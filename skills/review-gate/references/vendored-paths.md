@@ -4,23 +4,9 @@ For consumers that vendor an upstream tree byte-for-byte and merge re-vendor PRs
 
 A committed `kendex refresh` tree is the other case, and every section here covers it with the two changes in § The harness-render variant at the foot.
 
-## What suppression must not break
+## Review requirements
 
-**Evidence.** The gate's evidence term needs a trusted non-author review object at the exact head, or one of the other forms in [settings.md](settings.md). `REVIEW_GATE_CARRY_FORWARD` only extends evidence that already exists. A tree kendex renders carries under the `vendored` class when `REVIEW_GATE_VENDORED_PATHS` names it; any other byte-pinned tree sits in `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`, forcing fresh evidence on this PR class.
-
-**Threads.** The predicate counts `reviewThreads`, and the zero-bypass `required_review_thread_resolution` ruleset enforces the same threads server-side. Threads come from INLINE review comments. A review submitted with a body and no inline comments is full evidence and creates no thread — that is the target shape.
-
-**Honesty.** Never engineer a hollow review object to feed the gate. Where there is genuinely nothing to review, post the operator override with a reason.
-
-## The trap: reviewer path exclusion
-
-Never exclude the vendored tree in the reviewer's own configuration (content exclusion, ignore-paths, a path filter on the review trigger):
-
-- A pure re-vendor PR has no other files. With the tree excluded the reviewer posts no review object (gate stuck at `awaiting`) or posts a reviewed-nothing pass on a trusted context (hollow green).
-- **`REVIEW_GATE_CHECKRUN_SKIP_PATTERNS` does not close the second outcome.** It is a literal, case-insensitive substring match against the check's title plus summary (defaults `rate limited`, `skipped`, `queued`); a summary saying only that it reviewed no files matches none of them.
-- Mixed PRs still produce a review, so the failure appears only on the pure class.
-
-**Never exclude a path that can constitute an entire PR's diff.** The same rule rules out narrowing a review trigger by path.
+GitHub rulesets require approval at the current head and resolution of every inline review thread. A review body opens no thread. Do not exclude a path that can hold an entire pull request's diff: a pure re-vendor change would receive no review.
 
 ## The rule: route by remedy locus, not by path
 
@@ -71,34 +57,11 @@ Do not fix it locally, and do not file the same finding from each consumer.
 3. **Replace any existing instruction scoped to the same tree — do not add alongside it.** Merge any repo-specific carve-outs the old clause held into the new body.
 4. Classify each reviewer the repo runs as summary-capable or location-bound (above). A repo whose reviewers are ALL location-bound gets a bounded improvement, not silence — decide whether that is worth the wiring.
 5. Mirror the rule in the repo's reviewer-guidance file, for reviewers that do not read path-scoped instructions.
-6. Change no gate settings. A kendex render tree carries only through the `vendored` class and `REVIEW_GATE_VENDORED_PATHS`; any other vendored tree stays in `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`, and `REVIEW_GATE_TRUSTED_STATUS_CONTEXTS` never widens to a CI check as a substitute for review.
+6. Keep the repository's GitHub approval and thread-resolution requirements unchanged.
 
 ## Verifying on a real re-vendor PR
 
-Verify per repo, on the first re-vendor PR after the change, and use a PURE one (vendored files only).
-
-```bash
-# 1. Evidence AT HEAD. Read the head in the same call and compare per review.
-gh pr view [PR] --repo [OWNER/REPO] --json reviews,headRefOid --jq '.headRefOid as $head | .reviews[] | {login: .author.login, state: .state, at_head: (.commit.oid == $head), body_chars: (.body | length)}'
-
-# 2. Threads on the vendored tree, BEFORE resolving any of them.
-.agents/skills/github/scripts/github.sh pr-threads [PR] --unresolved
-
-# 3. The gate's own answer for this head.
-gh pr checks [PR] --repo [OWNER/REPO]
-```
-
-**Under `REVIEW_GATE_THREADS=enforce`** (the default), record step 2's threads and their authors first, resolve them, then read step 3.
-
-**Under `REVIEW_GATE_THREADS=off`**, read both from ONE snapshot and resolve nothing. Do not clear real repo-owned threads merely to finish a verification.
-
-Step 1 answers the evidence question only for rows with `at_head` true whose login is non-author AND in the repo's `REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` (empty list = any non-author), and only at the repo's `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE`. Under `any` such a row counts when it has content of its own: an `APPROVED` or `CHANGES_REQUESTED` verdict, a non-blank body, or a review comment that opens a thread. A `COMMENTED` row with `body_chars` 0 is often a reply to an existing thread, which is not evidence, and this view cannot tell the two apart. Judge it from the REST listings: take the row's numeric `id` from `pulls/[PR]/reviews`; the row opened a thread when `pulls/[PR]/comments` holds a comment with that `pull_request_review_id` and no `in_reply_to_id`. Under `approved` a login contributes evidence only when its newest `APPROVED` at head is not followed by a newer `CHANGES_REQUESTED` from that same login; a bare `COMMENTED` is not evidence there. This view reports bot logins WITHOUT the `[bot]` suffix the trusted list carries — compare on the base name, or read the REST `pulls/[PR]/reviews` endpoint, which returns the suffixed login and `commit_id`.
-
-**Pass**: a trusted non-author review object at the current head; on the vendored tree, no unresolved thread from a summary-capable reviewer; gate `success`. A repo-owned finding arriving inline is fine, and so is an inline thread raising a carve-out regression — read what a thread SAYS before grading it. Hold or revert the bump, or resolve it on an upstream fix, then re-read; it is a blocked re-vendor, never a failed rollout. Threads from a location-bound reviewer are counted and recorded, not graded.
-
-**Suspect, not proven**: threads at zero with `body_chars` also at zero. Treat it as a prompt to check, and confirm with a signal that distinguishes exclusion: a summary-capable reviewer's own reviewed-file count in the body (reviewed N of N changed files), and whether the reviewer's configuration carries a path exclusion over the vendored tree. For a trusted check-run passing with a reviewed-nothing summary, read the check's own output rather than trusting the green.
-
-**On confirmed failure**, revert the instruction file and merge the PR through the documented review path.
+Read the current head, its reviews and every unresolved thread before resolving a finding. Confirm that reviewers considered the changed files. A repository-owned finding or a production regression may hold the bump. A location-bound reviewer's thread count alone does not prove instruction failure.
 
 ## The harness-render variant
 

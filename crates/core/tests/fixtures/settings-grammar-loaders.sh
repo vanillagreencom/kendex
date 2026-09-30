@@ -63,11 +63,7 @@ env_sh() { # KEY -> loads:VALUE | refused | unread
 settings_sh() { # KEY -> loads:VALUE | refused | unread
   (
     unset -v "$1" 2>/dev/null || :
-    # This resolver reads two names of its own: REVIEW_GATE_MODE is a
-    # per-key exception in it, and REVIEW_GATE_SETTINGS_FILE selects which
-    # sources answer at all. Which file a corpus row is about is settled
-    # here, never by whoever ran the script.
-    unset -v REVIEW_GATE_MODE
+    # The fixture selects its settings source, never the caller.
     cd "$work"
     # shellcheck source=/dev/null
     source "$settings_lib"

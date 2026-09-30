@@ -1,6 +1,6 @@
 # Reading open review threads
 
-The read [merge-pr.md](../workflows/merge-pr.md) § 3.3 runs before its gate wait and before every merge call. `pr-merge` reads no thread, so this read is the lane's own. It runs under every gate mode and on every change class, a review-gate `none` row included.
+The read [merge-pr.md](../workflows/merge-pr.md) § 3.3 runs before its gate wait and before every merge call. `pr-merge` reads no thread, so this read is the lane's own. It runs under every gate mode and on every change class.
 
 Bind the pull request's head as `[READ_HEAD]`, then read its open threads:
 
@@ -27,7 +27,7 @@ A nonzero count takes `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 �
 
 ## What reads an open thread
 
-Under a review-gate `none` row, where no gate wait runs, three things read an open thread:
+Three readers check open threads:
 
 - This read, from merge-pr § 3.2 before the `not_approved` wait, and from merge-pr § 5 step 1 before every merge call. The § 5 read covers the entries that skip § 3.2: a [micro.md](../workflows/micro.md) § 4 entry and every return from the merge cycles.
 - `queue-wait`'s late-findings guard, on a thread posted after this read while the PR is armed or queued. Its `dequeued` verdict takes merge-pr § 5 step 1's Late-findings triage, which runs this read.

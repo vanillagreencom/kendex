@@ -95,7 +95,7 @@ rg_standard_load() { # MANIFEST SCOPE
   }
   [ -n "$WANT_SECRETS" ] || missing="${missing:+$missing,}REVIEW_GATE_STANDARD_SECRETS"
   if [ -n "$missing" ]; then
-    rg_message error standard-setting-missing "$missing" "this repository declares no value for these review-gate settings; set each in the [env] table of kendex.settings.toml (references/settings.md names them)" >&2
+    rg_message error standard-setting-missing "$missing" "this repository declares no value for these review-gate settings; set each in the [env] table of kendex.settings.toml (references/adoption.md names them)" >&2
     return 1
   fi
   # A name is uppercase letters, digits and underscores, and does not start

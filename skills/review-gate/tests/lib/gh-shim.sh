@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The fake `gh` the selftest and the suites beside it put on PATH: it answers
 # every `gh api` read from fixture files under GH_SHIM_FIXTURES and applies
-# any --jq filter with real jq, so review-predicate.sh runs unmodified.
+# any --jq filter with real jq, so the package readers run unmodified.
 # Dispatch is by request shape (the endpoint path, or GraphQL); the switches
 # GH_SHIM_FAIL, GH_SHIM_FAIL_TIMES and GH_SHIM_EMPTY drive the fail-loud
 # paths, and <name>.page2.json models a second page, filtered by --jq as

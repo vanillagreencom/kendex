@@ -130,7 +130,7 @@ run() { # EDIT [ARGS...]
   gh_stub_answer "api-repos/owner/repo/commits/h2/statuses?per_page=100" "$(status_history "$HISTORY_H2")"
   gh_stub_answer "api-repos/owner/repo/commits/b2/statuses?per_page=100" "$(status_history "")"
   gh_stub_answer "$ACTIVITY_PATH" "$(activity_log "$ACTIVITY")"
-  (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u REVIEW_GATE_CONTEXT \
+  (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO \
     bash "$BIN" 42 "$@" >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr") || rc=$?
   printf 'rc=%s' "$rc"
 }
@@ -176,7 +176,7 @@ gh_stub_answer "api-repos/owner/repo/commits/b1/statuses?per_page=100" "$(status
 gh_stub_answer "api-repos/owner/repo/commits/h2/statuses?per_page=100" "$(status_history "$HISTORY_H2")"
 gh_stub_fail "$ACTIVITY_PATH" 1 'HTTP 500'
 rc=0
-(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u REVIEW_GATE_CONTEXT \
+(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO \
   bash "$BIN" 42 >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr") || rc=$?
 assert_eq "rc=$rc out=$(cat "$TMP_ROOT/stdout")" "rc=1 out=" "an activity log that does not read prints nothing"
 
@@ -231,7 +231,7 @@ gh_stub_reset
 gh_stub_answer api-graphql "$(response .)"
 gh_stub_fail "api-repos/owner/repo/commits/b1/statuses?per_page=100" 1 'HTTP 500'
 rc=0
-(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u REVIEW_GATE_CONTEXT \
+(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO \
   bash "$BIN" 42 >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr") || rc=$?
 assert_eq "rc=$rc out=$(cat "$TMP_ROOT/stdout")" "rc=1 out=" "a status history that does not read prints nothing"
 
@@ -453,6 +453,13 @@ mutate() { # ANCHOR REPLACEMENT
     "$PR_TIMELINE" > "$BIN"
   assert_eq "$(grep -Fc -- "$1" "$BIN")" "0" "the control applied its mutation"
 }
+
+# The historical status default is part of the command contract, independent
+# of the retired package's settings.
+mutate 'gate="Review gate"' 'gate="Other status"'
+run . >/dev/null
+assert_eq "$(jq -c '.stamps.first_gate_met' "$TMP_ROOT/stdout")" 'null' \
+  'control: changing the historical status default loses the first gate stamp'
 
 # The head checks read without scope_current_run.
 mutate "head_checks=\$(jq -c '._checks.head' <<<\"\$result\" | scope_current_run)" \

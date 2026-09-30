@@ -120,11 +120,9 @@ run() {
   # shellcheck disable=SC2206
   [[ "$1" == - ]] || argv=($1)
   # Every token name and GH_REPO come off, so a lane's own environment cannot
-  # decide a row. The class policy is assigned
-  # empty: these rows are the CI and thread causes, and an active policy would
-  # classify the fixture's range.
+  # decide a row.
   (cd "$RUN_DIR" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u KENDEX_ENV_FILE \
-    REVIEW_GATE_CLASS_POLICY= STUB_CALL_LOG="$CALL_LOG" \
+    STUB_CALL_LOG="$CALL_LOG" \
     ${W_ENV[@]+"${W_ENV[@]}"} "$CLASSIFY" ${argv[@]+"${argv[@]}"} >"$TMPDIR/stdout" 2>"$TMPDIR/stderr") || rc=$?
   printf 'rc=%s out=%s checks=%s' "$rc" "$(out_text)" "$(grep -c '^pr checks' "$CALL_LOG" || true)"
 }

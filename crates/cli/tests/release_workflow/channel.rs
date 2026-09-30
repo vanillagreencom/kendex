@@ -450,8 +450,7 @@ fn the_channel_is_repointed_for_a_candidate_and_no_other_tag() {
 
 /// What a burst of tags does to one job, under GitHub's concurrency rules:
 /// one run of a group executes, one waits, and a third arrival replaces the
-/// one that was waiting rather than joining a queue behind it — the same
-/// behaviour `.github/workflows/review-gate-writer.yml` is written around.
+/// one that was waiting rather than joining a queue behind it.
 /// Returns, per tag in push order, whether that tag's job got to run at all.
 /// The burst is the worst case a group has to answer for: every tag arrives
 /// while the first is still executing.

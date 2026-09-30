@@ -20,9 +20,7 @@ Arguments:
 
 Options:
   --repo OWNER/REPO     The repository; default GH_REPO, else this checkout's
-  --gate-context NAME   The review gate's commit-status context; default
-                        REVIEW_GATE_CONTEXT, else `Review gate`, the review-gate
-                        skill's own default
+  --gate-context NAME   Historical review-status context; default `Review gate`
 
 Output, one JSON object on stdout:
 {
@@ -302,7 +300,7 @@ def rounds($reviews; $pushed):
   end'
 
 pr_timeline() {
-    local pr_num="" repo_arg="" gate="${REVIEW_GATE_CONTEXT:-Review gate}"
+    local pr_num="" repo_arg="" gate="Review gate"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --help|-h) show_help; exit 0 ;;

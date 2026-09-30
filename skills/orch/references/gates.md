@@ -13,7 +13,7 @@ Bind `[REVIEW_BASE_CHECKOUT]` to a checkout of the target pull request's consume
 
 Under `off`, open review threads still stop the merge: submit-pr's gate 3 applies, and so do the readers [thread-read.md § What reads an open thread](thread-read.md#what-reads-an-open-thread) lists. Required CI checks, commit guards, exact-head checks and conflict refusal are untouched in both modes, and the merge path still refuses a `CHANGES_REQUESTED` review at its readiness check. In `approval` mode an unresolved thread holds the wait at `comments` even beside an approval, because orch's own merge gates refuse an open thread: submit-pr's gate 3 and merge-pr's thread read ([thread-read.md](thread-read.md)). A base rule refuses one too where it requires thread resolution.
 
-The reviewer-gate settings, `PR_REVIEW_ON_TIMEOUT` and `PR_REVIEW_WAIT_SECS`, live in `kendex.settings.toml` `[env]`; semantics and defaults are in `approval-wait --help`. The gate predicate, writer, and engine-side `REVIEW_GATE_*` keys belong to the review-gate skill (its SKILL.md and `.agents/skills/review-gate/references/settings.md`).
+The reviewer-gate settings, `PR_REVIEW_ON_TIMEOUT` and `PR_REVIEW_WAIT_SECS`, live in `kendex.settings.toml` `[env]`; semantics and defaults are in `approval-wait --help`.
 
 ## Copilot requests
 

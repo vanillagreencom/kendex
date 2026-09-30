@@ -4,11 +4,11 @@
 # with one refresh-warning=workflow-edited value=PATH line. The optional
 # --workflow-edit-report file holds a Markdown section for refresh-consumer.sh,
 # naming PATH:LINE and both first-divergent lines; it is empty without an edit.
-# validate-workflow.sh owns writer adoption and whether its absence is allowed.
+# The committed adoption hash proves ownership of a retired writer copy.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "${1:-}" = --help ] && [ "$#" -eq 1 ]; then
-  printf '%s\n' 'Usage: adopt-refresh.sh [--templates-dir DIR] [--workflow-edit-report FILE]' 'Reads the provisioned kendex environment, adopts the refresh workflow, and records byte-identical writer and refresh copies in .kendex-generated.json.' 'Refresh hand edits are overwritten with a warning; FILE receives the workflow-edit section for the pull request body.' 'A repository with REVIEW_GATE_WRITER=optional and REVIEW_GATE_MODE=off may have no writer; only the refresh copy is then recorded.'
+  printf '%s\n' 'Usage: adopt-refresh.sh [--templates-dir DIR] [--workflow-edit-report FILE]' 'Reads the provisioned kendex environment, adopts the refresh workflow, and retires an unedited gate workflow and its inventory entry.' 'Refresh hand edits are overwritten with a warning; FILE receives the workflow-edit section for the pull request body.'
   exit 0
 fi
 templates="$SCRIPT_DIR/../templates"
@@ -38,12 +38,9 @@ template_environment="$(sed -n 's/^    environment: \(.*\)$/\1/p' "$refresh_temp
 template_secrets="$(sed -n 's/.*\${{ secrets\.\([A-Za-z0-9_]*\) }}.*/\1/p' "$refresh_template" | LC_ALL=C sort -u | paste -sd ';' -)" || exit 2
 REVIEW_GATE_STANDARD_ENVIRONMENT="$template_environment" REVIEW_GATE_STANDARD_SECRETS="$template_secrets" \
   "$SCRIPT_DIR/validate-standard.sh" --environment-only
-TMP="$(mktemp -d)"
-trap 'rm -rf -- "${TMP:?}"' EXIT
-"$SCRIPT_DIR/validate-workflow.sh" --adopt --templates-dir "$templates" --adopted-path-file "$TMP/writer-path"
 # Python supplies the same SHA-256 on every supported host. Template paths
 # remain repository-relative so verification resolves them against its plan.
-python3 - "$templates" "$TMP/writer-path" "$SCRIPT_DIR/../templates" "$edit_report" <<'PY'
+python3 - "$templates" "$SCRIPT_DIR/../templates" "$edit_report" <<'PY'
 import hashlib
 from itertools import zip_longest
 import json
@@ -66,6 +63,31 @@ def path_of(entry):
 
 refresh = root / ".github/workflows/kendex-refresh.yml"
 template = templates / refresh.name
+retired_owner = (templates / "review-gate-writer.yml").relative_to(root).as_posix()
+retired = [e for e in entries if isinstance(e, dict) and e["template"] == retired_owner]
+# Core refresh preserves adopted records when their template disappears.
+# A renamed copy keeps that owner, so its record selects the retirement path.
+prior = {}
+if retired:
+    previous = subprocess.run(["git", "show", "HEAD:.kendex-generated.json"], cwd=root, capture_output=True, text=True)
+    if previous.returncode != 0:
+        raise SystemExit("refresh-error=prior-inventory value=HEAD:.kendex-generated.json")
+    prior_entries = json.loads(previous.stdout)
+    if not isinstance(prior_entries, list):
+        raise SystemExit("refresh-error=prior-inventory value=not-array")
+    prior = {path_of(e): e for e in prior_entries}
+for record in retired:
+    copied = root / record["path"]
+    if copied.is_symlink():
+        raise SystemExit("refresh-error=workflow-symlink value=" + str(copied))
+    if copied.exists():
+        recorded = prior.get(record["path"])
+        if not copied.is_file() or not isinstance(recorded, dict) or recorded["template"] != retired_owner or recorded["templateHash"] != digest(copied):
+            raise SystemExit("refresh-error=workflow-edited value=" + str(copied))
+# An unrecorded default copy has no ownership proof and must stay untouched.
+unrecorded = root / ".github/workflows/review-gate-writer.yml"
+if (unrecorded.exists() or unrecorded.is_symlink()) and not any(e["path"] == unrecorded.relative_to(root).as_posix() for e in retired):
+    raise SystemExit("refresh-error=workflow-unrecorded value=" + str(unrecorded))
 template_bytes = template.read_bytes()
 report = ""
 if refresh.is_symlink():
@@ -75,7 +97,7 @@ if refresh.exists():
     shipped = copied_bytes == template_bytes
     # The preserved checkout keeps the consumer's pre-refresh vendored
     # template and its history. Records are inventory, not proof of an edit.
-    for directory in (Path(sys.argv[3]).resolve(), templates):
+    for directory in (Path(sys.argv[2]).resolve(), templates):
         if shipped:
             break
         shipped_template = directory / refresh.name
@@ -105,18 +127,15 @@ if refresh.exists():
         expected_line = json.dumps(None if expected is None else expected.decode("utf-8", errors="backslashreplace"))
         report = f"## Workflow edits\n\nReplaced a hand-edited refresh workflow with the shipped template. First divergence: `{relative}:{line}`.\n\n```text\ncopy: {copied_line}\ntemplate: {expected_line}\n```\n"
         print("refresh-warning=workflow-edited value=" + relative, file=sys.stderr)
+# Complete the ownership checks before removing or writing any consumer file.
+for record in retired:
+    (root / record["path"]).unlink(missing_ok=True)
 refresh.parent.mkdir(parents=True, exist_ok=True)
 refresh.write_bytes(template_bytes)
-# An empty selection is a writer absent by setting; its record is retired.
-selected = Path(sys.argv[2]).read_text()
-writer = root / selected if selected else None
-for copied, shipped in ((writer, templates / "review-gate-writer.yml"), (refresh, template)):
-    relative = None if copied is None else copied.relative_to(root).as_posix()
-    owner = shipped.relative_to(root).as_posix()
-    entries = [e for e in entries if not isinstance(e, dict) or e["template"] != owner]
-    if copied is not None and copied.is_file() and not copied.is_symlink() and copied.read_bytes() == shipped.read_bytes():
-        entries.append({"path": relative, "template": owner, "templateHash": digest(shipped)})
+owner = template.relative_to(root).as_posix()
+entries = [e for e in entries if not isinstance(e, dict) or e["template"] not in (retired_owner, owner)]
+entries.append({"path": refresh.relative_to(root).as_posix(), "template": owner, "templateHash": digest(template)})
 inventory.write_text("[\n" + ",\n".join("  " + json.dumps(e, ensure_ascii=False, separators=(",", ":")) for e in sorted(entries, key=path_of)) + "\n]\n")
-if sys.argv[4]:
-    Path(sys.argv[4]).write_text(report)
+if sys.argv[3]:
+    Path(sys.argv[3]).write_text(report)
 PY

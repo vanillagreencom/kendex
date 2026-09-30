@@ -1,6 +1,6 @@
 # Automatic review and the base branch
 
-Which pull requests draw GitHub's automatic Copilot review, and what to do when one does not. The gate reads evidence and never requests a review; this file names where the evidence comes from.
+Which pull requests draw GitHub's automatic Copilot review, and what to do when one does not. The watcher reports review state and never requests a review.
 
 ## What arms the reviewer
 

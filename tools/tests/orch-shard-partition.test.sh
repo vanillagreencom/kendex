@@ -284,11 +284,8 @@ one_line_steps() { # one_line_steps <workflow> ; `job\037if\037wd\037run` per st
   ' "$1"
 }
 
-# A job outside the shell matrix may run a suite by path on a one-line step:
-# `gate-selftest` runs review-gate's decision-table runner twice, under two
-# settings. Each job claims a path once however many of its steps name it,
-# and only a path in the universe counts, so the orch runner and a shipped
-# script such as validate.sh claim nothing.
+# A job outside the shell matrix may run a suite by path. Each job claims
+# a path once, and only a path in the suite universe counts.
 direct_claims() { # direct_claims <workflow> ; one path per job that runs it by path
   local job cond wd run word
   one_line_steps "$1" | while IFS=$'\037' read -r job cond wd run; do
@@ -492,18 +489,6 @@ if [[ -n "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-prefix"))" ]]; then
 else
   bad "must-fail: a directory-prefix needle lost no suite, so the glob needle is unproven"
 fi
-
-# A job's direct runs, deleted. No roster globs the decision-table runner, so
-# with the `gate-selftest` steps that name it gone it runs nowhere, and the
-# coverage check names it.
-wf_nodirect="$TMP/wf-direct-run-deleted.yml"
-awk '$0 !~ /^ *run: .*skills\/review-gate\/tests\/review-predicate-selftest\.sh$/' \
-  "$WORKFLOW" > "$wf_nodirect"
-edited "$WORKFLOW" "$wf_nodirect" direct-run-deleted
-claims_file "$wf_nodirect" "$TMP/claims-nodirect"
-check "must-fail: with the direct runs deleted, the runner they named is unclaimed" \
-  "skills/review-gate/tests/review-predicate-selftest.sh" \
-  "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-nodirect"))"
 
 # --- 4. Shard names cited in tracked text -----------------------------------
 # A shard's name reaches prose: an AGENTS.md sends a contributor to the lane

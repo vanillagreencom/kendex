@@ -261,7 +261,6 @@ fn the_observation_ignores_a_hostile_environment() {
         ("_WAIT", "ambient"),
         ("FOO-BAR", "ambient"),
         ("FOO.BAR", "ambient"),
-        ("REVIEW_GATE_MODE", "off"),
         ("REVIEW_GATE_SETTINGS_FILE", "/dev/null"),
     ]);
     assert_eq!(

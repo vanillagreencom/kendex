@@ -14,8 +14,7 @@
 # orch skill to other projects, and this policy is kendex's alone. tools/tests
 # is also what keeps the check merge-blocking — the guards-tools shard globs
 # tools/tests/*.test.sh and rolls up into the required "Skill suites (shell +
-# node)" context under the per-repository ruleset, which the gate-selftest
-# job is not, and into `CI` under the organization ruleset that replaces it.
+# node)" and `CI` contexts under the repository required-checks ruleset.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

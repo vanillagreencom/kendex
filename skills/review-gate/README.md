@@ -1,69 +1,23 @@
-# review-gate
+# Review operations
 
-A GitHub merge check for code review. Repository owners configure which reviewers and review results can approve the current PR commit.
+This package watches GitHub pull requests and reports their review state. It also checks organization standards and updates kendex installs in consumer repositories. GitHub rulesets enforce the approval and review-thread requirements.
 
 ## Install
 
-Your test checks must run on every push, or run in a merge queue that requires them. A skipped test job can otherwise count as satisfied.
-
-- Install and commit the skill with `kendex add vanillagreencom/kendex --skill review-gate`.
-- Copy the installed `templates/review-gate-writer.yml` into `.github/workflows/` without changes.
-- Add a CI step that runs the installed `scripts/validate.sh`.
-- Require `REVIEW_GATE_CONTEXT` in the branch rules alongside the test checks.
-
-Follow [references/adoption.md](references/adoption.md) for workflow and branch-rule setup.
+Install with `kendex add review-gate`, then run `kendex refresh` and commit the installed files.
 
 ## Features
 
-- Accept configured review approvals, analysis results and operator overrides.
-- Block approval while review objections or unresolved threads remain.
-- Check that the installed workflow and settings are valid.
-- Report PRs that need attention.
-- Refresh installed kendex packages through one rolling pull request. See [automatic consumer refresh](references/adoption.md#automatic-consumer-refresh).
+- Report pull requests that need attention.
+- Report repository rules and app-secret placement against an organization standard.
+- Provision app-secret environments from the owner's machine.
+- Open or update a consumer refresh pull request.
+- File automatic review findings upstream before resolving their threads.
 
 ## How it works
 
-Your GitHub workflow reads each open PR's current commit and review results. The gate evaluates those results against your trusted-reviewer settings. The workflow posts the result as a commit status. Your branch rules require that status before merging. Test results remain separate required checks.
+The pull-request watcher reads GitHub's review state. It reports open threads, objections and approvals that do not arrive within the wait period. The standard report compares GitHub configuration with the repository's settings. Consumer refresh updates one rolling branch and requests auto-merge. A finding that cannot be filed keeps its thread open and holds the merge.
 
 ## Settings
 
-Set `REVIEW_GATE_*` values in `kendex.settings.toml` under `[env]`. Environment values override the file.
-
-## Class policy
-
-Every repository applies this policy to the class from the shared `harness-ci` classifier. It is the built-in default of `REVIEW_GATE_CLASS_POLICY`, `render:none;trivial:none;micro:none;small:bot;standard:current`, so a repository assigns nothing to get it.
-
-| Change class | Review evidence | Review threads | Objections and suppressed findings |
-|---|---|---|---|
-| `render` | Not required | Not read by the gate; the lane answers every open thread before the merge | Not read |
-| `trivial` | Not required | Not read by the gate; the lane answers every open thread before the merge | Not read |
-| `micro` | Not required | Not read by the gate; the lane answers every open thread before the merge | Not read |
-| `small` | One normal bot round | Enforced | Enforced |
-| `standard` | Current review-gate behavior | Current review-gate behavior | Current review-gate behavior |
-
-`trivial` holds a documentation-set diff within the classifier's line ceiling, and a diff only under `docs/plans/` at any size; a `HARNESS_CI_TRIVIAL_PATHS` allowlist replaces both with a diff of its paths within that ceiling. Each holds once the classifier's configuration, instruction-pointer, narrow-change and render refusals have passed it, and a diff carrying an `AGENTS.md` or `SKILL.md` takes `small` in place of `trivial` or `micro`. `change-class --help` states each rule and the refusals ahead of them.
-
-A `none` row puts the pull request OUTSIDE the review gate: no review evidence, no thread wait, no standing objection and no suppressed finding is read for it, because a gate that cannot stop a bot from commenting must not run on a change it waives. What stays enforced is everything outside that gate — required CI checks, commit guards and merge conflicts — and the orch merge path still refuses a `CHANGES_REQUESTED` review at its readiness check, in every mode.
-
-A `none` row's open threads still stop its merge, by the readers orch's [thread-read.md § What reads an open thread](../orch/references/thread-read.md#what-reads-an-open-thread) lists. The predicate counts a thread the merge route resolved under its retired thread waiver as open while the waiver stands, by the rule in `scripts/lib/waiver.sh`.
-
-The table is applied only where the shared classifier measured a class, which it says on its own answer. It needs both endpoints present in the checkout, an ancestor they share, a generated-file inventory at the base end that is readable or absent, and the `orch` skill beside `harness-ci` for its `references/narrow-change.conf` list and its `scripts/lib/branch-growth.sh` measurer. A base with no inventory at all, older than the render that first wrote one, records no ownership, so the classifier answers `standard` as a fixed rule ahead of its size rules and marks it measured; the same diff on a base with an inventory can earn a narrower class. Missing any of the others, the classifier falls back to `standard` and marks the answer unmeasured, and `review-policy` exits 3 with a `policy=unmeasured` record naming the reason rather than apply a row to a class nothing earned. The writer posts that as a pending `unmeasured` status naming the reason, and the pull request does not fail the writer's pass. Fix what the reason names, then ask again.
-
-CI's writer workflow runs the review predicate for each open PR and posts the gate status. The predicate refreshes the PR's kendex sources only when every changed path is a generated file, because only the `render` check reads them. Every other diff is classified without refreshing kendex sources. A refresh that passes its time limit fails that PR's class with `predicate-policy-refresh-deadline`, naming the PR and the limit, and the next pass tries again. That failure is the `class-unresolved` verdict; the [SKILL.md decision table](SKILL.md#decision-table) says which other failures are, and what the writer posts for it. CI shows that line in the writer's job log.
-
-A missing package is refused, never read as an inactive policy. `review-policy` exits 2 as `policy-classifier` when the `harness-ci` classifier is not installed beside this skill, and exits 3 as `policy-unmeasured` when the classifier could not measure a class: no `orch` narrow-change list or measurer, or no `kendex` command to prove a render diff (`cause=no-verifier`). `validate.sh` reports the first under `settings-values`, with the `policy-classifier` diagnostic indented below it.
-
-A repository leaves this default only by a recorded choice. It can assign other rows, or assign `REVIEW_GATE_CLASS_POLICY = ""`, which turns this table off and keeps the gate behavior from before the class policy. Either way it also sets `REVIEW_GATE_CLASS_POLICY_DECISION` to the tracked decision record that gives the reason. `validate.sh` refuses a departure with no decision record as `class-policy-undecided`. Assigning the default value itself needs no record.
-
-The active default applies whatever `REVIEW_GATE_MODE` says, and the docs-only and render-only lanes below run only under an inactive policy.
-
-`scripts/review-predicate.sh`, which the writer runs, is the one consumer of the `scripts/review-policy` answer. The orch skill reads its gate mode from GitHub's approval rule, not from this policy.
-
-- `REVIEW_GATE_CONTEXT` names the required commit status.
-- Select trusted reviewer logins and check names using [references/settings.md](references/settings.md).
-- When the class policy is inactive, `REVIEW_GATE_DOCS_ONLY = "none"` lets a docs-only PR pass without bot review evidence. The shared CI classifier decides which paths qualify, then `REVIEW_GATE_CARRY_FORWARD_EXCLUDE` removes policy paths from the waiver. Review objections, suppressed findings, and unresolved threads still block.
-- The same reference defines when approval may carry forward after a documentation or generated-file change.
-- When the class policy is inactive, `REVIEW_GATE_RENDER_PATHS` names the harness render trees the repo commits as kendex output. A PR whose entire diff sits under them is approved without review evidence, and its CI checks still decide the merge. Any file outside the set, or a diff the gate cannot enumerate, takes the normal path.
-- `REVIEW_GATE_MODE = "off"` disables review evaluation when the class policy is inactive or resolves to `current`. A `bot` class still requires its review round.
-
-`REVIEW_GATE_CHECK_RUN_NAME` is a GitHub repository variable for the optional check-run trigger. Set it in GitHub Actions variables, not in the settings file.
+Declare organization-standard values in `kendex.settings.toml` under `[env]`. Set `PR_REVIEW_WAIT_SECS` to change the watcher's quiet period. [Repository wiring and settings](references/adoption.md) describes the required GitHub configuration and consumer refresh setup.

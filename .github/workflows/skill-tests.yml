@@ -666,7 +666,7 @@ jobs:
           fail=0
           failed=""
           # The suites only: the decision-table runner beside them is the
-          # gate-selftest job's.
+          # other suite jobs'.
           for t in skills/review-gate/tests/*.test.sh; do
             echo "=== $t"
             if ! bash "$t"; then
@@ -897,14 +897,6 @@ jobs:
           fi
           exit "$fail"
 
-      # The review-gate writer template reaches consumers when it merges. Its
-      # install step runs the installer at KENDEX_INSTALLER_SHA before a
-      # credentialed step, so a pull request may not move that commit off the
-      # one its release tag names. This checkout holds no tags; the tool reads
-      # them from origin.
-      - name: review-gate installer pin names its tag's commit
-        if: matrix.shard == 'guards-tools'
-        run: tools/installer-pin --check
 
       # This shard is the fallback for `guards-tools-tail`'s roster in the way
       # the `guards-commit` step above is for its moved tail.
@@ -1430,31 +1422,6 @@ jobs:
             --lane "$UI:ui-tests" \
             --lane "$BOT_INSTRUCTIONS:bot-instructions"
 
-  gate-selftest:
-    # DELIBERATELY UNGATED: no `needs`, no approval condition, no path
-    # filter. If the predicate is broken, nothing is ever approved, so a
-    # gated selftest could never run when it matters. Runs from the repo
-    # root so the configured layer regenerates its approve/near-miss
-    # battery from THIS repo's committed kendex.settings.toml trust values.
-    name: Pin the review-gate decision table
-    if: github.event_name != 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: review-gate selftest against this repo's settings
-        run: skills/review-gate/tests/review-predicate-selftest.sh
-      # The TRUSTED-STATUS-CONTEXTS battery re-derived from a list this repo
-      # does not commit. That layer only — every other REVIEW_GATE_* key
-      # resolves the same in both steps.
-      - name: review-gate selftest against a foreign trust surface
-        run: REVIEW_GATE_TRUSTED_STATUS_CONTEXTS="Acme Review; Beta Scan" skills/review-gate/tests/review-predicate-selftest.sh
-      # kendex adopts its own gate, so it takes the consumer's check too.
-      - name: review-gate validate against this repo's installation
-        run: skills/review-gate/scripts/validate.sh
-
   preflight:
     # Dogfoods the preflight skill on this repo's own PR diffs. PR-only
     # because it is diff-scoped and a merge group has no PR base to diff
@@ -1919,11 +1886,10 @@ jobs:
           printf '%s\n' "$gated"
           echo "::warning title=platform-gated tests::$n files under crates/*/tests carry a whole-file cfg gate that excludes Windows; the list is in this step"
 
-  # THE ONE REQUIRED CONTEXT beside `Review gate`, under the organization
-  # ruleset of docs/decisions/D003-one-merge-path.md item 3, and the job name
-  # skills/harness-ci/templates/ci.yml gives every repository. Every other job
+  # The aggregate CI context follows the repository required-checks ruleset.
+  # Every other job
   # in this workflow reports into it, the three aggregators above excepted:
-  # it holds every lane they hold, plus gate-selftest, Preflight and Markdown,
+  # it holds every lane they hold, plus Preflight and Markdown,
   # and they keep the per-repository ruleset's names until that ruleset is
   # retired. The shape and the reasons are the Skill suites
   # aggregator's: `always()` so a failed or skipped need fails this context
@@ -1936,7 +1902,7 @@ jobs:
   # the event condition it runs under, spelled as its own `if:` spells it.
   ci:
     name: CI
-    needs: [changes, bot-instructions, skill-suites-shard, ui-tests, gate-selftest, preflight, markdown, cargo-linux, cargo-macos, cargo-lint, cargo-check-windows, cargo-tests-windows]
+    needs: [changes, bot-instructions, skill-suites-shard, ui-tests, preflight, markdown, cargo-linux, cargo-macos, cargo-lint, cargo-check-windows, cargo-tests-windows]
     if: always() && github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5

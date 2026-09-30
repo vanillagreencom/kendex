@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # Edit one sandbox file and prove that the fixture reached its target. The
-# caller commits; workflow_edit, the adopted workflow's edit, commits itself.
+# caller commits.
 file_edit() { # DIR PATH EXPECTED_MATCHES MATCH_PATTERN SED_EXPRESSION [POSITION]
   local f="$1/$2" matches rc=0
   [ ! -L "$f" ] || { printf 'fixture-error=edit-symlink value=%q\n' "$f" >&2; exit 2; }
@@ -21,10 +21,6 @@ file_edit() { # DIR PATH EXPECTED_MATCHES MATCH_PATTERN SED_EXPRESSION [POSITION
   rc=0
   cmp -s "$f" "$f.new" || rc=$?
   [ "$rc" -eq 1 ] || { printf 'fixture-error=edit-unchanged value=%q\n' "$rc" >&2; exit 2; }
-  mv "$f.new" "$f"
-}
-
-workflow_edit() { # DIR EXPECTED_MATCHES MATCH_PATTERN SED_EXPRESSION [POSITION]
-  file_edit "$1" .github/workflows/review-gate-writer.yml "$2" "$3" "$4" "${5:-}"
-  commit "$1"
+  cat -- "$f.new" >"$f"
+  rm -- "${f:?}.new"
 }

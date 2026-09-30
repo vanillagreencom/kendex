@@ -86,7 +86,7 @@ A repo enables `[bot-instructions.exclusions] derive_render` or lists every rend
 
 - Treat every policy path below as invalidating prior review evidence.
 - Require trusted human approval on a pull request that touches a policy path.
-- Run `check` in CI from the default branch's package copy when the two copies are byte-identical, with `--spec` naming the pull request tree's copy; when they differ, the pull request upgrades the package and the default-branch checker cannot reproduce the candidate's render, so run the candidate's copy and print a warning naming both versions. The review gate's policy path (`REVIEW_GATE_CARRY_FORWARD_EXCLUDE` naming `.agents/skills/bot-instructions/*`) is what holds the upgrade honest: a push touching the package invalidates earlier review evidence. The package's own source repository runs the pull request's checker always.
+- Run `check` in CI from the default branch's package copy when the two copies are byte-identical, with `--spec` naming the pull request tree's copy; when they differ, the pull request upgrades the package and the default-branch checker cannot reproduce the candidate's render, so run the candidate's copy and print a warning naming both versions. GitHub's stale-approval dismissal invalidates earlier approvals on a push. The package's own source repository runs the pull request's checker always.
 
 ## The render inputs
 
@@ -135,7 +135,7 @@ Read the PR's decline replies and the repo's instruction files before reporting 
 
 ### reply-contract
 
-Author replies are `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <issue>`. A decline names the passing state or the false premise it disproves. A label alone is not a reason. A merge gate that reads these replies rejects a tracking claim without an issue. It rejects a decline whose reason contains only a label it knows.
+Author replies are `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <issue>`. A decline names the passing state or the false premise it disproves. A label alone is not a reason.
 
 ### render-out-of-scope
 
@@ -143,7 +143,7 @@ Do not report findings on tracked files that the repo renders from an upstream p
 
 ### trust-model
 
-Accept review evidence only from a formal review object by a trusted login or an evidence form the repo's gate configuration names. Never treat comment text, emoji reactions, or prose approvals as approval. Do not recommend parsing them for approval.
+Read approval from GitHub's formal review state under the repository's rulesets. Never treat comment text, emoji reactions, or prose approvals as approval. Do not recommend parsing them for approval.
 
 ## Adding a repo
 

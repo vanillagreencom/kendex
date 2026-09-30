@@ -109,3 +109,5 @@ The owner confirms the overseer grant is accepted (note 1790789346-1276246-32321
 ## Revisit Outcome (2026-09-30)
 
 KEN-2281 records the owner's approved choice to select the latest stable kendex release at run time for each consumer refresh. `skills/review-gate/scripts/install-latest.sh` resolves the selected release tag to its commit, fetches `install.sh` at that immutable commit and runs it with the selected version. Decision item 2 now reflects that choice instead of a consumer engine pin. The separate review-gate writer keeps its release and installer pins. The rolling pull request, review and merge conditions, and D007's kendex exclusion remain unchanged. The earlier revisit outcome and the D013 and D016 supersessions still hold.
+
+[D018](D018-platform-review-requirements.md) supersedes the required review status and review-finding answer contract.

@@ -276,7 +276,7 @@ change came from an outside contributor.
   package-manager install prints that manager's update command instead of
   replacing files it does not own.
 - Problems now lists a declared package whose place already holds files kendex did not write, with the ways out: keep those files, or install what kendex.toml asks for and send them to the trash.
-- `REVIEW_GATE_CARRY_FORWARD` gains a `vendored` class: a `kendex refresh` push under the render trees `REVIEW_GATE_VENDORED_PATHS` lists carries the prior review, whatever the files' extensions.
+- Review carry-forward gains a `vendored` class: a `kendex refresh` push under the render trees declared by the repository carries the prior review, whatever the files' extensions.
 - The foot of the app's sidebar names the kendex.ai account you are signed in to, says Offline when the server could not be reached, and offers Sign in or Sign in again. Clicking opens Settings.
 - Settings > Account names the kendex.ai account and offers Sign out; it reads Offline when the server could not be reached, and asks for a fresh sign-in when the credential was rejected, saying why.
 - The review-gate skill ships a reviewer instruction for a repo that commits
@@ -318,7 +318,7 @@ change came from an outside contributor.
 - `bot-instructions`: render, check and adopt review-bot files from shared doctrine and the manifest's `[bot-instructions]` table.
 - The workflow bundle includes bot-instructions for generating GitHub review-bot files from shared rules and repository settings.
 - Three waits become callable: `LINEAR_RETRY_BASE_DELAY`, `MUTATION_STABILITY_SETTLE`, and one decimal place on the `KENDEX_GITHUB_*_TIMEOUT` bounds.
-- review-gate: `REVIEW_GATE_RENDER_PATHS` names the harness render trees; a PR whose whole diff sits under them is approved without review evidence, CI still deciding the merge.
+- review-gate: Render-path settings names the harness render trees; a PR whose whole diff sits under them is approved without review evidence, CI still deciding the merge.
 - `linear.sh issues create` refuses a description with no `Reached by:` line, or a `--review-born --priority 2` body with no `Symptom:` line, where `LINEAR_REQUIRE_REACH` is set.
 - New `workflow` bundle: orchestration, code-review and commit-guards plus `deep-research` in one `kendex add --bundle workflow`, 30 members that carry what each other needs.
 - A catalog package's page and the install picker name what it requires and offer its optional dependencies; My Library says which package a dependency arrived with.
@@ -655,7 +655,7 @@ change came from an outside contributor.
 - Removed review-gate's `merged-sweep.sh` and its documented steps. Nothing shipped ran it; `pr-watch.sh` remains the reducer.
 - **Breaking:** `dev-return-write --kind analysis` (use `fix` or `implement`), `workflow-state init --team` (drop it), and bare-numeric `workflow-state` keys (pass the `issue-N` key init got).
 - **Breaking:** the orch settings `PR_REVIEW_QUORUM`, `PR_REVIEW_NUDGE`, `PR_REVIEW_NUDGE_SECS` and the `worktree-claim` script. Delete the three keys; the gate no longer nudges or awaits a quorum.
-- Removed the legacy `REVIEW_GATE_OUTAGE_CONTEXT` setting from review-gate. **Breaking:** set `REVIEW_GATE_OVERRIDE_CONTEXT` instead — it takes the same value and the same default.
+- Removed the legacy `REVIEW_GATE_OUTAGE_CONTEXT` setting from review-gate. **Breaking:** set the replacement override setting instead — it takes the same value and the same default.
 - **Breaking:** GitHub skill commands no longer accept deprecated `--json`; use `--format=safe`.
 - **Breaking:** A skill found only at its own pinned revision, not at the one its source points at, can no longer be assigned to an agent; pin the source there too. Other pins need no change.
 - The browser mock backend (`VITE_MOCK`) is gone; the app is exercised in the real window.
@@ -790,7 +790,7 @@ change came from an outside contributor.
 - A pi-hooks carrier registered through a scoped path such as
   `./packages/@vanillagreen/pi-hooks` no longer draws the false "nothing
   will run it" warning from `kendex apply`.
-- The review-gate predicate matches `REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS` only in a review body's first line, so a review quoting a pattern in later text counts as evidence again.
+- The review-gate predicate matches review error patterns only in a review body's first line, so a review quoting a pattern in later text counts as evidence again.
 - Customize › Customized packages lists every package you changed at that location, hand-edited and forked ones included, so it matches the Library's "Customized in" mark instead of settings alone.
 - macOS builds are Developer ID signed and notarized: installing from any
   channel no longer ends in "kendex is damaged" or an `xattr -cr` workaround.

@@ -44,7 +44,7 @@ Before § 4, repeat the § 2 check on the tree the review left. `tier=small` con
 
 ## 4. Submit
 
-Run [start-worktree.md](start-worktree.md) § 4. Bot threads get two rounds at most: `workflow-state cap REVIEW_MAX_EXTERNAL_ROUNDS --issue [ISSUE_ID]` reads a cap of 2 for this item, while the review gate's `small` row requires the evidence of one ([README](../../review-gate/README.md#class-policy)), and at that cap [review-pr-comments.md](review-pr-comments.md) answers every standing thread by reply.
+Run [start-worktree.md](start-worktree.md) § 4. Bot threads get two rounds at most: `workflow-state cap REVIEW_MAX_EXTERNAL_ROUNDS --issue [ISSUE_ID]` reads a cap of 2 for this item. At that cap [review-pr-comments.md](review-pr-comments.md) answers every standing thread by reply. GitHub's approval and thread-resolution rules still apply.
 
 Whenever HEAD differs from the head the last § 2 check measured, repeat that check before the lane's next push and before [submit-pr.md](submit-pr.md) § 6.1 Merge Gates; a step that pushes before it returns, such as ci-fix, is checked on its return. `tier=small` continues; anything else escapes.
 

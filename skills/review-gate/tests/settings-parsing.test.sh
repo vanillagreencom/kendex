@@ -218,11 +218,7 @@ echo "=== the default sources under a working directory ==="
 # .kendex/settings.toml and .env.local as specs in a fresh directory, with
 # the handle FILE (`unset`, `/dev/null`, or `empty` for set-but-empty).
 # The layering is .env.local > .kendex/settings.toml > kendex.settings.toml
-# > default — except REVIEW_GATE_MODE, which reads only the environment and
-# the COMMITTED kendex.settings.toml, so the local waiter and the CI gate
-# (whose checkout has neither .env.local nor .kendex/) resolve the switch
-# identically; a broken machine-local layer it never reads must not fail
-# it. The /dev/null sentinel selects no source at all and loses only to an
+# > default. The /dev/null sentinel selects no source and loses only to an
 # explicit environment variable; set-but-empty names no file and reads the
 # default sources. The dotenv layer reads every supported shape, a quoted
 # value ends at its FIRST closing delimiter, a trailing comment is dropped,
@@ -246,7 +242,7 @@ world_table() {
   done
   [[ "$((PASS + FAIL))" -gt "$before" ]] || { printf 'test-failure=world-assertions value=0\n' >&2; exit 2; }
 }
-ROOT='[env];REVIEW_GATE_TP = "root";REVIEW_GATE_MODE = "off"'
+ROOT='[env];REVIEW_GATE_TP = "root"'
 world_table \
   'without the sentinel the settings file at the default path supplies the value|[env];REVIEW_GATE_TS = "fromfile"|-|-|unset|REVIEW_GATE_TS|dflt||rc=0 out=fromfile' \
   'the sentinel skips a populated settings file and the built-in default decides|[env];REVIEW_GATE_TS = "fromfile"|-|-|/dev/null|REVIEW_GATE_TS|dflt||rc=0 out=dflt' \
@@ -255,10 +251,7 @@ world_table \
   'a SET-but-EMPTY handle reads the default sources|[env];REVIEW_GATE_TE = "fromrepo"|-|-|empty|REVIEW_GATE_TE|dflt||rc=0 out=fromrepo' \
   "the root settings file supplies the value|$ROOT|-|-|unset|REVIEW_GATE_TP|dflt||rc=0 out=root" \
   ".kendex/settings.toml beats kendex.settings.toml|$ROOT|[env];REVIEW_GATE_TP = \"nested\"|-|unset|REVIEW_GATE_TP|dflt||rc=0 out=nested" \
-  ".env.local beats both settings files|$ROOT|[env];REVIEW_GATE_TP = \"nested\"|REVIEW_GATE_TP=dotenv;REVIEW_GATE_MODE=enforce|unset|REVIEW_GATE_TP|dflt||rc=0 out=dotenv" \
-  "REVIEW_GATE_MODE ignores .env.local and reads the settings file|$ROOT|[env];REVIEW_GATE_TP = \"nested\"|REVIEW_GATE_TP=dotenv;REVIEW_GATE_MODE=enforce|unset|REVIEW_GATE_MODE|enforce||rc=0 out=off" \
-  'REVIEW_GATE_MODE ignores the machine-local .kendex/settings.toml|[env];REVIEW_GATE_TP = "root"|[env];REVIEW_GATE_MODE = "off"|REVIEW_GATE_TP=dotenv;REVIEW_GATE_MODE=enforce|unset|REVIEW_GATE_MODE|enforce||rc=0 out=enforce' \
-  'REVIEW_GATE_MODE falls to the default over a dotenv-only value|[env];REVIEW_GATE_TP = "root"|-|REVIEW_GATE_TP=dotenv;REVIEW_GATE_MODE=off|unset|REVIEW_GATE_MODE|enforce||rc=0 out=enforce' \
+  ".env.local beats both settings files|$ROOT|[env];REVIEW_GATE_TP = \"nested\"|REVIEW_GATE_TP=dotenv|unset|REVIEW_GATE_TP|dflt||rc=0 out=dotenv" \
   'a double-quoted dotenv value with a trailing comment extracts the content|[env];REVIEW_GATE_TP = "root"|-|REVIEW_GATE_TD="spaced value" # note|unset|REVIEW_GATE_TD|dflt||rc=0 out=spaced+value' \
   'a quote inside the trailing comment never leaks into the value|[env];REVIEW_GATE_TP = "root"|-|REVIEW_GATE_TD="900" # say "quiet"|unset|REVIEW_GATE_TD|dflt||rc=0 out=900' \
   'an export-form dotenv assignment is recognized|[env];REVIEW_GATE_TP = "root"|-|export REVIEW_GATE_TD=42|unset|REVIEW_GATE_TD|dflt||rc=0 out=42' \
@@ -269,14 +262,35 @@ world_table \
   'a DIRECTORY at .env.local is a config error, not a skipped layer|[env];REVIEW_GATE_TP = "root"|-|DIR|unset|REVIEW_GATE_TD|dflt||rc=1 out=- error=settings-type value=.env.local' \
   'a DANGLING symlink at .env.local is a config error, not a skipped layer|[env];REVIEW_GATE_TP = "root"|-|DANGLING|unset|REVIEW_GATE_TD|dflt||rc=1 out=- error=settings-symlink value=.env.local' \
   'a .env.local hit does not mask a malformed settings file|[env];DUP = "a";DUP = "b"|-|REVIEW_GATE_TV="local"|unset|REVIEW_GATE_TV|dflt||rc=1 out=- error=settings-duplicate value=DUP' \
-  'an exported value does not mask a DIRECTORY at .env.local|[env];REVIEW_GATE_TP = "root"|-|DIR|unset|REVIEW_GATE_TV|dflt|REVIEW_GATE_TV=envwin|rc=1 out=- error=settings-type value=.env.local' \
-  'REVIEW_GATE_MODE resolves past a broken .env.local it never reads|[env];REVIEW_GATE_MODE = "off"|-|DIR|unset|REVIEW_GATE_MODE|enforce||rc=0 out=off'
+  'an exported value does not mask a DIRECTORY at .env.local|[env];REVIEW_GATE_TP = "root"|-|DIR|unset|REVIEW_GATE_TV|dflt|REVIEW_GATE_TV=envwin|rc=1 out=- error=settings-type value=.env.local'
 if [ "$(id -u)" -eq 0 ]; then
   printf 'test-notice=permission-skip value=.env.local\n'
 else
   world_table \
     'an UNREADABLE .env.local is a config error, not a skipped layer|[env];REVIEW_GATE_TP = "root"|-|UNREADABLE|unset|REVIEW_GATE_TD|dflt||rc=1 out=- error=settings-unreadable value=.env.local'
 fi
+
+# The kept dotenv precedence case must turn red when the loader ignores it.
+cp -R "$SKILL_DIR/scripts/lib" "$TMP/mutant-lib"
+python3 - "$TMP/mutant-lib/settings.sh" <<'CONTROL'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+needle = 'val="$(rg_dotenv_layer ".env.local" "$name")" || status=$?'
+assert s.count(needle) == 1
+changed = s.replace(needle, 'val="" # ' + needle)
+assert changed != s
+p.write_text(changed)
+CONTROL
+control_rc=0
+(
+  source "$TMP/mutant-lib/settings.sh"
+  FAIL=0
+  world_table 'dotenv precedence control|[env];REVIEW_GATE_TP = "root"|[env];REVIEW_GATE_TP = "nested"|REVIEW_GATE_TP=dotenv|unset|REVIEW_GATE_TP|dflt||rc=0 out=dotenv'
+  [[ "$FAIL" -eq 0 ]]
+) >"$TMP/control-output" || control_rc=$?
+assert_eq "$control_rc" 1 'control: ignoring dotenv makes the precedence assertion red'
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -437,7 +437,7 @@ pr_range() { # PR
 # The range, as this checkout can read it: both ends present AND an ancestor
 # they share, since the classifier takes a merge-base diff and a shallow or
 # grafted checkout can hold two commits with no reachable ancestor between
-# them. The same three clauses review-predicate.sh materializes.
+# them.
 pr_range_present() { # ROOT BASE HEAD
     git -C "$1" cat-file -e "$2^{commit}" 2>/dev/null &&
         git -C "$1" cat-file -e "$3^{commit}" 2>/dev/null &&

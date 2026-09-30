@@ -137,19 +137,15 @@
 # environment sets HARNESS_CI_LOCK_KENDEX, it runs the executable that names.
 # The record is written by a kendex built from the recording tree, so a
 # registration shape newer than the release on PATH reads to that release as
-# drift. review-gate's writer installs kendex's rolling main build there
-# where REVIEW_GATE_LOCK_KENDEX asks for it. The variable is read from the
+# drift. The variable is read from the
 # environment alone, never from a settings file: it names a binary on the
 # machine running this script. A path that is not executable answers standard
 # with cause=no-verifier. The `render-verifier:` line names the verifier that
 # ran, `path` or `lock`, and the version its `--version` printed, and a
 # verify-refused cause carries both, so a refusal reads as the verifier's age.
 #
-# Only the render class reads kendex state, and it is reached only where
-# harness-only answers harness_only=true for the range. review-gate's
-# review-predicate.sh (resolve_class_policy) prepares the judged checkout's
-# sources on exactly that condition and on no other, so a kendex read added
-# on any other path here classifies against sources nobody prepared.
+# Only the render class reads kendex state, after harness-only answers
+# harness_only=true. The caller prepares the judged checkout's sources.
 #
 # A measured class needs --event pull_request or --event merge_group and an
 # orch beside this package carrying the measurement contract below; any other

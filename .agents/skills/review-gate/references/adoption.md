@@ -1,103 +1,45 @@
-# Adopting the review-gate engine
-
-How a repo wires the shared engine: the writer workflow, the validate step, rulesets, per-repo settings, and what an adoption PR deletes.
-
-## The precondition — check before anything else
-
-The gate never polices CI. A repo must satisfy ONE of these:
-
-1. **A merge queue** whose required contexts cover every job the repo's CI runs, through the `CI` aggregate or the jobs' own names (recommended).
-2. **No held-back jobs** — every required check runs on every push.
-
-Held-back jobs report `skipped`, and GitHub counts skipped as satisfied.
-
-## What an adoption PR contains
-
-1. **Vendor the skill** (`kendex refresh` places `.agents/skills/review-gate/scripts/` and these references). The consumer's drift check asserts the vendored copy matches the catalog byte-for-byte.
-2. **Copy `.agents/skills/review-gate/templates/review-gate-writer.yml`** into `.github/workflows/`, VERBATIM. It carries no per-repo values. `kendex refresh` updates the vendored template but never writes `.github/workflows/`; a template update reaches the copy through `.agents/skills/review-gate/scripts/validate-workflow.sh --adopt`, run after `kendex refresh` (§ Updating an already-adopted copy). The one workflow is the ONLY writer of the gate status; every leg that runs the engine runs the DEFAULT-branch one (PR-attached legs relay). Renaming the copy needs no further change. Keep every line of the relay's `env:` block (`GH_REPO`, `DISPATCH_REF`, `WORKFLOW_REF`, `EVENT_NAME`, `CHECK_NAME`).
-3. **Add the validate job** to the repo's CI (below).
-4. **Set the repo's `REVIEW_GATE_*` keys** in `kendex.settings.toml` (decision axes below; full key table in [settings.md](settings.md)).
-5. **Delete everything the writer supersedes in the same PR** — gate jobs that read the predicate to condition CI, rerun/refire/sweep workflows and scripts, local predicate copies, duplicated gate steps.
-6. **Repo-side wiring** (below): rulesets and merge queue, with a bypass actor only where the standard admits one.
-7. **Reviewer instruction for the vendored tree** — wire the remedy-locus rule from [vendored-paths.md](vendored-paths.md), never a reviewer path exclusion.
-
-## Recommended CI shape — the fast/full split
-
-Recommended split: cheap fast checks (lint, typecheck, unit) run on every push unconditionally; heavy suite jobs carry `if: github.event_name == 'merge_group'` and run only in the queue. Running everything on every push is also allowed. Jobs must NOT read the predicate to decide whether to run.
-
-## The validate job
-
-```yaml
-  review-gate-validate:
-    # DELIBERATELY UNGATED: no `needs`, no approval condition, no path
-    # filter.
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@<pinned-sha>
-        with:
-          persist-credentials: false
-      - name: Validate this repo's review-gate installation
-        run: .agents/skills/review-gate/scripts/validate.sh
-```
-
-Each check emits an `ok` or `FAIL` record with `check=CODE value=VALUE`. Indented lines give the explanation and repair. Exit 0 means clean, 1 means findings, and 2 means the check could not run. It answers repo-own questions only — the engine is installed and runnable here, the committed `REVIEW_GATE_*` values are legal, the carry-forward exclusions still match tracked paths, and the adopted workflow still meets this template's contract. It re-runs no engine test suite: the selftest and the wrapper suites are the ENGINE's proofs and run in the kendex repo on every change to it.
-
-Value rules come from the engine, not from a copy of it: the settings half calls the engine's own value judges, which `validate.sh --help` names, and none of them reads evidence or needs a PR.
+# Repository wiring and consumer refresh
 
 ## Repo-side wiring
 
-An organization ruleset carries the shared rules for every repository: the pull-request rule, the Copilot review, and the deletion and force-push rules. Each repository keeps two rulesets of its own, one for its required checks and one for its merge queue, and no other. `scripts/validate-standard.sh` reports which source each rule type comes from, not which ruleset holds it: it neither counts nor names the repository rulesets, so their number and their split are the owner's to hold.
+GitHub rulesets enforce review requirements. The organization ruleset holds pull-request approval, stale-approval dismissal, thread resolution, Copilot review, deletion and force-push rules. Each repository keeps its required-checks ruleset and merge-queue ruleset. It keeps no classic branch protection.
 
-`validate-standard.sh` and `provision-environment.sh` read the organization's own values from settings, since the package ships none. Declare them in the `[env]` table of the repository's `kendex.settings.toml`; which script reads which key is [settings.md](settings.md):
+Required contexts match `REVIEW_GATE_STANDARD_CONTEXTS` and exclude the retired gate context. Bind each context to its reporting app. Enable Copilot approvals and let them count toward merge requirements. Leave the approval path list blank so every changed file can qualify.
 
-1. `REVIEW_GATE_STANDARD_APP`: the slug of the GitHub App the organization installs on every repository.
-2. `REVIEW_GATE_STANDARD_ENVIRONMENT`: the environment that holds that app's secrets.
-3. `REVIEW_GATE_STANDARD_SECRETS`: those secrets' names, `;`-separated. Never their values. A name is uppercase letters, digits and underscores, and does not start with a digit. GitHub stores every secret name uppercase.
-4. `REVIEW_GATE_STANDARD_CONTEXTS`: the contexts the repository's required-checks ruleset requires, `;`-separated. `validate-standard.sh` compares it to that ruleset as its `standard-required-contexts` row. Its readers and its refusals are its row in [settings.md](settings.md).
+The organization's overseer app may approve a head after the managing workflow's internal review passes and its approval wait expires. Its emergency merge bypasses only the required-checks and merge-queue rulesets. Approval and thread resolution still apply. These operations belong to the managing workflow, not this package.
 
-Each script exits 2 with one `standard-setting-missing` record naming every key among the first three it reads that is unset or empty, or with one `standard-secret-invalid` record naming every secret name outside that grammar. An unset `REVIEW_GATE_STANDARD_CONTEXTS` is no refusal: `validate-standard.sh` reports it as a failed `standard-required-contexts` row. Refresh adoption reads none of these keys (§ Automatic consumer refresh).
+`validate-standard.sh` reports rule sources, approval requirements, stale-approval dismissal, required contexts, merge-queue checks, app installation and secret placement. Its standard-bypass-actors row judges bypass actors per ruleset: a queue-only ruleset admits REVIEW_GATE_STANDARD_QUEUE_BYPASS, a checks-only ruleset admits REVIEW_GATE_STANDARD_CHECKS_BYPASS, and any other ruleset admits none. The owner holds the ruleset split. The managing workflow reads the merge route through the github skill’s pr-merge command.
 
-A repository reaches this shape in one order. The workflow change that reports `CI` on `pull_request` and `merge_group`, both under `on:`, and the change to the required-checks ruleset apply back to back. Where the workflow change renames an existing aggregate, the ruleset changes first and the rename merges through the queue at once. After the first merge through the queue, `scripts/validate-standard.sh` runs: its `standard-ci-context` ok confirms the workflow change on both legs, and its `standard-merge-queue` ok confirms the ruleset change. Its `standard-required-contexts` row reads `gate-required` until the ruleset edit that precedes disabling the writer, and ok after that edit.
+## Settings
 
-- **Rule sources**: the pull-request, Copilot review, deletion and force-push rules come from an organization ruleset. The required checks and the merge queue come from a repository ruleset only, never an organization one, and a repository ruleset holds nothing else. `standard-ruleset-source` reports any other source.
-- **Required contexts**: the required-checks ruleset requires exactly the contexts `REVIEW_GATE_STANDARD_CONTEXTS` declares (`standard-required-contexts`); the list never holds the `gate_context` of the skill's `standard.json`, `Review gate`. `Review gate` stays required until the ruleset edit that precedes disabling the writer and leaves the ruleset in that edit, never before. After it the ruleset never requires `Review gate`: the approval rule replaces it. Until that edit, once `REVIEW_GATE_STANDARD_CONTEXTS` is declared, `standard-required-contexts` reads `gate-required`. The list need not hold `CI`. Every repository reports the aggregate `CI` context on both the `pull_request` and the `merge_group` leg (`standard-ci-context`), whatever its list holds; [harness-ci wiring.md § The CI context](../../harness-ci/references/wiring.md#the-ci-context) says how.
-- **Merge queue**: required on the default branch. The writer's `merge_group` leg posts the gate context on queue shas unconditionally.
-- **Approvals**: the organization ruleset's pull-request rule requires at least 1 approval (`standard-required-approvals`) and dismisses a stale approval on push (`standard-stale-dismissal`).
-- **Thread resolution**: a pull-request rule requires every review thread resolved.
-- **Copilot review**: a rule requests a Copilot review, which holds no merge.
-- **Bypass actors, per ruleset**: the ruleset holding the pull-request, deletion and force-push rules carries none. A ruleset holding the merge-queue rule alone may carry the actors `REVIEW_GATE_STANDARD_QUEUE_BYPASS` names: a lane holding one merges a green pull request that is not queue-only past the queue, and GitHub still holds it to every other ruleset (the github skill's `pr-merge --help` § Merge route). A ruleset holding the required checks alone may carry the actors `REVIEW_GATE_STANDARD_CHECKS_BYPASS` names, which merge a gate repair ([../SKILL.md](../SKILL.md#4-operations)). Any other actor, a Repository-admin actor included, is a departure `standard-bypass-actors` reports. A settings-change PR takes normal review.
-- **No classic branch protection** beside the rulesets.
-- **Required checks never include the writer's own job names.** Whether the gate context is required is the Required contexts bullet above.
-- **App-secret environment**: the organization owner runs `.agents/skills/review-gate/scripts/provision-environment.sh --org ORG` from their own machine, in a checkout that declares items 1 to 3 above: the app, the environment and the secrets. It creates the environment `REVIEW_GATE_STANDARD_ENVIRONMENT` names, with a default-branch-only deployment policy and the secrets `REVIEW_GATE_STANDARD_SECRETS` names, in every repository of the organization that is not archived; run it again for a new repository. An adoption never creates the environment.
+Declare values in the `[env]` table of `kendex.settings.toml`. The standard loader reads process values, `.env.local`, `.kendex/settings.toml`, then the committed file. `REVIEW_GATE_SETTINGS_FILE` selects an explicit file. `/dev/null` selects no file and keeps only process values and caller defaults.
 
-## Updating an already-adopted copy
+| Key | Meaning | Default |
+| --- | --- | --- |
+| `REVIEW_GATE_STANDARD_APP` | Organization app slug read by the full standard report and environment provisioning. | None; unset or empty refuses. |
+| `REVIEW_GATE_STANDARD_ENVIRONMENT` | App-secret environment read by both scripts. | None; unset or empty refuses. |
+| `REVIEW_GATE_STANDARD_SECRETS` | Secret names separated by `;`, never their values. Names use uppercase letters, digits and underscores and start with a letter or underscore. Provisioning reads each value from the environment variable of the same name and re-writes it on every run, including when the secret name is present. A rotation needs one owner run. | None; unset or empty refuses. |
+| `REVIEW_GATE_STANDARD_CONTEXTS` | Required contexts separated by `;`, compared by the full standard report. | None; an unset list fails the required-contexts row. |
+| `REVIEW_GATE_STANDARD_QUEUE_BYPASS`, `REVIEW_GATE_STANDARD_CHECKS_BYPASS` | Actors admitted by a queue-only and a checks-only ruleset, as `TYPE:ID:MODE`. Both standard scripts refuse malformed entries with `standard-bypass-invalid`. | Empty admits none. |
+| `PR_REVIEW_WAIT_SECS` | Watcher quiet period before an absent approval needs attention. | The watcher's `--help` states the default. |
 
-After `kendex refresh` brings a new template, run `.agents/skills/review-gate/scripts/validate-workflow.sh --adopt` from the repository root and commit its write with the refresh. It compares the copy against every version of the template this repository's history holds:
+`validate-standard.sh --environment-only` reads the environment and secret keys only. Consumer adoption supplies these values from the refresh template, so it needs no consumer assignment.
 
-- A copy equal to the current template is left as it is: `ok check=workflow-equality`.
-- A copy equal to an earlier shipped version is re-installed from the current template, keeping its script path and its `check_run` opt-in: `ok check=workflow-readopted`. The re-install writes the template's bytes, so a comment-only edit to the copy is replaced.
-- A copy whose code lines equal no shipped version is one a person edited. It is left untouched and named on one `FAIL check=workflow-edited` line, with the first divergent line under it. Re-copy the template by hand.
-
-Run it after every `kendex refresh` so template changes land with the refresh. The consumer refresh workflow calls it through `scripts/adopt-refresh.sh`.
-
-### Automatic consumer refresh
+## Automatic consumer refresh
 
 The shipped `templates/kendex-refresh.yml` checks for updates every 30 minutes. A manual run uses the same path. Each run installs the latest released kendex through `scripts/install-latest.sh`. That script resolves the release tag and its installer commit at run time. Each run updates `kendex/refresh` and keeps one open pull request. The class controls publication and auto-merge per [SKILL.md § Scripts](../SKILL.md#scripts). Required CI checks and the merge queue still control merging. A current consumer opens no pull request.
 
 Provision the `kendex` environment before adoption. It must contain `FLEET_GH_APP_ID` and `FLEET_GH_APP_PRIVATE_KEY` and allow deployments from the default branch only. The organization owner uses `scripts/provision-environment.sh --org ORG` from their own machine. `scripts/adopt-refresh.sh` reads the existing environment through `validate-standard.sh --environment-only`. It checks the environment and secret names the refresh template it installs reads, whatever the consumer's `REVIEW_GATE_STANDARD_*` settings say, so refresh adoption needs none of those keys. A missing environment, secret or branch policy stops adoption with the failed check and provisioning remedy.
 
-After installing the skill and copying the writer verbatim, stage that writer so the validator can find it. Run from the consumer root:
+Run from the consumer root after installing the skill:
 
 ```bash
-git add .github/workflows/review-gate-writer.yml
 .agents/skills/review-gate/scripts/adopt-refresh.sh
 kendex verify --scope project
-git add .github/workflows/kendex-refresh.yml .kendex-generated.json
+git add -A
 ```
 
-A repository that posts no gate status adopts the refresh workflow with no writer. It sets `REVIEW_GATE_WRITER = "optional"` and `REVIEW_GATE_MODE = "off"` in its committed `kendex.settings.toml`, where both keys are read from, copies no writer, and runs `adopt-refresh.sh` and `kendex verify` as above. Adoption then records only the refresh copy and retires any earlier writer record. Either setting alone still refuses a missing writer, a workflow that names `review-writer.sh` outside a comment still fails, and a writer that is present is still checked and updated. The class policy still applies: a change it resolves to `bot` still needs review evidence, which no status reports without a writer. `REVIEW_GATE_MODE = "off"` also skips orch's review wait, except where the class policy resolves a change to `bot` and `PR_REVIEW_GATE` then decides ([orch gates](../../orch/references/gates.md)).
+Commit the workflow and inventory with the installed skill. Adoption removes an unedited retired gate workflow and its inventory entry, proved by the committed adoption hash. An edited, symlinked or unrecorded retired copy needs an owner decision and stops adoption without changing the files.
 
 Refresh workflow reconciliation in `scripts/adopt-refresh.sh` uses exact bytes, independently of the adoption record:
 
@@ -111,7 +53,7 @@ Refresh workflow reconciliation in `scripts/adopt-refresh.sh` uses exact bytes, 
 
 When orch is present after refresh, the refresh pull request adds Settings only for refused or deprecated `ORCH_OVERSEER_PREFERENCE` entries. The release-installed parser runs read-only with only `PATH` and `HOME` in its environment. The preserved default-branch runner validates its stdout as data. A failed extraction stops publication and auto-merge. Each row names the entry and `harness:model:effort` as the replacement form. A setting joins this report by exposing its existing parse the same way. An absent orch or a clean parse leaves the body unchanged. `tests/refresh-consumer.test.sh` checks committed settings, private overrides, first installations and credential isolation.
 
-Commit the workflow copies and inventory with the installed skill. Adoption records each byte-identical copy's template path and SHA-256 hash. `kendex refresh` updates the template and its expected hash. Adoption then rewrites the refresh copy and records it. Verification and the shared change classifier compare the copy with the declared package template. Verification rejects a registered copy that differs from its template. A writer with local path or trigger changes is not an exact copy and is not registered as a render by this command.
+Commit the workflow copies and inventory with the installed skill. Adoption records each byte-identical copy's template path and SHA-256 hash. `kendex refresh` updates the template and its expected hash. Adoption then rewrites the refresh copy and records it. Verification and the shared change classifier compare the copy with the declared package template. Verification rejects a registered copy that differs from its template.
 
 Schedule and manual refresh work in a consumer with the app installation and environment above. Instant refresh also needs organization dispatch wiring. The catalog's `.github/workflows/kendex-dispatch.yml` signals every non-archived consumer repository visible to its app installation after a push to `main`. Adoption and dispatch exclude `vanillagreencom/kendex`, whose build-bound lock workflow owns its refresh under [D007](https://github.com/vanillagreencom/kendex/blob/main/docs/decisions/D007-lock-record-on-main.md). It attempts all destinations and fails the run if any dispatch fails.
 
@@ -123,113 +65,3 @@ The last two steps request an Issues-write token scoped only to `vanillagreencom
 - Every other finding is not filed, and the error line gives the reason: no single package claims the path (the lock, the inventory, a Copilot `.github/agents/*.agent.md` render), `kendex report` does not route the package to `vanillagreencom/kendex`, or the token or Issues access is missing. Review text about content kendex has not claimed is never published.
 
 A not-filed thread stays open, the thread-resolution rule holds the merge, and the run fails with an error naming the thread. Report the finding where it belongs and resolve the thread by hand: a resolved not-filed thread no longer fails the run. A reporter failure holds only its own pull request and also fails the run. If the token lacks Issues access, the Actions summary supplies filing links for routed findings only. A later run with the token files the finding and resolves the thread. A pull request the classifier cannot measure keeps its findings unanswered, and the run adds a warning with the cause.
-
-### The relay/converge split
-
-The template delta that split the writer into a relay and a converge leg:
-
-- A `request-converge` job (the relay) runs every PR-attached leg; the `write` job's `if:` is narrowed to `workflow_dispatch`/`schedule`.
-- **Permissions**: the relay holds `actions: write` and nothing else — no `contents`, no `statuses`, no `issues`. `actions: write` authorizes dispatching **any** workflow in the repo plus cancelling, re-running and deleting runs, logs and artifacts. The relay checks nothing out and executes no PR-controlled code — never add a checkout to this job. The `write` job holds no `actions` scope.
-- **The relay files no rolling escalation issue.** That stays on the `write` job. During a sustained dispatch outage the 15-minute cron floor converges each stale gate. No reducer reports gate staleness. Each relay run's log carries a `::warning::`.
-- **`workflow_dispatch` must stay in `on:`** — it is the dispatch target. Dropping it strips every event-fast path down to the cron floor.
-- The opt-in `check_run` trigger ships commented out. To enable it, uncomment the two trigger lines and set the repository variable `REVIEW_GATE_CHECK_RUN_NAME` to the reviewer's check name — the relay's `if:` already reads it, so no expression is hand-edited. An unset variable matches no check name, so the trigger without the variable relays nothing. The step separately refuses to dispatch on a `check_run` naming one of its own three jobs; that refusal is a literal list of the three job `name:` values — if you rename a job in your copy, rename it in the list too.
-- **Check the ruleset first** if it ever named a writer JOB (rather than the gate status context): a required `Evaluate and write the review gate` would block every PR. Require the status context only.
-
-- **The relay never exits non-zero.** Invariant when editing the copy. Every fault warns and exits 0, and every wait is bounded (`timeout` per dispatch attempt, a floored and capped backoff, and a `timeout-minutes` that outlasts the worst case). Do not restore fail-loud here.
-
-  It makes two dispatch attempts, classifying the server's answer:
-
-  | Answer | Wait | Recognized by |
-  |---|---|---|
-  | Rate limit | The named window, floored at 60s, plus bounded jitter; a window beyond 120s skips the retry | `retry-after`; `x-ratelimit-reset` *only when `x-ratelimit-remaining` is 0*; a header-less secondary limit, from its body or an HTTP 429 |
-  | Transient | 5s | Anything else retryable |
-  | Permanent | Not retried | 400; 404 (renamed workflow file); 405; 422 (bad ref); 401 (revoked token); 403 carrying no rate-limit evidence (`Resource not accessible by integration`) |
-
-  Never treat `x-ratelimit-reset` as a wait instruction on its own.
-
-Cost per repo: one extra Actions run per PR-attached event, up to about 4.2 minutes of runner hold in the worst modeled failure (inside the job's 5-minute budget), one or two content-creating API requests per run against the secondary-limit budget, and one extra run lifecycle of event-fast latency. The relay is group-less and coalesces nothing. Repos on a constrained or self-hosted runner pool size that before adopting.
-
-Verify after adopting — run both:
-
-1. **Something was actually dispatched.** After a push to an open PR, `gh run list --workflow "Review gate writer" --event workflow_dispatch --limit 5` must show a run created just after it. If nothing appears, the relay's own run log carries a `::warning::` naming the cause (a missing `actions: write` is the usual cause).
-2. **No cancelled check pins the PR.** Push twice in quick succession, then confirm `gh pr checks` shows no cancelled writer entry and `gh pr view --json mergeStateStatus` is not `UNSTABLE` on that account.
-
-## Keys a repo decides
-
-Concrete per-consumer values are tracked on the org adoption issue, not here. Everything else has a working default. Full key table: [settings.md](settings.md).
-
-| Key | Decide |
-|---|---|
-| `REVIEW_GATE_CONTEXT` | The protected commit-status name. Renaming it means updating the ruleset in the same PR. |
-| `REVIEW_GATE_TRUSTED_STATUS_CONTEXTS` | The reviewer contexts whose clean pass counts. Any context to trust needs an explicit entry. |
-| `REVIEW_GATE_CHECKRUN_SKIP_PATTERNS` | Default closes the rate-limited-pass gap everywhere; empty is an explicit opt-out. |
-| `REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` | Empty = any non-author. List logins to restrict — do that wherever outside collaborators can review. |
-| `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE` | `any` counts COMMENTED reviews (for bots that never APPROVE); `approved` requires an APPROVED verdict. |
-| `REVIEW_GATE_COMMENT_REVIEWERS` | Only for a comment-form reviewer: `login:binding-prefix`. |
-| `REVIEW_GATE_SHA_PREFIX_FLOOR` | Shortest SHA prefix accepted by both binding readers: comment-form reviewer evidence, and the author's suppressed-finding disposition comment. |
-| `REVIEW_GATE_OVERRIDE_CONTEXT` | The operator override status context. |
-| `REVIEW_GATE_STATUS_PUBLISHER_REJECT` | Set `github-actions[bot]` wherever PR workflows hold `statuses: write`. Requires the override to be posted by a non-Actions identity (operator PAT). Empty disables. |
-| `REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS` | Default closes the errored-auto-review gap; override where a repo's reviewer words its attestation differently; empty is an explicit opt-out. |
-| `REVIEW_GATE_THREADS` | `enforce`, unless a server-side zero-bypass thread ruleset is the enforcement point. |
-| `REVIEW_GATE_CARRY_FORWARD` | Off by default. Turn on `docs`/`comments` where re-review of review-inert deltas is unwanted; `vendored` where `kendex refresh` pushes should carry, with the render trees listed in `REVIEW_GATE_VENDORED_PATHS`. |
-| `REVIEW_GATE_VENDORED_PATHS` | The render trees `vendored` trusts as kendex output, e.g. `.agents/*;.claude/skills/*`. A hand-edit under them rides; keep hook scripts and instruction markdown in `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`, which wins. |
-| `REVIEW_GATE_CLASS_POLICY` | Leave it unassigned. The built-in default is the active value in the [README class table](../README.md#class-policy): it exempts `render`, `trivial` and `micro`, requires one bot round for `small`, and keeps the current policy for `standard`. An adoption never writes an empty value. |
-| `REVIEW_GATE_CLASS_POLICY_DECISION` | Leave it empty. A repository that assigns other rows, or `REVIEW_GATE_CLASS_POLICY = ""` to turn the policy off, names here, by its path from the repository root, the tracked decision record behind that choice. |
-| `REVIEW_GATE_DOCS_ONLY` | Leave it unassigned under the default class policy. The lane applies only after a recorded opt-out from the class policy. After an opt-out, `bot` keeps review evidence mandatory, and `none` lets the shared CI docs classifier replace missing bot evidence while objections, suppressed findings, unresolved threads, and excluded paths still block. |
-| `REVIEW_GATE_RENDER_PATHS` | Leave it unassigned under the default class policy. The lane applies only after a recorded opt-out from the class policy. After an opt-out, it names render trees that may merge on CI alone. Empty disables the lane. |
-| `REVIEW_GATE_MODE` | `enforce`. `off` disables an inactive or `current` class policy and attests rather than evaluates. A `bot` class still requires review. |
-| `REVIEW_GATE_WRITER` | `required`. `optional`, with `REVIEW_GATE_MODE = "off"`, only in a repository that runs the automatic refresh and posts no gate status. |
-| `REVIEW_GATE_STANDARD_APP`, `REVIEW_GATE_STANDARD_ENVIRONMENT`, `REVIEW_GATE_STANDARD_SECRETS` | The organization's app, app-secret environment and secret names (§ Repo-side wiring). No default. `validate-standard.sh` and `provision-environment.sh` refuse on each unset key. `validate-standard.sh --environment-only` reads the environment and secret keys only. Refresh adoption reads none of them. |
-| `REVIEW_GATE_STANDARD_CONTEXTS` | The repository's required contexts (§ Repo-side wiring). No default. `validate-standard.sh` reports an unset list as a failed `standard-required-contexts` row. Its readers and its refusals are its row in [settings.md](settings.md). |
-| `REVIEW_GATE_STANDARD_QUEUE_BYPASS`, `REVIEW_GATE_STANDARD_CHECKS_BYPASS` | The bypass actors a merge-queue-only and a checks-only ruleset admit, as `TYPE:ID:MODE` (§ Repo-side wiring). Empty admits none. Read by `validate-standard.sh`, and by `provision-environment.sh`, which refuses a malformed entry with `standard-bypass-invalid`. |
-
-## Repair by verdict line
-
-| Verdict line | What to do |
-|---|---|
-| `settings-unknown` | Fix the spelling against [settings.md](settings.md). The written value is being ignored. |
-| `settings-values` | Read the indented engine diagnostic. Its first record identifies the setting error; the following lines explain the accepted values. A nested `predicate-pattern` record means the path pattern uses an unsupported anchor or metacharacter. |
-| `carry-unmatched` | Fix the glob, or declare it in `REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC` when it guards paths that do not exist yet. |
-| `carry-declaration-matched` or `carry-declaration-missing` | Reconcile the ledger — every declaration names an active exclusion that still matches nothing. |
-| `workflow-count` | Adopt (§ What an adoption PR contains), or `git add` the workflow: Actions runs only what is committed. A repository that posts no gate status sets `REVIEW_GATE_WRITER = "optional"` and `REVIEW_GATE_MODE = "off"` instead. |
-| `workflow-absent-mode` | The writer is optional but the gate is enforced. Set `REVIEW_GATE_MODE = "off"`, or adopt the writer. |
-| `settings-writer` or `settings-writer-source` | Set `REVIEW_GATE_WRITER` to `required` or `optional` in the committed `kendex.settings.toml`, never in `.kendex/settings.toml`. |
-| `settings-lock-kendex` | Set `REVIEW_GATE_LOCK_KENDEX` to empty or `main`; the indented `policy-lock-kendex` record names the value `review-policy` refused. |
-| `workflow-equality` | Run `validate-workflow.sh --adopt` (§ Updating an already-adopted copy) and commit its write. The `note check=workflow-template` line under the verdict names the template blob the copy was compared against. |
-| `workflow-edited` | A person edited the copy. Re-copy `templates/review-gate-writer.yml` over it; the line named under the verdict says where it diverges. Keep only the `check_run` opt-in's two trigger lines if that opt-in is on. |
-| `class-policy-undecided` | Delete the `REVIEW_GATE_CLASS_POLICY` assignment so the default applies. A departure from the default needs a decision record named in `REVIEW_GATE_CLASS_POLICY_DECISION`. |
-| `class-policy-decision-untracked` | Commit the decision record, or correct the path in `REVIEW_GATE_CLASS_POLICY_DECISION`. |
-| `class-policy-unresolved` | Read the indented `review-policy` diagnostic. |
-| `settings-values` with `policy-classifier` | The `harness-ci` skill is not installed beside review-gate: install it with `kendex add`. |
-| `carry-load` | Read the nested `settings-unreadable` or `settings-syntax` diagnostic. It names the key and the shape the loader rejected. Fix the assignment; an unreadable value is never an empty one. |
-| `runtime-mode` or `runtime-syntax` | Re-run `kendex refresh` and commit the result. |
-
-## Migrating a v1 consumer (rerun/sweep-era wiring)
-
-A repo on the pre-writer machinery deletes, in one PR: its `approval-rerun.yml` / `approval-sweep.yml` (or equivalents), any CI gate job that evaluates the predicate to skip heavy jobs, any local refire / convergence scripts, and the `REVIEW_GATE_TRUST_PR_WORKFLOWS` / `REVIEW_GATE_MAX_RERUN_ATTEMPTS` keys (both retired). It adds the writer workflow, applies the fast/full split to its CI, and updates its own docs from the legacy override key to `REVIEW_GATE_OVERRIDE_CONTEXT`.
-
-## Watching PRs as an agent (pr-watch)
-
-`.agents/skills/review-gate/scripts/pr-watch.sh` is a needs-attention reducer for sessions shepherding one or many PRs. It reads GitHub's review state alone: unresolved threads, `reviewDecision`, the auto-merge arm and the merge-queue entry. Never watch review-state *transitions*.
-
-Wrap it in whatever wake-up mechanism the harness has — the loop body is always the same:
-
-```bash
-# cron / polling loop / harness monitor — silence means nothing needs you.
-# Run it BARE, once; the exit code is the predicate. Never invoke it a
-# second time to build a notification.
-export GH_REPO=your-org/your-repo
-.agents/skills/review-gate/scripts/pr-watch.sh
-```
-
-(The `export` is its own line, not a command prefix.)
-
-Exit 0 = silence (healthy); exit 1 = attention lines on stdout (threads to triage — queued PRs annotated with the dequeue-first warning — objections, an approved PR nothing will merge, no approval past the quiet period, or `head-moved` when a push landed mid-reduction — re-run); exit 2 = a PR could not be read (fail loud, never skipped). The orch skill's waiters are the single-PR *foreground* waits; pr-watch is the multi-PR *background* reducer over OPEN PRs only.
-
-`--awaiting-after SECS` replaces the `PR_REVIEW_WAIT_SECS` threshold.
-
-## Verification
-
-- `.agents/skills/review-gate/scripts/validate.sh` exits 0 from the repo root.
-- The consumer's vendored-copy drift check passes.
-- The first PURE re-vendor PR after adoption carries a trusted non-author review object at head, and on the vendored tree no unresolved thread from a summary-capable reviewer, except one raising a carve-out regression (which correctly blocks — read before resolving anything). A location-bound reviewer's threads are recorded, not graded ([vendored-paths.md](vendored-paths.md) § Verifying on a real re-vendor PR).

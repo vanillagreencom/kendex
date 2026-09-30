@@ -65,25 +65,33 @@ refresh_stopped_at_settings() { # REMOTE_HEAD ERROR_RECORD
     ! grep -qE '^api --method (POST|PATCH)|^pr merge ' "$TMP/state/calls"
 }
 
-# Successful adoption preserves unrelated entries and records exact workflow
-# metadata without duplicate paths. A writer name of - selects no writer.
-adoption_metadata() {
-  python3 - "$DIR" "${1:-review-gate-writer.yml}" <<'PY'
+# Seed the inventory shape core refresh and adoption use.
+record_adoption() { # ROOT PATH TEMPLATE
+  python3 - "$@" <<'PY'
 import hashlib
 import json
 from pathlib import Path
 import sys
 root = Path(sys.argv[1])
-expected = [".agents/skills/other/SKILL.md", {"path":".github/workflows/other.yml","template":".agents/skills/other/templates/other.yml","templateHash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}]
-for name in ("kendex-refresh.yml", "review-gate-writer.yml"):
-    if name == "review-gate-writer.yml" and sys.argv[2] == "-":
-        continue
-    path = ".github/workflows/" + (sys.argv[2] if name == "review-gate-writer.yml" else name)
-    template = ".agents/skills/review-gate/templates/" + name
-    data = (root / template).read_bytes()
-    assert (root / path).read_bytes() == data, path
-    expected.append({"path": path, "template": template, "templateHash": "sha256:" + hashlib.sha256(data).hexdigest()})
-assert json.loads((root / ".kendex-generated.json").read_text()) == sorted(expected, key=lambda e: e if isinstance(e, str) else e["path"])
+path, template = sys.argv[2:]
+inventory = root / ".kendex-generated.json"
+entries = json.loads(inventory.read_text())
+entries.append({"path": path, "template": template, "templateHash": "sha256:" + hashlib.sha256((root / path).read_bytes()).hexdigest()})
+inventory.write_text(json.dumps(entries) + "\n")
+PY
+}
+
+adoption_metadata() { # ROOT PATH TEMPLATE
+  python3 - "$@" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+path, template = sys.argv[2:]
+data = (root / template).read_bytes()
+assert (root / path).read_bytes() == data
+assert json.loads((root / ".kendex-generated.json").read_text()) == [{"path": path, "template": template, "templateHash": "sha256:" + hashlib.sha256(data).hexdigest()}]
 PY
 }
 

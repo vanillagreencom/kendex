@@ -28,15 +28,15 @@ table() { # SCRIPT TAG JUDGE — every row against SCRIPT, each judged by JUDGE 
     touch "$W/kendex.toml"
     export ORCH_POST_MERGE_CMD='[ "$ORCH_POST_MERGE_BEFORE" = "$before" ] && [ "$ORCH_POST_MERGE_AFTER" = "$after" ] && [ "$(git rev-parse HEAD)" = "$after" ] && [ "$FAIL_STEP" != command ]'
     case "$FAIL_STEP" in sync-base) git -C "$W" remote set-url origin "$SCRATCH/absent" ;; success) "$DIR/sync-base" "$W" >/dev/null ;; empty) ORCH_POST_MERGE_CMD='' ;; absent) rm -- "$W/kendex.toml" ;;
-      adopt) mkdir -p "$W/.agents/skills/review-gate/scripts"; printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$*"; exit 2' > "$W/.agents/skills/review-gate/scripts/validate-workflow.sh"; chmod +x "$W/.agents/skills/review-gate/scripts/validate-workflow.sh" ;; esac
+      esac
     rc=0; out="$(bash "$1" $flag "$W" 2>"$SCRATCH/error")" || rc=$?
     out="$(printf '%s\n' "$out" | sed '/^main$/d' | tr '\n' ',')"
     "$3" "$rc:$out" "$expected_rc:$expected" "$FAIL_STEP" "$SCRATCH/error" || return 1
     # Every run leaves the checkout as it found it, whatever the refresh, the
-    # adoption and the verify returned: the record the refresh re-wrote
+    # verify returned: the record the refresh re-wrote
     # restored, the render it created removed, and the untracked files the
     # row made kept.
-    case "$FAIL_STEP" in absent) want="" ;; adopt) want=$'?? .agents/skills/review-gate/scripts/validate-workflow.sh\n?? kendex.toml' ;; *) want="?? kendex.toml" ;; esac
+    case "$FAIL_STEP" in absent) want="" ;; *) want="?? kendex.toml" ;; esac
     left="$(git -C "$W" status --porcelain --untracked-files=all)"
     "$3" "$left" "$want" "$FAIL_STEP: the run left the checkout as it found it" || return 1
     case "$FAIL_STEP" in
@@ -48,25 +48,24 @@ table() { # SCRIPT TAG JUDGE — every row against SCRIPT, each judged by JUDGE 
 sync-base|1|post-merge: sync-base=1,
 command|1|post-merge: sync-base=0,post-merge: command=1,
 refresh|1|post-merge: sync-base=0,post-merge: command=0,refresh --scope project --yes --leave,post-merge: refresh=1,post-merge: restore=0,
-verify|1|post-merge: sync-base=0,post-merge: command=0,refresh --scope project --yes --leave,post-merge: refresh=0,adopt-writer: review-gate=absent,post-merge: adopt=0,verify --scope project,post-merge: verify=1,post-merge: restore=0,
-success|0|post-merge: sync-base=0,post-merge: command=0,refresh --scope project --yes --leave,post-merge: refresh=0,adopt-writer: review-gate=absent,post-merge: adopt=0,verify --scope project,post-merge: verify=0,post-merge: restore=0,
-empty|0|post-merge: sync-base=0,post-merge: command=skipped,refresh --scope project --yes --leave,post-merge: refresh=0,adopt-writer: review-gate=absent,post-merge: adopt=0,verify --scope project,post-merge: verify=0,post-merge: restore=0,
-adopt|1|post-merge: sync-base=0,post-merge: command=0,refresh --scope project --yes --leave,post-merge: refresh=0,--adopt,adopt-writer: adopt=2,post-merge: adopt=1,post-merge: restore=0,
-absent|0|post-merge: sync-base=0,post-merge: command=0,post-merge: refresh=skipped,post-merge: adopt=skipped,post-merge: verify=skipped,
-refresh-only|0|refresh --scope project --yes --leave,post-merge: refresh=0,adopt-writer: review-gate=absent,post-merge: adopt=0,post-merge: restore=0,
+verify|1|post-merge: sync-base=0,post-merge: command=0,refresh --scope project --yes --leave,post-merge: refresh=0,verify --scope project,post-merge: verify=1,post-merge: restore=0,
+success|0|post-merge: sync-base=0,post-merge: command=0,refresh --scope project --yes --leave,post-merge: refresh=0,verify --scope project,post-merge: verify=0,post-merge: restore=0,
+empty|0|post-merge: sync-base=0,post-merge: command=skipped,refresh --scope project --yes --leave,post-merge: refresh=0,verify --scope project,post-merge: verify=0,post-merge: restore=0,
+absent|0|post-merge: sync-base=0,post-merge: command=0,post-merge: refresh=skipped,post-merge: verify=skipped,
+refresh-only|0|refresh --scope project --yes --leave,post-merge: refresh=0,post-merge: restore=0,
 ROWS
 }
 table "$DIR/post-merge" real assert_eq
-# Must-fail control: a copy with no adopt step fails the verify row. Its judge
+# Must-fail control: a copy with no verify step fails the verify row. Its judge
 # counts nothing, so the misses it expects stay out of the suite's tally. The
 # mutant tree is named orch, with the github skill linked beside it, since
 # sync-base finds its auth helper there.
 miss() { [[ "$1" == "$2" ]] || { printf 'miss %s rc=%s\n' "$3" "${1%%:*}"; return 1; }; }
 mutant="$(mutant_scripts orch post-merge)/post-merge" || exit 1
 ln -s "$(cd "$DIR/../../github" && pwd)" "$SCRATCH/github"
-mutate_file "$mutant" '[[ $rc -ne 0 ]] || step adopt "$SCRIPT_DIR/adopt-writer" . || rc=$?' ':'
+mutate_file "$mutant" '[[ $rc -ne 0 || "$mode" != full ]] || step verify kendex verify --scope project || rc=$?' ':'
 rc=0; out="$(table "$mutant" mutant miss 2>"$SCRATCH/control-error")" || rc=$?
-assert_eq "$rc:$out" "1:miss verify rc=1" "control: a copy with no adopt step fails the verify row" "$SCRATCH/control-error"
+assert_eq "$rc:$out" "1:miss verify rc=0" "control: a copy with no verify step fails the verify row" "$SCRATCH/control-error"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

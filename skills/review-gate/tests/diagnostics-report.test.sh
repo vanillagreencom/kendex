@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# validate.sh consumes report records and ignores indented detail. Pin the
+# The standard report emits records separately from indented detail. Pin the
 # whole protocol, including indentation when detail resembles a verdict.
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,9 +16,9 @@ while IFS='|' read -r name status code value detail want; do
     exit 1
   fi
 done <<'ROWS'
-pass-record|ok|runtime-ready|scripts/validate.sh|detail|ok check=runtime-ready value=scripts/validate.sh\n  detail
+pass-record|ok|runtime-ready|scripts/validate-standard.sh|detail|ok check=runtime-ready value=scripts/validate-standard.sh\n  detail
 failure-record|FAIL|workflow-count|0|detail|FAIL check=workflow-count value=0\n  detail
-notice-record|note|carry-disabled|REVIEW_GATE_CARRY_FORWARD|detail|note check=carry-disabled value=REVIEW_GATE_CARRY_FORWARD\n  detail
+notice-record|note|standard-setting-missing|REVIEW_GATE_STANDARD_CONTEXTS|detail|note check=standard-setting-missing value=REVIEW_GATE_STANDARD_CONTEXTS\n  detail
 detail-verdict|FAIL|workflow-equality|workflow.yml|detail\nFAIL injected|FAIL check=workflow-equality value=workflow.yml\n  detail\n  FAIL injected
 space-value|FAIL|runtime-missing|my script.sh|detail|FAIL check=runtime-missing value=my\\ script.sh\n  detail
 ROWS

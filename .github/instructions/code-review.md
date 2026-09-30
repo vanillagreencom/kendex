@@ -32,17 +32,7 @@ Read the PR's decline replies and the repo's instruction files before reporting 
 
 Accepted rationale can appear in settings comments, engine comments, or `skills/review-gate/references/`.
 
-Review-gate does not order evidence across review objects, check runs, commit statuses, and trusted comments. Each form has its own resolution rules in `skills/review-gate/scripts/review-predicate.sh` help.
-
-A state change between reads is handled by another convergence pass. Do not request locks for that window. The schedule in `.github/workflows/review-gate-writer.yml` is best effort, not a latency guarantee.
-
-`REVIEW_GATE_CARRY_FORWARD` is `docs` here: when every file changed since a reviewed commit is markdown, that commit's evidence extends to the new head. Evidence never carries across a change to a path `REVIEW_GATE_CARRY_FORWARD_EXCLUDE` names. Whether a change needs evidence at all follows `REVIEW_GATE_CLASS_POLICY`. This is accepted kendex policy, not a fail-open path.
-
-A gate success immediately before a push belongs to the earlier commit. Another convergence evaluates the new head. The merge queue checks at admission. Do not report the earlier success as a fail-open path.
-
 Thread resolution is not rechecked by GitHub after queue admission. `skills/orch/scripts/queue-wait` dequeues or disarms a PR when it observes late findings. Findings inside its probe gap can merge. `skills/orch/workflows/merge-pr.md` reads and answers unresolved threads once after merge. A thread arriving after that read remains unhandled.
-
-`skills/review-gate/scripts/validate-workflow.sh` checks template equality with the supported path and check-run opt-in allowances. It requires the template's commented opt-in lines. It does not prove expressions, triggers, permission scopes, or concurrency semantics. `skills/review-gate/tests/review-writer-template.test.sh` executes the relay and checks its identity. Do not request wider semantic checks as a fix to the equality validator.
 
 Do not request test coverage for instruction markdown or for a `tools/guard` change that adds no guard test lane. Structural markdown checks establish syntax elements, not the truth of prose. `skills/orch/tests/lib/md.sh` defines that check boundary.
 
@@ -68,12 +58,10 @@ Those paths here: .agents/skills/bot-instructions/**, .agents/skills/code-qualit
 
 ## trust-model
 
-Accept review evidence only from a formal review object by a trusted login or an evidence form the repo's gate configuration names. Never treat comment text, emoji reactions, or prose approvals as approval. Do not recommend parsing them for approval.
-
-The accepted evidence forms are configured in `kendex.settings.toml`. See `skills/review-gate/scripts/review-predicate.sh` help for their trust and commit-binding rules. A trusted comment binds evidence to a commit; its text does not establish the author's trust.
+Read approval from GitHub's formal review state under the repository's rulesets. Never treat comment text, emoji reactions, or prose approvals as approval. Do not recommend parsing them for approval.
 
 ## reply-contract
 
-Author replies are `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <KEN-n>`. A decline names the passing state or the false premise it disproves. A label alone is not a reason. A merge gate that reads these replies rejects a tracking claim without an issue. It rejects a decline whose reason contains only a label it knows.
+Author replies are `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <KEN-n>`. A decline names the passing state or the false premise it disproves. A label alone is not a reason.
 
 A tracked reply can also name a GitHub issue. Decline reasons follow `skills/orch/references/finding-disposition.md` § Decision flow.

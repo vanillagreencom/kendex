@@ -33,21 +33,3 @@ hash = "4deb6e7bc2f186ccaeba4eb2ff061b4b394cbbc5cf99901b0c34d33fa787a373"
 rule = "rce"
 line = 207
 message = "this line pipes a download straight into a shell with `https://kendex.ai/install.sh`, so whatever the far end serves is what runs"
-
-[[package]]
-kind = "skill"
-name = "review-gate"
-
-[[package.file]]
-path = "templates/review-gate-writer.yml"
-hash = "dff088fdd9a370bcc87f53f2ead32a3619e742c49a85ea533b938eb16833e7f5"
-
-[[package.file.finding]]
-rule = "rce"
-line = 653
-message = "this line pipes a download straight into a shell from `https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/$KE… c4e2972fc18a3f5a`, so whatever the far end serves is what runs"
-
-[[package.file.finding]]
-rule = "rce"
-line = 660
-message = "this line pipes a download straight into a shell from `https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/$KE… c4e2972fc18a3f5a`, so whatever the far end serves is what runs"

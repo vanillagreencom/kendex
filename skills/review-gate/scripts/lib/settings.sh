@@ -1,6 +1,5 @@
 # shellcheck shell=bash
-# Settings resolution for the review-gate engine. Sourced (not executed) by
-# review-predicate.sh, review-writer.sh, pr-watch.sh and the selftest.
+# Settings resolution for the reducer and organization-standard tools.
 #
 # Resolution order for every key read through rg_setting (the REVIEW_GATE_*
 # family, plus shared keys like PR_REVIEW_WAIT_SECS):
@@ -12,14 +11,6 @@
 #      (the [env] table's sole `KEY = "value"` assignment; an explicit
 #      REVIEW_GATE_SETTINGS_FILE consults only itself);
 #   4. the built-in default passed by the caller.
-#
-# ONE per-key exception, for REVIEW_GATE_MODE and REVIEW_GATE_WRITER: they
-# skip layer 2 and the machine-local .kendex/settings.toml. The local waiter
-# and the CI gate must resolve the mode identically, and the consumer refresh
-# must judge a missing writer as CI does, and CI has neither machine-local
-# file — a local value could disable the wait while the gate still enforces,
-# or pass a writer-less adoption that fails every CI run. Each reads
-# environment, then the committed kendex.settings.toml, then the default.
 #
 # REVIEW_GATE_SETTINGS_FILE=/dev/null is the force-defaults handle and means
 # NO settings source at all: layers 2-3 are skipped whole, leaving explicit
@@ -244,21 +235,10 @@ rg_setting() { # NAME DEFAULT [PRIVATE_FILE] — resolved value on stdout; nonze
       return 1
       ;;
   esac
-  # Every applicable TOML source is validated BEFORE any source answers:
-  # kendex-env validates before its parent-env skip, and a malformed
-  # committed file must fail identically whatever the session exports or
-  # .env.local says — an override must never let a broken file pass
-  # silently. The list is the same one extraction walks below: an explicit
-  # REVIEW_GATE_SETTINGS_FILE consults only itself (set-but-EMPTY is unset:
-  # "" names no file), REVIEW_GATE_MODE and REVIEW_GATE_WRITER read the
-  # COMMITTED file alone (CI's checkout has no machine-local .kendex/), and
-  # /dev/null selects no
-  # sources at all, so nothing is checked for it.
+  # Validate every present source before a process value can answer.
   if [ "${REVIEW_GATE_SETTINGS_FILE:-}" != "/dev/null" ]; then
     if [ -n "${REVIEW_GATE_SETTINGS_FILE:-}" ]; then
       set -- "$REVIEW_GATE_SETTINGS_FILE"
-    elif [ "$name" = "REVIEW_GATE_MODE" ] || [ "$name" = "REVIEW_GATE_WRITER" ]; then
-      set -- "kendex.settings.toml"
     else
       set -- ".kendex/settings.toml" "kendex.settings.toml"
     fi
@@ -268,28 +248,13 @@ rg_setting() { # NAME DEFAULT [PRIVATE_FILE] — resolved value on stdout; nonze
         rg_env_table "$file" >/dev/null || return 1
       fi
     done
-    # The dotenv layer is probed for usability too: an exported key must
-    # not mask a broken .env.local (directory, dangling symlink, BOM,
-    # unreadable bytes) — every PRESENT source fails loud, the clause the
-    # generic loader honors before re-asserting process values. A key is
-    # validated against exactly the sources IT reads, so REVIEW_GATE_MODE and
-    # REVIEW_GATE_WRITER skip this probe: it never reads the layer, and CI's clean checkout
-    # would resolve while a broken machine-local file failed here — the
-    # install-dependent waiter/gate split the exception exists to prevent.
+    # Every present private source must be readable even when a process
+    # value wins. An empty path deliberately selects no private layer.
     if [ -n "$private_file" ]; then
-      case "$name" in
-        REVIEW_GATE_MODE | REVIEW_GATE_WRITER) ;;
-        *)
-          rg_settings_usable "$private_file" || return 1
-          if [ -f "$private_file" ]; then
-            rg_bom_guard "$private_file" || return 1
-            if [ ! -r "$private_file" ]; then
-              rg_message error settings-unreadable "$private_file" "::error::$private_file: unreadable while resolving a setting (permission denied)" >&2
-              return 1
-            fi
-          fi
-          ;;
-      esac
+      rg_settings_usable "$private_file" || return 1
+      if [ -f "$private_file" ]; then
+        rg_bom_guard "$private_file" || return 1
+      fi
     fi
   fi
   # Indirect expansion, not eval: a non-literal NAME must never become code.
@@ -306,22 +271,14 @@ rg_setting() { # NAME DEFAULT [PRIVATE_FILE] — resolved value on stdout; nonze
     printf '%s' "$default"
     return 0
   fi
-  # .env.local beats the settings files — EXCEPT for REVIEW_GATE_MODE and
-  # REVIEW_GATE_WRITER, the named per-key exception (header contract): a local
-  # reader and CI must resolve them from sources both sides can see.
   if [ -n "$private_file" ]; then
-    case "$name" in
-      REVIEW_GATE_MODE | REVIEW_GATE_WRITER) ;;
-      *)
-        status=0
-        val="$(rg_dotenv_layer "$private_file" "$name")" || status=$?
-        [ "$status" -ne 2 ] || return 1
-        if [ "$status" -eq 0 ]; then
-          printf '%s' "$val"
-          return 0
-        fi
-        ;;
-    esac
+    status=0
+    val="$(rg_dotenv_layer "$private_file" "$name")" || status=$?
+    [ "$status" -ne 2 ] || return 1
+    if [ "$status" -eq 0 ]; then
+      printf '%s' "$val"
+      return 0
+    fi
   fi
   # Nested project settings override the root file (the standard loader
   # order); the positional list was built — and every present file already
@@ -384,52 +341,4 @@ rg_setting() { # NAME DEFAULT [PRIVATE_FILE] — resolved value on stdout; nonze
 rg_pack() { # RAW SEPARATORS -> one trimmed, non-empty entry per line
   ( set -o pipefail
     printf '%s\n' "$1" | tr "$2" '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;/^$/d' )
-}
-
-# The writer's per-pull-request share of its converge step, validated here
-# because two callers must agree on what a legal value is: the writer that
-# spends it, and the configuration check a repository adopts a settings file
-# through. A shape judged in only one of those passes adoption and fails every
-# run. Prints the value, or the keyed refusal and status 2.
-rg_pr_deadline_seconds() {
-  local value
-  value="$(rg_setting REVIEW_GATE_PR_DEADLINE_SECONDS 120)" || return 2
-  case "$value" in
-    '' | *[!0-9]* | 0)
-      rg_message error writer-deadline-value "$value" \
-        "::error::REVIEW_GATE_PR_DEADLINE_SECONDS must be a positive whole number of seconds" >&2
-      return 2
-      ;;
-  esac
-  printf '%s' "$value"
-}
-
-# Whether this repository runs the gate's writer workflow, judged here because
-# two readers must agree: validate-workflow.sh on a repository with no writer,
-# and validate.sh's settings group.
-# Prints one word, or the keyed refusal and status 2:
-#   required  REVIEW_GATE_WRITER=required, the default
-#   enforced  optional, but REVIEW_GATE_MODE=enforce still needs a gate status
-#   none      optional with REVIEW_GATE_MODE=off: nothing posts a gate status
-# The mode is read only for an optional writer.
-rg_writer_state() {
-  local writer mode
-  writer="$(rg_setting REVIEW_GATE_WRITER required)" || return 2
-  case "$writer" in
-    required) printf 'required'; return 0 ;;
-    optional) ;;
-    *)
-      rg_message error writer-setting "$writer" "::error::REVIEW_GATE_WRITER must be 'required' or 'optional'" >&2
-      return 2
-      ;;
-  esac
-  mode="$(rg_setting REVIEW_GATE_MODE enforce)" || return 2
-  case "$mode" in
-    off) printf 'none' ;;
-    enforce) printf 'enforced' ;;
-    *)
-      rg_message error mode-setting "$mode" "::error::REVIEW_GATE_MODE must be 'enforce' or 'off'" >&2
-      return 2
-      ;;
-  esac
 }

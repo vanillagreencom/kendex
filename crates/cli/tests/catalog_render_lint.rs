@@ -200,7 +200,7 @@ fn each_lane_names_its_own_planted_defect(home: &Path, project: &Path, scripts: 
         (
             "comments",
             "comments: issue-number=",
-            ".claude/skills/review-gate/templates/review-gate-writer.yml",
+            ".claude/skills/review-gate/templates/kendex-refresh.yml",
             "# Regression history: #2107\n",
         ),
         (

@@ -305,7 +305,7 @@ while IFS='|' read -r label expected edits declared; do
 done <<'ROWS'
 a CI workflow is queue-only|queue_only=true cause=queue-path path=.github/workflows/ci.yml glob=.github/workflows/*|.github/workflows/ci.yml=2
 a CI action is queue-only|queue_only=true cause=queue-path path=.github/actions/change-class/classify glob=.github/actions/*|.github/actions/change-class/classify=2
-the gate writer's engine is queue-only|queue_only=true cause=queue-path path=skills/review-gate/scripts/review-predicate.sh glob=*skills/review-gate/scripts/*|skills/review-gate/scripts/review-predicate.sh=2
+the organization-standard report is queue-only|queue_only=true cause=queue-path path=skills/review-gate/scripts/validate-standard.sh glob=*skills/review-gate/scripts/*|skills/review-gate/scripts/validate-standard.sh=2
 the gate writer template's render is queue-only|queue_only=true cause=queue-path path=.agents/skills/review-gate/templates/review-gate-writer.yml glob=*skills/review-gate/templates/*|.agents/skills/review-gate/templates/review-gate-writer.yml=2
 the organization standard is queue-only|queue_only=true cause=queue-path path=skills/review-gate/standard.json glob=*skills/review-gate/standard.json|skills/review-gate/standard.json=2
 the settings naming the gate's context are queue-only|queue_only=true cause=queue-path path=kendex.settings.toml glob=kendex.settings.toml|kendex.settings.toml=2
