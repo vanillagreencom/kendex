@@ -163,6 +163,8 @@ export async function assertSharedRegistryLifecycle(extension: ExtensionFactory)
 		// A completed bg child from writeTaskRegistry needs neither tmux nor transcript backfill.
 		const records = { child: { taskId: "child", agent: "engineer", task: "work", kind: "oneshot" as const, status: "completed" as const, createdAt: "2026-09-30T00:00:00Z", summary: "done" } };
 		await writeTaskRegistry(root, records);
+		// Startup must warm the reader independently of the fixture writer's cache publication.
+		taskRegistryReader.clear();
 		const unchanged = readFileSync(taskRegistryPath(root), "utf8");
 		await withoutRealIntervals(async () => {
 			const start = await installExtension(harness, {
