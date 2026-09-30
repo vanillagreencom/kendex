@@ -37,10 +37,9 @@ fn the_current_catalog_renders_and_incomplete_delivery_fails() {
     assert!(record.contains(" result=pass"), "{record}");
 
     let text = fs::read_to_string(&script).unwrap();
-    // desired_hook and every native adapter can refuse delivery after
-    // another harness installs. targets also emits intentional advisory
-    // warnings: those, including Pi's missing carrier, must keep passing.
-    // The manifest parser supplies a nonzero exit without a refusal record.
+    // Engine delivery failures can leave another harness installed. A
+    // Claude-only header excludes Gemini intentionally; advisory delivery
+    // also passes. The manifest parser fails without a delivery diagnostic.
     let unsupported = "kendex-hook-unsupported";
     let undeliverable = "kendex-hook-undeliverable";
     for (n, (event, harnesses, feature)) in [
@@ -51,6 +50,7 @@ fn the_current_catalog_renders_and_incomplete_delivery_fails() {
         (Some("TaskCompleted"), "claude, copilot", unsupported),
         (Some("SessionStart"), "claude, antigravity", unsupported),
         (Some(""), "claude, gemini", "kendex-hook-unreadable"),
+        (Some("PreToolUse"), "claude", ""),
         (Some("PreToolUse"), "opencode, cursor, pi", ""),
         (None, "claude", "is_source_catalog"),
     ]

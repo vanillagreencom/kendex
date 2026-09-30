@@ -1,1 +1,1 @@
-- Consumer refresh installs the latest released kendex at run time. Catalog CI renders with that release and rejects refused hook delivery even when another declared harness installs the hook.
+- Consumer refresh installs the latest released kendex at run time. Catalog CI rejects the release's hook delivery failures, but permits intentional source-header exclusions and advisory notices.
