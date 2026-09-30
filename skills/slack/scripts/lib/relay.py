@@ -244,7 +244,7 @@ class RootRelay:
             if self.state.held:
                 self.resume(events)
             else:
-                self.post_events(events)
+                self.post_events(self.routes(events))
         if self.post_failed is not None:
             raise self.post_failed
         self.last_ok = self.clock()
@@ -466,14 +466,16 @@ class RootRelay:
         """End a hold, post unread notices and open asks, then journal the
         seen count, skipped notice ids and asks whose posts landed."""
         seen = self.master_read(events)
+        routed = self.routes(events, seen or 0)
+        skipped = [str(envelope["id"]) for envelope, route in routed if route == "seen"]
         asks: List[str] = []
-        skipped: List[str] = []
         # Stamp the resume now, not when presence expired: skipped notices
         # can be newer, and must stay carried until their age bars a post.
         at = format_at(self.clock())
-        # A dead token raises past the posts; completed work is still recorded.
+        # A dead token can stop before a read notice; suppression is complete
+        # before any post, while asks records only the posts that landed.
         try:
-            self.post_events(events, seen or 0, asks, skipped)
+            self.post_events(routed, asks)
         finally:
             self.journal.append(
                 t="resume", from_at=self.state.hold_at, at=at,
@@ -517,12 +519,11 @@ class RootRelay:
         return routed
 
     def post_events(
-        self, events: List[Dict], seen: int = 0, landed: Optional[List[str]] = None, skipped: Optional[List[str]] = None
+        self, routed: List[Tuple[Dict, str]], landed: Optional[List[str]] = None
     ) -> None:
         """Posts what `routes` gives each envelope; `landed`, when given,
-        collects the ids of the asks whose post landed, and `skipped` the
-        notice ids the master read."""
-        for envelope, route in self.routes(events, seen):
+        collects the ids of the asks whose post landed."""
+        for envelope, route in routed:
             if route == "ask":
                 if self.post_ask(envelope) and landed is not None:
                     landed.append(str(envelope["id"]))
@@ -532,8 +533,6 @@ class RootRelay:
                 self.post_answer(envelope)
             elif route in ("skip", "seen"):
                 self.skipped.add(str(envelope["id"]))
-                if route == "seen" and skipped is not None:
-                    skipped.append(str(envelope["id"]))
             else:
                 raise AssertionError(f"route={route}")
 

@@ -5,6 +5,7 @@
 # file is stale the resume posts the open ask, the answer to an ask the
 # channel shows open and notices past the master's seen line count. Its
 # journal records that count, the skipped ids and asks whose posts landed.
+# A dead token on an earlier ask still records every later read notice id.
 # A restart or a missing seen file cannot replay a skipped or posted id.
 # A missing, unreadable or invalid count skips nothing; a count past the
 # snapshot clamps. An absent master file or an empty setting posts as before,
@@ -183,29 +184,44 @@ gapped 3 1 1 2
 past-gap 6 0 0 4
 ROWS
 
-# --- a held ask Slack refuses on the resume is not journaled as posted --------------
-# refused_resume ROOT — a bound root holding an open ask, the resume's post of
-# it refused once; prints the ask's id.
+# --- a refusal on an ask preserves later read notice ids ---------------------------
+# refused_resume ROOT [ERROR] : a held ask before a read notice and an unread
+# notice; Slack refuses the ask once. Prints the ask id and sets REFUSED_READ.
 refused_resume() {
   local id
   sk_bind "$1"
   sk_poll "$1" "$HOLD"
   fresh
   id="$(ask "$1" "r-$(basename "$1")" "Refused on resume in $(basename "$1")?")"
+  notice "$1" "read-$(basename "$1")" "Read after the ask in $(basename "$1")."
+  REFUSED_READ="$(last_id "$1")"
+  sk_master_read "$1" "$(wc -l < "$(sk_box "$1")/to-overseer.jsonl")"
+  notice "$1" "unread-$(basename "$1")" "Unread after the ask in $(basename "$1")."
   sk_poll "$1" "$HOLD"
   stale
-  refuse_next_post
+  sk_ctl /_test/fault "$(jq -cn --arg error "${2:-not_in_channel}" '{method: "chat.postMessage", error: $error, times: 1}')" >/dev/null
   sk_poll "$1" "$HOLD"
   printf '%s' "$id"
 }
 resumed_asks() { jq -r 'select(.t == "resume") | .asks | join(",")' "$(sk_journal "$1")"; } # ROOT
-OMICRON="$(sk_new_root omicron)"
-refused_resume "$OMICRON" >/dev/null
-assert_eq "$RC=$(count "$(sk_channel "$OMICRON")" 'Refused on resume in omicron?')=$(resumed_asks "$OMICRON")" "1=0=" \
-  "a held ask Slack refuses on the resume is not named by the resume line"
-sk_poll "$OMICRON" "$HOLD"
-assert_eq "$RC=$(count "$(sk_channel "$OMICRON")" 'Refused on resume in omicron?')=$(holds "$OMICRON")" "0=1=hold resume " \
-  "the next poll posts the refused ask and journals no second resume"
+# Error, refusal key, unread notice posts before restart. A token refusal
+# stops the posting loop; not_in_channel leaves the later posts running.
+while read -r error key unread; do
+  R="$(sk_new_root "refused-$error")"
+  refused_resume "$R" "$error" >/dev/null
+  CH_R="$(sk_channel "$R")"
+  assert_has "$ERR1" "slack: $key=" "$error: the ask refusal reports its key"
+  assert_eq "$RC=$(count "$CH_R" "Refused on resume in refused-$error?")=$(resumed_asks "$R")=$(jq -r 'select(.t == "resume") | "\(.seen)=\(.skipped | join(","))"' "$(sk_journal "$R")")=$(count "$CH_R" "Read after the ask in refused-$error.")=$(count "$CH_R" "Unread after the ask in refused-$error.")=$(holds "$R")" \
+    "1=0==2=$REFUSED_READ=0=$unread=hold resume " "$error: the failed ask is omitted and every read notice id survives the refusal"
+  rm -- "$(sk_box "$R")/to-overseer.seen"
+  sk_poll "$R" "$HOLD"
+  assert_eq "$RC=$(count "$CH_R" "Refused on resume in refused-$error?")=$(count "$CH_R" "Read after the ask in refused-$error.")=$(count "$CH_R" "Unread after the ask in refused-$error.")=$(holds "$R")" \
+    "0=1=0=1=hold resume " "$error: restart posts the pending ask and unread notice but never the read notice"
+done <<'ROWS'
+not_in_channel slack-api-failed 1
+invalid_auth slack-auth-failed 0
+token_revoked slack-auth-failed 0
+ROWS
 
 # --- controls, one mutant per rule --------------------------------------------------
 # held ROOT — a bound root with a notice written under a fresh file and polled.
@@ -250,6 +266,17 @@ sk_mutant replay store.py 'self\.carried\.update\(str\(env_id\) for env_id in li
 rm -- "$(sk_box "$EPSILON")/to-overseer.seen"
 sk_poll "$EPSILON" "$HOLD"
 assert_eq "$(count "$(sk_channel "$EPSILON")" 'Backlog in epsilon.')" "3" "control: without replay, skipped ids post after restart"
+sk_bin_reset
+
+sk_mutant complete-suppression relay.py 'if route == "seen"\]' 'if route == "seen" and False]'
+THETA="$(sk_new_root theta)"
+refused_resume "$THETA" invalid_auth >/dev/null
+assert_eq "$RC=$(jq -r 'select(.t == "resume") | .skipped | length' "$(sk_journal "$THETA")")" "1=0" \
+  "control: without snapshot suppression, a dead token leaves no read notice id in the resume"
+rm -- "$(sk_box "$THETA")/to-overseer.seen"
+sk_poll "$THETA" "$HOLD"
+assert_eq "$(count "$(sk_channel "$THETA")" 'Read after the ask in theta.')" "1" \
+  "control: the unrecorded read notice replays after the token refusal and restart"
 sk_bin_reset
 
 ETA="$(sk_new_root eta)"
