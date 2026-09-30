@@ -87,6 +87,7 @@ ROWS
 # Keep the warning text but disable its producer. The edited copy still
 # updates; the warning/report assertion must turn red.
 file_edit "$trusted" "$ADOPT" 1 '^    if not shipped:$' 's/^    if not shipped:$/    if False and not shipped:/'
+chmod +x "$trusted/$ADOPT"
 file_edit "$DIR" "$REFRESH" 1 '^name: ' 's/^name: .*/name: consumer edit/'
 run_refresh_command "$DIR" "$trusted/$ADOPT" --templates-dir "$DIR/.agents/skills/review-gate/templates" --workflow-edit-report "$TMP/edit-report"
 if [ "$RC" -eq 0 ] && adoption_metadata - && ! workflow_edit_matches "$TMP/edit-report" "$REFRESH:8"; then
@@ -103,7 +104,8 @@ if [ "$RC" -eq 1 ] && grep -qxF "refresh-error=workflow-symlink value=$DIR/$REFR
     cmp -s "$TMP/symlink-target" "$DIR/$TEMPLATE" && cmp -s "$TMP/symlink-inventory" "$DIR/.kendex-generated.json"; then
   ok 'workflow-symlink stops adoption without writing its target or inventory'
 else bad 'workflow symlink stop' "$OUT"; fi
-file_edit "$DIR" "$ADOPT" 1 '^if refresh.is_symlink():$' 's/^if refresh.is_symlink():$/if False and refresh.is_symlink():/'
+file_edit "$DIR" "$ADOPT" 1 '^if refresh\.is_symlink\(\):$' 's/^if refresh\.is_symlink():$/if False and refresh.is_symlink():/'
+chmod +x "$DIR/$ADOPT"
 run_refresh_command "$DIR" "$DIR/$ADOPT"
 if [ "$RC" -eq 0 ] && ! grep -q '^refresh-error=workflow-symlink ' <<<"$OUT"; then
   ok 'control: disabled symlink guard breaks the must-fail row'
