@@ -1645,8 +1645,10 @@ REPO_LOG="$TMP_ROOT/caller.repo.tmux.log"
   OT_WT_LOG="$TMP_ROOT/caller.repo.worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
   "$SCRIPTREPO/scripts/open-terminal" --harness claude --lane auto \
   --cmd "true {repo} --model opus --effort high $QUESTION_OFF_ALL" CC-21 ) >/dev/null 2>&1
-assert_eq "caller=$(grep -c 'caller-owner/caller-repo' "$REPO_LOG" || true) script=$(grep -c 'script-owner/script-repo' "$REPO_LOG" || true)" \
+assert_eq "caller=$(grep -c '^clear; .*true caller-owner/caller-repo ' "$REPO_LOG" || true) script=$(grep -c 'script-owner/script-repo' "$REPO_LOG" || true)" \
   "caller=1 script=0" "the launch line names the caller checkout's repository, never the script checkout's"
+assert_eq "$(sed -n 's/^set-option -w -t [^ ]* @kendex_lane //p' "$REPO_LOG" | jq -r '.[1]')" \
+  "caller-owner/caller-repo" "the window identity carries the caller checkout's repository"
 
 echo "=== a GH_REPO the resolver refuses never reaches the launch line ==="
 # The resolver returns status 2 for a value that is not owner/name and PRINTS
