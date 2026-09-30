@@ -96,11 +96,11 @@ case "${1:-}" in
       [[ ! -e "${STUB_PASTED:-}" ]] || running="${STUB_PANE_CMD:-claude}"
       printf '%%1\t%s\t%s\n' "$$" "$running"
     else echo %1; fi ;;
-  load-buffer) [[ -z "${STUB_BUFFER_LOG:-}" ]] || cat -- "${@: -1}" >> "$STUB_BUFFER_LOG"
-    if grep -q '^exec bash -lc ' "${@: -1}"; then : > "$STUB_REMOTE_TYPED"; fi ;;
+  load-buffer) cat -- "${@: -1}" > "$STUB_PANE_BUFFER" || exit 1
+    [[ -z "${STUB_BUFFER_LOG:-}" ]] || cat -- "$STUB_PANE_BUFFER" >> "$STUB_BUFFER_LOG" ;;
   paste-buffer) [[ -z "${STUB_PASTED:-}" ]] || : > "$STUB_PASTED" ;;
   capture-pane)
-    if [[ -n "${STUB_HARNESS_TEXT:-}" && -e "$STUB_REMOTE_TYPED" ]]; then printf '%s\n' "$STUB_HARNESS_TEXT"
+    if [[ -n "${STUB_HARNESS_TEXT:-}" && -f "$STUB_PANE_BUFFER" ]] && grep -q '^exec bash -lc ' "$STUB_PANE_BUFFER"; then printf '%s\n' "$STUB_HARNESS_TEXT"
     else printf '%s\n' "${STUB_PANE_TEXT:-}"; fi ;;
 esac
 exit 0
@@ -174,9 +174,9 @@ run_ot() {
   done
   [[ -z "$state_dir" ]] || state_args=(--state-dir "$state_dir")
   rm -f -- "${TMP_ROOT:?}/pasted"
-  rm -f -- "${TMP_ROOT:?}/remote-typed"
+  rm -f -- "${TMP_ROOT:?}/pane-buffer"
   set +e
-  OUT="$(cd "$cwd" && PATH="$BIN:$PROC_BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" STUB_PASTED="$TMP_ROOT/pasted" STUB_REMOTE_TYPED="$TMP_ROOT/remote-typed" \
+  OUT="$(cd "$cwd" && PATH="$BIN:$PROC_BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" STUB_PASTED="$TMP_ROOT/pasted" STUB_PANE_BUFFER="$TMP_ROOT/pane-buffer" \
     WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" LANES_HOME="$SESSION_HOME" EXISTS_DIR="$EXISTS_DIR" \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX="${RUN_TMUX:-}" ORCH_TMUX_SESSION="${RUN_SESSION-stub}" TMUX_PANE="${RUN_PANE:-}" \
     STUB_SESSION_NAME="${STUB_SESSION_NAME:-}" STUB_TMUX_LOG="${STUB_TMUX_LOG:-}" STUB_DEAD_SESSIONS="${STUB_DEAD_SESSIONS:-}" STUB_PANE_GONE="${STUB_PANE_GONE:-}" STUB_HAS_SESSION_ERR="${STUB_HAS_SESSION_ERR:-}" GH_REPO="" STUB_GH_REPO="${STUB_GH_REPO:-}" \
@@ -860,13 +860,13 @@ assert_eq "rc=$RC refused=$(grep -c '^open-terminal: host-prepare-failed item=CC
 # foreground even in a fleet. One whose record names claude starts fresh on its
 # start brief, which carries the line, so it is handed off like any launch.
 CODEX_RELAUNCH=(-- --relaunch --launch-flags "-m gpt-5 -c model_reasoning_effort=high")
-HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-83 STUB_HARNESS_TEXT='Working (esc to interrupt)' "${CODEX_RELAUNCH[@]}"
+HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-83 STUB_BUFFER_LOG="$TMP_ROOT/codex-typed" STUB_HARNESS_TEXT='Working (esc to interrupt)' "${CODEX_RELAUNCH[@]}"
 assert_eq "rc=$RC waited=$(grep -c '^wait --item CC-83 $' "$TMP_ROOT/host.log" || true) handed=$(grep -c '^open-terminal: lane-preparing ' <<<"$OUT" || true) lineless=$(grep -c '^open-terminal: resume-lineless item=CC-83 harness=codex$' <<<"$ERR" || true) record=$(prepared CC-83)" \
   "rc=0 waited=1 handed=0 lineless=1 record=running none none" \
   "a hosted codex relaunch that resumes waits for its host in the foreground and reports resume-lineless to the caller"
 # A remote command that leaves the pane at its shell cannot renew this record.
 : > "$TMP_ROOT/host.log"
-HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-83 ORCH_TMUX_VERIFY_SECS=1 "${CODEX_RELAUNCH[@]}"
+HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-83 STUB_BUFFER_LOG="$TMP_ROOT/codex-typed" ORCH_TMUX_VERIFY_SECS=1 "${CODEX_RELAUNCH[@]}"
 assert_eq "rc=$RC waited=$(grep -c '^wait --item CC-83 $' "$TMP_ROOT/host.log" || true) missing=$(grep -c '^open-terminal: harness-screen-missing item=CC-83 seconds=2$' <<<"$ERR" || true) record=$(prepared CC-83)" \
   "rc=1 waited=1 missing=1 record=stopped none none" \
   "a foreground hosted codex relaunch at a bare shell fails and records stopped"
@@ -874,7 +874,7 @@ NO_SCREEN_OT="$TMP_ROOT/no-screen/scripts"
 mkdir -p "$NO_SCREEN_OT"
 cp -R "$REPO/scripts/." "$NO_SCREEN_OT/"
 mutate_file "$NO_SCREEN_OT/open-terminal" '    tmux_wait_harness "$pane" "$harness_secs" || harness_rc=$?' '    :'
-HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-83 -- SCRIPT="$NO_SCREEN_OT/open-terminal" "${CODEX_RELAUNCH[@]:1}"
+HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-83 STUB_BUFFER_LOG="$TMP_ROOT/codex-typed" -- SCRIPT="$NO_SCREEN_OT/open-terminal" "${CODEX_RELAUNCH[@]:1}"
 assert_eq "rc=$RC record=$(prepared CC-83)" "rc=0 record=running none none" \
   "control: without the screen check a bare shell renews the record as running"
 "$WS" --state-dir "$STATE" update oversee '.lanes += [{item: "CC-87", harness: "claude", status: "running"}]' >/dev/null
