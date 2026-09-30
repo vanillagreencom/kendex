@@ -158,8 +158,8 @@ SESSION_HOME="$TMP_ROOT/session-home"
 CLAUDE222=22222222-2222-2222-2222-222222222222
 CLAUDE444=44444444-4444-4444-4444-444444444444
 mkdir -p "$SESSION_HOME/.claude-shared/projects/repo"
-printf '%s\n' '{"type":"user","message":{"content":"start cc-1"}}' > "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222.jsonl"
-printf '%s\n' '{"type":"user","message":{"content":"start cc-40"}}' > "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE444.jsonl"
+printf '%s\n' "{\"type\":\"user\",\"cwd\":\"$TMP_ROOT/wt/CC-1\",\"message\":{\"content\":\"start cc-1\"}}" > "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222.jsonl"
+printf '%s\n' "{\"type\":\"user\",\"cwd\":\"$TMP_ROOT/wt/CC-40\",\"message\":{\"content\":\"start cc-40\"}}" > "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE444.jsonl"
 
 # run_ot [SCRIPT=PATH] [STATE_DIR=PATH] [CWD=PATH] ARGS... — one launch; sets
 # OUT (stdout), ERR and RC. STATE_DIR= is passed as --state-dir, the flag that

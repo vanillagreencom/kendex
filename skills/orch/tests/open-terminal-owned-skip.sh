@@ -347,7 +347,7 @@ printf '%s\n' "{\"type\":\"session\",\"version\":3,\"id\":\"$PI_SESSION_ID\",\"c
 # pi-agents-tmux sessionRuntimeDir/paneSessionPath keep workers outside sessions.
 PI_WORKER="$SESSION_HOME/.pi/agent/kendex/sessions/$PI_SESSION_ID/pi-agents-tmux/sessions/dev.jsonl"
 mkdir -p "${PI_WORKER%/*}"; cp "$SESSION_HOME/.pi/agent/sessions/repo/session.jsonl" "$PI_WORKER"; touch -t 203001010000 "$PI_WORKER"
-for row in '.claude-shared/projects/repo|{"type":"user","isSidechain":false,"message":{"content":"start CC-1"}}' '.selected-codex/sessions/2026|{"type":"session_meta","payload":{"id":"foreign","source":"cli"}}}' '.pi/agent/sessions/repo|{"type":"session","version":3,"id":"foreign"}'; do
+for row in '.claude-shared/projects/repo|{"type":"user","isSidechain":false,"message":{"content":"start CC-1"}}' '.selected-codex/sessions/2026|{"type":"session_meta","payload":{"id":"foreign","source":"cli"}}' '.pi/agent/sessions/repo|{"type":"session","version":3,"id":"foreign"}'; do
   root="${row%%|*}" meta="${row#*|}"
   jq -nc --argjson meta "$meta" --arg cwd "$TMP_ROOT/other-repo/CC-1" 'if $meta.type=="session_meta" then $meta|.payload.cwd=$cwd else $meta|.cwd=$cwd end' > "$SESSION_HOME/$root/foreign.jsonl"
   touch -t 203001010000 "$SESSION_HOME/$root/foreign.jsonl"
