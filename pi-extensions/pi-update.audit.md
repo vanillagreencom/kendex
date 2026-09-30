@@ -45,10 +45,12 @@ Every `### Breaking Changes` entry in range was read against `pi-hooks/pi-contra
 | Bucket | Count |
 |---|---:|
 | Required parity fix (open, this range) | 4 |
-| Required parity fix (open, carried from 0.87.1) | 1 |
+| Required parity fix (fixed after the tested commit) | 1 |
 | Found by this run, predates the range (open) | 2 |
 | Optional improvement (deferred) | 7 |
 | Non-impact | grouped below, not tallied |
+
+Fixed after the tested commit: KEN-2196, carried from 0.87.1, the Codex shim's Off reasoning effort (0.86.0, [#9191](https://github.com/earendil-works/pi/issues/9191)). It landed on `main` as `cd404e68`, after the tested commit `0d6164b3`, which still omits the Off effort; the next run's tested commit carries the fix.
 
 ## Unresolved required fixes
 
@@ -60,7 +62,6 @@ For KEN-2231, KEN-2232 and KEN-2233, the check fails on the tested commit at Pi 
 | KEN-2232 | `pi-codex-minimal-tools` | Responses streams that complete with an unfinished tool call end with an error (0.99.0, [#9974](https://github.com/earendil-works/pi/issues/9974)) | The vendored `processResponsesStream` in `src/providers/openai-responses-shared.ts` returns `stopReason=toolUse` and a `bash` call with `arguments: {}` while the partial JSON held `{"command":"rm -rf bu`. Control: Pi's own processor refuses the same events. |
 | KEN-2233 | `pi-extension-manager` | `pi config` stores a disabled built-in extension as `-builtin:<name>` in `extensions` (0.99.0) | `buildInventory` lists `-builtin:mcp`, written by Pi's own `SettingsManager`, as an extension setting. Control: a path entry is listed. |
 | KEN-2242 | `pi-output-policy` (`tool_result` handler), `pi-hooks` (`PostToolUse` append) | Extension tool `outputSchema` with `structuredContent`; `ctx.executeTool()` for nested calls; `bash` structured results (0.99.0) | `ExtensionRunner.emitToolResult` deletes `structuredContent` when a `tool_result` handler returns `content` without it, and `_afterToolCall` runs for a codemode script's nested calls too. `pi-output-policy/extensions/output-policy.ts` returns `{ content, details }` for every result it rewrites, even when only `details` changed; `pi-hooks/extensions/hooks.ts` returns the content plus the appended text when a `PostToolUse` hook speaks. Either way the script's `bash` call gets text in place of the structured result. KEN-2231 hides it while the renderer is installed. Fix: carry `structuredContent: event.structuredContent` where the text change keeps the structured result valid, and leave `content` undefined when only `details` changed. |
-| KEN-2196 | `pi-codex-minimal-tools` | Off reasoning effort sent, not omitted (0.86.0, [#9191](https://github.com/earendil-works/pi/issues/9191)) | Carried from the 0.87.1 record; the shim still omits it. |
 
 Found by this run, outside the range:
 
