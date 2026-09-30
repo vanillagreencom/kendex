@@ -237,7 +237,9 @@ export async function boundForAgent(text: string): Promise<string> {
 	const kept = `The last ${cut.outputLines} of ${cut.totalLines} lines follow, ${pi.formatSize(cut.outputBytes)} of ${pi.formatSize(cut.totalBytes)}.`;
 	const path = join(tmpdir(), `pi-hooks-output-${randomUUID()}.log`);
 	try {
-		await writeFile(path, text, { flag: "wx" });
+		// Owner-only: the directory is shared, and hook output can carry source
+		// lines and environment values another local user must not read.
+		await writeFile(path, text, { flag: "wx", mode: 0o600 });
 	} catch (error) {
 		return `hook-output-unsaved=${error instanceof Error ? error.message : String(error)}\n${kept} The full output could not be saved.\n${cut.content}`;
 	}

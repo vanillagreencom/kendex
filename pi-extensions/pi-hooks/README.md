@@ -44,7 +44,7 @@ The other hook events cannot stop anything in Pi, so the extension delivers what
 - Any other exit status is reported to the agent as a hook that reached no verdict; a hook that ran out of time, or whose script is missing, is reported as one that did not run.
 - A `PostToolUse` matcher is matched against the tool's name, and a `SessionStart` matcher against why the session started: `startup`, `resume` or `clear`.
 - `Stop` and `TaskCompleted` hooks take no matcher, so both always run.
-- What the hooks on one event say to the agent is kept to Pi's own limit for a tool's output, 2000 lines or 50 KB, whichever comes first, and the end is kept. Past that limit, the whole text goes to a file in the system temporary directory, and a `hook-output-truncated=<file>` line leads what the agent reads. A file that cannot be written is named as `hook-output-unsaved=<cause>` instead.
+- What the hooks on one event say to the agent is kept to Pi's own limit for a tool's output, 2000 lines or 50 KB, whichever comes first, and the end is kept. Past that limit, the whole text goes to a file in the system temporary directory that only its owner can read, and a `hook-output-truncated=<file>` line leads what the agent reads. A file that cannot be written is named as `hook-output-unsaved=<cause>` instead.
 - `Stop` and `TaskCompleted` hooks need Pi 0.87.0 or later. On an older Pi they do not run, and each fresh session starts with a `hook-host-unsupported=pi <version>` message that says so, and a session with a UI also gets it as a notification.
 
 ## Lane mail wake

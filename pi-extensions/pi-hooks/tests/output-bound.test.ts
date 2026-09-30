@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { TOOL_CALL_LISTENER, TOOL_RESULT_LISTENER, TURN_END_LISTENER } from "../extensions/registry.ts";
 import { initRustRepo, installCarrier, registerRendered, toolResultEvent, trusted, useIsolatedGitEnv } from "./harness.ts";
@@ -66,6 +66,7 @@ for (const row of [
 				expect(notice?.startsWith("hook-output-truncated=")).toBe(true);
 				saved = notice!.slice("hook-output-truncated=".length);
 				expect(readFileSync(saved, "utf8")).toBe(FULL);
+				if (process.platform !== "win32") expect(statSync(saved).mode & 0o077).toBe(0);
 			} else {
 				expect(notice?.startsWith("hook-output-unsaved=")).toBe(true);
 				expect(existsSync(join(project, "no-such-dir"))).toBe(false);
