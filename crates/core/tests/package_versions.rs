@@ -788,7 +788,8 @@ fn history_projection_matches_first_parent_literal_and_bounded_timeline() {
         .run()
         .unwrap();
     assert!(head.status.success());
-    let mut tip = String::from_utf8(head.stdout).unwrap().trim().to_owned();
+    let merge_tip = String::from_utf8(head.stdout).unwrap().trim().to_owned();
+    let mut tip = merge_tip.clone();
     let mirror = w.upstream.join(".git");
     let merged = history::subtree_log(&mirror, &tip, rel).unwrap();
     assert_eq!(
@@ -796,6 +797,11 @@ fn history_projection_matches_first_parent_literal_and_bounded_timeline() {
         2,
         "the merge, not its side-parent commit, changes the package"
     );
+    assert_eq!(
+        merged.iter().map(|row| &row.commit).collect::<Vec<_>>(),
+        [&merge_tip, &first]
+    );
+    assert!(!merged.iter().any(|row| row.commit == side));
     assert_eq!(
         history::latest_subtree_commit(&mirror, &tip, rel)
             .unwrap()
