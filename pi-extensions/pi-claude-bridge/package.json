@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-claude-bridge",
-  "version": "4.0.6",
+  "version": "4.0.7",
   "description": "Pi provider bridge that runs Claude Code through the Claude Agent SDK, with opt-in forwarding for Pi prompt context.",
   "type": "module",
   "keywords": [
