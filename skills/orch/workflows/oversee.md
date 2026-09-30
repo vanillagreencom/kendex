@@ -157,6 +157,8 @@ rm -f tmp/oversee-triage-source.json
 
 ### Judgement at every event
 
+Write owner summaries with [communication-modes.md § Owner messages](../references/communication-modes.md#owner-messages) and its template. For an owner note marked as a voice request, apply [§ Voice requests](../references/communication-modes.md#voice-requests) before acting or replying.
+
 - Judgement rules for every event: [oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules).
 - Handling per event kind: [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds).
 

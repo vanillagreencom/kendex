@@ -55,6 +55,14 @@ message() { # KEY VALUE [CAUSE]
       item-state) echo "The lane's own workflow state could not be read, so whether a post-PR stop holds it is unknown:" ;;
       lane-host-busy) echo "lane-host refused a provider call for this lane at its per-home cap on provider calls, so what the lane waits on is unknown and nothing is rendered from a partial fleet. Run the report again:" ;;
       summary) echo "The summary file is missing or empty. The report notice carries the overseer's own summary to the owner, so nothing is written without one." ;;
+      summary-shape)
+        case "$2" in
+          bare-id) echo "Link each KEN item or PR number in Slack mrkdwn; do not leave a bare identifier." ;;
+          github-link) echo "Link the Linear item, not a GitHub pull request or commit. The item holds that detail." ;;
+          waiting-on-you) echo "Include the Waiting on you label, even when its answer is Nothing." ;;
+          label-spacing) echo "Put a blank line before each owner-message label." ;;
+          line-cap) echo "Keep the summary within ORCH_REPORT_SUMMARY_LINES. Put detail in the report file." ;;
+        esac ;;
       report-exists) echo "A report under this name already stands, and it is never overwritten. Write again in the next minute." ;;
       write) echo "The report file could not be written." ;;
       report-written) echo "The report printed above is this file's content." ;;
@@ -114,6 +122,11 @@ write    prints the rows and writes the same bytes to the path
          the next report's starting point. A path that already stands is
          refused; a notice that cannot be sent is refused as `notice`
          after the report is printed, the file standing.
+         Before rendering or writing, write checks the summary in its posted
+         mrkdwn form. It refuses as summary-shape with the first failing
+         rule: bare-id, github-link, waiting-on-you, label-spacing, line-cap.
+         Owner wording and the template live in
+         references/communication-modes.md § Owner messages.
 
 Rows:
   Landed          each fleet item, a lanes[] record of any status, whose own
@@ -178,6 +191,8 @@ Settings, read through the kendex settings ladder:
   ORCH_REPORT_UPCOMING       Next rows, default 5
   ORCH_REPORT_COLUMNS        comma-separated column names, default
                              `issue,what it is,why it matters`
+  ORCH_REPORT_SUMMARY_LINES  positive line cap for write's summary, default 15;
+                             counts blank lines, excluding trailing blanks
   OVERSEE_REPORT_TRACKER     path to the Linear CLI
   OVERSEE_REPORT_GITHUB      path to the github skill's github.sh
   OVERSEE_REPORT_LANE_MAIL, OVERSEE_REPORT_LANE_HOST,
@@ -307,6 +322,44 @@ for column in ${column_list[@]+"${column_list[@]}"}; do
   COLUMNS+=("$column")
 done
 [[ ${#COLUMNS[@]} -gt 0 ]] || refuse setting "ORCH_REPORT_COLUMNS:$COLUMNS_SETTING"
+
+# Check the owner comment before progress-report-path creates its directory.
+if [[ "$VERB" == write ]]; then
+SUMMARY_LINES="${ORCH_REPORT_SUMMARY_LINES-15}"
+[[ "$SUMMARY_LINES" =~ ^[1-9][0-9]*$ ]] || refuse setting "ORCH_REPORT_SUMMARY_LINES:$SUMMARY_LINES"
+[[ -f "$SUMMARY" && -r "$SUMMARY" ]] || refuse summary "$SUMMARY"
+if ! SUMMARY_TEXT="$(awk '{ line[NR] = $0 } NF { last = NR } END { for (i = 1; i <= last; i++) print line[i] }' < "$SUMMARY")"; then
+  refuse summary "$SUMMARY"
+fi
+[[ -n "$SUMMARY_TEXT" ]] || refuse summary "$SUMMARY"
+# The overseer supplies Slack's upload comment through --summary-file.
+# Slack cannot enforce the owner's format before that comment is posted.
+if ! SHAPE_FAILURE="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
+  {
+    text = $0
+    gsub(/<https?:\/\/[^<>|[:space:]]+\|[^<>]+>/, "", text)
+    if (text ~ /(^|[^[:alnum:]_])KEN-[0-9]+([^[:alnum:]_]|$)/ ||
+        text ~ /(^|[^[:alnum:]_])#[0-9]+([^[:alnum:]_]|$)/) bare = 1
+    if ($0 ~ /https?:\/\/github\.com\/[^/[:space:]<>]+\/[^/[:space:]<>]+\/(pull|commit)\//) github = 1
+    label = $0
+    gsub(/\*/, "", label)
+    sub(/^[[:space:]]+/, "", label)
+    if (label ~ /^Waiting on you(:|[[:space:]]*$)/) waiting = 1
+    if (label ~ /^(Landed|Running|Blocked|Waiting on you)(:|[[:space:]]*$)/ &&
+        (NR == 1 || previous ~ /[^[:space:]]/)) spacing = 1
+    previous = $0
+  }
+  END {
+    if (bare) print "bare-id"
+    else if (github) print "github-link"
+    else if (!waiting) print "waiting-on-you"
+    else if (spacing) print "label-spacing"
+    else if (NR > cap) print "line-cap"
+  }' <<<"$SUMMARY_TEXT")"; then
+  refuse summary "$SUMMARY"
+fi
+[[ -z "$SHAPE_FAILURE" ]] || refuse summary-shape "$SHAPE_FAILURE"
+fi
 
 # --- fleet state and the last report -----------------------------------------
 
@@ -713,10 +766,7 @@ fi
 
 # --- write -----------------------------------------------------------------------
 
-[[ -f "$SUMMARY" && -n "$(awk 'NF' < "$SUMMARY")" ]] || refuse summary "$SUMMARY"
 BODY="$(render)" || exit 2
-SUMMARY_TEXT="$(awk '{ line[NR] = $0 } NF { last = NR } END { for (i = 1; i <= last; i++) print line[i] }' < "$SUMMARY")" \
-  || refuse summary "$SUMMARY"
 if [[ "$SUCCESSION" -eq 1 ]]; then report_path --succession; else report_path; fi
 TARGET="$REPORT_PATH"
 [[ ! -e "$TARGET" ]] || refuse report-exists "$TARGET"

@@ -61,6 +61,8 @@ The acceptance table lives in the delegating workflow (`dev-start.md` § 3, `dev
 
 ## Coordination
 
+**Voice requests.** Follow [communication-modes.md § Voice requests](communication-modes.md#voice-requests) for the operation-bound approval rule, corrections and the spoken reply.
+
 **Containers.** An issue with children or an `agent:multi` label and no `(one PR)` title marker is a CONTAINER. A container is never orchestrated and never gets a PR. Each child is the PR unit, selection operates on unblocked children, and the container closes LAST when its final child merges.
 
 **Ancestor gate.** Every selected issue walks its full `parent_id` chain. An enclosing `(one PR)` bundle REPLACES the selection. Dispatch requires the item's own `state_type` non-terminal and the union of its `blocked_by_open` with every container ancestor's `blocked_by_open` empty. `blocked_by` remains relation history and does not decide dispatch.

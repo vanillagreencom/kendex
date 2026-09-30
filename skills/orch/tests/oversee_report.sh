@@ -29,6 +29,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 # The clock every case reads: `date -u +%s` answers the case's now file, else
 # NOW; every other call is the host's date.
 NOW=1790000000
+OWNER_ROWS=$'\n*Landed*\n- Nothing\n\n*Running*\n- Nothing\n\n*Blocked*\n- Nothing\n\n*Waiting on you*\n- Nothing'
 mkdir -p "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/date" <<EOF
 #!/usr/bin/env bash
@@ -234,7 +235,7 @@ run() {
   shift
   RC=0
   OUT="$(cd "$CASE" && env -u ORCH_REPORT -u ORCH_REPORT_EVERY_MINUTES -u ORCH_REPORT_EVERY_ISSUES \
-    -u ORCH_REPORT_UPCOMING -u ORCH_REPORT_COLUMNS -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN \
+    -u ORCH_REPORT_UPCOMING -u ORCH_REPORT_COLUMNS -u ORCH_REPORT_SUMMARY_LINES -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN \
     -u GH_REPO -u WORKTREE_DEFAULT_BRANCH -u LINEAR_TEAM \
     PATH="$TMP_ROOT/bin:$PATH" CASE="$CASE" OVERSEE_REPORT_TRACKER="$TMP_ROOT/bin/linear" \
     OVERSEE_REPORT_GITHUB="$TMP_ROOT/bin/github" OVERSEE_REPORT_LANE_MAIL="$TMP_ROOT/bin/lane-mail" \
@@ -664,7 +665,7 @@ WANT8="$(row10="$ROW10" row8="$ROW8" val3="$VAL3" val8="$VAL8" awk '{ print }
   $0 == ENVIRON["row10"] { print ENVIRON["row8"] } $0 == ENVIRON["val3"] { print ENVIRON["val8"] }' <<<"$WANT")"
 assert_eq "$RC|$OUT" "0|$WANT8
 $MARK" "render lists KEN-8 under Running, marks its validation unread and its mailbox under Waiting on you, and every other lane as before"
-echo "One lane is unreadable." > "$CASE/summary.txt"
+printf 'One lane is unreadable.\n%s\n' "$OWNER_ROWS" > "$CASE/summary.txt"
 run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
 assert_eq "$RC|$(awk 'END { print }' <<<"$OUT")" "0|$MARK" "write writes the report with the unreadable lane marked"
 echo '{"lanes": [' > "$CASE/state.json"
@@ -720,7 +721,7 @@ fleet '' "$(lane KEN-1 running)" "$(lane KEN-2 done)" "$(lane KEN-3 done)"
 for n in 1 2 3; do issue "KEN-$n" "Title $n" "Outcome $n"; done
 echo "[$(merged_pr 9 ken-3 0 9999999aaa)]" > "$CASE/merged.json"
 merged_pr 7 ken-2 1 7777777aaa > "$CASE/merge-on-read-KEN-1.json"
-echo "One lane is running." > "$CASE/summary.txt"
+printf 'One lane is running.\n%s\n' "$OWNER_ROWS" > "$CASE/summary.txt"
 run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
 FILE="$(awk -F= 'NR == 1 { print $2 }' "$CASE/err")"
 STAMPED="$(stat -c %Y -- "$FILE" 2>/dev/null || stat -f %m -- "$FILE")"
@@ -733,7 +734,7 @@ assert_eq "$RC|$(awk '/^\| KEN-[23] /' <<<"$OUT")" "0|| KEN-3 (#9, 9999999) | Ti
 
 echo "=== write: the chat and the file carry one report ==="
 seed_fleet write_report
-printf 'Two items landed and one waits on you.\n\n\n' > "$CASE/summary.txt"
+printf 'Two items landed and one waits on you.\n%s\n\n\n' "$OWNER_ROWS" > "$CASE/summary.txt"
 run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt" --succession
 NAME="$("$REAL_DATE" -u -d "@$NOW" +%m-%d-%H-%M 2>/dev/null || "$REAL_DATE" -u -r "$NOW" +%m-%d-%H-%M)-succession.md"
 FILE="$CASE/progress-reports/$NAME"
@@ -752,16 +753,16 @@ assert_eq "$RC|$(first_err)" "2|oversee-report: summary=$CASE/empty.txt" "a writ
 # dropped; the stub keeps the argv alone, so the text is read through a copy
 # of the stub that saves it.
 seed_fleet write_notice_text
-printf 'One line.\nTwo.\n\n' > "$CASE/summary.txt"
+printf 'One line.\n%s\n\n' "$OWNER_ROWS" > "$CASE/summary.txt"
 sed 's@printf .%s\\n. "\$\*" >> "\$CASE/mail.calls"@cat "$9" > "$CASE/notice.txt"@' "$TMP_ROOT/bin/lane-mail" > "$TMP_ROOT/bin/lane-mail-saving"
 chmod +x "$TMP_ROOT/bin/lane-mail-saving"
 assert_eq "$(cmp -s "$TMP_ROOT/bin/lane-mail-saving" "$TMP_ROOT/bin/lane-mail" && echo same || echo differs)" "differs" \
   "the saving stub really differs from the recording one"
 run OVERSEE_REPORT_LANE_MAIL="$TMP_ROOT/bin/lane-mail-saving" -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
 assert_eq "$RC|$(cat "$CASE/notice.txt")" "0|One line.
-Two." "the notice's text is the summary, its trailing blank lines dropped"
+$OWNER_ROWS" "the notice's text is the summary, its trailing blank lines dropped"
 seed_fleet write_notice_fails
-echo "Nobody hears this." > "$CASE/summary.txt"
+printf 'Nobody hears this.\n%s\n' "$OWNER_ROWS" > "$CASE/summary.txt"
 touch "$CASE/notice-fail"
 run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
 FILE="$CASE/progress-reports/$("$REAL_DATE" -u -d "@$NOW" +%m-%d-%H-%M 2>/dev/null || "$REAL_DATE" -u -r "$NOW" +%m-%d-%H-%M).md"
@@ -769,10 +770,76 @@ assert_eq "$RC|$(first_err)|$([[ -f "$FILE" ]] && echo written || echo missing)|
   "2|oversee-report: notice=$FILE|written|printed" \
   "a notice that cannot be sent is refused by name after the report is printed, the file standing"
 seed_fleet write_report_off
-echo "The overseer hands over." > "$CASE/summary.txt"
+printf 'The overseer hands over.\n%s\n' "$OWNER_ROWS" > "$CASE/summary.txt"
 run ORCH_REPORT=off -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt" --succession
 assert_eq "$RC|$(first_err)" "0|oversee-report: report-written=$CASE/progress-reports/$NAME" \
   "ORCH_REPORT=off silences due alone: a succession write still writes"
+
+echo "=== write: owner summary shape before any report or notice ==="
+# The real producer is the overseer's --summary-file upload comment.
+# Each mutant keeps its detector and diagnostic but disables that rule's
+# refusal decision, so the same refusal assertion turns red.
+while IFS='~' read -r name lead mode setting rule; do
+  rows="$OWNER_ROWS"
+  case "$mode" in
+    normal) ;;
+    missing) rows=$'\n*Landed*\n- Nothing\n\n*Running*\n- Nothing\n\n*Blocked*\n- Nothing' ;;
+    spacing) rows=$'\n*Landed*\n- Nothing\n*Running*\n- Nothing\n\n*Blocked*\n- Nothing\n\n*Waiting on you*\n- Nothing' ;;
+    long) rows+=$'\nMore detail.\nMore detail.\nMore detail.' ;;
+    *) echo "oversee_report: fixture-mode=$mode" >&2; exit 1 ;;
+  esac
+  new_case "summary_$name"
+  fleet ''
+  printf '%s\n%s\n' "$lead" "$rows" > "$CASE/summary.txt"
+  envs=()
+  [[ -z "$setting" ]] || envs+=("$setting")
+  run ${envs[@]+"${envs[@]}"} -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
+  artifacts="$(find "$CASE" -name '*.md' -o -name 'progress-reports' -o -name 'mail.calls' -o -name 'gh.calls')"
+  assert_eq "$RC|$(first_err)|$OUT|$artifacts" "2|oversee-report: summary-shape=$rule||" \
+    "summary $name refuses without rendering, writing a report or sending a notice"
+  # One must-fail control per rule, on the row whose name is the rule.
+  if [[ "$name" == "$rule" ]]; then
+    mutant="$(mutant_scripts "shape-$name/orch" oversee-report)/oversee-report" || exit 1
+    ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/shape-$name/github"
+    case "$rule" in
+      bare-id) old='if (bare) print "bare-id"'; new='if (0 && bare) print "bare-id"' ;;
+      github-link) old='else if (github) print "github-link"'; new='else if (0 && github) print "github-link"' ;;
+      waiting-on-you) old='else if (!waiting) print "waiting-on-you"'; new='else if (0 && !waiting) print "waiting-on-you"' ;;
+      label-spacing) old='else if (spacing) print "label-spacing"'; new='else if (0 && spacing) print "label-spacing"' ;;
+      line-cap) old='else if (NR > cap) print "line-cap"'; new='else if (0 && NR > cap) print "line-cap"' ;;
+      *) echo "oversee_report: fixture-rule=$rule" >&2; exit 1 ;;
+    esac
+    mutate_file "$mutant" "$old" "$new"
+    REPORT_UNDER_TEST="$mutant" run ${envs[@]+"${envs[@]}"} -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
+    assert_eq "$RC|$(first_err)" "0|oversee-report: report-written=$CASE/progress-reports/${NAME%-succession.md}.md" \
+      "control: removing $rule lets its defective summary write, reddening the refusal check"
+  fi
+done <<'ROWS'
+bare-id~KEN-42 is ready.~normal~~bare-id
+bare-pr~The change (#42) is ready.~normal~~bare-id
+markdown-id~[KEN-42](https://linear.app/vanillagreen/issue/KEN-42) is ready.~normal~~bare-id
+github-link~See <https://github.com/owner/repo/pull/42|the change>.~normal~~github-link
+commit-link~See https://github.com/owner/repo/commit/abcdef.~normal~~github-link
+waiting-on-you~Work continues.~missing~~waiting-on-you
+label-spacing~Work continues.~spacing~~label-spacing
+line-cap~Work continues.~long~~line-cap
+custom-cap~Work continues.~normal~ORCH_REPORT_SUMMARY_LINES=12~line-cap
+first-failure~KEN-42: https://github.com/owner/repo/pull/42~missing~~bare-id
+ROWS
+new_case summary_at_cap
+fleet ''
+printf 'The fix shipped (<https://linear.app/vanillagreen/issue/KEN-42|KEN-42>).\n%s\nDetail.\nDetail.\n\n\n' "$OWNER_ROWS" > "$CASE/summary.txt"
+run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
+assert_eq "$RC" "0" "mrkdwn links and a summary at the default cap write; trailing blanks do not count"
+new_case summary_custom_cap
+fleet ''
+printf 'Work continues.\n%s\nDetail.\nDetail.\nDetail.\n' "$OWNER_ROWS" > "$CASE/summary.txt"
+run ORCH_REPORT_SUMMARY_LINES=16 -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
+assert_eq "$RC" "0" "a configured cap above the default allows its boundary"
+for cap in '' 0 -1 text; do
+  run "ORCH_REPORT_SUMMARY_LINES=$cap" -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
+  assert_eq "$RC|$(first_err)" "2|oversee-report: setting=ORCH_REPORT_SUMMARY_LINES:$cap" "an invalid summary cap refuses"
+done
 
 echo "=== due: the cadence ==="
 # Rows: case | report age in seconds, or none | settings | merged PR offsets | want.
@@ -950,7 +1017,7 @@ printf '%s\n\n%s\n' "$SUMMARY_TEXT" "$BODY" > "$TMP_FILE"
 EOF
 mutate_file "$SUMMARY_MUTANT" "$body_line" "$summary_line"
 seed_fleet write_summary_mutant
-printf 'Two items landed and one waits on you.\n\n\n' > "$CASE/summary.txt"
+printf 'Two items landed and one waits on you.\n%s\n\n\n' "$OWNER_ROWS" > "$CASE/summary.txt"
 REPORT_UNDER_TEST="$SUMMARY_MUTANT" run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt" --succession
 FILE="$CASE/progress-reports/$NAME"
 assert_eq "$RC|$(awk 'NR == 1' <<<"$OUT")|$(grep -c -F 'Two items landed' <<<"$OUT")|$(grep -c -F 'Two items landed' "$FILE")" \
