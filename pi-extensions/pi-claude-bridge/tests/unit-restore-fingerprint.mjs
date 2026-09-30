@@ -84,13 +84,25 @@ describe("restore fingerprint", () => {
 	});
 
 	it("serializes each message once across persists as the history grows", async () => {
-		let serialized = 0;
-		const first = { role: "user", content: "hello", timestamp: 1, toJSON() { serialized++; return { role: "user", content: "hello", timestamp: 1 }; } };
-		const messages = [first];
+		// Normalization copies an assistant message's content array by reference,
+		// so a counter on its content block counts serializations of that message.
+		const serialized = [];
+		const counted = (value) => {
+			const index = serialized.push(0) - 1;
+			return { ...value, toJSON() { serialized[index]++; return value; } };
+		};
+		const messages = [];
 		for (let turn = 0; turn < 3; turn++) {
+			messages.push(counted({ role: "user", content: `turn ${turn}`, timestamp: 2 * turn + 1 }));
+			messages.push({
+				role: "assistant",
+				provider: "pi-claude",
+				model: "claude-haiku-4-5",
+				content: [counted({ type: "text", text: `reply ${turn}` })],
+				timestamp: 2 * turn + 2,
+			});
 			await persist(`child-${turn}`, messages);
-			messages.push({ role: "user", content: `turn ${turn}`, timestamp: turn + 2 });
 		}
-		assert.equal(serialized, 1);
+		assert.deepEqual(serialized, [1, 1, 1, 1, 1, 1]);
 	});
 });
