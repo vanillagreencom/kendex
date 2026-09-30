@@ -611,8 +611,8 @@ function textPolicy(config: kendexConfig): TextPolicy {
 	const kilobytes = (key: NumericModeKey) => Math.max(1, Math.floor(configNumber(config, key, defaults[key]) * 1024));
 	return {
 		inlineTailBytes: kilobytes("inlineTailKb"),
-		inlineTailLines: count("inlineTailLines", 1),
-		maxLineCount: count("maxLineCount", 1),
+		inlineTailLines: count("inlineTailLines", MIN_LINE_LIMIT),
+		maxLineCount: count("maxLineCount", MIN_LINE_LIMIT),
 		maxLineWidth: count("maxLineWidth", 80),
 		maxTextBytes: kilobytes("maxTextBlockKb"),
 		mode,
@@ -715,6 +715,19 @@ function policyNotice(key: string, value: string | number, explanation: string):
 	return `[output-policy:${key}=${JSON.stringify(value)}]\n${explanation}`;
 }
 
+// A notice appended to text follows a blank line. `appendNotice` is the one
+// place that joins them and `noticeLines` the one place that counts what the
+// join adds: the notice's own lines plus the blank line.
+const NOTICE_SEPARATOR = "\n\n";
+
+function appendNotice(text: string, noticeText: string): string {
+	return `${text}${NOTICE_SEPARATOR}${noticeText}`;
+}
+
+function noticeLines(noticeText: string): number {
+	return countLines(noticeText) + 1;
+}
+
 /** The truncation notice, followed by the write-error notice when the full
  * output could not be saved. */
 function notice(meta: TruncationMeta): string {
@@ -724,8 +737,13 @@ function notice(meta: TruncationMeta): string {
 	const saved = typeof meta.savedBytes === "number" && meta.savedBytes > 0 ? ` Saved ${formatSize(meta.savedBytes)} from transcript (turn total: ${formatSize(meta.turnSavedBytes ?? 0)}, session: ${formatSize(meta.sessionSavedBytes ?? 0)}).` : "";
 	const continuation = meta.direction === "head" && meta.totalLines > meta.shownLines ? ` Continue with the same tool using an offset past line ${meta.shownLines} to read more.` : "";
 	const truncation = policyNotice("truncated-bytes", meta.totalBytes, `Output truncated (${meta.direction}). ${target}. Total: ${meta.totalLines} lines / ${formatSize(meta.totalBytes)}.${minimized}${saved}${artifact}${continuation}`);
-	return meta.artifactError === undefined ? truncation : `${truncation}\n\n${policyNotice("artifact-error", meta.artifactError, "Full output was not saved. Only the preview above remains.")}`;
+	return meta.artifactError === undefined ? truncation : appendNotice(truncation, policyNotice("artifact-error", meta.artifactError, "Full output was not saved. Only the preview above remains."));
 }
+
+// The floor of both line caps: the tallest notice, the truncation notice with
+// the write-error notice after it, plus one preview line. Every notice value
+// is JSON-escaped, so the notice's line count does not vary with its figures.
+const MIN_LINE_LIMIT = noticeLines(notice({ artifactError: "", direction: "head", reason: "", shownBytes: 0, shownLines: 0, shownRange: "", totalBytes: 0, totalLines: 0, truncated: true })) + 1;
 
 // The notice is sized before the preview is cut from worst-case figures; this
 // covers the few characters by which the final figures can print wider.
@@ -779,21 +797,20 @@ export async function processContent(event: any, ctx: ExtensionContext, content:
 	}
 	if (texts.length === 0) return unchanged;
 	const minimized = minimizedDroppedLines > 0;
-	const minimizedTail = minimized ? `\n\n${minimizedNotice(minimizedDroppedLines)}` : "";
+	const minimizedText = minimized ? minimizedNotice(minimizedDroppedLines) : undefined;
 	const joinedBytes = (sizes: number[]) => sizes.reduce((sum, size) => sum + size, sizes.length - 1);
 	const totalBytes = joinedBytes(texts.map((text) => text.stats.bytes));
 	const totalLines = texts.reduce((sum, text) => sum + text.stats.lines, 0);
-	const inlineBytes = totalBytes + byteLength(minimizedTail);
-	// The notice tail starts on the last text line, so it adds one line fewer than it holds.
-	const inlineLines = totalLines + (minimized ? countLines(minimizedTail) - 1 : 0);
+	const inlineBytes = totalBytes + (minimizedText === undefined ? 0 : byteLength(appendNotice("", minimizedText)));
+	const inlineLines = totalLines + (minimizedText === undefined ? 0 : noticeLines(minimizedText));
 	const overSpill = inlineBytes > policy.spillThresholdBytes;
 	const overTextBlock = inlineBytes > policy.maxTextBytes;
 	const tooLarge = overSpill || overTextBlock || inlineLines > policy.maxLineCount || texts.some((text) => text.stats.overWidth);
 	if (!tooLarge) {
-		if (!minimized) return unchanged;
+		if (minimizedText === undefined) return unchanged;
 		const last = texts[texts.length - 1];
 		const next = [...content];
-		for (const text of texts) next[text.index] = { ...(content[text.index] as Extract<ContentPart, { type: "text" }>), text: text === last ? `${text.working}${minimizedTail}` : text.working };
+		for (const text of texts) next[text.index] = { ...(content[text.index] as Extract<ContentPart, { type: "text" }>), text: text === last ? appendNotice(text.working, minimizedText) : text.working };
 		return { changed: true, content: next };
 	}
 
@@ -826,10 +843,9 @@ export async function processContent(event: any, ctx: ExtensionContext, content:
 		shownRange: `lines ${totalLines}-${totalLines}`,
 		turnSavedBytes: session.turnSavedBytes + originalBytes,
 	});
-	// The notice follows a blank line, so it takes its own lines plus one.
 	const budget: InlineBudget = {
-		bytes: Math.max(0, byteLimit - byteLength(worstNotice) - NOTICE_SLACK_BYTES),
-		lines: Math.max(0, lineLimit - countLines(worstNotice) - 1),
+		bytes: Math.max(0, byteLimit - byteLength(appendNotice("", worstNotice)) - NOTICE_SLACK_BYTES),
+		lines: Math.max(0, lineLimit - noticeLines(worstNotice)),
 		started: false,
 	};
 	const shown = new Map<number, { lines: number; text: string }>();
@@ -853,7 +869,7 @@ export async function processContent(event: any, ctx: ExtensionContext, content:
 		sessionSavedBytes: session.sessionSavedBytes,
 		shownBytes,
 		shownLines,
-		shownRange: tail ? `lines ${Math.max(1, totalLines - shownLines + 1)}-${totalLines}` : `lines 1-${shownLines}`,
+		shownRange: shownLines === 0 ? "none" : tail ? `lines ${totalLines - shownLines + 1}-${totalLines}` : `lines 1-${shownLines}`,
 		turnSavedBytes: session.turnSavedBytes,
 	};
 	const next: ContentPart[] = [];
@@ -872,7 +888,7 @@ export async function processContent(event: any, ctx: ExtensionContext, content:
 	if (lastText < 0) next.push({ text: policyText, type: "text" });
 	else {
 		const part = next[lastText] as Extract<ContentPart, { type: "text" }>;
-		next[lastText] = { ...part, text: `${part.text}\n\n${policyText}` };
+		next[lastText] = { ...part, text: appendNotice(part.text, policyText) };
 	}
 	return { changed: true, content: next, meta };
 }

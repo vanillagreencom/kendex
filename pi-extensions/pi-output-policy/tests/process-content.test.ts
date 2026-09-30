@@ -82,13 +82,25 @@ describe("balanced policy caps inline text", () => {
 
 describe("shell minimizer + truncation interaction", () => {
 	test("the minimized notice counts toward the line cap", async () => {
-		await withConfigAsync({}, async (cwd) => {
-			// 397 kept lines and one gap marker make 399; the notice tail adds 3 more.
-			const lines = Array.from({ length: 497 }, (_, i) => i >= 20 && i < 120 ? `   Compiling noise_${i}` : `warning: kept ${i}`);
-			const result = await processOne({ toolName: "bash", toolCallId: "sm-lines", input: { command: "cargo build" } }, fakeCtx(cwd), lines.join("\n"));
-			expect(result.meta?.reason).toBe("ui-safety");
-			expect(result.text.split("\n").length).toBeLessThanOrEqual(400);
-		});
+		// The minimizer drops 100 lines for a 2-line gap marker, so N input lines
+		// minimize to N - 98; the notice after them adds a blank line and 2 more.
+		for (const row of [
+			{ input: 496, truncated: true },
+			{ input: 495, truncated: false },
+		]) {
+			await withConfigAsync({}, async (cwd) => {
+				const lines = Array.from({ length: row.input }, (_, i) => i >= 20 && i < 120 ? `   Compiling noise_${i}` : `warning: kept ${i}`);
+				const result = await processOne({ toolName: "bash", toolCallId: "sm-lines", input: { command: "cargo build" } }, fakeCtx(cwd), lines.join("\n"));
+				const returned = result.text.split("\n").length;
+				if (row.truncated) {
+					expect(result.meta?.reason).toBe("ui-safety");
+					expect(returned).toBeLessThanOrEqual(400);
+				} else {
+					expect(result.meta).toBeUndefined();
+					expect(returned).toBe(400);
+				}
+			});
+		}
 	});
 
 	test("minimizer-only path emits inline minimized marker without meta", async () => {
@@ -161,6 +173,9 @@ describe("one inline budget per tool result", () => {
 			{ ...grep, parts: [block("b0", 300), Array(50).fill("x").join("\n")], bytes: 24, lines: 400, config: {} },
 			{ ...grep, parts: [block("c", 300).replaceAll("\n", "\r\n")], bytes: 24, lines: 400, config: {} },
 			{ ...bash, parts: [block("c", 300).replaceAll("\n", "\r\n")], bytes: 16, lines: 400, config: {} },
+			// A line cap under the floor rises to it: the notice takes 3 of 7 lines.
+			{ ...grep, parts: blocks(20, 50), bytes: 24, lines: 7, config: { maxLineCount: 1 }, shown: 4 },
+			{ ...bash, parts: blocks(2, 200), bytes: 16, lines: 7, config: { inlineTailLines: 1 }, shown: 4 },
 			// A first line larger than the whole budget is cut to it, whole characters only.
 			{ ...grep, parts: ["😀".repeat(1_500)], bytes: 1, lines: 400, config: { maxTextBlockKb: 1, maxLineWidth: 100_000 }, cutFirst: true },
 		]) {
@@ -179,6 +194,7 @@ describe("one inline budget per tool result", () => {
 				const meta = result.meta!;
 				expect(meta.direction).toBe(row.direction);
 				if (row.reason) expect(meta.reason).toBe(row.reason);
+				if (row.shown !== undefined) expect(meta.shownLines).toBe(row.shown);
 				const lines = all.split(/\r?\n/);
 				expect(meta.totalLines).toBe(lines.length);
 				if (row.cutFirst) {
@@ -206,25 +222,51 @@ describe("one inline budget per tool result", () => {
 	});
 
 	test("a failed artifact write names its error in its own notice", async () => {
-		await withConfigAsync({}, async (cwd) => {
-			const blocker = join(cwd, "blocker");
-			writeFileSync(blocker, "");
-			const previousTmp = process.env.TMPDIR;
-			process.env.PI_CODING_AGENT_DIR = join(blocker, "agent");
-			process.env.TMPDIR = join(blocker, "tmp");
-			try {
-				const text = block("w", 400);
-				const result = await processOne({ toolName: "grep", toolCallId: "werr", input: {} }, fakeCtx(cwd), text);
-				expect(result.meta?.artifactPath).toBeUndefined();
-				expect(result.meta?.artifactError?.split("; ")).toHaveLength(2);
-				expect(result.meta?.artifactError).toContain("ENOTDIR");
-				expect(result.text).toContain(`\n\n[output-policy:artifact-error=${JSON.stringify(result.meta!.artifactError)}]\n`);
-				expect(Buffer.byteLength(result.text)).toBeLessThanOrEqual(24 * 1024);
-			} finally {
-				if (previousTmp === undefined) delete process.env.TMPDIR;
-				else process.env.TMPDIR = previousTmp;
-			}
-		});
+		// At the line cap's floor, the truncation and write-error notices take 6
+		// of 7 lines and the preview keeps one.
+		for (const row of [
+			{ config: {}, lines: 400 },
+			{ config: { maxLineCount: 1 }, lines: 7, shown: 1 },
+		]) {
+			await withConfigAsync(row.config, async (cwd) => {
+				const blocker = join(cwd, "blocker");
+				writeFileSync(blocker, "");
+				const previousTmp = process.env.TMPDIR;
+				process.env.PI_CODING_AGENT_DIR = join(blocker, "agent");
+				process.env.TMPDIR = join(blocker, "tmp");
+				try {
+					const text = block("w", 400);
+					const result = await processOne({ toolName: "grep", toolCallId: "werr", input: {} }, fakeCtx(cwd), text);
+					expect(result.meta?.artifactPath).toBeUndefined();
+					expect(result.meta?.artifactError?.split("; ")).toHaveLength(2);
+					expect(result.meta?.artifactError).toContain("ENOTDIR");
+					expect(result.text).toContain(`\n\n[output-policy:artifact-error=${JSON.stringify(result.meta!.artifactError)}]\n`);
+					expect(Buffer.byteLength(result.text)).toBeLessThanOrEqual(24 * 1024);
+					expect(result.text.split("\n").length).toBeLessThanOrEqual(row.lines);
+					if (row.shown !== undefined) {
+						expect(result.meta?.shownLines).toBe(row.shown);
+						expect(result.meta?.shownRange).toBe(`lines 1-${row.shown}`);
+					}
+				} finally {
+					if (previousTmp === undefined) delete process.env.TMPDIR;
+					else process.env.TMPDIR = previousTmp;
+				}
+			});
+		}
+	});
+
+	test("a notice that fills the byte budget leaves a preview of no lines", async () => {
+		for (const tool of ["grep", "bash"]) {
+			await withConfigAsync({ maxTextBlockKb: 1 }, async (cwd) => {
+				// An artifact path over 1 KB makes the notice alone exceed the budget.
+				process.env.PI_CODING_AGENT_DIR = join(cwd, ...Array(5).fill("d".repeat(240)));
+				const result = await processContent({ toolName: tool, toolCallId: tool, input: { command: "printf" } }, fakeCtx(cwd), [{ type: "text", text: block("n", 100) }]);
+				expect(result.meta?.shownLines).toBe(0);
+				expect(result.meta?.shownRange).toBe("none");
+				expect(textOf(result.content)).toHaveLength(1);
+				expect(textOf(result.content)[0].startsWith("[output-policy:truncated-bytes=")).toBe(true);
+			});
+		}
 	});
 
 	test("a write that fails part way leaves no artifact", async () => {
