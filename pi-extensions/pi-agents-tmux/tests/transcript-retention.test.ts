@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { LANE_FILE_MAX_AGE_MS } from "../scripts/lane-retention.js";
-import { setRuntimeLaneCwd } from "../extensions/subagent/paths.js";
+import { LANE_FILE_MAX_AGE_MS, pruneLanes } from "../scripts/lane-retention.js";
+import { RUNTIME_LANE_FOLDERS, RUNTIME_LANE_REFRESH_MS, setRuntimeLaneCwd } from "../extensions/subagent/paths.js";
 import { runSingleAgent, setSingleAgentSpawnForTests, writeFullOutputArtifact } from "../extensions/subagent/runner.js";
 import { createHarness, fakeCtx, type Harness, installExtension, teardown, withoutRealIntervals } from "./extension-fixture.js";
 import { bridgeStdout, installMockSpawn, makeDetails, mockPiEvents, testAgent } from "./single-agent-fixture.js";
@@ -20,14 +20,17 @@ function sessionRuntimeRoot(h: Harness, sessionId: string): string {
 	return join(h.piUserDir, "kendex", "sessions", sessionId, "pi-agents-tmux");
 }
 
-/** Run session_start for an owning session with id `sessionId`. */
-async function startOwnerSession(h: Harness, sessionId: string): Promise<void> {
+/** Run session_start for an owning session with id `sessionId`; return the
+ *  intervals it started. */
+async function startOwnerSession(h: Harness, sessionId: string): Promise<Array<{ callback: () => void; ms: number }>> {
 	const onSessionStart = await installExtension(h);
 	const ctx = fakeCtx(h);
 	ctx.sessionManager.getSessionId = () => sessionId;
+	const started: Array<{ callback: () => void; ms: number }> = [];
 	await withoutRealIntervals(async () => {
 		await onSessionStart({}, ctx);
-	});
+	}, started);
+	return started;
 }
 
 /** Run one one-shot agent that writes its transcript under `runtimeRoot`;
@@ -127,4 +130,20 @@ test("a transcript only a child agent wrote into its parent's root is pruned by 
 	utimesSync(transcript, past, past);
 	await startOwnerSession(harness, "later");
 	expect({ written, kept: existsSync(transcript) }).toEqual({ written: true, kept: false });
+});
+
+test("a live owner's lane refresh keeps each lane through a prune once its first record is past five days", async () => {
+	harness = createHarness({});
+	const root = sessionRuntimeRoot(harness, "owner");
+	const refreshes = (await startOwnerSession(harness, "owner")).filter((interval) => interval.ms === RUNTIME_LANE_REFRESH_MS);
+	expect(refreshes).toHaveLength(1);
+	const past = (Date.now() - LANE_FILE_MAX_AGE_MS - 60_000) / 1000;
+	for (const folder of RUNTIME_LANE_FOLDERS) utimesSync(join(root, folder, ".lane-cwd"), past, past);
+	refreshes[0]!.callback();
+	const sessions = join(harness.piUserDir, "kendex", "sessions");
+	const removed = RUNTIME_LANE_FOLDERS.flatMap((folder) => pruneLanes(sessions, ["pi-agents-tmux", folder]).removed);
+	expect({
+		removed,
+		records: RUNTIME_LANE_FOLDERS.map((folder) => readFileSync(join(root, folder, ".lane-cwd"), "utf8")),
+	}).toEqual({ removed: [], records: RUNTIME_LANE_FOLDERS.map(() => harness!.cwd) });
 });

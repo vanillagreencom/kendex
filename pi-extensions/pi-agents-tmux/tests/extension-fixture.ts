@@ -114,9 +114,14 @@ export function fakeCtx(harness: Harness): any {
 	};
 }
 
-export async function withoutRealIntervals(fn: () => Promise<void>): Promise<void> {
+/** Run `fn` with setInterval stubbed out; each interval it starts is pushed
+ *  onto `started`, so a case can run a tick itself. */
+export async function withoutRealIntervals(fn: () => Promise<void>, started: Array<{ callback: () => void; ms: number }> = []): Promise<void> {
 	const realSetInterval = globalThis.setInterval;
-	(globalThis as any).setInterval = (() => ({ unref: () => undefined })) as any;
+	(globalThis as any).setInterval = ((callback: () => void, ms: number) => {
+		started.push({ callback, ms });
+		return { unref: () => undefined };
+	}) as any;
 	try {
 		await fn();
 	} finally {

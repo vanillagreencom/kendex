@@ -25,11 +25,16 @@ export function fullOutputDir(runtimeRoot: string): string {
 /** The runtime-root folders that follow the lane retention rule. */
 export const RUNTIME_LANE_FOLDERS = ["transcripts", "outputs"] as const;
 
+/** How often the live owning session rewrites its lane records. Well inside
+ *  LANE_FILE_MAX_AGE_MS, so a live owner's record is never old enough for a
+ *  prune to remove the lane, and a lane only a child writes to keeps it. */
+export const RUNTIME_LANE_REFRESH_MS = 6 * 60 * 60 * 1000;
+
 /** The working directory recorded for this process's runtime lanes; set only
  *  while the session that owns the runtime root is live. That session records
- *  every lane at session_start, so a lane a child writes to already holds its
- *  record. A child agent shares its parent's root and never sets this, so it
- *  never writes a record. */
+ *  every lane at session_start and every RUNTIME_LANE_REFRESH_MS after it, so a
+ *  lane a child writes to holds its record. A child agent shares its parent's
+ *  root and never sets this, so it never writes a record. */
 let runtimeLaneCwd: string | undefined;
 
 export function setRuntimeLaneCwd(cwd: string | undefined): void {
