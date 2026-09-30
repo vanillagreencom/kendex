@@ -36,8 +36,8 @@ class-unresolved means that under an active class policy this head's change
 class or review policy could not be resolved for any other reason: the pull
 request's range, manifest or inventory, or a runner fault such as a scratch
 directory, a checkout or a missing kendex. The stderr diagnostics above it
-name the cause, and no evidence was read. The writer posts pending on this
-head, converges the other pull requests, and fails its pass at the end.
+name the cause, and no evidence was read. What the writer does with it:
+SKILL.md § Decision table.
 
 Exit codes:
   0  evaluated (the verdict line is authoritative)
@@ -858,8 +858,9 @@ materialize_docs_commits() { # REPO BASE HEAD
 #             sixteen pull requests with every one of them overrunning.
 #
 # An overrun returns non-zero like any other preparation failure, so the caller
-# answers class-unresolved through predicate-policy-resolve, the writer records
-# it on this pull request and fails its pass, and the next pass tries again. `timeout` is coreutils and the writer runs where it exists; a
+# answers class-unresolved through predicate-policy-resolve, and the next pass
+# tries again; ../SKILL.md § Decision table says what the writer posts for it.
+# `timeout` is coreutils and the writer runs where it exists; a
 # host with neither spelling keeps the unbounded behaviour and says so, since
 # refusing there would disable the gate on a machine whose only fault is a
 # missing utility.
