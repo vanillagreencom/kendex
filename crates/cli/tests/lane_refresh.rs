@@ -176,6 +176,14 @@ fn global_writes_and_main_checkout_writes_keep_their_existing_paths() {
             };
             let output = kendex(&fixture, cwd, &args);
             assert!(output.status.success(), "{target} {args:?}: {output:?}");
+            assert!(
+                !String::from_utf8_lossy(&output.stderr).contains("lane-refresh: item="),
+                "{target} {args:?}: {output:?}"
+            );
+            if cfg!(windows) && target == "global" {
+                // Windows Known Folder detection ignores fixture home overrides.
+                continue;
+            }
             let root = if target == "main" {
                 &fixture.main
             } else {
