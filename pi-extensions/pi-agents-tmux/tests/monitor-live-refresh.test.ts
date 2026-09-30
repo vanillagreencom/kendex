@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -21,6 +21,7 @@ import {
 	taskNeedsTranscriptUsageRestore,
 	transcriptUsageRefreshSnapshot,
 } from "../extensions/subagent/index.js";
+import { taskRegistryPath } from "../extensions/subagent/paths.js";
 import { sortedMonitorRecords, TaskRegistryReader } from "../extensions/subagent/task-records.js";
 import { writeTaskRegistry } from "../extensions/subagent/tasks.js";
 import { TranscriptTailCache, type TranscriptSnapshot } from "../extensions/subagent/transcript-tail.js";
@@ -268,11 +269,14 @@ test("the poll skips only terminal registry records it already applied", () => {
 	}
 });
 
-test("the poll re-reads the task registry only when the registry file changes", async () => {
+test("TaskRegistryReader re-reads the task registry only when the registry file version changes", async () => {
 	const root = mkdtempSync(join(tmpdir(), "pi-agents-registry-reader-"));
+	// Whole seconds, so both writes below carry the same mtime to the nanosecond.
+	const pinTimes = () => utimesSync(taskRegistryPath(root), 1_800_000_000, 1_800_000_000);
 	try {
 		const running = record("planner", "planner-1", "2026-05-14T05:00:00.000Z");
 		await writeTaskRegistry(root, registryOf(running));
+		pinTimes();
 		const reader = new TaskRegistryReader();
 		const first = reader.read(root);
 		assert.deepEqual(first, registryOf(running));
@@ -281,12 +285,16 @@ test("the poll re-reads the task registry only when the registry file changes", 
 		assert.equal(reader.read(root)["planner-1"]?.status, "running", "a caller's write never reaches the next reader");
 
 		await writeTaskRegistry(root, registryOf(running));
+		pinTimes();
 		const rewritten = reader.read(root);
-		assert.notEqual(rewritten, first, "a registry rewritten with the same bytes is a new file and is re-read");
+		assert.notEqual(rewritten, first, "a registry rewritten with the same size and mtime is a new inode and is re-read");
 
 		const completed = { ...running, status: "completed" as const };
 		await writeTaskRegistry(root, registryOf(completed));
-		assert.deepEqual(reader.read(root), registryOf(completed));
+		chmodSync(taskRegistryPath(root), 0o000);
+		assert.deepEqual(reader.read(root), {}, "an unreadable registry reads as empty");
+		chmodSync(taskRegistryPath(root), 0o600);
+		assert.deepEqual(reader.read(root), registryOf(completed), "a failed read is not cached for the same file version");
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

@@ -149,11 +149,11 @@ function deepFreeze<T>(value: T): T {
 }
 
 /**
- * Reads a runtime's task registry once per file version (`file-version.ts::fileVersion`).
- * Every registry write lands by atomic rename, so each write is a new version; a
- * poll that finds the same version gets the parsed registry it got before, from
- * one stat and no read. That registry is shared by every caller until the file
- * changes, so it is frozen: a caller that needs to change it copies it first.
+ * Reads a runtime's task registry once per file version (`file-version.ts::fileVersion`:
+ * device, inode, byte size and modification time). A read that finds the same version
+ * gets the parsed registry it got before, from one stat and no read. That registry is
+ * shared by every caller until the version changes, so it is frozen: a caller that
+ * needs to change it copies it first. A failed read is not cached and is tried again.
  */
 export class TaskRegistryReader {
 	private readonly cache = new Map<string, { version: string; registry: PaneTaskRegistry }>();
@@ -169,9 +169,16 @@ export class TaskRegistryReader {
 		}
 		const cached = this.cache.get(filePath);
 		if (cached?.version === version) return cached.registry;
+		let content: string;
+		try {
+			content = fs.readFileSync(filePath, "utf-8");
+		} catch {
+			this.cache.delete(filePath);
+			return EMPTY_TASK_REGISTRY;
+		}
 		let registry: PaneTaskRegistry;
 		try {
-			registry = deepFreeze(normalizeTaskRegistryShape(JSON.parse(fs.readFileSync(filePath, "utf-8"))));
+			registry = deepFreeze(normalizeTaskRegistryShape(JSON.parse(content)));
 		} catch {
 			registry = EMPTY_TASK_REGISTRY;
 		}

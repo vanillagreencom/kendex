@@ -4,7 +4,7 @@
 
 ### 3.1.1
 
-- The agent dashboard no longer rereads child transcripts while it draws. Each working row's activity line and usage now come from a per-transcript cache that the completion poll advances by only the bytes a transcript gained since its last read; before, every widget frame read up to 96 KB per working row and every poll parsed each growing transcript from its first byte. The activity line now moves at the poll interval (`completionPollMs`) instead of every frame, and a half-written transcript line no longer shows as raw JSON. The poll also skips finished task records that have not changed since it last applied them, so an idle parent with a long task history no longer re-checks every record's files every poll. The poll and the dashboard now read the task registry file only when it has changed since their last read; before, each poll read and parsed the whole registry several times.
+- The agent dashboard no longer rereads child transcripts while it draws: the widget render reads no transcript file, where before every frame read up to 96 KB per working row. Each working row's activity line and usage come from a per-transcript cache, which the usage poll advances by only the bytes a transcript gained since its last read; before, the poll parsed each growing transcript from its first byte. The activity line now moves at the poll interval (`completionPollMs`) instead of every frame, and a half-written transcript line no longer shows as raw JSON. The dashboard's registry sync re-reads the task registry only when the file's version changed, and skips finished task records that have not changed since it last applied them.
 
 ### 3.1.0
 
