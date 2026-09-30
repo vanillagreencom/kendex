@@ -198,14 +198,25 @@ class MarkupScan {
 
 	/** Replaces a link with its text and href, or with a space for its opening tag alone when no closing tag follows. */
 	#link(lt: number, openEnd: number, href: string, out: string[]): number {
-		const content: string[] = [];
-		const end = this.#noLinkClose ? -1 : this.#scan(openEnd, content, true);
-		if (end < 0) {
-			this.#noLinkClose = true;
-			out.push(" ");
-			return this.#html.indexOf(">", lt) + 1;
+		const html = this.#html;
+		const next = html.indexOf("<", openEnd);
+		LINK_CLOSE.lastIndex = Math.max(next, 0);
+		let content: string;
+		let end: number;
+		if (next >= 0 && LINK_CLOSE.test(html)) {
+			content = html.slice(openEnd, next);
+			end = LINK_CLOSE.lastIndex;
+		} else {
+			const pieces: string[] = [];
+			end = this.#noLinkClose ? -1 : this.#scan(openEnd, pieces, true);
+			if (end < 0) {
+				this.#noLinkClose = true;
+				out.push(" ");
+				return html.indexOf(">", lt) + 1;
+			}
+			content = pieces.join("").replace(/<[^>]+>/g, "");
 		}
-		const text = content.join("").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+		const text = content.replace(/\s+/g, " ").trim();
 		if (text) out.push(href.startsWith("#") ? text : `${text} (${href})`);
 		return end;
 	}
@@ -236,7 +247,7 @@ export function htmlToMarkdown(html: string): HtmlExtraction {
 	main = stripRoleNavigation(main);
 	main = stripChromeBlocks(main);
 	const markdown = decodeEntities(new MarkupScan(main).convert())
-		.replace(/[ \t]*\t[ \t]*| {2,}/g, " ")
+		.replace(/[ \t]{2,}|\t/g, " ")
 		.split(/\r?\n/)
 		.map((line) => line.trim())
 		.filter((line) => line && line !== "-" && line !== "•")
