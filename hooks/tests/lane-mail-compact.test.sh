@@ -67,9 +67,13 @@ handoff_record() { # ITEM
 }
 # A Copilot lane's turn end with no context reading of its session: the
 # context and the account are both reported unmeasured, and nothing holds it.
+# Each lane a row judges for its compaction reports a step before every turn
+# end, so the idle judge, whose rows are in lane-mail-check.test.sh, holds
+# none of them.
 UNREAD_FIRST() { printf 'lane-mail-check: reading-unrecorded=%s/context.json' "$BOX"; }
 
 new_compact_lane lane KEN-301
+REPORT_ITEM=KEN-301
 turn_end
 assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision) flag=$(flag)" \
   "RC=0 first=$(UNREAD_FIRST) decision= flag=none" \
@@ -102,6 +106,7 @@ assert_eq "$(quiet)" "RC=0 stdout= stderr=-" "the handoff record standing, the t
 # A successor session in the same mailbox is not held on its predecessor's
 # compaction.
 new_compact_lane successor KEN-302
+REPORT_ITEM=KEN-302
 cop_lead_start "$LANE/.github/hooks/lane-mail-check.sh" s0
 compact auto s0
 turn_end false s0
@@ -264,6 +269,7 @@ assert_eq "$(quiet)" "RC=0 stdout= stderr=lane-mail-check: session-unrecorded=s7
 # The lane's turn-end refusal removed: a flagged lane ends its turn unheld.
 mutant compact-unheld -e 's@^  \[ "\$COMPACTED" != true \] || refuse_handoff compacted auto$@  :@'
 new_compact_lane control_unheld KEN-314 "$MUTANT_PATH"
+REPORT_ITEM=KEN-314
 compact auto
 turn_end
 assert_eq "RC=$RC decision=$(stdout_field .decision)" "RC=0 decision=" \
