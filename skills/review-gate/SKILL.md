@@ -125,7 +125,7 @@ Carry-forward never creates evidence or bypasses a fail-closed term. Objections 
 ## Scripts
 
 - `scripts/adopt-refresh.sh`: validate the existing app-secret environment, adopt the refresh workflow, and register exact workflow copies for render verification. [Setup and operation](references/adoption.md#automatic-consumer-refresh). `--help`
-- `scripts/refresh-consumer.sh`: rebuild the rolling refresh branch from the default branch, prove render equality, and open or update its pull request with app-token auto-merge. Called by the refresh workflow.
+- `scripts/refresh-consumer.sh`: rebuild the rolling refresh branch from the default branch and open or update its pull request at any measured class. Only `render` arms app-token auto-merge. A `standard` refresh pull request stays unarmed; its body names the class, classifier cause and path. A repository maintainer reviews and merges it through the normal review and CI gates. An unmeasured class stops publication. Called by the refresh workflow.
 - `scripts/refresh-reviews.sh`: on each open or merged rolling refresh pull request that the trusted `change-class` proves `render`, file every automatic review thread upstream, reply with the issue, then resolve it. A thread whose finding is not filed stays open and fails the run until it is resolved by hand. Called by the refresh workflow.
 - `scripts/dispatch-refresh.sh`: signal all non-archived repositories visible to the catalog app installation.
 - `scripts/validate.sh`: validate a consumer installation. `--help`

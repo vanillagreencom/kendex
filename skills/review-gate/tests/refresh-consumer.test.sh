@@ -4,8 +4,10 @@
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
-TMP="$(mktemp -d)"
-trap 'rm -rf -- "$TMP"' EXIT
+TMP="$(mktemp -d)" || { echo 'refresh-consumer: scratch=mktemp-failed' >&2; exit 1; }
+[[ -d $TMP && ! -L $TMP ]] || { echo "refresh-consumer: scratch=not-a-directory value=[$TMP]" >&2; exit 1; }
+TMP="$(cd -- "$TMP" && pwd -P)" || { echo 'refresh-consumer: scratch=resolve-failed' >&2; exit 1; }
+trap 'rm -rf -- "${TMP:?}"' EXIT
 . "$TEST_DIR/lib/refresh-fixture.sh"
 cp "$BIN/gh" "$TMP/standard-gh"
 mkdir -p "$TMP/bin" "$TMP/home" "$TMP/state"
@@ -13,13 +15,23 @@ cat >"$TMP/bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$TEST_STATE/calls"
+for arg in "$@"; do
+  case "$arg" in body=*) printf '%s\n' "${arg#body=}" >"$TEST_STATE/body" ;; esac
+done
 case "$*" in
   'api repos/acme/test --jq .default_branch') printf 'main\n' ;;
   api\ --paginate\ *pulls*) cat "$TEST_STATE/pr" ;;
   api\ users/*) printf '123\n' ;;
   'api --method POST repos/acme/test/pulls '*) printf '1\n' >"$TEST_STATE/pr"; printf 'created\n' >>"$TEST_STATE/creates"; printf '1\n' ;;
+  'api --method PATCH repos/acme/test/pulls/1 '*) : ;;
   'auth setup-git') : >"$TEST_STATE/auth" ;;
-  'pr merge '*|'pr close '*) ;;
+  'pr merge '*)
+    case " $* " in
+      *' --auto '*) : >"$TEST_STATE/armed" ;;
+      *' --disable-auto '*) rm -f -- "$TEST_STATE/armed" ;;
+      *) exit 2 ;;
+    esac ;;
+  'pr close '*) : ;;
   *) exec "$TEST_GH_SHIM" "$@" ;;
 esac
 SH
@@ -60,6 +72,11 @@ cat >"$repo/.agents/skills/harness-ci/scripts/change-class" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$TEST_STATE/classifier"
+if [ "$TEST_CLASS_EXIT" -ne 0 ]; then
+  printf 'wiring-error: cause=output-unwritable\n' >&2
+  exit "$TEST_CLASS_EXIT"
+fi
+printf 'class: class=%s measured=%s %s\n' "$TEST_CLASS" "$TEST_MEASURED" "$TEST_REASON" >&2
 printf 'change_class=%s\n' "$TEST_CLASS"
 SH
 printf '#!/usr/bin/env bash\nset -euo pipefail\n' >"$repo/.agents/skills/review-gate/scripts/adopt-refresh.sh"
@@ -76,18 +93,8 @@ git -C "$repo" push -q origin main
 : >"$TMP/state/creates"
 runner="$repo/.agents/skills/review-gate/scripts/refresh-consumer.sh"
 
-run_refresh() { # CONTENT VERIFY CLASS
-  local result=0
-  rm -f -- "${TMP:?}/state/auth"
-  OUT="$(cd "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$TMP/home" TMPDIR="$TMP" GH_TOKEN=test-token GH_REPO=acme/test REFRESH_APP_SLUG=lanes TEST_STATE="$TMP/state" TEST_REAL_GIT="$REAL_GIT" TEST_CONTENT="$1" TEST_VERIFY="$2" TEST_CLASS="$3" TEST_HOSTILE="${HOSTILE:-}" TEST_FRESH_TEMPLATES="$TMP/fresh-templates" TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" bash "$runner" 2>&1)" || result=$?
-  RC="$result"
-}
-reset_default() {
-  git -C "$repo" reset --hard -q
-  git -C "$repo" checkout -q main
-}
 run_refresh current pass render
-if [ "$RC" -eq 0 ] && [ ! -s "$TMP/state/creates" ]; then ok 'current consumer opens no pull request'; else bad 'current consumer opens no pull request' "$OUT"; fi
+if [ "$RC" -eq 0 ] && [ ! -s "$TMP/state/creates" ] && grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT"; then ok 'current consumer opens no pull request'; else bad 'current consumer opens no pull request' "$OUT"; fi
 reset_default
 run_refresh stale pass render
 first="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
@@ -96,13 +103,95 @@ reset_default
 run_refresh stale pass render
 second="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
 if [ "$RC" -eq 0 ] && [ "$first" = "$second" ] && [ "$(wc -l <"$TMP/state/creates" | tr -d ' ')" -eq 1 ]; then ok 'repeat keeps one pull request and its commit'; else bad 'repeat keeps one pull request and its commit' "$OUT"; fi
-for row in 'bad-verify|fail|render' 'unowned|pass|standard'; do
-  IFS='|' read -r content verify class <<<"$row"
+reset_default
+run_refresh bad-verify fail render
+after="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+if [ "$RC" -ne 0 ] && [ "$after" = "$first" ]; then ok 'bad-verify refuses before push'; else bad 'bad-verify refuses before push' "$OUT"; fi
+# The body must update with the current class, including when the rolling
+# tree is unchanged. A render-to-standard transition must remove the old arm.
+for row in \
+  'standard|open|no|cause=excluded-path path=.agents/skills/commit-guards/scripts/install-git-hooks glob=*skills/commit-guards/scripts/*' \
+  'render|update|yes|cause=renders-match-their-sources' \
+  'standard|update|no|cause=excluded-path path=.agents/skills/commit-guards/scripts/install-git-hooks glob=*skills/commit-guards/scripts/*' \
+  'standard|unchanged|no|cause=excluded-path path=.agents/skills/commit-guards/scripts/install-git-hooks glob=*skills/commit-guards/scripts/*' \
+  'trivial|update|no|cause=documentation-paths lines=8' \
+  'micro|update|no|cause=production-within-micro production=8' \
+  'small|update|no|cause=production-within-small subsystem=skills' \
+  'render|update|yes|cause=renders-match-their-sources'; do
+  IFS='|' read -r class mode arm CLASS_REASON <<<"$row"
+  state=pushed; method=PATCH
+  if [ "$mode" = open ]; then
+    : >"$TMP/state/pr"
+    rm -f -- "$TMP/state/armed"
+    method=POST
+  fi
+  [ "$mode" != unchanged ] || state=unchanged
+  : >"$TMP/state/calls"
   reset_default
-  run_refresh "$content" "$verify" "$class"
-  after="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
-  if [ "$RC" -ne 0 ] && [ "$after" = "$first" ]; then ok "$content refuses before push"; else bad "$content refuses before push" "$OUT"; fi
+  # The unchanged row deliberately repeats the preceding content.
+  [ "$mode" = unchanged ] || content="class-$class"
+  run_refresh "$content" pass "$class"
+  if refresh_class_matches "$class" "$state" "$arm" "$CLASS_REASON" "$method"; then
+    ok "$class $mode publishes its class and cause with arm=$arm"
+  else bad "$class $mode class publication" "$OUT"; fi
 done
+CLASS_REASON='cause=paths-unread'
+for row in 'fallback|false|0' 'call-failed|true|2'; do
+  IFS='|' read -r name MEASURED CLASS_EXIT <<<"$row"
+  reset_default
+  before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+  : >"$TMP/state/calls"
+  run_refresh "$name" pass standard
+  if refresh_stopped_at_class "$before"; then ok "$name stops before publication"; else bad "$name class stop" "$OUT"; fi
+done
+# Each class rule has a control on a disposable runner. Keeping the matched
+# condition as a comment proves that its behavior, not its spelling, matters.
+reset_default
+cp "$runner" "$TMP/class-runner"
+for mutation in measured arm; do
+  cp "$TMP/class-runner" "$runner"
+  python3 - "$runner" "$mutation" <<'CLASS_CONTROL'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve()
+s = p.read_text()
+mutations = {
+ 'measured': ('[[ " $class_line " != *\' measured=true \'* ]]', '{ false; }'),
+ 'arm': ('if [ "$class" = render ]; then\n  gh pr merge', 'if true; then\n  gh pr merge'),
+}
+old, new = mutations[sys.argv[2]]
+assert s.count(old) == 1
+changed = '# ' + old.replace('\n', '\n# ') + '\n' + s.replace(old, new)
+assert changed != s
+p.write_text(changed)
+CLASS_CONTROL
+  git -C "$repo" add -A
+  git -C "$repo" commit -qm 'mutate class rule'
+  git -C "$repo" push -q origin main
+  MEASURED=true; CLASS_EXIT=0
+  case "$mutation" in
+    measured) MEASURED=false; CLASS_REASON='cause=paths-unread' ;;
+    arm) CLASS_REASON='cause=excluded-path path=.agents/skills/commit-guards/scripts/install-git-hooks glob=*skills/commit-guards/scripts/*' ;;
+  esac
+  before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+  : >"$TMP/state/calls"
+  run_refresh "control-$mutation" pass standard
+  if [ "$mutation" = arm ]; then
+    if [ "$RC" -eq 0 ] && ! refresh_class_matches standard pushed no "$CLASS_REASON" PATCH; then
+      ok 'control: standard arm breaks the class assertion'
+    else bad 'standard arm control' "$OUT"; fi
+  else
+    if [ "$RC" -eq 0 ] && grep -qxF 'refresh-state=pushed pr=1 class=standard' <<<"$OUT" && ! refresh_stopped_at_class "$before"; then
+      ok "control: $mutation bypass breaks the class stop assertion"
+    else bad "$mutation class stop control" "$OUT"; fi
+  fi
+  reset_default
+done
+cp "$TMP/class-runner" "$runner"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'restore class rules'
+git -C "$repo" push -q origin main
+MEASURED=true; CLASS_EXIT=0; CLASS_REASON='cause=renders-match-their-sources'
 # One production mutation proves the rolling-PR count assertion observes
 # the runner's create decision, rather than merely the fake API's state.
 reset_default
@@ -118,8 +207,9 @@ PY
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'mutate create decision'
 git -C "$repo" push -q origin main
+creates_before="$(wc -l <"$TMP/state/creates" | tr -d ' ')"
 run_refresh stale pass render
-if [ "$RC" -eq 0 ] && [ "$(wc -l <"$TMP/state/creates" | tr -d ' ')" -gt 1 ]; then ok 'control exposes duplicate pull creation'; else bad 'control exposes duplicate pull creation' "$OUT"; fi
+if [ "$RC" -eq 0 ] && [ "$(wc -l <"$TMP/state/creates" | tr -d ' ')" -gt "$creates_before" ]; then ok 'control exposes duplicate pull creation'; else bad 'control exposes duplicate pull creation' "$OUT"; fi
 # The shipped workflow preserves a trusted checkout before refresh replaces
 # catalog files. Real adoption must read new template bytes without executing
 # any refreshed script or shell library, including for a renamed writer.

@@ -84,7 +84,7 @@ Run it after every `kendex refresh` so template changes land with the refresh. T
 
 ### Automatic consumer refresh
 
-The shipped `templates/kendex-refresh.yml` checks for updates every 30 minutes. A manual run uses the same path. Each run updates `kendex/refresh`, keeps one open pull request, and enables auto-merge with the repository's app token. Required CI checks and the merge queue still control merging. An unchanged result opens no pull request.
+The shipped `templates/kendex-refresh.yml` checks for updates every 30 minutes. A manual run uses the same path. Each run updates `kendex/refresh` and keeps one open pull request. The class controls publication and auto-merge per [SKILL.md § Scripts](../SKILL.md#scripts). Required CI checks and the merge queue still control merging. A current consumer opens no pull request.
 
 Provision the `kendex` environment before adoption. It must contain `FLEET_GH_APP_ID` and `FLEET_GH_APP_PRIVATE_KEY` and allow deployments from the default branch only. The organization owner uses `scripts/provision-environment.sh --org ORG` from their own machine. `scripts/adopt-refresh.sh` reads the existing environment through `validate-standard.sh --environment-only`. It checks the environment and secret names the refresh template it installs reads, whatever the consumer's `REVIEW_GATE_STANDARD_*` settings say, so refresh adoption needs none of those keys. A missing environment, secret or branch policy stops adoption with the failed check and provisioning remedy.
 
@@ -103,7 +103,7 @@ Commit the workflow copies and inventory with the installed skill. Adoption reco
 
 Schedule and manual refresh work in a consumer with the app installation and environment above. Instant refresh also needs organization dispatch wiring. The catalog's `.github/workflows/kendex-dispatch.yml` signals every non-archived consumer repository visible to its app installation after a push to `main`. Adoption and dispatch exclude `vanillagreencom/kendex`, whose build-bound lock workflow owns its refresh under D007. It attempts all destinations and fails the run if any dispatch fails.
 
-Only the default-branch workflow can use the private key. It checks out the default branch before minting a repository-scoped app token. It rebuilds the rolling branch from that checkout and proves the full diff is a render before pushing. It preserves the default-branch review scripts in a detached worktree before refreshing. Those scripts prove that each rolling pull request has class `render` before they file, reply to or resolve an automatic review thread. Findings on other classes remain unchanged.
+Only the default-branch workflow can use the private key. It checks out the default branch before minting a repository-scoped app token. It rebuilds the rolling branch from that checkout and asks the shared classifier to measure the full diff before pushing. It preserves the default-branch review scripts in a detached worktree before refreshing. Those scripts prove that each rolling pull request has class `render` before they file, reply to or resolve an automatic review thread. Findings on other classes remain unchanged.
 
 The last two steps request an Issues-write token scoped only to `vanillagreencom/kendex`, then use it to file findings and resolve their threads. Each automatic review thread on a render-proven pull request has one of two outcomes:
 

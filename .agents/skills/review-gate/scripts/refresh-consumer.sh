@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Runs from the default-branch checkout. It rebuilds the rolling branch from
 # that checkout, never executes the remote rolling branch, and pushes only
-# after the shared classifier proves the complete diff is a render.
-# Output records: refresh-state=current|unchanged|pushed pr=NUMBER|none.
+# after the shared classifier measures the complete diff. Only render arms.
+# Output records: refresh-state=current pr=none class=none, or
+# refresh-state=unchanged|pushed pr=NUMBER class=CLASS.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(git rev-parse --show-toplevel)"
@@ -55,7 +56,7 @@ if git diff --cached --quiet; then
   if [ -n "$pr" ]; then
     gh pr close "$pr" --repo "$GH_REPO"
   fi
-  printf 'refresh-state=current pr=none\n'
+  printf 'refresh-state=current pr=none class=none\n'
   exit 0
 fi
 if ! tree="$(git write-tree)"; then
@@ -70,22 +71,47 @@ else
   user_id="$(gh api "users/${REFRESH_APP_SLUG}[bot]" --jq .id)"
   git config user.name "${REFRESH_APP_SLUG}[bot]"
   git config user.email "$user_id+${REFRESH_APP_SLUG}[bot]@users.noreply.github.com"
-  # No consumer hook executes under the app token. Render equality is the
-  # check for this commit; the repository's checks run on its pull request.
+  # No consumer hook executes under the app token. Verification checks the
+  # installed files; the repository's checks run on its pull request.
   git -c core.hooksPath=/dev/null commit -m 'chore: refresh kendex renders'
   head="$(git rev-parse HEAD)"
   state=pushed
 fi
-if ! class="$("$SCRIPT_DIR/../../harness-ci/scripts/change-class" --event pull_request --base "$base" --head "$head" --repo "$ROOT")"; then
+class_result=0
+class_output="$("$SCRIPT_DIR/../../harness-ci/scripts/change-class" --event pull_request --base "$base" --head "$head" --repo "$ROOT" 2>&1)" || class_result=$?
+printf '%s\n' "$class_output" >&2
+class=""
+class_line=""
+while IFS= read -r line; do
+  case "$line" in
+    change_class=*) class="${line#change_class=}" ;;
+    'class: class='*) class_line="$line" ;;
+  esac
+done <<<"$class_output"
+# change-class also emits standard as a fallback. Its measured marker, not
+# its cause or class name, authorizes publication.
+if [ "$class_result" -ne 0 ] || [ -z "$class" ] || [[ " $class_line " != *' measured=true '* ]]; then
   printf 'refresh-error=read value=class\n' >&2
   exit 1
 fi
-[ "$class" = change_class=render ] || { printf 'refresh-error=class value=%s\n' "$class" >&2; exit 1; }
+if [ "$class" = render ]; then
+  merge_note='Render equality is verified. The refresh workflow arms auto-merge.'
+else
+  merge_note='Auto-merge is disabled. A repository maintainer reviews and merges this pull request through the normal review and CI gates.'
+  if [ -n "$pr" ]; then
+    gh pr merge "$pr" --repo "$GH_REPO" --disable-auto
+  fi
+fi
+printf -v body 'Generated kendex updates.\n\nChange class: `%s`.\n\nClassifier:\n```text\n%s\n```\n\n%s\n' "$class" "$class_line" "$merge_note"
 if [ "$state" = pushed ]; then
   git push "--force-with-lease=refs/heads/kendex/refresh:$old" origin HEAD:refs/heads/kendex/refresh
 fi
 if [ -z "$pr" ]; then
-  pr="$(gh api --method POST "repos/$GH_REPO/pulls" -f head=kendex/refresh -f base="$default" -f title='chore: refresh kendex renders' -f body='Generated kendex updates. The shared classifier verifies render equality before this pull request is opened.' --jq .number)"
+  pr="$(gh api --method POST "repos/$GH_REPO/pulls" -f head=kendex/refresh -f base="$default" -f title='chore: refresh kendex renders' -f body="$body" --jq .number)"
+else
+  gh api --method PATCH "repos/$GH_REPO/pulls/$pr" -f body="$body" >/dev/null
 fi
-gh pr merge "$pr" --repo "$GH_REPO" --auto --squash --match-head-commit "$head"
-printf 'refresh-state=%s pr=%s\n' "$state" "$pr"
+if [ "$class" = render ]; then
+  gh pr merge "$pr" --repo "$GH_REPO" --auto --squash --match-head-commit "$head"
+fi
+printf 'refresh-state=%s pr=%s class=%s\n' "$state" "$pr" "$class"

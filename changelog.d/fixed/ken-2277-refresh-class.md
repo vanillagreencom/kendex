@@ -1,0 +1,1 @@
+- Consumer refreshes open pull requests at any measured class. Only render arms auto-merge; other classes show the classifier cause and path for maintainer review.
