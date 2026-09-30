@@ -595,12 +595,17 @@ assert_eq "and a replayed dead reference is judged there too, across the configu
 NARROW="$TMP/.narrow/commit-guards"
 mkdir -p "$(dirname "$NARROW")"
 cp -R "$SKILL_TEMPLATE" "$NARROW"
-NARROW_BEFORE="$(cat -- "$NARROW/scripts/commit-guards")"
-sed -i.bak 's#^RANGE_SCOPED_CHECKS="byte-ceiling md-format md-refs py-names"$#RANGE_SCOPED_CHECKS="byte-ceiling py-names"#' \
+q test ! -L "$NARROW/scripts/commit-guards"
+NARROW_BEFORE="$(cat -- "$NARROW/scripts/commit-guards")" || exit 2
+NARROW_MATCHES="$(awk '$0 == "RANGE_SCOPED_CHECKS=\"byte-ceiling changelog-entries md-format md-refs py-names\"" { matches++ } END { print matches+0 }' \
+  "$NARROW/scripts/commit-guards")" || exit 2
+assert_eq "the narrowed edit matches one assignment" "1" "$NARROW_MATCHES"
+sed -i.bak 's#^RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries md-format md-refs py-names"$#RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries py-names"#' \
   "$NARROW/scripts/commit-guards"
 rm -f -- "$NARROW/scripts/commit-guards.bak"
+NARROW_AFTER="$(cat -- "$NARROW/scripts/commit-guards")" || exit 2
 assert_eq "the narrowed edit took" "rewritten" \
-  "$(if [ "$NARROW_BEFORE" = "$(cat -- "$NARROW/scripts/commit-guards")" ]; then echo unchanged; else echo rewritten; fi)"
+  "$(if [ "$NARROW_BEFORE" = "$NARROW_AFTER" ]; then echo unchanged; else echo rewritten; fi)"
 
 NARROWED_FORMAT=""
 wrapped NARROWED_FORMAT narrowed-format "$NARROW"
