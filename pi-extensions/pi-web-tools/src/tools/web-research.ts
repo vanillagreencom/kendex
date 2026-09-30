@@ -75,7 +75,7 @@ export const webResearchSchema = Type.Object({
 	outputPath: Type.Optional(Type.String({ description: "Optional path for the findings report. Relative paths resolve against ctx.cwd; leading @ is stripped." })),
 	reportTitle: Type.Optional(Type.String()),
 	reportFormat: Type.Optional(StringEnum(reportFormats)),
-	rawOutputPath: Type.Optional(Type.String({ description: "Optional explicit path for raw Exa JSON metadata. Defaults to findings.raw.json next to outputPath for findings reports." })),
+	rawOutputPath: Type.Optional(Type.String({ description: "Optional explicit path for raw Exa JSON metadata. Defaults to findings.raw.json next to outputPath for findings and markdown reports; json reports write none." })),
 });
 
 export type WebResearchInput = Static<typeof webResearchSchema>;
@@ -345,7 +345,8 @@ export function buildRawSidecar(response: NormalizedExaResponse, rawOutputPath?:
 /** The research metadata a tool result's details and the session entry carry:
  *  the mode, type and counts the renderer draws. Pi keeps both in the session
  *  record, and the request bodies in the full metadata hold the text of every
- *  context file, so those stay in the raw sidecar alone. */
+ *  context file, so only the raw sidecar keeps them, and only when `execute`
+ *  writes one. */
 function researchDetailsMetadata(metadata: NormalizedExaResponse["metadata"]): Record<string, unknown> {
 	const { researchMode, type, queryCount, sourceCount, uniqueSourceCount } = metadata;
 	return { researchMode, type, queryCount, sourceCount, uniqueSourceCount };

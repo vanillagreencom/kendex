@@ -1,6 +1,6 @@
 # Exa integration reference
 
-`pi-web-tools` uses Exa through a thin local `ExaClient` (`src/providers/exa.ts`). Tool renderers show concise provider labels while full provider payloads stay in tool `details`/raw sidecars.
+`pi-web-tools` uses Exa through a thin local `ExaClient` (`src/providers/exa.ts`). Tool renderers show concise provider labels. Tool `details` carry each result's title, URL, published date and content id; the stored text sits in the content store under its content id. No tool keeps the provider response in `details`. The `web_research` raw metadata file keeps the full research metadata and the Exa response, when one is written; a `json` report keeps the Exa response alone.
 
 ## API paths used
 
