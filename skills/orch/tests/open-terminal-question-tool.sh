@@ -8,7 +8,7 @@
 #           question-tool words, once, ahead of the caller's flags
 #   gate    a --cmd launch, whose template is the whole command, is refused as
 #           launch-question-tool-missing when it does not carry them itself
-# and the same two for the unattended words a Pi brief closes on, whose gate
+# and the same two for the unattended words every brief closes on, whose gate
 # refuses as launch-unattended-missing.
 #
 # The fixture is open-terminal-codex-prompt.sh's: a copy of open-terminal in a
@@ -100,26 +100,27 @@ launch() {
   [[ ! -d "$TMP_ROOT/wt/$(tr '[:lower:]' '[:upper:]' <<<"$item")" ]] || CREATED=yes
 }
 
-# Pi's unattended words, read from lib/lane-launch.sh, the table open-terminal
-# renders and judges them from, so no suite holds a second copy of the text.
-PI_UNATTENDED_TEXT="$(bash -c 'source "$1" && launch_choice_unattended pi' _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
-[[ -n "$PI_UNATTENDED_TEXT" ]] || { echo "lib/lane-launch.sh named no pi unattended text" >&2; exit 1; }
+# The unattended words every lane is briefed with, read from lib/lane-launch.sh,
+# the table open-terminal renders and judges them from, so no suite holds a
+# second copy of the text.
+UNATTENDED_TEXT="$(bash -c 'source "$1" && launch_choice_unattended' _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
+[[ -n "$UNATTENDED_TEXT" ]] || { echo "lib/lane-launch.sh named no unattended text" >&2; exit 1; }
 
 echo "=== every command open-terminal builds takes the question tool away ==="
 # HARNESS|FLAGS|ITEM|RENDERED COMMAND|WHAT. FLAGS `-` passes no --launch-flags;
 # an ITEM spelled REPO#N launches GitHub item N of REPO.
 # A caller's flags that already carry the words keep one copy, ahead of the rest.
 for row in \
-  "claude|-|CC-1|claude -n CC-1 '--disallowedTools=AskUserQuestion,EnterPlanMode' '/orch start CC-1'|claude denies AskUserQuestion and EnterPlanMode; naming no model, it keeps its compaction" \
-  "claude|--model opus|CC-6|claude -n CC-6 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'opus' '/orch start CC-6'|a claude model the adapter names a window for turns its compaction off" \
-  "claude|--model sonnet|CC-8|claude -n CC-8 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'claude-sonnet-5' '/orch start CC-8'|a claude alias is written as its model id, whose window turns its compaction off" \
-  "claude|--model=sonnet|CC-10|claude -n CC-10 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model=claude-sonnet-5' '/orch start CC-10'|the attached form of a claude alias is written as its model id too" \
-  "claude|--model claude-sonnet-4-6|CC-7|claude -n CC-7 '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'claude-sonnet-4-6' '/orch start CC-7'|a claude model with no window keeps its compaction, and there is no mark to hand off at" \
-  "codex|-|CC-2|codex '-c' 'check_for_update_on_startup=false' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-2'|codex disables the request_user_input feature after its update and compaction settings" \
-  "pi|-|CC-3|pi '--exclude-tools' 'question' '/skill:orch start CC-3 $PI_UNATTENDED_TEXT'|pi excludes the pi-questions tool, and its brief closes on the unattended words, never on --append-system-prompt" \
-  "pi|-|o/r#30|pi '--exclude-tools' 'question' '/skill:orch start github o/r#30 $PI_UNATTENDED_TEXT'|a github pi brief closes on the unattended words too" \
-  "opencode|-|CC-4|opencode --prompt '/orch start CC-4'|an opencode lane keeps its question tool: no flag turns it off, so none is rendered" \
-  "pi|--model sonnet:high --exclude-tools question|CC-5|pi '--exclude-tools' 'question' '--model' 'sonnet:high' '/skill:orch start CC-5 $PI_UNATTENDED_TEXT'|a caller's own copy of the words is carried once" \
+  "claude|-|CC-1|claude -n CC-1 '--disallowedTools=AskUserQuestion,EnterPlanMode' '/orch start CC-1 $UNATTENDED_TEXT'|claude denies AskUserQuestion and EnterPlanMode; naming no model, it keeps its compaction" \
+  "claude|--model opus|CC-6|claude -n CC-6 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'opus' '/orch start CC-6 $UNATTENDED_TEXT'|a claude model the adapter names a window for turns its compaction off" \
+  "claude|--model sonnet|CC-8|claude -n CC-8 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'claude-sonnet-5' '/orch start CC-8 $UNATTENDED_TEXT'|a claude alias is written as its model id, whose window turns its compaction off" \
+  "claude|--model=sonnet|CC-10|claude -n CC-10 '--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model=claude-sonnet-5' '/orch start CC-10 $UNATTENDED_TEXT'|the attached form of a claude alias is written as its model id too" \
+  "claude|--model claude-sonnet-4-6|CC-7|claude -n CC-7 '--disallowedTools=AskUserQuestion,EnterPlanMode' '--model' 'claude-sonnet-4-6' '/orch start CC-7 $UNATTENDED_TEXT'|a claude model with no window keeps its compaction, and there is no mark to hand off at" \
+  "codex|-|CC-2|codex '-c' 'check_for_update_on_startup=false' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-2. $UNATTENDED_TEXT'|codex disables the request_user_input feature after its update and compaction settings" \
+  "pi|-|CC-3|pi '--exclude-tools' 'question' '/skill:orch start CC-3 $UNATTENDED_TEXT'|pi excludes the pi-questions tool, and its brief closes on the unattended words, never on --append-system-prompt" \
+  "pi|-|o/r#30|pi '--exclude-tools' 'question' '/skill:orch start github o/r#30 $UNATTENDED_TEXT'|a github pi brief closes on the unattended words too" \
+  "opencode|-|CC-4|opencode --prompt '/orch start CC-4 $UNATTENDED_TEXT'|an opencode lane keeps its question tool: no flag turns it off, so none is rendered" \
+  "pi|--model sonnet:high --exclude-tools question|CC-5|pi '--exclude-tools' 'question' '--model' 'sonnet:high' '/skill:orch start CC-5 $UNATTENDED_TEXT'|a caller's own copy of the words is carried once" \
   ; do
   IFS='|' read -r harness flags item want what <<<"$row"
   flag_args=()
@@ -141,11 +142,11 @@ for row in \
   "codex|true|CC-12|1|open-terminal: launch-question-tool-missing harness=codex word=-c word=features.default_mode_request_user_input=false|no|a codex template without the words is refused, one word field per word" \
   "pi|true|CC-13|1|open-terminal: launch-question-tool-missing harness=pi word=--exclude-tools word=question|no|a pi template without the words is refused" \
   "pi|true question --exclude-tools|CC-14|1|open-terminal: launch-question-tool-missing harness=pi word=--exclude-tools word=question|no|the words out of order are not the words" \
-  "claude|true --disallowedTools=AskUserQuestion,EnterPlanMode|CC-15|0|-|yes|a claude template carrying the words launches" \
-  "claude|true '--disallowedTools=AskUserQuestion,EnterPlanMode'|CC-16|0|-|yes|a word the template quotes is still the word" \
-  "codex|true -c features.default_mode_request_user_input=false|CC-17|0|-|yes|a codex template carrying the words launches" \
-  "pi|true --exclude-tools question '$PI_UNATTENDED_TEXT'|CC-18|0|-|yes|a pi template carrying the words launches" \
-  "opencode|true|CC-19|0|-|yes|an opencode template is not asked for words it has none of" \
+  "claude|true --disallowedTools=AskUserQuestion,EnterPlanMode '$UNATTENDED_TEXT'|CC-15|0|-|yes|a claude template carrying the words launches" \
+  "claude|true '--disallowedTools=AskUserQuestion,EnterPlanMode' '$UNATTENDED_TEXT'|CC-16|0|-|yes|a word the template quotes is still the word" \
+  "codex|true -c features.default_mode_request_user_input=false '$UNATTENDED_TEXT'|CC-17|0|-|yes|a codex template carrying the words launches" \
+  "pi|true --exclude-tools question '$UNATTENDED_TEXT'|CC-18|0|-|yes|a pi template carrying the words launches" \
+  "opencode|true '$UNATTENDED_TEXT'|CC-19|0|-|yes|an opencode template is not asked for question-tool words it has none of" \
   "-|true|CC-20|0|-|yes|a template naming no harness is not asked for words" \
   ; do
   IFS='|' read -r harness template item want_rc want_err want_created what <<<"$row"
@@ -156,7 +157,7 @@ for row in \
   assert_eq "rc=$RC created=$CREATED refusal=${refusal:--}" "rc=$want_rc created=$want_created refusal=$want_err" "gate: $what"
 done
 
-echo "=== a pi --cmd launch without the unattended words is refused ==="
+echo "=== a --cmd launch without the unattended words is refused, on every harness ==="
 # HARNESS|TEMPLATE|BRIEF FILE TEXT (`-` for none)|ITEM|RC|REFUSAL LINE (`-` for
 # none)|TEXT PRINTED|CREATED|WHAT
 # Every template carries its harness's question-tool words, so the gate
@@ -166,11 +167,13 @@ PI_Q='--exclude-tools question'
 for row in \
   "pi|true $PI_Q|-|CC-26|1|open-terminal: launch-unattended-missing harness=pi|yes|no|a pi template without the words is refused, printing the text" \
   "pi|true $PI_Q 'Ask when stuck.'|-|CC-27|1|open-terminal: launch-unattended-missing harness=pi|yes|no|a pi template briefing other text is refused" \
-  "pi|true $PI_Q $PI_UNATTENDED_TEXT|-|CC-24|1|open-terminal: launch-unattended-missing harness=pi|yes|no|the words the shell splits into several arguments are not the words" \
-  "pi|true $PI_Q '/skill:orch start CC-23 $PI_UNATTENDED_TEXT'|-|CC-23|0|-|no|yes|the words whole inside one argument of the template launch" \
-  "pi|true $PI_Q {brief}|Lead CC-28. $PI_UNATTENDED_TEXT|CC-28|0|-|no|yes|the words in the brief file launch" \
+  "pi|true $PI_Q $UNATTENDED_TEXT|-|CC-24|1|open-terminal: launch-unattended-missing harness=pi|yes|no|the words the shell splits into several arguments are not the words" \
+  "pi|true $PI_Q '/skill:orch start CC-23 $UNATTENDED_TEXT'|-|CC-23|0|-|no|yes|the words whole inside one argument of the template launch" \
+  "pi|true $PI_Q {brief}|Lead CC-28. $UNATTENDED_TEXT|CC-28|0|-|no|yes|the words in the brief file launch" \
   "pi|true $PI_Q {brief}|Lead CC-29.|CC-29|1|open-terminal: launch-unattended-missing harness=pi|yes|no|a brief file without the words is refused" \
-  "claude|true --disallowedTools=AskUserQuestion,EnterPlanMode|-|CC-25|0|-|no|yes|a claude template is not asked for words its harness has none of" \
+  "claude|true --disallowedTools=AskUserQuestion,EnterPlanMode|-|CC-25|1|open-terminal: launch-unattended-missing harness=claude|yes|no|a claude template without the words is refused as a pi one is" \
+  "claude|true --disallowedTools=AskUserQuestion,EnterPlanMode '$UNATTENDED_TEXT'|-|CC-30|0|-|no|yes|a claude template carrying the words launches" \
+  "opencode|true|-|CC-31|1|open-terminal: launch-unattended-missing harness=opencode|yes|no|an opencode template, which has no question-tool words, is still asked for these" \
   ; do
   IFS='|' read -r harness template brief item want_rc want_err want_text want_created what <<<"$row"
   brief_args=()
@@ -181,7 +184,7 @@ for row in \
   launch "$item" --harness "$harness" ${brief_args[@]+"${brief_args[@]}"} --cmd "$template"
   refusal="$(awk '$2 == "launch-unattended-missing" { print; exit }' <<<"$ERR")"
   printed=no
-  [[ "$(tail -n 1 <<<"$ERR")" != "$PI_UNATTENDED_TEXT" ]] || printed=yes
+  [[ "$(tail -n 1 <<<"$ERR")" != "$UNATTENDED_TEXT" ]] || printed=yes
   assert_eq "rc=$RC created=$CREATED refusal=${refusal:--} printed=$printed" \
     "rc=$want_rc created=$want_created refusal=$want_err printed=$want_text" "gate: $what"
 done
@@ -202,20 +205,26 @@ QUESTION="'--disallowedTools=AskUserQuestion,EnterPlanMode'"
 # No rewrite at all: the id is judged and the bare alias written.
 lead_control '  if [[ "$model_id" != "$model" ]]; then' '  if false; then'
 launch CC-9 --harness claude --launch-flags '--model sonnet'
-assert_eq "$CMD" "claude -n CC-9 $SETTINGS$QUESTION '--model' 'sonnet' '/orch start CC-9'" \
+assert_eq "$CMD" "claude -n CC-9 $SETTINGS$QUESTION '--model' 'sonnet' '/orch start CC-9 $UNATTENDED_TEXT'" \
   "control: without the rewrite a claude alias reaches the command as named"
 # The attached form missed: the alias runs as named, judged so, and keeps its
 # compaction on, the attached row's value and words both gone.
 ATTACHED='      words="${words//"$nl$spelling$model$nl"/$nl$spelling$model_id$nl}"'
 lead_control "$ATTACHED" '      :'
 launch CC-21 --harness claude --launch-flags '--model=sonnet'
-assert_eq "$CMD" "claude -n CC-21 $QUESTION '--model=sonnet' '/orch start CC-21'" \
+assert_eq "$CMD" "claude -n CC-21 $QUESTION '--model=sonnet' '/orch start CC-21 $UNATTENDED_TEXT'" \
   "control: an attached alias the rewrite misses keeps its compaction on"
 # The same miss with no judge after it: compaction off on the bare alias.
 lead_control "$ATTACHED" '      :' '      || model_id="$model"' '      || :'
 launch CC-22 --harness claude --launch-flags '--model=sonnet'
-assert_eq "$CMD" "claude -n CC-22 $SETTINGS$QUESTION '--model=sonnet' '/orch start CC-22'" \
+assert_eq "$CMD" "claude -n CC-22 $SETTINGS$QUESTION '--model=sonnet' '/orch start CC-22 $UNATTENDED_TEXT'" \
   "control: without the check after it, that miss turns compaction off on the bare alias"
+# The unattended words gone from the table: a claude --cmd launch carrying
+# none of them then launches, which the gate row above refuses.
+lead_control '  printf '"'"'%s\n'"'"' "$LAUNCH_UNATTENDED_TEXT"' '  :'
+launch CC-32 --harness claude --cmd "true --disallowedTools=AskUserQuestion,EnterPlanMode"
+assert_eq "rc=$RC created=$CREATED" "rc=0 created=yes" \
+  "control: with no unattended words in the table a claude template without them launches"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

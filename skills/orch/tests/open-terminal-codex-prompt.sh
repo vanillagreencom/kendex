@@ -22,8 +22,6 @@ export ORCH_LANE_HOST=local
 # shellcheck source=lib/shared-skill-libs.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 
-# The brief ends at the start command; start.md owns completion.
-TC=""
 # The words every codex command leads with, quoted per token as start_cmd
 # quotes each flag: the launch-only setting that keeps Codex off its startup
 # update prompt, then the feature switch that keeps its question tool away.
@@ -33,6 +31,9 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 SRC_OT="$SCRIPTS_DIR/open-terminal"
 SRC_LIB_DIR="$SCRIPTS_DIR/lib"
+# The brief ends at the start command, then the unattended words every lane is
+# briefed with, read from lib/lane-launch.sh; start.md owns completion.
+TC=". $(bash -c 'source "$1" && launch_choice_unattended' _ "$SRC_LIB_DIR/lane-launch.sh")"
 TMP_ROOT="$(mktemp -d)" || { echo "open-terminal-codex-prompt: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "open-terminal-codex-prompt: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "open-terminal-codex-prompt: scratch=resolve-failed" >&2; exit 1; }

@@ -367,10 +367,10 @@ CODEX_COMPACTION="'-c' 'model_auto_compact_token_limit=9223372036854775807' '-c'
 CLAUDE_QUESTION_OFF="'--disallowedTools=AskUserQuestion,EnterPlanMode'"
 CODEX_QUESTION_OFF="'-c' 'features.default_mode_request_user_input=false'"
 PI_QUESTION_OFF="'--exclude-tools' 'question'"
-# A Pi continuation line then closes on its unattended words, the text read
+# Every continuation line then closes on the unattended words, the text read
 # from lib/lane-launch.sh, which renders and judges them.
-PI_UNATTENDED_TEXT="$(bash -c 'source "$1" && launch_choice_unattended pi' _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
-[[ -n "$PI_UNATTENDED_TEXT" ]] || { echo "lib/lane-launch.sh named no pi unattended text" >&2; exit 1; }
+UNATTENDED_TEXT="$(bash -c 'source "$1" && launch_choice_unattended' _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
+[[ -n "$UNATTENDED_TEXT" ]] || { echo "lib/lane-launch.sh named no unattended text" >&2; exit 1; }
 # occurrences TEXT NEEDLE — how many times NEEDLE stands in TEXT.
 occurrences() { local rest="${1//"$2"/}"; printf '%s\n' "$(( (${#1} - ${#rest}) / ${#2} ))"; }
 # A claude or pi lane re-arms its mailbox monitor; a codex lane arms none,
@@ -393,7 +393,7 @@ await_file "$LATE"
 assert_eq "$(cat "$LATE" 2>/dev/null || true)" "$RELAUNCH_LINE" "the wait bounded by time reads a late launcher's recorded line whole"
 CONTEXT_FILE="$TMP_ROOT/wt/CC-1/tmp/lane-mail/CC-1/context.json"
 mkdir -p "${CONTEXT_FILE%/*}"
-for row in "claude|claude -n CC-1 $CLAUDE_QUESTION_OFF --resume $CLAUDE222|$REARM|$CLAUDE222|" "codex|codex resume $CODEX_SETTINGS $CODEX_COMPACTION $CODEX_QUESTION_OFF $CODEX444||$CODEX444|" "pi|pi $PI_QUESTION_OFF --session $SESSION_HOME/.pi/agent/sessions/repo/session.jsonl|$REARM|$PI_SESSION_ID| $PI_UNATTENDED_TEXT"; do
+for row in "claude|claude -n CC-1 $CLAUDE_QUESTION_OFF --resume $CLAUDE222|$REARM|$CLAUDE222| $UNATTENDED_TEXT" "codex|codex resume $CODEX_SETTINGS $CODEX_COMPACTION $CODEX_QUESTION_OFF $CODEX444||$CODEX444| $UNATTENDED_TEXT" "pi|pi $PI_QUESTION_OFF --session $SESSION_HOME/.pi/agent/sessions/repo/session.jsonl|$REARM|$PI_SESSION_ID| $UNATTENDED_TEXT"; do
   IFS='|' read -r harness expected rearm context_session unattended <<<"$row"
   context_record="$(jq -nc --arg h "$harness" --arg s "$context_session" '{harness:$h,session_id:$s,tokens:400000,window:1000000}')"
   printf '%s\n' "$context_record" > "$CONTEXT_FILE"
@@ -440,13 +440,13 @@ for capture in launch-codex launch-codex-flagged resume-codex fresh; do
 done
 # A --cmd template is the caller's whole command and gains no setting: the
 # pane runs the substituted template exactly as written.
-CMD_TEMPLATE_CODEX="codex -m gpt-6-astra -c model_reasoning_effort=high -c features.default_mode_request_user_input=false {issue}"
+CMD_TEMPLATE_CODEX="codex -m gpt-6-astra -c model_reasoning_effort=high -c features.default_mode_request_user_input=false {issue} '$UNATTENDED_TEXT'"
 OT_CAPTURE="$TMP_ROOT/launch-codex-cmd.cmd" LANES_HOME="$SESSION_HOME" run_case launch-codex-cmd -- \
   --harness codex --cmd "$CMD_TEMPLATE_CODEX" CC-11
 await_file "$TMP_ROOT/launch-codex-cmd.cmd"
 LAUNCH_CODEX_CMD="$(cat "$TMP_ROOT/launch-codex-cmd.cmd")"
 assert_eq "${LAUNCH_CODEX_CMD##* && }" \
-  "env CODEX_HOME='$(lane_codex_home_path "$SESSION_HOME/.codex" "$TMP_ROOT/wt/CC-11")' ORCH_COMPACTION_OVERRIDES='' codex -m gpt-6-astra -c model_reasoning_effort=high -c features.default_mode_request_user_input=false CC-11" \
+  "env CODEX_HOME='$(lane_codex_home_path "$SESSION_HOME/.codex" "$TMP_ROOT/wt/CC-11")' ORCH_COMPACTION_OVERRIDES='' codex -m gpt-6-astra -c model_reasoning_effort=high -c features.default_mode_request_user_input=false CC-11 '$UNATTENDED_TEXT'" \
   "a codex --cmd launch runs its substituted template exactly, with no update setting added"
 
 OLD_CODEX="$SESSION_HOME/.old-codex"; CROSS_CODEX=55555555-5555-5555-5555-555555555555; mkdir -p "$OLD_CODEX/sessions/2026"
@@ -485,7 +485,7 @@ PI_UNTRUSTED="$TMP_ROOT/wt/CC-5"; mkdir -p "$PI_UNTRUSTED/.pi" "$PI_UNTRUSTED/pi
 printf '%s\n' '{"type":"message","message":{"role":"user","content":"start CC-5"}}' >"$PI_UNTRUSTED/pi-sessions/session.jsonl"
 printf '%s\n' '{"sessionDir":"pi-sessions"}' >"$PI_UNTRUSTED/.pi/settings.json"
 OT_CAPTURE="$TMP_ROOT/resume-pi-untrusted.cmd" LANES_HOME="$SESSION_HOME" run_case resume-pi-untrusted -- --relaunch --harness pi CC-5
-await_file "$TMP_ROOT/resume-pi-untrusted.cmd"; assert_contains "$(cat "$TMP_ROOT/resume-pi-untrusted.cmd")" "pi $PI_QUESTION_OFF '/skill:orch start CC-5 $PI_UNATTENDED_TEXT'" "pi relaunch ignores an untrusted project sessionDir"
+await_file "$TMP_ROOT/resume-pi-untrusted.cmd"; assert_contains "$(cat "$TMP_ROOT/resume-pi-untrusted.cmd")" "pi $PI_QUESTION_OFF '/skill:orch start CC-5 $UNATTENDED_TEXT'" "pi relaunch ignores an untrusted project sessionDir"
 
 # --wake hands the lane's own session the line that reads its inbox, through
 # the harness's native resume, from a detached command.
@@ -502,7 +502,7 @@ exit "${WAKE_STUB_RC:-0}"
 EOF
 chmod +x "$BIN/claude"; ln -s claude "$BIN/codex"; ln -s claude "$BIN/pi-bridge"
 WAKE_LINE="Run .agents/skills/orch/scripts/lane-mail inbox --item CC-1 and act on every directive it prints."
-for row in "claude|claude -n CC-1 --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE" "codex|codex exec resume -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false $CODEX444 $WAKE_LINE" "pi|pi-bridge send --cwd $TMP_ROOT/wt/CC-1 $WAKE_LINE $PI_UNATTENDED_TEXT"; do
+for row in "claude|claude -n CC-1 --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE $UNATTENDED_TEXT" "codex|codex exec resume -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false $CODEX444 $WAKE_LINE $UNATTENDED_TEXT" "pi|pi-bridge send --cwd $TMP_ROOT/wt/CC-1 $WAKE_LINE $UNATTENDED_TEXT"; do
   IFS='|' read -r harness expected <<<"$row"
   capture="$TMP_ROOT/wake-$harness.cmd"
   OT_CAPTURE="$capture" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case "wake-$harness" -- --wake --harness "$harness" CC-1
@@ -519,7 +519,7 @@ printf '%s\n' '{"type":"assistant","message":{"model":"claude-opus-5-5","usage":
 touch -r "$TMP_ROOT/claude-transcript.keep" "$CLAUDE_TRANSCRIPT"
 OT_CAPTURE="$TMP_ROOT/wake-claude-opus.cmd" LANES_HOME="$SESSION_HOME" run_case wake-claude-opus -- --wake --harness claude CC-1
 assert_eq "$(cat "$TMP_ROOT/wake-claude-opus.cmd" 2>/dev/null)" \
-  "claude -n CC-1 --settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}} --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE" \
+  "claude -n CC-1 --settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}} --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE $UNATTENDED_TEXT" \
   "a claude wake of a session on a model with a named window turns its compaction off"
 mv -- "$TMP_ROOT/claude-transcript.keep" "$CLAUDE_TRANSCRIPT"
 # A GitHub item is the issue number while its worktree id is issue-<n>, and the
@@ -532,7 +532,7 @@ mkdir -p "$TMP_ROOT/wt/issue-2708"
 git -C "$TMP_ROOT/wt/issue-2708" init -q
 OT_CAPTURE="$TMP_ROOT/wake-gh.cmd" run_case wake-gh -- --wake --tracker github --repo o/r --harness pi 2708
 assert_eq "$(cat "$TMP_ROOT/wake-gh.cmd" 2>/dev/null)" \
-  "pi-bridge send --cwd $TMP_ROOT/wt/issue-2708 Run .agents/skills/orch/scripts/lane-mail inbox --item issue-2708 and act on every directive it prints. $PI_UNATTENDED_TEXT" \
+  "pi-bridge send --cwd $TMP_ROOT/wt/issue-2708 Run .agents/skills/orch/scripts/lane-mail inbox --item issue-2708 and act on every directive it prints. $UNATTENDED_TEXT" \
   "a GitHub wake names the worktree id its mailbox is bound under, never the bare issue number"
 
 OT_CAPTURE="$TMP_ROOT/wake-failed.cmd" WAKE_STUB_RC=3 run_case wake-failed -- --wake --harness pi CC-1
@@ -700,8 +700,8 @@ WT_CC1="$TMP_ROOT/wt/CC-1"; mkdir -p "$WT_CC1"
 # holds session files named for live pids, and a collision there would decide
 # the row.
 WAKE_HOME="$TMP_ROOT/wake-home"; mkdir -p "$WAKE_HOME/.claude/sessions"
-LIVE_RESUME_claude="claude -n CC-1 --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE"
-LIVE_RESUME_codex="codex exec resume -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false $CODEX444 $WAKE_LINE"
+LIVE_RESUME_claude="claude -n CC-1 --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE $UNATTENDED_TEXT"
+LIVE_RESUME_codex="codex exec resume -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false $CODEX444 $WAKE_LINE $UNATTENDED_TEXT"
 
 # table_wake HARNESS [SCRIPT] — a HARNESS wake on CC-1 through SCRIPT, over the
 # table the caller staged. Nothing is started and nothing is waited for, so the

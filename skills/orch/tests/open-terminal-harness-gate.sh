@@ -120,8 +120,14 @@ FLEET=(--state-dir "$TMP_ROOT/fleet")
 # carries them.
 CLAUDE_WORDS="'--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}'"
 CODEX_WORDS='-c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0'
-CLAUDE_QUESTION=--disallowedTools=AskUserQuestion,EnterPlanMode
-CODEX_QUESTION='-c features.default_mode_request_user_input=false'
+# The unattended words every lane is briefed with, read from lib/lane-launch.sh,
+# shell-quoted as the one word a --cmd command carries them in, beside each
+# harness's question-tool words.
+UNATTENDED_TEXT="$(bash -c 'source "$1" && launch_choice_unattended' _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
+[[ -n "$UNATTENDED_TEXT" ]] || { echo "lib/lane-launch.sh named no unattended text" >&2; exit 1; }
+UNATTENDED_WORD="$(printf '%q' "$UNATTENDED_TEXT")"
+CLAUDE_QUESTION="--disallowedTools=AskUserQuestion,EnterPlanMode $UNATTENDED_WORD"
+CODEX_QUESTION="-c features.default_mode_request_user_input=false $UNATTENDED_WORD"
 CLAUDE_TEMPLATE="claude --model opus --effort high $CLAUDE_QUESTION $CLAUDE_WORDS {item}"
 
 echo "=== a fleet launch runs claude and codex only where compaction goes off and the window is named ==="
@@ -283,11 +289,9 @@ echo "=== a local Pi fleet lane's carrier decides its brief's arm line, never th
 # carrier without it launches all the same, its brief carrying the
 # watch-delivery.md arm line and the launch naming the carrier's version.
 printf '{"compaction":{"enabled":false}}\n' > "$PI_AGENT/settings.json"
-# The brief carries Pi's unattended words, read from lib/lane-launch.sh, the
-# table open-terminal judges them from, so the launch reaches the carrier.
-PI_UNATTENDED_TEXT="$(bash -c 'source "$1" && launch_choice_unattended pi' _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
-[[ -n "$PI_UNATTENDED_TEXT" ]] || { echo "lib/lane-launch.sh named no pi unattended text" >&2; exit 1; }
-printf 'Work the item.\n%s\n' "$PI_UNATTENDED_TEXT" > "$TMP_ROOT/pi-brief.txt"
+# The brief carries the unattended words read above, so the launch reaches the
+# carrier.
+printf 'Work the item.\n%s\n' "$UNATTENDED_TEXT" > "$TMP_ROOT/pi-brief.txt"
 PI_BRIEF_CMD='pi --exclude-tools question --model m --thinking high {brief}'
 for row in "sends|0|0" "nowake|1|1"; do
   IFS='|' read -r carrier want_arm want_notice <<<"$row"

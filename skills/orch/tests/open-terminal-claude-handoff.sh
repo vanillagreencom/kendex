@@ -67,7 +67,12 @@ STATUS='  realwd Opus 5 (VG)                    /rc'
 RULE='────────────────────────────────────────'
 BRIEF='/orch start CC-737'
 BRIEFN='/orch+start+CC-737'   # the brief as a needle: `+` reads as a space
-RESEND="loaded-text $BRIEF"
+# The unattended words every brief closes on, read from lib/lane-launch.sh, the
+# text open-terminal renders, and the whole prompt the claude arm passes.
+UNATTENDED="$(bash -c 'source "$1" && launch_choice_unattended' _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
+PROMPT="$BRIEF $UNATTENDED"
+PROMPTN="${PROMPT// /+}"
+RESEND="loaded-text $PROMPT"
 
 # Stub bin: ghostty captures its final argument (the composed `cd ... && claude
 # ...` command open_gui hands to `bash -lc`) into $OT_CAPTURE; gh exits 1 so
@@ -370,13 +375,13 @@ echo "=== open-terminal claude handoff: per-task launch flags ==="
 # shell-executed launch command; a bracketed model id is an ordinary value.
 # The tmux-only verify timeout is never validated on a GUI launch.
 launch_table \
-  "linear:claude renders the caller's launch flags before the brief, no warning|gui|-|--model opus[1m] --effort max --dangerously-skip-permissions|-|rc=0 cmd~'--model'+'opus[1m]'+'--effort'+'max'+'--dangerously-skip-permissions'+'$BRIEFN'=true stderr~open-terminal:+permission-prompt=false" \
-  "github:claude renders the same|github|-|--effort max --dangerously-skip-permissions|-|rc=0 cmd~'--effort'+'max'+'--dangerously-skip-permissions'+'/orch+start+github+acme/widgets#42'=true" \
-  "a second launch renders its own flags, nothing leaking from another launch or a stored default|gui|-|--model claude-sonnet-4-6 --permission-mode bypassPermissions|-|rc=0 cmd~'--model'+'claude-sonnet-4-6'+'--permission-mode'+'bypassPermissions'+'$BRIEFN'=true cmd~'--effort'+'max'=false stderr~open-terminal:+permission-prompt=false" \
-  "an unflagged launch renders no model, effort or permission default, and warns it will stall unattended|gui|-|-|-|rc=0 tail=claude+-n+CC-737+'--disallowedTools=AskUserQuestion,EnterPlanMode'+'$BRIEFN' stderr~open-terminal:+permission-prompt+flags==true" \
+  "linear:claude renders the caller's launch flags before the brief, no warning|gui|-|--model opus[1m] --effort max --dangerously-skip-permissions|-|rc=0 cmd~'--model'+'opus[1m]'+'--effort'+'max'+'--dangerously-skip-permissions'+'$PROMPTN'=true stderr~open-terminal:+permission-prompt=false" \
+  "github:claude renders the same|github|-|--effort max --dangerously-skip-permissions|-|rc=0 cmd~'--effort'+'max'+'--dangerously-skip-permissions'+'/orch+start+github+acme/widgets#42+${UNATTENDED// /+}'=true" \
+  "a second launch renders its own flags, nothing leaking from another launch or a stored default|gui|-|--model claude-sonnet-4-6 --permission-mode bypassPermissions|-|rc=0 cmd~'--model'+'claude-sonnet-4-6'+'--permission-mode'+'bypassPermissions'+'$PROMPTN'=true cmd~'--effort'+'max'=false stderr~open-terminal:+permission-prompt=false" \
+  "an unflagged launch renders no model, effort or permission default, and warns it will stall unattended|gui|-|-|-|rc=0 tail=claude+-n+CC-737+'--disallowedTools=AskUserQuestion,EnterPlanMode'+'$PROMPTN' stderr~open-terminal:+permission-prompt+flags==true" \
   "an unflagged codex launch warns for the same unattended prompt|gui-codex|-|-|-|rc=0 stderr~open-terminal:+permission-prompt+flags==true" \
   "codex's unattended permission word suppresses the warning|gui-codex|-|--dangerously-bypass-approvals-and-sandbox|-|rc=0 cmd~--dangerously-bypass-approvals-and-sandbox=true stderr~open-terminal:+permission-prompt=false" \
-  "a prompting override still launches, rendered as given, and warns loudly|gui|-|--permission-mode plan|-|rc=0 cmd~'--permission-mode'+'plan'+'$BRIEFN'=true stderr~open-terminal:+permission-prompt+flags=--permission-mode+plan=true" \
+  "a prompting override still launches, rendered as given, and warns loudly|gui|-|--permission-mode plan|-|rc=0 cmd~'--permission-mode'+'plan'+'$PROMPTN'=true stderr~open-terminal:+permission-prompt+flags=--permission-mode+plan=true" \
   "metacharacter launch flags refuse to launch, naming the option, and nothing runs|gui|-|--flag; touch $TMP_ROOT/pwned|-|rc=1 stderr~open-terminal:+flags-invalid+option=--launch-flags+value=--flag;+touch+$TMP_ROOT/pwned=true launched=false" \
   "a backslash cannot escape an apostrophe inside a single-quoted GUI brief|custom|-|-|-|rc=1 stderr1~open-terminal:+cmd-unbalanced-quote+item=CC-737=true creates=0 launched=false" \
   "the same unbalanced brief refuses before a tmux worktree or window|custom-tmux|-|-|-|rc=1 stderr1~open-terminal:+cmd-unbalanced-quote+item=CC-737=true creates=0 log~new-window=false" \
@@ -417,7 +422,7 @@ if wait_capture; then
   # rendered line through a login shell, which is the shape under test.
   (cd "$globbait" && OT_ARGV_CAPTURE="$TMP_ROOT/argv" bash -lc "PATH=\"$BIN:\$PATH\"; ${cmd##*&& }") >/dev/null 2>&1 || true
   rm -f "$BIN/claude"
-  assert_eq "$(tr '\n' ' ' < "$TMP_ROOT/argv" 2>/dev/null || echo unrun)" "-n CC-737 --settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}} --disallowedTools=AskUserQuestion,EnterPlanMode --model opus[1m] --dangerously-skip-permissions $BRIEF " \
+  assert_eq "$(tr '\n' ' ' < "$TMP_ROOT/argv" 2>/dev/null || echo unrun)" "-n CC-737 --settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}} --disallowedTools=AskUserQuestion,EnterPlanMode --model opus[1m] --dangerously-skip-permissions $PROMPT " \
     "the argv claude receives is the flags as given: a same-named file cannot rewrite the model id"
 else
   fail "the bracketed model id row never invoked the terminal stub, so its argv cannot be read"
@@ -442,7 +447,7 @@ echo "=== open-terminal claude handoff: tmux brief delivery ==="
 # checked, and each failure names its own cause: a window never created, or launch keystrokes that failed on a
 # briefless lane, is a failed lane, never a launched one.
 launch_table \
-  "the brief visible on the first pass is delivery: no re-send, the flags sent, scrollback captured|tmux|-|--dangerously-skip-permissions|delivered|rc=0 out~open-terminal:+tmux-opened+item=CC-737=true out~open-terminal:+brief-redelivered=false log~'--dangerously-skip-permissions'+'$BRIEFN'=true log~capture-pane+-pJ+-S+-+-t+%7=true resends=0" \
+  "the brief visible on the first pass is delivery: no re-send, the flags sent, scrollback captured|tmux|-|--dangerously-skip-permissions|delivered|rc=0 out~open-terminal:+tmux-opened+item=CC-737=true out~open-terminal:+brief-redelivered=false log~'--dangerously-skip-permissions'+'$PROMPTN'=true log~capture-pane+-pJ+-S+-+-t+%7=true resends=0" \
   "a dialog ate the brief: the launcher waits for a ready composer and re-sends exactly the start command once|tmux|-|-|echo,ready,delivered|rc=0 out~open-terminal:+brief-redelivered+item=CC-737=true resends=1 fullresends=1" \
   "two dialog passes before readiness: one dismissing Enter per pass, the brief typed once after|tmux|ORCH_TMUX_VERIFY_SECS=3|-|echo,echo,echo,echo,echo,ready,delivered|rc=0 out~open-terminal:+brief-redelivered+item=CC-737=true enters=4 resends=1" \
   "the echoed command alone is not delivery: one re-send, then a loud per-lane failure|tmux|-|-|echo,ready,ready|rc=1 stderr~open-terminal:+brief-undelivered+item=CC-737=true stderr~open-terminal:+summary+launched=0+skipped=0+failed=1=true out~open-terminal:+summary+launched=1=false resends=1" \

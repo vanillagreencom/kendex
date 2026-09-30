@@ -51,7 +51,7 @@ ot_message() { # REASON FIELD=VALUE...
     launch-flags-unreachable) text='These launch flags reach nothing. A --cmd launch runs its template as the whole command and no flag is appended to it, so a model, an effort or a permission word left here would be judged and recorded while the harness ran its own default. Nothing was launched. Name them inside the --cmd command, or drop --cmd and let this launcher build the harness command from --launch-flags.' ;;
     launch-model-missing) text='This lane launch names no model, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Name the model in the --cmd command where the launch carries its own harness argv, and in --launch-flags where it does not; spellings holds the flags this harness takes.' ;;
     launch-question-tool-missing) text='This lane launch leaves the harness question tool on, and a lane that calls it stops at a dialog nobody at the pane answers. Nothing was launched. Put the words this line names, in that order, inside the --cmd command; a launch without --cmd is given them by this launcher. A lane asks its overseer through lane-mail ask.' ;;
-    launch-unattended-missing) text='This Pi lane launch leaves out the unattended words, and a Pi lane with its question tool excluded can still ask the person in chat and end its turn waiting, idle with nobody at the pane. Nothing was launched. Put the text under this line, whole, in the brief file or inside one quoted argument of the --cmd command; a launch without --cmd is briefed with it by this launcher.' ;;
+    launch-unattended-missing) text='This lane launch leaves out the unattended words, and a lane with its question tool taken away can still ask the person in chat and end its turn waiting, idle with nobody at the pane. Nothing was launched. Put the text under this line, whole, in the brief file or inside one quoted argument of the --cmd command; a launch without --cmd is briefed with it by this launcher.' ;;
     launch-effort-missing) text='This lane launch names no reasoning effort, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Name the effort in the --cmd command where the launch carries its own harness argv, and in --launch-flags where it does not; spellings holds the flags this harness takes, one ending in = being a whole token with its value attached.' ;;
     lane-selected) text='The launch account is selected.' ;;
     pi-mail-wake-missing) text='The pi-hooks installed for this Pi lane lists no lane mail wake among its extensions, so mail that lands while the lane is idle starts no turn on its own. The lane launches anyway: its brief and relaunch line carry the lane-mail watch arm line, and the lane arms that monitor under bg_task instead. version names the pi-hooks read. Update pi-hooks where the lane runs, with kendex update-pi on that machine, and the next lane launches with the wake and arms no monitor.' ;;
@@ -476,13 +476,14 @@ Options:
                     --cmd launch on a harness with words carries them in its
                     command, --lane or not, or is refused as
                     launch-question-tool-missing, one word= field per word.
-                    Every pi brief built here, and its continuation line,
-                    also closes on the unattended words lib/lane-launch.sh
-                    holds, which route every question through lane-mail and
-                    end no turn waiting on the person. A pi --cmd launch
-                    carries the text whole in its brief file or in one
-                    argument of its command, or is refused as
-                    launch-unattended-missing, printing the text.
+                    Every brief built here, on every harness, and its
+                    continuation line, also closes on the unattended words
+                    lib/lane-launch.sh holds, which route every question
+                    through lane-mail and end no turn waiting on the person.
+                    A --cmd launch naming a harness carries the text whole
+                    in its brief file or in one argument of its command, or
+                    is refused as launch-unattended-missing, printing the
+                    text.
   --relaunch        Replace a dead session on items that may already have a
                     worktree: an existing tree is reused instead of being read
                     as another session's claim. The newest matching Claude,

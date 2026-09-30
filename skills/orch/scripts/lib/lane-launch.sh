@@ -644,22 +644,20 @@ launch_choice_question_off() { # HARNESS
   [[ "$words" == - ]] || printf '%s\n' "$words"
 }
 
-# The unattended words a lane launched on harness $1 is briefed with, printed,
-# nothing where the harness takes none. Pi's alone: a Pi lane with its question
-# tool excluded can still ask the person in chat and end its turn waiting on
-# them, idle with nobody at its pane, so every Pi brief states the rule. It
-# rides the brief, never `--append-system-prompt`: Pi reads its discovered
-# APPEND_SYSTEM.md only when no such value is given, and that file carries the
-# instructions its installed extensions append. The turn-end half of the rule
-# is the lane-mail-check hook's, on every harness that runs it. The text
-# crosses the quoting layers a codex kickoff does, so it holds only letters,
-# spaces, commas, periods and hyphens.
-LAUNCH_UNATTENDED_TEXT='This is an unattended orch lane, and nobody reads this pane. Send every question for the overseer with lane-mail ask and block on lane-mail wait for its answer, never as a question in chat. Never end a turn waiting on the person. Where you would stop to ask, read lane-mail inbox and continue the workflow.'
-launch_choice_unattended() { # HARNESS
-  case "$1" in
-    pi) printf '%s\n' "$LAUNCH_UNATTENDED_TEXT" ;;
-    *) ;;
-  esac
+# The unattended words every lane launch is briefed with, printed, whatever the
+# harness: nobody reads a lane's pane on any of them, and a lane with its
+# question tool taken away can still ask the person in chat and end its turn
+# waiting on them, idle with nobody at its pane, so every brief states the
+# rule. It rides the brief, never Pi's `--append-system-prompt`: Pi reads its
+# discovered APPEND_SYSTEM.md only when no such value is given, and that file
+# carries the instructions its installed extensions append. The turn-end half
+# of the rule is the lane-mail-check hook's idle judge, on every harness that
+# runs it, which holds a turn ending with no lane-mail ask or notice sent since
+# the last one. The text crosses the quoting layers a codex kickoff does, so it
+# holds only letters, spaces, commas, periods and hyphens.
+LAUNCH_UNATTENDED_TEXT='This is an unattended orch lane, and nobody reads this pane. Send every question for the overseer with lane-mail ask and block on lane-mail wait for its answer, never as a question in chat. Never end a turn waiting on the person, and end none before a lane-mail ask or notice says where the work stands. Where you would stop to ask, read lane-mail inbox and continue the workflow.'
+launch_choice_unattended() {
+  printf '%s\n' "$LAUNCH_UNATTENDED_TEXT"
 }
 
 # ORCH_QUESTION_TOOL, decided once here for every launcher: `off`, the

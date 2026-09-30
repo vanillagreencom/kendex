@@ -75,6 +75,7 @@ install_hook() { # SOURCE DEST
 }
 
 new_lane() { # NAME BRANCH
+  REPORT_ITEM=""
   LANE="$TMP_ROOT/$1"
   mkdir -p "$LANE"
   git -C "$LANE" init -q
@@ -89,6 +90,7 @@ new_lane() { # NAME BRANCH
 # makes one: the two share the common git directory the launch marker lives in.
 MAIN=""
 new_worktree_lane() { # NAME BRANCH
+  REPORT_ITEM=""
   MAIN="$TMP_ROOT/$1-main"
   LANE="$TMP_ROOT/$1"
   mkdir -p "$MAIN"
@@ -147,6 +149,21 @@ chmod +x "$NO_FETCH"
 # the marks are reached on, and `-` on one they are not.
 GAP='lane-mail-check: account=unlisted'
 
+# A notice the lane sends through the real `lane-mail notice`, as a working
+# lane reports a step before its turn ends, so the idle judge reads a send
+# this turn. Each carries its own words: a repeat of one envelope inside a
+# minute is refused as a duplicate.
+REPORTS=0
+report() { # ITEM
+  REPORTS=$((REPORTS + 1))
+  printf 'step %s done\n' "$REPORTS" > "$TMP_ROOT/report.txt"
+  (cd "$LANE" && "$LANE_MAIL" notice --item "$1" --root "$LANE" --file "$TMP_ROOT/report.txt" >/dev/null)
+}
+# The item whose lane reports a step before every turn end run_payload makes,
+# empty for a lane that sends nothing. new_lane clears it; a suite sets it for
+# rows that judge something other than the idle judge on a fresh turn end.
+REPORT_ITEM=""
+
 RC=0
 # The judge's argument, empty for the turn-end run the harness makes.
 ARM_ARGS=()
@@ -179,6 +196,7 @@ cop_lead_start() { # JUDGE SESSION
 run_payload() { # RAW-JSON [ENV=VAL...]
   local payload="$1"
   shift
+  if [ -n "$REPORT_ITEM" ] && [ "${#ARM_ARGS[@]}" -eq 0 ]; then report "$REPORT_ITEM"; fi
   RC=0
   : > "$ERR_FILE"
   printf '%s' "$payload" |
@@ -394,6 +412,13 @@ peer_send() { # TEXT
 # cursor: what the hook left for another reader.
 overseer_unread() { # TEXT
   (cd "$LANE" && "$LANE_MAIL" inbox --item overseer --root "$LANE" --peek) | grep -cF -- "$1" || :
+}
+
+# Every keyed value the run wrote, in order, each under its own English: the
+# leading run keyed_block reads stops at the first explanation, and the idle
+# refusal follows the marks' reports.
+hook_keys() {
+  sed -n 's/^lane-mail-check: \([a-z-]*=[^ ]*\).*/\1/p' "$ERR_FILE" | paste -sd';' -
 }
 
 mutant() { # NAME SED-ARGUMENT... — MUTANT_SOURCE names a file other than the hook

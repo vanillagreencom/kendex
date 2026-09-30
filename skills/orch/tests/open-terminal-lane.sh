@@ -1036,8 +1036,14 @@ printf 'Working (esc to interrupt)\n' > "$TMP_ROOT/harness-screen"
 HARNESS_UP="OT_HARNESS_SCREEN=$TMP_ROOT/harness-screen"
 # The flags a hosted claude command leads with, as the remote command quotes them.
 CLAUDE_LEAD="$Q--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}$Q $Q--disallowedTools=AskUserQuestion,EnterPlanMode$Q $Q--model$Q ${Q}opus$Q $Q--effort$Q ${Q}high$Q"
-# hosted_resume ITEM NAME BRIEF — the remote command of a hosted claude relaunch.
-hosted_resume() { printf "exec bash -lc 'cd /srv/lane && { claude %s --continue %s%s%s || [ \$? -ne 1 ] || exec claude -n %s %s %s%s%s; }'" "$CLAUDE_LEAD" "$Q" "$HOSTED_LINE" "$Q" "$2" "$CLAUDE_LEAD" "$Q" "$3" "$Q"; }
+# The unattended words every brief and continuation line closes on, the text
+# read from lib/lane-launch.sh, which renders and judges them.
+UNATTENDED_TEXT="$( source "$SCRIPTS_DIR/lib/lane-launch.sh" && launch_choice_unattended )"
+[[ -n "$UNATTENDED_TEXT" ]] || { echo "lib/lane-launch.sh named no unattended text" >&2; exit 1; }
+# hosted_resume ITEM NAME BRIEF — the remote command of a hosted claude
+# relaunch, the continuation line and the start brief each closing on the
+# unattended words.
+hosted_resume() { printf "exec bash -lc 'cd /srv/lane && { claude %s --continue %s%s %s%s || [ \$? -ne 1 ] || exec claude -n %s %s %s%s %s%s; }'" "$CLAUDE_LEAD" "$Q" "$HOSTED_LINE" "$UNATTENDED_TEXT" "$Q" "$2" "$CLAUDE_LEAD" "$Q" "$3" "$UNATTENDED_TEXT" "$Q"; }
 hosted_line() { printf 'Resume the orch workflow for %s from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item %s first and act on every directive it prints, then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item %s through your harness background wake.' "$1" "$1" "$1"; }
 HOSTED_LINE="$(hosted_line CC-41)"
 run_ot "$HARNESS_UP;$CHOICE" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --relaunch CC-41
@@ -1045,12 +1051,8 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=
   "rc=0 creates=nolog launched=1 calls=accounts;create,--item,CC-41,--repo,o/r,--harness,claude,--account,claude,--relaunch;cat,--item,CC-41,/srv/lane/.git;put,--item,CC-41,/srv/clone/.git/lane-mail/cc-41;cat,--item,CC-41,/srv/clone/.git/lane-mail/cc-41;put,--item,CC-41,/srv/lane/tmp/lane-mail/CC-41/context.json remote=1" \
   "a hosted claude relaunch passes the picked account and --relaunch, and continues natively with the continuation line, the start brief behind it"
 HOSTED_LINE="$(hosted_line CC-48)"
-# The unattended words a Pi continuation line closes on, the text read from
-# lib/lane-launch.sh, which renders and judges them.
-PI_UNATTENDED_TEXT="$( source "$SCRIPTS_DIR/lib/lane-launch.sh" && launch_choice_unattended pi )"
-[[ -n "$PI_UNATTENDED_TEXT" ]] || { echo "lib/lane-launch.sh named no pi unattended text" >&2; exit 1; }
 run_ot "ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;flags=--model github-copilot/opus --thinking high" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-48
-assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec pi $Q--exclude-tools$Q ${Q}question$Q $Q--model$Q ${Q}github-copilot/opus$Q $Q--thinking$Q ${Q}high$Q -c $Q$HOSTED_LINE $PI_UNATTENDED_TEXT$Q'")" \
+assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec pi $Q--exclude-tools$Q ${Q}question$Q $Q--model$Q ${Q}github-copilot/opus$Q $Q--thinking$Q ${Q}high$Q -c $Q$HOSTED_LINE $UNATTENDED_TEXT$Q'")" \
   "rc=0 creates=nolog launched=1 remote=1" \
   "a hosted pi relaunch continues natively with the continuation line"
 # A hosted Pi launch on a pi-claude model is refused before any pick, judge or
@@ -1587,7 +1589,7 @@ assert_eq "$(observe "rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERI
 BRIEF_ROW="ORCH_LANE_HOST=$HOST_STUB;OT_COMPOSER_ON_ENTER=3;$CHOICE"
 brief_resend() { # ITEM
   printf 'rc=%s enters=%s brief=%s redelivered=%s refused=%s' "$RC" "$(typed "send-keys -t %1 Enter")" \
-    "$(grep -cxF -- "/orch start $1" "$RUN/tmux.log" || true)" "$(said "open-terminal: brief-redelivered item=$1")" \
+    "$(grep -cxF -- "/orch start $1 $UNATTENDED_TEXT" "$RUN/tmux.log" || true)" "$(said "open-terminal: brief-redelivered item=$1")" \
     "$(awk '$1 == "open-terminal:" && $2 == "pane-refused" { print $3, $4; exit }' <<<"$OUT" | tr ' ' ',')"
 }
 run_ot "$BRIEF_ROW" --harness claude --lane "$H/.eclaude" --repo o/r CC-151

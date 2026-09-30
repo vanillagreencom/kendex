@@ -128,6 +128,11 @@ launch() { # NAME ARGS...
 }
 
 FLAGS='--model claude-opus-5 --reasoning-effort high --allow-all'
+# The unattended words every lane is briefed with, read from lib/lane-launch.sh,
+# the text open-terminal renders, and the same text shell-quoted as one word
+# for a --cmd template to carry.
+UNATTENDED="$(bash -c 'source "$1" && launch_choice_unattended' _ "$REPO/scripts/lib/lane-launch.sh")"
+UNATTENDED_Q="$(printf '%q' "$UNATTENDED")"
 # The words every copilot command leads with, quoted per token as start_cmd
 # quotes each flag: the launch settings, then the question-off word, then the
 # caller's flags.
@@ -139,13 +144,13 @@ COP_AMBIENT="COPILOT_HOME='$FLEET_HOME/.copilot'"
 
 echo "=== a copilot lane starts with its brief as the value of -i ==="
 launch linear --harness copilot --launch-flags "$FLAGS" cc-737
-assert_contains "$CMD" "&& $COP_ENV $COP_AMBIENT copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-737'" \
+assert_contains "$CMD" "&& $COP_ENV $COP_AMBIENT copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-737. $UNATTENDED'" \
   "linear:copilot emits the prose kickoff after its launch settings, question-off word and flags, under its launch environment and the pane's own account"
 assert_not_contains "$CMD" '$' "the linear:copilot command contains no \$"
 assert_eq "$(grep -c '^open-terminal: launch-trusted .*route=allow-all-env' <<<"$OUT" || true)" "1" \
   "an allow-all launch reports its folder trusted through COPILOT_ALLOW_ALL"
 launch github --tracker github --repo acme/widgets --harness copilot --launch-flags "$FLAGS" 42
-assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github acme/widgets#42'" \
+assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github acme/widgets#42. $UNATTENDED'" \
   "github:copilot emits the same kickoff carrying repo#item"
 
 # A caller's own copy of one launch setting is dropped, whether or not it
@@ -155,7 +160,7 @@ assert_eq "$(grep -o "'--context'" <<<"$CMD" | wc -l | tr -d '[:space:]')" "1" \
   "a caller's --context long_context is dropped for the row's own copy, never carried twice"
 # A --cmd template is the caller's own command, and it runs under the launch
 # environment all the same, on a named account or the default one.
-CMD_T="copilot --model claude-opus-5 --reasoning-effort high --allow-all --no-ask-user -i start-{item}"
+CMD_T="copilot --model claude-opus-5 --reasoning-effort high --allow-all --no-ask-user -i start-{item} $UNATTENDED_Q"
 launch cmd-bare --harness copilot --cmd "$CMD_T" CC-750
 assert_contains "$CMD" "&& $COP_ENV $COP_AMBIENT copilot --model claude-opus-5 --reasoning-effort high --allow-all --no-ask-user -i start-CC-750" \
   "a --cmd launch naming no lane carries the launch environment on the default account"
@@ -180,7 +185,7 @@ assert_contains "$CMD" "&& $COP_ENV $COP_AMBIENT copilot " "--yolo, the other fu
 launch tools-only --harness copilot --launch-flags "--model claude-opus-5 --reasoning-effort high --allow-all-tools" cc-754
 assert_contains "$CMD" "&& $SKILLS_ONLY copilot " \
   "the tools-only --allow-all-tools leaves paths and URLs asking, so it carries an empty COPILOT_ALLOW_ALL"
-launch cmd-narrow --harness copilot --cmd "copilot --model claude-opus-5 --reasoning-effort high --no-ask-user -i start-{item}" CC-755
+launch cmd-narrow --harness copilot --cmd "copilot --model claude-opus-5 --reasoning-effort high --no-ask-user -i start-{item} $UNATTENDED_Q" CC-755
 assert_contains "$CMD" "&& $SKILLS_ONLY copilot --model claude-opus-5" \
   "a --cmd template naming no allow-all spelling carries an empty COPILOT_ALLOW_ALL"
 
@@ -201,7 +206,7 @@ WT="$TMP_ROOT/wt/CC-738"
 session 11111111-aaaa-4aaa-8aaa-111111111111 "$WT" 200001010000
 session 22222222-bbbb-4bbb-8bbb-222222222222 "$WT" 200001010100
 session 33333333-cccc-4ccc-8ccc-333333333333 "$TMP_ROOT/wt/CC-999" 200001010200
-RESUME_LINE="'Resume the orch workflow for CC-738 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item CC-738 first and act on every directive it prints, then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --once --item CC-738 as a background command.'"
+RESUME_LINE="'Resume the orch workflow for CC-738 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item CC-738 first and act on every directive it prints, then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --once --item CC-738 as a background command. $UNATTENDED'"
 launch relaunch --relaunch --harness copilot --launch-flags "$FLAGS" CC-738
 assert_contains "$CMD" "copilot $LEAD --resume=22222222-bbbb-4bbb-8bbb-222222222222 -i $RESUME_LINE" \
   "the newest session in the lane's own worktree is resumed, its continuation line re-arming the --once monitor"
@@ -213,10 +218,10 @@ assert_contains "$CMD" "copilot $LEAD --resume=22222222-bbbb-4bbb-8bbb-222222222
   "a newer record with no events is passed over for the newest session that ran"
 session 77777777-aaaa-4aaa-8aaa-777777777777 "$TMP_ROOT/wt/CC-743" 200001010600 "" none
 launch relaunch-only-eventless --relaunch --harness copilot --launch-flags "$FLAGS" CC-743
-assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-743'" \
+assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-743. $UNATTENDED'" \
   "a worktree whose only record holds no events starts afresh rather than resuming what copilot cannot"
 launch relaunch-none --relaunch --harness copilot --launch-flags "$FLAGS" CC-740
-assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-740'" \
+assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-740. $UNATTENDED'" \
   "a relaunch whose worktree no session record names renders the fresh brief"
 # The store is the account the launch runs on: a named lane's, then the
 # ambient COPILOT_HOME, and only then the default home. Each row's records sit
@@ -240,7 +245,7 @@ echo "=== a relaunch of a retired session, or onto another harness, starts afres
 handoff() { mkdir -p "$TMP_ROOT/state"; printf '%s\n' "$2" > "$TMP_ROOT/state/workflow-state-$1.json"; }
 handoff CC-738 '{"handoff":{"merged":[],"remaining":["open the PR"],"written_at":"2000-01-01T06:00:00Z"}}'
 launch retired --relaunch --harness copilot --launch-flags "$FLAGS" CC-738
-assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-738'" \
+assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-738. $UNATTENDED'" \
   "a standing handoff record retires the lane's session: the relaunch renders the start brief, which continues from the record"
 handoff CC-738 '{"handoff":{"merged":[],"remaining":["open the PR"],"written_at":"2000-01-01T06:00:00Z","resumed_at":946713600}}'
 launch retired-resumed --relaunch --harness copilot --launch-flags "$FLAGS" CC-738
@@ -287,13 +292,13 @@ stderr_reopen() {
 # The lane ran on copilot and is relaunched on claude: nothing in claude's
 # store names the item, so claude starts it afresh on its own brief.
 launch switched --relaunch --harness claude --launch-flags '--model opus --effort high' CC-738
-assert_contains "$CMD" "'/orch start CC-738'" \
+assert_contains "$CMD" "'/orch start CC-738 $UNATTENDED'" \
   "a relaunch onto another harness finds none of the copilot session and starts afresh"
 assert_not_contains "$CMD" "--resume" "the switched relaunch resumes nothing"
 
 echo "=== a copilot wake resumes the lane's session in print mode, and only an idle one ==="
 launch wake --wake --harness copilot --launch-flags "$FLAGS" CC-738
-assert_eq "$CMD" "copilot --autopilot --max-autopilot-continues 3 --context long_context --no-auto-update --no-ask-user --model claude-opus-5 --reasoning-effort high --allow-all --resume=22222222-bbbb-4bbb-8bbb-222222222222 -p Run .agents/skills/orch/scripts/lane-mail inbox --item CC-738 and act on every directive it prints." \
+assert_eq "$CMD" "copilot --autopilot --max-autopilot-continues 3 --context long_context --no-auto-update --no-ask-user --model claude-opus-5 --reasoning-effort high --allow-all --resume=22222222-bbbb-4bbb-8bbb-222222222222 -p Run .agents/skills/orch/scripts/lane-mail inbox --item CC-738 and act on every directive it prints. $UNATTENDED" \
   "the wake resumes the newest session that ran, by its id, its inbox line the value of -p"
 assert_eq "$(cat "$TMP_ROOT/wake.cap.env" 2>/dev/null)" "COPILOT_ALLOW_ALL=true COPILOT_SKILLS_DIRS=$FLEET_HOME/.agents/skills COPILOT_GITHUB_TOKEN=unset GH_TOKEN=gh-fixture" \
   "the woken copilot runs under the launch environment, COPILOT_GITHUB_TOKEN cleared and GH_TOKEN kept"
@@ -402,7 +407,7 @@ assert_eq "${CMD:-none} $(grep -c '^open-terminal: harness-unsupported harness=c
 stage "$TMP_ROOT/cwd-ctrl"
 mutate_file "$TMP_ROOT/cwd-ctrl/scripts/lib/copilot-session.sh" 'index($0, "cwd: ") == 1' 'index($0, "cwd:: ") == 1'
 OT="$TMP_ROOT/cwd-ctrl/scripts/open-terminal" launch cwd-ctrl --relaunch --harness copilot --launch-flags "$FLAGS" CC-738
-assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-738'" \
+assert_contains "$CMD" "copilot $LEAD -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-738. $UNATTENDED'" \
   "control: without the record's directory the relaunch resumes nothing and starts afresh"
 # The retirement read handed /dev/stderr, which a relaunch whose stderr is a
 # regular file reopens and truncates, losing the line written before it. Only
@@ -503,7 +508,7 @@ stage "$TMP_ROOT/lane-store-ctrl"
 mutate_file "$TMP_ROOT/lane-store-ctrl/scripts/open-terminal" \
   '  if [[ "${LANE_ENV%%=*}" == COPILOT_HOME ]]; then' '  if false; then'
 OT="$TMP_ROOT/lane-store-ctrl/scripts/open-terminal" launch lane-store-ctrl --relaunch --harness copilot --lane "$TMP_ROOT/.1copilot" --launch-flags "$FLAGS" CC-741
-assert_contains "$CMD" "'--allow-all' -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-741'" \
+assert_contains "$CMD" "'--allow-all' -i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-741. $UNATTENDED'" \
   "control: without the named lane's store a --lane relaunch resumes nothing"
 # The account rules, each cut from a private copy of the library: the copilot
 # variable, then copilot's admission to the launcher form.

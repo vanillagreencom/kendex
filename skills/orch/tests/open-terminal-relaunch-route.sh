@@ -136,7 +136,7 @@ replay() {
   : > "$RUN/claude.log"
   line="$(remote | sed -e 's/^exec bash -lc /bash -c /' -e "s#cd /srv/lane #cd $sandbox #")"
   env -i PATH="$HARNESS_BIN:$PATH" HOME="$RUN" CLAUDE_LOG="$RUN/claude.log" CLAUDE_CONTINUE_RC="$1" bash -c "$line" 2>/dev/null
-  awk '/ --continue / { r = r s "continue"; s = "," ; next } /^-n CC-1 .*\/orch start CC-1$/ { r = r s "fresh"; s = "," ; next } { r = r s "other"; s = "," } END { print (r == "" ? "none" : r) }' "$RUN/claude.log"
+  awk '/ --continue / { r = r s "continue"; s = "," ; next } /^-n CC-1 .*\/orch start CC-1 / { r = r s "fresh"; s = "," ; next } { r = r s "other"; s = "," } END { print (r == "" ? "none" : r) }' "$RUN/claude.log"
 }
 
 echo "=== a hosted claude relaunch continues, and runs the start brief where claude finds no session ==="

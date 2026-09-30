@@ -507,14 +507,16 @@ if ! LAUNCH_QUESTION_OFF="$(launch_choice_question_off "$LAUNCH_HARNESS")" \
   exit 1
 fi
 
-# A harness with unattended words is briefed with them: start_cmd puts them in
-# every brief it renders, and a --cmd launch carries them whole in one argument
-# of its template or in its brief file, which reaches the harness as one
-# argument. The refusal prints the text under the English, whole, and a
-# reading of it that fails is refused as its absence, never skipped.
+# Every lane is briefed with the unattended words: start_cmd puts them in
+# every brief it renders, and a --cmd launch naming a harness carries them
+# whole in one argument of its template or in its brief file, which reaches the
+# harness as one argument; one naming none is not judged, as the question-tool
+# gate above does not judge it. The refusal prints the text under the English,
+# whole, and a reading of it that fails is refused as its absence, never
+# skipped.
 LAUNCH_UNATTENDED=""
-if ! LAUNCH_UNATTENDED="$(launch_choice_unattended "$LAUNCH_HARNESS")" \
-   || { [[ -n "$CMD_TEMPLATE" && -n "$LAUNCH_UNATTENDED" && "$BRIEF_TEXT" != *"$LAUNCH_UNATTENDED"* ]] \
+if ! LAUNCH_UNATTENDED="$(launch_choice_unattended)" \
+   || { [[ -n "$CMD_TEMPLATE" && -n "$LAUNCH_HARNESS" && "$BRIEF_TEXT" != *"$LAUNCH_UNATTENDED"* ]] \
         && ! launch_choice_phrase_present "$LAUNCH_UNATTENDED" "$CMD_TEMPLATE"; }; then
   ot_message launch-unattended-missing "harness=$LAUNCH_HARNESS" >&2
   [[ -z "$LAUNCH_UNATTENDED" ]] || printf '%s\n' "$LAUNCH_UNATTENDED" >&2
@@ -1461,12 +1463,10 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
   for tok in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}; do
     flags+="'$tok' "
   done
-  # The harness's unattended words close its brief and its continuation line,
-  # inside their quotes: the text holds blanks and nothing a quoting layer
-  # acts on.
+  # The unattended words close every brief and continuation line, inside
+  # their quotes: the text holds blanks and nothing a quoting layer acts on.
   local unattended
-  unattended="$(launch_choice_unattended "$HARNESS")" || return 1
-  [[ -z "$unattended" ]] || unattended=" $unattended"
+  unattended=" $(launch_choice_unattended)" || return 1
   # Both delivered lines obey the same shell-inert rule as the codex arms above.
   # A wake runs its line in print mode and exits; a relaunch resumes an
   # interactive session that is already mid-workflow, so the resumed command
@@ -1539,15 +1539,15 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
   # interactive session and submits it, and are prose built from the same
   # shell-inert characters as the codex arms, for the same reason.
   case "$TRACKER:$HARNESS" in
-    linear:claude)   printf "claude -n %q %s'/orch start %s'\n" "$item" "$flags" "$item" ;;
-    linear:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for %s'\n" "$flags" "$item" ;;
-    linear:copilot)  printf "copilot %s-i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for %s'\n" "$flags" "$item" ;;
-    linear:opencode) printf "opencode %s--prompt '/orch start %s'\n" "$flags" "$item" ;;
+    linear:claude)   printf "claude -n %q %s'/orch start %s%s'\n" "$item" "$flags" "$item" "$unattended" ;;
+    linear:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for %s.%s'\n" "$flags" "$item" "$unattended" ;;
+    linear:copilot)  printf "copilot %s-i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for %s.%s'\n" "$flags" "$item" "$unattended" ;;
+    linear:opencode) printf "opencode %s--prompt '/orch start %s%s'\n" "$flags" "$item" "$unattended" ;;
     linear:pi)       printf "pi %s'/skill:orch start %s%s'\n" "$flags" "$item" "$unattended" ;;
-    github:claude)   printf "claude -n github-%q %s'/orch start github %s#%s'\n" "$item" "$flags" "$repo" "$item" ;;
-    github:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github %s#%s'\n" "$flags" "$repo" "$item" ;;
-    github:copilot)  printf "copilot %s-i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github %s#%s'\n" "$flags" "$repo" "$item" ;;
-    github:opencode) printf "opencode %s--prompt '/orch start github %s#%s'\n" "$flags" "$repo" "$item" ;;
+    github:claude)   printf "claude -n github-%q %s'/orch start github %s#%s%s'\n" "$item" "$flags" "$repo" "$item" "$unattended" ;;
+    github:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github %s#%s.%s'\n" "$flags" "$repo" "$item" "$unattended" ;;
+    github:copilot)  printf "copilot %s-i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github %s#%s.%s'\n" "$flags" "$repo" "$item" "$unattended" ;;
+    github:opencode) printf "opencode %s--prompt '/orch start github %s#%s%s'\n" "$flags" "$repo" "$item" "$unattended" ;;
     github:pi)       printf "pi %s'/skill:orch start github %s#%s%s'\n" "$flags" "$repo" "$item" "$unattended" ;;
     *) ot_message harness-unsupported "harness=$HARNESS" >&2; exit 1 ;;
   esac
@@ -2323,7 +2323,10 @@ tmux_launch_verify() { # PANE TITLE BRIEF EXPECT
     ot_message composer-stuck "item=$title" "brief=$brief" >&2
     return 1
   fi
-  launch_write brief-send "$title" "$pane" "$expect" text "$brief" || return 1
+  # The brief is the check's needle, the start of the prompt the claude arm
+  # passed, short enough that no composer wraps it; the re-send carries the
+  # whole prompt, the unattended words after it, as start_cmd rendered it.
+  launch_write brief-send "$title" "$pane" "$expect" text "$brief $(launch_choice_unattended)" || return 1
   if tmux_wait_launched "$pane" "$brief"; then
     ot_message brief-redelivered "item=$title"
     return 0
@@ -2589,8 +2592,9 @@ launch_finish() {
   # (lib/copilot-session.sh copilot_session_lane_note). Null for another harness.
   LAUNCH_ALLOW_ALL=null
   [[ "$HARNESS" != copilot ]] || { LAUNCH_ALLOW_ALL=false; ! lane_copilot_allows_all "$cmd" || LAUNCH_ALLOW_ALL=true; }
-  # The brief the claude arms pass as the initial CLI prompt, restated for the
-  # tmux delivery check (and its one re-send). Empty for other harnesses and
+  # The start of the brief the claude arms pass as the initial CLI prompt, the
+  # part before the unattended words, restated for the tmux delivery check
+  # (and its one re-send, which adds the words back). Empty for other harnesses and
   # custom --cmd templates, which disables the check. A resume-or-fresh
   # relaunch has none either: which of its two commands runs is the host's
   # answer, and open_tmux checks for a harness screen instead.

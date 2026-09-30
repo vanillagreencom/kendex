@@ -108,11 +108,6 @@ lane_unread() { # ITEM TEXT
 cop_gap() { # ITEM
   printf 'reading-unrecorded=%s;session-record=missing;account=unlisted' "$LANE/tmp/lane-mail/$1/context.json"
 }
-# Every keyed value the run wrote, in order, each under its own English: the
-# leading run keyed_block reads stops at the first explanation.
-cop_keys() {
-  sed -n 's/^lane-mail-check: \([a-z-]*=[^ ]*\).*/\1/p' "$ERR_FILE" | paste -sd';' -
-}
 stdout_field() { # JQ
   jq -r "$1" "$TMP_ROOT/stdout" 2>/dev/null || echo unparseable
 }
@@ -129,6 +124,7 @@ plant_copilot_install() { # [SKIP]
 
 new_copilot_lane copilot_stop ken-201
 send KEN-201 'Rebase onto main.'
+REPORT_ITEM=KEN-201
 copilot_stop "$COP_TRANSCRIPT"
 assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
   "RC=0 first=lane-mail-check: unread=1 decision=block" \
@@ -138,7 +134,7 @@ assert_eq "recorded=$(cop_recorded)" "recorded=s1" \
 assert_eq "$(stdout_field .reason | grep -c 'Rebase onto main.') $(stdout_field .reason | head -n 1)" \
   "1 lane-mail-check: unread=1" "the block reason is the refusal text, keyed line first, directive under it"
 copilot_stop "$COP_TRANSCRIPT"
-assert_eq "RC=$RC keyed=$(cop_keys) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 keyed=$(cop_gap KEN-201) stdout=" \
+assert_eq "RC=$RC keyed=$(hook_keys) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 keyed=$(cop_gap KEN-201) stdout=" \
   "a second stop passes with the gaps reported and no answer on stdout: the block acknowledged the mail"
 
 send KEN-201 'Then re-arm auto-merge.'
@@ -168,7 +164,7 @@ assert_eq "RC=$RC decision=$(stdout_field .decision) exact=$(stdout_field .reaso
   "a directive holding a backslash and a quote reaches the block reason byte for byte"
 send KEN-201 'Continued.'
 copilot_stop "$COP_TRANSCRIPT" true
-assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=$(cop_gap KEN-201)" \
+assert_eq "RC=$RC keyed=$(hook_keys)" "RC=0 keyed=$(cop_gap KEN-201)" \
   "the turn Copilot continued after a block skips the mailbox check, as on every harness"
 
 # The halt arm: the deny answer under exit 2. A call from a session the judge
@@ -250,6 +246,7 @@ copilot_context start
 assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout") stderr=$(first_line) recorded=$(cop_recorded)" \
   "RC=0 stdout= stderr=- recorded=s1" "the lead's session start records the session as the lead"
 send KEN-203 'Rebase first.'
+REPORT_ITEM=KEN-203
 COP_SESSION=c1 copilot_tool deliver
 assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout") stderr=$(first_line) unread=$(lane_unread KEN-203 'Rebase first.')" \
   "RC=0 stdout= stderr=lane-mail-check: session-unrecorded=c1 unread=1" \
@@ -316,7 +313,7 @@ chmod +x "$FAKE_FIND_BIN/find"
 CALL_ENV=("HOME=$COP_HOME" "PATH=$FAKE_FIND_BIN:$PATH")
 copilot_context start
 CALL_ENV=("HOME=$COP_HOME")
-assert_eq "RC=$RC keys=$(cop_keys) cause=$(grep -cxF 'find: planted failure' "$ERR_FILE")" \
+assert_eq "RC=$RC keys=$(hook_keys) cause=$(grep -cxF 'find: planted failure' "$ERR_FILE")" \
   "RC=0 keys=leads-unpruned=$COP_LEADS;leads-unpruned=$COP_USAGE cause=2" \
   "a prune that fails is reported for each directory with its cause, and the start still passes"
 
@@ -448,12 +445,13 @@ assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
 new_copilot_lane copilot_context ken-204
 mkdir -p "$LANE/tmp/lane-mail/KEN-204"
 (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-204 >/dev/null)
+REPORT_ITEM=KEN-204
 copilot_stop "$COP_TRANSCRIPT"
-assert_eq "RC=$RC keyed=$(cop_keys) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 keyed=$(cop_gap KEN-204) stdout=" \
+assert_eq "RC=$RC keyed=$(hook_keys) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 keyed=$(cop_gap KEN-204) stdout=" \
   "a Copilot lane with no unread mail and no context reading ends its turn with the context and account reported unjudged"
 usage_line claude 900000 > "$COP_TRANSCRIPT"
 copilot_stop "$COP_TRANSCRIPT"
-assert_eq "RC=$RC keyed=$(cop_keys) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 keyed=$(cop_gap KEN-204) stdout=" \
+assert_eq "RC=$RC keyed=$(hook_keys) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 keyed=$(cop_gap KEN-204) stdout=" \
   "a Copilot transcript is never read for a figure, so a usage line past the mark does not hold the turn end"
 : > "$COP_TRANSCRIPT"
 
@@ -475,7 +473,7 @@ cop_context_recorded() { # the reading the hook recorded in the lane's mailbox
 # the account is unmeasured until the login row below.
 cop_record 100000 1000000
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
-assert_eq "RC=$RC keyed=$(cop_keys) recorded=$(cop_context_recorded)" \
+assert_eq "RC=$RC keyed=$(hook_keys) recorded=$(cop_context_recorded)" \
   'RC=0 keyed=account=unmeasured recorded=["copilot",100000,800000,"claude-opus-5"]' \
   "a Copilot lane's fresh record is read, recorded with the compaction point as capacity, and judged room"
 cop_record 400000 1000000
@@ -489,13 +487,13 @@ assert_eq "RC=$RC first=$(first_line)" "RC=0 first=lane-mail-check: context=1300
   "a 200K window is judged on its own compaction point, past half of 160000"
 cop_record 400000 1000000 "$TMP_ROOT/session-state/s2/events.jsonl"
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
-assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=reading-unrecorded=$LANE/tmp/lane-mail/KEN-204/context.json;session-record=wrong-transcript;account=unmeasured" \
+assert_eq "RC=$RC keyed=$(hook_keys)" "RC=0 keyed=reading-unrecorded=$LANE/tmp/lane-mail/KEN-204/context.json;session-record=wrong-transcript;account=unmeasured" \
   "a record naming another transcript is unmeasured, never read as this session's"
 cop_record 400000 1000000
 jq -c '.written_at = 1' "$COP_ACCOUNT/lane-status/s1.json" > "$TMP_ROOT/stale.json"
 mv -- "$TMP_ROOT/stale.json" "$COP_ACCOUNT/lane-status/s1.json"
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
-assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=reading-unrecorded=$LANE/tmp/lane-mail/KEN-204/context.json;session-record=stale;account=unmeasured" \
+assert_eq "RC=$RC keyed=$(hook_keys)" "RC=0 keyed=reading-unrecorded=$LANE/tmp/lane-mail/KEN-204/context.json;session-record=stale;account=unmeasured" \
   "a record the status line stopped refreshing is unmeasured, never read as room"
 # The extension's reading is read first: one below the mark stands although
 # the status line's record of the same session is past it.
@@ -517,7 +515,7 @@ cop_gap_record() { # ITEM
 cop_record 400000 1000000
 cop_extension_reading KEN-204 100000 800000
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
-assert_eq "RC=$RC keyed=$(cop_keys) decision=$(stdout_field .decision)" "RC=0 keyed=account=unmeasured decision=" \
+assert_eq "RC=$RC keyed=$(hook_keys) decision=$(stdout_field .decision)" "RC=0 keyed=account=unmeasured decision=" \
   "an extension reading below the mark is judged room, never overridden by a status-line record past it"
 # A record that is no extension reading of this session is passed over for
 # the status-line record: a predecessor's in the same mailbox, and a gap record.
@@ -547,7 +545,7 @@ while IFS='|' read -r allow grant extension want; do
   cop_record 400000 1000000 "" "$allow"
   [ -z "$extension" ] || cop_extension_reading KEN-204 "$extension" 800000
   copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT" "COPILOT_ALLOW_ALL=$grant"
-  assert_eq "RC=$RC keyed=$(cop_keys) decision=$(stdout_field .decision)" "RC=0 keyed=$want decision=block" \
+  assert_eq "RC=$RC keyed=$(hook_keys) decision=$(stdout_field .decision)" "RC=0 keyed=$want decision=block" \
     "a record at the cap whose allow_all_enabled is $allow at the turn end, COPILOT_ALLOW_ALL=[$grant], extension reading [$extension]"
   rm -f -- "${LANE:?}/tmp/lane-mail/KEN-204/context.json"
 done <<'ROWS'
@@ -572,9 +570,23 @@ assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
   "RC=0 first=lane-mail-check: headroom=0 decision=block" \
   "a Copilot account whose pool is at zero holds the turn end, overage permitted or not"
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT" "ORCH_LANES_FETCH_CMD=$COP_FETCH" "COP_POOL=$COP_ROOM" "ORCH_LANES_USAGE_TTL=0"
-assert_eq "RC=$RC keyed=$(cop_keys) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 keyed= stdout=" \
+assert_eq "RC=$RC keyed=$(hook_keys) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 keyed= stdout=" \
   "a Copilot account with room and a fresh record end the turn with nothing to report"
 rm -f -- "${COP_ACCOUNT:?}/config.json"
+
+# The idle judge on Copilot: a lead that sent nothing through lane mail is held
+# with the documented block answer, and on the turn Copilot continued the
+# overseer is sent the lane notice and nothing holds the turn.
+new_copilot_lane copilot_idle ken-205
+mkdir -p "$LANE/tmp/lane-mail/KEN-205"
+(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-205 >/dev/null)
+copilot_stop "$COP_TRANSCRIPT"
+assert_eq "RC=$RC keyed=$(hook_keys) decision=$(stdout_field .decision) reason=$(stdout_field .reason | head -n 1)" \
+  "RC=0 keyed=$(cop_gap KEN-205);idle=KEN-205 decision=block reason=lane-mail-check: idle=KEN-205" \
+  "a Copilot lead that sent nothing is held with the block answer, the idle refusal its reason"
+copilot_stop "$COP_TRANSCRIPT" true
+assert_eq "RC=$RC keyed=$(hook_keys) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 keyed=$(cop_gap KEN-205);idle-notice=KEN-205 stdout=" \
+  "the turn Copilot continued is reported to the overseer and not held"
 
 # --- the checkout's overseer mailbox --------------------------------------
 # The overseer mailbox has one reader, the session the checkout's fleet record
@@ -961,6 +973,7 @@ mutant copilot-no-record -e '/^context_read_and_record() {/,/^}/s@^  if \[ "\$HA
 new_copilot_lane control_cop_record ken-217 "$MUTANT_PATH"
 mkdir -p "$LANE/tmp/lane-mail/KEN-217"
 (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-217 >/dev/null)
+REPORT_ITEM=KEN-217
 cop_record 400000 1000000
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
 assert_eq "RC=$RC decision=$(stdout_field .decision)" "RC=0 decision=" \
@@ -983,6 +996,7 @@ mutant copilot-no-fallback -e '/^copilot_context_read() {/,/^}/s@^    return 1$@
 new_copilot_lane control_cop_fallback ken-257 "$MUTANT_PATH"
 mkdir -p "$LANE/tmp/lane-mail/KEN-257"
 (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-257 >/dev/null)
+REPORT_ITEM=KEN-257
 cop_record 400000 1000000
 cop_extension_reading KEN-257 100000 800000 s0
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
@@ -994,9 +1008,10 @@ mutant copilot-no-stop-cause -e 's@STOP_CAUSE=\$(copilot_session_stop_cause @STO
 new_copilot_lane control_cop_cause ken-258 "$MUTANT_PATH"
 mkdir -p "$LANE/tmp/lane-mail/KEN-258"
 (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-258 >/dev/null)
+REPORT_ITEM=KEN-258
 cop_record 100000 1000000 "" false
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT" COPILOT_ALLOW_ALL=true
-assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=account=unmeasured" \
+assert_eq "RC=$RC keyed=$(hook_keys)" "RC=0 keyed=account=unmeasured" \
   "control: without the stop-cause read a policy-blocked lane ends its turn with no cause"
 # The launch's grant cut: the hook hands the judge a grant whatever the launch
 # line set, so a lane launched without allow-all reports a policy stop.
@@ -1004,9 +1019,10 @@ mutant copilot-grant-ignored -e 's@"\$COPILOT_SESSION_RECORD" "\${COPILOT_ALLOW_
 new_copilot_lane control_cop_grant ken-259 "$MUTANT_PATH"
 mkdir -p "$LANE/tmp/lane-mail/KEN-259"
 (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-259 >/dev/null)
+REPORT_ITEM=KEN-259
 cop_record 100000 1000000 "" false
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT" COPILOT_ALLOW_ALL=
-assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=stop-cause=allow-all-blocked-by-policy;account=unmeasured" \
+assert_eq "RC=$RC keyed=$(hook_keys)" "RC=0 keyed=stop-cause=allow-all-blocked-by-policy;account=unmeasured" \
   "control: without the launch's grant a lane launched without allow-all reports a policy stop"
 # The record read only where no extension reading stands: a fleet lane whose
 # extension records its context ends a policy-blocked turn with no cause.
@@ -1014,10 +1030,11 @@ mutant copilot-cause-fallback-only -e 's@^    \[ "\$COMPACTED" = false \] || ret
 new_copilot_lane control_cop_cause_extension ken-260 "$MUTANT_PATH"
 mkdir -p "$LANE/tmp/lane-mail/KEN-260"
 (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-260 >/dev/null)
+REPORT_ITEM=KEN-260
 cop_record 100000 1000000 "" false
 cop_extension_reading KEN-260 100000 800000
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT" COPILOT_ALLOW_ALL=true
-assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=account=unmeasured" \
+assert_eq "RC=$RC keyed=$(hook_keys)" "RC=0 keyed=account=unmeasured" \
   "control: without the record read beside the extension's reading a policy-blocked lane ends its turn with no cause"
 # The account arm cut: a Copilot account at zero is reported unlisted and the
 # turn ends.
