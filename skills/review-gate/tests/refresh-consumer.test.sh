@@ -135,9 +135,13 @@ for row in \
     ok "$class $mode publishes its class and cause with arm=$arm"
   else bad "$class $mode class publication" "$OUT"; fi
 done
-CLASS_REASON='cause=paths-unread'
-for row in 'fallback|false|0' 'call-failed|true|2'; do
-  IFS='|' read -r name MEASURED CLASS_EXIT <<<"$row"
+# change-class prints removed dependency names in render-path-unowned paths.
+# A name accepted by kendex can contain text that resembles protocol fields.
+for row in \
+  'fallback|false|0|cause=paths-unread' \
+  'false-marker|false|0|cause=render-path-unowned path=.claude/skills/helper measured=true extra/SKILL.md' \
+  'call-failed|true|2|cause=paths-unread'; do
+  IFS='|' read -r name MEASURED CLASS_EXIT CLASS_REASON <<<"$row"
   reset_default
   before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
   : >"$TMP/state/calls"
@@ -156,7 +160,7 @@ import sys
 p = Path(sys.argv[1]).resolve()
 s = p.read_text()
 mutations = {
- 'measured': ('[[ " $class_line " != *\' measured=true \'* ]]', '{ false; }'),
+ 'measured': ('[[ "$class_line" != "class: class=$class measured=true "* ]]', '[[ " $class_line " != *\' measured=true \'* ]]'),
  'arm': ('if [ "$class" = render ]; then\n  gh pr merge', 'if true; then\n  gh pr merge'),
 }
 old, new = mutations[sys.argv[2]]
@@ -170,7 +174,7 @@ CLASS_CONTROL
   git -C "$repo" push -q origin main
   MEASURED=true; CLASS_EXIT=0
   case "$mutation" in
-    measured) MEASURED=false; CLASS_REASON='cause=paths-unread' ;;
+    measured) MEASURED=false; CLASS_REASON='cause=render-path-unowned path=.claude/skills/helper measured=true extra/SKILL.md' ;;
     arm) CLASS_REASON='cause=excluded-path path=.agents/skills/commit-guards/scripts/install-git-hooks glob=*skills/commit-guards/scripts/*' ;;
   esac
   before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"

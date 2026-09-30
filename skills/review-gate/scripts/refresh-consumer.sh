@@ -88,9 +88,9 @@ while IFS= read -r line; do
     'class: class='*) class_line="$line" ;;
   esac
 done <<<"$class_output"
-# change-class also emits standard as a fallback. Its measured marker, not
-# its cause or class name, authorizes publication.
-if [ "$class_result" -ne 0 ] || [ -z "$class" ] || [[ " $class_line " != *' measured=true '* ]]; then
+# change-class also emits standard as a fallback. Publication requires its
+# leading class and measured fields to agree with stdout, not path/cause text.
+if [ "$class_result" -ne 0 ] || [ -z "$class" ] || [[ "$class_line" != "class: class=$class measured=true "* ]]; then
   printf 'refresh-error=read value=class\n' >&2
   exit 1
 fi
