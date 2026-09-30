@@ -69,16 +69,16 @@ Read `pi-extensions/pi-hooks/pi-contract.json` for the events and calls pi-hooks
 
 Package suites run on older pinned Pi versions and fake hosts, so a green suite does not prove a contract change. For every Required entry and every blocking entry:
 
-- **One install location.** Node resolves an import from the importing file's own directories, so an install beside a package is invisible to it. Copy the package without its `node_modules` to `tmp/pi-update/<package>/` (`rsync -a --exclude node_modules pi-extensions/<package>/ tmp/pi-update/<package>/`) and install there: `npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund` with every `@earendil-works/pi-*` package the package's `package.json` names, each at `@<version>`, plus the other packages its `DEVELOPMENT.md` install line names. The extension, its other dependencies, every check and the suite then run from that copy.
+- **One install location.** Node resolves an import from the importing file's own directories, so an install beside a package is invisible to it. Copy the whole `pi-extensions` tree without any `node_modules`, so a test that imports a sibling package by relative path finds it: `mkdir -p tmp/pi-update/work && rsync -a --exclude node_modules pi-extensions tmp/pi-update/work/`. `<copy>` is `tmp/pi-update/work/pi-extensions/<package>` in this step. In `<copy>`, run `npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund` with every `@earendil-works/pi-*` package the package's `package.json` names, each at `@<version>`, plus the other packages its `DEVELOPMENT.md` install line names. The extension, its other dependencies, every check and the suite then run from `<copy>`.
 - **Prove the version.** Before any check or suite, print the `@earendil-works/pi-coding-agent` version that resolves from the extension's entry file and from the suite's directory. The record states it. A version other than the target stops the run.
 
   ```bash
-  node --input-type=module -e 'import { findPackageJSON } from "node:module"; import { readFileSync } from "node:fs"; import { pathToFileURL } from "node:url"; for (const at of process.argv.slice(1)) console.log(at, JSON.parse(readFileSync(findPackageJSON("@earendil-works/pi-coding-agent", pathToFileURL(at)), "utf8")).version)' tmp/pi-update/<package>/<entry file> tmp/pi-update/<package>/<suite directory>/
+  node --input-type=module -e 'import { findPackageJSON } from "node:module"; import { readFileSync } from "node:fs"; import { pathToFileURL } from "node:url"; for (const at of process.argv.slice(1)) console.log(at, JSON.parse(readFileSync(findPackageJSON("@earendil-works/pi-coding-agent", pathToFileURL(at)), "utf8")).version)' <copy>/<entry file> <copy>/<suite directory>/
   ```
 
-- Put each check in the copy's own test directory, and load the real extension from the copy into a real `createAgentSession` with a controlled provider: a faux provider as in `pi-extensions/pi-hooks/tests/pi-session.ts`, or a stubbed endpoint for a provider an extension registers, as in `pi-extensions/pi-codex-minimal-tools/tests/transcript-context.test.ts`.
+- Put each check in `<copy>`'s own test directory, and load the real extension from `<copy>` into a real `createAgentSession` with a controlled provider: a faux provider as in `pi-extensions/pi-hooks/tests/pi-session.ts`, or a stubbed endpoint for a provider an extension registers, as in `pi-extensions/pi-codex-minimal-tools/tests/transcript-context.test.ts`.
 - Pair each check with a regression control that fails on the old behaviour: the check run on a copy of the pre-fix code set up the same way, or a fixture that plants the old behaviour. A check whose control passes proves nothing.
-- Run each touched package's suite in the copy with the command its `test` script runs, less any `npm install` the script runs first: that install puts the package's own pin back (`pi-hooks` has one).
+- Run each touched package's suite in `<copy>` with the command its `test` script runs, less any `npm install` the script runs first: that install puts the package's own pin back (`pi-hooks` has one).
 
 When a behaviour cannot be exercised inside Pi, the record says so; it never asserts parity.
 
@@ -94,7 +94,7 @@ When a behaviour cannot be exercised inside Pi, the record says so; it never ass
 ## 6. Merge and record
 
 1. Land the fixes through a pull request (orch). Stage only intended files.
-2. Test the exact merged commit: copy each package from the full default-branch commit that holds the fixes (`git archive <sha> pi-extensions/<package> | tar -x -C tmp/pi-update/merged`) and repeat step 4 in that copy, the version proof included. That full SHA is the tested extension commit.
+2. Test the exact merged commit: extract the `pi-extensions` tree of the full default-branch commit that holds the fixes with `mkdir -p tmp/pi-update/merged && git archive <sha> pi-extensions | tar -x -C tmp/pi-update/merged`. `<copy>` is now `tmp/pi-update/merged/pi-extensions/<package>`. Copy each step 4 check from the work copy's test directory into `<copy>`'s, then run step 4 from its install on in `<copy>`: the install, the version proof, the checks and the suite, and no `rsync`. That full SHA is the tested extension commit.
 3. Replace `pi-update.audit.md` with the candidate record (§ Audit record) and update the marker: under `roll`, `lastVersion` and `lastDate` move to the target; under `hold` they stay at the last cleared release. Either way `lastRun` and `lastRunHead` refresh.
 4. Run `node --test pi-extensions/package-policy.test.mjs` and land the record and marker through a pull request whose subject says `audited through v<version>`.
 5. From the main checkout, run `kendex refresh` and report the Pi packages it updated.
