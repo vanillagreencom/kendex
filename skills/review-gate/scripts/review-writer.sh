@@ -81,10 +81,9 @@
 # Diagnostic records precede their explanation and use lib/diagnostics.sh.
 #
 # Read errors fail LOUDLY (exit 1) without acting: treating a transient API
-# failure as absent evidence could flip a healthy PR's state. A class policy
-# the predicate cannot resolve for one head is the one failure recorded on
-# the pull request as well as in the run: the predicate answers
-# class-unresolved, this writer records it on that head as
+# failure as absent evidence could flip a healthy PR's state. The
+# predicate's class-unresolved verdict is the one failure recorded on the
+# pull request as well as in the run: this writer records it on that head as
 # ../SKILL.md § Decision table states, the pass goes on converging every
 # other pull request, and it exits 1 at its end. The cause
 # may be the pull request's own or the runner's; the log names which.

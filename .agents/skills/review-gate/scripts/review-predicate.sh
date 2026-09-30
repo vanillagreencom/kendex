@@ -32,11 +32,9 @@ Output: one machine-readable line on stdout:
           detail=<human text>
 (diagnostic detail also echoed for logs). `unmeasured` is an active class
 policy whose classifier fell back to standard; the detail names its cause.
-class-unresolved means that under an active class policy this head's change
-class or review policy could not be resolved for any other reason: the pull
-request's range, manifest or inventory, or a runner fault such as a scratch
-directory, a checkout or a source refresh. The stderr diagnostics above it
-name the cause, and no evidence was read. What the writer does with it:
+class-unresolved is a class-policy failure on this head answered as a
+verdict rather than exit 2; the stderr diagnostics above it name the cause,
+and no evidence was read. Which failures, and what the writer does with it:
 SKILL.md § Decision table.
 
 Exit codes:
@@ -952,10 +950,11 @@ if [ "$POLICY_STATE" = "active" ]; then
   }
   # review-policy's exit 3 is its one answer that is not a class: the
   # classifier fell back to standard, and the record carries the cause it
-  # named. That is a verdict for this head, posted as a non-success status
-  # the next pass revisits, not a failed evaluation: an evaluation failure
-  # fails the writer's whole pass, and the pass would keep failing while the
-  # pull request stays open. Exit 3 without the record is a broken answer.
+  # named. That is a verdict for this head, not exit 2: a verdict posts a
+  # status naming the head, where exit 2 posts nothing on the pull request.
+  # Unlike class-unresolved below it does not fail the writer's pass, which
+  # would keep failing while the pull request stays open. Exit 3 without the
+  # record is a broken answer.
   policy_status=0
   CLASS_POLICY="$(resolve_class_policy "$POLICY_REPO" "$pr_base" "$HEAD_SHA")" || policy_status=$?
   if [ "$policy_status" -eq 3 ]; then
@@ -970,10 +969,10 @@ if [ "$POLICY_STATE" = "active" ]; then
         ;;
     esac
   fi
-  # Every other failure here, the pull request's own or the runner's, is a
-  # verdict on this head rather than exit 2, so the writer can post pending on
-  # it and keep the gate closed with a reason. The writer still fails its pass
-  # on it.
+  # Every other non-zero exit of resolve_class_policy, the pull request's
+  # fault or the runner's, is a verdict on this head rather than exit 2, so
+  # the writer can post pending on it and keep the gate closed with a reason.
+  # The writer still fails its pass on it.
   [ "$policy_status" -eq 0 ] || {
     rg_message error predicate-policy-resolve "$pr_base...$HEAD_SHA" "::error::review-predicate: the change class or review policy could not be resolved" >&2
     echo "verdict=class-unresolved detail=change class unresolved at $HEAD_SHA; the writer log names the cause, and the next pass retries"
