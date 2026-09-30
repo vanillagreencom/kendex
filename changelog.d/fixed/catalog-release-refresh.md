@@ -1,1 +1,1 @@
-- Consumer refresh uses the latest released kendex. Catalog CI rejects undeliverable hooks with that release. Release updates keep writer pins checked and leave refresh unpinned.
+- Consumer refresh uses the latest released kendex. Catalog CI checks declared hook delivery before install and honors caller advisory policy. Release updates keep writer pins checked.

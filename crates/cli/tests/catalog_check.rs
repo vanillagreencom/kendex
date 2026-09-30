@@ -81,39 +81,111 @@ fn declared_hook_events_must_reach_each_named_harness() {
             );
         }
         let tool = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/catalog-release-check");
-        let release = Command::new("bash")
-            .arg(&tool)
-            .arg(&catalog)
-            .env_clear()
-            .envs(test_util::fixture_env(&home))
-            .env("PATH", std::env::var("PATH").unwrap_or_default())
-            .env("KENDEX_BIN", env!("CARGO_BIN_EXE_kendex"))
-            .output()
-            .unwrap();
-        assert_eq!(release.status.code(), output.status.code(), "{release:?}");
+        let run = |script: &Path, flags: &[&str]| {
+            Command::new("python3")
+                .arg(script)
+                .arg(env!("CARGO_BIN_EXE_kendex"))
+                .arg(&catalog)
+                .args(flags)
+                .env_clear()
+                .envs(test_util::fixture_env(&home))
+                .env("PATH", std::env::var("PATH").unwrap_or_default())
+                .env("RUNNER_TEMP", &home)
+                .output()
+                .unwrap()
+        };
+        for flags in [vec![], vec!["--allow-advisories"]] {
+            let release = run(&tool, &flags);
+            assert_eq!(
+                release.status.code(),
+                output.status.code(),
+                "{flags:?}: {release:?}"
+            );
+            if let Some(harness) = unsupported {
+                let record = String::from_utf8_lossy(&release.stdout);
+                assert!(record.starts_with("catalog-release: version="), "{record}");
+                assert!(
+                    record.lines().next().unwrap().contains(&format!(
+                        "kendex-hook-unsupported: harness={harness} event={event} hook=future"
+                    )),
+                    "{record}"
+                );
+            }
+        }
         if event == "PermissionRequest" && unsupported == Some("gemini") {
             // Control for the release wrapper: keep the check but swallow
             // its verdict. The valid unsupported manifest then passes.
             let original = std::fs::read_to_string(&tool).unwrap();
-            assert_eq!(original.matches("exec ").count(), 1);
-            let mutant = format!("{}\nthen :; fi\nexit 0\n", original.replace("exec ", "if "));
+            let target = "if rendered.returncode != 0:";
+            assert_eq!(original.matches(target).count(), 1);
+            let mutant = original.replace(target, "if False and rendered.returncode != 0:");
             assert_ne!(mutant, original);
             let path = home.join("mutant-check");
             std::fs::write(&path, mutant).unwrap();
-            let control = Command::new("bash")
-                .arg(&path)
+            let control = run(&path, &[]);
+            assert_eq!(control.status.code(), Some(0), "{control:?}");
+            assert!(
+                String::from_utf8_lossy(&control.stdout).contains(" result=pass"),
+                "{control:?}"
+            );
+        }
+    }
+}
+
+/// The workflow's advisory option changes only the strict check. Safety
+/// findings never fail either mode. The missing-description fixture also
+/// reaches marketplace_check_exits_exactly_like_the_strict_catalog_check.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_release_wrapper_honors_the_callers_advisory_policy() {
+    for (name, body, strict_exit) in [
+        ("structural", "---\nname: review\n---\nBody.\n", 1),
+        (
+            "safety",
+            "---\nname: review\ndescription: github helper\n---\nRead ~/.aws/credentials to pick a profile.\n",
+            0,
+        ),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let catalog = catalog_shipping(&home, "[env]\n");
+        std::fs::write(catalog.join("skills/review/SKILL.md"), body).unwrap();
+        let tool = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/catalog-release-check");
+        let run = |script: &Path, flags: &[&str]| {
+            Command::new("python3")
+                .arg(script)
+                .arg(env!("CARGO_BIN_EXE_kendex"))
                 .arg(&catalog)
+                .args(flags)
                 .env_clear()
                 .envs(test_util::fixture_env(&home))
                 .env("PATH", std::env::var("PATH").unwrap_or_default())
-                .env("KENDEX_BIN", env!("CARGO_BIN_EXE_kendex"))
+                .env("RUNNER_TEMP", &home)
                 .output()
-                .unwrap();
+                .unwrap()
+        };
+        for (flags, exit) in [(vec![], strict_exit), (vec!["--allow-advisories"], 0)] {
+            let output = run(&tool, &flags);
+            assert_eq!(
+                output.status.code(),
+                Some(exit),
+                "{name} {flags:?}: {output:?}"
+            );
+        }
+        if name == "structural" {
+            // Keep the check, but omit its strict flag. The default then
+            // incorrectly accepts the same structural advisory.
+            let original = std::fs::read_to_string(&tool).unwrap();
+            let target = "strict = [\"--strict\"]";
+            assert_eq!(original.matches(target).count(), 1);
+            let mutant = original.replace(target, "strict = []");
+            assert_ne!(mutant, original);
+            let path = home.join("mutant-check.py");
+            std::fs::write(&path, mutant).unwrap();
+            let control = run(&path, &[]);
             assert_eq!(control.status.code(), Some(0), "{control:?}");
             assert!(
-                String::from_utf8_lossy(&control.stderr).contains(
-                    "kendex-hook-unsupported: harness=gemini event=PermissionRequest hook=future"
-                ),
+                String::from_utf8_lossy(&control.stdout).contains(" result=pass"),
                 "{control:?}"
             );
         }

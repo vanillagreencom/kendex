@@ -56,48 +56,43 @@ fn the_current_catalog_renders_and_incomplete_delivery_fails() {
     eprintln!("{}", String::from_utf8_lossy(&install.stdout));
     let binary = home.join(".local/bin/kendex");
     let output = check(&binary, &script, &repository, &root);
+    eprintln!(
+        "current catalog: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
     assert!(output.status.success(), "{output:?}");
     let record = String::from_utf8(output.stdout).unwrap();
     assert!(record.starts_with("catalog-release: version="), "{record}");
     assert!(record.contains(" result=pass"), "{record}");
 
     let text = fs::read_to_string(&script).unwrap();
-    // desired_hook supplies the diagnostic. The mixed declaration installs
-    // on Gemini, so every consumer command exits zero despite Claude's skip.
-    // parse_hook refuses an empty event; verify then exits nonzero because
-    // the hook is absent. This reaches the separate nonzero-command rule.
+    // Both declarations parse. Core's catalog check must refuse delivery
+    // to the named unsupported harness before the wrapper installs anything.
     let manifest = "is_source_catalog = true\n";
     for (name, event, harnesses, expected_feature, control) in [
         (
-            "claude-only",
-            "BeforeAgent",
-            "claude",
-            "kendex-hook-undeliverable: hook=future harness=claude",
-            None,
-        ),
-        (
-            "mixed-harness",
-            "BeforeAgent",
+            "permission-request",
+            "PermissionRequest",
             "claude, gemini",
-            "kendex-hook-undeliverable: hook=future harness=claude",
-            Some(("or undeliverable:", "or (False and undeliverable):")),
-        ),
-        (
-            "empty-event",
-            "",
-            "claude, gemini",
-            "kendex-hook-unreadable: hook=future",
+            "kendex-hook-unsupported: harness=gemini event=PermissionRequest hook=future",
             Some((
-                "rendered.returncode != 0 or",
-                "(False and rendered.returncode != 0) or",
+                "if rendered.returncode != 0:",
+                "if False and rendered.returncode != 0:",
             )),
+        ),
+        (
+            "subagent-stop",
+            "SubagentStop",
+            "claude, codex",
+            "kendex-hook-unsupported: harness=codex event=SubagentStop hook=future",
+            None,
         ),
     ] {
         let catalog = root.join(name);
         fs::create_dir_all(catalog.join("hooks")).unwrap();
         fs::write(catalog.join("kendex.toml"), manifest).unwrap();
         fs::write(catalog.join("hooks/future.sh"), format!(
-            "#!/bin/sh\n# ---\n# name: future\n# event: {event}\n# description: A Gemini event Claude never fires\n# harnesses: [{harnesses}]\n# ---\nexit 0\n")).unwrap();
+            "#!/bin/sh\n# ---\n# name: future\n# event: {event}\n# description: Check requests\n# harnesses: [{harnesses}]\n# ---\nexit 0\n")).unwrap();
         let rejects = |output: &Output| {
             let record = String::from_utf8_lossy(&output.stdout);
             output.status.code() == Some(1)
@@ -106,6 +101,7 @@ fn the_current_catalog_renders_and_incomplete_delivery_fails() {
                 && record.lines().next().unwrap().contains(expected_feature)
         };
         let output = check(&binary, &script, &catalog, &root);
+        eprintln!("{name}: {}", String::from_utf8_lossy(&output.stdout));
         assert!(rejects(&output), "{name}: {output:?}");
         assert_eq!(
             fs::read_to_string(catalog.join("kendex.toml")).unwrap(),
@@ -114,8 +110,8 @@ fn the_current_catalog_renders_and_incomplete_delivery_fails() {
         );
 
         if let Some((target, replacement)) = control {
-            // Each control leaves the commands and diagnostic intact and
-            // disables only its rule. The same rejection assertion must fail.
+            // Keep the commands and diagnostic, but disable the refusal.
+            // The same rejection assertion must then fail.
             assert_eq!(text.matches(target).count(), 1);
             let mutated = text.replace(target, replacement);
             assert_ne!(text, mutated);
@@ -159,7 +155,7 @@ fn catalog_ci_installs_the_release_and_runs_its_render_check() {
         );
         assert_eq!(
             run_script(&render_step).trim(),
-            "python3 kendex/tools/catalog-release-check \"$HOME/.local/bin/kendex\" \"$CATALOG_PATH\""
+            "python3 kendex/tools/catalog-release-check \"$HOME/.local/bin/kendex\" \"$CATALOG_PATH\" ${{ !inputs.strict && '--allow-advisories' || '' }}"
         );
     };
     assert_blocking_render(&text);
