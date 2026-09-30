@@ -766,7 +766,7 @@ interface UnifiedDiffBuilder {
 
 function splitGitHeaderPaths(rest: string): string[] {
 	const paths: string[] = [];
-	const tokenRe = /"((?:\\.|[^"])*)"|(\S+)/g;
+	const tokenRe = /"((?:\\.|[^"\\])*)"|(\S+)/g;
 	let match: RegExpExecArray | null;
 	while ((match = tokenRe.exec(rest))) {
 		const raw = match[1] ?? match[2] ?? "";

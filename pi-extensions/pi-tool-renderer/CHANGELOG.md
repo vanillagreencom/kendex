@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- Malformed Git diff headers with unterminated quoted paths no longer freeze Pi while rendering tool output.
+
 ### 2.0.8
 
 - User messages reuse Markdown layout during typing and streaming. Width, content and theme changes rebuild the layout.
