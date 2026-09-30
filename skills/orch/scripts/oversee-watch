@@ -5,8 +5,8 @@
 #
 # Two passes on one clock: the mail pass reads every mailbox and the lane
 # records on ORCH_WATCH_MAIL_INTERVAL, and the long pass (one lane snapshot,
-# pr-watch, merged items, team triage, outside contributions, lane
-# preparation, lane classification, accounts, report) runs forked on
+# pr-watch, merged items, team triage, outside contributions, refresh failures,
+# lane preparation, lane classification, accounts, report) runs forked on
 # --interval. A check that finds an event records it and the pass runs on to
 # the next check, so no kind starves another: a reducer line on every pass or
 # a lane parked on its limit banner would otherwise be the only thing the watch
@@ -264,6 +264,7 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   lane-failed<TAB><item><TAB><the last lane-local failure the long pass reported>
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
 #   outside-contribution<TAB><repo>#<number><TAB><pr HEAD_SHA|issue>
+#   refresh-failing<TAB><repo><TAB><passes since reported>|<cause>
 #   account<TAB><harness>|<through>|<config dir><TAB><status>|<verdict>|<binding_resets_at or ->
 # And in the mail pass's file:
 #   lane-mail<TAB><item>[@clone]<TAB><to-overseer.jsonl lines already drained> <first id>
@@ -1505,6 +1506,79 @@ check_prepare() {
     PASS_EVENT=1
   done <<<"$PREPARE_ROWS"
   rows="$(lane_row_prune lane-prepare "$rows" ${items[@]+"${items[@]}"})"
+  lane_row_commit "$rows"
+}
+
+# One completed-run list per repository proves the failure pair. A failed
+# read cannot clear a standing pair or end the other fleet checks.
+check_refresh() {
+  local repo runs pair last since log cause prior passes rc
+  local rows="${PW_SEEN[0]}" errf="$WORK_DIR/refresh.err"
+  for repo in "${REPOS[@]}"; do
+    rc=0
+    runs="$(gh run list --repo "$repo" --workflow kendex-refresh.yml --status completed --limit 2 \
+      --json databaseId,conclusion,createdAt 2>"$errf")" || rc=$?
+    if (( rc != 0 )); then
+      # gh emits this workflow-specific 404 for a repository without the
+      # consumer refresh workflow. A repository-access 404 is not absence.
+      if grep -q '^HTTP 404: workflow kendex-refresh\.yml not found on the default branch (' "$errf"; then
+        rows="$(lane_row_clear refresh-failing "$rows" "$repo")" \
+          || die state-read-failed "" "repo=$repo" "row=refresh-failing"
+        continue
+      fi
+      ow_message refresh-unread "repo=$repo" "read=runs" "exit=$rc" >&2
+      continue
+    fi
+    rc=0
+    pair="$(jq -er '
+      if type == "array" and length <= 2 and all(.[];
+        (.databaseId | type) == "number" and (.conclusion | type) == "string" and
+        (.createdAt | type) == "string") then
+        if length == 2 and all(.[]; .conclusion == "failure") then
+          "\(.[0].databaseId)\t\(.[1].createdAt)"
+        else "" end
+      else error("invalid completed refresh runs") end' <<<"$runs" 2>"$errf")" || rc=$?
+    if (( rc != 0 )); then
+      ow_message refresh-unread "repo=$repo" "read=runs" "exit=$rc" >&2
+      continue
+    fi
+    if [[ -z "$pair" ]]; then
+      rows="$(lane_row_clear refresh-failing "$rows" "$repo")" \
+        || die state-read-failed "" "repo=$repo" "row=refresh-failing"
+      continue
+    fi
+    IFS=$'\t' read -r last since <<<"$pair"
+    cause=unread
+    rc=0
+    log="$(gh run view "$last" --repo "$repo" --log-failed 2>"$errf")" || rc=$?
+    if (( rc != 0 )); then
+      ow_message refresh-unread "repo=$repo" "read=log" "run=$last" "exit=$rc" >&2
+    else
+      # refresh-consumer and the commit hooks emit these diagnostics. gh
+      # prefixes each failed-step log line with job, step and timestamp.
+      cause="$(awk 'match($0, /refresh-error=|kendex-hook-/) { cause = substr($0, RSTART) }
+        END { gsub("\t", " ", cause); sub(/\r$/, "", cause); print cause }' <<<"$log")" \
+        || rc=$?
+      if (( rc != 0 )); then
+        ow_message refresh-unread "repo=$repo" "read=log" "run=$last" "exit=$rc" >&2
+      fi
+      [[ -n "$cause" ]] || cause=unread
+    fi
+    if ! prior="$(lane_row_get refresh-failing "$rows" "$repo")"; then
+      die state-read-failed "" "repo=$repo" "row=refresh-failing"
+    fi
+    passes=0
+    if [[ -n "$prior" && "${prior#*|}" == "$cause" ]]; then
+      passes=$(( ${prior%%|*} + 1 ))
+      (( passes < MARK_REPEAT )) || passes=0
+    fi
+    if (( passes == 0 )); then
+      printf 'EVENT refresh-failing %s runs=2 last=%s since=%s cause=%s\n' "$repo" "$last" "$since" "$cause"
+      PASS_EVENT=1
+    fi
+    rows="$(lane_row_set refresh-failing "$rows" "$repo" "$passes|$cause")" \
+      || die state-read-failed "" "repo=$repo" "row=refresh-failing"
+  done
   lane_row_commit "$rows"
 }
 
@@ -3536,8 +3610,8 @@ heartbeat() {
 }
 
 # The long pass: the overseer's own pane, one lane snapshot, pr-watch, merged
-# items, triage, outside contributions, lane preparation, the lane checks and
-# the accounts, in a forked process. Mail passes go on while it runs, so it
+# items, triage, outside contributions, refresh failures, lane preparation,
+# the lane checks and the accounts, in a forked process. Mail passes go on while it runs, so it
 # spools its stdout and stderr and this process prints them whole once it
 # ends, staying the one writer of the event protocol. The fork has its own
 # copy of every global: the ones the loop below needs back
@@ -3567,6 +3641,7 @@ long_pass() {
     check_merged
     check_triage
     check_outside_contribution
+    check_refresh
     check_prepare
     check_start_stall
     check_lanes

@@ -22,7 +22,9 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd -P)" \
   || { echo "oversee-watch harness: test root not found" >&2; exit 1; }
 TMP_ROOT="$(mktemp -d)" || { echo "oversee-watch harness: mktemp -d failed" >&2; exit 1; }
-trap 'rm -rf "$TMP_ROOT"' EXIT
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "oversee-watch harness: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "oversee-watch harness: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 # mutant_scripts and mutate_file, for the shortened-ceiling copy below.
 # shellcheck source=growth-state.sh
 source "$(dirname "${BASH_SOURCE[0]}")/growth-state.sh"
@@ -46,6 +48,8 @@ ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
 # below, are only sandboxed because the suite sourcing this harness sourced
 # lib/git-env.sh first. `-C` does not neutralize an inherited git environment.
 git -C "$TMP_ROOT/repo" init -q
+git -C "$TMP_ROOT/repo" config gc.auto 0
+git -C "$TMP_ROOT/repo" config maintenance.auto false
 CASE_REPO_ROOT="$(git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
   || { echo "oversee-watch harness: case repository root not found" >&2; exit 1; }
 
@@ -66,7 +70,11 @@ CASE_REPO_ROOT="$(git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
 #                 pulls.<SLUG>.json and issues.<SLUG>.json per repo the same
 #                 way, run through the call's own --jq filter as gh runs it;
 #                 pulls-fail or issues-fail present → that call fails
-# Every `auth status`, `pr list` and `api --paginate` call is logged to gh.calls.
+#   refresh.<SLUG>.json is the completed-run list (default: []);
+#   refresh.<SLUG>.err fails that list with the file's stderr;
+#   refresh-log.<RUN>.txt is the failed-step log (default: empty);
+#   refresh-log.<RUN>.err fails that log with the file's stderr.
+# Every `auth status`, `pr list`, `run` and `api --paginate` call is logged to gh.calls.
 # `api user` (env-token preflight) succeeds for any token except one
 # starting with ghp_stale.
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
@@ -83,6 +91,24 @@ case "${1:-} ${2:-}" in
   "repo view")
     [[ -f "$STUB_DIR/repoview.txt" ]] && { cat "$STUB_DIR/repoview.txt"; exit 0; }
     echo "owner/repo"; exit 0 ;;
+  "run list" | "run view")
+    printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
+    verb="$2"; run="${3:-}"; repo=""
+    while [[ $# -gt 0 ]]; do
+      if [[ "$1" == --repo ]]; then repo="$2"; shift; fi
+      shift
+    done
+    slug="$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')"
+    if [[ "$verb" == list ]]; then
+      src="$STUB_DIR/refresh.$slug"
+      [[ ! -f "$src.err" ]] || { cat "$src.err" >&2; exit 1; }
+      if [[ -f "$src.json" ]]; then cat "$src.json"; else printf '[]\n'; fi
+    else
+      src="$STUB_DIR/refresh-log.$run"
+      [[ ! -f "$src.err" ]] || { cat "$src.err" >&2; exit 1; }
+      [[ ! -f "$src.txt" ]] || cat "$src.txt"
+    fi
+    exit 0 ;;
   "api --paginate")
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
     path="$3"; filter=""
@@ -661,4 +687,14 @@ run_watch() {
            ${env_args[@]+"${env_args[@]}"} \
            "${WATCH_BIN:-.agents/skills/orch/scripts/oversee-watch}" --interval 0 --max-loops 2 \
              ${repo_args[@]+"${repo_args[@]}"} ${watch_args[@]+"${watch_args[@]}"})
+}
+
+# refresh_watch [ARGS...] captures a complete long pass, including its status.
+# The fixture owns the mark interval and run list; no caller environment
+# decides how many passes elapse between refresh events.
+refresh_watch() {
+  REFRESH_RC=0
+  run_watch ORCH_OVERSEER_MARK_REPEAT=2 -- --max-loops 1 "$@" \
+    >"$STUB_DIR/out" 2>"$STUB_DIR/err" </dev/null || REFRESH_RC=$?
+  REFRESH_EVENTS="$(awk '/^EVENT refresh-failing /' "$STUB_DIR/out")"
 }

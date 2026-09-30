@@ -185,6 +185,20 @@ The long pass's events, checked and reported in this order:
                              first-repository baseline row keeps it quiet,
                              and closing it clears the row.
                              ORCH_EXTERNAL_TRIAGE=off lists nothing
+  EVENT refresh-failing <repo> runs=2 last=<run-id> since=<time> cause=<line>
+                             the last two completed kendex-refresh.yml runs
+                             both failed. last= names the newer run and since=
+                             is the older run's createdAt. cause= is the last
+                             refresh-error= or kendex-hook- diagnostic in the
+                             newer run's failed-step log, without gh's prefix;
+                             unread means the log could not be read or had no
+                             such diagnostic. Reported once, again when the
+                             cause changes, and every ORCH_OVERSEER_MARK_REPEAT
+                             long passes while it stands. A success clears it.
+                             A repository without that workflow is skipped.
+                             A failed read prints refresh-unread on stderr,
+                             leaves the failure pair intact when the run list
+                             is unread, and keeps watching
   EVENT lane-ready <item>    a lane open-terminal handed to a background job
                              while its host prepared it is launched: its
                              record reads running, and the watch carries it
@@ -448,7 +462,7 @@ twice: a repeated id is one already seen. A lane whose to-lane read
 lane-mail reports `missed` has nothing reported or moved that pass; a cursor
 below the one reported holds only its directive lines. Each repeats only when what it reports changes: another PR, a
 different wall or a reset gone by, a replacement pane, a different screen, a
-new record, another account state, a pull request's new head. An unchanged standing overseer-mark is the one keyed line that
+new record, another account state, a pull request's new head. An unchanged standing overseer-mark or refresh-failing
 comes back on a timer: it is reported every ORCH_OVERSEER_MARK_REPEAT passes
 while it stands, so a repeat there is the interval and never a new crossing.
 A suppressed line still holds: a walled lane
@@ -720,11 +734,11 @@ Environment:
                               launches no successor; `oversee-succeed` owns
                               every other value. An overseer-mark line still
                               goes out under it, carrying succession=off
-  ORCH_OVERSEER_MARK_REPEAT   passes a standing overseer-mark waits before it
-                              is reported again (default 5). The first crossing
-                              is always reported; this only bounds how often a
-                              mark the overseer has not yet acted on comes back.
-                              The judgement itself runs every pass and reads
+  ORCH_OVERSEER_MARK_REPEAT   passes a standing overseer-mark, start-stalled
+                              or refresh-failing waits before it is reported
+                              again (default 5). The first event is always
+                              reported. The overseer-mark judgement runs every
+                              pass and reads
                               every account the fleet can launch on, under a 60
                               second ceiling where `timeout` is installed; a
                               read that passes it leaves the mark unjudged for
@@ -732,8 +746,9 @@ Environment:
                               read runs unbounded
   OVERSEE_WATCH_STATE_DIR     one baseline file per repository — reducer,
                               triage, lane-asking, usage-limit, handoff,
-                              account and outside-contribution rows — the
-                              mail pass's file beside the first one, holding
+                              account, outside-contribution and refresh-failing
+                              rows; the mail pass's file beside the first one
+                              holds
                               each lane mailbox's read position and when the
                               last long pass started, plus claims/ and
                               usage/, both shared across the repositories
@@ -784,6 +799,7 @@ ow_message() { # REASON FIELD=VALUE...
     mail-interval-invalid) text='ORCH_WATCH_MAIL_INTERVAL takes a whole number of seconds, with no leading zero.' ;;
     start-stall-secs-invalid) text='ORCH_WATCH_START_STALL_SECS takes a positive whole number of seconds, with no leading zero.' ;;
     start-stall-unread) text='The lane status file could not be read through lane-host, so whether the lane started settles nothing this pass: no start-stalled goes out for it and its row stands. The exit is lane_host_fetch'"'"'s: 2 a failed read, 4 no lane-host slot.' ;;
+    refresh-unread) text='The refresh run list or failed-step log could not be read. A failed run-list read leaves the baseline intact; a failed log read reports cause=unread. The watch continues.' ;;
     lane-rows-unread) text='The Pi lane session rows could not be read, so the lane reads unjudged this pass and its pane is not read in their place. The exit is lane_host_fetch'"'"'s for a hosted lane, 2 a failed read and 4 no lane-host slot; 0 is a file this read reached and could not read, or whose last row names an event no writer writes, and 2 on a local lane is a record naming no mail_root.' ;;
     unread-secs-invalid) text='ORCH_DIRECTIVE_UNREAD_SECS takes a whole number of seconds, with no leading zero.' ;;
     dead-passes-invalid) text='ORCH_OVERSEER_DEAD_PASSES must be a positive integer.' ;;

@@ -1,0 +1,1 @@
+- Fleet watches report two consecutive consumer refresh failures with the latest run and cause, so overseers can notify the owner.
