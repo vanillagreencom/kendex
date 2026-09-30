@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- A completed Responses stream with an unfinished tool call ends with an error instead of handing the agent a runnable call with incomplete arguments.
+
 ### 2.1.1
 
 - Background image status reuses layout until job state, elapsed seconds, width or theme changes. Its timer requests a redraw without reinstalling the widget. Session shutdown releases the status cache and timer.

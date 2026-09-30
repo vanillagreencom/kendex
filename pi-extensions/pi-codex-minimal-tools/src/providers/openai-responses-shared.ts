@@ -854,6 +854,17 @@ export async function processResponsesStream<TApi extends Api>(
 	if (!sawTerminalResponseEvent) {
 		throw Object.assign(new Error("OpenAI Responses stream ended before a terminal response event"), { code: "RESPONSES_TERMINAL_MISSING" });
 	}
+	// Finished calls lose their scratch buffers at output_item.done. Check the
+	// blocks, not outputStates: missing output indexes can overwrite pending state.
+	if (output.stopReason === "toolUse") {
+		for (const block of output.content) {
+			if (block.type !== "toolCall") continue;
+			const toolCall = block as ToolCallBlock;
+			if (toolCall.partialJson !== undefined || toolCall.customInput !== undefined) {
+				throw new Error(`OpenAI Responses stream completed with an unfinished tool call: ${toolCall.name} (${toolCall.id})`);
+			}
+		}
+	}
 }
 
 function mapStopReason(status: string | undefined): AssistantMessage["stopReason"] {

@@ -111,25 +111,18 @@ const functionCall = { type: "function_call", id: "fc_1", call_id: "call_1", nam
 
 // Parsing work stays fixed however many deltas carry the arguments: a stream of
 // one delta per character parses at most once per completion event.
-for (const row of [
-	{
-		name: "done events",
-		events: [
-			...argumentDeltas,
-			{ type: "response.function_call_arguments.done", output_index: 0, arguments: argumentsJson },
-			{ type: "response.output_item.done", output_index: 0, item: { ...functionCall, arguments: argumentsJson } },
-		],
-		parses: 2,
-	},
-	{ name: "no done events", events: argumentDeltas, parses: 1 },
-]) {
-	test(`streamed function-call arguments with ${row.name} parse when the call completes`, async (t) => {
-		const parse = t.mock.method(JSON, "parse");
-		const { output, pushed } = await run([{ type: "response.output_item.added", output_index: 0, item: functionCall }, ...row.events, completed]);
-		const argumentParses = parse.mock.calls.filter((call) => call.arguments[0] === argumentsJson).length;
-		parse.mock.restore();
-		assert.equal(argumentParses, row.parses);
-		assert.deepEqual((output.content[0] as { arguments: unknown }).arguments, { path: "/tmp/streamed", content: "body" });
-		assert.equal(pushed.filter((event) => event.type === "toolcall_delta").map((event) => event.delta).join(""), argumentsJson);
-	});
-}
+test("streamed function-call arguments parse when the call completes", async (t) => {
+	const parse = t.mock.method(JSON, "parse");
+	const { output, pushed } = await run([
+		{ type: "response.output_item.added", output_index: 0, item: functionCall },
+		...argumentDeltas,
+		{ type: "response.function_call_arguments.done", output_index: 0, arguments: argumentsJson },
+		{ type: "response.output_item.done", output_index: 0, item: { ...functionCall, arguments: argumentsJson } },
+		completed,
+	]);
+	const argumentParses = parse.mock.calls.filter((call) => call.arguments[0] === argumentsJson).length;
+	parse.mock.restore();
+	assert.equal(argumentParses, 2);
+	assert.deepEqual((output.content[0] as { arguments: unknown }).arguments, { path: "/tmp/streamed", content: "body" });
+	assert.equal(pushed.filter((event) => event.type === "toolcall_delta").map((event) => event.delta).join(""), argumentsJson);
+});
