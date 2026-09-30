@@ -1343,9 +1343,8 @@ require_rows change-class-subsystem-controls "$control_rows"
 # A lane and CI classify one diff alike. CI's classify step may carry
 # ORCH_SIZE_TEST_PATHS in its environment; a lane's run carries none, whether
 # item-tier or dev-validate-run through orch's lib/change-class.sh, which the
-# lane rows call, or review-policy, which calls change-class itself, and the
-# classifier takes the glob from the base endpoint's settings instead. A
-# script beside a fixture only that glob calls a test answers one class both
+# lane rows call, and the classifier takes the glob from the base endpoint's
+# settings instead. A script beside a fixture only that glob calls a test answers one class both
 # ways: the fixture's lines are test lines, and the fixture, moved a level
 # down or up, sits in no subsystem. So does a render-root copy only the
 # glob's reading of the path past the render root calls a test, a mirror of
