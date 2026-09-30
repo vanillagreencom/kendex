@@ -55,7 +55,8 @@
 # Every function returns 0 for the answer its name promises and 1 for a
 # refusal the caller prints, with the reason in OL_REASON and its fields in
 # the OL_* variables each function documents; none of them prints a keyed
-# line, because the caller owns its own prefix and its own words. Every
+# line except ol_preference_entries' deprecation warning, because the caller
+# owns its own refusal prefix and words. Every
 # dependency writes its stderr to DEP_ERR, which the caller relays under its
 # keyed line.
 #
@@ -111,28 +112,47 @@ ol_preference() {
 # OL_NAMED the count. `harness` is claude, codex, copilot or pi; `model` is
 # the model the harness's `--model` word takes, on pi its own `provider/id`;
 # `effort` is the level as that harness spells it, on pi its thinking level.
-# The characters each field may hold are the two patterns below, which
-# kendex.settings.toml.example § Fleet states for the operator: a model
-# starts with a letter, so an entry naming no model, an empty field or a bare
-# number, is outside the shape. An entry outside the shape returns 1 with it in OL_BAD_ENTRY. An
-# empty VALUE is no entries and no refusal.
+# Consumer settings can still name a positive account number. Those entries
+# become harness::effort, which ol_entry_model resolves on the caller's model.
+# OL_DEPRECATED_ENTRIES keeps their original spelling for the refresh report.
+# One stderr warning per process names the first deprecated entry.
+# OL_REFUSED_ENTRIES holds every refused entry; a refusal returns 1 and keeps
+# the first in OL_BAD_ENTRY for launchers. Empty VALUE is no entries.
 OL_ENTRIES=()
 OL_NAMED=0
 OL_BAD_ENTRY=""
+OL_REFUSED_ENTRIES=()
+OL_DEPRECATED_ENTRIES=()
+OL_DEPRECATION_WARNED=0
 ol_preference_entries() { # VALUE
-  local rest="$1" entry LC_ALL=C
+  local rest="$1" entry LC_ALL=C status=0
   OL_ENTRIES=()
   OL_NAMED=0
   OL_BAD_ENTRY=""
+  OL_REFUSED_ENTRIES=()
+  OL_DEPRECATED_ENTRIES=()
   [[ -z "$rest" ]] || rest+=","
   while [[ -n "$rest" ]]; do
     entry="${rest%%,*}"
     rest="${rest#*,}"
-    [[ "$entry" =~ ^(claude|codex|copilot):[a-z][a-z0-9.-]*:[a-z]+$ \
-       || "$entry" =~ ^pi:[a-z][a-z0-9.-]*/[a-z0-9][a-z0-9._/-]*:[a-z]+$ ]] || { OL_BAD_ENTRY="$entry"; return 1; }
+    if [[ "$entry" =~ ^(claude|codex|copilot|pi):[1-9][0-9]*:[a-z]+$ ]]; then
+      OL_DEPRECATED_ENTRIES+=("$entry")
+      if (( ! OL_DEPRECATION_WARNED )); then
+        printf 'preference-deprecated entry=%s form=harness:model:effort\n' "$entry" >&2
+        OL_DEPRECATION_WARNED=1
+      fi
+      entry="${entry%%:*}::${entry##*:}"
+    elif ! [[ "$entry" =~ ^(claude|codex|copilot):[a-z][a-z0-9.-]*:[a-z]+$ \
+       || "$entry" =~ ^pi:[a-z][a-z0-9.-]*/[a-z0-9][a-z0-9._/-]*:[a-z]+$ ]]; then
+      (( status != 0 )) || OL_BAD_ENTRY="$entry"
+      OL_REFUSED_ENTRIES+=("$entry")
+      status=1
+      continue
+    fi
     OL_ENTRIES+=("$entry")
     OL_NAMED=$((OL_NAMED + 1))
   done
+  return "$status"
 }
 
 # ol_account HARNESS MODEL — the account a session of HARNESS on MODEL spends,
@@ -178,14 +198,19 @@ ol_pi_model() { # MODEL...
 }
 
 # ol_entry_model ENTRY — one entry ol_preference_entries admitted, split into
-# OL_ENTRY_HARNESS, OL_ENTRY_MODEL and OL_ENTRY_EFFORT, each as written. The
+# OL_ENTRY_HARNESS, OL_ENTRY_MODEL and OL_ENTRY_EFFORT. A normalized numeric
+# entry has no model word and uses the caller's launch or observed model. The
 # setting is the one source of which models the walk tries and in what order,
 # so nothing here holds a model list to check a name against: the launch line
 # carries the model the entry names, and a name its harness does not know is
 # the setting's to fix.
 OL_ENTRY_HARNESS="" OL_ENTRY_MODEL="" OL_ENTRY_EFFORT=""
+# oversee-succeed supplies the observed model before account measurement,
+# which deliberately drops codex's model to judge its binding bucket.
+OL_PREFERENCE_CALLER_MODEL=""
 ol_entry_model() { # ENTRY
   IFS=: read -r OL_ENTRY_HARNESS OL_ENTRY_MODEL OL_ENTRY_EFFORT <<<"$1"
+  [[ -n "$OL_ENTRY_MODEL" ]] || OL_ENTRY_MODEL="${OL_WALK_CALLER_MODEL:-$OL_PREFERENCE_CALLER_MODEL}"
 }
 
 # ol_lanes ARGS... — `lanes` as every overseer read of an account asks it,

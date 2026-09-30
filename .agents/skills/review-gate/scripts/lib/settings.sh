@@ -6,7 +6,8 @@
 # family, plus shared keys like PR_REVIEW_WAIT_SECS):
 #   1. explicit environment — a SET variable wins even when set to the empty
 #      string, so a caller (or the selftest) can force "explicitly empty";
-#   2. .env.local (KEY=value, quotes optional — parsed, never sourced);
+#   2. .env.local, or rg_setting's PRIVATE_FILE argument (KEY=value, quotes
+#      optional, parsed, never sourced); an empty argument skips this layer;
 #   3. .kendex/settings.toml, then the repo's committed kendex.settings.toml
 #      (the [env] table's sole `KEY = "value"` assignment; an explicit
 #      REVIEW_GATE_SETTINGS_FILE consults only itself);
@@ -218,9 +219,10 @@ rg_dotenv_layer() { # FILE NAME
   printf '%s' "$val"
 }
 
-rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
-               # a present-but-unparseable assignment (callers must propagate)
-  local name="$1" default="$2" line val file table status matches
+rg_setting() { # NAME DEFAULT [PRIVATE_FILE] — resolved value on stdout; nonzero
+               # on a present-but-unparseable assignment. Empty PRIVATE_FILE
+               # skips dotenv when resolving the setting that selects its path.
+  local name="$1" default="$2" private_file="${3-.env.local}" line val file table status matches
   # The name is interpolated into ERE patterns below; constrain it to the
   # identifier shape every real key has, so a metacharacter can neither
   # misgrep nor inject pattern syntax.
@@ -262,19 +264,21 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     # REVIEW_GATE_WRITER skip this probe: it never reads the layer, and CI's clean checkout
     # would resolve while a broken machine-local file failed here — the
     # install-dependent waiter/gate split the exception exists to prevent.
-    case "$name" in
-      REVIEW_GATE_MODE | REVIEW_GATE_WRITER) ;;
-      *)
-        rg_settings_usable ".env.local" || return 1
-        if [ -f ".env.local" ]; then
-          rg_bom_guard ".env.local" || return 1
-          if [ ! -r ".env.local" ]; then
-            rg_message error settings-unreadable ".env.local" "::error::.env.local: unreadable while resolving a setting (permission denied)" >&2
-            return 1
+    if [ -n "$private_file" ]; then
+      case "$name" in
+        REVIEW_GATE_MODE | REVIEW_GATE_WRITER) ;;
+        *)
+          rg_settings_usable "$private_file" || return 1
+          if [ -f "$private_file" ]; then
+            rg_bom_guard "$private_file" || return 1
+            if [ ! -r "$private_file" ]; then
+              rg_message error settings-unreadable "$private_file" "::error::$private_file: unreadable while resolving a setting (permission denied)" >&2
+              return 1
+            fi
           fi
-        fi
-        ;;
-    esac
+          ;;
+      esac
+    fi
   fi
   # Indirect expansion, not eval: a non-literal NAME must never become code.
   # ${!name+x} tests set-ness of the variable NAMED by $name (Bash 3.2-safe).
@@ -293,18 +297,20 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   # .env.local beats the settings files — EXCEPT for REVIEW_GATE_MODE and
   # REVIEW_GATE_WRITER, the named per-key exception (header contract): a local
   # reader and CI must resolve them from sources both sides can see.
-  case "$name" in
-    REVIEW_GATE_MODE | REVIEW_GATE_WRITER) ;;
-    *)
-      status=0
-      val="$(rg_dotenv_layer ".env.local" "$name")" || status=$?
-      [ "$status" -ne 2 ] || return 1
-      if [ "$status" -eq 0 ]; then
-        printf '%s' "$val"
-        return 0
-      fi
-      ;;
-  esac
+  if [ -n "$private_file" ]; then
+    case "$name" in
+      REVIEW_GATE_MODE | REVIEW_GATE_WRITER) ;;
+      *)
+        status=0
+        val="$(rg_dotenv_layer "$private_file" "$name")" || status=$?
+        [ "$status" -ne 2 ] || return 1
+        if [ "$status" -eq 0 ]; then
+          printf '%s' "$val"
+          return 0
+        fi
+        ;;
+    esac
+  fi
   # Nested project settings override the root file (the standard loader
   # order); the positional list was built — and every present file already
   # validated whole — before any source answered, above.

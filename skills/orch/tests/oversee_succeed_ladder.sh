@@ -226,9 +226,22 @@ assert_eq "$RC|$(keyed successor-lane-spent | awk '{print $2, $4}')|$(caller_ope
   "control: a walled pick that keeps the walled account drops the Opus entry"
 seat claude 10 99 99
 
-# An entry naming no model, a bare tier rank or an empty field, is a setting
+# The numeric account form takes the caller's measured model, not a model
+# named by the number. Headroom still selects the account at the given effort.
+seat eclaude 10 10 10
+new_caller
+run_succeed numeric 'claude:1:high'
+assert_eq "$RC|$(caller_open)|$(launched claude)|$(grep -cx -e --effort -e high "$TMP_ROOT/argv.claude")" \
+  "0|no|$H/.eclaude claude-fable-5-1|2" \
+  "numeric preference launches the caller model at the supplied effort"
+assert_eq "$(grep '^preference-deprecated ' <<<"$OUT")" \
+  'preference-deprecated entry=claude:1:high form=harness:model:effort' \
+  "numeric preference warns once"
+seat eclaude 10 99 10
+
+# An entry naming no model, zero or an empty field, is a setting
 # to fix: refused with a keyed line before any pick, on a fleet with Opus room.
-for entry in 'claude:1:high' 'claude::high' 'codex:high' 'copilot:2:high'; do
+for entry in 'claude:0:high' 'claude::high' 'codex:high' 'copilot:0:high'; do
   new_caller
   run_succeed nomodelentry "$entry"
   assert_eq "$RC|$(keyed invalid-preference | awk '{print $2, $3}')|$(caller_open)|$(launched claude)" \
@@ -239,10 +252,10 @@ done
 # entry, which then fails somewhere other than the parse.
 RANKCTL="$(mutant_scripts rankctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$RANKCTL/lib/overseer-launch.sh" \
-  '    [[ "$entry" =~ ^(claude|codex|copilot):[a-z][a-z0-9.-]*:[a-z]+$ \' \
-  '    [[ "$entry" =~ ^(claude|codex|copilot):([1-9][0-9]*|[a-z][a-z0-9.-]*):[a-z]+$ \'
+  '    elif ! [[ "$entry" =~ ^(claude|codex|copilot):[a-z][a-z0-9.-]*:[a-z]+$ \' \
+  '    elif ! [[ "$entry" =~ ^(claude|codex|copilot):([0-9]+|[a-z][a-z0-9.-]*):[a-z]+$ \'
 new_caller
-SUCCEED_BIN="$RANKCTL/oversee-succeed" run_succeed rankctl 'claude:1:high'
+SUCCEED_BIN="$RANKCTL/oversee-succeed" run_succeed rankctl 'claude:0:high'
 assert_eq "$(keyed invalid-preference)" "none" \
   "control: a parse that reads a bare number as a model admits the rank entry"
 

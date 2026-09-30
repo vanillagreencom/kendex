@@ -17,6 +17,34 @@ import sys
 
 skill, root = map(Path, sys.argv[1:3])
 real_cli = sys.argv[3]
+# Refresh-consumer owns the parse. This mode only formats its two arrays.
+reporter = skill / 'scripts/refresh-report.py'
+for refused, deprecated, present in [
+ ([], [], False),
+ ([], ['claude:1:high'], True),
+ (['claude::high', 'codex:0:low'], ['claude:1:high'], True),
+ (['<script>`bad\nentry</script>'], [], True),
+]:
+ result = subprocess.run(['python3', str(reporter), '--settings'],
+                         input=json.dumps(dict(refused=refused, deprecated=deprecated)),
+                         text=True, capture_output=True, env={'PATH':'/usr/bin:/bin'})
+ assert result.returncode == 0, result.stderr
+ assert ('## Settings' in result.stdout) == present
+ assert result.stdout.count('ORCH_OVERSEER_PREFERENCE:') == len(refused) + len(deprecated)
+ assert not present or 'harness:model:effort' in result.stdout
+ assert '<script>' not in result.stdout and '`bad' not in result.stdout
+ if not present: assert result.stdout == ''
+source = reporter.read_text()
+needle = '    if rows:\n'
+assert source.count(needle) == 1
+mutant = root / 'settings-report.py'
+changed = source.replace(needle, '# ' + needle + '    if False:\n')
+assert changed != source
+mutant.write_text(changed)
+control = subprocess.run(['python3', str(mutant), '--settings'],
+                         input=json.dumps(dict(refused=[], deprecated=['claude:1:high'])),
+                         text=True, capture_output=True, env={'PATH':'/usr/bin:/bin'})
+assert control.returncode == 0 and control.stdout == ''
 (root / 'bin').mkdir()
 mock = root / 'bin/mock'
 mock.write_text('''#!/usr/bin/env python3

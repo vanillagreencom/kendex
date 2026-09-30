@@ -112,6 +112,27 @@ TMP="$(mktemp -d)"
 trap 'rm -rf -- "${TMP:?}"' EXIT
 "$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$ROOT/.agents/skills/review-gate/templates" --workflow-edit-report "$TMP/workflow-edits"
 workflow_edits="$(cat "$TMP/workflow-edits")"
+settings_report=""
+# Only an installed orch has an overseer preference to refuse. Read settings
+# as data under the app credential, never source the consumer's private file.
+if [ -e "$SCRIPT_DIR/../../orch" ] || [ -L "$SCRIPT_DIR/../../orch" ]; then
+  (
+    source "$SCRIPT_DIR/lib/settings.sh"
+    source "$SCRIPT_DIR/../../orch/scripts/lib/kendex-env.sh"
+    source "$SCRIPT_DIR/../../orch/scripts/lib/overseer-launch.sh"
+    KENDEX_ENV_FILE="$(rg_setting KENDEX_ENV_FILE "" "")"
+    kendex_private_env_file private_file "$ROOT"
+    preference="$(rg_setting ORCH_OVERSEER_PREFERENCE "$OL_DEFAULT_PREFERENCE" "$private_file")"
+    parse_status=0
+    ol_preference_entries "$preference" || parse_status=$?
+    [ "$parse_status" -le 1 ] || exit "$parse_status"
+    jq -n --argjson refused_count "${#OL_REFUSED_ENTRIES[@]}" --args \
+      '{refused: $ARGS.positional[:$refused_count], deprecated: $ARGS.positional[$refused_count:]}' \
+      -- ${OL_REFUSED_ENTRIES[@]+"${OL_REFUSED_ENTRIES[@]}"} \
+      ${OL_DEPRECATED_ENTRIES[@]+"${OL_DEPRECATED_ENTRIES[@]}"}
+  ) >"$TMP/settings.json"
+  settings_report="$(python3 "$SCRIPT_DIR/refresh-report.py" --settings <"$TMP/settings.json")"
+fi
 kendex verify --scope project
 git add -A
 if git diff --cached --quiet; then
@@ -170,6 +191,9 @@ if [ -n "$workflow_edits" ]; then
 fi
 if [ -n "$conflict_count" ]; then
   printf -v body '%s\nOverwritten hand-edited items (from refresh):\n%s' "$body" "$held_items"
+fi
+if [ -n "$settings_report" ]; then
+  printf -v body '%s\n%s\n' "$body" "$settings_report"
 fi
 if [ "$state" = pushed ]; then
   git push "--force-with-lease=refs/heads/kendex/refresh:$old" origin HEAD:refs/heads/kendex/refresh

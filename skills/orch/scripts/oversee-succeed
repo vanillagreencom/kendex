@@ -137,7 +137,10 @@
 #        `mark-unmeasured`, either of which ends the run there; a reached mark
 #        otherwise falls through to step 3.
 #     3. Walk ORCH_OVERSEER_PREFERENCE through lib/overseer-launch.sh's
-#        ol_walk, and build the chosen entry's flag words through its
+#        parser. The old `harness:positive-integer:effort` form is deprecated
+#        and read until the next minor release after this change. It uses the
+#        caller's model and warns once per run. The walk uses ol_walk
+#        and builds the chosen entry's flag words through its
 #        ol_launch_flags, the walk and the assembly `oversee launch` takes:
 #        comma-separated `harness:model:effort` entries, harness claude,
 #        codex, copilot or pi, model the model the harness's `--model` word
@@ -903,6 +906,7 @@ if [[ "$MODE" != dead ]]; then
     caller_model="$(ol_pi_model "$OL_KNOWN_MODEL" "$flag_model" "$reading_model")"
   fi
   CALLER_MODEL="$(lane_context_mark_model "$CALLER_HARNESS" "$caller_model")"
+  OL_PREFERENCE_CALLER_MODEL="$caller_model"
   # The harness and model `lanes` measures this session's account as
   # (lib/overseer-launch.sh § ol_account): a pi session on the pi-claude
   # provider spends a claude account, on a github-copilot model the Copilot

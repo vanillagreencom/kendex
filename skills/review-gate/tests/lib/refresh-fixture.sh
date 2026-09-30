@@ -2,6 +2,8 @@
 # Consumer workflow fixtures use the shared sandbox and real API parser.
 . "$TEST_DIR/lib/sandbox.sh"
 . "$TEST_DIR/lib/workflow-edit.sh"
+# Refresh settings reporting uses the optional installed orch parser.
+cp -R "$SKILL_DIR/../orch" "$PRISTINE/.agents/skills/orch"
 BIN="$TMP/bin"
 FIXTURES="$TMP/github"
 mkdir -p "$BIN" "$FIXTURES"

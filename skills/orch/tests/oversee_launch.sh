@@ -259,7 +259,6 @@ assert_eq "$RC|$(keyed overseer-not-working "$OUT" | sed -n 1p | sed 's/session=
 for row in \
   "ORCH_OVERSEER_PREFERENCE=|preference-empty setting=ORCH_OVERSEER_PREFERENCE|an empty preference" \
   "ORCH_OVERSEER_PREFERENCE=claude:Opus:high|invalid-preference entry=claude:Opus:high|an entry outside the shape" \
-  "ORCH_OVERSEER_PREFERENCE=claude:1:high|invalid-preference entry=claude:1:high|an entry naming no model, a tier rank" \
   "ORCH_OVERSEER_PREFERENCE=claude:claude-sonnet-4-6:high|model-window-unknown entry=claude:claude-sonnet-4-6:high model=claude-sonnet-4-6|a claude model the adapter names no window for" \
   "ORCH_TMUX_SESSION=|session-unresolved consulted=--session,ORCH_TMUX_SESSION|no session named" \
   "ORCH_TMUX_SESSION=fleetz|tmux-session-missing session=fleetz server=$SOCKET|a session tmux does not hold" \
