@@ -311,7 +311,7 @@ launch() {
   trap - EXIT TERM HUP INT
 }
 second_opinion_detach_if_needed() {
-  local artifact="$OUTPUT_PATH" owned=false attempts=1 budget runtime_dir
+  local artifact="$OUTPUT_PATH" owned=false attempts=1 budget runtime_dir targets=1
   if $DETACHED_WORKER || [[ "$MODE" == "detect" ]] \
       || { ! $FOREGROUND_CAP && ! $FOREGROUND_CAP_IN_CALLER_ENV; }; then return; fi
   [[ -x "$RUNTIME_SELF" ]] || die "runtime is missing: $RUNTIME_SELF"
@@ -324,7 +324,9 @@ second_opinion_detach_if_needed() {
   [[ "$artifact" != *$'\r'* && "$artifact" != *$'\n'* ]] || die "artifact path contains CR or LF"
   runtime_dir=$(create_runtime_dir)
   [[ "$MODE" == "review" || "$MODE" == "audit" ]] && attempts=2
-  budget=$((attempts * (10#$TIMEOUT + 30) + 60))
+  # Sequential fall-through can spend a timeout window on every roster name.
+  [[ -n "$FORCED_TARGET" ]] || targets=${#ROSTER[@]}
+  budget=$((targets * attempts * (10#$TIMEOUT + 30) + 60))
   export SECOND_OPINION_LAUNCH_MODEL="$CURRENT_MODEL"
   exec "$RUNTIME_SELF" launch "$SCRIPT_DIR/second-opinion" "$artifact" "$runtime_dir" \
     "$budget" "$owned" 300 "${ORIGINAL_ARGS[@]}"

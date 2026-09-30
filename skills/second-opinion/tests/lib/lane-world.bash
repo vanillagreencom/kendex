@@ -2,7 +2,7 @@
 # The world of the multi-lane scratch suite (lane-scratch-durability): the
 # shipped script driven as a two-lane parent (roster `codex claude`, count 2)
 # against lane stubs that answer, fail, or act on the parent's scratch
-# directory, the artifact home or the sibling's artifact mid-run; a reviewed
+# directory, the artifact home mid-run; a reviewed
 # repository built per row; a sandboxed TMPDIR per row so a leftover is
 # attributable; a `ps` that hides the harness. Sourced, never run as a suite:
 # the runners glob tests/*.sh, so the subdirectory and the .bash name keep this
@@ -42,13 +42,6 @@ trap 'chmod -R u+rwX "$TMP_ROOT" 2>/dev/null || true; rm -rf -- "${TMP_ROOT:?}" 
 # bits; such rows are skipped out loud.
 CAN_DENY_BY_MODE=true
 [[ "$(id -u)" == "0" ]] && CAN_DENY_BY_MODE=false
-# A directory in an artifact's place passes the script's size test only where
-# the filesystem reports a directory as non-empty (ext4: 4096; btrfs and some
-# tmpfs: 0).
-DIR_HAS_SIZE=false
-mkdir -p "$TMP_ROOT/dirsize-probe"
-[[ -s "$TMP_ROOT/dirsize-probe" ]] && DIR_HAS_SIZE=true
-rmdir "$TMP_ROOT/dirsize-probe"
 
 PASS=0
 FAIL=0
@@ -86,6 +79,17 @@ JSON
 cat >"$TMP_ROOT/resp-codex-blocker.json" <<'JSON'
 {"agent":"external-codex","timestamp":"2026-01-01T00:00:00Z","verdict":"action_required","summary":"one blocker","blockers":[{"id":1,"title":"Unchecked index","location":"src/lib.rs (`get`)","description":"d","recommendation":"r","priority":2,"estimate":1}],"suggestions":[],"questions":[],"qa_metadata":{}}
 JSON
+# A CLI can return finding arrays with the wrong element or field type. The
+# child passes its top-level schema check; the union rejects these artifacts.
+for kind in bad-blockers bad-suggestions bad-location bad-summary; do
+  case "$kind" in
+    bad-blockers) filter='.blockers = ["bad"]' ;;
+    bad-suggestions) filter='.suggestions = ["bad"]' ;;
+    bad-location) filter='.blockers[0].location = 7' ;;
+    bad-summary) filter='.summary = 42' ;;
+  esac
+  jq "$filter" "$TMP_ROOT/resp-claude.json" > "$TMP_ROOT/resp-$kind.json"
+done
 # Not JSON at all: drives the child's raw-response preservation, so the sidecar
 # family lands beside the stdout-mode lane artifact.
 printf 'I am not going to answer in JSON today.\n' >"$TMP_ROOT/resp-prose.txt"
@@ -133,73 +137,14 @@ echo "$1" >&2
 exit "$2"
 SH
 
-# lane-reap <response> <scratch> [<home> <agent>]: answers, waits for both
-# lanes' captures to exist (the sibling's child opens its own after this one
-# started, so a clearing before that would cost it the capture, not the
-# replay), then removes every directory under the sandboxed TMPDIR (the
-# parent's promise: it creates exactly one and everything in it is
-# disposable). With a home and an agent it also waits for that lane's review,
-# so the clearing lands after the sibling wrote and before the parent reaped.
+# lane-reap <response> <scratch>: remove disposable scratch before answering.
 cat >"$BIN/lane-reap" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 cat >/dev/null
 cat "$1"
 scratch="$2"
-captures() { [[ -n "$(find "$scratch" -mindepth 2 -maxdepth 2 -name 'lane-codex.stderr' 2>/dev/null)" && -n "$(find "$scratch" -mindepth 2 -maxdepth 2 -name 'lane-claude.stderr' 2>/dev/null)" ]]; }
-waited=0
-while ! captures && [[ $waited -lt 300 ]]; do sleep 0.1; waited=$((waited + 1)); done
-captures || { echo "handshake never happened: a lane's capture never appeared" >&2; exit 1; }
-[[ $# -lt 4 ]] || "$(dirname "$0")/lane-wait-review" "$3" "$4" >/dev/null
 find "$2" -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} + 2>/dev/null || true
-SH
-
-# lane-reap-files <response> <dir> <home> <agent>: answers, waits for the
-# sibling's review, then unlinks every regular file under <dir>.
-cat >"$BIN/lane-reap-files" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-cat >/dev/null
-cat "$1"
-"$(dirname "$0")/lane-wait-review" "$3" "$4" >/dev/null
-find "$2" -type f -exec rm -f -- {} + 2>/dev/null || true
-SH
-
-# lane-sabotage <response> <target> <action> <rc>: waits for the sibling's
-# artifact to hold valid JSON, sabotages it, then answers or exits <rc>.
-cat >"$BIN/lane-sabotage" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-cat >/dev/null
-resp="$1"; target="$2"; action="$3"; rc="$4"
-waited=0
-holds_json() { [[ -f "$target" ]] && jq -e . < "$target" >/dev/null 2>&1; }
-while ! holds_json && [[ $waited -lt 300 ]]; do
-  sleep 0.1
-  waited=$((waited + 1))
-done
-holds_json || { echo "handshake never happened: the sibling's artifact never held JSON" >&2; exit 1; }
-head='{"agent":"external-claude","timestamp":"2026-01-01T00:00:00Z","verdict":"pass"'
-numloc='{"id":1,"title":"t","description":"d","recommendation":"r","priority":2,"estimate":1,"location":7}'
-case "$action" in
-  steal)   rm -f -- "$target" ;;
-  empty)   : > "$target" ;;
-  blank)   printf '   \n' > "$target" ;;
-  newline) printf '\n' > "$target" ;;
-  nul)     printf '\0' > "$target" ;;
-  nul-tail) printf '%s\0' "$head,\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}" > "$target" ;;
-  unread)  rm -f -- "$target"; mkdir -p -- "$target" ;;
-  trunc)   printf '{"agent":"external-cla' > "$target" ;;
-  double)  printf '%s' "$head,\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}$head,\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}" > "$target" ;;
-  poison)  printf '%s' "$head,\"summary\":\"s\",\"blockers\":[\"bad\"],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}" > "$target" ;;
-  poison-sugg)   printf '%s' "$head,\"summary\":\"s\",\"blockers\":[],\"suggestions\":[\"bad\"],\"questions\":[],\"qa_metadata\":{}}" > "$target" ;;
-  bad-loc)       printf '%s' "$head,\"summary\":\"s\",\"blockers\":[$numloc],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}" > "$target" ;;
-  bad-questions) printf '%s' "$head,\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"questions\":\"nope\",\"qa_metadata\":{}}" > "$target" ;;
-  bad-summary)   printf '%s' "$head,\"summary\":42,\"blockers\":[],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}" > "$target" ;;
-  *) echo "UNKNOWN-SABOTAGE: $action" >&2; exit 2 ;;
-esac
-[[ "$rc" -eq 0 ]] || exit "$rc"
-cat "$resp"
 SH
 
 # lane-probe-perms <response> <scratch> <home> <record>: waits until the
@@ -334,7 +279,6 @@ word() {
     stale:family) W_STALE=1 ;;
     # the single-lane control: roster codex, count 1
     single) W_SINGLE=1 ;;
-    fs:dirsize) [[ "$DIR_HAS_SIZE" == true ]] || W_SKIP=dirsize ;;
     # the world with nothing added
     -) ;;
     *) echo "UNKNOWN-WORD: $1" >&2; exit 2 ;;
@@ -342,23 +286,17 @@ word() {
 }
 
 # The lane stub for a spec: answer:<claude|codex|codex-blocker|prose>,
-# fail:<text>:<rc>, reap[:wait], reap-files:<scratch|home>, sabotage:<action>:<rc>
-# (the sibling's lane artifact beside --output), probe-perms, plant-locked,
+# fail:<text>:<rc>, reap, probe-perms, plant-locked,
 # plant-dir, cli-state:<prefix>[:reappear], kill (the lane child running the
 # stub is killed by TERM), die (the lane's CLI dies to TERM)
 lane_cmd() {
-  local lane="$1" spec="$2" a b sibling
+  local lane="$1" spec="$2" a b
   a="${spec#*:}"; b="${a#*:}"; a="${a%%:*}"
-  [[ "$lane" == claude ]] && sibling=codex || sibling=claude
   case "$spec" in
     answer:prose) printf '%s %s' "$BIN/lane-answer" "$TMP_ROOT/resp-prose.txt" ;;
     answer:*) printf '%s %s' "$BIN/lane-answer" "$TMP_ROOT/resp-$a.json" ;;
     fail:*) printf '%s %s %s' "$BIN/lane-fail" "$a" "$b" ;;
     reap) printf '%s %s %s' "$BIN/lane-reap" "$TMP_ROOT/resp-$lane.json" "$SCRATCH" ;;
-    reap:wait) printf '%s %s %s %s external-%s' "$BIN/lane-reap" "$TMP_ROOT/resp-$lane.json" "$SCRATCH" "$HOME_DIR" "$sibling" ;;
-    reap-files:scratch) printf '%s %s %s %s external-%s' "$BIN/lane-reap-files" "$TMP_ROOT/resp-$lane.json" "$SCRATCH" "$HOME_DIR" "$sibling" ;;
-    reap-files:home) printf '%s %s %s %s external-%s' "$BIN/lane-reap-files" "$TMP_ROOT/resp-$lane.json" "$HOME_DIR" "$HOME_DIR" "$sibling" ;;
-    sabotage:*) printf '%s %s %s.%s.json %s %s' "$BIN/lane-sabotage" "$TMP_ROOT/resp-$lane-blocker.json" "$OUT" "$sibling" "$a" "$b" ;;
     probe-perms) printf '%s %s %s %s %s' "$BIN/lane-probe-perms" "$TMP_ROOT/resp-$lane.json" "$SCRATCH" "$HOME_DIR" "$PERM_PROBE" ;;
     plant-locked) printf '%s %s %s' "$BIN/lane-plant-locked" "$TMP_ROOT/resp-$lane.json" "$SCRATCH" ;;
     plant-dir) printf '%s %s %s' "$BIN/lane-plant-dir" "$TMP_ROOT/resp-$lane.json" "$HOME_DIR" ;;
@@ -445,7 +383,7 @@ parent_log() {
       "{") in_json=1; json="{" ;;
       "["*|"→ cmd:"*|"→ Response received"*) ;;
       # the instruction-file reports, pinned by review-prompt.test.sh alone
-      "second-opinion: instructions-"*) ;;
+      "second-opinion: instructions-"*|"second-opinion: attempt "*|"→ requested "*) ;;
       # BSD rm reports every ancestor of an entry it could not remove; GNU rm
       # only the entry
       "rm: "*": Directory not empty") ;;
@@ -604,7 +542,7 @@ err_word() {
   local a="${f[1]:-}" b="${f[2]:-}"
   case "$1" in
     -) ;;
-    header) printf '→ second-opinion: targets=codex+claude mode=review (multi-lane) current=none\n' ;;
+    header) printf '→ second-opinion: requested=2 mode=review (ordered lanes) current=none\n' ;;
     header:single) printf '→ second-opinion: target=codex mode=review current=none\n' ;;
     union:*) printf '→ Written: <out> (union of %s lanes)\n' "$a" ;;
     written) printf '→ Written: <out>\n' ;;
@@ -614,10 +552,8 @@ err_word() {
     all-killed:*) printf 'all-failed every review lane failed — no external verdict lanes=codex:killed:%s,claude:killed:%s\n' "$a" "$b" ;;
     replay-lost:*) printf '→ lane stderr replay unavailable (scratch capture unreadable): %s\n' "$a" ;;
     unusable:*) printf '→ lane produced an unusable artifact: %s (%s)\n' "$a" "$(unusable_reason "$b")" ;;
-    no-artifact:*) printf '→ lane exited 0 without a usable artifact: %s\n' "$a" ;;
     rm-denied:*) printf 'rm: <scratch>/second-opinion.*/%s: Permission denied\n' "$a" ;;
     rm-isdir:*) printf 'rm: <home>/%s: Is a directory\n' "$a" ;;
-    all-failed:*) printf 'all-failed every review lane failed — no external verdict lanes=codex:failed:%s,claude:failed:%s\n' "$a" "$b" ;;
     capture-lost:*) printf '→ lane stderr capture could not be opened — log replay lost: %s\n' "$a" ;;
     home-unusable) printf '→ artifact home unusable, falling back to system temp: <ro-home>\n' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s\n' "$1" ;;
@@ -625,15 +561,10 @@ err_word() {
 }
 unusable_reason() {
   case "$1" in
-    novalue) printf 'jq: error: invalid review artifact: artifact holds no JSON value at all' ;;
     nonobject) printf 'jq: error: invalid review artifact: blockers holds a non-object entry' ;;
     sugg) printf 'jq: error: invalid review artifact: suggestions holds a non-object entry' ;;
     loc) printf 'jq: error: invalid review artifact: blockers holds a non-string location' ;;
-    questions) printf 'jq: error: invalid review artifact: questions is not an array' ;;
     summary) printf 'jq: error: invalid review artifact: summary is not a string' ;;
-    two) printf 'jq: error: invalid review artifact: artifact holds 2 JSON values, expected one' ;;
-    unfinished) printf 'jq: parse error: Unfinished string at EOF' ;;
-    numeric) printf 'jq: parse error: Invalid numeric literal' ;;
     *) printf 'UNKNOWN-REASON:%s' "$1" ;;
   esac
 }
@@ -653,10 +584,6 @@ run_table() {
     build "row-$n" $defaults $world
     if [[ "$W_SKIP" == mode && "$CAN_DENY_BY_MODE" == false ]]; then
       printf '  skip  %s (root ignores mode bits)\n' "$label"
-      continue
-    fi
-    if [[ "$W_SKIP" == dirsize ]]; then
-      printf '  skip  %s (a directory reports size 0 on this filesystem)\n' "$label"
       continue
     fi
     got="$(run)"

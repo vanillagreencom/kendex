@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Ordered execution fall-through. The external CLI stubs produce real exits,
+# timeout delays, and provider refusal codes. No dispatcher is stubbed.
+# shellcheck source=lib/roster-world.bash
+. "$(dirname "${BASH_SOURCE[0]}")/lib/roster-world.bash"
+
+DEFAULTS="ps:none current:none models:codex+claude+my-model count:1 cmd:codex=codex cmd:claude=claude cmd:my-model=extra"
+FIRST='[{"name":"codex","cause":"exit-7","timed":true},{"name":"claude","cause":"answered","timed":true}]'
+
+# label|world|command|expected rc, attempt records, execution order and calls
+ROWS="
+nonzero exit falls through and stops after the answer|exit:codex=7|review|rc=0 $FIRST order=codex,claude calls=1,1,0
+per-CLI timeout falls through|delay:codex=5 timeout:1|review|rc=0 [{\"name\":\"codex\",\"cause\":\"timeout\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,claude calls=1,1,0
+Anthropic rate-limit code on stderr overrides valid-looking stdout|refusal:codex=rate_limit_error|review|rc=0 [{\"name\":\"codex\",\"cause\":\"quota\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,claude calls=1,1,0
+OpenAI quota code falls through|refusal:codex=insufficient_quota|review|rc=0 [{\"name\":\"codex\",\"cause\":\"quota\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,claude calls=1,1,0
+Claude usage-limit banner falls through|refusal:codex=claude-banner|review|rc=0 [{\"name\":\"codex\",\"cause\":\"quota\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,claude calls=1,1,0
+execution failure during the existing format retry falls through|codex:junk retry-exit:codex=7|review|rc=0 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"codex\",\"cause\":\"exit-7\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,codex,claude calls=2,1,0
+list exhaustion preserves both attempts and no opinion|models:codex+claude exit:codex=7 exit:claude=8|review|rc=5 [{\"name\":\"codex\",\"cause\":\"exit-7\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"exit-8\",\"timed\":true}] order=codex,claude calls=1,1,0
+room skip still precedes execution|room:codex=walled|review|rc=0 [{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=claude calls=0,1,0
+failed model can answer through its next harness|model:codex=claude exit:codex=7|review|rc=0 $FIRST order=codex,claude calls=1,1,0
+COUNT counts valid opinions, not failed attempts|count:2 exit:codex=7|review|rc=0 [{\"name\":\"codex\",\"cause\":\"exit-7\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"opinion\",\"timed\":true},{\"name\":\"my-model\",\"cause\":\"opinion\",\"timed\":true}] order=codex,claude,extra calls=1,1,1
+successful model excludes a second harness for it|count:2 model:claude=codex|review|rc=0 [{\"name\":\"codex\",\"cause\":\"opinion\",\"timed\":true},{\"name\":\"my-model\",\"cause\":\"opinion\",\"timed\":true}] order=codex,extra calls=1,0,1
+forced target never falls through|exit:codex=7|review --target codex|rc=5 [{\"name\":\"codex\",\"cause\":\"exit-7\",\"timed\":true}] order=codex calls=1,0,0
+"
+n=0
+while IFS='|' read -r label world command expected; do
+  [[ -n "$label" ]] || continue
+  n=$((n + 1))
+  # shellcheck disable=SC2086 # fixture words are a list
+  build "fallback-$n" $DEFAULTS $world
+  got=$(run_fallback "$command")
+  assert_eq "$got" "$expected" "$label"
+  if [[ "$world" == count:2* ]]; then
+    assert_eq "$(jq -c '[.qa_metadata.coverage, ([.qa_metadata.lanes[] | select(.status == "ok")] | length)]' < "$ROW/out/out.json")" '["full",2]' "$label: requested valid opinions stand"
+  fi
+done <<<"$ROWS"
+
+# Must-fail control: retain the call text but remove target advancement in a
+# disposable copy. The nonzero-exit row must turn red, with only codex called.
+# shellcheck disable=SC2086
+build control $DEFAULTS exit:codex=7
+python3 - "$SO" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+assert not p.is_symlink()
+s = p.read_text()
+old = '  walk_roster "$((before + 1))"'
+assert s.count(old) == 1
+changed = s.replace(old, "  : 'walk_roster \"$((before + 1))\"'")
+assert changed != s
+p.write_text(changed)
+PY
+control=$(run_fallback review)
+assert_eq "$control" 'rc=5 [{"name":"codex","cause":"exit-7","timed":true}] order=codex calls=1,0,0' 'control: disabled advancement rejects the original fallback expectation'
+assert_eq "$([[ "$control" != "rc=0 $FIRST order=codex,claude calls=1,1,0" ]] && printf red || printf green)" red 'the nonzero-exit test turns red under the mutant'
+# Detached execution must budget for the whole sequential roster, not one CLI.
+# shellcheck disable=SC2086
+build budget $DEFAULTS models:codex+claude
+assert_eq "$(detached_budget)" 122 'detached deadline includes both possible CLI windows'
+# shellcheck disable=SC2086
+build budget-control $DEFAULTS models:codex+claude
+python3 - "${SO}-runtime" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+assert not p.is_symlink()
+s = p.read_text()
+old = 'targets=${#ROSTER[@]}'
+assert s.count(old) == 1
+changed = s.replace(old, 'targets=1 # targets=${#ROSTER[@]}')
+assert changed != s
+p.write_text(changed)
+PY
+assert_eq "$(detached_budget)" 91 'control: one-target budget turns the deadline test red'
+finish

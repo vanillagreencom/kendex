@@ -96,10 +96,14 @@ first target that is available AND runs a different model from this session,
 AND whose account has room by its SECOND_OPINION_<NAME>_ROOM_CMD where it has
 one — the model this session runs is never dispatched to, in any mode, forced
 or not.
-When no eligible target remains the run refuses (exit 1) and says why.
+A nonzero exit, per-CLI timeout or recognized quota/rate-limit refusal on
+stderr advances to the next roster name. Every attempt records name, cause
+and seconds on stderr and in review/audit qa_metadata.attempts (or the failed
+record when exhausted). Forced targets never fall through.
+When no eligible target remains before execution the run refuses (exit 1).
 Review mode collects up to SECOND_OPINION_COUNT opinions (default 1; a
 shortfall is stated and stamped as degraded coverage); with 2 or more,
-the lanes run in parallel on the same derived scope and one union artifact is
+the lanes run in roster order on the same derived scope and one union artifact is
 written — findings deduplicated by normalized location, per-lane provenance in
 each finding's `sources` and in qa_metadata.lanes, lane artifacts kept beside
 it as <output>.<target>.json. A failed lane is recorded in the artifact
@@ -1174,18 +1178,33 @@ consider_target() {
   # spends a room check.
   target_room "$t" || return 1
   REVIEW_LANES+=("$t")
-  SELECTED_MODELS+=("$model")
+  [[ "$MODE" != "detect" ]] || SELECTED_MODELS+=("$model")
   LANE_ENVS+=("$ROOM_ENV")
   return 0
 }
 
-# Walk the roster, taking up to $1 targets.
+# Keep the cursor between attempts: a failed command is never tried again.
+ROSTER=()
+ROSTER_INDEX=0
+ROSTER_TEXT=$(roster_entries)
+while IFS= read -r entry; do
+  [[ -z "$entry" ]] || ROSTER+=("$entry")
+done <<<"$ROSTER_TEXT"
 walk_roster() {
   local want="$1" t
-  while IFS= read -r t; do
-    [[ ${#REVIEW_LANES[@]} -lt "$want" ]] || break
+  while [[ $ROSTER_INDEX -lt ${#ROSTER[@]} && ${#REVIEW_LANES[@]} -lt "$want" ]]; do
+    t="${ROSTER[$ROSTER_INDEX]}"
+    ROSTER_INDEX=$((ROSTER_INDEX + 1))
     consider_target "$t" || true
-  done < <(roster_entries)
+  done
+}
+
+# Advance only after execution or collection, never reserve a failed model.
+next_target() {
+  local before=${#REVIEW_LANES[@]}
+  [[ -z "$FORCED_TARGET" ]] || return 1
+  walk_roster "$((before + 1))"
+  [[ ${#REVIEW_LANES[@]} -gt "$before" ]]
 }
 
 # Set when the session's own identity is what refused, undeclared or unspelled.
@@ -1278,7 +1297,7 @@ elif [[ -n "$FORCED_TARGET" ]]; then
   WANT=1
   consider_target "$FORCED_TARGET" || true
 else
-  walk_roster "$WANT"
+  if [[ "$MODE" == "detect" ]]; then walk_roster "$WANT"; else walk_roster 1; fi
   # A roster set to the empty string names no targets at all. Say so once —
   # otherwise the refusal below lists no candidates and reads as a bug.
   [[ -n "$(roster_entries)" ]] \
@@ -1323,7 +1342,7 @@ fi
 # was asked to be two reads as degraded, not as a run that never asked.
 REQUESTED_COUNT="$WANT"
 SELECTED_COUNT="${#REVIEW_LANES[@]}"
-if [[ "$SELECTED_COUNT" -lt "$REQUESTED_COUNT" ]]; then
+if [[ "$MODE" == "detect" && "$SELECTED_COUNT" -lt "$REQUESTED_COUNT" ]]; then
   echo "→ requested $REQUESTED_COUNT opinions, selected $SELECTED_COUNT — the roster has no further eligible model (coverage degraded)" >&2
 fi
 
@@ -1335,7 +1354,7 @@ fi
 TARGET_CLI=""
 TARGET_CLI_ENV=""
 MULTI_LANE=false
-if [[ ${#REVIEW_LANES[@]} -ge 2 ]]; then
+if [[ "$MODE" == "review" && "$REQUESTED_COUNT" -ge 2 ]]; then
   MULTI_LANE=true
 else
   TARGET_CLI="${REVIEW_LANES[0]}"
@@ -1354,7 +1373,7 @@ fi
 CWD="$(cd -- "$CWD" && pwd)" || { echo "Error: --cwd is not usable: $CWD" >&2; exit 1; }
 
 if $MULTI_LANE; then
-  echo "→ second-opinion: targets=$(IFS=+; echo "${REVIEW_LANES[*]}") mode=$MODE (multi-lane) current=$CURRENT_MODEL cwd=$CWD timeout=${TIMEOUT}s" >&2
+  echo "→ second-opinion: requested=$REQUESTED_COUNT mode=$MODE (ordered lanes) current=$CURRENT_MODEL cwd=$CWD timeout=${TIMEOUT}s" >&2
 else
   echo "→ second-opinion: target=$TARGET_CLI mode=$MODE current=$CURRENT_MODEL cwd=$CWD timeout=${TIMEOUT}s" >&2
 fi
@@ -1982,7 +2001,7 @@ second_opinion_detach_if_needed
 
 # --- Multi-lane review orchestration ------------------------------------------
 # With SECOND_OPINION_COUNT >= 2, review mode runs the selected lanes on the
-# SAME derived scope (in parallel — GH bots run concurrently too) and unions
+# SAME derived scope (in roster order) and unions
 # their findings, deduplicated by normalized location (file + backticked
 # symbol; the schema forbids line numbers). Each lane is a recursive
 # single-target invocation of this script, so every lane keeps the full
@@ -1992,7 +2011,7 @@ second_opinion_detach_if_needed
 # Failure semantics: one failed lane must not fail the run (a quota-capped lane
 # would block every review) but must never narrow coverage silently either —
 # the failed lane and its exit code are recorded in qa_metadata.lanes and
-# coverage becomes "degraded". When EVERY lane fails there is no external
+# coverage is degraded when the roster cannot supply the count. When EVERY lane fails there is no external
 # verdict, so the run joins the no-verdict class: exit 4 when at least one lane
 # answered unusably (its own exit 4), else 6 when any lane died to a signal,
 # else exit 5.
@@ -2012,17 +2031,15 @@ if $MULTI_LANE; then
   # reap either.
   LANE_TMP_DIR=$(so_tmpdir)
   LANE_TMP_FILES=()
-  LANE_PIDS=()
+  ACTIVE_LANE_PID=""
   # On any exit — including INT/TERM — kill still-running lane children before
   # cleanup: an interrupted parent must not leave external model CLIs running
   # (and billing) in the background, writing orphaned sidecars.
   cleanup_lanes() {
-    local pid art
-    for pid in ${LANE_PIDS[@]+"${LANE_PIDS[@]}"}; do
-      kill "$pid" 2>/dev/null || true
-    done
-    if [[ ${#LANE_PIDS[@]} -gt 0 ]]; then
-      wait ${LANE_PIDS[@]+"${LANE_PIDS[@]}"} 2>/dev/null || true
+    local art
+    if [[ -n "$ACTIVE_LANE_PID" ]]; then
+      kill "$ACTIVE_LANE_PID" 2>/dev/null || true
+      wait "$ACTIVE_LANE_PID" 2>/dev/null || true
     fi
     # Never let cleanup decide the run's exit status: rm still fails on an
     # entry it cannot unlink (something under a directory the run cannot write,
@@ -2063,7 +2080,41 @@ if $MULTI_LANE; then
   # nothing. Unremovable means the artifact family cannot be guaranteed clean,
   # which is worth failing on before any model spend — through the same named
   # cause as the pre-flight pass, not a bare rm error.
-  for lane in "${REVIEW_LANES[@]}"; do
+  # Gate every lane artifact on the shape the union merge actually consumes.
+  # A zero exit and a parse are not enough: the merge adds `{source: …}` to
+  # each finding, iterates questions, lowercases locations and concatenates
+  # summaries, so a top-level-complete artifact carrying `blockers: ["bad"]`
+  # parses fine and then aborts the merge under `set -e` — no union at all,
+  # even though the other lane returned a perfectly good review. Rejecting it
+  # here keeps that lane's failure local (exit 4, coverage degraded) and lets
+  # the healthy lanes publish. Slurped, so a stream of several JSON values is
+  # refused too rather than smuggling extra lanes into the merge.
+  LANE_WRAP_JQ='
+    def bad(m): error("invalid review artifact: " + m);
+    def check(k):
+      if (.[k] | type) != "array" then bad(k + " is not an array")
+      elif any(.[k][]; type != "object") then bad(k + " holds a non-object entry")
+      elif any(.[k][]; .location != null and (.location | type) != "string")
+        then bad(k + " holds a non-string location")
+      else . end;
+    if length == 0 then bad("artifact holds no JSON value at all")
+    elif length > 1 then bad("artifact holds " + (length | tostring) + " JSON values, expected one")
+    else .[0] end
+    | if type != "object" then bad("artifact is not a JSON object")
+      elif (.questions | type) != "array" then bad("questions is not an array")
+      elif .summary != null and (.summary | type) != "string" then bad("summary is not a string")
+      else check("blockers") | check("suggestions") end
+    | {target: $target, review: .}'
+
+  LANES_FAILED_JSON="[]"
+  LANE_WRAPS=()
+  ANY_LANE_EXIT4=false
+  ANY_LANE_KILLED=false
+  ATTEMPTS_JSON="[]"
+  i=0
+  while [[ $i -lt ${#REVIEW_LANES[@]} ]]; do
+    lane="${REVIEW_LANES[$i]}"
+    lane_started=$(date +%s)
     if [[ -n "$OUTPUT_PATH" ]]; then
       lane_out="${OUTPUT_PATH}.${lane}.json"
       clear_output_family "$lane_out" "${ALL_RECORD_SUFFIXES[@]}"
@@ -2100,7 +2151,7 @@ if $MULTI_LANE; then
     # launch itself is performed by the forked child BEFORE the command runs:
     # if the scratch directory has gone by then — an outsider can remove it at
     # any moment, and every lane after the first is exposed for as long as the
-    # fan-out takes — the child dies without ever reviewing, and scratch loss
+    # collection takes — the child dies without ever reviewing, and scratch loss
     # costs a VERDICT rather than a log.
     #
     # So the lane opens the capture itself, in its own process, with a fallback
@@ -2163,46 +2214,14 @@ if $MULTI_LANE; then
         --timeout="$TIMEOUT" --output="$lane_out" --scratch-output ${detached_worker_arg:+"$detached_worker_arg"} \
         >/dev/null 2>&3 3>&-
     ) &
-    LANE_PIDS+=($!)
+    ACTIVE_LANE_PID=$!
     LANE_OUTS+=("$lane_out")
     LANE_ERRS+=("$lane_err")
-  done
-
-  # Gate every lane artifact on the shape the union merge actually consumes.
-  # A zero exit and a parse are not enough: the merge adds `{source: …}` to
-  # each finding, iterates questions, lowercases locations and concatenates
-  # summaries, so a top-level-complete artifact carrying `blockers: ["bad"]`
-  # parses fine and then aborts the merge under `set -e` — no union at all,
-  # even though the other lane returned a perfectly good review. Rejecting it
-  # here keeps that lane's failure local (exit 4, coverage degraded) and lets
-  # the healthy lanes publish. Slurped, so a stream of several JSON values is
-  # refused too rather than smuggling extra lanes into the merge.
-  LANE_WRAP_JQ='
-    def bad(m): error("invalid review artifact: " + m);
-    def check(k):
-      if (.[k] | type) != "array" then bad(k + " is not an array")
-      elif any(.[k][]; type != "object") then bad(k + " holds a non-object entry")
-      elif any(.[k][]; .location != null and (.location | type) != "string")
-        then bad(k + " holds a non-string location")
-      else . end;
-    if length == 0 then bad("artifact holds no JSON value at all")
-    elif length > 1 then bad("artifact holds " + (length | tostring) + " JSON values, expected one")
-    else .[0] end
-    | if type != "object" then bad("artifact is not a JSON object")
-      elif (.questions | type) != "array" then bad("questions is not an array")
-      elif .summary != null and (.summary | type) != "string" then bad("summary is not a string")
-      else check("blockers") | check("suggestions") end
-    | {target: $target, review: .}'
-
-  LANES_FAILED_JSON="[]"
-  LANE_WRAPS=()
-  ANY_LANE_EXIT4=false
-  ANY_LANE_KILLED=false
-  for i in "${!LANE_PIDS[@]}"; do
     lane="${REVIEW_LANES[$i]}"
     lane_rc=0
-    wait "${LANE_PIDS[$i]}" || lane_rc=$?
-    # Replay the lane's stderr with a lane prefix so parallel logs stay
+    wait "$ACTIVE_LANE_PID" || lane_rc=$?
+    ACTIVE_LANE_PID=""
+    # Replay the lane's stderr with a lane prefix so logs stay
     # attributable in sequential order. The stderr capture is scratch: when it
     # is gone (the reviewed repo's own agent CLI, a sandbox, or a tmp reaper
     # can clear scratch while lanes run) the log is lost and nothing
@@ -2330,11 +2349,30 @@ if $MULTI_LANE; then
         --arg target "$lane" --arg status "$lane_status" --argjson code "$lane_rc" \
         '$prev + [{target: $target, status: $status, exit_code: $code}]')
     fi
+    lane_finished=$(date +%s)
+    lane_seconds=$((lane_finished - lane_started))
+    lane_cause="exit-$lane_rc"
+    if $lane_ok; then
+      lane_cause=opinion
+      SELECTED_MODELS+=("$(target_model "$lane")")
+    elif [[ -f "${lane_out}.failed.json" ]]; then
+      lane_cause=$(jq -r '.attempts[-1].cause // $cause' --arg cause "$lane_cause" < "${lane_out}.failed.json")
+    fi
+    ATTEMPTS_JSON=$(jq -cn --argjson prev "$ATTEMPTS_JSON" --arg name "$lane" \
+      --arg cause "$lane_cause" --argjson seconds "$lane_seconds" \
+      '$prev + [{name: $name, cause: $cause, seconds: $seconds}]')
+    if [[ ${#LANE_WRAPS[@]} -ge $REQUESTED_COUNT ]] || ! next_target; then break; fi
+    i=$((i + 1))
   done
+  SELECTED_COUNT=${#REVIEW_LANES[@]}
+  if [[ ${#LANE_WRAPS[@]} -lt $REQUESTED_COUNT ]]; then
+    echo "→ requested $REQUESTED_COUNT opinions, collected ${#LANE_WRAPS[@]} — the roster has no further eligible model (coverage degraded)" >&2
+  fi
 
   if [[ ${#LANE_WRAPS[@]} -eq 0 ]]; then
     jq -n --argjson lanes "$LANES_FAILED_JSON" \
-      '{error: "every review lane failed — no external verdict", lanes: $lanes}' >&2
+      --argjson attempts "$ATTEMPTS_JSON" \
+      '{error: "every review lane failed — no external verdict", lanes: $lanes, attempts: $attempts}' >&2
     # 4 outranks 6 outranks 5: an unusable ANSWER is a signal about the review,
     # a kill says the reviewer was taken away, else a plain lane failure.
     if $ANY_LANE_EXIT4; then exit "$EXIT_NO_REVIEW"
@@ -2356,6 +2394,7 @@ if $MULTI_LANE; then
   REVIEWED_HEAD="$REVIEW_HEAD_SHA"
   MERGED=$(printf '%s\n' "${LANE_WRAPS[@]}" | jq -s --argjson failed "$LANES_FAILED_JSON" --arg ts "$STAMP" --arg head "$REVIEWED_HEAD" \
       --arg start_head "${REVIEW_START_HEAD:-}" --argjson dirty_paths "${REVIEW_DIRTY_PATHS:-null}" \
+      --argjson attempts "$ATTEMPTS_JSON" \
       --argjson requested "$REQUESTED_COUNT" --argjson selected "$SELECTED_COUNT" '
     def norm: ((.location // "") | ascii_downcase | gsub("`"; "") | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" "));
     def with_occ: reduce .[] as $f ({seen: {}, out: []};
@@ -2390,7 +2429,8 @@ if $MULTI_LANE; then
         questions: ([ $lanes[] | .review.questions[] ] | unique),
         qa_metadata: ({
           union: true,
-          coverage: (if ($failed | length) > 0 or $selected < $requested then "degraded" else "full" end),
+          attempts: $attempts,
+          coverage: (if ($lanes | length) < $requested then "degraded" else "full" end),
           requested_count: $requested,
           selected_count: $selected,
           lanes: (($lanes | map({target: .target, status: "ok",
@@ -2535,7 +2575,8 @@ preserve_cli_failure_and_fail() {
   fi
   sidecar=$(store_record "$sidecar" "$(jq -n --arg target "$TARGET_CLI" --arg reason "$reason" \
         --arg verb "$verb" --arg cause "$cause" --arg cause_source "$cause_source" --arg stdout "$partial" \
-    '{error: "external CLI \($verb) before producing a review", target: $target, reason: $reason, cause: $cause, cause_source: $cause_source, partial_stdout: $stdout}')")
+        --argjson attempts "$ATTEMPTS_JSON" \
+    '{error: "external CLI \($verb) before producing a review", target: $target, reason: $reason, cause: $cause, cause_source: $cause_source, partial_stdout: $stdout, attempts: $attempts}')")
 
   jq -n --arg target "$TARGET_CLI" --arg reason "$reason" --arg sidecar "$sidecar" \
     '{error: "\($target) \($reason) — refusing to write a review artifact", response: $sidecar}' >&2
@@ -2553,7 +2594,58 @@ preserve_cli_failure_and_fail() {
 }
 
 # review/audit carry the no-verdict contract (the EXIT_* codes); challenge/quick do not.
-RESULT=$(run_target_cli "$PROMPT_TMP") || EXIT_CODE=$?
+ATTEMPTS_JSON="[]"
+# Claude, Codex and Pi can emit refusal text with a zero exit. There is no
+# common structured error interface across configured commands; match only
+# upstream error codes and refusal prefixes on stderr, not the opinion text.
+REFUSAL_PATTERNS=(
+  'rate_limit_error|rate_limit_exceeded'
+  'insufficient_quota|You exceeded your current quota'
+  "You've hit your (usage )?limit|You have hit your limit"
+)
+# Use the same fall-through for primary calls and the existing format retry.
+# A new target receives the original request, never another model's retry.
+collect_response() {
+  local invocation_prompt="$1" attempt_started attempt_finished attempt_seconds pattern refusal_rc
+  while :; do
+    EXIT_CODE=0
+    attempt_started=$(date +%s)
+    RESULT=$(run_target_cli "$invocation_prompt") || EXIT_CODE=$?
+    attempt_finished=$(date +%s)
+    attempt_seconds=$((attempt_finished - attempt_started))
+    attempt_cause=answered
+    if [[ $EXIT_CODE -eq 124 ]]; then attempt_cause=timeout
+    elif [[ $EXIT_CODE -ne 0 ]]; then attempt_cause="exit-$EXIT_CODE"
+    else
+      for pattern in "${REFUSAL_PATTERNS[@]}"; do
+        refusal_rc=0
+        grep -Ei -- "$pattern" "$STDERR_TMP" >/dev/null || refusal_rc=$?
+        [[ $refusal_rc -le 1 ]] || { echo "second-opinion: stderr-read-failed path=$STDERR_TMP" >&2; exit 1; }
+        if [[ $refusal_rc -eq 0 ]]; then attempt_cause=quota; EXIT_CODE=1; break; fi
+      done
+    fi
+    ATTEMPTS_JSON=$(jq -cn --argjson prev "$ATTEMPTS_JSON" --arg name "$TARGET_CLI" \
+      --arg cause "$attempt_cause" --argjson seconds "$attempt_seconds" \
+      '$prev + [{name: $name, cause: $cause, seconds: $seconds}]')
+    echo "second-opinion: attempt name=$TARGET_CLI cause=$attempt_cause seconds=$attempt_seconds" >&2
+    [[ $EXIT_CODE -ne 0 ]] || break
+    # Keep the original CLI cause visible even when a later target answers.
+    if ! next_target; then break; fi
+    cat "$STDERR_TMP" >&2
+    TARGET_CLI="${REVIEW_LANES[${#REVIEW_LANES[@]}-1]}"
+    TARGET_CLI_ENV="${LANE_ENVS[${#LANE_ENVS[@]}-1]}"
+    invocation_prompt="$PROMPT_TMP"
+    if [[ "$MODE" == "review" ]]; then
+      rm -f -- "$REVIEW_DIFF_FILE"
+      REVIEW_DIFF=""; REVIEW_DIFF_FILE=""
+      derive_review_diff "$CWD"
+      PROMPT=$(build_review_prompt)
+      printf '%s\n' "$PROMPT" > "$PROMPT_TMP"
+      trap 'rm -f -- "$PROMPT_TMP" "$STDERR_TMP" "$RETRY_PROMPT_TMP" "$REVIEW_DIFF_FILE" || true' EXIT
+    fi
+  done
+}
+collect_response "$PROMPT_TMP"
 
 if [[ $EXIT_CODE -eq 124 ]]; then
   $REVIEW_LIKE && preserve_cli_failure_and_fail "timed out after ${TIMEOUT}s" "$RESULT"
@@ -2563,6 +2655,7 @@ elif [[ $EXIT_CODE -ne 0 ]]; then
   # Classify first, report once: a signal death is a kill, not a refusal, and
   # takes its own exit code so the caller can tell its reviewer was taken away.
   CLI_FAILURE="exited with code $EXIT_CODE"; CLI_FAILURE_EXIT=$EXIT_CLI_FAILED
+  [[ "$attempt_cause" != quota ]] || CLI_FAILURE="reported a quota/rate-limit refusal"
   if CLI_SIGNAL=$(signal_name "$EXIT_CODE"); then
     CLI_FAILURE="was killed by $CLI_SIGNAL (exit $EXIT_CODE)"; CLI_FAILURE_EXIT=$EXIT_CLI_KILLED
   fi
@@ -2854,7 +2947,11 @@ if $REVIEW_LIKE; then
     fi
     RETRY_RESULT=""
     RETRY_EXIT=0
-    RETRY_RESULT=$(run_target_cli "$RETRY_PROMPT_TMP") || RETRY_EXIT=$?
+    FIRST_RESULT="$RESULT"
+    collect_response "$RETRY_PROMPT_TMP"
+    RETRY_EXIT=$EXIT_CODE
+    RETRY_RESULT="$RESULT"
+    RESULT="$FIRST_RESULT"
     RETRY_RESPONSE_BYTES=${#RETRY_RESULT}
     if [[ $RETRY_EXIT -eq 124 ]]; then
       echo "→ retry timed out after ${TIMEOUT}s" >&2
@@ -2933,6 +3030,7 @@ if $REVIEW_LIKE; then
   # makes "we wrote it" and "it carries our marker" the same statement.
   if STAMPED=$(printf '%s' "$RESULT" | jq --arg ts "$STAMP" --arg head "$REVIEWED_HEAD" \
       --arg start_head "${REVIEW_START_HEAD:-}" --argjson dirty_paths "${REVIEW_DIRTY_PATHS:-null}" \
+      --argjson attempts "$ATTEMPTS_JSON" \
       --argjson raw_bytes "$RAW_RESPONSE_BYTES" \
       --argjson retry_bytes "${RETRY_RESPONSE_BYTES:-null}" \
       --argjson requested "$REQUESTED_COUNT" --argjson selected "$SELECTED_COUNT" \
@@ -2941,6 +3039,7 @@ if $REVIEW_LIKE; then
        | .timestamp = $ts
        | .head = $start_head | .dirty_paths = $dirty_paths
        | (if $head == "" then . else .qa_metadata.reviewed_head = $head end)
+       | .qa_metadata.attempts = $attempts
        | .qa_metadata.raw_response_bytes = $raw_bytes
        | (if $retry_bytes == null then .
           else .qa_metadata.retry_response_bytes = $retry_bytes end)

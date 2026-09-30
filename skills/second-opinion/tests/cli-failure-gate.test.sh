@@ -25,7 +25,7 @@ FAILED_EXIT_STDERR="failed(exited with code 1|claude stderr|quota)"
 # label|world|argv|rc|out|err|calls files home tmp dirty
 ROWS="
 a non-zero exit with the cause on stderr exits 5, preserves the record with the cause, names it on stderr, and does not retry|rc:1 stdout:- stderr:quota|review|5|-|header:review failed:exit:out:1 cause:stderr preserved:out|calls=1 files=out.failed.json=$FAILED_EXIT_STDERR $CLEAN
-an empty response on a zero exit is the same class, with the empty-response reason|rc:0 stdout:- stderr:quota|review|5|-|header:review failed:empty:out cause:stderr preserved:out|calls=1 files=out.failed.json=failed(returned an empty response on a zero exit — check CLI auth and configuration|claude stderr|quota) $CLEAN
+an empty response on a zero exit is the same class, with the empty-response reason|rc:0 stdout:- stderr:-|review|5|-|header:review failed:empty:out preserved:out|calls=1 files=out.failed.json=failed(returned an empty response on a zero exit — check CLI auth and configuration|-|-) $CLEAN
 a timeout is a CLI failure too, with no cause block|sleep:5 timeout:1|review|5|-|header:review failed:timeout:out:1 preserved:out|calls=1 files=out.failed.json=failed(timed out after 1s|-|-) $CLEAN
 a valid response writes the artifact and no sidecar|-|review|0|<out>|header:review written|calls=1 files=out=review:external-claude:Clean $CLEAN
 a CLI that dies to a signal is a kill, not a refusal: exit 6, the record and the report name the signal, its last words are the cause|stdout:- stderr:killed signal:TERM|review|6|-|header:review killed:out:SIGTERM:143 cause:stderr:killed preserved:out|calls=1 files=out.failed.json=killed(was killed by SIGTERM (exit 143)|claude stderr|other) $CLEAN

@@ -152,13 +152,13 @@ ORCH_ROUND_PRUNE_DISK_PCT = "75"
 # SECOND_OPINION_<NAME>_CMD (claude and codex have defaults),
 # SECOND_OPINION_<NAME>_MODEL (identity, when the CLI fronts another model)
 # and SECOND_OPINION_<NAME>_ROOM_CMD (the check that its account has room).
-# pi-copilot reviews through Pi on the Copilot pool while the Codex seats are
-# walled; codex is taken again once its seat reads room. The room checks
+# pi-copilot runs Claude Opus on Copilot first, then the native claude and
+# codex entries. Room checks and execution failures use that order. The checks
 # assume the orch fleet's accounts, which lanes pick measures; a contributor
 # off the fleet overrides SECOND_OPINION_MODELS in .env.local. Each check runs
 # under ORCH_LANE_HOST=local: the reviewer runs on this machine's login, and a
 # lane-host provider's reading of an account would judge a copy it never spends.
-SECOND_OPINION_MODELS = "claude codex pi-copilot"
+SECOND_OPINION_MODELS = "pi-copilot claude codex"
 
 # Opinions a review collects; 2+ unions distinct models on one diff.
 SECOND_OPINION_COUNT = "1"
@@ -169,17 +169,17 @@ SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --e
 SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 
 # A Codex review runs on the seat lanes pick finds room on, as a codex lane
-# would; a walled seat passes the review to pi-copilot.
+# would; a walled seat is skipped.
 SECOND_OPINION_CODEX_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness codex --model gpt-6-astra --binding-floor"
 
-# The same model on the Copilot pool, read-only tools only, on the Pi account
+# Claude Opus on the Copilot pool, read-only tools only, on the Pi account
 # ORCH_LANE_COPILOT_POOL states room for; unstated, it is skipped. That
 # reading comes from the settings in the lane's own tree: a hosted lane states
 # it in .env.local until its provider forwards it, and one without it records
 # the check's refusal. With no shell, it is sent the diff inline.
-SECOND_OPINION_PI_COPILOT_CMD = "pi -p --no-session --no-extensions --model github-copilot/gpt-6-astra --thinking xhigh --tools read,grep,find,ls"
-SECOND_OPINION_PI_COPILOT_MODEL = "gpt-6-astra"
-SECOND_OPINION_PI_COPILOT_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness pi --model github-copilot/gpt-6-astra"
+SECOND_OPINION_PI_COPILOT_CMD = "pi -p --no-session --no-extensions --model github-copilot/claude-opus-5.5 --thinking high --tools read,grep,find,ls"
+SECOND_OPINION_PI_COPILOT_MODEL = "github-copilot/claude-opus-5.5"
+SECOND_OPINION_PI_COPILOT_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness pi --model github-copilot/claude-opus-5.5"
 SECOND_OPINION_PI_COPILOT_INLINE_DIFF = "1"
 
 # Seconds to wait for the external CLI.

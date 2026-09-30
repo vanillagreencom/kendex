@@ -125,6 +125,7 @@ project_file() {
 }
 
 word() {
+  local refusal
   case "$1" in
     # the nearest ancestor `ps` reports: a harness name, a bystander, none, or
     # empty (ps answers nothing)
@@ -152,6 +153,12 @@ word() {
     claude:*) W_RESP_CLAUDE="${1#claude:}" ;;
     codex:*) W_RESP_CODEX="${1#codex:}" ;;
     extra:*) W_RESP_EXTRA="${1#extra:}" ;;
+    exit:*) W_ENV+=("SO_TEST_EXIT_${1#exit:}") ;;
+    refusal:*=claude-banner) refusal="${1#refusal:}"; W_ENV+=("SO_TEST_REFUSAL_${refusal%%=*}=You've hit your usage limit") ;;
+    refusal:*) W_ENV+=("SO_TEST_REFUSAL_${1#refusal:}") ;;
+    retry-exit:*) W_ENV+=("SO_TEST_RETRY_EXIT_${1#retry-exit:}") ;;
+    delay:*) W_ENV+=("SO_TEST_DELAY_${1#delay:}") ;;
+    timeout:*) W_ENV+=("SECOND_OPINION_TIMEOUT=${1#timeout:}") ;;
     stale) W_STALE=1 ;;
     # the world with nothing added
     -) ;;
@@ -169,9 +176,18 @@ make_stub() {
 #!/usr/bin/env bash
 set -euo pipefail
 cat >/dev/null
+mkdir "$ROW/running" || { echo 'concurrent opinion command' >&2; exit 97; }
+trap 'rmdir "$ROW/running"' EXIT
+trap 'exit 143' TERM
 n=\$(cat "$ROW/count-$1" 2>/dev/null || echo 0)
 printf '%s' \$((n + 1)) >"$ROW/count-$1"
 printf '%s' "\${SO_TEST_SEAT:--}" >"$ROW/seat-$1"
+printf '%s\n' '$1' >>"$ROW/order"
+[[ \$n -eq 0 || "\${SO_TEST_RETRY_EXIT_$1:-0}" == 0 ]] || exit "\${SO_TEST_RETRY_EXIT_$1}"
+# Real sleep reaches GNU timeout's process teardown; a clock stub cannot expire it.
+[[ "\${SO_TEST_DELAY_$1:-0}" == 0 ]] || sleep "\${SO_TEST_DELAY_$1}"
+[[ -z "\${SO_TEST_REFUSAL_$1:-}" ]] || printf '%s\n' "\${SO_TEST_REFUSAL_$1}" >&2
+[[ "\${SO_TEST_EXIT_$1:-0}" == 0 ]] || exit "\${SO_TEST_EXIT_$1}"
 [[ -f "$ROW/resp-$1" ]] || exit 1
 cat "$ROW/resp-$1"
 SH
@@ -317,7 +333,8 @@ selection_log() {
       "{") in_json=1; json="{" ;;
       "["*|"→ cmd:"*|"→ Response received"*) ;;
       # the instruction-file reports, pinned by review-prompt.test.sh alone
-      "second-opinion: instructions-"*) ;;
+      "second-opinion: instructions-"*|"second-opinion: attempt "*) ;;
+      "→ requested "*) ;;
       "→ second-opinion:"*) printf '%s\n' "${line% cwd=*}" ;;
       *) printf '%s\n' "$line" ;;
     esac
@@ -391,7 +408,7 @@ run() {
     detect) argv=(detect ${argv[@]+"${argv[@]}"}) ;;
     *) echo "UNKNOWN-COMMAND: $verb" >&2; exit 2 ;;
   esac
-  (env PATH="$ROW/bin:$PATH" ${W_ENV[@]+"${W_ENV[@]}"} "$SO" "${argv[@]}" >"$ROW/stdout" 2>"$ROW/stderr") || rc=$?
+  (env -i HOME="$ROW" PATH="$ROW/bin:$PATH" ${W_ENV[@]+"${W_ENV[@]}"} "$SO" "${argv[@]}" >"$ROW/stdout" 2>"$ROW/stderr") || rc=$?
   printf 'rc=%s out=%s err=%s calls=claude:%s,codex:%s,extra:%s art=%s files=%s' "$rc" "$(stdout_text)" \
     "$(selection_log <"$ROW/stderr" | alias_text)" "$(count claude)" "$(count codex)" "$(count extra)" "$(artifact)" "$(files)"
 }
@@ -402,7 +419,10 @@ same_model() { printf '→ skipping %s: runs the same model as this session (%s)
 session_refusal() { printf '→ skipping session: %s' "$1"; }
 err_text() {
   local spec word out=""
-  for word in $1; do out="$out;$(err_word "$word" | sed 's/;/\\;/g')"; done
+  for word in $1; do
+    [[ "$word" != shortfall:* ]] || continue
+    out="$out;$(err_word "$word" | sed 's/;/\\;/g')"
+  done
   printf '%s' "${out#;}"
 }
 err_word() {
@@ -411,7 +431,7 @@ err_word() {
   a="${a%%:*}"; b="${b%%:*}"
   case "$spec" in
     -) printf '' ;;
-    multi:*) printf '→ second-opinion: targets=%s mode=review (multi-lane) current=%s' "$a" "$b" ;;
+    multi:*) printf '→ second-opinion: requested=%s mode=review (ordered lanes) current=%s' "$([[ "$spec" == *:*:*:* ]] && printf '%s' "$c" || printf 2)" "$b" ;;
     single:*) printf '→ second-opinion: target=%s mode=%s current=%s' "$a" "$b" "$c" ;;
     written) printf '→ Written: <out>' ;;
     union:*) printf '→ Written: <out> (union of %s lanes)' "$a" ;;
@@ -483,4 +503,35 @@ finish() {
   echo
   printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
   [[ "$FAIL" -eq 0 ]]
+}
+
+# The injected clock pins the launch budget. Real timeout still bounds the CLI.
+detached_budget() {
+  cat > "$ROW/bin/date" <<'SH'
+#!/usr/bin/env bash
+printf '1000000000\n'
+SH
+  chmod +x "$ROW/bin/date"
+  env -i HOME="$ROW" PATH="$ROW/bin:$PATH" "${W_ENV[@]}" "$SO" quick question \
+    --foreground --timeout 1 --cwd "$WORK" --output "$ROW/budget-answer" \
+    > "$ROW/launch" 2> "$ROW/launch-stderr"
+  local deadline wait_cmd
+  deadline=$(sed -n 's/^deadline: //p' "$ROW/launch")
+  wait_cmd=$(sed -n 's/^wait: //p' "$ROW/launch")
+  env -i HOME="$ROW" PATH="$ROW/bin:$PATH" bash -c "$wait_cmd" > "$ROW/wait" 2> "$ROW/wait-stderr"
+  printf '%s\n' "$((deadline - 1000000000))"
+}
+
+# One readback for CLI fall-through rows and their mutant control.
+run_fallback() {
+  local result
+  result=$(run "$1")
+  printf '%s ' "${result%% out=*}"
+  fallback_state | paste -s -d ' ' -
+}
+fallback_state() {
+  local file="$ROW/out/out.json"
+  [[ -f "$file" ]] || file="${file}.failed.json"
+  jq -c '(.qa_metadata.attempts // .attempts) | map({name, cause, timed: (.seconds | type == "number" and . >= 0)})' < "$file"
+  printf 'order=%s calls=%s,%s,%s\n' "$(paste -s -d , "$ROW/order")" "$(count codex)" "$(count claude)" "$(count extra)"
 }

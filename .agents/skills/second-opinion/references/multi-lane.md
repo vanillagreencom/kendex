@@ -1,6 +1,6 @@
 # Multi-lane review
 
-How `review` fans out across lanes, merges their findings, places their artifacts, and classifies their failures.
+How `review` collects ordered opinions, merges their findings, places their artifacts, and classifies their failures.
 
 ## Lane resolution
 
@@ -11,10 +11,10 @@ The roster `SECOND_OPINION_MODELS` (default `claude codex`, space- or comma-sepa
 | Name shape | Not `^[A-Za-z][A-Za-z0-9_-]*$` |
 | One configuration | Its `SECOND_OPINION_<NAME>_*` namespace was already considered (`my-model` and `my_model` are one configuration) |
 | Cross-model | Its declared identity (`SECOND_OPINION_<NAME>_MODEL`, default the name, model ids normalized; a target named `pi`, `opencode`, `cursor` or `copilot` has no default and is skipped until it is declared) equals the session's (the detected harness's model where there is one, else `SECOND_OPINION_CURRENT_MODEL`; a declaration contradicting a detected harness is refused). A session with no identity, or one whose `SECOND_OPINION_CURRENT_MODEL` the roster does not spell, refuses every target; `none` declares no session model. A *detected* identity the roster does not name excludes nothing |
-| Distinct model | Its identity is already covered by a taken lane |
+| Distinct model | Its identity is already covered by a successful opinion |
 | Available | Its configured command's first word does not resolve |
 
-Every skip is one line on stderr naming the target and the cause. Review mode stops after `SECOND_OPINION_COUNT` lanes (default 1); every other mode after one. Fewer lanes than requested is stated on stderr and stamped into the artifact — `qa_metadata.requested_count`, `qa_metadata.selected_count`, and `coverage: "degraded"`. Two or more lanes make the run multi-lane; one runs as a single-lane review; none is a refusal — exit 1, a JSON error on stderr listing every candidate with its reason, no artifact, no CLI invoked. `--target` and `SECOND_OPINION_TARGET` replace the walk with the one named target, which passes the same checks: forcing the session's own model is refused.
+Every skip is one line on stderr naming the target and the cause. Commands run one at a time. Review mode stops after `SECOND_OPINION_COUNT` successful opinions (default 1) or roster exhaustion; every other mode after one opinion or exhaustion. A failed attempt does not reserve its model. Fewer opinions than requested is stated on stderr and stamped as `coverage: "degraded"`. A requested count of two or more uses the union collector. No eligible target before execution is a refusal: exit 1, a JSON error listing every candidate, no artifact, no CLI invoked. `--target` and `SECOND_OPINION_TARGET` replace the walk with the one named target, which passes the same checks and never falls through.
 
 Adding a lane is a settings entry, not new code: add its name to `SECOND_OPINION_MODELS`, define `SECOND_OPINION_<NAME>_CMD` (name uppercased, hyphens as underscores), and — when the CLI fronts a model other than its own name, or is named for a harness that fronts a selectable model — `SECOND_OPINION_<NAME>_MODEL`.
 
@@ -36,7 +36,9 @@ Duplicates collapse to the first of their group and carry every contributing lan
 | `verdict` | `action_required` when the merged blockers are non-empty, else `pass` |
 | `summary` | Each lane's own summary, lane-labelled |
 | `qa_metadata.union` | Always `true` for a union artifact |
-| `qa_metadata.coverage` | `full` only when every selected lane answered AND as many lanes were selected as `SECOND_OPINION_COUNT` requested; `degraded` for either shortfall (see `requested_count` / `selected_count`) |
+| `qa_metadata.coverage` | `full` when the requested number of valid opinions stands; `degraded` for a shortfall |
+| `qa_metadata.attempts` | Execution order, each entry with `name`, `cause` and `seconds`; also carried by exhausted CLI-failure records |
+| `qa_metadata.requested_count` / `selected_count` | Requested opinions / attempted eligible targets |
 | `qa_metadata.lanes` | One entry per lane: the answering lanes with their agent, verdict and finding counts, then the failed ones with `status: "failed"` — or `"killed"` for a lane that died to a signal — and their exit code |
 | `qa_metadata.dedupe` | Findings in and out, per class |
 | `qa_metadata.reviewed_head` | The scope-derivation pin |
@@ -64,7 +66,7 @@ The one exception is a home that cannot be created or vetted: the lane falls bac
 
 ## Failure classes
 
-One failed lane does not fail the run. It is recorded in `qa_metadata.lanes`, coverage becomes `degraded`, and the run still exits 0 with the surviving lanes' findings.
+One failed lane does not fail the run. It is recorded in `qa_metadata.lanes` and the collector continues down the roster. Coverage is `degraded` only if the roster ends before the requested opinions stand. The run exits 0 with surviving findings when any valid opinion stands.
 
 A lane's artifact is usable only if it holds exactly one JSON object shaped the way the merge consumes it. Each rejection names itself on stderr. Rejected shapes: not exactly one JSON value; top level not an object; `blockers` / `suggestions` not an array of objects; a finding's `location` not a string; `questions` not an array; `summary` not a string.
 

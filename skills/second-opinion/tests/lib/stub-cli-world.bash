@@ -440,7 +440,7 @@ record_log() {
       # the plumbing, and the lane relays the dual-model suites pin
       "→ cmd:"*|"→ Response received"*|"["*"] "*) ;;
       # the instruction-file reports, pinned by review-prompt.test.sh alone
-      "second-opinion: instructions-"*) ;;
+      "second-opinion: instructions-"*|"second-opinion: attempt "*) ;;
       "→ second-opinion:"*) printf '%s\n' "${line% cwd=*}" ;;
       *) printf '%s\n' "$line" ;;
     esac

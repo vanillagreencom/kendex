@@ -5,7 +5,9 @@
 # The reviewers to try, best first, separated by spaces or commas. The
 # claude and codex names have built-in commands; any other name needs one
 # below. A review goes to the first name that is installed and is not the
-# model running this session.
+# model running this session. This is also the execution fallback order: a
+# nonzero exit, timeout or recognized quota/rate-limit refusal tries the next
+# name. Each attempt reports its name, cause and seconds.
 SECOND_OPINION_MODELS = "claude codex"
 
 # The most opinions one review collects. 2 or more sends the same change to
@@ -48,11 +50,11 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra -s read-only -c model_reas
 # ORCH_LANE_HOST=local through env, since the command runs without a shell: the
 # reviewer runs on this machine's login, which a lane-host provider's reading
 # of the account does not judge.
-# SECOND_OPINION_MODELS = "claude codex pi-copilot"
+# SECOND_OPINION_MODELS = "pi-copilot claude codex"
 # SECOND_OPINION_CODEX_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness codex --model gpt-6-astra --binding-floor"
-# SECOND_OPINION_PI_COPILOT_CMD = "pi -p --no-session --no-extensions --model github-copilot/gpt-6-astra --thinking xhigh --tools read,grep,find,ls"
-# SECOND_OPINION_PI_COPILOT_MODEL = "gpt-6-astra"
-# SECOND_OPINION_PI_COPILOT_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness pi --model github-copilot/gpt-6-astra"
+# SECOND_OPINION_PI_COPILOT_CMD = "pi -p --no-session --no-extensions --model github-copilot/claude-opus-5.5 --thinking high --tools read,grep,find,ls"
+# SECOND_OPINION_PI_COPILOT_MODEL = "github-copilot/claude-opus-5.5"
+# SECOND_OPINION_PI_COPILOT_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness pi --model github-copilot/claude-opus-5.5"
 
 # A reviewer that cannot run git, such as Pi on read-only file tools, is sent
 # the change itself: set to 1, its review prompt carries the diff, up to the cap
