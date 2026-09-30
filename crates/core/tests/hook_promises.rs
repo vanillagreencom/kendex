@@ -148,7 +148,7 @@ fn a_hook_records_deliverable_copies_and_refuses_only_when_none_land() {
 
         kendex_core::apply::execute(&f.env, &report.plan).unwrap();
         let path = kendex_core::lock::lock_path(&f.env, &f.scope);
-        let lock = kendex_core::lock::load(&path).unwrap();
+        let mut lock = kendex_core::lock::load(&path).unwrap();
         assert!(lock.entries.contains_key("hook:guard:claude"));
         let recorded: std::collections::BTreeSet<_> = lock
             .entries
@@ -157,7 +157,7 @@ fn a_hook_records_deliverable_copies_and_refuses_only_when_none_land() {
             .map(|entry| entry.harness)
             .collect();
         assert_eq!(recorded, delivered.into_iter().collect(), "{harnesses}");
-        fs::remove_file(path).unwrap();
+        fs::remove_file(&path).unwrap();
         let recovery = plan_record_existing(&f.env, &f.scope);
         if nowhere {
             assert!(
@@ -171,12 +171,16 @@ fn a_hook_records_deliverable_copies_and_refuses_only_when_none_land() {
             let recovery = recovery.unwrap();
             assert_eq!(recovery.declaration_status, DeclarationStatus::Complete);
             kendex_core::apply::execute(&f.env, &recovery.plan).unwrap();
-            assert_eq!(
-                kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope))
-                    .unwrap()
-                    .entries,
-                lock.entries
-            );
+            let mut recovered = kendex_core::lock::load(&path).unwrap();
+            // Recovery records a new install time, not the original apply's time.
+            for entries in [&mut lock.entries, &mut recovered.entries] {
+                for entry in entries.values_mut() {
+                    if let Some(machine) = &mut entry.machine {
+                        machine.installed_at.clear();
+                    }
+                }
+            }
+            assert_eq!(recovered.entries, lock.entries);
         }
     }
 }
