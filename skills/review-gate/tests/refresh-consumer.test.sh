@@ -17,6 +17,12 @@ TMP="$(mktemp -d)" || { echo 'refresh-consumer: scratch=mktemp-failed' >&2; exit
 [[ -d $TMP && ! -L $TMP ]] || { echo "refresh-consumer: scratch=not-a-directory value=[$TMP]" >&2; exit 1; }
 TMP="$(cd -- "$TMP" && pwd -P)" || { echo 'refresh-consumer: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
+# Fixture commits must not use the caller's Git configuration or identity.
+for inherited in $(compgen -e); do
+  case "$inherited" in GIT_* | EMAIL) unset "$inherited" ;; esac
+done
+unset inherited
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 . "$TEST_DIR/lib/refresh-fixture.sh"
 mkdir -p "$TMP/missing-bin"
 RC=0
@@ -378,6 +384,7 @@ skill probe for Pi: its files were edited on disk after another tool installed t
       commit "$real_root/git/owner/catalog"
       printf '\n[skills.second]\nsource = "cat"\n' >>"$repo/kendex.toml"
       (cd -- "$repo" && env -i PATH="$PATH" HOME="$real_root/home" KENDEX_REAL_HOME=1 \
+        GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
         KENDEX_GIT_BASE="file://$real_root/git" KENDEX_UI=plain "$REAL_KENDEX" refresh --scope project --yes --leave)
       printf 'Hand edit.\n' >>"$repo/.agents/skills/second/SKILL.md"
       expected_holds="$expected_holds
@@ -460,6 +467,7 @@ DISCARD_CONTROL
         fi
         printf '\n[agents.writer]\nsource = "cat"\n' >>"$repo/kendex.toml"
         (cd -- "$repo" && env -i PATH="$PATH" HOME="$real_root/home" KENDEX_REAL_HOME=1 \
+          GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
           KENDEX_GIT_BASE="file://$real_root/git" KENDEX_UI=plain "$REAL_KENDEX" refresh --scope project --yes --leave)
         printf 'Hand edit.\n' >>"$repo/.claude/agents/writer.md"
         if [ "$row" = same-orphan ]; then
