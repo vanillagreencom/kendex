@@ -226,7 +226,9 @@ The long pass's events, checked and reported in this order:
                              state's alerts_triaged records no verdict for:
                              a Dependabot alert names its package, manifest,
                              scope and advisory, and pr= the open Dependabot
-                             pull request that fixes it; a code scanning
+                             pull request that fixes it, manifest= being the
+                             repository path percent-encoded, %20 a space
+                             and %25 a percent sign; a code scanning
                              alert its rule; a secret its type and, where
                              GitHub checks it, its validity. Reported once;
                              a first-repository baseline row keeps it quiet,

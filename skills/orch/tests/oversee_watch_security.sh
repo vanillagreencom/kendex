@@ -168,6 +168,16 @@ for row in \
   assert_eq "$RC|$(events)|$(unread)" "0|none|EVENT security-alerts-unread reads=owner/repo/code-scanning:invalid" "$label" "$ERR"
 done
 
+# A manifest path is the one column that may hold white space: it is
+# percent-encoded, `%` first, so its alert and the rest of the list are read.
+new_case security_manifest_encoded
+printf '[%s,%s]\n' "$DEPENDABOT" "${DEPENDABOT_DEV/ui\/package-lock.json/packages/my app/100%/package.json}" \
+  > "$STUB_DIR/dependabot.json"
+run --
+assert_eq "$RC|$(events)|$(unread)" "0|$LINE_DEPENDABOT
+${LINE_DEPENDABOT_DEV/ui\/package-lock.json/packages/my%20app/100%25/package.json}|none" \
+  "a manifest path with a space or a percent sign is encoded, and the list is read" "$ERR"
+
 # A verdict record the check cannot read reports nothing and names the record.
 new_case security_record_invalid
 one_of_each

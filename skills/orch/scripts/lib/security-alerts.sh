@@ -13,9 +13,11 @@
 #         [advisory=<GHSA>] [validity=<v>] url=<url> [pr=<N>]
 #   EVENT security-alerts-unread reads=<source>:<cause>[,<source>:<cause>...]
 # <kind> is the alert API's own path segment, `dependabot`, `code-scanning` or
-# `secret-scanning`; a source is `<repo>/<kind>`, `<repo>/dependabot-prs` (the
-# alert-to-pull-request link) or `alerts_triaged`; a cause is one of
-# security_read_cause's or `invalid`.
+# `secret-scanning`; <path> is the manifest's repository path with each `%`
+# and white space character percent-encoded (`%25`, `%20`), so a directory
+# name with a space stays one word; a source is `<repo>/<kind>`,
+# `<repo>/dependabot-prs` (the alert-to-pull-request link) or
+# `alerts_triaged`; a cause is one of security_read_cause's or `invalid`.
 
 # ORCH_SECURITY_ALERTS, read once at start: `on` (the default) runs the pass,
 # `off` lists nothing, and any other value is refused rather than guessed.
@@ -35,14 +37,17 @@ SECURITY_KINDS="dependabot code-scanning secret-scanning"
 # One line per alert on a page, the columns fixed across kinds and split by the
 # ASCII unit separator, which unlike a tab keeps an empty column in `read`:
 # number, severity, subject key, subject, manifest, scope, advisory, validity,
-# url, an absent value empty. Code scanning's severity is the security level
-# where its rule has one and the rule's own level otherwise; a secret has no
-# severity. Written for gh's own jq as well as jq 1.7.1.
+# url, an absent value empty. The manifest is a repository path, which may
+# hold a space, so it is percent-encoded here as the header states; GitHub
+# writes every other column without white space. Code scanning's severity is
+# the security level where its rule has one and the rule's own level
+# otherwise; a secret has no severity. Written for gh's own jq as well as jq
+# 1.7.1.
 security_alert_jq() { # KIND
   local row
   case "$1" in
     dependabot) row='.number, .security_advisory.severity, "package", .dependency.package.name,
-      .dependency.manifest_path, .dependency.scope, .security_advisory.ghsa_id, null, .html_url' ;;
+      (.dependency.manifest_path // "" | gsub("(?<c>[%\\s])"; .c | @uri)), .dependency.scope, .security_advisory.ghsa_id, null, .html_url' ;;
     code-scanning) row='.number, (.rule.security_severity_level // .rule.severity), "rule", .rule.id,
       null, null, null, null, .html_url' ;;
     secret-scanning) row='.number, null, "rule", .secret_type, null, null, null, .validity, .html_url' ;;
@@ -237,10 +242,11 @@ check_security_alerts() {
   security_unread_commit "$state"
 }
 
-# Every column a line may carry is one word: a line whose number is not a
-# whole number, that names no subject or URL, that lacks a severity where its
-# kind has one, or that holds a value with white space in it, is not a list
-# this pass can report from. The same for the pull request lines.
+# Every column a line may carry is one word, the manifest once
+# security_alert_jq has encoded it: a line whose number is not a whole number,
+# that names no subject or URL, that lacks a severity where its kind has one,
+# or that holds a value with white space in it, is not a list this pass can
+# report from. The same for the pull request lines.
 security_lines_valid() { # KIND LIST PRS
   local number severity subject_key subject manifest scope advisory validity url value alert alert_state pr
   while IFS=$'\x1f' read -r number severity subject_key subject manifest scope advisory validity url; do
