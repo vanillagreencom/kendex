@@ -374,9 +374,12 @@ for row in \
       esac
       ;;
   esac
+  map_before="$(cat -- "$RESTACK_MAP" 2>/dev/null)" || map_before=missing
   # shellcheck disable=SC2086
   run --worktree "$BW" $RESTACK_ARGS --validate-run-dir "$dir"
   assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
+  map_after="$(cat -- "$RESTACK_MAP" 2>/dev/null)" || map_after=missing
+  assert_eq "$map_after" "$map_before" "$label leaves the map unchanged"
 done
 # Each mutant changes only the map binding rule. The first restores the
 # pre-fix refusal. The second treats any mapped target as a matching HEAD.
@@ -399,6 +402,19 @@ for control in refuse mismatch; do
   table "control: restack $control changes the binding result|--worktree $BW $RESTACK_ARGS --validate-run-dir $RESTACK_RUN|$expect"
   WRITE="$WRITE_SHIPPED"
 done
+# This control changes the shared owner's row comparison, not either caller.
+# A one-hop map must not chain its first result through another row.
+SHARED_SCRIPTS="$(mutant_scripts shared-hop-mutant lib/rebase-map.sh)" || exit 1
+mutate_file "$SHARED_SCRIPTS/lib/rebase-map.sh" \
+  'if ($e.key | startswith($sha))' 'if (. as $current | $e.key | startswith($current))'
+printf 'rebase-hop:\nrebase-map: %s %s\nrebase-map: %s %s\n' \
+  "$ROUND_BASE" "$REBASED" "$REBASED" "$REBASED_NEXT" > "$RESTACK_MAP"
+# jq visits keys in insertion order; the first mapping is the round base.
+rm -f -- "$BW/tmp/dev-return-issue-776-21-21.json"
+WRITE="$SHARED_SCRIPTS/dev-return-write"
+# shellcheck disable=SC2086
+table "control: chaining rows in the shared owner rejects the one-hop run|--worktree $BW $RESTACK_ARGS --validate-run-dir $RESTACK_RUN|rc=2 written=no stderr~dev-return-write:+run-off-round=true"
+WRITE="$WRITE_SHIPPED"
 rm -f -- "$RESTACK_MAP"
 
 echo "=== every refusal exits 2 on its own guard and writes nothing ==="

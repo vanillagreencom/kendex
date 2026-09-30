@@ -625,6 +625,7 @@
   ".agents/skills/orch/scripts/lib/overseer-launch.sh",
   ".agents/skills/orch/scripts/lib/pane-write.sh",
   ".agents/skills/orch/scripts/lib/pr-watch-pass.sh",
+  ".agents/skills/orch/scripts/lib/rebase-map.sh",
   ".agents/skills/orch/scripts/lib/review-artifact-gates.sh",
   ".agents/skills/orch/scripts/lib/review-artifact-measurement.sh",
   ".agents/skills/orch/scripts/lib/review-threads.sh",

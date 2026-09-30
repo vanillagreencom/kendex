@@ -131,6 +131,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=lib/branch-growth.sh
 source "$SCRIPT_DIR/lib/branch-growth.sh"
+# shellcheck source=lib/rebase-map.sh
+source "$SCRIPT_DIR/lib/rebase-map.sh"
 
 # Path-safe token grammar for --issue / --round-id: no '/', no '..', no
 # whitespace, so a value can never escape the tmp/ directory.
@@ -486,25 +488,17 @@ if [[ "$kind" == "fix" && "$validate_run_dir_given" == "true" ]]; then
         [[ "$rebase_map" == /* ]] || rebase_map="$worktree/$rebase_map"
         mapped_base=""
         if [[ -e "$rebase_map" || -L "$rebase_map" ]]; then
-          # worktree's append_rebase_hop writes ordered hops; worktree-push
-          # applies each hop against its starting values, never chaining rows
-          # inside a hop. Project just this round's base without consuming the
-          # file. A pending rewrite, dropped base or incomplete hop cannot bind.
-          mapped_base="$(awk -v base="$round_base" '
-            BEGIN { target = base; hops = 0; rows = 0; valid = 1 }
-            $0 == "rebase-hop:" {
-              if (hops && !rows) valid = 0
-              source = target; hops++; rows = 0; next
-            }
-            $1 == "rebase-map:" && NF == 3 && length($2) == 40 && $2 ~ /^[0-9a-f]+$/ &&
-                ($3 == "dropped" || (length($3) == 40 && $3 ~ /^[0-9a-f]+$/)) {
-              if (!hops) valid = 0
-              if ($2 == source) target = $3
-              rows++; next
-            }
-            { valid = 0 }
-            END { if (valid && hops && rows) print target }
-          ' < "$rebase_map")" || die rebase-map-unreadable "path=$rebase_map"
+          # The shared owner projects the round base without consuming the
+          # file. Only a complete map can bind the run's exact HEAD below.
+          if rebase_map_load "$rebase_map" && rebase_map_project "$round_base"; then
+            mapped_base="$REBASE_MAP_PROJECTED"
+          else
+            case "${REBASE_MAP_FAIL_ARGS[0]}" in
+              rebase-unmapped|restack-map-grammar|map-sha) mapped_base="" ;;
+              map-read|map-build) die rebase-map-unreadable "path=$rebase_map" ;;
+              *) die rebase-map-unreadable "path=$rebase_map" "cause=${REBASE_MAP_FAIL_ARGS[0]}" ;;
+            esac
+          fi
         fi
         [[ "$mapped_base" == "$run_head" ]] \
           || die run-off-round "run-dir=$validate_run_dir" "head=$run_head" "base-sha=$round_base"

@@ -762,5 +762,81 @@ assert_eq "$(jq -r '.fixed_items[0].commit' "$work/tmp/workflow-state-issue-7.js
   "the issue-7 record is left alone by a bare-numeric call"
 
 echo
+echo "=== shared map owner controls through the push entry point ==="
+# Private mutations reach the same grammar and hop rules used by completion.
+# The file holds append_rebase_hop's rows or a damaged version of those rows.
+for row in \
+  'pending|if [[ -n "$unmapped" ]]; then|if [[ -n "$unmapped" ]] && false; then|1|restack-map-grammar' \
+  'boundary|local callback="$1" line lines=\x27\x27 open=false|local callback="$1" line lines=\x27\x27 open=true|0|mapped' \
+  'empty|[[ -n "$lines" ]] || { REBASE_MAP_FAIL_ARGS=(restack-map-grammar); return 1; }|[[ -n "$lines" ]] || return 0|0|mapped' \
+  'old|if [[ ! "$old" =~ $sha_grammar ]]; then|if [[ ! "$old" =~ $sha_grammar ]] && false; then|0|mapped' \
+  'new|if [[ "$new" != dropped && ! "$new" =~ $sha_grammar ]]; then|if [[ "$new" != dropped && ! "$new" =~ $sha_grammar ]] && false; then|0|invalid-target' \
+  'nonchain|if ($e.key \x7c startswith($sha))|if (. as $current \x7c $e.key \x7c startswith($current))|0|chained'; do
+  IFS='|' read -r rule old new want_rc outcome <<<"$row"
+  # Encode quotes and pipes so the table delimiter is not part of a cell.
+  old="$(printf '%b' "$old")" || exit 1
+  new="$(printf '%b' "$new")" || exit 1
+  control_scripts="$(mutant_scripts "map-$rule-mutant" lib/rebase-map.sh)" || exit 1
+  mutate_file "$control_scripts/lib/rebase-map.sh" "$old" "$new"
+  work="$TMP_ROOT/work-map-control-$rule"
+  reset_state "$work"
+  case "$rule" in
+    boundary) printf 'rebase-map: %s %s\n' "$OLD_A" "$NEW_A" > "$restack_map_file" ;;
+    new) printf 'rebase-hop:\nrebase-map: %s not-a-sha\n' "$OLD_A" > "$restack_map_file" ;;
+    *)
+      printf 'rebase-hop:\nrebase-map: %s %s\n' "$OLD_A" "$NEW_A" > "$restack_map_file"
+      case "$rule" in
+        pending) printf 'rebase-unmapped: %s\n' "$OLD_B" >> "$restack_map_file" ;;
+        empty) printf 'rebase-hop:\n' >> "$restack_map_file" ;;
+        old) printf 'rebase-map: not-a-sha %s\n' "$NEW_A2" >> "$restack_map_file" ;;
+        nonchain) printf 'rebase-map: %s %s\n' "$NEW_A" "$NEW_A2" >> "$restack_map_file" ;;
+      esac
+      ;;
+  esac
+  input="$(cat -- "$restack_map_file")" || exit 1
+  RUN_RC=0
+  (cd -- "$work" && env -i PATH="$PATH" HOME="$TMP_ROOT" LC_ALL=C \
+    ORCH_WORKTREE_BIN="$stub" STUB_PUSH_STDOUT='pushed' \
+    "$PUSH" --worktree "$wt" --issue KEN-1) \
+    > "$run_out" 2> "$run_err" || RUN_RC=$?
+  case "$rule" in
+    nonchain)
+      got="$(state_json "$work" | jq -r '.fixed_items[0].commit')"
+      assert_eq "rc=$RUN_RC $got" "rc=0 ${NEW_A:0:7}" "shared rows do not chain in one hop" "$run_err"
+      ;;
+    *)
+      case "$rule" in
+        pending) want="rebase-unmapped head=$OLD_B file=$restack_map_file" ;;
+        boundary) want="restack-map-grammar file=$restack_map_file hops_applied=0" ;;
+        empty) want="restack-map-grammar file=$restack_map_file hops_applied=1" ;;
+        old) want="map-sha field=old sha=not-a-sha file=$restack_map_file hops_applied=0" ;;
+        new) want="map-sha field=new sha=not-a-sha file=$restack_map_file hops_applied=0" ;;
+      esac
+      assert_eq "rc=$RUN_RC $(grep '^worktree-push:' "$run_err")" \
+        "rc=1 worktree-push: $want" "shared $rule refusal" "$run_err"
+      ;;
+  esac
+  reset_state "$work"
+  printf '%s\n' "$input" > "$restack_map_file"
+  RUN_RC=0
+  (cd -- "$work" && env -i PATH="$PATH" HOME="$TMP_ROOT" LC_ALL=C \
+    ORCH_WORKTREE_BIN="$stub" STUB_PUSH_STDOUT='pushed' \
+    "$control_scripts/worktree-push" --worktree "$wt" --issue KEN-1) \
+    > "$run_out" 2> "$run_err" || RUN_RC=$?
+  case "$outcome" in
+    restack-map-grammar) got="$(grep '^worktree-push:' "$run_err")"; want="worktree-push: restack-map-grammar file=$restack_map_file hops_applied=0" ;;
+    *)
+      got="$(state_json "$work" | jq -r '.fixed_items[0].commit')"
+      case "$outcome" in
+        mapped) want="${NEW_A:0:7}" ;;
+        invalid-target) want=not-a-s ;;
+        chained) want="${NEW_A2:0:7}" ;;
+      esac
+      ;;
+  esac
+  assert_eq "rc=$RUN_RC $got" "rc=$want_rc $want" "control: shared $rule rule changes the push result" "$run_err"
+done
+
+echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

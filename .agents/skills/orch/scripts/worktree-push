@@ -141,18 +141,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKTREE_BIN="${ORCH_WORKTREE_BIN:-$SCRIPT_DIR/../../worktree/scripts/worktree}"
 WORKFLOW_STATE="$SCRIPT_DIR/workflow-state"
+# shellcheck source=lib/rebase-map.sh
+source "$SCRIPT_DIR/lib/rebase-map.sh"
 
-SHA_GRAMMAR='^[0-9a-f]{40}$'
 ISSUE_GRAMMAR='^[A-Za-z0-9][A-Za-z0-9._-]*$'
-# The line one restack's hop opens with in the map file, the same literal the
-# worktree script writes there — the wire format between the two scripts, like
-# the `rebase-map: ` prefix itself.
-RESTACK_HOP_MARK='rebase-hop:'
-# The line a push auto-rebase leaves in the same file when it rewrote the
-# branch without a derivable map. It names the pre-rebase head and stands until
-# an operator clears the file, so it is the same literal the worktree script
-# writes there.
-RESTACK_UNMAPPED_MARK='rebase-unmapped:'
 
 # The leading comment block is the contract, printed by shape rather than by
 # line number so --help cannot drift as that block grows.
@@ -192,6 +184,7 @@ message() {
 	round-read) printf 'The active dev round could not be read. No push ran.\n' ;;
 	live-round) printf 'The active fix round has no dev-return receipt. Land its receipt or stamp a fresh dev_round_id before rebasing.\n' ;;
 	temp-file) printf 'The push output could not be captured. No push ran.\n' ;;
+	map-read) printf 'The worktree-private rebase-map file could not be read. Nothing was reconciled and the file was kept.\n' ;;
 	map-sha) printf 'A rebase-map SHA is invalid. The mappings that map carries are not reconciled.\n' ;;
 	map-build) printf 'The rebase map could not be assembled. The mappings it carries are not reconciled.\n' ;;
 	esac
@@ -286,56 +279,19 @@ git -C "$worktree_abs" rev-parse --absolute-git-dir >/dev/null 2>&1 \
 state_flags=()
 [[ -z "$state_dir" ]] || state_flags=(--state-dir "$state_dir")
 
-# Assemble one JSON object from `rebase-map: <old> <new|dropped>` lines into
-# MAP_JSON. One grammar and one assembler serve both maps: the one a completed
-# restack left in the worktree and the one this run's own push prints. A
-# refusal leaves its message arguments in MAP_FAIL_ARGS for the caller to
-# report, because a refusal before the push and one after it differ in what
-# they must say.
-MAP_JSON='{}'
-MAP_FAIL_ARGS=()
-parse_map_lines() {
-	local lines="$1" old='' new=''
-	MAP_JSON='{}'
-	MAP_FAIL_ARGS=()
-	[[ -n "$lines" ]] || return 0
-	while IFS=' ' read -r _ old new; do
-		if [[ ! "$old" =~ $SHA_GRAMMAR ]]; then
-			MAP_FAIL_ARGS=(map-sha field=old "sha=$old")
-			return 1
-		fi
-		if [[ "$new" != "dropped" && ! "$new" =~ $SHA_GRAMMAR ]]; then
-			MAP_FAIL_ARGS=(map-sha field=new "sha=$new")
-			return 1
-		fi
-		MAP_JSON="$(jq -c --arg o "$old" --arg n "$new" '. + {($o): $n}' <<<"$MAP_JSON")" || {
-			MAP_FAIL_ARGS=(map-build)
-			return 1
-		}
-	done <<<"$lines"
-}
-
 # Apply one map (a JSON object of before->after) to workflow state atomically and
 # print the caller's summary line under its own key. The map travels by
 # environment variable so the jq program stays a plain single-quoted literal. A
-# recorded short SHA matches when it is a prefix of a mapped old SHA;
-# comparisons always run against the entry's original value so one map's
-# mappings cannot chain through each other — which is why a restack hop and a
-# push hop are applied as two sequential calls rather than one merged map.
+# recorded short SHA follows the shared owner's non-chaining remap rule.
 reconcile_map() {
 	local key="$1" map_json="$2" report
-	report="$(WTP_MAP="$map_json" "$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} update-report "$issue" '
-		def remap($map): . as $sha
-		  | reduce ($map | to_entries[]) as $e ($sha;
-		      if ($e.key | startswith($sha))
-		      then (if $e.value == "dropped" then "dropped:" + $sha else $e.value[0:($sha | length)] end)
-		      else . end);
+	report="$(WTP_MAP="$map_json" "$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} update-report "$issue" "$REBASE_MAP_REMAP_JQ"'
 		($ENV.WTP_MAP | fromjson) as $map
 		| . as $s
 		| ($s.fixed_items // []) as $fi
 		| ($s.pr_comment_review.fixes // []) as $pf
-		| ($fi | map(if (.commit? // "") != "" then .commit |= remap($map) else . end)) as $fi2
-		| ($pf | map(if (.commit? // "") != "" then .commit |= remap($map) else . end)) as $pf2
+		| ($fi | map(if (.commit? // "") != "" then .commit |= rebase_map_remap($map) else . end)) as $fi2
+		| ($pf | map(if (.commit? // "") != "" then .commit |= rebase_map_remap($map) else . end)) as $pf2
 		| {
 		    state: ($s
 		      | .rebase_map = ((.rebase_map // {}) + $map)
@@ -424,9 +380,6 @@ if ! restack_map_file="$(git -C "$worktree_abs" rev-parse --git-path kendex-reba
 fi
 [[ "$restack_map_file" == /* ]] || restack_map_file="$worktree_abs/$restack_map_file"
 
-restack_hop_lines=''
-restack_hop_open=false
-restack_hops=0
 restack_summary_key=restack-reconcile
 restack_pushed=false
 
@@ -442,17 +395,13 @@ consume_fail() {
 	fail "$@"
 }
 
-# Reconcile the hop that just ended, if one was open. Called at each boundary
-# and once more at end of file, so the last hop is not left unapplied.
+# The shared reader delivers complete hops in order. Only this consumer
+# writes workflow state; its callback failure keeps the whole file.
 reconcile_restack_hop() {
-	[[ "$restack_hop_open" == true ]] || return 0
-	[[ -n "$restack_hop_lines" ]] || consume_fail restack-map-grammar "file=$restack_map_file" "hops_applied=$restack_hops"
-	parse_map_lines "$restack_hop_lines" \
-		|| consume_fail "${MAP_FAIL_ARGS[@]}" "file=$restack_map_file" "hops_applied=$restack_hops"
-	reconcile_map "$restack_summary_key" "$MAP_JSON" \
-		|| consume_fail restack-map-write "issue=$issue" "state=$state_file" "file=$restack_map_file" "hops_applied=$restack_hops"
-	restack_hops=$((restack_hops + 1))
-	restack_hop_lines=''
+	if ! reconcile_map "$restack_summary_key" "$1"; then
+		REBASE_MAP_FAIL_ARGS=(restack-map-write "issue=$issue" "state=$state_file")
+		return 1
+	fi
 }
 
 # Apply every hop the file holds, in order, then delete it. Reports each hop
@@ -460,43 +409,15 @@ reconcile_restack_hop() {
 # rewrites' and the one written during it is this push's own.
 consume_rebase_map_file() {
 	restack_summary_key="$1"
-	restack_hop_lines=''
-	restack_hop_open=false
-	restack_hops=0
 	[[ -e "$restack_map_file" ]] || return 0
-	# A rewrite with no derivable map is recorded in this file too, and it is
-	# read before any hop is applied: no mapping repairs that rewrite, so
-	# nothing here may be reconciled or published while it stands, and the hops
-	# stay in the file for the operator reading it.
-	restack_unmapped=''
-	while IFS= read -r restack_line || [[ -n "$restack_line" ]]; do
-		case "$restack_line" in
-		"$RESTACK_UNMAPPED_MARK "*) restack_unmapped="${restack_line#"$RESTACK_UNMAPPED_MARK" }" ;;
-		esac
-	done <"$restack_map_file"
-	[[ -z "$restack_unmapped" ]] \
-		|| consume_fail rebase-unmapped "head=$restack_unmapped" "file=$restack_map_file"
+	rebase_map_load "$restack_map_file" \
+		|| consume_fail "${REBASE_MAP_FAIL_ARGS[@]}" "file=$restack_map_file"
 	# The record names SHAs recorded against a state file. With no record there
 	# is nothing the hops could move, and nothing this run can hold them in.
 	[[ "$state_present" == "true" ]] \
 		|| consume_fail restack-map-nostate "issue=$issue" "state=$state_file" "file=$restack_map_file"
-	while IFS= read -r restack_line || [[ -n "$restack_line" ]]; do
-		case "$restack_line" in
-		"$RESTACK_HOP_MARK")
-			reconcile_restack_hop
-			restack_hop_open=true
-			;;
-		'rebase-map: '*)
-			# A mapping outside a hop has no order, so the file is not a record
-			# this can apply rather than one hop it may guess at.
-			[[ "$restack_hop_open" == true ]] || consume_fail restack-map-grammar "file=$restack_map_file" "hops_applied=$restack_hops"
-			restack_hop_lines="${restack_hop_lines:+$restack_hop_lines$'\n'}$restack_line"
-			;;
-		*) consume_fail restack-map-grammar "file=$restack_map_file" "hops_applied=$restack_hops" ;;
-		esac
-	done <"$restack_map_file"
-	reconcile_restack_hop
-	[[ "$restack_hops" -gt 0 ]] || consume_fail restack-map-grammar "file=$restack_map_file" "hops_applied=$restack_hops"
+	rebase_map_each_hop reconcile_restack_hop \
+		|| consume_fail "${REBASE_MAP_FAIL_ARGS[@]}" "file=$restack_map_file" "hops_applied=$REBASE_MAP_HOPS"
 	rm -f -- "$restack_map_file" || consume_fail restack-map-clear "file=$restack_map_file"
 }
 
