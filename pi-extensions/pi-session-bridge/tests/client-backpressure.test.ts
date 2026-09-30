@@ -112,7 +112,12 @@ test("pi-bridge stream stops reading while its stdout is full, delivers every li
 	});
 	await new Promise<void>((resolveListen) => listener.listen(socketPath, resolveListen));
 	const cli = resolve(dirname(fileURLToPath(import.meta.url)), "../bin/pi-bridge.js");
-	const child = spawn("node", [cli, "stream", "--socket", socketPath], { stdio: ["ignore", "pipe", "pipe"], env: { PATH: process.env.PATH, HOME: dir } });
+	// Bun 1.3 drains a spawned child's stdout pipe before any listener attaches,
+	// so pi-bridge's stdout goes to a cat that starts only once a line arrives on
+	// fd 3; until then pi-bridge's stdout fills on every runtime. The shell exits
+	// with pi-bridge's status.
+	const script = 'exec 3<&0; node "$1" stream --socket "$2" </dev/null | { read -r _ <&3; exec cat; }; exit "${PIPESTATUS[0]}"';
+	const child = spawn("bash", ["-c", script, "pi-bridge-gate", cli, socketPath], { stdio: ["pipe", "pipe", "pipe"], env: { PATH: process.env.PATH, HOME: dir } });
 	try {
 		let stderr = "";
 		child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
@@ -126,12 +131,15 @@ test("pi-bridge stream stops reading while its stdout is full, delivers every li
 		const unreadAtBridge = server!.writableLength;
 		let received = 0;
 		child.stdout.on("data", (chunk: Buffer) => { received += chunk.length; });
+		child.stdin.end("\n");
 		while (received < line.length * lines && Date.now() < deadline + 10_000) await new Promise((r) => setTimeout(r, 10));
 		server!.end();
 		expect({ unreadAtBridge: unreadAtBridge > CLIENT_QUEUE_MAX_BYTES, received, code: await exited, stderr: stderr.split("\n")[0] })
 			.toEqual({ unreadAtBridge: true, received: line.length * lines, code: 1, stderr: "bridge-stream-closed" });
 	} finally {
+		// Killing bash leaves pi-bridge running; closing its socket ends it.
 		child.kill("SIGKILL");
+		server?.destroy();
 		await new Promise<void>((resolveClose) => listener.close(() => resolveClose()));
 	}
 }, 30_000);
