@@ -1,6 +1,6 @@
 # Oversee
 
-Standing fleet mode: burn down unblocked work items by launching one orch session per item and shepherding every PR to merge. The overseer launches, watches and unblocks (lanes merge their PRs) — it never reviews, save the fallback approval of a lane's head on an `awaiting-stale` pr-watch line ([oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds)), and it implements nothing but a `micro` item § 3 Item Tier leaves it to run. It runs unattended: a blocked lane is the overseer's to unblock, not the user's to notice.
+Standing fleet mode: burn down unblocked work items by launching one orch session per item and shepherding every PR to merge. The overseer launches, watches and unblocks (lanes merge their PRs) — it never reviews, save the fallback approval of a lane's head on an `awaiting-stale` pr-watch line ([copilot-head-notices.md § Fallback approval](../references/copilot-head-notices.md#fallback-approval)), and it implements nothing but a `micro` item § 3 Item Tier leaves it to run. It runs unattended: a blocked lane is the overseer's to unblock, not the user's to notice.
 
 ## 1. Resolve The Launch Surface
 
