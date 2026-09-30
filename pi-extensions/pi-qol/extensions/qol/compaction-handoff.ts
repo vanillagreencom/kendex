@@ -4,9 +4,10 @@
 // drops something critical. The pure data-building + write logic lives here
 // so it can be unit-tested without the pi-coding-agent / pi-ai peer deps.
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
+import { openLaneDir } from "../../scripts/lane-retention.js";
 import { QOL_BUDGET_HANDOFF_FOLDER, QOL_BUDGET_HANDOFF_LATEST } from "./constants.js";
 import { piUserDir } from "./package-config.js";
 
@@ -146,14 +147,11 @@ export function handoffBaseDir(sessionId: string, root: string = piUserDir()): s
 
 export interface WriteHandoffOptions {
 	enabled: boolean;
+	cwd: string;
 	root?: string;
 	/** Injection point so tests can stub fs without mocking node:fs. */
 	writer?: (path: string, payload: string) => void;
 	mkdir?: (path: string) => void;
-}
-
-function defaultMkdir(path: string): void {
-	mkdirSync(path, { recursive: true, mode: 0o700 });
 }
 
 function defaultWriter(path: string, payload: string): void {
@@ -165,7 +163,7 @@ export function writeBudgetHandoffArtifact(handoff: QolBudgetHandoff, options: W
 	const baseDir = handoffBaseDir(handoff.sessionId, options.root);
 	const stampedPath = handoffStampedPath(baseDir, handoff.timestamp);
 	const latestPath = join(dirname(baseDir), basename(baseDir), QOL_BUDGET_HANDOFF_LATEST);
-	const mkdir = options.mkdir ?? defaultMkdir;
+	const mkdir = options.mkdir ?? ((path: string) => openLaneDir(path, options.cwd));
 	const writer = options.writer ?? defaultWriter;
 	try {
 		mkdir(baseDir);

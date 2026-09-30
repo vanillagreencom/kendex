@@ -50,6 +50,25 @@ export async function withConfigAsync(config: Record<string, unknown>, run: (cwd
 	}
 }
 
+/** Isolate both artifact roots, including the OS temporary-directory fallback. */
+export async function withArtifactStorage(storage: "user" | "temporary", run: (cwd: string) => Promise<void>): Promise<void> {
+	await withConfigAsync({}, async (cwd) => {
+		const previous = ["TMPDIR", "TMP", "TEMP"].map((key) => [key, process.env[key]] as const);
+		const temporary = join(cwd, "temporary");
+		mkdirSync(temporary);
+		for (const [key] of previous) process.env[key] = temporary;
+		try {
+			if (storage === "temporary") writeFileSync(process.env.PI_CODING_AGENT_DIR!, "not a directory");
+			await run(cwd);
+		} finally {
+			for (const [key, value] of previous) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
+	});
+}
+
 let testSeq = 0;
 export function fakeCtx(cwd: string): ExtensionContext {
 	testSeq += 1;

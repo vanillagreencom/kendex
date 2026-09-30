@@ -27,6 +27,10 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 
 The extension watches model output and completed tool results. It checks them against the selected policy and your overrides. Large tool results become previews with a link to the full saved text. A model response that crosses a configured limit stops with a warning.
 
+## Saved files
+
+At session start, the extension deletes saved full outputs whose recorded working directory no longer exists. It also deletes files older than 5 days. This applies to the per-session artifact directory and the temporary-directory fallback.
+
 ## Settings
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-output-policy"]`.

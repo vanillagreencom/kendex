@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { afterEach, beforeEach, expect, setSystemTime, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import {
@@ -8,6 +8,9 @@ import {
 	type HandoffSessionAccessor,
 } from "../extensions/qol/compaction-handoff.ts";
 import { clearPackageConfigCache, piUserDir } from "../extensions/qol/package-config.ts";
+import qol from "../extensions/qol.ts";
+import { writeBudgetHandoffArtifact as writeFromContext } from "../extensions/qol/compaction.ts";
+import { makeCtx, makeFakeApi } from "./fake-pi.ts";
 
 let workdir = "";
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -21,6 +24,7 @@ beforeEach(() => {
 afterEach(() => {
 	try { if (workdir) rmSync(workdir, { force: true, recursive: true }); }
 	finally {
+		setSystemTime();
 		if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
 		clearPackageConfigCache();
@@ -111,7 +115,7 @@ const writerCases = [
 		name: "stamped and latest files",
 		run: () => {
 			const handoff = { artifactRefs: ["src/file.ts"], messageCount: 2, reason: "budget guard", sessionId: "sess-w1", timestamp };
-			const result = writeBudgetHandoffArtifact(handoff, { enabled: true, root: workdir });
+			const result = writeBudgetHandoffArtifact(handoff, { cwd: workdir, enabled: true, root: workdir });
 			return {
 				errorAbsent: result.error === undefined, pathDefined: result.path !== undefined, latestDefined: result.latestPath !== undefined,
 				stampedExists: typeof result.path === "string" && existsSync(result.path),
@@ -128,14 +132,14 @@ const writerCases = [
 	},
 	{
 		name: "disabled writer",
-		run: () => writeBudgetHandoffArtifact({ artifactRefs: [], messageCount: 0, reason: "test", sessionId: "s1", timestamp }, { enabled: false, root: workdir }),
+		run: () => writeBudgetHandoffArtifact({ artifactRefs: [], messageCount: 0, reason: "test", sessionId: "s1", timestamp }, { cwd: workdir, enabled: false, root: workdir }),
 		expected: {},
 	},
 	{
 		name: "filesystem error is forwarded",
 		run: () => {
 			const result = writeBudgetHandoffArtifact({ artifactRefs: [], messageCount: 0, reason: "boom", sessionId: "s2", timestamp }, {
-				enabled: true, root: workdir, mkdir: () => { throw new Error("fixture-mkdir-error"); }, writer: () => undefined,
+				cwd: workdir, enabled: true, root: workdir, mkdir: () => { throw new Error("fixture-mkdir-error"); }, writer: () => undefined,
 			});
 			return { pathAbsent: result.path === undefined, error: result.error };
 		},
@@ -144,7 +148,7 @@ const writerCases = [
 	{
 		name: "session id remains inside the supplied root",
 		run: () => {
-			const result = writeBudgetHandoffArtifact({ artifactRefs: [], messageCount: 0, reason: "sanitize", sessionId: "../etc/passwd", timestamp }, { enabled: true, root: workdir });
+			const result = writeBudgetHandoffArtifact({ artifactRefs: [], messageCount: 0, reason: "sanitize", sessionId: "../etc/passwd", timestamp }, { cwd: workdir, enabled: true, root: workdir });
 			return {
 				pathDefined: result.path !== undefined,
 				handoffDirectory: result.path?.startsWith(handoffBaseDir("../etc/passwd", workdir)),
@@ -158,4 +162,39 @@ const writerCases = [
 if (writerCases.length === 0) throw new Error("writer cases are empty");
 for (const row of writerCases) {
 	test(`writeBudgetHandoffArtifact: ${row.name}`, () => { expect(row.run()).toEqual(row.expected); });
+}
+
+for (const state of ["gone", "old", "fresh"] as const) {
+	test(`budget handoff: session_start prunes ${state} lanes or files, including latest.json`, async () => {
+		const now = 1_800_000_000_000;
+		setSystemTime(now);
+		const laneCwd = join(workdir, "worktree");
+		mkdirSync(laneCwd);
+		const ctx = makeCtx({ cwd: laneCwd });
+		const handoff = buildBudgetHandoff({ reason: "budget guard", sessionManager: ctx.sessionManager });
+		const result = writeFromContext(ctx, handoff);
+		expect(result.error).toBeUndefined();
+		const lane = handoffBaseDir(handoff.sessionId);
+		expect(dirname(result.path!)).toBe(lane);
+		expect(readFileSync(join(lane, ".lane-cwd"), "utf8")).toBe(laneCwd);
+		// The filesystem clock is real even when Date.now is injected.
+		utimesSync(join(lane, ".lane-cwd"), new Date(now), new Date(now));
+		for (const path of [result.path!, result.latestPath!]) {
+			expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(handoff);
+			const modified = new Date(state === "old" ? now - 6 * 24 * 60 * 60 * 1000 : now);
+			utimesSync(path, modified, modified);
+		}
+		if (state === "gone") rmSync(laneCwd, { recursive: true });
+		const fake = makeFakeApi();
+		qol(fake.api);
+		const nextCtx = makeCtx({ cwd: workdir, sessionManager: { getSessionId: () => "next-session", getSessionFile: () => undefined, getBranch: () => [] } });
+		try {
+			await fake.handlers.session_start!({ reason: "startup", type: "session_start" }, nextCtx);
+			expect({ lane: existsSync(lane), stamped: existsSync(result.path!), latest: existsSync(result.latestPath!) }).toEqual({
+				lane: state !== "gone", stamped: state === "fresh", latest: state === "fresh",
+			});
+		} finally {
+			await fake.handlers.session_shutdown!({ type: "session_shutdown" }, nextCtx);
+		}
+	});
 }

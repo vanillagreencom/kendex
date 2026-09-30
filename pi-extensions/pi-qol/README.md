@@ -36,6 +36,10 @@ The extension reads your enabled features when Pi starts. It adds their editor c
 - Where Pi cannot switch sessions directly, a chosen resume or fork waits as one `/search:resume-pending` command in the editor. Only the latest one is kept, and it is dropped when the session ends.
 - Parsed prompts are kept for at most 64 sessions, and finished thinking times for at most 256 blocks. Thinking labels are released at the end of each agent run, and notification cooldown entries once their cooldown has passed and all of them when the session ends.
 
+## Saved files
+
+At session start, the extension deletes budget handoff files whose recorded working directory no longer exists. It also deletes files older than 5 days. Both timestamped snapshots and `latest.json` follow this rule.
+
 ## Settings
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-qol"]`.

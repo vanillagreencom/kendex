@@ -1,9 +1,10 @@
 import type { ExtensionAPI, ExtensionContext, ToolResultEventResult } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
-import { type FileHandle, mkdir, open, rm } from "node:fs/promises";
+import { type FileHandle, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
+import { openLaneDir, pruneLanes } from "../scripts/lane-retention.js";
 import { installSettingsCacheRefresh, piUserDir, readPackageConfig, recordProjectTrust } from "./package-config.js";
 
 const INSTALL_SYMBOL = Symbol.for("kendex.pi-output-policy.installed");
@@ -613,7 +614,7 @@ async function writeArtifact(ctx: ExtensionContext, toolName: string, toolCallId
 			const unique = randomUUID().replaceAll("-", "").slice(0, 12);
 			const artifactPath = join(dir, `${Date.now()}-${unique}-${safeTool}-${safeId}.txt`);
 			try {
-				await mkdir(dir, { recursive: true, mode: 0o700 });
+				openLaneDir(dir, ctx.cwd);
 				await writeTexts(artifactPath, texts);
 				return { path: artifactPath };
 			} catch (error) {
@@ -965,6 +966,15 @@ export default function outputPolicy(pi: ExtensionAPI): void {
 		resetModelOutputState();
 		recordProjectTrust(ctx);
 		SESSION_COUNTERS.delete(sessionIdForContext(ctx));
+		for (const [root, below] of [
+			[join(piUserDir(), "kendex", "sessions"), [SESSION_FOLDER, "artifacts"]],
+			[join(tmpdir(), SESSION_FOLDER), []],
+		] as const) {
+			const pruned = pruneLanes(root, [...below]);
+			for (const failure of pruned.failed) {
+				console.warn(policyNotice("artifact-prune-error", failure.path, failure.error));
+			}
+		}
 	});
 
 	pi.on("turn_start", async (_event, ctx: ExtensionContext) => {

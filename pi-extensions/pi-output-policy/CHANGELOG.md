@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.1.1
+
+- At session start, saved full outputs are deleted when their recorded working directory is gone, or when a file is older than 5 days. This applies to per-session artifacts and the temporary-directory fallback. Files from earlier versions without a working-directory record stay untouched.
+
 ### 2.1.0
 
 - One tool result now has one inline budget. All its text blocks share `maxTextBlockKb` and the line cap, or `inlineTailKb` and `inlineTailLines` for tail-truncated tools, and the truncation notice counts inside both the byte and the line allowance. A result of many small blocks no longer passes several times the budget to the model. Blocks past the budget are dropped from the preview, and one artifact holds the full text of every block. `details.kendexOutputPolicy` carries one entry per result.

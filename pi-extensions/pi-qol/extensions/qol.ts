@@ -1,4 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { join } from "node:path";
+import { pruneLanes } from "../scripts/lane-retention.js";
 import { truncateToWidth, type TUI } from "@earendil-works/pi-tui";
 import { criticalInfo, lastAssistantTextFromAgentEnd, needsDirection, taskStats } from "./qol/agent-end.js";
 import { getQuestionService, readCavemanBridge, type QuestionOpenedEventLike } from "./qol/bridges.js";
@@ -16,6 +18,7 @@ import {
 	DEFAULT_IDLE_COMPACTION_SECONDS,
 	DEFAULT_INPUT_BOTTOM_PADDING_LINES,
 	INSTALL_SYMBOL,
+	QOL_BUDGET_HANDOFF_FOLDER,
 	QOL_NOTIFICATION_SERVICE_SYMBOL,
 	QUESTION_OPENED_EVENT,
 	SESSION_MANAGER_STATUS_KEY,
@@ -73,7 +76,7 @@ import {
 	sessionSearchShortcut,
 	takeSessionSearchPendingAction,
 } from "./qol/session-search/index.js";
-import { installSettingsCacheRefresh, recordProjectTrust } from "./qol/package-config.js";
+import { installSettingsCacheRefresh, piUserDir, recordProjectTrust } from "./qol/package-config.js";
 import { settingBoolean, settingNumber, settingString } from "./qol/settings.js";
 import { statusMessage } from "./qol/status-message.js";
 import {
@@ -607,6 +610,10 @@ export default function qol(pi: ExtensionAPI): void {
 	installSettingsCacheRefresh(pi);
 	pi.on("session_start", (event, ctx) => {
 		recordProjectTrust(ctx);
+		const pruned = pruneLanes(join(piUserDir(), "kendex", "sessions"), QOL_BUDGET_HANDOFF_FOLDER.split("/"));
+		for (const failure of pruned.failed) {
+			console.warn(`handoff-prune-error: ${failure.path}\n${failure.error}`);
+		}
 		currentCtx = ctx;
 		subscribeCavemanBridge();
 		latestSystemPromptOptions = undefined;

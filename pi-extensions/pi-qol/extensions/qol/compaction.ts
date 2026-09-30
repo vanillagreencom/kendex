@@ -252,7 +252,7 @@ export function buildBudgetHandoff(ctx: ExtensionContext, options: {
 
 export function writeBudgetHandoffArtifact(ctx: ExtensionContext, handoff: QolBudgetHandoff): HandoffWriteResult {
 	const enabled = settingBoolean("compaction.handoffArtifactEnabled", true, ctx.cwd);
-	const result = writeBudgetHandoffArtifactRaw(handoff, { enabled });
+	const result = writeBudgetHandoffArtifactRaw(handoff, { cwd: ctx.cwd, enabled });
 	if (result.error) {
 		compactionNotify(ctx, `QOL handoff artifact write failed: ${result.error}`, "warning");
 	}
