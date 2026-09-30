@@ -545,7 +545,7 @@ receipt_table \
   "unreported selection has no lanes^impl^.validate_selection=\"unreported\"^$FILE_ARGS^reason=valid validate_lanes=null validate_selection=unreported" \
   "absent optional fields remain absent information^impl^.^$FILE_ARGS^reason=valid validate_lanes=null validate_selection=null"
 LANE_CHECK="$(mutant_scripts lanes-echo-mutant dev-artifact-check)/dev-artifact-check" || exit 1
-mutate_file "$LANE_CHECK" '--argjson validate_lanes "$validate_lanes"' '--argjson validate_lanes null'
+mutate_file "$LANE_CHECK" '    --argjson validate_lanes "$validate_lanes"' '    --argjson validate_lanes null'
 CHECK_SHIPPED="$CHECK"
 CHECK="$LANE_CHECK"
 receipt_table "control: dropping the lane echo reds its assertion^impl^.validate_lanes=\"lint,test\" | .validate_selection=\"subset\"^$FILE_ARGS^reason=valid validate_lanes=null validate_selection=subset"
