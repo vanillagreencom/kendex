@@ -41,6 +41,9 @@ LINEAR_RETRY_BASE_DELAY = "1"
 # Together they win over the personal key. Tokens use fixed scope read,write
 # and stay in the cache; do not put tokens in settings or secret stores.
 LINEAR_CLIENT_ID = ""
+
+# The OAuth application secret paired with LINEAR_CLIENT_ID. Set it only
+# in the private env file.
 LINEAR_CLIENT_SECRET = ""
 
 # The fallback key when no app pair is set. Create one in Linear, under
