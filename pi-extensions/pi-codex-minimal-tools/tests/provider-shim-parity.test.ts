@@ -103,7 +103,7 @@ async function piRequestBody(target: typeof model, reasoning: string | undefined
 }
 
 for (const row of [
-	{ name: "Off maps to the model's Off effort", map: { off: "none" }, reasoning: "off" },
+	{ name: "Off maps to the model's Off effort", map: { off: "low" }, reasoning: "off" },
 	{ name: "Off with no Off entry sends none", map: undefined, reasoning: "off" },
 	{ name: "no thinking level sends the Off effort", map: { off: "none" }, reasoning: undefined },
 	{ name: "Off unsupported clamps upward", map: { off: null, minimal: "low" }, reasoning: "off" },
