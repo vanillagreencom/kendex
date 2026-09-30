@@ -1,8 +1,8 @@
 {
-  "lastVersion": "0.87.1",
-  "lastDate": "2026-09-22",
-  "lastRun": "2026-09-29T13:17:54Z",
-  "lastRunHead": "8b86d5ce54741355639f4eb0efa8106a3dd00f49",
+  "lastVersion": "0.99.1",
+  "lastDate": "2026-09-29",
+  "lastRun": "2026-09-30T02:31:31Z",
+  "lastRunHead": "3969e96b081551a364ec02a7f5126ff84285ecf0",
   "sourcesCovered": [
     "agent",
     "ai",
