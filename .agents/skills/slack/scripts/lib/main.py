@@ -52,7 +52,8 @@ listen    the relay: one Socket Mode connection opened with SLACK_APP_TOKEN
           journaled unknown and never repeated. One relay per checkout, held
           by an OS lock; two roots bound to one channel are refused; --once
           opens no connection, polls each root once, history read included,
-          and exits 0 when every poll succeeded, 1 otherwise
+          and exits 0 when every poll succeeded, 1 for a retryable poll
+          failure. A fatal refusal, such as a dead token, exits 2
   --status  one `slack-relay=ROOT state=ok|failing|stale|never` line per
           root from the relay's status record, with the connection state;
           failing too while the relay has been reconnecting past twice its

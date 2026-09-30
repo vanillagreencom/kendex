@@ -204,23 +204,23 @@ refused_resume() {
   printf '%s' "$id"
 }
 resumed_asks() { jq -r 'select(.t == "resume") | .asks | join(",")' "$(sk_journal "$1")"; } # ROOT
-# Error, refusal key, unread notice posts before restart. A token refusal
+# Error, refusal key, exit status, unread notice posts before restart. A token refusal
 # stops the posting loop; not_in_channel leaves the later posts running.
-while read -r error key unread; do
+while read -r error key status unread; do
   R="$(sk_new_root "refused-$error")"
   refused_resume "$R" "$error" >/dev/null
   CH_R="$(sk_channel "$R")"
   assert_has "$ERR1" "slack: $key=" "$error: the ask refusal reports its key"
   assert_eq "$RC=$(count "$CH_R" "Refused on resume in refused-$error?")=$(resumed_asks "$R")=$(jq -r 'select(.t == "resume") | "\(.seen)=\(.skipped | join(","))"' "$(sk_journal "$R")")=$(count "$CH_R" "Read after the ask in refused-$error.")=$(count "$CH_R" "Unread after the ask in refused-$error.")=$(holds "$R")" \
-    "1=0==2=$REFUSED_READ=0=$unread=hold resume " "$error: the failed ask is omitted and every read notice id survives the refusal"
+    "$status=0==2=$REFUSED_READ=0=$unread=hold resume " "$error: the failed ask is omitted and every read notice id survives the refusal"
   rm -- "$(sk_box "$R")/to-overseer.seen"
   sk_poll "$R" "$HOLD"
   assert_eq "$RC=$(count "$CH_R" "Refused on resume in refused-$error?")=$(count "$CH_R" "Read after the ask in refused-$error.")=$(count "$CH_R" "Unread after the ask in refused-$error.")=$(holds "$R")" \
     "0=1=0=1=hold resume " "$error: restart posts the pending ask and unread notice but never the read notice"
 done <<'ROWS'
-not_in_channel slack-api-failed 1
-invalid_auth slack-auth-failed 0
-token_revoked slack-auth-failed 0
+not_in_channel slack-api-failed 1 1
+invalid_auth slack-auth-failed 2 0
+token_revoked slack-auth-failed 2 0
 ROWS
 
 # --- controls, one mutant per rule --------------------------------------------------
@@ -271,7 +271,7 @@ sk_bin_reset
 sk_mutant complete-suppression relay.py 'if route == "seen"\]' 'if route == "seen" and False]'
 THETA="$(sk_new_root theta)"
 refused_resume "$THETA" invalid_auth >/dev/null
-assert_eq "$RC=$(jq -r 'select(.t == "resume") | .skipped | length' "$(sk_journal "$THETA")")" "1=0" \
+assert_eq "$RC=$(jq -r 'select(.t == "resume") | .skipped | length' "$(sk_journal "$THETA")")" "2=0" \
   "control: without snapshot suppression, a dead token leaves no read notice id in the resume"
 rm -- "$(sk_box "$THETA")/to-overseer.seen"
 sk_poll "$THETA" "$HOLD"
