@@ -2348,7 +2348,7 @@ overseer_unrecorded() {
 # means; this function reads the key it printed and nothing else, so the
 # turn-end refusal and the watch event cannot describe one overseer
 # differently. Who judges the context mark, and when, is
-# skills/orch/references/oversee-events.md § Judgement rules, the overseer's
+# the orch skill's Oversee events § Judgement rules, the overseer's
 # own case.
 #
 # Called plainly from handoff_check, whose errexit is live: every status is
@@ -2561,7 +2561,7 @@ handoff_check() {
   # At its turn end the overseer's marks are judged by oversee-succeed, the
   # script that performs its succession, handed the reading this hook just
   # took of this session; this hook acts on the key it prints. Who judges the
-  # context mark, and when: skills/orch/references/oversee-events.md §
+  # context mark, and when: the orch skill's Oversee events §
   # Judgement rules, the overseer's own case.
   if [ "$ROLE" = overseer ]; then
     # A turn that ended lifts a wall its StopFailure row recorded, and dates
@@ -2670,7 +2670,7 @@ handoff_check() {
 # recorded to the overseer mailbox's context.json, so the record also advances
 # while the overseer works and oversee-watch reads a fresh figure. Who judges
 # the overseer's context mark, and on what, is
-# skills/orch/references/oversee-events.md § Judgement rules, the overseer's
+# the orch skill's Oversee events § Judgement rules, the overseer's
 # own case; here it is context_mark_judge.
 # The account triggers stay out of this call, since an account read at every
 # tool call would cost a usage request per call.
