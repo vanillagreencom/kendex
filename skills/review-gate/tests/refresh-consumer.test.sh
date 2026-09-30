@@ -490,7 +490,7 @@ SH
   before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || exit 1
   : >"$TMP/state/calls"
   run_refresh "extract-$command" pass render
-  printf -v expected 'review-gate-error=settings-extract value=%q' "$source_path"
+  printf -v expected 'review-gate-error=settings-extract value=%q' "${source_path#"$repo/"}"
   if refresh_stopped_at_settings "$before" "refresh-error=settings-extraction value=$repo/.agents/skills/orch" &&
       grep -qxF -- "$expected" <<<"$OUT"; then
     ok "$command extraction failure names its source and stops publication"
