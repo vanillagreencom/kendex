@@ -14,7 +14,7 @@ import {
 } from "@/lib/copy-marketplaces";
 import { NO_REASON_GIVEN } from "@/lib/settled";
 import { useMarketplacesStore } from "@/stores/marketplaces";
-import { subscription } from "@/stores/marketplaces-shared";
+import { dropCatalogCaches, subscription } from "@/stores/marketplaces-shared";
 import { useNavStore } from "@/stores/nav";
 import { mount, settle } from "@/test/dom";
 import { MarketplaceDetailPage } from "./marketplace-detail";
@@ -66,14 +66,10 @@ beforeEach(() => {
     status: "ok",
     data: [],
   });
-  useMarketplacesStore.setState({
-    rows: [],
-    packages: {},
-    bundles: {},
-    catalogBundles: {},
-    summaries: {},
-    readErrors: {},
-  });
+  // The reading case leaves a request pending. Emptying only the slots
+  // would keep that request in the next case's shared-read generation.
+  dropCatalogCaches((partial) => useMarketplacesStore.setState(partial));
+  useMarketplacesStore.setState({ rows: [] });
   useNavStore.setState({ marketplaceRef: catalog });
 });
 
@@ -110,7 +106,6 @@ describe("opening a marketplace", () => {
   }[];
   expect(rows).toHaveLength(3);
   it.each(rows)("$name", async (row) => {
-    useMarketplacesStore.setState({ catalogBundles: {}, readErrors: {} });
     vi.mocked(commands.marketplaceBundles).mockResolvedValue(row.response);
     const host = mount(<MarketplaceDetailPage />);
     await settle();
@@ -237,7 +232,6 @@ describe("the Packages tab's read states", () => {
   ];
   expect(rows).toHaveLength(5);
   it.each(rows)("$name", async (row) => {
-    useMarketplacesStore.setState({ packages: {}, readErrors: {} });
     vi.mocked(commands.marketplacePackages).mockReturnValue(
       row.response as ReturnType<typeof commands.marketplacePackages>,
     );
