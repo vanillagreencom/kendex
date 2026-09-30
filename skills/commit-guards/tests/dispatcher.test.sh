@@ -194,7 +194,7 @@ run_rows \
   "a batch carrying a violation and an incomplete check reports the incompletion, not the violations|planted planted-3|$BC=abc||rc=2 $(steps all "$DEFAULT" byte-ceiling)$INCOMPLETE" \
   "'all' with a flag a check would take is exit 2: flags go to a single check|clean all-extra||all --extra|rc=2 ${ERR}argument-unknown=--extra"
 
-echo "=== --staged and --base REF name the batch's scope; each check gets the flag it takes ==="
+echo "=== --staged, --base REF and --against REF name the batch's scope; each check gets the flag it takes ==="
 versioned() { # NAME — a committed major bump after base
   repo "$1"
   put app.json '{"version":"1.0.0"}\n'
@@ -214,6 +214,7 @@ run_rows \
   "'all --base REF' hands byte-ceiling --base REF, so growth since the base fails|grown base-1|$BC=1,COMMIT_GUARDS_CHECKS=byte-ceiling|all --base base|rc=1 $(steps base:base byte-ceiling)$VIOLATIONS" \
   "--base=REF without 'all' is the same scope|grown base-2|$BC=1,COMMIT_GUARDS_CHECKS=byte-ceiling|--base=base|rc=1 $(steps base:base byte-ceiling)$VIOLATIONS" \
   "a committed major reaches the changelog check through the batch range|versioned version-red|COMMIT_GUARDS_CHECKS=changelog-entries,COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json|all --base base|rc=1 $(steps base:base changelog-entries)$VIOLATIONS" \
+  "a committed major reaches the changelog check through the pre-push against range|versioned version-against-red|COMMIT_GUARDS_CHECKS=changelog-entries,COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json|all --against base|rc=1 commit-guards: step=changelog-entries --against base;$VIOLATIONS" \
   "a check outside the full-scoped set runs unflagged under --base|grown base-3|COMMIT_GUARDS_CHECKS=conflict-markers|all --base base|rc=0 $(steps base:base conflict-markers)$(ok conflict-markers)" \
   "'--base' without a ref is exit 2|grown base-4||all --base|rc=2 ${ERR}argument-missing=--base" \
   "'--staged' with '--base' is exit 2: one scope per batch|grown base-5||all --staged --base base|rc=2 ${ERR}scope-conflict=2" \

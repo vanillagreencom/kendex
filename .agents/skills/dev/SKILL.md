@@ -62,7 +62,7 @@ For an item spanning domains, split the delegation by domain. If the selected ag
 - A refusal, a validator, a lock, a retry, or a test exists only for an input a real producer emits, this project's code or anything it calls or serves; name that producer beside it, or do not write it.
 - When a change deletes a call, apply [code-quality § Cleanup](../code-quality/SKILL.md#cleanup) to its callee. Its deletion maps to the call removal's Done-when item; no internal caller is not proof that a supported external API is unused.
 - A field, setting, or view member added by the change has a real producer and consumer. A named and documented external producer or consumer is valid when the change adds its in-repository counterpart; otherwise, add both sides in the change.
-- No migration or compat code for this project's own formats, its manifest, settings, lock and cache shapes, never another tool's on-disk state, which an adapter may have to keep recognising: write no reader for an artifact an older version of this project wrote, and decline a finding that asks you to carry one forward. A layout, schema or cache change is one changelog line and a fresh install.
+- Follow the project's declared release compatibility standard for changes to project-owned formats.
 - Before adding a function, parser, stub or loop, grep the repo for the verb it performs; before stating a rule, grep for the rule.
   - A second copy of that verb, in any language, is a twin and never delegation, and so is a second statement of a rule another file owns, in prose, config or a table.
   - Call or cite the one that exists, or escalate in your return. An issue that orders a twin is escalated, not implemented.

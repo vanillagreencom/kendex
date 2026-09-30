@@ -439,6 +439,7 @@ for row in \
   "package-historic|packages/a/package.json|1.9.0|2.0.0||packages/a/CHANGELOG.md|### Unreleased\n\n### 1.9.0\n\n$BREAK\n||1" \
   "package-other|packages/a/package.json|1.9.0|2.0.0|$BREAK|packages/b/CHANGELOG.md|### Unreleased\n\n$BREAK\n||1" \
   "committed-base|app.json|1.9.0|2.0.0||||--base base|1" \
+  "committed-against-unnamed|app.json|1.9.0|2.0.0||||--against base|1" \
   "committed-against|app.json|1.9.0|2.0.0|$BREAK|||--against base|0"; do
   IFS='|' read -r label manifest prior next fragment record_path record args expected <<<"$row"
   repo "version-$label"
