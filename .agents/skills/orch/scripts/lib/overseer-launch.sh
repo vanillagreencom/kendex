@@ -444,8 +444,9 @@ ol_entry_permitted() { # ENTRY
 # for ol_command_line to write, whether it is a first launch or a successor:
 # MODEL and EFFORT written from HARNESS's row of lib/lane-launch.sh's table,
 # then SOURCE's words FLAG... as HARNESS may take them, the predecessor's
-# harness and flags, both empty on a first launch. An entry with no MODEL is
-# a predecessor's own, and keeps every word. One of the same harness strips
+# harness and flags, both empty on a first launch. An entry with neither
+# MODEL nor EFFORT keeps every predecessor word. A numeric first-launch
+# entry names EFFORT alone. One of the same harness strips
 # the predecessor's model and effort and keeps its permission words exactly.
 # One of another harness, a first launch among them, writes HARNESS's
 # full-bypass permission words and keeps none of the predecessor's, whose
@@ -466,7 +467,7 @@ ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [F
   OL_REASON=launch-choice-failed
   words="$(launch_choice_write "$harness" "$model" "$effort")" || { OL_FIELDS=("harness=$harness"); return 1; }
   [[ -z "$words" ]] || eval "OL_FLAGS=($words)"
-  if [[ -z "$model" ]]; then
+  if [[ -z "$model" && -z "$effort" ]]; then
     LAUNCH_CHOICE_KEPT=("$@")
   elif [[ "$harness" == "$source" ]]; then
     launch_choice_strip "$source" "$@" || { OL_FIELDS=("harness=$source"); return 1; }

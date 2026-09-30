@@ -506,10 +506,10 @@ launch_choice_effort() { # HARNESS TEXT [TEXT]
 # what that reads, so a successor overseer cannot be given a spelling the
 # launcher would refuse.
 #
-# Empty, status 0, where MODEL is empty: a caller with no model to pass names
-# neither word. Status 1 where a MODEL is named and the table holds no row for
-# that harness, which is not an answer but the absence of one. A harness whose
-# row has no effort spelling takes the model alone; so does an empty EFFORT.
+# Empty, status 0, where MODEL and EFFORT are empty. A numeric overseer
+# preference on a first launch names effort alone and leaves the model to
+# the harness default. Status 1 where either value is named and the table
+# holds no row for that harness. A row with no effort spelling omits effort.
 # The model a launch of HARNESS writes for MODEL: a claude alias the adapter
 # maps is written as its id, so no ANTHROPIC_DEFAULT_*_MODEL pin moves the
 # model its window was judged on; every other model as named.
@@ -519,24 +519,23 @@ launch_choice_model_id() { # HARNESS MODEL
 
 launch_choice_write() { # HARNESS MODEL EFFORT
   local row model_spellings effort_spellings attach word out
-  # No model to pass is an answer: the caller names neither word, and an effort
-  # beside a default model is half a choice. A model the table has no row for is
-  # NOT an answer — nothing here knows how that harness spells it, and writing
-  # nothing would launch it on whatever default it ships. The caller refuses.
-  [[ -n "$2" ]] || return 0
+  [[ -n "$2" || -n "$3" ]] || return 0
   row="$(launch_choice_row "$1")"
   [[ -n "$row" ]] || return 1
   IFS='|' read -r _ model_spellings effort_spellings _ attach _ _ _ <<<"$row"
-  read -r word _ <<<"$model_spellings"
-  out="$word $(printf %q "$(launch_choice_model_id "$1" "$2")")"
+  out=""
+  if [[ -n "$2" ]]; then
+    read -r word _ <<<"$model_spellings"
+    out="$word $(printf %q "$(launch_choice_model_id "$1" "$2")")"
+  fi
   if [[ "$effort_spellings" != - && -n "$3" ]]; then
     read -r word _ <<<"$effort_spellings"
     if [[ "$word" == *= ]]; then
       # An attached-value spelling is one token, and the row names the flag word
       # it rides on.
-      out="$out $attach $(printf %q "$word$3")"
+      out="${out:+$out }$attach $(printf %q "$word$3")"
     else
-      out="$out $word $(printf %q "$3")"
+      out="${out:+$out }$word $(printf %q "$3")"
     fi
   fi
   printf '%s\n' "$out"

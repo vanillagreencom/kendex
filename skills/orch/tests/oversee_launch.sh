@@ -470,8 +470,8 @@ tm kill-window -t "$(recorded window)"
 # opens nothing.
 COPILOTFIRSTCTL="$(mutant_scripts copilotfirstctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$COPILOTFIRSTCTL/lib/overseer-launch.sh" \
-  '    [[ "$entry" =~ ^(claude|codex|copilot):[a-z][a-z0-9.-]*:[a-z]+$ \' \
-  '    [[ "$entry" =~ ^(claude|codex):[a-z][a-z0-9.-]*:[a-z]+$ \'
+  '    elif ! [[ "$entry" =~ ^(claude|codex|copilot):[a-z][a-z0-9.-]*:[a-z]+$ \' \
+  '    elif ! [[ "$entry" =~ ^(claude|codex):[a-z][a-z0-9.-]*:[a-z]+$ \'
 copilot_first_row "$COPILOTFIRSTCTL/oversee"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT" | awk '{print $2, $3}')|$(overseers)" "1|invalid-preference entry=copilot:gpt-5.3-codex:high|0" \
   "control: a preference parse naming no copilot refuses the copilot entry and opens nothing"
@@ -913,8 +913,8 @@ tm kill-window -t "$(recorded window)"
 # Committed consumer settings still emit the numeric account form. A first
 # launch has no caller model, so the harness keeps its default model.
 LAUNCH_PREF=claude:1:high run_oversee -- launch --wait-secs 20
-assert_eq "$RC|$(sed -n '/^preference-deprecated /p' <<<"$OUT")|$(overseers)|$(recorded harness)|$(recorded account)|$(recorded model)|$(recorded effort)" \
-  "0|preference-deprecated entry=claude:1:high form=harness:model:effort|1|claude|$H/.claude|none|high" \
+assert_eq "$RC|$(sed -n '/^preference-deprecated /p' <<<"$OUT")|$(overseers)|$(recorded harness)|$(recorded account)|$(recorded model)|$(recorded effort)|$(recorded_argv)" \
+  "0|preference-deprecated entry=claude:1:high form=harness:model:effort|1|claude|$H/.claude|none|high|lane=$H/.claude;-n;overseer;--effort;high;$BYPASS;$QUESTION_OFF;$BRIEF;" \
   "a numeric preference warns once and launches on the picked account at the supplied effort"
 assert_contains "$OUT" "oversee: overseer-launched session=" "the numeric preference reaches a recorded launch"
 tm kill-window -t "$(recorded window)"
@@ -927,6 +927,15 @@ LAUNCH_PREF=claude:1:high OVERSEE_BIN="$NUMERICCTL/oversee" run_oversee -- launc
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
   "1|oversee: invalid-preference entry=claude:1:high|0" \
   "control: numeric refusal turns the warning-and-launch assertion red"
+# The flag writer must preserve effort when the entry has no caller model.
+EFFORTCTL="$(mutant_scripts effortctl lib/lane-launch.sh)" || exit 1
+mutate_file "$EFFORTCTL/lib/lane-launch.sh" \
+  '  [[ -n "$2" || -n "$3" ]] || return 0' \
+  '  [[ -n "$2" ]] || return 0'
+LAUNCH_PREF=claude:1:high OVERSEE_BIN="$EFFORTCTL/oversee" run_oversee -- launch --wait-secs 20
+assert_eq "$RC|$(recorded effort)|$(overseers)" "0|none|1" \
+  "control: dropping effort without a model turns the numeric launch assertion red"
+tm kill-window -t "$(recorded window)"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
