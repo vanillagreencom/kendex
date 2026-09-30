@@ -27,6 +27,7 @@
 use std::cmp::Ordering;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use semver::Version;
@@ -473,6 +474,7 @@ impl SignedArtifact {
 }
 
 pub fn fetch(url: &str) -> Result<Vec<u8>, String> {
+    let retries = curl_retries()?;
     // Curl can truncate an output file before retrying a partial transfer,
     // but cannot discard bytes already written to its stdout pipe.
     // The private directory owns cleanup on success and every error path.
@@ -483,27 +485,76 @@ pub fn fetch(url: &str) -> Result<Vec<u8>, String> {
     let downloaded = temporary.path().join("body");
     // This fetches release binaries as well as the small feed, so it needs
     // room for a slow download.
-    let output = Hardened::curl(&curl_args(url, &downloaded))
+    let output = Hardened::curl(&curl_args(url, &downloaded, retries))
+        .env("LC_ALL", "C")
         .timeout(Duration::from_secs(600))
         .run()
         .map_err(|e| format!("curl unavailable: {e}"))?;
     if !output.status.success() {
+        let diagnostics = String::from_utf8_lossy(&output.stderr);
+        // num_retries in --write-out needs curl 8.9.0. Apple curl 7.64.1
+        // instead exposes retries through warnings, enabled by --no-silent.
+        // Each warning precedes one retry; the final failure adds one attempt.
+        let attempts = if output.status.code() == Some(2) {
+            // Curl's initialization failure precedes any transfer.
+            0
+        } else {
+            diagnostics.matches("Will retry in ").count() + 1
+        };
         return Err(format!(
-            "fetching {url} failed after 4 attempts: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            "fetching {url} failed after {attempts} attempts: {}",
+            diagnostics.trim()
         ));
     }
     std::fs::read(&downloaded).map_err(|e| format!("reading downloaded {url}: {e}"))
 }
 
-fn curl_args(url: &str, downloaded: &Path) -> Vec<OsString> {
+#[derive(Clone, Copy)]
+enum CurlRetries {
+    AllErrors,
+    Transient,
+}
+
+fn curl_retries() -> Result<CurlRetries, String> {
+    static RETRIES: OnceLock<Result<CurlRetries, String>> = OnceLock::new();
+    RETRIES
+        .get_or_init(|| {
+            // Apple curl 7.64.1 needs the transient-only policy. A dependency
+            // floor of curl 7.71.0 would remove this capability probe.
+            let probe = Hardened::curl(&["--disable", "--retry-all-errors", "--version"])
+                .env("LC_ALL", "C")
+                .run()
+                .map_err(|e| format!("curl unavailable: {e}"))?;
+            let diagnostics = String::from_utf8_lossy(&probe.stderr);
+            if probe.status.success() {
+                Ok(CurlRetries::AllErrors)
+            } else if probe.status.code() == Some(2)
+                && diagnostics
+                    .lines()
+                    .any(|line| line == "curl: option --retry-all-errors: is unknown")
+            {
+                Ok(CurlRetries::Transient)
+            } else {
+                Err(format!(
+                    "curl capability check failed: {}",
+                    diagnostics.trim()
+                ))
+            }
+        })
+        .clone()
+}
+
+fn curl_args(url: &str, downloaded: &Path, retries: CurlRetries) -> Vec<OsString> {
     let mut args = [
+        "--disable",
         "-fsS",
+        // Stderr is captured, not shown during the transfer. Silent mode
+        // would hide the retry warnings needed to count actual attempts.
+        "--no-silent",
         "--retry",
         "3",
         "--retry-delay",
         "2",
-        "--retry-all-errors",
         "--location",
         "--max-redirs",
         "3",
@@ -511,11 +562,19 @@ fn curl_args(url: &str, downloaded: &Path) -> Vec<OsString> {
         "=https,file",
         "--proto-redir",
         "=https",
-        "--output",
     ]
     .map(OsString::from)
     .to_vec();
-    args.extend([downloaded.as_os_str().to_owned(), "--".into(), url.into()]);
+    match retries {
+        CurlRetries::AllErrors => args.push("--retry-all-errors".into()),
+        CurlRetries::Transient => {}
+    }
+    args.extend([
+        "--output".into(),
+        downloaded.as_os_str().to_owned(),
+        "--".into(),
+        url.into(),
+    ]);
     args
 }
 
