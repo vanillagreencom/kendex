@@ -7,7 +7,7 @@
 # calls its `die`, `ow_message` and lane-row helpers.
 #
 # The lines it prints are protocol the overseer reads under
-# ../../references/oversee-events.md § Event kinds:
+# ../../references/security-alerts.md:
 #   EVENT security-alert <repo> kind=<kind> number=<N> [severity=<s>]
 #         <package|rule>=<name> [manifest=<path>] [scope=<scope>]
 #         [advisory=<GHSA>] [validity=<v>] url=<url> [pr=<N>]

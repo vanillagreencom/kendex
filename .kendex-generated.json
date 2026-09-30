@@ -561,6 +561,7 @@
   ".agents/skills/orch/references/peer-mail.md",
   ".agents/skills/orch/references/pi-runtime.md",
   ".agents/skills/orch/references/secret-value.ere",
+  ".agents/skills/orch/references/security-alerts.md",
   ".agents/skills/orch/references/skill-rules.md",
   ".agents/skills/orch/references/suppressed-findings.md",
   ".agents/skills/orch/references/thread-read.md",
