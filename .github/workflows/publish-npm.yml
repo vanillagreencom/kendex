@@ -74,7 +74,9 @@ jobs:
         with:
           # main, for tools/publish-npm, which reads the package from the
           # tag: main's copy can then publish a tag cut before this workflow
-          # existed. Every branch and tag is fetched, because the script
+          # existed. npm's provenance names this checkout's commit, so the
+          # script refuses a tag whose package directory differs from this
+          # checkout's. Every branch and tag is fetched, because the script
           # refuses a tag whose commit origin/main does not hold.
           fetch-depth: 0
           persist-credentials: false

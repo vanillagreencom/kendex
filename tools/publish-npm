@@ -4,7 +4,10 @@
 # .github/workflows/publish-npm.yml runs it from a checkout of main with
 # every branch and tag fetched. The package is read from the tag, never from
 # the checkout, so main's copy can publish a tag cut before this script
-# existed.
+# existed. npm's signed provenance names the checkout's commit, not the
+# tag's, so the tag publishes only while its package directory is the same
+# tree as the checkout's; a package changed on main since its tag needs a
+# new version and tag.
 #
 # npm trusted publishing is the credential: npm accepts the publish because
 # the job's GitHub identity names that workflow file and its main-only
@@ -40,6 +43,8 @@
 #                              publish is by hand, docs/RELEASING.md § Pi
 #                              packages on npm (exit 1)
 #   served=<name@version>      npm already serves it; nothing is published (exit 0)
+#   moved=<tag>                pi-extensions/<dir> at the checkout's HEAD differs
+#                              from the tag's; it needs a new version (exit 1)
 #   dry-run=<name@version>     every check passed; nothing is published (exit 0)
 #   publish=<name@version>     extracting the tag, npm ci or npm publish failed (exit 1)
 #   unconfirmed=<name@version> npm never served the published version (exit 1)
@@ -202,6 +207,19 @@ if [[ "$status" -eq 0 ]]; then
   exit 0
 fi
 # guard served: end
+
+# npm's provenance names HEAD, the commit the workflow checked out, as the
+# source; it is true only while HEAD's package tree is the tag's. A path
+# HEAD lacks reads as a differing tree.
+tagged_tree="$(git -C "$root" rev-parse --verify --quiet "$tagged:$path")" || tagged_tree=""
+head_tree="$(git -C "$root" rev-parse --verify --quiet "HEAD:$path")" || head_tree=""
+# guard moved: begin
+if [[ "$tagged_tree" != "$head_tree" ]]; then
+  say moved "$tag" "$path changed on this checkout's HEAD since $tag, and npm provenance would name HEAD as the source of the tag's package." \
+    "Land a new version bump and tag it; a second run of this tag cannot publish. Nothing was published" >&2
+  exit 1
+fi
+# guard moved: end
 
 if [[ "$dry_run" -eq 1 ]]; then
   say dry-run "$id"
