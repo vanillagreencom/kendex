@@ -311,17 +311,17 @@ head_rev="$(git_repo rev-parse --verify --quiet "${head}^{commit}")" || verdict 
 base_rev="$base"
 # A base older than the render that first wrote the inventory holds none,
 # which is a long-lived branch's normal state rather than a failed read:
-# nothing at that end is generated, so the diff is product source there and
-# runs product checks. Its own cause says so, and change-class reads it as a
-# measured standard. An inventory the base does hold and git cannot read, or
-# one that does not parse below, stays unreadable.
+# generated ownership at that end is not recorded, so the diff runs product
+# checks. Its own cause says so, and change-class answers it standard as a
+# fixed rule. An inventory the base does hold and git cannot read, or one
+# that does not parse below, stays unreadable.
 base_entry="$(git_repo ls-tree --full-tree "$base" -- .kendex-generated.json 2>/dev/null)" ||
   verdict false \
     "cause=unreadable-base-inventory base=$(stable_value "$base")" \
     "base generated paths are unreadable"
 [ -n "$base_entry" ] || verdict false \
   "cause=base-inventory-absent base=$(stable_value "$base")" \
-  "the base holds no generated-path inventory, so nothing there is generated"
+  "the base holds no generated-path inventory, so ownership there is not recorded"
 base_inventory="$(git_repo show "$base:.kendex-generated.json" 2>/dev/null)" || verdict false \
   "cause=unreadable-base-inventory base=$(stable_value "$base")" \
   "base generated paths are unreadable"

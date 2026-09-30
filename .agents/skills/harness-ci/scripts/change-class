@@ -90,9 +90,11 @@
 #            lookup, the diff, the endpoints, the event, and any refusal it
 #            adds later — answers standard carrying that cause, named here or
 #            not. Fail-closed: standard buys a diff nothing. A base that
-#            holds no inventory at all (cause=base-inventory-absent) is
-#            not a refusal: nothing there is generated, and that standard
-#            is measured=true. An inventory the base holds and harness-only
+#            holds no inventory at all (cause=base-inventory-absent) takes
+#            standard as a fixed rule ahead of the size rules, with
+#            measured=true: a reading, not a refusal, though no size was
+#            measured. The same diff on a base with an inventory can earn a
+#            narrower class. An inventory the base holds and harness-only
 #            cannot read or parse stays a refusal.
 #
 # A changed kendex configuration file refuses every narrow class, not only
@@ -411,11 +413,12 @@ fi
 #
 # One cause is a reading, not a refusal: a base that holds no inventory at
 # all, older than the render that first wrote one, which is a long-lived
-# branch's normal state. Nothing at that end is generated, so the diff is
-# product source there, and with no generated ownership at the base no rule
-# below can narrow it: standard is this rule's verdict, marked measured. An
-# inventory the base holds and harness-only cannot read or parse keeps its
-# own cause and stays refused.
+# branch's normal state. Ownership at that end is not recorded, so the diff
+# takes standard as a fixed rule ahead of every path and size rule below,
+# marked measured=true because the absence is what was read; no size is
+# measured. The same diff on a base with an inventory can earn a narrower
+# class. An inventory the base holds and harness-only cannot read or parse
+# keeps its own cause and stays refused.
 case "$harness_note" in
   '') ;;
   cause=product-source-or-unreadable-ownership | \

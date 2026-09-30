@@ -705,6 +705,19 @@ that has gained one|[]
 ABSENT
 require_rows change-class-absent-base "$absent_rows"
 
+# The control that separates absent from unreadable at git's own read: the
+# base commits an inventory, then its blob goes missing, so the tree still
+# lists the file and git cannot read it. That is unreadable, never absent.
+read -r lost_repo lost_base \
+  <<<"$(integrity_fixture change-class-lost-base-blob '["seed.txt","lost-base-blob"]' '[]')"
+lost_blob="$(git -C "$lost_repo" rev-parse "$lost_base:.kendex-generated.json")"
+rm -- "${lost_repo:?}/.git/objects/${lost_blob:0:2}/${lost_blob:2}"
+lost_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$lost_repo" \
+  --event pull_request --base "$lost_base" --head HEAD 2>&1 >/dev/null)"
+assert_eq "a base inventory git cannot read is never measured" \
+  "class: class=standard measured=false cause=unreadable-base-inventory base=$lost_base" \
+  "$(printf '%s\n' "$lost_err" | grep '^class: ')"
+
 # Those three are not a list of the causes that refuse: they are three of the
 # causes harness-only raises before it has read the changed paths at all. The
 # rule is the other way round. Only the two causes it raises AFTER reading

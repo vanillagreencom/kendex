@@ -64,10 +64,13 @@
 #                                               run strands nothing
 #   w30. zero open PRs / ghost author        -> clean pass
 # One pull request's class policy unresolved:
-#   wc1. class-unresolved, no gate status     -> posts pending naming the head
-#   wc2. class-unresolved over a success      -> keeps the success, no POST
+#   wc1. class-unresolved, no gate status     -> posts pending naming the
+#                                               head, exit 3
+#   wc2. class-unresolved over a success      -> keeps the success, no POST,
+#                                               exit 3
+#   wc2b. class-unresolved already pending    -> no POST, exit 3
 #   wc3. one PR class-unresolved in a pass    -> pending on that PR, the next
-#                                               PR converges, exit 0
+#                                               PR converges, exit 1
 # A head that moved during the pass (the PR re-read after a failure):
 #   wm1. listed head moved, current converges -> walks the current head, exit 0
 #   wm2. failure on the head the PR still has -> exit 1, as before
@@ -504,16 +507,17 @@ table \
   "w26c: a ghost-authored PR still converges, with an empty PR_AUTHOR handed down|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN_GHOST;STUB_GATE_HISTORY=[]|rc=0 posts=pending@sha9 author=-"
 
 echo "=== one pull request's class policy unresolved ==="
-# A class policy the predicate cannot resolve belongs to that pull request: its
-# range, its manifest, its inventory. It is recorded on that head as pending,
-# which keeps the gate closed and says why, and the pass converges the next
-# pull request and stays green. A success already on the head was written by
-# a pass that did resolve the class, so it stands, as it would under any
-# failed evaluation.
+# A class policy the predicate cannot resolve, whether the pull request or the
+# runner caused it, is recorded on that head as pending, which keeps the gate
+# closed and says why. The single-head run exits 3 on every path, and the pass
+# converges the next pull request, then exits 1 so the run stays red. A
+# success already on the head stands, as it did under any failed evaluation.
+H_UNRESOLVED_OLD="[$(entry pending "change class unresolved at headsha" "$OLD")]"
 table \
-  "wc1: class-unresolved posts pending on that head, naming it|single|STUB_PREDICATE_UNRESOLVED_PR=7;STUB_GATE_HISTORY=[]|rc=0 posts=pending@headsha desc=change+class+unresolved+at+headsha" \
-  "wc2: class-unresolved leaves a success already on the head standing|single|STUB_PREDICATE_UNRESOLVED_PR=7;STUB_GATE_HISTORY=$H_SUCCESS_OLD|rc=0 posts=none notice~writer-class-unresolved-kept@headsha=true" \
-  "wc3: one PR's class-unresolved is recorded on it, the next PR still converges, and the pass stays green|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[];STUB_PREDICATE_UNRESOLVED_PR=7|rc=0 posts=pending@sha7,pending@sha8 error~writer-convergence-failed@7=false"
+  "wc1: class-unresolved posts pending on that head, naming it|single|STUB_PREDICATE_UNRESOLVED_PR=7;STUB_GATE_HISTORY=[]|rc=3 posts=pending@headsha desc=change+class+unresolved+at+headsha" \
+  "wc2: class-unresolved leaves a success already on the head standing|single|STUB_PREDICATE_UNRESOLVED_PR=7;STUB_GATE_HISTORY=$H_SUCCESS_OLD|rc=3 posts=none notice~writer-class-unresolved-kept@headsha=true" \
+  "wc2b: class-unresolved already recorded posts nothing and still exits 3|single|STUB_PREDICATE_UNRESOLVED_PR=7;STUB_GATE_HISTORY=$H_UNRESOLVED_OLD|rc=3 posts=none notice~writer-unchanged@7=true" \
+  "wc3: one PR's class-unresolved is recorded on it, the next PR still converges, and the pass exits non-zero|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[];STUB_PREDICATE_UNRESOLVED_PR=7|rc=1 posts=pending@sha7,pending@sha8 error~writer-class-unresolved@7=true error~writer-convergence-failed@7=false"
 
 echo "=== a head that moved during the pass ==="
 # The listing is read once, so a push before a PR's turn leaves the predicate
