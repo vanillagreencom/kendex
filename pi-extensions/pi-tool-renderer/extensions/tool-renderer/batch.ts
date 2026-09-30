@@ -1,4 +1,4 @@
-import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, type ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 
 import { settingNumber } from "./settings.js";
 import {
@@ -19,7 +19,7 @@ import {
 	splitTerminalLines,
 	textContent,
 } from "./text.js";
-import { contextCwd, getBuiltInTool } from "./tools.js";
+import { contextCwd } from "./tools.js";
 
 type BatchToolCall = { args: Record<string, any>; tool: StackableToolName };
 
@@ -48,7 +48,6 @@ const TOOL_BATCH_MIN_CALL_TIMEOUT_MS = 1_000;
 const batchMessages = {
 	empty: "batch_calls=0\nNo valid calls provided.",
 	limit: (count: number, max: number) => `batch_calls=${count} max_calls=${max}\nToo many calls (${count}). Max is ${max}.`,
-	unavailable: (tool: string) => `batch_tool_unavailable=${tool}\nBuilt-in tool unavailable: ${tool}`,
 	timeout: (tool: string, ms: number) => `batch_timeout_ms=${ms} tool=${tool}\ntool_batch inner call ${tool} timed out after ${ms}ms`,
 	error: (error: unknown) => `batch_error=${error instanceof Error ? error.name : typeof error}\n${error instanceof Error ? error.message : String(error)}`,
 	result: (succeeded: number, total: number) => `batch_succeeded=${succeeded} batch_total=${total}\nBatch: ${succeeded}/${total} succeeded`,
@@ -251,7 +250,7 @@ function renderToolBatchCallText(args: any, theme: any, cwd?: string): string {
 	return lines.join("\n");
 }
 
-export function registerToolBatch(pi: ExtensionAPI, agent: any, cwd: string): void {
+export function registerToolBatch(pi: ExtensionAPI, cwd: string): void {
 	pi.registerTool({
 		renderShell: "self",
 		name: "tool_batch",
@@ -266,7 +265,7 @@ export function registerToolBatch(pi: ExtensionAPI, agent: any, cwd: string): vo
 			"Do not use tool_batch for edit/write or for bash commands that mutate files, depend on ordering, need streaming output, or should be inspected as separate commands.",
 		],
 		parameters: ToolBatchParams as never,
-		async execute(toolCallId: string, params: any, signal: AbortSignal | undefined, _onUpdate: unknown, context: any) {
+		async execute(_toolCallId: string, params: any, signal: AbortSignal | undefined, _onUpdate: unknown, context: ExtensionToolContext) {
 			const effectiveCwd = contextCwd(context, cwd);
 			const calls = normalizeBatchCalls(params?.calls);
 			const maxCalls = Math.max(1, Math.floor(settingNumber("batchMaxCalls", 8, effectiveCwd)));
@@ -296,8 +295,6 @@ export function registerToolBatch(pi: ExtensionAPI, agent: any, cwd: string): vo
 				}
 				let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 				try {
-					const original = getBuiltInTool(agent, effectiveCwd, call.tool);
-					if (!original?.execute) throw new BatchCallError(batchMessages.unavailable(call.tool));
 					const timeoutPromise = new Promise<never>((_, reject) => {
 						timeoutHandle = setTimeout(() => {
 							// Reject the race promise BEFORE aborting so the timeout
@@ -309,15 +306,17 @@ export function registerToolBatch(pi: ExtensionAPI, agent: any, cwd: string): vo
 							childController.abort();
 						}, batchCallTimeoutMs);
 					});
-					const result = await Promise.race([
-						original.execute(`${toolCallId}:${index}`, call.args, childController.signal, undefined, context),
+					// Pi owns validation, tool_call guards, and tool_result handlers for each child.
+					const outcome = await Promise.race([
+						context.executeTool(call.tool, call.args, { signal: childController.signal }),
 						timeoutPromise,
 					]);
+					const result = outcome.result;
 					return {
 						args: call.args,
 						details: result?.details,
 						index,
-						isError: Boolean(result?.isError),
+						isError: outcome.isError,
 						resultText: textContent(result),
 						toolName: call.tool,
 						truncated: resultTruncated(result),

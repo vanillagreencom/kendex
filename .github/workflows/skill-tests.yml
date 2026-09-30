@@ -1223,8 +1223,7 @@ jobs:
         working-directory: pi-extensions/pi-questions
         run: npm test
 
-      # The renderer imports pi-tui and pi-coding-agent, so unlike
-      # pi-questions its suite needs the 0.84.1 install to resolve at all.
+      # The renderer's batch guard regression needs Pi's nested execution API.
       # pi-ai and pi-agent-core are pinned alongside them because
       # pi-coding-agent pulls them transitively and an unpinned resolution
       # mismatches its exports.
@@ -1232,7 +1231,7 @@ jobs:
         if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-tool-renderer
         run: |
-          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.99.1 @earendil-works/pi-ai@0.99.1 @earendil-works/pi-coding-agent@0.99.1 @earendil-works/pi-tui@0.99.1
           npm test
 
       # Prompt stash mocks its Pi TUI value imports, so its suite needs no

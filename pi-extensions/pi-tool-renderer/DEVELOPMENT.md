@@ -4,7 +4,7 @@ For maintainers of the renderer. What it does for a consumer is [README.md](READ
 
 ## Invariants
 
-- Rendering only. Every replacement tool registered in `extensions/tool-renderer/tools.ts` executes through the built-in tool it replaces (`getBuiltInTool`) and draws the result; `tool_batch` in `extensions/tool-renderer/batch.ts` is the one tool with execution of its own, and it only fans out to those same built-ins. The wrappers and batch child calls forward the execution context unchanged so Pi retains ownership of session metadata and other context-dependent execution behavior. A change that alters what a tool does belongs in a different package.
+- Rendering only. Every replacement tool registered in `extensions/tool-renderer/tools.ts` executes through the built-in tool it replaces (`getBuiltInTool`) and draws the result. `tool_batch` in `extensions/tool-renderer/batch.ts` delegates each child to Pi's `ctx.executeTool()`, so Pi owns argument validation, tool-call guards, result handlers and session metadata. `extensions/__tests__/batch-guards.test.ts` proves guard delivery with real Pi and pi-hooks, and restores direct execution in a disposable copy as its must-fail control. A change that alters what a tool does belongs in a different package.
 - Install order in `extensions/tool-renderer.ts` is fixed: the stack events, the tool-execution renderer patch and live-settings refresh go in before chrome and message renderers, and tool renderers go in last, after the host agent module is imported. A patch that reads a symbol another patch installs depends on that order.
 - Every patch on a host component is guarded by a `Symbol.for("kendex.pi-tool-renderer.*")` marker so a reload does not stack a second copy. A new patch gets its own marker; a change to a patch's shape gets a new marker name, the way `installToolExecutionRendererPatch` carries `.v2`.
 - Bash success or failure comes from Pi's error flag, not command output. For a failed standalone call, `commandExit` reads Pi's trailing exit-code footer; cancellation and timeout remain failures without inventing an exit code. Grouped calls use the recorded error state.
@@ -22,7 +22,7 @@ The suites under `extensions/__tests__/` run on `bun:test` and import the host p
 
 ```bash
 cd pi-extensions/pi-tool-renderer
-npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1
+npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.99.1 @earendil-works/pi-ai@0.99.1 @earendil-works/pi-coding-agent@0.99.1 @earendil-works/pi-tui@0.99.1
 npm test
 ```
 

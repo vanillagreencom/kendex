@@ -16,18 +16,16 @@ for (const row of [
 		writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify({ kendex: { extensionManager: { config: { "@vanillagreen/pi-tool-renderer": { batchCallTimeoutMs: row.timeout } } } } }));
 		jest.useFakeTimers();
 		let aborts = 0;
-		const agent = {
-			createReadTool: () => ({ execute: (_id: string, _args: unknown, signal: AbortSignal) => new Promise<never>((_resolve, reject) => {
+		const executeTool = (name: string, _args: unknown, { signal }: { signal: AbortSignal }) => name === "read"
+			? new Promise<never>((_resolve, reject) => {
 				signal.addEventListener("abort", () => { aborts++; reject(new DOMException("", "AbortError")); }, { once: true });
-			}) }),
-			createBashTool: () => ({ execute: async () => ({ content: [{ type: "text", text: "ok-bash" }], isError: false }) }),
-			createGrepTool: () => ({ execute: async () => ({ content: [{ type: "text", text: "ok-grep" }], isError: false }) }),
-		};
+			})
+			: Promise.resolve({ result: { content: [{ type: "text", text: `ok-${name}` }] }, isError: false });
 		let definition: { execute: (...args: unknown[]) => Promise<{ content: Array<{ text: string }>; isError?: boolean; details: { total: number; failed: number; succeeded: number; items: Array<{ toolName: string; isError: boolean; resultText: string }> } }> } | undefined;
-		registerToolBatch({ registerTool: (tool: typeof definition) => { definition = tool; } } as never, agent, cwd);
+		registerToolBatch({ registerTool: (tool: typeof definition) => { definition = tool; } } as never, cwd);
 		expect(definition).toBeDefined();
 		let settled = false;
-		const pending = definition!.execute("batch-1", { calls: row.calls }, undefined, undefined, { cwd }).then((value) => { settled = true; return value; });
+		const pending = definition!.execute("batch-1", { calls: row.calls }, undefined, undefined, { cwd, executeTool }).then((value) => { settled = true; return value; });
 		await Promise.resolve();
 		jest.advanceTimersByTime(999);
 		await Promise.resolve();

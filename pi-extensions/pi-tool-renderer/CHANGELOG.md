@@ -4,6 +4,7 @@
 
 ### Unreleased
 
+- Batch children now run through Pi's tool-call guards and result handlers. Guard-refused bash commands no longer run inside `tool_batch`. Requires Pi 0.99.0 or later; upgrade Pi before using this package.
 - Replacement tools preserve Pi's output schemas and structured results, so codemode scripts receive structured bash output on Pi 0.99.0 and later. Tools without an output schema still work on earlier Pi versions.
 - Malformed Git diff headers with unterminated quoted paths no longer freeze Pi while rendering tool output.
 

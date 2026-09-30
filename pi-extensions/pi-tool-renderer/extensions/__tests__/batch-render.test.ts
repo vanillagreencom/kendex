@@ -13,12 +13,10 @@ for (const row of [
 ]) {
 	test(`a finished tool_batch ${row.tool} row shows its result count`, async () => {
 		const { cwd } = world();
-		const tool = { execute: async () => threeLines };
-		const host = { createReadTool: () => tool, createBashTool: () => tool, createGrepTool: () => tool };
 		let definition: { execute: (...args: unknown[]) => Promise<unknown>; renderResult: (...args: any[]) => { render: (width: number) => string[] } } | undefined;
-		registerToolBatch({ registerTool: (registered: typeof definition) => { definition = registered; } } as never, host, cwd);
+		registerToolBatch({ registerTool: (registered: typeof definition) => { definition = registered; } } as never, cwd);
 		expect(definition).toBeDefined();
-		const result = await definition!.execute("batch-render", { calls: [{ tool: row.tool, args: row.args }] }, undefined, undefined, { cwd });
+		const result = await definition!.execute("batch-render", { calls: [{ tool: row.tool, args: row.args }] }, undefined, undefined, { cwd, executeTool: async () => ({ result: threeLines, isError: false }) });
 		const rows = definition!.renderResult(result, { expanded: false, isPartial: false }, theme, { cwd }).render(200);
 		expect(rows).toHaveLength(2);
 		expect(rows[1]).toEndWith(row.summary);

@@ -6,6 +6,8 @@ Tool and message displays for Pi. It provides compact output, optional file diff
 
 ## Install
 
+Requires Pi 0.99.0 or later for guarded batch execution.
+
 - npm: `pi install npm:@vanillagreen/pi-tool-renderer`.
 - kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
 
