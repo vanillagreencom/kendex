@@ -13,7 +13,9 @@
 #         [advisory=<GHSA>] [validity=<v>] url=<url> [pr=<N>]
 #   EVENT security-alerts-unread reads=<source>:<cause>[,<source>:<cause>...]
 # <kind> is the alert API's own path segment, `dependabot`, `code-scanning` or
-# `secret-scanning`; a source is `<repo>/<kind>` or `alerts_triaged`.
+# `secret-scanning`; a source is `<repo>/<kind>`, `<repo>/dependabot-prs` (the
+# alert-to-pull-request link) or `alerts_triaged`; a cause is one of
+# security_read_cause's or `invalid`.
 
 # ORCH_SECURITY_ALERTS, read once at start: `on` (the default) runs the pass,
 # `off` lists nothing, and any other value is refused rather than guessed.
@@ -48,26 +50,53 @@ security_alert_jq() { # KIND
   printf '.[] | [%s] | map(. // "" | tostring) | join("\u001f")' "$row"
 }
 
-# The open Dependabot alerts that carry an open Dependabot pull request, one
-# `<alert>\t<pr>` line each. GitHub's GraphQL alert record is the one read that
-# links an alert to its pull request; the REST alert carries no such field.
+# The Dependabot alerts in any state that carry an open Dependabot pull
+# request, one `<alert>\t<alert state>\t<pr>` line each. GitHub's GraphQL alert
+# record is the one read that links an alert to its pull request; the REST
+# alert carries no such field. Every state is read, not only OPEN, so a pull
+# request whose alerts were all dismissed or fixed elsewhere is still known as
+# a security update: a pull request no alert links, a version update or one
+# opened after this read, is never named stale.
 SECURITY_PR_QUERY='query($owner: String!, $name: String!, $endCursor: String) {
   repository(owner: $owner, name: $name) {
-    vulnerabilityAlerts(states: OPEN, first: 100, after: $endCursor) {
+    vulnerabilityAlerts(first: 100, after: $endCursor) {
       pageInfo { hasNextPage endCursor }
-      nodes { number dependabotUpdate { pullRequest { number state } } }
+      nodes { number state dependabotUpdate { pullRequest { number state } } }
     }
   }
 }'
 SECURITY_PR_JQ='.data.repository.vulnerabilityAlerts.nodes[]
   | select(.dependabotUpdate.pullRequest.state == "OPEN")
-  | "\(.number)\t\(.dependabotUpdate.pullRequest.number)"'
+  | "\(.number)\t\(.state)\t\(.dependabotUpdate.pullRequest.number)"'
 
-# The cause a failed read is reported under: GitHub's HTTP status where gh
-# names one, the exit status otherwise.
+# The cause a failed read is reported under, the first row whose ERE matches
+# what gh printed: `permission`, the credential the watch reads with lacking
+# the alert permission, or `feature-off`, the alert feature turned off on the
+# repository, which GitHub answers with a 403 or 404 of its own. The words
+# each row was written from:
+#   Resource not accessible by integration (HTTP 403)          GitHub App
+#   Resource not accessible by personal access token (HTTP 403) fine-grained PAT
+#   Dependabot alerts are disabled for this repository. (HTTP 403)
+#   Secret scanning is disabled on this repository. (HTTP 404)
+#   GitHub Code Security or GitHub Advanced Security is not enabled (HTTP 403)
+#   Advanced Security must be enabled for this repository to use code scanning. (HTTP 403)
+#   no analysis found (HTTP 404)                                code scanning never ran
+SECURITY_CAUSES='permission	Resource not accessible by (integration|personal access token)
+feature-off	(alerts are|scanning is) disabled
+feature-off	Security (is not|must be) enabled
+feature-off	no analysis found'
+
+# The cause for a read no row matches: GitHub's HTTP status where gh names
+# one, `http-<status>`, the exit status otherwise, `exit-<N>`.
 security_read_cause() { # ERR_FILE EXIT
-  local detail
+  local detail cause pattern
   detail="$(cat -- "$1" 2>/dev/null)" || detail=""
+  while IFS=$'\t' read -r cause pattern; do
+    if [[ "$detail" =~ $pattern ]]; then
+      printf '%s' "$cause"
+      return 0
+    fi
+  done <<<"$SECURITY_CAUSES"
   if [[ "$detail" =~ \(HTTP\ ([0-9]{3})\) ]]; then
     printf 'http-%s' "${BASH_REMATCH[1]}"
   else
@@ -87,9 +116,11 @@ security_unread() { # SOURCE CAUSE [ERR_FILE]
 # One row per alert reported and not yet recorded, in the first repository's
 # baseline:
 #   security-alert<TAB><repo>#<kind>/<number><TAB>reported
-# and one per open Dependabot pull request an open alert names:
-#   bot-fix<TAB><repo>#<pr><TAB><alert>[,<alert>...]
-# and, while any read fails:
+# and one per open Dependabot pull request any alert links, naming its open
+# alerts, or `none` once every alert that links it has left the open list:
+#   bot-fix<TAB><repo>#<pr><TAB><alert>[,<alert>...]|none
+# A pull request no longer open, or that no alert links, has no row.
+# And, while any read fails:
 #   security-alerts-unread<TAB>fleet<TAB><the reads= value>
 # An alert whose verdict `alerts_triaged` records has no row and no line; one
 # that leaves the open list takes its row with it. A read that fails keeps
@@ -103,7 +134,7 @@ check_security_alerts() {
   [[ "$SECURITY_ENABLED" -eq 1 ]] || return 0
   local errf="$WORK_DIR/security.err" state="${PW_SEEN[0]}" events="" new_rows="" rc
   local recorded="" reported repo kind out prs line key number severity subject_key subject
-  local manifest scope advisory validity url pr fields row alerts keys=() fix_keys=() fix_rows=""
+  local manifest scope advisory validity url pr fields row alerts source query keys=() fix_keys=() fix_rows=""
   SECURITY_UNREAD=""
   reported=$'\n'"$(awk -F'\t' '$1 == "security-alert" && NF == 3 { print $2 }' <<<"$state")"$'\n'
 
@@ -135,20 +166,23 @@ check_security_alerts() {
 
   for repo in "${REPOS[@]}"; do
     for kind in $SECURITY_KINDS; do
-      rc=0
-      out="$(gh api --paginate "repos/$repo/$kind/alerts?state=open&per_page=100" \
+      rc=0 source="$repo/$kind" query="state=open&per_page=100"
+      # A secret's plaintext value is in the list unless GitHub is told to
+      # leave it out, and the check never reads it.
+      [[ "$kind" != secret-scanning ]] || query+="&hide_secret=true"
+      out="$(gh api --paginate "repos/$repo/$kind/alerts?$query" \
         --jq "$(security_alert_jq "$kind")" 2>"$errf")" || rc=$?
+      [[ "$rc" != 0 ]] || security_lines_valid "$kind" "$out" "" || rc=invalid
       prs=""
-      if [[ "$rc" -eq 0 && "$kind" == dependabot ]]; then
+      if [[ "$rc" == 0 && "$kind" == dependabot ]]; then
+        source="$repo/dependabot-prs"
         prs="$(gh api graphql --paginate -f owner="${repo%%/*}" -f name="${repo#*/}" \
           -f query="$SECURITY_PR_QUERY" --jq "$SECURITY_PR_JQ" 2>"$errf")" || rc=$?
-      fi
-      if [[ "$rc" -eq 0 ]] && ! security_lines_valid "$kind" "$out" "$prs"; then
-        rc=invalid
+        [[ "$rc" != 0 ]] || security_lines_valid "$kind" "" "$prs" || rc=invalid
       fi
       if [[ "$rc" != 0 ]]; then
-        if [[ "$rc" == invalid ]]; then security_unread "$repo/$kind" invalid
-        else security_unread "$repo/$kind" "$(security_read_cause "$errf" "$rc")" "$errf"; fi
+        if [[ "$rc" == invalid ]]; then security_unread "$source" invalid
+        else security_unread "$source" "$(security_read_cause "$errf" "$rc")" "$errf"; fi
         while IFS= read -r key; do
           [[ -z "$key" ]] || keys+=("$key")
         done < <(awk -F'\t' -v p="$repo#$kind/" '$1 == "security-alert" && index($2, p) == 1 { print $2 }' <<<"$state")
@@ -164,8 +198,9 @@ check_security_alerts() {
           fix_keys+=("$repo#$pr")
           fix_rows+="bot-fix"$'\t'"$repo#$pr"$'\t'"$fields"$'\n'
         done < <(sort -n <<<"$prs" | awk -F'\t' '
-          { if ($2 in list) list[$2] = list[$2] "," $1; else { order[++n] = $2; list[$2] = $1 } }
-          END { for (i = 1; i <= n; i++) print order[i] "\t" list[order[i]] }')
+          !($3 in list) { order[++n] = $3; list[$3] = "" }
+          $2 == "OPEN" { list[$3] = list[$3] (list[$3] == "" ? "" : ",") $1 }
+          END { for (i = 1; i <= n; i++) print order[i] "\t" (list[order[i]] == "" ? "none" : list[order[i]]) }')
       fi
       while IFS=$'\x1f' read -r number severity subject_key subject manifest scope advisory validity url; do
         [[ -n "$number" ]] || continue
@@ -180,7 +215,7 @@ check_security_alerts() {
           [[ -z "${fields#*=}" ]] || line+=" $fields"
         done
         line+=" url=$url"
-        pr="$(awk -F'\t' -v n="$number" '$1 == n { print $2; exit }' <<<"$prs")"
+        pr="$(awk -F'\t' -v n="$number" '$1 == n { print $3; exit }' <<<"$prs")"
         [[ -z "$pr" ]] || line+=" pr=$pr"
         events+="$line"$'\n'
         new_rows+="security-alert"$'\t'"$key"$'\t'"reported"$'\n'
@@ -207,7 +242,7 @@ check_security_alerts() {
 # kind has one, or that holds a value with white space in it, is not a list
 # this pass can report from. The same for the pull request lines.
 security_lines_valid() { # KIND LIST PRS
-  local number severity subject_key subject manifest scope advisory validity url value alert pr
+  local number severity subject_key subject manifest scope advisory validity url value alert alert_state pr
   while IFS=$'\x1f' read -r number severity subject_key subject manifest scope advisory validity url; do
     [[ -n "$number$severity$subject_key$subject$manifest$scope$advisory$validity$url" ]] || continue
     [[ "$number" =~ ^[0-9]+$ && -n "$subject" && -n "$url" ]] || return 1
@@ -216,9 +251,9 @@ security_lines_valid() { # KIND LIST PRS
       [[ -z "$value" || "$value" =~ ^[^[:space:]]+$ ]] || return 1
     done
   done <<<"$2"
-  while IFS=$'\t' read -r alert pr; do
-    [[ -n "$alert$pr" ]] || continue
-    [[ "$alert" =~ ^[0-9]+$ && "$pr" =~ ^[0-9]+$ ]] || return 1
+  while IFS=$'\t' read -r alert alert_state pr; do
+    [[ -n "$alert$alert_state$pr" ]] || continue
+    [[ "$alert" =~ ^[0-9]+$ && "$alert_state" =~ ^[A-Z_]+$ && "$pr" =~ ^[0-9]+$ ]] || return 1
   done <<<"$3"
 }
 
@@ -245,10 +280,11 @@ SECURITY_OPEN_JQ='.[] | "\(.number)\t\(.headRefName)\t\(.title)"
   + (if .author.login == "app/dependabot" then "\t\(.author.login)" else "" end)'
 
 # One repository's open pull request lines as the heartbeat prints them. With
-# the check on, a Dependabot pull request's line is `bot-fix pr=<N>
-# alert=<alerts|unread|none>`, as security_bot_fix_alerts reads the last long
-# pass's rows; with it off, its plain line. Fails where the baseline cannot be
-# read.
+# the check on, a Dependabot pull request the last long pass's bot-fix row
+# names reads `bot-fix pr=<N> alert=<alerts|none>`; any other, a version
+# update or one opened after that pass, keeps its plain line, as every
+# Dependabot pull request does with the check off. Fails where the baseline
+# cannot be read.
 security_mark_open() { # BASELINE REPO OPEN
   local line number alerts marked=""
   while IFS= read -r line; do
@@ -256,27 +292,11 @@ security_mark_open() { # BASELINE REPO OPEN
       line="${line%$'\t'app/dependabot}"
       if [[ "$SECURITY_ENABLED" -eq 1 ]]; then
         number="${line%%$'\t'*}"
-        alerts="$(security_bot_fix_alerts "$1" "$2" "$number")" || return 1
-        line="bot-fix pr=$number alert=$alerts"
+        alerts="$(lane_row_get bot-fix "$1" "$2#$number")" || return 1
+        [[ -z "$alerts" ]] || line="bot-fix pr=$number alert=$alerts"
       fi
     fi
     marked+="$line"$'\n'
   done <<<"$3"
   printf '%s' "${marked%$'\n'}"
-}
-
-# The alert list a heartbeat names a Dependabot pull request with, from the
-# baseline the last long pass committed: its bot-fix row; `unread` where it
-# has none and that pass could not read the repository's Dependabot alerts or
-# the verdicts, so a pull request it never saw is not called stale; and
-# `none` where no open alert names it, an alert dismissed or fixed elsewhere.
-security_bot_fix_alerts() { # BASELINE REPO PR
-  local alerts unread
-  alerts="$(lane_row_get bot-fix "$1" "$2#$3")" || return 1
-  if [[ -z "$alerts" ]]; then
-    unread="$(lane_row_get security-alerts-unread "$1" fleet)" || return 1
-    alerts=none
-    [[ ",$unread" != *",$2/dependabot:"* && ",$unread" != *",alerts_triaged:"* ]] || alerts=unread
-  fi
-  printf '%s' "$alerts"
 }

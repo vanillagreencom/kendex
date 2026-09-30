@@ -37,8 +37,14 @@ DEPENDABOT="{\"number\":7,\"html_url\":\"$URL/dependabot/7\",\"dependency\":{\"p
 DEPENDABOT_DEV="{\"number\":8,\"html_url\":\"$URL/dependabot/8\",\"dependency\":{\"package\":{\"ecosystem\":\"npm\",\"name\":\"undici\"},\"manifest_path\":\"ui/package-lock.json\",\"scope\":\"development\"},\"security_advisory\":{\"ghsa_id\":\"GHSA-dddd-eeee-ffff\",\"severity\":\"low\"}}"
 CODE_SCANNING="{\"number\":9,\"html_url\":\"$URL/code-scanning/9\",\"rule\":{\"id\":\"js/xss\",\"severity\":\"error\",\"security_severity_level\":\"medium\"}}"
 SECRET="{\"number\":3,\"html_url\":\"$URL/secret-scanning/3\",\"secret_type\":\"github_personal_access_token\",\"validity\":\"active\"}"
-PR_12='{"number":7,"dependabotUpdate":{"pullRequest":{"number":12,"state":"OPEN"}}}'
+# vulnerabilityAlerts nodes: an alert in STATE linking pull request PR in
+# PR_STATE.
+node() { # ALERT STATE PR PR_STATE
+  printf '{"number":%s,"state":"%s","dependabotUpdate":{"pullRequest":{"number":%s,"state":"%s"}}}' "$@"
+}
+PR_12="$(node 7 OPEN 12 OPEN)"
 LINE_DEPENDABOT="EVENT security-alert owner/repo kind=dependabot number=7 severity=high package=fast-uri manifest=ui/package-lock.json scope=runtime advisory=GHSA-aaaa-bbbb-cccc url=$URL/dependabot/7"
+LINE_DEPENDABOT_DEV="EVENT security-alert owner/repo kind=dependabot number=8 severity=low package=undici manifest=ui/package-lock.json scope=development advisory=GHSA-dddd-eeee-ffff url=$URL/dependabot/8"
 LINE_CODE="EVENT security-alert owner/repo kind=code-scanning number=9 severity=medium rule=js/xss url=$URL/code-scanning/9"
 LINE_SECRET="EVENT security-alert owner/repo kind=secret-scanning number=3 rule=github_personal_access_token validity=active url=$URL/secret-scanning/3"
 RECORDS='{"triaged":[],"alerts_triaged":[
@@ -46,6 +52,9 @@ RECORDS='{"triaged":[],"alerts_triaged":[
   {"repo":"owner/repo","kind":"code-scanning","number":9,"verdict":"dismissed","item":null,"reason":"test code"},
   {"repo":"owner/repo","kind":"secret-scanning","number":3,"verdict":"filed","item":"KEN-2","reason":"live token"}]}'
 HTTP_403='gh: Resource not accessible by integration (HTTP 403)'
+# DEPENDABOT_OPEN — an open Dependabot pull request as the open-list fixture
+# spells it, author last.
+DEPENDABOT_OPEN=$'12\tdependabot/npm_and_yarn/ui/security-1a2b\tBump the security group\tapp/dependabot'
 
 # one_of_each — one open alert of every kind, the Dependabot one with its
 # open pull request.
@@ -60,12 +69,19 @@ echo "=== oversee-watch security alerts ==="
 
 # One open alert of each kind prints one line each, the Dependabot line naming
 # its pull request, and ends the run as news. The next pass reports none.
+# An alert whose Dependabot pull request is closed names none, and the secret
+# list is read without the secret's value.
 new_case security_once
 one_of_each
+printf '[%s,%s]\n' "$DEPENDABOT" "$DEPENDABOT_DEV" > "$STUB_DIR/dependabot.json"
+printf '[%s,%s]\n' "$PR_12" "$(node 8 OPEN 11 CLOSED)" > "$STUB_DIR/dependabot-prs.json"
 run --
 assert_eq "$RC|$(events)|$(heartbeats)" "0|$LINE_DEPENDABOT pr=12
+$LINE_DEPENDABOT_DEV
 $LINE_CODE
 $LINE_SECRET|0" "an open alert of each kind is one line each, and the run ends on them" "$ERR"
+assert_eq "$(grep -c '^api --paginate repos/owner/repo/secret-scanning/alerts?state=open&per_page=100&hide_secret=true ' "$STUB_DIR/gh.calls" || true)" "1" \
+  "the secret scanning list asks GitHub to leave each secret's value out" "$ERR"
 run --
 assert_eq "$RC|$(events)|$(head -n 1 <<<"$OUT")" "0|none|$HEARTBEAT" \
   "an alert already reported is not a second line" "$ERR"
@@ -100,12 +116,12 @@ one_of_each
 printf '%s\n' "$HTTP_403" > "$STUB_DIR/dependabot-fail"
 run --
 assert_eq "$RC|$(unread)|$(events)|$(heartbeats)" \
-  "0|EVENT security-alerts-unread reads=owner/repo/dependabot:http-403|$LINE_CODE
-$LINE_SECRET|0" "a 403 on one list is the unread line, and the other lists are reported" "$ERR"
-assert_eq "$(grep -c '^oversee-watch: security-alerts-read-failed source=owner/repo/dependabot cause=http-403$' "$ERR" || true)" "1" \
+  "0|EVENT security-alerts-unread reads=owner/repo/dependabot:permission|$LINE_CODE
+$LINE_SECRET|0" "a failed read of one list is the unread line, and the other lists are reported" "$ERR"
+assert_eq "$(grep -c '^oversee-watch: security-alerts-read-failed source=owner/repo/dependabot cause=permission$' "$ERR" || true)" "1" \
   "the failed read is named on stderr with its cause" "$ERR"
 run --
-assert_eq "$RC|$(unread)|$(heartbeats)" "0|EVENT security-alerts-unread reads=owner/repo/dependabot:http-403|1" \
+assert_eq "$RC|$(unread)|$(heartbeats)" "0|EVENT security-alerts-unread reads=owner/repo/dependabot:permission|1" \
   "a standing failure prints the unread line again and the heartbeat still comes" "$ERR"
 
 # A read that fails keeps the rows of its source: the alert reported before it
@@ -119,6 +135,26 @@ rm -f "$STUB_DIR/dependabot-fail"
 run --
 assert_eq "$RC|$(events)|$(unread)" "0|none|none" \
   "an alert reported before a failed read is not reported again after it" "$ERR"
+
+# The cause a failed list read is named by, from what gh printed: a missing
+# permission and an alert feature turned off are told apart by GitHub's own
+# words, and any other failure keeps its HTTP status.
+for row in \
+  "dependabot|$HTTP_403|permission" \
+  "code-scanning|gh: Resource not accessible by personal access token (HTTP 403)|permission" \
+  "dependabot|gh: Dependabot alerts are disabled for this repository. (HTTP 403)|feature-off" \
+  "secret-scanning|gh: Secret scanning is disabled on this repository. (HTTP 404)|feature-off" \
+  "code-scanning|gh: GitHub Code Security or GitHub Advanced Security is not enabled (HTTP 403)|feature-off" \
+  "code-scanning|gh: Advanced Security must be enabled for this repository to use code scanning. (HTTP 403)|feature-off" \
+  "code-scanning|gh: no analysis found (HTTP 404)|feature-off" \
+  "code-scanning|gh: You have exceeded a secondary rate limit. (HTTP 403)|http-403" \
+  "secret-scanning|gh: Bad Gateway (HTTP 502)|http-502"; do
+  IFS='|' read -r kind text cause <<<"$row"
+  new_case security_cause
+  printf '%s\n' "$text" > "$STUB_DIR/$kind-fail"
+  run --
+  assert_eq "$RC|$(unread)" "0|EVENT security-alerts-unread reads=owner/repo/$kind:$cause" "$text is cause $cause" "$ERR"
+done
 
 # Refusals of a list's content: a line with no whole number, and a value with
 # white space in it, are an unread list, never an empty one.
@@ -140,32 +176,61 @@ run --
 assert_eq "$RC|$(events)|$(unread)" "0|none|EVENT security-alerts-unread reads=alerts_triaged:invalid" \
   "a verdict record naming no alert kind is unread, and no alert is reported past it" "$ERR"
 
-# The heartbeat names each open Dependabot pull request by the alerts its
-# row maps to it, and none where no open alert does; other pull requests keep
-# their line.
+# A verdict record that cannot be read at all, its presence check or its read
+# failing, is unread under the reader's exit status with the reader's words on
+# stderr, and no alert is reported past it. A `get` exits 5 on a state file
+# holding invalid JSON; `exists` answers 1 for no file, which is no verdict.
+for row in "get|.alerts_triaged |5" "exists| exists oversee |2"; do
+  IFS='|' read -r verb match status <<<"$row"
+  new_case security_record_unread
+  one_of_each
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf '[[ " $* " != *"%s"* ]] || { echo "workflow-state: %s refused" >&2; exit %s; }\n' "$match" "$verb" "$status"
+    printf 'exec "$STUB_DIR/../../bin/workflow-state-stub.sh" "$@"\n'
+  } > "$STUB_DIR/record-fail.sh"
+  chmod +x "$STUB_DIR/record-fail.sh"
+  run OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/record-fail.sh" --
+  assert_eq "$RC|$(events)|$(unread)|$(grep -c "^workflow-state: $verb refused$" "$ERR" || true)" \
+    "0|none|EVENT security-alerts-unread reads=alerts_triaged:exit-$status|1" \
+    "a verdict record whose $verb read fails is unread, and no alert is reported past it" "$ERR"
+done
+
+# The heartbeat names each open Dependabot pull request an alert links by its
+# open alerts, and none where every alert that links it has left the open
+# list. One no alert links, a version update, keeps its plain line, as does a
+# pull request of any other author.
 new_case security_heartbeat
 printf '[%s,%s]\n' "$DEPENDABOT" "$DEPENDABOT_DEV" > "$STUB_DIR/dependabot.json"
-printf '[%s,{"number":8,"dependabotUpdate":{"pullRequest":{"number":12,"state":"OPEN"}}},{"number":4,"dependabotUpdate":{"pullRequest":{"number":11,"state":"CLOSED"}}}]\n' \
-  "$PR_12" > "$STUB_DIR/dependabot-prs.json"
-printf '5\tken-5\tFix the thing\n12\tdependabot/npm_and_yarn/ui/security-1a2b\tBump the security group\tapp/dependabot\n13\tdependabot/cargo/time-0.3.47\tBump time\tapp/dependabot\n' \
-  > "$STUB_DIR/open.txt"
+printf '[%s,%s,%s,%s]\n' "$PR_12" "$(node 8 OPEN 12 OPEN)" "$(node 6 DISMISSED 12 OPEN)" "$(node 4 FIXED 14 OPEN)" \
+  > "$STUB_DIR/dependabot-prs.json"
+printf '5\tken-5\tFix the thing\toctocat\n%s\n13\tdependabot/cargo/time-0.3.47\tBump time\tapp/dependabot\n14\tdependabot/pip/requests-2.32.4\tBump requests\tapp/dependabot\n' \
+  "$DEPENDABOT_OPEN" > "$STUB_DIR/open.txt"
 run --
 run --
 assert_eq "$RC|$(grep -F $'owner/repo\t' <<<"$OUT" || true)" "0|owner/repo	5	ken-5	Fix the thing
 owner/repo	bot-fix pr=12 alert=7,8
-owner/repo	bot-fix pr=13 alert=none" \
-  "a Dependabot pull request is bot-fix with its alerts, none where no open alert names it" "$ERR"
+owner/repo	13	dependabot/cargo/time-0.3.47	Bump time
+owner/repo	bot-fix pr=14 alert=none" \
+  "a Dependabot pull request an alert links is bot-fix with its open alerts, and one none links keeps its line" "$ERR"
 
-# A Dependabot pull request the last long pass could not map, its alert list
-# unread, is unread rather than stale; with the check off it keeps its line.
-DEPENDABOT_OPEN=$'12\tdependabot/npm_and_yarn/ui/security-1a2b\tBump the security group\tapp/dependabot'
+# A failed read of the alert-to-pull-request link names its own source, and
+# the mapping of the last good read stands; a Dependabot pull request that
+# read never saw keeps its plain line.
 new_case security_heartbeat_unread
-printf '%s\n' "$HTTP_403" > "$STUB_DIR/dependabot-fail"
+printf '[%s]\n' "$DEPENDABOT" > "$STUB_DIR/dependabot.json"
+printf '[%s]\n' "$PR_12" > "$STUB_DIR/dependabot-prs.json"
 printf '%s\n' "$DEPENDABOT_OPEN" > "$STUB_DIR/open.txt"
 run --
+touch "$STUB_DIR/graphql-fail"
+printf '%s\n15\tdependabot/npm_and_yarn/ui/security-3c4d\tBump the ui group\tapp/dependabot\n' "$DEPENDABOT_OPEN" > "$STUB_DIR/open.txt"
 run --
-assert_eq "$RC|$(grep -F $'owner/repo\t' <<<"$OUT" || true)" "0|owner/repo	bot-fix pr=12 alert=unread" \
-  "a Dependabot pull request whose alert list is unread is bot-fix alert=unread" "$ERR"
+assert_eq "$RC|$(unread)|$(heartbeats)" "0|EVENT security-alerts-unread reads=owner/repo/dependabot-prs:permission|0" \
+  "a failed pull request link read is unread under its own source" "$ERR"
+run --
+assert_eq "$RC|$(grep -F $'owner/repo\t' <<<"$OUT" || true)" "0|owner/repo	bot-fix pr=12 alert=7
+owner/repo	15	dependabot/npm_and_yarn/ui/security-3c4d	Bump the ui group" \
+  "a failed pull request link read keeps the last mapping, and a pull request it never saw keeps its line" "$ERR"
 new_case security_heartbeat_off
 printf '%s\n' "$DEPENDABOT_OPEN" > "$STUB_DIR/open.txt"
 run ORCH_SECURITY_ALERTS=off --

@@ -235,10 +235,13 @@ The long pass's events, checked and reported in this order:
   EVENT security-alerts-unread reads=<source>:<cause>[,...]
                              an alert list or the alerts_triaged record could
                              not be read, or carried a line the check cannot
-                             read. A source is <repo>/<kind> or
-                             alerts_triaged; a cause is http-<status>,
-                             exit-<N> or invalid, and http-403 on an alert
-                             list is the lanes app missing that permission.
+                             read. A source is <repo>/<kind>,
+                             <repo>/dependabot-prs (the alert-to-pull-request
+                             link) or alerts_triaged. A cause is permission,
+                             the credential the watch reads with lacking that
+                             alert permission; feature-off, the alert feature
+                             turned off on that repository; http-<status> or
+                             exit-<N> for any other failure; or invalid.
                              Printed on every long pass a read fails, and
                              ends the run only when the set of failed reads
                              changes. The rows of a failed source stand
@@ -375,12 +378,14 @@ The long pass's events, checked and reported in this order:
                              of the current fleet whose failure still stands,
                              reported once and quiet since, then every
                              --repo's open PRs, each line prefixed with its
-                             repo, a Dependabot pull request's as `bot-fix
-                             pr=<N> alert=<alerts|unread|none>` from the last
-                             long pass's reading while ORCH_SECURITY_ALERTS is
-                             on: unread where that pass could not read its
-                             repository's Dependabot alerts, none where no
-                             open alert names it, then `account-roster accounts=<N>` and one
+                             repo, a Dependabot pull request an alert links
+                             as `bot-fix pr=<N> alert=<alerts|none>` from the
+                             last long pass's reading while
+                             ORCH_SECURITY_ALERTS is on: none where every
+                             alert that links it has left the open list. One
+                             no alert links, a version update or one opened
+                             since, keeps its plain line. Then
+                             `account-roster accounts=<N>` and one
                              `account <alias> config_dir=...` line per
                              account, the fields the account event carries up
                              to `change=`, from the last long pass's reading.
@@ -802,8 +807,9 @@ Environment:
   OVERSEE_WATCH_STATE_DIR     one baseline file per repository — reducer,
                               triage, lane-asking, usage-limit, handoff,
                               account, outside-contribution, refresh-failing,
-                              security-alert and bot-fix rows; the mail
-                              pass's file beside the first one holds
+                              security-alert, bot-fix and
+                              security-alerts-unread rows; the mail pass's
+                              file beside the first one holds
                               each lane mailbox's read position and when the
                               last long pass started, plus claims/ and
                               usage/, both shared across the repositories
@@ -901,7 +907,7 @@ ow_message() { # REASON FIELD=VALUE...
     outside-list-invalid) text='The GitHub list of open issues and pull requests carried a line the outside-contribution check cannot read: a number, a pr or issue kind, a login, and a pull request head commit.' ;;
     external-triage-invalid) text='ORCH_EXTERNAL_TRIAGE takes on or off.' ;;
     security-alerts-invalid) text='ORCH_SECURITY_ALERTS takes on or off.' ;;
-    security-alerts-read-failed) text='A read the security-alert check needs failed, so the source it names is judged nothing this pass and its baseline rows stand; the security-alerts-unread line carries it. An http-403 on an alert list is the credential the watch reads with lacking that alert permission; for a GitHub App the owner adds it to the app and accepts it on each installation. GitHub'"'"'s or workflow-state'"'"'s own words follow where the read printed any.' ;;
+    security-alerts-read-failed) text='A read the security-alert check needs failed, so the source it names is judged nothing this pass and its baseline rows stand; the security-alerts-unread line carries it. Cause permission is the credential the watch reads with lacking that alert permission; for a GitHub App the owner adds it to the app and accepts it on each installation. Cause feature-off is the alert feature turned off on that repository, which only turning it on clears. GitHub'"'"'s or workflow-state'"'"'s own words follow where the read printed any.' ;;
     triage-state-failed) text='The fleet triage verdict log could not be read.' ;;
     triage-item-invalid) text='The fleet triage log contains an invalid issue identifier.' ;;
     time-failed) text='The current UTC time could not be read.' ;;

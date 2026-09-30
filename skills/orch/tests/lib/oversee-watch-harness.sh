@@ -59,8 +59,12 @@ CASE_REPO_ROOT="$(git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
 #   merged.json   body for `pr list --state merged` (default: []);
 #                 merged.<SLUG>.json answers that --repo alone, <SLUG> being
 #                 the repo with everything outside [A-Za-z0-9._-] as `_`
-#   open.txt      lines for `pr list --state open` (default: empty), with
-#                 open.<SLUG>.txt per repo the same way; --limit caps them
+#   open.txt      the open pull requests `pr list --state open` answers
+#                 (default: none), with open.<SLUG>.txt per repo the same way:
+#                 one `<number>\t<head>\t<title>[\t<author login>]` line
+#                 each, author octocat where absent. --limit caps them, and
+#                 each becomes the object gh lists, holding only the --json
+#                 fields, run through the call's own --jq filter as gh runs it
 #   repoview.txt  what `repo view` reports — the repository the watch resolves
 #                 when no --repo is given (default: owner/repo)
 #   auth-fail     present → keyring `auth status` fails
@@ -86,7 +90,9 @@ CASE_REPO_ROOT="$(git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
 #   dependabot-prs.json
 #                 the vulnerabilityAlerts nodes `api graphql` answers, with
 #                 dependabot-prs.<SLUG>.json per repo (default: []);
-#                 graphql-fail present → that call fails
+#                 graphql-fail present → that call fails as gh fails a
+#                 GraphQL error, exit 1 with no HTTP status, printing the
+#                 file's own text, or a missing-permission line where empty
 # Every `auth status`, `pr list`, `run`, `api --paginate` and `api graphql`
 # call is logged to gh.calls.
 # `api user` (env-token preflight) succeeds for any token except one
@@ -146,7 +152,10 @@ case "${1:-} ${2:-}" in
     exit ;;
   "api graphql")
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
-    [[ -f "$STUB_DIR/graphql-fail" ]] && { echo "gh: Resource not accessible by integration (HTTP 403)" >&2; exit 1; }
+    if [[ -f "$STUB_DIR/graphql-fail" ]]; then
+      if [[ -s "$STUB_DIR/graphql-fail" ]]; then cat "$STUB_DIR/graphql-fail" >&2; else echo "gh: Resource not accessible by integration" >&2; fi
+      exit 1
+    fi
     owner=""; name=""; filter=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
@@ -168,13 +177,15 @@ case "${1:-} ${2:-}" in
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
     [[ -f "$STUB_DIR/list-fail" ]] && { echo "HTTP 502: bad gateway" >&2; exit 1; }
     [[ -f "$STUB_DIR/noisy" ]] && echo "Notice: something advisory" >&2
-    head=""; limit=""; state=""; repo=""
+    head=""; limit=""; state=""; repo=""; fields=""; filter=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --head) head="$2"; shift ;;
         --limit) limit="$2"; shift ;;
         --state) state="$2"; shift ;;
         --repo) repo="$2"; shift ;;
+        --json) fields="$2"; shift ;;
+        --jq) filter="$2"; shift ;;
       esac
       shift
     done
@@ -192,11 +203,15 @@ case "${1:-} ${2:-}" in
       exit 0
     fi
     # --limit caps the page, as gh does; the fixture is newest first already.
-    src=""
+    src=/dev/null
     if [[ -f "$STUB_DIR/open.$slug.txt" ]]; then src="$STUB_DIR/open.$slug.txt"
     elif [[ -f "$STUB_DIR/open.txt" ]]; then src="$STUB_DIR/open.txt"; fi
-    [[ -z "$src" ]] || awk -v n="${limit:-0}" 'n == 0 || NR <= n' "$src"
-    exit 0 ;;
+    awk -v n="${limit:-0}" 'n == 0 || NR <= n' "$src" \
+      | jq -Rn --arg fields "$fields" '[inputs | split("\t")
+          | {number: (.[0] | tonumber), headRefName: .[1], title: .[2], author: {login: (.[3] // "octocat")}}
+          | with_entries(select(.key as $k | $fields | split(",") | any(. == $k)))]' \
+      | jq -r "${filter:-.}"
+    exit ;;
 esac
 printf 'unexpected gh call: %s\n' "$*" >&2
 exit 1

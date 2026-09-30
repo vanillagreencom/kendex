@@ -268,9 +268,8 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
 #   outside-contribution<TAB><repo>#<number><TAB><pr HEAD_SHA|issue>
 #   refresh-failing<TAB><repo><TAB><passes since reported>|<cause>
-#   security-alert<TAB><repo>#<kind>/<number><TAB>reported
-#   bot-fix<TAB><repo>#<pr><TAB><alert>[,<alert>...]
-#   security-alerts-unread<TAB>fleet<TAB><the failed reads last reported>
+#   security-alert, bot-fix and security-alerts-unread rows, which
+#   lib/security-alerts.sh sets out above check_security_alerts
 #   account<TAB><harness>|<through>|<config dir><TAB><status>|<verdict>|<binding_resets_at or ->
 # And in the mail pass's file:
 #   lane-mail<TAB><item>[@clone]<TAB><to-overseer.jsonl lines already drained> <first id>

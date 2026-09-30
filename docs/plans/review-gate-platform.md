@@ -261,7 +261,8 @@ The lanes app, `vanillagreen-fleet-lanes` (installation 161253865), holds the pe
 
 - Owner step: add the three permissions to the app, then accept the permission update on each installation.
 - Done for kendex. The overseer measured it on 2026-09-30 (owner note 1790735185): a token minted from the installation read 28 open kendex Dependabot alerts.
-- Pending for every other installation. Until an installation accepts the update, each long pass of `oversee-watch` prints one `security-alerts-unread` line that names each alert list of that installation's repositories with `http-403`.
+- Pending for every other installation. Until an installation accepts the update, each long pass of `oversee-watch` prints one `security-alerts-unread` line that names each alert list of that installation's repositories with cause `permission`.
+- Open risk: every lane sandbox holds this installation's token, so each lane gets the three permissions wherever the app is installed. A lane can read secret scanning alerts, with each plaintext secret unless the read passes `hide_secret=true`, and can dismiss or resolve any alert, which silences the check that reports it. The least-privilege holder is the overseer app, `vanillagreen-overseer`, whose key sits on the control VM only (§ Copilot-down fallback). A follow-up item moves the grant there.
 
 ## Issues the design makes moot
 
