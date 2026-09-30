@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import * as fsp from "node:fs/promises";
 import { join } from "node:path";
 import { __resetSessionCountersForTests, processContent } from "../extensions/output-policy.ts";
+import { clearPackageConfigCache } from "../extensions/package-config.ts";
 import { withConfigAsync, fakeCtx, processOne } from "./fixtures.ts";
 
 beforeEach(() => { __resetSessionCountersForTests(); });
@@ -234,6 +235,7 @@ describe("one inline budget per tool result", () => {
 				const previousTmp = process.env.TMPDIR;
 				process.env.PI_CODING_AGENT_DIR = join(blocker, "agent");
 				process.env.TMPDIR = join(blocker, "tmp");
+				clearPackageConfigCache();
 				try {
 					const text = block("w", 400);
 					const result = await processOne({ toolName: "grep", toolCallId: "werr", input: {} }, fakeCtx(cwd), text);
@@ -260,6 +262,7 @@ describe("one inline budget per tool result", () => {
 			await withConfigAsync({ maxTextBlockKb: 1 }, async (cwd) => {
 				// An artifact path over 1 KB makes the notice alone exceed the budget.
 				process.env.PI_CODING_AGENT_DIR = join(cwd, ...Array(5).fill("d".repeat(240)));
+				clearPackageConfigCache();
 				const result = await processContent({ toolName: tool, toolCallId: tool, input: { command: "printf" } }, fakeCtx(cwd), [{ type: "text", text: block("n", 100) }]);
 				expect(result.meta?.shownLines).toBe(0);
 				expect(result.meta?.shownRange).toBe("none");
