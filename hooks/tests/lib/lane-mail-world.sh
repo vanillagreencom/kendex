@@ -511,17 +511,22 @@ record_overseer_handoff() { # [SESSION_ID] [PANE_KEY]
 
 # The workflow-state of the install new_overseer planted, or of the one DIR
 # names, replaced by one that runs the real script for every verb but the one
-# MODE fails: `path` for path-fails, `update` for update-fails, none for
-# delegate. The real one is run by its own path, so it sources its own
-# libraries whatever the install holds.
-state_stub() { # path-fails|update-fails|delegate [DIR]
+# MODE fails: `path` for path-fails, `update` for update-fails,
+# `handoff-standing` for standing-fails, none for delegate. Each run appends
+# its verb to STATE_LOG, so a row can count what the hook asked. The real one
+# is run by its own path, so it sources its own libraries whatever the
+# install holds.
+STATE_LOG="$TMP_ROOT/state-verbs"
+state_stub() { # path-fails|update-fails|standing-fails|delegate [DIR]
   local dir="${2:-$LANE/.claude/skills/orch/scripts}"
-  rm -f -- "${dir:?}/workflow-state"
+  rm -f -- "${dir:?}/workflow-state" "$STATE_LOG"
   {
     printf '#!/bin/sh\n'
+    printf 'printf "%%s\\n" "$1" >> %q\n' "$STATE_LOG"
     case "$1" in
       path-fails) printf '[ "$1" != path ] || { echo "workflow-state: lock-failed lock-file=x" >&2; exit 3; }\n' ;;
       update-fails) printf '[ "$1" != update ] || { echo "workflow-state: lock-failed lock-file=x" >&2; exit 1; }\n' ;;
+      standing-fails) printf '[ "$1" != handoff-standing ] || { echo "workflow-state: lock-failed lock-file=x" >&2; exit 3; }\n' ;;
     esac
     printf 'exec %q "$@"\n' "$REPO_ROOT/skills/orch/scripts/workflow-state"
   } > "$dir/workflow-state"

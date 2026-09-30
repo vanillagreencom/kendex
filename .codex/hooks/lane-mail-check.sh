@@ -1681,10 +1681,12 @@ handoff_instruction() {
 # After a tool call it is no refusal: the tool already ran, and an exit 2
 # there replaces the tool's own output on one harness. The overseer's tool-call
 # judgement (overseer_tool_judge) is the one caller there, run in a subshell
-# with its stderr in told.err: the keyed line joins what that run already
-# wrote, the key goes to tool.key for overseer_tool_check to decide how often
-# it is told, and the subshell ends at 0, so the mailbox check still runs and
-# any mail rides in the same context.
+# with its stderr in tool-judge.err, which overseer_tool_check adds to
+# told.err unless this session's own handoff record stands
+# (overseer_tool_held), dropping the text and its key where one does. The key
+# goes to tool.key for overseer_tool_check to decide how often it is told, and
+# the subshell ends at 0, so the mailbox check still runs and any mail rides
+# in the same context.
 refuse_handoff() { # KEY VALUE [CAUSE]
   handoff_instruction
   if [ "$ARM" = deliver ]; then

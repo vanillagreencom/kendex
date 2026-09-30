@@ -53,8 +53,9 @@ overseer_tool "$TRANSCRIPT"
 assert_eq "RC=$RC context=$(context_line)" "RC=0 context=PostToolUse lane-mail-check: context=600000" \
   "and at every tool call after it while no handoff record stands" "$ERR_FILE"
 record_overseer_handoff
+append_transcript "$TRANSCRIPT" 700000
 overseer_tool "$TRANSCRIPT"
-assert_eq "RC=$RC context=$(context_line) record=$(tool_record)" "RC=0 context=- record=600000 null" \
+assert_eq "RC=$RC context=$(context_line) record=$(tool_record)" "RC=0 context=- record=700000 null" \
   "an overseer whose own handoff record stands is handed nothing, its reading still recorded" "$ERR_FILE"
 variant never-held -e 's/^    stands) handoff_is_mine ;;$/    stands) return 1 ;;/'
 tool_overseer control_overseer_tool_held "$VARIANT_PATH"
@@ -63,6 +64,52 @@ record_overseer_handoff
 overseer_tool "$TRANSCRIPT"
 assert_eq "$(context_line)" "PostToolUse lane-mail-check: context=600000" \
   "control: a hook that never reads the record as its own hands the mark over past it"
+variant held-first -e 's|^    ( overseer_tool_judge ) 2>"\$WORK_DIR/tool-judge.err"$|    if ( overseer_tool_held ); then : >"$WORK_DIR/tool-judge.err"; else ( overseer_tool_judge ) 2>"$WORK_DIR/tool-judge.err"; fi|'
+tool_overseer control_overseer_tool_held_first "$VARIANT_PATH"
+write_transcript "$TRANSCRIPT" 600000
+overseer_tool "$TRANSCRIPT"
+record_overseer_handoff
+append_transcript "$TRANSCRIPT" 700000
+overseer_tool "$TRANSCRIPT"
+assert_eq "record=$(tool_record)" "record=600000 null" \
+  "control: a hook that asks the handoff before the judgement records no reading while it is held"
+# A handoff state the call cannot read holds the call silent: the turn end
+# reports it under the keys that say which.
+standing_unread_rows() { # NAME [JUDGE]
+  tool_overseer "$1" "${2:-$HOOK}"
+  write_transcript "$TRANSCRIPT" 600000
+  state_stub standing-fails
+  overseer_tool "$TRANSCRIPT"
+  UNREAD="RC=$RC context=$(context_line) asked=$(grep -cx handoff-standing "$STATE_LOG" || :)"
+}
+standing_unread_rows overseer_tool_standing_unread
+assert_eq "$UNREAD" "RC=0 context=- asked=1" \
+  "an overseer past its mark whose handoff state cannot be read is handed nothing at a tool call" "$ERR_FILE"
+variant unread-not-held -e '/^overseer_tool_held() {$/,/^}$/s/^    \*) return 0 ;;$/    *) return 1 ;;/'
+standing_unread_rows control_overseer_tool_standing_unread "$VARIANT_PATH"
+assert_eq "${UNREAD% asked=*}" "RC=0 context=PostToolUse lane-mail-check: context=600000" \
+  "control: a hook that reads an unread handoff state as none hands the mark over"
+# The handoff is asked only of a call with something to say: a call below the
+# mark runs no workflow-state handoff-standing.
+asked_rows() { # NAME [JUDGE]
+  tool_overseer "$1" "${2:-$HOOK}"
+  state_stub delegate
+  write_transcript "$TRANSCRIPT" 100000
+  overseer_tool "$TRANSCRIPT"
+  local below
+  below="$(grep -cx handoff-standing "$STATE_LOG" || :)"
+  : >"$STATE_LOG"
+  append_transcript "$TRANSCRIPT" 600000
+  overseer_tool "$TRANSCRIPT"
+  ASKED="below=$below past=$(grep -cx handoff-standing "$STATE_LOG" || :)"
+}
+asked_rows overseer_tool_asked
+assert_eq "$ASKED" "below=0 past=1" \
+  "a tool call below the mark asks no handoff state, and one past it asks once" "$ERR_FILE"
+variant ask-every-call -e 's/^    if \[ -s "\$WORK_DIR\/tool-judge.err" \] && ( overseer_tool_held ); then$/    if ( overseer_tool_held ); then/'
+asked_rows control_overseer_tool_asked "$VARIANT_PATH"
+assert_eq "${ASKED% past=*}" "below=1" \
+  "control: a hook that asks the handoff at every call asks it below the mark"
 # A subagent's call is the subagent's window, never the overseer's.
 tool_overseer overseer_tool_subagent
 CASE_HOOK_SAVED="$CASE_HOOK"
