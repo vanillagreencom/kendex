@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 3.1.1
 
 - The agent dashboard no longer rereads child transcripts while it draws. Each working row's activity line and usage now come from a per-transcript cache that the completion poll advances by only the bytes a transcript gained since its last read; before, every widget frame read up to 96 KB per working row and every poll parsed each growing transcript from its first byte. The activity line now moves at the poll interval (`completionPollMs`) instead of every frame, and a half-written transcript line no longer shows as raw JSON. The poll also skips finished task records that have not changed since it last applied them, so an idle parent with a long task history no longer re-checks every record's files every poll.
 

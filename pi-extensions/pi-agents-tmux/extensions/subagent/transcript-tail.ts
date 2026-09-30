@@ -9,7 +9,10 @@ import * as fs from "node:fs";
 import { normalizeTranscriptRecordEvent, oneLine } from "./transcripts.js";
 import type { UsageStats } from "./types.js";
 
-/** Largest slice read in one call, so a first read of a large transcript holds a bounded buffer. */
+/**
+ * Largest slice read in one call. A read holds at most one chunk plus the
+ * longest line: bytes with no newline yet carry over into the next chunk.
+ */
 const READ_CHUNK_BYTES = 1024 * 1024;
 /** Width cap of one activity line on a dashboard row. */
 export const ACTIVITY_MAX_CHARS = 180;
@@ -47,6 +50,23 @@ interface TailState {
 	committed: number;
 	fold: TranscriptFold;
 	snapshot: TranscriptSnapshot;
+}
+
+function versionOf(stat: fs.Stats, size: number): string {
+	return `${stat.dev}:${stat.ino}:${size}:${stat.mtimeMs}`;
+}
+
+/**
+ * The `TranscriptSnapshot.version` a read of this transcript would report now,
+ * from one stat and no read. Undefined when the path is missing or not a file.
+ */
+export async function statTranscriptVersion(filePath: string): Promise<string | undefined> {
+	try {
+		const stat = await fs.promises.stat(filePath);
+		return stat.isFile() ? versionOf(stat, stat.size) : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 function emptyFold(): TranscriptFold {
@@ -246,7 +266,9 @@ export class TranscriptTailCache {
 			return undefined;
 		}
 		let tail = this.tails.get(filePath);
-		// Append-only is the contract; a replaced, truncated or rewritten file starts over from byte 0.
+		// Append-only is the contract. A new device or inode, a smaller size, or a same-size
+		// rewrite with a new mtime starts over from byte 0. An in-place edit that also grows
+		// the file is not detected: the fold keeps the lines it already read.
 		const rewritten = tail !== undefined
 			&& (tail.dev !== stat.dev || tail.ino !== stat.ino || stat.size < tail.size || (stat.size === tail.size && stat.mtimeMs !== tail.mtimeMs));
 		if (tail && !rewritten && stat.size === tail.size) return tail.snapshot;
@@ -269,7 +291,7 @@ export class TranscriptTailCache {
 			foldLine(fold, remainder, false);
 		}
 		tail.mtimeMs = stat.mtimeMs;
-		tail.snapshot = { version: `${stat.dev}:${stat.ino}:${tail.size}:${stat.mtimeMs}`, usage: usageFromFold(fold), activity: fold.activity };
+		tail.snapshot = { version: versionOf(stat, tail.size), usage: usageFromFold(fold), activity: fold.activity };
 		this.tails.set(filePath, tail);
 		return tail.snapshot;
 	}

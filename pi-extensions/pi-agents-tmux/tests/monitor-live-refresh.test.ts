@@ -15,7 +15,7 @@ import {
 	claimTranscriptParse,
 	markRegistryRecordApplied,
 	patchTaskRecordUsage,
-	pruneTranscriptFingerprints,
+	pruneTaskEntries,
 	refreshTranscriptSnapshots,
 	registryRecordIsCold,
 	taskNeedsTranscriptUsageRestore,
@@ -267,13 +267,13 @@ test("the poll skips only terminal registry records it already applied", () => {
 	}
 });
 
-test("fingerprint pruning drops tasks that left the registry", () => {
+test("pruning drops tasks that left the registry", () => {
 	const fingerprints = new Map([
 		["planner-1", "planner-fingerprint"],
 		["stale-3", "stale-fingerprint"],
 	]);
 
-	pruneTranscriptFingerprints(fingerprints, new Set(["planner-1"]));
+	pruneTaskEntries(fingerprints, new Set(["planner-1"]));
 
 	assert.deepEqual([...fingerprints.keys()], ["planner-1"]);
 });
