@@ -1,7 +1,7 @@
 import { execFile, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { readdir, realpath, stat } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import nativePath, { join, relative, type PlatformPath } from "node:path";
 import { promisify } from "node:util";
 import { TEXT_READ_BYTE_LIMIT, type BoundedRead, type UrlReads } from "./byte-budget.js";
 
@@ -30,9 +30,11 @@ function repoCachePath(cacheDir: string, owner: string, repo: string): string {
 	return join(cacheDir, `${owner}__${repo}`);
 }
 
-function isInside(parent: string, child: string): boolean {
-	const rel = relative(resolve(parent), resolve(child));
-	return Boolean(rel) && !rel.startsWith("..") && !rel.startsWith("/");
+/** Whether `child` lies strictly under `parent` by the rules of `paths`. On Windows `relative` returns the target itself
+ * for another drive or a UNC share, an absolute path that no `..` prefix marks. */
+export function isInside(paths: PlatformPath, parent: string, child: string): boolean {
+	const rel = paths.relative(paths.resolve(parent), paths.resolve(child));
+	return Boolean(rel) && !rel.startsWith("..") && !paths.isAbsolute(rel);
 }
 
 async function runGit(args: string[], cwd: string | undefined, timeoutMs: number): Promise<string> {
@@ -92,7 +94,7 @@ async function resolveInCache(cachePath: string, path: string): Promise<{ root: 
 	const resolved = await Promise.all([realpath(cachePath), realpath(join(cachePath, path))]).catch((error: unknown) => { if (isMissing(error)) return null; throw error; });
 	if (!resolved) return null;
 	const [root, target] = resolved;
-	return target === root || isInside(root, target) ? { root, target } : null;
+	return target === root || isInside(nativePath, root, target) ? { root, target } : null;
 }
 
 /** Reads a file from the clone cache through `reads`, which sizes it before the read and reads at most its ceiling. */

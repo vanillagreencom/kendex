@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix, win32 } from "node:path";
 import test from "node:test";
-import { cloneOrUpdateRepo, readBlobFromCache, readReadmeFromCache, readTreeFromCache, summarizeTreeEntries } from "../src/extract/github-clone.js";
+import { cloneOrUpdateRepo, isInside, readBlobFromCache, readReadmeFromCache, readTreeFromCache, summarizeTreeEntries } from "../src/extract/github-clone.js";
 import type { UrlReads } from "../src/extract/byte-budget.js";
 import { githubFixtureRepo, tempDir, urlReads } from "./fixtures.js";
 
@@ -34,6 +34,21 @@ for (const row of [
 		symlinkSync(join(repo, "src", "index.ts"), join(repo, "src", "alias.ts"));
 		symlinkSync(join(root, "outside"), join(repo, "outer"));
 		assert.deepEqual(await row.read(repo, urlReads(t, row.budget)), row.expected);
+	});
+}
+
+// The symlink rows above run on POSIX only; a target on another Windows drive or UNC share is reachable only through win32 rules.
+for (const row of [
+	{ name: "POSIX file under the cache", paths: posix, parent: "/cache", child: "/cache/src/a.ts", expected: true },
+	{ name: "POSIX sibling of the cache", paths: posix, parent: "/cache", child: "/other/a.ts", expected: false },
+	{ name: "POSIX cache root itself", paths: posix, parent: "/cache", child: "/cache", expected: false },
+	{ name: "Windows file under the cache", paths: win32, parent: "C:\\cache", child: "C:\\cache\\src\\a.ts", expected: true },
+	{ name: "Windows sibling on the same drive", paths: win32, parent: "C:\\cache", child: "C:\\other\\a.ts", expected: false },
+	{ name: "Windows target on another drive", paths: win32, parent: "C:\\cache", child: "D:\\secret.txt", expected: false },
+	{ name: "Windows target on a UNC share", paths: win32, parent: "C:\\cache", child: "\\\\server\\share\\secret.txt", expected: false },
+]) {
+	test(`GitHub cache containment: ${row.name}`, () => {
+		assert.equal(isInside(row.paths, row.parent, row.child), row.expected);
 	});
 }
 
