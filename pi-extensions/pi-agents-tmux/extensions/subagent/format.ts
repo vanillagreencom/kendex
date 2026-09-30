@@ -1,7 +1,6 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { createInterface } from "node:readline";
 import type { Message } from "@earendil-works/pi-ai";
 import { type Theme } from "@earendil-works/pi-coding-agent";
 import { Container, Spacer, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
@@ -17,7 +16,6 @@ import {
 	ICONS,
 	type SessionMode,
 	type SubagentStatuslineInfo,
-	type UsageStats,
 } from "./types.js";
 
 export const SESSION_KEY_CHIP_MAX_CHARS = 14;
@@ -257,87 +255,6 @@ export function inactivePill(theme: Theme, label: string): string {
 
 export function divider(width: number, theme: Theme): string {
 	return theme.fg("borderMuted", glyphs().line.repeat(Math.max(1, width)));
-}
-
-export async function parseTranscriptUsage(transcriptPath: string | undefined): Promise<{ usage: UsageStats; model?: string } | undefined> {
-	if (!transcriptPath) return undefined;
-	const total: UsageStats = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
-	let model: string | undefined;
-	let bestPerTurn: { input: number; output: number; reasoning: number; cacheRead: number; cacheWrite: number; cost: number } | undefined;
-	const lines = createInterface({ input: fs.createReadStream(transcriptPath, { encoding: "utf-8" }), crlfDelay: Infinity });
-	try {
-		for await (const line of lines) {
-			if (!line.trim()) continue;
-			let event: any;
-			try {
-				event = JSON.parse(line);
-			} catch {
-				continue;
-			}
-			const inner = normalizeTranscriptRecordEvent(event).event;
-			if (!model && typeof inner?.modelId === "string") model = inner.modelId;
-			if (!model && typeof inner?.model === "string") model = inner.model;
-			if (!model && typeof inner?.message?.model === "string") model = inner.message.model;
-			const usage = inner?.usage ?? inner?.message?.usage;
-			if (!usage || typeof usage !== "object") continue;
-			const input = Number((usage as Record<string, unknown>).input ?? (usage as Record<string, unknown>).input_tokens ?? 0) || 0;
-			const output = Number((usage as Record<string, unknown>).output ?? (usage as Record<string, unknown>).output_tokens ?? 0) || 0;
-			const outputDetails = (usage as Record<string, unknown>).output_tokens_details;
-			const reasoning = Number(
-				(usage as Record<string, unknown>).reasoning ??
-					(usage as Record<string, unknown>).reasoning_tokens ??
-					(outputDetails && typeof outputDetails === "object" ? (outputDetails as Record<string, unknown>).reasoning_tokens : 0) ??
-					0,
-			) || 0;
-			const cacheRead = Number((usage as Record<string, unknown>).cacheRead ?? (usage as Record<string, unknown>).cache_read_input_tokens ?? 0) || 0;
-			const cacheWrite = Number((usage as Record<string, unknown>).cacheWrite ?? (usage as Record<string, unknown>).cache_creation_input_tokens ?? 0) || 0;
-			const rawCost = (usage as Record<string, unknown>).cost;
-			let cost = 0;
-			if (typeof rawCost === "number") cost = rawCost;
-			else if (rawCost && typeof rawCost === "object") {
-				const c = rawCost as Record<string, unknown>;
-				cost =
-					(Number(c.total) || 0) ||
-					((Number(c.input) || 0) +
-						(Number(c.output) || 0) +
-						(Number(c.cacheRead ?? c.cache_read) || 0) +
-						(Number(c.cacheWrite ?? c.cache_write) || 0));
-			}
-			const type = inner?.type;
-			const isFinal = type === "message" || type === "message_end";
-			const hasAny = input > 0 || output > 0 || reasoning > 0 || cacheRead > 0 || cacheWrite > 0 || cost > 0;
-			if (isFinal && hasAny) {
-				total.input += input;
-				total.output += output;
-				total.reasoning = (total.reasoning ?? 0) + reasoning;
-				total.cacheRead += cacheRead;
-				total.cacheWrite += cacheWrite;
-				total.cost += cost;
-				total.turns = (total.turns ?? 0) + 1;
-			} else if (hasAny) {
-				bestPerTurn = bestPerTurn ?? { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
-				bestPerTurn.input = Math.max(bestPerTurn.input, input);
-				bestPerTurn.output = Math.max(bestPerTurn.output, output);
-				bestPerTurn.reasoning = Math.max(bestPerTurn.reasoning, reasoning);
-				bestPerTurn.cacheRead = Math.max(bestPerTurn.cacheRead, cacheRead);
-				bestPerTurn.cacheWrite = Math.max(bestPerTurn.cacheWrite, cacheWrite);
-				bestPerTurn.cost = Math.max(bestPerTurn.cost, cost);
-			}
-		}
-	} catch {
-		return undefined;
-	}
-	if ((total.turns ?? 0) === 0 && bestPerTurn) {
-		total.input = bestPerTurn.input;
-		total.output = bestPerTurn.output;
-		total.reasoning = bestPerTurn.reasoning;
-		total.cacheRead = bestPerTurn.cacheRead;
-		total.cacheWrite = bestPerTurn.cacheWrite;
-		total.cost = bestPerTurn.cost;
-		total.turns = 1;
-	}
-	if ((total.turns ?? 0) === 0 && total.input === 0 && total.output === 0) return undefined;
-	return { usage: total, model };
 }
 
 export function formatUsageStatsForDashboard(usage: {

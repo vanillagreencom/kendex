@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- The agent dashboard no longer rereads child transcripts while it draws. Each working row's activity line and usage now come from a per-transcript cache that the completion poll advances by only the bytes a transcript gained since its last read; before, every widget frame read up to 96 KB per working row and every poll parsed each growing transcript from its first byte. The activity line now moves at the poll interval (`completionPollMs`) instead of every frame, and a half-written transcript line no longer shows as raw JSON. The poll also skips finished task records that have not changed since it last applied them, so an idle parent with a long task history no longer re-checks every record's files every poll.
+
 ### 3.1.0
 
 - A `pane: true` agent runs headless where no tmux server is reachable (`$TMUX` unset, or the server it names does not answer): the dispatch runs it as a background one-shot process with the same model and thinking, completing through its final output as any background child does, on a fresh session per delegation unless the call passes `sessionKey`, which resumes that background lane under the `reusedSessionBudget*` settings, and with no `bgTaskTimeoutMs` deadline, as a pane has none; it heads the tool result with `pane-fallback reason=no-tmux` and a `Task ID:` line per headless task. Before, the call failed with `Persistent pane agents require tmux ($TMUX is unset)`. The new `paneOnly: true` parameter keeps that refusal. `stop_subagent` on an agent whose latest task ran headless now succeeds with `no_pane=<agent>` instead of failing on the missing pane.

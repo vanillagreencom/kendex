@@ -377,6 +377,8 @@ export interface SubagentDashboardItem {
 	usage?: UsageStats;
 	model?: string;
 	effort?: string;
+	/** Latest child action, cached from the transcript tail by the poll; render never reads the transcript. */
+	activity?: string;
 }
 
 export interface SubagentDashboardState {

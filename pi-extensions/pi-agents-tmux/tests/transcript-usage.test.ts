@@ -5,9 +5,10 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test, { after } from "node:test";
-import { formatUsageStats, formatUsageStatsForDashboard, parseTranscriptUsage } from "../extensions/subagent/format.js";
+import { formatUsageStats, formatUsageStatsForDashboard } from "../extensions/subagent/format.js";
 import { usageSum } from "../extensions/subagent/task-records.js";
 import { normalizeUsageStats } from "../extensions/subagent/tasks.js";
+import { TranscriptTailCache, type TranscriptUsage } from "../extensions/subagent/transcript-tail.js";
 import { ICONS } from "../extensions/subagent/types.js";
 import { ABSENT, cleanupTempRuntimes, record, tempRuntime } from "./browser-fixture.js";
 
@@ -21,7 +22,7 @@ const modelless = JSON.stringify({ ts: "2026-05-14T05:01:00.000Z", event: { type
 const snakeCase = JSON.stringify({ event: { type: "message_end", message: { role: "assistant", content: [], usage: { input_tokens: 1, output_tokens: 2, cache_read_input_tokens: 3, cache_creation_input_tokens: 4, cost: { input: 0.5, output: 0.25 } } } } });
 const partial = (input: number, output: number) => JSON.stringify({ event: { type: "message_update", message: { role: "assistant", content: [], usage: { input, output } } } });
 
-function compact(result: Awaited<ReturnType<typeof parseTranscriptUsage>>): string {
+function compact(result: TranscriptUsage | undefined): string {
 	if (!result) return ABSENT;
 	const u = result.usage;
 	return `model=${result.model ?? ABSENT} in=${u.input} out=${u.output} reasoning=${u.reasoning} read=${u.cacheRead} write=${u.cacheWrite} cost=${u.cost} turns=${u.turns}`;
@@ -46,12 +47,12 @@ test("usage parsed from a transcript", async () => {
 	for (const [index, [label, lines, expect]] of usageRows.entries()) {
 		const transcriptPath = join(cwd, `usage-${index}.jsonl`);
 		writeFileSync(transcriptPath, lines.join("\n"));
-		assert.equal(compact(await parseTranscriptUsage(transcriptPath)), expect, label);
+		assert.equal(compact((await new TranscriptTailCache().read(transcriptPath))?.usage), expect, label);
 	}
 });
 
-test("a missing transcript path reads as no usage", async () => {
-	assert.equal(compact(await parseTranscriptUsage(undefined)), ABSENT);
+test("a missing transcript reads as no snapshot", async () => {
+	assert.equal(await new TranscriptTailCache().read(join(tempRuntime(), "missing.jsonl")), undefined);
 });
 
 const usage = { input: 1000, output: 2000, reasoning: 1500, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 1 };

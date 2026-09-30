@@ -1,4 +1,3 @@
-import * as fs from "node:fs";
 import * as path from "node:path";
 import { type Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
@@ -32,7 +31,8 @@ import {
 	type UsageStats,
 } from "./types.js";
 import { glyphs, glyphStyle } from "./glyphs.js";
-import { inputDeliveryLabel, normalizeTranscriptRecordEvent } from "./transcripts.js";
+import { ACTIVITY_MAX_CHARS } from "./transcript-tail.js";
+import { inputDeliveryLabel, oneLine } from "./transcripts.js";
 
 export function dashboardKindLabel(kind: DashboardKind): string {
 	return kind === "oneshot" ? "bg" : kind;
@@ -141,87 +141,14 @@ export function dashboardStatusText(item: SubagentDashboardItem, theme: Theme): 
 	return theme.fg("accent", item.status);
 }
 
-function recentTranscriptLines(filePath: string | undefined, maxBytes = 96 * 1024): string[] {
-	if (!filePath) return [];
-	let fd: number | undefined;
-	try {
-		const stat = fs.statSync(filePath);
-		if (!stat.isFile() || stat.size <= 0) return [];
-		const readBytes = Math.min(maxBytes, stat.size);
-		const offset = Math.max(0, stat.size - readBytes);
-		const buffer = Buffer.alloc(readBytes);
-		fd = fs.openSync(filePath, "r");
-		fs.readSync(fd, buffer, 0, readBytes, offset);
-		const lines = buffer.toString("utf-8").split(/\r?\n/).filter((line) => line.trim());
-		if (offset > 0 && lines.length > 0) lines.shift();
-		return lines;
-	} catch {
-		return [];
-	} finally {
-		if (fd !== undefined) {
-			try { fs.closeSync(fd); } catch { /* ignore */ }
-		}
-	}
-}
-
-function compactActivityText(text: string, maxChars = 180): string {
-	const compact = text.replace(/\s+/g, " ").trim();
-	return compact.length > maxChars ? `${compact.slice(0, maxChars - 1)}…` : compact;
-}
-
-type ActivityContent = { kind: "text" | "tool"; text: string };
-
-function toolNameFromPart(part: any): string | undefined {
-	return typeof part?.name === "string" && part.name.trim()
-		? part.name.trim()
-		: typeof part?.toolName === "string" && part.toolName.trim()
-			? part.toolName.trim()
-			: undefined;
-}
-
-function activityContentFromMessageContent(content: unknown): ActivityContent | undefined {
-	if (typeof content === "string") return { kind: "text", text: compactActivityText(content) };
-	if (!Array.isArray(content)) return undefined;
-	const tool = content.find((part: any) => part?.type === "toolCall" || part?.type === "tool_call" || part?.type === "tool-call");
-	if (tool) return { kind: "tool", text: toolNameFromPart(tool) ?? "call" };
-	const text = content.find((part: any) => part?.type === "text" && typeof part.text === "string");
-	if (text?.text) return { kind: "text", text: compactActivityText(String(text.text)) };
-	return undefined;
-}
-
-function activityFromParsedEvent(parsed: any): string | undefined {
-	if (!parsed || typeof parsed !== "object") return undefined;
-	if (typeof parsed.text === "string" && parsed.stream === "stderr") return `stderr: ${compactActivityText(parsed.text)}`;
-	if (parsed.type === "exit" && typeof parsed.code !== "undefined") return `exit ${parsed.code}`;
-	const inner = normalizeTranscriptRecordEvent(parsed).event;
-	const type = typeof inner?.type === "string" ? inner.type : undefined;
-	const toolName = typeof inner?.toolName === "string" ? inner.toolName : toolNameFromPart(inner?.toolCall) ?? toolNameFromPart(inner?.tool_call);
-	if (type === "tool_execution_start" && toolName) return `tool: ${toolName}`;
-	if ((type === "tool_execution_end" || type === "tool_result_end") && toolName) return `tool: ${toolName}`;
-	if (type === "tool_result_end") return "tool: result";
-	const msg = inner?.message && typeof inner.message === "object" ? inner.message : undefined;
-	if (msg) {
-		const rendered = activityContentFromMessageContent(msg.content);
-		if (rendered?.kind === "tool") return `tool: ${rendered.text}`;
-		if (rendered?.kind === "text" && msg.role === "assistant") return `said: ${rendered.text}`;
-		if (rendered?.kind === "text" && msg.role === "tool") return `tool: ${rendered.text}`;
-		return undefined;
-	}
-	if (type === "message_end") return "message complete";
-	return undefined;
-}
-
+/**
+ * The activity line of a working row. It reads only the snapshot the poll
+ * cached on the item: render runs on the spinner cadence and never reads a
+ * transcript file.
+ */
 export function latestDashboardActivity(item: SubagentDashboardItem): string | undefined {
-	for (const line of recentTranscriptLines(item.transcriptPath).reverse()) {
-		try {
-			const activity = activityFromParsedEvent(JSON.parse(line));
-			if (activity) return activity;
-		} catch {
-			const compact = compactActivityText(line);
-			if (compact) return compact;
-		}
-	}
-	if (item.status === "queued") return item.task ? `queued: ${compactActivityText(item.task)}` : "queued";
+	if (item.activity) return item.activity;
+	if (item.status === "queued") return item.task ? `queued: ${oneLine(item.task, ACTIVITY_MAX_CHARS)}` : "queued";
 	return undefined;
 }
 
@@ -229,7 +156,7 @@ function outgoingDashboardMessage(item: SubagentDashboardItem): string | undefin
 	if (isDashboardWorkingStatus(item.status)) return undefined;
 	const message = item.message?.trim();
 	if (!message || item.messageProvenance === "placeholder" || item.messageProvenance === "task-echo-fallback") return undefined;
-	if (item.task && compactActivityText(message) === compactActivityText(item.task)) return undefined;
+	if (item.task && oneLine(message, ACTIVITY_MAX_CHARS) === oneLine(item.task, ACTIVITY_MAX_CHARS)) return undefined;
 	return message;
 }
 

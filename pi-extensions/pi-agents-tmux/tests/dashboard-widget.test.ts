@@ -10,6 +10,7 @@ import { buildMonitorSessionGroups, monitorTreeRows, renderMonitorSessionDetail,
 import { dashboardStatusIcon, latestDashboardActivity, renderDashboardWidgetLines, shouldReplaceDashboardItem, sortDashboardItems } from "../extensions/subagent/dashboard.js";
 import { animateSpinnersEnabled } from "../extensions/subagent/settings.js";
 import { readTaskRegistry, updateTaskRegistry } from "../extensions/subagent/tasks.js";
+import { TranscriptTailCache } from "../extensions/subagent/transcript-tail.js";
 import { ICONS, type SubagentDashboardItem, type SubagentDashboardState } from "../extensions/subagent/types.js";
 import { ABSENT, cleanupTempRuntimes, dashboardItem, record, stripAnsi, tempRuntime, theme, uiState, withTempPiUserDir, writeSettings, writeUserSettings } from "./browser-fixture.js";
 
@@ -127,26 +128,30 @@ const activityRows: Array<[string, string[] | undefined, Partial<SubagentDashboa
 	["queued without a task", undefined, { status: "queued", task: undefined }, "queued"],
 ];
 
-test("latest activity of a working row", () => {
+test("latest activity of a working row", async () => {
 	const cwd = tempRuntime();
 	for (const [index, [label, lines, patch, expect]] of activityRows.entries()) {
 		let transcriptPath: string | undefined;
+		let activity: string | undefined;
 		if (lines) {
 			transcriptPath = join(cwd, `activity-${index}.jsonl`);
 			writeFileSync(transcriptPath, lines.join("\n"));
+			activity = (await new TranscriptTailCache().read(transcriptPath))?.activity;
 		}
-		assert.equal(latestDashboardActivity(dashboardItem({ ...patch, transcriptPath })) ?? ABSENT, expect, label);
+		assert.equal(latestDashboardActivity(dashboardItem({ ...patch, transcriptPath, activity })) ?? ABSENT, expect, label);
 	}
 });
 
-test("the compact widget prints the activity, not the prompt", () => {
+test("the compact widget prints the cached activity, not the prompt, and never reads the transcript", async () => {
 	const cwd = tempRuntime();
 	writeSettings(cwd, { dashboard: true });
 	const transcriptPath = join(cwd, "compact.jsonl");
 	writeFileSync(transcriptPath, toolCallTranscript.join("\n"));
-	const rendered = widget(cwd, [dashboardItem({ status: "running", task: "initial prompt", message: "initial prompt", transcriptPath })], "compact");
+	const activity = (await new TranscriptTailCache().read(transcriptPath))?.activity;
+	const rendered = widget(cwd, [dashboardItem({ status: "running", task: "initial prompt", message: "initial prompt", transcriptPath, activity })], "compact");
+	const uncached = widget(cwd, [dashboardItem({ status: "running", task: "initial prompt", message: "initial prompt", transcriptPath })], "compact");
 	const promptOnly = widget(cwd, [dashboardItem({ status: "running", task: "initial prompt", message: "initial prompt" })], "compact");
-	assert.equal([/tool: Bash/.test(rendered), /initial prompt/.test(rendered), /initial prompt/.test(promptOnly)].join(","), "true,false,false");
+	assert.equal([/tool: Bash/.test(rendered), /initial prompt/.test(rendered), /tool: Bash/.test(uncached), /initial prompt/.test(promptOnly)].join(","), "true,false,false,false");
 });
 
 // The expanded message lines, each as `<branch> <direction> <text>`.
