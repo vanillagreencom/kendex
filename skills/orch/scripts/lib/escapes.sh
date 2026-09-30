@@ -14,7 +14,9 @@
 #     template writes it (`**Regressed-by**: #N`), and may name several
 #     numbers, comma-separated. A number anywhere else in the issue, its
 #     title or a Source or Reached by line citing where a finding came from,
-#     is not a finding.
+#     is not a finding. Where LINEAR_TEAM is set, only an issue in that team
+#     counts: the cache holds every team the API key reaches, and a bare
+#     `#N` in another team's bug names another repository's pull request.
 # A number names the pull request bare (`#N`) or qualified with this
 # repository's own owner/name (`owner/name#N`), the one lib/gh-repo.sh
 # resolves; a number qualified with any other repository names that one's.
@@ -71,9 +73,9 @@ escapes_bounded() {
 # whose base branch is read, fetched first so the count is not the last
 # fetch's; TRACKER is the Linear CLI, whose cache is synced first where it is
 # older than ESCAPE_SYNC_MINUTES; SCRATCH a directory the reads are written
-# to. Returns 1 with ESCAPE_UNREAD naming the read that failed, and
-# ESCAPE_WEEKS empty: a count missing either source is not printed as a
-# number.
+# to. LINEAR_TEAM, the project's own, narrows the issue read where set.
+# Returns 1 with ESCAPE_UNREAD naming the read that failed, and ESCAPE_WEEKS
+# empty: a count missing either source is not printed as a number.
 ESCAPE_WEEKS=""
 ESCAPE_UNREAD=""
 escapes_read() {
@@ -137,9 +139,11 @@ escapes_read() {
   fi
   # --format=safe pins the shapes against the project's LINEAR_FORMAT. A
   # workspace spells the label `bug` or `Bug`, and one with neither never
-  # read a bug half, so it reads unread rather than 0.
+  # read a bug half, so it reads unread rather than 0. An unset LINEAR_TEAM
+  # sends no --team, which the CLI refuses empty.
   if ! "$tracker" cache labels list --format=safe >"$scratch/escapes-labels.json" 2>"$scratch/escapes-linear.err" \
-    || ! "$tracker" cache issues list --all-projects --max --include-archived --format=safe \
+    || ! "$tracker" cache issues list --all-projects --max --include-archived \
+      ${LINEAR_TEAM:+--team "$LINEAR_TEAM"} --format=safe \
       >"$scratch/escapes-issues.json" 2>"$scratch/escapes-linear.err"; then
     ESCAPE_UNREAD="Linear cache read failed"
     return 1

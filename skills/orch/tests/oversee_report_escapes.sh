@@ -32,7 +32,10 @@ REPO=owner/repo
 
 # The Linear CLI: `sync` copies $ESCAPES_UPSTREAM, where set, over the cache
 # $ESCAPES_ISSUES, or fails under $ESCAPES_SYNC_FAIL; the label list answers
-# $ESCAPES_LABELS; the issue list answers the cache. Any other call fails.
+# $ESCAPES_LABELS; the issue list answers the cache, each issue's `team`
+# standing for the team.name the real cache filters --team on and the safe
+# shape drops; an issue list that is no array passes through whole. Any other
+# call fails, an empty --team among them.
 LINEAR="$TMP_ROOT/linear"
 cat > "$LINEAR" <<'EOF'
 #!/usr/bin/env bash
@@ -41,7 +44,10 @@ case "$*" in
     [[ -z "${ESCAPES_SYNC_FAIL:-}" ]] || { echo "linear stub: sync failed" >&2; exit 1; }
     [[ -z "${ESCAPES_UPSTREAM:-}" ]] || cp -- "$ESCAPES_UPSTREAM" "$ESCAPES_ISSUES" ;;
   "cache labels list --format=safe") cat -- "$ESCAPES_LABELS" ;;
-  "cache issues list --all-projects --max --include-archived --format=safe") cat -- "$ESCAPES_ISSUES" ;;
+  "cache issues list --all-projects --max --include-archived --format=safe")
+    jq 'if type == "array" then map(del(.team)) else . end' -- "$ESCAPES_ISSUES" ;;
+  "cache issues list --all-projects --max --include-archived --team "?*" --format=safe")
+    jq --arg team "$8" 'if type == "array" then map(select(.team == $team) | del(.team)) else . end' -- "$ESCAPES_ISSUES" ;;
   *) echo "linear stub: unexpected call: $*" >&2; exit 1 ;;
 esac
 EOF
@@ -50,15 +56,16 @@ export ESCAPES_LABELS="$TMP_ROOT/labels.json"
 echo '[{"name": "Feature"}, {"name": "Bug"}]' > "$ESCAPES_LABELS"
 
 # count LIB ROOT [TRACKER] [NAME=VALUE ...] — escapes_read from LIB against
-# ROOT at NOW, each NAME=VALUE set after the lib is sourced, so one may stand
-# in for NOW or a lib setting: `rc=N` then ESCAPE_WEEKS' lines, or `rc=N
+# ROOT at NOW, with LINEAR_TEAM the project's team, kendex, each NAME=VALUE set
+# after the lib is sourced, so one may stand in for NOW, the team or a lib
+# setting: `rc=N` then ESCAPE_WEEKS' lines, or `rc=N
 # unread=<cause>` where it names one.
 count() {
   local scratch
   scratch="$(mktemp -d "$TMP_ROOT/scratch.XXXXXX")" || return 1
   (
     unset WORKTREE_DEFAULT_BRANCH
-    export GH_REPO="$REPO"
+    export GH_REPO="$REPO" LINEAR_TEAM=kendex
     # shellcheck source=../scripts/lib/escapes.sh
     source "$1"
     local assignment
@@ -111,12 +118,15 @@ COMMITS=(
   "2026-09-23T10:00:00Z|revert: back out #15 (#16)"
   "2026-09-24T10:00:00Z|Revert \"feat: reverted exactly 14 days later (#45)\" (#46)"
   # Week of 09-28: a bug names #18 qualified with this repository, one names
-  # #170, which is not #17, and one names #17 of another repository.
+  # #170, which is not #17, and one names #17 of another repository. A bug in
+  # another team names #49: its bare number is that team's repository's.
+  "2026-09-28T08:00:00Z|feat: another team's bug names it (#49)"
   "2026-09-28T09:00:00Z|feat: a number inside a longer one (#17)"
   "2026-09-28T10:00:00Z|Merge pull request #18 from owner/ken-18"
 )
-# id|created|title|description|label; an empty description or label is the
-# fixture's default, and `\n` in a description is a newline.
+# id|created|title|description|label|team; an empty description or label is
+# the fixture's default, an empty team is kendex, and `\n` in a description is
+# a newline.
 BUGS=(
   "KEN-B9|2026-08-24T09:00:00Z|after its revert, #9 breaks again|Regressed-by: #9|"
   "KEN-B11|2026-09-02T10:00:00Z|the report breaks|Regressed-by: #11, #48|Bug"
@@ -129,6 +139,7 @@ BUGS=(
   "KEN-B17|2026-09-29T10:00:00Z|the build breaks|Regressed-by: #170|"
   "KEN-X17|2026-09-29T10:30:00Z|the build breaks|Regressed-by: other/repo#17|"
   "KEN-B18|2026-09-29T11:00:00Z|the build breaks|Regressed-by: Owner/Repo#18|"
+  "OTH-B49|2026-09-29T12:00:00Z|the build breaks|Regressed-by: #49||other"
 )
 WANT="rc=0
 2026-08-24	1
@@ -151,15 +162,16 @@ done
 escapes_publish "$WORLD"
 bug_lines=""
 for row in "${BUGS[@]}"; do
-  IFS='|' read -r id when title description label <<<"$row"
+  IFS='|' read -r id when title description label team <<<"$row"
   description="${description//\\n/$'\n'}"
-  bug_lines+="$(escapes_bug "$id" "$(at "$when")" "$title" "$description" "$label")"$'\n'
+  bug_lines+="$(escapes_bug "$id" "$(at "$when")" "$title" "$description" "$label" \
+    | jq -c --arg team "${team:-kendex}" '. + {team: $team}')"$'\n'
 done
 export ESCAPES_ISSUES="$TMP_ROOT/issues.json"
 jq -s . <<<"$bug_lines" > "$ESCAPES_ISSUES"
 
 assert_eq "$(count "$LIB" "$WORLD")" "$WANT" \
-  "a revert or a bug's Regressed-by line naming a merged PR within 14 days counts once, in the week of its first finding; a late, early, self-named, unmerged, second-parent, non-bug, foreign or source-only one does not"
+  "a revert or a bug's Regressed-by line naming a merged PR within 14 days counts once, in the week of its first finding; a late, early, self-named, unmerged, second-parent, non-bug, foreign, other-team or source-only one does not"
 
 # Months after the cap week, the count still reaches back to it.
 LATER="$(at 2027-01-13T12:00:00Z)"
@@ -272,6 +284,7 @@ CONTROLS=(
   'label-case|world|any(.labels[]; ascii_downcase == "bug")|any(.labels[]; . == "bug")'
   'any-label|world|select(any(.labels[]; ascii_downcase == "bug"))|select(true)'
   'any-repository|world|select(.repo == null or (.repo | ascii_downcase) == ($repo | ascii_downcase))|select(true)'
+  'every-team|world|${LINEAR_TEAM:+--team "$LINEAR_TEAM"}|${LINEAR_TEAM:+}'
   'bare-only|world|select(.repo == null or (.repo | ascii_downcase) == ($repo | ascii_downcase))|select(.repo == null)'
   'window-only|later_cap|((cap >= from)) || from=$cap|true'
   'no-sync|stale_cache|"$tracker" sync --if-stale|true --if-stale'

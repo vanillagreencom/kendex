@@ -125,12 +125,13 @@ Rows:
                   branch resolve-base-branch names that a revert commit
                   there names as #N, or a `Regressed-by: #N` line (plain or
                   bold) in a Linear issue labelled bug and created at or
-                  after the merge; a #N elsewhere in an issue is not
-                  counted. Within 14 days of the merge, in the week of the
-                  first finding, for this week, last week and the week the
-                  review cap fell to 1 (lib/escapes.sh). It fetches that
-                  branch from origin in the project checkout and syncs a
-                  stale Linear cache first. `Escapes: unread (<cause>)`
+                  after the merge, in LINEAR_TEAM where that is set; a #N
+                  elsewhere in an issue is not counted. Within 14 days of
+                  the merge, in the week of the first finding, for this
+                  week, last week and the week the review cap fell to 1
+                  (lib/escapes.sh). It fetches that branch from origin in
+                  the project checkout and syncs a stale Linear cache
+                  first. `Escapes: unread (<cause>)`
                   where git or the Linear cache could not be read or
                   parsed, or the workspace has no label named bug.
   Running         each lanes[] record reading running, preparing or parked.
