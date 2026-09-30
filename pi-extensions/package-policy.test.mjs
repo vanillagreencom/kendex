@@ -115,15 +115,17 @@ function compareVersions(a, b) {
 // new marker; a `hold` clears only the old one, and pi-update.state.json stays
 // there so the next audit reads the held release again. A record that clears a
 // release other than the state marker's is a missing record. A `roll` also
-// names, in its `## Verdict` section, the release it tested (npm version,
-// package integrity, upstream source commit) and the full extension commit the
-// run proved; a roll without them clears nothing. Taking the manifests, marker
-// and record as arguments is what lets the controls below plant each defect.
+// names, in its `## Verdict` section, the release it tested in the target-line
+// form .agents/skills/pi-update/SKILL.md § Audit record writes (version, the npm
+// package at that same version, its integrity, the upstream source commit) and
+// the full extension commit the run proved; a roll without them clears nothing.
+// Taking the manifests, marker and record as arguments is what lets the
+// controls below plant each defect.
 function auditRecord(audit) {
 	const [, previous, release] = audit.match(/^Marker `(\d+\.\d+\.\d+)` → `(\d+\.\d+\.\d+)`/m) ?? [];
 	const verdictSection = audit.match(/^## Verdict\n([\s\S]*?)(?=^## |(?![\s\S]))/m)?.[1] ?? "";
 	const verdict = verdictSection.match(/^Verdict: `(roll|hold)`/m)?.[1];
-	const target = verdictSection.match(/^- Target release: `(\d+\.\d+\.\d+)`.* integrity `sha512-[A-Za-z0-9+/]+={0,2}`.* upstream source commit `[0-9a-f]{40}`/m)?.[1];
+	const target = verdictSection.match(/^- Target release: `(\d+\.\d+\.\d+)`, npm `@earendil-works\/pi-coding-agent@\1` integrity `sha512-[A-Za-z0-9+/]+={0,2}`, upstream source commit `[0-9a-f]{40}`(?: \([^)\n]*\))?\.$/m)?.[1];
 	const tested = verdictSection.match(/^- Tested extension commit: `([0-9a-f]{40})`/m)?.[1];
 	return { previous, release, verdict, target, tested, cleared: verdict === "roll" ? release : previous };
 }
@@ -131,7 +133,7 @@ function auditRecord(audit) {
 function rollRefusals({ release, verdict, target, tested }) {
 	if (verdict !== "roll") return [];
 	const refusals = [];
-	if (target !== release) refusals.push(`pi-update.audit.md: the \`roll\` for ${release} names no target release ${release} with its npm integrity and upstream source commit in § Verdict (found ${target ?? "none"})`);
+	if (target !== release) refusals.push(`pi-update.audit.md: the \`roll\` for ${release} names no target release ${release} with the npm package @earendil-works/pi-coding-agent@${release}, its integrity and upstream source commit in § Verdict (found ${target ?? "none"})`);
 	if (tested === undefined) refusals.push(`pi-update.audit.md: the \`roll\` for ${release} names no full tested extension commit in § Verdict`);
 	return refusals;
 }
@@ -175,7 +177,16 @@ test("no Pi peer floor rises above the release the Pi update audit clears", () =
 // expects no refusal; a refuse row expects one naming its defect.
 test("the audit record gates Pi peer floors under both verdicts", () => {
 	const integrity = "sha512-m8ArJUtVcQMSe1lLE/Ei7vX/JV7O39sWmWBsXV2NOU70F0qCp8GubA24pT3LnwTmM6LL2xV80/h6sQg85n69ew==";
-	const targetLine = (version) => `- Target release: \`${version}\`, npm \`@earendil-works/pi-coding-agent@${version}\` integrity \`${integrity}\`, upstream source commit \`${"f".repeat(40)}\`.`;
+	// The target line's fields in § Audit record order; a row drops one, or
+	// names another release in the npm package, to plant each defect.
+	const targetFields = (version, npmVersion) => [
+		["version", `\`${version}\``],
+		["npm package", `, npm \`@earendil-works/pi-coding-agent@${npmVersion}\``],
+		["integrity", ` integrity \`${integrity}\``],
+		["upstream source commit", `, upstream source commit \`${"f".repeat(40)}\``],
+	];
+	const targetLine = (version, { drop, npmVersion = version } = {}) =>
+		`- Target release: ${targetFields(version, npmVersion).filter(([field]) => field !== drop).map(([, text]) => text).join("")}.`;
 	const testedLine = `- Tested extension commit: \`${"a".repeat(40)}\`.`;
 	const fullSummary = [targetLine("0.87.1"), testedLine].join("\n");
 	const record = (verdict, summary = fullSummary, trailing = "") => `# Pi package update audit\n\nMarker \`0.85.1\` → \`0.87.1\`. Sources fetched: every changelog.\n\n## Verdict\n\n${verdict}\n\n${summary}\n\n## Counts\n\n- Tested extension commit: \`${"b".repeat(40)}\`.\n${trailing}\n`;
@@ -193,9 +204,9 @@ test("the audit record gates Pi peer floors under both verdicts", () => {
 		{ name: "roll: verdict line only outside § Verdict", verdict: "", trailing: "Verdict: `roll`.", lastVersion: "0.87.1", floor: "0.87.1", refused: "names no verdict" },
 		{ name: "roll: no target release", verdict: "Verdict: `roll`.", summary: testedLine, lastVersion: "0.87.1", floor: "0.87.1", refused: "names no target release 0.87.1" },
 		{ name: "roll: target release is not the marker's new release", verdict: "Verdict: `roll`.", summary: [targetLine("0.87.0"), testedLine].join("\n"), lastVersion: "0.87.1", floor: "0.87.1", refused: "(found 0.87.0)" },
-		{ name: "roll: target release without its upstream source commit", verdict: "Verdict: `roll`.", summary: [targetLine("0.87.1").replace(`, upstream source commit \`${"f".repeat(40)}\``, ""), testedLine].join("\n"), lastVersion: "0.87.1", floor: "0.87.1", refused: "names no target release 0.87.1" },
 		{ name: "roll: target release only outside § Verdict", verdict: "Verdict: `roll`.", summary: testedLine, trailing: targetLine("0.87.1"), lastVersion: "0.87.1", floor: "0.87.1", refused: "names no target release 0.87.1" },
-		{ name: "roll: target release without its integrity", verdict: "Verdict: `roll`.", summary: [targetLine("0.87.1").replace(integrity, "pending"), testedLine].join("\n"), lastVersion: "0.87.1", floor: "0.87.1", refused: "names no target release 0.87.1" },
+		...targetFields("0.87.1", "0.87.1").map(([field]) => ({ name: `roll: target release without its ${field}`, verdict: "Verdict: `roll`.", summary: [targetLine("0.87.1", { drop: field }), testedLine].join("\n"), lastVersion: "0.87.1", floor: "0.87.1", refused: "names no target release 0.87.1" })),
+		{ name: "roll: target release whose npm package names another release", verdict: "Verdict: `roll`.", summary: [targetLine("0.87.1", { npmVersion: "0.87.0" }), testedLine].join("\n"), lastVersion: "0.87.1", floor: "0.87.1", refused: "names no target release 0.87.1" },
 		{ name: "roll: no tested extension commit, one outside § Verdict ignored", verdict: "Verdict: `roll`.", summary: targetLine("0.87.1"), lastVersion: "0.87.1", floor: "0.87.1", refused: "names no full tested extension commit" },
 		{ name: "roll: abbreviated tested extension commit", verdict: "Verdict: `roll`.", summary: [targetLine("0.87.1"), "- Tested extension commit: `aaaaaaaa`."].join("\n"), lastVersion: "0.87.1", floor: "0.87.1", refused: "names no full tested extension commit" },
 		{ name: "hold: needs no target release or tested commit", verdict: "Verdict: `hold`.", summary: "", lastVersion: "0.85.1", floor: "0.85.1", refused: undefined },
