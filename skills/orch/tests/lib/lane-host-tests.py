@@ -1,7 +1,7 @@
 """Exercise the real dispatcher with the reusable external provider stub.
 
 The dispatcher's must-fail controls forward exec in place of stop and read
-an unavailable provider as an absent verb.
+an unavailable provider or a slot failure as an absent verb.
 """
 import os
 from pathlib import Path
@@ -73,16 +73,46 @@ class LaneHostTests(unittest.TestCase):
         held[1].wait()
         admitted = self.run_host("touch", "--item", "TEST-5", **env, ORCH_LANE_HOST_BUSY_WAIT_SECS="0")
         self.assertEqual(admitted.returncode, 0, admitted.stderr)
-    def test_bound_settings_refused(self):
-        rows = [("0", "30", b"name=ORCH_LANE_HOST_MAX_CALLS value=0"), ("04", "30", b"name=ORCH_LANE_HOST_MAX_CALLS value=04"),
-                ("x", "30", b"name=ORCH_LANE_HOST_MAX_CALLS value=x"), ("4", "-1", b"name=ORCH_LANE_HOST_BUSY_WAIT_SECS value=-1"),
-                ("4", "05", b"name=ORCH_LANE_HOST_BUSY_WAIT_SECS value=05")]
-        for cap, wait, fields in rows:
-            with self.subTest(cap=cap, wait=wait):
-                result = self.run_host("touch", "--item", "TEST-1", ORCH_LANE_HOST=str(self.stub),
-                                       ORCH_LANE_HOST_MAX_CALLS=cap, ORCH_LANE_HOST_BUSY_WAIT_SECS=wait)
-                self.assertEqual((result.returncode, result.stderr.splitlines()[:1]), (2, [b"lane-host: setting-invalid " + fields]))
-        self.assertFalse((self.root / "calls").exists())
+    def test_slot_failures_refused(self):
+        slots = self.root / "home/.cache/orch/lane-host-slots"
+        failed = f"lane-host: slot-failed path={slots}".encode()
+        rows = [("0", "30", "setting", b"lane-host: setting-invalid name=ORCH_LANE_HOST_MAX_CALLS value=0"),
+                ("04", "30", "setting", b"lane-host: setting-invalid name=ORCH_LANE_HOST_MAX_CALLS value=04"),
+                ("x", "30", "setting", b"lane-host: setting-invalid name=ORCH_LANE_HOST_MAX_CALLS value=x"),
+                ("4", "-1", "setting", b"lane-host: setting-invalid name=ORCH_LANE_HOST_BUSY_WAIT_SECS value=-1"),
+                ("4", "05", "setting", b"lane-host: setting-invalid name=ORCH_LANE_HOST_BUSY_WAIT_SECS value=05"),
+                ("4", "0", "directory", failed), ("4", "0", "lock", failed), ("4", "0", "write", failed)]
+        for cap, wait, defect, note in rows:
+            with self.subTest(cap=cap, wait=wait, defect=defect):
+                home = self.root / "home"
+                if home.exists():
+                    shutil.rmtree(home)
+                home.mkdir()
+                command = [str(self.script), "status", "--item", "TEST-1", "--harness", "claude"]
+                if defect == "directory":
+                    (home / ".cache").touch()
+                elif defect in ("lock", "write"):
+                    slots.mkdir(parents=True)
+                    if defect == "lock":
+                        (slots / ".lock").mkdir()
+                    else:
+                        # exec keeps the pid, so the dispatcher's slot is a directory.
+                        command = ["bash", "-c", 'set -euo pipefail; mkdir -- "$HOME/.cache/orch/lane-host-slots/slot.$$"; exec "$@"', "slot-write", *command]
+                result = subprocess.run(command, cwd=self.root, capture_output=True,
+                                        env={**self.env, "ORCH_LANE_HOST": str(self.stub),
+                                             "ORCH_LANE_HOST_MAX_CALLS": cap, "ORCH_LANE_HOST_BUSY_WAIT_SECS": wait})
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(note, result.stderr)
+                self.assertFalse((self.root / "calls").exists())
+        original = self.script.read_text()
+        rule = '  [[ "$status" -eq "$LANE_HOST_BUSY_EXIT" ]] || status=1'
+        self.assertEqual(original.count(rule), 1)
+        mutant = original.replace(rule, rule.replace("status=1", "status=$status"))
+        self.assertNotEqual(mutant, original)
+        self.script.write_text(mutant)
+        result = self.run_host("status", "--item", "TEST-1", ORCH_LANE_HOST=str(self.stub), ORCH_LANE_HOST_MAX_CALLS="0")
+        with self.assertRaises(AssertionError):
+            self.assertEqual(result.returncode, 1)
     def test_explicit_selection_and_settings(self):
         (self.root / "kendex.settings.toml").write_text(f'[env]\nORCH_LANE_HOST = "{self.stub}"\n')
         for env, expected in (({}, str(self.stub)), ({"ORCH_LANE_HOST": "local"}, "local")):
@@ -113,11 +143,14 @@ class LaneHostTests(unittest.TestCase):
         self.assertEqual(appended.returncode, 0, appended.stderr)
         result = self.run_host("cat", "--item", "TEST-1", "/remote", **env)
         self.assertEqual((result.returncode, result.stdout), (0, b"seed\x00data\nseed\x00data\n"))
-        for code, notice in ((75, False), (1, True), (3, True)):
+        for code, notice in ((75, False), (1, True), (2, True), (3, True)):
             with self.subTest(code=code):
                 result = self.run_host(*args, **env, LANE_HOST_STUB_STATUS=str(code))
                 self.assertEqual(result.returncode, code)
                 self.assertEqual(b"host-create-failed" in result.stderr, notice)
+                probe = self.run_host("status", "--item", "TEST-1", "--harness", "claude", **env,
+                                      LANE_HOST_STUB_PROBE_STATUS=str(code))
+                self.assertEqual(probe.returncode, code, probe.stderr)
         self.assertEqual(self.run_host("close", "--item", "TEST-1", **env, LANE_HOST_STUB_STATUS="3").returncode, 3)
         checked = self.run_host("stop-sandbox", "--check", "--item", "TEST-1", **env)
         self.assertEqual((checked.returncode, checked.stdout), (0, b"sandbox-stoppable item=TEST-1\n"))

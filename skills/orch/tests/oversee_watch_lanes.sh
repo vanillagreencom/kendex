@@ -281,8 +281,9 @@ echo "=== hosted lane exits: the provider reads past a live ssh child ==="
 REMOTE_WATCH="$(mutant_scripts remote-watch/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/remote-watch/github"
 mutate_file "$REMOTE_WATCH" '    if [[ "$prior" == "$pane_key" || "$(lane_field "$states" "$i" 3)" == provider ]]; then' '    if [[ "$prior" == "$pane_key" ]]; then'
+mutate_file "${REMOTE_WATCH%/*}/lib/lane-state.sh" '  if [[ "$LANE_PROBE_RC" -eq 2 ]]; then' '  if false; then'
 provider="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
-for row in 'exited|0|true|live' 'running|0|false|live' 'exited|2|false|live' 'exited|7|false|live' 'garbage|0|false|live' 'exited|0|false|control'; do
+for row in 'exited|0|true|live' 'running|0|false|live' 'exited|2|false|live' 'exited|7|false|live' 'garbage|0|false|live' 'exited|0|false|control' 'exited|2|false|unsupported-control'; do
   IFS='|' read -r remote_status provider_rc want_exit judge <<<"$row"
   new_case "remote_${remote_status}_${provider_rc}_$judge"
   lane fish_child; screen question
@@ -291,16 +292,18 @@ for row in 'exited|0|true|live' 'running|0|false|live' 'exited|2|false|live' 'ex
   printf 'gitdir: /srv/clone/.git/worktrees/issue-2\n' > "$remote_disk/srv/lane/.git"
   printf 'started\n' > "$remote_disk/srv/lane/tmp/lane-status-issue-2.md"
   jq -cn --arg host "$provider" '{issue_id:"oversee", triaged:[], lanes:[{item:"issue-2", window:"gh-2", host:$host, mail_root:"/srv/lane", harness:"claude", status:"running", launched_at:"2026-08-15T09:00:00Z"}]}' > "$STUB_DIR/fleet.json"
-  target="$REPO_ROOT/skills/orch/scripts/oversee-watch"; [[ "$judge" != control ]] || target="$REMOTE_WATCH"
+  target="$REPO_ROOT/skills/orch/scripts/oversee-watch"; [[ "$judge" == live ]] || target="$REMOTE_WATCH"
   OUT="$(WATCH_BIN="$target" run_watch ORCH_LANE_HOST="$provider" LANE_HOST_STUB_LOG="$STUB_DIR/host.calls" LANE_HOST_STUB_DIR="$remote_disk" LANE_HOST_STUB_HARNESS_STATE="$remote_status" LANE_HOST_STUB_PROBE_STATUS="$provider_rc" \
     -- --state "$STUB_DIR/fleet.json" --max-loops 1 2>"$ERR")" && RC=0 || RC=$?
-  want_asking=false; [[ "$remote_status/$provider_rc" != running/0 ]] || want_asking=true
+  want_asking=false
+  case "$remote_status/$provider_rc/$judge" in running/0/* | */2/live) want_asking=true ;; esac
   expect="rc=0 out~EVENT+lane-exited+gh-2=$want_exit out~EVENT+lane-asking+gh-2=$want_asking"
   assert_eq "$(watch "$expect")" "$expect" "hosted $judge $remote_status/$provider_rc exit in one pass" "$ERR"
   assert_eq "$(grep -c '^status --item issue-2 --harness claude ' "$STUB_DIR/host.calls")" "1" "one remote harness call per lane per pass"
 done
 
 echo "=== hosted provider reads require a running record naming the harness ==="
+# Controls pin the unwanted provider call, even when an absent verb leaves the pane answering.
 EXPLICIT_WATCH="$(mutant_scripts explicit-watch/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/explicit-watch/github"
 mutate_file "$EXPLICIT_WATCH" '      [[ -z "$hosted_harness" ]] || hosted_item="$LANE_ITEM"' '      hosted_item="$LANE_ITEM"'
@@ -338,7 +341,7 @@ preparing|fish_child|question|1|lane-asking|0|true|0|live
 preparing|fish_child|question|1|lane-asking|7|true|0|live
 running|fish_child|question|1|lane-exited|0|true|1|live
 running|fish_child|question|1|lane-asking|7|false|1|live
-none|fish_child|question|1|lane-asking|0|false|1|control
+none|fish_child|question|1|lane-asking|0|true|1|control
 stopped|fish_child|question|1|lane-asking|0|false|1|control
 ROWS
 
