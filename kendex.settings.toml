@@ -76,8 +76,8 @@ CI_FIX_MAX_CYCLES = "6"
 
 # Max internal re-review cycles per issue before the verdict pass; the
 # re-review re-entry raises rereview_cycles and refuses at this, so the number
-# set is the number of re-entries allowed.
-REVIEW_MAX_CYCLES = "4"
+# set is the number of re-entries allowed: one fix round, one re-review of it.
+REVIEW_MAX_CYCLES = "1"
 
 # Max external review rounds on an open PR. At or past it a finding gets a
 # disposition and no fix push, except a defect the diff introduces or arms.

@@ -2,9 +2,12 @@
 # `workflow-state set <id> rereview_panel <json>` — the write review-pr § 4
 # makes when it re-enters § 2 — is itself the re-review cycle: it raises
 # `rereview_cycles` under the same lock it is gated on, and refuses once that
-# count reaches REVIEW_MAX_CYCLES (default 4). The count is entries already
+# count reaches REVIEW_MAX_CYCLES (default 1). The count is entries already
 # taken, so the setting is the number of entries allowed and the stored count
-# never exceeds it: at a cap of 4 the fifth write is refused at exactly 4.
+# never exceeds it: at the default cap of 1 the second write is refused at
+# exactly 1. Every row below reads the table's default from a settings-free
+# checkout with the setting stripped from the process environment, the two
+# layers orch-env ranks above the table.
 #
 # `cycles` decides nothing here. It is the general fix-round tally
 # `dev-fix.md` keeps, bumped by QA fix rounds and by review/submit fix rounds
@@ -21,6 +24,15 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 WS="$REPO_ROOT/skills/orch/scripts/workflow-state"
 PANEL='{"agents": ["rev-a"], "reason": "test"}'
+NO_SETTINGS="$TMP_ROOT/no-settings"
+git init -q "$NO_SETTINGS"
+# ws [SCRIPT] ARGS... — a workflow-state, the real one unless SCRIPT is a
+# path to a copy, run where only the table can answer a cap.
+ws() {
+  local bin="$WS"
+  [[ "$1" != /* ]] || { bin="$1"; shift; }
+  (cd "$NO_SETTINGS" && env -u REVIEW_MAX_CYCLES "$bin" "$@")
+}
 
 # shellcheck source=lib/assertions.sh
 source "$TEST_DIR/lib/assertions.sh"
@@ -31,43 +43,49 @@ source "$TEST_DIR/lib/growth-state.sh"
 echo "=== workflow-state re-review cycle cap ==="
 
 sd="$TMP_ROOT/state"
-"$WS" --state-dir "$sd" init KEN-1 --worktree "$REPO_ROOT" --branch ken-1 >/dev/null
+ws --state-dir "$sd" init KEN-1 --worktree "$REPO_ROOT" --branch ken-1 >/dev/null
 
 # init seeds the key, so the first read is a number and not a null the gate
 # has to coalesce.
-seeded="$("$WS" --state-dir "$sd" get KEN-1 .rereview_cycles)"
+seeded="$(ws --state-dir "$sd" get KEN-1 .rereview_cycles)"
 [[ "$seeded" == "0" ]] && pass "init seeds rereview_cycles at 0" \
   || fail "init seeds rereview_cycles at 0" "got=$seeded"
 
 # Past the cap: rereview_cycles=5 refuses the re-entry and leaves the state alone.
-"$WS" --state-dir "$sd" update KEN-1 '.rereview_cycles = 5' >/dev/null
-err="$("$WS" --state-dir "$sd" set KEN-1 rereview_panel "$PANEL" 2>&1 >/dev/null)" && rc=0 || rc=$?
-[[ "$rc" -eq 1 ]] && [[ "${err%%$'\n'*}" == "workflow-state: cycle-cap count=5 limit=4" ]] \
+ws --state-dir "$sd" update KEN-1 '.rereview_cycles = 5' >/dev/null
+err="$(ws --state-dir "$sd" set KEN-1 rereview_panel "$PANEL" 2>&1 >/dev/null)" && rc=0 || rc=$?
+[[ "$rc" -eq 1 ]] && [[ "${err%%$'\n'*}" == "workflow-state: cycle-cap count=5 limit=1" ]] \
   && pass "rereview_cycles=5 refuses rereview_panel, naming the count and the cap" \
   || fail "rereview_cycles=5 refuses rereview_panel, naming the count and the cap" "rc=$rc err=$err"
-panel="$("$WS" --state-dir "$sd" get KEN-1 .rereview_panel)"
+panel="$(ws --state-dir "$sd" get KEN-1 .rereview_panel)"
 [[ "$panel" == "null" ]] && pass "a refused write leaves rereview_panel unset" \
   || fail "a refused write leaves rereview_panel unset" "panel=$panel"
-after="$("$WS" --state-dir "$sd" get KEN-1 .rereview_cycles)"
+after="$(ws --state-dir "$sd" get KEN-1 .rereview_cycles)"
 [[ "$after" == "5" ]] && pass "a refused write does not raise the counter" \
   || fail "a refused write does not raise the counter" "got=$after"
 
-# The boundary. The count is entries already taken, so the last permitted
-# entry is the one at cap-1 and the entry AT the cap is refused: a guard that
-# compares > instead of >= admits a fifth cycle under a cap of four, which is
+# The boundary at the default cap: one fix round, one re-review of it. The
+# count is entries already taken, so the one permitted entry is the one at 0
+# and the entry AT the cap is refused: a guard that compares > instead of >=,
+# or a table whose default is above 1, admits a second re-review, which is
 # the direction that fails open.
-"$WS" --state-dir "$sd" update KEN-1 '.rereview_cycles = 3' >/dev/null
-"$WS" --state-dir "$sd" set KEN-1 rereview_panel "$PANEL" >/dev/null && rc=0 || rc=$?
-agents="$("$WS" --state-dir "$sd" get KEN-1 '.rereview_panel.agents[0]')"
-raised="$("$WS" --state-dir "$sd" get KEN-1 .rereview_cycles)"
-[[ "$rc" -eq 0 ]] && [[ "$agents" == "rev-a" ]] && [[ "$raised" == "4" ]] \
-  && pass "the fourth entry is permitted and raises the count to the cap" \
-  || fail "the fourth entry is permitted and raises the count to the cap" "rc=$rc agents=$agents got=$raised"
-"$WS" --state-dir "$sd" set KEN-1 rereview_panel "$PANEL" >/dev/null 2>&1 && rc=0 || rc=$?
-after4="$("$WS" --state-dir "$sd" get KEN-1 .rereview_cycles)"
-[[ "$rc" -ne 0 ]] && [[ "$after4" == "4" ]] \
-  && pass "the fifth entry is refused at the cap and spends nothing" \
-  || fail "the fifth entry is refused at the cap and spends nothing" "rc=$rc got=$after4"
+# second_entry [SCRIPT] — on a fresh item, the first re-entry's exit status
+# and the count it leaves, then the second's status, first stderr line and
+# the count it leaves.
+second_entry() {
+  local sdb rc err first
+  sdb="$(mktemp -d "$TMP_ROOT/state-boundary.XXXXXX")" || return 1
+  ws "$@" --state-dir "$sdb" init KEN-B --worktree "$REPO_ROOT" --branch ken-b >/dev/null
+  ws "$@" --state-dir "$sdb" set KEN-B rereview_panel "$PANEL" >/dev/null && rc=0 || rc=$?
+  first="rc=$rc count=$(ws "$@" --state-dir "$sdb" get KEN-B .rereview_cycles)"
+  err="$(ws "$@" --state-dir "$sdb" set KEN-B rereview_panel "$PANEL" 2>&1 >/dev/null)" && rc=0 || rc=$?
+  printf '%s|rc=%s %s count=%s' "$first" "$rc" "${err%%$'\n'*}" "$(ws "$@" --state-dir "$sdb" get KEN-B .rereview_cycles)"
+}
+SECOND_ENTRY_WANT="rc=0 count=1|rc=1 workflow-state: cycle-cap count=1 limit=1 count=1"
+got="$(second_entry)"
+[[ "$got" == "$SECOND_ENTRY_WANT" ]] \
+  && pass "at the default cap the first re-entry is permitted and the second is refused as cycle-cap count=1 limit=1, spending nothing" \
+  || fail "at the default cap the first re-entry is permitted and the second is refused as cycle-cap count=1 limit=1, spending nothing" "got=$got"
 
 # --- fix rounds outside the loop leave the loop budget alone --------
 # `dev-fix.md` increments `cycles` on EVERY fix round it runs — QA fixes in
@@ -75,49 +93,47 @@ after4="$("$WS" --state-dir "$sd" get KEN-1 .rereview_cycles)"
 # While the gate read `.cycles`, those rounds spent loop budget they never
 # used, and a QA recheck after four loop cycles was refused outright.
 sd_qa="$TMP_ROOT/state-qa"
-"$WS" --state-dir "$sd_qa" init KEN-9 --worktree "$REPO_ROOT" --branch ken-9 >/dev/null
+ws --state-dir "$sd_qa" init KEN-9 --worktree "$REPO_ROOT" --branch ken-9 >/dev/null
 for _ in 1 2 3 4 5 6 7; do
-  "$WS" --state-dir "$sd_qa" increment KEN-9 cycles >/dev/null
+  ws --state-dir "$sd_qa" increment KEN-9 cycles >/dev/null
 done
-tally="$("$WS" --state-dir "$sd_qa" get KEN-9 .cycles)"
+tally="$(ws --state-dir "$sd_qa" get KEN-9 .cycles)"
 [[ "$tally" == "7" ]] && pass "increment … cycles is unbounded" \
   || fail "increment … cycles is unbounded" "cycles=$tally"
-"$WS" --state-dir "$sd_qa" set KEN-9 rereview_panel "$PANEL" >/dev/null && rc=0 || rc=$?
-budget="$("$WS" --state-dir "$sd_qa" get KEN-9 .rereview_cycles)"
+ws --state-dir "$sd_qa" set KEN-9 rereview_panel "$PANEL" >/dev/null && rc=0 || rc=$?
+budget="$(ws --state-dir "$sd_qa" get KEN-9 .rereview_cycles)"
 [[ "$rc" -eq 0 ]] && [[ "$budget" == "1" ]] \
   && pass "seven fix rounds spend no loop budget — the re-entry still passes" \
   || fail "seven fix rounds spend no loop budget — the re-entry still passes" "rc=$rc rereview_cycles=$budget"
 
 # --- the loop scenario, end to end --------------------------------
-# Four § 4 cycles reach the cap, a QA fix round follows, and its § 7 → § 6
+# One § 4 cycle reaches the cap, a QA fix round follows, and its § 7 → § 6
 # re-check must run. The re-check panel goes to its own key: a QA re-check is
 # not a re-review cycle, so the cap neither refuses it nor counts it.
 sd_scn="$TMP_ROOT/state-scenario"
-"$WS" --state-dir "$sd_scn" init KEN-8 --worktree "$REPO_ROOT" --branch ken-8 >/dev/null
-for _ in 1 2 3 4; do
-  "$WS" --state-dir "$sd_scn" set KEN-8 rereview_panel "$PANEL" >/dev/null
-  "$WS" --state-dir "$sd_scn" increment KEN-8 cycles >/dev/null
-done
-spent="$("$WS" --state-dir "$sd_scn" get KEN-8 .rereview_cycles)"
-[[ "$spent" == "4" ]] && pass "four § 4 re-entries spend exactly the whole budget" \
-  || fail "four § 4 re-entries spend exactly the whole budget" "got=$spent"
-"$WS" --state-dir "$sd_scn" set KEN-8 rereview_panel "$PANEL" >/dev/null 2>&1 && rc=0 || rc=$?
-[[ "$rc" -ne 0 ]] && pass "a fifth § 4 re-entry is refused, so the cap is the count allowed" \
-  || fail "a fifth § 4 re-entry is refused, so the cap is the count allowed" "rc=$rc"
+ws --state-dir "$sd_scn" init KEN-8 --worktree "$REPO_ROOT" --branch ken-8 >/dev/null
+ws --state-dir "$sd_scn" set KEN-8 rereview_panel "$PANEL" >/dev/null
+ws --state-dir "$sd_scn" increment KEN-8 cycles >/dev/null
+spent="$(ws --state-dir "$sd_scn" get KEN-8 .rereview_cycles)"
+[[ "$spent" == "1" ]] && pass "one § 4 re-entry spends exactly the whole budget" \
+  || fail "one § 4 re-entry spends exactly the whole budget" "got=$spent"
+ws --state-dir "$sd_scn" set KEN-8 rereview_panel "$PANEL" >/dev/null 2>&1 && rc=0 || rc=$?
+[[ "$rc" -ne 0 ]] && pass "a second § 4 re-entry is refused, so the cap is the count allowed" \
+  || fail "a second § 4 re-entry is refused, so the cap is the count allowed" "rc=$rc"
 # The QA fix round bumps the tally, then its § 7 → § 6 re-check runs.
-"$WS" --state-dir "$sd_scn" increment KEN-8 cycles >/dev/null
-"$WS" --state-dir "$sd_scn" set KEN-8 qa_recheck_panel "$PANEL" >/dev/null 2>&1 && rc=0 || rc=$?
-qa_agents="$("$WS" --state-dir "$sd_scn" get KEN-8 '.qa_recheck_panel.agents[0]')"
+ws --state-dir "$sd_scn" increment KEN-8 cycles >/dev/null
+ws --state-dir "$sd_scn" set KEN-8 qa_recheck_panel "$PANEL" >/dev/null 2>&1 && rc=0 || rc=$?
+qa_agents="$(ws --state-dir "$sd_scn" get KEN-8 '.qa_recheck_panel.agents[0]')"
 [[ "$rc" -eq 0 ]] && [[ "$qa_agents" == "rev-a" ]] \
   && pass "the QA re-check is permitted with the § 4 budget fully spent" \
   || fail "the QA re-check is permitted with the § 4 budget fully spent" "rc=$rc agents=$qa_agents"
-still="$("$WS" --state-dir "$sd_scn" get KEN-8 .rereview_cycles)"
-[[ "$still" == "4" ]] && pass "the QA re-check leaves rereview_cycles where the § 4 loop left it" \
+still="$(ws --state-dir "$sd_scn" get KEN-8 .rereview_cycles)"
+[[ "$still" == "1" ]] && pass "the QA re-check leaves rereview_cycles where the § 4 loop left it" \
   || fail "the QA re-check leaves rereview_cycles where the § 4 loop left it" "got=$still"
 # Repeating it never accrues budget either: the key is outside the cap entirely.
-"$WS" --state-dir "$sd_scn" set KEN-8 qa_recheck_panel "$PANEL" >/dev/null 2>&1 && rc=0 || rc=$?
-again="$("$WS" --state-dir "$sd_scn" get KEN-8 .rereview_cycles)"
-[[ "$rc" -eq 0 ]] && [[ "$again" == "4" ]] \
+ws --state-dir "$sd_scn" set KEN-8 qa_recheck_panel "$PANEL" >/dev/null 2>&1 && rc=0 || rc=$?
+again="$(ws --state-dir "$sd_scn" get KEN-8 .rereview_cycles)"
+[[ "$rc" -eq 0 ]] && [[ "$again" == "1" ]] \
   && pass "a second QA re-check is permitted and still spends nothing" \
   || fail "a second QA re-check is permitted and still spends nothing" "rc=$rc got=$again"
 
@@ -125,9 +141,9 @@ again="$("$WS" --state-dir "$sd_scn" get KEN-8 .rereview_cycles)"
 # The first cycle's panel lands on its own key with its agents and its reason,
 # and spends nothing: a first cycle is not a re-review cycle.
 sd_first="$TMP_ROOT/state-first"
-"$WS" --state-dir "$sd_first" init KEN-3 --worktree "$REPO_ROOT" --branch ken-3 >/dev/null
-"$WS" --state-dir "$sd_first" set KEN-3 first_panel '{"agents": ["reviewer-doc", "reviewer-error"], "reason": "docs + shell"}' >/dev/null && rc=0 || rc=$?
-first="$("$WS" --state-dir "$sd_first" get KEN-3 '[.first_panel.agents, .first_panel.reason, .rereview_cycles] | tojson')"
+ws --state-dir "$sd_first" init KEN-3 --worktree "$REPO_ROOT" --branch ken-3 >/dev/null
+ws --state-dir "$sd_first" set KEN-3 first_panel '{"agents": ["reviewer-doc", "reviewer-error"], "reason": "docs + shell"}' >/dev/null && rc=0 || rc=$?
+first="$(ws --state-dir "$sd_first" get KEN-3 '[.first_panel.agents, .first_panel.reason, .rereview_cycles] | tojson')"
 [[ "$rc" -eq 0 && "$first" == '[["reviewer-doc","reviewer-error"],"docs + shell",0]' ]] \
   && pass "first_panel is written with its agents and its reason and spends no re-review budget" \
   || fail "first_panel is written with its agents and its reason and spends no re-review budget" "rc=$rc got=$first"
@@ -166,14 +182,14 @@ grep -q -F 'finding-disposition.md#recurrence' <<<"$S7" \
   || fail "§ 7 has no exit for a loop where every round finds something new"
 
 # Other set fields are untouched by the cap.
-"$WS" --state-dir "$sd" set KEN-1 skip_qa true >/dev/null && rc=0 || rc=$?
+ws --state-dir "$sd" set KEN-1 skip_qa true >/dev/null && rc=0 || rc=$?
 [[ "$rc" -eq 0 ]] && pass "set of another field passes with the counter at the cap" \
   || fail "set of another field passes with the counter at the cap" "rc=$rc"
 
 # The cap follows REVIEW_MAX_CYCLES from the environment.
-"$WS" --state-dir "$sd" init KEN-2 --worktree "$REPO_ROOT" --branch ken-2 >/dev/null
-"$WS" --state-dir "$sd" update KEN-2 '.rereview_cycles = 2' >/dev/null
-err="$(REVIEW_MAX_CYCLES=2 "$WS" --state-dir "$sd" set KEN-2 rereview_panel "$PANEL" 2>&1 >/dev/null)" && rc=0 || rc=$?
+ws --state-dir "$sd" init KEN-2 --worktree "$REPO_ROOT" --branch ken-2 >/dev/null
+ws --state-dir "$sd" update KEN-2 '.rereview_cycles = 2' >/dev/null
+err="$(cd "$NO_SETTINGS" && REVIEW_MAX_CYCLES=2 "$WS" --state-dir "$sd" set KEN-2 rereview_panel "$PANEL" 2>&1 >/dev/null)" && rc=0 || rc=$?
 [[ "$rc" -eq 1 ]] && [[ "${err%%$'\n'*}" == "workflow-state: cycle-cap count=2 limit=2" ]] \
   && pass "REVIEW_MAX_CYCLES=2 allows two entries and refuses the third" \
   || fail "REVIEW_MAX_CYCLES=2 allows two entries and refuses the third" "rc=$rc err=$err"
@@ -182,18 +198,19 @@ err="$(REVIEW_MAX_CYCLES=2 "$WS" --state-dir "$sd" set KEN-2 rereview_panel "$PA
 echo
 echo "--- planted controls ---"
 
-# The gate's comparison slipped back to >, which admits a fifth entry under a
-# cap of four.
+# Two ways a second re-review comes back, each in a copy of the script: the
+# gate's comparison slipped back to >, and the table's default back to 4. The
+# boundary assertion must read each copy as admitting the second entry.
 OFF_WS="$(mutant_scripts off-by-one workflow-state)/workflow-state" || exit 1
 mutate_file "$OFF_WS" 'if \$n >= $cap then' 'if \$n > $cap then'
-sdo="$TMP_ROOT/state-ctrl-off"
-"$OFF_WS" --state-dir "$sdo" init KEN-9x --worktree "$REPO_ROOT" --branch ken-9x >/dev/null
-"$OFF_WS" --state-dir "$sdo" update KEN-9x '.rereview_cycles = 4' >/dev/null
-if "$OFF_WS" --state-dir "$sdo" set KEN-9x rereview_panel "$PANEL" >/dev/null 2>&1; then
-  pass "the boundary assertion flags a guard that admits a fifth entry"
-else
-  fail "the boundary assertion MISSED a guard that admits a fifth entry" "the control refused at the cap"
-fi
+DEFAULT_WS="$(mutant_scripts default-four workflow-state)/workflow-state" || exit 1
+mutate_file "$DEFAULT_WS" "printf 'REVIEW_MAX_CYCLES\\trereview_cycles\\t1\\t1\\n'" "printf 'REVIEW_MAX_CYCLES\\trereview_cycles\\t4\\t1\\n'"
+for control in "$OFF_WS|a guard comparing >" "$DEFAULT_WS|a table defaulting to 4"; do
+  got="$(second_entry "${control%%|*}")"
+  [[ "$got" != "$SECOND_ENTRY_WANT" && "$got" == "rc=0 count=1|rc=0 "* ]] \
+    && pass "the boundary assertion flags ${control#*|} admitting a second re-entry" \
+    || fail "the boundary assertion MISSED ${control#*|} admitting a second re-entry" "got=$got"
+done
 
 # § 7 changed to the shared key: the assertion must catch the counter
 # coming back into the section that must not spend it.

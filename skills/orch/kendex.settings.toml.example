@@ -80,8 +80,9 @@ CI_WAIT_NO_CHECKS_GRACE = "180"
 CI_FIX_MAX_CYCLES = "6"
 
 # How many times one piece of work may go back for internal re-review
-# before the final verdict is taken. A change sized small is held to one.
-REVIEW_MAX_CYCLES = "4"
+# before the final verdict is taken. One means one fix round and one
+# re-review of that fix, then the pull request opens.
+REVIEW_MAX_CYCLES = "1"
 
 # How many rounds of outside review an open pull request takes. Past the
 # limit a finding gets a written answer instead of a fix, unless the change

@@ -5,7 +5,8 @@
 # reviewers, the external lane counted, one re-review after one fix round,
 # and two bot rounds.
 # workflow-state holds each bound once the item's state records tier small,
-# and holds none without it. Every
+# whatever the settings say; without it the settings and the table's
+# defaults answer, and the re-review default is already one. Every
 # row resolves from a settings-free checkout with the caps stripped from the
 # process environment, so the numbers are the table's.
 
@@ -53,9 +54,9 @@ echo "--- workflow-state tier bounds ---"
 # tiers|re-review cap|bot-round cap|third review-wait|first four|verification four|three and external|no marker|re-review four|count after|next re-review
 ROWS=(
   "small|below 0/1|below 0/2|at-cap 2/2|panel-bound rc=1|panel-bound rc=1|panel-bound rc=1|panel-external rc=1|panel-bound rc=1|0| rc=0"
-  "standard|below 0/4|below 0/4|continue 3/4| rc=0| rc=0| rc=0| rc=0| rc=0|1| rc=0"
-  "small standard|below 0/4|below 0/4|continue 3/4| rc=0| rc=0| rc=0| rc=0| rc=0|1| rc=0"
-  "-|below 0/4|below 0/4|continue 3/4| rc=0| rc=0| rc=0| rc=0| rc=0|1| rc=0"
+  "standard|below 0/1|below 0/4|continue 3/4| rc=0| rc=0| rc=0| rc=0| rc=0|1|cycle-cap rc=1"
+  "small standard|below 0/1|below 0/4|continue 3/4| rc=0| rc=0| rc=0| rc=0| rc=0|1|cycle-cap rc=1"
+  "-|below 0/1|below 0/4|continue 3/4| rc=0| rc=0| rc=0| rc=0| rc=0|1|cycle-cap rc=1"
 )
 for row in "${ROWS[@]}"; do
   IFS='|' read -r tiers want_cycles want_rounds want_wait want_first want_verify want_external want_unmarked want_rereview want_count want_next <<<"$row"
@@ -83,12 +84,19 @@ done
 # The small cap after both re-reviews above: the one entry it allows is taken.
 assert_eq "$(set_verdict KEN-TIER-small rereview_panel "$(panel 1)")" "cycle-cap rc=1" "tiers small: a second re-review entry"
 
-# The tier ceiling lowers a cap and never raises one: a setting under it wins.
+# The tier ceiling lowers a cap and never raises one: a setting under it wins,
+# and a setting over it is held to it where the standard tier takes it. The
+# re-review cap's default equals the small ceiling, so a raised setting is
+# what tells the two tiers apart.
 got="$(cd "$NO_SETTINGS" && REVIEW_MAX_CYCLES=0 "$WS" --state-dir "$SD" cap REVIEW_MAX_CYCLES --issue KEN-TIER-small)"
 assert_eq "$got" "at-cap 1/0" "tiers small: a setting below the ceiling holds"
+got="$(cd "$NO_SETTINGS" && REVIEW_MAX_CYCLES=4 "$WS" --state-dir "$SD" cap REVIEW_MAX_CYCLES --issue KEN-TIER-small)"
+assert_eq "$got" "at-cap 1/1" "tiers small: a setting above the ceiling is held to it"
+got="$(cd "$NO_SETTINGS" && REVIEW_MAX_CYCLES=4 "$WS" --state-dir "$SD" cap REVIEW_MAX_CYCLES --issue KEN-TIER-standard)"
+assert_eq "$got" "below 1/4" "tiers standard: a setting above the default holds"
 
 # A bare cap names no item, so no tier bounds it.
-assert_eq "$(ws cap REVIEW_MAX_CYCLES)" "4" "a bare cap reads the setting"
+assert_eq "$(ws cap REVIEW_MAX_CYCLES)" "1" "a bare cap reads the setting"
 
 assert_eq "$(set_verdict KEN-TIER-small tier Small)" "tier-value rc=2" "a tier outside the three is refused"
 

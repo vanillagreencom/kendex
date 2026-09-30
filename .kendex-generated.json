@@ -597,6 +597,7 @@
   ".agents/skills/orch/scripts/lib/copilot-credits.sh",
   ".agents/skills/orch/scripts/lib/copilot-session.sh",
   ".agents/skills/orch/scripts/lib/date-ladder.sh",
+  ".agents/skills/orch/scripts/lib/escapes.sh",
   ".agents/skills/orch/scripts/lib/file-lock.sh",
   ".agents/skills/orch/scripts/lib/gh-auth.sh",
   ".agents/skills/orch/scripts/lib/gh-repo.sh",

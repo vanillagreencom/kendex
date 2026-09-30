@@ -14,6 +14,8 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # mutant_scripts, for the must-fail controls and the missing-helper row.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
+# shellcheck source=lib/escapes-fixture.sh
+source "$TEST_DIR/lib/escapes-fixture.sh"
 REPORT_BIN="$(cd "$TEST_DIR/../scripts" && pwd)/oversee-report"
 TMP_ROOT="$(mktemp -d)" || { echo "oversee_report: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "oversee_report: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
@@ -86,9 +88,13 @@ EOF
 # shape under --format=safe, and nested as {issue: ...} otherwise, the raw
 # shape a project's LINEAR_FORMAT=raw gives a call that names no format. A
 # merge-on-read-ID.json file is a pull request that merges while ID is read:
-# it joins merged.json, once, mid-render.
+# it joins merged.json, once, mid-render. The Escapes line's bug list answers
+# bugs.json.
 cat > "$TMP_ROOT/bin/linear" <<'EOF'
 #!/usr/bin/env bash
+if [[ "$*" == "cache issues list --all-projects --label bug --max --include-archived --format=safe" ]]; then
+  cat "$CASE/bugs.json"; exit
+fi
 [[ "$1 $2 $3" == "cache issues get" && -f "$CASE/linear-$4.json" ]] || { echo "No cache entry for $4" >&2; exit 1; }
 if [[ -f "$CASE/merge-on-read-$4.json" ]]; then
   jq -c --slurpfile pr "$CASE/merge-on-read-$4.json" '. + $pr' "$CASE/merged.json" > "$CASE/merged.next" || exit 1
@@ -265,6 +271,10 @@ seed_fleet() {
   for n in 1 2 3 4 5 6 7 8 9 10; do issue "KEN-$n" "Title $n" "Outcome $n | kept"; done
 }
 
+# A case directory is no checkout, so no case but the Escapes one below reads
+# a count.
+ESCAPES_UNREAD="Escapes: unread (git fetch origin main failed)"
+
 echo "=== render: the rows from a fleet ==="
 seed_fleet render_fleet
 run -- render --state "$CASE/state.json" --repo owner/repo
@@ -272,6 +282,7 @@ WANT="Landed:
 | issue | what it is | why it matters |
 | --- | --- | --- |
 | KEN-1 (#11, abcdef1) | Title 1 | Outcome 1 \\| kept |
+$ESCAPES_UNREAD
 
 Running:
 | issue | what it is | why it matters |
@@ -357,6 +368,7 @@ fleet '' "$(lane KEN-1 done)"
 echo "[$(merged_pr 11 ken-1 -120 abcdef1234)]" > "$CASE/merged.json"
 run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$OUT" "0|Landed: none
+$ESCAPES_UNREAD
 
 Running: none
 
@@ -365,6 +377,43 @@ Validation: none
 Next: none
 
 Waiting on you: none" "a fleet with nothing new renders each row as none and exits 0"
+
+echo "=== render: the Escapes line under Landed ==="
+# The case is the project checkout. Its origin/main and bug list hold two
+# escapes in the week of 09-21, one in the week of 09-14, one in the cap's
+# week of 09-28 and two in the week of 10-05. NOW is a Monday, 09-21, so the
+# cap's week has not come; a later clock reads it.
+escapes_world() { # CASE
+  local row
+  escapes_checkout "$1"
+  for row in "2026-09-14T10:00:00Z|feat: x (#30)" "2026-09-15T10:00:00Z|Revert \"feat: x (#30)\" (#31)" \
+    "2026-09-21T09:00:00Z|feat: y (#32)" "2026-09-21T10:00:00Z|feat: z (#33)" "2026-09-21T11:00:00Z|Revert \"feat: z (#33)\" (#34)" \
+    "2026-09-29T10:00:00Z|feat: w (#35)" "2026-10-05T10:00:00Z|feat: v (#36)" "2026-10-06T10:00:00Z|Revert \"feat: v (#36)\" (#37)" \
+    "2026-10-06T11:00:00Z|feat: u (#38)"; do
+    escapes_commit "$1" "$(jq -rn --arg s "${row%%|*}" '$s | fromdateiso8601')" "${row#*|}"
+  done
+  escapes_publish "$1"
+  for row in "KEN-32|2026-09-21T12:00:00Z|#32 breaks" "KEN-35|2026-09-30T10:00:00Z|#35 breaks" "KEN-38|2026-10-07T10:00:00Z|#38 breaks"; do
+    escapes_bug "${row%%|*}" "$(jq -rn --arg s "$(cut -d'|' -f2 <<<"$row")" '$s | fromdateiso8601')" "${row##*|}"
+  done | jq -s . > "$1/bugs.json"
+}
+# the clock|the Escapes line
+ESCAPE_ROWS=(
+  "|Escapes: this week 2, last week 1, the week the review cap fell to 1 (2026-09-28) unread, outside the 6 weeks counted"
+  "2026-10-14T12:00:00Z|Escapes: this week 0, last week 2, the week the review cap fell to 1 (2026-09-28) 1"
+)
+for row in "${ESCAPE_ROWS[@]}"; do
+  clock="${row%%|*}"
+  new_case "escapes_${clock:-now}"
+  report -60
+  fleet '' "$(lane KEN-1 done)"
+  escapes_world "$CASE"
+  [[ -z "$clock" ]] || jq -rn --arg s "$clock" '$s | fromdateiso8601' > "$CASE/now"
+  run -- render --state "$CASE/state.json" --repo owner/repo
+  # The Escapes line and the first word of the line above it, Landed's.
+  assert_eq "$RC|$(awk '/^Escapes:/ { print prev " / " $0 } { prev = $1; sub(/:$/, "", prev) }' <<<"$OUT")" "0|Landed / ${row#*|}" \
+    "under Landed, the Escapes line counts this week, last week and the cap's week at ${clock:-NOW}"
+done
 
 echo "=== render: ORCH_REPORT_UPCOMING caps Next ==="
 # A queue of six, so the default cap of 5 is what stops it.
@@ -902,6 +951,18 @@ REPORT_UNDER_TEST="$SUMMARY_MUTANT" run -- write --state "$CASE/state.json" --re
 FILE="$CASE/progress-reports/$NAME"
 assert_eq "$RC|$(awk 'NR == 1' <<<"$OUT")|$(grep -c -F 'Two items landed' <<<"$OUT")|$(grep -c -F 'Two items landed' "$FILE")" \
   "0|Two items landed and one waits on you.|1|1" "control: with the summary back in the body, the print and the file open with it"
+
+# The renderer with no Escapes line, its one call stubbed out: the Escapes
+# row reddens.
+ESCAPES_MUTANT="$(mutant_scripts escapes/orch oversee-report)/oversee-report" || exit 1
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/escapes/github"
+mutate_file "$ESCAPES_MUTANT" '  escapes_row' '  : escapes_row'
+new_case escapes_mutant
+report -60
+fleet '' "$(lane KEN-1 done)"
+escapes_world "$CASE"
+REPORT_UNDER_TEST="$ESCAPES_MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(awk '/^Escapes:/' <<<"$OUT")" "0|" "control: a renderer with no Escapes line prints none, which the Escapes row fails"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

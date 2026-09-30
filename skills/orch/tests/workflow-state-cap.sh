@@ -27,17 +27,17 @@ cd_sd="$TMP_ROOT/cap-state"
 "$WS" --state-dir "$cd_sd" init KEN-CAP --worktree "$REPO_ROOT" --branch ken-cap >/dev/null
 
 got="$("$WS" --state-dir "$cd_sd" cap REVIEW_MAX_CYCLES)"
-[[ "$got" == "4" ]] && pass "bare cap prints the resolved limit" || fail "bare cap prints the resolved limit" "got=$got"
+[[ "$got" == "1" ]] && pass "bare cap prints the resolved limit" || fail "bare cap prints the resolved limit" "got=$got"
 
 got="$("$WS" --state-dir "$cd_sd" cap REVIEW_MAX_CYCLES --issue KEN-CAP)"
-[[ "$got" == "below 0/4" ]] && pass "a fresh issue is below the re-review cap" \
+[[ "$got" == "below 0/1" ]] && pass "a fresh issue is below the re-review cap" \
   || fail "a fresh issue is below the re-review cap" "got=$got"
 
 # Walk the counter to the exact boundary and read both readers at each step:
 # the verdict flips on the same count the rereview_panel write starts refusing.
 flip_verdict=""
 flip_write=""
-for n in 0 1 2 3 4 5; do
+for n in 0 1 2; do
   "$WS" --state-dir "$cd_sd" update KEN-CAP ".rereview_cycles = $n" >/dev/null
   verdict="$("$WS" --state-dir "$cd_sd" cap REVIEW_MAX_CYCLES --issue KEN-CAP)"
   if [[ -z "$flip_verdict" && "$verdict" == at-cap* ]]; then flip_verdict="$n"; fi
@@ -47,8 +47,8 @@ for n in 0 1 2 3 4 5; do
     flip_write="$n"
   fi
 done
-[[ "$flip_verdict" == "4" ]] && pass "the cap verdict flips to at-cap at 4" \
-  || fail "the cap verdict flips to at-cap at 4" "flipped at=$flip_verdict"
+[[ "$flip_verdict" == "1" ]] && pass "the cap verdict flips to at-cap at 1" \
+  || fail "the cap verdict flips to at-cap at 1" "flipped at=$flip_verdict"
 [[ "$flip_verdict" == "$flip_write" ]] \
   && pass "the cap verdict and the rereview_panel refusal flip on the same count" \
   || fail "the cap verdict and the rereview_panel refusal flip on the same count" \
@@ -70,10 +70,11 @@ got="$(cd "$no_settings" && env -u REVIEW_MAX_EXTERNAL_ROUNDS "$WS" --state-dir 
   || fail "REVIEW_MAX_EXTERNAL_ROUNDS defaults to 4 through the table" "got=$got"
 
 # Two rows, not one: the external cap moving must leave the re-review cap where
-# the table put it, or the two knobs are one.
+# the table put it, or the two knobs are one. The table puts it at 1: one fix
+# round and one re-review of it.
 got="$(cd "$no_settings" && REVIEW_MAX_EXTERNAL_ROUNDS=9 env -u REVIEW_MAX_CYCLES "$WS" --state-dir "$cd_sd" cap REVIEW_MAX_CYCLES)"
-[[ "$got" == "4" ]] && pass "moving the external cap leaves REVIEW_MAX_CYCLES alone" \
-  || fail "moving the external cap leaves REVIEW_MAX_CYCLES alone" "got=$got"
+[[ "$got" == "1" ]] && pass "REVIEW_MAX_CYCLES defaults to 1 through the table, and moving the external cap leaves it there" \
+  || fail "REVIEW_MAX_CYCLES defaults to 1 through the table, and moving the external cap leaves it there" "got=$got"
 
 # Its row names `pr_comment_review.iterations`, so `--issue` counts the triage
 # passes rather than the re-review entries the row above it counts.

@@ -698,7 +698,7 @@ cmd_append_file() {
 # renamed here needs no second edit kept in step, and `cap_limit` is the one
 # place a cap resolves.
 cap_table() {
-    printf 'REVIEW_MAX_CYCLES\trereview_cycles\t4\t1\n'
+    printf 'REVIEW_MAX_CYCLES\trereview_cycles\t1\t1\n'
     printf 'REVIEW_MAX_EXTERNAL_ROUNDS\tpr_comment_review.iterations\t4\t2\n'
     printf 'CI_FIX_MAX_CYCLES\t\t6\t\n'
 }
