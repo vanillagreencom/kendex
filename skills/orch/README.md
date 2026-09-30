@@ -13,7 +13,7 @@ Requires jq, Bash 3.2, flock, setsid and timeout or gtimeout; the included SSH h
 ## Features
 
 - `orch start`, run in an issue's worktree, takes one issue to merge: a coding agent implements it, review agents check it, the coding agent applies required fixes, and orch merges it.
-- `orch oversee` launches one lane per unblocked issue, reports merges, lane questions, stopped lanes, usage limits and new Linear issues as events through `oversee-watch`, takes each PR to merge, then runs the post-merge steps and, off a hosted fleet, refreshes the consumer repositories when a merge changes shipped packages.
+- `orch oversee` launches one lane per unblocked issue, reports merges, lane questions, stopped lanes, usage limits, new Linear issues and GitHub security alerts as events through `oversee-watch`, takes each PR to merge, then runs the post-merge steps and, off a hosted fleet, refreshes the consumer repositories when a merge changes shipped packages.
 - `lane-mail` carries questions, notices and directives between a lane and the overseer as files in the lane's worktree, so messages need no tmux pane and also reach a lane on another machine.
 - `oversee launch` opens a fleet's first overseer and `oversee register` records one opened by hand. `oversee-succeed` replaces an overseer in the same tmux position when its context, headroom, projected wall time, or qualifying-account trigger fires, or once it has ended or walled.
 - `lanes` reads the usage of each Claude Code, Codex and Copilot CLI account it discovers or is configured with, and picks the one with the fewest lanes in flight under the threshold, never an overseer's; the watch reports an account that hit its usage limit and when the limit resets.
@@ -23,6 +23,8 @@ Requires jq, Bash 3.2, flock, setsid and timeout or gtimeout; the included SSH h
 - Each review finding is fixed, filed as an issue or declined by the rules in [references/finding-disposition.md](references/finding-disposition.md), settings cap the review and CI-fix rounds, and `branch-size-check` compares the branch's added lines with the issue's expected size.
 - [references/secret-value.ere](references/secret-value.ere) holds a pattern of secret values: GitHub and Slack tokens and private-key headers, for a package or a fleet script to refuse to send text or a file that matches it. Its header says how to read it.
 - Lanes run on Claude Code, Codex, OpenCode, Pi and Copilot CLI, remotely and in a fleet on all but OpenCode (Copilot fleets local); account selection, succession and preference entries cover all but OpenCode.
+
+Dependabot security updates open the fleet's fix pull requests; an organization owner turns them on for every repository through an organization security configuration.
 
 A directive is handed over at the lane's turn end where the harness runs hooks, and at the lane's next wait point where it does not. Delivery is checked on every harness kendex installs the mailbox hook on. That check runs on one machine at a time and is started by hand, so run it on a fleet's control machine to cover it.
 
@@ -57,15 +59,15 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `ORCH_HANDOFF_HEADROOM_PCT` | Account headroom at or below which `lanes context` marks a live lane for handoff and the `lane-mail-check` turn-end hook refuses that lane's turn end, read against the binding bucket | `3` |
 | `ORCH_OVERSEER_PREFERENCE` | Comma-separated `harness:model:effort` entries `oversee launch` and `oversee-succeed` try in order; grammar: [kendex.settings.toml.example](kendex.settings.toml.example) § Fleet. Empty names none | `claude:fable:high,claude:claude-opus-5-5:high,codex:gpt-6-astra:high,codex:gpt-5.6-sol:high` |
 | Owner-ask settings | `ORCH_QUESTION_TOOL`, `ORCH_ASK_WAIT_MINUTES`: [kendex.settings.toml.example](kendex.settings.toml.example) § Talking to you | |
-| `ORCH_OVERSEER_SUCCESSION` | `on` lets `oversee-succeed` launch the successor overseer; `off` launches none and turns off the account-mark turn-end refusals, not the context one. `overseer-mark` still goes out. A live overseer asks the user to start the next session. A dead or walled one gets a notice only | `on` |
-| `ORCH_OVERSEER_DEAD_PASSES` | Consecutive watch passes that must read the overseer as exited, or its pane as walled, before the watch reports it; a pane wall needs its account judged at or below the trigger too. A wall the overseer's own session rows record, or an account read at zero headroom, is reported on the first pass | `2` |
+| `ORCH_OVERSEER_SUCCESSION` | `on` lets `oversee-succeed` launch the successor overseer; `off` launches none and turns off the account-mark turn-end refusals, not the context one. A live overseer asks the user to start the next session; `oversee-watch --help` states the rest | `on` |
+| `ORCH_OVERSEER_DEAD_PASSES` | Watch passes that read the overseer exited or walled before it is reported: `oversee-watch --help` | `2` |
 | `ORCH_OVERSEER_HEADROOM_PCT` | Account headroom at or below which the overseer succeeds onto an account above it and `lane-mail-check` refuses its turn end | `5` |
 | `ORCH_OVERSEER_WALL_MINUTES` | Projected wall minutes that fire overseer succession. `0` disables it | `20` |
 | `ORCH_OVERSEER_SUCCESSOR_ACCOUNTS` | Qualifying-account count that fires succession, by the rule `oversee-succeed --help` states. `0` disables it | `1` |
 | `ORCH_OVERSEER_MARK_REPEAT` | Watch passes a standing `overseer-mark` waits before it repeats | `5` |
 | Recording settings | `ORCH_FLEET_LOG_ROW_BYTES`, `ORCH_TAKEOVER_ROWS`, `ORCH_RECORD_RETENTION_DAYS`, `ORCH_PROGRESS_REPORT_DIR`: [recording policy](schemas/workflow-state.md#recording-policy) | |
 | Report settings | `ORCH_REPORT`, `ORCH_REPORT_EVERY_MINUTES`, `ORCH_REPORT_EVERY_ISSUES`, `ORCH_REPORT_UPCOMING`, `ORCH_REPORT_COLUMNS`, `ORCH_REPORT_SUMMARY_LINES`: `oversee-report --help` | |
-| Watch settings | `ORCH_WATCH_*`, `ORCH_EXTERNAL_TRIAGE`: `oversee-watch --help` | |
+| Watch settings | `ORCH_WATCH_*`, `ORCH_EXTERNAL_TRIAGE`, `ORCH_SECURITY_ALERTS`: `oversee-watch --help` | |
 | `ORCH_LANE_HOST` | `lane-host`'s provider: an executable or `local`; `ORCH_LANE_HOST_MAX_CALLS` and `ORCH_LANE_HOST_BUSY_WAIT_SECS` cap it: [Host protocol](schemas/lane-host.md) | `local` |
 | `ORCH_OVERSEER_HOST` | Runtime of the overseer's own session: `tmux`, the included provider; another is refused as `runtime-unsupported`. [Protocol](schemas/overseer-host.md) | `tmux` |
 | `QA_PERF_PATHS` | Space-separated path globs whose modification adds the `needs-perf-test` QA signal | empty |

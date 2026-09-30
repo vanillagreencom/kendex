@@ -255,6 +255,14 @@ Not proven:
 - A head Copilot does not approve. All three PRs were one-line `.md` changes inside the `**/*.md` limit. The design: no approval of the head exists, so 24148602 holds the merge. A finding sends the lane to fix it through `approval-wait`'s early `comments` return, and once P2 orders that return ahead of `approved`, a Copilot approval carrying an inline finding does too; today's approval mode returns `approved` beside an open thread. The fix push draws a new Copilot review under `review_on_push`. When no approval arrives, `approval-wait`'s timeout and `pr-watch.sh`'s `awaiting-stale` start the overseer's Use 1 (§ Copilot-down fallback). No proof PR shows the overseer app's approval counting under 24148602.
 - A change outside `.md`. Under the sandbox's `**/*.md` limit, Copilot's approval of it would not count, so it needs another approval: the same Use 1, reached through the reviewer wait and `awaiting-stale`. The target leaves File paths blank, so there a Copilot approval counts for every path; no proof PR shows that.
 
+## The lanes app permission set
+
+The lanes app, `vanillagreen-fleet-lanes` (installation 161253865), holds the permission set [D003](../decisions/D003-one-merge-path.md) § Decision item 2 records. KEN-2220's security-alert check in `oversee-watch` adds three repository permissions, each read and write: Dependabot alerts, code scanning alerts and secret scanning alerts. Read lists a repository's open alerts. Write lets the overseer dismiss one with its reason and comment.
+
+- Owner step: add the three permissions to the app, then accept the permission update on each installation.
+- Done for kendex. The overseer measured it on 2026-09-30 (owner note 1790735185): a token minted from the installation read 28 open kendex Dependabot alerts.
+- Pending for every other installation. Until an installation accepts the update, each long pass of `oversee-watch` prints one `security-alerts-unread` line that names each alert list of that installation's repositories with `http-403`.
+
 ## Issues the design makes moot
 
 Each is moot once the item named lands. The lane dispositions them.

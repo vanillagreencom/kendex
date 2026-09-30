@@ -6,7 +6,8 @@
 # Two passes on one clock: the mail pass reads every mailbox and the lane
 # records on ORCH_WATCH_MAIL_INTERVAL, and the long pass (one lane snapshot,
 # pr-watch, merged items, team triage, outside contributions, refresh failures,
-# lane preparation, lane classification, accounts, report) runs forked on
+# security alerts, lane preparation, lane classification, accounts, report)
+# runs forked on
 # --interval. A check that finds an event records it and the pass runs on to
 # the next check, so no kind starves another: a reducer line on every pass or
 # a lane parked on its limit banner would otherwise be the only thing the watch
@@ -194,6 +195,8 @@ source "$SCRIPT_DIR/lib/lane-model.sh"
 source "$SCRIPT_DIR/lib/pr-watch-pass.sh"
 # shellcheck source=lib/outside-contribution.sh
 source "$SCRIPT_DIR/lib/outside-contribution.sh"
+# shellcheck source=lib/security-alerts.sh
+source "$SCRIPT_DIR/lib/security-alerts.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
 # shellcheck source=lib/tmux-server.sh
@@ -265,6 +268,9 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
 #   outside-contribution<TAB><repo>#<number><TAB><pr HEAD_SHA|issue>
 #   refresh-failing<TAB><repo><TAB><passes since reported>|<cause>
+#   security-alert<TAB><repo>#<kind>/<number><TAB>reported
+#   bot-fix<TAB><repo>#<pr><TAB><alert>[,<alert>...]
+#   security-alerts-unread<TAB>fleet<TAB><the failed reads last reported>
 #   account<TAB><harness>|<through>|<config dir><TAB><status>|<verdict>|<binding_resets_at or ->
 # And in the mail pass's file:
 #   lane-mail<TAB><item>[@clone]<TAB><to-overseer.jsonl lines already drained> <first id>
@@ -995,6 +1001,7 @@ if [[ -n "$SINCE" ]]; then
   fi
 fi
 outside_contribution_init
+security_alerts_init
 
 check_item_set
 
@@ -3692,12 +3699,16 @@ owed_wall() { # HOST HARNESS MODEL
 
 # Every --repo's open PRs, each line prefixed with its repo as the reducer's
 # are, and all of them read before the event line goes out: a repo that
-# cannot be listed is a failed pass, not a heartbeat missing a repo. The
+# cannot be listed is a failed pass, not a heartbeat missing a repo. With the
+# security-alert check on, a Dependabot pull request's line is `bot-fix
+# pr=<N> alert=<alerts|unread|none>`, as security_bot_fix_alerts reads the
+# last long pass's rows. The
 # account roster follows, as the last long pass read it, then the owed items,
 # read before the event line for the same reason. A parked record still
 # standing over its merged pull request is handed on again ahead of it.
 heartbeat() {
   local errf="$WORK_DIR/open.err" repo open open_all="" failing baseline="" file hands
+  local marked line number alerts
   github_ready
   # The standing lane failures, each reported once and quiet since: a quiet
   # run still names every channel that stays broken. The long pass's are in
@@ -3705,10 +3716,25 @@ heartbeat() {
   file="$(pw_state_file "${REPOS[0]}")"
   [[ ! -f "$file" ]] || baseline="$(cat -- "$file")" || die state-read-failed "" "path=$file"
   for repo in "${REPOS[@]}"; do
-    open="$(gh pr list --repo "$repo" --state open --limit 50 --json number,headRefName,title \
-      --jq '.[] | "\(.number)\t\(.headRefName)\t\(.title)"' 2>"$errf")" \
-      || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=open"
-    [[ -z "$open" ]] || open_all+="$(pw_prefix "$repo" "$open")"$'\n'
+    if ! open="$(gh pr list --repo "$repo" --state open --limit 50 --json number,headRefName,title,author \
+      --jq '.[] | "\(.number)\t\(.headRefName)\t\(.title)" + (if .author.login == "app/dependabot" then "\t\(.author.login)" else "" end)' 2>"$errf")"; then
+      die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=open"
+    fi
+    [[ -n "$open" ]] || continue
+    marked=""
+    while IFS= read -r line; do
+      if [[ "$line" == *$'\t'app/dependabot ]]; then
+        line="${line%$'\t'app/dependabot}"
+        if [[ "$SECURITY_ENABLED" -eq 1 ]]; then
+          number="${line%%$'\t'*}"
+          alerts="$(security_bot_fix_alerts "$baseline" "$repo" "$number")" \
+            || die state-read-failed "" "path=$file" "row=bot-fix"
+          line="bot-fix pr=$number alert=$alerts"
+        fi
+      fi
+      marked+="$line"$'\n'
+    done <<<"$open"
+    open_all+="$(pw_prefix "$repo" "${marked%$'\n'}")"$'\n'
   done
   owed_read
   hands="$(parked_merged_owed "$baseline")" || die state-read-failed "" "path=$file" "row=merged"
@@ -3736,7 +3762,8 @@ heartbeat() {
 }
 
 # The long pass: the overseer's own pane, one lane snapshot, pr-watch, merged
-# items, triage, outside contributions, refresh failures, lane preparation,
+# items, triage, outside contributions, refresh failures, security alerts,
+# lane preparation,
 # the lane checks and the accounts, in a forked process. Mail passes go on while it runs, so it
 # spools its stdout and stderr and this process prints them whole once it
 # ends, staying the one writer of the event protocol. The fork has its own
@@ -3768,6 +3795,7 @@ long_pass() {
     check_triage
     check_outside_contribution
     check_refresh
+    check_security_alerts
     check_prepare
     check_start_stall
     check_lanes

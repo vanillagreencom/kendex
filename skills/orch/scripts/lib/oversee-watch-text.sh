@@ -219,6 +219,29 @@ The long pass's events, checked and reported in this order:
                              A failed read prints refresh-unread on stderr,
                              leaves the failure pair intact when the run list
                              is unread, and keeps watching
+  EVENT security-alert <repo> kind=<dependabot|code-scanning|secret-scanning>
+        number=<N> [severity=<s>] <package|rule>=<name> [manifest=<path>]
+        [scope=<scope>] [advisory=<GHSA>] [validity=<v>] url=<url> [pr=<N>]
+                             an open alert in any --repo that the fleet
+                             state's alerts_triaged records no verdict for:
+                             a Dependabot alert names its package, manifest,
+                             scope and advisory, and pr= the open Dependabot
+                             pull request that fixes it; a code scanning
+                             alert its rule; a secret its type and, where
+                             GitHub checks it, its validity. Reported once;
+                             a first-repository baseline row keeps it quiet,
+                             a record or the alert closing clears the row.
+                             ORCH_SECURITY_ALERTS=off lists nothing
+  EVENT security-alerts-unread reads=<source>:<cause>[,...]
+                             an alert list or the alerts_triaged record could
+                             not be read, or carried a line the check cannot
+                             read. A source is <repo>/<kind> or
+                             alerts_triaged; a cause is http-<status>,
+                             exit-<N> or invalid, and http-403 on an alert
+                             list is the lanes app missing that permission.
+                             Printed on every long pass a read fails, and
+                             ends the run only when the set of failed reads
+                             changes. The rows of a failed source stand
   EVENT lane-ready <item>    a lane open-terminal handed to a background job
                              while its host prepared it is launched: its
                              record reads running, and the watch carries it
@@ -352,7 +375,12 @@ The long pass's events, checked and reported in this order:
                              of the current fleet whose failure still stands,
                              reported once and quiet since, then every
                              --repo's open PRs, each line prefixed with its
-                             repo, then `account-roster accounts=<N>` and one
+                             repo, a Dependabot pull request's as `bot-fix
+                             pr=<N> alert=<alerts|unread|none>` from the last
+                             long pass's reading while ORCH_SECURITY_ALERTS is
+                             on: unread where that pass could not read its
+                             repository's Dependabot alerts, none where no
+                             open alert names it, then `account-roster accounts=<N>` and one
                              `account <alias> config_dir=...` line per
                              account, the fields the account event carries up
                              to `change=`, from the last long pass's reading.
@@ -472,8 +500,8 @@ verdicts. Lane prompts use pane and turn.
 
 A line already delivered is not delivered again by a re-run: overseer-dead,
 overseer-walled, merged, lane-asking, usage-limit, model-capacity,
-lane-exited, idle-after-return, handoff, account and outside-contribution are
-keyed in that baseline. Mail is reported at least once and never lost: lane-question,
+lane-exited, idle-after-return, handoff, account, outside-contribution and
+security-alert are keyed in that baseline. Mail is reported at least once and never lost: lane-question,
 lane-notice, directive-unread and, for a directive read after its lane is
 first watched, directive-read are keyed in the mail pass's own file beside
 it, owner-note, owner-ask-resolved and peer-note by the overseer mailbox's
@@ -705,6 +733,13 @@ Environment:
                               check on every long pass, reading each --repo's
                               open pull requests and the first's open issues;
                               `off` lists nothing. Any other value exits 2
+  ORCH_SECURITY_ALERTS        `on` (default) runs the security-alert check on
+                              every long pass, reading each --repo's open
+                              Dependabot, code scanning and secret scanning
+                              alerts and the fleet state's alerts_triaged
+                              through OVERSEE_WATCH_WORKFLOW_STATE, which must
+                              then exist; `off` lists nothing. Any other value
+                              exits 2
   ORCH_STATE_DIR              workflow-state directory; relative paths join
                               the project root; absolute paths stay unchanged
   ORCH_WATCH_TAIL_LINES       most lines any one event's pane payload prints,
@@ -766,9 +801,9 @@ Environment:
                               read runs unbounded
   OVERSEE_WATCH_STATE_DIR     one baseline file per repository — reducer,
                               triage, lane-asking, usage-limit, handoff,
-                              account, outside-contribution and refresh-failing
-                              rows; the mail pass's file beside the first one
-                              holds
+                              account, outside-contribution, refresh-failing,
+                              security-alert and bot-fix rows; the mail
+                              pass's file beside the first one holds
                               each lane mailbox's read position and when the
                               last long pass started, plus claims/ and
                               usage/, both shared across the repositories
@@ -865,6 +900,8 @@ ow_message() { # REASON FIELD=VALUE...
     outside-list-failed) text='The GitHub list of open issues and pull requests the outside-contribution check reads failed.' ;;
     outside-list-invalid) text='The GitHub list of open issues and pull requests carried a line the outside-contribution check cannot read: a number, a pr or issue kind, a login, and a pull request head commit.' ;;
     external-triage-invalid) text='ORCH_EXTERNAL_TRIAGE takes on or off.' ;;
+    security-alerts-invalid) text='ORCH_SECURITY_ALERTS takes on or off.' ;;
+    security-alerts-read-failed) text='A read the security-alert check needs failed, so the source it names is judged nothing this pass and its baseline rows stand; the security-alerts-unread line carries it. An http-403 on an alert list is the credential the watch reads with lacking that alert permission; for a GitHub App the owner adds it to the app and accepts it on each installation. GitHub'"'"'s or workflow-state'"'"'s own words follow where the read printed any.' ;;
     triage-state-failed) text='The fleet triage verdict log could not be read.' ;;
     triage-item-invalid) text='The fleet triage log contains an invalid issue identifier.' ;;
     time-failed) text='The current UTC time could not be read.' ;;

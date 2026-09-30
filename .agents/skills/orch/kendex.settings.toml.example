@@ -240,6 +240,13 @@ ORCH_OVERSEER_LANES = "3"
 # values: on | off
 ORCH_EXTERNAL_TRIAGE = "on"
 
+# Security alerts. The overseer reads each open Dependabot, code scanning
+# and secret scanning alert of the watched repositories once, dismisses it
+# in GitHub with its reason or files a fix item, and records the verdict.
+# "off" leaves them unlisted.
+# values: on | off
+# ORCH_SECURITY_ALERTS = "on"
+
 # Whether a finished overseer starts its own replacement. "on" starts one.
 # "off" leaves a live overseer to write its handover note and ask you to
 # start the next session, and a dead one to be reported for replacement by

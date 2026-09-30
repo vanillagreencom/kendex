@@ -123,7 +123,7 @@ assert_eq "$RC|$(events)" "0|EVENT outside-contribution owner/repo#5 kind=issue 
 new_case outside_off
 printf '[%s]\n' "$OUTSIDE_PR" > "$STUB_DIR/pulls.json"
 run ORCH_EXTERNAL_TRIAGE=off --
-assert_eq "$RC|$(events)|$(grep -c 'api --paginate' "$STUB_DIR/gh.calls" || true)" "0|none|0" \
+assert_eq "$RC|$(events)|$(grep -cE 'api --paginate repos/[^ ]+/(pulls|issues)\?' "$STUB_DIR/gh.calls" || true)" "0|none|0" \
   "ORCH_EXTERNAL_TRIAGE=off lists nothing" "$ERR"
 new_case outside_setting_invalid
 run ORCH_EXTERNAL_TRIAGE=yes --

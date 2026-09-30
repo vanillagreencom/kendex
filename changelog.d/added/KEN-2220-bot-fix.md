@@ -1,0 +1,1 @@
+- orch: the `oversee-watch` heartbeat lists a Dependabot pull request as `bot-fix pr=N alert=K`, and `alert=none` once no open alert names it.

@@ -1,13 +1,15 @@
 # Shared sandbox for the oversee-watch suites: the stub binaries every case
 # drives, the assertion library, and one `run_watch` entry point.
 #
-# oversee-watch reads GitHub (pr-watch, `gh pr list`, the open issues list),
-# Linear, the tmux panes of the lane windows, and the accounts through `lanes list`.
-# oversee_watch.sh covers GitHub and process-wide failures;
-# oversee_watch_triage.sh covers the tracker; oversee_watch_outside.sh covers
-# outside contributions; the three lane suites cover pane
-# behavior, prompt state, and spent-account banners; oversee_watch_accounts.sh
-# covers account events and the heartbeat roster. They share this sandbox.
+# oversee-watch reads GitHub (pr-watch, `gh pr list`, the open issues list,
+# the security alert lists), Linear, the tmux panes of the lane windows, and
+# the accounts through `lanes list`. oversee_watch.sh covers GitHub and
+# process-wide failures; oversee_watch_triage.sh covers the tracker;
+# oversee_watch_outside.sh covers outside contributions;
+# oversee_watch_security.sh covers security alerts; the three lane suites
+# cover pane behavior, prompt state, and spent-account banners;
+# oversee_watch_accounts.sh covers account events and the heartbeat roster.
+# They share this sandbox.
 #
 # Sourced, never run: the runners glob tests/*.sh, so nothing here executes on
 # its own. Sourcing it sets the shell options, builds $TMP_ROOT and the stub
@@ -76,7 +78,17 @@ CASE_REPO_ROOT="$(git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
 #   refresh-log.<RUN>.err fails that log with the file's stderr.
 #   workflows.<SLUG>.json is the paginated workflow list (default: empty);
 #   workflows.<SLUG>.err fails that list with the file's stderr.
-# Every `auth status`, `pr list`, `run` and `api --paginate` call is logged to gh.calls.
+#   dependabot.json, code-scanning.json, secret-scanning.json
+#                 the page `api --paginate repos/<repo>/<kind>/alerts`
+#                 answers, the same way (default: []); <kind>-fail present →
+#                 that call fails, printing the file's own text, or an HTTP
+#                 502 line where it is empty
+#   dependabot-prs.json
+#                 the vulnerabilityAlerts nodes `api graphql` answers, with
+#                 dependabot-prs.<SLUG>.json per repo (default: []);
+#                 graphql-fail present → that call fails
+# Every `auth status`, `pr list`, `run`, `api --paginate` and `api graphql`
+# call is logged to gh.calls.
 # `api user` (env-token preflight) succeeds for any token except one
 # starting with ghp_stale.
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
@@ -116,8 +128,13 @@ case "${1:-} ${2:-}" in
     path="$3"; filter=""
     [[ "${4:-}" == --jq ]] && filter="$5"
     list="${path%%\?*}"; list="${list##*/}"
-    [[ -f "$STUB_DIR/$list-fail" ]] && { echo "HTTP 502: bad gateway" >&2; exit 1; }
-    repo="${path#repos/}"; repo="${repo%/"$list"*}"
+    tail="$list"
+    if [[ "$list" == alerts ]]; then list="${path%/alerts\?*}"; list="${list##*/}"; tail="$list/alerts"; fi
+    if [[ -f "$STUB_DIR/$list-fail" ]]; then
+      if [[ -s "$STUB_DIR/$list-fail" ]]; then cat "$STUB_DIR/$list-fail" >&2; else echo "HTTP 502: bad gateway" >&2; fi
+      exit 1
+    fi
+    repo="${path#repos/}"; repo="${repo%/"$tail"*}"
     [[ "$list" != workflows ]] || repo="${repo%/actions}"
     slug="$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')"
     [[ ! -f "$STUB_DIR/$list.$slug.err" ]] || { cat "$STUB_DIR/$list.$slug.err" >&2; exit 1; }
@@ -126,6 +143,26 @@ case "${1:-} ${2:-}" in
     if [[ -f "$src" ]]; then jq -r "${filter:-.}" "$src"
     elif [[ "$list" == workflows ]]; then jq -rn "{workflows: []} | ${filter:-.}"
     else jq -rn "[] | ${filter:-.}"; fi
+    exit ;;
+  "api graphql")
+    printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
+    [[ -f "$STUB_DIR/graphql-fail" ]] && { echo "gh: Resource not accessible by integration (HTTP 403)" >&2; exit 1; }
+    owner=""; name=""; filter=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -f) case "$2" in owner=*) owner="${2#owner=}" ;; name=*) name="${2#name=}" ;; esac; shift ;;
+        --jq) filter="$2"; shift ;;
+      esac
+      shift
+    done
+    slug="$(printf '%s/%s' "$owner" "$name" | tr -c 'A-Za-z0-9._-' '_')"
+    src="$STUB_DIR/dependabot-prs.$slug.json"
+    [[ -f "$src" ]] || src="$STUB_DIR/dependabot-prs.json"
+    nodes='[]'
+    [[ ! -f "$src" ]] || nodes="$(cat "$src")"
+    jq -rn --argjson nodes "$nodes" \
+      '{data: {repository: {vulnerabilityAlerts: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: $nodes}}}}' \
+      | jq -r "${filter:-.}"
     exit ;;
   "pr list")
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
@@ -674,7 +711,7 @@ run_watch() {
   (cd "${WATCH_CWD:-$TMP_ROOT/repo}" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR -u ORCH_LANE_HOST \
-           -u ORCH_WATCH_TAIL_LINES -u ORCH_WATCH_PREPARE_SECS -u ORCH_WATCH_START_STALL_SECS -u ORCH_OVERSEER_MARK_REPEAT -u LINEAR_TEAM -u ORCH_DIRECTIVE_UNREAD_SECS -u ORCH_EXTERNAL_TRIAGE \
+           -u ORCH_WATCH_TAIL_LINES -u ORCH_WATCH_PREPARE_SECS -u ORCH_WATCH_START_STALL_SECS -u ORCH_OVERSEER_MARK_REPEAT -u LINEAR_TEAM -u ORCH_DIRECTIVE_UNREAD_SECS -u ORCH_EXTERNAL_TRIAGE -u ORCH_SECURITY_ALERTS \
            -u ORCH_REPORT_EVERY_MINUTES -u ORCH_REPORT_EVERY_ISSUES -u ORCH_REPORT_UPCOMING \
            -u ORCH_REPORT_COLUMNS -u ORCH_PROGRESS_REPORT_DIR -u OVERSEE_WATCH_REPORT \
            -u OVERSEE_REPORT_WORKFLOW_STATE -u OVERSEE_REPORT_TRACKER -u OVERSEE_REPORT_GITHUB \

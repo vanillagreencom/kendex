@@ -825,7 +825,9 @@ for row in "1||workflow-state: unknown-command arg1=handoff-standing|an install 
   READER="$STUB_DIR/old-workflow-state"
   old_state_reader "$READER" "$status" "$answer" "$cause"
   err="$TMP_ROOT/e2b-unread-$unread_row"
-  out="$(run_watch REAL_WORKFLOW_STATE="$READER" -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
+  # The security-alert check reads the fleet state through the same reader
+  # and would print its words a second time; this row is the handoff read's.
+  out="$(run_watch REAL_WORKFLOW_STATE="$READER" ORCH_SECURITY_ALERTS=off -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
   assert_eq "rc=$rc stderr=$(grep -c "oversee-watch: handoff-read-failed item=KEN-1" "$err") cause=$(grep -cxF -- "$cause" "$err")" \
     "rc=2 stderr=1 cause=1" \
     "$label: the pass refuses and names the item, with the reader's words under it" "$err"
@@ -1061,10 +1063,12 @@ remote_disk() { # DIR
 # The handoff read's wrapper: at the pass count NAMED, run one shell line
 # against the case's state, then answer as the stub does. The state goes
 # through `unlink`, so a second removal is an error rather than a silent
-# no-op.
+# no-op. Only a handoff read runs the line: the security-alert check reads
+# the fleet state through the same helper, and each of its reads would
+# otherwise run the line again.
 swap_state() { # LINE...  — one `COUNT) COMMAND ;;` case arm per argument
   {
-    printf '#!/usr/bin/env bash\ncase "$(grep -c '"'"' handoff-standing '"'"' "$STUB_DIR/workflow-state.args" 2>/dev/null)" in\n'
+    printf '#!/usr/bin/env bash\n[[ " $* " != *" handoff-standing "* ]] || case "$(grep -c '"'"' handoff-standing '"'"' "$STUB_DIR/workflow-state.args" 2>/dev/null)" in\n'
     printf '  %s\n' "$@"
     printf 'esac\nexec "$STUB_DIR/../../bin/workflow-state-stub.sh" "$@"\n'
   } > "$STUB_DIR/swap-state.sh"
@@ -1569,7 +1573,7 @@ windows_case() { # NAME
   printf 'gh-1\nlane-x\n' > "$STUB_DIR/windows.txt"
   printf '⏺ working on it\n' > "$STUB_DIR/pane-lane-x.txt"
   printf 'claude\n' > "$STUB_DIR/cmd-lane-x.txt"
-  swap_state "'' | 3) printf 'gh-1\\n' > \"\$STUB_DIR/windows.txt\" ;;" \
+  swap_state "'' | 0 | 3) printf 'gh-1\\n' > \"\$STUB_DIR/windows.txt\" ;;" \
     "2) printf 'gh-1\\nlane-x\\n' > \"\$STUB_DIR/windows.txt\" ;;" \
     '4) unlink "$STUB_DIR/state.json" ;;'
   err="$TMP_ROOT/e-$1"
