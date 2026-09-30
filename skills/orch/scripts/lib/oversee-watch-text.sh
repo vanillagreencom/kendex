@@ -122,10 +122,11 @@ The long pass's events, checked and reported in this order:
   EVENT overseer-mark <pane> kind=<headroom|rate|qualifying> value=<N> mark=<N>
                              succession=<on|off>
                              the OVERSEER's own account reached its mark,
-                             judged by `oversee-succeed --check-marks`; its
-                             context mark is its lane-mail-check hook's
-                             alone, at every tool call and turn end. It
-                             reaches an overseer BETWEEN turn ends, where that
+                             judged by `oversee-succeed --check-marks`; who
+                             judges its context mark is
+                             references/oversee-events.md § Judgement rules,
+                             the overseer's own case. It reaches an overseer
+                             BETWEEN turn ends, where its lane-mail-check
                              hook judges no account mark: the hook refuses at
                              the same marks at a turn end, and a session part
                              way through a long turn meets neither until this
@@ -140,9 +141,9 @@ The long pass's events, checked and reported in this order:
                              the overseer mailbox, carries no reading: its
                              lane-mail-check hook read nothing and
                              wrote why as the gap, a word that hook's
-                             description lists. Its context mark is judged at
-                             its tool calls and turn ends alone, so it is not
-                             being judged. The route per gap is
+                             description lists. With no reading its context
+                             mark is not judged (references/oversee-events.md
+                             § Judgement rules). The route per gap is
                              references/oversee-events.md § Event kinds.
                              Emitted on the first long pass it stands; still
                              standing on the next, it goes to the owner

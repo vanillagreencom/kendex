@@ -646,6 +646,31 @@ unknown_tool_rows copilot_overseer_unknown_tool
 assert_eq "$UNKNOWN_TOOL" "RC=0 stdout= record=none" \
   "a Copilot call in the named pane from no recorded lead is judged on nothing and writes no context record" "$ERR_FILE"
 
+# A crossed mark and a mailbox refusal on the same Copilot tool call: the
+# refusal's additionalContext opens with the context mark, so the refusal
+# never withholds it. The context is the session record the account's status
+# line writes, and the refusal is the fleet state's path failing.
+refused_mark_rows() { # NAME [JUDGE]
+  new_copilot_named "$1" "${2:-$HOOK}"
+  plant_copilot_install
+  mkdir -p "$LANE/tmp/lane-mail/overseer" "$COP_LEADS"
+  : > "$COP_LEADS/s1"
+  cop_record 400000 1000000
+  peer_send 'Beside a crossed mark.'
+  state_stub path-fails "$LANE/.github/skills/orch/scripts"
+  CALL_ENV=("${COP_NAMED_ENV[@]}" "COPILOT_HOME=$COP_ACCOUNT")
+  copilot_tool deliver
+  CALL_ENV=("HOME=$COP_HOME")
+  REFUSED_MARK="RC=$RC context=$(stdout_field '.additionalContext' | head -n 1) fleet=$(stdout_field '.additionalContext' | grep -c '^lane-mail-check: fleet-state=')"
+}
+refused_mark_rows copilot_overseer_refused_mark
+assert_eq "$REFUSED_MARK" "RC=0 context=lane-mail-check: context=400000 fleet=1" \
+  "a Copilot tool call past the mark whose mailbox check refuses hands the mark over ahead of the refusal" "$ERR_FILE"
+mutant refuse-drops-notice -e 's/^  \[ "\$ARM" != deliver \] || text="\$TOOL_NOTICE\$text"$/  :/'
+refused_mark_rows control_copilot_refused_mark "$MUTANT_PATH"
+assert_eq "${REFUSED_MARK% fleet=*}" "RC=0 context=lane-mail-check: fleet-state=$LANE/.github/skills/orch/scripts/workflow-state" \
+  "control: a hook whose refusal drops the notice withholds the crossed mark"
+
 # --- a Copilot call reaching the Claude copy ------------------------------
 # Copilot runs a Claude copy registered in `.claude/settings.json` by hand or
 # by kendex before the Copilot skip, where no refresh has rewritten it,

@@ -479,9 +479,8 @@ if [[ -n "$live" ]]; then
     live_start="$(ol_session_start "$OL_INSPECT_SERVER" "$live_pane")" \
       || die launch-failed step=server-start "session=$live_pane" "server=$SERVER_SOCKET"
     if ! live_named="$(jq -r --arg server "$OL_INSPECT_SERVER" --arg start "$live_start" --arg pane "$live_pane" \
-      "$OL_JQ_DEFS"' [ol_names($server; $start; $pane),
-        (if .server_start == null then .server_start = $start else . end
-          | ol_names($server; $start; $pane))] | map(tostring) | join(" ")' <<<"$OL_PRIOR" 2>"$DEP_ERR")"; then
+      "$OL_JQ_DEFS"' [ol_names($server; $start; $pane), ol_owns($server; $start; $pane)]
+        | map(tostring) | join(" ")' <<<"$OL_PRIOR" 2>"$DEP_ERR")"; then
       die state-unwritable field=overseer
     fi
     read -r live_named live_blocks <<<"$live_named"

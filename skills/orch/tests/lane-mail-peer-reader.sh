@@ -226,6 +226,13 @@ record none
 ask 'control: an unjudged ask lands'
 assert_eq "$(first_err)" "" "control: without the judgement an ask to a checkout no session reads says nothing"
 
+mutant startless-unasked ')) then "unstarted"' ')) and false then "unstarted"'
+record "{\"server\":\"$LIVE\",\"pane\":\"%9\"}"
+printf '%s %s %%9\n' "$LIVE" "$START" > "$PANES"
+send 'Startless.'
+assert_eq "$(first_err)" "lane-mail: no-reader=$PEER cause=unnamed" \
+  "control: a reader that asks no ol_unstarted reads a record carrying no start as naming nobody"
+
 mutant sources-peer '"$SCRIPT_DIR/workflow-state" --no-private-env "$@"' '"$SCRIPT_DIR/workflow-state" "$@"'
 live_record
 send 'Sourced.'

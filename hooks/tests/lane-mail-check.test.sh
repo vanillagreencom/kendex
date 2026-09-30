@@ -1537,7 +1537,7 @@ assert_eq "$LOST" \
 # The start test that reads a record carrying no start as another session's:
 # the session is judged on nothing, and nothing is healed.
 variant startless-unnamed \
-  -e 's/^  if \[ -n "\$RECORDED_START" \] && \[ "\$CALLER_START" != "\$RECORDED_START" \]; then$/  if [ "$CALLER_START" != "$RECORDED_START" ]; then/'
+  -e 's/^    elif ol_unstarted(.*/    else "other" end),/'
 lost_identity control_lost_identity_start "$VARIANT_PATH"
 assert_eq "$LOST" "RC=0 first=- record=none start=none home=none harness=none" \
   "control: a hook that reads a record carrying no start as another session's judges the lost overseer on nothing"
@@ -1954,10 +1954,10 @@ assert_eq "$(state_unread overseer_state_unread)" "RC=0 first=- record=600000 nu
 variant ungated-unrecorded -e '/^  \[ "\$OVERSEER_UNRECORDED" -eq 1 \] || return 0$/d'
 HOOK_SAVED="$HOOK"
 HOOK="$VARIANT_PATH"
-# The path's first read of RECORDED_KEY, unset by the failed read, stops the
+# The path's first read of CALLER_KEY, unset by the failed read, stops the
 # hook on both shells; bash 3.2 then exits with its EXIT trap's 0, bash 5 with
 # 1, so the error line is the witness and the status is not.
-assert_eq "$(state_unread control_state_unread >/dev/null; grep -c ': RECORDED_KEY: unbound variable$' "$ERR_FILE")" "1" \
+assert_eq "$(state_unread control_state_unread >/dev/null; grep -c ': CALLER_KEY: unbound variable$' "$ERR_FILE")" "1" \
   "control: without the unrecorded gate a fleet state that cannot be read reaches the lost-overseer path" "$ERR_FILE"
 HOOK="$HOOK_SAVED"
 
@@ -2692,7 +2692,7 @@ assert_eq "unowned=$(grep -c '^lane-mail-check: transcript-unowned' "$ERR_FILE")
 # The overseer identification's control: the pane comparison removed, so any
 # session with no lane is taken for the overseer. An ordinary session in a
 # fleet checkout is then held at its own turn end on marks nobody set for it.
-mutant any-session-overseer -e 's@^  if \[ "\$RECORDED_KEY" != "\$CALLER_KEY" \]; then$@  if false; then@'
+mutant any-session-overseer -e '/^   (if ol_names(/s@\$pane)@(.pane // ""))@'
 new_overseer control_any_session
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 judge_says "$CONTEXT_MARK_LINE"
@@ -3065,10 +3065,10 @@ bound_session peer_startless none
 peer_send 'Sent to no start.'
 stop "${SESSION_ENV[@]}"
 expect 2 "lane-mail-check: unread=1" "a record carrying no start names the session in its pane"
-bound_session peer_start_unread "$OVERSEER_SERVER_START"
+bound_session peer_start_unread none
 peer_send 'Start unread.'
 stop "${SESSION_ENV[@]}" TMUX_SERVER_START=
-expect 0 - "a session whose server start tmux cannot read is handed nothing from a bound record"
+expect 0 - "a session whose server start tmux cannot read is handed nothing"
 assert_eq "$(overseer_unread 'Start unread.')" "1" "and the note stays unread"
 
 # A checkout with no fleet record names no reader: no session there is handed
@@ -3197,20 +3197,20 @@ expect 2 "lane-mail-check: unread=1" \
 
 # With the start test gone the pair alone names the session: a later server
 # handed the recorded pid and pane id is handed the gone server's note.
-mutant pair-only -e 's@^  if \[ -n "\$RECORDED_START" \] && \[ "\$CALLER_START" != "\$RECORDED_START" \]; then$@  if false; then@'
+mutant pair-only -e '/^   (if ol_names(/s@\$start;@(.server_start | tostring);@'
 bound_session control_peer_reused "$EARLIER_START" "$MUTANT_PATH"
 peer_send 'Taken by a later server.'
 stop "${SESSION_ENV[@]}"
 expect 2 "lane-mail-check: unread=1" \
   "control: without the start test a later server's session in the recorded pane id is handed the note"
-# With an unread start taken as a match, a bound record names a session whose
+# With an unread start read on, a startless record names a session whose
 # server nothing could read.
-mutant start-unread-names -e '/^  if ! CALLER_START=/,/^  fi$/ s@^    return 1$@    return 0@'
-bound_session control_peer_start_unread "$OVERSEER_SERVER_START" "$MUTANT_PATH"
+mutant start-unread-names -e '/^      start=\$(tmux_server_start /s@)$@ || :)@'
+bound_session control_peer_start_unread none "$MUTANT_PATH"
 peer_send 'Unread start taken.'
 stop "${SESSION_ENV[@]}" TMUX_SERVER_START=
-expect 2 "lane-mail-check: unread=1" \
-  "control: a hook that takes an unread start as a match hands a bound record's note to that session"
+assert_eq "RC=$RC unread=$(overseer_unread 'Unread start taken.')" "RC=2 unread=0" \
+  "control: a hook that reads past an unread start hands that session the note"
 
 mutant record-at-call-dir -e '/^overseer_identify() {/,/^}/ s@cd -- "\$ROOT" 2>/dev/null && @@'
 named_session control_peer_call_elsewhere "$MUTANT_PATH"

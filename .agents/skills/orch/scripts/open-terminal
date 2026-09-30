@@ -2406,7 +2406,7 @@ open_wake() { # DIR TITLE CMD
 # pi-hooks carrier of the tree's and the root's that its package.json shows
 # installed. Of the carrier only package.json, whose extensions list names the
 # lane mail wake, and extensions/vocab.ts, the file that puts context_window on
-# the Stop payload, are read. A file the host does not hold is one Pi does not
+# the hook payloads, are read. A file the host does not hold is one Pi does not
 # read. Returns 1 with its keyed line printed; otherwise prints `present`, or
 # `absent VERSION` for a carrier without the mail wake, on stdout.
 host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT

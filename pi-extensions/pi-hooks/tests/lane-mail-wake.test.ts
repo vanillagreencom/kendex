@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -239,3 +239,47 @@ for (const row of rows) {
 		}
 	}, MAIL_INTERVAL_MS * 4);
 }
+
+/**
+ * The wake runs the judge with the model's context window on its payload, as
+ * the carrier's PostToolUse payload carries it, so the judge reads the
+ * overseer's window from Pi at a wake as after a tool call. The judge here is
+ * a stub that logs each payload it is handed; the opening turn runs no tool,
+ * so every logged payload is a wake's.
+ */
+test("the wake hands its judge the session's context window", async () => {
+	const lane = join(world, "wake-window");
+	mkdirSync(join(lane, "tmp", "lane-mail"), { recursive: true });
+	runGit(["init", "-q", "-b", "main"], lane);
+	runGit(["config", "gc.auto", "0"], lane);
+	runGit(["config", "maintenance.auto", "false"], lane);
+	runGit(["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"], lane);
+	const log = join(world, "wake-window.log");
+	const judge = join(lane, ".pi", "kendex", "hooks", "lane-mail-deliver.sh");
+	mkdirSync(join(judge, ".."), { recursive: true });
+	writeFileSync(judge, `#!/usr/bin/env bash\ncat >> ${JSON.stringify(log)}\necho >> ${JSON.stringify(log)}\n`);
+	chmodSync(judge, 0o755);
+	registerRendered(join(lane, ".pi"), "tool_result", undefined, projectCommand(".pi/kendex/hooks/lane-mail-deliver.sh"), 30);
+	const agentDir = join(world, "wake-window-agent");
+	mkdirSync(agentDir, { recursive: true });
+	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ kendex: { extensionManager: { config: { [CONFIG_ID]: { enabled: true, sessionDriftCheck: false } } } } }));
+	const saved = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	const session = await startSession({ cwd: lane, agentDir, paths: [PACKAGE], prompts: [] });
+	try {
+		await session.prompt(NEXT);
+		await session.waitForIdle();
+		// Real time: the settle check runs the judge after the turn settles.
+		const deadline = Date.now() + MAIL_INTERVAL_MS;
+		while (!existsSync(log) && Date.now() < deadline) await Bun.sleep(100);
+		const payloads = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+		expect(payloads.length).toBeGreaterThan(0);
+		for (const payload of payloads) {
+			expect([payload.hook_event_name, payload.context_window]).toEqual(["PostToolUse", 200_000]);
+		}
+	} finally {
+		session.dispose();
+		if (saved === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = saved;
+	}
+}, MAIL_INTERVAL_MS * 4);

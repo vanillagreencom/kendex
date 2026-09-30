@@ -277,9 +277,12 @@ export default function piHooks(pi: ExtensionAPI): void {
 		// against it reads: the call it judged, plus what the tool answered.
 		// `tool_response` is the result's text, which is the whole of it for
 		// every tool a bash hook can read — an image block has no rendering a
-		// JSON payload could carry and is left out rather than faked. Built
-		// only once a hook is about to read it: joining a large result costs
-		// every tool call, and most calls have no hook.
+		// JSON payload could carry and is left out rather than faked. It also
+		// carries the model's `context_window`, as the `Stop` payload does, so
+		// a hook judging the session's context after a tool call reads the
+		// window from Pi and not from an earlier turn end's record. Built only
+		// once a hook is about to read it: joining a large result costs every
+		// tool call, and most calls have no hook.
 		const toolName = claudeToolName(event.toolName);
 		const payload = () => JSON.stringify({
 			hook_event_name: "PostToolUse",
@@ -287,6 +290,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 			tool_input: claudeToolInput(toolName, event.input, ctx.cwd),
 			tool_response: event.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n"),
 			...claudeSessionFields(ctx),
+			...piContextFields(ctx),
 		});
 		const run = await runListener(TOOL_RESULT_LISTENER, toolName, payload, ctx, cfg, project, projectTrusted(ctx));
 

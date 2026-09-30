@@ -184,7 +184,7 @@ mv -- "$TMP_ROOT/state.startless" "$FLEET_STATE"
 # session opens a second overseer beside the first.
 STARTLESSCTL="$(mutant_scripts startlessctl oversee)" || exit 1
 mutate_file "$STARTLESSCTL/oversee" \
-  'if .server_start == null then .server_start = $start else . end' 'if .server_start == null then . else . end'
+  'ol_owns($server; $start; $pane)]' 'ol_names($server; $start; $pane)]'
 OVERSEE_BIN="$STARTLESSCTL/oversee" run_oversee -- launch --wait-secs 20
 assert_eq "$RC|$(overseers)" "0|2" \
   "control: a launch that judges a startless record as naming no session opens a second overseer"

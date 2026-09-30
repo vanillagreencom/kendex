@@ -509,12 +509,14 @@ record_overseer_handoff() { # [SESSION_ID] [PANE_KEY]
     "$record" >/dev/null)
 }
 
-# The workflow-state of the install new_overseer planted replaced by one that
-# runs the real script for every verb but the one MODE fails: `path` for
-# path-fails, `update` for update-fails, none for delegate. The real one is run
-# by its own path, so it sources its own libraries whatever the install holds.
-state_stub() { # path-fails|update-fails|delegate
-  rm -f -- "${LANE:?}/.claude/skills/orch/scripts/workflow-state"
+# The workflow-state of the install new_overseer planted, or of the one DIR
+# names, replaced by one that runs the real script for every verb but the one
+# MODE fails: `path` for path-fails, `update` for update-fails, none for
+# delegate. The real one is run by its own path, so it sources its own
+# libraries whatever the install holds.
+state_stub() { # path-fails|update-fails|delegate [DIR]
+  local dir="${2:-$LANE/.claude/skills/orch/scripts}"
+  rm -f -- "${dir:?}/workflow-state"
   {
     printf '#!/bin/sh\n'
     case "$1" in
@@ -522,8 +524,8 @@ state_stub() { # path-fails|update-fails|delegate
       update-fails) printf '[ "$1" != update ] || { echo "workflow-state: lock-failed lock-file=x" >&2; exit 1; }\n' ;;
     esac
     printf 'exec %q "$@"\n' "$REPO_ROOT/skills/orch/scripts/workflow-state"
-  } > "$LANE/.claude/skills/orch/scripts/workflow-state"
-  chmod +x "$LANE/.claude/skills/orch/scripts/workflow-state"
+  } > "$dir/workflow-state"
+  chmod +x "$dir/workflow-state"
 }
 
 # The overseer's own native transcript: the claude file the payload's session

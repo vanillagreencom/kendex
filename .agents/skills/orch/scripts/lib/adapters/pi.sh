@@ -2,8 +2,8 @@
 #
 # The Pi adapter: the context a session has used, read from the session file Pi
 # writes, and the window, which Pi keeps in its model registry and never in
-# that file: the pi-hooks carrier puts it on the turn-end payload as
-# `context_window`, from the session's own `getContextUsage()`.
+# that file: the pi-hooks carrier puts it on the turn-end and tool-call
+# payloads as `context_window`, from the session's own `getContextUsage()`.
 #
 # Pi has no launch word for compaction. Its switch is `compaction.enabled` in
 # its settings file, so open-terminal reads that value before a Pi launch
@@ -98,10 +98,12 @@ lane_adapter_pi_enabled() { # FILE
 }
 
 # Whether the pi-hooks carrier Pi loads for a session started in DIR puts the
-# model's `context_window` on its Stop payload, the one place a Pi window
-# reaches the turn-end hook: 0 where the installed carrier, the project's or
+# model's `context_window` on its payloads, the one place a Pi window reaches
+# the lane-mail-check hook: 0 where the installed carrier, the project's or
 # else the user's, names that field, 1 where none installed does. A carrier
-# that predates the field leaves every Pi reading without a window.
+# that predates the field leaves every Pi reading without a window; one that
+# puts it on the Stop payload alone leaves the overseer's tool calls
+# unjudged, and its turn ends judged.
 lane_adapter_pi_window_read() { # DIR
   lane_adapter_pi_carrier_sends "$1/.pi/packages" "$(lane_adapter_pi_agent_dir)/packages"
 }

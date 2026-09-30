@@ -1001,11 +1001,15 @@ lm_sent() {
 # it to, since a later server may be handed the same pid and pane id; a
 # record carrying no start names the session in that pane on that server pid
 # whatever its start, as the hooks read it, which hand it the mailbox and
-# write the start into the record. A
+# write the start into the record. Which record carries no start is
+# lib/overseer-launch.sh § OL_JQ_DEFS's ol_unstarted, sourced here alone so
+# no other verb pays for it. A
 # hosted peer's record and tmux server sit on its own host, out of this
 # shell's reach.
 lm_peer_reader() {
   local path record server start pane cause rc=0
+  # shellcheck source=lib/overseer-launch.sh
+  . "$SCRIPT_DIR/lib/overseer-launch.sh"
   if [ "$HOST" -eq 1 ]; then
     lm_notice reader-unjudged "$ROOT" cause=hosted
     return 0
@@ -1015,9 +1019,10 @@ lm_peer_reader() {
   path="$(lm_peer_state path oversee)" || rc=$?
   [ -n "$path" ] || [ "$rc" -ne 0 ] || rc=1
   record=""
-  [ "$rc" -ne 0 ] || [ ! -e "$path" ] || record="$(lm_peer_state get oversee \
-    '[.overseer.server, .overseer.server_start, .overseer.pane]
-     | map(. // "" | tostring) | join(" ")')" || rc=$?
+  [ "$rc" -ne 0 ] || [ ! -e "$path" ] || record="$(lm_peer_state get oversee "$OL_JQ_DEFS"'
+    .overseer as $o | ($o.server // "") as $s
+    | [($s | tostring), (if $o | ol_unstarted($s; ($o.pane // $o.session // "")) then "unstarted"
+            else ($o.server_start // "" | tostring) end), ($o.pane // "" | tostring)] | join(" ")')" || rc=$?
   if [ "$rc" -ne 0 ]; then
     # The keyed first line of a refusal workflow-state or its settings loader
     # made, never the rest: those words come from a file of the peer's.
@@ -1032,10 +1037,11 @@ lm_peer_reader() {
   case "$server" in
     '' | *[!0-9]*) server="" ;;
   esac
-  # An empty start is a record carrying none, judged on its server alone; a
-  # start that is not epoch seconds binds the record to no server.
+  # A record carrying no start is judged on its server alone; any other start
+  # that is not epoch seconds binds the record to no server.
   case "$start" in
-    *[!0-9]*) start=invalid ;;
+    unstarted) start="" ;;
+    '' | *[!0-9]*) start=invalid ;;
   esac
   case "$pane" in
     % | %*[!0-9]*) pane="" ;;

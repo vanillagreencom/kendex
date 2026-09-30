@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 0.17.0
+
+- A `PostToolUse` payload now carries `context_window`, the context window of the session's model as Pi reports it, as the `Stop` payload does. So does the payload the lane mail wake hands the `lane-mail-deliver` hook when mail lands in an idle session. orch's `lane-mail-check` judges the fleet overseer's context after each tool call against this window. With an older carrier, that judgement is skipped at the tool call, and the turn end still judges it.
+
 ### 0.16.0
 
 - The end-of-turn clippy check no longer freezes Pi while cargo compiles. Typing, timers and other extensions keep working during the run, and the turn still waits for the report before the next one starts. Ending the turn stops cargo, and the check then reports nothing; the next turn's check covers that turn's edits, whether or not it edits a `.rs` file. A timeout or an ended turn now stops every process cargo started, rustc and clippy-driver included, where before they kept compiling after cargo was killed.

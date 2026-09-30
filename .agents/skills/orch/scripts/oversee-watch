@@ -2552,8 +2552,8 @@ overseer_context_times() {
 
 # That record, judged each long pass a working overseer is read, so a record
 # that stopped advancing, or advances with no reading, reaches someone instead
-# of passing for a context mark that is watching: the hook judges that mark
-# at the overseer's tool calls and turn ends and nowhere else.
+# of passing for a context mark that is watching (who judges that mark:
+# references/oversee-events.md § Judgement rules).
 #
 # A gap, the reason the hook took no reading, is `overseer-context-unmeasured`
 # on the first long pass it stands, told to the overseer; still standing on

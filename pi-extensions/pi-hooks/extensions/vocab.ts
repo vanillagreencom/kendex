@@ -126,12 +126,14 @@ export function claudeSessionFields(ctx: ExtensionContext): Record<string, strin
 }
 
 /**
- * The context window of the session's model, as `context_window` on a `Stop`
- * payload. Claude Code's payload carries no such field; Pi keeps the window in
- * its model registry and never in the session file, so a turn-end hook that
- * judges a session against its own window, as orch's `lane-mail-check` does,
- * reads it here. Absent where Pi reports no usage, or a window that is not a
- * positive whole number.
+ * The context window of the session's model, as `context_window` on every
+ * payload that can judge the session's context: the `Stop` payload, the
+ * `PostToolUse` payload, and the lane mail wake's `PostToolUse` run. Claude
+ * Code's payload carries no such field; Pi keeps the window in its model
+ * registry and never in the session file, so a hook that judges a session
+ * against its own window, as orch's `lane-mail-check` does at a turn end and
+ * after a tool call, reads it here. Absent where Pi reports no usage, or a
+ * window that is not a positive whole number.
  */
 export function piContextFields(ctx: ExtensionContext): Record<string, number> {
 	const window = ctx.getContextUsage?.()?.contextWindow;

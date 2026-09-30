@@ -550,20 +550,22 @@ ol_command_line() { # HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
 # server may be handed the recorded pid and numbers its panes from %0 again,
 # and never from a record carrying no start. ol_record_current, the
 # generation bump, the exit writes and oversee-watch's identification take
-# that strict answer; `oversee launch` takes it for its liveness refusal,
-# there judging a record carrying no start on the server and pane alone.
+# that strict answer; `oversee launch` takes it beside ol_owns for its
+# liveness refusal.
 # `ol_unstarted($server; $session)` is a record naming that session on that
 # server with no start at all, which no current writer leaves but a record
 # written before starts were recorded, or put back whole by
 # ol_record_restore, still is. The session in that pane is the one the
-# record was written for.
+# record was written for. The lane-mail-check hook's identification and
+# lane-mail's peer reader ask it rather than read an empty start.
 # `ol_owns($server; $start; $session)` is either answer: the record is that
 # session's, bound or unstarted. Its readers are the two writers that bind an
 # unstarted record to its session instead of reading it as another
 # session's: the watch start (lib/watch-overseer-record.sh §
 # overseer_command_record), which keeps its launch identity, and
 # ol_record_heal, which the lane-mail-check hook runs from the overseer's
-# turn ends and tool calls.
+# turn ends and tool calls; `oversee launch` reads it for its liveness
+# refusal, so a live pane a startless record names blocks a second overseer.
 OL_JQ_DEFS='def ol_identity: {harness, account, home, model, effort, cwd};
   def ol_names($server; $start; $session): type == "object" and (.server // "") == $server
     and ((.pane // .session // "") == $session)
