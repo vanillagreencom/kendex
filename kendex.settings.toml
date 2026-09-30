@@ -15,7 +15,7 @@ LINEAR_TEAM_PREFIX = "KEN"
 # Declared agent-routing label set (e.g. "agent:generalist, agent:rust").
 # Non-empty makes `issues create` refuse a create carrying none of them —
 # such an issue is invisible to agent routing. Empty = guard off.
-LINEAR_AGENT_LABELS = "agent:generalist, agent:rust, agent:iced, agent:researcher, agent:multi, agent:human"
+LINEAR_AGENT_LABELS = "agent:generalist, agent:engineer, agent:rust, agent:iced, agent:researcher, agent:multi, agent:human"
 
 # Non-empty makes `issues create` hold the presence half of the creation bar
 # in the project-management skill's SKILL.md, § Disposition → **Name what
