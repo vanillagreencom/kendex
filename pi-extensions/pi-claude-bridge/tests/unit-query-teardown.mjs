@@ -16,6 +16,7 @@ import { join } from "node:path";
 const scratch = mkdtempSync(join(tmpdir(), "claude-bridge-teardown-test-"));
 process.env.CLAUDE_BRIDGE_DIAG_PATH = join(scratch, "diag.log");
 process.env.PI_CODING_AGENT_DIR = scratch;
+clearPackageConfigCache();
 
 const { ctx, popContext, pushContext, resetStack, stackDepth } = await import("../src/query-state.js");
 const { teardownQuery } = await import("../src/query-teardown.js");
@@ -23,6 +24,7 @@ const { __testGetBridgeIntegrityState, __testSetBridgeIntegrityState } = await i
 
 import { describe, it, afterEach, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { clearPackageConfigCache } from "../src/package-config.ts";
 
 function registerWaitingCall(queryCtx, toolCallId, toolName = "read") {
 	return new Promise((resolve) => {

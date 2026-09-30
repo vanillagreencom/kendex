@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { QuestionActivityEvent } from "../activity.js";
 import { normalizeRequest } from "../question-model.js";
+import { clearPackageConfigCache } from "../package-config.js";
 
 // These Pi dependencies are unavailable in a dependency-free package test.
 // The test drives the registered service, without rendering a terminal UI.
@@ -47,6 +48,7 @@ describe("answer steer registration", () => {
 			const handlers = new Map<string, (...args: unknown[]) => unknown>();
 			try {
 				process.env.PI_CODING_AGENT_DIR = root;
+				clearPackageConfigCache();
 				delete globals[SERVICE];
 				writeFileSync(join(root, "settings.json"), JSON.stringify({
 					kendex: { extensionManager: { config: { "@vanillagreen/pi-questions": { answersAsUserMessage: setting } } } },

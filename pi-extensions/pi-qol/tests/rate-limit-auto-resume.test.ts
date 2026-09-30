@@ -77,6 +77,7 @@ beforeEach(() => {
 	workdir = mkdtempSync(join(tmpdir(), "pi-qol-rate-limit-"));
 	mkdirSync(join(workdir, ".pi"), { recursive: true });
 	process.env.PI_CODING_AGENT_DIR = workdir;
+	clearPackageConfigCache();
 	process.env.HOME = workdir;
 });
 

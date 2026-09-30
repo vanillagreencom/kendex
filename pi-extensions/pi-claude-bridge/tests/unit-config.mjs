@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { loadConfig, recordProjectTrust } from "../src/config.ts";
+import { clearPackageConfigCache } from "../src/package-config.ts";
 
 function withTempDirs(fn) {
 	const root = mkdtempSync(join(tmpdir(), "claude-bridge-config-"));
@@ -17,6 +18,7 @@ function withTempDirs(fn) {
 		mkdirSync(join(user), { recursive: true });
 		mkdirSync(join(project, ".pi"), { recursive: true });
 		process.env.PI_CODING_AGENT_DIR = user;
+		clearPackageConfigCache();
 		return fn({ user, project });
 	} finally {
 		if (oldPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;

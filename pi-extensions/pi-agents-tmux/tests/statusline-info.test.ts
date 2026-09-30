@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveSubagentStatuslineInfo } from "../extensions/subagent/format.js";
+import { clearPackageConfigCache } from "../extensions/subagent/package-config.js";
 
 const rootTmp = join(import.meta.dir, "..", "..", "..", "tmp", "pi-agents-statusline-tests");
 const originalEnv = {
@@ -38,6 +39,7 @@ beforeEach(() => {
 	mkdirSync(home, { recursive: true });
 	process.env.HOME = home;
 	process.env.PI_CODING_AGENT_DIR = join(home, ".pi", "agent");
+	clearPackageConfigCache();
 	delete process.env.PI_SUBAGENT_CHILD_COLOR;
 });
 

@@ -10,7 +10,8 @@
  * root, such as pi-hooks, passes its own path list to `readPackageConfigAt`.
  * Widgets and renderers read settings many times per frame; going to the disk
  * on each read kept every lane's render loop busy. A memoized answer is served
- * for `SETTINGS_RECHECK_MS` with no filesystem work and no path work, and
+ * for `SETTINGS_RECHECK_MS` with no filesystem, environment or path work, so a
+ * change to `PI_CODING_AGENT_DIR` reaches the settings reads within one window.
  * `installSettingsCacheRefresh` drops every answer when the extension manager
  * announces a settings change and when a session starts.
  */
@@ -61,8 +62,9 @@ function userDir(): UserDir {
 	return userDirMemo;
 }
 
-/** A root-anchored `PI_CODING_AGENT_DIR`, else `~/.pi/agent`. Kept until one
- * of the environment variables it reads changes. */
+/** A root-anchored `PI_CODING_AGENT_DIR`, else `~/.pi/agent`, for the
+ * environment of this call. The settings reads below take it once per window
+ * instead, since reading the environment costs more than a warm read. */
 export function piUserDir(): string {
 	return userDir().dir;
 }
@@ -76,14 +78,13 @@ interface MemoEntry {
 }
 
 const memo = new Map<string, MemoEntry>();
-/** Project settings paths by cwd, apart from `memo` so a lookup needs no key
- * built per call. */
-const projectPathMemo = new Map<string, MemoEntry>();
 
-/** Drops every memoized answer so the next read goes back to disk. */
+/** Drops every memoized answer so the next read goes back to disk and to the
+ * environment. */
 export function clearPackageConfigCache(): void {
 	memo.clear();
-	projectPathMemo.clear();
+	cwdSettings.clear();
+	userSettingsMemo = undefined;
 }
 
 /** The entry for `key` while its window is open. */
@@ -140,15 +141,17 @@ interface ProjectTrustRegistry {
 	projectSettings?: Map<string, boolean>;
 }
 
+/** The registry once found or made; no package replaces it after that. */
+let trustRegistry: ProjectTrustRegistry | undefined;
+
 /** Shared by every package in the process: whichever package records Pi's
  * trust answer first, every package reads it. */
 function projectTrustRegistry(): ProjectTrustRegistry {
+	if (trustRegistry !== undefined) return trustRegistry;
 	const host = globalThis as unknown as Record<PropertyKey, ProjectTrustRegistry | undefined>;
-	const existing = host[PROJECT_TRUST_SYMBOL];
-	if (existing) return existing;
-	const created: ProjectTrustRegistry = {};
-	host[PROJECT_TRUST_SYMBOL] = created;
-	return created;
+	trustRegistry = host[PROJECT_TRUST_SYMBOL] ?? {};
+	host[PROJECT_TRUST_SYMBOL] = trustRegistry;
+	return trustRegistry;
 }
 
 /**
@@ -183,19 +186,27 @@ export function settingsFileTrusted(settingsPath: string): boolean {
 	return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
 }
 
-function trustedProjectSettingsPathAt(cwd: string, now: number): string | undefined {
-	const project = memoIn(projectPathMemo, cwd, now, () => projectSettingsPath(cwd));
-	return settingsFileTrusted(project) ? project : undefined;
-}
-
 /** The project settings file for `cwd` when Pi trusts the project, else
  * `undefined`. */
 export function trustedProjectSettingsPath(cwd = process.cwd()): string | undefined {
-	return trustedProjectSettingsPathAt(cwd, performance.now());
+	const view = cwdSettingsAt(cwd, performance.now());
+	return view.trusted ? view.project : undefined;
 }
 
 export function projectSettingsTrustedForCwd(cwd = process.cwd()): boolean {
 	return trustedProjectSettingsPath(cwd) !== undefined;
+}
+
+/** The user settings file, resolved from the environment at most once per
+ * window. */
+let userSettingsMemo: { readAt: number; path: string } | undefined;
+
+function userSettingsPathAt(now: number): string {
+	const known = userSettingsMemo;
+	if (known !== undefined && now - known.readAt < SETTINGS_RECHECK_MS) return known.path;
+	const path = userDir().settings;
+	userSettingsMemo = { readAt: now, path };
+	return path;
 }
 
 /** The user settings file the lists below were built on; a new user directory
@@ -209,7 +220,11 @@ const pathLists = new Map<string | undefined, readonly string[]>();
  * caller decides whether `project` is trusted.
  */
 export function userAndProjectSettingsPaths(project: string | undefined): readonly string[] {
-	const user = userDir().settings;
+	return userAndProjectSettingsPathsAt(project, performance.now());
+}
+
+function userAndProjectSettingsPathsAt(project: string | undefined, now: number): readonly string[] {
+	const user = userSettingsPathAt(now);
 	if (user !== pathListsUser) {
 		pathLists.clear();
 		pathListsUser = user;
@@ -224,7 +239,7 @@ export function userAndProjectSettingsPaths(project: string | undefined): readon
 
 /** The user settings file, then the project's when Pi trusts the project. */
 export function piSettingsPaths(cwd = process.cwd()): readonly string[] {
-	return userAndProjectSettingsPaths(trustedProjectSettingsPathAt(cwd, performance.now()));
+	return cwdSettingsAt(cwd, performance.now()).paths;
 }
 
 export type SettingsRecord = Record<string, unknown>;
@@ -324,6 +339,44 @@ export function packageConfigIn(settings: Readonly<SettingsRecord>, packageId: s
 	return isRecord(own) ? own : undefined;
 }
 
+/** What reads for one cwd resolve to: its project settings file, the trust
+ * answer its paths were built under, the files at those paths and the configs
+ * merged over them. */
+interface CwdSettings {
+	readAt: number;
+	project: string;
+	trusted: boolean;
+	paths: readonly string[];
+	files: readonly SettingsFile[];
+	configs: Map<string, Readonly<SettingsRecord>>;
+}
+
+const cwdSettings = new Map<string, CwdSettings>();
+
+/**
+ * The settings for `cwd`, served for `SETTINGS_RECHECK_MS` with one map
+ * lookup and the trust lookup: no environment, path or file work. Trust is
+ * read on every call, so an answer any package records applies at once. Once
+ * the window closes, the project walk, the user directory and the files are
+ * resolved again.
+ */
+function cwdSettingsAt(cwd: string, now: number): CwdSettings {
+	const known = cwdSettings.get(cwd);
+	const open = known !== undefined && now - known.readAt < SETTINGS_RECHECK_MS ? known : undefined;
+	if (open !== undefined && settingsFileTrusted(open.project) === open.trusted) return open;
+	const project = open !== undefined ? open.project : projectSettingsPath(cwd);
+	const trusted = settingsFileTrusted(project);
+	const paths = userAndProjectSettingsPathsAt(trusted ? project : undefined, now);
+	const files = readSettingsFilesAt(paths, now);
+	// The files may come from a window another cwd opened; this view closes
+	// with it, so an edit is never served for longer than one window.
+	const filesReadAt = memo.get(settingsFilesKey(paths))?.readAt ?? now;
+	const readAt = Math.min(open !== undefined ? open.readAt : now, filesReadAt);
+	const view: CwdSettings = { readAt, project, trusted, paths, files, configs: configsOver(files) };
+	cwdSettings.set(cwd, view);
+	return view;
+}
+
 /** Merged configs per package id, keyed by the file list they were merged
  * from: `readSettingsFiles` hands back a new list whenever a file changed. */
 const configsByFiles = new WeakMap<readonly SettingsFile[], Map<string, Readonly<SettingsRecord>>>();
@@ -331,15 +384,20 @@ const configsByFiles = new WeakMap<readonly SettingsFile[], Map<string, Readonly
 /** `packageId`'s config over the files at `paths`, later files overriding
  * earlier ones key by key. A malformed file contributes nothing. */
 export function readPackageConfigAt(packageId: string, paths: readonly string[]): Readonly<SettingsRecord> {
-	return packageConfigOver(packageId, readSettingsFiles(paths));
+	const files = readSettingsFiles(paths);
+	return packageConfigOver(packageId, files, configsOver(files));
 }
 
-function packageConfigOver(packageId: string, files: readonly SettingsFile[]): Readonly<SettingsRecord> {
+function configsOver(files: readonly SettingsFile[]): Map<string, Readonly<SettingsRecord>> {
 	let configs = configsByFiles.get(files);
 	if (!configs) {
 		configs = new Map();
 		configsByFiles.set(files, configs);
 	}
+	return configs;
+}
+
+function packageConfigOver(packageId: string, files: readonly SettingsFile[], configs: Map<string, Readonly<SettingsRecord>>): Readonly<SettingsRecord> {
 	const known = configs.get(packageId);
 	if (known) return known;
 	const merged: SettingsRecord = {};
@@ -355,8 +413,8 @@ function packageConfigOver(packageId: string, files: readonly SettingsFile[]): R
 
 /** `packageId`'s config over `piSettingsPaths(cwd)`. */
 export function readPackageConfig(packageId: string, cwd = process.cwd()): Readonly<SettingsRecord> {
-	const now = performance.now();
-	return packageConfigOver(packageId, readSettingsFilesAt(userAndProjectSettingsPaths(trustedProjectSettingsPathAt(cwd, now)), now));
+	const view = cwdSettingsAt(cwd, performance.now());
+	return packageConfigOver(packageId, view.files, view.configs);
 }
 
 /** The part of Pi's `ExtensionAPI` the refresh needs. */

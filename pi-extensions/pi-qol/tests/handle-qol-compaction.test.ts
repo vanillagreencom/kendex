@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { QOL_BUDGET_GUARD_SENTINEL } from "../extensions/qol/budget-guard.ts";
 import { handleQolCompaction } from "../extensions/qol/compaction.ts";
+import { clearPackageConfigCache } from "../extensions/qol/package-config.ts";
 
 let workdir = "";
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -11,6 +12,7 @@ const originalHome = process.env.HOME;
 beforeEach(() => {
 	workdir = mkdtempSync(join(tmpdir(), "pi-qol-handle-"));
 	process.env.PI_CODING_AGENT_DIR = workdir;
+	clearPackageConfigCache();
 	process.env.HOME = workdir;
 });
 afterEach(() => {
@@ -85,6 +87,7 @@ const cases = [
 			const file = join(workdir, "blocking-file");
 			writeFileSync(file, "blocker");
 			process.env.PI_CODING_AGENT_DIR = file;
+			clearPackageConfigCache();
 			const { ctx, notify } = makeCtx(file);
 			const result = await handleQolCompaction({ customInstructions: `${QOL_BUDGET_GUARD_SENTINEL} budget guard fired`, preparation: {
 				messagesToSummarize: [makeMessage("only message")], tokensBefore: 180_000, turnPrefixMessages: [],

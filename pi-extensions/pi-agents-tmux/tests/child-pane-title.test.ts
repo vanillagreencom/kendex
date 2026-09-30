@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { clearPackageConfigCache } from "../extensions/subagent/package-config.js";
 import {
 	setTmuxPaneTitleSpawnForTests,
 } from "../extensions/subagent/pane.js";
@@ -37,6 +38,7 @@ function createHarness(env: { childAgent?: string; childPane?: string; tmuxPane?
 	if (env.tmuxPane === undefined) delete process.env.TMUX_PANE;
 	else process.env.TMUX_PANE = env.tmuxPane;
 	process.env.PI_CODING_AGENT_DIR = piUserDir;
+	clearPackageConfigCache();
 	const titleSpawnCalls: Array<{ command: string; args: string[] }> = [];
 	setTmuxPaneTitleSpawnForTests(((command: string, args?: readonly string[]) => {
 		titleSpawnCalls.push({ command, args: [...(args ?? [])] });

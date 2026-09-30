@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { readClaudeBillingIdentityBridge } from "../extensions/qol/bridges.ts";
 import { CLAUDE_BILLING_IDENTITY_SYMBOL } from "../extensions/qol/constants.ts";
 import { type GitState, renderStatusLine } from "../extensions/qol/statusline.ts";
+import { clearPackageConfigCache } from "../extensions/qol/package-config.ts";
 
 const EMAIL = "lane@example.test";
 
@@ -46,6 +47,7 @@ beforeEach(() => {
 	workdir = mkdtempSync(join(tmpdir(), "pi-qol-statusline-account-"));
 	mkdirSync(join(workdir, ".pi"), { recursive: true });
 	process.env.PI_CODING_AGENT_DIR = workdir;
+	clearPackageConfigCache();
 	writeQolConfig({});
 	delete host[CLAUDE_BILLING_IDENTITY_SYMBOL];
 });

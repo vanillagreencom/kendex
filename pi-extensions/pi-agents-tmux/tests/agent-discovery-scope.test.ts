@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { discoverAgents } from "../extensions/subagent/agents.js";
+import { clearPackageConfigCache } from "../extensions/subagent/package-config.js";
 
 const rootTmp = join(import.meta.dir, "..", "..", "..", "tmp", "pi-agents-discovery-scope-tests");
 const originalEnv = {
@@ -34,6 +35,7 @@ beforeEach(() => {
 	mkdirSync(home, { recursive: true });
 	process.env.HOME = home;
 	process.env.PI_CODING_AGENT_DIR = join(home, ".pi", "agent");
+	clearPackageConfigCache();
 });
 
 afterEach(() => {

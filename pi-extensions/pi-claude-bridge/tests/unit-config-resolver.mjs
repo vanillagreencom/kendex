@@ -21,6 +21,7 @@ function withTempDirs(fn) {
 		mkdirSync(user, { recursive: true });
 		mkdirSync(join(project, ".pi"), { recursive: true });
 		process.env.PI_CODING_AGENT_DIR = user;
+		clearPackageConfigCache();
 		process.env.HOME = join(root, "home");
 		delete process.env.CLAUDE_BRIDGE_ISOLATED;
 		return fn({ root, user, project });

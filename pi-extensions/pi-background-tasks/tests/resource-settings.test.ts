@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readResourceControlSettings, type ResourceControlSettings } from "../extensions/resource-control.js";
+import { clearPackageConfigCache } from "../extensions/package-config.js";
 
 test("resource settings parse configured fields and clamp numeric values", () => {
 	const defaults: ResourceControlSettings = {
@@ -44,6 +45,7 @@ test("resource settings parse configured fields and clamp numeric values", () =>
 		try {
 			const user = join(root, "user");
 			process.env.PI_CODING_AGENT_DIR = user;
+			clearPackageConfigCache();
 			if (row.config !== undefined) {
 				mkdirSync(user, { recursive: true });
 				writeFileSync(join(user, "settings.json"), JSON.stringify({

@@ -24,6 +24,7 @@ import {
 	resetStack,
 } from "../src/query-state.ts";
 import { currentRequestLaneId, runInRequestLane } from "../src/request-lane.ts";
+import { clearPackageConfigCache } from "../src/package-config.ts";
 import {
 	cancelScheduledSessionPersistence,
 	schedulePersistSharedSession,
@@ -143,6 +144,7 @@ async function withAgentDir(run) {
 	const agentDir = mkdtempSync(join(tmpdir(), "bridge-agent-dir-"));
 	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = agentDir;
+	clearPackageConfigCache();
 	try {
 		return await run();
 	} finally {

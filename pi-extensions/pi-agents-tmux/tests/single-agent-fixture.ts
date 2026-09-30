@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentConfig } from "../extensions/subagent/agents.js";
 import { setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
-import { recordProjectTrust } from "../extensions/subagent/package-config.js";
+import { clearPackageConfigCache, recordProjectTrust } from "../extensions/subagent/package-config.js";
 import type { SingleResult, SubagentDetails } from "../extensions/subagent/types.js";
 
 const tempRuntimeDirs = new Set<string>();
@@ -179,6 +179,7 @@ export function withPollutedEnv(fn: () => void) {
 		process.env.PI_SUBAGENT_PARENT_SESSION_ID = "polluted-parent";
 		process.env.PI_SUBAGENT_CHILD_AGENT = "polluted-child";
 		process.env.PI_CODING_AGENT_DIR = join(tempRuntime(), "agent-dir");
+		clearPackageConfigCache();
 		fn();
 	} finally {
 		if (previousParent === undefined) delete process.env.PI_SUBAGENT_PARENT_SESSION_ID;

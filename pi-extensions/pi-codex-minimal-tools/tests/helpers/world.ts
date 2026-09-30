@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
+import { clearPackageConfigCache } from "../../src/package-config.js";
 
 /** Own the project and settings directories until the case completes. */
 export function world(t: Pick<TestContext, "after">) {
@@ -22,6 +23,8 @@ export function environment(t: Pick<TestContext, "after">, values: Record<string
 			if (value === undefined) delete process.env[key];
 			else process.env[key] = value;
 		}
+		// The settings reader takes the environment once per window.
+		clearPackageConfigCache();
 	};
 	t.after(() => apply(previous));
 	apply(values);

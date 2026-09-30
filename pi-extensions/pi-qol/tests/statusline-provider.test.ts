@@ -33,6 +33,7 @@ beforeEach(() => {
 	workdir = mkdtempSync(join(tmpdir(), "qol-provider-"));
 	mkdirSync(join(workdir, ".pi"));
 	process.env.PI_CODING_AGENT_DIR = workdir;
+	clearPackageConfigCache();
 	delete process.env.PI_SUBAGENT_CHILD_AGENT;
 	config(true);
 });

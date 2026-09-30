@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
+import { clearPackageConfigCache } from "../src/package-config.js";
 import {
 	connectorCachePath, connectorCacheScopeKey, readCachedConnectors, writeCachedConnectors,
 	connectorMcpServers,
@@ -19,6 +20,7 @@ function withStateDir(fn) {
 	const dir = mkdtempSync(join(tmpdir(), "conn-cache-"));
 	const prev = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = dir;
+	clearPackageConfigCache();
 	try { return fn(dir); } finally {
 		if (prev === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = prev;

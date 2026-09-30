@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ALWAYS_DENIED_BUILTIN_TOOLS, DISALLOWED_BUILTIN_TOOLS, SUBSTITUTED_BUILTIN_TOOLS } from "../src/index.ts";
 import { buildClaudeQueryOptions } from "../src/query-options.ts";
+import { clearPackageConfigCache } from "../src/package-config.ts";
 
 const model = { id: "claude-haiku-4-5", api: "claude-bridge", provider: "pi-claude", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
 const bridgedServer = { "custom-tools": { name: "custom-tools", instance: {} } };
@@ -131,6 +132,7 @@ describe("bridge query options: the Pi agent-dir AGENTS.md is forwarded once wit
 			const oldCwd = process.cwd();
 			try {
 				process.env.PI_CODING_AGENT_DIR = agentDir;
+				clearPackageConfigCache();
 				delete process.env.CLAUDE_BRIDGE_ISOLATED;
 				delete process.env.CLAUDE_BRIDGE_ENABLE_CONNECTORS;
 				process.chdir(outsideRepo);

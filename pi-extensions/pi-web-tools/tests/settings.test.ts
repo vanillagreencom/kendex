@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import { recordProjectTrust } from "../src/package-config.js";
+import { clearPackageConfigCache, recordProjectTrust } from "../src/package-config.js";
 import { loadSettings, settingsDiagnostics } from "../src/settings.js";
 import { isolateEnvironment, settingsEnvironment, tempDir } from "./fixtures.js";
 
@@ -85,6 +85,7 @@ for (const row of [
 		mkdirSync(user);
 		mkdirSync(join(project, ".pi"), { recursive: true });
 		process.env.PI_CODING_AGENT_DIR = user;
+		clearPackageConfigCache();
 		assert.deepEqual(row.run(root, user, project), row.expected);
 	});
 }

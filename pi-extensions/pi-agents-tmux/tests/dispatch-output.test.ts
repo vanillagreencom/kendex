@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test, { after } from "node:test";
 import { formatPreparedParallelSection, parallelResultLimits } from "../extensions/subagent/dispatch.js";
 import { prepareSingleResultForReturn } from "../extensions/subagent/runner.js";
-import { recordProjectTrust } from "../extensions/subagent/package-config.js";
+import { clearPackageConfigCache, recordProjectTrust } from "../extensions/subagent/package-config.js";
 import { DEFAULT_RESULT_MAX_BYTES, DEFAULT_RESULT_MAX_LINES, type PreparedSingleResult } from "../extensions/subagent/types.js";
 
 function writeProjectSettings(cwd: string, config: Record<string, unknown>): void {
@@ -27,6 +27,7 @@ test("parallel output divides total result budgets across returned agents", () =
 	tempDirs.push(cwd);
 	const previousPiDir = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = join(cwd, "agent");
+	clearPackageConfigCache();
 	try {
 		assert.deepEqual(parallelResultLimits(cwd, 8), {
 			maxBytes: Math.floor(DEFAULT_RESULT_MAX_BYTES / 8),
@@ -48,6 +49,7 @@ test("parallel result preparation writes artifacts and section surfaces them bef
 	writeProjectSettings(cwd, { resultMaxBytes: 128, resultMaxLines: 3, preserveFullOutput: true });
 	const previousPiDir = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = join(cwd, "agent");
+	clearPackageConfigCache();
 	try {
 		const largeOutput = Array.from({ length: 80 }, (_, index) => `line-${index}-${"x".repeat(40)}`).join("\n");
 		const prepared = await prepareSingleResultForReturn({

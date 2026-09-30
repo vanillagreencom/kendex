@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { generateQolSummary } from "../extensions/qol/compaction.ts";
+import { clearPackageConfigCache } from "../extensions/qol/package-config.ts";
 
 let workdir = "";
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -17,6 +18,7 @@ const originalHome = process.env.HOME;
 beforeEach(() => {
 	workdir = mkdtempSync(join(tmpdir(), "pi-qol-length-stop-"));
 	process.env.PI_CODING_AGENT_DIR = workdir;
+	clearPackageConfigCache();
 	process.env.HOME = workdir;
 });
 

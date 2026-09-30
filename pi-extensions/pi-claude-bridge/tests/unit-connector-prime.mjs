@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { primeConnectorServers } from "../src/index.ts";
 import { readCachedConnectors } from "../src/connector-cache.ts";
+import { clearPackageConfigCache } from "../src/package-config.ts";
 
 const realFetch = globalThis.fetch;
 let root;
@@ -43,6 +44,7 @@ beforeEach(() => {
 	savedPiDir = process.env.PI_CODING_AGENT_DIR;
 	// Isolate the on-disk connector cache from the real user dir.
 	process.env.PI_CODING_AGENT_DIR = join(root, "agent");
+	clearPackageConfigCache();
 	mkdirSync(configDir, { recursive: true });
 });
 

@@ -13,6 +13,7 @@ import {
 } from "../extensions/persistence.js";
 import type { BackgroundTaskSnapshot } from "../extensions/types.js";
 import { boundedSnapshot } from "./fixtures/bounded-snapshot.js";
+import { clearPackageConfigCache } from "../extensions/package-config.js";
 
 function withPersistenceContext(run: (ctx: NonNullable<ReturnType<PersistenceDeps["getActiveCtx"]>>, sidecarFile: string) => void): void {
 	const root = mkdtempSync(join(tmpdir(), "pi-bg-bounded-"));
@@ -21,6 +22,7 @@ function withPersistenceContext(run: (ctx: NonNullable<ReturnType<PersistenceDep
 	try {
 		const piDir = join(root, "agent");
 		process.env.PI_CODING_AGENT_DIR = piDir;
+		clearPackageConfigCache();
 		process.env.PI_BG_TASK_DIAGNOSTIC_LOG = join(root, "diagnostics.log");
 		const ctx = {
 			cwd: root,

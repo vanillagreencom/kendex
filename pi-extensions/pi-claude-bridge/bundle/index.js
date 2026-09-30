@@ -35575,10 +35575,10 @@ function piUserDir() {
   return userDir().dir;
 }
 var memo = /* @__PURE__ */ new Map();
-var projectPathMemo = /* @__PURE__ */ new Map();
 function clearPackageConfigCache() {
   memo.clear();
-  projectPathMemo.clear();
+  cwdSettings.clear();
+  userSettingsMemo = void 0;
 }
 function openEntry(store, key, now) {
   const entry = store.get(key);
@@ -35609,13 +35609,13 @@ function projectSettingsPath(cwd) {
   }
 }
 var PROJECT_TRUST_SYMBOL = /* @__PURE__ */ Symbol.for("kendex.pi.project-trust");
+var trustRegistry;
 function projectTrustRegistry() {
+  if (trustRegistry !== void 0) return trustRegistry;
   const host = globalThis;
-  const existing = host[PROJECT_TRUST_SYMBOL];
-  if (existing) return existing;
-  const created = {};
-  host[PROJECT_TRUST_SYMBOL] = created;
-  return created;
+  trustRegistry = host[PROJECT_TRUST_SYMBOL] ?? {};
+  host[PROJECT_TRUST_SYMBOL] = trustRegistry;
+  return trustRegistry;
 }
 function projectTrusted(ctx2) {
   try {
@@ -35636,17 +35636,22 @@ function recordProjectTrust(ctx2) {
 function settingsFileTrusted(settingsPath) {
   return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
 }
-function trustedProjectSettingsPathAt(cwd, now) {
-  const project = memoIn(projectPathMemo, cwd, now, () => projectSettingsPath(cwd));
-  return settingsFileTrusted(project) ? project : void 0;
-}
 function trustedProjectSettingsPath(cwd = process.cwd()) {
-  return trustedProjectSettingsPathAt(cwd, performance.now());
+  const view = cwdSettingsAt(cwd, performance.now());
+  return view.trusted ? view.project : void 0;
+}
+var userSettingsMemo;
+function userSettingsPathAt(now) {
+  const known = userSettingsMemo;
+  if (known !== void 0 && now - known.readAt < SETTINGS_RECHECK_MS) return known.path;
+  const path = userDir().settings;
+  userSettingsMemo = { readAt: now, path };
+  return path;
 }
 var pathListsUser;
 var pathLists = /* @__PURE__ */ new Map();
-function userAndProjectSettingsPaths(project) {
-  const user = userDir().settings;
+function userAndProjectSettingsPathsAt(project, now) {
+  const user = userSettingsPathAt(now);
   if (user !== pathListsUser) {
     pathLists.clear();
     pathListsUser = user;
@@ -35659,7 +35664,7 @@ function userAndProjectSettingsPaths(project) {
   return paths;
 }
 function piSettingsPaths(cwd = process.cwd()) {
-  return userAndProjectSettingsPaths(trustedProjectSettingsPathAt(cwd, performance.now()));
+  return cwdSettingsAt(cwd, performance.now()).paths;
 }
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -35726,6 +35731,30 @@ function packageConfigIn(settings, packageId) {
   const config2 = isRecord(manager) ? manager.config : void 0;
   const own = isRecord(config2) ? config2[packageId] : void 0;
   return isRecord(own) ? own : void 0;
+}
+var cwdSettings = /* @__PURE__ */ new Map();
+function cwdSettingsAt(cwd, now) {
+  const known = cwdSettings.get(cwd);
+  const open3 = known !== void 0 && now - known.readAt < SETTINGS_RECHECK_MS ? known : void 0;
+  if (open3 !== void 0 && settingsFileTrusted(open3.project) === open3.trusted) return open3;
+  const project = open3 !== void 0 ? open3.project : projectSettingsPath(cwd);
+  const trusted = settingsFileTrusted(project);
+  const paths = userAndProjectSettingsPathsAt(trusted ? project : void 0, now);
+  const files = readSettingsFilesAt(paths, now);
+  const filesReadAt = memo.get(settingsFilesKey(paths))?.readAt ?? now;
+  const readAt = Math.min(open3 !== void 0 ? open3.readAt : now, filesReadAt);
+  const view = { readAt, project, trusted, paths, files, configs: configsOver(files) };
+  cwdSettings.set(cwd, view);
+  return view;
+}
+var configsByFiles = /* @__PURE__ */ new WeakMap();
+function configsOver(files) {
+  let configs = configsByFiles.get(files);
+  if (!configs) {
+    configs = /* @__PURE__ */ new Map();
+    configsByFiles.set(files, configs);
+  }
+  return configs;
 }
 function installSettingsCacheRefresh(pi2) {
   let unsubscribe;

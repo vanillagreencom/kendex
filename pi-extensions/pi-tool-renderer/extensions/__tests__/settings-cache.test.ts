@@ -4,7 +4,9 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+	clearPackageConfigCache,
 	installSettingsCacheRefresh,
+	piSettingsPaths,
 	piUserDir,
 	readPackageConfig,
 	readSettingsFiles,
@@ -50,6 +52,7 @@ function project(config: Record<string, unknown>): string {
 	writeConfig(join(dotPi, "settings.json"), config);
 	recordProjectTrust({ cwd: join(root, "project"), isProjectTrusted: () => true });
 	process.env.PI_CODING_AGENT_DIR = agentDir;
+	clearPackageConfigCache();
 	return join(root, "project");
 }
 
@@ -81,6 +84,23 @@ describe("readPackageConfig memoization", () => {
 		expect(readPackageConfig(CONFIG_ID, a).commandPreviewChars).toBe(100);
 		monotonicNow = SETTINGS_RECHECK_MS;
 		expect(readPackageConfig(CONFIG_ID, a).commandPreviewChars).toBe(300);
+	});
+
+	test("a cwd that joins a window another cwd opened closes with it", () => {
+		const root = mkdtempSync(join(tmpdir(), "kendex-settings-shared-"));
+		const agentDir = join(root, "agent");
+		const [a, b] = [join(root, "a"), join(root, "b")];
+		for (const dir of [agentDir, a, b]) mkdirSync(dir, { recursive: true });
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		clearPackageConfigCache();
+		// Neither cwd is a trusted project, so both read the user file alone.
+		writeConfig(join(agentDir, "settings.json"), { commandPreviewChars: 100 });
+		expect(readPackageConfig(CONFIG_ID, a).commandPreviewChars).toBe(100);
+		monotonicNow = SETTINGS_RECHECK_MS - 100;
+		expect(readPackageConfig(CONFIG_ID, b).commandPreviewChars).toBe(100);
+		writeConfig(join(agentDir, "settings.json"), { commandPreviewChars: 300 });
+		monotonicNow = SETTINGS_RECHECK_MS;
+		expect(readPackageConfig(CONFIG_ID, b).commandPreviewChars).toBe(300);
 	});
 
 	test("a backward wall-clock step does not extend the window", () => {
@@ -132,13 +152,14 @@ describe("readSettingsFiles fingerprint", () => {
 	});
 });
 
-// piUserDir is kept between calls; each row changes one variable it reads, in
-// order, and the next call must answer for the new environment. Bun's
-// `homedir()` does not follow a `HOME` set at run time, so under this runner
-// the two `HOME` rows only confirm the default root; under Node, Pi's runtime,
-// they catch a root kept past a `HOME` change.
-describe("piUserDir", () => {
-	test("a change to any variable it reads is answered on the next call", () => {
+// piUserDir answers for the environment of each call. The settings reads take
+// the user directory once per window instead, so each row moves the clock past
+// the window before it reads. Bun's `homedir()` does not follow a `HOME` set at
+// run time, so under this runner the two `HOME` rows only confirm the default
+// root; under Node, Pi's runtime, they catch a root kept past a `HOME` change.
+describe("user directory", () => {
+	test("a change to any variable it reads is answered by piUserDir at once and by settings reads after one window", () => {
+		const cwd = mkdtempSync(join(tmpdir(), "kendex-user-dir-"));
 		const rows: Array<{ name: string; agentDir: string | undefined; home: string; expected: () => string }> = [
 			{ name: "override", agentDir: "/pi-root/a", home: "/home-one", expected: () => "/pi-root/a" },
 			{ name: "another override", agentDir: "/pi-root/b", home: "/home-one", expected: () => "/pi-root/b" },
@@ -150,6 +171,8 @@ describe("piUserDir", () => {
 			else process.env.PI_CODING_AGENT_DIR = row.agentDir;
 			process.env.HOME = row.home;
 			expect(piUserDir(), row.name).toBe(row.expected());
+			monotonicNow += SETTINGS_RECHECK_MS;
+			expect(piSettingsPaths(cwd)[0], row.name).toBe(join(row.expected(), "settings.json"));
 		}
 	});
 });

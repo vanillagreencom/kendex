@@ -1,5 +1,6 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { clearPackageConfigCache } from "../../extensions/package-config.ts";
 
 // The .pi boundary stops ancestor settings discovery in this private cwd.
 export function privateLogRoot() {
@@ -21,6 +22,7 @@ export function withLogSettings<T>(run: (cwd: string) => T): T {
 	const previous = process.env.PI_CODING_AGENT_DIR;
 	try {
 		process.env.PI_CODING_AGENT_DIR = join(root, "agent");
+		clearPackageConfigCache();
 		return run(root);
 	} finally {
 		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;

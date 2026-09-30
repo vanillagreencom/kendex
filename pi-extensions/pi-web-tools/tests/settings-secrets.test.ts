@@ -46,6 +46,7 @@ for (const { name, timeout, expected } of [
 		}
 		writeFileSync(join(user, "settings.json"), JSON.stringify({ kendex: { extensionManager: { config: { "@vanillagreen/pi-web-tools": { exaApiKey: "op://vault/exa/key" } } } } }));
 		process.env.PI_CODING_AGENT_DIR = user;
+		clearPackageConfigCache();
 		process.env.PATH = `${bin}:${path ?? ""}`;
 		process.env.PI_WEB_TOOLS_OP_READ_TIMEOUT_MS = "100";
 		const started = performance.now();
@@ -83,6 +84,7 @@ test("settings secret process: op read runs once per change, not once per load",
 	t.mock.method(performance, "now", () => now);
 	const writeKey = (reference: string) => writeFileSync(join(user, "settings.json"), JSON.stringify({ kendex: { extensionManager: { config: { "@vanillagreen/pi-web-tools": { exaApiKey: reference } } } } }));
 	process.env.PI_CODING_AGENT_DIR = user;
+	clearPackageConfigCache();
 	writeKey("op://vault/exa/key");
 	const steps: Array<[string, () => void, string[]]> = [
 		["first load", () => {}, ["op://vault/exa/key"]],
@@ -122,6 +124,7 @@ test("settings secret process: a failed op read is retried after one window", (t
 	t.mock.method(performance, "now", () => now);
 	writeFileSync(join(user, "settings.json"), JSON.stringify({ kendex: { extensionManager: { config: { "@vanillagreen/pi-web-tools": { exaApiKey: "op://vault/exa/key" } } } } }));
 	process.env.PI_CODING_AGENT_DIR = user;
+	clearPackageConfigCache();
 	const steps: Array<[string, () => void, string | undefined, number]> = [
 		["locked", () => {}, undefined, 1],
 		["inside the window", () => { unlocked = true; now = SETTINGS_RECHECK_MS - 1; }, undefined, 1],

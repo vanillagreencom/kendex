@@ -4,7 +4,7 @@
 
 ### 2.0.6
 
-- Settings reads come from memory. A read is answered for one second without touching disk, then the settings files are read again, and an unchanged file is not parsed again. A change made in the extension manager, or a new session, applies at once; a hand edit to `settings.json` applies within one second. Before, every read went to disk, and widgets and renderers read settings many times per repaint.
+- Settings are read through the settings reader every kendex Pi extension now shares. Reads are still answered from memory for one second. After that second, a settings file whose text did not change is not parsed again, and all settings for one working directory come from one read of each file, not one read per package.
 
 ### 2.0.5
 

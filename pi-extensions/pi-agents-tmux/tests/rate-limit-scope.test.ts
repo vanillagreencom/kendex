@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { STATS_BRIDGE_SYMBOL, STATUSLINE_SYMBOL } from "../extensions/subagent/types.js";
+import { clearPackageConfigCache } from "../extensions/subagent/package-config.js";
 
 const RATE_LIMIT_MESSAGE_END = {
 	message: {
@@ -66,6 +67,7 @@ async function runRateLimitScopeCase(childOwnsVisiblePane: boolean): Promise<{
 		if (childOwnsVisiblePane) process.env.PI_SUBAGENT_CHILD_PANE = "1";
 		else delete process.env.PI_SUBAGENT_CHILD_PANE;
 		process.env.PI_CODING_AGENT_DIR = piUserDir;
+		clearPackageConfigCache();
 		process.env.KENDEX_RATE_LIMIT_BACKOFF_LADDER = "0.001";
 		process.env.KENDEX_RATE_LIMIT_WATCHDOG = "1";
 

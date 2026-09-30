@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import qolDefault from "../extensions/qol.ts";
+import { clearPackageConfigCache } from "../extensions/qol/package-config.ts";
 
 interface FakeApi {
 	handlers: Record<string, (event: any, ctx: any) => any>;
@@ -102,6 +103,7 @@ beforeEach(() => {
 	workdir = mkdtempSync(join(tmpdir(), "pi-qol-statusline-toggle-"));
 	mkdirSync(join(workdir, ".pi"), { recursive: true });
 	process.env.PI_CODING_AGENT_DIR = workdir;
+	clearPackageConfigCache();
 	process.env.HOME = workdir;
 	delete process.env.TMUX;
 	delete process.env.TMUX_PANE;
