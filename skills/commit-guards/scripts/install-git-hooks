@@ -132,13 +132,14 @@ nowhere. --check and --uninstall answer from any work tree: reading is safe
 anywhere, and disarming is repository-level.
 
 A commit or push is judged by the scripts the committing work tree carries.
-The helper also records where the scripts directory sits under the arming
-tree's top level, and runs the copy at that place in the committing tree
-when it is there, naming it on stderr (kendex-guards: scripts=PATH (this
-tree)) where it is not the armed copy. A tree carrying no copy there runs
-the armed one. --check reports drift when the two recorded paths no longer
-agree with the arming tree: the armed directory is gone, or this project's
-scripts sit somewhere other than the recorded place.
+The helper also records where the scripts directory sits under the top
+level of its own checkout, and runs the copy at that place in the
+committing tree when it is there, naming it on stderr (kendex-guards:
+scripts=PATH (this tree)) where it is not the armed copy. A tree carrying
+no copy there runs the armed one. --check reports drift when the armed
+directory is gone while the recorded place is still where this checkout
+keeps its scripts, or when this project's armed directory is there but the
+recorded place differs.
 
 Warnings go to stderr, and so does the core.hooksPath remedy, which the
 summary points at rather than repeats: git's report of where the value is
@@ -207,25 +208,39 @@ classify_hooks_path_or_stop
 
 gg_project_rel PROJECT_REL "$SCRIPT_DIR" "$REPO_ABS"
 
-# Where this scripts directory sits under the arming tree's top level, which
-# is where every other checkout of the repository carries its own render:
-# the helper runs the committing tree's copy from there, so a linked work
-# tree is judged by its own revision. Empty when it sits outside that tree,
-# where no checkout carries it and the helper runs the baked directory.
-# --check bakes the same value from the tree it is asked about, and a helper
-# holding another is drift.
+# Where this scripts directory sits under its own checkout's top level,
+# which is where every other checkout of the repository carries its own
+# render: the helper runs the committing tree's copy from there, so a linked
+# work tree is judged by its own revision. Asked of the scripts directory's
+# checkout, never of the --repo tree, so the main checkout's installer asked
+# about a linked work tree bakes and checks the same place it armed. Empty
+# when the directory is in no checkout of this repository, where no checkout
+# carries it and the helper runs the baked directory. --check holds the
+# helper to this value, and a helper holding another is drift, so a place
+# that cannot be resolved is never read as empty.
 INSTALLED_SCRIPTS_REL=""
-scripts_rel() {
-  local top="" top_real="" scripts_real=""
-  gg_git_path top "$REPO_ABS" rev-parse --show-toplevel || return 0
-  [ -n "$top" ] || return 0
-  gg_path top_real gg_physical "$top" || return 0
-  gg_path scripts_real gg_physical "$SCRIPT_DIR" || return 0
-  case "$scripts_real" in
-    "$top_real"/*) INSTALLED_SCRIPTS_REL="${scripts_real#"$top_real/"}" ;;
-  esac
+scripts_rel() { # -> 0 resolved, empty when outside this repository; 1 not
+  local place_common="" place_rel="" inside=""
+  if gg_checkout_place place_common place_rel "$SCRIPT_DIR"; then
+    [ "$place_common" != "$COMMON_DIR" ] || INSTALLED_SCRIPTS_REL="$place_rel"
+    return 0
+  fi
+  # Outside every work tree is an answer, not a failure: a package installed
+  # outside any repository. Inside one, git or the path resolution failed on
+  # a directory the installer is running from, and that is reported.
+  inside="$(
+    unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+    cd -- "$SCRIPT_DIR" 2>/dev/null && git rev-parse --is-inside-work-tree 2>/dev/null
+  )" || inside=""
+  [ "$inside" != "true" ]
 }
-scripts_rel
+if [ "$MODE" != "uninstall" ] && ! scripts_rel; then
+  [ "$MODE" != "check" ] || {
+    summary unknown "scripts-place=$(gg_shown "$SCRIPT_DIR")" "could not determine where this installer's scripts directory sits in its checkout, which the helper is held to"
+    exit 2
+  }
+  gg_fail scripts-place "$(gg_shown "$SCRIPT_DIR")" "could not determine where $(gg_shown "$SCRIPT_DIR") sits in its checkout, which the helper records; nothing was written"
+fi
 if [ "$HOOKS_PATH_ELSEWHERE" -eq 1 ] && [ "$MODE" = "install" ]; then
   if hooks_path_off; then
     warn hooks-path-disabled "$(gg_shown "$CUSTOM_HOOKS")" "core.hooksPath is set and empty, which switches git hooks off entirely, so the guard shims were NOT installed"

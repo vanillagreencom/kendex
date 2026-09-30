@@ -25,37 +25,40 @@ set -euo pipefail
 # Both answers come from git with its redirects unset, because --check may
 # be running inside a hook, where GIT_DIR is exported and git honours it
 # over the directory it was asked about — every directory would then answer
-# with this repository's.
+# with this repository's. The installer asks it too, for the place the
+# helper records. Its locals carry a __ prefix: a caller's variable of the
+# same name would otherwise take the answer inside this function and keep
+# its empty value outside it.
 gg_checkout_place() { # COMMONVAR RELVAR DIR -> 0 when both answers are had
-  local __c="$1" __r="$2" dir="$3" real="" common="" top=""
-  gg_path real gg_physical "$dir" || return 1
-  common="$(
+  local __c="$1" __r="$2" __dir="$3" __real="" __common="" __top=""
+  gg_path __real gg_physical "$__dir" || return 1
+  __common="$(
     unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
-    cd -- "$real" 2>/dev/null && git rev-parse --git-common-dir 2>/dev/null && printf x
+    cd -- "$__real" 2>/dev/null && git rev-parse --git-common-dir 2>/dev/null && printf x
   )" || return 1
-  common="${common%x}"
-  common="${common%"$GG_NL"}"
-  [ -n "$common" ] || return 1
+  __common="${__common%x}"
+  __common="${__common%"$GG_NL"}"
+  [ -n "$__common" ] || return 1
   # git answers relative to the directory it was asked in, which lib/hooks-path.sh
   # absolutizes the same way before resolving.
-  case "$common" in
+  case "$__common" in
     /*) ;;
-    *) common="$real/$common" ;;
+    *) __common="$__real/$__common" ;;
   esac
-  gg_path common gg_physical "$common" || return 1
-  top="$(
+  gg_path __common gg_physical "$__common" || return 1
+  __top="$(
     unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
-    cd -- "$real" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null && printf x
+    cd -- "$__real" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null && printf x
   )" || return 1
-  top="${top%x}"
-  top="${top%"$GG_NL"}"
-  gg_path top gg_physical "$top" || return 1
-  case "$real" in
-    "$top") eval "$__r=''" ;;
-    "$top"/*) eval "$__r=\${real#\"\$top/\"}" ;;
+  __top="${__top%x}"
+  __top="${__top%"$GG_NL"}"
+  gg_path __top gg_physical "$__top" || return 1
+  case "$__real" in
+    "$__top") eval "$__r=''" ;;
+    "$__top"/*) eval "$__r=\${__real#\"\$__top/\"}" ;;
     *) return 1 ;;
   esac
-  eval "$__c=\$common"
+  eval "$__c=\$__common"
 }
 
 # Whether a baked scripts directory is THIS project's, in another checkout of

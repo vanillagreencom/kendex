@@ -160,7 +160,13 @@ LANES="/.agents/skills/commit-guards/scripts"
 fx_two_projects() { armed two-projects; mkdir "$R/sub"; cp -R "$R/.agents" "$R/sub/.agents"; W="$R/sub"; }
 NOTOURS=""
 fx_other_repo() { armed other-repo; NOTOURS="$(new_repo not-ours)"; rebake "'$NOTOURS/.agents/skills/commit-guards/scripts'"; }
+# The main checkout's installer asked about a linked worktree that carries no
+# render, the one kendex's guard check falls back to there: the recorded place
+# is where the installer's own scripts directory sits in its checkout, not
+# where it would sit in the tree it was asked about.
+fx_wt_no_render() { armed wt-no-render; seed; W="$TMP/wt-no-render-wt"; git -C "$R" worktree add -q -b wt-no-render "$W"; INSTALLER_DIR="$R"; }
 run_rows \
+  "the main checkout's installer reads a linked worktree with no render as armed|fx_wt_no_render||check-wt||rc=0 $ARMED_CHECK|" \
   "an unarmed verdict from a linked worktree sends the reader to the main checkout, where the installer does not refuse|fx_wt_unarmed||check-wt||rc=1 ${NA}hook-missing=pre-commit$REARM_WT|" \
   "a worktree whose pre-commit program is gone is not armed: every commit would be blocked|fx_wt_lane_gone||check-wt||rc=1 ${NA}lane-missing=<repo>-wt$LANES/pre-commit$REARM_WT|" \
   "a worktree whose commit-msg program lost its execute bit is not armed either|fx_wt_lane_noexec||check-wt||rc=1 ${NA}lane-disabled=<repo>-wt$LANES/commit-msg$REARM_WT|" \
