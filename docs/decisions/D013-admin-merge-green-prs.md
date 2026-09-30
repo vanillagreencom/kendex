@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-28
 
-**Status**: Active (item 1's zero-bypass required-checks ruleset and the by-hand merge of item 2 → D015)
+**Status**: Active (item 1's zero-bypass required-checks ruleset and the by-hand merge of item 2 → D016)
 
 **Research**: —
 
@@ -24,7 +24,7 @@ The owner's words: "we have to use copilot and pi and we have to get it done as 
 - Owner note 1790641164 states that the three-ruleset layout the Decision gives stands on the default branch of hyprtrade, fleet, hyprtrade-io, kendex, vsys, memsira, drovr and vg, and that the owner's admin-role bypass is gone everywhere. All 17 repositories are set to squash merges only, auto-merge allowed, branch deleted on merge, and the squash commit taking the pull request title and body, with wikis off.
 - The kendex rulesets, their names and their rules were read through the API on 2026-09-29 at 01:07Z (`gh api repos/vanillagreencom/kendex/rules/branches/main` and `gh api repos/vanillagreencom/kendex/rulesets/ID`). The bypass lists read `null` to the lane's token, and the fleet rulesets are not readable by it. The bypass actors, the removed admin-role bypass, the fleet ruleset ids and the layout on the other repositories come from owner note 1790641164.
 - Fleet decision D066, items 2 to 4, says the same for the fleet repository.
-- Owner decision 1790634126 took D003's restatement out of this pull request. KEN-2069 carried D003's status and the rewrite to this decision of [merge-rail.md](../architecture/merge-rail.md), review-gate [adoption.md](../../skills/review-gate/references/adoption.md), review-gate [SKILL.md § 4](../../skills/review-gate/SKILL.md#4-operations) and [merge-pr.md § 5](../../skills/orch/workflows/merge-pr.md#5-execute-the-merge) step 1, with [D015](D015-merge-route-reads-bypass.md).
+- Owner decision 1790634126 took D003's restatement out of this pull request. KEN-2069 carried D003's status and the rewrite to this decision of [merge-rail.md](../architecture/merge-rail.md), review-gate [adoption.md](../../skills/review-gate/references/adoption.md), review-gate [SKILL.md § 4](../../skills/review-gate/SKILL.md#4-operations) and [merge-pr.md § 5](../../skills/orch/workflows/merge-pr.md#5-execute-the-merge) step 1, with [D016](D016-merge-route-reads-bypass.md).
 
 ## Decision
 
@@ -43,4 +43,4 @@ The owner's words: "we have to use copilot and pi and we have to get it done as 
 
 **Revisit When**: the PR run runs every merge-group job for the touched paths (a P1 item the overseer files).
 
-**References**: [D003](D003-one-merge-path.md), [D015](D015-merge-route-reads-bypass.md), KEN-2023, KEN-2069, fleet D066
+**References**: [D003](D003-one-merge-path.md), [D016](D016-merge-route-reads-bypass.md), KEN-2023, KEN-2069, fleet D066

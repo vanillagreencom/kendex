@@ -1,4 +1,4 @@
-# D015: The merge route reads the queue bypass and takes --admin itself; a repository names its own queue paths
+# D016: The merge route reads the queue bypass and takes --admin itself; a repository names its own queue paths
 
 [← Decision Index](INDEX.md)
 

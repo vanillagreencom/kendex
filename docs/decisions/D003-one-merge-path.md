@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-25
 
-**Status**: Active (one merge path, zero bypass → D013; the gate-repair break-glass → D015)
+**Status**: Active (one merge path, zero bypass → D013; the gate-repair break-glass → D016)
 
 **Research**: —
 
