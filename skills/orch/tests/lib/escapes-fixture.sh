@@ -10,10 +10,12 @@
 # this file out of the run. The sourcing suite has sourced git-env.sh.
 
 # escapes_checkout DIR — DIR a git checkout on main whose origin is the bare
-# repository DIR.origin, with git's background maintenance off.
+# repository DIR.origin, with git's background maintenance off in both.
 escapes_checkout() {
   local dir="$1"
   git init -q --bare "$dir.origin" || return 1
+  git -C "$dir.origin" config gc.auto 0 || return 1
+  git -C "$dir.origin" config maintenance.auto false || return 1
   git -C "$dir.origin" symbolic-ref HEAD refs/heads/main || return 1
   git init -q "$dir" || return 1
   git -C "$dir" config gc.auto 0 || return 1

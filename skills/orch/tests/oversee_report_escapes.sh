@@ -180,10 +180,11 @@ assert_eq "$(later_cap "$LIB")" "2026-09-28	1" "months after the cap week, its c
 
 # The count fetches first: a revert another clone pushed after this checkout
 # last fetched is counted. The world's copy takes the push, so the world
-# itself stays as WANT reads it.
+# itself stays as WANT reads it. The copy keeps the origin's maintenance
+# settings; a clone does not inherit them, so each clone sets its own.
 cp -R "$WORLD.origin" "$TMP_ROOT/stale.origin"
-git clone -q "$TMP_ROOT/stale.origin" "$TMP_ROOT/stale"
-git clone -q "$TMP_ROOT/stale.origin" "$TMP_ROOT/other"
+git clone -q -c gc.auto=0 -c maintenance.auto=false "$TMP_ROOT/stale.origin" "$TMP_ROOT/stale"
+git clone -q -c gc.auto=0 -c maintenance.auto=false "$TMP_ROOT/stale.origin" "$TMP_ROOT/other"
 escapes_commit "$TMP_ROOT/other" "$(at 2026-09-30T06:00:00Z)" "Revert \"feat: a number inside a longer one (#17)\" (#19)"
 git -C "$TMP_ROOT/other" push -q origin main
 assert_eq "$(count "$LIB" "$TMP_ROOT/stale" | tail -n 1)" "2026-09-28	2" "a revert on origin that this checkout has not fetched is counted"
@@ -215,13 +216,17 @@ echo "--- an unread count ---"
 
 NO_ORIGIN="$TMP_ROOT/no-origin"
 git init -q "$NO_ORIGIN"
+git -C "$NO_ORIGIN" config gc.auto 0
+git -C "$NO_ORIGIN" config maintenance.auto false
 NOT_A_CHECKOUT="$TMP_ROOT/not-a-checkout"
 mkdir "$NOT_A_CHECKOUT"
 LOCAL_ORIGIN="$TMP_ROOT/local-origin"
-git clone -q "$WORLD.origin" "$LOCAL_ORIGIN"
+git clone -q -c gc.auto=0 -c maintenance.auto=false "$WORLD.origin" "$LOCAL_ORIGIN"
 # An origin whose transport never answers: the fetch outlives its bound.
 HANGS="$TMP_ROOT/hangs"
 git init -q "$HANGS"
+git -C "$HANGS" config gc.auto 0
+git -C "$HANGS" config maintenance.auto false
 git -C "$HANGS" remote add origin ssh://example.invalid/owner/repo
 git -C "$HANGS" config core.sshCommand "sleep 2; :"
 NOT_EXECUTABLE="$TMP_ROOT/linear-not-executable"
