@@ -65,27 +65,43 @@ pub fn git_recorded_test(module_path: &str, function: &str) -> Option<PathBuf> {
 
     const INNER: &str = "KENDEX_TEST_HISTORY_INNER";
     const TRACE: &str = "KENDEX_TEST_HISTORY_TRACE";
+    const REAL_GIT: &str = "KENDEX_TEST_HISTORY_GIT";
     if std::env::var_os(INNER).is_some() {
         return Some(std::env::var_os(TRACE).unwrap().into());
     }
+    let parent_path = std::env::var_os("PATH").unwrap();
+    let real_git = std::env::split_paths(&parent_path)
+        .map(|dir| dir.join("git"))
+        .find(|path| kendex_core::fs::is_executable(path))
+        .unwrap();
+    // Keep the selected installation's bin directory, including symlinks:
+    // Git and its helpers need not live in the system directories.
+    let real_git = std::path::absolute(real_git).unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let root = rooted(&tmp);
     let recorder = root.join("git");
     std::fs::write(&recorder, concat!(
         "#!/bin/sh\n",
         "{ printf '%s\\0' \"$@\"; printf '\\0'; } >> \"$KENDEX_TEST_HISTORY_TRACE\" || exit 1\n",
-        "exec /usr/bin/git \"$@\"\n",
+        "exec \"$KENDEX_TEST_HISTORY_GIT\" \"$@\"\n",
     )).unwrap();
     std::fs::set_permissions(&recorder, std::fs::Permissions::from_mode(0o755)).unwrap();
     let trace = root.join("calls");
-    let path = format!("{}:/usr/bin:/bin", root.display());
+    let path = std::env::join_paths([
+        root.as_path(),
+        real_git.parent().unwrap(),
+        Path::new("/usr/bin"),
+        Path::new("/bin"),
+    ])
+    .unwrap();
     let output = reexecute_test(
         module_path,
         function,
         &[
             (INNER, "1"),
             (TRACE, trace.to_str().unwrap()),
-            ("PATH", &path),
+            (REAL_GIT, real_git.to_str().unwrap()),
+            ("PATH", path.to_str().unwrap()),
             ("HOME", root.to_str().unwrap()),
             ("GIT_CONFIG_NOSYSTEM", "1"),
         ],

@@ -45,6 +45,7 @@ mod edits_and_forks;
 mod fixture_manifest_paths;
 mod gemini;
 mod gemini_reports;
+mod git_recorder;
 mod guard_repo_paths;
 mod guard_skill_roots;
 mod guard_timeout_budget;

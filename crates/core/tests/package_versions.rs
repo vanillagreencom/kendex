@@ -822,7 +822,13 @@ fn history_projection_matches_first_parent_literal_and_bounded_timeline() {
             .as_ref(),
         complete.first()
     );
-    for commit in [&complete[0].commit, &complete[199].commit, &first, &side] {
+    for commit in [
+        &complete[0].commit,
+        &complete[199].commit,
+        &merged[0].commit,
+        &first,
+        &side,
+    ] {
         assert_eq!(
             history::subtree_commit(&mirror, &tip, rel, commit)
                 .unwrap()
