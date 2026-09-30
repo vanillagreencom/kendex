@@ -6,7 +6,7 @@
     },
     "extensions/hooks.ts": {
       "events": ["agent_before_settle", "agent_settled", "session_start", "tool_call", "tool_result", "turn_end"],
-      "calls": ["ctx.isIdle", "ctx.ui.notify", "pi.on", "pi.sendMessage"]
+      "calls": ["ctx.ui.notify", "pi.on", "pi.sendMessage"]
     },
     "extensions/lane-mail-wake.ts": {
       "events": ["agent_settled", "session_shutdown", "session_start"],
