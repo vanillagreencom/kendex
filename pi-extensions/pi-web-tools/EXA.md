@@ -23,7 +23,7 @@
 
 Session storage uses generated content ids internally so the assistant can call `get_web_content`. Compact renderers intentionally hide those ids from users and show URLs/source metadata instead.
 
-`get_web_content` labels search/answer/similar/code stored text as `stored excerpt` when it came from provider-capped Exa text. Direct `web_fetch` paths can show `full` when the extension stored the full extracted text before preview truncation.
+`get_web_content` labels search/answer/similar/code stored text as `stored excerpt` when it came from provider-capped Exa text. Direct `web_fetch` paths show `full` when the extension stored the full extracted text before preview truncation, and `source cut at N bytes` when the source was cut at the byte limit or the call's byte budget.
 
 ## Settings and keys
 

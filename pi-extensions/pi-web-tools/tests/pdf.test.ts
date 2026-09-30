@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import { extractPdfText, fetchLocalPdfText } from "../src/extract/pdf.js";
-import { tempDir } from "./fixtures.js";
+import { readLocalPdfWithin } from "../src/extract/byte-budget.js";
+import { extractPdfText, extractPdfTextBest } from "../src/extract/pdf.js";
+import { tempDir, urlReads } from "./fixtures.js";
 
 for (const { name, operators, expected } of [
 	{ name: "Tj", operators: "(Hello PDF) Tj", expected: "Hello PDF" },
@@ -13,9 +14,9 @@ for (const { name, operators, expected } of [
 		assert.equal(extractPdfText(`%PDF-1.4\nBT\n${operators}\nET`).text.trim(), expected);
 	});
 }
-test("local PDF uses the basic parser when pdftotext is disabled", async (t) => {
+test("a read local PDF uses the basic parser when pdftotext is disabled", async (t) => {
 	const path = join(tempDir(t), "sample.pdf");
 	writeFileSync(path, "%PDF-1.4\nBT\n(Local PDF) Tj\nET");
-	const result = await fetchLocalPdfText(path, { preferPdftotext: false });
+	const result = await extractPdfTextBest(await readLocalPdfWithin(path, urlReads(t)), { preferPdftotext: false });
 	assert.deepEqual({ text: result.text.trim(), extraction: result.metadata.extraction }, { text: "Local PDF", extraction: "pdf-basic" });
 });

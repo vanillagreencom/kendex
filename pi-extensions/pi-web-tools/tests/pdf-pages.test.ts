@@ -30,21 +30,23 @@ for (const { name, dpi, area, expected } of [
 }
 
 for (const { name, info, expected } of [
-	{ name: "largest listed page sets the DPI", info: "Pages:           3\nPage    1 size:  612 x 792 pts (letter)\nPage    2 size:  1224 x 1584 pts\n", expected: { args: ["-png", "-r", "103", "-f", "1", "-l", "2"], pageCount: 3, images: 1 } },
-	{ name: "no page size falls back to the pixel box", info: "Pages:           1\n", expected: { args: ["-png", "-scale-to", "2000", "-f", "1", "-l", "1"], pageCount: 1, images: 1 } },
+	{ name: "largest listed page sets the DPI", info: "Pages:           3\nPage    1 size:  612 x 792 pts (letter)\nPage    2 size:  1224 x 1584 pts\n", expected: { infoArgs: ["-f", "1", "-l", "2"], args: ["-png", "-cropbox", "-r", "103", "-f", "1", "-l", "2"], pageCount: 3, images: 1 } },
+	{ name: "no page size falls back to the pixel box", info: "Pages:           1\n", expected: { infoArgs: ["-f", "1", "-l", "2"], args: ["-png", "-cropbox", "-scale-to", "2000", "-f", "1", "-l", "1"], pageCount: 1, images: 1 } },
 ]) {
 	test(`rasterizePdfPages: ${name}`, async (t) => {
 		const root = tempDir(t);
 		const pdfinfo = join(root, "pdfinfo");
 		const pdftoppm = join(root, "pdftoppm");
 		const argsFile = join(root, "args");
+		const infoArgsFile = join(root, "pdfinfo.args");
 		writeFileSync(join(root, "pdfinfo.out"), info);
-		writeFileSync(pdfinfo, `#!/bin/sh\ncat -- '${join(root, "pdfinfo.out")}'\n`);
+		writeFileSync(pdfinfo, `#!/bin/sh\nprintf '%s\\n' "$@" > '${infoArgsFile}'\ncat -- '${join(root, "pdfinfo.out")}'\n`);
 		writeFileSync(pdftoppm, `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsFile}'\nfor last; do :; done\nprintf png > "$last-1.png"\n`);
 		chmodSync(pdfinfo, 0o755);
 		chmodSync(pdftoppm, 0o755);
 		const result = await rasterizePdfPages(new Uint8Array([37, 80, 68, 70]), { maxPages: 2, dpi: 150, pdfinfoCommand: pdfinfo, pdftoppmCommand: pdftoppm });
 		const args = readFileSync(argsFile, "utf8").trim().split("\n").slice(0, -2);
-		assert.deepEqual({ args, pageCount: result.pageCount, images: result.images.length }, expected);
+		const infoArgs = readFileSync(infoArgsFile, "utf8").trim().split("\n").slice(0, -1);
+		assert.deepEqual({ infoArgs, args, pageCount: result.pageCount, images: result.images.length }, expected);
 	});
 }

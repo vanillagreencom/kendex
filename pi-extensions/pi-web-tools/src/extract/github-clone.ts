@@ -1,8 +1,9 @@
 import { execFile, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
-import { open, stat } from "node:fs/promises";
-import { dirname, join, normalize, relative, resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
+import { realpath, stat } from "node:fs/promises";
+import { join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
+import { TEXT_READ_BYTE_LIMIT, type BoundedRead, type UrlReads } from "./byte-budget.js";
 
 import { piUserDir } from "../package-config.js";
 
@@ -76,8 +77,8 @@ export interface CachedBlob {
 	content: string;
 	/** The file's size on disk. */
 	bytes: number;
-	/** The byte limit the read stopped at when the file is larger; absent when the file was read whole. */
-	truncatedAtBytes?: number;
+	/** Where the read was cut and by which ceiling; absent when the file was read whole. */
+	cut?: BoundedRead["cut"];
 }
 
 function isMissing(error: unknown): boolean {
@@ -85,31 +86,37 @@ function isMissing(error: unknown): boolean {
 	return code === "ENOENT" || code === "ENOTDIR";
 }
 
-/** Reads a file from the clone cache, sizing it before the read and reading at most `maxBytes` of it. */
-export async function readBlobFromCache(cachePath: string, path: string, maxBytes: number): Promise<CachedBlob | null> {
-	const target = normalize(join(cachePath, path));
-	if (!isInside(cachePath, target)) return null;
-	const info = await stat(target).catch((error: unknown) => { if (isMissing(error)) return null; throw error; });
-	if (!info?.isFile()) return null;
-	const length = Math.min(info.size, maxBytes);
-	const handle = await open(target, "r");
-	const buffer = Buffer.alloc(length);
-	let bytesRead: number;
-	try {
-		({ bytesRead } = await handle.read(buffer, 0, length, 0));
-	} finally {
-		await handle.close();
-	}
-	const content = buffer.toString("utf8", 0, bytesRead);
-	return { content, bytes: info.size, ...(info.size > maxBytes ? { truncatedAtBytes: maxBytes } : {}) };
+/** The canonical path of `path` under the clone cache with every symlink resolved, or null when it is missing or resolves
+ * outside the cache, so a committed symlink cannot reach a file or directory beyond it. */
+async function resolveInCache(cachePath: string, path: string): Promise<{ root: string; target: string } | null> {
+	const resolved = await Promise.all([realpath(cachePath), realpath(join(cachePath, path))]).catch((error: unknown) => { if (isMissing(error)) return null; throw error; });
+	if (!resolved) return null;
+	const [root, target] = resolved;
+	return target === root || isInside(root, target) ? { root, target } : null;
+}
+
+/** Reads a file from the clone cache through `reads`, which sizes it before the read and reads at most its ceiling. */
+export async function readBlobFromCache(cachePath: string, path: string, reads: UrlReads): Promise<CachedBlob | null> {
+	const resolved = await resolveInCache(cachePath, path);
+	if (!resolved || !(await stat(resolved.target)).isFile()) return null;
+	const read = await reads.readFile(resolved.target, TEXT_READ_BYTE_LIMIT);
+	return { content: read.bytes.toString("utf8"), bytes: read.size, ...(read.cut ? { cut: read.cut } : {}) };
 }
 
 export interface CacheTreeEntry { name: string; path: string; type: "dir" | "file"; size?: number }
 
 export function readTreeFromCache(cachePath: string, path = "", limit = 200): { entries: CacheTreeEntry[]; truncated: boolean } | null {
-	const target = normalize(join(cachePath, path));
-	if (!isInside(cachePath, target) && resolve(target) !== resolve(cachePath)) return null;
-	if (!existsSync(target) || !statSync(target).isDirectory()) return null;
+	let root: string;
+	let target: string;
+	try {
+		root = realpathSync(cachePath);
+		target = realpathSync(join(cachePath, path));
+	} catch (error) {
+		if (isMissing(error)) return null;
+		throw error;
+	}
+	if (target !== root && !isInside(root, target)) return null;
+	if (!statSync(target).isDirectory()) return null;
 	const dirEntries = readdirSync(target, { withFileTypes: true })
 		.filter((entry) => entry.name !== ".git")
 		.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
@@ -118,16 +125,16 @@ export function readTreeFromCache(cachePath: string, path = "", limit = 200): { 
 		const full = join(target, entry.name);
 		let size: number | undefined;
 		if (entry.isFile()) try { size = statSync(full).size; } catch { /* ignore */ }
-		const rel = relative(cachePath, full);
+		const rel = relative(root, full);
 		return { name: entry.name, path: rel, type: entry.isDirectory() ? "dir" : "file", size } as CacheTreeEntry;
 	});
 	return { entries, truncated: total > limit };
 }
 
-export async function readReadmeFromCache(cachePath: string, maxBytes: number): Promise<CachedBlob | null> {
+export async function readReadmeFromCache(cachePath: string, reads: UrlReads): Promise<CachedBlob | null> {
 	const candidates = ["README.md", "README.MD", "Readme.md", "readme.md", "README.markdown", "README.rst", "README.txt", "README"];
 	for (const name of candidates) {
-		const readme = await readBlobFromCache(cachePath, name, maxBytes);
+		const readme = await readBlobFromCache(cachePath, name, reads);
 		if (readme) return readme;
 	}
 	return null;

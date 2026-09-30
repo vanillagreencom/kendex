@@ -67,6 +67,8 @@ export async function rasterizePdfPages(buffer: ArrayBuffer | Uint8Array, option
 		const lastPage = Math.min(pageCount, maxPages);
 		await execFileAsync(command, [
 			"-png",
+			// pdfinfo's page size is the CropBox; rendering the same box keeps each page within the pixel budget.
+			"-cropbox",
 			...pageScaleArgs(dpi, layout.maxPageArea),
 			"-f", "1",
 			"-l", String(lastPage),

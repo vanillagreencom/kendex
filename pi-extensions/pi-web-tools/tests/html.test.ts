@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { htmlToMarkdown } from "../src/extract/http.js";
 import { assessExtractionQuality, fetchViaJina } from "../src/extract/html.js";
+import { urlReads } from "./fixtures.js";
 
 for (const { name, chrome, absent } of [
 	{ name: "script", chrome: "<script>bad()</script>", absent: /bad/ },
@@ -18,7 +19,7 @@ for (const { name, chrome, absent } of [
 }
 for (const { name, body, expected } of [
 	{ name: "nested same-name tags", body: '<p>Keep A</p><div class="navbox"><div>inner<div>deeper</div></div>still nav</div><p>Keep B</p>', expected: "Keep A\nKeep B" },
-	{ name: "never-closed block keeps its content", body: '<p>Keep A</p><div class="sidebar"><p>Orphan text</p><p>Keep B</p>', expected: "Keep A\nOrphan text\nKeep B" },
+	{ name: "never-closed block keeps its content", body: '<p>Keep A</p><div class="sidebar"><div>Inner</div><p>Orphan text</p><p>Keep B</p>', expected: "Keep A\nInner\nOrphan text\nKeep B" },
 	{ name: "closing tag inside a nested tag's attribute", body: '<p>Keep A</p><div class="navbox"><div data-x="</div>">inner</div>still nav</div><p>Keep B</p>', expected: "Keep A\nKeep B" },
 	{ name: "sequential blocks of different tags", body: '<p>Keep A</p><ul class="breadcrumbs"><li>Home</li></ul><p>Keep B</p><figure class="thumb"><figcaption>cap</figcaption></figure><p>Keep C</p>', expected: "Keep A\nKeep B\nKeep C" },
 	{ name: "chrome nested in chrome", body: '<p>Keep A</p><div class="infobox"><table class="navbox"><tr><td>x</td></tr></table>info</div><p>Keep B</p>', expected: "Keep A\nKeep B" },
@@ -40,7 +41,7 @@ for (const { name, markdown, expected } of [
 		assert.deepEqual(Object.fromEntries(Object.keys(expected).map((key) => [key, values[key as keyof typeof values]])), expected);
 	});
 }
-test("Jina Reader parses title and markdown fields", async () => {
-	const result = await fetchViaJina("https://x.example", { fetchImpl: async () => new Response("Title: Demo\nURL Source: https://x.example\n\nMarkdown Content:\n# Demo\n\nbody") });
+test("Jina Reader parses title and markdown fields", async (t) => {
+	const result = await fetchViaJina("https://x.example", { reads: urlReads(t), fetchImpl: async () => new Response("Title: Demo\nURL Source: https://x.example\n\nMarkdown Content:\n# Demo\n\nbody") });
 	assert.deepEqual({ title: result.title, heading: result.markdown.includes("# Demo") }, { title: "Demo", heading: true });
 });

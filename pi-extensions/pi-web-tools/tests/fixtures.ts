@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
+import { ByteBudget, type UrlReads } from "../src/extract/byte-budget.js";
 
 import { clearPackageConfigCache } from "../src/package-config.js";
 
@@ -10,6 +11,28 @@ export function tempDir(t: TestContext): string {
 	const root = mkdtempSync(join(tmpdir(), "pi-web-tools-test-"));
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 	return root;
+}
+
+/** One URL's reads under a fresh web_fetch call budget of `total` bytes, released when the test ends. */
+export function urlReads(t: TestContext, total?: number): UrlReads {
+	const reads = new ByteBudget(total).openUrl();
+	t.after(() => reads.release());
+	return reads;
+}
+
+/** A body of `chunks` chunks of `chunkBytes` bytes, pulled one at a time, that counts the chunks pulled and records a cancel. */
+export function streamedBody(chunks: number, chunkBytes: number) {
+	const probe = { pulled: 0, cancelled: false };
+	const chunk = new Uint8Array(chunkBytes).fill(0x61);
+	const body = new ReadableStream<Uint8Array>({
+		pull(controller) {
+			if (probe.pulled === chunks) return controller.close();
+			probe.pulled++;
+			controller.enqueue(chunk);
+		},
+		cancel() { probe.cancelled = true; },
+	}, { highWaterMark: 0 });
+	return { body, probe };
 }
 
 export function isolateEnvironment(t: TestContext, keys: string[]): void {

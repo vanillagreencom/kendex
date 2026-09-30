@@ -1,34 +1,44 @@
-import { ByteBudget, readTextWithin } from "./byte-budget.js";
+import { readTextWithin, type BoundedRead, type UrlReads } from "./byte-budget.js";
 
 export interface HtmlExtraction {
 	title?: string;
 	markdown: string;
 }
 
-const ENTITY_MAP: Record<string, string> = {
-	"&nbsp;": " ",
-	"&amp;": "&",
-	"&lt;": "<",
-	"&gt;": ">",
-	"&quot;": '"',
-	"&#39;": "'",
-	"&apos;": "'",
-	"&hellip;": "…",
-	"&mdash;": "—",
-	"&ndash;": "–",
-	"&laquo;": "«",
-	"&raquo;": "»",
-	"&copy;": "©",
-	"&reg;": "®",
-	"&trade;": "™",
+const NAMED_ENTITIES: Record<string, string> = {
+	nbsp: " ",
+	amp: "&",
+	lt: "<",
+	gt: ">",
+	quot: '"',
+	"#39": "'",
+	apos: "'",
+	hellip: "…",
+	mdash: "—",
+	ndash: "–",
+	laquo: "«",
+	raquo: "»",
+	copy: "©",
+	reg: "®",
+	trade: "™",
 };
 
+/** Named entities an `&amp;` in front of them still decodes: `&amp;lt;` reads as `<`, `&amp;nbsp;` as `&nbsp;`. */
+const AFTER_AMP = "lt|gt|quot|#39|apos|hellip|mdash|ndash|laquo|raquo|copy|reg|trade";
+/** Groups: 1 a named entity after `&amp;`, 2 a decimal entity after `&amp;`, 3 a named entity, 4 a decimal entity; none is a bare `&amp;`. */
+const DECIMAL_OR_NAMED_ENTITY = new RegExp(`&(?:amp;(?:(${AFTER_AMP});|#(\\d+);)?|(nbsp|${AFTER_AMP});|#(\\d+);)`, "g");
+
+/** Decodes named and decimal entities in one scan, then hexadecimal ones, so a decimal entity that spells out a hexadecimal one
+ * decodes twice. */
 function decodeEntities(text: string): string {
-	let out = text;
-	for (const [k, v] of Object.entries(ENTITY_MAP)) out = out.split(k).join(v);
-	out = out.replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)));
-	out = out.replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)));
-	return out;
+	return text
+		.replace(DECIMAL_OR_NAMED_ENTITY, (_match, afterAmp?: string, afterAmpDecimal?: string, named?: string, decimal?: string) => {
+			const name = afterAmp ?? named;
+			if (name !== undefined) return NAMED_ENTITIES[name]!;
+			const code = afterAmpDecimal ?? decimal;
+			return code === undefined ? "&" : String.fromCodePoint(Number(code));
+		})
+		.replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)));
 }
 
 const CHROME_CLASS_EXACT = [
@@ -114,6 +124,109 @@ function stripRoleNavigation(html: string): string {
 	return html.replace(/<(div|section|nav|aside)\b[^>]*role=["']navigation["'][^>]*>[\s\S]*?<\/\1>/gi, "");
 }
 
+/** The markup rule for the tag at a `<`, tried in this order. Groups: 1 a block dropped with its content, by name prefix; 2 the
+ * same, by whole name; 3 a block's closing tag; 4 a line break; 5 a heading level; 6 a list item; 7 a link's href; 8 any other tag.
+ * A dropped block without a closing tag after it counts as any other tag. */
+const TAG_RULE = /<(?:(script|style|noscript|svg)|(header|nav|footer|aside|menu|form|button)\b|\/(?:h[1-6]|p|li|blockquote|pre|tr|div|section|article)>()|br\s*\/?>()|h([1-4])[^>]*>|li[^>]*>()|a\s+[^>]*href=["']([^"']+)["'][^>]*>|[^>]+>())/iy;
+const HEADING_PREFIX = ["", "\n# ", "\n## ", "\n### ", "\n#### "];
+const LINK_CLOSE = /<\/a>/iy;
+
+/** Converts the tags of one document to markdown text in a single left-to-right scan, building the output once. */
+class MarkupScan {
+	readonly #html: string;
+	/** Per dropped-block name: where its next closing tag is, or -1 from where on none is left. */
+	readonly #closes = new Map<string, { from: number; at: number; re: RegExp }>();
+	/** Set once a link reaches no closing tag: none is left for any later link either. */
+	#noLinkClose = false;
+
+	constructor(html: string) {
+		this.#html = html;
+	}
+
+	/** The markdown text of the whole document, entities not yet decoded. */
+	convert(): string {
+		const out: string[] = [];
+		this.#scan(0, out, false);
+		return out.join("");
+	}
+
+	/** Appends the text from `from` on to `out`. Inside a link it stops at the link's closing tag and returns the index after it,
+	 * or -1 when none follows; otherwise it returns the document's length. */
+	#scan(from: number, out: string[], inLink: boolean): number {
+		const html = this.#html;
+		let cursor = from;
+		for (;;) {
+			const lt = html.indexOf("<", cursor);
+			if (lt < 0) {
+				out.push(html.slice(cursor));
+				return inLink ? -1 : html.length;
+			}
+			if (lt > cursor) out.push(html.slice(cursor, lt));
+			if (inLink) {
+				LINK_CLOSE.lastIndex = lt;
+				if (LINK_CLOSE.test(html)) return LINK_CLOSE.lastIndex;
+			}
+			TAG_RULE.lastIndex = lt;
+			const match = TAG_RULE.exec(html);
+			if (!match) {
+				out.push("<");
+				cursor = lt + 1;
+				continue;
+			}
+			cursor = TAG_RULE.lastIndex;
+			const dropped = match[1] ?? match[2];
+			if (dropped !== undefined) {
+				const close = this.#closeAfter(dropped, cursor);
+				if (close >= 0) {
+					cursor = close;
+					continue;
+				}
+				const gt = html.indexOf(">", cursor);
+				if (gt < 0) {
+					out.push(html.slice(lt));
+					return inLink ? -1 : html.length;
+				}
+				if (!inLink) out.push(" ");
+				cursor = gt + 1;
+			} else if (match[3] !== undefined || match[4] !== undefined) out.push("\n");
+			else if (match[5] !== undefined) out.push(HEADING_PREFIX[Number(match[5])]!);
+			else if (match[6] !== undefined) out.push("\n- ");
+			else if (match[7] !== undefined && !inLink) cursor = this.#link(lt, cursor, match[7], out);
+			else if (!inLink) out.push(" ");
+		}
+	}
+
+	/** Replaces a link with its text and href, or with a space for its opening tag alone when no closing tag follows. */
+	#link(lt: number, openEnd: number, href: string, out: string[]): number {
+		const content: string[] = [];
+		const end = this.#noLinkClose ? -1 : this.#scan(openEnd, content, true);
+		if (end < 0) {
+			this.#noLinkClose = true;
+			out.push(" ");
+			return this.#html.indexOf(">", lt) + 1;
+		}
+		const text = content.join("").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+		if (text) out.push(href.startsWith("#") ? text : `${text} (${href})`);
+		return end;
+	}
+
+	/** The index after the first closing tag of `name` at or after `from`, or -1 when none follows. */
+	#closeAfter(name: string, from: number): number {
+		const key = name.toLowerCase();
+		let entry = this.#closes.get(key);
+		if (!entry) {
+			entry = { from: -1, at: -1, re: new RegExp(`</${key}>`, "ig") };
+			this.#closes.set(key, entry);
+		}
+		if (entry.from >= 0 && from >= entry.from && (entry.at < 0 || from <= entry.at)) return entry.at < 0 ? -1 : entry.at + key.length + 3;
+		entry.re.lastIndex = from;
+		const found = entry.re.exec(this.#html);
+		entry.from = from;
+		entry.at = found ? found.index : -1;
+		return found ? entry.re.lastIndex : -1;
+	}
+}
+
 export function htmlToMarkdown(html: string): HtmlExtraction {
 	const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.replace(/\s+/g, " ").trim();
 	let main = html.match(/<main\b[^>]*>([\s\S]*?)<\/main>/i)?.[1]
@@ -122,37 +235,13 @@ export function htmlToMarkdown(html: string): HtmlExtraction {
 		?? html;
 	main = stripRoleNavigation(main);
 	main = stripChromeBlocks(main);
-	let body = main
-		.replace(/<script[\s\S]*?<\/script>/gi, "")
-		.replace(/<style[\s\S]*?<\/style>/gi, "")
-		.replace(/<noscript[\s\S]*?<\/noscript>/gi, "")
-		.replace(/<svg[\s\S]*?<\/svg>/gi, "")
-		.replace(/<(header|nav|footer|aside|menu)\b[\s\S]*?<\/\1>/gi, "")
-		.replace(/<form\b[\s\S]*?<\/form>/gi, "")
-		.replace(/<button\b[\s\S]*?<\/button>/gi, "")
-		.replace(/<\/(h[1-6]|p|li|blockquote|pre|tr|div|section|article)>/gi, "\n")
-		.replace(/<br\s*\/?>/gi, "\n")
-		.replace(/<h1[^>]*>/gi, "\n# ")
-		.replace(/<h2[^>]*>/gi, "\n## ")
-		.replace(/<h3[^>]*>/gi, "\n### ")
-		.replace(/<h4[^>]*>/gi, "\n#### ")
-		.replace(/<li[^>]*>/gi, "\n- ")
-		.replace(/<a\s+[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_m, href, label) => {
-			const text = label.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
-			if (!text) return "";
-			if (href.startsWith("#")) return text;
-			return `${text} (${href})`;
-		})
-		.replace(/<[^>]+>/g, " ");
-	body = decodeEntities(body)
-		.replace(/[ \t]+/g, " ")
+	const markdown = decodeEntities(new MarkupScan(main).convert())
+		.replace(/[ \t]*\t[ \t]*| {2,}/g, " ")
 		.split(/\r?\n/)
 		.map((line) => line.trim())
 		.filter((line) => line && line !== "-" && line !== "•")
-		.join("\n")
-		.replace(/\n{3,}/g, "\n\n")
-		.trim();
-	return { title: title ? decodeEntities(title) : undefined, markdown: body };
+		.join("\n");
+	return { title: title ? decodeEntities(title) : undefined, markdown };
 }
 
 const BLOCKED_PATTERNS: RegExp[] = [
@@ -194,27 +283,28 @@ export interface JinaFetchOptions {
 	fetchImpl?: typeof fetch;
 	signal?: AbortSignal;
 	apiKey?: string;
-	byteBudget?: ByteBudget;
+	/** This URL's reads under the calling web_fetch call's budget. */
+	reads: UrlReads;
 }
 
 export interface JinaResult {
 	title?: string;
 	markdown: string;
 	source: "jina";
-	/** The byte limit the Jina body was cut at; absent when it was read whole. */
-	truncatedAtBytes?: number;
+	/** Where the Jina body was cut and by which ceiling; absent when it was read whole. */
+	cut?: BoundedRead["cut"];
 }
 
-export async function fetchViaJina(targetUrl: string, options: JinaFetchOptions = {}): Promise<JinaResult> {
+export async function fetchViaJina(targetUrl: string, options: JinaFetchOptions): Promise<JinaResult> {
 	const fetchImpl = options.fetchImpl ?? fetch;
 	const headers: Record<string, string> = { accept: "text/markdown,text/plain,*/*" };
 	if (options.apiKey) headers.authorization = `Bearer ${options.apiKey}`;
 	const response = await fetchImpl(`https://r.jina.ai/${targetUrl}`, { headers, signal: options.signal });
 	if (!response.ok) throw new Error(`Jina Reader fetch failed (${response.status}) for ${targetUrl}`);
-	const body = await readTextWithin(response, options.byteBudget ?? new ByteBudget());
+	const body = await readTextWithin(response, options.reads);
 	const text = body.text;
 	const titleMatch = text.match(/^Title:\s*(.+)$/m);
 	const bodyStart = text.indexOf("Markdown Content:");
 	const markdown = bodyStart >= 0 ? text.slice(bodyStart + "Markdown Content:".length).trim() : text.trim();
-	return { title: titleMatch?.[1]?.trim(), markdown, source: "jina", ...(body.truncatedAtBytes === undefined ? {} : { truncatedAtBytes: body.truncatedAtBytes }) };
+	return { title: titleMatch?.[1]?.trim(), markdown, source: "jina", ...(body.cut ? { cut: body.cut } : {}) };
 }

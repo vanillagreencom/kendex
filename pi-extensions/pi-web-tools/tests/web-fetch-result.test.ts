@@ -42,13 +42,15 @@ test("web_fetch preview retains complete per-item metadata", () => {
 	assert.deepEqual({ type: block.type, ratio: text.includes("4000/4005"), id: text.includes("web-long"), guidance: text.includes("get_web_content"), truncated: result.details.preview.truncated, shown: result.details.preview.shownCharacters, full: result.details.preview.fullCharacters, items: result.details.preview.items }, { type: "text", ratio: true, id: true, guidance: true, truncated: true, shown: 4000, full: 4005, items: [{ id: "web-long", shownCharacters: 4000, fullCharacters: 4005, truncated: true }] });
 });
 
-for (const { name, metadata, cut } of [
-	{ name: "cut source", metadata: { provider: "http", bodyTruncatedAtBytes: 8388608 }, cut: true },
-	{ name: "whole source", metadata: { provider: "http" }, cut: false },
+for (const { name, metadata, note } of [
+	{ name: "cut at the read limit", metadata: { provider: "http", bodyTruncatedAtBytes: 8388608, bodyTruncatedBy: "read-limit" }, note: "; source cut at 8388608 bytes]" },
+	{ name: "cut by the call budget", metadata: { provider: "http", bodyTruncatedAtBytes: 1024, bodyTruncatedBy: "call-budget" }, note: "; source cut at 1024 bytes because this call's byte budget ran out; fetch fewer URLs per call to read it whole]" },
+	{ name: "whole source", metadata: { provider: "http" }, note: undefined },
 ]) {
-	test(`web_fetch preview names a source cut at the byte limit: ${name}`, () => {
+	test(`web_fetch preview names a cut source and the ceiling that cut it: ${name}`, () => {
 		const result = buildWebFetchToolResult([{ id: "web-cut", title: "Big page", url: "https://example.com/big", content: "x".repeat(10), metadata, createdAt: "2026-01-01T00:00:00.000Z" }], "http");
 		const block = result.content[0]!;
-		assert.equal(block.type === "text" && block.text.includes("source cut at 8388608 bytes"), cut);
+		const text = block.type === "text" ? block.text : "";
+		assert.equal(text.match(/; source cut at [^\]]*\]/)?.[0], note);
 	});
 }

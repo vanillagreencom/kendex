@@ -4,11 +4,13 @@
 
 ### 3.1.0
 
-- `web_fetch` streams each page, GitHub file and Jina Reader body and stops reading at 8 MB. The stored item then carries `bodyTruncatedAtBytes` in its metadata, and the preview reads `source cut at N bytes`. A PDF over 32 MB is refused with its size named instead of being loaded whole.
-- One `web_fetch` call reads at most 64 MB across all its URLs. A URL past that fails with `web_fetch byte budget exhausted`, and the URLs fetched before it are still returned.
-- Files from the GitHub clone cache are sized before they are read and read without blocking Pi. `readBlobFromCache` and `readReadmeFromCache` are async and take a byte limit.
-- Scanned PDF pages are rasterized within a 4-megapixel budget per page. A page the configured `pdfOcr.dpi` would render larger is rendered at a lower DPI.
-- HTML chrome stripping makes one pass over the page. A 5 MB page with many navigation boxes no longer stalls Pi while it is converted.
+- `web_fetch` streams each page, GitHub file, README and Jina Reader body and stops reading at 8 MB. The stored item then carries `bodyTruncatedAtBytes` and `bodyTruncatedBy` in its metadata, the preview reads `source cut at N bytes`, and `get_web_content` labels the item `source cut at N bytes` instead of `full`. A PDF over 32 MB is refused with its size named instead of being loaded whole.
+- One `web_fetch` call reads at most 64 MB of those bodies and files across its URLs. The URL that crosses it is cut at the bytes left, and its preview says the call budget cut it; a PDF there is refused. Each later URL fails with `web_fetch byte budget exhausted` before any network or git work, and the URLs fetched before it are still returned. With an Exa key and a provider other than `http`, such a URL goes to the Exa fallback instead. GitHub API responses, local videos, YouTube, Exa and Gemini responses do not count against it.
+- All concurrent `web_fetch` calls together hold at most 64 MB of those bodies at once. A read that does not fit waits for earlier ones to finish instead of being cut, and an aborted call stops waiting.
+- Files from the GitHub clone cache are sized before they are read and read without blocking Pi. A committed symlink that resolves outside the clone is no longer read or listed. `readBlobFromCache` and `readReadmeFromCache` are async and take the URL's reads from the call's byte budget.
+- Scanned PDF pages are rasterized within a 4-megapixel budget per page. The DPI of the whole document is lowered until its largest page fits, so one large page lowers the DPI of every page, and the crop box `pdfinfo` measures is the box rendered.
+- HTML conversion rewrites the page's tags in one scan and builds its text once. A 5 MB page with many navigation boxes no longer stalls Pi while it is converted.
+- The unused `fetchPdfText` and `fetchLocalPdfText` exports are removed; they read a PDF whole with no size limit.
 
 ### 3.0.2
 

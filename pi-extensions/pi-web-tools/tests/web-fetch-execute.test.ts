@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test, { beforeEach, afterEach } from "node:test";
-import { CALL_BYTE_BUDGET, PDF_READ_BYTE_LIMIT, TEXT_READ_BYTE_LIMIT } from "../src/extract/byte-budget.js";
+import { CALL_BYTE_BUDGET, IN_FLIGHT_BYTE_BUDGET, PDF_READ_BYTE_LIMIT, TEXT_READ_BYTE_LIMIT } from "../src/extract/byte-budget.js";
 import { createWebFetchToolDefinition } from "../src/tools/web-fetch.js";
 import { clearMemoryForTests } from "../src/storage.js";
 import { tempDir } from "./fixtures.js";
@@ -364,20 +364,85 @@ function largeBody(bytes: number): ReadableStream<Uint8Array> {
 	}, { highWaterMark: 0 });
 }
 
-test("web_fetch shares one byte budget across the URLs of a call and refuses an oversized PDF", async (t) => {
-	const pageUrls = Array.from({ length: CALL_BYTE_BUDGET / TEXT_READ_BYTE_LIMIT + 1 }, (_, index) => `https://pages.example/${index}`);
-	const pdfUrl = "https://pages.example/huge.pdf";
-	t.mock.method(globalThis, "fetch", async (url: URL | string | Request) => String(url) === pdfUrl
-		? new Response(largeBody(1), { headers: { "content-type": "application/pdf", "content-length": String(PDF_READ_BYTE_LIMIT + 1) } })
-		: new Response(largeBody(TEXT_READ_BYTE_LIMIT + 1), { headers: { "content-type": "text/plain" } }));
+const LOCAL_PDF_BYTES = 8;
+const blobUrls = Array.from({ length: CALL_BYTE_BUDGET / TEXT_READ_BYTE_LIMIT }, (_, index) => `https://github.com/o/r/blob/main/file${index}.txt`);
+const pageUrls = Array.from({ length: CALL_BYTE_BUDGET / TEXT_READ_BYTE_LIMIT + 1 }, (_, index) => `https://pages.example/${index}`);
+for (const row of [
+	{
+		name: "remote pages after a refused PDF",
+		urls: ["https://pages.example/huge.pdf", ...pageUrls],
+		expected: {
+			cuts: pageUrls.slice(0, -1).map(() => [TEXT_READ_BYTE_LIMIT, "read-limit"]),
+			failures: [["https://pages.example/huge.pdf", "PDF too large"], [pageUrls.at(-1), "web_fetch byte budget exhausted"]],
+			requestsAfterBudget: [],
+		},
+	},
+	{
+		name: "a local PDF and GitHub files, then a GitHub repo",
+		urls: ["local.pdf", ...blobUrls, "https://github.com/o/r"],
+		expected: {
+			cuts: [[undefined, undefined], ...blobUrls.slice(0, -1).map(() => [TEXT_READ_BYTE_LIMIT, "read-limit"]), [TEXT_READ_BYTE_LIMIT - LOCAL_PDF_BYTES, "call-budget"]],
+			failures: [["https://github.com/o/r", "web_fetch byte budget exhausted"]],
+			requestsAfterBudget: [],
+		},
+	},
+]) {
+	test(`web_fetch shares one byte budget across the URLs of a call: ${row.name}`, { timeout: 30_000 }, async (t) => {
+		const cwd = tempDir(t);
+		writeFileSync(join(cwd, "local.pdf"), "p".repeat(LOCAL_PDF_BYTES));
+		const fetched: string[] = [];
+		t.mock.method(globalThis, "fetch", async (url: URL | string | Request) => {
+			fetched.push(String(url));
+			return String(url).endsWith(".pdf")
+				? new Response(largeBody(1), { headers: { "content-type": "application/pdf", "content-length": String(PDF_READ_BYTE_LIMIT + 1) } })
+				: new Response(largeBody(TEXT_READ_BYTE_LIMIT + 1), { headers: { "content-type": "text/plain" } });
+		});
+		const tool = createWebFetchToolDefinition({ appendEntry() {} } as any, () => webFetchSettings(), "web_fetch");
+		const result = await tool.execute("test", { urls: row.urls, provider: "http" }, undefined, undefined, { cwd } as any);
+		const details = result.details as typeof result.details & FailureDetails;
+		assert.deepEqual({
+			cuts: details.stored.map((item) => [item.metadata?.bodyTruncatedAtBytes, item.metadata?.bodyTruncatedBy]),
+			failures: details.failures?.map((failure) => [failure.url, failure.error.split(/[:(]/)[0]!.trim()]),
+			requestsAfterBudget: fetched.filter((url) => url === "https://api.github.com/repos/o/r" || url === "https://github.com/o/r" || url.endsWith("/o/r/HEAD/README.md") || url === pageUrls.at(-1)),
+		}, row.expected);
+	});
+}
+
+/** A body whose one pull waits until `finish` delivers `bytes` bytes and ends it; `pulled` counts the reads that reached it. */
+function gatedBody() {
+	const probe = { pulled: 0 };
+	let finish!: (bytes: number) => void;
+	const gate = new Promise<number>((resolve) => { finish = resolve; });
+	const body = new ReadableStream<Uint8Array>({
+		async pull(controller) {
+			probe.pulled++;
+			const bytes = await gate;
+			if (bytes) controller.enqueue(new Uint8Array(bytes).fill(0x61));
+			controller.close();
+		},
+	}, { highWaterMark: 0 });
+	return { body, probe, finish };
+}
+
+/** Runs every promise continuation queued so far: a read granted in-flight room reaches its body's first pull within them. */
+const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+test("concurrent web_fetch calls share the in-flight byte budget and return a URL's bytes when it is stored", { timeout: 10_000 }, async (t) => {
+	const slots = IN_FLIGHT_BYTE_BUDGET / TEXT_READ_BYTE_LIMIT;
+	const bodies = Array.from({ length: slots + 1 }, () => gatedBody());
+	t.mock.method(globalThis, "fetch", async (url: URL | string | Request) => new Response(bodies[Number(new URL(String(url)).pathname.slice(1))]!.body, { headers: { "content-type": "text/plain" } }));
 	const tool = createWebFetchToolDefinition({ appendEntry() {} } as any, () => webFetchSettings(), "web_fetch");
-	const result = await tool.execute("test", { urls: [pdfUrl, ...pageUrls], provider: "http" }, undefined, undefined, { cwd: process.cwd() } as any);
-	const details = result.details as typeof result.details & FailureDetails;
-	assert.deepEqual({
-		cuts: details.stored.map((item) => item.metadata?.bodyTruncatedAtBytes),
-		failures: details.failures?.map((failure) => [failure.url, failure.error.split(/[:(]/)[0]!.trim()]),
-	}, {
-		cuts: pageUrls.slice(0, -1).map(() => TEXT_READ_BYTE_LIMIT),
-		failures: [[pdfUrl, "PDF too large"], [pageUrls.at(-1), "web_fetch byte budget exhausted"]],
+	const calls = bodies.map((_, index) => tool.execute(`c${index}`, { url: `https://pages.example/${index}`, provider: "http" }, undefined, undefined, { cwd: process.cwd() } as any));
+	await settle();
+	const whileFull = bodies.map((body) => body.probe.pulled);
+	bodies[0]!.finish(1);
+	await settle();
+	const afterFirstStored = bodies.map((body) => body.probe.pulled);
+	for (const body of bodies) body.finish(1);
+	const stored = await Promise.all(calls).then((results) => results.map((result) => result.details.stored.length));
+	assert.deepEqual({ whileFull, afterFirstStored, stored }, {
+		whileFull: bodies.map((_, index) => index < slots ? 1 : 0),
+		afterFirstStored: bodies.map(() => 1),
+		stored: bodies.map(() => 1),
 	});
 });

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -69,14 +69,4 @@ export async function extractPdfTextBest(buffer: ArrayBuffer | Uint8Array, optio
 		}
 	}
 	return extractPdfText(buffer);
-}
-
-export async function fetchPdfText(url: string, fetchImpl: typeof fetch = fetch, signal?: AbortSignal, options: PdfExtractionOptions = {}): Promise<PdfExtractionResult> {
-	const response = await fetchImpl(url, { signal });
-	if (!response.ok) throw new Error(`PDF fetch failed (${response.status}) for ${url}`);
-	return extractPdfTextBest(await response.arrayBuffer(), options);
-}
-
-export async function fetchLocalPdfText(path: string, options: PdfExtractionOptions = {}): Promise<PdfExtractionResult> {
-	return extractPdfTextBest(await readFile(path), options);
 }

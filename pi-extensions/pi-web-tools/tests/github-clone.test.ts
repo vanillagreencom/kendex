@@ -1,28 +1,39 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { cloneOrUpdateRepo, readBlobFromCache, readReadmeFromCache, readTreeFromCache, summarizeTreeEntries } from "../src/extract/github-clone.js";
-import { githubFixtureRepo, tempDir } from "./fixtures.js";
+import type { UrlReads } from "../src/extract/byte-budget.js";
+import { githubFixtureRepo, tempDir, urlReads } from "./fixtures.js";
 
 for (const row of [
-	{ name: "blob", read: (repo: string) => readBlobFromCache(repo, "src/index.ts", 1024), expected: { content: "export const x = 1;\n", bytes: 20 } },
-	{ name: "blob over the byte limit", read: (repo: string) => readBlobFromCache(repo, "src/index.ts", 6), expected: { content: "export", bytes: 20, truncatedAtBytes: 6 } },
-	{ name: "missing blob", read: (repo: string) => readBlobFromCache(repo, "src/absent.ts", 1024), expected: null },
-	{ name: "directory as blob", read: (repo: string) => readBlobFromCache(repo, "src", 1024), expected: null },
-	{ name: "traversal", read: (repo: string) => readBlobFromCache(repo, "../outside.txt", 1024), expected: null },
-	{ name: "tree excludes Git state", read: (repo: string) => readTreeFromCache(repo, "")?.entries.map((entry) => entry.name), expected: ["src", "README.md"] },
-	{ name: "README", read: (repo: string) => readReadmeFromCache(repo, 1024), expected: { content: "# Hello\n\nbody", bytes: 13 } },
+	{ name: "blob", read: (repo: string, reads: UrlReads) => readBlobFromCache(repo, "src/index.ts", reads), expected: { content: "export const x = 1;\n", bytes: 20 } },
+	{ name: "blob over the call budget", budget: 6, read: (repo: string, reads: UrlReads) => readBlobFromCache(repo, "src/index.ts", reads), expected: { content: "export", bytes: 20, cut: { atBytes: 6, by: "call-budget" } } },
+	{ name: "missing blob", read: (repo: string, reads: UrlReads) => readBlobFromCache(repo, "src/absent.ts", reads), expected: null },
+	{ name: "directory as blob", read: (repo: string, reads: UrlReads) => readBlobFromCache(repo, "src", reads), expected: null },
+	{ name: "traversal", read: (repo: string, reads: UrlReads) => readBlobFromCache(repo, "../outside.txt", reads), expected: null },
+	{ name: "symlinked file outside the cache", read: (repo: string, reads: UrlReads) => readBlobFromCache(repo, "src/escape.txt", reads), expected: null },
+	{ name: "symlinked README outside the cache", read: (repo: string, reads: UrlReads) => readReadmeFromCache(join(repo, "src"), reads), expected: null },
+	{ name: "symlinked file inside the cache", read: (repo: string, reads: UrlReads) => readBlobFromCache(repo, "src/alias.ts", reads), expected: { content: "export const x = 1;\n", bytes: 20 } },
+	{ name: "tree excludes Git state", read: (repo: string) => readTreeFromCache(repo, "")?.entries.map((entry) => entry.name), expected: ["src", "outer", "README.md"] },
+	{ name: "symlinked directory outside the cache", read: (repo: string) => readTreeFromCache(repo, "outer"), expected: null },
+	{ name: "README", read: (repo: string, reads: UrlReads) => readReadmeFromCache(repo, reads), expected: { content: "# Hello\n\nbody", bytes: 13 } },
 ]) {
 	test(`GitHub cache: ${row.name}`, async (t) => {
 		const root = tempDir(t);
 		const repo = join(root, "repo");
 		mkdirSync(join(repo, "src"), { recursive: true });
 		mkdirSync(join(repo, ".git"));
+		mkdirSync(join(root, "outside"));
 		writeFileSync(join(repo, "README.md"), "# Hello\n\nbody");
 		writeFileSync(join(repo, "src", "index.ts"), "export const x = 1;\n");
-		if (row.name === "traversal") writeFileSync(join(root, "outside.txt"), "outside");
-		assert.deepEqual(await row.read(repo), row.expected);
+		writeFileSync(join(root, "outside.txt"), "outside");
+		writeFileSync(join(root, "outside", "secret.txt"), "secret");
+		symlinkSync(join(root, "outside.txt"), join(repo, "src", "escape.txt"));
+		symlinkSync(join(root, "outside.txt"), join(repo, "src", "README.md"));
+		symlinkSync(join(repo, "src", "index.ts"), join(repo, "src", "alias.ts"));
+		symlinkSync(join(root, "outside"), join(repo, "outer"));
+		assert.deepEqual(await row.read(repo, urlReads(t, row.budget)), row.expected);
 	});
 }
 
@@ -34,7 +45,7 @@ test("GitHub tree summary retains paths, size, and truncation marker", () => {
 test("cloneOrUpdateRepo clones the local fixture through its GitHub URL", async (t) => {
 	const { cache, head } = githubFixtureRepo(t, { "README.md": "# Source repo\n" });
 	const result = await cloneOrUpdateRepo("fixture", "repo", undefined, { cacheDir: cache });
-	assert.deepEqual({ ...result, readme: (await readBlobFromCache(result.cachePath, "README.md", 1024))?.content }, {
+	assert.deepEqual({ ...result, readme: (await readBlobFromCache(result.cachePath, "README.md", urlReads(t)))?.content }, {
 		cachePath: join(cache, "fixture__repo"), headRef: head, cloned: true, updated: false, readme: "# Source repo\n",
 	});
 });
