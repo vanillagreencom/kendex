@@ -128,15 +128,17 @@ for (const row of [
 		const fake = makeFakeApi();
 		qolDefault(fake.api);
 		const sent: string[] = [];
+		// Every tmux read fails, so delivery marks nothing; the rows read only the Pi UI channel.
+		const tmuxAbsent = { exec: async () => ({ code: 1, stdout: "", stderr: "", killed: false }) };
 		const ctx = makeCtx({ cwd: workdir, hasUI: true, ui: { ...makeCtx().ui, notify: (text: string) => { sent.push(text); } } });
 		try {
 			setSystemTime(new Date(1_000_000));
-			sendQolNotification(ctx as any, "test", "A", "info", "A");
+			await sendQolNotification(tmuxAbsent, ctx as any, "test", "A", "info", "A");
 			setSystemTime(new Date(1_001_000));
-			sendQolNotification(ctx as any, "test", "B", "info", "B");
+			await sendQolNotification(tmuxAbsent, ctx as any, "test", "B", "info", "B");
 			if (row.shutdown) await fake.handlers.session_shutdown!({ type: "session_shutdown" }, ctx);
 			setSystemTime(new Date(1_002_000));
-			sendQolNotification(ctx as any, "test", "A", "info", "A");
+			await sendQolNotification(tmuxAbsent, ctx as any, "test", "A", "info", "A");
 		} finally {
 			setSystemTime();
 			if (!row.shutdown) await fake.handlers.session_shutdown!({ type: "session_shutdown" }, ctx);
