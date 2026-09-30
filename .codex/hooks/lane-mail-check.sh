@@ -2194,14 +2194,15 @@ overseer_identify() {
   # record's `.overseer.home` names this session launched under, so a session
   # restarted in this pane onto another account reads context unmeasured
   # rather than off a file under a home the fleet never picked. A start that
-  # cannot be read establishes nothing, as a key that cannot be read does.
+  # cannot be read establishes nothing, as a key that cannot be read does, and
+  # a session outside tmux has no pane to read a key for.
   if ! IDENT=$(cd -- "$ROOT" 2>/dev/null && "$BASH" -euo pipefail -c '
       . "$1/lib/lane-context.sh" && . "$1/lib/overseer-launch.sh"
       key=$(lane_context_caller_key)
       start=$(tmux_server_start "$2" "${key%% *}")
       printf "%s\t%s\t" "$key" "$start"
       LMC_SERVER=${key%% *} LMC_START=$start LMC_PANE=$2 exec "$1/workflow-state" get "$3" "$OL_JQ_DEFS$4"' \
-    _ "$SCRIPTS" "$TMUX_PANE" "$OVERSEER_ITEM" "$OVERSEER_RECORD_JQ" 2>/dev/null)
+    _ "$SCRIPTS" "${TMUX_PANE:-}" "$OVERSEER_ITEM" "$OVERSEER_RECORD_JQ" 2>/dev/null)
   then
     return 1
   fi
