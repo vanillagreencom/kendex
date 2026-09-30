@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { extname, isAbsolute, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { type Component, type TUI, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { supportsImageInput, type ModelLike } from "./capabilities.js";
 import { frameGlyphs, glyphs, treeGlyph } from "./glyphs.js";
 import { loadSettings } from "./settings.js";
@@ -35,6 +35,9 @@ interface ActiveImageJob {
 const activeImageJobs = new Map<string, ActiveImageJob>();
 let activeStatusCtx: ExtensionCommandContext | undefined;
 let statusTimer: ReturnType<typeof setInterval> | undefined;
+let requestStatusRender: (() => void) | undefined;
+let invalidateStatusLayout: (() => void) | undefined;
+let jobRevision = 0;
 
 export interface ParsedImageGenCommand {
 	prompt: string;
@@ -173,9 +176,9 @@ function panelBranch(theme: Theme, branch: "├" | "└" | "│"): string {
 	return theme.fg(PANEL_RULE_COLOR, treeGlyph(branch));
 }
 
-function renderStatusHeader(jobs: ActiveImageJob[], theme: Theme): string {
+function renderStatusHeader(jobs: ActiveImageJob[], theme: Theme, now: number): string {
 	const oldest = jobs[0];
-	const elapsed = oldest ? Math.max(0, Math.round((Date.now() - oldest.startedAt) / 1000)) : 0;
+	const elapsed = oldest ? Math.max(0, Math.round((now - oldest.startedAt) / 1000)) : 0;
 	const imageModels = [...new Set(jobs.map((job) => job.imageModel))];
 	const modelText = imageModels.length === 1 ? imageModels[0] : `${imageModels.length} models`;
 	const refs = jobs.reduce((total, job) => total + job.referenceCount, 0);
@@ -183,31 +186,47 @@ function renderStatusHeader(jobs: ActiveImageJob[], theme: Theme): string {
 	return `${theme.fg(PANEL_TITLE_COLOR, theme.bold("Image Generation"))} ${theme.fg("muted", `${jobs.length} running · ${modelText}${refText} · ${elapsed}s`)}`;
 }
 
-function renderJobLines(theme: Theme, width: number): string[] {
-	const jobs = Array.from(activeImageJobs.values()).sort((a, b) => a.startedAt - b.startedAt);
+function renderJobLines(theme: Theme, width: number, jobs: ActiveImageJob[], now: number): string[] {
 	if (jobs.length === 0) return [];
-	const dot = theme.fg("dim", glyphs().dot);
-	const lines = [renderStatusHeader(jobs, theme)];
+	const icons = glyphs();
+	const dot = theme.fg("dim", icons.dot);
+	const lines = [renderStatusHeader(jobs, theme, now)];
 	const shown = jobs.slice(0, 4);
 	for (const [index, job] of shown.entries()) {
-		const ageSeconds = Math.max(0, Math.round((Date.now() - job.startedAt) / 1000));
+		const ageSeconds = Math.max(0, Math.round((now - job.startedAt) / 1000));
 		const isLast = index === shown.length - 1 && jobs.length <= shown.length;
 		const refs = job.referenceCount > 0 ? `${dot}${theme.fg("dim", `${job.referenceCount} ref${job.referenceCount === 1 ? "" : "s"}`)}` : "";
 		const promptWidth = Math.max(16, width - 36);
-		lines.push(`${panelBranch(theme, isLast ? "└" : "├")}${theme.fg("accent", glyphs().bullet.trim())} ${theme.fg("accent", truncateToWidth(job.prompt, promptWidth, glyphs().ellipsis))}${dot}${theme.fg("muted", job.imageModel)}${refs}${dot}${theme.fg("dim", `${ageSeconds}s`)}`);
+		lines.push(`${panelBranch(theme, isLast ? "└" : "├")}${theme.fg("accent", icons.bullet.trim())} ${theme.fg("accent", truncateToWidth(job.prompt, promptWidth, icons.ellipsis))}${dot}${theme.fg("muted", job.imageModel)}${refs}${dot}${theme.fg("dim", `${ageSeconds}s`)}`);
 	}
 	const hidden = jobs.length - shown.length;
-	if (hidden > 0) lines.push(`${panelBranch(theme, "└")}${theme.fg("muted", `${glyphs().ellipsis} ${hidden} more`)}`);
+	if (hidden > 0) lines.push(`${panelBranch(theme, "└")}${theme.fg("muted", `${icons.ellipsis} ${hidden} more`)}`);
 	return panelFrame(lines, width, theme);
 }
 
-function createImageGenWidgetFactory(): (_tui: unknown, theme: Theme) => Component {
-	return (_tui, theme) => ({
-		invalidate() {},
-		render(width: number): string[] {
-			return renderJobLines(theme, width);
-		},
-	});
+function createImageGenWidgetFactory(): (tui: TUI, theme: Theme) => Component {
+	return (tui, theme) => {
+		let startedAt: number[] = [];
+		let revision = -1;
+		let cache: { width: number; ages: string; icons: unknown; lines: string[] } | undefined;
+		requestStatusRender = () => tui.requestRender();
+		invalidateStatusLayout = () => { cache = undefined; startedAt = []; revision = -1; };
+		return {
+			invalidate() { cache = undefined; },
+			render(width: number): string[] {
+				const now = Date.now();
+				const icons = glyphs();
+				const ages = () => startedAt.map(start => Math.max(0, Math.round((now - start) / 1000))).join(",");
+				if (revision === jobRevision && cache?.width === width && cache.ages === ages() && cache.icons === icons) return cache.lines;
+				const jobs = Array.from(activeImageJobs.values()).sort((a, b) => a.startedAt - b.startedAt);
+				startedAt = jobs.slice(0, 4).map(job => job.startedAt);
+				revision = jobRevision;
+				const lines = renderJobLines(theme, width, jobs, now);
+				cache = lines.reduce((size, line) => size + line.length, 0) <= 64 * 1024 ? { width, ages: ages(), icons, lines } : undefined;
+				return lines;
+			},
+		};
+	};
 }
 
 function ensureStatusTimer(): void {
@@ -218,16 +237,24 @@ function ensureStatusTimer(): void {
 			statusTimer = undefined;
 			return;
 		}
-		updateImageGenStatus(activeStatusCtx);
+		requestStatusRender?.();
 	}, 1000);
 	statusTimer.unref?.();
 }
 
 function updateImageGenStatus(ctx: ExtensionCommandContext): void {
+	const contextChanged = activeStatusCtx !== ctx;
 	activeStatusCtx = ctx;
 	const count = activeImageJobs.size;
 	ctx.ui.setStatus(IMAGE_GEN_STATUS_KEY, count > 0 ? `image-gen ${count}` : undefined);
-	ctx.ui.setWidget(IMAGE_GEN_STATUS_KEY, count > 0 ? createImageGenWidgetFactory() : undefined, { placement: "aboveEditor" });
+	if (count === 0 || contextChanged || !requestStatusRender) {
+		invalidateStatusLayout?.();
+		requestStatusRender = undefined;
+		invalidateStatusLayout = undefined;
+		ctx.ui.setWidget(IMAGE_GEN_STATUS_KEY, count > 0 ? createImageGenWidgetFactory() : undefined, { placement: "aboveEditor" });
+	} else {
+		requestStatusRender();
+	}
 	if (count > 0) ensureStatusTimer();
 }
 
@@ -240,12 +267,14 @@ function startImageJob(ctx: ExtensionCommandContext, parsed: ParsedImageGenComma
 		imageModel,
 	};
 	activeImageJobs.set(job.id, job);
+	jobRevision++;
 	updateImageGenStatus(ctx);
 	return job;
 }
 
 function finishImageJob(ctx: ExtensionCommandContext, jobId: string): void {
-	activeImageJobs.delete(jobId);
+	if (!activeImageJobs.delete(jobId)) return;
+	jobRevision++;
 	updateImageGenStatus(ctx);
 }
 
@@ -482,6 +511,16 @@ async function runBackgroundImageGeneration(pi: ExtensionAPI, ctx: ExtensionComm
 }
 
 export function registerBackgroundImageGenerationCommand(pi: ExtensionAPI): void {
+	pi.on("session_shutdown", () => {
+		if (statusTimer) clearInterval(statusTimer);
+		statusTimer = undefined;
+		activeImageJobs.clear();
+		jobRevision++;
+		invalidateStatusLayout?.();
+		invalidateStatusLayout = undefined;
+		requestStatusRender = undefined;
+		activeStatusCtx = undefined;
+	});
 	pi.registerMessageRenderer<ImageGenerationErrorDetails>(IMAGE_GEN_ERROR_MESSAGE_TYPE, (message, _options, theme) => {
 		const rawContent = typeof message.content === "string"
 			? message.content

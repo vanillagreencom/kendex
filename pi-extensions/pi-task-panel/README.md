@@ -25,6 +25,10 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 
 The agent sends tasks to the tasks_write tool. The extension saves the list with the session and displays it above the editor. Tool calls or your edits update task status and notes. Resuming the session restores the saved list.
 
+## Memory use
+
+The visible panel keeps one rendered layout of at most 65,536 characters. It keeps sorted order for lists of at most 256 tasks. Larger lists sort when layout changes. A task change replaces these caches. Session shutdown removes the widget.
+
 ## Settings
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-task-panel"]`.

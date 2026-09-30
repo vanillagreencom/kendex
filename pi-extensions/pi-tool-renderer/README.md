@@ -29,6 +29,7 @@ Pi runs a tool and gives its call and result to the display extension. The exten
 
 ## Memory use
 
+- User messages keep at most 256 weakly held Markdown layouts. Each keeps one width and at most 65,536 characters each of source text and rendered lines. Larger messages render without retention. The layouts do not keep message components alive and are cleared at session shutdown.
 - Grouped tool calls are tracked only while `stackToolCalls` is on.
 - At most 256 grouped calls are kept, in groups of at most 64; older groups are dropped. Each keeps at most 16,384 characters of its result for the preview: the start for read and search calls, the end for bash.
 - A dropped call that Pi draws again (ctrl+o, a resize) is shown on its own and is not kept.

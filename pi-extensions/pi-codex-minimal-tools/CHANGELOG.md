@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.1.1
+
+- Background image status reuses layout until job state, elapsed seconds, width or theme changes. Its timer requests a redraw without reinstalling the widget. Session shutdown releases the status cache and timer.
+
 ### 2.1.0
 
 - A WebSocket response may hold at most 33,554,432 characters of received events that the reader has not taken yet, counted as each event arrives and before it is decoded; a binary frame counts its bytes. Past that the response stops with an error whose first line starts `codex-websocket-queue-overflow=`.

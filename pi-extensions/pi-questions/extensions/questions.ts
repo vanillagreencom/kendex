@@ -10,7 +10,7 @@ import {
 	type TruncationResult,
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
-import { Input, matchesKey, truncateToWidth, visibleWidth, type Focusable } from "@earendil-works/pi-tui";
+import { Input, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Focusable } from "@earendil-works/pi-tui";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -327,12 +327,18 @@ function syntheticConfirmLabel(request: QuestionRequest): string {
 
 class CompactLines {
 	private readonly getLines: (width: number) => string[];
+	private cache?: { width: number; icons: unknown; lines: string[] };
 	constructor(getLines: (width: number) => string[]) {
 		this.getLines = getLines;
 	}
-	invalidate(): void {}
+	invalidate(): void { this.cache = undefined; }
 	render(width: number): string[] {
-		return this.getLines(Math.max(1, width)).map((line) => truncateToWidth(line, Math.max(1, width), ""));
+		const safeWidth = Math.max(1, width);
+		const icons = glyphs();
+		if (this.cache?.width === safeWidth && this.cache.icons === icons) return this.cache.lines;
+		const lines = this.getLines(safeWidth).map((line) => truncateToWidth(line, safeWidth, ""));
+		this.cache = lines.reduce((size, line) => size + line.length, 0) <= 64 * 1024 ? { width: safeWidth, icons, lines } : undefined;
+		return lines;
 	}
 }
 
@@ -341,28 +347,11 @@ function compactLines(getLines: (width: number) => string[]): CompactLines {
 }
 
 function wrapPlain(text: string, width: number, maxLines = 3): string[] {
-	const words = text.trim().split(/\s+/).filter(Boolean);
-	if (words.length === 0) return [""];
-	const lines: string[] = [];
-	let current = "";
-	for (const word of words) {
-		if (visibleWidth(word) > width) {
-			if (current) lines.push(current);
-			lines.push(truncateToWidth(word, width, ""));
-			current = "";
-		} else if (!current) {
-			current = word;
-		} else if (visibleWidth(current) + 1 + visibleWidth(word) <= width) {
-			current = `${current} ${word}`;
-		} else {
-			lines.push(current);
-			current = word;
-		}
-		if (lines.length >= maxLines) break;
-	}
-	if (current && lines.length < maxLines) lines.push(current);
-	if (lines.length === maxLines && words.join(" ").length > lines.join(" ").length) {
-		lines[maxLines - 1] = truncateToWidth(`${lines[maxLines - 1]}${glyphs().ellipsis}`, width, "");
+	const wrapped = wrapTextWithAnsi(text.trim(), Math.max(1, width));
+	const lines = wrapped.slice(0, maxLines);
+	if (wrapped.length > maxLines) {
+		const suffix = glyphs().ellipsis;
+		lines[maxLines - 1] = `${truncateToWidth(lines[maxLines - 1] ?? "", Math.max(0, width - visibleWidth(suffix)), "")}${suffix}`;
 	}
 	return lines.length > 0 ? lines : [""];
 }
@@ -1016,11 +1005,11 @@ export default function questions(pi: ExtensionAPI): void {
 		},
 		renderResult(result, options, theme, context) {
 			const details = result.details as QuestionResult | undefined;
+			const request = (() => {
+				try { return normalizeRequest(context?.args); }
+				catch { return undefined; }
+			})();
 			return compactLines((width: number) => {
-				const request = (() => {
-					try { return normalizeRequest(context?.args); }
-					catch { return undefined; }
-				})();
 				const title = request?.header ?? "Question";
 				const prefix = details && "answers" in details ? theme.fg("success", glyphs().bullet) : theme.fg("warning", glyphs().bullet);
 				const state = details && "answers" in details ? theme.fg("success", "answered") : theme.fg("warning", "cancelled");

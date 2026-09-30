@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 3.0.4
+
+- Task panels reuse sorted task order and layout during redraws. Bulk replacement and import normalize the completed list once, preserving an explicitly active task after earlier pending tasks.
+
 ### 3.0.3
 
 - A task change that leaves the task list as it was no longer writes the sidecar `state.json` or adds a session entry. A real change writes the sidecar in the background, off Pi's main thread, and replaces the file whole, so a crash during the write leaves the previous state readable. The sidecar is now compact JSON instead of indented JSON.

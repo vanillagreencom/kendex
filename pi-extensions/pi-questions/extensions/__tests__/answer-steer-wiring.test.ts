@@ -1,4 +1,5 @@
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { mockQuestionRuntime } from "./helpers/runtime.js";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,20 +9,7 @@ import { clearPackageConfigCache } from "../package-config.js";
 
 // These Pi dependencies are unavailable in a dependency-free package test.
 // The test drives the registered service, without rendering a terminal UI.
-const unexpected = () => { throw new Error("Unexpected UI or output operation"); };
-mock.module("@earendil-works/pi-coding-agent", () => ({
-	DEFAULT_MAX_BYTES: 1024,
-	DEFAULT_MAX_LINES: 100,
-	formatSize: String,
-	truncateHead: unexpected,
-	withFileMutationQueue: unexpected,
-}));
-mock.module("@earendil-works/pi-tui", () => ({
-	Input: class { constructor() { unexpected(); } },
-	matchesKey: unexpected,
-	truncateToWidth: unexpected,
-	visibleWidth: unexpected,
-}));
+mockQuestionRuntime();
 
 const { default: questions } = await import("../questions.js");
 const SERVICE = Symbol.for("kendex.pi-questions.service");

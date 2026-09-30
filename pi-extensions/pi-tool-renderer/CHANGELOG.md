@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.0.8
+
+- User messages reuse Markdown layout during typing and streaming. Width, content and theme changes rebuild the layout.
+
 ### 2.0.7
 
 - Long sessions no longer grow in memory with every read, bash, grep, find and ls call. Grouped tool calls are tracked only while `stackToolCalls` is on, at most 256 are kept (in groups of at most 64), each keeps at most 16,384 characters of its result, and all of them are cleared when a session starts or ends. Once a group has been dropped, a dropped call that Pi draws again (ctrl+o, a resize) is shown on its own, and the groups still kept and the group receiving live calls are left as they were. A tool display Pi no longer shows is not kept alive for the settings refresh.

@@ -1,0 +1,1 @@
+- pi-codex-minimal-tools: Background image status reuses layout during redraws. Its timer updates elapsed time without reinstalling the widget.

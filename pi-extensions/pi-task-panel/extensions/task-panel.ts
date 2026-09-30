@@ -417,7 +417,7 @@ function updatePanelAfterTaskChange(state: TaskPanelState, cwd?: string): void {
 	});
 }
 
-function addTask(state: TaskPanelState, content: string, phaseTitleText?: string, cwd?: string): TaskItem {
+function appendTask(state: TaskPanelState, content: string, phaseTitleText?: string): TaskItem {
 	const task: TaskItem = {
 		content: content.trim(),
 		id: newId("task"),
@@ -427,6 +427,11 @@ function addTask(state: TaskPanelState, content: string, phaseTitleText?: string
 		status: "pending",
 	};
 	state.tasks.push(task);
+	return task;
+}
+
+function addTask(state: TaskPanelState, content: string, phaseTitleText?: string, cwd?: string): TaskItem {
+	const task = appendTask(state, content, phaseTitleText);
 	updatePanelAfterTaskChange(state, cwd);
 	return task;
 }
@@ -544,7 +549,7 @@ function parseEditableText(text: string, cwd?: string, visibility = rememberTask
 		if (!task) continue;
 		const parsed = stripEditableStatus(task[2] ?? "Task");
 		if (!parsed.content) continue;
-		const item = addTask(state, parsed.content, undefined, cwd);
+		const item = appendTask(state, parsed.content);
 		item.phaseId = currentPhase;
 		item.id = task[3]?.trim() || item.id;
 		item.status = parsed.status ?? statusFromLegacyBox(task[1]) ?? "pending";
@@ -554,8 +559,8 @@ function parseEditableText(text: string, cwd?: string, visibility = rememberTask
 	return state;
 }
 
-function renderPanelWidgetLines(state: TaskPanelState, theme: Theme, cwd: string, width: number): string[] {
-	const lines = renderPanelLines(state, theme, cwd);
+function renderPanelWidgetLines(state: TaskPanelState, theme: Theme, cwd: string, width: number, sortedTasks: TaskItem[]): string[] {
+	const lines = renderPanelLines(state, theme, cwd, sortedTasks);
 	if (lines.length === 0) return [];
 	return panelFrame(lines, Math.max(1, width), theme, cwd);
 }
@@ -592,7 +597,7 @@ function pushTaskGroup(lines: string[], title: string, tasks: TaskItem[], theme:
 	lines.push(...renderTaskGroup(title, tasks, theme, cwd, isLastGroup));
 }
 
-function renderPanelLines(state: TaskPanelState, theme: Theme, cwd: string): string[] {
+function renderPanelLines(state: TaskPanelState, theme: Theme, cwd: string, sortedTasks: TaskItem[]): string[] {
 	if (state.tasks.length === 0 || state.panel === "hidden") return [];
 	const remaining = remainingCount(state);
 	const active = activeTask(state);
@@ -600,7 +605,7 @@ function renderPanelLines(state: TaskPanelState, theme: Theme, cwd: string): str
 	const header = renderPanelHeader(state, theme, active, hint);
 	if (state.panel === "compact") {
 		const limit = Math.max(1, Math.floor(settingNumber("maxCompactTasks", 4, cwd)));
-		const candidates = active?.phaseId ? sortTasks(state.tasks.filter((task) => task.phaseId === active.phaseId)) : sortTasks(state.tasks);
+		const candidates = active?.phaseId ? sortedTasks.filter((task) => task.phaseId === active.phaseId) : sortedTasks;
 		const incomplete = candidates.filter((task) => task.status !== "completed" && task.status !== "abandoned");
 		const visible = incomplete.filter((task) => task.id !== active?.id).slice(0, Math.max(0, limit - (active ? 1 : 0)));
 		const lines = [header];
@@ -616,11 +621,11 @@ function renderPanelLines(state: TaskPanelState, theme: Theme, cwd: string): str
 	}
 	const lines = [header];
 	const groups: Array<{ title: string; tasks: TaskItem[] }> = [];
-	const unphased = sortTasks(state.tasks.filter((task) => !task.phaseId));
+	const unphased = sortedTasks.filter((task) => !task.phaseId);
 	if (unphased.length) groups.push({ title: "Unphased", tasks: unphased });
 	const phases = [...state.phases].sort((a, b) => a.order - b.order);
 	for (const phase of phases) {
-		const tasks = sortTasks(state.tasks.filter((task) => task.phaseId === phase.id));
+		const tasks = sortedTasks.filter((task) => task.phaseId === phase.id);
 		if (tasks.length) groups.push({ title: phase.title, tasks });
 	}
 	for (const [index, group] of groups.entries()) {
@@ -913,12 +918,24 @@ export default function taskPanel(pi: ExtensionAPI): void {
 			setMiniDashboardWidget(ctx, WIDGET_KEY, MINI_DASHBOARD_RANK.TASKS, undefined);
 			return;
 		}
-		setMiniDashboardWidget(ctx, WIDGET_KEY, MINI_DASHBOARD_RANK.TASKS, (tui, theme) => ({
-			invalidate() {},
-			render(width: number): string[] {
-				return clampAboveEditorWidget(renderPanelWidgetLines(state, theme, ctx.cwd, width), tui.terminal.rows, theme);
-			},
-		}), { placement: "aboveEditor" });
+		// Every state mutation installs a new widget. Each widget owns one order
+		// and one layout; resizing replaces the layout rather than growing a map.
+		const sortedTasks = state.tasks.length <= 256 ? sortTasks(state.tasks) : undefined;
+		setMiniDashboardWidget(ctx, WIDGET_KEY, MINI_DASHBOARD_RANK.TASKS, (tui, theme) => {
+			let cache: { width: number; rows: number; settings: unknown; icons: unknown; lines: string[] } | undefined;
+			return {
+				invalidate() { cache = undefined; },
+				render(width: number): string[] {
+					const rows = tui.terminal.rows;
+					const settings = readPackageConfig(CONFIG_ID, ctx.cwd);
+					const icons = glyphs(ctx.cwd);
+					if (cache?.width === width && cache.rows === rows && cache.settings === settings && cache.icons === icons) return cache.lines;
+					const lines = clampAboveEditorWidget(renderPanelWidgetLines(state, theme, ctx.cwd, width, sortedTasks ?? sortTasks(state.tasks)), rows, theme);
+					cache = lines.reduce((size, line) => size + line.length, 0) <= 64 * 1024 ? { width, rows, settings, icons, lines } : undefined;
+					return lines;
+				},
+			};
+		}, { placement: "aboveEditor" });
 	};
 
 	const mutate = (ctx: ExtensionContext | ExtensionCommandContext, fn: () => string): string => {
@@ -1177,7 +1194,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 			if (!runCtx) throw new Error("No active Pi context for tasks_write");
 			const message = mutate(runCtx, () => {
 				switch (params.action) {
-					case "replace": { const visibility = rememberTaskPanelVisibility(state); state = emptyState(runCtx.cwd); restoreTaskPanelVisibility(state, visibility); for (const input of params.tasks ?? []) { const text = input.content ?? input.task ?? ""; if (!text) continue; const task = addTask(state, text, input.phase, runCtx.cwd); task.status = isStatus(input.status) ? input.status : "pending"; task.notes = input.notes ?? []; } updatePanelAfterTaskChange(state, runCtx.cwd); return `Replaced tasks (${state.tasks.length})`; }
+					case "replace": { const visibility = rememberTaskPanelVisibility(state); state = emptyState(runCtx.cwd); restoreTaskPanelVisibility(state, visibility); for (const input of params.tasks ?? []) { const text = input.content ?? input.task ?? ""; if (!text) continue; const task = appendTask(state, text, input.phase); task.status = isStatus(input.status) ? input.status : "pending"; task.notes = input.notes ?? []; } updatePanelAfterTaskChange(state, runCtx.cwd); return `Replaced tasks (${state.tasks.length})`; }
 					case "add_phase": ensurePhase(state, params.phase ?? "General"); return params.phase ?? "General";
 					case "add_task": return addTask(state, params.task ?? "Task", params.phase, runCtx.cwd).content;
 					case "start_task": return startTask(state, params.task ?? "", runCtx.cwd)?.content ?? "No task matched";

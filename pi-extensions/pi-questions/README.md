@@ -25,6 +25,10 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 
 The agent sends questions and choices to the question tool. The extension displays them in Pi's editor area or the host's available dialogs. You select or type answers and submit them. The tool returns the answers to the agent. A connected session bridge can also complete a pending questionnaire.
 
+## Memory use
+
+Each question result keeps one rendered layout of at most 65,536 characters. Resizing or theme invalidation replaces it. The result component owns the cache, so disposing the session UI releases it.
+
 ## Settings
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-questions"]`.

@@ -16,7 +16,7 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "./ansi.js";
-import { settingBoolean } from "./settings.js";
+import { readkendexConfig, settingBoolean } from "./settings.js";
 import { frameGlyphs, glyphs } from "./glyphs.js";
 import { FALLBACK_THEME, stackPrefix, toolLabel, treeConnector } from "./theme.js";
 import { makeTruncatedLines } from "./text.js";
@@ -149,20 +149,57 @@ function appendUserMessageBreak(lines: string[], width: number, cwd?: string): s
 interface UserMessagePatchState {
 	activeCtx?: ExtensionContext;
 	originalRender: (width: number) => string[];
+	originalInvalidate?: (this: object) => void;
 }
 
-function renderRawUserMessageLines(component: any, width: number, theme: any): string[] | undefined {
+const USER_LAYOUT_MAX_CHARS = 64 * 1024;
+interface UserMessageLayout {
+	text: string;
+	theme: unknown;
+	markdownTheme: unknown;
+	settings: unknown;
+	markdown: Markdown;
+	width?: number;
+	lines?: string[];
+}
+let userMessageLayouts = new WeakMap<object, UserMessageLayout>();
+let userMessageLayoutCount = 0;
+
+function renderRawUserMessageLines(component: any, width: number, theme: any, cwd?: string): string[] | undefined {
 	const text = typeof component?.text === "string" ? component.text : undefined;
 	if (text === undefined) return undefined;
-	const markdownTheme = component?.markdownTheme ?? getMarkdownTheme();
-	return new Markdown(
-		text,
-		0,
-		0,
-		markdownTheme,
-		{ color: (content: string) => theme.fg("userMessageText", content) },
-		{ preserveOrderedListMarkers: true, preserveBackslashEscapes: true },
-	).render(width);
+	const markdownTheme = component?.markdownTheme;
+	const settings = readkendexConfig(cwd);
+	let layout = userMessageLayouts.get(component);
+	if (!layout || layout.theme !== theme || layout.markdownTheme !== markdownTheme || layout.settings !== settings) {
+		layout = {
+			text, theme, markdownTheme, settings,
+			markdown: new Markdown(text, 0, 0, markdownTheme ?? getMarkdownTheme(),
+				{ color: (content: string) => theme.fg("userMessageText", content) },
+				{ preserveOrderedListMarkers: true, preserveBackslashEscapes: true }),
+		};
+	} else if (layout.text !== text) {
+		layout.markdown.setText(text);
+		layout.text = text;
+		layout.lines = undefined;
+	}
+	if (layout.lines && layout.width === width) return layout.lines;
+	const lines = layout.markdown.render(width);
+	if (text.length <= USER_LAYOUT_MAX_CHARS && lines.reduce((size, line) => size + line.length, 0) <= USER_LAYOUT_MAX_CHARS) {
+		layout.width = width;
+		layout.lines = lines;
+		if (!userMessageLayouts.has(component)) {
+			if (userMessageLayoutCount >= 256) {
+				userMessageLayouts = new WeakMap();
+				userMessageLayoutCount = 0;
+			}
+			userMessageLayoutCount++;
+		}
+		userMessageLayouts.set(component, layout);
+	} else if (userMessageLayouts.delete(component)) {
+		userMessageLayoutCount--;
+	}
+	return lines;
 }
 
 export function installUserMessageRenderer(pi: ExtensionAPI, UserMessageComponent: any): void {
@@ -175,6 +212,15 @@ export function installUserMessageRenderer(pi: ExtensionAPI, UserMessageComponen
 			originalRender: prototype.render as (width: number) => string[],
 		};
 		prototype[USER_MESSAGE_PATCH_SYMBOL] = state;
+		state.originalInvalidate = prototype.invalidate as UserMessagePatchState["originalInvalidate"];
+		prototype.invalidate = function invalidateUserMessageLayout(this: object): void {
+			const layout = userMessageLayouts.get(this);
+			if (layout) {
+				layout.lines = undefined;
+				layout.markdown.invalidate();
+			}
+			state!.originalInvalidate?.call(this);
+		};
 		prototype.render = function compactUserMessageRender(this: any, width: number): string[] {
 			const ctx = state?.activeCtx;
 			const cwd = safeCtxCwd(ctx);
@@ -184,7 +230,7 @@ export function installUserMessageRenderer(pi: ExtensionAPI, UserMessageComponen
 			if (compact && width >= 4) {
 				const theme = safeCtxTheme(ctx);
 				const frameWidth = stableRenderWidth(width, cwd);
-				const rawLines = renderRawUserMessageLines(this, Math.max(1, frameWidth - 2), theme);
+				const rawLines = renderRawUserMessageLines(this, Math.max(1, frameWidth - 2), theme, cwd);
 				if (rawLines) {
 					return appendUserMessageBreak(renderUserMessageBorder(rawLines, frameWidth, theme, cwd, true), width, cwd);
 				}
@@ -232,8 +278,12 @@ export function installUserMessageRenderer(pi: ExtensionAPI, UserMessageComponen
 	pi.on("session_shutdown", () => {
 		if (prototype[USER_MESSAGE_PATCH_SYMBOL] === state) {
 			prototype.render = state!.originalRender as unknown;
+			if (state!.originalInvalidate) prototype.invalidate = state!.originalInvalidate;
+			else delete prototype.invalidate;
 			delete prototype[USER_MESSAGE_PATCH_SYMBOL];
 		}
+		userMessageLayouts = new WeakMap();
+		userMessageLayoutCount = 0;
 		state!.activeCtx = undefined;
 	});
 }

@@ -1,0 +1,1 @@
+- pi-task-panel: Task panels reuse layout and sorted order. Bulk replacement and import keep explicitly active tasks.

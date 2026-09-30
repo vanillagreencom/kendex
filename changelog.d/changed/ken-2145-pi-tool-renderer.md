@@ -1,0 +1,1 @@
+- pi-tool-renderer: User messages reuse Markdown layout during typing and streaming. Width, content and theme changes rebuild the layout.

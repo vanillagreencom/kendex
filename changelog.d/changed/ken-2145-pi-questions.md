@@ -1,0 +1,1 @@
+- pi-questions: Question results normalize requests once and reuse layout during redraws. Answer wrapping preserves ANSI styles and wraps long words with Pi’s text wrapper.

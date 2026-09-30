@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.0.4
+
+- Question results normalize requests once and reuse layout during redraws. Answer wrapping preserves ANSI styles and wraps long words with Pi’s text wrapper.
+
 ### 2.0.3
 
 - Settings reads come from memory. A read is answered for one second without touching disk, then the settings files are read again. A change made in the extension manager, or a new session, applies at once; a hand edit to `settings.json` applies within one second. Before, every read went to disk.
