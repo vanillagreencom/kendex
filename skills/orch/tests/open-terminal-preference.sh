@@ -84,7 +84,13 @@ observe() { # PREFERENCE WALL MODE TEXT
       '.lanes // [] | .[] | [.harness, .model, (.preference_entry // "none")] | join("|")' | tr -d '"')"
     [[ -n "$record" ]] || record='none|none|none'
   fi
-  OBS="$rc|$key|$record|$written|$(wc -l < "$RUN/picks" | tr -d ' ')"
+  if [[ "$mode" == cmd && "$record" == codex\|*\|codex:* ]]; then
+    launch_choice_words_present '-c features.default_mode_request_user_input=false' "$cmd" &&
+      launch_choice_words_present '-c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0' "$cmd" &&
+      ! launch_choice_words_present '--exclude-tools question' "$cmd" || written=no
+  fi
+  OBS="$rc|$key|$record|$written|$(paste -sd, - < "$RUN/picks")"
+  [[ -s "$RUN/picks" ]] || OBS+=none
 }
 
 # Input shape is one table. Expected protocol values are independent of the
@@ -95,18 +101,19 @@ while IFS='|' read -r label pref wall mode text want; do
   observe "$pref" "$wall" "$mode" "$text"
   assert_eq "$OBS" "$want" "$label" "$RUN/err"
 done <<'ROWS'
-first entry with room|default|none|flags||0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|yes|1
-walled pool falls to native codex|default|pi|flags||0|none|codex|gpt-6.1-sol|codex:gpt-6.1-sol:high|yes|2
-model-free command gets the preference|default|none|cmd|template|0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|yes|1
-preference replaces an effort-only flag|default|none|flags|--thinking low|0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|yes|1
-preference preserves brief quoting refusal|default|none|cmd|pi --exclude-tools question '{brief}'|1|brief-quoted|none|none|none|no|1
-invalid later entry refuses before a pick|pi:github-copilot/gpt-6.1-sol:high,pi:bare:high|none|flags||1|invalid-preference|none|none|none|no|0
-full walk refuses|default|all|flags||1|lane-unavailable|none|none|none|no|2
-judge failure does not try another entry|default|error|flags||1|lane-resolution-failed|none|none|none|no|1
-arbitrary command is not replaced|default|none|cmd|true {brief}|1|preference-command-invalid|none|none|none|no|1
-unset preserves the missing-model gate||none|flags||1|launch-model-missing|none|none|none|no|0
-explicit flags bypass even an invalid preference|invalid|none|flags|--model github-copilot/gpt-6.1-sol --thinking high|0|none|pi|github-copilot/gpt-6.1-sol|none|yes|1
-explicit command bypasses even an invalid preference|invalid|none|cmd|pi --model github-copilot/gpt-6.1-sol --thinking high --exclude-tools question {brief}|0|none|pi|github-copilot/gpt-6.1-sol|none|yes|1
+first entry with room|default|none|flags||0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|yes|pi:github-copilot/gpt-6.1-sol
+walled pool falls to native codex|default|pi|flags||0|none|codex|gpt-6.1-sol|codex:gpt-6.1-sol:high|yes|pi:github-copilot/gpt-6.1-sol,codex:gpt-6.1-sol
+model-free command gets the preference|default|none|cmd|template|0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|yes|pi:github-copilot/gpt-6.1-sol
+model-free command falls to native codex|default|pi|cmd|template|0|none|codex|gpt-6.1-sol|codex:gpt-6.1-sol:high|yes|pi:github-copilot/gpt-6.1-sol,codex:gpt-6.1-sol
+preference replaces an effort-only flag|default|none|flags|--thinking low|0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|yes|pi:github-copilot/gpt-6.1-sol
+preference preserves brief quoting refusal|default|none|cmd|pi --exclude-tools question '{brief}'|1|brief-quoted|none|none|none|no|pi:github-copilot/gpt-6.1-sol
+invalid later entry refuses before a pick|pi:github-copilot/gpt-6.1-sol:high,pi:bare:high|none|flags||1|invalid-preference|none|none|none|no|none
+full walk refuses|default|all|flags||1|lane-unavailable|none|none|none|no|pi:github-copilot/gpt-6.1-sol,codex:gpt-6.1-sol
+judge failure does not try another entry|default|error|flags||1|lane-resolution-failed|none|none|none|no|pi:github-copilot/gpt-6.1-sol
+arbitrary command is not replaced|default|none|cmd|true {brief}|1|preference-command-invalid|none|none|none|no|pi:github-copilot/gpt-6.1-sol
+unset preserves the missing-model gate||none|flags||1|launch-model-missing|none|none|none|no|none
+explicit flags bypass even an invalid preference|invalid|none|flags|--model github-copilot/gpt-6.1-sol --thinking high|0|none|pi|github-copilot/gpt-6.1-sol|none|yes|pi:github-copilot/gpt-6.1-sol
+explicit command bypasses even an invalid preference|invalid|none|cmd|pi --model github-copilot/gpt-6.1-sol --thinking high --exclude-tools question {brief}|0|none|pi|github-copilot/gpt-6.1-sol|none|yes|pi:github-copilot/gpt-6.1-sol
 ROWS
 # The refusal names the whole walk, not just the final model.
 observe "$PREF" all flags ''
@@ -114,7 +121,7 @@ assert_file_contains "$RUN/err" "walk=$PREF" 'no-room refusal names the preferen
 
 # One control for routing and one for each new refusal rule. Each mutation
 # keeps the tested call or comparison, but removes its effect in a private copy.
-for control in routing grammar command; do
+for control in routing model settings grammar command; do
   MUTANT="$(mutant_scripts "mutant-$control" open-terminal)/open-terminal"
   orch_fixture_shared_libs "$TMP_ROOT/mutant-$control"
   git -C "$TMP_ROOT/mutant-$control" init -q
@@ -125,15 +132,23 @@ for control in routing grammar command; do
     routing)
       mutate_file "$OT" 'if [[ "$WAKE" != true && -n "${ORCH_LANE_PREFERENCE:-}"' 'if [[ "$WAKE" != true && -z "${ORCH_LANE_PREFERENCE:-}"'
       observe "$PREF" none flags ''
-      assert_eq "$OBS" '1|launch-model-missing|none|none|none|no|0' 'control: the first-entry row turns red without routing' ;;
+      assert_eq "$OBS" '1|launch-model-missing|none|none|none|no|none' 'control: the first-entry row turns red without routing' ;;
+    model)
+      mutate_file "$OT" 'PREFERENCE_LANE_ENV="$(pick_auto_lane ' 'PREFERENCE_LANE_ENV="$(LAUNCH_MODEL="" pick_auto_lane '
+      observe "$PREF" none flags ''
+      assert_eq "$OBS" '0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|yes|pi:' 'control: the first-entry row turns red when its pick loses the model' ;;
+    settings)
+      mutate_file "$OT" 'launch_choice_lead_settings --question-off --model "$OL_ENTRY_MODEL"' 'true --question-off --model "$OL_ENTRY_MODEL"'
+      observe "$PREF" pi cmd 'pi --exclude-tools question {brief}'
+      assert_eq "$OBS" '1|launch-question-tool-missing|none|none|none|no|pi:github-copilot/gpt-6.1-sol,codex:gpt-6.1-sol' 'control: the model-free fallback row turns red without harness settings' ;;
     grammar)
       mutate_file "$OT" 'ol_preference_entries "$ORCH_LANE_PREFERENCE" || {' 'ol_preference_entries "$ORCH_LANE_PREFERENCE" || true; false && {'
       observe 'pi:github-copilot/gpt-6.1-sol:high,pi:bare:high' none flags ''
-      assert_eq "$OBS" '0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|yes|1' 'control: the invalid-entry row turns red without refusal' ;;
+      assert_eq "$OBS" '0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|yes|pi:github-copilot/gpt-6.1-sol' 'control: the invalid-entry row turns red without refusal' ;;
     command)
       mutate_file "$OT" '[[ "${LAUNCH_CHOICE_ARGV[0]}" == "$preference_harness" ]]' '[[ -n "${LAUNCH_CHOICE_ARGV[0]}" ]]'
       observe "$PREF" none cmd 'true --exclude-tools question {brief}'
-      assert_eq "$OBS" '0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|yes|1' 'control: the arbitrary-command row turns red without refusal' ;;
+      assert_eq "$OBS" '0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|yes|pi:github-copilot/gpt-6.1-sol' 'control: the arbitrary-command row turns red without refusal' ;;
   esac
 done
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

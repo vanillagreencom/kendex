@@ -281,10 +281,59 @@ if [[ -n "$CMD_TEMPLATE" && -n "$LAUNCH_FLAGS" ]]; then
   exit 1
 fi
 
+# Exits unless lanes clears the lane $1 names. lanes owns the name, alias and
+# retirement matching: its exit 4 is a lane a setting excludes or retires, and
+# any other failure is lanes failing, never reported as a covered lane.
+lane_check() {
+  [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
+  local rc=0
+  "$LANES_CLI" check "$1" >&2 || rc=$?
+  case "$rc" in
+    0) ;;
+    4) ot_message lane-refused "lane=$LANE" "exit=$rc" >&2; exit 1 ;;
+    *) ot_message lane-resolution-failed "exit=$rc" >&2; exit 1 ;;
+  esac
+}
+# Resolves and checks a caller-named lane once, before its model is judged.
+named_lane_resolve() {
+  local alias_rc=0
+  lane_dir="$LANE"
+  # A value carrying a `/` is meant as a path, so a miss there is a typo,
+  # not an alias. A bare word is resolved as a lane alias — the discovered
+  # name, or whatever ORCH_LANE_ALIASES renamed it to — through the same
+  # inventory `pick` measures, so aliases need no second source of truth.
+  if [[ "$lane_dir" == */* ]]; then
+    [[ -d "$lane_dir" ]] || { ot_message lane-directory-missing "path=$LANE" >&2; exit 1; }
+  else
+    # A bare word is resolved as an alias BEFORE the filesystem. Testing
+    # `-d` first meant any same-named directory in the caller's cwd shadowed
+    # a real lane and launched the fleet against the wrong account without
+    # saying so. A bare directory name still works when no alias claims it.
+    [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
+    # The status is taken, not left to errexit: a `lanes` or `jq` that
+    # failed would otherwise end the run here with no line naming why, and
+    # an empty result is the alias-not-found answer the branch below reads.
+    alias_rc=0
+    lane_dir="$("$LANES_CLI" list --local --json | jq -r --arg a "$LANE" 'map(select(.alias == $a)) | first | .config_dir // empty')" || alias_rc=$?
+    [[ "$alias_rc" -eq 0 ]] || { ot_message lane-resolution-failed "exit=$alias_rc" >&2; exit 1; }
+    if [[ -z "$lane_dir" ]]; then
+      # An excluded lane is absent from `list`, so its name or alias is
+      # refused here, before a same-named cwd directory can stand in for it.
+      lane_check "$LANE"
+      lane_dir="$LANE"
+      [[ -d "$lane_dir" ]] || { ot_message lane-unknown "lane=$LANE" >&2; exit 1; }
+    fi
+  fi
+  # Whether a setting excludes or retires the lane is lanes' decision, asked
+  # of the resolved directory so an alias and a path answer alike.
+  lane_check "$lane_dir"
+}
+
 # A caller's model is authoritative, including in an arbitrary --cmd. A
 # model-free harness command takes the program's ordered preference instead.
-# The remaining template words are the caller's, and must suit the chosen
-# harness; replacing an arbitrary shell command would discard its work.
+# The shared builder replaces harness-required settings; the remaining words
+# keep the caller's permission posture and brief. An arbitrary shell command
+# cannot be replaced without discarding its work.
 PREFERENCE_ENTRY="" PREFERENCE_LANE_ENV=""
 CMD_INPUT="$CMD_TEMPLATE"
 preference_harness="$HARNESS"
@@ -301,7 +350,10 @@ if [[ "$WAKE" != true && -n "${ORCH_LANE_PREFERENCE:-}" \
   }
   [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
   preference_pick_args=()
-  case "$LANE" in ''|auto|auto:*) ;; *) preference_pick_args=(--lane "$LANE") ;; esac
+  case "$LANE" in
+    ''|auto|auto:*) ;;
+    *) named_lane_resolve; preference_pick_args=(--lane "$lane_dir" --projected) ;;
+  esac
   for preference_entry in "${OL_ENTRIES[@]}"; do
     ol_entry_model "$preference_entry"
     LANE_HARNESS="$OL_ENTRY_HARNESS" LAUNCH_MODEL="$OL_ENTRY_MODEL"
@@ -323,19 +375,24 @@ if [[ "$WAKE" != true && -n "${ORCH_LANE_PREFERENCE:-}" \
       ot_message preference-command-invalid "harness=$preference_harness" >&2; exit 1;
     }
     launch_choice_strip "$preference_harness" "${LAUNCH_CHOICE_ARGV[@]:1}" || exit 1
+  else
+    launch_choice_shell_words "$LAUNCH_FLAGS"
+    launch_choice_strip "$preference_harness" ${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"} || exit 1
+  fi
+  launch_choice_lead_settings --question-off --model "$OL_ENTRY_MODEL" "$OL_ENTRY_HARNESS" \
+    ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}
+  if [[ -n "$CMD_TEMPLATE" ]]; then
     CMD_TEMPLATE="$OL_ENTRY_HARNESS $preference_words"
     for preference_word in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}; do
       if [[ "$preference_word" == '{brief}' ]]; then CMD_TEMPLATE+=" {brief}"
       else CMD_TEMPLATE+=" $(lane_single_quote "$preference_word")"; fi
     done
   else
-    launch_choice_shell_words "$LAUNCH_FLAGS"
-    launch_choice_strip "$preference_harness" ${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"} || exit 1
     LAUNCH_FLAGS="$preference_words"
     for preference_word in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}; do LAUNCH_FLAGS+=" $preference_word"; done
   fi
   HARNESS="$OL_ENTRY_HARNESS"
-  case "$LANE" in ''|auto|auto:*) LANE=auto ;; *) LANE="${PREFERENCE_LANE_ENV#*=}" ;; esac
+  case "$LANE" in ''|auto|auto:*) LANE=auto ;; esac
 fi
 # How lane_record_write treats an entry that already names the item.
 RECORD_MODE=launch
@@ -737,19 +794,6 @@ lane_value_error() {
   fi
   return 1
 }
-# Exits unless lanes clears the lane $1 names. lanes owns the name, alias and
-# retirement matching: its exit 4 is a lane a setting excludes or retires, and
-# any other failure is lanes failing, never reported as a covered lane.
-lane_check() {
-  [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
-  local rc=0
-  "$LANES_CLI" check "$1" >&2 || rc=$?
-  case "$rc" in
-    0) ;;
-    4) ot_message lane-refused "lane=$LANE" "exit=$rc" >&2; exit 1 ;;
-    *) ot_message lane-resolution-failed "exit=$rc" >&2; exit 1 ;;
-  esac
-}
 # The picked lane is judged on the bucket that walls the model the launch will
 # pass, so an account with weekly room but none left for that model is never
 # chosen. The model is the one the text the launch RUNS names — the --cmd
@@ -1014,40 +1058,14 @@ if [[ -n "$LANE" ]]; then
       [[ "$lane_rc" -eq 0 ]] || { auto_pick_refusal "$lane_rc"; exit 1; }
       ;;
     *)
-      lane_dir="$LANE"
-      # A value carrying a `/` is meant as a path, so a miss there is a typo,
-      # not an alias. A bare word is resolved as a lane alias — the discovered
-      # name, or whatever ORCH_LANE_ALIASES renamed it to — through the same
-      # inventory `pick` measures, so aliases need no second source of truth.
-      if [[ "$lane_dir" == */* ]]; then
-        [[ -d "$lane_dir" ]] || { ot_message lane-directory-missing "path=$LANE" >&2; exit 1; }
+      if [[ -n "$PREFERENCE_ENTRY" ]]; then LANE_ENV="$PREFERENCE_LANE_ENV"
       else
-        # A bare word is resolved as an alias BEFORE the filesystem. Testing
-        # `-d` first meant any same-named directory in the caller's cwd shadowed
-        # a real lane and launched the fleet against the wrong account without
-        # saying so. A bare directory name still works when no alias claims it.
-        [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
-        # The status is taken, not left to errexit: a `lanes` or `jq` that
-        # failed would otherwise end the run here with no line naming why, and
-        # an empty result is the alias-not-found answer the branch below reads.
-        alias_rc=0
-        lane_dir="$("$LANES_CLI" list --local --json | jq -r --arg a "$LANE" 'map(select(.alias == $a)) | first | .config_dir // empty')" || alias_rc=$?
-        [[ "$alias_rc" -eq 0 ]] || { ot_message lane-resolution-failed "exit=$alias_rc" >&2; exit 1; }
-        if [[ -z "$lane_dir" ]]; then
-          # An excluded lane is absent from `list`, so its name or alias is
-          # refused here, before a same-named cwd directory can stand in for it.
-          lane_check "$LANE"
-          lane_dir="$LANE"
-          [[ -d "$lane_dir" ]] || { ot_message lane-unknown "lane=$LANE" >&2; exit 1; }
-        fi
+        named_lane_resolve
+        # The harness-to-variable mapping is lib/lane-launch.sh's, the same one
+        # `lanes` hands a picked lane back through, so a harness added there is
+        # not left prefixing its launches with the other harness's variable.
+        LANE_ENV="$(lane_env_prefix "$HARNESS" "$lane_dir" "$LAUNCH_MODEL")"
       fi
-      # Whether a setting excludes or retires the lane is lanes' decision, asked
-      # of the resolved directory so an alias and a path answer alike.
-      lane_check "$lane_dir"
-      # The harness-to-variable mapping is lib/lane-launch.sh's, the same one
-      # `lanes` hands a picked lane back through, so a harness added there is
-      # not left prefixing its launches with the other harness's variable.
-      LANE_ENV="$(lane_env_prefix "$HARNESS" "$lane_dir" "$LAUNCH_MODEL")"
       ;;
   esac
   # Refused here, before any worktree is created: resolve the lane
@@ -1057,7 +1075,7 @@ if [[ -n "$LANE" ]]; then
   # separator, and a lane whose claim nobody can count is a lane that stacks
   # sessions silently.
   if lane_value_error "$LANE_ENV"; then exit 1; fi
-  # A lane named outright never went through `pick`, so the usage question is
+  # A named lane without a preference pick has not been judged, so usage is
   # still open for it. `lanes pick --lane` answers it — the one judge, which
   # also validates the threshold this script only forwards. Without the answer
   # a --wake or --relaunch onto a named account whose window is full spends its
@@ -1099,7 +1117,7 @@ if [[ -n "$LANE" ]]; then
   # A --wait-slot launch asks again once its wait ends, the window having had
   # that long to move.
   [[ "$LANE_AUTO" == true || -z "$(lane_pick_harness "$LAUNCH_HARNESS" "$LAUNCH_MODEL")" ]] || LANE_GATE=true
-  [[ "$LANE_GATE" != true ]] || named_lane_judge || exit 1
+  [[ "$LANE_GATE" != true || -n "$PREFERENCE_ENTRY" ]] || named_lane_judge || exit 1
   ot_message lane-selected "lane=$LANE_ENV"
   pi_lane_root_apply || exit 1
 fi
@@ -1345,9 +1363,9 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
   # the launch directory and the lane starts on a different model, or none.
   # Trailing space only when flags are present, so an unflagged launch renders
   # the exact command a human would type rather than a double-spaced one.
-  # The harness's launch-only settings and its question-tool words lead, once,
-  # on every command built here and never inside a --cmd template, which
-  # returned above as the caller's whole command.
+  # The harness's launch-only settings and its question-tool words lead once.
+  # A --cmd template returned above with the caller's settings or the ones
+  # the preference builder supplied.
   local flags="" tok
   local -a flag_tokens=()
   # read -a splits on IFS without globbing; a bare `for tok in $LAUNCH_FLAGS`

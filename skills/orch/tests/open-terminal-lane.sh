@@ -245,6 +245,7 @@ counted() {
 #   launched      windows the tmux stub created (`nolog`: tmux never ran)
 #   creates       worktrees the stub was asked to create (`nolog` likewise)
 #   claims        claim files recorded (`nolog`: no store directory)
+#   cmd_model     the model in a preference-built Claude command
 #   cmd_lane      the lane the launched command's env prefix names, read from
 #                 the tmux log, single-quoted as the launch shell needs it
 #   pi_root       the same for a PI_CODING_AGENT_DIR prefix, or none
@@ -303,6 +304,7 @@ observe() {
       launched) value="$(counted '^new-window' "$RUN/tmux.log")" ;;
       creates) value="$(counted '^create ' "$RUN/worktree.log")" ;;
       claims) value="$([[ -d "$RUN/state/claims" ]] && ls -1 "$RUN/state/claims" | wc -l | tr -d '[:space:]' || echo nolog)" ;;
+      cmd_model) value="$(launch_choice_launch_model claude "$(cat -- "$RUN/tmux.log" 2>/dev/null || true)")"; value="${value:-none}" ;;
       cmd_lane) value="$(grep -oE "env CLAUDE_CONFIG_DIR='[^']*'" "$RUN/tmux.log" 2>/dev/null | sed -E -e "s/^env CLAUDE_CONFIG_DIR='//" -e "s/'\$//" -e "s#^$H/\\.##" | sort -u | paste -sd, - || true)"; value="${value:-none}" ;;
       pi_root) value="$(grep -oE "env PI_CODING_AGENT_DIR='[^']*'" "$RUN/tmux.log" 2>/dev/null | sed -E -e "s/^env PI_CODING_AGENT_DIR='//" -e "s/'\$//" -e "s#^$H/\\.##" | sort -u | paste -sd, - || true)"; value="${value:-none}" ;;
       copilot_home) value="$(grep -oE "COPILOT_HOME='[^']*'" "$RUN/tmux.log" 2>/dev/null | sed -E -e "s/^COPILOT_HOME='//" -e "s/'\$//" -e "s#^$H/\\.##" | sort -u | paste -sd, - || true)"; value="${value:-none}" ;;
@@ -757,6 +759,19 @@ claude_usage 60 20 10 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 table \
   "a named lane with room whose live lanes project past the threshold is refused|cmd=true --model=fable --effort=high;prep=claude_claim;ORCH_LANE_BURN_PCT_PER_HOUR=50|--harness claude --lane $H/.claude CC-1641|rc=1 launched=0 creates=nolog walled=lane=$H/.claude,model=fable,pct=60,bucket=session,projected-headroom=-10" \
   "the same lane with nothing live on it launches|cmd=true --model=fable --effort=high;ORCH_LANE_BURN_PCT_PER_HOUR=50|--harness claude --lane $H/.claude CC-1642|rc=0 launched=1 walled=none"
+# This model's scoped window has room until an existing launch claim charges
+# its burn. The later Opus entry spends only the shared windows, which have
+# room even after that charge. `run_ot` seeds the same real claim as above.
+claude_usage 10 20 60 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
+NAMED_PREFERENCE='ORCH_LANE_PREFERENCE=claude:fable:high,claude:opus:high;cmd=claude;ORCH_LANE_BURN_PCT_PER_HOUR=50'
+table \
+  "a preference resolves a named alias before its pick|$NAMED_PREFERENCE;ORCH_LANE_ALIASES=claude=work;cwd=$COLLIDE|--harness claude --lane work CC-1643|rc=0 launched=1 cmd_lane=claude cmd_model=fable" \
+  "a preference skips the model its live claim projects past the wall|$NAMED_PREFERENCE;prep=claude_claim|--harness claude --lane $H/.claude CC-1644|rc=0 launched=1 cmd_lane=claude cmd_model=opus" \
+  "a preference checks an excluded alias before a same-named directory|$NAMED_PREFERENCE;ORCH_LANE_ALIASES=claude=work;ORCH_LANE_EXCLUDE=claude;cwd=$COLLIDE|--harness claude --lane work CC-1645|rc=1 launched=nolog refused=lane=work"
+pi_control ctl-preference-projected open-terminal 'preference_pick_args=(--lane "$lane_dir" --projected)' 'preference_pick_args=(--lane "$lane_dir")' \
+  "$NAMED_PREFERENCE;prep=claude_claim" --harness claude --lane "$H/.claude" CC-1644
+assert_eq "$(observe "rc=0 launched=1 cmd_model=fable")" "rc=0 launched=1 cmd_model=fable" \
+  "control: without projected use the preference launches the walled first model"
 claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 
 # A model can be spelled three ways and the gate reads all three. The rows above
