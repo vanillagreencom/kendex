@@ -150,6 +150,7 @@ run_succeed() {
     ORCH_LANE_DIRS="${LANE_DIRS:-$H/.claude:$H/.eclaude:$H/.fclaude:$H/.codex:$H/.dcodex}" ORCH_LANES_USAGE_TTL=0 \
     ORCH_OVERSEER_WALL_MINUTES=0 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=0 ORCH_QUESTION_TOOL=overseer \
     ${pref[@]+"${pref[@]}"} "${SUCCEED_BIN:-$SUCCEED}" --wait-secs 20 "$@" -- "${CALLER_FLAGS[@]}" 2>&1)" || RC=$?
+  printf '%s\n' "$OUT" > "$TMP_ROOT/out"
 }
 # A claim from this suite's tmux server on a pane that stays live, on LANE.
 write_claim() { # ROW LANE
@@ -382,11 +383,29 @@ for row in \
   fi
   caller_lane="$H/.$harness"
   case "$harness" in pi) caller_lane="$H/.claude" ;; copilot) caller_lane="$H/.1copilot" ;; esac
+  # Copilot names its account from the launch record, never COPILOT_HOME in
+  # an external recovery process. Leave the model empty to exercise flags.
+  if [[ "$harness" == copilot ]]; then
+    jq -n --arg server "$SERVER_PID" --argjson start "$SERVER_START" --arg pane "$CALLER_PANE" \
+      --arg account "$caller_lane" \
+      '{issue_id: "oversee", overseer: {runtime: "tmux", generation: 1, server: $server,
+        server_start: $start, pane: $pane, harness: "copilot", account: $account,
+        home: $account, model: "", effort: "", cwd: null, launch_line: "recorded"}}' \
+      > "$TMP_ROOT/work/tmp/workflow-state-oversee.json"
+  fi
   CALLER_LANE="$var=$caller_lane" LANE_DIRS="$H/.claude:$H/.eclaude:$H/.codex:$H/.dcodex:$H/.1copilot:$H/.2copilot" \
     run_succeed "numeric-$harness-$source" "$harness:1:high" --walled-pane "$CALLER_PANE" --harness "$harness"
+  launch_home="$H/.$successor"
+  if [[ "$harness" == codex ]]; then
+    # The only private home under this account is the one this fixture opens.
+    # Discover it independently of the launch builder, then pin CODEX_HOME.
+    CODEX_LAUNCH_HOME="$(find "$H/.dcodex/lane-launch" -mindepth 2 -maxdepth 2 -type d -name home)" || exit 1
+    [[ -n "$CODEX_LAUNCH_HOME" && "$CODEX_LAUNCH_HOME" != *$'\n'* ]] || { echo 'fixture: codex-home=not-single' >&2; exit 1; }
+    launch_home="$CODEX_LAUNCH_HOME"
+  fi
   assert_eq "$RC|$(caller_open)|$(launched "$harness")|$(grep -cx -e "$effort_word" -e "$effort_value" "$TMP_ROOT/argv.$harness")|$(grep '^preference-deprecated ' <<<"$OUT")" \
-    "0|no|$H/.$successor $model|$effort_count|preference-deprecated entry=$harness:1:high form=harness:model:effort" \
-    "numeric $harness preference keeps the $source model and supplied effort"
+    "0|no|$launch_home $model|$effort_count|preference-deprecated entry=$harness:1:high form=harness:model:effort" \
+    "numeric $harness preference keeps the $source model and supplied effort" "$TMP_ROOT/out"
 done
 # Normalizing the observed Codex model for account measurement must not erase
 # the model passed to its successor. A flags-only Codex caller covers the other
@@ -407,7 +426,7 @@ for control in observed flags; do
   CALLER_LANE="CODEX_HOME=$H/.codex" SUCCEED_BIN="$NUMERICCTL/oversee-succeed" \
     run_succeed "numeric-$control-ctl" 'codex:1:high' --walled-pane "$CALLER_PANE" --harness codex
   assert_eq "$RC|$(launched codex)|$(grep -cx 'model_reasoning_effort=high' "$TMP_ROOT/argv.codex")" \
-    "0|$H/.dcodex |1" "control: dropping the $control model breaks numeric launch identity"
+    "0|$CODEX_LAUNCH_HOME |1" "control: dropping the $control model breaks numeric launch identity"
 done
 CALLER_FLAGS=("$BYPASS")
 seat eclaude 10 99 10

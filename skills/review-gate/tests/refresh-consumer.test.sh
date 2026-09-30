@@ -451,7 +451,7 @@ for output in noise extra-field empty; do
   else bad "$output parser output refusal" "$OUT"; fi
   if [ "$output" = extra-field ]; then
     file_edit "$TMP/settings-trusted" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
-      '^  if \[ "\$settings_lines" -ne 1 \] ||' \
+      '^  if \[ "\$settings_lines" -ne 1 \] \|\|' \
       's/^  if \[ "\$settings_lines" -ne 1 \].*; then$/  if false; then # &/'
     reset_default
     : >"$TMP/state/calls"

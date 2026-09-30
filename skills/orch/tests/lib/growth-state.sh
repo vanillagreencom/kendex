@@ -44,23 +44,32 @@ mutant_scripts() {
   printf '%s\n' "$dir"
 }
 
-# mutate_file FILE OLD NEW — the substitution half of a must-fail control,
-# asserted on both sides: OLD occurs exactly once in FILE before the edit and
-# nowhere after it. A substitution that matched nothing would leave the control
-# running the unmutated script, and a control that cannot fail proves only that
-# its row ran. FILE is a private copy, mutant_scripts' FILE or the caller's
-# own; a symlink is refused, since editing through it would rewrite the
-# shipped script and editing around it would leave the mutant unmutated. Its
-# assert_eq is lib/assertions.sh's, which the caller sources.
+# mutate_file FILE OLD NEW: OLD occurs exactly once and the bytes change.
+# NEW can retain OLD as disabled code. A stale target stops the suite before
+# it can run the unchanged control. FILE is a private copy. A symlink is
+# refused because editing through it would rewrite the shipped script and
+# editing around it would leave the mutant unmutated.
 mutate_file() {
-  local file="$1" old="$2" new="$3" name
+  local file="$1" old="$2" new="$3"
   [[ ! -L "$file" ]] || { printf 'mutate_file: symlink %s\n' "$file" >&2; exit 1; }
-  name="$(basename "$file")"
-  assert_eq "$(grep -c -F -e "$old" "$file" || true)" "1" \
-    "control finds exactly one site to mutate in $name"
-  perl -i -pe 'BEGIN { ($o, $n) = (shift, shift) } s/\Q$o\E/$n/g' "$old" "$new" "$file"
-  assert_eq "$(grep -c -F -e "$old" "$file" || true)" "0" \
-    "control applied its mutation in $name"
+  perl -e '
+    use strict;
+    use warnings;
+    my ($old, $new, $file) = @ARGV;
+    length($old) or die "mutate_file: target=empty file=$file\n";
+    open my $input, "<", $file or die "mutate_file: read=$! file=$file\n";
+    local $/;
+    my $before = <$input> // "";
+    close $input or die "mutate_file: close=$! file=$file\n";
+    my $count = () = $before =~ /\Q$old\E/g;
+    $count == 1 or die "mutate_file: matches=$count file=$file\n";
+    my $after = $before;
+    $after =~ s/\Q$old\E/$new/;
+    $after ne $before or die "mutate_file: changed=no file=$file\n";
+    open my $output, ">", $file or die "mutate_file: write=$! file=$file\n";
+    print {$output} $after or die "mutate_file: write=$! file=$file\n";
+    close $output or die "mutate_file: close=$! file=$file\n";
+  ' "$old" "$new" "$file" || exit 1
 }
 
 init_growth_state() {
