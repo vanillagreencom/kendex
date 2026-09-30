@@ -277,8 +277,8 @@ function readSettingsInputs(cwd: string): SettingsInputs {
  * change or a new session. A resolution in which an `op://` reference failed
  * is served for its window only, so a locked or absent 1Password is asked
  * again once per window rather than never. The project's trust and the
- * environment are read on every call and key the memo, so a change to either
- * applies at once. Frozen, since every caller shares it.
+ * `INPUT_ENV_KEYS` variables are read on every call and key the memo, so a
+ * change to any of them applies at once. Frozen, since every caller shares it.
  */
 export function loadSettings(cwd = process.cwd()): WebToolsSettings {
 	const key = JSON.stringify(["web-tools-settings", cwd, projectSettingsTrustedForCwd(cwd), process.cwd(), INPUT_ENV_KEYS.map((name) => process.env[name] ?? null)]);

@@ -4,7 +4,7 @@
 
 ### 2.0.6
 
-- Settings are read through the settings reader every kendex Pi extension now shares. Reads are still answered from memory for one second. After that second, a settings file whose text did not change is not parsed again, and all settings for one working directory come from one read of each file, not one read per package.
+- After the one-second window in which settings are answered from memory, a settings file whose text did not change is not parsed again. A project trust answer that another kendex Pi extension records now applies on the next settings read, not after that window.
 
 ### 2.0.5
 

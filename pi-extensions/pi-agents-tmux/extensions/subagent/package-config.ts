@@ -10,8 +10,9 @@
  * root, such as pi-hooks, passes its own path list to `readPackageConfigAt`.
  * Widgets and renderers read settings many times per frame; going to the disk
  * on each read kept every lane's render loop busy. A memoized answer is served
- * for `SETTINGS_RECHECK_MS` with no filesystem, environment or path work, so a
- * change to `PI_CODING_AGENT_DIR` reaches the settings reads within one window.
+ * for `SETTINGS_RECHECK_MS` with no filesystem, environment or path work. The
+ * memos are module state, so each package keeps its own; only the trust
+ * registry is shared by every package in the process.
  * `installSettingsCacheRefresh` drops every answer when the extension manager
  * announces a settings change and when a session starts.
  */
@@ -63,8 +64,8 @@ function userDir(): UserDir {
 }
 
 /** A root-anchored `PI_CODING_AGENT_DIR`, else `~/.pi/agent`, for the
- * environment of this call. The settings reads below take it once per window
- * instead, since reading the environment costs more than a warm read. */
+ * environment of this call. The settings reads below memoize it instead,
+ * since reading the environment costs more than a warm read. */
 export function piUserDir(): string {
 	return userDir().dir;
 }
@@ -357,8 +358,8 @@ const cwdSettings = new Map<string, CwdSettings>();
  * The settings for `cwd`, served for `SETTINGS_RECHECK_MS` with one map
  * lookup and the trust lookup: no environment, path or file work. Trust is
  * read on every call, so an answer any package records applies at once. Once
- * the window closes, the project walk, the user directory and the files are
- * resolved again.
+ * the window closes, the project walk runs again, and the user settings file
+ * and the files come from their own memos.
  */
 function cwdSettingsAt(cwd: string, now: number): CwdSettings {
 	const known = cwdSettings.get(cwd);

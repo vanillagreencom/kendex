@@ -152,13 +152,13 @@ describe("readSettingsFiles fingerprint", () => {
 	});
 });
 
-// piUserDir answers for the environment of each call. The settings reads take
-// the user directory once per window instead, so each row moves the clock past
-// the window before it reads. Bun's `homedir()` does not follow a `HOME` set at
+// piUserDir answers for the environment of each call. The settings reads
+// memoize the user directory instead, so each row reads one cwd and moves the
+// clock past the window before it reads. Bun's `homedir()` does not follow a `HOME` set at
 // run time, so under this runner the two `HOME` rows only confirm the default
 // root; under Node, Pi's runtime, they catch a root kept past a `HOME` change.
 describe("user directory", () => {
-	test("a change to any variable it reads is answered by piUserDir at once and by settings reads after one window", () => {
+	test("a change to any variable it reads is answered by piUserDir at once and by a one-cwd settings read after one window", () => {
 		const cwd = mkdtempSync(join(tmpdir(), "kendex-user-dir-"));
 		const rows: Array<{ name: string; agentDir: string | undefined; home: string; expected: () => string }> = [
 			{ name: "override", agentDir: "/pi-root/a", home: "/home-one", expected: () => "/pi-root/a" },

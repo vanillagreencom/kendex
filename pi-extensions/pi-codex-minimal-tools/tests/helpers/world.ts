@@ -23,7 +23,7 @@ export function environment(t: Pick<TestContext, "after">, values: Record<string
 			if (value === undefined) delete process.env[key];
 			else process.env[key] = value;
 		}
-		// The settings reader takes the environment once per window.
+		// The settings reader memoizes what it read from the environment.
 		clearPackageConfigCache();
 	};
 	t.after(() => apply(previous));
