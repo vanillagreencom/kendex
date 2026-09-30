@@ -1,6 +1,9 @@
 # Public kendex settings seeded from installed skill defaults.
 # Skill scripts read this [env] table; process env and .env.local override it.
 # Keep secrets, tokens, and personal overrides in .env.local.
+# Linear credentials: LINEAR_CLIENT_ID and LINEAR_CLIENT_SECRET in .env.local
+# select the application with fixed scope read,write. LINEAR_API_KEY is the
+# fallback for key-only installs. OAuth tokens live only in the Linear cache.
 
 [env]
 # The team every Linear write targets. No default: an empty value refuses

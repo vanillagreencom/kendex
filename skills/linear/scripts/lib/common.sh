@@ -161,47 +161,20 @@ LINEAR_TEAM_TARGET="$DEFAULT_TEAM"
 # Source formatters
 source "$_LIB_DIR/formatters.sh"
 
-# Resolve 1Password references when the env file contains op:// secrets.
-resolve_linear_api_key() {
-    local token="${LINEAR_API_KEY:-}"
-
-    if [[ -z "$token" ]]; then
-        return 0
-    fi
-
-    if [[ "$token" == op://* ]]; then
-        if command -v op &>/dev/null; then
-            local resolved
-            if resolved=$(op read "$token" 2>/dev/null); then
-                LINEAR_API_KEY="$resolved"
-                export LINEAR_API_KEY
-            else
-                echo '{"error": "Failed to resolve LINEAR_API_KEY from 1Password. Run: op signin"}' >&2
-                return 1
-            fi
-        else
-            echo '{"error": "LINEAR_API_KEY is a 1Password reference but the op CLI is not installed"}' >&2
-            return 1
-        fi
-    fi
-
-    return 0
-}
+# shellcheck source=auth.sh
+source "$_LIB_DIR/auth.sh"
 
 # Most commands hit the Linear API and should resolve op:// references during
 # startup so authentication failures surface before any mutation/read work.
 # Local-cache commands source this file only for shared formatters/defaults; they
 # must not require API auth for documented cache-only reads.
 if [[ "${LINEAR_SKIP_API_KEY_RESOLUTION:-}" != "1" ]]; then
-    resolve_linear_api_key || exit 1
+    linear_resolve_credentials || exit 1
 fi
 
 # Validate API key
 check_api_key() {
-    if [ -z "${LINEAR_API_KEY:-}" ]; then
-        echo '{"error": "LINEAR_API_KEY not set. Add it to .env.local or export it."}' >&2
-        exit 1
-    fi
+    linear_check_credentials
 }
 
 json_or_default() {
@@ -263,6 +236,7 @@ graphql_query() {
     local max_retries=3
     local retry_delay="$LINEAR_RETRY_BASE_DELAY"
     local attempt=1
+    local authorization auth_renewed=0
 
     # Single choke point for writes: no mutation leaves this process without a
     # resolved team target, whatever path built it.
@@ -270,7 +244,8 @@ graphql_query() {
         linear_require_team_target || return 1
     fi
 
-    check_api_key
+    check_api_key || return 1
+    authorization=$(linear_authorization) || return 1
 
     while [ $attempt -le $max_retries ]; do
         local response
@@ -292,7 +267,7 @@ graphql_query() {
                 "url = $(curl_config_quote "$LINEAR_API")" \
                 'request = "POST"' \
                 "header = $(curl_config_quote "Content-Type: application/json")" \
-                "header = $(curl_config_quote "Authorization: $LINEAR_API_KEY")" \
+                "header = $(curl_config_quote "Authorization: $authorization")" \
                 "data = $(curl_config_quote "$payload")" \
             | curl -s -w "${delimiter}%{http_code}" -K -
         ); then
@@ -349,7 +324,12 @@ graphql_query() {
             return 0
             ;;
         401)
-            echo '{"error": "Authentication failed. Check your LINEAR_API_KEY."}' >&2
+            if [[ "$LINEAR_AUTH_KIND" == "app" && "$auth_renewed" == 0 ]]; then
+                authorization=$(linear_authorization renew) || return 1
+                auth_renewed=1
+                continue
+            fi
+            jq -cn --arg kind "$LINEAR_AUTH_KIND" '{error: ("linear-auth: http=401 credential=" + $kind)}' >&2
             return 1
             ;;
         429)

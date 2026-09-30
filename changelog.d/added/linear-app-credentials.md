@@ -1,0 +1,1 @@
+- Linear accepts OAuth app credentials beside personal keys, caches and renews tokens with fixed `read,write` scope, and reports the credential and actor in `auth-check`.

@@ -2,7 +2,7 @@
 # Auth + target preflight
 # Usage: ./linear.sh auth-check [--strict]
 # Returns: {"ok": true/false, "team": ..., "team_source": ..., "writes_enabled": ...}
-# Exit 0 when the API key works. With --strict, also requires a team target so
+# Exit 0 when the selected credential works. With --strict, requires a team so
 # the check matches what a write would do.
 
 set -euo pipefail
@@ -13,7 +13,9 @@ Auth + target preflight
 
 Usage: auth-check [--strict]
 
-Reports API key validity, the resolved Linear team, and where that team came
+Reports credential validity, its actor, the resolved Linear team, and its source.
+The app credential wins over the personal key.
+Reports where the team came
 from. Linear writes refuse when no team resolves, so run this before the first
 mutation in a new project.
 
@@ -21,7 +23,9 @@ Options:
   --strict    Exit 1 when no team target is configured (writes would refuse)
 
 Fields:
-  ok                API key is set and the API answered
+  ok                Selected credential is set and the API answered
+  credential        app | api-key | incomplete-app | unset
+  actor             {kind: application | user, id, name}, or null
   team              Resolved team name, or null
   team_source       environment | project-config | unset
   team_source_file  Project file that set the resolved team, or null
@@ -110,6 +114,7 @@ if [[ "${LINEAR_API_KEY_ENV_SHADOWED:-0}" == "1" ]]; then
   warnings+=("inherited LINEAR_API_KEY (sha256:$LINEAR_API_KEY_ENV_FINGERPRINT) differs from the project-config key (sha256:$LINEAR_API_KEY_PROJECT_FINGERPRINT); using project-config — unset the global export if unintended")
 fi
 
+actor='null'
 emit() {
   local ok="$1"
   local error="${2:-}"
@@ -123,6 +128,8 @@ emit() {
     --arg team_source "$LINEAR_TEAM_SOURCE" \
     --arg team_source_file "$team_source_file" \
     --arg api_key_source "$LINEAR_API_KEY_SOURCE" \
+    --arg credential "$LINEAR_AUTH_KIND" \
+    --argjson actor "$actor" \
     --argjson writes_enabled "$writes_enabled" \
     --args \
     '{ok: $ok}
@@ -132,27 +139,30 @@ emit() {
          team_source: $team_source,
          team_source_file: (if $team_source_file == "" then null else $team_source_file end),
          api_key_source: $api_key_source,
+         credential: $credential,
+         actor: $actor,
          writes_enabled: $writes_enabled,
          warnings: $ARGS.positional
        }' "${warnings[@]+"${warnings[@]}"}"
 }
 
-if [[ -z "${LINEAR_API_KEY:-}" ]]; then
-  emit false "LINEAR_API_KEY not set"
+if ! linear_check_credentials; then
+  emit false "Linear credentials missing or incomplete"
   exit 1
 fi
 
-result=$(graphql_query "{ viewer { id } }" "{}" 2>/dev/null) || {
+result=$(graphql_query "{ viewer { id name } }" "{}") || {
   emit false "API request failed"
   exit 1
 }
 
 viewer_id=$(echo "$result" | jq -r '.viewer.id // empty')
 if [[ -z "$viewer_id" ]]; then
-  emit false "Invalid API key"
+  emit false "Invalid Linear credential"
   exit 1
 fi
 
+actor=$(jq -c --arg kind "$LINEAR_AUTH_KIND" '{kind: (if $kind == "app" then "application" else "user" end), id: .viewer.id, name: .viewer.name}' <<<"$result")
 emit true
 if ((strict)) && [[ -z "$LINEAR_TEAM_TARGET" ]]; then
   exit 1

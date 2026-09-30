@@ -33,7 +33,7 @@ Reads go through `cache`; writes go through the live commands, which write throu
 | `cycles` | list, create, update |
 | `sync` | Refresh the local cache (`--full`, `--reconcile`, `--if-stale N`, `--stats`) |
 | `cache` | Cache-only reads: issues, projects, comments, labels, initiatives, cycles, attachments, status |
-| `auth-check` | Report the resolved key/team and `writes_enabled` (`--strict` exits non-zero when writes would refuse) |
+| `auth-check` | Report the selected credential, actor, team and `writes_enabled` (`--strict` exits non-zero when writes would refuse) |
 | `session-status` | Aggregated status for the `/start` workflow |
 
 Aliases: `issues relations` → `list-relations`, `projects dependencies` → `list-dependencies`. Singular resource names (`issue`, `project`, …) route to the plural. There is no `view`/`show`: single-issue lookups are `issues get <ID>` (live) or `cache issues get <ID>`; only the live `issues get <ID>`, without `--with-bundle` and in the default `safe` format, carries `github_sync`, the GitHub issues Linear's GitHub sync links the issue to, each as `owner/repo#N` lowercased. Multi-issue lookups are `issues bulk-get <ID1> <ID2> ...`, which is also the post-mutation verification path. Comments for several issues are one `cache comments bulk-list <ID1> <ID2> ...` call (`--stdin` takes one identifier per line), never a loop or parallel `cache comments list` readers.
@@ -58,7 +58,9 @@ The cache is `.cache/linear` under the physical worktree root ([README.md](READM
 
 `LINEAR_TEAM` has no default. With it unset every write refuses before any API call; reads drop the team filter. `--team <name>` overrides per call only on `issues create`, `projects create`, `cycles create`, and `labels create`. Run `auth-check --strict` before the first mutation in a project.
 
-`LINEAR_API_KEY` belongs in the project's private env file, `.env.local` unless `KENDEX_ENV_FILE` names another; so does `KENDEX_USER_EMAIL`, the email address of the person operating the checkout ([README.md](README.md) § Settings); non-secret defaults in committed `kendex.settings.toml` `[env]`. The kendex app's Customize tab writes all three. A `LINEAR_API_KEY` from project files beats one inherited from the environment, and `auth-check` warns (fingerprints only) when it shadows a differing inherited key. `KENDEX_USER_EMAIL` and every other key take the usual precedence: the process environment first, then the private env file.
+Set `LINEAR_CLIENT_ID` and `LINEAR_CLIENT_SECRET` in the project's private env file (`.env.local` unless `KENDEX_ENV_FILE` names another). Together they select the application over `LINEAR_API_KEY`. The fixed OAuth scope is `read,write`. Tokens live only in the cache. Credential precedence, renewal and attribution: [README.md § Settings](README.md#settings).
+
+`LINEAR_API_KEY` and `KENDEX_USER_EMAIL`, the operator's email, also belong in the private env file. Non-secret defaults belong in committed `kendex.settings.toml` `[env]`. The kendex app's Customize tab writes the key, team and email. A `LINEAR_API_KEY` from project files beats an inherited key. `auth-check` warns with fingerprints when it shadows a different inherited key. Every other key uses process environment precedence over the private env file.
 
 ## Shared label maintenance
 

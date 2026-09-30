@@ -20,6 +20,10 @@ if [[ -n "${ASSERT_LIB_LOADED:-}" ]]; then
 fi
 ASSERT_LIB_LOADED=1
 
+# Key fixtures must not select a developer's app from the process or project.
+# OAuth cases pass their own app pair in the child's explicit environment.
+export LINEAR_CLIENT_ID="" LINEAR_CLIENT_SECRET=""
+
 ASSERT_COUNT=0
 ASSERT_FAILURES=0
 ASSERT_TMPDIRS=()
@@ -236,6 +240,16 @@ assert_file_lacks() {
 assert_fail() {
 	__assert_ran
 	__assert_failed "$@"
+}
+
+# Run the OAuth suite's fixture command with an explicit environment and clock.
+run_oauth_request() {
+	local command="$PROJECT/request" action=()
+	if [[ "$1" == auth-check ]]; then command="$LINEAR"; action=(auth-check); fi
+	shift
+	OUT=$(cd -- "$PROJECT" && env -i PATH="$PROJECT/bin:$PATH" HOME="$TMP_ROOT" \
+		LINEAR_CACHE_ROOT="$PROJECT" LOG="$LOG" NOW="$NOW" LINEAR_RETRY_BASE_DELAY=0 \
+		"$@" bash "$command" "${action[@]}" 2>"$LOG/error") && RC=0 || RC=$?
 }
 
 # assert_stop DESC [DIAGNOSTIC...] — assert_fail, then end the suite.

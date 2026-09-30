@@ -362,7 +362,8 @@ graphql_query() {
     ;;
   esac
 }
-resolve_linear_api_key() { return 0; }
+linear_resolve_credentials() { return 0; }
+linear_authorization() { printf '%s' "$LINEAR_API_KEY"; }
 
 count=$(attach_sync --quiet)
 assert_eq "an issue attachment object downloads without a description link" "$count" 1

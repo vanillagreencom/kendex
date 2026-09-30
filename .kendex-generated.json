@@ -528,6 +528,7 @@
   ".agents/skills/linear/scripts/commands/teams.sh",
   ".agents/skills/linear/scripts/commands/users.sh",
   ".agents/skills/linear/scripts/lib/attachments.sh",
+  ".agents/skills/linear/scripts/lib/auth.sh",
   ".agents/skills/linear/scripts/lib/bash-version.sh",
   ".agents/skills/linear/scripts/lib/cache-dates.sh",
   ".agents/skills/linear/scripts/lib/cache.sh",
