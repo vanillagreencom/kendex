@@ -1,13 +1,14 @@
-import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test } from "bun:test";
 import { Buffer } from "node:buffer";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Socket } from "node:net";
 
 import { clearPackageConfigCache } from "../extensions/package-config.ts";
 import sessionBridge from "../extensions/session-bridge.ts";
 
-import { fakePi, fakeCtx, attachSubscriber, sendCommand, shutdownBridge, writeBridgeSettings, type EventHandler } from "./lib/bridge-fixture.ts";
+import { fakePi, fakeCtx, attachSubscriber, readEvent, sendCommand, shutdownBridge, writeBridgeSettings, type EventHandler } from "./lib/bridge-fixture.ts";
 
 let dir = "";
 let activeHandlers: Map<string, EventHandler> | undefined;
@@ -119,6 +120,53 @@ describe("history byte budgets", () => {
 		expect(response.data.events[0]?.rawError?.split("\n")[0]).toBe("spill_subscriber=false");
 		expect(response.data.events[0]?.rawRestored).toBeUndefined();
 		expect(existsSync(rawSpill)).toBe(false);
+	});
+
+	test("terminal event publication serializes compact JSON once regardless of subscriber count", async () => {
+		// Pi produces tool_execution_end; bridge subscribers receive its compact envelope.
+		// Disable spill so worker metadata updates cannot enter the publication count.
+		writeBridgeSettings(dir, { spillRawEvents: false, eventPreviewBytes: 16 });
+		process.chdir(dir);
+		const { pi, handlers } = fakePi();
+		activeHandlers = handlers;
+		sessionBridge(pi);
+		await handlers.get("session_start")!({ reason: "test" }, fakeCtx(dir));
+		const socketPath = join(process.env.PI_BRIDGE_DIR!, `pi-${process.pid}.sock`);
+		const subscribers: Socket[] = [];
+		const payload = { toolName: "probe", toolUseId: "call-1", isError: false, result: "x".repeat(1024) };
+		const originalBytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
+		const stringify = JSON.stringify;
+		try {
+			for (const count of [1, 3]) {
+				while (subscribers.length < count) subscribers.push(await attachSubscriber(socketPath));
+				const received = subscribers.map((socket) => readEvent(socket, "tool_execution_end"));
+				const calls = { original: 0, compact: 0, envelope: 0 };
+				const spy = spyOn(JSON, "stringify").mockImplementation((...args) => {
+					const value = args[0] as Record<string, unknown> | undefined;
+					if (value?.toolName === "probe") {
+						if (value.result !== undefined) calls.original++;
+						else if (value.resultPreview !== undefined) calls.compact++;
+					}
+					if (value?.event === "tool_execution_end") calls.envelope++;
+					return stringify(...args);
+				});
+				try { await handlers.get("tool_execution_end")!(payload, fakeCtx(dir)); }
+				finally { spy.mockRestore(); }
+				const events = await Promise.all(received);
+				expect(calls).toEqual({ original: 1, compact: 1, envelope: 1 });
+				expect(events).toHaveLength(count);
+				for (const event of events) {
+					expect(event).toMatchObject({
+						type: "event", event: "tool_execution_end",
+						truncated: true, originalBytes,
+						data: { toolName: "probe", toolUseId: "call-1", isError: false, resultBytes: 1024, resultPreview: "x".repeat(16) },
+					});
+					expect(typeof event.timestamp).toBe("string");
+					expect(event.rawError?.split("\n")[0]).toBe("spill_enabled=false");
+					expect(event).toEqual(events[0]);
+				}
+			}
+		} finally { for (const socket of subscribers) socket.destroy(); }
 	});
 
 	test("message_end spills the whole message and history --raw rehydrates it", async () => {

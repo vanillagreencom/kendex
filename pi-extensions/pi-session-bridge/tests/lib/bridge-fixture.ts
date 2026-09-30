@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { HistoryResponse } from "../../extensions/event-history.ts";
+import type { HistoryEnvelope, HistoryResponse } from "../../extensions/event-history.ts";
 import assert from "node:assert/strict";
 import { createConnection, type Socket } from "node:net";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -78,6 +78,39 @@ export async function attachSubscriber(socketPath: string): Promise<Socket> {
 	});
 	socket.on("data", () => undefined);
 	return socket;
+}
+
+/** Read one complete event line from an attached bridge subscriber. */
+export function readEvent(socket: Socket, eventName: string): Promise<HistoryEnvelope> {
+	return new Promise((resolve, reject) => {
+		let buffer = "";
+		const cleanup = () => {
+			socket.off("data", onData);
+			socket.off("error", onError);
+			socket.off("close", onClose);
+		};
+		const onError = (error: Error) => { cleanup(); reject(error); };
+		const onClose = () => onError(new Error(`Bridge closed before ${eventName}`));
+		const onData = (chunk: Buffer) => {
+			buffer += chunk.toString("utf8");
+			let newline: number;
+			while ((newline = buffer.indexOf("\n")) >= 0) {
+				const line = buffer.slice(0, newline);
+				buffer = buffer.slice(newline + 1);
+				try {
+					const event = JSON.parse(line) as HistoryEnvelope;
+					if (event.type === "event" && event.event === eventName) {
+						cleanup();
+						resolve(event);
+						return;
+					}
+				} catch (error) { cleanup(); reject(error); return; }
+			}
+		};
+		socket.on("data", onData);
+		socket.once("error", onError);
+		socket.once("close", onClose);
+	});
 }
 
 export async function sendCommand(socketPath: string, payload: Record<string, unknown>): Promise<{ success: boolean; data: HistoryResponse }> {

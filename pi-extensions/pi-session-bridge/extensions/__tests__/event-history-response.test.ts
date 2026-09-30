@@ -1,5 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
 import { writeFileSync } from "node:fs";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { BridgeHistory, type HistoryLimits } from "../event-history.js";
 import { defaultLimits, makeEnvelope, spillPath, useHistoryFixture, pushRaw, settle } from "./lib/history-fixture.ts";
 
@@ -28,6 +30,49 @@ describe("BridgeHistory.buildResponse", async () => {
 			expect(result.events.map((entry) => (entry.data as { idx: number }).idx)).toEqual(row.indexes);
 		});
 	}
+
+	test("compact history bypasses an in-flight spill while raw history waits for restoration", async () => {
+		// A subscribed Pi tool_execution_end queues raw data while clients request history.
+		const history = new BridgeHistory(spillPath, () => defaultLimits);
+		const envelope = { ...makeEnvelope("tool_execution_end"), truncated: true, originalBytes: 1024 };
+		const payload = { toolName: "probe", result: "y".repeat(1024) };
+		const blocked = Promise.withResolvers<void>();
+		const entered = Promise.withResolvers<void>();
+		const append = fs.promises.appendFile.bind(fs.promises);
+		const spy = spyOn(fs.promises, "appendFile").mockImplementation(async (...args) => {
+			entered.resolve();
+			await blocked.promise;
+			return append(...args);
+		});
+		try {
+			pushRaw(history, envelope, payload);
+			await entered.promise;
+			const order: string[] = [];
+			const compact = history.buildResponse({ limit: 5, maxBytes: 4096 }).then((response) => { order.push("compact"); return response; });
+			const raw = history.buildResponse({ limit: 5, maxBytes: 4096, raw: true }).then((response) => { order.push("raw"); return response; });
+			// One event-loop turn lets response continuations run, but cannot release the staged append.
+			await nextTurn();
+			expect(order).toEqual(["compact"]);
+			const compactResponse = await compact;
+			expect(compactResponse.events).toHaveLength(1);
+			expect(compactResponse.events[0]?.data).toEqual({ filler: "x".repeat(32), idx: 0 });
+			expect(compactResponse.events[0]?.rawError?.split("\n")[0]).toBe("spill_pending=true");
+			expect(compactResponse.events[0]?.rawRestored).toBeUndefined();
+			order.push("release");
+			blocked.resolve();
+			const rawResponse = await raw;
+			expect(order).toEqual(["compact", "release", "raw"]);
+			expect(rawResponse.events).toHaveLength(1);
+			expect(rawResponse.events[0]?.data).toEqual(payload);
+			expect(rawResponse.events[0]?.rawRestored).toBe(true);
+			expect(rawResponse.events[0]?.rawError).toBeUndefined();
+			expect(compactResponse.events[0]?.rawError?.split("\n")[0]).toBe("spill_pending=true");
+		} finally {
+			blocked.resolve();
+			await history.cleanup();
+			spy.mockRestore();
+		}
+	});
 
 	test("trims compact envelopes by response budget before rehydration", async () => {
 		const history = new BridgeHistory(spillPath, () => defaultLimits, () => undefined);
