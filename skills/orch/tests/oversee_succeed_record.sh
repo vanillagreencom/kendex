@@ -280,7 +280,8 @@ assert_eq "$RC|$(judged)" "0|mark-unmeasured kind=headroom reason=headroom-none 
 # The control for the server rule: a test that matches the pane id alone takes
 # another tmux server's record, whose pane ids restart at %0, as this one's.
 SERVERCTL="$(mutant_scripts serverctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$SERVERCTL/lib/overseer-launch.sh" 'type == "object" and (.server // "") == $server' 'type == "object"'
+mutate_file "$SERVERCTL/lib/overseer-launch.sh" 'def ol_names($server; $start; $session): type == "object" and (.server // "") == $server' \
+  'def ol_names($server; $start; $session): type == "object"'
 new_caller claude
 reading "Fable 5.1"
 state "$(record "$CALLER_PANE" "$H/.eclaude" claude-opus-5 '{"server": "1"}')"
