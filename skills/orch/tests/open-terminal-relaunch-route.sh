@@ -6,7 +6,8 @@
 # A hosted claude relaunch renders `--continue` with the start brief behind it,
 # which runs where claude exits 1, its answer where the host holds no session. A
 # relaunch whose harness differs from the one the fleet record names renders the
-# start brief alone, whose brief check stands in for the harness-screen wait. A
+# start brief alone. Claude verifies its brief; Codex and Pi share the same
+# harness-screen wait as a resume-or-fresh launch. A
 # pane that shows no harness screen is no launched lane: its window closes and
 # only then does its fleet record read stopped. A relaunch that has not taken,
 # recorded preparing or stopped, leaves the harness the record names.
@@ -72,7 +73,7 @@ RUN_SEQ=0
 # previous run left. SCREEN is the harness screen file, `-` for a pane that
 # never draws one. RUN_ENV holds any further stub settings for the run. Sets
 # OUT, RC and RUN.
-RUN_ENV=() SEED_LANES='[]'
+RUN_ENV=() SEED_LANES='[]' SELECT_KIND=-
 run_ot() {
   local recorded="$1" screen="$2" harness="$3" flags='--model opus --effort high' prev="${RUN:-}" lane=work pool=""
   [[ "$harness" != codex ]] || flags='-m gpt-6-astra -c model_reasoning_effort=high'
@@ -97,13 +98,20 @@ run_ot() {
     cp -R "$prev/state" "$RUN/state" || { echo "open-terminal-relaunch-route: seed-failed run=$RUN" >&2; exit 1; }
   elif ! mkdir -p "$RUN/state" || ! "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" init oversee >/dev/null \
     || ! "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" update oversee --arg h "$recorded" --argjson extra "$SEED_LANES" \
-      '.lanes = [{item: "CC-1", harness: $h, status: "running"}] + $extra' >/dev/null; then
+      '.lanes = [{item: "CC-1", harness: $h, model: "last-model", account: "last-account", session_id: "last-session", status: "running"}] + $extra' >/dev/null; then
     echo "open-terminal-relaunch-route: seed-failed run=$RUN" >&2
     exit 1
   fi
+  local -a selection_env=(LANE_HOST_STUB_SELECTION=resume)
+  if [[ "$SELECT_KIND" != - ]]; then
+    selection_env=(LANE_HOST_STUB_SELECTION= OT_REPLAY_LIB="$TEST_DIR/lib/open-terminal-stubs.sh"
+      OT_REPLAY_SCRIPTS="${OPEN_TERMINAL%/*}" OT_REPLAY_RUN="$RUN/inline" OT_REPLAY_HARNESS="$harness"
+      OT_REPLAY_KIND="$SELECT_KIND" OT_REPLAY_SANDBOX="$RUN/remote/srv/lane")
+    mkdir -p "$RUN/inline"
+  fi
   OUT="$(env LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_MAX_PCT=95 ORCH_LANE_ALIASES=eclaude=work ORCH_LANE_COPILOT_POOL="$pool" \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' LANE_HOST_STUB_DIR="$RUN/remote" LANE_HOST_STUB_LOG="$RUN/host.log" LANE_HOST_STUB_CREATE_LINE="$create_line" \
-    ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SSH_PROMPT_SECS=1 OT_HARNESS_SCREEN="$screen" ${RUN_ENV[@]+"${RUN_ENV[@]}"} \
+    ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SSH_PROMPT_SECS=1 OT_HARNESS_SCREEN="$screen" "${selection_env[@]}" ${RUN_ENV[@]+"${RUN_ENV[@]}"} \
     TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" \
     OT_WT_LOG="$RUN/worktree.log" OVERSEE_WATCH_STATE_DIR="$RUN/state" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
     "$OPEN_TERMINAL" --state-dir "$RUN/state" --host "$HOST_STUB" --repo o/r --relaunch \
@@ -188,10 +196,17 @@ for harness_screen in "codex|$HARNESS_SCREEN" "pi|$PI_SCREEN"; do
     'scan-failed|0|rc=2 runs=0 resume=0 fresh=0 target=0'; do
     kind="${row%%|*}" rest="${row#*|}" exit_status="${rest%%|*}" expected="${rest#*|}"
     if [[ "$exit_status" == 0 && ( "$kind" == none || "$kind" == matching ) ]]; then
-      run_ot "$harness" "$screen" "$harness"
+      SELECT_KIND="$kind" run_ot "$harness" "$screen" "$harness"
       assert_eq "rc=$RC launched=$(launched) closed=$(closed) status=$(status)" \
         'rc=0 launched=1 closed=0 status=running' \
         "$harness $kind keeps a healthy harness screen running" "$RUN/launcher.out"
+      assert_eq "$(cat "$RUN/inline/replay.out")" "$expected" \
+        "$harness $kind executes the host's actual selection before reporting success"
+      lineless=0
+      [[ "$harness:$kind" != codex:matching ]] || lineless=1
+      assert_eq "lineless=$(said '^open-terminal: resume-lineless item=CC-1 harness=codex$') continuation=$(tr '\0' '\n' < "$RUN/inline/harness.log" | grep -c 'Resume the orch workflow' || true)" \
+        "lineless=$lineless continuation=$([[ "$harness:$kind" == pi:matching ]] && echo 1 || echo 0)" \
+        "$harness $kind owes a paste only for an actual promptless Codex resume" "$RUN/launcher.out"
     fi
     replay_run="$RUN/replay-$kind-$exit_status"
     assert_eq "$(ot_replay_relaunch "$(remote)" "${OPEN_TERMINAL%/*}" "$replay_run" "$harness" "$kind" "$exit_status")" \
@@ -270,6 +285,29 @@ assert_eq "switched=$(said '^open-terminal: harness-switched item=CC-1 harness=c
   "switched=1 resume=0 lineless=0" \
   "a record naming claude under a codex relaunch renders codex's start brief"
 
+for harness in codex pi; do
+  run_ot claude - "$harness"
+  metadata="$("$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '[.lanes[]? | select(.item == "CC-1") | [.harness,.model,.account,.session_id] | join(" ")] | first')"
+  assert_eq "rc=$RC launched=$(launched) missing=$(said '^open-terminal: harness-screen-missing item=CC-1 seconds=2') closed=$(closed) record=$(recorded) metadata=$metadata" \
+    'rc=1 launched=0 missing=1 closed=1 record=stopped claude metadata=claude last-model last-account last-session' \
+    "switched $harness at a shell fails and keeps the last successful launch metadata"
+done
+# A missing or unreadable selection is not proof of a fresh start.
+for row in 'pending|read' 'resume|cat'; do
+  RUN_ENV=(LANE_HOST_STUB_SELECTION="${row%%|*}")
+  [[ "${row#*|}" != cat ]] || RUN_ENV+=(LANE_HOST_STUB_CAT_STATUS=1 LANE_HOST_STUB_CAT_PATH=/srv/lane/tmp/lane-mail/CC-1/relaunch-selection)
+  run_ot codex "$HARNESS_SCREEN" codex
+  RUN_ENV=()
+  assert_eq "rc=$RC launched=$(launched) failed=$(said "^open-terminal: relaunch-selection-failed item=CC-1 operation=${row#*|}") closed=$(closed) status=$(status)" \
+    'rc=1 launched=0 failed=1 closed=1 status=stopped' \
+    "Codex selection ${row#*|} failure refuses a success notice"
+done
+RUN_ENV=(LANE_HOST_STUB_PUT_STATUS=1)
+run_ot codex "$HARNESS_SCREEN" codex
+RUN_ENV=()
+assert_eq "rc=$RC launched=$(launched) failed=$(said '^open-terminal: relaunch-selection-failed item=CC-1 operation=put')" \
+  'rc=1 launched=0 failed=1' 'a selection reset that fails starts no Codex harness'
+
 echo "=== controls ==="
 # One mutant per rule. Each keeps the text it edits and removes the behaviour.
 SHIPPED="$OPEN_TERMINAL"
@@ -291,11 +329,39 @@ control status '|| [ $? -ne 1 ] || exec' '|| exec'
 run_ot claude "$HARNESS_SCREEN" claude
 assert_eq "$(replay 143)" "continue,fresh" "control: without the status gate a lane stopped by a signal starts afresh"
 control screen 'tmux_wait_harness "$pane" "$harness_secs" || harness_rc=$?' 'true || harness_rc=$?'
-for harness in claude codex pi; do
-  run_ot "$harness" - "$harness"
+for row in claude:claude codex:codex pi:pi claude:codex claude:pi; do
+  run_ot "${row%%:*}" - "${row#*:}"
   assert_eq "rc=$RC launched=$(launched)" "rc=0 launched=1" \
-    "control: without the harness-screen check $harness at a shell reports launched=1"
+    "control: without the shared screen check $row at a shell reports launched=1"
 done
+control selection-fresh 'printf fresh > %q' 'printf resume > %q'
+SELECT_KIND=none run_ot codex "$HARNESS_SCREEN" codex
+assert_eq "$(cat "$RUN/inline/replay.out") lineless=$(said '^open-terminal: resume-lineless item=CC-1 harness=codex$')" \
+  'rc=0 runs=1 resume=0 fresh=1 target=0 lineless=1' \
+  'control: a fresh selection labelled resume wrongly requests a continuation paste'
+control selection-resume 'resume) ot_message resume-lineless' 'resume) : ;; unused) ot_message resume-lineless'
+SELECT_KIND=matching run_ot codex "$HARNESS_SCREEN" codex
+assert_eq "$(cat "$RUN/inline/replay.out") lineless=$(said '^open-terminal: resume-lineless item=CC-1 harness=codex$')" \
+  'rc=0 runs=1 resume=1 fresh=0 target=1 lineless=0' \
+  'control: a suppressed resume result loses the continuation handoff'
+control selection-read 'UNTAKEN_PANE="$LAUNCH_PANE"; return 1 ;;' 'UNTAKEN_PANE="$LAUNCH_PANE"; : ;;'
+RUN_ENV=(LANE_HOST_STUB_SELECTION=pending)
+run_ot codex "$HARNESS_SCREEN" codex
+RUN_ENV=()
+assert_eq "rc=$RC launched=$(launched)" 'rc=0 launched=1' \
+  'control: without the result tag check pending counts as a launched Codex'
+control selection-cat 'if ! selected="$(host_transport cat --item "$wt_id" "$remote_path/$HOST_SELECTION_FILE")"; then' 'if selected="$(host_transport cat --item "$wt_id" "$remote_path/$HOST_SELECTION_FILE")"; then'
+RUN_ENV=(LANE_HOST_STUB_CAT_STATUS=1 LANE_HOST_STUB_CAT_PATH=/srv/lane/tmp/lane-mail/CC-1/relaunch-selection)
+run_ot codex "$HARNESS_SCREEN" codex
+RUN_ENV=()
+assert_eq "rc=$RC failed=$(said '^open-terminal: relaunch-selection-failed item=CC-1 operation=cat')" 'rc=1 failed=0' \
+  'control: an inverted read check loses the host cat failure classification'
+control selection-put 'if ! printf pending | host_transport put --item "$wt_id" "$remote_path/$HOST_SELECTION_FILE"; then' 'if printf pending | host_transport put --item "$wt_id" "$remote_path/$HOST_SELECTION_FILE"; then'
+RUN_ENV=(LANE_HOST_STUB_PUT_STATUS=1)
+run_ot codex "$HARNESS_SCREEN" codex
+RUN_ENV=()
+assert_eq "rc=$RC failed=$(said '^open-terminal: relaunch-selection-failed item=CC-1 operation=put')" 'rc=1 failed=0' \
+  'control: an inverted reset check loses the host put failure classification'
 control screen-bound 'case "$HARNESS" in codex | pi) TIMEOUT_IS_READ=true ;; esac' ': '
 for harness in codex pi; do
   RUN_ENV=(ORCH_TMUX_VERIFY_SECS=abc)

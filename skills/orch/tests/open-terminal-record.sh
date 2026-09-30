@@ -860,7 +860,7 @@ assert_eq "rc=$RC refused=$(grep -c '^open-terminal: host-prepare-failed item=CC
 # foreground even in a fleet. One whose record names claude starts fresh on its
 # start brief, which carries the line, so it is handed off like any launch.
 CODEX_RELAUNCH=(-- --relaunch --launch-flags "-m gpt-5 -c model_reasoning_effort=high")
-HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-83 STUB_BUFFER_LOG="$TMP_ROOT/codex-typed" STUB_HARNESS_TEXT='Working (esc to interrupt)' "${CODEX_RELAUNCH[@]}"
+HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-83 LANE_HOST_STUB_SELECTION=resume STUB_BUFFER_LOG="$TMP_ROOT/codex-typed" STUB_HARNESS_TEXT='Working (esc to interrupt)' "${CODEX_RELAUNCH[@]}"
 assert_eq "rc=$RC waited=$(grep -c '^wait --item CC-83 $' "$TMP_ROOT/host.log" || true) handed=$(grep -c '^open-terminal: lane-preparing ' <<<"$OUT" || true) lineless=$(grep -c '^open-terminal: resume-lineless item=CC-83 harness=codex$' <<<"$ERR" || true) record=$(prepared CC-83)" \
   "rc=0 waited=1 handed=0 lineless=1 record=running none none" \
   "a hosted codex relaunch that resumes waits for its host in the foreground and reports resume-lineless to the caller"
@@ -874,20 +874,20 @@ NO_SCREEN_OT="$TMP_ROOT/no-screen/scripts"
 mkdir -p "$NO_SCREEN_OT"
 cp -R "$REPO/scripts/." "$NO_SCREEN_OT/"
 mutate_file "$NO_SCREEN_OT/open-terminal" '    tmux_wait_harness "$pane" "$harness_secs" || harness_rc=$?' '    :'
-HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-83 STUB_BUFFER_LOG="$TMP_ROOT/codex-typed" -- SCRIPT="$NO_SCREEN_OT/open-terminal" "${CODEX_RELAUNCH[@]:1}"
+HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-83 LANE_HOST_STUB_SELECTION=resume STUB_BUFFER_LOG="$TMP_ROOT/codex-typed" -- SCRIPT="$NO_SCREEN_OT/open-terminal" "${CODEX_RELAUNCH[@]:1}"
 assert_eq "rc=$RC record=$(prepared CC-83)" "rc=0 record=running none none" \
   "control: without the screen check a bare shell renews the record as running"
 "$WS" --state-dir "$STATE" update oversee '.lanes += [{item: "CC-87", harness: "claude", status: "running"}]' >/dev/null
-HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-87 "${CODEX_RELAUNCH[@]}"
+HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-87 STUB_HARNESS_TEXT='Working (esc to interrupt)' "${CODEX_RELAUNCH[@]}"
 assert_eq "rc=$RC handed=$(grep -c '^open-terminal: lane-preparing item=CC-87 ' <<<"$OUT" || true) lineless=$(grep -c 'resume-lineless' <<<"$ERR" || true) record=$(settled CC-87)" \
   "rc=0 handed=1 lineless=0 record=running prepare none" \
   "a hosted codex relaunch across a harness switch starts fresh and is handed off"
 LINELESS_MUTANT="$TMP_ROOT/lineless-mutant/scripts"
 mkdir -p "$LINELESS_MUTANT"
 cp -R "$REPO/scripts/." "$LINELESS_MUTANT/"
-mutate_file "$LINELESS_MUTANT/open-terminal" '"$FLEET" == true && "$RESUME_LINELESS" != true ]]' '"$FLEET" == true && "$HARNESS" != codex ]]'
+mutate_file "$LINELESS_MUTANT/open-terminal" '"$FLEET" == true && -z "$HOST_SELECTION_FILE" ]]' '"$FLEET" == true && "$HARNESS" != codex ]]'
 "$WS" --state-dir "$STATE" update oversee '.lanes += [{item: "CC-88", harness: "claude", status: "running"}]' >/dev/null
-HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-88 -- SCRIPT="$LINELESS_MUTANT/open-terminal" "${CODEX_RELAUNCH[@]:1}"
+HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-88 STUB_HARNESS_TEXT='Working (esc to interrupt)' -- SCRIPT="$LINELESS_MUTANT/open-terminal" "${CODEX_RELAUNCH[@]:1}"
 assert_eq "handed=$(grep -c '^open-terminal: lane-preparing item=CC-88 ' <<<"$OUT" || true)" "handed=0" \
   "control: gated on every hosted codex relaunch the switched one waits in the foreground"
 

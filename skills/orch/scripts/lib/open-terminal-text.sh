@@ -106,11 +106,12 @@ ot_message() { # REASON FIELD=VALUE...
     github-item-invalid) text='A GitHub work item must be an issue number.' ;;
     repo-missing) text='Specify a repository when GitHub cannot resolve it.' ;;
     claim-unrecorded) text='The previous claim is missing, so under --lane auto the next item cannot be spread off its account. The batch stops.' ;;
-    item-owned) text='Another session owns this work item. Its worktree was skipped. Where no session runs it, a dead lane or a hosted create that failed after its sandbox started, launch it again with --relaunch. A hosted codex or pi relaunch resumes natively with no start brief behind it, so where its sandbox holds no session of that harness, give --relaunch a --cmd carrying the full harness command with the start brief.' ;;
+    item-owned) text='Another session owns this work item. Its worktree was skipped. Where no session runs it, a dead lane or a hosted create that failed after its sandbox started, launch it again with --relaunch. Without --cmd, a hosted Codex or Pi relaunch selects a matching session on the host, or runs the start brief in the same call when none exists.' ;;
     worktree-failed) text='The worktree helper failed to create this item.' ;;
     worktree-reuse-merged) text='The item pull request merged, so its tree is kept as it stands and no rebase is attempted.' ;;
     worktree-links-failed) text='The kept tree has configured symlinks the repair could not restore, so the lane could not reach its own .agents scripts. The item was not launched.' ;;
-    resume-lineless) text='The hosted codex resume carries no continuation line, because codex resume refuses a prompt beside --last. The lane is up and idle: paste its continuation line into the pane per oversee-lanes.md section Talking to a lane, Pane paste.' ;;
+    resume-lineless) text='The host selected a matching Codex session and resumed it without a continuation line. Paste its continuation into the pane per oversee-lanes.md section Talking to a lane, Pane paste. A fresh start carries its brief and needs no paste.' ;;
+    relaunch-selection-failed) text='The hosted Codex selection result could not be reset, read or recognized. The operation names the failed step. The lane is not counted as launched. Repair the host file access or selection command, then relaunch.' ;;
     host-resolve-failed) text='The lane-host helper could not resolve the host.' ;;
     host-invalid) text='A hosted launch needs tmux mode, a resolved lane and --harness claude, codex, pi or copilot. Nothing was created.' ;;
     host-create-failed) text='The lane host failed to create this item. No local lane was started.' ;;
@@ -133,7 +134,7 @@ ot_message() { # REASON FIELD=VALUE...
     session-resumed) text='The harness resumed the matching session.' ;;
     session-retired) text='The item'"'"'s handoff record stands, so its lane handed its work to that record and ended the session. The relaunch resumes no session: it starts the lane afresh, and the start workflow continues from the record.' ;;
     harness-switched) text='The lane record names another harness as the last one to run the lane, so no session this harness holds carries that work. The relaunch resumes no session: it starts the lane afresh on the start brief.' ;;
-    harness-screen-missing) text='The hosted relaunch showed no harness screen the launcher recognizes within seconds. The resume and the start brief behind it may both have exited, or the harness may be slow to start or show a screen the launcher does not know. The lane is not launched. Under a fleet its window is closed and its record reads stopped, still naming the harness, model and account of the last launch that took. A launch run in the foreground writes stopped only once the close succeeds: a close that fails leaves the record as it read, tmux-failed naming the cause. A launch the background job ran writes stopped whatever the close answered. Relaunch; if this recurs, run the harness in the sandbox by hand to read its own words.' ;;
+    harness-screen-missing) text='The hosted relaunch showed no harness screen the launcher recognizes within seconds. The selected command may have exited, or the harness may be slow to start or show a screen the launcher does not know. The lane is not launched. Under a fleet its window is closed and its record reads stopped, still naming the harness, model and account of the last launch that took. A launch run in the foreground writes stopped only once the close succeeds: a close that fails leaves the record as it read, tmux-failed naming the cause. A launch the background job ran writes stopped whatever the close answered. Relaunch; if this recurs, run the harness in the sandbox by hand to read its own words.' ;;
     record-stop-failed) text='The hosted relaunch did not take and its window is closed, but its record could not be rewritten stopped, so the record keeps whatever status the launch last wrote. workflow-state names why above: fix it, then relaunch.' ;;
     handoff-unreadable) text='workflow-state handoff-standing, asked from the lane'"'"'s worktree, answered unreadable or gave no verdict, so nothing says whether the lane handed off and retired its session. Nothing was launched. Its own words are above. state is the item'"'"'s state file, or the item where even the path could not be read: repair it, then relaunch.' ;;
     wake-invalid) text='The wake option takes --harness claude, codex, pi or copilot, and no --cmd, --relaunch or lane host.' ;;
@@ -329,25 +330,24 @@ Options:
                     stopped with its reason, logging to
                     lane-prepare-ITEM.log in the state directory; the summary
                     counts it as preparing. Without --state-dir, and for a
-                    codex --relaunch that resumes, the launch runs `lane-host
-                    wait` itself.
+                    Codex --relaunch awaiting host session selection, the
+                    launch runs `lane-host wait` itself.
                     lane-close closes a record still preparing. With
-                    --relaunch the provider keeps its tree and the harness
-                    continues natively: claude --continue, codex resume
-                    --last, pi -c. The claude and pi forms carry the
-                    continuation line. The codex form does not: its prompt
-                    argument is declared as conflicting with --last, so
-                    `codex resume --last a b` is a parse error and a lone
-                    positional beside --last is the session id. A hosted codex
-                    lane therefore resumes with no line, reported as
-                    resume-lineless; paste its line into the pane per
-                    oversee-lanes.md § Talking to a lane, Pane paste.
-                    A claude --continue that exits 1, its answer where the
-                    host holds no session, runs the start brief in the same
-                    call, and the lane counts as launched only once its pane
-                    draws a harness screen within twice
-                    ORCH_TMUX_VERIFY_SECS, one bound for each claude start; a
-                    pane that draws none is harness-screen-missing, and under
+                    --relaunch the provider keeps its tree. Without --cmd,
+                    Codex and Pi select a matching session on the host and
+                    resume by id or file path. No session starts the normal
+                    brief in the same call. Claude uses --continue and runs
+                    the start brief when it exits 1 for no session.
+                    Claude and Pi resumes carry the continuation line.
+                    A Codex resume stays promptless and reports resume-lineless
+                    only when the host selected resume. Paste its continuation
+                    per oversee-lanes.md § Talking to a lane, Pane paste.
+                    A fresh start needs no paste. These no-command relaunches,
+                    including switched-harness fresh starts, count as launched
+                    only once the pane shows a harness screen or Claude's
+                    brief check passes. The screen wait allows twice
+                    ORCH_TMUX_VERIFY_SECS for Claude's possible two starts.
+                    A pane that draws none is harness-screen-missing, and under
                     --state-dir its window is closed and the lane's fleet
                     record reads stopped. A launch run in the foreground
                     writes stopped only once the close succeeds; one the
@@ -500,9 +500,10 @@ Options:
                     the --state-dir gate read as listing the lane mail wake,
                     which starts its turn when mail lands; one it read without
                     the wake also prints pi-mail-wake-missing. A hosted codex
-                    lane is the exception: it resumes with no line, reported as
-                    resume-lineless, and its line is pasted into the pane
-                    afterwards — see --host. With no match the normal brief
+                    resume is the exception: only an actual resume reports
+                    resume-lineless and needs its continuation pasted into
+                    the pane. A fresh start needs no paste. See --host.
+                    With no match the normal brief
                     starts fresh, and so does a local relaunch of an item
                     whose handoff record stands (`workflow-state
                     handoff-standing`), reported as session-retired: its lane
@@ -512,13 +513,13 @@ Options:
                     fleet record names another harness as the last one to run
                     the lane starts fresh too, hosted or local, reported as
                     harness-switched: no session this harness holds carries
-                    that work. A local relaunch and a hosted claude relaunch
-                    need no --cmd: the launcher runs the start brief itself
-                    where the resume finds no session. A hosted codex or pi
-                    relaunch resumes natively with no start brief behind it;
-                    into a sandbox that holds no session of that harness,
-                    relaunch with a --cmd carrying the full harness command
-                    with the start brief. A --cmd relaunch renders its
+                    that work. Local relaunches and hosted Claude, Codex and
+                    Pi relaunches need no --cmd. Hosted Codex and Pi select a
+                    matching session through lane-relaunch on the host, or
+                    run the start brief in the same call when none exists.
+                    These hosted no-command relaunches count as launched only
+                    after the pane shows a harness screen, including a fresh
+                    start after a harness switch. A --cmd relaunch renders its
                     template verbatim: no session lookup, no harness-switch
                     check and no start brief after it. Before the
                     worktree step an existing tree is asked whether its pull

@@ -51,4 +51,4 @@ A lane under a session limit still needs its one-line continuation nudge pasted 
 
 A lane never arms the shared git hooks from its worktree; a guard-script PR whose new chain refuses the branch under main's installed scripts is a one-time transition the overseer sequences.
 
-**Resuming a dead or walled lane.** Use [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch), which resumes the item's newest session natively per `open-terminal --help` § `--relaunch`; a hosted lane has no local transcript lookup. The resumed command carries the continuation line that re-arms the lane's waiters, so the relaunch is the whole step, except on a hosted codex lane, which that section says resumes without the line and takes it by Pane paste afterwards.
+**Resuming a dead or walled lane.** Use [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch) without `--cmd` for automatic session selection or the fresh start brief. Only a hosted Codex relaunch that reports `resume-lineless` needs its continuation through Pane paste afterwards. A fresh start needs no paste.

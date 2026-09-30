@@ -15,6 +15,9 @@ export SCRIPT_DIR
 # English explanations follow and are not a parsing contract.
 # start_cmd returns a shell command consumed by open_gui or open_tmux. Its
 # quoting and harness argv, including the kickoff prompt, are that contract.
+# A hosted Codex selector writes resume or fresh to HOST_SELECTION_FILE before
+# exec. launch_finish resets it to pending, then reads it through lane-host cat
+# after the harness-screen wait. Only resume owes the caller a continuation.
 # shellcheck source=lib/open-terminal-text.sh
 source "$SCRIPT_DIR/lib/open-terminal-text.sh"
 
@@ -304,15 +307,15 @@ fi
 #                      no resume-or-fresh relaunch route, hosted or local
 #   tmux_wait_harness  two callers: the premise ahead of the account read,
 #                      so whatever lane_account_ok reaches, and the
-#                      harness-screen wait of a resume-or-fresh relaunch, a
-#                      hosted claude, codex or pi relaunch with no --cmd
+#                      harness-screen wait of a hosted claude, codex or pi
+#                      relaunch with no --cmd and no brief
 #   lane_account_ok    a local claude, codex or copilot lane with a --lane and
 #                      no --cmd
 # The account read and its premise are not reachable on a hosted lane: LANE_FORM
 # stays `unchecked` outside the local branch, which is what
 # lane_account_readable answers on. A hosted --cmd lane reads this setting
 # nowhere. A hosted claude lane reads it for its brief or resume-or-fresh wait;
-# a hosted codex or pi relaunch reads it for the resume-or-fresh wait.
+# a hosted codex or pi relaunch reads it even after a harness switch.
 # The session-file term of the
 # brief's condition is never filled on a hosted lane: its sessions are on its
 # host and this machine's session store is not scanned.
@@ -1512,14 +1515,18 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
       fresh="$(RELAUNCH_ROUTE=fresh start_cmd "$item" "$mail_id" "$repo")" || return 1
       printf 'claude %s--continue%s || [ $? -ne 1 ] || exec %s\n' "$flags" "$line" "$fresh"; return ;;
       codex | pi)
-        local fresh resume selection quoted
+        local fresh resume selection quoted selected_resume="" selected_fresh=""
         fresh="$(RELAUNCH_ROUTE=fresh start_cmd "$item" "$mail_id" "$repo")" || return 1
         case "$HARNESS" in
           codex) resume="codex ${flags}resume \"\$session\"" ;;
           pi) resume="pi ${flags}--session \"\$session\"$line" ;;
         esac
-        selection="$(printf 'session=$(bash .agents/skills/orch/scripts/lib/lane-relaunch.sh %q %q %q %q); rc=$?; case "$rc" in 0) exec %s ;; 1) exec %s ;; *) exit "$rc" ;; esac' \
-          "$HARNESS" "$item" "$TRACKER" "$LAUNCH_FLAGS" "$resume" "$fresh")" || return 1
+        if [[ "$HARNESS" == codex ]]; then
+          selected_resume="$(printf 'printf resume > %q || exit 2; ' "$HOST_SELECTION_FILE")" || return 1
+          selected_fresh="$(printf 'printf fresh > %q || exit 2; ' "$HOST_SELECTION_FILE")" || return 1
+        fi
+        selection="$(printf 'session=$(bash .agents/skills/orch/scripts/lib/lane-relaunch.sh %q %q %q %q); rc=$?; case "$rc" in 0) %sexec %s ;; 1) %sexec %s ;; *) exit "$rc" ;; esac' \
+          "$HARNESS" "$item" "$TRACKER" "$LAUNCH_FLAGS" "$selected_resume" "$resume" "$selected_fresh" "$fresh")" || return 1
         quoted="$(lane_single_quote "$selection")" || return 1
         printf 'bash -c %s\n' "$quoted"
         return ;; esac
@@ -2271,14 +2278,11 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
   local launch_rc=0 premise=skipped
   HARNESS_SCREEN_MISSED=false
   [[ -z "$brief" ]] || tmux_launch_verify "$pane" "$title" "$brief" "$running" || launch_rc=$?
-  # A resume-or-fresh relaunch has no brief to verify, so it counts as launched
-  # only once its pane draws a harness screen. The ssh login is already behind
-  # the paste, and what follows it can be two claude starts, the resume and
-  # the start brief after it, so the bound is one verification bound for each.
-  # A pane that draws none is no launched lane, whether both exited or the
-  # screen is one pane_harness_up does not know; under a fleet the launch loop
-  # ends it through launch_stop.
-  if [[ "$RELAUNCH_ROUTE" == resume-or-fresh ]]; then
+  # Hosted no-command relaunches with no brief share this readiness check,
+  # including a Codex or Pi start after a harness switch. Claude can run two
+  # commands, so the bound allows one verification period for each. A shell
+  # alone never counts as launched; the fleet launch loop closes it.
+  if [[ "$HOST_RELAUNCH" == true && -z "$CMD_TEMPLATE" && -z "$brief" && "$HARNESS" =~ ^(claude|codex|pi)$ ]]; then
     local harness_rc=0 harness_secs=$((TMUX_VERIFY_SECS * 2))
     tmux_wait_harness "$pane" "$harness_secs" || harness_rc=$?
     case "$harness_rc" in
@@ -2524,15 +2528,12 @@ host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
 # record, which would resume the session the lane retired. The verb's own words
 # reach stderr.
 #
-# Sets RESUME_LINELESS too: a hosted codex relaunch that resumes carries no
-# continuation line, preserving D002's foreground handoff. This is what
-# resume-lineless tells the caller, and which keeps that relaunch off the
-# background hand-off whose output is a log. The launch loop resets both per
-# item.
-RELAUNCH_ROUTE=resume RESUME_LINELESS=false
+# Hosted Codex selection stays in the foreground under D002. Its result is
+# unknown until the host starts the harness; launch_finish reads that result.
+RELAUNCH_ROUTE=resume HOST_SELECTION_FILE=""
 relaunch_route() { # ITEM STATE_ID WORKTREE
   local path
-  RELAUNCH_ROUTE=resume RESUME_LINELESS=false
+  RELAUNCH_ROUTE=resume HOST_SELECTION_FILE=""
   LANE_RECORD_VALUE=absent
   [[ "$FLEET" != true ]] || lane_record_read "$2" harness || return 1
   if [[ "$LANE_RECORD_VALUE" != absent && "$LANE_RECORD_VALUE" != "$HARNESS" ]]; then
@@ -2543,7 +2544,7 @@ relaunch_route() { # ITEM STATE_ID WORKTREE
   if [[ "$HOST_RELAUNCH" == true ]]; then
     case "$HARNESS" in
       claude) RELAUNCH_ROUTE=resume-or-fresh ;;
-      codex) RELAUNCH_ROUTE=resume-or-fresh; RESUME_LINELESS=true ;;
+      codex) RELAUNCH_ROUTE=resume-or-fresh; HOST_SELECTION_FILE="tmp/lane-mail/$2/relaunch-selection" ;;
       pi) RELAUNCH_ROUTE=resume-or-fresh ;;
     esac
     return 0
@@ -2565,6 +2566,12 @@ relaunch_route() { # ITEM STATE_ID WORKTREE
 # substitution here is checked explicitly.
 launch_finish() {
   local context_session
+  if [[ -n "$HOST_SELECTION_FILE" ]]; then
+    # Reset before every attempt: a previous resume must not label a fresh run.
+    if ! printf pending | host_transport put --item "$wt_id" "$remote_path/$HOST_SELECTION_FILE"; then
+      ot_message relaunch-selection-failed "item=$item" "operation=put" >&2; return 1
+    fi
+  fi
   if [[ "$LANE_HOST" != local && "$FLEET" == true && "$WAKE" != true && "$HARNESS" == pi ]]; then
     local pi_wake
     pi_wake="$(host_pi_gate "$item" "$wt_id" "$pi_root" "$remote_path")" || return 1
@@ -2714,12 +2721,19 @@ launch_finish() {
     open_gui "$wt" "$title" "$cmd" || return 1
   fi
   [[ -z "$session_file" || "$WAKE" == true ]] || ot_message session-resumed "item=$item" "harness=$HARNESS" "transcript=$session_file"
-  # The one launch that leaves work owed. Every other resumed lane carries its
-  # continuation line in the command itself; this one cannot, so the lane comes
-  # up idle and runs no turn until the line is pasted. session-resumed cannot
-  # carry this: it is gated on a matched transcript, which a hosted relaunch
-  # never has.
-  [[ "$RESUME_LINELESS" != true ]] || ot_message resume-lineless "item=$item" "harness=$HARNESS" >&2
+  if [[ -n "$HOST_SELECTION_FILE" ]]; then
+    local selected
+    if ! selected="$(host_transport cat --item "$wt_id" "$remote_path/$HOST_SELECTION_FILE")"; then
+      ot_message relaunch-selection-failed "item=$item" "operation=cat" >&2
+      UNTAKEN_PANE="$LAUNCH_PANE"; return 1
+    fi
+    case "$selected" in
+      resume) ot_message resume-lineless "item=$item" "harness=$HARNESS" >&2 ;;
+      fresh) ;;
+      *) ot_message relaunch-selection-failed "item=$item" "operation=read" "value=$selected" >&2
+        UNTAKEN_PANE="$LAUNCH_PANE"; return 1 ;;
+    esac
+  fi
   # Recorded once the launch stands, under the workflow-state id the watch
   # names the item by (issue-N for a GitHub item), with the window the watch
   # reads its pane through and the root its mailbox is read under. A record
@@ -3131,7 +3145,7 @@ for raw in "${ITEMS[@]}"; do
   launched_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   # Judged before any record write: a preparing record already names this
   # launch's harness, and the switch is read against the one before it.
-  RELAUNCH_ROUTE=resume RESUME_LINELESS=false
+  RELAUNCH_ROUTE=resume HOST_SELECTION_FILE=""
   if [[ "$RELAUNCH" == true && -z "$CMD_TEMPLATE" ]] && ! relaunch_route "$item" "$wt_id" "$wt"; then
     failed=$((failed + 1))
     continue
@@ -3139,10 +3153,9 @@ for raw in "${ITEMS[@]}"; do
   # A host still preparing the item it accepted answers through `wait`. Under a
   # fleet a background job waits and the watch reports what it recorded;
   # without one there is no record to report through, so the launch waits here.
-  # A hosted codex relaunch that resumes is the exception: it carries no
-  # continuation line and says so as resume-lineless, which must reach the
-  # caller, not a log.
-  if [[ "$host_state" == preparing && "$FLEET" == true && "$RESUME_LINELESS" != true ]]; then
+  # Hosted Codex selection must finish in the foreground: only the host knows
+  # whether it resumed promptless and owes the caller a continuation paste.
+  if [[ "$host_state" == preparing && "$FLEET" == true && -z "$HOST_SELECTION_FILE" ]]; then
     launch_handoff || { failed=$((failed + 1)); continue; }
     preparing=$((preparing + 1))
   else

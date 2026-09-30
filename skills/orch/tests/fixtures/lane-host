@@ -86,6 +86,11 @@ case "$1" in
   # has not written this yet"; anything else keeps its own status. A relative
   # path resolves under the disk's `home`, as the SSH session's does.
   cat)
+    # Consumer suites can supply the selector's result as remote host data.
+    # Selector integration rows instead replay the launch into _STUB_DIR.
+    if [[ "$4" == */relaunch-selection && -n "${LANE_HOST_STUB_SELECTION:-}" ]]; then
+      printf '%s' "$LANE_HOST_STUB_SELECTION"; exit 0
+    fi
     src="${LANE_HOST_STUB_FILE:-}"
     [ -z "${LANE_HOST_STUB_DIR:-}" ] || src="$LANE_HOST_STUB_DIR$4"
     [[ -z "${LANE_HOST_STUB_DIR:-}" || "$4" == /* ]] || src="$LANE_HOST_STUB_DIR/home/$4"

@@ -174,7 +174,16 @@ case "${1:-}" in
     else printf '%s\n' "${OT_PANE_TEXT:-dev@lane:~\$}"; fi ;;
   # The pasted text on a line of its own: a paste carries no newline, and the
   # next call's log line would otherwise run on from it.
-  load-buffer) { cat "${!#}"; echo; } >> "$OT_TMUX_LOG" ;;
+  load-buffer)
+    { cat "${!#}"; echo; } >> "$OT_TMUX_LOG"
+    # A relaunch row can execute the rendered command before the screen read.
+    # The real selector writes its result to the fixture host's filesystem.
+    if [[ -n "${OT_REPLAY_LIB:-}" ]] && grep -q '^exec bash -lc ' "${!#}"; then
+      source "${OT_REPLAY_LIB%/*}/shared-skill-libs.sh"
+      source "$OT_REPLAY_LIB"
+      line="$(cat -- "${!#}")" || exit 1
+      ot_replay_relaunch "$line" "$OT_REPLAY_SCRIPTS" "$OT_REPLAY_RUN" "$OT_REPLAY_HARNESS" "$OT_REPLAY_KIND" 0 > "$OT_REPLAY_RUN/replay.out" || exit 1
+    fi ;;
 esac
 exit 0
 STUBEOF
@@ -201,7 +210,7 @@ ot_hosted_relaunch_text() { # LOG
 # STATUS is the exit of a resumed or fresh harness, never the lookup's exit.
 ot_replay_relaunch() { # LINE SCRIPTS RUN HARNESS KIND STATUS
   local line="$1" scripts="$2" run="$3" harness="$4" kind="$5" status="$6"
-  local sandbox="$run/sandbox" home="$run/host-home" root kickoff=CC-1 rc=0 metadata
+  local sandbox="${OT_REPLAY_SANDBOX:-$run/sandbox}" home="$run/host-home" root kickoff=CC-1 rc=0 metadata
   local arg previous="" runs=0 resume=0 fresh=0 target=0 unattended expected_prompt
   # Expectations read the shipped owner, never the scripts a control mutates.
   unattended="$(
@@ -209,7 +218,7 @@ ot_replay_relaunch() { # LINE SCRIPTS RUN HARNESS KIND STATUS
     source "$(dirname "${BASH_SOURCE[0]}")/../../scripts/lib/lane-launch.sh" && printf '%s' "$LAUNCH_UNATTENDED_TEXT"
   )" || return 1
   [[ -n "$unattended" ]] || { echo "ot-replay-relaunch: unattended-text=empty" >&2; return 1; }
-  mkdir -p "$sandbox/.agents/skills/orch" "$home" "$run/harness-bin" || return 1
+  mkdir -p "$sandbox/.agents/skills/orch" "$sandbox/tmp/lane-mail/CC-1" "$home" "$run/harness-bin" || return 1
   ln -s "$scripts" "$sandbox/.agents/skills/orch/scripts" || return 1
   orch_fixture_shared_libs "$sandbox/.agents/skills/orch"
   case "$harness" in

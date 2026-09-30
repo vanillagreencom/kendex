@@ -38,7 +38,7 @@ Every lane the wake refuses while its session still runs takes this route, whate
 
 4. Relaunch under [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
 
-The relaunch carries its own continuation line, which tells the lane to read `lane-mail inbox`, except on a hosted Codex lane, which resumes with no line, reported as `resume-lineless`, and takes it as that section says. The stop interrupts any turn in flight, so it is never the default.
+Follow that recovery section's continuation rule: only `resume-lineless` requires a paste after the relaunch. The stop interrupts any turn in flight, so it is never the default.
 
 ## Lane close
 

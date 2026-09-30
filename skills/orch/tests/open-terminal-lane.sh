@@ -1161,11 +1161,11 @@ run_ot "$COPILOT_HOSTED" --host "$HOST_STUB" --harness copilot --lane "$H/.1copi
 assert_eq "$(observe "rc=0 launched=1") policy=$(typed "COPILOT_ALLOW_ALL=true copilot")" "rc=0 launched=1 policy=0" \
   "control: without the hosted policy a hosted copilot lane keeps the COPILOT_GITHUB_TOKEN its host exports"
 OPEN_TERMINAL="$COPILOT_OT_SHIPPED"
-CODEX_RELAUNCH="$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;flags=-m gpt-6-astra -c model_reasoning_effort=high"
+CODEX_RELAUNCH="$HARNESS_UP;LANE_HOST_STUB_SELECTION=resume;ORCH_LANE_ALIASES=eclaude=work;flags=-m gpt-6-astra -c model_reasoning_effort=high"
 run_ot "$CODEX_RELAUNCH" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch CC-49
 CODEX_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1
 CODEX_LEAD="codex '-c' 'check_for_update_on_startup=false' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' '-m' 'gpt-6-astra' '-c' 'model_reasoning_effort=high'"
-CODEX_RESUME="0) exec $CODEX_LEAD resume \"\$session\" ;; 1) exec $CODEX_LEAD 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-49. $UNATTENDED_TEXT'"
+CODEX_RESUME="0) printf resume > tmp/lane-mail/CC-49/relaunch-selection || exit 2; exec $CODEX_LEAD resume \"\$session\" ;; 1) printf fresh > tmp/lane-mail/CC-49/relaunch-selection || exit 2; exec $CODEX_LEAD 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-49. $UNATTENDED_TEXT'"
 assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") lookup=$(grep -cF 'session=$(bash .agents/skills/orch/scripts/lib/lane-relaunch.sh codex CC-49 linear ' <<<"$CODEX_REMOTE" || true) arms=$(grep -cF "$CODEX_RESUME" <<<"$CODEX_REMOTE" || true) compaction=$(typed "ORCH_COMPACTION_OVERRIDES=$Q$CODEX_COMPACTION$Q") line=$(typed 'Resume the orch workflow for CC-49')" \
   "rc=0 creates=nolog launched=1 claim_lanes=eclaude lookup=1 arms=1 compaction=1 line=0" \
   "a hosted codex relaunch selects its host session promptless or the start brief, keeping its lane and compaction flags"
@@ -1181,7 +1181,7 @@ assert_eq "$(said "open-terminal: resume-lineless item=CC-49 harness=codex")" "1
 # only while the resume arm is promptless. An arm already carrying a prompt
 # rejects the extra positional (exit 2). --help bypasses that argument check.
 if command -v codex >/dev/null 2>&1; then
-  RENDERED="$(sed -n 's/.*0) exec \(codex .*\) ;; 1) exec .*/\1/p' <<<"$CODEX_REMOTE")" || exit 1
+  RENDERED="$(sed -n 's/.*0) printf resume .*; exec \(codex .*\) ;; 1) printf fresh .*/\1/p' <<<"$CODEX_REMOTE")" || exit 1
   assert_eq "${RENDERED:-MISSING}" "$CODEX_LEAD resume \"\$session\"" \
     "the rendered resume arm is recovered from the pane log with no prompt"
   CODEX_PARSE_RC=0
