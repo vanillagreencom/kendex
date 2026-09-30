@@ -44,12 +44,10 @@ case "$1" in
   touch) [[ "${LANE_HOST_STUB_TOUCH_STATUS:-0}" -eq 0 ]] || exit "$LANE_HOST_STUB_TOUCH_STATUS" ;;
   status)
     [[ "${LANE_HOST_STUB_PROBE_STATUS:-0}" -eq 0 ]] || exit "$LANE_HOST_STUB_PROBE_STATUS"
-    # Repeat-watch fixtures change this file between passes. Live fixtures
-    # retain the running reply unless they supply a terminal state.
+    # Repeat-watch fixtures change this file; live fixtures default to running.
     harness_state="${LANE_HOST_STUB_HARNESS_STATE:-running}"
     if [[ -n "${LANE_HOST_STUB_HARNESS_STATE_FILE:-}" ]]; then
-      harness_state="$(cat -- "$LANE_HOST_STUB_HARNESS_STATE_FILE")" || exit $?
-    fi
+      harness_state="$(cat -- "$LANE_HOST_STUB_HARNESS_STATE_FILE")" || exit $?; fi
     printf '%s\n' "$harness_state"
     exit 0 ;;
   put)

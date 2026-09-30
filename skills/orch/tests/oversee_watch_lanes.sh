@@ -277,40 +277,28 @@ lane_table \
   "an unreadable pane command is a fail-closed probe error, never window-gone|new|-|nocmd|2|rc=2 lines=0 stderr~oversee-watch:+pane-command-failed+lane=gh-2=true stderr~E_COMMAND+lane=gh-2=true"
 
 echo "=== hosted lane exits: the provider reads past a live ssh child ==="
+# Control: local debounce must not hide a confirmed provider exit on this pass.
+REMOTE_WATCH="$(mutant_scripts remote-watch/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/remote-watch/github"
+mutate_file "$REMOTE_WATCH" '    if [[ "$prior" == "$pane_key" || "$(lane_field "$states" "$i" 3)" == provider ]]; then' '    if [[ "$prior" == "$pane_key" ]]; then'
+provider="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
 # Exit 2 is the protocol's absent-verb answer from a provider without status.
-for row in 'exited|0|true' 'running|0|false' 'exited|2|false' 'exited|7|false' 'garbage|0|false'; do
-  IFS='|' read -r remote_status provider_rc want_exit <<<"$row"
-  new_case "remote_${remote_status}_$provider_rc"
-  lane fish_child
-  screen fish_prompt
-  provider="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
-  remote_disk="$STUB_DIR/remote"
+for row in 'exited|0|true|live' 'running|0|false|live' 'exited|2|false|live' 'exited|7|false|live' 'garbage|0|false|live' 'exited|0|false|control'; do
+  IFS='|' read -r remote_status provider_rc want_exit judge <<<"$row"
+  new_case "remote_${remote_status}_${provider_rc}_$judge"
+  lane fish_child; screen fish_prompt
+  remote_disk="$STUB_DIR/remote"; ERR="$STUB_DIR/err"
   mkdir -p "$remote_disk/srv/lane/tmp" "$remote_disk/srv/clone/tmp"
   printf 'gitdir: /srv/clone/.git/worktrees/issue-2\n' > "$remote_disk/srv/lane/.git"
   printf 'started\n' > "$remote_disk/srv/lane/tmp/lane-status-issue-2.md"
-  jq -cn --arg host "$provider" '{issue_id:"oversee", triaged:[], lanes:[{
-    item:"issue-2", window:"gh-2", host:$host, mail_root:"/srv/lane", harness:"claude",
-    status:"running", launched_at:"2026-08-15T09:00:00Z"}]}' > "$STUB_DIR/fleet.json"
-  ERR="$STUB_DIR/err"
-  OUT="$(run_watch ORCH_LANE_HOST="$provider" LANE_HOST_STUB_LOG="$STUB_DIR/host.calls" \
-    LANE_HOST_STUB_DIR="$remote_disk" LANE_HOST_STUB_HARNESS_STATE="$remote_status" LANE_HOST_STUB_PROBE_STATUS="$provider_rc" \
+  jq -cn --arg host "$provider" '{issue_id:"oversee", triaged:[], lanes:[{item:"issue-2", window:"gh-2", host:$host, mail_root:"/srv/lane", harness:"claude", status:"running", launched_at:"2026-08-15T09:00:00Z"}]}' > "$STUB_DIR/fleet.json"
+  target="$REPO_ROOT/skills/orch/scripts/oversee-watch"; [[ "$judge" != control ]] || target="$REMOTE_WATCH"
+  OUT="$(WATCH_BIN="$target" run_watch ORCH_LANE_HOST="$provider" LANE_HOST_STUB_LOG="$STUB_DIR/host.calls" LANE_HOST_STUB_DIR="$remote_disk" LANE_HOST_STUB_HARNESS_STATE="$remote_status" LANE_HOST_STUB_PROBE_STATUS="$provider_rc" \
     -- --state "$STUB_DIR/fleet.json" --max-loops 1 2>"$ERR")" && RC=0 || RC=$?
   expect="rc=0 out~EVENT+lane-exited+gh-2=$want_exit"
-  assert_eq "$(watch "$expect")" "$expect" "hosted $remote_status/$provider_rc reports only a confirmed exit in one pass" "$ERR"
+  assert_eq "$(watch "$expect")" "$expect" "hosted $judge $remote_status/$provider_rc exit in one pass" "$ERR"
   assert_eq "$(grep -c '^status --item issue-2 --harness claude ' "$STUB_DIR/host.calls")" "1" "one remote harness call per lane per pass"
 done
-# The watch still has to publish the authoritative remote exit immediately.
-REMOTE_SCRIPTS="$(mutant_scripts remote-watch/orch oversee-watch)" || exit 1
-REMOTE_WATCH="$REMOTE_SCRIPTS/oversee-watch"
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/remote-watch/github"
-mutate_file "$REMOTE_WATCH" '    if [[ "$prior" == "$pane_key" || "$(lane_field "$states" "$i" 3)" == provider ]]; then' \
-  '    if [[ "$prior" == "$pane_key" ]]; then'
-rm -rf -- "$STATE_DIR"
-OUT="$(WATCH_BIN="$REMOTE_WATCH" run_watch ORCH_LANE_HOST="$provider" LANE_HOST_STUB_LOG="$STUB_DIR/host.calls" \
-  LANE_HOST_STUB_DIR="$remote_disk" LANE_HOST_STUB_HARNESS_STATE=exited LANE_HOST_STUB_PROBE_STATUS=0 \
-  -- --state "$STUB_DIR/fleet.json" --max-loops 1 2>"$ERR")" && RC=0 || RC=$?
-expect='rc=0 out~EVENT+lane-exited+gh-2=false'
-assert_eq "$(watch "$expect")" "$expect" "control: a confirmed provider exit hidden behind the local debounce misses the pass" "$ERR"
 
 echo "=== lane-asking: a question nobody has answered ==="
 # A selection prompt is a question, never an idle prompt; the check reads the

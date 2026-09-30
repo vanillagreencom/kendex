@@ -697,17 +697,15 @@ exec "$REAL_CAT" "$@"
     @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
     def test_status_reads_the_owned_harness_and_refuses_failed_reads(self):
         self.assertEqual(self.create().returncode, 0)
-        worktree = Path(self.row["clone"] + "-worktree")
         shutil.copy2(shutil.which("bash"), self.bin / "claude")
         lane = subprocess.Popen([str(self.bin / "claude"), "-c", "printf 'ready\\n'; read -r line"],
-                                cwd=worktree, env=self.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+                                cwd=Path(self.row["clone"] + "-worktree"), env=self.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         try:
             self.assertEqual(lane.stdout.readline(), b"ready\n")
             for harness, expected in (("claude", b"running\n"), ("codex", b"exited\n")):
                 with self.subTest(harness=harness):
                     result = self.call("status", "--item", "TEST-1", "--harness", harness)
-                    self.assertEqual((result.returncode, result.stdout), (0, expected), result.stderr)
-                    self.assertIsNone(lane.poll())
+                    self.assertEqual((result.returncode, result.stdout, lane.poll()), (0, expected, None), result.stderr)
             original = self.script.read_text()
             rule = 'if test -n "$LANE_OWNED_PROCESS_PIDS"; then printf'
             self.assertEqual(original.count(rule), 1)
@@ -722,10 +720,8 @@ exec "$REAL_CAT" "$@"
         library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/lane-state.sh"
         library.write_text(library.read_text() + '\nlane_owned_processes() { return 2; }\n')
         for env in ({}, {"SSH_TEST_FAIL": "7"}):
-            with self.subTest(env=env):
-                result = self.call("status", "--item", "TEST-1", "--harness", "claude", **env)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertEqual(result.stdout, b"")
+            result = self.call("status", "--item", "TEST-1", "--harness", "claude", **env)
+            self.assertEqual((result.returncode != 0, result.stdout), (True, b""), (env, result.stderr))
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
     def test_stop_signals_only_the_named_harness_in_the_owned_worktree(self):
