@@ -43,6 +43,7 @@ trap '[ "${#STAGED[@]}" -eq 0 ] || kill "${STAGED[@]}" 2>/dev/null; rm -rf -- "$
 
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
+source "$TEST_DIR/lib/growth-state.sh"
 
 # A fresh battery directory holding run-all.sh and no suites, and DIR.tmp for
 # its TMPDIR.
@@ -308,6 +309,20 @@ while IFS='|' read -r filters want; do
   started="$(printf '%s\n' "$OUT" | sed -n 's/^start suite=//p' | sort | tr '\n' ' ')"
   assert_eq "rc=$RC started=$started" "rc=0 started=$want " "the filters $filters start $want"
 done <<<"$FILTER_ROWS"
+
+echo "=== 7. caller lane state never replaces fixture state ==="
+B="$TMP_ROOT/state"
+battery "$B"
+mkdir -p "$B/tmp" "$B.planted"
+printf '{"marker":"fixture"}\n' >"$B/tmp/workflow-state-oversee.json"
+printf '{"marker":"caller"}\n' >"$B.planted/workflow-state-oversee.json"
+printf '#!/usr/bin/env bash\nset -euo pipefail\ncd -- "$(dirname "$0")"\n[[ "$("$WS" get oversee .marker)" == fixture ]]\nexport ORCH_STATE_DIR="$PLANTED"\n[[ "$("$WS" get oversee .marker)" == caller ]]\n' \
+  >"$B/state.sh"
+run_battery "$B" 1 ORCH_STATE_DIR="$B.planted" PLANTED="$B.planted" WS="$TEST_DIR/../scripts/workflow-state"
+assert_eq "$RC" 0 "the suite reads fixture state and can set its own ORCH_STATE_DIR"
+mutate_file "$B/run-all.sh" 'unset ORCH_STATE_DIR' ': ORCH_STATE_DIR'
+run_battery "$B" 1 ORCH_STATE_DIR="$B.planted" PLANTED="$B.planted" WS="$TEST_DIR/../scripts/workflow-state"
+assert_eq "rc=$RC failed=$(failed_of)" "rc=1 failed=state " "control: inherited lane state fails the fixture assertion"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

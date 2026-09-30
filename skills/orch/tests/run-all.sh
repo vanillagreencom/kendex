@@ -50,6 +50,11 @@
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
+# Lane launch settings must not override the suites' own fixture settings.
+unset ORCH_STATE_DIR ORCH_LANE_HOST ORCH_TMUX_SESSION \
+  ORCH_USER_MODE ORCH_DECISION_MODE ORCH_MERGE_AUTONOMY \
+  ORCH_LANE_OUTPUT ORCH_QUESTION_TOOL ORCH_COMPACTION_OVERRIDES
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 SELECT=()
