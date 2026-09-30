@@ -166,7 +166,13 @@ describe("history byte budgets", () => {
 					expect(event).toEqual(events[0]);
 				}
 			}
-		} finally { for (const socket of subscribers) socket.destroy(); }
+		} finally {
+			try {
+				await shutdownBridge(handlers, dir);
+			} finally {
+				for (const socket of subscribers) socket.destroy();
+			}
+		}
 	});
 
 	test("message_end spills the whole message and history --raw rehydrates it", async () => {
