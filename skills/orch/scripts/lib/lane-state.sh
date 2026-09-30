@@ -269,12 +269,17 @@ pane_has_child() {
 }
 
 # Read the provider's documented status verb, not the local ssh process.
-# Returns the same three answers as pane_has_child. A failed or malformed read
+# Returns 0 for running, 1 for exited, 2 for a failed read, 3 for an absent verb.
+# An absent status verb leaves pane judgment in place. A failed or malformed read
 # cannot prove an exit, even when the captured screen shows a shell prompt.
 pane_has_remote_harness() { # LANE_HOST ITEM HARNESS
   local answer
   LANE_PROBE_RC=0
   answer="$("$1" status --item "$2" --harness "$3")" || LANE_PROBE_RC=$?
+  if [[ "$LANE_PROBE_RC" -eq 2 ]]; then
+    printf 'lane-state: harness-probe-unsupported item=%s status=2 judgment=pane\n' "$2" >&2
+    return 3
+  fi
   if [[ "$LANE_PROBE_RC" -eq 0 ]]; then
     case "$answer" in
       running) return 0 ;;
@@ -707,6 +712,7 @@ lane_state() {
       0) ;;
       1) LANE_EXIT_SOURCE=provider; printf -v "$_ls_out" exited; return 0 ;;
       2) printf -v "$_ls_out" unjudged; return 0 ;;
+      3) ;; # The provider has no status verb; judge the pane below.
     esac
   elif is_bare_shell "$_ls_cmd" && [[ -n "$_ls_pid" ]]; then
     pane_has_child "$_ls_pid" || _ls_rc=$?
