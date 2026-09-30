@@ -25,9 +25,10 @@ const SESSION_HISTORY_FALLBACK = "Task panel state persistence failed. Falling b
 const PERSISTENCE_FAILURE_EXPLANATIONS = {
 	"sidecar-read": SESSION_HISTORY_FALLBACK,
 	"sidecar-write": SESSION_HISTORY_FALLBACK,
-	"session-entry": "The task panel session history entry was not written. The sidecar file alone holds this task state.",
+	"session-entry":
+		"The task panel session history entry was not written. The sidecar file holds this change, but a session restart can restore the older state in session history instead. The next successful task panel save records it.",
 	"session-entry-no-sidecar":
-		"The task panel session history entry was not written, and neither was the sidecar file. No store holds this task state until the next task panel save.",
+		"The task panel session history entry was not written, and neither was the sidecar file. A session restart loses this change. The next successful task panel save records it.",
 } as const;
 
 export type TaskPanelPersistenceFailure = keyof typeof PERSISTENCE_FAILURE_EXPLANATIONS;
