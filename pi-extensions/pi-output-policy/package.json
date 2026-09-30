@@ -150,7 +150,7 @@
         {
           "key": "maxLineCount",
           "label": "Max UI-safe line count",
-          "description": "Hard line cap for the text of one tool result, all its text blocks together. When unset, policyMode picks: balanced 400, compact 200, compat 8000.",
+          "description": "Hard line cap for the text of one tool result: all its text blocks and the truncation notice together. When unset, policyMode picks: balanced 400, compact 200, compat 8000.",
           "type": "number",
           "category": "UI Safety",
           "apply": "live"

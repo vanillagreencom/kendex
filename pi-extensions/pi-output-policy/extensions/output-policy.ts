@@ -468,11 +468,9 @@ export function minimizeShellOutput(text: string, command: string, cwd?: string,
 	const compact: string[] = [];
 	let dropped = 0;
 	let gap = 0;
-	let start = 0;
-	for (let i = 0; i < total; i += 1) {
-		const nl = text.indexOf("\n", start);
-		const line = text.slice(start, nl < 0 ? text.length : contentEnd(text, start, nl));
-		start = nl + 1;
+	let i = 0;
+	eachLine(text, (start, end) => {
+		const line = text.slice(start, end);
 		if (i < 20 || i >= total - 80 || IMPORTANT_SHELL_LINE.test(line)) {
 			if (gap > 0) compact.push(minimizedNotice(gap));
 			gap = 0;
@@ -481,19 +479,32 @@ export function minimizeShellOutput(text: string, command: string, cwd?: string,
 			dropped += 1;
 			gap += 1;
 		}
-	}
+		i += 1;
+	});
 	if (gap > 0) compact.push(minimizedNotice(gap));
 	return dropped > 0 ? { dropped, text: compact.join("\n") } : { dropped: 0, text };
 }
 
 // Lines are what `/\r?\n/` splits: a `\r` before a `\n` belongs to the
 // terminator, and a trailing `\r` with no `\n` after it belongs to the line.
-// The scanners below walk those boundaries with `indexOf`, so a large result is
-// never split into a whole-output array; only the lines a preview keeps are
-// sliced out.
+// `eachLine` walks those boundaries forward and the tail selection walks them
+// backward, both by newline position, so a large result is never split into a
+// whole-output array. The truncation preview slices only the lines it keeps;
+// the shell minimizer slices each line of its input, which
+// `shellMinimizer.maxCaptureBytes` bounds.
 
 function contentEnd(text: string, start: number, newline: number): number {
 	return newline > start && text.charCodeAt(newline - 1) === 13 ? newline - 1 : newline;
+}
+
+/** Visits each line's content span, first to last, and stops early when
+ * `visit` returns false. */
+function eachLine(text: string, visit: (start: number, end: number) => boolean | void): void {
+	for (let start = 0; ;) {
+		const nl = text.indexOf("\n", start);
+		if (visit(start, nl < 0 ? text.length : contentEnd(text, start, nl)) === false || nl < 0) return;
+		start = nl + 1;
+	}
 }
 
 function countLines(text: string): number {
@@ -512,15 +523,12 @@ interface TextStats {
  * result is cut either way, so only its line count is still needed. */
 function textStats(text: string, bytes: number, widthLimit: number | undefined): TextStats {
 	if (widthLimit === undefined) return { bytes, lines: countLines(text), overWidth: false };
-	let lines = 1;
+	let lines = 0;
 	let overWidth = false;
-	let start = 0;
-	for (let nl = text.indexOf("\n"); nl >= 0; nl = text.indexOf("\n", start)) {
-		overWidth ||= contentEnd(text, start, nl) - start > widthLimit;
+	eachLine(text, (start, end) => {
 		lines += 1;
-		start = nl + 1;
-	}
-	overWidth ||= text.length - start > widthLimit;
+		overWidth ||= end - start > widthLimit;
+	});
 	return { bytes, lines, overWidth };
 }
 
@@ -568,13 +576,7 @@ function takeLine(picked: string[], line: string, budget: InlineBudget): boolean
 function selectLines(text: string, direction: Direction, budget: InlineBudget, maxLineWidth: number): string[] {
 	const picked: string[] = [];
 	if (direction === "head") {
-		let start = 0;
-		while (budget.lines > 0) {
-			const nl = text.indexOf("\n", start);
-			const end = nl < 0 ? text.length : contentEnd(text, start, nl);
-			if (!takeLine(picked, widthSafeLine(text, start, end, maxLineWidth), budget) || nl < 0) break;
-			start = nl + 1;
-		}
+		eachLine(text, (start, end) => budget.lines > 0 && takeLine(picked, widthSafeLine(text, start, end, maxLineWidth), budget));
 		return picked;
 	}
 	// `stop` is the index of the newline that ends the current line, or the text's end.
@@ -782,9 +784,11 @@ export async function processContent(event: any, ctx: ExtensionContext, content:
 	const totalBytes = joinedBytes(texts.map((text) => text.stats.bytes));
 	const totalLines = texts.reduce((sum, text) => sum + text.stats.lines, 0);
 	const inlineBytes = totalBytes + byteLength(minimizedTail);
+	// The notice tail starts on the last text line, so it adds one line fewer than it holds.
+	const inlineLines = totalLines + (minimized ? countLines(minimizedTail) - 1 : 0);
 	const overSpill = inlineBytes > policy.spillThresholdBytes;
 	const overTextBlock = inlineBytes > policy.maxTextBytes;
-	const tooLarge = overSpill || overTextBlock || totalLines > policy.maxLineCount || texts.some((text) => text.stats.overWidth);
+	const tooLarge = overSpill || overTextBlock || inlineLines > policy.maxLineCount || texts.some((text) => text.stats.overWidth);
 	if (!tooLarge) {
 		if (!minimized) return unchanged;
 		const last = texts[texts.length - 1];
@@ -822,7 +826,12 @@ export async function processContent(event: any, ctx: ExtensionContext, content:
 		shownRange: `lines ${totalLines}-${totalLines}`,
 		turnSavedBytes: session.turnSavedBytes + originalBytes,
 	});
-	const budget: InlineBudget = { bytes: Math.max(0, byteLimit - byteLength(worstNotice) - NOTICE_SLACK_BYTES), lines: lineLimit, started: false };
+	// The notice follows a blank line, so it takes its own lines plus one.
+	const budget: InlineBudget = {
+		bytes: Math.max(0, byteLimit - byteLength(worstNotice) - NOTICE_SLACK_BYTES),
+		lines: Math.max(0, lineLimit - countLines(worstNotice) - 1),
+		started: false,
+	};
 	const shown = new Map<number, { lines: number; text: string }>();
 	for (const text of tail ? [...texts].reverse() : texts) {
 		if (budget.lines <= 0) break;
@@ -889,9 +898,13 @@ export function sanitizeDetails(value: unknown): { value: unknown; changed: bool
 	return { changed: !Object.is(sanitized, value), value: sanitized };
 }
 
+function byteBudgetNotice(): string {
+	return policyNotice("detail-byte-budget", SANITIZE_BYTE_BUDGET, "Detail byte budget reached.");
+}
+
 function budgetNotice(budget: DetailBudget): string | undefined {
 	if (budget.nodes <= 0) return policyNotice("detail-node-budget", SANITIZE_NODE_BUDGET, "Detail traversal budget reached.");
-	if (budget.bytes <= 0) return policyNotice("detail-byte-budget", SANITIZE_BYTE_BUDGET, "Detail byte budget reached.");
+	if (budget.bytes <= 0) return byteBudgetNotice();
 	return undefined;
 }
 
@@ -905,16 +918,21 @@ function sanitizeNode(value: unknown, depth: number, budget: DetailBudget): unkn
 	return String(value);
 }
 
+/** A string over the character cap ends with a `detail-chars` notice. One the
+ * byte budget cuts ends with the `detail-byte-budget` notice and spends the
+ * rest of the budget, since a multi-byte cut can leave a few bytes no whole
+ * character fits. */
 function sanitizeString(value: string, budget: DetailBudget): string {
-	const head = value.length > SANITIZE_STRING_CHARS ? value.slice(0, SANITIZE_STRING_CHARS) : value;
+	const overChars = value.length > SANITIZE_STRING_CHARS;
+	const head = overChars ? value.slice(0, SANITIZE_STRING_CHARS) : value;
 	const bytes = byteLength(head);
-	if (head === value && bytes <= budget.bytes) {
+	if (bytes <= budget.bytes) {
 		budget.bytes -= bytes;
-		return value;
+		return overChars ? `${head}…\n${policyNotice("detail-chars", value.length, "Detail string truncated.")}` : value;
 	}
-	const kept = bytes <= budget.bytes ? head : prefixWithinBytes(head, budget.bytes);
-	budget.bytes -= byteLength(kept);
-	return `${kept}…\n${policyNotice("detail-chars", value.length, "Detail string truncated.")}`;
+	const kept = prefixWithinBytes(head, budget.bytes);
+	budget.bytes = 0;
+	return `${kept}…\n${byteBudgetNotice()}`;
 }
 
 function sanitizeArray(value: unknown[], depth: number, budget: DetailBudget): unknown[] {

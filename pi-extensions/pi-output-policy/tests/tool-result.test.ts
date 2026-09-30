@@ -1,5 +1,5 @@
 import { expect, test, beforeEach } from "bun:test";
-import outputPolicy, { __resetSessionCountersForTests } from "../extensions/output-policy.ts";
+import outputPolicy, { __resetSessionCountersForTests, minimizeShellOutput } from "../extensions/output-policy.ts";
 import { withConfigAsync, fakeCtx, createFakePi } from "./fixtures.ts";
 
 beforeEach(() => { __resetSessionCountersForTests(); });
@@ -43,5 +43,20 @@ test("truncated tool text carries metadata and its artifact path", async () => {
 		expect(result!.details.kendexOutputPolicy[0].truncated).toBe(true);
 		expect(result!.details.kendexOutputPolicy[0].artifactPath).toBeString();
 		expect(result!.content[0].text).toContain(`[output-policy:truncated-bytes=${Buffer.byteLength(huge)}]`);
+	});
+});
+
+test("a result of several text parts carries one truncation entry for all of them", async () => {
+	await withConfigAsync({}, async (cwd) => {
+		const fake = createFakePi();
+		outputPolicy(fake.pi);
+		// Every other line is a warning the minimizer keeps, so both parts stay over the line cap.
+		const part = (label: string) => Array.from({ length: 1_000 }, (_, i) => i % 2 ? `warning: ${label} ${i}` : `   Compiling ${label}_${i}`).join("\n");
+		const parts = [part("a"), part("b")];
+		const result = await fake.fire("tool_result", { toolName: "bash", toolCallId: "two", input: { command: "cargo test" }, content: parts.map((text) => ({ type: "text", text })), details: {}, isError: false }, fakeCtx(cwd));
+		const entries = result!.details.kendexOutputPolicy;
+		expect(entries).toHaveLength(1);
+		expect(entries[0].minimizedDroppedLines).toBe(parts.reduce((sum, text) => sum + minimizeShellOutput(text, "cargo test", cwd).dropped, 0));
+		expect(entries[0].minimizedDroppedLines).toBeGreaterThan(minimizeShellOutput(parts[0], "cargo test", cwd).dropped);
 	});
 });

@@ -7,13 +7,11 @@ test("detail value limits", () => {
 	const small = { ok: true, count: 3, label: "x", list: [1, { nested: "y" }] };
 	// 40 objects of 60 numbers: 2,441 values, past the 2,000-value traversal budget.
 	const wide = Array.from({ length: 40 }, (_, i) => Object.fromEntries(Array.from({ length: 60 }, (_, j) => [`k${j}`, i * j])));
-	// 40 strings of 2,000 bytes each: 80,000 bytes, past the 64 KiB byte budget.
-	const heavy = Array.from({ length: 40 }, (_, i) => `${i}`.padEnd(2_000, "s"));
 	for (const [name, input, changed] of [
 		["string", { note: "a".repeat(20_000) }, true],
 		["array", Array.from({ length: 200 }, (_, i) => ({ i })), true],
 		["deep", deep, true], ["small", small, false],
-		["nodes", wide, true], ["bytes", heavy, true],
+		["nodes", wide, true],
 	] as const) {
 		const result = sanitizeDetails(input);
 		expect(result.changed).toBe(changed);
@@ -51,14 +49,31 @@ test("detail value limits", () => {
 				expect((array[33] as string).split("\n")[0]).toBe(notice);
 				break;
 			}
-			case "bytes": {
-				const array = result.value as string[];
-				const kept = array.slice(0, -1);
-				expect(array.at(-1)!.split("\n")[0]).toBe("[output-policy:detail-byte-budget=65536]");
-				expect(kept.filter((value) => !value.includes("[output-policy:")).reduce((sum, value) => sum + Buffer.byteLength(value), 0)).toBeLessThanOrEqual(64 * 1024);
-				expect(kept.at(-1)!).toContain("[output-policy:detail-chars=2000]");
-				break;
-			}
 		}
+	}
+});
+
+test("detail byte budget", () => {
+	const notice = "[output-policy:detail-byte-budget=65536]";
+	const strings = (count: number, fill: string, chars: number) => Array.from({ length: count }, (_, i) => `${i}`.padEnd(chars, fill));
+	// Each input holds more than 64 KiB of string text: 40 x 2,000 ASCII bytes;
+	// 33 x 2,000 ASCII bytes whose cut string is the last key; 40 x 6,000 bytes
+	// of three-byte characters, whose cut leaves bytes no whole character fits.
+	for (const [name, input] of [
+		["ascii", strings(40, "s", 2_000)],
+		["last-key", Object.fromEntries(strings(33, "s", 2_000).map((value, i) => [`k${i}`, value]))],
+		["multibyte", strings(40, "漢", 2_000)],
+	] as const) {
+		const result = sanitizeDetails(input);
+		expect(result.changed).toBe(true);
+		const values = Object.values(result.value as Record<string, string>);
+		const cut = values.filter((value) => value.includes(`…\n${notice}\n`));
+		expect(cut).toHaveLength(1);
+		expect(values.some((value) => value.includes("[output-policy:detail-chars="))).toBe(false);
+		const kept = values.filter((value) => !value.startsWith("[output-policy:")).map((value) => value.split(`…\n${notice}`)[0]);
+		expect(kept.reduce((sum, value) => sum + Buffer.byteLength(value), 0)).toBeLessThanOrEqual(64 * 1024);
+		expect(Buffer.from(kept.at(-1)!).toString()).toBe(kept.at(-1)!);
+		if (name === "last-key") expect(values.at(-1)).toBe(cut[0]);
+		else expect(values.at(-1)!.split("\n")[0]).toBe(notice);
 	}
 });
