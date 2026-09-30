@@ -240,7 +240,7 @@ For `off`, skip the wait and go to § 5. The internal review, CI, and comment-hy
 
 A retarget changes the base without touching the head, so every path below that re-resolves the mode runs this section's command again and records what it prints, and § 6.1 re-runs it before gate 4.
 
-**Who acts.** The lane waits and triages under its own credential, and never approves its own PR. Where the base branch's ruleset requires an approval, no review bot approved the head within its window, and the lane's internal review passed with no open blocker, the overseer approves that head under its own identity and sends one notice; a lane never does. pr-watch's `awaiting-stale` line brings that case to the overseer ([oversee-events.md](../references/oversee-events.md), `pr-watch`); the lane's own `timeout` row below keeps it waiting or asks the user. An approval that arrives ends the wait as `approved`.
+**Who acts.** The lane waits and triages under its own credential, and never approves its own PR. The overseer approves a head only as [copilot-head-notices.md](../references/copilot-head-notices.md) sets, reached by pr-watch's `awaiting-stale` line ([oversee-events.md](../references/oversee-events.md), `pr-watch`) or a Copilot notice from [review-pr-comments.md](review-pr-comments.md#72-copilot-head-route) § 7.2. The lane's own `timeout` row below keeps it waiting or asks the user. An approval that arrives ends the wait as `approved`.
 
 1. **Wait.** Poll for the verdict and new comments together:
 
