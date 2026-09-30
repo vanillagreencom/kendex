@@ -39,8 +39,9 @@
 #   ol_record_*            the session record in the oversee state's
 #                          `overseer` object: read, written before the first
 #                          turn, restored when the launch is abandoned, the
-#                          pending successor written apart from it, and the
-#                          current session's launch identity read back
+#                          pending successor written apart from it, the
+#                          current session's launch identity read back, and
+#                          a record lacking a fact its session knows healed
 #   ol_session_verify      the account read, the first working turn and the
 #                          confirming read, inside one deadline
 #   ol_session_inspect     the runtime's `inspect` of a recorded session: its
@@ -548,13 +549,23 @@ ol_command_line() { # HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
 # started at its `server_start`, since after a tmux restart a new server may be
 # handed the recorded pid and numbers its panes from %0 again, and a record
 # carrying none names no session.
+# `ol_unstarted($server; $session)` is a record naming that session on that
+# server with no start at all, which no current writer leaves but a record
+# written before starts were recorded, or put back whole by
+# ol_record_restore, still is. The session in that pane is the one the record
+# was written for, so the watch start keeps such a record's launch identity
+# and the turn-end hook heals it (ol_record_heal) rather than reading it as
+# another session's.
 # lib/watch-overseer-record.sh takes `ol_names` for the watch start, and
 # `oversee launch` for its liveness refusal, there judging a record carrying
 # no start on the server and pane alone.
 OL_JQ_DEFS='def ol_identity: {harness, account, home, model, effort, cwd};
   def ol_names($server; $start; $session): type == "object" and (.server // "") == $server
     and ((.pane // .session // "") == $session)
-    and (.server_start | tostring) == $start;'
+    and (.server_start | tostring) == $start;
+  def ol_unstarted($server; $session): type == "object" and (.server // "") == $server
+    and ((.pane // .session // "") == $session)
+    and .server_start == null;'
 
 # ol_session_start SERVER SESSION — the start ol_names judges SESSION on
 # SERVER by: tmux_server_start's for a pane. Returns 1, printing nothing, where
@@ -787,7 +798,8 @@ ol_record_get() {
 # where that is unknown, and `server_start` is the server's start time read
 # off that pane (lib/tmux-server.sh § tmux_server_start), so no start of
 # another server's survives. A start that cannot be read writes nothing: a
-# record with no start names no session. `pending` is
+# record with no start is bound to no server, and a later server handed the
+# same pid and pane id would read it as its own (ol_unstarted). `pending` is
 # dropped: the successor it named is the session written here, or a launch
 # that never opened. `exit` is dropped: it is a session's that ended. The
 # prior's `launch_line` goes with it where LINE is empty: `oversee register`
@@ -868,6 +880,27 @@ ol_record_current() { # SERVER PANE
       else empty end' <<<"$record" 2>"$DEP_ERR")" || return 2
   [[ -n "$fields" ]] || return 1
   IFS="$sep" read -r OL_CUR_HARNESS OL_CUR_ACCOUNT OL_CUR_HOME OL_CUR_MODEL OL_CUR_EFFORT OL_CUR_CWD <<<"$fields"
+}
+
+# ol_record_heal SERVER PANE START HARNESS HOME — the record naming the session
+# SERVER PANE on the server started at START, bound (ol_names) or unstarted
+# (ol_unstarted), given each fact it lacks and the session itself knows: START
+# as `server_start`, HARNESS as `harness`, and HOME, the directory the harness
+# variable of that session carries, as `home`. A fact the record already
+# names stays, and a record naming another session is left as it stands. The
+# lane-mail-check hook runs it from the overseer's own turn end and tool calls,
+# so a record that lost the facts the transcript binding reads is filled from
+# the session they describe instead of leaving its context unread. An empty
+# HARNESS or HOME writes nothing for that field. Returns 1 with the writer's
+# words in DEP_ERR.
+ol_record_heal() { # SERVER PANE START HARNESS HOME
+  "$SCRIPT_DIR/workflow-state" update oversee --arg server "$1" --arg pane "$2" --arg start "$3" \
+    --arg harness "$4" --arg home "$5" "$OL_JQ_DEFS"'
+      if (.overseer | ol_names($server; $start; $pane) or ol_unstarted($server; $pane))
+      then .overseer |= (.server_start = ($start | tonumber)
+        | if (.harness // "") == "" and $harness != "" then .harness = $harness else . end
+        | if (.home // "") == "" and $home != "" then .home = $home else . end)
+      else . end' >/dev/null 2>"$DEP_ERR"
 }
 
 # ol_record_exit_clear SERVER PANE — the record's `exit` member dropped where

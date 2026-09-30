@@ -794,7 +794,7 @@ assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout")" "RC=2 stdout=" \
 # The deliver context in Claude Code's shape on Copilot: the key Copilot
 # reads is absent, so the model is handed nothing while the lines are
 # acknowledged.
-mutant copilot-nested-context -e "s@^      CONTEXT_SHAPE='{additionalContext: \\\$text}'\$@      CONTEXT_SHAPE='{hookSpecificOutput: {hookEventName: \"PostToolUse\", additionalContext: \$text}}'@"
+mutant copilot-nested-context -e "s@^    CONTEXT_SHAPE='{additionalContext: \\\$text}'\$@    CONTEXT_SHAPE='{hookSpecificOutput: {hookEventName: \"PostToolUse\", additionalContext: \$text}}'@"
 new_copilot_lane control_cop_deliver ken-215 "$MUTANT_PATH"
 mkdir -p "$LANE/tmp/lane-mail/KEN-215"
 copilot_context start

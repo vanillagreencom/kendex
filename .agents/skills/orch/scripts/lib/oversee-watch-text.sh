@@ -45,11 +45,16 @@ the last mail pass.
 
 The long pass's events, checked and reported in this order:
   EVENT overseer-dead <pane> window=<window> passes=<N> succession=<on|off>
-        source=<record|rows|process|pane> [record=<server>:<pane>|none]
+        source=<record|rows|process|context|pane> [record=<server>:<pane>|none]
                              the OVERSEER's own session — the $TMUX_PANE this
                              watch was started from — read `exited` on N
                              consecutive passes. `source` names what settled
-                             it: `record`, the exit status `overseer-run`
+                             it: `context`, a harness still up whose context
+                             fills its window, so it takes no turn again: a
+                             StopFailure row naming a prompt-too-long error,
+                             or its context record a reading at or past the
+                             window it names with no Stop row after it;
+                             `record`, the exit status `overseer-run`
                              wrote into the fleet state's overseer.exit once
                              the launch line returned, over a bare shell with
                              nothing under it; `rows`, a SessionEnd row its
@@ -116,7 +121,8 @@ The long pass's events, checked and reported in this order:
                              succession=<on|off>
                              the OVERSEER's own account reached its mark,
                              judged by `oversee-succeed --check-marks`; its
-                             context mark is its turn-end hook's alone. It
+                             context mark is its lane-mail-check hook's
+                             alone, at every tool call and turn end. It
                              reaches an overseer BETWEEN turn ends, where that
                              hook cannot: the hook refuses at the same marks,
                              and a session part way
@@ -132,9 +138,15 @@ The long pass's events, checked and reported in this order:
                              lane-mail-check turn-end hook read nothing and
                              wrote why as the gap, a word that hook's
                              description lists. Its context mark is judged at
-                             that turn end alone, so it is not being judged.
-                             The route per gap is references/oversee-events.md
-                             § Event kinds. Emitted every long pass it stands.
+                             its tool calls and turn ends alone, so it is not
+                             being judged. The route per gap is
+                             references/oversee-events.md § Event kinds.
+                             Emitted on the first long pass it stands; still
+                             standing on the next, it goes to the owner
+                             instead, as one `lane-mail notice --to owner`
+                             and one fleet-log row, with an
+                             overseer-context-alerted line on stderr, and
+                             neither is repeated while that gap stands.
                              A record another session wrote, naming another
                              pane, a harness other than the fleet record's or
                              a session other than the pane's latest start,
@@ -792,6 +804,7 @@ ow_message() { # REASON FIELD=VALUE...
     overseer-wall-unjudged) text='The overseer pane read walled and the account judgement that would confirm it could not be made, so nothing is acted on: this pane carries the limit banners this watch relays about OTHER lanes, and the screen alone cannot tell those from the overseer own account running out. The reading is left to the next pass.' ;;
     overseer-wall-unconfirmed) text='The overseer pane read walled and its own account measures room, so the banner on that screen is one this watch relayed about another lane and the overseer is working. Nothing is launched and no window is closed. The fields name the judgement that refuted it.' ;;
     overseer-wall-lifted) text='The overseer session rows last recorded a usage-limit failure and its own account now measures room, so the wall has lifted and the session is read as live. Only a finished turn writes the row that clears it.' ;;
+    overseer-context-alerted) text='The overseer context record carried the same gap on two consecutive long passes, so the owner was sent one notice and the fleet log took one row naming the pane and the gap; the event is not repeated while that gap stands.' ;;
     overseer-context-unread) text='The overseer context record, or the session rows file its staleness is judged against, could not be read or is not a shape the turn-end hook writes, so neither overseer-context event is judged this pass.' ;;
     overseer-unwatched) text='The overseer pane is not being watched, so an overseer that dies is reported by nothing. The field names what is missing.' ;;
     overseer-unreadable) text='The overseer pane could not be read, so its state settles nothing this pass.' ;;

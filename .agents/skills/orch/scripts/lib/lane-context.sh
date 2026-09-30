@@ -152,7 +152,7 @@ lane_context_caller_cfg() { # SHAPE
   local home="${LANES_HOME:-$HOME}"
   case "${1:-}" in
     claude) printf '%s\n' "${CLAUDE_CONFIG_DIR:-$home/.claude}" ;;
-    codex) lane_launch_home_account "${CODEX_HOME:-$home/.codex}" ;;
+    codex) lane_launch_home_account "$(lane_context_caller_home codex)" ;;
     pi) lane_adapter_pi_agent_dir ;;
     copilot) printf '%s\n' "${COPILOT_HOME:-$home/.copilot}" ;;
     *)
@@ -187,6 +187,24 @@ lane_context_copilot_note() { # REC NOW
   root="${f%%	*}"; f="${f#*	}"
   [ -n "$home" ] || home="$(lane_context_caller_cfg copilot)" || return 2
   copilot_session_lane_note "$home" "$session" "$root" "${f%%	*}" "$2" "${f#*	}"
+}
+
+# lane_context_caller_home HARNESS — the launch home a session of HARNESS runs
+# from, read off this process's own environment: the directory the harness
+# variable carries, or the harness's own default where none is set. For claude
+# and copilot that is the account itself (lane_context_caller_cfg); for codex
+# it is CODEX_HOME as it stands, a private home built under an account
+# included, since that home is where its rollouts are written. The home a
+# transcript is bound to (lane_context_transcript_owned) is this one, so the
+# turn-end hook fills a fleet record naming no home from it
+# (lib/overseer-launch.sh § ol_record_heal). Exit 1, printing nothing, for a
+# harness with no transcript shape.
+lane_context_caller_home() { # HARNESS
+  case "${1:-}" in
+    claude | copilot) lane_context_caller_cfg "$1" ;;
+    codex) printf '%s\n' "${CODEX_HOME:-${LANES_HOME:-$HOME}/.codex}" ;;
+    *) return 1 ;;
+  esac
 }
 
 # lane_context_mark_model HARNESS MODEL — the model a session of HARNESS

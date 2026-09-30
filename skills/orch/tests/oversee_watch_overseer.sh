@@ -597,6 +597,32 @@ for row in "7000|%4|1790000000|another pane" "7001|$PANE|1790000000|this pane id
     "server=7000 pane=$PANE generation=none account=none harness=none model=none start=1790000000" \
     "a start over a record naming $row_what drops that session's generation, account and launch identity" "$ERR"
 done
+# A record naming this pane on this server with no start at all is the one a
+# writer from before starts were recorded left for the session in this pane,
+# which a start that read it as another session's stripped of its launch
+# identity: the start keeps its generation and identity and binds it to this
+# server's start.
+startless_keeps_run() { # NAME [WATCH_BIN]
+  overseer_case "$1" idle
+  jq -n --arg pane "$PANE" --arg window "$WINDOW" \
+    '{triaged: [], overseer: {runtime: "tmux", generation: 3, account: "/home/me/.codex", server: "7000", pane: $pane, window: $window, launch_line: "old",
+      harness: "codex", home: "/home/me/.codex", model: "gpt-6-astra"}}' \
+    > "$STUB_DIR/oversee-state.json"
+  printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
+  WATCH_BIN="${2:-}" run TMUX_PANE="$PANE" -- --max-loops 1 -- --model fable
+}
+startless_keeps_run record_keeps_startless
+assert_eq "generation=$(recorded generation) harness=$(recorded harness) home=$(recorded home) model=$(recorded model) start=$(recorded server_start)" \
+  "generation=3 harness=codex home=/home/me/.codex model=gpt-6-astra start=1790000000" \
+  "a start over a record naming this pane on this server with no start keeps its launch identity and binds it" "$ERR"
+STARTLESSKEEP_CTL="$(mutant_scripts startlesskeep-ctl/orch lib/watch-overseer-record.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/startlesskeep-ctl/github"
+mutate_file "$STARTLESSKEEP_CTL/lib/watch-overseer-record.sh" \
+  'if ol_names($server; $start; $pane) or ol_unstarted($server; $pane) then . else {} end)' \
+  'if ol_names($server; $start; $pane) then . else {} end)'
+startless_keeps_run record_keeps_startless_mutant "$STARTLESSKEEP_CTL/oversee-watch"
+assert_eq "generation=$(recorded generation) harness=$(recorded harness)" "generation=none harness=none" \
+  "control: a start that reads a record with no start as another session's drops this pane's launch identity" "$ERR"
 # The start test's control: ol_names without it keeps the earlier server's
 # generation and launch identity for the session now in its pane id.
 KEEPSTART_CTL="$(mutant_scripts keepstart-ctl/orch lib/overseer-launch.sh)" || exit 1
@@ -611,7 +637,8 @@ assert_eq "generation=$(recorded generation) harness=$(recorded harness)" "gener
 KEEPEMPTY_CTL="$(mutant_scripts keepempty-ctl/orch lib/watch-overseer-record.sh)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/keepempty-ctl/github"
 mutate_file "$KEEPEMPTY_CTL/lib/watch-overseer-record.sh" \
-  '        | if ol_names($server; $start; $pane) then . else {} end)' '        | if ol_names($server; ""; $pane) then . else {} end)'
+  '        | if ol_names($server; $start; $pane) or ol_unstarted($server; $pane) then . else {} end)' \
+  '        | if ol_names($server; ""; $pane) or ol_unstarted($server; $pane) then . else {} end)'
 keeps_generation_run record_keeps_generation_start_mutant "$KEEPEMPTY_CTL/oversee-watch"
 assert_eq "generation=$(recorded generation)" "generation=none" \
   "control: a start judged on no start drops this pane's bound generation" "$ERR"
@@ -621,7 +648,7 @@ RECORD_MUTANT="$TMP_ROOT/record-mutant"
 mkdir -p "$RECORD_MUTANT/orch"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$RECORD_MUTANT/orch/scripts"
 ln -s "$REPO_ROOT/skills/github" "$RECORD_MUTANT/github"
-FROM='        | if ol_names($server; $start; $pane) then . else {} end)'
+FROM='        | if ol_names($server; $start; $pane) or ol_unstarted($server; $pane) then . else {} end)'
 assert_eq "$(grep -cxF -- "$FROM" "$REPO_ROOT/skills/orch/scripts/lib/watch-overseer-record.sh")" "1" \
   "control: the merge rule is one line of the record library"
 FROM="$FROM" awk '$0 == ENVIRON["FROM"] { print "        | {})"; next } { print }' \

@@ -107,19 +107,35 @@ session_rows_last() { # FILE [EVENT]
 #   walled       StopFailure with `rate_limit`, the harness's own word for a
 #                usage limit; its `message` carries the harness's text with the
 #                reset in it
+#   wedged       StopFailure whose `message` or `error_details` names a
+#                request refused for its prompt's length, a phrase
+#                SESSION_ROWS_PROMPT_TOO_LONG lists: the session's context
+#                filled its window, so every turn it starts fails the same way
+#                while its harness stays up
 #   live         any other row
 # Exit 2 where the file could not be read; the verdict is then `none` and says
 # nothing.
+#
+# The phrases are the harness's own text, lowercased and matched as a
+# substring, one table read by this judge alone. Claude Code writes
+# `Prompt is too long` as the turn's last assistant message when a request
+# outgrows the window; an overseer run with DISABLE_AUTO_COMPACT=1 met it on
+# every turn once its context filled.
+SESSION_ROWS_PROMPT_TOO_LONG='["prompt is too long"]'
 SESSION_ROWS_VERDICT=none
 session_rows_verdict() { # FILE
   SESSION_ROWS_VERDICT=none
   session_rows_last "$1" || return 2
   [ -n "$SESSION_ROW" ] || return 0
-  SESSION_ROWS_VERDICT="$(jq -r '
+  SESSION_ROWS_VERDICT="$(jq -r --argjson too_long "$SESSION_ROWS_PROMPT_TOO_LONG" '
     if .harness != "claude" then "unsupported"
     elif .event == "SessionEnd" then
       (if .reason == "clear" or .reason == "resume" then "live" else "ended" end)
     elif .event == "StopFailure" and .error == "rate_limit" then "walled"
+    elif .event == "StopFailure"
+      and ((((.message // "") + "\n" + (.error_details // "")) | ascii_downcase) as $text
+        | any($too_long[]; . as $p | $text | contains($p)))
+    then "wedged"
     else "live" end' <<<"$SESSION_ROW")" || { SESSION_ROWS_VERDICT=none; return 2; }
 }
 

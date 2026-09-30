@@ -114,11 +114,14 @@ overseer_command_record() {
   # The six fields this watch observes replace the prior's; the launcher's
   # own, runtime, generation and the launch identity (harness, account, home,
   # model, effort and cwd), stay only where the prior names THIS pane on THIS
-  # server, started when this one was: another pane's record is another
-  # session's, and so is one an earlier server handed the same pid wrote, or
-  # one carrying no server start, even where it names this pane. A start there
-  # has no launch identity to record, which leaves its readers on the pane and
-  # the environment until a launcher or `oversee register` writes one. A
+  # server, started when this one was (ol_names), or names this pane on this
+  # server with no start at all (ol_unstarted), the record a writer from
+  # before starts were recorded left for the very session in the pane, whose
+  # identity the start is written beside: another pane's record is another
+  # session's, and so is one an earlier server handed the same pid wrote,
+  # whose start is not this server's. A start there has no launch identity to
+  # record, which leaves its readers on the pane and the environment until a
+  # launcher or `oversee register` writes one. A
   # `pending`
   # successor goes either way: the line this start records is the current
   # session's, as a start always replaced the pending line it met, so a
@@ -134,7 +137,7 @@ overseer_command_record() {
     update oversee --arg server "$server" --arg pane "$pane" --arg window "$window" --arg line "$line" \
       --arg rows "$rows" --arg start "$start" "$OL_JQ_DEFS"'
       .overseer = ((((.overseer // {})
-        | if ol_names($server; $start; $pane) then . else {} end)
+        | if ol_names($server; $start; $pane) or ol_unstarted($server; $pane) then . else {} end)
         + {server: $server, pane: $pane, window: $window, launch_line: $line, session_rows: $rows,
            server_start: ($start | tonumber)})
         | del(.pending, .exit)

@@ -271,12 +271,13 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   clone-root<TAB><item><TAB><the hosted lane's clone, on its own host>
 #   lane-failed<TAB><item><TAB><the last lane-local failure the mail pass reported>
 #   long-pass<TAB>fleet<TAB><the epoch the last long pass started at>
-# Three rows are keyed by the overseer's own pane rather than by a lane, and
+# Four rows are keyed by the overseer's own pane rather than by a lane, and
 # are pruned on every pass so a pane that stops being the overseer's leaves
 # nothing behind:
 #   overseer-mark<TAB><server> <pane><TAB><kind>|<passes since it was reported>
 #   overseer-dead<TAB><server> <pane><TAB><count>|pending:<N>|reported
 #   overseer-walled<TAB><server> <pane><TAB><count>|pending:<N>|reported
+#   overseer-context-gap<TAB><server> <pane><TAB><gap>|told|alerted
 # The last two are one machinery under two names, one per case the overseer's
 # own pane can be recovered from: `exited` is the harness gone and `walled` is
 # the account spent under a harness still running. Separate rows rather than
@@ -2210,6 +2211,7 @@ overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD MINE
     relaunch_text='A successor is being launched into that window on an account the lane pick judged, never on the spent one.'
   else
     reading=exited
+    [[ "$OV_SOURCE" != context ]] || reading='wedged at its context window'
     relaunch_text='A successor is being launched into that window from the recorded launch line.'
   fi
   case "$5" in
@@ -2230,8 +2232,8 @@ overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD MINE
     # one.
     *) plan_text="No successor is launched; the watch reported plan $5, which it has no wording for. Start one by hand." ;;
   esac
-  printf 'overseer-%s: the overseer session in tmux window %s (pane %s) read %s on %s consecutive watch passes at %s. %s\n' \
-    "$kind" "$3" "$2" "$reading" "$DEAD_PASSES" "${now:-an unreadable clock}" "$plan_text" > "$notice" \
+  printf 'overseer-%s: the overseer session in tmux window %s (pane %s) read %s on %s consecutive watch passes at %s, source=%s. %s\n' \
+    "$kind" "$3" "$2" "$reading" "$DEAD_PASSES" "${now:-an unreadable clock}" "$OV_SOURCE" "$plan_text" > "$notice" \
     || { overseer_note overseer-notice-failed "channel=file"; return 0; }
   overseer_publish "$notice" "$record" "$errf"
 }
@@ -2492,65 +2494,149 @@ overseer_mark_check() { # ROWS IDENTITY PANE
 }
 
 # The overseer's context record, context.json in the overseer mailbox, as its
-# turn-end hook last wrote it (lib/lane-context.sh § lane_context_record),
-# judged each long pass a working overseer is read, so a record that stopped
-# advancing, or advances with no reading, reaches the overseer instead of
-# passing for a context mark that is watching: the hook judges that mark at a
-# turn end and nowhere else. A record another session wrote, a predecessor's
-# until this one's first turn end, says nothing of this one: one naming
-# another pane, a harness other than the one the fleet record names for this
-# pane (check_overseer's OVERSEER_RECORD_HARNESS), or a session other than
-# the one the pane's latest SessionStart row names. A Copilot overseer writes
-# records, readings and gaps, and Stop rows but no SessionStart row
-# (hooks/session-start-row.sh is not run on copilot), so only the harness
-# separates it from a predecessor in the same pane: a Copilot predecessor's
-# record, a gap drawing overseer-context-unmeasured among them, stands as this
-# session's until this session's first turn end rewrites it.
+# lane-mail-check hook last wrote it at a turn end or a tool call
+# (lib/lane-context.sh § lane_context_record), where it is THIS session's:
+# into LANE_CTX_* (lane_context_record_fields), with OVERSEER_CTX_FILE the
+# record and OVERSEER_CTX_ROWS the pane's rows file. A record another session
+# wrote, a predecessor's until this one's first reading, says nothing of this
+# one: one naming another pane, a harness other than the one the fleet record
+# names for this pane (check_overseer's OVERSEER_RECORD_HARNESS), or a session
+# other than the one the pane's latest SessionStart row names. A Copilot
+# overseer writes records, readings and gaps, and Stop rows but no
+# SessionStart row (hooks/session-start-row.sh is not run on copilot), so only
+# the harness separates it from a predecessor in the same pane: a Copilot
+# predecessor's record, a gap drawing overseer-context-unmeasured among them,
+# stands as this session's until this session's first reading rewrites it.
+# Returns 0 where the record is this session's, 1 otherwise: no record,
+# another session's, or one or its rows that cannot be read, which is noted
+# and settles nothing. Reads the state overseer_pane_read left.
+OVERSEER_CTX_FILE=""
+OVERSEER_CTX_ROWS=""
+overseer_context_own() { # PANE IDENTITY
+  local pane="$1" identity="$2" record started
+  OVERSEER_CTX_FILE="$(lane_context_overseer_box "$PROJECT_ROOT")/$LANE_CONTEXT_RECORD"
+  OVERSEER_CTX_ROWS="$(session_rows_overseer_file "$PROJECT_ROOT" "${identity%% *}" "$pane")"
+  [[ -e "$OVERSEER_CTX_FILE" ]] || return 1
+  if ! record="$(cat -- "$OVERSEER_CTX_FILE" 2>/dev/null)" || ! lane_context_record_fields "$record"; then
+    overseer_note overseer-context-unread "path=$OVERSEER_CTX_FILE"
+    return 1
+  fi
+  [[ "$LANE_CTX_PANE_KEY" == "$identity" ]] || return 1
+  [[ -z "$OVERSEER_RECORD_HARNESS" || "$LANE_CTX_HARNESS" == "$OVERSEER_RECORD_HARNESS" ]] || return 1
+  if ! session_rows_last "$OVERSEER_CTX_ROWS" SessionStart || ! started="$(jq -r '.session_id // ""' <<<"${SESSION_ROW:-null}")"; then
+    overseer_note overseer-context-unread "path=$OVERSEER_CTX_ROWS"
+    return 1
+  fi
+  [[ -z "$started" || -z "$LANE_CTX_SESSION" || "$started" == "$LANE_CTX_SESSION" ]] || return 1
+}
+
+# The epoch of the last Stop row in OVERSEER_CTX_ROWS into OVERSEER_CTX_STOP,
+# 0 for none, and the record's own `at` into OVERSEER_CTX_AT: the two
+# instants the stale and the wedged judgements compare, since the hook writes
+# a Stop row at every overseer turn end (lib/session-rows.sh) and the record
+# beside it. Returns 1 where either cannot be read, noted.
+OVERSEER_CTX_AT=0
+OVERSEER_CTX_STOP=0
+overseer_context_times() {
+  if ! OVERSEER_CTX_AT="$(to_epoch "$LANE_CTX_AT")"; then
+    overseer_note overseer-context-unread "path=$OVERSEER_CTX_FILE" "at=${LANE_CTX_AT:-none}"
+    return 1
+  fi
+  if ! session_rows_last "$OVERSEER_CTX_ROWS" Stop \
+     || ! OVERSEER_CTX_STOP="$(jq -r '.at // 0' <<<"${SESSION_ROW:-null}")"; then
+    overseer_note overseer-context-unread "path=$OVERSEER_CTX_ROWS"
+    return 1
+  fi
+}
+
+# That record, judged each long pass a working overseer is read, so a record
+# that stopped advancing, or advances with no reading, reaches someone instead
+# of passing for a context mark that is watching: the hook judges that mark
+# at the overseer's tool calls and turn ends and nowhere else.
 #
-# `overseer-context-unmeasured` where the record carries a gap, the reason the
-# hook took no reading; `overseer-context-stale` where the record's `at` is
-# more than OVERSEER_CONTEXT_STALE_SECS old and a Stop row, which that hook
-# writes at every overseer turn end (lib/session-rows.sh), came after it: the
-# hook ran and the record did not follow; a session with no Stop row after the
-# record gets no stale judgement. Either event goes out on every long pass it
-# stands. No record says nothing; one that cannot be read, a record
-# the hook does not write, or rows that cannot be read are noted and settle
-# nothing. Reads the state overseer_pane_read left and never runs inside it.
+# A gap, the reason the hook took no reading, is `overseer-context-unmeasured`
+# on the first long pass it stands, told to the overseer; still standing on
+# the next, it goes to the owner once instead, through overseer_gap_alert, and
+# neither is said again while that gap stands: a gap the overseer did not
+# close is one it is not acting on, and repeating the event to it is what
+# left a fleet unwatched. The `overseer-context-gap` row carries that count
+# under this pane's key, `<gap>|told` then `<gap>|alerted`, in
+# OVERSEER_MARK_ROWS, which the caller commits; a reading clears it, and a
+# different gap starts it again.
+#
+# `overseer-context-stale` where the record's `at` is more than
+# OVERSEER_CONTEXT_STALE_SECS old and a Stop row came after it: the hook ran
+# and the record did not follow; a session with no Stop row after the record
+# gets no stale judgement. It goes out on every long pass it stands.
 OVERSEER_CONTEXT_STALE_SECS=3600
 overseer_context_check() { # PANE IDENTITY
-  local pane="$1" identity="$2" file record at age rows row_at started
-  file="$(lane_context_overseer_box "$PROJECT_ROOT")/$LANE_CONTEXT_RECORD"
-  rows="$(session_rows_overseer_file "$PROJECT_ROOT" "${identity%% *}" "$pane")"
-  [[ -e "$file" ]] || return 0
-  if ! record="$(cat -- "$file" 2>/dev/null)" || ! lane_context_record_fields "$record"; then
-    overseer_note overseer-context-unread "path=$file"
-    return 0
-  fi
-  [[ "$LANE_CTX_PANE_KEY" == "$identity" ]] || return 0
-  [[ -z "$OVERSEER_RECORD_HARNESS" || "$LANE_CTX_HARNESS" == "$OVERSEER_RECORD_HARNESS" ]] || return 0
-  if ! session_rows_last "$rows" SessionStart || ! started="$(jq -r '.session_id // ""' <<<"${SESSION_ROW:-null}")"; then
-    overseer_note overseer-context-unread "path=$rows"
-    return 0
-  fi
-  [[ -z "$started" || -z "$LANE_CTX_SESSION" || "$started" == "$LANE_CTX_SESSION" ]] || return 0
+  local pane="$1" identity="$2" age at row_at
+  overseer_context_own "$pane" "$identity" || return 0
   if [[ -n "$LANE_CTX_GAP" ]]; then
-    echo "EVENT overseer-context-unmeasured $pane gap=$LANE_CTX_GAP"
-    PASS_EVENT=1
+    overseer_context_gap "$pane" "$identity" "$LANE_CTX_GAP"
     return 0
   fi
-  if ! at="$(to_epoch "$LANE_CTX_AT")"; then
-    overseer_note overseer-context-unread "path=$file" "at=${LANE_CTX_AT:-none}"
-    return 0
-  fi
+  OVERSEER_MARK_ROWS="$(lane_row_clear overseer-context-gap "$OVERSEER_MARK_ROWS" "$identity")"
+  overseer_context_times || return 0
+  at="$OVERSEER_CTX_AT" row_at="$OVERSEER_CTX_STOP"
   age=$((PASS_NOW - at))
   (( age > OVERSEER_CONTEXT_STALE_SECS )) || return 0
-  if ! session_rows_last "$rows" Stop || ! row_at="$(jq -r '.at // 0' <<<"${SESSION_ROW:-null}")"; then
-    overseer_note overseer-context-unread "path=$rows"
-    return 0
-  fi
   (( row_at > at )) || return 0
   echo "EVENT overseer-context-stale $pane age=$age"
   PASS_EVENT=1
+}
+
+# One standing gap's turn: the event on its first pass, the owner's alert on
+# its second, nothing after. GAP is the record's word.
+overseer_context_gap() { # PANE IDENTITY GAP
+  local pane="$1" identity="$2" gap="$3" prior
+  prior="$(lane_row_get overseer-context-gap "$OVERSEER_MARK_ROWS" "$identity")"
+  case "$prior" in
+    "$gap|alerted") ;;
+    "$gap|told")
+      overseer_gap_alert "$pane" "$gap"
+      OVERSEER_MARK_ROWS="$(lane_row_set overseer-context-gap "$OVERSEER_MARK_ROWS" "$identity" "$gap|alerted")" ;;
+    *)
+      echo "EVENT overseer-context-unmeasured $pane gap=$gap"
+      PASS_EVENT=1
+      OVERSEER_MARK_ROWS="$(lane_row_set overseer-context-gap "$OVERSEER_MARK_ROWS" "$identity" "$gap|told")" ;;
+  esac
+}
+
+# The owner's alert for a gap that stood two long passes: one notice to the
+# owner through the overseer mailbox (`lane-mail notice --to owner`, which the
+# owner relay carries out) and one `close` row in the fleet log, so a
+# successor reads it too. A channel that fails is noted and the other still
+# goes; the stderr line says the alert went.
+overseer_gap_alert() { # PANE GAP
+  local notice="$WORK_DIR/overseer-context-gap.txt" record="$WORK_DIR/overseer-context-gap.json"
+  local errf="$WORK_DIR/overseer-context-gap.err"
+  printf 'overseer-context-unmeasured: the overseer in pane %s has recorded no context reading on two consecutive watch passes, gap=%s, so nothing judges its context mark and it can run into its context window with no handoff. The remedy for this gap is under overseer-context-unmeasured in the orch skill'"'"'s references/oversee-events.md.\n' \
+    "$1" "$2" > "$notice" || { overseer_note overseer-notice-failed "channel=file"; return 0; }
+  overseer_fleet_log "$notice" "$record" "$errf" \
+    || overseer_note overseer-notice-failed "channel=fleet-log"
+  "$LANE_MAIL" notice --item overseer --to owner --file "$notice" >/dev/null 2>"$errf" \
+    || overseer_note overseer-notice-failed "channel=owner"
+  ow_message overseer-context-alerted "pane=$1" "gap=$2" >&2
+}
+
+# Whether the overseer's harness is up and can take no turn because its
+# context fills its window: its own context record is a reading at or past
+# the window it names, the window's hard limit, with no Stop row after it, so
+# no turn has ended since the reading. A harness in that state keeps its
+# process and writes no row but a failed turn's, which a death judgement
+# reading the process and the rows never sees, and the fleet runs
+# unattended until someone finds the pane. A StopFailure row naming a
+# prompt-too-long error is the harness's own word for the same state and is
+# read in overseer_pane_read (session_rows_verdict's `wedged`); this reads
+# the record, which every harness the hook reads a transcript for writes.
+# A reading with no window is never at it. Returns 0 for a wedge.
+overseer_context_wedged() { # PANE IDENTITY
+  overseer_context_own "$1" "$2" || return 1
+  [[ -z "$LANE_CTX_GAP" && "$LANE_CTX_TOKENS" =~ ^[0-9]+$ && "$LANE_CTX_WINDOW" =~ ^[1-9][0-9]*$ ]] || return 1
+  (( LANE_CTX_TOKENS >= LANE_CTX_WINDOW )) || return 1
+  overseer_context_times || return 1
+  (( OVERSEER_CTX_STOP <= OVERSEER_CTX_AT ))
 }
 
 # The overseer's own session as one reading: OV_WINDOW, OV_IDENTITY (`<server>
@@ -2568,7 +2654,9 @@ overseer_context_check() { # PANE IDENTITY
 # `clear` or `resume` is `exited` only over a pane whose process is a bare
 # shell with nothing under it, and live over a running process; a usage-limit
 # StopFailure is `walled` whatever the screen shows, and overseer_judge holds
-# it to the account judgement. A session its rows call live is still `exited` when
+# it to the account judgement; a StopFailure naming a prompt-too-long error
+# is `exited`, OV_SOURCE `context`, the harness up and its window full
+# (session_rows_verdict's `wedged`). A session its rows call live is still `exited` when
 # the pane's process is a bare shell with nothing under it, which a harness
 # killed before its SessionEnd hook ran leaves, OV_SOURCE `process`: a process
 # fact, read as lib/lane-state.sh's own rung reads it, never the screen.
@@ -2639,6 +2727,14 @@ overseer_pane_read() { # PANE
   case "$cause" in
     ended) OV_STATE=exited; OV_SOURCE=rows; return 0 ;;
     walled) OV_STATE=walled; OV_SOURCE=rows; return 0 ;;
+    # A harness whose every turn fails on its prompt's length takes no turn
+    # again: it reads no mail, answers no event and cannot hand itself over,
+    # the unattended fleet a death leaves, with its process still up. Only a
+    # relaunch ends it, so it is read as the death it is in effect.
+    wedged)
+      OV_STATE=exited; OV_SOURCE=context
+      (( ! bare )) || OV_SOURCE=process
+      return 0 ;;
     live)
       OV_STATE=working; OV_SOURCE=rows
       (( ! bare )) || { OV_STATE=exited; OV_SOURCE=process; }
@@ -2735,6 +2831,13 @@ check_overseer() {
            && "$OVERSEER_MARK_VALUE" == 0 ]]; then
     OV_VERDICT=walled OV_SOURCE=account
   fi
+  # A harness whose recorded context fills its window takes no turn again, and
+  # nothing but a relaunch ends that: read as dead, `source=context`, on the
+  # same count of passes a death takes, so one reading caught between a turn's
+  # reading and its failure never relaunches a session.
+  if [[ "$OV_VERDICT" == live ]] && overseer_context_wedged "$pane" "$identity"; then
+    OV_VERDICT=exited OV_SOURCE=context
+  fi
   ov_case=""
   case "$OV_VERDICT" in
     exited) ov_case=dead ;;
@@ -2746,6 +2849,7 @@ check_overseer() {
   # notice-only or the bounded recovery attempts are spent.
   rows="$(lane_row_prune overseer-dead "${PW_SEEN[0]}" "$identity")"
   rows="$(lane_row_prune overseer-walled "$rows" "$identity")"
+  rows="$(lane_row_prune overseer-context-gap "$rows" "$identity")"
   if [[ -z "$ov_case" ]]; then
     rows="$(lane_row_clear overseer-dead "$rows" "$identity")"
     rows="$(lane_row_clear overseer-walled "$rows" "$identity")"
@@ -2772,6 +2876,7 @@ check_overseer() {
   # then read the old session's repeat count and wait out its remainder before
   # its own first crossing is reported.
   rows="$(lane_row_clear overseer-mark "$rows" "$identity")"
+  rows="$(lane_row_clear overseer-context-gap "$rows" "$identity")"
   if ! prior="$(lane_row_get "$row" "$rows" "$identity")"; then
     die state-read-failed "" "pane=$pane" "row=$row"
   fi
