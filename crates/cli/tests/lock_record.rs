@@ -415,6 +415,8 @@ impl World {
         Command::new("bash")
             .arg(script())
             .args(args)
+            // The nested named-target refresh also checks the caller's repository.
+            .current_dir(&self.main)
             .env_clear()
             .envs(test_util::fixture_env(&self.home))
             .env("KENDEX_BACKGROUND_REFRESH", "off")

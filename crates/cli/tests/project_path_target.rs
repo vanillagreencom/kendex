@@ -490,17 +490,19 @@ fn a_plan_leaves_the_projects_list_as_it_found_it() {
 fn a_temporary_project_is_refused_unless_a_throwaway_one_is_meant() {
     // `kept_world` settles the precondition every row below rests on: a
     // registry a temporary fixture home would have exempted.
-    let (_tmp, home, catalog, elsewhere) = kept_world();
+    let (_tmp, home, catalog, _) = kept_world();
     let scratch = tempfile::tempdir().unwrap();
     let project = rooted(&scratch);
     declare(&project, &catalog);
     let path = project.to_str().unwrap();
 
+    // The kept registry can sit under a lane; only the temporary project
+    // belongs to these commands, including their working directory.
     for writing in [
         ["apply", "--project-path", path, "-y"],
         ["refresh", "--project-path", path, "-y"],
     ] {
-        let refused = kendex(&home, &elsewhere, &writing);
+        let refused = kendex(&home, &project, &writing);
         let text = said(&refused);
         assert!(!refused.status.success(), "{writing:?}: {text}");
         assert!(
@@ -517,7 +519,7 @@ fn a_temporary_project_is_refused_unless_a_throwaway_one_is_meant() {
 
     let previewed = run(
         &home,
-        &elsewhere,
+        &project,
         &["apply", "--plan", "--project-path", path],
     );
     assert!(
@@ -529,7 +531,7 @@ fn a_temporary_project_is_refused_unless_a_throwaway_one_is_meant() {
 
     run(
         &home,
-        &elsewhere,
+        &project,
         &["apply", "--project-path", path, "--throwaway", "-y"],
     );
 
