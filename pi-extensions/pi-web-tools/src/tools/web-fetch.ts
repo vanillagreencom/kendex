@@ -2,11 +2,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { basename, isAbsolute, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
+import { ByteBudget, readLocalPdfWithin, readPdfWithin } from "../extract/byte-budget.js";
 import { extractGitHubUrl } from "../extract/github.js";
 import { fetchHttpContent, isProbablyPdf } from "../extract/http.js";
 import { extractLocalVideo, isLocalVideoPath } from "../extract/video.js";
 import { extractYouTubeUrl, isTranscriptPrompt, parseYouTubeUrl } from "../extract/youtube.js";
-import { readFile as fsReadFile } from "node:fs/promises";
 import { fetchLocalPdfText, fetchPdfText, extractPdfTextBest } from "../extract/pdf.js";
 import { looksLikeScannedPdf, rasterizePdfPages, type PdfPageImage } from "../extract/pdf-pages.js";
 import { ExaClient } from "../providers/exa.js";
@@ -325,7 +325,9 @@ export function buildWebFetchToolResult(
 	const ids = stored.map((item) => item.id).join(", ");
 	const previewBlocks = previewItems.map(({ item, text, stats }) => {
 		const label = displayTitle(item);
-		const meta = `preview ${stats.shownCharacters}/${stats.fullCharacters} chars${stats.truncated ? "; full text stored" : ""}`;
+		const cutAt = item.metadata?.bodyTruncatedAtBytes;
+		const cut = typeof cutAt === "number" ? `; source cut at ${cutAt} bytes` : "";
+		const meta = `preview ${stats.shownCharacters}/${stats.fullCharacters} chars${stats.truncated ? "; full text stored" : ""}${cut}`;
 		return `- ${item.id}: ${label}\n[${meta}]\n${text}`;
 	}).join("\n\n");
 	const previewMeta = preview.truncated ? ` (${preview.shownCharacters}/${preview.fullCharacters} chars shown)` : "";
@@ -523,6 +525,7 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 			if (params.provider !== "exa") {
 				const stored = [];
 				const pageImages: PdfPageImage[] = [];
+				const byteBudget = new ByteBudget();
 				const failed: Array<{ url: string; error: unknown; provider?: string; allowExaFallback: boolean }> = transcriptConflictFailures.map((failure) => ({ ...failure, allowExaFallback: false }));
 				async function handlePdfBuffer(buffer: Buffer | ArrayBuffer | Uint8Array, source: { provider: "http" | "local"; url: string; title: string; localPath?: string }) {
 					const bufferLike = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer));
@@ -561,11 +564,11 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 								continue;
 							}
 							if (!isProbablyPdf(localPath)) throw new Error(`Local file extraction currently supports PDFs and videos only: ${localPath}`);
-							const buffer = await fsReadFile(localPath);
+							const buffer = await readLocalPdfWithin(localPath, byteBudget);
 							await handlePdfBuffer(buffer, { provider: "local", url: pathToFileURL(localPath).href, title: basename(localPath), localPath });
 							continue;
 						}
-						const github = await extractGitHubUrl(url, { signal, cloneEnabled: settings.githubClone.enabled, maxRepoSizeMB: settings.githubClone.maxRepoSizeMB, cloneTimeoutSeconds: settings.githubClone.cloneTimeoutSeconds, maxAgeHours: settings.githubClone.cacheMaxAgeHours }).catch((error) => ({ error }));
+						const github = await extractGitHubUrl(url, { signal, cloneEnabled: settings.githubClone.enabled, maxRepoSizeMB: settings.githubClone.maxRepoSizeMB, cloneTimeoutSeconds: settings.githubClone.cloneTimeoutSeconds, maxAgeHours: settings.githubClone.cacheMaxAgeHours, byteBudget }).catch((error) => ({ error }));
 						if (github && !("error" in github)) {
 							stored.push(storeWebContent(pi, { title: github.title, url, content: github.content, metadata: github.metadata }));
 							continue;
@@ -582,11 +585,11 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 						if (isProbablyPdf(url)) {
 							const response = await fetch(url, { signal });
 							if (!response.ok) throw new Error(`PDF fetch failed (${response.status}) for ${url}`);
-							const buffer = await response.arrayBuffer();
+							const buffer = await readPdfWithin(response, byteBudget, url);
 							await handlePdfBuffer(buffer, { provider: "http", url, title: url.split("/").pop() || url });
 							continue;
 						}
-						const extracted = await httpExtractor(url, { signal, jinaFallback: settings.htmlExtraction.jinaFallback, jinaApiKey: settings.apiKeys.jina });
+						const extracted = await httpExtractor(url, { signal, jinaFallback: settings.htmlExtraction.jinaFallback, jinaApiKey: settings.apiKeys.jina, byteBudget });
 						stored.push(storeWebContent(pi, { title: extracted.title, url: extracted.url, content: extracted.content, metadata: { provider: "http", tool: name, ...extracted.metadata } }));
 					} catch (error) {
 						if (isAbortError(error, signal)) throw error;

@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
@@ -28,3 +29,24 @@ export const settingsEnvironment = [
 	"PI_CODING_AGENT_DIR", "PI_WEB_TOOLS_CONFIG_FILE", "PI_WEB_TOOLS_OP_READ_TIMEOUT_MS",
 	"EXA_API_KEY", "PERPLEXITY_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "JINA_API_KEY",
 ];
+
+/** A local repository with `files` committed, which git clones in place of https://github.com/fixture/repo.git
+ * while the test runs; `cache` is an empty clone-cache directory beside it. */
+export function githubFixtureRepo(t: TestContext, files: Record<string, string>): { cache: string; head: string } {
+	isolateEnvironment(t, [...Object.keys(process.env).filter((key) => key.startsWith("GIT_")), "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"]);
+	const root = tempDir(t);
+	const source = join(root, "source");
+	const config = join(root, "gitconfig");
+	process.env.GIT_CONFIG_GLOBAL = config;
+	process.env.GIT_CONFIG_NOSYSTEM = "1";
+	process.env.GIT_CONFIG_COUNT = "1";
+	process.env.GIT_CONFIG_KEY_0 = "core.hooksPath";
+	process.env.GIT_CONFIG_VALUE_0 = join(root, "no-hooks");
+	const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+	git("init", "-q", "--initial-branch=main", source);
+	for (const [name, content] of Object.entries(files)) writeFileSync(join(source, name), content);
+	git("-C", source, "add", ...Object.keys(files));
+	git("-C", source, "-c", "user.email=test@example.com", "-c", "user.name=Test", "-c", "commit.gpgSign=false", "commit", "-q", "-m", "init");
+	git("config", "--file", config, `url.${source}.insteadOf`, "https://github.com/fixture/repo.git");
+	return { cache: join(root, "cache"), head: git("-C", source, "rev-parse", "HEAD") };
+}

@@ -6,6 +6,9 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+/** Pixel budget for one rasterized page; `pageScaleArgs` lowers the DPI of a document whose largest page would exceed it. */
+export const MAX_PAGE_PIXELS = 4_000_000;
+
 export interface PdfPageImage {
 	type: "image";
 	mimeType: "image/png";
@@ -26,14 +29,29 @@ export interface RasterizeResult {
 	truncated: boolean;
 }
 
-async function readPageCount(pdfPath: string, command = "pdfinfo"): Promise<number | undefined> {
+interface PageLayout {
+	pageCount?: number;
+	/** The largest page area in square points among the pages read; absent when pdfinfo printed no page size. */
+	maxPageArea?: number;
+}
+
+async function readPageLayout(pdfPath: string, lastPage: number, command = "pdfinfo"): Promise<PageLayout> {
 	try {
-		const { stdout } = await execFileAsync(command, [pdfPath], { maxBuffer: 1024 * 1024 });
-		const match = String(stdout ?? "").match(/^Pages:\s*(\d+)/m);
-		return match?.[1] ? Number(match[1]) : undefined;
+		const { stdout } = await execFileAsync(command, ["-f", "1", "-l", String(lastPage), pdfPath], { maxBuffer: 1024 * 1024 });
+		const text = String(stdout ?? "");
+		const count = text.match(/^Pages:\s*(\d+)/m);
+		const areas = [...text.matchAll(/^Page\s+\d+\s+size:\s*([\d.]+)\s*x\s*([\d.]+)\s*pts/gm)].map((match) => Number(match[1]) * Number(match[2]));
+		return { pageCount: count?.[1] ? Number(count[1]) : undefined, maxPageArea: areas.length ? Math.max(...areas) : undefined };
 	} catch {
-		return undefined;
+		return {};
 	}
+}
+
+/** The pdftoppm scaling arguments for the page pixel budget: the requested DPI, lowered so the largest page's area at that DPI
+ * stays within MAX_PAGE_PIXELS, or a square box of MAX_PAGE_PIXELS when pdfinfo gave no page size. */
+export function pageScaleArgs(dpi: number, maxPageArea: number | undefined): string[] {
+	const fitDpi = maxPageArea !== undefined && maxPageArea > 0 ? Math.floor(72 * Math.sqrt(MAX_PAGE_PIXELS / maxPageArea)) : 0;
+	return fitDpi >= 1 ? ["-r", String(Math.min(dpi, fitDpi))] : ["-scale-to", String(Math.floor(Math.sqrt(MAX_PAGE_PIXELS)))];
 }
 
 export async function rasterizePdfPages(buffer: ArrayBuffer | Uint8Array, options: RasterizeOptions = {}): Promise<RasterizeResult> {
@@ -44,11 +62,12 @@ export async function rasterizePdfPages(buffer: ArrayBuffer | Uint8Array, option
 	const inputPath = join(dir, "input.pdf");
 	try {
 		await writeFile(inputPath, Buffer.from(buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)));
-		const pageCount = await readPageCount(inputPath, options.pdfinfoCommand) ?? maxPages;
+		const layout = await readPageLayout(inputPath, maxPages, options.pdfinfoCommand);
+		const pageCount = layout.pageCount ?? maxPages;
 		const lastPage = Math.min(pageCount, maxPages);
 		await execFileAsync(command, [
 			"-png",
-			"-r", String(dpi),
+			...pageScaleArgs(dpi, layout.maxPageArea),
 			"-f", "1",
 			"-l", String(lastPage),
 			inputPath,

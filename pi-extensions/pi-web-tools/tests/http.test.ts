@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { ByteBudget } from "../src/extract/byte-budget.js";
 import { fetchHttpContent } from "../src/extract/http.js";
 
 for (const row of [
@@ -15,5 +16,19 @@ for (const row of [
 			fetchImpl: async (url) => String(url).startsWith("https://r.jina.ai/") ? new Response(`Title: Recovered\n\nMarkdown Content:\n${row.recovered}`) : new Response(row.body, { status: row.status, headers: { "content-type": row.type } }),
 		});
 		assert.deepEqual({ content: row.expected.content.test(out.content), ...(row.expected.title ? { title: out.title } : {}), ...(row.expected.chain ? { chain: out.metadata.extractionChain } : {}) }, { content: true, ...(row.expected.title ? { title: row.expected.title } : {}), ...(row.expected.chain ? { chain: row.expected.chain } : {}) });
+	});
+}
+
+for (const row of [
+	{ name: "direct body", status: 200, expected: { content: "aaaaaaaaaaaa", bodyTruncatedAtBytes: 12, chain: ["text"] } },
+	{ name: "Jina body after HTTP 403", status: 403, expected: { content: "rescued and", bodyTruncatedAtBytes: 12, chain: ["http:403", "jina"] } },
+]) {
+	test(`HTTP extraction cuts at the call byte budget: ${row.name}`, async () => {
+		const out = await fetchHttpContent("https://big.example", {
+			jinaFallback: true,
+			byteBudget: new ByteBudget(12),
+			fetchImpl: async (url) => String(url).startsWith("https://r.jina.ai/") ? new Response("rescued and more past the budget") : new Response("a".repeat(20), { status: row.status, headers: { "content-type": "text/plain" } }),
+		});
+		assert.deepEqual({ content: out.content, bodyTruncatedAtBytes: out.metadata.bodyTruncatedAtBytes, chain: out.metadata.extractionChain }, row.expected);
 	});
 }

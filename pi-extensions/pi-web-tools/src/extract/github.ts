@@ -1,3 +1,4 @@
+import { ByteBudget, readTextWithin, TEXT_READ_BYTE_LIMIT, truncationMetadata } from "./byte-budget.js";
 import { cloneOrUpdateRepo, defaultCacheDir, isGitInstalled, readBlobFromCache, readReadmeFromCache, readTreeFromCache, summarizeTreeEntries } from "./github-clone.js";
 
 export type GitHubUrlKind = "repo" | "blob" | "tree" | "commit";
@@ -21,6 +22,8 @@ export interface GitHubExtractOptions {
 	cloneTimeoutSeconds?: number;
 	cacheDir?: string;
 	maxAgeHours?: number;
+	/** The calling web_fetch call's shared budget; a standalone call gets its own. */
+	byteBudget?: ByteBudget;
 }
 
 function splitRefAndPath(parts: string[]): { ref?: string; path?: string } {
@@ -69,7 +72,13 @@ async function shouldUseClone(parsed: ParsedGitHubUrl, options: GitHubExtractOpt
 	}
 }
 
-async function extractFromClone(parsed: ParsedGitHubUrl, options: GitHubExtractOptions, defaultBranch: string | undefined) {
+async function readCached(budget: ByteBudget, read: (maxBytes: number) => ReturnType<typeof readBlobFromCache>) {
+	const blob = await read(budget.limitFor(TEXT_READ_BYTE_LIMIT));
+	if (blob) budget.spend(blob.truncatedAtBytes ?? blob.bytes);
+	return blob;
+}
+
+async function extractFromClone(parsed: ParsedGitHubUrl, options: GitHubExtractOptions, defaultBranch: string | undefined, budget: ByteBudget) {
 	const clone = await cloneOrUpdateRepo(parsed.owner, parsed.repo, parsed.ref ?? defaultBranch, {
 		cacheDir: options.cacheDir ?? defaultCacheDir(),
 		timeoutSeconds: options.cloneTimeoutSeconds,
@@ -77,30 +86,33 @@ async function extractFromClone(parsed: ParsedGitHubUrl, options: GitHubExtractO
 	});
 	const meta = { provider: "github", ...parsed, extraction: "clone", cachePath: clone.cachePath, headRef: clone.headRef, cloned: clone.cloned, updated: clone.updated, defaultBranch };
 	if (parsed.kind === "blob" && parsed.path) {
-		const blob = readBlobFromCache(clone.cachePath, parsed.path);
+		const path = parsed.path;
+		const blob = await readCached(budget, (maxBytes) => readBlobFromCache(clone.cachePath, path, maxBytes));
 		if (!blob) throw new Error(`File not found in cloned repo: ${parsed.path}`);
-		return { title: `${parsed.owner}/${parsed.repo}/${parsed.path}`, content: blob.content, metadata: { ...meta, bytes: blob.bytes } };
+		return { title: `${parsed.owner}/${parsed.repo}/${parsed.path}`, content: blob.content, metadata: { ...meta, bytes: blob.bytes, ...truncationMetadata(blob.truncatedAtBytes) } };
 	}
 	if (parsed.kind === "tree") {
 		const tree = readTreeFromCache(clone.cachePath, parsed.path ?? "", options.maxTreeEntries ?? 200);
 		if (!tree) throw new Error(`Directory not found in cloned repo: ${parsed.path ?? "/"}`);
 		return { title: `${parsed.owner}/${parsed.repo}/${parsed.path ?? ""}`, content: summarizeTreeEntries(tree.entries, tree.truncated), metadata: { ...meta, entries: tree.entries.length, truncated: tree.truncated } };
 	}
-	const readme = readReadmeFromCache(clone.cachePath) ?? "";
+	const readmeBlob = await readCached(budget, (maxBytes) => readReadmeFromCache(clone.cachePath, maxBytes));
+	const readme = readmeBlob?.content ?? "";
 	const tree = readTreeFromCache(clone.cachePath, "", options.maxTreeEntries ?? 80);
 	const treeText = tree ? summarizeTreeEntries(tree.entries, tree.truncated) : "";
 	const body = [`# ${parsed.owner}/${parsed.repo}`, `Cached at: ${clone.cachePath}`, treeText ? `\n## Tree (top entries)\n${treeText}` : undefined, readme ? `\n## README\n\n${readme}` : undefined].filter(Boolean).join("\n");
-	return { title: `${parsed.owner}/${parsed.repo}`, content: body, metadata: { ...meta, hasReadme: Boolean(readme), entries: tree?.entries.length ?? 0 } };
+	return { title: `${parsed.owner}/${parsed.repo}`, content: body, metadata: { ...meta, hasReadme: Boolean(readme), entries: tree?.entries.length ?? 0, ...truncationMetadata(readmeBlob?.truncatedAtBytes) } };
 }
 
 export async function extractGitHubUrl(input: string, options: GitHubExtractOptions = {}) {
 	const parsed = parseGitHubUrl(input);
 	if (!parsed) return undefined;
 	const fetchImpl = options.fetchImpl ?? fetch;
+	const budget = options.byteBudget ?? new ByteBudget();
 	const decision = await shouldUseClone(parsed, options, fetchImpl);
 	if (decision.useClone) {
 		try {
-			return await extractFromClone(parsed, options, decision.defaultBranch);
+			return await extractFromClone(parsed, options, decision.defaultBranch, budget);
 		} catch (error) {
 			// fall through to API path on clone failure
 		}
@@ -108,14 +120,14 @@ export async function extractGitHubUrl(input: string, options: GitHubExtractOpti
 	if (parsed.kind === "blob" && parsed.rawUrl) {
 		const response = await fetchImpl(parsed.rawUrl, { signal: options.signal });
 		if (!response.ok) throw new Error(`GitHub raw fetch failed (${response.status}) for ${parsed.rawUrl}`);
-		const content = await response.text();
-		return { title: `${parsed.owner}/${parsed.repo}/${parsed.path ?? ""}`, content, metadata: { provider: "github", ...parsed, extraction: "raw" } };
+		const body = await readTextWithin(response, budget);
+		return { title: `${parsed.owner}/${parsed.repo}/${parsed.path ?? ""}`, content: body.text, metadata: { provider: "github", ...parsed, extraction: "raw", ...truncationMetadata(body.truncatedAtBytes) } };
 	}
 	const data = await jsonFetch(fetchImpl, parsed.apiUrl, options.signal);
 	if (parsed.kind === "repo") {
-		const readme = await fetchImpl(`https://raw.githubusercontent.com/${parsed.owner}/${parsed.repo}/HEAD/README.md`, { signal: options.signal }).then((r) => r.ok ? r.text() : "").catch(() => "");
-		const content = `# ${data.full_name ?? `${parsed.owner}/${parsed.repo}`}\n\n${data.description ?? ""}\n\n${readme}`.trim();
-		return { title: data.full_name ?? `${parsed.owner}/${parsed.repo}`, content, metadata: { provider: "github", ...parsed, extraction: "repo", stars: data.stargazers_count, defaultBranch: data.default_branch } };
+		const readme = await fetchImpl(`https://raw.githubusercontent.com/${parsed.owner}/${parsed.repo}/HEAD/README.md`, { signal: options.signal }).then((r) => r.ok ? readTextWithin(r, budget) : undefined).catch(() => undefined);
+		const content = `# ${data.full_name ?? `${parsed.owner}/${parsed.repo}`}\n\n${data.description ?? ""}\n\n${readme?.text ?? ""}`.trim();
+		return { title: data.full_name ?? `${parsed.owner}/${parsed.repo}`, content, metadata: { provider: "github", ...parsed, extraction: "repo", stars: data.stargazers_count, defaultBranch: data.default_branch, ...truncationMetadata(readme?.truncatedAtBytes) } };
 	}
 	if (Array.isArray(data)) {
 		const entries = data.slice(0, options.maxTreeEntries ?? 200).map((entry: any) => `- ${entry.type === "dir" ? "dir" : "file"}: ${entry.path ?? entry.name}`).join("\n");

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test, { beforeEach, afterEach } from "node:test";
+import { CALL_BYTE_BUDGET, PDF_READ_BYTE_LIMIT, TEXT_READ_BYTE_LIMIT } from "../src/extract/byte-budget.js";
 import { createWebFetchToolDefinition } from "../src/tools/web-fetch.js";
 import { clearMemoryForTests } from "../src/storage.js";
 import { tempDir } from "./fixtures.js";
@@ -347,4 +348,36 @@ test("web_fetch all-failed batch retains every fixture failure", async () => {
 	const tool = createWebFetchToolDefinition({ appendEntry() {} } as any, () => webFetchSettings(), "web_fetch", { extractYouTubeUrl: async (url) => { throw new Error(`failed ${url.slice(-11)}`); } });
 	const result = await tool.execute("test", { urls: ["https://youtu.be/failedVid01", "https://youtu.be/failedVid02"], videoMode: "transcript" }, undefined, undefined, { cwd: process.cwd() } as any).then(() => undefined, (error: unknown) => error);
 	assert.deepEqual({ rejected: result instanceof Error, members: [String(result).includes("failedVid01"), String(result).includes("failedVid02")] }, { rejected: true, members: [true, true] });
+});
+
+/** A text body of `bytes` bytes streamed in 1 MiB chunks of one shared buffer, so the test holds one chunk, not the body. */
+function largeBody(bytes: number): ReadableStream<Uint8Array> {
+	const chunk = new Uint8Array(1024 * 1024).fill(0x61);
+	let sent = 0;
+	return new ReadableStream<Uint8Array>({
+		pull(controller) {
+			if (sent >= bytes) return controller.close();
+			const size = Math.min(chunk.byteLength, bytes - sent);
+			sent += size;
+			controller.enqueue(size === chunk.byteLength ? chunk : chunk.subarray(0, size));
+		},
+	}, { highWaterMark: 0 });
+}
+
+test("web_fetch shares one byte budget across the URLs of a call and refuses an oversized PDF", async (t) => {
+	const pageUrls = Array.from({ length: CALL_BYTE_BUDGET / TEXT_READ_BYTE_LIMIT + 1 }, (_, index) => `https://pages.example/${index}`);
+	const pdfUrl = "https://pages.example/huge.pdf";
+	t.mock.method(globalThis, "fetch", async (url: URL | string | Request) => String(url) === pdfUrl
+		? new Response(largeBody(1), { headers: { "content-type": "application/pdf", "content-length": String(PDF_READ_BYTE_LIMIT + 1) } })
+		: new Response(largeBody(TEXT_READ_BYTE_LIMIT + 1), { headers: { "content-type": "text/plain" } }));
+	const tool = createWebFetchToolDefinition({ appendEntry() {} } as any, () => webFetchSettings(), "web_fetch");
+	const result = await tool.execute("test", { urls: [pdfUrl, ...pageUrls], provider: "http" }, undefined, undefined, { cwd: process.cwd() } as any);
+	const details = result.details as typeof result.details & FailureDetails;
+	assert.deepEqual({
+		cuts: details.stored.map((item) => item.metadata?.bodyTruncatedAtBytes),
+		failures: details.failures?.map((failure) => [failure.url, failure.error.split(/[:(]/)[0]!.trim()]),
+	}, {
+		cuts: pageUrls.slice(0, -1).map(() => TEXT_READ_BYTE_LIMIT),
+		failures: [[pdfUrl, "PDF too large"], [pageUrls.at(-1), "web_fetch byte budget exhausted"]],
+	});
 });

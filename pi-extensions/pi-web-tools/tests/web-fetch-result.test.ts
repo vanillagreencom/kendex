@@ -41,3 +41,14 @@ test("web_fetch preview retains complete per-item metadata", () => {
 	const text = block.type === "text" ? block.text : "";
 	assert.deepEqual({ type: block.type, ratio: text.includes("4000/4005"), id: text.includes("web-long"), guidance: text.includes("get_web_content"), truncated: result.details.preview.truncated, shown: result.details.preview.shownCharacters, full: result.details.preview.fullCharacters, items: result.details.preview.items }, { type: "text", ratio: true, id: true, guidance: true, truncated: true, shown: 4000, full: 4005, items: [{ id: "web-long", shownCharacters: 4000, fullCharacters: 4005, truncated: true }] });
 });
+
+for (const { name, metadata, cut } of [
+	{ name: "cut source", metadata: { provider: "http", bodyTruncatedAtBytes: 8388608 }, cut: true },
+	{ name: "whole source", metadata: { provider: "http" }, cut: false },
+]) {
+	test(`web_fetch preview names a source cut at the byte limit: ${name}`, () => {
+		const result = buildWebFetchToolResult([{ id: "web-cut", title: "Big page", url: "https://example.com/big", content: "x".repeat(10), metadata, createdAt: "2026-01-01T00:00:00.000Z" }], "http");
+		const block = result.content[0]!;
+		assert.equal(block.type === "text" && block.text.includes("source cut at 8388608 bytes"), cut);
+	});
+}

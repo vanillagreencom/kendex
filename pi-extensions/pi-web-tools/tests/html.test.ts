@@ -16,6 +16,19 @@ for (const { name, chrome, absent } of [
 		assert.deepEqual({ title: result.title, heading: result.markdown.includes("# Hello"), link: result.markdown.includes("Example (https://example.com)"), body: result.markdown.includes("Real body content"), chrome: absent.test(result.markdown) }, { title: "T", heading: true, link: true, body: true, chrome: false });
 	});
 }
+for (const { name, body, expected } of [
+	{ name: "nested same-name tags", body: '<p>Keep A</p><div class="navbox"><div>inner<div>deeper</div></div>still nav</div><p>Keep B</p>', expected: "Keep A\nKeep B" },
+	{ name: "never-closed block keeps its content", body: '<p>Keep A</p><div class="sidebar"><p>Orphan text</p><p>Keep B</p>', expected: "Keep A\nOrphan text\nKeep B" },
+	{ name: "closing tag inside a nested tag's attribute", body: '<p>Keep A</p><div class="navbox"><div data-x="</div>">inner</div>still nav</div><p>Keep B</p>', expected: "Keep A\nKeep B" },
+	{ name: "sequential blocks of different tags", body: '<p>Keep A</p><ul class="breadcrumbs"><li>Home</li></ul><p>Keep B</p><figure class="thumb"><figcaption>cap</figcaption></figure><p>Keep C</p>', expected: "Keep A\nKeep B\nKeep C" },
+	{ name: "chrome nested in chrome", body: '<p>Keep A</p><div class="infobox"><table class="navbox"><tr><td>x</td></tr></table>info</div><p>Keep B</p>', expected: "Keep A\nKeep B" },
+	{ name: "class that only contains a chrome name", body: '<p>Keep A</p><div class="navbox-like">kept</div><p>Keep B</p>', expected: "Keep A\nkept\nKeep B" },
+	{ name: "blocks past the removal cap", body: Array.from({ length: 502 }, (_, i) => `<p>k${i}</p><div class="toc">t${i}</div>`).join(""), expected: Array.from({ length: 502 }, (_, i) => i < 500 ? `k${i}` : `k${i}\nt${i}`).join("\n") },
+]) {
+	test(`HTML chrome stripping: ${name}`, () => {
+		assert.equal(htmlToMarkdown(`<html><body><main>${body}</main></body></html>`).markdown, expected);
+	});
+}
 for (const { name, markdown, expected } of [
 	{ name: "blocked", markdown: "Just a moment. Checking your browser.", expected: { blocked: true, blockedReason: true } },
 	{ name: "low content", markdown: "x", expected: { lowContent: true } },

@@ -1,3 +1,5 @@
+import { ByteBudget, readTextWithin } from "./byte-budget.js";
+
 export interface HtmlExtraction {
 	title?: string;
 	markdown: string;
@@ -59,48 +61,53 @@ const CHROME_CLASS_EXACT = [
 	"site-footer",
 ];
 
+/** Most chrome blocks one document has removed; a document past it keeps the rest. */
+const MAX_CHROME_REMOVALS = 500;
+
+function nextTag(re: RegExp, html: string, from: number): RegExpExecArray | null {
+	re.lastIndex = from;
+	return re.exec(html);
+}
+
+/** Removes each chrome-class block with its nested same-name tags, or only its opening tag when it never closes.
+ * One pass over the input: kept ranges are collected and joined once, so the document is never copied per removal. */
 function stripChromeBlocks(html: string): string {
 	const classRe = new RegExp(
 		`<(table|div|aside|section|nav|ul|ol|figure)\\b[^>]*class=["'][^"']*(?<![\\w-])(?:${CHROME_CLASS_EXACT.join("|")})(?![\\w-])[^"']*["'][^>]*>`,
-		"i",
+		"ig",
 	);
-	let out = html;
-	let safety = 0;
-	while (safety++ < 500) {
-		const match = classRe.exec(out);
+	const kept: string[] = [];
+	let keptFrom = 0;
+	for (let removals = 0; removals < MAX_CHROME_REMOVALS; removals++) {
+		const match = nextTag(classRe, html, keptFrom);
 		if (!match) break;
 		const tag = match[1].toLowerCase();
 		const start = match.index;
-		const openLen = match[0].length;
+		const openEnd = start + match[0].length;
 		const openRe = new RegExp(`<${tag}\\b[^>]*>`, "ig");
 		const closeRe = new RegExp(`</${tag}\\s*>`, "ig");
-		openRe.lastIndex = start + openLen;
-		closeRe.lastIndex = start + openLen;
 		let depth = 1;
-		let cursor = start + openLen;
-		while (depth > 0) {
-			openRe.lastIndex = cursor;
-			closeRe.lastIndex = cursor;
-			const o = openRe.exec(out);
-			const c = closeRe.exec(out);
-			if (!c) break;
-			if (o && o.index < c.index) {
+		let cursor = openEnd;
+		let open = nextTag(openRe, html, cursor);
+		let close = nextTag(closeRe, html, cursor);
+		while (depth > 0 && close) {
+			if (open && open.index < close.index) {
 				depth++;
-				cursor = o.index + o[0].length;
+				cursor = open.index + open[0].length;
+				open = nextTag(openRe, html, cursor);
+				if (close.index < cursor) close = nextTag(closeRe, html, cursor);
 			} else {
 				depth--;
-				cursor = c.index + c[0].length;
-				if (depth === 0) {
-					out = out.slice(0, start) + out.slice(cursor);
-					break;
-				}
+				cursor = close.index + close[0].length;
+				close = nextTag(closeRe, html, cursor);
+				if (open && open.index < cursor) open = nextTag(openRe, html, cursor);
 			}
 		}
-		if (depth !== 0) {
-			out = out.slice(0, start) + out.slice(start + openLen);
-		}
+		kept.push(html.slice(keptFrom, start));
+		keptFrom = depth === 0 ? cursor : openEnd;
 	}
-	return out;
+	kept.push(html.slice(keptFrom));
+	return kept.join("");
 }
 
 function stripRoleNavigation(html: string): string {
@@ -187,12 +194,15 @@ export interface JinaFetchOptions {
 	fetchImpl?: typeof fetch;
 	signal?: AbortSignal;
 	apiKey?: string;
+	byteBudget?: ByteBudget;
 }
 
 export interface JinaResult {
 	title?: string;
 	markdown: string;
 	source: "jina";
+	/** The byte limit the Jina body was cut at; absent when it was read whole. */
+	truncatedAtBytes?: number;
 }
 
 export async function fetchViaJina(targetUrl: string, options: JinaFetchOptions = {}): Promise<JinaResult> {
@@ -201,9 +211,10 @@ export async function fetchViaJina(targetUrl: string, options: JinaFetchOptions 
 	if (options.apiKey) headers.authorization = `Bearer ${options.apiKey}`;
 	const response = await fetchImpl(`https://r.jina.ai/${targetUrl}`, { headers, signal: options.signal });
 	if (!response.ok) throw new Error(`Jina Reader fetch failed (${response.status}) for ${targetUrl}`);
-	const text = await response.text();
+	const body = await readTextWithin(response, options.byteBudget ?? new ByteBudget());
+	const text = body.text;
 	const titleMatch = text.match(/^Title:\s*(.+)$/m);
 	const bodyStart = text.indexOf("Markdown Content:");
 	const markdown = bodyStart >= 0 ? text.slice(bodyStart + "Markdown Content:".length).trim() : text.trim();
-	return { title: titleMatch?.[1]?.trim(), markdown, source: "jina" };
+	return { title: titleMatch?.[1]?.trim(), markdown, source: "jina", ...(body.truncatedAtBytes === undefined ? {} : { truncatedAtBytes: body.truncatedAtBytes }) };
 }

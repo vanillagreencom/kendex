@@ -1,3 +1,4 @@
+import { ByteBudget, readTextWithin, truncationMetadata } from "./byte-budget.js";
 import { assessExtractionQuality, fetchViaJina, htmlToMarkdown as readableHtmlToMarkdown } from "./html.js";
 
 export interface ExtractedContent {
@@ -15,6 +16,8 @@ export interface HttpFetchOptions {
 	signal?: AbortSignal;
 	jinaFallback?: boolean;
 	jinaApiKey?: string;
+	/** The calling web_fetch call's shared budget; a standalone call gets its own. */
+	byteBudget?: ByteBudget;
 }
 
 export const htmlToMarkdown = readableHtmlToMarkdown;
@@ -30,6 +33,7 @@ export function isProbablyPdf(url: string, contentType?: string): boolean {
 
 export async function fetchHttpContent(url: string, options: HttpFetchOptions = {}): Promise<ExtractedContent> {
 	const fetchImpl = options.fetchImpl ?? fetch;
+	const byteBudget = options.byteBudget ?? new ByteBudget();
 	const response = await fetchImpl(url, { signal: options.signal });
 	const contentType = response.headers.get("content-type") ?? undefined;
 	const chain: string[] = [];
@@ -38,11 +42,11 @@ export async function fetchHttpContent(url: string, options: HttpFetchOptions = 
 		if (options.jinaFallback && (response.status === 403 || response.status === 429 || response.status >= 500)) {
 			chain.push(`http:${response.status}`);
 			try {
-				const jina = await fetchViaJina(url, { fetchImpl, signal: options.signal, apiKey: options.jinaApiKey });
+				const jina = await fetchViaJina(url, { fetchImpl, signal: options.signal, apiKey: options.jinaApiKey, byteBudget });
 				chain.push("jina");
 				let content = jina.markdown;
 				if (options.textMaxCharacters && content.length > options.textMaxCharacters) content = content.slice(0, options.textMaxCharacters);
-				return { url, title: jina.title, content, contentType, status: response.status, metadata: { ...metadata, extraction: "jina", extractionChain: chain } };
+				return { url, title: jina.title, content, contentType, status: response.status, metadata: { ...metadata, ...truncationMetadata(jina.truncatedAtBytes), extraction: "jina", extractionChain: chain } };
 			} catch (error) {
 				chain.push("jina-failed");
 				throw new Error(`HTTP fetch failed (${response.status}) and Jina fallback failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -50,7 +54,9 @@ export async function fetchHttpContent(url: string, options: HttpFetchOptions = 
 		}
 		throw new Error(`HTTP fetch failed (${response.status}) for ${url}`);
 	}
-	const raw = await response.text();
+	const body = await readTextWithin(response, byteBudget);
+	const raw = body.text;
+	let truncatedAtBytes = body.truncatedAtBytes;
 	let title: string | undefined;
 	let content = raw;
 	let extraction = "text";
@@ -65,9 +71,10 @@ export async function fetchHttpContent(url: string, options: HttpFetchOptions = 
 			if (quality.blocked || quality.lowContent) {
 				metadata.fallbackReasons = quality.reasons;
 				try {
-					const jina = await fetchViaJina(url, { fetchImpl, signal: options.signal, apiKey: options.jinaApiKey });
+					const jina = await fetchViaJina(url, { fetchImpl, signal: options.signal, apiKey: options.jinaApiKey, byteBudget });
 					title = jina.title ?? title;
 					content = jina.markdown;
+					truncatedAtBytes = jina.truncatedAtBytes;
 					extraction = "jina";
 					chain.push("jina");
 				} catch (error) {
@@ -84,5 +91,5 @@ export async function fetchHttpContent(url: string, options: HttpFetchOptions = 
 		chain.push("text");
 	}
 	if (options.textMaxCharacters && content.length > options.textMaxCharacters) content = content.slice(0, options.textMaxCharacters);
-	return { url, title, content, contentType, status: response.status, metadata: { ...metadata, extraction, extractionChain: chain } };
+	return { url, title, content, contentType, status: response.status, metadata: { ...metadata, ...truncationMetadata(truncatedAtBytes), extraction, extractionChain: chain } };
 }

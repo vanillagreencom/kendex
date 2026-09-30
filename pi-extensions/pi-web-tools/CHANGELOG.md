@@ -2,6 +2,14 @@
 
 ## Consumer-impacting changes
 
+### 3.1.0
+
+- `web_fetch` streams each page, GitHub file and Jina Reader body and stops reading at 8 MB. The stored item then carries `bodyTruncatedAtBytes` in its metadata, and the preview reads `source cut at N bytes`. A PDF over 32 MB is refused with its size named instead of being loaded whole.
+- One `web_fetch` call reads at most 64 MB across all its URLs. A URL past that fails with `web_fetch byte budget exhausted`, and the URLs fetched before it are still returned.
+- Files from the GitHub clone cache are sized before they are read and read without blocking Pi. `readBlobFromCache` and `readReadmeFromCache` are async and take a byte limit.
+- Scanned PDF pages are rasterized within a 4-megapixel budget per page. A page the configured `pdfOcr.dpi` would render larger is rendered at a lower DPI.
+- HTML chrome stripping makes one pass over the page. A 5 MB page with many navigation boxes no longer stalls Pi while it is converted.
+
 ### 3.0.2
 
 - Settings reads come from memory. A read is answered for one second without touching disk, then the settings files are read again. A change made in the extension manager, or a new session, applies at once; a hand edit to `settings.json` applies within one second. Before, every read went to disk. The resolved settings, `op://` keys included, are kept while no settings, `.env` or private config file changes, so `op read` runs once per change instead of on every provider request. A reference that did not resolve is tried again after one second.

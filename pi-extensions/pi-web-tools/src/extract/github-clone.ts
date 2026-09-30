@@ -1,5 +1,6 @@
 import { execFile, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { open, stat } from "node:fs/promises";
 import { dirname, join, normalize, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -71,14 +72,36 @@ export async function cloneOrUpdateRepo(owner: string, repo: string, ref: string
 	return { cachePath: targetPath, headRef, cloned: false, updated };
 }
 
-export function readBlobFromCache(cachePath: string, path: string): { content: string; bytes: number } | null {
+export interface CachedBlob {
+	content: string;
+	/** The file's size on disk. */
+	bytes: number;
+	/** The byte limit the read stopped at when the file is larger; absent when the file was read whole. */
+	truncatedAtBytes?: number;
+}
+
+function isMissing(error: unknown): boolean {
+	const code = (error as NodeJS.ErrnoException | undefined)?.code;
+	return code === "ENOENT" || code === "ENOTDIR";
+}
+
+/** Reads a file from the clone cache, sizing it before the read and reading at most `maxBytes` of it. */
+export async function readBlobFromCache(cachePath: string, path: string, maxBytes: number): Promise<CachedBlob | null> {
 	const target = normalize(join(cachePath, path));
 	if (!isInside(cachePath, target)) return null;
-	if (!existsSync(target)) return null;
-	const info = statSync(target);
-	if (!info.isFile()) return null;
-	const content = readFileSync(target, "utf8");
-	return { content, bytes: info.size };
+	const info = await stat(target).catch((error: unknown) => { if (isMissing(error)) return null; throw error; });
+	if (!info?.isFile()) return null;
+	const length = Math.min(info.size, maxBytes);
+	const handle = await open(target, "r");
+	const buffer = Buffer.alloc(length);
+	let bytesRead: number;
+	try {
+		({ bytesRead } = await handle.read(buffer, 0, length, 0));
+	} finally {
+		await handle.close();
+	}
+	const content = buffer.toString("utf8", 0, bytesRead);
+	return { content, bytes: info.size, ...(info.size > maxBytes ? { truncatedAtBytes: maxBytes } : {}) };
 }
 
 export interface CacheTreeEntry { name: string; path: string; type: "dir" | "file"; size?: number }
@@ -101,13 +124,11 @@ export function readTreeFromCache(cachePath: string, path = "", limit = 200): { 
 	return { entries, truncated: total > limit };
 }
 
-export function readReadmeFromCache(cachePath: string): string | null {
+export async function readReadmeFromCache(cachePath: string, maxBytes: number): Promise<CachedBlob | null> {
 	const candidates = ["README.md", "README.MD", "Readme.md", "readme.md", "README.markdown", "README.rst", "README.txt", "README"];
 	for (const name of candidates) {
-		const path = join(cachePath, name);
-		if (existsSync(path)) {
-			try { return readFileSync(path, "utf8"); } catch { /* ignore */ }
-		}
+		const readme = await readBlobFromCache(cachePath, name, maxBytes);
+		if (readme) return readme;
 	}
 	return null;
 }
