@@ -910,5 +910,23 @@ assert_eq "$RC|$(recorded harness)|$(recorded account)|$(sed -n 1p "$TMP_ROOT/ar
   "a first launch on a codex entry carries the table's model, bypass, settings, compaction and question-tool words"
 tm kill-window -t "$(recorded window)"
 
+# Committed consumer settings still emit the numeric account form. A first
+# launch has no caller model, so the harness keeps its default model.
+LAUNCH_PREF=claude:1:high run_oversee -- launch --wait-secs 20
+assert_eq "$RC|$(sed -n '/^preference-deprecated /p' <<<"$OUT")|$(overseers)|$(recorded harness)|$(recorded account)|$(recorded model)|$(recorded effort)" \
+  "0|preference-deprecated entry=claude:1:high form=harness:model:effort|1|claude|$H/.claude|none|high" \
+  "a numeric preference warns once and launches on the picked account at the supplied effort"
+assert_contains "$OUT" "oversee: overseer-launched session=" "the numeric preference reaches a recorded launch"
+tm kill-window -t "$(recorded window)"
+# Restoring the numeric refusal must turn that warning-and-launch row red.
+NUMERICCTL="$(mutant_scripts numericctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$NUMERICCTL/lib/overseer-launch.sh" \
+  '    if [[ "$entry" =~ ^(claude|codex|copilot|pi):[1-9][0-9]*:[a-z]+$ ]]; then' \
+  '    if false && [[ "$entry" =~ ^(claude|codex|copilot|pi):[1-9][0-9]*:[a-z]+$ ]]; then'
+LAUNCH_PREF=claude:1:high OVERSEE_BIN="$NUMERICCTL/oversee" run_oversee -- launch --wait-secs 20
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "1|oversee: invalid-preference entry=claude:1:high|0" \
+  "control: numeric refusal turns the warning-and-launch assertion red"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
