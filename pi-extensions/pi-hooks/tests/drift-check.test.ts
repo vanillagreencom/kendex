@@ -1,9 +1,14 @@
 import { expect, test } from "bun:test";
-import { chmodSync, mkdirSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { driftMessage, runDriftCheck, type DriftCheckResult } from "../extensions/drift-check.ts";
+import type { DriftCheckResult } from "../extensions/drift-check.ts";
+// Controls rerun these assertions against a planted copy, never the live file.
+const { driftMessage, runDriftCheck } = await import(process.env.DRIFT_UNDER_TEST ?? "../extensions/drift-check.ts") as typeof import("../extensions/drift-check.ts");
 import { withFake } from "./drift-fixture.ts";
+import { runGit, useIsolatedGitEnv } from "./harness.ts";
+
+useIsolatedGitEnv();
 
 // kendex check produces these exit/report pairs. Report bytes are data from
 // that command; the carrier owns only the diagnostic key above them.
@@ -50,6 +55,69 @@ for (const row of [
 			} finally {
 				if (row.directory === "locked") chmodSync(cwd, 0o700);
 			}
+		});
+	});
+}
+
+// crates/core/src/drift/report/render.rs::render_plain produces these report
+// forms. The rule's prohibition is not actionable advice: assertions judge
+// the report below that rule line, not the command names in the prohibition.
+const laneReports = [
+	{ name: "safe", code: 1, report: "source unreachable:\n  github.com/x/y: cannot lock ref", count: undefined },
+	{ name: "refresh", code: 1, report: "source comparison needed:\n  skill 'orch': source changed since evaluation; not yet re-evaluated\nNext: kendex refresh --scope project --yes in this checkout to refresh project packages.", count: 1 },
+	{ name: "remove", code: 1, report: "removed upstream:\n  skill 'orch': removed upstream: no replacement is declared: remove the installed copies and declaration \u2014 fix: kendex remove orch", count: 1 },
+	{ name: "overflow", code: 1, report: "outdated:\n  skill 'orch': source changed \u2014 fix: kendex refresh\n  … 4 more \u2014 see: kendex check", count: 5 },
+	{ name: "truncated", code: 1, report: "outdated:\n  skill 'orch': source changed \u2014 fix: kendex refresh\n… report truncated (3 more line(s)) \u2014 see: kendex check", count: 1 },
+	{ name: "incomplete", code: 2, report: "source comparison needed:\n  skill 'orch': source changed since evaluation; not yet re-evaluated\nNext: kendex refresh --scope project --yes in this checkout to refresh project packages.", count: 1 },
+	{ name: "clean", code: 0, report: "", count: undefined },
+] as const;
+
+for (const mode of ["linked", "marker", "main"] as const) {
+	for (const row of laneReports) {
+		test(`${mode} drift: ${row.name}`, async () => {
+			await withFake(String(row.code), row.report, async ({ binary, root, argsLog }) => {
+				runGit(["init", "-q", root], root);
+				runGit(["config", "gc.auto", "0"], root);
+				runGit(["config", "maintenance.auto", "false"], root);
+				runGit(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"], root);
+				let cwd = root;
+				if (mode === "linked") {
+					cwd = join(root, "linked");
+					runGit(["worktree", "add", "-q", "-b", "lane", cwd], root);
+				}
+				// lane-marker writes this root binding. A marker for another
+				// root must not apply the lane rule to the base checkout.
+				mkdirSync(join(root, ".git", "lane-mail"));
+				writeFileSync(join(root, ".git", "lane-mail", "item"), `${mode === "main" ? join(root, "other") : cwd}\n`);
+				const result = await runDriftCheck(cwd, { timeoutMs: 5000, binary });
+				const message = driftMessage(result);
+				expect(readFileSync(argsLog, "utf8")).toBe("check --quiet --report-only\n");
+				if (mode === "main") {
+					// The must-fail control: the same advice remains actionable
+					// outside a lane. Nothing rewrites main-checkout output.
+					expect(message).toBe(row.code === 0 ? undefined : row.code === 1 ? row.report : `kendex-drift-incomplete: exit=2\nSome drift status is unknown.\n${row.report}`);
+				} else {
+					expect(message?.split("\n")[0]).toBe("session-drift-check: lane=1");
+					const detail = message?.split("\n").slice(2).join("\n");
+					const report = row.count === undefined ? row.report : `session-drift-check: drift-items=${row.count}${row.name === "truncated" ? "\nsession-drift-check: count=lower-bound" : ""}`;
+					expect(detail).toBe(row.code === 2 ? `kendex-drift-incomplete: exit=2\nSome drift status is unknown.\n${report}` : report);
+				}
+			});
+		});
+	}
+}
+
+for (const fault of ["gitfile", "marker-directory"] as const) {
+	test(`lane discovery failure: ${fault}`, async () => {
+		await withFake("1", laneReports[1].report, async ({ binary, root, argsLog }) => {
+			if (fault === "gitfile") writeFileSync(join(root, ".git"), "broken gitfile\n");
+			else {
+				runGit(["init", "-q", root], root);
+				writeFileSync(join(root, ".git", "lane-mail"), "not a directory\n");
+			}
+			const result = await runDriftCheck(root, { timeoutMs: 5000, binary });
+			expect(driftMessage(result)?.split("\n")[0]).toBe("session-drift-check: lane=unknown");
+			expect(existsSync(argsLog)).toBe(false);
 		});
 	});
 }

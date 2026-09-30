@@ -48,8 +48,10 @@ HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/session-drift-check.sh}"
 
 PASS=0
 FAIL=0
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo "session-drift-check: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "session-drift-check: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "session-drift-check: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 BIN_DIR="$TMP_ROOT/bin"
 mkdir -p "$BIN_DIR"
@@ -103,7 +105,7 @@ run_hook() {
   : >"$ARGS_LOG"
   : >"$CWD_LOG"
   set +e
-  env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK \
+  env -u KENDEX_DRIFT_HOOK CLAUDE_PROJECT_DIR="$TMP_ROOT" \
     PATH="$BIN_DIR:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" "$@" \
     bash "$HOOK" <<<"{\"session_id\":\"s\",\"hook_event_name\":\"SessionStart\",\"source\":\"${HOOK_SOURCE:-startup}\"}" \
     2>/dev/null
@@ -189,7 +191,7 @@ run_row() { # fake-rc fake-out-word
   fake="$(fake_out "$2")" || { printf 'the fake output word could not be mapped: %s\n' "$2" >&2; return 1; }
   : >"$ARGS_LOG"
   : >"$CWD_LOG"
-  env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK \
+  env -u KENDEX_DRIFT_HOOK CLAUDE_PROJECT_DIR="$TMP_ROOT" \
     PATH="$BIN_DIR:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" \
     FAKE_RC="$1" FAKE_OUT="$fake" \
     bash "$HOOK" <<<'{"session_id":"s","hook_event_name":"SessionStart","source":"startup"}' \
@@ -266,7 +268,7 @@ echo "session-drift-check: the too-old notice names the installer only as kendex
 while IFS='|' read -r ostype route; do
   : >"$ARGS_LOG"
   rc=0
-  env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK \
+  env -u KENDEX_DRIFT_HOOK CLAUDE_PROJECT_DIR="$TMP_ROOT" \
     PATH="$BIN_DIR:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" \
     FAKE_RC=2 FAKE_OUT="$(fake_out too-old)" OSTYPE="$ostype" \
     bash "$HOOK" <<<'{"session_id":"s","hook_event_name":"SessionStart","source":"startup"}' \
@@ -295,7 +297,7 @@ mkdir -p "$FAILCAT_BIN"
 printf '#!/usr/bin/env bash\necho "cat: -: Input/output error" >&2\nexit 1\n' >"$FAILCAT_BIN/cat"
 chmod +x "$FAILCAT_BIN/cat"
 set +e
-out="$(env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK \
+out="$(env -u KENDEX_DRIFT_HOOK CLAUDE_PROJECT_DIR="$TMP_ROOT" \
   PATH="$FAILCAT_BIN:$BIN_DIR:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" \
   FAKE_RC=1 FAKE_OUT="$REPORT" bash "$HOOK" </dev/null 2>"$TMP_ROOT/stderr")"
 rc=$?
@@ -321,35 +323,92 @@ mkdir -p "$TMP_ROOT/proj"
 capture FAKE_RC=0 CLAUDE_PROJECT_DIR="$TMP_ROOT/proj"
 assert_eq "$(cd "$TMP_ROOT/proj" && pwd -P)" "$(cd "$(cat "$CWD_LOG")" && pwd -P)" "runs kendex inside CLAUDE_PROJECT_DIR"
 
-echo "session-drift-check: inside a linked worktree"
-# The fix a session in a linked worktree is shown is kendex's own: the project
-# a project-scope write lands in is named there with `--project-path`, because
-# a session running the block-worktree-refresh hook is refused that write with
-# no target. This hook neither composes that line nor rewrites it, so what is
-# pinned here is the pair that makes it right where it is read: the check is
-# asked about the worktree, and what it answered reaches stdout as the bytes
-# it wrote.
-#
-# The git setup documents that scenario. It drives no branch of this hook,
-# which reads nothing about worktree-ness, so no assertion below depends on
-# it. It runs under a fixture HOME, so the person's own git config decides
-# nothing here.
+echo "session-drift-check: lane reports"
 GIT_HOME="$TMP_ROOT/git-home"
 mkdir -p "$GIT_HOME"
 printf '[user]\n\temail = t@t\n\tname = t\n[init]\n\tdefaultBranch = main\n' >"$GIT_HOME/.gitconfig"
-fixture_git() { env HOME="$GIT_HOME" git "$@"; }
+fixture_git() { env HOME="$GIT_HOME" GIT_CONFIG_NOSYSTEM=1 git "$@"; }
 WT_MAIN="$TMP_ROOT/wt-main"
 WT_LINKED="$TMP_ROOT/wt-linked"
-fixture_git init -q "$WT_MAIN"
-fixture_git -C "$WT_MAIN" commit -q --allow-empty -m init
+WT_MARKER="$TMP_ROOT/wt-marker"
+for repo in "$WT_MAIN" "$WT_MARKER"; do
+  fixture_git init -q "$repo"
+  fixture_git -C "$repo" config gc.auto 0
+  fixture_git -C "$repo" config maintenance.auto false
+  fixture_git -C "$repo" commit -q --allow-empty -m init
+done
 fixture_git -C "$WT_MAIN" worktree add -q "$WT_LINKED" -b lane
-WT_REPORT="stale:
-  orch (skill) — fix: kendex apply --project-path '$WT_LINKED'"
-capture FAKE_RC=1 FAKE_OUT="$WT_REPORT" CLAUDE_PROJECT_DIR="$WT_LINKED"
-assert_eq "$(cd "$WT_LINKED" && pwd -P)" "$(cd "$(cat "$CWD_LOG")" && pwd -P)" \
-  "asks the check about the worktree, not the checkout it was added from"
-assert_eq "keyed=$(keyed_of) relayed=$(relayed_text)" "keyed=drift=found relayed=$WT_REPORT" \
-  "and relays the named-target fix byte for byte"
+# lane-marker's real record binds the root under the common git directory.
+# No LANE_MAIL_ITEM is passed: delegated agents must recognise the same lane.
+mkdir -p "$WT_MAIN/.git/lane-mail" "$WT_MARKER/.git/lane-mail"
+printf '%s\n' "$WT_LINKED" >"$WT_MAIN/.git/lane-mail/lane"
+printf '%s\n' "$WT_MARKER" >"$WT_MARKER/.git/lane-mail/marker"
+
+# render_plain in crates/core/src/drift/report/render.rs emits these forms.
+# The prohibition line belongs to the hook, not the actionable report.
+LANE_SAFE=$'source unreachable:\n  github.com/x/y: cannot lock ref'
+LANE_REFRESH=$'source comparison needed:\n  skill \'orch\': source changed since evaluation; not yet re-evaluated\nNext: kendex refresh --scope project --yes in this checkout to refresh project packages.'
+LANE_REMOVE=$'removed upstream:\n  skill \'orch\': removed upstream: no replacement is declared: remove the installed copies and declaration \342\200\224 fix: kendex remove orch'
+LANE_OVERFLOW=$'outdated:\n  skill \'orch\': source changed \342\200\224 fix: kendex refresh\n  … 4 more \342\200\224 see: kendex check'
+LANE_TRUNCATED=$'outdated:\n  skill \'orch\': source changed \342\200\224 fix: kendex refresh\n… report truncated (3 more line(s)) \342\200\224 see: kendex check'
+for project in "$WT_LINKED" "$WT_MARKER" "$WT_MAIN"; do
+  for shape in safe refresh remove overflow truncated; do
+    case "$shape" in
+      safe) text="$LANE_SAFE"; count=0 ;;
+      refresh) text="$LANE_REFRESH"; count=1 ;;
+      remove) text="$LANE_REMOVE"; count=1 ;;
+      overflow) text="$LANE_OVERFLOW"; count=5 ;;
+      truncated) text="$LANE_TRUNCATED"; count=1 ;;
+    esac
+    capture FAKE_RC=1 FAKE_OUT="$text" CLAUDE_PROJECT_DIR="$project"
+    assert_eq "$rc" 0 "$project $shape: starts the session"
+    assert_eq "$(cat "$CWD_LOG")" "$project" "$project $shape: checks this root"
+    if [ "$project" = "$WT_MAIN" ]; then
+      # The common directory carries another root's marker. This main
+      # checkout is the must-fail control for applying the lane rule.
+      assert_eq "keyed=$(keyed_of) relayed=$(relayed_text)" "keyed=drift=found relayed=$text" "main $shape: output unchanged"
+    else
+      assert_eq "$(first_line "$TMP_ROOT/stdout")" "session-drift-check: lane=1" "$project $shape: lane key precedes the rule and report"
+      detail="$(sed '1,2d' "$TMP_ROOT/stdout")"
+      if [ "$shape" = safe ]; then
+        assert_eq "$detail" "session-drift-check: drift=found
+$text" "$project: safe report passes through"
+      else
+        expected="session-drift-check: drift=found
+session-drift-check: drift-items=$count"
+        [ "$shape" != truncated ] || expected="$expected
+session-drift-check: count=lower-bound"
+        assert_eq "$detail" "$expected" "$project $shape: advice replaced by item count"
+      fi
+    fi
+  done
+  capture FAKE_RC=0 CLAUDE_PROJECT_DIR="$project"
+  if [ "$project" = "$WT_MAIN" ]; then
+    assert_eq "$out" "" "main clean: silent"
+  else
+    assert_eq "$(first_line "$TMP_ROOT/stdout")" "session-drift-check: lane=1" "$project clean: rule still applies"
+  fi
+done
+# A partial check can carry drift advice alongside an unreachable source.
+capture FAKE_RC=2 FAKE_OUT="$LANE_REFRESH" CLAUDE_PROJECT_DIR="$WT_LINKED"
+assert_eq "$(sed '1,2d' "$TMP_ROOT/stdout" | sed '/^kendex check incomplete /d')" \
+  $'session-drift-check: check=incomplete\nsession-drift-check: exit=2\nsession-drift-check: drift-items=1' "incomplete lane check withholds advice too"
+
+echo "session-drift-check: lane discovery failures"
+# git produces this failure for a broken gitfile. Filesystem read failures
+# on lane-marker's directory are also unknown, never an ordinary checkout.
+BROKEN_GIT="$TMP_ROOT/broken-git"
+mkdir -p "$BROKEN_GIT"
+printf 'broken gitfile\n' >"$BROKEN_GIT/.git"
+for project in "$BROKEN_GIT" "$WT_MARKER"; do
+  if [ "$project" = "$WT_MARKER" ]; then
+    rm -r -- "$WT_MARKER/.git/lane-mail"
+    printf 'not a directory\n' >"$WT_MARKER/.git/lane-mail"
+  fi
+  capture FAKE_RC=1 FAKE_OUT="$LANE_REFRESH" CLAUDE_PROJECT_DIR="$project"
+  assert_eq "$(first_line "$TMP_ROOT/stdout")" "session-drift-check: lane=unknown" "$project: failed lane discovery is reported"
+  assert_eq "$(cat "$ARGS_LOG")" "" "$project: no report is obtained with unknown lane status"
+done
 
 echo "session-drift-check: start reasons"
 for src in resume compact; do
@@ -375,7 +434,7 @@ run_raw() {
   : >"$ARGS_LOG"
   : >"$CWD_LOG"
   set +e
-  out="$(env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK \
+  out="$(env -u KENDEX_DRIFT_HOOK CLAUDE_PROJECT_DIR="$TMP_ROOT" \
     PATH="$1:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" \
     FAKE_RC=1 FAKE_OUT="$REPORT" bash "$HOOK" <<<"$payload" 2>/dev/null)"
   rc=$?
@@ -470,7 +529,7 @@ echo "session-drift-check: unexpected failure"
 BROKEN_HOOK="$TMP_ROOT/broken-hook.sh"
 awk '{ print } /^INPUT=/ { print "false" }' "$HOOK" >"$BROKEN_HOOK"
 set +e
-out="$(env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK \
+out="$(env -u KENDEX_DRIFT_HOOK CLAUDE_PROJECT_DIR="$TMP_ROOT" \
   PATH="$BIN_DIR:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" \
   FAKE_RC=0 bash "$BROKEN_HOOK" <<<'{"source":"startup"}' 2>/dev/null)"
 rc=$?

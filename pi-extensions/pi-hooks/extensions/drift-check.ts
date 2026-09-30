@@ -1,10 +1,12 @@
 /**
- * kendex check --quiet --report-only output protocol: exit 1 report bytes are relayed.
+ * kendex check --quiet --report-only output protocol: exit 1 report bytes are
+ * relayed outside lanes. Lanes withhold reports with refresh or remove advice.
  * At exit 2, leading Error: or error: denotes a precheck failure; all other
  * nonempty reports are incomplete checks. tests/drift-check.test.ts pins the
  * complete result and report for each producer form.
  */
-import { accessSync, constants, statSync } from "node:fs";
+import { accessSync, constants, readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 import { runCommandAsync } from "./process.js";
 
@@ -16,8 +18,8 @@ import { runCommandAsync } from "./process.js";
  * with a usage error, which reads as could-not-run, never as a reason to run
  * the check without it.
  *
- *   0 → clean (say nothing)
- *   1 → drift, or packages not yet evaluated (relay the report verbatim)
+ *   0 → clean (say nothing outside a lane)
+ *   1 → drift, or packages not yet evaluated (relay a safe report in lanes)
  *   2 → kendex could not check, in part or at all: a report carrying a
  *       "could not check" section is relayed under an "incomplete" line;
  *       output opening with kendex's own Error: line or clap's usage
@@ -27,13 +29,18 @@ import { runCommandAsync } from "./process.js";
  *   ENOENT spawn failure → no kendex binary; one "skipped" line
  *   unusable cwd, other spawn error, unexpected throw → could not run
  */
-export type DriftCheckResult =
+type CheckResult =
 	| { kind: "clean" }
 	| { kind: "drift"; report: string }
 	| { kind: "incomplete"; report: string }
 	| { kind: "failed"; exitCode: number; report: string }
 	| { kind: "unavailable" }
 	| { kind: "unusable-cwd"; cwd: string };
+
+/** A lane wraps the check so even a clean install carries the worktree rule. */
+export type DriftCheckResult = CheckResult
+	| { kind: "lane"; check: CheckResult }
+	| { kind: "lane-unknown"; report: string };
 
 export interface DriftCheckOptions {
 	timeoutMs: number;
@@ -56,23 +63,72 @@ export async function runDriftCheck(cwd: string, options: DriftCheckOptions): Pr
 	} catch {
 		return { kind: "unusable-cwd", cwd };
 	}
+	const git = await runCommandAsync("git", ["rev-parse", "--show-toplevel", "--absolute-git-dir", "--path-format=absolute", "--git-common-dir"], cwd, options.timeoutMs);
+	let lane = false;
+	if (git.stoppedBy !== null) return { kind: "lane-unknown", report: `git probe stopped by ${git.stoppedBy}.` };
+	if (git.exitCode !== 0) {
+		if (!git.stderr.includes("not a git repository")) return { kind: "lane-unknown", report: git.stderr };
+	} else {
+		const [root, gitDir, common, ...extra] = git.stdout.trimEnd().split("\n");
+		if (!root || !gitDir || !common || extra.length) return { kind: "lane-unknown", report: "git returned incomplete directory metadata." };
+		lane = gitDir !== common;
+		if (!lane) {
+			// lane-marker binds a root under the common git directory. Scanning
+			// roots also covers subagents that inherit no LANE_MAIL_ITEM.
+			const directory = join(common, "lane-mail");
+			try {
+				for (const marker of readdirSync(directory, { withFileTypes: true })) {
+					if (!marker.isFile()) throw new Error(`The lane marker is not a plain file: ${join(directory, marker.name)}`);
+					if (readFileSync(join(directory, marker.name), "utf8").replace(/\n$/, "") === root) { lane = true; break; }
+				}
+			} catch (error) {
+				// Only an absent marker directory means no launched lane. A
+				// vanished or unreadable marker leaves the status unknown.
+				if (!(error instanceof Error && "code" in error && error.code === "ENOENT" && "path" in error && error.path === directory)) {
+					return { kind: "lane-unknown", report: String(error) };
+				}
+			}
+		}
+	}
 	const result = await runCommandAsync(binary, ["check", "--quiet", "--report-only"], cwd, options.timeoutMs);
 	// The report is on stdout; stderr carries only Error: lines and the
 	// non-quiet all-clear, so both are concatenated, stderr first.
 	const report = `${result.stderr}${result.stdout}`.trim();
-	if (result.exitCode === 0) return { kind: "clean" };
-	if (result.exitCode === 1) return { kind: "drift", report };
-	if (result.exitCode === 2 && report !== "" && !PRECHECK_FAILURE.test(report)) return { kind: "incomplete", report };
+	let check: CheckResult;
+	if (result.exitCode === 0) check = { kind: "clean" };
+	else if (result.exitCode === 1) check = { kind: "drift", report };
+	else if (result.exitCode === 2 && report !== "" && !PRECHECK_FAILURE.test(report)) check = { kind: "incomplete", report };
 	// spawn() surfaces ENOENT through the error event as exit -1 with the
 	// error text. The port only runs because kendex installed it, so a
 	// missing binary is almost always a PATH gap worth one line.
-	if (result.exitCode === -1 && /ENOENT/.test(result.stderr)) return { kind: "unavailable" };
-	return { kind: "failed", exitCode: result.exitCode, report };
+	else if (result.exitCode === -1 && /ENOENT/.test(result.stderr)) check = { kind: "unavailable" };
+	else check = { kind: "failed", exitCode: result.exitCode, report };
+	return lane ? { kind: "lane", check } : check;
 }
 
-/** Text handed to the agent for a non-clean result; `undefined` means silence. */
+/** Text handed to the agent; `undefined` means a clean install outside a lane. */
 export function driftMessage(result: DriftCheckResult): string | undefined {
 	switch (result.kind) {
+		case "lane-unknown":
+			return `session-drift-check: lane=unknown\nThe lane status could not be read. Drift details are withheld.\n${result.report}`;
+		case "lane": {
+			const rule = "session-drift-check: lane=1\nThis worktree changes nothing about the install. The overseer refreshes the base checkout after merge. kendex refresh and kendex apply are never run here.";
+			let check = result.check;
+			if ("report" in check && /kendex\s+(refresh|remove)([\s\p{P}]|$)/u.test(check.report)) {
+				// render_plain emits two-space items and a section overflow
+				// count. Whole-report truncation yields only a lower bound.
+				let count = 0;
+				for (const line of check.report.split("\n")) {
+					const overflow = /^  … (\d+) more/.exec(line);
+					if (overflow) count += Number(overflow[1]);
+					else if (line.startsWith("  ")) count++;
+				}
+				const lowerBound = /^… report truncated/m.test(check.report) ? "\nsession-drift-check: count=lower-bound" : "";
+				check = { ...check, report: `session-drift-check: drift-items=${count}${lowerBound}` };
+			}
+			const message = driftMessage(check);
+			return message === undefined ? rule : `${rule}\n${message}`;
+		}
 		case "clean":
 			return undefined;
 		case "unavailable":

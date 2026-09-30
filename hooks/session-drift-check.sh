@@ -2,9 +2,9 @@
 # ---
 # name: session-drift-check
 # event: SessionStart
-# description: On a fresh session start (not resume or compact), runs `kendex check --quiet --report-only` and surfaces kendex drift to the agent — outdated items (`kendex refresh`), items removed upstream (`kendex remove <name>`, `-g` in a global section), unreachable sources, and packages not yet evaluated against their sources (a background refresh settles them). Prints nothing when the install is current. When the kendex command is absent it says so with what that costs: which manifest file this project's declarations live in and what became of reading it, how many packages and bundles it declares, how the command is installed on this platform, that the user decides whether to install it before any workflow runs here, and that the files kendex renders whole are never hand-edited — the notice names the trees they are under, and every other tree kendex renders into is covered with them — while a harness's own settings file it writes one key in keeps every key it did not write. KENDEX_DRIFT_HOOK=off disables it. Not run on pi: the pi-hooks carrier runs its own drift report at session start. Not run on antigravity: it has no SessionStart event.
-# summary: Tells a coding agent at the start of a session which installed packages no longer match their source, and what to run about it. Says nothing when everything matches.
-# safety: Installs nothing and removes nothing, never touches the project's git state, and writes no tracked file on any branch, the default branch included: it runs `kendex check --quiet --report-only`. Where a declaration in kendex.toml sits on files no install record accounts for, the check plans the scope inside the budget this hook allows and reports each copy that is its source's render byte for byte under `not in the install record`, with its path and its recorded and rendered hashes (a registration that wrote no file, with the settings file it sits in), leaving `.kendex-lock.json` as the checkout holds it; the default branch records it after the merge. A copy that differs is reported, never replaced. The one install record it may write is the global scope's, under kendex's own directory, which no repository tracks. The plan is paid for once per state and memoized under kendex's own cache directory; a plan past the budget is reported as not checked and finished by the detached background process. The check never waits on the network; the rest of what it may write is kendex's own cache bookkeeping under ~/.kendex/cache (fetch stamps, snapshots, that memo), and when a source cache there is older than its TTL, a detached background process refreshes it (git fetch + reset, confined to that cache) and this hook does not wait for it. Every suggestion requires user approval before acting. Every notice opens with `session-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key. `kendex check`'s own report is relayed on stdout under those lines, preserved exactly; which arm its exit code chose is a value on them, not a sentence in it.
+# description: On a fresh session start (not resume or compact), runs `kendex check --quiet --report-only` and surfaces kendex drift to the agent — outdated items (`kendex refresh`), items removed upstream (`kendex remove <name>`, `-g` in a global section), unreachable sources, and packages not yet evaluated against their sources (a background refresh settles them). Outside a lane, prints nothing when the install is current. The lane notice precedes drift details in linked worktrees and roots named by orch lane markers. When the kendex command is absent it says so with what that costs: which manifest file this project's declarations live in and what became of reading it, how many packages and bundles it declares, how the command is installed on this platform, that the user decides whether to install it before any workflow runs here, and that the files kendex renders whole are never hand-edited — the notice names the trees they are under, and every other tree kendex renders into is covered with them — while a harness's own settings file it writes one key in keeps every key it did not write. KENDEX_DRIFT_HOOK=off disables it. Not run on pi: the pi-hooks carrier runs its own drift report at session start. Not run on antigravity: it has no SessionStart event.
+# summary: Tells a coding agent at the start of a session which installed packages no longer match their source, and what to run about it. A lane gets the install rule instead of refresh or remove advice.
+# safety: Installs nothing and removes nothing, never touches the project's git state, and writes no tracked file on any branch, the default branch included: it runs `kendex check --quiet --report-only`. Where a declaration in kendex.toml sits on files no install record accounts for, the check plans the scope inside the budget this hook allows and reports each copy that is its source's render byte for byte under `not in the install record`, with its path and its recorded and rendered hashes (a registration that wrote no file, with the settings file it sits in), leaving `.kendex-lock.json` as the checkout holds it; the default branch records it after the merge. A copy that differs is reported, never replaced. The one install record it may write is the global scope's, under kendex's own directory, which no repository tracks. The plan is paid for once per state and memoized under kendex's own cache directory; a plan past the budget is reported as not checked and finished by the detached background process. The check never waits on the network; the rest of what it may write is kendex's own cache bookkeeping under ~/.kendex/cache (fetch stamps, snapshots, that memo), and when a source cache there is older than its TTL, a detached background process refreshes it (git fetch + reset, confined to that cache) and this hook does not wait for it. Every suggestion requires user approval before acting. Every notice opens with `session-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key. `kendex check`'s own report is relayed on stdout under those lines, preserved exactly outside lanes and in lanes when it carries no refresh or remove suggestion; otherwise a drift-item count replaces the report; which arm its exit code chose is a value on them, not a sentence in it.
 # timeout: 30
 # harnesses: [claude, codex, gemini, copilot, opencode, cursor]
 # ---
@@ -22,6 +22,8 @@ RC=0
 FAILED_LINE=""
 PAYLOAD_ERR=""
 PATH_ERR=""
+LANE=0
+LANE_ERR=""
 # What the missing-kendex notice names: the manifest file this project's
 # declarations would be in and what became of reading it, how many packages
 # that read found, the route that installs the command on this platform, and
@@ -197,7 +199,13 @@ notice() { # KEY VALUE
       printf 'kendex check could not run: project directory %s is not accessible; drift status unknown\n' "$2"
       printf '%s\n' "$PATH_ERR"
       ;;
-    drift=found) printf '%s\n' "$OUTPUT" ;;
+    lane=1)
+      echo 'This worktree changes nothing about the install. The overseer refreshes the base checkout after merge. kendex refresh and kendex apply are never run here.'
+      ;;
+    lane=unknown)
+      printf 'The lane status could not be read. Drift details are withheld.\n%s\n' "$LANE_ERR"
+      ;;
+    drift=found) report ;;
     check=could-not-run)
       # The status kendex left is a value, not a number inside a sentence: the
       # arm this hook chose and the code it chose it from are both parsed off
@@ -211,7 +219,8 @@ notice() { # KEY VALUE
       if [ "$RC" = 2 ] && [ -z "$OUTPUT" ]; then
         printf '\n'
       else
-        printf ':\n%s\n' "$OUTPUT"
+        printf ':\n'
+        report
       fi
       ;;
     check=kendex-too-old)
@@ -237,11 +246,13 @@ notice() { # KEY VALUE
       printf 'This kendex predates the check --report-only flag this hook runs, so drift status is unknown. Update kendex with the command above, then start a new session.\n'
       printf 'If kendex update answers that it cannot tell how this copy was installed, run the kendex installer for this platform again: %s\n' "$INSTALL_ROUTE"
       printf 'Then check that kendex --version in a new shell shows the new version before you start a new session.\n'
-      printf 'What kendex said:\n%s\n' "$OUTPUT"
+      printf 'What kendex said:\n'
+      report
       ;;
     check=incomplete)
       printf 'session-drift-check: exit=%s\n' "$RC"
-      printf 'kendex check incomplete (exit %s); some drift status unknown:\n%s\n' "$RC" "$OUTPUT"
+      printf 'kendex check incomplete (exit %s); some drift status unknown:\n' "$RC"
+      report
       ;;
     exit=*)
       # Two facts, two keys: what the failure left, and where it reached.
@@ -250,6 +261,63 @@ notice() { # KEY VALUE
       ;;
   esac
   return 0
+}
+
+# lane-marker records the root, not the branch: a subagent in a lane has the
+# same rule even when it has no LANE_MAIL_ITEM. Other roots' markers do not
+# make the base checkout a lane.
+read_lane() {
+  local dirs root git_dir common marker bound rc=0
+  dirs=$(git rev-parse --show-toplevel --absolute-git-dir --path-format=absolute --git-common-dir 2>&1) || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    case "$dirs" in
+      *'not a git repository'*) return 0 ;;
+      *) LANE_ERR="$dirs"; notice lane unknown; return 1 ;;
+    esac
+  fi
+  root=${dirs%%$'\n'*}
+  dirs=${dirs#*$'\n'}
+  git_dir=${dirs%%$'\n'*}
+  common=${dirs#*$'\n'}
+  if [ "$git_dir" != "$common" ]; then
+    LANE=1
+    return 0
+  fi
+  if { [ -e "$common/lane-mail" ] || [ -L "$common/lane-mail" ]; } &&
+    { [ ! -d "$common/lane-mail" ] || [ ! -r "$common/lane-mail" ] || [ ! -x "$common/lane-mail" ]; }; then
+    LANE_ERR="The lane marker directory could not be read: $common/lane-mail"
+    notice lane unknown
+    return 1
+  fi
+  for marker in "$common"/lane-mail/*; do
+    [ -e "$marker" ] || [ -L "$marker" ] || continue
+    if [ ! -f "$marker" ] || [ -L "$marker" ]; then
+      LANE_ERR="The lane marker is not a plain file: $marker"
+      notice lane unknown
+      return 1
+    fi
+    bound=$(cat -- "$marker" 2>&1) || { LANE_ERR="$bound"; notice lane unknown; return 1; }
+    [ "$bound" != "$root" ] || { LANE=1; return 0; }
+  done
+}
+
+# crates/core/src/drift/report/render.rs::render_plain emits two-space item
+# lines and a section overflow count. A whole-report truncation hides lines,
+# not an item count, so its count is a lower bound rather than an exact total.
+report() {
+  if [ "$LANE" = 1 ] && [[ "$OUTPUT" =~ kendex[[:space:]]+(refresh|remove)([[:space:][:punct:]]|$) ]]; then
+    awk '
+      /^  … [0-9]+ more/ { count += $2; next }
+      /^  / { count++ }
+      /^… report truncated/ { truncated = 1 }
+      END {
+        printf "session-drift-check: drift-items=%d\n", count
+        if (truncated) print "session-drift-check: count=lower-bound"
+      }
+    ' <<<"$OUTPUT"
+  else
+    printf '%s\n' "$OUTPUT"
+  fi
 }
 
 # Reaching this trap means an UNGUARDED command failed. Say so: an unexpected
@@ -317,6 +385,9 @@ if ! command -v kendex >/dev/null 2>&1; then
   notice missing-tools kendex
   exit 0
 fi
+
+read_lane || exit 0
+[ "$LANE" != 1 ] || notice lane 1
 
 # kendex's exit code IS the classification; under errexit a bare failing
 # assignment would abort before `RC=$?` could run.

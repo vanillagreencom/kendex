@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -19,7 +19,7 @@ exit "\${FAKE_RC:-0}"
 }
 
 export async function withFake<T>(rc: string, out: string, run: (paths: { binary: string; argsLog: string; root: string }) => Promise<T>): Promise<T> {
-	const root = mkdtempSync(join(tmpdir(), "pi-hooks-drift-"));
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "pi-hooks-drift-")));
 	const paths = fakekendex(root);
 	const oldRc = process.env.FAKE_RC;
 	const oldOut = process.env.FAKE_OUT;
