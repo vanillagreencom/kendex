@@ -41,6 +41,25 @@ expect_first_line() { # EXPECTED LABEL
     FAIL=$((FAIL + 1)); printf '  FAIL: %s: first line <%s>\n' "$2" "$first"
   fi
 }
+expect_line_prefix() { # PREFIX LABEL: some output line after the first starts with PREFIX
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+      "$1"*) PASS=$((PASS + 1)); printf '  ok: %s\n' "$2"; return 0 ;;
+    esac
+  done <<<"${OUT#*$'\n'}"
+  FAIL=$((FAIL + 1)); printf '  FAIL: %s: no line starts <%s>\n%s\n' "$2" "$1" "$OUT"
+}
+must_fail_line_prefix() { # FORMER-PREFIX LABEL
+  local assertion_rc=0
+  (PASS=0; FAIL=0; expect_line_prefix "$1" "$2"; [ "$FAIL" -eq 0 ]) >"$TMP/control.log" || assertion_rc=$?
+  if [ "$assertion_rc" -ne 0 ]; then
+    PASS=$((PASS + 1)); printf '  ok: %s\n' "$2"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL: %s: line assertion stayed green\n' "$2"
+    cat "$TMP/control.log"
+  fi
+}
 must_fail_first_line() { # FORMER-LINE LABEL
   local assertion_rc=0
   (PASS=0; FAIL=0; expect_first_line "$1" "$2"; [ "$FAIL" -eq 0 ]) >"$TMP/control.log" || assertion_rc=$?
@@ -105,7 +124,7 @@ if [ "$MODE_ASSERTIONS" -eq 0 ]; then
 fi
 
 INVENTORY_ASSERTIONS=0
-while IFS='|' read -r name mode operation expected first_line; do
+while IFS='|' read -r name mode operation expected first_line cause_line; do
   case "$operation" in
     inventory-worktree-empty) printf '[]\n' >"$R/.kendex-generated.json" ;;
     unchanged) : ;;
@@ -141,6 +160,7 @@ while IFS='|' read -r name mode operation expected first_line; do
   run_mode "$mode"
   expect "$expected" "$name: $mode"
   [ -z "$first_line" ] || expect_first_line "$first_line" "$name diagnostic: $mode"
+  [ -z "$cause_line" ] || expect_line_prefix "$cause_line" "$name loader cause: $mode"
   INVENTORY_ASSERTIONS=$((INVENTORY_ASSERTIONS + 1))
 done <<'INVENTORY_CASES'
 inventory-worktree-empty|worktree|inventory-worktree-empty|1
@@ -149,8 +169,8 @@ inventory-empty-staged|staged|stage-empty|1
 inventory-deleted-from-index|staged|delete-from-index|1
 inventory-absent-small-document|staged|small-without-inventory|0
 inventory-worktree-missing-index-fallback|worktree|missing-worktree-fallback|0
-inventory-invalid|worktree|invalid-inventory|2|error=inventory-invalid path=.kendex-generated.json
-inventory-invalid|staged|unchanged|2|error=inventory-invalid path=.kendex-generated.json
+inventory-invalid|worktree|invalid-inventory|2|error=inventory-invalid path=.kendex-generated.json|  status: entry-shape, read by 
+inventory-invalid|staged|unchanged|2|error=inventory-invalid path=.kendex-generated.json|  status: entry-shape, read by 
 render-carved-back|worktree|carve-back|1
 render-carved-back|staged|unchanged|1
 inventory-unreadable-shape|worktree|inventory-unreadable|2|error=inventory-read-failed path=.kendex-generated.json
@@ -197,8 +217,8 @@ SR="$SOURCE_COMMAND"
 printf '{}\n' >"$R/.kendex-generated.json"
 git -C "$R" add .kendex-generated.json
 private_command inventory-diagnostic
-[ "$(grep -Fxc "  || collection_error inventory-invalid path .kendex-generated.json 'cannot read .kendex-generated.json; jq is required; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'" "$MUTANT")" -eq 1 ]
-sed 's/collection_error inventory-invalid path/collection_error inventory-renamed path/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+[ "$(grep -Fxc "  diagnostic error inventory-invalid path .kendex-generated.json 'cannot read .kendex-generated.json; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'" "$MUTANT")" -eq 1 ]
+sed 's/diagnostic error inventory-invalid path/diagnostic error inventory-renamed path/' "$SOURCE_COMMAND" >"$MUTANT.changed"
 if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
 mv "$MUTANT.changed" "$MUTANT"
 chmod +x "$MUTANT"
@@ -209,8 +229,8 @@ must_fail_first_line 'error=inventory-invalid path=.kendex-generated.json' 'inve
 
 private_command inventory-parse
 [ ! -L "$MUTANT" ]
-[ "$(grep -Fxc "  || collection_error inventory-invalid path .kendex-generated.json 'cannot read .kendex-generated.json; jq is required; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'" "$MUTANT")" -eq 1 ]
-sed "s#^  || collection_error inventory-invalid path .kendex-generated.json 'cannot read .kendex-generated.json; jq is required; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'\$#  || :#" "$SOURCE_COMMAND" >"$MUTANT.changed"
+[ "$(grep -Fxc 'GG_CHECK=doc-limits generated_paths_load "$inventory" 2>"$TMP/inventory-status" || {' "$MUTANT")" -eq 1 ]
+sed 's#^GG_CHECK=doc-limits generated_paths_load "\$inventory" 2>"\$TMP/inventory-status" || {$#GG_CHECK=doc-limits generated_paths_load "$inventory" 2>"$TMP/inventory-status" || true || {#' "$SOURCE_COMMAND" >"$MUTANT.changed"
 if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
 mv "$MUTANT.changed" "$MUTANT"
 chmod +x "$MUTANT"
@@ -218,6 +238,19 @@ bash -n "$MUTANT"
 SR="$MUTANT"
 run --staged
 must_fail 2 1 'inventory table control: bypassing parse failure fails inventory-invalid'
+SR="$SOURCE_COMMAND"
+
+private_command inventory-cause
+[ ! -L "$MUTANT" ]
+[ "$(grep -Fxc 'GG_CHECK=doc-limits generated_paths_load "$inventory" 2>"$TMP/inventory-status" || {' "$MUTANT")" -eq 1 ]
+sed 's#^GG_CHECK=doc-limits generated_paths_load "\$inventory" 2>"\$TMP/inventory-status" || {$#GG_CHECK=doc-limits generated_paths_load "$inventory" 2>/dev/null || {#' "$SOURCE_COMMAND" >"$MUTANT.changed"
+if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
+mv "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+SR="$MUTANT"
+run --staged
+must_fail_line_prefix '  status: entry-shape, read by ' 'inventory table control: discarding the loader refusal fails inventory-invalid loader cause'
 SR="$SOURCE_COMMAND"
 
 git -C "$R" checkout HEAD -- .kendex-generated.json

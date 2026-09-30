@@ -360,8 +360,13 @@ else
   inventory="$(cat -- "$INVENTORY_SOURCE" 2>/dev/null)" \
     || collection_error inventory-read-failed path "$INVENTORY_SOURCE" 'cannot read .kendex-generated.json; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'
 fi
-generated_paths_load "$inventory" 2>/dev/null \
-  || collection_error inventory-invalid path .kendex-generated.json 'cannot read .kendex-generated.json; jq is required; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'
+# The loader's refusal names the status, the jq that read it, the cause and
+# the fix; it follows this script's stable first line.
+GG_CHECK=doc-limits generated_paths_load "$inventory" 2>"$TMP/inventory-status" || {
+  diagnostic error inventory-invalid path .kendex-generated.json 'cannot read .kendex-generated.json; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'
+  cat -- "$TMP/inventory-status" >&2 || :
+  exit 2
+}
 is_excluded() { # PATH — inclusion rows override both exclusion sources
   generated_path_contains "$1" \
     || glob_match "$1" ${EXCLUDE_PATTERNS[@]+"${EXCLUDE_PATTERNS[@]}"} || return 1
