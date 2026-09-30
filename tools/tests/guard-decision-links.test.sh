@@ -96,7 +96,7 @@ for command in 'ls-files' 'diff --cached --name-only'; do
     && ok "a failed $command cannot pass on its partial output" \
     || bad "a failed $command cannot pass on its partial output" "rc=$RC out=$OUT"
   matches=$(grep -Fc 'say file-set unreadable' "$GUARD") || matches=0
-  if [ "$matches" -eq 1 ] && mutant_guard 's/say file-set unreadable/: # file-set control/'; then
+  if [ "$matches" -eq 1 ] && mutant_guard 's/say file-set unreadable/:/'; then
     run_mutant
     [ "$RC" -eq 0 ] && ok "control: without the file-set refusal a failed $command passes" \
       || bad "control: without the file-set refusal a failed $command passes" "rc=$RC out=$OUT"
