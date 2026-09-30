@@ -429,14 +429,15 @@ record_log() {
       json="$json$line"
       if [[ "$line" == "}" ]]; then
         in_json=""
-        printf '%s\n' "$json" | jq -r 'to_entries | map("\(.key)=\(.value)") | join(" ")'
+        # execution-fallback.test.sh pins invocation history separately.
+        printf '%s\n' "$json" | jq -r 'del(.attempts) | to_entries | map("\(.key)=\(.value)") | join(" ")'
         json=""
       fi
       continue
     fi
     case "$line" in
       "{") in_json=1; json="{" ;;
-      "{"*"}") printf '%s\n' "$line" | jq -r 'to_entries | map("\(.key)=\(.value)") | join(" ")' 2>/dev/null || printf '%s\n' "$line" ;;
+      "{"*"}") printf '%s\n' "$line" | jq -r 'del(.attempts) | to_entries | map("\(.key)=\(.value)") | join(" ")' 2>/dev/null || printf '%s\n' "$line" ;;
       # the plumbing, and the lane relays the dual-model suites pin
       "→ cmd:"*|"→ Response received"*|"["*"] "*) ;;
       # the instruction-file reports, pinned by review-prompt.test.sh alone

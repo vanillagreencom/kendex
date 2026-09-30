@@ -14,7 +14,7 @@ The roster `SECOND_OPINION_MODELS` (default `claude codex`, space- or comma-sepa
 | Distinct model | Its identity is already covered by a successful opinion |
 | Available | Its configured command's first word does not resolve |
 
-Every skip is one line on stderr naming the target and the cause. Commands run one at a time. Review mode stops after `SECOND_OPINION_COUNT` successful opinions (default 1) or roster exhaustion; every other mode after one opinion or exhaustion. A failed attempt does not reserve its model. Fewer opinions than requested is stated on stderr and stamped as `coverage: "degraded"`. A requested count of two or more uses the union collector. No eligible target before execution is a refusal: exit 1, a JSON error listing every candidate, no artifact, no CLI invoked. `--target` and `SECOND_OPINION_TARGET` replace the walk with the one named target, which passes the same checks and never falls through.
+Every skip is one line on stderr naming the target and the cause. Commands run one at a time. Review mode stops after `SECOND_OPINION_COUNT` successful opinions (default 1) or roster exhaustion; every other mode after one opinion or exhaustion. A failed attempt does not reserve its model. Coverage follows the `qa_metadata.coverage` definition under [Union merge](#union-merge). A requested count of two or more uses the union collector. No eligible target before execution is a refusal: exit 1, a JSON error listing every candidate, no artifact, no CLI invoked. `--target` and `SECOND_OPINION_TARGET` replace the walk with the one named target, which passes the same checks and never falls through.
 
 Adding a lane is a settings entry, not new code: add its name to `SECOND_OPINION_MODELS`, define `SECOND_OPINION_<NAME>_CMD` (name uppercased, hyphens as underscores), and — when the CLI fronts a model other than its own name, or is named for a harness that fronts a selectable model — `SECOND_OPINION_<NAME>_MODEL`.
 
@@ -37,7 +37,7 @@ Duplicates collapse to the first of their group and carry every contributing lan
 | `summary` | Each lane's own summary, lane-labelled |
 | `qa_metadata.union` | Always `true` for a union artifact |
 | `qa_metadata.coverage` | `full` when the requested number of valid opinions stands; `degraded` for a shortfall |
-| `qa_metadata.attempts` | Execution order, each entry with `name`, `cause` and `seconds`; also carried by exhausted CLI-failure records |
+| `qa_metadata.attempts` | Each CLI invocation in execution order, including format retries, with `name`, `cause` and `seconds`; failure and rejected-response records carry `attempts` |
 | `qa_metadata.requested_count` / `selected_count` | Requested opinions / attempted eligible targets |
 | `qa_metadata.lanes` | One entry per lane: the answering lanes with their agent, verdict and finding counts, then the failed ones with `status: "failed"` — or `"killed"` for a lane that died to a signal — and their exit code |
 | `qa_metadata.dedupe` | Findings in and out, per class |
@@ -62,15 +62,15 @@ Each lane's review is held in memory from the moment that lane is reaped. Where 
 | `--output` | The durable sibling beside the union | None — it is not in temp space |
 | stdout | A per-run file in the artifact home | None — it is not in temp space |
 
-The one exception is a home that cannot be created or vetted: the lane falls back to a temp file, with the cause on stderr, and losing it degrades coverage, records that lane at exit 5 and names the loss.
+The one exception is a home that cannot be created or vetted: the lane falls back to a temp file, with the cause on stderr, and losing it records that lane at exit 5 and names the loss. Coverage follows [Union merge](#union-merge).
 
 ## Failure classes
 
-One failed lane does not fail the run. It is recorded in `qa_metadata.lanes` and the collector continues down the roster. Coverage is `degraded` only if the roster ends before the requested opinions stand. The run exits 0 with surviving findings when any valid opinion stands.
+One failed lane does not fail the run. It is recorded in `qa_metadata.lanes` and the collector continues down the roster. Coverage follows [Union merge](#union-merge). The run exits 0 with surviving findings when any valid opinion stands.
 
 A lane's artifact is usable only if it holds exactly one JSON object shaped the way the merge consumes it. Each rejection names itself on stderr. Rejected shapes: not exactly one JSON value; top level not an object; `blockers` / `suggestions` not an array of objects; a finding's `location` not a string; `questions` not an array; `summary` not a string.
 
-Rejecting an artifact keeps that lane's failure local — exit 4, coverage degraded.
+Rejecting an artifact keeps that lane's failure local: exit 4.
 
 The line between the two failure classes is whether the lane produced any bytes at all. An artifact with content the merge cannot consume, including one holding only whitespace, is the lane answering unusably (4). An absent or zero-byte artifact, or a lane that exited 0 leaving nothing, is the lane never answering (5).
 

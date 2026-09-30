@@ -106,9 +106,9 @@ shortfall is stated and stamped as degraded coverage); with 2 or more,
 the lanes run in roster order on the same derived scope and one union artifact is
 written — findings deduplicated by normalized location, per-lane provenance in
 each finding's `sources` and in qa_metadata.lanes, lane artifacts kept beside
-it as <output>.<target>.json. A failed lane is recorded in the artifact
-(qa_metadata.coverage="degraded"); when every lane fails there is no artifact
-and the run exits 4/5/6.
+it as <output>.<target>.json. Failed lanes are recorded in qa_metadata.lanes.
+Coverage follows the valid-opinion count, as defined in references/multi-lane.md.
+When every lane fails there is no artifact and the run exits 4/5/6.
 
 Environment. Every key below belongs in kendex.settings.toml [env] (or
 .env.local) except SECOND_OPINION_CURRENT_MODEL and
@@ -232,10 +232,10 @@ Review scope (review mode only):
 
 Response handling and stamping (review and audit modes):
   Both require a Git worktree and preserve its head and dirty_paths from before the model call.
-  A first response that is unparseable, or structurally incomplete, gets one
-  retry resending the full original request (scope block included for
-  review) alongside the captured response; unusable responses never become
-  the artifact. The wrapper overwrites the JSON timestamp field with its own
+  Each target's first unparseable or structurally incomplete response gets
+  one format retry with its full original request (scope block included for
+  review) and captured response. A replacement target starts with its own
+  first response. Unusable responses never become the artifact. The wrapper overwrites the JSON timestamp field with its own
   UTC wall clock (date -u) after the model responds, and overwrites agent
   with external-<target> for a lane or external-union(...) for a union.
 
@@ -2008,11 +2008,10 @@ second_opinion_detach_if_needed
 # single-lane contract: scope embedding, one-shot retry, no-review/incomplete
 # gates, and its own sidecar family under <output>.<target>.json*.
 #
-# Failure semantics: one failed lane must not fail the run (a quota-capped lane
-# would block every review) but must never narrow coverage silently either —
-# the failed lane and its exit code are recorded in qa_metadata.lanes and
-# coverage is degraded when the roster cannot supply the count. When EVERY lane fails there is no external
-# verdict, so the run joins the no-verdict class: exit 4 when at least one lane
+# Failure semantics and count-based coverage: references/multi-lane.md.
+# The failed lane and its exit code are recorded in qa_metadata.lanes.
+# When EVERY lane fails there is no external verdict, so the run joins the
+# no-verdict class: exit 4 when at least one lane
 # answered unusably (its own exit 4), else 6 when any lane died to a signal,
 # else exit 5.
 if $MULTI_LANE; then
@@ -2081,7 +2080,7 @@ if $MULTI_LANE; then
   # summaries, so a top-level-complete artifact carrying `blockers: ["bad"]`
   # parses fine and then aborts the merge under `set -e` — no union at all,
   # even though the other lane returned a perfectly good review. Rejecting it
-  # here keeps that lane's failure local (exit 4, coverage degraded) and lets
+  # here keeps that lane's failure local (exit 4) and lets
   # the healthy lanes publish. Slurped, so a stream of several JSON values is
   # refused too rather than smuggling extra lanes into the merge.
   LANE_WRAP_JQ='
@@ -2350,9 +2349,24 @@ if $MULTI_LANE; then
     elif [[ -f "${lane_out}.failed.json" ]]; then
       lane_cause=$(jq -r '.attempts[-1].cause // $cause' --arg cause "$lane_cause" < "${lane_out}.failed.json")
     fi
+    # Keep actual child invocations, including its format retry. Only a child
+    # killed before writing a record needs the parent's elapsed-time record.
+    lane_attempts=""
+    if [[ -n "$lane_raw" ]]; then
+      lane_attempts=$(jq -ce '.qa_metadata.attempts | select(type == "array")' <<<"$lane_raw" 2>/dev/null) || lane_attempts=""
+    fi
+    if [[ -z "$lane_attempts" ]]; then
+      for suffix in failed noreview incomplete; do
+        if [[ -f "${lane_out}.${suffix}.json" ]]; then
+          lane_attempts=$(jq -c '.attempts // .qa_metadata.attempts' < "${lane_out}.${suffix}.json")
+          break
+        fi
+      done
+    fi
     ATTEMPTS_JSON=$(jq -cn --argjson prev "$ATTEMPTS_JSON" --arg name "$lane" \
       --arg cause "$lane_cause" --argjson seconds "$lane_seconds" \
-      '$prev + [{name: $name, cause: $cause, seconds: $seconds}]')
+      --argjson child "${lane_attempts:-null}" \
+      '$prev + ($child // [{name: $name, cause: $cause, seconds: $seconds}])')
     if [[ ${#LANE_WRAPS[@]} -ge $REQUESTED_COUNT ]] || ! next_target; then break; fi
     i=$((i + 1))
   done
@@ -2526,6 +2540,20 @@ run_target_cli() {
   return "$rc"
 }
 
+# Claude can report login/quota failures on stdout with an empty stderr.
+# Select the failure text before another invocation replaces either stream.
+select_cli_failure_cause() {
+  local partial="$1"
+  CLI_FAILURE_CAUSE=""; CLI_FAILURE_CAUSE_SOURCE=""
+  if [[ -s "$STDERR_TMP" ]]; then
+    CLI_FAILURE_CAUSE=$(head -20 "$STDERR_TMP")
+    CLI_FAILURE_CAUSE_SOURCE="${TARGET_CLI} stderr"
+  elif [[ -n "$partial" ]]; then
+    CLI_FAILURE_CAUSE=$(printf '%s\n' "$partial" | tail -20)
+    CLI_FAILURE_CAUSE_SOURCE="${TARGET_CLI} stdout"
+  fi
+}
+
 # A failed external-CLI invocation on the primary call — non-zero
 # exit (quota/auth/network), timeout, or a zero exit that returned nothing
 # usable — produces no external verdict, exactly like the no-scope/no-review
@@ -2543,21 +2571,10 @@ preserve_cli_failure_and_fail() {
   local reason="$1"          # human-readable cause (e.g. "exited with code 2")
   local partial="${2:-}"     # captured stdout, may be empty
   local exit_code="${3:-$EXIT_CLI_FAILED}"  # EXIT_CLI_KILLED for a signal death
-  local sidecar cause="" cause_source="" verb="failed"
+  local sidecar cause cause_source verb="failed"
   [[ "$exit_code" -ne "$EXIT_CLI_KILLED" ]] || verb="was killed"
-
-  # The CLI's own stderr is the authoritative cause (e.g. the quota message).
-  # Some CLIs report the failure on stdout with an empty stderr — the Claude
-  # quota-limit message is the concrete case — which would leave the cause
-  # block empty and make a capped lane read as broken. Fall back to the tail
-  # of captured stdout so the reason surfaces whichever stream carried it.
-  if [[ -s "$STDERR_TMP" ]]; then
-    cause=$(head -20 "$STDERR_TMP")
-    cause_source="${TARGET_CLI} stderr"
-  elif [[ -n "$partial" ]]; then
-    cause=$(printf '%s\n' "$partial" | tail -20)
-    cause_source="${TARGET_CLI} stdout"
-  fi
+  select_cli_failure_cause "$partial"
+  cause="$CLI_FAILURE_CAUSE"; cause_source="$CLI_FAILURE_CAUSE_SOURCE"
 
   if [[ -n "$OUTPUT_PATH" ]]; then
     mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
@@ -2621,9 +2638,13 @@ collect_response() {
       '$prev + [{name: $name, cause: $cause, seconds: $seconds}]')
     echo "second-opinion: attempt name=$TARGET_CLI cause=$attempt_cause seconds=$attempt_seconds" >&2
     [[ $EXIT_CODE -ne 0 ]] || break
-    # Keep the original CLI cause visible even when a later target answers.
+    # Keep the failed command's text visible before RESULT is overwritten.
+    select_cli_failure_cause "$RESULT"
     if ! next_target; then break; fi
-    cat "$STDERR_TMP" >&2
+    if [[ -n "$CLI_FAILURE_CAUSE" ]]; then
+      echo "--- cause (${CLI_FAILURE_CAUSE_SOURCE}) ---" >&2
+      printf '%s\n' "$CLI_FAILURE_CAUSE" >&2
+    fi
     TARGET_CLI="${REVIEW_LANES[${#REVIEW_LANES[@]}-1]}"
     TARGET_CLI_ENV="${LANE_ENVS[${#LANE_ENVS[@]}-1]}"
     invocation_prompt="$PROMPT_TMP"
@@ -2789,7 +2810,7 @@ preserve_raw_response() {
 preserve_raw_and_fail() {
   local raw="$1"
   local retry="${2:-}"
-  local raw_path retry_path=""
+  local raw_path retry_path="" failure_path record
 
   # The raw first response was already written when the retry was attempted —
   # reuse that sidecar instead of writing it a second time.
@@ -2809,15 +2830,19 @@ preserve_raw_and_fail() {
     fi
   fi
 
-  if [[ -n "$retry_path" ]]; then
-    jq -n --arg target "$TARGET_CLI" --argjson len "${#raw}" \
-      --arg rawpath "$raw_path" --arg retrypath "$retry_path" \
-      '{error: "Failed to extract JSON from \($target) response after retry", raw_length: $len, raw_response: $rawpath, retry_response: $retrypath}' >&2
-    echo "→ retry response preserved: $retry_path" >&2
+  record=$(jq -n --arg target "$TARGET_CLI" --argjson len "${#raw}" \
+    --arg rawpath "$raw_path" --arg retrypath "$retry_path" --argjson attempts "$ATTEMPTS_JSON" \
+    '{error: "Failed to extract JSON from \($target) response after retry", raw_length: $len,
+      raw_response: $rawpath, attempts: $attempts}
+     + (if $retrypath == "" then {} else {retry_response: $retrypath} end)')
+  if [[ -n "$OUTPUT_PATH" ]]; then
+    failure_path="${OUTPUT_PATH}.failed.json"
   else
-    jq -n --arg target "$TARGET_CLI" --argjson len "${#raw}" --arg rawpath "$raw_path" \
-      '{error: "Failed to extract JSON from \($target) response after retry", raw_length: $len, raw_response: $rawpath}' >&2
+    artifact_file failed; failure_path="$ARTIFACT_PATH"
   fi
+  failure_path=$(store_record "$failure_path" "$record")
+  printf '%s\n' "$record" >&2
+  [[ -z "$retry_path" ]] || echo "→ retry response preserved: $retry_path" >&2
   if [[ -n "$raw_path" ]]; then
     echo "→ raw response preserved: $raw_path" >&2
   else
@@ -2890,6 +2915,9 @@ preserve_no_review_and_fail() {
   else
     artifact_file "$suffix"; sidecar="$ARTIFACT_PATH"
   fi
+  json=$(jq --argjson attempts "$ATTEMPTS_JSON" '
+    if type == "object" then .attempts = $attempts
+    else {rejected_response: ., attempts: $attempts} end' <<<"$json")
   sidecar=$(store_record "$sidecar" "$json")
 
   jq -n --arg target "$TARGET_CLI" --arg errmsg "$errmsg" --arg sidecar "$sidecar" \
@@ -2909,78 +2937,89 @@ if $REVIEW_LIKE; then
   # retry resends the full original request, so a truncated extraction gets
   # one chance to re-serialize completely instead of being written as a
   # findings-less artifact.
-  RETRY_WHY=""
-  RETRY_PROBLEM=""
-  # Byte counts of the raw responses, recorded into the artifact's qa_metadata
-  # so a reformat that shrank the review is visible in the artifact itself.
-  # Measured on the untouched CLI output, before extraction.
-  RAW_RESPONSE_BYTES=${#RESULT}
-  RETRY_RESPONSE_BYTES=""
-  if JSON=$(extract_json "$RESULT"); then
-    if response_incomplete_schema "$JSON"; then
-      RETRY_WHY="first response JSON is structurally incomplete"
-      RETRY_PROBLEM="contained a JSON object that is missing required schema fields — verdict and the blockers, suggestions, and questions arrays are all mandatory (use [] for an empty array)"
-    else
-      RESULT="$JSON"
-    fi
-  else
-    RETRY_WHY="extract_json failed on first response"
-  fi
-  if [[ -n "$RETRY_WHY" ]]; then
-    echo "→ $RETRY_WHY; retrying once with captured response" >&2
-    # Persist the raw first response now, before the retry outcome is known —
-    # a successful reformat must not erase the original.
-    preserve_raw_response "$RESULT"
-    RETRY_PROMPT_TMP=$(so_tmpfile)
-    if [[ -n "$RETRY_PROBLEM" ]]; then
-      build_retry_prompt "$RESULT" "$RETRY_PROBLEM" > "$RETRY_PROMPT_TMP"
-    else
-      build_retry_prompt "$RESULT" > "$RETRY_PROMPT_TMP"
-    fi
-    RETRY_RESULT=""
-    RETRY_EXIT=0
-    FIRST_RESULT="$RESULT"
-    collect_response "$RETRY_PROMPT_TMP"
-    RETRY_EXIT=$EXIT_CODE
-    RETRY_RESULT="$RESULT"
-    RESULT="$FIRST_RESULT"
-    RETRY_RESPONSE_BYTES=${#RETRY_RESULT}
-    if [[ $RETRY_EXIT -eq 124 ]]; then
-      echo "→ retry timed out after ${TIMEOUT}s" >&2
-      preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
-    elif [[ $RETRY_EXIT -ne 0 ]]; then
-      # The retry is a second full CLI run under the same killer exposure, so a
-      # signal death here is the same kill, reported the same way.
-      if RETRY_SIGNAL=$(signal_name "$RETRY_EXIT"); then
-        [[ -z "$RAW_PRESERVED_PATH" ]] || echo "→ raw first response preserved: $RAW_PRESERVED_PATH" >&2
-        preserve_cli_failure_and_fail \
-          "was killed by $RETRY_SIGNAL (exit $RETRY_EXIT) during the recovery retry" \
-          "$RETRY_RESULT" "$EXIT_CLI_KILLED"
-      fi
-      echo "→ retry exited with code $RETRY_EXIT" >&2
-      preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
-    elif [[ ${#RETRY_RESULT} -eq 0 ]]; then
-      echo "→ retry returned an empty response" >&2
-      preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
-    elif JSON=$(extract_json "$RETRY_RESULT"); then
-      # Same completeness discipline on the retried response: a retry that is
-      # still missing the required arrays must not become the artifact either
-      # — preserve it and fail with the distinct no-review code.
+  # Each selected target owns its first response and one format retry.
+  # collect_response never returns to a target after execution fall-through.
+  while :; do
+    RETRY_WHY=""
+    RETRY_PROBLEM=""
+    # Byte counts of the raw responses, recorded into the artifact's qa_metadata
+    # so a reformat that shrank the review is visible in the artifact itself.
+    # Measured on the untouched CLI output, before extraction.
+    RAW_RESPONSE_BYTES=${#RESULT}
+    RETRY_RESPONSE_BYTES=""
+    if JSON=$(extract_json "$RESULT"); then
       if response_incomplete_schema "$JSON"; then
-        echo "→ retry response JSON is still structurally incomplete" >&2
-        preserve_no_review_and_fail "$JSON" \
-          "returned structurally incomplete JSON after retry — verdict and the blockers/suggestions/questions arrays are required (incomplete_schema)" \
-          incomplete
+        RETRY_WHY="first response JSON is structurally incomplete"
+        RETRY_PROBLEM="contained a JSON object that is missing required schema fields — verdict and the blockers, suggestions, and questions arrays are all mandatory (use [] for an empty array)"
+      else
+        RESULT="$JSON"
       fi
-      echo "→ retry recovered valid JSON (${#JSON} bytes)" >&2
-      [[ -n "$RAW_PRESERVED_PATH" ]] \
-        && echo "→ raw first response preserved: $RAW_PRESERVED_PATH" >&2 || true
-      RESULT="$JSON"
     else
-      echo "→ retry response still not parseable" >&2
-      preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
+      RETRY_WHY="extract_json failed on first response"
     fi
-  fi
+    if [[ -n "$RETRY_WHY" ]]; then
+      echo "→ $RETRY_WHY; retrying once with captured response" >&2
+      # Persist the raw first response now, before the retry outcome is known —
+      # a successful reformat must not erase the original.
+      preserve_raw_response "$RESULT"
+      rm -f -- "$RETRY_PROMPT_TMP"
+      RETRY_PROMPT_TMP=$(so_tmpfile)
+      if [[ -n "$RETRY_PROBLEM" ]]; then
+        build_retry_prompt "$RESULT" "$RETRY_PROBLEM" > "$RETRY_PROMPT_TMP"
+      else
+        build_retry_prompt "$RESULT" > "$RETRY_PROMPT_TMP"
+      fi
+      RETRY_RESULT=""
+      RETRY_EXIT=0
+      FIRST_RESULT="$RESULT"
+      RECOVERY_TARGET="$TARGET_CLI"
+      collect_response "$RETRY_PROMPT_TMP"
+      if [[ "$TARGET_CLI" != "$RECOVERY_TARGET" && $EXIT_CODE -eq 0 ]]; then
+        RAW_PRESERVED_PATH=""
+        continue
+      fi
+      RETRY_EXIT=$EXIT_CODE
+      RETRY_RESULT="$RESULT"
+      RESULT="$FIRST_RESULT"
+      RETRY_RESPONSE_BYTES=${#RETRY_RESULT}
+      if [[ $RETRY_EXIT -eq 124 ]]; then
+        echo "→ retry timed out after ${TIMEOUT}s" >&2
+        preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
+      elif [[ $RETRY_EXIT -ne 0 ]]; then
+        # The retry is a second full CLI run under the same killer exposure, so a
+        # signal death here is the same kill, reported the same way.
+        if RETRY_SIGNAL=$(signal_name "$RETRY_EXIT"); then
+          [[ -z "$RAW_PRESERVED_PATH" ]] || echo "→ raw first response preserved: $RAW_PRESERVED_PATH" >&2
+          preserve_cli_failure_and_fail \
+            "was killed by $RETRY_SIGNAL (exit $RETRY_EXIT) during the recovery retry" \
+            "$RETRY_RESULT" "$EXIT_CLI_KILLED"
+        fi
+        echo "→ retry exited with code $RETRY_EXIT" >&2
+        preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
+      elif [[ ${#RETRY_RESULT} -eq 0 ]]; then
+        echo "→ retry returned an empty response" >&2
+        preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
+      elif JSON=$(extract_json "$RETRY_RESULT"); then
+        # Same completeness discipline on the retried response: a retry that is
+        # still missing the required arrays must not become the artifact either
+        # — preserve it and fail with the distinct no-review code.
+        if response_incomplete_schema "$JSON"; then
+          echo "→ retry response JSON is still structurally incomplete" >&2
+          preserve_no_review_and_fail "$JSON" \
+            "returned structurally incomplete JSON after retry — verdict and the blockers/suggestions/questions arrays are required (incomplete_schema)" \
+            incomplete
+        fi
+        echo "→ retry recovered valid JSON (${#JSON} bytes)" >&2
+        [[ -n "$RAW_PRESERVED_PATH" ]] \
+          && echo "→ raw first response preserved: $RAW_PRESERVED_PATH" >&2 || true
+        RESULT="$JSON"
+      else
+        echo "→ retry response still not parseable" >&2
+        preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
+      fi
+    fi
+    break
+  done
   # Reject a self-reported no-review before the artifact can be written — a
   # "pass" from a model that admits it reviewed nothing is a false pass. These
   # gates run on whichever response became RESULT: first or retried.
@@ -3011,15 +3050,14 @@ if $REVIEW_LIKE; then
     # mutable HEAD after the review finished.
     REVIEWED_HEAD="$REVIEW_HEAD_SHA"
   fi
-  # requested/selected opinion counts (review mode): a review asked for more
-  # breadth than the roster could supply reads as degraded coverage, in the
-  # artifact and not only on stderr.
+  # Count fields and coverage: references/multi-lane.md.
   # agent is OURS to assert, not the provider's to supply. The consumer side
   # will only remove a scanned sibling that carries an `external-…` marker, and
   # a provider is free to return a missing or foreign `agent` that still passes
   # the schema gate — leaving an artifact this skill genuinely wrote unmarked,
   # and so unreclaimable once its target leaves the roster. Overwriting here
   # makes "we wrote it" and "it carries our marker" the same statement.
+  SELECTED_COUNT=${#REVIEW_LANES[@]}
   if STAMPED=$(printf '%s' "$RESULT" | jq --arg ts "$STAMP" --arg head "$REVIEWED_HEAD" \
       --arg start_head "${REVIEW_START_HEAD:-}" --argjson dirty_paths "${REVIEW_DIRTY_PATHS:-null}" \
       --argjson attempts "$ATTEMPTS_JSON" \

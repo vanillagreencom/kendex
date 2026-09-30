@@ -42,8 +42,9 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra -s read-only -c model_reas
 # asked. The check exits 0 when there is room and prints the account's
 # NAME=value env prefix, which the reviewer then runs under; any other exit
 # skips the reviewer for the next one. With the orch skill installed, its
-# lanes pick is that check: this pair reviews through Pi on the Copilot pool
-# while the Codex seats are walled, and codex again once its seat has room.
+# lanes pick is that check: this order tries Pi on the Copilot pool first,
+# then the native CLIs after a skip or execution failure. Each target remains
+# subject to session-model exclusion.
 # The Copilot check reads ORCH_LANE_COPILOT_POOL from the settings in the
 # lane's own tree; a hosted lane states it in .env.local until its provider
 # forwards it, and one without it records the check's refusal. Each check pins

@@ -125,7 +125,7 @@ project_file() {
 }
 
 word() {
-  local refusal
+  local refusal retry_name
   case "$1" in
     # the nearest ancestor `ps` reports: a harness name, a bystander, none, or
     # empty (ps answers nothing)
@@ -157,8 +157,11 @@ word() {
     refusal:*=claude-banner) refusal="${1#refusal:}"; W_ENV+=("SO_TEST_REFUSAL_${refusal%%=*}=You've hit your usage limit") ;;
     refusal:*) W_ENV+=("SO_TEST_REFUSAL_${1#refusal:}") ;;
     retry-exit:*) W_ENV+=("SO_TEST_RETRY_EXIT_${1#retry-exit:}") ;;
+    retry:*) retry_name="${1#retry:}"; retry_name="${retry_name%%=*}"; response "${1##*=}" "$retry_name" >"$ROW/resp-retry-$retry_name" ;;
     delay:*) W_ENV+=("SO_TEST_DELAY_${1#delay:}") ;;
     timeout:*) W_ENV+=("SECOND_OPINION_TIMEOUT=${1#timeout:}") ;;
+    inline:*) W_ENV+=("$(so_var "${1#inline:}" INLINE_DIFF)=${1##*=}") ;;
+    failure-stdout:*) W_ENV+=("SO_TEST_FAILURE_STDOUT_${1#failure-stdout:}") ;;
     stale) W_STALE=1 ;;
     # the world with nothing added
     -) ;;
@@ -175,21 +178,26 @@ make_stub() {
   cat >"$ROW/bin/lane-$1" <<SH
 #!/usr/bin/env bash
 set -euo pipefail
-cat >/dev/null
 mkdir "$ROW/running" || { echo 'concurrent opinion command' >&2; exit 97; }
 trap 'rmdir "$ROW/running"' EXIT
 trap 'exit 143' TERM
 n=\$(cat "$ROW/count-$1" 2>/dev/null || echo 0)
 printf '%s' \$((n + 1)) >"$ROW/count-$1"
+cat >"$ROW/request-$1-\$((n + 1)).txt"
 printf '%s' "\${SO_TEST_SEAT:--}" >"$ROW/seat-$1"
 printf '%s\n' '$1' >>"$ROW/order"
+[[ -z "\${SO_TEST_FAILURE_STDOUT_$1:-}" ]] || printf '%s\n' "\${SO_TEST_FAILURE_STDOUT_$1}"
 [[ \$n -eq 0 || "\${SO_TEST_RETRY_EXIT_$1:-0}" == 0 ]] || exit "\${SO_TEST_RETRY_EXIT_$1}"
 # Real sleep reaches GNU timeout's process teardown; a clock stub cannot expire it.
 [[ "\${SO_TEST_DELAY_$1:-0}" == 0 ]] || sleep "\${SO_TEST_DELAY_$1}"
 [[ -z "\${SO_TEST_REFUSAL_$1:-}" ]] || printf '%s\n' "\${SO_TEST_REFUSAL_$1}" >&2
 [[ "\${SO_TEST_EXIT_$1:-0}" == 0 ]] || exit "\${SO_TEST_EXIT_$1}"
-[[ -f "$ROW/resp-$1" ]] || exit 1
-cat "$ROW/resp-$1"
+if [[ \$n -gt 0 && -f "$ROW/resp-retry-$1" ]]; then
+  cat "$ROW/resp-retry-$1"
+else
+  [[ -f "$ROW/resp-$1" ]] || exit 1
+  cat "$ROW/resp-$1"
+fi
 SH
   chmod +x "$ROW/bin/lane-$1"
 }
@@ -404,6 +412,7 @@ run() {
   argv=("${argv[@]:1}")
   case "$verb" in
     review) argv=(review --range HEAD --cwd "$WORK" --output "$ROW/out/out.json" ${argv[@]+"${argv[@]}"}) ;;
+    audit) argv=(audit "inspect file.txt" --cwd "$WORK" --output "$ROW/out/out.json" ${argv[@]+"${argv[@]}"}) ;;
     quick) argv=(quick "is this safe?" --cwd "$WORK" ${argv[@]+"${argv[@]}"}) ;;
     detect) argv=(detect ${argv[@]+"${argv[@]}"}) ;;
     *) echo "UNKNOWN-COMMAND: $verb" >&2; exit 2 ;;
@@ -520,6 +529,29 @@ SH
   wait_cmd=$(sed -n 's/^wait: //p' "$ROW/launch")
   env -i HOME="$ROW" PATH="$ROW/bin:$PATH" bash -c "$wait_cmd" > "$ROW/wait" 2> "$ROW/wait-stderr"
   printf '%s\n' "$((deadline - 1000000000))"
+}
+
+# A disposable script copy keeps the call text while a control disables it.
+mutate_script() {
+  python3 - "$@" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+assert not p.is_symlink()
+s = p.read_text()
+old, new = sys.argv[2:]
+assert s.count(old) == 1, (old, s.count(old))
+changed = s.replace(old, new)
+assert changed != s
+p.write_text(changed)
+PY
+}
+
+# Request stdin captured by the external CLI, not a prompt builder stub.
+request_state() {
+  jq -Rc -s '{inline_diff: contains("\n+world\n"),
+    repair: contains("--- Your previous response ---"),
+    audit_original: (. == "inspect file.txt\n")}' < "$ROW/request-$1-$2.txt"
 }
 
 # One readback for CLI fall-through rows and their mutant control.

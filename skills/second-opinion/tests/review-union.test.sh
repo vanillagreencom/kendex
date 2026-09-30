@@ -3,7 +3,7 @@
 # on one derived scope and write one union artifact (findings deduplicated by
 # location and occurrence with every contributing lane in `sources`, a
 # suggestion dropped where a blocker holds its slot, lane artifacts kept beside
-# the union); one failed lane degrades coverage loudly, every lane failing
+# the union); coverage follows references/multi-lane.md, every lane failing
 # leaves no artifact and exits in the no-verdict class; a forced target keeps
 # the single-lane path; a shortfall against the requested count is stamped.
 # One table, a row per scenario.
@@ -22,7 +22,7 @@ both lanes answer: the parse blocker is deduped with both lanes in sources, the 
 one lane down: the survivor's findings, coverage degraded, the failed lane recorded with its exit code|claude:parse codex:down|review|0|<out>|$MULTI lane-failed:codex:5 union:1|calls=claude:1,codex:1,extra:0 art=external-union(claude)/action_required/b=parse(claude)/s=readme(claude)/cov=degraded/req=2/sel=2/lanes=claude:ok,codex:failed:5/dedupe=1/1/1/1/head=head/union=true files=out,out.claude,out.codex.failed
 every lane down: no artifact, exit 5|claude:down codex:down|review|5|-|$MULTI lane-failed:codex:5 lane-failed:claude:5 all-failed:codex:failed:5,claude:failed:5|calls=claude:1,codex:1,extra:0 art=- files=out.claude.failed,out.codex.failed
 every lane down clears a stale artifact at the output path|stale claude:down codex:down|review|5|-|$MULTI lane-failed:codex:5 lane-failed:claude:5 all-failed:codex:failed:5,claude:failed:5|calls=claude:1,codex:1,extra:0 art=- files=out.claude.failed,out.codex.failed
-lanes that answer unusably, even after the retry, exit 4|claude:junk codex:junk|review|4|-|$MULTI lane-failed:codex:1 lane-failed:claude:1 all-failed:codex:failed:1,claude:failed:1|calls=claude:2,codex:2,extra:0 art=- files=out.claude.raw.txt,out.claude.retry.txt,out.codex.raw.txt,out.codex.retry.txt
+lanes that answer unusably, even after the retry, exit 4|claude:junk codex:junk|review|4|-|$MULTI lane-failed:codex:1 lane-failed:claude:1 all-failed:codex:failed:1,claude:failed:1|calls=claude:2,codex:2,extra:0 art=- files=out.claude.failed,out.claude.raw.txt,out.claude.retry.txt,out.codex.failed,out.codex.raw.txt,out.codex.retry.txt
 a forced target keeps the single-lane path: the lane's own artifact, no sidecars, one opinion requested whatever COUNT says|target:claude|review|0|<out>|single:claude:review:none written|calls=claude:1,codex:0,extra:0 art=external-claude/pass/b=-/s=-/cov=null/req=1/sel=1/lanes=-/dedupe=-/head=head/union=null files=out
 a third target is a settings entry: SECOND_OPINION_MODELS names it, its _CMD runs it, its artifact is kept beside the union|models:claude+my-model cmd:my-model=extra|review|0|<out>|multi:claude+my-model:none union:2|calls=claude:1,codex:0,extra:1 art=external-union(claude+my-model)/pass/b=-/s=-/cov=full/req=2/sel=2/lanes=claude:ok,my-model:ok/dedupe=0/0/0/0/head=head/union=true files=out,out.claude,out.my-model
 two distinct findings at one location from one lane both survive; the other lane's merges with the first|claude:parse codex:parse2|review|0|<out>|$MULTI union:2|calls=claude:1,codex:1,extra:0 art=external-union(codex+claude)/action_required/b=parse(claude,codex),parse(codex)/s=readme(claude)/cov=full/req=2/sel=2/lanes=codex:ok,claude:ok/dedupe=3/2/1/1/head=head/union=true files=out,out.claude,out.codex

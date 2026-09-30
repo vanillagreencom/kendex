@@ -5,8 +5,8 @@
 # stdout mode alike; a healthy lane's log and a failing lane's own cause reach
 # the operator lane-prefixed; an artifact is usable only when it holds exactly
 # one JSON object shaped the way the merge consumes it, every other shape
-# being that lane answering unusably (exit 4, coverage degraded, the union
-# still shipped) and never a healthy lane contributing nothing; a lane that
+# being that lane answering unusably (exit 4) and never a healthy lane
+# contributing nothing; coverage follows references/multi-lane.md. A lane that
 # exits 0 without an artifact never answered (5), which keeps the all-lanes-
 # failed aggregate at 5 unless somebody answered unusably (4); lane artifacts
 # and sidecars in the home are owner-only while live and gone after, the CLI's
