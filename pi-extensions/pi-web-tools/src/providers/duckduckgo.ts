@@ -16,14 +16,14 @@ export interface DuckDuckGoClientOptions {
 
 function decodeHtml(value: string): string {
 	return value
-		.replace(/&amp;/g, "&")
 		.replace(/&lt;/g, "<")
 		.replace(/&gt;/g, ">")
 		.replace(/&quot;/g, '"')
 		.replace(/&#39;|&apos;/g, "'")
 		.replace(/&nbsp;/g, " ")
 		.replace(/&#(\d+);/g, (_match, code) => String.fromCharCode(Number(code)))
-		.replace(/&#x([0-9a-f]+);/gi, (_match, code) => String.fromCharCode(Number.parseInt(code, 16)));
+		.replace(/&#x([0-9a-f]+);/gi, (_match, code) => String.fromCharCode(Number.parseInt(code, 16)))
+		.replace(/&amp;/g, "&");
 }
 
 function stripTags(value: string): string {

@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- DuckDuckGo result titles and snippets preserve escaped entity text such as `&lt;` instead of decoding it twice.
+
 ### 4.0.0
 
 - **Breaking**: fetched and searched text is stored once, on disk, under `~/.pi/agent/kendex/sessions/<session>/pi-web-tools/content/`. The session record, the `web_fetch` details (`stored`) and the `get_web_content` details now carry the id, title, URL, metadata, `contentLength` and the `sessionId` of the session that stored the text, not the text. A forked session reads its parent's ids from the parent's directory. Text stored in a session by an earlier version cannot be read with `get_web_content`, which fails with `Stored content text gone: <id>`, as it does for any recorded id whose file was deleted.

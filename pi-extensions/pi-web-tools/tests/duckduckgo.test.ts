@@ -12,6 +12,11 @@ test("parseDuckDuckGoHtml extracts titles, redirect URLs, and snippets", () => {
 	assert.deepEqual(results, [{ title: "Example & Docs", url: "https://example.com/docs", summary: "Useful <b>snippet</b> here." }]);
 });
 
+test("parseDuckDuckGoHtml preserves escaped entity text after one decode", () => {
+	const html = `<div class="result"><a class="result__a" href="https://example.com/">&amp;lt;</a><div class="result__snippet">&amp;lt;</div></div>`;
+	assert.deepEqual(parseDuckDuckGoHtml(html), [{ title: "&lt;", url: "https://example.com/", summary: "&lt;" }]);
+});
+
 test("DuckDuckGoClient requests html endpoint and parses response", async () => {
 	const seen: string[] = [];
 	const fetchImpl = (async (url: any) => {
