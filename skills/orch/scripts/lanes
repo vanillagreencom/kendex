@@ -253,12 +253,8 @@
 #          a fleet state whose records cannot be read refuses as
 #          `lanes: state-fleet`. The pane judge is the last-resort fallback
 #          for a window no such record names, whatever harness runs there.
-#          For a window a pane here carries and a running record names as a
-#          Copilot lane launched with allow-all, its session record's
-#          `lanes: stop-cause=<cause>` or `lanes: session-record=<reason>` is
-#          on stderr (lib/copilot-session.sh), the state the pane's either
-#          way; references/copilot-runtime.md § Allow-all blocked by policy
-#          lists the words and why no hosted Copilot lane is read.
+#          A Copilot allow-all lane's record note is on stderr beside it
+#          (references/copilot-runtime.md).
 #          A name no pane on this server carries is
 #          `unjudged`: a window that closed and a name two windows share are
 #          the same silence from here. `gone` is the judge's answer for a
@@ -803,13 +799,9 @@ message() {
       printf '%s\n' "the host provider did not answer the touch probe; the state names what this machine could read of the lane and says nothing about the host, and the provider's own message follows"
       [ -z "$3" ] || printf '%s\n' "$3"
       ;;
-    stop-cause)
-      printf 'lanes: stop-cause=%s item=%s\n' "$2" "$1"
-      printf '%s\n' "this Copilot lane was launched with allow-all and its session record reports allow_all_enabled false: enterprise managed settings block the allow-all mode, so every tool call waits on a permission prompt. The state names what the pane shows; references/copilot-runtime.md § Allow-all blocked by policy names the remedy"
-      ;;
-    session-record)
-      printf 'lanes: session-record=%s item=%s\n' "$2" "$1"
-      printf '%s\n' "this Copilot lane's session record did not answer, so whether a policy blocks its allow-all mode is unknown; the state names what the pane shows. references/copilot-runtime.md § Allow-all blocked by policy names each reason and its remedy"
+    copilot-note)
+      printf 'lanes: %s item=%s\n' "$2" "$1"
+      printf '%s\n' "the Copilot allow-all lane's session record note; the state is the pane's (references/copilot-runtime.md § Allow-all blocked by policy)"
       ;;
     invalid-usage-ttl)
       printf 'lanes: invalid-usage-ttl value=%s\n' "$1"
@@ -2811,13 +2803,17 @@ mailbox_file_fetch() { # REC NAME
 # wrote in its mailbox, through its host where its record names one, and
 # `unreadable` where they could not be read; it is empty for a window no
 # running fleet lane record names as a Pi lane's, whose pane is judged. Exit 2
-# where RECORDS, state_records' answer, is no JSON, since a Pi lane read as any
-# other would be judged by its pane.
-STATE_ROWS=""
-state_rows_read() { # RECORDS WINDOW
-	local rec rows rc=0
-	STATE_ROWS=""
-	rec="$(lane_running_record "$1" "$2" pi)" || return 2
+# where the fleet state is there and its records could not be read, since a Pi
+# lane read as any other would be judged by its pane. It keeps the records in
+# STATE_RECORDS.
+STATE_ROWS="" STATE_RECORDS=""
+state_rows_read() { # WINDOW
+	local exists rec rows rc=0
+	STATE_ROWS="" STATE_RECORDS=""
+	exists="$("$SCRIPT_DIR/workflow-state" exists --json oversee 2>/dev/null | jq -r '.exists')" || return 2
+	[[ "$exists" == true ]] || return 0
+	STATE_RECORDS="$("$SCRIPT_DIR/workflow-state" get oversee '.lanes // []' 2>/dev/null)" || return 2
+	rec="$(lane_running_record "$STATE_RECORDS" "$1" pi)" || return 2
 	[[ -n "$rec" ]] || return 0
 	STATE_ROWS=unreadable
 	rows="$(mailbox_file_fetch "$rec" "$SESSION_ROWS_LANE")" || rc=$?
@@ -2828,15 +2824,6 @@ state_rows_read() { # RECORDS WINDOW
 	esac
 	session_rows_lane_verdict /dev/stdin <<<"$rows" || return 0
 	STATE_ROWS="$SESSION_ROWS_VERDICT"
-}
-
-# The fleet state's lane records for `state`, printed, nothing where there is
-# no fleet state; 2 where it is there and its records could not be read.
-state_records() {
-	local exists
-	exists="$("$SCRIPT_DIR/workflow-state" exists --json oversee 2>/dev/null | jq -r '.exists')" || return 2
-	[[ "$exists" == true ]] || return 0
-	"$SCRIPT_DIR/workflow-state" get oversee '.lanes // []' 2>/dev/null || return 2
 }
 
 render_table() {
@@ -3647,15 +3634,14 @@ case "$SUB" in
 		# that also holds the lane's worktree — `open-terminal --wake` — passes
 		# the harness process as the sixth argument instead.
 		# A Pi lane is judged from the rows its own hook wrote, never its pane;
-		# the pane is read only for a window no running Pi record names. A Copilot
-		# lane's session record note is printed beside the state, never as it.
-		records="$(state_records)" && state_rows_read "$records" "$LANE_ARG" || die state-fleet "$LANE_ARG"
+		# the pane is read only for a window no running Pi record names.
+		state_rows_read "$LANE_ARG" || die state-fleet "$LANE_ARG"
 		# No pane on this server carries the name: nothing here sees the lane's
 		# harness, so its rows answer nothing either and the judge says unjudged.
 		[[ -n "$LANE_PANE_ID" ]] || STATE_ROWS=""
-		[[ -z "$LANE_PANE_ID" ]] || { rec="$(lane_running_record "$records" "$LANE_ARG" copilot)" &&
+		[[ -z "$LANE_PANE_ID" ]] || { rec="$(lane_running_record "$STATE_RECORDS" "$LANE_ARG" copilot)" &&
 			lane_context_copilot_note "$rec" "$(date +%s)"; } || die state-fleet "$LANE_ARG"
-		[[ -z "$COPILOT_SESSION_NOTE" ]] || message "${COPILOT_SESSION_NOTE%%=*}" "$LANE_ARG" "${COPILOT_SESSION_NOTE#*=}" >&2
+		[[ -z "$COPILOT_SESSION_NOTE" ]] || message copilot-note "$LANE_ARG" "$COPILOT_SESSION_NOTE" >&2
 		lane_state_rc=0
 		lane_state LANE_STATE_ANSWER listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$LANE_PANE_SCREEN" "" "" "$STATE_ROWS" \
 			|| lane_state_rc=$?
