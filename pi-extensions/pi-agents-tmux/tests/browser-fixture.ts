@@ -33,13 +33,18 @@ export function filesystemCalls(run: () => void): number[] {
 }
 
 /** Load a disposable production edit with the real package's modules and dependencies. */
-export async function importRuntimeCopy(fileName: string, before: string, after: string): Promise<unknown> {
+export async function importRuntimeCopy(fileName: string, before: string, after: string, additionalEdits: Array<{ before: string; after: string }> = []): Promise<unknown> {
 	const runtimeDir = resolve(import.meta.dir, "../extensions/subagent");
 	const original = fs.readFileSync(join(runtimeDir, fileName), "utf8");
-	assert.equal(original.split(before).length - 1, 1, "control must edit exactly one production behavior");
-	const modified = original.replace(before, after);
+	let modified = original;
+	for (const edit of [{ before, after }, ...additionalEdits]) {
+		assert.equal(modified.split(edit.before).length - 1, 1, "control must match exactly one production site");
+		const next = modified.replace(edit.before, edit.after);
+		assert.notEqual(next, modified);
+		modified = next;
+	}
 	assert.notEqual(modified, original);
-	const source = modified.replace(/from "\.\/([^\"]+)\.js"/g, (_match, name: string) => `from ${JSON.stringify(join(runtimeDir, `${name}.ts`))}`);
+	const source = modified.replace(/from "(\.{1,2}\/[^\"]+)\.js"/g, (_match, name: string) => `from ${JSON.stringify(resolve(runtimeDir, `${name}.ts`))}`);
 	const copyDir = tempRuntime();
 	// Bare imports resolve from the copy, outside the package's dependency tree.
 	fs.symlinkSync(resolve(import.meta.dir, "../node_modules"), join(copyDir, "node_modules"), "dir");

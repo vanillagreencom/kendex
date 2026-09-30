@@ -1,14 +1,24 @@
 // The extension entry point loaded fresh against a fake Pi, in a private Pi
 // user directory, for suites that drive its session_start handler.
 import { expect } from "bun:test";
+import assert from "node:assert/strict";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearPackageConfigCache } from "../extensions/subagent/package-config.js";
 import {
 	setTmuxPaneTitleSpawnForTests,
 } from "../extensions/subagent/pane.js";
+import { taskRegistryPath } from "../extensions/subagent/paths.js";
+import { sessionRuntimeDir } from "../extensions/subagent/settings.js";
+import { taskRegistryReader } from "../extensions/subagent/task-records.js";
+import { writeTaskRegistry } from "../extensions/subagent/tasks.js";
+import { taskRegistryReads, writeSettings } from "./browser-fixture.js";
+
+type ExtensionFactory = (pi: ExtensionAPI) => void;
+type SessionHandler = (event: unknown, ctx: ExtensionContext) => void | Promise<void>;
 
 export interface Harness {
 	cwd: string;
@@ -65,15 +75,19 @@ export function teardown(harness: Harness): void {
 	rmSync(harness.cwd, { force: true, recursive: true });
 }
 
-export async function installExtension(harness: Harness): Promise<(event: unknown, ctx: any) => Promise<void>> {
-	const handlers = new Map<string, Array<(event: unknown, ctx: any) => Promise<void>>>();
+export async function installExtension(harness: Harness, options: {
+	extension?: ExtensionFactory;
+	handlers?: Map<string, SessionHandler[]>;
+	appendEntry?: (customType: string, data: unknown) => void;
+} = {}): Promise<(event: unknown, ctx: ExtensionContext) => Promise<void>> {
+	const handlers = options.handlers ?? new Map<string, SessionHandler[]>();
 	const bus = new EventEmitter();
 	const pi = {
-		appendEntry: () => undefined,
+		appendEntry: options.appendEntry ?? (() => undefined),
 		events: { emit: bus.emit.bind(bus), on: (channel: string, handler: (data: unknown) => void) => { bus.on(channel, handler); return () => bus.off(channel, handler); } },
 		getActiveTools: () => [],
 		getThinkingLevel: () => undefined,
-		on: (event: string, handler: (event: unknown, ctx: any) => Promise<void>) => {
+		on: (event: string, handler: SessionHandler) => {
 			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
 		},
 		registerCommand: () => undefined,
@@ -85,8 +99,8 @@ export async function installExtension(harness: Harness): Promise<(event: unknow
 	} as any;
 	const url = new URL("../extensions/subagent/index.ts", import.meta.url);
 	url.searchParams.set("t", `${Date.now()}-${Math.random().toString(36).slice(2)}`);
-	const mod = await import(url.href);
-	mod.default(pi);
+	const extension = options.extension ?? (await import(url.href)).default;
+	extension(pi);
 	const registered = handlers.get("session_start") ?? [];
 	expect(registered.length).toBeGreaterThan(0);
 	return async (event, ctx) => {
@@ -126,5 +140,54 @@ export async function withoutRealIntervals(fn: () => Promise<void>, started: Arr
 		await fn();
 	} finally {
 		globalThis.setInterval = realSetInterval;
+	}
+}
+
+/** Startup warms the shared snapshot; its real parent poll reuses it and shutdown releases it. */
+export async function assertSharedRegistryLifecycle(extension: ExtensionFactory): Promise<void> {
+	const harness = createHarness({});
+	const handlers = new Map<string, SessionHandler[]>();
+	const entries: Array<{ customType: string; data: unknown }> = [];
+	const stackSymbol = Symbol.for("kendex.pi.mini-dashboard-stack");
+	const globals = globalThis as unknown as Record<PropertyKey, unknown>;
+	const previousStack = globals[stackSymbol];
+	delete globals[stackSymbol];
+	const ctx = { ...fakeCtx(harness), hasUI: true } as ExtensionContext;
+	const shutdown = async () => {
+		for (const handler of handlers.get("session_shutdown") ?? []) await handler({ reason: "quit" }, ctx);
+	};
+	try {
+		writeSettings(harness.cwd, { dashboard: true });
+		const root = sessionRuntimeDir("test-session-id");
+		mkdirSync(join(root, "outbox"), { recursive: true });
+		// A completed bg child from writeTaskRegistry needs neither tmux nor transcript backfill.
+		const records = { child: { taskId: "child", agent: "engineer", task: "work", kind: "oneshot" as const, status: "completed" as const, createdAt: "2026-09-30T00:00:00Z", summary: "done" } };
+		await writeTaskRegistry(root, records);
+		const unchanged = readFileSync(taskRegistryPath(root), "utf8");
+		await withoutRealIntervals(async () => {
+			const start = await installExtension(harness, {
+				extension, handlers,
+				appendEntry: (customType, data) => { entries.push({ customType, data }); },
+			});
+			assert.ok((handlers.get("session_shutdown")?.length ?? 0) > 0);
+			assert.equal(await taskRegistryReads(root, () => start({}, ctx)), 1);
+			assert.equal(await taskRegistryReads(root, async () => {
+				assert.deepEqual(taskRegistryReader.read(root), records);
+			}), 0, "startup must warm the shared reader, not a private reader");
+			// session_start starts a real asynchronous parent poll. Shutdown drains it before clearing
+			// the reader, so the count covers its completion, dashboard sync and snapshot persistence.
+			assert.equal(await taskRegistryReads(root, shutdown), 0, "the warmed parent poll must read no registry content");
+			assert.deepEqual(entries.filter(({ customType }) => customType === "kendex-subagents:runtime-state").map(({ data }) => (data as { tasks: unknown }).tasks), [records], "the parent poll must persist its registry snapshot");
+			assert.equal(readFileSync(taskRegistryPath(root), "utf8"), unchanged);
+			assert.equal(await taskRegistryReads(root, async () => {
+				assert.deepEqual(taskRegistryReader.read(root), records);
+			}), 1, "shutdown must release the unchanged shared snapshot");
+		});
+	} finally {
+		await shutdown();
+		taskRegistryReader.clear();
+		if (previousStack === undefined) delete globals[stackSymbol];
+		else globals[stackSymbol] = previousStack;
+		teardown(harness);
 	}
 }
