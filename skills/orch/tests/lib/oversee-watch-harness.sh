@@ -89,7 +89,15 @@ CASE_REPO_ROOT="$(git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
 #                 502 line where it is empty
 #   dependabot-prs.json
 #                 the vulnerabilityAlerts nodes `api graphql` answers, with
-#                 dependabot-prs.<SLUG>.json per repo (default: []);
+#                 dependabot-prs.<SLUG>.json per repo (default: []), all in
+#                 one page. The query's own vulnerabilityAlerts arguments
+#                 apply as GitHub applies them: `states:` drops each node
+#                 whose state it does not list, `first:` and `after:` read as
+#                 one page. Any other argument, a `states:` value that is not
+#                 an alert state, or a query with no vulnerabilityAlerts
+#                 field fails the call with a `stub: unmodeled-argument`
+#                 line, so a query change the stub does not model reddens
+#                 the suite instead of reading every node;
 #                 graphql-fail present → that call fails as gh fails a
 #                 GraphQL error, exit 1 with no HTTP status, printing the
 #                 file's own text, or a missing-permission line where empty
@@ -156,21 +164,42 @@ case "${1:-} ${2:-}" in
       if [[ -s "$STUB_DIR/graphql-fail" ]]; then cat "$STUB_DIR/graphql-fail" >&2; else echo "gh: Resource not accessible by integration" >&2; fi
       exit 1
     fi
-    owner=""; name=""; filter=""
+    owner=""; name=""; filter=""; query=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
-        -f) case "$2" in owner=*) owner="${2#owner=}" ;; name=*) name="${2#name=}" ;; esac; shift ;;
+        -f) case "$2" in owner=*) owner="${2#owner=}" ;; name=*) name="${2#name=}" ;; query=*) query="${2#query=}" ;; esac; shift ;;
         --jq) filter="$2"; shift ;;
       esac
       shift
     done
+    [[ "$query" =~ vulnerabilityAlerts[[:space:]]*(\(([^\)]*)\))? ]] \
+      || { echo "stub: unmodeled-argument query=no-vulnerabilityAlerts" >&2; exit 2; }
+    args="${BASH_REMATCH[2]}" states='null'
+    arg_re='^[[:space:],]*([A-Za-z_]+)[[:space:]]*:[[:space:]]*(\[[^]]*\]|[^],[:space:]]+)(.*)$'
+    while [[ "$args" =~ $arg_re ]]; do
+      key="${BASH_REMATCH[1]}" value="${BASH_REMATCH[2]}" args="${BASH_REMATCH[3]}"
+      case "$key" in
+        first|after) ;;
+        states)
+          states='[]'
+          for state in ${value//[][,]/ }; do
+            case "$state" in
+              OPEN|FIXED|DISMISSED|AUTO_DISMISSED) states="$(jq -cn --argjson s "$states" --arg v "$state" '$s + [$v]')" ;;
+              *) echo "stub: unmodeled-argument states=$state" >&2; exit 2 ;;
+            esac
+          done ;;
+        *) echo "stub: unmodeled-argument $key=$value" >&2; exit 2 ;;
+      esac
+    done
+    [[ "$args" =~ ^[[:space:],]*$ ]] || { echo "stub: unmodeled-argument args=$args" >&2; exit 2; }
     slug="$(printf '%s/%s' "$owner" "$name" | tr -c 'A-Za-z0-9._-' '_')"
     src="$STUB_DIR/dependabot-prs.$slug.json"
     [[ -f "$src" ]] || src="$STUB_DIR/dependabot-prs.json"
     nodes='[]'
     [[ ! -f "$src" ]] || nodes="$(cat "$src")"
-    jq -rn --argjson nodes "$nodes" \
-      '{data: {repository: {vulnerabilityAlerts: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: $nodes}}}}' \
+    jq -rn --argjson nodes "$nodes" --argjson states "$states" \
+      '{data: {repository: {vulnerabilityAlerts: {pageInfo: {hasNextPage: false, endCursor: null},
+        nodes: [$nodes[] | select($states == null or (.state as $s | $states | index($s)))]}}}}' \
       | jq -r "${filter:-.}"
     exit ;;
   "pr list")
