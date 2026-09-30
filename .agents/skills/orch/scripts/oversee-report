@@ -340,7 +340,7 @@ if ! SHAPE_FAILURE="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
     gsub(/<https?:\/\/[^<>|[:space:]]+\|[^<>]+>/, "", text)
     if (text ~ /(^|[^[:alnum:]_])KEN-[0-9]+([^[:alnum:]_]|$)/ ||
         text ~ /(^|[^[:alnum:]_])#[0-9]+([^[:alnum:]_]|$)/) bare = 1
-    if ($0 ~ /https?:\/\/github\.com\/[^/[:space:]<>]+\/[^/[:space:]<>]+\/(pull|commit)\//) github = 1
+    if ($0 ~ /https?:\/\/github\.com\/[^\/[:space:]<>]+\/[^\/[:space:]<>]+\/(pull|commit)\//) github = 1
     label = $0
     gsub(/\*/, "", label)
     sub(/^[[:space:]]+/, "", label)
