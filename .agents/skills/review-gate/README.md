@@ -57,7 +57,7 @@ A repository leaves this default only by a recorded choice. It can assign other 
 
 The active default applies whatever `REVIEW_GATE_MODE` says, and the docs-only and render-only lanes below run only under an inactive policy.
 
-Every consumer of `scripts/review-policy` applies the same answer: the orch skill's reviewer wait and thread gates, and orch's micro admission and tier gate.
+`scripts/review-predicate.sh`, which the writer runs, is the one consumer of the `scripts/review-policy` answer. The orch skill reads its gate mode from GitHub's approval rule, not from this policy.
 
 - `REVIEW_GATE_CONTEXT` names the required commit status.
 - Select trusted reviewer logins and check names using [references/settings.md](references/settings.md).

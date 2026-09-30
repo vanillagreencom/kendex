@@ -182,7 +182,7 @@ Its JSON stdout is `[CHECK]`. Require a valid readiness object for an open pull 
 
 Its § 3 is skipped, so nothing waits on CI or on a reviewer before the arm. § 5 step 1 attempts the prepared head and owns the queue wait to a terminal verdict. A refusal returns to its § 3.2, which reads the `[CHECK]` object only the skipped § 3 produces. That return escapes (§ Escape condition 8).
 
-A `dequeued` verdict routes to that step's late-findings triage. A finding there that needs a change § Escape excludes ends this run at the escape instead. A wording, naming or index finding is answered by reply and starts no fix push: [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow).
+A `dequeued` verdict routes to that step's late-findings triage. A finding there that needs a change § Escape excludes ends this run at the escape instead. A wording, naming or index finding there or at § 5 step 1's pre-arm [thread read](../references/thread-read.md) is answered by reply, per [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow): a fix push at either moves the head and escapes (§ Escape condition 9).
 
 ## 5. Return
 
