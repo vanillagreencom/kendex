@@ -4,7 +4,7 @@
 
 ### 2.0.2
 
-- The skill list is no longer loaded when a session starts, with or without a UI. `/skill` loads it when it opens and releases it when it closes. The list no longer keeps skill bodies in memory: it reads each skill's file for its metadata only, and the manager reads a skill's body from its file when it shows that skill. A skill whose file cannot be read shows the read error in its preview and does not open in the editor, where before the editor opened on the body cached at load.
+- The skill list is no longer loaded when a session starts, with or without a UI. `/skill` loads it when it opens and releases it when it closes. The list no longer keeps skill bodies in memory: it reads each skill's file for its metadata only, and the manager reads a skill's body from its file when it shows that skill. A listed skill whose file can no longer be read shows the read error in its preview and does not open in the editor, where before the editor opened on the body cached at load.
 - Settings reads come from memory. A read is answered for one second without touching disk, then the settings files are read again. A change made in the extension manager, or a new session, applies at once; a hand edit to `settings.json` applies within one second. Before, every read went to disk.
 
 ### 2.0.1
