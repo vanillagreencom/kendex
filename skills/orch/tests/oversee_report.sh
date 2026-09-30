@@ -300,6 +300,8 @@ Validation:
 - KEN-2: no validation run recorded
 - KEN-3: 60 min over 2 runs: implement full 55, fix range 5
 
+Use 1: none
+
 Next:
 | issue | what it is | why it matters |
 | --- | --- | --- |
@@ -378,6 +380,8 @@ Running: none
 
 Validation: none
 
+Use 1: none
+
 Next: none
 
 Waiting on you: none" "a fleet with nothing new renders each row as none and exits 0"
@@ -419,6 +423,32 @@ for row in "${ESCAPE_ROWS[@]}"; do
   assert_eq "$RC|$(awk '/^Escapes:/ { print prev " / " $0 } { prev = $1; sub(/:$/, "", prev) }' <<<"$OUT")" "0|Landed / ${row#*|}" \
     "under Landed, the Escapes line counts this week, last week and the cap's week at $clock"
 done
+
+echo "=== render: Use 1 counts the use1 rows since the last report by outcome ==="
+# A use1 row from before the last report and a ruling row count for nothing;
+# an outcome outside the three is counted as unrecognized, never dropped.
+seed_use1() {
+  new_case "$1"
+  report -3600
+  fleet "+ {fleet_log: [
+    {at: \"$(at -7200)\", kind: \"use1\", item: \"KEN-1\", outcome: \"fallback\", text: \"PR #1 head a\"},
+    {at: \"$(at -600)\", kind: \"use1\", item: \"KEN-2\", outcome: \"approved-on-rerequest\", text: \"PR #2 head b\"},
+    {at: \"$(at -500)\", kind: \"use1\", item: \"KEN-3\", outcome: \"approved-on-rerequest\", text: \"PR #3 head c\"},
+    {at: \"$(at -400)\", kind: \"use1\", item: \"KEN-4\", outcome: \"declined-unchanged\", text: \"PR #4 head d\"},
+    {at: \"$(at -300)\", kind: \"use1\", item: \"KEN-5\", outcome: \"fallbak\", text: \"PR #5 head e\"},
+    {at: \"$(at -200)\", kind: \"ruling\", item: \"KEN-6\", text: \"fallback\"}]}" "$(lane KEN-1 done)"
+  echo '[]' > "$CASE/merged.json"
+}
+USE1_WANT="Use 1: approved-on-rerequest=2 fallback=0 declined-unchanged=1 unrecognized=1"
+seed_use1 render_use1
+run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(awk '/^Use 1/' <<<"$OUT")" "0|$USE1_WANT" \
+  "Use 1 counts each outcome since the last report, an unknown outcome as unrecognized"
+jq '.fleet_log += [{at: "yesterday", kind: "use1", item: "KEN-7", outcome: "fallback", text: "PR #7 head f"}]' \
+  "$CASE/state.json" > "$CASE/state.next" && mv -- "$CASE/state.next" "$CASE/state.json"
+run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)" "2|oversee-report: state=$CASE/state.json" \
+  "a use1 row whose stamp is not ISO 8601 refuses rather than count or drop it"
 
 echo "=== render: ORCH_REPORT_UPCOMING caps Next ==="
 # A queue of six, so the default cap of 5 is what stops it.
@@ -740,8 +770,8 @@ NAME="$("$REAL_DATE" -u -d "@$NOW" +%m-%d-%H-%M 2>/dev/null || "$REAL_DATE" -u -
 FILE="$CASE/progress-reports/$NAME"
 assert_eq "$RC|$(first_err)" "0|oversee-report: report-written=$FILE" "a succession write names its file MM-DD-HH-MM-succession.md"
 assert_eq "printed=$([[ -n "$OUT" ]] && echo yes)|$OUT" "printed=yes|$(cat "$FILE" 2>/dev/null)" "what write prints is the file's content, byte for byte"
-assert_eq "$(grep -c -E '^(Landed|Running|Validation|Next|Waiting on you):' <<<"$OUT")|$(awk 'NR == 1' <<<"$OUT")|$(grep -c -F 'Two items landed' <<<"$OUT")" \
-  "5|Landed:|0" "the report is the five rows alone: the summary is in neither the file nor the print"
+assert_eq "$(grep -c -E '^(Landed|Running|Validation|Use 1|Next|Waiting on you):' <<<"$OUT")|$(awk 'NR == 1' <<<"$OUT")|$(grep -c -F 'Two items landed' <<<"$OUT")" \
+  "6|Landed:|0" "the report is the six rows alone: the summary is in neither the file nor the print"
 assert_eq "$(awk '{ $NF = "TEXT"; print }' "$CASE/mail.calls")" "notice --item overseer --to owner --attach $FILE --file TEXT" \
   "write sends the owner one report notice carrying the file"
 run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt" --succession
@@ -1006,7 +1036,7 @@ REPORT_UNDER_TEST="$BUSY_MUTANT" run -- render --state "$CASE/state.json" --repo
 assert_eq "$RC|$(first_err)" "2|oversee-report: mail-read=KEN-2" "control: without it a refused mailbox read is mail-read"
 
 # write's report body: with the summary written back above the rows, the
-# summary shows in the print and the file, so the five-rows-alone row reddens.
+# summary shows in the print and the file, so the six-rows-alone row reddens.
 SUMMARY_MUTANT="$(mutant_scripts summary/orch oversee-report)/oversee-report" || exit 1
 ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/summary/github"
 IFS= read -r body_line <<'EOF' || true
@@ -1034,6 +1064,16 @@ fleet '' "$(lane KEN-1 done)"
 escapes_world "$CASE"
 REPORT_UNDER_TEST="$ESCAPES_MUTANT" run GH_REPO=owner/repo -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(awk '/^Escapes:/' <<<"$OUT")" "0|" "control: a renderer with no Escapes line prints none, which the Escapes row fails"
+
+# The Use 1 window: without it the fallback row from before the last report
+# is counted too.
+USE1_MUTANT="$(mutant_scripts use1/orch oversee-report)/oversee-report" || exit 1
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/use1/github"
+mutate_file "$USE1_MUTANT" '$t >= $since and $t < $until' 'true'
+seed_use1 render_use1_mutant
+REPORT_UNDER_TEST="$USE1_MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(awk '/^Use 1/' <<<"$OUT")" "0|${USE1_WANT/fallback=0/fallback=1}" \
+  "control: without the window a use1 row from before the last report is counted"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

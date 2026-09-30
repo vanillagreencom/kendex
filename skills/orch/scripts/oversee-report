@@ -86,7 +86,7 @@ Usage: oversee-report due    --state PATH --repo OWNER/REPO [--repo ...]
 
 The overseer's status report, in the rows
 references/communication-modes.md § Status report gives: Landed, Escapes,
-Running, Validation, Next, Waiting on you.
+Running, Validation, Use 1, Next, Waiting on you.
 
 --state is the oversee workflow-state file the watch reads. The report is
 the owner progress report record schemas/workflow-state.md § Recording policy
@@ -158,6 +158,13 @@ Rows:
                   the validate_rounds its own workflow state holds
                   (schemas/workflow-state.md), each rounded to the nearest
                   minute; `no validation run recorded` where it holds none.
+  Use 1           the fleet log's use1 rows stamped since the last report,
+                  counted by outcome: `Use 1: approved-on-rerequest=N
+                  fallback=N declined-unchanged=N`, then `unrecognized=N`
+                  where a row carries any other outcome.
+                  references/oversee-events.md § Event kinds `lane-notice`
+                  writes them. A row whose `at` is not ISO 8601 UTC
+                  refuses as state.
   Next            the first ORCH_REPORT_UPCOMING keys of launch_queue that
                   have no lanes[] record, whatever its status: a record is
                   written at launch, so a key with one has launched.
@@ -730,6 +737,21 @@ render() {
     printf 'Validation:\n%s\n' "$VALIDATION"
   fi
   echo
+
+  # The overseer's use1 fleet log rows stamped since the last report, counted
+  # by outcome. An outcome outside the three is counted as unrecognized rather
+  # than dropped, and a row whose stamp does not read refuses the report.
+  if ! list="$(jq -r --argjson since "${MARKER:-0}" --argjson until "$NOW" '
+    [(.fleet_log // [])[] | select(.kind == "use1")
+      | select((.at | fromdateiso8601) as $t | $t >= $since and $t < $until) | .outcome] as $rows
+    | ["approved-on-rerequest", "fallback", "declined-unchanged"] as $known
+    | if ($rows | length) == 0 then "Use 1: none"
+      else "Use 1: " + ([$known[] as $k | "\($k)=\([$rows[] | select(. == $k)] | length)"] | join(" "))
+        + ([$rows[] | select(IN($known[]) | not)] | length | if . > 0 then " unrecognized=\(.)" else "" end)
+      end' <<<"$STATE_JSON" 2>"$WORK_DIR/jq.err")"; then
+    refuse state "$STATE" "$(cat "$WORK_DIR/jq.err")"
+  fi
+  printf '%s\n\n' "$list"
 
   # A queued item with any lanes[] record has launched, and a done one stays
   # in the queue until the next selection rewrites it: neither is upcoming.

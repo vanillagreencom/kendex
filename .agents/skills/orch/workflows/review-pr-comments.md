@@ -385,7 +385,37 @@ Use inline `--body` only for plain strings; Markdown with backticks or fences go
 
 Auto-resolve every thread where a reply was posted; keep open only threads awaiting a human response.
 
-### 7.2 Present And Await
+### 7.2 Copilot Head Route
+
+**Skip if** no thread this triage answered is Copilot's; After the wait below runs from merge-pr.md § 3.2 alone. Copilot submits an approval only at its green tier, and it re-reads a head only on a review request. A head its review left at the yellow tier therefore stays unapproved after the answers until one of the two routes below runs. Bind the head and its decision:
+
+```bash
+env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid,reviewDecision --jq '[.headRefOid,.reviewDecision]|@tsv'
+```
+
+`APPROVED` ends this step. Otherwise every Copilot thread is answered and resolved by now, and the route is whether this triage pushed a fix for one of them:
+
+- **No fix, head unchanged.** In a lane, write one notice with the harness file-write tool to `[WORKTREE_PATH]/tmp/copilot-declines-[ISSUE_ID].md`. Its first line is `copilot-declined-unchanged PR #[PR_NUMBER] head [HEAD_SHA]`. Under it, one line per Copilot thread gives its location and the reply that answered it, the decline reason included. Send it with `.agents/skills/orch/scripts/lane-mail notice --item [ISSUE_ID] --file [WORKTREE_PATH]/tmp/copilot-declines-[ISSUE_ID].md` and request no Copilot re-review. The overseer approves the head under [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds) `lane-notice`. Outside a lane no overseer reads a notice, and merge-pr.md § 3.2's wait decides the head.
+- **Fix pushed.** Unless the head already equals `pr_approval.copilot_rerequest_head`, request one Copilot re-review of it, then record that head:
+
+  ```bash
+  env -u GH_REPO -u GITHUB_REPOSITORY gh pr edit [PR_NUMBER] --add-reviewer @copilot
+  ```
+
+  ```bash
+  .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.pr_approval.copilot_rerequest_head = "[HEAD_SHA]"'
+  ```
+
+  One request per head, never a loop. [merge-pr.md § 3.2](merge-pr.md#32-act-on-the-result)'s approval wait waits for the re-review, and only its end without an approval sends the lane to the overseer for a fallback approval.
+
+**After the wait.** merge-pr.md § 3.2 comes back here when that wait on the recorded head answers. In a lane, send the overseer one notice, written with the harness file-write tool to `tmp/copilot-rerequest-[ISSUE_ID].md` under the checkout the wait runs in, and sent with `.agents/skills/orch/scripts/lane-mail notice --item [ISSUE_ID] --file` that absolute path. Its first line names the answer:
+
+- `approved` → `copilot-approved-on-rerequest PR #[PR_NUMBER] head [HEAD_SHA]`.
+- `timeout`: the re-review commented again with no new thread, read the blue tier with no finding, or never came → `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA]`, which asks for the overseer's fallback approval. merge-pr.md § 3.2 then runs its wait once more, and a second `timeout` takes that wait's own `approval` rule. Nothing requests a second Copilot re-review of this head.
+
+A `comments` answer is the re-review's new finding: merge-pr.md § 3.3 triages it, and this section routes the head again.
+
+### 7.3 Present And Await
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
 
