@@ -1,7 +1,7 @@
 """Exercise the real dispatcher with the reusable external provider stub.
 
-The dispatcher is one surface, and its one must-fail control closes the
-protocol case: a copy that forwards exec in place of stop.
+The dispatcher's must-fail controls forward exec in place of stop and read
+an unavailable provider as an absent verb.
 """
 import os
 from pathlib import Path
@@ -128,10 +128,29 @@ class LaneHostTests(unittest.TestCase):
         closed = self.run_host("close", "--item", "TEST-1", **env)
         self.assertEqual((closed.returncode, closed.stdout), (0, b"kept=/fleet/archive/repo/TEST-1/tmp-stub.tgz\n"))
         self.assertTrue((self.root / "calls").read_text().endswith("delete --item TEST-1\n"))
-    def test_missing_provider_and_inert_help(self):
-        result = self.run_host("create", ORCH_LANE_HOST="/absent/provider")
-        self.assertEqual(result.returncode, 2)
-        self.assertIn(b"host-unavailable path=/absent/provider", result.stderr)
+    def test_unavailable_provider(self):
+        # ORCH_LANE_HOST can name a removed file, a file without execute
+        # permission, or a directory. None is a provider lacking a status verb.
+        nonexec = self.root / "non-executable"
+        nonexec.write_text("#!/usr/bin/env bash\nexit 0\n")
+        nonexec.chmod(0o600)
+        missing = self.root / "missing"
+        for provider in (missing, nonexec, self.root):
+            for verb in ("create", "status"):
+                with self.subTest(provider=provider, verb=verb):
+                    result = self.run_host(verb, "--item", "TEST-1", ORCH_LANE_HOST=str(provider))
+                    note = f"lane-host: host-unavailable path={provider}\n".encode()
+                    self.assertEqual((result.returncode, result.stdout, result.stderr), (1, b"", note))
+        original = self.script.read_text()
+        rule = "  printf 'lane-host: host-unavailable path=%s\\n' \"$host\" >&2\n  exit 1\n"
+        self.assertEqual(original.count(rule), 1)
+        mutant = original.replace(rule, rule.replace("exit 1", "exit 2"))
+        self.assertNotEqual(mutant, original)
+        self.script.write_text(mutant)
+        result = self.run_host("status", "--item", "TEST-1", ORCH_LANE_HOST=str(missing))
+        with self.assertRaises(AssertionError):
+            self.assertEqual(result.returncode, 1)
+    def test_inert_help(self):
         (self.root / ".env.local").write_text("exit 91\n")
         self.assertEqual(self.run_host("--help").returncode, 0)
     def test_dispatch_protocol(self):
