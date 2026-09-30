@@ -73,7 +73,6 @@ bare_guard_world() { # COMMAND FAMILY POSITION MODE
     direct) ;;
     inner) name=INNER; assignment='INNER="$(cd "$1" && git rev-parse HEAD 2>/dev/null)"' ;;
     suffix) suffix=/.fleet ;;
-
     *) printf 'bare_guard_world: no such mode: %s\n' "$mode" >&2; return 1 ;;
   esac
   operand='"${'"$name"':-}"'"$suffix"
@@ -97,12 +96,10 @@ bare_guard_world() { # COMMAND FAMILY POSITION MODE
       printf '# shellcheck disable=SC2157\n'
     fi
     printf '%s\n' "$guard"
-
     printf '  exit 1\n'
     printf 'fi\n'
     printf 'echo "$%s"\n' "$name"
   } >"$R/scripts/bare.sh"
-
 }
 
 # The jq continuation is emitted by oversee-watch::check_lanes.
@@ -143,7 +140,10 @@ multisubst_world() { # SHAPE HANDLER
     literal)
       assignment='ROOT="$(printf '\''%s'\'' '\''literal \
 '\'')"' ;;
-
+    arrayprefix)
+      # oversee-watch::repeat_watch emits the continued array prefix.
+      prefix=$'args=(--interval "$INTERVAL" --max-loops "$MAX_LOOPS" \\\n  --handoff "$HANDOFF" --state "$STATE_FILE")\n'
+      assignment='ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"' ;;
     mktemp)
       preamble='set -uo pipefail'; path="$R/scripts/loose.sh"
       assignment='ROOT="$(mktemp -d
@@ -154,7 +154,6 @@ multisubst_world() { # SHAPE HANDLER
         comment) ;;
         closeif) prefix=$'if true; then\n'; suffix='; fi' ;;
         closewhile) prefix=$'while true; do\n'; suffix='; done' ;;
-
         closecase) prefix=$'case x in x)\n'; suffix=';; esac' ;;
         closebrace) prefix=$'{\n'; suffix='; }' ;;
       esac
@@ -316,7 +315,8 @@ a quoted hash does not turn a continuation into a comment|multisubst hash or|-|-
 a comment slash inside a substitution preserves its closing line|multisubst commented bare|-|-|1|scripts/multisubst.sh:4: [fail-open]|bare command-substitution assignment under errexit
 a comment slash inside a substitution preserves its handler|multisubst commented or|-|-|0|-|preflight: clean=1
 a slash in a single-quoted literal preserves its newline|multisubst literal or|-|-|0|-|preflight: clean=1
-
+an array prefix preserves the following bare assignment finding|multisubst arrayprefix bare|-|-|1|scripts/multisubst.sh:6: [fail-open]|bare command-substitution assignment under errexit
+an array prefix preserves the following checked assignment|multisubst arrayprefix or|-|-|0|-|preflight: clean=1
 an if continued onto the assignment stays checked|multisubst condition if|-|-|0|-|preflight: clean=1
 a while continued onto the assignment stays checked|multisubst condition while|-|-|0|-|preflight: clean=1
 an until continued onto the assignment stays checked|multisubst condition until|-|-|0|-|preflight: clean=1

@@ -753,12 +753,12 @@ substitution_status_checked() { # STATEMENT
 substitution_parse_result() { # SOURCE -> boundary | open:DELIMITER
   local diagnostic='' rc=0
   diagnostic="$(LC_ALL=C bash -n <<<"$1" 2>&1)" || rc=$?
-  case "$rc" in 0|2) ;; *) return 1 ;; esac
   diagnostic="${diagnostic%%$'\n'*}"
-  case "$diagnostic" in
-    *'unexpected EOF while looking for matching '*)
+  case "$rc:$diagnostic" in
+    [12]:*'unexpected EOF while looking for matching '*)
       printf 'open:%s\n' "${diagnostic#*unexpected EOF while looking for matching }" ;;
-    *) printf 'boundary\n' ;;
+    0:*|2:*) printf 'boundary\n' ;;
+    *) return 1 ;;
   esac
 }
 # Keep the original prefix for Bash's compound-command context. A closing fi,
