@@ -106,7 +106,10 @@ for (const row of [
 	{ name: "Off maps to the model's Off effort", map: { off: "low" }, reasoning: "off" },
 	{ name: "Off with no Off entry sends none", map: undefined, reasoning: "off" },
 	{ name: "no thinking level sends the Off effort", map: { off: "none" }, reasoning: undefined },
-	{ name: "Off unsupported clamps upward", map: { off: null, minimal: "low" }, reasoning: "off" },
+	{ name: "Off level on a null Off entry clamps to minimal", map: { off: null, minimal: "low" }, reasoning: "off" },
+	// pi-ai's openai-codex gpt-6-astra maps Off to null; Pi's agent and
+	// compaction call it with no thinking level.
+	{ name: "no thinking level with a null Off entry sends no field", map: { off: null, minimal: "low" }, reasoning: undefined },
 	{ name: "high keeps its summary", map: { off: "none" }, reasoning: "high" },
 ]) {
 	test(`request reasoning effort matches Pi: ${row.name}`, async () => {
