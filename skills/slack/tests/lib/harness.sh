@@ -214,6 +214,35 @@ PY
 }
 sk_bin_reset() { SK_BIN="$SK_SLACK"; }
 
+# sk_master_read ROOT COUNT — the file the master's watch writes after drain.
+sk_master_read() { printf '%s\n' "$2" > "$(sk_box "$1")/to-overseer.seen"; }
+
+# sk_age_resume ROOT AT — the last resume moved to an age boundary.
+sk_age_resume() {
+  python3 - "$(sk_journal "$1")" "$2" <<'PY'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+lines = [json.loads(raw) for raw in path.read_text().splitlines()]
+resume = next(line for line in reversed(lines) if line["t"] == "resume")
+resume["at"] = sys.argv[2]
+path.write_text("".join(json.dumps(line) + "\n" for line in lines))
+PY
+}
+
+# sk_unposted ROOT MASTER — notices written while the relay is down, with a
+# standing start seed, then the first poll under fresh master presence.
+sk_unposted() {
+  local name
+  name="$(basename "$1")"
+  sk_bind "$1"
+  printf '{"t":"start","at":"","ids":[]}\n' > "$(sk_journal "$1")"
+  for n in 1 2 3; do
+    sk_lm "$1" notice --item overseer --to owner --file "$(sk_text "$name-$n" "Backlog in $name.")" >/dev/null
+    sk_age_envelope "$1" "$(tail -n 1 "$(sk_box "$1")/to-overseer.jsonl" | jq -r .id)" 1200
+  done
+  sk_poll "$1" "SLACK_MASTER_FILE=$2"
+}
+
 # sk_fake_systemctl — a systemctl of its own that appends its arguments to
 # SK_TMP/systemctl.log, answers is-active with FAKE_SYSTEMCTL_ACTIVE (default
 # active) and exits FAKE_SYSTEMCTL_EXIT (default 0); prints the directory to

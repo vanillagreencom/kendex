@@ -47,11 +47,12 @@ SLACK_THREAD_DAYS, since they still want an answer.
 While SLACK_MASTER_FILE is younger than SLACK_MASTER_MAX_AGE a master session
 answers the overseer, and the relay posts no envelope from the mailbox;
 reading the channel and replying there go on. When the file goes stale or
-absent the relay resumes: a notice written after the file's mtime the hold's
-first poll read and before the hold ended never posts, any other does, open
-asks post, and a held answer still posts so the thread of an ask the channel
-shows open is closed. Neither end comes from what the relay posted, so a gap
-in its polls can post a notice the master saw, never drop one it did not.
+absent the relay resumes. The master's watch writes its last mailbox read
+count as one bare integer in tmp/lane-mail/overseer/to-overseer.seen. A resume
+skips notices on lines at or below that count and journals their ids; later
+notices post. A missing or unreadable seen file skips nothing. The count is
+clamped to the lines listed. Open asks post whatever their line, and a held
+answer still posts so the thread of an ask the channel shows open is closed.
 """
 
 from __future__ import annotations
@@ -78,7 +79,7 @@ from store import (
     RelayLock,
     State,
     Thread,
-    Window,
+
     compact,
     format_at,
     parse_at,
@@ -156,11 +157,6 @@ def before(floor_at: str, floor_ids: Set[str], at: float, env_id: str) -> bool:
     return at < floor or at == floor and env_id in floor_ids
 
 
-def within(window: Window, at: float) -> bool:
-    """Whether an envelope stamped `at` was written during a closed hold: in a
-    later second than its start and an earlier one than its end."""
-    return at_epoch(window.from_at) < at < at_epoch(window.at)
-
 
 def local_time(at: str) -> str:
     """An `at`-shaped stamp as Slack's date token, which each reader's Slack
@@ -195,10 +191,7 @@ class RootRelay:
         # journal holds deliveries and positions alone.
         record = read_status(path) or {}
         self.compacted_day: str = str(record.get("compacted_day", ""))
-        # The clock at the last poll that found SLACK_MASTER_FILE fresh, the
-        # end of a hold whose file is gone; None when unknown.
-        seen = record.get("master_seen")
-        self.master_seen: Optional[float] = None if seen is None else float(seen)
+
 
     @property
     def channel(self) -> str:
@@ -244,13 +237,12 @@ class RootRelay:
         now = self.clock()
         touched = self.master_touched()
         if touched is not None and now - touched < self.settings.master_max_age:
-            self.master_seen = now
             if not self.state.held:
                 self.journal.append(t="hold", at=format_at(touched))
         else:
             events = self.mail.events()
             if self.state.held:
-                self.resume(events, touched)
+                self.resume(events)
             else:
                 self.post_events(events)
         if self.post_failed is not None:
@@ -456,37 +448,46 @@ class RootRelay:
         except OSError as err:
             raise Refusal("master-file-unreadable", f"{path} ({err.strerror})") from err
 
-    def resume(self, events: List[Dict], touched: Optional[float]) -> None:
-        """The end of a hold: the mailbox posted with the window no notice
-        posts from, past the hold's start up to when the hold ended, then
-        that window journaled with `asks`, the open asks whose post landed.
-        A stale file ended it SLACK_MASTER_MAX_AGE after its last touch, an
-        absent one at the last poll that found it fresh."""
-        if touched is not None:
-            at = format_at(touched + self.settings.master_max_age)
-        elif self.master_seen is not None:
-            at = format_at(self.master_seen)
-        else:
-            # A crash between the `hold` line and status.json loses
-            # master_seen: the hold's own start, an empty window, drops none.
-            at = self.state.hold_at
-        window = Window(self.state.hold_at, at)
-        asks: List[str] = []
-        # A dead token raises past the posts: the window and the asks that
-        # landed before it are journaled all the same.
+    def master_read(self, events: List[Dict]) -> Optional[int]:
+        """The master's seen line count, clamped to this mailbox snapshot;
+        None when absent, unreadable or not a bare nonnegative integer."""
+        path = self.path / "tmp/lane-mail/overseer/to-overseer.seen"
         try:
-            self.post_events(events, window, asks)
-        finally:
-            self.journal.append(t="resume", from_at=window.from_at, at=window.at, asks=asks)
+            text = path.read_text().strip()
+            if not text.isascii() or not text.isdecimal():
+                return None
+            count = int(text)
+        except (OSError, UnicodeError, ValueError):
+            return None
+        lines = max((e["count"] for e in events if e["box"] == "to-overseer"), default=0)
+        return min(count, lines)
 
-    def routes(self, events: List[Dict], closing: Optional[Window] = None) -> List[Tuple[Dict, str]]:
+    def resume(self, events: List[Dict]) -> None:
+        """End a hold, post unread notices and open asks, then journal the
+        seen count, skipped notice ids and asks whose posts landed."""
+        seen = self.master_read(events)
+        asks: List[str] = []
+        skipped: List[str] = []
+        # Stamp the resume now, not when presence expired: skipped notices
+        # can be newer, and must stay carried until their age bars a post.
+        at = format_at(self.clock())
+        # A dead token raises past the posts; completed work is still recorded.
+        try:
+            self.post_events(events, seen or 0, asks, skipped)
+        finally:
+            self.journal.append(
+                t="resume", from_at=self.state.hold_at, at=at,
+                seen=seen if seen is not None else "none", skipped=skipped, asks=asks
+            )
+
+    def routes(self, events: List[Dict], seen: int = 0) -> List[Tuple[Dict, str]]:
         """Each envelope not yet carried and what it takes: `ask`, `notice`,
-        `answer`, or `skip` for one that never posts. `closing` is the hold
-        a resume ends, not yet journaled."""
+        `answer`, `seen` for a notice the master read on resume, or `skip`
+        for another that never posts."""
         answered = {e.get("re") for e in events if e.get("kind") == "answer"}
         horizon = self.settings.horizon(self.clock())
         state = self.state
-        holds = state.holds + ([closing] if closing is not None else [])
+
         routed = []
         for envelope in events:
             env_id = str(envelope["id"])
@@ -498,14 +499,16 @@ class RootRelay:
             owner = box == "to-overseer" and envelope.get("to") == "owner"
             # `store.compact` drops an `out` line by this same age, so an
             # envelope whose line it may drop must never post again.
-            if at < horizon:
+            if owner and kind == "notice" and envelope["line"] <= seen:
+                route = "seen"
+            elif at < horizon:
                 route = "skip"
             elif owner and kind == "ask":
                 route = "skip" if env_id in answered else "ask"
             elif before(state.start_at, state.start_ids, at, env_id):
                 route = "skip"
             elif owner and kind == "notice":
-                route = "skip" if any(within(w, at) for w in holds) else "notice"
+                route = "notice"
             elif box == "to-lane" and kind == "answer":
                 route = "answer"
             else:
@@ -513,10 +516,13 @@ class RootRelay:
             routed.append((envelope, route))
         return routed
 
-    def post_events(self, events: List[Dict], closing: Optional[Window] = None, landed: Optional[List[str]] = None) -> None:
+    def post_events(
+        self, events: List[Dict], seen: int = 0, landed: Optional[List[str]] = None, skipped: Optional[List[str]] = None
+    ) -> None:
         """Posts what `routes` gives each envelope; `landed`, when given,
-        collects the ids of the asks whose post landed."""
-        for envelope, route in self.routes(events, closing):
+        collects the ids of the asks whose post landed, and `skipped` the
+        notice ids the master read."""
+        for envelope, route in self.routes(events, seen):
             if route == "ask":
                 if self.post_ask(envelope) and landed is not None:
                     landed.append(str(envelope["id"]))
@@ -524,8 +530,10 @@ class RootRelay:
                 self.post_notice(envelope)
             elif route == "answer":
                 self.post_answer(envelope)
-            elif route == "skip":
+            elif route in ("skip", "seen"):
                 self.skipped.add(str(envelope["id"]))
+                if route == "seen" and skipped is not None:
+                    skipped.append(str(envelope["id"]))
             else:
                 raise AssertionError(f"route={route}")
 
@@ -655,7 +663,7 @@ class RootRelay:
                 "connection_since": since,
                 "connection_error": connection_error,
                 "held_by": MASTER if self.state.held else "",
-                "master_seen": self.master_seen,
+
             },
         )
 

@@ -105,6 +105,20 @@ assert_eq "$RC=${ERR1%% pid=*}" "2=slack: relay-running=$BETA" "compact beside a
 assert_eq "$(cat "$(sk_journal "$BETA")")" "$HELD" "the refused compact leaves the relay's journal as it was"
 sk_relay_stop
 
+# A resume keeps its skipped ids as one line, by its own `at`, not the
+# hold's start or the master's count. Compaction drops the aged line whole.
+RESUMES="$(sk_new_root resumes)"
+sk_bind "$RESUMES"
+cat > "$(sk_journal "$RESUMES")" <<EOF
+{"at": "", "ids": [], "t": "start"}
+{"t": "resume", "from_at": "$OLD_AT", "at": "$OLD_AT", "seen": 3, "skipped": ["OLD-SKIP"], "asks": []}
+{"t": "resume", "from_at": "$OLD_AT", "at": "$OLD_AT", "asks": []}
+{"t": "resume", "from_at": "$OLD_AT", "at": "$YOUNG_AT", "seen": 4, "skipped": ["YOUNG-SKIP"], "asks": []}
+EOF
+sk_run -- compact --root "$RESUMES"
+assert_eq "$RC=$(jq -cr 'select(.t == "resume") | .skipped' "$(sk_journal "$RESUMES")")" '0=["YOUNG-SKIP"]' \
+  "compaction keeps skipped ids with the young resume and drops them with the aged resume"
+
 # --- controls, one per rule -------------------------------------------------------
 sk_mutant keep store.py 'if drop:\n            dropped \+= 1' 'if False:\n            dropped += 1'
 cat >> "$JOURNAL" <<EOF

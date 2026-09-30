@@ -273,12 +273,18 @@ owner_ask 'Cut the scanner?' cut,keep cut 0
 lm resolve --item overseer --id "$ASK" --default
 lm send --item overseer --directive --file "$(text d 'Owner wrote.')"
 lm events --item overseer
-assert_eq "$RC=$(jq -r '[.box, .kind] | join(":")' <<<"$OUT" | paste -sd, -)" \
-  "0=to-overseer:ask,to-lane:answer,to-lane:directive" \
+assert_eq "$RC=$(jq -r '[.box, (.line | tostring), .kind] | join(":")' <<<"$OUT" | paste -sd, -)" \
+  "0=to-overseer:1:ask,to-lane:1:answer,to-lane:2:directive" \
   "events prints both files, the resolved ask and its answer included, each naming its box"
 lm events --item overseer
 assert_eq "$(jq -r '.kind' <<<"$OUT" | paste -sd, -)=$([[ -e "$BOX/to-lane.cursor" ]] && echo cursor || echo no-cursor)" \
   "ask,answer,directive=no-cursor" "events consumes nothing: a second read prints the same and moves no cursor"
+printf 'interrupted\n\n' >> "$BOX/to-overseer.jsonl"
+lm notice --item overseer --to owner --file "$(text after-gap 'After the interrupted lines.')"
+printf 'interrupted\n' >> "$BOX/to-overseer.jsonl"
+lm events --item overseer
+assert_eq "$RC=$(jq -r 'select(.box == "to-overseer") | "\(.line)/\(.count)"' <<<"$OUT" | paste -sd, -)" "0=1/5,4/5" \
+  "events keeps physical offsets and counts across filtered lines left by an interrupted writer"
 
 # --- controls, one per rule ---------------------------------------------------
 # mutant NAME OLD NEW — a private lane-mail with OLD, which occurs once,
@@ -334,9 +340,15 @@ assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '[has("wait"), has("deadline")] 
 
 new_repo control_box
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 'Owner wrote.')"
-mutant boxless ' + {box: "to-lane"}' ''
+mutant boxless 'box: $box, line: $line' 'line: $line'
 lm events --item overseer
 assert_eq "$RC=$(jq -r '.box // "none"' <<<"$OUT")" "0=none" "control: without the box field a to-lane envelope names no file"
+
+new_repo control_lines
+LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 'Owner wrote.')"
+mutant lineless 'line: $line' 'line: 0'
+lm events --item overseer
+assert_eq "$RC=$(jq -r '.line' <<<"$OUT")" "0=0" "control: without physical numbering an envelope has no usable cursor position"
 
 new_repo control_recommend
 mutant recommend-optional 'if [ "$VERB:$ITEM" = ask:overseer ]; then' 'if [ -n "$RECOMMEND" ]; then'

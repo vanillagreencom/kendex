@@ -105,6 +105,10 @@ A workstation runs the relay by hand:
 
 The relay prints `slack: listening=1 poll_seconds=15`, then `slack: connected=<UTC second>`, and runs until stopped. `--once` opens no connection: it reads each root's channel and mailbox once and exits, which is the form a test uses. The doctor reads `listen --status`. A second relay on the same checkout is refused `relay-running`.
 
+## The master hold
+
+On resume, the relay reads `<root>/tmp/lane-mail/overseer/to-overseer.seen`. The master's watch writes its drain count there as one bare integer. Notices at or below it stay off Slack. Open asks, held answers and later notices post. Missing or unreadable files skip nothing. Counts past the mailbox clamp.
+
 ## Steering contract
 
 What an owner's message in the channel does:

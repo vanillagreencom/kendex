@@ -142,14 +142,6 @@ class Thread:
     open: bool = False
 
 
-@dataclass
-class Window:
-    """One closed master hold: from the second of SLACK_MASTER_FILE's mtime
-    its first poll read, to the second the hold ended."""
-
-    from_at: str
-    at: str
-
 
 @dataclass
 class State:
@@ -163,7 +155,7 @@ class State:
     start_ids: Set[str] = field(default_factory=set)
     held: bool = False
     hold_at: str = ""
-    holds: List[Window] = field(default_factory=list)
+
     carried: Set[str] = field(default_factory=set)
     delivered: Dict[str, str] = field(default_factory=dict)
     threads: Dict[str, Thread] = field(default_factory=dict)
@@ -187,8 +179,9 @@ class State:
             self.held = True
             self.hold_at = str(line["at"])
         elif kind == "resume":
+            parse_at(str(line["at"]))
             self.held = False
-            self.holds.append(Window(str(line["from_at"]), str(line["at"])))
+            self.carried.update(str(env_id) for env_id in line.get("skipped", []))
         elif kind == "in":
             ts = str(line["ts"])
             if line["kind"] == "ignored":
@@ -288,8 +281,9 @@ def compact(root: Path, cutoff_ts: float) -> int:
     with no mark, which the relay marks SEEN on its next poll, and one
     marked SEEN, which it swaps for READ once the overseer reads it.
     Returns the lines dropped. An `out` line and a `resume` line are judged
-    by the `at` they journal, the age `post_events` never posts past, so
-    what they name can never post again."""
+    by the `at` they journal. A resume's skipped ids stay carried while its
+    line stays; its stamp is at least as recent as the notices it skips,
+    so those notices cannot post once the line leaves."""
     path = root_dir(root) / JOURNAL
     state = read_journal(root)
     if not path.is_file():

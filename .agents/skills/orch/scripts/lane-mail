@@ -125,6 +125,8 @@ Overseer side:
   events --item ITEM
               print every envelope of both files, to-overseer.jsonl then
               to-lane.jsonl, each with `box` naming the file it came from,
+              `line` its physical line number and `count` that file's complete
+              line count, including lines filtered as invalid JSON,
               answered asks and their answers included. Moves no cursor and
               marks nothing: a relay keeps its own record of what it carried,
               keyed by envelope id, so --after is refused `events-no-cursor`
@@ -882,10 +884,16 @@ lm_header() { # FILE
 }
 
 # The parsing JSON objects among FILE's lines. A terminated line that does not
-# parse is dropped here and counted above, so a cursor stays aligned with the
-# file whatever a line holds.
-lm_objects() { # FILE
-  jq -c -R '(fromjson? // empty) | select(type == "object")' <"$1"
+# parse is dropped here and counted above. Events name BOX to carry physical
+# line numbers before that filtering, aligned with the master's seen count.
+lm_objects() { # FILE [BOX]
+  local count=0
+  if [ -n "${2:-}" ]; then
+    count="$(lm_count "$1")" || return 1
+  fi
+  jq -c -R --arg box "${2:-}" --argjson count "$count" 'input_line_number as $line
+    | (fromjson? // empty) | select(type == "object")
+    | if $box == "" then . else . + {box: $box, line: $line, count: $count} end' <"$1"
 }
 
 # The id of an envelope to-lane.jsonl already holds that is this one again,
@@ -1440,8 +1448,8 @@ case "$VERB" in
     lm_terminated "$WORK_DIR/over.raw" "$WORK_DIR/over.jsonl"
     lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
     lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
-    lm_objects "$WORK_DIR/over.jsonl" | jq -c '. + {box: "to-overseer"}' || refuse file-unreadable "$TO_OVERSEER"
-    lm_objects "$WORK_DIR/lane.jsonl" | jq -c '. + {box: "to-lane"}' || refuse file-unreadable "$TO_LANE"
+    lm_objects "$WORK_DIR/over.jsonl" to-overseer || refuse file-unreadable "$TO_OVERSEER"
+    lm_objects "$WORK_DIR/lane.jsonl" to-lane || refuse file-unreadable "$TO_LANE"
     ;;
 
   peer)

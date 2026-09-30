@@ -3,12 +3,11 @@
 # and an ask are held, no envelope is posted, an owner message still lands,
 # the hold is journaled once and `--status` shows held-by=master. Once the
 # file is stale the resume posts the open ask, the answer to an ask the
-# channel shows open, a notice Slack refused before the hold and one written
-# after the file went stale, never a held notice, and journals which asks
-# landed, never one Slack refused; a removed file ends the hold at the last poll that found it
-# fresh. A notice written before the touch posts on the resume though the
-# relay first saw the hold a poll later or failed to read the channel in
-# between. An absent file or an empty setting posts as before,
+# channel shows open and notices past the master's seen line count. Its
+# journal records that count, the skipped ids and asks whose posts landed.
+# A restart or a missing seen file cannot replay a skipped or posted id.
+# A missing, unreadable or invalid count skips nothing; a count past the
+# snapshot clamps. An absent master file or an empty setting posts as before,
 # SLACK_MASTER_MAX_AGE bounds the hold, and a file whose age cannot be read
 # refuses the post step alone. Compaction keeps a standing hold and the resumes inside the
 # horizon. The controls plant one mutant per rule.
@@ -21,8 +20,6 @@ echo "=== slack listen: the master hold ==="
 MASTER="$SK_TMP/master-live"
 HOLD="SLACK_MASTER_FILE=$MASTER"
 aged() { python3 -c 'import os, sys, time; t = time.time() - int(sys.argv[2]); os.utime(sys.argv[1], (t, t))' "$MASTER" "$1"; } # SECONDS
-# The master's touch, ten seconds back: an envelope written after it, or one
-# of those aged five seconds, lands in a later second; one aged twenty before.
 fresh() { touch -- "$MASTER" && aged 10; }
 stale() { aged 600; } # the default SLACK_MASTER_MAX_AGE: the hold ends as this runs
 count() { sk_state "[(.messages.${1} // [])[] | select(.text | contains(\"$2\"))] | length"; } # CHANNEL TEXT
@@ -66,15 +63,15 @@ assert_eq "$(holds "$ROOT")" "hold " "the hold is journaled once"
 row "$ROOT"
 assert_has "$LINE" " held-by=master" "the status row shows the hold"
 
-# --- a stale file resumes: open asks and notices from outside the hold -----------
-sleep 1 # the held envelopes' `at` second passes, so the hold's end lands in a later one
+# --- a stale file resumes: asks and answers survive a master read ----------------
+sk_master_read "$ROOT" "$(wc -l < "$(sk_box "$ROOT")/to-overseer.jsonl")"
 stale
 notice "$ROOT" n5 'After the stale file.'
 sk_poll "$ROOT" "$HOLD"
 assert_eq "$RC=$(count "$CH" 'Held and open?')=$(count "$CH" 'Held notice.')=$(count "$CH" 'Held and answered?')" "0=1=0=0" \
   "the resume posts the open ask and neither the held notice nor the answered ask"
-assert_eq "$(count "$CH" 'Refused before the hold.')=$(count "$CH" 'After the stale file.')" "1=1" \
-  "the resume posts the notice refused before the hold and the one written after the file went stale"
+assert_eq "$(count "$CH" 'Refused before the hold.')=$(count "$CH" 'After the stale file.')" "0=1" \
+  "the resume skips a notice the master read before the hold and posts the later one"
 assert_has "$(sk_state ".messages.${CH}[] | select(.thread_ts == \"$ASK0_TS\") | .text")" "Answered in the chat: b, from the master" \
   "an ask the channel shows open gets its held answer, so its thread closes"
 assert_eq "$(holds "$ROOT")=$(jq -r 'select(.t == "resume") | .asks | join(",")' "$(sk_journal "$ROOT")")" "hold resume =$ASK1" \
@@ -83,19 +80,19 @@ row "$ROOT"
 assert_lacks "$LINE" "held-by=" "the status row drops the hold"
 notice "$ROOT" n2 'After the resume.'
 sk_poll "$ROOT" "$HOLD"
-assert_eq "$(count "$CH" 'After the resume.')=$(count "$CH" 'Held notice.')=$(count "$CH" 'Refused before the hold.')" "1=0=1" \
-  "a notice after the resume posts; the held one never does and the refused one posted once"
+assert_eq "$(count "$CH" 'After the resume.')=$(count "$CH" 'Held notice.')=$(count "$CH" 'Refused before the hold.')" "1=0=0" \
+  "a notice after the resume posts; neither read notice replays after a restart"
 
-# --- a removed file ends the hold at the last poll that found it fresh -------------
+# --- removal resumes against the same seen count ---------------------------------
 fresh
 notice "$ROOT" n6 'Held until removed.'
-sleep 1 # that envelope's `at` second passes before the poll that last finds the file fresh
+sk_master_read "$ROOT" "$(wc -l < "$(sk_box "$ROOT")/to-overseer.jsonl")"
 sk_poll "$ROOT" "$HOLD"
 rm -f -- "$MASTER"
 notice "$ROOT" n7 'After the removal.'
 sk_poll "$ROOT" "$HOLD"
 assert_eq "$RC=$(count "$CH" 'Held until removed.')=$(count "$CH" 'After the removal.')" "0=0=1" \
-  "a removed file resumes: the held notice never posts, one written after the removal does"
+  "a removed file resumes: the read notice never posts, one past the count does"
 
 # --- an absent file or an empty setting posts as before ---------------------------
 notice "$ROOT" n3 'No file.'
@@ -131,42 +128,60 @@ fresh
 sk_poll "$ROOT" "$HOLD"
 sk_run -- compact --root "$ROOT"
 assert_eq "$RC=$(holds "$ROOT")" "0=resume resume resume hold " "compaction drops each closed hold line and keeps the standing one"
-aged 1000000000
+stale
 sk_poll "$ROOT" "$HOLD"
-assert_eq "$(old_resumes "$ROOT")" "1" "a file touched long ago ends its hold then"
+sk_age_resume "$ROOT" 2000-01-01T00:00:00Z
+assert_eq "$(old_resumes "$ROOT")" "1" "the fixture has one resume past the horizon"
 sk_run -- compact --root "$ROOT"
 assert_eq "$RC=$(holds "$ROOT")" "0=resume resume resume " "compaction drops a resume whose end is past the horizon"
 
-# --- a notice written before the touch posts, whatever the relay's polls missed ------
-# before_touch ROOT [fault] — a notice posted, then one written before the
-# touch, the channel read refused once between them when asked, the hold
-# first seen on the poll after the touch, then a stale file.
-before_touch() {
-  local name
-  name="$(basename "$1")"
-  sk_bind "$1"
-  sk_poll "$1" "$HOLD"
-  notice "$1" "a-$name" "Posted in $name."
-  sk_age_envelope "$1" "$(last_id "$1")" 30
-  sk_poll "$1" "$HOLD"
-  notice "$1" "b-$name" "Before the touch in $name."
-  sk_age_envelope "$1" "$(last_id "$1")" 20
-  if [ "${2:-}" = fault ]; then
-    sk_ctl /_test/fault '{"method": "conversations.history", "error": "ratelimited", "times": 1}' >/dev/null
-    sk_poll "$1" "$HOLD"
-    assert_eq "$RC=$(count "$(sk_channel "$1")" "Before the touch in $name.")" "1=0" "the refused channel read fails the poll before anything posts"
-  fi
+# --- notices before the first held poll use line numbers, never hold times ---------
+# count state, effective seen, backlog posts, fourth posts, skipped ids count.
+while read -r value seen backlog fourth skipped; do
+  R="$(sk_new_root "seen-$value")"
   fresh
-  sk_poll "$1" "$HOLD"
-  stale
-  sk_poll "$1" "$HOLD"
-}
-NU="$(sk_new_root nu)"
-before_touch "$NU"
-assert_eq "$(count "$(sk_channel "$NU")" 'Before the touch in nu.')" "1" "a notice written before the touch posts though the hold was first seen a poll later"
-XI="$(sk_new_root xi)"
-before_touch "$XI" fault
-assert_eq "$(count "$(sk_channel "$XI")" 'Before the touch in xi.')" "1" "a notice written before the touch posts though the channel read failed in between"
+  sk_unposted "$R" "$MASTER"
+  IDS="$(jq -sc 'map(.id)' "$(sk_box "$R")/to-overseer.jsonl")"
+  case "$value" in
+    missing) ;;
+    unreadable) mkdir "$(sk_box "$R")/to-overseer.seen" ;;
+    ancient) sk_master_read "$R" 3 ;;
+    gapped|past-gap)
+      # A killed writer can leave filtered physical lines; the master's
+      # cursor still counts them, including one after the last envelope.
+      python3 - "$(sk_box "$R")/to-overseer.jsonl" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+path.write_text("interrupted\n" + path.read_text() + "interrupted\n")
+PY
+      if [ "$value" = gapped ]; then sk_master_read "$R" 3; else sk_master_read "$R" 99; fi ;;
+    *) sk_master_read "$R" "$value" ;;
+  esac
+  notice "$R" "fourth-$value" "Fourth in seen-$value."
+  if [ "$value" = ancient ]; then aged 1000000000; else stale; fi
+  sk_poll "$R" "$HOLD"
+  assert_eq "$RC=$(count "$(sk_channel "$R")" "Backlog in seen-$value.")=$(count "$(sk_channel "$R")" "Fourth in seen-$value.")=$(jq -r 'select(.t == "resume") | "\(.seen)=\(.skipped | length)"' "$(sk_journal "$R")")" \
+    "0=$backlog=$fourth=$seen=$skipped" "resume count $value skips only read notices and journals the clamped count"
+  if [ "$value" = 3 ]; then
+    assert_eq "$(jq -c 'select(.t == "resume") | .skipped' "$(sk_journal "$R")")" "$IDS" "the resume names every skipped backlog id"
+    rm -- "$(sk_box "$R")/to-overseer.seen"
+  fi
+  sk_run -- compact --root "$R"
+  sk_poll "$R" "$HOLD"
+  assert_eq "$(count "$(sk_channel "$R")" "Backlog in seen-$value.")=$(count "$(sk_channel "$R")" "Fourth in seen-$value.")" \
+    "$backlog=$fourth" "count $value: compaction and restart repeat neither skipped nor out ids"
+done <<'ROWS'
+3 3 0 1 3
+missing none 3 1 0
+unreadable none 3 1 0
+invalid none 3 1 0
+-1 none 3 1 0
+0 0 3 1 0
+99 4 0 0 4
+ancient 3 0 1 3
+gapped 3 1 1 2
+past-gap 6 0 0 4
+ROWS
 
 # --- a held ask Slack refuses on the resume is not journaled as posted --------------
 # refused_resume ROOT — a bound root holding an open ask, the resume's post of
@@ -194,8 +209,7 @@ assert_eq "$RC=$(count "$(sk_channel "$OMICRON")" 'Refused on resume in omicron?
 
 # --- controls, one mutant per rule --------------------------------------------------
 # held ROOT — a bound root with a notice written under a fresh file and polled.
-# A control that needs that notice inside the hold moves it five seconds
-# back, into a second before the hold's end.
+
 held() {
   sk_bind "$1"
   sk_poll "$1" "$HOLD"
@@ -216,58 +230,49 @@ held "$GAMMA"
 assert_eq "$(holds "$GAMMA")" "hold hold " "control: the transition rule gone, every held poll journals a hold"
 sk_bin_reset
 
-sk_mutant window relay.py 'route = "skip" if any\(within\(w, at\) for w in holds\) else "notice"' 'route = "notice"'
+sk_mutant count relay.py 'envelope\["line"\] <= seen' 'False'
 DELTA="$(sk_new_root delta)"
-held "$DELTA"
-sk_age_envelope "$DELTA" "$(last_id "$DELTA")" 5
+fresh
+sk_unposted "$DELTA" "$MASTER"
+sk_master_read "$DELTA" 3
 stale
 sk_poll "$DELTA" "$HOLD"
-assert_eq "$(count "$(sk_channel "$DELTA")" 'Held in delta.')" "1" "control: the hold window gone, a held notice posts"
+assert_eq "$(count "$(sk_channel "$DELTA")" 'Backlog in delta.')" "3" "control: the seen rule gone, all three pre-hold notices replay"
 sk_bin_reset
 
-# The pending notice is moved twenty seconds back, before the hold's start
-# and in a second before the hold's end.
-sk_mutant from relay.py 'return at_epoch\(window\.from_at\) < at < ' 'return at < '
 EPSILON="$(sk_new_root epsilon)"
-sk_bind "$EPSILON"
-sk_poll "$EPSILON" "$HOLD"
-notice "$EPSILON" ne 'Refused in epsilon.'
-sk_age_envelope "$EPSILON" "$(last_id "$EPSILON")" 20
-refuse_next_post
-sk_poll "$EPSILON" "$HOLD"
 fresh
-sk_poll "$EPSILON" "$HOLD"
+sk_unposted "$EPSILON" "$MASTER"
+sk_master_read "$EPSILON" 3
 stale
 sk_poll "$EPSILON" "$HOLD"
-assert_eq "$(count "$(sk_channel "$EPSILON")" 'Refused in epsilon.')" "0" "control: the hold's start gone, a notice refused before it is dropped"
+sk_mutant replay store.py 'self\.carried\.update\(str\(env_id\) for env_id in line\.get\("skipped", \[\]\)\)' 'self.carried.update([])'
+rm -- "$(sk_box "$EPSILON")/to-overseer.seen"
+sk_poll "$EPSILON" "$HOLD"
+assert_eq "$(count "$(sk_channel "$EPSILON")" 'Backlog in epsilon.')" "3" "control: without replay, skipped ids post after restart"
 sk_bin_reset
 
-HOLD_LINE='self\.journal\.append\(t="hold", at=format_at\(touched\)\)'
-sk_mutant posted relay.py "$HOLD_LINE" 'self.journal.append(t="hold", at=newest(self.mail.events())[0])'
+ETA="$(sk_new_root eta)"
+fresh
+sk_unposted "$ETA" "$MASTER"
+sk_master_read "$ETA" 3
+aged 1000000000
+sk_mutant age-stamp relay.py 'at = format_at\(self.clock\(\)\)' 'at = format_at(self.master_touched() + self.settings.master_max_age)'
+sk_poll "$ETA" "$HOLD"
+sk_bin_reset
+sk_run -- compact --root "$ETA"
+rm -- "$(sk_box "$ETA")/to-overseer.seen"
+sk_poll "$ETA" "$HOLD"
+assert_eq "$(count "$(sk_channel "$ETA")" 'Backlog in eta.')" "3" "control: an expiry-time stamp lets compaction drop young skipped ids and replay them"
+
+sk_mutant clamp relay.py 'return min\(count, lines\)' 'return count'
 ZETA="$(sk_new_root zeta)"
-held "$ZETA"
-sk_age_envelope "$ZETA" "$(last_id "$ZETA")" 5
+fresh
+sk_unposted "$ZETA" "$MASTER"
+sk_master_read "$ZETA" 99
 stale
 sk_poll "$ZETA" "$HOLD"
-assert_eq "$(count "$(sk_channel "$ZETA")" 'Held in zeta.')" "1" "control: the start taken from the mailbox at the hold's first poll, a notice written after the touch posts"
-sk_bin_reset
-
-sk_mutant history relay.py "$HOLD_LINE" 'self.journal.append(t="hold", at=newest([e for e in self.mail.events() if str(e["id"]) in self.state.carried])[0])'
-LAMBDA="$(sk_new_root lambda)"
-before_touch "$LAMBDA"
-assert_eq "$(count "$(sk_channel "$LAMBDA")" 'Before the touch in lambda.')" "0" "control: the start taken from the relay's posts, a notice before the touch seen a poll later is dropped"
-MU="$(sk_new_root mu)"
-before_touch "$MU" fault
-assert_eq "$(count "$(sk_channel "$MU")" 'Before the touch in mu.')" "0" "control: the start taken from the relay's posts, a notice before a refused read and the touch is dropped"
-sk_bin_reset
-
-sk_mutant stale relay.py 'at = format_at\(touched \+ self\.settings\.master_max_age\)' 'at = format_at(self.clock() + self.settings.master_max_age)'
-ETA="$(sk_new_root eta)"
-held "$ETA"
-stale
-notice "$ETA" ne2 'After stale in eta.'
-sk_poll "$ETA" "$HOLD"
-assert_eq "$(count "$(sk_channel "$ETA")" 'After stale in eta.')" "0" "control: the stale file's end taken from the poll, not the touch, a notice after it is held"
+assert_eq "$(jq -r 'select(.t == "resume") | .seen' "$(sk_journal "$ZETA")")" "99" "control: without clamping, the resume records a count past its snapshot"
 sk_bin_reset
 
 sk_mutant landed relay.py 'if self\.post_ask\(envelope\) and landed' 'if (self.post_ask(envelope) or True) and landed'
@@ -276,14 +281,6 @@ PI_ASK="$(refused_resume "$PI")"
 assert_eq "$(resumed_asks "$PI")" "$PI_ASK" "control: every routed ask journaled, the resume names one Slack refused"
 sk_bin_reset
 
-sk_mutant seen relay.py 'elif self\.master_seen is not None:' 'elif False:'
-THETA="$(sk_new_root theta)"
-held "$THETA"
-sk_age_envelope "$THETA" "$(last_id "$THETA")" 5
-rm -f -- "$MASTER"
-sk_poll "$THETA" "$HOLD"
-assert_eq "$(count "$(sk_channel "$THETA")" 'Held in theta.')" "1" "control: the last fresh poll gone, a held notice posts after the removal"
-sk_bin_reset
 
 sk_mutant age settings.py '_positive_int\("SLACK_MASTER_MAX_AGE", DEFAULT_MASTER_MAX_AGE\)' 'DEFAULT_MASTER_MAX_AGE'
 IOTA="$(sk_new_root iota)"
@@ -322,8 +319,9 @@ sk_bin_reset
 sk_mutant compact-resume store.py 'kind == "resume":\n            drop = aged' 'kind == "resume":\n            drop = False'
 fresh
 sk_poll "$ROOT" "$HOLD"
-aged 1000000000
+stale
 sk_poll "$ROOT" "$HOLD"
+sk_age_resume "$ROOT" 2000-01-01T00:00:00Z
 sk_run -- compact --root "$ROOT"
 assert_eq "$(old_resumes "$ROOT")" "1" "control: every resume kept, compaction leaves one past the horizon"
 sk_bin_reset

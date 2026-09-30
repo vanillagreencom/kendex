@@ -41,6 +41,8 @@ class LaneMail:
         return proc.returncode, proc.stdout, proc.stderr
 
     def events(self) -> List[Dict]:
+        """All envelopes with their box and physical line number, as
+        lane-mail lists them; line numbers align with the master's count."""
         code, out, err = self._run("events", "--item", "overseer")
         if code != 0:
             raise Refusal("lane-mail-failed", _first(err))
