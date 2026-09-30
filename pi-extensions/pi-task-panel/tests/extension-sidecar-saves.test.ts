@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import * as atomicWrite from "../extensions/atomic-write.ts";
 import { fakeCtx, fakePi, mockPiModules } from "./lib/fake-pi.ts";
 
 mockPiModules();
@@ -99,6 +100,36 @@ test("tree navigation reads the sidecar only after a queued write lands", async 
 		await pending;
 		const result = await tasksWrite({ action: "start_task", task: "queued" });
 		expect(result.details.message).toBe("queued");
+	});
+});
+
+test("a save queued behind a pending sidecar write starts only after it and lands last", async () => {
+	await withPanel(async ({ pi, sidecar, tasksWrite }) => {
+		const realWrite = atomicWrite.writeFileAtomic;
+		let release = () => {};
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const write = spyOn(atomicWrite, "writeFileAtomic").mockImplementationOnce(async (file, text) => {
+			await held;
+			await realWrite(file, text);
+		});
+		try {
+			const first = tasksWrite({ action: "add_task", task: "first" });
+			const second = tasksWrite({ action: "add_task", task: "second" });
+			// setImmediate runs after every queued microtask, so a second save that
+			// skipped the queue would have called the write by now.
+			await new Promise((resolve) => setImmediate(resolve));
+			expect(write).toHaveBeenCalledTimes(1);
+			expect(pi.appended).toHaveLength(0);
+			release();
+			await Promise.all([first, second]);
+			expect(write).toHaveBeenCalledTimes(2);
+		} finally {
+			write.mockRestore();
+		}
+		expect(pi.appended.map((entry) => entry.data.tasks.map((task: { content: string }) => task.content))).toEqual([["first"], ["first", "second"]]);
+		expect(sidecarTasks(sidecar)).toEqual(["first", "second"]);
 	});
 });
 
