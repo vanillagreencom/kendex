@@ -264,8 +264,8 @@ assert_eq "$(keyed invalid-preference)" "none" \
 # the same fleet the default ladder succeeds on.
 NOMODEL="$(mutant_scripts nomodel lib/overseer-launch.sh)" || exit 1
 mutate_file "$NOMODEL/lib/overseer-launch.sh" \
-  '  IFS=: read -r OL_ENTRY_HARNESS OL_ENTRY_MODEL OL_ENTRY_EFFORT <<<"$1"' \
-  '  IFS=: read -r OL_ENTRY_HARNESS _ OL_ENTRY_EFFORT <<<"$1"; OL_ENTRY_MODEL=""'
+  '  [[ -n "$OL_ENTRY_MODEL" ]] || OL_ENTRY_MODEL="${OL_WALK_CALLER_MODEL:-$OL_PREFERENCE_CALLER_MODEL}"' \
+  '  OL_ENTRY_MODEL=""'
 new_caller
 SUCCEED_BIN="$NOMODEL/oversee-succeed" run_succeed nomodel unset
 assert_eq "$RC|$(first_key)|$(caller_open)|$(launched claude)" \

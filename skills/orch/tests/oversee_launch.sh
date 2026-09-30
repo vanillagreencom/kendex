@@ -927,15 +927,20 @@ LAUNCH_PREF=claude:1:high OVERSEE_BIN="$NUMERICCTL/oversee" run_oversee -- launc
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
   "1|oversee: invalid-preference entry=claude:1:high|0" \
   "control: numeric refusal turns the warning-and-launch assertion red"
-# The flag writer must preserve effort when the entry has no caller model.
-EFFORTCTL="$(mutant_scripts effortctl lib/lane-launch.sh)" || exit 1
-mutate_file "$EFFORTCTL/lib/lane-launch.sh" \
-  '  [[ -n "$2" || -n "$3" ]] || return 0' \
-  '  [[ -n "$2" ]] || return 0'
-LAUNCH_PREF=claude:1:high OVERSEE_BIN="$EFFORTCTL/oversee" run_oversee -- launch --wait-secs 20
-assert_eq "$RC|$(recorded effort)|$(overseers)" "0|none|1" \
-  "control: dropping effort without a model turns the numeric launch assertion red"
-tm kill-window -t "$(recorded window)"
+# With no caller model, effort still needs flag writing and permission
+# assembly. Each control removes one rule from the numeric launch above.
+for row in \
+  $'effortctl\tlib/lane-launch.sh\t  [[ -n "$2" || -n "$3" ]] || return 0\t  [[ -n "$2" ]] || return 0\tnone\t1' \
+  $'empty-modelctl\tlib/overseer-launch.sh\t  if [[ -z "$model" && -z "$effort" ]]; then\t  if [[ -z "$model" ]]; then\thigh\t0'; do
+  IFS=$'\t' read -r name file old new effort permissions <<<"$row"
+  EFFORTCTL="$(mutant_scripts "$name" "$file")" || exit 1
+  mutate_file "$EFFORTCTL/$file" "$old" "$new"
+  LAUNCH_PREF=claude:1:high OVERSEE_BIN="$EFFORTCTL/oversee" run_oversee -- launch --wait-secs 20
+  assert_eq "$RC|$(recorded effort)|$(overseers)|$(grep -cxF -- "$BYPASS" "$TMP_ROOT/argv.claude" || true)" \
+    "0|$effort|1|$permissions" \
+    "control: $name turns the numeric launch assertion red"
+  tm kill-window -t "$(recorded window)"
+done
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
