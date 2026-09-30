@@ -1,1 +1,1 @@
-- Pi session-start installation drift reports now reach only the lead session, so delegated children stay on their assigned task.
+- Pi's native session-start check sends `kendex-drift` only to lead sessions, not delegated children. Registered `SessionStart` hook output (`kendex-hook`) remains unchanged.
