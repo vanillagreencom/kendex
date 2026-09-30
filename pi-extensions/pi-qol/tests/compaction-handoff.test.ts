@@ -23,6 +23,7 @@ afterEach(() => {
 	finally {
 		if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+		clearPackageConfigCache();
 	}
 });
 

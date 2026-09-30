@@ -80,6 +80,7 @@ export function useIsolatedGitEnv(): void {
 		savedEnv.PI_CODING_AGENT_DIR = process.env.PI_CODING_AGENT_DIR;
 		emptyAgentDir = mkdtempSync(join(tmpdir(), "pi-hooks-empty-agent-"));
 		process.env.PI_CODING_AGENT_DIR = emptyAgentDir;
+		clearPackageConfigCache();
 		// The carrier names the calling agent from this, and a suite run from
 		// inside a Pi subagent inherits it.
 		savedEnv.PI_SUBAGENT_CHILD_AGENT = process.env.PI_SUBAGENT_CHILD_AGENT;
@@ -90,6 +91,7 @@ export function useIsolatedGitEnv(): void {
 			if (value === undefined) delete process.env[name];
 			else process.env[name] = value;
 		}
+		clearPackageConfigCache();
 		if (emptyAgentDir !== undefined) rmSync(emptyAgentDir, { recursive: true, force: true });
 	});
 }

@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { clearPackageConfigCache } from "../extensions/package-config.ts";
 import sessionBridge from "../extensions/session-bridge.ts";
 
 import { fakePi, fakeCtx, sendCommand, shutdownBridge, writeBridgeSettings, type EventHandler } from "./lib/bridge-fixture.ts";
@@ -19,6 +20,7 @@ beforeEach(() => {
 	oldBridgeDir = process.env.PI_BRIDGE_DIR;
 	oldPiDir = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = join(dir, "agent");
+	clearPackageConfigCache();
 	oldCwd = process.cwd();
 	process.env.PI_BRIDGE_DIR = join(dir, "bridge");
 });
@@ -31,6 +33,7 @@ afterEach(async () => {
 		setSystemTime();
 		if (oldPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = oldPiDir;
+		clearPackageConfigCache();
 	if (oldBridgeDir === undefined) delete process.env.PI_BRIDGE_DIR;
 	else process.env.PI_BRIDGE_DIR = oldBridgeDir;
 	process.chdir(oldCwd);

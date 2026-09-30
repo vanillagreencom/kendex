@@ -3,9 +3,12 @@ import { spawnSync as realSpawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { clearPackageConfigCache } from "../extensions/manager/package-config.ts";
+
 const rootTmp = join(import.meta.dir, "..", "tmp", "actions-test");
 const originalEnv = { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR };
-const spawnSyncMock = mock(() => ({ status: 0, stdout: "", stderr: "", error: undefined, signal: null, output: [], pid: 0 }));
+const spawnSucceeded = () => ({ status: 0, stdout: "", stderr: "", error: undefined, signal: null, output: [], pid: 0 });
+const spawnSyncMock = mock(spawnSucceeded);
 
 function writeJson(path: string, value: unknown): void {
 	mkdirSync(dirname(path), { recursive: true });
@@ -36,7 +39,10 @@ beforeEach(() => {
 	rmSync(rootTmp, { recursive: true, force: true });
 	mkdirSync(rootTmp, { recursive: true });
 	process.env.PI_CODING_AGENT_DIR = join(rootTmp, "home", ".pi", "agent");
+	clearPackageConfigCache();
 	spawnSyncMock.mockClear();
+	// A case that swaps the implementation must not hand it to the next case.
+	spawnSyncMock.mockImplementation(spawnSucceeded);
 });
 
 afterEach(async () => {
@@ -45,6 +51,7 @@ afterEach(async () => {
 	rmSync(rootTmp, { recursive: true, force: true });
 	if (originalEnv.PI_CODING_AGENT_DIR === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = originalEnv.PI_CODING_AGENT_DIR;
+	clearPackageConfigCache();
 });
 
 // spawnSync snapshots the environment the process started with, so a child

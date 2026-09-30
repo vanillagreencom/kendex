@@ -17,6 +17,7 @@ afterEach(() => {
 	resetCapabilitiesCache();
 	clearTrackedToolExecutionComponents();
 	for (const dir of createdDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+	clearPackageConfigCache();
 });
 
 const theme = {

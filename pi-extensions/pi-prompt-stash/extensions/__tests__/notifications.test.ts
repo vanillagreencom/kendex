@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { clearPackageConfigCache } from "../package-config.js";
+
 mock.module("@earendil-works/pi-tui", () => ({
 	Input: class {},
 	matchesKey: () => false,
@@ -21,11 +23,13 @@ beforeEach(() => {
 	mkdirSync(join(root, "agent"));
 	previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = join(root, "agent");
+	clearPackageConfigCache();
 });
 
 afterEach(() => {
 	if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+	clearPackageConfigCache();
 	rmSync(root, { recursive: true, force: true });
 });
 

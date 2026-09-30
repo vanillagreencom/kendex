@@ -34,6 +34,8 @@ function writeProjectSettings(cwd: string, config: Record<string, unknown>): voi
 		kendex: { extensionManager: { config: { "@vanillagreen/pi-agents-tmux": config } } },
 	}), "utf8");
 	recordProjectTrust({ cwd, isProjectTrusted: () => true });
+	// What pi-extension-manager's settings-changed event does after a write.
+	clearPackageConfigCache();
 }
 
 test("settings metadata hides deprecated maxParallelTasks", () => {
@@ -71,6 +73,7 @@ test("settings metadata keeps bgTaskTimeoutMs visible and disableable", () => {
 	} finally {
 		if (previousPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousPiDir;
+		clearPackageConfigCache();
 	}
 });
 
@@ -117,5 +120,6 @@ test("legacy maxParallelTasks setting does not affect maxConcurrency", () => {
 	} finally {
 		if (previousPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousPiDir;
+		clearPackageConfigCache();
 	}
 });

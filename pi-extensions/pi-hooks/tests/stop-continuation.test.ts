@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { clearPackageConfigCache } from "../extensions/package-config.ts";
 import { TURN_END_LISTENER } from "../extensions/registry.ts";
 import { CONFIG_ID, readLog, registerRendered, useIsolatedGitEnv } from "./harness.ts";
 import { startSession } from "./pi-session.ts";
@@ -85,6 +86,7 @@ for (const row of rows) {
 
 		const saved = process.env.PI_CODING_AGENT_DIR;
 		process.env.PI_CODING_AGENT_DIR = agentDir;
+		clearPackageConfigCache();
 		const prompts: string[] = [];
 		let settles = 0;
 		const session = await startSession({
@@ -106,6 +108,7 @@ for (const row of rows) {
 			session.dispose();
 			if (saved === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = saved;
+			clearPackageConfigCache();
 		}
 	});
 }

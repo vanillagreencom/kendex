@@ -27,6 +27,7 @@ export function withLogSettings<T>(run: (cwd: string) => T): T {
 	} finally {
 		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previous;
+		clearPackageConfigCache();
 		rmSync(root, { recursive: true, force: true });
 	}
 }

@@ -9,6 +9,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
+import { clearPackageConfigCache } from "../extensions/subagent/package-config.js";
 import { setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
 import { removeSettled } from "./remove-settled.js";
 
@@ -141,6 +142,7 @@ async function delegateLine(caller: string | undefined, agents: Agents, params: 
 	Object.assign(process.env, PARENT_ENV, { PI_CODING_AGENT_DIR: join(cwd, ".pi-agent-home") });
 	if (caller === undefined) delete process.env.PI_SUBAGENT_CHILD_AGENT;
 	else process.env.PI_SUBAGENT_CHILD_AGENT = caller;
+	clearPackageConfigCache();
 	try {
 		const execute = await installTool();
 		if (!execute) return "unregistered";
@@ -156,6 +158,7 @@ async function delegateLine(caller: string | undefined, agents: Agents, params: 
 			if (saved[key] === undefined) delete process.env[key];
 			else process.env[key] = saved[key];
 		}
+		clearPackageConfigCache();
 		await removeSettled(cwd);
 	}
 }

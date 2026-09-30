@@ -4,6 +4,7 @@ import { copyFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { clearPackageConfigCache } from "../extensions/package-config.ts";
 import { CONFIG_ID, projectCommand, registerRendered, runGit, useIsolatedGitEnv } from "./harness.ts";
 import { startSession } from "./pi-session.ts";
 
@@ -184,6 +185,7 @@ for (const row of rows) {
 		const saved = { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PI_SUBAGENT_CHILD_AGENT: process.env.PI_SUBAGENT_CHILD_AGENT };
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		if (row.subagent) process.env.PI_SUBAGENT_CHILD_AGENT = "reviewer-correctness";
+		clearPackageConfigCache();
 		const session = await startSession({ cwd: lane, agentDir, paths: entryPaths(row.entries, name), prompts });
 		try {
 			// The busy row's one tool call appends the directive, then runs
@@ -233,6 +235,7 @@ for (const row of rows) {
 				if (value === undefined) delete process.env[key];
 				else process.env[key] = value;
 			}
+			clearPackageConfigCache();
 		}
 	}, MAIL_INTERVAL_MS * 4);
 }

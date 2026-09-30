@@ -37,6 +37,7 @@ function withPersistenceContext(run: (ctx: NonNullable<ReturnType<PersistenceDep
 		else process.env.PI_CODING_AGENT_DIR = previousPiDir;
 		if (previousDiagnosticLog === undefined) delete process.env.PI_BG_TASK_DIAGNOSTIC_LOG;
 		else process.env.PI_BG_TASK_DIAGNOSTIC_LOG = previousDiagnosticLog;
+		clearPackageConfigCache();
 		rmSync(root, { recursive: true, force: true });
 	}
 }

@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { __testSetBridgeIntegrityState, __testSetSdkQueryFactory, streamClaudeAgentSdk } from "../../src/index.ts";
+import { clearPackageConfigCache } from "../../src/package-config.ts";
 import { ctx, resetStack } from "../../src/query-state.ts";
 import { cancelScheduledToolUseEnd } from "../../src/assistant-stream.ts";
 import { piContext } from "./transcript.mjs";
@@ -25,6 +26,7 @@ export async function withBridge(ids, run, { prompt = "run" } = {}) {
 	const env = { CLAUDE_CONFIG_DIR: root, PI_CODING_AGENT_DIR: root, CLAUDE_CODE_OAUTH_TOKEN: "offline-test", CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT: "0" };
 	const previous = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
 	Object.assign(process.env, env);
+	clearPackageConfigCache();
 	resetStack();
 	__testSetBridgeIntegrityState({ sharedSession: null, ui: { notify() {} } });
 	const gate = Promise.withResolvers();
@@ -113,6 +115,7 @@ export async function withBridge(ids, run, { prompt = "run" } = {}) {
 		__testSetBridgeIntegrityState({ sharedSession: null, ui: null });
 		resetStack();
 		for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+		clearPackageConfigCache();
 		rmSync(root, { recursive: true, force: true });
 	}
 }

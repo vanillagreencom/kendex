@@ -259,6 +259,7 @@ test("the reused-session budget guard", async () => {
 	} finally {
 		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		clearPackageConfigCache();
 	}
 });
 

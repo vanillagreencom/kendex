@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { CONFIG_ID, installCarrier, type ListenerHandler, type SentCall, toolResultEvent, trusted, useIsolatedGitEnv } from "./harness.ts";
 
 import * as cargo from "../extensions/cargo.ts";
+import { clearPackageConfigCache } from "../extensions/package-config.ts";
 
 useIsolatedGitEnv();
 
@@ -58,6 +59,8 @@ function initClippyProject(clippyTimeoutMs = 4000): string {
 			},
 		},
 	}));
+	// What pi-extension-manager's settings-changed event does after a write.
+	clearPackageConfigCache();
 	mkdirSync(join(dir, "src"), { recursive: true });
 	writeFileSync(join(dir, "src", "lib.rs"), "pub fn answer() -> i32 { 42 }\n");
 	return dir;

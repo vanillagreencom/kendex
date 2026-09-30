@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
 
+import { clearPackageConfigCache } from "../src/package-config.js";
+
 export function tempDir(t: TestContext): string {
 	const root = mkdtempSync(join(tmpdir(), "pi-web-tools-test-"));
 	t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -16,8 +18,10 @@ export function isolateEnvironment(t: TestContext, keys: string[]): void {
 			if (value === undefined) delete process.env[key];
 			else process.env[key] = value;
 		}
+		clearPackageConfigCache();
 	});
 	for (const key of keys) delete process.env[key];
+	clearPackageConfigCache();
 }
 
 export const settingsEnvironment = [

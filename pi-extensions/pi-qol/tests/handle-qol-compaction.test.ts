@@ -12,8 +12,8 @@ const originalHome = process.env.HOME;
 beforeEach(() => {
 	workdir = mkdtempSync(join(tmpdir(), "pi-qol-handle-"));
 	process.env.PI_CODING_AGENT_DIR = workdir;
-	clearPackageConfigCache();
 	process.env.HOME = workdir;
+	clearPackageConfigCache();
 });
 afterEach(() => {
 	try { rmSync(workdir, { force: true, recursive: true }); }
@@ -22,6 +22,7 @@ afterEach(() => {
 		else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
 		if (originalHome === undefined) delete process.env.HOME;
 		else process.env.HOME = originalHome;
+		clearPackageConfigCache();
 		mock.module("@earendil-works/pi-ai", () => ({
 			complete: async () => ({ content: [{ text: "stubbed summary text", type: "text" }], stopReason: "end_turn" }),
 		}));

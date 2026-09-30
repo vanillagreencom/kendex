@@ -2,6 +2,7 @@ import { expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { clearPackageConfigCache } from "../package-config.js";
 import sessionBridge, { BRIDGE_STREAM_EVENT_NAMES, REGISTRY_REFRESH_EVENT_NAMES } from "../session-bridge.js";
 import { fakePi, fakeCtx, sendCommand, shutdownBridge, writeBridgeSettings } from "../../tests/lib/bridge-fixture.ts";
 
@@ -20,6 +21,7 @@ for (const eventName of new Set(["session_info_changed", ...BRIDGE_STREAM_EVENT_
 			const bridgeDir = join(root, "bridge");
 			process.env.PI_BRIDGE_DIR = bridgeDir;
 			process.env.PI_CODING_AGENT_DIR = join(root, "agent");
+			clearPackageConfigCache();
 			let name = "before";
 			fixture.pi.getSessionName = () => name;
 			sessionBridge(fixture.pi);
@@ -58,6 +60,7 @@ for (const eventName of new Set(["session_info_changed", ...BRIDGE_STREAM_EVENT_
 				process.chdir(oldCwd);
 				if (oldBridge === undefined) delete process.env.PI_BRIDGE_DIR; else process.env.PI_BRIDGE_DIR = oldBridge;
 				if (oldAgent === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgent;
+				clearPackageConfigCache();
 				fs.rmSync(root, { recursive: true, force: true });
 			}
 		}

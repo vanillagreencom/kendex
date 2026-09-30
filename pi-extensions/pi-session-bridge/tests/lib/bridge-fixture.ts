@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { HistoryResponse } from "../../extensions/event-history.ts";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { clearPackageConfigCache } from "../../extensions/package-config.ts";
 import { runCli } from "./cli-fixture.ts";
 import { dirname, join } from "node:path";
 
@@ -47,6 +48,8 @@ export function writeBridgeSettings(root: string, extras: Record<string, unknown
 			},
 		},
 	}));
+	// What pi-extension-manager's settings-changed event does after a write.
+	clearPackageConfigCache();
 }
 
 export function fakeCtx(dir: string): ExtensionContext {

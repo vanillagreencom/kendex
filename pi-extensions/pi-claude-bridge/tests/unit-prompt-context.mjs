@@ -13,6 +13,7 @@ afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 	if (originalPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = originalPiDir;
+	clearPackageConfigCache();
 });
 
 function isolateGlobalPiDir(root) {

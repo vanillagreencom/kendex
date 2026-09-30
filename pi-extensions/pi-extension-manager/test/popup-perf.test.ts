@@ -2,6 +2,8 @@ import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { clearPackageConfigCache } from "../extensions/manager/package-config.ts";
+
 const rootTmp = join(process.cwd(), "tmp", "pi-extension-manager-popup-perf-tests");
 
 const originalEnv = {
@@ -48,6 +50,7 @@ beforeEach(() => {
 	process.env.NPM_CONFIG_PREFIX = join(rootTmp, "npm-prefix");
 	process.env.npm_config_prefix = process.env.NPM_CONFIG_PREFIX;
 	process.env.PI_CODING_AGENT_DIR = join(rootTmp, "home", ".pi", "agent");
+	clearPackageConfigCache();
 	spawnSyncMock.mockClear();
 });
 
@@ -62,6 +65,7 @@ afterEach(async () => {
 	else process.env.npm_config_prefix = originalEnv.npm_config_prefix;
 	if (originalEnv.PI_CODING_AGENT_DIR === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = originalEnv.PI_CODING_AGENT_DIR;
+	clearPackageConfigCache();
 	rmSync(rootTmp, { force: true, recursive: true });
 });
 

@@ -44,6 +44,7 @@ afterEach(() => {
 	else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
 	if (originalChildAgent === undefined) delete process.env.PI_SUBAGENT_CHILD_AGENT;
 	else process.env.PI_SUBAGENT_CHILD_AGENT = originalChildAgent;
+	clearPackageConfigCache();
 });
 
 const rows = [

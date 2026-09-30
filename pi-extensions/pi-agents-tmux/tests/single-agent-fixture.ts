@@ -36,6 +36,8 @@ export function writeSettings(cwd: string, config: Record<string, unknown>) {
 		kendex: { extensionManager: { config: { "@vanillagreen/pi-agents-tmux": config } } },
 	}), "utf8");
 	recordProjectTrust({ cwd, isProjectTrusted: () => true });
+	// What pi-extension-manager's settings-changed event does after a write.
+	clearPackageConfigCache();
 }
 
 export function testAgent(): AgentConfig {
@@ -188,6 +190,7 @@ export function withPollutedEnv(fn: () => void) {
 		else process.env.PI_SUBAGENT_CHILD_AGENT = previousChild;
 		if (previousDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousDir;
+		clearPackageConfigCache();
 	}
 }
 

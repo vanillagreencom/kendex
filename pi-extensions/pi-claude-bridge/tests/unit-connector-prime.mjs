@@ -52,6 +52,7 @@ afterEach(() => {
 	globalThis.fetch = realFetch;
 	if (savedPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = savedPiDir;
+	clearPackageConfigCache();
 	rmSync(root, { recursive: true, force: true });
 });
 

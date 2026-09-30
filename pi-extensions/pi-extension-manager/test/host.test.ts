@@ -7,7 +7,7 @@ import { buildInventory, npmCandidatesFromInventory } from "../extensions/manage
 import { planUninstall, planUpdate, runUninstall, runUpdate, toggleItem } from "../extensions/manager/actions.ts";
 import { setConfigValue, resetConfigKeys, updateManagerState, getConfigValue, mergedManagerState, defaultWriteScope } from "../extensions/manager/settings.ts";
 import { glyphStyle } from "../extensions/manager/glyphs.ts";
-import { piUserDir } from "../extensions/manager/package-config.ts";
+import { clearPackageConfigCache, piUserDir } from "../extensions/manager/package-config.ts";
 import { MANAGER_ID, type ManagerUiState } from "../extensions/manager/types.ts";
 import { filteredItems } from "../extensions/manager/filters.ts";
 // Neutral terminal primitives; the production components own row construction and grouping.
@@ -63,10 +63,12 @@ beforeEach(async () => {
 	rmSync(root, { recursive: true, force: true });
 	mkdirSync(cwd, { recursive: true });
 	await selectOmp();
+	clearPackageConfigCache();
 });
 afterEach(async () => {
 	await selectHost({ getAgentDir: piUserDir, SettingsManager: class {} }, async () => { throw new Error("not OMP"); });
 	rmSync(root, { recursive: true, force: true });
+	clearPackageConfigCache();
 });
 
 test("native disabled package without settings.json or YAML packages is inventoried and enabled in its lock", () => {
@@ -366,10 +368,12 @@ test("Pi retains root-anchored override policy when the runtime returns a relati
 	const previous = process.env.PI_CODING_AGENT_DIR;
 	try {
 		process.env.PI_CODING_AGENT_DIR = "relative";
+		clearPackageConfigCache();
 		await selectHost({ getAgentDir: () => "relative", SettingsManager: class {} }, async () => runtime);
 		expect(host.agentDir()).toBe(piUserDir());
 	} finally {
 		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous;
+		clearPackageConfigCache();
 	}
 });
 

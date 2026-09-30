@@ -2,6 +2,7 @@ import { afterEach, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { clearPackageConfigCache } from "../extensions/skills-manager/package-config.ts";
 import { settingString, updatePackageConfig } from "../extensions/skills-manager/settings.ts";
 
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -11,6 +12,7 @@ afterEach(() => {
 	for (const cleanup of cleanups.splice(0)) cleanup();
 	if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+	clearPackageConfigCache();
 });
 
 // Settings reads are memoized for a window. The clock is held still, so the
@@ -23,6 +25,7 @@ test("a setting written through updatePackageConfig is read back inside the sett
 	mkdirSync(join(root, "agent"), { recursive: true });
 	mkdirSync(cwd, { recursive: true });
 	process.env.PI_CODING_AGENT_DIR = join(root, "agent");
+	clearPackageConfigCache();
 	expect(settingString("popupMaxHeight", "unset", cwd)).toBe("unset");
 	updatePackageConfig(cwd, { popupMaxHeight: "40%" }, "global");
 	expect(settingString("popupMaxHeight", "unset", cwd)).toBe("40%");

@@ -103,10 +103,10 @@ beforeEach(() => {
 	workdir = mkdtempSync(join(tmpdir(), "pi-qol-statusline-toggle-"));
 	mkdirSync(join(workdir, ".pi"), { recursive: true });
 	process.env.PI_CODING_AGENT_DIR = workdir;
-	clearPackageConfigCache();
 	process.env.HOME = workdir;
 	delete process.env.TMUX;
 	delete process.env.TMUX_PANE;
+	clearPackageConfigCache();
 	zeroDelayCallbacks = [];
 	timerSpy = spyOn(globalThis, "setTimeout").mockImplementation(((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
 		if (delay !== 0) return nativeTimeout(callback, delay, ...args);
@@ -131,6 +131,7 @@ afterEach(() => {
 		else process.env.TMUX = originalTmux;
 		if (originalTmuxPane === undefined) delete process.env.TMUX_PANE;
 		else process.env.TMUX_PANE = originalTmuxPane;
+		clearPackageConfigCache();
 	}
 });
 

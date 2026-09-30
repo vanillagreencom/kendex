@@ -24,6 +24,7 @@ function withStateDir(fn) {
 	try { return fn(dir); } finally {
 		if (prev === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = prev;
+		clearPackageConfigCache();
 		rmSync(dir, { recursive: true, force: true });
 	}
 }

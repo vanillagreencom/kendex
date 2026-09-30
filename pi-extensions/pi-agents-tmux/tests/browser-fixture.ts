@@ -41,6 +41,7 @@ export function withTempPiUserDir<T>(fn: (userDir: string) => T): T {
 	} finally {
 		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previous;
+		clearPackageConfigCache();
 	}
 }
 
@@ -49,6 +50,8 @@ export function writeUserSettings(userDir: string, config: Record<string, unknow
 	writeFileSync(join(userDir, "settings.json"), JSON.stringify({
 		kendex: { extensionManager: { config: { "@vanillagreen/pi-agents-tmux": config } } },
 	}));
+	// What pi-extension-manager's settings-changed event does after a write.
+	clearPackageConfigCache();
 }
 
 export function record(agent: string, taskId: string, createdAt: string, patch: Partial<PaneTaskRecord> = {}): PaneTaskRecord {

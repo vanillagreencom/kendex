@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { clearPackageConfigCache } from "../extensions/package-config.js";
 import { fakeCtx, fakePi, mockPiModules } from "./lib/fake-pi.ts";
 
 mockPiModules();
@@ -16,6 +17,7 @@ for (const entry of ["tool", "command"] as const) {
 			writeFileSync(fileNotDirectory, "x", "utf8");
 			process.env.PI_CODING_AGENT_DIR = fileNotDirectory;
 			process.env.PI_TASK_PANEL_DIAGNOSTIC_LOG = join(base, "diagnostics.log");
+			clearPackageConfigCache();
 			const [{ default: taskPanel }, { isTaskPanelToolResultBoundedState }] = await Promise.all([
 				import("../extensions/task-panel.js"), import("../extensions/tool-result-details.js"),
 			]);
@@ -49,6 +51,7 @@ for (const entry of ["tool", "command"] as const) {
 			else process.env.PI_CODING_AGENT_DIR = previousPiDir;
 			if (previousDiagnosticLog === undefined) delete process.env.PI_TASK_PANEL_DIAGNOSTIC_LOG;
 			else process.env.PI_TASK_PANEL_DIAGNOSTIC_LOG = previousDiagnosticLog;
+			clearPackageConfigCache();
 			rmSync(base, { recursive: true, force: true });
 		}
 	});

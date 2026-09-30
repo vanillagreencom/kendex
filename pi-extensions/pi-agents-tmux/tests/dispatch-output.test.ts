@@ -14,6 +14,8 @@ function writeProjectSettings(cwd: string, config: Record<string, unknown>): voi
 		kendex: { extensionManager: { config: { "@vanillagreen/pi-agents-tmux": config } } },
 	}), "utf8");
 	recordProjectTrust({ cwd, isProjectTrusted: () => true });
+	// What pi-extension-manager's settings-changed event does after a write.
+	clearPackageConfigCache();
 }
 
 const tempDirs: string[] = [];
@@ -39,6 +41,7 @@ test("parallel output divides total result budgets across returned agents", () =
 	} finally {
 		if (previousPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousPiDir;
+		clearPackageConfigCache();
 	}
 });
 
@@ -80,6 +83,7 @@ test("parallel result preparation writes artifacts and section surfaces them bef
 	} finally {
 		if (previousPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousPiDir;
+		clearPackageConfigCache();
 	}
 });
 

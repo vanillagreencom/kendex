@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { clearPackageConfigCache } from "../extensions/manager/package-config.ts";
 import { planUninstall, planUpdate, toggleItem } from "../extensions/manager/actions.ts";
 import { applyUpdateMetadata, buildInventory } from "../extensions/manager/inventory.ts";
 import { npmCachePath } from "../extensions/manager/paths.ts";
@@ -59,6 +60,7 @@ beforeEach(() => {
 	process.env.NPM_CONFIG_PREFIX = join(rootTmp, "npm-prefix");
 	process.env.npm_config_prefix = process.env.NPM_CONFIG_PREFIX;
 	process.env.PI_CODING_AGENT_DIR = join(rootTmp, "home", ".pi", "agent");
+	clearPackageConfigCache();
 });
 
 afterEach(() => {
@@ -70,6 +72,7 @@ afterEach(() => {
 	else process.env.npm_config_prefix = originalEnv.npm_config_prefix;
 	if (originalEnv.PI_CODING_AGENT_DIR === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = originalEnv.PI_CODING_AGENT_DIR;
+	clearPackageConfigCache();
 	rmSync(rootTmp, { force: true, recursive: true });
 });
 

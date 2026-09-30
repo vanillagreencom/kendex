@@ -144,6 +144,7 @@ afterEach(() => {
 		if (savedEnv[key] === undefined) delete process.env[key];
 		else process.env[key] = savedEnv[key];
 	}
+	clearPackageConfigCache();
 	if (root) rmSync(root, { force: true, recursive: true });
 });
 

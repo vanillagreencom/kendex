@@ -21,9 +21,9 @@ function withTempDirs(fn) {
 		mkdirSync(user, { recursive: true });
 		mkdirSync(join(project, ".pi"), { recursive: true });
 		process.env.PI_CODING_AGENT_DIR = user;
-		clearPackageConfigCache();
 		process.env.HOME = join(root, "home");
 		delete process.env.CLAUDE_BRIDGE_ISOLATED;
+		clearPackageConfigCache();
 		return fn({ root, user, project });
 	} finally {
 		if (oldPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
@@ -32,6 +32,7 @@ function withTempDirs(fn) {
 		else process.env.CLAUDE_BRIDGE_ISOLATED = oldIsolated;
 		if (oldHome === undefined) delete process.env.HOME;
 		else process.env.HOME = oldHome;
+		clearPackageConfigCache();
 		rmSync(root, { recursive: true, force: true });
 	}
 }
@@ -56,6 +57,7 @@ describe("resolveExternalConfigValue", () => {
 
 	it("shows the global source as a home-relative path", () => withTempDirs(({ root, user, project }) => {
 		process.env.HOME = root;
+		clearPackageConfigCache();
 		writeFileSync(join(user, "claude-bridge.json"), JSON.stringify({ enabled: false }));
 
 		assert.equal(resolveExternalConfigValue("enabled", project).source, "~/user/claude-bridge.json");

@@ -20,6 +20,7 @@ export function withConfig(config: Record<string, unknown>, run: (cwd: string) =
 	const dir = mkdtempSync(join(tmpdir(), "pi-output-policy-test-"));
 	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = join(dir, "agent");
+	clearPackageConfigCache();
 	try {
 		writeConfig(dir, config);
 		recordProjectTrust({ cwd: dir, isProjectTrusted: () => true });
@@ -27,6 +28,7 @@ export function withConfig(config: Record<string, unknown>, run: (cwd: string) =
 	} finally {
 		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		clearPackageConfigCache();
 		rmSync(dir, { force: true, recursive: true });
 	}
 }
@@ -35,6 +37,7 @@ export async function withConfigAsync(config: Record<string, unknown>, run: (cwd
 	const dir = mkdtempSync(join(tmpdir(), "pi-output-policy-test-"));
 	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = join(dir, "agent");
+	clearPackageConfigCache();
 	try {
 		writeConfig(dir, config);
 		recordProjectTrust({ cwd: dir, isProjectTrusted: () => true });
@@ -42,6 +45,7 @@ export async function withConfigAsync(config: Record<string, unknown>, run: (cwd
 	} finally {
 		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		clearPackageConfigCache();
 		rmSync(dir, { force: true, recursive: true });
 	}
 }

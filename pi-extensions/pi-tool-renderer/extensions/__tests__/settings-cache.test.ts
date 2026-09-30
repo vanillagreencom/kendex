@@ -27,6 +27,7 @@ let monotonicClock: ReturnType<typeof spyOn> | undefined;
 beforeEach(() => {
 	monotonicNow = 0;
 	monotonicClock = spyOn(performance, "now").mockImplementation(() => monotonicNow);
+	clearPackageConfigCache();
 });
 
 afterEach(() => {
@@ -36,6 +37,7 @@ afterEach(() => {
 	else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 	if (previousHome === undefined) delete process.env.HOME;
 	else process.env.HOME = previousHome;
+	clearPackageConfigCache();
 });
 
 function writeConfig(settingsPath: string, config: Record<string, unknown>): void {

@@ -129,6 +129,7 @@ async function runRateLimitScopeCase(childOwnsVisiblePane: boolean): Promise<{
 		restoreEnv("PI_CODING_AGENT_DIR", previousEnv.piDir);
 		restoreEnv("KENDEX_RATE_LIMIT_BACKOFF_LADDER", previousEnv.backoffLadder);
 		restoreEnv("KENDEX_RATE_LIMIT_WATCHDOG", previousEnv.watchdog);
+		clearPackageConfigCache();
 		if (previousStatusline.exists) globals[STATUSLINE_SYMBOL] = previousStatusline.value;
 		else delete globals[STATUSLINE_SYMBOL];
 		if (previousStats.exists) globals[STATS_BRIDGE_SYMBOL] = previousStats.value;

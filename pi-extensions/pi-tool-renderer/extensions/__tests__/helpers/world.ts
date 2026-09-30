@@ -23,6 +23,7 @@ export function useWorld() {
 	afterEach(() => {
 		if (previousAgent === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgent;
+		clearPackageConfigCache();
 		if (current) rmSync(current.root, { recursive: true, force: true });
 		current = undefined;
 	});

@@ -59,6 +59,7 @@ function teardown(harness: Harness): void {
 	else process.env.TMUX_PANE = harness.previousEnv.tmuxPane;
 	if (harness.previousEnv.piDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = harness.previousEnv.piDir;
+	clearPackageConfigCache();
 	rmSync(harness.cwd, { force: true, recursive: true });
 }
 

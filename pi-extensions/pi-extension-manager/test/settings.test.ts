@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { clearPackageConfigCache } from "../extensions/manager/package-config.ts";
 import { buildInventory } from "../extensions/manager/inventory.ts";
 import { applyMessage, managerFailure, managerNotice, parseSettingInput } from "../extensions/manager/format.ts";
 import { getConfigValue, getOrCreateRecord } from "../extensions/manager/settings.ts";
@@ -61,6 +62,7 @@ beforeEach(() => {
 	process.env.NPM_CONFIG_PREFIX = join(rootTmp, "npm-prefix");
 	process.env.npm_config_prefix = process.env.NPM_CONFIG_PREFIX;
 	process.env.PI_CODING_AGENT_DIR = join(rootTmp, "home", ".pi", "agent");
+	clearPackageConfigCache();
 	delete (globalThis as unknown as Record<PropertyKey, unknown>)[EXTERNAL_CONFIG_RESOLVER_SYMBOL];
 });
 
@@ -74,6 +76,7 @@ afterEach(() => {
 	else process.env.npm_config_prefix = originalEnv.npm_config_prefix;
 	if (originalEnv.PI_CODING_AGENT_DIR === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = originalEnv.PI_CODING_AGENT_DIR;
+	clearPackageConfigCache();
 	rmSync(rootTmp, { force: true, recursive: true });
 });
 

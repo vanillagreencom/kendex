@@ -18,10 +18,12 @@ beforeAll(() => {
 	savedAgentDir = process.env.PI_CODING_AGENT_DIR;
 	emptyAgentDir = mkdtempSync(join(tmpdir(), "pi-nested-agents-md-empty-agent-"));
 	process.env.PI_CODING_AGENT_DIR = emptyAgentDir;
+	clearPackageConfigCache();
 });
 afterAll(() => {
 	if (savedAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = savedAgentDir;
+	clearPackageConfigCache();
 	if (emptyAgentDir !== undefined) rmSync(emptyAgentDir, { recursive: true, force: true });
 });
 

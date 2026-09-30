@@ -20,6 +20,7 @@ function restoreEnv(): void {
 	else process.env.HOME = originalEnv.HOME;
 	if (originalEnv.PI_CODING_AGENT_DIR === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = originalEnv.PI_CODING_AGENT_DIR;
+	clearPackageConfigCache();
 }
 
 function writeAgent(dir: string, name: string, description: string): string {

@@ -56,6 +56,7 @@ test("resource settings parse configured fields and clamp numeric values", () =>
 		} finally {
 			if (previousPiRoot === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = previousPiRoot;
+			clearPackageConfigCache();
 			rmSync(root, { recursive: true, force: true });
 		}
 	}

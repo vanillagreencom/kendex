@@ -11,6 +11,7 @@ const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 afterEach(() => {
 	if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+	clearPackageConfigCache();
 });
 
 function fixture(config: Record<string, unknown>): string {

@@ -104,8 +104,8 @@ const originalHome = process.env.HOME;
 beforeEach(() => {
 	workdir = mkdtempSync(join(tmpdir(), "pi-qol-agent-end-"));
 	process.env.PI_CODING_AGENT_DIR = workdir;
-	clearPackageConfigCache();
 	process.env.HOME = workdir;
+	clearPackageConfigCache();
 });
 
 afterEach(async () => {
@@ -125,6 +125,7 @@ afterEach(async () => {
 		else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
 		if (originalHome === undefined) delete process.env.HOME;
 		else process.env.HOME = originalHome;
+		clearPackageConfigCache();
 	}
 	if (failures.length) throw new AggregateError(failures, "session_shutdown failed");
 });

@@ -147,6 +147,7 @@ describe("bridge query options: the Pi agent-dir AGENTS.md is forwarded once wit
 					if (value === undefined) delete process.env[key];
 					else process.env[key] = value;
 				}
+				clearPackageConfigCache();
 				rmSync(dir, { recursive: true, force: true });
 			}
 		});
