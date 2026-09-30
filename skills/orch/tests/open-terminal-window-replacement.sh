@@ -2,7 +2,7 @@
 # Drive the launcher over a real private tmux server. Local launches deliver a
 # working screen; a hosted provider holds preparation so its replacement can
 # be observed before the background job tries to dial SSH. Both paths must
-# replace only owned windows and preserve other repositories' same-name lanes.
+# replace Linear windows by key and GitHub windows by recorded identity.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -67,41 +67,33 @@ tm set-option -g renumber-windows on
 # Each row starts with the dead windows a relaunch can encounter. SPLIT adds
 # the extra pane a manually split lane can leave. SOLE removes the controller
 # window, so replacement must keep the session itself alive.
-run_row() { # LAUNCHER HOST COUNT SPLIT SOLE [FAILURE] [MODE] [COLLISION]
-  local launcher="$1" host="$2" count="$3" split="$4" sole="$5" failure="${6:-}" mode="${7:---relaunch}" collision="${8:-no}" i old pane root owner foreign_owner
+run_row() { # LAUNCHER HOST COUNT SPLIT SOLE [FAILURE] [MODE] [OWNER] [TRACKER]
+  local launcher="$1" host="$2" count="$3" split="$4" sole="$5" failure="${6:-}" mode="${7:---relaunch}" ownership="${8:-untagged}" tracker="${9:-linear}" i old pane root owner
   local tracker_args=()
-  TITLE=CC-1 ITEM=CC-1 STATE_ID=CC-1
-  if [[ "$collision" == yes ]]; then TITLE=gh-1 ITEM=1 STATE_ID=issue-1; tracker_args=(--tracker github); fi
+  TITLE=KEN-2194 ITEM=KEN-2194 STATE_ID=KEN-2194
+  if [[ "$tracker" == github ]]; then TITLE=gh-1 ITEM=1 STATE_ID=issue-1; tracker_args=(--tracker github); fi
   RUN="$TMP_ROOT/run-$((++RUN_SEQ))"
   mkdir -p "$RUN/state" "$RUN/remote" "$RUN/tree"
   root="$RUN/tree"
   [[ "$host" != hosted ]] || root="$TMP_ROOT/repo"
-  owner="$(jq -cn --arg root "$root" --arg item "$STATE_ID" '[$root, "o/r", $item]')"
+  case "$ownership" in
+    untagged) owner="" ;;
+    tagged) owner="$(jq -cn --arg root "$root" --arg item "$STATE_ID" '[$root, "o/r", $item]')" ;;
+    repo) owner="$(jq -cn --arg root "$root" --arg item "$STATE_ID" '[$root, "o/other", $item]')" ;;
+    tree) owner="$(jq -cn --arg root "$RUN/other-tree" --arg item "$STATE_ID" '[$root, "o/r", $item]')" ;;
+  esac
   if tm has-session -t =fleet 2>/dev/null; then tm kill-session -t =fleet; fi
   if tm has-session -t =fleet-extra 2>/dev/null; then tm kill-session -t =fleet-extra; fi
-  tm -f /dev/null new-session -d -s fleet -n CC-10 -x 200 -y 40 'exec /bin/sh'
+  tm -f /dev/null new-session -d -s fleet -n KEN-21940 -x 200 -y 40 'exec /bin/sh'
   SIBLING="$(tm new-session -d -s fleet-extra -n "$TITLE" -P -F '#{pane_id}' 'exec /bin/sh')"
-  NEIGHBOUR="$(tm display-message -p -t fleet:CC-10 '#{pane_id}')"
-  # The same numeric GitHub item can belong to another repository at the
-  # same start path, or another checkout of this repository. Neither is ours.
-  FOREIGN=""
-  if [[ "$collision" == yes ]]; then
-    for i in repo tree unowned; do
-      pane="$(tm new-window -d -t fleet -n "$TITLE" -c "$root" -P -F '#{pane_id}' 'exec /bin/sh')"
-      FOREIGN+="$pane "
-      case "$i" in
-        repo) foreign_owner="$(jq -cn --arg root "$root" '[$root, "o/other", "issue-1"]')" ;;
-        tree) foreign_owner="$(jq -cn --arg root "$RUN/other-tree" '[$root, "o/r", "issue-1"]')" ;;
-        unowned) foreign_owner="" ;;
-      esac
-      [[ -z "$foreign_owner" ]] || tm set-option -w -t "$pane" @kendex_lane "$foreign_owner"
-    done
-  fi
+  NEIGHBOUR="$(tm display-message -p -t fleet:KEN-21940 '#{pane_id}')"
   OLD=""
   i=0
   while [[ "$i" -lt "$count" ]]; do
     old="$(tm new-window -d -t fleet -n "$TITLE" -c "$root" -P -F '#{pane_id}' 'exec /bin/sh')"
-    tm set-option -w -t "$old" @kendex_lane "$owner"
+    # open-terminal creates a shell window at this path. Untagged rows leave
+    # it exactly that way, without adding the launcher's identity option.
+    [[ -z "$owner" ]] || tm set-option -w -t "$old" @kendex_lane "$owner"
     OLD+="$old "
     if [[ "$split" == yes ]]; then
       old="$(tm split-window -d -t "$old" -P -F '#{pane_id}' 'exec /bin/sh')"
@@ -138,21 +130,15 @@ run_row() { # LAUNCHER HOST COUNT SPLIT SOLE [FAILURE] [MODE] [COLLISION]
   for i in $(seq 50); do
     STATE="$(env -i HOME="$TMP_ROOT/home" PATH="$BIN:$PATH" REAL_TMUX="$REAL_TMUX" TMUX="$ADDR" \
       "$SCRIPTS_DIR/lanes" state "fleet:$TITLE")"
-    [[ "$host" != local || "$RC" != 0 || "$STATE" == working || "$mode" != --relaunch || "$collision" == yes ]] && break
+    [[ "$host" != local || "$RC" != 0 || "$STATE" == working || "$mode" != --relaunch || "$tracker" == github ]] && break
     sleep 0.1
   done
   WINDOWS="$(tm list-windows -t =fleet -f "#{==:#{window_name},$TITLE}" -F '#{window_id}')"
   COUNT="$(grep -c . <<<"$WINDOWS" || true)"
-  OWNERS="$(tm list-windows -t =fleet -f "#{==:#{window_name},$TITLE}" -F '#{@kendex_lane}')"
-  OWNED_COUNT="$(grep -cxF -- "$owner" <<<"$OWNERS" || true)"
   PANES="$(tm list-panes -a -F '#{pane_id}')"
   RETAINED=0
   for pane in $OLD; do
     if grep -qxF -- "$pane" <<<"$PANES"; then RETAINED=$((RETAINED + 1)); fi
-  done
-  FOREIGN_RETAINED=0
-  for pane in $FOREIGN; do
-    if grep -qxF -- "$pane" <<<"$PANES"; then FOREIGN_RETAINED=$((FOREIGN_RETAINED + 1)); fi
   done
   RECORD="$("$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee .lanes | jq -r --arg item "$STATE_ID" \
     '[.[]? | select(.item == $item) | "\(.status) \(.window // "")"] | first')"
@@ -161,27 +147,29 @@ run_row() { # LAUNCHER HOST COUNT SPLIT SOLE [FAILURE] [MODE] [COLLISION]
 
 # Local and hosted relaunches reach the same window creator, including the
 # hosted launch_handoff path that opens a window before its host is ready.
-for row in 'local|0|no|no|working' 'local|1|no|no|working' 'local|2|no|no|working' \
-  'local|1|yes|no|working' 'local|1|no|yes|working' \
-  'hosted|0|no|no|exited' 'hosted|1|no|no|exited' 'hosted|2|no|no|exited' \
-  'hosted|1|yes|no|exited' 'hosted|1|no|yes|exited'; do
-  IFS='|' read -r host count split sole expect <<<"$row"
-  run_row "$LIVE" "$host" "$count" "$split" "$sole"
+for row in 'local|0|no|no|untagged|working' 'local|1|no|no|untagged|working' \
+  'local|2|no|no|tagged|working' 'local|1|yes|no|untagged|working' 'local|1|no|yes|untagged|working' \
+  'hosted|0|no|no|untagged|exited' 'hosted|1|no|no|untagged|exited' \
+  'hosted|2|no|no|untagged|exited' 'hosted|1|no|yes|untagged|exited'; do
+  IFS='|' read -r host count split sole ownership expect <<<"$row"
+  run_row "$LIVE" "$host" "$count" "$split" "$sole" '' --relaunch "$ownership"
   KEPT="$(tm display-message -p -t "$SIBLING" '#{pane_id}')"
   if [[ "$sole" == yes ]]; then neighbour=removed; want_neighbour=removed
   else neighbour="$(tm display-message -p -t "$NEIGHBOUR" '#{pane_id}')"; want_neighbour="$NEIGHBOUR"; fi
-  record='running fleet:CC-1'
-  [[ "$host" != hosted ]] || record='preparing fleet:CC-1'
-  assert_eq "$RC|$COUNT|$OWNED_COUNT|$RETAINED|$STATE|$RECORD|$KEPT|$neighbour" \
-    "0|1|1|0|$expect|$record|$SIBLING|$want_neighbour" \
+  record='running fleet:KEN-2194'
+  [[ "$host" != hosted ]] || record='preparing fleet:KEN-2194'
+  assert_eq "$RC|$COUNT|$RETAINED|$STATE|$RECORD|$KEPT|$neighbour" \
+    "0|1|0|$expect|$record|$SIBLING|$want_neighbour" \
     "$row: replace old panes, keep one judged lane and preserve the sibling and neighbour"
 done
 
-for row in 'local|0' 'local|1' 'local|2' 'hosted|0' 'hosted|1' 'hosted|2'; do
-  IFS='|' read -r host count <<<"$row"
-  run_row "$LIVE" "$host" "$count" no no '' --relaunch yes
-  assert_eq "$RC|$COUNT|$OWNED_COUNT|$RETAINED|$FOREIGN_RETAINED" '0|4|1|0|3' \
-    "$row: replace only this repository's worktree and preserve foreign and unowned windows"
+# GitHub numbers can name another repository at the same hosted start path,
+# another worktree, or a window with no recorded owner. Only our tag replaces.
+for row in 'tagged|1|0|0' 'untagged|2|1|1' 'repo|2|1|0' 'tree|2|1|0'; do
+  IFS='|' read -r ownership count retained notice <<<"$row"
+  run_row "$LIVE" hosted 1 no no '' --relaunch "$ownership" github
+  assert_eq "$RC|$COUNT|$RETAINED|$(grep -cE '^open-terminal: window-preserved item=gh-1 window=@[0-9]+ reason=owner-unrecorded$' <<<"$OUT" || true)" \
+    "0|$count|$retained|$notice" "$ownership: GitHub replacement requires identity and reports an untagged preserved window once"
 done
 
 # Plain launches retain their insertion semantics; replacement is opt-in.
@@ -191,29 +179,26 @@ assert_eq "$RC|$COUNT|$RETAINED" '0|2|1' 'a launch without --relaunch does not k
 for row in 'discovery|1|list-windows|1' 'close|2|kill-window|2' 'owner|1|set-option|0'; do
   IFS='|' read -r failure count operation remaining <<<"$row"
   run_row "$LIVE" local "$count" no no "$failure"
-  assert_eq "$RC|$COUNT|$RETAINED|$(grep -cF "open-terminal: tmux-failed operation=$operation item=CC-1" <<<"$OUT")" \
+  assert_eq "$RC|$COUNT|$RETAINED|$(grep -cF "open-terminal: tmux-failed operation=$operation item=KEN-2194" <<<"$OUT")" \
     "1|$remaining|$remaining|1" "a failed $operation leaves no new unowned window"
 done
 
-# A private production mutant disables the replacement option but keeps the
-# discovery and its text. The same full launch then leaves an ambiguous name.
+# Identity-only replacement leaves an untagged Linear window ambiguous.
 MUTANT="$(mutant_scripts mutant open-terminal)/open-terminal"
 orch_fixture_shared_libs "$TMP_ROOT/mutant"
 git -C "$TMP_ROOT/mutant" init -q
 git -C "$TMP_ROOT/mutant" config gc.auto 0
 git -C "$TMP_ROOT/mutant" config maintenance.auto false
-mutate_file "$MUTANT" '[[ -z "$replace_idx" ]] || window_args=(-k -t' '[[ -n "$replace_idx" ]] || window_args=(-k -t'
+mutate_file "$MUTANT" 'if [[ "$TRACKER" == github && "$owner" != "$identity" ]]; then' 'if [[ "$owner" != "$identity" ]]; then'
 run_row "$MUTANT" local 1 no no
 assert_eq "$RC|$COUNT|$RETAINED|$STATE" '0|2|1|unjudged' \
-  'control: without replacement the same test sees two windows and lanes state is unjudged'
+  'control: identity-only replacement leaves the untagged Linear window and lanes state is unjudged'
 
-# A second control removes ownership from the same full launcher. It closes
-# the other repository's panes even though their start directory is identical.
-mutate_file "$MUTANT" '[[ -n "$replace_idx" ]] || window_args=(-k -t' '[[ -z "$replace_idx" ]] || window_args=(-k -t'
-mutate_file "$MUTANT" '[[ "$owner" == "$identity" ]] || continue' '[[ "$owner" == "$owner" ]] || continue'
-run_row "$MUTANT" hosted 2 no no '' --relaunch yes
-assert_eq "$RC|$COUNT|$RETAINED|$FOREIGN_RETAINED" '0|1|0|0' \
-  'control: name-only replacement destroys the foreign and unowned windows'
+# Name-only replacement destroys an untagged GitHub window.
+mutate_file "$MUTANT" 'if [[ "$owner" != "$identity" ]]; then' 'if [[ "$TRACKER" == github && "$owner" != "$owner" ]]; then'
+run_row "$MUTANT" hosted 1 no no '' --relaunch untagged github
+assert_eq "$RC|$COUNT|$RETAINED" '0|1|0' \
+  'control: name-only replacement destroys the untagged GitHub window'
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

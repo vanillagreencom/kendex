@@ -2141,18 +2141,18 @@ tmux_window_open() { # DIR TITLE
     matches="$(tmux list-windows -t "=$LAUNCH_SESSION" -f "#{==:#{window_name},$title}" -F '#{window_index} #{window_id} #{@kendex_lane}')" || {
       ot_message tmux-failed "operation=list-windows" "item=$title" >&2; return 1;
     }
-    # Only the launcher's recorded identity owns a window. A name alone can
-    # belong to another repository or worktree, or to a manually opened window.
+    # Linear keys identify an item; GitHub numbers require a matching identity.
     # Window ids keep duplicate removal stable through renumbering.
     while IFS= read -r row; do
       [[ -n "$row" ]] || continue
       read -r idx id owner <<<"$row"
-      [[ "$owner" == "$identity" ]] || continue
+      if [[ "$TRACKER" == github && "$owner" != "$identity" ]]; then
+        [[ -n "$owner" ]] || printf 'open-terminal: window-preserved item=%s window=%s reason=owner-unrecorded\n' "$title" "$id" >&2; continue
+      fi
       if [[ -z "$replace_idx" ]]; then replace_idx="$idx"
       else tmux kill-window -t "$id" || { ot_message tmux-failed "operation=kill-window" "item=$title" >&2; return 1; }; fi
     done <<<"$matches"
-    # new-window -k replaces in place without destroying a session whose only
-    # window is the old lane. A plain launch still inserts after the last one.
+    # new-window -k keeps a session whose only window is the old lane alive.
     [[ -z "$replace_idx" ]] || window_args=(-k -t "=$LAUNCH_SESSION:$replace_idx")
   fi
   # The server pid rides along with the pane id: it is the other half of a
