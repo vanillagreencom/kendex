@@ -226,14 +226,17 @@ echo "=== the two recorded scripts paths are held to the tree that armed them ==
 # repairs: the checkout moved away from the recorded directory, or this
 # project's scripts sit somewhere other than the recorded place. A pair that
 # names another project, or that the quoter would not write, stays
-# unverifiable.
+# unverifiable, and so does a gone directory whose recorded place is not
+# this project's: nothing left on disk ties the helper to this project.
 fx_moved_checkout() { armed moved-from; mv "$R" "$TMP/moved-to"; R="$TMP/moved-to"; }
 fx_rel_elsewhere() { armed rel-elsewhere; edit "$R/.git/hooks/kendex-guards" "s|^installed_scripts_rel='.*'\$|installed_scripts_rel='elsewhere/scripts'|"; }
 fx_rel_payload() { armed rel-payload; edit "$R/.git/hooks/kendex-guards" "s|^installed_scripts_rel='.*'\$|installed_scripts_rel='x'; echo PWNED >\\&2; :'|"; }
+fx_moved_rel_elsewhere() { armed moved-rel-from; mv "$R" "$TMP/moved-rel-to"; R="$TMP/moved-rel-to"; edit "$R/.git/hooks/kendex-guards" "s|^installed_scripts_rel='.*'\$|installed_scripts_rel='elsewhere/scripts'|"; }
 fx_moved_rearmed() { fx_moved_checkout; "$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true; }
 MOVED="helper-moved=kendex-guards"
 run_rows \
   "a checkout moved away from the directory its helper names is drift|fx_moved_checkout||check||rc=1 $NA$MOVED$REARM|helper=$X:ours['<root>/moved-from/.agents/skills/commit-guards/scripts'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a gone directory whose recorded place is not this project's is unverifiable|fx_moved_rel_elsewhere||check||rc=2 $CND$UNVERIFIED|" \
   "control: re-arming the moved checkout reads armed|fx_moved_rearmed||check||rc=0 $ARMED_CHECK|$FRESH" \
   "a recorded place other than where this project keeps its scripts is drift|fx_rel_elsewhere||check||rc=1 $NA$MOVED$REARM|" \
   "a payload on the recorded place is unverifiable|fx_rel_payload||check||rc=2 $CND$UNVERIFIED|"
