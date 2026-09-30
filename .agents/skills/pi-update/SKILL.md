@@ -26,7 +26,7 @@ Checks `pi-extensions/*` against a Pi release and records one verdict. The recor
 
 - No argument: the target is npm's current `latest` of `@earendil-works/pi-coding-agent`.
 - A version: that version is the target. Every source is still fetched.
-- A pasted changelog: the authoritative entry list for the range; fetching is skipped.
+- A pasted changelog: the authoritative entry list for the range; changelog fetching is skipped. The target is the highest released version header in the paste, and step 1 captures that version.
 
 ## 1. Capture the target
 
@@ -43,7 +43,7 @@ Create this run's own directory with `mkdir -p tmp/pi-update && mktemp -d tmp/pi
 
 ## 2. Audit the range
 
-- **Marker.** In scope is every released version header above `lastVersion` and at or below the target. Equal means nothing to audit: refresh `lastRun` and `lastRunHead`, commit the marker, stop.
+- **Marker.** In scope is every released version header above `lastVersion` and at or below the target. A target at or below `lastVersion` means nothing to audit: refresh `lastRun` and `lastRunHead`, commit the marker, stop. `lastVersion` and `lastDate` never move backward.
 - **First run** (marker absent): propose a baseline, the newest Pi version named in `git log`, and ask the user to confirm it before any work. Seed the marker there.
 - **Sources.** Enumerate every changelog on each run; never trust a stored list:
 
