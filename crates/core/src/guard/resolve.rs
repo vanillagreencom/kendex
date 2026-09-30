@@ -54,7 +54,9 @@ impl Installed {
     /// Resolve one of the package's scripts the way an armed repository
     /// runs them, as closely as a caller standing outside `.git/hooks` can.
     ///
-    /// The helper starts from the scripts directory baked into it at install.
+    /// The helper starts from the committing tree's own render, at the place
+    /// under its top level baked into it at install, then the scripts
+    /// directory baked in beside that place.
     /// This resolver does not read package-owned hook files, so it starts
     /// from the project root the caller stood in —
     /// where a kendex install renders — then the MAIN checkout, then this

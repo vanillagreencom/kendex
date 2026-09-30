@@ -38,12 +38,19 @@ skip() { printf 'pre-commit: lane-absent=%s roots=%s skills=%s fallback=%s/../..
 lanes() { printf '%s;%s;%s;%s;%s' "$DL" "$(skip preflight "$1" "$2")" "$(skip bot-instructions "$1" "$2")" "$BATCH" "$LOCAL_NONE"; } # SEARCHED SCRIPTS-DIR
 CLEAN="$(lanes '<repo>' "$SCRIPTS");$CHAIN_OK"
 BLOCKS="$(lanes '<repo>' "$SCRIPTS");$BLOCKED"
-# The baked value spans lines when the project name holds a newline, so the
-# blanking runs from the assignment to the comment that follows it.
+# Both baked scripts paths, so the helper reaches the search: the committing
+# tree's own render at the recorded place would otherwise run first. A baked
+# value spans lines when the project name holds a newline, so each blanking
+# runs from the assignment to the comment or program line that follows it.
 blank_baked() {
   local h="${HOOKS_OVERRIDE:-$R/.git/hooks}/kendex-guards" before=""
   before="$(cat -- "$h")"
-  awk 'BEGIN { skip = 0 } /^installed_scripts=/ { print "installed_scripts=\047\047"; skip = 1; next } skip && /^# Baked:/ { skip = 0 } !skip { print }' "$h" >"$h.new"
+  awk 'BEGIN { skip = 0 }
+    /^installed_scripts=/ { print "installed_scripts=\047\047"; skip = 1; next }
+    /^installed_scripts_rel=/ { print "installed_scripts_rel=\047\047"; skip = 2; next }
+    skip == 1 && /^# Baked:/ { skip = 0 }
+    skip == 2 && /^# kendex commit-guards git hooks\./ { skip = 0 }
+    !skip { print }' "$h" >"$h.new"
   cat "$h.new" >"$h"
   rm -f "$h.new"
   [ "$before" != "$(cat -- "$h")" ] || bad "fixture: ${R##*/}: the baked path was blanked" "the helper did not change"
@@ -252,6 +259,7 @@ nasty() { # NAME — a repository whose project, and its render, sit under the a
 nasty_armed() { nasty "$1"; "$INSTALLER_DIR/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true; }
 fx_nasty_install() { nasty nasty-install; }
 fx_nasty_check() { nasty_armed nasty-check; }
+fx_nasty_own() { nasty_armed nasty-own; printf '.gitignore\n' >"$R/.gitignore"; stage_marker; }
 fx_nasty_commit() { nasty_armed nasty-commit; blank_baked; printf '.gitignore\n' >"$R/.gitignore"; stage_marker; }
 fx_nasty_uninstall() { nasty_armed nasty-uninstall; }
 # The fallback path ends with a newline; the header replaces it with '?'.
@@ -260,6 +268,7 @@ NASTY_LANES="$DL;$(nasty_skip preflight);$(nasty_skip bot-instructions);$BATCH;$
 run_rows \
   "a project named with every awkward class arms|fx_nasty_install||install||rc=0 $ARMED|" \
   "and --check recognises the helper it wrote|fx_nasty_check||check||rc=0 commit-guards git hooks: armed=<repo>/.git/hooks|" \
+  "and the helper runs the render at the recorded place under that name, whose chain blocks|fx_nasty_own|$ONE|commit|feat: add b|rc=1 $NASTY_LANES;$BLOCKED|" \
   "and the helper rediscovers the package under that project name, whose chain blocks|fx_nasty_commit|$ONE|commit|feat: add b|rc=1 $NASTY_LANES;$BLOCKED|" \
   "and the project can disarm again|fx_nasty_uninstall||uninstall||rc=0 $REMOVED_ALL|helper=absent pre-commit=absent commit-msg=absent pre-push=absent hooksPath=<unset>"
 

@@ -111,14 +111,19 @@ fx_no_skill_newline() { armed $'no-skill\npre-commit: lane-missing=forged'; stag
 fx_armed_hook() { armed armed-hook; stage a.txt 'hello\n'; }
 fx_stale_path() { armed stale-path; stage a.txt 'hello\n'; edit "$R/.git/hooks/kendex-guards" "s|^installed_scripts=.*|installed_scripts='$R/gone/scripts'|"; }
 fx_stale_path_marker() { armed stale-path-marker; stage_marker; edit "$R/.git/hooks/kendex-guards" "s|^installed_scripts=.*|installed_scripts='$R/gone/scripts'|"; }
-fx_baked_first() {
-  armed baked-first
+baked_elsewhere() { # NAME — a baked scripts directory whose pre-commit announces itself
+  armed "$1"
   stage a.txt 'hello\n'
   mkdir "$R/baked"
   printf '#!/bin/sh\necho "foreign: baked ran"\nexit 0\n' >"$R/baked/pre-commit"
   chmod +x "$R/baked/pre-commit"
   edit "$R/.git/hooks/kendex-guards" "s|^installed_scripts=.*|installed_scripts='$R/baked'|"
 }
+fx_own_first() { baked_elsewhere own-first; }
+# The package moved off the recorded place, so the tree carries no render
+# there and the baked directory is next.
+fx_baked_first() { baked_elsewhere baked-first; mkdir -p "$R/.claude/skills"; mv "$R/.agents/skills/commit-guards" "$R/.claude/skills/commit-guards"; }
+OWN="kendex-guards: scripts=<repo>/.agents/skills/commit-guards/scripts (this tree)"
 run_rows \
   "a missing helper blocks the commit|fx_no_helper|$ONE|commit|feat: add a|rc=1 $NO_HELPER|" \
   "a missing helper is exit 2 from the hook itself|fx_no_helper_hook|$ONE|hook||rc=2 $NO_HELPER|" \
@@ -126,9 +131,10 @@ run_rows \
   "an unreachable script is exit 2 from the hook itself|fx_no_skill_hook|$ONE|hook||rc=2 $NO_SCRIPT|" \
   "a newline in a searched checkout cannot create another stable record|fx_no_skill_newline|$ONE|hook||rc=2 $NO_SCRIPT|" \
   "control: the hook exits 0 once the guard can run|fx_armed_hook|$ONE|hook||rc=0 $CHAIN_OK|" \
-  "a stale baked path is rediscovered under .agents/skills|fx_stale_path|$ONE|commit|feat: add a|rc=0 $CHAIN_OK;${MSG_OK}feat: add a|helper=$X:ours['<repo>/gone/scripts'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
-  "control: the rediscovered chain still blocks|fx_stale_path_marker|$ONE|commit|feat: add b|rc=1 $BLOCKED|" \
-  "the baked scripts directory is run before any rediscovery, lane by lane|fx_baked_first|$ONE|commit|feat: add a|rc=0 foreign: baked ran;${MSG_OK}feat: add a|helper=$X:ours['<repo>/baked'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>"
+  "a stale baked path runs the tree's own render at the recorded place, and names it|fx_stale_path|$ONE|commit|feat: add a|rc=0 $OWN;$CHAIN_OK;$OWN;${MSG_OK}feat: add a|helper=$X:ours['<repo>/gone/scripts'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "control: that chain still blocks|fx_stale_path_marker|$ONE|commit|feat: add b|rc=1 $OWN;$BLOCKED|" \
+  "the tree's own render runs before a baked scripts directory that is there|fx_own_first|$ONE|commit|feat: add a|rc=0 $OWN;$CHAIN_OK;$OWN;${MSG_OK}feat: add a|" \
+  "with no render at the recorded place, the baked scripts directory is run before any rediscovery, lane by lane|fx_baked_first|$ONE|commit|feat: add a|rc=0 foreign: baked ran;${MSG_OK}feat: add a|helper=$X:ours['<repo>/baked'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>"
 
 echo "=== existing hooks survive the install, and ours runs first ==="
 fx_compose() {
@@ -297,9 +303,19 @@ fx_bare_host() {
   ln -s "$SKILL_DIR/../doc-limits" "$W/.agents/skills/doc-limits"
 }
 DRIFTED="helper=$OURS pre-commit=$X:#!/bin/sh~#@PRE@~@CREATED@ commit-msg=$X:#!/bin/sh~#@MSG@~@CREATED@ pre-push=$SHIM_PUSH"
+# Which revision judges a linked worktree's commit: each copy's pre-commit
+# announces itself. A worktree carrying its own render is judged by it, and
+# the note names that copy; one carrying none runs the copy the main
+# checkout armed, with no note.
+announce() { printf '#!/bin/sh\necho "foreign: %s copy ran"\nexit 0\n' "$2" >"$1/pre-commit"; chmod +x "$1/pre-commit"; } # SCRIPTS-DIR WHOSE
+fx_wt_own() { wt_with_package own-render; announce "$R/.agents/skills/commit-guards/scripts" main; announce "$W/.agents/skills/commit-guards/scripts" tree; printf 'hello\n' >"$W/w.txt"; git -C "$W" add w.txt; }
+fx_wt_none() { worktree_of no-render; announce "$R/.agents/skills/commit-guards/scripts" main; printf 'hello\n' >"$W/w.txt"; git -C "$W" add w.txt; }
+WT_OWN="kendex-guards: scripts=<root>/wt-own-render/.agents/skills/commit-guards/scripts (this tree)"
 run_rows \
   "control: a clean commit from a linked worktree passes through the shared shims|fx_wt_clean|$ONE|commit|feat: from the worktree|rc=0 $CHAIN_OK;${MSG_OK}feat: from the worktree|" \
   "a linked worktree gets the guard chain too|fx_wt_marker|$ONE|commit|feat: from the worktree|rc=1 $BLOCKED|" \
+  "a linked worktree carrying its own render is judged by it, not by the main checkout's|fx_wt_own|$ONE|commit|feat: from the worktree|rc=0 $WT_OWN;foreign: tree copy ran;$WT_OWN;${MSG_OK}feat: from the worktree|" \
+  "control: a linked worktree carrying none runs the copy the main checkout armed|fx_wt_none|$ONE|commit|feat: from the worktree|rc=0 foreign: main copy ran;${MSG_OK}feat: from the worktree|" \
   "arming from a linked worktree is refused, and the shared hooks are left as they were|fx_wt_install||install-wt||rc=2 install-git-hooks: linked-worktree=<repo>/.git/hooks|$DRIFTED hooksPath=<unset>" \
   "control: the main checkout arms and repairs the drift the refused run left|fx_wt_install_main||install||rc=0 $ARMED|$FRESH" \
   "control: --check answers from the linked worktree|fx_wt_check||check-wt||rc=0 commit-guards git hooks: armed=<repo>/.git/hooks|" \

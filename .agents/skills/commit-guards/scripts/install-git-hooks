@@ -131,6 +131,15 @@ to it has no main checkout, and arms from any of them rather than from
 nowhere. --check and --uninstall answer from any work tree: reading is safe
 anywhere, and disarming is repository-level.
 
+A commit or push is judged by the scripts the committing work tree carries.
+The helper also records where the scripts directory sits under the arming
+tree's top level, and runs the copy at that place in the committing tree
+when it is there, naming it on stderr (kendex-guards: scripts=PATH (this
+tree)) where it is not the armed copy. A tree carrying no copy there runs
+the armed one. --check reports drift when the two recorded paths no longer
+agree with the arming tree: the armed directory is gone, or this project's
+scripts sit somewhere other than the recorded place.
+
 Warnings go to stderr, and so does the core.hooksPath remedy, which the
 summary points at rather than repeats: git's report of where the value is
 set runs to as many lines as git gives.
@@ -198,6 +207,25 @@ classify_hooks_path_or_stop
 
 gg_project_rel PROJECT_REL "$SCRIPT_DIR" "$REPO_ABS"
 
+# Where this scripts directory sits under the arming tree's top level, which
+# is where every other checkout of the repository carries its own render:
+# the helper runs the committing tree's copy from there, so a linked work
+# tree is judged by its own revision. Empty when it sits outside that tree,
+# where no checkout carries it and the helper runs the baked directory.
+# --check bakes the same value from the tree it is asked about, and a helper
+# holding another is drift.
+INSTALLED_SCRIPTS_REL=""
+scripts_rel() {
+  local top="" top_real="" scripts_real=""
+  gg_git_path top "$REPO_ABS" rev-parse --show-toplevel || return 0
+  [ -n "$top" ] || return 0
+  gg_path top_real gg_physical "$top" || return 0
+  gg_path scripts_real gg_physical "$SCRIPT_DIR" || return 0
+  case "$scripts_real" in
+    "$top_real"/*) INSTALLED_SCRIPTS_REL="${scripts_real#"$top_real/"}" ;;
+  esac
+}
+scripts_rel
 if [ "$HOOKS_PATH_ELSEWHERE" -eq 1 ] && [ "$MODE" = "install" ]; then
   if hooks_path_off; then
     warn hooks-path-disabled "$(gg_shown "$CUSTOM_HOOKS")" "core.hooksPath is set and empty, which switches git hooks off entirely, so the guard shims were NOT installed"

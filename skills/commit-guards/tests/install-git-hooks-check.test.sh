@@ -213,6 +213,25 @@ run_rows \
   "a checkout path carrying an apostrophe is armed through the escape the quoter writes|fx_apostrophe||check||rc=0 commit-guards git hooks: armed=<root>/check\\ o\\'brien/.git/hooks|helper=$X:ours['<root>/check o'\\''brien/.agents/skills/commit-guards/scripts'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
   "a bare apostrophe where the escape belongs is unverifiable|fx_apostrophe_bare||check||rc=2 $CND$UNVERIFIED|"
 
+echo "=== the two recorded scripts paths are held to the tree that armed them ==="
+# The helper records the armed scripts directory and where it sits under the
+# arming tree's top level, and runs the committing tree's render from that
+# place. A pair the arming tree no longer matches is drift, which the re-arm
+# repairs: the checkout moved away from the recorded directory, or this
+# project's scripts sit somewhere other than the recorded place. A pair that
+# names another project, or that the quoter would not write, stays
+# unverifiable.
+fx_moved_checkout() { armed moved-from; mv "$R" "$TMP/moved-to"; R="$TMP/moved-to"; }
+fx_rel_elsewhere() { armed rel-elsewhere; edit "$R/.git/hooks/kendex-guards" "s|^installed_scripts_rel='.*'\$|installed_scripts_rel='elsewhere/scripts'|"; }
+fx_rel_payload() { armed rel-payload; edit "$R/.git/hooks/kendex-guards" "s|^installed_scripts_rel='.*'\$|installed_scripts_rel='x'; echo PWNED >\\&2; :'|"; }
+fx_moved_rearmed() { fx_moved_checkout; "$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true; }
+MOVED="helper-moved=kendex-guards"
+run_rows \
+  "a checkout moved away from the directory its helper names is drift|fx_moved_checkout||check||rc=1 $NA$MOVED$REARM|helper=$X:ours['<root>/moved-from/.agents/skills/commit-guards/scripts'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "control: re-arming the moved checkout reads armed|fx_moved_rearmed||check||rc=0 $ARMED_CHECK|$FRESH" \
+  "a recorded place other than where this project keeps its scripts is drift|fx_rel_elsewhere||check||rc=1 $NA$MOVED$REARM|" \
+  "a payload on the recorded place is unverifiable|fx_rel_payload||check||rc=2 $CND$UNVERIFIED|"
+
 echo "=== usage ==="
 fx_fresh() { R="$(new_repo fresh)"; }
 fx_not_git() { R="$TMP/not-git"; mkdir "$R"; }

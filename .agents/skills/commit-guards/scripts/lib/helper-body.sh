@@ -11,8 +11,9 @@
 # the package is still installed — the case its own search exists to survive
 # — so what it needs is interpolated in or written out.
 #
-# Sourced by install-git-hooks, which owns SCRIPT_DIR, GG_SKILL_ROOTS and
-# PROJECT_REL, and by lib/hook-check.sh, which compares against it.
+# Sourced by install-git-hooks, which owns SCRIPT_DIR, GG_SKILL_ROOTS,
+# PROJECT_REL and INSTALLED_SCRIPTS_REL, and by lib/hook-check.sh, which
+# compares against it.
 set -euo pipefail
 
 # The hook lanes this package owns, and what each of them gates.
@@ -77,9 +78,18 @@ GG_PER_CHECKOUT_VAR='SCRIPT_DIR'
 # which is what lets the value between them be lifted out whatever it holds.
 GG_PER_CHECKOUT_MARK='@@commit-guards-per-checkout@@'
 
-# The head this install would bake, with the per-checkout value blanked.
-helper_head_shape() { # -> the head around GG_PER_CHECKOUT_MARK, on stdout
-  local "$GG_PER_CHECKOUT_VAR=$GG_PER_CHECKOUT_MARK"
+# The scripts directory relative to the armed tree's top level. Every
+# checkout of the project bakes the same value, so it does not excuse a
+# difference the way the per-checkout value does. It is lifted out all the
+# same, because a value that no longer matches the tree that armed the
+# repository is drift for the re-arm to repair, where a head that is not
+# ours at all is unverifiable.
+GG_SCRIPTS_REL_VAR='INSTALLED_SCRIPTS_REL'
+GG_SCRIPTS_REL_MARK='@@commit-guards-scripts-rel@@'
+
+# The head this install would bake, with both lifted values blanked.
+helper_head_shape() { # -> the head around both marks, on stdout
+  local "$GG_PER_CHECKOUT_VAR=$GG_PER_CHECKOUT_MARK" "$GG_SCRIPTS_REL_VAR=$GG_SCRIPTS_REL_MARK"
   helper_head
 }
 
@@ -97,13 +107,18 @@ skill_roots='$(gg_shell_quote "$GG_SKILL_ROOTS")'
 # written for; the search below falls back to the work-tree root, so a
 # different project sharing these shims is still served.
 project_rel='$(gg_shell_quote "$PROJECT_REL")'
+# Baked too: the scripts directory relative to the armed tree's top level,
+# where every checkout of this repository carries its own render. Empty
+# when the install sits outside that tree.
+installed_scripts_rel='$(gg_shell_quote "$INSTALLED_SCRIPTS_REL")'
 HELPER_HEAD
 }
 
-# The helper is POSIX sh and self-contained. It runs this install's own
-# scripts directory first, then rediscovers one from the MAIN checkout (linked
-# worktrees share this hooks directory and may carry no skills of their own),
-# so a moved or re-installed checkout repairs itself.
+# The helper is POSIX sh and self-contained. It runs the committing tree's
+# own render first, then this install's own scripts directory, then
+# rediscovers one from the MAIN checkout (linked worktrees share this hooks
+# directory and may carry no skills of their own), so a moved or
+# re-installed checkout repairs itself.
 #
 # Generating and VERIFYING both go through here, so a checker cannot drift
 # from a writer and start blessing a helper that only resembles one. These
@@ -224,6 +239,29 @@ main_top="${main_top%"$gg_nl"}"
 if [ -z "$main_common" ] || [ "$main_common" != "$common" ] \
   || [ -z "$main_top" ] || [ "$main_top" != "$main" ]; then
   main=""
+fi
+# The committing tree's own render first. This one hooks directory serves
+# the main checkout and every linked work tree, so the baked absolute path
+# names one revision of the scripts for all of them: a work tree whose main
+# checkout is behind was judged by the older scripts, and one whose main
+# checkout is ahead by rules its own tree does not carry. Every checkout
+# carries its own render at the same place under its top level, the rule
+# lib/siblings.sh applies to the chain's companions, so the chain and its
+# companions then come from one revision. A tree with no render there falls
+# through to the baked directory.
+if [ -n "$installed_scripts_rel" ] && [ -x "$top/$installed_scripts_rel/$mode" ]; then
+  here="$top/$installed_scripts_rel"
+  here_real="$(cd -P -- "$here" 2>/dev/null && pwd -P && printf x)" || here_real=""
+  baked_real=""
+  if [ -n "$installed_scripts" ]; then
+    baked_real="$(cd -P -- "$installed_scripts" 2>/dev/null && pwd -P && printf x)" || baked_real=""
+  fi
+  # Named only where it is not the baked copy, so a refusal is read
+  # against the revision that made it.
+  if [ -z "$here_real" ] || [ "$here_real" != "$baked_real" ]; then
+    printf 'kendex-guards: scripts=%s (this tree)\n' "$(printf '%s' "$here" | LC_ALL=C tr '\001-\037\177' '?')" >&2
+  fi
+  exec "$here/$mode" "$@"
 fi
 if [ -n "$installed_scripts" ] && [ -x "$installed_scripts/$mode" ]; then
   exec "$installed_scripts/$mode" "$@"
