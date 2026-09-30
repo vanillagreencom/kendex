@@ -65,7 +65,7 @@ control_replace scripts/lib/auth.sh 1 \
     '    LINEAR_AUTH_KIND="incomplete-app"; if [[ -n "${LINEAR_API_KEY:-}" ]]; then LINEAR_AUTH_KIND="api-key"; fi'
 
 control_expect 'inventory references: request succeeds'
-control_replace scripts/lib/auth.sh 1 \
+control_replace scripts/lib/auth.sh 2 \
     '    linear_resolve_credentials || return 1' \
     '    : linear_resolve_credentials || return 1'
 
@@ -93,3 +93,119 @@ control_expect 'app-renew: download keeps selected actor'
 control_replace scripts/lib/attachments.sh 1 \
     '            if ! authorization=$(linear_authorization renew) ||' \
     '            if ! authorization=$(linear_authorization) ||'
+
+# Without the new selection branch, the prior auth implementation is reached.
+control_expect 'token-only: request succeeds'
+control_replace scripts/lib/auth.sh 1 \
+    'if [[ -n "${LINEAR_APP_TOKEN:-}" ]]; then' \
+    'if [[ -n "${LINEAR_APP_TOKEN:-}" && -z "${LINEAR_APP_TOKEN:-}" ]]; then'
+
+control_expect 'token-beats-pair: request succeeds'
+control_replace scripts/lib/auth.sh 1 \
+    'if [[ -n "${LINEAR_APP_TOKEN:-}" ]]; then' \
+    'if [[ -n "${LINEAR_APP_TOKEN:-}" && -z "${LINEAR_CLIENT_ID:-}${LINEAR_CLIENT_SECRET:-}" ]]; then'
+
+control_expect 'token-only: GraphQL Bearer header'
+control_replace scripts/lib/auth.sh 1 \
+    '        printf '\''Bearer %s'\'' "$LINEAR_APP_TOKEN"' \
+    '        printf '\''%s'\'' "$LINEAR_APP_TOKEN"'
+
+control_expect 'token-only: cache directory absent'
+control_replace scripts/lib/auth.sh 1 \
+    '        printf '\''Bearer %s'\'' "$LINEAR_APP_TOKEN"' \
+    '        printf '\''Bearer %s'\'' "$LINEAR_APP_TOKEN"; mkdir -p -- "$PROJECT_ROOT/.cache/linear/oauth"'
+
+control_expect 'token-reference: only token resolves'
+control_replace scripts/lib/auth.sh 1 \
+    '    app-token) set -- LINEAR_APP_TOKEN ;;' \
+    '    app-token) return 0 ;;'
+
+control_expect 'token-check: application actor'
+control_replace scripts/commands/auth-check.sh 1 \
+    'actor=$(jq -c --arg kind "$LINEAR_AUTH_KIND" '\''{kind: (if $kind == "app" or $kind == "app-token" then "application" else "user" end), id: .viewer.id, name: .viewer.name}'\'' <<<"$result")' \
+    'actor=$(jq -c --arg kind "$LINEAR_AUTH_KIND" '\''{kind: (if $kind == "app" then "application" else "user" end), id: .viewer.id, name: .viewer.name}'\'' <<<"$result")'
+
+control_expect 'token-401: one request uses environment token'
+control_replace scripts/lib/common.sh 1 \
+    '            if [[ "$LINEAR_AUTH_KIND" == "app" && "$auth_renewed" == 0 ]]; then' \
+    '            if [[ "$LINEAR_AUTH_KIND" != "api-key" && "$auth_renewed" == 0 ]]; then'
+
+control_expect 'token-download-401: one download uses Bearer token'
+control_replace scripts/lib/attachments.sh 1 \
+    '        if [[ "$http_code" == "401" && "$LINEAR_AUTH_KIND" == "app" && "$auth_renewed" == 0 ]]; then' \
+    '        if [[ "$http_code" == "401" && "$LINEAR_AUTH_KIND" != "api-key" && "$auth_renewed" == 0 ]]; then'
+
+control_expect 'token-401: credential diagnostic'
+control_replace scripts/lib/common.sh 1 \
+    '            linear_auth_unauthorized' \
+    '            : linear_auth_unauthorized'
+
+control_expect 'token-download-401: credential diagnostic'
+control_replace scripts/lib/attachments.sh 1 \
+    '            linear_auth_unauthorized' \
+    '            : linear_auth_unauthorized'
+
+control_expect 'mint-host: mint succeeds'
+control_replace scripts/commands/auth-mint.sh 1 \
+    'export LINEAR_SKIP_API_KEY_RESOLUTION=1' \
+    'export LINEAR_SKIP_API_KEY_RESOLUTION=0'
+
+control_expect 'mint-host-reference: resolved pair reaches mint'
+control_replace scripts/lib/auth.sh 1 \
+    '    local LINEAR_AUTH_KIND="app"' \
+    '    local LINEAR_AUTH_KIND="app-token"'
+
+control_expect 'mint-missing: refuses'
+control_replace scripts/lib/auth.sh 1 \
+    '    if [[ -z "${LINEAR_CLIENT_ID:-}" || -z "${LINEAR_CLIENT_SECRET:-}" ]]; then' \
+    '    if [[ -z "${LINEAR_CLIENT_ID:-}" && -n "${LINEAR_CLIENT_ID:-}" ]]; then'
+
+control_expect 'mint-host: token JSON'
+control_replace scripts/lib/auth.sh 1 \
+    '    printf '\''%s\n'\'' "$cached"' \
+    '    printf '\''%s\n'\'' "$cached" | jq '\''.access_token'\'''
+
+control_expect 'mint-host: cache directory absent'
+control_replace scripts/commands/auth-mint.sh 1 \
+    'linear_mint_token' \
+    'linear_mint_token; mkdir -p -- "$PROJECT_ROOT/.cache/linear/oauth"'
+
+control_expect 'mint-response-type: refuses'
+control_replace scripts/lib/auth.sh 1 \
+    '        select(.token_type == "Bearer") |' \
+    '        select(.token_type == "Bearer" or true) |'
+
+control_expect 'mint-response-empty: refuses'
+control_replace scripts/lib/auth.sh 1 \
+    '        select(.access_token | type == "string" and length > 0) |' \
+    '        select(.access_token | type == "string") |'
+
+control_expect 'mint-response-expiry-low: refuses'
+control_replace scripts/lib/auth.sh 1 \
+    '        select(.expires_in | type == "number" and . > 60 and . <= 2592000 and . == floor) |' \
+    '        select(.expires_in | type == "number" and . >= 60 and . <= 2592000 and . == floor) |'
+
+control_expect 'mint-response-expiry-high: refuses'
+control_replace scripts/lib/auth.sh 1 \
+    '        select(.expires_in | type == "number" and . > 60 and . <= 2592000 and . == floor) |' \
+    '        select(.expires_in | type == "number" and . > 60 and . <= 2592001 and . == floor) |'
+
+control_expect 'mint-response-expiry-fraction: refuses'
+control_replace scripts/lib/auth.sh 1 \
+    '        select(.expires_in | type == "number" and . > 60 and . <= 2592000 and . == floor) |' \
+    '        select(.expires_in | type == "number" and . > 60 and . <= 2592000) |'
+
+control_expect 'mint-token-failure: diagnostic'
+control_replace scripts/lib/auth.sh 1 \
+    '    if [[ "$http_code" != "200" ]]; then' \
+    '    if [[ "$http_code" == "200" && "$http_code" != "200" ]]; then'
+
+control_expect 'mint-token-transport: diagnostic'
+control_replace scripts/lib/auth.sh 1 \
+    '    ) || { echo '\''{"error": "linear-auth: token=transport-failed"}'\'' >&2; return 1; }' \
+    '    ) || { echo '\''{"error": "linear-auth: token=transport-failed"}'\'' >/dev/null; return 1; }'
+
+control_expect 'token-beats-partial: request succeeds'
+control_replace scripts/lib/auth.sh 1 \
+    '    app-token|app|api-key) return 0 ;;' \
+    '    app|api-key) return 0 ;;'

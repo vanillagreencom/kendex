@@ -513,6 +513,7 @@
   ".agents/skills/linear/kendex.settings.toml.example",
   ".agents/skills/linear/patterns/workflow-actions.md",
   ".agents/skills/linear/scripts/commands/auth-check.sh",
+  ".agents/skills/linear/scripts/commands/auth-mint.sh",
   ".agents/skills/linear/scripts/commands/cache-query.sh",
   ".agents/skills/linear/scripts/commands/comments.sh",
   ".agents/skills/linear/scripts/commands/cycles.sh",

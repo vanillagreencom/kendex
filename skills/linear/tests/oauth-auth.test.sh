@@ -36,6 +36,7 @@ printf '%s\n' "$*" >>"$LOG/op"
 case "$*" in
 'read op://selected/app/id') printf 'resolved/id' ;;
 'read op://selected/app/secret') printf 'resolved&secret' ;;
+'read op://selected/app/token') printf 'resolved-token' ;;
 *) exit 1 ;;
 esac
 SH
@@ -49,6 +50,11 @@ if [[ "$*" == *'-K -'* ]]; then
     if [[ "$config" == *'https://api.linear.app/oauth/token'* ]]; then
         printf 'mint\n' >>"$LOG/mints"
         n=$(wc -l <"$LOG/mints")
+        if [[ "${MODE:-}" == token-response ]]; then
+            printf '%s___HTTP_CODE___200' "${TOKEN_RESPONSE:?}"
+            exit
+        fi
+        if [[ "${MODE:-}" == token-transport ]]; then exit 7; fi
         if [[ "${MODE:-}" == token-failure || ( "${FAIL_RENEWAL:-0}" == 1 && "$n" -gt 1 ) || ( "${MODE:-}" == references &&
             "$config" != *'client_id=resolved%2Fid&client_secret=resolved%26secret'* ) ]]; then
             printf '{"error":"invalid_client"}___HTTP_CODE___400'
@@ -253,6 +259,131 @@ for row in \
         assert_jq "$label: failed download is not recorded" "$manifest" 'length == 0'
     fi
 done
+
+# A fleet's published token must not use the accompanying proxy-placeholder pair.
+for row in \
+    'token-only||||published-token|published-token' \
+    'token-beats-pair|op://unused/id|op://unused/secret|personal-key|published-token|published-token' \
+    'token-beats-partial|partial||personal-key|published-token|published-token' \
+    'token-reference|op://unused/id|op://unused/secret|op://unused/key|op://selected/app/token|resolved-token'; do
+    IFS='|' read -r label id secret key supplied token <<<"$row"
+    rm -rf -- "$PROJECT/.cache/linear"
+    printf 'LINEAR_APP_TOKEN="%s"\nLINEAR_API_KEY="%s"\n' "$supplied" "$key" >"$PROJECT/.env.local"
+    : >"$LOG/mints"
+    : >"$LOG/auth"
+    : >"$LOG/op"
+    run_oauth_request request LINEAR_CLIENT_ID="$id" LINEAR_CLIENT_SECRET="$secret"
+    assert_eq "$label: request succeeds" "$RC" 0
+    header=$(cat "$LOG/auth")
+    assert_eq "$label: GraphQL Bearer header" "$header" "Bearer $token"
+    assert_not "$label: never mints" test -s "$LOG/mints"
+    assert_not "$label: cache directory absent" test -e "$PROJECT/.cache/linear"
+    reads=$(cat "$LOG/op")
+    if [[ "$label" == token-reference ]]; then
+        assert_eq 'token-reference: only token resolves' "$reads" 'read op://selected/app/token'
+    else
+        assert_eq "$label: unused credentials never resolve" "$reads" ''
+    fi
+done
+
+for row in 'token-check|auth-check||0' 'token-401|request|always-401|1'; do
+    IFS='|' read -r label command mode expected_rc <<<"$row"
+    : >"$LOG/auth"
+    : >"$LOG/mints"
+    run_oauth_request "$command" MODE="$mode" LINEAR_APP_TOKEN=environment-token \
+        LINEAR_CLIENT_ID=app/id LINEAR_CLIENT_SECRET='app&secret' LINEAR_API_KEY_OVERRIDE=personal-key
+    assert_eq "$label: request result" "$RC" "$expected_rc"
+    header=$(cat "$LOG/auth")
+    assert_eq "$label: one request uses environment token" "$header" 'Bearer environment-token'
+    assert_not "$label: never mints" test -s "$LOG/mints"
+    assert_not "$label: cache directory absent" test -e "$PROJECT/.cache/linear"
+    if [[ "$command" == auth-check ]]; then
+        assert_jq 'token-check: application actor' "$OUT" \
+            '.ok and .credential == "app-token" and .actor == {kind:"application",id:"actor-id",name:"Actor name"}'
+    else
+        assert_file_contains 'token-401: credential diagnostic' "$LOG/error" 'linear-auth: http=401 credential=app-token'
+    fi
+done
+
+for row in 'token-download|200|0' 'token-download-401|401,200|1'; do
+    IFS='|' read -r label codes expected_rc <<<"$row"
+    rm -rf -- "$PROJECT/.cache/linear"
+    : >"$LOG/download-auth"
+    : >"$LOG/mints"
+    run_oauth_request request MODE=download DOWNLOAD_RESPONSES="$codes" \
+        LINEAR_APP_TOKEN=published-token LINEAR_CLIENT_ID=app/id LINEAR_CLIENT_SECRET='app&secret'
+    assert_eq "$label: download result" "$RC" "$expected_rc"
+    header=$(cat "$LOG/download-auth")
+    assert_eq "$label: one download uses Bearer token" "$header" 'Authorization: Bearer published-token'
+    assert_not "$label: never mints" test -s "$LOG/mints"
+    assert_not "$label: OAuth cache absent" test -e "$PROJECT/.cache/linear/oauth"
+    if [[ "$expected_rc" == 1 ]]; then
+        assert_file_contains 'token-download-401: credential diagnostic' "$LOG/error" 'linear-auth: http=401 credential=app-token'
+    fi
+done
+
+# The mint host uses only its pair, even when a published token cannot resolve.
+for row in 'mint-host|app/id|app&secret' 'mint-host-reference|op://selected/app/id|op://selected/app/secret'; do
+    IFS='|' read -r label id secret <<<"$row"
+    rm -rf -- "$PROJECT/.cache/linear"
+    : >"$LOG/mints"
+    : >"$LOG/auth"
+    : >"$LOG/op"
+    : >"$LOG/config"
+    before=$(find "$PROJECT" -type f | sort)
+    run_oauth_request auth-mint LINEAR_CLIENT_ID="$id" LINEAR_CLIENT_SECRET="$secret" \
+        LINEAR_APP_TOKEN=op://unused/token LINEAR_API_KEY_OVERRIDE=op://unused/key
+    assert_eq "$label: mint succeeds" "$RC" 0
+    assert_jq "$label: token JSON" "$OUT" '. == {access_token:"token-1",expires_at:12600}'
+    count=$(wc -l <"$LOG/mints")
+    assert_eq "$label: one mint" "${count//[[:space:]]/}" 1
+    assert_not "$label: no GraphQL call" test -s "$LOG/auth"
+    assert_not "$label: cache directory absent" test -e "$PROJECT/.cache/linear"
+    after=$(find "$PROJECT" -type f | sort)
+    assert_eq "$label: no files added" "$after" "$before"
+    if [[ "$label" == mint-host-reference ]]; then
+        reads=$(cat "$LOG/op")
+        assert_eq 'mint-host-reference: only pair resolves' "$reads" \
+            $'read op://selected/app/id\nread op://selected/app/secret'
+        config=$(cat "$LOG/config")
+        assert_contains 'mint-host-reference: resolved pair reaches mint' "$config" \
+            'client_id=resolved%2Fid&client_secret=resolved%26secret'
+    fi
+done
+
+for row in 'mint-missing||' 'mint-missing-secret|app/id|' 'mint-missing-id||app&secret'; do
+    IFS='|' read -r label id secret <<<"$row"
+    : >"$LOG/mints"
+    run_oauth_request auth-mint LINEAR_CLIENT_ID="$id" LINEAR_CLIENT_SECRET="$secret" \
+        LINEAR_APP_TOKEN=published-token LINEAR_API_KEY_OVERRIDE=personal-key
+    assert_eq "$label: refuses" "$RC" 1
+    assert_file_contains "$label: incomplete pair diagnostic" "$LOG/error" 'credential=incomplete-app'
+    assert_not "$label: never mints" test -s "$LOG/mints"
+    assert_eq "$label: no stdout" "$OUT" ''
+done
+
+# Linear's token endpoint supplies token_type, access_token and expires_in.
+for row in \
+    'type|{"access_token":"token","token_type":"Basic","expires_in":3600}' \
+    'empty|{"access_token":"","token_type":"Bearer","expires_in":3600}' \
+    'expiry-low|{"access_token":"token","token_type":"Bearer","expires_in":60}' \
+    'expiry-high|{"access_token":"token","token_type":"Bearer","expires_in":2592001}' \
+    'expiry-fraction|{"access_token":"token","token_type":"Bearer","expires_in":3600.5}'; do
+    IFS='|' read -r label response <<<"$row"
+    run_oauth_request auth-mint LINEAR_CLIENT_ID=app/id LINEAR_CLIENT_SECRET='app&secret' \
+        MODE=token-response TOKEN_RESPONSE="$response"
+    assert_eq "mint-response-$label: refuses" "$RC" 1
+    assert_file_contains "mint-response-$label: response diagnostic" "$LOG/error" 'token=invalid-response'
+    assert_eq "mint-response-$label: no stdout" "$OUT" ''
+done
+for row in 'token-failure|token-http=400' 'token-transport|token=transport-failed'; do
+    IFS='|' read -r mode diagnostic <<<"$row"
+    run_oauth_request auth-mint LINEAR_CLIENT_ID=app/id LINEAR_CLIENT_SECRET='app&secret' MODE="$mode"
+    assert_eq "mint-$mode: refuses" "$RC" 1
+    assert_file_contains "mint-$mode: diagnostic" "$LOG/error" "$diagnostic"
+    assert_eq "mint-$mode: no stdout" "$OUT" ''
+done
+
 if [[ "${OAUTH_GIT_REDIRECT_CHILD:-0}" != 1 ]]; then
     run_oauth_git_redirects "$SCRIPT_DIR/oauth-auth.test.sh" "$TMP_ROOT/git-callers"
 fi

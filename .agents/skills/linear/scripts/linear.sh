@@ -30,6 +30,7 @@ Resources:
   documents       Document operations (list, get)
   session-status  Aggregated session status for /start workflow
   auth-check      Credential, actor and team preflight (--strict fails with no team)
+  auth-mint       Mint app token JSON from the client pair without writing files
   sync            Sync Linear data to local cache
   cache           Query local cache (issues, projects, cycles, initiatives, comments, labels)
 
@@ -59,9 +60,14 @@ Examples:
 
 Environment:
   Runtime         Bash 4.0 or newer. macOS system Bash 3.2 is unsupported.
+  LINEAR_APP_TOKEN Pre-minted app token, sent as Bearer. Wins over pair and key.
+                  Set in the private env file or secret store (op:// supported).
+                  Never renewed or cached; replace an expired or revoked token.
   LINEAR_CLIENT_ID / LINEAR_CLIENT_SECRET
-                  App credentials in .env.local. Together they win over the key.
-                  Tokens use fixed scope read,write and live only in the cache.
+                  App credentials in .env.local. Together they win over the key
+                  when no app token is set. Tokens use fixed scope read,write.
+                  auth-mint prints access_token and expires_at without caching;
+                  the pair's API path caches and renews its own token.
   LINEAR_API_KEY  Fallback. Set in .env.local; a key from project files wins
                   over a plain environment export (auth-check warns when they
                   differ). LINEAR_API_KEY_OVERRIDE overrides personal-key
@@ -104,7 +110,7 @@ case "$resource" in
     cache)
         exec "$BASH" "$SCRIPT_DIR/commands/cache-query.sh" "$@"
         ;;
-    issues|comments|projects|initiatives|milestones|labels|project-labels|teams|users|cycles|statuses|documents|session-status|auth-check)
+    issues|comments|projects|initiatives|milestones|labels|project-labels|teams|users|cycles|statuses|documents|session-status|auth-check|auth-mint)
         script="$SCRIPT_DIR/commands/${resource}.sh"
         if [ -f "$script" ]; then
             exec "$BASH" "$script" "$@"

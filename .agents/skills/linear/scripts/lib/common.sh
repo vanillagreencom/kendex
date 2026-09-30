@@ -329,7 +329,7 @@ graphql_query() {
                 auth_renewed=1
                 continue
             fi
-            jq -cn --arg kind "$LINEAR_AUTH_KIND" '{error: ("linear-auth: http=401 credential=" + $kind)}' >&2
+            linear_auth_unauthorized
             return 1
             ;;
         429)

@@ -3,7 +3,10 @@
 
 set -euo pipefail
 
-if [[ -n "${LINEAR_CLIENT_ID:-}" && -n "${LINEAR_CLIENT_SECRET:-}" ]]; then
+# Credential precedence: pre-minted app token, app pair, personal key.
+if [[ -n "${LINEAR_APP_TOKEN:-}" ]]; then
+    LINEAR_AUTH_KIND="app-token"
+elif [[ -n "${LINEAR_CLIENT_ID:-}" && -n "${LINEAR_CLIENT_SECRET:-}" ]]; then
     LINEAR_AUTH_KIND="app"
 elif [[ -n "${LINEAR_CLIENT_ID:-}${LINEAR_CLIENT_SECRET:-}" ]]; then
     LINEAR_AUTH_KIND="incomplete-app"
@@ -17,6 +20,7 @@ fi
 linear_resolve_credentials() {
     local name value
     case "$LINEAR_AUTH_KIND" in
+    app-token) set -- LINEAR_APP_TOKEN ;;
     app) set -- LINEAR_CLIENT_ID LINEAR_CLIENT_SECRET ;;
     api-key) set -- LINEAR_API_KEY ;;
     incomplete-app|unset) return 0 ;;
@@ -41,27 +45,37 @@ linear_resolve_credentials() {
 # No personal-key fallback after selecting an app: a failure must keep its actor.
 linear_check_credentials() {
     case "$LINEAR_AUTH_KIND" in
-    app|api-key) return 0 ;;
+    app-token|app|api-key) return 0 ;;
     incomplete-app)
         echo '{"error": "linear-auth: credential=incomplete-app. Set both LINEAR_CLIENT_ID and LINEAR_CLIENT_SECRET in .env.local."}' >&2 ;;
     unset)
-        echo '{"error": "linear-auth: credential=unset. Set LINEAR_CLIENT_ID and LINEAR_CLIENT_SECRET, or LINEAR_API_KEY, in .env.local."}' >&2 ;;
+        echo '{"error": "linear-auth: credential=unset. Set LINEAR_APP_TOKEN, LINEAR_CLIENT_ID and LINEAR_CLIENT_SECRET, or LINEAR_API_KEY, in .env.local."}' >&2 ;;
     esac
     return 1
+}
+
+# Linear's GraphQL and upload servers use 401 for an expired or revoked token.
+linear_auth_unauthorized() {
+    jq -cn --arg kind "$LINEAR_AUTH_KIND" \
+        '{error: ("linear-auth: http=401 credential=" + $kind +
+          (if $kind == "app-token" then "\nApplication token is expired or revoked. Replace LINEAR_APP_TOKEN." else "" end))}' >&2
 }
 
 # Prints the Authorization value. Force renewal is used once after an HTTP 401.
 linear_authorization() (
     linear_check_credentials || return 1
     linear_resolve_credentials || return 1
-    if [[ "$LINEAR_AUTH_KIND" == "api-key" ]]; then
+    if [[ "$LINEAR_AUTH_KIND" == "app-token" ]]; then
+        printf 'Bearer %s' "$LINEAR_APP_TOKEN"
+        return 0
+    elif [[ "$LINEAR_AUTH_KIND" == "api-key" ]]; then
         printf '%s' "$LINEAR_API_KEY"
         return 0
     fi
 
     # Reuse the cache library's root resolution, including LINEAR_CACHE_ROOT.
     source "$_LIB_DIR/cache.sh" || return 1
-    local identity now token_file cached token raw http_code response payload payload_quote staged
+    local identity now token_file cached token staged
     identity=$(linear_key_fingerprint "$LINEAR_CLIENT_ID:$LINEAR_CLIENT_SECRET") || return 1
     token_file="$CACHE_DIR/oauth/$identity.json"
     now=$(date +%s) || return 1
@@ -77,6 +91,29 @@ linear_authorization() (
         fi
     fi
 
+    cached=$(linear_mint_token) || return 1
+    token=$(jq -r '.access_token' <<<"$cached") || return 1
+    # Atomic replacement keeps parallel callers from reading a partial token.
+    umask 077
+    mkdir -p -- "$CACHE_DIR/oauth" || return 1
+    staged=$(mktemp "$CACHE_DIR/oauth/.token.XXXXXX") || return 1
+    trap 'rm -f -- "${staged:?}"' EXIT
+    printf '%s\n' "$cached" >"$staged" || return 1
+    mv -f -- "$staged" "$token_file" || return 1
+    printf 'Bearer %s' "$token"
+)
+
+# Mint once from the pair and print {access_token, expires_at}; never write files.
+linear_mint_token() (
+    if [[ -z "${LINEAR_CLIENT_ID:-}" || -z "${LINEAR_CLIENT_SECRET:-}" ]]; then
+        local LINEAR_AUTH_KIND="incomplete-app"
+        linear_check_credentials
+        return 1
+    fi
+    local LINEAR_AUTH_KIND="app"
+    linear_resolve_credentials || return 1
+    local now raw http_code response payload payload_quote cached
+    now=$(date +%s) || return 1
     # Scope is fixed: Linear revokes every app token when scopes change.
     # Environment values cannot contain NUL; it separates credentials on stdin.
     payload=$(printf '%s\0%s' "$LINEAR_CLIENT_ID" "$LINEAR_CLIENT_SECRET" | jq -Rsr '
@@ -106,13 +143,5 @@ linear_authorization() (
         echo '{"error": "linear-auth: token=invalid-response"}' >&2
         return 1
     fi
-    token=$(jq -r '.access_token' <<<"$cached") || return 1
-    # Atomic replacement keeps parallel callers from reading a partial token.
-    umask 077
-    mkdir -p -- "$CACHE_DIR/oauth" || return 1
-    staged=$(mktemp "$CACHE_DIR/oauth/.token.XXXXXX") || return 1
-    trap 'rm -f -- "${staged:?}"' EXIT
-    printf '%s\n' "$cached" >"$staged" || return 1
-    mv -f -- "$staged" "$token_file" || return 1
-    printf 'Bearer %s' "$token"
+    printf '%s\n' "$cached"
 )

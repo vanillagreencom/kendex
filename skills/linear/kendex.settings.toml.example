@@ -37,16 +37,22 @@ LINEAR_RETRY_BASE_DELAY = "1"
 
 [secrets]
 
+# Pre-minted application token. Set in the private env file or a secret store
+# via op://, never in committed settings. Wins over the client pair and key.
+# The skill never caches or renews it. auth-mint prints token and expiry JSON
+# on the host with the real pair; the fleet publishes it before expiry.
+LINEAR_APP_TOKEN = ""
+
 # OAuth application credentials. Set both in the private env file, never here.
-# Together they win over the personal key. Tokens use fixed scope read,write
-# and stay in the cache; do not put tokens in settings or secret stores.
+# Together they win over the personal key when LINEAR_APP_TOKEN is unset.
+# Both mint paths use fixed scope read,write. Only the pair's API path caches.
 LINEAR_CLIENT_ID = ""
 
 # The OAuth application secret paired with LINEAR_CLIENT_ID. Set it only
 # in the private env file.
 LINEAR_CLIENT_SECRET = ""
 
-# The fallback key when no app pair is set. Create one in Linear, under
+# The fallback key when no app token or pair is set. Create one in Linear, under
 # Settings, Security and access, Personal API keys. A key set here beats one
 # already in your shell, unlike every other setting, because a machine-wide
 # key points at the wrong workspace for all but one project.

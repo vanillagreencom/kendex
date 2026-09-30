@@ -243,6 +243,9 @@ attach_download_url() {
 
     if [[ "$http_code" != "200" ]]; then
         rm -f "$tmp_file" "$tmp_headers"
+        if [[ "$http_code" == "401" ]]; then
+            linear_auth_unauthorized
+        fi
         echo "Warning: Failed to download $url (HTTP $http_code)" >&2
         return 1
     fi

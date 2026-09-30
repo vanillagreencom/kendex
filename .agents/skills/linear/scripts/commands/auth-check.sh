@@ -14,7 +14,7 @@ Auth + target preflight
 Usage: auth-check [--strict]
 
 Reports credential validity, its actor, the resolved Linear team, and its source.
-The app credential wins over the personal key.
+Credential precedence: pre-minted app token, app pair, personal key.
 Reports where the team came
 from. Linear writes refuse when no team resolves, so run this before the first
 mutation in a new project.
@@ -24,7 +24,7 @@ Options:
 
 Fields:
   ok                Selected credential is set and the API answered
-  credential        app | api-key | incomplete-app | unset
+  credential        app-token | app | api-key | incomplete-app | unset
   actor             {kind: application | user, id, name}, or null
   team              Resolved team name, or null
   team_source       environment | project-config | unset
@@ -164,7 +164,7 @@ if [[ -z "$viewer_id" ]]; then
   exit 1
 fi
 
-actor=$(jq -c --arg kind "$LINEAR_AUTH_KIND" '{kind: (if $kind == "app" then "application" else "user" end), id: .viewer.id, name: .viewer.name}' <<<"$result")
+actor=$(jq -c --arg kind "$LINEAR_AUTH_KIND" '{kind: (if $kind == "app" or $kind == "app-token" then "application" else "user" end), id: .viewer.id, name: .viewer.name}' <<<"$result")
 emit true
 if ((strict)) && [[ -z "$LINEAR_TEAM_TARGET" ]]; then
   exit 1
