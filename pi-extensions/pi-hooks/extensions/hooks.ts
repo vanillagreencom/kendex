@@ -8,7 +8,7 @@ import type {
 import { isAbsolute, resolve } from "node:path";
 
 import { getBool, getNumber, projectRoot, projectTrusted, readConfig, recordProjectTrust } from "./config.js";
-import { agentLine, deliver, type HookResult, personLine, runListener, unreadableLine } from "./dispatch.js";
+import { agentLine, boundForAgent, deliver, type HookResult, personLine, runListener, unreadableLine } from "./dispatch.js";
 import { deliverDrift, runDriftCheck } from "./drift-check.js";
 import { workspaceClippyOutcome } from "./lint-hooks.js";
 import { SESSION_START_LISTENER, TOOL_CALL_LISTENER, TOOL_RESULT_LISTENER, TURN_END_LISTENER } from "./registry.js";
@@ -158,7 +158,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 		void runListener(
 			SESSION_START_LISTENER,
 			source,
-			JSON.stringify({ hook_event_name: "SessionStart", source, ...claudeSessionFields(ctx) }),
+			() => JSON.stringify({ hook_event_name: "SessionStart", source, ...claudeSessionFields(ctx) }),
 			ctx,
 			cfg,
 			project,
@@ -215,9 +215,10 @@ export default function piHooks(pi: ExtensionAPI): void {
 		// this listener and this tool runs, in the order it names them, and
 		// the first refusal is the answer. Nothing here knows a hook's name in
 		// advance, which is what lets a custom hook run at all. The tool is
-		// named and its input keyed the way a hook was authored to read them.
+		// named and its input keyed the way a hook was authored to read them,
+		// and only once a hook is about to read them.
 		const toolName = claudeToolName(event.toolName);
-		const payload = JSON.stringify({
+		const payload = () => JSON.stringify({
 			tool_name: toolName,
 			tool_input: claudeToolInput(toolName, event.input, ctx.cwd),
 			...claudeSessionFields(ctx),
@@ -249,7 +250,8 @@ export default function piHooks(pi: ExtensionAPI): void {
 			const advisory = personLine(result);
 			if (advisory !== undefined && ctx.hasUI) ctx.ui.notify(advisory, "info");
 		}
-		return verdict;
+		// A refusal's reason is a hook's own stderr, and the model reads it.
+		return verdict === undefined ? undefined : { block: true, reason: await boundForAgent(verdict.reason) };
 	});
 
 	pi.on("tool_result", async (event, ctx: ExtensionContext) => {
@@ -271,9 +273,11 @@ export default function piHooks(pi: ExtensionAPI): void {
 		// against it reads: the call it judged, plus what the tool answered.
 		// `tool_response` is the result's text, which is the whole of it for
 		// every tool a bash hook can read — an image block has no rendering a
-		// JSON payload could carry and is left out rather than faked.
+		// JSON payload could carry and is left out rather than faked. Built
+		// only once a hook is about to read it: joining a large result costs
+		// every tool call, and most calls have no hook.
 		const toolName = claudeToolName(event.toolName);
-		const payload = JSON.stringify({
+		const payload = () => JSON.stringify({
 			hook_event_name: "PostToolUse",
 			tool_name: toolName,
 			tool_input: claudeToolInput(toolName, event.input, ctx.cwd),
@@ -291,7 +295,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 		if (run.unreadable !== undefined) added.push(unreadableLine(TOOL_RESULT_LISTENER, run.unreadable));
 		report(run.results, ctx, (content) => added.push(content));
 		if (added.length === 0) return undefined;
-		return { content: [...event.content, { type: "text" as const, text: added.join("\n") }] };
+		return { content: [...event.content, { type: "text" as const, text: await boundForAgent(added.join("\n")) }] };
 	});
 
 	// `Stop` and `TaskCompleted` fire when Claude Code's agent has finished
@@ -342,7 +346,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 		const run = await runListener(
 			TURN_END_LISTENER,
 			undefined,
-			JSON.stringify({ hook_event_name: "Stop", stop_hook_active: stopHookActive, ...claudeSessionFields(ctx), ...piContextFields(ctx) }),
+			() => JSON.stringify({ hook_event_name: "Stop", stop_hook_active: stopHookActive, ...claudeSessionFields(ctx), ...piContextFields(ctx) }),
 			ctx,
 			cfg,
 			project,
@@ -374,11 +378,25 @@ export default function piHooks(pi: ExtensionAPI): void {
 		if (!getBool(cfg, "taskCompletedCheck")) return undefined;
 		if (turn.rustFilesTouched.size === 0) return undefined;
 
-		const outcome = workspaceClippyOutcome(ctx.cwd, getNumber(cfg, "clippyTimeoutMs"));
-		if (outcome.kind === "clean") return undefined;
-		const summary = outcome.kind === "errors"
-			? `clippy-errors=${outcome.lines.length}\n${outcome.lines.slice(0, 5).join("\n")}`
-			: `clippy-${outcome.code}=${outcome.value}\n${outcome.reason}`;
+		// Awaited, so the turn's report lands before the next turn starts, but
+		// never on Pi's thread: input, timers and other listeners run while
+		// cargo compiles. The turn's own signal stops it when the person ends
+		// the turn.
+		const outcome = await workspaceClippyOutcome(ctx.cwd, getNumber(cfg, "clippyTimeoutMs"), ctx.signal);
+		let summary: string;
+		switch (outcome.kind) {
+			case "clean":
+			case "aborted":
+				return undefined;
+			case "errors":
+				summary = `clippy-errors=${outcome.lines.length}\n${outcome.lines.slice(0, 5).join("\n")}`;
+				break;
+			case "unavailable":
+				summary = `clippy-${outcome.code}=${outcome.value}\n${outcome.reason}`;
+				break;
+			default:
+				throw new Error(`clippy outcome ${JSON.stringify(outcome satisfies never)} is no outcome this check knows`);
+		}
 
 		// Every failing turn reports: an agent that cannot fix an error hears
 		// the same advisory each turn, which is noisy and self-correcting,

@@ -2,6 +2,14 @@
 
 ## Consumer-impacting changes
 
+### 0.16.0
+
+- The end-of-turn clippy check no longer freezes Pi while cargo compiles. Typing, timers and other extensions keep working during the run, and the turn still waits for the report before the next one starts. Ending the turn stops cargo, and the check then reports nothing. A timeout or an ended turn now stops every process cargo started, rustc and clippy-driver included, where before they kept compiling after cargo was killed.
+- One end-of-turn clippy run at a time runs on a host. A Pi session that finds another session's run in progress waits for it, inside its own `clippyTimeoutMs`, and reports `clippy-timeout-ms=` as before if the budget runs out first. A slot left by a Pi process that died, or held past its holder's own budget, is taken over. A slot file that cannot be written or read is reported as `clippy-slot=<path>`.
+- A tool call or tool result that no enabled hook matches no longer builds the hook payload, so a large tool result is no longer serialized for nothing.
+- What the hooks on one event hand the agent, a `PreToolUse` refusal's reason or the text added to a tool result, is kept to Pi's limit for a tool's output, 2000 lines or 50 KB, keeping the end. Past it, the whole text is written to a file in the system temporary directory, and a `hook-output-truncated=<file>` line leads what the agent reads; a file that cannot be written is named as `hook-output-unsaved=<cause>`.
+- **Breaking**: `extensions/process.ts` `runCommandAsync` takes an options object, `{ stdin, signal }`, as its fifth argument in place of the stdin string, and `CommandResult.timedOut` is replaced by `stoppedBy`, `"timeout"`, `"abort"` or `null`. `extensions/cargo.ts` `runCargo`, `findCargoWorkspaceRoot` and `runWorkspaceClippy` return promises and take an optional abort signal, and `claimClippySlot` and `SlotClaim` are added. `extensions/lint-hooks.ts` `workspaceClippyOutcome` returns a promise, takes an optional abort signal, and `ClippyOutcome` gains `{ kind: "aborted" }`. `extensions/dispatch.ts` `runListener` takes the payload as a function it calls at most once, and `boundForAgent` is added.
+
 ### 0.15.0
 
 - **Requires Pi 0.87.0 or later.** The declared Pi peer range names 0.87.0 as its floor. On an older Pi, a registered `Stop` or `TaskCompleted` hook does not run, and a fresh session starts with a `hook-host-unsupported=pi <version>` message that says so, and a session with a UI also gets it as a notification.

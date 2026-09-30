@@ -1,11 +1,23 @@
 import { spawn } from "node:child_process";
 
-/** Outcome of a bounded child process run. */
+/**
+ * Outcome of a bounded child process run. `stoppedBy` names what cut the run
+ * off, `null` for a run that ended on its own; a run cut off judged nothing,
+ * whatever exit status it managed.
+ */
 export interface CommandResult {
 	exitCode: number;
 	stdout: string;
 	stderr: string;
-	timedOut: boolean;
+	stoppedBy: "timeout" | "abort" | null;
+}
+
+/** What a run takes besides its command. `stdin` is written to the child and
+ * the pipe closed; omitted, the child gets no stdin at all. `signal` stops the
+ * run the way the timeout does, for work owned by a turn the person can end. */
+export interface CommandOptions {
+	stdin?: string;
+	signal?: AbortSignal;
 }
 
 function appendChunk(chunks: Buffer[], chunk: Buffer | string, totalBytes: { value: number }, maxBuffer: number): void {
@@ -21,22 +33,28 @@ function appendChunk(chunks: Buffer[], chunk: Buffer | string, totalBytes: { val
  * stdout/stderr. Never rejects: a spawn failure (ENOENT included) settles as
  * `exitCode: -1` with the error text in `stderr`.
  *
- * `stdin` is written to the child and the pipe closed. Omitted, the child gets
- * no stdin at all, which is what every probe here wants; a hook script reading
- * its payload from stdin wants the string.
+ * The child leads its own process group, and the timeout and an abort both
+ * signal that group: SIGTERM, then SIGKILL a second later for a group still
+ * running. So a child that forks, as cargo forks rustc, is stopped whole.
  */
-export function runCommandAsync(command: string, args: string[], cwd: string, timeoutMs: number, stdin?: string): Promise<CommandResult> {
+export function runCommandAsync(command: string, args: string[], cwd: string, timeoutMs: number, options: CommandOptions = {}): Promise<CommandResult> {
+	const { stdin, signal } = options;
 	return new Promise((resolve) => {
 		const stdout: Buffer[] = [];
 		const stderr: Buffer[] = [];
 		const stdoutBytes = { value: 0 };
 		const stderrBytes = { value: 0 };
 		const maxBuffer = 16 * 1024 * 1024;
-		let timedOut = false;
+		let stoppedBy: CommandResult["stoppedBy"] = null;
 		let settled = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let killTimer: ReturnType<typeof setTimeout> | undefined;
 		const detached = process.platform !== "win32";
+		// A turn already ended starts nothing.
+		if (signal?.aborted) {
+			resolve({ exitCode: -1, stdout: "", stderr: "", stoppedBy: "abort" });
+			return;
+		}
 
 		let child: ReturnType<typeof spawn>;
 		try {
@@ -44,16 +62,14 @@ export function runCommandAsync(command: string, args: string[], cwd: string, ti
 				cwd,
 				detached,
 				// Name the live object rather than let the runtime choose an env.
-				// Bun's spawnSync defaults to a boot-time snapshot, which can leave
-				// a test binary on PATH unreachable in runCargo.
 				// Bun's async spawn reads process.env today, so this is a no-op
 				// here as it is under Node. It is the guarantee a test planting a
-				// binary rests on, not a runtime default.
+				// binary on PATH rests on, not a runtime default.
 				env: process.env,
 				stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
 			});
 		} catch (error) {
-			resolve({ exitCode: -1, stdout: "", stderr: String(error), timedOut });
+			resolve({ exitCode: -1, stdout: "", stderr: String(error), stoppedBy });
 			return;
 		}
 
@@ -62,33 +78,35 @@ export function runCommandAsync(command: string, args: string[], cwd: string, ti
 			settled = true;
 			if (timer) clearTimeout(timer);
 			if (killTimer) clearTimeout(killTimer);
+			signal?.removeEventListener("abort", onAbort);
 			if (extraStderr) appendChunk(stderr, extraStderr, stderrBytes, maxBuffer);
 			resolve({
 				exitCode,
 				stdout: Buffer.concat(stdout).toString("utf8"),
 				stderr: Buffer.concat(stderr).toString("utf8"),
-				timedOut,
+				stoppedBy,
 			});
 		};
 
-		const killChild = (signal: NodeJS.Signals) => {
+		const killChild = (sig: NodeJS.Signals) => {
 			try {
 				if (detached && child.pid) {
-					process.kill(-child.pid, signal);
+					process.kill(-child.pid, sig);
 					return;
 				}
 			} catch {
 				// Fall through to direct child kill below.
 			}
 			try {
-				child.kill(signal);
+				child.kill(sig);
 			} catch {
 				// Process already exited or cannot be signaled; close/error will settle.
 			}
 		};
 
-		timer = setTimeout(() => {
-			timedOut = true;
+		const stop = (cause: "timeout" | "abort") => {
+			if (settled || stoppedBy !== null) return;
+			stoppedBy = cause;
 			// Scheduled before the SIGTERM, and inert once the run has settled:
 			// an escalation assigned after a kill that settles the promise in the
 			// same turn is a timer no settle path holds a handle to, and it would
@@ -96,10 +114,17 @@ export function runCommandAsync(command: string, args: string[], cwd: string, ti
 			killTimer = setTimeout(() => {
 				if (settled) return;
 				killChild("SIGKILL");
-				finish(-1, `\n${command} ${args.join(" ")} timed out after ${Math.max(1, timeoutMs)}ms and was killed.`);
+				const why = cause === "timeout" ? `timed out after ${Math.max(1, timeoutMs)}ms` : "was aborted";
+				finish(-1, `\n${command} ${args.join(" ")} ${why} and was killed.`);
 			}, 1000);
 			killChild("SIGTERM");
-		}, Math.max(1, timeoutMs));
+		};
+		function onAbort(): void {
+			stop("abort");
+		}
+
+		timer = setTimeout(() => stop("timeout"), Math.max(1, timeoutMs));
+		signal?.addEventListener("abort", onAbort, { once: true });
 
 		if (stdin !== undefined) {
 			// A child that exits before reading its payload breaks the pipe, which

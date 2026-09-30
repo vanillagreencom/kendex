@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-hooks",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "The carrier that runs kendex's hooks under Pi: it dispatches the rendered kendex/hooks.json registry on every listener kendex maps a hook event onto, so a PreToolUse, PostToolUse, Stop, TaskCompleted or SessionStart hook fires, the bash guards kendex renders and a custom hook of your own alike, and it adds end-of-turn lint, a session-start kendex drift report, and a turn for an idle session when mail the lane-mail hooks hand it lands, an orch lane's included. Per-hook toggles via pi-extension-manager.",
   "license": "MIT",
   "keywords": [
@@ -69,7 +69,7 @@
         {
           "key": "taskCompletedCheck",
           "label": "End-of-turn clippy",
-          "description": "At turn end, if any .rs files were touched during the turn, run a final `cargo clippy --workspace --all-targets -- -D warnings` and steer the result to the agent, so a headless session reads it in the turn that follows; an interactive session also gets a UI notification. Every failing turn reports, an unchanged failure included; a turn that touched no .rs file runs no clippy and reports nothing. A run that established nothing — no workspace root, a timeout, a clippy failure printing no error line — says so rather than passing as clean. Pi has no equivalent of Claude Code's `TaskCompleted` block semantics, so this is advisory.",
+          "description": "At turn end, if any .rs files were touched during the turn, run a final `cargo clippy --workspace --all-targets -- -D warnings` beside Pi, never blocking its input, and steer the result to the agent, so a headless session reads it in the turn that follows; an interactive session also gets a UI notification. Every failing turn reports, an unchanged failure included; a turn that touched no .rs file runs no clippy and reports nothing. A run that established nothing — no workspace root, a timeout, a clippy failure printing no error line — says so rather than passing as clean. Ending the turn stops cargo and everything it started, and reports nothing. One run at a time holds the host's clippy slot, so Pi sessions on one machine do not compile at once. Pi has no equivalent of Claude Code's `TaskCompleted` block semantics, so this is advisory.",
           "type": "boolean",
           "default": true,
           "category": "Rust",
@@ -96,7 +96,7 @@
         {
           "key": "clippyTimeoutMs",
           "label": "Clippy timeout",
-          "description": "Maximum milliseconds the whole end-of-turn check may take: a quarter of it, capped at 5s, goes to the `cargo metadata` workspace lookup and the rest to `cargo clippy`, each abandoned past its share so the turn can continue. Raise for slow workspaces.",
+          "description": "Maximum milliseconds the whole end-of-turn check may take: a quarter of it, capped at 5s, goes to the `cargo metadata` workspace lookup, and the rest to waiting for the host's clippy slot and running `cargo clippy`. Each part is abandoned past its share, cargo and every process it started killed, so the turn can continue. Raise for slow workspaces, or for a host where several sessions edit Rust at once.",
           "type": "number",
           "default": 30000,
           "category": "Rust",

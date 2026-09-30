@@ -10,19 +10,25 @@ import { runCommandAsync } from "../extensions/process.ts";
 for (const row of [
 	{ name: "normal exit", command: "bash", args: ["-c", "printf out; printf err >&2; exit 3"], code: 3, out: "out", err: "err" },
 	{ name: "missing executable", command: "kendex-no-such-binary", args: [], code: -1, out: "", err: undefined },
+	{ name: "aborted before start", command: "bash", args: ["-c", "printf ran"], code: -1, out: "", err: "", aborted: true },
 ]) {
 	test(row.name, async () => {
-		const result = await runCommandAsync(row.command, row.args, process.cwd(), 5000);
+		const signal = row.aborted ? AbortSignal.abort() : undefined;
+		const result = await runCommandAsync(row.command, row.args, process.cwd(), 5000, { signal });
 		expect(result.exitCode).toBe(row.code);
 		expect(result.stdout).toBe(row.out);
 		if (row.err !== undefined) expect(result.stderr).toBe(row.err);
-		expect(result.timedOut).toBe(false);
+		expect(result.stoppedBy).toBe(row.aborted ? "abort" : null);
 	});
 }
 
+// An abort takes the timeout's path to the process group, started by the
+// signal rather than the timer: the row aborts at 150ms, before the 200ms
+// budget, and the escalation is the same second.
 for (const row of [
-	{ name: "cooperative timeout cancels escalation", closeOnTerm: true, signals: ["SIGTERM"] },
-	{ name: "ignored timeout escalates", closeOnTerm: false, signals: ["SIGTERM", "SIGKILL"] },
+	{ name: "cooperative timeout cancels escalation", closeOnTerm: true, signals: ["SIGTERM"], abortAt: undefined, stoppedBy: "timeout" },
+	{ name: "ignored timeout escalates", closeOnTerm: false, signals: ["SIGTERM", "SIGKILL"], abortAt: undefined, stoppedBy: "timeout" },
+	{ name: "abort stops the group", closeOnTerm: false, signals: ["SIGTERM", "SIGKILL"], abortAt: 150, stoppedBy: "abort" },
 ]) {
 	test(row.name, async () => {
 		const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), stdin: null, pid: 711 });
@@ -51,15 +57,21 @@ for (const row of [
 		};
 		try {
 			let settled = false;
-			const run = runCommandAsync("child", [], process.cwd(), 200).then((result) => { settled = true; return result; });
+			const abort = new AbortController();
+			const run = runCommandAsync("child", [], process.cwd(), 200, { signal: abort.signal }).then((result) => { settled = true; return result; });
 			expect(spawn).toHaveBeenCalledTimes(1);
-			advance(199);
+			advance(row.abortAt === undefined ? 199 : row.abortAt - 1);
 			expect(signals).toEqual([]);
-			advance(200);
+			if (row.abortAt === undefined) advance(200);
+			else abort.abort();
 			await Promise.resolve();
 			expect(signals).toEqual(["SIGTERM"]);
 			expect(settled).toBe(row.closeOnTerm);
 			if (row.closeOnTerm) expect(timers.size).toBe(0);
+			// The budget timer, still set after an abort, sends no second
+			// SIGTERM when it comes due.
+			if (row.abortAt !== undefined) advance(200);
+			expect(signals).toEqual(["SIGTERM"]);
 			advance(1000);
 			await Promise.resolve();
 			expect(settled).toBe(true);
@@ -67,7 +79,7 @@ for (const row of [
 			const result = await run;
 			expect(signals).toEqual(row.signals);
 			expect(result.exitCode).toBe(-1);
-			expect(result.timedOut).toBe(true);
+			expect(result.stoppedBy).toBe(row.stoppedBy);
 			if (row.closeOnTerm) expect(result.stderr.trim()).toBe("SIGTERM");
 			expect(timers.size).toBe(0);
 		} finally {

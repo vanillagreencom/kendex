@@ -1,4 +1,8 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { randomUUID } from "node:crypto";
+import { writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { getBool, type HookKey, type kendexConfig } from "./config.js";
 import { runCommandAsync } from "./process.js";
@@ -61,7 +65,7 @@ const DEFAULT_BUDGET_MS = 60_000;
  * one. `runCommandAsync` sends SIGTERM at the budget and the child gets a
  * grace period to die, so a hook that traps the signal and exits 0 — or one
  * whose last statement happens to succeed as it is torn down — settles as
- * `timedOut: true, exitCode: 0`. Read in the other order, that was a clean
+ * `stoppedBy: "timeout", exitCode: 0`. Read in the other order, that was a clean
  * run: the one status this must never take from a run that was cut off. A hook
  * stopped part way judged nothing, whatever it managed to exit with.
  *
@@ -83,8 +87,17 @@ export async function runHook(hook: RegisteredHook, payload: string, ctx: Extens
 	if (hook.missing && hook.script !== undefined) return { ran: false, missing: hook.script };
 	const budgetMs = hook.budgetMs ?? DEFAULT_BUDGET_MS;
 	const args = hook.script === undefined || hook.assigns === true ? ["-c", hook.command] : [hook.script];
-	const result = await runCommandAsync("bash", args, ctx.cwd, budgetMs, payload);
-	if (result.timedOut) return { ran: false, timedOutAfterMs: budgetMs };
+	const result = await runCommandAsync("bash", args, ctx.cwd, budgetMs, { stdin: payload });
+	switch (result.stoppedBy) {
+		case "timeout":
+			return { ran: false, timedOutAfterMs: budgetMs };
+		case "abort":
+			throw new Error("hook run reports an abort, and no abort signal was given to it");
+		case null:
+			break;
+		default:
+			throw new Error(`hook run stopped by ${JSON.stringify(result.stoppedBy satisfies never)}, which dispatch does not know`);
+	}
 	return { ran: true, exitCode: result.exitCode, stdout: result.stdout.trim(), stderr: result.stderr.trim() };
 }
 
@@ -106,6 +119,10 @@ export interface ListenerRun {
  * it names them. `subject` is what a registration's matcher is compared
  * against, `undefined` where the listener has no matcher vocabulary.
  *
+ * `payload` is called once, when the first hook is about to run, and never
+ * for an event no enabled registration matches: a listener fires on every
+ * tool call, and most calls have no hook to read what it would build.
+ *
  * `stop` ends the run early and is the `tool_call` gate's: a refusal is the
  * answer and the guards behind it are not asked. The listeners Pi gives no
  * verdict to pass none — the event has already happened, so every hook
@@ -117,7 +134,7 @@ export interface ListenerRun {
 export async function runListener(
 	listener: string,
 	subject: string | undefined,
-	payload: string,
+	payload: () => string,
 	ctx: ExtensionContext,
 	cfg: kendexConfig,
 	project: string | undefined,
@@ -127,10 +144,12 @@ export async function runListener(
 	const registry = registeredHooks(listener, subject, project, trusted);
 	if (registry.unreadable !== undefined) return { results: [], unreadable: registry.unreadable };
 	const results: HookResult[] = [];
+	let built: string | undefined;
 	for (const hook of registry.hooks) {
 		const setting = GUARD_SETTINGS.get(hook.name);
 		if (setting !== undefined && !getBool(cfg, setting)) continue;
-		const result = { hook, outcome: await runHook(hook, payload, ctx) };
+		built ??= payload();
+		const result = { hook, outcome: await runHook(hook, built, ctx) };
 		results.push(result);
 		if (stop?.(result)) break;
 	}
@@ -185,6 +204,44 @@ export function personLine(result: HookResult): string | undefined {
  * said rather than read as no hooks installed. */
 export function unreadableLine(listener: string, cause: string): string {
 	return `hook-registry-unreadable=${listener}\nNo hook ran. ${cause}`;
+}
+
+/**
+ * What the agent reads from one event's hooks, bounded the way Pi bounds a
+ * tool's own output: Pi's `truncateTail` at its defaults, keeping the end,
+ * where a failing command prints its error. Each hook may print up to the
+ * 16 MiB per stream `runCommandAsync` keeps, and what reaches the agent stays
+ * in the session for its whole life, so the bound is on the text all of an
+ * event's hooks said together.
+ *
+ * Past the bound, the whole text is written to a file of its own in the
+ * system temporary directory, as Pi's bash tool does with a long output, and
+ * the kept tail is led by `hook-output-truncated=<that file>`; a file that
+ * could not be written leads it with `hook-output-unsaved=<its cause>`
+ * instead. Nothing a hook said is dropped unannounced.
+ *
+ * Pi's package is imported where the bound is taken, not when this module
+ * loads, for the reason `hooks.ts::unsupportedHostLine` gives: kendex's
+ * carrier test drives this file under bare bun, where the package does not
+ * resolve. There nothing reads a session, and the text is returned whole.
+ */
+export async function boundForAgent(text: string): Promise<string> {
+	let pi: typeof import("@earendil-works/pi-coding-agent");
+	try {
+		pi = await import("@earendil-works/pi-coding-agent");
+	} catch {
+		return text;
+	}
+	const cut = pi.truncateTail(text);
+	if (!cut.truncated) return text;
+	const kept = `The last ${cut.outputLines} of ${cut.totalLines} lines follow, ${pi.formatSize(cut.outputBytes)} of ${pi.formatSize(cut.totalBytes)}.`;
+	const path = join(tmpdir(), `pi-hooks-output-${randomUUID()}.log`);
+	try {
+		await writeFile(path, text, { flag: "wx" });
+	} catch (error) {
+		return `hook-output-unsaved=${error instanceof Error ? error.message : String(error)}\n${kept} The full output could not be saved.\n${cut.content}`;
+	}
+	return `hook-output-truncated=${path}\n${kept} The full output is in that file.\n${cut.content}`;
 }
 
 /**

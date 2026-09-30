@@ -32,12 +32,10 @@ const PROBE_ARG = "--pi-hooks-reachability-probe";
 /**
  * Prove the fake is the cargo a spawn from this process resolves, then hand the
  * body an empty log. Without this an empty log means nothing: it reads the same
- * whether no check ran or the substitution broke. Bun's spawnSync inherits an
- * environment snapshot rather than the live `process.env`, so the fake is
- * unreachable unless runCargo passes an explicit environment.
+ * whether no check ran or the substitution broke.
  */
-function expectFakeCargoReachable(cwd: string, log: string): void {
-	runCargo([PROBE_ARG], cwd, 5000);
+async function expectFakeCargoReachable(cwd: string, log: string): Promise<void> {
+	await runCargo([PROBE_ARG], cwd, 5000);
 	expect(cargoLog(log)).toBe(`${PROBE_ARG}\n`);
 	writeFileSync(log, "");
 }
@@ -51,7 +49,7 @@ async function withFakeCargo<T>(run: (paths: { bin: string; log: string }) => Pr
 	process.env.PATH = `${paths.bin}:${oldPath ?? ""}`;
 	process.env.FAKE_CARGO_LOG = paths.log;
 	try {
-		expectFakeCargoReachable(root, paths.log);
+		await expectFakeCargoReachable(root, paths.log);
 		return await run(paths);
 	} finally {
 		if (oldPath === undefined) delete process.env.PATH;

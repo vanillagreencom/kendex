@@ -44,6 +44,7 @@ The other hook events cannot stop anything in Pi, so the extension delivers what
 - Any other exit status is reported to the agent as a hook that reached no verdict; a hook that ran out of time, or whose script is missing, is reported as one that did not run.
 - A `PostToolUse` matcher is matched against the tool's name, and a `SessionStart` matcher against why the session started: `startup`, `resume` or `clear`.
 - `Stop` and `TaskCompleted` hooks take no matcher, so both always run.
+- What the hooks on one event say to the agent is kept to Pi's own limit for a tool's output, 2000 lines or 50 KB, whichever comes first, and the end is kept. Past that limit, the whole text goes to a file in the system temporary directory, and a `hook-output-truncated=<file>` line leads what the agent reads. This applies to a `PreToolUse` refusal and to what is added to a tool result.
 - `Stop` and `TaskCompleted` hooks need Pi 0.87.0 or later. On an older Pi they do not run, and each fresh session starts with a `hook-host-unsupported=pi <version>` message that says so, and a session with a UI also gets it as a notification.
 
 ## Lane mail wake
@@ -64,6 +65,6 @@ Open `/extensions:settings`; settings appear under the **Hooks** tab. Project se
 - `enabled`: package toggle; a custom hook has no toggle of its own and rides this one.
 - `blockBareCd`, `blockRepoCopy`, `preCommitCheck`: one toggle per shipped guard.
 - `taskCompletedCheck`, `sessionDriftCheck`: the end-of-turn clippy advisory and the session-start drift report. These two run natively and are not in the registry; the same setting also turns off a registered `task-completed-check` or `session-drift-check` hook.
-- `clippyTimeoutMs`, `driftCheckTimeoutMs`: the time budgets of the two native checks. A registered hook runs to the `timeout` its registration declares, 60 seconds where it declares none, and one past its budget refuses the call.
+- `clippyTimeoutMs`, `driftCheckTimeoutMs`: the time budgets of the two native checks. The end-of-turn clippy check runs beside Pi, so typing and other extensions keep working while it compiles, and ending the turn stops it. One clippy run at a time runs on a host: a Pi session that finds another session's run in progress waits for it inside its own budget. A registered hook runs to the `timeout` its registration declares, 60 seconds where it declares none, and one past its budget refuses the call.
 
 Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
