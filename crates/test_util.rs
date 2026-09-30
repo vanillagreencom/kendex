@@ -51,6 +51,59 @@ pub fn reexecute_test(
         .output()
 }
 
+/// Re-execute a test with a disposable recorder that forwards to real Git.
+/// The parent waits for the child and checks that it recorded calls before
+/// releasing the temporary directory. Only the child receives the trace path.
+#[cfg(unix)]
+#[allow(
+    dead_code,
+    clippy::unwrap_used,
+    reason = "test binaries share this module; recorder setup and child success are fixture preconditions"
+)]
+pub fn git_recorded_test(module_path: &str, function: &str) -> Option<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+
+    const INNER: &str = "KENDEX_TEST_HISTORY_INNER";
+    const TRACE: &str = "KENDEX_TEST_HISTORY_TRACE";
+    if std::env::var_os(INNER).is_some() {
+        return Some(std::env::var_os(TRACE).unwrap().into());
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let root = rooted(&tmp);
+    let recorder = root.join("git");
+    std::fs::write(&recorder, concat!(
+        "#!/bin/sh\n",
+        "{ printf '%s\\0' \"$@\"; printf '\\0'; } >> \"$KENDEX_TEST_HISTORY_TRACE\" || exit 1\n",
+        "exec /usr/bin/git \"$@\"\n",
+    )).unwrap();
+    std::fs::set_permissions(&recorder, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let trace = root.join("calls");
+    let path = format!("{}:/usr/bin:/bin", root.display());
+    let output = reexecute_test(
+        module_path,
+        function,
+        &[
+            (INNER, "1"),
+            (TRACE, trace.to_str().unwrap()),
+            ("PATH", &path),
+            ("HOME", root.to_str().unwrap()),
+            ("GIT_CONFIG_NOSYSTEM", "1"),
+        ],
+    )
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        std::fs::metadata(trace).unwrap().len() > 0,
+        "the inner test must run"
+    );
+    None
+}
+
 /// The checkout this crate sits in, canonical: the workspace root two levels
 /// above `crates/<name>`, whichever of the three crates compiled this module.
 ///

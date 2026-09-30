@@ -1,0 +1,1 @@
+- Updates reads only current and latest version details instead of complete package histories. Versions keeps its full history.

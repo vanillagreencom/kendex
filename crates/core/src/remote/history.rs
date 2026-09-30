@@ -104,8 +104,71 @@ fn require_commit(value: &str) -> Result<()> {
 /// history from `tip`. Tag names arrive through `%D` decorations so one
 /// invocation answers both "what changed" and "what is it called".
 pub fn subtree_log(mirror: &Path, tip: &str, rel: &Path) -> Result<Vec<CommitRow>> {
+    subtree_rows(mirror, tip, rel, MAX_ROWS, 0)
+}
+
+/// The newest subtree revision, with the same metadata as [`subtree_log`],
+/// without reading the rest of the timeline.
+pub fn latest_subtree_commit(mirror: &Path, tip: &str, rel: &Path) -> Result<Option<CommitRow>> {
+    Ok(subtree_rows(mirror, tip, rel, 1, 0)?.into_iter().next())
+}
+
+/// One content revision's metadata, only if it belongs to [`subtree_log`]
+/// at `tip`. An installed revision can be outside that first-parent walk
+/// or beyond its row bound; neither gets metadata from another timeline.
+pub fn subtree_commit(
+    mirror: &Path,
+    tip: &str,
+    rel: &Path,
+    commit: &str,
+) -> Result<Option<CommitRow>> {
     require_commit(tip)?;
+    require_commit(commit)?;
     let max = MAX_ROWS.to_string();
+    let excluded = format!("^{commit}");
+    let text = stdout_capped(Hardened::git_bare(
+        mirror,
+        &[
+            "rev-list",
+            "--first-parent",
+            "--max-count",
+            &max,
+            "--count",
+            tip,
+            &excluded,
+            "--",
+            &literal(rel),
+        ],
+    ))?;
+    let offset = text
+        .trim()
+        .parse::<usize>()
+        .map_err(|_| CoreError::GitFailed {
+            command: "reading subtree revision position".to_owned(),
+            stderr: "git returned an invalid commit count".to_owned(),
+        })?;
+    if offset >= MAX_ROWS {
+        return Ok(None);
+    }
+    // The count locates an ancestor in the filtered walk. A divergent
+    // installed revision can give a count too, so the selected id must
+    // match before its date or tags are used.
+    Ok(subtree_rows(mirror, tip, rel, 1, offset)?
+        .into_iter()
+        .next()
+        .filter(|row| row.commit == commit))
+}
+
+fn subtree_rows(
+    mirror: &Path,
+    tip: &str,
+    rel: &Path,
+    count: usize,
+    offset: usize,
+) -> Result<Vec<CommitRow>> {
+    require_commit(tip)?;
+    let max = count.to_string();
+    let skip = offset.to_string();
     let text = stdout_capped(Hardened::git_bare(
         mirror,
         &[
@@ -113,6 +176,8 @@ pub fn subtree_log(mirror: &Path, tip: &str, rel: &Path) -> Result<Vec<CommitRow
             "--first-parent",
             "--max-count",
             &max,
+            "--skip",
+            &skip,
             "--decorate=full",
             "--format=%H%x00%cI%x00%s%x00%D%x1e",
             tip,

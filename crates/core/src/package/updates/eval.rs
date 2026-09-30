@@ -274,25 +274,17 @@ impl Eval<'_> {
                 remediation: None,
             });
         };
-        let log = match history::subtree_log(&package.mirror, &package.tip, &package.subtree) {
-            Ok(log) => log,
-            Err(error) => {
-                warn(report, format!("history could not be read: {error}"));
-                Vec::new()
-            }
-        };
-        let refer = |commit: &str| VersionRef {
-            label: log
-                .iter()
-                .find(|row| row.commit == commit)
-                .and_then(|row| row.tags.first().cloned()),
-            date: log
-                .iter()
-                .find(|row| row.commit == commit)
-                .map(|row| row.date.clone()),
-            commit: commit.to_owned(),
-        };
-        let latest = log.first().map(|row| refer(&row.commit));
+        let newest =
+            match history::latest_subtree_commit(&package.mirror, &package.tip, &package.subtree) {
+                Ok(row) => row,
+                Err(error) => {
+                    warn(report, format!("history could not be read: {error}"));
+                    None
+                }
+            };
+        let latest = newest
+            .as_ref()
+            .map(|row| version_ref(&row.commit, Some(row)));
         let commits: Vec<String> = self
             .lock
             .entries
@@ -303,21 +295,16 @@ impl Eval<'_> {
         let mixed = commits.windows(2).any(|pair| pair[0] != pair[1]);
         let current = match (latest.is_some(), commits.last()) {
             (false, _) | (_, None) => None,
-            (true, Some(commit)) => {
-                // A recorded commit that cannot be mapped onto the timeline
-                // (a v1-imported or hand-edited lock value, a force-pushed
-                // mirror) costs the "current" marker, never the row.
-                match history::last_content_commit(&package.mirror, commit, &package.subtree) {
-                    Ok(mapped) => mapped.map(|commit| refer(&commit)),
-                    Err(error) => {
-                        warn(
-                            report,
-                            format!("installed version could not be read: {error}"),
-                        );
-                        None
-                    }
+            (true, Some(commit)) => match installed_version(package, commit, newest.as_ref()) {
+                Ok(current) => current,
+                Err(error) => {
+                    warn(
+                        report,
+                        format!("installed version could not be read: {error}"),
+                    );
+                    None
                 }
-            }
+            },
         };
         let update_available = match (&current, &latest) {
             (Some(current), Some(latest)) => current.commit != latest.commit,
@@ -376,6 +363,33 @@ impl Eval<'_> {
                 && entry.repo == repo
         })
     }
+}
+
+fn version_ref(commit: &str, row: Option<&history::CommitRow>) -> VersionRef {
+    VersionRef {
+        label: row.and_then(|row| row.tags.first().cloned()),
+        date: row.map(|row| row.date.clone()),
+        commit: commit.to_owned(),
+    }
+}
+
+fn installed_version(
+    package: &crate::package::PackageRef,
+    commit: &str,
+    newest: Option<&history::CommitRow>,
+) -> Result<Option<VersionRef>> {
+    // A recorded commit that cannot be mapped onto the timeline
+    // (a v1-imported or hand-edited lock value, a force-pushed
+    // mirror) costs the "current" marker, never the row.
+    let Some(commit) = history::last_content_commit(&package.mirror, commit, &package.subtree)?
+    else {
+        return Ok(None);
+    };
+    if newest.is_some_and(|row| row.commit == commit) {
+        return Ok(Some(version_ref(&commit, newest)));
+    }
+    let row = history::subtree_commit(&package.mirror, &package.tip, &package.subtree, &commit)?;
+    Ok(Some(version_ref(&commit, row.as_ref())))
 }
 
 /// The edited rendering a fork can capture, if any. A fork takes one

@@ -14,7 +14,7 @@ use kendex_core::manifest;
 use kendex_core::model::{ItemKind, Scope};
 use kendex_core::package::{self, updates};
 use kendex_core::process::Hardened;
-use kendex_core::remote;
+use kendex_core::remote::{self, history};
 
 const REPO: &str = "owner/catalog";
 
@@ -543,4 +543,298 @@ fn a_pi_extension_reaches_the_updates_report() {
     let versions = package::versions(&w.env, &w.scope, ItemKind::PiExtension, "pi-hooks").unwrap();
     assert!(!versions.is_empty(), "the timeline still reads");
     assert!(versions.iter().all(|row| !row.installed), "{versions:?}");
+}
+
+struct HistoryWorld {
+    world: World,
+    first: String,
+    unrelated: String,
+    tip: String,
+    mirror: PathBuf,
+    complete: Vec<history::CommitRow>,
+}
+
+#[allow(clippy::unwrap_used)]
+fn history_world() -> HistoryWorld {
+    let w = world();
+    write_skill(&w.upstream, "gh", "One.");
+    let first = commit(&w.upstream, "first");
+    git(&w.upstream, &["tag", "v1"]);
+    declare(&w, "", "[skills.gh]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    fs::write(w.upstream.join("README.md"), "unrelated").unwrap();
+    let unrelated = commit(&w.upstream, "unrelated");
+    write_skill(&w.upstream, "gh", "Two.");
+    let tip = commit(&w.upstream, "second");
+    git(&w.upstream, &["tag", "v2"]);
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
+    let mirror = remote::store::mirror_dir(&w.env, &remote::cache_key(&w.env, REPO));
+    let subtree = Path::new("skills/gh");
+    let complete = history::subtree_log(&mirror, &tip, subtree).unwrap();
+    assert_eq!(complete.len(), 2);
+    HistoryWorld {
+        world: w,
+        first,
+        unrelated,
+        tip,
+        mirror,
+        complete,
+    }
+}
+
+/// The disposable Git recorder observes real calls because core has no
+/// injected Git runner. Updates must project the same facts as Versions.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn updates_projects_versions_without_reading_complete_timelines() {
+    let Some(trace) = crate::test_util::git_recorded_test(
+        module_path!(),
+        "updates_projects_versions_without_reading_complete_timelines",
+    ) else {
+        return;
+    };
+    let HistoryWorld {
+        world: w,
+        first,
+        unrelated,
+        tip,
+        mirror,
+        complete,
+    } = history_world();
+    let subtree = Path::new("skills/gh");
+    let lock_path = kendex_core::lock::lock_path(&w.env, &w.scope);
+    let missing = "f".repeat(40);
+    for (case, installed, held) in [
+        ("current", Some(tip.as_str()), false),
+        (
+            "older installed at unrelated commit",
+            Some(unrelated.as_str()),
+            false,
+        ),
+        ("held", Some(first.as_str()), true),
+        ("missing installed commit", Some(missing.as_str()), false),
+        ("no recorded commit", None, false),
+    ] {
+        let declaration = match held {
+            true => format!("[skills.gh]\nsource = \"cat\"\nrev = \"{first}\"\n"),
+            false => "[skills.gh]\nsource = \"cat\"\n".to_owned(),
+        };
+        declare(&w, "", &declaration);
+        let mut lock = kendex_core::lock::load(&lock_path).unwrap();
+        for entry in lock.entries.values_mut() {
+            entry.source_commit = installed.map(str::to_owned);
+        }
+        kendex_core::lock::save(&lock_path, &lock).unwrap();
+        let expected_current = installed
+            .and_then(|commit| {
+                history::last_content_commit(&mirror, commit, subtree)
+                    .ok()
+                    .flatten()
+            })
+            .map(|commit| {
+                let metadata = complete.iter().find(|row| row.commit == commit);
+                updates::VersionRef {
+                    label: metadata.and_then(|row| row.tags.first().cloned()),
+                    date: metadata.map(|row| row.date.clone()),
+                    commit,
+                }
+            });
+        let expected_latest = updates::VersionRef {
+            commit: complete[0].commit.clone(),
+            date: Some(complete[0].date.clone()),
+            label: complete[0].tags.first().cloned(),
+        };
+        fs::write(&trace, "").unwrap();
+        let report = updates::updates(&w.env, &w.scope).unwrap();
+        let row = report.rows.iter().find(|row| row.name == "gh").unwrap();
+        assert_eq!(
+            (&row.current, &row.latest, row.pinned, row.update_available),
+            (
+                &expected_current,
+                &Some(expected_latest),
+                held,
+                expected_current
+                    .as_ref()
+                    .is_some_and(|current| current.commit != tip)
+            ),
+            "{case}"
+        );
+        assert_eq!(
+            report.warnings.is_empty(),
+            installed != Some(missing.as_str()),
+            "{case}"
+        );
+        let calls = fs::read_to_string(&trace).unwrap();
+        let logs: Vec<Vec<&str>> = calls
+            .split("\0\0")
+            .map(|call| call.split('\0').collect())
+            .filter(|args: &Vec<&str>| args.contains(&"log"))
+            .collect();
+        assert!(
+            !logs.is_empty(),
+            "{case}: Git history must actually be read"
+        );
+        assert!(
+            logs.iter()
+                .all(|args| args.windows(2).any(|pair| pair == ["--max-count", "1"])),
+            "{case}: Updates read a complete timeline: {logs:?}"
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn versions_retains_complete_timeline_reads() {
+    let Some(trace) = crate::test_util::git_recorded_test(
+        module_path!(),
+        "versions_retains_complete_timeline_reads",
+    ) else {
+        return;
+    };
+    let fixture = history_world();
+    let w = &fixture.world;
+    let complete = &fixture.complete;
+    fs::write(&trace, "").unwrap();
+    let versions = package::versions(&w.env, &w.scope, ItemKind::Skill, "gh").unwrap();
+    assert_eq!(
+        versions
+            .iter()
+            .map(|row| (&row.id, &row.date, &row.summary, row.label.as_deref()))
+            .collect::<Vec<_>>(),
+        complete
+            .iter()
+            .map(|row| (
+                &row.commit,
+                &row.date,
+                &row.summary,
+                row.tags.first().map(String::as_str)
+            ))
+            .collect::<Vec<_>>()
+    );
+    let calls = fs::read_to_string(&trace).unwrap();
+    assert!(
+        calls.split("\0\0").any(|call| {
+            let args: Vec<&str> = call.split('\0').collect();
+            args.contains(&"log") && args.windows(2).any(|pair| pair == ["--max-count", "200"])
+        }),
+        "Versions must request its complete timeline"
+    );
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn unreadable_history_preserves_update_controls_and_refuses_versions() {
+    if crate::test_util::git_recorded_test(
+        module_path!(),
+        "unreadable_history_preserves_update_controls_and_refuses_versions",
+    )
+    .is_none()
+    {
+        return;
+    }
+    let fixture = history_world();
+    let w = &fixture.world;
+    let mirror = &fixture.mirror;
+    let tip = &fixture.tip;
+    let subtree = Path::new("skills/gh");
+    // A mirror config error leaves the cached source bytes usable.
+    let config_path = mirror.join("config");
+    let config = fs::read_to_string(&config_path).unwrap();
+    fs::write(
+        &config_path,
+        format!("{config}[log]\n\tdiffMerges = bogus\n"),
+    )
+    .unwrap();
+    assert!(history::subtree_log(mirror, tip, subtree).is_err());
+    let report = updates::updates(&w.env, &w.scope).unwrap();
+    let row = report.rows.iter().find(|row| row.name == "gh").unwrap();
+    assert!(row.current.is_none() && row.latest.is_none() && !row.update_available);
+    assert!(row.can_discard && !row.can_take_latest);
+    assert!(!report.warnings.is_empty());
+    assert!(package::versions(&w.env, &w.scope, ItemKind::Skill, "gh").is_err());
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn history_projection_matches_first_parent_literal_and_bounded_timeline() {
+    let w = world();
+    let rel = Path::new("skills/[literal]");
+    write_skill(&w.upstream, "[literal]", "One.");
+    let first = commit(&w.upstream, "first");
+    git(&w.upstream, &["tag", "v1"]);
+    git(&w.upstream, &["checkout", "--quiet", "-b", "side"]);
+    write_skill(&w.upstream, "[literal]", "Side.");
+    let side = commit(&w.upstream, "side");
+    git(&w.upstream, &["checkout", "--quiet", "main"]);
+    git(
+        &w.upstream,
+        &[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "merge",
+            "--quiet",
+            "--no-ff",
+            "side",
+            "-m",
+            "merge",
+        ],
+    );
+    let head = Hardened::git(&["rev-parse", "HEAD"], Some(&w.upstream))
+        .run()
+        .unwrap();
+    assert!(head.status.success());
+    let mut tip = String::from_utf8(head.stdout).unwrap().trim().to_owned();
+    let mirror = w.upstream.join(".git");
+    let merged = history::subtree_log(&mirror, &tip, rel).unwrap();
+    assert_eq!(
+        merged.len(),
+        2,
+        "the merge, not its side-parent commit, changes the package"
+    );
+    assert_eq!(
+        history::latest_subtree_commit(&mirror, &tip, rel)
+            .unwrap()
+            .as_ref(),
+        merged.first()
+    );
+    for commit in [&first, &side] {
+        assert_eq!(
+            history::subtree_commit(&mirror, &tip, rel, commit)
+                .unwrap()
+                .as_ref(),
+            merged.iter().find(|row| &row.commit == commit)
+        );
+    }
+    for index in 0..200 {
+        write_skill(&w.upstream, "[literal]", &format!("Change {index}."));
+        tip = commit(&w.upstream, "change");
+    }
+    let complete = history::subtree_log(&mirror, &tip, rel).unwrap();
+    assert_eq!(complete.len(), 200);
+    assert_eq!(
+        history::latest_subtree_commit(&mirror, &tip, rel)
+            .unwrap()
+            .as_ref(),
+        complete.first()
+    );
+    for commit in [&complete[0].commit, &complete[199].commit, &first, &side] {
+        assert_eq!(
+            history::subtree_commit(&mirror, &tip, rel, commit)
+                .unwrap()
+                .as_ref(),
+            complete.iter().find(|row| &row.commit == commit),
+            "{commit}"
+        );
+    }
+    assert!(
+        history::latest_subtree_commit(&mirror, &tip, Path::new("absent"))
+            .unwrap()
+            .is_none()
+    );
+    assert!(history::latest_subtree_commit(&mirror, &"f".repeat(40), rel).is_err());
 }
