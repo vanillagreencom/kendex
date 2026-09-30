@@ -402,7 +402,7 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 		renderShell: "self" as const,
 		name,
 		label: name === "web_fetch" ? "Web Fetch" : "Fetch Content",
-		description: "Fetch known URL or local PDF content and store full extracted text for get_web_content. Auto handles GitHub, PDF, HTML/text/JSON, with Exa contents fallback/override for URLs. Direct/GitHub/PDF fetches store full extracted text; the tool result is only a preview. A page or file past 8 MB is cut there and its preview says so; a PDF past 32 MB is refused; one call reads at most 64 MB, so the URL that crosses it is cut and later URLs fail: fetch fewer URLs per call.",
+		description: "Fetch known URL or local PDF content and store full extracted text for get_web_content. Auto handles GitHub, PDF, HTML/text/JSON, with Exa contents fallback/override for URLs. Direct/GitHub/PDF fetches store full extracted text; the tool result is only a preview. A page or file past 8 MB is cut there and its preview says so; a PDF past 32 MB is refused; one call reads at most 64 MB, so the URL that crosses it is cut and later URLs fail or go to the Exa fallback: fetch fewer URLs per call.",
 		promptSnippet: "Fetch and store known URL or local PDF content; use the returned content id with get_web_content for full stored text.",
 		parameters: webFetchSchema,
 		renderCall(args: WebFetchInput, theme: any, context: any) {
