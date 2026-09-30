@@ -85,6 +85,9 @@ screen_for() {
     copilot_draft) cat "$CODEX_PANES/copilot-composer-draft.txt" ;;
     copilot_working) cat "$CODEX_PANES/copilot-working.txt" ;;
     copilot_trust) cat "$CODEX_PANES/copilot-dialog-trust.txt" ;;
+    pi_working) cat "$CODEX_PANES/pi-working.txt" ;;
+    pi_header_only) sed '/^──/,$d' "$CODEX_PANES/pi-working.txt" ;;
+    pi_editor_only) sed -n '/^──/,$p' "$CODEX_PANES/pi-working.txt" ;;
     *) printf 'screen_for: no such screen: %s\n' "$1" >&2; return 1 ;;
   esac
 }
@@ -150,7 +153,31 @@ a claude composer is the harness up|idle|yes
 an idle copilot composer is the harness up|copilot_idle|yes
 a copilot command in flight is the harness up|copilot_working|yes
 copilot's folder-trust dialog is not|copilot_trust|no
+a Pi compact working screen is the harness up|pi_working|yes
+a Pi startup interrupted before its editor is not ready|pi_header_only|no
+a Working border without Pi startup is not proof of Pi|pi_editor_only|no
+a bare shell is not the harness up|shell|no
 ROWS
+
+# Each requirement in Pi's readiness proof has its own inverse. The disabled
+# proof rejects the live capture; dropping either requirement accepts a partial
+# redraw. mutate_file asserts each edit on a private copy of the shared owner.
+for row in 'disabled|pi_working|no' 'header|pi_editor_only|yes' 'editor|pi_header_only|yes'; do
+  rule="${row%%|*}" rest="${row#*|}" screen="${rest%%|*}" want="${rest#*|}"
+  pi_mutant="$TMP_ROOT/pi-readiness-$rule.sh"
+  cp -- "$SCRIPTS_DIR/lib/lane-state.sh" "$pi_mutant"
+  case "$rule" in
+    disabled) mutate_file "$pi_mutant" '|| { grep -Eq -- "$PI_COMPACT_HEADER_RE"' '|| { false && grep -Eq -- "$PI_COMPACT_HEADER_RE"' ;;
+    header) mutate_file "$pi_mutant" 'grep -Eq -- "$PI_COMPACT_HEADER_RE" <<<"$1" &&' 'true &&' ;;
+    editor) mutate_file "$pi_mutant" '&& grep -Eq -- "$PI_COMPACT_EDITOR_RE" <<<"$1";' '&& true;' ;;
+  esac
+  pi_screen="$(screen_for "$screen")"
+  pi_up="$(
+    source "$pi_mutant"
+    if pane_harness_up "$pi_screen"; then printf yes; else printf no; fi
+  )"
+  assert_eq "$pi_up" "$want" "control: Pi readiness $rule changes the $screen answer"
+done
 
 # A scan that fails is not an answer: exit 2 and `unjudged`, never a verdict a
 # caller could act on, and never the `idle` the session read claimed. The grep

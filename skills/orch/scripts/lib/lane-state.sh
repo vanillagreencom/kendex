@@ -162,10 +162,20 @@ CLAUDE_FOOTER_RE='\? for shortcuts'
 # this one-line pattern. Its folder-trust dialog draws neither and answers no.
 HARNESS_UP_RE="$CLAUDE_COMPOSER_RE|$CODEX_MARKER_RE|$CLAUDE_FOOTER_RE"
 
+# Pi 0.99.1's compact screen pairs its startup key hints with a Working editor
+# border (fixtures/oversee-watch/pi-working.txt). Neither alone proves readiness.
+# This pane read is the hosted interactive launch fallback: Pi's SDK and RPC
+# expose state in an embedding or non-interactive process, not this ssh TUI;
+# the hook rows used by lane_state carry turn state, not editor readiness.
+# Keep this proof out of pane_working: the startup interrupt hint stays at idle.
+PI_COMPACT_HEADER_RE='^ █▀ █ escape interrupt · ctrl\+c/ctrl\+d clear/exit · / commands · ! bash · ctrl\+o more[[:space:]]*$'
+PI_COMPACT_EDITOR_RE='^── [^[:space:]]+ Working ─+[[:space:]]*$'
+
 # pane_harness_up SCREEN — the predicate over one captured pane.
 pane_harness_up() {
   pane_working "$1" || grep -Eq -- "$HARNESS_UP_RE" <<<"$1" \
-    || [[ "$(pane_turn_slice "$1" framed)" == framed ]]
+    || [[ "$(pane_turn_slice "$1" framed)" == framed ]] \
+    || { grep -Eq -- "$PI_COMPACT_HEADER_RE" <<<"$1" && grep -Eq -- "$PI_COMPACT_EDITOR_RE" <<<"$1"; }
 }
 
 # The pane lines strictly below the last user turn — the whole pane when the

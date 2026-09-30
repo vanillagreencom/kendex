@@ -50,6 +50,7 @@ HOST_STUB="$TEST_DIR/fixtures/lane-host"
 # The screen a working claude draws, which pane_harness_up reads as a harness.
 HARNESS_SCREEN="$TMP_ROOT/harness-screen"
 printf 'Working (esc to interrupt)\n' > "$HARNESS_SCREEN"
+PI_SCREEN="$TEST_DIR/fixtures/oversee-watch/pi-working.txt"
 
 # A claude that logs its argv, one line per run. A `--continue` run exits
 # $CLAUDE_CONTINUE_RC after the words claude prints where it finds no session;
@@ -176,9 +177,8 @@ assert_eq "rc=$RC launched=$(launched) missing=$(said '^open-terminal: harness-s
 echo "=== hosted Codex and Pi select a session or the start brief on the host ==="
 # Native Codex resume --last and Pi -c silently start fresh on an empty store.
 # Each row executes the command start_cmd rendered, with the real host lookup.
-for harness in codex pi; do
-  run_ot "$harness" "$HARNESS_SCREEN" "$harness"
-  assert_eq "rc=$RC launched=$(launched)" 'rc=0 launched=1' "$harness reaches the harness-screen check" "$RUN/launcher.out"
+for harness_screen in "codex|$HARNESS_SCREEN" "pi|$PI_SCREEN"; do
+  harness="${harness_screen%%|*}" screen="${harness_screen#*|}"
   for row in 'none|0|rc=0 runs=1 resume=0 fresh=1 target=0' \
     'foreign|0|rc=0 runs=1 resume=0 fresh=1 target=0' \
     'empty|0|rc=0 runs=1 resume=0 fresh=1 target=0' \
@@ -187,6 +187,12 @@ for harness in codex pi; do
     'matching|143|rc=143 runs=1 resume=1 fresh=0 target=1' \
     'scan-failed|0|rc=2 runs=0 resume=0 fresh=0 target=0'; do
     kind="${row%%|*}" rest="${row#*|}" exit_status="${rest%%|*}" expected="${rest#*|}"
+    if [[ "$exit_status" == 0 && ( "$kind" == none || "$kind" == matching ) ]]; then
+      run_ot "$harness" "$screen" "$harness"
+      assert_eq "rc=$RC launched=$(launched) closed=$(closed) status=$(status)" \
+        'rc=0 launched=1 closed=0 status=running' \
+        "$harness $kind keeps a healthy harness screen running" "$RUN/launcher.out"
+    fi
     replay_run="$RUN/replay-$kind-$exit_status"
     assert_eq "$(ot_replay_relaunch "$(remote)" "${OPEN_TERMINAL%/*}" "$replay_run" "$harness" "$kind" "$exit_status")" \
       "$expected" "$harness $kind exit=$exit_status selects the host session or start brief" "$replay_run/replay.err"
@@ -196,7 +202,7 @@ for harness in codex pi; do
     'rc=1 launched=0 missing=1 closed=1 status=stopped' \
     "$harness at a shell is not launched and its lane stops"
   RUN_ENV=(ORCH_TMUX_VERIFY_SECS=abc)
-  run_ot "$harness" "$HARNESS_SCREEN" "$harness"
+  run_ot "$harness" "$screen" "$harness"
   RUN_ENV=()
   assert_eq "rc=$RC invalid=$(said '^open-terminal: verify-seconds-invalid setting=ORCH_TMUX_VERIFY_SECS value=abc')" \
     'rc=1 invalid=1' "$harness relaunch refuses an invalid screen-wait bound"

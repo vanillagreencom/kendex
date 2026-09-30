@@ -1,0 +1,30 @@
+
+ ▀▀█  v0.99.1                                                                                       
+ █▀ █ escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more               
+ Press ctrl+o to show full startup help and loaded resources.                                       
+                                                                                                    
+ Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.              
+
+
+[Context]                                                                                           
+  /home/dev/.cache/ken-2189-review.qnnvVi/AGENTS.md                                                 
+
+ This project is not trusted. Project .pi resources and packages are ignored. Use /trust to save a  
+ trust decision, then restart pi.                                                                   
+
+                                                                                                    
+ Resume the orch workflow for CC-1 from where this session stopped.                                 
+                                                                                                    
+
+ Warning: tmux extended-keys is off. Modified Enter keys may not work. Add `set -g extended-keys    
+ on` to ~/.tmux.conf and restart tmux.                                                              
+
+── ⠸ Working ───────────────────────────────────────────────────────────────────────────────────────
+                                                                                                    
+────────────────────────────────────────────────────────────────────────────────────────────────────
+/home/dev/.cache/ken-2189-review.qnnvVi/pi-live/cwd
+1.9%/128k (auto)                                                                         probe-model
+
+
+
+
