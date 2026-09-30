@@ -145,65 +145,26 @@ control_replace scripts/lib/attachments.sh 1 \
     '            linear_auth_unauthorized' \
     '            : linear_auth_unauthorized'
 
-control_expect 'mint-host: mint succeeds'
-control_replace scripts/commands/auth-mint.sh 1 \
-    'export LINEAR_SKIP_API_KEY_RESOLUTION=1' \
-    'export LINEAR_SKIP_API_KEY_RESOLUTION=0'
-
-control_expect 'mint-host-reference: resolved pair reaches mint'
-control_replace scripts/lib/auth.sh 1 \
-    '    local LINEAR_AUTH_KIND="app"' \
-    '    local LINEAR_AUTH_KIND="app"; if [[ "${LINEAR_SKIP_API_KEY_RESOLUTION:-}" == 1 && "${LINEAR_CLIENT_ID:-}" == op://* ]]; then LINEAR_AUTH_KIND="unset"; fi'
-
-control_expect 'mint-missing: refuses'
-control_replace scripts/lib/auth.sh 1 \
-    '    if [[ -z "${LINEAR_CLIENT_ID:-}" || -z "${LINEAR_CLIENT_SECRET:-}" ]]; then' \
-    '    if [[ -z "${LINEAR_CLIENT_ID:-}" && -n "${LINEAR_CLIENT_ID:-}" ]]; then'
-
-control_expect 'mint-host: token JSON'
-control_replace scripts/lib/auth.sh 1 \
-    '    printf '\''%s\n'\'' "$cached"' \
-    '    printf '\''%s\n'\'' "$cached" | jq '\''.access_token'\'''
-
-control_expect 'mint-host: cache directory absent'
-control_replace scripts/commands/auth-mint.sh 1 \
-    'linear_mint_token' \
-    'linear_mint_token; mkdir -p -- "$PROJECT_ROOT/.cache/linear/oauth"'
-
-control_expect 'mint-response-type: refuses'
-control_replace scripts/lib/auth.sh 1 \
-    '        select(.token_type == "Bearer") |' \
-    '        select(.token_type == "Bearer" or true) |'
-
-control_expect 'mint-response-empty: refuses'
-control_replace scripts/lib/auth.sh 1 \
-    '        select(.access_token | type == "string" and length > 0) |' \
-    '        select(.access_token | type == "string") |'
-
-control_expect 'mint-response-expiry-low: refuses'
-control_replace scripts/lib/auth.sh 1 \
-    '        select(.expires_in | type == "number" and . > 60 and . <= 2592000 and . == floor) |' \
-    '        select(.expires_in | type == "number" and . >= 60 and . <= 2592000 and . == floor) |'
-
-control_expect 'mint-response-expiry-high: refuses'
-control_replace scripts/lib/auth.sh 1 \
-    '        select(.expires_in | type == "number" and . > 60 and . <= 2592000 and . == floor) |' \
-    '        select(.expires_in | type == "number" and . > 60 and . <= 2592001 and . == floor) |'
-
-control_expect 'mint-response-expiry-fraction: refuses'
-control_replace scripts/lib/auth.sh 1 \
-    '        select(.expires_in | type == "number" and . > 60 and . <= 2592000 and . == floor) |' \
-    '        select(.expires_in | type == "number" and . > 60 and . <= 2592000) |'
-
-control_expect 'mint-token-failure: diagnostic'
-control_replace scripts/lib/auth.sh 1 \
-    '    if [[ "$http_code" != "200" ]]; then' \
-    '    if [[ "$http_code" == "200" && "$http_code" != "200" ]]; then'
-
-control_expect 'mint-token-transport: diagnostic'
-control_replace scripts/lib/auth.sh 1 \
-    '    ) || { echo '\''{"error": "linear-auth: token=transport-failed"}'\'' >&2; return 1; }' \
-    '    ) || { echo '\''{"error": "linear-auth: token=transport-failed"}'\'' >/dev/null; return 1; }'
+# Mint controls pair each defect with the first assertion it reddens.
+# Output-only defects stay at the command boundary: the cached-pair caller
+# needs the helper's JSON to reach the auth-mint cases without aborting.
+while IFS=$'\t' read -r expectation path old replacement; do
+    control_expect "$expectation"
+    control_replace "$path" 1 "$old" "$replacement"
+done <<'MINT_CONTROLS'
+mint-host: mint succeeds	scripts/commands/auth-mint.sh	export LINEAR_SKIP_API_KEY_RESOLUTION=1	export LINEAR_SKIP_API_KEY_RESOLUTION=0
+mint-host-reference: mint succeeds	scripts/lib/auth.sh	    local LINEAR_AUTH_KIND="app"	    local LINEAR_AUTH_KIND="app"; if [[ "${LINEAR_SKIP_API_KEY_RESOLUTION:-}" == 1 && "${LINEAR_CLIENT_ID:-}" == op://* ]]; then LINEAR_AUTH_KIND="unset"; fi
+mint-missing: refuses	scripts/lib/auth.sh	    if [[ -z "${LINEAR_CLIENT_ID:-}" || -z "${LINEAR_CLIENT_SECRET:-}" ]]; then	    if [[ -z "${LINEAR_CLIENT_ID:-}" && -n "${LINEAR_CLIENT_ID:-}" ]]; then
+mint-host: token JSON	scripts/commands/auth-mint.sh	linear_mint_token	linear_mint_token | jq '.access_token'
+mint-host: cache directory absent	scripts/commands/auth-mint.sh	linear_mint_token	linear_mint_token; mkdir -p -- "$PROJECT_ROOT/.cache/linear/oauth"
+mint-response-type: refuses	scripts/lib/auth.sh	        select(.token_type == "Bearer") |	        select(.token_type == "Bearer" or true) |
+mint-response-empty: refuses	scripts/lib/auth.sh	        select(.access_token | type == "string" and length > 0) |	        select(.access_token | type == "string") |
+mint-response-expiry-low: refuses	scripts/lib/auth.sh	        select(.expires_in | type == "number" and . > 60 and . <= 2592000 and . == floor) |	        select(.expires_in | type == "number" and . >= 60 and . <= 2592000 and . == floor) |
+mint-response-expiry-high: refuses	scripts/lib/auth.sh	        select(.expires_in | type == "number" and . > 60 and . <= 2592000 and . == floor) |	        select(.expires_in | type == "number" and . > 60 and . <= 2592001 and . == floor) |
+mint-response-expiry-fraction: refuses	scripts/lib/auth.sh	        select(.expires_in | type == "number" and . > 60 and . <= 2592000 and . == floor) |	        select(.expires_in | type == "number" and . > 60 and . <= 2592000) |
+mint-token-failure: diagnostic	scripts/lib/auth.sh	    if [[ "$http_code" != "200" ]]; then	    if [[ "$http_code" == "200" && "$http_code" != "200" ]]; then
+mint-token-transport: diagnostic	scripts/lib/auth.sh	    ) || { echo '{"error": "linear-auth: token=transport-failed"}' >&2; return 1; }	    ) || { echo '{"error": "linear-auth: token=transport-failed"}' >/dev/null; return 1; }
+MINT_CONTROLS
 
 control_expect 'token-beats-partial: request succeeds'
 control_replace scripts/lib/auth.sh 1 \
