@@ -65,6 +65,7 @@ fn native_file(
                     kind: ItemKind::Command,
                     name: ctx.name.to_owned(),
                     harness,
+                    refusal: super::desired::RefusalKind::Render,
                     reason,
                 });
                 return Ok(None);
@@ -79,6 +80,7 @@ fn native_file(
             kind: ItemKind::Command,
             name: ctx.name.to_owned(),
             harness,
+            refusal: super::desired::RefusalKind::Render,
             reason,
         });
         return Ok(None);
@@ -139,6 +141,7 @@ fn as_skill(
             kind: ItemKind::Command,
             name: ctx.name.to_owned(),
             harness,
+            refusal: super::desired::RefusalKind::Render,
             reason,
         });
         return Ok(None);
@@ -241,6 +244,7 @@ fn emitted_name(ctx: &ItemCtx, state: &mut DesiredState, harness: HarnessId) -> 
                 kind: ItemKind::Command,
                 name: ctx.name.to_owned(),
                 harness,
+                refusal: super::desired::RefusalKind::Render,
                 reason: format!(
                     "{name}, {name}__command and {name}__cmd are all taken on {} — rename one of them",
                     harness.display_name(),

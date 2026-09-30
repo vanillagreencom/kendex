@@ -469,6 +469,7 @@ fn refuse(ctx: &ItemCtx, state: &mut DesiredState, group: &SurfaceGroup, reason:
             kind: ItemKind::Skill,
             name: ctx.name.to_owned(),
             harness: *harness,
+            refusal: super::desired::RefusalKind::Render,
             reason: reason.to_owned(),
         });
     }

@@ -145,8 +145,8 @@ struct Tally {
     /// Declared tracked outputs the project ignores under `--strict`, and
     /// projects whose ignore rules git could not be asked about.
     outputs_failed: usize,
-    /// Conflicts with no recorded installation, including failed delivery.
-    unrecorded_failed: usize,
+    /// Unsupported hook deliveries with no recorded installation.
+    deliveries_failed: usize,
     /// Declared tracked outputs the project ignores, without `--strict`:
     /// counted on the closing line apart from every failure.
     warned: usize,
@@ -162,7 +162,7 @@ impl Tally {
             + self.setup_failed
             + self.bookkeeping_failed
             + self.outputs_failed
-            + self.unrecorded_failed
+            + self.deliveries_failed
     }
 
     fn clean(&self) -> bool {
@@ -171,7 +171,7 @@ impl Tally {
             || self.setup_failed > 0
             || self.bookkeeping_failed > 0
             || self.outputs_failed > 0
-            || self.unrecorded_failed > 0
+            || self.deliveries_failed > 0
             || self.recordless
             || !self.gaps.is_empty())
     }
@@ -348,7 +348,7 @@ fn check_scope(
             .cloned(),
     );
     declaration_rows(&scope, declared, &lock, &report, &placer, &named, tally);
-    unrecorded_conflict_rows(&lock, &report, &placer, &named, tally, style);
+    failed_hook_delivery_rows(&lock, &report, &placer, &named, tally, style);
     for (key, entry) in &lock.entries {
         if !named(&entry.name) {
             continue;
@@ -397,9 +397,9 @@ fn check_scope(
     Ok(())
 }
 
-/// Conflicts with no record entry still fail verification. Recorded
-/// conflicts belong to `say_row`, so each conflict is counted once.
-fn unrecorded_conflict_rows(
+/// Unsupported hook deliveries without a record entry fail verification.
+/// Recorded failures belong to `say_row`, so each is counted once.
+fn failed_hook_delivery_rows(
     lock: &kendex_core::lock::Lock,
     report: &EngineReport,
     placer: &Placer,
@@ -407,9 +407,8 @@ fn unrecorded_conflict_rows(
     tally: &mut Tally,
     style: &Style,
 ) {
-    for row in &report.drift {
-        if row.state == DriftState::Conflict
-            && named(&row.name)
+    for row in report.failed_hook_deliveries() {
+        if named(&row.name)
             && !lock.entries.contains_key(&kendex_core::lock::entry_key(
                 row.kind,
                 &row.name,
@@ -418,15 +417,15 @@ fn unrecorded_conflict_rows(
         {
             ui::stderr(&style.report_verdict(
                 &format!("{} {}", row.kind.name(), row.name),
-                Some(&row.detail),
+                Some(&row.reason),
             ));
-            tally.unrecorded_failed += 1;
+            tally.deliveries_failed += 1;
             tally.rows.push(placer.row(
                 row.kind.name(),
                 &row.name,
                 Some(row.harness),
                 State::Failed,
-                Some(row.detail.clone()),
+                Some(row.reason.clone()),
                 &[],
             ));
         }

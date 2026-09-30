@@ -228,6 +228,8 @@ pub struct ExcludedHook {
 #[derive(Debug)]
 pub struct EngineReport {
     pub declaration_status: DeclarationStatus,
+    /// Declared installations withheld by the engine, with a typed reason.
+    pub refused: Vec<super::desired::Refused>,
     pub drift: Vec<DriftRow>,
     pub plan: Plan,
     pub notes: Vec<String>,
@@ -365,6 +367,16 @@ pub enum StoodIn {
 }
 
 impl EngineReport {
+    /// Hook deliveries that fail because a declared harness cannot run
+    /// their event. Render refusals, exclusions and advisory notices are
+    /// not incomplete hook deliveries.
+    pub fn failed_hook_deliveries(&self) -> impl Iterator<Item = &super::desired::Refused> {
+        self.refused.iter().filter(|refused| match refused.refusal {
+            super::desired::RefusalKind::UnsupportedHookEvent => true,
+            super::desired::RefusalKind::Render => false,
+        })
+    }
+
     /// A report carrying `plan` and nothing else: no drift, no
     /// derivation, every declaration complete. What a caller that planned
     /// its ops outside the engine, or read a scope back after a write,
@@ -374,6 +386,7 @@ impl EngineReport {
     pub fn observed(plan: Plan) -> EngineReport {
         EngineReport {
             declaration_status: DeclarationStatus::Complete,
+            refused: Vec::new(),
             drift: Vec::new(),
             plan,
             notes: Vec::new(),

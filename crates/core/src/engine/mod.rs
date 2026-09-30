@@ -254,6 +254,7 @@ pub fn plan_scope(
         repo_effects: repo_effects::run(&state, &drift, &set_changes, lock),
         registrations: registrations(&state),
         repo_effects_leaving,
+        refused: state.refused,
         drift,
         plan: Plan::landed(scope.clone(), ops)?,
         notes: state.notes,

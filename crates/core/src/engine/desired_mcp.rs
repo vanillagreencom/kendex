@@ -44,6 +44,7 @@ pub(super) fn desired_mcp(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()>
                     kind: ItemKind::McpServer,
                     name: ctx.name.to_owned(),
                     harness,
+                    refusal: super::desired::RefusalKind::Render,
                     reason,
                 });
                 continue;

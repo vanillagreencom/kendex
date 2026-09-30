@@ -17,6 +17,7 @@ pub(crate) fn unsupported_hook_event(
         kind: ItemKind::Hook,
         name: name.to_owned(),
         harness,
+        refusal: super::desired::RefusalKind::UnsupportedHookEvent,
         reason: format!(
             "kendex-hook-unsupported: harness={record_arg0} event={record_event} hook={record_name}\nThis harness cannot run the hook event. Nothing is installed for it.",
             record_arg0 = crate::names::shown(harness.name()),

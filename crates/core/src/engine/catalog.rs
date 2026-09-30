@@ -54,6 +54,7 @@ impl Collisions {
                         kind,
                         name: name.clone(),
                         harness,
+                        refusal: super::desired::RefusalKind::Render,
                         reason: format!(
                             "`{name}` and `{}` both install as `{rendered}` on {} — one would take the other's place",
                             others.join("`, `"),

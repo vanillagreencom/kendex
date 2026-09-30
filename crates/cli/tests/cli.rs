@@ -604,7 +604,7 @@ fn declared(home: &Path, body: &str) -> std::path::PathBuf {
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn refresh_removes_only_the_departed_harness_and_verify_passes() {
+fn refresh_removes_only_the_departed_harness_and_verify_reports_delivery() {
     const SKILLS: &str = "\"claude\", \"opencode\"";
     const HOOKS: &str = "\"claude\", \"codex\"";
     const SKILL: &str = "skill:deploy:opencode";
@@ -614,12 +614,12 @@ fn refresh_removes_only_the_departed_harness_and_verify_passes() {
     let excluded = GUARD.replace("# event:", "# harnesses: [claude]\n# event:");
     let unsupported = GUARD.replace("PreToolUse", "TaskCompleted");
     for changed in [
-        (SKILLS, GUARD, HOOKS, None),
-        ("\"claude\"", GUARD, HOOKS, Some(SKILL)),
-        (SKILLS, excluded.as_str(), HOOKS, Some(HOOK)),
-        (SKILLS, unsupported.as_str(), HOOKS, Some(HOOK)),
-        (SKILLS, GUARD, "\"claude\"", Some(CUSTOM)),
-        (SKILLS, "unreadable hook", HOOKS, None),
+        (SKILLS, GUARD, HOOKS, None, 0),
+        ("\"claude\"", GUARD, HOOKS, Some(SKILL), 0),
+        (SKILLS, excluded.as_str(), HOOKS, Some(HOOK), 0),
+        (SKILLS, unsupported.as_str(), HOOKS, Some(HOOK), 1),
+        (SKILLS, GUARD, "\"claude\"", Some(CUSTOM), 0),
+        (SKILLS, "unreadable hook", HOOKS, None, 0),
     ] {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
@@ -630,7 +630,7 @@ fn refresh_removes_only_the_departed_harness_and_verify_passes() {
             "is_source_catalog = true\n",
         )
         .unwrap();
-        for (skills, source, custom, removed) in [(SKILLS, GUARD, HOOKS, None), changed] {
+        for (skills, source, custom, removed, _) in [(SKILLS, GUARD, HOOKS, None, 0), changed] {
             fs::write(home.join("catalog/hooks/guard.sh"), source).unwrap();
             fs::write(project.join("kendex.toml"), format!("schema = 6\n[sources.cat]\n{}\n[install]\nmethod = \"copy\"\nharnesses = [{HOOKS}]\n[skills.deploy]\nsource = \"cat\"\nharnesses = [{skills}]\n[hooks.guard]\nsource = \"cat\"\n[[custom-hooks]]\nname = \"mine\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./mine.sh\"\nagents = \"all\"\nharnesses = [{custom}]\n", source_path(&home.join("catalog")))).unwrap();
             let output = kendex(
@@ -654,8 +654,30 @@ fn refresh_removes_only_the_departed_harness_and_verify_passes() {
             assert!(lock.entries.contains_key("skill:deploy:claude"));
             assert!(project.join(".claude/skills/deploy/SKILL.md").is_file());
         }
-        let output = kendex(&home, &project, &["verify", "--scope", "project"]);
-        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        let output = kendex(&home, &project, &["verify", "--scope", "project", "--json"]);
+        assert_eq!(output.status.code(), Some(changed.4), "{output:?}");
+        let verified: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let failed_deliveries: Vec<_> = verified["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row["kind"] == "hook" && row["state"] == "failed")
+            .map(|row| {
+                (
+                    row["name"].as_str().unwrap(),
+                    row["harness"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            failed_deliveries,
+            if changed.4 == 1 {
+                vec![("guard", "codex")]
+            } else {
+                vec![]
+            },
+            "{verified}"
+        );
     }
 }
 

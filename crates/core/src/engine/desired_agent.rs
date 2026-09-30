@@ -72,6 +72,7 @@ fn loadable(
             kind: ItemKind::Agent,
             name: ctx.name.to_owned(),
             harness,
+            refusal: super::desired::RefusalKind::Render,
             reason,
         });
         return false;
@@ -241,6 +242,7 @@ fn render_or_refuse(
                 kind: ItemKind::Agent,
                 name: ctx.name.to_owned(),
                 harness,
+                refusal: super::desired::RefusalKind::Render,
                 reason: refusal,
             });
             None

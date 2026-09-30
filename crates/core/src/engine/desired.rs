@@ -242,7 +242,17 @@ pub struct Refused {
     pub kind: ItemKind,
     pub name: String,
     pub harness: HarnessId,
+    pub refusal: RefusalKind,
     pub reason: String,
+}
+
+/// The engine's reason for withholding a declared installation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefusalKind {
+    /// The item's rendered content, configuration or name cannot load.
+    Render,
+    /// The declared harness cannot run the hook's event.
+    UnsupportedHookEvent,
 }
 
 #[derive(Debug, Default)]

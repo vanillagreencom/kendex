@@ -139,6 +139,18 @@ fn a_hook_records_supported_copies_but_fails_each_unsupported_delivery() {
             })
             .collect();
         assert_eq!(failures.len(), unavailable.len(), "{report:?}");
+        let deliveries: std::collections::BTreeSet<_> = report
+            .failed_hook_deliveries()
+            .map(|row| (row.kind, row.name.as_str(), row.harness))
+            .collect();
+        assert_eq!(
+            deliveries,
+            unavailable
+                .iter()
+                .map(|&harness| (ItemKind::Hook, "newer", harness))
+                .collect(),
+            "{report:?}"
+        );
         for &harness in unavailable {
             let row = failures.iter().find(|row| row.harness == harness).unwrap();
             assert_eq!(row.kind, ItemKind::Hook);
@@ -202,6 +214,7 @@ fn a_hook_says_which_tools_run_it_and_which_only_read_it() {
     );
     let report = plan(&f);
 
+    assert_eq!(report.failed_hook_deliveries().count(), 0, "{report:?}");
     let advisory: Vec<_> = report
         .warnings
         .iter()
@@ -372,6 +385,11 @@ fn a_catalog_hook_refusal_names_its_own_reason() {
             .collect();
         assert_eq!(heads, Vec::from_iter(record), "{case}: {:?}", report.notes);
         assert_eq!(report.excluded_hooks, want_excluded, "{case}");
+        assert_eq!(
+            report.failed_hook_deliveries().count(),
+            0,
+            "{case}: {report:?}"
+        );
         assert!(
             !report
                 .drift
