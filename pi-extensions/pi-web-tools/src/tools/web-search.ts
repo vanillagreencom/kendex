@@ -11,7 +11,7 @@ import { PerplexityClient } from "../providers/perplexity.js";
 import { resolveWebProvider, resolveWebProviderCandidates } from "../provider-selection.js";
 import { WEB_PROVIDERS, type ResolvedWebProvider, type WebProvider, type WebToolsSettings } from "../settings.js";
 import { storeWebContent } from "../storage.js";
-import { sourceList } from "../utils/format.js";
+import { sourceList, toResultRef, type ResultRef } from "../utils/format.js";
 import { accent, emptyComponent, errorSummary, firstText, muted, oneLine, providerLabel, successSummary, textComponent, tree, webCallText } from "../utils/render.js";
 
 export const webSearchSchema = Type.Object({
@@ -52,13 +52,13 @@ function storeProviderContent(pi: ExtensionAPI, result: NormalizedExaResult, met
 	});
 }
 
-function contentIdGuidance(all: any[]): string {
+function contentIdGuidance(all: ResultRef[]): string {
 	return all.some((r) => r.contentId)
 		? "Use get_web_content only with shown content id values (for example web-...), not result numbers."
 		: "Result numbers above are not content ids. To inspect a page, call web_fetch with its URL; use get_web_content only after a tool returns a content id.";
 }
 
-function formatProviderBody(provider: string, all: any[], answer?: string): string {
+function formatProviderBody(provider: string, all: ResultRef[], answer?: string): string {
 	const guidance = contentIdGuidance(all);
 	if (answer) return `${answer}\n\n${sourceList(all)}\n\n${guidance}`;
 	return `Provider: ${provider}\nResults: ${all.length}\n${sourceList(all)}\n\n${guidance}`;
@@ -71,7 +71,7 @@ export function createWebSearchToolDefinition(pi: ExtensionAPI, getSettings: (cw
 
 		if (provider === "perplexity") {
 			const client = new PerplexityClient({ apiKey: settings.apiKeys.perplexity });
-			const all = [] as any[];
+			const all: ResultRef[] = [];
 			let answer: string | undefined;
 			for (const query of queries) {
 				const response = await client.search({
@@ -83,13 +83,13 @@ export function createWebSearchToolDefinition(pi: ExtensionAPI, getSettings: (cw
 					endPublishedDate: params.endPublishedDate,
 				}, signal);
 				if (!answer && response.answer) answer = response.answer;
-				for (const result of response.results.slice(0, numResults)) all.push({ ...result });
+				for (const result of response.results.slice(0, numResults)) all.push(toResultRef(result));
 			}
-			return { content: [{ type: "text", text: formatProviderBody("perplexity", all, answer) }], details: { provider: "perplexity", answer, results: all } };
+			return { content: [{ type: "text", text: formatProviderBody("perplexity", all, answer) }], details: { provider: "perplexity", results: all } };
 		}
 
 		if (provider === "gemini") {
-			const all = [] as any[];
+			const all: ResultRef[] = [];
 			let answer: string | undefined;
 			let sourceLabel = "gemini";
 			for (const query of queries) {
@@ -104,17 +104,17 @@ export function createWebSearchToolDefinition(pi: ExtensionAPI, getSettings: (cw
 					throw new Error("Gemini provider requires GEMINI_API_KEY or browserCookieAccess=true with a signed-in Firefox/Zen/Chrome.");
 				}
 				if (!answer && response.answer) answer = response.answer;
-				for (const result of response.results.slice(0, numResults)) all.push({ ...result });
+				for (const result of response.results.slice(0, numResults)) all.push(toResultRef(result));
 			}
-			return { content: [{ type: "text", text: formatProviderBody(sourceLabel, all, answer) }], details: { provider: sourceLabel, answer, results: all } };
+			return { content: [{ type: "text", text: formatProviderBody(sourceLabel, all, answer) }], details: { provider: sourceLabel, results: all } };
 		}
 
 		if (provider === "duckduckgo") {
 			const client = new DuckDuckGoClient();
-			const all = [] as any[];
+			const all: ResultRef[] = [];
 			for (const query of queries) {
 				const response = await client.search({ query, numResults, includeDomains: params.includeDomains, excludeDomains: params.excludeDomains }, signal);
-				for (const result of response.results.slice(0, numResults)) all.push({ ...result });
+				for (const result of response.results.slice(0, numResults)) all.push(toResultRef(result));
 			}
 			return { content: [{ type: "text", text: formatProviderBody("duckduckgo", all) }], details: { provider: "duckduckgo", results: all } };
 		}
@@ -122,7 +122,7 @@ export function createWebSearchToolDefinition(pi: ExtensionAPI, getSettings: (cw
 		const client = provider === "exa-mcp"
 			? new ExaMcpClient()
 			: new ExaClient({ apiKey: settings.apiKeys.exa });
-		const all = [] as any[];
+		const all: ResultRef[] = [];
 		for (const query of queries) {
 			const response = await client.search({
 				query,
@@ -142,7 +142,7 @@ export function createWebSearchToolDefinition(pi: ExtensionAPI, getSettings: (cw
 					contentKind: "search-result",
 					providerTextMaxCharacters: params.textMaxCharacters ?? (provider === "exa-mcp" ? 3000 : 12000),
 				});
-				all.push({ ...result, contentId: stored?.id });
+				all.push(toResultRef(result, stored?.id));
 			}
 		}
 		return { content: [{ type: "text", text: formatProviderBody(provider, all) }], details: { provider, results: all } };

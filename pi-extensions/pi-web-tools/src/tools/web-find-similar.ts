@@ -3,7 +3,7 @@ import { Type, type Static } from "typebox";
 import { ExaClient } from "../providers/exa.js";
 import type { WebToolsSettings } from "../settings.js";
 import { storeWebContent } from "../storage.js";
-import { sourceList } from "../utils/format.js";
+import { sourceList, toResultRef } from "../utils/format.js";
 import { renderExaCall, renderExaResultList } from "./exa-render.js";
 
 export const webFindSimilarSchema = Type.Object({ url: Type.String(), numResults: Type.Optional(Type.Number()), textMaxCharacters: Type.Optional(Type.Number()) });
@@ -28,9 +28,9 @@ export function createWebFindSimilarToolDefinition(pi: ExtensionAPI, getSettings
 			const response = await client.findSimilar(params.url, { numResults: params.numResults, textMaxCharacters: params.textMaxCharacters }, signal);
 			const results = response.results.map((result) => {
 				const stored = result.text || result.summary ? storeWebContent(pi, { title: result.title, url: result.url, content: result.text || result.summary || "", metadata: { url: params.url, provider: "exa", tool: name, contentKind: "similar-result", providerTextMaxCharacters: params.textMaxCharacters ?? 12000 } }) : undefined;
-				return { ...result, contentId: stored?.id };
+				return toResultRef(result, stored?.id);
 			});
-			return { content: [{ type: "text", text: `${sourceList(results)}${results.some((result) => result.contentId) ? "\n\nUse get_web_content with the content id for stored full text." : ""}` }], details: { ...response, provider: "exa", results } };
+			return { content: [{ type: "text", text: `${sourceList(results)}${results.some((result) => result.contentId) ? "\n\nUse get_web_content with the content id for stored full text." : ""}` }], details: { provider: "exa", answer: response.answer, results } };
 		},
 	};
 }

@@ -4,7 +4,7 @@
 
 ### 2.1.0
 
-- A WebSocket response may queue at most 33,554,432 characters of received events ahead of the reader. Past that the response stops with an error whose first line starts `codex-websocket-queue-overflow=`.
+- A WebSocket response may hold at most 33,554,432 characters of received events that the reader has not taken yet, counted as each event arrives and before it is decoded; a binary frame counts its bytes. Past that the response stops with an error whose first line starts `codex-websocket-queue-overflow=`.
 - Generated-image previews are read from disk in the background the first time a message shows them, instead of inside the render, and appear on the next redraw. At most 16,777,216 characters of base64 preview data are cached, least recently shown dropped first; one preview larger than that bound by itself is still cached until the next preview loads.
 
 ### 2.0.4

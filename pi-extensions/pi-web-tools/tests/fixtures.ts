@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
 import { ByteBudget, type UrlReads } from "../src/extract/byte-budget.js";
-import type { WebContentLookup } from "../src/storage.js";
+import { getWebContent, type WebContentLookup } from "../src/storage.js";
+import type { ResultRef } from "../src/utils/format.js";
 
 import { clearPackageConfigCache } from "../src/package-config.js";
 
@@ -76,7 +77,18 @@ export function githubFixtureRepo(t: TestContext, files: Record<string, string>)
 	return { cache: join(root, "cache"), head: git("-C", source, "rev-parse", "HEAD") };
 }
 
+/** Whether `text` appears in a tool result's details as Pi writes them to the
+ *  session record. */
+export function detailsHold(details: unknown, text: string): boolean {
+	return JSON.stringify(details).includes(text);
+}
+
 /** The stored text a lookup found, or undefined when it found none. */
 export function textOf(lookup: WebContentLookup): string | undefined {
 	return lookup.status === "found" ? lookup.item.content : undefined;
+}
+
+/** Each result ref with its content id replaced by the text stored under it. */
+export function withStoredText(results: ResultRef[]): Array<Omit<ResultRef, "contentId"> & { stored?: string }> {
+	return results.map(({ contentId, ...ref }) => ({ ...ref, stored: contentId === undefined ? undefined : textOf(getWebContent(contentId)) }));
 }

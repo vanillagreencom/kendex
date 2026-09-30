@@ -3,7 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { ExaClient } from "../providers/exa.js";
 import type { WebToolsSettings } from "../settings.js";
 import { storeWebContent } from "../storage.js";
-import { sourceList } from "../utils/format.js";
+import { sourceList, toResultRef } from "../utils/format.js";
 import { renderExaCall, renderExaResultList } from "./exa-render.js";
 
 function parseExaCodeSources(text: string): Array<{ title?: string; url: string }> {
@@ -63,7 +63,7 @@ export function createCodeSearchToolDefinition(pi: ExtensionAPI, getSettings: (c
 						const sources = parseExaCodeSources(context.text);
 						return {
 							content: [{ type: "text", text: `${context.text}\n\nUse get_web_content with content id ${stored.id} for the full stored context.` }],
-							details: { provider: "exa-code", source: "exa-code", text: context.text, outputTokens: context.outputTokens, resultsCount: context.resultsCount, contentId: stored.id, results: sources },
+							details: { provider: "exa-code", source: "exa-code", outputTokens: context.outputTokens, resultsCount: context.resultsCount, contentId: stored.id, results: sources },
 						};
 					}
 				} catch (error) {
@@ -75,9 +75,9 @@ export function createCodeSearchToolDefinition(pi: ExtensionAPI, getSettings: (c
 			const response = await client.search({ query: params.query, numResults: params.numResults ?? 8, includeDomains }, signal);
 			const results = response.results.map((result) => {
 				const stored = result.text || result.summary ? storeWebContent(pi, { title: result.title, url: result.url, content: result.text || result.summary || "", metadata: { query: params.query, provider: "exa", tool: "code_search", contentKind: "code-search-result", providerTextMaxCharacters: 12000 } }) : undefined;
-				return { ...result, contentId: stored?.id };
+				return toResultRef(result, stored?.id);
 			});
-			return { content: [{ type: "text", text: `${sourceList(results)}${results.some((result) => result.contentId) ? "\n\nUse get_web_content with the content id for stored full text." : ""}` }], details: { ...response, provider: "exa", results } };
+			return { content: [{ type: "text", text: `${sourceList(results)}${results.some((result) => result.contentId) ? "\n\nUse get_web_content with the content id for stored full text." : ""}` }], details: { provider: "exa", answer: response.answer, results } };
 		},
 	};
 }

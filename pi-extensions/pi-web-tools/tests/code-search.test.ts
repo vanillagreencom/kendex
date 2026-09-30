@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { endWebContentSession, getWebContent } from "../src/storage.js";
-import { textOf } from "./fixtures.js";
+import { detailsHold, textOf, withStoredText } from "./fixtures.js";
 import test, { beforeEach, afterEach } from "node:test";
 import { createCodeSearchToolDefinition } from "../src/tools/code-search.js";
 import type { StoredWebContent } from "../src/storage.js";
@@ -21,8 +21,8 @@ for (const { name, expanded, details, query, present, absent } of [
 	});
 }
 for (const { name, contextStatus, expected } of [
-	{ name: "context success", contextStatus: 200, expected: { provider: "exa-code", contextCalls: 1, searchCalls: 0, text: true, appended: 1, kind: "code-context", full: "code snippet body" } },
-	{ name: "classic fallback", contextStatus: 500, expected: { provider: "exa", contextCalls: 1, searchCalls: 1, results: 1 } },
+	{ name: "context success", contextStatus: 200, expected: { provider: "exa-code", contextCalls: 1, searchCalls: 0, detailsText: false, text: true, appended: 1, kind: "code-context", full: "code snippet body" } },
+	{ name: "classic fallback", contextStatus: 500, expected: { provider: "exa", contextCalls: 1, searchCalls: 1, detailsText: false, results: [{ title: "GitHub repo", url: "https://github.com/foo/bar", stored: "classic page text" }] } },
 ]) {
 	test(`code_search execute: ${name}`, async (t) => {
 		let contextCalls = 0;
@@ -31,11 +31,11 @@ for (const { name, contextStatus, expected } of [
 		t.mock.method(globalThis, "fetch", async (url: URL | string | Request) => {
 			if (String(url).endsWith("/context")) { contextCalls++; return new Response(JSON.stringify({ response: "code snippet body", resultsCount: 5, outputTokens: 400 }), { status: contextStatus }); }
 			searchCalls++;
-			return new Response(JSON.stringify({ results: [{ title: "GitHub repo", url: "https://github.com/foo/bar", text: "code" }] }));
+			return new Response(JSON.stringify({ results: [{ title: "GitHub repo", url: "https://github.com/foo/bar", text: "classic page text" }] }));
 		});
 		const tool = createCodeSearchToolDefinition({ appendEntry(_type: string, data: StoredWebContent) { appended.push(data); } } as any, () => ({ apiKeys: { exa: "k" } } as any));
 		const result = await tool.execute("call", { query: "react hooks" }, undefined, undefined, { cwd: process.cwd() } as any);
 		const block = result.content[0]!;
-		assert.deepEqual({ provider: result.details.provider, contextCalls, searchCalls, ...(contextStatus === 200 ? { text: block.type === "text" && block.text.includes("code snippet body"), appended: appended.length, kind: appended[0]?.metadata?.contentKind, full: textOf(getWebContent(appended[0]!.id)) } : { results: result.details.results.length }) }, expected);
+		assert.deepEqual({ provider: result.details.provider, contextCalls, searchCalls, detailsText: detailsHold(result.details, contextStatus === 200 ? "code snippet body" : "classic page text"), ...(contextStatus === 200 ? { text: block.type === "text" && block.text.includes("code snippet body"), appended: appended.length, kind: appended[0]?.metadata?.contentKind, full: textOf(getWebContent(appended[0]!.id)) } : { results: withStoredText(result.details.results) }) }, expected);
 	});
 }

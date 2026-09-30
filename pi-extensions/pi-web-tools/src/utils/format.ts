@@ -13,3 +13,23 @@ export function sourceList(results: Array<{ title?: string; url?: string; conten
 		return `${index + 1}. ${result.title || result.url || "Untitled"}${bits ? ` — ${bits}` : ""}`;
 	}).join("\n");
 }
+
+/** A provider result as a tool's details carry it: what `sourceList` and the
+ *  result renderers draw, and no page text. Pi keeps details in the session
+ *  record, so text there is a second copy beside the content store; a tool
+ *  that keeps the text names it by `contentId`. */
+export interface ResultRef {
+	title?: string;
+	url?: string;
+	publishedDate?: string;
+	contentId?: string;
+}
+
+export function toResultRef(result: { title?: string; url?: string; publishedDate?: string }, contentId?: string): ResultRef {
+	const ref: ResultRef = {};
+	if (result.title !== undefined) ref.title = result.title;
+	if (result.url !== undefined) ref.url = result.url;
+	if (result.publishedDate !== undefined) ref.publishedDate = result.publishedDate;
+	if (contentId !== undefined) ref.contentId = contentId;
+	return ref;
+}

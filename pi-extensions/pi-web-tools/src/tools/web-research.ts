@@ -6,6 +6,7 @@ import { Type, type Static } from "typebox";
 import { ExaClient, type ExaDeepType, type NormalizedExaResponse } from "../providers/exa.js";
 import type { WebToolsSettings } from "../settings.js";
 import { accent, emptyComponent, errorSummary, firstText, muted, providerLabel, successSummary, textComponent, tree, webCallText } from "../utils/render.js";
+import { toResultRef } from "../utils/format.js";
 
 const deepTypes = ["deep-reasoning", "deep-lite", "deep"] as const;
 const researchModes = ["lite", "standard", "full"] as const;
@@ -438,7 +439,7 @@ export function createWebResearchToolDefinition(pi: ExtensionAPI, getSettings: (
 			pi.appendEntry?.("pi-web-tools.web_research", { query: prepared.query, outputPath, rawOutputPath, metadata: response.metadata, sources: response.results.length });
 			return {
 				content: [{ type: "text", text: outputPath ? `Exa deep research complete. Report: ${outputPath}\nSources: ${response.results.length}${rawOutputPath ? `\nRaw metadata: ${rawOutputPath}` : ""}` : report }],
-				details: { outputPath, rawOutputPath, sources: response.results, metadata: response.metadata, raw: response.raw },
+				details: { outputPath, rawOutputPath, sources: response.results.map((result) => toResultRef(result)), metadata: response.metadata },
 			};
 		},
 	};

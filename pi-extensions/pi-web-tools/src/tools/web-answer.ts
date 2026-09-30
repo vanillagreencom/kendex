@@ -3,7 +3,7 @@ import { Type, type Static } from "typebox";
 import { ExaClient } from "../providers/exa.js";
 import type { WebToolsSettings } from "../settings.js";
 import { storeWebContent } from "../storage.js";
-import { sourceList } from "../utils/format.js";
+import { sourceList, toResultRef } from "../utils/format.js";
 import { renderExaCall, renderExaResultList } from "./exa-render.js";
 
 export const webAnswerSchema = Type.Object({ query: Type.String() });
@@ -29,9 +29,9 @@ export function createWebAnswerToolDefinition(pi: ExtensionAPI, getSettings: (cw
 			const response = await client.answer(params.query, signal);
 			const results = response.results.map((result) => {
 				const stored = result.text || result.summary ? storeWebContent(pi, { title: result.title, url: result.url, content: result.text || result.summary || "", metadata: { query: params.query, provider: "exa", tool: name, contentKind: "answer-source", providerTextMaxCharacters: 12000 } }) : undefined;
-				return { ...result, contentId: stored?.id };
+				return toResultRef(result, stored?.id);
 			});
-			return { content: [{ type: "text", text: `${response.answer ?? "No answer returned."}\n\nSources:\n${sourceList(results)}${results.some((result) => result.contentId) ? "\n\nUse get_web_content with the content id for stored full text." : ""}` }], details: { ...response, provider: "exa", results } };
+			return { content: [{ type: "text", text: `${response.answer ?? "No answer returned."}\n\nSources:\n${sourceList(results)}${results.some((result) => result.contentId) ? "\n\nUse get_web_content with the content id for stored full text." : ""}` }], details: { provider: "exa", answer: response.answer, results } };
 		},
 	};
 }

@@ -1018,15 +1018,28 @@ function buildCachedWebSocketRequestBody(entry: SessionWebSocketCacheEntry, body
 	};
 }
 
-/** Characters of received WebSocket events waiting for the stream consumer.
+/** Characters of received WebSocket events not yet taken by the stream
+ *  consumer, counted from the moment each event arrives, before it is decoded.
  *  A WebSocket cannot be paused, so past this the response fails instead of
- *  buffering without limit. */
+ *  buffering without limit. A binary frame counts its bytes. */
 export const WEBSOCKET_QUEUE_MAX_CHARS = 32 * 1024 * 1024;
+
+/** Size of a raw WebSocket payload as it arrives: characters of a text frame,
+ *  bytes of a binary one. A payload of no known type counts as 0 and is
+ *  dropped by `decodeWebSocketData`. */
+function webSocketPayloadSize(data: unknown): number {
+	if (typeof data === "string") return data.length;
+	if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) return data.byteLength;
+	if (data && typeof data === "object" && "size" in data && typeof (data as { size: unknown }).size === "number") return (data as { size: number }).size;
+	return 0;
+}
 
 async function* parseWebSocket(socket: WebSocketLike, signal: AbortSignal | undefined): AsyncIterable<StreamEventShape> {
 	const queue: StreamEventShape[] = [];
-	/** Decoded length of each queued event, in queue order. */
+	/** Arrival size of each queued event, in queue order. */
 	const queuedChars: number[] = [];
+	/** Arrival size of every event received and not yet taken by the reader,
+	 *  whether it still waits to be decoded or sits in `queue`. */
 	let queuedTotal = 0;
 	let overflowed = false;
 	let pending: (() => void) | null = null;
@@ -1044,20 +1057,34 @@ async function* parseWebSocket(socket: WebSocketLike, signal: AbortSignal | unde
 		resolve();
 	};
 
+	// The bound is applied here, as each event arrives: the decode chain below
+	// holds every raw payload until its turn, so a count taken there would miss
+	// a burst that arrives before any decode runs.
 	const onMessage = (event: unknown) => {
+		if (overflowed) return;
+		const data = event && typeof event === "object" && "data" in event ? (event as { data?: unknown }).data : undefined;
+		const size = webSocketPayloadSize(data);
+		if (queuedTotal + size > WEBSOCKET_QUEUE_MAX_CHARS) {
+			overflowed = true;
+			failed = new Error(`codex-websocket-queue-overflow=${queuedTotal + size}\nThe response arrived faster than it was consumed, past the ${WEBSOCKET_QUEUE_MAX_CHARS}-character WebSocket queue bound; the response was stopped.`);
+			done = true;
+			wake();
+			return;
+		}
+		queuedTotal += size;
 		pendingMessages++;
 		messageChain = messageChain
 			.then(async () => {
-				if (!event || typeof event !== "object" || !("data" in event)) return;
-				const text = await decodeWebSocketData((event as { data?: unknown }).data);
-				if (!text) return;
+				let queued = false;
 				try {
-					const parsed = JSON.parse(text) as StreamEventShape;
 					if (overflowed) return;
-					if (queuedTotal + text.length > WEBSOCKET_QUEUE_MAX_CHARS) {
-						overflowed = true;
-						failed = new Error(`codex-websocket-queue-overflow=${queuedTotal + text.length}\nThe response arrived faster than it was consumed, past the ${WEBSOCKET_QUEUE_MAX_CHARS}-character WebSocket queue bound; the response was stopped.`);
-						done = true;
+					const text = await decodeWebSocketData(data);
+					if (!text) return;
+					let parsed: StreamEventShape;
+					try {
+						parsed = JSON.parse(text) as StreamEventShape;
+					} catch {
+						// ignore malformed websocket messages
 						return;
 					}
 					const type = typeof parsed.type === "string" ? parsed.type : "";
@@ -1067,10 +1094,10 @@ async function* parseWebSocket(socket: WebSocketLike, signal: AbortSignal | unde
 						done = true;
 					}
 					queue.push(parsed);
-					queuedChars.push(text.length);
-					queuedTotal += text.length;
-				} catch {
-					// ignore malformed websocket messages
+					queuedChars.push(size);
+					queued = true;
+				} finally {
+					if (!queued) queuedTotal -= size;
 				}
 			})
 			.catch((error: unknown) => {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { endWebContentSession } from "../src/storage.js";
+import { detailsHold } from "./fixtures.js";
 import test, { beforeEach, afterEach } from "node:test";
 import { createWebSearchToolDefinition } from "../src/tools/web-search.js";
 import { DEFAULT_SETTINGS } from "../src/settings.js";
@@ -36,9 +37,10 @@ for (const row of [
 			fetchGuidance: text.includes("web_fetch"),
 			storedGuidance: text.includes("get_web_content"),
 			warning: result.details.warnings?.some((warning: string) => warning.includes("perplexity")) ?? false,
+			detailsText: detailsHold(result.details, row.fallback ? "Fallback snippet" : "Snippet 0"),
 			appended: appended.length,
 			storedProvider: appended[0]?.metadata?.provider,
-		}, { count: row.expectedCount, printedCount: true, provider: row.fallback ? "exa-mcp" : "duckduckgo", printedProvider: true, url: true, fetchGuidance: !row.fallback, storedGuidance: true, warning: row.fallback, appended: row.fallback ? 1 : 0, storedProvider: row.fallback ? "exa-mcp" : undefined });
+		}, { count: row.expectedCount, printedCount: true, provider: row.fallback ? "exa-mcp" : "duckduckgo", printedProvider: true, url: true, fetchGuidance: !row.fallback, storedGuidance: true, warning: row.fallback, detailsText: false, appended: row.fallback ? 1 : 0, storedProvider: row.fallback ? "exa-mcp" : undefined });
 	});
 }
 test("web_search renderer shows source URLs and hides content ids", () => {

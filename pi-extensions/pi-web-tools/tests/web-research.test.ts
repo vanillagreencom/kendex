@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import { applyResearchMode, buildRawSidecar, defaultRawOutputPath, displayWebResearchPath, expandSimpleGlob, prepareResearchInput, renderFindingsReport, renderWebResearchSourceTree, resolveOutputPath, runExaResearch } from "../src/tools/web-research.js";
+import { applyResearchMode, buildRawSidecar, createWebResearchToolDefinition, defaultRawOutputPath, displayWebResearchPath, expandSimpleGlob, prepareResearchInput, renderFindingsReport, renderWebResearchSourceTree, resolveOutputPath, runExaResearch } from "../src/tools/web-research.js";
 import { DEFAULT_SETTINGS } from "../src/settings.js";
-import { tempDir } from "./fixtures.js";
+import { detailsHold, tempDir } from "./fixtures.js";
 
 for (const { name, params, settings, expected } of [
 	{ name: "lite", params: { researchMode: "lite" }, settings: undefined, expected: { researchMode: "lite", type: "deep-lite", numResults: 15, textMaxCharacters: 10000, timeoutSeconds: 300, highlightsMaxCharacters: 600, highlightsPerUrl: 1 } },
@@ -78,3 +78,16 @@ for (const expanded of [false, true]) {
 for (const { path, expected } of [{ path: "/repo/tmp/findings.md", expected: "tmp/findings.md" }, { path: "/other/findings.md", expected: "/other/findings.md" }]) {
 	test(`research display path: ${path}`, () => assert.equal(displayWebResearchPath("/repo", path), expected));
 }
+
+test("web_research execute: details carry source refs and metadata, not the source text or raw response", async (t) => {
+	t.mock.method(globalThis, "fetch", async () => new Response(JSON.stringify({ output: { content: "Research answer." }, results: [{ title: "T", url: "https://example.com/t", publishedDate: "2026-01-01", text: "research page text", highlights: ["research highlight"] }] })));
+	const tool = createWebResearchToolDefinition({ appendEntry() {} } as any, () => ({ ...DEFAULT_SETTINGS, warnings: [], apiKeys: { exa: "k" } }));
+	const result = await tool.execute("call", { query: "q", researchMode: "lite" }, undefined, undefined, { cwd: tempDir(t) } as any);
+	const { sources, metadata, ...rest } = result.details;
+	assert.deepEqual({ rest: JSON.parse(JSON.stringify(rest)), sources, mode: metadata.researchMode, detailsText: ["research page text", "research highlight"].some((text) => detailsHold(result.details, text)) }, {
+		rest: {},
+		sources: [{ title: "T", url: "https://example.com/t", publishedDate: "2026-01-01" }],
+		mode: "lite",
+		detailsText: false,
+	});
+});
