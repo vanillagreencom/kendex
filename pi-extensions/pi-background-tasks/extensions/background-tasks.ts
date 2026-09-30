@@ -763,6 +763,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 						rememberSnapshot(task);
 						persistSoon.request();
 						return;
+					case "alive":
 					case "gone":
 						return;
 					case "unknown":

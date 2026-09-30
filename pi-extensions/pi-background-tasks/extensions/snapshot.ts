@@ -78,10 +78,8 @@ export function resolveTaskByToken<T extends Pick<BackgroundTaskSnapshot, "id" |
 }
 
 // Default pid-liveness probe. Returns true iff the kernel reports the
-// pid as alive (or EPERM, which means alive-but-foreign). Used as a
-// pre-filter before the more expensive identity probe; the watcher /
-// restore paths use identityProbe directly so PID reuse cannot pass
-// as "still running".
+// pid as alive (or EPERM, which means alive-but-foreign). It cannot tell
+// PID reuse, so the identity read uses it only on a host without `ps`.
 export function defaultProcessAlive(pid: number): boolean {
 	if (!Number.isFinite(pid) || pid <= 0) return false;
 	try {
@@ -95,6 +93,8 @@ export function defaultProcessAlive(pid: number): boolean {
 /** What one identity read learned about a pid. */
 export type IdentityReading =
 	| { kind: "identity"; identity: ProcessIdentity }
+	/** The pid lives, but this host has no way to read its identity. */
+	| { kind: "alive" }
 	| { kind: "gone" }
 	| { kind: "unknown"; reason: string };
 
@@ -102,7 +102,9 @@ export type IdentityProbe = (pid: number) => Promise<IdentityReading>;
 
 export interface IdentityReaderDeps {
 	platform?: NodeJS.Platform;
+	readStat?: (path: string) => Promise<string>;
 	run?: ProbeRunner;
+	processAlive?: (pid: number) => boolean;
 }
 
 // Read kernel-stable process identity. Linux fast path: /proc/<pid>/stat
@@ -114,13 +116,14 @@ export interface IdentityReaderDeps {
 // for the same recycled pid within the same boot.
 //
 // `gone` needs a positive answer: /proc has no entry, or ps ran and matched
-// no process. A ps that timed out, was signalled or could not start answers
-// `unknown`, which callers read as alive for this pass.
+// no process. A host without ps falls back to a signal-0 check. An unsettled
+// ps result, or ps output this cannot parse, answers `unknown`, which callers
+// read as alive for this pass.
 export async function defaultReadProcessIdentity(pid: number, deps: IdentityReaderDeps = {}): Promise<IdentityReading> {
 	if (!Number.isFinite(pid) || pid <= 0) return { kind: "gone" };
 	if ((deps.platform ?? process.platform) === "linux") {
 		try {
-			const stat = await readFile(`/proc/${pid}/stat`, "utf8");
+			const stat = await (deps.readStat ?? ((path: string) => readFile(path, "utf8")))(`/proc/${pid}/stat`);
 			const lastParen = stat.lastIndexOf(")");
 			// stat fields after the closing paren of comm are space-separated.
 			// starttime is field 22 globally, which is index 22-3=19 inside the
@@ -139,9 +142,8 @@ export async function defaultReadProcessIdentity(pid: number, deps: IdentityRead
 	const result = await (deps.run ?? runProbe)("ps", ["-o", "lstart=,comm=", "-p", String(pid)]);
 	switch (result.kind) {
 		case "exited": break;
-		case "timed-out": return { kind: "unknown", reason: "ps timed out" };
-		case "signalled": return { kind: "unknown", reason: `ps killed by ${result.signal}` };
-		case "spawn-failed": return { kind: "unknown", reason: `ps failed to start: ${result.code}` };
+		case "missing": return (deps.processAlive ?? defaultProcessAlive)(pid) ? { kind: "alive" } : { kind: "gone" };
+		case "unsettled": return { kind: "unknown", reason: `ps ${result.cause}` };
 		default: {
 			const unreachable: never = result;
 			throw new Error(`unknown probe result: ${JSON.stringify(unreachable)}`);
@@ -199,6 +201,7 @@ export async function livenessVerdict(
 	if (unitActive === false) return "pid-gone";
 	const current = await probes.identityProbe(task.pid);
 	switch (current.kind) {
+		case "alive": return "alive";
 		case "gone": return "pid-gone";
 		case "unknown": return "unknown";
 		case "identity": return identityMatches(task.procIdent, current.identity) ? "alive" : "pid-reused";

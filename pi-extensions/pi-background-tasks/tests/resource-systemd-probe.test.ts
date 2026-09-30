@@ -34,7 +34,7 @@ test.skipIf(process.platform !== "linux")("default systemd availability probe ex
 				},
 			});
 			if (child.error || child.status !== 0) throw new Error(`resource-probe-exit=${child.status ?? "none"}\n${row.name}: ${child.error?.message ?? child.stderr}`);
-			const result = JSON.parse(child.stdout) as { pid: number; plan: ResourceControlSpawnPlan };
+			const result = JSON.parse(child.stdout) as { pid: number; plan: ResourceControlSpawnPlan; unitActive: boolean | null };
 			const calls = readFileSync(log, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
 			const expectedCalls = [{ command: "systemctl", args: ["--user", "show-environment"] }];
 			if (row.probeRuns) expectedCalls.push({
@@ -45,6 +45,8 @@ test.skipIf(process.platform !== "linux")("default systemd availability probe ex
 					"--property=IOSchedulingClass=best-effort", "--property=IOSchedulingPriority=6", "--", "/usr/bin/true",
 				],
 			});
+			// A reachable manager is not asked again; the unit query follows planning.
+			if (row.systemctlStatus === 0) expectedCalls.push({ command: "systemctl", args: ["--user", "is-active", "--quiet", "kendex-pi-bg-bg-7-123456.service"] });
 			const expectedPlan = row.available ? {
 				file: "systemd-run", warnings: [],
 				metadata: { mode: "systemd-run", requestedMode: "systemd-run", unitName: "kendex-pi-bg-bg-7-123456.service" },
@@ -54,7 +56,7 @@ test.skipIf(process.platform !== "linux")("default systemd availability probe ex
 					"--property=IOSchedulingClass=best-effort", "--property=IOSchedulingPriority=6", "--", "/bin/bash", "-lc", command,
 				],
 			} : { file: "/bin/bash", args: ["-lc", command], warnings: [expect.stringMatching(/^resourceControlMode=systemd-run(?:\s|$)/)] };
-			expect({ calls, plan: result.plan }, row.name).toStrictEqual({ calls: expectedCalls, plan: expectedPlan });
+			expect({ calls, plan: result.plan, unitActive: result.unitActive }, row.name).toStrictEqual({ calls: expectedCalls, plan: expectedPlan, unitActive: row.systemctlStatus === 0 ? true : null });
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

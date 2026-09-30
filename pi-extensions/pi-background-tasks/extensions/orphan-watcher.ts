@@ -10,10 +10,11 @@
 // previous pass, and finalizes nothing once stop() has run. An orphan whose
 // verdict is unknown stays running and is asked again on the next pass.
 //
-// This module is METADATA-ONLY. It MUST NOT call process.kill() or child.kill() on
-// the tracked pid under any reconcile or polling path. The only
-// observation it makes is the identity probe (defaultReadProcessIdentity
-// reads /proc or shells out to `ps`, neither of which signals); the
+// This module is METADATA-ONLY. It MUST NOT send a signal with process.kill()
+// or child.kill() to the tracked pid under any reconcile or polling path. The
+// only observation it makes is the identity probe (defaultReadProcessIdentity
+// reads /proc, shells out to `ps`, or on a host without ps calls
+// process.kill(pid, 0), which checks the pid and delivers no signal); the
 // only mutation it makes is finalizeTaskLifecycle, which updates the
 // in-memory + persisted snapshot and emits the canonical exit wake.
 // If a future change adds a real kill here it would resurrect the H2
@@ -22,6 +23,7 @@
 //
 // Pure logic; tests inject deterministic probes + timers.
 
+import { logBackgroundDiagnostic } from "./diagnostics.js";
 import { finalizeTaskLifecycle, type LifecycleHooks } from "./lifecycle.js";
 import { mapWithConcurrency, PROBE_CONCURRENCY } from "./probes.js";
 import { defaultSystemdUnitActive } from "./resource-control.js";
@@ -82,6 +84,7 @@ export function createOrphanWatcher(deps: OrphanWatcherDeps): OrphanWatcher {
 		let finalized = 0;
 		for (const [index, task] of orphans.entries()) {
 			const reason = verdicts[index];
+			if (reason === "unknown") logBackgroundDiagnostic("orphan liveness unknown", { id: task.id, pid: task.pid });
 			if (reason === "alive" || reason === "unknown") continue;
 			// The task may have been stopped, finalized or cleared while the
 			// probes ran, or the watcher stopped.

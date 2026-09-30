@@ -60,6 +60,19 @@ const rows: { name: string; steps: Step[]; expected: Observed }[] = [
 		expected: { writes: [["a.log", "one\n"], ["a.log", "two\n"]], errors: [], timerArmed: false, drained: [] },
 	},
 	{
+		name: "a drain batch waits for the write in flight",
+		steps: [{ append: ["a.log", "one\n"] }, { fire: true }, { append: ["a.log", "two\n"] }, { drain: true }],
+		expected: { writes: [["a.log", "one\n"]], errors: [], timerArmed: false, drained: null },
+	},
+	{
+		name: "text appended while a drain batch writes waits for that write",
+		steps: [
+			{ append: ["a.log", "one\n"] }, { fire: true }, { append: ["a.log", "two\n"] }, { drain: true }, { settleWrite: 0 },
+			{ append: ["a.log", "three\n"] }, { fire: true },
+		],
+		expected: { writes: [["a.log", "one\n"], ["a.log", "two\n"]], errors: [], timerArmed: false, drained: null },
+	},
+	{
 		name: "drain waits only for text pending at the call",
 		steps: [{ append: ["a.log", "one\n"] }, { drain: true }, { append: ["a.log", "two\n"] }, { settleWrite: 0 }],
 		expected: { writes: [["a.log", "one\n"]], errors: [], timerArmed: true, drained: [] },
