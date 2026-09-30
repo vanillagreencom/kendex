@@ -95,11 +95,7 @@ When a behaviour cannot be exercised inside Pi, the record says so; it never ass
 
 ## 7. Notify and publish
 
-- Send the result to the fleet overseer as a peer directive, naming the Pi release, the verdict and the tested extension commit:
-
-  ```bash
-  .agents/skills/orch/scripts/lane-mail peer send --repo fleet --file tmp/pi-update/result.md
-  ```
+- Write the result to `tmp/pi-update/result.md`, naming the Pi release, the verdict and the tested extension commit. From a lane, send it to your own overseer with `.agents/skills/orch/scripts/lane-mail notice --item <ITEM> --file tmp/pi-update/result.md`, the text opening with `For the fleet overseer:`; the overseer relays it with `lane-mail peer send --repo fleet --file <PATH>`. From a session on the control VM's kendex checkout, `.agents/skills/orch/scripts/lane-mail peer send --repo fleet --file tmp/pi-update/result.md` reaches the fleet overseer directly.
 
 - Publication is the `npm-deploy` skill, run as linked work: a Linear item related to this one. A failed publish leaves that item open. It does not block fleet rollout, and it does not block the next compatibility run. Add no publication recovery step.
 
@@ -124,7 +120,7 @@ The Breaking Changes table follows. A `roll` clears `<new>`; a `hold` clears `<o
 - Entry counts per bucket, and the verdict with each blocking entry and the pi-hooks change it waits for.
 - Commits shipped, packages touched, and tests run with pass counts.
 - Deferred Optional entries with their reasons; the Non-impact log.
-- The tested extension commit, the marker commit, the peer-mail receipt, the npm-deploy item, and the refresh result.
+- The tested extension commit, the marker commit, the lane-mail receipt, the npm-deploy item, and the refresh result.
 - `git status --short` is clean.
 
 ## Notes
