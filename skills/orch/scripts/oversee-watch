@@ -3083,7 +3083,8 @@ check_lanes() {
   # A pane keeps its last screen, so neither a stale prompt under a bare shell
   # nor a dialog answered passes ago is a live question. A current prompt is
   # keyed by its pane slice across watch invocations: emit it once, clear the
-  # key when it disappears, and emit again only when the prompt changes.
+  # key when it disappears, and emit again only when the prompt or its Copilot
+  # note changes.
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
@@ -3122,8 +3123,8 @@ check_lanes() {
   # between a finished tool call and the next one reads the same; the first is
   # a `lane-idle` row, as for lane-exited above. The second pass reports it and
   # marks the row, so a lane left at the same screen is reported once, however
-  # many runs look at it; a turn taken changes the slice and starts the count
-  # over. A lane that is walled, asking, working or exited drops its row.
+  # many runs look at it; a turn taken or a changed Copilot note starts the
+  # count over. A lane that is walled, asking, working or exited drops its row.
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
@@ -3169,8 +3170,7 @@ check_lanes() {
     # lane shows is a different idle screen and news again. A repaint of an
     # older frame does not reach here, since a scrolled view carries `Jump to
     # bottom` and pane_working reads that frame as working. A Pi lane's key is
-    # its last row, so each turn end it writes is news once. The note is keyed
-    # as for lane-asking.
+    # its last row, so each turn end it writes is news once.
     lane_note "$lane"
     screen_key="${pane_key}|${COPILOT_SESSION_NOTE}|$(printf '%s' "$turn" | cksum)"
     prior="$(lane_row_get lane-idle "$asking_state" "$lane")"
