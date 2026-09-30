@@ -1,4 +1,4 @@
-use super::screen;
+use super::{UpdatesArgs, run_with, screen};
 use crate::ui::testing::{plain, rich, tagged};
 use crate::width::visible_width;
 use kendex_core::engine::ItemWarning;
@@ -41,6 +41,78 @@ fn row() -> UpdateRow {
         removed_upstream: false,
         no_per_package_update: None,
     }
+}
+
+#[test]
+fn listing_evaluates_once_and_records_the_supplied_report() -> super::CliResult {
+    use kendex_core::drift::snapshot::{PackageSnapshot, SnapshotFile, load};
+    use kendex_core::env::{Env, FakeOs};
+
+    let tmp = tempfile::tempdir()?;
+    let root = crate::test_util::rooted(&tmp);
+    let env = Env::fake(&root, FakeOs::Linux);
+    let report = UpdatesReport {
+        rows: vec![UpdateRow {
+            pinned: true,
+            ignored: true,
+            blocked_by_local_edit: true,
+            mixed: true,
+            removed_upstream: true,
+            forked: true,
+            ..row()
+        }],
+        warnings: vec![ItemWarning {
+            kind: ItemKind::Skill,
+            name: "tidy".into(),
+            harness: None,
+            message: "unreadable source".into(),
+            remediation: None,
+        }],
+        unreadable: vec![],
+        last_fetched: None,
+    };
+    let mut evaluations = 0;
+    run_with(
+        &env,
+        UpdatesArgs {
+            command: None,
+            refresh: false,
+            apply: false,
+            global: true,
+            scope: None,
+            yes: false,
+            target: Default::default(),
+            _commit: Default::default(),
+        },
+        |_, scope| {
+            assert_eq!(scope, &Scope::Global);
+            evaluations += 1;
+            Ok(report)
+        },
+    )?;
+    assert_eq!(evaluations, 1);
+    let SnapshotFile::Current(snapshot) = load(&env, &Scope::Global) else {
+        panic!("the listing must record its report");
+    };
+    assert_eq!(
+        snapshot.packages,
+        vec![PackageSnapshot {
+            kind: ItemKind::Skill,
+            name: "tidy".into(),
+            source: "cat".into(),
+            repo: "owner/catalog".into(),
+            refs_state: None,
+            update_available: true,
+            removed_upstream: true,
+            held: true,
+            ignored: true,
+            edited: true,
+            mixed: true,
+            forked: true,
+        }]
+    );
+    assert_eq!(snapshot.unreadable, ["skill tidy: unreadable source"]);
+    Ok(())
 }
 
 #[test]

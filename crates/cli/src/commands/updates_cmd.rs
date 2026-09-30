@@ -1,6 +1,8 @@
 use clap::{Args, Subcommand};
 
 use kendex_core::env::Env;
+use kendex_core::model::Scope;
+use kendex_core::package::updates::UpdatesReport;
 
 use super::pin::parse_kind;
 use super::{CliResult, resolve_scopes_at, scope_label};
@@ -53,6 +55,14 @@ pub struct UpdatesArgs {
 }
 
 pub fn run(env: &Env, args: UpdatesArgs) -> CliResult {
+    run_with(env, args, kendex_core::package::updates::updates)
+}
+
+fn run_with(
+    env: &Env,
+    args: UpdatesArgs,
+    evaluate: impl FnOnce(&Env, &Scope) -> kendex_core::error::Result<UpdatesReport>,
+) -> CliResult {
     let UpdatesArgs {
         command,
         refresh,
@@ -96,13 +106,13 @@ pub fn run(env: &Env, args: UpdatesArgs) -> CliResult {
     if apply {
         return super::refresh::run(env, filter, &target, false, yes, false);
     }
-    let report = kendex_core::package::updates::updates(env, &scope)?;
+    let report = evaluate(env, &scope)?;
     let style = ui::style();
     ui::stderr(&style.header("updates", &scope.label()));
     ui::stderr(&screen(&style, &report));
     // The deep work just ran; write it down so the next session-start check
     // reads verdicts instead of guesses.
-    if let Err(error) = kendex_core::drift::snapshot::record(env, &scope) {
+    if let Err(error) = kendex_core::drift::snapshot::record_with(env, &scope, &report) {
         ui::report::warning(&format!("snapshot not derived ({})", error));
     }
     Ok(())
