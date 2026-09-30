@@ -47,10 +47,10 @@ that most often survive and they are the two the flat rule forbids.
    This tree is `kendex refresh` OUTPUT, rendered from the catalogs
    `kendex.toml` names. The same reviewers see this content in the catalog
    repo before it arrives here. Nothing under this glob is edited in this
-   repo, and an edit here does not land: the next refresh reads the disk,
-   finds bytes no apply wrote, and holds that item as a conflict, planning no
-   write until someone forks it or discards the edit. A local fix does not
-   reach the repos that share this render; it wedges this one's next refresh.
+   repo. Interactive refresh holds a hand edit until someone forks it or
+   discards it. The rolling refresh replaces hand edits under the contract in
+   `.agents/skills/review-gate/SKILL.md` § Scripts. A local fix does not reach
+   the repos that share this render.
 
    [UPSTREAM_REPO] and [PIN_CHECK] do not apply and are not filled: a render
    has no pin, and its upstream is whichever catalog `kendex.toml` names.

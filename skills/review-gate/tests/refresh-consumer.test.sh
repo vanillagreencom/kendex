@@ -3,6 +3,14 @@
 # the classifier and GitHub services are replaced; held-render rows use a
 # real kendex, an isolated HOME and a local catalog.
 set -euo pipefail
+REAL_KENDEX=""
+# Check the runner requirement before sandbox.sh clears consumer settings.
+if ! REAL_KENDEX="$(command -v kendex)"; then
+  if [ -n "${REVIEW_GATE_REQUIRE_KENDEX:-}" ]; then
+    printf 'refresh-consumer: kendex=missing\n' >&2
+    exit 1
+  fi
+fi
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 TMP="$(mktemp -d)" || { echo 'refresh-consumer: scratch=mktemp-failed' >&2; exit 1; }
@@ -10,6 +18,13 @@ TMP="$(mktemp -d)" || { echo 'refresh-consumer: scratch=mktemp-failed' >&2; exit
 TMP="$(cd -- "$TMP" && pwd -P)" || { echo 'refresh-consumer: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
 . "$TEST_DIR/lib/refresh-fixture.sh"
+mkdir -p "$TMP/missing-bin"
+RC=0
+OUT="$(env -i PATH="$TMP/missing-bin" REVIEW_GATE_REQUIRE_KENDEX=1 \
+  "$BASH" "$TEST_DIR/refresh-consumer.test.sh" 2>&1)" || RC=$?
+if [ "$RC" -eq 1 ] && [ "$OUT" = 'refresh-consumer: kendex=missing' ]; then
+  ok 'control: a required missing binary fails instead of skipping'
+else bad 'required missing binary control' "$OUT"; fi
 cp "$BIN/gh" "$TMP/standard-gh"
 mkdir -p "$TMP/bin" "$TMP/home" "$TMP/state"
 cat >"$TMP/bin/gh" <<'SH'
@@ -325,12 +340,8 @@ if [ "$RC" -eq 0 ] && [ ! -e "$TMP/state/hostile" ] && [ "$(wc -l <"$TMP/state/c
 else bad 'no-writer refresh' "$OUT"; fi
 # The CLI producer succeeds on a hold. The runner must read its ledger,
 # discard only a fully classified set, then retain verify as the final gate.
-if ! REAL_KENDEX="$(command -v kendex)"; then
-  if [ -n "${REVIEW_GATE_REQUIRE_KENDEX:-}" ]; then
-    bad 'real consumer fixture needs kendex on PATH'
-  else
-    printf '  SKIP: real held-render consumer rows need kendex on PATH\n'
-  fi
+if [ -z "$REAL_KENDEX" ]; then
+  printf '  SKIP: real held-render consumer rows need kendex on PATH\n'
 else
   cat >"$TMP/bin/kendex" <<'REAL_KENDEX_SH'
 #!/usr/bin/env bash
@@ -347,18 +358,55 @@ else
   exec "$TEST_REAL_KENDEX" "$@"
 fi
 REAL_KENDEX_SH
-  for row in local upstream; do
+  for row in local upstream shared body-control; do
     real_refresh_fixture "$row"
+    expected_edits='.agents/skills/probe/SKILL.md'
+    expected_holds='skill probe for Claude Code: edited on disk since install — keep it as a fork, or apply with edits discarded'
     if [ "$row" = upstream ]; then
       printf 'New upstream content.\n' >>"$real_root/git/owner/catalog/skills/probe/SKILL.md"
       commit "$real_root/git/owner/catalog"
-      expected_hold='skill probe for Claude Code: edited on disk and changed upstream — keep your edits as a fork, or apply with edits discarded'
+      expected_holds='skill probe for Claude Code: edited on disk and changed upstream — keep your edits as a fork, or apply with edits discarded'
+    elif [ "$row" = shared ]; then
+      file_edit "$repo" kendex.toml 1 '^harnesses = \["claude"\]$' \
+        's/harnesses = \["claude"\]/harnesses = ["claude", "pi"]/'
+      expected_holds="$expected_holds
+skill probe for Pi: its files were edited on disk after another tool installed them — keep the edits as a fork, or apply with edits discarded"
     else
-      expected_hold='skill probe for Claude Code: edited on disk since install — keep it as a fork, or apply with edits discarded'
+      mkdir -p "$real_root/git/owner/catalog/skills/second"
+      cp "$real_root/git/owner/catalog/skills/probe/SKILL.md" "$real_root/git/owner/catalog/skills/second/SKILL.md"
+      file_edit "$real_root/git/owner/catalog" skills/second/SKILL.md 1 '^name: probe$' 's/^name: probe$/name: second/'
+      commit "$real_root/git/owner/catalog"
+      printf '\n[skills.second]\nsource = "cat"\n' >>"$repo/kendex.toml"
+      (cd -- "$repo" && env -i PATH="$PATH" HOME="$real_root/home" KENDEX_REAL_HOME=1 \
+        KENDEX_GIT_BASE="file://$real_root/git" KENDEX_UI=plain "$REAL_KENDEX" refresh --scope project --yes --leave)
+      printf 'Hand edit.\n' >>"$repo/.agents/skills/second/SKILL.md"
+      expected_holds="$expected_holds
+skill second for Claude Code: edited on disk since install — keep it as a fork, or apply with edits discarded"
+      expected_edits="$expected_edits
+.agents/skills/second/SKILL.md"
     fi
     publish_real_fixture
+    if [ "$row" = body-control ]; then
+      python3 - "$runner" <<'BODY_CONTROL'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve()
+s = p.read_text()
+old = '        held_items="$held_items- ${line#  }'
+assert s.count(old) == 1
+changed = s.replace(old, '        held_items="" # reset accumulator\n' + old)
+assert changed != s
+p.write_text(changed)
+BODY_CONTROL
+      commit "$repo"
+      git -C "$repo" push -q origin main
+    fi
     run_real_refresh
-    if real_refresh_published; then ok "$row hand edit refreshes and its pull request lists the held item"
+    if [ "$row" = body-control ]; then
+      if [ "$RC" -eq 0 ] && ! real_refresh_published; then
+        ok 'control: resetting the accumulator breaks the complete body assertion'
+      else bad 'held-item body control' "$OUT"; fi
+    elif real_refresh_published; then ok "$row hand edits refresh and their pull request lists every held record"
     else bad "$row real consumer publication" "$OUT"; fi
   done
   real_refresh_fixture no-discard
@@ -386,23 +434,47 @@ DISCARD_CONTROL
   else bad 'discard control' "$OUT"; fi
   # An unmanaged render is another real CLI conflict producer. It is not a
   # hold from holds.rs, even when the same run also holds a hand-edited item.
-  for row in non-hold mixed truncated failed count-control; do
+  for row in non-hold mixed same-unmanaged same-orphan truncated failed count-control record-control; do
     real_refresh_fixture "$row"
     KENDEX_OUTPUT=normal
     case "$row" in
-      non-hold | mixed | count-control)
+      non-hold | mixed)
         mkdir -p "$real_root/git/owner/catalog/skills/unmanaged" "$repo/.agents/skills/unmanaged"
         cp "$real_root/git/owner/catalog/skills/probe/SKILL.md" "$real_root/git/owner/catalog/skills/unmanaged/SKILL.md"
+        file_edit "$real_root/git/owner/catalog" skills/unmanaged/SKILL.md 1 '^name: probe$' 's/^name: probe$/name: unmanaged/'
         commit "$real_root/git/owner/catalog"
         printf '\n[skills.unmanaged]\nsource = "cat"\n' >>"$repo/kendex.toml"
         printf 'Unmanaged content.\n' >"$repo/.agents/skills/unmanaged/SKILL.md"
-        expected_error='refresh-error=conflict-count value=2 held=1'
+        expected_error='refresh-error=conflict-record value=skill unmanaged for Claude Code: '
         if [ "$row" = non-hold ]; then
           sed '/^Hand edit\.$/d' "$repo/.agents/skills/probe/SKILL.md" >"$real_root/unedited"
           cp "$real_root/unedited" "$repo/.agents/skills/probe/SKILL.md"
-          expected_error='refresh-error=conflict-count value=1 held=0'
         fi ;;
-      truncated)
+      same-unmanaged | same-orphan | record-control)
+        mkdir -p "$real_root/git/owner/catalog/agents"
+        printf '%s\n' '---' 'name: writer' 'description: fixture agent' '---' 'Upstream content.' >"$real_root/git/owner/catalog/agents/writer.md"
+        commit "$real_root/git/owner/catalog"
+        if [ "$row" = same-orphan ]; then
+          file_edit "$repo" kendex.toml 1 '^harnesses = \["claude"\]$' \
+            's/harnesses = \["claude"\]/harnesses = ["claude", "codex"]/'
+        fi
+        printf '\n[agents.writer]\nsource = "cat"\n' >>"$repo/kendex.toml"
+        (cd -- "$repo" && env -i PATH="$PATH" HOME="$real_root/home" KENDEX_REAL_HOME=1 \
+          KENDEX_GIT_BASE="file://$real_root/git" KENDEX_UI=plain "$REAL_KENDEX" refresh --scope project --yes --leave)
+        printf 'Hand edit.\n' >>"$repo/.claude/agents/writer.md"
+        if [ "$row" = same-orphan ]; then
+          printf '\n# Hand edit.\n' >>"$repo/.codex/agents/writer.toml"
+          file_edit "$repo" kendex.toml 1 '^harnesses = \["claude", "codex"\]$' \
+            's/harnesses = \["claude", "codex"\]/harnesses = ["claude"]/'
+          expected_error='refresh-error=conflict-record value=agent writer for Codex: no longer wanted, but its files were edited on disk'
+        else
+          mkdir -p "$repo/.codex/agents"
+          printf '# Unmanaged content.\n' >"$repo/.codex/agents/writer.toml"
+          file_edit "$repo" kendex.toml 1 '^harnesses = \["claude"\]$' \
+            's/harnesses = \["claude"\]/harnesses = ["claude", "codex"]/'
+          expected_error='refresh-error=conflict-record value=agent writer for Codex: '
+        fi ;;
+      truncated | count-control)
         KENDEX_OUTPUT=truncated
         expected_error='refresh-error=conflict-count value=1 held=0' ;;
       failed)
@@ -416,7 +488,7 @@ from pathlib import Path
 import sys
 p = Path(sys.argv[1]).resolve()
 s = p.read_text()
-old = 'if [ "$conflict_count" != "$held_count" ]; then'
+old = 'if [ "${conflict_count:-0}" != "$held_count" ]; then'
 assert s.count(old) == 1
 changed = s.replace(old, 'if false; then # ' + old)
 assert changed != s
@@ -424,15 +496,33 @@ p.write_text(changed)
 COUNT_CONTROL
       commit "$repo"
       git -C "$repo" push -q origin main
+    elif [ "$row" = record-control ]; then
+      python3 - "$runner" <<'RECORD_CONTROL'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve()
+s = p.read_text()
+old = '            exit 1 ;;\n        esac'
+assert s.count(old) == 1
+changed = s.replace(old, '            continue ;; # ' + old.splitlines()[0].strip() + '\n        esac')
+assert changed != s
+p.write_text(changed)
+RECORD_CONTROL
+      commit "$repo"
+      git -C "$repo" push -q origin main
     fi
     run_real_refresh
-    if [ "$row" = count-control ]; then
+    if [ "$row" = count-control ] || [ "$row" = record-control ]; then
       if ! real_refresh_stopped "$expected_error" &&
           grep -qxF 'refresh --scope project --yes --leave --discard-edits' "$TMP/state/kendex"; then
-        ok 'control: removing count agreement permits discard on a mixed conflict'
+        ok "control: $row bypass permits an unauthorized discard"
       else bad 'conflict count control' "$OUT"; fi
     elif real_refresh_stopped "$expected_error"; then
-      ok "$row stops before any discard or publication"
+      if { grep -qF 'Hand edit.' "$repo/.agents/skills/probe/SKILL.md" || [ "$row" = non-hold ]; } &&
+          { { [ "$row" != same-unmanaged ] && [ "$row" != same-orphan ]; } || grep -qF 'Hand edit.' "$repo/.claude/agents/writer.md"; } &&
+          { [ "$row" != same-orphan ] || grep -qF '# Hand edit.' "$repo/.codex/agents/writer.toml"; }; then
+        ok "$row stops before any discard or publication"
+      else bad "$row preserved edit" "$OUT"; fi
     else bad "$row refusal" "$OUT"; fi
   done
 fi

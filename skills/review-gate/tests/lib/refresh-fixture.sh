@@ -156,12 +156,16 @@ real_refresh_published() {
     grep -qxF 'verify --scope project' "$TMP/state/kendex" &&
     grep -qxF 'refresh-state=pushed pr=1 class=render' <<<"$OUT" &&
     [ -s "$TMP/state/creates" ] &&
-    grep -qxF -- "- $expected_hold" "$TMP/state/body" &&
-    ! grep -qF 'Hand edit.' "$repo/.agents/skills/probe/SKILL.md"
+    while IFS= read -r hold; do
+      grep -qxF -- "- $hold" "$TMP/state/body" || return 1
+    done <<<"$expected_holds" &&
+    while IFS= read -r edited; do
+      [ -s "$repo/$edited" ] && ! grep -qF 'Hand edit.' "$repo/$edited" || return 1
+    done <<<"$expected_edits"
 }
 
-real_refresh_stopped() { # ERROR_RECORD
-  [ "$RC" -ne 0 ] && grep -qxF -- "$1" <<<"$OUT" &&
+real_refresh_stopped() { # ERROR_RECORD_PREFIX
+  [ "$RC" -ne 0 ] && grep -qF -- "$1" <<<"$OUT" &&
     ! grep -qF -- '--discard-edits' "$TMP/state/kendex" &&
     ! grep -qF 'verify ' "$TMP/state/kendex" &&
     [ ! -s "$TMP/state/creates" ] &&

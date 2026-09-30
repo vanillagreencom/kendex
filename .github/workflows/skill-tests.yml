@@ -627,6 +627,37 @@ jobs:
           diff <(printf '%s\n' "$declared") <(printf '%s\n' "$used") || { echo "shard names disagree: '<' the matrix declares and no step names; '>' a step names and the matrix does not run"; exit 1; }
           printf '%s\n' "$declared" | grep -qxF "$SHARD" || { echo "this leg's shard '$SHARD' is not in the matrix"; exit 1; }
 
+      # kendex-cli, built from this checkout and put on PATH, for the
+      # shards whose suites run a real kendex: `rest`, for harness-ci's
+      # change-class rows, whose comment at the `rest` shard's verify-document
+      # step says why the build is this checkout's and why Linux alone, and
+      # `orch-terminal`, for the disableAllHooks rows of
+      # open-terminal-copilot-context.sh, which ask the `hooks-off` verb this
+      # checkout ships, and `review-gate`, for refresh-consumer's held-render
+      # rows. The macOS legs keep the binary-dependent skips. A pull request
+      # restores the cache and never saves it.
+      - uses: dtolnay/rust-toolchain@stable
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'review-gate') && runner.os == 'Linux'
+      - uses: Swatinem/rust-cache@v2
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'review-gate') && runner.os == 'Linux'
+        with:
+          key: change-class-kendex
+          save-if: ${{ github.event_name != 'pull_request' }}
+      # The keychain store links dbus, as every cargo job below installs.
+      - name: System dependencies for the keychain store
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'review-gate') && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+      - name: kendex from this checkout
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'review-gate') && runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          cargo build -p kendex-cli --locked
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 target/debug/kendex "$HOME/.local/bin/kendex"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          installed="$(PATH="$HOME/.local/bin:$PATH" kendex --version)"
+          echo "installed: $installed"
+
       # ---- shard: review-gate — the heavyweight review-gate suites alone ----
       - name: review-gate suites
         if: matrix.shard == 'review-gate'
@@ -706,37 +737,6 @@ jobs:
       # never in neither. Run 36195213656, PR #2902's own run with the split
       # in place, confirms it: both shards finished inside each leg's job
       # ceiling, by the per-suite paragraph above.
-      # kendex-cli, built from this checkout and put on PATH, for the
-      # shards whose suites run a real kendex: `rest`, for harness-ci's
-      # change-class rows, whose comment at the `rest` shard's verify-document
-      # step says why the build is this checkout's and why Linux alone, and
-      # `orch-terminal`, for the disableAllHooks rows of
-      # open-terminal-copilot-context.sh, which ask the `hooks-off` verb this
-      # checkout ships, and `review-gate`, for refresh-consumer's held-render
-      # rows. The macOS legs keep the binary-dependent skips. A pull request
-      # restores the cache and never saves it.
-      - uses: dtolnay/rust-toolchain@stable
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'review-gate') && runner.os == 'Linux'
-      - uses: Swatinem/rust-cache@v2
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'review-gate') && runner.os == 'Linux'
-        with:
-          key: change-class-kendex
-          save-if: ${{ github.event_name != 'pull_request' }}
-      # The keychain store links dbus, as every cargo job below installs.
-      - name: System dependencies for the keychain store
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'review-gate') && runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
-      - name: kendex from this checkout
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'review-gate') && runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          cargo build -p kendex-cli --locked
-          mkdir -p "$HOME/.local/bin"
-          install -m 0755 target/debug/kendex "$HOME/.local/bin/kendex"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          installed="$(PATH="$HOME/.local/bin:$PATH" kendex --version)"
-          echo "installed: $installed"
-
       - name: tmux for pane delivery tests
         if: matrix.shard == 'orch-terminal' || matrix.shard == 'orch-oversee' || matrix.shard == 'orch-oversee-succeed' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'node'
         run: |

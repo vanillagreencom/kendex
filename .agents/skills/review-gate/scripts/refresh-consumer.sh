@@ -56,19 +56,41 @@ if [ "$refresh_status" -ne 0 ]; then
   printf 'refresh-error=refresh value=%s\n' "$refresh_status" >&2
   exit "$refresh_status"
 fi
-# refresh has no JSON report. Fall back to the ledger from ledger.rs and the
-# held-item records from holds.rs; verify cannot report which edits a later
-# discard pass overwrote. Only a complete set of known holds permits discard.
+# refresh has no JSON report. Fall back to blocked.rs's plain conflicts
+# section and holds.rs's records; verify cannot report discarded edits.
+# ledger.rs counts distinct kind/name items, not rows or harnesses.
 held_items=""
+held_keys=$'\n'
 held_count=0
 conflict_count=""
+conflict_section=no
 ledger_pattern=' · skipped ([1-9][0-9]*) items? on conflict( · |$)'
 while IFS= read -r line; do
   case "$line" in
-    '  '*': edited on disk and changed upstream '* | '  '*': edited on disk since install '*)
-      held_items="$held_items- ${line#  }
+    conflicts:) conflict_section=yes; continue ;;
+    '    '*) continue ;;
+    '  '*)
+      if [ "$conflict_section" = yes ]; then
+        case "$line" in
+          *': edited on disk and changed upstream — keep your edits as a fork, or apply with edits discarded' | \
+          *': edited on disk since install — keep it as a fork, or apply with edits discarded' | \
+          *': its files were edited on disk after another tool installed them — keep the edits as a fork, or apply with edits discarded' | \
+          *': changed upstream and on disk — kendex cannot tell your edits from the update; keep it as a fork or apply with edits discarded') ;;
+          *)
+            printf 'refresh-error=conflict-record value=%s\n' "${line#  }" >&2
+            exit 1 ;;
+        esac
+        held_items="$held_items- ${line#  }
 "
-      held_count=$((held_count + 1)) ;;
+        item="${line#  }"
+        item="${item%: *}"
+        item="${item% for *}"
+        case "$held_keys" in
+          *$'\n'"$item"$'\n'*) ;;
+          *) held_keys="$held_keys$item"$'\n'; held_count=$((held_count + 1)) ;;
+        esac
+      fi ;;
+    *) conflict_section=no ;;
   esac
   case "$line" in
     *' · skipped '*' on conflict'*)
@@ -79,9 +101,9 @@ while IFS= read -r line; do
       conflict_count="${BASH_REMATCH[1]}" ;;
   esac
 done <<<"$refresh_output"
-if [ -n "$conflict_count" ]; then
-  if [ "$conflict_count" != "$held_count" ]; then
-    printf 'refresh-error=conflict-count value=%s held=%s\n' "$conflict_count" "$held_count" >&2
+if [ -n "$conflict_count" ] || [ "$held_count" -ne 0 ]; then
+  if [ "${conflict_count:-0}" != "$held_count" ]; then
+    printf 'refresh-error=conflict-count value=%s held=%s\n' "${conflict_count:-0}" "$held_count" >&2
     exit 1
   fi
   kendex refresh --scope project --yes --leave --discard-edits
