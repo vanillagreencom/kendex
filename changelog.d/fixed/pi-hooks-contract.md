@@ -1,1 +1,1 @@
-- Pi hooks tests compare the event and call inventory with extension source. Missing or extra entries fail the check, so an omitted event cannot hide a blocking Pi update.
+- Pi hooks' `pi-contract.test.ts` rejects missing or extra literal `pi.on` events and dotted `pi`/`ctx` accesses in the update inventory. Named package exports remain manual.
