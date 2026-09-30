@@ -8,10 +8,15 @@ import { fixturePid, interceptNativeEffects } from "./spawn-native.js";
 //   chunks:              one task streams output with notifyOnOutput on;
 //   restore:             a session branch replays many snapshot entries of the same tasks;
 //   identity-cleared:    a task is cleared before its spawn-time identity read resolves;
-//   restore-concurrency: restore probes `running` running tasks whose /proc reads the fixture holds.
-interface Input { mode: "chunks" | "restore" | "identity-cleared" | "restore-concurrency"; chunks?: number; entries?: number; running?: number }
+//   restore-concurrency: restore probes `running` running tasks whose /proc reads the fixture holds;
+//   exit-flush:          a task's last chunk is still pending in the log writer when its child closes;
+//   log-hold:            a task outruns log appends the fixture holds.
+interface Input { mode: "chunks" | "restore" | "identity-cleared" | "restore-concurrency" | "exit-flush" | "log-hold"; chunks?: number; entries?: number; running?: number }
 const input: Input = JSON.parse(await Bun.stdin.text());
-const native = await interceptNativeEffects({ deferProcReads: input.mode === "identity-cleared" || input.mode === "restore-concurrency" });
+const native = await interceptNativeEffects({
+	deferProcReads: input.mode === "identity-cleared" || input.mode === "restore-concurrency",
+	deferAppends: input.mode === "log-hold",
+});
 mock.module("@earendil-works/pi-ai", () => ({ StringEnum: (values: readonly string[]) => ({ enum: values }) }));
 mock.module("typebox", () => ({ Type: { Object: (value: unknown) => value, Optional: (value: unknown) => value, Number: () => ({}), String: () => ({}), Boolean: () => ({}) } }));
 const unused = () => { throw new Error("write_path_fixture.sdk_operation=unexpected_render"); };
@@ -23,6 +28,9 @@ interface Tool { name: string; execute(id: string, params: Record<string, unknow
 const tools = new Map<string, Tool>();
 const events = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
 const entries: unknown[] = [];
+// The task's log file contents at each wake, read when the wake is sent.
+let wakeLogFile: string | null = null;
+const logsAtWake: string[] = [];
 const sessionId = "write-path-private-session";
 const unit = "kendex-pi-bg-bg-2-1700000000000.service";
 const snapshot = (id: string, fields: Record<string, unknown>) => ({
@@ -55,7 +63,7 @@ const pi = {
 	registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
 	on(event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) { events.set(event, handler); },
 	appendEntry: (...args: unknown[]) => entries.push(args),
-	sendMessage() {},
+	sendMessage() { if (wakeLogFile) logsAtWake.push(existsSync(wakeLogFile) ? readFileSync(wakeLogFile, "utf8") : ""); },
 } as unknown as ExtensionAPI;
 async function dispatch(event: string) {
 	const handler = events.get(event);
@@ -69,6 +77,10 @@ async function execute(params: Record<string, unknown>) {
 }
 // PassThrough data events and resolved probes land on later event-loop turns.
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+// Log appends reach the real file system, whose writes finish in real time.
+const settleUntil = async (done: () => boolean) => {
+	for (let waited = 0; waited < 5_000 && !done(); waited += 1) await Bun.sleep(1);
+};
 const timerSets = () => {
 	const counts: Record<string, number> = {};
 	for (const event of native.timerEvents) if (event.action === "set") counts[`${event.kind}:${event.ms}`] = (counts[`${event.kind}:${event.ms}`] ?? 0) + 1;
@@ -105,6 +117,43 @@ try {
 		fireIfArmed(250);
 		await taskLogs.drain(LOG_DRAIN_DEADLINE_MS);
 		result = { duringChunks, afterPersistWindow, procIdent: persistedProcIdent("bg-1"), logBytesAfterFlush: logBytes(logFile), chunkBytes: chunk.length };
+		child.emit("close", 0);
+	} else if (input.mode === "exit-flush") {
+		await dispatch("session_start");
+		const spawned = await execute({ action: "spawn", command: "fixture exit", notifyOnExit: true });
+		wakeLogFile = spawned.details.task!.logFile as string;
+		await settle();
+		const child = native.children[0]!;
+		child.stdout.write("final line\n");
+		await settle();
+		child.emit("close", 0);
+		await settleUntil(() => logsAtWake.length > 0);
+		result = { logsAtWake };
+	} else if (input.mode === "log-hold") {
+		const { LOG_MAX_PENDING_BYTES, LOG_WRITE_NOW_BYTES } = await import("../../extensions/log-writer.js");
+		await dispatch("session_start");
+		const spawned = await execute({ action: "spawn", command: "fixture flood", notifyOnExit: false });
+		const logFile = spawned.details.task!.logFile as string;
+		await settle();
+		const child = native.children[0]!;
+		const chunk = `${"z".repeat(LOG_WRITE_NOW_BYTES - 1)}\n`;
+		// One chunk starts a write the fixture holds; the pending text behind it
+		// reaches the cap, and one chunk more waits in the paused stream.
+		const chunks = 2 + LOG_MAX_PENDING_BYTES / LOG_WRITE_NOW_BYTES;
+		for (let index = 0; index < chunks; index++) {
+			child.stdout.write(chunk);
+			await settle();
+		}
+		const whileHeld = { heldAppends: native.heldAppends(), stdoutPaused: child.stdout.isPaused(), stderrPaused: child.stderr.isPaused() };
+		native.releaseAppends();
+		await settleUntil(() => !child.stdout.isPaused());
+		const afterRelease = { stdoutPaused: child.stdout.isPaused(), stderrPaused: child.stderr.isPaused() };
+		// The chunk the paused stream held reaches the writer once it resumes.
+		await settleUntil(() => {
+			native.releaseAppends();
+			return logBytes(logFile) === chunks * chunk.length;
+		});
+		result = { whileHeld, afterRelease, logBytes: logBytes(logFile), expectedBytes: chunks * chunk.length };
 		child.emit("close", 0);
 	} else if (input.mode === "identity-cleared") {
 		const { latestSnapshot } = await import("../../extensions/snapshot.js");

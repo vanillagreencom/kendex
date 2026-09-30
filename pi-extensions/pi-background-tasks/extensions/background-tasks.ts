@@ -512,8 +512,22 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		clearTaskTimers,
 	};
 
-	const finalizeTask = (task: ManagedTask, exitCode: number | null, statusOverride?: BackgroundTaskStatus): ManagedTask =>
-		finalizeTaskLifecycle(task, exitCode, lifecycleHooks, statusOverride);
+	// The exit wake and tool results name the log file as the task's full
+	// output, so a task finalizes once its log holds every chunk appended
+	// before this call, or once the flush deadline passes.
+	const finalizeTask = (task: ManagedTask, exitCode: number | null, statusOverride?: BackgroundTaskStatus): void => {
+		const flushed = taskLogs.flush(task.logFile, LOG_DRAIN_DEADLINE_MS);
+		if (!flushed) {
+			finalizeTaskLifecycle(task, exitCode, lifecycleHooks, statusOverride);
+			return;
+		}
+		void flushed.then(({ unwritten }) => {
+			if (unwritten.length > 0) {
+				logBackgroundDiagnostic("task log flush deadline passed", { id: task.id, deadlineMs: LOG_DRAIN_DEADLINE_MS, unwritten });
+			}
+			finalizeTaskLifecycle(task, exitCode, lifecycleHooks, statusOverride);
+		});
+	};
 
 	// Orphan-running tasks (status=
 	// running, child=null, restored=true) need a liveness watcher.
@@ -551,9 +565,10 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		}
 	};
 
-	const appendLogLine = (task: ManagedTask, text: string) => {
+	// A non-null result is the log writer's hold: the task's output should
+	// pause until it resolves.
+	const appendLogLine = (task: ManagedTask, text: string): Promise<void> | null =>
 		taskLogs.append(task.logFile, text);
-	};
 
 	const resourceControlFallbackWarned = new Set<string>();
 	const warnResourceControlFallback = (message: string, cwd?: string) => {
@@ -786,7 +801,17 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			const trimmed = trimOutputBuffer(task.output, task.lastAnnouncedLength);
 			task.output = trimmed.output;
 			task.lastAnnouncedLength = trimmed.lastAnnouncedLength;
-			appendLogLine(task, text);
+			const hold = appendLogLine(task, text);
+			if (hold) {
+				// The log's writes fell behind: stop reading until the writer
+				// takes the pending text, so the child blocks on its pipe.
+				child.stdout?.pause();
+				child.stderr?.pause();
+				void hold.then(() => {
+					child.stdout?.resume();
+					child.stderr?.resume();
+				});
+			}
 			scheduleOutputReaction(task);
 			outputUiRefresh.request();
 		};

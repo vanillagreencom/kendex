@@ -77,3 +77,19 @@ describe.skipIf(process.platform !== "linux")("deferred identity reads", () => {
 		expect(result).toStrictEqual({ maxInFlight: PROBE_CONCURRENCY, probes: running, unexpected: [] });
 	}, SPAWN_FIXTURE_TIMEOUT_MS);
 });
+
+test("a task's exit wake is sent once its log holds the chunk written before close", () => {
+	const result = runSpawnFixture("write-path-extension.ts", { mode: "exit-flush" });
+	expect(result).toStrictEqual({ logsAtWake: ["final line\n"], unexpected: [] });
+}, SPAWN_FIXTURE_TIMEOUT_MS);
+
+test("a task that outruns its log writes pauses its output until the write in flight ends, and loses none", () => {
+	const result = runSpawnFixture("write-path-extension.ts", { mode: "log-hold" }) as { expectedBytes: number };
+	expect(result).toStrictEqual({
+		whileHeld: { heldAppends: 1, stdoutPaused: true, stderrPaused: true },
+		afterRelease: { stdoutPaused: false, stderrPaused: false },
+		logBytes: result.expectedBytes,
+		expectedBytes: result.expectedBytes,
+		unexpected: [],
+	});
+}, SPAWN_FIXTURE_TIMEOUT_MS);

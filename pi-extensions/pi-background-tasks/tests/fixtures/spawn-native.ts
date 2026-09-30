@@ -9,8 +9,9 @@ import { PassThrough } from "node:stream";
 export const fixturePid = 4242;
 export const fixtureNow = 1_700_000_000_000;
 
-// deferProcReads holds each asynchronous /proc read until releaseProcReads().
-export async function interceptNativeEffects(options: { stopFails?: boolean; killFails?: boolean; signalGone?: boolean; deferProcReads?: boolean } = {}) {
+// deferProcReads holds each asynchronous /proc read until releaseProcReads();
+// deferAppends holds each asynchronous file append until releaseAppends().
+export async function interceptNativeEffects(options: { stopFails?: boolean; killFails?: boolean; signalGone?: boolean; deferProcReads?: boolean; deferAppends?: boolean } = {}) {
 	const signals: { pid: number; signal: unknown }[] = [];
 	const childSignals: unknown[] = [];
 	const spawns: { file: string; args: string[]; options: Record<string, unknown> }[] = [];
@@ -21,6 +22,7 @@ export async function interceptNativeEffects(options: { stopFails?: boolean; kil
 	const originalChildModule = { ...nativeChildProcess };
 	const originalReadFileSync = filesystem.readFileSync;
 	const originalReadFile = filesystemPromises.readFile;
+	const originalAppendFile = filesystemPromises.appendFile;
 	const originalKill = process.kill;
 	const originalNow = Date.now;
 	const originalTimers = { setTimeout, clearTimeout, setInterval, clearInterval };
@@ -78,6 +80,11 @@ export async function interceptNativeEffects(options: { stopFails?: boolean; kil
 		}
 		return await Reflect.apply(originalReadFile, filesystemPromises, [path, ...args]);
 	};
+	const heldAppends: (() => void)[] = [];
+	const appendFile = async (...args: unknown[]) => {
+		if (options.deferAppends) await new Promise<void>((resolve) => heldAppends.push(resolve));
+		return await Reflect.apply(originalAppendFile, filesystemPromises, args);
+	};
 	// Asynchronous probes answer through execFile's callback.
 	const execFile = (file: string, args: string[], _options: unknown, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
 		probeCalls.push({ file, args });
@@ -117,7 +124,7 @@ export async function interceptNativeEffects(options: { stopFails?: boolean; kil
 	mock.module("node:child_process", () => childModule);
 	mock.module("child_process", () => childModule);
 	mock.module("node:fs", () => ({ ...filesystem, readFileSync }));
-	mock.module("node:fs/promises", () => ({ ...filesystemPromises, readFile }));
+	mock.module("node:fs/promises", () => ({ ...filesystemPromises, readFile, appendFile }));
 	const actual = await import("node:child_process");
 	const alias = await import("child_process");
 	const actualFs = await import("node:fs");
@@ -125,6 +132,7 @@ export async function interceptNativeEffects(options: { stopFails?: boolean; kil
 	const intercepted = {
 		processModule: Object.entries(childModule).every(([name, value]) => Reflect.get(actual, name) === value && Reflect.get(alias, name) === value && Reflect.get(nativeChildProcess, name) === value),
 		kill: process.kill === kill, readFileSync: actualFs.readFileSync === readFileSync, readFile: actualFsPromises.readFile === readFile,
+		appendFile: actualFsPromises.appendFile === appendFile,
 		bunSpawn: Bun.spawn === forbidden, bunSpawnSync: Bun.spawnSync === forbidden,
 	};
 	if (Object.values(intercepted).some((value) => !value)) {
@@ -135,6 +143,8 @@ export async function interceptNativeEffects(options: { stopFails?: boolean; kil
 		activeTimers: () => [...timers.values()].map(({ kind, ms }) => ({ kind, ms })),
 		heldProcReads: () => heldProcReads.length,
 		releaseProcReads() { for (const release of heldProcReads.splice(0)) release(); },
+		heldAppends: () => heldAppends.length,
+		releaseAppends() { for (const release of heldAppends.splice(0)) release(); },
 		fireTimeout(ms: number) {
 			const matches = [...timers.values()].filter((timer) => timer.kind === "timeout" && timer.ms === ms);
 			if (matches.length !== 1) throw new Error(`spawn_fixture.timer_count=${matches.length}\ndelay_ms=${ms}`);

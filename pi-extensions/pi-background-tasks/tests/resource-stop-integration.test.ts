@@ -18,11 +18,12 @@ const persist = { kind: "timeout", ms: 1_000 };
 const set = (timer: object) => ({ action: "set", ...timer });
 const clear = (timer: object) => ({ action: "clear", ...timer });
 // Where the row first appends a log line decides when the log flush timer is
-// armed; the fixture drains the log before reading it, and shutdown drains it.
-// A drain with a write to wait for arms its deadline.
+// armed; the task's close flushes its log before it finalizes, the fixture
+// drains the log before reading it, and shutdown drains it. A flush or drain
+// with a write to wait for arms its deadline.
 const timerEvents = {
 	none: [set(interval), set(persist), clear(persist), clear(interval)],
-	escalation: [set(interval), set(persist), clear(persist), set(timeout), set(flush), clear(timeout), clear(flush), set(drain), clear(drain), clear(interval)],
+	escalation: [set(interval), set(persist), clear(persist), set(timeout), set(flush), set(drain), clear(drain), clear(timeout), clear(flush), clear(interval)],
 	stop: [set(interval), set(persist), clear(persist), set(flush), clear(flush), set(drain), clear(drain), clear(interval), set(flush), clear(flush), set(drain), clear(drain)],
 	shutdown: [set(interval), set(persist), clear(interval), set(flush), clear(persist), clear(flush), set(drain), clear(drain)],
 	shutdownQuiet: [set(interval), set(persist), clear(interval), clear(persist)],
