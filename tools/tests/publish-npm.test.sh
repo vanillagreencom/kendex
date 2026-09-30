@@ -18,7 +18,8 @@
 #            prepack  main, and the package declares a prepack script
 #            side     the tag on a commit origin/main does not hold, checked out
 #            later    the tag on origin/main's parent; origin/main, checked
-#                     out, has bumped the package to 1.2.4 since
+#                     out, has added a file to the package since, its
+#                     version still 1.2.3
 #            ahead    the tag on origin/main's parent; origin/main, checked
 #                     out, has changed only a file outside the package since
 #            foreign  main, and the package is named @other/pi-demo
@@ -132,8 +133,9 @@ world() {
       git -C "$tree" tag pi-demo-v1.2.3 ;;
     later)
       git -C "$tree" tag pi-demo-v1.2.3
-      printf '{"name":"@vanillagreen/pi-demo","version":"1.2.4"}\n' >"$tree/pi-extensions/pi-demo/package.json"
-      commit "$tree" bump
+      printf 'export {};\n' >"$tree/pi-extensions/pi-demo/index.js"
+      git -C "$tree" add pi-extensions/pi-demo/index.js
+      commit "$tree" code
       git -C "$tree" update-ref refs/remotes/origin/main HEAD ;;
     ahead)
       git -C "$tree" tag pi-demo-v1.2.3
@@ -182,6 +184,7 @@ app release tag|main|v1.2.3|11.6.0|no|ok|1|tag=v1.2.3|-
 tag missing|main|pi-demo-v9.9.9|11.6.0|no|ok|1|absent=pi-demo-v9.9.9|-
 checkout ahead of the tag outside the package publishes|ahead|pi-demo-v1.2.3|11.6.0|no|ok|0|published=$ID|version,view,view,publish@1.2.3,view
 package changed on main since the tag|later|pi-demo-v1.2.3|11.6.0|no|ok|1|moved=pi-demo-v1.2.3|version,view,view
+served before the package-change check|later|pi-demo-v1.2.3|11.6.0|yes|ok|0|served=$ID|version,view,view
 tag off the default branch|side|pi-demo-v1.2.3|11.6.0|no|ok|1|off-main=TAGGED|-
 no such package|main|pi-gone-v1.0.0|11.6.0|no|ok|1|package=pi-gone|-
 package.json not JSON|broken|pi-demo-v1.2.3|11.6.0|no|ok|1|package=pi-demo|-
