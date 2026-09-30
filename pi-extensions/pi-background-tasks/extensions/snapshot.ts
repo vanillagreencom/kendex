@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 import { parseOutputMatcher } from "./format.js";
-import { runProbe } from "./probes.js";
+import { runProbe, type ProbeRunner } from "./probes.js";
 import type { BackgroundTaskSnapshot, ManagedTask, ProcessIdentity } from "./types.js";
 import { normalizeNotifyMode, normalizeOutputWakeBudget } from "./wake-events.js";
 
@@ -92,75 +92,128 @@ export function defaultProcessAlive(pid: number): boolean {
 	}
 }
 
+/** What one identity read learned about a pid. */
+export type IdentityReading =
+	| { kind: "identity"; identity: ProcessIdentity }
+	| { kind: "gone" }
+	| { kind: "unknown"; reason: string };
+
+export type IdentityProbe = (pid: number) => Promise<IdentityReading>;
+
+export interface IdentityReaderDeps {
+	platform?: NodeJS.Platform;
+	run?: ProbeRunner;
+}
+
 // Read kernel-stable process identity. Linux fast path: /proc/<pid>/stat
 // field 22 (starttime in jiffies since boot) + /proc/<pid>/comm. Other
-// platforms: `ps -o lstart=,comm= -p <pid>` returns an absolute start
-// time string + comm, as a time-limited asynchronous probe. Resolves null
-// when the pid is gone or the probe failed or timed out. This detects PID
-// reuse: the kernel may recycle a PID for an unrelated process, but the
-// start token cannot collide for the same recycled pid within the same boot.
-export async function defaultReadProcessIdentity(pid: number): Promise<ProcessIdentity | null> {
-	if (!Number.isFinite(pid) || pid <= 0) return null;
-	if (process.platform === "linux") {
+// platforms, and a /proc read that fails for another reason: `ps -o
+// lstart=,comm= -p <pid>` returns an absolute start time string + comm, as a
+// time-limited asynchronous probe. This detects PID reuse: the kernel may
+// recycle a PID for an unrelated process, but the start token cannot collide
+// for the same recycled pid within the same boot.
+//
+// `gone` needs a positive answer: /proc has no entry, or ps ran and matched
+// no process. A ps that timed out, was signalled or could not start answers
+// `unknown`, which callers read as alive for this pass.
+export async function defaultReadProcessIdentity(pid: number, deps: IdentityReaderDeps = {}): Promise<IdentityReading> {
+	if (!Number.isFinite(pid) || pid <= 0) return { kind: "gone" };
+	if ((deps.platform ?? process.platform) === "linux") {
 		try {
 			const stat = await readFile(`/proc/${pid}/stat`, "utf8");
 			const lastParen = stat.lastIndexOf(")");
-			if (lastParen < 0) return null;
 			// stat fields after the closing paren of comm are space-separated.
 			// starttime is field 22 globally, which is index 22-3=19 inside the
 			// post-paren slice (fields 1, 2 (parenthesized comm), 3..N).
-			const after = stat.slice(lastParen + 1).trim().split(/\s+/);
-			const starttime = after[19];
-			if (!starttime) return null;
-			const comm = stat.slice(stat.indexOf("(") + 1, lastParen);
-			return { pid, startToken: starttime, comm };
-		} catch {
+			const starttime = lastParen < 0 ? undefined : stat.slice(lastParen + 1).trim().split(/\s+/)[19];
+			if (starttime) {
+				const comm = stat.slice(stat.indexOf("(") + 1, lastParen);
+				return { kind: "identity", identity: { pid, startToken: starttime, comm } };
+			}
+			// An unparseable stat falls through to the portable ps path.
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return { kind: "gone" };
 			// Fall through to the portable ps path.
 		}
 	}
-	const result = await runProbe("ps", ["-o", "lstart=,comm=", "-p", String(pid)]);
-	if (result.kind !== "exited" || result.status !== 0) return null;
+	const result = await (deps.run ?? runProbe)("ps", ["-o", "lstart=,comm=", "-p", String(pid)]);
+	switch (result.kind) {
+		case "exited": break;
+		case "timed-out": return { kind: "unknown", reason: "ps timed out" };
+		case "signalled": return { kind: "unknown", reason: `ps killed by ${result.signal}` };
+		case "spawn-failed": return { kind: "unknown", reason: `ps failed to start: ${result.code}` };
+		default: {
+			const unreachable: never = result;
+			throw new Error(`unknown probe result: ${JSON.stringify(unreachable)}`);
+		}
+	}
+	if (result.status !== 0) return { kind: "gone" };
 	const line = result.stdout.trim();
-	if (!line) return null;
+	if (!line) return { kind: "gone" };
 	// lstart format: "Day Mon DD HH:MM:SS YYYY" (5 whitespace-separated tokens),
 	// then comm. Split on whitespace and reassemble.
 	const parts = line.split(/\s+/);
-	if (parts.length < 6) return null;
-	return { pid, startToken: parts.slice(0, 5).join(" "), comm: parts.slice(5).join(" ") };
+	if (parts.length < 6) return { kind: "unknown", reason: `ps output unparseable: ${line}` };
+	return { kind: "identity", identity: { pid, startToken: parts.slice(0, 5).join(" "), comm: parts.slice(5).join(" ") } };
 }
 
-// True iff both identities are present and the kernel-stable subset
-// matches. "Kernel-stable" means pid + startToken (process start time):
-// these cannot drift while the original process lives. comm is
-// captured and persisted as a diagnostic so `bg_task list` / logs can
-// show what the process was at spawn, but it is NOT part of equality:
-// the common `bash -lc "sleep 5"` pattern rotates /proc/<pid>/comm
-// from "bash" to "sleep" via exec(2) without changing pid or
-// starttime. Gating identity on comm would false-finalize a still-live
-// task.
+// True iff the kernel-stable subset matches. "Kernel-stable" means pid +
+// startToken (process start time): these cannot drift while the original
+// process lives. comm is captured and persisted as a diagnostic so
+// `bg_task list` / logs can show what the process was at spawn, but it is NOT
+// part of equality: the common `bash -lc "sleep 5"` pattern rotates
+// /proc/<pid>/comm from "bash" to "sleep" via exec(2) without changing pid or
+// starttime. Gating identity on comm would false-finalize a still-live task.
 //
 // A snapshot with no identity (the spawn-time probe failed) is treated
 // as a match because there is no pre-recorded token to compare against;
 // PID-only liveness is the documented degraded path.
-export function identityMatches(
-	recorded: ProcessIdentity | undefined,
-	current: ProcessIdentity | null,
-): boolean {
-	if (!current) return false;
+export function identityMatches(recorded: ProcessIdentity | undefined, current: ProcessIdentity): boolean {
 	if (!recorded) return true;
 	return recorded.pid === current.pid
 		&& recorded.startToken === current.startToken;
 }
 
+export type LivenessVerdict = "alive" | "pid-gone" | "pid-reused" | "unknown";
+
+export interface LivenessProbes {
+	identityProbe: IdentityProbe;
+	// For a systemd-run task the transient unit is more authoritative than the
+	// wrapper pid: true = active, false = known inactive, null = cannot be
+	// queried, so the pid decides.
+	unitActiveProbe?: (unitName: string) => Promise<boolean | null>;
+}
+
+/**
+ * Decide whether a running task's process still lives. Restore and the orphan
+ * watcher both ask this; `unknown` means the probes could not answer, and
+ * both callers treat it as alive for this pass.
+ */
+export async function livenessVerdict(
+	task: Pick<BackgroundTaskSnapshot, "pid" | "procIdent" | "resourceControl">,
+	probes: LivenessProbes,
+): Promise<LivenessVerdict> {
+	const unitName = task.resourceControl?.mode === "systemd-run" ? task.resourceControl.unitName : undefined;
+	const unitActive = unitName && probes.unitActiveProbe ? await probes.unitActiveProbe(unitName) : null;
+	if (unitActive === true) return "alive";
+	if (unitActive === false) return "pid-gone";
+	const current = await probes.identityProbe(task.pid);
+	switch (current.kind) {
+		case "gone": return "pid-gone";
+		case "unknown": return "unknown";
+		case "identity": return identityMatches(task.procIdent, current.identity) ? "alive" : "pid-reused";
+		default: {
+			const unreachable: never = current;
+			throw new Error(`unknown identity reading: ${JSON.stringify(unreachable)}`);
+		}
+	}
+}
+
 export interface RestoreOptions {
 	now?: number;
-	// Identity probe. Default uses /proc + ps. Resolve null when the pid
-	// is gone or the probe failed; the watcher / restore paths then
-	// treat the task as terminal and replay the missed exit. Resolve a
-	// ProcessIdentity when the pid is alive; identityMatches against
-	// the snapshot's procIdent decides whether the original task is
-	// still that process or PID reuse hit.
-	identityProbe?: (pid: number) => Promise<ProcessIdentity | null>;
+	// Identity probe. Default is defaultReadProcessIdentity; livenessVerdict
+	// reads its answer.
+	identityProbe?: IdentityProbe;
 	// Current Pi session id. Snapshots whose sessionId disagrees with this
 	// value are still rehydrated (so the dashboard can show their final
 	// state) but are not eligible for missed-exit replay; replay is scoped
@@ -176,13 +229,13 @@ export interface RestoreOptions {
 // process is gone in the vast majority of cases, so closed=true and timers
 // are zeroed. Two cases get special treatment:
 //
-// 1. snapshot.status === 'running' AND the recorded PID is not
-//    alive -> coerce to 'stopped', stopReason=shutdown, exitNotified=false
+// 1. snapshot.status === 'running' AND livenessVerdict says the process
+//    is gone or its pid was reused -> coerce to 'stopped', stopReason=shutdown, exitNotified=false
 //    so selectMissedExits / replayMissedExits can deliver the deferred
 //    'exit' wake. This is the primary defense against a missed exit.
 //
-// 2. snapshot.status === 'running' AND the recorded PID is still alive
-//    (Pi restarted but the detached child group is still chugging) ->
+// 2. snapshot.status === 'running' AND livenessVerdict says alive or
+//    unknown (Pi restarted but the detached child group is still chugging) ->
 //    keep status='running', child=null, exitNotified untouched, and tag
 //    the rehydrated task as `restored: true` + `closed: false` so the
 //    caller can re-attach output streams (or at minimum surface the
@@ -201,21 +254,12 @@ export async function restoredTaskFromSnapshot(snapshot: BackgroundTaskSnapshot,
 	const foreignSession = typeof options.sessionId === "string"
 		&& typeof snapshot.sessionId === "string"
 		&& snapshot.sessionId !== options.sessionId;
-	// PID-reuse safe: a non-null identity is required AND must match the
-	// snapshot's recorded procIdent (when present). A snapshot whose
-	// spawn-time probe failed degrades to PID-only via identityMatches.
+	// A task whose liveness the probes could not answer stays running; the
+	// orphan watcher asks again on its next pass.
 	let pidStillAlive = false;
 	if (wasRunning && !foreignSession) {
-		const unitName = snapshot.resourceControl?.mode === "systemd-run" ? snapshot.resourceControl.unitName : undefined;
-		const unitActive = unitName && options.unitActiveProbe ? await options.unitActiveProbe(unitName) : null;
-		if (unitActive === true) {
-			pidStillAlive = true;
-		} else if (unitActive !== false) {
-			const current = await probe(snapshot.pid);
-			if (current !== null && identityMatches(snapshot.procIdent, current)) {
-				pidStillAlive = true;
-			}
-		}
+		const verdict = await livenessVerdict(snapshot, { identityProbe: probe, unitActiveProbe: options.unitActiveProbe });
+		pidStillAlive = verdict === "alive" || verdict === "unknown";
 	}
 	const coercedFromRunning = wasRunning && !pidStillAlive;
 

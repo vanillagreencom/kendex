@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 import { createOrphanWatcher } from "../extensions/orphan-watcher.js";
 import { PROBE_CONCURRENCY } from "../extensions/probes.js";
-import type { ProcessIdentity } from "../extensions/types.js";
+import type { IdentityReading } from "../extensions/snapshot.js";
 import { recordingHooks } from "./fixtures/lifecycle.js";
 import { orphanTask } from "./fixtures/orphan-watcher.js";
 
-// Probes resolve null (pid gone) only when the test releases them.
+// Probes answer that the pid is gone only when the test releases them.
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 test("an orphan pass bounds its probes, joins overlapping passes and yields to stop", async () => {
@@ -49,11 +49,11 @@ test("an orphan pass bounds its probes, joins overlapping passes and yields to s
 		const watcher = createOrphanWatcher({
 			getTasks() { reads++; return tasks; },
 			hooks: recorder.hooks,
-			identityProbe(): Promise<ProcessIdentity | null> {
+			identityProbe(): Promise<IdentityReading> {
 				probes++;
 				inFlight++;
 				maxInFlight = Math.max(maxInFlight, inFlight);
-				return new Promise((resolve) => waiting.push(() => { inFlight--; resolve(null); }));
+				return new Promise((resolve) => waiting.push(() => { inFlight--; resolve({ kind: "gone" }); }));
 			},
 			async unitActiveProbe() { throw new Error("unexpected systemd unit probe"); },
 		});

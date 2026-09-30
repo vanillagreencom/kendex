@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { replayMissedExitsLifecycle } from "../extensions/lifecycle.js";
 import { restoredTaskFromSnapshot } from "../extensions/snapshot.js";
 import type { BackgroundTaskSnapshot, BackgroundTaskStatus, BackgroundTaskTerminationReason, ProcessIdentity } from "../extensions/types.js";
-import { fakeIdent, fakeSnapshot, recordingHooks } from "./fixtures/lifecycle.js";
+import { fakeIdent, fakeSnapshot, reading, recordingHooks } from "./fixtures/lifecycle.js";
 
 interface RestoreReplayRow {
 	name: string;
@@ -46,7 +46,7 @@ test("restore followed by missed exit replay", async () => {
 	for (const row of rows) {
 		const recorder = recordingHooks();
 		const restored = await restoredTaskFromSnapshot(fakeSnapshot(row.snapshot), {
-			identityProbe: async () => row.identity, sessionId: "sess-1", now: 1_700_000_100_000,
+			identityProbe: async () => reading(row.identity), sessionId: "sess-1", now: 1_700_000_100_000,
 		});
 		// Capture the restore result before replay can change exitNotified.
 		const before = { status: restored.status, closed: restored.closed, exitNotified: restored.exitNotified };

@@ -60,11 +60,14 @@ test("snapshot append decisions follow content changes", () => {
 		] as const) {
 			snapshots = [boundedSnapshot({ status, updatedAt })];
 			const result = persistence.persistSnapshots();
-			const sidecar = JSON.parse(readFileSync(sidecarFile, "utf8")) as PersistencePayload;
-			expect({ result, appendCount: appended.length, sidecarTasks: sidecar.tasks }, name).toEqual({
+			const sidecarText = readFileSync(sidecarFile, "utf8");
+			const sidecar = JSON.parse(sidecarText) as PersistencePayload;
+			// The sidecar body is the compact serialization plus one newline.
+			expect({ result, appendCount: appended.length, sidecarTasks: sidecar.tasks, sidecarText }, name).toEqual({
 				result: { appendEntry: true, sidecar: true, appendReason },
 				appendCount: count,
 				sidecarTasks: snapshots,
+				sidecarText: `${JSON.stringify(sidecar)}\n`,
 			});
 		}
 	});

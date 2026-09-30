@@ -9,7 +9,8 @@ import { PassThrough } from "node:stream";
 export const fixturePid = 4242;
 export const fixtureNow = 1_700_000_000_000;
 
-export async function interceptNativeEffects(options: { stopFails?: boolean; killFails?: boolean; signalGone?: boolean } = {}) {
+// deferProcReads holds each asynchronous /proc read until releaseProcReads().
+export async function interceptNativeEffects(options: { stopFails?: boolean; killFails?: boolean; signalGone?: boolean; deferProcReads?: boolean } = {}) {
 	const signals: { pid: number; signal: unknown }[] = [];
 	const childSignals: unknown[] = [];
 	const spawns: { file: string; args: string[]; options: Record<string, unknown> }[] = [];
@@ -69,8 +70,12 @@ export async function interceptNativeEffects(options: { stopFails?: boolean; kil
 		if (typeof path === "string" && path.startsWith("/proc/")) return procRead(path);
 		return Reflect.apply(originalReadFileSync, filesystem, [path, ...args]);
 	};
+	const heldProcReads: (() => void)[] = [];
 	const readFile = async (path: string, ...args: unknown[]) => {
-		if (typeof path === "string" && path.startsWith("/proc/")) return procRead(path);
+		if (typeof path === "string" && path.startsWith("/proc/")) {
+			if (options.deferProcReads) await new Promise<void>((resolve) => heldProcReads.push(resolve));
+			return procRead(path);
+		}
 		return await Reflect.apply(originalReadFile, filesystemPromises, [path, ...args]);
 	};
 	// Asynchronous probes answer through execFile's callback.
@@ -128,6 +133,8 @@ export async function interceptNativeEffects(options: { stopFails?: boolean; kil
 	return {
 		signals, childSignals, spawns, syncCalls, probeCalls, unexpected, children, timerEvents,
 		activeTimers: () => [...timers.values()].map(({ kind, ms }) => ({ kind, ms })),
+		heldProcReads: () => heldProcReads.length,
+		releaseProcReads() { for (const release of heldProcReads.splice(0)) release(); },
 		fireTimeout(ms: number) {
 			const matches = [...timers.values()].filter((timer) => timer.kind === "timeout" && timer.ms === ms);
 			if (matches.length !== 1) throw new Error(`spawn_fixture.timer_count=${matches.length}\ndelay_ms=${ms}`);

@@ -65,7 +65,7 @@ import {
 import { logBackgroundDiagnostic } from "./diagnostics.js";
 import { registerAll } from "./registrations.js";
 import { finalizeTaskLifecycle, replayMissedExitsLifecycle, type LifecycleHooks } from "./lifecycle.js";
-import { taskLogs } from "./log-writer.js";
+import { LOG_DRAIN_DEADLINE_MS, taskLogs } from "./log-writer.js";
 import { createOrphanWatcher, type OrphanWatcher } from "./orphan-watcher.js";
 import { applyCustomEntryWithBarrier, createPersistence, sessionIdForContext, sidecarStatePath } from "./persistence.js";
 import { mapWithConcurrency, PROBE_CONCURRENCY } from "./probes.js";
@@ -750,14 +750,29 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		persistSnapshots();
 		publishBackgroundTaskStarted(task);
 		// The identity lets a later restore tell this process from a reused
-		// pid, so it is persisted as soon as it is read. A task cleared before
-		// the read resolves stays forgotten.
+		// pid; it rides the next windowed persist, and every lifecycle persist
+		// and session_shutdown flush it. A task cleared or replaced before the
+		// read resolves stays forgotten. An identity the read could not answer
+		// stays unset, so restore falls back to pid-only liveness.
 		if (spawnedPid > 0) {
-			void defaultReadProcessIdentity(spawnedPid).then((procIdent) => {
-				if (!procIdent || tasks.get(task.id) !== task) return;
-				task.procIdent = procIdent;
-				rememberSnapshot(task);
-				persistSnapshots();
+			void defaultReadProcessIdentity(spawnedPid).then((reading) => {
+				if (tasks.get(task.id) !== task) return;
+				switch (reading.kind) {
+					case "identity":
+						task.procIdent = reading.identity;
+						rememberSnapshot(task);
+						persistSoon.request();
+						return;
+					case "gone":
+						return;
+					case "unknown":
+						logBackgroundDiagnostic("spawn identity unknown", { id: task.id, pid: spawnedPid, reason: reading.reason });
+						return;
+					default: {
+						const unreachable: never = reading;
+						throw new Error(`unknown identity reading: ${JSON.stringify(unreachable)}`);
+					}
+				}
 			});
 		}
 
@@ -867,11 +882,9 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		activeCtx = ctx;
 		await restoreSnapshots(ctx);
 		replayMissedExits();
-		// Run one orphan-check pass as the interval is armed, so a task whose
-		// pid died after restore probed it gets its exit wake without waiting
-		// one poll cycle.
+		// Restore just probed every task the watcher would check, so the first
+		// pass waits one poll interval.
 		ensureOrphanWatcher();
-		await orphanWatcher?.checkOnce();
 		syncWidget(ctx);
 	});
 	pi.on("before_agent_start", (_event, ctx) => {
@@ -917,7 +930,10 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		persistSnapshots();
 		clearWidget();
 		activeCtx = null;
-		await taskLogs.drain();
+		const { unwritten } = await taskLogs.drain(LOG_DRAIN_DEADLINE_MS);
+		if (unwritten.length > 0) {
+			logBackgroundDiagnostic("task log drain deadline passed", { deadlineMs: LOG_DRAIN_DEADLINE_MS, unwritten });
+		}
 	});
 
 	pi.on("tool_call", async (event: any, ctx: ExtensionContext) => {

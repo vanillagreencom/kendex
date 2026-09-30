@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { restoredTaskFromSnapshot, selectMissedExits, type RestoreOptions } from "../extensions/snapshot.js";
 import type { BackgroundTaskSnapshot, ManagedTask } from "../extensions/types.js";
-import { fakeIdent, fakeSnapshot } from "./fixtures/lifecycle.js";
+import { fakeIdent, fakeSnapshot, reading } from "./fixtures/lifecycle.js";
 
 test("restoredTaskFromSnapshot restores task state and missed exit eligibility", async () => {
 	const rows: {
@@ -24,7 +24,7 @@ test("restoredTaskFromSnapshot restores task state and missed exit eligibility",
 		{
 			name: "dead running process clears its old exit notification",
 			input: { status: "running", exitNotified: true, procIdent: fakeIdent(2409160), outputBytes: 89 },
-			options: { now: 1_700_000_100_000, identityProbe: async () => null, sessionId: "sess-1" },
+			options: { now: 1_700_000_100_000, identityProbe: async () => reading(null), sessionId: "sess-1" },
 			expected: {
 				status: "stopped", stopReason: "shutdown", closed: true, exitNotified: false,
 				updatedAt: 1_700_000_100_000, terminationReason: "reconcile-on-restart", missedIds: ["bg-3"],
@@ -34,7 +34,7 @@ test("restoredTaskFromSnapshot restores task state and missed exit eligibility",
 		{
 			name: "matching live process stays running with its original timestamp",
 			input: { status: "running", pid: 4242, procIdent: fakeIdent(4242), outputBytes: 89 },
-			options: { now: 1_700_000_200_000, identityProbe: async (pid) => fakeIdent(pid), sessionId: "sess-1" },
+			options: { now: 1_700_000_200_000, identityProbe: async (pid) => reading(fakeIdent(pid)), sessionId: "sess-1" },
 			expected: {
 				status: "running", stopReason: null, closed: false, exitNotified: false,
 				updatedAt: 1_700_000_000_000, terminationReason: undefined, missedIds: [],
@@ -46,7 +46,7 @@ test("restoredTaskFromSnapshot restores task state and missed exit eligibility",
 			input: { status: "running", pid: 12345, exitNotified: false, procIdent: fakeIdent(12345), outputBytes: 89 },
 			options: {
 				now: 1_700_000_300_000, sessionId: "sess-1",
-				identityProbe: async (pid) => ({ pid, startToken: "start-RECYCLED", comm: "unrelated" }),
+				identityProbe: async (pid) => reading({ pid, startToken: "start-RECYCLED", comm: "unrelated" }),
 			},
 			expected: {
 				status: "stopped", stopReason: "shutdown", closed: true, exitNotified: false,
@@ -62,7 +62,7 @@ test("restoredTaskFromSnapshot restores task state and missed exit eligibility",
 			},
 			options: {
 				now: 1_700_000_100_000, sessionId: "sess-1",
-				identityProbe: async (pid) => ({ pid, startToken: "19283746", comm: "sleep" }),
+				identityProbe: async (pid) => reading({ pid, startToken: "19283746", comm: "sleep" }),
 			},
 			expected: {
 				status: "running", stopReason: null, closed: false, exitNotified: false,
@@ -73,7 +73,7 @@ test("restoredTaskFromSnapshot restores task state and missed exit eligibility",
 		{
 			name: "absent recorded identity uses live process ID",
 			input: { status: "running", pid: 4242, outputBytes: 89 }, omit: ["procIdent"],
-			options: { now: 1_700_000_100_000, identityProbe: async (pid) => fakeIdent(pid), sessionId: "sess-1" },
+			options: { now: 1_700_000_100_000, identityProbe: async (pid) => reading(fakeIdent(pid)), sessionId: "sess-1" },
 			expected: {
 				status: "running", stopReason: null, closed: false, exitNotified: false,
 				updatedAt: 1_700_000_000_000, terminationReason: undefined, missedIds: [],
@@ -83,7 +83,7 @@ test("restoredTaskFromSnapshot restores task state and missed exit eligibility",
 		{
 			name: "completed and notified snapshot keeps its terminal state",
 			input: { status: "completed", exitNotified: true, exitCode: 0, outputBytes: 89 },
-			options: { now: 1_700_000_100_000, identityProbe: async () => null },
+			options: { now: 1_700_000_100_000, identityProbe: async () => reading(null) },
 			expected: {
 				status: "completed", stopReason: null, closed: true, exitNotified: true,
 				updatedAt: 1_700_000_000_000, terminationReason: undefined, missedIds: [],
@@ -93,7 +93,7 @@ test("restoredTaskFromSnapshot restores task state and missed exit eligibility",
 		{
 			name: "terminal snapshot with absent exit notification becomes replay eligible",
 			input: { status: "completed", exitCode: 0, notifyOnExit: true, outputBytes: 89 }, omit: ["exitNotified"],
-			options: { now: 1_700_000_100_000, identityProbe: async () => null },
+			options: { now: 1_700_000_100_000, identityProbe: async () => reading(null) },
 			expected: {
 				status: "completed", stopReason: null, closed: true, exitNotified: false,
 				updatedAt: 1_700_000_000_000, terminationReason: undefined, missedIds: ["bg-3"],
@@ -103,7 +103,7 @@ test("restoredTaskFromSnapshot restores task state and missed exit eligibility",
 		{
 			name: "stopped snapshot explicitly never notified stays replay eligible",
 			input: { status: "stopped", exitNotified: false, outputBytes: 89 },
-			options: { now: 1_700_000_100_000, identityProbe: async () => null },
+			options: { now: 1_700_000_100_000, identityProbe: async () => reading(null) },
 			expected: {
 				status: "stopped", stopReason: null, closed: true, exitNotified: false,
 				updatedAt: 1_700_000_000_000, terminationReason: undefined, missedIds: ["bg-3"],
@@ -116,7 +116,7 @@ test("restoredTaskFromSnapshot restores task state and missed exit eligibility",
 				status: "running", sessionId: "sess-OTHER", exitNotified: false,
 				procIdent: fakeIdent(2409160), outputBytes: 89,
 			},
-			options: { now: 1_700_000_100_000, identityProbe: async () => null, sessionId: "sess-1" },
+			options: { now: 1_700_000_100_000, identityProbe: async () => reading(null), sessionId: "sess-1" },
 			expected: {
 				status: "stopped", stopReason: "shutdown", closed: true, exitNotified: true,
 				updatedAt: 1_700_000_100_000, terminationReason: "reconcile-on-restart", missedIds: [],
@@ -126,7 +126,7 @@ test("restoredTaskFromSnapshot restores task state and missed exit eligibility",
 		{
 			name: "dead running snapshot with absent session identity is same session",
 			input: { status: "running", outputBytes: 89 }, omit: ["sessionId"],
-			options: { now: 1_700_000_100_000, identityProbe: async () => null, sessionId: "sess-1" },
+			options: { now: 1_700_000_100_000, identityProbe: async () => reading(null), sessionId: "sess-1" },
 			expected: {
 				status: "stopped", stopReason: "shutdown", closed: true, exitNotified: false,
 				updatedAt: 1_700_000_100_000, terminationReason: "reconcile-on-restart", missedIds: ["bg-3"],
@@ -139,7 +139,7 @@ test("restoredTaskFromSnapshot restores task state and missed exit eligibility",
 				id: "bg-3", status: "running", exitCode: null, outputBytes: 89,
 				exitNotified: false, notifyOnExit: true, procIdent: fakeIdent(2409160),
 			},
-			options: { now: 1_700_000_100_000, identityProbe: async () => null, sessionId: "sess-1" },
+			options: { now: 1_700_000_100_000, identityProbe: async () => reading(null), sessionId: "sess-1" },
 			expected: {
 				status: "stopped", stopReason: "shutdown", closed: true, exitNotified: false,
 				updatedAt: 1_700_000_100_000, terminationReason: "reconcile-on-restart", missedIds: ["bg-3"],
@@ -149,7 +149,7 @@ test("restoredTaskFromSnapshot restores task state and missed exit eligibility",
 		{
 			name: "surviving review waiter incident has no false exit selection",
 			input: { id: "bg-3", status: "running", pid: 4242, notifyOnExit: true, procIdent: fakeIdent(4242), outputBytes: 89 },
-			options: { now: 1_700_000_100_000, identityProbe: async (pid) => fakeIdent(pid), sessionId: "sess-1" },
+			options: { now: 1_700_000_100_000, identityProbe: async (pid) => reading(fakeIdent(pid)), sessionId: "sess-1" },
 			expected: {
 				status: "running", stopReason: null, closed: false, exitNotified: false,
 				updatedAt: 1_700_000_000_000, terminationReason: undefined, missedIds: [],
@@ -159,7 +159,7 @@ test("restoredTaskFromSnapshot restores task state and missed exit eligibility",
 		{
 			name: "dead process restore stamps reconcile reason",
 			input: { status: "running", pid: 4242, sessionId: "sess-A", outputBytes: 12, procIdent: { comm: "bash", pid: 4242, startToken: "start-4242" } },
-			options: { now: 1_700_000_100_000, identityProbe: async () => null, sessionId: "sess-A" },
+			options: { now: 1_700_000_100_000, identityProbe: async () => reading(null), sessionId: "sess-A" },
 			expected: {
 				status: "stopped", stopReason: "shutdown", closed: true, exitNotified: false,
 				updatedAt: 1_700_000_100_000, terminationReason: "reconcile-on-restart", missedIds: ["bg-3"],
@@ -174,7 +174,7 @@ test("restoredTaskFromSnapshot restores task state and missed exit eligibility",
 			},
 			options: {
 				now: 1_700_000_100_000, sessionId: "sess-A",
-				identityProbe: async (pid) => ({ comm: "bash", pid, startToken: "start-4242" }),
+				identityProbe: async (pid) => reading({ comm: "bash", pid, startToken: "start-4242" }),
 			},
 			expected: {
 				status: "running", stopReason: null, closed: false, exitNotified: false,
@@ -185,7 +185,7 @@ test("restoredTaskFromSnapshot restores task state and missed exit eligibility",
 		{
 			name: "terminal snapshot retains a populated termination reason",
 			input: { exitCode: 0, exitNotified: true, status: "completed", terminationReason: "self-exit", sessionId: "sess-A", outputBytes: 12 },
-			options: { now: 1_700_000_100_000, identityProbe: async () => null, sessionId: "sess-A" },
+			options: { now: 1_700_000_100_000, identityProbe: async () => reading(null), sessionId: "sess-A" },
 			expected: {
 				status: "completed", stopReason: null, closed: true, exitNotified: true,
 				updatedAt: 1_700_000_000_000, terminationReason: "self-exit", missedIds: [],

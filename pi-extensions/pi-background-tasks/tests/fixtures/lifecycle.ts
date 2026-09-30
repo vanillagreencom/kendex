@@ -1,8 +1,14 @@
 import type { LifecycleHooks } from "../../extensions/lifecycle.js";
+import type { IdentityReading } from "../../extensions/snapshot.js";
 import type { BackgroundTaskSnapshot, ManagedTask, ProcessIdentity, TaskEventType } from "../../extensions/types.js";
 
 export function fakeIdent(pid: number): ProcessIdentity {
 	return { pid, startToken: `start-${pid}`, comm: "approval-wait" };
+}
+
+/** An identity probe answer: null reads as a pid the kernel reports gone. */
+export function reading(identity: ProcessIdentity | null): IdentityReading {
+	return identity ? { kind: "identity", identity } : { kind: "gone" };
 }
 
 export function fakeSnapshot(overrides: Partial<BackgroundTaskSnapshot> = {}): BackgroundTaskSnapshot {

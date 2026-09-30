@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createOrphanWatcher } from "../extensions/orphan-watcher.js";
 import type { BackgroundTaskStatus, BackgroundTaskTerminationReason, ManagedTask, ProcessIdentity } from "../extensions/types.js";
-import { fakeIdent, recordingHooks } from "./fixtures/lifecycle.js";
+import { fakeIdent, reading, recordingHooks } from "./fixtures/lifecycle.js";
 import { orphanTask } from "./fixtures/orphan-watcher.js";
 
 type TaskState = [string, BackgroundTaskStatus, number | null, boolean | undefined, boolean, BackgroundTaskTerminationReason | undefined];
@@ -97,7 +97,7 @@ test("orphan watcher poll outcomes", async () => {
 			async identityProbe(pid) {
 				const identity = identities[pid];
 				if (identity === undefined) throw new Error(`unexpected identity probe for ${pid}`);
-				return identity;
+				return reading(identity);
 			},
 			async unitActiveProbe() { throw new Error("unexpected systemd unit probe"); },
 			setIntervalFn() { throw new Error("checkOnce must not arm a timer"); },

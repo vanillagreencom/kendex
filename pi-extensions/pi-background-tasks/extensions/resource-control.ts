@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 
-import { runProbe, type ProbeRunner } from "./probes.js";
+import { PROBE_TIMEOUT_MS, runProbe, type ProbeResult, type ProbeRunner } from "./probes.js";
 import { settingBoolean, settingEnum, settingNumber } from "./settings.js";
 
 export const RESOURCE_CONTROL_MODES = ["auto", "systemd-run", "nice-ionice", "off"] as const;
@@ -76,6 +76,81 @@ const SYSTEMCTL_TIMEOUT_MS = 2_000;
 const SYSTEMD_USER_MANAGER_PROBE_ARGS = ["--user", "show-environment"];
 const cachedUserSystemdRunnable = new Map<string, boolean>();
 
+/**
+ * Whether the user's systemd manager answers. Spawn planning asks
+ * synchronously and liveness probes asynchronously; both read one memo, so
+ * once either settles the answer the other never probes.
+ */
+export interface UserManagerReachability {
+	sync(): boolean;
+	/** Concurrent callers share one probe. */
+	check(): Promise<boolean>;
+}
+
+export interface UserManagerReachabilityDeps {
+	run?: ProbeRunner;
+	runSync?: (file: string, args: string[]) => ProbeResult;
+}
+
+// exited 0 = reachable; a non-zero exit or a missing systemctl = unreachable.
+// A timeout, a signal or another spawn failure settles nothing, so the next
+// caller asks again.
+function settledReachability(result: ProbeResult): boolean | null {
+	switch (result.kind) {
+		case "exited": return result.status === 0;
+		case "spawn-failed": return result.code === "ENOENT" ? false : null;
+		case "timed-out":
+		case "signalled": return null;
+		default: {
+			const unreachable: never = result;
+			throw new Error(`unknown probe result: ${JSON.stringify(unreachable)}`);
+		}
+	}
+}
+
+function runProbeSync(file: string, args: string[]): ProbeResult {
+	try {
+		const result = spawnSync(file, args, { stdio: "ignore", timeout: PROBE_TIMEOUT_MS });
+		if (result.error) {
+			const code = (result.error as NodeJS.ErrnoException).code;
+			return code === "ETIMEDOUT" ? { kind: "timed-out" } : { kind: "spawn-failed", code: String(code ?? result.error.message) };
+		}
+		if (result.signal) return { kind: "signalled", signal: result.signal };
+		if (result.status === null) throw new Error(`spawnSync ${file} returned neither a status nor a signal`);
+		return { kind: "exited", status: result.status, stdout: "" };
+	} catch (error) {
+		return { kind: "spawn-failed", code: error instanceof Error ? error.message : String(error) };
+	}
+}
+
+export function createUserManagerReachability(deps: UserManagerReachabilityDeps = {}): UserManagerReachability {
+	const run = deps.run ?? runProbe;
+	const runSync = deps.runSync ?? runProbeSync;
+	let answer: boolean | null = null;
+	let inFlight: Promise<boolean> | null = null;
+	return {
+		sync() {
+			if (answer !== null) return answer;
+			const settled = settledReachability(runSync("systemctl", SYSTEMD_USER_MANAGER_PROBE_ARGS));
+			if (settled !== null) answer = settled;
+			return settled === true;
+		},
+		check() {
+			if (answer !== null) return Promise.resolve(answer);
+			inFlight ??= run("systemctl", SYSTEMD_USER_MANAGER_PROBE_ARGS).then((result) => {
+				const settled = settledReachability(result);
+				if (settled !== null) answer = settled;
+				inFlight = null;
+				return settled === true;
+			});
+			return inFlight;
+		},
+	};
+}
+
+/** The user manager answer every caller in this Pi process reads. */
+const userManager = createUserManagerReachability();
+
 function finiteInt(value: number, fallback: number): number {
 	return Number.isFinite(value) ? Math.round(value) : fallback;
 }
@@ -129,15 +204,11 @@ function systemdResourcePropertyArgs(settings: ResourceControlSettings): string[
 function userSystemdAvailable(commandProbe: (command: string) => boolean, platform: NodeJS.Platform, settings: ResourceControlSettings): boolean {
 	if (platform !== "linux") return false;
 	if (!commandProbe("systemd-run") || !commandProbe("systemctl")) return false;
+	if (!userManager.sync()) return false;
 	const cacheKey = systemdProbeCacheKey(settings);
 	const cached = cachedUserSystemdRunnable.get(cacheKey);
 	if (cached !== undefined) return cached;
 	try {
-		const result = spawnSync("systemctl", SYSTEMD_USER_MANAGER_PROBE_ARGS, { stdio: "ignore", timeout: 1_500 });
-		if (result.status !== 0) {
-			cachedUserSystemdRunnable.set(cacheKey, false);
-			return false;
-		}
 		// Probe the exact transient-service shape used below. Older scope-based
 		// plans accepted availability checks but failed at spawn time on hosts
 		// where `--scope --wait` or scope-level Nice/IOScheduling properties are
@@ -336,42 +407,21 @@ export function stopResourceControlledTask(
 export interface SystemdUnitActiveProbeDeps {
 	platform?: () => NodeJS.Platform;
 	run?: ProbeRunner;
+	userManager?: UserManagerReachability;
 }
 
 /**
  * Build an asynchronous unit liveness probe: true while the unit is active,
  * false when `systemctl is-active` reports it inactive, null when it cannot
- * be queried.
- *
- * The user manager's reachability is probed once and cached, so a host with
- * no `systemctl` or no user bus pays one probe, not one per task per pass.
- * A probe that timed out or was signalled settles nothing and is retried by
- * the next caller.
+ * be queried. An unreachable user manager answers null without a unit query.
  */
 export function createSystemdUnitActiveProbe(deps: SystemdUnitActiveProbeDeps = {}): (unitName: string) => Promise<boolean | null> {
 	const platform = deps.platform ?? (() => process.platform);
 	const run = deps.run ?? runProbe;
-	let userManager: Promise<boolean | null> | null = null;
-	const userManagerReachable = async (): Promise<boolean> => {
-		userManager ??= run("systemctl", SYSTEMD_USER_MANAGER_PROBE_ARGS).then((result) => {
-			switch (result.kind) {
-				case "exited": return result.status === 0;
-				case "spawn-failed": return false;
-				case "timed-out":
-				case "signalled": return null;
-				default: {
-					const unreachable: never = result;
-					throw new Error(`unknown probe result: ${JSON.stringify(unreachable)}`);
-				}
-			}
-		});
-		const reachable = await userManager;
-		if (reachable === null) userManager = null;
-		return reachable === true;
-	};
+	const manager = deps.userManager ?? userManager;
 	return async (unitName: string): Promise<boolean | null> => {
 		if (!unitName || platform() !== "linux") return null;
-		if (!(await userManagerReachable())) return null;
+		if (!(await manager.check())) return null;
 		const result = await run("systemctl", ["--user", "is-active", "--quiet", unitName]);
 		if (result.kind !== "exited") return null;
 		if (result.status === 0) return true;

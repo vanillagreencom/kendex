@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { createOrphanWatcher } from "../extensions/orphan-watcher.js";
 import { restoredTaskFromSnapshot } from "../extensions/snapshot.js";
 import type { ManagedTask, ProcessIdentity } from "../extensions/types.js";
-import { fakeSnapshot, fakeTask, recordingHooks } from "./fixtures/lifecycle.js";
+import { fakeSnapshot, fakeTask, reading, recordingHooks } from "./fixtures/lifecycle.js";
 
 test("systemd unit state takes precedence over wrapper identity during restore and polling", async () => {
 	const unit = "kendex-pi-bg-bg-7.service";
@@ -34,7 +34,7 @@ test("systemd unit state takes precedence over wrapper identity during restore a
 		const unitCalls: string[] = [];
 		const identityCalls: number[] = [];
 		const unitActiveProbe = async (name: string) => { unitCalls.push(name); return row.active; };
-		const identityProbe = async (pid: number) => { identityCalls.push(pid); return row.identity; };
+		const identityProbe = async (pid: number) => { identityCalls.push(pid); return reading(row.identity); };
 		const recorder = recordingHooks();
 		let task: ManagedTask;
 		let result: { finalized: number } | undefined;

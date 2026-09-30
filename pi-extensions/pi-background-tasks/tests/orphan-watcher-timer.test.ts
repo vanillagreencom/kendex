@@ -68,7 +68,7 @@ test("orphan watcher interval lifecycle", async () => {
 		const probes: number[] = [];
 		const watcher = createOrphanWatcher({
 			getTasks() { reads++; return tasks; }, hooks: recorder.hooks, pollMs: row.pollMs,
-			async identityProbe(pid) { probes.push(pid); return null; },
+			async identityProbe(pid) { probes.push(pid); return { kind: "gone" }; },
 			async unitActiveProbe() { throw new Error("unexpected systemd unit probe"); },
 			setIntervalFn(callback, delay) {
 				const handle = { callback, unref() { unrefs.push(handles.indexOf(handle)); } };

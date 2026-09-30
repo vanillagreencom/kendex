@@ -16,20 +16,19 @@ describe.skipIf(process.platform !== "linux")("Linux process identity across exe
 				await owned.ready("bash-ready");
 				const pid = owned.child.pid;
 				if (pid === undefined) throw new Error(`${row.name}: Bash has no process ID`);
-				const initial = await defaultReadProcessIdentity(pid);
-				if (initial === null) throw new Error(`${row.name}: initial live identity is null`);
+				const initialReading = await defaultReadProcessIdentity(pid);
+				if (initialReading.kind !== "identity") throw new Error(`${row.name}: initial live identity is ${initialReading.kind}`);
+				const initial = initialReading.identity;
 				owned.child.stdin.write(`${row.release}\n`);
 				if (row.release === "exec") await owned.ready("exec-ready");
 				else await owned.exited();
 				const current = await defaultReadProcessIdentity(pid);
-				if (row.release === "exec" && current === null) {
-					throw new Error(`${row.name}: post-exec live identity is null`);
-				}
-				expect({ initial, current, matches: identityMatches(initial, current) }, row.name).toStrictEqual({
+				const matches = current.kind === "identity" && identityMatches(initial, current.identity);
+				expect({ initial, current, matches }, row.name).toStrictEqual({
 					initial: { pid, startToken: expect.stringMatching(/^\d+$/), comm: "bash" },
 					current: row.release === "exec"
-						? { pid, startToken: initial.startToken, comm: "sh" }
-						: current === null ? null : expect.not.objectContaining({ startToken: initial.startToken }),
+						? { kind: "identity", identity: { pid, startToken: initial.startToken, comm: "sh" } }
+						: current.kind === "gone" ? { kind: "gone" } : { kind: "identity", identity: expect.not.objectContaining({ startToken: initial.startToken }) },
 					matches: row.matches,
 				});
 				if (row.release === "exec") {
