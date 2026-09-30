@@ -16,10 +16,11 @@
 # tests really ran" must reverse-engineer that from run numbers, job
 # conclusions and timestamps — the machinery this version deletes, and the
 # source of every correctness defect found reviewing v2. ADOPTION
-# PRECONDITION, one of two (references/adoption.md):
+# PRECONDITION, one of two; the contexts each requires are in
+# ../references/adoption.md § The precondition — check before anything else:
 #
-#   (1) RECOMMENDED — a merge queue whose required contexts include the
-#       repo's test aggregate. The queue runs the suite on the MERGED result
+#   (1) RECOMMENDED — a merge queue that requires the repo's CI jobs.
+#       The queue runs the suite on the MERGED result
 #       and refuses the merge if it fails, so the suite runs once, against
 #       the code that actually ships. Proven in the sandbox: a PR whose head
 #       attempt skipped its heavy jobs, with a green gate and no proof of

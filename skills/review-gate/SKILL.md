@@ -58,7 +58,7 @@ git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml' \
 
 ## 2. Adopt, when nothing is wired
 
-The precondition comes first: the repo needs **a merge queue** whose required contexts include the test aggregate, or **no held-back jobs**. Held-back jobs report `skipped`, which GitHub counts as satisfied, and a reviewed PR would merge untested. Confirm which one holds before wiring anything.
+The precondition comes first: the repo needs **a merge queue** that requires its CI jobs, or **no held-back jobs**; [references/adoption.md § The precondition](references/adoption.md#the-precondition--check-before-anything-else) is the one statement of both. Held-back jobs report `skipped`, which GitHub counts as satisfied, and a reviewed PR would merge untested. Confirm which one holds before wiring anything.
 
 ```bash
 # 1. vendor the engine as TRACKED files (CI checks out nothing else)
