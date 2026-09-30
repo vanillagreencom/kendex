@@ -14,11 +14,10 @@
 #                    references/narrow-change.conf.
 #   --floor CLASS    a class the item already holds: the tier a lane runs at,
 #                    or the class above the one a run escaped from.
-#   --path PATH      a file the item's **Location** names. A path one of that
-#                    file's `path` lines matches is refused by every narrow
-#                    class, so it answers standard; one its `instruction`
-#                    lines match answers small, the class change-class gives
-#                    such a file where it would earn trivial or micro.
+#   --path PATH      a file the item's **Location** names, classified through
+#                    harness-ci's shared path rules. No render is proved at
+#                    launch. A matched rule supplies its class and cause;
+#                    an unmatched path leaves the other inputs unchanged.
 #   --base, --head   the item's branch, classified by harness-ci's
 #                    change-class through lib/change-class.sh. render and
 #                    trivial count as micro. A class the classifier's
@@ -44,6 +43,8 @@ shopt -s extglob
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NARROW_CONF="$SCRIPT_DIR/../references/narrow-change.conf"
+# shellcheck source=lib/change-class.sh
+. "$SCRIPT_DIR/lib/change-class.sh"
 
 usage() { sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
 
@@ -108,74 +109,45 @@ consider() { # CLASS CAUSE
   fi
 }
 
-# A --path against one group of the list's globs: the first match decides.
-consider_path() { # PATH GLOBS CLASS CAUSE
-  local glob
-  while IFS= read -r glob; do
-    [ -n "$glob" ] || continue
-    # shellcheck disable=SC2254
-    case "$1" in
-      $glob) consider "$3" "$4 path=$1 glob=$glob"; return ;;
-    esac
-  done <<<"$2"
-}
-
-# The ceilings and the path list, read once and only when an input needs them.
+# The ceilings, read once and only when an estimate needs them.
 micro_max=""
 small_max=""
-excluded=""
-instruction=""
 conf_cause=""
-# The list's `KEYWORD GLOB` lines, less a `path` line a `superseded` line
-# keeps for a reader from before the extglob grammar, as the list's header
-# states.
-list_globs() { # KEYWORD
-  awk -v kind="$1" '
-    $1 == "superseded" { drop[$2] = 1 }
-    $1 == kind { glob[++n] = $2 }
-    END { for (i = 1; i <= n; i++) if (!(glob[i] in drop)) print glob[i] }
-  ' "$NARROW_CONF"
-}
 read_conf() {
   [ -r "$NARROW_CONF" ] || { conf_cause="narrow-change-unreadable"; return 1; }
   micro_max="$(sed -n 's/^micro_max_production=\([0123456789][0123456789]*\)$/\1/p' "$NARROW_CONF" | tail -1)" &&
-    small_max="$(sed -n 's/^small_max_production=\([0123456789][0123456789]*\)$/\1/p' "$NARROW_CONF" | tail -1)" &&
-    excluded="$(list_globs path)" &&
-    instruction="$(list_globs instruction)" ||
+    small_max="$(sed -n 's/^small_max_production=\([0123456789][0123456789]*\)$/\1/p' "$NARROW_CONF" | tail -1)" ||
     { conf_cause="narrow-change-unreadable"; return 1; }
   [ -n "$micro_max" ] && [ -n "$small_max" ] ||
     { conf_cause="narrow-change-ceilings-missing"; return 1; }
 }
 
-if [ -n "$production" ] || [ "${#paths[@]}" -gt 0 ]; then
+if [ -n "$production" ]; then
   if ! read_conf; then
     consider standard "$conf_cause"
+  elif [ "$production" -le "$micro_max" ]; then
+    consider micro "estimate-within-micro production=$production"
+  elif [ "$production" -le "$small_max" ]; then
+    consider small "estimate-within-small production=$production"
   else
-    if [ -n "$production" ]; then
-      if [ "$production" -le "$micro_max" ]; then
-        consider micro "estimate-within-micro production=$production"
-      elif [ "$production" -le "$small_max" ]; then
-        consider small "estimate-within-small production=$production"
-      else
-        consider standard "estimate-past-small production=$production"
-      fi
-    fi
-    # A glob matches the whole path, `*` crossing `/`, as the list's header
-    # states. Expansion is off so a glob never names local files.
-    set -f
-    for path in ${paths[@]+"${paths[@]}"}; do
-      consider_path "$path" "$excluded" standard excluded-path
-      consider_path "$path" "$instruction" small instruction-file
+    consider standard "estimate-past-small production=$production"
+  fi
+fi
+
+if [ "${#paths[@]}" -gt 0 ]; then
+  if change_class_location_load; then
+    for path in "${paths[@]}"; do
+      change_class_path "$path" launch
+      [ -z "$CHANGE_CLASS_PATH" ] || consider "$CHANGE_CLASS_PATH" "$CHANGE_CLASS_PATH_CAUSE"
     done
-    set +f
+  else
+    consider standard "$CHANGE_CLASS_CAUSE"
   fi
 fi
 
 [ -z "$floor" ] || consider "$floor" "floor class=$floor"
 
 if [ -n "$base" ]; then
-  # shellcheck source=lib/change-class.sh
-  . "$SCRIPT_DIR/lib/change-class.sh"
   class_err="$(mktemp "${TMPDIR:-/tmp}/item-tier-class.XXXXXX")" ||
     die scratch-unavailable "a scratch file for the classifier's log could not be created"
   trap 'rm -f -- "$class_err"' EXIT

@@ -760,6 +760,7 @@ assert_eq "a changed path git had to quote is never measured" \
 stub_pkg="$SANDBOX/stub-pkg"
 mkdir -p "$stub_pkg/harness-ci/scripts"
 cp "$CHANGE_CLASS" "$stub_pkg/harness-ci/scripts/change-class"
+cp -R "$(dirname "$CHANGE_CLASS")/lib" "$stub_pkg/harness-ci/scripts/"
 ln -s "$(cd "$TEST_DIR/../../orch" && pwd)" "$stub_pkg/orch"
 cat >"$stub_pkg/harness-ci/scripts/harness-only" <<'ONLY'
 #!/usr/bin/env bash
@@ -1071,6 +1072,7 @@ plant_package() { # ROOT link|none -> prints the planted change-class path
   ln -s "$(dirname "$CHANGE_CLASS")/harness-only" "$1/harness-ci/scripts/harness-only"
   [ "$2" != link ] || ln -s "$ORCH_PACKAGE" "$1/orch"
   cp "$CHANGE_CLASS" "$1/harness-ci/scripts/change-class"
+  cp -R "$(dirname "$CHANGE_CLASS")/lib" "$1/harness-ci/scripts/"
   chmod +x "$1/harness-ci/scripts/change-class"
   printf '%s' "$1/harness-ci/scripts/change-class"
 }
@@ -1923,21 +1925,19 @@ plain_control_out="$(PATH="$stub_bin:$PATH" "$spelling_mutant" --repo "$repo" \
 assert_eq "and still owns a plain name, so the awkward rows are what it costs" \
   "change_class=render" "$plain_control_out"
 
-# Must-fail control for the registry rows above: the same classifier with the
-# harness registry globs deleted from the refusal list and the list closed
-# where they began. Without them a changed `.claude/settings.json` is a file
-# like any other, and the diff the rows hold at standard is four production
-# lines, which is micro.
+# Must-fail control for the registry rows: disable the shared registry
+# phase while keeping its rules. A changed registry then measures as micro.
 registry_mutant="$(plant_package "$SANDBOX/registry-mutant" link)"
-sed -e "/^REGISTRY_GLOBS='/,/opencode\.jsonc'\$/c\\
-REGISTRY_GLOBS=''" \
-  "$CHANGE_CLASS" >"$registry_mutant"
-chmod +x "$registry_mutant"
-assert_eq "the control drops the harness registry globs" "0" \
-  "$(grep -cE '^  (\.codex/config|\.cursor/hooks|\.github/mcp)\.' \
-    "$registry_mutant")"
-assert_eq "and leaves the list empty where it began" "1" \
-  "$(grep -c "^REGISTRY_GLOBS=''\$" "$registry_mutant")"
+registry_library="$SANDBOX/registry-mutant/harness-ci/scripts/lib/change-class.sh"
+registry_line='  if [ "$2" = registry ] || [ "$2" = launch ]; then'
+awk -v line="$registry_line" '
+  $0 == line { hits++; print "  if false; then # " line; next }
+  { print }
+  END { exit hits == 1 ? 0 : 3 }
+' "$(dirname "$CHANGE_CLASS")/lib/change-class.sh" >"$registry_library"
+if cmp -s "$(dirname "$CHANGE_CLASS")/lib/change-class.sh" "$registry_library"; then
+  echo "FAIL: the registry control did not change the library" >&2; exit 1
+fi
 
 reset_case
 set_verifier dirty

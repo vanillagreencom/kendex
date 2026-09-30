@@ -163,6 +163,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HARNESS_ONLY="$SCRIPT_DIR/harness-only"
 ORCH_DIR="$SCRIPT_DIR/../../orch"
 NARROW_CONF="$ORCH_DIR/references/narrow-change.conf"
+# shellcheck source=lib/change-class.sh
+. "$SCRIPT_DIR/lib/change-class.sh"
 # The micro-tier measurement's boundary as this script reaches it: every file
 # it reads or runs whose edit changes the range measured, the settings the
 # measurement reads, or the ceilings it compares against. orch's
@@ -172,6 +174,7 @@ NARROW_CONF="$ORCH_DIR/references/narrow-change.conf"
 # to branch-size-check's, and to the `source` lines of every file they name.
 # measures-with: skills/harness-ci/scripts/change-class
 # measures-with: skills/harness-ci/scripts/harness-only
+# measures-with: skills/harness-ci/scripts/lib/change-class.sh
 # measures-with: skills/orch/references/narrow-change.conf
 # measures-with: skills/orch/scripts/lib/branch-growth.sh
 # measures-with: skills/orch/scripts/lib/kendex-env.sh
@@ -324,17 +327,16 @@ set_globs() { # GLOBS
 # One matcher and one glob grammar for the allowlist and the refusal lists.
 PATH_MATCH_HIT=""
 path_matches() { # MODE(every|any) — against GLOB_LIST
-  local path glob hit
+  local path hit globs
   PATH_MATCH_HIT=""
+  globs=""
+  if [ "${#GLOB_LIST[@]}" -gt 0 ]; then
+    printf -v globs '%s\n' "${GLOB_LIST[@]}"
+  fi
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     hit=false
-    for glob in ${GLOB_LIST[@]+"${GLOB_LIST[@]}"}; do
-      # shellcheck disable=SC2254
-      case "$path" in
-        $glob) hit=true; PATH_MATCH_HIT="path=$path glob=$glob"; break ;;
-      esac
-    done
+    if change_class_path_match "$path" "$globs"; then hit=true; fi
     if [ "$1" = any ]; then
       [ "$hit" = false ] || return 0
     else
@@ -344,16 +346,17 @@ path_matches() { # MODE(every|any) — against GLOB_LIST
   [ "$1" = every ]
 }
 
-# orch's list, as `KEYWORD GLOB` lines. A `superseded` line names a `path`
-# line kept for a reader from before the list's extglob grammar, which reads
-# an extglob as literal text; this reader drops that line and reads the
-# narrower lines beside it.
-list_globs() { # KEYWORD
-  awk -v kind="$1" '
-    $1 == "superseded" { drop[$2] = 1 }
-    $1 == kind { glob[++n] = $2 }
-    END { for (i = 1; i <= n; i++) if (!(glob[i] in drop)) print glob[i] }
-  ' "$NARROW_CONF"
+# The shared path rule, applied to the branch's paths at the phase where
+# that rule belongs. The registry and pointer phases follow the render proof;
+# the names-only inventory leaves the path set before the narrow phase.
+path_class_matches() { # PHASE CLASS
+  local path
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    change_class_path "$path" "$1"
+    [ "$CHANGE_CLASS_PATH" != "$2" ] || return 0
+  done <<<"$changed"
+  return 1
 }
 
 # The measurement settings and the repository's queue list, read from the
@@ -438,7 +441,7 @@ queue_only_of_paths() {
       \"*) QUEUE_CAUSE="cause=path-quoted path=$path"; return ;;
     esac
   done <<<"$changed"
-  if [ ! -r "$NARROW_CONF" ] || ! globs="$(list_globs queue)"; then
+  if [ ! -r "$NARROW_CONF" ] || ! globs="$(change_class_list_globs "$NARROW_CONF" queue)"; then
     QUEUE_CAUSE="cause=queue-list-unreadable"
     return
   fi
@@ -526,36 +529,8 @@ if [ ! -s "$paths_file" ]; then
   answer standard "${harness_note:-cause=no-changed-paths}"
 fi
 
-# Two groups, refused at two places. First, ahead of everything, kendex's own
-# configuration, with .gemini/settings.json beside it: the shim row kendex
-# prints for it weighs one key of a document whose other keys decide what that harness loads, and
-# the row vouches for nothing else in it, so a refresh that rewrites it
-# answers cause=configuration-source rather than reaching the render proof.
-# Second, below the render branch, the registry files a harness reads its
-# hooks, its permissions and its MCP servers out of: one project-scope entry
-# per structured surface the adapters under crates/core/src/harness name,
-# which is also the set kendex writes. A harness executes those keys whether
-# or not kendex wrote the file, so a hand-authored one the inventory does not
-# carry must not fall through to size measurement and take the class its
-# size earns; a re-rendered one the inventory does carry reaches the render
-# proof first, where the row that owns it says whether the rest of the file
-# moved. Every harness those adapters name is covered, Cursor and Copilot
-# included. .github/hooks/*.json is a glob because Copilot's registry is one
-# file per hook, named for the hook: engine/targets.rs copilot_hook writes
-# .github/hooks/<name>.json. A harness kendex adds later has to join this
-# list, which no rule does for it.
-set_globs 'kendex.toml kendex.settings.toml kendex-local.toml
-  .kendex/settings.toml .gemini/settings.json'
-! path_matches any ||
-  answer standard "cause=configuration-source $PATH_MATCH_HIT" measured
-REGISTRY_GLOBS='.claude/settings.json .claude/settings.local.json .mcp.json
-  .codex/config.toml .codex/hooks.json
-  .cursor/hooks.json .cursor/mcp.json
-  .agents/hooks.json .agents/mcp_config.json
-  .github/copilot/settings.json .github/copilot/settings.local.json
-  .github/mcp.json .github/hooks/*.json
-  .pi/settings.json .pi/kendex/hooks.json
-  opencode.json opencode.jsonc'
+! path_class_matches before-render standard ||
+  answer standard "cause=$CHANGE_CLASS_PATH_CAUSE" measured
 
 # The render proof weighs the tree at the range's head and no other: the
 # commit harness-only resolved --head to, checked out into a directory of this
@@ -773,21 +748,10 @@ if [ "$harness_verdict" = "harness_only=true" ]; then
   answer standard "$RENDER_REFUSAL"
 fi
 
-# The registry files a harness executes as configuration, below the render
-# branch: a hand-authored one the inventory does not carry, or one changed
-# beside a product file, refuses every measured class here.
-set_globs "$REGISTRY_GLOBS"
-! path_matches any ||
-  answer standard "cause=configuration-source $PATH_MATCH_HIT" measured
-
-# A harness instruction pointer is a render when the whole diff is generated
-# and the proof above passed. Anywhere else nothing re-rendered it, and the
-# shipped documentation set would take a root one for ordinary markdown, so
-# the narrow classes refuse it by name, while the AGENTS.md it points at is
-# held to small below.
-set_globs 'CLAUDE.md */CLAUDE.md'
-! path_matches any ||
-  answer standard "cause=instruction-pointer $PATH_MATCH_HIT" measured
+! path_class_matches registry standard ||
+  answer standard "cause=$CHANGE_CLASS_PATH_CAUSE" measured
+! path_class_matches pointer standard ||
+  answer standard "cause=$CHANGE_CLASS_PATH_CAUSE" measured
 
 # The measurement's library, sourced from orch beside this package, and the
 # render roots it pairs a mirror against. MEASURE_CAUSE names a failure.
@@ -847,17 +811,8 @@ case "$inventory_change" in
     fi ;;
 esac
 
-[ -r "$NARROW_CONF" ] || answer standard "cause=narrow-change-list-unreadable"
-if ! excluded="$(list_globs path)" ||
-  ! instruction_globs="$(list_globs instruction)"; then
-  answer standard "cause=narrow-change-list-unreadable"
-fi
-# A list with no `instruction` line is one from before the floor: AGENTS.md
-# left this script's configuration-source refusal on the promise of that
-# floor, so it is refused rather than read without it.
-[ -n "$instruction_globs" ] || answer standard "cause=narrow-change-floor-missing"
-set_globs "$excluded"
-! path_matches any || answer standard "cause=excluded-path $PATH_MATCH_HIT" measured
+change_class_path_load "$NARROW_CONF" || answer standard "cause=$CHANGE_CLASS_PATH_CAUSE"
+! path_class_matches narrow standard || answer standard "cause=$CHANGE_CLASS_PATH_CAUSE" measured
 
 # Every measured class shares orch's branch growth reader, which owns the
 # production/test split and the render-mirror pairing branch-size-check judges
@@ -897,9 +852,8 @@ measure || answer standard "$MEASURE_CAUSE"
 # how every agent behaves, so it never answers below small, the lowest class
 # the default review policy gives a bot round; CLAUDE.md is refused above by
 # name. Every trivial and micro answer goes through here.
-set_globs "$instruction_globs"
 instruction_file=""
-! path_matches any || instruction_file="$PATH_MATCH_HIT"
+! path_class_matches narrow small || instruction_file="$PATH_MATCH_HIT"
 answer_narrow() { # CLASS FIELDS
   [ -n "$instruction_file" ] || answer "$1" "$2"
   answer small "cause=instruction-file $instruction_file measured-class=$1"

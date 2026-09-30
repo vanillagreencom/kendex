@@ -239,11 +239,13 @@ control "a matcher without extglob measures a hook body" "$MICRO" \
 # line read, the superseded one too. The broad line keeps its refusal.
 control "a reader before the extglob grammar still refuses a hook body" \
   "class=standard measured=true cause=excluded-path" hooks/guard.sh=2 \
-  pre-extglob change-class 'shopt -s extglob' - \
+  pre-extglob lib/change-class.sh \
+  'change_class_list_globs() { # CONF KEYWORD' 'change_class_list_globs() { shopt -u extglob # CONF KEYWORD' \
   '    $1 == "superseded" { drop[$2] = 1 }' -
 control "a reader before the extglob grammar still refuses a rendered hook body" \
   "class=standard measured=true cause=excluded-path" .claude/hooks/guard.sh=2 \
-  pre-extglob-render change-class 'shopt -s extglob' - \
+  pre-extglob-render lib/change-class.sh \
+  'change_class_list_globs() { # CONF KEYWORD' 'change_class_list_globs() { shopt -u extglob # CONF KEYWORD' \
   '    $1 == "superseded" { drop[$2] = 1 }' -
 
 # A list from before the floor carries no `instruction` line; the classifier
@@ -254,6 +256,7 @@ grep -v '^instruction ' "$ORCH_PACKAGE/references/narrow-change.conf" \
   >"$SANDBOX/floorless/orch/references/narrow-change.conf"
 cp "$(dirname "$CHANGE_CLASS")/harness-only" "$(dirname "$CHANGE_CLASS")/change-class" \
   "$SANDBOX/floorless/harness-ci/scripts/"
+cp -R "$(dirname "$CHANGE_CLASS")/lib" "$SANDBOX/floorless/harness-ci/scripts/"
 assert_eq "a list with no floor is refused" \
   "class=standard measured=false cause=narrow-change-floor-missing" \
   "$(verdict_of "$(run_row "$SANDBOX/floorless/harness-ci/scripts/change-class" AGENTS.md=10)")"
@@ -415,6 +418,7 @@ grep -v '^queue ' "$ORCH_PACKAGE/references/narrow-change.conf" \
   >"$queueless/orch/references/narrow-change.conf"
 cp "$(dirname "$CHANGE_CLASS")/harness-only" "$(dirname "$CHANGE_CLASS")/change-class" \
   "$queueless/harness-ci/scripts/"
+cp -R "$(dirname "$CHANGE_CLASS")/lib" "$queueless/harness-ci/scripts/"
 assert_eq "a list with no queue group reads queue-only" \
   "queue_only=true cause=queue-list-missing" \
   "$(queue_of "$(run_row "$queueless/harness-ci/scripts/change-class" docs/guide.md=2)")"
@@ -426,6 +430,7 @@ cp -R "$ORCH_PACKAGE" "$listless/orch"
 rm -- "${listless:?}/orch/references/narrow-change.conf"
 cp "$(dirname "$CHANGE_CLASS")/harness-only" "$(dirname "$CHANGE_CLASS")/change-class" \
   "$listless/harness-ci/scripts/"
+cp -R "$(dirname "$CHANGE_CLASS")/lib" "$listless/harness-ci/scripts/"
 assert_eq "an orch with no list reads queue-only" \
   "queue_only=true cause=queue-list-unreadable" \
   "$(queue_of "$(run_row "$listless/harness-ci/scripts/change-class" docs/guide.md=2)")"

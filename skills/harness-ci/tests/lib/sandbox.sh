@@ -128,6 +128,7 @@ plant() { # ROOT SCRIPT PLANTED -> prints the planted change-class path
   cp "$(dirname "$CHANGE_CLASS")/harness-only" "$(dirname "$CHANGE_CLASS")/change-class" \
     "$1/harness-ci/scripts/"
   ln -s "$ORCH_PACKAGE" "$1/orch"
+  cp -R "$(dirname "$CHANGE_CLASS")/lib" "$1/harness-ci/scripts/"
   cp "$3" "$1/harness-ci/scripts/$2"
   chmod +x "$1/harness-ci/scripts/"*
   printf '%s' "$1/harness-ci/scripts/change-class"
@@ -139,7 +140,7 @@ plant() { # ROOT SCRIPT PLANTED -> prints the planted change-class path
 mutant() { # NAME SCRIPT LINE REPLACEMENT [LINE REPLACEMENT]...
   local name="$1" script="$2" copy
   shift 2
-  copy="$SANDBOX/$name.$script"
+  copy="$SANDBOX/$name.${script##*/}"
   cp "$(dirname "$CHANGE_CLASS")/$script" "$copy"
   while [ "$#" -ge 2 ]; do
     if ! LINE="$1" WITH="$2" awk '

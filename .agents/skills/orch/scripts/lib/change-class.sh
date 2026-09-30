@@ -26,7 +26,12 @@
 #   docs-reader-unreadable. Call it after change_class_read, which resolves the
 #   install.
 #
-# Both append the called script's stderr to STDERR_FILE, and neither writes a
+# change_class_location_load loads harness-ci's shared path rules and the
+# narrow-change list. Returns 1 with CHANGE_CLASS_CAUSE on a missing library
+# or unreadable list. After loading, change_class_path PATH launch applies
+# the same path rules as branch classification, without proving a render.
+#
+# Both range readers append the called script's stderr to STDERR_FILE, and neither writes a
 # workflow's GITHUB_OUTPUT. The class is never read from anything but the
 # classifier: no argument here carries one.
 
@@ -36,6 +41,19 @@ CHANGE_CLASS_CAUSE=""
 CHANGE_CLASS_MEASURED=""
 CHANGE_CLASS_DOCS_ONLY=""
 CHANGE_CLASS_SCRIPTS=""
+
+change_class_location_load() {
+  local library="$CHANGE_CLASS_LIB_DIR/../../../harness-ci/scripts/lib/change-class.sh"
+  CHANGE_CLASS_CAUSE=classifier-path-rules-unreadable
+  [ -r "$library" ] || return 1
+  # shellcheck source=../../../harness-ci/scripts/lib/change-class.sh
+  . "$library" || return 1
+  if ! change_class_path_load "$CHANGE_CLASS_LIB_DIR/../../references/narrow-change.conf"; then
+    CHANGE_CLASS_CAUSE="$CHANGE_CLASS_PATH_CAUSE"
+    return 1
+  fi
+  CHANGE_CLASS_CAUSE=""
+}
 
 change_class_read() { # BASE HEAD REPO STDERR_FILE
   local classifier answer status=0

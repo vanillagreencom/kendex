@@ -3,7 +3,8 @@
 #
 # The script runs from a copy laid out as the installed packages are:
 # orch/scripts beside harness-ci/scripts. The classifier is a stub answering
-# what each row names. The ceilings come from the real narrow-change.conf, so
+# what each range row names. Location rows use harness-ci's real shared path
+# rules, not that stub. The ceilings come from narrow-change.conf, so
 # a boundary row follows the list rather than a second copy of its numbers.
 
 set -euo pipefail
@@ -11,15 +12,18 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH_DIR="$(cd "$TEST_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo "item-tier: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "item-tier: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "item-tier: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 # shellcheck source=lib/assertions.sh
 source "$TEST_DIR/lib/assertions.sh"
 
 LAYOUT="$TMP_ROOT/layout"
 mkdir -p "$LAYOUT/orch/scripts/lib" "$LAYOUT/orch/references" \
-  "$LAYOUT/harness-ci/scripts"
+  "$LAYOUT/harness-ci/scripts/lib"
+cp "$ORCH_DIR/../harness-ci/scripts/lib/change-class.sh" "$LAYOUT/harness-ci/scripts/lib/"
 cp "$ORCH_DIR/scripts/item-tier" "$LAYOUT/orch/scripts/"
 cp "$ORCH_DIR/scripts/lib/change-class.sh" "$LAYOUT/orch/scripts/lib/"
 cp "$ORCH_DIR/references/narrow-change.conf" "$LAYOUT/orch/references/"
@@ -68,7 +72,8 @@ SMALL_MAX="$(conf_value small_max_production)"
 run_tier() { # CLASS ARG...
   local class="$1" out rc=0
   shift
-  out="$(STUB_CLASS="$class" "${TIER_BIN:-$TIER}" --repo "$TMP_ROOT" "$@" 2>/dev/null)" || rc=$?
+  out="$(env -i PATH="$PATH" TMPDIR="$TMP_ROOT" STUB_ARGV="$STUB_ARGV" STUB_CLASS="$class" \
+    "${TIER_BIN:-$TIER}" --repo "$TMP_ROOT" "$@" 2>/dev/null)" || rc=$?
   out="$(sed -n '1s/^\(tier=[a-z]* brief=[a-z]* cause=[a-z-]*\( class=[a-z]*\)\{0,1\}\).*/\1/p' <<<"$out")"
   printf '%s' "${out:+$out }rc=$rc"
 }
@@ -88,6 +93,14 @@ ROWS=(
   "trivial|--floor small --base b --head h|tier=small brief=small cause=floor class=small rc=0|a floor holds over a narrower branch"
   "standard|--floor small --base b --head h|tier=standard brief=start cause=classifier class=standard rc=0|a branch past its floor escapes to its class"
   "exit-2|--floor small --base b --head h|tier=standard brief=start cause=classifier-failed rc=0|a classifier that cannot answer is standard"
+  "-|--production 1 --path kendex.settings.toml|tier=standard brief=start cause=configuration-source rc=0|a settings Location takes the classifier's class and cause"
+  "-|--production 1 --path kendex.toml|tier=standard brief=start cause=configuration-source rc=0|a manifest Location takes the classifier's class and cause"
+  "-|--production 1 --path kendex-local.toml|tier=standard brief=start cause=configuration-source rc=0|a catalog manifest Location takes the classifier's class and cause"
+  "-|--production 1 --path .kendex/settings.toml|tier=standard brief=start cause=configuration-source rc=0|a local settings Location takes the classifier's class and cause"
+  "-|--production 1 --path src/main.rs|tier=micro brief=micro cause=estimate-within-micro rc=0|a plain source Location keeps the estimate's class"
+  "-|--production 1 --path src/main.rs --path kendex.settings.toml|tier=standard brief=start cause=configuration-source rc=0|each Location is classified, not only the first"
+  "-|--production 1 --path .pi/settings.json|tier=standard brief=start cause=configuration-source rc=0|a registry Location proves no render"
+  "-|--production 1 --path CLAUDE.md|tier=standard brief=start cause=instruction-pointer rc=0|an instruction pointer Location proves no render"
   "-|--production 1 --path $PR_MERGE|tier=standard brief=start cause=excluded-path rc=0|a merge-gate Location is never micro whatever the estimate"
   "-|--production 1 --path skills/orch/workflows/review-pr.md|tier=micro brief=micro cause=estimate-within-micro rc=0|a Location off the list leaves the estimate's class"
   "-|--production 1 --path hooks/block-bare-cd.sh|tier=standard brief=start cause=excluded-path rc=0|a hook body Location is never micro"
@@ -126,17 +139,55 @@ assert_eq "$(run_tier - --production 1 --path hooks/block-bare-cd.sh)" \
   "tier=micro brief=micro cause=estimate-within-micro rc=0" "an item-tier without extglob misses a hook body"
 unset TIER_BIN
 
-# Must-fail control for the instruction rows: a copy that never reads the
-# list's `instruction` lines leaves a SKILL.md Location at the estimate's class.
+# Must-fail control for instruction rows: disable the class assigned by the
+# shared rule. A SKILL.md Location then keeps the estimate's class.
 mkdir -p "$TMP_ROOT/no-floor"
 cp -R "$LAYOUT/." "$TMP_ROOT/no-floor/"
-floor_line='      consider_path "$path" "$instruction" small instruction-file'
-awk -v line="$floor_line" '$0 != line' "$ORCH_DIR/scripts/item-tier" >"$TMP_ROOT/no-floor/orch/scripts/item-tier"
-assert_eq "$(grep -cxF -- "$floor_line" "$ORCH_DIR/scripts/item-tier") $(grep -cxF -- "$floor_line" "$TMP_ROOT/no-floor/orch/scripts/item-tier" || true)" \
-  "1 0" "the floor control drops the one instruction read"
+floor_line='      CHANGE_CLASS_PATH=small'
+awk -v line="$floor_line" '
+  $0 == line { hits++; print "      CHANGE_CLASS_PATH=\"\""; next }
+  { print }
+  END { exit hits == 1 ? 0 : 3 }
+' "$LAYOUT/harness-ci/scripts/lib/change-class.sh" >"$TMP_ROOT/no-floor/harness-ci/scripts/lib/change-class.sh"
+if cmp -s "$LAYOUT/harness-ci/scripts/lib/change-class.sh" "$TMP_ROOT/no-floor/harness-ci/scripts/lib/change-class.sh"; then
+  echo "FAIL: the floor control did not change the library" >&2; exit 1
+fi
 TIER_BIN="$TMP_ROOT/no-floor/orch/scripts/item-tier"
 assert_eq "$(run_tier - --production 1 --path skills/x/SKILL.md)" \
   "tier=micro brief=micro cause=estimate-within-micro rc=0" "an item-tier without the floor lets a SKILL.md Location run micro"
+unset TIER_BIN
+
+# Must-fail control for configuration Locations: retain the rule but disable
+# its pre-render phase in a private library, restoring the old launch answer.
+cp -R "$LAYOUT" "$TMP_ROOT/no-configuration"
+configuration_line='  if [ "$2" = before-render ] || [ "$2" = launch ]; then'
+awk -v line="$configuration_line" '
+  $0 == line { hits++; print "  if false; then # " line; next }
+  { print }
+  END { exit hits == 1 ? 0 : 3 }
+' "$LAYOUT/harness-ci/scripts/lib/change-class.sh" >"$TMP_ROOT/no-configuration/harness-ci/scripts/lib/change-class.sh"
+if cmp -s "$LAYOUT/harness-ci/scripts/lib/change-class.sh" "$TMP_ROOT/no-configuration/harness-ci/scripts/lib/change-class.sh"; then
+  echo "FAIL: the configuration control did not change the library" >&2; exit 1
+fi
+TIER_BIN="$TMP_ROOT/no-configuration/orch/scripts/item-tier"
+control_out="$(run_tier - --production 1 --path kendex.settings.toml)"
+assert_eq "$control_out" "tier=micro brief=micro cause=estimate-within-micro rc=0" \
+  "the old launch behavior misses a settings Location"
+# The regression assertion itself must reject that old answer.
+if (PASS=0; FAIL=0; assert_eq "$control_out" \
+  "tier=standard brief=start cause=configuration-source rc=0" "settings regression" >/dev/null; [[ "$FAIL" -eq 0 ]]); then
+  fail "the settings regression accepts old behavior"
+else
+  pass "the settings regression turns red on old behavior"
+fi
+unset TIER_BIN
+
+# A missing shared rule library refuses a narrow Location class.
+cp -R "$LAYOUT" "$TMP_ROOT/no-path-rules"
+rm -- "$TMP_ROOT/no-path-rules/harness-ci/scripts/lib/change-class.sh"
+TIER_BIN="$TMP_ROOT/no-path-rules/orch/scripts/item-tier"
+assert_eq "$(run_tier - --floor micro --path src/main.rs)" \
+  "tier=standard brief=start cause=classifier-path-rules-unreadable rc=0" "missing path rules are not an unmatched Location"
 unset TIER_BIN
 
 # A ceiling list item-tier cannot use is standard, never a narrower class.
