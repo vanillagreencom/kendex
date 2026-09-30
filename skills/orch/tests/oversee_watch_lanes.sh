@@ -277,7 +277,8 @@ lane_table \
   "an unreadable pane command is a fail-closed probe error, never window-gone|new|-|nocmd|2|rc=2 lines=0 stderr~oversee-watch:+pane-command-failed+lane=gh-2=true stderr~E_COMMAND+lane=gh-2=true"
 
 echo "=== hosted lane exits: the provider reads past a live ssh child ==="
-for row in 'exited|0|true' 'running|0|false' 'exited|7|false' 'garbage|0|false'; do
+# Exit 2 is the protocol's absent-verb answer from a provider without status.
+for row in 'exited|0|true' 'running|0|false' 'exited|2|false' 'exited|7|false' 'garbage|0|false'; do
   IFS='|' read -r remote_status provider_rc want_exit <<<"$row"
   new_case "remote_${remote_status}_$provider_rc"
   lane fish_child
@@ -285,10 +286,10 @@ for row in 'exited|0|true' 'running|0|false' 'exited|7|false' 'garbage|0|false';
   provider="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
   remote_disk="$STUB_DIR/remote"
   mkdir -p "$remote_disk/srv/lane/tmp" "$remote_disk/srv/clone/tmp"
-  printf 'gitdir: /srv/clone/.git/worktrees/TEST-1\n' > "$remote_disk/srv/lane/.git"
-  printf 'started\n' > "$remote_disk/srv/lane/tmp/lane-status-TEST-1.md"
+  printf 'gitdir: /srv/clone/.git/worktrees/issue-2\n' > "$remote_disk/srv/lane/.git"
+  printf 'started\n' > "$remote_disk/srv/lane/tmp/lane-status-issue-2.md"
   jq -cn --arg host "$provider" '{issue_id:"oversee", triaged:[], lanes:[{
-    item:"TEST-1", window:"gh-2", host:$host, mail_root:"/srv/lane", harness:"claude",
+    item:"issue-2", window:"gh-2", host:$host, mail_root:"/srv/lane", harness:"claude",
     status:"running", launched_at:"2026-08-15T09:00:00Z"}]}' > "$STUB_DIR/fleet.json"
   ERR="$STUB_DIR/err"
   OUT="$(run_watch ORCH_LANE_HOST="$provider" LANE_HOST_STUB_LOG="$STUB_DIR/host.calls" \
@@ -296,7 +297,7 @@ for row in 'exited|0|true' 'running|0|false' 'exited|7|false' 'garbage|0|false';
     -- --state "$STUB_DIR/fleet.json" --max-loops 1 2>"$ERR")" && RC=0 || RC=$?
   expect="rc=0 out~EVENT+lane-exited+gh-2=$want_exit"
   assert_eq "$(watch "$expect")" "$expect" "hosted $remote_status/$provider_rc reports only a confirmed exit in one pass" "$ERR"
-  assert_eq "$(grep -c '^status --item TEST-1 --harness claude ' "$STUB_DIR/host.calls")" "1" "one remote harness call per lane per pass"
+  assert_eq "$(grep -c '^status --item issue-2 --harness claude ' "$STUB_DIR/host.calls")" "1" "one remote harness call per lane per pass"
 done
 # The watch still has to publish the authoritative remote exit immediately.
 REMOTE_WATCH="$(mutant_scripts remote-watch/orch oversee-watch)/oversee-watch" || exit 1

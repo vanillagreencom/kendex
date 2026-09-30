@@ -141,7 +141,8 @@ ROWS
 # The provider creates the remote harness while tmux holds only its ssh
 # connection. Drive the real dispatcher and keep the local child live.
 echo "=== lane-state § remote harness: one provider read, no ssh-child verdict ==="
-for row in 'exited|0|exited|provider' 'running|0|idle|' 'running|7|unjudged|' 'garbage|0|unjudged|'; do
+# Exit 2 is the protocol's absent-verb answer from a provider without status.
+for row in 'exited|0|exited|provider' 'running|0|idle|' 'exited|2|unjudged|' 'running|7|unjudged|' 'garbage|0|unjudged|'; do
   IFS='|' read -r remote_status provider_rc want source <<<"$row"
   export ORCH_LANE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
   export LANE_HOST_STUB_LOG="$STUB_DIR/host.calls"

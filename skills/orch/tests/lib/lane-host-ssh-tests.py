@@ -727,6 +727,7 @@ exec "$REAL_CAT" "$@"
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(result.stdout, b"")
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
     def test_stop_signals_only_the_named_harness_in_the_owned_worktree(self):
         self.assertEqual(self.create().returncode, 0)
         worktree = Path(self.row["clone"] + "-worktree")

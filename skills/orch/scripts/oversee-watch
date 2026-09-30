@@ -3052,12 +3052,10 @@ check_lanes() {
         || die state-invalid "" "item=$LANE_ITEM"
     fi
     lane_state state "$window" "$cmd" "$pid" "$pane" "" "" "${LANE_ROWS[$i]:-}" "$hosted_item" "$hosted_harness" \
-
       || die limit-scan-failed "" "lane=$lane"
-    # A probe that could not run is not an answer: the judge falls through to
-    # the screen, a lane it cannot classify stays watched, and the status is
-    # noted once — a wrong lane-exited retires a working lane while a missed
-    # one costs a pass.
+    # A failed local child probe still permits pane classification and its
+    # status is noted once. A failed provider read is already unjudged and
+    # reported by the judge; the local ssh child cannot settle that failure.
     [[ -n "$hosted_item" || "$LANE_PROBE_RC" -le 1 ]] || note_probe_unusable "$lane"
     states+="$i"$'\t'"$state"$'\t'"$LANE_EXIT_SOURCE"$'\n'
     if [[ "$state" == gone ]]; then
@@ -3323,6 +3321,7 @@ check_lanes() {
   # reported what it found.
   [[ "$close_failed" -eq 0 ]] || exit 2
 }
+
 
 # One `lanes list` per pass, read by the account events below and the
 # heartbeat's roster alike, so those two never describe an account
