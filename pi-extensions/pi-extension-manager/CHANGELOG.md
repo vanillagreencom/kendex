@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 3.0.3
 
 - Built-in extension selectors (`builtin:<name>` and `-builtin:<name>`) no longer appear as extension-setting rows. Manage built-ins through `pi config`; configured extension paths remain listed.
 

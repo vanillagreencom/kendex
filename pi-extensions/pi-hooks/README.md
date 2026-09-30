@@ -22,6 +22,7 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 - Run configured custom hooks.
 - Report clippy errors after Rust edits.
 - Report installation drift through the native check's `kendex-drift` message in lead sessions, not delegated children. Registered `SessionStart` hook output (`kendex-hook`) remains unchanged.
+- In a lane, report installation-repair suggestions as item counts and send a worktree notice even when the install is current. The overseer refreshes the base checkout after merge. If lane detection fails, report the unknown status without drift details.
 - Wake an idle session the lane-mail hooks hand mail to.
 
 ## How it works

@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 2.0.9
 
 - Replacement tools preserve Pi's output schemas and structured results, so codemode scripts receive structured bash output on Pi 0.99.0 and later. Tools without an output schema still work on earlier Pi versions.
 - Malformed Git diff headers with unterminated quoted paths no longer freeze Pi while rendering tool output.

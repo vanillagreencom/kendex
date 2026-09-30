@@ -9,6 +9,7 @@
 ### 3.2.1
 
 - Session startup keeps fresh transcripts and saved full outputs when their working directory exists and its name ends in whitespace. Cleanup previously trimmed the name and could delete these files.
+- Tool-call previews read agent definitions from memory instead of reading files while Pi draws them. File checks update the cached definitions outside rendering, so previews use changed agent files after the next check.
 
 ### 3.2.0
 

@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 4.0.1
 
 - DuckDuckGo result titles and snippets preserve escaped entity text such as `&lt;` instead of decoding it twice.
 

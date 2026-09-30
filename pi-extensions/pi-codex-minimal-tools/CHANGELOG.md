@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 2.1.2
 
 - A completed Responses stream with an unfinished tool call ends with an error instead of handing the agent a runnable call with incomplete arguments.
 

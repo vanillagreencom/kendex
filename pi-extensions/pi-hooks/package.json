@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-hooks",
-  "version": "0.17.0",
+  "version": "0.17.1",
   "description": "The carrier that runs kendex's hooks under Pi: it dispatches the rendered kendex/hooks.json registry on every listener kendex maps a hook event onto, so a PreToolUse, PostToolUse, Stop, TaskCompleted or SessionStart hook fires, the bash guards kendex renders and a custom hook of your own alike, and it adds end-of-turn lint, a session-start kendex drift report, and a turn for an idle session when mail the lane-mail hooks hand it lands, an orch lane's included. Per-hook toggles via pi-extension-manager.",
   "license": "MIT",
   "keywords": [
@@ -51,7 +51,7 @@
         {
           "key": "blockRepoCopy",
           "label": "Block repo copy into scratch",
-          "description": "Run the rendered hooks/block-repo-copy.sh on every bash tool call. One regex over the raw command decides, in the order the words stand: a copy verb (`cp`, `rsync`, `tar`, `git clone`), a source word whose last path component IS `.git` or `target` — both edges are tested, so a `\u2026/bar.git` clone URL and a `build-target` directory are not it — and a destination under `/tmp`, `/var/tmp` or `$TMPDIR`. Temp roots are commonly RAM-backed tmpfs, where such a copy fills the filesystem and every process writing there fails with ENOSPC. All three parts are required, so an expensive tree copied elsewhere, an ordinary directory copied into scratch, and one file out of a build tree all pass. Nothing is resolved, expanded or stat-ed: a source reached through a variable, a repository named only by its working-tree path, and a `tar -czf DEST SRC` that spells its destination first are not seen, while a copy spelled inside a quoted string is refused as the copy it is not.",
+          "description": "Run the rendered hooks/block-repo-copy.sh on every bash tool call. One regex over the raw command decides, in the order the words stand: a copy verb (`cp`, `rsync`, `tar`, `git clone`), a source word whose last path component IS `.git` or `target` — both edges are tested, so a `…/bar.git` clone URL and a `build-target` directory are not it — and a destination under `/tmp`, `/var/tmp` or `$TMPDIR`. Temp roots are commonly RAM-backed tmpfs, where such a copy fills the filesystem and every process writing there fails with ENOSPC. All three parts are required, so an expensive tree copied elsewhere, an ordinary directory copied into scratch, and one file out of a build tree all pass. Nothing is resolved, expanded or stat-ed: a source reached through a variable, a repository named only by its working-tree path, and a `tar -czf DEST SRC` that spells its destination first are not seen, while a copy spelled inside a quoted string is refused as the copy it is not.",
           "type": "boolean",
           "default": true,
           "category": "Bash",
@@ -78,7 +78,7 @@
         {
           "key": "sessionDriftCheck",
           "label": "Session-start drift report",
-          "description": "On a fresh lead session start (startup, new or fork, not resume or reload), run the native `kendex check --quiet --report-only` in the background and hand the agent the drift report as a `kendex-drift` message: outdated items (`kendex refresh`), items removed upstream (`kendex remove <name>`), unreachable sources, and packages not yet evaluated against their sources (a background refresh settles them). Delegated children skip this native check and its `kendex-drift` message. Registered `SessionStart` hook output (`kendex-hook`) remains unchanged. Silent when the install is current; one line when no kendex binary is on PATH, and one line naming the reason if the check itself fails unexpectedly. Never blocks startup. Informational only: never installs or removes anything, never touches the project's git and writes no tracked file; kendex's own source caches under ~/.kendex/cache may be fetched at most once per TTL. Mirrors hooks/session-drift-check.sh.",
+          "description": "On a fresh lead session start (startup, new or fork, not resume or reload), run `kendex check --quiet --report-only` in the background and send its result as a `kendex-drift` message. Delegated children skip the native check. Outside lanes, a current install is silent. In a lane, send a worktree notice even for a current install and replace reports containing installation-repair suggestions with item counts. The overseer refreshes the base checkout after merge. If lane detection fails, withhold drift details and report the unknown status. Registered `SessionStart` hook output (`kendex-hook`) remains unchanged. Report a missing kendex binary or a failed check. Never blocks startup, installs or removes anything, or writes tracked files.",
           "type": "boolean",
           "default": true,
           "category": "Session",

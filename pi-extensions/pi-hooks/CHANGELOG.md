@@ -2,13 +2,14 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 0.17.1
 
 - `tests/pi-contract.test.ts` compares literal `pi.on` events and dotted `pi`/`ctx` accesses with the Pi compatibility audit inventory. Missing or extra entries for these uses fail the tests, so an omitted literal hook event cannot hide a blocking Pi update. Named package exports remain manual, as [DEVELOPMENT.md](DEVELOPMENT.md) documents.
+- The native session-start drift check sends its `kendex-drift` message only to the lead session. A child started by pi-agents-tmux no longer receives that message, which can pull it away from its delegated task. Registered `SessionStart` hook output (`kendex-hook`) remains unchanged.
+- In a lead session inside a lane, the native drift check sends a worktree notice even when the install is current. Reports that suggest installation repairs become item counts. If lane detection fails, the check withholds drift details and reports the unknown lane status. The overseer refreshes the base checkout after merge.
 
 ### 0.17.0
 
-- The native session-start drift check sends its `kendex-drift` message only to the lead session. A child started by pi-agents-tmux no longer receives that message, which can pull it away from its delegated task. Registered `SessionStart` hook output (`kendex-hook`) remains unchanged.
 - A `PostToolUse` payload now carries `context_window`, the context window of the session's model as Pi reports it, as the `Stop` payload does. orch's `lane-mail-check` judges the fleet overseer's context after each tool call against this window. With an older carrier, that judgement is skipped at the tool call, and the turn end still judges it.
 
 ### 0.16.0
