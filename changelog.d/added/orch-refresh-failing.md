@@ -1,1 +1,1 @@
-- Fleet watches report two consecutive consumer refresh failures with the latest run and cause, so overseers can notify the owner.
+- Fleet watches report consecutive consumer refresh failures with the latest run, cause and initial/repeat marker, so owners get a notice for each new incident without timed-repeat noise.

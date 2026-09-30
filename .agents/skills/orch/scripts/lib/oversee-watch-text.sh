@@ -185,10 +185,12 @@ The long pass's events, checked and reported in this order:
                              first-repository baseline row keeps it quiet,
                              and closing it clears the row.
                              ORCH_EXTERNAL_TRIAGE=off lists nothing
-  EVENT refresh-failing <repo> runs=2 last=<run-id> since=<time> cause=<line>
+  EVENT refresh-failing <repo> runs=2 last=<run-id> since=<time> report=initial|repeat cause=<line>
                              the last two completed kendex-refresh.yml runs
                              both failed. last= names the newer run and since=
-                             is the older run's createdAt. cause= is the last
+                             is the older run's createdAt. report=initial starts
+                             a new incident; report=repeat continues a standing
+                             incident, including a cause change. cause= is the last
                              refresh-error= or kendex-hook- diagnostic in the
                              newer run's failed-step log, without gh's prefix;
                              unread means the log could not be read or had no

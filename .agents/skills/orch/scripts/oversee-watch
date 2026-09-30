@@ -1512,7 +1512,7 @@ check_prepare() {
 # One completed-run list per repository proves the failure pair. A failed
 # read cannot clear a standing pair or end the other fleet checks.
 check_refresh() {
-  local repo runs pair last since log cause prior passes rc workflows
+  local repo runs pair last since log cause prior passes rc workflows report
   local rows="${PW_SEEN[0]}" errf="$WORK_DIR/refresh.err"
   for repo in "${REPOS[@]}"; do
     rc=0
@@ -1577,7 +1577,9 @@ check_refresh() {
       (( passes < MARK_REPEAT )) || passes=0
     fi
     if (( passes == 0 )); then
-      printf 'EVENT refresh-failing %s runs=2 last=%s since=%s cause=%s\n' "$repo" "$last" "$since" "$cause"
+      report=initial
+      [[ -z "$prior" ]] || report=repeat
+      printf 'EVENT refresh-failing %s runs=2 last=%s since=%s report=%s cause=%s\n' "$repo" "$last" "$since" "$report" "$cause"
       PASS_EVENT=1
     fi
     rows="$(lane_row_set refresh-failing "$rows" "$repo" "$passes|$cause")" \

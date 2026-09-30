@@ -6,7 +6,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
 
-EVENT='EVENT refresh-failing owner/repo runs=2 last=202 since=2026-09-30T07:00:00Z cause=refresh-error=read value=class'
+EVENT='EVENT refresh-failing owner/repo runs=2 last=202 since=2026-09-30T07:00:00Z report=initial cause=refresh-error=read value=class'
+REPEAT="${EVENT/report=initial/report=repeat}"
 
 new_case refresh_timeline
 printf 'Refresh\tRefresh consumer\t2026-09-30T08:00:00Z refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.202.txt"
@@ -17,7 +18,7 @@ for row in \
   'one-failure|failure|absent|1|1|' \
   "two-failures|failure|failure|2|0|$EVENT" \
   'unchanged-pair|failure|failure|1|1|' \
-  "mark-repeat|failure|failure|1|0|$EVENT" \
+  "mark-repeat|failure|failure|1|0|$REPEAT" \
   'newest-success|success|failure|1|1|' \
   'one-failure-after-success|failure|success|1|1|' \
   "new-pair-after-success|failure|failure|1|0|$EVENT" \
@@ -38,7 +39,7 @@ done
 printf '[{"databaseId":202,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
 printf 'Refresh\tRefresh consumer\t2026-09-30T08:00:00Z refresh-error=old\nRefresh\tRefresh consumer\t2026-09-30T08:00:01Z kendex-hook-commit-guards: failed | check=changelog\nother output\n' > "$STUB_DIR/refresh-log.202.txt"
 refresh_watch
-CHANGED='EVENT refresh-failing owner/repo runs=2 last=202 since=2026-09-30T07:00:00Z cause=kendex-hook-commit-guards: failed | check=changelog'
+CHANGED='EVENT refresh-failing owner/repo runs=2 last=202 since=2026-09-30T07:00:00Z report=repeat cause=kendex-hook-commit-guards: failed | check=changelog'
 assert_eq "rc=$REFRESH_RC events=$REFRESH_EVENTS" "rc=0 events=$CHANGED" "a changed cause is news before the repeat interval" "$STUB_DIR/err"
 refresh_watch
 assert_eq "rc=$REFRESH_RC events=$REFRESH_EVENTS" 'rc=0 events=' "a cause containing a pipe remains quiet on the next pass" "$STUB_DIR/err"
@@ -110,20 +111,25 @@ rm -- "$STUB_DIR/refresh.other_repo.err"
 refresh_watch --repo owner/repo --repo other/repo
 assert_eq "rc=$REFRESH_RC events=$REFRESH_EVENTS" 'rc=0 events=' "an unread list does not reset or advance a standing pair" "$STUB_DIR/err"
 refresh_watch --repo owner/repo --repo other/repo
-assert_eq "rc=$REFRESH_RC events=$REFRESH_EVENTS" "rc=0 events=${EVENT/owner\/repo/other\/repo}" "the standing pair repeats after two good long passes" "$STUB_DIR/err"
+assert_eq "rc=$REFRESH_RC events=$REFRESH_EVENTS" "rc=0 events=${REPEAT/owner\/repo/other\/repo}" "the standing pair repeats after two good long passes" "$STUB_DIR/err"
 
-# Must-fail control: requiring three runs from a two-run read makes the same
-# positive event assertion red. The private mutant still reads the real list.
-MUTANT_WATCH="$(mutant_scripts refresh-mutant/orch oversee-watch)/oversee-watch" || exit 1
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-mutant/github"
-mutate_file "$MUTANT_WATCH" 'if length == 2 and all(.[]; .conclusion == "failure") then' 'if length == 3 and all(.[]; .conclusion == "failure") then'
-new_case refresh_control
-printf '[{"databaseId":202,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
-printf 'refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.202.txt"
-WATCH_BIN="$MUTANT_WATCH" refresh_watch
-CONTROL_RC=0
-( assert_eq "$REFRESH_EVENTS" "$EVENT" 'positive event oracle'; [[ "$FAIL" -eq 0 ]] ) > "$STUB_DIR/control.out" || CONTROL_RC=$?
-assert_eq "watch=$REFRESH_RC oracle=$CONTROL_RC" 'watch=0 oracle=1' "control: the positive event assertion rejects an unreachable failure threshold" "$STUB_DIR/err"
+# Each private mutant still reads the real completed-run list. The positive
+# event oracle rejects an unreachable threshold or an initial event marked repeat.
+for mutation in \
+  'threshold|if length == 2 and all(.[]; .conclusion == "failure") then|if length == 3 and all(.[]; .conclusion == "failure") then' \
+  'initial-marker|      report=initial|      report=repeat'; do
+  IFS='|' read -r name old replacement <<<"$mutation"
+  MUTANT_WATCH="$(mutant_scripts "refresh-mutant-$name/orch" oversee-watch)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-mutant-$name/github"
+  mutate_file "$MUTANT_WATCH" "$old" "$replacement"
+  new_case "refresh_control_$name"
+  printf '[{"databaseId":202,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
+  printf 'refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.202.txt"
+  WATCH_BIN="$MUTANT_WATCH" refresh_watch
+  CONTROL_RC=0
+  ( assert_eq "$REFRESH_EVENTS" "$EVENT" 'positive event oracle'; [[ "$FAIL" -eq 0 ]] ) > "$STUB_DIR/control.out" || CONTROL_RC=$?
+  assert_eq "watch=$REFRESH_RC oracle=$CONTROL_RC" 'watch=0 oracle=1' "control: the positive event assertion rejects $name" "$STUB_DIR/err"
+done
 
 # A failed workflow list must not become a successful absence read.
 GUARD_WATCH="$(mutant_scripts refresh-guard/orch oversee-watch)/oversee-watch" || exit 1
