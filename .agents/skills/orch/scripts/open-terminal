@@ -305,15 +305,15 @@ fi
 #   tmux_wait_harness  two callers: the premise ahead of the account read,
 #                      so whatever lane_account_ok reaches, and the
 #                      harness-screen wait of a resume-or-fresh relaunch, a
-#                      hosted claude relaunch with no --cmd
+#                      hosted claude, codex or pi relaunch with no --cmd
 #   lane_account_ok    a local claude, codex or copilot lane with a --lane and
 #                      no --cmd
 # The account read and its premise are not reachable on a hosted lane: LANE_FORM
 # stays `unchecked` outside the local branch, which is what
-# lane_account_readable answers on, so a hosted codex lane and a hosted --cmd
-# lane read this setting nowhere. A hosted claude lane with no --cmd reads it
-# on one of the other two: the brief waits where the launch carries a brief,
-# the resume-or-fresh wait where it does not. The session-file term of the
+# lane_account_readable answers on. A hosted --cmd lane reads this setting
+# nowhere. A hosted claude lane reads it for its brief or resume-or-fresh wait;
+# a hosted codex or pi relaunch reads it for the resume-or-fresh wait.
+# The session-file term of the
 # brief's condition is never filled on a hosted lane: its sessions are on its
 # host and this machine's session store is not scanned.
 #
@@ -337,6 +337,9 @@ if [[ "$TERMINAL_MODE" == "tmux" && "$WAKE" != true ]]; then
   if [[ "$LANE_HOST" != local ]]; then
     SSH_PROMPT_IS_READ=true
     [[ -n "$CMD_TEMPLATE" || "$HARNESS" != claude ]] || TIMEOUT_IS_READ=true
+    if [[ -z "$CMD_TEMPLATE" && "$RELAUNCH" == true ]]; then
+      case "$HARNESS" in codex | pi) TIMEOUT_IS_READ=true ;; esac
+    fi
   elif [[ -z "$CMD_TEMPLATE" ]]; then
     case "$HARNESS" in
       claude) TIMEOUT_IS_READ=true ;;
@@ -1492,20 +1495,10 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
   # takes it as the value of `-i`, and its session id attached to `--resume`,
   # whose value is optional, so a bare id can never be read as a prompt.
   #
-  # The hosted codex arm cannot take one. `codex resume` declares its prompt as
-  # conflicting with --last, so the two never appear together: `codex resume
-  # --last a b` exits 2 with "the argument '--last' cannot be used with
-  # '[PROMPT]'", and `codex resume --last a` parses with a as the SESSION_ID.
-  # Rendering the line there would hand codex a sentence as a session name.
-  # Filling PROMPT needs a real session id in front of it, which the local arm
-  # below has from the transcript it matched and a hosted lane does not: its
-  # sessions live on the remote host and no local store lists them. Resolving
-  # one inside the rendered remote command would be a second implementation of
-  # the selection find_relaunch_session owns, written as a shell string that
-  # crosses the quoting layers the codex arms above exist to survive. So the
-  # hosted codex resume is promptless. The launch loop reports that as
-  # resume-lineless, and the line reaches the lane the way a walled lane's
-  # nudge does: pasted into the pane the hosted launch typed its ssh into.
+  # The hosted Codex resume stays promptless under D002's foreground handoff.
+  # The launch loop reports resume-lineless so the caller pastes its continuation
+  # into the pane. Its session id comes from the same lookup on the host, not
+  # from the local session store.
   #
   # A relaunch_route verdict of fresh skips this block for the start brief
   # below. The claude arm is resume-or-fresh: where claude answers "No
@@ -1518,8 +1511,18 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
       local fresh
       fresh="$(RELAUNCH_ROUTE=fresh start_cmd "$item" "$mail_id" "$repo")" || return 1
       printf 'claude %s--continue%s || [ $? -ne 1 ] || exec %s\n' "$flags" "$line" "$fresh"; return ;;
-      codex) printf 'codex %sresume --last\n' "$flags"; return ;;
-      pi) printf 'pi %s-c%s\n' "$flags" "$line"; return ;; esac
+      codex | pi)
+        local fresh resume selection quoted
+        fresh="$(RELAUNCH_ROUTE=fresh start_cmd "$item" "$mail_id" "$repo")" || return 1
+        case "$HARNESS" in
+          codex) resume="codex ${flags}resume \"\$session\"" ;;
+          pi) resume="pi ${flags}--session \"\$session\"$line" ;;
+        esac
+        selection="$(printf 'session=$(bash .agents/skills/orch/scripts/lib/lane-relaunch.sh %q %q %q %q); rc=$?; case "$rc" in 0) exec %s ;; 1) exec %s ;; *) exit "$rc" ;; esac' \
+          "$HARNESS" "$item" "$TRACKER" "$LAUNCH_FLAGS" "$resume" "$fresh")" || return 1
+        quoted="$(lane_single_quote "$selection")" || return 1
+        printf 'bash -c %s\n' "$quoted"
+        return ;; esac
   fi
   if [[ -n "$session_id" ]]; then
     case "$HARNESS" in claude) printf 'claude -n %q %s--resume %q%s%s\n' "$item" "$flags" "$session_id" "$print" "$line" ;;
@@ -2500,10 +2503,9 @@ host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
 # open_tmux, which checks it took:
 #   resume           the native resume; a local relaunch looks its session up
 #   fresh            the start brief, the session being none to resume
-#   resume-or-fresh  a hosted claude relaunch: `--continue`, and the start
-#                    brief in the same call where claude finds no session.
-#                    Its sandbox's sessions are on the host, which no scan
-#                    from here reaches.
+#   resume-or-fresh  a hosted relaunch: resume where the host holds a session,
+#                    otherwise the start brief in the same call. Claude's
+#                    exit selects it; Codex and Pi ask lane-relaunch on the host.
 #
 # fresh has two causes. The fleet record names another harness as the last one
 # to run the lane: no session this harness holds carries that work, so the
@@ -2523,7 +2525,7 @@ host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
 # reach stderr.
 #
 # Sets RESUME_LINELESS too: a hosted codex relaunch that resumes carries no
-# continuation line (`codex resume` refuses a prompt beside --last), which
+# continuation line, preserving D002's foreground handoff. This is what
 # resume-lineless tells the caller, and which keeps that relaunch off the
 # background hand-off whose output is a log. The launch loop resets both per
 # item.
@@ -2541,7 +2543,8 @@ relaunch_route() { # ITEM STATE_ID WORKTREE
   if [[ "$HOST_RELAUNCH" == true ]]; then
     case "$HARNESS" in
       claude) RELAUNCH_ROUTE=resume-or-fresh ;;
-      codex) RESUME_LINELESS=true ;;
+      codex) RELAUNCH_ROUTE=resume-or-fresh; RESUME_LINELESS=true ;;
+      pi) RELAUNCH_ROUTE=resume-or-fresh ;;
     esac
     return 0
   fi
@@ -2632,9 +2635,14 @@ launch_finish() {
   # records the config dir.
   if [[ "$LANE_HOST" != local ]]; then
     if [[ "$HARNESS" == codex ]]; then
-      local compaction_env compaction_verified=true
+      local compaction_env compaction_verified=true compaction_cmd="$cmd"
       [[ -z "$CMD_TEMPLATE" ]] || compaction_verified=false
-      compaction_env=$(lane_launch_compaction_env "$cmd" "$HARNESS" "$compaction_verified") || return 1
+      # Both selection arms use the same flags. The fresh form exposes those
+      # verified Codex arguments to the compaction reader without shell code.
+      if [[ "$RELAUNCH_ROUTE" == resume-or-fresh ]]; then
+        compaction_cmd="$(RELAUNCH_ROUTE=fresh start_cmd "$item" "$wt_id" "$repo")" || return 1
+      fi
+      compaction_env=$(lane_launch_compaction_env "$compaction_cmd" "$HARNESS" "$compaction_verified") || return 1
       cmd="env $compaction_env $cmd"
     fi
     # The Copilot launch policy rides in the command, as codex's compaction

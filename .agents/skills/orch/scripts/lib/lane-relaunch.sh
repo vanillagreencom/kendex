@@ -1,14 +1,15 @@
 # shellcheck shell=bash
 #
-# Owner: open-terminal, the one script that sources this file.
+# Owner: open-terminal, which sources this file locally and runs it on a host.
 #
 # The relaunch session lookup: which harness transcript a --relaunch or --wake
 # resumes, and the id the harness resumes it by. It reads open-terminal's
 # globals (TRACKER, LANE_ENV, LAUNCH_FLAGS, LANES_CLI) and calls its
-# launch_ambient_codex_home and copilot_launch_home, so it is loaded by that
-# script alone.
+# launch_ambient_codex_home and copilot_launch_home on the local path.
 #
-# Sourced, never run.
+# Hosted entry point: bash lane-relaunch.sh HARNESS ITEM TRACKER LAUNCH_FLAGS.
+# open-terminal's rendered command consumes stdout as the resume id. Exit 1
+# means no session; exit 2 means lookup failed, never permission to start fresh.
 
 # Pi resolves a relative session directory from the process working directory,
 # which is the item worktree for the command this launcher emits.
@@ -74,7 +75,7 @@ pi_relaunch_root() { # WORKTREE HOME
 # in `-p` and at a pane alike (1.0.88, the log naming "Cannot create session
 # from empty events array"). An older resumable record in the same worktree is
 # resumed in its place.
-find_relaunch_session() { # HARNESS ITEM WORKTREE
+find_relaunch_session() { # HARNESS ITEM WORKTREE [HOST_CODEX_HOME]
   local harness="$1" item="$2" cwd="$3" home="${LANES_HOME:-$HOME}" config roots root inventory id_match match_filter="" files file best="" best_root="" rc relative target
   command -v jq >/dev/null 2>&1 || return 2
   # Whether a kickoff record names the item, for every harness: one expression,
@@ -91,7 +92,11 @@ find_relaunch_session() { # HARNESS ITEM WORKTREE
   case "$harness" in
     claude) roots="$home/.claude-shared/projects"; match_filter='[inputs|fromjson?|select(.type=="user")|.message.content]'"$id_match" ;;
     codex)
-      config="$(launch_ambient_codex_home)"; [[ "${LANE_ENV%%=*}" != CODEX_HOME ]] || config="${LANE_ENV#*=}"
+      if [[ -n "${4:-}" ]]; then config="$4"
+      else
+        config="$(launch_ambient_codex_home)" || return 2
+        [[ "${LANE_ENV%%=*}" != CODEX_HOME ]] || config="${LANE_ENV#*=}"
+      fi
       [[ -x "$LANES_CLI" ]] || return 2
       inventory="$("$LANES_CLI" list --local --harness codex --json)" || return 2
       roots="$(jq -er --arg d "$config" 'if type=="array" and all(.[]; (.config_dir|type)=="string") then ([.[]|.config_dir]+[$d]|unique[]|.+"/sessions") else error("inventory") end' <<<"$inventory")" || return 2
@@ -145,3 +150,20 @@ session_id_of() { # HARNESS SESSION_FILE
   [[ -n "$id" ]] || return 1
   printf '%s\n' "$id"
 }
+
+# Codex and Pi silently start fresh when their native continue finds no session.
+# The hosted command must ask the same lookup as the local launcher before it
+# chooses a prompt. It runs in the worktree, with the host's account environment.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  set -euo pipefail
+  TRACKER="$3" LAUNCH_FLAGS="$4" LANE_ENV=""
+  LANES_CLI="$(cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)/lanes" || exit 2
+  session_file="" lookup_rc=0
+  session_file="$(find_relaunch_session "$1" "$2" "$PWD" "${CODEX_HOME:-$HOME/.codex}")" || lookup_rc=$?
+  case "$lookup_rc" in
+    0) session_id_of "$1" "$session_file" && exit 0 ;;
+    1) exit 1 ;;
+  esac
+  printf 'lane-relaunch: session-scan-failed item=%s harness=%s\n' "$2" "$1" >&2
+  exit 2
+fi

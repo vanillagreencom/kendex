@@ -187,3 +187,52 @@ exit 0
 STUBEOF
 chmod +x "$1/worktree" "$1/gh" "$1/tmux" "$1/ghostty"
 }
+
+# Execute the hosted command in a disposable worktree with the real session
+# lookup and a harness that records argv. KIND describes the session store;
+# STATUS is the exit of a resumed or fresh harness, never the lookup's exit.
+ot_replay_relaunch() { # LINE SCRIPTS RUN HARNESS KIND STATUS
+  local line="$1" scripts="$2" run="$3" harness="$4" kind="$5" status="$6"
+  local sandbox="$run/sandbox" home="$run/host-home" root kickoff=CC-1 rc=0
+  mkdir -p "$sandbox/.agents/skills/orch" "$home" "$run/harness-bin" || return 1
+  ln -s "$scripts" "$sandbox/.agents/skills/orch/scripts" || return 1
+  orch_fixture_shared_libs "$sandbox/.agents/skills/orch"
+  case "$harness" in
+    codex) root="$home/codex account/sessions" ;;
+    pi) root="$home/pi agent/sessions" ;;
+  esac
+  [[ "$kind" != foreign ]] || kickoff=CC-2
+  case "$kind" in
+    matching | foreign)
+      mkdir -p "$root" || return 1
+      if [[ "$harness" == codex ]]; then
+        printf '%s\n' '{"type":"session_meta","payload":{"id":"11111111-1111-4111-8111-111111111111"}}' \
+          "{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"start $kickoff\"}}" > "$root/session.jsonl"
+      else
+        printf '%s\n' '{"type":"session","id":"11111111-1111-4111-8111-111111111111"}' \
+          "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":\"start $kickoff\"}}" > "$root/session.jsonl"
+      fi ;;
+    empty) mkdir -p "$root"; : > "$root/session.jsonl" ;;
+    scan-failed) mkdir -p "${root%/*}"; : > "$root" ;;
+    none) ;;
+  esac
+  cat > "$run/harness-bin/$harness" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$HARNESS_LOG"
+exit "$HARNESS_RC"
+EOF
+  chmod +x "$run/harness-bin/$harness" || return 1
+  : > "$run/harness.log"
+  line="${line/#exec bash -lc /bash -c }"
+  line="${line/cd \/srv\/lane /cd $sandbox }"
+  env -i PATH="$run/harness-bin:$PATH" HOME="$home" CODEX_HOME="$home/codex account" \
+    PI_CODING_AGENT_DIR="$home/pi agent" HARNESS_LOG="$run/harness.log" HARNESS_RC="$status" \
+    bash -c "$line" 2> "$run/replay.err" || rc=$?
+  awk -v rc="$rc" -v pi="$root/session.jsonl" '
+    / resume / { resume++; if (index($0, "resume 11111111-1111-4111-8111-111111111111")) target++; next }
+    / --session / { resume++; if (index($0, "--session " pi)) target++; next }
+    /Read .agents\/skills\/orch\/SKILL.md and execute the orch start workflow for CC-1/ { fresh++; next }
+    /\/skill:orch start CC-1/ { fresh++ }
+    END { printf "rc=%d runs=%d resume=%d fresh=%d target=%d\n", rc, NR, resume, fresh, target }
+  ' "$run/harness.log"
+}

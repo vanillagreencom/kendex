@@ -13,12 +13,13 @@
 #
 # tmux, worktree and gh are the shared open-terminal stubs, and the host is the
 # lane-host fixture. The rendered remote command is also run for real, against
-# a stub claude, which is what shows the start brief runs in the same call.
+# stub harnesses, which show that the start brief runs in the same call.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 export ORCH_LANE_HOST=local ORCH_OVERSEER_LANES=1000
 unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANE_COPILOT_POOL ORCH_LANES_USAGE_TTL CODEX_HOME
 unset ORCH_LANES_CLAUDE_CLIENT_ID ORCH_LANES_TOKEN_CMD ORCH_LANES_CLAUDE_TOKEN_URL
+unset PI_CODING_AGENT_DIR PI_CODING_AGENT_SESSION_DIR
 # shellcheck source=lib/shared-skill-libs.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -72,12 +73,25 @@ RUN_SEQ=0
 # OUT, RC and RUN.
 RUN_ENV=() SEED_LANES='[]'
 run_ot() {
-  local recorded="$1" screen="$2" harness="$3" flags='--model opus --effort high' prev="${RUN:-}"
+  local recorded="$1" screen="$2" harness="$3" flags='--model opus --effort high' prev="${RUN:-}" lane=work pool=""
   [[ "$harness" != codex ]] || flags='-m gpt-6-astra -c model_reasoning_effort=high'
+  if [[ "$harness" == pi ]]; then
+    flags='--model github-copilot/claude-sonnet-5 --thinking high'
+    lane=auto pool="$TMP_ROOT/pi-pool=1/10"
+    mkdir -p "$TMP_ROOT/pi-pool"
+  fi
   [[ "$screen" != - ]] || screen=""
   RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
   mkdir -p "$RUN/remote/srv/lane"
   printf 'gitdir: /srv/clone/.git/worktrees/lane\n' > "$RUN/remote/srv/lane/.git"
+  local create_line=$'ssh-target=lane.example\tpath=/srv/lane\tremote-prefix=exec bash -lc'
+  if [[ "$harness" == pi ]]; then
+    create_line+=$'\tpi-root=/srv/pi'
+    mkdir -p "$RUN/remote/srv/pi/packages/@vanillagreen/pi-hooks/extensions"
+    printf '{"compaction":{"enabled":false}}\n' > "$RUN/remote/srv/pi/settings.json"
+    printf '{"pi":{"extensions":["./extensions/hooks.ts","./extensions/lane-mail-wake.ts"]}}\n' > "$RUN/remote/srv/pi/packages/@vanillagreen/pi-hooks/package.json"
+    printf 'export const f = { context_window: 1 };\n' > "$RUN/remote/srv/pi/packages/@vanillagreen/pi-hooks/extensions/vocab.ts"
+  fi
   if [[ "$recorded" == - ]]; then
     cp -R "$prev/state" "$RUN/state" || { echo "open-terminal-relaunch-route: seed-failed run=$RUN" >&2; exit 1; }
   elif ! mkdir -p "$RUN/state" || ! "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" init oversee >/dev/null \
@@ -86,14 +100,15 @@ run_ot() {
     echo "open-terminal-relaunch-route: seed-failed run=$RUN" >&2
     exit 1
   fi
-  OUT="$(env LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_MAX_PCT=95 ORCH_LANE_ALIASES=eclaude=work \
-    GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' LANE_HOST_STUB_DIR="$RUN/remote" LANE_HOST_STUB_LOG="$RUN/host.log" \
+  OUT="$(env LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_MAX_PCT=95 ORCH_LANE_ALIASES=eclaude=work ORCH_LANE_COPILOT_POOL="$pool" \
+    GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' LANE_HOST_STUB_DIR="$RUN/remote" LANE_HOST_STUB_LOG="$RUN/host.log" LANE_HOST_STUB_CREATE_LINE="$create_line" \
     ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SSH_PROMPT_SECS=1 OT_HARNESS_SCREEN="$screen" ${RUN_ENV[@]+"${RUN_ENV[@]}"} \
     TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" \
     OT_WT_LOG="$RUN/worktree.log" OVERSEE_WATCH_STATE_DIR="$RUN/state" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
     "$OPEN_TERMINAL" --state-dir "$RUN/state" --host "$HOST_STUB" --repo o/r --relaunch \
-    --harness "$harness" --lane work --launch-flags "$flags" CC-1 2>&1)"
+    --harness "$harness" --lane "$lane" --launch-flags "$flags" CC-1 2>&1)"
   RC=$?
+  printf '%s\n' "$OUT" > "$RUN/launcher.out"
 }
 # The remote command the run typed into its ssh session.
 remote() { grep -m1 '^exec bash -lc ' "$RUN/tmux.log" || echo none; }
@@ -157,6 +172,35 @@ run_ot claude - claude
 assert_eq "rc=$RC launched=$(launched) missing=$(said '^open-terminal: harness-screen-missing item=CC-1 seconds=2') closed=$(closed) status=$(status)" \
   "rc=1 launched=0 missing=1 closed=1 status=stopped" \
   "a hosted relaunch whose pane shows no harness is harness-screen-missing, not launched, its window closed and its record stopped"
+
+echo "=== hosted Codex and Pi select a session or the start brief on the host ==="
+# Native Codex resume --last and Pi -c silently start fresh on an empty store.
+# Each row executes the command start_cmd rendered, with the real host lookup.
+for harness in codex pi; do
+  run_ot "$harness" "$HARNESS_SCREEN" "$harness"
+  assert_eq "rc=$RC launched=$(launched)" 'rc=0 launched=1' "$harness reaches the harness-screen check" "$RUN/launcher.out"
+  for row in 'none|0|rc=0 runs=1 resume=0 fresh=1 target=0' \
+    'foreign|0|rc=0 runs=1 resume=0 fresh=1 target=0' \
+    'empty|0|rc=0 runs=1 resume=0 fresh=1 target=0' \
+    'matching|0|rc=0 runs=1 resume=1 fresh=0 target=1' \
+    'matching|1|rc=1 runs=1 resume=1 fresh=0 target=1' \
+    'matching|143|rc=143 runs=1 resume=1 fresh=0 target=1' \
+    'scan-failed|0|rc=2 runs=0 resume=0 fresh=0 target=0'; do
+    kind="${row%%|*}" rest="${row#*|}" exit_status="${rest%%|*}" expected="${rest#*|}"
+    replay_run="$RUN/replay-$kind-$exit_status"
+    assert_eq "$(ot_replay_relaunch "$(remote)" "${OPEN_TERMINAL%/*}" "$replay_run" "$harness" "$kind" "$exit_status")" \
+      "$expected" "$harness $kind exit=$exit_status selects the host session or start brief" "$replay_run/replay.err"
+  done
+  run_ot "$harness" - "$harness"
+  assert_eq "rc=$RC launched=$(launched) missing=$(said '^open-terminal: harness-screen-missing item=CC-1 seconds=2') closed=$(closed) status=$(status)" \
+    'rc=1 launched=0 missing=1 closed=1 status=stopped' \
+    "$harness at a shell is not launched and its lane stops"
+  RUN_ENV=(ORCH_TMUX_VERIFY_SECS=abc)
+  run_ot "$harness" "$HARNESS_SCREEN" "$harness"
+  RUN_ENV=()
+  assert_eq "rc=$RC invalid=$(said '^open-terminal: verify-seconds-invalid setting=ORCH_TMUX_VERIFY_SECS value=abc')" \
+    'rc=1 invalid=1' "$harness relaunch refuses an invalid screen-wait bound"
+done
 # A pane this machine cannot read is the local tmux failure it is, never a
 # harness that showed no screen. The first capture is the ssh prompt wait's.
 CAPTURE_FAILS=(OT_TMUX_FAIL_NTH=capture-pane:2)
@@ -195,7 +239,7 @@ assert_eq "rc=$RC launched=$(launched) stuck=$(said '^open-terminal: composer-st
 # That claude never ran, so the record still names codex, and a codex
 # relaunch on the same state resumes codex's session.
 run_ot - "$HARNESS_SCREEN" codex
-assert_eq "switched=$(said 'harness-switched') resume=$(remote | grep -c 'resume --last')" "switched=0 resume=1" \
+assert_eq "switched=$(said 'harness-switched') resume=$(remote | grep -c 'lane-relaunch.sh codex')" "switched=0 resume=1" \
   "a codex relaunch after a failed claude relaunch over a codex record resumes codex"
 # The same failure on a host still preparing: the background job's preparing
 # and stopped records both still name codex.
@@ -212,10 +256,12 @@ assert_eq "switched=$(said '^open-terminal: harness-switched item=CC-1 harness=c
 echo "=== controls ==="
 # One mutant per rule. Each keeps the text it edits and removes the behaviour.
 SHIPPED="$OPEN_TERMINAL"
-control() { # NAME OLD NEW
-  OPEN_TERMINAL="$(mutant_scripts "ctl-$1/orch" open-terminal)/open-terminal" || exit 1
+control() { # NAME OLD NEW [FILE]
+  local file="${4:-open-terminal}" scripts
+  scripts="$(mutant_scripts "ctl-$1/orch" "$file")" || exit 1
+  OPEN_TERMINAL="$scripts/open-terminal"
   orch_fixture_shared_libs "$TMP_ROOT/ctl-$1/orch"
-  mutate_file "$OPEN_TERMINAL" "$2" "$3"
+  mutate_file "$scripts/$file" "$2" "$3"
 }
 control switch '"$LANE_RECORD_VALUE" != "$HARNESS" ]]' '"$LANE_RECORD_VALUE" == "$HARNESS-never" ]]'
 run_ot codex "$HARNESS_SCREEN" claude
@@ -227,10 +273,45 @@ assert_eq "$(replay 1)" "continue" "control: without the fallback a --continue t
 control status '|| [ $? -ne 1 ] || exec' '|| exec'
 run_ot claude "$HARNESS_SCREEN" claude
 assert_eq "$(replay 143)" "continue,fresh" "control: without the status gate a lane stopped by a signal starts afresh"
-control screen 'if [[ "$RELAUNCH_ROUTE" == resume-or-fresh ]]; then' 'if [[ "$RELAUNCH_ROUTE" == never ]]; then'
-run_ot claude - claude
-assert_eq "rc=$RC launched=$(launched)" "rc=0 launched=1" \
-  "control: without the harness-screen check a pane at a shell reports launched=1"
+control screen 'tmux_wait_harness "$pane" "$harness_secs" || harness_rc=$?' 'true || harness_rc=$?'
+for harness in claude codex pi; do
+  run_ot "$harness" - "$harness"
+  assert_eq "rc=$RC launched=$(launched)" "rc=0 launched=1" \
+    "control: without the harness-screen check $harness at a shell reports launched=1"
+done
+control screen-bound 'case "$HARNESS" in codex | pi) TIMEOUT_IS_READ=true ;; esac' ': '
+for harness in codex pi; do
+  RUN_ENV=(ORCH_TMUX_VERIFY_SECS=abc)
+  run_ot "$harness" "$HARNESS_SCREEN" "$harness"
+  RUN_ENV=()
+  assert_eq "rc=$RC launched=$(launched) invalid=$(said 'verify-seconds-invalid')" \
+    'rc=0 launched=1 invalid=0' "control: without the bound reader $harness relaunch ignores invalid input"
+done
+for harness in codex pi; do
+  if [[ "$harness" == codex ]]; then native="      codex) printf 'codex %sresume --last\\n' \"\$flags\"; return ;;"
+  else native="      pi) printf 'pi %s-c%s\\n' \"\$flags\" \"\$line\"; return ;;"; fi
+  control "$harness-lookup" '      codex | pi)' "$native"$'\n''      pi | codex)'
+  run_ot "$harness" "$HARNESS_SCREEN" "$harness"
+  if [[ "$harness" == codex ]]; then expected='rc=0 runs=1 resume=1 fresh=0 target=0'
+  else expected='rc=0 runs=1 resume=0 fresh=0 target=0'; fi
+  assert_eq "$(ot_replay_relaunch "$(remote)" "${OPEN_TERMINAL%/*}" "$RUN" "$harness" none 0)" \
+    "$expected" \
+    "control: native $harness continue on an empty host loses the start brief" "$RUN/replay.err"
+done
+control lookup-empty '    1) exit 1 ;;' '    1) exit 0 ;;' lib/lane-relaunch.sh
+for harness in codex pi; do
+  run_ot "$harness" "$HARNESS_SCREEN" "$harness"
+  assert_eq "$(ot_replay_relaunch "$(remote)" "${OPEN_TERMINAL%/*}" "$RUN" "$harness" none 0)" \
+    'rc=0 runs=1 resume=1 fresh=0 target=0' \
+    "control: a lookup that passes absence resumes $harness with an empty id" "$RUN/replay.err"
+done
+control lookup-failure '  exit 2' '  exit 1' lib/lane-relaunch.sh
+for harness in codex pi; do
+  run_ot "$harness" "$HARNESS_SCREEN" "$harness"
+  assert_eq "$(ot_replay_relaunch "$(remote)" "${OPEN_TERMINAL%/*}" "$RUN" "$harness" scan-failed 0)" \
+    'rc=0 runs=1 resume=0 fresh=1 target=0' \
+    "control: a lookup that hides its failure starts $harness fresh" "$RUN/replay.err"
+done
 control brief '"$RELAUNCH_ROUTE" != resume-or-fresh ]]; then' '"$HOST_RELAUNCH" == false ]]; then'
 run_ot codex - claude
 assert_eq "rc=$RC launched=$(launched)" "rc=0 launched=1" \
