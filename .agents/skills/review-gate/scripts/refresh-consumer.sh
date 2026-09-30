@@ -49,7 +49,10 @@ if [ -n "$old" ]; then
 fi
 git checkout -B kendex/refresh "$base"
 kendex refresh --scope project --yes --leave
-"$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$ROOT/.agents/skills/review-gate/templates"
+TMP="$(mktemp -d)"
+trap 'rm -rf -- "${TMP:?}"' EXIT
+"$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$ROOT/.agents/skills/review-gate/templates" --workflow-edit-report "$TMP/workflow-edits"
+workflow_edits="$(cat "$TMP/workflow-edits")"
 kendex verify --scope project
 git add -A
 if git diff --cached --quiet; then
@@ -103,6 +106,9 @@ else
   fi
 fi
 printf -v body 'Generated kendex updates.\n\nChange class: `%s`.\n\nClassifier:\n```text\n%s\n```\n\n%s\n' "$class" "$class_line" "$merge_note"
+if [ -n "$workflow_edits" ]; then
+  printf -v body '%s\n%s\n' "$body" "$workflow_edits"
+fi
 if [ "$state" = pushed ]; then
   git push "--force-with-lease=refs/heads/kendex/refresh:$old" origin HEAD:refs/heads/kendex/refresh
 fi

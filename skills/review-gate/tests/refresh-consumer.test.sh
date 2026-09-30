@@ -79,7 +79,7 @@ fi
 printf 'class: class=%s measured=%s %s\n' "$TEST_CLASS" "$TEST_MEASURED" "$TEST_REASON" >&2
 printf 'change_class=%s\n' "$TEST_CLASS"
 SH
-printf '#!/usr/bin/env bash\nset -euo pipefail\n' >"$repo/.agents/skills/review-gate/scripts/adopt-refresh.sh"
+printf '#!/usr/bin/env bash\nset -euo pipefail\n: >"$4"\n' >"$repo/.agents/skills/review-gate/scripts/adopt-refresh.sh"
 chmod +x "$repo/.agents/skills/harness-ci/scripts/change-class"
 chmod +x "$repo/.agents/skills/review-gate/scripts/adopt-refresh.sh"
 printf 'current\n' >"$repo/rendered.txt"
@@ -254,6 +254,29 @@ for entry in entries:
 INVENTORY
 then ok 'trusted adoption reads fresh templates and records a renamed writer without executing refreshed code'
 else bad 'trusted adoption boundary and fresh data' "$OUT"; fi
+# A hand edit committed on the default branch must reach the rolling body's
+# own section, even when adoption produces the same rolling tree as before.
+reset_default
+cp "$repo/.agents/skills/review-gate/templates/kendex-refresh.yml" "$repo/.github/workflows/kendex-refresh.yml"
+file_edit "$repo" .github/workflows/kendex-refresh.yml 1 '^name: ' 's/^name: .*/name: consumer edit/'
+commit "$repo"
+git -C "$repo" push -q origin main
+run_refresh refreshed pass render
+if workflow_edit_matches "$TMP/state/body" '.github/workflows/kendex-refresh.yml:8' &&
+    grep -qxF 'refresh-state=unchanged pr=1 class=render' <<<"$OUT" &&
+    cmp -s "$repo/.github/workflows/kendex-refresh.yml" "$TMP/fresh-templates/kendex-refresh.yml"; then
+  ok 'hand-edit adoption warns once and updates the unchanged rolling pull request body with its first divergence'
+else bad 'workflow edit body publication' "$OUT"; fi
+cp "$runner" "$TMP/body-runner"
+file_edit "$TMP/trusted" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 '^if \[ -n "\$workflow_edits" \]; then$' \
+  's/^if \[ -n "\$workflow_edits" \]; then$/if false; then # if [ -n "$workflow_edits" ]; then/'
+reset_default
+run_refresh refreshed pass render
+if [ "$RC" -eq 0 ] && grep -q '^refresh-warning=workflow-edited value=' <<<"$OUT" &&
+    ! workflow_edit_matches "$TMP/state/body" '.github/workflows/kendex-refresh.yml:8'; then
+  ok 'control: skipped body section breaks the workflow edit publication assertion'
+else bad 'workflow edit body control' "$OUT"; fi
+cp "$TMP/body-runner" "$runner"
 # Restoring execution from the refreshed checkout must reach the hostile
 # script before verification, even when that script retains the expected name.
 python3 - "$runner" <<'TRUST_CONTROL'

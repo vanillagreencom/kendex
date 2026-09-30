@@ -99,7 +99,17 @@ git add .github/workflows/kendex-refresh.yml .kendex-generated.json
 
 A repository that posts no gate status adopts the refresh workflow with no writer. It sets `REVIEW_GATE_WRITER = "optional"` and `REVIEW_GATE_MODE = "off"` in its committed `kendex.settings.toml`, where both keys are read from, copies no writer, and runs `adopt-refresh.sh` and `kendex verify` as above. Adoption then records only the refresh copy and retires any earlier writer record. Either setting alone still refuses a missing writer, a workflow that names `review-writer.sh` outside a comment still fails, and a writer that is present is still checked and updated. The class policy still applies: a change it resolves to `bot` still needs review evidence, which no status reports without a writer. `REVIEW_GATE_MODE = "off"` also skips orch's review wait, except where the class policy resolves a change to `bot` and `PR_REVIEW_GATE` then decides ([orch gates](../../orch/references/gates.md)).
 
-Commit the workflow copies and inventory with the installed skill. Adoption records each byte-identical copy's template path and SHA-256 hash. `kendex refresh` updates the template and its expected hash. Adoption then updates an unedited copy. Verification and the shared change classifier compare the copy with the declared package template. Verification rejects a registered copy that differs from its template. A writer with local path or trigger changes is not an exact copy and is not registered as a render by this command.
+Refresh workflow reconciliation in `scripts/adopt-refresh.sh` uses exact bytes, independently of the adoption record:
+
+| Existing `.github/workflows/kendex-refresh.yml` | Refresh result |
+|---|---|
+| Absent, or equal to the current template, the preserved consumer's vendored template, or a template in checkout history | Write the current template and its adoption record without a warning. A missing or stale record does not count as a hand edit. |
+| Equal to no shipped template | Write the current template and its adoption record. Print one `refresh-warning=workflow-edited value=.github/workflows/kendex-refresh.yml` line without failing adoption. The rolling pull request's Workflow edits section names the path and first divergent line. |
+| Symlink | Stop with `refresh-error=workflow-symlink`. Leave its target unchanged. |
+
+`--workflow-edit-report FILE` writes the Workflow edits section for `scripts/refresh-consumer.sh`, or an empty file when no hand edit exists. The section is separate from other refresh reports. `tests/adopt-refresh.test.sh` checks reconciliation and the symlink stop. `tests/refresh-consumer.test.sh` checks publication of the edit report, including an unchanged rolling tree.
+
+Commit the workflow copies and inventory with the installed skill. Adoption records each byte-identical copy's template path and SHA-256 hash. `kendex refresh` updates the template and its expected hash. Adoption then rewrites the refresh copy and records it. Verification and the shared change classifier compare the copy with the declared package template. Verification rejects a registered copy that differs from its template. A writer with local path or trigger changes is not an exact copy and is not registered as a render by this command.
 
 Schedule and manual refresh work in a consumer with the app installation and environment above. Instant refresh also needs organization dispatch wiring. The catalog's `.github/workflows/kendex-dispatch.yml` signals every non-archived consumer repository visible to its app installation after a push to `main`. Adoption and dispatch exclude `vanillagreencom/kendex`, whose build-bound lock workflow owns its refresh under D007. It attempts all destinations and fails the run if any dispatch fails.
 

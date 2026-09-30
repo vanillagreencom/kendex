@@ -3,7 +3,9 @@
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
-TMP="$(mktemp -d)"
+TMP="$(mktemp -d)" || { echo 'adopt-refresh: scratch=mktemp-failed' >&2; exit 1; }
+[[ -d $TMP && ! -L $TMP ]] || { echo "adopt-refresh: scratch=not-a-directory value=[$TMP]" >&2; exit 1; }
+TMP="$(cd -- "$TMP" && pwd -P)" || { echo 'adopt-refresh: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
 . "$TEST_DIR/lib/refresh-fixture.sh"
 ADOPT='.agents/skills/review-gate/scripts/adopt-refresh.sh'
@@ -11,45 +13,6 @@ REFRESH='.github/workflows/kendex-refresh.yml'
 TEMPLATE='.agents/skills/review-gate/templates/kendex-refresh.yml'
 printf '[".agents/skills/other/SKILL.md",{"path":".github/workflows/other.yml","template":".agents/skills/other/templates/other.yml","templateHash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}]\n' >"$PRISTINE/.kendex-generated.json"
 
-# Every successful adoption must preserve unrelated entries and produce the
-# exact workflow metadata that kendex verify reads, with no duplicate paths.
-# A writer name of - is a repository with no writer, which has no writer entry.
-adoption_metadata() {
-  python3 - "$DIR" "${1:-review-gate-writer.yml}" <<'PY'
-import hashlib
-import json
-from pathlib import Path
-import sys
-root = Path(sys.argv[1])
-expected = [".agents/skills/other/SKILL.md", {"path":".github/workflows/other.yml","template":".agents/skills/other/templates/other.yml","templateHash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}]
-for name in ("kendex-refresh.yml", "review-gate-writer.yml"):
-    if name == "review-gate-writer.yml" and sys.argv[2] == "-":
-        continue
-    path = ".github/workflows/" + (sys.argv[2] if name == "review-gate-writer.yml" else name)
-    template = ".agents/skills/review-gate/templates/" + name
-    data = (root / template).read_bytes()
-    assert (root / path).read_bytes() == data, path
-    expected.append({"path": path, "template": template, "templateHash": "sha256:" + hashlib.sha256(data).hexdigest()})
-assert json.loads((root / ".kendex-generated.json").read_text()) == sorted(expected, key=lambda e: e if isinstance(e, str) else e["path"])
-PY
-}
-
-# What kendex refresh does to the inventory: the refresh record takes the new
-# template's hash.
-record_template_hash() {
-  python3 - "$DIR" "$TEMPLATE" "$REFRESH" <<'PY_FIXTURE'
-import hashlib
-import json
-from pathlib import Path
-import sys
-root = Path(sys.argv[1])
-path = root / ".kendex-generated.json"
-entries = json.loads(path.read_text())
-record = next(e for e in entries if isinstance(e, dict) and e["path"] == sys.argv[3])
-record["templateHash"] = "sha256:" + hashlib.sha256((root / sys.argv[2]).read_bytes()).hexdigest()
-path.write_text(json.dumps(entries) + "\n")
-PY_FIXTURE
-}
 
 sandbox
 run_refresh_command "$DIR" "$DIR/$ADOPT"
@@ -58,36 +21,93 @@ cp "$DIR/.kendex-generated.json" "$TMP/inventory-before"
 run_refresh_command "$DIR" "$DIR/$ADOPT"
 if [ "$RC" -eq 0 ] && cmp -s "$TMP/inventory-before" "$DIR/.kendex-generated.json"; then ok 'repeated adoption keeps the inventory unchanged'; else bad "repeated adoption (rc=$RC)" "$OUT"; fi
 
-# Refresh records the new template hash before adoption. The previous commit
-# still records the old copy's hash, which must authorize its replacement.
+# Refresh records the new template hash before adoption. The earlier template
+# in history proves that the old workflow copy remains unedited.
 commit "$DIR"
 printf '\n# new template bytes\n' >>"$DIR/$TEMPLATE"
 record_template_hash
 run_refresh_command "$DIR" "$DIR/$ADOPT"
-if [ "$RC" -eq 0 ] && adoption_metadata; then ok 'prior recorded hash permits a template update'; else bad "prior hash adoption (rc=$RC)" "$OUT"; fi
+if [ "$RC" -eq 0 ] && adoption_metadata && ! grep -q '^refresh-warning=' <<<"$OUT"; then ok 'template history permits a silent update despite a changed inventory hash'; else bad "template history adoption (rc=$RC)" "$OUT"; fi
 
-cp "$DIR/.kendex-generated.json" "$TMP/inventory-before"
-printf '\n# consumer edit\n' >>"$DIR/$REFRESH"
-cp "$DIR/$REFRESH" "$TMP/refresh-before"
-run_refresh_command "$DIR" "$DIR/$ADOPT"
-if [ "$RC" -eq 1 ] && grep -q '^refresh-error=workflow-edited value=' <<<"$OUT" &&
-    cmp -s "$TMP/refresh-before" "$DIR/$REFRESH" && cmp -s "$TMP/inventory-before" "$DIR/.kendex-generated.json"; then
-  ok 'an edited refresh workflow is refused without rewriting it or its inventory'
-else
-  bad "edited refresh (rc=$RC)" "$OUT"
-fi
+# Consumer installs can lack workflow records. A preserved checkout supplies
+# both its vendored bytes and older shipped versions in history.
+# input | record | warning | writer
+while IFS='|' read -r input record warning writer; do
+  sandbox
+  if [ "$writer" = absent ]; then
+    rm -- "${DIR:?}/.github/workflows/review-gate-writer.yml"
+    settings "$DIR" REVIEW_GATE_WRITER optional
+    settings "$DIR" REVIEW_GATE_MODE off
+  fi
+  cp "$DIR/$TEMPLATE" "$DIR/$REFRESH"
+  if [ "$input" = hand-edit ]; then
+    file_edit "$DIR" "$REFRESH" 1 '^name: ' 's/^name: .*/name: consumer edit/'
+  fi
+  if [ "$record" = matching ]; then
+    python3 - "$DIR" "$REFRESH" "$TEMPLATE" <<'RECORD'
+import hashlib, json, sys
+from pathlib import Path
+root = Path(sys.argv[1]); inventory = root / '.kendex-generated.json'
+entries = json.loads(inventory.read_text())
+entries.append({'path': sys.argv[2], 'template': sys.argv[3], 'templateHash': 'sha256:' + hashlib.sha256((root / sys.argv[2]).read_bytes()).hexdigest()})
+inventory.write_text(json.dumps(entries))
+RECORD
+  fi
+  # Later committed templates must not make older history unreachable.
+  if [ "$input" = historical ]; then printf '# intermediate shipped bytes\n' >>"$DIR/$TEMPLATE"; fi
+  commit "$DIR"
+  trusted="$TMP/trusted-$SANDBOX_N"
+  git -C "$DIR" worktree add --detach -q "$trusted" HEAD
+  if [ "$input" = vendored ]; then
+    # Neither history nor the refreshed template holds this version.
+    printf '# preserved vendored bytes\n' >>"$trusted/$TEMPLATE"
+    cp "$trusted/$TEMPLATE" "$DIR/$REFRESH"
+  fi
+  if [ "$input" != current ]; then printf '# new template bytes\n' >>"$DIR/$TEMPLATE"; fi
+  run_refresh_command "$DIR" "$trusted/$ADOPT" --templates-dir "$DIR/.agents/skills/review-gate/templates" --workflow-edit-report "$TMP/edit-report"
+  writer_name=review-gate-writer.yml
+  [ "$writer" != absent ] || writer_name=-
+  if [ "$warning" = yes ]; then
+    if workflow_edit_matches "$TMP/edit-report" "$REFRESH:8" && adoption_metadata "$writer_name"; then
+      ok "$input record=$record writer=$writer replaces the edit with one warning and a first-line report"
+    else bad "$input record=$record writer=$writer (rc=$RC)" "$OUT"; fi
+  elif [ "$RC" -eq 0 ] && ! grep -q '^refresh-warning=' <<<"$OUT" && [ ! -s "$TMP/edit-report" ] && adoption_metadata "$writer_name"; then
+    ok "$input record=$record writer=$writer adopts silently and records the written copy"
+  else bad "$input record=$record writer=$writer (rc=$RC)" "$OUT"; fi
+done <<'ROWS'
+current|missing|no|present
+historical|missing|no|present
+historical|matching|no|present
+vendored|missing|no|present
+hand-edit|missing|yes|present
+hand-edit|matching|yes|present
+hand-edit|missing|yes|absent
+ROWS
 
-# The refusal's control preserves the diagnostic and operands but disables
-# its branch. The same edited copy must then be overwritten incorrectly.
-file_edit "$DIR" "$ADOPT" 1 '^    if recorded is None or ' \
-  's/^    if \(recorded .*\):$/    if False and (\1):/'
-chmod +x "$DIR/$ADOPT"
+# Keep the warning text but disable its producer. The edited copy still
+# updates; the warning/report assertion must turn red.
+file_edit "$trusted" "$ADOPT" 1 '^    if not shipped:$' 's/^    if not shipped:$/    if False and not shipped:/'
+file_edit "$DIR" "$REFRESH" 1 '^name: ' 's/^name: .*/name: consumer edit/'
+run_refresh_command "$DIR" "$trusted/$ADOPT" --templates-dir "$DIR/.agents/skills/review-gate/templates" --workflow-edit-report "$TMP/edit-report"
+if [ "$RC" -eq 0 ] && adoption_metadata - && ! workflow_edit_matches "$TMP/edit-report" "$REFRESH:8"; then
+  ok 'control: silenced edit detection breaks the warning/report assertion'
+else bad 'workflow edit warning control' "$OUT"; fi
+
+# A workflow symlink comes from a consumer checkout. Never write its target.
+sandbox
+cp "$DIR/$TEMPLATE" "$TMP/symlink-target"
+ln -s "$TMP/symlink-target" "$DIR/$REFRESH"
+cp "$DIR/.kendex-generated.json" "$TMP/symlink-inventory"
 run_refresh_command "$DIR" "$DIR/$ADOPT"
-if [ "$RC" -eq 0 ] && adoption_metadata && ! cmp -s "$TMP/refresh-before" "$DIR/$REFRESH"; then
-  ok 'control: disabled edit guard overwrites the consumer edit'
-else
-  bad "control: edit guard mutation did not reach the overwrite (rc=$RC)" "$OUT"
-fi
+if [ "$RC" -eq 1 ] && grep -qxF "refresh-error=workflow-symlink value=$DIR/$REFRESH" <<<"$OUT" &&
+    cmp -s "$TMP/symlink-target" "$DIR/$TEMPLATE" && cmp -s "$TMP/symlink-inventory" "$DIR/.kendex-generated.json"; then
+  ok 'workflow-symlink stops adoption without writing its target or inventory'
+else bad 'workflow symlink stop' "$OUT"; fi
+file_edit "$DIR" "$ADOPT" 1 '^if refresh.is_symlink():$' 's/^if refresh.is_symlink():$/if False and refresh.is_symlink():/'
+run_refresh_command "$DIR" "$DIR/$ADOPT"
+if [ "$RC" -eq 0 ] && ! grep -q '^refresh-error=workflow-symlink ' <<<"$OUT"; then
+  ok 'control: disabled symlink guard breaks the must-fail row'
+else bad 'workflow symlink control' "$OUT"; fi
 
 # A supported check_run opt-in changes the writer's bytes. Adoption must keep
 # those bytes and remove the render record from its earlier exact adoption.
@@ -261,12 +281,9 @@ if [ "$RC" -eq 0 ] && adoption_metadata -; then
 else bad "no-writer template update (rc=$RC)" "$OUT"; fi
 commit "$DIR"
 printf '\n# consumer edit\n' >>"$DIR/$REFRESH"
-cp "$DIR/$REFRESH" "$TMP/no-writer-edited"
-cp "$DIR/.kendex-generated.json" "$TMP/no-writer-inventory"
-run_refresh_command "$DIR" "$DIR/$ADOPT"
-if [ "$RC" -eq 1 ] && grep -q '^refresh-error=workflow-edited value=' <<<"$OUT" &&
-    cmp -s "$TMP/no-writer-edited" "$DIR/$REFRESH" && cmp -s "$TMP/no-writer-inventory" "$DIR/.kendex-generated.json"; then
-  ok 'no-writer adoption preserves an edited refresh workflow'
+run_refresh_command "$DIR" "$DIR/$ADOPT" --workflow-edit-report "$TMP/no-writer-report"
+if [ "$RC" -eq 0 ] && grep -q '^refresh-warning=workflow-edited value=' <<<"$OUT" && adoption_metadata -; then
+  ok 'no-writer adoption reconciles an edited refresh workflow'
 else bad "no-writer edited refresh (rc=$RC)" "$OUT"; fi
 
 # The retirement's control keeps the ownership filter's text and skips it for

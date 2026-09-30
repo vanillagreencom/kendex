@@ -52,3 +52,51 @@ refresh_stopped_at_class() { # REMOTE_HEAD
     grep -qxF 'refresh-error=read value=class' <<<"$OUT" &&
     ! grep -qE '^api --method (POST|PATCH)|^pr merge ' "$TMP/state/calls"
 }
+
+# Successful adoption preserves unrelated entries and records exact workflow
+# metadata without duplicate paths. A writer name of - selects no writer.
+adoption_metadata() {
+  python3 - "$DIR" "${1:-review-gate-writer.yml}" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+expected = [".agents/skills/other/SKILL.md", {"path":".github/workflows/other.yml","template":".agents/skills/other/templates/other.yml","templateHash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}]
+for name in ("kendex-refresh.yml", "review-gate-writer.yml"):
+    if name == "review-gate-writer.yml" and sys.argv[2] == "-":
+        continue
+    path = ".github/workflows/" + (sys.argv[2] if name == "review-gate-writer.yml" else name)
+    template = ".agents/skills/review-gate/templates/" + name
+    data = (root / template).read_bytes()
+    assert (root / path).read_bytes() == data, path
+    expected.append({"path": path, "template": template, "templateHash": "sha256:" + hashlib.sha256(data).hexdigest()})
+assert json.loads((root / ".kendex-generated.json").read_text()) == sorted(expected, key=lambda e: e if isinstance(e, str) else e["path"])
+PY
+}
+
+# kendex refresh updates the inventory's hash before workflow adoption.
+record_template_hash() {
+  python3 - "$DIR" "$TEMPLATE" "$REFRESH" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+path = root / ".kendex-generated.json"
+entries = json.loads(path.read_text())
+record = next(e for e in entries if isinstance(e, dict) and e["path"] == sys.argv[3])
+record["templateHash"] = "sha256:" + hashlib.sha256((root / sys.argv[2]).read_bytes()).hexdigest()
+path.write_text(json.dumps(entries) + "\n")
+PY
+}
+
+# The diagnostic count and the PATH:LINE report token are adoption's output
+# contract. Prose surrounding the token is not part of the assertion.
+workflow_edit_matches() { # REPORT PATH:LINE
+  local count
+  count="$(grep -c '^refresh-warning=workflow-edited value=' <<<"$OUT")" || return 1
+  [ "$RC" -eq 0 ] && [ "$count" -eq 1 ] &&
+    grep -qxF "refresh-warning=workflow-edited value=${2%:*}" <<<"$OUT" &&
+    grep -qF -- "\`$2\`" "$1"
+}
