@@ -72,7 +72,7 @@ pub fn marked_worktree(dir: &Path) -> Result<Option<String>> {
         ));
     }
     let root = crate::paths::canonical(&root).map_err(|error| CoreError::io(&marker, error))?;
-    Ok((root == repo.worktree).then_some(branch))
+    Ok((root == crate::paths::reduced(&repo.worktree)).then_some(branch))
 }
 
 enum Component {

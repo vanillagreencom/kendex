@@ -180,7 +180,7 @@ pub struct ProjectTargetFlag {
     project_path: Option<std::path::PathBuf>,
     /// Permit project writes in a marked lane whose item is a refresh
     #[arg(long)]
-    lane_refresh: bool,
+    pub(crate) lane_refresh: bool,
     /// The temporary-path refusal's answer, for the project --project-path names
     #[command(flatten)]
     pub throwaway: commands::project::ThrowawayFlag,

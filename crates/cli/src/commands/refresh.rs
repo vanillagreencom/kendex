@@ -39,11 +39,18 @@ pub struct RefreshArgs {
     // help clap prints is the flag's own, on `flags::ProjectTargetFlag`;
     // a doc comment here would reach no output.
     #[command(flatten)]
-    target: crate::flags::ProjectTargetFlag,
+    pub(super) target: crate::flags::ProjectTargetFlag,
     // The commit offer's answer, without asking. Its help is
     // `commit_offer::CommitFlags`' own, for the same reason.
     #[command(flatten)]
     _commit: crate::commands::commit_offer::CommitFlags,
+}
+
+impl RefreshArgs {
+    /// The scope selection shared by dispatch and the pre-bootstrap lane check.
+    pub(super) fn effective_scope(&self) -> Result<ScopeFilter, String> {
+        ScopeFilter::resolve(self.scope.as_deref(), self.global, ScopeFilter::All)
+    }
 }
 
 /// What this refresh would add to or drop from the installed set — the part
@@ -412,7 +419,7 @@ fn write_scope(
 }
 
 pub fn run_args(env: &Env, args: RefreshArgs) -> CliResult {
-    let filter = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::All)?;
+    let filter = args.effective_scope()?;
     run(
         env,
         filter,

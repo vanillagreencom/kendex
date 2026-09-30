@@ -42,7 +42,19 @@ fn only_the_checked_out_item_marker_bound_to_a_linked_root_names_a_lane() {
         fixture.mark();
         let mut checked = &fixture.linked;
         match case {
-            Case::Marked => {}
+            Case::Marked => {
+                // Repo keeps std's resolved spelling. On Windows this row
+                // must compare it with the marker's reduced root spelling.
+                let resolved = fixture.linked.canonicalize().expect("resolved worktree");
+                assert_eq!(kendex_core::paths::reduced(&resolved), fixture.linked);
+                #[cfg(windows)]
+                assert!(
+                    resolved
+                        .to_str()
+                        .expect("Windows fixture path")
+                        .starts_with(r"\\?\")
+                );
+            }
             Case::TaggedBranch => fixture.git(&fixture.main, &["tag", "KEN-2299"]),
             Case::Unmarked => fs::remove_file(&fixture.marker).expect("remove marker"),
             Case::NoMarkers => fs::remove_dir_all(fixture.marker.parent().expect("marker parent"))

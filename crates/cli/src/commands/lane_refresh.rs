@@ -2,16 +2,16 @@
 //! The CLI refusal key is `lane-refresh: item=<branch>`; the override flag is
 //! `--lane-refresh`. The refusal always occupies one stderr line.
 
-use clap::ArgMatches;
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
 
 use super::{CliResult, resolve_scopes_at};
 use crate::scope::ScopeFilter;
+use crate::{Cli, Command};
 
-/// Check clap's resolved verb and flags before any CLI bootstrap writes.
-pub(crate) fn check(matches: &ArgMatches) -> CliResult {
-    match project_lane(matches) {
+/// Check the parsed command before any CLI bootstrap writes.
+pub(crate) fn check(cli: &Cli) -> CliResult {
+    match project_lane(cli) {
         Ok(None) => Ok(()),
         Ok(Some(item)) => Err(format!(
             "lane-refresh: item={item}; project writes belong in the repository rolling refresh pull request; pass --lane-refresh for a refresh lane"
@@ -20,27 +20,54 @@ pub(crate) fn check(matches: &ArgMatches) -> CliResult {
     }
 }
 
-fn project_lane(matches: &ArgMatches) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    let Some((verb, args)) = matches.subcommand() else {
+fn project_lane(cli: &Cli) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let Some(command) = &cli.command else {
         return Ok(None);
     };
-    // These names and argument IDs come from the CLI's clap declarations.
-    // `update` installs kendex itself, not a project; package updates write
-    // through `updates --apply`. A plan or listing keeps its existing path.
-    let default = match verb {
-        "refresh" => ScopeFilter::All,
-        "apply" if !args.get_flag("plan") => ScopeFilter::Project,
-        "updates" if args.get_flag("apply") => ScopeFilter::Project,
-        _ => return Ok(None),
+    let (filter, target) = match command {
+        Command::Refresh(args) => (args.effective_scope(), &args.target),
+        Command::Apply(args) if !args.plan => (args.effective_scope(), &args.target),
+        Command::Updates(args) if args.apply => (args.effective_scope(), &args.target),
+        // `update` installs kendex itself. Package updates write through
+        // `updates --apply`; plans and listings keep their existing paths.
+        Command::Apply(_)
+        | Command::Updates(_)
+        | Command::Add { .. }
+        | Command::Diff(_)
+        | Command::Show(_)
+        | Command::Fork(_)
+        | Command::Pin(_)
+        | Command::Versions(_)
+        | Command::Remove { .. }
+        | Command::Verify { .. }
+        | Command::Adopt { .. }
+        | Command::Project(_)
+        | Command::Template(_)
+        | Command::Bookmark(_)
+        | Command::List { .. }
+        | Command::Check(_)
+        | Command::DriftHook { .. }
+        | Command::Guard(_)
+        | Command::GeneratedPaths
+        | Command::Report(_)
+        | Command::Source(_)
+        | Command::Marketplace(_)
+        | Command::Trash(_)
+        | Command::Login
+        | Command::Logout
+        | Command::Index { .. }
+        | Command::Init { .. }
+        | Command::Update { .. }
+        | Command::VersionCompare(_)
+        | Command::HarnessPaths
+        | Command::HooksOff(_)
+        | Command::TierModel(_)
+        | Command::ReleaseMainBuild(_)
+        | Command::UpdatePi { .. } => return Ok(None),
     };
-    if args.get_flag("lane_refresh") {
+    if target.lane_refresh {
         return Ok(None);
     }
-    let filter = ScopeFilter::resolve(
-        args.get_one::<String>("scope").map(String::as_str),
-        args.get_flag("global"),
-        default,
-    );
     if matches!(filter, Ok(ScopeFilter::Global)) {
         return Ok(None);
     }
@@ -51,12 +78,7 @@ fn project_lane(matches: &ArgMatches) -> Result<Option<String>, Box<dyn std::err
     let Some(item) = kendex_core::lane::marked_worktree(cwd)? else {
         return Ok(None);
     };
-    let scopes = resolve_scopes_at(
-        &env,
-        filter?,
-        args.get_one::<std::path::PathBuf>("project_path")
-            .map(std::path::PathBuf::as_path),
-    )?;
+    let scopes = resolve_scopes_at(&env, filter?, target.path())?;
     if !scopes
         .iter()
         .any(|scope| matches!(scope, Scope::Project { .. }))

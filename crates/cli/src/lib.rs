@@ -243,9 +243,12 @@ enum Command {
 pub fn main() -> ExitCode {
     // Clap answers help and version without dispatch. Those runs still
     // record the command, but a lane refusal must precede every write.
-    let parsed = help::command().try_get_matches();
-    if let Ok(matches) = &parsed
-        && let Err(error) = commands::lane_refresh::check(matches)
+    let parsed = help::command().try_get_matches().and_then(|matches| {
+        let cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches)?;
+        Ok((matches, cli))
+    });
+    if let Ok((_, cli)) = &parsed
+        && let Err(error) = commands::lane_refresh::check(cli)
     {
         ui::warn(&error.to_string());
         return ExitCode::FAILURE;
@@ -254,11 +257,7 @@ pub fn main() -> ExitCode {
         bootstrap_the_command_record(&env);
         announce_the_terms_on_first_run(&env);
     }
-    let matches = parsed.unwrap_or_else(|error| error.exit());
-    let cli = match <Cli as clap::FromArgMatches>::from_arg_matches(&matches) {
-        Ok(cli) => cli,
-        Err(error) => error.exit(),
-    };
+    let (matches, cli) = parsed.unwrap_or_else(|error| error.exit());
     // What the person typed, for the commit offer's default message, and
     // the flag they answered it with. Both read off clap's own resolution
     // rather than enumerated here, so no list of verbs can fall out of

@@ -34,7 +34,7 @@ pub struct UpdatesArgs {
     refresh: bool,
     /// Install pending updates (the same run as refresh)
     #[arg(long)]
-    apply: bool,
+    pub(super) apply: bool,
     #[arg(short = 'g', long)]
     global: bool,
     /// project | global (default project)
@@ -47,11 +47,18 @@ pub struct UpdatesArgs {
     // flag's own, on `flags::ProjectTargetFlag`; a doc comment here would
     // reach no output.
     #[command(flatten)]
-    target: crate::flags::ProjectTargetFlag,
+    pub(super) target: crate::flags::ProjectTargetFlag,
     // The commit offer's answer, without asking. Its help is
     // `commit_offer::CommitFlags`' own, for the same reason.
     #[command(flatten)]
     _commit: crate::commands::commit_offer::CommitFlags,
+}
+
+impl UpdatesArgs {
+    /// The scope selection shared by dispatch and the pre-bootstrap lane check.
+    pub(super) fn effective_scope(&self) -> Result<ScopeFilter, String> {
+        ScopeFilter::resolve(self.scope.as_deref(), self.global, ScopeFilter::Project)
+    }
 }
 
 pub fn run(env: &Env, args: UpdatesArgs) -> CliResult {
@@ -63,17 +70,17 @@ fn run_with(
     args: UpdatesArgs,
     evaluate: impl FnOnce(&Env, &Scope) -> kendex_core::error::Result<UpdatesReport>,
 ) -> CliResult {
+    let filter = args.effective_scope()?;
     let UpdatesArgs {
         command,
         refresh,
         apply,
-        global,
-        scope,
+
         yes,
         target,
         ..
     } = args;
-    let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::Project)?;
+
     // Resolution only resolves: a listing writes nothing, so a bare
     // `updates --project-path` leaves the projects list as it found it.
     // `--apply` registers through the refresh it hands off to.

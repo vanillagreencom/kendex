@@ -18,7 +18,7 @@ use crate::ui;
 pub struct ApplyArgs {
     /// Print the plan and change nothing
     #[arg(long)]
-    plan: bool,
+    pub(super) plan: bool,
     /// Install into your personal setup
     #[arg(short = 'g', long)]
     global: bool,
@@ -42,7 +42,7 @@ pub struct ApplyArgs {
     // help clap prints is the flag's own, on `flags::ProjectTargetFlag`;
     // a doc comment here would reach no output.
     #[command(flatten)]
-    target: crate::flags::ProjectTargetFlag,
+    pub(super) target: crate::flags::ProjectTargetFlag,
     /// Record matching installed files after moving an unreadable install record aside
     #[arg(
         long,
@@ -55,8 +55,15 @@ pub struct ApplyArgs {
     _commit: crate::commands::commit_offer::CommitFlags,
 }
 
+impl ApplyArgs {
+    /// The scope selection shared by dispatch and the pre-bootstrap lane check.
+    pub(super) fn effective_scope(&self) -> Result<ScopeFilter, String> {
+        ScopeFilter::resolve(self.scope.as_deref(), self.global, ScopeFilter::Project)
+    }
+}
+
 pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
-    let filter = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::Project)?;
+    let filter = args.effective_scope()?;
     // Every scope is planned before any of them is written: failing before
     // the first write beats a half-applied run.
     let mut planned = Vec::new();
