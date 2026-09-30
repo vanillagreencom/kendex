@@ -19,6 +19,10 @@ import { mount, settle } from "@/test/dom";
 vi.mock("@/bindings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/bindings")>()),
   commands: {
+    updatesOverview: vi.fn().mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+    }),
     scanMachine: vi.fn(),
     auditAll: vi.fn(),
     // The third read a rescan makes. Stubbed rather than left off: absent,

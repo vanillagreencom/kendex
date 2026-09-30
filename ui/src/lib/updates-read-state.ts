@@ -13,9 +13,9 @@ import { updateWithheld } from "@/lib/update-groups";
 
 /** How the last read of the standing went, and whether one that will
  *  replace it is on its way — an explicit check, or an ordinary reload
- *  from a mount or a return to the window. Every predicate here that ranks
- *  the rows reads this shape; [`workOut`] declares its own, because what it
- *  asks about is the page-wide write hold rather than the read. */
+ *  from startup, a rescan or a return to the window. Row predicates read
+ *  this shape; [`workOut`] declares its own, because it asks about the
+ *  page-wide write hold rather than the read. */
 interface PageState {
   read: ReadState;
   checking: boolean;
@@ -24,7 +24,7 @@ interface PageState {
 
 /** Whether the rows on screen are not to be acted on: the first read has
  *  not answered, the last one failed, or one that will replace every row is
- *  on its way. A landed read is not enough on its own — a mount or a return
+ *  on its way. A landed read is not enough on its own — a rescan or a return
  *  to the window starts a reload over rows that landed perfectly well, and
  *  the answer it brings back is what the captured values would be committed
  *  against.

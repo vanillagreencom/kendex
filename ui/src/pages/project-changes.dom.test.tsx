@@ -36,6 +36,10 @@ import { ProjectChangesPage } from "./project-changes";
 
 vi.mock("@/bindings", () => ({
   commands: {
+    updatesOverview: vi.fn().mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+    }),
     scanMachine: vi.fn(),
     auditAll: vi.fn(),
     libraryProvenance: vi.fn(),

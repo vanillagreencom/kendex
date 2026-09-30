@@ -46,8 +46,8 @@ type Answer =
 
 /** The landing and the plain read, sharing one ticket order.
  *
- *  Startup and focus supply the standing to every page. Navigation adds
- *  no demand. A focus read can overlap startup or a mutation's read. */
+ *  Startup, focus and shared rescans supply the standing to every page.
+ *  Navigation adds no demand. These reads can overlap a mutation's read. */
 export function standingReads(set: (partial: Partial<Standing>) => void) {
   const order = readOrder();
 

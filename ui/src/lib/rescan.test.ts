@@ -7,6 +7,7 @@ import { useAuditStore } from "@/stores/audit";
 import { joinCurrent, useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
+import { useUpdatesStore } from "@/stores/updates";
 
 vi.mock("@/bindings", () => ({
   commands: {
@@ -14,6 +15,7 @@ vi.mock("@/bindings", () => ({
     auditAll: vi.fn(),
     libraryProvenance: vi.fn(),
     projectChangesScan: vi.fn(),
+    updatesOverview: vi.fn(),
     commitOfferBaseline: vi.fn(),
     commitOfferScan: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
   },
@@ -42,6 +44,10 @@ beforeEach(() => {
   vi.mocked(commands.projectChangesScan).mockResolvedValue({
     status: "ok",
     data: [],
+  });
+  vi.mocked(commands.updatesOverview).mockResolvedValue({
+    status: "ok",
+    data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
   });
   useProvenanceStore.setState({ rows: [], loaded: false, answeredFor: null });
   useScanStore.setState({
@@ -85,6 +91,8 @@ describe("Scan again", () => {
     expect(commands.auditAll).toHaveBeenCalledTimes(1);
     expect(commands.libraryProvenance).toHaveBeenCalledTimes(1);
     expect(useProvenanceStore.getState().rows).toHaveLength(1);
+    expect(commands.updatesOverview).toHaveBeenCalledTimes(1);
+    expect(useUpdatesStore.getState().read.status).toBe("landed");
   });
 
   // Somebody clicking this has a reason to think something changed. The

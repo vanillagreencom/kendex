@@ -39,7 +39,7 @@ export function packageVersionActions(
       .showError({ title: VERSION_ERROR_TITLE, message });
   const afterChange = (roots: string[]) => {
     reload();
-    // The package's own reads, then the two the whole app derives from —
+    // The package's own reads, then the shared app reads —
     // the same call the updates store's own apply makes, on the rule
     // `rescan.ts`'s header states.
     void rescanEverything();

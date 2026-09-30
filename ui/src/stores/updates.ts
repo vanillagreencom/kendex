@@ -196,14 +196,14 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     updateOne: (row) =>
       writeOne(row, applyRow, updatedToastLabel(row.name), async () => {
         await reload();
-        await rescanEverything();
+        await rescanEverything({ updates: "caller-owned" });
       }),
 
     repairOne: (row) =>
       writeOne(row, repairRow, repairedToastLabel(row.name), async () => {
         // The machine first, so the page never stands between rows that
         // say nothing is missing and a scan that still sees no copy.
-        await rescanEverything();
+        await rescanEverything({ updates: "caller-owned" });
         await reload();
       }),
 
@@ -257,7 +257,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
         // The rows this run sent, on the same rule: `what.wrote` is what the
         // plan moved, which is the wrong question for a refresh.
         wrote(rows);
-        await rescanEverything();
+        await rescanEverything({ updates: "caller-owned" });
         void offerToCommit(roots);
       });
     },

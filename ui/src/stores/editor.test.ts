@@ -23,6 +23,10 @@ import { openInventory, useEditorStore } from "./editor";
 vi.mock("@/bindings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/bindings")>()),
   commands: {
+    updatesOverview: vi.fn().mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+    }),
     libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
     getManifest: vi.fn(),
     editorInventory: vi.fn(),

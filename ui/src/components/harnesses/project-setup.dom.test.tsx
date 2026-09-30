@@ -44,6 +44,10 @@ import { ProjectList } from "./project-list";
 vi.mock("@/bindings", () => ({
   PACKAGE_CHECK_HARNESSES: ["claude", "pi"] as const,
   commands: {
+    updatesOverview: vi.fn().mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+    }),
     templatesList: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
     auditAll: vi.fn(),
     libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),

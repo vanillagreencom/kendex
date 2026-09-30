@@ -4,7 +4,7 @@
 import { toast } from "sonner";
 import type { Scope } from "@/bindings";
 import { commands } from "@/bindings";
-import { writingRepo } from "@/lib/rescan";
+import { rescanEverything, writingRepo } from "@/lib/rescan";
 import { sayUndone } from "@/lib/undone";
 import { dropCatalogCaches } from "./marketplaces-shared";
 
@@ -46,6 +46,9 @@ export function sourceActions(set: Set, get: () => Sources) {
         }
       } finally {
         set({ busy: false });
+        // A fetch can move mirrors before a later source fails. Read the
+        // standing behind either answer, without holding the fetch UI.
+        void rescanEverything();
       }
     },
   };

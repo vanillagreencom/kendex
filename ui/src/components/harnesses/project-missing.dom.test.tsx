@@ -474,9 +474,8 @@ describe("what a folder leaving the list leaves behind", () => {
     expect(useNavStore.getState().packageRef).toBeNull();
     expect(useNavStore.getState().history).toEqual([]);
     expect(useNavStore.getState().libraryScope).toBe("all");
-    // What a package's source has moved on to is a fourth read, keyed by
-    // the place each row is at and not covered by the rescan.
-    expect(commands.updatesOverview).toHaveBeenCalled();
+    // The shared rescan refreshes rows keyed by the place the project is at.
+    expect(commands.updatesOverview).toHaveBeenCalledTimes(1);
   });
 
   // The reconnect's own read goes through the project-setup owner, the

@@ -37,7 +37,7 @@ const run = <T>(work: () => Promise<Outcome<T>>): Promise<Outcome<T>> =>
     await useUpdatesStore.getState().reload();
     // Then the machine, on `rescan.ts`'s rule: asked whatever the work
     // answered, and inside the busy this wrapper holds.
-    await rescanEverything();
+    await rescanEverything({ updates: "caller-owned" });
     void offerToCommit(roots);
     return answer.status === "error" ? { error: answer.error } : answer.data;
   });

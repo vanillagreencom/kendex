@@ -30,6 +30,10 @@ import {
 
 vi.mock("@/bindings", () => ({
   commands: {
+    updatesOverview: vi.fn().mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+    }),
     auditAll: vi.fn(),
     scanMachine: vi.fn(),
     // The third read a rescan makes; absent, it throws into the store's

@@ -22,6 +22,10 @@ import { mount, settle } from "@/test/dom";
 
 vi.mock("@/bindings", () => ({
   commands: {
+    updatesOverview: vi.fn().mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+    }),
     commitOfferScan: vi.fn(),
     commitOfferBaseline: vi.fn(),
     commitOfferOpen: vi.fn(),

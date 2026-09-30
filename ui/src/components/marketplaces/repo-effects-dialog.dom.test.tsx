@@ -26,11 +26,15 @@ import { mount, settle } from "@/test/dom";
 import { RepoEffectsDialog } from "./repo-effects-dialog";
 
 vi.mock("@/bindings", () => ({
-  // The three reads a yes runs behind it: applying an effect runs the
+  // The shared reads a yes runs behind it: applying an effect runs the
   // package's installer in the repository, so `lib/rescan.ts` reads the
   // machine again whatever it answered. Nothing here is about what they
   // find; unmocked they reject out of a promise nobody awaits.
   commands: {
+    updatesOverview: vi.fn().mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+    }),
     repoEffectsApply: vi.fn(),
     scanMachine: vi.fn(),
     auditAll: vi.fn(),

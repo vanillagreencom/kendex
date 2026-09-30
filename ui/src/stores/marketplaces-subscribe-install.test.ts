@@ -5,6 +5,10 @@ import { subscription } from "./marketplaces-shared";
 
 vi.mock("@/bindings", () => ({
   commands: {
+    updatesOverview: vi.fn().mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+    }),
     libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
     marketplaceSubscribe: vi.fn(),
     marketplaceInstall: vi.fn(),

@@ -5,6 +5,10 @@ import { useMarketplacesStore } from "./marketplaces";
 
 vi.mock("@/bindings", () => ({
   commands: {
+    updatesOverview: vi.fn().mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+    }),
     marketplacesOverview: vi.fn(),
     marketplaceSubscribe: vi.fn(),
     // Subscribing writes its report through `repo_effects`, so

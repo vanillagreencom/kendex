@@ -40,6 +40,10 @@ import { mount, settle } from "@/test/dom";
 
 vi.mock("@/bindings", () => ({
   commands: {
+    updatesOverview: vi.fn().mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+    }),
     templatesList: vi.fn(),
     templateDraft: vi.fn(),
     templateCreateFromProject: vi.fn(),

@@ -3,8 +3,8 @@
 // the reason a refusal is no account of the disk.
 //
 // The refusal arm is what the first cases are about, and the wrapper cannot
-// tell it from the landing one. `rescanEverything` sends three reads, and
-// `readAgain` below says which two of them every case asks about.
+// tell it from the landing one. `readAgain` below asks about the scan,
+// audit and update standing through the shared rescan.
 //
 // Nothing waits on those reads, so `rescansSettled` is what a test waits on.
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +22,7 @@ import { useMarketplacesStore } from "./marketplaces";
 import { useProvenanceStore } from "./provenance";
 import { useScanStore } from "./scan";
 import { useSettingsStore } from "./settings";
+import { useUpdatesStore } from "./updates";
 
 vi.mock("@/bindings", async (importOriginal) => ({
   // The generated constants stay real — the editor's empty draft is stamped
@@ -34,6 +35,8 @@ vi.mock("@/bindings", async (importOriginal) => ({
     marketplacesOverview: vi.fn(),
     repoEffectsApply: vi.fn(),
     sourceToggle: vi.fn(),
+    sourcesRefresh: vi.fn(),
+    updatesOverview: vi.fn(),
     enablePackageChecks: vi.fn(),
     packageCheckPlan: vi.fn(),
     registerProject: vi.fn(),
@@ -120,6 +123,10 @@ beforeEach(() => {
     } as never,
   });
   vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
+  vi.mocked(commands.updatesOverview).mockResolvedValue({
+    status: "ok",
+    data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+  });
   vi.mocked(commands.libraryProvenance).mockResolvedValue({
     status: "ok",
     data: [],
@@ -162,14 +169,14 @@ beforeEach(() => {
 });
 
 /** What every case below asks: the machine was read again behind a command
- *  that answered with a refusal. Two of the three reads, not all of them —
- *  the provenance join's read answers nothing at all, publishing how it
+ *  that answered with a refusal. The provenance join publishes how it
  *  went as its store's own read state, and no store mocked here would tell
  *  a join that ran from one that could not, so it is asserted through
  *  neither. */
 const readAgain = () => {
   expect(commands.scanMachine).toHaveBeenCalled();
   expect(commands.auditAll).toHaveBeenCalled();
+  expect(commands.updatesOverview).toHaveBeenCalledTimes(1);
   // And the offer was made behind the same write, over the tracked
   // projects: a write redirected into another project writes under that
   // project's root, so the scope alone would miss it.
@@ -186,6 +193,33 @@ const readAgain = () => {
     vi.mocked(commands.commitOfferScan).mock.invocationCallOrder[0],
   );
 };
+
+describe("the standing behind a source fetch", () => {
+  for (const response of [
+    { status: "ok" as const, data: [] },
+    { status: "error" as const, error: "one source could not be fetched" },
+  ]) {
+    it(`refreshes Updates after a fetch answers ${response.status}`, async () => {
+      vi.mocked(commands.sourcesRefresh).mockResolvedValue(response);
+      vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+        status: "ok",
+        data: [],
+      });
+      useUpdatesStore.setState({ read: READ_LANDED, lastFetched: 1 });
+      await useMarketplacesStore.getState().checkForUpdates();
+      await vi.waitFor(() =>
+        expect(useUpdatesStore.getState().lastFetched).toBeNull(),
+      );
+      expect(commands.updatesOverview).toHaveBeenCalledTimes(1);
+      expect(
+        vi.mocked(commands.sourcesRefresh).mock.invocationCallOrder[0],
+      ).toBeLessThan(
+        vi.mocked(commands.updatesOverview).mock.invocationCallOrder[0],
+      );
+      expect(useMarketplacesStore.getState().busy).toBe(false);
+    });
+  }
+});
 
 describe("a write that reaches repo_effects and is refused", () => {
   it("reads the machine again behind a marketplace install", async () => {

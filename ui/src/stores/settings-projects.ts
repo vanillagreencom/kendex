@@ -13,7 +13,6 @@ import { useNavStore } from "./nav";
 import { useProblemsStore } from "./problems";
 import { useProjectChangesStore } from "./project-changes";
 import { useProjectSetupStore } from "./project-setup";
-import { useUpdatesStore } from "./updates";
 
 interface ProjectFields {
   settings: AppSettings | null;
@@ -99,7 +98,7 @@ export function projectActions(ordered: {
         useProjectSetupStore.getState().forget(path);
         useCommitOfferStore.getState().forget(path);
         useProjectChangesStore.getState().forget(path);
-        await Promise.all([rescanEverything(), updatesAgain()]);
+        await rescanEverything();
       } else {
         useProblemsStore.getState().showError({
           title: "Couldn't remove the project from Projects",
@@ -149,10 +148,7 @@ export function projectActions(ordered: {
       // scan has no missing entry for the new root and no evidence it
       // read one either — and the card falls through to "Nothing from
       // kendex yet" over a folder nothing answered for.
-      await Promise.all([
-        useProjectSetupStore.getState().check(root),
-        updatesAgain(),
-      ]);
+      await useProjectSetupStore.getState().check(root);
       return root;
     },
 
@@ -168,17 +164,6 @@ export function projectActions(ordered: {
     },
   };
 }
-
-/** The update standing again, on a registry write.
- *
- *  `rescanEverything` is the scan, the audit and the provenance join, and
- *  says so: what a package's source has moved on to is a fourth read,
- *  held by its own store and keyed by the place each row is at. Left
- *  alone across a reconnect every row still names the folder the project
- *  left, so the card at the new folder shows no updates — a definite
- *  nothing, from rows about a place that is not there — and the Updates
- *  page's own actions still name the old one. */
-const updatesAgain = (): Promise<void> => useUpdatesStore.getState().reload();
 
 // The answer before the settings read lands, shared rather than spelled at
 // each call. A selector that wrote `[]` itself would mint a fresh array per

@@ -15,6 +15,10 @@ import { useSettingsStore } from "./settings";
 
 vi.mock("@/bindings", () => ({
   commands: {
+    updatesOverview: vi.fn().mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+    }),
     registerProject: vi.fn(),
     scanMachine: vi.fn(),
     auditAll: vi.fn(),

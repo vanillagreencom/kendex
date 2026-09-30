@@ -36,6 +36,10 @@ import { PackageChecksRow } from "./package-checks-row";
 vi.mock("@/bindings", () => ({
   PACKAGE_CHECK_HARNESSES: ["claude", "pi"] as const,
   commands: {
+    updatesOverview: vi.fn().mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+    }),
     packageCheckPlan: vi.fn(),
     enablePackageChecks: vi.fn(),
     scanMachine: vi.fn().mockResolvedValue({ status: "ok", data: [] }),

@@ -1,10 +1,10 @@
 // What "everything on the machine, read again" means, in one place.
 //
-// Three reads stand behind every page: the scan says what is on the machine,
+// The scan says what is on the machine,
 // the audit says what it scored, and the provenance join says where each
 // installation came from. A refresh of only the first would leave every
 // score on screen answering for content the same call had just re-read — so
-// they go together, and none waits on another.
+// they go together. Updates reads the package standing alongside them.
 //
 // The join is read here rather than on each reader's own guess at when to
 // re-read. Such guesses are proxies for "something installed", and every
@@ -68,6 +68,7 @@ import { useProjectChangesStore } from "@/stores/project-changes";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
+import { useUpdatesStore } from "@/stores/updates";
 
 export async function rescanEverything(opts?: {
   /** Say so when the scan fails, however many times running. Somebody who
@@ -75,6 +76,9 @@ export async function rescanEverything(opts?: {
    *  and one it joins re-opens the notice. A rescan behind a write is not
    *  waited on, and the scan store's own once-only notice covers it. */
   announce?: boolean;
+  /** Updates-store mutations own their standing read's order relative to
+   *  the scan. They still read it once, inside their write hold. */
+  updates?: "caller-owned";
 }): Promise<void> {
   await Promise.all([
     // The join answers ABOUT a scan — which observations are one package —
@@ -112,6 +116,9 @@ export async function rescanEverything(opts?: {
     // decides whether kendex asks a question, not whether a person may see
     // what is pending.
     useProjectChangesStore.getState().refresh(trackedProjects()),
+    ...(opts?.updates === "caller-owned"
+      ? []
+      : [useUpdatesStore.getState().reload()]),
   ]);
 }
 
@@ -119,7 +126,7 @@ export async function rescanEverything(opts?: {
 // request arriving under a running read joins that follow-up, which starts
 // only once the running one has finished — so every write is answered by a
 // read that began after it, and a page of writes does not pay a whole-machine
-// read each. Each of the three legs keeps a queue of this shape for itself.
+// read each. The scan, audit and join each keep a queue of this shape.
 // The join guards which arrivals may start one, so a write is never answered
 // by a read of the join that began before it; the scan and audit stores hold
 // the pair without that guard, and nothing here establishes the property for

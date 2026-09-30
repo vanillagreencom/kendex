@@ -10,6 +10,10 @@ import { useProblemsStore } from "./problems";
 
 vi.mock("@/bindings", () => ({
   commands: {
+    updatesOverview: vi.fn().mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+    }),
     auditAll: vi.fn(),
     adoptItem: vi.fn(),
     toggleItem: vi.fn(),
