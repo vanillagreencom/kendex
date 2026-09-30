@@ -43,6 +43,7 @@ case "$1" in
     fi ;;
   touch) [[ "${LANE_HOST_STUB_TOUCH_STATUS:-0}" -eq 0 ]] || exit "$LANE_HOST_STUB_TOUCH_STATUS" ;;
   status)
+    case "${5:-}" in claude|codex|pi|copilot) ;; *) exit 2 ;; esac
     [[ "${LANE_HOST_STUB_PROBE_STATUS:-0}" -eq 0 ]] || exit "$LANE_HOST_STUB_PROBE_STATUS"
     # Repeat-watch fixtures change this file; live fixtures default to running.
     harness_state="${LANE_HOST_STUB_HARNESS_STATE:-running}"

@@ -3023,10 +3023,9 @@ check_lanes() {
   # inventing a classification each. Every loop below reads its verdict out of
   # `states` and classifies nothing of its own.
   #
-  # No local /proc session read. A hosted lane names its item and recorded
-  # harness so the judge reads the provider once, instead of judging the ssh
-  # child. The eighth argument is a Pi lane's rows verdict, which
-  # observe_lanes read and which replaces its screen after liveness is settled.
+  # Recorded hosted lanes read the provider once. Explicit watches without a
+  # recorded harness keep the pane route; no valid status request exists.
+  # The eighth argument is observe_lanes' Pi rows verdict.
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
@@ -3046,10 +3045,10 @@ check_lanes() {
     hosted_lane_item "$lane"
     hosted_item=""; hosted_harness=""
     if [[ -n "$HOSTED_ROOT" ]]; then
-      hosted_item="$LANE_ITEM"
       hosted_harness="$(jq -r --arg item "$LANE_ITEM" \
         '[.lanes[]? | select(.item == $item)][0].harness // ""' <<<"${FLEET_STATE:-null}")" \
         || die state-invalid "" "item=$LANE_ITEM"
+      [[ -z "$hosted_harness" ]] || hosted_item="$LANE_ITEM"
     fi
     lane_state state "$window" "$cmd" "$pid" "$pane" "" "" "${LANE_ROWS[$i]:-}" "$hosted_item" "$hosted_harness" \
       || die limit-scan-failed "" "lane=$lane"

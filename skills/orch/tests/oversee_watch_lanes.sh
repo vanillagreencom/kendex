@@ -300,6 +300,41 @@ for row in 'exited|0|true|live' 'running|0|false|live' 'exited|2|false|live' 'ex
   assert_eq "$(grep -c '^status --item issue-2 --harness claude ' "$STUB_DIR/host.calls")" "1" "one remote harness call per lane per pass"
 done
 
+echo "=== explicit hosted watches without a recorded harness keep pane events ==="
+EXPLICIT_WATCH="$(mutant_scripts explicit-watch/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/explicit-watch/github"
+mutate_file "$EXPLICIT_WATCH" '      [[ -z "$hosted_harness" ]] || hosted_item="$LANE_ITEM"' '      hosted_item="$LANE_ITEM"'
+while IFS='|' read -r record pane_kind capture loops event judge; do
+  new_case "explicit_${record}_${event}_$judge"
+  lane "$pane_kind"; screen "$capture"
+  remote_disk="$STUB_DIR/remote"; ERR="$STUB_DIR/err"
+  mkdir -p "$remote_disk/srv/lane/tmp" "$remote_disk/srv/clone/tmp"
+  printf 'gitdir: /srv/clone/.git/worktrees/issue-2\n' > "$remote_disk/srv/lane/.git"
+  printf 'started\n' > "$remote_disk/srv/lane/tmp/lane-status-issue-2.md"
+  state_args=()
+  if [[ "$record" == absent ]]; then
+    printf '{"issue_id":"oversee","triaged":[],"lanes":[]}\n' > "$STUB_DIR/fleet.json"
+    state_args=(--state "$STUB_DIR/fleet.json")
+  fi
+  target="$REPO_ROOT/skills/orch/scripts/oversee-watch"; [[ "$judge" != control ]] || target="$EXPLICIT_WATCH"
+  OUT="$(WATCH_BIN="$target" run_watch ORCH_LANE_HOST="$provider" LANE_HOST_STUB_LOG="$STUB_DIR/host.calls" LANE_HOST_STUB_DIR="$remote_disk" \
+    -- ${state_args[@]+"${state_args[@]}"} --item issue-2 --hosted issue-2=/srv/lane --max-loops "$loops" gh-2 2>"$ERR")" && RC=0 || RC=$?
+  want=true; calls=0; [[ "$judge" != control ]] || { want=false; calls=1; }
+  expect="rc=0 out~EVENT+$event+gh-2=$want"
+  assert_eq "$(watch "$expect")" "$expect" "explicit $record/$event/$judge" "$ERR"
+  assert_eq "$(awk '/^status / {n++} END {print n+0}' "$STUB_DIR/host.calls")" "$calls" "no invalid provider request without an identity"
+done <<'ROWS'
+none|fish_child|question|1|lane-asking|live
+absent|fish_child|question|1|lane-asking|live
+none|fish_child|idle|2|idle-after-return|live
+absent|fish_child|idle|2|idle-after-return|live
+none|fish|fish_prompt|2|lane-exited|live
+absent|fish|fish_prompt|2|lane-exited|live
+none|fish_child|exited_banner|1|usage-limit|live
+absent|fish_child|exited_banner|1|usage-limit|live
+none|fish_child|question|1|lane-asking|control
+ROWS
+
 echo "=== lane-asking: a question nobody has answered ==="
 # A selection prompt is a question, never an idle prompt; the check reads the
 # same liveness answer as the exit check, so a wrapped lane's prompt is seen.

@@ -394,12 +394,18 @@ lane_harness_process_re() { # HARNESS
   esac
 }
 
-lane_owned_processes() { # WORKTREE HARNESS
+lane_owned_processes() { # WORKTREE HARNESS [ROOT_SOURCE: directory|launch-record]
   local root table candidates pid cwd state rc name_re
   LANE_OWNED_PROCESS_TABLE=""
   LANE_OWNED_PROCESS_CANDIDATES=""
   LANE_OWNED_PROCESS_PIDS=""
-  root="$(cd -- "$1" && pwd -P)" || return 2
+  # lane-marker records a canonical root before the harness starts. That
+  # record still names its ownership after merge-pr removes the directory.
+  case "${3:-directory}" in
+    directory) root="$(cd -- "$1" && pwd -P)" || return 2 ;;
+    launch-record) root="$1"; [[ "$root" == /* ]] || return 2 ;;
+    *) return 2 ;;
+  esac
   table="$(lane_process_table)" || return 2
   name_re="$(lane_harness_process_re "$2")" || return 2
   # The whole name after the two id columns, as lane_process_below reads it,
@@ -416,7 +422,8 @@ lane_owned_processes() { # WORKTREE HARNESS
         return 2 ;;
       *) return 3 ;;
     esac
-    [[ "$cwd" == "$root" ]] || continue
+    # Linux retains the deleted cwd's name with this suffix while it is live.
+    [[ "$cwd" == "$root" || ( "${3:-directory}" == launch-record && "$cwd" == "$root (deleted)" ) ]] || continue
     LANE_OWNED_PROCESS_PIDS+="${LANE_OWNED_PROCESS_PIDS:+ }$pid"
   done
   LANE_OWNED_PROCESS_CANDIDATES="$candidates"

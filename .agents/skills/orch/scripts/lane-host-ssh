@@ -192,7 +192,13 @@ if test "$owner" != "$2"; then exit 75; fi''', row["clone"], item, accept=(75,))
     if owned.returncode == 75:
         notice(verb + "-unowned", item=item)
         raise SystemExit(75)
-    path = worktree(row, "path", item).stdout.decode().strip()
+    # The launch marker survives merge-pr's worktree removal. The worktree
+    # command then returns its configured fallback, not the launched root.
+    if verb == "status":
+        path = remote(row, '''marker=$("$1/.agents/skills/orch/scripts/lane-marker" --marker-path "$1/.git" "$2") || exit 1
+cat -- "$marker"''', row["clone"], item).stdout.decode().strip()
+    else:
+        path = worktree(row, "path", item).stdout.decode().strip()
     if not path or "\n" in path or "\t" in path:
         notice("worktree-path-invalid", item=item)
         raise SystemExit(1)
@@ -371,7 +377,7 @@ if ! test -r "$lib"; then
   exit 1
 fi
 . "$lib"
-lane_owned_processes "$1" "$2" || {
+lane_owned_processes "$1" "$2" launch-record || {
   printf 'lane-host-ssh: status-read-failed item=%s\\n' "$4" >&2
   exit 1
 }
@@ -383,8 +389,8 @@ else printf 'exited\\n'; fi''', path, harness, row["clone"], item)
 def stop(row, item, harness):
     """Stop the named harness only when its process belongs to the item worktree.
 
-    An item whose worktree its own close-out already removed exits 4: no
-    process can be matched to a directory that is gone, and lane-close reads
+    An item whose worktree its own close-out already removed exits 4:
+    stop requires an existing directory, and lane-close reads
     that status as a stop its host close makes unnecessary."""
     path = owned_worktree(row, item, "stop")
     result = remote(row, '''if ! test -d "$1"; then
