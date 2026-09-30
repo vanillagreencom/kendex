@@ -128,7 +128,7 @@
 #   state=running elapsed-secs=N cap-secs=N run-dir=…
 #   state=timeout elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
 #   state=lost elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
-#   validate-mode=full|range verdict=pass|FAILING|no-verdict|unfinished head=SHA| start=EPOCH [validate-base-orphaned=SHA] [seconds=N started-at=TIME ended-at=TIME]   (--record)
+#   validate-mode=full|range [lanes=NAMES] selection=all|subset|unreported verdict=pass|FAILING|no-verdict|unfinished head=SHA| start=EPOCH [validate-base-orphaned=SHA] [seconds=N started-at=TIME ended-at=TIME]   (--record)
 #   validate-mode=full|range                                                  (--resolve-mode)
 #
 # --record's verdict is pass only for a sentinel of guard-exit=0, no-verdict
@@ -666,6 +666,19 @@ read_sentinel() {
 
 # --- Record: the run's mode and verdict, read-only ---------------------------
 if [[ "$mode" == record ]]; then
+  # DEV_VALIDATE_CMD and DEV_VALIDATE_RANGE_CMD may report their lanes through
+  # references/artifact-checks.md's Validation command output contract.
+  # The last candidate owns the result, even when it is malformed.
+  record_selection='selection=unreported'
+  if [[ -e "$run_dir/log" ]]; then
+    record_selection="$(LC_ALL=C awk '
+      /^validate:/ { last = $0 }
+      END {
+        if (last ~ /^validate: lanes=[[:alnum:]_.-]+(,[[:alnum:]_.-]+)* selection=(all|subset)$/) {
+          split(last, fields, " "); print fields[2] " " fields[3]
+        } else print "selection=unreported"
+      }' "$run_dir/log")" || die record-unreadable "path=$run_dir/log"
+  fi
   record_mode="$(start_field "$run_dir/start" validate-mode)"
   case "$record_mode" in
     full|range) ;;
@@ -686,7 +699,7 @@ if [[ "$mode" == record ]]; then
     record_timing=" seconds=$timing_seconds started-at=$timing_started ended-at=$timing_ended"
   fi
   record_orphaned="$(start_field "$run_dir/start" validate-base-orphaned)"
-  printf 'validate-mode=%s verdict=%s head=%s start=%s%s%s\n' "$record_mode" "$record_verdict" \
+  printf 'validate-mode=%s %s verdict=%s head=%s start=%s%s%s\n' "$record_mode" "$record_selection" "$record_verdict" \
     "$(start_field "$run_dir/start" head)" "$(start_field "$run_dir/start" start)" \
     "${record_orphaned:+ validate-base-orphaned=$record_orphaned}" "$record_timing"
   exit 0

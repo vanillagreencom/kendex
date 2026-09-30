@@ -264,8 +264,8 @@ seed_fleet() {
   echo '{"id":"1790000000-1-a","kind":"ask","text":"Which schema?"}' > "$CASE/pending-KEN-2.jsonl"
   echo '[{"number": 12, "branch": "ken-2", "failed_checks": ["test", "lint"]}]' > "$CASE/failing.json"
   item_state KEN-3 '{"post_pr_stop": {"name": "review-round-cap", "gate": "review", "remaining": ["one unresolved review thread"]},
-    "validate_rounds": [{"round_id": "r1", "kind": "implement", "mode": "full", "seconds": 3300},
-      {"round_id": "r2", "kind": "fix", "mode": "range", "seconds": 290}]}'
+    "validate_rounds": [{"round_id": "r1", "kind": "implement", "mode": "full", "seconds": 3300, "lanes": "lint,test", "selection": "all"},
+      {"round_id": "r2", "kind": "fix", "mode": "range", "seconds": 290, "lanes": "lint", "selection": "subset"}]}'
   item_state KEN-2 '{"post_pr_stop": null}'
   printf '%s\n' "$(merged_pr 11 ken-1 -60 abcdef1234)" "$(merged_pr 13 ken-3 -7200 1234567abc)" \
     "$(merged_pr 19 ken-9 -60 9999999aaa)" "$(merged_pr 21 ken-1 -30 2121212aaa someone-else)" \
@@ -298,7 +298,7 @@ Running:
 
 Validation:
 - KEN-2: no validation run recorded
-- KEN-3: 60 min over 2 runs: implement full 55, fix range 5
+- KEN-3: 60 min over 2 runs: implement full 55 selection=all lanes=lint,test, fix range 5 selection=subset lanes=lint
 
 Use 1: none
 
@@ -668,8 +668,18 @@ mkdir -p "$CASE/host/w/KEN-7" "$CASE/host/clone/tmp"
 echo "gitdir: /clone/.git/worktrees/KEN-7" > "$CASE/host/w/KEN-7/.git"
 echo '{"validate_rounds": [{"round_id": "r1", "kind": "implement", "mode": "full", "seconds": 89}]}' > "$CASE/host/clone/tmp/workflow-state-KEN-7.json"
 run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC|$(awk '/^Validation/ { on = 1; next } on && /^$/ { on = 0 } on' <<<"$OUT")" "0|- KEN-7: 1 min over 1 run: implement full 1" \
+assert_eq "$RC|$(awk '/^Validation/ { on = 1; next } on && /^$/ { on = 0 } on' <<<"$OUT")" "0|- KEN-7: 1 min over 1 run: implement full 1 selection=unreported" \
   "a hosted lane's validation minutes are read from the clone its worktree's .git names"
+# Reported selection is independent of full versus range invocation.
+echo '{"validate_rounds": [{"round_id": "r1", "kind": "implement", "mode": "full", "seconds": 89, "lanes": "test,lint", "selection": "subset"}]}' > "$CASE/host/clone/tmp/workflow-state-KEN-7.json"
+run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
+assert_contains "$OUT" "implement full 1 selection=subset lanes=test,lint" "a hosted round reports the lanes beside its minutes"
+LANE_MUTANT="$(mutant_scripts lane-report/orch oversee-report)/oversee-report" || exit 1
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/lane-report/github"
+mutate_file "$LANE_MUTANT" '.selection // "unreported"' '"unreported"'
+REPORT_UNDER_TEST="$LANE_MUTANT" run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC" "0" "control: the report still runs when it drops selection"
+assert_not_contains "$OUT" "implement full 1 selection=subset lanes=test,lint" "control: dropping selection reds the reported-round assertion"
 echo '{"validate_rounds": [{"round_id": "r1", "kind": "implement", "mode": "full", "seconds": "89"}]}' > "$CASE/host/clone/tmp/workflow-state-KEN-7.json"
 run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)" "2|oversee-report: item-state=KEN-7" "a round whose seconds are no number refuses rather than render a total"
@@ -693,7 +703,7 @@ MARK="- KEN-8 mailbox unreadable (mail-read=KEN-8): lane-mail: host-unreachable=
 run -- render --state "$CASE/state.json" --repo owner/repo
 ROW10='| KEN-10 (#14, parked) | Title 10 | Outcome 10 \| kept |'
 ROW8='| KEN-8 (no PR, running) | Title 8 | Outcome 8 \| kept |'
-VAL3='- KEN-3: 60 min over 2 runs: implement full 55, fix range 5'
+VAL3='- KEN-3: 60 min over 2 runs: implement full 55 selection=all lanes=lint,test, fix range 5 selection=subset lanes=lint'
 VAL8='- KEN-8: validation unread, its host unreachable'
 WANT8="$(row10="$ROW10" row8="$ROW8" val3="$VAL3" val8="$VAL8" awk '{ print }
   $0 == ENVIRON["row10"] { print ENVIRON["row8"] } $0 == ENVIRON["val3"] { print ENVIRON["val8"] }' <<<"$WANT")"

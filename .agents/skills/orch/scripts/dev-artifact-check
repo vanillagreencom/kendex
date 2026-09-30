@@ -177,6 +177,8 @@ Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
               validate_mode: the recorded validation mode|null,
               validate_time: the recorded run wall time|null,
               validate_note: the recorded note|null,
+              validate_lanes: the recorded lane names|null,
+              validate_selection: the recorded selection|null,
               near_ceiling: [byte-ceiling near-ceiling lines]|null (null: the
                             probe did not answer; keep the carried list),
               near_ceiling_error: why near_ceiling is null|null}
@@ -440,7 +442,7 @@ check_id_token() {
 # not answer, and the orchestrator keeps the list it carries rather than replacing
 # it with an empty one.
 emit() {
-  local ok="$1" path="$2" reason="$3" warning="${4:-}" hint="${5:-}" files="${6:-[]}" validate=null validate_mode=null validate_time=null validate_note=null near_ceiling='[]' near_ceiling_error=null surfaced=""
+  local ok="$1" path="$2" reason="$3" warning="${4:-}" hint="${5:-}" files="${6:-[]}" validate=null validate_mode=null validate_time=null validate_note=null validate_lanes=null validate_selection=null near_ceiling='[]' near_ceiling_error=null surfaced=""
   if [[ -n "$path" && -f "$path" ]]; then
     # One read for every surfaced field, so the process count stays flat as
     # fields are added: one line of tab-separated compact JSON values, in this
@@ -451,13 +453,15 @@ emit() {
         (if (.validate_mode? | type) == "string" then .validate_mode else null end),
         (if (.validate_time? | type) == "object" then .validate_time else null end),
         (if (.validate_note? | type) == "string" then .validate_note else null end),
+        (.validate_lanes // null),
+        (.validate_selection // null),
         (if (.near_ceiling? | type) == "array" then [.near_ceiling[] | select(type == "string")]
          elif has("near_ceiling") and .near_ceiling == null then null
          else [] end),
         (if (.near_ceiling_error? | type) == "string" then .near_ceiling_error else null end)
       ] | map(tojson) | join("\t")' "$path" 2>/dev/null)" || surfaced=""
     if [[ -n "$surfaced" ]]; then
-      IFS=$'\t' read -r validate validate_mode validate_time validate_note near_ceiling near_ceiling_error <<<"$surfaced"
+      IFS=$'\t' read -r validate validate_mode validate_time validate_note validate_lanes validate_selection near_ceiling near_ceiling_error <<<"$surfaced"
     fi
   fi
   # verdict is the one-word acceptance answer the orchestrator acts on:
@@ -489,11 +493,13 @@ emit() {
     --arg hint "$hint" --arg verdict "$verdict" \
     --argjson files "$files" --argjson validate "${validate:-null}" --argjson validate_mode "${validate_mode:-null}" --argjson validate_time "${validate_time:-null}" --argjson validate_note "${validate_note:-null}" \
     --argjson near_ceiling "${near_ceiling:-[]}" --argjson near_ceiling_error "${near_ceiling_error:-null}" \
+    --argjson validate_lanes "$validate_lanes" --argjson validate_selection "$validate_selection" \
     '{ok: $ok, verdict: $verdict, path: (if $path == "" then null else $path end), reason: $reason,
       warning: (if $warning == "" then null else $warning end),
       hint: (if $hint == "" then null else $hint end),
       files: $files,
       validate: $validate, validate_mode: $validate_mode, validate_time: $validate_time, validate_note: $validate_note,
+      validate_lanes: $validate_lanes, validate_selection: $validate_selection,
       near_ceiling: $near_ceiling, near_ceiling_error: $near_ceiling_error}' 2>/dev/null
 }
 

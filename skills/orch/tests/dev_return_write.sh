@@ -161,7 +161,7 @@ echo "=== a single implement record, complete by construction ==="
 init_growth_state "$STATE" "$WT" issue-776 "$RID"
 run --worktree "$WT" --kind implement --issue issue-776 --round-id "$RID" --branch issue-776 --commit "$IMPL_HEAD" --validate pass --validate-run-dir "$VRUN" --qa-label needs-review
 assert_eq "rc=$RC $OUT" "rc=0 $WT/tmp/dev-return-issue-776-$RID.json" "the writer exits 0 and prints the round-scoped artifact path" "$ERR"
-assert_eq "$(rec -c '.')" "{\"schema_version\":1,\"round_id\":\"$RID\",\"kind\":\"implement\",\"issue\":\"issue-776\",\"branch\":\"issue-776\",\"commit\":\"$IMPL_HEAD\",\"validate\":\"pass\",\"validate_mode\":\"full\",\"validate_time\":{\"started_at\":\"2026-01-01T00:00:00Z\",\"ended_at\":\"2026-01-01T00:55:00Z\",\"seconds\":3300},\"validate_note\":null,\"qa_labels\":[\"needs-review\"],\"near_ceiling\":null,\"near_ceiling_error\":\"byte-ceiling not probed: no --near-ceiling-base\",\"summary_posted\":true,\"summary\":null,\"recovered_from\":null,\"bundled\":false,\"items\":[],\"baseline_lines\":3}" \
+assert_eq "$(rec -c '.')" "{\"schema_version\":1,\"round_id\":\"$RID\",\"kind\":\"implement\",\"issue\":\"issue-776\",\"branch\":\"issue-776\",\"commit\":\"$IMPL_HEAD\",\"validate\":\"pass\",\"validate_mode\":\"full\",\"validate_time\":{\"started_at\":\"2026-01-01T00:00:00Z\",\"ended_at\":\"2026-01-01T00:55:00Z\",\"seconds\":3300},\"validate_note\":null,\"qa_labels\":[\"needs-review\"],\"near_ceiling\":null,\"near_ceiling_error\":\"byte-ceiling not probed: no --near-ceiling-base\",\"summary_posted\":true,\"summary\":null,\"recovered_from\":null,\"bundled\":false,\"items\":[],\"validate_selection\":\"unreported\",\"baseline_lines\":3}" \
   "the record is the schema's shape with the measured baseline, the run's wall time, a numeric schema_version and no note" "$ERR"
 assert_eq "$(env ORCH_STATE_DIR="$WT/tmp" "$CHECK" --worktree "$WT" --issue issue-776 --round-id "$RID" | jq -r '.reason')" "valid" \
   "the record round-trips through round-mode acceptance"
@@ -199,6 +199,18 @@ table \
   "double-dash prose is accepted as --item REASONING|--worktree %FW --kind fix --issue issue-776 --round-id 14-15 --branch b --commit c --validate pass --validate-run-dir $VRUN_FIX_14 --item 1 Skipped --force+would+be+needed|rc=0 .items[0].reasoning=--force+would+be+needed"
 assert_eq "$(find "$WT/tmp" -maxdepth 1 -name '.dev-return-*' | wc -l | tr -d ' ')" "0" "a successful write leaves no temp file behind"
 assert_eq "$("$CHECK" --worktree "$FW" --issue issue-776 --round-id 7-7 --expect-items-from-round | jq -r '.reason')" "valid" "the fix record round-trips through the bound round's authorization"
+
+echo "=== reported lanes reach the receipt ==="
+VRUN_LANES="$(validate_run_dir "$TMP_ROOT/validate-run-lanes" full)"
+printf 'validate: lanes=lint,test selection=subset\n' > "$VRUN_LANES/log"
+LANE_ARGS="--worktree $WT --kind implement --issue issue-lanes --round-id 25-25 --branch b --commit $IMPL_HEAD --validate pass --validate-run-dir $VRUN_LANES"
+table "reported lanes and selection|$LANE_ARGS|rc=0 .validate_mode=full .validate_lanes=lint,test .validate_selection=subset roundtrip=valid"
+LANE_WRITE="$(mutant_scripts lanes-mutant dev-return-write)/dev-return-write" || exit 1
+mutate_file "$LANE_WRITE" 'lanes=*) validate_lanes="${field#*=}" ;;' 'lanes=*) validate_lanes="" ;;'
+WRITE_SHIPPED="$WRITE"
+WRITE="$LANE_WRITE"
+table "control: dropping lanes reds the receipt assertion|$LANE_ARGS|rc=0 has:validate_lanes=false .validate_selection=subset"
+WRITE="$WRITE_SHIPPED"
 
 echo "=== --near-ceiling-base runs the installed lane and records what it could answer ==="
 # probe_wt NAME SIZE... — a worktree on branch `work` over `main` that adds one

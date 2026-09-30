@@ -654,7 +654,7 @@ running_lanes() {
     elif ! minutes="$(jq -r --arg item "$item" 'def min: (. + 30) / 60 | floor;
       (if . == null then [] else .validate_rounds // [] end) as $rounds
       | if ($rounds | length) == 0 then "- \($item): no validation run recorded"
-        else "- \($item): \([$rounds[].seconds] | add | min) min over \($rounds | length) run\(if ($rounds | length) == 1 then "" else "s" end): \([$rounds[] | "\(.kind) \(.mode) \(.seconds | min)"] | join(", "))"
+        else "- \($item): \([$rounds[].seconds] | add | min) min over \($rounds | length) run\(if ($rounds | length) == 1 then "" else "s" end): \([$rounds[] | "\(.kind) \(.mode) \(.seconds | min) selection=\(.selection // "unreported")\(if .lanes == null then "" else " lanes=\(.lanes)" end)"] | join(", "))"
         end' <<<"${LANE_ITEM_STATE:-null}" 2>"$WORK_DIR/state.err")"; then
       refuse item-state "$item" "$(cat "$WORK_DIR/state.err")"
     fi

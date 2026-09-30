@@ -18,8 +18,10 @@ STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
 source "$TEST_DIR/lib/growth-state.sh"
 # shellcheck source=lib/assertions.sh
 source "$TEST_DIR/lib/assertions.sh"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo "dev_artifact_check: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "dev_artifact_check: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "dev_artifact_check: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 # The mode a fix round runs is read from the project's settings, and orch-env
 # reads the process environment first: a developer's own range command would
 # otherwise decide every fix row.
@@ -536,6 +538,18 @@ receipt_table \
   "a numeric validate_note is invalid^impl^.validate_note=42^$FILE_ARGS^reason=invalid" \
   "a boolean validate_note is invalid^impl^.validate_note=true^$FILE_ARGS^reason=invalid" \
   "an array validate_note is invalid^impl^.validate_note=[]^$FILE_ARGS^reason=invalid"
+
+echo "=== the validation lanes reach the orchestrator ==="
+receipt_table \
+  "reported selection and lanes are echoed^impl^.validate_lanes=\"lint,test\" | .validate_selection=\"subset\"^$FILE_ARGS^reason=valid validate_mode=full validate_lanes=lint,test validate_selection=subset" \
+  "unreported selection has no lanes^impl^.validate_selection=\"unreported\"^$FILE_ARGS^reason=valid validate_lanes=null validate_selection=unreported" \
+  "absent optional fields remain absent information^impl^.^$FILE_ARGS^reason=valid validate_lanes=null validate_selection=null"
+LANE_CHECK="$(mutant_scripts lanes-echo-mutant dev-artifact-check)/dev-artifact-check" || exit 1
+mutate_file "$LANE_CHECK" '--argjson validate_lanes "$validate_lanes"' '--argjson validate_lanes null'
+CHECK_SHIPPED="$CHECK"
+CHECK="$LANE_CHECK"
+receipt_table "control: dropping the lane echo reds its assertion^impl^.validate_lanes=\"lint,test\" | .validate_selection=\"subset\"^$FILE_ARGS^reason=valid validate_lanes=null validate_selection=subset"
+CHECK="$CHECK_SHIPPED"
 
 echo "=== the validation wall time reaches the orchestrator ==="
 # The lane status file and the overseer's report show minutes per round from

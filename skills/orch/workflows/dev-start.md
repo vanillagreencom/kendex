@@ -231,8 +231,10 @@ Every artifact past the schema gate runs this subsection, implement and fix alik
 
 `[VALIDATE_TIME]` is the artifact's `validate_time` as `dev-artifact-check` echoed it. On `null` the round named no run, or its run is unfinished, and there is no wall time to record: skip the write. A `no-verdict` run the timeout ended carries its time and is recorded like any other. Otherwise `[SECONDS]` is its `seconds`, `[VALIDATE_MODE]` the echoed `validate_mode`, and `[KIND]` the round's `implement` or `fix`. The write appends one entry per round and replaces an entry already carrying this round id, so a re-run of this step never counts a round twice.
 
+`[VALIDATE_LANES]` and `[VALIDATE_SELECTION]` are the echoed `validate_lanes` and `validate_selection` as JSON values, or `null` when absent. The write carries reported lanes and selection without changing the invocation mode.
+
 ```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --arg round [DEV_ROUND_ID] --arg kind [KIND] --arg mode [VALIDATE_MODE] --argjson seconds [SECONDS] '.validate_rounds = ([(.validate_rounds // [])[] | select(.round_id != $round)] + [{round_id: $round, kind: $kind, mode: $mode, seconds: $seconds}])'
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --arg round [DEV_ROUND_ID] --arg kind [KIND] --arg mode [VALIDATE_MODE] --argjson seconds [SECONDS] --argjson lanes [VALIDATE_LANES] --argjson selection [VALIDATE_SELECTION] '.validate_rounds = ([(.validate_rounds // [])[] | select(.round_id != $round)] + [({round_id: $round, kind: $kind, mode: $mode, seconds: $seconds} + (if $lanes == null then {} else {lanes: $lanes} end) + (if $selection == null then {} else {selection: $selection} end))])'
 ```
 
 A lane under an overseer then rewrites its status file's validation line from `.validate_rounds`, per [oversee.md § 3 Lane directive](oversee.md#lane-directive).

@@ -1,0 +1,1 @@
+- Validation records and fleet reports show which check lanes each round ran and whether the command selected all lanes or a subset.

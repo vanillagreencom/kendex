@@ -20,6 +20,8 @@
 # not part of any finding. Each finding still opens with its keyed line, and
 # the offending lines a rule collected follow that line rather than precede
 # it.
+# The final validate: line reports the check groups this command reached to
+# dev-validate-run --record; it comes after any nested guard's report.
 set -uo pipefail
 # Resolved before the cd below: the sibling tools this script runs live
 # beside it, not necessarily in the repository it judges.
@@ -391,9 +393,12 @@ lane_on() { # LANE — tools/ci-job-set's name for it
   return 1
 }
 
+reported_lanes=guard-scans
+
 # The staged bot-instructions check is a lane of the commit-guards chain that
 # runs this script; --full judges the working tree, which the chain does not.
 if [ "$MODE" = full ] && lane_on bot_instructions; then
+  reported_lanes="$reported_lanes,bot-instructions"
   "$TOOLS_DIR/../.agents/skills/bot-instructions/scripts/bot-instructions" check || say bot-instructions "$?"
 fi
 # Decision IDs are judged before merge and not per commit: the check fetches
@@ -401,6 +406,7 @@ fi
 # branch's merged record cannot show the collision. No CI lane runs it, so no
 # change class stands it down. A range run leaves it to that full run.
 if [ "$MODE" = full ]; then
+  reported_lanes="$reported_lanes,decision-ids"
   "$TOOLS_DIR/../.agents/skills/decider/scripts/decisions" check || say decision-ids "$?"
 fi
 
@@ -862,7 +868,7 @@ fi
 # reported from before the lane existed.
 # One line on purpose, like the lane above it: the must-fail control in
 # tools/tests/guard-full.test.sh removes this lane by deleting it.
-[ "$MODE" != full ] || ! lane_on shell_shards || "$TOOLS_DIR/bash32-parse" || say bash32-parse "$?"
+[ "$MODE" != full ] || ! lane_on shell_shards || { reported_lanes="$reported_lanes,bash32-parse"; "$TOOLS_DIR/bash32-parse"; } || say bash32-parse "$?"
 
 # A render source lands its renders in the same change: skills/<x>/<p>
 # renders to .agents/skills/<x>/<p>, an agent definition to one file per
@@ -1197,6 +1203,7 @@ if [ "$MODE" = full ] && [ -f Cargo.toml ]; then
 fi
 
 if [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] || [ "${#rust_manifests[@]}" -gt 0 ]; }; then
+  reported_lanes="$reported_lanes,cargo-lint"
   if cargo tree -p kendex-core -e normal 2>/dev/null | grep -qE '\btauri v'; then
     say tauri-dependency crates/core
   fi
@@ -1352,6 +1359,7 @@ $f"
   printf '%s' "$out"
 }
 if [ "$MODE" != default ] && lane_on shell_shards; then
+  reported_lanes="$reported_lanes,shell-suites"
   suite_dirs=""
   while IFS= read -r f; do
     [ -n "$f" ] || continue
@@ -1494,6 +1502,7 @@ if [ "$MODE" = full ] && [ -f Cargo.toml ]; then
           if ! grep -Fxq "$cross_target" <<<"$installed_targets"; then
             say missing-target "$cross_target"
           else
+            reported_lanes="$reported_lanes,$cross_target"
             cargo check -p kendex-core -p kendex-cli --all-targets --target "$cross_target" ||
               say cross-check "$cross_target"
           fi
@@ -1501,11 +1510,13 @@ if [ "$MODE" = full ] && [ -f Cargo.toml ]; then
       fi
     fi
     if lane_on cargo_lint; then
+      reported_lanes="$reported_lanes,cargo-doc"
       cargo doc --no-deps --document-private-items --workspace --quiet || say cargo-doc workspace
     fi
   fi
 fi
 if [ "$MODE" = full ] && [ -f Cargo.toml ] && lane_on cargo_linux; then
+  reported_lanes="$reported_lanes,cargo-test"
   # A test binary that dies by a signal reached no verdict: the runner
   # reports the executable's death, not an assertion. A binary whose code
   # pages come back wrong from disk dies this way, and rebuilding that
@@ -1536,6 +1547,7 @@ if [ "$MODE" = full ] && [ -f Cargo.toml ] && lane_on cargo_linux; then
   fi
 fi
 if [ "$ui_changed" -eq 1 ] && [ -f ui/package.json ]; then
+  reported_lanes="$reported_lanes,ui"
   npm run --prefix ui check:types || say ui-check check:types
   npm run --prefix ui check:lint || say ui-check check:lint
   if [ "$MODE" != default ]; then
@@ -1543,4 +1555,5 @@ if [ "$ui_changed" -eq 1 ] && [ -f ui/package.json ]; then
   fi
 fi
 
+printf 'validate: lanes=%s selection=all\n' "$reported_lanes"
 exit $fail

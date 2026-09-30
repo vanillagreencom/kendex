@@ -60,7 +60,8 @@
 # failures, an empty DEV_VALIDATE_CMD among them, before any run directory
 # exists; validate_mode is then null. validate_time is the run's wall time as
 # --record reports it, a no-verdict run's included, and null where no run is
-# named or the run is unfinished.
+# named or the run is unfinished. validate_lanes and validate_selection carry
+# the command's report as --record reads it; schemas/dev-return.md names them.
 #
 # A fix round's run is bound to its round. The round record dev-round-write
 # stamped at delegation, PATH/tmp/dev-round-ID-RID.json, names the round's
@@ -282,6 +283,8 @@ commit=""
 validate=""
 validate_note=""
 validate_mode=""
+validate_lanes=""
+validate_selection=""
 validate_run_dir=""
 validate_seconds=""
 validate_started_at=""
@@ -389,7 +392,7 @@ if [[ "$validate_run_dir_given" == "true" ]]; then
     IFS= read -r run_cause <<<"$run_record" || true
     die run-record-unreadable "path=$validate_run_dir" "cause=$run_cause"
   fi
-  # The one line --record prints: validate-mode=M verdict=V head=H start=S,
+  # The one line --record prints: validate-mode=M [lanes=L] selection=S verdict=V head=H start=S,
   # then validate-base-orphaned=O where a rebase left the run's base off the
   # branch, then seconds=N started-at=T ended-at=T where the run finished, the
   # bound's end included.
@@ -398,6 +401,8 @@ if [[ "$validate_run_dir_given" == "true" ]]; then
   for field in ${run_fields[@]+"${run_fields[@]}"}; do
     case "$field" in
       validate-mode=*) validate_mode="${field#*=}" ;;
+      lanes=*) validate_lanes="${field#*=}" ;;
+      selection=*) validate_selection="${field#*=}" ;;
       verdict=*) run_verdict="${field#*=}" ;;
       head=*) run_head="${field#*=}" ;;
       start=*) run_start="${field#*=}" ;;
@@ -621,6 +626,8 @@ jq -n \
   --argjson baseline_lines "$baseline_lines" \
   --arg validate "$validate" \
   --arg validate_mode "$validate_mode" \
+  --arg validate_lanes "$validate_lanes" \
+  --arg validate_selection "$validate_selection" \
   --arg validate_seconds "$validate_seconds" \
   --arg validate_started_at "$validate_started_at" \
   --arg validate_ended_at "$validate_ended_at" \
@@ -653,7 +660,9 @@ jq -n \
      recovered_from: $recovered_from,
      bundled: $bundled,
      items: $items
-   } + if $kind == "implement" then {baseline_lines: $baseline_lines} else {} end)' > "$tmp"
+   } + (if $validate_selection == "" then {} else {validate_selection: $validate_selection} end)
+     + (if $validate_lanes == "" then {} else {validate_lanes: $validate_lanes} end)
+     + if $kind == "implement" then {baseline_lines: $baseline_lines} else {} end)' > "$tmp"
 
 mv "$tmp" "$out"
 trap - EXIT

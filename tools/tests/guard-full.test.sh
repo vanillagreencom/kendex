@@ -755,7 +755,27 @@ for row in "${LANE_ROWS[@]}"; do
   [ "$RC" -eq 0 ] && [ "$got" = "$want" ] \
     && ok "class '${class:-unset}' docs-only '${docs:-unset}' over $paths runs: ${want:-no heavy lane}" \
     || bad "class '${class:-unset}' docs-only '${docs:-unset}' over $paths runs: ${want:-no heavy lane}" "rc=$RC got=$got out=$OUT"
+  case "$class" in
+    "")
+      REPORT_ALL='validate: lanes=guard-scans,bot-instructions,decision-ids,bash32-parse,cargo-lint,shell-suites,aarch64-apple-darwin,x86_64-pc-windows-msvc,cargo-doc,cargo-test,ui selection=all'
+      [ "$(sed -n '$p' <<<"$OUT")" = "$REPORT_ALL" ] \
+        && ok "the full guard reports the check groups it runs once at its end" \
+        || bad "the full guard reports the check groups it runs once at its end" "$OUT"
+      ;;
+    trivial)
+      [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans,decision-ids selection=all' ] \
+        && ok "the guard omits groups it did not run" \
+        || bad "the guard omits groups it did not run" "$OUT"
+      ;;
+  esac
 done
+[ "$(grep -cF "printf 'validate: " "$GUARD")" -eq 1 ] || { echo 'lane control: reporting edit has no unique match' >&2; exit 1; }
+lane_guard "/^printf 'validate: /s/^/: # /"
+run_lanes '' '' $CODE ui/app.ts
+[ "$RC" -eq 0 ] && [ "$(sed -n '$p' <<<"$OUT")" != "$REPORT_ALL" ] \
+  && ok "control: without the final report the lane assertion turns red" \
+  || bad "control: without the final report the lane assertion turns red" "$OUT"
+lane_guard
 run_lanes stale false $CODE
 [ "$RC" -eq 2 ] && [[ "$OUT" == *"guard: validate-class=stale"* ]] && [ "$(lanes_ran)" = "" ] \
   && ok "a class ci-job-set has no selection for is refused before any lane runs" \

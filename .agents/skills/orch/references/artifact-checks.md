@@ -9,6 +9,19 @@ Cross-script routing behind the artifact rows in [../SKILL.md](../SKILL.md). Eac
 | `dev-round-write` | Orchestrator-side twin persisting a fix round's delegated item set at stamp time; immutable per round. Schema: [`../schemas/dev-round.md`](../schemas/dev-round.md). |
 | `dev-artifact-check` | Validates a dev round's artifact by round id and answers `accept`/`wait`/`retry`. Tracker corroboration and exact-commit acceptance binding stay in the orch acceptance tables. |
 
+## Validation command output
+
+`DEV_VALIDATE_CMD` or `DEV_VALIDATE_RANGE_CMD` may print one line to report the checks it runs. `dev-validate-run --record` reads it from the run log.
+
+| Item | Contract |
+|------|----------|
+| Line | `validate: lanes=<comma-separated names> selection=all\|subset` |
+| Names | Non-empty ASCII names using letters, digits, `.`, `_` or `-`; no empty comma-separated element |
+| `selection` | `all` means every lane; `subset` means the command chose fewer lanes |
+| Repeated lines | The last line starting with `validate:` owns the result |
+| Missing or malformed last line | `selection=unreported`, with no `lanes` field; does not change the run verdict |
+| `validate-mode` | Remains `full` or `range`; names the invocation, not the lane selection |
+
 ## Round-closure mechanics
 
 - **The watchdog IS the check in blocking mode**: `dev-artifact-check --wait <quiet_window> …` polls on-disk state and returns the moment a fresh artifact lands or at the deadline — return-message delivery is never load-bearing. Per-harness backgrounding is in each check's `--help`. Run A/B on its return if the round is still outstanding; re-arm only on entering a new escalation step. The reviewer side of the same invariant is stated once, in review-pr.md § 3.2, and never restated here.
