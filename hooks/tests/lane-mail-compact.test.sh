@@ -277,7 +277,7 @@ assert_eq "RC=$RC decision=$(stdout_field .decision)" "RC=0 decision=" \
 
 # The overseer's refusal removed: a flagged overseer is judged on its reading
 # alone, and has none.
-mutant compact-overseer-unheld -e 's@^        \[ "\$COMPACTED" != true \] || refuse_handoff compacted auto$@        :@'
+mutant compact-overseer-unheld -e 's@^    \[ "\$COMPACTED" != true \] || refuse_handoff compacted auto$@    :@'
 new_compact_overseer control_overseer "$MUTANT_PATH"
 # shellcheck disable=SC2046
 compact auto s1 s1 $(overseer_env)
