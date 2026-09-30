@@ -1,0 +1,2087 @@
+[
+  {
+    "kind": "agent",
+    "summary": "Rigorous visual validation expert specializing in UI testing, design system compliance, and accessibility verification. Masters screenshot analysis, visual regression testing, and component validation. Use PROACTIVELY to verify UI modifications have achieved their intended goals through comprehensive visual analysis.",
+    "bundles": ["accessibility-compliance"],
+    "updatedAt": "2026-01-15T17:38:21-05:00",
+    "name": "accessibility-compliance/ui-visual-validator",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Rigorous visual validation expert specializing in UI testing, design system compliance, and accessibility verification. Masters screenshot analysis, visual regression testing, and component validation. Use PROACTIVELY to verify UI modifications have achieved their intended goals through comprehensive visual analysis."
+  },
+  {
+    "kind": "agent",
+    "summary": "Elite AI context engineering specialist mastering dynamic context management, vector databases, knowledge graphs, and intelligent memory systems. Orchestrates context across multi-agent workflows, enterprise AI systems, and long-running projects with 2024/2025 best practices. Use PROACTIVELY for complex AI orchestration.",
+    "bundles": ["agent-orchestration"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "agent-orchestration/context-manager",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Elite AI context engineering specialist mastering dynamic context management, vector databases, knowledge graphs, and intelligent memory systems. Orchestrates context across multi-agent workflows, enterprise AI systems, and long-running projects with 2024/2025 best practices. Use PROACTIVELY for complex AI orchestration."
+  },
+  {
+    "kind": "agent",
+    "summary": "Hypothesis-driven debugging investigator that investigates one assigned hypothesis, gathering evidence to confirm or falsify it with file:line citations and confidence levels. Use when debugging complex issues with multiple potential root causes.",
+    "bundles": ["agent-teams"],
+    "updatedAt": "2026-05-16T20:46:39-04:00",
+    "name": "agent-teams/team-debugger",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Hypothesis-driven debugging investigator that investigates one assigned hypothesis, gathering evidence to confirm or falsify it with file:line citations and confidence levels. Use when debugging complex issues with multiple potential root causes."
+  },
+  {
+    "kind": "agent",
+    "summary": "Parallel feature builder that implements components within strict file ownership boundaries, coordinating at integration points via messaging. Use when building features in parallel across multiple agents with file ownership coordination.",
+    "bundles": ["agent-teams"],
+    "updatedAt": "2026-05-16T20:46:39-04:00",
+    "name": "agent-teams/team-implementer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Parallel feature builder that implements components within strict file ownership boundaries, coordinating at integration points via messaging. Use when building features in parallel across multiple agents with file ownership coordination."
+  },
+  {
+    "kind": "agent",
+    "summary": "Team orchestrator that decomposes work into parallel tasks with file ownership boundaries, manages team lifecycle, and synthesizes results. Use when coordinating multi-agent teams, decomposing complex tasks, or managing parallel workstreams.",
+    "bundles": ["agent-teams"],
+    "updatedAt": "2026-08-15T17:15:13-04:00",
+    "name": "agent-teams/team-lead",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Team orchestrator that decomposes work into parallel tasks with file ownership boundaries, manages team lifecycle, and synthesizes results. Use when coordinating multi-agent teams, decomposing complex tasks, or managing parallel workstreams."
+  },
+  {
+    "kind": "agent",
+    "summary": "Multi-dimensional code reviewer that operates on one assigned review dimension (security, performance, architecture, testing, or accessibility) with structured finding format. Use when performing parallel code reviews across multiple quality dimensions.",
+    "bundles": ["agent-teams"],
+    "updatedAt": "2026-05-16T20:46:39-04:00",
+    "name": "agent-teams/team-reviewer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Multi-dimensional code reviewer that operates on one assigned review dimension (security, performance, architecture, testing, or accessibility) with structured finding format. Use when performing parallel code reviews across multiple quality dimensions."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert backend architect specializing in scalable API design, microservices architecture, and distributed systems. Masters REST/GraphQL/gRPC APIs, event-driven architectures, service mesh patterns, and modern backend frameworks. Handles service boundary definition, inter-service communication, resilience patterns, and observability. Use PROACTIVELY when creating new backend services or APIs.",
+    "bundles": ["api-scaffolding"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "api-scaffolding/backend-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert backend architect specializing in scalable API design, microservices architecture, and distributed systems. Masters REST/GraphQL/gRPC APIs, event-driven architectures, service mesh patterns, and modern backend frameworks. Handles service boundary definition, inter-service communication, resilience patterns, and observability. Use PROACTIVELY when creating new backend services or APIs."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master Django 5.x with async views, DRF, Celery, and Django Channels. Build scalable web applications with proper architecture, testing, and deployment. Use PROACTIVELY for Django development, ORM optimization, or complex Django patterns.",
+    "bundles": ["api-scaffolding"],
+    "updatedAt": "2026-09-01T18:36:23-04:00",
+    "name": "api-scaffolding/django-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master Django 5.x with async views, DRF, Celery, and Django Channels. Build scalable web applications with proper architecture, testing, and deployment. Use PROACTIVELY for Django development, ORM optimization, or complex Django patterns."
+  },
+  {
+    "kind": "agent",
+    "summary": "Build high-performance async APIs with FastAPI, SQLAlchemy 2.0, and Pydantic V2. Master microservices, WebSockets, and modern Python async patterns. Use PROACTIVELY for FastAPI development, async optimization, or API architecture.",
+    "bundles": ["api-scaffolding"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "api-scaffolding/fastapi-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Build high-performance async APIs with FastAPI, SQLAlchemy 2.0, and Pydantic V2. Master microservices, WebSockets, and modern Python async patterns. Use PROACTIVELY for FastAPI development, async optimization, or API architecture."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master modern GraphQL with federation, performance optimization, and enterprise security. Build scalable schemas, implement advanced caching, and design real-time systems. Use PROACTIVELY for GraphQL architecture or performance optimization.",
+    "bundles": ["api-scaffolding"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "api-scaffolding/graphql-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master modern GraphQL with federation, performance optimization, and enterprise security. Build scalable schemas, implement advanced caching, and design real-time systems. Use PROACTIVELY for GraphQL architecture or performance optimization."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master API documentation with OpenAPI 3.1, AI-powered tools, and modern developer experience practices. Create interactive docs, generate SDKs, and build comprehensive developer portals. Use PROACTIVELY for API documentation or developer portal creation.",
+    "bundles": ["api-testing-observability"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "api-testing-observability/api-documenter",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master API documentation with OpenAPI 3.1, AI-powered tools, and modern developer experience practices. Create interactive docs, generate SDKs, and build comprehensive developer portals. Use PROACTIVELY for API documentation or developer portal creation."
+  },
+  {
+    "kind": "agent",
+    "summary": "Build React components, implement responsive layouts, and handle client-side state management. Masters React 19, Next.js 15, and modern frontend architecture. Optimizes performance and ensures accessibility. Use PROACTIVELY when creating UI components or fixing frontend issues.",
+    "bundles": ["application-performance"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "application-performance/frontend-developer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Build React components, implement responsive layouts, and handle client-side state management. Masters React 19, Next.js 15, and modern frontend architecture. Optimizes performance and ensures accessibility. Use PROACTIVELY when creating UI components or fixing frontend issues."
+  },
+  {
+    "kind": "agent",
+    "summary": "Build production-ready monitoring, logging, and tracing systems. Implements comprehensive observability strategies, SLI/SLO management, and incident response workflows. Use PROACTIVELY for monitoring infrastructure, performance optimization, or production reliability.",
+    "bundles": ["application-performance"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "application-performance/observability-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Build production-ready monitoring, logging, and tracing systems. Implements comprehensive observability strategies, SLI/SLO management, and incident response workflows. Use PROACTIVELY for monitoring infrastructure, performance optimization, or production reliability."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert performance engineer specializing in modern observability, application optimization, and scalable system performance. Masters OpenTelemetry, distributed tracing, load testing, multi-tier caching, Core Web Vitals, and performance monitoring. Handles end-to-end optimization, real user monitoring, and scalability patterns. Use PROACTIVELY for performance optimization, observability, or scalability challenges.",
+    "bundles": ["application-performance"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "application-performance/performance-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert performance engineer specializing in modern observability, application optimization, and scalable system performance. Masters OpenTelemetry, distributed tracing, load testing, multi-tier caching, Core Web Vitals, and performance monitoring. Handles end-to-end optimization, real user monitoring, and scalability patterns. Use PROACTIVELY for performance optimization, observability, or scalability challenges."
+  },
+  {
+    "kind": "agent",
+    "summary": "Senior embedded software engineer specializing in firmware and driver development for ARM Cortex-M microcontrollers (Teensy, STM32, nRF52, SAMD). Decades of experience writing reliable, optimized, and maintainable embedded code with deep expertise in memory barriers, DMA/cache coherency, interrupt-driven I/O, and peripheral drivers.",
+    "bundles": ["arm-cortex-microcontrollers"],
+    "updatedAt": "2026-01-15T17:38:21-05:00",
+    "name": "arm-cortex-microcontrollers/arm-cortex-expert",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Senior embedded software engineer specializing in firmware and driver development for ARM Cortex-M microcontrollers (Teensy, STM32, nRF52, SAMD). Decades of experience writing reliable, optimized, and maintainable embedded code with deep expertise in memory barriers, DMA/cache coherency, interrupt-driven I/O, and peripheral drivers."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert backend architect specializing in scalable API design, microservices architecture, and distributed systems. Masters REST/GraphQL/gRPC APIs, event-driven architectures, service mesh patterns, and modern backend frameworks. Handles service boundary definition, inter-service communication, resilience patterns, and observability. Use PROACTIVELY when creating new backend services or APIs.",
+    "bundles": ["backend-api-security"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "backend-api-security/backend-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert backend architect specializing in scalable API design, microservices architecture, and distributed systems. Masters REST/GraphQL/gRPC APIs, event-driven architectures, service mesh patterns, and modern backend frameworks. Handles service boundary definition, inter-service communication, resilience patterns, and observability. Use PROACTIVELY when creating new backend services or APIs."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert in secure backend coding practices specializing in input validation, authentication, and API security. Use PROACTIVELY for backend security implementations or security code reviews.",
+    "bundles": ["backend-api-security"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "backend-api-security/backend-security-coder",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert in secure backend coding practices specializing in input validation, authentication, and API security. Use PROACTIVELY for backend security implementations or security code reviews."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert backend architect specializing in scalable API design, microservices architecture, and distributed systems. Masters REST/GraphQL/gRPC APIs, event-driven architectures, service mesh patterns, and modern backend frameworks. Handles service boundary definition, inter-service communication, resilience patterns, and observability. Use PROACTIVELY when creating new backend services or APIs.",
+    "bundles": ["backend-development"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "backend-development/backend-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert backend architect specializing in scalable API design, microservices architecture, and distributed systems. Masters REST/GraphQL/gRPC APIs, event-driven architectures, service mesh patterns, and modern backend frameworks. Handles service boundary definition, inter-service communication, resilience patterns, and observability. Use PROACTIVELY when creating new backend services or APIs."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert in event sourcing, CQRS, and event-driven architecture patterns. Masters event store design, projection building, saga orchestration, and eventual consistency patterns. Use PROACTIVELY for event-sourced systems, audit trail requirements, or complex domain modeling with temporal queries.",
+    "bundles": ["backend-development"],
+    "updatedAt": "2026-01-30T11:34:59-05:00",
+    "name": "backend-development/event-sourcing-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert in event sourcing, CQRS, and event-driven architecture patterns. Masters event store design, projection building, saga orchestration, and eventual consistency patterns. Use PROACTIVELY for event-sourced systems, audit trail requirements, or complex domain modeling with temporal queries."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master modern GraphQL with federation, performance optimization, and enterprise security. Build scalable schemas, implement advanced caching, and design real-time systems. Use PROACTIVELY for GraphQL architecture or performance optimization.",
+    "bundles": ["backend-development"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "backend-development/graphql-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master modern GraphQL with federation, performance optimization, and enterprise security. Build scalable schemas, implement advanced caching, and design real-time systems. Use PROACTIVELY for GraphQL architecture or performance optimization."
+  },
+  {
+    "kind": "agent",
+    "summary": "Profile and optimize application performance including response times, memory usage, query efficiency, and scalability. Use for performance review during feature development.",
+    "bundles": ["backend-development"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "backend-development/performance-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Profile and optimize application performance including response times, memory usage, query efficiency, and scalability. Use for performance review during feature development."
+  },
+  {
+    "kind": "agent",
+    "summary": "Review code and architecture for security vulnerabilities, OWASP Top 10, auth flaws, and compliance issues. Use for security review during feature development.",
+    "bundles": ["backend-development"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "backend-development/security-auditor",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Review code and architecture for security vulnerabilities, OWASP Top 10, auth flaws, and compliance issues. Use for security review during feature development."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master TDD orchestrator specializing in red-green-refactor discipline, multi-agent workflow coordination, and comprehensive test-driven development practices. Enforces TDD best practices across teams with AI-assisted testing and modern frameworks. Use PROACTIVELY for TDD implementation and governance.",
+    "bundles": ["backend-development"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "backend-development/tdd-orchestrator",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master TDD orchestrator specializing in red-green-refactor discipline, multi-agent workflow coordination, and comprehensive test-driven development practices. Enforces TDD best practices across teams with AI-assisted testing and modern frameworks. Use PROACTIVELY for TDD implementation and governance."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master Temporal workflow orchestration with Python SDK. Implements durable workflows, saga patterns, and distributed transactions. Covers async/await, testing strategies, and production deployment. Use PROACTIVELY for workflow design, microservice orchestration, or long-running processes.",
+    "bundles": ["backend-development"],
+    "updatedAt": "2026-01-15T17:38:21-05:00",
+    "name": "backend-development/temporal-python-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master Temporal workflow orchestration with Python SDK. Implements durable workflows, saga patterns, and distributed transactions. Covers async/await, testing strategies, and production deployment. Use PROACTIVELY for workflow design, microservice orchestration, or long-running processes."
+  },
+  {
+    "kind": "agent",
+    "summary": "Create comprehensive test suites including unit, integration, and E2E tests. Supports TDD/BDD workflows. Use for test creation during feature development.",
+    "bundles": ["backend-development"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "backend-development/test-automator",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Create comprehensive test suites including unit, integration, and E2E tests. Supports TDD/BDD workflows. Use for test creation during feature development."
+  },
+  {
+    "kind": "agent",
+    "summary": "Build production-ready Web3 applications, smart contracts, and decentralized systems. Implements DeFi protocols, NFT platforms, DAOs, and enterprise blockchain integrations. Use PROACTIVELY for smart contracts, Web3 apps, DeFi protocols, or blockchain infrastructure.",
+    "bundles": ["blockchain-web3"],
+    "updatedAt": "2026-01-15T17:38:21-05:00",
+    "name": "blockchain-web3/blockchain-developer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Build production-ready Web3 applications, smart contracts, and decentralized systems. Implements DeFi protocols, NFT platforms, DAOs, and enterprise blockchain integrations. Use PROACTIVELY for smart contracts, Web3 apps, DeFi protocols, or blockchain infrastructure."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master modern business analysis with AI-powered analytics, real-time dashboards, and data-driven insights. Build comprehensive KPI frameworks, predictive models, and strategic recommendations. Use PROACTIVELY for business intelligence or strategic analysis.",
+    "bundles": ["business-analytics"],
+    "updatedAt": "2026-01-15T17:38:21-05:00",
+    "name": "business-analytics/business-analyst",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master modern business analysis with AI-powered analytics, real-time dashboards, and data-driven insights. Build comprehensive KPI frameworks, predictive models, and strategic recommendations. Use PROACTIVELY for business intelligence or strategic analysis."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert C4 Code-level documentation specialist. Analyzes code directories to create comprehensive C4 code-level documentation including function signatures, arguments, dependencies, and code structure. Use when documenting code at the lowest C4 level for individual directories and code modules.",
+    "bundles": ["c4-architecture"],
+    "updatedAt": "2026-01-15T17:38:21-05:00",
+    "name": "c4-architecture/c4-code",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert C4 Code-level documentation specialist. Analyzes code directories to create comprehensive C4 code-level documentation including function signatures, arguments, dependencies, and code structure. Use when documenting code at the lowest C4 level for individual directories and code modules."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert C4 Component-level documentation specialist. Synthesizes C4 Code-level documentation into Component-level architecture, defining component boundaries, interfaces, and relationships. Creates component diagrams and documentation. Use when synthesizing code-level documentation into logical components.",
+    "bundles": ["c4-architecture"],
+    "updatedAt": "2026-01-15T17:38:21-05:00",
+    "name": "c4-architecture/c4-component",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert C4 Component-level documentation specialist. Synthesizes C4 Code-level documentation into Component-level architecture, defining component boundaries, interfaces, and relationships. Creates component diagrams and documentation. Use when synthesizing code-level documentation into logical components."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert C4 Container-level documentation specialist. Synthesizes Component-level documentation into Container-level architecture, mapping components to deployment units, documenting container interfaces as APIs, and creating container diagrams. Use when synthesizing components into deployment containers and documenting system deployment architecture.",
+    "bundles": ["c4-architecture"],
+    "updatedAt": "2026-01-15T17:38:21-05:00",
+    "name": "c4-architecture/c4-container",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert C4 Container-level documentation specialist. Synthesizes Component-level documentation into Container-level architecture, mapping components to deployment units, documenting container interfaces as APIs, and creating container diagrams. Use when synthesizing components into deployment containers and documenting system deployment architecture."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert C4 Context-level documentation specialist. Creates high-level system context diagrams, documents personas, user journeys, system features, and external dependencies. Synthesizes container and component documentation with system documentation to create comprehensive context-level architecture. Use when creating the highest-level C4 system context documentation.",
+    "bundles": ["c4-architecture"],
+    "updatedAt": "2026-01-15T17:38:21-05:00",
+    "name": "c4-architecture/c4-context",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert C4 Context-level documentation specialist. Creates high-level system context diagrams, documents personas, user journeys, system features, and external dependencies. Synthesizes container and component documentation with system documentation to create comprehensive context-level architecture. Use when creating the highest-level C4 system context documentation."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert cloud architect specializing in AWS/Azure/GCP/OCI multi-cloud infrastructure design, advanced IaC (Terraform/OpenTofu/CDK), FinOps cost optimization, and modern architectural patterns. Masters serverless, microservices, security, compliance, and disaster recovery. Use PROACTIVELY for cloud architecture, cost optimization, migration planning, or multi-cloud strategies.",
+    "bundles": ["cicd-automation"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "cicd-automation/cloud-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert cloud architect specializing in AWS/Azure/GCP/OCI multi-cloud infrastructure design, advanced IaC (Terraform/OpenTofu/CDK), FinOps cost optimization, and modern architectural patterns. Masters serverless, microservices, security, compliance, and disaster recovery. Use PROACTIVELY for cloud architecture, cost optimization, migration planning, or multi-cloud strategies."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert deployment engineer specializing in modern CI/CD pipelines, GitOps workflows, and advanced deployment automation. Masters GitHub Actions, ArgoCD/Flux, progressive delivery, container security, and platform engineering. Handles zero-downtime deployments, security scanning, and developer experience optimization. Use PROACTIVELY for CI/CD design, GitOps implementation, or deployment automation.",
+    "bundles": ["cicd-automation"],
+    "updatedAt": "2026-09-01T18:36:23-04:00",
+    "name": "cicd-automation/deployment-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert deployment engineer specializing in modern CI/CD pipelines, GitOps workflows, and advanced deployment automation. Masters GitHub Actions, ArgoCD/Flux, progressive delivery, container security, and platform engineering. Handles zero-downtime deployments, security scanning, and developer experience optimization. Use PROACTIVELY for CI/CD design, GitOps implementation, or deployment automation."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert DevOps troubleshooter specializing in rapid incident response, advanced debugging, and modern observability. Masters log analysis, distributed tracing, Kubernetes debugging, performance optimization, and root cause analysis. Handles production outages, system reliability, and preventive monitoring. Use PROACTIVELY for debugging, incident response, or system troubleshooting.",
+    "bundles": ["cicd-automation"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "cicd-automation/devops-troubleshooter",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert DevOps troubleshooter specializing in rapid incident response, advanced debugging, and modern observability. Masters log analysis, distributed tracing, Kubernetes debugging, performance optimization, and root cause analysis. Handles production outages, system reliability, and preventive monitoring. Use PROACTIVELY for debugging, incident response, or system troubleshooting."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert Kubernetes architect specializing in cloud-native infrastructure, advanced GitOps workflows (ArgoCD/Flux), and enterprise container orchestration. Masters EKS/AKS/GKE/OKE, service mesh (Istio/Linkerd), progressive delivery, multi-tenancy, and platform engineering. Handles security, observability, cost optimization, and developer experience. Use PROACTIVELY for K8s architecture, GitOps implementation, or cloud-native platform design.",
+    "bundles": ["cicd-automation"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "cicd-automation/kubernetes-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert Kubernetes architect specializing in cloud-native infrastructure, advanced GitOps workflows (ArgoCD/Flux), and enterprise container orchestration. Masters EKS/AKS/GKE/OKE, service mesh (Istio/Linkerd), progressive delivery, multi-tenancy, and platform engineering. Handles security, observability, cost optimization, and developer experience. Use PROACTIVELY for K8s architecture, GitOps implementation, or cloud-native platform design."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert Terraform/OpenTofu specialist mastering advanced IaC automation, state management, and enterprise infrastructure patterns. Handles complex module design, multi-cloud deployments, GitOps workflows, policy as code, and CI/CD integration. Covers migration strategies, security best practices, and modern IaC ecosystems. Use PROACTIVELY for advanced IaC, state management, or infrastructure automation.",
+    "bundles": ["cicd-automation"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "cicd-automation/terraform-specialist",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert Terraform/OpenTofu specialist mastering advanced IaC automation, state management, and enterprise infrastructure patterns. Handles complex module design, multi-cloud deployments, GitOps workflows, policy as code, and CI/CD integration. Covers migration strategies, security best practices, and modern IaC ecosystems. Use PROACTIVELY for advanced IaC, state management, or infrastructure automation."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert cloud architect specializing in AWS/Azure/GCP/OCI multi-cloud infrastructure design, advanced IaC (Terraform/OpenTofu/CDK), FinOps cost optimization, and modern architectural patterns. Masters serverless, microservices, security, compliance, and disaster recovery. Use PROACTIVELY for cloud architecture, cost optimization, migration planning, or multi-cloud strategies.",
+    "bundles": ["cloud-infrastructure"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "cloud-infrastructure/cloud-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert cloud architect specializing in AWS/Azure/GCP/OCI multi-cloud infrastructure design, advanced IaC (Terraform/OpenTofu/CDK), FinOps cost optimization, and modern architectural patterns. Masters serverless, microservices, security, compliance, and disaster recovery. Use PROACTIVELY for cloud architecture, cost optimization, migration planning, or multi-cloud strategies."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert deployment engineer specializing in modern CI/CD pipelines, GitOps workflows, and advanced deployment automation. Masters GitHub Actions, ArgoCD/Flux, progressive delivery, container security, and platform engineering. Handles zero-downtime deployments, security scanning, and developer experience optimization. Use PROACTIVELY for CI/CD design, GitOps implementation, or deployment automation.",
+    "bundles": ["cloud-infrastructure"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "cloud-infrastructure/deployment-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert deployment engineer specializing in modern CI/CD pipelines, GitOps workflows, and advanced deployment automation. Masters GitHub Actions, ArgoCD/Flux, progressive delivery, container security, and platform engineering. Handles zero-downtime deployments, security scanning, and developer experience optimization. Use PROACTIVELY for CI/CD design, GitOps implementation, or deployment automation."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert hybrid cloud architect specializing in complex multi-cloud solutions across AWS/Azure/GCP/OCI and private clouds (OpenStack/VMware). Masters hybrid connectivity, workload placement optimization, edge computing, and cross-cloud automation. Handles compliance, cost optimization, disaster recovery, and migration strategies. Use PROACTIVELY for hybrid architecture, multi-cloud strategy, or complex infrastructure integration.",
+    "bundles": ["cloud-infrastructure"],
+    "updatedAt": "2026-03-17T11:00:12-04:00",
+    "name": "cloud-infrastructure/hybrid-cloud-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert hybrid cloud architect specializing in complex multi-cloud solutions across AWS/Azure/GCP/OCI and private clouds (OpenStack/VMware). Masters hybrid connectivity, workload placement optimization, edge computing, and cross-cloud automation. Handles compliance, cost optimization, disaster recovery, and migration strategies. Use PROACTIVELY for hybrid architecture, multi-cloud strategy, or complex infrastructure integration."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert Kubernetes architect specializing in cloud-native infrastructure, advanced GitOps workflows (ArgoCD/Flux), and enterprise container orchestration. Masters EKS/AKS/GKE/OKE, service mesh (Istio/Linkerd), progressive delivery, multi-tenancy, and platform engineering. Handles security, observability, cost optimization, and developer experience. Use PROACTIVELY for K8s architecture, GitOps implementation, or cloud-native platform design.",
+    "bundles": ["cloud-infrastructure"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "cloud-infrastructure/kubernetes-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert Kubernetes architect specializing in cloud-native infrastructure, advanced GitOps workflows (ArgoCD/Flux), and enterprise container orchestration. Masters EKS/AKS/GKE/OKE, service mesh (Istio/Linkerd), progressive delivery, multi-tenancy, and platform engineering. Handles security, observability, cost optimization, and developer experience. Use PROACTIVELY for K8s architecture, GitOps implementation, or cloud-native platform design."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert network engineer specializing in modern cloud networking, security architectures, and performance optimization. Masters multi-cloud connectivity, service mesh, zero-trust networking, SSL/TLS, global load balancing, and advanced troubleshooting. Handles CDN optimization, network automation, and compliance. Use PROACTIVELY for network design, connectivity issues, or performance optimization.",
+    "bundles": ["cloud-infrastructure"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "cloud-infrastructure/network-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert network engineer specializing in modern cloud networking, security architectures, and performance optimization. Masters multi-cloud connectivity, service mesh, zero-trust networking, SSL/TLS, global load balancing, and advanced troubleshooting. Handles CDN optimization, network automation, and compliance. Use PROACTIVELY for network design, connectivity issues, or performance optimization."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert service mesh architect specializing in Istio, Linkerd, and cloud-native networking patterns. Masters traffic management, security policies, observability integration, and multi-cluster mesh configurations. Use PROACTIVELY for service mesh architecture, zero-trust networking, or microservices communication patterns.",
+    "bundles": ["cloud-infrastructure"],
+    "updatedAt": "2026-04-26T16:42:31-04:00",
+    "name": "cloud-infrastructure/service-mesh-expert",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert service mesh architect specializing in Istio, Linkerd, and cloud-native networking patterns. Masters traffic management, security policies, observability integration, and multi-cluster mesh configurations. Use PROACTIVELY for service mesh architecture, zero-trust networking, or microservices communication patterns."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert Terraform/OpenTofu specialist mastering advanced IaC automation, state management, and enterprise infrastructure patterns. Handles complex module design, multi-cloud deployments, GitOps workflows, policy as code, and CI/CD integration. Covers migration strategies, security best practices, and modern IaC ecosystems. Use PROACTIVELY for advanced IaC, state management, or infrastructure automation.",
+    "bundles": ["cloud-infrastructure"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "cloud-infrastructure/terraform-specialist",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert Terraform/OpenTofu specialist mastering advanced IaC automation, state management, and enterprise infrastructure patterns. Handles complex module design, multi-cloud deployments, GitOps workflows, policy as code, and CI/CD integration. Covers migration strategies, security best practices, and modern IaC ecosystems. Use PROACTIVELY for advanced IaC, state management, or infrastructure automation."
+  },
+  {
+    "kind": "agent",
+    "summary": "Elite code review expert specializing in modern AI-powered code analysis, security vulnerabilities, performance optimization, and production reliability. Masters static analysis tools, security scanning, and configuration review with 2024/2025 best practices. Use PROACTIVELY for code quality assurance.",
+    "bundles": ["code-documentation"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "code-documentation/code-reviewer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Elite code review expert specializing in modern AI-powered code analysis, security vulnerabilities, performance optimization, and production reliability. Masters static analysis tools, security scanning, and configuration review with 2024/2025 best practices. Use PROACTIVELY for code quality assurance."
+  },
+  {
+    "kind": "agent",
+    "summary": "Creates comprehensive technical documentation from existing codebases. Analyzes architecture, design patterns, and implementation details to produce long-form technical manuals and ebooks. Use PROACTIVELY for system documentation, architecture guides, or technical deep-dives.",
+    "bundles": ["code-documentation"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "code-documentation/docs-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Creates comprehensive technical documentation from existing codebases. Analyzes architecture, design patterns, and implementation details to produce long-form technical manuals and ebooks. Use PROACTIVELY for system documentation, architecture guides, or technical deep-dives."
+  },
+  {
+    "kind": "agent",
+    "summary": "Creates step-by-step tutorials and educational content from code. Transforms complex concepts into progressive learning experiences with hands-on examples. Use PROACTIVELY for onboarding guides, feature tutorials, or concept explanations.",
+    "bundles": ["code-documentation"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "code-documentation/tutorial-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Creates step-by-step tutorials and educational content from code. Transforms complex concepts into progressive learning experiences with hands-on examples. Use PROACTIVELY for onboarding guides, feature tutorials, or concept explanations."
+  },
+  {
+    "kind": "agent",
+    "summary": "Elite code review expert specializing in modern AI-powered code analysis, security vulnerabilities, performance optimization, and production reliability. Masters static analysis tools, security scanning, and configuration review with 2024/2025 best practices. Use PROACTIVELY for code quality assurance.",
+    "bundles": ["code-refactoring"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "code-refactoring/code-reviewer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Elite code review expert specializing in modern AI-powered code analysis, security vulnerabilities, performance optimization, and production reliability. Masters static analysis tools, security scanning, and configuration review with 2024/2025 best practices. Use PROACTIVELY for code quality assurance."
+  },
+  {
+    "kind": "agent",
+    "summary": "Refactor legacy codebases, migrate outdated frameworks, and implement gradual modernization. Handles technical debt, dependency updates, and backward compatibility. Use PROACTIVELY for legacy system updates, framework migrations, or technical debt reduction.",
+    "bundles": ["code-refactoring"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "code-refactoring/legacy-modernizer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Refactor legacy codebases, migrate outdated frameworks, and implement gradual modernization. Handles technical debt, dependency updates, and backward compatibility. Use PROACTIVELY for legacy system updates, framework migrations, or technical debt reduction."
+  },
+  {
+    "kind": "agent",
+    "summary": "Elite code review expert specializing in modern AI-powered code analysis, security vulnerabilities, performance optimization, and production reliability. Masters static analysis tools, security scanning, and configuration review with 2024/2025 best practices. Use PROACTIVELY for code quality assurance.",
+    "bundles": ["codebase-cleanup"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "codebase-cleanup/code-reviewer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Elite code review expert specializing in modern AI-powered code analysis, security vulnerabilities, performance optimization, and production reliability. Masters static analysis tools, security scanning, and configuration review with 2024/2025 best practices. Use PROACTIVELY for code quality assurance."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master AI-powered test automation with modern frameworks, self-healing tests, and comprehensive quality engineering. Build scalable testing strategies with advanced CI/CD integration. Use PROACTIVELY for testing automation or quality assurance.",
+    "bundles": ["codebase-cleanup"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "codebase-cleanup/test-automator",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master AI-powered test automation with modern frameworks, self-healing tests, and comprehensive quality engineering. Build scalable testing strategies with advanced CI/CD integration. Use PROACTIVELY for testing automation or quality assurance."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master software architect specializing in modern architecture patterns, clean architecture, microservices, event-driven systems, and DDD. Reviews system designs and code changes for architectural integrity, scalability, and maintainability. Use PROACTIVELY for architectural decisions.",
+    "bundles": ["comprehensive-review"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "comprehensive-review/architect-review",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master software architect specializing in modern architecture patterns, clean architecture, microservices, event-driven systems, and DDD. Reviews system designs and code changes for architectural integrity, scalability, and maintainability. Use PROACTIVELY for architectural decisions."
+  },
+  {
+    "kind": "agent",
+    "summary": "Elite code review expert specializing in modern AI-powered code analysis, security vulnerabilities, performance optimization, and production reliability. Masters static analysis tools, security scanning, and configuration review with 2024/2025 best practices. Use PROACTIVELY for code quality assurance.",
+    "bundles": ["comprehensive-review"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "comprehensive-review/code-reviewer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Elite code review expert specializing in modern AI-powered code analysis, security vulnerabilities, performance optimization, and production reliability. Masters static analysis tools, security scanning, and configuration review with 2024/2025 best practices. Use PROACTIVELY for code quality assurance."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert security auditor specializing in DevSecOps, comprehensive cybersecurity, and compliance frameworks. Masters vulnerability assessment, threat modeling, secure authentication (OAuth2/OIDC), OWASP standards, cloud security, and security automation. Handles DevSecOps integration, compliance (GDPR/HIPAA/SOC2), and incident response. Use PROACTIVELY for security audits, DevSecOps, or compliance implementation.",
+    "bundles": ["comprehensive-review"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "comprehensive-review/security-auditor",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert security auditor specializing in DevSecOps, comprehensive cybersecurity, and compliance frameworks. Masters vulnerability assessment, threat modeling, secure authentication (OAuth2/OIDC), OWASP standards, cloud security, and security automation. Handles DevSecOps integration, compliance (GDPR/HIPAA/SOC2), and incident response. Use PROACTIVELY for security audits, DevSecOps, or compliance implementation."
+  },
+  {
+    "kind": "agent",
+    "summary": "Validates Conductor project artifacts for completeness, consistency, and correctness. Use after setup, when diagnosing issues, or before implementation to verify project context.",
+    "bundles": ["conductor"],
+    "updatedAt": "2026-01-15T20:58:35-05:00",
+    "name": "conductor/conductor-validator",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Validates Conductor project artifacts for completeness, consistency, and correctness. Use after setup, when diagnosing issues, or before implementation to verify project context."
+  },
+  {
+    "kind": "agent",
+    "summary": "Elite content marketing strategist specializing in AI-powered content creation, omnichannel distribution, SEO optimization, and data-driven performance marketing. Masters modern content tools, social media automation, and conversion optimization with 2024/2025 best practices. Use PROACTIVELY for comprehensive content marketing.",
+    "bundles": ["content-marketing"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "content-marketing/content-marketer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Elite content marketing strategist specializing in AI-powered content creation, omnichannel distribution, SEO optimization, and data-driven performance marketing. Masters modern content tools, social media automation, and conversion optimization with 2024/2025 best practices. Use PROACTIVELY for comprehensive content marketing."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert web researcher using advanced search techniques and synthesis. Masters search operators, result filtering, and multi-source verification. Handles competitive analysis and fact-checking. Use PROACTIVELY for deep research, information gathering, or trend analysis.",
+    "bundles": ["content-marketing"],
+    "updatedAt": "2025-10-13T10:19:10-04:00",
+    "name": "content-marketing/search-specialist",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert web researcher using advanced search techniques and synthesis. Masters search operators, result filtering, and multi-source verification. Handles competitive analysis and fact-checking. Use PROACTIVELY for deep research, information gathering, or trend analysis."
+  },
+  {
+    "kind": "agent",
+    "summary": "Elite AI context engineering specialist mastering dynamic context management, vector databases, knowledge graphs, and intelligent memory systems. Orchestrates context across multi-agent workflows, enterprise AI systems, and long-running projects with 2024/2025 best practices. Use PROACTIVELY for complex AI orchestration.",
+    "bundles": ["context-management"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "context-management/context-manager",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Elite AI context engineering specialist mastering dynamic context management, vector databases, knowledge graphs, and intelligent memory systems. Orchestrates context across multi-agent workflows, enterprise AI systems, and long-running projects with 2024/2025 best practices. Use PROACTIVELY for complex AI orchestration."
+  },
+  {
+    "kind": "agent",
+    "summary": "Elite AI-powered customer support specialist mastering conversational AI, automated ticketing, sentiment analysis, and omnichannel support experiences. Integrates modern support tools, chatbot platforms, and CX optimization with 2024/2025 best practices. Use PROACTIVELY for comprehensive customer experience management.",
+    "bundles": ["customer-sales-automation"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "customer-sales-automation/customer-support",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Elite AI-powered customer support specialist mastering conversational AI, automated ticketing, sentiment analysis, and omnichannel support experiences. Integrates modern support tools, chatbot platforms, and CX optimization with 2024/2025 best practices. Use PROACTIVELY for comprehensive customer experience management."
+  },
+  {
+    "kind": "agent",
+    "summary": "Draft cold emails, follow-ups, and proposal templates. Creates pricing pages, case studies, and sales scripts. Use PROACTIVELY for sales outreach or lead nurturing.",
+    "bundles": ["customer-sales-automation"],
+    "updatedAt": "2025-10-13T10:19:10-04:00",
+    "name": "customer-sales-automation/sales-automator",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Draft cold emails, follow-ups, and proposal templates. Creates pricing pages, case studies, and sales scripts. Use PROACTIVELY for sales outreach or lead nurturing."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert backend architect specializing in scalable API design, microservices architecture, and distributed systems. Masters REST/GraphQL/gRPC APIs, event-driven architectures, service mesh patterns, and modern backend frameworks. Handles service boundary definition, inter-service communication, resilience patterns, and observability. Use PROACTIVELY when creating new backend services or APIs.",
+    "bundles": ["data-engineering"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "data-engineering/backend-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert backend architect specializing in scalable API design, microservices architecture, and distributed systems. Masters REST/GraphQL/gRPC APIs, event-driven architectures, service mesh patterns, and modern backend frameworks. Handles service boundary definition, inter-service communication, resilience patterns, and observability. Use PROACTIVELY when creating new backend services or APIs."
+  },
+  {
+    "kind": "agent",
+    "summary": "Build scalable data pipelines, modern data warehouses, and real-time streaming architectures. Implements Apache Spark, dbt, Airflow, and cloud-native data platforms. Use PROACTIVELY for data pipeline design, analytics infrastructure, or modern data stack implementation.",
+    "bundles": ["data-engineering"],
+    "updatedAt": "2026-03-17T11:00:12-04:00",
+    "name": "data-engineering/data-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Build scalable data pipelines, modern data warehouses, and real-time streaming architectures. Implements Apache Spark, dbt, Airflow, and cloud-native data platforms. Use PROACTIVELY for data pipeline design, analytics infrastructure, or modern data stack implementation."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert in secure backend coding practices specializing in input validation, authentication, and API security. Use PROACTIVELY for backend security implementations or security code reviews.",
+    "bundles": ["data-validation-suite"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "data-validation-suite/backend-security-coder",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert in secure backend coding practices specializing in input validation, authentication, and API security. Use PROACTIVELY for backend security implementations or security code reviews."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert backend architect specializing in scalable API design, microservices architecture, and distributed systems. Masters REST/GraphQL/gRPC APIs, event-driven architectures, service mesh patterns, and modern backend frameworks. Handles service boundary definition, inter-service communication, resilience patterns, and observability. Use PROACTIVELY when creating new backend services or APIs.",
+    "bundles": ["database-cloud-optimization"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "database-cloud-optimization/backend-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert backend architect specializing in scalable API design, microservices architecture, and distributed systems. Masters REST/GraphQL/gRPC APIs, event-driven architectures, service mesh patterns, and modern backend frameworks. Handles service boundary definition, inter-service communication, resilience patterns, and observability. Use PROACTIVELY when creating new backend services or APIs."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert cloud architect specializing in AWS/Azure/GCP/OCI multi-cloud infrastructure design, advanced IaC (Terraform/OpenTofu/CDK), FinOps cost optimization, and modern architectural patterns. Masters serverless, microservices, security, compliance, and disaster recovery. Use PROACTIVELY for cloud architecture, cost optimization, migration planning, or multi-cloud strategies.",
+    "bundles": ["database-cloud-optimization"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "database-cloud-optimization/cloud-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert cloud architect specializing in AWS/Azure/GCP/OCI multi-cloud infrastructure design, advanced IaC (Terraform/OpenTofu/CDK), FinOps cost optimization, and modern architectural patterns. Masters serverless, microservices, security, compliance, and disaster recovery. Use PROACTIVELY for cloud architecture, cost optimization, migration planning, or multi-cloud strategies."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert database architect specializing in data layer design from scratch, technology selection, schema modeling, and scalable database architectures. Masters SQL/NoSQL/TimeSeries database selection, normalization strategies, migration planning, and performance-first design. Handles both greenfield architectures and re-architecture of existing systems. Use PROACTIVELY for database architecture, technology selection, or data modeling decisions.",
+    "bundles": ["database-cloud-optimization"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "database-cloud-optimization/database-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert database architect specializing in data layer design from scratch, technology selection, schema modeling, and scalable database architectures. Masters SQL/NoSQL/TimeSeries database selection, normalization strategies, migration planning, and performance-first design. Handles both greenfield architectures and re-architecture of existing systems. Use PROACTIVELY for database architecture, technology selection, or data modeling decisions."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert database optimizer specializing in modern performance tuning, query optimization, and scalable architectures. Masters advanced indexing, N+1 resolution, multi-tier caching, partitioning strategies, and cloud database optimization. Handles complex query analysis, migration strategies, and performance monitoring. Use PROACTIVELY for database optimization, performance issues, or scalability challenges.",
+    "bundles": ["database-cloud-optimization"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "database-cloud-optimization/database-optimizer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert database optimizer specializing in modern performance tuning, query optimization, and scalable architectures. Masters advanced indexing, N+1 resolution, multi-tier caching, partitioning strategies, and cloud database optimization. Handles complex query analysis, migration strategies, and performance monitoring. Use PROACTIVELY for database optimization, performance issues, or scalability challenges."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert database architect specializing in data layer design from scratch, technology selection, schema modeling, and scalable database architectures. Masters SQL/NoSQL/TimeSeries database selection, normalization strategies, migration planning, and performance-first design. Handles both greenfield architectures and re-architecture of existing systems. Use PROACTIVELY for database architecture, technology selection, or data modeling decisions.",
+    "bundles": ["database-design"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "database-design/database-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert database architect specializing in data layer design from scratch, technology selection, schema modeling, and scalable database architectures. Masters SQL/NoSQL/TimeSeries database selection, normalization strategies, migration planning, and performance-first design. Handles both greenfield architectures and re-architecture of existing systems. Use PROACTIVELY for database architecture, technology selection, or data modeling decisions."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master modern SQL with cloud-native databases, OLTP/OLAP optimization, and advanced query techniques. Expert in performance tuning, data modeling, and hybrid analytical systems. Use PROACTIVELY for database optimization or complex analysis.",
+    "bundles": ["database-design"],
+    "updatedAt": "2026-03-17T11:00:12-04:00",
+    "name": "database-design/sql-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master modern SQL with cloud-native databases, OLTP/OLAP optimization, and advanced query techniques. Expert in performance tuning, data modeling, and hybrid analytical systems. Use PROACTIVELY for database optimization or complex analysis."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert database administrator specializing in modern cloud databases, automation, and reliability engineering. Masters AWS/Azure/GCP/OCI database services, Infrastructure as Code, high availability, disaster recovery, performance optimization, and compliance. Handles multi-cloud strategies, container databases, and cost optimization. Use PROACTIVELY for database architecture, operations, or reliability engineering.",
+    "bundles": ["database-migrations"],
+    "updatedAt": "2026-03-17T11:00:12-04:00",
+    "name": "database-migrations/database-admin",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert database administrator specializing in modern cloud databases, automation, and reliability engineering. Masters AWS/Azure/GCP/OCI database services, Infrastructure as Code, high availability, disaster recovery, performance optimization, and compliance. Handles multi-cloud strategies, container databases, and cost optimization. Use PROACTIVELY for database architecture, operations, or reliability engineering."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert database optimizer specializing in modern performance tuning, query optimization, and scalable architectures. Masters advanced indexing, N+1 resolution, multi-tier caching, partitioning strategies, and cloud database optimization. Handles complex query analysis, migration strategies, and performance monitoring. Use PROACTIVELY for database optimization, performance issues, or scalability challenges.",
+    "bundles": ["database-migrations"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "database-migrations/database-optimizer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert database optimizer specializing in modern performance tuning, query optimization, and scalable architectures. Masters advanced indexing, N+1 resolution, multi-tier caching, partitioning strategies, and cloud database optimization. Handles complex query analysis, migration strategies, and performance monitoring. Use PROACTIVELY for database optimization, performance issues, or scalability challenges."
+  },
+  {
+    "kind": "agent",
+    "summary": "Debugging specialist for errors, test failures, and unexpected behavior. Use proactively when encountering any issues.",
+    "bundles": ["debugging-toolkit"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "debugging-toolkit/debugger",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Debugging specialist for errors, test failures, and unexpected behavior. Use proactively when encountering any issues."
+  },
+  {
+    "kind": "agent",
+    "summary": "Developer Experience specialist. Improves tooling, setup, and workflows. Use PROACTIVELY when setting up new projects, after team feedback, or when development friction is noticed.",
+    "bundles": ["debugging-toolkit"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "debugging-toolkit/dx-optimizer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Developer Experience specialist. Improves tooling, setup, and workflows. Use PROACTIVELY when setting up new projects, after team feedback, or when development friction is noticed."
+  },
+  {
+    "kind": "agent",
+    "summary": "Refactor legacy codebases, migrate outdated frameworks, and implement gradual modernization. Handles technical debt, dependency updates, and backward compatibility. Use PROACTIVELY for legacy system updates, framework migrations, or technical debt reduction.",
+    "bundles": ["dependency-management"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "dependency-management/legacy-modernizer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Refactor legacy codebases, migrate outdated frameworks, and implement gradual modernization. Handles technical debt, dependency updates, and backward compatibility. Use PROACTIVELY for legacy system updates, framework migrations, or technical debt reduction."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert deployment engineer specializing in modern CI/CD pipelines, GitOps workflows, and advanced deployment automation. Masters GitHub Actions, ArgoCD/Flux, progressive delivery, container security, and platform engineering. Handles zero-downtime deployments, security scanning, and developer experience optimization. Use PROACTIVELY for CI/CD design, GitOps implementation, or deployment automation.",
+    "bundles": ["deployment-strategies"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "deployment-strategies/deployment-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert deployment engineer specializing in modern CI/CD pipelines, GitOps workflows, and advanced deployment automation. Masters GitHub Actions, ArgoCD/Flux, progressive delivery, container security, and platform engineering. Handles zero-downtime deployments, security scanning, and developer experience optimization. Use PROACTIVELY for CI/CD design, GitOps implementation, or deployment automation."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert Terraform/OpenTofu specialist mastering advanced IaC automation, state management, and enterprise infrastructure patterns. Handles complex module design, multi-cloud deployments, GitOps workflows, policy as code, and CI/CD integration. Covers migration strategies, security best practices, and modern IaC ecosystems. Use PROACTIVELY for advanced IaC, state management, or infrastructure automation.",
+    "bundles": ["deployment-strategies"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "deployment-strategies/terraform-specialist",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert Terraform/OpenTofu specialist mastering advanced IaC automation, state management, and enterprise infrastructure patterns. Handles complex module design, multi-cloud deployments, GitOps workflows, policy as code, and CI/CD integration. Covers migration strategies, security best practices, and modern IaC ecosystems. Use PROACTIVELY for advanced IaC, state management, or infrastructure automation."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert cloud architect specializing in AWS/Azure/GCP/OCI multi-cloud infrastructure design, advanced IaC (Terraform/OpenTofu/CDK), FinOps cost optimization, and modern architectural patterns. Masters serverless, microservices, security, compliance, and disaster recovery. Use PROACTIVELY for cloud architecture, cost optimization, migration planning, or multi-cloud strategies.",
+    "bundles": ["deployment-validation"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "deployment-validation/cloud-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert cloud architect specializing in AWS/Azure/GCP/OCI multi-cloud infrastructure design, advanced IaC (Terraform/OpenTofu/CDK), FinOps cost optimization, and modern architectural patterns. Masters serverless, microservices, security, compliance, and disaster recovery. Use PROACTIVELY for cloud architecture, cost optimization, migration planning, or multi-cloud strategies."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert in monorepo architecture, build systems, and dependency management at scale. Masters Nx, Turborepo, Bazel, and Lerna for efficient multi-project development. Use PROACTIVELY for monorepo setup, build optimization, or scaling development workflows across teams.",
+    "bundles": ["developer-essentials"],
+    "updatedAt": "2026-04-26T16:42:31-04:00",
+    "name": "developer-essentials/monorepo-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert in monorepo architecture, build systems, and dependency management at scale. Masters Nx, Turborepo, Bazel, and Lerna for efficient multi-project development. Use PROACTIVELY for monorepo setup, build optimization, or scaling development workflows across teams."
+  },
+  {
+    "kind": "agent",
+    "summary": "NVIDIA DGX Spark environment doctor for GB10/aarch64/CUDA-13 systems. Diagnoses and fixes ML stack setup, unified-memory, and thermal issues. Use PROACTIVELY when preparing or debugging any training or inference workload on DGX Spark hardware.",
+    "bundles": ["dgx-spark-ops"],
+    "updatedAt": "2026-07-14T13:18:02-04:00",
+    "name": "dgx-spark-ops/dgx-spark-ops-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "NVIDIA DGX Spark environment doctor for GB10/aarch64/CUDA-13 systems. Diagnoses and fixes ML stack setup, unified-memory, and thermal issues. Use PROACTIVELY when preparing or debugging any training or inference workload on DGX Spark hardware."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert DevOps troubleshooter specializing in rapid incident response, advanced debugging, and modern observability. Masters log analysis, distributed tracing, Kubernetes debugging, performance optimization, and root cause analysis. Handles production outages, system reliability, and preventive monitoring. Use PROACTIVELY for debugging, incident response, or system troubleshooting.",
+    "bundles": ["distributed-debugging"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "distributed-debugging/devops-troubleshooter",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert DevOps troubleshooter specializing in rapid incident response, advanced debugging, and modern observability. Masters log analysis, distributed tracing, Kubernetes debugging, performance optimization, and root cause analysis. Handles production outages, system reliability, and preventive monitoring. Use PROACTIVELY for debugging, incident response, or system troubleshooting."
+  },
+  {
+    "kind": "agent",
+    "summary": "Search logs and codebases for error patterns, stack traces, and anomalies. Correlates errors across systems and identifies root causes. Use PROACTIVELY when debugging issues, analyzing logs, or investigating production errors.",
+    "bundles": ["distributed-debugging"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "distributed-debugging/error-detective",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Search logs and codebases for error patterns, stack traces, and anomalies. Correlates errors across systems and identifies root causes. Use PROACTIVELY when debugging issues, analyzing logs, or investigating production errors."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master API documentation with OpenAPI 3.1, AI-powered tools, and modern developer experience practices. Create interactive docs, generate SDKs, and build comprehensive developer portals. Use PROACTIVELY for API documentation or developer portal creation.",
+    "bundles": ["documentation-generation"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "documentation-generation/api-documenter",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master API documentation with OpenAPI 3.1, AI-powered tools, and modern developer experience practices. Create interactive docs, generate SDKs, and build comprehensive developer portals. Use PROACTIVELY for API documentation or developer portal creation."
+  },
+  {
+    "kind": "agent",
+    "summary": "Creates comprehensive technical documentation from existing codebases. Analyzes architecture, design patterns, and implementation details to produce long-form technical manuals and ebooks. Use PROACTIVELY for system documentation, architecture guides, or technical deep-dives.",
+    "bundles": ["documentation-generation"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "documentation-generation/docs-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Creates comprehensive technical documentation from existing codebases. Analyzes architecture, design patterns, and implementation details to produce long-form technical manuals and ebooks. Use PROACTIVELY for system documentation, architecture guides, or technical deep-dives."
+  },
+  {
+    "kind": "agent",
+    "summary": "Create Mermaid diagrams for flowcharts, sequences, ERDs, and architectures. Masters syntax for all diagram types and styling. Use PROACTIVELY for visual documentation, system diagrams, or process flows.",
+    "bundles": ["documentation-generation"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "documentation-generation/mermaid-expert",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Create Mermaid diagrams for flowcharts, sequences, ERDs, and architectures. Masters syntax for all diagram types and styling. Use PROACTIVELY for visual documentation, system diagrams, or process flows."
+  },
+  {
+    "kind": "agent",
+    "summary": "Creates exhaustive technical references and API documentation. Generates comprehensive parameter listings, configuration guides, and searchable reference materials. Use PROACTIVELY for API docs, configuration references, or complete technical specifications.",
+    "bundles": ["documentation-generation"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "documentation-generation/reference-builder",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Creates exhaustive technical references and API documentation. Generates comprehensive parameter listings, configuration guides, and searchable reference materials. Use PROACTIVELY for API docs, configuration references, or complete technical specifications."
+  },
+  {
+    "kind": "agent",
+    "summary": "Creates step-by-step tutorials and educational content from code. Transforms complex concepts into progressive learning experiences with hands-on examples. Use PROACTIVELY for onboarding guides, feature tutorials, or concept explanations.",
+    "bundles": ["documentation-generation"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "documentation-generation/tutorial-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Creates step-by-step tutorials and educational content from code. Transforms complex concepts into progressive learning experiences with hands-on examples. Use PROACTIVELY for onboarding guides, feature tutorials, or concept explanations."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert .NET backend architect specializing in C#, ASP.NET Core, Entity Framework, Dapper, and enterprise application patterns. Masters async/await, dependency injection, caching strategies, and performance optimization. Use PROACTIVELY for .NET API development, code review, or architecture decisions.",
+    "bundles": ["dotnet-contribution"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "dotnet-contribution/dotnet-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert .NET backend architect specializing in C#, ASP.NET Core, Entity Framework, Dapper, and enterprise application patterns. Masters async/await, dependency injection, caching strategies, and performance optimization. Use PROACTIVELY for .NET API development, code review, or architecture decisions."
+  },
+  {
+    "kind": "agent",
+    "summary": "Debugging specialist for errors, test failures, and unexpected behavior. Use proactively when encountering any issues.",
+    "bundles": ["error-debugging"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "error-debugging/debugger",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Debugging specialist for errors, test failures, and unexpected behavior. Use proactively when encountering any issues."
+  },
+  {
+    "kind": "agent",
+    "summary": "Search logs and codebases for error patterns, stack traces, and anomalies. Correlates errors across systems and identifies root causes. Use PROACTIVELY when debugging issues, analyzing logs, or investigating production errors.",
+    "bundles": ["error-debugging"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "error-debugging/error-detective",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Search logs and codebases for error patterns, stack traces, and anomalies. Correlates errors across systems and identifies root causes. Use PROACTIVELY when debugging issues, analyzing logs, or investigating production errors."
+  },
+  {
+    "kind": "agent",
+    "summary": "Debugging specialist for errors, test failures, and unexpected behavior. Use proactively when encountering any issues.",
+    "bundles": ["error-diagnostics"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "error-diagnostics/debugger",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Debugging specialist for errors, test failures, and unexpected behavior. Use proactively when encountering any issues."
+  },
+  {
+    "kind": "agent",
+    "summary": "Search logs and codebases for error patterns, stack traces, and anomalies. Correlates errors across systems and identifies root causes. Use PROACTIVELY when debugging issues, analyzing logs, or investigating production errors.",
+    "bundles": ["error-diagnostics"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "error-diagnostics/error-detective",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Search logs and codebases for error patterns, stack traces, and anomalies. Correlates errors across systems and identifies root causes. Use PROACTIVELY when debugging issues, analyzing logs, or investigating production errors."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master software architect specializing in modern architecture patterns, clean architecture, microservices, event-driven systems, and DDD. Reviews system designs and code changes for architectural integrity, scalability, and maintainability. Use PROACTIVELY for architectural decisions.",
+    "bundles": ["framework-migration"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "framework-migration/architect-review",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master software architect specializing in modern architecture patterns, clean architecture, microservices, event-driven systems, and DDD. Reviews system designs and code changes for architectural integrity, scalability, and maintainability. Use PROACTIVELY for architectural decisions."
+  },
+  {
+    "kind": "agent",
+    "summary": "Refactor legacy codebases, migrate outdated frameworks, and implement gradual modernization. Handles technical debt, dependency updates, and backward compatibility. Use PROACTIVELY for legacy system updates, framework migrations, or technical debt reduction.",
+    "bundles": ["framework-migration"],
+    "updatedAt": "2026-08-15T17:15:13-04:00",
+    "name": "framework-migration/legacy-modernizer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Refactor legacy codebases, migrate outdated frameworks, and implement gradual modernization. Handles technical debt, dependency updates, and backward compatibility. Use PROACTIVELY for legacy system updates, framework migrations, or technical debt reduction."
+  },
+  {
+    "kind": "agent",
+    "summary": "Build React components, implement responsive layouts, and handle client-side state management. Masters React 19, Next.js 15, and modern frontend architecture. Optimizes performance and ensures accessibility. Use PROACTIVELY when creating UI components or fixing frontend issues.",
+    "bundles": ["frontend-mobile-development"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "frontend-mobile-development/frontend-developer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Build React components, implement responsive layouts, and handle client-side state management. Masters React 19, Next.js 15, and modern frontend architecture. Optimizes performance and ensures accessibility. Use PROACTIVELY when creating UI components or fixing frontend issues."
+  },
+  {
+    "kind": "agent",
+    "summary": "Develop React Native, Flutter, or native mobile apps with modern architecture patterns. Masters cross-platform development, native integrations, offline sync, and app store optimization. Use PROACTIVELY for mobile features, cross-platform code, or app optimization.",
+    "bundles": ["frontend-mobile-development"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "frontend-mobile-development/mobile-developer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Develop React Native, Flutter, or native mobile apps with modern architecture patterns. Masters cross-platform development, native integrations, offline sync, and app store optimization. Use PROACTIVELY for mobile features, cross-platform code, or app optimization."
+  },
+  {
+    "kind": "agent",
+    "summary": "Build React components, implement responsive layouts, and handle client-side state management. Masters React 19, Next.js 15, and modern frontend architecture. Optimizes performance and ensures accessibility. Use PROACTIVELY when creating UI components or fixing frontend issues.",
+    "bundles": ["frontend-mobile-security"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "frontend-mobile-security/frontend-developer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Build React components, implement responsive layouts, and handle client-side state management. Masters React 19, Next.js 15, and modern frontend architecture. Optimizes performance and ensures accessibility. Use PROACTIVELY when creating UI components or fixing frontend issues."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert in secure frontend coding practices specializing in XSS prevention, output sanitization, and client-side security patterns. Use PROACTIVELY for frontend security implementations or client-side security code reviews.",
+    "bundles": ["frontend-mobile-security"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "frontend-mobile-security/frontend-security-coder",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert in secure frontend coding practices specializing in XSS prevention, output sanitization, and client-side security patterns. Use PROACTIVELY for frontend security implementations or client-side security code reviews."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert in secure mobile coding practices specializing in input validation, WebView security, and mobile-specific security patterns. Use PROACTIVELY for mobile security implementations or mobile security code reviews.",
+    "bundles": ["frontend-mobile-security"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "frontend-mobile-security/mobile-security-coder",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert in secure mobile coding practices specializing in input validation, WebView security, and mobile-specific security patterns. Use PROACTIVELY for mobile security implementations or mobile security code reviews."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert deployment engineer specializing in modern CI/CD pipelines, GitOps workflows, and advanced deployment automation. Masters GitHub Actions, ArgoCD/Flux, progressive delivery, container security, and platform engineering. Handles zero-downtime deployments, security scanning, and developer experience optimization. Use PROACTIVELY for CI/CD design, GitOps implementation, or deployment automation.",
+    "bundles": ["full-stack-orchestration"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "full-stack-orchestration/deployment-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert deployment engineer specializing in modern CI/CD pipelines, GitOps workflows, and advanced deployment automation. Masters GitHub Actions, ArgoCD/Flux, progressive delivery, container security, and platform engineering. Handles zero-downtime deployments, security scanning, and developer experience optimization. Use PROACTIVELY for CI/CD design, GitOps implementation, or deployment automation."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert performance engineer specializing in modern observability, application optimization, and scalable system performance. Masters OpenTelemetry, distributed tracing, load testing, multi-tier caching, Core Web Vitals, and performance monitoring. Handles end-to-end optimization, real user monitoring, and scalability patterns. Use PROACTIVELY for performance optimization, observability, or scalability challenges.",
+    "bundles": ["full-stack-orchestration"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "full-stack-orchestration/performance-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert performance engineer specializing in modern observability, application optimization, and scalable system performance. Masters OpenTelemetry, distributed tracing, load testing, multi-tier caching, Core Web Vitals, and performance monitoring. Handles end-to-end optimization, real user monitoring, and scalability patterns. Use PROACTIVELY for performance optimization, observability, or scalability challenges."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert security auditor specializing in DevSecOps, comprehensive cybersecurity, and compliance frameworks. Masters vulnerability assessment, threat modeling, secure authentication (OAuth2/OIDC), OWASP standards, cloud security, and security automation. Handles DevSecOps integration, compliance (GDPR/HIPAA/SOC2), and incident response. Use PROACTIVELY for security audits, DevSecOps, or compliance implementation.",
+    "bundles": ["full-stack-orchestration"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "full-stack-orchestration/security-auditor",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert security auditor specializing in DevSecOps, comprehensive cybersecurity, and compliance frameworks. Masters vulnerability assessment, threat modeling, secure authentication (OAuth2/OIDC), OWASP standards, cloud security, and security automation. Handles DevSecOps integration, compliance (GDPR/HIPAA/SOC2), and incident response. Use PROACTIVELY for security audits, DevSecOps, or compliance implementation."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master AI-powered test automation with modern frameworks, self-healing tests, and comprehensive quality engineering. Build scalable testing strategies with advanced CI/CD integration. Use PROACTIVELY for testing automation or quality assurance.",
+    "bundles": ["full-stack-orchestration"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "full-stack-orchestration/test-automator",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master AI-powered test automation with modern frameworks, self-healing tests, and comprehensive quality engineering. Build scalable testing strategies with advanced CI/CD integration. Use PROACTIVELY for testing automation or quality assurance."
+  },
+  {
+    "kind": "agent",
+    "summary": "Write idiomatic Elixir code with OTP patterns, supervision trees, and Phoenix LiveView. Masters concurrency, fault tolerance, and distributed systems. Use PROACTIVELY for Elixir refactoring, OTP design, or complex BEAM optimizations.",
+    "bundles": ["functional-programming"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "functional-programming/elixir-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Write idiomatic Elixir code with OTP patterns, supervision trees, and Phoenix LiveView. Masters concurrency, fault tolerance, and distributed systems. Use PROACTIVELY for Elixir refactoring, OTP design, or complex BEAM optimizations."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert Haskell engineer specializing in advanced type systems, pure functional design, and high-reliability software. Use PROACTIVELY for type-level programming, concurrency, and architecture guidance.",
+    "bundles": ["functional-programming"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "functional-programming/haskell-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert Haskell engineer specializing in advanced type systems, pure functional design, and high-reliability software. Use PROACTIVELY for type-level programming, concurrency, and architecture guidance."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master Minecraft server plugin development with Bukkit, Spigot, and Paper APIs. Specializes in event-driven architecture, command systems, world manipulation, player management, and performance optimization. Use PROACTIVELY for plugin architecture, gameplay mechanics, server-side features, or cross-version compatibility.",
+    "bundles": ["game-development"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "game-development/minecraft-bukkit-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master Minecraft server plugin development with Bukkit, Spigot, and Paper APIs. Specializes in event-driven architecture, command systems, world manipulation, player management, and performance optimization. Use PROACTIVELY for plugin architecture, gameplay mechanics, server-side features, or cross-version compatibility."
+  },
+  {
+    "kind": "agent",
+    "summary": "Build Unity games with optimized C# scripts, efficient rendering, and proper asset management. Masters Unity 6 LTS, URP/HDRP pipelines, and cross-platform deployment. Handles gameplay systems, UI implementation, and platform optimization. Use PROACTIVELY for Unity performance issues, game mechanics, or cross-platform builds.",
+    "bundles": ["game-development"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "game-development/unity-developer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Build Unity games with optimized C# scripts, efficient rendering, and proper asset management. Masters Unity 6 LTS, URP/HDRP pipelines, and cross-platform deployment. Handles gameplay systems, UI implementation, and platform optimization. Use PROACTIVELY for Unity performance issues, game mechanics, or cross-platform builds."
+  },
+  {
+    "kind": "agent",
+    "summary": "Elite code review expert specializing in modern AI-powered code analysis, security vulnerabilities, performance optimization, and production reliability. Masters static analysis tools, security scanning, and configuration review with 2024/2025 best practices. Use PROACTIVELY for code quality assurance.",
+    "bundles": ["git-pr-workflows"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "git-pr-workflows/code-reviewer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Elite code review expert specializing in modern AI-powered code analysis, security vulnerabilities, performance optimization, and production reliability. Masters static analysis tools, security scanning, and configuration review with 2024/2025 best practices. Use PROACTIVELY for code quality assurance."
+  },
+  {
+    "kind": "agent",
+    "summary": "Professional, ethical HR partner for hiring, onboarding/offboarding, PTO and leave, performance, compliant policies, and employee relations. Ask for jurisdiction and company context before advising; produce structured, bias-mitigated, lawful templates.",
+    "bundles": ["hr-legal-compliance"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "hr-legal-compliance/hr-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Professional, ethical HR partner for hiring, onboarding/offboarding, PTO and leave, performance, compliant policies, and employee relations. Ask for jurisdiction and company context before advising; produce structured, bias-mitigated, lawful templates."
+  },
+  {
+    "kind": "agent",
+    "summary": "Draft privacy policies, terms of service, disclaimers, and legal notices. Creates GDPR-compliant texts, cookie policies, and data processing agreements. Use PROACTIVELY for legal documentation, compliance texts, or regulatory requirements.",
+    "bundles": ["hr-legal-compliance"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "hr-legal-compliance/legal-advisor",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Draft privacy policies, terms of service, disclaimers, and legal notices. Creates GDPR-compliant texts, cookie policies, and data processing agreements. Use PROACTIVELY for legal documentation, compliance texts, or regulatory requirements."
+  },
+  {
+    "kind": "agent",
+    "summary": "Reviews code for logic flaws, type safety gaps, error handling issues, architectural concerns, and similar vulnerability patterns. Provides fix design recommendations.",
+    "bundles": ["incident-response"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "incident-response/code-reviewer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Reviews code for logic flaws, type safety gaps, error handling issues, architectural concerns, and similar vulnerability patterns. Provides fix design recommendations."
+  },
+  {
+    "kind": "agent",
+    "summary": "Performs deep root cause analysis through code path tracing, git bisect automation, dependency analysis, and systematic hypothesis testing for production bugs.",
+    "bundles": ["incident-response"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "incident-response/debugger",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Performs deep root cause analysis through code path tracing, git bisect automation, dependency analysis, and systematic hypothesis testing for production bugs."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert DevOps troubleshooter specializing in rapid incident response, advanced debugging, and modern observability. Masters log analysis, distributed tracing, Kubernetes debugging, performance optimization, and root cause analysis. Handles production outages, system reliability, and preventive monitoring. Use PROACTIVELY for debugging, incident response, or system troubleshooting.",
+    "bundles": ["incident-response"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "incident-response/devops-troubleshooter",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert DevOps troubleshooter specializing in rapid incident response, advanced debugging, and modern observability. Masters log analysis, distributed tracing, Kubernetes debugging, performance optimization, and root cause analysis. Handles production outages, system reliability, and preventive monitoring. Use PROACTIVELY for debugging, incident response, or system troubleshooting."
+  },
+  {
+    "kind": "agent",
+    "summary": "Analyzes error traces, logs, and observability data to identify error signatures, reproduction steps, user impact, and timeline context for production issues.",
+    "bundles": ["incident-response"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "incident-response/error-detective",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Analyzes error traces, logs, and observability data to identify error signatures, reproduction steps, user impact, and timeline context for production issues."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert SRE incident responder specializing in rapid problem resolution, modern observability, and comprehensive incident management. Masters incident command, blameless post-mortems, error budget management, and system reliability patterns. Handles critical outages, communication strategies, and continuous improvement. Use IMMEDIATELY for production incidents or SRE practices.",
+    "bundles": ["incident-response"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "incident-response/incident-responder",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert SRE incident responder specializing in rapid problem resolution, modern observability, and comprehensive incident management. Masters incident command, blameless post-mortems, error budget management, and system reliability patterns. Handles critical outages, communication strategies, and continuous improvement. Use IMMEDIATELY for production incidents or SRE practices."
+  },
+  {
+    "kind": "agent",
+    "summary": "Creates comprehensive test suites including unit, integration, regression, and security tests. Validates fixes with full coverage and cross-environment testing.",
+    "bundles": ["incident-response"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "incident-response/test-automator",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Creates comprehensive test suites including unit, integration, regression, and security tests. Validates fixes with full coverage and cross-environment testing."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master modern JavaScript with ES6+, async patterns, and Node.js APIs. Handles promises, event loops, and browser/Node compatibility. Use PROACTIVELY for JavaScript optimization, async debugging, or complex JS patterns.",
+    "bundles": ["javascript-typescript"],
+    "updatedAt": "2025-12-10T15:52:06-05:00",
+    "name": "javascript-typescript/javascript-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master modern JavaScript with ES6+, async patterns, and Node.js APIs. Handles promises, event loops, and browser/Node compatibility. Use PROACTIVELY for JavaScript optimization, async debugging, or complex JS patterns."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master TypeScript with advanced types, generics, and strict type safety. Handles complex type systems, decorators, and enterprise-grade patterns. Use PROACTIVELY for TypeScript architecture, type inference optimization, or advanced typing patterns.",
+    "bundles": ["javascript-typescript"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "javascript-typescript/typescript-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master TypeScript with advanced types, generics, and strict type safety. Handles complex type systems, decorators, and enterprise-grade patterns. Use PROACTIVELY for TypeScript architecture, type inference optimization, or advanced typing patterns."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master Julia 1.10+ with modern features, performance optimization, multiple dispatch, and production-ready practices. Expert in the Julia ecosystem including package management, scientific computing, and high-performance numerical code. Use PROACTIVELY for Julia development, optimization, or advanced Julia patterns.",
+    "bundles": ["julia-development"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "julia-development/julia-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master Julia 1.10+ with modern features, performance optimization, multiple dispatch, and production-ready practices. Expert in the Julia ecosystem including package management, scientific computing, and high-performance numerical code. Use PROACTIVELY for Julia development, optimization, or advanced Julia patterns."
+  },
+  {
+    "kind": "agent",
+    "summary": "Write modern C# code with advanced features like records, pattern matching, and async/await. Optimizes .NET applications, implements enterprise patterns, and ensures comprehensive testing. Use PROACTIVELY for C# refactoring, performance optimization, or complex .NET solutions.",
+    "bundles": ["jvm-languages"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "jvm-languages/csharp-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Write modern C# code with advanced features like records, pattern matching, and async/await. Optimizes .NET applications, implements enterprise patterns, and ensures comprehensive testing. Use PROACTIVELY for C# refactoring, performance optimization, or complex .NET solutions."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master Java 21+ with modern features like virtual threads, pattern matching, and Spring Boot 3.x. Expert in the latest Java ecosystem including GraalVM, Project Loom, and cloud-native patterns. Use PROACTIVELY for Java development, microservices architecture, or performance optimization.",
+    "bundles": ["jvm-languages"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "jvm-languages/java-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master Java 21+ with modern features like virtual threads, pattern matching, and Spring Boot 3.x. Expert in the latest Java ecosystem including GraalVM, Project Loom, and cloud-native patterns. Use PROACTIVELY for Java development, microservices architecture, or performance optimization."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master enterprise-grade Scala development with functional programming, distributed systems, and big data processing. Expert in Apache Pekko, Akka, Spark, ZIO/Cats Effect, and reactive architectures. Use PROACTIVELY for Scala system design, performance optimization, or enterprise integration.",
+    "bundles": ["jvm-languages"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "jvm-languages/scala-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master enterprise-grade Scala development with functional programming, distributed systems, and big data processing. Expert in Apache Pekko, Akka, Spark, ZIO/Cats Effect, and reactive architectures. Use PROACTIVELY for Scala system design, performance optimization, or enterprise integration."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert Kubernetes architect specializing in cloud-native infrastructure, advanced GitOps workflows (ArgoCD/Flux), and enterprise container orchestration. Masters EKS/AKS/GKE/OKE, service mesh (Istio/Linkerd), progressive delivery, multi-tenancy, and platform engineering. Handles security, observability, cost optimization, and developer experience. Use PROACTIVELY for K8s architecture, GitOps implementation, or cloud-native platform design.",
+    "bundles": ["kubernetes-operations"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "kubernetes-operations/kubernetes-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert Kubernetes architect specializing in cloud-native infrastructure, advanced GitOps workflows (ArgoCD/Flux), and enterprise container orchestration. Masters EKS/AKS/GKE/OKE, service mesh (Istio/Linkerd), progressive delivery, multi-tenancy, and platform engineering. Handles security, observability, cost optimization, and developer experience. Use PROACTIVELY for K8s architecture, GitOps implementation, or cloud-native platform design."
+  },
+  {
+    "kind": "agent",
+    "summary": "Build production-ready LLM applications, advanced RAG systems, and intelligent agents. Implements vector search, multimodal AI, agent orchestration, and enterprise AI integrations. Use PROACTIVELY for LLM features, chatbots, AI agents, or AI-powered applications.",
+    "bundles": ["llm-application-dev"],
+    "updatedAt": "2026-07-07T12:17:53-04:00",
+    "name": "llm-application-dev/ai-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Build production-ready LLM applications, advanced RAG systems, and intelligent agents. Implements vector search, multimodal AI, agent orchestration, and enterprise AI integrations. Use PROACTIVELY for LLM features, chatbots, AI agents, or AI-powered applications."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert prompt engineer specializing in advanced prompting techniques, LLM optimization, and AI system design. Masters chain-of-thought, constitutional AI, and production prompt strategies. Use when building AI features, improving agent performance, or crafting system prompts.",
+    "bundles": ["llm-application-dev"],
+    "updatedAt": "2026-07-07T12:17:53-04:00",
+    "name": "llm-application-dev/prompt-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert prompt engineer specializing in advanced prompting techniques, LLM optimization, and AI system design. Masters chain-of-thought, constitutional AI, and production prompt strategies. Use when building AI features, improving agent performance, or crafting system prompts."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert in vector databases, embedding strategies, and semantic search implementation. Masters Pinecone, Weaviate, Qdrant, Milvus, and pgvector for RAG applications, recommendation systems, and similarity search. Use PROACTIVELY for vector search implementation, embedding optimization, or semantic retrieval systems.",
+    "bundles": ["llm-application-dev"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "llm-application-dev/vector-database-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert in vector databases, embedding strategies, and semantic search implementation. Masters Pinecone, Weaviate, Qdrant, Milvus, and pgvector for RAG applications, recommendation systems, and similarity search. Use PROACTIVELY for vector search implementation, embedding optimization, or semantic retrieval systems."
+  },
+  {
+    "kind": "agent",
+    "summary": "Fine-tuning strategist who owns the eval gate and method/model selection. Refuses to plan training without a baselined eval harness. Use PROACTIVELY when a user wants to fine-tune a model, before any training configuration exists.",
+    "bundles": ["llm-finetuning"],
+    "updatedAt": "2026-07-14T13:18:02-04:00",
+    "name": "llm-finetuning/llm-finetuning-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Fine-tuning strategist who owns the eval gate and method/model selection. Refuses to plan training without a baselined eval harness. Use PROACTIVELY when a user wants to fine-tune a model, before any training configuration exists."
+  },
+  {
+    "kind": "agent",
+    "summary": "Evaluation gatekeeper for fine-tuning — builds golden sets and graders, calibrates judges, baselines base models, and issues checkpoint promotion verdicts. Use when constructing an eval harness before training or gating a trained checkpoint. Deliberately independent from training execution.",
+    "bundles": ["llm-finetuning"],
+    "updatedAt": "2026-07-14T13:18:02-04:00",
+    "name": "llm-finetuning/llm-finetuning-eval-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Evaluation gatekeeper for fine-tuning — builds golden sets and graders, calibrates judges, baselines base models, and issues checkpoint promotion verdicts. Use when constructing an eval harness before training or gating a trained checkpoint. Deliberately independent from training execution."
+  },
+  {
+    "kind": "agent",
+    "summary": "Fine-tuning implementation workhorse — prepares datasets, generates Unsloth-first training scripts, launches and monitors runs, and exports artifacts. Use after a training brief exists, for dataset preparation, training execution, or model export.",
+    "bundles": ["llm-finetuning"],
+    "updatedAt": "2026-07-14T13:18:02-04:00",
+    "name": "llm-finetuning/llm-finetuning-training-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Fine-tuning implementation workhorse — prepares datasets, generates Unsloth-first training scripts, launches and monitors runs, and exports artifacts. Use after a training brief exists, for dataset preparation, training execution, or model export."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert data scientist for advanced analytics, machine learning, and statistical modeling. Handles complex data analysis, predictive modeling, and business intelligence. Use PROACTIVELY for data analysis tasks, ML modeling, statistical analysis, and data-driven insights.",
+    "bundles": ["machine-learning-ops"],
+    "updatedAt": "2026-03-17T11:00:12-04:00",
+    "name": "machine-learning-ops/data-scientist",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert data scientist for advanced analytics, machine learning, and statistical modeling. Handles complex data analysis, predictive modeling, and business intelligence. Use PROACTIVELY for data analysis tasks, ML modeling, statistical analysis, and data-driven insights."
+  },
+  {
+    "kind": "agent",
+    "summary": "Build production ML systems with PyTorch 2.x, TensorFlow, and modern ML frameworks. Implements model serving, feature engineering, A/B testing, and monitoring. Use PROACTIVELY for ML model deployment, inference optimization, or production ML infrastructure.",
+    "bundles": ["machine-learning-ops"],
+    "updatedAt": "2026-03-17T11:00:12-04:00",
+    "name": "machine-learning-ops/ml-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Build production ML systems with PyTorch 2.x, TensorFlow, and modern ML frameworks. Implements model serving, feature engineering, A/B testing, and monitoring. Use PROACTIVELY for ML model deployment, inference optimization, or production ML infrastructure."
+  },
+  {
+    "kind": "agent",
+    "summary": "Build comprehensive ML pipelines, experiment tracking, and model registries with MLflow, Kubeflow, and modern MLOps tools. Implements automated training, deployment, and monitoring across cloud platforms. Use PROACTIVELY for ML infrastructure, experiment management, or pipeline automation.",
+    "bundles": ["machine-learning-ops"],
+    "updatedAt": "2026-03-17T11:00:12-04:00",
+    "name": "machine-learning-ops/mlops-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Build comprehensive ML pipelines, experiment tracking, and model registries with MLflow, Kubeflow, and modern MLOps tools. Implements automated training, deployment, and monitoring across cloud platforms. Use PROACTIVELY for ML infrastructure, experiment management, or pipeline automation."
+  },
+  {
+    "kind": "agent",
+    "summary": "Gallery search and inspiration agent. Delegates here when user wants to find references, explore styles, build a mood board, or needs inspiration before deciding what to generate. Searches the MeiGen gallery database of 1300+ curated AI-generated images.",
+    "bundles": ["meigen-ai-design"],
+    "updatedAt": "2026-04-17T13:15:24-04:00",
+    "name": "meigen-ai-design/gallery-researcher",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Gallery search and inspiration agent. Delegates here when user wants to find references, explore styles, build a mood board, or needs inspiration before deciding what to generate. Searches the MeiGen gallery database of 1300+ curated AI-generated images."
+  },
+  {
+    "kind": "agent",
+    "summary": "Image generation executor agent. Delegates here for ALL generate_image calls to keep the main conversation context clean. Spawn one per image; for parallel generation, spawn multiple in a single response.",
+    "bundles": ["meigen-ai-design"],
+    "updatedAt": "2026-04-17T13:15:24-04:00",
+    "name": "meigen-ai-design/image-generator",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Image generation executor agent. Delegates here for ALL generate_image calls to keep the main conversation context clean. Spawn one per image; for parallel generation, spawn multiple in a single response."
+  },
+  {
+    "kind": "agent",
+    "summary": "Batch prompt writing agent. Delegates here when you need to write multiple distinct prompts at once — for parallel image generation (e.g., \"5 logo concepts\"), serial-to-parallel workflows (e.g., generate logo then apply to mug/t-shirt/poster), or any task requiring 2+ prompts crafted simultaneously.",
+    "bundles": ["meigen-ai-design"],
+    "updatedAt": "2026-04-17T13:15:24-04:00",
+    "name": "meigen-ai-design/prompt-crafter",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Batch prompt writing agent. Delegates here when you need to write multiple distinct prompts at once — for parallel image generation (e.g., \"5 logo concepts\"), serial-to-parallel workflows (e.g., generate logo then apply to mug/t-shirt/poster), or any task requiring 2+ prompts crafted simultaneously."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert backend architect specializing in scalable API design, microservices architecture, and distributed systems. Masters REST/GraphQL/gRPC APIs, event-driven architectures, service mesh patterns, and modern backend frameworks. Handles service boundary definition, inter-service communication, resilience patterns, and observability. Use PROACTIVELY when creating new backend services or APIs.",
+    "bundles": ["multi-platform-apps"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "multi-platform-apps/backend-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert backend architect specializing in scalable API design, microservices architecture, and distributed systems. Masters REST/GraphQL/gRPC APIs, event-driven architectures, service mesh patterns, and modern backend frameworks. Handles service boundary definition, inter-service communication, resilience patterns, and observability. Use PROACTIVELY when creating new backend services or APIs."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master Flutter development with Dart 3, advanced widgets, and multi-platform deployment. Handles state management, animations, testing, and performance optimization for mobile, web, desktop, and embedded platforms. Use PROACTIVELY for Flutter architecture, UI implementation, or cross-platform features.",
+    "bundles": ["multi-platform-apps"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "multi-platform-apps/flutter-expert",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master Flutter development with Dart 3, advanced widgets, and multi-platform deployment. Handles state management, animations, testing, and performance optimization for mobile, web, desktop, and embedded platforms. Use PROACTIVELY for Flutter architecture, UI implementation, or cross-platform features."
+  },
+  {
+    "kind": "agent",
+    "summary": "Build React components, implement responsive layouts, and handle client-side state management. Masters React 19, Next.js 15, and modern frontend architecture. Optimizes performance and ensures accessibility. Use PROACTIVELY when creating UI components or fixing frontend issues.",
+    "bundles": ["multi-platform-apps"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "multi-platform-apps/frontend-developer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Build React components, implement responsive layouts, and handle client-side state management. Masters React 19, Next.js 15, and modern frontend architecture. Optimizes performance and ensures accessibility. Use PROACTIVELY when creating UI components or fixing frontend issues."
+  },
+  {
+    "kind": "agent",
+    "summary": "Develop native iOS applications with Swift/SwiftUI. Masters iOS 18, SwiftUI, UIKit integration, Core Data, networking, and App Store optimization. Use PROACTIVELY for iOS-specific features, App Store optimization, or native iOS development.",
+    "bundles": ["multi-platform-apps"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "multi-platform-apps/ios-developer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Develop native iOS applications with Swift/SwiftUI. Masters iOS 18, SwiftUI, UIKit integration, Core Data, networking, and App Store optimization. Use PROACTIVELY for iOS-specific features, App Store optimization, or native iOS development."
+  },
+  {
+    "kind": "agent",
+    "summary": "Develop React Native, Flutter, or native mobile apps with modern architecture patterns. Masters cross-platform development, native integrations, offline sync, and app store optimization. Use PROACTIVELY for mobile features, cross-platform code, or app optimization.",
+    "bundles": ["multi-platform-apps"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "multi-platform-apps/mobile-developer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Develop React Native, Flutter, or native mobile apps with modern architecture patterns. Masters cross-platform development, native integrations, offline sync, and app store optimization. Use PROACTIVELY for mobile features, cross-platform code, or app optimization."
+  },
+  {
+    "kind": "agent",
+    "summary": "Create interface designs, wireframes, and design systems. Masters user research, accessibility standards, and modern design tools. Specializes in design tokens, component libraries, and inclusive design. Use PROACTIVELY for design systems, user flows, or interface optimization.",
+    "bundles": ["multi-platform-apps"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "multi-platform-apps/ui-ux-designer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Create interface designs, wireframes, and design systems. Masters user research, accessibility standards, and modern design tools. Specializes in design tokens, component libraries, and inclusive design. Use PROACTIVELY for design systems, user flows, or interface optimization."
+  }
+]

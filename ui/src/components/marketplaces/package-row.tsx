@@ -124,7 +124,7 @@ export function PackageRow({
   const Icon = kindIcon(row.kind);
 
   useEffect(() => {
-    want(catalog, row.kind, row.name);
+    return want(catalog, row.kind, row.name);
   }, [want, catalog, row.kind, row.name]);
 
   const openPackage = () =>

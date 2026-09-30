@@ -15,13 +15,12 @@ export const safetyKey = (
 ): string => `${catalogKey(catalog)}::${kind}::${name}`;
 
 interface PreinstallSafetyState {
-  /** Answered scores; a key in flight or failed is simply absent, and the
-   * dot stays quiet rather than guessing. */
+  /** Answered scores; a key in flight or failed is simply absent. */
   scores: Record<string, PackageSafety>;
-  /** Queue a package's score. Fetches drain one at a time — a table of
-   * forty rows must not fire forty scans at once; the backend caches, so a
-   * revisit answers from disk. */
-  want: (catalog: Catalog, kind: ItemKind, name: string) => void;
+  /** Hold demand while a row is visible or a consumer explicitly needs it.
+   * Release removes queued work when the last consumer leaves. Running
+   * reads finish, but only their own catalog generation can store them. */
+  want: (catalog: Catalog, kind: ItemKind, name: string) => () => void;
 }
 
 interface QueueItem {
@@ -31,72 +30,74 @@ interface QueueItem {
   key: string;
 }
 
-const queue: QueueItem[] = [];
-const queued = new Set<string>();
-let draining = false;
+const queue = new Map<string, QueueItem>();
+const demand = new Map<string, { item: QueueItem; consumers: Set<symbol> }>();
+let running: { key: string; generation: number } | null = null;
 
-/** Empty the cache and the queue — half of [droppedSetCaches], which is
- * where a drop is declared and where the one [catalogDrops] bump is taken.
- * Call that rather than this: a scan already in flight would otherwise land
- * in the slot this just emptied, and `want` short-circuits on a stored
- * score, so nothing would ever ask again. */
-export function resetPreinstallSafety() {
-  queue.length = 0;
-  queued.clear();
-  usePreinstallSafety.setState({ scores: {} });
+function enqueue(item: QueueItem) {
+  if (usePreinstallSafety.getState().scores[item.key] !== undefined) return;
+  if (running?.key === item.key && running.generation === catalogDrops.since())
+    return;
+  queue.set(item.key, item);
+  void drain();
 }
 
-export const usePreinstallSafety = create<PreinstallSafetyState>(
-  (set, get) => ({
-    scores: {},
-    want: (catalog, kind, name) => {
-      const key = safetyKey(catalog, kind, name);
-      if (get().scores[key] || queued.has(key)) return;
-      queued.add(key);
-      queue.push({ catalog, kind, name, key });
-      if (draining) return;
-      draining = true;
-      void (async () => {
-        try {
-          while (queue.length > 0) {
-            const item = queue.shift();
-            if (!item) break;
-            const began = catalogDrops.since();
-            try {
-              const response = await commands.marketplacePackagePreview(
-                item.catalog,
-                item.kind,
-                item.name,
-                // The safety reading is about the package's bytes, which
-                // no destination changes.
-                null,
-              );
-              // A drop while this was in flight emptied the slot it would
-              // fill, and cleared `queued` with it: storing the old score
-              // would pin the commit before the change, and dropping it
-              // costs nothing because the next mount of the row asks again.
-              if (catalogDrops.stale(began)) continue;
-              if (response.status === "ok") {
-                set((state) => ({
-                  scores: {
-                    ...state.scores,
-                    [item.key]: response.data.safety,
-                  },
-                }));
-              } else {
-                // Retryable: the next mount of the row asks again instead
-                // of showing "Checking…" forever.
-                queued.delete(item.key);
-              }
-            } catch {
-              // A transport error must not wedge the whole queue.
-              queued.delete(item.key);
-            }
-          }
-        } finally {
-          draining = false;
-        }
-      })();
-    },
-  }),
-);
+async function drain() {
+  if (running !== null) return;
+  while (queue.size > 0) {
+    const item = queue.values().next().value;
+    if (!item) throw new Error("A nonempty safety queue has no first item");
+    queue.delete(item.key);
+    const began = catalogDrops.since();
+    running = { key: item.key, generation: began };
+    try {
+      const response = await commands.marketplacePackagePreview(
+        item.catalog,
+        item.kind,
+        item.name,
+        // Safety describes the package's bytes, which no destination changes.
+        null,
+      );
+      if (!catalogDrops.stale(began) && response.status === "ok") {
+        usePreinstallSafety.setState((state) => ({
+          scores: { ...state.scores, [item.key]: response.data.safety },
+        }));
+      }
+      // A refusal leaves no score. The next acquisition can retry it.
+    } catch {
+      // A transport failure leaves no score and must not wedge the drain.
+    } finally {
+      running = null;
+    }
+  }
+}
+
+/** The score half of the shared catalog drop. Call [dropCatalogCaches] or
+ * [droppedSetCaches] so the generation moves before the running read lands.
+ * Demand survives the drop: mounted consumers need the replacement score. */
+export function resetPreinstallSafety() {
+  queue.clear();
+  usePreinstallSafety.setState({ scores: {} });
+  for (const { item } of demand.values()) enqueue(item);
+}
+
+export const usePreinstallSafety = create<PreinstallSafetyState>(() => ({
+  scores: {},
+  want: (catalog, kind, name) => {
+    const key = safetyKey(catalog, kind, name);
+    const consumer = Symbol();
+    let held = demand.get(key);
+    if (!held) {
+      held = { item: { catalog, kind, name, key }, consumers: new Set() };
+      demand.set(key, held);
+    }
+    held.consumers.add(consumer);
+    enqueue(held.item);
+    return () => {
+      if (!held.consumers.delete(consumer)) return;
+      if (held.consumers.size > 0) return;
+      demand.delete(key);
+      queue.delete(key);
+    };
+  },
+}));

@@ -21,28 +21,65 @@ import {
 type SetReads = (fn: (state: CatalogCaches) => Partial<CatalogCaches>) => void;
 
 export function catalogReads(set: SetReads) {
+  // Partial arrivals re-run consumers' effects. Share each outstanding read
+  // in its generation, including the replacement a stale answer asks for.
+  const pending = new Map<
+    string,
+    {
+      generation: number;
+      promise: Promise<void>;
+      status: "pending" | "settled";
+    }
+  >();
+  const readOnce = <F extends Exclude<keyof CatalogCaches, "readErrors">>(
+    field: F,
+    key: string,
+    errorKey: string,
+    read: () => Promise<
+      | { status: "ok"; data: CatalogCaches[F][string] }
+      | { status: "error"; error: SourceReadRefused | string }
+    >,
+    request: "direct" | "replacement" = "direct",
+  ): Promise<void> => {
+    const generation = catalogDrops.since();
+    const held = pending.get(errorKey);
+    // An old generation joins even an already-settled replacement. A
+    // direct request can retry failures or explicitly refresh a result.
+    if (
+      held?.generation === generation &&
+      (held.status === "pending" || request === "replacement")
+    )
+      return held.promise;
+    const promise = settle(set, field, key, errorKey, read, generation, () =>
+      readOnce(field, key, errorKey, read, "replacement"),
+    ).finally(() => {
+      const current = pending.get(errorKey);
+      if (current?.promise === promise) current.status = "settled";
+    });
+    pending.set(errorKey, { generation, promise, status: "pending" });
+    return promise;
+  };
   return {
     loadPackages: (catalog: Catalog) => {
       const key = catalogKey(catalog);
-      return settle(set, "packages", key, readErrorKey(key, "packages"), () =>
+      return readOnce("packages", key, readErrorKey(key, "packages"), () =>
         commands.marketplacePackages(catalog),
       );
     },
     loadSummary: (catalog: Catalog) => {
       const key = catalogKey(catalog);
-      return settle(set, "summaries", key, readErrorKey(key, "summary"), () =>
+      return readOnce("summaries", key, readErrorKey(key, "summary"), () =>
         commands.marketplaceSummary(catalog),
       );
     },
     loadAbout: (catalog: Catalog) => {
       const key = catalogKey(catalog);
-      return settle(set, "about", key, readErrorKey(key, "about"), () =>
+      return readOnce("about", key, readErrorKey(key, "about"), () =>
         commands.marketplaceAbout(catalog),
       );
     },
     loadCatalogBundles: (catalog: Catalog) => {
-      return settle(
-        set,
+      return readOnce(
         "catalogBundles",
         catalogKey(catalog),
         catalogBundlesErrorKey(catalog),
@@ -51,7 +88,7 @@ export function catalogReads(set: SetReads) {
     },
     loadBundle: (catalog: Catalog, name: string, destination: Scope | null) => {
       const key = bundleKey(catalog, name, destination);
-      return settle(set, "bundles", key, key, () =>
+      return readOnce("bundles", key, key, () =>
         commands.marketplaceBundle(catalog, name, destination),
       );
     },
@@ -61,12 +98,9 @@ export function catalogReads(set: SetReads) {
 /** One cached read: the answer lands under its key, a failure under its
  * error key.
  *
- * A read that outlives a cache drop is not stored — ok and error alike, since
- * a stale failure pins the page on a superseded reason and `readDue` will not
- * retry it. The read is asked once more under the generation after the drop
- * rather than only discarded: the slot the drop emptied has no other asker,
- * and every consumer keys on presence, so discarding alone leaves the page
- * blank. */
+ * A read that outlives a cache drop is not stored, ok and error alike.
+ * It joins the current generation's read or starts it when no other
+ * consumer has asked. Discarding alone would leave the emptied slot blank. */
 async function settle<F extends Exclude<keyof CatalogCaches, "readErrors">>(
   set: SetReads,
   field: F,
@@ -76,15 +110,16 @@ async function settle<F extends Exclude<keyof CatalogCaches, "readErrors">>(
     | { status: "ok"; data: CatalogCaches[F][string] }
     | { status: "error"; error: SourceReadRefused | string }
   >,
+  began: number,
+  reread: () => Promise<void>,
 ): Promise<void> {
-  const began = catalogDrops.since();
   // `settled` so a transport rejection lands as this read's own error
   // rather than escaping: these loaders are called with `void` from
   // effects, so a rejection would leave the slot empty, no reason under
   // its key, and the page loading forever with nothing to retry from.
   const response = await settled(read());
   if (catalogDrops.stale(began)) {
-    return settle(set, field, key, errorKey, read);
+    return reread();
   }
   if (response.status === "ok") {
     set((state) => ({

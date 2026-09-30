@@ -1,0 +1,947 @@
+[
+  {
+    "kind": "agent",
+    "summary": "Expert database optimizer specializing in modern performance tuning, query optimization, and scalable architectures. Masters advanced indexing, N+1 resolution, multi-tier caching, partitioning strategies, and cloud database optimization. Handles complex query analysis, migration strategies, and performance monitoring. Use PROACTIVELY for database optimization, performance issues, or scalability challenges.",
+    "bundles": ["observability-monitoring"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "observability-monitoring/database-optimizer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert database optimizer specializing in modern performance tuning, query optimization, and scalable architectures. Masters advanced indexing, N+1 resolution, multi-tier caching, partitioning strategies, and cloud database optimization. Handles complex query analysis, migration strategies, and performance monitoring. Use PROACTIVELY for database optimization, performance issues, or scalability challenges."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert network engineer specializing in modern cloud networking, security architectures, and performance optimization. Masters multi-cloud connectivity, service mesh, zero-trust networking, SSL/TLS, global load balancing, and advanced troubleshooting. Handles CDN optimization, network automation, and compliance. Use PROACTIVELY for network design, connectivity issues, or performance optimization.",
+    "bundles": ["observability-monitoring"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "observability-monitoring/network-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert network engineer specializing in modern cloud networking, security architectures, and performance optimization. Masters multi-cloud connectivity, service mesh, zero-trust networking, SSL/TLS, global load balancing, and advanced troubleshooting. Handles CDN optimization, network automation, and compliance. Use PROACTIVELY for network design, connectivity issues, or performance optimization."
+  },
+  {
+    "kind": "agent",
+    "summary": "Build production-ready monitoring, logging, and tracing systems. Implements comprehensive observability strategies, SLI/SLO management, and incident response workflows. Use PROACTIVELY for monitoring infrastructure, performance optimization, or production reliability.",
+    "bundles": ["observability-monitoring"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "observability-monitoring/observability-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Build production-ready monitoring, logging, and tracing systems. Implements comprehensive observability strategies, SLI/SLO management, and incident response workflows. Use PROACTIVELY for monitoring infrastructure, performance optimization, or production reliability."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert performance engineer specializing in modern observability, application optimization, and scalable system performance. Masters OpenTelemetry, distributed tracing, load testing, multi-tier caching, Core Web Vitals, and performance monitoring. Handles end-to-end optimization, real user monitoring, and scalability patterns. Use PROACTIVELY for performance optimization, observability, or scalability challenges.",
+    "bundles": ["observability-monitoring"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "observability-monitoring/performance-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert performance engineer specializing in modern observability, application optimization, and scalable system performance. Masters OpenTelemetry, distributed tracing, load testing, multi-tier caching, Core Web Vitals, and performance monitoring. Handles end-to-end optimization, real user monitoring, and scalability patterns. Use PROACTIVELY for performance optimization, observability, or scalability challenges."
+  },
+  {
+    "kind": "agent",
+    "summary": "Comprehensive pre-ship review of all changes since the last deploy or a specified commit. Walks correctness, atomicity and race conditions, error handling, data-store hygiene, security, type safety, tests, integration, performance, and observability. Use after any sprint and always before deploying. Ends with a SHIP / SHIP WITH FIXES / DO NOT SHIP verdict.",
+    "bundles": ["operating-kit"],
+    "updatedAt": "2026-07-07T16:10:46-04:00",
+    "name": "operating-kit/code-review-preshipment",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Comprehensive pre-ship review of all changes since the last deploy or a specified commit. Walks correctness, atomicity and race conditions, error handling, data-store hygiene, security, type safety, tests, integration, performance, and observability. Use after any sprint and always before deploying. Ends with a SHIP / SHIP WITH FIXES / DO NOT SHIP verdict."
+  },
+  {
+    "kind": "agent",
+    "summary": "Use when deploying to production. Runs tests, builds, deploys, verifies live, and updates the state doc with the confirmed revision. Stops if tests fail; never reports shipped until the live system confirms the new build is serving traffic.",
+    "bundles": ["operating-kit"],
+    "updatedAt": "2026-07-07T16:10:46-04:00",
+    "name": "operating-kit/deploy-with-verification",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Use when deploying to production. Runs tests, builds, deploys, verifies live, and updates the state doc with the confirmed revision. Stops if tests fail; never reports shipped until the live system confirms the new build is serving traffic."
+  },
+  {
+    "kind": "agent",
+    "summary": "Pulls recent production logs filtered for errors, warnings, and anomalies. Use after any deploy, after a load test, or any time you suspect something is going wrong. Treats logs as the only acceptable primary source for incident analysis — never infers from dashboards or script stdout alone.",
+    "bundles": ["operating-kit"],
+    "updatedAt": "2026-07-07T16:10:46-04:00",
+    "name": "operating-kit/prod-logs-health-check",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Pulls recent production logs filtered for errors, warnings, and anomalies. Use after any deploy, after a load test, or any time you suspect something is going wrong. Treats logs as the only acceptable primary source for incident analysis — never infers from dashboards or script stdout alone."
+  },
+  {
+    "kind": "agent",
+    "summary": "Use at the end of every significant work session. Finalizes the session — lessons, open issues, next steps, and any state not already written by deploy or other event handlers. Skips cleanly if nothing significant changed. Pairs with session-start.",
+    "bundles": ["operating-kit"],
+    "updatedAt": "2026-07-07T16:10:46-04:00",
+    "name": "operating-kit/session-end",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Use at the end of every significant work session. Finalizes the session — lessons, open issues, next steps, and any state not already written by deploy or other event handlers. Skips cleanly if nothing significant changed. Pairs with session-start."
+  },
+  {
+    "kind": "agent",
+    "summary": "Use at the start of every work session. Reads the canonical state doc, verifies live state, reconciles drift from external deploys or dirty shutdowns, and prints a concise briefing. Pairs with session-end.",
+    "bundles": ["operating-kit"],
+    "updatedAt": "2026-07-07T16:10:46-04:00",
+    "name": "operating-kit/session-start",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Use at the start of every work session. Reads the canonical state doc, verifies live state, reconciles drift from external deploys or dirty shutdowns, and prints a concise briefing. Pairs with session-end."
+  },
+  {
+    "kind": "agent",
+    "summary": "Integrate Stripe, PayPal, and payment processors. Handles checkout flows, subscriptions, webhooks, and PCI compliance. Use PROACTIVELY when implementing payments, billing, or subscription features.",
+    "bundles": ["payment-processing"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "payment-processing/payment-integration",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Integrate Stripe, PayPal, and payment processors. Handles checkout flows, subscriptions, webhooks, and PCI compliance. Use PROACTIVELY when implementing payments, billing, or subscription features."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert performance engineer specializing in modern observability, application optimization, and scalable system performance. Masters OpenTelemetry, distributed tracing, load testing, multi-tier caching, Core Web Vitals, and performance monitoring. Handles end-to-end optimization, real user monitoring, and scalability patterns. Use PROACTIVELY for performance optimization, observability, or scalability challenges.",
+    "bundles": ["performance-testing-review"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "performance-testing-review/performance-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert performance engineer specializing in modern observability, application optimization, and scalable system performance. Masters OpenTelemetry, distributed tracing, load testing, multi-tier caching, Core Web Vitals, and performance monitoring. Handles end-to-end optimization, real user monitoring, and scalability patterns. Use PROACTIVELY for performance optimization, observability, or scalability challenges."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master AI-powered test automation with modern frameworks, self-healing tests, and comprehensive quality engineering. Build scalable testing strategies with advanced CI/CD integration. Use PROACTIVELY for testing automation or quality assurance.",
+    "bundles": ["performance-testing-review"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "performance-testing-review/test-automator",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master AI-powered test automation with modern frameworks, self-healing tests, and comprehensive quality engineering. Build scalable testing strategies with advanced CI/CD integration. Use PROACTIVELY for testing automation or quality assurance."
+  },
+  {
+    "kind": "agent",
+    "summary": "LLM judge for plugin quality assessment. Scores skills on triggering accuracy, orchestration fitness, output quality, and scope calibration using anchored rubrics.",
+    "bundles": ["plugin-eval"],
+    "updatedAt": "2026-03-26T17:34:48-04:00",
+    "name": "plugin-eval/eval-judge",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "LLM judge for plugin quality assessment. Scores skills on triggering accuracy, orchestration fitness, output quality, and scope calibration using anchored rubrics."
+  },
+  {
+    "kind": "agent",
+    "summary": "Orchestrates plugin quality evaluation. Use PROACTIVELY when evaluating, scoring, or certifying plugin quality.",
+    "bundles": ["plugin-eval"],
+    "updatedAt": "2026-03-26T17:34:48-04:00",
+    "name": "plugin-eval/eval-orchestrator",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Orchestrates plugin quality evaluation. Use PROACTIVELY when evaluating, scoring, or certifying plugin quality."
+  },
+  {
+    "kind": "agent",
+    "summary": "Use when creating, repairing, or auditing a production-ready editable PowerPoint (PPTX) deck from a brief, source material, or reference deck.",
+    "bundles": ["pptx-deck-creation"],
+    "updatedAt": "2026-07-18T17:00:10-04:00",
+    "name": "pptx-deck-creation/pptx-deck-creation-builder",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Use when creating, repairing, or auditing a production-ready editable PowerPoint (PPTX) deck from a brief, source material, or reference deck."
+  },
+  {
+    "kind": "agent",
+    "summary": "Cedar policy author and reviewer for Claude Code tool calls. Writes, audits, and explains Cedar policies that govern Bash, Edit, Write, WebFetch, and other tools. Use when you need declarative, formally verifiable rules for what an AI agent can and cannot do in a project.",
+    "bundles": ["protect-mcp"],
+    "updatedAt": "2026-09-26T11:09:38-04:00",
+    "name": "protect-mcp/policy-enforcer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Cedar policy author and reviewer for Claude Code tool calls. Writes, audits, and explains Cedar policies that govern Bash, Edit, Write, WebFetch, and other tools. Use when you need declarative, formally verifiable rules for what an AI agent can and cannot do in a project."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert in Ed25519 signed receipts, JCS canonicalization, and offline verification. Use when you need to verify receipt authenticity, audit a receipts file, detect tampering, or explain why verification failed.",
+    "bundles": ["protect-mcp"],
+    "updatedAt": "2026-09-26T11:09:38-04:00",
+    "name": "protect-mcp/receipt-verifier",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert in Ed25519 signed receipts, JCS canonicalization, and offline verification. Use when you need to verify receipt authenticity, audit a receipts file, detect tampering, or explain why verification failed."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master Django 5.x with async views, DRF, Celery, and Django Channels. Build scalable web applications with proper architecture, testing, and deployment. Use PROACTIVELY for Django development, ORM optimization, or complex Django patterns.",
+    "bundles": ["python-development"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "python-development/django-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master Django 5.x with async views, DRF, Celery, and Django Channels. Build scalable web applications with proper architecture, testing, and deployment. Use PROACTIVELY for Django development, ORM optimization, or complex Django patterns."
+  },
+  {
+    "kind": "agent",
+    "summary": "Build high-performance async APIs with FastAPI, SQLAlchemy 2.0, and Pydantic V2. Master microservices, WebSockets, and modern Python async patterns. Use PROACTIVELY for FastAPI development, async optimization, or API architecture.",
+    "bundles": ["python-development"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "python-development/fastapi-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Build high-performance async APIs with FastAPI, SQLAlchemy 2.0, and Pydantic V2. Master microservices, WebSockets, and modern Python async patterns. Use PROACTIVELY for FastAPI development, async optimization, or API architecture."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master Python 3.12+ with modern features, async programming, performance optimization, and production-ready practices. Expert in the latest Python ecosystem including uv, ruff, pydantic, and FastAPI. Use PROACTIVELY for Python development, optimization, or advanced Python patterns.",
+    "bundles": ["python-development"],
+    "updatedAt": "2026-03-17T11:00:12-04:00",
+    "name": "python-development/python-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master Python 3.12+ with modern features, async programming, performance optimization, and production-ready practices. Expert in the latest Python ecosystem including uv, ruff, pydantic, and FastAPI. Use PROACTIVELY for Python development, optimization, or advanced Python patterns."
+  },
+  {
+    "kind": "agent",
+    "summary": "Build financial models, backtest trading strategies, and analyze market data. Implements risk metrics, portfolio optimization, and statistical arbitrage. Use PROACTIVELY for quantitative finance, trading algorithms, or risk analysis.",
+    "bundles": ["quantitative-trading"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "quantitative-trading/quant-analyst",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Build financial models, backtest trading strategies, and analyze market data. Implements risk metrics, portfolio optimization, and statistical arbitrage. Use PROACTIVELY for quantitative finance, trading algorithms, or risk analysis."
+  },
+  {
+    "kind": "agent",
+    "summary": "Monitor portfolio risk, R-multiples, and position limits. Creates hedging strategies, calculates expectancy, and implements stop-losses. Use PROACTIVELY for risk assessment, trade tracking, or portfolio protection.",
+    "bundles": ["quantitative-trading"],
+    "updatedAt": "2025-12-10T15:52:06-05:00",
+    "name": "quantitative-trading/risk-manager",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Monitor portfolio risk, R-multiples, and position limits. Creates hedging strategies, calculates expectancy, and implements stop-losses. Use PROACTIVELY for risk assessment, trade tracking, or portfolio protection."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert firmware analyst specializing in embedded systems, IoT security, and hardware reverse engineering. Masters firmware extraction, analysis, and vulnerability research for routers, IoT devices, automotive systems, and industrial controllers. Use PROACTIVELY for firmware security audits, IoT penetration testing, or embedded systems research.",
+    "bundles": ["reverse-engineering"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "reverse-engineering/firmware-analyst",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert firmware analyst specializing in embedded systems, IoT security, and hardware reverse engineering. Masters firmware extraction, analysis, and vulnerability research for routers, IoT devices, automotive systems, and industrial controllers. Use PROACTIVELY for firmware security audits, IoT penetration testing, or embedded systems research."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert malware analyst specializing in defensive malware research, threat intelligence, and incident response. Masters sandbox analysis, behavioral analysis, and malware family identification. Handles static/dynamic analysis, unpacking, and IOC extraction. Use PROACTIVELY for malware triage, threat hunting, incident response, or security research.",
+    "bundles": ["reverse-engineering"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "reverse-engineering/malware-analyst",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert malware analyst specializing in defensive malware research, threat intelligence, and incident response. Masters sandbox analysis, behavioral analysis, and malware family identification. Handles static/dynamic analysis, unpacking, and IOC extraction. Use PROACTIVELY for malware triage, threat hunting, incident response, or security research."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert reverse engineer specializing in binary analysis, disassembly, decompilation, and software analysis. Masters IDA Pro, Ghidra, radare2, x64dbg, and modern RE toolchains. Handles executable analysis, library inspection, protocol extraction, and vulnerability research. Use PROACTIVELY for binary analysis, CTF challenges, security research, or understanding undocumented software.",
+    "bundles": ["reverse-engineering"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "reverse-engineering/reverse-engineer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert reverse engineer specializing in binary analysis, disassembly, decompilation, and software analysis. Masters IDA Pro, Ghidra, radare2, x64dbg, and modern RE toolchains. Handles executable analysis, library inspection, protocol extraction, and vulnerability research. Use PROACTIVELY for binary analysis, CTF challenges, security research, or understanding undocumented software."
+  },
+  {
+    "kind": "agent",
+    "summary": "Cedar policy author specialized in gating AI agent review actions (PR comments, reviews, merges, CI edits) behind human approval. Use when writing, auditing, or extending a review-governance.cedar policy for review-bot governance.",
+    "bundles": ["review-agent-governance"],
+    "updatedAt": "2026-09-25T20:40:31-04:00",
+    "name": "review-agent-governance/review-policy-author",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Cedar policy author specialized in gating AI agent review actions (PR comments, reviews, merges, CI edits) behind human approval. Use when writing, auditing, or extending a review-governance.cedar policy for review-bot governance."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert security auditor specializing in DevSecOps, comprehensive cybersecurity, and compliance frameworks. Masters vulnerability assessment, threat modeling, secure authentication (OAuth2/OIDC), OWASP standards, cloud security, and security automation. Handles DevSecOps integration, compliance (GDPR/HIPAA/SOC2), and incident response. Use PROACTIVELY for security audits, DevSecOps, or compliance implementation.",
+    "bundles": ["security-compliance"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "security-compliance/security-auditor",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert security auditor specializing in DevSecOps, comprehensive cybersecurity, and compliance frameworks. Masters vulnerability assessment, threat modeling, secure authentication (OAuth2/OIDC), OWASP standards, cloud security, and security automation. Handles DevSecOps integration, compliance (GDPR/HIPAA/SOC2), and incident response. Use PROACTIVELY for security audits, DevSecOps, or compliance implementation."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert security auditor specializing in DevSecOps, comprehensive cybersecurity, and compliance frameworks. Masters vulnerability assessment, threat modeling, secure authentication (OAuth2/OIDC), OWASP standards, cloud security, and security automation. Handles DevSecOps integration, compliance (GDPR/HIPAA/SOC2), and incident response. Use PROACTIVELY for security audits, DevSecOps, or compliance implementation.",
+    "bundles": ["security-scanning"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "security-scanning/security-auditor",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert security auditor specializing in DevSecOps, comprehensive cybersecurity, and compliance frameworks. Masters vulnerability assessment, threat modeling, secure authentication (OAuth2/OIDC), OWASP standards, cloud security, and security automation. Handles DevSecOps integration, compliance (GDPR/HIPAA/SOC2), and incident response. Use PROACTIVELY for security audits, DevSecOps, or compliance implementation."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert in threat modeling methodologies, security architecture review, and risk assessment. Masters STRIDE, PASTA, attack trees, and security requirement extraction. Use PROACTIVELY for security architecture reviews, threat identification, or building secure-by-design systems.",
+    "bundles": ["security-scanning"],
+    "updatedAt": "2026-04-17T13:15:22-04:00",
+    "name": "security-scanning/threat-modeling-expert",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert in threat modeling methodologies, security architecture review, and risk assessment. Masters STRIDE, PASTA, attack trees, and security requirement extraction. Use PROACTIVELY for security architecture reviews, threat identification, or building secure-by-design systems."
+  },
+  {
+    "kind": "agent",
+    "summary": "Analyzes content for E-E-A-T signals and suggests improvements to build authority and trust. Identifies missing credibility elements. Use PROACTIVELY for YMYL topics.",
+    "bundles": ["seo-analysis-monitoring"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "seo-analysis-monitoring/seo-authority-builder",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Analyzes content for E-E-A-T signals and suggests improvements to build authority and trust. Identifies missing credibility elements. Use PROACTIVELY for YMYL topics."
+  },
+  {
+    "kind": "agent",
+    "summary": "Analyzes multiple provided pages to identify keyword overlap and potential cannibalization issues. Suggests differentiation strategies. Use PROACTIVELY when reviewing similar content.",
+    "bundles": ["seo-analysis-monitoring"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "seo-analysis-monitoring/seo-cannibalization-detector",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Analyzes multiple provided pages to identify keyword overlap and potential cannibalization issues. Suggests differentiation strategies. Use PROACTIVELY when reviewing similar content."
+  },
+  {
+    "kind": "agent",
+    "summary": "Identifies outdated elements in provided content and suggests updates to maintain freshness. Finds statistics, dates, and examples that need updating. Use PROACTIVELY for older content.",
+    "bundles": ["seo-analysis-monitoring"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "seo-analysis-monitoring/seo-content-refresher",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Identifies outdated elements in provided content and suggests updates to maintain freshness. Finds statistics, dates, and examples that need updating. Use PROACTIVELY for older content."
+  },
+  {
+    "kind": "agent",
+    "summary": "Analyzes provided content for quality, E-E-A-T signals, and SEO best practices. Scores content and provides improvement recommendations based on established guidelines. Use PROACTIVELY for content review.",
+    "bundles": ["seo-content-creation"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "seo-content-creation/seo-content-auditor",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Analyzes provided content for quality, E-E-A-T signals, and SEO best practices. Scores content and provides improvement recommendations based on established guidelines. Use PROACTIVELY for content review."
+  },
+  {
+    "kind": "agent",
+    "summary": "Creates comprehensive content outlines and topic clusters for SEO. Plans content calendars and identifies topic gaps. Use PROACTIVELY for content strategy and planning.",
+    "bundles": ["seo-content-creation"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "seo-content-creation/seo-content-planner",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Creates comprehensive content outlines and topic clusters for SEO. Plans content calendars and identifies topic gaps. Use PROACTIVELY for content strategy and planning."
+  },
+  {
+    "kind": "agent",
+    "summary": "Writes SEO-optimized content based on provided keywords and topic briefs. Creates engaging, comprehensive content following best practices. Use PROACTIVELY for content creation tasks.",
+    "bundles": ["seo-content-creation"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "seo-content-creation/seo-content-writer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Writes SEO-optimized content based on provided keywords and topic briefs. Creates engaging, comprehensive content following best practices. Use PROACTIVELY for content creation tasks."
+  },
+  {
+    "kind": "agent",
+    "summary": "Analyzes keyword usage in provided content, calculates density, suggests semantic variations and LSI keywords based on the topic. Prevents over-optimization. Use PROACTIVELY for content optimization.",
+    "bundles": ["seo-technical-optimization"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "seo-technical-optimization/seo-keyword-strategist",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Analyzes keyword usage in provided content, calculates density, suggests semantic variations and LSI keywords based on the topic. Prevents over-optimization. Use PROACTIVELY for content optimization."
+  },
+  {
+    "kind": "agent",
+    "summary": "Creates optimized meta titles, descriptions, and URL suggestions based on character limits and best practices. Generates compelling, keyword-rich metadata. Use PROACTIVELY for new content.",
+    "bundles": ["seo-technical-optimization"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "seo-technical-optimization/seo-meta-optimizer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Creates optimized meta titles, descriptions, and URL suggestions based on character limits and best practices. Generates compelling, keyword-rich metadata. Use PROACTIVELY for new content."
+  },
+  {
+    "kind": "agent",
+    "summary": "Formats content to be eligible for featured snippets and SERP features. Creates snippet-optimized content blocks based on best practices. Use PROACTIVELY for question-based content.",
+    "bundles": ["seo-technical-optimization"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "seo-technical-optimization/seo-snippet-hunter",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Formats content to be eligible for featured snippets and SERP features. Creates snippet-optimized content blocks based on best practices. Use PROACTIVELY for question-based content."
+  },
+  {
+    "kind": "agent",
+    "summary": "Analyzes and optimizes content structure including header hierarchy, suggests schema markup, and internal linking opportunities. Creates search-friendly content organization. Use PROACTIVELY for content structuring.",
+    "bundles": ["seo-technical-optimization"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "seo-technical-optimization/seo-structure-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Analyzes and optimizes content structure including header hierarchy, suggests schema markup, and internal linking opportunities. Creates search-friendly content organization. Use PROACTIVELY for content structuring."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master of defensive Bash scripting for production automation, CI/CD pipelines, and system utilities. Expert in safe, portable, and testable shell scripts.",
+    "bundles": ["shell-scripting"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "shell-scripting/bash-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master of defensive Bash scripting for production automation, CI/CD pipelines, and system utilities. Expert in safe, portable, and testable shell scripts."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert in strict POSIX sh scripting for maximum portability across Unix-like systems. Specializes in shell scripts that run on any POSIX-compliant shell (dash, ash, sh, bash --posix).",
+    "bundles": ["shell-scripting"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "shell-scripting/posix-shell-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert in strict POSIX sh scripting for maximum portability across Unix-like systems. Specializes in shell scripts that run on any POSIX-compliant shell (dash, ash, sh, bash --posix)."
+  },
+  {
+    "kind": "agent",
+    "summary": "Architect agent. Reads orchestrator-output.md, AGENTS.md, and project-doc.md to produce a numbered step-by-step implementation plan. Pauses for human approval before implementation begins.",
+    "bundles": ["ship-mate"],
+    "updatedAt": "2026-05-11T19:29:31-04:00",
+    "name": "ship-mate/architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Architect agent. Reads orchestrator-output.md, AGENTS.md, and project-doc.md to produce a numbered step-by-step implementation plan. Pauses for human approval before implementation begins."
+  },
+  {
+    "kind": "agent",
+    "summary": "Developer agent. Implements the architect plan step-by-step, guided by AGENTS.md guardrails. Writes tests, leaves no TODOs, and flags plan deviations rather than silently skipping them.",
+    "bundles": ["ship-mate"],
+    "updatedAt": "2026-05-11T19:29:31-04:00",
+    "name": "ship-mate/implement",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Developer agent. Implements the architect plan step-by-step, guided by AGENTS.md guardrails. Writes tests, leaves no TODOs, and flags plan deviations rather than silently skipping them."
+  },
+  {
+    "kind": "agent",
+    "summary": "Product Orchestrator agent. Reads the active story file, asks clarifying product questions one at a time, confirms task type (FRONTEND/BACKEND), and produces a complete unambiguous spec in orchestrator-output.md.",
+    "bundles": ["ship-mate"],
+    "updatedAt": "2026-05-11T19:29:31-04:00",
+    "name": "ship-mate/orchestrate",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Product Orchestrator agent. Reads the active story file, asks clarifying product questions one at a time, confirms task type (FRONTEND/BACKEND), and produces a complete unambiguous spec in orchestrator-output.md."
+  },
+  {
+    "kind": "agent",
+    "summary": "Playwright testing agent. Only runs for FRONTEND tasks. Verifies acceptance criteria in a real browser using the page object pattern. Passes on success, routes back to developer on failure.",
+    "bundles": ["ship-mate"],
+    "updatedAt": "2026-05-11T19:29:31-04:00",
+    "name": "ship-mate/playwright",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Playwright testing agent. Only runs for FRONTEND tasks. Verifies acceptance criteria in a real browser using the page object pattern. Passes on success, routes back to developer on failure."
+  },
+  {
+    "kind": "agent",
+    "summary": "QA Agent. Tests all acceptance criteria and edge cases from orchestrator-output.md. Generates a structured qa-report.md with pass/fail per criterion and bug triage. Loops back to implement if bugs found (max 2 iterations).",
+    "bundles": ["ship-mate"],
+    "updatedAt": "2026-05-11T19:29:31-04:00",
+    "name": "ship-mate/qa",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "QA Agent. Tests all acceptance criteria and edge cases from orchestrator-output.md. Generates a structured qa-report.md with pass/fail per criterion and bug triage. Loops back to implement if bugs found (max 2 iterations)."
+  },
+  {
+    "kind": "agent",
+    "summary": "PR Reviewer agent. Reviews implemented code using a 3-tier taxonomy (🔴 Critical / 🟡 Should Fix / 💡 Consider). Auto-resolves minor issues, pauses on critical ones. Applies security guardrails. Outputs review-report.md.",
+    "bundles": ["ship-mate"],
+    "updatedAt": "2026-05-11T19:29:31-04:00",
+    "name": "ship-mate/review",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "PR Reviewer agent. Reviews implemented code using a 3-tier taxonomy (🔴 Critical / 🟡 Should Fix / 💡 Consider). Auto-resolves minor issues, pauses on critical ones. Applies security guardrails. Outputs review-report.md."
+  },
+  {
+    "kind": "agent",
+    "summary": "Agent-first social media publishing specialist. Use this agent to schedule and publish posts across 13 platforms (X, LinkedIn, Instagram, Facebook Pages, TikTok, Discord, Telegram, YouTube, Reddit, WordPress, Pinterest) via the SocialClaw API. Invoke for multi-platform campaigns, content scheduling, media upload, and post analytics. Requires a SocialClaw workspace API key (SOCIALCLAW_API_KEY).",
+    "bundles": ["social-publishing"],
+    "updatedAt": "2026-06-03T08:10:00+09:00",
+    "name": "social-publishing/social-publishing-publisher",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Agent-first social media publishing specialist. Use this agent to schedule and publish posts across 13 platforms (X, LinkedIn, Instagram, Facebook Pages, TikTok, Discord, Telegram, YouTube, Reddit, WordPress, Pinterest) via the SocialClaw API. Invoke for multi-platform campaigns, content scheduling, media upload, and post analytics. Requires a SocialClaw workspace API key (SOCIALCLAW_API_KEY)."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert startup business analyst specializing in market sizing, financial modeling, competitive analysis, and strategic planning for early-stage companies. Use PROACTIVELY when the user asks about market opportunity, TAM/SAM/SOM, financial projections, unit economics, competitive landscape, team planning, startup metrics, or business strategy for pre-seed through Series A startups.",
+    "bundles": ["startup-business-analyst"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "startup-business-analyst/startup-analyst",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert startup business analyst specializing in market sizing, financial modeling, competitive analysis, and strategic planning for early-stage companies. Use PROACTIVELY when the user asks about market opportunity, TAM/SAM/SOM, financial projections, unit economics, competitive landscape, team planning, startup metrics, or business strategy for pre-seed through Series A startups."
+  },
+  {
+    "kind": "agent",
+    "summary": "Write efficient C code with proper memory management, pointer arithmetic, and system calls. Handles embedded systems, kernel modules, and performance-critical code. Use PROACTIVELY for C optimization, memory issues, or system programming.",
+    "bundles": ["systems-programming"],
+    "updatedAt": "2025-12-10T15:52:06-05:00",
+    "name": "systems-programming/c-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Write efficient C code with proper memory management, pointer arithmetic, and system calls. Handles embedded systems, kernel modules, and performance-critical code. Use PROACTIVELY for C optimization, memory issues, or system programming."
+  },
+  {
+    "kind": "agent",
+    "summary": "Write idiomatic C++ code with modern features, RAII, smart pointers, and STL algorithms. Handles templates, move semantics, and performance optimization. Use PROACTIVELY for C++ refactoring, memory safety, or complex C++ patterns.",
+    "bundles": ["systems-programming"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "systems-programming/cpp-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Write idiomatic C++ code with modern features, RAII, smart pointers, and STL algorithms. Handles templates, move semantics, and performance optimization. Use PROACTIVELY for C++ refactoring, memory safety, or complex C++ patterns."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master Go 1.21+ with modern patterns, advanced concurrency, performance optimization, and production-ready microservices. Expert in the latest Go ecosystem including generics, workspaces, and cutting-edge frameworks. Use PROACTIVELY for Go development, architecture design, or performance optimization.",
+    "bundles": ["systems-programming"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "systems-programming/golang-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master Go 1.21+ with modern patterns, advanced concurrency, performance optimization, and production-ready microservices. Expert in the latest Go ecosystem including generics, workspaces, and cutting-edge frameworks. Use PROACTIVELY for Go development, architecture design, or performance optimization."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master Rust 1.75+ with modern async patterns, advanced type system features, and production-ready systems programming. Expert in the latest Rust ecosystem including Tokio, axum, and cutting-edge crates. Use PROACTIVELY for Rust development, performance optimization, or systems programming.",
+    "bundles": ["systems-programming"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "systems-programming/rust-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master Rust 1.75+ with modern async patterns, advanced type system features, and production-ready systems programming. Expert in the latest Rust ecosystem including Tokio, axum, and cutting-edge crates. Use PROACTIVELY for Rust development, performance optimization, or systems programming."
+  },
+  {
+    "kind": "agent",
+    "summary": "Elite code review expert specializing in modern AI-powered code analysis, security vulnerabilities, performance optimization, and production reliability. Masters static analysis tools, security scanning, and configuration review with 2024/2025 best practices. Use PROACTIVELY for code quality assurance.",
+    "bundles": ["tdd-workflows"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "tdd-workflows/code-reviewer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Elite code review expert specializing in modern AI-powered code analysis, security vulnerabilities, performance optimization, and production reliability. Masters static analysis tools, security scanning, and configuration review with 2024/2025 best practices. Use PROACTIVELY for code quality assurance."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master TDD orchestrator specializing in red-green-refactor discipline, multi-agent workflow coordination, and comprehensive test-driven development practices. Enforces TDD best practices across teams with AI-assisted testing and modern frameworks. Use PROACTIVELY for TDD implementation and governance.",
+    "bundles": ["tdd-workflows"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "tdd-workflows/tdd-orchestrator",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master TDD orchestrator specializing in red-green-refactor discipline, multi-agent workflow coordination, and comprehensive test-driven development practices. Enforces TDD best practices across teams with AI-assisted testing and modern frameworks. Use PROACTIVELY for TDD implementation and governance."
+  },
+  {
+    "kind": "agent",
+    "summary": "Developer Experience specialist. Improves tooling, setup, and workflows. Use PROACTIVELY when setting up new projects, after team feedback, or when development friction is noticed.",
+    "bundles": ["team-collaboration"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "team-collaboration/dx-optimizer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Developer Experience specialist. Improves tooling, setup, and workflows. Use PROACTIVELY when setting up new projects, after team feedback, or when development friction is noticed."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert accessibility specialist ensuring WCAG compliance, inclusive design, and assistive technology compatibility. Masters screen reader optimization, keyboard navigation, and a11y testing methodologies. Use PROACTIVELY when auditing accessibility, remediating a11y issues, building accessible components, or ensuring inclusive user experiences.",
+    "bundles": ["ui-design"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "ui-design/accessibility-expert",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert accessibility specialist ensuring WCAG compliance, inclusive design, and assistive technology compatibility. Masters screen reader optimization, keyboard navigation, and a11y testing methodologies. Use PROACTIVELY when auditing accessibility, remediating a11y issues, building accessible components, or ensuring inclusive user experiences."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert design system architect specializing in design tokens, component libraries, theming infrastructure, and scalable design operations. Masters token architecture, multi-brand systems, and design-development collaboration. Use PROACTIVELY when building design systems, creating token architectures, implementing theming, or establishing component libraries.",
+    "bundles": ["ui-design"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "ui-design/design-system-architect",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert design system architect specializing in design tokens, component libraries, theming infrastructure, and scalable design operations. Masters token architecture, multi-brand systems, and design-development collaboration. Use PROACTIVELY when building design systems, creating token architectures, implementing theming, or establishing component libraries."
+  },
+  {
+    "kind": "agent",
+    "summary": "Expert UI designer specializing in component creation, layout systems, and visual design implementation. Masters modern design patterns, responsive layouts, and design-to-code workflows. Use PROACTIVELY when building UI components, designing layouts, creating mockups, or implementing visual designs.",
+    "bundles": ["ui-design"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "ui-design/ui-designer",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Expert UI designer specializing in component creation, layout systems, and visual design implementation. Masters modern design patterns, responsive layouts, and design-to-code workflows. Use PROACTIVELY when building UI components, designing layouts, creating mockups, or implementing visual designs."
+  },
+  {
+    "kind": "agent",
+    "summary": "Debugging specialist for errors, test failures, and unexpected behavior. Use proactively when encountering any issues.",
+    "bundles": ["unit-testing"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "unit-testing/debugger",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Debugging specialist for errors, test failures, and unexpected behavior. Use proactively when encountering any issues."
+  },
+  {
+    "kind": "agent",
+    "summary": "Master AI-powered test automation with modern frameworks, self-healing tests, and comprehensive quality engineering. Build scalable testing strategies with advanced CI/CD integration. Use PROACTIVELY for testing automation or quality assurance.",
+    "bundles": ["unit-testing"],
+    "updatedAt": "2026-05-24T19:55:35-04:00",
+    "name": "unit-testing/test-automator",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Master AI-powered test automation with modern frameworks, self-healing tests, and comprehensive quality engineering. Build scalable testing strategies with advanced CI/CD integration. Use PROACTIVELY for testing automation or quality assurance."
+  },
+  {
+    "kind": "agent",
+    "summary": "Write idiomatic PHP code with generators, iterators, SPL data structures, and modern OOP features. Use PROACTIVELY for high-performance PHP applications.",
+    "bundles": ["web-scripting"],
+    "updatedAt": "2026-01-19T17:07:03-05:00",
+    "name": "web-scripting/php-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Write idiomatic PHP code with generators, iterators, SPL data structures, and modern OOP features. Use PROACTIVELY for high-performance PHP applications."
+  },
+  {
+    "kind": "agent",
+    "summary": "Write idiomatic Ruby code with metaprogramming, Rails patterns, and performance optimization. Specializes in Ruby on Rails, gem development, and testing frameworks. Use PROACTIVELY for Ruby refactoring, optimization, or complex Ruby features.",
+    "bundles": ["web-scripting"],
+    "updatedAt": "2025-12-10T15:52:06-05:00",
+    "name": "web-scripting/ruby-pro",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": {
+      "required": [],
+      "optional": []
+    },
+    "description": "Write idiomatic Ruby code with metaprogramming, Rails patterns, and performance optimization. Specializes in Ruby on Rails, gem development, and testing frameworks. Use PROACTIVELY for Ruby refactoring, optimization, or complex Ruby features."
+  }
+]

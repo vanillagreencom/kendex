@@ -79,7 +79,7 @@ beforeEach(() => {
     loadPackages: async () => {},
   });
   // A mounted row asks for its safety score, and no backend answers here.
-  usePreinstallSafety.setState({ want: () => {} });
+  usePreinstallSafety.setState({ want: () => () => {} });
   // Whether a place has a readable lock rides on the overview rows. The
   // update read is left empty throughout: nothing here may depend on it.
   useUpdatesStore.setState({ unreadable: [] });

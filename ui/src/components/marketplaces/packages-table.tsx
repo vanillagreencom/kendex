@@ -76,6 +76,7 @@ import {
 const NAME_ROOM = 288; // `max-w-72` on the name cell
 const SELECT_ROOM = 32; // `w-8` on the tick cell, at every width
 const BOOKMARK_ROOM = 40; // `w-10` on the bookmark cell, at every width
+const PAGE_SIZE = 20;
 
 /** Name, Kind, Safety and Status are what a reader needs to tell one
  *  package from another and decide about it, so they stay at every width
@@ -213,6 +214,21 @@ export function PackagesTable({
     () => orderPackages(entries, order),
     [entries, order],
   );
+  // Filters and sorting apply to the full result, then paging bounds mounts.
+  // Reset during render so an old page never queues scores for a new filter.
+  const [paging, setPaging] = useState({ entries, order, index: 0 });
+  const page =
+    paging.entries === entries && paging.order === order
+      ? Math.min(
+          paging.index,
+          Math.max(0, Math.ceil(ordered.length / PAGE_SIZE) - 1),
+        )
+      : 0;
+  if (paging.entries !== entries || paging.order !== order) {
+    setPaging({ entries, order, index: 0 });
+  }
+  const start = page * PAGE_SIZE;
+  const visible = ordered.slice(start, start + PAGE_SIZE);
   // One resolution per marketplace for the whole table. Asking per row
   // would scan the subscription rows once per package, and the answer is
   // the same for every row of one catalog.
@@ -398,7 +414,7 @@ export function PackagesTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {ordered.map((entry) => (
+          {visible.map((entry) => (
             <PackageRow
               key={rowKey(entry)}
               entry={entry}
@@ -417,6 +433,33 @@ export function PackagesTable({
           ))}
         </TableBody>
       </Table>
+      {ordered.length > PAGE_SIZE ? (
+        <nav
+          aria-label="Package pages"
+          className="mt-3 flex items-center justify-end gap-2"
+        >
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {start + 1}–{Math.min(start + PAGE_SIZE, ordered.length)} of{" "}
+            {ordered.length} packages
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={page === 0}
+            onClick={() => setPaging({ entries, order, index: page - 1 })}
+          >
+            Previous page
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={start + PAGE_SIZE >= ordered.length}
+            onClick={() => setPaging({ entries, order, index: page + 1 })}
+          >
+            Next page
+          </Button>
+        </nav>
+      ) : null}
     </div>
   );
 }

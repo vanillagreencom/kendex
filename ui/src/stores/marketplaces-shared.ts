@@ -151,10 +151,8 @@ export const droppedSetCaches = (): Pick<
   "bundles" | "catalogBundles"
 > => {
   catalogDrops.moved();
-  // Everything keyed to that generation goes with the bump. A pre-install
-  // scan in flight is discarded on it, and only this reset clears the
-  // `queued` mark the discard leaves behind — without it the row's score is
-  // never asked for again and it reads "Checking…" for the session.
+  // Scores use the same generation. A running preview is discarded on
+  // the bump, and live demand queues a replacement under the new one.
   resetPreinstallSafety();
   return { bundles: {}, catalogBundles: {} };
 };

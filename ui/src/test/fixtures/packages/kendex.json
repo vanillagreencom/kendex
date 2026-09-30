@@ -1,0 +1,881 @@
+[
+  {
+    "kind": "agent",
+    "summary": "General-purpose agent for documentation, cleanup, stale references, code organization, and miscellaneous maintenance tasks.",
+    "bundles": [],
+    "updatedAt": "2026-09-25T12:12:31-07:00",
+    "name": "generalist",
+    "collision": null,
+    "tags": ["refactoring", "docs"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "General-purpose agent for documentation, cleanup, stale references, code organization, and miscellaneous maintenance tasks."
+  },
+  {
+    "kind": "agent",
+    "summary": "Iced UI specialist. Use for Iced widgets, Canvas/Shader rendering, pane_grid layout, Theme system, Subscription-based data flow, or Elm Architecture patterns.",
+    "bundles": [],
+    "updatedAt": "2026-09-25T12:12:31-07:00",
+    "name": "iced",
+    "collision": null,
+    "tags": ["ui"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Iced UI specialist. Use for Iced widgets, Canvas/Shader rendering, pane_grid layout, Theme system, Subscription-based data flow, or Elm Architecture patterns."
+  },
+  {
+    "kind": "agent",
+    "summary": "Planning specialist that explores requirements and code context, weighs architecture trade-offs, and produces ordered implementation plans or plan files. May write planning artifacts; does not edit production code.",
+    "bundles": ["research"],
+    "updatedAt": "2026-09-29T07:50:11+00:00",
+    "name": "planner",
+    "collision": null,
+    "tags": ["planning", "research"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Planning specialist that explores requirements and code context, weighs architecture trade-offs, and produces ordered implementation plans or plan files. May write planning artifacts; does not edit production code."
+  },
+  {
+    "kind": "agent",
+    "summary": "Exa-powered research specialist for producing evidence-backed findings reports from project research prompts. Use for research issues, technology investigations, vendor/library comparisons, architectural option analysis, and current-state web research.",
+    "bundles": ["research"],
+    "updatedAt": "2026-09-26T00:26:26+00:00",
+    "name": "researcher",
+    "collision": null,
+    "tags": ["research"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Exa-powered research specialist for producing evidence-backed findings reports from project research prompts. Use for research issues, technology investigations, vendor/library comparisons, architectural option analysis, and current-state web research."
+  },
+  {
+    "kind": "agent",
+    "summary": "Architecture reviewer for design reviews, module boundary validation, spec/proposal review, and technical debt assessment.",
+    "bundles": ["code-review", "workflow"],
+    "updatedAt": "2026-09-30T00:33:02+00:00",
+    "name": "reviewer-arch",
+    "collision": null,
+    "tags": ["review"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Architecture reviewer for design reviews, module boundary validation, spec/proposal review, and technical debt assessment."
+  },
+  {
+    "kind": "agent",
+    "summary": "Broad correctness and regression reviewer for behavior breakage, boundary/edge-case predicates, API/CLI/devex regressions, feature-gate leaks, migrations, state semantics, and cross-module side effects.",
+    "bundles": ["code-review", "workflow"],
+    "updatedAt": "2026-09-25T12:12:31-07:00",
+    "name": "reviewer-correctness",
+    "collision": null,
+    "tags": ["review"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Broad correctness and regression reviewer for behavior breakage, boundary/edge-case predicates, API/CLI/devex regressions, feature-gate leaks, migrations, state semantics, and cross-module side effects."
+  },
+  {
+    "kind": "agent",
+    "summary": "Documentation accuracy reviewer. Verifies changed doc claims against implementation, re-derives transcribed values, checks citations resolve, audits drift.",
+    "bundles": ["code-review", "workflow"],
+    "updatedAt": "2026-09-25T12:12:31-07:00",
+    "name": "reviewer-doc",
+    "collision": null,
+    "tags": ["review", "docs"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Documentation accuracy reviewer. Verifies changed doc claims against implementation, re-derives transcribed values, checks citations resolve, audits drift."
+  },
+  {
+    "kind": "agent",
+    "summary": "Silent failure and error handling reviewer. Detects fail-open paths, swallowed errors, wrong-cause diagnostics, and inadequate error propagation.",
+    "bundles": ["code-review", "workflow"],
+    "updatedAt": "2026-09-25T12:12:31-07:00",
+    "name": "reviewer-error",
+    "collision": null,
+    "tags": ["review", "debugging"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Silent failure and error handling reviewer. Detects fail-open paths, swallowed errors, wrong-cause diagnostics, and inadequate error propagation."
+  },
+  {
+    "kind": "agent",
+    "summary": "Performance validation specialist. Latency validation, benchmark execution, percentile analysis, hot-path cost review, regression detection.",
+    "bundles": ["code-review", "workflow"],
+    "updatedAt": "2026-09-25T12:12:31-07:00",
+    "name": "reviewer-perf",
+    "collision": null,
+    "tags": ["review", "performance"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Performance validation specialist. Latency validation, benchmark execution, percentile analysis, hot-path cost review, regression detection."
+  },
+  {
+    "kind": "agent",
+    "summary": "Code quality reviewer for maintainability, simplification, abstraction value, type boundaries, helper reuse, decomposition, and god objects.",
+    "bundles": ["code-review", "workflow"],
+    "updatedAt": "2026-09-25T12:12:31-07:00",
+    "name": "reviewer-quality",
+    "collision": null,
+    "tags": ["review"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Code quality reviewer for maintainability, simplification, abstraction value, type boundaries, helper reuse, decomposition, and god objects."
+  },
+  {
+    "kind": "agent",
+    "summary": "Memory, thread, and process safety auditor. Unsafe code, data races, lock-free correctness, and file/process races (TOCTOU, PID reuse, shared mutable state).",
+    "bundles": ["code-review", "workflow"],
+    "updatedAt": "2026-09-25T12:12:31-07:00",
+    "name": "reviewer-safety",
+    "collision": null,
+    "tags": ["review", "security"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Memory, thread, and process safety auditor. Unsafe code, data races, lock-free correctness, and file/process races (TOCTOU, PID reuse, shared mutable state)."
+  },
+  {
+    "kind": "agent",
+    "summary": "Application security reviewer. Auth logic, input handling, trust/ownership gating, path containment, and secret exposure.",
+    "bundles": ["code-review", "workflow"],
+    "updatedAt": "2026-09-25T12:12:31-07:00",
+    "name": "reviewer-security",
+    "collision": null,
+    "tags": ["review", "security"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Application security reviewer. Auth logic, input handling, trust/ownership gating, path containment, and secret exposure."
+  },
+  {
+    "kind": "agent",
+    "summary": "Test coverage and quality reviewer. Verifies coverage, detects vacuous tests and missing must-fail controls, audits assertion tightness and test wiring.",
+    "bundles": ["code-review", "workflow"],
+    "updatedAt": "2026-09-26T09:27:20+00:00",
+    "name": "reviewer-test",
+    "collision": null,
+    "tags": ["review", "testing"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Test coverage and quality reviewer. Verifies coverage, detects vacuous tests and missing must-fail controls, audits assertion tightness and test wiring."
+  },
+  {
+    "kind": "agent",
+    "summary": "Rust engineer for performance-critical systems. Use for zero-allocation hot paths, lock-free algorithms, SIMD optimization, and systems programming.",
+    "bundles": [],
+    "updatedAt": "2026-09-25T12:12:31-07:00",
+    "name": "rust",
+    "collision": null,
+    "tags": ["performance"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Rust engineer for performance-critical systems. Use for zero-allocation hot paths, lock-free algorithms, SIMD optimization, and systems programming."
+  },
+  {
+    "kind": "agent",
+    "summary": "Fast reconnaissance agent for exploring codebases, finding files by pattern, searching keywords, answering architecture questions, and returning compressed cited context or report artifacts. Specify thoroughness: quick, medium, or very thorough.",
+    "bundles": ["research"],
+    "updatedAt": "2026-09-25T12:12:31-07:00",
+    "name": "scout",
+    "collision": null,
+    "tags": ["research"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Fast reconnaissance agent for exploring codebases, finding files by pattern, searching keywords, answering architecture questions, and returning compressed cited context or report artifacts. Specify thoroughness: quick, medium, or very thorough."
+  },
+  {
+    "kind": "agent",
+    "summary": "Technical Program Manager for analyzing roadmaps, project lifecycle, and progress. Returns recommendations only. Does not modify project management tools.",
+    "bundles": [],
+    "updatedAt": "2026-09-25T12:12:31-07:00",
+    "name": "tpm",
+    "collision": null,
+    "tags": ["planning"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Technical Program Manager for analyzing roadmaps, project lifecycle, and progress. Returns recommendations only. Does not modify project management tools."
+  },
+  {
+    "kind": "skill",
+    "summary": "Renders every GitHub review bot's native instruction file from one doctrine source plus the [bot-instructions] manifest table, with validators for the surfaces that fail silently.",
+    "bundles": ["workflow"],
+    "updatedAt": "2026-09-30T00:33:02+00:00",
+    "name": "bot-instructions",
+    "collision": null,
+    "tags": ["review"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Load to render, check, or adopt a repo's GitHub review-bot instruction files from the shared doctrine and its effective manifest."
+  },
+  {
+    "kind": "skill",
+    "summary": "Code-authoring standards for dev agents: correctness over convenience, no fail-open branches, module structure, over-engineering limits, prove-your-guards, test architecture, comment rules.",
+    "bundles": ["code-review", "workflow"],
+    "updatedAt": "2026-09-30T00:33:02+00:00",
+    "name": "code-quality",
+    "collision": null,
+    "tags": ["review"],
+    "state": "installed",
+    "dependencies": {
+      "required": [
+        {
+          "name": "docs-writing",
+          "state": "installed",
+          "shown": "docs-writing"
+        }
+      ],
+      "optional": []
+    },
+    "description": "Load for any coding or development task in any repository: writing, changing, fixing, refactoring, or testing code or scripts in any language."
+  },
+  {
+    "kind": "skill",
+    "summary": "Commit guards for markers, bytes, suppressions, conflicts, changelog, prose, markdown, Python names and commit messages, plus an optional comment audit and git hook shims.",
+    "bundles": ["command-safety", "commit-guards", "workflow"],
+    "updatedAt": "2026-09-29T21:35:38+00:00",
+    "name": "commit-guards",
+    "collision": null,
+    "tags": ["automation"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Load to add, tune, or debug a commit guard lane, its git hooks, or COMMIT_GUARDS_* settings."
+  },
+  {
+    "kind": "skill",
+    "summary": "Architecture decision records: templates, creation, search, supersession tracking, and INDEX maintenance.",
+    "bundles": ["orchestration", "research", "workflow"],
+    "updatedAt": "2026-09-28T02:09:18+00:00",
+    "name": "decider",
+    "collision": null,
+    "tags": ["planning"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Load to create, search, or supersede an architecture decision record."
+  },
+  {
+    "kind": "skill",
+    "summary": "Exa-powered deep research that produces an evidence-backed findings.md report.",
+    "bundles": ["research", "workflow"],
+    "updatedAt": "2026-09-29T02:59:36+00:00",
+    "name": "deep-research",
+    "collision": null,
+    "tags": ["research"],
+    "state": "installed",
+    "dependencies": {
+      "required": [
+        {
+          "name": "code-quality",
+          "state": "installed",
+          "shown": "code-quality"
+        }
+      ],
+      "optional": [
+        { "name": "decider", "state": "installed", "shown": "decider" }
+      ]
+    },
+    "description": "Load for research tasks, architectural investigations, and vendor, library, or technology comparisons."
+  },
+  {
+    "kind": "skill",
+    "summary": "Sweeps every pinned version in the repo (deps, SDKs, vendored forks, model weights), checks upstream, and lands upgrades with their fallout in one PR per surface.",
+    "bundles": [],
+    "updatedAt": "2026-09-05T00:48:40-07:00",
+    "name": "dep-radar",
+    "collision": null,
+    "tags": ["release"],
+    "state": "installed",
+    "dependencies": {
+      "required": [
+        { "name": "github", "state": "installed", "shown": "github" }
+      ],
+      "optional": [
+        { "name": "worktree", "state": "installed", "shown": "worktree" }
+      ]
+    },
+    "description": "Load to run or tune a dependency sweep."
+  },
+  {
+    "kind": "skill",
+    "summary": "Dev-agent workflows for implementing an issue and applying review fixes, invoked by orch or specialist agents.",
+    "bundles": ["orchestration", "workflow"],
+    "updatedAt": "2026-09-30T00:33:02+00:00",
+    "name": "dev",
+    "collision": null,
+    "tags": ["automation"],
+    "state": "installed",
+    "dependencies": {
+      "required": [
+        { "name": "orch", "state": "installed", "shown": "orch" },
+        { "name": "github", "state": "installed", "shown": "github" },
+        { "name": "decider", "state": "installed", "shown": "decider" },
+        {
+          "name": "code-quality",
+          "state": "installed",
+          "shown": "code-quality"
+        }
+      ],
+      "optional": [
+        { "name": "linear", "state": "installed", "shown": "linear" },
+        {
+          "name": "commit-guards",
+          "state": "installed",
+          "shown": "commit-guards"
+        }
+      ]
+    },
+    "description": "Load when implementing an issue or applying review fixes as a dev agent."
+  },
+  {
+    "kind": "skill",
+    "summary": "Hard byte ceilings for tracked Markdown and documentation HTML, with path classes and reasoned exclusions.",
+    "bundles": ["commit-guards", "workflow"],
+    "updatedAt": "2026-09-29T08:27:20+00:00",
+    "name": "doc-limits",
+    "collision": null,
+    "tags": ["automation"],
+    "state": "installed",
+    "dependencies": {
+      "required": [
+        {
+          "name": "commit-guards",
+          "state": "installed",
+          "shown": "commit-guards"
+        },
+        {
+          "name": "docs-writing",
+          "state": "installed",
+          "shown": "docs-writing"
+        }
+      ],
+      "optional": []
+    },
+    "description": "Load to add, tune, or debug document byte ceilings and DOC_LIMITS_* settings."
+  },
+  {
+    "kind": "skill",
+    "summary": "Writing rules and templates for repository markdown and documentation HTML, with a blank-page rewrite workflow.",
+    "bundles": ["code-review", "workflow"],
+    "updatedAt": "2026-09-27T01:15:58+00:00",
+    "name": "docs-writing",
+    "collision": null,
+    "tags": ["docs"],
+    "state": "installed",
+    "dependencies": {
+      "required": [
+        { "name": "decider", "state": "installed", "shown": "decider" }
+      ],
+      "optional": []
+    },
+    "description": "Load to write, rewrite, or review repository markdown or documentation HTML: README, DEVELOPMENT, architecture docs, reference docs, SKILL.md and AGENTS.md."
+  },
+  {
+    "kind": "skill",
+    "summary": "GitHub API CLI for pull requests: threads, comments, reviews, CI logs, merging, and cross-PR analysis.",
+    "bundles": ["orchestration", "research", "workflow"],
+    "updatedAt": "2026-09-30T00:15:16+00:00",
+    "name": "github",
+    "collision": null,
+    "tags": ["git", "integration"],
+    "state": "installed",
+    "dependencies": {
+      "required": [],
+      "optional": [
+        { "name": "review-gate", "state": "installed", "shown": "review-gate" },
+        { "name": "harness-ci", "state": "installed", "shown": "harness-ci" }
+      ]
+    },
+    "description": "Load to work a GitHub pull request: threads, comments, reviews, CI logs, merges."
+  },
+  {
+    "kind": "skill",
+    "summary": "Classifies a CI diff as harness-only or docs-only, names its change class, and validates classifier-authorized skipped jobs in required-context aggregators.",
+    "bundles": ["workflow"],
+    "updatedAt": "2026-09-30T01:21:13+00:00",
+    "name": "harness-ci",
+    "collision": null,
+    "tags": ["automation"],
+    "state": "installed",
+    "dependencies": {
+      "required": [{ "name": "orch", "state": "installed", "shown": "orch" }],
+      "optional": []
+    },
+    "description": "Load to wire, tune, or debug a repo's changed-file CI skip."
+  },
+  {
+    "kind": "skill",
+    "summary": "Iced 0.14 GUI reference: custom widgets via iced::advanced, overlays, Canvas, Shader, pane_grid, theming, subscriptions, Elm architecture, with a bundled full-API reference.",
+    "bundles": [],
+    "updatedAt": "2026-09-08T01:24:37-07:00",
+    "name": "iced-rs",
+    "collision": null,
+    "tags": ["ui"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Load whenever building or debugging an Iced UI."
+  },
+  {
+    "kind": "skill",
+    "summary": "Bash CLI over Linear's GraphQL API with a local cache: read, search, create, or update issues, projects, cycles, milestones, initiatives, and labels.",
+    "bundles": ["orchestration", "research", "workflow"],
+    "updatedAt": "2026-09-29T19:40:58+00:00",
+    "name": "linear",
+    "collision": null,
+    "tags": ["integration"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Load for any Linear read or write: issues, projects, cycles, milestones, initiatives, labels."
+  },
+  {
+    "kind": "skill",
+    "summary": "Work-item orchestration for Linear or GitHub issues: prepare, delegate implementation, review, submit, merge, hand off, and oversee fleets of sessions.",
+    "bundles": ["orchestration", "workflow"],
+    "updatedAt": "2026-09-30T02:37:46+00:00",
+    "name": "orch",
+    "collision": null,
+    "tags": ["automation"],
+    "state": "installed",
+    "dependencies": {
+      "required": [
+        { "name": "github", "state": "installed", "shown": "github" },
+        { "name": "worktree", "state": "installed", "shown": "worktree" },
+        { "name": "dev", "state": "installed", "shown": "dev" },
+        {
+          "name": "project-management",
+          "state": "installed",
+          "shown": "project-management"
+        },
+        { "name": "decider", "state": "installed", "shown": "decider" },
+        { "name": "reviewer", "state": "installed", "shown": "reviewer" }
+      ],
+      "optional": [
+        { "name": "harness-ci", "state": "installed", "shown": "harness-ci" },
+        { "name": "linear", "state": "installed", "shown": "linear" },
+        { "name": "review-gate", "state": "installed", "shown": "review-gate" },
+        {
+          "name": "second-opinion",
+          "state": "installed",
+          "shown": "second-opinion"
+        }
+      ]
+    },
+    "description": "PRIMARY AGENT ONLY. Load to orchestrate a Linear or GitHub work item from preparation through merge."
+  },
+  {
+    "kind": "skill",
+    "summary": "Diff-scoped fail-only checks over one change: shell safety, unwired suites, scratch directories, temp paths, dead path citations, applied migrations and data syntax.",
+    "bundles": ["commit-guards", "workflow"],
+    "updatedAt": "2026-09-28T02:09:18+00:00",
+    "name": "preflight",
+    "collision": null,
+    "tags": ["review", "testing"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Load to run, tune, or debug preflight."
+  },
+  {
+    "kind": "skill",
+    "summary": "f64 price patterns for trading systems: comparing prices, rounding to tick size, formatting for display and broker APIs, parsing market feeds, designing price types.",
+    "bundles": [],
+    "updatedAt": "2026-09-05T00:48:40-07:00",
+    "name": "price-handling",
+    "collision": null,
+    "tags": ["data"],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Load when comparing, rounding, formatting, or parsing prices, or designing price types."
+  },
+  {
+    "kind": "skill",
+    "summary": "TPM planning, audit, roadmap, and research-driven decomposition: the cycle-plan, audit-issues, roadmap and research wrappers and the TPM workflows under them.",
+    "bundles": ["orchestration", "workflow"],
+    "updatedAt": "2026-09-27T06:48:10+00:00",
+    "name": "project-management",
+    "collision": null,
+    "tags": ["planning"],
+    "state": "installed",
+    "dependencies": {
+      "required": [
+        { "name": "orch", "state": "installed", "shown": "orch" },
+        { "name": "linear", "state": "installed", "shown": "linear" },
+        { "name": "github", "state": "installed", "shown": "github" }
+      ],
+      "optional": [
+        { "name": "decider", "state": "installed", "shown": "decider" },
+        {
+          "name": "second-opinion",
+          "state": "installed",
+          "shown": "second-opinion"
+        }
+      ]
+    },
+    "description": "Load to plan a cycle, audit issues, build a roadmap, or decompose research into issues."
+  },
+  {
+    "kind": "skill",
+    "summary": "Org-wide PR review gate: one predicate answers whether this exact head is reviewed, one writer posts the answer as a merge-blocking commit status.",
+    "bundles": ["code-review", "workflow"],
+    "updatedAt": "2026-09-30T03:10:33+00:00",
+    "name": "review-gate",
+    "collision": null,
+    "tags": ["review"],
+    "state": "installed",
+    "dependencies": {
+      "required": [
+        { "name": "harness-ci", "state": "installed", "shown": "harness-ci" }
+      ],
+      "optional": []
+    },
+    "description": "Load to wire, adopt, tune, or debug a repo's review gate or its REVIEW_GATE_* settings."
+  },
+  {
+    "kind": "skill",
+    "summary": "Strict review and QA workflows: reviewer ethos, code-review classification, the finding JSON schema, and the QA-label lifecycle.",
+    "bundles": ["code-review", "orchestration", "workflow"],
+    "updatedAt": "2026-09-29T21:35:38+00:00",
+    "name": "reviewer",
+    "collision": null,
+    "tags": ["review"],
+    "state": "installed",
+    "dependencies": {
+      "required": [
+        { "name": "orch", "state": "installed", "shown": "orch" },
+        { "name": "github", "state": "installed", "shown": "github" },
+        {
+          "name": "code-quality",
+          "state": "installed",
+          "shown": "code-quality"
+        },
+        {
+          "name": "docs-writing",
+          "state": "installed",
+          "shown": "docs-writing"
+        }
+      ],
+      "optional": [
+        { "name": "linear", "state": "installed", "shown": "linear" }
+      ]
+    },
+    "description": "Load when reviewing a diff, classifying findings, or returning a verdict."
+  },
+  {
+    "kind": "skill",
+    "summary": "Cross-model second opinion: review, challenge, audit, and consult through an external AI CLI (Claude and Codex, or one a settings entry names).",
+    "bundles": ["code-review", "workflow"],
+    "updatedAt": "2026-09-29T08:27:18+00:00",
+    "name": "second-opinion",
+    "collision": null,
+    "tags": ["review"],
+    "state": "installed",
+    "dependencies": {
+      "required": [
+        { "name": "github", "state": "installed", "shown": "github" }
+      ],
+      "optional": []
+    },
+    "description": "Load for a cross-model review, challenge, audit, or quick consult."
+  },
+  {
+    "kind": "skill",
+    "summary": "Relays one checkout's overseer mailbox to one private Slack channel and back, owner messages over Socket Mode, through lane-mail alone: setup, listen, post, compact and install.",
+    "bundles": [],
+    "updatedAt": "2026-09-29T23:21:40+00:00",
+    "name": "slack",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": {
+      "required": [{ "name": "orch", "state": "installed", "shown": "orch" }],
+      "optional": []
+    },
+    "description": "Load to bind an overseer's mailbox to a private Slack channel, run or check the relay, or post an alert or a file to Slack."
+  },
+  {
+    "kind": "skill",
+    "summary": "Git worktree management: create, list, remove isolated working copies with env and config symlinks.",
+    "bundles": ["orchestration", "workflow"],
+    "updatedAt": "2026-09-29T16:28:05+00:00",
+    "name": "worktree",
+    "collision": null,
+    "tags": ["git"],
+    "state": "installed",
+    "dependencies": {
+      "required": [],
+      "optional": [
+        { "name": "github", "state": "installed", "shown": "github" }
+      ]
+    },
+    "description": "Load to create, list, remove, push, or repair a git worktree."
+  },
+  {
+    "kind": "hook",
+    "summary": "Stops a command that kills processes by name. On a machine running several agents, one name matches every lane using that tool. Names the safe form: kill a process id you started.",
+    "bundles": ["commit-guards", "workflow"],
+    "updatedAt": "2026-09-10T10:43:06+00:00",
+    "name": "block-argv-kill",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Refuse a command that kills processes by name or by argv pattern (`pkill`, `killall`), whatever flags follow. On a machine where several agents share one checkout and its worktrees, a pattern that matches a tool's name matches every lane running that tool, the caller's own shell included when its command line holds the pattern. Names the accepted forms: `kill <pid>` on a PID the caller recorded when it launched the process, or one whose `/proc/<pid>/cwd` the caller has read and found inside its own worktree."
+  },
+  {
+    "kind": "hook",
+    "summary": "Stops a command whose whole line is a `cd`. Where the shell stays open between tool calls, that moves every later command with it. Names the scoped form to use instead.",
+    "bundles": ["commit-guards", "workflow"],
+    "updatedAt": "2026-09-10T10:43:06+00:00",
+    "name": "block-bare-cd",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Refuse a command with a line that is only a `cd`. Where the shell persists across tool calls (Claude Code) a bare cd re-roots every later command and every hook that judges the working directory, while instruction files and hook paths stay with the launch directory; a cd into a worktree inside the repository, Claude Code's default `.claude/worktrees/<name>/`, also loads that tree's instruction files a second time as files there are read. Names the scoped form, `(cd /path && command)`, and, where the harness has one (Claude Code's EnterWorktree), its worktree tool for a move."
+  },
+  {
+    "kind": "hook",
+    "summary": "Stops a copy of a repository's `.git` folder or build output into a temporary folder, which can fill the disk. Suggests reading the source where it sits instead.",
+    "bundles": ["commit-guards", "workflow"],
+    "updatedAt": "2026-09-10T10:43:06+00:00",
+    "name": "block-repo-copy",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Block a copy (cp, rsync, tar, git clone) whose source names a `.git` or `target` path component and whose destination is under /tmp, /var/tmp or $TMPDIR. Suggests reading the source in place or building a minimal fixture."
+  },
+  {
+    "kind": "hook",
+    "summary": "Stops a delete whose path starts with a variable that may be empty. Refusing this shape lets the agent rewrite it before a harness prompt stalls the session.",
+    "bundles": ["commit-guards", "workflow"],
+    "updatedAt": "2026-09-15T03:37:45+00:00",
+    "name": "block-unsafe-rm",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Block any rm with a path operand that starts with a variable that may expand empty. Names the rewrite the harness accepts without a prompt."
+  },
+  {
+    "kind": "hook",
+    "summary": "Stops a kendex command that writes a project from inside a linked git worktree, where the write would land somewhere the command does not name.",
+    "bundles": ["commit-guards", "workflow"],
+    "updatedAt": "2026-09-26T21:02:15+00:00",
+    "name": "block-worktree-refresh",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Refuse a `kendex` command that writes the project scope (`refresh`, `apply`, `add`, `remove`, `update-pi`, `updates --apply`, `pin`, `fork`, `adopt`, `drift-hook`, `source add|remove|enable|disable`, `marketplace subscribe|unsubscribe`) when the working directory is a linked git worktree, the command does not name the global scope, and the project the write lands in is not the worktree's own; and whenever a `cd`, `pushd`, `env -C` or `sudo -D` stands before the verb in the same command, since the directory the write lands in cannot then be read from the command. The project a bare verb writes is the one kendex resolves from the working directory; where that project has no manifest of its own in the linked worktree (kendex.toml, or kendex-local.toml for a source catalog), its declarations are the main checkout's, so a project-scope write renders into that checkout and removes what it does not expect there. Where it has one, it is a project in its own right and its target is unambiguous, so every writing verb but `update-pi` passes there bare. `refresh`, `apply` and `updates --apply` pass in any worktree once they name their target with `--project-path PATH`: the directory the write lands in is then the command's own word; `update-pi` is refused in every worktree at the project scope. Names the forms that are right: `--project-path PATH` where the verb takes it and the installed kendex lists the flag, the same command from the main checkout, or the verb's global form (`--global` for add, `--scope global` for update-pi, either for the rest, the `source` subcommands included). An installed kendex whose `refresh --help` does not list `--project-path` is named with its version instead of the flag it lacks."
+  },
+  {
+    "kind": "hook",
+    "summary": "Refuses shell commands matching a project's declared deny pattern, and every command while its settings file cannot be read.",
+    "bundles": ["command-safety"],
+    "updatedAt": "2026-09-29T14:41:58+00:00",
+    "name": "command-safety",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "On harnesses that execute hooks, refuse shell tool command text matching COMMAND_SAFETY_DENY_PATTERN from project settings. An absent policy is inactive unless the project settings file cannot be read. Matching is textual, including quoted text, and does not inspect the desktop or running processes."
+  },
+  {
+    "kind": "hook",
+    "summary": "Stops an agent at the end of its turn when documents covering the code it changed did not change or an architecture topic names a path that does not exist, and hands it the list. Where some topic declares a Covers entry, changed code with no covering document is named too.",
+    "bundles": ["commit-guards", "workflow"],
+    "updatedAt": "2026-09-29T03:05:14+00:00",
+    "name": "doc-drift-check",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Blocks a stop once per set of findings so the agent, the only party that can act on them, is the one given the list. Three kinds are found: stale, a document covering changed code that did not change; dangling, an architecture topic `Covers:` entry that no tracked or untracked non-ignored path on disk matches; uncovered, a changed non-markdown path still on disk that no topic entry and no AGENTS.md covers, judged only where some topic declares an entry. A changed path the repository's `.kendex-generated.json` lists is named at neither kind, a render being covered through the source it was rendered from. The refusal opens with one keyed line per kind that holds, in the order `doc-drift-check: stale=<count>`, `doc-drift-check: dangling=<count>`, `doc-drift-check: uncovered=<count>`, then `doc-drift-check: base=<ref>` — the ref it compared against, or `default-branch`, `none` or `unrelated` — and names each finding under them; stdout carries nothing and no user-facing notice is written. The set is recorded as `<git common dir>/kendex/doc-drift/<session_id>-<digest of the sorted set>`, so a later stop naming that same set passes and an agent that read the list and changed nothing is not asked again; a set that gains or loses a finding is a different set and blocks once. `stop_hook_active` true passes, and so does a stop with nothing changed; any change, markdown alone included, has every Covers entry judged. Uses the nearest AGENTS.md, tracked or untracked and not ignored, which for a path directly at the repository root is the root's own and for a path below it is one below the root, and architecture topic Covers entries. Compares the branch with its default-branch merge-base, or the working tree when no comparison applies. Not run on gemini: it has no Stop event. Not run on copilot: its agentStop also fires at each custom subagent's end, naming the subagent's own session id and the lead's transcript, and this hook does not tell that stop from the lead's. Not run on antigravity: its Stop payload carries no `stop_hook_active` and names the session `conversationId`."
+  },
+  {
+    "kind": "hook",
+    "summary": "Hands a lane the messages its overseer sent before the turn can end, so a directive is acted on instead of waiting for the next launch, and the same way hands the notes another repository's overseer sent to the one session the checkout's fleet record names. It also holds the turn end once the lane is near the end of its context window or its account's limit, until the lane records where it got to and exits, so the work resumes in a fresh session instead of stopping mid-round. The session running the fleet is held the same way, and hands itself over to a fresh one. On Claude Code and Pi, a lane ending a turn on a question it sent no lane mail about is told once to continue, then its overseer is told, so no question waits unread.",
+    "bundles": ["orchestration", "workflow"],
+    "updatedAt": "2026-09-29T18:04:09+00:00",
+    "name": "lane-mail-check",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Blocks a lane's turn end while its overseer mailbox holds unread lines, so a directive or a ruling reaches the lane without a keystroke, a pane or a question tool. The lane is the work item `LANE_MAIL_ITEM` names, or the one directory under `<repo>/tmp/lane-mail/` whose name lowercases to the current branch; a session with neither is not a lane; a lane whose mailbox holds no unread line passes silently, as does a directory git reports no repository for and that holds no mailbox of its own. The checkout's overseer mailbox, `<repo>/tmp/lane-mail/overseer`, has one reader: the session whose tmux server and pane the checkout's oversee workflow state names under `.overseer`, the pair every writer the orch `schemas/workflow-state.md` `overseer` row names writes, `oversee register` among them for a session opened by hand, and the one the fleet's OVERSEER is established by below, so a record naming a dead pane names no reader. The pair names a session only on the tmux server started at the record's `server_start`, so a server a tmux restart handed the recorded pid and pane id names no reader either, and a record carrying no start names none. Where a file stands there, that session is handed the notes `lane-mail peer send --repo` wrote there at its turn end and after its tool calls, under the same `unread=<count>` line, unless a live watch holds the fleet state: the `oversee-watch.pid` record a repeat `oversee-watch` writes beside the fleet state on every surface and removes on exit, judged by the orch `lib/watch-pid.sh` library's `watch_pid_live`, which reads the mailbox itself, so the named session is handed nothing from it beside that watch. A fleet watched in single passes writes no watch record, so its named overseer is handed the notes as `unread=` lines and the next pass does not report them. Every other session in the checkout, one the owner opened there for other work included, is handed nothing from that mailbox, and so is a session whose install has no reader beside this hook. For the named session, where the install's `workflow-state path oversee` prints no path, or the library cannot be sourced or answers neither way, the hook refuses, opening `lane-mail-check: fleet-state=<path of the failing file>` with that file's own words under it; the halt arm never reads that mailbox, a subagent's turn end is handed nothing from it, and a session in a checkout with no overseer mailbox pays two file tests for the question. `<repo>` is the lane's root, resolved in this order: `CLAUDE_PROJECT_DIR`, the directory Claude Code started the session in; else the root the launch marker for `LANE_MAIL_ITEM` binds, where that root exists; else the directory the hook runs in, which on Codex and Pi is the session's start directory and on Claude Code without the variable is the call's own. A Claude Code lane working from the main clone is therefore still judged on its own mailbox. A root its launch marker binds that has no `tmp/lane-mail` directory is refused at a turn end, before any tool call and after the lead's finished one, opening `lane-mail-check: mailbox-missing=<path>` with the marker and the one `mkdir` command that restores the directory, and that command alone passes a tool call. Before a tool call a subagent is refused whatever it runs, and a call whose caller is unknown may run that command; after one a subagent is handed nothing and refused nothing, as with any mail, and its next call meets the refusal. The marker is looked up for the item `LANE_MAIL_ITEM` names or else the branch names, so that check costs one stat in a repository whose common git directory holds no `lane-mail` directory, and one branch read and one marker stat in one that does. A mailbox belongs to a lane only where a launch recorded one: `open-terminal` and `lane-host create` write the lane's root to `lane-mail/<item in lower case>` under the repository's common git directory and create the lane's own `tmp/lane-mail/<item>`, and a mailbox with no marker bound to this root passes silently. Unread lines are peeked through the orch skill's own `lane-mail inbox --peek`, the one reader of the mailbox and its cursor, and acknowledged with `inbox --ack` only once the refusal is written, so a hook killed at its budget leaves them unread and a line acknowledged here is never handed over twice. That reader is resolved from this hook's own install, walking up to the home directory for `skills/orch/scripts/lane-mail` or the shared `.agents/skills/orch/scripts/lane-mail` beside it, then the home's own shared tree for a harness root relocated out of it; the open repository's `.agents/skills/orch/scripts/lane-mail` is used only where this hook is installed in that repository, and a reader outside that containment is refused rather than run. The refusal opens with `lane-mail-check: unread=<count>` and carries one JSON envelope per line under it, and for the lead, where a halt is among them, the one `lane-mail inbox` command that reads it; the turn then continues with them. Run with the argument `deliver` by the lane-mail-deliver hook after a tool call, it exits 0 with the harness's JSON on stdout, whose `additionalContext` carries the same lines. Run with `start` by the lane-mail-start hook at a session start, or with `prompt` by the lane-mail-prompt hook at a prompt, both on Copilot alone, it hands the same lines over the same way and acknowledges them only once that is written, and refuses nothing: every refusal this description names is its keyed line on stderr at exit 0, with nothing on stdout and nothing acknowledged. Run with `halt` by the lane-mail-halt hook before one, it acknowledges nothing and refuses the call while an unread directive sent with `lane-mail send --halt` stands, opening `lane-mail-check: halt=<id>` with the directive and the one `lane-mail inbox` command that reads it, which names the lane's root with `--root` so it reads the same mailbox from any checkout; that command alone passes. Run with `row` by the session-start-row, session-end-row and stop-failure-row hooks, it writes the event row of a session with no lane of its own, and only for the pane's top-level harness, through the orch skill's `lib/session-rows.sh`, the file those hooks describe, and refuses nothing: every gap below its payload read is reported and passed; the overseer's own turn end writes a Stop row there through the same library at every turn end, compact, its time, event, harness and session alone, except over a standing StopFailure row, which it lifts and where it keeps the turn's last message. On a Pi install a launched lane's lead writes its own turn rows through that library into its mailbox directory, `session-rows.jsonl`: a Stop row at each turn end, carrying the `stopReason` of the turn's last assistant message in the transcript and Pi's `errorMessage` where that reason is `error`, and a PreToolUse row at the first tool call of each turn, after a turn end or on an empty file, written ahead of the mailbox check; oversee-watch and `lanes state` judge a Pi lane idle, working or walled from those rows in place of its pane, and a gap in the write is reported under `lane-rows-skipped` or `lane-rows-unwritten` and passed. The Pi install is the hook directory under `.pi` or `.pi/agent`, or under the user root `PI_CODING_AGENT_DIR` names; an install naming no harness writes no row, which a launched lane's turn end reports under `harness-unlisted`. Who made a call is answered once for every arm: the lead, a subagent, or unknown. A payload carrying a non-empty `agent_id` or `agent_type` is a subagent's on every harness, handed no mail and acknowledging none, and while a halt stands refused without that command. On Copilot, whose payloads name no agent, a preToolUse or postToolUse call is the lead's where its `sessionId` is a lead session this install recorded: one empty file per session under `~/.cache/lane-mail/copilot-leads`, written at the session's sessionStart, which Copilot fires for the lead alone, and at each turn end the transcript rule below proves the lead's, and pruned at a start once untouched for 30 days. A custom subagent's call was measured on Copilot CLI 1.0.88 carrying its own session id, which nothing recorded; whether a built-in task-tool subagent's calls carry their own session id or the lead's is a pending live-lane proof, and one whose calls carry the lead's is read as the lead, handed the lead's mail after its calls, which marks it read, and under a halt shown the read that clears it. A call whose session is no recorded lead, a custom subagent's among them, is unknown: the deliver arm hands it nothing and acknowledges nothing, writing `lane-mail-check: session-unrecorded=<id>` to stderr, so the lead's turn end hands the lines over and acknowledges them, and the halt arm refuses it without showing that command yet passes the command, because the reader's `--ack` stops short of an unread halt and a lead whose record could not be written would otherwise be refused for good; the lead is shown the command by every notice and refusal that hands it the halt, its turn end's included. A record that cannot be written is reported on stderr under `lane-mail-check: lead-unrecorded=<path>`, or `=none` for a session start naming no session id, and never refused. A Copilot sessionStart or userPromptSubmitted is the lead's, and an agentStop is ruled by its transcript, below; a prompt records no lead, since that a subagent's prompt fires no userPromptSubmitted is unmeasured. `stop_hook_active` true skips the mailbox check whole on the turn-end run. The flag is in the payload, so nothing above the payload read knows a turn was continued, and `arm`, the `missing-tools` refusal for `jq` or `cat`, `payload=unreadable` and `payload=invalid-json` are refused on every turn, the continued one included. Below that read one rule holds and every refusal is on one side of it: a refusal the lane itself can clear is still made, and a refusal it cannot is reported on stderr and passed. The lane clears the two handoff marks, and `script`, `setting`, `setting-range` and both `transcript` refusals, by writing its handoff record, and `mailbox-missing` by running the command it names, so those are refused on a continued turn as on any other. It clears none of `workdir`, `git`, `item`, `marker` or the `missing-tools` refusal for `git`, `tr`, `awk`, `mktemp` or `tail`, so each of those is reported and the turn ends, where a fresh turn refuses it. The halt arm reports and passes that same set at every tool call: a lane whose tool calls are refused can clear nothing, since clearing it takes a tool call, so there only the payload refusals and the mailbox's own, `reader`, `inbox`, `halt` and `mailbox-missing`, are refused, the last two each passing the one command that clears it. The same turn-end run hands the lane off before it runs out, so the handoff never waits on an overseer reading a pane. It reads this session's context use from the `transcript_path` the payload names, through the orch adapter for the harness this hook's install directory names, `.claude/hooks`, `.codex/hooks` or Pi's `kendex/hooks`: the tokens the last response left in context and effective capacity, with Pi reading the payload's own `context_window`. It records that reading as `context.json` in the lane's mailbox directory, where `lanes context` reads it, and refuses the turn end when `lane_context_handoff_due` requires handoff under the shared context rule in orch `references/oversee-events.md`, Judgement rules. It reads the account the credential this session runs on still has through the orch skill's own `lanes pick --lane`, and refuses at or below `ORCH_HANDOFF_HEADROOM_PCT` (default 3). A Pi session's account is the one its model's provider bills, by the orch `lane_pick_harness` rule on the `<provider>/<model>` its transcript names: a `pi-claude/` model spends the Claude seat `CLAUDE_CONFIG_DIR` names and is judged there on that model, a `github-copilot/` model spends the Copilot pool on Pi's own root, and any other provider, or a reading naming none, is left unjudged under `account=unmeasured`. Either refusal opens `lane-mail-check: context=<tokens>` or `lane-mail-check: headroom=<percent>` and carries one instruction: reach the next safe point, write the record with `workflow-state set <item> handoff`, send a `handoff` notice, and exit. The instruction opens with the `workflow-state init <item>` that `set` needs where the item has no state file yet, so it is enough on its own. It repeats at every turn end, `stop_hook_active` included, until the item's workflow state carries a `.handoff` object no relaunch has resumed; only the lane can write that record, so a single refusal it declines to act on would end the session with nothing recorded. That record is judged before every mark, before every read they rest on and before `orch-env` and `lanes` are looked for, so no failure but the record's own writer can hold a lane that has already done what it was asked. `orch-env` or `lanes` missing from this hook's install, a mark setting that is not a whole number in range, and a transcript the payload names and nothing can read are refusals too, each on the lane path alone and each carrying the same instruction. What the marks cannot judge is reported and passed, never refused: a payload naming no transcript leaves the context unread, and so does a transcript whose last usage line is an object carrying none of the field names its adapter reads, which is reported under `usage-unread=<path>` rather than summed to a figure of zero and read as room, a reading below the independent token limit whose capacity the adapter could not name, reported under `window-unread=<model>`, and an install directory naming no harness, reported under `harness-unlisted=<directory>`; a reading that could not be recorded is reported under `context-unrecorded=<path>` and still judged; an account `lanes` keeps no inventory for, one it could not measure and a read that passed this hook's own ceiling each leave the account unjudged under `account=unlisted`, `account=unmeasured` or `account=timeout`, never read as room, so a setup with no usage endpoint still ends its turns; and a lane whose handoff record cannot be judged leaves both marks unjudged under one of four keys, `handoff-skipped=<path>` for a reader or a script this install has not got, or `handoff-skipped=unlocatable` where this hook's own directory could not be resolved and none of them could be looked for, `handoff-outside=<path>` for one only the open repository supplies, `handoff-unanswered=<path>` for one that is there and answered nothing this hook can read, and `handoff-unreadable=<path>` for a state file the install's own `workflow-state` could not read. Passing the turn is the answer for all four. For the first three it is because an install whose orch scripts cannot answer cannot run `workflow-state set` either, so a lane told to record a handoff with them could never end a turn again; for `handoff-unreadable` the install answers and the fault is the item's own state file, which is the file the record would be written into, so that write could not land either and the refusal would be as uncloseable. A subagent's turn end is judged on neither mark. The fleet's OVERSEER meets four triggers of its own on its turn end: a session with no lane of its own whose tmux server and pane are the pair the oversee workflow state records under `.overseer` is that overseer, and nothing weaker establishes one, so an ordinary session in a fleet checkout is judged on nothing. A session the record does not name whose pane the overseer's `context.json` names, the overseer the record lost, is judged on nothing either, and reports `pane-unrecorded=<its pane key>` with the recorded key under it and writes that record with no reading and the gap `pane-unrecorded`; any other session the record does not name writes nothing, so the real overseer's reading stands. Before it reads that transcript for the overseer it binds it to the current session: the `transcript_path` the payload names is read only where it is this session's own native file, held to the `session_id` the payload carries and the launch home the fleet record names under `.overseer.home`, through the orch adapter for a claude, codex or copilot install; a Pi install states no transcript shape and reads the payload's own window as a Pi lane does. A file that is not this session's under that home, a newer unrelated transcript, a predecessor's in the same pane, or one under an account the fleet never picked, and a binding that cannot be made, a payload naming no session or a record naming no home, are each reported once under `transcript-unowned=<path>` with the reason the gate gave. Nothing is read then, and the context record is written with a null token count and that reason as its `gap` (orch `workflow-state.md`, `context.json` row), so it still advances at every turn end and oversee-watch reports the gap, and the judge is handed this install's harness and no context figure, so it judges the account triggers alone, the `transcript-unowned` line is this hook's one report that the context went unmeasured, and a session is never judged on a file it does not own. Every overseer turn end whose orch context library loads writes that record, a reading or a null token count with a `gap` naming why none was taken: the gate's reason, `binding-missing` for a payload naming no session, `home-unnamed` for a fleet record naming no launch home, `session-mismatch` for a file another session wrote and `home-mismatch` for one under another launch home, `transcript-unnamed` for a payload naming no transcript, `usage-absent` for a transcript holding no usage line, `usage-unread` for a usage object its adapter does not read, which is also reported under `usage-unread=<path>`, `session-record` for a Copilot session record that does not answer, which is also reported under `session-record=<reason>`, or `pane-unrecorded` below. An install naming no harness an adapter reads writes no gap, since its context is never read, and leaves the record as it was; a gap record that cannot be written is reported under `context-gap-unrecorded=<path>`, the record keeping its earlier entry. This hook records the overseer's own context reading as `context.json` in the overseer mailbox directory at the main checkout, naming the session and its pane, and hands that reading to `oversee-succeed --check-marks --context <tokens>:<window>` from this hook's own install, which judges those marks on it and on no stored figure, and nothing here judges them, under the same ceiling the account read runs under, so the turn-end refusal and the `overseer-mark` watch event cannot describe one overseer differently. Its refusal opens with the `context=`, `headroom=`, `rate=` or `qualifying=` key, carrying the figure that judgement read, and names `oversee-succeed`, handed the same reading, as the route, with `workflow-state set oversee handoff` under it for a succession that refuses, so the refusal always has an escape the overseer can reach. That record names the session that wrote it, in a `session_id` the payload gives and a `pane_key` for a harness that sends none. One other refusal stands on that path, `script` for an `oversee-succeed` this install has not got, and the record clears it as it clears the marks. `ORCH_OVERSEER_SUCCESSION=off`, read off the judgement's own line and never here, turns the account-mark refusals off with the succession they name, the watch's `overseer-mark` event still reporting those marks; the context mark is refused whatever the setting, since only this hook judges it, and the handoff record ends that refusal. An answer this hook cannot act on, one the ceiling abandoned, and one whose own reading was unmeasured are reported under `marks=unjudged`, `marks=timeout` and `marks=unmeasured` and the turn ends, never held. A lane asks its overseer only through lane mail, and this hook holds that rule at both places a lane could ask elsewhere. Before a tool call in a launched lane, the halt arm refuses the harness question tool, whichever of the four names the payload's `tool_name` carries, Claude Code's `AskUserQuestion` and `EnterPlanMode`, Codex's `request_user_input` and Pi's `question`, opening `lane-mail-check: question-tool=<name>` and naming the `lane-mail ask --item <ID> --file <PATH>` send and the `lane-mail wait` on its printed id as the route, because a dialog on the pane reaches no overseer; an unread halt is refused ahead of it, a subagent's call is refused and told to report its question to the lead, and a session that is no launched lane passes the call silently, a committed mailbox and status file included. At a lane lead's turn end, once no handoff record stands, it refuses a turn whose final assistant text asks the person at the pane while the lane wrote no `lane-mail ask` or `notice` this turn, opening `lane-mail-check: question-turn=<transcript>` with one continuation, the lane's `lane-mail inbox` read and then its workflow, beside the same route; on a turn the harness continued for a stop hook's refusal it refuses nothing and sends the overseer a lane notice naming the question instead, opening `lane-mail-check: question-notice=<transcript>`, or `question-notice-unsent=<exit status>` with the sender's words where the send fails, so a lane that asks twice in a row is reported and never looped. The question test is deterministic: the last non-empty line of the text blocks of the last assistant record in the transcript, trailing whitespace dropped and lowercased, ends with `?` or holds a phrasing the hook's `asks_the_person` table lists, such as `say if you` or `let me know`, read in Claude Code's `assistant` record and Pi's assistant `message` record, so a Codex lane's rollout, which spells neither, leaves its turn end unjudged; the sent test is the reader's own `lane-mail events` listing, an ask or notice in the lane's outbound file stamped in a later second than the turn's opening, a send in the opener's own second counting as the turn before's, the last typed prompt or extension wake after a run that last called no tool, never a tool's result or a stop hook's continuation, or the window's first stamp where none stands; a turn start that cannot be read is reported under `turn-start=<exit status>` and the turn ends. A payload naming no transcript, a window holding no assistant text in either spelling, and an install with no reader leave the turn unjudged, the last under the marks' own `handoff-skipped` line; an `events` listing that fails is reported under `events=<status>` and the turn ends, because nothing a lane does at its turn end repairs its mailbox. On Copilot the event is `agentStop`, registered in Copilot's own hook file under its camelCase name, so the payload spells its fields `sessionId`, `transcriptPath` and `toolArgs`, which this hook reads beside the snake_case spellings; its reference spells `stop_hook_active` so on both, and `toolName` goes unread, since the question rule names no Copilot tool. Copilot also runs the hooks `.claude/settings.json` registers, under their PascalCase names, but the registration kendex writes there exits 0 before its script in a Copilot hook process, so a Copilot call reaches an install that is not Copilot's, the claude copy of this hook among them, only through a registration made there by hand or one kendex wrote before that skip and no refresh has rewritten. Whether Copilot made the call is read from the call, never from the install: a payload carrying `timestamp`, which both of Copilot's payload formats carry and no Claude, Codex or Pi payload does, or naming the session `sessionId`, is Copilot's, and any install but Copilot's own passes it silently, exit 0 with nothing written and nothing acknowledged, so the Copilot install is the one reader of the mailbox for a Copilot call. A Copilot agentStop names no agent: the stop whose `transcriptPath` sits in the directory named for the `sessionId`, Copilot's `session-state/<session id>/events.jsonl`, is the lead's and records it, a stop naming a transcript under another directory is read as a subagent's, handed nothing and judged on nothing, and a payload naming no transcript, or no session, is the lead's and records nothing. Copilot CLI 1.0.88 was measured firing agentStop at a custom subagent's end too, with the subagent's own `sessionId` and the lead's `transcriptPath`, which this rule reads as a subagent's. A refusal on Copilot is the documented answer for its event, on stdout beside the keyed stderr line: at a turn end `{\"decision\":\"block\",\"reason\":<the refusal text>}` with exit 0, which Copilot stops honouring after 8 consecutive blocks, before a tool call `{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":<the text>}` with exit 2, since any non-zero exit denies the call and the JSON carries the words, and after one `{\"additionalContext\":<the text>}` with exit 0, since Copilot reads a postToolUse answer only at exit 0. That halt decision is local, the mailbox peek and nothing else, so it lands inside the hook's deadline: a preToolUse hook that times out on Copilot lets the call through. A Copilot session's context is read not from its transcript, which holds no live count, but from the session record the orch `copilot-statusline` command writes as the account's `statusLine`, under `<COPILOT_HOME>/lane-status/<session id>.json`, through the orch adapter for copilot, which holds the record to the payload's `sessionId`, its `transcriptPath` where one is named, the account directory and a freshness bound, and hands the shared judge the window's documented compaction point, about 80 percent, as the capacity; a record that does not answer leaves the context unmeasured under `session-record=<reason>`, reported and passed. A Copilot account is judged through `lanes pick --lane` like any other. Not run on gemini: it has no Stop event. Not run on antigravity: its Stop payload carries no `stop_hook_active`."
+  },
+  {
+    "kind": "hook",
+    "summary": "Hands a working lane the messages its overseer sent as soon as a tool call finishes, and the notes another repository's overseer sent to the one session the checkout's fleet record names.",
+    "bundles": ["orchestration", "workflow"],
+    "updatedAt": "2026-09-29T14:17:15+00:00",
+    "name": "lane-mail-deliver",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Hands a lane the lines its overseer mailbox holds unread once a tool call finishes, so a directive reaches a working lane at its next tool call rather than at its turn end. The judgement is the lane-mail-check hook's, run from beside this one with the argument `deliver`: it exits 0 with `{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":...}}` on stdout, the context opening `lane-mail-check: unread=<count>` with one JSON envelope per line under it, and acknowledges them once that is written; the tool's own output stands. A subagent's call, whose payload carries a non-empty `agent_id` or `agent_type`, is handed nothing and acknowledges nothing. The lane is judged from the root lane-mail-check resolves: the directory Claude Code started the session in, else the root the launch marker for `LANE_MAIL_ITEM` binds, else the directory the hook runs in, which on Codex and Pi is the session's start directory. A root its launch marker binds that has no mailbox directory is refused under the judge's `lane-mail-check: mailbox-missing=<path>` after the lead's call; a subagent's finished call is refused nothing here, and its next call is refused by the lane-mail-halt hook. A session that is no lane is handed the checkout's overseer mailbox instead, by the judge's own rule, only where the checkout's oversee workflow state names its tmux pane under `.overseer`, a single-pass fleet's own overseer or a session `oversee register` named, and no live repeat watch holds that state, so a note `lane-mail peer send --repo` wrote to a checkout where no repeat watch runs reaches that session and no other session working there. A lane with nothing unread, and a session with neither mailbox, passes silently. A lane-mail-check missing from beside this hook is refused, opening `lane-mail-deliver: judge=<path>`. On Copilot the event is `postToolUse`, whose reference reads a top-level `additionalContext` and appends it to the tool result the model sees on the same turn, so there the judge exits 0 with `{\"additionalContext\":...}` carrying the same context and acknowledges it, for a call whose `sessionId` is a lead session the judge recorded at the session's start or at a turn end its transcript proved the lead's. A Copilot tool call names no agent, so a call from any session the judge has no record of is handed nothing and acknowledges nothing, with `lane-mail-check: session-unrecorded=<id>` on stderr, and the lines stay unread for the lead's turn end, which hands them over and acknowledges them. A custom subagent's call was measured on Copilot CLI 1.0.88 carrying its own session id, which nothing recorded; whether a built-in task-tool subagent's calls carry their own session id or the lead's is a pending live-lane proof, and one whose calls carry the lead's is read as the lead and handed the lead's mail after its calls, which marks it read. A refusal the judge makes there is the same answer at exit 0, since Copilot reads a postToolUse answer only at exit 0. A live-lane capture of that delivery is a proof still pending. Not run on gemini: the lane-mail-check hook it runs is not installed there, having no Stop event. Not run on antigravity: any PostToolUse output replaces the tool result the model reads."
+  },
+  {
+    "kind": "hook",
+    "summary": "Stops a lane at its next tool call when its overseer sends a halt, until the lane reads it, and refuses the harness question tool in a lane, naming lane mail as the route.",
+    "bundles": ["orchestration", "workflow"],
+    "updatedAt": "2026-09-29T03:05:14+00:00",
+    "name": "lane-mail-halt",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Refuses every tool call in a lane while its overseer mailbox holds an unread directive sent with `lane-mail send --halt`, so a halted lane stops at its next tool call. The judgement is the lane-mail-check hook's, run from beside this one with the argument `halt`: its refusal opens `lane-mail-check: halt=<id>` and carries the directive and the one `lane-mail inbox` command that reads it. That command alone passes, and the halt stands until a plain inbox read acknowledges it. A subagent's call, whose payload carries a non-empty `agent_id` or `agent_type`, is refused whatever it runs and is told to report to its lead, never shown the command. The lane is judged from the root lane-mail-check resolves: the directory Claude Code started the session in, else the root the launch marker for `LANE_MAIL_ITEM` binds, else the directory the hook runs in, which on Codex and Pi is the session's start directory; so a lane working from the main clone meets its halt wherever one of the first two is set, or the harness runs hooks in its start directory. A root its launch marker binds that has no mailbox directory is refused too, opening `lane-mail-check: mailbox-missing=<path>` with the one `mkdir` command that restores it, which alone passes. In a launched lane with no unread halt it refuses the harness question tool, Claude Code's `AskUserQuestion` and `EnterPlanMode`, Codex's `request_user_input` and Pi's `question`, under the judge's `lane-mail-check: question-tool=<name>`, naming `lane-mail ask --item <ID> --file <PATH>` and `lane-mail wait` as the route, because a lane asks its overseer only through lane mail and a dialog on the pane reaches nobody; a subagent's such call is refused and told to report its question to the lead. A session that is no lane, and a lane calling any other tool with no unread halt, passes silently. A lane-mail-check missing from beside this hook is refused, opening `lane-mail-halt: judge=<path>`. On Copilot the event is `preToolUse`, the command arrives as `toolArgs.command`, and the judge's refusal is also the documented deny, `{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":<the refusal text>}` on stdout under exit 2, so the call is refused and the words reach the model; the decision is the mailbox peek alone, made inside the hook's deadline, because a Copilot preToolUse hook that times out lets the call through. A Copilot call names no agent, so the judge reads it as the lead's only where its `sessionId` is a lead session it recorded at the session's start or at a turn end its transcript proved the lead's, and that call's refusal shows the `lane-mail inbox` command. A call from any other session, a custom subagent's among them, is refused without that command, which the lead's turn end, session start and prompt name, and a call of such a session running that command passes, because the reader's `--ack` stops short of an unread halt and a lead whose record could not be written would otherwise be refused for good. A custom subagent's call was measured on Copilot CLI 1.0.88 carrying its own session id, which nothing recorded; whether a built-in task-tool subagent's calls carry their own session id or the lead's is a pending live-lane proof, and one whose calls carry the lead's is read as the lead and, under a halt, shown the read that clears it. Not run on gemini: the lane-mail-check hook it runs is not installed there, having no Stop event. Not run on antigravity: the lane-mail-check hook it runs is not installed there, and its command arrives as `toolCall.args.CommandLine`."
+  },
+  {
+    "kind": "hook",
+    "summary": "Hands a Copilot lane the messages its overseer sent with each prompt it is handed, and the notes another repository's overseer sent to the one session the checkout's fleet record names.",
+    "bundles": ["orchestration", "workflow"],
+    "updatedAt": "2026-09-29T14:17:15+00:00",
+    "name": "lane-mail-prompt",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Hands a Copilot lane the lines its overseer mailbox holds unread each time it is handed a prompt, so a lane idle at its prompt reads its mail with the next prompt rather than at its first tool call or turn end. The judgement is the lane-mail-check hook's, run from beside this one with the argument `prompt`: it exits 0 with `{\"additionalContext\":...}` on stdout, the context opening `lane-mail-check: unread=<count>` with one JSON envelope per line under it, and acknowledges them only once that is written, so a write that fails leaves them unread for the next point that delivers them. Copilot registers it as `userPromptSubmitted`, whose hooks reference documents only `modifiedPrompt` and says a config-file hook's output is dropped; the owner's own probe, a repository hook in a fresh `copilot -p` run against a negative control, is what shows the `additionalContext` reaching the model, and a live-lane capture of that delivery is a proof still pending. The lane, its mailbox, the overseer mailbox only the session the checkout's oversee workflow state names under `.overseer` reads, where no live repeat watch holds that state, and the subagent rule are the judge's own, as for the lane-mail-deliver hook: a payload carrying a non-empty `agent_id` or `agent_type` is handed nothing and acknowledges nothing. It never refuses a prompt: a session that is no lane, a lane with nothing unread and a subagent get no output, and every refusal the judge names is its keyed line on stderr at exit 0, with nothing on stdout and nothing acknowledged, as is a lane-mail-check missing from beside this hook, opening `lane-mail-prompt: judge=<path>`. Not run on claude: a lane there arms a `lane-mail watch` monitor that wakes it at an idle prompt. Not run on codex: the overseer wakes a Codex lane idle at its prompt with `open-terminal --wake`. Not run on pi: the pi-hooks mail wake starts an idle lane's turn; a lane without it arms `lane-mail watch`. Not run on gemini: the lane-mail-check hook it runs is not installed there, having no Stop event. Not run on antigravity: the lane-mail-check hook it runs is not installed there, its Stop payload carrying no `stop_hook_active`. Not run on opencode: it runs no hooks, and a delivery point taken as an instruction delivers nothing. Not run on cursor: kendex delivers a hook there only as advisory rule prose, and a delivery point taken as an instruction delivers nothing."
+  },
+  {
+    "kind": "hook",
+    "summary": "Hands a Copilot lane the messages its overseer sent as soon as its session starts, and the notes another repository's overseer sent to the one session the checkout's fleet record names.",
+    "bundles": ["orchestration", "workflow"],
+    "updatedAt": "2026-09-29T14:17:15+00:00",
+    "name": "lane-mail-start",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Hands a Copilot lane the lines its overseer mailbox holds unread when its session starts, so a lane launched or resumed onto waiting mail reads it before its first tool call rather than at its first tool call or turn end. The judgement is the lane-mail-check hook's, run from beside this one with the argument `start`: it exits 0 with `{\"additionalContext\":...}` on stdout, the context opening `lane-mail-check: unread=<count>` with one JSON envelope per line under it, and acknowledges them only once that is written, so a write that fails leaves them unread for the next point that delivers them. Copilot registers it as `sessionStart`, and its hooks reference says a sessionStart hook can inject `additionalContext` into the session; a live-lane capture of that delivery is a proof still pending. Copilot fires it for the lead session alone, a resumed one included, so the judge also records the payload's `sessionId` as a lead session there, which is what lets the lane-mail-deliver and lane-mail-halt hooks tell the lead's tool calls from a custom subagent's, and prunes records untouched for 30 days; a record it cannot write is reported on stderr under `lane-mail-check: lead-unrecorded=<path>`, or `=none` for a start naming no session id, and the start still passes. A custom subagent's call was measured on Copilot CLI 1.0.88 carrying its own session id, which nothing recorded; whether a built-in task-tool subagent's calls carry their own session id or the lead's is a pending live-lane proof, and one whose calls carry the lead's is read as the lead. The lane, its mailbox, the overseer mailbox only the session the checkout's oversee workflow state names under `.overseer` reads, where no live repeat watch holds that state, and the subagent rule are the judge's own, as for the lane-mail-deliver hook: a payload carrying a non-empty `agent_id` or `agent_type` is handed nothing and acknowledges nothing. It never refuses a session start: a session that is no lane, a lane with nothing unread and a subagent get no output, and every refusal the judge names is its keyed line on stderr at exit 0, with nothing on stdout and nothing acknowledged, as is a lane-mail-check missing from beside this hook, opening `lane-mail-start: judge=<path>`. Not run on claude: a lane there arms a `lane-mail watch` monitor that wakes it at an idle prompt. Not run on codex: the overseer wakes a Codex lane idle at its prompt with `open-terminal --wake`. Not run on pi: the pi-hooks mail wake starts an idle lane's turn; a lane without it arms `lane-mail watch`. Not run on gemini: the lane-mail-check hook it runs is not installed there, having no Stop event. Not run on antigravity: the lane-mail-check hook it runs is not installed there, its Stop payload carrying no `stop_hook_active`. Not run on opencode: it runs no hooks, and a delivery point taken as an instruction delivers nothing. Not run on cursor: kendex delivers a hook there only as advisory rule prose, and a delivery point taken as an instruction delivers nothing."
+  },
+  {
+    "kind": "hook",
+    "summary": "Makes a commit run the repository's armed git hooks and refuses one carrying a word that skips them. Unarmed, it refuses only a line whose command is git commit.",
+    "bundles": ["commit-guards", "workflow"],
+    "updatedAt": "2026-09-29T16:46:52+00:00",
+    "name": "pre-commit-check",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "On a git commit, defer to the working directory's armed git hooks — both pre-commit and commit-msg, marked and executable (kendex guard install arms them). Otherwise the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where nothing is armed, a commit is a simple command whose command word is `git`, after any NAME=value assignments, any reserved word bash reads before a command (`! { if then else elif while until do time coproc`), the -p of `time` and any leading redirection, with a later `commit` word; a `commit` word anywhere else, a message, a printf of a note or another program's arguments, is not a commit, but a line of quoted text or of a heredoc body that itself leads with `git` and holds `commit` is read as one. A program that launches git (xargs, parallel, env, sudo, timeout) is not a commit where nothing is armed. The simple commands are the lines of the command once bash's non-whitespace metacharacters (`| & ; ( ) < >`) are turned into separators, the five that end a simple command into newlines and the two that redirect into arrow words; a leading path, backtick or `$(` comes off the git word, and nothing comes off the commit word. A backtick is no separator, so a commit in a backtick substitution behind another word is not a commit where nothing is armed, and a code span in the middle of a line of a note starts no line of its own. Where the hooks are armed, a command holding a `git` word with a later `commit` word is refused when it also holds a word that would skip them: the no-verify flag or a short-option cluster holding that letter, read from that git word to the end of its line where the command holds none of ' \" \\ ` $ and no process substitution, and to the end of the whole command otherwise, so the flag counts in a git call env, sudo or timeout runs, in a note that spells git and commit, and in a stage the commit pipes into once the command holds quoting, while a -n of another program in front of the git word is not a finding; or a word carrying a core.hooksPath key (an attached -c value, the value after a bare -c, a --config-env, a git config argument, a GIT_CONFIG_* assignment), read wherever it stands in the command, since a config write disarms the hook from a call of its own. Git would skip the commit-msg hook too, and nothing here can check the message. A flag that xargs or parallel reads from a pipe, a heredoc or a file is not seen here, and it reaches git. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here."
+  },
+  {
+    "kind": "hook",
+    "summary": "Keeps a reviewer agent read-only: no edits, no commits, no pushes, no Git commands that discard work, only its review report.",
+    "bundles": ["code-review", "workflow"],
+    "updatedAt": "2026-09-15T03:37:45+00:00",
+    "name": "reviewer-read-only",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "For a subagent whose agent_type starts with `reviewer-`, refuses every Edit, MultiEdit and NotebookEdit call; a Write whose path lies inside a git work tree unless it is the review artifact, `<dir>/tmp/review-*.json`; and a Bash command that runs `git commit`, `push`, `checkout`, `restore`, `stash`, `clean`, `reset` or `switch` (options between `git` and the verb allowed). Any other agent, and a payload naming no agent_type, passes. Under Pi the pi-hooks carrier sends as agent_type the agent name a Pi subagent process is started with. Not run on codex: a write is `apply_patch` with no `tool_input.file_path`, so the review artifact cannot be told from any other write. Not run on gemini: its tool-call payload is unmeasured. Not run on copilot: its preToolUse payload names no calling agent. Not run on antigravity: its payload carries no agent field."
+  },
+  {
+    "kind": "hook",
+    "summary": "Stops a reviewer agent from finishing while the worktree it reviewed still holds files it left behind.",
+    "bundles": ["code-review", "workflow"],
+    "updatedAt": "2026-09-15T03:37:45+00:00",
+    "name": "reviewer-stop-check",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Blocks a reviewer subagent's stop once when the worktree it reviewed is not clean. The worktree is the one the artifact path in the subagent's transcript names (`<worktree>/tmp/review-<agent>-*.json`, the newest mention); `git status --porcelain --untracked-files=all` there listing anything blocks, naming each path, and a transcript naming no artifact path blocks the same way, since the review contract is an artifact at that path. An agent_type not starting with `reviewer-` passes, as does `stop_hook_active` true; a block is recorded per agent_id under `<git common dir>/kendex/reviewer-stop/` so a later stop of the same subagent passes. Not run on codex: it has no SubagentStop event. Not run on pi: it has no SubagentStop event. Not run on gemini: it has no SubagentStop event. Not run on copilot: its subagentStop names the agent type `task`, the tool rather than the agent, and carries no `stop_hook_active`. Not run on antigravity: it has no SubagentStop event."
+  },
+  {
+    "kind": "hook",
+    "summary": "Tells a coding agent at the start of a session which installed packages no longer match their source, and what to run about it. Says nothing when everything matches.",
+    "bundles": ["commit-guards", "workflow"],
+    "updatedAt": "2026-09-29T18:01:00+00:00",
+    "name": "session-drift-check",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "On a fresh session start (not resume or compact), runs `kendex check --quiet --report-only` and surfaces kendex drift to the agent — outdated items (`kendex refresh`), items removed upstream (`kendex remove <name>`, `-g` in a global section), unreachable sources, and packages not yet evaluated against their sources (a background refresh settles them). Prints nothing when the install is current. When the kendex command is absent it says so with what that costs: which manifest file this project's declarations live in and what became of reading it, how many packages and bundles it declares, how the command is installed on this platform, that the user decides whether to install it before any workflow runs here, and that the files kendex renders whole are never hand-edited — the notice names the trees they are under, and every other tree kendex renders into is covered with them — while a harness's own settings file it writes one key in keeps every key it did not write. KENDEX_DRIFT_HOOK=off disables it. Not run on pi: the pi-hooks carrier runs its own drift report at session start. Not run on antigravity: it has no SessionStart event."
+  },
+  {
+    "kind": "hook",
+    "summary": "Writes down that a session ended, so a fleet's overseer that exits is seen to have exited without anyone reading its screen.",
+    "bundles": ["orchestration", "workflow"],
+    "updatedAt": "2026-09-28T08:23:49+00:00",
+    "name": "session-end-row",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Records that a session ended, as one JSON row the fleet's overseer judgement reads instead of the session's pane: `oversee-watch` judges an overseer whose last row is a SessionEnd for any reason but `clear` or `resume` as exited only where its pane's process is a bare shell with nothing under it, and as live over a running process, whatever its screen shows. The row is written by the lane-mail-check hook, run from beside this one with the argument `row`, through the orch skill's `lib/session-rows.sh` from that hook's own install: it carries the time, the event, the harness, the payload's `session_id`, `transcript_path`, `cwd` and `reason`, and the account directory this hook's own environment names. It lands in `tmp/lane-mail/overseer/session-<tmux server pid>-<pane number>.jsonl` at the main checkout, the file the oversee state's `overseer.session_rows` names, under the mailbox's own lock, and only where that directory already stands; a session outside tmux, a session with a lane of its own, a harness another harness started in the same pane, whose process ancestry reaches the pane's shell through two processes that are no shell, and an install with no orch reader write nothing and say nothing. A row that could not be written is reported under `lane-mail-check: rows-unwritten=<checkout>`, a library this install has not got under `lane-mail-check: rows-skipped=<path>`, and the session ends either way. A lane-mail-check missing from beside this hook is reported under `session-end-row: judge=<path>`. Not run on codex: it has no SessionEnd event. Not run on pi: it has no SessionEnd event. Not run on gemini: the lane-mail-check hook it runs is not installed there, having no Stop event. Not run on copilot: the lane-mail-check hook it runs is not installed there, its agentStop also firing at each subagent's end. Not run on antigravity: it has no SessionEnd event."
+  },
+  {
+    "kind": "hook",
+    "summary": "Writes down that a session started, and on which account and model, so the fleet's overseer is judged from what its harness said rather than from its screen.",
+    "bundles": ["orchestration", "workflow"],
+    "updatedAt": "2026-09-28T08:23:49+00:00",
+    "name": "session-start-row",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Records that a session started, as one JSON row the fleet's overseer judgement reads instead of the session's pane. The row is written by the lane-mail-check hook, run from beside this one with the argument `row`, through the orch skill's `lib/session-rows.sh` from that hook's own install: it carries the time, the event, the harness this hook's install directory names, the payload's `session_id`, `transcript_path`, `cwd`, `source` and `model` as the harness emitted them, and the account directory the session runs on, read from this hook's own environment, which is the harness's. It lands in `tmp/lane-mail/overseer/session-<tmux server pid>-<pane number>.jsonl` at the main checkout, the file the oversee state's `overseer.session_rows` names, under the mailbox's own lock, and only where that directory already stands; a session outside tmux, a session with a lane of its own, a harness another harness started in the same pane, whose process ancestry reaches the pane's shell through two processes that are no shell, and an install with no orch reader write nothing and say nothing. A row that could not be written is reported under `lane-mail-check: rows-unwritten=<checkout>`, a library this install has not got under `lane-mail-check: rows-skipped=<path>`, and the session starts either way. A lane-mail-check missing from beside this hook is reported under `session-start-row: judge=<path>` and the session starts. Not run on gemini: the lane-mail-check hook it runs is not installed there, having no Stop event. Not run on copilot: the lane-mail-check hook it runs is not installed there, its agentStop also firing at each subagent's end. Not run on antigravity: it has no SessionStart event."
+  },
+  {
+    "kind": "hook",
+    "summary": "Holds back edits and Linear commands until the agent making them has loaded the skill the repository ties to them, so the standard is applied rather than remembered.",
+    "bundles": ["workflow"],
+    "updatedAt": "2026-09-29T20:14:48+00:00",
+    "name": "skill-load-check",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Refuses a call a repository rule ties to a skill until the agent making the call has loaded that skill, so each \"load skill X before doing Y\" rule is decided rather than remembered. The rules are one table of trigger and skill. The defaults: an Edit, MultiEdit, NotebookEdit or Write onto a path inside a git work tree that ends in `.md` needs docs-writing, and one onto any other path there needs code-quality; a Bash call naming `linear.sh` at the word it executes or at any word after it needs linear whatever it asks of Linear, so a call that only mentions the name inside a quoted note or a heredoc body is no command, while a call that hands the name to another command, such as `echo /tmp/linear.sh` or `cat .../linear.sh`, is refused alongside the calls that really run it: a word that launches what follows it, `bash` and `env` among them, picks its command by options nothing here reads, so every word after the first is judged rather than any launcher being listed. KENDEX_SKILL_LOAD_RULES appends a repository's own rules: `<glob>=<skill>` for an edit, the glob matched against the path from the work tree's root with `*` crossing `/` and extended patterns such as `!(*.md)` read, and `bash:<regex>=<skill>` for a command, the regex matched against each command the shell would run from the word it executes on, past leading assignments, and from every word after that one, entries separated by `;`. A call needing two skills is refused on the first one not loaded. Loaded is read off the transcript that records that agent's tool calls: a `Skill` tool call whose `skill` input names the skill, or, in a Pi session file, a successful `read` tool call whose `path` ends in `<skill>/SKILL.md`: one whose result is recorded under the same `toolCallId` and is not an error. That transcript is the session transcript the payload names, or, when the payload carries `agent_id` because a subagent made the call, the subagent's own `agent-<agent_id>.jsonl` under the session's `subagents/` directory, directly or one directory below; the lead session's load does not pass a subagent's call. A Pi subagent is its own process with its own session file, which is the transcript its payload names. On Copilot, whose payload names no transcript, loaded is read off a record kept per agent outside every repository, `$XDG_STATE_HOME/kendex/skill-load-check/<sessionId>` or under `~/.local/state` where that is unset: the skill-load-record hook beside this one runs it with the argument `record` after each `skill` tool call and appends the skill `toolArgs.skill` names only when `toolResult.resultType` is `success`, and the payload's `sessionId` names the agent, a subagent apart from the session that launched it, so the lead's load does not pass a subagent's call there either. A record untouched for 30 days is removed. There the matcher names every runtime tool Copilot's hooks reference lists for Edit, Write and Bash: the command is `toolArgs.command` of a `bash` or `powershell` call, the edit's target `toolArgs.path` of an `edit`, `create` or `str_replace_editor` call, whatever the last one's own command, and each file an `apply_patch` call's patch names on an `*** Add File: `, `*** Update File: `, `*** Delete File: ` or `*** Move to: ` line, a call with no target it can read being refused as `payload=no-file-path`; a refusal is also Copilot's `permissionDecision` deny on stdout, its reason the refusal's text, under the same exit 2. A Copilot call reaching another harness's copy, which Copilot runs from `.claude/settings.json` only through a registration made there by hand or one kendex wrote before its Copilot skip and no refresh has rewritten, passes there under `skill-load-check: harness=copilot`, the Copilot copy being its judge, so where no Copilot copy is installed that line is the one trace of a call nothing judged. A call needing a skill that reaches a Copilot copy with no skill-load-record beside it is refused as `carrier=<path>`: nothing writes the record there, and the remedy is `skill-load-record` added to the manifest's hooks list beside skill-load-check. The work tree's own `tmp/` is scratch and passes, and so does every path outside a work tree. KENDEX_SKILL_LOAD_HOOK=off disables it for a session that is not working under those rules. Not run on codex: a file write is `apply_patch`, whose payload carries no `tool_input.file_path`, and a skill load is a shell read of SKILL.md with no skill record. Not run on gemini: its tool-call payload and its record of a skill load are unmeasured. Not run on antigravity: the file arrives as `toolCall.args.TargetFile` and a skill load is a `view_file` read with no skill record."
+  },
+  {
+    "kind": "hook",
+    "summary": "Remembers which skills each Copilot agent has loaded, so the skill-load check can let that agent's edits and Linear commands through once it has.",
+    "bundles": ["workflow"],
+    "updatedAt": "2026-09-29T20:14:48+00:00",
+    "name": "skill-load-record",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Writes down each skill a Copilot agent finished loading, so the skill-load-check hook can judge that agent's calls on Copilot, whose payload names no transcript to read loads from. The recording is the skill-load-check hook's, run from beside this one with the argument `record`: after a `skill` tool call whose `toolResult.resultType` is `success`, it appends the skill `toolArgs.skill` names to the record of the agent the payload's `sessionId` names, under `$XDG_STATE_HOME/kendex/skill-load-check/` or `~/.local/state/kendex/skill-load-check/` where that is unset, and removes records untouched for 30 days. It never refuses: the tool has already run, so a load it could not record is its keyed line on stderr and the same text as `additionalContext` on stdout at exit 0, and so is a skill-load-check missing from beside it, opening `skill-load-record: judge=<path>`. Not run on claude: a skill load is a Skill tool call in the transcript skill-load-check reads. Not run on codex: skill-load-check does not run there, a file write being `apply_patch`, whose payload carries no `tool_input.file_path`. Not run on pi: a skill load is a `read` of SKILL.md in the session file skill-load-check reads. Not run on gemini: skill-load-check does not run there, its tool-call payload and its record of a skill load unmeasured. Not run on antigravity: skill-load-check does not run there, a skill load being a `view_file` read with no skill record. Not run on opencode: kendex delivers a hook there only as advisory rule prose, and a record taken as an instruction records nothing. Not run on cursor: kendex delivers a hook there only as advisory rule prose, and a record taken as an instruction records nothing."
+  },
+  {
+    "kind": "hook",
+    "summary": "Writes down that a turn stopped on an error such as a usage limit, so a fleet's overseer that hits its limit is seen to be stuck without anyone reading its screen.",
+    "bundles": ["orchestration", "workflow"],
+    "updatedAt": "2026-09-28T08:23:49+00:00",
+    "name": "stop-failure-row",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Records that a turn ended on an API error, as one JSON row the fleet's overseer judgement reads instead of the session's pane: `oversee-watch` judges an overseer whose last row is a StopFailure with error `rate_limit` as walled, the harness's own word for a usage limit, whatever its pane shows, and the lane-mail-check hook writes a Stop row over it at the overseer's next turn end, which lifts it. The row is written by the lane-mail-check hook, run from beside this one with the argument `row`, through the orch skill's `lib/session-rows.sh` from that hook's own install: it carries the time, the event, the harness, the payload's `session_id`, `transcript_path`, `cwd`, `error` and `error_details`, its `last_assistant_message` as `message`, which holds the harness's own text of the limit and its reset, and the account directory this hook's own environment names. A subagent's failure, whose payload carries an `agent_id`, writes nothing. It lands in `tmp/lane-mail/overseer/session-<tmux server pid>-<pane number>.jsonl` at the main checkout, the file the oversee state's `overseer.session_rows` names, under the mailbox's own lock, and only where that directory already stands; a session outside tmux, a session with a lane of its own, a harness another harness started in the same pane, whose process ancestry reaches the pane's shell through two processes that are no shell, and an install with no orch reader write nothing and say nothing. A row that could not be written is reported under `lane-mail-check: rows-unwritten=<checkout>`, a library this install has not got under `lane-mail-check: rows-skipped=<path>`. A lane-mail-check missing from beside this hook is reported under `stop-failure-row: judge=<path>`. Not run on codex: it has no StopFailure event. Not run on pi: it has no StopFailure event. Not run on gemini: it has no StopFailure event. Not run on copilot: it has no StopFailure event. Not run on antigravity: it has no StopFailure event."
+  },
+  {
+    "kind": "hook",
+    "summary": "Runs clippy before a task is marked complete whenever Rust files changed, and refuses the completion with the first errors it found.",
+    "bundles": ["commit-guards", "workflow"],
+    "updatedAt": "2026-09-15T03:37:45+00:00",
+    "name": "task-completed-check",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Before a task is marked complete, runs `cargo clippy --workspace --all-targets -- -D warnings` against the repository's Cargo.toml, or the nearest one above a changed file when the root has none, whenever a Rust file changed in the working tree, the index or as an untracked file, and refuses the completion naming the first error lines, or the output tail when there are none. Rust only. Not run on pi: the pi-hooks carrier runs its own end-of-turn clippy check, and a second run is left out. Not run on codex: it has no TaskCompleted event. Not run on gemini: it has no TaskCompleted event. Not run on copilot: it has no TaskCompleted event. Not run on antigravity: it has no TaskCompleted event."
+  },
+  {
+    "kind": "command",
+    "summary": "Find unused code, duplicate logic, excess scope and unmet issue requirements in merged pull requests.",
+    "bundles": [],
+    "updatedAt": "2026-09-06T19:02:14-07:00",
+    "name": "code-scrub",
+    "collision": null,
+    "tags": [],
+    "state": "installed",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Audit merged pull requests over a user-specified number of days."
+  }
+]

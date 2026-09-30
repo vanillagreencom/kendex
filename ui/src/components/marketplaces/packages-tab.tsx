@@ -8,6 +8,7 @@ import {
   TroubleLines,
   troubledScopes,
 } from "@/components/marketplaces/packages-trouble";
+import { readDue } from "@/components/marketplaces/use-catalog";
 import { Input } from "@/components/ui/input";
 import { SelectItem } from "@/components/ui/select";
 import { scopeLabel } from "@/lib/derive";
@@ -22,6 +23,7 @@ import { PAGE_BODY, PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import {
   marketKey,
+  readErrorKey,
   subscription,
   useMarketplacesStore,
 } from "@/stores/marketplaces";
@@ -50,11 +52,18 @@ export function PackagesTab() {
   useEffect(() => {
     for (const row of rows) {
       if (!row.enabled) continue;
-      if (!packages[marketKey(row.scope, row.name)]) {
+      const key = marketKey(row.scope, row.name);
+      if (
+        readDue(
+          packages[key] !== undefined,
+          readErrors[readErrorKey(key, "packages")] !== undefined,
+          true,
+        )
+      ) {
         void loadPackages(subscription(row.scope, row.name));
       }
     }
-  }, [rows, packages, loadPackages]);
+  }, [rows, packages, readErrors, loadPackages]);
 
   useEffect(() => {
     if (searchFocus === 0) return;

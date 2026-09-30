@@ -1,0 +1,110 @@
+[
+  {
+    "kind": "skill",
+    "summary": "React composition patterns that scale. Use when refactoring components with boolean prop proliferation, building flexible component libraries, or designing reusable APIs. Triggers on tasks involving compound components, render props, context providers, or component architecture. Includes React 19 API changes.",
+    "bundles": [],
+    "updatedAt": "2026-01-28T08:27:09-08:00",
+    "name": "composition-patterns",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "React composition patterns that scale. Use when refactoring components with boolean prop proliferation, building flexible component libraries, or designing reusable APIs. Triggers on tasks involving compound components, render props, context providers, or component architecture. Includes React 19 API changes."
+  },
+  {
+    "kind": "skill",
+    "summary": "Deploy applications and websites to Vercel. Use when the user requests deployment actions like \"deploy my app\", \"deploy and give me the link\", \"push this live\", or \"create a preview deployment\".",
+    "bundles": [],
+    "updatedAt": "2026-03-06T06:32:23-08:00",
+    "name": "deploy-to-vercel",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Deploy applications and websites to Vercel. Use when the user requests deployment actions like \"deploy my app\", \"deploy and give me the link\", \"push this live\", or \"create a preview deployment\"."
+  },
+  {
+    "kind": "skill",
+    "summary": "React and Next.js performance optimization guidelines from Vercel Engineering. This skill should be used when writing, reviewing, or refactoring React/Next.js code to ensure optimal performance patterns. Triggers on tasks involving React components, Next.js pages, data fetching, bundle optimization, or performance improvements.",
+    "bundles": [],
+    "updatedAt": "2026-04-14T20:37:48+09:00",
+    "name": "react-best-practices",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "React and Next.js performance optimization guidelines from Vercel Engineering. This skill should be used when writing, reviewing, or refactoring React/Next.js code to ensure optimal performance patterns. Triggers on tasks involving React components, Next.js pages, data fetching, bundle optimization, or performance improvements."
+  },
+  {
+    "kind": "skill",
+    "summary": "React Native and Expo best practices for building performant mobile apps. Use when building React Native components, optimizing list performance, implementing animations, or working with native modules. Triggers on tasks involving React Native, Expo, mobile performance, or native platform APIs.",
+    "bundles": [],
+    "updatedAt": "2026-01-27T17:19:22-08:00",
+    "name": "react-native-skills",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "React Native and Expo best practices for building performant mobile apps. Use when building React Native components, optimizing list performance, implementing animations, or working with native modules. Triggers on tasks involving React Native, Expo, mobile performance, or native platform APIs."
+  },
+  {
+    "kind": "skill",
+    "summary": "Guide for implementing smooth, native-feeling animations using React's View Transition API (`<ViewTransition>` component, `addTransitionType`, and CSS view transition pseudo-elements). Use this skill whenever the user wants to add page transitions, animate route changes, create shared element animations, animate enter/exit of components, animate list reorder, implement directional (forward/back) navigation animations, or integrate view transitions in Next.js. Also use when the user mentions view transitions, `startViewTransition`, `ViewTransition`, transition types, or asks about animating between UI states in React without third-party animation libraries.",
+    "bundles": [],
+    "updatedAt": "2026-08-28T15:36:07+02:00",
+    "name": "react-view-transitions",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Guide for implementing smooth, native-feeling animations using React's View Transition API (`<ViewTransition>` component, `addTransitionType`, and CSS view transition pseudo-elements). Use this skill whenever the user wants to add page transitions, animate route changes, create shared element animations, animate enter/exit of components, animate list reorder, implement directional (forward/back) navigation animations, or integrate view transitions in Next.js. Also use when the user mentions view transitions, `startViewTransition`, `ViewTransition`, transition types, or asks about animating between UI states in React without third-party animation libraries."
+  },
+  {
+    "kind": "skill",
+    "summary": "Deploy and manage projects on Vercel using token-based authentication. Use when working with Vercel CLI using access tokens rather than interactive login — e.g. \"deploy to vercel\", \"set up vercel\", \"add environment variables to vercel\".",
+    "bundles": [],
+    "updatedAt": "2026-04-16T21:17:46-07:00",
+    "name": "vercel-cli-with-tokens",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Deploy and manage projects on Vercel using token-based authentication. Use when working with Vercel CLI using access tokens rather than interactive login — e.g. \"deploy to vercel\", \"set up vercel\", \"add environment variables to vercel\"."
+  },
+  {
+    "kind": "skill",
+    "summary": "Use for Vercel cost and performance optimization on deployed projects, especially Next.js, SvelteKit, Nuxt, and limited Astro apps. Collect Vercel metrics, usage, project config, and code scan results first; investigate only metric-backed candidates; produce ranked recommendations grounded in verified files and version-aware Vercel/framework docs. Trigger for Vercel bill reduction, slow or expensive routes, caching opportunities, Function Invocations, Build Minutes, Fast Data Transfer, Core Web Vitals, Bot Management, Fluid compute, or cost breakdown requests.",
+    "bundles": [],
+    "updatedAt": "2026-06-10T14:21:47-07:00",
+    "name": "vercel-optimize",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Use for Vercel cost and performance optimization on deployed projects, especially Next.js, SvelteKit, Nuxt, and limited Astro apps. Collect Vercel metrics, usage, project config, and code scan results first; investigate only metric-backed candidates; produce ranked recommendations grounded in verified files and version-aware Vercel/framework docs. Trigger for Vercel bill reduction, slow or expensive routes, caching opportunities, Function Invocations, Build Minutes, Fast Data Transfer, Core Web Vitals, Bot Management, Fluid compute, or cost breakdown requests."
+  },
+  {
+    "kind": "skill",
+    "summary": "Review UI code for Web Interface Guidelines compliance. Use when asked to \"review my UI\", \"check accessibility\", \"audit design\", \"review UX\", or \"check my site against best practices\".",
+    "bundles": [],
+    "updatedAt": "2026-01-16T15:47:11-08:00",
+    "name": "web-design-guidelines",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Review UI code for Web Interface Guidelines compliance. Use when asked to \"review my UI\", \"check accessibility\", \"audit design\", \"review UX\", or \"check my site against best practices\"."
+  },
+  {
+    "kind": "skill",
+    "summary": "Review docs/prose for Writing Guidelines compliance. Use when asked to \"review my docs\", \"check writing style\", \"audit prose\", \"review docs voice and tone\", or \"check this page against the writing handbook\".",
+    "bundles": [],
+    "updatedAt": "2026-06-01T09:25:17-07:00",
+    "name": "writing-guidelines",
+    "collision": null,
+    "tags": [],
+    "state": "available",
+    "dependencies": { "required": [], "optional": [] },
+    "description": "Review docs/prose for Writing Guidelines compliance. Use when asked to \"review my docs\", \"check writing style\", \"audit prose\", \"review docs voice and tone\", or \"check this page against the writing handbook\"."
+  }
+]

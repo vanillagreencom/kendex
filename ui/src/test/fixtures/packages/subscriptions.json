@@ -1,0 +1,111 @@
+[
+  {
+    "enabled": true,
+    "repoIdentity": "github.com/vanillagreencom/kendex",
+    "mode": "explicit",
+    "resolvedPath": null,
+    "meta": {
+      "homepage": "https://kendex.ai",
+      "name": "kendex",
+      "author": "vanillagreen",
+      "tags": ["agents", "skills", "hooks", "official"],
+      "license": "MIT",
+      "description": "The official kendex catalog: agents, skills, hooks, commands and Pi extensions for AI coding harnesses"
+    },
+    "path": null,
+    "counts": {
+      "agent": 16,
+      "hook": 22,
+      "command": 1,
+      "skill": 22
+    },
+    "scope": {
+      "scope": "global"
+    },
+    "name": "kendex",
+    "repo": "vanillagreencom/kendex",
+    "recordsUnreadable": false,
+    "repoKey": "vanillagreencom/kendex",
+    "rev": null,
+    "provenance": "vanillagreencom/kendex",
+    "commit": "901af3ae0188bdc0f0b39ac7142477cc2e600ee2"
+  },
+  {
+    "enabled": true,
+    "repoIdentity": "github.com/vercel-labs/agent-skills",
+    "mode": "discovered",
+    "resolvedPath": null,
+    "meta": null,
+    "path": null,
+    "counts": {
+      "skill": 9
+    },
+    "scope": {
+      "scope": "project",
+      "root": "/home/dev/dev/.worktrees/kendex/ken-2221/tmp/research/project"
+    },
+    "name": "agent-skills",
+    "repo": "vercel-labs/agent-skills",
+    "recordsUnreadable": false,
+    "repoKey": "vercel-labs/agent-skills",
+    "rev": null,
+    "provenance": "vercel-labs/agent-skills",
+    "commit": "063bee94c3f4df8453406c830b0a7df0f2860278"
+  },
+  {
+    "enabled": true,
+    "repoIdentity": "github.com/wshobson/agents",
+    "mode": "plugin-registry",
+    "resolvedPath": null,
+    "meta": null,
+    "path": null,
+    "counts": {
+      "agent": 202,
+      "command": 105,
+      "skill": 184
+    },
+    "scope": {
+      "scope": "project",
+      "root": "/home/dev/dev/.worktrees/kendex/ken-2221/tmp/research/project"
+    },
+    "name": "agents",
+    "repo": "wshobson/agents",
+    "recordsUnreadable": false,
+    "repoKey": "wshobson/agents",
+    "rev": null,
+    "provenance": "wshobson/agents",
+    "commit": "156b7a5e7a8b93642628a339ee4039c925b34c7f"
+  },
+  {
+    "enabled": true,
+    "repoIdentity": "github.com/vanillagreencom/kendex",
+    "mode": "explicit",
+    "resolvedPath": null,
+    "meta": {
+      "homepage": "https://kendex.ai",
+      "name": "kendex",
+      "author": "vanillagreen",
+      "tags": ["agents", "skills", "hooks", "official"],
+      "license": "MIT",
+      "description": "The official kendex catalog: agents, skills, hooks, commands and Pi extensions for AI coding harnesses"
+    },
+    "path": null,
+    "counts": {
+      "agent": 16,
+      "hook": 22,
+      "command": 1,
+      "skill": 22
+    },
+    "scope": {
+      "scope": "project",
+      "root": "/home/dev/dev/.worktrees/kendex/ken-2221/tmp/research/project"
+    },
+    "name": "kendex",
+    "repo": "vanillagreencom/kendex",
+    "recordsUnreadable": false,
+    "repoKey": "vanillagreencom/kendex",
+    "rev": null,
+    "provenance": "vanillagreencom/kendex",
+    "commit": "901af3ae0188bdc0f0b39ac7142477cc2e600ee2"
+  }
+]
