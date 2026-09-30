@@ -1,6 +1,6 @@
 # In place
 
-Covers: crates/core/src/discover.rs, crates/core/src/engine/tree_plan.rs, crates/core/src/engine/desired_skill.rs, crates/core/src/engine/owned.rs, crates/core/src/engine/generated_paths.rs, crates/core/src/hash.rs, hooks/block-worktree-refresh.sh
+Covers: crates/core/src/discover.rs, crates/core/src/engine/tree_plan.rs, crates/core/src/engine/desired_skill.rs, crates/core/src/engine/owned.rs, crates/core/src/engine/generated_paths.rs, crates/core/src/hash.rs, hooks/block-worktree-refresh.sh, .claude/skills/app-deploy, .claude/skills/kendex-issues, .claude/skills/pi-update
 
 Two places where the thing kendex writes is also the thing it reads: a linked git worktree that carries its own manifest, and a package whose source is its files in place.
 
