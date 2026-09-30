@@ -148,7 +148,7 @@ import {
 	stableSessionSnapshotFingerprint,
 } from "./session-persistence.js";
 import { subagentToolRenderers } from "./subagent-render.js";
-import { TaskRegistryReader, taskNumberById } from "./task-records.js";
+import { taskRegistryReader, taskNumberById } from "./task-records.js";
 import { statTranscriptVersion, TranscriptTailCache, type TranscriptSnapshot } from "./transcript-tail.js";
 import {
 	prepareSingleResultForReturn,
@@ -528,7 +528,6 @@ export default function (pi: ExtensionAPI) {
 	const usageTranscriptVersionsByTask = new Map<string, string>();
 	const summaryBackfillVersionsByTask = new Map<string, string>();
 	const transcriptTails = new TranscriptTailCache();
-	const taskRegistryReader = new TaskRegistryReader();
 	// Terminal registry records the dashboard already reflects. Cleared where a row is
 	// dropped on purpose (removeDashboardAgent, the unknown one-shot branch of
 	// updateDashboardFromTaskRecord) and at session start and end, so the next poll can put

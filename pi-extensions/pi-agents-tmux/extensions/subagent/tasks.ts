@@ -16,6 +16,7 @@ import {
 	transcriptDir,
 } from "./paths.js";
 import { randomHex } from "./random.js";
+import { taskRegistryReader } from "./task-records.js";
 import {
 	type DashboardKind,
 	type CwdSnapshot,
@@ -111,13 +112,9 @@ export async function updateTaskRegistry(runtimeRoot: string, mutator: (records:
 	const filePath = taskRegistryPath(runtimeRoot);
 	let records: PaneTaskRegistry = {};
 	await withCrossProcessFileLock(filePath, async () => {
-		try {
-			const content = await fs.promises.readFile(filePath, "utf-8");
-			const parsed = JSON.parse(content);
-			records = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as PaneTaskRegistry) : {};
-		} catch {
-			records = {};
-		}
+		// Check the file version under the writer lock, then copy the frozen snapshot
+		// so a nested mutation cannot change another reader's view before persistence.
+		records = structuredClone(taskRegistryReader.read(runtimeRoot));
 		mutator(records);
 		await atomicWriteJson(filePath, records);
 	});
@@ -795,7 +792,7 @@ async function pollPaneCompletionsUnlocked(runtimeRoot: string, pi: ExtensionAPI
 	}
 
 	const registry = await readPaneRegistry(runtimeRoot);
-	let tasks = await readTaskRegistry(runtimeRoot);
+	let tasks = taskRegistryReader.read(runtimeRoot);
 	const completions: PaneCompletionDetails[] = [];
 
 	for (const agentDir of agentDirs) {

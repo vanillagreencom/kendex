@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- Completion polling and task updates reuse the dashboard's cached task registry while the file is unchanged. Registry changes apply on the next poll or update. The cache holds only the most recently read runtime and clears when a session ends.
+
 ### 3.2.1
 
 - Session startup keeps fresh transcripts and saved full outputs when their working directory exists and its name ends in whitespace. Cleanup previously trimmed the name and could delete these files.

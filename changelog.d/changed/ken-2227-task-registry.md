@@ -1,0 +1,1 @@
+- Pi agent completion polling and task updates reuse the cached task registry when the file is unchanged, reducing repeated disk reads. Registry changes apply on the next poll or update.

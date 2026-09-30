@@ -149,14 +149,14 @@ function deepFreeze<T>(value: T): T {
 }
 
 /**
- * Reads a runtime's task registry once per file version (`file-version.ts::fileVersion`:
+ * Keeps the most recently read runtime's task registry once per file version (`file-version.ts::fileVersion`:
  * device, inode, byte size and modification time). A read that finds the same version
  * gets the parsed registry it got before, from one stat and no read. That registry is
  * shared by every caller until the version changes, so it is frozen: a caller that
  * needs to change it copies it first. A failed read is not cached and is tried again.
  */
 export class TaskRegistryReader {
-	private readonly cache = new Map<string, { version: string; registry: PaneTaskRegistry }>();
+	private cache: { filePath: string; version: string; registry: PaneTaskRegistry } | undefined;
 
 	read(runtimeRoot: string): PaneTaskRegistry {
 		const filePath = taskRegistryPath(runtimeRoot);
@@ -164,16 +164,16 @@ export class TaskRegistryReader {
 		try {
 			version = fileVersion(fs.statSync(filePath));
 		} catch {
-			this.cache.delete(filePath);
+			this.clear();
 			return EMPTY_TASK_REGISTRY;
 		}
-		const cached = this.cache.get(filePath);
-		if (cached?.version === version) return cached.registry;
+		const cached = this.cache;
+		if (cached?.filePath === filePath && cached.version === version) return cached.registry;
 		let content: string;
 		try {
 			content = fs.readFileSync(filePath, "utf-8");
 		} catch {
-			this.cache.delete(filePath);
+			this.clear();
 			return EMPTY_TASK_REGISTRY;
 		}
 		let registry: PaneTaskRegistry;
@@ -182,11 +182,14 @@ export class TaskRegistryReader {
 		} catch {
 			registry = EMPTY_TASK_REGISTRY;
 		}
-		this.cache.set(filePath, { version, registry });
+		this.cache = { filePath, version, registry };
 		return registry;
 	}
 
 	clear(): void {
-		this.cache.clear();
+		this.cache = undefined;
 	}
 }
+
+/** Shared by task updates, completion polling and dashboard reads; session teardown clears it. */
+export const taskRegistryReader = new TaskRegistryReader();

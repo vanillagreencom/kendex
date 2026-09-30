@@ -11,6 +11,8 @@ import type { AgentConfig } from "../extensions/subagent/agents.js";
 import type { AgentBrowserUiState, AgentPaneStatus, PaneTaskRecord, SubagentDashboardItem } from "../extensions/subagent/types.js";
 import { tempRuntime } from "./single-agent-fixture.js";
 import { clearPackageConfigCache } from "../extensions/subagent/package-config.js";
+import { taskRegistryPath } from "../extensions/subagent/paths.js";
+import type { TaskRegistryReader } from "../extensions/subagent/task-records.js";
 
 export { cleanupTempRuntimes, tempRuntime, writeSettings } from "./single-agent-fixture.js";
 
@@ -44,6 +46,54 @@ export async function importRuntimeCopy(fileName: string, before: string, after:
 	const copy = join(copyDir, fileName);
 	writeFileSync(copy, source);
 	return import(copy);
+}
+
+/** Count reads of registry content through both Node file APIs, without replacing their behavior. */
+export async function taskRegistryReads(root: string, run: () => Promise<unknown>): Promise<number> {
+	const filePath = taskRegistryPath(root);
+	const sync = spyOn(fs, "readFileSync");
+	const asyncRead = spyOn(fs.promises, "readFile");
+	try {
+		await run();
+		return [...sync.mock.calls, ...asyncRead.mock.calls].filter(([file]) => String(file) === filePath).length;
+	} finally {
+		sync.mockRestore();
+		asyncRead.mockRestore();
+	}
+}
+
+/** Pin the no-content-read contract on the real completion poll. */
+export async function assertCachedCompletionPoll(runtime: Pick<typeof import("../extensions/subagent/tasks.js"), "pollPaneCompletions" | "writeTaskRegistry">): Promise<void> {
+	const root = tempRuntime();
+	mkdirSync(join(root, "outbox"), { recursive: true });
+	await runtime.writeTaskRegistry(root, {});
+	const pi = { events: { emit() {} }, sendMessage() {} } as unknown as Parameters<typeof runtime.pollPaneCompletions>[1];
+	assert.equal(await taskRegistryReads(root, () => runtime.pollPaneCompletions(root, pi)), 1);
+	assert.equal(await taskRegistryReads(root, () => runtime.pollPaneCompletions(root, pi)), 0);
+}
+
+/** Pin the cached read and mutable-copy contract on the real registry update. */
+export async function assertCachedRegistryUpdate(runtime: Pick<typeof import("../extensions/subagent/tasks.js"), "updateTaskRegistry" | "writeTaskRegistry">, reader: TaskRegistryReader): Promise<void> {
+	const root = tempRuntime();
+	await runtime.writeTaskRegistry(root, { child: { agent: "engineer", taskId: "child", task: "work", status: "running", createdAt: "2026-09-30T00:00:00Z", filesChanged: ["before.ts"] } });
+	const snapshot = reader.read(root);
+	assert.equal(await taskRegistryReads(root, () => runtime.updateTaskRegistry(root, (records) => {
+		records.child!.filesChanged!.push("after.ts");
+	})), 0);
+	assert.deepEqual(snapshot.child?.filesChanged, ["before.ts"]);
+	assert.deepEqual(reader.read(root).child?.filesChanged, ["before.ts", "after.ts"]);
+}
+
+/** Exercise reuse, cross-runtime eviction and teardown through the reader's public API. */
+export async function assertRegistryReaderCache(reader: TaskRegistryReader): Promise<void> {
+	const roots = [tempRuntime(), tempRuntime()];
+	for (const [index, root] of roots.entries()) writeFileSync(taskRegistryPath(root), JSON.stringify({ [index]: { taskId: String(index) } }));
+	assert.deepEqual(reader.read(roots[0]!), { 0: { taskId: "0" } });
+	assert.equal(await taskRegistryReads(roots[0]!, async () => reader.read(roots[0]!)), 0);
+	assert.deepEqual(reader.read(roots[1]!), { 1: { taskId: "1" } });
+	assert.equal(await taskRegistryReads(roots[0]!, async () => reader.read(roots[0]!)), 1);
+	reader.clear();
+	assert.equal(await taskRegistryReads(roots[0]!, async () => reader.read(roots[0]!)), 1);
 }
 
 /** Deliver Node's file-check notification without waiting for its polling clock. */
