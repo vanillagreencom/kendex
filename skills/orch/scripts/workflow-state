@@ -704,7 +704,7 @@ cap_table() {
 }
 
 # The reviewers a small item's panel may hold, the external lane counted,
-# small.md § 3's other bound.
+# ../workflows/small.md § 3, the other bound.
 SMALL_TIER_PANEL_MAX=3
 
 # One cap's "<field><tab><default><tab><small ceiling>", or the one refusal
@@ -1184,7 +1184,7 @@ archive_write() { # STEM RECORDS PATH...
 }
 
 # `prune [--keep PATH]...`: the retention that
-# schemas/workflow-state.md § Recording policy states, applied to the fleet
+# ../schemas/workflow-state.md § Recording policy states, applied to the fleet
 # state and the directory holding it.
 #
 # A live item's paths stay whatever their age. An item is live while its own

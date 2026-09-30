@@ -240,7 +240,7 @@ emit() {
   # not the answer the caller asked for. Say so in the status: an accept path
   # that printed a refusal must not also report success — that is this issue's
   # own defect class, and every caller that branches on exit status (orch's
-  # waiters, review-pr.md § 3.1, submit-pr.md § 1, the reviewer self-check)
+  # waiters, ../workflows/review-pr.md § 3.1, ../workflows/submit-pr.md § 1, the reviewer self-check)
   # would read the 0 as "artifact accepted".
   emit_unavailable "The check could not run jq. No artifact could be validated." jq
   return 1

@@ -139,7 +139,7 @@ An unterminated fence, front matter, HTML comment or prompt-section block is exi
 
 ## md-refs
 
-A dead reference in a scanned markdown file fails. Fenced code, indented code and front matter are never read. Forms:
+A dead reference in a scanned markdown file fails. A citing file at or below a path in the indexed `.kendex-lock.json` `emitted.paths` warns instead, with the citing file, target and `kendex report` command. A consumer-authored citing file still fails, including one citing a rendered target. `--strict` makes rendered-file references fail too; the catalog install-layout test uses it. An absent lock lists no paths; a scan that reads an unreadable or malformed lock exits 2. Fenced code, indented code and front matter are never read. Forms:
 
 - A link or reference definition whose destination is relative (no scheme, no leading `/`, not `mailto:`) must name a tracked file or directory, resolved against the citing file's directory; `..` above the repository root is dead. With `#anchor`, the target must be markdown and the anchor one of its heading slugs or an explicit `<a id="...">` or `<a name="...">`; a bare `#anchor` resolves in the citing file. A definition is read only where the line begins with its `[label]:`.
 - A code span holding `<path>.md § Heading` must name a tracked file with a heading equal to `Heading` case-insensitively after trimming; one holding `<path>.md#anchor` a tracked file with that slug or explicit anchor. The path resolves against the citing file's directory, then the repository root. A path alone in a code span is not judged.

@@ -13,7 +13,7 @@
 </p>
 
 [documentation]: https://docs.rs/iced_wgpu
-[`iced_runtime`]: ../runtime
+[`iced_runtime`]: https://docs.rs/iced_runtime
 [`wgpu`]: https://github.com/gfx-rs/wgpu
 [native platforms]: https://github.com/gfx-rs/wgpu#supported-platforms
 [WebGPU API]: https://gpuweb.github.io/gpuweb/

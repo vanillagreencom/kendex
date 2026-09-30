@@ -11,7 +11,7 @@
 # markup. The extractor is a character scanner, not a parser: it tracks
 # string literals so a leader inside one is not a comment, tracks a comment
 # that spans lines, and skips a shell heredoc body. Its stated limits are in
-# CHECKS.md § comments.
+# ../CHECKS.md § comments.
 #
 # Two scopes, as todo-ban has them: the lines the staged diff ADDS
 # (--staged), and every tracked file the configured globs name (default).

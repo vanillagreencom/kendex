@@ -47,7 +47,7 @@
 #   that line names the account that just walled.
 #
 #   Every mode but `--dead-pane` reads the caller's LAUNCH RECORD first: the
-#   fleet state's `overseer` object (schemas/workflow-state.md § Oversee
+#   fleet state's `overseer` object (../schemas/workflow-state.md § Oversee state
 #   state), where it names the caller pane on this tmux server. The harness,
 #   account, model and directory it names are taken ahead of the caller's
 #   SessionStart row (lib/session-rows.sh), then --harness, the pane command,
@@ -66,7 +66,7 @@
 #   re-reads the pane's account, which that judgement has already measured.
 #
 #   Run from the overseer's own tmux pane after the overseer handoff file is
-#   rewritten (oversee.md § 5). In order:
+#   rewritten (../workflows/oversee.md § 5). In order:
 #     1. Read ORCH_OVERSEER_SUCCESSION, `on` (default) or `off`. `off` prints
 #        `succession-off`, exits 0 and launches nothing; any other value
 #        refuses `invalid-succession`. Under --check-marks `off` is reported on

@@ -1,0 +1,1 @@
+- Dead references in lock-listed kendex files warn instead of blocking consumer commits. Catalog CI checks references after installation, including hooks and scripts.

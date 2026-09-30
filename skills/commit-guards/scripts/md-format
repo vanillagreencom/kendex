@@ -3,7 +3,7 @@
 # line, with blank lines between paragraphs, list blocks, headings and
 # fences, and no trailing-double-space line break. Fenced code, tables, HTML
 # blocks, indented code and front matter are left as they are. The grammar
-# is lib/md-blocks.awk's, stated in CHECKS.md § md-format; md-reflow is the
+# is lib/md-blocks.awk's, stated in ../CHECKS.md § md-format; md-reflow is the
 # remedy.
 #
 # Scopes: --staged judges every markdown file the staged diff adds or

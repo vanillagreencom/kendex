@@ -382,7 +382,14 @@ function has_section_prefix(target, value,   key, prefix, name, tail, number) {
   return 0
 }
 
-function fail(rule, value) { if (phase == "verdict") printf "V\t%s\t%d\t%s\t%s\n", src_path, line_no, rule, value }
+function fail(rule, value,   path, kind) {
+  if (phase != "verdict") return
+  kind = "V"
+  for (path in rendered) {
+    if (src_path == path || index(src_path, path "/") == 1) { kind = "W"; break }
+  }
+  printf "%s\t%s\t%d\t%s\t%s\n", kind, src_path, line_no, rule, value
+}
 
 function want_target(t) { if (phase == "targets" && !(t in wanted)) { wanted[t] = 1; print t } }
 
@@ -410,7 +417,17 @@ BEGIN {
       exit 2
     }
     load_tracked()
-    if (phase == "verdict") { load_headings(); load_contents(); load_skips() }
+    if (phase == "verdict") {
+      load_headings(); load_contents(); load_skips()
+      if (lock_paths != "") {
+        while ((lock_status = getline path < lock_paths) > 0) rendered[path] = 1
+        if (lock_status < 0) {
+          printf "md-refs: lock-read=%s\n", lock_paths > "/dev/stderr"
+          exit 2
+        }
+        close(lock_paths)
+      }
+    }
     judged = 0
   } else if (mode == "index") {
     printf "F\t%s\n", src

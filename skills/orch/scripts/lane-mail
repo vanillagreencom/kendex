@@ -17,7 +17,7 @@
 # An owner ask in the overseer mailbox is closed by `resolve` alone, exactly
 # once, under the same lock the append takes, and a send carrying a delivery
 # id lands once under that lock too; usage() § Owner channel owns both rules.
-# Text crosses a file, never argv (orch SKILL.md § Harness-Safe Shell).
+# Text crosses a file, never argv (orch ../SKILL.md § Harness-Safe Shell).
 # Bash 3.2-safe: tools/bash32-lint scans this directory.
 
 set -euo pipefail

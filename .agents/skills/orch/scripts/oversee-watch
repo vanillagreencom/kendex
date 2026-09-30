@@ -596,7 +596,7 @@ lane_skipped() { # WINDOW
 }
 
 # The live fleet, read from the oversee workflow state open-terminal writes
-# (schemas/workflow-state.md § Oversee state): a first line counting the
+# (../schemas/workflow-state.md § Oversee state): a first line counting the
 # records no pass carries, then one line per running lane record, item,
 # window, local|hosted, mail_root, harness and the time the record went
 # running in epoch seconds, its running_at or, on a record written before that
@@ -806,7 +806,7 @@ repeat_stop() { # STATUS
 # second start is refused on and `oversee-succeed` restarts this watch from. A
 # live record refuses the start, with two exceptions, whose watch is stopped
 # and replaced: the watch a succession restarted for THIS pane, since that
-# start is the successor running its own watch (oversee.md § 4), and a watch
+# start is the successor running its own watch (../workflows/oversee.md § 4), and a watch
 # whose pane tmux no longer lists, which serves an overseer that is gone. This
 # function is the one place a live watch is replaced. The pid recorded is this
 # process's own, so a stop reaches the loop and never a shell that started it.
@@ -1022,7 +1022,7 @@ HOSTED_GONE_ITEMS=""
 # The clone a hosted lane's worktree belongs to, which its record does not
 # carry: the worktree's `.git` file names it while the worktree stands, read
 # through lib/lane-gitfile.sh's lane_hosted_clone, and STATE's clone-root row
-# keeps it for after merge-pr.md § 5 removes the worktree. A root that is
+# keeps it for after ../workflows/merge-pr.md § 5 removes the worktree. A root that is
 # itself a clone is its own clone. Sets HOSTED_CLONE, and HOSTED_GONE to 1
 # when the worktree is gone. Call after hosted_root.
 hosted_clone() { # ITEM STATE
@@ -1213,7 +1213,7 @@ pass_stop() {
 }
 trap pass_stop TERM
 
-# Auth ladder (gates.md § Waiter auth ladder): a stale env token yields to the
+# Auth ladder (../references/gates.md § Waiter auth ladder): a stale env token yields to the
 # keyring; when neither works, the env token is dropped so the project's
 # GH_BOT_TOKEN can be selected — the last candidate. Never proceed
 # unauthenticated: an unauthenticated `gh pr list` would report an empty
@@ -2639,7 +2639,7 @@ overseer_context_times() {
 # That record, judged each long pass a working overseer is read, so a record
 # that stopped advancing, or advances with no reading, reaches someone instead
 # of passing for a context mark that is watching (who judges that mark:
-# references/oversee-events.md § Judgement rules).
+# ../references/oversee-events.md § Judgement rules).
 #
 # A gap, the reason the hook took no reading, is `overseer-context-unmeasured`
 # on the first long pass it stands, told to the overseer; still standing on

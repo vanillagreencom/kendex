@@ -22,7 +22,7 @@
 # § Item Tier gave the item at its first launch. The round counts come from
 # the lane's own workflow state, read as oversee-report reads it through
 # lib/lane-gitfile.sh's lane_item_state; a lane whose state is gone, which
-# merge-pr.md § 5 removes, records its rounds as null, never as zero, and a
+# ../workflows/merge-pr.md § 5 removes, records its rounds as null, never as zero, and a
 # read that failed also prints `oversee-cycle: rounds-unread item=ITEM` and
 # the reason on stderr.
 #

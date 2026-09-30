@@ -452,6 +452,105 @@ run_rows \
 # exit status, beside the table.
 assert_eq "--help prints usage at exit 0" "rc=0 md-refs: usage=md-refs" "$(run '' --help | sed -n 1p | LC_ALL=C cut -d';' -f1)"
 
+echo "=== lock-listed citing files warn; authored files and strict scans block ==="
+fx_lock_ref() { # NAME POSITION CALLER
+  repo "$1"
+  put "$3" '# Citing file\n\n`skills/orch/references/oversee-events.md § Judgement rules`\n'
+  put .kendex-lock.json "{\"version\":11,\"entries\":{\"skill:orch:codex\":{\"emitted\":{\"paths\":[\"$2\"]}}}}"
+}
+warning() { printf 'md-refs: warning=%s:%s:%s:%s' "$1" "$2" "${3%%=*}" "${3#*=}"; }
+lock_cite="$(nocite 'skills/orch/references/oversee-events.md § Judgement rules' skills/orch/references/oversee-events.md .agents/skills/orch/SKILL.md)"
+warn_record="$(warning .agents/skills/orch/SKILL.md 3 "$lock_cite")"
+fx_lock_exact() { fx_lock_ref "$1" .agents/skills/orch/SKILL.md .agents/skills/orch/SKILL.md; }
+fx_lock_tree() { fx_lock_ref "$1" .agents/skills/orch .agents/skills/orch/SKILL.md; }
+fx_lock_authored() { fx_lock_ref "$1" .agents/skills/orch AGENTS.md; }
+fx_lock_boundary() { fx_lock_ref "$1" .agents/skills/orch .agents/skills/orchard/SKILL.md; }
+fx_lock_index() { fx_lock_tree "$1"; printf '%s' '{"version":11,"entries":{}}' >"$R/.kendex-lock.json"; }
+fx_lock_unstaged() { fx_lock_tree "$1"; git -C "$R" rm --cached .kendex-lock.json; }
+fx_lock_bad() { fx_lock_tree "$1"; put .kendex-lock.json '{"version":11,"entries":{"skill:x:codex":{"emitted":{"paths":["../outside"]}}}}'; }
+fx_lock_version() { fx_lock_tree "$1"; put .kendex-lock.json '{"version":10,"entries":{}}'; }
+fx_lock_json() { fx_lock_tree "$1"; put .kendex-lock.json '{'; }
+fx_lock_empty() { fx_lock_tree "$1"; put .kendex-lock.json '{"version":11,"entries":{}}'; }
+fx_lock_generated() { fx_lock_authored "$1"; put .kendex-generated.json '["AGENTS.md"]'; }
+fx_lock_literal() { fx_lock_ref "$1" '.agents/skills/[orch]' '.agents/skills/[orch]/SKILL.md'; }
+fx_lock_mixed() { fx_lock_tree "$1"; put AGENTS.md '`skills/orch/references/oversee-events.md § Judgement rules`\n'; }
+fx_lock_target() {
+  fx_lock_tree "$1"
+  put .agents/skills/orch/SKILL.md '# Orch\n'
+  put AGENTS.md '`.agents/skills/orch/SKILL.md § Missing`\n'
+}
+run_rows \
+  "an exact emitted citing file warns|fx_lock_exact lock-exact||--all|rc=0 $warn_record;$(clean 1 1) warnings=1" \
+  "a file below an emitted directory warns|fx_lock_tree lock-tree||--all|rc=0 $warn_record;$(clean 1 1) warnings=1" \
+  "strict install checks block for a lock-listed file|fx_lock_tree lock-strict||--all --strict|rc=1 $(dead .agents/skills/orch/SKILL.md 3 "$lock_cite");$(failed 1 1 1)" \
+  "control: the same citation in an authored file blocks|fx_lock_authored lock-authored||--all|rc=1 $(dead AGENTS.md 3 "$(nocite 'skills/orch/references/oversee-events.md § Judgement rules' skills/orch/references/oversee-events.md AGENTS.md)");$(failed 1 1 1)" \
+  "directory ownership stops at a slash|fx_lock_boundary lock-boundary||--all|rc=1 $(dead .agents/skills/orchard/SKILL.md 3 "$(nocite 'skills/orch/references/oversee-events.md § Judgement rules' skills/orch/references/oversee-events.md .agents/skills/orchard/SKILL.md)");$(failed 1 1 1)" \
+  "an unstaged lock edit does not change severity|fx_lock_index lock-index||--all|rc=0 $warn_record;$(clean 1 1) warnings=1" \
+  "an untracked lock does not lower severity|fx_lock_unstaged lock-unstaged||--all|rc=1 $(dead .agents/skills/orch/SKILL.md 3 "$lock_cite");$(failed 1 1 1)" \
+  "an invalid emitted position refuses the scan|fx_lock_bad lock-bad||--all|rc=2 md-refs: lock-paths=.kendex-lock.json" \
+  "an unsupported lock version refuses the scan|fx_lock_version lock-version||--all|rc=2 md-refs: lock-paths=.kendex-lock.json" \
+  "malformed lock JSON refuses the scan|fx_lock_json lock-json||--all|rc=2 md-refs: lock-paths=.kendex-lock.json" \
+  "an empty lock owns nothing|fx_lock_empty lock-empty||--all|rc=1 $(dead .agents/skills/orch/SKILL.md 3 "$lock_cite");$(failed 1 1 1)" \
+  "the generated inventory cannot lower severity|fx_lock_generated lock-generated||--all|rc=1 $(dead AGENTS.md 3 "$(nocite 'skills/orch/references/oversee-events.md § Judgement rules' skills/orch/references/oversee-events.md AGENTS.md)");$(failed 1 1 1)" \
+  "emitted paths are literal, not globs|fx_lock_literal lock-literal||--all|rc=0 $(warning '.agents/skills/[orch]/SKILL.md' 3 "$(nocite 'skills/orch/references/oversee-events.md § Judgement rules' skills/orch/references/oversee-events.md '.agents/skills/[orch]/SKILL.md')");$(clean 1 1) warnings=1" \
+  "warnings do not hide an authored failure|fx_lock_mixed lock-mixed||--all|rc=1 $warn_record;$(dead AGENTS.md 1 "$(nocite 'skills/orch/references/oversee-events.md § Judgement rules' skills/orch/references/oversee-events.md AGENTS.md)");$(failed 1 2 2) warnings=1" \
+  "an authored caller into a render still blocks|fx_lock_target lock-target||--all|rc=1 $(dead AGENTS.md 1 "$(notext '.agents/skills/orch/SKILL.md § Missing' .agents/skills/orch/SKILL.md Missing)");$(failed 1 1 2)"
+
+fx_lock_tree lock-report-command
+report_output="$(cd "$R" && env -i PATH="$PATH" HOME="$HOME" TMPDIR="$TMPDIR" \
+  XDG_CONFIG_HOME="$XDG_CONFIG_HOME" GIT_CONFIG_NOSYSTEM=1 LC_ALL=C "$MDR" --all)"
+case "$report_output" in
+  *'kendex report '*) assert_eq "the warning names the report command" yes yes ;;
+  *) assert_eq "the warning names the report command" yes no ;;
+esac
+
+# Mutate private copies, keeping each matched expression but removing its
+# effect. Each copy must turn the matching production assertion red.
+REAL_MDR="$MDR"
+for control in warn strict position; do
+  copy="$TMP/mutant-$control"
+  mkdir -p "$copy"
+  cp -R "$SKILL_DIR/scripts" "$copy/scripts"
+  case "$control" in
+    warn)
+      file="$copy/scripts/lib/md-refs.awk"
+      match='kind = "W"; break'
+      edit='s/kind = "W"; break/kind = "V"; break/'
+      fx_lock_tree world-mutant-warn
+      args=--all
+      expected="rc=0 $warn_record;$(clean 1 1) warnings=1"
+      ;;
+    strict)
+      file="$copy/scripts/md-refs"
+      match='--strict) STRICT=1 ;;'
+      edit='s/--strict) STRICT=1 ;;/--strict) STRICT=0 ;;/'
+      fx_lock_tree world-mutant-strict
+      args='--all --strict'
+      expected="rc=1 $(dead .agents/skills/orch/SKILL.md 3 "$lock_cite");$(failed 1 1 1)"
+      ;;
+    position)
+      file="$copy/scripts/lib/md-scope.sh"
+      match='all(. != "" and . != "." and . != "..")'
+      edit='s/all(. != "" and . != "." and . != "..")/all(. != "" and . != ".")/'
+      fx_lock_bad world-mutant-position
+      args=--all
+      expected='rc=2 md-refs: lock-paths=.kendex-lock.json'
+      ;;
+  esac
+  matches="$(grep -Fc -- "$match" "$file")" || { echo "control: match=$control" >&2; exit 1; }
+  [ "$matches" -eq 1 ] || { echo "control: match=$control count=$matches" >&2; exit 1; }
+  sed "$edit" "$file" >"$file.edited"
+  ! cmp -s "$file" "$file.edited" || { echo "control: unchanged=$control" >&2; exit 1; }
+  mv "$file.edited" "$file"
+  chmod +x "$file"
+  MDR="$copy/scripts/md-refs"
+  status=0
+  (PASS=0; FAIL=0; assert_eq "$control" "$expected" "$(run '' "$args")"; [ "$FAIL" -eq 0 ]) \
+    >"$TMP/control-$control.log" 2>&1 || status=$?
+  assert_eq "control: $control mutant turns its assertion red" 1 "$status"
+done
+MDR="$REAL_MDR"
+
 echo "=== the skill's own shipped markdown resolves ==="
 fx_shipped() { # the four shipped documents beside what they cite: consumer files by directory, and the one script a `::` citation reads for its phrase
   local doc

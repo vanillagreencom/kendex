@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Launch one or more work item worktrees in a separate terminal/window.
 # This is a handoff helper only; it does not monitor spawned sessions.
-# This is the tmux surface's launcher (oversee.md § 1). Where $TMUX is unset and
+# This is the tmux surface's launcher (../workflows/oversee.md § 1). Where $TMUX is unset and
 # the harness ships its own session or thread launching, the handoff goes
 # through that instead.
 
@@ -183,7 +183,7 @@ WORKFLOW_STATE="$SCRIPT_DIR/workflow-state"
 # that repository's state, which is not the one the watch reads.
 # A launch names a fleet by naming its state: with no --state-dir there is no
 # fleet to record into, so nothing below writes a lane record or creates a
-# state. handoff.md § 2's launch-only commands pass none; every oversee entry
+# state. ../workflows/handoff.md § 2: launch-only commands pass none; every oversee entry
 # point passes the fleet's.
 FLEET=false
 WORKFLOW_STATE_ARGS=()
@@ -1421,8 +1421,8 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
     # substituted: bash 5.2 reads `&` in a ${var//pat/rep} replacement as the
     # matched text.
     # A Pi lane on a carrier without the mail wake arms the lane-mail watch,
-    # and its brief says so: the orch watch-delivery.md § Lane mailbox
-    # monitor brief line, which the overseer's own Pi brief leaves out.
+    # and its brief says so: ../references/watch-delivery.md § Lane mailbox monitor.
+    # The overseer's own Pi brief leaves that line out.
     local text rendered="" quoted brief="$BRIEF_TEXT"
     if [[ "$HARNESS" == pi && "$PI_MAIL_WAKE" == absent && -n "$brief" ]]; then
       brief+=$'\n\n'"As your first step, arm the mailbox monitor \`lane-mail watch --item $mail_id\` per watch-delivery.md § Lane mailbox monitor, re-arm it at each expiry, and run the \`lane-mail inbox\` command each of its announcements prints."
@@ -1481,8 +1481,8 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
     exec="exec "
     print=" -p"
   elif [[ "$RELAUNCH" == true ]]; then
-    # The harnesses whose row in the orch watch-delivery.md § Lane mailbox
-    # monitor names an Arm; that table is the rule, and a Pi lane has one only
+    # The harnesses whose row in ../references/watch-delivery.md § Lane mailbox monitor
+    # names an Arm; that table is the rule, and a Pi lane has one only
     # on a carrier without the mail wake.
     local rearm=""
     case "$HARNESS" in
@@ -2516,7 +2516,7 @@ host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
 # relaunch starts fresh. Or a local lane's handoff record stands,
 # by the one judge `workflow-state handoff-standing` owns, read through
 # lib/lane-state.sh: the lane handed its work to the record and ended its
-# session, and only a fresh start carries the record on, since start.md § 0
+# session, and only a fresh start carries the record on, since ../workflows/start.md § 0
 # reads it and a resumed session never runs that step.
 #
 # The handoff record is asked from the lane's worktree with no --state-dir,
@@ -2666,7 +2666,7 @@ launch_finish() {
     # account a launch was aimed at, so the preparation runs for every local
     # codex launch and not only for one under --lane. A launch with no lane
     # opens into a worktree nothing has trusted just the same, and the command
-    # shape workflows/handoff.md § 2 documents passes no --lane at all. A
+    # shape ../workflows/handoff.md § 2 documents passes no --lane at all. A
     # claude launch under --lane is prepared the same way, into that lane's
     # own config; one with no lane keeps the launch verification's dialog
     # nudge below as its answer. Every local copilot launch takes this branch

@@ -538,7 +538,7 @@ fi
 # uncommitted there, such as a file an earlier step wrote back or an untracked
 # render standing in for one the branch deleted, would be weighed in place of
 # what the pull request would merge. And the commit it sits at is not always
-# --head: references/wiring.md § Shape 4 checks the subject out at the pull
+# --head: Shape 4 in ../references/wiring.md checks the subject out at the pull
 # request's merge ref, and a local caller's checkout can sit anywhere.
 #
 # The private checkout has a git directory of its own, which `git init`

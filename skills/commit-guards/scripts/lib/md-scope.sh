@@ -200,6 +200,36 @@ gg_md_take() { # PATH BLOBFILE SHA
   GG_MD_COUNT=$((GG_MD_COUNT + 1))
 }
 
+# Kendex's project lock records emitted file and directory paths. Read only
+# those positions, never derive a destination from a package or harness name.
+# An absent lock owns nothing. Index policy keeps an unstaged lock edit from
+# lowering the severity of a staged citation.
+gg_md_lock_paths() { # OUTPUT: newline-separated emitted paths
+  local content="" status=0
+  content="$(gg_policy_content .kendex-lock.json)" || status=$?
+  case "$status" in
+    0) ;;
+    1) : >"$1"; return 0 ;;
+    *) gg_fail lock-read "$status" "Could not read .kendex-lock.json from the index." ;;
+  esac
+  jq -rs '
+    def position: type == "string" and length > 0
+      and (explode | all(. >= 32 and . != 127))
+      and (startswith("/") | not)
+      and (split("/") | all(. != "" and . != "." and . != ".."));
+    if length != 1 then error("expected one lock document") else .[0] end
+    | if type != "object" or .version != 11 or (.entries | type) != "object"
+      then error("expected version 11 lock with entries") else .entries end
+    | [ .[] | if type != "object" then error("expected lock entry")
+        elif .emitted == null then empty
+        elif (.emitted | type) != "object" or (.emitted.paths | type) != "array"
+        then error("expected emitted.paths array")
+        else .emitted.paths[] | if position then . else error("invalid emitted path") end end ]
+    | unique | .[]
+  ' <<<"$content" >"$1" 2>"$GG_TMP/lock.err" \
+    || gg_fail_cause lock-paths .kendex-lock.json "$GG_TMP/lock.err" "Could not read emitted paths from .kendex-lock.json."
+}
+
 # Present the shared block-parser enum without putting prose in its records.
 gg_md_block_message() { # RULE PATH LINE — sets GG_MD_RULE and GG_MD_DETAIL
   local rule="$1" path="$2" line="$3"

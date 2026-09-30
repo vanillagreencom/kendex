@@ -22,7 +22,10 @@
 # markdown only, never in comment text, where the section sign pre-filter that
 # keeps the source pass cheap has no counterpart for `::`.
 #
-# Exit codes: 0 clean; 1 dead references; 2 usage/config/collection error.
+# Exit codes: 0 clean or rendered-file warnings; 1 dead authored references;
+# 2 usage/config/collection error. --strict makes every dead reference fail.
+# The catalog-render test reads summary sources and skipped as the source
+# scan's admitted count, and markdown as its separately judged document count.
 set -euo pipefail
 set -f
 
@@ -61,7 +64,12 @@ DECISION_ID_WIDTH_DEFAULT="3"
 usage() {
   gg_message usage md-refs "Command usage follows."
   cat <<EOF
-usage: md-refs [--staged | --base REF | --against REF | --all] [--verbose]
+usage: md-refs [--staged | --base REF | --against REF | --all] [--strict] [--verbose]
+
+A citing file listed under emitted.paths in the indexed .kendex-lock.json,
+including files below a listed directory, warns instead of blocking. Only
+the citing file decides severity; a consumer file citing a render still
+fails. --strict blocks for rendered files too, for the catalog install check.
 
 A dead relative link, code-span section, anchor or content citation, or
 decision reference fails. A link followed by § must start with a heading from
@@ -111,12 +119,14 @@ kendex.settings.toml [env] > default):
   DECISION_ID_PREFIX            (default $DECISION_ID_PREFIX_DEFAULT)
   DECISION_ID_WIDTH             least digits in an ID (default $DECISION_ID_WIDTH_DEFAULT)
 
-Exit codes: 0 clean; 1 dead references; 2 usage/config/collection error.
+Exit codes: 0 clean or rendered-file warnings; 1 dead authored references
+(every dead reference with --strict); 2 usage/config/collection error.
 EOF
 }
 
 STAGED=0
 ALL=0
+STRICT=0
 # Every scope flag is recorded as it is read, not just applied: applying alone
 # loses the first of two, and the exclusivity check would then see one scope.
 while [ $# -gt 0 ]; do
@@ -142,6 +152,7 @@ while [ $# -gt 0 ]; do
       ;;
     --against=*) gg_md_name_range against "${1#--against=}" ;;
     --verbose) GG_VERBOSE=1 ;;
+    --strict) STRICT=1 ;;
     -h | --help)
       usage
       exit 0
@@ -210,6 +221,11 @@ gg_md_scope md-refs "$STAGED" "$ALL"
 GG_MD_MODE=all
 
 gg_tmpdir
+LOCK_PATHS=""
+if [ "$STRICT" -eq 0 ]; then
+  gg_md_lock_paths "$GG_TMP/lock-paths"
+  LOCK_PATHS="$GG_TMP/lock-paths"
+fi
 gg_md_select markdown
 SKIPPED="$GG_WALK_SKIPPED"
 
@@ -440,17 +456,23 @@ done <"$GG_TMP/wanted.sorted"
 # Pass three: the verdict.
 LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=resolve -v phase=verdict -v tracked="$GG_TMP/tracked" -v headings="$GG_TMP/headings.tsv" \
   -v contents="$GG_TMP/contents.tsv" -v skips="$GG_TMP/skips.tsv" \
+  -v lock_paths="$LOCK_PATHS" \
   -v dec_dir="$DEC_DIR" -v dec_judge="$DEC_JUDGE" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/verdict" \
   || gg_fail references-exit "$?" "The reference resolver failed."
 
 REMEDY="point the reference at a tracked file, a heading or phrase it has, or a recorded decision, or delete it"
 violations=0
+warnings=0
 judged=""
 while IFS="$GG_TAB" read -r kind a b c detail; do
   case "$kind" in
     V)
       gg_message "$c" "$a:$b:$detail" "$REMEDY"
       violations=$((violations + 1))
+      ;;
+    W)
+      gg_message warning "$a:$b:$c:$detail" "Use kendex report with --title and --body. Include the citing file and target shown above."
+      warnings=$((warnings + 1))
       ;;
     N) judged="$a" ;;
     T) gg_message unmeasured "$a:$b" "$c" ;;
@@ -459,5 +481,7 @@ while IFS="$GG_TAB" read -r kind a b c detail; do
 done <"$GG_TMP/verdict"
 [ -n "$judged" ] || gg_fail verdict-count missing "The resolver returned no reference count."
 
-gg_message summary "violations=$violations references=$judged markdown=$GG_MD_COUNT sources=$SRC_COUNT decisions=$DEC_JUDGE:$DEC_DIR skipped=$SKIPPED$SKIP_COUNTS" "The reference scan is complete."
+WARNING_COUNT=""
+[ "$warnings" -eq 0 ] || WARNING_COUNT=" warnings=$warnings"
+gg_message summary "violations=$violations references=$judged markdown=$GG_MD_COUNT sources=$SRC_COUNT decisions=$DEC_JUDGE:$DEC_DIR skipped=$SKIPPED$SKIP_COUNTS$WARNING_COUNT" "The reference scan is complete."
 [ "$violations" -eq 0 ] || exit 1

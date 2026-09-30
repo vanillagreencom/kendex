@@ -317,7 +317,7 @@ if [ -f "$EXCLUDES_SOURCE" ]; then
     fi
     # A `!` pattern CARVES its matches back into the measured set, the only
     # way to govern documents living inside an excluded render tree
-    # (references/policy.md § Exclusion list). A row naming a path that begins with `!`
+    # (../references/policy.md § Exclusion list). A row naming a path that begins with `!`
     # escapes it as `\!foo`, which stays an exclusion.
     case "$pat" in
       "!"*)
