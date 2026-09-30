@@ -1,122 +1,73 @@
-/**
- * Sidecar I/O failure paths.
- *
- * Every root-proof way to make a real file refuse a write also makes the next
- * append refuse it, which reports the same code without ever entering the
- * rewrite. These cases stub the three `node:fs` calls the rewrite uses instead,
- * so each failure is reached on its own. Module stubbing is process-wide in
- * Bun and outlives this file, so it lives here alone, the stubs delegate to
- * the real calls unless a case arms them, and every case disarms them on the
- * way out as well as on the way in. A stub left armed hands every later test
- * file a throwing `node:fs` call, which reads as a failure in the code that
- * call belongs to.
- */
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import * as realFs from "node:fs";
-
-import { defaultLimits, makeEnvelope, spillPath, warnings, useHistoryFixture } from "./lib/history-fixture.ts";
-
-interface FailingCall {
-	code: string;
-	calls: number;
-	armed: boolean;
-}
-
-const failing: Record<"writeFileSync" | "openSync" | "unlinkSync", FailingCall> = {
-	writeFileSync: { code: "EROFS", calls: 0, armed: false },
-	openSync: { code: "EIO", calls: 0, armed: false },
-	unlinkSync: { code: "EPERM", calls: 0, armed: false },
-};
-
-function wrap<K extends keyof typeof failing>(name: K) {
-	const real = realFs[name] as (...args: unknown[]) => unknown;
-	return (...args: unknown[]): unknown => {
-		const state = failing[name];
-		state.calls++;
-		if (state.armed) throw Object.assign(new Error(`stubbed ${name}`), { code: state.code, path: String(args[0]) });
-		return real(...args);
-	};
-}
-
-mock.module("node:fs", () => ({
-	...realFs,
-	default: realFs,
-	writeFileSync: wrap("writeFileSync"),
-	openSync: wrap("openSync"),
-	unlinkSync: wrap("unlinkSync"),
-}));
-
-const { BridgeHistory } = await import("../event-history.js");
+import { describe, expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
+import { BridgeHistory } from "../event-history.js";
+import { defaultLimits, makeEnvelope, spillPath, warnings, useHistoryFixture, pushRaw, settle } from "./lib/history-fixture.ts";
 
 useHistoryFixture();
 
-function disarm(): void {
-	for (const state of Object.values(failing)) {
-		state.calls = 0;
-		state.armed = false;
-	}
-}
-
-beforeEach(disarm);
-afterEach(disarm);
+const payload = { delta: "z".repeat(150) };
+const envelope = () => ({ ...makeEnvelope("message_end", 8), truncated: true, originalBytes: 200 });
 
 describe("sidecar I/O failures", () => {
-	const spillPayload = { delta: "z".repeat(150) };
-	const spillEnvelope = () => ({ ...makeEnvelope("message_end", 8), truncated: true, originalBytes: 200 });
-
-	// The rewrite is the only caller of writeFileSync and unlinkSync during a
-	// push, and the only caller of openSync, so a call count of one proves the
-	// failure was reached inside it and not by a later append.
 	for (const row of [
-		{ name: "the rewrite cannot write", call: "writeFileSync" as const },
-		{ name: "the rewrite cannot read", call: "openSync" as const },
+		{ name: "read", mode: "r", code: "EIO", suffix: "" },
+		{ name: "write", mode: "w", code: "EROFS", suffix: ".compact" },
 	]) {
-		test(`${row.name}, the spill reports that call's error`, () => {
-			const limits = { ...defaultLimits, historyLimit: 2, maxRawSpillBytes: 4 * 1024 };
-			const history = new BridgeHistory(spillPath, () => limits, (where: string, error: unknown) => warnings.push({ where, error }));
-			const push = () => history.push(spillEnvelope(), spillPayload);
-
-			push();
-			push();
-			// The third evicts the first, leaving its bytes orphaned in the file.
-			push();
-			const lineBytes = realFs.statSync(spillPath).size / 3;
-
-			// Room for the two live slots plus the incoming line, but not for
-			// the orphan as well, so the next spill must rewrite first.
-			limits.maxRawSpillBytes = Math.ceil(lineBytes * 3);
-			failing[row.call].armed = true;
-			const refused = push();
-
-			expect(failing[row.call].calls).toBe(1);
+		test(`compaction ${row.name} failure reports its own cause and preserves live data`, async () => {
+			const limits = { ...defaultLimits, historyLimit: 2, maxRawSpillBytes: 4096 };
+			const history = new BridgeHistory(spillPath, () => limits, (where, error) => warnings.push({ where, error }));
+			for (let i = 0; i < 3; i++) { pushRaw(history, envelope(), payload); await settle(history); }
+			limits.maxRawSpillBytes = fs.statSync(spillPath).size;
+			const open = fs.promises.open.bind(fs.promises);
+			let calls = 0;
+			const spy = spyOn(fs.promises, "open").mockImplementation(async (...args) => {
+				if (args[1] === row.mode) {
+					calls++;
+					throw Object.assign(new Error(`refused ${row.name}`), { code: row.code, path: String(args[0]) });
+				}
+				return open(...args);
+			});
+			const refused = pushRaw(history, envelope(), payload);
+			try { await settle(history); } finally { spy.mockRestore(); }
+			expect(calls).toBe(1);
 			expect(refused.rawEventRef).toBeUndefined();
-			expect(refused.rawError?.split("\n")[0]).toBe(`error_code=${failing[row.call].code} path=${spillPath}`);
-			// A swallowed rewrite reports here and hands the caller a budget
-			// refusal instead; the propagated one reports under the spill.
-			expect(warnings.some((entry) => entry.where === "compactSidecar")).toBe(false);
-			expect(warnings.some((entry) => entry.where === "spill")).toBe(true);
+			expect(refused.rawError?.split("\n")[0]).toBe(`error_code=${row.code} path=${spillPath}${row.suffix}`);
+			expect(warnings.map((entry) => entry.where)).toEqual(["spill"]);
+			const response = await history.buildResponse({ limit: 2, maxBytes: 4096, raw: true });
+			expect(response.events[0]?.rawRestored).toBe(true);
+			expect(response.events[0]?.data).toEqual(payload);
 		});
 	}
 
-	test("a reclaim that cannot remove the emptied sidecar reports the unlink error", () => {
-		const limits = { ...defaultLimits, historyLimit: 1, maxRawSpillBytes: 4 * 1024 };
-		const history = new BridgeHistory(spillPath, () => limits, (where: string, error: unknown) => warnings.push({ where, error }));
-		const push = () => history.push(spillEnvelope(), spillPayload);
-
-		const first = push();
-		expect(first.rawEventRef).toBe("1");
-		const lineBytes = realFs.statSync(spillPath).size;
-
-		// The next push evicts the only live envelope, so the reclaim keeps no
-		// slot and removes the file outright.
-		limits.maxRawSpillBytes = Math.ceil(lineBytes * 1.5);
-		failing.unlinkSync.armed = true;
-		const refused = push();
-
-		expect(failing.unlinkSync.calls).toBe(1);
+	test("compaction unlink failure reports the file that survived", async () => {
+		const limits = { ...defaultLimits, historyLimit: 1, maxRawSpillBytes: 4096 };
+		const history = new BridgeHistory(spillPath, () => limits, (where, error) => warnings.push({ where, error }));
+		pushRaw(history, envelope(), payload);
+		await settle(history);
+		limits.maxRawSpillBytes = Math.ceil(fs.statSync(spillPath).size * 1.5);
+		const unlink = fs.promises.unlink.bind(fs.promises);
+		const spy = spyOn(fs.promises, "unlink").mockImplementation(async (...args) => {
+			if (args[0] === spillPath) throw Object.assign(new Error("refused unlink"), { code: "EPERM", path: spillPath });
+			return unlink(...args);
+		});
+		const refused = pushRaw(history, envelope(), payload);
+		try { await settle(history); } finally { spy.mockRestore(); }
 		expect(refused.rawEventRef).toBeUndefined();
 		expect(refused.rawError?.split("\n")[0]).toBe(`error_code=EPERM path=${spillPath}`);
-		expect(warnings.some((entry) => entry.where === "compactSidecar")).toBe(false);
-		expect(warnings.some((entry) => entry.where === "spill")).toBe(true);
+		expect(warnings.map((entry) => entry.where)).toEqual(["spill"]);
+	});
+
+	test("append failure releases its reservation so a later event can spill", async () => {
+		const limits = { ...defaultLimits, maxRawSpillBytes: 400 };
+		const history = new BridgeHistory(spillPath, () => limits, (where, error) => warnings.push({ where, error }));
+		const spy = spyOn(fs.promises, "appendFile").mockRejectedValueOnce(Object.assign(new Error("append refused"), { code: "EIO", path: spillPath }));
+		const refused = pushRaw(history, envelope(), payload);
+		try { await settle(history); } finally { spy.mockRestore(); }
+		expect(refused.rawError?.split("\n")[0]).toBe(`error_code=EIO path=${spillPath}`);
+		const next = pushRaw(history, envelope(), payload);
+		await settle(history);
+		expect(next.rawError).toBeUndefined();
+		expect(next.rawEventRef).toBe("2");
+		expect(history.rawSpillBytes).toBe(fs.statSync(spillPath).size);
 	});
 });

@@ -2,7 +2,7 @@ import { afterEach, beforeEach } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { HistoryEnvelope, HistoryLimits } from "../../event-history.js";
+import type { BridgeHistory, HistoryEnvelope, HistoryLimits } from "../../event-history.js";
 
 export const defaultLimits: HistoryLimits = {
 	historyLimit: 500,
@@ -42,4 +42,15 @@ afterEach(() => {
 	rmSync(dir, { recursive: true, force: true });
 });
 
+}
+
+/** Push JSON already serialized by the producer, preserving the envelope for assertions. */
+export function pushRaw(history: BridgeHistory, envelope: HistoryEnvelope, payload: unknown): HistoryEnvelope {
+	history.push(envelope, JSON.stringify(payload));
+	return envelope;
+}
+
+/** A raw history request is the production barrier for queued writes. */
+export async function settle(history: BridgeHistory): Promise<void> {
+	await history.buildResponse({ limit: 500, maxBytes: 16 * 1024 * 1024, raw: true });
 }

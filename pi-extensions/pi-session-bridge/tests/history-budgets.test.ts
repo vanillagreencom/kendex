@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { clearPackageConfigCache } from "../extensions/package-config.ts";
 import sessionBridge from "../extensions/session-bridge.ts";
 
-import { fakePi, fakeCtx, sendCommand, shutdownBridge, writeBridgeSettings, type EventHandler } from "./lib/bridge-fixture.ts";
+import { fakePi, fakeCtx, attachSubscriber, sendCommand, shutdownBridge, writeBridgeSettings, type EventHandler } from "./lib/bridge-fixture.ts";
 
 let dir = "";
 let activeHandlers: Map<string, EventHandler> | undefined;
@@ -102,6 +102,25 @@ describe("history byte budgets", () => {
 		await shutdownBridge(handlers, dir);
 	});
 
+	test("terminal events without an attached subscriber keep only compact history", async () => {
+		writeBridgeSettings(dir);
+		process.chdir(dir);
+		const { pi, handlers } = fakePi();
+		activeHandlers = handlers;
+		sessionBridge(pi);
+		await handlers.get("session_start")?.({ reason: "test" }, fakeCtx(dir));
+		let serializations = 0;
+		await handlers.get("tool_execution_end")?.({ toolName: "probe", result: { toJSON() { serializations++; return { text: "x".repeat(1_000_000) }; } } }, fakeCtx(dir));
+		expect(serializations).toBe(1);
+		const rawSpill = join(process.env.PI_BRIDGE_DIR!, "raw", `${process.pid}.jsonl`);
+		const socketPath = join(process.env.PI_BRIDGE_DIR!, `pi-${process.pid}.sock`);
+		const response = await sendCommand(socketPath, { type: "history", event: "tool_execution_end", raw: true });
+		expect(response.data.events).toHaveLength(1);
+		expect(response.data.events[0]?.rawError?.split("\n")[0]).toBe("spill_subscriber=false");
+		expect(response.data.events[0]?.rawRestored).toBeUndefined();
+		expect(existsSync(rawSpill)).toBe(false);
+	});
+
 	test("message_end spills the whole message and history --raw rehydrates it", async () => {
 		writeBridgeSettings(dir);
 		process.chdir(dir);
@@ -109,6 +128,7 @@ describe("history byte budgets", () => {
 		activeHandlers = handlers;
 		sessionBridge(pi);
 		await handlers.get("session_start")?.({ reason: "test" }, fakeCtx(dir));
+		await attachSubscriber(join(process.env.PI_BRIDGE_DIR!, `pi-${process.pid}.sock`));
 
 		const finalText = "x".repeat(50_000);
 		await handlers.get("message_end")?.({ message: { role: "assistant", content: [{ type: "text", text: finalText }] } }, fakeCtx(dir));
@@ -116,6 +136,7 @@ describe("history byte budgets", () => {
 		const socketPath = join(process.env.PI_BRIDGE_DIR!, `pi-${process.pid}.sock`);
 		expect(existsSync(socketPath)).toBe(true);
 
+		await sendCommand(socketPath, { type: "history", raw: true });
 		const compactResp = await sendCommand(socketPath, { id: "h1", type: "history", limit: 5 });
 		expect(compactResp.success).toBe(true);
 		const compactEnd = (compactResp.data.events as Array<Record<string, unknown>>).find((entry) => entry.event === "message_end");
@@ -231,6 +252,7 @@ describe("history byte budgets", () => {
 		activeHandlers = handlers;
 		sessionBridge(pi);
 		await handlers.get("session_start")?.({ reason: "test" }, fakeCtx(dir));
+		await attachSubscriber(join(process.env.PI_BRIDGE_DIR!, `pi-${process.pid}.sock`));
 
 		// Above maxEventBytes, so each terminal message spills a small raw line.
 		const end = handlers.get("message_end");
@@ -257,9 +279,11 @@ describe("history byte budgets", () => {
 		activeHandlers = handlers;
 		sessionBridge(pi);
 		await handlers.get("session_start")?.({ reason: "test" }, fakeCtx(dir));
+		await attachSubscriber(join(process.env.PI_BRIDGE_DIR!, `pi-${process.pid}.sock`));
 
 		await handlers.get("message_end")?.({ message: { role: "assistant", content: [{ type: "text", text: "z".repeat(50_000) }] } }, fakeCtx(dir));
 
+		await sendCommand(join(process.env.PI_BRIDGE_DIR!, `pi-${process.pid}.sock`), { type: "history", raw: true });
 		const rawSpill = join(process.env.PI_BRIDGE_DIR!, "raw", `${process.pid}.jsonl`);
 		expect(existsSync(rawSpill)).toBe(true);
 		writeFileSync(rawSpill, "not-json\n", { mode: 0o600 });
@@ -282,9 +306,11 @@ describe("history byte budgets", () => {
 		activeHandlers = handlers;
 		sessionBridge(pi);
 		await handlers.get("session_start")?.({ reason: "test" }, fakeCtx(dir));
+		await attachSubscriber(join(process.env.PI_BRIDGE_DIR!, `pi-${process.pid}.sock`));
 
 		await handlers.get("message_end")?.({ message: { role: "assistant", content: [{ type: "text", text: "y".repeat(50_000) }] } }, fakeCtx(dir));
 
+		await sendCommand(join(process.env.PI_BRIDGE_DIR!, `pi-${process.pid}.sock`), { type: "history", raw: true });
 		const rawSpill = join(process.env.PI_BRIDGE_DIR!, "raw", `${process.pid}.jsonl`);
 		expect(existsSync(rawSpill)).toBe(true);
 		const lines = readFileSync(rawSpill, "utf8").split("\n").filter(Boolean);

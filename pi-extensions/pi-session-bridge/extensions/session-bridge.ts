@@ -379,7 +379,7 @@ export default function sessionBridge(pi: ExtensionAPI) {
 		exitHandler = undefined;
 		await unlinkIfExists(socketPath);
 		await unlinkIfExists(registryPath);
-		history.cleanup();
+		await history.cleanup();
 		rawSpillWarned = false;
 		currentCtx = undefined;
 		stopping = false;
@@ -472,7 +472,7 @@ export default function sessionBridge(pi: ExtensionAPI) {
 						command.maxBytes ?? command.max_bytes,
 						Math.max(0, settingNumber("maxHistoryResponseBytes", DEFAULT_MAX_HISTORY_RESPONSE_BYTES, responseCwd)),
 					);
-					const response = history.buildResponse({
+					const response = await history.buildResponse({
 						limit: Math.min(requested, historyLimit),
 						maxBytes: maxResponseBytes,
 						event: eventFilter,
@@ -634,25 +634,26 @@ export default function sessionBridge(pi: ExtensionAPI) {
 			previewBytes: Math.max(0, configNumber(config, "eventPreviewBytes", DEFAULT_PREVIEW_BYTES)),
 		};
 		const sanitized = sanitizeBridgeEvent(event, data, sanitizerConfig);
-		const envelope = toJsonable({
+		const envelope: HistoryEnvelope = {
 			type: "event",
 			event,
 			timestamp: new Date().toISOString(),
 			data: sanitized.data,
-		}) as HistoryEnvelope;
+		};
 
 		if (sanitized.truncated) {
 			envelope.truncated = true;
 			envelope.originalBytes = sanitized.originalBytes;
 		}
 
-		history.push(envelope, sanitized.truncated ? sanitized.raw : undefined);
-		broadcast(envelope as JsonObject);
+		const subscribed = [...clients].some((client) => client.events && !client.socket.destroyed);
+		const json = history.push(envelope, sanitized.rawJson, sanitized.dataJson, subscribed);
+		broadcast(envelope as JsonObject, json);
 	}
 
-	function broadcast(payload: JsonObject) {
+	function broadcast(payload: JsonObject, json?: string) {
 		for (const client of clients) {
-			if (client.events) send(client, payload);
+			if (client.events) send(client, payload, json);
 		}
 	}
 
@@ -975,7 +976,7 @@ export const CLIENT_QUEUE_MAX_BYTES = 8 * 1024 * 1024;
 /** The first line of the error a stalled client is disconnected with. */
 export const CLIENT_STALLED_KEY = "bridge-client-stalled";
 
-function send(client: BridgeClient, payload: unknown) {
+function send(client: BridgeClient, payload: unknown, json?: string) {
 	const socket = client.socket;
 	if (socket.destroyed) return;
 	// `writableLength` is what write() has accepted and not yet flushed: the
@@ -985,7 +986,7 @@ function send(client: BridgeClient, payload: unknown) {
 		socket.destroy(new Error(`${CLIENT_STALLED_KEY}=${queued}\nThe client left more than ${CLIENT_QUEUE_MAX_BYTES} bytes unread; it was disconnected.`));
 		return;
 	}
-	socket.write(`${JSON.stringify(toJsonable(payload))}\n`);
+	socket.write(`${json ?? JSON.stringify(toJsonable(payload))}\n`);
 }
 
 function normalizeDelivery(value: unknown, fallback: Delivery): Delivery {

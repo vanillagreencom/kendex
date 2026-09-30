@@ -9,12 +9,13 @@
  * Raw spill semantics:
  *   - Each compact envelope can be paired with a raw JSONL line on disk.
  *   - Slots track `{ ref, offset, length }` so rehydration is one O(1)
- *     pread per envelope, not a full sidecar scan.
+ *     pread per envelope, not a full sidecar scan. Pending slots reserve bytes
+ *     before enqueueing; raw history requests wait for the FIFO worker.
  *   - When a raw retention budget is configured and the live slots alone
  *     cannot hold the incoming payload, the spill is refused and the envelope
  *     keeps compact-only data plus an explicit `rawError` marker. The file is
  *     not touched: a refusal costs no I/O.
- *   - The sidecar is rewritten in place only to reclaim orphaned bytes, those
+ *   - The worker replaces the sidecar only to reclaim orphaned bytes, those
  *     left by evicted envelopes. That rewrite therefore always makes room, so
  *     one event costs at most one rewrite or one refusal, never both. A
  *     rewrite that fails names its own I/O error on the envelope.
@@ -24,6 +25,7 @@ import { stringifyError } from "./diagnostics.js";
 import { Buffer } from "node:buffer";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { setImmediate as nextTurn } from "node:timers/promises";
 
 export interface HistoryEnvelope {
 	type: string;
@@ -63,20 +65,34 @@ export interface HistoryResponse {
 
 interface HistoryEntry {
 	envelope: HistoryEnvelope;
+	dataJson: string;
+	json: string;
 	bytes: number;
 	rawSlot?: RawSlot;
 }
 
-interface RawSlot {
-	ref: string;
-	offset: number;
+type RawSlot = { ref: string; length: number } & (
+	| { state: "pending" }
+	| { state: "stored"; offset: number }
+);
+
+interface SpillJob {
+	entry: HistoryEntry;
+	line: string;
 	length: number;
+	budget: number;
 }
+
+const MAX_QUEUED_RAW_BYTES = 16 * 1024 * 1024;
+const MAX_QUEUED_RAW_EVENTS = 64;
 
 export type HistoryWarn = (where: string, error: unknown) => void;
 
 const messages = {
 	disabled: "spill_enabled=false\nRaw spill is disabled.",
+	unsubscribed: "spill_subscriber=false\nNo bridge event subscriber was attached.",
+	pending: "spill_pending=true\nRaw spill is queued; history --raw waits for it.",
+	queue: "spill_queue_full=true\nThe bounded raw spill queue is full.",
 	budget: (bytes: number) => `spill_max_bytes=${bytes}\nRaw spill exceeds the configured limit.`,
 	refMismatch: (offset: number) => `raw_ref_offset=${offset}\nThe raw event reference does not match.`,
 	noRawPayload: "raw_retained=false\nThe sanitizer kept no raw payload for this event, so there is nothing to restore.",
@@ -84,14 +100,16 @@ const messages = {
 
 export class BridgeHistory {
 	private readonly entries: HistoryEntry[] = [];
-	private readonly rawIndex = new Map<string, RawSlot>();
 	readonly rawSpillPath: string;
 	private readonly limits: () => HistoryLimits;
 	private readonly warn: HistoryWarn;
 	private bytes = 0;
 	private rawBytes = 0;
 	private rawSequence = 0;
-	private lastSpillError: string | undefined;
+	private readonly queue: SpillJob[] = [];
+	private queuedBytes = 0;
+	private queuedCount = 0;
+	private work: Promise<void> | undefined;
 
 	constructor(
 		rawSpillPath: string,
@@ -120,32 +138,36 @@ export class BridgeHistory {
 		return this.entries.map((entry) => entry.envelope);
 	}
 
-	/** Push a compact envelope; optionally spill the raw payload to the sidecar. */
-	push(envelope: HistoryEnvelope, rawPayload?: unknown): HistoryEnvelope {
+	/** Retain serialized compact data and queue raw data only for attached event subscribers. */
+	push(envelope: HistoryEnvelope, rawJson?: string, dataJson = JSON.stringify(envelope.data) ?? "null", subscribed = true): string {
 		const limits = this.limits();
-		// Evict by count first so the raw spill budget reflects only live entries.
 		while (this.entries.length >= limits.historyLimit && this.entries.length > 0) this.evictOldest();
-
-		let rawSlot: RawSlot | undefined;
-		if (envelope.truncated && rawPayload !== undefined) {
-			if (limits.spillEnabled) {
-				rawSlot = this.spill(envelope.event, envelope.timestamp, rawPayload, limits);
-				if (rawSlot) {
-					envelope.rawEventPath = this.rawSpillPath;
-					envelope.rawEventRef = rawSlot.ref;
-					delete envelope.rawError;
-				} else if (this.lastSpillError) {
-					envelope.rawError = this.lastSpillError;
-				}
-			} else {
-				envelope.rawError = messages.disabled;
-			}
+		// Retain the bounded JSON value, not an upstream object whose toJSON hides other data.
+		envelope.data = JSON.parse(dataJson) as unknown;
+		const entry: HistoryEntry = { envelope, dataJson, json: "", bytes: 0 };
+		if (envelope.truncated && rawJson !== undefined) {
+			if (!limits.spillEnabled) envelope.rawError = messages.disabled;
+			else if (!subscribed) envelope.rawError = messages.unsubscribed;
+			else this.enqueue(entry, rawJson, limits);
 		}
-		const bytes = Buffer.byteLength(JSON.stringify(envelope), "utf8");
-		this.entries.push({ envelope, bytes, rawSlot });
-		this.bytes += bytes;
+		this.updateEntry(entry);
+		this.entries.push(entry);
+		this.bytes += entry.bytes;
+		this.trim(limits);
+		return entry.json;
+	}
+
+	private updateEntry(entry: HistoryEntry): void {
+		// Serialize only metadata. The payload string is shared with measurement and spill.
+		const metadata = JSON.stringify({ ...entry.envelope, data: undefined });
+		entry.json = `${metadata.slice(0, -1)},"data":${entry.dataJson}}`;
+		const bytes = Buffer.byteLength(entry.json, "utf8");
+		if (this.entries.includes(entry)) this.bytes += bytes - entry.bytes;
+		entry.bytes = bytes;
+	}
+
+	private trim(limits: HistoryLimits): void {
 		while (limits.maxHistoryBytes > 0 && this.bytes > limits.maxHistoryBytes && this.entries.length > 1) this.evictOldest();
-		return envelope;
 	}
 
 	private evictOldest(): void {
@@ -153,7 +175,6 @@ export class BridgeHistory {
 		if (!removed) return;
 		this.bytes -= removed.bytes;
 		if (removed.rawSlot) {
-			this.rawIndex.delete(removed.rawSlot.ref);
 			this.rawBytes -= removed.rawSlot.length;
 		}
 		// Sidecar reclamation happens lazily on the next spill that needs space.
@@ -174,7 +195,8 @@ export class BridgeHistory {
 	 *      surface as `rawError` on that envelope and aggregate into the
 	 *      `rawErrors` array.
 	 */
-	buildResponse(filters: HistoryFilters): HistoryResponse {
+	async buildResponse(filters: HistoryFilters): Promise<HistoryResponse> {
+		if (filters.raw) while (this.work) await this.work;
 		const maxBytes = Math.max(0, Math.floor(filters.maxBytes));
 		let candidates = this.entries.slice();
 		if (filters.event) candidates = candidates.filter((entry) => entry.envelope.event === filters.event);
@@ -194,7 +216,7 @@ export class BridgeHistory {
 			bytes += entry.bytes;
 		}
 
-		const events: HistoryEnvelope[] = selected.map((entry) => clone(entry.envelope));
+		const events: HistoryEnvelope[] = selected.map((entry) => JSON.parse(entry.json) as HistoryEnvelope);
 		const rawErrors: string[] = [];
 
 		if (filters.raw && events.length > 0) {
@@ -222,6 +244,7 @@ export class BridgeHistory {
 					continue;
 				}
 				const compactSize = Buffer.byteLength(JSON.stringify(target), "utf8");
+				if (entry.rawSlot.state !== "stored") throw new Error("Raw history read reached a pending spill");
 				const read = this.readRaw(entry.rawSlot);
 				if (!read.ok) {
 					// A failure is reported whatever the budget; only optional
@@ -250,72 +273,107 @@ export class BridgeHistory {
 		};
 	}
 
-	/** Drop all in-memory state and remove the sidecar file. */
-	cleanup(): void {
+	/** Cancel pending work, wait for in-flight I/O, then remove the sidecar. */
+	async cleanup(): Promise<void> {
 		this.entries.length = 0;
 		this.bytes = 0;
 		this.rawBytes = 0;
-		this.rawIndex.clear();
-		try {
-			fs.unlinkSync(this.rawSpillPath);
-		} catch {
-			// Already gone or not created yet.
+		for (const job of this.queue.splice(0)) {
+			this.queuedBytes -= job.length;
+			this.queuedCount--;
 		}
-	}
-
-	private spill(event: string, timestamp: string, raw: unknown, limits: HistoryLimits): RawSlot | undefined {
-		this.lastSpillError = undefined;
+		await this.work;
 		try {
-			const ref = String(++this.rawSequence);
-			const line = `${JSON.stringify({ ref, event, timestamp, data: raw })}\n`;
-			const length = Buffer.byteLength(line, "utf8");
-
-			if (limits.maxRawSpillBytes > 0) {
-				// The live slots are what a rewrite would keep, so when they
-				// alone leave no room the payload cannot fit at any file size.
-				// Refuse before reading or writing the sidecar; a streaming turn
-				// otherwise pays a full read plus a full rewrite per event.
-				if (this.rawBytes + length > limits.maxRawSpillBytes) return this.refuseSpill(limits.maxRawSpillBytes);
-				// Past the cap while the live slots still fit means the file
-				// holds orphaned lines from evicted envelopes. Reclaiming them
-				// leaves the live total, which the check above proved fits, so
-				// the append below needs no second budget check. A failed
-				// rewrite throws to the catch, where the I/O cause becomes the
-				// envelope's rawError rather than a misleading budget refusal.
-				if (this.currentFileSize() + length > limits.maxRawSpillBytes) this.compactSidecar();
-			}
-
-			this.ensureRawDir();
-			const offset = this.currentFileSize();
-			fs.appendFileSync(this.rawSpillPath, line, { mode: 0o600 });
-			const slot: RawSlot = { ref, offset, length };
-			this.rawIndex.set(ref, slot);
-			this.rawBytes += length;
-			return slot;
+			await fs.promises.unlink(this.rawSpillPath);
 		} catch (error) {
-			this.lastSpillError = stringifyError(error);
-			this.warn("spill", error);
-			return undefined;
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.warn("cleanup", error);
 		}
 	}
 
-	private refuseSpill(budget: number): undefined {
-		this.lastSpillError = messages.budget(budget);
-		this.warn("spill.budget", new Error(this.lastSpillError));
-		return undefined;
+	private enqueue(entry: HistoryEntry, rawJson: string, limits: HistoryLimits): void {
+		const ref = String(++this.rawSequence);
+		const metadata = JSON.stringify({ ref, event: entry.envelope.event, timestamp: entry.envelope.timestamp });
+		const line = `${metadata.slice(0, -1)},"data":${rawJson}}\n`;
+		const length = Buffer.byteLength(line, "utf8");
+		if (limits.maxRawSpillBytes > 0 && this.rawBytes + length > limits.maxRawSpillBytes) {
+			entry.envelope.rawError = messages.budget(limits.maxRawSpillBytes);
+			this.warn("spill.budget", new Error(entry.envelope.rawError));
+			return;
+		}
+		if (this.queuedBytes + length > MAX_QUEUED_RAW_BYTES || this.queuedCount >= MAX_QUEUED_RAW_EVENTS) {
+			entry.envelope.rawError = messages.queue;
+			this.warn("spill.queue", new Error(messages.queue));
+			return;
+		}
+		entry.rawSlot = { state: "pending", ref, length };
+		entry.envelope.rawEventPath = this.rawSpillPath;
+		entry.envelope.rawEventRef = ref;
+		entry.envelope.rawError = messages.pending;
+		this.rawBytes += length;
+		this.queuedBytes += length;
+		this.queuedCount++;
+		this.queue.push({ entry, line, length, budget: limits.maxRawSpillBytes });
+		if (!this.work) this.work = this.drain();
 	}
 
-	private currentFileSize(): number {
+	private async drain(): Promise<void> {
+		// Start after publish returns. The queue bound includes the in-flight job.
+		await nextTurn();
 		try {
-			return fs.statSync(this.rawSpillPath).size;
+			let job: SpillJob | undefined;
+			while ((job = this.queue.shift()) !== undefined) {
+				try {
+					if (!this.entries.includes(job.entry)) continue;
+					await this.spill(job);
+				} catch (error) {
+					if (this.entries.includes(job.entry)) {
+						this.rawBytes -= job.length;
+						job.entry.rawSlot = undefined;
+						delete job.entry.envelope.rawEventPath;
+						delete job.entry.envelope.rawEventRef;
+						job.entry.envelope.rawError = stringifyError(error);
+					}
+					this.warn("spill", error);
+				} finally {
+					this.queuedBytes -= job.length;
+					this.queuedCount--;
+					if (this.entries.includes(job.entry)) {
+						this.updateEntry(job.entry);
+						this.trim(this.limits());
+					}
+				}
+			}
+		} finally {
+			this.work = undefined;
+		}
+	}
+
+	private async spill(job: SpillJob): Promise<void> {
+		const slot = job.entry.rawSlot;
+		if (!slot || slot.state !== "pending") throw new Error("Spill job has no pending slot");
+		let offset = await this.currentFileSize();
+		if (job.budget > 0 && offset + job.length > job.budget) {
+			await this.compactSidecar();
+			offset = await this.currentFileSize();
+		}
+		if (!this.entries.includes(job.entry)) return;
+		await fs.promises.mkdir(path.dirname(this.rawSpillPath), { recursive: true, mode: 0o700 });
+		await fs.promises.appendFile(this.rawSpillPath, job.line, { mode: 0o600 });
+		job.entry.rawSlot = { state: "stored", ref: slot.ref, length: slot.length, offset };
+		delete job.entry.envelope.rawError;
+	}
+
+	private async currentFileSize(): Promise<number> {
+		try {
+			return (await fs.promises.stat(this.rawSpillPath)).size;
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
 			throw error;
 		}
 	}
 
-	private readRaw(slot: RawSlot): { ok: true; data: unknown } | { ok: false; error: string } {
-		const current = this.rawIndex.get(slot.ref) ?? slot;
+	private readRaw(slot: Extract<RawSlot, { state: "stored" }>): { ok: true; data: unknown } | { ok: false; error: string } {
+		const current = slot;
 		try {
 			const fd = fs.openSync(this.rawSpillPath, "r");
 			try {
@@ -333,60 +391,48 @@ export class BridgeHistory {
 		}
 	}
 
-	/**
-	 * Rewrite the sidecar with the live slots alone, dropping the bytes of
-	 * evicted envelopes. Throws the underlying I/O error rather than reporting
-	 * a rewrite that did not happen; the caller turns it into the spill's own
-	 * failure, and the accounting is updated only once the write succeeded.
-	 */
-	private compactSidecar(): void {
-		const alive = this.entries.filter((entry) => entry.rawSlot).map((entry) => entry.rawSlot!);
+	/** Reclaim orphaned bytes in the same FIFO worker as append operations. */
+	private async compactSidecar(): Promise<void> {
+		const alive = this.entries.flatMap((entry) => entry.rawSlot?.state === "stored" ? [entry.rawSlot] : []);
 		if (alive.length === 0) {
-			try {
-				fs.unlinkSync(this.rawSpillPath);
-			} catch (error) {
-				// A file that survives removal keeps its bytes against the
-				// budget, so the caller must hear the removal's own cause
-				// rather than compute a refusal from a file it failed to drop.
-				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-			}
-			this.rawIndex.clear();
-			this.rawBytes = 0;
+			try { await fs.promises.unlink(this.rawSpillPath); }
+			catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
 			return;
 		}
-		const fd = fs.openSync(this.rawSpillPath, "r");
-		const buffers: Buffer[] = [];
+		const temporary = `${this.rawSpillPath}.compact`;
+		const input = await fs.promises.open(this.rawSpillPath, "r");
 		try {
-			for (const slot of alive) {
-				const buf = Buffer.alloc(slot.length);
-				fs.readSync(fd, buf, 0, slot.length, slot.offset);
-				buffers.push(buf);
-			}
+			const output = await fs.promises.open(temporary, "w", 0o600);
+			const offsets: number[] = [];
+			try {
+				// One bounded buffer, not a second full sidecar held by Buffer.concat.
+				const buffer = Buffer.alloc(64 * 1024);
+				let cursor = 0;
+				for (const slot of alive) {
+					offsets.push(cursor);
+					let copied = 0;
+					while (copied < slot.length) {
+						const { bytesRead } = await input.read(buffer, 0, Math.min(buffer.length, slot.length - copied), slot.offset + copied);
+						if (bytesRead === 0) throw new Error("Raw sidecar ended before the retained slot");
+						let written = 0;
+						while (written < bytesRead) {
+							const result = await output.write(buffer, written, bytesRead - written, cursor + written);
+							if (result.bytesWritten === 0) throw new Error("Raw sidecar compaction wrote no bytes");
+							written += result.bytesWritten;
+						}
+						copied += bytesRead;
+						cursor += bytesRead;
+					}
+				}
+			} finally { await output.close(); }
+			await fs.promises.rename(temporary, this.rawSpillPath);
+			alive.forEach((slot, i) => { slot.offset = offsets[i]!; });
 		} finally {
-			fs.closeSync(fd);
+			await input.close();
+			try { await fs.promises.unlink(temporary); }
+			catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.warn("compact.cleanup", error); }
 		}
-		fs.writeFileSync(this.rawSpillPath, Buffer.concat(buffers), { mode: 0o600 });
-		this.rawIndex.clear();
-		let cursor = 0;
-		for (let i = 0; i < alive.length; i++) {
-			const slot = alive[i]!;
-			const length = buffers[i]!.length;
-			slot.offset = cursor;
-			slot.length = length;
-			this.rawIndex.set(slot.ref, slot);
-			cursor += length;
-		}
-		this.rawBytes = cursor;
 	}
-
-	private ensureRawDir(): void {
-		const dir = path.dirname(this.rawSpillPath);
-		if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-	}
-}
-
-function clone(envelope: HistoryEnvelope): HistoryEnvelope {
-	return JSON.parse(JSON.stringify(envelope)) as HistoryEnvelope;
 }
 
 

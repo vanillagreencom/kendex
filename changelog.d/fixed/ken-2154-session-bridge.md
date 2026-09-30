@@ -1,0 +1,1 @@
+- Session Bridge reuses serialized events and saves raw history through a bounded asynchronous queue only while an event subscriber is attached, so unused bridges do not write large results to disk.

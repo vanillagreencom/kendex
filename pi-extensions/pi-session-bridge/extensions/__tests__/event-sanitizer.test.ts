@@ -63,7 +63,7 @@ describe("sanitizeBridgeEvent", () => {
 			expect(result.data).toEqual(row.expected);
 			expect(result.originalBytes).toBe(row.originalBytes);
 			expect(result.truncated).toBe(true);
-			expect(result.raw).toBeUndefined();
+			expect(result.rawJson).toBeUndefined();
 		});
 	}
 
@@ -81,7 +81,7 @@ describe("sanitizeBridgeEvent", () => {
 		expect(result.data).toEqual({ summary: "message_update payload omitted (exceeded 40 bytes)", truncated: true, originalBytes: 400, maxBytes: 40 });
 		expect(result.truncated).toBe(true);
 		expect(result.originalBytes).toBe(400);
-		expect(result.raw).toBeUndefined();
+		expect(result.rawJson).toBeUndefined();
 	});
 
 	for (const event of ["message_update", "tool_execution_update"]) {
@@ -90,7 +90,7 @@ describe("sanitizeBridgeEvent", () => {
 				const result = sanitizeBridgeEvent(event, payload, baseConfig);
 				expect(result.data).toEqual(payload);
 				expect(result.truncated).toBe(false);
-				expect(result.raw).toBeUndefined();
+				expect(result.rawJson).toBeUndefined();
 			}
 		});
 	}
@@ -105,7 +105,7 @@ describe("sanitizeBridgeEvent", () => {
 			expect(data.truncated).toBe(true);
 			expect("nodes" in data).toBe(false);
 			expect(result.truncated).toBe(true);
-			expect(result.raw).toEqual(payload);
+			expect(result.rawJson).toBe(JSON.stringify(payload));
 		});
 	}
 
@@ -115,7 +115,7 @@ describe("sanitizeBridgeEvent", () => {
 		expect(result.data).toEqual({ toolName: "Bash", toolUseId: "tcl_9" });
 		expect(result.originalBytes).toBe(0);
 		expect(result.truncated).toBe(true);
-		expect(result.raw).toBeUndefined();
+		expect(result.rawJson).toBeUndefined();
 	});
 
 	test("tool_execution_end compacts heavy result and surfaces byte counts", () => {
@@ -139,7 +139,7 @@ describe("sanitizeBridgeEvent", () => {
 		expect((data.resultPreview as string).length).toBeLessThanOrEqual(32);
 		expect("result" in data).toBe(false);
 		expect(result.truncated).toBe(true);
-		expect(result.raw).toEqual(payload);
+		expect(result.rawJson).toBe(JSON.stringify(payload));
 	});
 
 	test("agent_end compacts a long message list to a preview + count", () => {
@@ -184,7 +184,7 @@ describe("sanitizeBridgeEvent", () => {
 				expect("text" in data).toBe(false);
 				expect("images" in data).toBe(false);
 				expect(result.truncated).toBe(true);
-				expect(result.raw).toEqual(row.payload);
+				expect(result.rawJson).toBe(JSON.stringify(row.payload));
 			} else {
 				expect(data.textPreview).toBe("idle prompt");
 				expect("streamingBehavior" in data).toBe(false);
@@ -204,10 +204,10 @@ describe("sanitizeBridgeEvent", () => {
 				expect(data.truncated).toBe(true);
 				expect(typeof data.originalBytes).toBe("number");
 				expect(data.maxBytes).toBe(1024);
-				expect(result.raw).toEqual(row.payload);
+				expect(result.rawJson).toBe(JSON.stringify(row.payload));
 			} else {
 				expect(result.data).toEqual(row.payload);
-				expect(result.raw).toBeUndefined();
+				expect(result.rawJson).toBeUndefined();
 			}
 		});
 	}
@@ -234,7 +234,7 @@ describe("sanitizeBridgeEvent", () => {
 					expect(data.namePreview).toBe(row.name);
 					expect("nameTruncated" in data).toBe(false);
 				}
-				expect(result.raw).toEqual(payload);
+				expect(result.rawJson).toBe(JSON.stringify(payload));
 			} else {
 				expect(data).toEqual({});
 			}
@@ -246,7 +246,7 @@ describe("sanitizeBridgeEvent", () => {
 			const result = sanitizeBridgeEvent("session_info_changed", payload, baseConfig);
 			expect(result.data).toEqual(payload);
 			expect(result.truncated).toBe(false);
-			expect(result.raw).toBeUndefined();
+			expect(result.rawJson).toBeUndefined();
 		}
 	});
 
@@ -276,6 +276,39 @@ describe("sanitizeBridgeEvent", () => {
 			expect((data.finalTextPreview as string).length).toBeGreaterThan(0);
 		});
 	}
+
+	for (const row of [
+		{ name: "nested containers and delimiters", value: { content: ["a,}:[]", { text: "é\\\"\\\\" }], done: true } },
+		{ name: "string escape at the end", value: "end\\\\" },
+		{ name: "empty result", value: {} },
+		{ name: "null top-level field with a nested result", value: [null, false, 0] },
+	]) {
+		test(`tool preview reuses serialized fields: ${row.name}`, () => {
+			const payload = { result: null, toolCall: { name: "probe", result: row.value } };
+			const result = sanitizeBridgeEvent("tool_execution_end", payload, { ...baseConfig, previewBytes: 1024 });
+			const preview = typeof row.value === "string" ? row.value : JSON.stringify(row.value);
+			expect(result.data).toMatchObject({ resultBytes: Buffer.byteLength(preview), resultPreview: preview });
+			expect(result.rawJson).toBe(JSON.stringify(payload));
+			expect(JSON.parse(result.dataJson)).toEqual(result.data);
+		});
+	}
+
+	for (const event of ["tool_execution_end", "session_tree", "message_end", "bridge_pong"]) {
+		test(`${event} serializes the original payload and each nested result once`, () => {
+			let calls = 0;
+			const payload = { result: { toJSON() { calls++; return { text: "x".repeat(50_000) }; } } };
+			const result = sanitizeBridgeEvent(event, payload, baseConfig);
+			expect(calls).toBe(1);
+			expect(result.originalBytes).toBe(50_022);
+			expect(JSON.parse(result.rawJson!)).toEqual({ result: { text: "x".repeat(50_000) } });
+		});
+	}
+
+	test("unserializable events report serialization failure", () => {
+		const circular: Record<string, unknown> = {};
+		circular.self = circular;
+		expect(() => sanitizeBridgeEvent("message_end", circular, baseConfig)).toThrow("Bridge event serialization failed");
+	});
 
 	test("originalBytes reflects raw JSON length", () => {
 		const payload = { text: "abc", source: "interactive" };

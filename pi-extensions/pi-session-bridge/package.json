@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-session-bridge",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Pi extension and CLI for controlling visible interactive Pi sessions over a structured Unix-socket side channel.",
   "license": "MIT",
   "keywords": [
@@ -111,7 +111,7 @@
         {
           "key": "spillRawEvents",
           "label": "Spill raw events",
-          "description": "Write oversized event payloads to a per-session JSONL sidecar so history --raw can rehydrate them.",
+          "description": "Queue oversized event payloads for raw history while an event subscriber is attached. A full queue leaves compact data with rawError.",
           "type": "boolean",
           "default": true,
           "category": "Protocol",

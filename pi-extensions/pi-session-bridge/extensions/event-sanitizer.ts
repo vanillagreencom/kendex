@@ -4,8 +4,8 @@
  * Compacts noisy Pi events (input, message_update, tool_execution_*, agent_end)
  * to small descriptors before they are pushed to history or broadcast to
  * bridge clients. Caps every envelope at a configured byte budget; raw
- * payloads spill to a per-session JSONL sidecar so `pi-bridge history --raw`
- * can still fetch them when an operator explicitly asks.
+ * payloads can spill to a per-session JSONL sidecar so `pi-bridge history --raw`
+ * can fetch retained data when an operator explicitly asks.
  *
  * Streaming events are the exception. Pi fires `message_update` once per token
  * and `tool_execution_update` once per partial tool result, and each payload
@@ -37,8 +37,10 @@ export interface SanitizedEvent {
 	truncated: boolean;
 	/** Byte length of the JSON-serialized original payload; on a streaming event, of its delta alone. */
 	originalBytes: number;
-	/** Original payload preserved for sidecar spill; undefined when no truncation occurred. */
-	raw?: unknown;
+	/** Serialized compact data, reused by history and the event stream. */
+	dataJson: string;
+	/** Serialized original, reused for sidecar spill without visiting the payload again. */
+	rawJson?: string;
 }
 
 export function sanitizeBridgeEvent(eventName: string, payload: unknown, config: SanitizerConfig): SanitizedEvent {
@@ -48,36 +50,37 @@ export function sanitizeBridgeEvent(eventName: string, payload: unknown, config:
 	const streamingCompactor = STREAMING_DELTA_COMPACTORS.get(eventName);
 	if (streamingCompactor) return sanitizeStreamingEvent(eventName, streamingCompactor, payload, previewBytes, maxEventBytes);
 
-	const originalBytes = byteLengthOf(payload);
+	const originalJson = safeStringify(payload);
+	const originalBytes = Buffer.byteLength(originalJson, "utf8");
 	const compactor = COMPACT_EVENT_COMPACTORS.get(eventName);
 	if (compactor) {
-		const compact = compactor(payload, previewBytes);
+		const compact = compactor(payload, previewBytes, originalJson);
 		const truncated = compact.truncated || compact.compact !== payload;
-		return finalize(compact.compact, originalBytes, truncated, payload, maxEventBytes, eventName);
+		return finalize(compact.compact, originalBytes, truncated, originalJson, maxEventBytes, eventName);
 	}
 
 	if (originalBytes <= maxEventBytes) {
-		return { data: payload, truncated: false, originalBytes };
+		return { data: payload, dataJson: originalJson, truncated: false, originalBytes };
 	}
 
 	const descriptor = oversizedDescriptor(eventName, originalBytes, maxEventBytes);
-	return { data: descriptor, truncated: true, originalBytes, raw: payload };
+	return { data: descriptor, dataJson: safeStringify(descriptor), truncated: true, originalBytes, rawJson: originalJson };
 }
 
 function finalize(
 	compact: unknown,
 	originalBytes: number,
 	truncated: boolean,
-	raw: unknown,
+	originalJson: string,
 	maxEventBytes: number,
 	eventName: string,
 ): SanitizedEvent {
-	const bytes = byteLengthOf(compact);
-	if (bytes <= maxEventBytes) {
-		return { data: compact, truncated, originalBytes, raw: truncated ? raw : undefined };
+	const dataJson = truncated ? safeStringify(compact) : originalJson;
+	if (Buffer.byteLength(dataJson, "utf8") <= maxEventBytes) {
+		return { data: compact, dataJson, truncated, originalBytes, rawJson: truncated ? originalJson : undefined };
 	}
 	const descriptor = oversizedDescriptor(eventName, originalBytes, maxEventBytes);
-	return { data: descriptor, truncated: true, originalBytes, raw };
+	return { data: descriptor, dataJson: safeStringify(descriptor), truncated: true, originalBytes, rawJson: originalJson };
 }
 
 function oversizedDescriptor(eventName: string, originalBytes: number, maxEventBytes: number) {
@@ -100,7 +103,7 @@ interface CompactResult {
  * from this map and from {@link STREAMING_DELTA_COMPACTORS} is published
  * as it arrived, subject only to the event byte cap.
  */
-const COMPACT_EVENT_COMPACTORS = new Map<string, (payload: unknown, previewBytes: number) => CompactResult>([
+const COMPACT_EVENT_COMPACTORS = new Map<string, (payload: unknown, previewBytes: number, originalJson: string) => CompactResult>([
 	["input", compactInputEvent],
 	["tool_execution_start", compactToolExecution],
 	["tool_execution_end", compactToolExecution],
@@ -167,16 +170,14 @@ function sanitizeStreamingEvent(
 	maxEventBytes: number,
 ): SanitizedEvent {
 	const streamed = compactor(payload, previewBytes);
-	if (byteLengthOf(streamed.compact) <= maxEventBytes) {
-		return { data: streamed.compact, truncated: streamed.truncated, originalBytes: streamed.deltaBytes };
+	const dataJson = safeStringify(streamed.compact);
+	if (Buffer.byteLength(dataJson, "utf8") <= maxEventBytes) {
+		return { data: streamed.compact, dataJson, truncated: streamed.truncated, originalBytes: streamed.deltaBytes };
 	}
 	// A single delta larger than the whole event budget still yields a
 	// descriptor rather than a raw reference: streaming events never spill.
-	return {
-		data: oversizedDescriptor(eventName, streamed.deltaBytes, maxEventBytes),
-		truncated: true,
-		originalBytes: streamed.deltaBytes,
-	};
+	const data = oversizedDescriptor(eventName, streamed.deltaBytes, maxEventBytes);
+	return { data, dataJson: safeStringify(data), truncated: true, originalBytes: streamed.deltaBytes };
 }
 
 /**
@@ -295,13 +296,16 @@ function toolExecutionIdentity(source: Record<string, unknown>): Record<string, 
 	return identity;
 }
 
-function compactToolExecution(payload: unknown, previewBytes: number): CompactResult {
+function compactToolExecution(payload: unknown, previewBytes: number, originalJson: string): CompactResult {
 	const source = asRecord(payload);
 	if (!source) return { compact: payload, truncated: false };
 
 	const inner = toolExecutionInner(source);
 	const lookup = (key: string): unknown => source[key] ?? (inner ? inner[key] : undefined);
 	const compact = toolExecutionIdentity(source);
+	const fields = serializedFields(originalJson);
+	const innerJson = ["toolUse", "toolCall", "tool_call", "toolExecution"].map((key) => fields.get(key)).find((value) => value?.startsWith("{"));
+	const innerFields = innerJson === undefined ? new Map<string, string>() : serializedFields(innerJson);
 
 	let truncated = false;
 	for (const [key, target] of [
@@ -315,7 +319,9 @@ function compactToolExecution(payload: unknown, previewBytes: number): CompactRe
 	] as const) {
 		const value = lookup(key);
 		if (value === undefined || value === null) continue;
-		const measurement = measurePayload(value, previewBytes);
+		const json = source[key] === undefined || source[key] === null ? innerFields.get(key) : fields.get(key);
+		if (json === undefined) continue;
+		const measurement = previewString(typeof value === "string" ? JSON.parse(json) as string : json, previewBytes);
 		compact[`${key}Bytes`] = measurement.bytes;
 		compact[target] = measurement.preview;
 		if (measurement.truncated) truncated = true;
@@ -414,8 +420,8 @@ function compactSessionInfoChanged(payload: unknown, previewBytes: number): Comp
 	return { compact, truncated: true };
 }
 
-function compactSessionTree(payload: unknown, previewBytes: number): CompactResult {
-	const measurement = measurePayload(payload, previewBytes);
+function compactSessionTree(payload: unknown, previewBytes: number, originalJson: string): CompactResult {
+	const measurement = previewString(typeof payload === "string" ? payload : originalJson, previewBytes);
 	return {
 		compact: {
 			bytes: measurement.bytes,
@@ -467,12 +473,6 @@ function previewString(value: string, maxBytes: number): PreviewMeasurement {
 	return { preview: cut, bytes, truncated: true };
 }
 
-function measurePayload(value: unknown, previewBytes: number): PreviewMeasurement {
-	if (typeof value === "string") return previewString(value, previewBytes);
-	const serialized = safeStringify(value);
-	return previewString(serialized, previewBytes);
-}
-
 function asRecord(value: unknown): Record<string, unknown> | undefined {
 	return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
@@ -489,9 +489,9 @@ function pickNumber(source: Record<string, unknown>, key: string): number | unde
 
 function safeStringify(value: unknown): string {
 	try {
-		return JSON.stringify(value) ?? "";
-	} catch {
-		return "";
+		return JSON.stringify(value) ?? "null";
+	} catch (error) {
+		throw new Error("Bridge event serialization failed", { cause: error });
 	}
 }
 
@@ -499,5 +499,40 @@ function byteLengthOf(value: unknown): number {
 	return Buffer.byteLength(safeStringify(value), "utf8");
 }
 
-/** Visible for tests. */
-export const __internals = { byteLengthOf, previewString };
+
+
+/** Slice fields from JSON.stringify output without serializing nested tool results again. */
+function serializedFields(json: string): Map<string, string> {
+	const fields = new Map<string, string>();
+	if (!json.startsWith("{")) return fields;
+	let cursor = 1;
+	while (cursor < json.length - 1) {
+		const keyEnd = stringEnd(json, cursor);
+		const key = JSON.parse(json.slice(cursor, keyEnd)) as string;
+		const start = keyEnd + 1;
+		let end = start;
+		let depth = 0;
+		while (end < json.length) {
+			const char = json[end];
+			if (char === '"') { end = stringEnd(json, end); continue; }
+			if (depth === 0 && (char === "," || char === "}")) break;
+			if (char === "{" || char === "[") depth++;
+			if (char === "}" || char === "]") depth--;
+			end++;
+		}
+		fields.set(key, json.slice(start, end));
+		cursor = end + 1;
+	}
+	return fields;
+}
+
+function stringEnd(json: string, start: number): number {
+	let cursor = start;
+	while (true) {
+		cursor = json.indexOf('"', cursor + 1);
+		if (cursor < 0) throw new Error("Serialized bridge event has an unterminated string");
+		let escapes = 0;
+		for (let i = cursor - 1; json[i] === "\\"; i--) escapes++;
+		if (escapes % 2 === 0) return cursor + 1;
+	}
+}

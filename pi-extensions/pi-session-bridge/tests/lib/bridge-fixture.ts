@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HistoryResponse } from "../../extensions/event-history.ts";
 import assert from "node:assert/strict";
+import { createConnection, type Socket } from "node:net";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { clearPackageConfigCache } from "../../extensions/package-config.ts";
 import { runCli } from "./cli-fixture.ts";
@@ -66,6 +67,17 @@ export async function shutdownBridge(handlers: Map<string, EventHandler>, dir: s
 	if (!shutdown) return;
 	handlers.delete("session_shutdown");
 	await shutdown({ reason: "test" }, fakeCtx(dir));
+}
+
+/** Keep a real event subscriber attached while the test produces terminal events. */
+export async function attachSubscriber(socketPath: string): Promise<Socket> {
+	const socket = createConnection(socketPath);
+	await new Promise<void>((resolve, reject) => {
+		socket.once("error", reject);
+		socket.once("data", () => { socket.off("error", reject); resolve(); });
+	});
+	socket.on("data", () => undefined);
+	return socket;
 }
 
 export async function sendCommand(socketPath: string, payload: Record<string, unknown>): Promise<{ success: boolean; data: HistoryResponse }> {

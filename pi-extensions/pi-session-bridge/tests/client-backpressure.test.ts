@@ -12,7 +12,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { clearPackageConfigCache } from "../extensions/package-config.ts";
 import sessionBridge, { CLIENT_QUEUE_MAX_BYTES, CLIENT_STALLED_KEY } from "../extensions/session-bridge.ts";
 
-import { fakeCtx, fakePi, sendCommand, shutdownBridge, writeBridgeSettings, type EventHandler } from "./lib/bridge-fixture.ts";
+import { fakeCtx, fakePi, attachSubscriber, sendCommand, shutdownBridge, writeBridgeSettings, type EventHandler } from "./lib/bridge-fixture.ts";
 
 let dir = "";
 let activeHandlers: Map<string, EventHandler> | undefined;
@@ -91,6 +91,7 @@ test("one response larger than the bound reaches a client that reads it", async 
 	activeHandlers = handlers;
 	sessionBridge(pi);
 	await handlers.get("session_start")?.({ reason: "test" }, fakeCtx(dir));
+	await attachSubscriber(join(process.env.PI_BRIDGE_DIR!, `pi-${process.pid}.sock`));
 	// message_end spills the whole message, and history --raw restores it into one response line.
 	const finalText = "x".repeat(CLIENT_QUEUE_MAX_BYTES + 1024 * 1024);
 	await handlers.get("message_end")?.({ message: { role: "assistant", content: [{ type: "text", text: finalText }] } }, fakeCtx(dir));
