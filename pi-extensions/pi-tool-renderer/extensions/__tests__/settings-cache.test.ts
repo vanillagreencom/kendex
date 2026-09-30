@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
 	installSettingsCacheRefresh,
+	piUserDir,
 	readPackageConfig,
 	readSettingsFiles,
 	recordProjectTrust,
@@ -15,6 +16,7 @@ import {
 import { CONFIG_ID } from "../tool-renderer/settings.js";
 
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+const previousHome = process.env.HOME;
 
 /** The cache window reads `performance.now()`; each case moves this value instead of waiting. */
 let monotonicNow = 0;
@@ -30,6 +32,8 @@ afterEach(() => {
 	setSystemTime();
 	if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+	if (previousHome === undefined) delete process.env.HOME;
+	else process.env.HOME = previousHome;
 });
 
 function writeConfig(settingsPath: string, config: Record<string, unknown>): void {
@@ -125,6 +129,28 @@ describe("readSettingsFiles fingerprint", () => {
 		expect(() => { config.commandPreviewChars = 5; }).toThrow();
 		expect(() => { config.nested.depth = 5; }).toThrow();
 		expect(readPackageConfig(CONFIG_ID, a).commandPreviewChars).toBe(100);
+	});
+});
+
+// piUserDir is kept between calls; each row changes one variable it reads, in
+// order, and the next call must answer for the new environment. Bun's
+// `homedir()` does not follow a `HOME` set at run time, so under this runner
+// the two `HOME` rows only confirm the default root; under Node, Pi's runtime,
+// they catch a root kept past a `HOME` change.
+describe("piUserDir", () => {
+	test("a change to any variable it reads is answered on the next call", () => {
+		const rows: Array<{ name: string; agentDir: string | undefined; home: string; expected: () => string }> = [
+			{ name: "override", agentDir: "/pi-root/a", home: "/home-one", expected: () => "/pi-root/a" },
+			{ name: "another override", agentDir: "/pi-root/b", home: "/home-one", expected: () => "/pi-root/b" },
+			{ name: "no override", agentDir: undefined, home: "/home-one", expected: () => join(homedir(), ".pi", "agent") },
+			{ name: "another home", agentDir: undefined, home: "/home-two", expected: () => join(homedir(), ".pi", "agent") },
+		];
+		for (const row of rows) {
+			if (row.agentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = row.agentDir;
+			process.env.HOME = row.home;
+			expect(piUserDir(), row.name).toBe(row.expected());
+		}
 	});
 });
 

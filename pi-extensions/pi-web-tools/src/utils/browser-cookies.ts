@@ -58,10 +58,6 @@ interface ChromeBrowser {
 
 type BrowserConfig = FirefoxBrowser | ChromeBrowser;
 
-function expandHome(path: string): string {
-	return path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
-}
-
 function discoverBrowsers(): BrowserConfig[] {
 	const list: BrowserConfig[] = [];
 	const home = homedir();

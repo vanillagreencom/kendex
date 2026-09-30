@@ -186,11 +186,19 @@ function opReadTimeoutMs(): number {
 	return Number.isFinite(parsed) && parsed > 0 ? Math.min(Math.max(Math.trunc(parsed), 100), 10000) : DEFAULT_OP_READ_TIMEOUT_MS;
 }
 
-function addSecretWarning(warnings: string[], name: string, reason: string): void {
-	warnings.push(`${name} is a 1Password reference but could not be resolved ${reason}; treating it as unset.`);
+/** The warnings one resolution collects, and whether any `op://` reference in
+ * it failed to resolve. */
+interface Resolution {
+	warnings: string[];
+	secretFailed: boolean;
 }
 
-function resolveSecretRef(value: string | undefined, name: string, warnings: string[]): string | undefined {
+function addSecretWarning(resolution: Resolution, name: string, reason: string): void {
+	resolution.secretFailed = true;
+	resolution.warnings.push(`${name} is a 1Password reference but could not be resolved ${reason}; treating it as unset.`);
+}
+
+function resolveSecretRef(value: string | undefined, name: string, resolution: Resolution): string | undefined {
 	if (!value || !value.startsWith("op://")) return value;
 	const timeout = opReadTimeoutMs();
 	const result = spawnSync("op", ["read", value], {
@@ -201,20 +209,20 @@ function resolveSecretRef(value: string | undefined, name: string, warnings: str
 	});
 	const errorCode = result.error && "code" in result.error ? String(result.error.code) : undefined;
 	if (errorCode === "ETIMEDOUT") {
-		addSecretWarning(warnings, name, `within ${timeout}ms`);
+		addSecretWarning(resolution, name, `within ${timeout}ms`);
 		return undefined;
 	}
 	if (result.error) {
-		addSecretWarning(warnings, name, "because the op CLI is unavailable or failed to start");
+		addSecretWarning(resolution, name, "because the op CLI is unavailable or failed to start");
 		return undefined;
 	}
 	if (result.status !== 0 || result.signal) {
-		addSecretWarning(warnings, name, "because op read exited unsuccessfully");
+		addSecretWarning(resolution, name, "because op read exited unsuccessfully");
 		return undefined;
 	}
 	const resolved = result.stdout.trim();
 	if (!resolved) {
-		addSecretWarning(warnings, name, "because op read returned an empty value");
+		addSecretWarning(resolution, name, "because op read returned an empty value");
 		return undefined;
 	}
 	return resolved;
@@ -242,7 +250,7 @@ function readFile(path: string): FileRead {
 interface SettingsInputs {
 	raw: SettingsRecord;
 	diagnostics: string[];
-	envFiles: FileRead[];
+	envFiles: Array<{ path: string; read: FileRead }>;
 	privateConfigFile: string | undefined;
 	privateConfig: FileRead | undefined;
 }
@@ -255,7 +263,7 @@ function readSettingsInputs(cwd: string): SettingsInputs {
 	return {
 		raw,
 		diagnostics: settingsDiagnostics(cwd),
-		envFiles: projectSettingsTrustedForCwd(cwd) ? projectEnvFiles(cwd).map(readFile) : [],
+		envFiles: projectSettingsTrustedForCwd(cwd) ? projectEnvFiles(cwd).map((path) => ({ path, read: readFile(path) })) : [],
 		privateConfigFile,
 		privateConfig: privateConfigFile === undefined ? undefined : readFile(privateConfigFile),
 	};
@@ -266,27 +274,41 @@ function readSettingsInputs(cwd: string): SettingsInputs {
  * an `op://` key runs the 1Password CLI, so the resolved object is memoized:
  * served for the settings window, then kept for as long as every raw input
  * reads the same, and dropped with every other memoized setting on a settings
- * change or a new session. The project's trust and the environment are read on
- * every call and key the memo, so a change to either applies at once. Frozen,
- * since every caller shares it.
+ * change or a new session. A resolution in which an `op://` reference failed
+ * is served for its window only, so a locked or absent 1Password is asked
+ * again once per window rather than never. The project's trust and the
+ * environment are read on every call and key the memo, so a change to either
+ * applies at once. Frozen, since every caller shares it.
  */
 export function loadSettings(cwd = process.cwd()): WebToolsSettings {
 	const key = JSON.stringify(["web-tools-settings", cwd, projectSettingsTrustedForCwd(cwd), process.cwd(), INPUT_ENV_KEYS.map((name) => process.env[name] ?? null)]);
 	let inputs: SettingsInputs | undefined;
+	let secretFailed = false;
 	return settingsMemo(
 		key,
-		() => resolveSettings(inputs ?? readSettingsInputs(cwd)),
+		() => {
+			const resolution: Resolution = { warnings: [], secretFailed: false };
+			const settings = resolveSettings(inputs ?? readSettingsInputs(cwd), resolution);
+			secretFailed = resolution.secretFailed;
+			return settings;
+		},
 		() => {
 			inputs = readSettingsInputs(cwd);
 			return JSON.stringify(inputs);
 		},
+		() => !secretFailed,
 	);
 }
 
-function resolveSettings(inputs: SettingsInputs): WebToolsSettings {
+function resolveSettings(inputs: SettingsInputs, resolution: Resolution): WebToolsSettings {
 	const { raw, privateConfigFile } = inputs;
-	const warnings = [...inputs.diagnostics];
-	const envFileConfig = inputs.envFiles.reduce((merged, read) => (read.kind === "text" ? mergeDeep(merged, parseEnvFile(read.text)) : merged), {} as SettingsRecord);
+	const warnings = resolution.warnings;
+	warnings.push(...inputs.diagnostics);
+	const envFileConfig: SettingsRecord = {};
+	for (const { path, read } of inputs.envFiles) {
+		if (read.kind === "text") mergeDeep(envFileConfig, parseEnvFile(read.text));
+		else if (read.kind === "failed") warnings.push(`${path}: ${read.error}`);
+	}
 	let privateConfig: SettingsRecord = {};
 	if (privateConfigFile && inputs.privateConfig?.kind === "text") {
 		try { privateConfig = asRecord(JSON.parse(inputs.privateConfig.text)) ?? {}; }
@@ -340,11 +362,11 @@ function resolveSettings(inputs: SettingsInputs): WebToolsSettings {
 		},
 		video: { enabled: typeof video.enabled === "boolean" ? video.enabled : DEFAULT_SETTINGS.video.enabled },
 		apiKeys: {
-			exa: resolveSecretRef(exaKey, "EXA_API_KEY", warnings),
-			perplexity: resolveSecretRef(perplexityKey, "PERPLEXITY_API_KEY", warnings),
-			gemini: resolveSecretRef(geminiKey, "GEMINI_API_KEY", warnings),
-			openai: resolveSecretRef(openAiKey, "OPENAI_API_KEY", warnings),
-			jina: resolveSecretRef(jinaKey, "JINA_API_KEY", warnings),
+			exa: resolveSecretRef(exaKey, "EXA_API_KEY", resolution),
+			perplexity: resolveSecretRef(perplexityKey, "PERPLEXITY_API_KEY", resolution),
+			gemini: resolveSecretRef(geminiKey, "GEMINI_API_KEY", resolution),
+			openai: resolveSecretRef(openAiKey, "OPENAI_API_KEY", resolution),
+			jina: resolveSecretRef(jinaKey, "JINA_API_KEY", resolution),
 		},
 		privateConfigFile,
 		warnings,

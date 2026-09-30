@@ -4,9 +4,10 @@ import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import {
 	buildBudgetHandoff, collectArtifactRefs, findLatestTaskState, handoffBaseDir,
-	piUserDir, safeFileName, sessionIdFromManager, writeBudgetHandoffArtifact,
+	safeFileName, sessionIdFromManager, writeBudgetHandoffArtifact,
 	type HandoffSessionAccessor,
 } from "../extensions/qol/compaction-handoff.ts";
+import { piUserDir } from "../extensions/qol/package-config.ts";
 
 let workdir = "";
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;

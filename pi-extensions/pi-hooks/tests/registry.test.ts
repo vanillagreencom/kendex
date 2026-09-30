@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registeredHooks, TOOL_CALL_LISTENER } from "../extensions/registry.ts";
@@ -244,6 +244,28 @@ describe("pi-hooks registry dispatch", () => {
 // when its inode, size or mtime moves. The planted edit keeps all three: were
 // the parse not kept, the second read would return the edit.
 describe("pi-hooks registry parse cache", () => {
+	// A permission change moves none of the three, so a failed read kept under
+	// the stat would refuse every later call quoting an error that no longer
+	// holds. Root reads a mode-000 file, so the case needs another user.
+	test.skipIf(process.getuid?.() === 0)("a read that failed is read again once the file is readable", () => {
+		const project = mkdtempSync(join(tmpdir(), "pi-hooks-registry-mode-"));
+		const path = join(project, ".pi", "kendex", "hooks.json");
+		try {
+			mkdirSync(join(project, ".pi", "kendex"), { recursive: true });
+			writeFileSync(path, `${JSON.stringify({ hooks: { tool_call: [{ matcher: "Bash", hooks: [{ type: "command", command: "echo aaaa" }] }] } })}\n`);
+			chmodSync(path, 0o000);
+			const locked = registeredHooks(TOOL_CALL_LISTENER, "Bash", project, true);
+			expect(locked.hooks).toEqual([]);
+			expect(locked.unreadable?.startsWith(`${path}: `)).toBe(true);
+			chmodSync(path, 0o644);
+			const readable = registeredHooks(TOOL_CALL_LISTENER, "Bash", project, true);
+			expect(readable.unreadable).toBeUndefined();
+			expect(readable.hooks.map((hook) => hook.command)).toEqual(["echo aaaa"]);
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
 	test("an edit that keeps the file's stat is not read; one that moves its mtime is", () => {
 		const project = mkdtempSync(join(tmpdir(), "pi-hooks-registry-cache-"));
 		try {

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -86,6 +86,8 @@ describe("pi-hooks root selection", () => {
 
 	test("a `.pi` file is not a project, and a marked one below it still is", () => {
 		const outer = mkdtempSync(join(tmpdir(), "pi-hooks-shape-"));
+		// The memo window reads `performance.now()`; held still, both reads fall in one window.
+		const clock = spyOn(performance, "now").mockImplementation(() => 0);
 		try {
 			const inner = join(outer, "inner");
 			mkdirSync(join(inner, "deep"), { recursive: true });
@@ -98,6 +100,7 @@ describe("pi-hooks root selection", () => {
 			clearPackageConfigCache();
 			expect(projectRoot(join(inner, "deep"))).toBe(realpathSync(inner));
 		} finally {
+			clock.mockRestore();
 			rmSync(outer, { recursive: true, force: true });
 		}
 	});

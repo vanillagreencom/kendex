@@ -4,14 +4,16 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-/* The sidecar root under a given HOME and PI_CODING_AGENT_DIR. Both are the
- * process's own environment, so each case runs in a child. Every other suite in
- * this package sets an absolute override, which returns before the default root
- * or a tilde is ever reached — the path this covers, and the one that shipped a
- * ReferenceError for a missing `homedir` import. `persistSnapshots` catches
- * that and reports `sidecar: false`, so the state simply stops persisting. */
+/* The sidecar root under a given HOME and PI_CODING_AGENT_DIR: the Pi user
+ * directory `persistence.ts` takes from the vendored `package-config.ts`. Both
+ * are the process's own environment, so each case runs in a child. Every other
+ * suite in this package sets an absolute override, which returns before the
+ * default root or a tilde is ever reached — the path this covers, and the one
+ * that shipped a ReferenceError for a missing `homedir` import.
+ * `persistSnapshots` catches that and reports `sidecar: false`, so the state
+ * simply stops persisting. */
 function sidecarRoot(home: string, override: string | undefined): string {
-	const module = JSON.stringify(join(import.meta.dir, "..", "extensions", "persistence.ts"));
+	const module = JSON.stringify(join(import.meta.dir, "..", "extensions", "package-config.ts"));
 	const env: Record<string, string> = { ...process.env as Record<string, string>, HOME: home };
 	if (override === undefined) delete env.PI_CODING_AGENT_DIR;
 	else env.PI_CODING_AGENT_DIR = override;

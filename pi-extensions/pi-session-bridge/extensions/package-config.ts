@@ -4,11 +4,13 @@
  * the copies equal: change one, then copy it over every other
  * `package-config.ts` in the tree.
  *
- * It owns the project-trust registry, the settings-file order and the
- * `kendex.extensionManager.config` walk, and it memoizes all of them. Widgets
- * and renderers read settings many times per frame; going to the disk on each
- * read kept every lane's render loop busy. A memoized answer is served for
- * `SETTINGS_RECHECK_MS` with no filesystem work, and
+ * It owns the Pi user directory, the project-trust registry and the
+ * `kendex.extensionManager.config` walk, and it provides the default
+ * settings-file order, `piSettingsPaths`. A package that finds its own project
+ * root, such as pi-hooks, passes its own path list to `readPackageConfigAt`.
+ * Widgets and renderers read settings many times per frame; going to the disk
+ * on each read kept every lane's render loop busy. A memoized answer is served
+ * for `SETTINGS_RECHECK_MS` with no filesystem work and no path work, and
  * `installSettingsCacheRefresh` drops every answer when the extension manager
  * announces a settings change and when a session starts.
  */
@@ -31,13 +33,38 @@ export function expandHome(input: string): string {
 /** Root-anchored as `crates/core/src/harness/pi.rs::pi_root_is_absolute_for`
  * means it, which `isAbsolute` is not: it calls a driveless `\root` absolute
  * where the renderer does not, putting the two on different roots. */
-function rootAnchored(path: string, windows: boolean): boolean {
+export function rootAnchored(path: string, windows: boolean): boolean {
 	return windows ? /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/.test(path) : path.startsWith("/");
 }
 
+/** The user directory and the environment it was resolved under. `HOME` and
+ * `USERPROFILE` are what `homedir()` reads, on POSIX and on Windows. */
+interface UserDir {
+	agentDir: string | undefined;
+	home: string | undefined;
+	profile: string | undefined;
+	dir: string;
+	settings: string;
+}
+
+let userDirMemo: UserDir | undefined;
+
+function userDir(): UserDir {
+	const agentDir = process.env.PI_CODING_AGENT_DIR;
+	const home = process.env.HOME;
+	const profile = process.env.USERPROFILE;
+	const known = userDirMemo;
+	if (known !== undefined && known.agentDir === agentDir && known.home === home && known.profile === profile) return known;
+	const override = expandHome(agentDir?.trim() || "");
+	const dir = resolve(rootAnchored(override, process.platform === "win32") ? override : expandHome("~/.pi/agent"));
+	userDirMemo = { agentDir, home, profile, dir, settings: join(dir, "settings.json") };
+	return userDirMemo;
+}
+
+/** A root-anchored `PI_CODING_AGENT_DIR`, else `~/.pi/agent`. Kept until one
+ * of the environment variables it reads changes. */
 export function piUserDir(): string {
-	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
-	return resolve(rootAnchored(override, process.platform === "win32") ? override : expandHome("~/.pi/agent"));
+	return userDir().dir;
 }
 
 interface MemoEntry {
@@ -49,10 +76,20 @@ interface MemoEntry {
 }
 
 const memo = new Map<string, MemoEntry>();
+/** Project settings paths by cwd, apart from `memo` so a lookup needs no key
+ * built per call. */
+const projectPathMemo = new Map<string, MemoEntry>();
 
 /** Drops every memoized answer so the next read goes back to disk. */
 export function clearPackageConfigCache(): void {
 	memo.clear();
+	projectPathMemo.clear();
+}
+
+/** The entry for `key` while its window is open. */
+function openEntry(store: Map<string, MemoEntry>, key: string, now: number): MemoEntry | undefined {
+	const entry = store.get(key);
+	return entry !== undefined && now - entry.readAt < SETTINGS_RECHECK_MS ? entry : undefined;
 }
 
 /**
@@ -60,19 +97,26 @@ export function clearPackageConfigCache(): void {
  * window closes, `fingerprint` (when given) runs first, and a fingerprint equal
  * to the one the value was computed under keeps the value, and its identity,
  * for another window without calling `compute`. Without a fingerprint the
- * value is computed again. `clearPackageConfigCache` drops every entry.
+ * value is computed again, and so is a value `reusable` answered `false` for,
+ * whatever the fingerprint says. `clearPackageConfigCache` drops every entry.
  */
-export function settingsMemo<T>(key: string, compute: () => T, fingerprint?: () => string): T {
-	const now = performance.now();
-	const entry = memo.get(key);
-	if (entry && now - entry.readAt < SETTINGS_RECHECK_MS) return entry.value as T;
+export function settingsMemo<T>(key: string, compute: () => T, fingerprint?: () => string, reusable?: (value: T) => boolean): T {
+	return memoIn(memo, key, performance.now(), compute, fingerprint, reusable);
+}
+
+/** `settingsMemo` over `store` at `now`. One public read takes the clock
+ * once and hands it down, since reading it costs as much as a warm read. */
+function memoIn<T>(store: Map<string, MemoEntry>, key: string, now: number, compute: () => T, fingerprint?: () => string, reusable?: (value: T) => boolean): T {
+	const open = openEntry(store, key, now);
+	if (open !== undefined) return open.value as T;
+	const entry = store.get(key);
 	const print = fingerprint?.();
-	if (entry && print !== undefined && entry.fingerprint === print) {
+	if (entry !== undefined && print !== undefined && entry.fingerprint === print) {
 		entry.readAt = now;
 		return entry.value as T;
 	}
 	const value = compute();
-	memo.set(key, { readAt: now, fingerprint: print, value });
+	store.set(key, { readAt: now, fingerprint: reusable === undefined || reusable(value) ? print : undefined, value });
 	return value;
 }
 
@@ -139,26 +183,48 @@ export function settingsFileTrusted(settingsPath: string): boolean {
 	return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
 }
 
-function memoizedProjectSettingsPath(cwd: string): string {
-	return settingsMemo(`project-settings-path\0${cwd}`, () => projectSettingsPath(cwd));
+function trustedProjectSettingsPathAt(cwd: string, now: number): string | undefined {
+	const project = memoIn(projectPathMemo, cwd, now, () => projectSettingsPath(cwd));
+	return settingsFileTrusted(project) ? project : undefined;
 }
 
 /** The project settings file for `cwd` when Pi trusts the project, else
  * `undefined`. */
 export function trustedProjectSettingsPath(cwd = process.cwd()): string | undefined {
-	const project = memoizedProjectSettingsPath(cwd);
-	return settingsFileTrusted(project) ? project : undefined;
+	return trustedProjectSettingsPathAt(cwd, performance.now());
 }
 
 export function projectSettingsTrustedForCwd(cwd = process.cwd()): boolean {
 	return trustedProjectSettingsPath(cwd) !== undefined;
 }
 
+/** The user settings file the lists below were built on; a new user directory
+ * starts a new set of lists. */
+let pathListsUser: string | undefined;
+const pathLists = new Map<string | undefined, readonly string[]>();
+
+/**
+ * The user settings file, then `project` when given. One frozen list per
+ * answer, so `readSettingsFiles` finds its memo by the list's identity. The
+ * caller decides whether `project` is trusted.
+ */
+export function userAndProjectSettingsPaths(project: string | undefined): readonly string[] {
+	const user = userDir().settings;
+	if (user !== pathListsUser) {
+		pathLists.clear();
+		pathListsUser = user;
+	}
+	let paths = pathLists.get(project);
+	if (paths === undefined) {
+		paths = Object.freeze(project === undefined ? [user] : [user, project]);
+		pathLists.set(project, paths);
+	}
+	return paths;
+}
+
 /** The user settings file, then the project's when Pi trusts the project. */
-export function piSettingsPaths(cwd = process.cwd()): string[] {
-	const user = join(piUserDir(), "settings.json");
-	const project = trustedProjectSettingsPath(cwd);
-	return project === undefined ? [user] : [user, project];
+export function piSettingsPaths(cwd = process.cwd()): readonly string[] {
+	return userAndProjectSettingsPaths(trustedProjectSettingsPathAt(cwd, performance.now()));
 }
 
 export type SettingsRecord = Record<string, unknown>;
@@ -196,15 +262,37 @@ function readText(path: string): FileText {
 	}
 }
 
+/** Each path list's memo key, so a list a caller keeps is joined once. */
+const settingsFilesKeys = new WeakMap<readonly string[], string>();
+
+function settingsFilesKey(paths: readonly string[]): string {
+	let key = settingsFilesKeys.get(paths);
+	if (key === undefined) {
+		key = `settings-files\0${paths.join("\0")}`;
+		settingsFilesKeys.set(paths, key);
+	}
+	return key;
+}
+
 /**
  * The files at `paths` that exist, in order. Each window re-reads their text;
  * text equal to what the last parse saw keeps the last answer, so an unchanged
  * file is parsed once and its callers keep one identity for it.
  */
 export function readSettingsFiles(paths: readonly string[]): readonly SettingsFile[] {
+	return readSettingsFilesAt(paths, performance.now());
+}
+
+function readSettingsFilesAt(paths: readonly string[], now: number): readonly SettingsFile[] {
+	const key = settingsFilesKey(paths);
+	// Checked before the closures below exist, so a warm read allocates nothing.
+	const open = openEntry(memo, key, now);
+	if (open !== undefined) return open.value as readonly SettingsFile[];
 	let texts: FileText[] = [];
-	return settingsMemo(
-		`settings-files\0${paths.join("\0")}`,
+	return memoIn(
+		memo,
+		key,
+		now,
 		() =>
 			deepFreeze(
 				paths.flatMap((path, index): SettingsFile[] => {
@@ -243,7 +331,10 @@ const configsByFiles = new WeakMap<readonly SettingsFile[], Map<string, Readonly
 /** `packageId`'s config over the files at `paths`, later files overriding
  * earlier ones key by key. A malformed file contributes nothing. */
 export function readPackageConfigAt(packageId: string, paths: readonly string[]): Readonly<SettingsRecord> {
-	const files = readSettingsFiles(paths);
+	return packageConfigOver(packageId, readSettingsFiles(paths));
+}
+
+function packageConfigOver(packageId: string, files: readonly SettingsFile[]): Readonly<SettingsRecord> {
 	let configs = configsByFiles.get(files);
 	if (!configs) {
 		configs = new Map();
@@ -264,7 +355,8 @@ export function readPackageConfigAt(packageId: string, paths: readonly string[])
 
 /** `packageId`'s config over `piSettingsPaths(cwd)`. */
 export function readPackageConfig(packageId: string, cwd = process.cwd()): Readonly<SettingsRecord> {
-	return readPackageConfigAt(packageId, piSettingsPaths(cwd));
+	const now = performance.now();
+	return packageConfigOver(packageId, readSettingsFilesAt(userAndProjectSettingsPaths(trustedProjectSettingsPathAt(cwd, now)), now));
 }
 
 /** The part of Pi's `ExtensionAPI` the refresh needs. */

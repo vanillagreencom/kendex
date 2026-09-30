@@ -97,3 +97,40 @@ test("settings secret process: op read runs once per change, not once per load",
 		assert.deepEqual(requests, expected, name);
 	}
 });
+
+// A failed `op read` is not kept: 1Password may be locked now and unlocked a
+// moment later, with no settings text changing in between. The failure is
+// served for its window, then `op read` runs again.
+test("settings secret process: a failed op read is retried after one window", (t) => {
+	isolateEnvironment(t, settingsEnvironment);
+	const root = tempDir(t);
+	const user = join(root, "agent");
+	const project = join(root, "project");
+	mkdirSync(user);
+	mkdirSync(project);
+	let unlocked = false;
+	let reads = 0;
+	const spawn = t.mock.method(childProcess, "spawnSync", () => {
+		reads += 1;
+		return unlocked
+			? { pid: 1, output: [null, "resolved", ""], stdout: "resolved", stderr: "", status: 0, signal: null }
+			: { pid: 1, output: [null, "", ""], stdout: "", stderr: "", status: 1, signal: null };
+	});
+	syncBuiltinESMExports();
+	t.after(() => { spawn.mock.restore(); syncBuiltinESMExports(); });
+	let now = 0;
+	t.mock.method(performance, "now", () => now);
+	writeFileSync(join(user, "settings.json"), JSON.stringify({ kendex: { extensionManager: { config: { "@vanillagreen/pi-web-tools": { exaApiKey: "op://vault/exa/key" } } } } }));
+	process.env.PI_CODING_AGENT_DIR = user;
+	const steps: Array<[string, () => void, string | undefined, number]> = [
+		["locked", () => {}, undefined, 1],
+		["inside the window", () => { unlocked = true; now = SETTINGS_RECHECK_MS - 1; }, undefined, 1],
+		["past the window, text unchanged", () => { now = SETTINGS_RECHECK_MS * 3; }, "resolved", 2],
+		["a resolved key is kept", () => { now = SETTINGS_RECHECK_MS * 5; }, "resolved", 2],
+	];
+	for (const [name, act, key, expectedReads] of steps) {
+		act();
+		assert.equal(loadSettings(project).apiKeys.exa, key, name);
+		assert.equal(reads, expectedReads, name);
+	}
+});

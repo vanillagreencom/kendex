@@ -1,8 +1,9 @@
 import { execFile, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, normalize, relative, resolve } from "node:path";
 import { promisify } from "node:util";
+
+import { piUserDir } from "../package-config.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -19,22 +20,8 @@ export interface CloneResult {
 	updated: boolean;
 }
 
-/** Root-anchored as `crates/core/src/harness/pi.rs::pi_root_is_absolute_for`
- * means it, which `isAbsolute` is not: it calls a driveless `\root` absolute
- * where the renderer does not, putting the two on different roots. Hoisted, so
- * a circular import cannot reach it inside a temporal dead zone. */
-function rootAnchored(path: string, windows: boolean): boolean { return windows ? /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/.test(path) : path.startsWith("/"); }
-
-function expandHome(input: string): string {
-	if (input === "~") return homedir();
-	if (input.startsWith("~/")) return join(homedir(), input.slice(2));
-	return input;
-}
-
 export function defaultCacheDir(): string {
-	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
-	const piHome = rootAnchored(override, process.platform === "win32") ? override : join(homedir(), ".pi", "agent");
-	return join(piHome, "cache", "github");
+	return join(piUserDir(), "cache", "github");
 }
 
 function repoCachePath(cacheDir: string, owner: string, repo: string): string {

@@ -1,6 +1,6 @@
 # pi-output-policy development
 
-For maintainers. What it does for a consumer is [README.md](README.md). Everything ships from one module, `extensions/output-policy.ts`, whose named exports are the seams the tests use: `resolvePolicyMode`, `isSanitizeExceptTool`, `createModelOutputGuardState`, `inspectModelOutputDelta`, `processContent`, `sanitizeDetails`, `minimizeShellOutput`, `recordProjectTrust`, and `__resetSessionCountersForTests`.
+For maintainers. What it does for a consumer is [README.md](README.md). The policy ships from one module, `extensions/output-policy.ts`, whose named exports are the seams the tests use: `resolvePolicyMode`, `isSanitizeExceptTool`, `createModelOutputGuardState`, `inspectModelOutputDelta`, `processContent`, `sanitizeDetails`, `minimizeShellOutput`, and `__resetSessionCountersForTests`. The settings reader, `recordProjectTrust` and `clearPackageConfigCache` come from the vendored `extensions/package-config.ts`, which the tests use as a seam too.
 
 ## Invariants
 

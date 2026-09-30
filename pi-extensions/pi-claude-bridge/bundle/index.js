@@ -35559,25 +35559,42 @@ function expandHome(input) {
 function rootAnchored(path, windows) {
   return windows ? /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/.test(path) : path.startsWith("/");
 }
+var userDirMemo;
+function userDir() {
+  const agentDir = process.env.PI_CODING_AGENT_DIR;
+  const home = process.env.HOME;
+  const profile = process.env.USERPROFILE;
+  const known = userDirMemo;
+  if (known !== void 0 && known.agentDir === agentDir && known.home === home && known.profile === profile) return known;
+  const override = expandHome(agentDir?.trim() || "");
+  const dir = resolve5(rootAnchored(override, process.platform === "win32") ? override : expandHome("~/.pi/agent"));
+  userDirMemo = { agentDir, home, profile, dir, settings: join5(dir, "settings.json") };
+  return userDirMemo;
+}
 function piUserDir() {
-  const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
-  return resolve5(rootAnchored(override, process.platform === "win32") ? override : expandHome("~/.pi/agent"));
+  return userDir().dir;
 }
 var memo = /* @__PURE__ */ new Map();
+var projectPathMemo = /* @__PURE__ */ new Map();
 function clearPackageConfigCache() {
   memo.clear();
+  projectPathMemo.clear();
 }
-function settingsMemo(key, compute, fingerprint) {
-  const now = performance.now();
-  const entry = memo.get(key);
-  if (entry && now - entry.readAt < SETTINGS_RECHECK_MS) return entry.value;
+function openEntry(store, key, now) {
+  const entry = store.get(key);
+  return entry !== void 0 && now - entry.readAt < SETTINGS_RECHECK_MS ? entry : void 0;
+}
+function memoIn(store, key, now, compute, fingerprint, reusable) {
+  const open3 = openEntry(store, key, now);
+  if (open3 !== void 0) return open3.value;
+  const entry = store.get(key);
   const print = fingerprint?.();
-  if (entry && print !== void 0 && entry.fingerprint === print) {
+  if (entry !== void 0 && print !== void 0 && entry.fingerprint === print) {
     entry.readAt = now;
     return entry.value;
   }
   const value = compute();
-  memo.set(key, { readAt: now, fingerprint: print, value });
+  store.set(key, { readAt: now, fingerprint: reusable === void 0 || reusable(value) ? print : void 0, value });
   return value;
 }
 function projectSettingsPath(cwd) {
@@ -35619,17 +35636,30 @@ function recordProjectTrust(ctx2) {
 function settingsFileTrusted(settingsPath) {
   return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
 }
-function memoizedProjectSettingsPath(cwd) {
-  return settingsMemo(`project-settings-path\0${cwd}`, () => projectSettingsPath(cwd));
-}
-function trustedProjectSettingsPath(cwd = process.cwd()) {
-  const project = memoizedProjectSettingsPath(cwd);
+function trustedProjectSettingsPathAt(cwd, now) {
+  const project = memoIn(projectPathMemo, cwd, now, () => projectSettingsPath(cwd));
   return settingsFileTrusted(project) ? project : void 0;
 }
+function trustedProjectSettingsPath(cwd = process.cwd()) {
+  return trustedProjectSettingsPathAt(cwd, performance.now());
+}
+var pathListsUser;
+var pathLists = /* @__PURE__ */ new Map();
+function userAndProjectSettingsPaths(project) {
+  const user = userDir().settings;
+  if (user !== pathListsUser) {
+    pathLists.clear();
+    pathListsUser = user;
+  }
+  let paths = pathLists.get(project);
+  if (paths === void 0) {
+    paths = Object.freeze(project === void 0 ? [user] : [user, project]);
+    pathLists.set(project, paths);
+  }
+  return paths;
+}
 function piSettingsPaths(cwd = process.cwd()) {
-  const user = join5(piUserDir(), "settings.json");
-  const project = trustedProjectSettingsPath(cwd);
-  return project === void 0 ? [user] : [user, project];
+  return userAndProjectSettingsPaths(trustedProjectSettingsPathAt(cwd, performance.now()));
 }
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -35650,10 +35680,27 @@ function readText(path) {
     return { kind: "unreadable", error: error51 instanceof Error ? error51.message : String(error51) };
   }
 }
+var settingsFilesKeys = /* @__PURE__ */ new WeakMap();
+function settingsFilesKey(paths) {
+  let key = settingsFilesKeys.get(paths);
+  if (key === void 0) {
+    key = `settings-files\0${paths.join("\0")}`;
+    settingsFilesKeys.set(paths, key);
+  }
+  return key;
+}
 function readSettingsFiles(paths) {
+  return readSettingsFilesAt(paths, performance.now());
+}
+function readSettingsFilesAt(paths, now) {
+  const key = settingsFilesKey(paths);
+  const open3 = openEntry(memo, key, now);
+  if (open3 !== void 0) return open3.value;
   let texts = [];
-  return settingsMemo(
-    `settings-files\0${paths.join("\0")}`,
+  return memoIn(
+    memo,
+    key,
+    now,
     () => deepFreeze(
       paths.flatMap((path, index) => {
         const text = texts[index] ?? readText(path);

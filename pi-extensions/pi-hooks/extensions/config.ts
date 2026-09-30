@@ -2,7 +2,7 @@ import { realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-import { piUserDir, readPackageConfigAt, recordSettingsTrust, settingsFileTrusted, settingsMemo } from "./package-config.js";
+import { readPackageConfigAt, recordSettingsTrust, settingsFileTrusted, settingsMemo, userAndProjectSettingsPaths } from "./package-config.js";
 
 /** Package id used as the config namespace key in `.pi/settings.json`. */
 export const CONFIG_ID = "@vanillagreen/pi-hooks";
@@ -130,10 +130,7 @@ export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () =>
  */
 export function readConfig(cwd: string, projectDir?: string | undefined): kendexConfig {
 	const project = projectSettingsPath(projectDir === undefined ? projectRoot(cwd) : projectDir);
-	const paths = [
-		join(piUserDir(), "settings.json"),
-		...(project !== undefined && settingsFileTrusted(project) ? [project] : []),
-	];
+	const paths = userAndProjectSettingsPaths(project !== undefined && settingsFileTrusted(project) ? project : undefined);
 	return readPackageConfigAt(CONFIG_ID, paths) as kendexConfig;
 }
 

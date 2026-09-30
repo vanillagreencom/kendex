@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -46,6 +46,8 @@ test("the walk stops at home, and a home lock answers", () => {
 // settings window, "no project" included; a settings change walks again.
 test("projectRoot memoizes its answer, no project included", () => {
 	const outer = realpathSync(mkdtempSync(join(tmpdir(), "nested-agents-md-memo-")));
+	// The memo window reads `performance.now()`; held still, both reads fall in one window.
+	const clock = spyOn(performance, "now").mockImplementation(() => 0);
 	try {
 		const deep = join(outer, "inner", "deep");
 		mkdirSync(deep, { recursive: true });
@@ -55,6 +57,7 @@ test("projectRoot memoizes its answer, no project included", () => {
 		clearPackageConfigCache();
 		expect(projectRoot(deep)).toBe(join(outer, "inner"));
 	} finally {
+		clock.mockRestore();
 		rmSync(outer, { recursive: true, force: true });
 	}
 });

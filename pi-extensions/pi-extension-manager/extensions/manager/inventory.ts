@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { stringifyError } from "./format.js";
 import { host } from "./host.js";
-import { expandHome } from "./paths.js";
+import { expandHome } from "./package-config.js";
 import { asRecord, loadSettingsFiles, mergedManagerState } from "./settings.js";
 import {
 	gitPackageDirCandidates,

@@ -66,6 +66,16 @@ for (const row of [
 		},
 		expected: [undefined, undefined, "env-file-exa", "env-file-pplx", "process-exa"],
 	},
+	{
+		name: "an unreadable dotenv is reported",
+		run(_root: string, _user: string, project: string) {
+			// A directory where the file should be fails the read on every platform and for every user.
+			mkdirSync(join(project, ".env"));
+			recordProjectTrust({ cwd: project, isProjectTrusted: () => true });
+			return loadSettings(project).warnings.filter((warning) => warning.startsWith(`${join(project, ".env")}: `)).length;
+		},
+		expected: 1,
+	},
 ]) {
 	test(`settings: ${row.name}`, (t) => {
 		isolateEnvironment(t, settingsEnvironment);

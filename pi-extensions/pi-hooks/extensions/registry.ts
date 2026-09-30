@@ -130,24 +130,28 @@ type RegistryDocument = { kind: "parsed"; document: unknown } | { kind: "failed"
 
 /** The last parse of each registry file, keyed by path, with the stat it was
  * read under. Every hook event reads both registries; a file whose inode, size
- * and mtime all match is not read or parsed again. */
+ * and mtime all match is not read or parsed again. Only text that was read is
+ * kept, parsed or not: a permission change or a passing descriptor shortage
+ * leaves the stat as it was, so a failed read is never held against it. */
 const registryDocuments = new Map<string, { ino: number; size: number; mtimeMs: number; read: RegistryDocument }>();
 
-/** Throws what `statSync` threw, so the caller's absent-versus-unreadable
- * reading is the same as it was for `readFileSync`. */
+/** Throws what `statSync` or `readFileSync` threw, so the caller's
+ * absent-versus-unreadable reading is the same as it was before the cache. */
 function registryDocument(path: string): RegistryDocument {
 	let stat;
+	let text: string;
 	try {
 		stat = statSync(path);
+		const known = registryDocuments.get(path);
+		if (known && known.ino === stat.ino && known.size === stat.size && known.mtimeMs === stat.mtimeMs) return known.read;
+		text = readFileSync(path, "utf8");
 	} catch (error) {
 		registryDocuments.delete(path);
 		throw error;
 	}
-	const known = registryDocuments.get(path);
-	if (known && known.ino === stat.ino && known.size === stat.size && known.mtimeMs === stat.mtimeMs) return known.read;
 	let read: RegistryDocument;
 	try {
-		read = { kind: "parsed", document: JSON.parse(readFileSync(path, "utf8")) as unknown };
+		read = { kind: "parsed", document: JSON.parse(text) as unknown };
 	} catch (error) {
 		read = { kind: "failed", error };
 	}

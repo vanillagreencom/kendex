@@ -7,7 +7,7 @@ import { buildInventory, npmCandidatesFromInventory } from "../extensions/manage
 import { planUninstall, planUpdate, runUninstall, runUpdate, toggleItem } from "../extensions/manager/actions.ts";
 import { setConfigValue, resetConfigKeys, updateManagerState, getConfigValue, mergedManagerState, defaultWriteScope } from "../extensions/manager/settings.ts";
 import { glyphStyle } from "../extensions/manager/glyphs.ts";
-import { userPiDir } from "../extensions/manager/paths.ts";
+import { piUserDir } from "../extensions/manager/package-config.ts";
 import { MANAGER_ID, type ManagerUiState } from "../extensions/manager/types.ts";
 import { filteredItems } from "../extensions/manager/filters.ts";
 // Neutral terminal primitives; the production components own row construction and grouping.
@@ -65,7 +65,7 @@ beforeEach(async () => {
 	await selectOmp();
 });
 afterEach(async () => {
-	await selectHost({ getAgentDir: userPiDir, SettingsManager: class {} }, async () => { throw new Error("not OMP"); });
+	await selectHost({ getAgentDir: piUserDir, SettingsManager: class {} }, async () => { throw new Error("not OMP"); });
 	rmSync(root, { recursive: true, force: true });
 });
 
@@ -367,7 +367,7 @@ test("Pi retains root-anchored override policy when the runtime returns a relati
 	try {
 		process.env.PI_CODING_AGENT_DIR = "relative";
 		await selectHost({ getAgentDir: () => "relative", SettingsManager: class {} }, async () => runtime);
-		expect(host.agentDir()).toBe(userPiDir());
+		expect(host.agentDir()).toBe(piUserDir());
 	} finally {
 		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous;
 	}

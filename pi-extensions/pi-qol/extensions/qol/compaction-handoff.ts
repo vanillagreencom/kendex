@@ -5,10 +5,10 @@
 // so it can be unit-tested without the pi-coding-agent / pi-ai peer deps.
 
 import { mkdirSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { QOL_BUDGET_HANDOFF_FOLDER, QOL_BUDGET_HANDOFF_LATEST } from "./constants.js";
-import { expandHome } from "./package-config.js";
+import { piUserDir } from "./package-config.js";
 
 export interface QolBudgetHandoff {
 	reason: string;
@@ -20,17 +20,6 @@ export interface QolBudgetHandoff {
 	taskState?: unknown;
 	artifactRefs: string[];
 	model?: string;
-}
-
-/** Root-anchored as `crates/core/src/harness/pi.rs::pi_root_is_absolute_for`
- * means it, which `isAbsolute` is not: it calls a driveless `\root` absolute
- * where the renderer does not, putting the two on different roots. Hoisted, so
- * a circular import cannot reach it inside a temporal dead zone. */
-function rootAnchored(path: string, windows: boolean): boolean { return windows ? /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/.test(path) : path.startsWith("/"); }
-
-export function piUserDir(): string {
-	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
-	return resolve(rootAnchored(override, process.platform === "win32") ? override : expandHome("~/.pi/agent"));
 }
 
 export function safeFileName(value: string): string {
