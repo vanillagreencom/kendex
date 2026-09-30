@@ -514,9 +514,8 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 
 	// The task's final status and its timers settle at once, so a stop,
 	// timeout or shutdown after the child exits signals nothing. The exit wake
-	// names the log file as the task's full output, so it waits until the log
-	// holds every chunk appended before this call or the log write stalls. A
-	// task cleared or replaced meanwhile gets no wake.
+	// names the log file as the task's full output, so it waits for the log's
+	// flush to release. A task cleared or replaced meanwhile gets no wake.
 	const finalizeTask = (task: ManagedTask, exitCode: number | null, statusOverride?: BackgroundTaskStatus): void => {
 		if (!closeTaskLifecycle(task, exitCode, lifecycleHooks, statusOverride)) return;
 		refreshUi();

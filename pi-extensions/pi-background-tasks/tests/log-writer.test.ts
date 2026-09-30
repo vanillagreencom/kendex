@@ -91,6 +91,27 @@ const rows: { name: string; steps: Step[]; expected: Observed }[] = [
 		expected: { writes: [["a.log", "one\n"], ["a.log", atCap + stalledLogMarker(5)]], diagnostics: [stalled], timerArmed: true, stallsArmed: 1, held: 0, drained: null },
 	},
 	{
+		name: "a write chained behind a stalled write starts unstalled, so text at the cap holds the producer and is kept",
+		steps: [
+			{ append: ["a.log", "one\n"] }, { flush: "a.log" }, { append: ["a.log", "two\n"] }, { flush: "a.log" }, { stall: 0 }, { settleWrite: 0 },
+			{ append: ["a.log", atCap] }, { append: ["a.log", "more\n"] }, { settleWrite: 1 },
+		],
+		expected: {
+			writes: [["a.log", "one\n"], ["a.log", "two\n"], ["a.log", atCap + "more\n"]], diagnostics: [stalled], timerArmed: true, stallsArmed: 1, held: 0, drained: "done",
+		},
+	},
+	{
+		name: "a failed batch that carries a stall marker counts the counted bytes in its failure marker",
+		steps: [
+			{ append: ["a.log", "one\n"] }, { fire: true }, { append: ["a.log", atCap] }, { stall: 0 }, { append: ["a.log", "lost\n"] }, { settleWrite: 0 },
+			{ settleWrite: 1, fails: true }, { append: ["a.log", "two\n"] }, { fire: true },
+		],
+		expected: {
+			writes: [["a.log", "one\n"], ["a.log", atCap + stalledLogMarker(5)], ["a.log", writeFailed(atCap.length + 5) + "two\n"]],
+			diagnostics: [stalled, failed], timerArmed: false, stallsArmed: 1, held: 0, drained: null,
+		},
+	},
+	{
 		name: "flush of a stalled file takes no batch and resolves at once, so text past the cap stays counted",
 		steps: [{ append: ["a.log", "one\n"] }, { fire: true }, { append: ["a.log", atCap] }, { stall: 0 }, { flush: "a.log" }, { append: ["a.log", "lost\n"] }, { settleWrite: 0 }],
 		expected: { writes: [["a.log", "one\n"], ["a.log", atCap + stalledLogMarker(5)]], diagnostics: [stalled], timerArmed: true, stallsArmed: 1, held: 0, drained: "done" },

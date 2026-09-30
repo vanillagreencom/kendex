@@ -94,7 +94,7 @@ test("a task that outruns its log writes pauses its output until the write in fl
 	});
 }, SPAWN_FIXTURE_TIMEOUT_MS);
 
-test("a task that exits while its last log write is in flight takes no stop, timeout or shutdown signal and ends completed", () => {
+test("a task that exits while its last log write is in flight shows closed at once, takes no stop, timeout or shutdown signal and ends completed", () => {
 	const completed = { status: "completed", reason: "self-exit", exitCode: 0 };
 	const rows = [
 		{
@@ -111,7 +111,8 @@ test("a task that exits while its last log write is in flight takes no stop, tim
 	for (const row of rows) {
 		const result = runSpawnFixture("write-path-extension.ts", { mode: "exit-held", during: row.during });
 		expect(result, row.name).toStrictEqual({
-			heldAppends: 1, ...row.expected, signals: [], childSignals: [], log: "final line\n", unexpected: [],
+			heldAppends: 1, widgetBeforeClose: { running: 1, finished: 0 }, widgetAtClose: { running: 0, finished: 1 },
+			...row.expected, signals: [], childSignals: [], log: "final line\n", unexpected: [],
 		});
 	}
 }, SPAWN_FIXTURE_TIMEOUT_MS * 4);

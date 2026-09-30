@@ -1,6 +1,6 @@
 import { mock } from "bun:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fixturePid, interceptNativeEffects } from "./spawn-native.js";
 
@@ -13,6 +13,7 @@ import { fixturePid, interceptNativeEffects } from "./spawn-native.js";
 //   log-hold:            a task outruns log appends the fixture holds;
 //   exit-held:           a task's child closes while the fixture holds its last log append, then
 //                        `during` names what lands before the release: a stop and the timeout, shutdown or a clear;
+//                        this mode alone has a UI, whose widget the fixture draws on each redraw request;
 //   log-stall:           a task outruns a log append that never settles and is stopped while held.
 interface Input {
 	mode: "chunks" | "restore" | "identity-cleared" | "restore-concurrency" | "exit-flush" | "log-hold" | "exit-held" | "log-stall";
@@ -26,7 +27,12 @@ const native = await interceptNativeEffects({
 mock.module("@earendil-works/pi-ai", () => ({ StringEnum: (values: readonly string[]) => ({ enum: values }) }));
 mock.module("typebox", () => ({ Type: { Object: (value: unknown) => value, Optional: (value: unknown) => value, Number: () => ({}), String: () => ({}), Boolean: () => ({}) } }));
 const unused = () => { throw new Error("write_path_fixture.sdk_operation=unexpected_render"); };
-mock.module("@earendil-works/pi-tui", () => ({ matchesKey: unused, truncateToWidth: unused, visibleWidth: unused, wrapTextWithAnsi: unused }));
+const hasUI = input.mode === "exit-held";
+// The runner's user settings hide the widget; this project's settings show it.
+if (hasUI) writeFileSync(join(process.cwd(), ".pi", "settings.json"), JSON.stringify({ kendex: { extensionManager: { config: { "@vanillagreen/pi-background-tasks": { showWidget: true } } } } }));
+mock.module("@earendil-works/pi-tui", () => hasUI
+	? { matchesKey: unused, truncateToWidth: (text: string, width: number) => text.slice(0, width), visibleWidth: (text: string) => text.length, wrapTextWithAnsi: (text: string) => [text] }
+	: { matchesKey: unused, truncateToWidth: unused, visibleWidth: unused, wrapTextWithAnsi: unused });
 mock.module("@earendil-works/pi-coding-agent", () => ({ getShellConfig: () => ({ shell: "fixture-shell", args: ["-c"] }) }));
 
 interface ToolResult { content: { text: string }[]; details: { task?: Record<string, unknown> } }
@@ -59,10 +65,27 @@ const historyBranch = Array.from({ length: input.entries ?? 0 }, (_, entry) => (
 	] },
 }));
 const branch = input.mode === "restore-concurrency" ? concurrencyBranch : historyBranch;
+// The widget stack as the TUI last drew it: a new widget and each redraw request draw it again.
+type Drawn = { render(width: number): string[] };
+let widget: Drawn | null = null;
+let frame: string[] = [];
+const draw = () => { frame = widget?.render(120) ?? []; };
+const tui = { terminal: { rows: 40 }, requestRender: draw };
+const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
+const widgetCounts = () => {
+	const counts = frame.join("\n").match(/(\d+) running · (\d+) finished/);
+	return counts ? { running: Number(counts[1]), finished: Number(counts[2]) } : null;
+};
 const ctx = {
-	cwd: process.cwd(), hasUI: false, isProjectTrusted: () => true,
+	cwd: process.cwd(), hasUI, isProjectTrusted: () => true,
 	sessionManager: { getSessionId: () => sessionId, getSessionFile: () => join(process.cwd(), "session.jsonl"), getBranch: () => branch },
-	ui: { notify() {}, setWidget() {} },
+	ui: {
+		notify() {},
+		setWidget(_key: string, factory?: (tui: unknown, theme: unknown) => Drawn) {
+			widget = factory ? factory(tui, theme) : null;
+			draw();
+		},
+	},
 } as unknown as ExtensionContext;
 const pi = {
 	registerTool(tool: Tool) { tools.set(tool.name, tool); },
@@ -175,9 +198,11 @@ try {
 		const child = native.children[0]!;
 		child.stdout.write("final line\n");
 		await settle();
+		const widgetBeforeClose = widgetCounts();
 		child.emit("close", 0);
 		await settle();
 		const heldAppends = native.heldAppends();
+		const widgetAtClose = widgetCounts();
 		let stopMessage: string | null = null;
 		let timeoutArmed: boolean | null = null;
 		let signals: unknown[];
@@ -204,7 +229,7 @@ try {
 			await settleUntil(() => logsAtWake.length > 0);
 		}
 		result = {
-			heldAppends, stopMessage, timeoutArmed, signals, childSignals: native.childSignals,
+			heldAppends, widgetBeforeClose, widgetAtClose, stopMessage, timeoutArmed, signals, childSignals: native.childSignals,
 			outcome: persistedOutcome("bg-1"), logsAtWake, log: readFileSync(logFile, "utf8"),
 		};
 	} else if (input.mode === "log-stall") {

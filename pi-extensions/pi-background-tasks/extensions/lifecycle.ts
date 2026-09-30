@@ -49,9 +49,9 @@ export function finalizeTaskLifecycle(
 	return task;
 }
 
-// The terminal transition without the exit wake: the one place that picks a
-// task's final status. Returns false when the task was already closed. A
-// caller that defers the wake calls sendExitWakeLifecycle itself.
+// The terminal transition without the exit wake, for finalizeTaskLifecycle
+// and background-tasks.ts finalizeTask, which call sendExitWakeLifecycle
+// after it. Returns false when the task was already closed.
 export function closeTaskLifecycle(
 	task: ManagedTask,
 	exitCode: number | null,
