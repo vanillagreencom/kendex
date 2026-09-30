@@ -7,11 +7,15 @@ test("detail value limits", () => {
 	const small = { ok: true, count: 3, label: "x", list: [1, { nested: "y" }] };
 	// 40 objects of 60 numbers: 2,441 values, past the 2,000-value traversal budget.
 	const wide = Array.from({ length: 40 }, (_, i) => Object.fromEntries(Array.from({ length: 60 }, (_, j) => [`k${j}`, i * j])));
+	// 40 x 49 objects of 79 keys each put 154,840 values at depth 5, each one
+	// replaced by a detail-depth notice.
+	const broad = { a: { b: Array.from({ length: 40 }, () => Array.from({ length: 49 }, () => Object.fromEntries(Array.from({ length: 79 }, (_, j) => [`k${j}`, {}])))) } };
 	for (const [name, input, changed] of [
 		["string", { note: "a".repeat(20_000) }, true],
 		["array", Array.from({ length: 200 }, (_, i) => ({ i })), true],
 		["deep", deep, true], ["small", small, false],
 		["nodes", wide, true],
+		["depth-nodes", broad, true],
 	] as const) {
 		const result = sanitizeDetails(input);
 		expect(result.changed).toBe(changed);
@@ -47,6 +51,13 @@ test("detail value limits", () => {
 				expect(Object.keys(cut)).toHaveLength(47);
 				expect((cut["[output-policy:truncated]"] as string).split("\n")[0]).toBe(notice);
 				expect((array[33] as string).split("\n")[0]).toBe(notice);
+				break;
+			}
+			case "depth-nodes": {
+				// A depth-capped value spends a node like any other.
+				const json = JSON.stringify(result.value);
+				expect(json).toContain("[output-policy:detail-node-budget=2000]");
+				expect(json.split("[output-policy:detail-depth=5]").length - 1).toBeLessThan(2_000);
 				break;
 			}
 		}

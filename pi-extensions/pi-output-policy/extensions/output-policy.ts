@@ -925,8 +925,8 @@ function budgetNotice(budget: DetailBudget): string | undefined {
 }
 
 function sanitizeNode(value: unknown, depth: number, budget: DetailBudget): unknown {
-	if (depth > SANITIZE_MAX_DEPTH) return policyNotice("detail-depth", depth, "Maximum detail depth reached.");
 	budget.nodes -= 1;
+	if (depth > SANITIZE_MAX_DEPTH) return policyNotice("detail-depth", depth, "Maximum detail depth reached.");
 	if (value == null || typeof value === "number" || typeof value === "boolean") return value;
 	if (typeof value === "string") return sanitizeString(value, budget);
 	if (Array.isArray(value)) return sanitizeArray(value, depth, budget);
