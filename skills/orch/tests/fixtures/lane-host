@@ -42,6 +42,10 @@ case "$1" in
       exit "$LANE_HOST_STUB_CAT_STATUS"
     fi ;;
   touch) [[ "${LANE_HOST_STUB_TOUCH_STATUS:-0}" -eq 0 ]] || exit "$LANE_HOST_STUB_TOUCH_STATUS" ;;
+  status)
+    [[ "${LANE_HOST_STUB_PROBE_STATUS:-0}" -eq 0 ]] || exit "$LANE_HOST_STUB_PROBE_STATUS"
+    printf '%s\n' "${LANE_HOST_STUB_HARNESS_STATE:-running}"
+    exit 0 ;;
   put)
     [[ "${LANE_HOST_STUB_PUT_STATUS:-0}" -eq 0 ]] \
       || { printf 'lane-host-fixture: put-failed path=%s\n' "$4" >&2; exit "$LANE_HOST_STUB_PUT_STATUS"; }

@@ -258,6 +258,24 @@ pane_has_child() {
   return "$LANE_PROBE_RC"
 }
 
+# Read the provider's documented status verb, not the local ssh process.
+# Returns the same three answers as pane_has_child. A failed or malformed read
+# cannot prove an exit, even when the captured screen shows a shell prompt.
+pane_has_remote_harness() { # LANE_HOST ITEM HARNESS
+  local answer
+  LANE_PROBE_RC=0
+  answer="$("$1" status --item "$2" --harness "$3")" || LANE_PROBE_RC=$?
+  if [[ "$LANE_PROBE_RC" -eq 0 ]]; then
+    case "$answer" in
+      running) return 0 ;;
+      exited) return 1 ;;
+      *) LANE_PROBE_RC=2 ;;
+    esac
+  fi
+  printf 'lane-state: harness-probe-failed item=%s status=%s\n' "$2" "$LANE_PROBE_RC" >&2
+  return 2
+}
+
 # The harness processes whose current directory is one worktree. This is the
 # ownership read used before a wake starts a second harness and before
 # lane_stop_owned signals one. The worktree path is canonical, and a process
@@ -580,13 +598,12 @@ lane_pane_observe() { # WINDOW
 # The judge.
 # ---------------------------------------------------------------------------
 
-# lane_state OUT_VAR WINDOW CMD PID SCREEN [SESSION] [ACCOUNT] [ROWS] —
+# lane_state OUT_VAR WINDOW CMD PID SCREEN [SESSION] [ACCOUNT] [ROWS] [HOSTED_ITEM] [HARNESS] —
 # assigns OUT_VAR exactly one of:
 #
 #   gone      no window: there is no lane here to ask about
-#   exited    the window outlived its harness — a bare shell with nothing
-#             under it, the shape a session that quit, crashed or hit its
-#             limit leaves behind
+#   exited    the window outlived its harness: the provider confirms the
+#             remote harness has ended, or a local shell has no child
 #   walled    the account is spent and said so below the lane's last turn,
 #             and no ACCOUNT reading says the wall has lifted
 #   asking    a dialog is up and waiting on an answer
@@ -608,6 +625,11 @@ lane_pane_observe() { # WINDOW
 #            wall standing, and "" where it measured nothing
 #   ROWS     for a Pi lane, lib/session-rows.sh § session_rows_lane_verdict's
 #            word, `unreadable` where that read failed; "" for any other lane
+#   HOSTED_ITEM and HARNESS name the remote process read through lane-host.
+#            One call per invocation; a failure returns unjudged without
+#            falling back to the local ssh child or the screen.
+#   LANE_EXIT_SOURCE is `provider` for a confirmed remote exit, `pane` for
+#            a childless local shell, and empty for every other verdict.
 #
 # A PI LANE IS JUDGED FROM WHAT PI EMITS, NEVER FROM ITS PANE, by every caller
 # that passes ROWS: the Stop and PreToolUse rows the lane-mail-check hook
@@ -621,11 +643,10 @@ lane_pane_observe() { # WINDOW
 #
 # THE PANE IS ASKED FIRST FOR EVERY RUNG THAT IS NOT `idle`, which the
 # supplied process read decides; the session rule below carries that half.
-# A lane whose harness runs on another machine — every hosted lane — has
-# nothing in the reader's /proc by construction, and judging from /proc first
-# made every such lane `unjudged`. Its ssh pane is on the reader's own tmux server and carries the
-# same screen the harness draws, so the pane rungs answer for it exactly as
-# they do for a local lane.
+# A hosted lane has nothing in the reader's /proc. When HOSTED_ITEM is given,
+# the provider first settles whether its remote harness is still running.
+# The local ssh child proves no remote harness is alive. A running remote
+# harness takes the pane rungs below, as a running local harness does.
 #
 # Rung order is load-bearing and is the order the watch has always used:
 # `walled` outranks `asking` because a limit banner can sit above a stale
@@ -662,15 +683,23 @@ lane_pane_observe() { # WINDOW
 # answered. The caller decides whether that ends its run.
 lane_state() {
   local _ls_out="$1" _ls_window="$2" _ls_cmd="$3" _ls_pid="$4" _ls_screen="$5" _ls_session="${6:-}" _ls_account="${7:-}"
-  local _ls_rows="${8:-}" _ls_slice _ls_banner _ls_rc=0
+  local _ls_rows="${8:-}" _ls_item="${9:-}" _ls_harness="${10:-}" _ls_slice _ls_banner _ls_rc=0
   LANE_PROBE_RC=0
+  LANE_EXIT_SOURCE=""
   if [[ "$_ls_window" != listed ]]; then printf -v "$_ls_out" gone; return 0; fi
-  if is_bare_shell "$_ls_cmd" && [[ -n "$_ls_pid" ]]; then
+  if [[ -n "$_ls_item" ]]; then
+    pane_has_remote_harness "$SCRIPT_DIR/lane-host" "$_ls_item" "$_ls_harness" || _ls_rc=$?
+    case "$_ls_rc" in
+      0) ;;
+      1) LANE_EXIT_SOURCE=provider; printf -v "$_ls_out" exited; return 0 ;;
+      2) printf -v "$_ls_out" unjudged; return 0 ;;
+    esac
+  elif is_bare_shell "$_ls_cmd" && [[ -n "$_ls_pid" ]]; then
     pane_has_child "$_ls_pid" || _ls_rc=$?
     # 1 is "no child" and the whole of `exited`. 2 is a probe that could not
     # run, never an answer: the pane rungs below still get their say, and
     # LANE_PROBE_RC carries the status for the caller's note.
-    if [[ "$_ls_rc" -eq 1 ]]; then printf -v "$_ls_out" exited; return 0; fi
+    if [[ "$_ls_rc" -eq 1 ]]; then LANE_EXIT_SOURCE=pane; printf -v "$_ls_out" exited; return 0; fi
   fi
   if [[ "$_ls_rows" == walled ]]; then
     case "$_ls_account" in

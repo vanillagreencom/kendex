@@ -3014,7 +3014,7 @@ check_lanes() {
   local lane pane below cmd pid state window i states="" claims="" claimed pane_key
   local seen seen_at seen_pane seen_reported seen_key reset_at reset_utc reset_note event
   local asking_state fingerprint prior turn_identity capacity capacity_key screen_key close_failed=0
-  local banner banner_rc turn
+  local banner banner_rc turn hosted_item hosted_harness
   # One liveness read and one pane capture per lane per pass: a lane's kind is
   # decided from a single observation, never from two screens taken apart. The
   # pid leads the format so a command carrying a space cannot shift the split.
@@ -3023,13 +3023,10 @@ check_lanes() {
   # inventing a classification each. Every loop below reads its verdict out of
   # `states` and classifies nothing of its own.
   #
-  # The sixth argument, the harness process read through /proc, is empty here:
-  # the watch's one vantage point is the tmux pane, and a hosted lane's
-  # harness runs on another machine. With it empty the judge answers
-  # `unjudged` for a screen its pane rungs cannot settle, where the wake, which
-  # does pass it, can still answer. The eighth is a Pi lane's rows verdict,
-  # which observe_lanes read and which answers for that lane in place of its
-  # screen.
+  # No local /proc session read. A hosted lane names its item and recorded
+  # harness so the judge reads the provider once, instead of judging the ssh
+  # child. The eighth argument is a Pi lane's rows verdict, which
+  # observe_lanes read and which replaces its screen after liveness is settled.
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
@@ -3046,14 +3043,23 @@ check_lanes() {
     # same reason, and in an ordinary pass it is unreachable: the status is
     # checked because a verdict nothing looked at is how a lane gets read as
     # having no news.
-    lane_state state "$window" "$cmd" "$pid" "$pane" "" "" "${LANE_ROWS[$i]:-}" \
+    hosted_lane_item "$lane"
+    hosted_item=""; hosted_harness=""
+    if [[ -n "$HOSTED_ROOT" ]]; then
+      hosted_item="$LANE_ITEM"
+      hosted_harness="$(jq -r --arg item "$LANE_ITEM" \
+        '[.lanes[]? | select(.item == $item)][0].harness // ""' <<<"${FLEET_STATE:-null}")" \
+        || die state-invalid "" "item=$LANE_ITEM"
+    fi
+    lane_state state "$window" "$cmd" "$pid" "$pane" "" "" "${LANE_ROWS[$i]:-}" "$hosted_item" "$hosted_harness" \
+
       || die limit-scan-failed "" "lane=$lane"
     # A probe that could not run is not an answer: the judge falls through to
     # the screen, a lane it cannot classify stays watched, and the status is
     # noted once — a wrong lane-exited retires a working lane while a missed
     # one costs a pass.
-    [[ "$LANE_PROBE_RC" -le 1 ]] || note_probe_unusable "$lane"
-    states+="$i"$'\t'"$state"$'\n'
+    [[ -n "$hosted_item" || "$LANE_PROBE_RC" -le 1 ]] || note_probe_unusable "$lane"
+    states+="$i"$'\t'"$state"$'\t'"$LANE_EXIT_SOURCE"$'\n'
     if [[ "$state" == gone ]]; then
       echo "EVENT window-gone $lane"
       PASS_EVENT=1
@@ -3064,7 +3070,8 @@ check_lanes() {
   # shell in the foreground — a window that exists, a pane that matches no
   # question prompt, and a slot held until someone looks. A bare shell with
   # nothing running under it IS that lane, finished; its closing lines carry
-  # why. Two consecutive passes: a live harness can hold a childless shell in
+  # why. A provider-confirmed exit is news in this pass. A local shell takes
+  # two consecutive passes: a live harness can hold a childless shell in
   # the foreground for one poll, and relaunching a working lane costs more
   # than one interval. The first pass is a `lane-exited` row keyed by the
   # pane, so the second can be the next run's first; that second pass marks
@@ -3081,7 +3088,7 @@ check_lanes() {
     pane_key="$(lane_field "$LANE_OBS" "$i" 5)"
     prior="$(lane_row_get lane-exited "$asking_state" "$lane")"
     if [[ "$prior" == "$pane_key|reported" ]]; then continue; fi
-    if [[ "$prior" == "$pane_key" ]]; then
+    if [[ "$prior" == "$pane_key" || "$(lane_field "$states" "$i" 3)" == provider ]]; then
       asking_state="$(lane_row_set lane-exited "$asking_state" "$lane" "$pane_key|reported")"
       echo "EVENT lane-exited $lane"
       pane="$(cat -- "$(lane_pane_file "$i")")"

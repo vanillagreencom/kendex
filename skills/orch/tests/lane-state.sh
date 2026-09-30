@@ -48,6 +48,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/process-table.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 SCRIPTS_DIR="$REPO_ROOT/skills/orch/scripts"
+SCRIPT_DIR="$SCRIPTS_DIR"
 # The library under test, sourced into this shell: the judge is a function, and
 # a call to it is the smallest surface that can fail.
 # shellcheck source=../scripts/lib/lane-state.sh
@@ -136,6 +137,38 @@ a copilot composer holding a draft is the same live input|listed|node|100|copilo
 a copilot footer running a command is a turn in flight|listed|node|100|copilot_working|||working
 copilot's folder-trust dialog is asking|listed|node|100|copilot_trust|||asking
 ROWS
+
+# The provider creates the remote harness while tmux holds only its ssh
+# connection. Drive the real dispatcher and keep the local child live.
+echo "=== lane-state § remote harness: one provider read, no ssh-child verdict ==="
+for row in 'exited|0|exited|provider' 'running|0|idle|' 'running|7|unjudged|' 'garbage|0|unjudged|'; do
+  IFS='|' read -r remote_status provider_rc want source <<<"$row"
+  export ORCH_LANE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
+  export LANE_HOST_STUB_LOG="$STUB_DIR/host.calls"
+  export LANE_HOST_STUB_HARNESS_STATE="$remote_status" LANE_HOST_STUB_PROBE_STATUS="$provider_rc"
+  : > "$LANE_HOST_STUB_LOG"
+  : > "$STUB_DIR/pgrep.calls"
+  remote_result="$(cd -- "$TMP_ROOT/repo" && lane_state row_state listed bash 100 "$(screen_for idle)" "" "" "" TEST-1 claude &&
+    printf '%s source=%s' "$row_state" "$LANE_EXIT_SOURCE")" || exit 1
+  assert_eq "$remote_result" "$want source=$source" "provider $remote_status/$provider_rc judges the hosted lane"
+  assert_eq "$(grep -c '^status --item TEST-1 --harness claude ' "$LANE_HOST_STUB_LOG")" "1" "one provider read per hosted judgment"
+  assert_eq "$(wc -c < "$STUB_DIR/pgrep.calls" | tr -d ' ')" "0" "a hosted judgment never reads the local ssh child"
+done
+# The old local-only walk leaves this remote exit hidden behind that child.
+REMOTE_MUTANT="$(mutant_scripts remote-judge lib/lane-state.sh)" || exit 1
+mutate_file "$REMOTE_MUTANT/lib/lane-state.sh" '  if [[ -n "$_ls_item" ]]; then' '  if [[ -n "$_ls_item" && false == true ]]; then'
+export LANE_HOST_STUB_HARNESS_STATE=exited LANE_HOST_STUB_PROBE_STATUS=0
+remote_control="$(cd -- "$TMP_ROOT/repo" && source "$REMOTE_MUTANT/lib/lane-state.sh" &&
+  lane_state row_state listed bash 100 "$(screen_for idle)" "" "" "" TEST-1 claude && printf '%s' "$row_state")" || exit 1
+assert_eq "$remote_control" "idle" "control: the local-only walk misses the remote exit behind a live ssh child"
+REMOTE_FAILURE_MUTANT="$(mutant_scripts remote-failure lib/lane-state.sh)" || exit 1
+mutate_file "$REMOTE_FAILURE_MUTANT/lib/lane-state.sh" '      2) printf -v "$_ls_out" unjudged; return 0 ;;' '      2) printf -v "$_ls_out" exited; return 0 ;;'
+export LANE_HOST_STUB_PROBE_STATUS=7
+remote_control="$(cd -- "$TMP_ROOT/repo" && source "$REMOTE_FAILURE_MUTANT/lib/lane-state.sh" &&
+  lane_state row_state listed bash 100 "$(screen_for idle)" "" "" "" TEST-1 claude && printf '%s' "$row_state")" || exit 1
+assert_eq "$remote_control" "exited" "control: reading a provider failure as an exit violates the unjudged rule"
+export ORCH_LANE_HOST=local
+unset LANE_HOST_STUB_HARNESS_STATE LANE_HOST_STUB_PROBE_STATUS
 
 # Whether a launcher sees the harness up on a pane it opened: the Copilot
 # composer is two lines, so it is the one screen the one-line pattern misses.

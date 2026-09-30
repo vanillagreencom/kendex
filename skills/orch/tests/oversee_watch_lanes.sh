@@ -276,6 +276,40 @@ lane_table \
   "a liveness reply with a non-pid exits 2, emits nothing, and is preserved|new|-|obs:fish fish|2|rc=2 lines=0 stderr~oversee-watch:+pane-command-invalid+lane=gh-2+value=fish+fish=true" \
   "an unreadable pane command is a fail-closed probe error, never window-gone|new|-|nocmd|2|rc=2 lines=0 stderr~oversee-watch:+pane-command-failed+lane=gh-2=true stderr~E_COMMAND+lane=gh-2=true"
 
+echo "=== hosted lane exits: the provider reads past a live ssh child ==="
+for row in 'exited|0|true' 'running|0|false' 'exited|7|false' 'garbage|0|false'; do
+  IFS='|' read -r remote_status provider_rc want_exit <<<"$row"
+  new_case "remote_${remote_status}_$provider_rc"
+  lane fish_child
+  screen fish_prompt
+  provider="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
+  remote_disk="$STUB_DIR/remote"
+  mkdir -p "$remote_disk/srv/lane/tmp" "$remote_disk/srv/clone/tmp"
+  printf 'gitdir: /srv/clone/.git/worktrees/TEST-1\n' > "$remote_disk/srv/lane/.git"
+  printf 'started\n' > "$remote_disk/srv/lane/tmp/lane-status-TEST-1.md"
+  jq -cn --arg host "$provider" '{issue_id:"oversee", triaged:[], lanes:[{
+    item:"TEST-1", window:"gh-2", host:$host, mail_root:"/srv/lane", harness:"claude",
+    status:"running", launched_at:"2026-08-15T09:00:00Z"}]}' > "$STUB_DIR/fleet.json"
+  ERR="$STUB_DIR/err"
+  OUT="$(run_watch ORCH_LANE_HOST="$provider" LANE_HOST_STUB_LOG="$STUB_DIR/host.calls" \
+    LANE_HOST_STUB_DIR="$remote_disk" LANE_HOST_STUB_HARNESS_STATE="$remote_status" LANE_HOST_STUB_PROBE_STATUS="$provider_rc" \
+    -- --state "$STUB_DIR/fleet.json" --max-loops 1 2>"$ERR")" && RC=0 || RC=$?
+  expect="rc=0 out~EVENT+lane-exited+gh-2=$want_exit"
+  assert_eq "$(watch "$expect")" "$expect" "hosted $remote_status/$provider_rc reports only a confirmed exit in one pass" "$ERR"
+  assert_eq "$(grep -c '^status --item TEST-1 --harness claude ' "$STUB_DIR/host.calls")" "1" "one remote harness call per lane per pass"
+done
+# The watch still has to publish the authoritative remote exit immediately.
+REMOTE_WATCH="$(mutant_scripts remote-watch/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/remote-watch/github"
+mutate_file "$REMOTE_WATCH" '    if [[ "$prior" == "$pane_key" || "$(lane_field "$states" "$i" 3)" == provider ]]; then' \
+  '    if [[ "$prior" == "$pane_key" ]]; then'
+rm -rf -- "$STATE_DIR"
+OUT="$(WATCH_BIN="$REMOTE_WATCH" run_watch ORCH_LANE_HOST="$provider" LANE_HOST_STUB_LOG="$STUB_DIR/host.calls" \
+  LANE_HOST_STUB_DIR="$remote_disk" LANE_HOST_STUB_HARNESS_STATE=exited LANE_HOST_STUB_PROBE_STATUS=0 \
+  -- --state "$STUB_DIR/fleet.json" --max-loops 1 2>"$ERR")" && RC=0 || RC=$?
+expect='rc=0 out~EVENT+lane-exited+gh-2=false'
+assert_eq "$(watch "$expect")" "$expect" "control: a confirmed provider exit hidden behind the local debounce misses the pass" "$ERR"
+
 echo "=== lane-asking: a question nobody has answered ==="
 # A selection prompt is a question, never an idle prompt; the check reads the
 # same liveness answer as the exit check, so a wrapped lane's prompt is seen.

@@ -136,9 +136,10 @@ class LaneHostTests(unittest.TestCase):
         self.assertEqual(self.run_host("--help").returncode, 0)
     def test_dispatch_protocol(self):
         original = self.script.read_text()
-        rule = "  create|wait|cat|put|append|touch|stop|stop-sandbox|start|close|list|accounts)"
+        rule = "  create|wait|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts)"
         self.assertEqual(original.count(rule), 1)
         protocol = [(("stop", "--item", "TEST-1", "--harness", "claude"), (0, True)),
+                    (("status", "--item", "TEST-1", "--harness", "claude"), (0, True)),
                     (("wait", "--item", "TEST-1"), (0, True)),
                     (("stop-sandbox", "--item", "TEST-1"), (0, True)),
                     (("start", "--item", "TEST-1"), (0, True)),
@@ -159,7 +160,7 @@ class LaneHostCallersTests(unittest.TestCase):
     provider verb is a call outside the bound."""
     # A provider verb, or the caller's own argv forwarded whole, which is how
     # open-terminal's host_transport hands its verbs on.
-    VERB = re.compile(r"(?:create|wait|cat|put|append|touch|stop|stop-sandbox|start|close|list|accounts|\$@)")
+    VERB = re.compile(r"(?:create|wait|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts|\$@)")
     # Keywords, `!`, environment assignments and optional argv prefixes, then
     # the command word and the word after it. A prefix is an array expanded
     # whole, `${X[@]+"${X[@]}"}` or `"${X[@]}"`, such as the github skill's

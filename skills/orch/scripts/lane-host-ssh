@@ -362,6 +362,24 @@ exec tar -chzf - -C / -- "${paths[@]}"''', row["clone"], worktree_path).stdout
     print(f"kept={kept}", flush=True)
 
 
+def status(row, item, harness):
+    """Read the owned remote harness without signalling any process."""
+    path = owned_worktree(row, item, "status")
+    result = remote(row, '''lib="$3/.agents/skills/orch/scripts/lib/lane-state.sh"
+if ! test -r "$lib"; then
+  printf 'lane-host-ssh: status-library-missing path=%s\\n' "$lib" >&2
+  exit 1
+fi
+. "$lib"
+lane_owned_processes "$1" "$2" || {
+  printf 'lane-host-ssh: status-read-failed item=%s\\n' "$4" >&2
+  exit 1
+}
+if test -n "$LANE_OWNED_PROCESS_PIDS"; then printf 'running\\n'
+else printf 'exited\\n'; fi''', path, harness, row["clone"], item)
+    sys.stdout.buffer.write(result.stdout)
+
+
 def stop(row, item, harness):
     """Stop the named harness only when its process belongs to the item worktree.
 
@@ -441,7 +459,10 @@ hosted lane path (worktree path --hosted), and path= names it.
 stop --item ID --harness claude|codex|pi|copilot resolves the owned worktree through
 the installed worktree command, signals only matching harness processes whose
 current directory is that worktree, waits for them to exit, and prints
-stopped item=ID processes=COUNT. A worktree that is no longer a directory exits
+stopped item=ID processes=COUNT. status takes the same arguments and reads the
+owned harness without signalling it: running or exited on stdout. A failed
+ownership or process read exits nonzero and reports no status.
+A worktree that is no longer a directory exits
 4 with stop-worktree-removed and signals nothing. close preserves render-only drift as a binary patch under clone/tmp, restores
 the generated paths, refreshes the clone, and then closes. An untracked render,
 a skill symlink a post-launch kendex apply added among them, enters the patch
@@ -477,9 +498,10 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
             action.add_argument("path")
         if verb == "close":
             action.add_argument("--merged", action="store_true")
-    stopping = sub.add_parser("stop")
-    stopping.add_argument("--item", required=True)
-    stopping.add_argument("--harness", required=True, choices=("claude", "codex", "pi", "copilot"))
+    for verb in ("stop", "status"):
+        stopping = sub.add_parser(verb)
+        stopping.add_argument("--item", required=True)
+        stopping.add_argument("--harness", required=True, choices=("claude", "codex", "pi", "copilot"))
     sub.add_parser("list")
     args = parser.parse_args()
     inventory = os.environ.get("LANE_HOST_SSH_INVENTORY", "")
@@ -532,6 +554,8 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
         remote(row, "true")
     elif args.verb == "stop":
         stop(row, args.item, args.harness)
+    elif args.verb == "status":
+        status(row, args.item, args.harness)
     elif args.verb == "close":
         path = owned_worktree(row, args.item, "close")
         result = remote(row, '''drop_render_scratch() { rm -f -- "$owned" "$status" "$index" "$carried"; }
