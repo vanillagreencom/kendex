@@ -149,14 +149,15 @@ function deepFreeze<T>(value: T): T {
 }
 
 /**
- * Keeps the most recently read runtime's task registry once per file version (`file-version.ts::fileVersion`:
+ * Keeps the most recently read or written runtime's task registry once per file version (`file-version.ts::fileVersion`:
  * device, inode, byte size and modification time). A read that finds the same version
  * gets the parsed registry it got before, from one stat and no read. That registry is
  * shared by every caller until the version changes, so it is frozen: a caller that
- * needs to change it copies it first. A failed read is not cached and is tried again.
+ * needs to change it takes a mutable copy of the retained JSON. Local writers publish
+ * that JSON under the writer lock after replacement. A failed read is not cached.
  */
 export class TaskRegistryReader {
-	private cache: { filePath: string; version: string; registry: PaneTaskRegistry } | undefined;
+	private cache: { filePath: string; version: string; content: string; registry: PaneTaskRegistry } | undefined;
 
 	read(runtimeRoot: string): PaneTaskRegistry {
 		const filePath = taskRegistryPath(runtimeRoot);
@@ -176,13 +177,37 @@ export class TaskRegistryReader {
 			this.clear();
 			return EMPTY_TASK_REGISTRY;
 		}
+		return this.cacheContent(filePath, version, content);
+	}
+
+	/** Check the version before copying; nested edits cannot change shared readers. */
+	mutableCopy(runtimeRoot: string): PaneTaskRegistry {
+		this.read(runtimeRoot);
+		return this.cache ? normalizeTaskRegistryShape(JSON.parse(this.cache.content)) : {};
+	}
+
+	/** Publish the exact written JSON while the task registry writer still holds its lock. */
+	rememberWrite(runtimeRoot: string, content: string): void {
+		const filePath = taskRegistryPath(runtimeRoot);
+		let version: string;
+		try {
+			version = fileVersion(fs.statSync(filePath));
+		} catch {
+			this.clear();
+			return;
+		}
+		this.cacheContent(filePath, version, content);
+	}
+
+	private cacheContent(filePath: string, version: string, content: string): PaneTaskRegistry {
 		let registry: PaneTaskRegistry;
 		try {
 			registry = deepFreeze(normalizeTaskRegistryShape(JSON.parse(content)));
 		} catch {
 			registry = EMPTY_TASK_REGISTRY;
+			content = "{}";
 		}
-		this.cache = { filePath, version, registry };
+		this.cache = { filePath, version, content, registry };
 		return registry;
 	}
 

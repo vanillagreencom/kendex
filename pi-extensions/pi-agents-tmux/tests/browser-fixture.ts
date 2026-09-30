@@ -13,6 +13,7 @@ import { tempRuntime } from "./single-agent-fixture.js";
 import { clearPackageConfigCache } from "../extensions/subagent/package-config.js";
 import { taskRegistryPath } from "../extensions/subagent/paths.js";
 import type { TaskRegistryReader } from "../extensions/subagent/task-records.js";
+import { patchTaskRecordUsage } from "../extensions/subagent/index.js";
 
 export { cleanupTempRuntimes, tempRuntime, writeSettings } from "./single-agent-fixture.js";
 
@@ -73,7 +74,7 @@ export async function assertCachedCompletionPoll(runtime: Pick<typeof import("..
 	mkdirSync(join(root, "outbox"), { recursive: true });
 	await runtime.writeTaskRegistry(root, {});
 	const pi = { events: { emit() {} }, sendMessage() {} } as unknown as Parameters<typeof runtime.pollPaneCompletions>[1];
-	assert.equal(await taskRegistryReads(root, () => runtime.pollPaneCompletions(root, pi)), 1);
+	assert.equal(await taskRegistryReads(root, () => runtime.pollPaneCompletions(root, pi)), 0);
 	assert.equal(await taskRegistryReads(root, () => runtime.pollPaneCompletions(root, pi)), 0);
 }
 
@@ -86,7 +87,41 @@ export async function assertCachedRegistryUpdate(runtime: Pick<typeof import("..
 		records.child!.filesChanged!.push("after.ts");
 	})), 0);
 	assert.deepEqual(snapshot.child?.filesChanged, ["before.ts"]);
-	assert.deepEqual(reader.read(root).child?.filesChanged, ["before.ts", "after.ts"]);
+	assert.equal(await taskRegistryReads(root, async () => {
+		assert.deepEqual(reader.read(root).child?.filesChanged, ["before.ts", "after.ts"]);
+	}), 0);
+}
+
+/** Drive patchDashboardUsage's per-child writes and the real following poll. */
+export async function assertSequentialUsageUpdates(runtime: Pick<typeof import("../extensions/subagent/tasks.js"), "updateTaskRegistry" | "writeTaskRegistry" | "pollPaneCompletions" | "readTaskRegistry">, reader: TaskRegistryReader): Promise<void> {
+	const root = tempRuntime();
+	mkdirSync(join(root, "outbox"), { recursive: true });
+	const records = Object.fromEntries(["engineer", "scout", "planner"].map((agent) => [agent, {
+		taskId: agent, agent, task: "work", status: "running" as const, createdAt: "2026-09-30T00:00:00Z",
+		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+	}]));
+	await runtime.writeTaskRegistry(root, records);
+	const before = reader.read(root);
+	const pi = { events: { emit() {} }, sendMessage() {} } as unknown as Parameters<typeof runtime.pollPaneCompletions>[1];
+	assert.equal(await taskRegistryReads(root, async () => {
+		for (const taskId of Object.keys(records)) {
+			const updated = await runtime.updateTaskRegistry(root, (registry) => {
+				assert.equal(patchTaskRecordUsage(registry, taskId, { usage: { ...records[taskId]!.usage, input: 4, output: 2, turns: 1 }, model: "test-model" }), true);
+			});
+			const written = reader.read(root);
+			assert.equal(written[taskId]?.usage?.input, 4);
+			assert.equal(Object.isFrozen(written[taskId]?.usage), true);
+			// The caller may retain and mutate both the returned record and its nested fields.
+			updated[taskId]!.usage!.input = 999;
+			updated[taskId]!.model = "caller-model";
+			assert.equal(reader.read(root), written);
+			assert.equal(written[taskId]?.usage?.input, 4);
+			assert.equal(written[taskId]?.model, "test-model");
+		}
+		assert.equal(await runtime.pollPaneCompletions(root, pi), 0);
+	}), 0, "local usage writes and the following poll must read no registry content");
+	assert.deepEqual(Object.values(before).map((record) => record.usage?.input), [0, 0, 0]);
+	assert.deepEqual(Object.values(await runtime.readTaskRegistry(root)).map((record) => [record.usage?.input, record.model]), [[4, "test-model"], [4, "test-model"], [4, "test-model"]]);
 }
 
 /** Exercise reuse, cross-runtime eviction and teardown through the reader's public API. */
@@ -99,6 +134,14 @@ export async function assertRegistryReaderCache(reader: TaskRegistryReader): Pro
 	assert.equal(await taskRegistryReads(roots[0]!, async () => reader.read(roots[0]!)), 1);
 	reader.clear();
 	assert.equal(await taskRegistryReads(roots[0]!, async () => reader.read(roots[0]!)), 1);
+	const content = JSON.stringify({ child: { taskId: "child", filesChanged: ["written.ts"] } });
+	writeFileSync(taskRegistryPath(roots[0]!), content);
+	reader.rememberWrite(roots[0]!, content);
+	assert.equal(await taskRegistryReads(roots[0]!, async () => {
+		const copy = reader.mutableCopy(roots[0]!);
+		copy.child!.filesChanged!.push("caller.ts");
+		assert.deepEqual(reader.read(roots[0]!).child?.filesChanged, ["written.ts"]);
+	}), 0);
 }
 
 /** Deliver Node's file-check notification without waiting for its polling clock. */

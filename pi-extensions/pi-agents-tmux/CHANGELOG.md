@@ -4,7 +4,7 @@
 
 ### Unreleased
 
-- Completion polling and task updates reuse the dashboard's cached task registry while the file is unchanged. Registry changes apply on the next poll or update. The cache holds only the most recently read runtime and clears when a session ends.
+- Completion polling and task updates reuse the dashboard's cached task registry. Local writes update the cache, so sequential child usage writes and the next completion poll do not reread registry content. External registry changes apply on the next poll or update. The cache holds only the most recent runtime and clears when a session ends.
 
 ### 3.2.1
 
