@@ -426,12 +426,16 @@ done
 
 echo "=== render: Use 1 counts the use1 rows since the last report by outcome ==="
 # A use1 row from before the last report and a ruling row count for nothing;
-# an outcome outside the three is counted as unrecognized, never dropped.
+# an outcome outside the three is counted as unrecognized, never dropped. The
+# window's edges: a row stamped at the last report's time counts, and one
+# stamped at NOW belongs to the next report.
 seed_use1() {
   new_case "$1"
   report -3600
   fleet "+ {fleet_log: [
     {at: \"$(at -7200)\", kind: \"use1\", item: \"KEN-1\", outcome: \"fallback\", text: \"PR #1 head a\"},
+    {at: \"$(at -3600)\", kind: \"use1\", item: \"KEN-8\", outcome: \"declined-unchanged\", text: \"PR #8 head g\"},
+    {at: \"$(at 0)\", kind: \"use1\", item: \"KEN-9\", outcome: \"fallback\", text: \"PR #9 head h\"},
     {at: \"$(at -600)\", kind: \"use1\", item: \"KEN-2\", outcome: \"approved-on-rerequest\", text: \"PR #2 head b\"},
     {at: \"$(at -500)\", kind: \"use1\", item: \"KEN-3\", outcome: \"approved-on-rerequest\", text: \"PR #3 head c\"},
     {at: \"$(at -400)\", kind: \"use1\", item: \"KEN-4\", outcome: \"declined-unchanged\", text: \"PR #4 head d\"},
@@ -439,7 +443,7 @@ seed_use1() {
     {at: \"$(at -200)\", kind: \"ruling\", item: \"KEN-6\", text: \"fallback\"}]}" "$(lane KEN-1 done)"
   echo '[]' > "$CASE/merged.json"
 }
-USE1_WANT="Use 1: approved-on-rerequest=2 fallback=0 declined-unchanged=1 unrecognized=1"
+USE1_WANT="Use 1: approved-on-rerequest=2 fallback=0 declined-unchanged=2 unrecognized=1"
 seed_use1 render_use1
 run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(awk '/^Use 1/' <<<"$OUT")" "0|$USE1_WANT" \
@@ -1065,15 +1069,15 @@ escapes_world "$CASE"
 REPORT_UNDER_TEST="$ESCAPES_MUTANT" run GH_REPO=owner/repo -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(awk '/^Escapes:/' <<<"$OUT")" "0|" "control: a renderer with no Escapes line prints none, which the Escapes row fails"
 
-# The Use 1 window: without it the fallback row from before the last report
-# is counted too.
+# The Use 1 window: without it the fallback rows from before the last report
+# and at NOW are counted too.
 USE1_MUTANT="$(mutant_scripts use1/orch oversee-report)/oversee-report" || exit 1
 ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/use1/github"
 mutate_file "$USE1_MUTANT" '$t >= $since and $t < $until' 'true'
 seed_use1 render_use1_mutant
 REPORT_UNDER_TEST="$USE1_MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC|$(awk '/^Use 1/' <<<"$OUT")" "0|${USE1_WANT/fallback=0/fallback=1}" \
-  "control: without the window a use1 row from before the last report is counted"
+assert_eq "$RC|$(awk '/^Use 1/' <<<"$OUT")" "0|${USE1_WANT/fallback=0/fallback=2}" \
+  "control: without the window the use1 rows outside it are counted"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -163,7 +163,7 @@ Rows:
                   fallback=N declined-unchanged=N`, then `unrecognized=N`
                   where a row carries any other outcome.
                   references/oversee-events.md § Event kinds `lane-notice`
-                  writes them. A row whose `at` is not ISO 8601 UTC
+                  and `awaiting-stale` write them. A row whose `at` is not ISO 8601 UTC
                   refuses as state.
   Next            the first ORCH_REPORT_UPCOMING keys of launch_queue that
                   have no lanes[] record, whatever its status: a record is

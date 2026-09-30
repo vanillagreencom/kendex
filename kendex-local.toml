@@ -1116,7 +1116,7 @@ reply-contract = '''
 A tracked reply can also name a GitHub issue. Decline reasons follow `skills/orch/references/finding-disposition.md` § Decision flow.
 '''
 severity = '''
-Copilot code review reviews each new head on a push. Copilot re-reads a head only on a review request, and that re-read sees the author's replies. The `vanillagreen-overseer` GitHub App can approve a head that no review bot approves and whose findings the author answered under the reply contract, in their threads or in a `Dispositions at <sha>` comment. Use 1 of `docs/plans/review-gate-platform.md` § Copilot-down fallback states the conditions for that approval.
+Copilot code review reviews each new head on a push. Copilot re-reads a head only on a review request. The `vanillagreen-overseer` GitHub App can approve a head that no review bot approves and whose findings the author answered under the reply contract, in their threads or in a `Dispositions at <sha>` comment. Use 1 of `docs/plans/review-gate-platform.md` § Copilot-down fallback states the conditions for that approval.
 '''
 trust-model = '''
 The accepted evidence forms are configured in `kendex.settings.toml`. See `skills/review-gate/scripts/review-predicate.sh` help for their trust and commit-binding rules. A trusted comment binds evidence to a commit; its text does not establish the author's trust.
