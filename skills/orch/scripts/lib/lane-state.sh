@@ -650,10 +650,7 @@ lane_pane_observe() { # WINDOW
 #
 # THE PANE IS ASKED FIRST FOR EVERY RUNG THAT IS NOT `idle`, which the
 # supplied process read decides; the session rule below carries that half.
-# A hosted lane has nothing in the reader's /proc. When HOSTED_ITEM is given,
-# the provider first settles whether its remote harness is still running.
-# The local ssh child proves no remote harness is alive. A running remote
-# harness takes the pane rungs below, as a running local harness does.
+# HOSTED_ITEM reads the remote harness first; SSH liveness cannot settle it.
 #
 # Rung order is load-bearing and is the order the watch has always used:
 # `walled` outranks `asking` because a limit banner can sit above a stale

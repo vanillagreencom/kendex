@@ -277,16 +277,15 @@ lane_table \
   "an unreadable pane command is a fail-closed probe error, never window-gone|new|-|nocmd|2|rc=2 lines=0 stderr~oversee-watch:+pane-command-failed+lane=gh-2=true stderr~E_COMMAND+lane=gh-2=true"
 
 echo "=== hosted lane exits: the provider reads past a live ssh child ==="
-# Control: local debounce must not hide a confirmed provider exit on this pass.
+# Control: local debounce must not hide a provider exit; exit 2 means unsupported status.
 REMOTE_WATCH="$(mutant_scripts remote-watch/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/remote-watch/github"
 mutate_file "$REMOTE_WATCH" '    if [[ "$prior" == "$pane_key" || "$(lane_field "$states" "$i" 3)" == provider ]]; then' '    if [[ "$prior" == "$pane_key" ]]; then'
 provider="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
-# Exit 2 is the protocol's absent-verb answer from a provider without status.
 for row in 'exited|0|true|live' 'running|0|false|live' 'exited|2|false|live' 'exited|7|false|live' 'garbage|0|false|live' 'exited|0|false|control'; do
   IFS='|' read -r remote_status provider_rc want_exit judge <<<"$row"
   new_case "remote_${remote_status}_${provider_rc}_$judge"
-  lane fish_child; screen fish_prompt
+  lane fish_child; screen question
   remote_disk="$STUB_DIR/remote"; ERR="$STUB_DIR/err"
   mkdir -p "$remote_disk/srv/lane/tmp" "$remote_disk/srv/clone/tmp"
   printf 'gitdir: /srv/clone/.git/worktrees/issue-2\n' > "$remote_disk/srv/lane/.git"
@@ -295,44 +294,54 @@ for row in 'exited|0|true|live' 'running|0|false|live' 'exited|2|false|live' 'ex
   target="$REPO_ROOT/skills/orch/scripts/oversee-watch"; [[ "$judge" != control ]] || target="$REMOTE_WATCH"
   OUT="$(WATCH_BIN="$target" run_watch ORCH_LANE_HOST="$provider" LANE_HOST_STUB_LOG="$STUB_DIR/host.calls" LANE_HOST_STUB_DIR="$remote_disk" LANE_HOST_STUB_HARNESS_STATE="$remote_status" LANE_HOST_STUB_PROBE_STATUS="$provider_rc" \
     -- --state "$STUB_DIR/fleet.json" --max-loops 1 2>"$ERR")" && RC=0 || RC=$?
-  expect="rc=0 out~EVENT+lane-exited+gh-2=$want_exit"
+  want_asking=false; [[ "$remote_status/$provider_rc" != running/0 ]] || want_asking=true
+  expect="rc=0 out~EVENT+lane-exited+gh-2=$want_exit out~EVENT+lane-asking+gh-2=$want_asking"
   assert_eq "$(watch "$expect")" "$expect" "hosted $judge $remote_status/$provider_rc exit in one pass" "$ERR"
   assert_eq "$(grep -c '^status --item issue-2 --harness claude ' "$STUB_DIR/host.calls")" "1" "one remote harness call per lane per pass"
 done
 
-echo "=== explicit hosted watches without a recorded harness keep pane events ==="
+echo "=== hosted provider reads require a running record naming the harness ==="
 EXPLICIT_WATCH="$(mutant_scripts explicit-watch/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/explicit-watch/github"
 mutate_file "$EXPLICIT_WATCH" '      [[ -z "$hosted_harness" ]] || hosted_item="$LANE_ITEM"' '      hosted_item="$LANE_ITEM"'
-while IFS='|' read -r record pane_kind capture loops event judge; do
-  new_case "explicit_${record}_${event}_$judge"
+mutate_file "$EXPLICIT_WATCH" 'select(running and .item == $item)' 'select(.item == $item)'
+while IFS='|' read -r record pane_kind capture loops event provider_rc want calls judge; do
+  new_case "explicit_${record}_${event}_${provider_rc}_$judge"
   lane "$pane_kind"; screen "$capture"
   remote_disk="$STUB_DIR/remote"; ERR="$STUB_DIR/err"
   mkdir -p "$remote_disk/srv/lane/tmp" "$remote_disk/srv/clone/tmp"
   printf 'gitdir: /srv/clone/.git/worktrees/issue-2\n' > "$remote_disk/srv/lane/.git"
   printf 'started\n' > "$remote_disk/srv/lane/tmp/lane-status-issue-2.md"
   state_args=()
-  if [[ "$record" == absent ]]; then
-    printf '{"issue_id":"oversee","triaged":[],"lanes":[]}\n' > "$STUB_DIR/fleet.json"
+  if [[ "$record" != none ]]; then
+    jq -cn --arg host "$provider" --arg status "$record" \
+      '{issue_id:"oversee",triaged:[],lanes:(if $status == "absent" then [] else [{item:"issue-2",window:"gh-2",host:$host,mail_root:"/srv/lane",harness:"claude",status:$status,parked:{pr:3,repo:"owner/repo"}}] end)}' > "$STUB_DIR/fleet.json"
     state_args=(--state "$STUB_DIR/fleet.json")
   fi
   target="$REPO_ROOT/skills/orch/scripts/oversee-watch"; [[ "$judge" != control ]] || target="$EXPLICIT_WATCH"
-  OUT="$(WATCH_BIN="$target" run_watch ORCH_LANE_HOST="$provider" LANE_HOST_STUB_LOG="$STUB_DIR/host.calls" LANE_HOST_STUB_DIR="$remote_disk" \
+  OUT="$(WATCH_BIN="$target" run_watch ORCH_LANE_HOST="$provider" LANE_HOST_STUB_LOG="$STUB_DIR/host.calls" LANE_HOST_STUB_DIR="$remote_disk" LANE_HOST_STUB_HARNESS_STATE=exited LANE_HOST_STUB_PROBE_STATUS="$provider_rc" \
     -- ${state_args[@]+"${state_args[@]}"} --item issue-2 --hosted issue-2=/srv/lane --max-loops "$loops" gh-2 2>"$ERR")" && RC=0 || RC=$?
-  want=true; calls=0; [[ "$judge" != control ]] || { want=false; calls=1; }
   expect="rc=0 out~EVENT+$event+gh-2=$want"
-  assert_eq "$(watch "$expect")" "$expect" "explicit $record/$event/$judge" "$ERR"
-  assert_eq "$(awk '/^status / {n++} END {print n+0}' "$STUB_DIR/host.calls")" "$calls" "no invalid provider request without an identity"
+  assert_eq "$(watch "$expect") calls=$(awk '/^status / {n++} END {print n+0}' "$STUB_DIR/host.calls")" "$expect calls=$calls" "eligibility $record/$event/$provider_rc/$judge" "$ERR"
 done <<'ROWS'
-none|fish_child|question|1|lane-asking|live
-absent|fish_child|question|1|lane-asking|live
-none|fish_child|idle|2|idle-after-return|live
-absent|fish_child|idle|2|idle-after-return|live
-none|fish|fish_prompt|2|lane-exited|live
-absent|fish|fish_prompt|2|lane-exited|live
-none|fish_child|exited_banner|1|usage-limit|live
-absent|fish_child|exited_banner|1|usage-limit|live
-none|fish_child|question|1|lane-asking|control
+none|fish_child|question|1|lane-asking|0|true|0|live
+absent|fish_child|question|1|lane-asking|0|true|0|live
+none|fish_child|idle|2|idle-after-return|0|true|0|live
+absent|fish_child|idle|2|idle-after-return|0|true|0|live
+none|fish|fish_prompt|2|lane-exited|0|true|0|live
+absent|fish|fish_prompt|2|lane-exited|0|true|0|live
+none|fish_child|exited_banner|1|usage-limit|0|true|0|live
+absent|fish_child|exited_banner|1|usage-limit|0|true|0|live
+stopped|fish_child|question|1|lane-asking|0|true|0|live
+stopped|fish_child|question|1|lane-asking|7|true|0|live
+preparing|fish_child|question|1|lane-asking|0|true|0|live
+preparing|fish_child|question|1|lane-asking|7|true|0|live
+parked|fish_child|question|1|lane-asking|0|true|0|live
+parked|fish_child|question|1|lane-asking|7|true|0|live
+running|fish_child|question|1|lane-exited|0|true|1|live
+running|fish_child|question|1|lane-asking|7|false|1|live
+none|fish_child|question|1|lane-asking|0|false|1|control
+stopped|fish_child|question|1|lane-asking|0|false|1|control
 ROWS
 
 echo "=== lane-asking: a question nobody has answered ==="
