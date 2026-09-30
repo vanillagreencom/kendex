@@ -88,13 +88,15 @@ EOF
 # shape under --format=safe, and nested as {issue: ...} otherwise, the raw
 # shape a project's LINEAR_FORMAT=raw gives a call that names no format. A
 # merge-on-read-ID.json file is a pull request that merges while ID is read:
-# it joins merged.json, once, mid-render. The Escapes line's bug list answers
-# bugs.json.
+# it joins merged.json, once, mid-render. The Escapes line's sync is fresh,
+# its label list holds bug and its issue list answers bugs.json.
 cat > "$TMP_ROOT/bin/linear" <<'EOF'
 #!/usr/bin/env bash
-if [[ "$*" == "cache issues list --all-projects --label bug --max --include-archived --format=safe" ]]; then
-  cat "$CASE/bugs.json"; exit
-fi
+case "$*" in
+  "sync --if-stale 15") exit 0 ;;
+  "cache labels list --format=safe") echo '[{"name": "bug"}]'; exit ;;
+  "cache issues list --all-projects --max --include-archived --format=safe") cat "$CASE/bugs.json"; exit ;;
+esac
 [[ "$1 $2 $3" == "cache issues get" && -f "$CASE/linear-$4.json" ]] || { echo "No cache entry for $4" >&2; exit 1; }
 if [[ -f "$CASE/merge-on-read-$4.json" ]]; then
   jq -c --slurpfile pr "$CASE/merge-on-read-$4.json" '. + $pr' "$CASE/merged.json" > "$CASE/merged.next" || exit 1
@@ -233,6 +235,7 @@ run() {
   RC=0
   OUT="$(cd "$CASE" && env -u ORCH_REPORT -u ORCH_REPORT_EVERY_MINUTES -u ORCH_REPORT_EVERY_ISSUES \
     -u ORCH_REPORT_UPCOMING -u ORCH_REPORT_COLUMNS -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN \
+    -u GH_REPO -u WORKTREE_DEFAULT_BRANCH \
     PATH="$TMP_ROOT/bin:$PATH" CASE="$CASE" OVERSEE_REPORT_TRACKER="$TMP_ROOT/bin/linear" \
     OVERSEE_REPORT_GITHUB="$TMP_ROOT/bin/github" OVERSEE_REPORT_LANE_MAIL="$TMP_ROOT/bin/lane-mail" \
     OVERSEE_REPORT_LANE_HOST="$TMP_ROOT/bin/lane-host" ORCH_STATE_DIR="$CASE/ws" \
@@ -271,9 +274,9 @@ seed_fleet() {
   for n in 1 2 3 4 5 6 7 8 9 10; do issue "KEN-$n" "Title $n" "Outcome $n | kept"; done
 }
 
-# A case directory is no checkout, so no case but the Escapes one below reads
-# a count.
-ESCAPES_UNREAD="Escapes: unread (git fetch origin main failed)"
+# The suite's clock reads before the week the review cap fell, so no case but
+# the Escapes ones below, each on a later clock, reads a count.
+ESCAPES_UNREAD="Escapes: unread (the clock reads before the cap week 2026-09-28)"
 
 echo "=== render: the rows from a fleet ==="
 seed_fleet render_fleet
@@ -381,8 +384,8 @@ Waiting on you: none" "a fleet with nothing new renders each row as none and exi
 echo "=== render: the Escapes line under Landed ==="
 # The case is the project checkout. Its origin/main and bug list hold two
 # escapes in the week of 09-21, one in the week of 09-14, one in the cap's
-# week of 09-28 and two in the week of 10-05. NOW is a Monday, 09-21, so the
-# cap's week has not come; a later clock reads it.
+# week of 09-28 and two in the week of 10-05. Months after the cap's week,
+# the line still reads its count.
 escapes_world() { # CASE
   local row
   escapes_checkout "$1"
@@ -399,20 +402,20 @@ escapes_world() { # CASE
 }
 # the clock|the Escapes line
 ESCAPE_ROWS=(
-  "|Escapes: this week 2, last week 1, the week the review cap fell to 1 (2026-09-28) unread, outside the 6 weeks counted"
+  "2027-01-13T12:00:00Z|Escapes: this week 0, last week 0, the week the review cap fell to 1 (2026-09-28) 1"
   "2026-10-14T12:00:00Z|Escapes: this week 0, last week 2, the week the review cap fell to 1 (2026-09-28) 1"
 )
 for row in "${ESCAPE_ROWS[@]}"; do
   clock="${row%%|*}"
-  new_case "escapes_${clock:-now}"
+  new_case "escapes_$clock"
   report -60
   fleet '' "$(lane KEN-1 done)"
   escapes_world "$CASE"
-  [[ -z "$clock" ]] || jq -rn --arg s "$clock" '$s | fromdateiso8601' > "$CASE/now"
-  run -- render --state "$CASE/state.json" --repo owner/repo
+  jq -rn --arg s "$clock" '$s | fromdateiso8601' > "$CASE/now"
+  run GH_REPO=owner/repo -- render --state "$CASE/state.json" --repo owner/repo
   # The Escapes line and the first word of the line above it, Landed's.
   assert_eq "$RC|$(awk '/^Escapes:/ { print prev " / " $0 } { prev = $1; sub(/:$/, "", prev) }' <<<"$OUT")" "0|Landed / ${row#*|}" \
-    "under Landed, the Escapes line counts this week, last week and the cap's week at ${clock:-NOW}"
+    "under Landed, the Escapes line counts this week, last week and the cap's week at $clock"
 done
 
 echo "=== render: ORCH_REPORT_UPCOMING caps Next ==="
@@ -961,7 +964,7 @@ new_case escapes_mutant
 report -60
 fleet '' "$(lane KEN-1 done)"
 escapes_world "$CASE"
-REPORT_UNDER_TEST="$ESCAPES_MUTANT" run -- render --state "$CASE/state.json" --repo owner/repo
+REPORT_UNDER_TEST="$ESCAPES_MUTANT" run GH_REPO=owner/repo -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(awk '/^Escapes:/' <<<"$OUT")" "0|" "control: a renderer with no Escapes line prints none, which the Escapes row fails"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

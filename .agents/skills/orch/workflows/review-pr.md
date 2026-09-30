@@ -295,13 +295,13 @@ Omit empty categories. Read `patched_causes` and `frozen_causes` first, with the
 
 ### At The Cap
 
-Every tier runs one fix round, then one re-review narrowed to that fix diff, then § 5 and submit: `REVIEW_MAX_CYCLES` defaults to 1. A blocker still open after it is escalated below, reaching § 8's filing candidates, or takes a cut round ([SKILL.md § The Cycle](../SKILL.md#the-cycle)), never another re-review cycle. The cap decides before any delegation; one call reads the cycles entered, the cap and the verdict:
+At the default `REVIEW_MAX_CYCLES` of 1, a review with blockers runs one fix round and one re-review of that fix diff, then § 5 and submit. A project setting raises it for a standard item; [small.md](small.md) holds a small item to 1; micro runs none. A blocker open at the cap is escalated below, reaching § 8's filing candidates, or takes a cut round ([SKILL.md § The Cycle](../SKILL.md#the-cycle)), never another re-review. The cap decides before any delegation:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state cap REVIEW_MAX_CYCLES --issue [ISSUE_ID]
 ```
 
-It prints `below [COUNT]/[CAP]` or `at-cap [COUNT]/[CAP]`, counting `rereview_cycles`, which only the Bounded Re-Review write below raises ([workflow-state.md](../schemas/workflow-state.md)), never `cycles`. Below the cap → Fix Delegation. At it the fix loop ends here, with no fix round beyond the `structural-close` items the `fix set` carries past it, so the items this pass reported are the latest word on the diff.
+It prints `below [COUNT]/[CAP]` or `at-cap [COUNT]/[CAP]`, counting `rereview_cycles`, which only the Bounded Re-Review write below raises, never `cycles`. Below the cap → Fix Delegation. At it the fix loop ends here, with no fix round beyond the `structural-close` items the `fix set` carries past it, so the items this pass reported are the latest word on the diff.
 
 **Capped items are escalated, never dropped.** Record every blocker, and every suggestion § 4 made one, that this pass found still outstanding, including one already listed in `fixed_items` whose fix did not hold. Exclude only what is already in `escalated_items`, what § 4 declined, and the `fix set`'s `structural-close` items; a decline is terminal. Match on the RECORDED entry's (location, description), the § 8 key — a re-reporting reviewer copies both fields verbatim off the Fixed line, so the pair matches. An item `fixed_items` already lists has a superseded entry there: its fix did not hold, so the same write drops it. One write per item, before routing to § 5 — the drop and the record land in one command, so the item is never in both buckets and never in neither:
 
