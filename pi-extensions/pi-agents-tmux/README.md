@@ -28,7 +28,7 @@ The parent Pi session selects an agent file and sends it a task. The extension s
 ## Memory and disk use
 
 - A one-shot result keeps its last 20 assistant messages, and the newest earlier one with text when those 20 carry only tool calls, so the final answer is kept. Each keeps only its text and tool-call parts. Tool-call arguments are cut to the tool-details bound: 8,192 characters per string, 50 array items, 80 object fields and a nesting depth of 4. The expanded view says how many earlier messages it does not show. The result also keeps the last 65,536 characters of the child's stderr.
-- The transcript keeps every event except the per-token `message_update` events; `PI_AGENTS_TMUX_TRANSCRIPT_FULL=1` keeps those too. Each record holds its event once. When more than 8 MiB of transcript records wait to be written, the extension stops reading the child's stdout until the writer catches up.
+- The transcript keeps every event except the per-token `message_update` events; `PI_AGENTS_TMUX_TRANSCRIPT_FULL=1` keeps those too. Each record holds its event once. When more than 8 MiB of transcript records wait to be written, the extension stops reading the child's stdout and stderr until the writer catches up.
 - Transcripts live in `~/.pi/agent/kendex/sessions/<session>/pi-agents-tmux/transcripts/`, and full outputs too long for a tool result in `.../pi-agents-tmux/outputs/`. Each directory is deleted once the session's working directory is gone (a merged worktree), and any file in it older than 5 days is deleted. Pi applies both rules when a session starts.
 
 ## Settings

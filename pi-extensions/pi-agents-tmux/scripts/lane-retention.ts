@@ -13,7 +13,7 @@
  * `scripts/`; pi-extensions/package-policy.test.mjs holds the copies equal.
  * Edit one copy, then copy it over the others.
  */
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export const LANE_FILE_MAX_AGE_MS = 5 * 24 * 60 * 60 * 1000;
@@ -76,6 +76,23 @@ function recordedCwd(dir: string): string | undefined {
 	}
 }
 
+/** Whether a lane's recorded working directory is still there. Only a stat
+ *  that answers ENOENT or ENOTDIR confirms it is gone. Any other failure, such
+ *  as a refused permission or a filesystem that is briefly unavailable, is
+ *  reported against the lane and answers "unknown", so the lane is not
+ *  removed as gone. */
+function cwdState(dir: string, cwd: string, result: LanePruneResult): "present" | "gone" | "unknown" {
+	try {
+		statSync(cwd);
+		return "present";
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === "ENOENT" || code === "ENOTDIR") return "gone";
+		result.failed.push({ path: dir, error: `lane-cwd-unchecked: the lane is kept; its working directory could not be checked: ${message(error)}` });
+		return "unknown";
+	}
+}
+
 function modifiedAt(path: string, result: LanePruneResult): number | undefined {
 	try {
 		return lstatSync(path).mtimeMs;
@@ -114,7 +131,8 @@ function pruneOldFiles(dir: string, cutoff: number, result: LanePruneResult): nu
 /**
  * Apply the retention rule to each lane directory at `root/<entry>/<...below>`,
  * one entry per session. A lane whose recorded working directory is gone is
- * removed whole. Otherwise each file older than LANE_FILE_MAX_AGE_MS is
+ * removed whole; a working directory that cannot be checked is reported and
+ * does not count as gone. Otherwise each file older than LANE_FILE_MAX_AGE_MS is
  * removed, and the lane goes too once only its record is left and the record
  * is that old. The record is kept while the lane is: it is what marks the
  * directory as the package's. An absent root has no lanes. Every failure,
@@ -148,9 +166,18 @@ export function pruneLanes(root: string, below: string[] = [], now = Date.now())
 		if (!owned) continue;
 		const cwd = recordedCwd(dir);
 		if (cwd === undefined) continue;
-		if (!existsSync(cwd)) {
-			remove(dir, result);
-			continue;
+		const state = cwdState(dir, cwd, result);
+		switch (state) {
+			case "gone":
+				remove(dir, result);
+				continue;
+			case "present":
+			case "unknown":
+				break;
+			default: {
+				const unhandled: never = state;
+				throw new Error(`lane-cwd-state-unhandled: ${String(unhandled)}`);
+			}
 		}
 		if (pruneOldFiles(dir, cutoff, result) > 0) continue;
 		const recordAt = modifiedAt(join(dir, LANE_CWD_FILE), result);

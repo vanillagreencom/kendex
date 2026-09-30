@@ -96,18 +96,29 @@ test("a oneshot result keeps the last text answer when the newest messages carry
 	}
 });
 
-test("a child that outpaces its transcript is paused until the writer catches up", async () => {
-	const text = "x".repeat(64 * 1024);
-	const events = Array.from({ length: Math.ceil((TRANSCRIPT_PENDING_MAX_BYTES * 2) / text.length) }, (_, i) =>
-		shapedStreamEvent("top-level", "message_end", { message: { role: "toolResult", toolCallId: `call-${i}`, content: [{ type: "text", text }] } }));
-	const calls = installMockSpawn([{ code: 0, stdout: bridgeStdout(events) }]);
-	try {
-		await runOneShot();
-		assert.deepEqual(calls[0]!.stdoutFlow, ["pause", "resume"]);
-	} finally {
-		setSingleAgentSpawnForTests();
-	}
-});
+// Either output stream can outpace the transcript writer; whichever one does,
+// both streams stop until the writer catches up.
+const outpacingProducers: Array<{ producer: "stdout" | "stderr"; scenario: () => { stdout?: string; stderr?: string } }> = [
+	{ producer: "stdout", scenario: () => {
+		const text = "x".repeat(64 * 1024);
+		const events = Array.from({ length: Math.ceil((TRANSCRIPT_PENDING_MAX_BYTES * 2) / text.length) }, (_, i) =>
+			shapedStreamEvent("top-level", "message_end", { message: { role: "toolResult", toolCallId: `call-${i}`, content: [{ type: "text", text }] } }));
+		return { stdout: bridgeStdout(events) };
+	} },
+	{ producer: "stderr", scenario: () => ({ stderr: "e".repeat(TRANSCRIPT_PENDING_MAX_BYTES * 2) }) },
+];
+
+for (const { producer, scenario } of outpacingProducers) {
+	test(`a child whose ${producer} outpaces its transcript is paused until the writer catches up`, async () => {
+		const calls = installMockSpawn([{ code: 0, ...scenario() }]);
+		try {
+			await runOneShot();
+			assert.deepEqual(calls[0]!.flow, { stdout: ["pause", "resume"], stderr: ["pause", "resume"] });
+		} finally {
+			setSingleAgentSpawnForTests();
+		}
+	});
+}
 
 test("the transcript appender reports backpressure past its pending bound and drains in order", async () => {
 	const written: string[] = [];

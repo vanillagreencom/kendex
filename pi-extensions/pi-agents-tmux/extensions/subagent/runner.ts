@@ -691,16 +691,17 @@ async function runSingleAgentAttempt(
 		appendResultDiagnostic(currentResult, `transcript write failed (${transcriptPath}): ${stringifyError(error)}`),
 	);
 	// A child that writes faster than its transcript can is paused until the
-	// writer catches up, so the queue of unwritten records stays bounded.
+	// writer catches up, so the queue of unwritten records stays bounded. Both
+	// output streams feed records, so both are paused together.
 	let pausedForTranscript = false;
-	let childStdout: NodeJS.ReadableStream | undefined;
+	let childOutputs: NodeJS.ReadableStream[] = [];
 	const appendTranscript = (record: Record<string, unknown>) => {
-		if (transcript.append(record) || pausedForTranscript || !childStdout) return;
+		if (transcript.append(record) || pausedForTranscript || childOutputs.length === 0) return;
 		pausedForTranscript = true;
-		childStdout.pause();
+		for (const stream of childOutputs) stream.pause();
 		void transcript.drained().then(() => {
 			pausedForTranscript = false;
-			childStdout?.resume();
+			for (const stream of childOutputs) stream.resume();
 		});
 	};
 
@@ -816,7 +817,7 @@ async function runSingleAgentAttempt(
 				shell: false,
 				stdio: ["ignore", "pipe", "pipe"],
 			});
-			childStdout = proc.stdout ?? undefined;
+			childOutputs = [proc.stdout, proc.stderr].filter((stream): stream is NonNullable<typeof stream> => stream != null);
 			const keepFullTranscript = transcriptFullStreamEnabled();
 			let buffer = "";
 			let processClosed = false;

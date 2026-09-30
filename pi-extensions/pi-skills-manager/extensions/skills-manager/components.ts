@@ -14,7 +14,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { getMarkdownTheme, type Theme } from "@earendil-works/pi-coding-agent";
-import { buildFrontmatterBlock, readSkillBody } from "./format.js";
+import { buildFrontmatterBlock, readSkillBody, type SkillBody } from "./format.js";
 import { glyphs } from "./glyphs.js";
 import { isDeletableSkill } from "./registry.js";
 import {
@@ -100,7 +100,7 @@ export class ScrollableSkillPreview implements Component {
 	private skill: SkillEntry;
 	private readonly theme: Theme;
 	private readonly getTerminalRows: () => number;
-	private body: string;
+	private body: SkillBody;
 	constructor(skill: SkillEntry, theme: Theme, getTerminalRows: () => number) {
 		this.skill = skill;
 		this.body = readSkillBody(skill);
@@ -125,11 +125,18 @@ export class ScrollableSkillPreview implements Component {
 		content.addChild(new Spacer(1));
 		content.addChild(new Text(this.theme.fg("muted", this.theme.bold("Content")), 0, 0));
 		content.addChild(new Spacer(1));
-		content.addChild(new Markdown(this.body || this.theme.fg("dim", "(empty skill body)"), 0, 0, getMarkdownTheme()));
+		content.addChild(this.renderBody());
 		const lines = content.render(innerWidth);
 		this.lastInnerWidth = innerWidth;
 		this.lastContentLines = lines;
 		return lines;
+	}
+	private renderBody(): Component {
+		switch (this.body.kind) {
+			case "body": return new Markdown(this.body.text || this.theme.fg("dim", "(empty skill body)"), 0, 0, getMarkdownTheme());
+			case "unreadable": return new Text(this.theme.fg("error", `Cannot read ${this.skill.path}: ${this.body.reason}`), 0, 0);
+			default: { const unhandled: never = this.body; throw new Error(`unhandled skill body: ${JSON.stringify(unhandled)}`); }
+		}
 	}
 	private footer(innerWidth: number, visibleHeight: number, totalLines: number): string {
 		const maxScroll = Math.max(0, totalLines - visibleHeight);

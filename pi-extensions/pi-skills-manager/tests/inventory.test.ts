@@ -35,7 +35,7 @@ test("the inventory holds no skill body; the body is read for the skill shown", 
 	const sample = registry.allSkills.find((skill) => skill.name === "sample");
 	expect(sample).toBeDefined();
 	expect("content" in sample!).toBe(false);
-	expect(readSkillBody(sample!)).toBe("The sample body.");
+	expect(readSkillBody(sample!)).toEqual({ kind: "body", text: "The sample body." });
 });
 
 test("session_start loads no inventory, with or without a UI", async () => {

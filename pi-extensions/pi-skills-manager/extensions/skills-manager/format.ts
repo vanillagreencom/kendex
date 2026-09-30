@@ -68,19 +68,17 @@ export function buildEditableSkillDocument(source: string): string {
 	return content ? `${editableBlock}\n\n${content}\n` : `${editableBlock}\n`;
 }
 
-/** The skill file as it is on disk; a file that cannot be read gives its
- *  frontmatter with an empty body. */
-export function readSkillDocument(skill: SkillEntry): string {
-	try {
-		return readFileSync(skill.path, "utf8");
-	} catch {
-		return `${buildFrontmatterBlock(skill)}\n`;
-	}
-}
+/** The body of one skill as the preview shows it, or why its file cannot be
+ *  read. Only the preview takes this: the editor saves what it opened over
+ *  the file, so it reads the file itself and opens nothing on a failure. */
+export type SkillBody = { kind: "body"; text: string } | { kind: "unreadable"; reason: string };
 
-/** The body of one skill, read when it is shown. */
-export function readSkillBody(skill: SkillEntry): string {
-	return stripFrontmatter(readSkillDocument(skill)).trim();
+export function readSkillBody(skill: SkillEntry): SkillBody {
+	try {
+		return { kind: "body", text: stripFrontmatter(readFileSync(skill.path, "utf8")).trim() };
+	} catch (error) {
+		return { kind: "unreadable", reason: error instanceof Error ? error.message : String(error) };
+	}
 }
 
 export function frontmatterToRaw(frontmatter: Record<string, unknown>, content: string): string {

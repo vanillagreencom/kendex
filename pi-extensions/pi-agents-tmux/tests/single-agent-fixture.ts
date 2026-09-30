@@ -52,17 +52,18 @@ export function testAgent(): AgentConfig {
 }
 
 export function installMockSpawn(scenarios: Array<{ code?: number | null; delayMs?: number; error?: Error | string; signal?: string; stderr?: string; stdout?: string }>) {
-	const calls: Array<{ args: string[]; kills: string[]; stdoutFlow: string[] }> = [];
+	const calls: Array<{ args: string[]; kills: string[]; flow: { stdout: string[]; stderr: string[] } }> = [];
 	setSingleAgentSpawnForTests(((command: string, args: string[]) => {
 		void command;
-		const call = { args, kills: [] as string[], stdoutFlow: [] as string[] };
+		const call = { args, kills: [] as string[], flow: { stdout: [] as string[], stderr: [] as string[] } };
 		calls.push(call);
 		const proc = new EventEmitter() as any;
-		proc.stdout = new EventEmitter();
 		// A readable's flow control, recorded rather than enforced.
-		proc.stdout.pause = () => { call.stdoutFlow.push("pause"); };
-		proc.stdout.resume = () => { call.stdoutFlow.push("resume"); };
-		proc.stderr = new EventEmitter();
+		for (const name of ["stdout", "stderr"] as const) {
+			proc[name] = new EventEmitter();
+			proc[name].pause = () => { call.flow[name].push("pause"); };
+			proc[name].resume = () => { call.flow[name].push("resume"); };
+		}
 		proc.killed = false;
 		proc.kill = (signal?: string) => {
 			proc.killed = true;

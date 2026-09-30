@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import {
 	Container,
 	type Focusable,
@@ -26,7 +26,6 @@ import {
 	buildEditableSkillDocument,
 	normalizeSkillName,
 	parseEditableSkillDocument,
-	readSkillDocument,
 	toUpdatedSkill,
 } from "./format.js";
 import { normalizeListRows, responsiveBrowsePageSelection, responsiveBrowseWindow, sanitizePopupMaxHeight } from "./layout.js";
@@ -170,7 +169,16 @@ class SkillsManagerDialog implements Focusable {
 	private openEditor(): void {
 		const skill = this.getCurrentSkill();
 		if (!skill || !isDeletableSkill(skill)) return;
-		this.editorView = new SkillEditorView(skill, this.theme, this.tui, buildEditableSkillDocument(readSkillDocument(skill)), (value) => { void this.saveEditedSkill(value); }, () => this.closeEditor());
+		// Save writes the editor's text over the file, so a file that cannot be
+		// read opens no editor: a stand-in document saved back would erase it.
+		let source: string;
+		try {
+			source = readFileSync(skill.path, "utf8");
+		} catch (error) {
+			this.ctx.ui.notify(`Cannot edit ${skill.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
+			return;
+		}
+		this.editorView = new SkillEditorView(skill, this.theme, this.tui, buildEditableSkillDocument(source), (value) => { void this.saveEditedSkill(value); }, () => this.closeEditor());
 		this.mode = "edit"; this.syncFocus(); this.requestRender();
 	}
 	private closeEditor(): void { this.editorView = undefined; this.mode = "preview"; this.syncFocus(); this.requestRender(); }
