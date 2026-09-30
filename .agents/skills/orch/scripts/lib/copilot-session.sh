@@ -191,16 +191,20 @@ copilot_session_cwd() { # WORKSPACE_YAML
   awk 'index($0, "cwd: ") == 1 { print substr($0, 6); exit }' "$1"
 }
 
-# copilot_session_in_worktree HOME WORKTREE — the workspace.yaml of the session
-# a lane in WORKTREE runs under the account HOME, printed, 0: the newest
-# `HOME/session-state/<id>/workspace.yaml` whose `cwd:` line is WORKTREE,
-# resolved, and that holds events. A session that ended before its first
-# event, one whose sign-in failed, leaves workspace.yaml and no events.jsonl,
-# and `copilot --resume=<id>` on it exits 1, so it is passed over for an older
-# one. 1 where no session names WORKTREE; 2 where WORKTREE does not resolve or
-# the store could not be read.
-copilot_session_in_worktree() { # HOME WORKTREE
-  local store="$1/session-state" cwd files file recorded best=""
+# copilot_session_in_worktree HOME WORKTREE [SINCE] — the workspace.yaml of
+# the session a lane in WORKTREE runs under the account HOME, printed, 0: among
+# the `HOME/session-state/<id>/workspace.yaml` files whose `cwd:` line is
+# WORKTREE, resolved, and that hold events, the newest; with SINCE, epoch
+# seconds the lane launched at, the earliest written at or after SINCE, the
+# session that launch started. A later Copilot session in the same worktree on
+# the same account, a second-opinion run from it, is then not read in its
+# place. A session that ended before its first event, one whose sign-in
+# failed, leaves workspace.yaml and no events.jsonl, and
+# `copilot --resume=<id>` on it exits 1, so it is passed over. 1 where no
+# session qualifies; 2 where WORKTREE does not resolve or the store could not
+# be read.
+copilot_session_in_worktree() { # HOME WORKTREE [SINCE]
+  local store="$1/session-state" since="${3:-}" cwd files file recorded written best=""
   cwd="$(cd -- "$2" 2>/dev/null && pwd -P)" || return 2
   [ -e "$store" ] || return 1
   { [ -d "$store" ] && [ -r "$store" ]; } || return 2
@@ -209,13 +213,20 @@ copilot_session_in_worktree() { # HOME WORKTREE
     [ -n "$file" ] || continue
     recorded="$(copilot_session_cwd "$file")" || return 2
     { [ "$recorded" = "$cwd" ] && [ -s "${file%/*}/events.jsonl" ]; } || continue
-    { [ -n "$best" ] && [ ! "$file" -nt "$best" ]; } || best="$file"
+    if [ -z "$since" ]; then
+      { [ -n "$best" ] && [ ! "$file" -nt "$best" ]; } || best="$file"
+      continue
+    fi
+    written="$(stat -c %Y -- "$file" 2>/dev/null || stat -f %m -- "$file" 2>/dev/null)" || return 2
+    case "$written" in '' | *[!0-9]*) return 2 ;; esac
+    [ "$written" -ge "$since" ] || continue
+    { [ -n "$best" ] && [ ! "$file" -ot "$best" ]; } || best="$file"
   done <<<"$files"
   [ -n "$best" ] || return 1
   printf '%s\n' "$best"
 }
 
-# copilot_session_lane_note HOME SESSION_ID WORKTREE GRANTED NOW — what the
+# copilot_session_lane_note HOME SESSION_ID WORKTREE GRANTED NOW LAUNCHED — what the
 # session record of a Copilot lane on the account HOME says about a stop, for a
 # reader outside the session, which holds no payload naming it: `lanes state`
 # and oversee-watch, through lib/lane-context.sh lane_context_copilot_note.
@@ -224,7 +235,7 @@ copilot_session_in_worktree() { # HOME WORKTREE
 #   stop-cause=<cause>       copilot_session_stop_cause's cause
 #   session-record=<reason>  no record answered: copilot_session_read's reason,
 #                            `worktree-unmatched` for no SESSION_ID and no
-#                            WORKTREE a session with events ran in, or
+#                            session with events in WORKTREE since LAUNCHED, or
 #                            `store-unreadable` for a WORKTREE or a session
 #                            store that could not be read
 # GRANTED is `true` for a lane whose launch granted the full allow-all mode,
@@ -233,14 +244,16 @@ copilot_session_in_worktree() { # HOME WORKTREE
 # has an allow-all a policy can take, so any other GRANTED leaves the note
 # empty and reads no record: a record reason for a lane that can carry no
 # cause names nothing to act on. The session is SESSION_ID, else the one
-# copilot_session_in_worktree names for WORKTREE. Always 0.
+# copilot_session_in_worktree names for WORKTREE since LAUNCHED, the lane's
+# launch in epoch seconds, or the newest there where LAUNCHED is empty. Always
+# 0.
 COPILOT_SESSION_NOTE=""
-copilot_session_lane_note() { # HOME SESSION_ID WORKTREE GRANTED NOW
+copilot_session_lane_note() { # HOME SESSION_ID WORKTREE GRANTED NOW LAUNCHED
   local home="$1" session="$2" file rc=0
   COPILOT_SESSION_NOTE=""
   [ "$4" = true ] || return 0
   if [ -z "$session" ]; then
-    if [ -z "$3" ]; then rc=1; else file="$(copilot_session_in_worktree "$home" "$3")" || rc=$?; fi
+    if [ -z "$3" ]; then rc=1; else file="$(copilot_session_in_worktree "$home" "$3" "${6:-}")" || rc=$?; fi
     [ "$rc" -ne 0 ] || session="$(copilot_session_id "$file")" || rc=2
     case "$rc" in
       0) ;;

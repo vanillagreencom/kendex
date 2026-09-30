@@ -166,21 +166,24 @@ lane_context_caller_cfg() { # SHAPE
 # copilot_session_lane_note for REC, a Copilot lane's fleet record
 # (lib/lane-claims.sh lane_running_record), into COPILOT_SESSION_NOTE: under
 # the record's `account`, else the account a launch with no --lane runs on, for
-# its `session_id`, which a relaunch or a wake writes, its `mail_root` and its
-# `allow_all`, which open-terminal writes. The store read is this machine's: a
+# its `session_id`, which a relaunch or a wake writes, its `mail_root`, its
+# `allow_all`, which open-terminal writes, and its `launched_at`, which binds a
+# record with no session_id to the session its own launch started; a stamp
+# that does not parse is handed on empty. The store read is this machine's: a
 # fleet refuses a hosted Copilot lane (open-terminal,
 # `unsupported-for-oversee reason=hosted`). An empty REC is no lane and leaves
 # the note empty; 2 where REC could not be read.
 lane_context_copilot_note() { # REC NOW
-  local f home session
+  local f home session root
   COPILOT_SESSION_NOTE=""
   [ -n "$1" ] || return 0
-  f="$(jq -r '[(.account, .session_id, .mail_root | strings // ""), (.allow_all == true | tostring)]
-    | join("\t")' <<<"$1" 2>/dev/null)" || return 2
+  f="$(jq -r '[(.account, .session_id, .mail_root | strings // ""), (.allow_all == true | tostring),
+    (try (.launched_at | fromdateiso8601 | floor | tostring) catch "")] | join("\t")' <<<"$1" 2>/dev/null)" || return 2
   home="${f%%	*}"; f="${f#*	}"
   session="${f%%	*}"; f="${f#*	}"
+  root="${f%%	*}"; f="${f#*	}"
   [ -n "$home" ] || home="$(lane_context_caller_cfg copilot)" || return 2
-  copilot_session_lane_note "$home" "$session" "${f%%	*}" "${f#*	}" "$2"
+  copilot_session_lane_note "$home" "$session" "$root" "${f%%	*}" "$2" "${f#*	}"
 }
 
 # lane_context_mark_model HARNESS MODEL — the model a session of HARNESS
