@@ -19,6 +19,7 @@ async function run(events: unknown[]) {
 }
 
 const text = (content_index: number, delta: string) => ({ type: "response.output_text.delta", output_index: 0, content_index, delta });
+const refusal = (content_index: number, delta: string) => ({ type: "response.refusal.delta", output_index: 0, content_index, delta });
 const summary = (summary_index: number, delta: string) => ({ type: "response.reasoning_summary_text.delta", output_index: 0, summary_index, delta });
 
 // Each delta event reports the appended text and the block text right after it.
@@ -47,6 +48,25 @@ for (const row of [
 			{ delta: "?", text: "HelloX! there?" },
 			{ delta: "+", text: "HelloX! there?+" },
 			{ delta: "+", text: "HelloX! there?++" },
+		],
+	},
+	{
+		name: "refusal parts",
+		events: [
+			{ type: "response.output_item.added", output_index: 0, item: { type: "message", id: "msg_1" } },
+			{ type: "response.content_part.added", output_index: 0, content_index: 0, part: { type: "refusal", refusal: "" } },
+			refusal(0, "Can"),
+			refusal(0, "not"),
+			{ type: "response.content_part.added", output_index: 0, content_index: 1, part: { type: "refusal", refusal: "!" } },
+			refusal(1, " help"),
+			refusal(0, "X"),
+			refusal(1, "."),
+		],
+		deltas: [
+			{ delta: "Can", text: "Can" },
+			{ delta: "not", text: "Cannot" },
+			{ delta: "! help", text: "Cannot! help" },
+			{ delta: ".", text: "CannotX! help." },
 		],
 	},
 	{
