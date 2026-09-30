@@ -85,9 +85,11 @@ COMMITS=(
   "2026-08-20T10:00:00Z|feat: reverted too late (#12)"
   # Week of 08-24: the revert names #10 thirteen days after its merge.
   "2026-08-25T10:00:00Z|Revert \"feat: reverted 13 days later (#10)\" (#20)"
-  # Week of 08-31: an issue labelled Bug names #11.
+  # Week of 08-31: an issue labelled Bug names #11 and #48 on one
+  # Regressed-by line.
   "2026-08-31T10:00:00Z|fix: found by a bug issue (#11)"
   "2026-09-01T10:00:00Z|feat: backed out by a lowercase revert (#40)"
+  "2026-09-01T12:00:00Z|feat: second on a Regressed-by line (#48)"
   # Week of 09-07: a lowercase revert is #40's one finding.
   "2026-09-08T10:00:00Z|Revert \"feat: reverted too late (#12)\" (#22)"
   "2026-09-08T12:00:00Z|revert: back out #40 (#41)"
@@ -95,10 +97,13 @@ COMMITS=(
   # Week of 09-14: #13's bug issue predates its merge, an issue labelled
   # feature names it, and a commit a merge brought in on its second parent
   # reverts it: none counts. This revert names #99, never merged, beside its
-  # own merge #14, which names no escape. A bug's description names #42.
+  # own merge #14, which names no escape. A bug's bold Regressed-by line
+  # names #42. Bugs name #47 only in a title and in Source and Reached by
+  # lines: it does not count.
   "2026-09-14T10:00:00Z|feat: named before its merge (#13)"
   "2026-09-15T10:00:00Z|Revert \"feat: never merged here (#99)\" (#14)"
   "2026-09-15T12:00:00Z|feat: a bug names it in its description (#42)"
+  "2026-09-15T13:00:00Z|feat: a bug cites it only as its source (#47)"
   "2026-09-16T10:00:00Z|Merge pull request #43 from owner/ken-43|Revert \"feat: named before its merge (#13)\" (#44)"
   # Week of 09-21: a bug issue and a revert both name #15; one escape, in the
   # week of the earlier. #45's revert comes exactly 14 days after its merge.
@@ -111,21 +116,23 @@ COMMITS=(
   "2026-09-28T10:00:00Z|Merge pull request #18 from owner/ken-18"
 )
 # id|created|title|description|label; an empty description or label is the
-# fixture's default.
+# fixture's default, and `\n` in a description is a newline.
 BUGS=(
-  "KEN-B9|2026-08-24T09:00:00Z|after its revert, #9 breaks again||"
-  "KEN-B11|2026-09-02T10:00:00Z|#11 breaks the report||Bug"
-  "KEN-B13|2026-09-10T10:00:00Z|#13 is wrong before it merges||"
-  "KEN-F13|2026-09-15T11:00:00Z|follow up on #13||feature"
-  "KEN-B42|2026-09-16T12:00:00Z|the watch hangs|Since #42 the watch hangs.|"
-  "KEN-B15|2026-09-22T10:00:00Z|#15 breaks the watch||"
-  "KEN-B17|2026-09-29T10:00:00Z|#170 breaks the build||"
-  "KEN-X17|2026-09-29T10:30:00Z|other/repo#17 breaks the build||"
-  "KEN-B18|2026-09-29T11:00:00Z|breaks after Owner/Repo#18||"
+  "KEN-B9|2026-08-24T09:00:00Z|after its revert, #9 breaks again|Regressed-by: #9|"
+  "KEN-B11|2026-09-02T10:00:00Z|the report breaks|Regressed-by: #11, #48|Bug"
+  "KEN-B13|2026-09-10T10:00:00Z|wrong before it merges|Regressed-by: #13|"
+  "KEN-F13|2026-09-15T11:00:00Z|follow up|Regressed-by: #13|feature"
+  "KEN-B42|2026-09-16T12:00:00Z|the watch hangs|**Symptom**: the watch hangs.\n**Regressed-by**: #42|"
+  "KEN-T47|2026-09-16T13:00:00Z|#47 breaks the watch||"
+  "KEN-S47|2026-09-16T14:00:00Z|the watch stalls|**Source**: review of owner/repo#47\n**Reached by**: every watch since #47\nSource PR: owner/repo#47|"
+  "KEN-B15|2026-09-22T10:00:00Z|the watch breaks|Regressed-by: #15|"
+  "KEN-B17|2026-09-29T10:00:00Z|the build breaks|Regressed-by: #170|"
+  "KEN-X17|2026-09-29T10:30:00Z|the build breaks|Regressed-by: other/repo#17|"
+  "KEN-B18|2026-09-29T11:00:00Z|the build breaks|Regressed-by: Owner/Repo#18|"
 )
 WANT="rc=0
 2026-08-24	1
-2026-08-31	1
+2026-08-31	2
 2026-09-07	1
 2026-09-14	1
 2026-09-21	2
@@ -145,13 +152,14 @@ escapes_publish "$WORLD"
 bug_lines=""
 for row in "${BUGS[@]}"; do
   IFS='|' read -r id when title description label <<<"$row"
+  description="${description//\\n/$'\n'}"
   bug_lines+="$(escapes_bug "$id" "$(at "$when")" "$title" "$description" "$label")"$'\n'
 done
 export ESCAPES_ISSUES="$TMP_ROOT/issues.json"
 jq -s . <<<"$bug_lines" > "$ESCAPES_ISSUES"
 
 assert_eq "$(count "$LIB" "$WORLD")" "$WANT" \
-  "a revert or a bug naming a merged PR within 14 days counts once, in the week of its first finding; a late, early, self-named, unmerged, second-parent, non-bug or foreign one does not"
+  "a revert or a bug's Regressed-by line naming a merged PR within 14 days counts once, in the week of its first finding; a late, early, self-named, unmerged, second-parent, non-bug, foreign or source-only one does not"
 
 # Months after the cap week, the count still reaches back to it.
 LATER="$(at 2027-01-13T12:00:00Z)"
@@ -258,7 +266,8 @@ CONTROLS=(
   'no-reach|world|reach "$ESCAPE_REACH"|reach 999999999'
   'reach-exclusive|world|$f.t - $m.t <= $reach|$f.t - $m.t < $reach'
   'capital-revert-only|world|test("^[Rr]evert")|test("^Revert")'
-  'title-only|world|((.title // "") + "\n" + (.description // ""))|(.title // "")'
+  'every-number|world|def regressed: [split("\n")[] | capture("^(?:[*][*]Regressed-by[*][*]|Regressed-by):(?<v>.*)$").v | numbers[]];|def regressed: numbers;'
+  'plain-key-only|world|(?:[*][*]Regressed-by[*][*]|Regressed-by):|Regressed-by:'
   'every-parent|world|log --first-parent|log'
   'label-case|world|any(.labels[]; ascii_downcase == "bug")|any(.labels[]; . == "bug")'
   'any-label|world|select(any(.labels[]; ascii_downcase == "bug"))|select(true)'

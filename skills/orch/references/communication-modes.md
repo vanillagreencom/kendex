@@ -106,14 +106,14 @@ What do you want to work on? Reply with issue ids or describe it, or answer trac
 
 ```text
 Landed: [WHAT SHIPPED AND WHAT IT CHANGES FOR THE USER]
-Escapes: [MERGED PULL REQUESTS A REVERT OR A BUG ISSUE NAMED WITHIN 14 DAYS: THIS WEEK, LAST WEEK, THE WEEK THE REVIEW CAP FELL TO 1]
+Escapes: [MERGED PULL REQUESTS A REVERT OR A BUG ISSUE'S REGRESSED-BY LINE NAMED WITHIN 14 DAYS: THIS WEEK, LAST WEEK, THE WEEK THE REVIEW CAP FELL TO 1]
 Running: [WHAT IS IN FLIGHT AND WHEN IT LANDS]
 Validation: [EACH RUNNING LANE: MINUTES SPENT VALIDATING, IN TOTAL AND PER ROUND OR RESTACK]
 Next: [WHAT STARTS AFTER THAT]
 Waiting on you: [EACH OPEN QUESTION WITH ITS RECOMMENDATION AND THE TIME ITS DEFAULT STANDS, THEN EACH LANE BLOCKER, OR none]
 ```
 
-Under `engineer` a report is the same shape with the session's own vocabulary. A report the overseer writes to the user takes this shape whatever produced its rows. The Validation line per lane comes from that lane's workflow state `validate_rounds`, which [`dev-start.md` § Store Validation Time](../workflows/dev-start.md#store-validation-time) writes, so the owner sees what each round's and each restack's validation cost. The Escapes line is `oversee-report --help`'s count, so the owner sees whether one review cycle before the pull request lets more defects through. Waiting on you is the unresolved owner asks `lane-mail pending --item overseer --to owner` lists, one record for the report, the relay and the chat.
+Under `engineer` a report is the same shape with the session's own vocabulary. A report the overseer writes to the user takes this shape whatever produced its rows. The Validation line per lane comes from that lane's workflow state `validate_rounds`, which [`dev-start.md` § Store Validation Time](../workflows/dev-start.md#store-validation-time) writes, so the owner sees what each round's and each restack's validation cost. The Escapes line is `oversee-report --help`'s count, so the owner sees whether one review cycle before the pull request lets more defects through. A bug issue counts only through its `Regressed-by: #N` line, which [issue-description-template.md](../../project-management/templates/issue-description-template.md) writes where the pull request that caused the defect is known; an issue that names a pull request only as its source is not an escape. Waiting on you is the unresolved owner asks `lane-mail pending --item overseer --to owner` lists, one record for the report, the relay and the chat.
 
 ## Owner messages
 

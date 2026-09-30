@@ -26,6 +26,7 @@ Input file for `audit-issues --issues` and `audit-issues --single`, written by t
       "description": "2-3 sentences: what and why",
       "impact": "who hits this, on what real path",
       "symptom": "the run, user, or red check that already showed it",
+      "regressed_by": [123],
       "recommendation": "* Bullet-list requirements, each actionable",
       "priority": 2,
       "estimate": 2,
@@ -66,6 +67,7 @@ Input file for `audit-issues --issues` and `audit-issues --single`, written by t
 | `description` | Yes | 2-3 sentences: what and why. Becomes the issue body |
 | `impact` | Before create | Who hits this, on what real path. The reviewer skill's `review-finding` field on a `category: "issue"` suggestion; on a blocker, an escalated item, or a Discovered Work bullet no artifact carries it and the caller writes it from the finding |
 | `symptom` | P2 review items | The run, user, or red check that already showed it. No artifact carries it, so the caller writes it from the finding. Required where a review-born source files at priority 2 |
+| `regressed_by` | No | Numbers of the pull requests that caused the defect, known from a revert, a bisect or the run that showed it. Renders the template's `**Regressed-by**` line. Empty on a review-born item that cites its source PR: a source is not a cause |
 | `recommendation` | Yes | Bullet-list requirements. Becomes the requirements section |
 | `priority` | Yes | 1-4 |
 | `estimate` | Yes | 1-5 points |

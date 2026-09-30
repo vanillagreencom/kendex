@@ -119,6 +119,7 @@ Mode `single` uses this same shape with `"mode": "single"` and one `issues[]` ro
         "reach": "the user action, run, check, or shipped producer that arrives at the defect — the producer the item's impact names, or the run that produced a structural entry",
         "review_born": false,
         "symptom": "review_born at priority 2 only — the run, user, or red check that already showed it",
+        "regressed_by": [123],
         "location": "path or component",
         "estimate": 3,
         "priority": 2,

@@ -396,8 +396,9 @@ escapes_world() { # CASE
     escapes_commit "$1" "$(jq -rn --arg s "${row%%|*}" '$s | fromdateiso8601')" "${row#*|}"
   done
   escapes_publish "$1"
-  for row in "KEN-32|2026-09-21T12:00:00Z|#32 breaks" "KEN-35|2026-09-30T10:00:00Z|#35 breaks" "KEN-38|2026-10-07T10:00:00Z|#38 breaks"; do
-    escapes_bug "${row%%|*}" "$(jq -rn --arg s "$(cut -d'|' -f2 <<<"$row")" '$s | fromdateiso8601')" "${row##*|}"
+  for row in "KEN-32|2026-09-21T12:00:00Z|#32" "KEN-35|2026-09-30T10:00:00Z|#35" "KEN-38|2026-10-07T10:00:00Z|#38"; do
+    escapes_bug "${row%%|*}" "$(jq -rn --arg s "$(cut -d'|' -f2 <<<"$row")" '$s | fromdateiso8601')" "it breaks" \
+      "Regressed-by: ${row##*|}"
   done | jq -s . > "$1/bugs.json"
 }
 # the clock|the Escapes line

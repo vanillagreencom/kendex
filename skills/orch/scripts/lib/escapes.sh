@@ -7,8 +7,14 @@
 # merge, the bound included, is named by its number in:
 #   - the subject of a revert commit on that branch, a subject starting
 #     `Revert` or `revert`, other than the revert's own merge; or
-#   - the title or description of a Linear issue labelled bug, in any case,
-#     and created at or after the merge, read from the linear skill's cache.
+#   - a `Regressed-by` line in the description of a Linear issue labelled
+#     bug, in any case, and created at or after the merge, read from the
+#     linear skill's cache. The line starts the description or follows a
+#     newline, its key plain (`Regressed-by: #N`) or bold as the issue
+#     template writes it (`**Regressed-by**: #N`), and may name several
+#     numbers, comma-separated. A number anywhere else in the issue, its
+#     title or a Source or Reached by line citing where a finding came from,
+#     is not a finding.
 # A number names the pull request bare (`#N`) or qualified with this
 # repository's own owner/name (`owner/name#N`), the one lib/gh-repo.sh
 # resolves; a number qualified with any other repository names that one's.
@@ -153,6 +159,7 @@ escapes_read() {
     def numbers: [match("(?<repo>[A-Za-z0-9-]+/[A-Za-z0-9._-]+)?#(?<n>[0-9]+)"; "g")
       | (.captures | map({key: .name, value: .string}) | from_entries)
       | select(.repo == null or (.repo | ascii_downcase) == ($repo | ascii_downcase)) | .n];
+    def regressed: [split("\n")[] | capture("^(?:[*][*]Regressed-by[*][*]|Regressed-by):(?<v>.*)$").v | numbers[]];
     if ($issues | length) != 1 or ($issues[0] | type) != "array" then error("the issue list is not one JSON array") else . end
     | [$log | split("\n")[] | select(length > 0) | split("\t")
         | {sha: .[0], t: (.[1] | tonumber), s: (.[2:] | join("\t"))}] as $commits
@@ -162,7 +169,7 @@ escapes_read() {
     | [($commits[] | select(.s | test("^[Rr]evert")) | {t, sha, ns: (.s | numbers)}),
        ($issues[0][] | select(any(.labels[]; ascii_downcase == "bug"))
          | {t: (.created_at | sub("[.][0-9]+Z$"; "Z") | fromdateiso8601), sha: "",
-            ns: (((.title // "") + "\n" + (.description // "")) | numbers)})] as $findings
+            ns: ((.description // "") | regressed)})] as $findings
     | [$findings[] as $f | $f.ns[] as $n | $merged[$n] as $m
         | select($m != null and $m.sha != $f.sha and $f.t >= $m.t and $f.t - $m.t <= $reach)
         | {n: $n, t: $f.t}]
