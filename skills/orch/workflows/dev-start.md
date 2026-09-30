@@ -47,7 +47,7 @@ Initialize state unless it exists:
 
 ## 1. Determine Agent
 
-An `agent:X` label selects X; with no label, infer from the component paths the issue touches.
+Select the agent through [dev § Implementer selection](../../dev/SKILL.md#implementer-selection).
 
 ```bash
 # Linear

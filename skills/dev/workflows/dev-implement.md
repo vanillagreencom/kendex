@@ -84,7 +84,7 @@ Blocked → **§ 3**, then STOP. Clear → § 2.4.
 
 ### 2.5 Domain Setup
 
-Follow your agent definition for architecture docs, code paths, and skills to load.
+Confirm the delegated role against [dev § Implementer selection](../SKILL.md#implementer-selection). Follow your agent definition for architecture docs, code paths, and skills to load.
 
 ### 2.6 Capture Baseline
 

@@ -62,6 +62,16 @@ harnesses = [
 ]
 method = "symlink"
 
+[agents.engineer]
+source = "."
+harnesses = [
+    "claude",
+    "codex",
+    "pi",
+    "copilot",
+]
+enabled = true
+
 [agents.generalist]
 source = "."
 harnesses = [
@@ -568,6 +578,15 @@ harnesses = [
 ]
 enabled = true
 
+[agent-frontmatter.claude.engineer]
+effort = "high"
+color = "orange"
+deny-tools = [
+    "Agent",
+    "AskUserQuestion",
+]
+background = false
+
 [agent-frontmatter.claude.generalist]
 color = "green"
 deny-tools = [
@@ -694,6 +713,17 @@ deny-tools = [
     "AskUserQuestion",
 ]
 background = true
+
+[agent-frontmatter.codex.engineer]
+sandbox-mode = "danger-full-access"
+nickname-candidates = [
+    "Engineer-Atlas",
+    "Engineer-Delta",
+    "Engineer-Echo",
+    "Engineer-Nova",
+    "Engineer-Orion",
+    "Engineer-Vector",
+]
 
 [agent-frontmatter.codex.generalist]
 sandbox-mode = "danger-full-access"
@@ -870,6 +900,18 @@ nickname-candidates = [
     "TPM-Orion",
     "TPM-Vector",
 ]
+
+[agent-frontmatter.pi.engineer]
+color = "orange"
+deny-tools = [
+    "subagent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "question",
+]
+allowed-subagents = ["scout"]
+pane = true
 
 [agent-frontmatter.pi.generalist]
 color = "green"

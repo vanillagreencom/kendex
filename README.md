@@ -80,6 +80,15 @@ The full per-tool facts are in [docs/adapters](docs/adapters/README.md).
 - Keep private settings and secrets in `.env.local`.
 - If a formatter such as Biome or Prettier checks JSON at the project root, add `.kendex-lock.json` and `.kendex-generated.json` to its ignore list. kendex writes both files in its own layout whenever what they record changes.
 
+## Catalog agents
+
+The default catalog includes implementation and maintenance agents:
+
+- [engineer](agents/engineer.md): non-UI runtime code in shell, Python and TypeScript.
+- [rust](agents/rust.md): Rust systems implementation and performance work.
+- [iced](agents/iced.md): Iced desktop UI implementation.
+- [generalist](agents/generalist.md): documentation, references and configuration organization.
+
 ## Documentation
 
 - [Package authoring](docs/authoring/README.md)

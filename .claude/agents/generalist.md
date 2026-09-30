@@ -22,6 +22,7 @@ Changes whose correctness is settled by reading: doc claims, references, links, 
 
 ## Discipline
 
+- For an orch implementation delegation that requires non-UI shell, Python or TypeScript runtime changes, return `generalist: runtime-owner=engineer` before editing. Ask the caller to delegate to the installed `engineer` agent.
 - Reference code by semantic anchor, never line number: `file.rs`, `file.rs::function_name`, `module/file.rs § Section`. Resolve every path, symbol, and link you write. An unverified reference is the defect you were sent to fix.
 - When the same staleness recurs across files, report what produces it rather than patching the Nth instance.
 

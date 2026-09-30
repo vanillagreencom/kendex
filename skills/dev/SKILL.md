@@ -27,6 +27,20 @@ orch is the caller and runtime: it owns delegation format, round acceptance, and
 
 Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/review.md`](../reviewer/workflows/review.md), [`../reviewer/workflows/qa-review.md`](../reviewer/workflows/qa-review.md). Command shapes are orch's [`../orch/SKILL.md`](../orch/SKILL.md) § Harness-Safe Shell; literal format tags and round mechanics are its [`../orch/references/skill-rules.md`](../orch/references/skill-rules.md) § Format Tags Are Literal and § Round Closure.
 
+## Implementer selection
+
+An `agent:X` label selects X. With no agent label, use the item's Location paths and required work:
+
+| Required work | Agent |
+|---|---|
+| Rust implementation under `crates/` | `rust` |
+| Iced UI implementation | `iced` |
+| Web UI implementation | `frontend` |
+| Non-UI shell, Python or TypeScript runtime implementation, with no `crates/` or UI path | `engineer` |
+| Documentation, references, file or configuration organization | `generalist` |
+
+For an item spanning domains, split the delegation by domain. If the selected agent is not installed, report the missing agent to the caller. Never substitute `generalist` for runtime implementation.
+
 ## Engineering Rules
 
 - Scope is the issue's Done-when. A behavioral surface that does not trace to it stays out of this change, and a committed render of a source file you changed traces to whatever its source traces to. Two exceptions:
