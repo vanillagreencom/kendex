@@ -197,8 +197,6 @@ Read by CodeRabbit from the pull request's head branch. The file outranks the re
 
 **Head.** The `yaml-language-server` schema line, then the marker comment, then a sentence stating that this file is not a delta and that a global override, if one exists, outranks it.
 
-**The vendored schema** `coderabbit-schema` validates against lives at `.bot-instructions/coderabbit-schema.json`. The path is fixed by this spec rather than configurable, because a configurable one is repointable by the same pull request whose file the schema is meant to judge.
-
 **Keys.** The render **walks the vendored schema** and emits, at every depth, every property the schema defines a default for **plus every property this package chooses a value for**, taking the value from the posture below where this package has an opinion and from the schema's own default everywhere else. Full state means every such key, or the ones left out keep resolving down the ladder this package does not control, and the file's claim about itself stops being true.
 
 A property the vendor defines no default for is written only when this package overrides it. Left alone it is not written: such a key has no "unset resolves down the ladder" semantics to state, and writing one would assert a value the vendor never chose. An override is the opposite case — this package has chosen the value, so writing it is the whole point, and the completeness clause holds the render to it like any other.

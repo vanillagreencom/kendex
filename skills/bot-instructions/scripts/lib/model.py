@@ -1,8 +1,4 @@
 """Everything a render reads, assembled once.
-
-SKILL.md § The render inputs is the one statement of the input set: the marker
-names them and `check --staged` reads each from the index. `RenderModel.inputs`
-is this implementation's single copy of that list.
 """
 
 from .constants import CODERABBIT_SCHEMA_PATH
