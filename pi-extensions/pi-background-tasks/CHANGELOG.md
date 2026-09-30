@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.1.1
+
+- Session startup keeps fresh task logs when their working directory exists and its name ends in whitespace. Cleanup previously trimmed the name and could delete these files.
+
 ### 2.1.0
 
 - New task logs go into one directory per session in the task directory's `lanes/` folder. A session's log directory is deleted once its working directory is gone (a merged worktree), and any log older than 5 days is deleted, when the next session starts. The prune reads only `lanes/`, and in it only real directories this user owns that the package marked as its own, so other folders in the task directory are never touched. Logs written before 2.1.0 stay where they are and are not deleted by the prune, `clear` or the task bound.

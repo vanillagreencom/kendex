@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 3.2.1
+
+- Session startup keeps fresh transcripts and saved full outputs when their working directory exists and its name ends in whitespace. Cleanup previously trimmed the name and could delete these files.
+
 ### 3.2.0
 
 - A one-shot result keeps its last 20 assistant messages, plus the newest earlier one with text when those 20 carry only tool calls, so the final answer survives a long tool loop. Each keeps only its text and tool-call parts, with tool-call arguments cut to the tool-details bound (8,192 characters per string, 50 array items, 80 object fields, nesting depth 4). The result's new `droppedMessages` field counts the messages it no longer lists, and the expanded view shows that count. The result keeps the last 65,536 characters of the child's stderr. Tool-result and user messages are no longer held in the result; the transcript still records them.

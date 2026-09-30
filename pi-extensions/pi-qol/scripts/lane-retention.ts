@@ -69,8 +69,8 @@ function remove(path: string, result: LanePruneResult): void {
  *  record, so the package did not make it. */
 function recordedCwd(dir: string): string | undefined {
 	try {
-		const cwd = readFileSync(join(dir, LANE_CWD_FILE), "utf8").trim();
-		return cwd || undefined;
+		const cwd = readFileSync(join(dir, LANE_CWD_FILE), "utf8");
+		return cwd === "" ? undefined : cwd;
 	} catch {
 		return undefined;
 	}

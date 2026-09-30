@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.1.2
+
+- Session startup keeps fresh saved full outputs when their working directory exists and its name ends in whitespace. Cleanup previously trimmed the name and could delete these files.
+
 ### 2.1.1
 
 - At session start, saved full outputs are deleted when their recorded working directory is gone, or when a file is older than 5 days. This applies to per-session artifacts and the temporary-directory fallback. Files from earlier versions without a working-directory record stay untouched.
