@@ -939,6 +939,7 @@
   "crates/app/CLAUDE.md",
   "crates/cli/CLAUDE.md",
   "crates/core/CLAUDE.md",
+  "docs/plans/CLAUDE.md",
   "hooks/CLAUDE.md",
   "pi-extensions/CLAUDE.md",
   "pi-extensions/pi-agents-tmux/CLAUDE.md",
