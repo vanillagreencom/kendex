@@ -794,8 +794,8 @@ ol_record_get() {
 # for a session this launch opened, merged over OL_PRIOR: `runtime`,
 # `session`, `window`, `server`, IDENTITY, the launch identity object
 # ol_identity or ol_record_line_identity built (every field present, null
-# where the launch does not know it, so no field of another session's
-# survives into this one's), `launch_line` where LINE is given, and `generation`: one more than
+# where the launch does not know it), `launch_line` where LINE is given, and
+# `generation`: one more than
 # the prior record's, or 1 where none was recorded, and the prior's own where
 # the prior names this very session on this server, which is a registration
 # repeated and never a second session. On tmux the session is the pane, and
@@ -810,17 +810,19 @@ ol_record_get() {
 # same pid and pane id would read it as its own (ol_unstarted). `pending` is
 # dropped: the successor it named is the session written here, or a launch
 # that never opened. `exit` is dropped: it is a session's that ended. The
-# prior's `launch_line` goes with it where LINE is empty: `oversee register`
-# writes a session a person opened by hand, whose line nothing here knows, and
-# a line kept from the prior would be replayed for this session's death as if
-# it were its own, the prior's account and permission words included. Every
-# other field the prior carried stays. The generation written is in
-# OL_GENERATION, empty where the write failed. Returns 1 with the writer's
+# prior's fields survive only where ol_names proves this same server, server
+# start and pane. There, only non-empty IDENTITY fields replace prior values,
+# and an empty LINE keeps the prior launch line. A different session takes
+# IDENTITY's nulls for unknown fields and inherits no launch line or other
+# prior fields. OL_GENERATION names the generation written. OL_RECORD_RETAINED
+# and OL_RECORD_FRESH name the retained non-empty fields and the fields read
+# afresh, as sorted comma-separated lists, or `none`, for register's report.
+# All three are empty where the write failed. Returns 1 with the writer's
 # words in DEP_ERR.
-OL_GENERATION=""
+OL_GENERATION="" OL_RECORD_RETAINED="" OL_RECORD_FRESH=""
 ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
-  local prior="${OL_PRIOR:-null}" record cwd rows="" start="" generation
-  OL_GENERATION=""
+  local prior="${OL_PRIOR:-null}" result record cwd rows="" start="" fields
+  OL_GENERATION="" OL_RECORD_RETAINED="" OL_RECORD_FRESH=""
   if [[ "$1" == tmux ]]; then
     cwd="$(jq -r '.cwd // empty' <<<"$5" 2>"$DEP_ERR")" || return 1
     rows="$(session_rows_overseer_file "${cwd:-$PWD}" "$4" "$2")"
@@ -829,22 +831,29 @@ ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
       return 1
     fi
   fi
-  record="$(jq -cn --argjson prior "$prior" --argjson identity "$5" --arg runtime "$1" \
+  result="$(jq -cn --argjson prior "$prior" --argjson identity "$5" --arg runtime "$1" \
     --arg session "$2" --arg window "$3" --arg server "$4" --arg line "${6:-}" --arg rows "$rows" \
     --arg start "$start" "$OL_JQ_DEFS"'
+      def nonempty: with_entries(select(.value != null and .value != ""));
+      def field_names: keys | if length == 0 then "none" else join(",") end;
       ($prior // {}) as $p
+      | ($p | ol_names($server; $start; $session)) as $same
       | (($p.generation // 0) | if type == "number" then . else 0 end) as $g
-      | (if ($p | ol_names($server; $start; $session)) and $g > 0 then $g else $g + 1 end) as $next
-      | ($p | del(.pending, .exit, .launch_line)) + {runtime: $runtime, server: $server, window: $window, generation: $next}
-      + $identity
-      + (if $runtime == "tmux"
-         then {pane: $session, session_rows: $rows, server_start: ($start | tonumber)}
-         else {session: $session} end)
-      + (if $line == "" then {} else {launch_line: $line} end)' 2>"$DEP_ERR")" \
-    || return 1
-  generation="$(jq -r '.generation' <<<"$record" 2>"$DEP_ERR")" || return 1
+      | (if $same and $g > 0 then $g else $g + 1 end) as $next
+      | ($identity | nonempty) as $known
+      | ($known + {runtime: $runtime, server: $server, window: $window, generation: $next}
+         + (if $runtime == "tmux"
+            then {pane: $session, session_rows: $rows, server_start: ($start | tonumber)}
+            else {session: $session} end)
+         + (if $line == "" then {} else {launch_line: $line} end)) as $fresh
+      | (if $same then $p | del(.pending, .exit) else $identity | map_values(null) end) as $base
+      | {record: ($base + $fresh),
+         retained: ($base | nonempty | with_entries(select(.key as $key | $fresh | has($key) | not)) | field_names),
+         fresh: ($fresh | field_names)}' 2>"$DEP_ERR")" || return 1
+  record="$(jq -c '.record' <<<"$result" 2>"$DEP_ERR")" || return 1
+  fields="$(jq -r '[.record.generation, .retained, .fresh] | @tsv' <<<"$result" 2>"$DEP_ERR")" || return 1
   "$SCRIPT_DIR/workflow-state" set oversee overseer "$record" >/dev/null 2>"$DEP_ERR" || return 1
-  OL_GENERATION="$generation"
+  IFS=$'\t' read -r OL_GENERATION OL_RECORD_RETAINED OL_RECORD_FRESH <<<"$fields"
 }
 
 # ol_record_pending LINE IDENTITY — the successor a succession is about to

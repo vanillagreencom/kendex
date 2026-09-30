@@ -33,7 +33,9 @@ QUESTION_OFF="$(launch_choice_question_off claude)"
 COMPACT="$(launch_choice_compaction_off claude)"
 [[ -n "$COMPACT" && "$COMPACT" != *" "* ]] || { echo "fixture: claude's compaction words are not one word in the launch table" >&2; exit 1; }
 
-TMP_ROOT="$(mktemp -d)"
+TMP_ROOT="$(mktemp -d)" || { echo "oversee_launch: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "oversee_launch: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "oversee_launch: scratch=resolve-failed" >&2; exit 1; }
 TMUX_DIR="$TMP_ROOT/tmux"
 mkdir -p "$TMUX_DIR"
 cleanup() {
@@ -312,26 +314,16 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
 # register: the record for a hand-opened pane, its generation one past the
 # record's, kept where the record already names that pane.
 HAND="$(tm new-window -d -t fleet:4 -n hand -P -F '#{pane_id}' "exec '$BIN/hclaude' 100000")"
-PRIOR_LINE="$(recorded launch_line)"
 run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(keyed registered "$OUT" | sed -n 1p)|$(recorded runtime)|$(recorded account)|$(recorded launch_line)|$(recorded server_start)" \
-  "0|oversee: identity-fallback session=$HAND cause=no-start-row|oversee: registered session=$HAND window=$(tm display-message -p -t "$HAND" '#{window_id}') server=$SERVER_PID generation=4 account=$H/.eclaude|tmux|$H/.eclaude|none|$SERVER_START" \
+  "0|oversee: identity-fallback session=$HAND cause=no-start-row|oversee: registered session=$HAND window=$(tm display-message -p -t "$HAND" '#{window_id}') server=$SERVER_PID generation=4 account=$H/.eclaude retained=none fresh=account,cwd,generation,harness,home,pane,runtime,server,server_start,session_rows,window|tmux|$H/.eclaude|none|$SERVER_START" \
   "register with no SessionStart row reads the pane as the named fallback, says so, writes the record one generation past it with its server's start, and drops the launch line the record held"
-# The line's control: a writer that keeps the prior's fields whole leaves the
-# launched session's line on the hand-opened one, and a death of the latter
-# would replay the former's command. The line the real register just dropped
-# is put back first, so the control meets the record that register met.
-[[ "$PRIOR_LINE" != none ]] || fail "control premise: the record held no launch line before register"
-jq --arg line "$PRIOR_LINE" '.overseer.launch_line = $line' "$FLEET_STATE" > "$FLEET_STATE.tmp" && mv -- "$FLEET_STATE.tmp" "$FLEET_STATE"
-LINECTL="$(mutant_scripts linectl lib/overseer-launch.sh)" || exit 1
-mutate_file "$LINECTL/lib/overseer-launch.sh" '($p | del(.pending, .exit, .launch_line))' '($p | del(.pending, .exit))'
-OVERSEE_BIN="$LINECTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
-assert_eq "$RC|$(recorded launch_line)" "0|$PRIOR_LINE" \
-  "control: a register that keeps the prior fields whole carries the launched session's line"
 HAND_IDENTITY="claude|$H/.eclaude|$H/.eclaude|none|none|$(tm display-message -p -t "$HAND" '#{pane_current_path}')|"
 assert_eq "$(identity)" "$HAND_IDENTITY" \
   "register records the harness the pane runs, its account and directory, and no model or effort"
 # register's control: a harness read that names none leaves the record without one.
+# No proven prior harness may mask the missing fresh reading in this control.
+jq 'del(.overseer.harness)' "$FLEET_STATE" > "$FLEET_STATE.tmp" && mv -- "$FLEET_STATE.tmp" "$FLEET_STATE"
 REGCTL="$(mutant_scripts regctl oversee)" || exit 1
 mutate_file "$REGCTL/oversee" '    claude) harness=claude ;;' '    claude) ;;'
 OVERSEE_BIN="$REGCTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
@@ -377,10 +369,12 @@ hand_start_row() {
     source: "startup", model: "claude-fable-5-1", account: $account}' > "$HAND_ROWS"
 }
 hand_start_row
+cp -- "$FLEET_STATE" "$TMP_ROOT/state.before-row"
 run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
 assert_eq "$RC|$(sed -n 1p <<<"$OUT" | cut -d' ' -f1-2)|$(identity)$(recorded session_rows)" \
   "0|oversee: registered|claude|$H/.claude|$H/.claude|claude-fable-5-1|none|$WORK_REAL|$HAND_ROWS" \
   "register takes the identity its SessionStart row states and records the rows file"
+mv -- "$TMP_ROOT/state.before-row" "$FLEET_STATE"
 ROWCTL="$(mutant_scripts rowctl oversee)" || exit 1
 mutate_file "$ROWCTL/oversee" '  if (( start_rc == 0 )) && [[ -n "$SR_HARNESS" && -n "$SR_CWD" ]]; then' '  if false; then'
 OVERSEE_BIN="$ROWCTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
@@ -487,7 +481,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT" | awk '{print $2, $3}')|$(overseers)" "1|in
 # over a fleet with no prior record, records a session nothing says the
 # harness or model of.
 WRITECTL="$(mutant_scripts writectl lib/overseer-launch.sh)" || exit 1
-mutate_file "$WRITECTL/lib/overseer-launch.sh" '      + $identity' '      + {}'
+mutate_file "$WRITECTL/lib/overseer-launch.sh" '($identity | nonempty) as $known' '({} | nonempty) as $known'
 jq 'del(.overseer)' "$FLEET_STATE" > "$FLEET_STATE.tmp" && mv -- "$FLEET_STATE.tmp" "$FLEET_STATE"
 OVERSEE_BIN="$WRITECTL/oversee" run_oversee -- launch --wait-secs 20
 assert_eq "$RC|$(recorded harness)|$(recorded model)" "0|none|none" \
@@ -579,8 +573,8 @@ assert_eq "$RC|$(recorded harness)|$(recorded account)|$(recorded home)" \
   "register on a copilot pane records harness copilot, read off the process under it, on --account"
 register_on "$COPILOT_PANE" ''
 assert_eq "$RC|$(recorded harness)|$(recorded account)|$(recorded home)" \
-  "0|copilot|none|none" \
-  "register on a copilot pane with no --account records no account, never the claude one its session carries"
+  "0|copilot|$H/.1copilot|$H/.1copilot" \
+  "register on the same copilot pane with no --account keeps its proven account, never the claude one its session carries"
 register_on "$WRAPPED_PANE" ''
 assert_eq "$RC|$(recorded harness)" "0|none" \
   "a pane reading neither node nor copilot is no copilot pane, whatever runs under it"
@@ -609,6 +603,58 @@ mutate_file "$DEPTHCTL/oversee" '"$name_re" 1 2)"' '"$name_re" 1)"'
 register_on "$DEEP_PANE" "$DEPTHCTL/oversee"
 assert_eq "$RC|$(recorded harness)" "0|copilot" \
   "control: without the depth bound a Copilot run deep under a node pane reads copilot"
+
+# A hand-opened pane with no SessionStart hook, whose current command names
+# no harness, is register's fallback producer. Only the exact server, start
+# and pane binding lets its unread identity and launch line survive.
+UNNAMED_PANE="$(tm new-window -d -t fleet -n unnamed -P -F '#{pane_id}' 'exec sleep 100000')"
+UNNAMED_CWD="$(tm display-message -p -t "$UNNAMED_PANE" '#{pane_current_path}')"
+UNNAMED_LINE="env COPILOT_HOME='$H/.1copilot' copilot --model gpt-5.3-codex --reasoning-effort high"
+cp -- "$FLEET_STATE" "$TMP_ROOT/state.before-preservation"
+jq --arg server "$SERVER_PID" --argjson start "$SERVER_START" --arg pane "$UNNAMED_PANE" \
+  --arg account "$H/.1copilot" --arg cwd "$UNNAMED_CWD" --arg line "$UNNAMED_LINE" \
+  '.overseer = {runtime: "tmux", server: $server, server_start: $start, pane: $pane,
+    generation: 20, harness: "copilot", account: $account, home: $account,
+    model: "gpt-5.3-codex", effort: "high", cwd: $cwd, launch_line: $line,
+    pending: {harness: "claude"}, exit: {status: 0}}' \
+  "$FLEET_STATE" > "$TMP_ROOT/state.full"
+for row in \
+  "$SERVER_PID|$SERVER_START|$UNNAMED_PANE|copilot|gpt-5.3-codex|high|$UNNAMED_LINE|20|effort,harness,launch_line,model|same pane" \
+  "$SERVER_PID|$SERVER_START|$COPILOT_PANE|none|none|none|none|21|none|different pane" \
+  "1|$SERVER_START|$UNNAMED_PANE|none|none|none|none|21|none|different server" \
+  "$SERVER_PID|$((SERVER_START - 3600))|$UNNAMED_PANE|none|none|none|none|21|none|different server start" \
+  "$SERVER_PID|null|$UNNAMED_PANE|none|none|none|none|21|none|no server start"; do
+  IFS='|' read -r prior_server prior_start prior_pane want_harness want_model want_effort want_line want_gen want_retained what <<<"$row"
+  jq --arg server "$prior_server" --argjson start "$prior_start" --arg pane "$prior_pane" \
+    '.overseer.server = $server | .overseer.server_start = $start | .overseer.pane = $pane' \
+    "$TMP_ROOT/state.full" > "$FLEET_STATE"
+  register_on "$UNNAMED_PANE" ''
+  assert_eq "$RC|$(identity)$(recorded launch_line)|$(recorded generation)|$(recorded pending)|$(recorded exit)|$(field "$(keyed registered "$OUT")" retained)|$(field "$(keyed registered "$OUT")" fresh)" \
+    "0|$want_harness|$H/.claude|$H/.claude|$want_model|$want_effort|$UNNAMED_CWD|$want_line|$want_gen|none|none|$want_retained|account,cwd,generation,home,pane,runtime,server,server_start,session_rows,window" \
+    "register with no start row over $what replaces proven fields and retains only that pane's unread fields"
+done
+# The control reinstates the blanking writer's merge: empty identity values
+# and an unpassed launch line erase a proven record of the same pane.
+PRESERVECTL="$(mutant_scripts preservectl lib/overseer-launch.sh)" || exit 1
+mutate_file "$PRESERVECTL/lib/overseer-launch.sh" '($base + $fresh)' \
+  '(($p | del(.pending, .exit, .launch_line)) + $identity + ($fresh | del(.launch_line)))'
+cp -- "$TMP_ROOT/state.full" "$FLEET_STATE"
+register_on "$UNNAMED_PANE" "$PRESERVECTL/oversee"
+assert_eq "$RC|$(recorded harness)|$(recorded model)|$(recorded effort)|$(recorded launch_line)" "0|none|none|none|none" \
+  "control: the blanking writer loses the same pane's harness, model, effort and launch line"
+# The same writer's other direction: retaining without a binding hands a
+# different pane the old pane's launch identity and command.
+INHERITCTL="$(mutant_scripts inheritctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$INHERITCTL/lib/overseer-launch.sh" \
+  '(if $same then $p | del(.pending, .exit) else $identity | map_values(null) end) as $base' \
+  '($p | del(.pending, .exit)) as $base'
+jq --arg pane "$COPILOT_PANE" '.overseer.pane = $pane' "$TMP_ROOT/state.full" > "$FLEET_STATE"
+register_on "$UNNAMED_PANE" "$INHERITCTL/oversee"
+assert_eq "$RC|$(recorded harness)|$(recorded model)|$(recorded effort)|$(recorded launch_line)" \
+  "0|copilot|gpt-5.3-codex|high|$UNNAMED_LINE" \
+  "control: a writer with no binding check gives another pane the old identity and launch line"
+mv -- "$TMP_ROOT/state.before-preservation" "$FLEET_STATE"
+tm kill-window -t "$UNNAMED_PANE"
 
 # --- a succession through the launch verb --------------------------------
 # --predecessor names the live recorded overseer: the successor opens beside

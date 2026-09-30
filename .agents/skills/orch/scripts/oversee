@@ -141,13 +141,17 @@
 #            node or copilot and a Copilot process runs at most two levels
 #            under it (its account --account's alone), and the pane's
 #            directory, the model unknown. The home is a private CODEX_HOME
-#            where the session carries one, the account otherwise; effort is
-#            recorded as unknown. The generation is one past the record's,
+#            where the session carries one, the account otherwise; no effort
+#            is read. Where ol_names proves the same server, server start and
+#            pane, unknown fields and an unpassed launch line keep their prior
+#            values. Another pane inherits none of them. The generation is one past the record's,
 #            or the record's own where it already names this pane, so
 #            registering twice launches nothing and counts nothing twice.
 #            A server start that cannot be read refuses `record-unwritten`
 #            and writes nothing.
-#            Prints `registered` naming the session and generation.
+#            Prints `registered` naming the session and generation, with
+#            `retained` and `fresh` sorted comma-separated field names, or
+#            `none`, from the record writer.
 #
 # Options:
 #   --session NAME   The tmux session the window opens in (default
@@ -229,7 +233,7 @@ message() { # KEY FIELD=VALUE...
     interrupted) text='A signal stopped the launch; the session was closed and the record put back.' ;;
     pane-unreadable) text='This session'\''s own pane could not be read; tmux says why below.' ;;
     registered) text='The session record names this session.' ;;
-    identity-fallback) text='No SessionStart row of this session stands, so its harness, account and directory are read off its pane and environment, the named fallback, and its model is recorded as unknown.' ;;
+    identity-fallback) text='No SessionStart row of this session stands, so its harness, account and directory are read off its pane and environment, the named fallback. No model or effort is read; a record proven to name this same pane keeps fields the fallback cannot read.' ;;
   esac
   printf 'oversee: %s' "$key"
   printf ' %s' "$@"
@@ -418,7 +422,8 @@ if [[ "$COMMAND" == register ]]; then
   ol_record_write tmux "$TMUX_PANE" "$window" "$server" "$OL_IDENTITY" "" \
     || die record-unwritten field=overseer
   message registered "session=$TMUX_PANE" "window=$window" "server=$server" \
-    "generation=$OL_GENERATION" "account=${ACCOUNT:-none}"
+    "generation=$OL_GENERATION" "account=${ACCOUNT:-none}" \
+    "retained=$OL_RECORD_RETAINED" "fresh=$OL_RECORD_FRESH"
   exit 0
 fi
 

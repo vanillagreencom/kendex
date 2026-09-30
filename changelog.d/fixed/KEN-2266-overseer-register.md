@@ -1,0 +1,1 @@
+- Overseer registration keeps unread identity fields and the launch command only for the same proven pane, and reports retained and freshly read fields.
