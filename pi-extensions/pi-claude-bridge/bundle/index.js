@@ -35600,7 +35600,12 @@ function debug(...args) {
   }
 }
 function describeBlocks(blocks) {
-  return `blocks=${blocks.length} types=${blocks.map((block) => block.type).join(",")} bytes=${Buffer.byteLength(JSON.stringify(blocks))}`;
+  return () => `blocks=${blocks.length} types=${blocks.map((block) => block.type).join(",")} bytes=${Buffer.byteLength(JSON.stringify(blocks))}`;
+}
+function describePrompt(text, blocks) {
+  const chars = text?.length ?? 0;
+  if (!blocks) return `chars=${chars}`;
+  return `chars=${chars} blocks=${blocks.length}${chars === 0 ? " image-only" : ""}`;
 }
 var nextCliDebugSeq = 1;
 function makeCliDebugOptions(tag) {
@@ -54410,7 +54415,7 @@ function processAssistantMessage(message, model, customToolNameToPi, c = ctx()) 
     c.resetToolTracking();
   }
   c.beginChildMessage(assistantMsg.id);
-  debug("processAssistantMessage fallback:", () => describeBlocks(assistantMsg.content), sameMessage ? "(same message re-yield)" : "");
+  debug("processAssistantMessage fallback:", describeBlocks(assistantMsg.content), sameMessage ? "(same message re-yield)" : "");
   const alreadyRendered = (type, content) => c.turnBlocks.some((b2) => b2.type === type && (type === "text" ? b2.text : b2.thinking) === content);
   for (const block of assistantMsg.content) {
     if (block.type === "text" && block.text) {
@@ -55166,7 +55171,7 @@ function extractAllToolResults2(context) {
   debug(`extractAllToolResults: ${results.length} results from ${context.messages.length} msgs, stopped at index ${stopIdx}`);
   debug(`extractAllToolResults: all msg roles:`, () => context.messages.map((m, i) => `[${i}]${m.role}`).join(" "));
   for (let r = 0; r < results.length; r++) {
-    debug(`extractAllToolResults: result[${r}] id=${results[r].toolCallId}${results[r].isError ? " ERROR" : ""}`, () => describeBlocks(results[r].content));
+    debug(`extractAllToolResults: result[${r}] id=${results[r].toolCallId}${results[r].isError ? " ERROR" : ""}`, describeBlocks(results[r].content));
   }
   return results;
 }
@@ -55191,7 +55196,7 @@ function extractUserPromptBlocks(messages) {
       debug(`extractUserPromptBlocks: content is ${typeof content}`);
       continue;
     }
-    debug("extractUserPromptBlocks:", () => describeBlocks(content));
+    debug("extractUserPromptBlocks:", describeBlocks(content));
     for (const block of content) {
       if (block.type === "text" && block.text) {
         blocks.push({ type: "text", text: block.text });
@@ -55472,7 +55477,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
       if (id2 && queryCtx.pendingToolCalls.has(id2)) {
         const pending = queryCtx.pendingToolCalls.get(id2);
         queryCtx.pendingToolCalls.delete(id2);
-        debug(`provider: resolving ${pending.toolName} [${id2}]${result.isError ? " (error)" : ""}`, () => describeBlocks(result.content));
+        debug(`provider: resolving ${pending.toolName} [${id2}]${result.isError ? " (error)" : ""}`, describeBlocks(result.content));
         pending.resolve(result);
       } else if (id2) {
         queryCtx.pendingResults.set(id2, result);
@@ -55515,7 +55520,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
       const replay = planDeferredUserReplay(context.messages, queryCtx.latestCursor);
       if (replay.prompt || replay.blocks) {
         ctx().deferredUserMessages.push({ text: replay.prompt ?? "", blocks: replay.blocks ?? void 0 });
-        debug(`provider: deferred ${replay.userMessageCount} user message(s) for replay after query${replay.blocks ? ` (${replay.blocks.length} blocks incl. images)` : ""}: ${(replay.prompt ?? "[image-only]").slice(0, 60)}`);
+        debug(`provider: deferred ${replay.userMessageCount} user message(s) for replay after query: ${describePrompt(replay.prompt, replay.blocks)}`);
       } else {
         capturedThrough = replay.runStart;
         diagDump("deferred_user_replay_skipped", {
@@ -55721,7 +55726,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     `fallback=${built.fallbackModel ?? "none"}`,
     () => `appendSys=${built.appendSystemPrompt} promptCtx=${built.promptContextLabels.join(",") || "none"} strictMcp=${built.strictMcpConfigEnabled} fastMode=${providerSettings.fastMode === true} connectors=${built.enableCloudMcp}`,
     `claudeExec=${claudeExecutablePreflight ? `${claudeExecutablePreflight.fileType}:${claudeExecutablePreflight.path}` : "sdk-default"}`,
-    `prompt=${promptText.slice(0, 60)}${promptBlocks ? " [+images]" : ""}`
+    `prompt ${describePrompt(promptText, promptBlocks)}`
   );
   let wasAborted = false;
   let reentryStream = stream;
@@ -55916,8 +55921,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     try {
       while (abortCtx.deferredUserMessages.length > 0 && !isReentrant && !wasAborted) {
         const steer = abortCtx.deferredUserMessages.shift();
-        const steerPreview = (steer.text || "[image-only]").slice(0, 60);
-        debug(`provider: replaying deferred user message: ${steerPreview}`);
+        debug(`provider: replaying deferred user message: ${describePrompt(steer.text, steer.blocks)}`);
         abortCtx.resetTurnState(queryModel);
         abortCtx.resetToolTracking();
         const resumeId = foreignContext ? capturedSessionId : getSharedSession()?.sessionId;
@@ -55929,7 +55933,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
         const contOptions = { ...queryOptions, resume: resumeId, ...makeCliDebugOptions("continuation") };
         const contQuery = sdkQueryFactory({ prompt: steer.blocks ? wrapPromptStream(steer.blocks) : steer.text, options: contOptions });
         abortCtx.activeQuery = contQuery;
-        debug(`provider: continuation query, model=${queryModel.id}, resume=${resumeId.slice(0, 8)}, account=${account?.label ?? "legacy"}, prompt=${steerPreview}`);
+        debug(`provider: continuation query, model=${queryModel.id}, resume=${resumeId.slice(0, 8)}, account=${account?.label ?? "legacy"}, prompt ${describePrompt(steer.text, steer.blocks)}`);
         try {
           const continuation = await consumeQuery(contQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, recordBillingIdentity, account, router);
           if (abortCtx.restartRequest) break;

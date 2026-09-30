@@ -36,7 +36,7 @@ export {
 } from "./connector-inventory.js";
 export { connectorCachePath, connectorCacheScopeKey, readCachedConnectors, scopeKeyFor, writeCachedConnectors } from "./connector-cache.js";
 export { connectorServersSnapshot, primeConnectorServers } from "./connector-runtime.js";
-import { debug, describeBlocks, diagDump, makeCliDebugOptions, moduleInstanceId } from "./debug.js";
+import { debug, describeBlocks, describePrompt, diagDump, makeCliDebugOptions, moduleInstanceId } from "./debug.js";
 import { preflightClaudeExecutable, resolveClaudeExecutable } from "./claude-executable.js";
 import { appendIntegrityEntry, argKeys, deleteSharedSessionLane, extensionApi, getSharedSession, markSessionForRebuild, recordStartedLane, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, takeStartedLane, type SessionState } from "./bridge-state.js";
 import { connectorsEnabledFor, isChildExecutedTool } from "./connectors.js";
@@ -175,7 +175,7 @@ function extractAllToolResults(context: Context): McpResult[] {
 	debug(`extractAllToolResults: ${results.length} results from ${context.messages.length} msgs, stopped at index ${stopIdx}`);
 	debug(`extractAllToolResults: all msg roles:`, () => context.messages.map((m, i) => `[${i}]${m.role}`).join(" "));
 	for (let r = 0; r < results.length; r++) {
-		debug(`extractAllToolResults: result[${r}] id=${results[r].toolCallId}${results[r].isError ? " ERROR" : ""}`, () => describeBlocks(results[r].content));
+		debug(`extractAllToolResults: result[${r}] id=${results[r].toolCallId}${results[r].isError ? " ERROR" : ""}`, describeBlocks(results[r].content));
 	}
 	return results;
 }
@@ -215,7 +215,7 @@ function extractUserPromptBlocks(messages: Context["messages"]): ContentBlockPar
 			debug(`extractUserPromptBlocks: content is ${typeof content}`);
 			continue;
 		}
-		debug("extractUserPromptBlocks:", () => describeBlocks(content));
+		debug("extractUserPromptBlocks:", describeBlocks(content));
 		for (const block of content) {
 			if (block.type === "text" && block.text) {
 				blocks.push({ type: "text", text: block.text });
@@ -730,7 +730,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			if (id && queryCtx.pendingToolCalls.has(id)) {
 				const pending = queryCtx.pendingToolCalls.get(id)!;
 				queryCtx.pendingToolCalls.delete(id);
-				debug(`provider: resolving ${pending.toolName} [${id}]${result.isError ? " (error)" : ""}`, () => describeBlocks(result.content));
+				debug(`provider: resolving ${pending.toolName} [${id}]${result.isError ? " (error)" : ""}`, describeBlocks(result.content));
 				pending.resolve(result);
 			} else if (id) {
 				queryCtx.pendingResults.set(id, result);
@@ -805,7 +805,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			// whenever EITHER form has content.
 			if (replay.prompt || replay.blocks) {
 				ctx().deferredUserMessages.push({ text: replay.prompt ?? "", blocks: replay.blocks ?? undefined });
-				debug(`provider: deferred ${replay.userMessageCount} user message(s) for replay after query${replay.blocks ? ` (${replay.blocks.length} blocks incl. images)` : ""}: ${(replay.prompt ?? "[image-only]").slice(0, 60)}`);
+				debug(`provider: deferred ${replay.userMessageCount} user message(s) for replay after query: ${describePrompt(replay.prompt, replay.blocks)}`);
 			} else {
 				capturedThrough = replay.runStart;
 				diagDump("deferred_user_replay_skipped", {
@@ -1107,7 +1107,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		`fallback=${built.fallbackModel ?? "none"}`,
 		() => `appendSys=${built.appendSystemPrompt} promptCtx=${built.promptContextLabels.join(",") || "none"} strictMcp=${built.strictMcpConfigEnabled} fastMode=${providerSettings.fastMode === true} connectors=${built.enableCloudMcp}`,
 		`claudeExec=${claudeExecutablePreflight ? `${claudeExecutablePreflight.fileType}:${claudeExecutablePreflight.path}` : "sdk-default"}`,
-		`prompt=${promptText.slice(0, 60)}${promptBlocks ? " [+images]" : ""}`);
+		`prompt ${describePrompt(promptText, promptBlocks)}`);
 
 	// 3. Start SDK query and claim it for this context
 	let wasAborted = false;
@@ -1393,8 +1393,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			try {
 				while (abortCtx.deferredUserMessages.length > 0 && !isReentrant && !wasAborted) {
 					const steer = abortCtx.deferredUserMessages.shift()!;
-					const steerPreview = (steer.text || "[image-only]").slice(0, 60);
-					debug(`provider: replaying deferred user message: ${steerPreview}`);
+					debug(`provider: replaying deferred user message: ${describePrompt(steer.text, steer.blocks)}`);
 					abortCtx.resetTurnState(queryModel);
 					abortCtx.resetToolTracking();
 
@@ -1415,7 +1414,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 					const contQuery = sdkQueryFactory({ prompt: steer.blocks ? wrapPromptStream(steer.blocks) : steer.text, options: contOptions });
 					abortCtx.activeQuery = contQuery;
 
-					debug(`provider: continuation query, model=${queryModel.id}, resume=${resumeId.slice(0, 8)}, account=${account?.label ?? "legacy"}, prompt=${steerPreview}`);
+					debug(`provider: continuation query, model=${queryModel.id}, resume=${resumeId.slice(0, 8)}, account=${account?.label ?? "legacy"}, prompt ${describePrompt(steer.text, steer.blocks)}`);
 
 					try {
 						const continuation = await consumeQuery(contQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, recordBillingIdentity, account, router);

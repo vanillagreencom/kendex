@@ -19,7 +19,8 @@ const model = { id: "claude-haiku-4-5", api: "claude-bridge", provider: "pi-clau
 const tool = { name: "echo", description: "Return a supplied value", parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } };
 const collect = async (stream) => { const events = []; for await (const event of stream) events.push(event); return events; };
 
-export async function withBridge(ids, run) {
+/** `prompt` is the user message that opens the query. */
+export async function withBridge(ids, run, { prompt = "run" } = {}) {
 	const root = mkdtempSync(join(tmpdir(), "bridge-queue-"));
 	const env = { CLAUDE_CONFIG_DIR: root, PI_CODING_AGENT_DIR: root, CLAUDE_CODE_OAUTH_TOKEN: "offline-test", CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT: "0" };
 	const previous = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
@@ -32,7 +33,18 @@ export async function withBridge(ids, run) {
 	let client;
 	const pending = [];
 	const abort = new AbortController();
+	let queries = 0;
 	__testSetSdkQueryFactory(({ options }) => {
+		// Every query after the first replays a deferred user message and
+		// answers at once.
+		if (++queries > 1) return {
+			async *[Symbol.asyncIterator]() {
+				yield { type: "system", subtype: "init", session_id: "offline-queue" };
+				yield { type: "result", subtype: "success", result: "continued" };
+			},
+			close() {},
+			async interrupt() {},
+		};
 		server = options.mcpServers["custom-tools"].instance;
 		return {
 			async *[Symbol.asyncIterator]() {
@@ -48,7 +60,7 @@ export async function withBridge(ids, run) {
 		};
 	});
 	try {
-		const initial = await collect(streamClaudeAgentSdk(model, piContext({ messages: [{ role: "user", content: "run" }], tools: [tool] }), { cwd: root, signal: abort.signal }));
+		const initial = await collect(streamClaudeAgentSdk(model, piContext({ messages: [{ role: "user", content: prompt }], tools: [tool] }), { cwd: root, signal: abort.signal }));
 		assert.deepEqual(initial.find((event) => event.type === "done").message.content.map((block) => block.id), ids);
 		const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 		client = new Client({ name: "queue-test", version: "1.0.0" });
@@ -66,11 +78,21 @@ export async function withBridge(ids, run) {
 				assert.equal(ctx().claimedToolCallIds.has(id), true, `handler registered: ${id}`);
 				return { result };
 			},
-			deliver(results) {
+			/** `steer` is a user message Pi appended after the results. */
+			deliver(results, { steer } = {}) {
 				streamClaudeAgentSdk(model, piContext({ tools: [tool], messages: [
 					{ role: "assistant", content: ids.map((id) => ({ type: "toolCall", id, name: "echo", arguments: { id } })) },
 					...results.map(({ id, text = id, isError = false }) => ({ role: "toolResult", toolCallId: id, content: [{ type: "text", text }], isError })),
+					...(steer === undefined ? [] : [{ role: "user", content: steer }]),
 				] }), { cwd: root });
+			},
+			/** End the query unaborted, so its deferred user messages replay, and
+			 *  wait until every query has settled. */
+			async finish() {
+				gate.resolve();
+				await finished.promise;
+				for (let turn = 0; turn < 1000 && ctx().activeQuery !== null; turn++) await new Promise((resolve) => setImmediate(resolve));
+				assert.equal(ctx().activeQuery, null, "every query settled");
 			},
 			counts(waiting, queued) {
 				assert.deepEqual([ctx().pendingToolCalls.size, ctx().pendingResults.size], [waiting, queued]);

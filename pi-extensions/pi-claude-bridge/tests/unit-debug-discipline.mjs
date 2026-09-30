@@ -3,8 +3,6 @@
 // 1. diagDump is gated on CLAUDE_BRIDGE_DEBUG exactly like debug(): a host
 //    that has not opted into debugging gets NO diag file. This includes
 //    every "should never happen" path.
-//    60-char previews of user-authored prompt text, outside any host app's
-//    retention boundary.
 // 2. The deferred_user_messages_dropped entry carries counts/sites/lengths
 //    only — never message content.
 // 3. debug() evaluates function args lazily (after the DEBUG early return),
@@ -12,8 +10,10 @@
 //    must not be built when DEBUG is off, because stream_event arrives once
 //    per streamed token. No debug() argument in src/ builds a collection
 //    string or JSON outside a thunk.
-// 4. A tool result's debug lines carry its block count, types and size,
-//    never its content, even with DEBUG on.
+// 4. With DEBUG on, a tool result's debug lines carry its block count, types
+//    and size, and a user prompt's its character and block counts, never
+//    their content. describeBlocks returns a thunk, so its serialization runs
+//    only with DEBUG on.
 //
 // The DEBUG flag is read once at module load, so the two gating states are
 // exercised in child processes with a controlled environment; the in-process
@@ -30,7 +30,7 @@ import ts from "typescript";
 
 // In-process modules must load with DEBUG off regardless of the runner's env.
 delete process.env.CLAUDE_BRIDGE_DEBUG;
-const { DEBUG, diagGuidance, diagLogPath } = await import("../src/debug.ts");
+const { DEBUG, debug, describeBlocks, diagGuidance, diagLogPath } = await import("../src/debug.ts");
 const { summarizeDroppedUserMessages } = await import("../src/query-state.ts");
 const { consumeQuery } = await import("../src/consume-query.ts");
 
@@ -222,18 +222,34 @@ describe("debug() arguments that build collections are lazy", () => {
 	});
 });
 
-describe("tool-result debug lines carry no tool content", () => {
-	it("logs block count, types and size for a delivered result with DEBUG on", () => {
+describe("describeBlocks is lazy", () => {
+	it("serializes nothing until debug() runs the thunk it returns", () => {
+		assert.equal(DEBUG, false, "precondition: this test process must run with DEBUG off");
+		let serialized = 0;
+		const blocks = [{ type: "image", toJSON() { serialized++; return { type: "image" }; } }];
+		debug("describeBlocks probe:", describeBlocks(blocks));
+		const thunk = describeBlocks(blocks);
+		assert.equal(serialized, 0, "no serialization before the thunk runs");
+		assert.match(thunk(), /^blocks=1 types=image bytes=\d+$/);
+		assert.equal(serialized, 1, "the thunk serializes");
+	});
+});
+
+describe("debug lines carry no tool content or user text", () => {
+	it("logs counts, types and size for a prompt, a steer and a delivered result with DEBUG on", () => {
 		const marker = "tool-result-content-marker";
+		const promptMarker = "user-prompt-content-marker";
+		const steerMarker = "user-steer-content-marker";
 		const scriptPath = join(dir, "tool-result.mjs");
 		const logPath = join(dir, "debug.log");
 		writeFileSync(scriptPath, [
 			`import { withBridge } from ${JSON.stringify(pathToFileURL(join(pkgRoot, "tests/lib/queue-bridge.mjs")).href)};`,
 			`await withBridge(["t0"], async (bridge) => {`,
 			`	const waiting = (await bridge.handler("t0")).result;`,
-			`	bridge.deliver([{ id: "t0", text: ${JSON.stringify(marker)} }]);`,
+			`	bridge.deliver([{ id: "t0", text: ${JSON.stringify(marker)} }], { steer: ${JSON.stringify(steerMarker)} });`,
 			`	if ((await waiting).content[0].text !== ${JSON.stringify(marker)}) throw new Error("result not delivered");`,
-			`});`,
+			`	await bridge.finish();`,
+			`}, { prompt: ${JSON.stringify(promptMarker)} });`,
 		].join("\n"));
 		execFileSync(process.execPath, ["--import", "tsx", scriptPath], {
 			cwd: pkgRoot,
@@ -242,6 +258,10 @@ describe("tool-result debug lines carry no tool content", () => {
 		const log = readFileSync(logPath, "utf8");
 		assert.match(log, /provider: resolving echo \[t0\] blocks=1 types=text bytes=\d+\n/);
 		assert.match(log, /extractAllToolResults: result\[0\] id=t0 blocks=1 types=text bytes=\d+\n/);
-		assert.equal(log.includes(marker), false, "no tool content in the debug log");
+		assert.match(log, new RegExp(`provider: fresh query .* prompt chars=${promptMarker.length}\n`));
+		assert.match(log, new RegExp(`provider: deferred 1 user message\\(s\\) for replay after query: chars=${steerMarker.length}\n`));
+		assert.match(log, new RegExp(`provider: replaying deferred user message: chars=${steerMarker.length}\n`));
+		assert.match(log, new RegExp(`provider: continuation query, .* prompt chars=${steerMarker.length}\n`));
+		for (const text of [marker, promptMarker, steerMarker]) assert.equal(log.includes(text), false, `no ${text} in the debug log`);
 	});
 });

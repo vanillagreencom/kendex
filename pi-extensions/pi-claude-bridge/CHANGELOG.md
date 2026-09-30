@@ -7,7 +7,7 @@
 - A query no longer reads the whole Claude executable to check its type. The bridge reads the first 16 bytes and remembers the result until the file's modification time changes.
 - The restore check no longer serializes the whole Pi history after each assistant message. Each stored message is serialized and hashed once per process. Summary, custom and edited messages are hashed again at each check. The check then hashes the list of per-message hashes. The check's format changed, so the first resume of a session saved by 4.0.5 or earlier rebuilds the Claude session from Pi history once.
 - A tool call's streamed arguments are parsed once, when the block completes, not again at each fragment.
-- With debugging off, a tool result is no longer serialized for a debug line that is never written. With `CLAUDE_BRIDGE_DEBUG=1` set, that line gives the block count, the block types and the size, and no longer copies the start of the tool output into the log. Other debug lines that list or serialize a collection now do that work only with debugging on.
+- With debugging off, a tool result is no longer serialized for a debug line that is never written. With `CLAUDE_BRIDGE_DEBUG=1` set, that line gives the block count, the block types and the size, and no longer copies the start of the tool output into the log. The lines for a new query, a deferred user message and its replay give the prompt's character count and image block count, and no longer copy the start of the user's prompt. Other debug lines that list or serialize a collection now do that work only with debugging on.
 
 ### 4.0.5
 

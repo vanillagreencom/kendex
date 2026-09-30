@@ -638,7 +638,7 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 	// for a message whose `message_start` already streamed — any message that
 	// produced no content blocks, since `turnSawStreamEvent` only tracks those.
 	c.beginChildMessage(assistantMsg.id);
-	debug("processAssistantMessage fallback:", () => describeBlocks(assistantMsg.content), sameMessage ? "(same message re-yield)" : "");
+	debug("processAssistantMessage fallback:", describeBlocks(assistantMsg.content), sameMessage ? "(same message re-yield)" : "");
 	// Deduped against the WHOLE current turn, not just same-id re-yields: a
 	// rejected turn's synthesized error message ("You've hit your weekly limit")
 	// arrives as multiple assistant yields whose ids DIFFER or are absent (one

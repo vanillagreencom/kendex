@@ -24,7 +24,7 @@ export function diagGuidance(): string {
 }
 
 // Ensure log directories exist when debug is enabled. 0o700/0o600 throughout:
-// these logs carry prompt previews and session metadata and belong to the user
+// these logs carry session metadata and belong to the user
 // alone — same discipline as diagDump.
 if (DEBUG) {
 	try {
@@ -95,9 +95,17 @@ export function debug(...args: unknown[]) {
 /** Debug description of a content-block list: block count, block types and
  *  serialized size, never a block's text or data, so a tool payload or a
  *  user-authored message stays out of the log. The size serializes every
- *  block: call it only inside a debug() thunk. */
-export function describeBlocks(blocks: ReadonlyArray<{ type: string }>): string {
-	return `blocks=${blocks.length} types=${blocks.map((block) => block.type).join(",")} bytes=${Buffer.byteLength(JSON.stringify(blocks))}`;
+ *  block, so this returns a thunk: debug() runs it only with debugging on. */
+export function describeBlocks(blocks: ReadonlyArray<{ type: string }>): () => string {
+	return () => `blocks=${blocks.length} types=${blocks.map((block) => block.type).join(",")} bytes=${Buffer.byteLength(JSON.stringify(blocks))}`;
+}
+
+/** Debug description of a user prompt: its character count, and its block
+ *  count when it carries images, never its text. */
+export function describePrompt(text: string | null | undefined, blocks: ReadonlyArray<unknown> | null | undefined): string {
+	const chars = text?.length ?? 0;
+	if (!blocks) return `chars=${chars}`;
+	return `chars=${chars} blocks=${blocks.length}${chars === 0 ? " image-only" : ""}`;
 }
 
 // Per-query CLI debug capture. When CLAUDE_BRIDGE_DEBUG=1, ask the Claude Code

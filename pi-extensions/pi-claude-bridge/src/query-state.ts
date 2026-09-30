@@ -12,8 +12,8 @@ import type { McpResult } from "./extract-tool-results.js";
 import { currentRequestLaneId } from "./request-lane.js";
 
 /** A mid-query user run captured for replay after the active query ends.
- *  `text` is the joined text form (previews, and the replay prompt when no
- *  image blocks were captured). `blocks` is present when the run carried
+ *  `text` is the joined text form, the replay prompt when no image blocks
+ *  were captured. `blocks` is present when the run carried
  *  images — the replay must send the blocks or the images are silently lost. */
 export interface DeferredUserMessage {
 	text: string;
