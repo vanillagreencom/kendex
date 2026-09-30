@@ -52,7 +52,7 @@ Seven `<`, seven `|`, or seven `>` at column 0, followed by a space or end of li
 
 ## changelog-entries
 
-Ordinary runs check fragments. `--collate` also validates the destination record before writing. A path in both roles is a config error. Text that is not valid UTF-8 is a collection error naming the line.
+Ordinary runs check fragments and configured major bumps. `--collate` also validates the destination record before writing. A path in both roles is a config error. Text that is not valid UTF-8 is a collection error naming the line.
 
 ### Fragments
 
@@ -69,11 +69,21 @@ A pattern's root is its leading run of glob-free directories (`changelog.d/*/*.m
 
 ### The record
 
-`COMMIT_GUARDS_CHANGELOG_RECORD` names the collation destination. Ordinary checks permit edits to its wording and headings. They do not compare it against HEAD.
+`COMMIT_GUARDS_CHANGELOG_RECORD` names the collation destination. Ordinary checks permit edits to its wording and headings. A configured major bump reads the record only for its Breaking evidence.
 
 - `--collate` with accepted fragments requires a tracked, regular text destination with one `## [Unreleased]` section. Section headings use the Keep a Changelog names so each fragment has a destination.
 - Missing or duplicate pending sections, unclosed fences, and unknown section names refuse collation before any write.
 - `COMMIT_GUARDS_CHANGELOG_COLLATE=1` authorizes `--collate` and lets `commit-msg` count a record change as the release changelog entry. It does not change fragment validation.
+
+### Major bumps
+
+- `COMMIT_GUARDS_CHANGELOG_VERSION_PATHS` selects tracked JSON files by space-separated path globs. Empty, the default, disables version checks. A selected changed file must be regular JSON with a string `version` in `major.minor.patch` form, with optional prerelease and build suffixes. jq reads both versions. Missing jq or unreadable versions are collection errors.
+- The default and `--staged` compare HEAD to the index. `--base REF` compares HEAD's merge base with REF to the index. `--against REF` compares REF itself to the index. The batch passes its range to this lane. Fragment validation always reads the whole index. A newly added version file has no prior major to increase.
+- An increased major fails with `major-breaking=PATH:OLD:NEW` unless its release has a list item starting `- **Breaking:**` followed by non-blank text. The check cannot judge whether the text describes the actual break or gives a sufficient migration note.
+- A `package.json` uses only its adjacent `CHANGELOG.md`: `### Unreleased` before release, or `### <new version>` as the first release section after the release renames that heading. Another package's call-out does not count.
+- Other version files use an accepted fragment or the configured record's `## [Unreleased]` or the first release section, `## [<new version>] - <date>`. This permits the release commit after collation deletes fragments and the caller sets the version. Past versions and fenced examples do not count. An unreadable record fails closed.
+- The owner-approval and compatibility policies belong to the consuming repository's release standard, not this configurable catalog check.
+- [`tests/changelog-entries.test.sh`](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/tests/changelog-entries.test.sh) pins a planted major with and without a named Breaking entry.
 
 ### Measuring one entry
 

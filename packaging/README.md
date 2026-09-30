@@ -19,7 +19,6 @@ The desktop app binary is named `kendex-app`, after its cargo package, and every
 
 ## The four Arch packages
 
-Three install the desktop app and the command together and one installs the command alone; they differ in where the bytes come from.
 
 | Package | Contents | Source |
 |---|---|---|
@@ -38,6 +37,8 @@ Which package owns a running install is asked of the package manager (`pacman -Q
 
 ## Per release
 
+Version choice and release notes follow the [release standard](../changelog.d/README.md#release-standard).
+
 Each new `vX.Y.Z` changes the artifact checksums. Update, in this repo:
 
 - `arch/kendex/PKGBUILD` + `.SRCINFO`: `pkgver` and the one `sha256sums` entry, over the tag's source tarball.
@@ -53,7 +54,7 @@ Each Linux CLI `sha256` (one per architecture) is the same value in `kendex-cli.
 
 ### The version restart, once
 
-Arch survives 1.0.0 following 5.0.1 on the `epoch=1` above. The formula's counterpart is `version_scheme 1`: brew compares the scheme before the number, so an installed 5.0.1 (scheme 0) shows in `brew outdated` and `brew upgrade kendex-cli` moves it; the scheme never goes down. A cask has no version scheme, and `auto_updates true` hands its upgrade to an app that renders no notice for a feed older than itself, so the cask's `caveats` block tells a 5.x install to `brew uninstall` the app, then the `kendex-cli` formula that leaves behind, and install the app again from the tap. `the_formula_declares_the_restart_as_a_new_version_scheme` and `the_cask_tells_a_5_x_install_to_reinstall_the_app_and_its_cli` in `crates/cli/tests/packaging_recipes.rs` hold both; drop the cask's block once no install is left on 5.x.
+The formula's counterpart to Arch's epoch is `version_scheme 1`: brew compares the scheme before the number, so an installed 5.0.1 (scheme 0) shows in `brew outdated` and `brew upgrade kendex-cli` moves it; the scheme never goes down. A cask has no version scheme, and `auto_updates true` hands its upgrade to an app that renders no notice for a feed older than itself, so the cask's `caveats` block tells a 5.x install to `brew uninstall` the app, then the `kendex-cli` formula that leaves behind, and install the app again from the tap. `the_formula_declares_the_restart_as_a_new_version_scheme` and `the_cask_tells_a_5_x_install_to_reinstall_the_app_and_its_cli` in `crates/cli/tests/packaging_recipes.rs` hold both; drop the cask's block once no install is left on 5.x.
 
 ## Publishing
 

@@ -17,7 +17,7 @@ CE="$SKILL_DIR/scripts/changelog-entries"
 # Hermetic: a leaked setting would mask every row below.
 unset COMMIT_GUARDS_CHANGELOG_CAP COMMIT_GUARDS_CHANGELOG_PATHS \
   COMMIT_GUARDS_CHANGELOG_RECORD COMMIT_GUARDS_CHANGELOG_COLLATE \
-  COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
+  COMMIT_GUARDS_CHANGELOG_VERSION_PATHS COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 PASS=0
 FAIL=0
@@ -39,7 +39,7 @@ run() { # ENVS ARGS
   local envs=() rc=0 out=""
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
   # shellcheck disable=SC2086
-  out="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$CE" $2 2>&1)" || rc=$?
+  out="$(cd "$R" && env -i PATH="$PATH" HOME="$HOME" TMPDIR="$TMPDIR" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$GIT_CONFIG_GLOBAL" ${envs[@]+"${envs[@]}"} "$CE" $2 2>&1)" || rc=$?
   out="$(printf '%s\n' "$out" | LC_ALL=C awk '
     /^changelog-entries: [a-z-]+=/ { print; next }
     /^[[:space:]]*dependency-order-control:/ { sub(/^[[:space:]]*/, ""); print }
@@ -56,6 +56,8 @@ repo() { # NAME
   git -C "$R" -c init.defaultBranch=main init -q
   git -C "$R" config user.email test@example.com
   git -C "$R" config user.name test
+  git -C "$R" config gc.auto 0
+  git -C "$R" config maintenance.auto false
 }
 put() { mkdir -p "$R/$(dirname "$1")"; printf '%b' "$2" >"$R/$1"; } # PATH CONTENT (printf %b)
 stage() { git -C "$R" add -A; }
@@ -405,6 +407,71 @@ run_rows \
   "the entry under the hostile name is measured, and the message values stay on their own lines|fx_hostile_name|||rc=1 $(long "\$'changelog.d/fixed/KEN\\n1\\EX\\t.md'" 252 "- $X250");$(summary 1 1)" \
   "a refusal names the hostile path the same way, on its own line|fx_hostile_stray|||rc=1 $(stray "\$'changelog.d/fixed/KEN\\n1\\EX\\t'");$(summary 1 0)" \
   "a pattern carrying ESC that matches nothing is a clean pass on one line, the byte scrubbed|fx_hostile_pattern|$(printf 'COMMIT_GUARDS_CHANGELOG_PATHS=no\033match.md')||rc=0 changelog-entries: no-matches=no?match.md"
+
+echo "=== configured major bumps need named Breaking evidence for their own release ==="
+# npm version and app release edits stage JSON versions. The record field is
+# the release author's pending or renamed section; each row owns its repository.
+# The unnamed-major row is the must-fail control for the new production rule.
+BREAK='- **Breaking:** Rename the mode setting; replace mode with profile.'
+for row in \
+  "major-unnamed|app.json|1.9.0|2.0.0|||||1" \
+  "major-named|app.json|1.9.0|2.0.0|$BREAK||||0" \
+  "major-empty-callout|app.json|1.9.0|2.0.0|- **Breaking:**   ||||1" \
+  "major-inline-mention|app.json|1.9.0|2.0.0|- Read **Breaking:** in the guide.||||1" \
+  "patch|app.json|1.9.0|1.9.1|||||0" \
+  "minor|app.json|1.9.0|1.10.0|||||0" \
+  "downgrade|app.json|2.0.0|1.9.0|||||0" \
+  "large-major|app.json|9223372036854775808.0.0|9223372036854775809.0.0|||||1" \
+  "prerelease-major|app.json|1.9.0|2.0.0-rc.1+build.2|||||1" \
+  "initial|app.json||2.0.0|||||0" \
+  "invalid-new|app.json|1.9.0|2.0.0junk|||||2" \
+  "invalid-old|app.json|bad|2.0.0|||||2" \
+  "collated|app.json|1.9.0|2.0.0||CHANGELOG.md|## [Unreleased]\n\n### Changed\n\n$BREAK\n||0" \
+  "released|app.json|1.9.0|2.0.0||CHANGELOG.md|## [Unreleased]\n\n## [2.0.0] - 2026-09-30\n\n### Changed\n\n$BREAK\n||0" \
+  "historic|app.json|1.9.0|2.0.0||CHANGELOG.md|## [Unreleased]\n\n## [1.0.0] - 2026-01-01\n\n$BREAK\n||1" \
+  "historic-reused-number|app.json|1.9.0|2.0.0||CHANGELOG.md|## [Unreleased]\n\n## [1.9.0] - 2026-09-01\n\n## [2.0.0] - 2025-01-01\n\n$BREAK\n||1" \
+  "fenced|app.json|1.9.0|2.0.0||CHANGELOG.md|## [Unreleased]\n\n\140\140\140md\n$BREAK\n\140\140\140\n||1" \
+  "unclosed-fence|app.json|1.9.0|2.0.0||CHANGELOG.md|## [Unreleased]\n\n\140\140\140md\n$BREAK\n||fence" \
+  "package-unnamed|packages/a/package.json|1.9.0|2.0.0||packages/a/CHANGELOG.md|### Unreleased\n\n- Fix a typo.\n||1" \
+  "package-named|packages/a/package.json|1.9.0|2.0.0||packages/a/CHANGELOG.md|### Unreleased\n\n$BREAK\n||0" \
+  "package-released|packages/a/package.json|1.9.0|2.0.0||packages/a/CHANGELOG.md|### 2.0.0\n\n$BREAK\n\n### 1.9.0\n||0" \
+  "package-root|package.json|1.9.0|2.0.0||CHANGELOG.md|### Unreleased\n\n$BREAK\n||0" \
+  "package-historic|packages/a/package.json|1.9.0|2.0.0||packages/a/CHANGELOG.md|### Unreleased\n\n### 1.9.0\n\n$BREAK\n||1" \
+  "package-other|packages/a/package.json|1.9.0|2.0.0|$BREAK|packages/b/CHANGELOG.md|### Unreleased\n\n$BREAK\n||1" \
+  "committed-base|app.json|1.9.0|2.0.0||||--base base|1" \
+  "committed-against|app.json|1.9.0|2.0.0|$BREAK|||--against base|0"; do
+  IFS='|' read -r label manifest prior next fragment record_path record args expected <<<"$row"
+  repo "version-$label"
+  if [ -n "$prior" ]; then
+    put "$manifest" "{\"version\":\"$prior\"}\n"
+    stage
+    git -C "$R" commit -qm base
+    git -C "$R" tag base
+  fi
+  put "$manifest" "{\"version\":\"$next\"}\n"
+  [ -z "$fragment" ] || put changelog.d/changed/break.md "$fragment\n"
+  [ -z "$record_path" ] || put "$record_path" "$record"
+  stage
+  [ -z "$args" ] || git -C "$R" commit -qm release
+  report="$NOMATCH"
+  count=0
+  if [ -n "$fragment" ]; then report="$(within 1)"; count=1; fi
+  case "$expected" in
+    1) report="${ERR}major-breaking=$manifest:$prior:$next;$(summary 1 "$count")" ;;
+    2) report="${ERR}version-read=$manifest" ;;
+    fence) expected=2; report="${ERR}version-record-fence=$record_path" ;;
+  esac
+  assert_eq "$label" "rc=$expected $report" "$(run 'COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json packages/*/package.json package.json' "$args")"
+done
+
+# No version-file configuration means no version policy for a catalog consumer.
+repo version-off
+put app.json '{"version":"1.0.0"}\n'; stage; git -C "$R" commit -qm base
+put app.json '{"version":"2.0.0"}\n'; stage
+assert_eq 'version discovery defaults off' "rc=0 $NOMATCH" "$(run '' '')"
+# The staged major stays unnamed even if the working tree holds a call-out.
+put changelog.d/changed/unstaged.md "$BREAK\n"
+assert_eq 'unstaged call-out cannot justify a staged major' "rc=1 ${ERR}major-breaking=app.json:1.0.0:2.0.0;$(summary 1 0)" "$(run COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json '')"
 
 echo "=== the usage is answered ==="
 repo help

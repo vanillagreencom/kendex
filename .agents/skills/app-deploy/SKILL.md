@@ -14,8 +14,10 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 # Release kendex
 
+Follow the [release standard](../../../changelog.d/README.md#release-standard) for version choice, breaking changes, compatibility, and owner approval.
+
 1. Run `tools/installer-pin --check`. It halts the release where a review-gate template's `KENDEX_INSTALLER_SHA` is not the commit its `KENDEX_VERSION` tag names. Then, from a clean index and working tree, set `COMMIT_GUARDS_CHANGELOG_COLLATE=1` in the environment and run `.agents/skills/commit-guards/scripts/changelog-entries --collate`. It folds the `changelog.d` fragments into `CHANGELOG.md`'s `Unreleased`. A nonzero exit halts the release: fix the cause before retrying.
-2. Bump the workspace `version` in `Cargo.toml` and the version in `crates/app/tauri.conf.json`. Both must equal the tag minus the `v`, or the update feed no-ops or loops. Move the collated entries under a new `## [<version>] - <date>` heading, leaving an empty `## [Unreleased]` above it. Confirm every breaking change carries its **Breaking** call-out and migration note.
+2. Bump the workspace `version` in `Cargo.toml` and the version in `crates/app/tauri.conf.json`. Both must equal the tag minus the `v`, or the update feed no-ops or loops. Move the collated entries under a new `## [<version>] - <date>` heading, leaving an empty `## [Unreleased]` above it.
 3. Commit with `COMMIT_GUARDS_CHANGELOG_COLLATE=1`. That declaration is what makes `CHANGELOG.md` count as the entry this commit owes for the version bump under `crates/`, whose fragments the collator just deleted, and the `commit-msg` lane refuses the commit without it. Then tag `v<version>` and push the tag. CI builds each target and publishes a draft GitHub Release with CLI binaries, app bundles, and `feed.json` (details: `docs/RELEASING.md`).
 4. Review the draft, then publish it. Publishing is what makes the version "latest" for self-update.
 5. Once the release is published, bump the per-release pins `packaging/README.md` § Per release lists: `version` and the checksums in the Homebrew formula and cask, and `pkgver` and `sha256sums` in the Arch recipes where they are not already current. Landing that bump on `main` is the push that runs the two publishers below.

@@ -392,6 +392,10 @@ COMMIT_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"
 # refused and the released history no one may rewrite is never measured.
 COMMIT_GUARDS_CHANGELOG_PATHS = "changelog.d/*/*.md"
 
+# The app version equals the workspace version (crates/cli/tests/compat.rs).
+# Package manifests keep their own adjacent release records.
+COMMIT_GUARDS_CHANGELOG_VERSION_PATHS = "crates/app/tauri.conf.json pi-extensions/*/package.json"
+
 # Paths whose change obliges a changelog entry, checked by the commit-msg
 # lane: crates/ and ui/ are what a consumer sees. [no-changelog] in the
 # subject is the escape for a change none of them notices.

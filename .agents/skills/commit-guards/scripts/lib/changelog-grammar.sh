@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # What a changelog IS to this family: where its two scopes live, and the
 # grammars each is judged by — what a fragment is, what an entry measures,
-# and where the record's [Unreleased] section starts and stops. Kept apart
+# where the record's [Unreleased] section starts and stops, and which release
+# entries name a break. Kept apart
 # from the scans that run them, and shared, so the changelog-entries check and
 # the commit-msg lane cannot come to different answers about the same repo.
 #
@@ -186,6 +187,8 @@ gg_is_section() { # NAME — 0 when NAME is exactly one of the sections
 # line for collation. A missing section, duplicate section, or unclosed fence
 # is a refusal. The collator uses these boundaries without another search.
 GG_UNRELEASED_AWK='
+BEGIN { if (!release_level) release_level = 2; if (whole_entry) inside = 1 }
+function named_breaking(l) { return l ~ /^- \*\*Breaking:\*\*[ \t]+[^ \t]/ }
 function lead(l,   i) { i = 0; while (i < 3 && substr(l, i + 1, 1) == " ") i++; return i }
 function heading_level(l,   i, n, c) {
   i = lead(l)
@@ -203,6 +206,7 @@ function heading_text(l,   i, n, t) {
 }
 {
   line = $0; sub(/\r$/, "", line)
+  if (whole_entry) { if (named_breaking(line)) breaking = 1; next }
   i = lead(line)
   c = substr(line, i + 1, 1)
   run = 0
@@ -214,6 +218,20 @@ function heading_text(l,   i, n, t) {
   }
   if (run >= 3) { fence = c; flen = run; next }
   lvl = heading_level(line)
+  # The version check reads the same headings and fences as collation. Its
+  # query accepts a pending section or the section a release just renamed.
+  if (breaking_query) {
+    if (!whole_entry && lvl > 0 && lvl <= release_level) {
+      text = tolower(heading_text(line))
+      pending = (release_level == 2 ? "[unreleased]" : "unreleased")
+      released = (release_level == 2 ? "[" release_version "]" : release_version)
+      if (lvl == release_level && text != pending) releases++
+      inside = (lvl == release_level && (text == pending || (releases == 1 &&
+        (text == released || (release_level == 2 && release_version != "" && index(text, released " - ") == 1)))))
+    }
+    if (inside && named_breaking(line)) breaking = 1
+    next
+  }
   if (lvl == 1 || lvl == 2) {
     if (inside) printf "end\t%d\n", NR
     inside = (lvl == 2 && tolower(heading_text(line)) == "[unreleased]")
@@ -227,6 +245,7 @@ function heading_text(l,   i, n, t) {
   if (lvl == 3) printf "section\t%d\t%s\n", NR, heading_text(line)
 }
 END {
+  if (breaking_query) { if (fence != "") exit 3; print breaking + 0; exit }
   # A body that bailed lands here too, and its status is the one to keep.
   if (rc) exit rc
   # The duplicate count outranks a later unclosed fence, as the former

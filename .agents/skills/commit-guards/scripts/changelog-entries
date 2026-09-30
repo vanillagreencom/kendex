@@ -10,8 +10,9 @@
 # rule: no line counting, so an entry that states its outcome passes however
 # it is wrapped.
 #
-# Ordinary checks judge the fragments. The combined record is read only by
-# --collate, which validates its destination before writing.
+# Ordinary checks judge fragments and configured JSON version bumps. A major
+# increase needs a named Breaking entry. The record supplies release evidence
+# after a caller collates fragments or renames a package's Unreleased heading.
 #
 # --collate is that write, and the release commit is its only caller: on a
 # clean verdict it folds the fragments this run just accepted into the
@@ -67,7 +68,7 @@ source "$SCRIPT_DIR/lib/atomic-install.sh"
 usage() {
   gg_message usage changelog-entries 'Available options follow.'
   cat <<'EOF'
-usage: changelog-entries [--collate]
+usage: changelog-entries [--collate | --staged | --base REF | --against REF]
 
 Checks changelog fragments. --collate also validates its destination.
 
@@ -80,7 +81,16 @@ submodule gitlink or a binary blob at a configured path is refused. The
 measurement joins the fragment's lines with CR stripped and whitespace runs
 collapsed to one space, counted in characters.
 
-Ordinary runs do not judge the combined record or its wording.
+Ordinary runs read the record only as evidence for a configured major bump.
+COMMIT_GUARDS_CHANGELOG_VERSION_PATHS selects JSON files with a string version.
+An increased major needs a '- **Breaking:**' entry with non-blank text. A
+package.json uses only its adjacent CHANGELOG.md's '### Unreleased' or
+'### <new version>' section. Other files use accepted fragments or the
+configured record's '## [Unreleased]' or '## [<new version>] - <date>' section.
+Historical sections and fenced examples do not count.
+The default compares HEAD to the index; --base compares HEAD's merge base
+with REF to the index; --against compares REF itself to the index. Fragments
+always come from the index. A first version has no prior major to increase.
 
 A tracked path under a fragment root that the globs do not cover is refused
 too — it is a fragment nothing would ever fold in. A root is a pattern's
@@ -110,6 +120,8 @@ kendex.settings.toml [env] > default):
   COMMIT_GUARDS_CHANGELOG_RECORD  the collated record file
                                   (default CHANGELOG.md; empty = no record
                                   scope)
+  COMMIT_GUARDS_CHANGELOG_VERSION_PATHS  JSON version-file globs
+                                  (default empty = no version check)
 
 COMMIT_GUARDS_CHANGELOG_COLLATE=1 authorizes --collate and lets commit-msg
 count the release record as its required changelog change. Ordinary fragment
@@ -120,6 +132,9 @@ EOF
 }
 
 COLLATE=0
+MODE=staged
+BASE_REF=""
+SCOPE_FLAGS=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -h | --help)
@@ -127,10 +142,20 @@ while [ $# -gt 0 ]; do
       exit 0
       ;;
     --collate) COLLATE=1 ;;
+    --staged) MODE=staged; SCOPE_FLAGS=$((SCOPE_FLAGS + 1)) ;;
+    --base | --against)
+      [ $# -ge 2 ] || gg_fail argument-missing "$1" "$1 requires a ref"
+      MODE="${1#--}"
+      shift
+      BASE_REF="$1"
+      SCOPE_FLAGS=$((SCOPE_FLAGS + 1))
+      ;;
     *) gg_fail argument "$(gg_shown "$1")" "unknown argument $(gg_shown "$1") (see --help)" ;;
   esac
   shift
 done
+[ "$SCOPE_FLAGS" -le 1 ] && { [ "$COLLATE" -eq 0 ] || [ "$SCOPE_FLAGS" -eq 0 ]; } \
+  || gg_fail scope-conflict "$SCOPE_FLAGS:$COLLATE" "Use one scope or --collate, not both."
 
 gg_repo_root_cd
 
@@ -156,6 +181,7 @@ checked=0
 violations=0
 RECORD_SHA=""
 RECORD_MODE=""
+FRAGMENT_BREAKING=0
 
 refuse() { # KEY VALUE EXPLANATION [REMEDY]
   gg_message "$1" "$2" "$3"
@@ -260,6 +286,10 @@ while IFS= read -r -d '' rec; do
   fi
   checked=$((checked + 1))
   printf '%s\t%s\0' "$sec" "$f" >>"$GG_TMP/frags.z"
+  if ! breaking="$(LC_ALL=C awk -v breaking_query=1 -v whole_entry=1 "$GG_UNRELEASED_AWK" <"$GG_TMP/blob")"; then
+    gg_fail breaking-read "$(gg_shown "$f")" "Could not read the Breaking entry."
+  fi
+  [ "$breaking" -eq 0 ] || FRAGMENT_BREAKING=1
   status=0
   LC_ALL=C awk "$GG_ENTRY_AWK" <"$GG_TMP/blob" >"$GG_TMP/report" || status=$?
   [ "$status" -eq 0 ] || gg_fail fragment-measure "$(gg_shown "$f"):$status" "could not measure the entry in $(gg_shown "$f") (awk exit $status)"
@@ -279,6 +309,90 @@ while IFS= read -r -d '' rec; do
     esac
   done <"$GG_TMP/report"
 done <"$GG_TMP/files.z"
+
+# Release manifests already expose their version through jq. Opt-in discovery
+# keeps this catalog lane independent of any repo layout.
+version_paths="$(gg_setting COMMIT_GUARDS_CHANGELOG_VERSION_PATHS "")" || exit 2
+version_paths="$(gg_config_path_list "$version_paths" changelog-version)" || exit 2
+
+read_version() { # SHA PATH -> version, refusing unreadable or malformed manifests
+  gg_read_blob "$1" "$2" version
+  jq -er '.version | select(type == "string") | select(test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"))' \
+    "$GG_TMP/blob" 2>"$GG_TMP/dependency.err" \
+    || gg_fail_cause version-read "$(gg_shown "$2")" "$GG_TMP/dependency.err" "Expected a JSON string version in major.minor.patch form."
+}
+
+record_breaking() { # PATH LEVEL VERSION -> 0 or 1 on stdout
+  local path="$1" level="$2" version="$3" rec mode rest sha status=0
+  # Reuse the completed index discovery; an absent record is no evidence,
+  # whereas a record that cannot be read is a collection error.
+  while IFS= read -r -d '' rec; do
+    [ "${rec#*"$GG_TAB"}" = "$path" ] || continue
+    mode="${rec%% *}"; rest="${rec#* }"; sha="${rest%% *}"
+    gg_mode_is_regular "$mode" || gg_fail version-record-mode "$(gg_shown "$path"):$mode" "Breaking evidence must be a regular text file."
+    gg_changelog_blob "$sha" "$path" || gg_fail version-record-binary "$(gg_shown "$path")" "Breaking evidence must be text."
+    LC_ALL=C awk -v breaking_query=1 -v release_level="$level" -v release_version="$version" "$GG_UNRELEASED_AWK" <"$GG_TMP/blob" \
+      >"$GG_TMP/breaking" || status=$?
+    [ "$status" -ne 3 ] || gg_fail version-record-fence "$(gg_shown "$path")" "An unclosed code fence prevents reading the release section."
+    [ "$status" -eq 0 ] || gg_fail breaking-read "$(gg_shown "$path"):$status" "The changelog grammar failed (awk exit $status)."
+    cat -- "$GG_TMP/breaking" || gg_fail breaking-read "$(gg_shown "$path")" "Could not read the Breaking result."
+    return 0
+  done <"$GG_TMP/files.z"
+  printf '0\n'
+}
+
+if [ -n "$version_paths" ]; then
+  diff_args=(--cached)
+  case "$MODE" in
+    staged) : ;;
+    base)
+      base="$(git merge-base -- "$BASE_REF" HEAD 2>"$GG_TMP/dependency.err")" \
+        || gg_fail_cause version-base "$(gg_shown "$BASE_REF")" "$GG_TMP/dependency.err" "Could not find the version comparison's merge base."
+      diff_args+=("$base")
+      ;;
+    against)
+      base="$(git rev-parse --verify --end-of-options "$BASE_REF^{commit}" 2>"$GG_TMP/dependency.err")" \
+        || gg_fail_cause version-base "$(gg_shown "$BASE_REF")" "$GG_TMP/dependency.err" "The version comparison ref must name a commit."
+      diff_args+=("$base")
+      ;;
+  esac
+  git diff "${diff_args[@]}" --raw --no-abbrev -z --no-renames --diff-filter=AMT -- >"$GG_TMP/versions.z" 2>"$GG_TMP/dependency.err" \
+    || gg_fail_cause version-diff "$?" "$GG_TMP/dependency.err" "Could not collect version changes."
+  while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
+    selected=0
+    for pattern in $version_paths; do
+      case "$f" in $pattern) selected=1; break ;; esac
+    done
+    [ "$selected" -eq 1 ] || continue
+    # --raw emits srcmode dstmode srcsha dstsha status, followed by the path.
+    read -r srcmode dstmode srcsha dstsha status <<<"${meta#:}"
+    gg_mode_is_regular "$dstmode" || gg_fail version-mode "$(gg_shown "$f"):$dstmode" "A configured version file must be a regular JSON file."
+    new="$(read_version "$dstsha" "$f")" || exit 2
+    [ "$srcmode" != 000000 ] || continue
+    gg_mode_is_regular "$srcmode" || gg_fail version-mode "$(gg_shown "$f"):$srcmode" "The prior version file must be regular JSON."
+    old="$(read_version "$srcsha" "$f")" || exit 2
+    # Decimal strings avoid shell integer overflow and jq number rounding.
+    if ! increased="$(jq -nr --arg old "$old" --arg new "$new" 'def major: split(".")[0] | [length, .]; ($new | major) > ($old | major)' 2>"$GG_TMP/dependency.err")"; then
+      gg_fail_cause version-compare "$(gg_shown "$f")" "$GG_TMP/dependency.err" "Could not compare the major versions."
+    fi
+    [ "$increased" = true ] || continue
+    case "${f##*/}" in
+      package.json)
+        case "$f" in */*) local_record="${f%/*}/CHANGELOG.md" ;; *) local_record=CHANGELOG.md ;; esac
+        evidence="$(record_breaking "$local_record" 3 "$new")" || exit 2
+        ;;
+      *)
+        evidence="$FRAGMENT_BREAKING"
+        if [ "$evidence" -eq 0 ] && [ -n "$RECORD" ]; then
+          evidence="$(record_breaking "$RECORD" 2 "$new")" || exit 2
+        fi
+        ;;
+    esac
+    [ "$evidence" -eq 1 ] || refuse major-breaking "$(gg_shown "$f"):$old:$new" \
+      "A major increase needs a Breaking entry naming the break." \
+      "Write - **Breaking:** with the break and migration note in this release's changelog."
+  done <"$GG_TMP/versions.z"
+fi
 
 # The release operation reads the destination only when it has entries to fold.
 if [ "$COLLATE" -eq 1 ] && [ "$checked" -gt 0 ]; then

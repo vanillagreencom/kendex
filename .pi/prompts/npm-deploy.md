@@ -25,11 +25,7 @@ kendex distribution is independent of npm. `kendex update-pi` installs the catal
 - README or documentation edits, unless the gallery copy needs them.
 - Repository-only files: tests, fixtures, tooling.
 
-Semver bump from the unreleased entries:
-
-- patch: a fix with no API change, docs packaged with the runtime, a settings or notice wording change.
-- minor: additive, such as a new tool, setting, field, command or backward-compatible feature.
-- major: breaking, such as a removed or renamed tool, a changed settings key, a changed envelope or protocol shape consumers parse, or a dropped Pi peer floor.
+Choose the bump and write breaking-change entries under the [release standard](https://github.com/vanillagreencom/kendex/blob/main/changelog.d/README.md#release-standard). It also defines compatibility and owner approval.
 
 ## Audit
 

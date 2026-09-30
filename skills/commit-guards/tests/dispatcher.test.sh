@@ -26,7 +26,7 @@ unset COMMIT_GUARDS_CHECKS COMMIT_GUARDS_TODO_EXCLUDES COMMIT_GUARDS_BYTE_CEILIN
   COMMIT_GUARDS_SUPPRESSION_BASELINE COMMIT_GUARDS_CONFLICT_EXCLUDES \
   COMMIT_GUARDS_COMMIT_TYPES COMMIT_GUARDS_PROSE_PATHS \
   COMMIT_GUARDS_MD_PATHS COMMIT_GUARDS_MD_REFS_PATHS COMMIT_GUARDS_MD_EXCLUDES COMMIT_GUARDS_MD_SCOPE \
-  COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
+  COMMIT_GUARDS_CHANGELOG_VERSION_PATHS COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 TD="TO""DO"
 
@@ -51,7 +51,7 @@ run_raw() { # ENVS ARGS [STDIN]
   local envs=()
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
   # shellcheck disable=SC2086
-  (cd "$R" && printf '%b' "${3-}" | env ${envs[@]+"${envs[@]}"} "$GG" $2 2>&1)
+  (cd "$R" && printf '%b' "${3-}" | env -i PATH="$PATH" HOME="$HOME" TMPDIR="$TMPDIR" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$GIT_CONFIG_GLOBAL" ${envs[@]+"${envs[@]}"} "$GG" $2 2>&1)
 }
 batch() { # ENVS ARGS
   local rc=0 out=""
@@ -77,7 +77,7 @@ steps() { # MODE CHECKS [INCOMPLETE]
     case "$mode" in
       all) case "$c" in byte-ceiling | py-names) flag=" --all" ;; esac ;;
       staged) case " $STAGED_SCOPED " in *" $c "*) flag=" --staged" ;; esac ;;
-      base:*) case "$c" in byte-ceiling | py-names) flag=" --base ${mode#base:}" ;; esac ;;
+      base:*) case "$c" in byte-ceiling | changelog-entries | py-names) flag=" --base ${mode#base:}" ;; esac ;;
     esac
     printf 'commit-guards: step=%s%s;' "$c" "$flag"
     [ "$c" != "${3-}" ] || printf 'commit-guards: incomplete=%s:2;' "$c"
@@ -96,6 +96,8 @@ repo() { # NAME
   git -C "$R" -c init.defaultBranch=main init -q
   git -C "$R" config user.email test@example.com
   git -C "$R" config user.name test
+  git -C "$R" config gc.auto 0
+  git -C "$R" config maintenance.auto false
 }
 put() { mkdir -p "$R/$(dirname "$1")"; printf '%b' "$2" >"$R/$1"; git -C "$R" add -A; } # PATH CONTENT (printf %b), staged
 commit() { git -C "$R" commit -qm "${1:-seed}"; }
@@ -193,6 +195,14 @@ run_rows \
   "'all' with a flag a check would take is exit 2: flags go to a single check|clean all-extra||all --extra|rc=2 ${ERR}argument-unknown=--extra"
 
 echo "=== --staged and --base REF name the batch's scope; each check gets the flag it takes ==="
+versioned() { # NAME — a committed major bump after base
+  repo "$1"
+  put app.json '{"version":"1.0.0"}\n'
+  commit
+  git -C "$R" tag base
+  put app.json '{"version":"2.0.0"}\n'
+  commit
+}
 run_rows \
   "'all --staged' hands --staged to the staged-scoped checks and no other, so a commit adding no marker passes|staged_batch staged-1||all --staged|rc=0 $(steps staged "$DEFAULT")$(ok)" \
   "control: a hard-wrapped markdown file staged beside the code fails the staged batch|fx_staged_md||all --staged|rc=1 $(steps staged "$DEFAULT")$VIOLATIONS" \
@@ -203,6 +213,7 @@ run_rows \
   "control: 'all --staged' hands byte-ceiling --staged and judges only the staged diff|full_scope full-2|$BC=1,COMMIT_GUARDS_CHECKS=byte-ceiling|all --staged|rc=0 $(steps staged byte-ceiling)$(ok byte-ceiling)" \
   "'all --base REF' hands byte-ceiling --base REF, so growth since the base fails|grown base-1|$BC=1,COMMIT_GUARDS_CHECKS=byte-ceiling|all --base base|rc=1 $(steps base:base byte-ceiling)$VIOLATIONS" \
   "--base=REF without 'all' is the same scope|grown base-2|$BC=1,COMMIT_GUARDS_CHECKS=byte-ceiling|--base=base|rc=1 $(steps base:base byte-ceiling)$VIOLATIONS" \
+  "a committed major reaches the changelog check through the batch range|versioned version-red|COMMIT_GUARDS_CHECKS=changelog-entries,COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json|all --base base|rc=1 $(steps base:base changelog-entries)$VIOLATIONS" \
   "a check outside the full-scoped set runs unflagged under --base|grown base-3|COMMIT_GUARDS_CHECKS=conflict-markers|all --base base|rc=0 $(steps base:base conflict-markers)$(ok conflict-markers)" \
   "'--base' without a ref is exit 2|grown base-4||all --base|rc=2 ${ERR}argument-missing=--base" \
   "'--staged' with '--base' is exit 2: one scope per batch|grown base-5||all --staged --base base|rc=2 ${ERR}scope-conflict=2" \

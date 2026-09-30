@@ -51,6 +51,8 @@ FULL_SCOPED_CHECKS="byte-ceiling py-names"
 # design and takes one under every setting: it is ratcheted, so a range is the
 # question it was written to answer. py-names takes one under every setting
 # too: it reads no markdown setting, and a range carries the files it judges.
+# changelog-entries uses the range's prior versions against the index; its
+# fragment scan stays index-wide.
 # A markdown lane takes one only where its configured scope is `touched`,
 # which selects from the staged diff and so opens no file at a caller that
 # stages nothing; the range is what gives it a document a replay carried in.
@@ -58,7 +60,7 @@ FULL_SCOPED_CHECKS="byte-ceiling py-names"
 # sweep, which is WIDER than any range, and scope_for hands it that sweep
 # instead — a range there would answer a smaller
 # question under the setting's name.
-RANGE_SCOPED_CHECKS="byte-ceiling md-format md-refs py-names"
+RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries md-format md-refs py-names"
 
 usage() {
   gg_message usage "$GG_CHECK" "Command usage follows."
