@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { clearTmuxWindowMark, osc777NotificationSequence, sendQolNotification, terminalBellSequence } from "../extensions/qol/notifications.ts";
+import { clearPackageConfigCache } from "../extensions/qol/package-config.ts";
 
 const bellRows = [
 	{ name: "audible terminal bell", muted: false, expected: "\x07" },
@@ -116,6 +117,7 @@ function stalledTty(name: string): string {
 
 function writeQolSettings(config: Record<string, unknown>): void {
 	writeFileSync(join(root, "settings.json"), `${JSON.stringify({ kendex: { extensionManager: { config: { "@vanillagreen/pi-qol": config } } } })}\n`, "utf8");
+	clearPackageConfigCache();
 }
 
 /** Settles with "stalled" when `promise` has not settled within `ms`. */
@@ -132,6 +134,7 @@ beforeEach(() => {
 	process.env.TMUX_PANE = "%1";
 	delete process.env.WT_SESSION;
 	delete process.env.KITTY_WINDOW_ID;
+	clearPackageConfigCache();
 });
 
 afterEach(() => {

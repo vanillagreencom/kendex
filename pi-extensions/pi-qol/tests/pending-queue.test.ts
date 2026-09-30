@@ -6,6 +6,7 @@ import { Text } from "@earendil-works/pi-tui";
 
 import * as ansi from "../extensions/qol/ansi.ts";
 import { STATUS_TEXT_ALIGNMENT_PATCH_SYMBOL } from "../extensions/qol/constants.ts";
+import { clearPackageConfigCache } from "../extensions/qol/package-config.ts";
 
 // Counts the classification's scans: each classification strips ANSI from the
 // whole text once, so a stripAnsi call is one scan. The wrapper delegates, so
@@ -52,6 +53,7 @@ beforeEach(() => {
 	mkdirSync(join(workdir, ".pi"), { recursive: true });
 	process.env.PI_CODING_AGENT_DIR = workdir;
 	process.env.HOME = workdir;
+	clearPackageConfigCache();
 });
 
 afterEach(() => {
@@ -180,6 +182,7 @@ test("the session installs the patch at start and removes it at shutdown", () =>
 		`${JSON.stringify({ kendex: { extensionManager: { config: { "@vanillagreen/pi-qol": { "sessionSearch.enabled": false, "sessionAutoRename.enabled": false, "statusline.enabled": false, "enableScheduleCommand": false } } } } })}\n`,
 		"utf8",
 	);
+	clearPackageConfigCache();
 	const fake = makeFakeApi();
 	const ctx = makeSessionCtx();
 	qolDefault(fake.api as never);
