@@ -15,9 +15,12 @@
 # through lib/copilot-session.sh, at
 # `<COPILOT_HOME>/lane-status/<session_id>.json`, is what that hook reads the
 # context through where no extension reading stands (lib/adapters/copilot.sh), and
-# copilot_session_write there states its fields. The account directory is the
-# one lib/lane-context.sh names for a copilot session, COPILOT_HOME or the
-# CLI's default home, so the writer and every reader name one directory.
+# copilot_session_write there states its fields. It is also the one record that
+# carries allow_all_enabled, read for the allow-all stop cause whether or not an
+# extension reading stands (lib/copilot-session.sh copilot_session_stop_cause).
+# The account directory is the one lib/lane-context.sh names for a copilot
+# session, COPILOT_HOME or the CLI's default home, so the writer and every
+# reader name one directory.
 #
 # Stdin is the CLI's own object, as Copilot 1.0.88 sends it: session_id,
 # transcript_path, model.id, context_window.used_percentage,

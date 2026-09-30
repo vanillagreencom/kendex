@@ -230,11 +230,10 @@ assert_eq "rc=$RC $(record issue-2709 | sed -E 's/ (account|host|mail_root|surfa
 # Their items are ids no later case launches: their copilot records share
 # $STATE, where a later codex relaunch of the same id reads a harness switch.
 # copilot_allow_all ITEM FLAGS [SCRIPT] — rc and the record's allow_all.
-# The account, LANES_HOME's default copilot home, runs the status line the
-# fleet gate asks of a Copilot lane.
-mkdir -p "$SESSION_HOME/.copilot"
-jq -nc --arg c "$SCRIPTS_DIR/copilot-statusline" '{statusLine: {type: "command", command: $c, refreshInterval: 30}}' \
-  > "$SESSION_HOME/.copilot/settings.json"
+# The account, LANES_HOME's default copilot home, holds the hooks the fleet
+# gate asks of a Copilot lane, and the gate makes it load the context reader.
+mkdir -p "$SESSION_HOME/.copilot/hooks"
+for name in lane-mail-check lane-mail-compact lane-mail-start; do : > "$SESSION_HOME/.copilot/hooks/$name.sh"; : > "$SESSION_HOME/.copilot/hooks/$name.json"; done
 copilot_allow_all() {
   run_ot ${3:+SCRIPT="$3"} --ghostty --harness copilot --cmd "copilot $2 --no-ask-user -i start-{item}" "$1"
   printf 'rc=%s %s\n' "$RC" "$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .allow_all')"
@@ -242,14 +241,14 @@ copilot_allow_all() {
 while IFS='|' read -r item flags want; do
   assert_eq "$(copilot_allow_all "$item" "$flags")" "rc=0 $want" "a Copilot launch naming [$flags] records allow_all $want"
 done <<'ROWS'
-CC-140|--allow-all|true
-CC-141|--yolo|true
-CC-142|--allow-all-tools|false
-CC-143||false
+CC-150|--allow-all|true
+CC-151|--yolo|true
+CC-152|--allow-all-tools|false
+CC-153||false
 ROWS
 ALLOW_ALL_OT="$(mutant_scripts allow-all-mutant open-terminal)/open-terminal" || exit 1
 mutate_file "$ALLOW_ALL_OT" '! lane_copilot_allows_all "$cmd" || LAUNCH_ALLOW_ALL=true' '! false || LAUNCH_ALLOW_ALL=true'
-assert_eq "$(copilot_allow_all CC-144 --allow-all "$ALLOW_ALL_OT")" "rc=0 false" \
+assert_eq "$(copilot_allow_all CC-154 --allow-all "$ALLOW_ALL_OT")" "rc=0 false" \
   "control: without the allow-all test a lane launched with --allow-all records no grant"
 
 # --repo is optional on a supported GitHub launch: the resolver answers and
@@ -267,7 +266,7 @@ COP_RECORD_HOME="$TMP_ROOT/copilot-home"
 mkdir -p "$COP_RECORD_HOME/hooks"
 for name in lane-mail-check lane-mail-compact lane-mail-start; do : > "$COP_RECORD_HOME/hooks/$name.sh"; : > "$COP_RECORD_HOME/hooks/$name.json"; done
 COPILOT_HOME="$COP_RECORD_HOME" RUN_TMUX=stub,1,0 run_ot --tmux --harness copilot --launch-flags "--model claude-opus-5 --reasoning-effort high" CC-140
-assert_eq "rc=$RC $(record CC-140 | sed -E 's/ (launched_at|over_cap)=[^ ]*//g') extensions=$(jq -r .enabledFeatureFlags.EXTENSIONS "$COP_RECORD_HOME/settings.json" 2>/dev/null)" \
+assert_eq "rc=$RC $(record CC-140 | sed -E 's/ (launched_at|over_cap|allow_all)=[^ ]*//g') extensions=$(jq -r .enabledFeatureFlags.EXTENSIONS "$COP_RECORD_HOME/settings.json" 2>/dev/null)" \
   "rc=0 item=CC-140 tracker=linear repo=null harness=copilot window=stub:CC-140 account=null host=null mail_root=$TMP_ROOT/wt/CC-140 surface=tmux model=claude-opus-5 session_id=null status=running extensions=true" \
   "a Copilot fleet launch opens its window and records the lane, its harness and model, its home loading the reader"
 
