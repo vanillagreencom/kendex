@@ -59,25 +59,32 @@ pass|agents/tests/citation.md|D016
 pass|hooks/tests/citation.md|D016
 pass|skills/demo/AGENTS.md|D016
 pass|skills/demo/DEVELOPMENT.md|D016
-pass|skills/demo/references/DEVELOPMENT.md|D016
+pass|skills/demo/evals/citation.md|D016
+refuse|skills/demo/templates/DEVELOPMENT.md|D016
+refuse|agents/DEVELOPMENT.md|D016
+refuse|hooks/DEVELOPMENT.md|D016
 pass|docs/citation.md|D016
 pass|skills/demo/citation.txt|D016
 scan|skills/demo/README.md|```text\nD016
 CASES
 
 reset_world
-printf '# citation\n\nRead D016.\n' >"$R/skills/demo/README.md"
-git -C "$R" add -- skills/demo/README.md
-git -C "$R" commit -qm fixture
+# docs-writing/templates/DEVELOPMENT.md is catalog content, unlike the
+# skill's top-level maintainer notes. Stage its source and render together.
+mkdir -p "$R/skills/demo/templates" "$R/.agents/skills/demo/templates"
+printf '# citation\n\nRead D016.\n' >"$R/skills/demo/templates/DEVELOPMENT.md"
+cp "$R/skills/demo/templates/DEVELOPMENT.md" "$R/.agents/skills/demo/templates/DEVELOPMENT.md"
+git -C "$R" add -- skills/demo/templates/DEVELOPMENT.md .agents/skills/demo/templates/DEVELOPMENT.md
 run_guard
-[ "$RC" -eq 1 ] && [[ "$OUT" == *$'D\tskills/demo/README.md\t3\tD016'* ]] \
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: shipped-decision-link=skills/demo/templates/DEVELOPMENT.md"* ]] \
+  && [[ "$OUT" == *$'D\tskills/demo/templates/DEVELOPMENT.md\t3\tD016'* ]] \
   && ok "must-fail fixture reaches the decision-link rule with its source line" \
   || bad "must-fail fixture reaches the decision-link rule with its source line" "rc=$RC out=$OUT"
 # Keep extraction and matched text intact. Remove only the refusal behavior.
 matches=$(grep -Fc 'say shipped-decision-link "$f"' "$GUARD") || matches=0
 if [ "$matches" -eq 1 ] && mutant_guard 's/say shipped-decision-link "$f"/: # decision-link control/'; then
   run_mutant
-  [ "$RC" -eq 0 ] && [[ "$OUT" == *$'D\tskills/demo/README.md\t3\tD016'* ]] \
+  [ "$RC" -eq 0 ] && [[ "$OUT" == *$'D\tskills/demo/templates/DEVELOPMENT.md\t3\tD016'* ]] \
     && ok "control: the same fixture passes when the link refusal is disabled" \
     || bad "control: the same fixture passes when the link refusal is disabled" "rc=$RC out=$OUT"
 else
