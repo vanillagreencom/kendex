@@ -74,6 +74,14 @@ Everything else is absorbed or declined. P4 polish never files: absorb it when i
 
 When a same-surface bundle or umbrella parent already exists, residue attaches to it as a child or related issue; a standalone filing needs a stated reason.
 
+## Review pipeline
+
+**Finding schema.** [`../../reviewer/schemas/review-finding.md`](../../reviewer/schemas/review-finding.md), enforced by `review-artifact-check`. Routing reads `verdict` (`action_required` when blockers exist, else `pass`) and each suggestion's `category` ∈ {`fix`, `issue`}.
+
+**Disposition.** Classify each suggestion by § Decision flow: apply in-PR, file as a tracked issue, or decline with one line. The filing bar is § Filing bar.
+
+**Issue audit pipeline.** Collect every follow-up that clears the filing bar (`category=issue` suggestions, escalated blockers, dev "deliberately left out" lists, gaps noticed) into audit input (schema in `project-management/schemas/`), with dependency fields populated when order is known. Apply [skill-rules.md § Coordination](skill-rules.md#coordination) before issue creation or the TPM audit.
+
 ## Priority
 
 | Pri | Meaning | Use when |
