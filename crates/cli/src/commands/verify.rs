@@ -154,9 +154,8 @@ struct Tally {
 }
 
 impl Tally {
-    /// The failed rows the lock-entry count leaves out: shims, lapsed
-    /// armings, the two bookkeeping files, adopted workflow copies and
-    /// ignored tracked outputs.
+    /// Failed rows outside the lock-entry count, including unsupported
+    /// hook deliveries with no recorded entry.
     fn beside_failed(&self) -> usize {
         self.shims_failed
             + self.setup_failed
@@ -177,29 +176,20 @@ impl Tally {
     }
 }
 
-/// Drift check over lock entries; non-zero exit on any failing row — this
-/// is the signal consuming repos compose in shell pipelines.
+/// Drift check over lock entries; non-zero exit on any failing row.
+/// Consuming repos use this exit status in shell pipelines.
 ///
-/// Nine things are named beside the rows without changing the count,
-/// which is a count of lock entries and nothing else: content nothing
-/// manages, what a scope declares that its record does not hold, what a
-/// scope declares that installs on none of its tools by the package's own
-/// harnesses line, the instruction shims the scope owes, a repository
-/// effect kendex recorded arming that the package no longer stands behind,
-/// the two files a project commits about itself — the record and the
-/// inventory, each held to what this pass would write — each adopted
-/// workflow copy, held to its template's bytes, and each path an agent the
-/// project declares names as tracked output that the project's repository
-/// ignores. Each of the last six is printed as a row of its own where it
-/// fails, counted after the lock entries on the closing line, and a
-/// failing one closes the run non-zero like a failing lock row. The
-/// ignored tracked output is the one exception: a project may keep an
-/// agent's output local on purpose, so its row is a warning, counted apart
-/// on the closing line and leaving the run clean, unless `warnings` is
-/// [`Warnings::Fail`]. The arming check and the ignore check fail closed: a
-/// recorded arming whose check could not be taken is a row nothing
-/// measured, never a clean one, and a git that cannot say whether it
-/// ignores a declared path fails the run.
+/// The checked count covers lock entries only. Failures outside those
+/// entries have their own rows and closing count. An unsupported hook
+/// delivery fails even without a recorded entry, under the contract in
+/// docs/architecture/engine.md. Intentional harness exclusions and advisory
+/// copies are not failed deliveries.
+///
+/// A project may keep an agent's tracked output local on purpose, so an
+/// ignored output is a warning unless `warnings` is [`Warnings::Fail`].
+/// Warnings have a separate closing count. The arming and ignore checks
+/// fail closed: an unmeasured recorded arming or a git query that cannot
+/// settle whether a declared path is ignored fails the run.
 ///
 /// A recorded entry nothing in the scope declares fails its row, and a
 /// declared installation the record does not hold is a gap, for every

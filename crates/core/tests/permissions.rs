@@ -10,9 +10,10 @@ use std::fs;
 use std::path::PathBuf;
 
 use kendex_core::apply;
+use kendex_core::engine::desired::RefusalKind;
 use kendex_core::engine::{DriftState, audit};
 use kendex_core::env::{Env, FakeOs};
-use kendex_core::model::Scope;
+use kendex_core::model::{HarnessId, ItemKind, Scope};
 
 struct Fixture {
     _tmp: tempfile::TempDir,
@@ -76,6 +77,17 @@ fn a_refused_rendering_is_a_conflict_and_removes_the_wide_artifact() {
     )
     .unwrap();
     let report = audit(&f.env, &f.scope).unwrap();
+    let refused = report
+        .refused
+        .iter()
+        .find(|row| row.name == "rust" && row.harness == HarnessId::Pi)
+        .expect("the Pi agent allowlist produces a render refusal");
+    assert_eq!(refused.kind, ItemKind::Agent);
+    assert_eq!(refused.refusal, RefusalKind::Render);
+    assert!(
+        report.failed_hook_deliveries().next().is_none(),
+        "an agent render refusal is not a failed hook delivery"
+    );
     let conflict = report
         .drift
         .iter()

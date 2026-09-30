@@ -36,7 +36,7 @@ Project markers: a `.pi/` or `.agents/` directory.
 
 ## Hooks
 
-Pi executes nothing per hook itself. The `pi-hooks` carrier extension hosts native listeners, and hook content rides in the registry kendex renders one level under the root: `<root>/kendex/hooks/<name>.sh` plus `<root>/kendex/hooks.json`, keyed by Pi's listener names (`pi_listener`, `crates/core/src/harness/caps.rs`: `PreToolUse` to `tool_call`, `PostToolUse` to `tool_result`, `Stop` and `TaskCompleted` to `turn_end`, `SessionStart` to `session_start`). An event outside that map installs nothing on Pi, said as a note. The tests are `crates/core/tests/pi_carrier.rs` and the pi-hooks suite under `pi-extensions/pi-hooks/`.
+Pi executes nothing per hook itself. The `pi-hooks` carrier extension hosts native listeners, and hook content rides in the registry kendex renders one level under the root: `<root>/kendex/hooks/<name>.sh` plus `<root>/kendex/hooks.json`, keyed by Pi's listener names (`pi_listener`, `crates/core/src/harness/caps.rs`: `PreToolUse` to `tool_call`, `PostToolUse` to `tool_result`, `Stop` and `TaskCompleted` to `turn_end`, `SessionStart` to `session_start`). An event outside that map installs nothing on Pi. The [engine failed-delivery contract](../architecture/engine.md#invariants) applies to a hook that declares Pi. The tests are `crates/core/tests/pi_carrier.rs` and the pi-hooks suite under `pi-extensions/pi-hooks/`.
 
 The carrier's rules:
 
