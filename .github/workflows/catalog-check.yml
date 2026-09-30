@@ -52,8 +52,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: catalog
-      # Only the CI scripts come from this revision. The binary comes from
-      # the latest release, so unreleased engine features cannot pass here.
+      # inputs.ref selects the CI scripts. install-latest.sh selects the
+      # latest released engine.
       - uses: actions/checkout@v4
         with:
           repository: vanillagreencom/kendex
