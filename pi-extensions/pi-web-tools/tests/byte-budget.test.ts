@@ -20,6 +20,7 @@ for (const row of [
 	{ name: "over the limit mid-chunk", chunks: 100, end: "close", limit: 10, headers: new Headers(), expected: { length: 10, cut: { atBytes: 10, by: "read-limit" }, pulled: 3, cancelled: true } },
 	{ name: "over the limit at a chunk edge", chunks: 100, end: "close", limit: 8, headers: new Headers(), expected: { length: 8, cut: { atBytes: 8, by: "read-limit" }, pulled: 2, cancelled: true } },
 	{ name: "exactly its declared length, then open and silent", chunks: 2, end: "stall", limit: 16, headers: new Headers({ "content-length": "8" }), expected: { length: 8, cut: undefined, pulled: 2, cancelled: true } },
+	{ name: "exactly a declared length equal to the limit, then open and silent", chunks: 4, end: "stall", limit: 16, headers: new Headers({ "content-length": "16" }), expected: { length: 16, cut: undefined, pulled: 4, cancelled: true } },
 	{ name: "past its declared length", chunks: 100, end: "close", limit: 16, headers: new Headers({ "content-length": "6" }), expected: { length: 6, cut: { atBytes: 6, by: "declared-length" }, pulled: 2, cancelled: true } },
 	{ name: "past the declared length of its compressed bytes", chunks: 3, end: "close", limit: 16, headers: new Headers({ "content-length": "6", "content-encoding": "gzip" }), expected: { length: 12, cut: undefined, pulled: 3, cancelled: false } },
 ] as const) {
