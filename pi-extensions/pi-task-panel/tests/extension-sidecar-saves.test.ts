@@ -1,0 +1,103 @@
+import { expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fakeCtx, fakePi, mockPiModules } from "./lib/fake-pi.ts";
+
+mockPiModules();
+
+const SESSION_ID = "sidecar-saves-test";
+
+interface Panel {
+	ctx: ReturnType<typeof fakeCtx>;
+	notifications: Array<{ message: string; level: string }>;
+	pi: ReturnType<typeof fakePi>;
+	sidecar: string;
+	tasksWrite: (params: Record<string, unknown>) => Promise<any>;
+}
+
+async function withPanel(run: (panel: Panel) => Promise<void>): Promise<void> {
+	const previousPiDir = process.env.PI_CODING_AGENT_DIR;
+	const previousDiagnosticLog = process.env.PI_TASK_PANEL_DIAGNOSTIC_LOG;
+	const base = realpathSync(mkdtempSync(join(tmpdir(), "pi-task-panel-saves-")));
+	try {
+		process.env.PI_CODING_AGENT_DIR = join(base, "agent");
+		process.env.PI_TASK_PANEL_DIAGNOSTIC_LOG = join(base, "diagnostics.log");
+		const { default: taskPanel } = await import("../extensions/task-panel.js");
+		const pi = fakePi();
+		taskPanel(pi as never);
+		const notifications: Array<{ message: string; level: string }> = [];
+		const ctx = fakeCtx(base, SESSION_ID, notifications);
+		const tool = pi.tools.get("tasks_write");
+		let call = 0;
+		await run({
+			ctx,
+			notifications,
+			pi,
+			sidecar: join(base, "agent", "kendex", "sessions", SESSION_ID, "pi-task-panel", "state.json"),
+			tasksWrite: (params) => tool.execute(`call-${++call}`, params, undefined, undefined, ctx),
+		});
+		expect(notifications.filter((note) => note.level === "warning")).toEqual([]);
+	} finally {
+		if (previousPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousPiDir;
+		if (previousDiagnosticLog === undefined) delete process.env.PI_TASK_PANEL_DIAGNOSTIC_LOG;
+		else process.env.PI_TASK_PANEL_DIAGNOSTIC_LOG = previousDiagnosticLog;
+		rmSync(base, { recursive: true, force: true });
+	}
+}
+
+function handler(pi: ReturnType<typeof fakePi>, event: string) {
+	const registered = pi.handlers.get(event);
+	if (!registered) throw new Error(`handler-missing=${event}`);
+	return registered;
+}
+
+function sidecarTasks(sidecar: string): string[] {
+	return JSON.parse(readFileSync(sidecar, "utf8")).tasks.map((task: { content: string }) => task.content);
+}
+
+test("a tasks_write call writes the sidecar off the calling turn and holds its result until the write lands", async () => {
+	await withPanel(async ({ pi, sidecar, tasksWrite }) => {
+		const pending = tasksWrite({ action: "add_task", task: "first" });
+		expect(existsSync(sidecar)).toBe(false);
+		await pending;
+		expect(sidecarTasks(sidecar)).toEqual(["first"]);
+		expect(JSON.parse(readFileSync(sidecar, "utf8"))).toEqual(pi.appended.at(-1)?.data);
+	});
+});
+
+test("an unchanged state writes neither the sidecar nor a session entry", async () => {
+	await withPanel(async ({ pi, sidecar, tasksWrite }) => {
+		await tasksWrite({ action: "add_task", task: "first" });
+		await tasksWrite({ action: "start_task", task: "first" });
+		const entries = pi.appended.length;
+		unlinkSync(sidecar);
+		await tasksWrite({ action: "start_task", task: "first" });
+		expect(existsSync(sidecar)).toBe(false);
+		expect(pi.appended).toHaveLength(entries);
+		await tasksWrite({ action: "add_task", task: "second" });
+		expect(sidecarTasks(sidecar)).toEqual(["first", "second"]);
+		expect(pi.appended).toHaveLength(entries + 1);
+	});
+});
+
+test("session shutdown waits for a queued sidecar write", async () => {
+	await withPanel(async ({ ctx, pi, sidecar, tasksWrite }) => {
+		const pending = tasksWrite({ action: "add_task", task: "last" });
+		await handler(pi, "session_shutdown")({ type: "session_shutdown" }, ctx);
+		expect(existsSync(sidecar)).toBe(true);
+		expect(sidecarTasks(sidecar)).toEqual(["last"]);
+		await pending;
+	});
+});
+
+test("tree navigation reads the sidecar only after a queued write lands", async () => {
+	await withPanel(async ({ ctx, pi, tasksWrite }) => {
+		const pending = tasksWrite({ action: "add_task", task: "queued" });
+		await handler(pi, "session_tree")({ type: "session_tree" }, ctx);
+		await pending;
+		const result = await tasksWrite({ action: "start_task", task: "queued" });
+		expect(result.details.message).toBe("queued");
+	});
+});

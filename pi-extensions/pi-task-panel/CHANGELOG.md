@@ -2,6 +2,12 @@
 
 ## Consumer-impacting changes
 
+### 3.0.3
+
+- A task change that leaves the task list as it was no longer writes the sidecar `state.json` or adds a session entry. A real change writes the sidecar in the background, off Pi's main thread, and replaces the file whole, so a crash during the write leaves the previous state readable. The sidecar is now compact JSON instead of indented JSON.
+- `tasks_write`, the `/tasks` commands, the shortcuts and the manager return after their sidecar write lands, and session shutdown waits for any write still queued.
+- A session entry that Pi refuses to append is reported with a `persistence_failure=session-entry` warning instead of failing the call.
+
 ### 3.0.2
 
 - The persistence-failure warning opens with a `persistence_failure=<where>` line followed by the explanation.

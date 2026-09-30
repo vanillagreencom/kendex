@@ -25,6 +25,7 @@ import {
 	type VisiblePanelState,
 } from "./visibility.js";
 import { reportTaskPanelPersistenceFailure } from "./diagnostics.js";
+import { writeFileAtomic } from "./atomic-write.js";
 import {
 	applyTaskPanelToolResultRestore,
 	taskPanelToolResultState,
@@ -57,6 +58,14 @@ interface TaskPanelBoundedManifest {
 	reason: "payload-too-large";
 	byteSize: number;
 	fingerprint: string;
+	counts: { tasks: number; phases: number };
+	updatedAt: string;
+}
+
+/** One changed state, serialized once for both the sidecar and the session entry. */
+interface SavedState {
+	fingerprint: string;
+	serialized: string;
 	counts: { tasks: number; phases: number };
 	updatedAt: string;
 }
@@ -773,24 +782,11 @@ export default function taskPanel(pi: ExtensionAPI): void {
 	let pendingCompletionMessage: { action: string; summary: string } | undefined;
 
 	let lastSidecarWriteOk = true;
-
-	const writeSidecar = (ctx: ExtensionContext | undefined): boolean => {
-		if (!ctx) {
-			lastSidecarWriteOk = true;
-			return true;
-		}
-		try {
-			const file = sidecarStatePath(ctx);
-			mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-			writeFileSync(file, `${JSON.stringify(cloneState(state), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-			lastSidecarWriteOk = true;
-			return true;
-		} catch (error) {
-			lastSidecarWriteOk = false;
-			reportTaskPanelPersistenceFailure("sidecar-write", error, ctx);
-			return false;
-		}
-	};
+	// Saves run one at a time in call order, so an older state never lands after
+	// a newer one. Each step catches its own failures, so the chain never
+	// rejects and a caller may leave it unawaited. Awaiting it waits for every
+	// save queued so far.
+	let sidecarSaves: Promise<void> = Promise.resolve();
 
 	const readSidecar = (ctx: ExtensionContext): TaskPanelState | undefined => {
 		try {
@@ -805,47 +801,70 @@ export default function taskPanel(pi: ExtensionAPI): void {
 
 	const lastFingerprintBySession = new Map<string, string>();
 
-	const persist = () => {
-		state.updatedAt = new Date().toISOString();
-		const sidecarOk = writeSidecar(activeCtx);
-		if (!activeCtx) {
-			// No active session context — fall back to the unconditional append.
-			pi.appendEntry<TaskPanelState>(STATE_TYPE, cloneState(state));
-			return;
-		}
-		const sessionKey = sessionIdForContext(activeCtx);
-		// Fingerprint excludes updatedAt so cosmetic timestamp bumps don't burn a session entry.
-		const fingerprint = stableTaskPanelFingerprint(state);
-		if (lastFingerprintBySession.get(sessionKey) === fingerprint) return;
-		const snapshot = cloneState(state);
-		const serialized = JSON.stringify(snapshot);
-		const byteSize = Buffer.byteLength(serialized, "utf8");
+	const appendSessionEntry = (saved: SavedState, sidecarOk: boolean) => {
+		const byteSize = Buffer.byteLength(saved.serialized, "utf8");
 		if (!sidecarOk || byteSize <= TASK_PANEL_SNAPSHOT_MAX_BYTES) {
 			// If sidecar persistence failed, keep a full session-entry fallback even
 			// for oversized panels. Slash/manager/shortcut mutations have no tool
 			// result details, so a bounded manifest alone would make resume lossy.
-			pi.appendEntry<TaskPanelState>(STATE_TYPE, snapshot);
-			lastFingerprintBySession.set(sessionKey, fingerprint);
-		} else {
-			const manifest: TaskPanelBoundedManifest = {
-				version: 2,
-				fullSnapshot: false,
-				reason: "payload-too-large",
-				byteSize,
-				fingerprint,
-				counts: { tasks: state.tasks.length, phases: state.phases.length },
-				updatedAt: state.updatedAt,
-			};
-			// The manifest itself must stay under the cap.
-			const manifestBytes = Buffer.byteLength(JSON.stringify(manifest), "utf8");
-			if (manifestBytes <= TASK_PANEL_SNAPSHOT_MAX_BYTES) {
-				pi.appendEntry<TaskPanelBoundedManifest>(STATE_TYPE, manifest);
-				lastFingerprintBySession.set(sessionKey, fingerprint);
-			} else {
-				// Skip the session-entry write entirely; sidecar (already written above) remains canonical.
-				lastFingerprintBySession.set(sessionKey, fingerprint);
-			}
+			pi.appendEntry<TaskPanelState>(STATE_TYPE, JSON.parse(saved.serialized) as TaskPanelState);
+			return;
 		}
+		const manifest: TaskPanelBoundedManifest = {
+			version: 2,
+			fullSnapshot: false,
+			reason: "payload-too-large",
+			byteSize,
+			fingerprint: saved.fingerprint,
+			counts: saved.counts,
+			updatedAt: saved.updatedAt,
+		};
+		// The manifest itself must stay under the cap; past it, the sidecar alone is canonical.
+		if (Buffer.byteLength(JSON.stringify(manifest), "utf8") <= TASK_PANEL_SNAPSHOT_MAX_BYTES) {
+			pi.appendEntry<TaskPanelBoundedManifest>(STATE_TYPE, manifest);
+		}
+	};
+
+	/** Queues a save of the current state and returns the queue, which settles once that save has. */
+	const persist = (): Promise<void> => {
+		if (!activeCtx) {
+			// No active session context — fall back to the unconditional append.
+			state.updatedAt = new Date().toISOString();
+			pi.appendEntry<TaskPanelState>(STATE_TYPE, cloneState(state));
+			return sidecarSaves;
+		}
+		const ctx = activeCtx;
+		const sessionKey = sessionIdForContext(ctx);
+		// Fingerprint excludes updatedAt, so an unchanged state costs neither a
+		// sidecar write nor a session entry.
+		const fingerprint = stableTaskPanelFingerprint(state);
+		if (lastFingerprintBySession.get(sessionKey) === fingerprint) return sidecarSaves;
+		lastFingerprintBySession.set(sessionKey, fingerprint);
+		state.updatedAt = new Date().toISOString();
+		const saved: SavedState = {
+			fingerprint,
+			serialized: JSON.stringify(state),
+			counts: { tasks: state.tasks.length, phases: state.phases.length },
+			updatedAt: state.updatedAt,
+		};
+		// The session entry waits for the sidecar write because a failed write
+		// turns an oversized entry from a manifest into the full state.
+		sidecarSaves = sidecarSaves.then(async () => {
+			let sidecarOk = true;
+			try {
+				await writeFileAtomic(sidecarStatePath(ctx), `${saved.serialized}\n`);
+			} catch (error) {
+				sidecarOk = false;
+				reportTaskPanelPersistenceFailure("sidecar-write", error, ctx);
+			}
+			lastSidecarWriteOk = sidecarOk;
+			try {
+				appendSessionEntry(saved, sidecarOk);
+			} catch (error) {
+				reportTaskPanelPersistenceFailure("session-entry", error, ctx);
+			}
+		});
+		return sidecarSaves;
 	};
 
 	const restore = (ctx: ExtensionContext) => {
@@ -897,7 +916,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 	const mutate = (ctx: ExtensionContext | ExtensionCommandContext, fn: () => string): string => {
 		activeCtx = ctx as ExtensionContext;
 		const message = fn();
-		persist();
+		void persist();
 		syncWidget(ctx as ExtensionContext);
 		return message;
 	};
@@ -906,7 +925,9 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		const text = await ctx.ui.editor("Edit tasks — one '- task' per line; optional: (active), (done), (dropped)", toEditableText(state));
 		if (text === undefined) return;
 		state = parseEditableText(text, ctx.cwd, rememberTaskPanelVisibility(state));
-		ctx.ui.notify(mutate(ctx, () => `Saved ${state.tasks.length} task(s)`), "info");
+		const message = mutate(ctx, () => `Saved ${state.tasks.length} task(s)`);
+		await sidecarSaves;
+		ctx.ui.notify(message, "info");
 	}
 
 	async function manage(ctx: ExtensionCommandContext | ExtensionContext): Promise<void> {
@@ -1025,10 +1046,11 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		} finally {
 			releaseModalLock();
 		}
+		await sidecarSaves;
 		if (postManageAction === "edit") await editTasks(ctx);
 	}
 
-	function handleTasksCommand(args: string, ctx: ExtensionCommandContext): Promise<void> | void {
+	async function handleTasksCommand(args: string, ctx: ExtensionCommandContext): Promise<void> {
 		const trimmed = args.trim();
 		if (!trimmed || trimmed === "manage") return manage(ctx);
 		const [cmd, ...restParts] = trimmed.split(/\s+/);
@@ -1058,6 +1080,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 			case "edit": return editTasks(ctx);
 			default: message = "Unknown /tasks action. Try add, edit, manage, start, done, drop, remove, hide, show, or show-all.";
 		}
+		await sidecarSaves;
 		ctx.ui.notify(message, message.startsWith("No task") || message.startsWith("Unknown") ? "warning" : "info");
 	}
 
@@ -1158,6 +1181,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 					default: return "No task action matched";
 				}
 			});
+			await sidecarSaves;
 			const summary = toolResultSummary(params.action, message, state);
 			const deferAllCompleteDisplay = state.tasks.length > 0 && remainingCount(state) === 0 && !summary.startsWith("No task");
 			pendingCompletionMessage = deferAllCompleteDisplay ? { action: params.action, summary } : undefined;
@@ -1179,7 +1203,11 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		recordProjectTrust(ctx);
 		restore(ctx);
 	});
-	pi.on("session_tree", (_event, ctx) => restore(ctx));
+	pi.on("session_tree", async (_event, ctx) => {
+		// restore reads the sidecar, which a queued save may not have written yet.
+		await sidecarSaves;
+		restore(ctx);
+	});
 	pi.on("context", (event, ctx) => {
 		let latestContextIndex = -1;
 		for (let index = 0; index < event.messages.length; index++) {
@@ -1214,12 +1242,17 @@ export default function taskPanel(pi: ExtensionAPI): void {
 			ctx.ui.notify(`${remainingCount(state)} task(s) still incomplete. ${workflowReminder(state)}`, "info");
 		}
 	});
-	pi.on("session_shutdown", (_event, ctx) => setMiniDashboardWidget(ctx, WIDGET_KEY, MINI_DASHBOARD_RANK.TASKS, undefined));
+	pi.on("session_shutdown", async (_event, ctx) => {
+		setMiniDashboardWidget(ctx, WIDGET_KEY, MINI_DASHBOARD_RANK.TASKS, undefined);
+		// Pi awaits this handler before it disposes the session, so the last save lands.
+		await sidecarSaves;
+	});
 
 	const toggle = async (ctx: ExtensionContext) => {
 		toggleTaskPanelVisibility(state, panelToggleBehavior(ctx.cwd));
-		persist();
+		const saved = persist();
 		syncWidget(ctx);
+		await saved;
 	};
 	const alternateShortcut = settingString("alternateShortcut", "alt+t");
 	if (alternateShortcut !== "none") {

@@ -1,62 +1,10 @@
-import { expect, mock, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fakeCtx, fakePi, mockPiModules } from "./lib/fake-pi.ts";
 
-mock.module("@earendil-works/pi-ai", () => ({
-	StringEnum: (values: readonly string[], options: Record<string, unknown> = {}) => ({ ...options, enum: values }),
-}));
-
-mock.module("@earendil-works/pi-tui", () => ({
-	matchesKey: () => false,
-	truncateToWidth: (text: string) => text,
-	visibleWidth: (text: string) => text.length,
-	wrapTextWithAnsi: (text: string) => text.split(/\r?\n/),
-}));
-
-mock.module("typebox", () => ({
-	Type: {
-		Array: (item: unknown) => ({ item, type: "array" }),
-		Boolean: (options: Record<string, unknown> = {}) => ({ ...options, type: "boolean" }),
-		Number: (options: Record<string, unknown> = {}) => ({ ...options, type: "number" }),
-		Object: (properties: Record<string, unknown>) => ({ properties, type: "object" }),
-		Optional: (value: unknown) => ({ optional: true, value }),
-		String: (options: Record<string, unknown> = {}) => ({ ...options, type: "string" }),
-	},
-}));
-
-function fakePi() {
-	const tools = new Map<string, any>();
-	return {
-		appended: [] as any[],
-		commands: new Map<string, any>(),
-		renderers: new Map<string, any>(),
-		shortcuts: new Map<string, any>(),
-		tools,
-		appendEntry(customType: string, data: unknown) { this.appended.push({ customType, data }); },
-		on() {},
-		registerCommand(name: string, command: any) { this.commands.set(name, command); },
-		registerMessageRenderer(name: string, renderer: any) { this.renderers.set(name, renderer); },
-		registerShortcut(name: string, shortcut: any) { this.shortcuts.set(name, shortcut); },
-		registerTool(tool: any) { tools.set(tool.name, tool); },
-	};
-}
-
-function fakeCtx(base: string, notifications: Array<{ message: string; level: string }>) {
-	return {
-		cwd: base,
-		hasUI: false,
-		sessionManager: {
-			getBranch: () => [],
-			getSessionFile: () => join(base, "session.jsonl"),
-			getSessionId: () => "sidecar-failure-test",
-		},
-		ui: {
-			notify: (message: string, level: string) => notifications.push({ message, level }),
-			setWidget: () => {},
-		},
-	};
-}
+mockPiModules();
 
 for (const entry of ["tool", "command"] as const) {
 	test(`${entry} keeps full state when oversized sidecar persistence fails`, async () => {
@@ -74,7 +22,7 @@ for (const entry of ["tool", "command"] as const) {
 			const pi = fakePi();
 			taskPanel(pi as never);
 			const notifications: Array<{ message: string; level: string }> = [];
-			const ctx = fakeCtx(base, notifications);
+			const ctx = fakeCtx(base, "sidecar-failure-test", notifications);
 			let detailsState;
 			if (entry === "tool") {
 				const tasksWrite = pi.tools.get("tasks_write");
