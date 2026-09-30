@@ -82,7 +82,7 @@ export function createGetWebContentToolDefinition(name = "get_web_content") {
 			const excerpt = isStoredExcerpt(metadata);
 			const providerCap = typeof metadata?.providerTextMaxCharacters === "number" ? metadata.providerTextMaxCharacters : undefined;
 			const cutAt = metadata?.bodyTruncatedAtBytes;
-			const sourceState = excerpt ? "stored excerpt" : typeof cutAt === "number" ? `source cut at ${cutAt} bytes` : "full";
+			const sourceState = excerpt ? "stored excerpt" : typeof cutAt === "number" ? `source cut at ${cutAt} bytes` : details.truncated ? undefined : "full";
 			const meta = [lengthMeta, details.truncated ? "truncated" : undefined, sourceState].filter(Boolean).join(" · ");
 			const rows = [provider ? "source" : undefined, providerCap ? "providerCap" : undefined, details.url ? "url" : undefined].filter(Boolean);
 			const lines = [successSummary(theme, providerLabel("Get Web Content", "session"), title, meta)];
