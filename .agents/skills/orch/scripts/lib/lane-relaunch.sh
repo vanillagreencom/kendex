@@ -100,7 +100,14 @@ find_relaunch_session() { # HARNESS ITEM WORKTREE [HOST_CODEX_HOME]
       [[ -x "$LANES_CLI" ]] || return 2
       inventory="$("$LANES_CLI" list --local --harness codex --json)" || return 2
       roots="$(jq -er --arg d "$config" 'if type=="array" and all(.[]; (.config_dir|type)=="string") then ([.[]|.config_dir]+[$d]|unique[]|.+"/sessions") else error("inventory") end' <<<"$inventory")" || return 2
-      match_filter='[inputs|fromjson?|select(.type=="event_msg" and .payload.type=="user_message")|.payload.message]'"$id_match" ;;
+      # Transcript fallback for item-scoped resume: the CLI's resume --last
+      # cannot query a kickoff by item. Match its interactive sources, then
+      # exclude worker parents before comparing timestamps. SessionMeta in
+      # Codex's protocol defaults an omitted source to vscode.
+      match_filter='[inputs|fromjson?] as $rows |
+        ($rows|map(select(.type=="session_meta"))|first|.payload) as $meta |
+        ($meta!=null and ($meta|(.source=="cli" or .source=="vscode" or (has("source")|not)) and .parent_thread_id==null)) and
+        ([$rows[]|select(.type=="event_msg" and .payload.type=="user_message")|.payload.message]'"$id_match"')' ;;
     pi) roots="$(pi_relaunch_root "$cwd" "$home")" || return 2; match_filter='[inputs|fromjson?|select(.type=="message" and .message.role=="user")|.message.content]'"$id_match" ;;
     copilot)
       config="$(copilot_launch_home)"

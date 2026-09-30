@@ -201,6 +201,17 @@ for harness in codex pi; do
   assert_eq "rc=$RC invalid=$(said '^open-terminal: verify-seconds-invalid setting=ORCH_TMUX_VERIFY_SECS value=abc')" \
     'rc=1 invalid=1' "$harness relaunch refuses an invalid screen-wait bound"
 done
+run_ot codex "$HARNESS_SCREEN" codex
+for row in 'newer-worker|rc=0 runs=1 resume=1 fresh=0 target=1' \
+  'worker-only|rc=0 runs=1 resume=0 fresh=1 target=0' \
+  'newer-exec|rc=0 runs=1 resume=1 fresh=0 target=1' \
+  'exec-only|rc=0 runs=1 resume=0 fresh=1 target=0' \
+  'newer-parent|rc=0 runs=1 resume=1 fresh=0 target=1' \
+  'parent-only|rc=0 runs=1 resume=0 fresh=1 target=0'; do
+  kind="${row%%|*}" replay_run="$RUN/replay-$kind"
+  assert_eq "$(ot_replay_relaunch "$(remote)" "${OPEN_TERMINAL%/*}" "$replay_run" codex "$kind" 0)" \
+    "${row#*|}" "codex $kind resumes only a lead interactive session" "$replay_run/replay.err"
+done
 # A pane this machine cannot read is the local tmux failure it is, never a
 # harness that showed no screen. The first capture is the ssh prompt wait's.
 CAPTURE_FAILS=(OT_TMUX_FAIL_NTH=capture-pane:2)
@@ -311,6 +322,28 @@ for harness in codex pi; do
   assert_eq "$(ot_replay_relaunch "$(remote)" "${OPEN_TERMINAL%/*}" "$RUN" "$harness" scan-failed 0)" \
     'rc=0 runs=1 resume=0 fresh=1 target=0' \
     "control: a lookup that hides its failure starts $harness fresh" "$RUN/replay.err"
+done
+for rule in source parent lead; do
+  case "$rule" in
+    source) old='.source=="cli"'; new='.source!="cli"'; worker=exec ;;
+    parent) old='.parent_thread_id==null'; new='.parent_thread_id!=null'; worker=parent ;;
+    lead) old='$meta!=null and ($meta|'; new='$meta!=null or ($meta|'; worker=worker ;;
+  esac
+  control "codex-$rule" "$old" "$new" lib/lane-relaunch.sh
+  run_ot codex "$HARNESS_SCREEN" codex
+  for kind in "newer-$worker" "$worker-only"; do
+    replay_run="$RUN/replay-$kind"
+    assert_eq "$(ot_replay_relaunch "$(remote)" "${OPEN_TERMINAL%/*}" "$replay_run" codex "$kind" 0)" \
+      'rc=0 runs=1 resume=1 fresh=0 target=0' \
+      "control: without the $rule check codex $kind resumes a non-lead" "$replay_run/replay.err"
+  done
+done
+control wrong-target '0) session_id_of "$1" "$session_file" && exit 0 ;;' '0) id="$(session_id_of "$1" "$session_file")" && printf "%s-wrong\n" "$id" && exit 0 ;;' lib/lane-relaunch.sh
+for harness in codex pi; do
+  run_ot "$harness" "$HARNESS_SCREEN" "$harness"
+  assert_eq "$(ot_replay_relaunch "$(remote)" "${OPEN_TERMINAL%/*}" "$RUN" "$harness" matching 0)" \
+    'rc=0 runs=1 resume=1 fresh=0 target=0' \
+    "control: a wrong $harness resume argument fails the matching-session target check" "$RUN/replay.err"
 done
 control brief '"$RELAUNCH_ROUTE" != resume-or-fresh ]]; then' '"$HOST_RELAUNCH" == false ]]; then'
 run_ot codex - claude

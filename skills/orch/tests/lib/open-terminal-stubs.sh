@@ -201,7 +201,8 @@ ot_hosted_relaunch_text() { # LOG
 # STATUS is the exit of a resumed or fresh harness, never the lookup's exit.
 ot_replay_relaunch() { # LINE SCRIPTS RUN HARNESS KIND STATUS
   local line="$1" scripts="$2" run="$3" harness="$4" kind="$5" status="$6"
-  local sandbox="$run/sandbox" home="$run/host-home" root kickoff=CC-1 rc=0
+  local sandbox="$run/sandbox" home="$run/host-home" root kickoff=CC-1 rc=0 metadata
+  local arg previous="" runs=0 resume=0 fresh=0 target=0
   mkdir -p "$sandbox/.agents/skills/orch" "$home" "$run/harness-bin" || return 1
   ln -s "$scripts" "$sandbox/.agents/skills/orch/scripts" || return 1
   orch_fixture_shared_libs "$sandbox/.agents/skills/orch"
@@ -211,10 +212,10 @@ ot_replay_relaunch() { # LINE SCRIPTS RUN HARNESS KIND STATUS
   esac
   [[ "$kind" != foreign ]] || kickoff=CC-2
   case "$kind" in
-    matching | foreign)
+    matching | foreign | newer-worker | newer-exec | newer-parent)
       mkdir -p "$root" || return 1
       if [[ "$harness" == codex ]]; then
-        printf '%s\n' '{"type":"session_meta","payload":{"id":"11111111-1111-4111-8111-111111111111"}}' \
+        printf '%s\n' '{"type":"session_meta","payload":{"id":"11111111-1111-4111-8111-111111111111","source":"cli"}}' \
           "{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"start $kickoff\"}}" > "$root/session.jsonl"
       else
         printf '%s\n' '{"type":"session","id":"11111111-1111-4111-8111-111111111111"}' \
@@ -224,9 +225,26 @@ ot_replay_relaunch() { # LINE SCRIPTS RUN HARNESS KIND STATUS
     scan-failed) mkdir -p "${root%/*}"; : > "$root" ;;
     none) ;;
   esac
+  # Codex's SessionMeta carries source and parent separately. A spawned
+  # dev-start worker repeats the lead's item in its delegation kickoff.
+  case "$kind" in
+    newer-worker | worker-only) metadata='"source":{"subagent":{"thread_spawn":{"parent_thread_id":"11111111-1111-4111-8111-111111111111","depth":1}}},"parent_thread_id":"11111111-1111-4111-8111-111111111111"' ;;
+    newer-exec | exec-only) metadata='"source":"exec"' ;;
+    newer-parent | parent-only) metadata='"source":"cli","parent_thread_id":"11111111-1111-4111-8111-111111111111"' ;;
+    *) metadata="" ;;
+  esac
+  if [[ -n "$metadata" ]]; then
+    mkdir -p "$root" || return 1
+    printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"22222222-2222-4222-8222-222222222222\",$metadata}}" \
+      '{"type":"event_msg","payload":{"type":"user_message","message":"DELEGATION: implement CC-1"}}' > "$root/worker.jsonl" || return 1
+    # Fixed mtimes prove the newer worker loses to the lead, without a wait.
+    [[ ! -f "$root/session.jsonl" ]] || touch -t 202601010000 "$root/session.jsonl" || return 1
+    touch -t 202601010001 "$root/worker.jsonl" || return 1
+  fi
   cat > "$run/harness-bin/$harness" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$HARNESS_LOG"
+# NUL preserves argument boundaries, including spaces and an empty resume id.
+printf '%s\0' __run__ "$@" >> "$HARNESS_LOG"
 exit "$HARNESS_RC"
 EOF
   chmod +x "$run/harness-bin/$harness" || return 1
@@ -236,11 +254,17 @@ EOF
   env -i PATH="$run/harness-bin:$PATH" HOME="$home" CODEX_HOME="$home/codex account" \
     PI_CODING_AGENT_DIR="$home/pi agent" HARNESS_LOG="$run/harness.log" HARNESS_RC="$status" \
     bash -c "$line" 2> "$run/replay.err" || rc=$?
-  awk -v rc="$rc" -v pi="$root/session.jsonl" '
-    / resume / { resume++; if (index($0, "resume 11111111-1111-4111-8111-111111111111")) target++; next }
-    / --session / { resume++; if (index($0, "--session " pi)) target++; next }
-    /Read .agents\/skills\/orch\/SKILL.md and execute the orch start workflow for CC-1/ { fresh++; next }
-    /\/skill:orch start CC-1/ { fresh++ }
-    END { printf "rc=%d runs=%d resume=%d fresh=%d target=%d\n", rc, NR, resume, fresh, target }
-  ' "$run/harness.log"
+  while IFS= read -r -d '' arg; do
+    case "$previous" in
+      resume) [[ "$arg" != 11111111-1111-4111-8111-111111111111 ]] || target=$((target + 1)) ;;
+      --session) [[ "$arg" != "$root/session.jsonl" ]] || target=$((target + 1)) ;;
+    esac
+    case "$arg" in
+      __run__) runs=$((runs + 1)) ;;
+      resume | --session) resume=$((resume + 1)) ;;
+      'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-1' | '/skill:orch start CC-1' | '/skill:orch start CC-1 '*) fresh=$((fresh + 1)) ;;
+    esac
+    previous="$arg"
+  done < "$run/harness.log"
+  printf 'rc=%d runs=%d resume=%d fresh=%d target=%d\n' "$rc" "$runs" "$resume" "$fresh" "$target"
 }
