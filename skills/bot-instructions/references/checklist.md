@@ -120,13 +120,6 @@ Copy the second and third as entries rather than expecting the generator to know
 ## Excluding the render trees
 
 - [ ] The exclusion set actually covers this repo's render trees. `render` fails when a destination the routing table marks as carrying the paths does not carry them, on every repo; what `[bot-instructions.exclusions] derive_render` decides is whether the set is derived from the install manifest or written by hand, so a repo deriving nothing still has to name its render trees in `[[bot-instructions.exclusions.path]]` for that check to have anything to enforce.
-- [ ] Enforcement for Codex, Copilot and Qodo comes from the merge gate, not from here. Those three receive the paths as an instruction and may comment on them anyway; a gate that passes a render-only diff needs no bot to cooperate, which is the only thing that makes "a render-only diff opens no bot rounds" true rather than requested. CodeRabbit and Macroscope subtract for real and need nothing from the gate.
-
-## If the repo's gate reads bot output
-
-- [ ] The repository's GitHub pull-request rule dismisses stale approvals on push, including a push that changes review instructions.
-- [ ] A pull request touching a policy path needs a trusted human approval. Bot evidence gathered under head-branch policy that same pull request wrote is not evidence.
-- [ ] The CI lane running `check` uses this package's copy from the default branch when it is byte-identical to the pull request's, and the pull request's copy with a warning when the pull request upgrades the package; the policy path in the gate, not the checker's provenance, is what judges the upgrade.
 
 ## After the checklist
 
