@@ -21,7 +21,8 @@ import {
 	taskNeedsTranscriptUsageRestore,
 	transcriptUsageRefreshSnapshot,
 } from "../extensions/subagent/index.js";
-import { sortedMonitorRecords } from "../extensions/subagent/task-records.js";
+import { sortedMonitorRecords, TaskRegistryReader } from "../extensions/subagent/task-records.js";
+import { writeTaskRegistry } from "../extensions/subagent/tasks.js";
 import { TranscriptTailCache, type TranscriptSnapshot } from "../extensions/subagent/transcript-tail.js";
 import type { AgentBrowserUiState, PaneTaskRecord, PaneTaskRegistry, SubagentDashboardItem, UsageStats } from "../extensions/subagent/types.js";
 
@@ -264,6 +265,30 @@ test("the poll skips only terminal registry records it already applied", () => {
 		const appliedByTask = new Map<string, string>();
 		if (applied) markRegistryRecordApplied(applied, appliedByTask);
 		assert.equal(registryRecordIsCold(read, appliedByTask), expect, label);
+	}
+});
+
+test("the poll re-reads the task registry only when the registry file changes", async () => {
+	const root = mkdtempSync(join(tmpdir(), "pi-agents-registry-reader-"));
+	try {
+		const running = record("planner", "planner-1", "2026-05-14T05:00:00.000Z");
+		await writeTaskRegistry(root, registryOf(running));
+		const reader = new TaskRegistryReader();
+		const first = reader.read(root);
+		assert.deepEqual(first, registryOf(running));
+		assert.equal(reader.read(root), first, "an unchanged registry file is not re-read");
+		assert.throws(() => { (first["planner-1"] as PaneTaskRecord).status = "failed"; }, TypeError);
+		assert.equal(reader.read(root)["planner-1"]?.status, "running", "a caller's write never reaches the next reader");
+
+		await writeTaskRegistry(root, registryOf(running));
+		const rewritten = reader.read(root);
+		assert.notEqual(rewritten, first, "a registry rewritten with the same bytes is a new file and is re-read");
+
+		const completed = { ...running, status: "completed" as const };
+		await writeTaskRegistry(root, registryOf(completed));
+		assert.deepEqual(reader.read(root), registryOf(completed));
+	} finally {
+		rmSync(root, { recursive: true, force: true });
 	}
 });
 

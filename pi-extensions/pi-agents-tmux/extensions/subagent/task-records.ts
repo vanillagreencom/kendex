@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import { fileVersion } from "./file-version.js";
 import { taskRegistryPath } from "./paths.js";
 import type { PaneTaskRecord, PaneTaskRegistry, PaneTaskStatus, SubagentDashboardItem, SubagentDashboardStatus, UsageStats } from "./types.js";
 
@@ -137,10 +138,48 @@ function normalizeTaskRegistryShape(parsed: unknown): PaneTaskRegistry {
 	return parsed && typeof parsed === "object" ? parsed as PaneTaskRegistry : {};
 }
 
-export function loadTaskRegistrySync(runtimeRoot: string): PaneTaskRegistry {
-	try {
-		return normalizeTaskRegistryShape(JSON.parse(fs.readFileSync(taskRegistryPath(runtimeRoot), "utf-8")));
-	} catch {
-		return {};
+const EMPTY_TASK_REGISTRY: PaneTaskRegistry = Object.freeze({});
+
+function deepFreeze<T>(value: T): T {
+	if (value && typeof value === "object" && !Object.isFrozen(value)) {
+		for (const child of Object.values(value)) deepFreeze(child);
+		Object.freeze(value);
+	}
+	return value;
+}
+
+/**
+ * Reads a runtime's task registry once per file version (`file-version.ts::fileVersion`).
+ * Every registry write lands by atomic rename, so each write is a new version; a
+ * poll that finds the same version gets the parsed registry it got before, from
+ * one stat and no read. That registry is shared by every caller until the file
+ * changes, so it is frozen: a caller that needs to change it copies it first.
+ */
+export class TaskRegistryReader {
+	private readonly cache = new Map<string, { version: string; registry: PaneTaskRegistry }>();
+
+	read(runtimeRoot: string): PaneTaskRegistry {
+		const filePath = taskRegistryPath(runtimeRoot);
+		let version: string;
+		try {
+			version = fileVersion(fs.statSync(filePath));
+		} catch {
+			this.cache.delete(filePath);
+			return EMPTY_TASK_REGISTRY;
+		}
+		const cached = this.cache.get(filePath);
+		if (cached?.version === version) return cached.registry;
+		let registry: PaneTaskRegistry;
+		try {
+			registry = deepFreeze(normalizeTaskRegistryShape(JSON.parse(fs.readFileSync(filePath, "utf-8"))));
+		} catch {
+			registry = EMPTY_TASK_REGISTRY;
+		}
+		this.cache.set(filePath, { version, registry });
+		return registry;
+	}
+
+	clear(): void {
+		this.cache.clear();
 	}
 }

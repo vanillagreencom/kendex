@@ -142,7 +142,7 @@ import {
 	stableSessionSnapshotFingerprint,
 } from "./session-persistence.js";
 import { subagentToolRenderers } from "./subagent-render.js";
-import { loadTaskRegistrySync, taskNumberById } from "./task-records.js";
+import { TaskRegistryReader, taskNumberById } from "./task-records.js";
 import { statTranscriptVersion, TranscriptTailCache, type TranscriptSnapshot } from "./transcript-tail.js";
 import {
 	prepareSingleResultForReturn,
@@ -507,6 +507,7 @@ export default function (pi: ExtensionAPI) {
 	const usageTranscriptVersionsByTask = new Map<string, string>();
 	const summaryBackfillVersionsByTask = new Map<string, string>();
 	const transcriptTails = new TranscriptTailCache();
+	const taskRegistryReader = new TaskRegistryReader();
 	// Terminal registry records the dashboard already reflects. Cleared where a row is
 	// dropped on purpose (removeDashboardAgent, the unknown one-shot branch of
 	// updateDashboardFromTaskRecord) and at session start and end, so the next poll can put
@@ -616,7 +617,7 @@ export default function (pi: ExtensionAPI) {
 		},
 		listActiveTasks: async () => {
 			if (!currentRuntimeRoot) return [];
-			const records = await readTaskRegistry(currentRuntimeRoot);
+			const records = taskRegistryReader.read(currentRuntimeRoot);
 			return Object.values(records).filter(
 				(record) =>
 					record?.taskId &&
@@ -704,7 +705,8 @@ export default function (pi: ExtensionAPI) {
 	const persistRuntimeSnapshot = async (ctx: ExtensionContext, runtimeRoot: string) => {
 		if (childAgentName) return;
 		try {
-			const [panes, tasks] = await Promise.all([readPaneRegistry(runtimeRoot), readTaskRegistry(runtimeRoot)]);
+			const panes = await readPaneRegistry(runtimeRoot);
+			const tasks = taskRegistryReader.read(runtimeRoot);
 			const sessionKey = ctx.sessionManager.getSessionFile?.() ?? ctx.sessionManager.getSessionId?.() ?? runtimeRoot;
 			// Fingerprint over registry only (not updatedAt) so cosmetic bumps don't burn a session entry.
 			const fingerprintInput = { panes, tasks };
@@ -833,7 +835,7 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 		const widgetRuntimeRoot = sessionRuntimeDir(runtimeSessionId(ctx));
-		const widgetTaskNumbers = taskNumberById(Object.values(loadTaskRegistrySync(widgetRuntimeRoot)));
+		const widgetTaskNumbers = taskNumberById(Object.values(taskRegistryReader.read(widgetRuntimeRoot)));
 		setMiniDashboardWidget(ctx, SUBAGENT_WIDGET_KEY, MINI_DASHBOARD_RANK.AGENTS, (tui, theme) => {
 			const animationTimer = (() => {
 				if (!Object.values(dashboardState.items).some((item) => isDashboardAnimatingStatus(item.status))) return undefined;
@@ -1030,7 +1032,7 @@ export default function (pi: ExtensionAPI) {
 
 	const syncDashboardFromTaskRegistry = async (ctx: ExtensionContext, runtimeRoot: string) => {
 		await withDashboardBatch(async () => {
-			const records = await readTaskRegistry(runtimeRoot);
+			const records = taskRegistryReader.read(runtimeRoot);
 			const registry = await readPaneRegistry(runtimeRoot);
 			const taskIds = new Set(Object.keys(records));
 			pruneTaskEntries(summaryBackfillVersionsByTask, taskIds);
@@ -1370,6 +1372,7 @@ export default function (pi: ExtensionAPI) {
 		if (childTitlePoller) clearInterval(childTitlePoller);
 		usageTranscriptVersionsByTask.clear();
 		transcriptTails.clear();
+		taskRegistryReader.clear();
 		appliedRegistryRecords.clear();
 
 		const runtimeRoot = runtimeDirForContext(ctx);
@@ -1465,7 +1468,7 @@ export default function (pi: ExtensionAPI) {
 		await restoreRuntimeSnapshot(ctx, runtimeRoot);
 		try {
 			await withDashboardBatch(async () => {
-				const records = await readTaskRegistry(runtimeRoot);
+				const records = taskRegistryReader.read(runtimeRoot);
 				const sortedRecords = Object.values(records).sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
 				for (const record of sortedRecords) {
 					if (!record.taskId || !record.agent) continue;
@@ -1486,6 +1489,7 @@ export default function (pi: ExtensionAPI) {
 			usageTranscriptVersionsByTask.clear();
 			summaryBackfillVersionsByTask.clear();
 			transcriptTails.clear();
+			taskRegistryReader.clear();
 			appliedRegistryRecords.clear();
 			return;
 		}
@@ -1680,6 +1684,7 @@ export default function (pi: ExtensionAPI) {
 		dashboardCtx = undefined;
 		usageTranscriptVersionsByTask.clear();
 		transcriptTails.clear();
+		taskRegistryReader.clear();
 		appliedRegistryRecords.clear();
 
 		idleStallWatchdog.stop();

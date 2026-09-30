@@ -6,6 +6,7 @@
 // from its first byte.
 
 import * as fs from "node:fs";
+import { fileVersion } from "./file-version.js";
 import { normalizeTranscriptRecordEvent, oneLine } from "./transcripts.js";
 import type { UsageStats } from "./types.js";
 
@@ -52,10 +53,6 @@ interface TailState {
 	snapshot: TranscriptSnapshot;
 }
 
-function versionOf(stat: fs.Stats, size: number): string {
-	return `${stat.dev}:${stat.ino}:${size}:${stat.mtimeMs}`;
-}
-
 /**
  * The `TranscriptSnapshot.version` a read of this transcript would report now,
  * from one stat and no read. Undefined when the path is missing or not a file.
@@ -63,7 +60,7 @@ function versionOf(stat: fs.Stats, size: number): string {
 export async function statTranscriptVersion(filePath: string): Promise<string | undefined> {
 	try {
 		const stat = await fs.promises.stat(filePath);
-		return stat.isFile() ? versionOf(stat, stat.size) : undefined;
+		return stat.isFile() ? fileVersion(stat) : undefined;
 	} catch {
 		return undefined;
 	}
@@ -291,7 +288,7 @@ export class TranscriptTailCache {
 			foldLine(fold, remainder, false);
 		}
 		tail.mtimeMs = stat.mtimeMs;
-		tail.snapshot = { version: versionOf(stat, tail.size), usage: usageFromFold(fold), activity: fold.activity };
+		tail.snapshot = { version: fileVersion(stat, tail.size), usage: usageFromFold(fold), activity: fold.activity };
 		this.tails.set(filePath, tail);
 		return tail.snapshot;
 	}

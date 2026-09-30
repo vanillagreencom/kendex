@@ -104,7 +104,7 @@ export {
 	dashboardDisplayLabels,
 } from "./browser/dashboard-integration.js";
 export { openTraceViewer } from "./browser/trace-viewer.js";
-export { liveDashboardSignature, loadTaskRegistrySync, mergeLiveDashboardItems, taskNumberById } from "./task-records.js";
+export { liveDashboardSignature, mergeLiveDashboardItems, taskNumberById } from "./task-records.js";
 
 function renderMonitorTabBody(
 	records: PaneTaskRecord[],
