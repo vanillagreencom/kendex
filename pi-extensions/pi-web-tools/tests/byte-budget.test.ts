@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import test from "node:test";
-import { ByteBudget, ByteBudgetExhausted, IN_FLIGHT_BYTE_BUDGET, IN_FLIGHT_WAIT_TIMEOUT_MS, PDF_READ_BYTE_LIMIT, readLocalPdfWithin, readPdfWithin, readTextWithin, TEXT_READ_BYTE_LIMIT, type UrlReads } from "../src/extract/byte-budget.js";
+import test, { type TestContext } from "node:test";
+import { BODY_IDLE_TIMEOUT_MS, ByteBudget, ByteBudgetExhausted, IN_FLIGHT_BYTE_BUDGET, IN_FLIGHT_WAIT_TIMEOUT_MS, PDF_READ_BYTE_LIMIT, readLocalPdfWithin, readPdfWithin, readTextWithin, TEXT_READ_BYTE_LIMIT, type UrlReads } from "../src/extract/byte-budget.js";
 import { streamedBody, tempDir, urlReads } from "./fixtures.js";
 
 /** What a text read of a 10-byte body returns after the reads under test: how much of the call budget they left. */
@@ -10,17 +10,24 @@ async function leftAfter(reads: UrlReads): Promise<string> {
 	return readTextWithin(new Response("0123456789"), reads).then((read) => read.text, (error: Error) => error.name);
 }
 
+/** Runs every promise continuation queued so far: a read granted in-flight room reaches its body's first pull within them. */
+const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+// A "stall" body sends its chunks, then nothing, and never closes: a read that settles on it never waited for another chunk.
 for (const row of [
-	{ name: "under the limit", chunks: 3, chunkBytes: 4, limit: 16, headers: new Headers(), expected: { length: 12, cut: undefined, pulled: 3, cancelled: false } },
-	{ name: "exactly the limit", chunks: 4, chunkBytes: 4, limit: 16, headers: new Headers(), expected: { length: 16, cut: undefined, pulled: 4, cancelled: false } },
-	{ name: "over the limit mid-chunk", chunks: 100, chunkBytes: 4, limit: 10, headers: new Headers(), expected: { length: 10, cut: { atBytes: 10, by: "read-limit" }, pulled: 3, cancelled: true } },
-	{ name: "over the limit at a chunk edge", chunks: 100, chunkBytes: 4, limit: 8, headers: new Headers(), expected: { length: 8, cut: { atBytes: 8, by: "read-limit" }, pulled: 3, cancelled: true } },
-	{ name: "past its declared length", chunks: 100, chunkBytes: 4, limit: 16, headers: new Headers({ "content-length": "6" }), expected: { length: 6, cut: { atBytes: 6, by: "declared-length" }, pulled: 2, cancelled: true } },
-	{ name: "past the declared length of its compressed bytes", chunks: 3, chunkBytes: 4, limit: 16, headers: new Headers({ "content-length": "6", "content-encoding": "gzip" }), expected: { length: 12, cut: undefined, pulled: 3, cancelled: false } },
-]) {
+	{ name: "under the limit", chunks: 3, end: "close", limit: 16, headers: new Headers(), expected: { length: 12, cut: undefined, pulled: 3, cancelled: false } },
+	{ name: "exactly the limit with no declared length, then open and silent", chunks: 4, end: "stall", limit: 16, headers: new Headers(), expected: { length: 16, cut: { atBytes: 16, by: "read-limit" }, pulled: 4, cancelled: true } },
+	{ name: "over the limit mid-chunk", chunks: 100, end: "close", limit: 10, headers: new Headers(), expected: { length: 10, cut: { atBytes: 10, by: "read-limit" }, pulled: 3, cancelled: true } },
+	{ name: "over the limit at a chunk edge", chunks: 100, end: "close", limit: 8, headers: new Headers(), expected: { length: 8, cut: { atBytes: 8, by: "read-limit" }, pulled: 2, cancelled: true } },
+	{ name: "exactly its declared length, then open and silent", chunks: 2, end: "stall", limit: 16, headers: new Headers({ "content-length": "8" }), expected: { length: 8, cut: undefined, pulled: 2, cancelled: true } },
+	{ name: "past its declared length", chunks: 100, end: "close", limit: 16, headers: new Headers({ "content-length": "6" }), expected: { length: 6, cut: { atBytes: 6, by: "declared-length" }, pulled: 2, cancelled: true } },
+	{ name: "past the declared length of its compressed bytes", chunks: 3, end: "close", limit: 16, headers: new Headers({ "content-length": "6", "content-encoding": "gzip" }), expected: { length: 12, cut: undefined, pulled: 3, cancelled: false } },
+] as const) {
 	test(`UrlReads.readBody: ${row.name}`, async (t) => {
-		const { body, probe } = streamedBody(row.chunks, row.chunkBytes);
-		const read = await urlReads(t).readBody(new Response(body, { headers: row.headers }), row.limit);
+		const { body, probe } = streamedBody(row.chunks, 4, row.end);
+		const pending = urlReads(t).readBody(new Response(body, { headers: row.headers }), row.limit);
+		const read = await Promise.race([pending, settle().then(() => undefined)]);
+		assert.ok(read, "the read did not settle: it is waiting for a chunk the body never sends");
 		assert.deepEqual({ length: read.bytes.byteLength, cut: read.cut, pulled: probe.pulled, cancelled: probe.cancelled }, row.expected);
 	});
 }
@@ -95,9 +102,6 @@ function gatedBody() {
 	}, { highWaterMark: 0 });
 	return { body, probe, finish };
 }
-
-/** Runs every promise continuation queued so far: a read granted in-flight room reaches its body's first pull within them. */
-const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 /** A read of a gated body under its own web_fetch call budget, as one of several concurrent calls would make: a text read by
  * default, a PDF read with PDF_READ_BYTE_LIMIT. Its outcome names a byte-budget error's budget. */
@@ -213,9 +217,22 @@ for (const row of [
 	});
 }
 
+/** Reads of other web_fetch calls that have each read TEXT_READ_BYTE_LIMIT bytes and hold them while their URLs are processed.
+ * They await no chunk, so no BODY_IDLE_TIMEOUT_MS deadline returns their in-flight room; the test's end releases it. */
+async function heldReads(t: TestContext, count: number): Promise<UrlReads[]> {
+	const chunk = new Uint8Array(TEXT_READ_BYTE_LIMIT);
+	const held = await Promise.all(Array.from({ length: count }, async () => {
+		const reads = new ByteBudget().openUrl();
+		await reads.readBody(new Response(new ReadableStream<Uint8Array>({ pull: (controller) => controller.enqueue(chunk) })), TEXT_READ_BYTE_LIMIT);
+		return reads;
+	}));
+	t.after(() => { for (const reads of held) reads.release(); });
+	return held;
+}
+
 test("a read that waits IN_FLIGHT_WAIT_TIMEOUT_MS for in-flight room fails naming that budget, cancels its body and holds nothing", { timeout: 10_000 }, async (t) => {
 	t.mock.timers.enable({ apis: ["setTimeout"] });
-	const holders = Array.from({ length: HOLDERS_UNDER_PDF }, () => concurrentCallRead());
+	await heldReads(t, HOLDERS_UNDER_PDF);
 	const pdf = concurrentCallRead(undefined, PDF_READ_BYTE_LIMIT);
 	const text = concurrentCallRead();
 	await settle();
@@ -226,7 +243,7 @@ test("a read that waits IN_FLIGHT_WAIT_TIMEOUT_MS for in-flight room fails namin
 	const pdfOutcome = await pdf.read;
 	await settle();
 	const textAfterTimeout = text.body.probe.pulled;
-	await finishAll([...holders, pdf, text]);
+	await finishAll([pdf, text]);
 	assert.deepEqual({ textBeforeTimeout, pdfOutcome, pdfCancelled: pdf.body.probe.cancelled, textAfterTimeout }, {
 		textBeforeTimeout: 0, pdfOutcome: "ByteBudgetExhausted:in-flight", pdfCancelled: true, textAfterTimeout: 1,
 	});
@@ -234,20 +251,46 @@ test("a read that waits IN_FLIGHT_WAIT_TIMEOUT_MS for in-flight room fails namin
 
 test("a read granted in-flight room before IN_FLIGHT_WAIT_TIMEOUT_MS stops its wait timer, which then removes no other waiting read", { timeout: 10_000 }, async (t) => {
 	t.mock.timers.enable({ apis: ["setTimeout"] });
-	const holders = Array.from({ length: SLOTS }, () => concurrentCallRead());
+	const holders = await heldReads(t, SLOTS);
 	const granted = concurrentCallRead();
 	await settle();
-	holders[0]!.body.finish(0);
+	holders[0]!.release();
 	await settle();
+	// The granted read ends holding one byte, so it awaits no chunk while the clock runs past BODY_IDLE_TIMEOUT_MS.
+	granted.body.finish(1);
+	await granted.read;
 	t.mock.timers.tick(IN_FLIGHT_WAIT_TIMEOUT_MS / 2);
 	const waiting = concurrentCallRead();
 	await settle();
 	t.mock.timers.tick(IN_FLIGHT_WAIT_TIMEOUT_MS / 2);
 	await settle();
-	holders[1]!.body.finish(0);
+	holders[1]!.release();
 	await settle();
 	// Asserted before any read is awaited: a waiting read the stale timer removed is never granted, so awaiting it would hang.
 	assert.deepEqual({ grantedPulled: granted.body.probe.pulled, waitingPulled: waiting.body.probe.pulled }, { grantedPulled: 1, waitingPulled: 1 });
-	await finishAll([...holders, granted, waiting]);
+	await finishAll([granted, waiting]);
 	assert.equal(await waiting.read, "read");
+});
+
+test("a read whose body sends nothing for BODY_IDLE_TIMEOUT_MS fails naming the stall, cancels its body and returns its in-flight room", { timeout: 10_000 }, async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	await heldReads(t, SLOTS - 1);
+	const stalledReads = new ByteBudget().openUrl();
+	t.after(() => stalledReads.release());
+	const stalledBody = streamedBody(1, 4, "stall");
+	const stalled = stalledReads.readBody(new Response(stalledBody.body), TEXT_READ_BYTE_LIMIT).then(() => "read", (error: Error) => error.message.split(":")[0]);
+	const waiting = concurrentCallRead();
+	await settle();
+	t.mock.timers.tick(BODY_IDLE_TIMEOUT_MS - 1);
+	await settle();
+	const waitingBeforeDeadline = waiting.body.probe.pulled;
+	t.mock.timers.tick(1);
+	// Raced against the event loop, not awaited alone: a read with no idle deadline never settles.
+	const stalledOutcome = await Promise.race([stalled, settle().then(() => "pending")]);
+	await settle();
+	const waitingAfterDeadline = waiting.body.probe.pulled;
+	await finishAll([waiting]);
+	assert.deepEqual({ waitingBeforeDeadline, stalledOutcome, stalledCancelled: stalledBody.probe.cancelled, waitingAfterDeadline }, {
+		waitingBeforeDeadline: 0, stalledOutcome: "web_fetch body stalled", stalledCancelled: true, waitingAfterDeadline: 1,
+	});
 });

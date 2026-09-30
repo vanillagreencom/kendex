@@ -20,13 +20,14 @@ export function urlReads(t: TestContext, total?: number): UrlReads {
 	return reads;
 }
 
-/** A body of `chunks` chunks of `chunkBytes` bytes, pulled one at a time, that counts the chunks pulled and records a cancel. */
-export function streamedBody(chunks: number, chunkBytes: number) {
+/** A body of `chunks` chunks of `chunkBytes` bytes, pulled one at a time, that counts the chunks pulled and records a cancel.
+ * After its chunks it closes, or with `end: "stall"` sends nothing more and never closes, as a server holding the connection open. */
+export function streamedBody(chunks: number, chunkBytes: number, end: "close" | "stall" = "close") {
 	const probe = { pulled: 0, cancelled: false };
 	const chunk = new Uint8Array(chunkBytes).fill(0x61);
 	const body = new ReadableStream<Uint8Array>({
 		pull(controller) {
-			if (probe.pulled === chunks) return controller.close();
+			if (probe.pulled === chunks) return end === "close" ? controller.close() : new Promise<void>(() => undefined);
 			probe.pulled++;
 			controller.enqueue(chunk);
 		},

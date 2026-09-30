@@ -9,8 +9,13 @@ export const CALL_BYTE_BUDGET = 64 * 1024 * 1024;
 /** Most bytes the reads of all web_fetch calls in this process reserve at once. A read waits here for room and is never cut by it,
  * so it stays at or above PDF_READ_BYTE_LIMIT: one read always fits once the reads ahead of it release. */
 export const IN_FLIGHT_BYTE_BUDGET = 64 * 1024 * 1024;
-/** Longest a read waits for room in IN_FLIGHT_BYTE_BUDGET before its URL fails; stalled reads of other calls can hold the room. */
+/** Longest a read waits for room in IN_FLIGHT_BYTE_BUDGET before its URL fails; slow reads of other calls, and the bytes their
+ * URLs hold while processed, can hold the room. */
 export const IN_FLIGHT_WAIT_TIMEOUT_MS = 60_000;
+/** Longest a body read waits for its next chunk before its URL fails. A server that stops sending with the connection open would
+ * otherwise hold the read's in-flight room for good; kept under IN_FLIGHT_WAIT_TIMEOUT_MS, so a read waiting behind a stalled
+ * one gets the room before its own wait ends. */
+export const BODY_IDLE_TIMEOUT_MS = 30_000;
 
 /** The ceiling that cut a read short: the per-read limit, what the web_fetch call had left of CALL_BYTE_BUDGET, or the
  * content-length the response declared. */
@@ -151,14 +156,16 @@ export class UrlReads {
 		return this.#call.ceiling(perRead);
 	}
 
-	/** Streams a response body within the ceiling, or within its declared length when that is smaller, cancelling the stream
-	 * once more bytes arrive. */
+	/** Streams a response body within the ceiling, or within its declared length when that is smaller, then cancels the stream.
+	 * A body that sends nothing for BODY_IDLE_TIMEOUT_MS fails the read. */
 	async readBody(response: Response, perRead: number): Promise<BoundedRead> {
-		const ceiling = await this.#reserve(perRead, declaredLength(response)).catch(async (error: unknown) => {
+		const declared = declaredLength(response);
+		const ceiling = await this.#reserve(perRead, declared).catch(async (error: unknown) => {
 			await response.body?.cancel().catch(() => undefined);
 			throw error;
 		});
-		const read = await this.#charged(ceiling.reserved, () => streamWithin(response, ceiling.reserved));
+		const atLimit = declared !== undefined && declared <= ceiling.limit ? "whole" : "cut";
+		const read = await this.#charged(ceiling.reserved, () => streamWithin(response, ceiling.reserved, atLimit));
 		if (!read.truncated) return { bytes: read.bytes };
 		return { bytes: read.bytes, cut: ceiling.reserved < ceiling.limit ? { atBytes: ceiling.reserved, by: "declared-length" } : { atBytes: ceiling.limit, by: ceiling.by } };
 	}
@@ -220,7 +227,10 @@ function declaredLength(response: Response): number | undefined {
 	return length !== undefined && /^\d+$/.test(length) ? Number(length) : undefined;
 }
 
-async function streamWithin(response: Response, limit: number): Promise<{ bytes: Buffer; truncated: boolean }> {
+/** Streams a body until it ends or holds `limit` bytes, then cancels the rest. `atLimit` is what holding `limit` bytes means:
+ * "whole" when `limit` is the length the body declared, "cut" otherwise. Neither waits for another chunk to learn whether more
+ * follows, since a server holding the connection open never answers that read. */
+async function streamWithin(response: Response, limit: number, atLimit: "whole" | "cut"): Promise<{ bytes: Buffer; truncated: boolean }> {
 	if (!response.body) return { bytes: Buffer.alloc(0), truncated: false };
 	const reader = response.body.getReader();
 	const chunks: Uint8Array[] = [];
@@ -228,7 +238,12 @@ async function streamWithin(response: Response, limit: number): Promise<{ bytes:
 	let truncated = false;
 	try {
 		for (;;) {
-			const { done, value } = await reader.read();
+			if (total === limit) {
+				truncated = atLimit === "cut";
+				await reader.cancel();
+				break;
+			}
+			const { done, value } = await nextChunk(reader, total);
 			if (done) break;
 			const room = limit - total;
 			if (value.byteLength > room) {
@@ -241,10 +256,26 @@ async function streamWithin(response: Response, limit: number): Promise<{ bytes:
 			chunks.push(value);
 			total += value.byteLength;
 		}
+	} catch (error) {
+		await reader.cancel().catch(() => undefined);
+		throw error;
 	} finally {
 		reader.releaseLock();
 	}
 	return { bytes: Buffer.concat(chunks, total), truncated };
+}
+
+/** The body's next chunk; rejects naming the stall when none arrives within BODY_IDLE_TIMEOUT_MS. */
+async function nextChunk(reader: ReadableStreamDefaultReader<Uint8Array>, total: number): Promise<ReadableStreamReadResult<Uint8Array>> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const stalled = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => reject(new Error(`web_fetch body stalled: no bytes arrived for ${BODY_IDLE_TIMEOUT_MS / 1000} s after ${total} bytes; the server kept the connection open without sending.`)), BODY_IDLE_TIMEOUT_MS);
+	});
+	try {
+		return await Promise.race([reader.read(), stalled]);
+	} finally {
+		clearTimeout(timer);
+	}
 }
 
 /** The metadata fields a stored item carries when its source was cut; `buildWebFetchToolResult` names the cut and its ceiling in
