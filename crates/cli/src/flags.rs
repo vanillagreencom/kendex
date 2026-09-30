@@ -178,6 +178,9 @@ pub struct ProjectTargetFlag {
     /// The project this run reads and writes, by path, instead of the one it was typed in
     #[arg(long, value_name = "PATH")]
     project_path: Option<std::path::PathBuf>,
+    /// Permit project writes in a marked lane whose item is a refresh
+    #[arg(long)]
+    lane_refresh: bool,
     /// The temporary-path refusal's answer, for the project --project-path names
     #[command(flatten)]
     pub throwaway: commands::project::ThrowawayFlag,

@@ -41,6 +41,7 @@ mod install_script;
 mod install_ux;
 mod installer;
 mod instruction_shims_cli;
+mod lane_refresh;
 mod lock_record;
 mod marketplace_author;
 mod marketplace_cli;

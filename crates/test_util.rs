@@ -2,6 +2,9 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+#[path = "test_util/lane.rs"]
+pub mod lane;
+
 /// Derives the canonical root once, before fixture paths reach code that may
 /// resolve symlinks itself. Through the same rule production uses, so a
 /// fixture root and the root the binary reports back are one spelling.

@@ -241,15 +241,20 @@ enum Command {
 /// would do anywhere — and only the second one belongs in a repository's CI.
 #[allow(clippy::too_many_arguments)]
 pub fn main() -> ExitCode {
-    // Ahead of the parse. `--version` and `--help` are answered by clap and
-    // never reach dispatch, and they are what a person runs when the app's
-    // card has just told them their command is behind — which is exactly
-    // the install this record is missing from.
+    // Clap answers help and version without dispatch. Those runs still
+    // record the command, but a lane refusal must precede every write.
+    let parsed = help::command().try_get_matches();
+    if let Ok(matches) = &parsed
+        && let Err(error) = commands::lane_refresh::check(matches)
+    {
+        ui::warn(&error.to_string());
+        return ExitCode::FAILURE;
+    }
     if let Ok(env) = Env::detect() {
         bootstrap_the_command_record(&env);
         announce_the_terms_on_first_run(&env);
     }
-    let matches = help::command().get_matches();
+    let matches = parsed.unwrap_or_else(|error| error.exit());
     let cli = match <Cli as clap::FromArgMatches>::from_arg_matches(&matches) {
         Ok(cli) => cli,
         Err(error) => error.exit(),
@@ -331,8 +336,8 @@ pub fn main() -> ExitCode {
 /// run of this binary settles it, because the path a process is running
 /// from is the one thing no search by name can establish.
 ///
-/// Run before the arguments are parsed, because clap answers `--version`
-/// and `--help` itself and exits without reaching dispatch. Those are the
+/// Run before clap prints `--version` or `--help` and exits without
+/// reaching dispatch. Those are the
 /// two a person reaches for when the app's card says their command is
 /// behind, so a bootstrap that skipped them would miss the run most likely
 /// to be the first one.

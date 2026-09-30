@@ -19,6 +19,7 @@ pub mod harness_picker;
 pub mod hooks_off;
 pub mod index_cmd;
 pub mod init;
+pub mod lane_refresh;
 pub mod ledger;
 pub mod list;
 pub mod login;

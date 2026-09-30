@@ -1,0 +1,1 @@
+- Project refresh, apply and package updates refuse writes in marked lane worktrees. Refresh lanes can pass `--lane-refresh` to proceed.
