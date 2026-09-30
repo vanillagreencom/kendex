@@ -1,6 +1,6 @@
 # Copilot head notices
 
-The overseer applies these rules to the three Copilot head notices [review-pr-comments.md](../workflows/review-pr-comments.md) § 7.2 sends as a `lane-notice`, and to a head a pr-watch `awaiting-stale` line names, both events in [oversee-events.md § Event kinds](oversee-events.md#event-kinds). Each notice's first line is its kind, then `PR #[N] head [SHA]`.
+The overseer applies these rules to the three Copilot head notices [review-pr-comments.md](../workflows/review-pr-comments.md) § 7.2 sends as a `lane-notice`, and to a head a pr-watch `awaiting-stale` line names, both events in [oversee-events.md § Event kinds](oversee-events.md#event-kinds). Each notice's first line is its kind, then `PR #[N] head [SHA]`. Before any approval below, the overseer re-reads the pull request's `headRefOid` and approves only when it equals the SHA the notice or the `awaiting-stale` line names; on a mismatch it approves nothing and writes no `use1` row, since the new head takes its own route.
 
 - `copilot-declined-unchanged` → when the notice lists every thread `github.sh pr-threads [N]` gives with `author` `copilot-pull-request-reviewer` and each reply holds at that head, post one comment saying why each decline holds, then approve the head at once as the overseer's app, with no Copilot re-review. Otherwise direct the lane on what does not hold and approve nothing.
 - `copilot-fallback` → approve the moved head as the app when the lane's own review of it passed with no open blocker; otherwise wake the lane with what its review left open.
