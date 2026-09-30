@@ -54,9 +54,9 @@ message = "this line pipes a download straight into a shell from `https://raw.gi
 
 [[package.file]]
 path = "templates/kendex-refresh.yml"
-hash = "2d2390e4e44a8ae620339864fe15cf8c1dbd1ed694cb59e9c659658b13be95a5"
+hash = "ee562ff1b92a9f09637829140858bd151be70986c625ce2295e744b4d56d00d7"
 
 [[package.file.finding]]
 rule = "rce"
-line = 46
+line = 48
 message = "this line pipes a download straight into a shell from `https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/$KE… c4e2972fc18a3f5a`, so whatever the far end serves is what runs"
