@@ -2,6 +2,13 @@
 
 ## Consumer-impacting changes
 
+### 4.0.6
+
+- A query no longer reads the whole Claude executable to check its type. The bridge reads the first 16 bytes and remembers the result until the file's modification time changes.
+- The restore check no longer serializes the whole Pi history after each assistant message. Each message is hashed once, and the check hashes the list of message hashes. The check's format changed, so the first resume of a session saved by 4.0.5 or earlier rebuilds the Claude session from Pi history once.
+- A tool call's streamed arguments are parsed once, when the block completes, not again at each fragment.
+- A tool result's debug preview is built only when `CLAUDE_BRIDGE_DEBUG=1` is set.
+
 ### 4.0.5
 
 - A connectors session that loads Claude user settings (the default; the README's Connectors section says how `provider.settingSources` changes that) no longer forwards the Pi agent-dir `AGENTS.md` (`~/.pi/agent/AGENTS.md`, or the file under `PI_CODING_AGENT_DIR`) when no `AGENTS.md` is found from the working directory up. Global instructions for such a session belong in Claude's user level: `~/.claude/CLAUDE.md`, the `CLAUDE.md` in the account's Claude config directory, or a Claude output style. Instructions kept only in the Pi agent-dir file no longer reach it outside a repository. Other sessions, and a repository `AGENTS.md`, are unchanged.

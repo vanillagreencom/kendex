@@ -104,19 +104,36 @@ function conversationFingerprintUpgrade(recorded: string | undefined, incoming: 
 	return rec && inc && !rec.assistant && inc.assistant && rec.user === inc.user ? incoming : undefined;
 }
 
-function fingerprintMessages(messages: Context["messages"]): string {
-	const normalized = messages.map((message) => {
-		if (message.role === "assistant") {
-			return {
-				role: message.role,
-				provider: (message as AssistantMessage).provider,
-				model: (message as AssistantMessage).model,
-				content: (message as AssistantMessage).content,
-			};
+/** Hash per Pi message object. Pi's built session context hands back the
+ *  stored object for a message entry on every build, so an entry is
+ *  serialized once per process rather than once per turn. Summary, custom and
+ *  edited messages are new objects on each build and hash anew. The memo
+ *  assumes a message is not mutated after Pi stores it. */
+const messageHashes = new WeakMap<object, string>();
+
+function messageHash(message: Context["messages"][number]): string {
+	const known = messageHashes.get(message);
+	if (known !== undefined) return known;
+	const normalized = message.role === "assistant"
+		? {
+			role: message.role,
+			provider: (message as AssistantMessage).provider,
+			model: (message as AssistantMessage).model,
+			content: (message as AssistantMessage).content,
 		}
-		return message;
-	});
-	return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
+		: message;
+	const hash = createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
+	messageHashes.set(message, hash);
+	return hash;
+}
+
+/** Restore-integrity hash of a cursor slice: sha256 over the per-message
+ *  hashes in order. Each per-message hash has a fixed length, so the
+ *  concatenation needs no separator. */
+function fingerprintMessages(messages: Context["messages"]): string {
+	const hash = createHash("sha256");
+	for (const message of messages) hash.update(messageHash(message));
+	return hash.digest("hex");
 }
 
 function readBuiltSessionContext(sessionManager: unknown): { messages: Context["messages"] } | undefined {

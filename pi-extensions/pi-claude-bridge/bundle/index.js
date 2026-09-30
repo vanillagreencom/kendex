@@ -52503,7 +52503,7 @@ function connectorServersSnapshot(claudeConfigDir) {
 
 // src/claude-executable.ts
 import { spawn as spawnProcess } from "child_process";
-import { accessSync, constants as fsConstants, readFileSync as readFileSync5, realpathSync as realpathSync2, statSync as statSync2 } from "fs";
+import { accessSync, closeSync as closeSync2, constants as fsConstants, openSync as openSync2, readSync as readSync2, realpathSync as realpathSync2, statSync as statSync2 } from "fs";
 import { delimiter as delimiter2, join as join9 } from "path";
 function executableFromPath(name) {
   const paths = (process.env.PATH ?? "").split(delimiter2).filter(Boolean);
@@ -52573,6 +52573,25 @@ function classifyClaudeExecutableBytes(bytes) {
   }
   return "unknown";
 }
+var EXECUTABLE_HEADER_BYTES = 16;
+var executableFileTypes = /* @__PURE__ */ new Map();
+function readExecutableHeader(realPath) {
+  const header = Buffer.alloc(EXECUTABLE_HEADER_BYTES);
+  const fd = openSync2(realPath, "r");
+  try {
+    const read = readSync2(fd, header, 0, EXECUTABLE_HEADER_BYTES, 0);
+    return header.subarray(0, read);
+  } finally {
+    closeSync2(fd);
+  }
+}
+function executableFileType(realPath, mtimeMs) {
+  const known = executableFileTypes.get(realPath);
+  if (known?.mtimeMs === mtimeMs) return known.fileType;
+  const fileType = classifyClaudeExecutableBytes(readExecutableHeader(realPath));
+  executableFileTypes.set(realPath, { mtimeMs, fileType });
+  return fileType;
+}
 function preflightClaudeExecutable(path, cwd) {
   let realCwd;
   try {
@@ -52599,6 +52618,7 @@ function preflightClaudeExecutable(path, cwd) {
     });
   }
   let realPath;
+  let mtimeMs;
   try {
     const stat2 = statSync2(path);
     if (!stat2.isFile()) {
@@ -52611,6 +52631,7 @@ function preflightClaudeExecutable(path, cwd) {
     }
     accessSync(path, fsConstants.X_OK);
     realPath = realpathSync2(path);
+    mtimeMs = stat2.mtimeMs;
   } catch (err) {
     if (err.name === "ClaudeExecutablePreflightError") throw err;
     throw makeClaudePreflightError("Claude Code executable preflight failed: cannot access resolved executable before spawning Claude Code.", {
@@ -52624,7 +52645,7 @@ function preflightClaudeExecutable(path, cwd) {
   }
   let fileType;
   try {
-    fileType = classifyClaudeExecutableBytes(readFileSync5(realPath).subarray(0, 16));
+    fileType = executableFileType(realPath, mtimeMs);
   } catch (err) {
     throw makeClaudePreflightError("Claude Code executable preflight failed: cannot read executable header before spawning Claude Code.", {
       code: codeValue(err, "EACCES"),
@@ -52721,7 +52742,7 @@ function spawnClaudeCodeWithDiagnostics(options) {
 import { randomUUID as randomUUID2 } from "crypto";
 import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync2, appendFileSync as appendFileSync3, existsSync as existsSync4, rmSync as rmSync2 } from "fs";
 import { dirname as dirname7 } from "path";
-import { readFileSync as readFileSync6 } from "fs";
+import { readFileSync as readFileSync5 } from "fs";
 import { realpathSync as realpathSync3 } from "fs";
 import { homedir as homedir3 } from "os";
 import { join as join10 } from "path";
@@ -52729,7 +52750,7 @@ function parseJsonl(content) {
   return content.split("\n").filter((line) => line.trim()).map(parseRecord);
 }
 function parseJsonlFile(path) {
-  return parseJsonl(readFileSync6(path, "utf-8"));
+  return parseJsonl(readFileSync5(path, "utf-8"));
 }
 function parseRecord(line) {
   const raw = JSON.parse(line);
@@ -53170,16 +53191,16 @@ import { realpathSync as realpathSync4, statSync as statSync4 } from "fs";
 import { resolve as pathResolve } from "path";
 
 // src/session-verify.ts
-import { closeSync as closeSync2, openSync as openSync2, readSync as readSync2, statSync as statSync3 } from "fs";
+import { closeSync as closeSync3, openSync as openSync3, readSync as readSync3, statSync as statSync3 } from "fs";
 import { StringDecoder } from "node:string_decoder";
 function forEachJsonlLine(path, onLine) {
-  const fd = openSync2(path, "r");
+  const fd = openSync3(path, "r");
   const buffer = Buffer.allocUnsafe(64 * 1024);
   const decoder = new StringDecoder("utf8");
   let pending = "";
   try {
     for (; ; ) {
-      const bytesRead = readSync2(fd, buffer, 0, buffer.length, null);
+      const bytesRead = readSync3(fd, buffer, 0, buffer.length, null);
       if (bytesRead === 0) break;
       pending += decoder.write(buffer.subarray(0, bytesRead));
       let start = 0;
@@ -53197,7 +53218,7 @@ function forEachJsonlLine(path, onLine) {
     pending += decoder.end();
     if (pending.length > 0) onLine(pending.endsWith("\r") ? pending.slice(0, -1) : pending);
   } finally {
-    closeSync2(fd);
+    closeSync3(fd);
   }
 }
 function summarizeJsonl(path) {
@@ -53510,19 +53531,24 @@ function conversationFingerprintUpgrade(recorded, incoming) {
   const inc = parseConversationFingerprint(incoming);
   return rec && inc && !rec.assistant && inc.assistant && rec.user === inc.user ? incoming : void 0;
 }
+var messageHashes = /* @__PURE__ */ new WeakMap();
+function messageHash(message) {
+  const known = messageHashes.get(message);
+  if (known !== void 0) return known;
+  const normalized = message.role === "assistant" ? {
+    role: message.role,
+    provider: message.provider,
+    model: message.model,
+    content: message.content
+  } : message;
+  const hash2 = createHash2("sha256").update(JSON.stringify(normalized)).digest("hex");
+  messageHashes.set(message, hash2);
+  return hash2;
+}
 function fingerprintMessages(messages) {
-  const normalized = messages.map((message) => {
-    if (message.role === "assistant") {
-      return {
-        role: message.role,
-        provider: message.provider,
-        model: message.model,
-        content: message.content
-      };
-    }
-    return message;
-  });
-  return createHash2("sha256").update(JSON.stringify(normalized)).digest("hex");
+  const hash2 = createHash2("sha256");
+  for (const message of messages) hash2.update(messageHash(message));
+  return hash2.digest("hex");
 }
 function readBuiltSessionContext(sessionManager) {
   const built = typeof sessionManager?.buildSessionContext === "function" ? sessionManager.buildSessionContext() : void 0;
@@ -54249,7 +54275,6 @@ function processStreamEvent(message, customToolNameToPi, model, c = ctx()) {
       c.currentPiStream.push({ type: "thinking_delta", contentIndex: index, delta: event.delta.thinking, partial: c.turnOutput });
     } else if (event.delta?.type === "input_json_delta" && block.type === "toolCall") {
       block.partialJson += event.delta.partial_json;
-      block.arguments = parsePartialJson(block.partialJson, block.arguments);
       c.currentPiStream.push({ type: "toolcall_delta", contentIndex: index, delta: event.delta.partial_json, partial: c.turnOutput });
     } else if (event.delta?.type === "signature_delta" && block.type === "thinking") {
       block.thinkingSignature = (block.thinkingSignature ?? "") + event.delta.signature;
@@ -54841,7 +54866,7 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
 }
 
 // src/agents-md.ts
-import { lstatSync as lstatSync2, readFileSync as readFileSync7, statSync as statSync5 } from "fs";
+import { lstatSync as lstatSync2, readFileSync as readFileSync6, statSync as statSync5 } from "fs";
 import { dirname as dirname8, join as join12, resolve as resolve6 } from "path";
 var CONTEXT_FILE_CANDIDATES = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD"];
 function contextFileInDir(dir) {
@@ -54889,7 +54914,7 @@ function extractAgentsAppend(settingSources) {
   const agentsPath = resolveAgentsMdPath(settingSources);
   if (!agentsPath) return void 0;
   try {
-    const content = readFileSync7(agentsPath, "utf-8").trim();
+    const content = readFileSync6(agentsPath, "utf-8").trim();
     if (!content) return void 0;
     const sanitized = sanitizeAgentsContent(content);
     return sanitized.length > 0 ? `# CLAUDE.md
@@ -54910,12 +54935,12 @@ function sanitizeAgentsContent(content) {
 }
 
 // src/prompt-context.ts
-import { existsSync as existsSync5, readFileSync as readFileSync8 } from "fs";
+import { existsSync as existsSync5, readFileSync as readFileSync7 } from "fs";
 import { dirname as dirname9, join as join13, resolve as resolve7 } from "path";
 function readTrimmed(path) {
   try {
     if (!existsSync5(path)) return void 0;
-    const content = readFileSync8(path, "utf8").trim();
+    const content = readFileSync7(path, "utf8").trim();
     return content.length > 0 ? content : void 0;
   } catch (error51) {
     debug(`prompt-context: failed to read ${path}:`, error51 instanceof Error ? error51.message : String(error51));
@@ -55140,7 +55165,7 @@ function extractAllToolResults2(context) {
   debug(`extractAllToolResults: ${results.length} results from ${context.messages.length} msgs, stopped at index ${stopIdx}`);
   debug(`extractAllToolResults: all msg roles:`, context.messages.map((m, i) => `[${i}]${m.role}`).join(" "));
   for (let r = 0; r < results.length; r++) {
-    debug(`extractAllToolResults: result[${r}] id=${results[r].toolCallId}${results[r].isError ? " ERROR" : ""} preview:`, JSON.stringify(results[r].content).slice(0, 150));
+    debug(`extractAllToolResults: result[${r}] id=${results[r].toolCallId}${results[r].isError ? " ERROR" : ""} preview:`, () => JSON.stringify(results[r].content).slice(0, 150));
   }
   return results;
 }
@@ -55446,7 +55471,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
       if (id2 && queryCtx.pendingToolCalls.has(id2)) {
         const pending = queryCtx.pendingToolCalls.get(id2);
         queryCtx.pendingToolCalls.delete(id2);
-        debug(`provider: resolving ${pending.toolName} [${id2}]${result.isError ? " (error)" : ""}`, JSON.stringify(result.content).slice(0, 200));
+        debug(`provider: resolving ${pending.toolName} [${id2}]${result.isError ? " (error)" : ""}`, () => JSON.stringify(result.content).slice(0, 200));
         pending.resolve(result);
       } else if (id2) {
         queryCtx.pendingResults.set(id2, result);

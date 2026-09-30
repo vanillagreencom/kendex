@@ -9,6 +9,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { __testSetBridgeIntegrityState, __testSetSdkQueryFactory, streamClaudeAgentSdk } from "../src/index.ts";
 import { ctx, resetStack } from "../src/query-state.ts";
 import { cancelScheduledToolUseEnd } from "../src/assistant-stream.ts";
+import { DEBUG } from "../src/debug.ts";
 import { piContext } from "./lib/transcript.mjs";
 
 const model = { id: "claude-haiku-4-5", api: "claude-bridge", provider: "pi-claude", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
@@ -131,5 +132,27 @@ it("abort resolves waiting handlers and clears queued results before a fresh que
 		bridge.deliver([{ id: "queued", text: "fresh" }]);
 		assert.equal((await fresh).content[0].text, "fresh");
 		bridge.counts(0, 0);
+	});
+});
+
+it("delivery serializes no result content for a debug preview while debugging is off", { timeout: 5000 }, async () => {
+	assert.equal(DEBUG, false, "precondition: this test process must run with CLAUDE_BRIDGE_DEBUG unset");
+	await withBridge(["t0"], async (bridge) => {
+		const waiting = (await bridge.handler("t0")).result;
+		const marker = "result-content-marker";
+		const stringify = JSON.stringify;
+		const serialized = [];
+		JSON.stringify = (value, ...rest) => {
+			const out = stringify(value, ...rest);
+			if (typeof out === "string" && out.includes(marker)) serialized.push(out);
+			return out;
+		};
+		try {
+			bridge.deliver([{ id: "t0", text: marker }]);
+		} finally {
+			JSON.stringify = stringify;
+		}
+		assert.deepEqual(serialized, []);
+		assert.equal((await waiting).content[0].text, marker);
 	});
 });

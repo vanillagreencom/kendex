@@ -175,7 +175,7 @@ function extractAllToolResults(context: Context): McpResult[] {
 	debug(`extractAllToolResults: ${results.length} results from ${context.messages.length} msgs, stopped at index ${stopIdx}`);
 	debug(`extractAllToolResults: all msg roles:`, context.messages.map((m, i) => `[${i}]${m.role}`).join(" "));
 	for (let r = 0; r < results.length; r++) {
-		debug(`extractAllToolResults: result[${r}] id=${results[r].toolCallId}${results[r].isError ? " ERROR" : ""} preview:`, JSON.stringify(results[r].content).slice(0, 150));
+		debug(`extractAllToolResults: result[${r}] id=${results[r].toolCallId}${results[r].isError ? " ERROR" : ""} preview:`, () => JSON.stringify(results[r].content).slice(0, 150));
 	}
 	return results;
 }
@@ -730,7 +730,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			if (id && queryCtx.pendingToolCalls.has(id)) {
 				const pending = queryCtx.pendingToolCalls.get(id)!;
 				queryCtx.pendingToolCalls.delete(id);
-				debug(`provider: resolving ${pending.toolName} [${id}]${result.isError ? " (error)" : ""}`, JSON.stringify(result.content).slice(0, 200));
+				debug(`provider: resolving ${pending.toolName} [${id}]${result.isError ? " (error)" : ""}`, () => JSON.stringify(result.content).slice(0, 200));
 				pending.resolve(result);
 			} else if (id) {
 				queryCtx.pendingResults.set(id, result);

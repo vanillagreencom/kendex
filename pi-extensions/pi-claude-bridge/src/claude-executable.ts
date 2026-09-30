@@ -1,6 +1,6 @@
 import { type SpawnOptions, type SpawnedProcess } from "@anthropic-ai/claude-agent-sdk";
 import { spawn as spawnProcess } from "child_process";
-import { accessSync, constants as fsConstants, readFileSync, realpathSync, statSync } from "fs";
+import { accessSync, closeSync, constants as fsConstants, openSync, readSync, realpathSync, statSync } from "fs";
 import { delimiter, join } from "path";
 import { isolatedFromEnv } from "./config.js";
 import { DEBUG, debug } from "./debug.js";
@@ -106,6 +106,33 @@ export function classifyClaudeExecutableBytes(bytes: Uint8Array): ClaudeExecutab
 	return "unknown";
 }
 
+/** Bytes classifyClaudeExecutableBytes inspects; every magic it matches fits. */
+const EXECUTABLE_HEADER_BYTES = 16;
+
+/** File type per real executable path, valid while the file's mtime holds.
+ *  The preflight runs on every fresh query, and the file behind the path is
+ *  replaced only by an install or update, which moves the mtime. */
+const executableFileTypes = new Map<string, { mtimeMs: number; fileType: ClaudeExecutableFileType }>();
+
+function readExecutableHeader(realPath: string): Uint8Array {
+	const header = Buffer.alloc(EXECUTABLE_HEADER_BYTES);
+	const fd = openSync(realPath, "r");
+	try {
+		const read = readSync(fd, header, 0, EXECUTABLE_HEADER_BYTES, 0);
+		return header.subarray(0, read);
+	} finally {
+		closeSync(fd);
+	}
+}
+
+function executableFileType(realPath: string, mtimeMs: number): ClaudeExecutableFileType {
+	const known = executableFileTypes.get(realPath);
+	if (known?.mtimeMs === mtimeMs) return known.fileType;
+	const fileType = classifyClaudeExecutableBytes(readExecutableHeader(realPath));
+	executableFileTypes.set(realPath, { mtimeMs, fileType });
+	return fileType;
+}
+
 export function preflightClaudeExecutable(path: string, cwd: string): ClaudeExecutablePreflightResult {
 	let realCwd: string;
 	try {
@@ -133,6 +160,7 @@ export function preflightClaudeExecutable(path: string, cwd: string): ClaudeExec
 	}
 
 	let realPath: string;
+	let mtimeMs: number;
 	try {
 		const stat = statSync(path);
 		if (!stat.isFile()) {
@@ -145,6 +173,7 @@ export function preflightClaudeExecutable(path: string, cwd: string): ClaudeExec
 		}
 		accessSync(path, fsConstants.X_OK);
 		realPath = realpathSync(path);
+		mtimeMs = stat.mtimeMs;
 	} catch (err) {
 		if ((err as Error).name === "ClaudeExecutablePreflightError") throw err;
 		throw makeClaudePreflightError("Claude Code executable preflight failed: cannot access resolved executable before spawning Claude Code.", {
@@ -159,7 +188,7 @@ export function preflightClaudeExecutable(path: string, cwd: string): ClaudeExec
 
 	let fileType: ClaudeExecutableFileType;
 	try {
-		fileType = classifyClaudeExecutableBytes(readFileSync(realPath).subarray(0, 16));
+		fileType = executableFileType(realPath, mtimeMs);
 	} catch (err) {
 		throw makeClaudePreflightError("Claude Code executable preflight failed: cannot read executable header before spawning Claude Code.", {
 			code: codeValue(err, "EACCES"),

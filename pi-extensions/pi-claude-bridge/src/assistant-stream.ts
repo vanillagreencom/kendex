@@ -415,8 +415,10 @@ export function processStreamEvent(
 			block.thinking += event.delta.thinking;
 			c.currentPiStream!.push({ type: "thinking_delta", contentIndex: index, delta: event.delta.thinking, partial: c.turnOutput });
 		} else if (event.delta?.type === "input_json_delta" && block.type === "toolCall") {
+			// Accumulated only: a prefix of the arguments object never parses, so
+			// parsing each fragment rescans the whole prefix for nothing.
+			// content_block_stop parses the complete text once.
 			block.partialJson += event.delta.partial_json;
-			block.arguments = parsePartialJson(block.partialJson, block.arguments);
 			c.currentPiStream!.push({ type: "toolcall_delta", contentIndex: index, delta: event.delta.partial_json, partial: c.turnOutput });
 		} else if (event.delta?.type === "signature_delta" && block.type === "thinking") {
 			block.thinkingSignature = (block.thinkingSignature ?? "") + event.delta.signature;

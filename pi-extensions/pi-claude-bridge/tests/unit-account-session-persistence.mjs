@@ -8,7 +8,6 @@ import { waitFor } from "./lib/wait-for.mjs";
  * session-persistence.ts).
  */
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,8 +30,17 @@ const root = mkdtempSync(join(tmpdir(), "claude-account-persistence-"));
 const cwd = join(root, "project");
 const profileDir = join(root, "profile-a");
 
-function fingerprint(messages) {
-	return createHash("sha256").update(JSON.stringify(messages)).digest("hex");
+/** The fingerprint the persist path records for `messages`, read back off the
+ *  marker it appends, so a restore test builds its marker the way Pi does. */
+async function persistedFingerprint(messages) {
+	const entries = [];
+	setExtensionApi({ appendEntry(type, data) { entries.push({ type, data }); } });
+	__testSetBridgeIntegrityState({ sharedSession: { sessionId: "fingerprint-probe", cursor: messages.length, cwd } });
+	schedulePersistSharedSession({ sessionManager: { buildSessionContext: () => ({ messages }), getSessionId: () => "pi-session" } });
+	assert.equal(await waitFor(() => entries.length === 1), true, "fingerprint probe persisted");
+	setExtensionApi(undefined);
+	__testSetBridgeIntegrityState({ sharedSession: null });
+	return entries[0].data.fingerprint;
 }
 
 beforeEach(() => {
@@ -80,14 +88,14 @@ describe("account-scoped session persistence", () => {
 		assert.equal(entries[0].data.sessionId, "child-session");
 		assert.equal(entries[0].data.accountProfileId, "profile-a");
 		assert.equal(entries[0].data.piSessionId, "pi-session");
-		assert.equal(entries[0].data.fingerprint, fingerprint(messages));
 		// The privacy invariant this file exists for: nothing but the type
 		// system otherwise stops the resolved config-dir path from being written.
 		assert.equal("claudeConfigDir" in entries[0].data, false);
 	});
 
-	it("re-resolves an opaque persisted profile through the account router", () => {
+	it("re-resolves an opaque persisted profile through the account router", async () => {
 		const messages = [{ role: "user", content: "hello", timestamp: 1 }];
+		const fingerprint = await persistedFingerprint(messages);
 		const child = createSession({ projectPath: cwd, claudeDir: profileDir });
 		child.addUserMessage("hello");
 		child.save();
@@ -107,7 +115,7 @@ describe("account-scoped session persistence", () => {
 				cursor: 1,
 				cwd,
 				accountProfileId: "profile-a",
-				fingerprint: fingerprint(messages),
+				fingerprint,
 				piSessionId: "pi-session",
 				updatedAt: new Date().toISOString(),
 			},

@@ -140,3 +140,37 @@ describe("turn-end safety invariants", () => {
 		assert.equal(deliveredContent.length, lengthAtDelivery, "Pi's delivered message is never appended to behind its back");
 	});
 });
+describe("streamed argument assembly", () => {
+	beforeEach(() => resetStack());
+
+	it("parses the argument fragments once, at block completion", () => {
+		const c = ctx();
+		c.resetTurnState(model);
+		const events = installFakeStream();
+		const nameMap = new Map([["mcp__custom-tools__write", "write"]]);
+		const args = { path: "notes.md", content: "x".repeat(2000) };
+		const text = JSON.stringify(args);
+		processStreamEvent({ type: "stream_event", event: {
+			type: "content_block_start", index: 0,
+			content_block: { type: "tool_use", id: "t1", name: "mcp__custom-tools__write", input: {} },
+		} }, nameMap, model);
+
+		const parse = JSON.parse;
+		const parsed = [];
+		JSON.parse = (input, ...rest) => { parsed.push(input); return parse(input, ...rest); };
+		try {
+			for (let at = 0; at < text.length; at += 100) {
+				processStreamEvent({ type: "stream_event", event: {
+					type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: text.slice(at, at + 100) },
+				} }, nameMap, model);
+			}
+			assert.equal(parsed.filter((input) => text.startsWith(input)).length, 0, "no fragment prefix is parsed while streaming");
+			processStreamEvent({ type: "stream_event", event: { type: "content_block_stop", index: 0 } }, nameMap, model);
+		} finally {
+			JSON.parse = parse;
+		}
+
+		assert.equal(parsed.filter((input) => text.startsWith(input)).length, 1, "the complete text is parsed once");
+		assert.deepEqual(events.find((e) => e.type === "toolcall_end").toolCall.arguments, args);
+	});
+});

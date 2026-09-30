@@ -3,7 +3,7 @@
  * The checks do not require Claude Code to be installed; they use temp files
  * and the current Node executable as a known platform binary.
  */
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, ftruncateSync, mkdtempSync, openSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -42,6 +42,42 @@ describe("preflightClaudeExecutable", () => {
 		const result = preflightClaudeExecutable(process.execPath, dir);
 		assert.equal(result.path, process.execPath);
 		assert.match(result.fileType, /^(elf|mach-o|pe)$/);
+	}));
+
+	it("classifies an executable past the whole-file read limit from its header", () => withTempDir((dir) => {
+		// A sparse file: 3 GiB of size, no data blocks. Reading it whole fails
+		// with ERR_FS_FILE_TOO_LARGE, so only a header read classifies it.
+		const script = join(dir, "claude-large");
+		writeFileSync(script, "#!/bin/sh\nexit 0\n");
+		chmodSync(script, 0o755);
+		const fd = openSync(script, "r+");
+		try { ftruncateSync(fd, 3 * 1024 ** 3); } finally { closeSync(fd); }
+
+		assert.equal(preflightClaudeExecutable(script, dir).fileType, "shebang-script");
+	}));
+
+	it("reuses the file type while the mtime holds and reclassifies once it moves", () => withTempDir((dir) => {
+		const script = join(dir, "claude-wrapper");
+		writeFileSync(script, "#!/bin/sh\nexit 0\n");
+		chmodSync(script, 0o755);
+		// Whole seconds, so setting the same mtime again reproduces it exactly.
+		const atime = new Date(1_700_000_000_000);
+		const mtime = new Date(1_700_000_000_000);
+		utimesSync(script, atime, mtime);
+		assert.equal(preflightClaudeExecutable(script, dir).fileType, "shebang-script");
+
+		// Same mtime, new bytes: the memo answers, so the header is not read again.
+		writeFileSync(script, "not an executable header\n");
+		utimesSync(script, atime, mtime);
+		assert.equal(preflightClaudeExecutable(script, dir).fileType, "shebang-script");
+
+		// A moved mtime reads the header again.
+		utimesSync(script, atime, new Date(mtime.getTime() + 5000));
+		assert.throws(() => preflightClaudeExecutable(script, dir), (error) => {
+			assert.equal(error.code, "ENOEXEC");
+			assert.equal(error.fileType, "unknown");
+			return true;
+		});
 	}));
 
 	it("reports errno details for a non-existent executable path", () => withTempDir((dir) => {
