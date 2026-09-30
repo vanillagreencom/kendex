@@ -1,21 +1,22 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AvailablePackage,
   MarketplaceRow,
   SourceReadRefused,
 } from "@/bindings";
-import { CHECK_FOR_UPDATES_LABEL } from "@/lib/copy";
+import { CHECK_FOR_UPDATES_LABEL, TRY_AGAIN_LABEL } from "@/lib/copy";
 import {
   LOCAL_FOLDER_LABEL,
   notDownloadedSourcesLine,
+  PACKAGES_READ_FAILED_EMPTY,
   SEE_PROBLEMS_LABEL,
   unreadableRecordsLine,
   unreadableSourcesLine,
 } from "@/lib/copy-marketplaces";
 import { marketKey, useMarketplacesStore } from "@/stores/marketplaces";
-import { readErrorKey } from "@/stores/marketplaces-shared";
+import { readErrorKey, subscription } from "@/stores/marketplaces-shared";
 import { usePreinstallSafety } from "@/stores/preinstall-safety";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount } from "@/test/dom";
@@ -258,7 +259,7 @@ describe("naming what could not be read", () => {
   // downloaded yet is the first-launch state, not a read failure: it gets
   // a neutral line naming the header's control, and the warning stays for
   // a read that went wrong — shaped or folded by the transport alike.
-  it("tells a marketplace nothing has downloaded from one that could not be read", () => {
+  it("tells a marketplace nothing has downloaded from one that could not be read", async () => {
     const row = projectRow("/home/dev/hyprtrade", "kendex");
     const rows: {
       name: string;
@@ -266,10 +267,12 @@ describe("naming what could not be read", () => {
       warning: string[];
       shown: string[];
       absent: string[];
+      failure: string | null;
     }[] = [
       {
         name: "a shaped failure",
         refusal: { kind: "failed", message: "the clone is corrupt" },
+        failure: "the clone is corrupt",
         warning: [unreadableSourcesLine("hyprtrade")],
         shown: [],
         absent: [notDownloadedSourcesLine("hyprtrade")],
@@ -277,6 +280,7 @@ describe("naming what could not be read", () => {
       {
         name: "a transport failure",
         refusal: "the channel closed",
+        failure: "the channel closed",
         warning: [unreadableSourcesLine("hyprtrade")],
         shown: [],
         absent: [notDownloadedSourcesLine("hyprtrade")],
@@ -284,14 +288,17 @@ describe("naming what could not be read", () => {
       {
         name: "a marketplace nothing has downloaded",
         refusal: { kind: "source-pending", source: "kendex" },
+        failure: null,
         warning: [],
         shown: [notDownloadedSourcesLine("hyprtrade"), CHECK_FOR_UPDATES_LABEL],
         absent: [unreadableSourcesLine("hyprtrade")],
       },
     ];
     expect(rows).toHaveLength(3);
-    for (const { name, refusal, warning, shown, absent } of rows) {
+    for (const { name, refusal, warning, shown, absent, failure } of rows) {
+      const loadPackages = vi.fn(async () => {});
       useMarketplacesStore.setState({
+        loadPackages,
         rows: [row],
         packages: {},
         readErrors: {
@@ -308,6 +315,26 @@ describe("naming what could not be read", () => {
       for (const text of shown) expect(host.textContent, name).toContain(text);
       for (const text of absent) {
         expect(host.textContent, name).not.toContain(text);
+      }
+      const retries = [...host.querySelectorAll("button")].filter(
+        (button) => button.textContent === TRY_AGAIN_LABEL,
+      );
+      expect(retries, name).toHaveLength(failure === null ? 0 : 1);
+      expect(loadPackages, name).not.toHaveBeenCalled();
+      if (failure !== null) {
+        expect(host.querySelector('[role="alert"]')?.textContent, name).toBe(
+          failure,
+        );
+        expect(host.textContent, name).toContain(PACKAGES_READ_FAILED_EMPTY);
+        await userEvent.click(retries[0]);
+        expect(loadPackages, name).toHaveBeenCalledExactlyOnceWith(
+          subscription(row.scope, row.name),
+        );
+      } else {
+        expect(host.querySelector('[role="alert"]'), name).toBeNull();
+        expect(host.textContent, name).not.toContain(
+          PACKAGES_READ_FAILED_EMPTY,
+        );
       }
     }
   });

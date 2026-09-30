@@ -1,5 +1,7 @@
 import type { MarketplaceRow, Scope, SourceReadRefused } from "@/bindings";
+import { Button } from "@/components/ui/button";
 import { catalogRefusal } from "@/lib/catalog-read-state";
+import { TRY_AGAIN_LABEL } from "@/lib/copy";
 import {
   notDownloadedSourcesLine,
   SEE_PROBLEMS_LABEL,
@@ -27,7 +29,7 @@ import { useNavStore } from "@/stores/nav";
 export interface TroubledScope {
   key: string;
   scope: Scope;
-  sources: boolean;
+  sources: { source: string; reason: string }[];
   pending: boolean;
   records: boolean;
 }
@@ -52,7 +54,7 @@ export function troubledScopes(
     const place = places.get(key) ?? {
       key,
       scope: row.scope,
-      sources: false,
+      sources: [],
       pending: false,
       records: false,
     };
@@ -64,9 +66,11 @@ export function troubledScopes(
     const refused = catalogRefusal(
       readErrors[readErrorKey(market, "packages")],
     );
-    if (refused?.is === "failed") place.sources = true;
+    if (refused?.is === "failed")
+      place.sources.push({ source: row.name, reason: refused.reason });
     if (refused?.is === "not-downloaded") place.pending = true;
-    if (place.sources || place.pending || place.records) places.set(key, place);
+    if (place.sources.length || place.pending || place.records)
+      places.set(key, place);
   }
   return [...places.values()];
 }
@@ -119,16 +123,22 @@ export function RecordsUnreadableWriteNote({ scope }: { scope: Scope }) {
  * downloaded yet is said in a neutral line of its own, never in the
  * warning: it is the first-launch state, and the page's header carries the
  * control that lifts it. */
-export function TroubleLines({ places }: { places: TroubledScope[] }) {
+export function TroubleLines({
+  places,
+  onRetry,
+}: {
+  places: TroubledScope[];
+  onRetry: (scope: Scope, source: string) => void;
+}) {
   if (places.length === 0) return null;
   const names = scopeNames(places.map((place) => place.scope));
   return (
     <div className="mb-3 space-y-1">
       {places.map((place, index) => (
         <div key={place.key} className="space-y-1">
-          {place.sources || place.records ? (
+          {place.sources.length || place.records ? (
             <p className="text-xs text-warning">
-              {place.sources
+              {place.sources.length
                 ? unreadableSourcesLine(names[index] ?? "")
                 : unreadableRecordsLine(names[index] ?? "")}
               {place.records ? (
@@ -139,6 +149,21 @@ export function TroubleLines({ places }: { places: TroubledScope[] }) {
               ) : null}
             </p>
           ) : null}
+          {place.sources.map(({ source, reason }) => (
+            <div key={source} className="flex items-center gap-2">
+              <p className="text-xs text-critical" role="alert">
+                {reason}
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label={`${TRY_AGAIN_LABEL}: ${source} in ${names[index]}`}
+                onClick={() => onRetry(place.scope, source)}
+              >
+                {TRY_AGAIN_LABEL}
+              </Button>
+            </div>
+          ))}
           {place.pending ? (
             <p className="text-xs text-muted-foreground">
               {notDownloadedSourcesLine(names[index] ?? "")}

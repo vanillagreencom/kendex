@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { act, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";
+import { TRY_AGAIN_LABEL } from "@/lib/copy";
 import { installSelectedLabel, SELECT_EVERY_ROW } from "@/lib/copy-install";
 import { useBookmarksStore } from "@/stores/bookmarks";
 import { useInstallFlow } from "@/stores/install-flow";
@@ -198,7 +199,7 @@ describe("paged Packages demand", () => {
       status: "error",
       error: "fixture",
     });
-    mount(<PackagesTab />);
+    const host = mount(<PackagesTab />);
     expect(commands.marketplacePackages).toHaveBeenCalledTimes(4);
     for (let index = 0; index < 4; index += 1) {
       const row = world.rows[index];
@@ -219,10 +220,16 @@ describe("paged Packages demand", () => {
     expect(
       useMarketplacesStore.getState().readErrors[readErrorKey(key, "packages")],
     ).toBe("cannot read");
-    const retry = loadPackages(subscription(row.scope, row.name));
+    await userEvent.click(
+      [...host.querySelectorAll("button")].find(
+        (button) => button.textContent === TRY_AGAIN_LABEL,
+      ) as HTMLButtonElement,
+    );
+    expect(commands.marketplacePackages).toHaveBeenLastCalledWith(
+      subscription(row.scope, row.name),
+    );
     await act(async () => {
       lands[4]({ status: "ok", data: world.packages[key] });
-      await retry;
     });
     expect(commands.marketplacePackages).toHaveBeenCalledTimes(5);
     expect(
@@ -231,6 +238,9 @@ describe("paged Packages demand", () => {
     expect(
       useMarketplacesStore.getState().readErrors[readErrorKey(key, "packages")],
     ).toBeUndefined();
+    expect(host.querySelectorAll("tbody tr")).toHaveLength(20);
+    expect(host.textContent).toContain("1–20 of 622 packages");
+    expect(host.querySelector('[role="alert"]')).toBeNull();
   });
 });
 

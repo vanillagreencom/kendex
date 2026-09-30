@@ -13,6 +13,10 @@ export const MARKETPLACES_EMPTY_TITLE = "No marketplaces yet";
 export const MARKETPLACES_UNCONFIRMED_TITLE =
   "These are the last subscriptions kendex could check";
 
+/** Empty combined results with packages missing after a failed read. */
+export const PACKAGES_READ_FAILED_EMPTY =
+  "Some packages could not be read. Try again above to check the missing packages.";
+
 // A package's declared dependencies, on the two surfaces that show them
 // before an install: the package page's facts column and the install
 // picker. "Requires" installs whatever the person does; "Optional" is

@@ -11,6 +11,7 @@ import {
 import { readDue } from "@/components/marketplaces/use-catalog";
 import { Input } from "@/components/ui/input";
 import { SelectItem } from "@/components/ui/select";
+import { PACKAGES_READ_FAILED_EMPTY } from "@/lib/copy-marketplaces";
 import { scopeLabel } from "@/lib/derive";
 import {
   KINDS,
@@ -118,6 +119,18 @@ export function PackagesTab() {
     () => troubledScopes(rows, readErrors),
     [rows, readErrors],
   );
+  const failedSources = troubled.flatMap((place) =>
+    where === "any" || place.key === where
+      ? place.sources
+          .filter(
+            ({ source }) => marketplace === "any" || source === marketplace,
+          )
+          .map(({ source }) => marketKey(place.scope, source))
+      : [],
+  );
+  const missingResults = failedSources.some(
+    (key) => packages[key] === undefined,
+  );
   const marketplaceNames = [...new Set(rows.map((row) => row.name))];
   const whereOptions = [
     ...new Map(rows.map((row) => [scopeLabel(row.scope), row.scope])).values(),
@@ -198,6 +211,7 @@ export function PackagesTab() {
             ))}
           </Filter>
           <span className="ml-auto text-xs whitespace-nowrap text-muted-foreground tabular-nums">
+            {failedSources.length > 0 ? "Last checked: " : null}
             {entries.length} package{entries.length === 1 ? "" : "s"}
           </span>
         </div>
@@ -205,12 +219,19 @@ export function PackagesTab() {
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className={cn(PAGE_BODY, "pt-0")}>
           <div className={WIDE_CONTENT_WIDTH}>
-            <TroubleLines places={troubled} />
+            <TroubleLines
+              places={troubled}
+              onRetry={(scope, source) =>
+                void loadPackages(subscription(scope, source))
+              }
+            />
             {entries.length === 0 ? (
               <p className="py-16 text-center text-sm text-muted-foreground">
                 {rows.length === 0
                   ? "Subscribe to a marketplace to browse its packages here."
-                  : "Nothing matches — clear a filter or try another search."}
+                  : missingResults
+                    ? PACKAGES_READ_FAILED_EMPTY
+                    : "Nothing matches — clear a filter or try another search."}
               </p>
             ) : (
               <PackagesTable entries={entries} showMarketplace />
