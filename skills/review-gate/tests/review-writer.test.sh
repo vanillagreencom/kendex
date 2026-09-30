@@ -136,9 +136,8 @@ if [[ -n "${STUB_PREDICATE_FAIL_HEAD:-}" && "${STUB_PREDICATE_FAIL_HEAD}" == "${
   echo "::error::stubbed predicate failure for head ${HEAD_SHA}" >&2
   exit 2
 fi
-# STUB_PREDICATE_UNRESOLVED_PR answers that PR alone with class-unresolved,
-# the verdict the real predicate gives where the PR's change class cannot be
-# resolved.
+# STUB_PREDICATE_UNRESOLVED_PR answers that PR alone with class-unresolved
+# (scope: the SKILL.md class-unresolved row).
 if [[ -n "${STUB_PREDICATE_UNRESOLVED_PR:-}" && "${STUB_PREDICATE_UNRESOLVED_PR}" == "${PR_NUMBER:-}" ]]; then
   printf 'verdict=class-unresolved detail=change class unresolved at %s\n' "$HEAD_SHA"
   exit 0
@@ -507,9 +506,8 @@ table \
   "w26c: a ghost-authored PR still converges, with an empty PR_AUTHOR handed down|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN_GHOST;STUB_GATE_HISTORY=[]|rc=0 posts=pending@sha9 author=-"
 
 echo "=== one pull request's class policy unresolved ==="
-# A class policy the predicate cannot resolve, whether the pull request or the
-# runner caused it, is recorded on that head as pending, which keeps the gate
-# closed and says why. The single-head run exits 3 on every path, and the pass
+# A class-unresolved verdict (scope: the SKILL.md class-unresolved row) is
+# recorded on that head as pending, which keeps the gate closed and says why. The single-head run exits 3 on every path, and the pass
 # converges the next pull request, then exits 1 so the run stays red. A
 # success already on the head stands, as it did under any failed evaluation.
 H_UNRESOLVED_OLD="[$(entry pending "change class unresolved at headsha" "$OLD")]"

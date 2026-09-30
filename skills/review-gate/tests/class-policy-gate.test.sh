@@ -253,10 +253,9 @@ fi
 cat "$TMP/predicate-original" >"$PREDICATE"
 
 # Source preparation is bounded because the judged manifest chooses how much
-# work it asks for. Either bound refuses THIS pull request's classification.
-# The failure is the pull request's own, so it is a class-unresolved verdict
-# on its head, which the writer records there and the next pass retries, and
-# no evidence is read.
+# work it asks for. Either bound refuses THIS pull request's classification:
+# a non-zero exit of the class resolution, which answers class-unresolved on
+# its head with no evidence read. Scope: the SKILL.md class-unresolved row.
 while IFS='|' read -r label stub_env key value; do
   [ -n "$label" ] || continue
   reset
