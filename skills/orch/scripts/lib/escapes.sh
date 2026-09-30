@@ -44,7 +44,7 @@ ESCAPE_REACH=1209600
 # consumer repository's own settings, so it is each install's cap week too.
 ESCAPE_CAP_WEEK=2026-09-28
 # How long the fetch of the base branch, and the Linear sync, may run before
-# the count reads unread, where a `timeout` command exists. A sync that
+# the count reads unread, where `timeout` or `gtimeout` exists. A sync that
 # outlasts its bound, a full one on a large workspace, reads unread until a
 # `linear.sh sync` run by hand completes.
 ESCAPE_FETCH_SECONDS=60
@@ -52,15 +52,15 @@ ESCAPE_SYNC_SECONDS=120
 # How old, in minutes, the Linear cache may be before the count syncs it.
 ESCAPE_SYNC_MINUTES=15
 
-# escapes_bounded SECONDS COMMAND... — COMMAND under a SECONDS bound, `timeout`
-# answering 124 where it cuts it off. A stalled connection would otherwise
-# hold the whole report. Stock macOS ships no `timeout`, and there COMMAND
-# runs unbounded.
+# escapes_bounded BOUND SECONDS COMMAND... — COMMAND under a SECONDS bound
+# that BOUND, `timeout` or `gtimeout`, holds, answering 124 where it cuts it
+# off. A stalled connection would otherwise hold the whole report. An empty
+# BOUND, stock macOS with no coreutils, runs COMMAND unbounded.
 escapes_bounded() {
-  local seconds="$1"
-  shift
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "$seconds" "$@"
+  local bound="$1" seconds="$2"
+  shift 2
+  if [[ -n "$bound" ]]; then
+    "$bound" "$seconds" "$@"
   else
     "$@"
   fi
@@ -79,7 +79,7 @@ escapes_bounded() {
 ESCAPE_WEEKS=""
 ESCAPE_UNREAD=""
 escapes_read() {
-  local root="$1" tracker="$2" now="$3" scratch="$4" week cap from since base repo bug_label rc=0 cut=""
+  local root="$1" tracker="$2" now="$3" scratch="$4" week cap from since base repo bug_label rc=0 cut="" bound="" candidate
   ESCAPE_WEEKS=""
   ESCAPE_UNREAD=""
   # 1970-01-05, a Monday, is 345600: the week starts that many seconds past
@@ -100,11 +100,18 @@ escapes_read() {
     ESCAPE_UNREAD="the base branch did not resolve"
     return 1
   fi
-  # Only `timeout` answers 124 here: neither git nor the Linear CLI exits so.
-  ! command -v timeout >/dev/null 2>&1 || cut=124
+  # `gtimeout` is the name a Homebrew coreutils install gives `timeout`. Only
+  # the bound answers 124 here: neither git nor the Linear CLI exits so.
+  for candidate in timeout gtimeout; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      bound="$candidate"
+      cut=124
+      break
+    fi
+  done
   # A credential prompt would hold the report as a stall does: git never
   # prompts here.
-  escapes_bounded "$ESCAPE_FETCH_SECONDS" env GIT_TERMINAL_PROMPT=0 git -C "$root" fetch --quiet origin "$base" \
+  escapes_bounded "$bound" "$ESCAPE_FETCH_SECONDS" env GIT_TERMINAL_PROMPT=0 git -C "$root" fetch --quiet origin "$base" \
     2>"$scratch/escapes-git.err" || rc=$?
   if [[ "$rc" == "$cut" ]]; then
     ESCAPE_UNREAD="git fetch origin $base timed out"
@@ -128,7 +135,7 @@ escapes_read() {
   fi
   # The cache answers only what its last sync saw: a bug filed since then is
   # missing from a read that exits 0.
-  escapes_bounded "$ESCAPE_SYNC_SECONDS" "$tracker" sync --if-stale "$ESCAPE_SYNC_MINUTES" \
+  escapes_bounded "$bound" "$ESCAPE_SYNC_SECONDS" "$tracker" sync --if-stale "$ESCAPE_SYNC_MINUTES" \
     >/dev/null 2>"$scratch/escapes-linear.err" || rc=$?
   if [[ "$rc" == "$cut" ]]; then
     ESCAPE_UNREAD="Linear sync timed out"
@@ -150,7 +157,7 @@ escapes_read() {
   fi
   if ! bug_label="$(jq -r 'if type != "array" then error("the label list is not one JSON array") else
       any(.[]; (.name // "") | ascii_downcase == "bug") end' "$scratch/escapes-labels.json" 2>"$scratch/escapes-jq.err")"; then
-    ESCAPE_UNREAD="the git log or the bug list did not parse"
+    ESCAPE_UNREAD="the Linear label list did not parse"
     return 1
   fi
   if [[ "$bug_label" != true ]]; then

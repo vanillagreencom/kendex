@@ -18,6 +18,9 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 source "$TEST_DIR/lib/assertions.sh"
 # shellcheck source=lib/escapes-fixture.sh
 source "$TEST_DIR/lib/escapes-fixture.sh"
+# path_without, for the PATH that carries gtimeout alone.
+# shellcheck source=lib/lanes-fixture.sh
+source "$TEST_DIR/lib/lanes-fixture.sh"
 # mutant_scripts and mutate_file, for the must-fail controls.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
@@ -239,6 +242,16 @@ printf '#!/usr/bin/env bash\n[[ "$1" == sync ]] && exit 0\necho "cache corrupt" 
 chmod +x "$FAILING"
 NOT_A_LIST="$TMP_ROOT/not-a-list.json"
 echo '{"issues": []}' > "$NOT_A_LIST"
+# A PATH whose one bound command is gtimeout, the name a Homebrew coreutils
+# install gives timeout: a shim to whichever of the two this host carries.
+GTIMEOUT_ONLY="$TMP_ROOT/gtimeout-only"
+REAL_TIMEOUT="$(command -v timeout || command -v gtimeout || true)"
+if [[ -n "$REAL_TIMEOUT" ]]; then
+  path_without "$GTIMEOUT_ONLY" timeout
+  rm -f -- "${GTIMEOUT_ONLY:?}/gtimeout"
+  printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$REAL_TIMEOUT" > "$GTIMEOUT_ONLY/gtimeout"
+  chmod +x "$GTIMEOUT_ONLY/gtimeout"
+fi
 NO_BUG_LABEL="$TMP_ROOT/no-bug-label.json"
 echo '[{"name": "Feature"}, {"name": "bugfix"}]' > "$NO_BUG_LABEL"
 # root|tracker|the first line|NAME=VALUE ..., an empty tracker the stub
@@ -250,14 +263,17 @@ UNREAD=(
   "$WORLD||rc=1 unread=Linear sync failed|ESCAPES_SYNC_FAIL=1"
   "$WORLD|$FAILING|rc=1 unread=Linear cache read failed|"
   "$WORLD||rc=1 unread=no Linear label named bug|ESCAPES_LABELS=$NO_BUG_LABEL"
+  "$WORLD||rc=1 unread=the Linear label list did not parse|ESCAPES_LABELS=$NOT_A_LIST"
   "$WORLD||rc=1 unread=the git log or the bug list did not parse|ESCAPES_ISSUES=$NOT_A_LIST"
   "$WORLD||rc=1 unread=the clock reads before the cap week 2026-09-28|NOW=$(at 2026-09-21T12:00:00Z)"
 )
-# The fetch and the sync are bounded only where `timeout` exists; stock
-# macOS ships none. Each bound is one second, so each row waits that long.
-if command -v timeout >/dev/null 2>&1; then
+# The fetch and the sync are bounded only where `timeout` or `gtimeout`
+# exists; stock macOS ships neither. Each bound is one second, so each row
+# waits that long.
+if [[ -n "$REAL_TIMEOUT" ]]; then
   UNREAD+=("$HANGS||rc=1 unread=git fetch origin main timed out|ESCAPE_FETCH_SECONDS=1"
-    "$WORLD|$SLOW_SYNC|rc=1 unread=Linear sync timed out|ESCAPE_SYNC_SECONDS=1")
+    "$WORLD|$SLOW_SYNC|rc=1 unread=Linear sync timed out|ESCAPE_SYNC_SECONDS=1"
+    "$HANGS||rc=1 unread=git fetch origin main timed out|ESCAPE_FETCH_SECONDS=1 PATH=$GTIMEOUT_ONLY")
 fi
 for row in "${UNREAD[@]}"; do
   IFS='|' read -r root tracker want assignments <<<"$row"
@@ -297,9 +313,11 @@ CONTROLS=(
 )
 hangs() { count "$1" "$HANGS" "" ESCAPE_FETCH_SECONDS=1; }
 slow_sync() { count "$1" "$WORLD" "$SLOW_SYNC" ESCAPE_SYNC_SECONDS=1; }
-if command -v timeout >/dev/null 2>&1; then
-  CONTROLS+=('unbounded-fetch|hangs|escapes_bounded "$ESCAPE_FETCH_SECONDS" env|env'
-    'unbounded-sync|slow_sync|escapes_bounded "$ESCAPE_SYNC_SECONDS" "$tracker"|"$tracker"')
+gtimeout_hangs() { count "$1" "$HANGS" "" ESCAPE_FETCH_SECONDS=1 PATH="$GTIMEOUT_ONLY"; }
+if [[ -n "$REAL_TIMEOUT" ]]; then
+  CONTROLS+=('unbounded-fetch|hangs|escapes_bounded "$bound" "$ESCAPE_FETCH_SECONDS" env|env'
+    'unbounded-sync|slow_sync|escapes_bounded "$bound" "$ESCAPE_SYNC_SECONDS" "$tracker"|"$tracker"'
+    'timeout-only|gtimeout_hangs|for candidate in timeout gtimeout; do|for candidate in timeout; do')
 fi
 for row in "${CONTROLS[@]}"; do
   name="${row%%|*}"; rest="${row#*|}"
