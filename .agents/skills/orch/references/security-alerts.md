@@ -15,6 +15,7 @@ Load from [oversee-events.md § Event kinds](oversee-events.md#event-kinds) at a
 ## Dependabot pull requests
 
 - **Take-over.** A lane taking over a Dependabot pull request branches from its head (`git fetch origin pull/[N]/head`), adds the version bump, changelog fragment and suite, merges through the queue, and closes the bot's pull request linking its own.
+- **`bot-fix pr=[N] alert=[ALERTS]`** on a heartbeat is a security update the listed alerts link: those alerts take § Triage, and the lane that works the filed item takes the pull request over as above.
 - **`bot-fix pr=[N] alert=none`** on a heartbeat is a security update whose every linked alert has left the open list: close it saying so.
 - **A plain heartbeat line** on a Dependabot pull request is one no alert links, a version update or one opened since the last long pass: leave it.
 
