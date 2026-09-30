@@ -43,6 +43,34 @@ for (const [name, register] of registrations) {
 		expect(received[4]).toBe(context);
 	});
 
+	test(`${name} preserves structured results and accepts tools from Pi below 0.99.0`, async () => {
+		for (const structured of [true, false]) {
+			let definition: ToolDefinition | undefined;
+			const outputSchema = { type: "object", properties: { output: { type: "string" } } };
+			const structuredContent = { output: "fixture", truncated: false, full_output_path: null };
+			const result = { content: [{ type: "text", text: "fixture" }], ...(structured ? { structuredContent } : {}) };
+			const original = {
+				description: "fixture",
+				parameters: {},
+				...(structured ? { outputSchema } : {}),
+				execute: async () => result,
+			};
+			const host = {
+				createReadTool: () => original, createBashTool: () => original,
+				createEditTool: () => original, createWriteTool: () => original,
+				createGrepTool: () => original, createFindTool: () => original, createLsTool: () => original,
+			};
+			// Each row needs its own cwd because the renderer caches built-in tools by cwd.
+			const cwd = `${world().cwd}/${structured ? "structured" : "legacy"}`;
+			register({ registerTool: (tool: ToolDefinition) => { definition = tool; } } as ExtensionAPI, host, cwd);
+			expect(definition).toBeDefined();
+			const returned = await definition!.execute("call", {}, undefined, undefined, { cwd } as ExtensionContext);
+			expect(returned).toBe(result);
+			expect((returned as unknown as Record<string, unknown>).structuredContent).toBe(structured ? structuredContent : undefined);
+			expect((definition as unknown as Record<string, unknown>).outputSchema).toBe(structured ? outputSchema : undefined);
+		}
+	});
+
 	test(`${name} carries the wrapped tool's request fields onto the replacement`, () => {
 		let definition: ToolDefinition | undefined;
 		const original = {

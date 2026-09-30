@@ -80,12 +80,14 @@ export function getBuiltInTool(agent: any, cwd: string, toolName: BuiltInToolNam
 }
 
 /**
- * Four fields of the wrapped AgentTool that Pi's agent loop reads, which a
+ * Fields of the wrapped AgentTool that Pi's agent loop reads, which a
  * replacement definition carries unchanged. `description`, `parameters` and
  * `constrainedSampling` are the tool as declared to the model, the last being
  * Pi's schema-sampling choice, strict-prefer on read, bash, edit and write.
  * `prepareArguments` runs before arguments validate against `parameters`, so
  * without it the shapes Pi's own tool accepts fail before `execute` delegates.
+ * `outputSchema` lets codemode read the unchanged result's `structuredContent`;
+ * on Pi below 0.99.0 the wrapped tool leaves it undefined.
  */
 function piToolContract(original: any) {
 	return {
@@ -93,6 +95,7 @@ function piToolContract(original: any) {
 		parameters: original.parameters,
 		constrainedSampling: original.constrainedSampling,
 		prepareArguments: original.prepareArguments,
+		outputSchema: original.outputSchema,
 	};
 }
 
