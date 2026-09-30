@@ -1,4 +1,10 @@
 # Each mutation changes a copy; the runner proves its named assertion fails.
+control_expect 'normal Git redirects: OAuth suite succeeds'
+control_expect 'linked Git redirects: OAuth suite succeeds'
+control_replace tests/oauth-auth.test.sh 1 \
+    'unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE' \
+    ': unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE'
+
 control_expect 'cache: mint count'
 control_replace scripts/lib/auth.sh 1 \
     '    if [[ "${1:-}" != "renew" && -f "$token_file" ]]; then' \

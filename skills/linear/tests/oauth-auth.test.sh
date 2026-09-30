@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Credential selection and OAuth lifecycle through requests, auth-check and cache fetch.
 set -euo pipefail
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd -P)"
@@ -11,6 +12,8 @@ mkdir -p "$PROJECT/bin" "$PROJECT/.agents/skills"
 git -C "$PROJECT" init -q -b main
 git -C "$PROJECT" config gc.auto 0
 git -C "$PROJECT" config maintenance.auto false
+fixture_root=$(git -C "$PROJECT" rev-parse --show-toplevel)
+assert_eq 'fixture Git root stays in scratch' "$fixture_root" "$PROJECT"
 cp -R -- "$SKILL_DIR" "$PROJECT/.agents/skills/linear"
 LINEAR="$PROJECT/.agents/skills/linear/scripts/linear.sh"
 REAL_JQ=$(command -v jq)
@@ -257,3 +260,7 @@ for row in \
         assert_jq "$label: failed download is not recorded" "$manifest" 'length == 0'
     fi
 done
+
+if [[ "${OAUTH_GIT_REDIRECT_CHILD:-0}" != 1 ]]; then
+    run_oauth_git_redirects "$SCRIPT_DIR/oauth-auth.test.sh" "$TMP_ROOT/git-callers"
+fi
