@@ -73,7 +73,9 @@ class WebSocket:
             raise Closed(f"connect ({err})") from err
         try:
             if parts.scheme == "wss":
-                sock = ssl.create_default_context().wrap_socket(sock, server_hostname=parts.hostname)
+                ctx = ssl.create_default_context()
+                ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+                sock = ctx.wrap_socket(sock, server_hostname=parts.hostname)
             key = base64.b64encode(os.urandom(16)).decode()
             request = (
                 f"GET {path} HTTP/1.1\r\nHost: {parts.netloc}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"

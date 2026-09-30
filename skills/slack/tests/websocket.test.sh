@@ -90,4 +90,44 @@ OUT="$(keepalive)"
 assert_eq "$(row at-drop)" "open" "control: the Closed branch gone, a silent connection is never dropped"
 sk_bin_reset
 
+# --- TLS floor: emulate the Python 3.8/3.9 default before wrapping --------------
+tls_floor() {
+  env -i PATH="$PATH" PYTHONDONTWRITEBYTECODE=1 python3 - "$(dirname "$SK_BIN")/lib" <<'PY'
+import socket, ssl, sys
+from unittest.mock import Mock, patch
+sys.path.insert(0, sys.argv[1])
+from websocket import Closed, WebSocket
+
+ctx = Mock(spec=ssl.SSLContext, minimum_version=ssl.TLSVersion.TLSv1)
+sock = Mock(spec=socket.socket)
+
+
+def wrap(raw, server_hostname):
+    assert ctx.minimum_version == ssl.TLSVersion.TLSv1_2, ctx.minimum_version
+    assert raw is sock and server_hostname == "slack.test"
+    raise OSError("TLS floor inspected")
+
+
+ctx.wrap_socket.side_effect = wrap
+with patch("websocket.ssl.create_default_context", return_value=ctx), patch(
+    "websocket.socket.create_connection", return_value=sock
+):
+    try:
+        WebSocket.connect("wss://slack.test/socket", 30)
+    except Closed as err:
+        assert str(err) == "handshake (TLS floor inspected)", str(err)
+    else:
+        raise AssertionError("wrap_socket did not inspect the TLS floor")
+PY
+}
+RC=0
+tls_floor || RC=$?
+assert_eq "$RC" "0" "wss context requires TLS 1.2 before wrap_socket"
+
+sk_mutant tls-floor websocket.py 'ctx.minimum_version = ssl.TLSVersion.TLSv1_2' 'pass'
+RC=0
+tls_floor 2>"$SK_TMP/tls-control.err" || RC=$?
+assert_eq "$RC" "1" "control: an unset TLS floor fails the same assertion"
+sk_bin_reset
+
 sk_summary

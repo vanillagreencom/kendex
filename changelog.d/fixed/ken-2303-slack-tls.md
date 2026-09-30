@@ -1,0 +1,1 @@
+- Slack relay WebSocket connections require TLS 1.2 or later on every supported Python version.
