@@ -55,6 +55,7 @@ fn attention(
             false => conflicts(style, report, &rows, &blocked),
         };
         lines.extend(safety_section(style, &report.safety, listing));
+        lines.extend(super::engine_common::warning_lines(style, &report.warnings));
         lines.extend(notes_section(
             style,
             &report.notes,

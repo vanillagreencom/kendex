@@ -296,19 +296,18 @@ fn a_hook_registers_under_its_name_in_the_roots_hooks_json() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hook_the_harness_cannot_run_stays_out_of_antigravity() {
-    for (hook, record) in [
-        (
-            UNNAMED_HOOK.to_owned(),
-            "kendex-hook-unlisted: harness=antigravity hook=audit",
-        ),
-        (
-            AUDIT_HOOK.replace("PreToolUse", "TaskCompleted"),
-            "kendex-hook-unsupported: harness=antigravity event=TaskCompleted hook=audit",
-        ),
+    let record = "kendex-hook-undeliverable: hook=audit harness=antigravity";
+    for hook in [
+        UNNAMED_HOOK.to_owned(),
+        AUDIT_HOOK.replace("PreToolUse", "TaskCompleted"),
     ] {
         let f = fixture("[hooks.audit]\nsource = \"cat\"\n");
         fs::write(f.env.home.join("catalog/hooks/audit.sh"), hook).unwrap();
         let report = apply_now(&f);
+        assert_eq!(
+            report.declaration_status,
+            kendex_core::engine::DeclarationStatus::Incomplete
+        );
         assert!(!f.project.join(".agents/hooks.json").exists(), "{record}");
         assert!(
             !f.project.join(".agents/hooks/audit.sh").exists(),

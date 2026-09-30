@@ -211,9 +211,13 @@ fn an_event_codex_cannot_run_is_reported_never_faked() {
     let report = audit(&f.env, &f.scope).unwrap();
     assert!(
         report.notes.iter().any(|note| note.lines().next()
-            == Some("kendex-hook-unsupported: harness=codex event=TaskCompleted hook=done")),
+            == Some("kendex-hook-undeliverable: hook=done harness=codex")),
         "{:?}",
         report.notes
+    );
+    assert_eq!(
+        report.declaration_status,
+        kendex_core::engine::DeclarationStatus::Incomplete
     );
     apply::execute(&f.env, &report.plan).unwrap();
     assert!(!f.project.join(".codex").exists());

@@ -49,35 +49,39 @@ fn clean_changed_blocked_and_warning_reports_keep_their_content() {
         (
             &changed,
             false,
-            vec![
-                "warning: tidy (Claude Code): missing description",
-                "  fix: add a description",
-                "plan: 1 change",
-                "  - Save kendex.toml",
-            ],
-            vec![
-                "  <33>!</> tidy (Claude Code): missing description",
-                "    <90>fix: add a description</>",
-                "  <36>•</> plan: 1 change",
-                "  <36>•</> Save kendex.toml",
-            ],
+            vec!["plan: 1 change", "  - Save kendex.toml"],
+            vec!["  <36>•</> plan: 1 change", "  <36>•</> Save kendex.toml"],
         ),
     ];
     for (report, blocked, want_plain, want_rich) in cases {
         assert_eq!(report_lines(&plain(), report, blocked), want_plain);
         assert_eq!(tagged(&report_lines(&rich(80), report, blocked)), want_rich);
     }
+    assert_eq!(
+        warning_lines(&plain(), &changed.warnings),
+        [
+            "warning: tidy (Claude Code): missing description",
+            "  fix: add a description",
+        ]
+    );
+    assert_eq!(
+        tagged(&warning_lines(&rich(80), &changed.warnings)),
+        [
+            "  <33>!</> tidy (Claude Code): missing description",
+            "    <90>fix: add a description</>",
+        ]
+    );
 
     // desired_custom_hooks supplies prose remediation, not a command.
     let remedy = "set agents = \"all\" to make it run for everything, or keep it as instructions";
     changed.warnings[0].remediation = Some(remedy.into());
     assert!(
-        report_lines(&plain(), &changed, false)
+        warning_lines(&plain(), &changed.warnings)
             .iter()
             .any(|line| line == &format!("  fix: {remedy}"))
     );
     assert!(
-        report_lines(&rich(60), &changed, false)
+        warning_lines(&rich(60), &changed.warnings)
             .iter()
             .all(|line| console::measure_text_width(line) <= 60)
     );

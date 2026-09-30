@@ -188,10 +188,17 @@ fn an_unmappable_event_installs_nothing_on_pi() {
 
     let report = audit(&w.env, &scope(&w)).unwrap();
     assert!(
-        report.notes.iter().any(|note| note.lines().next()
-            == Some("kendex-hook-unsupported: harness=pi event=PostCompact hook=guard")),
+        report
+            .notes
+            .iter()
+            .any(|note| note.lines().next()
+                == Some("kendex-hook-undeliverable: hook=guard harness=pi")),
         "{:?}",
         report.notes
+    );
+    assert_eq!(
+        report.declaration_status,
+        kendex_core::engine::DeclarationStatus::Incomplete
     );
     kendex_core::apply::execute(&w.env, &report.plan).unwrap();
     assert!(

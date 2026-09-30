@@ -1,0 +1,1 @@
+- Refresh records supported hook copies when another harness cannot run the catalog event, warns for that harness, and keeps verification current for the rest of the install.

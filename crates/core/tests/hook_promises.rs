@@ -9,7 +9,7 @@ use test_util::{rooted, source_path};
 use std::fs;
 use std::path::PathBuf;
 
-use kendex_core::engine::{EngineReport, audit};
+use kendex_core::engine::{DeclarationStatus, EngineReport, audit, plan_record_existing};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::harness::{Enforcement, hook_enforcement};
 use kendex_core::model::{HarnessId, ItemKind, Scope};
@@ -59,6 +59,126 @@ fn fixture(harnesses: &str, declarations: &str) -> Fixture {
 #[allow(clippy::unwrap_used)]
 fn plan(f: &Fixture) -> EngineReport {
     audit(&f.env, &f.scope).unwrap()
+}
+
+#[allow(clippy::unwrap_used)]
+fn fixture_with_newer_hook(harnesses: &str, event: &str) -> Fixture {
+    let f = fixture(
+        "\"claude\", \"codex\", \"opencode\", \"cursor\", \"gemini\"",
+        &format!(
+            "[hooks.guard]\nsource = \"cat\"\nharnesses = [\"claude\"]\n[hooks.newer]\nsource = \"cat\"\nharnesses = [{harnesses}]\n"
+        ),
+    );
+    fs::write(
+        f.env.home.join("catalog/hooks/newer.sh"),
+        GUARD
+            .replace("name: guard", "name: newer")
+            .replace("PreToolUse", event),
+    )
+    .unwrap();
+    f
+}
+
+/// A newer catalog can name an event this engine lacks. Advisory copies
+/// still land, but an unrelated hook cannot make an undeliverable hook
+/// count as delivered. Record recovery must keep the same distinction.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_hook_records_deliverable_copies_and_refuses_only_when_none_land() {
+    use HarnessId::{Claude, Codex, Cursor, Gemini, Opencode};
+    for (harnesses, event, unavailable, delivered) in [
+        (
+            "\"claude\", \"opencode\", \"cursor\"",
+            "FutureCatalogEvent",
+            vec![Claude],
+            vec![Opencode, Cursor],
+        ),
+        (
+            "\"claude\", \"codex\"",
+            "TaskCompleted",
+            vec![Codex],
+            vec![Claude],
+        ),
+        ("\"claude\"", "FutureCatalogEvent", vec![Claude], vec![]),
+        (
+            "\"codex\", \"gemini\"",
+            "TaskCompleted",
+            vec![Codex, Gemini],
+            vec![],
+        ),
+    ] {
+        let f = fixture_with_newer_hook(harnesses, event);
+        let report = plan(&f);
+        let nowhere = delivered.is_empty();
+        assert_eq!(
+            report.declaration_status,
+            if nowhere {
+                DeclarationStatus::Incomplete
+            } else {
+                DeclarationStatus::Complete
+            },
+            "{harnesses}: {report:?}"
+        );
+        for harness in unavailable {
+            let record = format!(
+                "kendex-hook-undeliverable: hook=newer harness={}",
+                harness.name()
+            );
+            assert_eq!(
+                report
+                    .notes
+                    .iter()
+                    .filter(|note| note.lines().next() == Some(record.as_str()))
+                    .count(),
+                usize::from(nowhere)
+            );
+            let warnings: Vec<_> = report
+                .warnings
+                .iter()
+                .filter(|warning| warning.message.lines().next() == Some(record.as_str()))
+                .collect();
+            assert_eq!(warnings.len(), usize::from(!nowhere));
+            if let Some(warning) = warnings.first() {
+                assert_eq!(
+                    (warning.kind, warning.name.as_str(), warning.harness),
+                    (ItemKind::Hook, "newer", Some(harness))
+                );
+            }
+        }
+
+        kendex_core::apply::execute(&f.env, &report.plan).unwrap();
+        let path = kendex_core::lock::lock_path(&f.env, &f.scope);
+        let lock = kendex_core::lock::load(&path).unwrap();
+        assert!(lock.entries.contains_key("hook:guard:claude"));
+        let recorded: std::collections::BTreeSet<_> = lock
+            .entries
+            .values()
+            .filter(|entry| entry.name == "newer")
+            .map(|entry| entry.harness)
+            .collect();
+        assert_eq!(recorded, delivered.into_iter().collect(), "{harnesses}");
+        fs::remove_file(path).unwrap();
+        let recovery = plan_record_existing(&f.env, &f.scope);
+        if nowhere {
+            assert!(
+                matches!(
+                    recovery,
+                    Err(kendex_core::error::CoreError::RecordExistingRefused { .. })
+                ),
+                "{recovery:?}"
+            );
+        } else {
+            let recovery = recovery.unwrap();
+            assert_eq!(recovery.declaration_status, DeclarationStatus::Complete);
+            kendex_core::apply::execute(&f.env, &recovery.plan).unwrap();
+            assert_eq!(
+                kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope))
+                    .unwrap()
+                    .entries,
+                lock.entries
+            );
+        }
+    }
 }
 
 /// Cursor and OpenCode have no hook surface of their own: what installs

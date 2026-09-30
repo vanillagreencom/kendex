@@ -84,9 +84,14 @@ pub fn print_report(
     blocked
 }
 
-fn report_lines(style: &ui::Style, report: &EngineReport, blocked: bool) -> Vec<String> {
+/// Per-item warnings belong to the attention report, including a compact
+/// refresh, rather than the operation list a compact refresh omits.
+pub(super) fn warning_lines(
+    style: &ui::Style,
+    warnings: &[kendex_core::engine::ItemWarning],
+) -> Vec<String> {
     let mut lines = Vec::new();
-    for warning in &report.warnings {
+    for warning in warnings {
         let target = match warning.harness {
             Some(harness) => format!("{} ({})", warning.name, harness.display_name()),
             None => warning.name.clone(),
@@ -96,6 +101,11 @@ fn report_lines(style: &ui::Style, report: &EngineReport, blocked: bool) -> Vec<
             lines.extend(style.report_detail(&[Span::Prose("fix: "), Span::Prose(fix)], "  "));
         }
     }
+    lines
+}
+
+fn report_lines(style: &ui::Style, report: &EngineReport, blocked: bool) -> Vec<String> {
+    let mut lines = Vec::new();
     if report.plan.is_empty() {
         // "nothing to do" directly under a conflict reads as "and nothing
         // you can do" — the run has plenty to do, once the reader picks.

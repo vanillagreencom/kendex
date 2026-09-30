@@ -659,6 +659,61 @@ fn refresh_removes_only_the_departed_harness_and_verify_passes() {
     }
 }
 
+/// Consumer refresh meets a catalog event newer than the running engine.
+/// Both a first install and a recordless render must record the supported
+/// copies without losing the other packages in the plan.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn consumer_refresh_records_a_partially_deliverable_hook_and_verify_passes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = declared(&home, "Ship the branch.\n");
+    let catalog = home.join("catalog");
+    fs::create_dir_all(catalog.join("hooks")).unwrap();
+    fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    fs::write(catalog.join("hooks/newer.sh"), "#!/bin/sh\n# ---\n# name: newer\n# event: FutureCatalogEvent\n# harnesses: [claude, opencode, cursor]\n# description: a future catalog event\n# ---\nexit 0\n").unwrap();
+    fs::write(catalog.join("hooks/guard.sh"), "#!/bin/sh\n# ---\n# name: guard\n# event: PreToolUse\n# harnesses: [claude]\n# description: guard\n# ---\nexit 0\n").unwrap();
+    fs::write(project.join("kendex.toml"), format!("schema = 6\n[sources.cat]\n{}\n[install]\nmethod = \"copy\"\nharnesses = [\"claude\", \"opencode\", \"cursor\"]\n[skills.deploy]\nsource = \"cat\"\n[hooks.guard]\nsource = \"cat\"\n[hooks.newer]\nsource = \"cat\"\n", source_path(&catalog))).unwrap();
+    let path = project.join(".kendex-lock.json");
+    for recordless in [false, true] {
+        if recordless {
+            fs::remove_file(&path).unwrap();
+        }
+        let output = kendex(
+            &home,
+            &project,
+            &["refresh", "--scope", "project", "--yes", "--leave"],
+        );
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        let printed = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            printed
+                .matches("kendex-hook-undeliverable: hook=newer harness=claude")
+                .count(),
+            1,
+            "{printed}"
+        );
+        let lock = kendex_core::lock::load(&path).unwrap();
+        assert_eq!(
+            lock.entries.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "hook:guard:claude",
+                "hook:newer:cursor",
+                "hook:newer:opencode",
+                "skill:deploy:claude",
+                "skill:deploy:cursor",
+                "skill:deploy:opencode",
+            ]
+        );
+        assert!(!project.join(".claude/hooks/newer.sh").exists());
+        let output = kendex(&home, &project, &["verify", "--scope", "project", "--json"]);
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        let verified: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(verified["clean"], true, "{verified}");
+        assert_eq!(verified["failed"], 0, "{verified}");
+    }
+}
+
 /// Everything under `from`, put down again under `to` — a checkout of the
 /// same tree, which is what a linked worktree is.
 ///

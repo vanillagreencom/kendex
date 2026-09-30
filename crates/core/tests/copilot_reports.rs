@@ -6,7 +6,7 @@
 #![cfg(unix)]
 
 use crate::test_util;
-use test_util::source_path;
+use test_util::{rooted, source_path};
 
 use std::fs;
 use std::path::PathBuf;
@@ -34,7 +34,7 @@ struct Fixture {
 #[allow(clippy::unwrap_used)]
 fn fixture(harnesses: &str, declarations: &str) -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().to_path_buf();
+    let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".github")).unwrap();
@@ -96,9 +96,13 @@ fn an_event_copilot_does_not_have_is_reported_never_faked() {
     let report = audit(&f.env, &f.scope).unwrap();
     assert!(
         report.notes.iter().any(|note| note.lines().next()
-            == Some("kendex-hook-unsupported: harness=copilot event=TaskCompleted hook=done")),
+            == Some("kendex-hook-undeliverable: hook=done harness=copilot")),
         "{:?}",
         report.notes
+    );
+    assert_eq!(
+        report.declaration_status,
+        kendex_core::engine::DeclarationStatus::Incomplete
     );
     apply::execute(&f.env, &report.plan).unwrap();
     assert!(!f.project.join(".github/hooks").exists());

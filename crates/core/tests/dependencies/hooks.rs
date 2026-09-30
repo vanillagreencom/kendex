@@ -220,8 +220,14 @@ struct Row {
     judge: &'static str,
     deliver: &'static str,
     parent: &'static str,
-    finding: Option<(&'static str, &'static str)>,
+    finding: Finding,
     lands: [bool; 2],
+}
+
+enum Finding {
+    None,
+    Dependency(&'static str, &'static str),
+    Undeliverable(&'static str, HarnessId),
 }
 /// The rows the manifest decides: what it keeps removed, switches off,
 /// declares for some tools, or names that the catalog lacks.
@@ -232,10 +238,10 @@ fn manifest_rows() -> [Row; 6] {
             judge: JUDGE,
             deliver: DELIVER,
             parent: "deliver",
-            finding: Some((
+            finding: Finding::Dependency(
                 "missing required dependency: deliver requires judge, which is kept removed",
                 "add the hook judge again to restore it, or drop it from deliver's dependencies",
-            )),
+            ),
             lands: [false, false],
         },
         Row {
@@ -243,10 +249,10 @@ fn manifest_rows() -> [Row; 6] {
             judge: JUDGE,
             deliver: DELIVER,
             parent: "deliver",
-            finding: Some((
+            finding: Finding::Dependency(
                 "missing required dependency: deliver requires judge, which is switched off",
                 "set enabled = true on judge's declaration in kendex.toml, or drop it from deliver's dependencies",
-            )),
+            ),
             lands: [false, false],
         },
         Row {
@@ -254,10 +260,10 @@ fn manifest_rows() -> [Row; 6] {
             judge: BROKEN_JUDGE,
             deliver: DELIVER,
             parent: "deliver",
-            finding: Some((
+            finding: Finding::Dependency(
                 "missing required dependency: deliver requires judge, whose header cannot be read: hook script has no `# ---` frontmatter block",
                 "repair judge's header in the catalog 'cat', or drop it from deliver's dependencies",
-            )),
+            ),
             lands: [false, false],
         },
         Row {
@@ -265,10 +271,10 @@ fn manifest_rows() -> [Row; 6] {
             judge: JUDGE,
             deliver: DELIVER,
             parent: "deliver",
-            finding: Some((
+            finding: Finding::Dependency(
                 "missing required dependency: Codex runs deliver without judge, which it requires",
                 "declare judge for Codex too",
-            )),
+            ),
             lands: [true, false],
         },
         Row {
@@ -276,10 +282,10 @@ fn manifest_rows() -> [Row; 6] {
             judge: JUDGE,
             deliver: DELIVER,
             parent: "lonely",
-            finding: Some((
+            finding: Finding::Dependency(
                 "lonely requires absent, which the catalog 'cat' does not offer",
                 "add absent to that catalog, or drop it from lonely's dependencies",
-            )),
+            ),
             lands: [false, false],
         },
         // The judge is withheld for the other wrapper's sake, and this one
@@ -289,10 +295,10 @@ fn manifest_rows() -> [Row; 6] {
             judge: JUDGE,
             deliver: DELIVER,
             parent: "deliver",
-            finding: Some((
+            finding: Finding::Dependency(
                 "missing required dependency: deliver requires judge, which is withheld from Claude Code and Codex",
                 "settle the finding on judge",
-            )),
+            ),
             lands: [false, false],
         },
     ]
@@ -309,10 +315,10 @@ fn header_rows() -> [Row; 4] {
             judge: NARROW_JUDGE,
             deliver: DELIVER,
             parent: "deliver",
-            finding: Some((
+            finding: Finding::Dependency(
                 "missing required dependency: Codex runs deliver without judge, whose own harnesses line leaves Codex out",
                 "add Codex to judge's harnesses line in the catalog, or list deliver's harnesses in kendex.toml without Codex",
-            )),
+            ),
             lands: [true, false],
         },
         // The wrapper's own harnesses line leaves Codex out: it never runs
@@ -322,7 +328,7 @@ fn header_rows() -> [Row; 4] {
             judge: JUDGE,
             deliver: NARROW_DELIVER,
             parent: "deliver",
-            finding: None,
+            finding: Finding::None,
             lands: [true, false],
         },
         // The judge's event is one Codex never fires, so the plan writes
@@ -332,10 +338,10 @@ fn header_rows() -> [Row; 4] {
             judge: LATE_JUDGE,
             deliver: DELIVER,
             parent: "deliver",
-            finding: Some((
+            finding: Finding::Dependency(
                 "missing required dependency: Codex runs deliver without judge, which cannot be delivered there: Codex never fires TaskCompleted",
                 "make judge deliverable on Codex, or list deliver's harnesses in kendex.toml without Codex",
-            )),
+            ),
             lands: [true, false],
         },
         // The wrapper's own event is one Codex never fires: it never runs
@@ -345,7 +351,10 @@ fn header_rows() -> [Row; 4] {
             judge: LATE_JUDGE_ALONE,
             deliver: LATE_DELIVER,
             parent: "deliver",
-            finding: None,
+            finding: Finding::Undeliverable(
+                "kendex-hook-undeliverable: hook=deliver harness=codex",
+                HarnessId::Codex,
+            ),
             lands: [true, false],
         },
     ]
@@ -375,25 +384,34 @@ fn a_companion_that_will_not_land_withholds_the_hook_that_needs_it() {
         fs::write(f.source.join("hooks/deliver.sh"), deliver).unwrap();
         let report = audit(&f.env, &f.scope).unwrap();
         let findings = findings_on(&report, parent);
-        let found: Vec<(&str, Option<&str>)> = findings
-            .iter()
-            .map(|w| (w.message.as_str(), w.remediation.as_deref()))
-            .collect();
-        let expected: Vec<(&str, Option<&str>)> = finding
-            .iter()
-            .map(|(message, remediation)| (*message, Some(*remediation)))
-            .collect();
-        assert_eq!(found, expected, "{declarations}: {:?}", messages(&report));
+        let status = match finding {
+            Finding::None => {
+                assert!(findings.is_empty(), "{:?}", messages(&report));
+                kendex_core::engine::DeclarationStatus::Complete
+            }
+            Finding::Dependency(message, remediation) => {
+                let found: Vec<_> = findings
+                    .iter()
+                    .map(|w| (w.message.as_str(), w.remediation.as_deref()))
+                    .collect();
+                assert_eq!(found, [(message, Some(remediation))], "{declarations}");
+                kendex_core::engine::DeclarationStatus::Incomplete
+            }
+            Finding::Undeliverable(record, harness) => {
+                let found: Vec<_> = findings
+                    .iter()
+                    .map(|w| (w.message.lines().next(), w.harness))
+                    .collect();
+                assert_eq!(found, [(Some(record), Some(harness))], "{declarations}");
+                kendex_core::engine::DeclarationStatus::Complete
+            }
+        };
         assert!(
             findings.iter().all(|w| w.kind == ItemKind::Hook),
             "{declarations}"
         );
-        let status = match finding {
-            Some(_) => kendex_core::engine::DeclarationStatus::Incomplete,
-            None => kendex_core::engine::DeclarationStatus::Complete,
-        };
         assert_eq!(report.declaration_status, status, "{declarations}");
-        if finding.is_some() {
+        if let Finding::Dependency(..) = finding {
             assert!(
                 !report
                     .notes
@@ -404,6 +422,11 @@ fn a_companion_that_will_not_land_withholds_the_hook_that_needs_it() {
             );
         }
         apply::execute(&f.env, &report.plan).unwrap();
+        if let Finding::Undeliverable(..) = finding {
+            let lock = lock_of(&f);
+            assert!(lock.entries.contains_key("hook:deliver:claude"));
+            assert!(!lock.entries.contains_key("hook:deliver:codex"));
+        }
         let file = format!("{parent}.sh");
         for (harness, lands) in [(HarnessId::Claude, on_claude), (HarnessId::Codex, on_codex)] {
             assert_eq!(

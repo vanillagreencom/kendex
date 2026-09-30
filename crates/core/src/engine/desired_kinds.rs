@@ -203,6 +203,8 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
             return Ok(());
         }
     };
+    let first_item = state.items.len();
+    let mut undeliverable = Vec::new();
     for harness in ctx.harnesses.clone() {
         match not_written(
             ctx.env,
@@ -250,29 +252,7 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
                 continue;
             }
             Some(NotWritten::Undeliverable(reason)) => {
-                // Restating the hook says the same in the tool's own words,
-                // and writes nothing. Were it to hand an artifact back, the
-                // delivery decision and the restating would disagree; the
-                // decision wins, so nothing is armed that the walk believes
-                // absent, and the plan says so.
-                let restated = restated_hook_artifact(
-                    ctx.env,
-                    ctx.scope,
-                    ctx.name,
-                    &hook,
-                    ctx.decl.enabled,
-                    harness,
-                    ctx.manifest.hook_env(ctx.name),
-                    state,
-                );
-                if restated.is_some() {
-                    state.mark_incomplete();
-                    state.notes.push(format!(
-                        "kendex-hook-undeliverable: hook={record_arg0} harness={record_arg1}\n{reason}",
-                        record_arg0 = crate::names::shown(ctx.name),
-                        record_arg1 = crate::names::shown(harness.name()),
-                    ));
-                }
+                undeliverable.push((harness, reason));
                 continue;
             }
             Some(NotWritten::UnreadableHeader(problem)) => unreachable!(
@@ -295,6 +275,33 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
         state
             .items
             .push(declared(ctx, ItemKind::Hook, harness, artifact)?);
+    }
+    // A catalog can name an event newer than this engine knows. Supported
+    // copies still owe a record; only a hook with no deliverable copy makes
+    // the declaration incomplete. Use the artifacts, not a second delivery
+    // probe, so a failed restatement cannot count as a supported copy.
+    let installed_nowhere = state.items.len() == first_item;
+    for (harness, reason) in undeliverable {
+        let message = format!(
+            "kendex-hook-undeliverable: hook={record_arg0} harness={record_arg1}\n{reason}",
+            record_arg0 = crate::names::shown(ctx.name),
+            record_arg1 = crate::names::shown(harness.name()),
+        );
+        if installed_nowhere {
+            state.mark_incomplete();
+            state.notes.push(message);
+        } else {
+            state.warnings.push(super::ItemWarning {
+                kind: ItemKind::Hook,
+                name: ctx.name.to_owned(),
+                harness: Some(harness),
+                message,
+                remediation: Some(format!(
+                    "use an event {} supports, or remove it from this hook's harnesses",
+                    harness.display_name(),
+                )),
+            });
+        }
     }
     Ok(())
 }
