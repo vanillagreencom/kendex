@@ -35,10 +35,8 @@ parse_argv() {
   # option the caller did not pass. Settings reach the script through their own
   # ORCH_* names, resolved after the load.
   #
-  # Model, effort, and permission posture are decided per task by the caller and
-  # arrive as --launch-flags. Nothing in this script, the settings file, or a
-  # handoff template pins them: a stored default silently applies yesterday's
-  # answer to today's work item.
+  # Explicit model choices keep the caller's route. ORCH_LANE_PREFERENCE
+  # supplies the harness, model and effort only where no model is named.
   LAUNCH_FLAGS=""
   TRACKER="linear"
   REPO=""
@@ -237,6 +235,108 @@ fi
 # copy again.
 HOST_RELAUNCH=false
 [[ "$LANE_HOST" == local || "$RELAUNCH" != true ]] || HOST_RELAUNCH=true
+
+pick_auto_lane() {
+  local model_args=() state_env=()
+  [[ -z "$LAUNCH_MODEL" ]] || model_args=(--model "$LAUNCH_MODEL")
+  [[ "$FLEET" != true ]] || state_env=("ORCH_STATE_DIR=$STATE_DIR")
+  env ${state_env[@]+"${state_env[@]}"} ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --harness "$LANE_HARNESS" \
+    ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} ${model_args[@]+"${model_args[@]}"} "$@"
+}
+
+# $LAUNCH_FLAGS is interpolated verbatim into a shell-executed launch command
+# (bash -lc on GUI lanes, keystrokes into the pane shell on tmux lanes), so a
+# shell metacharacter here is arbitrary command execution at launch. Only plain
+# flag words may pass; anything else is a caller error, not a launch. Bracketed
+# model ids (`opus[1m]`) and pi's `sonnet:high` are ordinary flag values, so
+# brackets and the colon are allowed and every shell-active character is not: a
+# colon is a shell word only as a command name, which no flag value becomes, and
+# the expansions that read one all need a `$` this pattern refuses. The colon
+# also has to pass here because a --cmd launch names pi's level on its model
+# value inside the template, and a launch without --cmd names the same word
+# here.
+if [[ -n "$LAUNCH_FLAGS" ]]; then
+  # `]` leads and `-` trails inside the bracket expression, the only positions
+  # where they are literal rather than range/close syntax.
+  launch_flags_pattern='^[]A-Za-z0-9._=/:[-]+( []A-Za-z0-9._=/:[-]+)*$'
+  if [[ ! "$LAUNCH_FLAGS" =~ $launch_flags_pattern ]]; then
+    ot_message flags-invalid "option=--launch-flags" "value=$LAUNCH_FLAGS" >&2
+    exit 1
+  fi
+fi
+
+# --launch-flags beside --cmd reach NOTHING. start_cmd renders a --cmd template
+# as the whole command, substituting {issue}, {item} and {repo} and returning
+# before the block that quotes these flags into a harness command, and no other
+# site appends them to a template. A launch leaving its model or its effort here
+# would pass the gate below, have its lane judged on that word and have it
+# written into the lane record, while the harness ran whatever default its own
+# argv named — the very gap the gate exists to close. Refused before that gate,
+# so an operator is told the flags are unreachable rather than told nothing.
+#
+# The caller's own argv is the whole of a --cmd launch, permission posture
+# included, which is why the permission-prompt warning below already skips it.
+if [[ -n "$CMD_TEMPLATE" && -n "$LAUNCH_FLAGS" ]]; then
+  ot_message launch-flags-unreachable "option=--launch-flags" "flags=$LAUNCH_FLAGS" >&2
+  exit 1
+fi
+
+# A caller's model is authoritative, including in an arbitrary --cmd. A
+# model-free harness command takes the program's ordered preference instead.
+# The remaining template words are the caller's, and must suit the chosen
+# harness; replacing an arbitrary shell command would discard its work.
+PREFERENCE_ENTRY="" PREFERENCE_LANE_ENV=""
+CMD_INPUT="$CMD_TEMPLATE"
+preference_harness="$HARNESS"
+[[ -n "$preference_harness" || "$LANE" != auto:* ]] || preference_harness="${LANE#auto:}"
+preference_text="$CMD_TEMPLATE $LAUNCH_FLAGS"
+[[ -n "$preference_harness" || -z "$CMD_TEMPLATE" ]] || preference_harness="${CMD_TEMPLATE%% *}"
+if [[ "$WAKE" != true && -n "${ORCH_LANE_PREFERENCE:-}" \
+      && -n "$(launch_choice_row "$preference_harness")" \
+      && -z "$(launch_choice_launch_model "" "$preference_text")" ]]; then
+  # shellcheck source=lib/overseer-launch.sh
+  source "$SCRIPT_DIR/lib/overseer-launch.sh"
+  ol_preference_entries "$ORCH_LANE_PREFERENCE" || {
+    ot_message invalid-preference "entry=$OL_BAD_ENTRY" >&2; exit 1;
+  }
+  [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
+  preference_pick_args=()
+  case "$LANE" in ''|auto|auto:*) ;; *) preference_pick_args=(--lane "$LANE") ;; esac
+  for preference_entry in "${OL_ENTRIES[@]}"; do
+    ol_entry_model "$preference_entry"
+    LANE_HARNESS="$OL_ENTRY_HARNESS" LAUNCH_MODEL="$OL_ENTRY_MODEL"
+    preference_rc=0
+    PREFERENCE_LANE_ENV="$(pick_auto_lane ${preference_pick_args[@]+"${preference_pick_args[@]}"})" || preference_rc=$?
+    case "$preference_rc" in
+      0) PREFERENCE_ENTRY="$preference_entry"; break ;;
+      3) continue ;;
+      *) ot_message lane-resolution-failed "entry=$preference_entry" "exit=$preference_rc" >&2; exit 1 ;;
+    esac
+  done
+  [[ -n "$PREFERENCE_ENTRY" ]] || { ot_message lane-unavailable "walk=$ORCH_LANE_PREFERENCE" >&2; exit 1; }
+  preference_words="$(launch_choice_write "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" "$OL_ENTRY_EFFORT")" || {
+    ot_message lane-resolution-failed "entry=$PREFERENCE_ENTRY" step=launch-flags >&2; exit 1;
+  }
+  if [[ -n "$CMD_TEMPLATE" ]]; then
+    launch_choice_shell_words "$CMD_TEMPLATE"
+    [[ "${LAUNCH_CHOICE_ARGV[0]}" == "$preference_harness" ]] || {
+      ot_message preference-command-invalid "harness=$preference_harness" >&2; exit 1;
+    }
+    launch_choice_strip "$preference_harness" "${LAUNCH_CHOICE_ARGV[@]:1}" || exit 1
+    CMD_TEMPLATE="$OL_ENTRY_HARNESS $preference_words"
+    for preference_word in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}; do
+      if [[ "$preference_word" == '{brief}' ]]; then CMD_TEMPLATE+=" {brief}"
+      else CMD_TEMPLATE+=" $(lane_single_quote "$preference_word")"; fi
+    done
+  else
+    launch_choice_shell_words "$LAUNCH_FLAGS"
+    launch_choice_strip "$preference_harness" ${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"} || exit 1
+    LAUNCH_FLAGS="$preference_words"
+    for preference_word in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}; do LAUNCH_FLAGS+=" $preference_word"; done
+  fi
+  HARNESS="$OL_ENTRY_HARNESS"
+  case "$LANE" in ''|auto|auto:*) LANE=auto ;; *) LANE="${PREFERENCE_LANE_ENV#*=}" ;; esac
+fi
 # How lane_record_write treats an entry that already names the item.
 RECORD_MODE=launch
 [[ "$RELAUNCH" != true ]] || RECORD_MODE=relaunch
@@ -365,43 +465,6 @@ if [[ "$SSH_PROMPT_IS_READ" == true ]]; then
   LANE_SSH_PROMPT_SECS="$VERIFY_SECONDS"
 else
   LANE_SSH_PROMPT_SECS="$LANE_SSH_PROMPT_DEFAULT"
-fi
-
-# $LAUNCH_FLAGS is interpolated verbatim into a shell-executed launch command
-# (bash -lc on GUI lanes, keystrokes into the pane shell on tmux lanes), so a
-# shell metacharacter here is arbitrary command execution at launch. Only plain
-# flag words may pass; anything else is a caller error, not a launch. Bracketed
-# model ids (`opus[1m]`) and pi's `sonnet:high` are ordinary flag values, so
-# brackets and the colon are allowed and every shell-active character is not: a
-# colon is a shell word only as a command name, which no flag value becomes, and
-# the expansions that read one all need a `$` this pattern refuses. The colon
-# also has to pass here because a --cmd launch names pi's level on its model
-# value inside the template, and a launch without --cmd names the same word
-# here.
-if [[ -n "$LAUNCH_FLAGS" ]]; then
-  # `]` leads and `-` trails inside the bracket expression, the only positions
-  # where they are literal rather than range/close syntax.
-  launch_flags_pattern='^[]A-Za-z0-9._=/:[-]+( []A-Za-z0-9._=/:[-]+)*$'
-  if [[ ! "$LAUNCH_FLAGS" =~ $launch_flags_pattern ]]; then
-    ot_message flags-invalid "option=--launch-flags" "value=$LAUNCH_FLAGS" >&2
-    exit 1
-  fi
-fi
-
-# --launch-flags beside --cmd reach NOTHING. start_cmd renders a --cmd template
-# as the whole command, substituting {issue}, {item} and {repo} and returning
-# before the block that quotes these flags into a harness command, and no other
-# site appends them to a template. A launch leaving its model or its effort here
-# would pass the gate below, have its lane judged on that word and have it
-# written into the lane record, while the harness ran whatever default its own
-# argv named — the very gap the gate exists to close. Refused before that gate,
-# so an operator is told the flags are unreachable rather than told nothing.
-#
-# The caller's own argv is the whole of a --cmd launch, permission posture
-# included, which is why the permission-prompt warning below already skips it.
-if [[ -n "$CMD_TEMPLATE" && -n "$LAUNCH_FLAGS" ]]; then
-  ot_message launch-flags-unreachable "option=--launch-flags" "flags=$LAUNCH_FLAGS" >&2
-  exit 1
 fi
 
 # Every row field is read by the library that owns the table. The MODEL
@@ -738,13 +801,6 @@ copilot_fleet_gate() {
   return 1
 }
 
-pick_auto_lane() {
-  local model_args=() state_env=()
-  [[ -z "$LAUNCH_MODEL" ]] || model_args=(--model "$LAUNCH_MODEL")
-  [[ "$FLEET" != true ]] || state_env=("ORCH_STATE_DIR=$STATE_DIR")
-  env ${state_env[@]+"${state_env[@]}"} ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --harness "$LANE_HARNESS" \
-    ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} ${model_args[@]+"${model_args[@]}"}
-}
 # A Pi launch on the Copilot pool runs under PI_CODING_AGENT_DIR set to its
 # lane (lane_env_prefix), so every reader here of Pi's root, the fleet gate's
 # settings and carrier reads and the relaunch transcript lookup, is pointed at
@@ -953,7 +1009,8 @@ if [[ -n "$LANE" ]]; then
       LANE_AUTO=true
       LANE_HARNESS="$lane_harness"
       lane_rc=0
-      LANE_ENV="$(pick_auto_lane)" || lane_rc=$?
+      if [[ -n "$PREFERENCE_ENTRY" ]]; then LANE_ENV="$PREFERENCE_LANE_ENV"
+      else LANE_ENV="$(pick_auto_lane)" || lane_rc=$?; fi
       [[ "$lane_rc" -eq 0 ]] || { auto_pick_refusal "$lane_rc"; exit 1; }
       ;;
     *)
@@ -1187,19 +1244,22 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
   [[ "$TRACKER" != github ]] || record_repo="$repo"
   rec="$(jq -cn --arg item "$item" --arg tracker "$TRACKER" --arg repo "$record_repo" --arg harness "$LAUNCH_HARNESS" \
     --arg window "$window" --arg account "$account" --arg host "$host" \
-    --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$LAUNCH_MODEL" \
+    --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$LAUNCH_MODEL" --arg preference_entry "$PREFERENCE_ENTRY" \
     --arg session_id "$session_id" --arg launched_at "$launched_at" --arg status "$status" --argjson prepare "${LAUNCH_PREPARE:-null}" \
     --arg over_cap "$CAP_PASSED" --arg running_at "$running_at" --argjson allow_all "${LAUNCH_ALLOW_ALL:-null}" \
     '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, session_id: $session_id, session_since: $launched_at, launched_at: $launched_at, running_at: $running_at, status: $status, over_cap: $over_cap}
-     | map_values(if . == "" then null else . end) + {allow_all: $allow_all} + (if $prepare == null then {} else {prepare: $prepare} end)')" || return 1
+     | map_values(if . == "" then null else . end) + {allow_all: $allow_all}
+       + (if $preference_entry == "" then {} else {preference_entry: $preference_entry} end)
+       + (if $prepare == null then {} else {prepare: $prepare} end)')" || return 1
   # update-report, so the refusal and the write are one locked step: a wake
   # that names no entry leaves the state as it was and reports so.
   report="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update-report oversee \
     "$UNPARK_JQ"'(.lanes // []) as $l
      | ($rec | if $mode == "wake" then {session_id, status} elif $mode == "relaunch" then del(.launched_at, .over_cap)
-       | if .status == "running" then . else del(.harness, .model, .account, .session_id) end else . end) as $patch
+       | if .status == "running" then . else del(.harness, .model, .preference_entry, .account, .session_id) end else . end) as $patch
      | if any($l[]; .item == $rec.item)
-       then {state: (.lanes = ($l | map(if .item == $rec.item then (if $mode == "wake" then . else del(.prepare) | unpark($rec.launched_at) end) + $patch else . end))), report: "rewritten"}
+       then {state: (.lanes = ($l | map(if .item == $rec.item then (if $mode == "wake" then . else del(.prepare) | unpark($rec.launched_at)
+         | if $rec.status == "running" then del(.preference_entry) else . end end) + $patch else . end))), report: "rewritten"}
        elif $mode == "wake" then {state: ., report: "unrecorded"}
        else {state: (.lanes = $l + [$rec]), report: "appended"} end' --argjson rec "$rec" --arg mode "$mode")" || return 1
   [[ "$report" != '"unrecorded"' ]] || return 2
@@ -2799,7 +2859,7 @@ for raw in "${ITEMS[@]}"; do
   if [[ -n "$CMD_TEMPLATE" ]]; then
     # The classifier only prints, so a failed substitution is the shell's own
     # failure, which the shell has already reported.
-    if ! quote_refusal="$(cmd_template_quote_refusal "$(cmd_template_text "$item" "$repo")")"; then exit 1; fi
+    if ! quote_refusal="$(cmd_template_quote_refusal "$CMD_INPUT")"; then exit 1; fi
     [[ -z "$quote_refusal" ]] || { ot_message "$quote_refusal" "item=$item" >&2; exit 1; }
   fi
   # The worktree create is the ownership claim: exit 75 means another session

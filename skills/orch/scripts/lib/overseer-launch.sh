@@ -12,7 +12,7 @@
 #
 #   ol_preference          the ORCH_OVERSEER_PREFERENCE value, its default
 #                          where the setting is unset
-#   ol_preference_entries  the ORCH_OVERSEER_PREFERENCE parse
+#   ol_preference_entries  the shared overseer and lane preference parse
 #   ol_account             the account a session spends, as `lanes` judges it
 #   ol_pi_model            a pi session's model, out of the sources naming it
 #   ol_entry_model         one entry's harness, model and effort, as written
@@ -107,7 +107,7 @@ ol_preference() {
   printf '%s\n' "${ORCH_OVERSEER_PREFERENCE-$OL_DEFAULT_PREFERENCE}"
 }
 
-# ol_preference_entries VALUE — VALUE, ORCH_OVERSEER_PREFERENCE's
+# ol_preference_entries VALUE — VALUE, ORCH_OVERSEER_PREFERENCE's or ORCH_LANE_PREFERENCE's
 # comma-separated `harness:model:effort` entries, into OL_ENTRIES, with
 # OL_NAMED the count. `harness` is claude, codex, copilot or pi; `model` is
 # the model the harness's `--model` word takes, on pi its own `provider/id`;

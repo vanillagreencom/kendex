@@ -9,6 +9,7 @@
 #
 # Usage: orch-env VAR_NAME DEFAULT
 #   orch-env PR_REVIEW_WAIT_SECS 900
+#   orch-env ORCH_LANE_PREFERENCE ""   (unset leaves the caller's model choice)
 #
 # ORCH_USER_MODE composes three autonomy keys. Under `ceo`, a composed key the
 # ladder leaves unset resolves to its unattended value instead of the supplied

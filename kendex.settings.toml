@@ -112,6 +112,9 @@ ORCH_LANE_SSH_PROMPT_SECS = "60"
 # checkout on the machine shares the count.
 ORCH_LANE_HOST_MAX_CALLS = "4"
 
+# The kendex owner program uses the Copilot pool before the native Codex harness.
+ORCH_LANE_PREFERENCE = "pi:github-copilot/gpt-6.1-sol:high,codex:gpt-6.1-sol:high"
+
 # Seconds a lane-host call at the ORCH_LANE_HOST_MAX_CALLS cap waits for a
 # slot before it refuses as lane-host-busy with exit 69.
 ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"

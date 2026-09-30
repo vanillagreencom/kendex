@@ -40,6 +40,8 @@ ot_message() { # REASON FIELD=VALUE...
     lane-separator) text='A tab or newline in the lane path cannot be stored in a claim.' ;;
     lane-harness-missing) text='Select a harness for automatic lane selection.' ;;
     lane-unavailable) text='No lane meets the usage threshold. Wait for a reset, raise the threshold or select a lane. The keyed lanes: line above names what each lane was and, where a threshold applied, the threshold.' ;;
+    invalid-preference) text='ORCH_LANE_PREFERENCE uses the ORCH_OVERSEER_PREFERENCE grammar in kendex.settings.toml.example § Fleet. The named entry is invalid. Nothing was launched.' ;;
+    preference-command-invalid) text='A model-free --cmd using ORCH_LANE_PREFERENCE must name the plain harness as its first word. The remaining arguments must suit the selected harness. Name an explicit model to keep an arbitrary shell command unchanged.' ;;
     lane-resolution-failed) text='The lanes helper failed to select an account.' ;;
     copilot-pool-walled) text='Every Pi account this launch could spend is at or above the usage threshold on its Copilot pool, as the lane host'"'"'s accounts row reads it or, where no row reads it, as ORCH_LANE_COPILOT_POOL states it. Nothing was launched. A pool the host read reopens at the reset its record names as binding_resets_at; a stated reading moves only when the owner restates it. The keyed lanes: line above names the pool and the threshold.' ;;
     lane-provider-unmeasured) text='Nothing measures the account this Pi launch spends: its model names no provider, or a provider other than pi-claude/ (a Claude seat) and github-copilot/ (the Copilot pool), the two whose accounts are judged. Nothing was launched: an unmeasured account is not one with room. Spell the model pi-claude/<model> or github-copilot/<model>, or pass --provider beside a bare --model.' ;;
@@ -404,12 +406,18 @@ Options:
   --launch-flags S  Flags for the harness command THIS LAUNCHER BUILDS, chosen
                     per task by the caller (model, effort, permission posture).
                     They reach a harness only through that command, so a --cmd
-                    launch, whose command is rendered verbatim, names those
+                    launch with an explicit model, rendered verbatim, names those
                     words inside the command instead and these flags beside it
                     are refused as launch-flags-unreachable. Plain
                     flag words only — the string is interpolated into a
-                    shell-executed launch command. Nothing is hardcoded here or
-                    in settings. A harness row that names an unattended
+                    shell-executed launch command. With no model,
+                    ORCH_LANE_PREFERENCE supplies the first harness:model:effort
+                    entry with room, using lanes pick. Unset or empty keeps the
+                    caller's route. The chosen preference_entry joins model on
+                    the lane record. Entry grammar: kendex.settings.toml.example
+                    § Fleet. A model-free --cmd starts with the plain harness
+                    name; its remaining arguments must suit the chosen harness.
+                    A harness row that names an unattended
                     permission posture warns when the flags carry none of its
                     spellings, because a prompting mode stalls the lane at its
                     first tool call. A --cmd launch carries its own argv and is
