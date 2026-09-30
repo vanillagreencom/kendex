@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.0.4
+
+- The declared `undici` range starts at 7.29.1, so an install can no longer resolve an `undici` release that carries the published security advisories fixed in 7.29.1, one of them high. The proxy transport that routes the Codex WebSocket through `HTTPS_PROXY` or `HTTP_PROXY` uses `undici`.
+
 ### 2.0.3
 
 - **The Codex provider shim sends the system prompt and tools again on Pi 0.86.0 and later.** Pi 0.86 moved the system prompt and the tool declarations out of a provider's `systemPrompt` and `tools` fields and into the transcript's `system` messages. The Codex provider shim still read the old fields, so on Pi 0.86 and later every `openai-codex` request reached the model with no system prompt and no tools. The shim now reads both from the transcript, with later system messages folded into the instructions and the tool set, and sends no `system` message as an input item. On a Pi host below 0.86.0 it still reads the old fields, as before.

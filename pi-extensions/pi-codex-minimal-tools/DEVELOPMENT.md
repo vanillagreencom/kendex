@@ -21,7 +21,7 @@ For maintainers. What it does for a consumer is [README.md](README.md); the prov
 
 ```bash
 cd pi-extensions/pi-codex-minimal-tools
-npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@0.87.1 @earendil-works/pi-coding-agent@0.87.1 @earendil-works/pi-tui@0.87.1 typebox 'undici@^7.25.0'
+npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@0.87.1 @earendil-works/pi-coding-agent@0.87.1 @earendil-works/pi-tui@0.87.1 typebox 'undici@^7.29.1'
 npm run check
 ```
 

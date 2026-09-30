@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-codex-minimal-tools",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "Minimal Codex/OpenAI native tools for Pi: Codex image_generation, view_image, apply_patch",
   "type": "module",
   "keywords": [
@@ -171,7 +171,7 @@
     "typebox": "*"
   },
   "dependencies": {
-    "undici": "^7.25.0"
+    "undici": "^7.29.1"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "^0.87.1",
