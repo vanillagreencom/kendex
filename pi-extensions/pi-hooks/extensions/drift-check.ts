@@ -1,6 +1,7 @@
 /**
  * kendex check --quiet --report-only output protocol: exit 1 report bytes are
- * relayed outside lanes. Lanes withhold reports with refresh or remove advice.
+ * relayed outside lanes. Lanes withhold reports with any fix: kendex advice
+ * or a direct refresh or remove suggestion.
  * At exit 2, leading Error: or error: denotes a precheck failure; all other
  * nonempty reports are incomplete checks. tests/drift-check.test.ts pins the
  * complete result and report for each producer form.
@@ -114,7 +115,7 @@ export function driftMessage(result: DriftCheckResult): string | undefined {
 		case "lane": {
 			const rule = "session-drift-check: lane=1\nThis worktree changes nothing about the install. The overseer refreshes the base checkout after merge. kendex refresh and kendex apply are never run here.";
 			let check = result.check;
-			if ("report" in check && /kendex\s+(refresh|remove)([\s\p{P}]|$)/u.test(check.report)) {
+			if ("report" in check && /fix:\s+kendex([\s\p{P}]|$)|kendex\s+(refresh|remove)([\s\p{P}]|$)/u.test(check.report)) {
 				// render_plain emits two-space items and a section overflow
 				// count. Whole-report truncation yields only a lower bound.
 				let count = 0;

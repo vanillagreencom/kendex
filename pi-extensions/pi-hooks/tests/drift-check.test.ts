@@ -65,6 +65,8 @@ for (const row of [
 const laneReports = [
 	{ name: "safe", code: 1, report: "source unreachable:\n  github.com/x/y: cannot lock ref", count: undefined },
 	{ name: "refresh", code: 1, report: "source comparison needed:\n  skill 'orch': source changed since evaluation; not yet re-evaluated\nNext: kendex refresh --scope project --yes in this checkout to refresh project packages.", count: 1 },
+	{ name: "updates", code: 1, report: "source comparison needed:\n  packages have not been compared with their sources \u2014 fix: kendex updates", count: 1 },
+	{ name: "apply", code: 1, report: "stale:\n  'orch' does not match its source \u2014 fix: kendex apply", count: 1 },
 	{ name: "remove", code: 1, report: "removed upstream:\n  skill 'orch': removed upstream: no replacement is declared: remove the installed copies and declaration \u2014 fix: kendex remove orch", count: 1 },
 	{ name: "overflow", code: 1, report: "outdated:\n  skill 'orch': source changed \u2014 fix: kendex refresh\n  … 4 more \u2014 see: kendex check", count: 5 },
 	{ name: "truncated", code: 1, report: "outdated:\n  skill 'orch': source changed \u2014 fix: kendex refresh\n… report truncated (3 more line(s)) \u2014 see: kendex check", count: 1 },

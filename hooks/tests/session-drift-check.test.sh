@@ -348,14 +348,18 @@ printf '%s\n' "$WT_MARKER" >"$WT_MARKER/.git/lane-mail/marker"
 # The prohibition line belongs to the hook, not the actionable report.
 LANE_SAFE=$'source unreachable:\n  github.com/x/y: cannot lock ref'
 LANE_REFRESH=$'source comparison needed:\n  skill \'orch\': source changed since evaluation; not yet re-evaluated\nNext: kendex refresh --scope project --yes in this checkout to refresh project packages.'
+LANE_UPDATES=$'source comparison needed:\n  packages have not been compared with their sources \342\200\224 fix: kendex updates'
+LANE_APPLY=$'stale:\n  \'orch\' does not match its source \342\200\224 fix: kendex apply'
 LANE_REMOVE=$'removed upstream:\n  skill \'orch\': removed upstream: no replacement is declared: remove the installed copies and declaration \342\200\224 fix: kendex remove orch'
 LANE_OVERFLOW=$'outdated:\n  skill \'orch\': source changed \342\200\224 fix: kendex refresh\n  … 4 more \342\200\224 see: kendex check'
 LANE_TRUNCATED=$'outdated:\n  skill \'orch\': source changed \342\200\224 fix: kendex refresh\n… report truncated (3 more line(s)) \342\200\224 see: kendex check'
 for project in "$WT_LINKED" "$WT_MARKER" "$WT_MAIN"; do
-  for shape in safe refresh remove overflow truncated; do
+  for shape in safe refresh updates apply remove overflow truncated; do
     case "$shape" in
       safe) text="$LANE_SAFE"; count=0 ;;
       refresh) text="$LANE_REFRESH"; count=1 ;;
+      updates) text="$LANE_UPDATES"; count=1 ;;
+      apply) text="$LANE_APPLY"; count=1 ;;
       remove) text="$LANE_REMOVE"; count=1 ;;
       overflow) text="$LANE_OVERFLOW"; count=5 ;;
       truncated) text="$LANE_TRUNCATED"; count=1 ;;
