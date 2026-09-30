@@ -22,8 +22,10 @@ STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
 source "$TEST_DIR/lib/growth-state.sh"
 # shellcheck source=lib/assertions.sh
 source "$TEST_DIR/lib/assertions.sh"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo "dev_return_write: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "dev_return_write: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "dev_return_write: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 # The mode a fix round runs is read from the project's settings, and orch-env
 # reads the process environment first: a developer's own range command would
 # otherwise decide the round-trip rows.
@@ -43,6 +45,8 @@ new_repo() {
   git -C "$dir" config user.email test@example.com
   git -C "$dir" config user.name Test
   git -C "$dir" config commit.gpgsign false
+  git -C "$dir" config gc.auto 0
+  git -C "$dir" config maintenance.auto false
   git -C "$dir" commit -q --allow-empty -m base
   printf '%s' "$dir"
 }
@@ -100,7 +104,10 @@ run() {
   mkdir -p "$RUN"
   ERR="$RUN/stderr"
   set +e
-  OUT=$("$WRITE" ${args[@]+"${args[@]}"} 2>"$ERR")
+  OUT=$(env -i PATH="$PATH" HOME="$TMP_ROOT" LC_ALL=C \
+    COMMIT_GUARDS_BYTE_CEILING_KB="${COMMIT_GUARDS_BYTE_CEILING_KB:-}" \
+    COMMIT_GUARDS_BYTE_WARN_PCT="${COMMIT_GUARDS_BYTE_WARN_PCT:-}" \
+    "$WRITE" ${args[@]+"${args[@]}"} 2>"$ERR")
   RC=$?
   set -e
 }
@@ -317,6 +324,82 @@ WRITE="$BIND_WRITE"
 table \
   "control: without the binding the implement round's full run is recorded for the fix|--worktree $BW $BIND_ARGS --validate-run-dir $VRUN_IMPL|rc=0 .validate_mode=full"
 WRITE="$WRITE_SHIPPED"
+
+echo "=== guarded restack binds the delegated base to the exact run head ==="
+# KEN-2156: merge-pr-restack validates from origin/main, which is still an
+# ancestor. dev-validate-run therefore records no orphan for the round base.
+# worktree's append_rebase_hop owns these map rows; worktree-push consumes
+# the same ordered hops. Completion reads them without consuming the file.
+git -C "$BW" update-ref refs/remotes/origin/main "$IMPL_BASE"
+REBASED_NEXT="$(git -C "$BW" commit-tree -p "$IMPL_BASE" -m restacked-again "$ROUND_BASE^{tree}")" || exit 1
+REBASED_CHILD="$(git -C "$BW" commit-tree -p "$REBASED" -m later-work "$ROUND_BASE^{tree}")" || exit 1
+RESTACK_RUN="$(validate_run_dir "$TMP_ROOT/validate-run-restack" range 0 "$REBASED" "$ROUND_DELEGATED")" || exit 1
+RESTACK_NEXT_RUN="$(validate_run_dir "$TMP_ROOT/validate-run-restack-next" range 0 "$REBASED_NEXT" "$ROUND_DELEGATED")" || exit 1
+RESTACK_CHILD_RUN="$(validate_run_dir "$TMP_ROOT/validate-run-restack-child" range 0 "$REBASED_CHILD" "$ROUND_DELEGATED")" || exit 1
+RESTACK_EARLY_RUN="$(validate_run_dir "$TMP_ROOT/validate-run-restack-early" range 0 "$REBASED" "$(( ROUND_DELEGATED - 1 ))")" || exit 1
+for dir in "$RESTACK_RUN" "$RESTACK_NEXT_RUN" "$RESTACK_CHILD_RUN" "$RESTACK_EARLY_RUN"; do
+  printf 'validate-base=%s\n' "$IMPL_BASE" >> "$dir/start"
+done
+RESTACK_MAP="$(git -C "$BW" rev-parse --git-path kendex-rebase-map)" || exit 1
+[[ "$RESTACK_MAP" == /* ]] || RESTACK_MAP="$BW/$RESTACK_MAP"
+RESTACK_ARGS="--kind fix --issue issue-776 --round-id 21-21 --branch b --commit $REBASED --validate pass --item 1 Applied restacked"
+for row in \
+  "KEN-2156 range from origin/main binds through the recorded restack|matching|$RESTACK_RUN|rc=0 .validate_mode=range" \
+  "no map cannot bind the rewritten head|missing|$RESTACK_RUN|rc=2 written=no stderr~dev-return-write:+run-off-round=true" \
+  "a map for another base cannot bind this round|other-base|$RESTACK_RUN|rc=2 written=no stderr~dev-return-write:+run-off-round=true" \
+  "a map to another head cannot bind this run|other-head|$RESTACK_RUN|rc=2 written=no stderr~dev-return-write:+run-off-round=true" \
+  "a descendant of the mapped head is not the mapped head|matching|$RESTACK_CHILD_RUN|rc=2 written=no stderr~dev-return-write:+run-off-round=true" \
+  "a dropped round base cannot bind a run|dropped|$RESTACK_RUN|rc=2 written=no stderr~dev-return-write:+run-off-round=true" \
+  "a pending rewrite is not a completed guarded restack|pending|$RESTACK_RUN|rc=2 written=no stderr~dev-return-write:+run-off-round=true" \
+  "ordered hops move the delegated base to the final head|two-hops|$RESTACK_NEXT_RUN|rc=0 .validate_mode=range" \
+  "rows inside one hop compare against the starting base|one-hop|$RESTACK_RUN|rc=0 .validate_mode=range" \
+  "an incomplete hop cannot bind a run|empty-hop|$RESTACK_RUN|rc=2 written=no stderr~dev-return-write:+run-off-round=true" \
+  "a matching map does not admit a run before delegation|matching|$RESTACK_EARLY_RUN|rc=2 written=no stderr~dev-return-write:+run-before-round=true"; do
+  IFS='|' read -r label shape dir expect <<<"$row"
+  rm -f -- "$BW/tmp/dev-return-issue-776-21-21.json" "$RESTACK_MAP"
+  case "$shape" in
+    missing) ;;
+    other-base) printf 'rebase-hop:\nrebase-map: %s %s\n' "$IMPL_BASE" "$REBASED" > "$RESTACK_MAP" ;;
+    other-head) printf 'rebase-hop:\nrebase-map: %s %s\n' "$ROUND_BASE" "$REBASED_NEXT" > "$RESTACK_MAP" ;;
+    dropped) printf 'rebase-hop:\nrebase-map: %s dropped\n' "$ROUND_BASE" > "$RESTACK_MAP" ;;
+    *)
+      printf 'rebase-hop:\nrebase-map: %s %s\n' "$ROUND_BASE" "$REBASED" > "$RESTACK_MAP"
+      case "$shape" in
+        matching) ;;
+        pending) printf 'rebase-unmapped: %s\n' "$REBASED" >> "$RESTACK_MAP" ;;
+        two-hops) printf 'rebase-hop:\nrebase-map: %s %s\n' "$REBASED" "$REBASED_NEXT" >> "$RESTACK_MAP" ;;
+        one-hop) printf 'rebase-map: %s %s\n' "$REBASED" "$REBASED_NEXT" >> "$RESTACK_MAP" ;;
+        empty-hop) printf 'rebase-hop:\n' >> "$RESTACK_MAP" ;;
+        *) printf 'unknown restack shape: %s\n' "$shape" >&2; exit 1 ;;
+      esac
+      ;;
+  esac
+  # shellcheck disable=SC2086
+  run --worktree "$BW" $RESTACK_ARGS --validate-run-dir "$dir"
+  assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
+done
+# Each mutant changes only the map binding rule. The first restores the
+# pre-fix refusal. The second treats any mapped target as a matching HEAD.
+for control in refuse mismatch; do
+  CONTROL_WRITE="$(mutant_scripts "restack-$control-mutant" dev-return-write)/dev-return-write" || exit 1
+  case "$control" in
+    refuse)
+      mutate_file "$CONTROL_WRITE" '        [[ "$mapped_base" == "$run_head" ]] \' '        [[ "$mapped_base" == "$run_head" ]] && false \'
+      printf 'rebase-hop:\nrebase-map: %s %s\n' "$ROUND_BASE" "$REBASED" > "$RESTACK_MAP"
+      expect="rc=2 written=no stderr~dev-return-write:+run-off-round=true"
+      ;;
+    mismatch)
+      mutate_file "$CONTROL_WRITE" '        [[ "$mapped_base" == "$run_head" ]] \' '        [[ "$mapped_base" == "$run_head" || -n "$mapped_base" ]] \'
+      printf 'rebase-hop:\nrebase-map: %s %s\n' "$ROUND_BASE" "$REBASED_NEXT" > "$RESTACK_MAP"
+      expect="rc=0 .validate_mode=range"
+      ;;
+  esac
+  rm -f -- "$BW/tmp/dev-return-issue-776-21-21.json"
+  WRITE="$CONTROL_WRITE"
+  table "control: restack $control changes the binding result|--worktree $BW $RESTACK_ARGS --validate-run-dir $RESTACK_RUN|$expect"
+  WRITE="$WRITE_SHIPPED"
+done
+rm -f -- "$RESTACK_MAP"
 
 echo "=== every refusal exits 2 on its own guard and writes nothing ==="
 # Every value-taking flag refuses a missing value and an option token in its
