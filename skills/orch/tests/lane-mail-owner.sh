@@ -9,7 +9,8 @@
 # id, the attachment's confinement, the audience and deadline filters, the
 # cursor rule, the reply's owner-ask read, the owner-note class a reply names,
 # the ask's deadline field, the box `events` stamps, the owner ask's required
-# recommendation, the cursor `events` refuses and the reply's delivery id.
+# recommendation, the cursor `events` refuses, the reply's delivery id and
+# the referenced mailbox's read lock.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -339,6 +340,44 @@ LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Which?' a,b a
 mutant ref-lane-only 'lm_owner_ask_find "$REF" ||' 'false ||'
 lm notice --item overseer --to owner --file "$(text n 'Ruled.')" --ref "$ASK"
 assert_eq "$RC=$ERR" "2=lane-mail: ref-unknown=$ASK" "control: without the to-overseer read a reply naming an owner ask is refused"
+
+# The host worker's delivered request is a valid --ref. Fail only that
+# to-lane.jsonl lock in a private dependency copy, without a real wait; the
+# notice's to-overseer.jsonl append must still work under its own lock.
+new_repo ref_lock
+LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 'Voice request.')" --delivery-id voice:request-1
+assert_eq "$RC" "0" "the request for the failed reference lock lands"
+OWNER_NOTE="$(field "$BOX/to-lane.jsonl" '.id')"
+REF_LOCK_DIR="$(mutant_scripts fixtures/ref-lock lib/file-lock.sh)" || exit 1
+mutate_file "$REF_LOCK_DIR/lib/file-lock.sh" \
+  'orch_take_lock() { # FD LOCK_FILE WAIT_SECONDS' \
+  'orch_take_lock() { [ "$2" != "$TO_LANE" ] || return 1 # FD LOCK_FILE WAIT_SECONDS'
+LANE_MAIL_BIN="$REF_LOCK_DIR/lane-mail" lm notice --item overseer --to owner --file "$(text n 'Unreferenced notice.')"
+assert_eq "$RC=$ERR" "0=" "the failed reference lock does not block the notice append lock"
+LANE_MAIL_BIN="$REF_LOCK_DIR/lane-mail" lm notice --item overseer --to owner --file "$(text n 'Voice reply.')" --ref "$OWNER_NOTE"
+REF_LOCK_WANT="2=lane-mail: lock-failed=$BOX/to-lane.jsonl"
+REF_LOCK_ASSERTION="a reply refuses the failed reference read lock and names its mailbox"
+assert_eq "$RC=$ERR" "$REF_LOCK_WANT" "$REF_LOCK_ASSERTION"
+assert_eq "$(wc -l < "$BOX/to-overseer.jsonl" | tr -d ' ')" "1" \
+  "the failed reference read appends no reply"
+
+# Keep the failed dependency, but bypass only lm_ref_find's acquisition in a
+# private lane-mail. The same refusal assertion must turn red, while the
+# reply append succeeds and carries the delivered request's binding.
+rm -- "$REF_LOCK_DIR/lane-mail"
+cp -p -- "$LANE_MAIL" "$REF_LOCK_DIR/lane-mail"
+mutate_file "$REF_LOCK_DIR/lane-mail" 'orch_take_lock 9 "$path" 30' ': 9 "$path" 30'
+LANE_MAIL_BIN="$REF_LOCK_DIR/lane-mail" lm notice --item overseer --to owner --file "$(text n 'Voice reply.')" --ref "$OWNER_NOTE"
+CONTROL_RC=0
+CONTROL_OUT="$(
+  FAIL=0
+  assert_eq "$RC=$ERR" "$REF_LOCK_WANT" "$REF_LOCK_ASSERTION"
+  [[ "$FAIL" -eq 0 ]]
+)" || CONTROL_RC=$?
+assert_eq "$RC=$ERR=$CONTROL_RC" "0==1" \
+  "control: the reference-lock assertion fails when only its acquisition is bypassed"
+assert_eq "$(field "$BOX/to-overseer.jsonl" 'select(has("ref")) | .re_delivery_id')" "voice:request-1" \
+  "control: the unlocked reference read permits the bound reply to land"
 
 new_repo control_reply_delivery
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 'Voice request.')" --delivery-id voice:request-1
