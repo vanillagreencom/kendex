@@ -753,24 +753,36 @@ substitution_status_checked() { # STATEMENT
 # condition is already complete. The C locale keeps that distinction stable.
 substitution_statements() { # FILE -> START TAB END TAB STATEMENT
   local line='' statement='' first=1 last=0 tail='' syntax=''
+  local quoted_syntax='' syntax_rc=0
   while IFS= read -r line || [ -n "$line" ]; do
     last=$((last + 1))
     statement="$statement$line"
     tail="$line"
     while [ "${tail%\\}" != "$tail" ]; do tail="${tail%\\}"; done
-    if [ "$(( (${#line} - ${#tail}) % 2 ))" = 1 ] && ! is_comment_line "$statement"; then
-      statement="${statement%\\}"
-      continue
-    fi
+    syntax=''
     case "$statement" in
-      *'$('*)
-        if ! syntax="$(LC_ALL=C bash -n <<<"$statement" 2>&1)"; then
-          case "$syntax" in
-            *'unexpected EOF while looking for matching'*)
-              statement="$statement"$'\n'
-              continue ;;
-          esac
-        fi ;;
+      *'$('* | *\\)
+        syntax_rc=0
+        syntax="$(LC_ALL=C bash -n <<<"$statement" 2>&1)" || syntax_rc=$?
+        case "$syntax_rc" in 0|2) ;; *) return 1 ;; esac ;;
+    esac
+    if [ "$(( (${#line} - ${#tail}) % 2 ))" = 1 ]; then
+      # Bash has no command-span API. A syntax-only probe replaces the final
+      # backslash with a double quote: comments and single quotes ignore it,
+      # while code and double quotes change the parser's delimiter result.
+      # Only those active backslashes remove the physical newline.
+      syntax_rc=0
+      quoted_syntax="$(LC_ALL=C bash -n <<<"${statement%\\}\"" 2>&1)" || syntax_rc=$?
+      case "$syntax_rc" in 0|2) ;; *) return 1 ;; esac
+      if [ "$syntax" != "$quoted_syntax" ]; then
+        statement="${statement%\\}"
+        continue
+      fi
+    fi
+    case "$syntax" in
+      *'unexpected EOF while looking for matching'*)
+        statement="$statement"$'\n'
+        continue ;;
     esac
     printf '%s\t%s\t%s\n' "$first" "$last" "${statement//$'\n'/ }" || return 1
     statement=''

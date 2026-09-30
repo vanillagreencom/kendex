@@ -29,7 +29,7 @@ seed() { # NAME — fixture in $R: committed baseline, origin/main, feature bran
   printf '# Fixture\n\nSee `scripts/existing.sh`.\n' >"$R/README.md"
   printf '# Guide\n\nNothing here yet.\n' >"$R/docs/guide.md"
   printf '#!/usr/bin/env bash\nset -euo pipefail\necho existing\n' >"$R/scripts/existing.sh"
-  printf '#!/usr/bin/env bash\necho loose\n' >"$R/scripts/loose.sh"
+  printf '#!/usr/bin/env bash\nset -euo pipefail\necho loose\n' >"$R/scripts/loose.sh"
   printf '{\n  "ok": true\n}\n' >"$R/data/config.json"
   printf 'CREATE TABLE t (id INTEGER);\n' >"$R/store/migrations/V1__init.sql"
   printf 'CREATE TABLE u (id INTEGER);\n' >"$R/store/migrations/V2__more.sql"
@@ -61,6 +61,7 @@ YML
 bare_guard_world() { # COMMAND FAMILY POSITION MODE
   local command="$1" family="$2" position="$3" mode="$4"
   local end='' name=ROOT assignment='' operand='' suffix='' guard=''
+  local runtime_out='' runtime_rc=0
   assignment='ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"'
   case "$command" in
     single) command='['; end=' ]' ;;
@@ -72,6 +73,9 @@ bare_guard_world() { # COMMAND FAMILY POSITION MODE
     direct) ;;
     inner) name=INNER; assignment='INNER="$(cd "$1" && git rev-parse HEAD 2>/dev/null)"' ;;
     suffix) suffix=/.fleet ;;
+    comment) assignment="$assignment"' # lookup failure \' ;;
+    commentplain) assignment="$assignment"' # lookup failure' ;;
+    commenteven) assignment="$assignment"' # lookup failure \\' ;;
     *) printf 'bare_guard_world: no such mode: %s\n' "$mode" >&2; return 1 ;;
   esac
   operand='"${'"$name"':-}"'"$suffix"
@@ -95,10 +99,21 @@ bare_guard_world() { # COMMAND FAMILY POSITION MODE
       printf '# shellcheck disable=SC2157\n'
     fi
     printf '%s\n' "$guard"
+    case "$mode" in comment*) printf '  echo guard-reached\n' ;; esac
     printf '  exit 1\n'
     printf 'fi\n'
     printf 'echo "$%s"\n' "$name"
   } >"$R/scripts/bare.sh"
+  case "$mode" in
+    comment*)
+      # Outside any repository, git exits 128. Errexit must stop before the
+      # immediate guard, including when its assignment has a comment slash.
+      runtime_out="$(cd -- "$TMP" && env -i PATH="$PATH" LC_ALL=C bash "$R/scripts/bare.sh" 2>&1)" || runtime_rc=$?
+      if [ "$runtime_rc" != 128 ] || [ -n "$runtime_out" ]; then
+        printf 'bare_guard_world: runtime=%s output=[%s]\n' "$runtime_rc" "$runtime_out" >&2
+        return 1
+      fi ;;
+  esac
 }
 
 # The jq continuation is emitted by oversee-watch::check_lanes. The other
@@ -128,6 +143,17 @@ multisubst_world() { # SHAPE HANDLER
     inner)
       assignment='ROOT="$(cd "$1" || exit 1
   git rev-parse --show-toplevel 2>/dev/null)"' ;;
+    doublequote)
+      assignment='ROOT="$(git rev-parse --show-toplevel 2>/dev/null)\
+"' ;;
+    hash)
+      assignment='ROOT="$(git rev-parse --show-toplevel 2>/dev/null '\''#'\'')" \' ;;
+    commented)
+      assignment='ROOT="$(git # lookup failure \
+  rev-parse --show-toplevel 2>/dev/null)"' ;;
+    literal)
+      assignment='ROOT="$(printf '\''%s'\'' '\''literal \
+'\'')"' ;;
     condition)
       prefix="$prefix\\"$'\n'
       assignment='ROOT="$(git
@@ -157,7 +183,7 @@ multisubst_world() { # SHAPE HANDLER
     {
       printf '#!/usr/bin/env bash\n%s\ndie() { exit 1; }\n' "$preamble"
       printf '%s%s' "$prefix" "$assignment"
-      if [ "$1" = continued ]; then printf '\n'; fi
+      case "$1" in continued|hash) printf '\n' ;; esac
       printf '%s\n%s\n' "$suffix" "$guard"
     } >"$path"
     if [ "$phase" = baseline ]; then
@@ -272,10 +298,22 @@ a double-bracket right equality guard fails as fail-open|bareguard double equali
 an inline test unary guard fails as fail-open|bareguard test unary -z direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
 an inline test right equality guard fails as fail-open|bareguard test equality right direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
 an operator inside the substitution does not exempt the equality guard|bareguard single equality left inner|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+a comment backslash preserves the immediate guard in default scope|bareguard single unary -n comment|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+a comment backslash preserves the immediate guard in base scope|bareguard single unary -n comment|--base HEAD|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+a comment backslash preserves the immediate guard in staged scope|bareguard single unary -n comment|--staged|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+a comment backslash preserves the immediate guard in all scope|bareguard single unary -n comment|--all|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+removing only the comment backslash still fails|bareguard single unary -n commentplain|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+an even comment backslash pair still fails|bareguard single unary -n commenteven|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
 the two-line jq assignment ending with or-die is checked|multisubst continued or|-|-|0|-|preflight: clean=1
 a continued assignment ending with an and-handler is checked|multisubst continued and|-|-|0|-|preflight: clean=1
 a quoted multiline substitution ending with or-die is checked|multisubst quoted or|-|-|0|-|preflight: clean=1
 a quoted multiline substitution ending with an and-handler is checked|multisubst quoted and|-|-|0|-|preflight: clean=1
+an escaped newline inside double quotes preserves the handler|multisubst doublequote or|-|-|0|-|preflight: clean=1
+an escaped newline inside double quotes preserves the bare assignment finding|multisubst doublequote bare|-|-|1|scripts/multisubst.sh:4: [fail-open]|bare command-substitution assignment under errexit
+a quoted hash does not turn a continuation into a comment|multisubst hash or|-|-|0|-|preflight: clean=1
+a comment slash inside a substitution preserves its closing line|multisubst commented bare|-|-|1|scripts/multisubst.sh:4: [fail-open]|bare command-substitution assignment under errexit
+a comment slash inside a substitution preserves its handler|multisubst commented or|-|-|0|-|preflight: clean=1
+a slash in a single-quoted literal preserves its newline|multisubst literal or|-|-|0|-|preflight: clean=1
 an if assignment condition remains checked across lines|multisubst quoted if|-|-|0|-|preflight: clean=1
 a while assignment condition remains checked across lines|multisubst quoted while|-|-|0|-|preflight: clean=1
 an until assignment condition remains checked across lines|multisubst quoted until|-|-|0|-|preflight: clean=1
