@@ -246,9 +246,11 @@ assert_fail() {
 run_oauth_request() {
 	local command="$PROJECT/request" action=()
 	if [[ "$1" == auth-check ]]; then command="$LINEAR"; action=(auth-check); fi
+	if [[ "$1" == cache-fetch ]]; then command="$LINEAR"; action=(cache attachments fetch TEAM-1); fi
+	if [[ "$1" == cache-read ]]; then command="$LINEAR"; action=(cache attachments list TEAM-1); fi
 	shift
 	OUT=$(cd -- "$PROJECT" && env -i PATH="$PROJECT/bin:$PATH" HOME="$TMP_ROOT" \
-		LINEAR_CACHE_ROOT="$PROJECT" LOG="$LOG" NOW="$NOW" LINEAR_RETRY_BASE_DELAY=0 \
+		LINEAR_CACHE_ROOT="$PROJECT" LOG="$LOG" NOW="$NOW" REAL_JQ="$REAL_JQ" LINEAR_RETRY_BASE_DELAY=0 \
 		"$@" bash "$command" "${action[@]}" 2>"$LOG/error") && RC=0 || RC=$?
 }
 

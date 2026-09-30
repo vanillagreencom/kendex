@@ -53,6 +53,7 @@ linear_check_credentials() {
 # Prints the Authorization value. Force renewal is used once after an HTTP 401.
 linear_authorization() (
     linear_check_credentials || return 1
+    linear_resolve_credentials || return 1
     if [[ "$LINEAR_AUTH_KIND" == "api-key" ]]; then
         printf '%s' "$LINEAR_API_KEY"
         return 0
@@ -77,9 +78,11 @@ linear_authorization() (
     fi
 
     # Scope is fixed: Linear revokes every app token when scopes change.
-    payload=$(jq -nr --arg id "$LINEAR_CLIENT_ID" --arg secret "$LINEAR_CLIENT_SECRET" '
-        "grant_type=client_credentials&scope=read%2Cwrite&client_id=" + ($id | @uri) +
-        "&client_secret=" + ($secret | @uri)') || return 1
+    # Environment values cannot contain NUL; it separates credentials on stdin.
+    payload=$(printf '%s\0%s' "$LINEAR_CLIENT_ID" "$LINEAR_CLIENT_SECRET" | jq -Rsr '
+        split("\u0000") |
+        "grant_type=client_credentials&scope=read%2Cwrite&client_id=" + (.[0] | @uri) +
+        "&client_secret=" + (.[1] | @uri)') || return 1
     payload_quote=$(curl_config_quote "$payload") || return 1
     raw=$(
         printf '%s\n' \

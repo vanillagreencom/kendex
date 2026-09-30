@@ -28,14 +28,14 @@ CURL_LOG="$TMP_ROOT/curl-payloads.jsonl"
 ERR_FILE="$TMP_ROOT/stderr.txt"
 
 # The fake curl mirrors the script's two transports: GraphQL POSTs and the
-# storage PUT both arrive as curl-config-on-stdin (-K -); the attachment
-# cache's background asset download uses direct args (no -K) and is not
-# under test here.
+# storage PUT arrive as curl-config-on-stdin (-K -). Asset downloads use the
+# same transport and pass their output and header paths as direct arguments.
 cat >"$PROJECT/bin/curl" <<'SH'
 #!/usr/bin/env bash
 has_config=0
 for a in "$@"; do [ "$a" = "-K" ] && has_config=1; done
-if [ "$has_config" = "0" ]; then
+if [[ "$has_config" = "0" || "$*" == *' -D '* ]]; then
+  if [[ "$has_config" = "1" ]]; then cat >/dev/null; fi
   if [ "${FAKE_ASSET_DOWNLOAD:-0}" = "fail" ]; then
     printf '500'
     exit 0
@@ -362,8 +362,8 @@ graphql_query() {
     ;;
   esac
 }
-linear_resolve_credentials() { return 0; }
 linear_authorization() { printf '%s' "$LINEAR_API_KEY"; }
+curl_config_quote() { printf '%s' "$1" | jq -Rs .; }
 
 count=$(attach_sync --quiet)
 assert_eq "an issue attachment object downloads without a description link" "$count" 1

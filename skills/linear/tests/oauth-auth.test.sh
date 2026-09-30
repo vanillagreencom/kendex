@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Credential selection and OAuth lifecycle through the request and auth-check.
+# Credential selection and OAuth lifecycle through requests, auth-check and cache fetch.
 set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 source "$SCRIPT_DIR/lib/assert.sh"
@@ -13,6 +13,7 @@ git -C "$PROJECT" config gc.auto 0
 git -C "$PROJECT" config maintenance.auto false
 cp -R -- "$SKILL_DIR" "$PROJECT/.agents/skills/linear"
 LINEAR="$PROJECT/.agents/skills/linear/scripts/linear.sh"
+REAL_JQ=$(command -v jq)
 export LINEAR_CACHE_ROOT="$PROJECT"
 
 cat >"$PROJECT/bin/date" <<'SH'
@@ -20,39 +21,64 @@ cat >"$PROJECT/bin/date" <<'SH'
 set -euo pipefail
 printf '%s\n' "${NOW:?}"
 SH
+cat >"$PROJECT/bin/jq" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$@" >>"$LOG/jq-argv"
+exec "${REAL_JQ:?}" "$@"
+SH
+cat >"$PROJECT/bin/op" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$LOG/op"
+case "$*" in
+'read op://selected/app/id') printf 'resolved/id' ;;
+'read op://selected/app/secret') printf 'resolved&secret' ;;
+*) exit 1 ;;
+esac
+SH
 cat >"$PROJECT/bin/curl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+printf '%s\n' "$@" >>"$LOG/curl-argv"
 if [[ "$*" == *'-K -'* ]]; then
     config=$(cat)
     printf '%s\n' "$config" >>"$LOG/config"
     if [[ "$config" == *'https://api.linear.app/oauth/token'* ]]; then
         printf 'mint\n' >>"$LOG/mints"
         n=$(wc -l <"$LOG/mints")
-        if [[ "${MODE:-}" == token-failure ]]; then
+        if [[ "${MODE:-}" == token-failure || ( "${MODE:-}" == references &&
+            "$config" != *'client_id=resolved%2Fid&client_secret=resolved%26secret'* ) ]]; then
             printf '{"error":"invalid_client"}___HTTP_CODE___400'
         else
             printf '{"access_token":"token-%s","token_type":"Bearer","expires_in":3600}___HTTP_CODE___200' "$n"
         fi
         exit
     fi
+    if [[ "$config" == *'https://uploads.linear.app/'* ]]; then
+        sed -n 's/^header = "\(Authorization: .*\)"$/\1/p' <<<"$config" >"$LOG/download-auth"
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+            -o) printf 'file body\n' >"$2"; shift 2 ;;
+            -D) printf 'Content-Type: text/plain\n' >"$2"; shift 2 ;;
+            *) shift ;;
+            esac
+        done
+        printf 200
+        exit
+    fi
     sed -n 's/^header = "Authorization: \(.*\)"$/\1/p' <<<"$config" >>"$LOG/auth"
     if [[ "${MODE:-}" == always-401 || ( "${MODE:-}" == once-401 && ! -f "$LOG/denied" ) ]]; then
         touch "$LOG/denied"
         printf '{}___HTTP_CODE___401'
+    elif [[ "$config" == *SyncIssueAttachments* ]]; then
+        printf '{"data":{"attachments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://uploads.linear.app/asset/findings.txt","title":"docs/findings.txt","issue":{"identifier":"TEAM-1"}}]}}}___HTTP_CODE___200'
     else
         printf '{"data":{"viewer":{"id":"actor-id","name":"Actor name"}}}___HTTP_CODE___200'
     fi
 else
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-        -H) printf '%s\n' "$2" >"$LOG/download-auth"; shift 2 ;;
-        -o) printf 'file body\n' >"$2"; shift 2 ;;
-        -D) printf 'Content-Type: text/plain\n' >"$2"; shift 2 ;;
-        *) shift ;;
-        esac
-    done
-    printf 200
+    echo 'fake-curl: transport=missing-stdin-config' >&2
+    exit 1
 fi
 SH
 cat >"$PROJECT/request" <<'SH'
@@ -67,7 +93,7 @@ else
     graphql_query '{ viewer { id name } }' '{}'
 fi
 SH
-chmod +x "$PROJECT/bin/curl" "$PROJECT/bin/date" "$PROJECT/request"
+chmod +x "$PROJECT/bin/curl" "$PROJECT/bin/date" "$PROJECT/bin/jq" "$PROJECT/bin/op" "$PROJECT/request"
 OUT="" RC=0 NOW=1000
 LOG="$TMP_ROOT/log"
 mkdir -p "$LOG"
@@ -88,6 +114,9 @@ done
 config=$(cat "$LOG/config")
 assert_contains 'mint sends fixed scope and encoded client credentials' "$config" \
     'grant_type=client_credentials&scope=read%2Cwrite&client_id=app%2Fid&client_secret=app%26secret'
+argv=$(cat "$LOG/jq-argv")
+assert_not_contains 'mint keeps client credentials out of jq arguments' "$argv" 'app&secret'
+assert_not_contains 'mint keeps client ID out of jq arguments' "$argv" 'app/id'
 cache_files=("$PROJECT/.cache/linear/oauth/"*.json)
 assert_eq 'one app cache record exists' "${#cache_files[@]}" 1
 cached=$(cat -- "${cache_files[0]}")
@@ -112,6 +141,8 @@ run_oauth_request request MODE=download
 assert_eq 'app attachment download succeeds' "$RC" 0
 header=$(cat "$LOG/download-auth")
 assert_eq 'attachment download uses selected app' "$header" 'Authorization: Bearer token-5'
+argv=$(cat "$LOG/curl-argv")
+assert_not_contains 'attachment download keeps token out of curl arguments' "$argv" 'token-5'
 
 # A new secret cannot reuse the token minted by an old one.
 run_oauth_request request LINEAR_CLIENT_SECRET=rotated
@@ -132,16 +163,57 @@ assert_jq 'auth-check reports personal key and user actor' "$OUT" \
     '.credential == "api-key" and .actor.kind == "user" and .actor.id == "actor-id"'
 
 # Both app values in process env win over the key from project files.
-run_oauth_request request LINEAR_CLIENT_ID=env-app LINEAR_CLIENT_SECRET=env-secret
+run_oauth_request request LINEAR_CLIENT_ID=env-app LINEAR_CLIENT_SECRET=env-secret LINEAR_API_KEY_OVERRIDE=override-key
 assert_eq 'environment app beats project key' "$RC" 0
 header=$(tail -n 1 "$LOG/auth")
 assert_eq 'app precedence uses Bearer' "$header" 'Bearer token-8'
 
-for row in 'no-credentials:' 'partial-app:LINEAR_CLIENT_ID=partial'; do
-    IFS=: read -r label credential <<<"$row"
-    : >"$PROJECT/.env.local"
+for row in 'no-credentials||||credential=unset' \
+    'partial-app|partial|||credential=incomplete-app' \
+    'partial-app-with-key|partial||personal-key|credential=incomplete-app' \
+    'partial-secret-with-key||partial|personal-key|credential=incomplete-app'; do
+    IFS='|' read -r label id secret key error <<<"$row"
+    printf 'LINEAR_API_KEY="%s"\n' "$key" >"$PROJECT/.env.local"
     : >"$LOG/auth"
-    if [[ -n "$credential" ]]; then run_oauth_request request "$credential"; else run_oauth_request request; fi
+    run_oauth_request request LINEAR_CLIENT_ID="$id" LINEAR_CLIENT_SECRET="$secret" LINEAR_API_KEY_OVERRIDE="$key"
     assert_ne "$label: request refuses" "$RC" 0
+    assert_file_contains "$label: selected credential refusal" "$LOG/error" "$error"
     assert_not "$label: no request reaches GraphQL" test -s "$LOG/auth"
+done
+
+# Private app references select the app even when the unused key cannot resolve.
+printf 'LINEAR_CLIENT_ID="op://selected/app/id"\nLINEAR_CLIENT_SECRET="op://selected/app/secret"\nLINEAR_API_KEY="op://unused/key"\n' >"$PROJECT/.env.local"
+printf '[{"identifier":"TEAM-1","description":""}]' >"$PROJECT/.cache/linear/issues.json"
+printf '{"synced_at":"2026-09-30T00:00:00Z"}' >"$PROJECT/.cache/linear/meta.json"
+: >"$LOG/op"
+run_oauth_request cache-read
+assert_eq 'app references: cache-only read succeeds' "$RC" 0
+assert_not 'app references: cache-only read never resolves secrets' test -s "$LOG/op"
+
+for row in 'live:request' 'inventory:cache-fetch'; do
+    IFS=: read -r label command <<<"$row"
+    rm -rf -- "$PROJECT/.cache/linear/oauth"
+    : >"$LOG/op"
+    : >"$LOG/mints"
+    : >"$LOG/config"
+    : >"$LOG/auth"
+    run_oauth_request "$command" MODE=references
+    assert_eq "$label references: request succeeds" "$RC" 0
+    reads=$(sort -u "$LOG/op")
+    assert_eq "$label references: only selected app references resolve" "$reads" \
+        $'read op://selected/app/id\nread op://selected/app/secret'
+    config=$(cat "$LOG/config")
+    assert_contains "$label references: resolved credentials reach token endpoint" "$config" \
+        'client_id=resolved%2Fid&client_secret=resolved%26secret'
+    if [[ "$command" == cache-fetch ]]; then
+        assert_jq 'inventory references: attachment fetch downloads the live record' "$OUT" \
+            '.downloaded == 1 and .total_urls == 1'
+        assert_contains 'inventory references: inventory reaches GraphQL' "$config" SyncIssueAttachments
+        header=$(cat "$LOG/download-auth")
+        assert_eq 'inventory references: attachment uses minted token' "$header" 'Authorization: Bearer token-1'
+    fi
+    run_oauth_request request MODE=references
+    assert_eq "$label references: resolved credentials reuse the cache" "$RC" 0
+    count=$(wc -l <"$LOG/mints")
+    assert_eq "$label references: cache identity uses resolved values" "${count//[[:space:]]/}" 1
 done

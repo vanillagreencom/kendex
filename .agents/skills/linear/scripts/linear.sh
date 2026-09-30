@@ -64,8 +64,9 @@ Environment:
                   Tokens use fixed scope read,write and live only in the cache.
   LINEAR_API_KEY  Fallback. Set in .env.local; a key from project files wins
                   over a plain environment export (auth-check warns when they
-                  differ). LINEAR_API_KEY_OVERRIDE beats everything for one
-                  invocation (inline/test channel).
+                  differ). LINEAR_API_KEY_OVERRIDE overrides personal-key
+                  sources for one invocation (inline/test channel). It does not
+                  bypass app selection or refusal of an incomplete app pair.
   LINEAR_TEAM     Required for writes; no default. Set it in kendex.settings.toml
                   [env] (committed, non-secret). With no team, writes refuse and
                   reads run without a team filter. Only issues/projects/cycles/
