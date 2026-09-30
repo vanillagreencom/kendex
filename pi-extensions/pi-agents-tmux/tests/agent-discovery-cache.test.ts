@@ -8,7 +8,7 @@ import { spyOn } from "bun:test";
 import { cachedAgentDiscovery, discoverAgents } from "../extensions/subagent/agents.js";
 import { subagentToolRenderers } from "../extensions/subagent/subagent-render.js";
 import {
-	cleanupTempRuntimes, filesystemCalls, importRuntimeCopy, notifyFileCheck,
+	assertDiscoveryEviction, cleanupTempRuntimes, filesystemCalls, importRuntimeCopy, notifyFileCheck,
 	stripAnsi, tempRuntime, theme, withTempPiUserDir, writeProjectAgent, writeSettings,
 } from "./browser-fixture.js";
 
@@ -87,6 +87,12 @@ for (const change of directoryRows) {
 					const rendered = subagentToolRenderers.renderCall({ agent: name, task: "Inspect." }, theme, { cwd }).render(220).join("\n");
 					assert.equal(rendered === "", change !== "remove");
 				}), [0, 0, 0, 0, 0]);
+				if (change === "nearer") {
+					fs.rmSync(dir, { recursive: true });
+					notifyFileCheck(watch, dir);
+					assert.deepEqual(cachedAgentDiscovery(cwd, "project")?.agents.map(({ name, filePath }) => ({ name, filePath })),
+						[{ name: "scout", filePath: join(root, ".pi/agents/scout.md") }]);
+				}
 			} finally { watch.mockRestore(); }
 		});
 	});
@@ -110,23 +116,28 @@ test("symlink target edits invalidate parsed content", () => {
 	});
 });
 
-test("cache eviction releases checks and retains the most recently used directory combination", () => {
-	withTempPiUserDir(() => {
-		const roots = Array.from({ length: 9 }, () => tempRuntime());
-		const unwatch = spyOn(fs, "unwatchFile");
-		try {
-			for (const cwd of roots.slice(0, 8)) {
-				writeProjectAgent(cwd, "scout");
-				discoverAgents(cwd, "project");
-			}
-			assert.ok(cachedAgentDiscovery(roots[0]!, "project"));
-			discoverAgents(roots[8]!, "project");
-			assert.ok(cachedAgentDiscovery(roots[0]!, "project"));
-			assert.equal(cachedAgentDiscovery(roots[1]!, "project"), undefined);
-			assert.ok(unwatch.mock.calls.some((args) => args[0] === join(roots[1]!, ".pi/agents/scout.md")));
-		} finally { unwatch.mockRestore(); }
-	});
+test("cache eviction releases checks and retains the requested project's inventory", () => {
+	assertDiscoveryEviction({ discoverAgents, cachedAgentDiscovery });
 });
+
+const evictionControls = [
+	{
+		name: "retaining directory subscriptions",
+		before: "for (const [file, listener] of this.subscriptions) fs.unwatchFile(file, listener);",
+		after: 'for (const [file, listener] of this.subscriptions) if (file.endsWith(".md")) fs.unwatchFile(file, listener);',
+	},
+	{
+		name: "returning another directory's memo",
+		before: "const memo = discoveryMemos.get(key);",
+		after: "const memo = discoveryMemos.values().next().value;",
+	},
+];
+for (const control of evictionControls) {
+	test(`must-fail control: ${control.name} violates eviction assertions`, async () => {
+		const mutant = await importRuntimeCopy("agents.ts", control.before, control.after) as typeof import("../extensions/subagent/agents.js");
+		assert.throws(() => assertDiscoveryEviction(mutant), assert.AssertionError);
+	});
+}
 
 test("must-fail control: render-time discovery violates the no-disk assertion", async () => {
 	const mutant = await importRuntimeCopy("subagent-render.ts",

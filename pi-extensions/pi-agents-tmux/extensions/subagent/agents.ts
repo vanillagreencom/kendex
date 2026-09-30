@@ -210,11 +210,22 @@ function userHomeDir(): string {
 	return home ? home : homedir();
 }
 
-function userAgentSourceDirs(): string[] {
-	return [
-		path.join(userHomeDir(), ".claude", "agents"),
-		path.join(getAgentDir(), "agents"),
-	];
+interface DiscoveryLocation {
+	cwd: string;
+	home: string;
+	userClaudeDir: string;
+	userPiDir: string;
+}
+
+// The render lookup resolves paths only; discovery owns the filesystem walk.
+function discoveryLocation(cwd: string): DiscoveryLocation {
+	const home = path.resolve(userHomeDir());
+	return {
+		cwd: path.resolve(cwd),
+		home,
+		userClaudeDir: path.join(home, ".claude", "agents"),
+		userPiDir: path.resolve(getAgentDir(), "agents"),
+	};
 }
 
 function realpathOrResolve(p: string): string {
@@ -235,15 +246,18 @@ function isSameOrDescendantOfAny(candidate: string, roots: string[]): boolean {
 	return roots.some((root) => isSameOrDescendant(realCandidate, root));
 }
 
-function findNearestProjectAgentDirs(cwd: string, blockedSourceDirs: string[]): string[] {
-	const home = realpathOrResolve(userHomeDir());
-	let currentDir = path.resolve(cwd);
+function findNearestProjectAgentDirs(location: DiscoveryLocation, blockedSourceDirs: string[], watched: Set<string>): string[] {
+	const home = realpathOrResolve(location.home);
+	let currentDir = location.cwd;
 	while (true) {
 		const isHome = realpathOrResolve(currentDir) === home;
 		if (isHome) return [];
 
 		const claudeDir = path.join(currentDir, ".claude", "agents");
 		const piDir = path.join(currentDir, ".pi", "agents");
+		// Absent nearer candidates must replace the inherited inventory when created.
+		watched.add(claudeDir);
+		watched.add(piDir);
 		const dirs = [claudeDir, piDir]
 			.filter(isDirectory)
 			.filter((dir) => !isSameOrDescendantOfAny(dir, blockedSourceDirs));
@@ -255,9 +269,11 @@ function findNearestProjectAgentDirs(cwd: string, blockedSourceDirs: string[]): 
 	}
 }
 
-function readDiscovery(cwd: string, userAgentDirs: string[], files: Map<string, CachedAgentFile>, watched: Set<string>): AgentDiscoveryResult {
+function readDiscovery(location: DiscoveryLocation, files: Map<string, CachedAgentFile>, watched: Set<string>): AgentDiscoveryResult {
+	const userAgentDirs = [location.userClaudeDir, location.userPiDir];
+	for (const dir of userAgentDirs) watched.add(dir);
 	const userAgentRealDirs = userAgentDirs.map(realpathOrResolve);
-	const projectAgentDirs = findNearestProjectAgentDirs(cwd, userAgentRealDirs);
+	const projectAgentDirs = findNearestProjectAgentDirs(location, userAgentRealDirs, watched);
 	return {
 		agents: [
 			...userAgentDirs.flatMap((dir) => loadAgentsFromDir(dir, "user", [], files, watched)),
@@ -278,21 +294,6 @@ function scopedDiscovery(discovery: AgentDiscoveryResult, scope: AgentScope): Ag
 	};
 }
 
-// Includes absent candidates: creating a nearer project directory must replace
-// the inherited inventory. This key needs no filesystem access in a renderer.
-function discoveryDirectories(cwd: string): string[] {
-	const dirs = userAgentSourceDirs();
-	const home = path.resolve(userHomeDir());
-	let current = path.resolve(cwd);
-	while (current !== home) {
-		dirs.push(path.join(current, ".claude", "agents"), path.join(current, ".pi", "agents"));
-		const parent = path.dirname(current);
-		if (parent === current) break;
-		current = parent;
-	}
-	return dirs;
-}
-
 type DiscoveryState =
 	| { kind: "ready"; discovery: AgentDiscoveryResult; scopes: Record<AgentScope, AgentDiscoveryResult> }
 	| { kind: "failed"; error: unknown };
@@ -305,18 +306,16 @@ class AgentDiscoveryMemo {
 	private subscriptions = new Map<string, (current: fs.Stats, previous: fs.Stats) => void>();
 	private state: DiscoveryState = { kind: "failed", error: new Error("Agent discovery has not loaded") };
 
-	private cwd: string;
-	private directories: string[];
+	private location: DiscoveryLocation;
 
-	constructor(cwd: string, directories: string[]) {
-		this.cwd = path.resolve(cwd);
-		this.directories = directories;
+	constructor(location: DiscoveryLocation) {
+		this.location = location;
 	}
 
 	refresh(): void {
-		const watched = new Set(this.directories);
+		const watched = new Set<string>();
 		try {
-			const discovery = readDiscovery(this.cwd, this.directories.slice(0, 2), this.files, watched);
+			const discovery = readDiscovery(this.location, this.files, watched);
 			for (const file of this.files.keys()) if (!watched.has(file)) this.files.delete(file);
 			const old = this.state;
 			if (old.kind !== "ready" || old.discovery.projectAgentsDir !== discovery.projectAgentsDir ||
@@ -365,11 +364,11 @@ const MAX_DISCOVERY_MEMOS = 8;
 
 /** Load or revalidate discovery outside rendering. Unchanged files are not read or parsed again. */
 export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
-	const directories = discoveryDirectories(cwd);
-	const key = JSON.stringify(directories);
+	const location = discoveryLocation(cwd);
+	const key = JSON.stringify(location);
 	let memo = discoveryMemos.get(key);
 	if (!memo) {
-		memo = new AgentDiscoveryMemo(cwd, directories);
+		memo = new AgentDiscoveryMemo(location);
 		if (discoveryMemos.size >= MAX_DISCOVERY_MEMOS) {
 			const oldest = discoveryMemos.entries().next().value;
 			if (!oldest) throw new Error("Agent discovery cache is full without an oldest entry");
@@ -385,7 +384,7 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 
 /** Read only memory. Session startup and tool execution populate all scopes; cold calls use the generic preview. */
 export function cachedAgentDiscovery(cwd: string, scope: AgentScope): AgentDiscoveryResult | undefined {
-	const key = JSON.stringify(discoveryDirectories(cwd));
+	const key = JSON.stringify(discoveryLocation(cwd));
 	const memo = discoveryMemos.get(key);
 	if (!memo) return undefined;
 	discoveryMemos.delete(key);

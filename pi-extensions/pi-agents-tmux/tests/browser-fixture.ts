@@ -30,14 +30,19 @@ export function filesystemCalls(run: () => void): number[] {
 	}
 }
 
-/** Load a disposable production edit. Relative runtime imports still use the real package. */
+/** Load a disposable production edit with imports resolved from the real package. */
 export async function importRuntimeCopy(fileName: string, before: string, after: string): Promise<unknown> {
 	const runtimeDir = resolve(import.meta.dir, "../extensions/subagent");
 	const original = fs.readFileSync(join(runtimeDir, fileName), "utf8");
 	assert.equal(original.split(before).length - 1, 1, "control must edit exactly one production behavior");
 	const modified = original.replace(before, after);
 	assert.notEqual(modified, original);
-	const source = modified.replace(/from "\.\/([^\"]+)\.js"/g, (_match, name: string) => `from ${JSON.stringify(join(runtimeDir, `${name}.ts`))}`);
+	const source = modified.replace(/from "([^"]+)"/g, (_match, specifier: string) => {
+		const resolved = specifier.startsWith("./")
+			? join(runtimeDir, specifier.replace(/\.js$/, ".ts"))
+			: import.meta.resolve(specifier);
+		return `from ${JSON.stringify(resolved)}`;
+	});
 	const copy = join(tempRuntime(), fileName);
 	writeFileSync(copy, source);
 	return import(copy);
@@ -51,6 +56,51 @@ export function notifyFileCheck(watch: { mock: { calls: unknown[][] } }, filePat
 	assert.equal(typeof listener, "function");
 	const stat = fs.existsSync(filePath) ? fs.statSync(filePath) : new fs.Stats();
 	(listener as (current: fs.Stats, previous: fs.Stats) => void)(stat, stat);
+}
+
+/** Exercise inventory identity and release of every evicted path/listener pair. */
+export function assertDiscoveryEviction(runtime: Pick<typeof import("../extensions/subagent/agents.js"), "discoverAgents" | "cachedAgentDiscovery">): void {
+	withTempPiUserDir(() => {
+		const roots = Array.from({ length: 9 }, () => tempRuntime());
+		const watch = spyOn(fs, "watchFile");
+		const unwatch = spyOn(fs, "unwatchFile");
+		const inventory = (index: number) => [
+			{ name: `local-${index}`, filePath: join(roots[index]!, `.pi/agents/local-${index}.md`) },
+			{ name: "scout", filePath: join(roots[index]!, ".pi/agents/scout.md") },
+		];
+		const readInventory = (index: number) => runtime.cachedAgentDiscovery(roots[index]!, "project")?.agents
+			.map(({ name, filePath }) => ({ name, filePath }));
+		let evictedChecks: unknown[][] = [];
+		try {
+			for (const [index, cwd] of roots.entries()) {
+				writeProjectAgent(cwd, "scout");
+				writeProjectAgent(cwd, `local-${index}`);
+				const start = watch.mock.calls.length;
+				const discovery = runtime.discoverAgents(cwd, "project");
+				assert.deepEqual(discovery.agents.map(({ name, filePath }) => ({ name, filePath })), inventory(index));
+				if (index === 1) evictedChecks = watch.mock.calls.slice(start);
+				if (index === 7) assert.deepEqual(readInventory(0), inventory(0));
+			}
+			assert.deepEqual(readInventory(0), inventory(0));
+			assert.deepEqual(readInventory(8), inventory(8));
+			assert.equal(runtime.cachedAgentDiscovery(roots[1]!, "project"), undefined);
+			// The captured subscriptions include present directories and absent candidates.
+			for (const relative of [".pi/agents/scout.md", ".pi/agents", ".claude/agents"]) {
+				assert.ok(evictedChecks.some((args) => args[0] === join(roots[1]!, relative)));
+			}
+			for (const check of evictedChecks) {
+				assert.ok(unwatch.mock.calls.some((args) => args[0] === check[0] && args[1] === check.at(-1)),
+					`evicted subscription still registered: ${check[0]}`);
+			}
+		} finally {
+			// Controls can retain subscriptions; release those too before deleting their files.
+			for (const check of watch.mock.calls) {
+				fs.unwatchFile(check[0] as string, check.at(-1) as (current: fs.Stats, previous: fs.Stats) => void);
+			}
+			watch.mockRestore();
+			unwatch.mockRestore();
+		}
+	});
 }
 
 export const theme = {

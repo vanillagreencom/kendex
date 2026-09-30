@@ -1,1 +1,1 @@
-- Pi agent tool-call previews use cached agent discovery instead of reading agent files on each render. File and directory changes update the cache outside rendering.
+- Pi agent previews reuse each working directory's cached inventory without render-time disk reads. File and directory changes update it outside rendering.
