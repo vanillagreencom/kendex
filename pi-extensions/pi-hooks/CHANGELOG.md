@@ -4,7 +4,7 @@
 
 ### 0.17.0
 
-- A `PostToolUse` payload now carries `context_window`, the context window of the session's model as Pi reports it, as the `Stop` payload does. So does the payload the lane mail wake hands the `lane-mail-deliver` hook when mail lands in an idle session. orch's `lane-mail-check` judges the fleet overseer's context after each tool call against this window. With an older carrier, that judgement is skipped at the tool call, and the turn end still judges it.
+- A `PostToolUse` payload now carries `context_window`, the context window of the session's model as Pi reports it, as the `Stop` payload does. orch's `lane-mail-check` judges the fleet overseer's context after each tool call against this window. With an older carrier, that judgement is skipped at the tool call, and the turn end still judges it.
 
 ### 0.16.0
 

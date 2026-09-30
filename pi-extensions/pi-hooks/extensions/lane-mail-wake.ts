@@ -7,7 +7,7 @@ import { installSettingsCacheRefresh, projectTrusted } from "./package-config.js
 import { agentLine, personLine, runHook, unreadableLine } from "./dispatch.js";
 import { runCommandAsync } from "./process.js";
 import { registeredHooks, TOOL_RESULT_LISTENER } from "./registry.js";
-import { claudeSessionFields, piContextFields } from "./vocab.js";
+import { claudeSessionFields } from "./vocab.js";
 
 /** The file an overseer's `lane-mail send` and a hosted `lane-host put` append to, in each lane's mailbox. */
 const TO_LANE = "to-lane.jsonl";
@@ -64,14 +64,20 @@ function deliveredContext(stdout: string): string {
  * answer, are the lane-mail-check hook's to judge, run through
  * the `lane-mail-deliver` registration kendex renders for Pi, the judge that
  * hands a working lane its mail after each tool call. The wake runs that same
- * judge while the session is idle, with the lead's session fields and the
- * model's context window, as after a tool call, and no tool fields, since no
- * tool ran, and starts one turn through `pi.sendUserMessage`
+ * judge while the session is idle, with the lead's session fields, and starts
+ * one turn through `pi.sendUserMessage`
  * with what the judge hands over; the judge marks the mail read once it has
  * written it, as after a tool call. Anything else the judge says, a refusal or
  * a judge that did not run, starts the same turn, and a wake whose text equals
  * the last one's is not sent again, so a mailbox the judge keeps refusing, or
  * a halt the lane has not yet read, starts one turn and not one per settle.
+ *
+ * The run carries no tool fields, since no tool ran, and no `context_window`.
+ * The hook judges an overseer's context mark on the window its payload names,
+ * and the turn end that just settled has judged it on the same reading. A
+ * wake run that judged it again would hand a reached mark over at each settle,
+ * its token count growing each time so the text never repeats, and each wake
+ * would start a turn that fills the context the mark protects.
  *
  * Two triggers ask for the judgement: a change to any mailbox's `to-lane.jsonl`
  * under the checkout's `tmp/lane-mail`, the overseer's included, and each
@@ -117,7 +123,7 @@ export default function laneMailWake(pi: ExtensionAPI): void {
 			const hook = registry.hooks.find((candidate) => candidate.name === DELIVER_HOOK);
 			// No registration is kendex having installed no lane mail delivery here.
 			if (hook === undefined) return;
-			const outcome = await runHook(hook, JSON.stringify({ hook_event_name: "PostToolUse", ...claudeSessionFields(ctx), ...piContextFields(ctx) }), ctx);
+			const outcome = await runHook(hook, JSON.stringify({ hook_event_name: "PostToolUse", ...claudeSessionFields(ctx) }), ctx);
 			const result = { hook, outcome };
 			const forPerson = personLine(result);
 			if (forPerson !== undefined && ctx.hasUI) ctx.ui.notify(forPerson, "info");

@@ -210,9 +210,9 @@ assert_eq "${UNREADABLE#* second=}" "PostToolUse lane-mail-check: transcript=unr
   "control: a hook that tells a transcript refusal at every call hands a standing one over again"
 
 # Pi's carrier puts the model's window on the tool call's payload, and the
-# overseer's reading is judged on it. A payload naming none comes from an
-# older carrier: that call takes no reading, writes no record and hands
-# nothing over, so the turn end's reading and judgement stand.
+# overseer's reading is judged on it. A payload naming none, the lane mail
+# wake's run or an older carrier's tool call, takes no reading, writes no
+# record and hands nothing over, so the turn end's reading and judgement stand.
 PI_TOOL_TRANSCRIPT="$TMP_ROOT/pi-tool-overseer.jsonl"
 pi_tool_rows() { # NAME WINDOW_FIELDS [JUDGE]
   tool_overseer "$1" "${3:-$HOOK}"

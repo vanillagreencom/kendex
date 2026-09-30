@@ -234,8 +234,9 @@ lane_context_mark_model() { # HARNESS MODEL
 # through HARNESS's adapter: `<tokens>\t<window>\t<model>`, the word
 # LANE_CONTEXT_UNREAD for a usage object the adapter does not read, or nothing
 # for a transcript holding no usage yet. WINDOW is a window the harness named
-# outside its transcript, which only Pi's turn-end payload does. Exit 3 names a
-# harness no adapter reads; any other failure is the adapter's own. DIR is the
+# outside its transcript, which only Pi's hook payloads do, at a turn end and
+# after a tool call. Exit 3 names a harness no adapter reads; any other failure
+# is the adapter's own. DIR is the
 # session project for Pi settings. The reading's window field holds the verified
 # compaction point, empty when the effective configuration is unresolved.
 lane_context_reading() { # HARNESS [WINDOW] [DIR]

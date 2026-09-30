@@ -241,13 +241,14 @@ for (const row of rows) {
 }
 
 /**
- * The wake runs the judge with the model's context window on its payload, as
- * the carrier's PostToolUse payload carries it, so the judge reads the
- * overseer's window from Pi at a wake as after a tool call. The judge here is
- * a stub that logs each payload it is handed; the opening turn runs no tool,
- * so every logged payload is a wake's.
+ * The wake runs the judge with no tool fields and no context window, though
+ * the session's model names one: the hook judges the overseer's context mark
+ * only on a payload naming its window, and a wake run judging it would start
+ * a turn at each settle past the mark. The judge here is a stub that logs
+ * each payload it is handed; the opening turn runs no tool, so every logged
+ * payload is a wake's.
  */
-test("the wake hands its judge the session's context window", async () => {
+test("the wake hands its judge no tool and no context window", async () => {
 	const lane = join(world, "wake-window");
 	mkdirSync(join(lane, "tmp", "lane-mail"), { recursive: true });
 	runGit(["init", "-q", "-b", "main"], lane);
@@ -275,7 +276,7 @@ test("the wake hands its judge the session's context window", async () => {
 		const payloads = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
 		expect(payloads.length).toBeGreaterThan(0);
 		for (const payload of payloads) {
-			expect([payload.hook_event_name, payload.context_window]).toEqual(["PostToolUse", 200_000]);
+			expect([payload.hook_event_name, payload.tool_name, payload.context_window]).toEqual(["PostToolUse", undefined, undefined]);
 		}
 	} finally {
 		session.dispose();
