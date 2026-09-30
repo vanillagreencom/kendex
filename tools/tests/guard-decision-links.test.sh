@@ -84,5 +84,26 @@ else
   bad "control: the decision-link refusal was not changed in the guard copy"
 fi
 
+echo "=== incomplete common-file discovery refuses all dependent scans ==="
+reset_world
+printf '#!/usr/bin/env bash\nif [ "$*" = "$GUARD_TEST_FAIL_COLLECTION" ]; then echo skills/demo/README.md; exit 9; fi\nexec %q "$@"\n' \
+  "$REAL_GIT" >"$MUTANT_TOOLS/git"
+chmod +x "$MUTANT_TOOLS/git"
+for command in 'ls-files' 'diff --cached --name-only'; do
+  GUARD_TEST_ENV=(-i "PATH=$MUTANT_TOOLS:$PATH" "HOME=$TMP" LC_ALL=C "GUARD_TEST_FAIL_COLLECTION=$command")
+  run_guard
+  [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: file-set=unreadable"* ]] \
+    && ok "a failed $command cannot pass on its partial output" \
+    || bad "a failed $command cannot pass on its partial output" "rc=$RC out=$OUT"
+  matches=$(grep -Fc 'say file-set unreadable' "$GUARD") || matches=0
+  if [ "$matches" -eq 1 ] && mutant_guard 's/say file-set unreadable/: # file-set control/'; then
+    run_mutant
+    [ "$RC" -eq 0 ] && ok "control: without the file-set refusal a failed $command passes" \
+      || bad "control: without the file-set refusal a failed $command passes" "rc=$RC out=$OUT"
+  else
+    bad "control: the file-set refusal was not changed in the guard copy"
+  fi
+done
+
 printf '\n=== %s passed, %s failed ===\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

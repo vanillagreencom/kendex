@@ -54,6 +54,8 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo 'a shipped decision citation needs a link: [D<digits>](https://github.com/vanillagreencom/kendex/blob/main/docs/decisions/<ID>-<name>.md). The file, line and bare ID follow.' ;;
     shipped-decision-scan)
       echo 'the shipped decision citation scan could not read that input; its diagnostic follows.' ;;
+    file-set)
+      echo 'the common file set could not be read, so its scans were not judged.' ;;
     homebrew-formula)
       echo "a Homebrew formula claims the plain kendex name — the cask owns it; name the formula KendexCli." ;;
     catalog-fs-read)
@@ -411,13 +413,13 @@ show() { # HITS — the same lines, safe to print
   printf '%s\n' "$1" | LC_ALL=C awk '{ gsub(/[\001-\010\013-\037\177]/, "?"); print }'
 }
 
-files=$({ git ls-files && git diff --cached --name-only; } | sort -u) || refuse shipped-decision-scan file-set
+files=$({ git ls-files && git diff --cached --name-only; } | sort -u) ||
+  { files=""; say file-set unreadable; }
 
 # Catalog prose travels to repositories without kendex's decision directory.
 # GitHub cannot judge that prose rule, so this repository's commit lane does.
-# Reuse md-refs' block, code-span, destination and ID readers. Only the link
-# masking belongs here; md-refs judges whether a citation resolves locally,
-# not whether shipped prose gives a consumer a link to the catalog decision.
+# Reuse md-refs' block, code-span, link and ID readers. This rule requires a
+# link even where md-refs can resolve a bare ID in the author's repository.
 md_lib="$TOOLS_DIR/../.agents/skills/commit-guards/scripts/lib"
 while IFS= read -r f; do
   case "$f" in
@@ -448,16 +450,7 @@ while IFS= read -r f; do
   text = substr(rest, second + 1)
   split_spans(text)
   text = outside
-  # parse_dest is md-refs' owner of escaped and nested destinations and titles.
-  p = 1
-  while (match(substr(text, p), /\[[^][]*\]\(/)) {
-    start = p + RSTART - 1
-    dest = parse_dest(text, start + RLENGTH)
-    if (dest == "" || LINK_CLOSE == 0) { p = start + RLENGTH; continue }
-    p = LINK_CLOSE + 1
-    text = substr(text, 1, start - 1) sprintf("%*s", LINK_CLOSE - start + 1, "") substr(text, LINK_CLOSE + 1)
-  }
-  emit_ids(text)
+  emit_ids(mask_links(text, 0))
   next
 }
 AWK

@@ -73,6 +73,7 @@ all|reverse-shared|the shared
 MARKERS
 printf '%s\n' '#!/bin/sh' 'exit 9' >"$MUTANT_TOOLS/sort"; chmod +x "$MUTANT_TOOLS/sort"
 run_guard PATH="$MUTANT_TOOLS:$PATH"
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: render-tracked-set=unreadable"* ]] \
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: file-set=unreadable"* ]] \
+  && [[ "$OUT" == *"guard: render-tracked-set=unreadable"* ]] \
   && ok "a failed render path normalization blocks the guard" || bad "a failed render path normalization blocks the guard" "rc=$RC out=$OUT"
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"; [ "$FAIL" -eq 0 ]

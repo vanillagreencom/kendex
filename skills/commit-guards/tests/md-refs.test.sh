@@ -44,7 +44,9 @@ run() { # ENVS ARGS
   local envs=() rc=0 out=""
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
   # shellcheck disable=SC2086
-  out="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$MDR" $2 2>&1)" || rc=$?
+  out="$(cd "$R" && env -i PATH="$PATH" HOME="$HOME" TMPDIR="$TMPDIR" \
+    XDG_CONFIG_HOME="$XDG_CONFIG_HOME" GIT_CONFIG_NOSYSTEM=1 LC_ALL=C \
+    ${envs[@]+"${envs[@]}"} "$MDR" $2 2>&1)" || rc=$?
   out="$(printf '%s\n' "$out" | LC_ALL=C awk '
     /^[a-z][a-z-]*: [a-z-]+=/ { print; next }
     /^[[:space:]]*dependency-order-control:/ {
@@ -186,6 +188,16 @@ cite_rows \
 
 echo "=== decision IDs: judged only where the decisions directory is tracked ==="
 cite_rows \
+  "an external link label is not a local decision|dec||[D016](https://example.com/decision)\n|rc=0 $(clean 0 3 0 "$DEC_YES")" \
+  "an external destination is not a local decision|dec||[decision](https://example.com/D016)\n|rc=0 $(clean 0 3 0 "$DEC_YES")" \
+  "angle destinations and titles stay inside the external link|dec||[D016](<https://example.com/D016> \"D016\")\n|rc=0 $(clean 0 3 0 "$DEC_YES")" \
+  "balanced parentheses stay inside the external link|dec||[D016](https://example.com/(D016))\n|rc=0 $(clean 0 3 0 "$DEC_YES")" \
+  "mailto uses the same non-local destination rule|dec||[D016](mailto:D016@example.com)\n|rc=0 $(clean 0 3 0 "$DEC_YES")" \
+  "a leading slash uses the same non-local destination rule|dec||[D016](/D016)\n|rc=0 $(clean 0 3 0 "$DEC_YES")" \
+  "bare IDs beside external links still fail|dec||[D016](https://example.com/D016) D016\n|rc=1 $(dead AGENTS.md 1 "$(nodecision D016)");$(failed 1 1 3 0 "$DEC_YES")" \
+  "relative link labels and destinations keep their decision IDs|dec||[D001](docs/decisions/D001-first.md)\n|rc=0 $(clean 3 3 0 "$DEC_YES")" \
+  "a relative link does not hide a missing decision in its label|dec||[D016](docs/guide.md)\n|rc=1 $(dead AGENTS.md 1 "$(nodecision D016)");$(failed 1 2 3 0 "$DEC_YES")" \
+  "link-shaped code remains decision citation text|dec||\`[D016](https://example.com/D016)\`\n|rc=1 $(dead AGENTS.md 1 "$(nodecision D016)");$(dead AGENTS.md 1 "$(nodecision D016)");$(failed 2 2 3 0 "$DEC_YES")" \
   "with no tracked decisions directory, an ID is not judged and the verdict says so|refs||Decided in D042.\n|rc=0 $(clean 0 3)" \
   "a cited ID with a tracked file passes, in prose and in a code span, and the verdict names the directory|dec||Decided in D001; see \`D001 § Context\`.\n|rc=0 $(clean 2 3 0 "$DEC_YES")" \
   "an ID citing a heading its decision does not have fails, the heading read to the end of the line|dec||See \`D001 § Rationale\`.\n|rc=1 $(dead AGENTS.md 1 "$(noprefix 'D001 § Rationale`.' docs/decisions/D001-first.md 'Rationale`.')");$(failed 1 1 3 0 "$DEC_YES")" \
@@ -198,6 +210,26 @@ cite_rows \
   "DECISIONS_DIR moves the directory, and the verdict names it|dec|DECISIONS_DIR=elsewhere|Decided in D001.\n|rc=0 $(clean 0 3 0 '0:elsewhere')" \
   "a zero width is exit 2, quoting the value|dec|DECISION_ID_WIDTH=0|Decided in D001.\n|rc=2 ${ERR}positive-integer=DECISION_ID_WIDTH:0" \
   "a prefix outside letters, digits, '_' and '-' is exit 2, quoting the value|dec|DECISION_ID_PREFIX=a.b|Decided in D001.\n|rc=2 ${ERR}decision-prefix=a.b"
+
+# merge-pr.md ships this catalog link to consumers with their own decisions.
+# The same consumer holds D001, not D016, for both the link and bare-ID runs.
+world_dec consumer-decision-link
+put AGENTS.md '[D016](https://github.com/vanillagreencom/kendex/blob/main/docs/decisions/D016-merge-route-reads-bypass.md)\n'
+assert_eq "the shipped D016 link passes without a local D016 decision" "rc=0 $(clean 0 3 0 "$DEC_YES")" "$(run '' --all)"
+mkdir -p "$TMP/md-refs-mutant"
+cp -R "$SKILL_DIR/scripts" "$TMP/md-refs-mutant/scripts"
+MASK_LINE='  if (grammar != "text") s = mask_links(s, 1)'
+assert_eq "the external-link masking control has one edit site" 1 "$(grep -Fxc "$MASK_LINE" "$TMP/md-refs-mutant/scripts/lib/md-refs.awk")"
+sed 's/if (grammar != "text") s = mask_links(s, 1)/# external-link control: keep decision emission unmasked/' \
+  "$SKILL_DIR/scripts/lib/md-refs.awk" >"$TMP/md-refs-mutant/scripts/lib/md-refs.awk"
+cmp -s "$SKILL_DIR/scripts/lib/md-refs.awk" "$TMP/md-refs-mutant/scripts/lib/md-refs.awk" && exit 2
+MDR="$TMP/md-refs-mutant/scripts/md-refs"
+assert_eq "control: without external-link masking the same consumer link fails" \
+  "rc=1 $(dead AGENTS.md 1 "$(nodecision D016)");$(dead AGENTS.md 1 "$(nodecision D016)");$(failed 2 2 3 0 "$DEC_YES")" "$(run '' --all)"
+MDR="$SKILL_DIR/scripts/md-refs"
+put AGENTS.md 'D016\n'
+assert_eq "a bare D016 fails decision-missing in that same consumer" \
+  "rc=1 $(dead AGENTS.md 1 "$(nodecision D016)");$(failed 1 1 3 0 "$DEC_YES")" "$(run '' --all)"
 
 echo "=== a link followed by a section name resolves the heading prefix ==="
 cite_rows \

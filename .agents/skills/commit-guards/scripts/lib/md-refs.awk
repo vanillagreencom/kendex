@@ -123,6 +123,25 @@ function is_local(dest) {
   return 1
 }
 
+# Mask complete inline links, or only those whose destinations are not local.
+# Keep positions for section tails. Code spans still carry decision citations,
+# so link-shaped text inside them is not masked.
+function mask_links(s, external_only,   search, p, start, dest, stop) {
+  split_spans(s)
+  search = outside
+  p = 1
+  while (match(substr(search, p), /\[[^][]*\]\(/)) {
+    start = p + RSTART - 1
+    dest = parse_dest(search, start + RLENGTH)
+    stop = LINK_CLOSE
+    if (dest == "" || stop == 0) { p = start + RLENGTH; continue }
+    p = stop + 1
+    if (!external_only || !is_local(dest))
+      s = substr(s, 1, start - 1) sprintf("%*s", stop - start + 1, "") substr(s, stop + 1)
+  }
+  return s
+}
+
 function emit_links(s, original,   i, j, k, dest, raw, tail, path) {
   i = 1
   while (1) {
@@ -186,6 +205,7 @@ function emit_citation(span,   path, rest, i) {
 # and the caller's pre-filter is free to open only the files that hold a §.
 function emit_ids(s,   i, p, q, n, before, after, tail, section) {
   if (id_prefix == "") return
+  if (grammar != "text") s = mask_links(s, 1)
   p = 1
   while (1) {
     i = index(substr(s, p), id_prefix)
