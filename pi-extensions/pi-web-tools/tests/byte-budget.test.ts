@@ -231,3 +231,23 @@ test("a read that waits IN_FLIGHT_WAIT_TIMEOUT_MS for in-flight room fails namin
 		textBeforeTimeout: 0, pdfOutcome: "ByteBudgetExhausted:in-flight", pdfCancelled: true, textAfterTimeout: 1,
 	});
 });
+
+test("a read granted in-flight room before IN_FLIGHT_WAIT_TIMEOUT_MS stops its wait timer, which then removes no other waiting read", { timeout: 10_000 }, async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const holders = Array.from({ length: SLOTS }, () => concurrentCallRead());
+	const granted = concurrentCallRead();
+	await settle();
+	holders[0]!.body.finish(0);
+	await settle();
+	t.mock.timers.tick(IN_FLIGHT_WAIT_TIMEOUT_MS / 2);
+	const waiting = concurrentCallRead();
+	await settle();
+	t.mock.timers.tick(IN_FLIGHT_WAIT_TIMEOUT_MS / 2);
+	await settle();
+	holders[1]!.body.finish(0);
+	await settle();
+	// Asserted before any read is awaited: a waiting read the stale timer removed is never granted, so awaiting it would hang.
+	assert.deepEqual({ grantedPulled: granted.body.probe.pulled, waitingPulled: waiting.body.probe.pulled }, { grantedPulled: 1, waitingPulled: 1 });
+	await finishAll([...holders, granted, waiting]);
+	assert.equal(await waiting.read, "read");
+});
