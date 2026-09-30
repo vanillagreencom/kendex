@@ -10,12 +10,18 @@ import { fixturePid, interceptNativeEffects } from "./spawn-native.js";
 //   identity-cleared:    a task is cleared before its spawn-time identity read resolves;
 //   restore-concurrency: restore probes `running` running tasks whose /proc reads the fixture holds;
 //   exit-flush:          a task's last chunk is still pending in the log writer when its child closes;
-//   log-hold:            a task outruns log appends the fixture holds.
-interface Input { mode: "chunks" | "restore" | "identity-cleared" | "restore-concurrency" | "exit-flush" | "log-hold"; chunks?: number; entries?: number; running?: number }
+//   log-hold:            a task outruns log appends the fixture holds;
+//   exit-held:           a task's child closes while the fixture holds its last log append, then
+//                        `during` names what lands before the release: a stop and the timeout, shutdown or a clear;
+//   log-stall:           a task outruns a log append that never settles and is stopped while held.
+interface Input {
+	mode: "chunks" | "restore" | "identity-cleared" | "restore-concurrency" | "exit-flush" | "log-hold" | "exit-held" | "log-stall";
+	chunks?: number; entries?: number; running?: number; during?: "stop-and-timeout" | "shutdown" | "clear";
+}
 const input: Input = JSON.parse(await Bun.stdin.text());
 const native = await interceptNativeEffects({
 	deferProcReads: input.mode === "identity-cleared" || input.mode === "restore-concurrency",
-	deferAppends: input.mode === "log-hold",
+	deferAppends: input.mode === "log-hold" || input.mode === "exit-held" || input.mode === "log-stall",
 });
 mock.module("@earendil-works/pi-ai", () => ({ StringEnum: (values: readonly string[]) => ({ enum: values }) }));
 mock.module("typebox", () => ({ Type: { Object: (value: unknown) => value, Optional: (value: unknown) => value, Number: () => ({}), String: () => ({}), Boolean: () => ({}) } }));
@@ -23,7 +29,7 @@ const unused = () => { throw new Error("write_path_fixture.sdk_operation=unexpec
 mock.module("@earendil-works/pi-tui", () => ({ matchesKey: unused, truncateToWidth: unused, visibleWidth: unused, wrapTextWithAnsi: unused }));
 mock.module("@earendil-works/pi-coding-agent", () => ({ getShellConfig: () => ({ shell: "fixture-shell", args: ["-c"] }) }));
 
-interface ToolResult { details: { task?: Record<string, unknown> } }
+interface ToolResult { content: { text: string }[]; details: { task?: Record<string, unknown> } }
 interface Tool { name: string; execute(id: string, params: Record<string, unknown>): Promise<ToolResult> }
 const tools = new Map<string, Tool>();
 const events = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
@@ -87,14 +93,19 @@ const timerSets = () => {
 	return counts;
 };
 const logBytes = (file: string) => existsSync(file) ? readFileSync(file, "utf8").length : 0;
-const persistedProcIdent = (id: string) => {
-	const payload = (entries.at(-1) as [string, { tasks: { id: string; procIdent?: unknown }[] }] | undefined)?.[1];
-	return payload?.tasks.find((task) => task.id === id)?.procIdent ?? null;
+const persistedTask = (id: string) => {
+	const payload = (entries.at(-1) as [string, { tasks: Record<string, unknown>[] }] | undefined)?.[1];
+	return payload?.tasks.find((task) => task.id === id) ?? null;
+};
+const persistedProcIdent = (id: string) => persistedTask(id)?.procIdent ?? null;
+const persistedOutcome = (id: string) => {
+	const task = persistedTask(id);
+	return { status: task?.status, reason: task?.terminationReason, exitCode: task?.exitCode };
 };
 let result: unknown;
 try {
 	const { default: backgroundTasks } = await import("../../extensions/background-tasks.js");
-	const { LOG_DRAIN_DEADLINE_MS, taskLogs } = await import("../../extensions/log-writer.js");
+	const { taskLogs } = await import("../../extensions/log-writer.js");
 	backgroundTasks(pi);
 	if (input.mode === "chunks") {
 		await dispatch("session_start");
@@ -115,7 +126,7 @@ try {
 		fireIfArmed(1_000);
 		const afterPersistWindow = entries.length - entriesBefore;
 		fireIfArmed(250);
-		await taskLogs.drain(LOG_DRAIN_DEADLINE_MS);
+		await taskLogs.drain();
 		result = { duringChunks, afterPersistWindow, procIdent: persistedProcIdent("bg-1"), logBytesAfterFlush: logBytes(logFile), chunkBytes: chunk.length };
 		child.emit("close", 0);
 	} else if (input.mode === "exit-flush") {
@@ -155,6 +166,79 @@ try {
 		});
 		result = { whileHeld, afterRelease, logBytes: logBytes(logFile), expectedBytes: chunks * chunk.length };
 		child.emit("close", 0);
+	} else if (input.mode === "exit-held") {
+		await dispatch("session_start");
+		const spawned = await execute({ action: "spawn", command: "fixture exit", notifyOnExit: true, timeoutSeconds: 60 });
+		const logFile = spawned.details.task!.logFile as string;
+		wakeLogFile = logFile;
+		await settle();
+		const child = native.children[0]!;
+		child.stdout.write("final line\n");
+		await settle();
+		child.emit("close", 0);
+		await settle();
+		const heldAppends = native.heldAppends();
+		let stopMessage: string | null = null;
+		let timeoutArmed: boolean | null = null;
+		let signals: unknown[];
+		if (input.during === "shutdown") {
+			const shutdown = dispatch("session_shutdown");
+			await settle();
+			signals = [...native.signals];
+			native.releaseAppends();
+			await shutdown;
+		} else if (input.during === "clear") {
+			await execute({ action: "clear" });
+			signals = [...native.signals];
+			native.releaseAppends();
+			await settleUntil(() => logBytes(logFile) > 0);
+			// The write's settle and the wake it releases run on the turns after the bytes land.
+			await settle();
+			await settle();
+		} else {
+			stopMessage = (await execute({ action: "stop", id: "bg-1" })).content[0]!.text;
+			timeoutArmed = native.activeTimers().some((timer) => timer.kind === "timeout" && timer.ms === 60_000);
+			if (timeoutArmed) native.fireTimeout(60_000);
+			signals = [...native.signals];
+			native.releaseAppends();
+			await settleUntil(() => logsAtWake.length > 0);
+		}
+		result = {
+			heldAppends, stopMessage, timeoutArmed, signals, childSignals: native.childSignals,
+			outcome: persistedOutcome("bg-1"), logsAtWake, log: readFileSync(logFile, "utf8"),
+		};
+	} else if (input.mode === "log-stall") {
+		const { LOG_MAX_PENDING_BYTES, LOG_WRITE_NOW_BYTES, LOG_WRITE_STALL_MS, stalledLogMarker } = await import("../../extensions/log-writer.js");
+		await dispatch("session_start");
+		const spawned = await execute({ action: "spawn", command: "fixture flood", notifyOnExit: true });
+		const logFile = spawned.details.task!.logFile as string;
+		wakeLogFile = logFile;
+		await settle();
+		const child = native.children[0]!;
+		const chunk = `${"z".repeat(LOG_WRITE_NOW_BYTES - 1)}\n`;
+		// One chunk starts the write the fixture holds; the pending text behind
+		// it reaches the cap, and one chunk more waits in the paused stream.
+		const chunks = 2 + LOG_MAX_PENDING_BYTES / LOG_WRITE_NOW_BYTES;
+		for (let index = 0; index < chunks; index++) {
+			child.stdout.write(chunk);
+			await settle();
+		}
+		const whileHeld = { heldAppends: native.heldAppends(), stdoutPaused: child.stdout.isPaused() };
+		const stopMessage = (await execute({ action: "stop", id: "bg-1" })).content[0]!.text.split(" ")[0];
+		native.fireTimeout(LOG_WRITE_STALL_MS);
+		await settleUntil(() => !child.stdout.isPaused());
+		const afterStall = { heldAppends: native.heldAppends(), stdoutPaused: child.stdout.isPaused() };
+		child.emit("close", null);
+		await settleUntil(() => logsAtWake.length > 0);
+		const atWake = { outcome: persistedOutcome("bg-1"), logsAtWake: logsAtWake.map((log) => log.length) };
+		// The chunk that arrived during the stall is past the cap: once the
+		// write settles, a marker counts it after the text kept before it.
+		const expectedLog = chunk.repeat(chunks - 1) + stalledLogMarker(chunk.length);
+		await settleUntil(() => {
+			native.releaseAppends();
+			return logBytes(logFile) >= expectedLog.length;
+		});
+		result = { whileHeld, stopMessage, afterStall, atWake, logIsKeptTextThenMarker: readFileSync(logFile, "utf8") === expectedLog };
 	} else if (input.mode === "identity-cleared") {
 		const { latestSnapshot } = await import("../../extensions/snapshot.js");
 		await dispatch("session_start");

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { LOG_DRAIN_DEADLINE_MS, LOG_FLUSH_DELAY_MS } from "../extensions/log-writer.js";
+import { LOG_FLUSH_DELAY_MS, LOG_WRITE_STALL_MS } from "../extensions/log-writer.js";
 import { runSpawnFixture, SPAWN_FIXTURE_TIMEOUT_MS } from "./fixtures/spawn-child-runner.js";
 
 const unit = "kendex-pi-bg-bg-1-1700000000000.service";
@@ -11,21 +11,21 @@ const killSignal = { pid: signalPid, signal: "SIGKILL" };
 const interval = { kind: "interval", ms: 30_000 };
 const timeout = { kind: "timeout", ms: 5_000 };
 const flush = { kind: "timeout", ms: LOG_FLUSH_DELAY_MS };
-const drain = { kind: "timeout", ms: LOG_DRAIN_DEADLINE_MS };
+const stall = { kind: "timeout", ms: LOG_WRITE_STALL_MS };
 // The spawn-time identity read arms the windowed persist; the next lifecycle
 // persist, or shutdown's, cancels it.
 const persist = { kind: "timeout", ms: 1_000 };
 const set = (timer: object) => ({ action: "set", ...timer });
 const clear = (timer: object) => ({ action: "clear", ...timer });
 // Where the row first appends a log line decides when the log flush timer is
-// armed; the task's close flushes its log before it finalizes, the fixture
-// drains the log before reading it, and shutdown drains it. A flush or drain
-// with a write to wait for arms its deadline.
+// armed; the task's close clears its timers and then flushes its log, the
+// fixture drains the log before reading it, and shutdown drains it. Each log
+// write arms its stall deadline and clears it when it settles.
 const timerEvents = {
 	none: [set(interval), set(persist), clear(persist), clear(interval)],
-	escalation: [set(interval), set(persist), clear(persist), set(timeout), set(flush), set(drain), clear(drain), clear(timeout), clear(flush), clear(interval)],
-	stop: [set(interval), set(persist), clear(persist), set(flush), clear(flush), set(drain), clear(drain), clear(interval), set(flush), clear(flush), set(drain), clear(drain)],
-	shutdown: [set(interval), set(persist), clear(interval), set(flush), clear(persist), clear(flush), set(drain), clear(drain)],
+	escalation: [set(interval), set(persist), clear(persist), set(timeout), set(flush), clear(timeout), set(stall), clear(flush), clear(stall), clear(interval)],
+	stop: [set(interval), set(persist), clear(persist), set(flush), clear(flush), set(stall), clear(stall), clear(interval), set(flush), clear(flush), set(stall), clear(stall)],
+	shutdown: [set(interval), set(persist), clear(interval), set(flush), clear(persist), clear(flush), set(stall), clear(stall)],
 	shutdownQuiet: [set(interval), set(persist), clear(interval), clear(persist)],
 } as const;
 const running = { id: "bg-1", pid: 4242, status: "running", reason: null, exitCode: null, exitNotified: false };

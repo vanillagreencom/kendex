@@ -64,8 +64,8 @@ import {
 } from "./render.js";
 import { logBackgroundDiagnostic } from "./diagnostics.js";
 import { registerAll } from "./registrations.js";
-import { finalizeTaskLifecycle, replayMissedExitsLifecycle, type LifecycleHooks } from "./lifecycle.js";
-import { LOG_DRAIN_DEADLINE_MS, taskLogs } from "./log-writer.js";
+import { closeTaskLifecycle, replayMissedExitsLifecycle, sendExitWakeLifecycle, type LifecycleHooks } from "./lifecycle.js";
+import { taskLogs } from "./log-writer.js";
 import { createOrphanWatcher, type OrphanWatcher } from "./orphan-watcher.js";
 import { applyCustomEntryWithBarrier, createPersistence, sessionIdForContext, sidecarStatePath } from "./persistence.js";
 import { mapWithConcurrency, PROBE_CONCURRENCY } from "./probes.js";
@@ -512,20 +512,21 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		clearTaskTimers,
 	};
 
-	// The exit wake and tool results name the log file as the task's full
-	// output, so a task finalizes once its log holds every chunk appended
-	// before this call, or once the flush deadline passes.
+	// The task's final status and its timers settle at once, so a stop,
+	// timeout or shutdown after the child exits signals nothing. The exit wake
+	// names the log file as the task's full output, so it waits until the log
+	// holds every chunk appended before this call or the log write stalls. A
+	// task cleared or replaced meanwhile gets no wake.
 	const finalizeTask = (task: ManagedTask, exitCode: number | null, statusOverride?: BackgroundTaskStatus): void => {
-		const flushed = taskLogs.flush(task.logFile, LOG_DRAIN_DEADLINE_MS);
-		if (!flushed) {
-			finalizeTaskLifecycle(task, exitCode, lifecycleHooks, statusOverride);
+		if (!closeTaskLifecycle(task, exitCode, lifecycleHooks, statusOverride)) return;
+		refreshUi();
+		const written = taskLogs.flush(task.logFile);
+		if (!written) {
+			sendExitWakeLifecycle(task, lifecycleHooks);
 			return;
 		}
-		void flushed.then(({ unwritten }) => {
-			if (unwritten.length > 0) {
-				logBackgroundDiagnostic("task log flush deadline passed", { id: task.id, deadlineMs: LOG_DRAIN_DEADLINE_MS, unwritten });
-			}
-			finalizeTaskLifecycle(task, exitCode, lifecycleHooks, statusOverride);
+		void written.then(() => {
+			if (tasks.get(task.id) === task) sendExitWakeLifecycle(task, lifecycleHooks);
 		});
 	};
 
@@ -620,7 +621,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 
 		task.stopReason = reason;
 		// stamp terminationReason eagerly so when the child's
-		// close handler later calls finalizeTaskLifecycle the annotation
+		// close handler later calls closeTaskLifecycle the annotation
 		// is already in place. session_shutdown calls requestStop with
 		// reason="shutdown" so the two paths land on distinct values.
 		if (reason === "user") task.terminationReason = "extension-stop";
@@ -803,8 +804,8 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			task.lastAnnouncedLength = trimmed.lastAnnouncedLength;
 			const hold = appendLogLine(task, text);
 			if (hold) {
-				// The log's writes fell behind: stop reading until the writer
-				// takes the pending text, so the child blocks on its pipe.
+				// The log's writes fell behind: stop reading until they settle
+				// or one stalls, so the child blocks on its pipe meanwhile.
 				child.stdout?.pause();
 				child.stderr?.pause();
 				void hold.then(() => {
@@ -956,10 +957,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		persistSnapshots();
 		clearWidget();
 		activeCtx = null;
-		const { unwritten } = await taskLogs.drain(LOG_DRAIN_DEADLINE_MS);
-		if (unwritten.length > 0) {
-			logBackgroundDiagnostic("task log drain deadline passed", { deadlineMs: LOG_DRAIN_DEADLINE_MS, unwritten });
-		}
+		await taskLogs.drain();
 	});
 
 	pi.on("tool_call", async (event: any, ctx: ExtensionContext) => {

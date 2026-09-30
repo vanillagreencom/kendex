@@ -5,11 +5,12 @@
 ### 2.0.4
 
 - A chunk of task output no longer costs a synchronous log write, a widget render and a full state save. Output is written to the task log in batches every 250 ms. The widget refreshes at most every 200 ms. Task state is saved at most once per second while output streams. The saved state file is compact JSON.
-- Task log writes lose no output. A task log with 1 MiB of unwritten output is written at once, without waiting for the 250 ms batch. A task whose log has 4 MiB of unwritten output behind a write in progress stops reading the task's output until that write finishes, so the task waits on its output pipe. A failed log write records a line with the number of lost bytes and the write error at the start of the next write.
-- A task reports its exit only after its log file holds all output received before the exit, or after 2 seconds if the log write has not finished.
+- A task log no longer drops output when a working disk falls behind the task. A task log with 1 MiB of unwritten output is written at once, without waiting for the 250 ms batch. A task whose log has 4 MiB of unwritten output behind a write in progress stops reading the task's output until that write finishes, so the task waits on its output pipe.
+- A log write that has not finished after 2 seconds counts as stalled. The task reads its output again. Until the write finishes, output past the 4 MiB of unwritten output is dropped, and the log gets a line with the number of dropped bytes. A failed log write records a line with the number of lost bytes and the write error at the start of the next write.
+- A task's status changes to completed, failed, stopped or timed out as soon as its process exits. A stop request, timeout or session shutdown after that sends no signal. The exit notification waits until the log file holds all output received before the exit, or until the log write stalls.
 - Process and systemd unit checks (`ps`, `systemctl`) run in the background with a 1-second timeout, at most 4 at a time. On Linux the process check reads `/proc` in the background. A check that times out, is killed, or fails to start for a reason other than a missing command no longer marks a live task as exited: the task stays running and is checked again on the next pass. On a host without `ps`, a restored task counts as exited when its process ID no longer exists. The user systemd manager check stops after its first answer until the extension loads again, for example after `/reload`. When that check times out while a task starts, later task starts with the same settings do not use `systemd-run` and do not ask again; the background check keeps asking.
 - Session start and reload read the saved task history first and then check each restored running task once, so a long history no longer slows startup.
-- Session shutdown waits at most 2 seconds for pending task log writes.
+- Session shutdown waits for pending task log writes, and stops waiting for a write that has not finished after 2 seconds.
 
 ### 2.0.3
 

@@ -180,7 +180,7 @@ export interface BackgroundTaskSnapshot {
 	/**
 	 * Why this task left the running state. Undefined means no cause was
 	 * recorded. Set on every
-	 * terminal transition through finalizeTaskLifecycle, the
+	 * terminal transition through closeTaskLifecycle, the
 	 * restoredTaskFromSnapshot coercion path, and the orphan watcher.
 	 */
 	terminationReason?: BackgroundTaskTerminationReason;

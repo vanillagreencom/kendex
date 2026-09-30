@@ -43,7 +43,23 @@ export function finalizeTaskLifecycle(
 	statusOverride?: BackgroundTaskStatus,
 	terminationReason?: BackgroundTaskTerminationReason,
 ): ManagedTask {
-	if (task.closed) return task;
+	if (!closeTaskLifecycle(task, exitCode, hooks, statusOverride, terminationReason)) return task;
+	sendExitWakeLifecycle(task, hooks);
+	hooks.refreshUi();
+	return task;
+}
+
+// The terminal transition without the exit wake: the one place that picks a
+// task's final status. Returns false when the task was already closed. A
+// caller that defers the wake calls sendExitWakeLifecycle itself.
+export function closeTaskLifecycle(
+	task: ManagedTask,
+	exitCode: number | null,
+	hooks: LifecycleHooks,
+	statusOverride?: BackgroundTaskStatus,
+	terminationReason?: BackgroundTaskTerminationReason,
+): boolean {
+	if (task.closed) return false;
 	task.closed = true;
 	task.updatedAt = Date.now();
 	task.exitCode = exitCode;
@@ -61,15 +77,14 @@ export function finalizeTaskLifecycle(
 	task.terminationReason = resolveTerminationReason(task, exitCode, terminationReason);
 	hooks.rememberSnapshot(task);
 	hooks.persistSnapshots();
+	return true;
+}
 
-	const notified = hooks.sendTaskEvent("exit", task);
-	if (notified) {
-		task.exitNotified = true;
-		hooks.rememberSnapshot(task);
-		hooks.persistSnapshots();
-	}
-	hooks.refreshUi();
-	return task;
+export function sendExitWakeLifecycle(task: ManagedTask, hooks: LifecycleHooks): void {
+	if (!hooks.sendTaskEvent("exit", task)) return;
+	task.exitNotified = true;
+	hooks.rememberSnapshot(task);
+	hooks.persistSnapshots();
 }
 
 // Resolve the terminationReason for a finalize call. Precedence:

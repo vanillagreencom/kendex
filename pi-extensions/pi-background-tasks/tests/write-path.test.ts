@@ -93,3 +93,37 @@ test("a task that outruns its log writes pauses its output until the write in fl
 		unexpected: [],
 	});
 }, SPAWN_FIXTURE_TIMEOUT_MS);
+
+test("a task that exits while its last log write is in flight takes no stop, timeout or shutdown signal and ends completed", () => {
+	const completed = { status: "completed", reason: "self-exit", exitCode: 0 };
+	const rows = [
+		{
+			name: "stop and timeout",
+			during: "stop-and-timeout",
+			expected: { stopMessage: "bg-1 is already completed (exit 0).", timeoutArmed: false, outcome: completed, logsAtWake: ["final line\n"] },
+		},
+		{ name: "shutdown", during: "shutdown", expected: { stopMessage: null, timeoutArmed: null, outcome: completed, logsAtWake: [] } },
+		// A cleared task is forgotten: no wake, and no persist brings it back.
+		{ name: "clear", during: "clear", expected: { stopMessage: null, timeoutArmed: null, outcome: {}, logsAtWake: [] } },
+	];
+	expect.assertions(rows.length + 1);
+	expect(rows.length, "exit window table must contain cases").toBeGreaterThan(0);
+	for (const row of rows) {
+		const result = runSpawnFixture("write-path-extension.ts", { mode: "exit-held", during: row.during });
+		expect(result, row.name).toStrictEqual({
+			heldAppends: 1, ...row.expected, signals: [], childSignals: [], log: "final line\n", unexpected: [],
+		});
+	}
+}, SPAWN_FIXTURE_TIMEOUT_MS * 4);
+
+test("a task stopped while its log write never settles resumes output at the stall deadline, finalizes and sends its exit wake", () => {
+	const result = runSpawnFixture("write-path-extension.ts", { mode: "log-stall" });
+	expect(result).toStrictEqual({
+		whileHeld: { heldAppends: 1, stdoutPaused: true },
+		stopMessage: "Stopping",
+		afterStall: { heldAppends: 1, stdoutPaused: false },
+		atWake: { outcome: { status: "stopped", reason: "extension-stop", exitCode: null }, logsAtWake: [0] },
+		logIsKeptTextThenMarker: true,
+		unexpected: [],
+	});
+}, SPAWN_FIXTURE_TIMEOUT_MS);
