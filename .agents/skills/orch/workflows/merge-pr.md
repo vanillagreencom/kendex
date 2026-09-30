@@ -273,7 +273,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Route a completed log's verdict through the table below. If the completion file records an exit other than `5` without a result object, report the exit and stop: `queue-wait --help` § Exit codes defines those failures. Follow [Waiter launch](../references/waiter-launch.md) § Completion when no exit is recorded.
 
-   Successive waits are the designed shape for a long queue, and this step is reached only after an exit `75` from the `--auto` arm or the direct attempt, which is GitHub reporting the PR queued or auto-merge enabled. That holds for every wait in the sequence and no wait can lose it, which is what the `not_queued` row below rests on: each wait starts with the queue priors of `queue-wait --help` § Verdicts reset, so a wait that never itself saw the PR queued says `not_queued` whatever came before it — and after an exit `75` that reads as an arm cleared in the seam, never as one that was never made.
+   Every wait in this sequence follows an exit `75`: GitHub reported the PR queued or armed. Each new wait resets its queue history (`queue-wait --help` § Verdicts). A later `not_queued` therefore means that arm cleared between waits, not that no arm occurred.
 
    Under Codex, run the saved launch script as one simple command ([references/codex-runtime.md](../references/codex-runtime.md)).
 
@@ -289,9 +289,9 @@ Use the output as `MAIN_REPO_ROOT`.
    | `closed` | Hand back with the verdict; no replay |
    | `unknown` | Unrecognized, or `status: error` — a read failed and says nothing about the arm, which after exit `75` is usually still live. Unarm before handing back, by § 1's no-armed-hand-back rule. Hand back with the `error` and `cause` fields, and never re-arm |
 
-   A `still_progressing` repeat is left unbounded on purpose. It terminates: the signal stays true only while a check-run is not completed or the queue entry is still moving, and GitHub's own workflow timeout finally fails a run whose runner died. Entry movement ends too — a position only falls, so the PR reaches the front and merges or leaves the queue. Returning early would leave the PR armed with the merge free to fire behind a departed lane, and steps 5 and 6 would never run on it — which is the whole reason the lane waits here rather than handing back.
+   A `still_progressing` repeat has no limit. Keep the lane active until a terminal verdict; after a merge, run steps 2-6.
 
-   A `progress_unobservable` repeat is bounded, because nothing in that signal promises it ends. Take one repeat wait on the same head. A second consecutive `progress_unobservable` takes the Recovery cycle, where `stalled` already goes: the lane stays on the PR and steps 2-6 still run on it, which is the same reason the `still_progressing` repeat does not return early. The result's two counts say which shape the lane met and neither gates the route — `progress_head_polls: 0` means no poll's queue entry ever exposed a head commit to read, and a `progress_head_polls` above 0 with `progress_check_reads: 0` means every read on that head failed.
+   For `progress_unobservable`, repeat once on the same head. A second consecutive `progress_unobservable` takes the Recovery cycle, as `stalled` does. Keep the lane active for steps 2-6. The progress counts in `queue-wait --help` report what the wait could read; neither gates the route.
 
    **Recovery cycle** — route the failure back into ci-fix, never fix CI by hand:
 
