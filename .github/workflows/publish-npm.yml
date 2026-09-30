@@ -40,7 +40,7 @@ jobs:
     if: ${{ github.event_name == 'push' }}
     permissions:
       # Creates the workflow_dispatch event. GitHub starts a run for a
-      # workflow_dispatch the job token creates, unlike its other events.
+      # workflow_dispatch the job token creates.
       actions: write
       contents: read
     runs-on: ubuntu-latest
