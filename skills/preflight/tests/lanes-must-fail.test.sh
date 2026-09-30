@@ -106,6 +106,7 @@ bare_guard_world() { # COMMAND FAMILY POSITION MODE
 multisubst_world() { # SHAPE HANDLER
   local assignment='' prefix='' suffix='' guard='[ -z "$ROOT" ] && exit 1'
   local preamble='set -euo pipefail' path="$R/scripts/multisubst.sh"
+  local phase phases='final'
   case "$2" in
     or) suffix=' || die' ;;
     and) suffix=' && echo "$ROOT"' ;;
@@ -143,12 +144,27 @@ multisubst_world() { # SHAPE HANDLER
     guard="${guard//ROOT/hosted_harness}"
   fi
   if [ "$2" = test ]; then assignment="${assignment#ROOT=}"; fi
-  {
-    printf '#!/usr/bin/env bash\n%s\ndie() { exit 1; }\n' "$preamble"
-    printf '%s%s' "$prefix" "$assignment"
-    if [ "$1" = continued ]; then printf '\n'; fi
-    printf '%s\n%s\n' "$suffix" "$guard"
-  } >"$path"
+  if [ "$1:$2" = quoted:bare ]; then
+    # Only the closing line changes. The guard sits at the far edge of the
+    # four-line window from that line, outside the window from the opening.
+    phases='baseline final'
+    guard=$'log() {\n  printf "%s\\n" "$1" >&2\n}\n'"$guard"
+  fi
+  for phase in $phases; do
+    if [ "$1:$2" = quoted:bare ]; then
+      case "$phase" in baseline) suffix=' || die' ;; final) suffix='' ;; esac
+    fi
+    {
+      printf '#!/usr/bin/env bash\n%s\ndie() { exit 1; }\n' "$preamble"
+      printf '%s%s' "$prefix" "$assignment"
+      if [ "$1" = continued ]; then printf '\n'; fi
+      printf '%s\n%s\n' "$suffix" "$guard"
+    } >"$path"
+    if [ "$phase" = baseline ]; then
+      git -C "$R" add scripts/multisubst.sh || return 1
+      git -C "$R" commit -qm 'checked multiline assignment' || return 1
+    fi
+  done
 }
 
 # One planted defect per world, on top of the seeded fixture, staged. The
@@ -270,7 +286,8 @@ a substitution inside a double-bracket test remains checked|multisubst quoted te
 a checked multiline mktemp without errexit stays checked|multisubst mktemp or|-|-|0|-|preflight: clean=1
 an unchecked multiline mktemp without errexit still fails|multisubst mktemp bare|-|-|1|scripts/loose.sh:4: [fail-open]|unchecked mktemp
 a bare continued substitution still fails|multisubst continued bare|-|-|1|scripts/multisubst.sh:4: [fail-open]|bare command-substitution assignment under errexit
-a bare quoted multiline substitution still fails|multisubst quoted bare|-|-|1|scripts/multisubst.sh:4: [fail-open]|bare command-substitution assignment under errexit
+removing only the closing-line handler fails at the statement-end guard boundary in base scope|multisubst quoted bare|--base HEAD|-|1|scripts/multisubst.sh:4: [fail-open]|bare command-substitution assignment under errexit
+removing only the closing-line handler fails at the statement-end guard boundary in staged scope|multisubst quoted bare|--staged|-|1|scripts/multisubst.sh:4: [fail-open]|bare command-substitution assignment under errexit
 an operator inside a multiline substitution does not check its assignment|multisubst inner bare|-|-|1|scripts/multisubst.sh:4: [fail-open]|bare command-substitution assignment under errexit
 a later command handler does not check the multiline assignment|multisubst quoted later|-|-|1|scripts/multisubst.sh:4: [fail-open]|bare command-substitution assignment under errexit
 a quoted unary operand with a path suffix is not a direct guard|bareguard single unary -z suffix|-|-|0|-|preflight: clean=1
