@@ -8,8 +8,10 @@
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d)" || { echo 'lanes-must-fail: scratch=mktemp-failed' >&2; exit 1; }
+[[ -d $TMP && ! -L $TMP ]] || { echo "lanes-must-fail: scratch=not-a-directory value=[$TMP]" >&2; exit 1; }
+TMP="$(cd -- "$TMP" && pwd -P)" || { echo 'lanes-must-fail: scratch=resolve-failed' >&2; exit 1; }
+trap 'rm -rf -- "${TMP:?}"' EXIT
 
 seed() { # NAME — fixture in $R: committed baseline, origin/main, feature branch
   R="$TMP/$1"
@@ -22,6 +24,8 @@ seed() { # NAME — fixture in $R: committed baseline, origin/main, feature bran
   git -C "$R" -c init.defaultBranch=main init -q
   git -C "$R" config user.email test@example.com
   git -C "$R" config user.name test
+  git -C "$R" config gc.auto 0
+  git -C "$R" config maintenance.auto false
   printf '# Fixture\n\nSee `scripts/existing.sh`.\n' >"$R/README.md"
   printf '# Guide\n\nNothing here yet.\n' >"$R/docs/guide.md"
   printf '#!/usr/bin/env bash\nset -euo pipefail\necho existing\n' >"$R/scripts/existing.sh"
@@ -97,6 +101,56 @@ bare_guard_world() { # COMMAND FAMILY POSITION MODE
   } >"$R/scripts/bare.sh"
 }
 
+# The jq continuation is emitted by oversee-watch::check_lanes. The other
+# rows exercise the shell condition and handler spellings of that same rule.
+multisubst_world() { # SHAPE HANDLER
+  local assignment='' prefix='' suffix='' guard='[ -z "$ROOT" ] && exit 1'
+  local preamble='set -euo pipefail' path="$R/scripts/multisubst.sh"
+  case "$2" in
+    or) suffix=' || die' ;;
+    and) suffix=' && echo "$ROOT"' ;;
+    if) prefix='if '; suffix='; then echo "$ROOT"; fi' ;;
+    while) prefix='while '; suffix='; do break; done' ;;
+    until) prefix='until '; suffix='; do break; done' ;;
+    test) prefix='[[ -n '; suffix=' ]]'; guard='echo done' ;;
+    bare) ;;
+    later) suffix='; echo later || die' ;;
+    *) printf 'multisubst_world: no such handler: %s\n' "$2" >&2; return 1 ;;
+  esac
+  case "$1" in
+    continued)
+      # The two-line jq assignment and handler reported by the real producer.
+      assignment='ROOT="$(jq -r '\''.lanes[]? | select(.item == $item) | .harness'\'' --arg item "$LANE_ITEM" <<<"${FLEET_STATE:-null}")" \' ;;
+    quoted)
+      assignment='ROOT="$(git
+  rev-parse --show-toplevel 2>/dev/null)"' ;;
+    inner)
+      assignment='ROOT="$(cd "$1" || exit 1
+  git rev-parse --show-toplevel 2>/dev/null)"' ;;
+    condition)
+      prefix="$prefix\\"$'\n'
+      assignment='ROOT="$(git
+  rev-parse --show-toplevel 2>/dev/null)"' ;;
+    mktemp)
+      preamble='set -uo pipefail'; path="$R/scripts/loose.sh"
+      assignment='ROOT="$(mktemp -d
+)"' ;;
+    *) printf 'multisubst_world: no such shape: %s\n' "$1" >&2; return 1 ;;
+  esac
+  if [ "$1" = continued ]; then
+    assignment="${assignment//ROOT/hosted_harness}"
+    suffix="${suffix//ROOT/hosted_harness}"
+    guard="${guard//ROOT/hosted_harness}"
+  fi
+  if [ "$2" = test ]; then assignment="${assignment#ROOT=}"; fi
+  {
+    printf '#!/usr/bin/env bash\n%s\ndie() { exit 1; }\n' "$preamble"
+    printf '%s%s' "$prefix" "$assignment"
+    if [ "$1" = continued ]; then printf '\n'; fi
+    printf '%s\n%s\n' "$suffix" "$guard"
+  } >"$path"
+}
+
 # One planted defect per world, on top of the seeded fixture, staged. The
 # temp-path literals are substituted at run time: the generated fixture
 # carries them by design, while this suite's own committed bytes never join
@@ -128,6 +182,7 @@ pf_world() {
       printf '#!/usr/bin/env bash\nset -euo pipefail\n%s%s\necho "$n"\n' "$ec_writer" "$ec_reader" >"$R/tests/known.test.sh"
       ;;
     bareguard) bare_guard_world "$2" "$3" "$4" "$5" ;;
+    multisubst) multisubst_world "$2" "$3" ;;
     scratch) printf '#!/usr/bin/env bash\nset -euo pipefail\nD="$(mktemp -d)"\necho "$D"\n' >"$R/scripts/scratch.sh" ;;
     scratchfile) printf '#!/usr/bin/env bash\nset -euo pipefail\nF="$(mktemp)"\necho "$F"\n' >"$R/scripts/scratchfile.sh" ;;
     shellmk) printf '#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p %s/cache\n' /tmp >"$R/scripts/shellmk.sh" ;;
@@ -201,6 +256,23 @@ a double-bracket right equality guard fails as fail-open|bareguard double equali
 an inline test unary guard fails as fail-open|bareguard test unary -z direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
 an inline test right equality guard fails as fail-open|bareguard test equality right direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
 an operator inside the substitution does not exempt the equality guard|bareguard single equality left inner|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+the two-line jq assignment ending with or-die is checked|multisubst continued or|-|-|0|-|preflight: clean=1
+a continued assignment ending with an and-handler is checked|multisubst continued and|-|-|0|-|preflight: clean=1
+a quoted multiline substitution ending with or-die is checked|multisubst quoted or|-|-|0|-|preflight: clean=1
+a quoted multiline substitution ending with an and-handler is checked|multisubst quoted and|-|-|0|-|preflight: clean=1
+an if assignment condition remains checked across lines|multisubst quoted if|-|-|0|-|preflight: clean=1
+a while assignment condition remains checked across lines|multisubst quoted while|-|-|0|-|preflight: clean=1
+an until assignment condition remains checked across lines|multisubst quoted until|-|-|0|-|preflight: clean=1
+an if continued onto the assignment stays checked|multisubst condition if|-|-|0|-|preflight: clean=1
+a while continued onto the assignment stays checked|multisubst condition while|-|-|0|-|preflight: clean=1
+an until continued onto the assignment stays checked|multisubst condition until|-|-|0|-|preflight: clean=1
+a substitution inside a double-bracket test remains checked|multisubst quoted test|-|-|0|-|preflight: clean=1
+a checked multiline mktemp without errexit stays checked|multisubst mktemp or|-|-|0|-|preflight: clean=1
+an unchecked multiline mktemp without errexit still fails|multisubst mktemp bare|-|-|1|scripts/loose.sh:4: [fail-open]|unchecked mktemp
+a bare continued substitution still fails|multisubst continued bare|-|-|1|scripts/multisubst.sh:4: [fail-open]|bare command-substitution assignment under errexit
+a bare quoted multiline substitution still fails|multisubst quoted bare|-|-|1|scripts/multisubst.sh:4: [fail-open]|bare command-substitution assignment under errexit
+an operator inside a multiline substitution does not check its assignment|multisubst inner bare|-|-|1|scripts/multisubst.sh:4: [fail-open]|bare command-substitution assignment under errexit
+a later command handler does not check the multiline assignment|multisubst quoted later|-|-|1|scripts/multisubst.sh:4: [fail-open]|bare command-substitution assignment under errexit
 a quoted unary operand with a path suffix is not a direct guard|bareguard single unary -z suffix|-|-|0|-|preflight: clean=1
 a quoted right-hand equality operand with a path suffix is not a direct guard|bareguard single equality right suffix|-|-|0|-|preflight: clean=1
 a new script with mktemp and no EXIT trap fails as mktemp-trap|scratch|-|-|1|scripts/scratch.sh:3: [mktemp-trap]|mktemp without an EXIT trap
