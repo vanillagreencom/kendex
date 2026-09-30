@@ -14,15 +14,17 @@ import { fixturePid, interceptNativeEffects } from "./spawn-native.js";
 //   exit-held:           a task's child closes while the fixture holds its last log append, then
 //                        `during` names what lands before the release: a stop and the timeout, shutdown or a clear;
 //                        this mode alone has a UI, whose widget the fixture draws on each redraw request;
-//   log-stall:           a task outruns a log append that never settles and is stopped while held.
+//   log-stall:           a task outruns a log append that never settles and is stopped while held;
+//   bound-held:          a task's child closes while the fixture holds its last log append, then
+//                        as many tasks as the finished-task bound keeps finish before the release.
 interface Input {
-	mode: "chunks" | "restore" | "identity-cleared" | "restore-concurrency" | "exit-flush" | "log-hold" | "exit-held" | "log-stall";
+	mode: "chunks" | "restore" | "identity-cleared" | "restore-concurrency" | "exit-flush" | "log-hold" | "exit-held" | "log-stall" | "bound-held";
 	chunks?: number; entries?: number; running?: number; during?: "stop-and-timeout" | "shutdown" | "clear";
 }
 const input: Input = JSON.parse(await Bun.stdin.text());
 const native = await interceptNativeEffects({
 	deferProcReads: input.mode === "identity-cleared" || input.mode === "restore-concurrency",
-	deferAppends: input.mode === "log-hold" || input.mode === "exit-held" || input.mode === "log-stall",
+	deferAppends: input.mode === "log-hold" || input.mode === "exit-held" || input.mode === "log-stall" || input.mode === "bound-held",
 });
 mock.module("@earendil-works/pi-ai", () => ({ StringEnum: (values: readonly string[]) => ({ enum: values }) }));
 mock.module("typebox", () => ({ Type: { Object: (value: unknown) => value, Optional: (value: unknown) => value, Number: () => ({}), String: () => ({}), Boolean: () => ({}) } }));
@@ -265,6 +267,28 @@ try {
 			return logBytes(logFile) >= expectedLog.length;
 		});
 		result = { whileHeld, stopMessage, afterStall, atWake, logIsKeptTextThenMarker: readFileSync(logFile, "utf8") === expectedLog };
+	} else if (input.mode === "bound-held") {
+		const { MAX_FINISHED_TASKS } = await import("../../extensions/constants.js");
+		await dispatch("session_start");
+		const spawned = await execute({ action: "spawn", command: "fixture held", notifyOnExit: true });
+		wakeLogFile = spawned.details.task!.logFile as string;
+		await settle();
+		native.children[0]!.stdout.write("held line\n");
+		await settle();
+		native.children[0]!.emit("close", 0);
+		await settle();
+		// Each quiet task finishes with no output, so its exit settles at once and
+		// runs the bound, while bg-1 is the oldest finished task.
+		for (let index = 1; index <= MAX_FINISHED_TASKS; index++) {
+			await execute({ action: "spawn", command: `fixture quiet ${index}`, notifyOnExit: false });
+			await settle();
+			native.children[index]!.emit("close", 0);
+			await settle();
+		}
+		const heldAppends = native.heldAppends();
+		native.releaseAppends();
+		await settleUntil(() => logsAtWake.length > 0);
+		result = { heldAppends, logsAtWake };
 	} else if (input.mode === "identity-cleared") {
 		const { latestSnapshot } = await import("../../extensions/snapshot.js");
 		await dispatch("session_start");

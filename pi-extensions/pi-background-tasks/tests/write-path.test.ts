@@ -119,6 +119,11 @@ test("a task that exits while its last log write is in flight shows closed at on
 	}
 }, SPAWN_FIXTURE_TIMEOUT_MS * 4);
 
+test("the finished-task bound keeps a task whose exit wake waits for its log flush", () => {
+	const result = runSpawnFixture("write-path-extension.ts", { mode: "bound-held" });
+	expect(result).toStrictEqual({ heldAppends: 1, logsAtWake: ["held line\n"], unexpected: [] });
+}, SPAWN_FIXTURE_TIMEOUT_MS);
+
 test("a task stopped while its log write never settles resumes output at the stall deadline, finalizes and sends its exit wake", () => {
 	const result = runSpawnFixture("write-path-extension.ts", { mode: "log-stall" });
 	expect(result).toStrictEqual({
