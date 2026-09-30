@@ -112,7 +112,6 @@ sk_bind "$RESUMES"
 cat > "$(sk_journal "$RESUMES")" <<EOF
 {"at": "", "ids": [], "t": "start"}
 {"t": "resume", "from_at": "$OLD_AT", "at": "$OLD_AT", "seen": 3, "skipped": ["OLD-SKIP"], "asks": []}
-{"t": "resume", "from_at": "$OLD_AT", "at": "$OLD_AT", "asks": []}
 {"t": "resume", "from_at": "$OLD_AT", "at": "$YOUNG_AT", "seen": 4, "skipped": ["YOUNG-SKIP"], "asks": []}
 EOF
 sk_run -- compact --root "$RESUMES"

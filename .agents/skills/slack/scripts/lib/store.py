@@ -181,7 +181,7 @@ class State:
         elif kind == "resume":
             parse_at(str(line["at"]))
             self.held = False
-            self.carried.update(str(env_id) for env_id in line.get("skipped", []))
+            self.carried.update(str(env_id) for env_id in line["skipped"])
         elif kind == "in":
             ts = str(line["ts"])
             if line["kind"] == "ignored":

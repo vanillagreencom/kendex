@@ -246,7 +246,7 @@ sk_unposted "$EPSILON" "$MASTER"
 sk_master_read "$EPSILON" 3
 stale
 sk_poll "$EPSILON" "$HOLD"
-sk_mutant replay store.py 'self\.carried\.update\(str\(env_id\) for env_id in line\.get\("skipped", \[\]\)\)' 'self.carried.update([])'
+sk_mutant replay store.py 'self\.carried\.update\(str\(env_id\) for env_id in line\["skipped"\]\)' 'self.carried.update([])'
 rm -- "$(sk_box "$EPSILON")/to-overseer.seen"
 sk_poll "$EPSILON" "$HOLD"
 assert_eq "$(count "$(sk_channel "$EPSILON")" 'Backlog in epsilon.')" "3" "control: without replay, skipped ids post after restart"

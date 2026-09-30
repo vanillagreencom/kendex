@@ -346,7 +346,7 @@ assert_eq "$RC=$(jq -r '.box // "none"' <<<"$OUT")" "0=none" "control: without t
 
 new_repo control_lines
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 'Owner wrote.')"
-mutant lineless 'line: $line' 'line: 0'
+mutant lineless '{box: $box, line: $line, count: $count}' '{box: $box, line: 0, count: $count}'
 lm events --item overseer
 assert_eq "$RC=$(jq -r '.line' <<<"$OUT")" "0=0" "control: without physical numbering an envelope has no usable cursor position"
 
