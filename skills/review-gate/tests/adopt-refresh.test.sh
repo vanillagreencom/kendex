@@ -282,11 +282,24 @@ if [ "$RC" -eq 0 ] && adoption_metadata -; then
   ok 'no-writer refresh updates an unedited refresh workflow'
 else bad "no-writer template update (rc=$RC)" "$OUT"; fi
 commit "$DIR"
+# The appended blank line differs first, immediately after the unedited copy.
+first_edit_line="$(awk 'END { print NR + 1 }' "$DIR/$REFRESH")" || exit 1
 printf '\n# consumer edit\n' >>"$DIR/$REFRESH"
 run_refresh_command "$DIR" "$DIR/$ADOPT" --workflow-edit-report "$TMP/no-writer-report"
-if [ "$RC" -eq 0 ] && grep -q '^refresh-warning=workflow-edited value=' <<<"$OUT" && adoption_metadata -; then
-  ok 'no-writer adoption reconciles an edited refresh workflow'
+if workflow_edit_matches "$TMP/no-writer-report" "$REFRESH:$first_edit_line" && adoption_metadata -; then
+  ok 'no-writer adoption reconciles an edited refresh workflow and reports its first divergent line'
 else bad "no-writer edited refresh (rc=$RC)" "$OUT"; fi
+
+# Keep the report and warning but replace the measured line with the name
+# field's line. A later edit must not accept that constant location.
+file_edit "$DIR" "$ADOPT" 1 '\{relative\}:\{line\}' 's/{relative}:{line}/{relative}:8/'
+chmod +x "$DIR/$ADOPT"
+printf '\n# consumer edit\n' >>"$DIR/$REFRESH"
+run_refresh_command "$DIR" "$DIR/$ADOPT" --workflow-edit-report "$TMP/no-writer-report"
+if adoption_metadata - && workflow_edit_matches "$TMP/no-writer-report" "$REFRESH:8" &&
+    ! workflow_edit_matches "$TMP/no-writer-report" "$REFRESH:$first_edit_line"; then
+  ok 'control: a constant report line breaks the appended-edit location assertion'
+else bad 'first divergent line control' "$OUT"; fi
 
 # The retirement's control keeps the ownership filter's text and skips it for
 # an absent writer; the earlier writer record then survives adoption.
