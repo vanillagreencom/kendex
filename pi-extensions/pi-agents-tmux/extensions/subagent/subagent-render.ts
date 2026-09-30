@@ -1,6 +1,6 @@
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { discoverAgents, type AgentScope } from "./agents.js";
+import { cachedAgentDiscovery, type AgentScope } from "./agents.js";
 import { dashboardKindLabel } from "./dashboard.js";
 import {
 	addArtifactPathSection,
@@ -62,7 +62,7 @@ export const subagentToolRenderers = {
 		const agentName = args.agent || "...";
 		const cwd = _context?.cwd ?? process.cwd();
 		try {
-			const agent = discoverAgents(cwd, scope).agents.find((candidate) => candidate.name === agentName);
+			const agent = cachedAgentDiscovery(cwd, scope)?.agents.find((candidate) => candidate.name === agentName);
 			if (agent?.pane) return new Container();
 		} catch {
 			// Keep the generic call preview if discovery fails.

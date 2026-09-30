@@ -1,0 +1,1 @@
+- Pi agent tool-call previews use cached agent discovery instead of reading agent files on each render. File and directory changes update the cache outside rendering.

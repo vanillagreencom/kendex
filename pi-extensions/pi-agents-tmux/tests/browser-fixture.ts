@@ -2,8 +2,11 @@
 // a pass-through theme, record and item builders, the settings writers and
 // an observer that reads a rendered pane back as `label=value` pairs.
 // Nothing here plants a defect; a row that needs one builds it inline.
+import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import { spyOn } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { AgentConfig } from "../extensions/subagent/agents.js";
 import type { AgentBrowserUiState, AgentPaneStatus, PaneTaskRecord, SubagentDashboardItem } from "../extensions/subagent/types.js";
 import { tempRuntime } from "./single-agent-fixture.js";
@@ -12,6 +15,43 @@ import { clearPackageConfigCache } from "../extensions/subagent/package-config.j
 export { cleanupTempRuntimes, tempRuntime, writeSettings } from "./single-agent-fixture.js";
 
 export const ABSENT = "ABSENT";
+
+/** Count synchronous filesystem work during a warmed renderer call. */
+export function filesystemCalls(run: () => void): number[] {
+	const spies = [
+		spyOn(fs, "readFileSync"), spyOn(fs, "readdirSync"), spyOn(fs, "statSync"),
+		spyOn(fs, "realpathSync"), spyOn(fs, "existsSync"),
+	];
+	try {
+		run();
+		return spies.map((spy) => spy.mock.calls.length);
+	} finally {
+		for (const spy of spies) spy.mockRestore();
+	}
+}
+
+/** Load a disposable production edit. Relative runtime imports still use the real package. */
+export async function importRuntimeCopy(fileName: string, before: string, after: string): Promise<unknown> {
+	const runtimeDir = resolve(import.meta.dir, "../extensions/subagent");
+	const original = fs.readFileSync(join(runtimeDir, fileName), "utf8");
+	assert.equal(original.split(before).length - 1, 1, "control must edit exactly one production behavior");
+	const modified = original.replace(before, after);
+	assert.notEqual(modified, original);
+	const source = modified.replace(/from "\.\/([^\"]+)\.js"/g, (_match, name: string) => `from ${JSON.stringify(join(runtimeDir, `${name}.ts`))}`);
+	const copy = join(tempRuntime(), fileName);
+	writeFileSync(copy, source);
+	return import(copy);
+}
+
+/** Deliver Node's file-check notification without waiting for its polling clock. */
+export function notifyFileCheck(watch: { mock: { calls: unknown[][] } }, filePath: string): void {
+	const call = watch.mock.calls.find((args) => String(args[0]) === filePath);
+	assert.ok(call, `file check missing: ${filePath}`);
+	const listener = call.at(-1);
+	assert.equal(typeof listener, "function");
+	const stat = fs.existsSync(filePath) ? fs.statSync(filePath) : new fs.Stats();
+	(listener as (current: fs.Stats, previous: fs.Stats) => void)(stat, stat);
+}
 
 export const theme = {
 	bg: (_tone: string, text: string) => text,

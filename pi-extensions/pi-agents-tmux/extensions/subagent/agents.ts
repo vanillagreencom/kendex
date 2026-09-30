@@ -112,7 +112,17 @@ function asBoolean(value: unknown): boolean {
 	return normalized === "true" || normalized === "yes" || normalized === "1" || normalized === "pane";
 }
 
-function loadAgentsFromDir(dir: string, source: "user" | "project", blockedSourceDirs: string[] = []): AgentConfig[] {
+interface CachedAgentFile {
+	version: string;
+	agents: AgentConfig[];
+}
+
+function fileVersion(filePath: string): string {
+	const stat = fs.statSync(filePath);
+	return JSON.stringify([fs.realpathSync(filePath), stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs]);
+}
+
+function loadAgentsFromDir(dir: string, source: "user" | "project", blockedSourceDirs: string[], files: Map<string, CachedAgentFile>, watched: Set<string>): AgentConfig[] {
 	const agents: AgentConfig[] = [];
 
 	if (!fs.existsSync(dir)) {
@@ -131,11 +141,19 @@ function loadAgentsFromDir(dir: string, source: "user" | "project", blockedSourc
 		if (!entry.isFile() && !entry.isSymbolicLink()) continue;
 
 		const filePath = path.join(dir, entry.name);
+		watched.add(filePath);
 		if (source === "project" && isSameOrDescendantOfAny(filePath, blockedSourceDirs)) {
 			continue;
 		}
 		let content: string;
+		let version: string;
 		try {
+			version = fileVersion(filePath);
+			const cached = files.get(filePath);
+			if (cached?.version === version) {
+				agents.push(...cached.agents);
+				continue;
+			}
 			content = fs.readFileSync(filePath, "utf-8");
 		} catch {
 			continue;
@@ -146,6 +164,7 @@ function loadAgentsFromDir(dir: string, source: "user" | "project", blockedSourc
 		const description = asString(frontmatter.description);
 
 		if (!name || !description) {
+			files.set(filePath, { version, agents: [] });
 			continue;
 		}
 
@@ -155,7 +174,7 @@ function loadAgentsFromDir(dir: string, source: "user" | "project", blockedSourc
 		// parent's rather than this one.
 		const effort = normalizeReasoningEffort(frontmatter["model-reasoning-effort"] ?? frontmatter.modelReasoningEffort ?? frontmatter.effort) ?? effortFromModelId(model);
 
-		agents.push({
+		const agent: AgentConfig = {
 			name,
 			description,
 			color: asString(frontmatter.color),
@@ -170,7 +189,9 @@ function loadAgentsFromDir(dir: string, source: "user" | "project", blockedSourc
 			systemPrompt: body,
 			source,
 			filePath,
-		});
+		};
+		files.set(filePath, { version, agents: [agent] });
+		agents.push(agent);
 	}
 
 	return agents;
@@ -234,30 +255,142 @@ function findNearestProjectAgentDirs(cwd: string, blockedSourceDirs: string[]): 
 	}
 }
 
-export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
-	const userAgentDirs = userAgentSourceDirs();
+function readDiscovery(cwd: string, userAgentDirs: string[], files: Map<string, CachedAgentFile>, watched: Set<string>): AgentDiscoveryResult {
 	const userAgentRealDirs = userAgentDirs.map(realpathOrResolve);
 	const projectAgentDirs = findNearestProjectAgentDirs(cwd, userAgentRealDirs);
-
-	const userAgents = scope === "project" ? [] : userAgentDirs.flatMap((dir) => loadAgentsFromDir(dir, "user"));
-	const projectAgents =
-		scope === "user" ? [] : projectAgentDirs.flatMap((dir) => loadAgentsFromDir(dir, "project", userAgentRealDirs));
-
-	const agentMap = new Map<string, AgentConfig>();
-
-	if (scope === "both") {
-		for (const agent of userAgents) agentMap.set(agent.name, agent);
-		for (const agent of projectAgents) agentMap.set(agent.name, agent);
-	} else if (scope === "user") {
-		for (const agent of userAgents) agentMap.set(agent.name, agent);
-	} else {
-		for (const agent of projectAgents) agentMap.set(agent.name, agent);
-	}
-
 	return {
-		agents: Array.from(agentMap.values()).sort((a, b) => a.name.localeCompare(b.name)),
+		agents: [
+			...userAgentDirs.flatMap((dir) => loadAgentsFromDir(dir, "user", [], files, watched)),
+			...projectAgentDirs.flatMap((dir) => loadAgentsFromDir(dir, "project", userAgentRealDirs, files, watched)),
+		],
 		projectAgentsDir: projectAgentDirs.length > 0 ? projectAgentDirs.join(", ") : null,
 	};
+}
+
+function scopedDiscovery(discovery: AgentDiscoveryResult, scope: AgentScope): AgentDiscoveryResult {
+	const agentMap = new Map<string, AgentConfig>();
+	for (const agent of discovery.agents) {
+		if (scope === "both" || scope === agent.source) agentMap.set(agent.name, agent);
+	}
+	return {
+		agents: Array.from(agentMap.values()).sort((a, b) => a.name.localeCompare(b.name)),
+		projectAgentsDir: discovery.projectAgentsDir,
+	};
+}
+
+// Includes absent candidates: creating a nearer project directory must replace
+// the inherited inventory. This key needs no filesystem access in a renderer.
+function discoveryDirectories(cwd: string): string[] {
+	const dirs = userAgentSourceDirs();
+	const home = path.resolve(userHomeDir());
+	let current = path.resolve(cwd);
+	while (current !== home) {
+		dirs.push(path.join(current, ".claude", "agents"), path.join(current, ".pi", "agents"));
+		const parent = path.dirname(current);
+		if (parent === current) break;
+		current = parent;
+	}
+	return dirs;
+}
+
+type DiscoveryState =
+	| { kind: "ready"; discovery: AgentDiscoveryResult; scopes: Record<AgentScope, AgentDiscoveryResult> }
+	| { kind: "failed"; error: unknown };
+
+// Process-shared, bounded by directory combinations rather than session events.
+// watchFile polls symlink targets and absent paths too; native directory watches
+// alone miss target edits and newly created agent directories.
+class AgentDiscoveryMemo {
+	private files = new Map<string, CachedAgentFile>();
+	private subscriptions = new Map<string, (current: fs.Stats, previous: fs.Stats) => void>();
+	private state: DiscoveryState = { kind: "failed", error: new Error("Agent discovery has not loaded") };
+
+	private cwd: string;
+	private directories: string[];
+
+	constructor(cwd: string, directories: string[]) {
+		this.cwd = path.resolve(cwd);
+		this.directories = directories;
+	}
+
+	refresh(): void {
+		const watched = new Set(this.directories);
+		try {
+			const discovery = readDiscovery(this.cwd, this.directories.slice(0, 2), this.files, watched);
+			for (const file of this.files.keys()) if (!watched.has(file)) this.files.delete(file);
+			const old = this.state;
+			if (old.kind !== "ready" || old.discovery.projectAgentsDir !== discovery.projectAgentsDir ||
+				old.discovery.agents.length !== discovery.agents.length ||
+				old.discovery.agents.some((agent, index) => agent !== discovery.agents[index])) {
+				this.state = { kind: "ready", discovery, scopes: {
+					user: scopedDiscovery(discovery, "user"),
+					project: scopedDiscovery(discovery, "project"),
+					both: scopedDiscovery(discovery, "both"),
+				} };
+			}
+			for (const [file, listener] of this.subscriptions) {
+				if (!watched.has(file)) {
+					fs.unwatchFile(file, listener);
+					this.subscriptions.delete(file);
+				}
+			}
+			for (const file of watched) {
+				if (this.subscriptions.has(file)) continue;
+				const listener = () => this.refresh();
+				fs.watchFile(file, { persistent: false, interval: 250 }, listener);
+				this.subscriptions.set(file, listener);
+			}
+		} catch (error) {
+			this.state = { kind: "failed", error };
+		}
+	}
+
+	read(scope: AgentScope): AgentDiscoveryResult {
+		switch (this.state.kind) {
+			case "ready": return this.state.scopes[scope];
+			case "failed": throw this.state.error;
+			default: { const unreachable: never = this.state; throw unreachable; }
+		}
+	}
+
+	dispose(): void {
+		for (const [file, listener] of this.subscriptions) fs.unwatchFile(file, listener);
+		this.subscriptions.clear();
+		this.files.clear();
+	}
+}
+
+const discoveryMemos = new Map<string, AgentDiscoveryMemo>();
+const MAX_DISCOVERY_MEMOS = 8;
+
+/** Load or revalidate discovery outside rendering. Unchanged files are not read or parsed again. */
+export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
+	const directories = discoveryDirectories(cwd);
+	const key = JSON.stringify(directories);
+	let memo = discoveryMemos.get(key);
+	if (!memo) {
+		memo = new AgentDiscoveryMemo(cwd, directories);
+		if (discoveryMemos.size >= MAX_DISCOVERY_MEMOS) {
+			const oldest = discoveryMemos.entries().next().value;
+			if (!oldest) throw new Error("Agent discovery cache is full without an oldest entry");
+			oldest[1].dispose();
+			discoveryMemos.delete(oldest[0]);
+		}
+	}
+	discoveryMemos.delete(key);
+	discoveryMemos.set(key, memo);
+	memo.refresh();
+	return memo.read(scope);
+}
+
+/** Read only memory. Session startup and tool execution populate all scopes; cold calls use the generic preview. */
+export function cachedAgentDiscovery(cwd: string, scope: AgentScope): AgentDiscoveryResult | undefined {
+	const key = JSON.stringify(discoveryDirectories(cwd));
+	const memo = discoveryMemos.get(key);
+	if (!memo) return undefined;
+	discoveryMemos.delete(key);
+	discoveryMemos.set(key, memo);
+	return memo.read(scope);
 }
 
 export function formatAgentList(agents: AgentConfig[], maxItems = Number.POSITIVE_INFINITY): { text: string; remaining: number } {
