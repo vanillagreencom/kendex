@@ -172,16 +172,16 @@ case "${1:-}" in
       fi
     elif [[ -n "${OT_LAUNCHED_GATE:-}" && ! -e "$OT_LAUNCHED_GATE" ]]; then printf 'dev@lane:~$\n'
     else printf '%s\n' "${OT_PANE_TEXT:-dev@lane:~\$}"; fi ;;
-  # The pasted text on a line of its own: a paste carries no newline, and the
-  # next call's log line would otherwise run on from it.
+  # pane-write passes text on stdin and files by path. Read either once:
+  # logging must not consume stdin before the inline host replay reads it.
   load-buffer)
-    { cat "${!#}"; echo; } >> "$OT_TMUX_LOG"
+    line="$(cat -- "${!#}")" || exit 1
+    printf '%s\n' "$line" >> "$OT_TMUX_LOG" || exit 1
     # A relaunch row can execute the rendered command before the screen read.
     # The real selector writes its result to the fixture host's filesystem.
-    if [[ -n "${OT_REPLAY_LIB:-}" ]] && grep -q '^exec bash -lc ' "${!#}"; then
-      source "${OT_REPLAY_LIB%/*}/shared-skill-libs.sh"
-      source "$OT_REPLAY_LIB"
-      line="$(cat -- "${!#}")" || exit 1
+    if [[ -n "${OT_REPLAY_LIB:-}" && "$line" == 'exec bash -lc '* ]]; then
+      source "${OT_REPLAY_LIB%/*}/shared-skill-libs.sh" || exit 1
+      source "$OT_REPLAY_LIB" || exit 1
       ot_replay_relaunch "$line" "$OT_REPLAY_SCRIPTS" "$OT_REPLAY_RUN" "$OT_REPLAY_HARNESS" "$OT_REPLAY_KIND" 0 > "$OT_REPLAY_RUN/replay.out" || exit 1
     fi ;;
 esac

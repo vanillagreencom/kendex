@@ -428,8 +428,9 @@ for harness in codex pi; do
 done
 control brief '"$RELAUNCH_ROUTE" != resume-or-fresh ]]; then' '"$HOST_RELAUNCH" == false ]]; then'
 run_ot codex - claude
-assert_eq "rc=$RC launched=$(launched)" "rc=0 launched=1" \
-  "control: with the brief gated on a local relaunch a switched claude relaunch at a shell reports launched=1"
+assert_eq "rc=$RC launched=$(launched) stuck=$(said '^open-terminal: composer-stuck item=CC-1 ') missing=$(said '^open-terminal: harness-screen-missing item=CC-1 seconds=2')" \
+  "rc=1 launched=0 stuck=0 missing=1" \
+  "control: gating the brief on a local relaunch loses its brief failure, but shared readiness still refuses the shell"
 control capture 'capture-pane -pJ -t "$pane" 2>/dev/null)" || return 2' 'capture-pane -pJ -t "$pane" 2>/dev/null)" || return 1'
 RUN_ENV=("${CAPTURE_FAILS[@]}")
 run_ot claude "$HARNESS_SCREEN" claude
