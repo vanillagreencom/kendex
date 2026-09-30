@@ -54,8 +54,15 @@ assert_eq "RC=$RC context=$(context_line)" "RC=0 context=PostToolUse lane-mail-c
   "and at every tool call after it while no handoff record stands" "$ERR_FILE"
 record_overseer_handoff
 overseer_tool "$TRANSCRIPT"
-assert_eq "RC=$RC context=$(context_line)" "RC=0 context=-" \
-  "an overseer whose own handoff record stands is handed nothing" "$ERR_FILE"
+assert_eq "RC=$RC context=$(context_line) record=$(tool_record)" "RC=0 context=- record=600000 null" \
+  "an overseer whose own handoff record stands is handed nothing, its reading still recorded" "$ERR_FILE"
+variant never-held -e 's/^    stands) handoff_is_mine ;;$/    stands) return 1 ;;/'
+tool_overseer control_overseer_tool_held "$VARIANT_PATH"
+write_transcript "$TRANSCRIPT" 600000
+record_overseer_handoff
+overseer_tool "$TRANSCRIPT"
+assert_eq "$(context_line)" "PostToolUse lane-mail-check: context=600000" \
+  "control: a hook that never reads the record as its own hands the mark over past it"
 # A subagent's call is the subagent's window, never the overseer's.
 tool_overseer overseer_tool_subagent
 CASE_HOOK_SAVED="$CASE_HOOK"

@@ -2702,7 +2702,16 @@ overseer_tool_check() {
   : >"$WORK_DIR/told.err"
   rm -f -- "$WORK_DIR/tool.key"
   if overseer_identified 2>>"$WORK_DIR/told.err"; then
-    ( overseer_tool_judge ) 2>>"$WORK_DIR/told.err"
+    ( overseer_tool_judge ) 2>"$WORK_DIR/tool-judge.err"
+    # What the judgement says is handed over only while no handoff record of
+    # this session's own stands, asked only once it has something to say: a
+    # call below the mark says nothing, and a workflow-state run at each such
+    # call would be most of this hook's cost there.
+    if [ -s "$WORK_DIR/tool-judge.err" ] && ( overseer_tool_held ); then
+      rm -f -- "$WORK_DIR/tool.key"
+    else
+      cat -- "$WORK_DIR/tool-judge.err" >>"$WORK_DIR/told.err"
+    fi
   else
     overseer_unrecorded 2>>"$WORK_DIR/told.err"
   fi
@@ -2739,9 +2748,9 @@ overseer_tool_check() {
 }
 
 # The judgement itself, for the session overseer_identified named, in the
-# subshell overseer_tool_check runs it in: whether its own handoff record
-# already stands, then the reading, its record, and the mark. A refusal ends
-# the subshell at 0 with its key in tool.key (refuse_handoff). A Pi payload
+# subshell overseer_tool_check runs it in: the reading, its record, and the
+# mark. A refusal ends the subshell at 0 with its key in tool.key
+# (refuse_handoff). A Pi payload
 # naming no window is the lane mail wake's run, which follows a turn end that
 # judged the same reading, or a tool call from a pi-hooks carrier older than
 # the one that puts `context_window` on the tool call's payload
@@ -2753,14 +2762,6 @@ overseer_tool_judge() {
   [ "$HARNESS" != pi ] || [ -n "$PAYLOAD_WINDOW" ] || return 0
   ROLE=overseer
   ITEM="$OVERSEER_ITEM"
-  handoff_recorded
-  case "$HANDOFF_STATE" in
-    stands) ! handoff_is_mine || return 0 ;;
-    none) ;;
-    # The turn end reports a state it cannot read, under the keys that say
-    # which; a tool call ahead of it adds nothing a turn end does not.
-    *) return 0 ;;
-  esac
   if ! overseer_context_read; then
     message "$FAIL_KEY" "$FAIL_VALUE" "$FAIL_CAUSE"
     return 0
@@ -2770,6 +2771,20 @@ overseer_tool_judge() {
   context_mark_setting
   context_mark_judge
   return 0
+}
+
+# Whether the overseer's own handoff record stands, which silences its
+# tool-call judgement: exit 0 where it does, and where the state cannot be
+# read, which the turn end reports under the keys that say which; exit 1 where
+# none stands or the record is another session's. Run in a subshell.
+overseer_tool_held() {
+  ITEM="$OVERSEER_ITEM"
+  handoff_recorded
+  case "$HANDOFF_STATE" in
+    stands) handoff_is_mine ;;
+    none) return 1 ;;
+    *) return 0 ;;
+  esac
 }
 
 # A Pi lane's own turn rows (lib/session-rows.sh § A Pi lane's own rows): a
