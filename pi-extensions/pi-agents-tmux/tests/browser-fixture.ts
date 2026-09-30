@@ -53,6 +53,42 @@ export function notifyFileCheck(watch: { mock: { calls: unknown[][] } }, filePat
 	(listener as (current: fs.Stats, previous: fs.Stats) => void)(stat, stat);
 }
 
+/** Model kendex's bulk WriteFile agent updates without waiting for Node's polling clock. */
+export function assertBulkDiscoveryUpdate(runtime: Pick<typeof import("../extensions/subagent/agents.js"), "discoverAgents" | "cachedAgentDiscovery">, combinations: number): void {
+	withTempPiUserDir(() => {
+		const roots = Array.from({ length: combinations }, () => tempRuntime());
+		const names = Array.from({ length: 17 }, (_, index) => `agent-${index}`);
+		const watch = spyOn(fs, "watchFile");
+		try {
+			for (const cwd of roots) {
+				for (const name of names) writeProjectAgent(cwd, name, ["pane: false"]);
+				runtime.discoverAgents(cwd, "both");
+				for (const name of names) writeProjectAgent(cwd, name, ["pane: true", "allowed-subagents: scout"]);
+			}
+			const calls = filesystemCalls(() => {
+				for (const cwd of roots) {
+					for (const name of names) notifyFileCheck(watch, join(cwd, `.pi/agents/${name}.md`));
+				}
+			});
+			assert.equal(calls[0], names.length * roots.length, "each changed file is read once");
+			assert.equal(calls[1], 0, "listed-file notifications must not scan directories");
+			// notifyFileCheck takes one stat; discovery may take only the changed file's stat.
+			assert.equal(calls[2], 2 * names.length * roots.length, "unchanged files must not be checked again");
+			for (const cwd of roots) {
+				const agents = runtime.cachedAgentDiscovery(cwd, "project")?.agents;
+				assert.equal(agents?.length, names.length);
+				assert.deepEqual(agents?.map(({ name, pane, allowedSubagents }) => ({ name, pane, allowedSubagents })),
+					names.toSorted().map((name) => ({ name, pane: true, allowedSubagents: ["scout"] })));
+			}
+		} finally {
+			for (const check of watch.mock.calls) {
+				fs.unwatchFile(check[0] as string, check.at(-1) as (current: fs.Stats, previous: fs.Stats) => void);
+			}
+			watch.mockRestore();
+		}
+	});
+}
+
 /** Exercise inventory identity and release of every evicted path/listener pair. */
 export function assertDiscoveryEviction(runtime: Pick<typeof import("../extensions/subagent/agents.js"), "discoverAgents" | "cachedAgentDiscovery">): void {
 	withTempPiUserDir(() => {

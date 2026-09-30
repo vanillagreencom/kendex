@@ -122,7 +122,7 @@ function fileVersion(filePath: string): string {
 	return JSON.stringify([fs.realpathSync(filePath), stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs]);
 }
 
-function loadAgentsFromDir(dir: string, source: "user" | "project", blockedSourceDirs: string[], files: Map<string, CachedAgentFile>, watched: Set<string>): AgentConfig[] {
+function loadAgentsFromDir(dir: string, source: "user" | "project", blockedSourceDirs: string[], files: Map<string, CachedAgentFile>, watched: Map<string, "user" | "project" | "directory">): AgentConfig[] {
 	const agents: AgentConfig[] = [];
 
 	if (!fs.existsSync(dir)) {
@@ -141,60 +141,65 @@ function loadAgentsFromDir(dir: string, source: "user" | "project", blockedSourc
 		if (!entry.isFile() && !entry.isSymbolicLink()) continue;
 
 		const filePath = path.join(dir, entry.name);
-		watched.add(filePath);
-		if (source === "project" && isSameOrDescendantOfAny(filePath, blockedSourceDirs)) {
-			continue;
-		}
-		let content: string;
-		let version: string;
-		try {
-			version = fileVersion(filePath);
-			const cached = files.get(filePath);
-			if (cached?.version === version) {
-				agents.push(...cached.agents);
-				continue;
-			}
-			content = fs.readFileSync(filePath, "utf-8");
-		} catch {
-			continue;
-		}
-
-		const { frontmatter, body } = parseFrontmatter<Record<string, unknown>>(content);
-		const name = asString(frontmatter.name);
-		const description = asString(frontmatter.description);
-
-		if (!name || !description) {
-			files.set(filePath, { version, agents: [] });
-			continue;
-		}
-
-		const model = normalizeModel(frontmatter.model);
-		// The explicit key is kept as written: the launchers prefer the suffix of
-		// the model they actually run (`selectedEffortForAgent`), which may be the
-		// parent's rather than this one.
-		const effort = normalizeReasoningEffort(frontmatter["model-reasoning-effort"] ?? frontmatter.modelReasoningEffort ?? frontmatter.effort) ?? effortFromModelId(model);
-
-		const agent: AgentConfig = {
-			name,
-			description,
-			color: asString(frontmatter.color),
-			denyTools: parseToolList(frontmatter["deny-tools"] ?? frontmatter.denyTools ?? frontmatter.disallowedTools),
-			allowedSubagents: parseAllowedSubagents(frontmatter),
-			model,
-			// Reasoning effort lives under different keys depending on harness
-			// (Claude `effort`, OpenCode/Codex `model-reasoning-effort`). Both
-			// resolve to the same display token (low|medium|high|xhigh|max).
-			effort,
-			pane: asBoolean(frontmatter.pane ?? frontmatter.persistentPane),
-			systemPrompt: body,
-			source,
-			filePath,
-		};
-		files.set(filePath, { version, agents: [agent] });
-		agents.push(agent);
+		watched.set(filePath, source);
+		agents.push(...loadAgentFile(filePath, source, blockedSourceDirs, files));
 	}
 
 	return agents;
+}
+
+function loadAgentFile(filePath: string, source: "user" | "project", blockedSourceDirs: string[], files: Map<string, CachedAgentFile>): AgentConfig[] {
+	if (source === "project" && isSameOrDescendantOfAny(filePath, blockedSourceDirs)) {
+		files.delete(filePath);
+		return [];
+	}
+	let content: string;
+	let version: string;
+	try {
+		version = fileVersion(filePath);
+		const cached = files.get(filePath);
+		if (cached?.version === version) {
+			return cached.agents;
+		}
+		content = fs.readFileSync(filePath, "utf-8");
+	} catch {
+		files.delete(filePath);
+		return [];
+	}
+
+	const { frontmatter, body } = parseFrontmatter<Record<string, unknown>>(content);
+	const name = asString(frontmatter.name);
+	const description = asString(frontmatter.description);
+
+	if (!name || !description) {
+		files.set(filePath, { version, agents: [] });
+		return [];
+	}
+
+	const model = normalizeModel(frontmatter.model);
+	// The explicit key is kept as written: the launchers prefer the suffix of
+	// the model they actually run (`selectedEffortForAgent`), which may be the
+	// parent's rather than this one.
+	const effort = normalizeReasoningEffort(frontmatter["model-reasoning-effort"] ?? frontmatter.modelReasoningEffort ?? frontmatter.effort) ?? effortFromModelId(model);
+
+	const agent: AgentConfig = {
+		name,
+		description,
+		color: asString(frontmatter.color),
+		denyTools: parseToolList(frontmatter["deny-tools"] ?? frontmatter.denyTools ?? frontmatter.disallowedTools),
+		allowedSubagents: parseAllowedSubagents(frontmatter),
+		model,
+		// Reasoning effort lives under different keys depending on harness
+		// (Claude `effort`, OpenCode/Codex `model-reasoning-effort`). Both
+		// resolve to the same display token (low|medium|high|xhigh|max).
+		effort,
+		pane: asBoolean(frontmatter.pane ?? frontmatter.persistentPane),
+		systemPrompt: body,
+		source,
+		filePath,
+	};
+	files.set(filePath, { version, agents: [agent] });
+	return [agent];
 }
 
 function isDirectory(p: string): boolean {
@@ -246,7 +251,7 @@ function isSameOrDescendantOfAny(candidate: string, roots: string[]): boolean {
 	return roots.some((root) => isSameOrDescendant(realCandidate, root));
 }
 
-function findNearestProjectAgentDirs(location: DiscoveryLocation, blockedSourceDirs: string[], watched: Set<string>): string[] {
+function findNearestProjectAgentDirs(location: DiscoveryLocation, blockedSourceDirs: string[], watched: Map<string, "user" | "project" | "directory">): string[] {
 	const home = realpathOrResolve(location.home);
 	let currentDir = location.cwd;
 	while (true) {
@@ -256,8 +261,8 @@ function findNearestProjectAgentDirs(location: DiscoveryLocation, blockedSourceD
 		const claudeDir = path.join(currentDir, ".claude", "agents");
 		const piDir = path.join(currentDir, ".pi", "agents");
 		// Absent nearer candidates must replace the inherited inventory when created.
-		watched.add(claudeDir);
-		watched.add(piDir);
+		watched.set(claudeDir, "directory");
+		watched.set(piDir, "directory");
 		const dirs = [claudeDir, piDir]
 			.filter(isDirectory)
 			.filter((dir) => !isSameOrDescendantOfAny(dir, blockedSourceDirs));
@@ -269,9 +274,9 @@ function findNearestProjectAgentDirs(location: DiscoveryLocation, blockedSourceD
 	}
 }
 
-function readDiscovery(location: DiscoveryLocation, files: Map<string, CachedAgentFile>, watched: Set<string>): AgentDiscoveryResult {
+function readDiscovery(location: DiscoveryLocation, files: Map<string, CachedAgentFile>, watched: Map<string, "user" | "project" | "directory">): AgentDiscoveryResult {
 	const userAgentDirs = [location.userClaudeDir, location.userPiDir];
-	for (const dir of userAgentDirs) watched.add(dir);
+	for (const dir of userAgentDirs) watched.set(dir, "directory");
 	const userAgentRealDirs = userAgentDirs.map(realpathOrResolve);
 	const projectAgentDirs = findNearestProjectAgentDirs(location, userAgentRealDirs, watched);
 	return {
@@ -303,6 +308,7 @@ type DiscoveryState =
 // alone miss target edits and newly created agent directories.
 class AgentDiscoveryMemo {
 	private files = new Map<string, CachedAgentFile>();
+	private watched = new Map<string, "user" | "project" | "directory">();
 	private subscriptions = new Map<string, (current: fs.Stats, previous: fs.Stats) => void>();
 	private state: DiscoveryState = { kind: "failed", error: new Error("Agent discovery has not loaded") };
 
@@ -313,34 +319,57 @@ class AgentDiscoveryMemo {
 	}
 
 	refresh(): void {
-		const watched = new Set<string>();
+		const watched = new Map<string, "user" | "project" | "directory">();
 		try {
 			const discovery = readDiscovery(this.location, this.files, watched);
 			for (const file of this.files.keys()) if (!watched.has(file)) this.files.delete(file);
-			const old = this.state;
-			if (old.kind !== "ready" || old.discovery.projectAgentsDir !== discovery.projectAgentsDir ||
-				old.discovery.agents.length !== discovery.agents.length ||
-				old.discovery.agents.some((agent, index) => agent !== discovery.agents[index])) {
-				this.state = { kind: "ready", discovery, scopes: {
-					user: scopedDiscovery(discovery, "user"),
-					project: scopedDiscovery(discovery, "project"),
-					both: scopedDiscovery(discovery, "both"),
-				} };
-			}
+			this.watched = watched;
+			this.update(discovery);
 			for (const [file, listener] of this.subscriptions) {
 				if (!watched.has(file)) {
 					fs.unwatchFile(file, listener);
 					this.subscriptions.delete(file);
 				}
 			}
-			for (const file of watched) {
+			for (const [file, source] of watched) {
 				if (this.subscriptions.has(file)) continue;
-				const listener = () => this.refresh();
+				const listener = () => source === "directory" ? this.refresh() : this.refreshFile(file, source);
 				fs.watchFile(file, { persistent: false, interval: 250 }, listener);
 				this.subscriptions.set(file, listener);
 			}
 		} catch (error) {
 			this.state = { kind: "failed", error };
+		}
+	}
+
+	private refreshFile(file: string, source: "user" | "project"): void {
+		if (this.state.kind === "failed") {
+			this.refresh();
+			return;
+		}
+		try {
+			const blockedDirs = source === "project" ? [this.location.userClaudeDir, this.location.userPiDir].map(realpathOrResolve) : [];
+			loadAgentFile(file, source, blockedDirs, this.files);
+			// Keep listing order: duplicate names retain the same precedence after edits.
+			this.update({
+				agents: Array.from(this.watched.keys()).flatMap((file) => this.files.get(file)?.agents ?? []),
+				projectAgentsDir: this.state.discovery.projectAgentsDir,
+			});
+		} catch (error) {
+			this.state = { kind: "failed", error };
+		}
+	}
+
+	private update(discovery: AgentDiscoveryResult): void {
+		const old = this.state;
+		if (old.kind !== "ready" || old.discovery.projectAgentsDir !== discovery.projectAgentsDir ||
+			old.discovery.agents.length !== discovery.agents.length ||
+			old.discovery.agents.some((agent, index) => agent !== discovery.agents[index])) {
+			this.state = { kind: "ready", discovery, scopes: {
+				user: scopedDiscovery(discovery, "user"),
+				project: scopedDiscovery(discovery, "project"),
+				both: scopedDiscovery(discovery, "both"),
+			} };
 		}
 	}
 
@@ -355,6 +384,7 @@ class AgentDiscoveryMemo {
 	dispose(): void {
 		for (const [file, listener] of this.subscriptions) fs.unwatchFile(file, listener);
 		this.subscriptions.clear();
+		this.watched.clear();
 		this.files.clear();
 	}
 }

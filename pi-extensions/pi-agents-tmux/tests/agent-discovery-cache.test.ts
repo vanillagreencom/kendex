@@ -8,7 +8,7 @@ import { spyOn } from "bun:test";
 import { cachedAgentDiscovery, discoverAgents } from "../extensions/subagent/agents.js";
 import { subagentToolRenderers } from "../extensions/subagent/subagent-render.js";
 import {
-	assertDiscoveryEviction, cleanupTempRuntimes, filesystemCalls, importRuntimeCopy, notifyFileCheck,
+	assertBulkDiscoveryUpdate, assertDiscoveryEviction, cleanupTempRuntimes, filesystemCalls, importRuntimeCopy, notifyFileCheck,
 	stripAnsi, tempRuntime, theme, withTempPiUserDir, writeProjectAgent, writeSettings,
 } from "./browser-fixture.js";
 
@@ -32,28 +32,49 @@ test("second unchanged render uses memory, including on a cold inventory", () =>
 	});
 });
 
-test("listed file mtime change updates the next render without a discovery call", () => {
-	withTempPiUserDir(() => {
-		const cwd = tempRuntime();
-		writeSettings(cwd, { dashboard: false });
-		writeProjectAgent(cwd, "scout", ["pane: false"]);
-		const watch = spyOn(fs, "watchFile");
-		try {
-			discoverAgents(cwd, "project");
-			const args = { agent: "scout", task: "Inspect." };
-			const first = stripAnsi(subagentToolRenderers.renderCall(args, theme, { cwd }).render(220).join("\n"));
-			assert.match(first, /scout/);
-			const file = join(cwd, ".pi/agents/scout.md");
-			writeProjectAgent(cwd, "scout", ["pane: true", "allowed-subagents: researcher"]);
-			const oldTime = fs.statSync(file).mtimeMs;
-			fs.utimesSync(file, oldTime / 1000, (oldTime + 2000) / 1000);
-			notifyFileCheck(watch, file);
-			assert.deepEqual(cachedAgentDiscovery(cwd, "project")?.agents[0]?.allowedSubagents, ["researcher"]);
-			assert.deepEqual(filesystemCalls(() => {
-				assert.equal(subagentToolRenderers.renderCall(args, theme, { cwd }).render(220).join("\n"), "");
-			}), [0, 0, 0, 0, 0]);
-		} finally { watch.mockRestore(); }
+for (const scope of ["project", "user"] as const) {
+	test(`listed ${scope} file mtime change updates the next render without a discovery call`, () => {
+		withTempPiUserDir((userDir) => {
+			const cwd = tempRuntime();
+			writeSettings(cwd, { dashboard: false });
+			writeProjectAgent(cwd, "scout", ["pane: false"]);
+			const projectFile = join(cwd, ".pi/agents/scout.md");
+			const file = scope === "project" ? projectFile : join(userDir, "agents/scout.md");
+			if (scope === "user") {
+				fs.mkdirSync(join(userDir, "agents"));
+				fs.copyFileSync(projectFile, file);
+			}
+			const watch = spyOn(fs, "watchFile");
+			try {
+				discoverAgents(cwd, scope);
+				const args = { agent: "scout", task: "Inspect.", agentScope: scope };
+				const first = stripAnsi(subagentToolRenderers.renderCall(args, theme, { cwd }).render(220).join("\n"));
+				assert.match(first, /scout/);
+				writeProjectAgent(cwd, "scout", ["pane: true", "allowed-subagents: researcher"]);
+				if (scope === "user") fs.copyFileSync(projectFile, file);
+				const oldTime = fs.statSync(file).mtimeMs;
+				fs.utimesSync(file, oldTime / 1000, (oldTime + 2000) / 1000);
+				notifyFileCheck(watch, file);
+				assert.deepEqual(cachedAgentDiscovery(cwd, scope)?.agents.find((agent) => agent.name === "scout")?.allowedSubagents, ["researcher"]);
+				assert.deepEqual(filesystemCalls(() => {
+					assert.equal(subagentToolRenderers.renderCall(args, theme, { cwd }).render(220).join("\n"), "");
+				}), [0, 0, 0, 0, 0]);
+			} finally { watch.mockRestore(); }
+		});
 	});
+}
+
+for (const combinations of [1, 8]) {
+	test(`bulk listed-file updates check only changed files across ${combinations} inventories`, () => {
+		assertBulkDiscoveryUpdate({ discoverAgents, cachedAgentDiscovery }, combinations);
+	});
+}
+
+test("must-fail control: full scans on every notification violate the bulk-update assertion", async () => {
+	const mutant = await importRuntimeCopy("agents.ts",
+		'source === "directory" ? this.refresh() : this.refreshFile(file, source)',
+		'source === "directory" ? this.refresh() : this.refresh()') as typeof import("../extensions/subagent/agents.js");
+	assert.throws(() => assertBulkDiscoveryUpdate(mutant, 1), assert.AssertionError);
 });
 
 // Directory listings are written by agent installation, removal and rename.
