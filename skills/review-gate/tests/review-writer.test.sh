@@ -63,6 +63,11 @@
 #                                               PR, so an evicted pending
 #                                               run strands nothing
 #   w30. zero open PRs / ghost author        -> clean pass
+# One pull request's class policy unresolved:
+#   wc1. class-unresolved, no gate status     -> posts pending naming the head
+#   wc2. class-unresolved over a success      -> keeps the success, no POST
+#   wc3. one PR class-unresolved in a pass    -> pending on that PR, the next
+#                                               PR converges, exit 0
 # A head that moved during the pass (the PR re-read after a failure):
 #   wm1. listed head moved, current converges -> walks the current head, exit 0
 #   wm2. failure on the head the PR still has -> exit 1, as before
@@ -127,6 +132,13 @@ fi
 if [[ -n "${STUB_PREDICATE_FAIL_HEAD:-}" && "${STUB_PREDICATE_FAIL_HEAD}" == "${HEAD_SHA:-}" ]]; then
   echo "::error::stubbed predicate failure for head ${HEAD_SHA}" >&2
   exit 2
+fi
+# STUB_PREDICATE_UNRESOLVED_PR answers that PR alone with class-unresolved,
+# the verdict the real predicate gives where the PR's change class cannot be
+# resolved.
+if [[ -n "${STUB_PREDICATE_UNRESOLVED_PR:-}" && "${STUB_PREDICATE_UNRESOLVED_PR}" == "${PR_NUMBER:-}" ]]; then
+  printf 'verdict=class-unresolved detail=change class unresolved at %s\n' "$HEAD_SHA"
+  exit 0
 fi
 # 124 is the status a passed per-PR deadline returns, so a row asks for it
 # rather than sleeping out the writer's real bound.
@@ -490,6 +502,18 @@ table \
   "w22d: a whitespace-only open-PR listing exits 1 naming the shape violation|all:workflow_run|STUB_VERDICT_LINE=$APPROVED;STUB_OPEN_PRS=whitespace|rc=1 posts=none error~writer-list-malformed@acme/widgets=true" \
   "w22e: an error-object open-PR page exits 1 naming the shape violation|all:workflow_run|STUB_VERDICT_LINE=$APPROVED;STUB_OPEN_PRS=$ERROR_PAGE|rc=1 posts=none error~writer-list-malformed@acme/widgets=true" \
   "w26c: a ghost-authored PR still converges, with an empty PR_AUTHOR handed down|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN_GHOST;STUB_GATE_HISTORY=[]|rc=0 posts=pending@sha9 author=-"
+
+echo "=== one pull request's class policy unresolved ==="
+# A class policy the predicate cannot resolve belongs to that pull request: its
+# range, its manifest, its inventory. It is recorded on that head as pending,
+# which keeps the gate closed and says why, and the pass converges the next
+# pull request and stays green. A success already on the head was written by
+# a pass that did resolve the class, so it stands, as it would under any
+# failed evaluation.
+table \
+  "wc1: class-unresolved posts pending on that head, naming it|single|STUB_PREDICATE_UNRESOLVED_PR=7;STUB_GATE_HISTORY=[]|rc=0 posts=pending@headsha desc=change+class+unresolved+at+headsha" \
+  "wc2: class-unresolved leaves a success already on the head standing|single|STUB_PREDICATE_UNRESOLVED_PR=7;STUB_GATE_HISTORY=$H_SUCCESS_OLD|rc=0 posts=none notice~writer-class-unresolved-kept@headsha=true" \
+  "wc3: one PR's class-unresolved is recorded on it, the next PR still converges, and the pass stays green|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[];STUB_PREDICATE_UNRESOLVED_PR=7|rc=0 posts=pending@sha7,pending@sha8 error~writer-convergence-failed@7=false"
 
 echo "=== a head that moved during the pass ==="
 # The listing is read once, so a push before a PR's turn leaves the predicate

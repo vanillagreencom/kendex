@@ -152,8 +152,19 @@ missing_inventory_base="$(git -C "$missing_base_inventory" rev-parse HEAD)"
 write_inventory "$missing_base_inventory"
 commit_paths "$missing_base_inventory" render .agents/skills/orch/SKILL.md
 closed missing-base-inventory \
-  "fallback: cause=unreadable-base-inventory base=$missing_inventory_base" \
+  "fallback: cause=base-inventory-absent base=$missing_inventory_base" \
   --repo "$missing_base_inventory" --event push --base "$missing_inventory_base"
+
+# The control for the absent-base rule: a base that holds an inventory which
+# does not parse is not a base without one, and stays unreadable.
+broken_base_inventory="$(new_repo broken-base-inventory)"
+printf '%s\n' 'not json {' >"$broken_base_inventory/.kendex-generated.json"
+commit_paths "$broken_base_inventory" baseline README.md
+broken_inventory_base="$(git -C "$broken_base_inventory" rev-parse HEAD)"
+write_inventory "$broken_base_inventory"
+commit_paths "$broken_base_inventory" render .agents/skills/orch/SKILL.md
+closed broken-base-inventory "fallback: cause=invalid-generated-paths" \
+  --repo "$broken_base_inventory" --event push --base "$broken_inventory_base"
 
 ownership="$(new_repo ownership-gain)"
 commit_paths "$ownership" baseline README.md

@@ -81,7 +81,11 @@
 # Diagnostic records precede their explanation and use lib/diagnostics.sh.
 #
 # Read errors fail LOUDLY (exit 1) without acting: treating a transient API
-# failure as absent evidence could flip a healthy PR's state.
+# failure as absent evidence could flip a healthy PR's state. A class policy
+# that cannot be resolved for one pull request is that pull request's own
+# failure, not a read error: the predicate answers class-unresolved, and this
+# writer records it on that head as pending, so the pass converges every other
+# pull request and the failing one says why its gate is closed.
 set -u
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -271,6 +275,7 @@ case "$verdict" in
   untracked-claim)       desired="failure" ;;
   unreasoned-decline)    desired="failure" ;;
   suppressed-findings)   desired="failure" ;;
+  class-unresolved)      desired="pending" ;;
   *)
     rg_message error writer-verdict-unknown "$verdict" "::error::unknown verdict '$verdict'"
     exit 1
@@ -308,6 +313,15 @@ post_status() {
   }
   rg_message notice writer-status-posted "$HEAD_SHA" "posted $GATE_CONTEXT=$1 on $HEAD_SHA ($2)"
 }
+
+# class-unresolved reads no evidence; it says only that this pass could not
+# resolve the class. A success already on this head was written by a pass that
+# did, so it stands, as it would under any failed evaluation. Everywhere else
+# the failure is recorded on this pull request as pending.
+if [ "$verdict" = class-unresolved ] && [ "$current_state" = success ]; then
+  rg_message notice writer-class-unresolved-kept "$HEAD_SHA" "PR #$PR_NUMBER: change class unresolved this pass; the success already on $HEAD_SHA stands"
+  exit 0
+fi
 
 # Idempotent no-op: idle passes append nothing.
 if [ "$current_state" = "$desired" ] && [ "$current_desc" = "${detail:0:140}" ]; then

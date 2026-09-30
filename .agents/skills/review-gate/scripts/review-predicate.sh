@@ -28,9 +28,15 @@ Env (optional): PR_AUTHOR and PR_BASE_SHA — resolved from the PR when empty.
 
 Output: one machine-readable line on stdout:
   verdict=approved|awaiting|threads-open|changes-requested|untracked-claim|
-          unreasoned-decline|suppressed-findings|unmeasured detail=<human text>
+          unreasoned-decline|suppressed-findings|unmeasured|class-unresolved
+          detail=<human text>
 (diagnostic detail also echoed for logs). `unmeasured` is an active class
 policy whose classifier fell back to standard; the detail names its cause.
+class-unresolved is this pull request's own failure: under an active class
+policy, its change class or review policy could not be resolved, the stderr
+diagnostics above it name the cause, and no evidence was read. It is a
+verdict because the failure belongs to this head, not to the run: the
+writer records it on this pull request and converges the others.
 
 Exit codes:
   0  evaluated (the verdict line is authoritative)
@@ -851,8 +857,8 @@ materialize_docs_commits() { # REPO BASE HEAD
 #             sixteen pull requests with every one of them overrunning.
 #
 # An overrun returns non-zero like any other preparation failure, so the caller
-# exits 2 through predicate-policy-resolve, writes no status, and the next pass
-# tries again. `timeout` is coreutils and the writer runs where it exists; a
+# answers class-unresolved through predicate-policy-resolve, the writer records
+# it on this pull request alone, and the next pass tries again. `timeout` is coreutils and the writer runs where it exists; a
 # host with neither spelling keeps the unbounded behaviour and says so, since
 # refusing there would disable the gate on a machine whose only fault is a
 # missing utility.
@@ -962,9 +968,13 @@ if [ "$POLICY_STATE" = "active" ]; then
         ;;
     esac
   fi
+  # This failure is the judged pull request's own: its range, its manifest, its
+  # inventory. Exit 2 would say nothing about which pull request it belongs
+  # to, so it is a verdict on this head, and the gate stays closed on it.
   [ "$policy_status" -eq 0 ] || {
     rg_message error predicate-policy-resolve "$pr_base...$HEAD_SHA" "::error::review-predicate: the change class or review policy could not be resolved" >&2
-    exit 2
+    echo "verdict=class-unresolved detail=change class unresolved at $HEAD_SHA; the writer log names the cause, and the next pass retries"
+    exit 0
   }
   case "$CLASS_POLICY" in
     "change_class=render review_evidence="*" policy=active"|"change_class=trivial review_evidence="*" policy=active"|"change_class=micro review_evidence="*" policy=active"|"change_class=small review_evidence="*" policy=active"|"change_class=standard review_evidence="*" policy=active") ;;
