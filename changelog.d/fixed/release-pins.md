@@ -1,0 +1,1 @@
+- Homebrew and Arch packages install kendex 1.3.0. Review-gate workflows use its released CLI and an installer pinned to the release commit.

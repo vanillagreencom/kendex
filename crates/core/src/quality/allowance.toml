@@ -40,7 +40,7 @@ name = "review-gate"
 
 [[package.file]]
 path = "templates/review-gate-writer.yml"
-hash = "b486c48570410b18d76957b3662fff6c371e7983752cc1178f5641d1ec254d8e"
+hash = "dff088fdd9a370bcc87f53f2ead32a3619e742c49a85ea533b938eb16833e7f5"
 
 [[package.file.finding]]
 rule = "rce"
@@ -54,7 +54,7 @@ message = "this line pipes a download straight into a shell from `https://raw.gi
 
 [[package.file]]
 path = "templates/kendex-refresh.yml"
-hash = "ee562ff1b92a9f09637829140858bd151be70986c625ce2295e744b4d56d00d7"
+hash = "7db22f64b3da549b437264d16b43f0ea73969d9f5e7f308a6a419708539fc618"
 
 [[package.file.finding]]
 rule = "rce"
