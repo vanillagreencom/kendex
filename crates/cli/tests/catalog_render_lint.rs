@@ -52,8 +52,18 @@ fn scoped_command(
         // Include extensionless scripts and hooks. The shipped extractor
         // decides which installed files have a comment grammar.
         .env("COMMIT_GUARDS_COMMENT_PATHS", scope)
-        .env("COMMIT_GUARDS_MD_REFS_PATHS", "*.md")
-        .env("COMMIT_GUARDS_MD_REFS_SOURCE_PATHS", "*")
+        // A source-only control must not parse shell code as Markdown.
+        .env(
+            "COMMIT_GUARDS_MD_REFS_PATHS",
+            if scope == "*" {
+                "*.md"
+            } else if scope.ends_with(".md") {
+                scope
+            } else {
+                "__no_markdown__"
+            },
+        )
+        .env("COMMIT_GUARDS_MD_REFS_SOURCE_PATHS", scope)
         .env("COMMIT_GUARDS_SETTINGS_FILE", "/dev/null")
         .output()
         .unwrap()
@@ -344,8 +354,8 @@ fn assert_reference_coverage(output: &Output, staged: &[String]) {
 }
 
 /// A source-layout citation can resolve before installation and be dead in
-/// a consumer. Judge hook comments, extensionless scripts and markdown with
-/// the same scanner and scope as the complete installed tree above.
+/// a consumer. The complete tree is scanned once above. Controls use that
+/// scanner on one citing file, with a coverage count for each run.
 #[allow(clippy::unwrap_used)]
 fn install_reference_controls(home: &Path, project: &Path, scripts: &Path) {
     let callers = [
@@ -369,12 +379,16 @@ fn install_reference_controls(home: &Path, project: &Path, scripts: &Path) {
         fs::create_dir_all(project.join("skills/orch/references")).unwrap();
         fs::write(project.join(target), "# Events\n\n## Judgement rules\n").unwrap();
         success(command(home, project, Path::new("git"), &["add", "-A"]));
-        success(command(
+        let expected_paths = [relative.to_owned()];
+        let output = scoped_command(
             home,
             project,
             &scripts.join("md-refs"),
             &["--all", "--strict"],
-        ));
+            relative,
+        );
+        assert_reference_coverage(&output, &expected_paths);
+        success(output);
 
         success(command(
             home,
@@ -382,12 +396,14 @@ fn install_reference_controls(home: &Path, project: &Path, scripts: &Path) {
             Path::new("git"),
             &["rm", "-f", "--", target],
         ));
-        let output = command(
+        let output = scoped_command(
             home,
             project,
             &scripts.join("md-refs"),
             &["--all", "--strict"],
+            relative,
         );
+        assert_reference_coverage(&output, &expected_paths);
         assert_eq!(output.status.code(), Some(1), "{output:?}");
         let expected = format!("md-refs: citation-target={relative}:");
         assert!(
@@ -408,12 +424,15 @@ fn install_reference_controls(home: &Path, project: &Path, scripts: &Path) {
             Path::new("git"),
             &["add", "--", relative],
         ));
-        success(command(
+        let output = scoped_command(
             home,
             project,
             &scripts.join("md-refs"),
             &["--all", "--strict"],
-        ));
+            relative,
+        );
+        assert_reference_coverage(&output, &expected_paths);
+        success(output);
         fs::write(path, original).unwrap();
         success(command(
             home,
