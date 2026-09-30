@@ -3,19 +3,25 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use super::{run_script, step};
-use crate::test_util::{checkout_root, rooted};
+use crate::test_util::rooted;
+
+#[allow(clippy::unwrap_used)]
+fn repo() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap()
+}
 
 #[allow(clippy::unwrap_used)]
 fn check(script: &Path, catalog: &Path, root: &Path) -> Output {
-    let binary = std::env::var_os("KENDEX_CATALOG_TEST_BINARY")
-        .unwrap_or_else(|| env!("CARGO_BIN_EXE_kendex").into());
     Command::new("python3")
         .arg(script)
-        .arg(binary)
+        .arg(env!("CARGO_BIN_EXE_kendex"))
         .arg(catalog)
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap())
@@ -29,95 +35,92 @@ fn check(script: &Path, catalog: &Path, root: &Path) -> Output {
 fn the_current_catalog_renders_and_incomplete_delivery_fails() {
     let tmp = tempfile::tempdir().unwrap();
     let root = rooted(&tmp);
-    let repository = checkout_root();
+    let repository = repo();
     let script = repository.join("tools/catalog-release-check");
     let output = check(&script, &repository, &root);
     assert!(output.status.success(), "{output:?}");
     let record = String::from_utf8(output.stdout).unwrap();
+    assert!(record.starts_with("catalog-release: version="), "{record}");
     assert!(record.contains(" result=pass"), "{record}");
 
     let text = fs::read_to_string(&script).unwrap();
-    // Engine delivery failures can leave another harness installed. A
-    // Claude-only header excludes Gemini intentionally; advisory delivery
-    // also passes. The manifest parser fails without a delivery diagnostic.
-    let unsupported = "kendex-hook-unsupported";
-    let undeliverable = "kendex-hook-undeliverable";
-    for (n, (event, harnesses, feature)) in [
-        (Some("BeforeAgent"), "claude, gemini", undeliverable),
-        (Some("PermissionRequest"), "claude, gemini", unsupported),
-        (Some("PermissionRequest"), "claude, pi", unsupported),
-        (Some("SubagentStop"), "claude, codex", unsupported),
-        (Some("TaskCompleted"), "claude, copilot", unsupported),
-        (Some("SessionStart"), "claude, antigravity", unsupported),
-        (Some(""), "claude, gemini", "kendex-hook-unreadable"),
-        (Some("PreToolUse"), "claude", ""),
-        (Some("PreToolUse"), "opencode, cursor, pi", ""),
-        (None, "claude", "is_source_catalog"),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let catalog = root.join(n.to_string());
+    // desired_hook supplies the diagnostic. The mixed declaration installs
+    // on Gemini, so every consumer command exits zero despite Claude's skip.
+    // parse_hook refuses an empty event; verify then exits nonzero because
+    // the hook is absent. This reaches the separate nonzero-command rule.
+    let manifest = "is_source_catalog = true\n";
+    for (name, event, harnesses, expected_feature, control) in [
+        (
+            "claude-only",
+            "BeforeAgent",
+            "claude",
+            "kendex-hook-undeliverable: hook=future harness=claude",
+            None,
+        ),
+        (
+            "mixed-harness",
+            "BeforeAgent",
+            "claude, gemini",
+            "kendex-hook-undeliverable: hook=future harness=claude",
+            Some(("or undeliverable:", "or (False and undeliverable):")),
+        ),
+        (
+            "empty-event",
+            "",
+            "claude, gemini",
+            "kendex-hook-unreadable: hook=future",
+            Some((
+                "rendered.returncode != 0 or",
+                "(False and rendered.returncode != 0) or",
+            )),
+        ),
+    ] {
+        let catalog = root.join(name);
         fs::create_dir_all(catalog.join("hooks")).unwrap();
-        let manifest = match event {
-            Some(_) => "is_source_catalog = true\n",
-            None => "is_source_catalog = []\n",
-        };
         fs::write(catalog.join("kendex.toml"), manifest).unwrap();
-        let hook_event = event.unwrap_or("PreToolUse");
-        for name in ["future", "other"] {
-            fs::write(catalog.join(format!("hooks/{name}.sh")), format!(
-                "#!/bin/sh\n# ---\n# name: {name}\n# event: {hook_event}\n# description: Hook delivery fixture\n# harnesses: [{harnesses}]\n# ---\nexit 0\n")).unwrap();
-        }
-        let accepts = |output: &Output| {
+        fs::write(catalog.join("hooks/future.sh"), format!(
+            "#!/bin/sh\n# ---\n# name: future\n# event: {event}\n# description: A Gemini event Claude never fires\n# harnesses: [{harnesses}]\n# ---\nexit 0\n")).unwrap();
+        let rejects = |output: &Output| {
             let record = String::from_utf8_lossy(&output.stdout);
-            record.starts_with("catalog-release: version=")
-                && match feature {
-                    "" => output.status.success() && record.contains(" result=pass"),
-                    key => {
-                        output.status.code() == Some(1)
-                            && record.lines().next().unwrap().contains("feature=")
-                            && record.lines().next().unwrap().contains(key)
-                    }
-                }
+            output.status.code() == Some(1)
+                && record.starts_with("catalog-release: version=")
+                && record.lines().next().unwrap().contains("feature=")
+                && record.lines().next().unwrap().contains(expected_feature)
         };
         let output = check(&script, &catalog, &root);
-        assert!(accepts(&output), "{event:?} [{harnesses}]: {output:?}");
+        assert!(rejects(&output), "{name}: {output:?}");
         assert_eq!(
             fs::read_to_string(catalog.join("kendex.toml")).unwrap(),
-            manifest
+            manifest,
+            "the checker must not change its input"
         );
 
-        let target = match event {
-            Some("BeforeAgent") => "refusal.search(diagnostic)",
-            None => "rendered.returncode != 0",
-            Some(_) => continue,
-        };
-        // Disable each independent rule without changing commands or text.
-        // The same row assertion must reject the resulting incorrect pass.
-        assert_eq!(text.matches(target).count(), 1);
-        let mutated = text.replace(target, &format!("(False and {target})"));
-        assert_ne!(text, mutated);
-        let mutant = root.join(format!("inert-{n}.py"));
-        fs::write(&mutant, mutated).unwrap();
-        let output = check(&mutant, &catalog, &root);
-        assert!(
-            output.status.success(),
-            "control must reach the incorrect pass: {output:?}"
-        );
-        assert!(String::from_utf8_lossy(&output.stdout).contains(" result=pass"));
-        assert!(
-            !accepts(&output),
-            "control escaped the row assertion: {output:?}"
-        );
+        if let Some((target, replacement)) = control {
+            // Each control leaves the commands and diagnostic intact and
+            // disables only its rule. The same rejection assertion must fail.
+            assert_eq!(text.matches(target).count(), 1);
+            let mutated = text.replace(target, replacement);
+            assert_ne!(text, mutated);
+            let mutant = root.join(format!("inert-{name}.py"));
+            fs::write(&mutant, mutated).unwrap();
+            let output = check(&mutant, &catalog, &root);
+            assert!(
+                output.status.success(),
+                "control must reach the incorrect pass: {output:?}"
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains(" result=pass"));
+            assert!(
+                !rejects(&output),
+                "control escaped the rejection assertion: {output:?}"
+            );
+        }
     }
 }
 
 #[test]
 #[allow(clippy::unwrap_used)]
 fn catalog_ci_installs_the_release_and_runs_its_render_check() {
-    let text =
-        fs::read_to_string(checkout_root().join(".github/workflows/catalog-check.yml")).unwrap();
+    let text = fs::read_to_string(repo().join(".github/workflows/catalog-check.yml")).unwrap();
     let install = run_script(&step(&text, "name: Install latest released kendex"));
     assert_eq!(
         install.trim(),
