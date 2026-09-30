@@ -223,6 +223,8 @@ assert_eq "rc=$RC $(record issue-2709 | sed -E 's/ (account|host|mail_root|surfa
 # A Copilot lane records whether its command grants the full allow-all mode,
 # the one posture lib/copilot-session.sh names a policy stop for; the
 # tools-only spelling and none are no such grant.
+# Their items are ids no later case launches: their copilot records share
+# $STATE, where a later codex relaunch of the same id reads a harness switch.
 # copilot_allow_all ITEM FLAGS [SCRIPT] — rc and the record's allow_all.
 # The account, LANES_HOME's default copilot home, runs the status line the
 # fleet gate asks of a Copilot lane.
@@ -236,14 +238,14 @@ copilot_allow_all() {
 while IFS='|' read -r item flags want; do
   assert_eq "$(copilot_allow_all "$item" "$flags")" "rc=0 $want" "a Copilot launch naming [$flags] records allow_all $want"
 done <<'ROWS'
-CC-81|--allow-all|true
-CC-82|--yolo|true
-CC-83|--allow-all-tools|false
-CC-84||false
+CC-140|--allow-all|true
+CC-141|--yolo|true
+CC-142|--allow-all-tools|false
+CC-143||false
 ROWS
 ALLOW_ALL_OT="$(mutant_scripts allow-all-mutant open-terminal)/open-terminal" || exit 1
 mutate_file "$ALLOW_ALL_OT" '! lane_copilot_allows_all "$cmd" || LAUNCH_ALLOW_ALL=true' '! false || LAUNCH_ALLOW_ALL=true'
-assert_eq "$(copilot_allow_all CC-85 --allow-all "$ALLOW_ALL_OT")" "rc=0 false" \
+assert_eq "$(copilot_allow_all CC-144 --allow-all "$ALLOW_ALL_OT")" "rc=0 false" \
   "control: without the allow-all test a lane launched with --allow-all records no grant"
 
 # --repo is optional on a supported GitHub launch: the resolver answers and
