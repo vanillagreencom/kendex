@@ -50,7 +50,12 @@ const rows: { name: string; steps: Step[]; expected: Observed }[] = [
 		expected: { writes: [["a.log", "one\n"], ["a.log", writeFailed(4) + "two\n"]], errors: ["a.log"], timerArmed: false, drained: null },
 	},
 	{
-		name: "a failure marker alone arms no retry and is written by drain",
+		name: "a failure marker alone arms no retry",
+		steps: [{ append: ["a.log", "one\n"] }, { fire: true }, { settleWrite: 0, fails: true }],
+		expected: { writes: [["a.log", "one\n"]], errors: ["a.log"], timerArmed: false, drained: null },
+	},
+	{
+		name: "a failure marker alone is written by drain",
 		steps: [{ append: ["a.log", "one\n"] }, { fire: true }, { settleWrite: 0, fails: true }, { drain: true }, { settleWrite: 1 }],
 		expected: { writes: [["a.log", "one\n"], ["a.log", writeFailed(4)]], errors: ["a.log"], timerArmed: false, drained: [] },
 	},

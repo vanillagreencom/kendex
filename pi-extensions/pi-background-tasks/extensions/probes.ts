@@ -1,5 +1,5 @@
-// Time-limited subprocess probes, whose result type holds the one rule for
-// which outcomes settle an answer, and the bounded pool that runs many of them. runProbe
+// Time-limited subprocess probes, whose result type says which outcomes settle
+// an answer, and the bounded pool that runs many of them. runProbe
 // never blocks Pi's thread: the child runs off the event loop, a timeout kills
 // it, and the caller awaits one tagged result. runProbeSync is for a caller
 // that cannot await, and blocks for at most the same timeout.
@@ -17,7 +17,7 @@ export const PROBE_CONCURRENCY = 4;
 const PROBE_MAX_BUFFER_BYTES = 1024 * 1024;
 
 /**
- * How a probe ended, and the one rule for whether that settles an answer.
+ * How a probe ended, and whether that settles an answer.
  * `exited`: the command ran to an exit status. `missing`: the command does not
  * exist, which every later call repeats. `unsettled`: a timeout, a signal or
  * another start failure, which a later call may not repeat, so the caller asks

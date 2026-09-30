@@ -115,10 +115,9 @@ export interface IdentityReaderDeps {
 // recycle a PID for an unrelated process, but the start token cannot collide
 // for the same recycled pid within the same boot.
 //
-// `gone` needs a positive answer: /proc has no entry, or ps ran and matched
-// no process. A host without ps falls back to a signal-0 check. An unsettled
-// ps result, or ps output this cannot parse, answers `unknown`, which callers
-// read as alive for this pass.
+// `gone`: /proc has no entry, or ps exited non-zero or printed nothing. A
+// host without ps falls back to a signal-0 check. An unsettled ps result, or
+// ps output this cannot parse, answers `unknown`.
 export async function defaultReadProcessIdentity(pid: number, deps: IdentityReaderDeps = {}): Promise<IdentityReading> {
 	if (!Number.isFinite(pid) || pid <= 0) return { kind: "gone" };
 	if ((deps.platform ?? process.platform) === "linux") {
