@@ -12,6 +12,10 @@ The procedure is the `app-deploy` skill (`.agents/skills/app-deploy/SKILL.md`): 
 
 `install.sh` rests on TLS to kendex.ai and github.com alone, on every run, because a fresh machine holds neither the release key nor minisign; `kendex update` is the path held to the key.
 
+## Catalog compatibility
+
+`.github/workflows/catalog-check.yml` installs the latest released kendex with `skills/review-gate/scripts/install-latest.sh`. `tools/catalog-release-check` installs the catalog into an isolated project for all harnesses, then runs the consumer's refresh and verify commands before the authoring check runs. A failure prints one `catalog-release: version=... feature=...` record with the engine's diagnostic. Release an engine that supports the feature before merging catalog content that uses it. A binary built from the pull request does not satisfy this check. The consumer refresh template uses the same release installer.
+
 ## Pre-releases
 
 A tag carrying a SemVer pre-release identifier (`v1.0.0-rc1`) is published outright and marked pre-release. The workflow's `channel` job puts its `feed.json` on the fixed `prerelease` release. The feed keeps all download URLs on the immutable tagged release. A build whose own version is a candidate reads its updates from there (`crates/core/src/update_channel.rs`); a full release is never offered a candidate.

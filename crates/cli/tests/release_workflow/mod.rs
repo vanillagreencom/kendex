@@ -19,6 +19,8 @@ use std::sync::OnceLock;
 #[cfg(unix)]
 use crate::test_util::rooted;
 
+mod catalog;
+
 const TARGET_EXPR: &str = "${{ matrix.target }}";
 
 #[allow(clippy::unwrap_used)]

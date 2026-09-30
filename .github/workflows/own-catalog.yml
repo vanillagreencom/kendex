@@ -19,11 +19,7 @@ jobs:
     with:
       path: .
       strict: true
-      # The commit under review, checked by its own checker. `ref` has a
-      # default, and workflow_call applies input defaults to a local caller
-      # exactly as to a remote one — so leaving it out validates this branch
-      # with main's engine, which is a different set of rules than the
-      # branch's own tests ran.
+      # Exercise this branch's CI scripts, never a binary built from it.
       ref: ${{ github.sha }}
 
   # The one job that lets somebody other than kendex read kendex's output.

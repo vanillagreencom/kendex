@@ -1,0 +1,1 @@
+- Consumer refresh installs the latest released kendex at run time. Catalog CI renders with that release and rejects content that needs an unreleased engine feature.

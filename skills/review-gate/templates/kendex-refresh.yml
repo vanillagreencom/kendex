@@ -33,19 +33,14 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Install pinned kendex
+      # Resolve the latest release and its installer commit together at run time.
+      - name: Install latest released kendex
         env:
           GH_TOKEN: ""
-          # The installer is fetched at an immutable commit, the one the
-          # release tag names; the tag only names the version installed. A
-          # tag can be moved, and a moved one would run another installer
-          # here. Both values are written together from one tag.
-          KENDEX_VERSION: v1.3.0
-          KENDEX_INSTALLER_SHA: f6ad9491a810a9256f04f66f8d083eb9db709602
-          KENDEX_INSTALLER_REPO: vanillagreencom/kendex
+
         run: |
           set -euo pipefail
-          curl -fsSL "https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/$KENDEX_INSTALLER_SHA/install.sh" | sh -s -- --version "$KENDEX_VERSION"
+          exec .agents/skills/review-gate/scripts/install-latest.sh
       - name: Preserve default-branch scripts
         run: |
           set -euo pipefail

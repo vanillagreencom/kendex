@@ -57,18 +57,13 @@ def check(w):
  assert users[0]['env']['KENDEX_ISSUES_TOKEN']=='${{ steps.issues-token.outputs.token }}'
  assert '$RUNNER_TEMP/refresh-skills/.agents/skills/review-gate/scripts/refresh-reviews.sh' in users[0]['run']
  assert steps.index(upstream)>next(i for i,s in enumerate(steps) if 'refresh-consumer.sh' in s.get('run',''))
- # The consumer runs a kendex release, never a main build; the release route
- # picks which one and holds the installer commit to its tag.
- install=next(s for s in steps if s.get('name')=='Install pinned kendex')
- assert re.fullmatch(r'v\d+\.\d+\.\d+',install['env']['KENDEX_VERSION'])
- assert install['env']['KENDEX_INSTALLER_REPO']=='vanillagreencom/kendex'
+ # The installer owns run-time release resolution. No workflow value can
+ # keep a consumer on a version after the catalog moves forward.
+ install=next(s for s in steps if s.get('name')=='Install latest released kendex')
+ assert set(install['env'])=={'GH_TOKEN'}
  assert install['env']['GH_TOKEN']=='""'
- assert 'raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/$KENDEX_INSTALLER_SHA/install.sh" | sh -s -- --version "$KENDEX_VERSION"' in install['run']
- # A tag can be moved, so the installer path names a 40-hex commit and no
- # ${KENDEX_VERSION once the step's env values are put in.
- url=re.search(r'curl -fsSL "([^"]*)"',install['run']).group(1)
- for k in ('KENDEX_INSTALLER_REPO','KENDEX_INSTALLER_SHA'): url=url.replace('$'+k,install['env'].get(k,''))
- assert re.fullmatch(r'https://raw\.githubusercontent\.com/vanillagreencom/kendex/[0-9a-f]{40}/install\.sh',url),url
+ assert install['run']=='set -euo pipefail\nexec .agents/skills/review-gate/scripts/install-latest.sh\n'
+ assert 'KENDEX_VERSION' not in json.dumps(w)
 check(workflow)
 for mutation in ('repository','permission','exposure','branch','fallback','self','pin','installer'):
  w=copy.deepcopy(workflow);job=w['jobs']['refresh'];steps=job['steps'];token=next(s for s in steps if s.get('id')=='issues-token')
@@ -77,13 +72,13 @@ for mutation in ('repository','permission','exposure','branch','fallback','self'
  elif mutation=='exposure': steps[0]['env']={'TOKEN':'${{ steps.issues-token.outputs.token }}'}
  elif mutation=='branch': job['if']='true'
  elif mutation=='self': job['if']=job['if'].split(' && ')[1]
- elif mutation=='pin': next(s for s in steps if s.get('name')=='Install pinned kendex')['env']['KENDEX_VERSION']='main-build-261-1-d1637e9ee73474603707339935ebaed33d175269'
- elif mutation=='installer': next(s for s in steps if s.get('name')=='Install pinned kendex')['env']['KENDEX_INSTALLER_SHA']='v1.1.0'
+ elif mutation=='pin': next(s for s in steps if s.get('name')=='Install latest released kendex')['env']['KENDEX_VERSION']='v1.2.0'
+ elif mutation=='installer': next(s for s in steps if s.get('name')=='Install latest released kendex')['run']='set -euo pipefail\ntrue # exec .agents/skills/review-gate/scripts/install-latest.sh\n'
  else: token['continue-on-error']=False
  try: check(w)
  except AssertionError: pass
  else: raise AssertionError('must-fail control missed '+mutation)
 PY
-then ok 'default-branch environment, consumer and Issues token boundaries, the kendex pin, the installer commit, fallback and mutation controls'; else bad 'workflow token boundary'; fi
+then ok 'default-branch environment, token boundaries, unpinned release installation, fallback and mutation controls'; else bad 'workflow token boundary'; fi
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

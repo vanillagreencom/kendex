@@ -1,6 +1,70 @@
-#!/usr/bin/env bash
-# Release authoring check. Core owns delivery and validation rules.
-# Usage: tools/catalog-release-check [CATALOG]
-# KENDEX_BIN selects the built CLI. The strict check's exit status is preserved.
-set -euo pipefail
-exec "${KENDEX_BIN:-kendex}" check --catalog "${1:-.}" --strict
+#!/usr/bin/env python3
+"""Check and render a catalog with the installed release, without changing it.
+
+Usage: catalog-release-check BINARY CATALOG
+Report protocol: catalog-release: version=JSON feature=JSON on failure. The
+feature value is the engine's diagnostic, not a second feature classifier.
+Core owns declared-hook delivery and catalog validation rules.
+"""
+
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+
+def main():
+    if len(sys.argv) != 3:
+        raise SystemExit("catalog-release: cause=arguments\nExpected BINARY and CATALOG.")
+    binary = str(Path(sys.argv[1]).resolve(strict=True))
+    catalog = str(Path(sys.argv[2]).resolve(strict=True))
+    # All writes, including project registration, belong to this one scratch
+    # lifetime. No credentials or live kendex settings reach the child.
+    with tempfile.TemporaryDirectory(dir=os.environ.get("RUNNER_TEMP")) as scratch:
+        root = Path(scratch)
+        home = root / "home"
+        project = root / "project"
+        home.mkdir()
+        (project / ".agents").mkdir(parents=True)
+        environment = {
+            "PATH": os.environ["PATH"],
+            "HOME": str(home),
+            "XDG_CONFIG_HOME": str(home / ".config"),
+            "XDG_DATA_HOME": str(home / ".local/share"),
+            "XDG_CACHE_HOME": str(home / ".cache"),
+            "KENDEX_REAL_HOME": "1",
+            "KENDEX_UI": "plain",
+        }
+        version = subprocess.run(
+            [binary, "--version"], env=environment, cwd=project,
+            capture_output=True, text=True, check=True,
+        ).stdout.strip().removeprefix("kendex ")
+        commands = [
+            ["check", "--catalog", catalog, "--strict"],
+            ["add", catalog, "--all", "--all-harnesses",
+             "--copy", "--yes", "--throwaway", "--leave"],
+            ["refresh", "--scope", "project", "--yes", "--leave"],
+            ["verify", "--scope", "project"],
+        ]
+        diagnostics = []
+        for command in commands:
+            rendered = subprocess.run(
+                [binary, *command], env=environment, cwd=project,
+                capture_output=True, text=True, check=False,
+            )
+            diagnostics.append("\n".join(filter(None, (
+                rendered.stderr.strip(), rendered.stdout.strip(),
+            ))))
+            if rendered.returncode != 0:
+                diagnostic = "\n".join(diagnostics)
+                print(f"catalog-release: version={json.dumps(version)} feature={json.dumps(diagnostic)}")
+                print("Release an engine that supports this catalog before merging it. See docs/RELEASING.md.")
+                return 1
+        print(f"catalog-release: version={json.dumps(version)} result=pass")
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

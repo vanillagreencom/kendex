@@ -724,6 +724,7 @@
   ".agents/skills/review-gate/references/vendored-paths.md",
   ".agents/skills/review-gate/scripts/adopt-refresh.sh",
   ".agents/skills/review-gate/scripts/dispatch-refresh.sh",
+  ".agents/skills/review-gate/scripts/install-latest.sh",
   ".agents/skills/review-gate/scripts/lib/diagnostics.sh",
   ".agents/skills/review-gate/scripts/lib/review-findings.sh",
   ".agents/skills/review-gate/scripts/lib/settings.sh",
