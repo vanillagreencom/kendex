@@ -202,13 +202,19 @@ ot_hosted_relaunch_text() { # LOG
 ot_replay_relaunch() { # LINE SCRIPTS RUN HARNESS KIND STATUS
   local line="$1" scripts="$2" run="$3" harness="$4" kind="$5" status="$6"
   local sandbox="$run/sandbox" home="$run/host-home" root kickoff=CC-1 rc=0 metadata
-  local arg previous="" runs=0 resume=0 fresh=0 target=0
+  local arg previous="" runs=0 resume=0 fresh=0 target=0 unattended expected_prompt
+  # Expectations read the shipped owner, never the scripts a control mutates.
+  unattended="$(
+    # shellcheck source=../../scripts/lib/lane-launch.sh
+    source "$(dirname "${BASH_SOURCE[0]}")/../../scripts/lib/lane-launch.sh" && printf '%s' "$LAUNCH_UNATTENDED_TEXT"
+  )" || return 1
+  [[ -n "$unattended" ]] || { echo "ot-replay-relaunch: unattended-text=empty" >&2; return 1; }
   mkdir -p "$sandbox/.agents/skills/orch" "$home" "$run/harness-bin" || return 1
   ln -s "$scripts" "$sandbox/.agents/skills/orch/scripts" || return 1
   orch_fixture_shared_libs "$sandbox/.agents/skills/orch"
   case "$harness" in
-    codex) root="$home/codex account/sessions" ;;
-    pi) root="$home/pi agent/sessions" ;;
+    codex) root="$home/codex account/sessions"; expected_prompt="Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-1. $unattended" ;;
+    pi) root="$home/pi agent/sessions"; expected_prompt="/skill:orch start CC-1 $unattended" ;;
   esac
   [[ "$kind" != foreign ]] || kickoff=CC-2
   case "$kind" in
@@ -262,7 +268,7 @@ EOF
     case "$arg" in
       __run__) runs=$((runs + 1)) ;;
       resume | --session) resume=$((resume + 1)) ;;
-      'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-1' | '/skill:orch start CC-1' | '/skill:orch start CC-1 '*) fresh=$((fresh + 1)) ;;
+      "$expected_prompt") fresh=$((fresh + 1)) ;;
     esac
     previous="$arg"
   done < "$run/harness.log"

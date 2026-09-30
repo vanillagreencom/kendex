@@ -329,6 +329,15 @@ for harness in codex pi; do
     'rc=0 runs=1 resume=0 fresh=1 target=0' \
     "control: a lookup that hides its failure starts $harness fresh" "$RUN/replay.err"
 done
+# Only the executed launch reads the mutant owner. The replay matcher keeps
+# the shipped text, so a changed suffix cannot pass as the exact fresh prompt.
+control unattended "LAUNCH_UNATTENDED_TEXT='This is" "LAUNCH_UNATTENDED_TEXT='changed unattended text. This is" lib/lane-launch.sh
+for harness in codex pi; do
+  run_ot "$harness" "$HARNESS_SCREEN" "$harness"
+  assert_eq "$(ot_replay_relaunch "$(remote)" "${OPEN_TERMINAL%/*}" "$RUN" "$harness" none 0)" \
+    'rc=0 runs=1 resume=0 fresh=0 target=0' \
+    "control: changed unattended text fails the exact $harness fresh-prompt match" "$RUN/replay.err"
+done
 for rule in source parent lead; do
   case "$rule" in
     source) old='.source=="cli"'; new='.source!="cli"'; worker=exec ;;

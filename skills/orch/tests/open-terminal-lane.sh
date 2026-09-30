@@ -1165,7 +1165,7 @@ CODEX_RELAUNCH="$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;flags=-m gpt-6-astra 
 run_ot "$CODEX_RELAUNCH" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch CC-49
 CODEX_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1
 CODEX_LEAD="codex '-c' 'check_for_update_on_startup=false' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' '-m' 'gpt-6-astra' '-c' 'model_reasoning_effort=high'"
-CODEX_RESUME="0) exec $CODEX_LEAD resume \"\$session\" ;; 1) exec $CODEX_LEAD 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-49'"
+CODEX_RESUME="0) exec $CODEX_LEAD resume \"\$session\" ;; 1) exec $CODEX_LEAD 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-49. $UNATTENDED_TEXT'"
 assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") lookup=$(grep -cF 'session=$(bash .agents/skills/orch/scripts/lib/lane-relaunch.sh codex CC-49 linear ' <<<"$CODEX_REMOTE" || true) arms=$(grep -cF "$CODEX_RESUME" <<<"$CODEX_REMOTE" || true) compaction=$(typed "ORCH_COMPACTION_OVERRIDES=$Q$CODEX_COMPACTION$Q") line=$(typed 'Resume the orch workflow for CC-49')" \
   "rc=0 creates=nolog launched=1 claim_lanes=eclaude lookup=1 arms=1 compaction=1 line=0" \
   "a hosted codex relaunch selects its host session promptless or the start brief, keeping its lane and compaction flags"
@@ -1201,6 +1201,16 @@ run_ot "$CODEX_RELAUNCH" --host "$HOST_STUB" --harness codex --lane work --repo 
 CODEX_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1
 assert_eq "rc=$RC selection=$(grep -cF "$CODEX_RESUME" <<<"$CODEX_REMOTE" || true) native=$(grep -cF ' resume --last' <<<"$CODEX_REMOTE" || true)" \
   "rc=0 selection=0 native=1" "control: the old codex resume --last form fails the resume-or-fresh assertion"
+OPEN_TERMINAL="$CODEX_OT_SHIPPED"
+# The expected arms still use the shipped text read above, not this copy.
+CODEX_UNATTENDED_SCRIPTS="$(mutant_scripts ctl-codex-unattended/orch lib/lane-launch.sh)" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/ctl-codex-unattended/orch"
+mutate_file "$CODEX_UNATTENDED_SCRIPTS/lib/lane-launch.sh" "LAUNCH_UNATTENDED_TEXT='This is" "LAUNCH_UNATTENDED_TEXT='changed unattended text. This is"
+OPEN_TERMINAL="$CODEX_UNATTENDED_SCRIPTS/open-terminal"
+run_ot "$CODEX_RELAUNCH" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch CC-49
+CODEX_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1
+assert_eq "rc=$RC arms=$(grep -cF "$CODEX_RESUME" <<<"$CODEX_REMOTE" || true) changed=$(grep -cF 'changed unattended text.' <<<"$CODEX_REMOTE" || true)" \
+  "rc=0 arms=0 changed=1" "control: changed unattended text fails the exact codex resume-or-fresh assertion"
 OPEN_TERMINAL="$CODEX_OT_SHIPPED"
 # A GitHub-tracker item is the issue number while its worktree id is issue-<n>,
 # and the lane's mailbox is bound under the worktree id: write_lane_marker
