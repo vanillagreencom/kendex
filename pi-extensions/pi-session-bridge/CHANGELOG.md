@@ -2,9 +2,12 @@
 
 ## Consumer-impacting changes
 
+### 3.0.0
+
+- **Breaking**: raw history is saved only for events that fire while an event subscriber is attached and raw spill is enabled. Keep `pi-bridge stream` connected to retain future terminal payloads. A later `history --raw` request cannot recover events that had no subscriber.
+
 ### 2.3.0
 
-- Raw history is saved only for events that fire while an event subscriber is attached and raw spill is enabled. Keep `pi-bridge stream` connected to retain future terminal payloads. A later `history --raw` request cannot recover events that had no subscriber.
 - Raw append and disk compaction use an asynchronous queue capped at 64 events and 16 MiB, including in-flight work. `rawError` explains queue or retention refusals. Compact events can show `spill_pending=true`; `history --raw` waits for queued writes. Shutdown cancels pending work and waits for in-flight I/O before it removes the file.
 - The bridge reuses each payload's JSON string for measurement and raw storage. It also reuses compact JSON for event delivery and history.
 
