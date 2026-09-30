@@ -856,7 +856,7 @@ fi
 # are the lint's own; exit 1 is a construct, exit 2 a scan that could not
 # run, and neither is a pass. One line on purpose: the must-fail control in
 # tools/tests/guard.test.sh removes this lane by deleting it.
-"$TOOLS_DIR/bash32-lint" || say bash32-lint "$?"
+reported_lanes="$reported_lanes,bash32-lint"; "$TOOLS_DIR/bash32-lint" || say bash32-lint "$?"
 
 # What the scan above reads as text, this one parses with the shell that has
 # to accept it. --full and not the commit chain: the pass needs a real Bash

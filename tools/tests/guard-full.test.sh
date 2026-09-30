@@ -757,13 +757,13 @@ for row in "${LANE_ROWS[@]}"; do
     || bad "class '${class:-unset}' docs-only '${docs:-unset}' over $paths runs: ${want:-no heavy lane}" "rc=$RC got=$got out=$OUT"
   case "$class" in
     "")
-      REPORT_ALL='validate: lanes=guard-scans,bot-instructions,decision-ids,bash32-parse,cargo-lint,shell-suites,aarch64-apple-darwin,x86_64-pc-windows-msvc,cargo-doc,cargo-test,ui selection=all'
+      REPORT_ALL='validate: lanes=guard-scans,bot-instructions,decision-ids,bash32-lint,bash32-parse,cargo-lint,shell-suites,aarch64-apple-darwin,x86_64-pc-windows-msvc,cargo-doc,cargo-test,ui selection=all'
       [ "$(sed -n '$p' <<<"$OUT")" = "$REPORT_ALL" ] \
         && ok "the full guard reports the check groups it runs once at its end" \
         || bad "the full guard reports the check groups it runs once at its end" "$OUT"
       ;;
     trivial)
-      [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans,decision-ids selection=all' ] \
+      [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans,bot-instructions,decision-ids,bash32-lint selection=all' ] \
         && ok "the guard omits groups it did not run" \
         || bad "the guard omits groups it did not run" "$OUT"
       ;;
