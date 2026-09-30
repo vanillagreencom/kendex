@@ -238,6 +238,33 @@ security_unread_commit() { # STATE
   lane_row_commit "$state"
 }
 
+# The heartbeat's open pull request list, one `<number>\t<head>\t<title>` line
+# each, with `\tapp/dependabot` after a Dependabot pull request's for
+# security_mark_open to read.
+SECURITY_OPEN_JQ='.[] | "\(.number)\t\(.headRefName)\t\(.title)"
+  + (if .author.login == "app/dependabot" then "\t\(.author.login)" else "" end)'
+
+# One repository's open pull request lines as the heartbeat prints them. With
+# the check on, a Dependabot pull request's line is `bot-fix pr=<N>
+# alert=<alerts|unread|none>`, as security_bot_fix_alerts reads the last long
+# pass's rows; with it off, its plain line. Fails where the baseline cannot be
+# read.
+security_mark_open() { # BASELINE REPO OPEN
+  local line number alerts marked=""
+  while IFS= read -r line; do
+    if [[ "$line" == *$'\t'app/dependabot ]]; then
+      line="${line%$'\t'app/dependabot}"
+      if [[ "$SECURITY_ENABLED" -eq 1 ]]; then
+        number="${line%%$'\t'*}"
+        alerts="$(security_bot_fix_alerts "$1" "$2" "$number")" || return 1
+        line="bot-fix pr=$number alert=$alerts"
+      fi
+    fi
+    marked+="$line"$'\n'
+  done <<<"$3"
+  printf '%s' "${marked%$'\n'}"
+}
+
 # The alert list a heartbeat names a Dependabot pull request with, from the
 # baseline the last long pass committed: its bot-fix row; `unread` where it
 # has none and that pass could not read the repository's Dependabot alerts or

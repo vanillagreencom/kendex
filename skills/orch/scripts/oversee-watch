@@ -3699,16 +3699,13 @@ owed_wall() { # HOST HARNESS MODEL
 
 # Every --repo's open PRs, each line prefixed with its repo as the reducer's
 # are, and all of them read before the event line goes out: a repo that
-# cannot be listed is a failed pass, not a heartbeat missing a repo. With the
-# security-alert check on, a Dependabot pull request's line is `bot-fix
-# pr=<N> alert=<alerts|unread|none>`, as security_bot_fix_alerts reads the
-# last long pass's rows. The
+# cannot be listed is a failed pass, not a heartbeat missing a repo; a
+# Dependabot pull request's line is security_mark_open's. The
 # account roster follows, as the last long pass read it, then the owed items,
 # read before the event line for the same reason. A parked record still
 # standing over its merged pull request is handed on again ahead of it.
 heartbeat() {
   local errf="$WORK_DIR/open.err" repo open open_all="" failing baseline="" file hands
-  local marked line number alerts
   github_ready
   # The standing lane failures, each reported once and quiet since: a quiet
   # run still names every channel that stays broken. The long pass's are in
@@ -3717,24 +3714,12 @@ heartbeat() {
   [[ ! -f "$file" ]] || baseline="$(cat -- "$file")" || die state-read-failed "" "path=$file"
   for repo in "${REPOS[@]}"; do
     if ! open="$(gh pr list --repo "$repo" --state open --limit 50 --json number,headRefName,title,author \
-      --jq '.[] | "\(.number)\t\(.headRefName)\t\(.title)" + (if .author.login == "app/dependabot" then "\t\(.author.login)" else "" end)' 2>"$errf")"; then
+      --jq "$SECURITY_OPEN_JQ" 2>"$errf")"; then
       die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=open"
     fi
     [[ -n "$open" ]] || continue
-    marked=""
-    while IFS= read -r line; do
-      if [[ "$line" == *$'\t'app/dependabot ]]; then
-        line="${line%$'\t'app/dependabot}"
-        if [[ "$SECURITY_ENABLED" -eq 1 ]]; then
-          number="${line%%$'\t'*}"
-          alerts="$(security_bot_fix_alerts "$baseline" "$repo" "$number")" \
-            || die state-read-failed "" "path=$file" "row=bot-fix"
-          line="bot-fix pr=$number alert=$alerts"
-        fi
-      fi
-      marked+="$line"$'\n'
-    done <<<"$open"
-    open_all+="$(pw_prefix "$repo" "${marked%$'\n'}")"$'\n'
+    open="$(security_mark_open "$baseline" "$repo" "$open")" || die state-read-failed "" "path=$file" "row=bot-fix"
+    open_all+="$(pw_prefix "$repo" "$open")"$'\n'
   done
   owed_read
   hands="$(parked_merged_owed "$baseline")" || die state-read-failed "" "path=$file" "row=merged"
