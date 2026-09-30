@@ -4,7 +4,7 @@
 
 ### 2.0.4
 
-- The declared `undici` range starts at 7.29.1, so an install can no longer resolve an `undici` release that carries the published security advisories fixed in 7.29.1, one of them high. The proxy transport that routes the Codex WebSocket through `HTTPS_PROXY` or `HTTP_PROXY` uses `undici`.
+- The declared `undici` range starts at 7.29.1, so an install can no longer resolve an `undici` release that carries the published security advisories fixed in 7.29.1, two of them high. The proxy transport that routes the Codex WebSocket through `HTTPS_PROXY` or `HTTP_PROXY` uses `undici`.
 
 ### 2.0.3
 

@@ -4,7 +4,7 @@
 
 ### 4.0.7
 
-- The installed dependency tree no longer carries the published security advisories against fast-uri (high: host confusion and server-side request forgery in URL parsing), hono, ip-address and qs. The lock now resolves fast-uri 3.1.8, hono 4.13.11, ip-address 10.7.2 and qs 6.16.0. The bridge's declared dependency ranges and its behaviour are unchanged.
+- This release changes no shipped code, no declared dependency range and no behaviour. Installing or updating the bridge resolves fast-uri 3.1.8, hono 4.13.11, ip-address 10.7.2 and qs 6.16.0, or later releases, from the unchanged ranges. Those releases fix the published security advisories against fast-uri (high: host confusion and server-side request forgery in URL parsing), hono, ip-address and qs. The package's own lock, which only a maintainer checkout and CI read, now resolves the same versions.
 
 ### 4.0.6
 
