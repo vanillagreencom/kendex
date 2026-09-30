@@ -3,7 +3,9 @@
 # hook (the installed .git/hooks/kendex-guards shim execs it): doc-limits,
 # preflight and bot-instructions when the committing work tree or this
 # install carries those sibling skills, then `commit-guards all --staged`,
-# then the repo-local entry named by COMMIT_GUARDS_PRE_COMMIT_LOCAL. Every lane announces itself,
+# then the repo-local entry named by COMMIT_GUARDS_PRE_COMMIT_LOCAL, run only
+# when the commit touches a path COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS names,
+# or on every commit when that setting is empty. Every lane announces itself,
 # a skipped or unconfigured one included.
 #
 # Every step runs before the verdict, so one commit attempt reports every
@@ -26,6 +28,8 @@ source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/settings.sh"
 # shellcheck source=lib/siblings.sh
 source "$SCRIPT_DIR/lib/siblings.sh"
+# shellcheck source=lib/commit-changes.sh
+source "$SCRIPT_DIR/lib/commit-changes.sh"
 
 usage() {
   cat <<'EOF'
@@ -41,6 +45,11 @@ Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
   COMMIT_GUARDS_PRE_COMMIT_LOCAL   repo-root-relative executable to run last
                                    (default "": no repo-local entry)
+  COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS
+                                   space-separated globs against the full
+                                   repo-relative path (`*` crosses `/`); the
+                                   entry runs only when the commit touches a
+                                   matching path (default "": every commit)
 Every COMMIT_GUARDS_* key the batch reads applies here unchanged.
 
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error. Both
@@ -121,13 +130,38 @@ BATCH="$SCRIPT_DIR/commit-guards"
 [ -x "$BATCH" ] || gg_fail lane-missing "$BATCH" "$BATCH is missing or not executable — reinstall the commit-guards skill"
 run_step "commit-guards all --staged" "$BATCH" all --staged
 
+local_paths_touched() { # 0 when the commit touches a path LOCAL_PATHS matches
+  local f
+  # Every path the commit touches, a deletion and both sides of a rename
+  # included, against the parent the commit will have: the commit-msg
+  # gate's own list, so the two hooks cannot disagree about what a commit
+  # changes.
+  gg_commit_paths
+  while IFS= read -r -d '' f; do
+    # The globs expand unquoted to act as patterns, under set -f.
+    # shellcheck disable=SC2086
+    if gg_path_matches "$f" $LOCAL_PATHS; then return 0; fi
+  done <"$GG_TMP/staged.z"
+  return 1
+}
+
 LOCAL_RAW="$(gg_setting COMMIT_GUARDS_PRE_COMMIT_LOCAL "")" || exit 2
 if [ -n "$LOCAL_RAW" ]; then
   LOCAL_ENTRY="$(gg_config_path "$LOCAL_RAW" COMMIT_GUARDS_PRE_COMMIT_LOCAL)" || exit 2
   [ -x "$LOCAL_ENTRY" ] || gg_fail local-missing "$LOCAL_ENTRY" "COMMIT_GUARDS_PRE_COMMIT_LOCAL names '$LOCAL_ENTRY', which is missing or not executable"
-  # The family contract applies: 0 clean, 1 violations, anything else "could
-  # not complete". Every nonzero blocks either way.
-  run_step "repo-local: $LOCAL_ENTRY" "./$LOCAL_ENTRY"
+  LOCAL_PATHS_RAW="$(gg_setting COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS "")" || exit 2
+  # The globs match the commit's paths, never the work tree.
+  set -f
+  LOCAL_PATHS="$(gg_config_path_list "$LOCAL_PATHS_RAW" COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS)" || exit 2
+  if [ -z "$LOCAL_PATHS" ] || local_paths_touched; then
+    # The family contract applies: 0 clean, 1 violations, anything else
+    # "could not complete". Every nonzero blocks either way.
+    run_step "repo-local: $LOCAL_ENTRY" "./$LOCAL_ENTRY"
+  else
+    # Announced, and folded into no verdict: the lane names the paths it
+    # reads, and this commit touches none of them.
+    gg_message local-entry skipped "=== pre-commit: repo-local entry: skipped (no staged path matches COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS)"
+  fi
 else
   # Announced like every ran or skipped lane: silence here is
   # indistinguishable from a lane the chain lost.

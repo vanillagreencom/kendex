@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Pins for scripts/py-names: a staged Python script holding an undefined name
 # or a syntax error is refused at its path and line, and a clean one is judged
-# and passes. A row
+# and passes; a scope that selects no Python file passes at its no-match line
+# without reading the render inventory. A row
 # stages CONTENT as script.py in a fresh repository, runs the lane with
 # --staged, and pins the exit status with the first stable line printed.
 set -euo pipefail
@@ -44,6 +45,40 @@ for row in \
   printf '%b' "$content" >"$r/script.py"
   git -C "$r" add script.py
   assert_eq "$label" "$expect" "$(run "$r")"
+done
+
+echo "=== a scope selecting no Python file is announced and passes before the inventory is read ==="
+# Each row's repository commits a script, then holds a render inventory the
+# loader refuses at entry shape, so a lane that read it would exit 2. The
+# commit stages a settings change and, where the row says so, a second script.
+# The batch hands the lane each of these scopes.
+ROW=0
+for row in \
+  "a staged change with no Python file skips at its no-match line|--staged|no|rc=0 py-names: no-match=staged:*.py" \
+  "a range with no Python file skips at its no-match line|--against HEAD|no|rc=0 py-names: no-match=against:*.py" \
+  "control: a staged Python file reads the inventory, which refuses at entry shape|--staged|yes|rc=2 py-names: inventory-status=21" \
+  "control: the whole tree selects the committed script, and the inventory refuses|--all|no|rc=2 py-names: inventory-status=21"; do
+  IFS='|' read -r label scope with_py expect <<<"$row"
+  ROW=$((ROW + 1))
+  r="$TMP/scope-$ROW"
+  git -c init.defaultBranch=main init -q "$r"
+  git -C "$r" config user.email test@example.com
+  git -C "$r" config user.name test
+  printf 'print(1)\n' >"$r/committed.py"
+  git -C "$r" add committed.py
+  git -C "$r" commit -qm 'feat: seed'
+  printf '[1]\n' >"$r/.kendex-generated.json"
+  printf '[env]\nREVIEW_MAX_CYCLES = "1"\n' >"$r/kendex.settings.toml"
+  git -C "$r" add .kendex-generated.json kendex.settings.toml
+  if [ "$with_py" = yes ]; then
+    printf 'x = 1\n' >"$r/script.py"
+    git -C "$r" add script.py
+  fi
+  rc=0
+  # $scope is a flag and, for a range, its ref.
+  # shellcheck disable=SC2086
+  out="$(cd "$r" && "$PY_NAMES" $scope 2>&1)" || rc=$?
+  assert_eq "$label" "$expect" "rc=$rc $(printf '%s\n' "$out" | LC_ALL=C awk '/^py-names: [a-z-]+=/ && !seen { print; seen=1 }')"
 done
 
 echo "=== with neither tool reachable the lane refuses and names the CI remedy ==="

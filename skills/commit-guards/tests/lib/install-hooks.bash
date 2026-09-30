@@ -15,7 +15,7 @@ INSTALL="$SKILL_DIR/scripts/install-git-hooks"
 # slot as a git repository, with nothing checking the shape.
 GG_SKILL_TEMPLATE="$TMP/.templates/commit-guards"
 
-unset COMMIT_GUARDS_CHECKS COMMIT_GUARDS_PRE_COMMIT_LOCAL COMMIT_GUARDS_SETTINGS_FILE \
+unset COMMIT_GUARDS_CHECKS COMMIT_GUARDS_PRE_COMMIT_LOCAL COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS COMMIT_GUARDS_SETTINGS_FILE \
   COMMIT_GUARDS_COMMIT_TYPES DOC_LIMITS_CLASSES DOC_LIMITS_DEFAULT_CLASSES DOC_LIMITS_EXCLUDES DOC_LIMITS_SETTINGS_FILE 2>/dev/null || true
 
 # Marker words are assembled from split tokens so this file never contains a

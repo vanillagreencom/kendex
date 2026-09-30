@@ -1,12 +1,13 @@
 # shellcheck shell=bash
-# Shared commit changes for the changelog gate and repository compile checks.
+# Shared commit changes for the changelog gate, the pre-commit chain's
+# repo-local path scope and repository compile checks.
 # Call after common.sh and settings.sh, from the repository root.
 gg_path GG_COMMIT_LIB dirname -- "${BASH_SOURCE[0]}"
 # shellcheck source=commit-parent.sh
 source "$GG_COMMIT_LIB/commit-parent.sh"
 
-gg_commit_changes() { # sets GG_TMP/staged.z, written.z and product.z
-  local meta src dest srcmode dstmode srcsha dstsha status f required_raw required
+gg_commit_paths() { # sets GG_TMP/staged.z and written.z
+  local meta src dest srcmode dstmode srcsha dstsha status
   # --raw, the spelling todo-ban and byte-ceiling already use: a raw record
   # carries the old and new MODE and the old and new BLOB for every path, so
   # what a commit did to a file is read off the record rather than inferred
@@ -34,7 +35,7 @@ gg_commit_changes() { # sets GG_TMP/staged.z, written.z and product.z
   git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% \
     $GG_COMMIT_BASE \
     >"$GG_TMP/raw.z" 2>"$GG_TMP/commit-files.err" \
-    || gg_fail_cause commit-files "$?" "$GG_TMP/commit-files.err" "could not read the commit's file list — the changelog rule could not run"
+    || gg_fail_cause commit-files "$?" "$GG_TMP/commit-files.err" "could not read the commit's file list"
 
   # What "written" MEANS, over the record's full identity: a mode and a sha
   # together, never a sha alone. Equal shas are TWO states, and only the modes
@@ -81,7 +82,7 @@ gg_commit_changes() { # sets GG_TMP/staged.z, written.z and product.z
   : >"$GG_TMP/written.z"
   while IFS= read -r -d '' meta; do
     IFS= read -r -d '' src \
-      || gg_fail commit-record-end "$meta" "the commit's file list ended mid-record after $(gg_shown "$meta") — the changelog rule could not run"
+      || gg_fail commit-record-end "$meta" "the commit's file list ended mid-record after $(gg_shown "$meta") — the commit's paths could not be listed"
     # Record shape: ":srcmode dstmode srcsha dstsha status". Splitting is safe
     # under `set -f` below — the fields are modes, hex
     # and a letter, and none of them is a path.
@@ -89,7 +90,7 @@ gg_commit_changes() { # sets GG_TMP/staged.z, written.z and product.z
     set -f
     set -- $meta
     [ "$#" -eq 5 ] \
-      || gg_fail commit-record-fields "$#:$meta" "the commit's file list carried a record of $# field(s), not five: $(gg_shown "$meta") — the changelog rule could not run"
+      || gg_fail commit-record-fields "$#:$meta" "the commit's file list carried a record of $# field(s), not five: $(gg_shown "$meta") — the commit's paths could not be listed"
     srcmode="${1#:}"
     dstmode="$2"
     srcsha="$3"
@@ -97,11 +98,11 @@ gg_commit_changes() { # sets GG_TMP/staged.z, written.z and product.z
     status="$5"
     case "$status" in
       C*)
-        gg_fail commit-copy "$status" "git reported a copy ($(gg_shown "$status")) though this scan pins diff.renames=true — the changelog rule could not run"
+        gg_fail commit-copy "$status" "git reported a copy ($(gg_shown "$status")) though this scan pins diff.renames=true — the commit's paths could not be listed"
         ;;
       R*)
         IFS= read -r -d '' dest \
-          || gg_fail commit-rename-end "$status" "the commit's file list ended before the destination of a $(gg_shown "$status") record — the changelog rule could not run"
+          || gg_fail commit-rename-end "$status" "the commit's file list ended before the destination of a $(gg_shown "$status") record — the commit's paths could not be listed"
         printf '%s\0' "$src" "$dest" >>"$GG_TMP/staged.z"
         printf '%s\0' "$dest" >>"$GG_TMP/written.z"
         continue
@@ -111,8 +112,11 @@ gg_commit_changes() { # sets GG_TMP/staged.z, written.z and product.z
     ! gg_record_gained "$srcmode" "$srcsha" "$dstmode" "$dstsha" \
       || printf '%s\0' "$src" >>"$GG_TMP/written.z"
   done <"$GG_TMP/raw.z"
+}
 
-
+gg_commit_changes() { # sets GG_TMP/staged.z, written.z and product.z
+  local f required_raw required
+  gg_commit_paths
   required_raw="$(gg_setting COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS "")" || exit 2
   required="$(gg_config_path_list "$required_raw" changelog-required)" || exit 2
   : >"$GG_TMP/product.z"

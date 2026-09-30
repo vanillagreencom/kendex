@@ -4,7 +4,8 @@
 # then the install's own, which may sit in another checkout since linked
 # worktrees share one hooks directory), the announcement every lane makes,
 # ran or skipped, run_step's three statuses folded into one verdict that
-# fails closed, the repo-local entry, and the batch at commit scope. One
+# fails closed, the repo-local entry and the paths that scope it, and the
+# batch at commit scope. One
 # table: a row builds its own repository, runs the chain from one of two
 # shared installs in another checkout — one carrying no sibling, one
 # carrying three stubs that say which copy ran — and reads back the exit
@@ -17,7 +18,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
-unset COMMIT_GUARDS_CHECKS COMMIT_GUARDS_PRE_COMMIT_LOCAL COMMIT_GUARDS_SETTINGS_FILE \
+unset COMMIT_GUARDS_CHECKS COMMIT_GUARDS_PRE_COMMIT_LOCAL COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS COMMIT_GUARDS_SETTINGS_FILE \
   GG_TMP GG_SETTINGS_INDEX_OWNED GG_SETTINGS_INDEX_DIR GG_SETTINGS_FROM_INDEX 2>/dev/null || true
 
 # Assembled from split tokens so this file carries no marker shape of its
@@ -172,6 +173,23 @@ run_rows \
   "its violation blocks|fx_local_fails|$LOCAL_ENV|$BARE||rc=1 $SKIPS;$BATCH_OK;$LOCAL;fixture=local-violation;$BLOCKED" \
   "its status past 1 is a step that did not complete|fx_local_dies|$LOCAL_ENV|$BARE||rc=2 $SKIPS;$BATCH_OK;$LOCAL;fixture=local-error;$(incomplete 'repo-local: tools/local-check' 2);$ERRORS" \
   "an entry that is not executable is a config error naming it, after the batch ran|fx_local_unexecutable|$LOCAL_ENV|$BARE||rc=2 $SKIPS;$BATCH_OK;pre-commit: local-missing=tools/local-check"
+
+echo "=== COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS: the entry runs only for a commit touching a path it names ==="
+# Every row's entry exits 2, so a row where it ran blocks and a row where it
+# was skipped passes only because it did not run.
+fx_scope_settings() { repo scope-settings; local_entry '#!/bin/sh\necho "fixture=local-error"\nexit 2\n'; printf '[env]\n' >"$R/kendex.settings.toml"; git -C "$R" add kendex.settings.toml; }
+fx_scope_empty() { repo scope-empty; local_entry '#!/bin/sh\necho "fixture=local-error"\nexit 2\n'; printf '[env]\n' >"$R/kendex.settings.toml"; git -C "$R" add kendex.settings.toml; }
+fx_scope_hit() { repo scope-hit; local_entry '#!/bin/sh\necho "fixture=local-error"\nexit 2\n'; mkdir -p "$R/src"; printf 'x = 1\n' >"$R/src/x.py"; git -C "$R" add src/x.py; }
+fx_scope_deleted() { repo scope-deleted; local_entry '#!/bin/sh\necho "fixture=local-error"\nexit 2\n'; git -C "$R" rm -q a.txt; }
+fx_scope_malformed() { repo scope-malformed; local_entry '#!/bin/sh\nexit 0\n'; }
+SCOPE_ENV="$LOCAL_ENV,COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS=*.py a.txt"
+LOCAL_DIED="$LOCAL;fixture=local-error;$(incomplete 'repo-local: tools/local-check' 2);$ERRORS"
+run_rows \
+  "a commit staging a settings file and a text file, neither named, skips the entry with one announced line and passes|fx_scope_settings|$SCOPE_ENV|$BARE||rc=0 $SKIPS;$BATCH_OK;pre-commit: local-entry=skipped;$CHAIN_OK" \
+  "control: the same commit with the setting empty runs the entry, and its exit 2 blocks|fx_scope_empty|$LOCAL_ENV,COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS=|$BARE||rc=2 $SKIPS;$BATCH_OK;$LOCAL_DIED" \
+  "a staged path the globs match runs the entry, a glob crossing a slash|fx_scope_hit|$SCOPE_ENV|$BARE||rc=2 $SKIPS;$BATCH_OK;$LOCAL_DIED" \
+  "a deletion of a named path is a change to it and runs the entry|fx_scope_deleted|$SCOPE_ENV|$BARE||rc=2 $SKIPS;$BATCH_OK;$LOCAL_DIED" \
+  "an absolute glob is a config error naming the setting, as every path setting's is|fx_scope_malformed|$LOCAL_ENV,COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS=/abs/*.py|$BARE||rc=2 $SKIPS;$BATCH_OK;pre-commit: path-absolute=COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS:/abs/*.py"
 
 echo "=== the batch runs at commit scope: a marker the commit does not add belongs to CI ==="
 # The fixture proves its marker landed in HEAD: a row over a repository

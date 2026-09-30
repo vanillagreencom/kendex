@@ -81,7 +81,7 @@ The installer writes into `.git/hooks`, never `core.hooksPath`:
 2. `preflight --staged`, resolved the same way; a first commit skips it with a note.
 3. `bot-instructions check --staged`, resolved the same way, so no consumer carries a wrapper for it.
 4. `commit-guards all --staged`.
-5. The repo-root-relative executable `COMMIT_GUARDS_PRE_COMMIT_LOCAL` names, when set.
+5. The repo-root-relative executable `COMMIT_GUARDS_PRE_COMMIT_LOCAL` names, when set. With `COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS` set, it runs only when a path the commit touches matches, the list `gg_commit_paths` in `scripts/lib/commit-changes.sh` gives the commit-msg gate too.
 
 Every step runs before the verdict; any other companion failure blocks. The shims fail closed on `2` for a guard that could not run, naming what is missing.
 

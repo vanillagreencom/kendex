@@ -37,6 +37,8 @@ COMMIT_GUARDS_BYTE_CEILING_KB = "500"
 COMMIT_GUARDS_CHECKS = "todo-ban suppression-ban"
 ```
 
+`COMMIT_GUARDS_PRE_COMMIT_LOCAL` names a project check the pre-commit hook runs last. `COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS` names the paths that check reads. The hook runs the check only for a commit that changes one of those paths, and prints one line when it skips it. A tool the check needs and cannot find is reported with its install command and exit `2`, which blocks only a commit that changes those paths.
+
 ## Git hooks
 
 The Git hooks run the committed skill scripts: `pre-commit` and `commit-msg` per commit, `pre-push` per branch. The harness pre-commit hook requires these Git hooks before it allows a commit.

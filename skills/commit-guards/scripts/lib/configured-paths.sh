@@ -364,6 +364,29 @@ gg_policy_content() { # FILE — content on stdout; 1 = the commit has no such f
   esac
 }
 
+# The render inventory gg_is_excluded consults, read from the index through
+# gg_policy_content. An absent inventory is an empty one: a project whose
+# items are all in-place has no renders to record, and excluding nothing keeps
+# every tracked file scanned. An unread or malformed one refuses.
+#
+# GG_RENDER_INVENTORY is none for a lane that consults no inventory, deferred
+# for one that reads it at the first path a walk selects, and loaded once read.
+# A deferred lane whose walk selects nothing never reads it, so a commit that
+# gives the lane nothing to judge is never refused on the inventory.
+GG_RENDER_INVENTORY=none
+gg_load_render_inventory() { # sets GENERATED_PATHS, or refuses
+  local inventory status=0
+  # A walk calls this with its record file on stdin: nothing here may read it.
+  inventory="$(gg_policy_content .kendex-generated.json </dev/null)" || status=$?
+  case "$status" in
+    0) ;;
+    1) inventory='[]' ;;
+    *) gg_fail inventory-read "$status" "refusing to run on an unread render inventory: .kendex-generated.json (exit $status, cause above)" ;;
+  esac
+  generated_paths_load "$inventory" || exit 2
+  GG_RENDER_INVENTORY=loaded
+}
+
 # Shell glob matched against the full repo-relative path (`*` crosses `/`);
 # blank lines and `#` comments are ignored; a pattern without a reason is a
 # config error. A missing file is an empty list. A `!` pattern CARVES its
@@ -409,6 +432,11 @@ gg_load_excludes() { # FILE — fills GG_EXCLUDE_PATTERNS and GG_EXCLUDE_CARVES
 }
 
 gg_is_excluded() { # PATH — 0 when an exclusion glob matches and no `!` row carves it back
+  case "$GG_RENDER_INVENTORY" in
+    none | loaded) ;;
+    deferred) gg_load_render_inventory ;;
+    *) gg_fail render-inventory-state "$GG_RENDER_INVENTORY" "gg_is_excluded: the render inventory state is none, deferred or loaded" ;;
+  esac
   # The loaded lists, matched by the one spelling above. Guarded expansion: an
   # empty array is an unbound variable under Bash 3.2 with set -u.
   generated_path_contains "$1" \

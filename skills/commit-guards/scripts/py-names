@@ -73,15 +73,8 @@ done
 gg_repo_root_cd
 gg_load_path_globs "*.py" py-names py-names
 # A render is not judged: its source is, and a local edit to a render is
-# overwritten. An absent inventory lists nothing; an unread one refuses.
-inventory_status=0
-inventory="$(gg_policy_content .kendex-generated.json)" || inventory_status=$?
-case "$inventory_status" in
-  0) ;;
-  1) inventory='[]' ;;
-  *) gg_fail inventory-read "$inventory_status" "refusing to run on an unread render inventory: .kendex-generated.json (exit $inventory_status, cause above)" ;;
-esac
-generated_paths_load "$inventory" || exit 2
+# overwritten. The inventory is read at the first *.py path a walk selects.
+GG_RENDER_INVENTORY=deferred
 gg_tmpdir
 
 TOOL=""
@@ -169,6 +162,13 @@ case "$MODE" in
     gg_walk_range_paths "$range" Python judge
     ;;
 esac
+
+# Still deferred: the walk reached gg_is_excluded for no path, so no *.py path
+# is in this scope. Nothing was judged, and no inventory or tool was read.
+if [ "$GG_RENDER_INVENTORY" = deferred ]; then
+  gg_message no-match "$MODE:$GG_PATH_GLOBS_SHOWN" "No Python file is selected in this scope."
+  exit 0
+fi
 
 gg_message summary "violations=$violations files=$checked scope=$MODE skipped=$GG_WALK_SKIPPED" "The Python name scan is complete."
 [ "$violations" -eq 0 ] || exit 1
