@@ -4,11 +4,10 @@
 
 ### 2.0.4
 
-- A task that prints a lot no longer makes Pi write the task log synchronously, save the full task state and redraw the widget for every output chunk.
-- A task that prints faster than the disk takes waits for the disk instead of losing log lines. A stalled or failing log write marks the lost bytes in the log.
-- Process and systemd unit checks no longer block Pi on the idle timer. A check that cannot answer leaves the task running.
+- A task that prints a lot no longer makes Pi write the task log synchronously, save the full task state and redraw the widget for every output chunk. A slow disk no longer blocks Pi; the task waits on its output instead.
+- A log write that fails loses its bytes, and a log write that stalls loses the output that arrives past a bounded buffer; the log marks each loss with its byte count. In 2.0.2 a failed write lost its bytes with no mark, and a stalled write blocked Pi.
+- Checks of tasks left running by an earlier Pi session no longer block Pi at startup or on their 30-second recheck.
 - Startup and reload with a long task history no longer slow down.
-- A stop, timeout or shutdown after a task exits sends no signal and keeps the task's real status.
 
 ### 2.0.3
 
