@@ -40,13 +40,13 @@ const rows: RestoreReplayRow[] = [
 	},
 ];
 
-test("restore followed by missed exit replay", () => {
+test("restore followed by missed exit replay", async () => {
 	expect.assertions(rows.length + 1);
 	expect(rows.length, "restore-replay table must contain rows").toBeGreaterThan(0);
 	for (const row of rows) {
 		const recorder = recordingHooks();
-		const restored = restoredTaskFromSnapshot(fakeSnapshot(row.snapshot), {
-			identityProbe: () => row.identity, sessionId: "sess-1", now: 1_700_000_100_000,
+		const restored = await restoredTaskFromSnapshot(fakeSnapshot(row.snapshot), {
+			identityProbe: async () => row.identity, sessionId: "sess-1", now: 1_700_000_100_000,
 		});
 		// Capture the restore result before replay can change exitNotified.
 		const before = { status: restored.status, closed: restored.closed, exitNotified: restored.exitNotified };

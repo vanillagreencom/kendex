@@ -53,13 +53,13 @@ const rows: TimerRow[] = [
 	},
 ];
 
-test("orphan watcher interval lifecycle", () => {
+test("orphan watcher interval lifecycle", async () => {
 	expect.assertions(rows.length + 1);
 	expect(rows.length, "orphan timer table must contain rows").toBeGreaterThan(0);
 	for (const row of rows) {
 		const tasks = row.tasks.map((task) => orphanTask(task));
 		const recorder = recordingHooks();
-		const handles: { callback: () => void; unref: () => void }[] = [];
+		const handles: { callback: () => Promise<unknown>; unref: () => void }[] = [];
 		const active = new Set<NodeJS.Timeout>();
 		const delays: number[] = [];
 		const unrefs: number[] = [];
@@ -68,8 +68,8 @@ test("orphan watcher interval lifecycle", () => {
 		const probes: number[] = [];
 		const watcher = createOrphanWatcher({
 			getTasks() { reads++; return tasks; }, hooks: recorder.hooks, pollMs: row.pollMs,
-			identityProbe(pid) { probes.push(pid); return null; },
-			unitActiveProbe() { throw new Error("unexpected systemd unit probe"); },
+			async identityProbe(pid) { probes.push(pid); return null; },
+			async unitActiveProbe() { throw new Error("unexpected systemd unit probe"); },
 			setIntervalFn(callback, delay) {
 				const handle = { callback, unref() { unrefs.push(handles.indexOf(handle)); } };
 				handles.push(handle);
@@ -92,7 +92,7 @@ test("orphan watcher interval lifecycle", () => {
 					case "fire": {
 						const handle = step.handle === undefined ? undefined : handles[step.handle];
 						if (!handle || !active.has(handle as unknown as NodeJS.Timeout)) throw new Error("requested timer is not active");
-						handle.callback();
+						await handle.callback();
 						break;
 					}
 				}

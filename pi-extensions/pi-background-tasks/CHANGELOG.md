@@ -2,6 +2,13 @@
 
 ## Consumer-impacting changes
 
+### 2.0.4
+
+- A task that prints a lot no longer slows Pi down. Output is written to the task log in batches every 250 ms, off Pi's thread. The widget refreshes at most every 200 ms. Task state is saved at most once per second while output streams, not once per output chunk. The saved state file is compact JSON.
+- A task log whose writes fall more than 4 MiB behind the task's output drops the excess and records a line with the number of dropped bytes.
+- Process and systemd unit checks run in the background with a 1-second timeout, at most 4 at a time. The check for a user systemd manager runs once per Pi process.
+- Session start and reload read the saved task history first and then check each restored running task once, so a long history no longer slows startup.
+
 ### 2.0.3
 
 - Settings reads come from memory. A read is answered for one second without touching disk, then the settings files are read again. A change made in the extension manager, or a new session, applies at once; a hand edit to `settings.json` applies within one second. Before, every read went to disk.

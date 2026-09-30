@@ -4,7 +4,7 @@ import { restoredTaskFromSnapshot } from "../extensions/snapshot.js";
 import type { ManagedTask, ProcessIdentity } from "../extensions/types.js";
 import { fakeSnapshot, fakeTask, recordingHooks } from "./fixtures/lifecycle.js";
 
-test("systemd unit state takes precedence over wrapper identity during restore and polling", () => {
+test("systemd unit state takes precedence over wrapper identity during restore and polling", async () => {
 	const unit = "kendex-pi-bg-bg-7.service";
 	const identity = { comm: "systemd-run", pid: 4242, startToken: "start-4242" };
 	const rows: {
@@ -33,20 +33,20 @@ test("systemd unit state takes precedence over wrapper identity during restore a
 		});
 		const unitCalls: string[] = [];
 		const identityCalls: number[] = [];
-		const unitActiveProbe = (name: string) => { unitCalls.push(name); return row.active; };
-		const identityProbe = (pid: number) => { identityCalls.push(pid); return row.identity; };
+		const unitActiveProbe = async (name: string) => { unitCalls.push(name); return row.active; };
+		const identityProbe = async (pid: number) => { identityCalls.push(pid); return row.identity; };
 		const recorder = recordingHooks();
 		let task: ManagedTask;
 		let result: { finalized: number } | undefined;
 		if (row.operation === "restore") {
-			task = restoredTaskFromSnapshot(snapshot, { sessionId: "session-A", identityProbe, unitActiveProbe, now: 1_700_000_001_000 });
+			task = await restoredTaskFromSnapshot(snapshot, { sessionId: "session-A", identityProbe, unitActiveProbe, now: 1_700_000_001_000 });
 		} else {
 			task = fakeTask({
 				...snapshot, restored: true, notifyMode: "transition", pendingWakes: [], voidedWakeSequences: [],
 				voidedWakes: new Set<number>(), wakeEvents: [], wakeSequence: 0,
 			});
 			const watcher = createOrphanWatcher({ getTasks: () => [task], hooks: recorder.hooks, identityProbe, unitActiveProbe });
-			result = watcher.checkOnce();
+			result = await watcher.checkOnce();
 		}
 		expect({
 			state: { status: task.status, closed: task.closed, exitNotified: task.exitNotified, terminationReason: task.terminationReason, result },

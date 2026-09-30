@@ -1,7 +1,7 @@
-import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 
 import { parseOutputMatcher } from "./format.js";
+import { runProbe } from "./probes.js";
 import type { BackgroundTaskSnapshot, ManagedTask, ProcessIdentity } from "./types.js";
 import { normalizeNotifyMode, normalizeOutputWakeBudget } from "./wake-events.js";
 
@@ -95,15 +95,15 @@ export function defaultProcessAlive(pid: number): boolean {
 // Read kernel-stable process identity. Linux fast path: /proc/<pid>/stat
 // field 22 (starttime in jiffies since boot) + /proc/<pid>/comm. Other
 // platforms: `ps -o lstart=,comm= -p <pid>` returns an absolute start
-// time string + comm. Returns null when the pid is gone or the probe
-// failed. This detects PID reuse: the kernel may recycle a PID for
-// an unrelated process, but the start token cannot collide for the
-// same recycled pid within the same boot.
-export function defaultReadProcessIdentity(pid: number): ProcessIdentity | null {
+// time string + comm, as a time-limited asynchronous probe. Resolves null
+// when the pid is gone or the probe failed or timed out. This detects PID
+// reuse: the kernel may recycle a PID for an unrelated process, but the
+// start token cannot collide for the same recycled pid within the same boot.
+export async function defaultReadProcessIdentity(pid: number): Promise<ProcessIdentity | null> {
 	if (!Number.isFinite(pid) || pid <= 0) return null;
 	if (process.platform === "linux") {
 		try {
-			const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+			const stat = await readFile(`/proc/${pid}/stat`, "utf8");
 			const lastParen = stat.lastIndexOf(")");
 			if (lastParen < 0) return null;
 			// stat fields after the closing paren of comm are space-separated.
@@ -118,9 +118,9 @@ export function defaultReadProcessIdentity(pid: number): ProcessIdentity | null 
 			// Fall through to the portable ps path.
 		}
 	}
-	const r = spawnSync("ps", ["-o", "lstart=,comm=", "-p", String(pid)], { encoding: "utf8" });
-	if (r.status !== 0) return null;
-	const line = (r.stdout ?? "").trim();
+	const result = await runProbe("ps", ["-o", "lstart=,comm=", "-p", String(pid)]);
+	if (result.kind !== "exited" || result.status !== 0) return null;
+	const line = result.stdout.trim();
 	if (!line) return null;
 	// lstart format: "Day Mon DD HH:MM:SS YYYY" (5 whitespace-separated tokens),
 	// then comm. Split on whitespace and reassemble.
@@ -154,22 +154,22 @@ export function identityMatches(
 
 export interface RestoreOptions {
 	now?: number;
-	// Identity probe. Default uses /proc + ps. Return null when the pid
+	// Identity probe. Default uses /proc + ps. Resolve null when the pid
 	// is gone or the probe failed; the watcher / restore paths then
-	// treat the task as terminal and replay the missed exit. Return a
+	// treat the task as terminal and replay the missed exit. Resolve a
 	// ProcessIdentity when the pid is alive; identityMatches against
 	// the snapshot's procIdent decides whether the original task is
 	// still that process or PID reuse hit.
-	identityProbe?: (pid: number) => ProcessIdentity | null;
+	identityProbe?: (pid: number) => Promise<ProcessIdentity | null>;
 	// Current Pi session id. Snapshots whose sessionId disagrees with this
 	// value are still rehydrated (so the dashboard can show their final
 	// state) but are not eligible for missed-exit replay; replay is scoped
 	// to the session that spawned the task.
 	sessionId?: string;
 	// Optional systemd unit liveness probe for resource-controlled tasks.
-	// Returns true while the persisted transient unit is active, false
+	// Resolves true while the persisted transient unit is active, false
 	// when it is known inactive, and null when the unit cannot be queried.
-	unitActiveProbe?: (unitName: string) => boolean | null;
+	unitActiveProbe?: (unitName: string) => Promise<boolean | null>;
 }
 
 // Rehydrate a persisted snapshot into a ManagedTask placeholder. The child
@@ -191,7 +191,10 @@ export interface RestoreOptions {
 // Everything else takes snapshot.exitNotified === true, so a terminal
 // snapshot that never carried the field is replay-eligible, as is a fresh
 // running->stopped coercion.
-export function restoredTaskFromSnapshot(snapshot: BackgroundTaskSnapshot, options: RestoreOptions = {}): ManagedTask {
+//
+// Only a same-session running snapshot is probed, so a restore probes each
+// task of its final set at most once.
+export async function restoredTaskFromSnapshot(snapshot: BackgroundTaskSnapshot, options: RestoreOptions = {}): Promise<ManagedTask> {
 	const now = options.now ?? Date.now();
 	const probe = options.identityProbe ?? defaultReadProcessIdentity;
 	const wasRunning = snapshot.status === "running";
@@ -204,11 +207,11 @@ export function restoredTaskFromSnapshot(snapshot: BackgroundTaskSnapshot, optio
 	let pidStillAlive = false;
 	if (wasRunning && !foreignSession) {
 		const unitName = snapshot.resourceControl?.mode === "systemd-run" ? snapshot.resourceControl.unitName : undefined;
-		const unitActive = unitName ? options.unitActiveProbe?.(unitName) : null;
+		const unitActive = unitName && options.unitActiveProbe ? await options.unitActiveProbe(unitName) : null;
 		if (unitActive === true) {
 			pidStillAlive = true;
 		} else if (unitActive !== false) {
-			const current = probe(snapshot.pid);
+			const current = await probe(snapshot.pid);
 			if (current !== null && identityMatches(snapshot.procIdent, current)) {
 				pidStillAlive = true;
 			}

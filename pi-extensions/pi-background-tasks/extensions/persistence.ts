@@ -197,6 +197,8 @@ export function createPersistence(deps: PersistenceDeps): {
 
 	function persistSnapshots(): PersistResult {
 		const payload = payloadFor(deps.listSnapshots());
+		// Serialized once, compact: it sizes the session entry and is the sidecar body.
+		const serialized = JSON.stringify(payload);
 		const ctx = deps.getActiveCtx();
 		let appendEntryOk = false;
 		let appendReason: PersistResult["appendReason"] = ctx ? undefined : "no-active-context";
@@ -210,7 +212,6 @@ export function createPersistence(deps: PersistenceDeps): {
 				appendEntryOk = true;
 				appendReason = "unchanged";
 			} else {
-				const serialized = JSON.stringify(payload);
 				const byteSize = Buffer.byteLength(serialized, "utf8");
 				try {
 					if (byteSize <= maxBytes) {
@@ -260,7 +261,7 @@ export function createPersistence(deps: PersistenceDeps): {
 
 		if (ctx) {
 			try {
-				writeSidecarAtomic(sidecarStatePath(ctx), `${JSON.stringify(payload, null, 2)}\n`);
+				writeSidecarAtomic(sidecarStatePath(ctx), `${serialized}\n`);
 				sidecarOk = true;
 			} catch (error) {
 				reportPersistFailure("sidecar", error, notify);

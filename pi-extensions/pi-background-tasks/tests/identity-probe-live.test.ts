@@ -16,12 +16,12 @@ describe.skipIf(process.platform !== "linux")("Linux process identity across exe
 				await owned.ready("bash-ready");
 				const pid = owned.child.pid;
 				if (pid === undefined) throw new Error(`${row.name}: Bash has no process ID`);
-				const initial = defaultReadProcessIdentity(pid);
+				const initial = await defaultReadProcessIdentity(pid);
 				if (initial === null) throw new Error(`${row.name}: initial live identity is null`);
 				owned.child.stdin.write(`${row.release}\n`);
 				if (row.release === "exec") await owned.ready("exec-ready");
 				else await owned.exited();
-				const current = defaultReadProcessIdentity(pid);
+				const current = await defaultReadProcessIdentity(pid);
 				if (row.release === "exec" && current === null) {
 					throw new Error(`${row.name}: post-exec live identity is null`);
 				}

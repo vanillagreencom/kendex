@@ -84,7 +84,7 @@ const rows: WatcherRow[] = [
 	},
 ];
 
-test("orphan watcher poll outcomes", () => {
+test("orphan watcher poll outcomes", async () => {
 	expect.assertions(rows.length + 1);
 	expect(rows.length, "orphan watcher table must contain rows").toBeGreaterThan(0);
 	for (const row of rows) {
@@ -94,12 +94,12 @@ test("orphan watcher poll outcomes", () => {
 		const callbacks: { id: string; reason: "pid-gone" | "pid-reused"; sameTask: boolean }[] = [];
 		const watcher = createOrphanWatcher({
 			getTasks: () => tasks, hooks: recorder.hooks,
-			identityProbe(pid) {
+			async identityProbe(pid) {
 				const identity = identities[pid];
 				if (identity === undefined) throw new Error(`unexpected identity probe for ${pid}`);
 				return identity;
 			},
-			unitActiveProbe() { throw new Error("unexpected systemd unit probe"); },
+			async unitActiveProbe() { throw new Error("unexpected systemd unit probe"); },
 			setIntervalFn() { throw new Error("checkOnce must not arm a timer"); },
 			clearIntervalFn() { throw new Error("checkOnce must not clear an interval"); },
 			onFinalize(task, reason) { callbacks.push({ id: task.id, reason, sameTask: tasks.includes(task) }); },
@@ -107,7 +107,7 @@ test("orphan watcher poll outcomes", () => {
 		const observed = [];
 		for (const poll of row.polls) {
 			identities = poll.identities;
-			const { finalized } = watcher.checkOnce();
+			const { finalized } = await watcher.checkOnce();
 			const hooks = recorder.observe(tasks);
 			// Store primitive task fields before a later poll changes the task.
 			observed.push({

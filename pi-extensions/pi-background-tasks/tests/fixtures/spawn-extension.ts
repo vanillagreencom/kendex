@@ -93,6 +93,9 @@ try {
 	}
 	if (input.mode === "spawn") child.emit("close", 0);
 	const final = await state();
+	// Log lines are written asynchronously; the drain lands them before the read.
+	const { taskLogs } = await import("../../extensions/log-writer.js");
+	await taskLogs.drain();
 	const log = readFileSync(spawned.details.task!.logFile as string, "utf8");
 	const stoppedTimers = native.activeTimers();
 	const stopCalls = native.syncCalls.slice(stopStart);

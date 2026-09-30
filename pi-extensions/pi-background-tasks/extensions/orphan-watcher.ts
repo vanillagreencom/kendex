@@ -1,10 +1,13 @@
 // Liveness watcher for orphan-running tasks rehydrated by
 // restoredTaskFromSnapshot when the recorded child pid is still alive.
 //
-// This module polls `kill -0` per orphan. When the pid
+// This module polls an asynchronous identity probe per orphan. When the pid
 // disappears, it routes through finalizeTaskLifecycle so the same
 // canonical exit wake (and pi-bg-task-exit daemon path) fires that
 // would have fired if Pi had stayed alive.
+//
+// A pass runs at most PROBE_CONCURRENCY probes at once, never overlaps the
+// previous pass, and finalizes nothing once stop() has run.
 //
 // This module is METADATA-ONLY. It MUST NOT call process.kill() or child.kill() on
 // the tracked pid under any reconcile or polling path. The only
@@ -16,9 +19,10 @@
 // failure mode where a tracked pid + start-time pair flickering across
 // snapshot writes could be proactively terminated.
 //
-// Pure logic; tests inject deterministic `isProcessAlive` + clock.
+// Pure logic; tests inject deterministic probes + timers.
 
 import { finalizeTaskLifecycle, type LifecycleHooks } from "./lifecycle.js";
+import { mapWithConcurrency, PROBE_CONCURRENCY } from "./probes.js";
 import { defaultSystemdUnitActive } from "./resource-control.js";
 import { defaultReadProcessIdentity, identityMatches } from "./snapshot.js";
 import type { ManagedTask, ProcessIdentity } from "./types.js";
@@ -32,18 +36,20 @@ export interface OrphanWatcherDeps {
 	// The watcher compares against task.procIdent so a recycled PID
 	// hitting an unrelated process is detected as a mismatch and treated
 	// like the pid is gone.
-	identityProbe?: (pid: number) => ProcessIdentity | null;
+	identityProbe?: (pid: number) => Promise<ProcessIdentity | null>;
 	// For resource-controlled systemd units, the wrapper pid can be less
 	// authoritative than the transient unit. true = still running, false =
 	// known inactive, null = unavailable so the watcher falls back to pid.
-	unitActiveProbe?: (unitName: string) => boolean | null;
-	setIntervalFn?: (cb: () => void, ms: number) => NodeJS.Timeout;
+	unitActiveProbe?: (unitName: string) => Promise<boolean | null>;
+	// The callback returns the pass it started, so a caller can await it.
+	setIntervalFn?: (cb: () => Promise<unknown>, ms: number) => NodeJS.Timeout;
 	clearIntervalFn?: (handle: NodeJS.Timeout) => void;
 	onFinalize?: (task: ManagedTask, reason: "pid-gone" | "pid-reused") => void;
 }
 
 export interface OrphanWatcher {
-	checkOnce(): { finalized: number };
+	/** Run one pass, or join the pass already running. */
+	checkOnce(): Promise<{ finalized: number }>;
 	start(): void;
 	stop(): void;
 }
@@ -69,26 +75,30 @@ export function createOrphanWatcher(deps: OrphanWatcherDeps): OrphanWatcher {
 	const startTimer = deps.setIntervalFn ?? ((cb, ms) => setInterval(cb, ms));
 	const stopTimer = deps.clearIntervalFn ?? ((h) => clearInterval(h));
 	let timer: NodeJS.Timeout | null = null;
+	let pass: Promise<{ finalized: number }> | null = null;
+	// stop() bumps the generation, so a pass it interrupts finalizes nothing.
+	let generation = 0;
 
-	function checkOnce(): { finalized: number } {
+	async function orphanVerdict(task: ManagedTask): Promise<"alive" | "pid-gone" | "pid-reused"> {
+		const unitName = task.resourceControl?.mode === "systemd-run" ? task.resourceControl.unitName : undefined;
+		const unitActive = unitName ? await unitProbe(unitName) : null;
+		if (unitActive === true) return "alive";
+		if (unitActive === false) return "pid-gone";
+		const current = await probe(task.pid);
+		if (current === null) return "pid-gone";
+		return identityMatches(task.procIdent, current) ? "alive" : "pid-reused";
+	}
+
+	async function runPass(passGeneration: number): Promise<{ finalized: number }> {
+		const orphans = [...deps.getTasks()].filter(isOrphanRunning);
+		const verdicts = await mapWithConcurrency(orphans, PROBE_CONCURRENCY, orphanVerdict);
 		let finalized = 0;
-		for (const task of deps.getTasks()) {
-			if (!isOrphanRunning(task)) continue;
-			let reason: "pid-gone" | "pid-reused" | null = null;
-			const unitName = task.resourceControl?.mode === "systemd-run" ? task.resourceControl.unitName : undefined;
-			const unitActive = unitName ? unitProbe(unitName) : null;
-			if (unitActive === true) continue;
-			if (unitActive === false) {
-				reason = "pid-gone";
-			} else {
-				const current = probe(task.pid);
-				if (current === null) {
-					reason = "pid-gone";
-				} else if (!identityMatches(task.procIdent, current)) {
-					reason = "pid-reused";
-				}
-			}
-			if (reason === null) continue;
+		for (const [index, task] of orphans.entries()) {
+			const reason = verdicts[index];
+			if (reason === "alive") continue;
+			// The task may have been stopped, finalized or cleared while the
+			// probes ran, or the watcher stopped.
+			if (passGeneration !== generation || !isOrphanRunning(task)) continue;
 			// PID disappeared or was recycled by an unrelated process. We
 			// can't recover the real exit code; the orphan is gone. Use
 			// exitCode=null and let finalizeTaskLifecycle classify as
@@ -112,6 +122,15 @@ export function createOrphanWatcher(deps: OrphanWatcherDeps): OrphanWatcher {
 		return { finalized };
 	}
 
+	function checkOnce(): Promise<{ finalized: number }> {
+		if (pass) return pass;
+		const current = runPass(generation).finally(() => {
+			if (pass === current) pass = null;
+		});
+		pass = current;
+		return current;
+	}
+
 	function start(): void {
 		if (timer) return;
 		timer = startTimer(checkOnce, pollMs);
@@ -120,6 +139,8 @@ export function createOrphanWatcher(deps: OrphanWatcherDeps): OrphanWatcher {
 	}
 
 	function stop(): void {
+		generation += 1;
+		pass = null;
 		if (!timer) return;
 		stopTimer(timer);
 		timer = null;

@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 
+import { runProbe, type ProbeRunner } from "./probes.js";
 import { settingBoolean, settingEnum, settingNumber } from "./settings.js";
 
 export const RESOURCE_CONTROL_MODES = ["auto", "systemd-run", "nice-ionice", "off"] as const;
@@ -71,6 +72,8 @@ const DEFAULT_NICE = 10;
 const DEFAULT_IONICE_CLASS: ResourceControlIoniceClass = "best-effort";
 const DEFAULT_IONICE_LEVEL = 7;
 const SYSTEMCTL_TIMEOUT_MS = 2_000;
+/** Succeeds only when the user's systemd manager answers on its bus. */
+const SYSTEMD_USER_MANAGER_PROBE_ARGS = ["--user", "show-environment"];
 const cachedUserSystemdRunnable = new Map<string, boolean>();
 
 function finiteInt(value: number, fallback: number): number {
@@ -130,7 +133,7 @@ function userSystemdAvailable(commandProbe: (command: string) => boolean, platfo
 	const cached = cachedUserSystemdRunnable.get(cacheKey);
 	if (cached !== undefined) return cached;
 	try {
-		const result = spawnSync("systemctl", ["--user", "show-environment"], { stdio: "ignore", timeout: 1_500 });
+		const result = spawnSync("systemctl", SYSTEMD_USER_MANAGER_PROBE_ARGS, { stdio: "ignore", timeout: 1_500 });
 		if (result.status !== 0) {
 			cachedUserSystemdRunnable.set(cacheKey, false);
 			return false;
@@ -330,14 +333,51 @@ export function stopResourceControlledTask(
 	};
 }
 
-export function defaultSystemdUnitActive(unitName: string): boolean | null {
-	if (!unitName || process.platform !== "linux") return null;
-	try {
-		const result = spawnSync("systemctl", ["--user", "is-active", "--quiet", unitName], { stdio: "ignore", timeout: 1_000 });
+export interface SystemdUnitActiveProbeDeps {
+	platform?: () => NodeJS.Platform;
+	run?: ProbeRunner;
+}
+
+/**
+ * Build an asynchronous unit liveness probe: true while the unit is active,
+ * false when `systemctl is-active` reports it inactive, null when it cannot
+ * be queried.
+ *
+ * The user manager's reachability is probed once and cached, so a host with
+ * no `systemctl` or no user bus pays one probe, not one per task per pass.
+ * A probe that timed out or was signalled settles nothing and is retried by
+ * the next caller.
+ */
+export function createSystemdUnitActiveProbe(deps: SystemdUnitActiveProbeDeps = {}): (unitName: string) => Promise<boolean | null> {
+	const platform = deps.platform ?? (() => process.platform);
+	const run = deps.run ?? runProbe;
+	let userManager: Promise<boolean | null> | null = null;
+	const userManagerReachable = async (): Promise<boolean> => {
+		userManager ??= run("systemctl", SYSTEMD_USER_MANAGER_PROBE_ARGS).then((result) => {
+			switch (result.kind) {
+				case "exited": return result.status === 0;
+				case "spawn-failed": return false;
+				case "timed-out":
+				case "signalled": return null;
+				default: {
+					const unreachable: never = result;
+					throw new Error(`unknown probe result: ${JSON.stringify(unreachable)}`);
+				}
+			}
+		});
+		const reachable = await userManager;
+		if (reachable === null) userManager = null;
+		return reachable === true;
+	};
+	return async (unitName: string): Promise<boolean | null> => {
+		if (!unitName || platform() !== "linux") return null;
+		if (!(await userManagerReachable())) return null;
+		const result = await run("systemctl", ["--user", "is-active", "--quiet", unitName]);
+		if (result.kind !== "exited") return null;
 		if (result.status === 0) return true;
 		if (result.status === 3) return false;
 		return null;
-	} catch {
-		return null;
-	}
+	};
 }
+
+export const defaultSystemdUnitActive = createSystemdUnitActiveProbe();

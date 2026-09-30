@@ -3,6 +3,7 @@ import nativeChildProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { EventEmitter } from "node:events";
 import * as filesystem from "node:fs";
+import * as filesystemPromises from "node:fs/promises";
 import { PassThrough } from "node:stream";
 
 export const fixturePid = 4242;
@@ -13,10 +14,12 @@ export async function interceptNativeEffects(options: { stopFails?: boolean; kil
 	const childSignals: unknown[] = [];
 	const spawns: { file: string; args: string[]; options: Record<string, unknown> }[] = [];
 	const syncCalls: { file: string; args: string[] }[] = [];
+	const probeCalls: { file: string; args: string[] }[] = [];
 	const unexpected: string[] = [];
 	const children: FakeChild[] = [];
 	const originalChildModule = { ...nativeChildProcess };
 	const originalReadFileSync = filesystem.readFileSync;
+	const originalReadFile = filesystemPromises.readFile;
 	const originalKill = process.kill;
 	const originalNow = Date.now;
 	const originalTimers = { setTimeout, clearTimeout, setInterval, clearInterval };
@@ -56,13 +59,29 @@ export async function interceptNativeEffects(options: { stopFails?: boolean; kil
 		if (file === "ps") return { status: 0, stdout: "Mon Jan  1 00:00:00 2024 fixture-child\n" };
 		return forbidden(file, args);
 	};
+	const procRead = (path: string): string => {
+		probeCalls.push({ file: path, args: [] });
+		if (path === `/proc/${fixturePid}/comm`) return "fixture-child\n";
+		if (path === `/proc/${fixturePid}/stat`) return `${fixturePid} (fixture-child) S ${Array(18).fill("0").join(" ")} 12345 0\n`;
+		return forbidden("unexpected proc read", path);
+	};
 	const readFileSync = (path: filesystem.PathOrFileDescriptor, ...args: unknown[]) => {
-		if (typeof path === "string" && path.startsWith("/proc/")) {
-			if (path === `/proc/${fixturePid}/comm`) return "fixture-child\n";
-			if (path === `/proc/${fixturePid}/stat`) return `${fixturePid} (fixture-child) S ${Array(18).fill("0").join(" ")} 12345 0\n`;
-			return forbidden("unexpected proc read", path);
-		}
+		if (typeof path === "string" && path.startsWith("/proc/")) return procRead(path);
 		return Reflect.apply(originalReadFileSync, filesystem, [path, ...args]);
+	};
+	const readFile = async (path: string, ...args: unknown[]) => {
+		if (typeof path === "string" && path.startsWith("/proc/")) return procRead(path);
+		return await Reflect.apply(originalReadFile, filesystemPromises, [path, ...args]);
+	};
+	// Asynchronous probes answer through execFile's callback.
+	const execFile = (file: string, args: string[], _options: unknown, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
+		probeCalls.push({ file, args });
+		const answer = (stdout: string) => queueMicrotask(() => callback(null, stdout, ""));
+		if (file === "ps") answer("Mon Jan  1 00:00:00 2024 fixture-child\n");
+		else if (file === "systemctl" && args.join(" ") === "--user show-environment") answer("");
+		else if (file === "systemctl" && args.slice(0, 3).join(" ") === "--user is-active --quiet") answer("");
+		else return forbidden(file, args);
+		return new FakeChild();
 	};
 	interface Timer { id: number; kind: "timeout" | "interval"; callback: () => void; ms: number; unref(): void }
 	const timers = new Map<number, Timer>();
@@ -87,24 +106,27 @@ export async function interceptNativeEffects(options: { stopFails?: boolean; kil
 	globalThis.setInterval = ((cb: () => void, ms: number) => schedule("interval", cb, ms)) as unknown as typeof setInterval;
 	globalThis.clearTimeout = clear as unknown as typeof clearTimeout;
 	globalThis.clearInterval = clear as unknown as typeof clearInterval;
-	const childModule = { spawn, spawnSync, ChildProcess: FakeChild, exec: forbidden, execSync: forbidden, execFile: forbidden, execFileSync: forbidden, fork: forbidden };
+	const childModule = { spawn, spawnSync, ChildProcess: FakeChild, exec: forbidden, execSync: forbidden, execFile, execFileSync: forbidden, fork: forbidden };
 	Object.assign(nativeChildProcess, childModule);
 	syncBuiltinESMExports();
 	mock.module("node:child_process", () => childModule);
 	mock.module("child_process", () => childModule);
 	mock.module("node:fs", () => ({ ...filesystem, readFileSync }));
+	mock.module("node:fs/promises", () => ({ ...filesystemPromises, readFile }));
 	const actual = await import("node:child_process");
 	const alias = await import("child_process");
 	const actualFs = await import("node:fs");
+	const actualFsPromises = await import("node:fs/promises");
 	const intercepted = {
 		processModule: Object.entries(childModule).every(([name, value]) => Reflect.get(actual, name) === value && Reflect.get(alias, name) === value && Reflect.get(nativeChildProcess, name) === value),
-		kill: process.kill === kill, readFileSync: actualFs.readFileSync === readFileSync, bunSpawn: Bun.spawn === forbidden, bunSpawnSync: Bun.spawnSync === forbidden,
+		kill: process.kill === kill, readFileSync: actualFs.readFileSync === readFileSync, readFile: actualFsPromises.readFile === readFile,
+		bunSpawn: Bun.spawn === forbidden, bunSpawnSync: Bun.spawnSync === forbidden,
 	};
 	if (Object.values(intercepted).some((value) => !value)) {
 		throw new Error(`spawn_fixture.interception=${JSON.stringify(intercepted)}\nExtension actions are refused.`);
 	}
 	return {
-		signals, childSignals, spawns, syncCalls, unexpected, children, timerEvents,
+		signals, childSignals, spawns, syncCalls, probeCalls, unexpected, children, timerEvents,
 		activeTimers: () => [...timers.values()].map(({ kind, ms }) => ({ kind, ms })),
 		fireTimeout(ms: number) {
 			const matches = [...timers.values()].filter((timer) => timer.kind === "timeout" && timer.ms === ms);
