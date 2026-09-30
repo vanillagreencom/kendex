@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import { ByteBudget, IN_FLIGHT_BYTE_BUDGET, readLocalPdfWithin, readPdfWithin, readTextWithin, TEXT_READ_BYTE_LIMIT, type UrlReads } from "../src/extract/byte-budget.js";
+import { ByteBudget, ByteBudgetExhausted, IN_FLIGHT_BYTE_BUDGET, IN_FLIGHT_WAIT_TIMEOUT_MS, PDF_READ_BYTE_LIMIT, readLocalPdfWithin, readPdfWithin, readTextWithin, TEXT_READ_BYTE_LIMIT, type UrlReads } from "../src/extract/byte-budget.js";
 import { streamedBody, tempDir, urlReads } from "./fixtures.js";
 
 /** What a text read of a 10-byte body returns after the reads under test: how much of the call budget they left. */
@@ -11,14 +11,16 @@ async function leftAfter(reads: UrlReads): Promise<string> {
 }
 
 for (const row of [
-	{ name: "under the limit", chunks: 3, chunkBytes: 4, limit: 16, expected: { length: 12, cut: undefined, pulled: 3, cancelled: false } },
-	{ name: "exactly the limit", chunks: 4, chunkBytes: 4, limit: 16, expected: { length: 16, cut: undefined, pulled: 4, cancelled: false } },
-	{ name: "over the limit mid-chunk", chunks: 100, chunkBytes: 4, limit: 10, expected: { length: 10, cut: { atBytes: 10, by: "read-limit" }, pulled: 3, cancelled: true } },
-	{ name: "over the limit at a chunk edge", chunks: 100, chunkBytes: 4, limit: 8, expected: { length: 8, cut: { atBytes: 8, by: "read-limit" }, pulled: 3, cancelled: true } },
+	{ name: "under the limit", chunks: 3, chunkBytes: 4, limit: 16, headers: new Headers(), expected: { length: 12, cut: undefined, pulled: 3, cancelled: false } },
+	{ name: "exactly the limit", chunks: 4, chunkBytes: 4, limit: 16, headers: new Headers(), expected: { length: 16, cut: undefined, pulled: 4, cancelled: false } },
+	{ name: "over the limit mid-chunk", chunks: 100, chunkBytes: 4, limit: 10, headers: new Headers(), expected: { length: 10, cut: { atBytes: 10, by: "read-limit" }, pulled: 3, cancelled: true } },
+	{ name: "over the limit at a chunk edge", chunks: 100, chunkBytes: 4, limit: 8, headers: new Headers(), expected: { length: 8, cut: { atBytes: 8, by: "read-limit" }, pulled: 3, cancelled: true } },
+	{ name: "past its declared length", chunks: 100, chunkBytes: 4, limit: 16, headers: new Headers({ "content-length": "6" }), expected: { length: 6, cut: { atBytes: 6, by: "declared-length" }, pulled: 2, cancelled: true } },
+	{ name: "past the declared length of its compressed bytes", chunks: 3, chunkBytes: 4, limit: 16, headers: new Headers({ "content-length": "6", "content-encoding": "gzip" }), expected: { length: 12, cut: undefined, pulled: 3, cancelled: false } },
 ]) {
 	test(`UrlReads.readBody: ${row.name}`, async (t) => {
 		const { body, probe } = streamedBody(row.chunks, row.chunkBytes);
-		const read = await urlReads(t).readBody(new Response(body), row.limit);
+		const read = await urlReads(t).readBody(new Response(body, { headers: row.headers }), row.limit);
 		assert.deepEqual({ length: read.bytes.byteLength, cut: read.cut, pulled: probe.pulled, cancelled: probe.cancelled }, row.expected);
 	});
 }
@@ -97,15 +99,25 @@ function gatedBody() {
 /** Runs every promise continuation queued so far: a read granted in-flight room reaches its body's first pull within them. */
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-/** A text read of a gated body under its own web_fetch call budget, as one of several concurrent calls would make. */
-function concurrentCallRead(signal?: AbortSignal) {
+/** A read of a gated body under its own web_fetch call budget, as one of several concurrent calls would make: a text read by
+ * default, a PDF read with PDF_READ_BYTE_LIMIT. Its outcome names a byte-budget error's budget. */
+function concurrentCallRead(signal?: AbortSignal, perRead = TEXT_READ_BYTE_LIMIT, headers = new Headers()) {
 	const reads = new ByteBudget().openUrl(signal);
 	const body = gatedBody();
-	const read = reads.readBody(new Response(body.body), TEXT_READ_BYTE_LIMIT).then(() => "read", (error: Error) => error.name);
+	const read = reads.readBody(new Response(body.body, { headers }), perRead).then(() => "read", (error: Error) => error instanceof ByteBudgetExhausted ? `${error.name}:${error.budget}` : error.name);
 	return { reads, body, read };
 }
 
 const SLOTS = IN_FLIGHT_BYTE_BUDGET / TEXT_READ_BYTE_LIMIT;
+/** Text reads that leave too little in-flight room for a PDF read and enough for one more text read. */
+const HOLDERS_UNDER_PDF = Math.floor((IN_FLIGHT_BYTE_BUDGET - PDF_READ_BYTE_LIMIT) / TEXT_READ_BYTE_LIMIT) + 1;
+
+/** Ends every read and returns its in-flight room, so the next test starts with the whole budget free. */
+async function finishAll(calls: Array<ReturnType<typeof concurrentCallRead>>): Promise<void> {
+	for (const call of calls) call.body.finish(0);
+	await Promise.all(calls.map((call) => call.read));
+	for (const call of calls) call.reads.release();
+}
 
 test("reads of concurrent web_fetch calls hold at most IN_FLIGHT_BYTE_BUDGET at once, and a waiting read starts after a release", { timeout: 10_000 }, async () => {
 	const calls = Array.from({ length: SLOTS + 2 }, () => concurrentCallRead());
@@ -167,4 +179,55 @@ test("a URL's next read waits only for room its own earlier read does not alread
 	await Promise.all([...holders.map((call) => call.read), nextRead]);
 	for (const call of holders) call.reads.release();
 	assert.equal(nextPulled, 1);
+});
+
+test("a waiting PDF read keeps a text read that would fit behind it, and its abort grants that read the room", { timeout: 10_000 }, async () => {
+	const holders = Array.from({ length: HOLDERS_UNDER_PDF }, () => concurrentCallRead());
+	const controller = new AbortController();
+	const pdf = concurrentCallRead(controller.signal, PDF_READ_BYTE_LIMIT);
+	const text = concurrentCallRead();
+	await settle();
+	const textWhilePdfWaits = text.body.probe.pulled;
+	controller.abort();
+	const pdfOutcome = await pdf.read;
+	await settle();
+	const textAfterAbort = text.body.probe.pulled;
+	await finishAll([...holders, pdf, text]);
+	assert.deepEqual({ textWhilePdfWaits, pdfOutcome, textAfterAbort }, { textWhilePdfWaits: 0, pdfOutcome: "AbortError", textAfterAbort: 1 });
+});
+
+for (const row of [
+	{ name: "a declared length reserves only that length", headers: new Headers({ "content-length": "8" }), expected: 1 },
+	{ name: "no declared length reserves the whole ceiling", headers: new Headers(), expected: 0 },
+	{ name: "a compressed body's declared length reserves the whole ceiling", headers: new Headers({ "content-length": "8", "content-encoding": "gzip" }), expected: 0 },
+]) {
+	test(`in-flight reservation of a PDF read: ${row.name}`, { timeout: 10_000 }, async () => {
+		const holders = Array.from({ length: HOLDERS_UNDER_PDF }, () => concurrentCallRead());
+		const controller = new AbortController();
+		const pdf = concurrentCallRead(controller.signal, PDF_READ_BYTE_LIMIT, row.headers);
+		await settle();
+		const pulled = pdf.body.probe.pulled;
+		controller.abort();
+		await finishAll([...holders, pdf]);
+		assert.equal(pulled, row.expected);
+	});
+}
+
+test("a read that waits IN_FLIGHT_WAIT_TIMEOUT_MS for in-flight room fails naming that budget, cancels its body and holds nothing", { timeout: 10_000 }, async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const holders = Array.from({ length: HOLDERS_UNDER_PDF }, () => concurrentCallRead());
+	const pdf = concurrentCallRead(undefined, PDF_READ_BYTE_LIMIT);
+	const text = concurrentCallRead();
+	await settle();
+	t.mock.timers.tick(IN_FLIGHT_WAIT_TIMEOUT_MS - 1);
+	await settle();
+	const textBeforeTimeout = text.body.probe.pulled;
+	t.mock.timers.tick(1);
+	const pdfOutcome = await pdf.read;
+	await settle();
+	const textAfterTimeout = text.body.probe.pulled;
+	await finishAll([...holders, pdf, text]);
+	assert.deepEqual({ textBeforeTimeout, pdfOutcome, pdfCancelled: pdf.body.probe.cancelled, textAfterTimeout }, {
+		textBeforeTimeout: 0, pdfOutcome: "ByteBudgetExhausted:in-flight", pdfCancelled: true, textAfterTimeout: 1,
+	});
 });

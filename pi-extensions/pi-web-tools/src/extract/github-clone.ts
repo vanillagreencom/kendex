@@ -1,6 +1,6 @@
 import { execFile, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
-import { realpath, stat } from "node:fs/promises";
+import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { readdir, realpath, stat } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { TEXT_READ_BYTE_LIMIT, type BoundedRead, type UrlReads } from "./byte-budget.js";
@@ -105,30 +105,19 @@ export async function readBlobFromCache(cachePath: string, path: string, reads: 
 
 export interface CacheTreeEntry { name: string; path: string; type: "dir" | "file"; size?: number }
 
-export function readTreeFromCache(cachePath: string, path = "", limit = 200): { entries: CacheTreeEntry[]; truncated: boolean } | null {
-	let root: string;
-	let target: string;
-	try {
-		root = realpathSync(cachePath);
-		target = realpathSync(join(cachePath, path));
-	} catch (error) {
-		if (isMissing(error)) return null;
-		throw error;
-	}
-	if (target !== root && !isInside(root, target)) return null;
-	if (!statSync(target).isDirectory()) return null;
-	const dirEntries = readdirSync(target, { withFileTypes: true })
+export async function readTreeFromCache(cachePath: string, path = "", limit = 200): Promise<{ entries: CacheTreeEntry[]; truncated: boolean } | null> {
+	const resolved = await resolveInCache(cachePath, path);
+	if (!resolved || !(await stat(resolved.target)).isDirectory()) return null;
+	const { root, target } = resolved;
+	const dirEntries = (await readdir(target, { withFileTypes: true }))
 		.filter((entry) => entry.name !== ".git")
 		.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
-	const total = dirEntries.length;
-	const entries = dirEntries.slice(0, limit).map((entry) => {
+	const entries = await Promise.all(dirEntries.slice(0, limit).map(async (entry) => {
 		const full = join(target, entry.name);
-		let size: number | undefined;
-		if (entry.isFile()) try { size = statSync(full).size; } catch { /* ignore */ }
-		const rel = relative(root, full);
-		return { name: entry.name, path: rel, type: entry.isDirectory() ? "dir" : "file", size } as CacheTreeEntry;
-	});
-	return { entries, truncated: total > limit };
+		const size = entry.isFile() ? await stat(full).then((stats) => stats.size, () => undefined) : undefined;
+		return { name: entry.name, path: relative(root, full), type: entry.isDirectory() ? "dir" : "file", size } as CacheTreeEntry;
+	}));
+	return { entries, truncated: dirEntries.length > limit };
 }
 
 export async function readReadmeFromCache(cachePath: string, reads: UrlReads): Promise<CachedBlob | null> {

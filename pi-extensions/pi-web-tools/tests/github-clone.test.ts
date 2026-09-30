@@ -15,7 +15,7 @@ for (const row of [
 	{ name: "symlinked file outside the cache", read: (repo: string, reads: UrlReads) => readBlobFromCache(repo, "src/escape.txt", reads), expected: null },
 	{ name: "symlinked README outside the cache", read: (repo: string, reads: UrlReads) => readReadmeFromCache(join(repo, "src"), reads), expected: null },
 	{ name: "symlinked file inside the cache", read: (repo: string, reads: UrlReads) => readBlobFromCache(repo, "src/alias.ts", reads), expected: { content: "export const x = 1;\n", bytes: 20 } },
-	{ name: "tree excludes Git state", read: (repo: string) => readTreeFromCache(repo, "")?.entries.map((entry) => entry.name), expected: ["src", "outer", "README.md"] },
+	{ name: "tree excludes Git state", read: async (repo: string) => (await readTreeFromCache(repo, ""))?.entries.map((entry) => entry.name), expected: ["src", "outer", "README.md"] },
 	{ name: "symlinked directory outside the cache", read: (repo: string) => readTreeFromCache(repo, "outer"), expected: null },
 	{ name: "README", read: (repo: string, reads: UrlReads) => readReadmeFromCache(repo, reads), expected: { content: "# Hello\n\nbody", bytes: 13 } },
 ]) {

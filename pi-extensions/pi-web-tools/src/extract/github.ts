@@ -85,13 +85,13 @@ async function extractFromClone(parsed: ParsedGitHubUrl, options: GitHubExtractO
 		return { title: `${parsed.owner}/${parsed.repo}/${parsed.path}`, content: blob.content, metadata: { ...meta, bytes: blob.bytes, ...truncationMetadata(blob.cut) } };
 	}
 	if (parsed.kind === "tree") {
-		const tree = readTreeFromCache(clone.cachePath, parsed.path ?? "", options.maxTreeEntries ?? 200);
+		const tree = await readTreeFromCache(clone.cachePath, parsed.path ?? "", options.maxTreeEntries ?? 200);
 		if (!tree) throw new Error(`Directory not found in cloned repo: ${parsed.path ?? "/"}`);
 		return { title: `${parsed.owner}/${parsed.repo}/${parsed.path ?? ""}`, content: summarizeTreeEntries(tree.entries, tree.truncated), metadata: { ...meta, entries: tree.entries.length, truncated: tree.truncated } };
 	}
 	const readmeBlob = await readReadmeFromCache(clone.cachePath, options.reads);
 	const readme = readmeBlob?.content ?? "";
-	const tree = readTreeFromCache(clone.cachePath, "", options.maxTreeEntries ?? 80);
+	const tree = await readTreeFromCache(clone.cachePath, "", options.maxTreeEntries ?? 80);
 	const treeText = tree ? summarizeTreeEntries(tree.entries, tree.truncated) : "";
 	const body = [`# ${parsed.owner}/${parsed.repo}`, `Cached at: ${clone.cachePath}`, treeText ? `\n## Tree (top entries)\n${treeText}` : undefined, readme ? `\n## README\n\n${readme}` : undefined].filter(Boolean).join("\n");
 	return { title: `${parsed.owner}/${parsed.repo}`, content: body, metadata: { ...meta, hasReadme: Boolean(readme), entries: tree?.entries.length ?? 0, ...truncationMetadata(readmeBlob?.cut) } };
@@ -106,7 +106,7 @@ export async function extractGitHubUrl(input: string, options: GitHubExtractOpti
 		try {
 			return await extractFromClone(parsed, options, decision.defaultBranch);
 		} catch (error) {
-			// A clone failure falls through to the API path; a spent byte budget or an abort ends the URL instead.
+			// A clone failure falls through to the API path; a byte-budget refusal or an abort ends the URL instead.
 			if (error instanceof ByteBudgetExhausted || options.signal?.aborted) throw error;
 		}
 	}
@@ -119,7 +119,7 @@ export async function extractGitHubUrl(input: string, options: GitHubExtractOpti
 	const data = await jsonFetch(fetchImpl, parsed.apiUrl, options.signal);
 	if (parsed.kind === "repo") {
 		const readme = await fetchImpl(`https://raw.githubusercontent.com/${parsed.owner}/${parsed.repo}/HEAD/README.md`, { signal: options.signal }).then((r) => r.ok ? readTextWithin(r, options.reads) : undefined).catch((error: unknown) => {
-			// A repo without a readable README still returns its description; a spent byte budget or an abort ends the URL instead.
+			// A repo without a readable README still returns its description; a byte-budget refusal or an abort ends the URL instead.
 			if (error instanceof ByteBudgetExhausted || options.signal?.aborted) throw error;
 			return undefined;
 		});

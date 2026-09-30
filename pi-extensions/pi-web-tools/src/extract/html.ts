@@ -5,40 +5,30 @@ export interface HtmlExtraction {
 	markdown: string;
 }
 
-const NAMED_ENTITIES: Record<string, string> = {
-	nbsp: " ",
-	amp: "&",
-	lt: "<",
-	gt: ">",
-	quot: '"',
-	"#39": "'",
-	apos: "'",
-	hellip: "…",
-	mdash: "—",
-	ndash: "–",
-	laquo: "«",
-	raquo: "»",
-	copy: "©",
-	reg: "®",
-	trade: "™",
+const ENTITY_MAP: Record<string, string> = {
+	"&nbsp;": " ",
+	"&amp;": "&",
+	"&lt;": "<",
+	"&gt;": ">",
+	"&quot;": '"',
+	"&#39;": "'",
+	"&apos;": "'",
+	"&hellip;": "…",
+	"&mdash;": "—",
+	"&ndash;": "–",
+	"&laquo;": "«",
+	"&raquo;": "»",
+	"&copy;": "©",
+	"&reg;": "®",
+	"&trade;": "™",
 };
 
-/** Named entities an `&amp;` in front of them still decodes: `&amp;lt;` reads as `<`, `&amp;nbsp;` as `&nbsp;`. */
-const AFTER_AMP = "lt|gt|quot|#39|apos|hellip|mdash|ndash|laquo|raquo|copy|reg|trade";
-/** Groups: 1 a named entity after `&amp;`, 2 a decimal entity after `&amp;`, 3 a named entity, 4 a decimal entity; none is a bare `&amp;`. */
-const DECIMAL_OR_NAMED_ENTITY = new RegExp(`&(?:amp;(?:(${AFTER_AMP});|#(\\d+);)?|(nbsp|${AFTER_AMP});|#(\\d+);)`, "g");
-
-/** Decodes named and decimal entities in one scan, then hexadecimal ones, so a decimal entity that spells out a hexadecimal one
- * decodes twice. */
 function decodeEntities(text: string): string {
-	return text
-		.replace(DECIMAL_OR_NAMED_ENTITY, (_match, afterAmp?: string, afterAmpDecimal?: string, named?: string, decimal?: string) => {
-			const name = afterAmp ?? named;
-			if (name !== undefined) return NAMED_ENTITIES[name]!;
-			const code = afterAmpDecimal ?? decimal;
-			return code === undefined ? "&" : String.fromCodePoint(Number(code));
-		})
-		.replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)));
+	let out = text;
+	for (const [k, v] of Object.entries(ENTITY_MAP)) out = out.split(k).join(v);
+	out = out.replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)));
+	out = out.replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)));
+	return out;
 }
 
 const CHROME_CLASS_EXACT = [
@@ -124,23 +114,73 @@ function stripRoleNavigation(html: string): string {
 	return html.replace(/<(div|section|nav|aside)\b[^>]*role=["']navigation["'][^>]*>[\s\S]*?<\/\1>/gi, "");
 }
 
-/** The markup rule for the tag at a `<`, tried in this order. Groups: 1 a block dropped with its content, by name prefix; 2 the
- * same, by whole name; 3 a block's closing tag; 4 a line break; 5 a heading level; 6 a list item; 7 a link's href; 8 any other tag.
- * A dropped block without a closing tag after it counts as any other tag. */
-const TAG_RULE = /<(?:(script|style|noscript|svg)|(header|nav|footer|aside|menu|form|button)\b|\/(?:h[1-6]|p|li|blockquote|pre|tr|div|section|article)>()|br\s*\/?>()|h([1-4])[^>]*>|li[^>]*>()|a\s+[^>]*href=["']([^"']+)["'][^>]*>|[^>]+>())/iy;
+/** The index after the next closing tag of each name, found by one forward search per name that later lookups reuse while
+ * they start at or before the tag it found. */
+class ClosingTags {
+	readonly #html: string;
+	/** Per name: the lookup start the search ran from, and where its closing tag is, or -1 when none follows that start. */
+	readonly #found = new Map<string, { from: number; at: number; re: RegExp }>();
+
+	constructor(html: string) {
+		this.#html = html;
+	}
+
+	/** The index after the first closing tag of `name` at or after `from`, or -1 when none follows. */
+	after(name: string, from: number): number {
+		const key = name.toLowerCase();
+		let entry = this.#found.get(key);
+		if (!entry) {
+			entry = { from: -1, at: -1, re: new RegExp(`</${key}>`, "ig") };
+			this.#found.set(key, entry);
+		}
+		if (entry.from >= 0 && from >= entry.from && (entry.at < 0 || from <= entry.at)) return entry.at < 0 ? -1 : entry.at + key.length + 3;
+		const found = nextTag(entry.re, this.#html, from);
+		entry.from = from;
+		entry.at = found ? found.index : -1;
+		return found ? entry.re.lastIndex : -1;
+	}
+}
+
+const SCRIPT_LIKE_OPEN = /<(script|style|noscript|svg)/gi;
+
+/** Removes each script, style, noscript and svg block, from its opening name to its first closing tag, in one pass before the
+ * tag scan, so a closing tag written inside one (`'</form>'` in a script) never ends the block around it. An opening name with
+ * no closing tag after it stays, and the scan reads it as any other tag. */
+function stripScriptLikeBlocks(html: string): string {
+	const closes = new ClosingTags(html);
+	const kept: string[] = [];
+	let keptFrom = 0;
+	let from = 0;
+	for (let open = nextTag(SCRIPT_LIKE_OPEN, html, from); open; open = nextTag(SCRIPT_LIKE_OPEN, html, from)) {
+		const close = closes.after(open[1]!, SCRIPT_LIKE_OPEN.lastIndex);
+		if (close < 0) {
+			from = SCRIPT_LIKE_OPEN.lastIndex;
+			continue;
+		}
+		kept.push(html.slice(keptFrom, open.index));
+		keptFrom = from = close;
+	}
+	kept.push(html.slice(keptFrom));
+	return kept.join("");
+}
+
+/** The markup rule for the tag at a `<`, tried in this order. Groups: 1 a block dropped with its content; 2 a block's closing
+ * tag; 3 a line break; 4 a heading level; 5 a list item; 6 a link's href; 7 any other tag. A dropped block without a closing tag
+ * after it counts as any other tag. */
+const TAG_RULE = /<(?:(header|nav|footer|aside|menu|form|button)\b|\/(?:h[1-6]|p|li|blockquote|pre|tr|div|section|article)>()|br\s*\/?>()|h([1-4])[^>]*>|li[^>]*>()|a\s+[^>]*href=["']([^"']+)["'][^>]*>|[^>]+>())/iy;
 const HEADING_PREFIX = ["", "\n# ", "\n## ", "\n### ", "\n#### "];
 const LINK_CLOSE = /<\/a>/iy;
 
 /** Converts the tags of one document to markdown text in a single left-to-right scan, building the output once. */
 class MarkupScan {
 	readonly #html: string;
-	/** Per dropped-block name: where its next closing tag is, or -1 from where on none is left. */
-	readonly #closes = new Map<string, { from: number; at: number; re: RegExp }>();
+	readonly #closes: ClosingTags;
 	/** Set once a link reaches no closing tag: none is left for any later link either. */
 	#noLinkClose = false;
 
 	constructor(html: string) {
 		this.#html = html;
+		this.#closes = new ClosingTags(html);
 	}
 
 	/** The markdown text of the whole document, entities not yet decoded. */
@@ -174,9 +214,9 @@ class MarkupScan {
 				continue;
 			}
 			cursor = TAG_RULE.lastIndex;
-			const dropped = match[1] ?? match[2];
+			const dropped = match[1];
 			if (dropped !== undefined) {
-				const close = this.#closeAfter(dropped, cursor);
+				const close = this.#closes.after(dropped, cursor);
 				if (close >= 0) {
 					cursor = close;
 					continue;
@@ -188,10 +228,10 @@ class MarkupScan {
 				}
 				if (!inLink) out.push(" ");
 				cursor = gt + 1;
-			} else if (match[3] !== undefined || match[4] !== undefined) out.push("\n");
-			else if (match[5] !== undefined) out.push(HEADING_PREFIX[Number(match[5])]!);
-			else if (match[6] !== undefined) out.push("\n- ");
-			else if (match[7] !== undefined && !inLink) cursor = this.#link(lt, cursor, match[7], out);
+			} else if (match[2] !== undefined || match[3] !== undefined) out.push("\n");
+			else if (match[4] !== undefined) out.push(HEADING_PREFIX[Number(match[4])]!);
+			else if (match[5] !== undefined) out.push("\n- ");
+			else if (match[6] !== undefined && !inLink) cursor = this.#link(lt, cursor, match[6], out);
 			else if (!inLink) out.push(" ");
 		}
 	}
@@ -220,22 +260,6 @@ class MarkupScan {
 		if (text) out.push(href.startsWith("#") ? text : `${text} (${href})`);
 		return end;
 	}
-
-	/** The index after the first closing tag of `name` at or after `from`, or -1 when none follows. */
-	#closeAfter(name: string, from: number): number {
-		const key = name.toLowerCase();
-		let entry = this.#closes.get(key);
-		if (!entry) {
-			entry = { from: -1, at: -1, re: new RegExp(`</${key}>`, "ig") };
-			this.#closes.set(key, entry);
-		}
-		if (entry.from >= 0 && from >= entry.from && (entry.at < 0 || from <= entry.at)) return entry.at < 0 ? -1 : entry.at + key.length + 3;
-		entry.re.lastIndex = from;
-		const found = entry.re.exec(this.#html);
-		entry.from = from;
-		entry.at = found ? found.index : -1;
-		return found ? entry.re.lastIndex : -1;
-	}
 }
 
 export function htmlToMarkdown(html: string): HtmlExtraction {
@@ -246,6 +270,7 @@ export function htmlToMarkdown(html: string): HtmlExtraction {
 		?? html;
 	main = stripRoleNavigation(main);
 	main = stripChromeBlocks(main);
+	main = stripScriptLikeBlocks(main);
 	const markdown = decodeEntities(new MarkupScan(main).convert())
 		.replace(/[ \t]{2,}|\t/g, " ")
 		.split(/\r?\n/)

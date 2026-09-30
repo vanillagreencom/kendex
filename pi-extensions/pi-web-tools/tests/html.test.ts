@@ -25,8 +25,18 @@ for (const { name, body, expected } of [
 	{ name: "chrome nested in chrome", body: '<p>Keep A</p><div class="infobox"><table class="navbox"><tr><td>x</td></tr></table>info</div><p>Keep B</p>', expected: "Keep A\nKeep B" },
 	{ name: "class that only contains a chrome name", body: '<p>Keep A</p><div class="navbox-like">kept</div><p>Keep B</p>', expected: "Keep A\nkept\nKeep B" },
 	{ name: "blocks past the removal cap", body: Array.from({ length: 502 }, (_, i) => `<p>k${i}</p><div class="toc">t${i}</div>`).join(""), expected: Array.from({ length: 502 }, (_, i) => i < 500 ? `k${i}` : `k${i}\nt${i}`).join("\n") },
+	{ name: "heading levels and line breaks", body: "<h2>Two</h2><h3>Three</h3><h4>Four</h4><h5>Five</h5><p>a<br>b</p>", expected: "## Two\n### Three\n#### Four\nFive\na\nb" },
+	{ name: "link that never closes", body: '<p>Open<a href="https://x.example">never closed</p>', expected: "Open never closed" },
+	{ name: "script that never closes", body: "<p>a<script>b</p>", expected: "a b" },
+	{ name: "nav that never closes", body: "<p>a<nav>b</p>", expected: "a b" },
+	{ name: "< that starts no tag", body: "<p>a <> b</p>", expected: "a <> b" },
+	{ name: "second script block after a stray <", body: "<p>a < b</p><script>x()</script><p>mid</p><script>y()</script><p>end</p>", expected: "a mid\nend" },
+	{ name: "entities", body: "<p>&amp;lt; &#38; &#x26; x&nbsp;y &amp; &#38;#x41; &amp;#65; &copy;</p>", expected: "< & & x y & A A ©" },
+	{ name: "form closing tag inside a script", body: `<p>Before</p><form id=f><input name=q><script>document.body.insertAdjacentHTML("beforeend", '<b>hi</b></form>');</script><button>Go</button></form><p>After</p>`, expected: "Before\nAfter" },
+	{ name: "header closing tag inside a script", body: "<p>Before</p><header><script>var tpl = '<div></header>';</script><p>Site</p></header><p>After</p>", expected: "Before\nAfter" },
+	{ name: "nav closing tag inside a style", body: `<p>Before</p><nav><style>nav a::after{content:'</nav>'}</style><a href="/x">X</a></nav><p>After</p>`, expected: "Before\nAfter" },
 ]) {
-	test(`HTML chrome stripping: ${name}`, () => {
+	test(`HTML to markdown: ${name}`, () => {
 		assert.equal(htmlToMarkdown(`<html><body><main>${body}</main></body></html>`).markdown, expected);
 	});
 }

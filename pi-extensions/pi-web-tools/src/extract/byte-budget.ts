@@ -4,24 +4,42 @@ import { open, stat } from "node:fs/promises";
 export const TEXT_READ_BYTE_LIMIT = 8 * 1024 * 1024;
 /** Most bytes one PDF may hold in memory. A PDF cut short cannot be parsed, so a longer one is refused, not cut. */
 export const PDF_READ_BYTE_LIMIT = 32 * 1024 * 1024;
-/** Most bytes one web_fetch call reads across every URL and file it fetches. */
+/** Most bytes one web_fetch call reads through UrlReads across its URLs. */
 export const CALL_BYTE_BUDGET = 64 * 1024 * 1024;
-/** Most body and file bytes all web_fetch calls in this process hold at once. A read waits here for room and is never cut by it,
+/** Most bytes the reads of all web_fetch calls in this process reserve at once. A read waits here for room and is never cut by it,
  * so it stays at or above PDF_READ_BYTE_LIMIT: one read always fits once the reads ahead of it release. */
 export const IN_FLIGHT_BYTE_BUDGET = 64 * 1024 * 1024;
+/** Longest a read waits for room in IN_FLIGHT_BYTE_BUDGET before its URL fails; stalled reads of other calls can hold the room. */
+export const IN_FLIGHT_WAIT_TIMEOUT_MS = 60_000;
 
-/** The ceiling that cut a read short: the per-read limit, or what the web_fetch call had left of CALL_BYTE_BUDGET. */
-export type ReadCeiling = "read-limit" | "call-budget";
+/** The ceiling that cut a read short: the per-read limit, what the web_fetch call had left of CALL_BYTE_BUDGET, or the
+ * content-length the response declared. */
+export type ReadCeiling = "read-limit" | "call-budget" | "declared-length";
 
-/** Raised for a read once its web_fetch call has read CALL_BYTE_BUDGET; the call's other URLs keep what they stored. */
+/** Raised for a read once its web_fetch call has read CALL_BYTE_BUDGET, or once it waited IN_FLIGHT_WAIT_TIMEOUT_MS for room in
+ * IN_FLIGHT_BYTE_BUDGET; the read's URL fails and the call's other URLs keep what they stored. */
 export class ByteBudgetExhausted extends Error {
-	constructor(total: number) {
-		super(`web_fetch byte budget exhausted (${total} bytes read by this call); fetch fewer URLs per call.`);
+	readonly budget: "call" | "in-flight";
+
+	constructor(budget: "call" | "in-flight", total: number) {
+		super(budgetMessage(budget, total));
 		this.name = "ByteBudgetExhausted";
+		this.budget = budget;
 	}
 }
 
-/** The bytes every web_fetch call in the process holds. A reservation waits in FIFO order until the bytes ahead of it are
+function budgetMessage(budget: "call" | "in-flight", total: number): string {
+	switch (budget) {
+		case "call": return `web_fetch byte budget exhausted (${total} bytes read by this call); fetch fewer URLs per call.`;
+		case "in-flight": return `web_fetch in-flight byte budget full: this read waited ${IN_FLIGHT_WAIT_TIMEOUT_MS / 1000} s for room in the ${total} bytes all web_fetch calls share; retry once other fetches finish.`;
+		default: {
+			const unknown: never = budget;
+			throw new Error(`unknown byte budget: ${String(unknown)}`);
+		}
+	}
+}
+
+/** The bytes every web_fetch call in the process reserves. A reservation waits in FIFO order until the bytes ahead of it are
  * released, so a large read is never starved by smaller ones behind it. */
 class InFlightBytes {
 	readonly #total: number;
@@ -33,7 +51,8 @@ class InFlightBytes {
 		this.#free = total;
 	}
 
-	/** Resolves once `bytes` are reserved; rejects with the signal's reason when it aborts first, having reserved nothing. */
+	/** Resolves once `bytes` are reserved. Rejects having reserved nothing when the signal aborts first, with its reason, or
+	 * when IN_FLIGHT_WAIT_TIMEOUT_MS passes first, with ByteBudgetExhausted. */
 	reserve(bytes: number, signal: AbortSignal | undefined): Promise<void> {
 		if (bytes > this.#total) throw new Error(`in-flight reservation of ${bytes} bytes exceeds IN_FLIGHT_BYTE_BUDGET (${this.#total}); a per-read limit must stay within it.`);
 		signal?.throwIfAborted();
@@ -42,12 +61,19 @@ class InFlightBytes {
 			return Promise.resolve();
 		}
 		return new Promise<void>((resolve, reject) => {
-			const onAbort = () => {
+			const stopWaiting = () => {
+				clearTimeout(timer);
+				signal?.removeEventListener("abort", onAbort);
+			};
+			const leave = (error: unknown) => {
+				stopWaiting();
 				this.#waiting.splice(this.#waiting.indexOf(waiter), 1);
-				reject(signal!.reason);
+				reject(error);
 				this.#grant();
 			};
-			const waiter = { bytes, grant: () => { signal?.removeEventListener("abort", onAbort); resolve(); } };
+			const onAbort = () => leave(signal!.reason);
+			const waiter = { bytes, grant: () => { stopWaiting(); resolve(); } };
+			const timer = setTimeout(() => leave(new ByteBudgetExhausted("in-flight", this.#total)), IN_FLIGHT_WAIT_TIMEOUT_MS);
 			signal?.addEventListener("abort", onAbort, { once: true });
 			this.#waiting.push(waiter);
 		});
@@ -81,7 +107,7 @@ export class ByteBudget {
 
 	/** Throws ByteBudgetExhausted once the call has nothing left; web_fetch checks it before a URL's network or git work. */
 	assertRemaining(): void {
-		if (this.#remaining <= 0) throw new ByteBudgetExhausted(this.total);
+		if (this.#remaining <= 0) throw new ByteBudgetExhausted("call", this.total);
 	}
 
 	/** The reads of one URL. They hold their bytes in the process-wide in-flight budget until `release`, which the caller
@@ -125,14 +151,16 @@ export class UrlReads {
 		return this.#call.ceiling(perRead);
 	}
 
-	/** Streams a response body within the ceiling, cancelling the stream once more bytes arrive. */
+	/** Streams a response body within the ceiling, or within its declared length when that is smaller, cancelling the stream
+	 * once more bytes arrive. */
 	async readBody(response: Response, perRead: number): Promise<BoundedRead> {
-		const ceiling = await this.#reserve(perRead, undefined).catch(async (error: unknown) => {
+		const ceiling = await this.#reserve(perRead, declaredLength(response)).catch(async (error: unknown) => {
 			await response.body?.cancel().catch(() => undefined);
 			throw error;
 		});
-		const read = await this.#charged(ceiling.reserved, () => streamWithin(response, ceiling.limit));
-		return read.truncated ? { bytes: read.bytes, cut: { atBytes: ceiling.limit, by: ceiling.by } } : { bytes: read.bytes };
+		const read = await this.#charged(ceiling.reserved, () => streamWithin(response, ceiling.reserved));
+		if (!read.truncated) return { bytes: read.bytes };
+		return { bytes: read.bytes, cut: ceiling.reserved < ceiling.limit ? { atBytes: ceiling.reserved, by: "declared-length" } : { atBytes: ceiling.limit, by: ceiling.by } };
 	}
 
 	/** Reads a file within the ceiling, sizing it through its open handle before any byte is read. */
@@ -183,6 +211,15 @@ export class UrlReads {
 	}
 }
 
+/** The body length a response declares, or undefined when it declares none that holds for its body: fetch decompresses an
+ * encoded body, which then runs past the content-length of the compressed bytes. */
+function declaredLength(response: Response): number | undefined {
+	const encoding = response.headers.get("content-encoding");
+	if (encoding !== null && encoding.trim().toLowerCase() !== "identity") return undefined;
+	const length = response.headers.get("content-length")?.trim();
+	return length !== undefined && /^\d+$/.test(length) ? Number(length) : undefined;
+}
+
 async function streamWithin(response: Response, limit: number): Promise<{ bytes: Buffer; truncated: boolean }> {
 	if (!response.body) return { bytes: Buffer.alloc(0), truncated: false };
 	const reader = response.body.getReader();
@@ -231,8 +268,8 @@ export async function readTextWithin(response: Response, reads: UrlReads): Promi
  * any byte is read when its declared length already exceeds the ceiling. */
 export async function readPdfWithin(response: Response, reads: UrlReads, url: string): Promise<Buffer> {
 	const { limit } = reads.ceiling(PDF_READ_BYTE_LIMIT);
-	const declared = Number(response.headers.get("content-length"));
-	if (response.headers.has("content-length") && Number.isFinite(declared) && declared > limit) {
+	const declared = declaredLength(response);
+	if (declared !== undefined && declared > limit) {
 		await response.body?.cancel();
 		throw pdfTooLarge(url, `${declared} bytes`, limit);
 	}
