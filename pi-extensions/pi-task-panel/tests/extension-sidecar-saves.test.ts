@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import * as atomicWrite from "../extensions/atomic-write.ts";
+import { clearPackageConfigCache } from "../extensions/package-config.js";
 import { fakeCtx, fakePi, mockPiModules } from "./lib/fake-pi.ts";
 
 mockPiModules();
@@ -24,6 +25,7 @@ async function withPanel(run: (panel: Panel) => Promise<void>, expectedWarnings:
 	try {
 		process.env.PI_CODING_AGENT_DIR = join(base, "agent");
 		process.env.PI_TASK_PANEL_DIAGNOSTIC_LOG = join(base, "diagnostics.log");
+		clearPackageConfigCache();
 		const { default: taskPanel } = await import("../extensions/task-panel.js");
 		const pi = fakePi();
 		taskPanel(pi as never);
@@ -44,6 +46,7 @@ async function withPanel(run: (panel: Panel) => Promise<void>, expectedWarnings:
 		else process.env.PI_CODING_AGENT_DIR = previousPiDir;
 		if (previousDiagnosticLog === undefined) delete process.env.PI_TASK_PANEL_DIAGNOSTIC_LOG;
 		else process.env.PI_TASK_PANEL_DIAGNOSTIC_LOG = previousDiagnosticLog;
+		clearPackageConfigCache();
 		rmSync(base, { recursive: true, force: true });
 	}
 }
