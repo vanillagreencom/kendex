@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # provision-environment.sh against a fake GitHub holding one provisioned
 # repository, one unprovisioned repository and one archived repository: a
-# dry run plans exactly one create and one no-op and writes nothing, each
-# drift of the provisioned one is converged by exactly the writes it needs,
+# dry run plans secret writes in both and writes nothing, each
+# drift is converged and both repositories get the supplied secret values,
 # and a run that cannot enumerate every repository or has no secret value
 # writes nothing.
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
-TMP="$(mktemp -d)"
+TMP="$(mktemp -d)" || { echo "provision-environment.test: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP && ! -L $TMP ]] || { echo "provision-environment.test: scratch=not-a-directory value=[$TMP]" >&2; exit 1; }
+TMP="$(cd -- "$TMP" && pwd -P)" || { echo "provision-environment.test: scratch=resolve-failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
 
 PASS=0
@@ -118,17 +120,19 @@ write_shapes() {
   sed -E 's/^(secret-set repo=[^ ]* env=[^ ]* name=[^ ]*) value=.*/\1/; s/^([A-Z]+ [^ ]+) .*/\1/' <<<"$WRITES"
 }
 
-echo "=== a dry run plans one create and one no-op ==="
+echo "=== a dry run plans every secret write ==="
 run "$BASE" "" no --org acme --dry-run
-want='provision repo=acme/done result=current
+want='provision repo=acme/done result=would-update
+  step=secret value=APP_ID result=would-update
+  step=secret value=APP_KEY result=would-update
 provision repo=acme/fresh result=would-create
   step=create-environment value=kendex
   step=add-policy value=branch:trunk
-  step=set-secret value=APP_ID
-  step=set-secret value=APP_KEY
-provision-total repositories=2 changed=1 current=1 failed=0'
+  step=secret value=APP_ID result=would-update
+  step=secret value=APP_KEY result=would-update
+provision-total repositories=2 changed=2 current=0 failed=0'
 if [ "$RC" -eq 0 ] && [ "$REPORT" = "$want" ] && [ -z "$WRITES" ]; then
-  ok "with no secret value, the provisioned repository is current, the other would be created step by step, the archived one is not listed, and nothing is written"
+  ok "with no secret value, both repositories plan every secret write, the total counts both as changed, the archived one is not listed, and nothing is written"
 else
   bad "dry run (rc=$RC)" "$RAW
 writes: $WRITES"
@@ -161,13 +165,15 @@ got:  $got
 $RAW"
   fi
 done <<'ROWS'
-deploys from every branch~environments.json~.environments[1].deployment_branch_policy = null~provision repo=acme/done result=would-update|  step=switch-policy value=every-branch|  step=keep-only-policy value=branch:main
-a second branch policy and a missing secret~branch-policies.json,environment-secrets-kendex.json~.branch_policies += [{"id": 2, "name": "dev", "type": "branch"}]^.secrets = [{"name": "APP_ID"}]~provision repo=acme/done result=would-update|  step=delete-policy value=branch:dev|  step=set-secret value=APP_KEY
+deploys from every branch~environments.json~.environments[1].deployment_branch_policy = null~provision repo=acme/done result=would-update|  step=switch-policy value=every-branch|  step=keep-only-policy value=branch:main|  step=secret value=APP_ID result=would-update|  step=secret value=APP_KEY result=would-update
+a second branch policy and a missing secret~branch-policies.json,environment-secrets-kendex.json~.branch_policies += [{"id": 2, "name": "dev", "type": "branch"}]^.secrets = [{"name": "APP_ID"}]~provision repo=acme/done result=would-update|  step=delete-policy value=branch:dev|  step=secret value=APP_ID result=would-update|  step=secret value=APP_KEY result=would-update
 ROWS
 
 echo "=== a run creates the unprovisioned repository with these bodies ==="
 run "$BASE" "" yes --org acme
-want_writes="PUT repos/acme/fresh/environments/kendex
+want_writes="secret-set repo=acme/done env=kendex name=APP_ID
+secret-set repo=acme/done env=kendex name=APP_KEY
+PUT repos/acme/fresh/environments/kendex
 POST repos/acme/fresh/environments/kendex/deployment-branch-policies
 secret-set repo=acme/fresh env=kendex name=APP_ID
 secret-set repo=acme/fresh env=kendex name=APP_KEY"
@@ -178,11 +184,15 @@ key_line="$(grep '^secret-set repo=acme/fresh env=kendex name=APP_KEY ' <<<"$WRI
 key_value=""
 [ -z "$key_line" ] || eval "key_value=${key_line#* value=}"
 if [ "$RC" -eq 0 ] &&
+  [ "$(record_of acme/done)" = 'provision repo=acme/done result=updated
+  step=secret value=APP_ID result=updated
+  step=secret value=APP_KEY result=updated' ] &&
   [ "$(grep -x 'provision repo=acme/fresh result=created' <<<"$REPORT")" != "" ] &&
   [ "$(write_shapes)" = "$want_writes" ] &&
   [ "$put_policy" = '{"protected_branches":false,"custom_branch_policies":true}' ] &&
   grep -qx 'POST repos/acme/fresh/environments/kendex/deployment-branch-policies name=trunk\\ type=branch' <<<"$WRITES" &&
   grep -qx 'secret-set repo=acme/fresh env=kendex name=APP_ID value=4242' <<<"$WRITES" &&
+  grep -qx 'secret-set repo=acme/done env=kendex name=APP_ID value=4242' <<<"$WRITES" &&
   [ "$key_value" = "$KEY" ]; then
   ok "one environment on custom policies, the default branch as its policy, both secrets with the supplied values"
 else
@@ -214,36 +224,39 @@ got writes:  $got_writes
 $RAW"
   fi
 done <<'ROWS'
-provisioned~~~~current~
+both secret names already present~~~~updated~secret-set repo=acme/done env=kendex name=APP_ID;secret-set repo=acme/done env=kendex name=APP_KEY
 environment absent~~environments.json~.environments |= [.[0]]~created~PUT repos/acme/done/environments/kendex;POST repos/acme/done/environments/kendex/deployment-branch-policies;secret-set repo=acme/done env=kendex name=APP_ID;secret-set repo=acme/done env=kendex name=APP_KEY
-deploys from every branch~~environments.json,branch-policies.json~.environments[1].deployment_branch_policy = null^.branch_policies = []~updated~PUT repos/acme/done/environments/kendex;POST repos/acme/done/environments/kendex/deployment-branch-policies
-deploys from protected branches~~environments.json,branch-policies.json~.environments[1].deployment_branch_policy = {"protected_branches": true, "custom_branch_policies": false}^.branch_policies = [{"id": 4, "name": "release", "type": "branch"}]~updated~PUT repos/acme/done/environments/kendex;DELETE repos/acme/done/environments/kendex/deployment-branch-policies/4;POST repos/acme/done/environments/kendex/deployment-branch-policies
+deploys from every branch~~environments.json,branch-policies.json~.environments[1].deployment_branch_policy = null^.branch_policies = []~updated~PUT repos/acme/done/environments/kendex;POST repos/acme/done/environments/kendex/deployment-branch-policies;secret-set repo=acme/done env=kendex name=APP_ID;secret-set repo=acme/done env=kendex name=APP_KEY
+deploys from protected branches~~environments.json,branch-policies.json~.environments[1].deployment_branch_policy = {"protected_branches": true, "custom_branch_policies": false}^.branch_policies = [{"id": 4, "name": "release", "type": "branch"}]~updated~PUT repos/acme/done/environments/kendex;DELETE repos/acme/done/environments/kendex/deployment-branch-policies/4;POST repos/acme/done/environments/kendex/deployment-branch-policies;secret-set repo=acme/done env=kendex name=APP_ID;secret-set repo=acme/done env=kendex name=APP_KEY
 deploys from every branch behind required reviewers~~environments.json~.environments[1].deployment_branch_policy = null | .environments[1].protection_rules += [{"id": 7, "type": "required_reviewers"}]~failed~
-a second branch policy~~branch-policies.json~.branch_policies += [{"id": 2, "name": "dev", "type": "branch"}]~updated~DELETE repos/acme/done/environments/kendex/deployment-branch-policies/2
-a tag policy named for the default branch~~branch-policies.json~.branch_policies = [{"id": 3, "name": "main", "type": "tag"}]~updated~DELETE repos/acme/done/environments/kendex/deployment-branch-policies/3;POST repos/acme/done/environments/kendex/deployment-branch-policies
-no branch policy~~branch-policies.json~.branch_policies = []~updated~POST repos/acme/done/environments/kendex/deployment-branch-policies
-a secret whose name only starts like a standard one~~environment-secrets-kendex.json~.secrets = [{"name": "APP_ID"}, {"name": "APP_KEY_OLD"}]~updated~secret-set repo=acme/done env=kendex name=APP_KEY
+a second branch policy~~branch-policies.json~.branch_policies += [{"id": 2, "name": "dev", "type": "branch"}]~updated~DELETE repos/acme/done/environments/kendex/deployment-branch-policies/2;secret-set repo=acme/done env=kendex name=APP_ID;secret-set repo=acme/done env=kendex name=APP_KEY
+a tag policy named for the default branch~~branch-policies.json~.branch_policies = [{"id": 3, "name": "main", "type": "tag"}]~updated~DELETE repos/acme/done/environments/kendex/deployment-branch-policies/3;POST repos/acme/done/environments/kendex/deployment-branch-policies;secret-set repo=acme/done env=kendex name=APP_ID;secret-set repo=acme/done env=kendex name=APP_KEY
+no branch policy~~branch-policies.json~.branch_policies = []~updated~POST repos/acme/done/environments/kendex/deployment-branch-policies;secret-set repo=acme/done env=kendex name=APP_ID;secret-set repo=acme/done env=kendex name=APP_KEY
+a missing secret beside a non-standard name~~environment-secrets-kendex.json~.secrets = [{"name": "APP_ID"}, {"name": "APP_KEY_OLD"}]~updated~secret-set repo=acme/done env=kendex name=APP_ID;secret-set repo=acme/done env=kendex name=APP_KEY
 environments unreadable~environments~~~failed~
 branch policies unreadable~branch-policies~~~failed~
-secrets unreadable~environment-secrets-kendex~~~failed~
-a secret write refused~secret-set~environment-secrets-kendex.json~.secrets = [{"name": "APP_ID"}]~failed~
+a secret write refused~secret-set~~~failed~
 ROWS
 [ "$rows" -gt 0 ] || bad "the drift table ran no row" ""
 
 echo "=== a failed repository does not stop the others ==="
 # acme/done has no environment and its creation is refused; acme/fresh is
-# provisioned on main, so its record shows the loop went on past the failure.
+# provisioned on main, so its secret writes show the loop passed the failure.
 dir="$TMP/case-one-fails"
 world "$dir" "" organization-repositories.json,repos/acme/done/environments.json '.[1].default_branch = "main"^.environments |= [.[0]]'
 cp "$DONE/environments.json" "$DONE/branch-policies.json" "$DONE/environment-secrets-kendex.json" "$dir/repos/acme/fresh/"
 run "$dir" PUT:environment yes --org acme
 want='provision repo=acme/done result=failed
-provision repo=acme/fresh result=current
-provision-total repositories=2 changed=0 current=1 failed=1'
-if [ "$RC" -eq 1 ] && [ "$REPORT" = "$want" ] && [ -z "$WRITES" ]; then
-  ok "a repository after a failed one is still read"
+provision repo=acme/fresh result=updated
+  step=secret value=APP_ID result=updated
+  step=secret value=APP_KEY result=updated
+provision-total repositories=2 changed=1 current=0 failed=1'
+want_writes='secret-set repo=acme/fresh env=kendex name=APP_ID
+secret-set repo=acme/fresh env=kendex name=APP_KEY'
+if [ "$RC" -eq 1 ] && [ "$REPORT" = "$want" ] && [ "$(write_shapes)" = "$want_writes" ]; then
+  ok "a repository after a failed one still gets both secret writes"
 else
-  bad "a repository after a failed one is still read (rc=$RC)" "$RAW"
+  bad "a repository after a failed one still gets both secret writes (rc=$RC)" "$RAW"
 fi
 
 echo "=== nothing is attempted ==="
@@ -296,11 +309,31 @@ repositories unreadable~organization-repositories~~~yes~~--org acme~review-gate-
 every repository archived~~organization-repositories.json~map(.archived = true)~yes~~--org acme~review-gate-error=repositories-none
 ROWS
 
+. "$TEST_DIR/lib/workflow-edit.sh"
+# Restore the name-based skip in a disposable copy. The provisioned
+# repository must then lose both writes and their successful step records.
+cp "$SKILL/scripts/provision-environment.sh" "$TMP/provision.keep"
+file_edit "$SKILL" scripts/provision-environment.sh 1 '^        step secret ' \
+  's/step secret /if [ "$full" = acme\/done ]; then gh_run api "repos\/$full\/environments\/$ENV_URI\/secrets" --paginate --jq ".secrets[].name" || break; rg_standard_missing "$GH_OUT" | grep -qxF -- "$name" || continue; fi; step secret /'
+chmod +x "$SKILL/scripts/provision-environment.sh"
+run "$BASE" "" yes --org acme
+got="$(record_of acme/done)"
+got_writes="$(write_shapes | grep ' repo=acme/done ' || true)"
+if [ "$RC" -eq 0 ] && [ "$got" != 'provision repo=acme/done result=updated
+  step=secret value=APP_ID result=updated
+  step=secret value=APP_KEY result=updated' ] && [ -z "$got_writes" ]; then
+  ok 'control: the name-based skip fails the required secret writes and updated records'
+else
+  bad "control: name-based skip (rc=$RC)" "$RAW
+writes: $WRITES"
+fi
+cp "$TMP/provision.keep" "$SKILL/scripts/provision-environment.sh"
+chmod +x "$SKILL/scripts/provision-environment.sh"
+
 # The secret reader's control reads the copy's value from the shell
 # namespace, as the former indirect lookup did: BASH_VERSION, a shell
 # variable the environment lacks, then reads as set, the run no longer
 # refuses, and the shell's own value is written as the secret.
-. "$TEST_DIR/lib/workflow-edit.sh"
 cp "$SKILL/scripts/lib/standard.sh" "$TMP/standard-lib.keep"
 file_edit "$SKILL" scripts/lib/standard.sh 1 'printenv -- "\$1"' 's/printenv -- "\$1"/echo "${!1:-}"/'
 dir="$TMP/control-secret-value"

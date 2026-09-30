@@ -13,17 +13,17 @@
 # hold, so this runs from the organization owner's own machine under the
 # owner's `gh` credential and never in CI or on a lane host. validate-standard.sh is the read-only half that reports the result.
 #
-# A secret is set only where the environment lacks its name: GitHub never
-# returns a secret's value, so a present name is current. A re-run changes
-# nothing in a repository already provisioned and provisions a new one.
+# Every run re-writes each standard secret's value. GitHub never returns
+# secret values, so a present name is never proof that its value is current.
 #
 # Report protocol, one record per repository on stdout:
 #   provision repo=OWNER/NAME result=RESULT
 # then one `  step=STEP value=VALUE` line per step taken (or planned, under
 # --dry-run), in order, and on a failure one indented line of explanation.
-# RESULT and STEP are the words print_usage lists; VALUE is %q-escaped. A
-# last `provision-total repositories=N changed=N current=N failed=N` line
-# counts the records. Human explanation is not parsed.
+# RESULT and STEP are the words print_usage lists; VALUE is %q-escaped.
+# A secret step also carries result=updated (would-update under --dry-run).
+# The last `provision-total repositories=N changed=N current=0 failed=N`
+# line counts the records. Human explanation is not parsed.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || {
@@ -71,9 +71,9 @@ Per repository it:
     the owner switches it by hand;
   - leaves exactly one branch policy, the repository's default branch,
     deleting any other;
-  - sets each standard secret the environment lacks by name. A present
-    secret is never rewritten; to replace a value, delete that secret in
-    GitHub and run this again.
+  - re-writes each standard secret's value on every run. GitHub never
+    returns secret values, so a present name is never proof that its value
+    is current. To rotate values, supply them and run this again.
 
 Secret values come from the environment of this command: each secret the
 standard names is read from the environment variable of the same name,
@@ -86,7 +86,8 @@ A run that is not --dry-run refuses before any write when one is unset or
 empty.
 
 --dry-run  reads everything and writes nothing: each repository's record
-           names the steps a run would take. No secret value is needed.
+           names the steps a run would take, including would-update for
+           every secret. No secret value is needed.
 
 Credential: the `gh` login of the organization owner, on the owner's own
 machine; never a lane's or CI's token. The organization's private
@@ -97,8 +98,8 @@ installation), repository Metadata read (the repositories), Actions read
 environment and its branch policies) and Environments write (its secrets).
 
 Output: one `provision repo=OWNER/NAME result=RESULT` record per
-repository. RESULT is created, updated, current or failed, and under
---dry-run would-create, would-update, current or failed. Under it, one
+repository. RESULT is created, updated or failed, and under
+--dry-run would-create, would-update or failed. Under it, one
 `  step=STEP value=VALUE` line per step, in order:
   create-environment  VALUE the environment, created on custom policies
   switch-policy       VALUE every-branch or protected-branches, the policy
@@ -107,9 +108,11 @@ repository. RESULT is created, updated, current or failed, and under
                       whose policies cannot be read before the switch)
   delete-policy       VALUE TYPE:NAME, a branch policy deleted
   add-policy          VALUE branch:BRANCH, the default branch added
-  set-secret          VALUE the secret name set
+  secret              VALUE the secret name re-written; result=updated,
+                      or result=would-update under --dry-run
 A failed record ends with one indented line naming the cause. The last line
-is `provision-total repositories=N changed=N current=N failed=N`.
+is `provision-total repositories=N changed=N current=0 failed=N`.
+Every successful repository counts as changed, including under --dry-run.
 
 Exit codes:
   0  every repository is provisioned (or, under --dry-run, was read)
@@ -226,13 +229,17 @@ EOF_LISTED
 STEPS=""
 CAUSE=""
 step() { # STEP VALUE WRITER ARGS...
-  local key="$1" value="$2" line
+  local key="$1" value="$2" line result=updated
   shift 2
   if [ "$DRY_RUN" -eq 0 ] && ! "$@"; then
     CAUSE="$key $value: $GH_ERR"
     return 1
   fi
   line="$(printf '  step=%s value=%q' "$key" "$value")"
+  if [ "$key" = secret ]; then
+    [ "$DRY_RUN" -eq 0 ] || result=would-update
+    line="$line result=$result"
+  fi
   STEPS="${STEPS:+$STEPS
 }$line"
 }
@@ -283,10 +290,9 @@ EOF_POLICIES
 
 # Sets STEPS and CAUSE for one repository and prints its record.
 CHANGED=0
-CURRENT=0
 FAILED=0
 provision() { # FULL BRANCH
-  local full="$1" branch="$2" environment kind rules created=0 listed="" name result
+  local full="$1" branch="$2" environment kind rules created=0 name result
   STEPS=""
   CAUSE=""
   if ! gh_run api "repos/$full/environments" --paginate --jq ".environments[] | select(.name == $(jq -n --arg v "$WANT_ENV" '$v')) | @json"; then
@@ -321,31 +327,18 @@ provision() { # FULL BRANCH
             ;;
           *) CAUSE="the environment $WANT_ENV did not parse: $environment" ;;
         esac
-        if [ -z "$CAUSE" ]; then
-          if gh_run api "repos/$full/environments/$ENV_URI/secrets" --paginate --jq '.secrets[].name'; then
-            listed="$GH_OUT"
-          else
-            CAUSE="the secrets of $WANT_ENV could not be read: $GH_ERR"
-          fi
-        fi
         ;;
     esac
     if [ -z "$CAUSE" ]; then
-      while IFS= read -r name; do
-        [ -n "$name" ] || continue
-        step set-secret "$name" set_secret "$full" "$name" || break
-      done <<EOF_MISSING
-$(rg_standard_missing "$listed")
-EOF_MISSING
+      for name in $WANT_SECRETS; do
+        step secret "$name" set_secret "$full" "$name" || break
+      done
     fi
   fi
 
   if [ -n "$CAUSE" ]; then
     result=failed
     FAILED=$((FAILED + 1))
-  elif [ -z "$STEPS" ]; then
-    result=current
-    CURRENT=$((CURRENT + 1))
   else
     if [ "$DRY_RUN" -eq 1 ]; then
       [ "$created" -eq 1 ] && result=would-create || result=would-update
@@ -372,6 +365,6 @@ done <<EOF_REPOS
 $REPOS
 EOF_REPOS
 
-printf 'provision-total repositories=%s changed=%s current=%s failed=%s\n' "$TOTAL" "$CHANGED" "$CURRENT" "$FAILED"
+printf 'provision-total repositories=%s changed=%s current=0 failed=%s\n' "$TOTAL" "$CHANGED" "$FAILED"
 [ "$FAILED" -eq 0 ] || exit 1
 exit 0
