@@ -137,6 +137,8 @@ function collectConfiguredExtensions(file: SettingsFile, cwd: string): Inventory
 	const items: InventoryItem[] = [];
 	for (const entry of entries) {
 		if (typeof entry !== "string" || entry.startsWith("!")) continue;
+		// Built-in selectors belong to pi config, not the path-based inventory.
+		if (entry.startsWith("builtin:") || entry.startsWith("-builtin:")) continue;
 		const resolved = resolveSource(entry, host.extensionBase(file, cwd));
 		items.push(makeResourceItem(`extension-setting:${file.scope}:${entry}`, entry, "extension setting", file.scope, resolved, `${file.scope}:extensions`, entry, `Configured in ${file.path} extensions[]`));
 	}

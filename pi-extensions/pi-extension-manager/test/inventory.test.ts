@@ -76,6 +76,21 @@ afterEach(() => {
 	rmSync(rootTmp, { force: true, recursive: true });
 });
 
+test("leaves built-in selectors to pi config while retaining extension paths in both scopes", () => {
+	const project = join(rootTmp, "project");
+	const userPi = process.env.PI_CODING_AGENT_DIR!;
+	const projectPi = join(project, ".pi");
+	const extensions = ["builtin:mcp", "-builtin:mcp", "builtin:tool-search", "-builtin:tool-search", "./builtin:local.ts", "./-builtin:local.ts", "./custom.ts"];
+	writeJson(join(userPi, "settings.json"), { extensions });
+	writeJson(join(projectPi, "settings.json"), { extensions });
+
+	const inv = inventoryWithTrust(project, true);
+	for (const scope of ["user", "project"]) {
+		const rows = inv.items.filter((item) => item.kind === "extension setting" && item.scope === scope);
+		expect(rows.map((item) => item.sourceName).sort()).toEqual(["./-builtin:local.ts", "./builtin:local.ts", "./custom.ts"]);
+	}
+});
+
 test("reads settings schemas from user-scoped Pi npm packages", () => {
 	const project = join(rootTmp, "project");
 	const userPi = process.env.PI_CODING_AGENT_DIR!;
