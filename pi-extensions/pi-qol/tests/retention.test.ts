@@ -14,6 +14,7 @@ import {
 } from "../extensions/qol/constants.ts";
 import { capSessionSearchText, refreshQolSessionSearchCache, releaseQolSessionSearchCache, sessionUserMessages } from "../extensions/qol/session-search/cache.ts";
 import { sendQolNotification } from "../extensions/qol/notifications.ts";
+import { clearPackageConfigCache } from "../extensions/qol/package-config.ts";
 import { openQolSessionSearch } from "../extensions/qol/session-search/index.ts";
 import { getThinkingTimerStore } from "../extensions/qol/thinking-timer.ts";
 import type { QolSessionSearchSession } from "../extensions/qol/session-search/types.ts";
@@ -29,6 +30,7 @@ beforeEach(() => {
 	workdir = mkdtempSync(join(tmpdir(), "pi-qol-retention-"));
 	process.env.PI_CODING_AGENT_DIR = workdir;
 	process.env.HOME = workdir;
+	clearPackageConfigCache();
 	listAllCalls = 0;
 	stubSessionManager.listAll = async () => {
 		listAllCalls++;
@@ -46,6 +48,7 @@ afterEach(() => {
 	else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
 	if (originalHome === undefined) delete process.env.HOME;
 	else process.env.HOME = originalHome;
+	clearPackageConfigCache();
 });
 
 test("a headless session loads no session-search index at startup, and shutdown releases a loaded one", async () => {
@@ -157,6 +160,7 @@ for (const row of [
 		writeFileSync(join(workdir, "settings.json"), JSON.stringify({ kendex: { extensionManager: { config: {
 			"@vanillagreen/pi-qol": { "notification.bell": false, "notification.native": false, "notification.piUi": true, "notification.cooldownSeconds": 8 },
 		} } } }));
+		clearPackageConfigCache();
 		const fake = makeFakeApi();
 		qolDefault(fake.api);
 		const sent: string[] = [];

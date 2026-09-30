@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { showSkillsManager } from "../extensions/skills-manager/dialog.ts";
-import { recordProjectTrust } from "../extensions/skills-manager/paths.ts";
+import { clearPackageConfigCache, recordProjectTrust } from "../extensions/skills-manager/package-config.ts";
 import { loadSkillRegistry } from "../extensions/skills-manager/registry.ts";
 
 const SKILL_TEXT = "---\nname: sample\ndescription: A sample skill.\n---\n\nThe sample body.\n";
@@ -28,6 +28,7 @@ beforeAll(() => {
 	skillPath = join(skillDir, "SKILL.md");
 	writeFileSync(skillPath, SKILL_TEXT);
 	process.env.PI_CODING_AGENT_DIR = join(root, "agent");
+	clearPackageConfigCache();
 	recordProjectTrust({ cwd, isProjectTrusted: () => true } as any);
 });
 
@@ -36,6 +37,7 @@ afterAll(() => {
 	rmSync(root, { recursive: true, force: true });
 	if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+	clearPackageConfigCache();
 });
 
 // A file unreadable when the preview opens shows the read error there; one

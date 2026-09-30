@@ -9,6 +9,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { clearPackageConfigCache } from "../extensions/package-config.ts";
 import sessionBridge, { CLIENT_QUEUE_MAX_BYTES, CLIENT_STALLED_KEY } from "../extensions/session-bridge.ts";
 
 import { fakeCtx, fakePi, sendCommand, shutdownBridge, writeBridgeSettings, type EventHandler } from "./lib/bridge-fixture.ts";
@@ -23,6 +24,7 @@ beforeEach(() => {
 	saved.piDir = process.env.PI_CODING_AGENT_DIR;
 	saved.bridgeDir = process.env.PI_BRIDGE_DIR;
 	process.env.PI_CODING_AGENT_DIR = join(dir, "agent");
+	clearPackageConfigCache();
 	process.env.PI_BRIDGE_DIR = join(dir, "bridge");
 });
 
@@ -34,6 +36,7 @@ afterEach(async () => {
 		process.chdir(saved.cwd);
 		if (saved.piDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = saved.piDir;
+		clearPackageConfigCache();
 		if (saved.bridgeDir === undefined) delete process.env.PI_BRIDGE_DIR;
 		else process.env.PI_BRIDGE_DIR = saved.bridgeDir;
 		rmSync(dir, { recursive: true, force: true });

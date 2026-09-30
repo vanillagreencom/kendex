@@ -3,7 +3,8 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { clearTrackedToolExecutionComponents, refreshToolExecutionComponents, trackToolExecutionComponent } from "../tool-renderer/live-settings.js";
-import { CONFIG_ID, clearPackageConfigCache } from "../tool-renderer/settings.js";
+import { clearPackageConfigCache } from "../tool-renderer/package-config.js";
+import { CONFIG_ID } from "../tool-renderer/settings.js";
 import { STACK_MAX_ITEMS, STACK_RESULT_MAX_CHARS, registerStackEvents, renderStackedToolResult, stackBatches, stackItems } from "../tool-renderer/stack.js";
 import { useWorld } from "./helpers/world.js";
 
