@@ -1,11 +1,15 @@
 name: publish-npm
+# Both runs of one release carry the tag in their title, which is how the
+# npm-deploy skill finds the publish run a tag push started.
+run-name: publish-npm ${{ inputs.tag || github.ref_name }}
 
-# Publishes one pi-extensions package to npm with npm trusted publishing:
-# npm trusts this workflow file by name, per package, and the job's GitHub
-# identity is the only credential, so no npm token exists anywhere. The
-# npm-deploy skill pushes the per-package release tag that starts a run;
-# tools/publish-npm holds every check. .github/AGENTS.md says what renaming
-# this file breaks.
+# Publishes one pi-extensions package to npm with npm trusted publishing: the
+# publish job's GitHub identity is the only credential, so no npm token
+# exists anywhere. Each package's trusted publisher names this file and the
+# kendex environment, which deploys from main only (D003), so only main's
+# reviewed copy of this file and of tools/publish-npm can publish. The
+# npm-side settings, and what renaming this file breaks, are
+# docs/RELEASING.md § Pi packages on npm; tools/publish-npm holds every check.
 
 on:
   push:
@@ -13,15 +17,12 @@ on:
     # release.yml takes `v*`, which none of these match.
     tags:
       - "*-v[0-9]*"
-  # Reruns a failed publish of a tag that already exists.
+  # The publish itself, on main: the tag push dispatches it, and a failed
+  # publish, or a tag cut before this workflow existed, is dispatched by hand.
   workflow_dispatch:
     inputs:
-      package:
-        description: Unscoped package name, the directory under pi-extensions/ (pi-qol)
-        type: string
-        required: true
-      version:
-        description: The version its tag names (2.1.0)
+      tag:
+        description: The release tag to publish, <unscoped-name>-v<version> (pi-qol-v2.1.0)
         type: string
         required: true
       dry_run:
@@ -29,16 +30,38 @@ on:
         type: boolean
         default: false
 
-permissions:
-  contents: read
-
-concurrency:
-  # Two runs for one tag would race to publish the same version.
-  group: publish-npm-${{ github.event_name == 'workflow_dispatch' && format('{0}-v{1}', inputs.package, inputs.version) || github.ref_name }}
-  cancel-in-progress: false
+permissions: {}
 
 jobs:
+  # A tag push runs this file from the tagged commit, which review may never
+  # have held. This job has no identity npm accepts: it only asks main's copy
+  # of this workflow to publish the tag.
+  dispatch:
+    if: ${{ github.event_name == 'push' }}
+    permissions:
+      # Creates the workflow_dispatch event. GitHub starts a run for a
+      # workflow_dispatch the job token creates, unlike its other events.
+      actions: write
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch the publish on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: gh workflow run publish-npm.yml --ref main -f tag="$TAG"
+
   publish:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    # GitHub refuses this job on any ref but main, and npm refuses a token
+    # from a job outside this environment.
+    environment: kendex
+    concurrency:
+      # Two runs for one tag would race to publish the same version.
+      group: publish-npm-${{ inputs.tag }}
+      cancel-in-progress: false
     permissions:
       contents: read
       # The OIDC token npm exchanges for a one-publish credential.
@@ -46,21 +69,19 @@ jobs:
     # npm trusted publishing accepts GitHub-hosted runners only.
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      TAG: ${{ github.event_name == 'workflow_dispatch' && format('{0}-v{1}', inputs.package, inputs.version) || github.ref_name }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The workflow's own commit, for tools/publish-npm, which reads the
-          # package from the tag: a dispatch from main can then publish a
-          # tag cut before this workflow existed. Every branch and tag is
-          # fetched, because the script refuses a tag whose commit
-          # origin/main does not hold.
+          # main, for tools/publish-npm, which reads the package from the
+          # tag: main's copy can then publish a tag cut before this workflow
+          # existed. Every branch and tag is fetched, because the script
+          # refuses a tag whose commit origin/main does not hold.
           fetch-depth: 0
           persist-credentials: false
 
-      # setup-node resolves "24" to the newest Node 24 release, whose npm is
-      # above 11.5.1, the trusted-publishing floor tools/publish-npm checks.
+      # With check-latest off, setup-node takes the runner's cached Node 24
+      # and the npm it bundles; tools/publish-npm refuses an npm below
+      # 11.5.1, the trusted-publishing floor, with npm=<version>.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
@@ -70,10 +91,11 @@ jobs:
 
       - name: Publish
         env:
+          TAG: ${{ inputs.tag }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
-          if [ "${DRY_RUN:-false}" = "true" ]; then
+          if [ "$DRY_RUN" = "true" ]; then
             tools/publish-npm --dry-run "$TAG"
           else
             tools/publish-npm "$TAG"

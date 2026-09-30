@@ -23,11 +23,15 @@
 #            broken   main, and package.json is not JSON
 #   argv     the arguments as written
 #   npm      what `npm --version` prints
-#   served   no      E404 until a publish succeeds, then the version
+#   served   what `npm view` answers; every mode but absent and down serves
+#            the package itself, and each names what it answers for the version
+#            no      E404 until a publish succeeds, then the version
 #            yes     the version from the start
 #            never   E404 always
 #            late    E404 until one read after a publish, then the version
-#            down    exit 1 with a network error always
+#            absent  E404 for the package, so for the version too
+#            down    exit 1 with a network error for the package
+#            vdown   exit 1 with a network error for the version
 #   publish  ok or fail
 #
 # The last block cuts each guard out of a copy of the tool, between its
@@ -62,6 +66,14 @@ case "$1" in
   --version) printf '%s\n' "$STUB_NPM_VERSION" ;;
   view)
     spec="$2"
+    if [ "${3:-}" = name ]; then
+      case "$STUB_SERVED" in
+        down) printf 'npm error code ECONNRESET\n' >&2; exit 1 ;;
+        absent) printf 'npm error code E404\nnpm error 404 Not Found - GET %s - Not found\n' "$spec" >&2; exit 1 ;;
+        *) printf '%s\n' "$spec" ;;
+      esac
+      exit 0
+    fi
     case "$STUB_SERVED" in
       yes) printf '%s\n' "${spec##*@}" ;;
       no)
@@ -74,7 +86,8 @@ case "$1" in
           [ -f "$STUB_DIR/published" ] && : >"$STUB_DIR/lagged"
           printf 'npm error code E404\n' >&2; exit 1
         fi ;;
-      down) printf 'npm error code ECONNRESET\n' >&2; exit 1 ;;
+      absent) printf 'npm error code E404\nnpm error 404 Not Found - GET %s - Not found\n' "${spec%@*}" >&2; exit 1 ;;
+      down|vdown) printf 'npm error code ECONNRESET\n' >&2; exit 1 ;;
     esac ;;
   ci) [ "$2" = --ignore-scripts ] || { echo "stub: npm ci without --ignore-scripts" >&2; exit 9; } ;;
   publish)
@@ -151,15 +164,15 @@ EOF_OUT
 }
 
 rows="
-publish from main|main|pi-demo-v1.2.3|11.6.0|no|ok|0|published=$ID|version,view,publish@1.2.3,view
-npm at the floor, first read after the publish E404|main|pi-demo-v1.2.3|11.5.1|late|ok|0|published=$ID|version,view,publish@1.2.3,view,view
-prepack package installs its tools first|prepack|pi-demo-v1.2.3|11.6.0|no|ok|0|published=$ID|version,view,ci,publish@1.2.3,view
-dry run stops before publishing|main|--dry-run pi-demo-v1.2.3|11.6.0|no|ok|0|dry-run=$ID|version,view
-already served publishes nothing|main|pi-demo-v1.2.3|11.6.0|yes|ok|0|served=$ID|version,view
+publish from main|main|pi-demo-v1.2.3|11.6.0|no|ok|0|published=$ID|version,view,view,publish@1.2.3,view
+npm at the floor, first read after the publish E404|main|pi-demo-v1.2.3|11.5.1|late|ok|0|published=$ID|version,view,view,publish@1.2.3,view,view
+prepack package installs its tools first|prepack|pi-demo-v1.2.3|11.6.0|no|ok|0|published=$ID|version,view,view,ci,publish@1.2.3,view
+dry run stops before publishing|main|--dry-run pi-demo-v1.2.3|11.6.0|no|ok|0|dry-run=$ID|version,view,view
+already served publishes nothing|main|pi-demo-v1.2.3|11.6.0|yes|ok|0|served=$ID|version,view,view
 not a release tag|main|pi-demo-1.2.3|11.6.0|no|ok|1|tag=pi-demo-1.2.3|-
 app release tag|main|v1.2.3|11.6.0|no|ok|1|tag=v1.2.3|-
 tag missing|main|pi-demo-v9.9.9|11.6.0|no|ok|1|absent=pi-demo-v9.9.9|-
-checkout ahead of the tag publishes the tag's tree|later|pi-demo-v1.2.3|11.6.0|no|ok|0|published=$ID|version,view,publish@1.2.3,view
+checkout ahead of the tag publishes the tag's tree|later|pi-demo-v1.2.3|11.6.0|no|ok|0|published=$ID|version,view,view,publish@1.2.3,view
 tag off the default branch|side|pi-demo-v1.2.3|11.6.0|no|ok|1|off-main=TAGGED|-
 no such package|main|pi-gone-v1.0.0|11.6.0|no|ok|1|package=pi-gone|-
 package.json not JSON|broken|pi-demo-v1.2.3|11.6.0|no|ok|1|package=pi-demo|-
@@ -167,9 +180,12 @@ package named outside the scope|foreign|pi-demo-v1.2.3|11.6.0|no|ok|1|name=@othe
 manifest version differs from the tag|main|pi-demo-v1.2.4|11.6.0|no|ok|1|version=1.2.3|-
 npm below the trusted-publishing floor|main|pi-demo-v1.2.3|11.5.0|no|ok|1|npm=11.5.0|version
 npm 10 below the floor|main|pi-demo-v1.2.3|10.9.2|no|ok|1|npm=10.9.2|version
-registry lookup fails|main|pi-demo-v1.2.3|11.6.0|down|ok|1|lookup=$ID|version,view
-publish fails|main|pi-demo-v1.2.3|11.6.0|no|fail|1|publish=$ID|version,view,publish@1.2.3
-published version never served|main|pi-demo-v1.2.3|11.6.0|never|ok|1|unconfirmed=$ID|version,view,publish@1.2.3,view,view,view
+registry lookup fails|main|pi-demo-v1.2.3|11.6.0|down|ok|1|lookup=@vanillagreen/pi-demo|version,view
+version lookup fails|main|pi-demo-v1.2.3|11.6.0|vdown|ok|1|lookup=$ID|version,view,view
+npm serves no version of the package|main|pi-demo-v1.2.3|11.6.0|absent|ok|1|first-release=@vanillagreen/pi-demo|version,view
+first release dry run|main|--dry-run pi-demo-v1.2.3|11.6.0|absent|ok|1|first-release=@vanillagreen/pi-demo|version,view
+publish fails|main|pi-demo-v1.2.3|11.6.0|no|fail|1|publish=$ID|version,view,view,publish@1.2.3
+published version never served|main|pi-demo-v1.2.3|11.6.0|never|ok|1|unconfirmed=$ID|version,view,view,publish@1.2.3,view,view,view
 unknown option|main|--nope pi-demo-v1.2.3|11.6.0|no|ok|2|option=--nope|-
 no tag|main|--dry-run|11.6.0|no|ok|2|option=no-tag|-
 "
@@ -205,9 +221,12 @@ controls="
 tag|not a release tag
 absent|tag missing
 off-main|tag off the default branch
+package|no such package
 name|package named outside the scope
 version|manifest version differs from the tag
 npm|npm below the trusted-publishing floor
+lookup|registry lookup fails
+first-release|npm serves no version of the package
 served|already served publishes nothing
 "
 while IFS='|' read -r rule label; do
@@ -217,11 +236,12 @@ while IFS='|' read -r rule label; do
   cut="$TMP_ROOT/publish-npm.$rule"
   begin="# guard $rule: begin"
   end="# guard $rule: end"
-  if [ "$(grep -cxF -- "$begin" "$REPO/tools/publish-npm")" != 1 ] || [ "$(grep -cxF -- "$end" "$REPO/tools/publish-npm")" != 1 ]; then
+  # A marker may be indented; rule names are [a-z-], so they match as written.
+  if [ "$(grep -cE -- "^[[:space:]]*$begin\$" "$REPO/tools/publish-npm")" != 1 ] || [ "$(grep -cE -- "^[[:space:]]*$end\$" "$REPO/tools/publish-npm")" != 1 ]; then
     bad "control $rule: the tool does not carry exactly one pair of [$begin] markers"
     continue
   fi
-  sed "/^$begin\$/,/^$end\$/d" "$REPO/tools/publish-npm" >"$cut"
+  sed "/^[[:space:]]*$begin\$/,/^[[:space:]]*$end\$/d" "$REPO/tools/publish-npm" >"$cut"
   if cmp -s -- "$cut" "$REPO/tools/publish-npm"; then
     bad "control $rule: the cut changed nothing"
     continue

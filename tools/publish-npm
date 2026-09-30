@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # Publishes one pi-extensions package to npm, named by its release tag
 # `<unscoped-name>-v<version>`, from the tree that tag names.
-# .github/workflows/publish-npm.yml runs it from its own checkout with every
-# branch and tag fetched. The package is read from the tag, never from the
-# checkout, so a dispatch from the default branch can publish a tag cut
-# before this script existed.
+# .github/workflows/publish-npm.yml runs it from a checkout of main with
+# every branch and tag fetched. The package is read from the tag, never from
+# the checkout, so main's copy can publish a tag cut before this script
+# existed.
 #
 # npm trusted publishing is the credential: npm accepts the publish because
-# the job's GitHub identity names that workflow file, so this script reads
-# no token and writes no .npmrc.
+# the job's GitHub identity names that workflow file and its main-only
+# environment, so this script reads no token and writes no .npmrc. Trusted
+# publishing cannot make a package's first publish, so a package npm does
+# not serve at all is refused before npm publish runs.
 #
 # Usage: tools/publish-npm [--dry-run] TAG
 #   --dry-run  run every check, then stop before `npm ci` and `npm publish`
@@ -21,7 +23,8 @@
 #   PUBLISH_NPM_VIEW_INTERVAL  seconds between those reads (default 10); the
 #                              registry can take a minute to serve a version
 #
-# Every line this script writes opens `publish-npm: <key>=<value>`:
+# Each outcome is one line `publish-npm: <key>=<value>`, which may be
+# followed by unkeyed explanation lines and npm's own output:
 #   option=<arg>               unknown option or no tag (exit 2)
 #   tag=<tag>                  not `<unscoped-name>-v<major.minor.patch...>` (exit 1)
 #   absent=<tag>               this checkout holds no such tag (exit 1)
@@ -31,7 +34,11 @@
 #   name=<name>                its name is not @vanillagreen/<dir> (exit 1)
 #   version=<version>          its version is not the tag's (exit 1)
 #   npm=<version>              npm is older than 11.5.1, the trusted-publishing floor (exit 1)
-#   lookup=<name@version>      npm view failed other than with E404 (exit 1)
+#   scratch=mktemp-failed      no scratch directory could be made (exit 1)
+#   lookup=<name[@version]>    npm view failed other than with E404 (exit 1)
+#   first-release=<name>       npm serves no version of the package; its first
+#                              publish is by hand, docs/RELEASING.md § Pi
+#                              packages on npm (exit 1)
 #   served=<name@version>      npm already serves it; nothing is published (exit 0)
 #   dry-run=<name@version>     every check passed; nothing is published (exit 0)
 #   publish=<name@version>     extracting the tag, npm ci or npm publish failed (exit 1)
@@ -58,7 +65,7 @@ tag=""
 for argument in "$@"; do
   case "$argument" in
     --dry-run) dry_run=1 ;;
-    -h|--help) sed -n '2,39p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) awk 'NR == 1 { next } /^#/ { print; next } { exit }' "${BASH_SOURCE[0]}"; exit 0 ;;
     -*) say option "$argument" "$usage" >&2; exit 2 ;;
     *)
       if [[ -n "$tag" ]]; then say option "$argument" "$usage" >&2; exit 2; fi
@@ -118,10 +125,12 @@ fi
 # guard off-main: end
 
 manifest="$(git -C "$root" show "$tagged:$path/package.json" 2>/dev/null)" || manifest=""
+# guard package: begin
 if [[ -z "$manifest" ]] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$manifest"; then
   say package "$dir" "$path/package.json at $tag is missing or not a JSON object" >&2
   exit 1
 fi
+# guard package: end
 declared_name="$(jq -r '.name // ""' <<<"$manifest")"
 declared_version="$(jq -r '.version // ""' <<<"$manifest")"
 prepack="$(jq -r '.scripts.prepack // ""' <<<"$manifest")"
@@ -148,34 +157,51 @@ if ! numeric_at_least "$npm_version" "$npm_floor"; then
 fi
 # guard npm: end
 
-scratch="$(mktemp -d)" || { echo "publish-npm: mktemp -d failed" >&2; exit 1; }
+scratch="$(mktemp -d)" || { say scratch mktemp-failed >&2; exit 1; }
 trap 'rm -rf -- "${scratch:?}"' EXIT
 view_err="$scratch/view.err"
 
-# served ID — 0 npm serves ID, 1 it answers E404, 2 the lookup failed; the
+# registry SPEC FIELD WANT — sets status: 0 when `npm view SPEC FIELD` prints
+# WANT, 1 when npm answers E404, 2 when the lookup failed. E404 means no
+# such package for a bare name and no such version for name@version; the
 # lookup's own output is in $view_err.
-served() {
+registry() {
   local out rc=0
-  out="$(npm view "$1" version 2>"$view_err")" || rc=$?
-  if [[ "$rc" -eq 0 && "$out" == "${1##*@}" ]]; then return 0; fi
-  if [[ "$rc" -ne 0 ]] && grep -q 'code E404' "$view_err"; then return 1; fi
+  status=2
+  out="$(npm view "$1" "$2" 2>"$view_err")" || rc=$?
+  if [[ "$rc" -eq 0 && "$out" == "$3" ]]; then status=0; return; fi
+  if [[ "$rc" -ne 0 ]] && grep -q 'code E404' "$view_err"; then status=1; return; fi
   printf 'npm view exited %s and printed [%s]\n' "$rc" "$out" >>"$view_err"
-  return 2
 }
 
-status=0
-served "$id" || status=$?
+# lookup SPEC FIELD WANT — registry, refusing a failed lookup.
+lookup() {
+  registry "$@"
+  # guard lookup: begin
+  if [[ "$status" -eq 2 ]]; then
+    say lookup "$1" "cannot tell whether npm serves $1:" >&2
+    cat -- "$view_err" >&2
+    exit 1
+  fi
+  # guard lookup: end
+}
+
+lookup "$name" name "$name"
+# guard first-release: begin
+if [[ "$status" -eq 1 ]]; then
+  say first-release "$name" "npm serves no version of $name, and npm trusted publishing cannot make a package's first publish." \
+    "An npm organization admin publishes it once by hand and adds its trusted publisher (docs/RELEASING.md § Pi packages on npm); nothing was published" >&2
+  exit 1
+fi
+# guard first-release: end
+
+lookup "$id" version "$version"
 # guard served: begin
 if [[ "$status" -eq 0 ]]; then
   say served "$id" "npm already serves $id; nothing was published"
   exit 0
 fi
 # guard served: end
-case "$status" in
-  0|1) ;;
-  2) say lookup "$id" "cannot tell whether npm serves $id:" >&2; cat -- "$view_err" >&2; exit 1 ;;
-  *) echo "publish-npm: served() returned $status, outside 0-2" >&2; exit 1 ;;
-esac
 
 if [[ "$dry_run" -eq 1 ]]; then
   say dry-run "$id"
@@ -189,8 +215,11 @@ if ! git -C "$root" archive "$tagged" -- "$path" | tar -x -C "$scratch/tree"; th
   exit 1
 fi
 package_dir="$scratch/tree/$path"
-# A prepack build needs the package's dev dependencies; --ignore-scripts
-# keeps their install hooks from running with this job's identity.
+# A prepack build needs the package's dev dependencies. --ignore-scripts
+# stops their install hooks; npm publish still runs prepack, and with it
+# those dependencies' code, in this job, which holds the publish identity.
+# Both read main's reviewed lockfile, since the workflow publishes only a
+# tag on main.
 if [[ -n "$prepack" ]] && ! (cd -- "$package_dir" && npm ci --ignore-scripts); then
   say publish "$id" "npm ci failed in $path; nothing was published" >&2
   exit 1
@@ -202,8 +231,7 @@ fi
 
 attempt=1
 while :; do
-  status=0
-  served "$id" || status=$?
+  registry "$id" version "$version"
   if [[ "$status" -eq 0 ]]; then
     say published "$id"
     exit 0
