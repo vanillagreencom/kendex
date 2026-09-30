@@ -31,11 +31,29 @@ let qolSessionSearchReleaseTimer: ReturnType<typeof setTimeout> | undefined;
 /** Parsed user prompts per session path, oldest insertion first; at most
  *  SESSION_SEARCH_USER_MESSAGES_MAX_SESSIONS entries. */
 const qolSessionUserMessagesCache = new Map<string, QolSessionUserMessage[]>();
-export const qolSessionSearchPendingActions = new Map<string, QolSessionPaletteAction>();
+/** The resume or fork action the editor's `/search:resume-pending <id>` line
+ *  names. Queuing another replaces it, since the editor holds one line. */
+let qolSessionSearchPendingAction: { id: string; action: QolSessionPaletteAction } | undefined;
 let qolSessionSearchPendingActionCounter = 0;
 
-export function nextSessionSearchPendingActionId(): string {
-	return `ss-${Date.now().toString(36)}-${(++qolSessionSearchPendingActionCounter).toString(36)}`;
+/** Hold `action` as the one pending action and return the id that claims it. */
+export function queueSessionSearchPendingAction(action: QolSessionPaletteAction): string {
+	const id = `ss-${Date.now().toString(36)}-${(++qolSessionSearchPendingActionCounter).toString(36)}`;
+	qolSessionSearchPendingAction = { id, action };
+	return id;
+}
+
+/** Remove and return the pending action when `id` names it. */
+export function takeSessionSearchPendingAction(id: string): QolSessionPaletteAction | undefined {
+	if (qolSessionSearchPendingAction?.id !== id) return undefined;
+	const { action } = qolSessionSearchPendingAction;
+	qolSessionSearchPendingAction = undefined;
+	return action;
+}
+
+/** Drop the pending action. Runs on session shutdown. */
+export function clearSessionSearchPendingAction(): void {
+	qolSessionSearchPendingAction = undefined;
 }
 
 export function getPendingSessionSearchMessage(): QolSessionSearchPendingMessage | undefined {

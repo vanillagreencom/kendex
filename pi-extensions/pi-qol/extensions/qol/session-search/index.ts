@@ -5,9 +5,8 @@ import { settingNumber } from "../settings.js";
 import { stringifyError } from "../util.js";
 import {
 	getPendingSessionSearchMessage,
-	nextSessionSearchPendingActionId,
 	pinSessionModel,
-	qolSessionSearchPendingActions,
+	queueSessionSearchPendingAction,
 	refreshQolSessionSearchCache,
 	sessionDisplayName,
 	setPendingSessionSearchMessage,
@@ -20,10 +19,11 @@ import {
 import type { QolSessionPaletteAction, QolSessionSearchLoad, QolSessionSearchResult } from "./types.js";
 
 export {
-	qolSessionSearchPendingActions,
+	clearSessionSearchPendingAction,
 	refreshQolSessionSearchCache,
 	releaseQolSessionSearchCache,
 	sessionSearchShortcut,
+	takeSessionSearchPendingAction,
 } from "./cache.js";
 export { renderSessionSearchContextMessage } from "./context.js";
 
@@ -32,8 +32,7 @@ function asCommandContext(ctx: ExtensionContext): (ExtensionContext & Partial<Ex
 }
 
 function queueSessionSearchCommandAction(ctx: ExtensionContext, action: QolSessionPaletteAction): void {
-	const id = nextSessionSearchPendingActionId();
-	qolSessionSearchPendingActions.set(id, action);
+	const id = queueSessionSearchPendingAction(action);
 	ctx.ui.setEditorText(`/search:resume-pending ${id}`);
 	ctx.ui.notify(`${sessionDisplayName(action.result!)} — press enter to ${action.type === "fork" ? "fork" : "resume"}`, "info");
 }

@@ -33,6 +33,7 @@ The extension reads your enabled features when Pi starts. It adds their editor c
 
 - A session without a UI loads no session-search index. With a UI, the index is loaded shortly after start and kept for `sessionSearch.cacheTtlSeconds` (default 300 seconds; 0 keeps it until the session ends). A search after the index was released opens at once and fills in when the index has loaded again.
 - The index keeps at most 32,768 characters of message text per session and 8,388,608 characters in total, newest session first. A session past the total is searched by name, path and first prompt only.
+- Where Pi cannot switch sessions directly, a chosen resume or fork waits as one `/search:resume-pending` command in the editor. Only the latest one is kept, and it is dropped when the session ends.
 - Parsed prompts are kept for at most 64 sessions, and finished thinking times for at most 256 blocks. Thinking labels are released at the end of each agent run, and notification cooldown entries once their cooldown has passed and all of them when the session ends.
 
 ## Settings

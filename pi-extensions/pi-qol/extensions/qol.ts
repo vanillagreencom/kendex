@@ -63,14 +63,15 @@ import {
 } from "./qol/session-rename.js";
 import { createScheduleController, getScheduleArgumentCompletions } from "./qol/schedule.js";
 import {
+	clearSessionSearchPendingAction,
 	consumePendingSessionSearchContext,
 	openQolSessionSearch,
-	qolSessionSearchPendingActions,
 	refreshQolSessionSearchCache,
 	releaseQolSessionSearchCache,
 	renderSessionSearchContextMessage,
 	runSessionSearchResumeOrFork,
 	sessionSearchShortcut,
+	takeSessionSearchPendingAction,
 } from "./qol/session-search/index.js";
 import { installSettingsCacheRefresh, recordProjectTrust } from "./qol/package-config.js";
 import { settingBoolean, settingNumber, settingString } from "./qol/settings.js";
@@ -693,6 +694,7 @@ export default function qol(pi: ExtensionAPI): void {
 		if (sessionSearchWarmupTimer) clearTimeout(sessionSearchWarmupTimer);
 		sessionSearchWarmupTimer = undefined;
 		releaseQolSessionSearchCache();
+		clearSessionSearchPendingAction();
 		resetThinkingTimer(undefined);
 		clearTmuxWindowMark(pi);
 		resetQolNotificationCooldowns();
@@ -925,13 +927,11 @@ export default function qol(pi: ExtensionAPI): void {
 		pi.registerCommand("search:resume-pending", {
 			description: "Run a pending session-search resume or fork action",
 			handler: async (args, ctx) => {
-				const id = args.trim();
-				const action = qolSessionSearchPendingActions.get(id);
+				const action = takeSessionSearchPendingAction(args.trim());
 				if (!action) {
 					ctx.ui.notify("No pending session-search resume/fork action found.", "warning");
 					return;
 				}
-				qolSessionSearchPendingActions.delete(id);
 				if (!(await runSessionSearchResumeOrFork(pi, ctx, action))) ctx.ui.notify("Session resume/fork is unavailable in this context.", "error");
 			},
 		});

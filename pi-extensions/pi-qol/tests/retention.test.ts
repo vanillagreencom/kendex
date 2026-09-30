@@ -63,6 +63,38 @@ test("a headless session loads no session-search index at startup, and shutdown 
 	expect(listAllCalls).toBe(2);
 });
 
+test("only the latest queued resume action stays pending, and session_shutdown drops it", async () => {
+	const fake = makeFakeApi();
+	qolDefault(fake.api);
+	const levels: string[] = [];
+	let editor = "";
+	// No switchSession, so a chosen resume is queued behind an editor command.
+	const ctx = makeCtx({
+		cwd: workdir,
+		hasUI: true,
+		ui: {
+			...makeCtx().ui,
+			custom: async () => ({ type: "resume", result: searchSession(1, 0) }),
+			notify: (_text: string, level: string) => { if (level !== "info") levels.push(level); },
+			setEditorText: (text: string) => { editor = text; },
+		},
+	});
+	const queue = async () => {
+		await openQolSessionSearch(fake.api, ctx as any);
+		return editor.replace("/search:resume-pending ", "");
+	};
+	const resumePending = (id: string) => fake.commands["search:resume-pending"].handler(id, ctx);
+	const first = await queue();
+	const second = await queue();
+	// A missing action warns; a found one runs and reports resume unavailable here.
+	await resumePending(first);
+	await resumePending(second);
+	const third = await queue();
+	await fake.handlers.session_shutdown!({ type: "session_shutdown" }, ctx);
+	await resumePending(third);
+	expect({ distinct: new Set([first, second, third]).size, levels }).toEqual({ distinct: 3, levels: ["warning", "error", "warning"] });
+});
+
 test("the loaded index and parsed prompts are released after the default TTL and on release", async () => {
 	jest.useFakeTimers();
 	const ctx = makeCtx({ cwd: workdir });
