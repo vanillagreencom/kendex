@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tools/installer-pin: what it writes from a tag, and what --check refuses.
 # Every run is over a world built here: a repository holding the tool and
-# the five pin sites, with a lightweight tag v1.0.0 on its first commit (C1)
+# the writer pin sites, with a lightweight tag v1.0.0 on its first commit (C1)
 # and an annotated tag v2.0.0 on its second (C2), and a bare clone of it on a
 # local path as its `origin`, so no run reaches the network. Pins are set in
 # the work tree, which is what the tool reads.
@@ -9,7 +9,7 @@
 # A run renders as `rc=<n> keys=<k=v,...> pins=<...>`: the exit status, every
 # `installer-pin: <key>=<value>` line in order, and each site's pin values
 # after the run, in the tool's site order, with a commit written by its name.
-# `all:X` is five sites that agree. The English under a keyed line is not
+# `all:X` is the writer sites that agree. The English under a keyed line is not
 # pinned.
 #
 # The rows table is `label|state|tags|argv|rc|keys|pins`:
@@ -38,9 +38,7 @@ ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
 SITES="skills/review-gate/templates/review-gate-writer.yml
-skills/review-gate/templates/kendex-refresh.yml
 .agents/skills/review-gate/templates/review-gate-writer.yml
-.agents/skills/review-gate/templates/kendex-refresh.yml
 .github/workflows/review-gate-writer.yml"
 ZERO=0000000000000000000000000000000000000000
 GITC=(-c user.name=world -c user.email=world@example.invalid -c tag.gpgSign=false -c commit.gpgSign=false)
@@ -59,6 +57,10 @@ world() {
     mkdir -p "$TMP/w/$(dirname -- "$site")"
     site_text v0.0.0 "$ZERO" >"$TMP/w/$site"
   done <<<"$SITES"
+  # These unpinned workflow copies must survive check and update unchanged.
+  for site in skills/review-gate/templates/kendex-refresh.yml .agents/skills/review-gate/templates/kendex-refresh.yml; do
+    cp -- "$REPO/$site" "$TMP/w/$site"
+  done
   git -C "$TMP/w" init --quiet
   git -C "$TMP/w" config gc.auto 0
   git -C "$TMP/w" config maintenance.auto false
@@ -103,7 +105,7 @@ state() {
     sha) site_text v1.0.0 "$C2" >"$TMP/w/$last" ;;
     version) site_text v2.0.0 "$C2" >"$TMP/w/$last" ;;
     dup) printf '        KENDEX_VERSION: v1.0.0\n' >>"$TMP/w/skills/review-gate/templates/review-gate-writer.yml" ;;
-    missing) printf 'jobs:\n        KENDEX_VERSION: v1.0.0\n' >"$TMP/w/.agents/skills/review-gate/templates/kendex-refresh.yml" ;;
+    missing) printf 'jobs:\n        KENDEX_VERSION: v1.0.0\n' >"$TMP/w/.agents/skills/review-gate/templates/review-gate-writer.yml" ;;
     absent) rm -- "$TMP/w/$last" ;;
     *) echo "installer-pin.test: unknown state $1" >&2; exit 1 ;;
   esac
@@ -135,7 +137,7 @@ pins() { # each site's pin values, `/`-joined, commits named; all:X when they ag
 
 # run TOOL ARGV... — sets RC, OUT, GOT
 run() {
-  local tool="$1" line keys=""
+  local tool="$1" line site keys=""
   shift
   RC=0
   OUT="$(cd "$TMP/w" && env -i PATH="$PATH" HOME="$TMP" GIT_CONFIG_NOSYSTEM=1 "$tool" "$@" 2>&1)" || RC=$?
@@ -144,6 +146,13 @@ run() {
   done <<<"$OUT"
   keys="${keys#,}"
   GOT="rc=$RC keys=${keys:--} pins=$(pins)"
+  for site in skills/review-gate/templates/kendex-refresh.yml .agents/skills/review-gate/templates/kendex-refresh.yml; do
+    if cmp -s -- "$REPO/$site" "$TMP/w/$site"; then
+      ok "refresh remains unpinned: $site"
+    else
+      bad "refresh was changed: $site"
+    fi
+  done
 }
 
 rows="
@@ -151,17 +160,17 @@ pin a lightweight tag|fresh|local|v1.0.0|0|pinned=v1.0.0|all:v1.0.0/C1
 pin an annotated tag writes its commit|v1|local|v2.0.0|0|pinned=v2.0.0|all:v2.0.0/C2
 pin an annotated tag on origin writes its commit|v1|origin|v2.0.0|0|pinned=v2.0.0|all:v2.0.0/C2
 pin an absent tag writes nothing|v1|local|v9.9.9|1|tag=v9.9.9|all:v1.0.0/C1
-pin over a bad site writes nothing|missing|local|v2.0.0|1|site=.agents/skills/review-gate/templates/kendex-refresh.yml|v1.0.0/C1 v1.0.0/C1 v1.0.0/C1 v1.0.0 v1.0.0/C1
+pin over a bad site writes nothing|missing|local|v2.0.0|1|site=.agents/skills/review-gate/templates/review-gate-writer.yml|v1.0.0/C1 v1.0.0 v1.0.0/C1
 check pinned sites|v1|local|--check|0|pinned=v1.0.0|all:v1.0.0/C1
 check pinned sites against origin|v1|origin|--check|0|pinned=v1.0.0|all:v1.0.0/C1
 check with origin unreachable|v1|unreachable|--check|1|remote=origin|all:v1.0.0/C1
 check a version with no tag|fresh|local|--check|1|tag=v0.0.0|all:v0.0.0/Z
-check a SHA that is not the tag's commit|sha|local|--check|1|mismatch=.github/workflows/review-gate-writer.yml|v1.0.0/C1 v1.0.0/C1 v1.0.0/C1 v1.0.0/C1 v1.0.0/C2
-check a SHA that is not the origin tag's commit|sha|origin|--check|1|mismatch=.github/workflows/review-gate-writer.yml|v1.0.0/C1 v1.0.0/C1 v1.0.0/C1 v1.0.0/C1 v1.0.0/C2
-check a site naming another version|version|local|--check|1|mismatch=.github/workflows/review-gate-writer.yml|v1.0.0/C1 v1.0.0/C1 v1.0.0/C1 v1.0.0/C1 v2.0.0/C2
-check a site with two version lines|dup|local|--check|1|site=skills/review-gate/templates/review-gate-writer.yml|v1.0.0/C1/v1.0.0 v1.0.0/C1 v1.0.0/C1 v1.0.0/C1 v1.0.0/C1
-check a site with no SHA line|missing|local|--check|1|site=.agents/skills/review-gate/templates/kendex-refresh.yml|v1.0.0/C1 v1.0.0/C1 v1.0.0/C1 v1.0.0 v1.0.0/C1
-check an absent site|absent|local|--check|1|site=.github/workflows/review-gate-writer.yml|v1.0.0/C1 v1.0.0/C1 v1.0.0/C1 v1.0.0/C1 absent
+check a SHA that is not the tag's commit|sha|local|--check|1|mismatch=.github/workflows/review-gate-writer.yml|v1.0.0/C1 v1.0.0/C1 v1.0.0/C2
+check a SHA that is not the origin tag's commit|sha|origin|--check|1|mismatch=.github/workflows/review-gate-writer.yml|v1.0.0/C1 v1.0.0/C1 v1.0.0/C2
+check a site naming another version|version|local|--check|1|mismatch=.github/workflows/review-gate-writer.yml|v1.0.0/C1 v1.0.0/C1 v2.0.0/C2
+check a site with two version lines|dup|local|--check|1|site=skills/review-gate/templates/review-gate-writer.yml|v1.0.0/C1/v1.0.0 v1.0.0/C1 v1.0.0/C1
+check a site with no SHA line|missing|local|--check|1|site=.agents/skills/review-gate/templates/review-gate-writer.yml|v1.0.0/C1 v1.0.0 v1.0.0/C1
+check an absent site|absent|local|--check|1|site=.github/workflows/review-gate-writer.yml|v1.0.0/C1 v1.0.0/C1 absent
 no argument|v1|local|-|2|option=|all:v1.0.0/C1
 unknown option|v1|local|--pin|2|option=--pin|all:v1.0.0/C1
 check with an extra argument|v1|local|--check x|2|option=x|all:v1.0.0/C1
@@ -203,6 +212,9 @@ PY_MUTANT
   want="rc=$rc keys=$keys pins=$want_pins"
   if [ "$GOT" != "$want" ]; then ok "control, $label: the mutant answers $GOT"; else bad "control, $label: the mutant still answers the row" "$GOT"; fi
 }
+
+control 'refresh is not a pin site' 'pin a lightweight tag' 'sites="skills/review-gate/templates/review-gate-writer.yml' 'sites="skills/review-gate/templates/kendex-refresh.yml
+skills/review-gate/templates/review-gate-writer.yml'
 
 control 'the SHA is its tag'"'"'s commit' 'check a SHA that is not the tag'"'"'s commit' '[ "$sha" = "$want" ] ||' 'true ||'
 control 'every site names one version' 'check a site naming another version' '[ "$version" = "$first" ] ||' 'true ||'

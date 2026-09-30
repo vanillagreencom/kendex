@@ -900,7 +900,7 @@ jobs:
           fi
           exit "$fail"
 
-      # A review-gate template reaches every consumer when it merges, and its
+      # The review-gate writer template reaches consumers when it merges. Its
       # install step runs the installer at KENDEX_INSTALLER_SHA before a
       # credentialed step, so a pull request may not move that commit off the
       # one its release tag names. This checkout holds no tags; the tool reads

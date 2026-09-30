@@ -12,14 +12,15 @@
 #   a site, since a site reaches consumers when it merges.
 # -h, --help: print this help.
 #
-# Both templates fetch install.sh at KENDEX_INSTALLER_SHA and run it before a
+# The writer templates fetch install.sh at KENDEX_INSTALLER_SHA and run it before a
 # credentialed step, so it must be an immutable commit: a tag can be moved.
 # The tag only selects the binary release. One run writes both values from
 # one tag, so neither lands without the other.
 #
-# The pin sites are the two templates, their renders under .agents/skills/,
-# and this repository's adopted writer workflow. Each holds exactly one line
-# of each variable. A tag resolves in this checkout first, else on origin
+# The pin sites are the writer template, its render under .agents/skills/,
+# and this repository's adopted writer workflow. The refresh template resolves
+# the latest release at run time and is never a pin site. Each writer site holds
+# exactly one line of each variable. A tag resolves in this checkout first, else on origin
 # through `git ls-remote`, which is how a shallow CI checkout with no tags
 # reads it; nothing is fetched.
 #
@@ -39,9 +40,7 @@ export LC_ALL=C
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 usage='usage: tools/installer-pin <tag> | --check'
 sites="skills/review-gate/templates/review-gate-writer.yml
-skills/review-gate/templates/kendex-refresh.yml
 .agents/skills/review-gate/templates/review-gate-writer.yml
-.agents/skills/review-gate/templates/kendex-refresh.yml
 .github/workflows/review-gate-writer.yml"
 
 say() { # KEY VALUE [LINE...] — the keyed line, then each explanation line

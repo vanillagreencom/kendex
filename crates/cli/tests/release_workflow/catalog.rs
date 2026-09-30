@@ -1,5 +1,6 @@
 //! Catalog CI must render with the binary it installed, not its checkout's
-//! authoring rules. Run the workflow's checker against the real CLI.
+//! authoring rules. Install the same latest release as the workflow, then run
+//! its checker against that binary. A checkout build is not release evidence.
 #![cfg(unix)]
 
 use std::fs;
@@ -18,10 +19,10 @@ fn repo() -> PathBuf {
 }
 
 #[allow(clippy::unwrap_used)]
-fn check(script: &Path, catalog: &Path, root: &Path) -> Output {
+fn check(binary: &Path, script: &Path, catalog: &Path, root: &Path) -> Output {
     Command::new("python3")
         .arg(script)
-        .arg(env!("CARGO_BIN_EXE_kendex"))
+        .arg(binary)
         .arg(catalog)
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap())
@@ -37,7 +38,24 @@ fn the_current_catalog_renders_and_incomplete_delivery_fails() {
     let root = rooted(&tmp);
     let repository = repo();
     let script = repository.join("tools/catalog-release-check");
-    let output = check(&script, &repository, &root);
+    let home = root.join("release-home");
+    fs::create_dir(&home).unwrap();
+    let install = Command::new("/bin/bash")
+        .arg(repository.join("skills/review-gate/scripts/install-latest.sh"))
+        .current_dir(&root)
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap())
+        .env("HOME", &home)
+        .env("KENDEX_REAL_HOME", "1")
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .output()
+        .unwrap();
+    assert!(install.status.success(), "release install: {install:?}");
+    eprintln!("{}", String::from_utf8_lossy(&install.stdout));
+    let binary = home.join(".local/bin/kendex");
+    let output = check(&binary, &script, &repository, &root);
     assert!(output.status.success(), "{output:?}");
     let record = String::from_utf8(output.stdout).unwrap();
     assert!(record.starts_with("catalog-release: version="), "{record}");
@@ -87,7 +105,7 @@ fn the_current_catalog_renders_and_incomplete_delivery_fails() {
                 && record.lines().next().unwrap().contains("feature=")
                 && record.lines().next().unwrap().contains(expected_feature)
         };
-        let output = check(&script, &catalog, &root);
+        let output = check(&binary, &script, &catalog, &root);
         assert!(rejects(&output), "{name}: {output:?}");
         assert_eq!(
             fs::read_to_string(catalog.join("kendex.toml")).unwrap(),
@@ -103,7 +121,7 @@ fn the_current_catalog_renders_and_incomplete_delivery_fails() {
             assert_ne!(text, mutated);
             let mutant = root.join(format!("inert-{name}.py"));
             fs::write(&mutant, mutated).unwrap();
-            let output = check(&mutant, &catalog, &root);
+            let output = check(&binary, &mutant, &catalog, &root);
             assert!(
                 output.status.success(),
                 "control must reach the incorrect pass: {output:?}"
