@@ -49,7 +49,7 @@ pub(super) fn hook(
         remediation,
     };
     let Some(registered) = crate::harness::copilot::hook_for(hook) else {
-        state.notes.push(super::targets::unsupported_hook_event(
+        state.refused.push(super::targets::unsupported_hook_event(
             name,
             &hook.event,
             HarnessId::Copilot,

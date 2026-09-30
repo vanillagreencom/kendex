@@ -451,6 +451,34 @@ fn content(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Result<Content
 fn structural(kind: ItemKind, name: &str, file: &str, content: &Content) -> Vec<CheckFinding> {
     let leaf = crate::names::leaf(name);
     let mut out = Vec::new();
+    if let (ItemKind::Hook, Content::Document { text }) = (kind, content)
+        && let Ok(hook) = crate::hook::parse_hook(text)
+        && hook.harnesses.is_some()
+    {
+        let hook = crate::hook::HookSpec::from(hook);
+        for harness in HarnessId::ALL
+            .into_iter()
+            .filter(|harness| hook.applies_to(*harness))
+        {
+            if !crate::hook::delivery::event_fires(harness, &hook.event) {
+                let refusal =
+                    crate::engine::targets::unsupported_hook_event(name, &hook.event, harness);
+                out.push(CheckFinding {
+                    file: file.to_owned(),
+                    line: None,
+                    kind: refusal.kind.name(),
+                    name: refusal.name,
+                    pass: refusal.harness.name().to_owned(),
+                    severity: "error",
+                    rule: None,
+                    message: refusal.reason,
+                    fix:
+                        "use an event this harness supports, or remove it from the hook's harnesses"
+                            .to_owned(),
+                });
+            }
+        }
+    }
     for harness in HarnessId::ALL {
         if !crate::harness::capabilities(harness, kind).install.global {
             continue;

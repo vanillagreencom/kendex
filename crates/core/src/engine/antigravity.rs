@@ -7,7 +7,7 @@ use super::desired::DesiredState;
 use crate::hook::HookSpec;
 use crate::model::{HarnessId, ItemKind};
 
-/// The hook as Antigravity would register it, or `None` with the note
+/// The hook as Antigravity would register it, or `None` with the refusal
 /// saying why nothing is registered: an event it has no counterpart for.
 pub(super) fn hook(name: &str, hook: &HookSpec, state: &mut DesiredState) -> Option<HookSpec> {
     if hook.harnesses.is_none() {
@@ -19,7 +19,7 @@ pub(super) fn hook(name: &str, hook: &HookSpec, state: &mut DesiredState) -> Opt
         return None;
     }
     let Some(registered) = crate::harness::antigravity::hook_for(hook) else {
-        state.notes.push(super::targets::unsupported_hook_event(
+        state.refused.push(super::targets::unsupported_hook_event(
             name,
             &hook.event,
             HarnessId::Antigravity,

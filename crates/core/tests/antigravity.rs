@@ -296,10 +296,17 @@ fn a_hook_registers_under_its_name_in_the_roots_hooks_json() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hook_the_harness_cannot_run_stays_out_of_antigravity() {
-    let record = "kendex-hook-undeliverable: hook=audit harness=antigravity";
-    for hook in [
-        UNNAMED_HOOK.to_owned(),
-        AUDIT_HOOK.replace("PreToolUse", "TaskCompleted"),
+    for (hook, record, failed_delivery) in [
+        (
+            UNNAMED_HOOK.to_owned(),
+            "kendex-hook-undeliverable: hook=audit harness=antigravity",
+            false,
+        ),
+        (
+            AUDIT_HOOK.replace("PreToolUse", "TaskCompleted"),
+            "kendex-hook-unsupported: harness=antigravity event=TaskCompleted hook=audit",
+            true,
+        ),
     ] {
         let f = fixture("[hooks.audit]\nsource = \"cat\"\n");
         fs::write(f.env.home.join("catalog/hooks/audit.sh"), hook).unwrap();
@@ -313,14 +320,27 @@ fn a_hook_the_harness_cannot_run_stays_out_of_antigravity() {
             !f.project.join(".agents/hooks/audit.sh").exists(),
             "{record}"
         );
-        assert!(
-            report
-                .notes
-                .iter()
-                .any(|note| note.lines().next() == Some(record)),
-            "{record}: {:?}",
-            report.notes
-        );
+        if failed_delivery {
+            assert_eq!(
+                report
+                    .drift
+                    .iter()
+                    .filter(|row| row.state == kendex_core::engine::DriftState::Conflict
+                        && row.detail.lines().next() == Some(record))
+                    .count(),
+                1,
+                "{report:?}"
+            );
+        } else {
+            assert!(
+                report
+                    .notes
+                    .iter()
+                    .any(|note| note.lines().next() == Some(record)),
+                "{record}: {:?}",
+                report.notes
+            );
+        }
     }
 }
 

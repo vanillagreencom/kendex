@@ -235,9 +235,8 @@ impl Artifact {
     }
 }
 
-/// A declared installation a renderer refused to produce — expressing it on
-/// this harness would widen access. The plan turns each into a conflict row
-/// and a removal of whatever the old, wider rendering left installed.
+/// A declared installation the engine cannot deliver. The plan turns each
+/// into a conflict row and removes the previous unedited installation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Refused {
     pub kind: ItemKind,

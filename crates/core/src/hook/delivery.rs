@@ -49,7 +49,7 @@ pub fn agent_scoping(harness: HarnessId) -> AgentScoping {
 /// Whether this harness fires the spec's event at all, in the shared
 /// vocabulary. Claude fires everything in `EVENTS`; the rest answer through
 /// their own maps.
-fn event_fires(harness: HarnessId, event: &str) -> bool {
+pub(crate) fn event_fires(harness: HarnessId, event: &str) -> bool {
     match harness {
         HarnessId::Claude => super::known_event(event),
         HarnessId::Codex => super::codex_event(event).is_some(),

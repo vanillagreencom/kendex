@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use super::desired::{Artifact, Desired, DesiredState, ItemCtx};
 use super::targets::{
     HookFormat, HookTarget, advisory_notice, disabled_name, hook_target, plugin_settings,
+    unsupported_hook_event,
 };
 use crate::configedit::ConfigEdit;
 use crate::env::Env;
@@ -252,7 +253,13 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
                 continue;
             }
             Some(NotWritten::Undeliverable(reason)) => {
-                undeliverable.push((harness, reason));
+                if crate::hook::delivery::event_fires(harness, &hook.event) {
+                    undeliverable.push((harness, reason));
+                } else {
+                    state
+                        .refused
+                        .push(unsupported_hook_event(ctx.name, &hook.event, harness));
+                }
                 continue;
             }
             Some(NotWritten::UnreadableHeader(problem)) => unreachable!(
@@ -272,14 +279,12 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
         ) else {
             continue;
         };
-        state
-            .items
-            .push(declared(ctx, ItemKind::Hook, harness, artifact)?);
+        let item = declared(ctx, ItemKind::Hook, harness, artifact)?;
+        state.items.push(item);
     }
-    // A catalog can name an event newer than this engine knows. Supported
-    // copies still owe a record; only a hook with no deliverable copy makes
-    // the declaration incomplete. Use the artifacts, not a second delivery
-    // probe, so a failed restatement cannot count as a supported copy.
+    // Unsupported events already refused their copies above. Other delivery
+    // limits warn when a copy lands; no artifact means an incomplete hook.
+    // Count artifacts so a failed restatement cannot count as delivery.
     let installed_nowhere = state.items.len() == first_item;
     for (harness, reason) in undeliverable {
         let message = format!(
@@ -307,7 +312,7 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
 }
 
 /// The hook restated in one harness's own words, then placed: event renamed
-/// where the harness names it differently, skipped with a note where the
+/// where the harness names it differently, refused where the
 /// harness never fires it, and turned into the target's artifact. One path
 /// for both authors — the catalog loop above and the custom-hook loop
 /// (`desired_custom_hooks`) differ only in where the spec came from.
@@ -328,7 +333,7 @@ pub(crate) fn restated_hook_artifact(
         _ => Some(hook.event.as_str()),
     };
     let Some(event) = event else {
-        state.notes.push(super::targets::unsupported_hook_event(
+        state.refused.push(super::targets::unsupported_hook_event(
             name,
             &hook.event,
             harness,

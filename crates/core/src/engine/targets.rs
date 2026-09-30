@@ -6,14 +6,24 @@ use crate::env::Env;
 use crate::harness::{Enforcement, adapter};
 use crate::model::{HarnessId, ItemKind, Scope};
 
-/// The notice every native event adapter emits when no listener can run it.
-pub(super) fn unsupported_hook_event(name: &str, event: &str, harness: HarnessId) -> String {
-    format!(
-        "kendex-hook-unsupported: harness={record_arg0} event={record_event} hook={record_name}\nThis harness cannot run the hook event. Nothing is installed for it.",
-        record_arg0 = crate::names::shown(harness.name()),
-        record_event = crate::names::shown(event),
-        record_name = crate::names::shown(name),
-    )
+/// A failed delivery, shared by the engine and catalog check. The diagnostic
+/// key identifies the hook and harness in CLI reports; it is never a note.
+pub(crate) fn unsupported_hook_event(
+    name: &str,
+    event: &str,
+    harness: HarnessId,
+) -> super::desired::Refused {
+    super::desired::Refused {
+        kind: ItemKind::Hook,
+        name: name.to_owned(),
+        harness,
+        reason: format!(
+            "kendex-hook-unsupported: harness={record_arg0} event={record_event} hook={record_name}\nThis harness cannot run the hook event. Nothing is installed for it.",
+            record_arg0 = crate::names::shown(harness.name()),
+            record_event = crate::names::shown(event),
+            record_name = crate::names::shown(name),
+        ),
+    }
 }
 
 /// What installing a hook on this harness actually buys. A tool that only

@@ -352,7 +352,7 @@ fn header_rows() -> [Row; 4] {
             deliver: LATE_DELIVER,
             parent: "deliver",
             finding: Finding::Undeliverable(
-                "kendex-hook-undeliverable: hook=deliver harness=codex",
+                "kendex-hook-unsupported: harness=codex event=TaskCompleted hook=deliver",
                 HarnessId::Codex,
             ),
             lands: [true, false],
@@ -398,12 +398,17 @@ fn a_companion_that_will_not_land_withholds_the_hook_that_needs_it() {
                 kendex_core::engine::DeclarationStatus::Incomplete
             }
             Finding::Undeliverable(record, harness) => {
-                let found: Vec<_> = findings
+                let found: Vec<_> = report
+                    .drift
                     .iter()
-                    .map(|w| (w.message.lines().next(), w.harness))
+                    .filter(|row| {
+                        row.name == parent && row.state == kendex_core::engine::DriftState::Conflict
+                    })
+                    .map(|row| (row.detail.lines().next(), Some(row.harness)))
                     .collect();
                 assert_eq!(found, [(Some(record), Some(harness))], "{declarations}");
-                kendex_core::engine::DeclarationStatus::Complete
+                assert!(findings.is_empty(), "{declarations}: {findings:?}");
+                kendex_core::engine::DeclarationStatus::Incomplete
             }
         };
         assert!(

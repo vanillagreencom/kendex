@@ -1,0 +1,1 @@
+- Catalog checks and verification fail when a named harness cannot run a hook event. Intentional harness exclusions and advisory hooks remain non-blocking.

@@ -189,12 +189,13 @@ fn an_unmappable_event_installs_nothing_on_pi() {
     let report = audit(&w.env, &scope(&w)).unwrap();
     assert!(
         report
-            .notes
+            .drift
             .iter()
-            .any(|note| note.lines().next()
-                == Some("kendex-hook-undeliverable: hook=guard harness=pi")),
+            .any(|row| row.state == kendex_core::engine::DriftState::Conflict
+                && row.detail.lines().next()
+                    == Some("kendex-hook-unsupported: harness=pi event=PostCompact hook=guard")),
         "{:?}",
-        report.notes
+        report.drift
     );
     assert_eq!(
         report.declaration_status,

@@ -73,7 +73,7 @@ pub(super) fn agent_notices(ctx: &ItemCtx, state: &mut DesiredState) {
         .extend(overridden(ctx, ItemKind::Agent, "agents"));
 }
 
-/// The hook as Gemini would register it, or `None` with the note saying why
+/// The hook as Gemini would register it, or `None` with a diagnostic saying why
 /// nothing is registered: an event Gemini has no counterpart for, or a
 /// settings file the installed CLI would not read back.
 pub(super) fn hook(
@@ -91,7 +91,7 @@ pub(super) fn hook(
         return None;
     }
     let Some(registered) = crate::harness::gemini::hook_for(hook) else {
-        state.notes.push(super::targets::unsupported_hook_event(
+        state.refused.push(super::targets::unsupported_hook_event(
             name,
             &hook.event,
             HarnessId::Gemini,

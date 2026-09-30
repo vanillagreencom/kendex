@@ -210,10 +210,16 @@ fn an_event_codex_cannot_run_is_reported_never_faked() {
     let f = fixture("[hooks.done]\nsource = \"cat\"\nharnesses = [\"codex\"]\n");
     let report = audit(&f.env, &f.scope).unwrap();
     assert!(
-        report.notes.iter().any(|note| note.lines().next()
-            == Some("kendex-hook-undeliverable: hook=done harness=codex")),
+        report
+            .drift
+            .iter()
+            .any(|row| row.state == kendex_core::engine::DriftState::Conflict
+                && row.detail.lines().next()
+                    == Some(
+                        "kendex-hook-unsupported: harness=codex event=TaskCompleted hook=done"
+                    )),
         "{:?}",
-        report.notes
+        report.drift
     );
     assert_eq!(
         report.declaration_status,

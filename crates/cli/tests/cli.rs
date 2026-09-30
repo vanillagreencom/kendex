@@ -664,7 +664,7 @@ fn refresh_removes_only_the_departed_harness_and_verify_passes() {
 /// copies without losing the other packages in the plan.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn consumer_refresh_records_a_partially_deliverable_hook_and_verify_passes() {
+fn consumer_refresh_records_supported_copies_and_verify_fails_unsupported_delivery() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let project = declared(&home, "Ship the branch.\n");
@@ -688,7 +688,9 @@ fn consumer_refresh_records_a_partially_deliverable_hook_and_verify_passes() {
         let printed = String::from_utf8_lossy(&output.stderr);
         assert_eq!(
             printed
-                .matches("kendex-hook-undeliverable: hook=newer harness=claude")
+                .matches(
+                    "kendex-hook-unsupported: harness=claude event=FutureCatalogEvent hook=newer"
+                )
                 .count(),
             1,
             "{printed}"
@@ -707,10 +709,22 @@ fn consumer_refresh_records_a_partially_deliverable_hook_and_verify_passes() {
         );
         assert!(!project.join(".claude/hooks/newer.sh").exists());
         let output = kendex(&home, &project, &["verify", "--scope", "project", "--json"]);
-        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
         let verified: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(verified["clean"], true, "{verified}");
+        assert_eq!(verified["clean"], false, "{verified}");
+        // The envelope counts failed record entries separately. The
+        // missing delivery has no entry, but its failed row closes verify.
         assert_eq!(verified["failed"], 0, "{verified}");
+        let rows: Vec<_> = verified["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| {
+                row["kind"] == "hook" && row["name"] == "newer" && row["harness"] == "claude"
+            })
+            .collect();
+        assert_eq!(rows.len(), 1, "{verified}");
+        assert_eq!(rows[0]["state"], "failed", "{verified}");
     }
 }
 

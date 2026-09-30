@@ -95,10 +95,16 @@ fn an_event_copilot_does_not_have_is_reported_never_faked() {
     let f = fixture("\"copilot\"", "[hooks.done]\nsource = \"cat\"\n");
     let report = audit(&f.env, &f.scope).unwrap();
     assert!(
-        report.notes.iter().any(|note| note.lines().next()
-            == Some("kendex-hook-undeliverable: hook=done harness=copilot")),
+        report
+            .drift
+            .iter()
+            .any(|row| row.state == kendex_core::engine::DriftState::Conflict
+                && row.detail.lines().next()
+                    == Some(
+                        "kendex-hook-unsupported: harness=copilot event=TaskCompleted hook=done"
+                    )),
         "{:?}",
-        report.notes
+        report.drift
     );
     assert_eq!(
         report.declaration_status,

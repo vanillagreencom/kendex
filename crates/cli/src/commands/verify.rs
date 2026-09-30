@@ -145,6 +145,8 @@ struct Tally {
     /// Declared tracked outputs the project ignores under `--strict`, and
     /// projects whose ignore rules git could not be asked about.
     outputs_failed: usize,
+    /// Conflicts with no recorded installation, including failed delivery.
+    unrecorded_failed: usize,
     /// Declared tracked outputs the project ignores, without `--strict`:
     /// counted on the closing line apart from every failure.
     warned: usize,
@@ -156,7 +158,11 @@ impl Tally {
     /// armings, the two bookkeeping files, adopted workflow copies and
     /// ignored tracked outputs.
     fn beside_failed(&self) -> usize {
-        self.shims_failed + self.setup_failed + self.bookkeeping_failed + self.outputs_failed
+        self.shims_failed
+            + self.setup_failed
+            + self.bookkeeping_failed
+            + self.outputs_failed
+            + self.unrecorded_failed
     }
 
     fn clean(&self) -> bool {
@@ -165,6 +171,7 @@ impl Tally {
             || self.setup_failed > 0
             || self.bookkeeping_failed > 0
             || self.outputs_failed > 0
+            || self.unrecorded_failed > 0
             || self.recordless
             || !self.gaps.is_empty())
     }
@@ -328,9 +335,8 @@ fn check_scope(
     };
     let lock = audited.matching;
     let report = audited.report;
-    tally
-        .stale
-        .extend(trailed(style, &scope, &lock, &report, reading));
+    let stale = trailed(style, &scope, &lock, &report, reading);
+    tally.stale.extend(stale);
     let placer = Placer::new(env, &scope, output.base.as_deref(), &report);
     let named = |name: &str| names.is_empty() || names.iter().any(|wanted| wanted == name);
     tally.unmanaged.extend(
@@ -342,6 +348,7 @@ fn check_scope(
             .cloned(),
     );
     declaration_rows(&scope, declared, &lock, &report, &placer, &named, tally);
+    unrecorded_conflict_rows(&lock, &report, &placer, &named, tally, style);
     for (key, entry) in &lock.entries {
         if !named(&entry.name) {
             continue;
@@ -388,6 +395,42 @@ fn check_scope(
     };
     bookkeeping_rows(&scope, record, &report, &placer, tally, style)?;
     Ok(())
+}
+
+/// Conflicts with no record entry still fail verification. Recorded
+/// conflicts belong to `say_row`, so each conflict is counted once.
+fn unrecorded_conflict_rows(
+    lock: &kendex_core::lock::Lock,
+    report: &EngineReport,
+    placer: &Placer,
+    named: &dyn Fn(&str) -> bool,
+    tally: &mut Tally,
+    style: &Style,
+) {
+    for row in &report.drift {
+        if row.state == DriftState::Conflict
+            && named(&row.name)
+            && !lock.entries.contains_key(&kendex_core::lock::entry_key(
+                row.kind,
+                &row.name,
+                row.harness,
+            ))
+        {
+            ui::stderr(&style.report_verdict(
+                &format!("{} {}", row.kind.name(), row.name),
+                Some(&row.detail),
+            ));
+            tally.unrecorded_failed += 1;
+            tally.rows.push(placer.row(
+                row.kind.name(),
+                &row.name,
+                Some(row.harness),
+                State::Failed,
+                Some(row.detail.clone()),
+                &[],
+            ));
+        }
+    }
 }
 
 /// The source commits this scope's record trails, each said beside the

@@ -25,6 +25,101 @@ fn fixture() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bad-catalog")
 }
 
+/// The manifests are valid. Ignoring unsupported delivery makes the
+/// PermissionRequest row pass, so this is a must-fail control for the check.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn declared_hook_events_must_reach_each_named_harness() {
+    for (event, harnesses, unsupported) in [
+        ("PermissionRequest", "claude, gemini", Some("gemini")),
+        ("SubagentStop", "claude, codex", Some("codex")),
+        ("PermissionRequest", "claude", None),
+        ("PermissionRequest", "opencode", None),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let catalog = home.join("catalog");
+        std::fs::create_dir_all(catalog.join("hooks")).unwrap();
+        std::fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+        std::fs::write(
+            catalog.join("hooks/future.sh"),
+            format!("#!/bin/sh\n# ---\n# name: future\n# description: check requests\n# event: {event}\n# harnesses: [{harnesses}]\n# ---\nexit 0\n"),
+        ).unwrap();
+        let output = kendex(
+            &home,
+            &home,
+            &[
+                "check",
+                "--catalog",
+                catalog.to_str().unwrap(),
+                "--strict",
+                "--json",
+            ],
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(i32::from(unsupported.is_some())),
+            "{event} [{harnesses}]: {output:?}"
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            report["breakage"],
+            usize::from(unsupported.is_some()),
+            "{report}"
+        );
+        assert_eq!(report["ok"], unsupported.is_none(), "{report}");
+        if let Some(harness) = unsupported {
+            let findings = report["findings"].as_array().unwrap();
+            assert_eq!(findings.len(), 1, "{report}");
+            assert_eq!(findings[0]["pass"], harness);
+            assert_eq!(
+                findings[0]["message"].as_str().unwrap().lines().next(),
+                Some(
+                    format!("kendex-hook-unsupported: harness={harness} event={event} hook=future")
+                        .as_str()
+                )
+            );
+        }
+        let tool = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/catalog-release-check");
+        let release = Command::new("bash")
+            .arg(&tool)
+            .arg(&catalog)
+            .env_clear()
+            .envs(test_util::fixture_env(&home))
+            .env("PATH", std::env::var("PATH").unwrap_or_default())
+            .env("KENDEX_BIN", env!("CARGO_BIN_EXE_kendex"))
+            .output()
+            .unwrap();
+        assert_eq!(release.status.code(), output.status.code(), "{release:?}");
+        if event == "PermissionRequest" && unsupported == Some("gemini") {
+            // Control for the release wrapper: keep the check but swallow
+            // its verdict. The valid unsupported manifest then passes.
+            let original = std::fs::read_to_string(&tool).unwrap();
+            assert_eq!(original.matches("exec ").count(), 1);
+            let mutant = format!("{}\nthen :; fi\nexit 0\n", original.replace("exec ", "if "));
+            assert_ne!(mutant, original);
+            let path = home.join("mutant-check");
+            std::fs::write(&path, mutant).unwrap();
+            let control = Command::new("bash")
+                .arg(&path)
+                .arg(&catalog)
+                .env_clear()
+                .envs(test_util::fixture_env(&home))
+                .env("PATH", std::env::var("PATH").unwrap_or_default())
+                .env("KENDEX_BIN", env!("CARGO_BIN_EXE_kendex"))
+                .output()
+                .unwrap();
+            assert_eq!(control.status.code(), Some(0), "{control:?}");
+            assert!(
+                String::from_utf8_lossy(&control.stderr).contains(
+                    "kendex-hook-unsupported: harness=gemini event=PermissionRequest hook=future"
+                ),
+                "{control:?}"
+            );
+        }
+    }
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_seeded_bad_catalog_fails_the_check() {

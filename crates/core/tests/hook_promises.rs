@@ -79,76 +79,96 @@ fn fixture_with_newer_hook(harnesses: &str, event: &str) -> Fixture {
     f
 }
 
-/// A newer catalog can name an event this engine lacks. Advisory copies
-/// still land, but an unrelated hook cannot make an undeliverable hook
-/// count as delivered. Record recovery must keep the same distinction.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_hook_records_deliverable_copies_and_refuses_only_when_none_land() {
-    use HarnessId::{Claude, Codex, Cursor, Gemini, Opencode};
-    for (harnesses, event, unavailable, delivered) in [
+const UNSUPPORTED_DELIVERIES: [(&str, &str, &[HarnessId], &[HarnessId]); 8] = {
+    use HarnessId::{Antigravity, Claude, Codex, Copilot, Cursor, Gemini, Opencode, Pi};
+    [
         (
             "\"claude\", \"opencode\", \"cursor\"",
             "FutureCatalogEvent",
-            vec![Claude],
-            vec![Opencode, Cursor],
+            &[Claude],
+            &[Opencode, Cursor],
         ),
         (
-            "\"claude\", \"codex\"",
-            "TaskCompleted",
-            vec![Codex],
-            vec![Claude],
+            "\"claude\", \"gemini\"",
+            "PermissionRequest",
+            &[Gemini],
+            &[Claude],
         ),
-        ("\"claude\"", "FutureCatalogEvent", vec![Claude], vec![]),
+        ("\"claude\", \"pi\"", "PermissionRequest", &[Pi], &[Claude]),
+        ("\"claude\", \"codex\"", "SubagentStop", &[Codex], &[Claude]),
+        (
+            "\"claude\", \"copilot\"",
+            "TaskCompleted",
+            &[Copilot],
+            &[Claude],
+        ),
+        (
+            "\"claude\", \"antigravity\"",
+            "SessionStart",
+            &[Antigravity],
+            &[Claude],
+        ),
+        ("\"claude\"", "FutureCatalogEvent", &[Claude], &[]),
         (
             "\"codex\", \"gemini\"",
             "TaskCompleted",
-            vec![Codex, Gemini],
-            vec![],
+            &[Codex, Gemini],
+            &[],
         ),
-    ] {
+    ]
+};
+
+/// Supported copies still land. Each unsupported copy fails delivery,
+/// even when other copies land. Record recovery requires full delivery.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_hook_records_supported_copies_but_fails_each_unsupported_delivery() {
+    for (harnesses, event, unavailable, delivered) in UNSUPPORTED_DELIVERIES {
         let f = fixture_with_newer_hook(harnesses, event);
         let report = plan(&f);
-        let nowhere = delivered.is_empty();
         assert_eq!(
             report.declaration_status,
-            if nowhere {
-                DeclarationStatus::Incomplete
-            } else {
-                DeclarationStatus::Complete
-            },
-            "{harnesses}: {report:?}"
+            DeclarationStatus::Incomplete,
+            "{report:?}"
         );
-        for harness in unavailable {
-            let record = format!(
-                "kendex-hook-undeliverable: hook=newer harness={}",
-                harness.name()
-            );
+        let failures: Vec<_> = report
+            .drift
+            .iter()
+            .filter(|row| {
+                row.name == "newer" && row.state == kendex_core::engine::DriftState::Conflict
+            })
+            .collect();
+        assert_eq!(failures.len(), unavailable.len(), "{report:?}");
+        for &harness in unavailable {
+            let row = failures.iter().find(|row| row.harness == harness).unwrap();
+            assert_eq!(row.kind, ItemKind::Hook);
             assert_eq!(
-                report
-                    .notes
-                    .iter()
-                    .filter(|note| note.lines().next() == Some(record.as_str()))
-                    .count(),
-                usize::from(nowhere)
+                row.detail.lines().next(),
+                Some(
+                    format!(
+                        "kendex-hook-unsupported: harness={} event={event} hook=newer",
+                        harness.name()
+                    )
+                    .as_str()
+                )
             );
-            let warnings: Vec<_> = report
+        }
+        assert!(
+            !report
+                .notes
+                .iter()
+                .any(|note| note.starts_with("kendex-hook-unsupported:"))
+        );
+        assert!(
+            !report
                 .warnings
                 .iter()
-                .filter(|warning| warning.message.lines().next() == Some(record.as_str()))
-                .collect();
-            assert_eq!(warnings.len(), usize::from(!nowhere));
-            if let Some(warning) = warnings.first() {
-                assert_eq!(
-                    (warning.kind, warning.name.as_str(), warning.harness),
-                    (ItemKind::Hook, "newer", Some(harness))
-                );
-            }
-        }
+                .any(|warning| warning.message.starts_with("kendex-hook-unsupported:"))
+        );
 
         kendex_core::apply::execute(&f.env, &report.plan).unwrap();
         let path = kendex_core::lock::lock_path(&f.env, &f.scope);
-        let mut lock = kendex_core::lock::load(&path).unwrap();
+        let lock = kendex_core::lock::load(&path).unwrap();
         assert!(lock.entries.contains_key("hook:guard:claude"));
         let recorded: std::collections::BTreeSet<_> = lock
             .entries
@@ -156,32 +176,16 @@ fn a_hook_records_deliverable_copies_and_refuses_only_when_none_land() {
             .filter(|entry| entry.name == "newer")
             .map(|entry| entry.harness)
             .collect();
-        assert_eq!(recorded, delivered.into_iter().collect(), "{harnesses}");
+        assert_eq!(recorded, delivered.iter().copied().collect(), "{harnesses}");
         fs::remove_file(&path).unwrap();
         let recovery = plan_record_existing(&f.env, &f.scope);
-        if nowhere {
-            assert!(
-                matches!(
-                    recovery,
-                    Err(kendex_core::error::CoreError::RecordExistingRefused { .. })
-                ),
-                "{recovery:?}"
-            );
-        } else {
-            let recovery = recovery.unwrap();
-            assert_eq!(recovery.declaration_status, DeclarationStatus::Complete);
-            kendex_core::apply::execute(&f.env, &recovery.plan).unwrap();
-            let mut recovered = kendex_core::lock::load(&path).unwrap();
-            // Recovery records a new install time, not the original apply's time.
-            for entries in [&mut lock.entries, &mut recovered.entries] {
-                for entry in entries.values_mut() {
-                    if let Some(machine) = &mut entry.machine {
-                        machine.installed_at.clear();
-                    }
-                }
-            }
-            assert_eq!(recovered.entries, lock.entries);
-        }
+        assert!(
+            matches!(
+                recovery,
+                Err(kendex_core::error::CoreError::RecordExistingRefused { .. })
+            ),
+            "{recovery:?}"
+        );
     }
 }
 
@@ -317,7 +321,9 @@ fn a_matcher_that_cannot_be_translated_installs_as_written_and_is_named() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_catalog_hook_refusal_names_its_own_reason() {
-    let excluding = GUARD.replace("# event:", "# harnesses: [claude]\n# event:");
+    let excluding = GUARD
+        .replace("# event:", "# harnesses: [claude]\n# event:")
+        .replace("PreToolUse", "PermissionRequest");
     let excluded = || {
         vec![kendex_core::engine::ExcludedHook {
             name: "guard".to_owned(),
@@ -366,6 +372,21 @@ fn a_catalog_hook_refusal_names_its_own_reason() {
             .collect();
         assert_eq!(heads, Vec::from_iter(record), "{case}: {:?}", report.notes);
         assert_eq!(report.excluded_hooks, want_excluded, "{case}");
+        assert!(
+            !report
+                .drift
+                .iter()
+                .any(|row| row.state == kendex_core::engine::DriftState::Conflict),
+            "{case}: {report:?}"
+        );
+        assert_eq!(
+            report.declaration_status,
+            if case == "an unreadable header" {
+                DeclarationStatus::Incomplete
+            } else {
+                DeclarationStatus::Complete
+            }
+        );
         kendex_core::apply::execute(&f.env, &report.plan).unwrap();
         let Scope::Project { root } = &f.scope else {
             panic!("fixture is a project")

@@ -103,10 +103,16 @@ fn an_event_gemini_does_not_have_is_reported_never_faked() {
     let f = fixture("[hooks.done]\nsource = \"cat\"\n");
     let report = audit(&f.env, &f.scope).unwrap();
     assert!(
-        report.notes.iter().any(|note| note.lines().next()
-            == Some("kendex-hook-undeliverable: hook=done harness=gemini")),
+        report
+            .drift
+            .iter()
+            .any(|row| row.state == kendex_core::engine::DriftState::Conflict
+                && row.detail.lines().next()
+                    == Some(
+                        "kendex-hook-unsupported: harness=gemini event=TaskCompleted hook=done"
+                    )),
         "{:?}",
-        report.notes
+        report.drift
     );
     assert_eq!(
         report.declaration_status,

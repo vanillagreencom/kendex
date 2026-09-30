@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Release authoring check. Core owns delivery and validation rules.
+# Usage: tools/catalog-release-check [CATALOG]
+# KENDEX_BIN selects the built CLI. The strict check's exit status is preserved.
+set -euo pipefail
+exec "${KENDEX_BIN:-kendex}" check --catalog "${1:-.}" --strict
