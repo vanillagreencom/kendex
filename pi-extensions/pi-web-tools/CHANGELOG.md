@@ -5,6 +5,9 @@
 ### Unreleased
 
 - DuckDuckGo result titles and snippets preserve escaped entity text such as `&lt;` instead of decoding it twice.
+
+### 4.0.1
+
 - Session startup keeps fresh stored web content when its working directory exists and its name ends in whitespace. Cleanup previously trimmed the name and could delete these files.
 
 ### 4.0.0
