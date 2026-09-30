@@ -686,7 +686,7 @@ export async function processResponsesStream<TApi extends Api>(
 		} else if (event.type === "response.function_call_arguments.delta") {
 			const state = outputStates.get(event.output_index);
 			if (state?.kind === "function_call") {
-				// Arguments parse once the call completes: parsing the growing buffer on
+				// Arguments parse when the call completes: parsing the growing buffer on
 				// every delta costs time quadratic in the argument length.
 				state.block.partialJson = (state.block.partialJson ?? "") + event.delta;
 				stream.push({ type: "toolcall_delta", contentIndex: state.blockIndex, delta: event.delta, partial: output });

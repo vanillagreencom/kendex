@@ -103,7 +103,7 @@ for (const row of [
 	},
 	{ name: "no done events", events: argumentDeltas, parses: 1 },
 ]) {
-	test(`streamed function-call arguments with ${row.name} parse once the call completes`, async (t) => {
+	test(`streamed function-call arguments with ${row.name} parse when the call completes`, async (t) => {
 		const parse = t.mock.method(JSON, "parse");
 		const { output, pushed } = await run([{ type: "response.output_item.added", output_index: 0, item: functionCall }, ...row.events, completed]);
 		const argumentParses = parse.mock.calls.filter((call) => call.arguments[0] === argumentsJson).length;
