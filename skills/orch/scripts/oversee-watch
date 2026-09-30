@@ -2616,7 +2616,7 @@ overseer_context_gap() { # PANE IDENTITY GAP
 overseer_gap_alert() { # PANE GAP
   local notice="$WORK_DIR/overseer-context-gap.txt" record="$WORK_DIR/overseer-context-gap.json"
   local errf="$WORK_DIR/overseer-context-gap.err"
-  printf 'overseer-context-unmeasured: the overseer in pane %s has recorded no context reading on two consecutive watch passes, gap=%s, so nothing judges its context mark and it can run into its context window with no handoff. The remedy for this gap is under overseer-context-unmeasured in the orch skill'"'"'s references/oversee-events.md.\n' \
+  printf 'overseer-context-unmeasured: the overseer in pane %s has recorded no context reading on two consecutive watch passes, gap=%s, so nothing judges its context mark and it can run into its context window with no handoff. The remedy for this gap is under overseer-context-unmeasured in the orch skill'"'"'s references/overseer-session-events.md.\n' \
     "$1" "$2" > "$notice" || { overseer_note overseer-notice-failed "channel=file"; return 1; }
   "$LANE_MAIL" notice --item overseer --to owner --file "$notice" >/dev/null 2>"$errf" \
     || { overseer_note overseer-notice-failed "channel=owner"; return 1; }

@@ -555,6 +555,7 @@
   ".agents/skills/orch/references/narrow-change.conf",
   ".agents/skills/orch/references/oversee-events.md",
   ".agents/skills/orch/references/oversee-lanes.md",
+  ".agents/skills/orch/references/overseer-session-events.md",
   ".agents/skills/orch/references/peer-mail.md",
   ".agents/skills/orch/references/pi-runtime.md",
   ".agents/skills/orch/references/secret-value.ere",

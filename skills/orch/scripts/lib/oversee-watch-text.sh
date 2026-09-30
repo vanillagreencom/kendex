@@ -144,7 +144,7 @@ The long pass's events, checked and reported in this order:
                              description lists. With no reading its context
                              mark is not judged (references/oversee-events.md
                              § Judgement rules). The route per gap is
-                             references/oversee-events.md § Event kinds.
+                             references/overseer-session-events.md.
                              Emitted on the first long pass it stands; still
                              standing on the next, it goes to the owner
                              instead, as one `lane-mail notice --to owner`
