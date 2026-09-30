@@ -316,7 +316,8 @@ battery "$B"
 mkdir -p "$B/tmp" "$B.planted"
 printf '{"marker":"fixture"}\n' >"$B/tmp/workflow-state-oversee.json"
 printf '{"marker":"caller"}\n' >"$B.planted/workflow-state-oversee.json"
-printf '#!/usr/bin/env bash\nset -euo pipefail\ncd -- "$(dirname "$0")"\n[[ "$("$WS" get oversee .marker)" == fixture ]]\nexport ORCH_STATE_DIR="$PLANTED"\n[[ "$("$WS" get oversee .marker)" == caller ]]\n' \
+# Bash 3.2 does not apply errexit to [[ ... ]]; each assertion exits explicitly.
+printf '#!/usr/bin/env bash\nset -euo pipefail\ncd -- "$(dirname "$0")"\n[[ "$("$WS" get oversee .marker)" == fixture ]] || exit 1\nexport ORCH_STATE_DIR="$PLANTED"\n[[ "$("$WS" get oversee .marker)" == caller ]] || exit 1\n' \
   >"$B/state.sh"
 run_battery "$B" 1 ORCH_STATE_DIR="$B.planted" PLANTED="$B.planted" WS="$TEST_DIR/../scripts/workflow-state"
 assert_eq "$RC" 0 "the suite reads fixture state and can set its own ORCH_STATE_DIR"
