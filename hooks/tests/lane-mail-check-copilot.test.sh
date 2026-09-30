@@ -628,6 +628,24 @@ CALL_ENV=("HOME=$COP_HOME")
 assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout") unread=$(overseer_unread 'For the named session.')" "RC=0 stdout= unread=0" \
   "and marks it read, so its next prompt is handed nothing"
 
+# The overseer's tool-call judgement is the lead's alone. A Copilot call in
+# the named pane whose session no sessionStart recorded, a custom subagent's
+# as Copilot CLI 1.0.88 was measured sending it, is judged on nothing: it is
+# handed nothing and writes no context record for the overseer.
+unknown_tool_rows() { # NAME [JUDGE]
+  new_copilot_named "$1" "${2:-$HOOK}"
+  mkdir -p "$LANE/tmp/lane-mail/overseer"
+  CALL_ENV=("${COP_NAMED_ENV[@]}")
+  COP_SESSION=c1
+  copilot_tool deliver
+  COP_SESSION=s1
+  CALL_ENV=("HOME=$COP_HOME")
+  UNKNOWN_TOOL="RC=$RC stdout=$(cat "$TMP_ROOT/stdout") record=$([ -e "$LANE/tmp/lane-mail/overseer/context.json" ] && echo written || echo none)"
+}
+unknown_tool_rows copilot_overseer_unknown_tool
+assert_eq "$UNKNOWN_TOOL" "RC=0 stdout= record=none" \
+  "a Copilot call in the named pane from no recorded lead is judged on nothing and writes no context record" "$ERR_FILE"
+
 # --- a Copilot call reaching the Claude copy ------------------------------
 # Copilot runs a Claude copy registered in `.claude/settings.json` by hand or
 # by kendex before the Copilot skip, where no refresh has rewritten it,
@@ -711,6 +729,12 @@ CASE_HOOK="$LANE/.github/hooks/lane-mail-check.sh"
 expect 2 "lane-mail-check: unread=1" "a Claude turn end through the same copy is refused as before"
 
 # --- copilot controls ----------------------------------------------------
+# The tool-call judgement's lead test dropped: a call from no recorded lead
+# in the named pane is judged as the overseer's.
+mutant tool-any-caller -e 's/^if \[ "\$ARM" = deliver \] && \[ -z "\$ITEM" \] && \[ "\$CALLER" = lead \]; then$/if [ "$ARM" = deliver ] \&\& [ -z "$ITEM" ]; then/'
+unknown_tool_rows control_copilot_unknown_tool "$MUTANT_PATH"
+assert_eq "${UNKNOWN_TOOL##* record=}" "written" \
+  "control: without the lead test a Copilot call from no recorded lead writes the overseer's context record"
 # With the record test gone, every lead session in a checkout no live watch
 # holds is handed the overseer mailbox.
 mutant any-lead-reads -e '/^mail_check() {/,/^}/ { /^    overseer_identified || return 0$/d; }'
