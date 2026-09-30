@@ -34,9 +34,9 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 VERIFY_LANES="${VERIFY_ROW% shards=*}"
 # The fixture checkouts' rows, where no script or suite reads a path: a
-# build input runs `rest`, which builds kendex-cli for harness-ci's rows, and
+# build input runs `rest` and `review-gate` for real kendex rows, and
 # a tools/ path its suites' two shards and the scans.
-BUILD_ROW="$(measured both false true true '["rest"]')"
+BUILD_ROW="$(measured both false true true '["review-gate","rest"]')"
 TOOL_ROW="$(measured both false true false '["guards-scans","guards-tools","guards-tools-tail"]')"
 # Where a shard runs, and where none does. A shard runs on both runners
 # unless the diff is prose alone.
@@ -285,7 +285,7 @@ while IFS='|' read -r class paths expected; do
 done <<<"$READ_ROWS"
 [ "$read_rows" -ge 6 ] || { echo "the read table read $read_rows rows" >&2; exit 1; }
 # Each declared build name is a build input. Read in the fixture checkout,
-# where no file names one, so the search adds nothing to `rest`.
+# where no file names one, so the search adds no further shard.
 while IFS= read -r p; do
   check "build name $p is a build input" "$BUILD_ROW" "$(SELECT_IN="$READ_WORLD" selection micro false "$p")"
 done <<<"$names"
@@ -391,7 +391,7 @@ skills/preflight/scripts/preflight|["guards-scans","guards-commit","guards-hooks
 kendex.settings.toml|["guards-tools","guards-tools-tail"]
 install.sh|[]
 README.md|[]
-crates/demo/src/discover.rs|["guards-hooks","guards-tools-tail","rest","node"]
+crates/demo/src/discover.rs|["review-gate","guards-hooks","guards-tools-tail","rest","node"]
 .claude/hooks/lane-mail-check|["guards-hooks","guards-tools-tail","node"]
 .pi/kendex/hooks/lane-mail-check|["guards-hooks","guards-tools-tail","node"]
 hooks/block-bare-cd.sh|["guards-scans","guards-hooks","guards-tools-tail","node"]
@@ -443,7 +443,7 @@ s/^        want_shard guards-hooks$/        :/@skills/price-handling/scripts/x
 s/ | \.claude\/hooks\/\*//@.claude/hooks/lane-mail-check
 s/skills\/\*\/\* | \.agents\/skills\/\*\/\*)/no-package)/@skills/orch/scripts/lib/branch-growth.sh
 s/skills\/\* | hooks\/\* | tools\/\*) want_shard guards-scans/no-tree) want_shard guards-scans/@skills/price-handling/scripts/x
-s/\[ "\$build" = false \] || want_shard rest/:/@crates/demo/src/unnamed.rs
+s/\[ "\$build" = false \] || .*/:/@crates/demo/src/unnamed.rs
 s/! any "\$ALL_SHARDS" || want_shard \$SHARDS/:/@.github/instructions/code-review.md
 s/\[ "\$shards" != "\[\]" \] || shell=false/:/@install.sh
 s/^      macos=\$platform$/      macos=true/@skills/price-handling/SKILL.md

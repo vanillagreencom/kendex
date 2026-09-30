@@ -1,0 +1,1 @@
+- Rolling consumer refreshes replace hand-edited renders when every conflict is a known edit hold, and list the held items in the pull request body.

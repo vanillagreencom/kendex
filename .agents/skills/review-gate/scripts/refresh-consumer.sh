@@ -48,7 +48,44 @@ if [ -n "$old" ]; then
   git fetch --no-tags origin refs/heads/kendex/refresh
 fi
 git checkout -B kendex/refresh "$base"
-kendex refresh --scope project --yes --leave
+export KENDEX_UI=plain
+refresh_status=0
+refresh_output="$(kendex refresh --scope project --yes --leave 2>&1)" || refresh_status=$?
+printf '%s\n' "$refresh_output"
+if [ "$refresh_status" -ne 0 ]; then
+  printf 'refresh-error=refresh value=%s\n' "$refresh_status" >&2
+  exit "$refresh_status"
+fi
+# refresh has no JSON report. Fall back to the ledger from ledger.rs and the
+# held-item records from holds.rs; verify cannot report which edits a later
+# discard pass overwrote. Only a complete set of known holds permits discard.
+held_items=""
+held_count=0
+conflict_count=""
+ledger_pattern=' · skipped ([1-9][0-9]*) items? on conflict( · |$)'
+while IFS= read -r line; do
+  case "$line" in
+    '  '*': edited on disk and changed upstream '* | '  '*': edited on disk since install '*)
+      held_items="$held_items- ${line#  }
+"
+      held_count=$((held_count + 1)) ;;
+  esac
+  case "$line" in
+    *' · skipped '*' on conflict'*)
+      if [ -n "$conflict_count" ] || ! [[ "$line" =~ $ledger_pattern ]]; then
+        printf 'refresh-error=conflict-ledger value=%s\n' "$line" >&2
+        exit 1
+      fi
+      conflict_count="${BASH_REMATCH[1]}" ;;
+  esac
+done <<<"$refresh_output"
+if [ -n "$conflict_count" ]; then
+  if [ "$conflict_count" != "$held_count" ]; then
+    printf 'refresh-error=conflict-count value=%s held=%s\n' "$conflict_count" "$held_count" >&2
+    exit 1
+  fi
+  kendex refresh --scope project --yes --leave --discard-edits
+fi
 TMP="$(mktemp -d)"
 trap 'rm -rf -- "${TMP:?}"' EXIT
 "$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$ROOT/.agents/skills/review-gate/templates" --workflow-edit-report "$TMP/workflow-edits"
@@ -108,6 +145,9 @@ fi
 printf -v body 'Generated kendex updates.\n\nChange class: `%s`.\n\nClassifier:\n```text\n%s\n```\n\n%s\n' "$class" "$class_line" "$merge_note"
 if [ -n "$workflow_edits" ]; then
   printf -v body '%s\n%s\n' "$body" "$workflow_edits"
+fi
+if [ -n "$conflict_count" ]; then
+  printf -v body '%s\nOverwritten hand-edited items (from refresh):\n%s' "$body" "$held_items"
 fi
 if [ "$state" = pushed ]; then
   git push "--force-with-lease=refs/heads/kendex/refresh:$old" origin HEAD:refs/heads/kendex/refresh

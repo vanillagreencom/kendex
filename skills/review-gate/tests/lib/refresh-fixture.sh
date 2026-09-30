@@ -100,3 +100,70 @@ workflow_edit_matches() { # REPORT PATH:LINE
     grep -qxF "refresh-warning=workflow-edited value=${2%:*}" <<<"$OUT" &&
     grep -qF -- "\`$2\`" "$1"
 }
+
+# Each row owns its local catalog, HOME, edit and install record.
+real_refresh_fixture() { # NAME
+  sandbox
+  repo="$DIR"
+  real_root="$TMP/real-$1"
+  mkdir -p "$real_root/home/.claude" "$real_root/git/owner/catalog/skills/probe" "$repo/.claude"
+  printf '%s\n' '---' 'name: probe' 'description: fixture skill' '---' 'Upstream content.' >"$real_root/git/owner/catalog/skills/probe/SKILL.md"
+  git -C "$real_root/git/owner/catalog" init -q -b main
+  git -C "$real_root/git/owner/catalog" config gc.auto 0
+  git -C "$real_root/git/owner/catalog" config maintenance.auto false
+  git -C "$real_root/git/owner/catalog" add -A
+  git -C "$real_root/git/owner/catalog" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm fixture
+  printf 'schema = 6\n[sources.cat]\nrepo = "owner/catalog"\n[install]\nharnesses = ["claude"]\nmethod = "symlink"\n[skills.probe]\nsource = "cat"\n' >"$repo/kendex.toml"
+  (cd -- "$repo" && env -i PATH="$PATH" HOME="$real_root/home" KENDEX_REAL_HOME=1 \
+    KENDEX_GIT_BASE="file://$real_root/git" KENDEX_UI=plain "$REAL_KENDEX" refresh --scope project --yes --leave)
+  git -C "$repo" branch -M main
+  git -C "$repo" config gc.auto 0
+  git -C "$repo" config maintenance.auto false
+  cp "$TMP/case.1/.agents/skills/harness-ci/scripts/change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
+  printf '#!/usr/bin/env bash\nset -euo pipefail\n: >"$4"\n' >"$repo/.agents/skills/review-gate/scripts/adopt-refresh.sh"
+  printf 'Hand edit.\n' >>"$repo/.agents/skills/probe/SKILL.md"
+}
+
+publish_real_fixture() {
+  commit "$repo"
+  git init --bare -q "$real_root/remote"
+  git --git-dir="$real_root/remote" config gc.auto 0
+  git --git-dir="$real_root/remote" config maintenance.auto false
+  git -C "$repo" remote add origin "$real_root/remote"
+  git -C "$repo" push -q origin main
+  runner="$repo/.agents/skills/review-gate/scripts/refresh-consumer.sh"
+  : >"$TMP/state/pr"
+  : >"$TMP/state/creates"
+  : >"$TMP/state/calls"
+  : >"$TMP/state/kendex"
+  rm -f -- "$TMP/state/body"
+}
+
+run_real_refresh() {
+  RC=0
+  OUT="$(cd -- "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$real_root/home" TMPDIR="$TMP" \
+    GH_TOKEN=test-token GH_REPO=acme/test REFRESH_APP_SLUG=lanes TEST_STATE="$TMP/state" \
+    TEST_REAL_GIT="$REAL_GIT" TEST_REAL_KENDEX="$REAL_KENDEX" TEST_KENDEX_OUTPUT="${KENDEX_OUTPUT:-normal}" \
+    TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" \
+    TEST_CLASS=render TEST_MEASURED=true TEST_CLASS_EXIT=0 TEST_REASON=cause=renders-match-their-sources \
+    KENDEX_REAL_HOME=1 KENDEX_GIT_BASE="file://$real_root/git" KENDEX_UI=plain bash "$runner" 2>&1)" || RC=$?
+}
+
+real_refresh_published() {
+  [ "$RC" -eq 0 ] &&
+    grep -qxF 'refresh --scope project --yes --leave' "$TMP/state/kendex" &&
+    grep -qxF 'refresh --scope project --yes --leave --discard-edits' "$TMP/state/kendex" &&
+    grep -qxF 'verify --scope project' "$TMP/state/kendex" &&
+    grep -qxF 'refresh-state=pushed pr=1 class=render' <<<"$OUT" &&
+    [ -s "$TMP/state/creates" ] &&
+    grep -qxF -- "- $expected_hold" "$TMP/state/body" &&
+    ! grep -qF 'Hand edit.' "$repo/.agents/skills/probe/SKILL.md"
+}
+
+real_refresh_stopped() { # ERROR_RECORD
+  [ "$RC" -ne 0 ] && grep -qxF -- "$1" <<<"$OUT" &&
+    ! grep -qF -- '--discard-edits' "$TMP/state/kendex" &&
+    ! grep -qF 'verify ' "$TMP/state/kendex" &&
+    [ ! -s "$TMP/state/creates" ] &&
+    ! git --git-dir="$real_root/remote" show-ref --verify --quiet refs/heads/kendex/refresh
+}

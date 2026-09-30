@@ -481,6 +481,7 @@ jobs:
     env:
       HARNESS_CI_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
       ORCH_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+      REVIEW_GATE_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -705,27 +706,28 @@ jobs:
       # never in neither. Run 36195213656, PR #2902's own run with the split
       # in place, confirms it: both shards finished inside each leg's job
       # ceiling, by the per-suite paragraph above.
-      # kendex-cli, built from this checkout and put on PATH, for the two
+      # kendex-cli, built from this checkout and put on PATH, for the
       # shards whose suites run a real kendex: `rest`, for harness-ci's
       # change-class rows, whose comment at the `rest` shard's verify-document
       # step says why the build is this checkout's and why Linux alone, and
       # `orch-terminal`, for the disableAllHooks rows of
       # open-terminal-copilot-context.sh, which ask the `hooks-off` verb this
-      # checkout ships. The macOS legs keep both suites' skips. A pull request
+      # checkout ships, and `review-gate`, for refresh-consumer's held-render
+      # rows. The macOS legs keep the binary-dependent skips. A pull request
       # restores the cache and never saves it.
       - uses: dtolnay/rust-toolchain@stable
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal') && runner.os == 'Linux'
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'review-gate') && runner.os == 'Linux'
       - uses: Swatinem/rust-cache@v2
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal') && runner.os == 'Linux'
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'review-gate') && runner.os == 'Linux'
         with:
           key: change-class-kendex
           save-if: ${{ github.event_name != 'pull_request' }}
       # The keychain store links dbus, as every cargo job below installs.
       - name: System dependencies for the keychain store
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal') && runner.os == 'Linux'
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'review-gate') && runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
       - name: kendex from this checkout
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal') && runner.os == 'Linux'
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'review-gate') && runner.os == 'Linux'
         run: |
           set -euo pipefail
           cargo build -p kendex-cli --locked

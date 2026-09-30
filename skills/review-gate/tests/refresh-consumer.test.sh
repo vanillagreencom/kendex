@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Drives the actual consumer runner with real local git repositories. Only
-# the external kendex/classifier and GitHub services are replaced.
+# the classifier and GitHub services are replaced; held-render rows use a
+# real kendex, an isolated HOME and a local catalog.
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
@@ -322,5 +323,118 @@ if [ "$RC" -eq 0 ] && [ ! -e "$TMP/state/hostile" ] && [ "$(wc -l <"$TMP/state/c
     jq -e '[.[] | objects | .path] == [".github/workflows/kendex-refresh.yml"]' "$repo/.kendex-generated.json" >/dev/null; then
   ok 'no-writer refresh adopts the refresh workflow and opens its pull request'
 else bad 'no-writer refresh' "$OUT"; fi
+# The CLI producer succeeds on a hold. The runner must read its ledger,
+# discard only a fully classified set, then retain verify as the final gate.
+if ! REAL_KENDEX="$(command -v kendex)"; then
+  if [ -n "${REVIEW_GATE_REQUIRE_KENDEX:-}" ]; then
+    bad 'real consumer fixture needs kendex on PATH'
+  else
+    printf '  SKIP: real held-render consumer rows need kendex on PATH\n'
+  fi
+else
+  cat >"$TMP/bin/kendex" <<'REAL_KENDEX_SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$TEST_STATE/kendex"
+if [ "$TEST_KENDEX_OUTPUT" = failed ] && [ "$1" = refresh ]; then
+  printf 'catalog read failed\n' >&2
+  exit 17
+fi
+if [ "$TEST_KENDEX_OUTPUT" = truncated ] && [ "$1" = refresh ]; then
+  # A lost held-item record must never authorize a discard pass.
+  "$TEST_REAL_KENDEX" "$@" 2>&1 | sed '/^  .*: edited on disk since install /d'
+else
+  exec "$TEST_REAL_KENDEX" "$@"
+fi
+REAL_KENDEX_SH
+  for row in local upstream; do
+    real_refresh_fixture "$row"
+    if [ "$row" = upstream ]; then
+      printf 'New upstream content.\n' >>"$real_root/git/owner/catalog/skills/probe/SKILL.md"
+      commit "$real_root/git/owner/catalog"
+      expected_hold='skill probe for Claude Code: edited on disk and changed upstream — keep your edits as a fork, or apply with edits discarded'
+    else
+      expected_hold='skill probe for Claude Code: edited on disk since install — keep it as a fork, or apply with edits discarded'
+    fi
+    publish_real_fixture
+    run_real_refresh
+    if real_refresh_published; then ok "$row hand edit refreshes and its pull request lists the held item"
+    else bad "$row real consumer publication" "$OUT"; fi
+  done
+  real_refresh_fixture no-discard
+  publish_real_fixture
+  # Only the disposable runner changes; the tracked source is never mutated.
+  python3 - "$runner" <<'DISCARD_CONTROL'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve()
+s = p.read_text()
+old = '  kendex refresh --scope project --yes --leave --discard-edits'
+assert s.count(old) == 1
+changed = s.replace(old, '  : # ' + old.strip())
+assert changed != s
+p.write_text(changed)
+DISCARD_CONTROL
+  commit "$repo"
+  git -C "$repo" push -q origin main
+  run_real_refresh
+  if [ "$RC" -eq 1 ] && ! real_refresh_published &&
+      grep -qxF 'verify --scope project' "$TMP/state/kendex" &&
+      grep -qF '✗ skill probe [claude]: edited on disk since install' <<<"$OUT" &&
+      [ ! -s "$TMP/state/creates" ]; then
+    ok 'control: removing discard reaches verify and fails on the held row'
+  else bad 'discard control' "$OUT"; fi
+  # An unmanaged render is another real CLI conflict producer. It is not a
+  # hold from holds.rs, even when the same run also holds a hand-edited item.
+  for row in non-hold mixed truncated failed count-control; do
+    real_refresh_fixture "$row"
+    KENDEX_OUTPUT=normal
+    case "$row" in
+      non-hold | mixed | count-control)
+        mkdir -p "$real_root/git/owner/catalog/skills/unmanaged" "$repo/.agents/skills/unmanaged"
+        cp "$real_root/git/owner/catalog/skills/probe/SKILL.md" "$real_root/git/owner/catalog/skills/unmanaged/SKILL.md"
+        commit "$real_root/git/owner/catalog"
+        printf '\n[skills.unmanaged]\nsource = "cat"\n' >>"$repo/kendex.toml"
+        printf 'Unmanaged content.\n' >"$repo/.agents/skills/unmanaged/SKILL.md"
+        expected_error='refresh-error=conflict-count value=2 held=1'
+        if [ "$row" = non-hold ]; then
+          sed '/^Hand edit\.$/d' "$repo/.agents/skills/probe/SKILL.md" >"$real_root/unedited"
+          cp "$real_root/unedited" "$repo/.agents/skills/probe/SKILL.md"
+          expected_error='refresh-error=conflict-count value=1 held=0'
+        fi ;;
+      truncated)
+        KENDEX_OUTPUT=truncated
+        expected_error='refresh-error=conflict-count value=1 held=0' ;;
+      failed)
+        KENDEX_OUTPUT=failed
+        expected_error='refresh-error=refresh value=17' ;;
+    esac
+    publish_real_fixture
+    if [ "$row" = count-control ]; then
+      python3 - "$runner" <<'COUNT_CONTROL'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve()
+s = p.read_text()
+old = 'if [ "$conflict_count" != "$held_count" ]; then'
+assert s.count(old) == 1
+changed = s.replace(old, 'if false; then # ' + old)
+assert changed != s
+p.write_text(changed)
+COUNT_CONTROL
+      commit "$repo"
+      git -C "$repo" push -q origin main
+    fi
+    run_real_refresh
+    if [ "$row" = count-control ]; then
+      if ! real_refresh_stopped "$expected_error" &&
+          grep -qxF 'refresh --scope project --yes --leave --discard-edits' "$TMP/state/kendex"; then
+        ok 'control: removing count agreement permits discard on a mixed conflict'
+      else bad 'conflict count control' "$OUT"; fi
+    elif real_refresh_stopped "$expected_error"; then
+      ok "$row stops before any discard or publication"
+    else bad "$row refusal" "$OUT"; fi
+  done
+fi
 printf 'pass=%s fail=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
