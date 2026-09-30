@@ -862,33 +862,46 @@ assert_eq "$RC|$(keyed interrupted "$(cat "$TMP_ROOT/interrupted.out")" | sed -n
 # header names: the successor window is open and its id lives only in the
 # provider's answer, not yet in SUCC_PANE. The close-out must read the session
 # off that answer and stop it, or two overseers run. A tmux shim on PATH
-# delays load-buffer, the first write the provider's pane_write makes, so the
-# group kill lands inside the real provider, between its new-window and its
-# answer, before the line is typed; the shim is on PATH for these rows alone.
+# holds load-buffer, the first write the provider's pane_write makes, until
+# the test sends the group signal and releases it. The kill therefore lands
+# between new-window and the provider's answer, regardless of runner load;
+# the shim is on PATH for these rows alone.
 REAL_TMUX="$(command -v tmux)"
 # int_create_run BIN — the script launched in its own process group so the
-# group kill reaches the provider too, run until the overseer window opens,
-# then TERMed. Sets INT_OVERSEERS to the overseer count after it exits.
+# group kill reaches the provider too, run until load-buffer is held, then
+# TERMed and released. Sets INT_OVERSEERS to the count after it exits.
 int_create_run() { # SUCCEED_BIN
   new_caller "$MARK"
   local before after=""
   before="$(overseers)"
+  rm -f -- "$TMP_ROOT/intcreate.ready" "$TMP_ROOT/intcreate.release"
   setsid env TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" SUCCEED_BIN="$1" \
     "$TMP_ROOT/succeed-env" intcreate 'claude:fable:high' --wait-secs 30 \
     > "$TMP_ROOT/intcreate.out" 2>&1 &
   local pgid=$!
-  for _ in $(seq 1 100); do [[ "$(overseers)" -gt "$before" ]] && break; sleep 0.2; done
-  kill -TERM -"$pgid" 2>/dev/null || true
+  # Poll only for the barrier; a timeout refuses the fixture, never a row pass.
+  for _ in $(seq 1 100); do [[ -f "$TMP_ROOT/intcreate.ready" ]] && break; sleep 0.2; done
+  if [[ ! -f "$TMP_ROOT/intcreate.ready" ]]; then
+    kill -TERM -"$pgid" 2>/dev/null || true
+    touch "$TMP_ROOT/intcreate.release"
+    wait "$pgid" 2>/dev/null || true
+    echo 'oversee-succeed-test: intcreate=barrier-not-reached' >&2
+    exit 1
+  fi
+  kill -TERM -"$pgid"
+  touch "$TMP_ROOT/intcreate.release"
   wait "$pgid" 2>/dev/null || true
   for _ in $(seq 1 25); do after="$(overseers)"; [[ "$after" -le "$before" ]] && break; sleep 0.2; done
   INT_OVERSEERS="$after"
 }
 if command -v setsid >/dev/null 2>&1; then
-  # The delay is the span the kill must land in: longer than the poll above
-  # takes to see the new window.
   cat > "$BIN/tmux" <<SHIM
 #!/bin/sh
-[ "\$1" != load-buffer ] || sleep 2
+if [ "\$1" = load-buffer ]; then
+  : > "$TMP_ROOT/intcreate.ready"
+  # Wait for the test's release after TERM, not for a fixed create duration.
+  while [ ! -f "$TMP_ROOT/intcreate.release" ]; do sleep 0.2; done
+fi
 exec "$REAL_TMUX" "\$@"
 SHIM
   chmod +x "$BIN/tmux"
