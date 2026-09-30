@@ -28,8 +28,9 @@ Env (optional): PR_AUTHOR and PR_BASE_SHA — resolved from the PR when empty.
 
 Output: one machine-readable line on stdout:
   verdict=approved|awaiting|threads-open|changes-requested|untracked-claim|
-          unreasoned-decline|suppressed-findings detail=<human text>
-(diagnostic detail also echoed for logs).
+          unreasoned-decline|suppressed-findings|unmeasured detail=<human text>
+(diagnostic detail also echoed for logs). `unmeasured` is an active class
+policy whose classifier fell back to standard; the detail names its cause.
 
 Exit codes:
   0  evaluated (the verdict line is authoritative)
@@ -941,7 +942,27 @@ if [ "$POLICY_STATE" = "active" ]; then
     rg_message error predicate-policy-commits "$pr_base...$HEAD_SHA" "::error::review-predicate: the commits needed for class policy could not be materialized" >&2
     exit 2
   }
-  CLASS_POLICY="$(resolve_class_policy "$POLICY_REPO" "$pr_base" "$HEAD_SHA")" || {
+  # review-policy's exit 3 is its one answer that is not a class: the
+  # classifier fell back to standard, and the record carries the cause it
+  # named. That is a verdict for this head, posted as a non-success status
+  # the next pass revisits, not a failed evaluation: an evaluation failure
+  # fails the writer's whole pass, and the pass would keep failing while the
+  # pull request stays open. Exit 3 without the record is a broken answer.
+  policy_status=0
+  CLASS_POLICY="$(resolve_class_policy "$POLICY_REPO" "$pr_base" "$HEAD_SHA")" || policy_status=$?
+  if [ "$policy_status" -eq 3 ]; then
+    case "$CLASS_POLICY" in
+      "policy=unmeasured cause="*)
+        echo "verdict=unmeasured detail=change class not measured: ${CLASS_POLICY#policy=unmeasured }"
+        exit 0
+        ;;
+      *)
+        rg_message error predicate-policy-live-protocol "$CLASS_POLICY" "::error::review-predicate: the review class policy owner exited 3 without its unmeasured record" >&2
+        exit 2
+        ;;
+    esac
+  fi
+  [ "$policy_status" -eq 0 ] || {
     rg_message error predicate-policy-resolve "$pr_base...$HEAD_SHA" "::error::review-predicate: the change class or review policy could not be resolved" >&2
     exit 2
   }

@@ -266,6 +266,7 @@ case "$verdict" in
   approved)              desired="success" ;;
   changes-requested)     desired="failure" ;;
   awaiting|threads-open) desired="pending" ;;
+  unmeasured)            desired="pending" ;;
   untracked-claim)       desired="failure" ;;
   unreasoned-decline)    desired="failure" ;;
   suppressed-findings)   desired="failure" ;;

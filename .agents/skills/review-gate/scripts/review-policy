@@ -58,12 +58,16 @@ The live form calls the sibling harness-ci change classifier. It prints:
 
 `standard` is the classifier's fallback as well as one of its verdicts, and
 its `class:` line carries `measured=true|false` saying which. A `false`
-answer exits 2 as `policy-unmeasured`, naming the cause the classifier gave,
-because the policy row for `standard` would otherwise read to every consumer
-as a class something measured. This script keeps no list of causes; the
+answer exits 3 as `policy-unmeasured` and prints one record in place of a
+class, the classifier's own fields after the key:
+
+  policy=unmeasured cause=CAUSE [FIELD=VALUE ...]
+
+The policy row for `standard` would otherwise read to every consumer as a
+class something measured. This script keeps no list of causes; the
 classifier is the only thing that can tell its two answers apart. A class
-line with no marker exits 2 as well. The caller fixes what the cause names
-and asks again.
+line with no marker exits 2. The caller fixes what the cause names and asks
+again; the review predicate reads the record as its `unmeasured` verdict.
 
 Exit 2 prints no policy record. The caller cannot assert a class.
 
@@ -183,14 +187,17 @@ cat -- "$CLASS_ERR" >&2
 # `class:` line. Read that marker. This script keeps NO list of causes: three
 # rounds of enumerating the producer's refusals from out here each missed a
 # site, because a list maintained beside the thing it describes is a copy that
-# drifts. The cause is repeated in the diagnostic so the caller knows what to
-# fix, but nothing here decides anything from it.
+# drifts. The cause is repeated in the diagnostic and the record so the caller
+# knows what to fix, but nothing here decides anything from it.
 CLASS_MEASURED="$(sed -n 's/^class: class=[a-z]* measured=\([a-z]*\) .*/\1/p' "$CLASS_ERR" | tail -1)"
 case "$CLASS_MEASURED" in
   true) ;;
   false)
     CLASS_CAUSE="$(sed -n 's/^class: class=[a-z]* measured=[a-z]* //p' "$CLASS_ERR" | tail -1)"
-    fail policy-unmeasured "${CLASS_CAUSE:-unnamed}" "the change classifier fell back to standard instead of measuring a class" ;;
+    CLASS_CAUSE="${CLASS_CAUSE:-cause=unnamed}"
+    rg_message error policy-unmeasured "$CLASS_CAUSE" "review-policy: the change classifier fell back to standard instead of measuring a class" >&2
+    printf 'policy=unmeasured %s\n' "$CLASS_CAUSE"
+    exit 3 ;;
   *)
     fail policy-classifier-protocol "${CLASS_MEASURED:-absent}" "the harness-ci change classifier printed no measured marker, so its answer cannot be read" ;;
 esac

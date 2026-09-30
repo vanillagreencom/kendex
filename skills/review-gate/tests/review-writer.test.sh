@@ -32,6 +32,9 @@
 #   w9e. suppressed-findings                 -> posts failure, the count and
 #                                               the file:line list in the
 #                                               description
+#   wu1. unmeasured                          -> posts pending naming the
+#                                               classifier's cause; a pass
+#                                               of them exits 0
 # Write discipline (ordering guard, success posts only):
 #   w10. guard re-read shows a non-success   -> defers (exit 0, no POST)
 #        entry at/after evaluated_at
@@ -247,6 +250,7 @@ THREADS="verdict=threads-open detail=2 unresolved review thread(s)"
 UNREASONED="verdict=unreasoned-decline detail=1 decline names no mechanism"
 UNTRACKED="verdict=untracked-claim detail=1 tracking claim names no issue"
 SUPPRESSED="verdict=suppressed-findings detail=2 suppressed finding(s) in a review body, carried by no thread: src/a.ts:106, src/b.tsx:257"
+UNMEASURED="verdict=unmeasured detail=change class not measured: cause=verify-refused verifier=lock"
 
 # created_at anchors: OLD predates every evaluation instant; FUTURE postdates
 # every one; SAME is the instant a `date` shim pins the evaluation to.
@@ -401,6 +405,17 @@ table \
   "w9d: the no-op check compares the truncated form, so a long detail already posted is not re-posted|single|STUB_VERDICT_LINE=$LONG_UNREASONED;STUB_GATE_HISTORY=$H_FAILURE_LONG_OLD|rc=0 posts=none notice~writer-unchanged@7=true" \
   "w9b: untracked-claim over a newer success posts failure without deferring|single|STUB_VERDICT_LINE=$UNTRACKED;STUB_GATE_HISTORY=$H_SUCCESS_FUTURE|rc=0 posts=failure@headsha notice~writer-success-deferred@headsha=false" \
   "w9e: suppressed-findings posts failure naming the count and the files|single|STUB_VERDICT_LINE=$SUPPRESSED;STUB_GATE_HISTORY=[]|rc=0 posts=failure@headsha desc=2+suppressed+finding(s)+in+a+review+body,+carried+by+no+thread:+src/a.ts:106,+src/b.tsx:257"
+
+echo "=== an unmeasured class is a pending status, not a failed evaluation ==="
+# The class policy's classifier fell back to standard for this head. The
+# predicate answers that as a verdict, so the PR gets a non-success status
+# naming the cause, and a pass whose only unmeasured PRs posted exits 0: the
+# writer's escalation step reads the pass's exit status. A post that fails
+# still fails the pass, as w20h does for any verdict.
+table \
+  "wu1: an unmeasured class posts pending naming the cause|single|STUB_VERDICT_LINE=$UNMEASURED;STUB_GATE_HISTORY=[]|rc=0 posts=pending@headsha desc=change+class+not+measured:+cause=verify-refused+verifier=lock notice~writer-verdict@unmeasured=true" \
+  "wu2: a schedule pass over unmeasured PRs posts each and exits 0|all:schedule|STUB_VERDICT_LINE=$UNMEASURED;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[]|rc=0 posts=pending@sha7,pending@sha8 error~writer-convergence-failed@7=false" \
+  "wu3: an unmeasured PR whose post fails still fails the pass|all:schedule|STUB_VERDICT_LINE=$UNMEASURED;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[];STUB_POST_FAIL=1|rc=1 posts=none error~writer-convergence-failed@7=true"
 
 echo "=== approved converges to success ==="
 table \

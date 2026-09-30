@@ -256,11 +256,37 @@ LONE="$TMP/lone"
 package "$LONE" review-gate harness-ci
 repo "$TMP/lone-repo"
 run "$LONE/review-gate/scripts/review-policy" "$TMP/lone-repo"
-assert_eq "$RC" "2" "a tree the classifier cannot measure in refuses"
-assert_eq "$([ -z "$OUT" ] && echo empty || echo lines)" "empty" "and prints no policy record"
+assert_eq "$RC" "3" "a tree the classifier cannot measure in answers unmeasured"
+assert_eq "$OUT" "policy=unmeasured cause=narrow-change-list-unreadable" \
+  "and prints the unmeasured record with the classifier's own cause in place of a class"
 assert_eq "$(diagnostic_key)" "policy-unmeasured" "naming the refusal under its own key"
 assert_eq "$(grep -c 'cause=narrow-change-list-unreadable' "$TMP/err")" "2" \
   "and repeating the classifier's own cause, in its log and in the diagnostic"
+
+# Must-fail control: the record is on stdout, where the review predicate reads
+# it. A copy that writes the same line to stderr prints no record.
+RECORD_LINE="printf 'policy=unmeasured %s\\n' \"\$CLASS_CAUSE\""
+LONE_POLICY="$LONE/review-gate/scripts/review-policy"
+assert_eq "$(grep -Fc -- "$RECORD_LINE" "$LONE_POLICY" || true)" "1" "control: the unmeasured record has one line to redirect"
+if [ -L "$LONE_POLICY" ]; then
+  bad "control: the mutation source must not be a symlink"
+else
+  MUT_OLD="$RECORD_LINE" MUT_NEW="$RECORD_LINE >&2" awk '
+    {
+      old = ENVIRON["MUT_OLD"]
+      at = index($0, old)
+      if (at) { $0 = substr($0, 1, at - 1) ENVIRON["MUT_NEW"] substr($0, at + length(old)) }
+      print
+    }' "$LONE_POLICY" >"$TMP/lone-policy"
+  if cmp -s "$TMP/lone-policy" "$LONE_POLICY"; then
+    bad "control: the mutant must redirect the record"
+  else
+    cat "$TMP/lone-policy" >"$LONE_POLICY"
+    run "$LONE_POLICY" "$TMP/lone-repo"
+    assert_eq "$RC:$([ -z "$OUT" ] && echo empty || echo lines)" "3:empty" \
+      "must-fail: a record written to stderr leaves the caller no record to read"
+  fi
+fi
 
 # Must-fail control: the marker is the whole of what this script reads. A
 # class line without one is an answer it cannot read, never one it may assume.

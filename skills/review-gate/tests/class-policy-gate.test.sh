@@ -269,5 +269,75 @@ a manifest past the source cap|STUB_SOURCE_COUNT=99|predicate-policy-sources|99/
 a refresh past its deadline|STUB_REFRESH_RC=124|predicate-policy-refresh-deadline|1/45s
 BOUNDS
 
+# An unmeasured class is the policy owner's answer for this head, not a failed
+# evaluation: the predicate answers `unmeasured` with the classifier's cause,
+# reads no review evidence, and exits 0, so the writer posts a non-success
+# status and its pass does not fail. A copy of the predicate that no longer
+# reads the owner's exit 3 is the must-fail control.
+UNMEASURED_WANT='0:verdict=unmeasured detail=change class not measured: cause=stub'
+reset
+set +e
+out="$(run_predicate "$HEAD" standard STUB_MEASURED=false)"
+rc=$?
+set -e
+assert_eq "$rc:$out" "$UNMEASURED_WANT" "an unmeasured class answers unmeasured naming the classifier's cause"
+if grep -Eq '/reviews|graphql' "$FIXTURES/.urls.log" 2>/dev/null; then
+  bad "an unmeasured class reads no review evidence" "$(cat "$FIXTURES/.urls.log")"
+else
+  ok "an unmeasured class reads no review evidence"
+fi
+
+UNMEASURED_BRANCH='  if [ "$policy_status" -eq 3 ]; then'
+cp "$PREDICATE" "$TMP/predicate-original"
+assert_eq "$(grep -Fxc -- "$UNMEASURED_BRANCH" "$PREDICATE" || true)" "1" "control has one unmeasured branch"
+sed 's/^  if \[ "\$policy_status" -eq 3 \]; then$/  if [ "$policy_status" -eq 30 ]; then/' "$TMP/predicate-original" >"$TMP/predicate-mutant"
+if cmp -s "$TMP/predicate-mutant" "$TMP/predicate-original"; then
+  bad "control: the mutant must stop reading exit 3" "the substitution changed nothing"
+else
+  cat "$TMP/predicate-mutant" >"$PREDICATE"
+  reset
+  set +e
+  out="$(run_predicate "$HEAD" standard STUB_MEASURED=false)"
+  rc=$?
+  set -e
+  if [ "$rc:$out" = "$UNMEASURED_WANT" ]; then
+    bad "must-fail: a predicate that ignores exit 3 must lose the unmeasured verdict" "$rc:$out"
+  elif [ "$rc:$out" = "2:" ] && grep -q 'review-gate-error=predicate-policy-resolve' "$TMP/stderr"; then
+    ok "must-fail: a predicate that ignores exit 3 fails the evaluation as predicate-policy-resolve"
+  else
+    bad "must-fail: the mutant failed somewhere other than the policy resolve" "$rc:$out $(cat "$TMP/stderr")"
+  fi
+  cat "$TMP/predicate-original" >"$PREDICATE"
+fi
+
+# Exit 3 with no unmeasured record is a broken answer, never a verdict: a policy
+# owner that writes its record to stderr leaves the predicate nothing to read,
+# and the evaluation fails as a malformed live record.
+OWNER="$REPO/.agents/skills/review-gate/scripts/review-policy"
+RECORD_LINE="printf 'policy=unmeasured %s\\n' \"\$CLASS_CAUSE\""
+cp "$OWNER" "$TMP/owner-original"
+assert_eq "$(grep -Fc -- "$RECORD_LINE" "$OWNER" || true)" "1" "control: the owner has one unmeasured record to redirect"
+MUT_OLD="$RECORD_LINE" MUT_NEW="$RECORD_LINE >&2" awk '
+  {
+    old = ENVIRON["MUT_OLD"]
+    at = index($0, old)
+    if (at) { $0 = substr($0, 1, at - 1) ENVIRON["MUT_NEW"] substr($0, at + length(old)) }
+    print
+  }' "$TMP/owner-original" >"$TMP/owner-mutant"
+if cmp -s "$TMP/owner-mutant" "$TMP/owner-original"; then
+  bad "control: the owner mutant must redirect the record" "the substitution changed nothing"
+else
+  cat "$TMP/owner-mutant" >"$OWNER"
+  reset
+  set +e
+  out="$(run_predicate "$HEAD" standard STUB_MEASURED=false)"
+  rc=$?
+  set -e
+  assert_eq "$rc:$out" "2:" "an exit 3 with no unmeasured record writes no verdict"
+  assert_eq "$(grep -c 'review-gate-error=predicate-policy-live-protocol' "$TMP/stderr")" "1" \
+    "and is refused as a malformed live record"
+  cat "$TMP/owner-original" >"$OWNER"
+fi
+
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
