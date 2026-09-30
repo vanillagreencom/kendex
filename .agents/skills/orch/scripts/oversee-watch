@@ -278,9 +278,10 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   overseer-dead<TAB><server> <pane><TAB><count>|pending:<N>|reported
 #   overseer-walled<TAB><server> <pane><TAB><count>|pending:<N>|reported
 #   overseer-context-gap<TAB><server> <pane><TAB><gap>|told|alerted
-# The last two are one machinery under two names, one per case the overseer's
-# own pane can be recovered from: `exited` is the harness gone and `walled` is
-# the account spent under a harness still running. Separate rows rather than
+# overseer-dead and overseer-walled are one machinery under two names, one
+# per case the overseer's own pane can be recovered from: `exited` is the
+# harness gone and `walled` is the account spent under a harness still
+# running. Separate rows rather than
 # one carrying its case, so a pane that flips between the two starts its count
 # over instead of counting a wall's passes towards a death's threshold.
 # The usage-limit value is split apart where the event is emitted, some 200
@@ -2556,8 +2557,9 @@ overseer_context_times() {
 #
 # A gap, the reason the hook took no reading, is `overseer-context-unmeasured`
 # on the first long pass it stands, told to the overseer; still standing on
-# the next, it goes to the owner once instead, through overseer_gap_alert, and
-# neither is said again while that gap stands: a gap the overseer did not
+# the next, it goes to the owner instead, through overseer_gap_alert, on each
+# pass until the owner's notice is sent, and after that neither is said again
+# while that gap stands: a gap the overseer did not
 # close is one it is not acting on, and repeating the event to it is what
 # left a fleet unwatched. The `overseer-context-gap` row carries that count
 # under this pane's key, `<gap>|told` then `<gap>|alerted`, in
@@ -2587,14 +2589,15 @@ overseer_context_check() { # PANE IDENTITY
 }
 
 # One standing gap's turn: the event on its first pass, the owner's alert on
-# its second, nothing after. GAP is the record's word.
+# its second, nothing after. An alert the owner did not get leaves the row
+# at `told`, so the next pass sends it again. GAP is the record's word.
 overseer_context_gap() { # PANE IDENTITY GAP
   local pane="$1" identity="$2" gap="$3" prior
   prior="$(lane_row_get overseer-context-gap "$OVERSEER_MARK_ROWS" "$identity")"
   case "$prior" in
     "$gap|alerted") ;;
     "$gap|told")
-      overseer_gap_alert "$pane" "$gap"
+      overseer_gap_alert "$pane" "$gap" || return 0
       OVERSEER_MARK_ROWS="$(lane_row_set overseer-context-gap "$OVERSEER_MARK_ROWS" "$identity" "$gap|alerted")" ;;
     *)
       echo "EVENT overseer-context-unmeasured $pane gap=$gap"
@@ -2605,36 +2608,48 @@ overseer_context_gap() { # PANE IDENTITY GAP
 
 # The owner's alert for a gap that stood two long passes: one notice to the
 # owner through the overseer mailbox (`lane-mail notice --to owner`, which the
-# owner relay carries out) and one `close` row in the fleet log, so a
-# successor reads it too. A channel that fails is noted and the other still
-# goes; the stderr line says the alert went.
+# owner relay carries out), then one `close` row in the fleet log, so a
+# successor reads it too. Returns 0 once the owner's notice is sent, with the
+# stderr line saying so; 1 where it is not, noted, with no fleet-log row, so
+# the retry the caller makes writes one row and not one per failed pass. A
+# fleet-log row that fails is noted and the alert still stands as sent.
 overseer_gap_alert() { # PANE GAP
   local notice="$WORK_DIR/overseer-context-gap.txt" record="$WORK_DIR/overseer-context-gap.json"
   local errf="$WORK_DIR/overseer-context-gap.err"
   printf 'overseer-context-unmeasured: the overseer in pane %s has recorded no context reading on two consecutive watch passes, gap=%s, so nothing judges its context mark and it can run into its context window with no handoff. The remedy for this gap is under overseer-context-unmeasured in the orch skill'"'"'s references/oversee-events.md.\n' \
-    "$1" "$2" > "$notice" || { overseer_note overseer-notice-failed "channel=file"; return 0; }
+    "$1" "$2" > "$notice" || { overseer_note overseer-notice-failed "channel=file"; return 1; }
+  "$LANE_MAIL" notice --item overseer --to owner --file "$notice" >/dev/null 2>"$errf" \
+    || { overseer_note overseer-notice-failed "channel=owner"; return 1; }
   overseer_fleet_log "$notice" "$record" "$errf" \
     || overseer_note overseer-notice-failed "channel=fleet-log"
-  "$LANE_MAIL" notice --item overseer --to owner --file "$notice" >/dev/null 2>"$errf" \
-    || overseer_note overseer-notice-failed "channel=owner"
   ow_message overseer-context-alerted "pane=$1" "gap=$2" >&2
 }
 
 # Whether the overseer's harness is up and can take no turn because its
-# context fills its window: its own context record is a reading at or past
-# the window it names, the window's hard limit, with no Stop row after it, so
-# no turn has ended since the reading. A harness in that state keeps its
-# process and writes no row but a failed turn's, which a death judgement
-# reading the process and the rows never sees, and the fleet runs
+# context fills its window: its own context record is a reading that fills
+# its window, by lib/lane-context.sh § lane_context_window_full, which says
+# for which harnesses a recorded window is the hard limit (claude, codex and
+# pi, never copilot, whose window is its compaction point), with no Stop row
+# after it, so no turn has ended since the reading. A harness in that state
+# keeps its process and writes no row but a failed turn's, which a death
+# judgement reading the process and the rows never sees, and the fleet runs
 # unattended until someone finds the pane. A StopFailure row naming a
 # prompt-too-long error is the harness's own word for the same state and is
 # read in overseer_pane_read (session_rows_verdict's `wedged`); this reads
-# the record, which every harness the hook reads a transcript for writes.
-# A reading with no window is never at it. Returns 0 for a wedge.
+# the record. A reading the judge cannot take is noted and settles nothing.
+# Returns 0 for a wedge.
 overseer_context_wedged() { # PANE IDENTITY
+  local rc=0
   overseer_context_own "$1" "$2" || return 1
-  [[ -z "$LANE_CTX_GAP" && "$LANE_CTX_TOKENS" =~ ^[0-9]+$ && "$LANE_CTX_WINDOW" =~ ^[1-9][0-9]*$ ]] || return 1
-  (( LANE_CTX_TOKENS >= LANE_CTX_WINDOW )) || return 1
+  [[ -z "$LANE_CTX_GAP" ]] || return 1
+  lane_context_window_full "$LANE_CTX_TOKENS" "$LANE_CTX_WINDOW" "$LANE_CTX_HARNESS" || rc=$?
+  case "$rc" in
+    0) ;;
+    1) return 1 ;;
+    *)
+      overseer_note overseer-context-unread "path=$OVERSEER_CTX_FILE" "harness=${LANE_CTX_HARNESS:-none}"
+      return 1 ;;
+  esac
   overseer_context_times || return 1
   (( OVERSEER_CTX_STOP <= OVERSEER_CTX_AT ))
 }

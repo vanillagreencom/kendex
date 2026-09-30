@@ -78,7 +78,10 @@ tmux_server_start() { # PANE SERVER
 # where SERVER runs a tmux that is not the server this process reaches, or
 # the pane list could not be read: nothing here can judge a pane on a server
 # it cannot ask. SERVER is read back off disk, so the pid may run anything;
-# only a process named tmux can be the server it recorded.
+# only a process named tmux can be the server it recorded. An empty START is
+# a record carrying no start, which names the session in PANE on SERVER
+# whatever that server's start (lib/overseer-launch.sh § ol_unstarted): the
+# pane is judged on SERVER alone.
 tmux_pane_live() { # SERVER START PANE
   local comm panes nl='
 '
@@ -88,9 +91,13 @@ tmux_pane_live() { # SERVER START PANE
     *) return 1 ;;
   esac
   panes="$(tmux list-panes -a -F '#{pid} #{start_time} #{pane_id}' 2>/dev/null)" || return 2
-  case "$nl$panes$nl" in
-    *"$nl$1 $2 $3$nl"*) return 0 ;;
-  esac
+  if [ -n "$2" ]; then
+    case "$nl$panes$nl" in
+      *"$nl$1 $2 $3$nl"*) return 0 ;;
+    esac
+  elif awk -v s="$1" -v p="$3" '$1 == s && $3 == p { f = 1 } END { exit !f }' <<<"$panes"; then
+    return 0
+  fi
   [ "${panes%% *}" = "$1" ] || return 2
   return 1
 }

@@ -618,7 +618,7 @@ assert_eq "generation=$(recorded generation) harness=$(recorded harness) home=$(
 STARTLESSKEEP_CTL="$(mutant_scripts startlesskeep-ctl/orch lib/watch-overseer-record.sh)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/startlesskeep-ctl/github"
 mutate_file "$STARTLESSKEEP_CTL/lib/watch-overseer-record.sh" \
-  'if ol_names($server; $start; $pane) or ol_unstarted($server; $pane) then . else {} end)' \
+  'if ol_owns($server; $start; $pane) then . else {} end)' \
   'if ol_names($server; $start; $pane) then . else {} end)'
 startless_keeps_run record_keeps_startless_mutant "$STARTLESSKEEP_CTL/oversee-watch"
 assert_eq "generation=$(recorded generation) harness=$(recorded harness)" "generation=none harness=none" \
@@ -637,8 +637,8 @@ assert_eq "generation=$(recorded generation) harness=$(recorded harness)" "gener
 KEEPEMPTY_CTL="$(mutant_scripts keepempty-ctl/orch lib/watch-overseer-record.sh)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/keepempty-ctl/github"
 mutate_file "$KEEPEMPTY_CTL/lib/watch-overseer-record.sh" \
-  '        | if ol_names($server; $start; $pane) or ol_unstarted($server; $pane) then . else {} end)' \
-  '        | if ol_names($server; ""; $pane) or ol_unstarted($server; $pane) then . else {} end)'
+  '        | if ol_owns($server; $start; $pane) then . else {} end)' \
+  '        | if ol_owns($server; ""; $pane) then . else {} end)'
 keeps_generation_run record_keeps_generation_start_mutant "$KEEPEMPTY_CTL/oversee-watch"
 assert_eq "generation=$(recorded generation)" "generation=none" \
   "control: a start judged on no start drops this pane's bound generation" "$ERR"
@@ -648,7 +648,7 @@ RECORD_MUTANT="$TMP_ROOT/record-mutant"
 mkdir -p "$RECORD_MUTANT/orch"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$RECORD_MUTANT/orch/scripts"
 ln -s "$REPO_ROOT/skills/github" "$RECORD_MUTANT/github"
-FROM='        | if ol_names($server; $start; $pane) or ol_unstarted($server; $pane) then . else {} end)'
+FROM='        | if ol_owns($server; $start; $pane) then . else {} end)'
 assert_eq "$(grep -cxF -- "$FROM" "$REPO_ROOT/skills/orch/scripts/lib/watch-overseer-record.sh")" "1" \
   "control: the merge rule is one line of the record library"
 FROM="$FROM" awk '$0 == ENVIRON["FROM"] { print "        | {})"; next } { print }' \

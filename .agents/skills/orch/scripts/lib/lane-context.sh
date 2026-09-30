@@ -10,8 +10,9 @@
 #
 # One judge: lane_context_handoff_due enforces the absolute token cap and the
 # remaining-capacity mark. ORCH_HANDOFF_CONTEXT_PCT can request an earlier
-# handoff. No reader carries its own arithmetic. Missing capacity is unmeasured
-# below the absolute cap, never judged against a guess.
+# handoff. lane_context_window_full is the one judge of a reading that fills
+# its window. No reader carries its own arithmetic. Missing capacity is
+# unmeasured below the absolute cap, never judged against a guess.
 set -euo pipefail
 
 # A launch home reaches this library in CODEX_HOME, and only lane-home.sh says
@@ -317,6 +318,34 @@ lane_context_handoff_due() { # TOKENS WINDOW PCT
   else
     printf 'room\n'
   fi
+}
+
+# lane_context_window_full TOKENS WINDOW HARNESS — whether a reading of a
+# HARNESS session fills the window it names, so that session can take no turn
+# again: exit 0 where it does, 1 where it does not or cannot. Only the window a
+# claude, codex or pi reading names is the hard limit a session stops at, since
+# each adapter names one only where the harness would not compact first
+# (lib/adapters/). A copilot reading's window is the point Copilot starts to
+# compact, which cannot be turned off, so a copilot reading at it is a session
+# about to compact and never full. A reading with no window is never full.
+# Exit 2 where a figure is not a whole number, and 3 for a harness no adapter
+# reads.
+lane_context_window_full() { # TOKENS WINDOW HARNESS
+  case "${3:-}" in
+    claude | codex | pi) ;;
+    copilot) return 1 ;;
+    *) return 3 ;;
+  esac
+  case "${1:-}" in
+    '' | *[!0-9]*) return 2 ;;
+    0) ;;
+    0*) return 2 ;;
+  esac
+  case "${2:-}" in
+    '' | 0) return 1 ;;
+    *[!0-9]* | 0*) return 2 ;;
+  esac
+  [ "$1" -ge "$2" ]
 }
 
 # lane_context_file_write BOX FILE JQ_ARGS... — the document jq prints from

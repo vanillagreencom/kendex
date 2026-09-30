@@ -225,6 +225,30 @@ x|10|90|rc=2
 5|1x|90|rc=2
 ROWS
 
+echo "=== a reading fills its window only where that window is a hard limit ==="
+# `tokens|window|harness|exit status`: claude, codex and pi name a window only
+# where the harness would not compact first; copilot's is its compaction point.
+while IFS='|' read -r tokens window harness want; do
+  rc=0
+  bash -c 'set -euo pipefail; source "$1"; lane_context_window_full "$2" "$3" "$4"' _ "$LIB" "$tokens" "$window" "$harness" || rc=$?
+  assert_eq "rc=$rc" "$want" "window full: $tokens of ${window:-no window} on ${harness:-no harness}: $want"
+done <<'ROWS'
+1000000|1000000|claude|rc=0
+1000001|1000000|claude|rc=0
+999999|1000000|claude|rc=1
+258400|258400|codex|rc=0
+200000|200000|pi|rc=0
+800000|800000|copilot|rc=1
+900000|800000|copilot|rc=1
+5||claude|rc=1
+5|0|claude|rc=1
+x|10|claude|rc=2
+05|10|claude|rc=2
+5|1x|claude|rc=2
+5|10|opencode|rc=3
+5|10||rc=3
+ROWS
+
 echo "=== a Pi launch reads whether Pi would compact the session ==="
 PI_AGENT="$TMP_ROOT/pi-agent"; PI_PROJECT="$TMP_ROOT/pi-project"
 mkdir -p "$PI_AGENT" "$PI_PROJECT/.pi"
@@ -467,6 +491,10 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     '180001 of 200000 at 100: rc=0 due'
   control window-read-as-room lane-context.sh "case \"\${2:-}\" in '' | 0) return 1 ;;" "case \"\${2:-}\" in '' | 0) printf 'room\\n'; return 0 ;;" \
     '5 of no window at 90: rc=1'
+  control window-full-copilot lane-context.sh '    copilot) return 1 ;;' '    copilot) ;;' \
+    'window full: 800000 of 800000 on copilot: rc=1'
+  control window-full-limit lane-context.sh '  [ "$1" -ge "$2" ]' '  [ "$1" -gt "$2" ]' \
+    'window full: 1000000 of 1000000 on claude: rc=0'
   control project-ignored adapters/pi.sh '[ "$LANE_ADAPTER_PI_ENABLED" = true ] && return 0' ':' \
     'user {"compaction":{"enabled":false}} and project {"compaction":{"enabled":true}}: rc=0'
   control owned-claude-session adapters/claude.sh '*) LANE_ADAPTER_OWNED_REASON=session-mismatch; return 1 ;;' '*) ;;' \

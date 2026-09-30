@@ -83,6 +83,10 @@ done <<EOF
 1|$REUSED|$S|%9|-|the server pid runs a program that is not tmux, and no pane list answers
 2|$LIVE|$S|%9|4242 $S %9|the server runs and is not the one this shell reaches
 2|$LIVE|$S|%9|-|the pane list cannot be read
+0|$LIVE||%9|$LIVE $E %1\n$LIVE $E %9|with no start, the server this shell reaches lists the pane, whatever its start
+1|$LIVE||%4|$LIVE $S %1\n$LIVE $S %9|with no start, the server this shell reaches lists no such pane
+1|$LIVE||%9|$LIVE $S %1\n4242 $S %9|with no start, a pane listed under another server pid is not the recorded one
+2|$LIVE||%9|4242 $S %9|with no start, the server runs and is not the one this shell reaches
 EOF
 assert_eq "$(live_rc "$LIB" "$LIVE" "$S" "%1" "$LIVE $S %11")" "1" "a pane id is matched whole, never as a prefix of another"
 
@@ -113,6 +117,10 @@ mutant_lib() { # NAME OLD NEW
 mutant_lib listed-reads-gone '    *"$nl$1 $2 $3$nl"*) return 0 ;;' '    *"$nl$1 $2 $3$nl"*) ;;'
 assert_eq "$(live_rc "$MUTANT_LIB" "$LIVE" "$S" "%9" "$OWN")" "1" \
   "control: without the listing match a live pane reads gone"
+
+mutant_lib unstarted-reads-gone "'\$1 == s && \$3 == p { f = 1 } END { exit !f }'" "'END { exit 1 }'"
+assert_eq "$(live_rc "$MUTANT_LIB" "$LIVE" "" "%9" "$OWN")" "1" \
+  "control: without the match on the server alone a record carrying no start reads its live pane gone"
 
 mutant_lib gone-reads-other '  comm="$(ps -o comm= -p "$1" 2>/dev/null)" || return 1' '  comm=tmux'
 assert_eq "$(live_rc "$MUTANT_LIB" "$GONE" "$S" "%9" "$OTHER")" "2" \

@@ -194,8 +194,10 @@ Peer side, one other repository's overseer mailbox per call:
               the repository that holds it. That mailbox has one reader, the
               session REPO's fleet record names by the `server` and `pane` of
               its `overseer` member (orch schemas/workflow-state.md). Where
-              the record names none or no `server_start`, or a pane that no
-              longer runs on the server its `server_start` names, stderr
+              the record names none or a `server_start` that is not epoch
+              seconds, or a pane that no longer runs on the server its
+              `server_start` names, or on that server pid where it carries
+              no `server_start`, stderr
               opens `lane-mail: no-reader=<REPO root> cause=unnamed|pane-gone`
               with a `fix=` line naming `oversee register`; where that cannot
               be judged from here, `lane-mail: reader-unjudged=<REPO root>
@@ -392,7 +394,7 @@ lm_message() { # KEY VALUE
     repo-unresolved) text='The peer repository is not a checkout on this disk. Pass the path of one, or a bare name of a checkout beside this one.' ;;
     repo-self) text='A peer is another repository, and that value resolves to this one. Both sides of an exchange would land in one mailbox, where this repository is reported as its own peer. To write a note to this overseer, use `send --item overseer`.' ;;
     lane-foreign) text='That mailbox belongs to another repository. A send reaches only this repository: its lanes, and its own overseer mailbox. Reach a peer overseer with `lane-mail peer`.' ;;
-    no-reader) text='The note or ask landed, and no session reads that checkout'\''s overseer mailbox: its fleet record names no tmux pane, or none bound to its tmux server'\''s start time (cause=unnamed), or names one that no longer runs on the tmux server the record binds it to by its start time (cause=pane-gone). The lane-mail hooks hand that mailbox only to the session the record names, so it waits unread until one is named, and an ask'\''s answer with it.
+    no-reader) text='The note or ask landed, and no session reads that checkout'\''s overseer mailbox: its fleet record names no tmux pane, or binds it to a tmux server start time that is not epoch seconds (cause=unnamed), or names one that no longer runs on the tmux server the record binds it to by its start time, or on that server process where the record carries no start time (cause=pane-gone). The lane-mail hooks hand that mailbox only to the session the record names, so it waits unread until one is named, and an ask'\''s answer with it.
 fix=run `oversee register` from the orch skill in the session that should read that checkout'\''s mail, which makes that session the checkout'\''s overseer, its turn end held at the context marks for a succession as a fleet overseer'\''s is; or start its fleet with `oversee launch`' ;;
     reader-unjudged) text='The note or ask landed, and whether a session reads that checkout'\''s overseer mailbox is unknown: a hosted peer keeps its fleet record and tmux server on its own host (cause=hosted), the record could not be read (cause=state, the reader'\''s keyed refusal below where it made one), or the pane it names is on a tmux server this shell does not reach (cause=server).' ;;
     mailbox-unsafe) text='A mailbox directory, file, cursor or lock is a symlink or not the kind of file it names, so nothing is read or written through it. Remove it; the next write recreates it.' ;;
@@ -993,10 +995,13 @@ lm_sent() {
 # refuses. The reader is the one session the checkout's fleet record names
 # under `.overseer` by tmux server and pane: the lane-mail-check hooks hand the
 # mailbox to that session alone, and a live watch there reads it itself. No
-# record, or one naming no server pid, `server_start` and `%N` pane, names
-# nobody, and a pane that no longer runs reads nothing. The pane is judged on
-# the server the record's `server_start` binds it to, since a later server may
-# be handed the same pid and pane id. A
+# record, or one naming no server pid and `%N` pane, or a `server_start` that
+# is not epoch seconds, names nobody, and a pane that no longer runs reads
+# nothing. The pane is judged on the server the record's `server_start` binds
+# it to, since a later server may be handed the same pid and pane id; a
+# record carrying no start names the session in that pane on that server pid
+# whatever its start, as the hooks read it, which hand it the mailbox and
+# write the start into the record. A
 # hosted peer's record and tmux server sit on its own host, out of this
 # shell's reach.
 lm_peer_reader() {
@@ -1027,15 +1032,17 @@ lm_peer_reader() {
   case "$server" in
     '' | *[!0-9]*) server="" ;;
   esac
+  # An empty start is a record carrying none, judged on its server alone; a
+  # start that is not epoch seconds binds the record to no server.
   case "$start" in
-    '' | *[!0-9]*) start="" ;;
+    *[!0-9]*) start=invalid ;;
   esac
   case "$pane" in
     % | %*[!0-9]*) pane="" ;;
     %*) ;;
     *) pane="" ;;
   esac
-  if [ -z "$server" ] || [ -z "$start" ] || [ -z "$pane" ]; then
+  if [ -z "$server" ] || [ "$start" = invalid ] || [ -z "$pane" ]; then
     lm_notice no-reader "$ROOT" cause=unnamed
     return 0
   fi

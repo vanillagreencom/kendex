@@ -42,6 +42,9 @@ OVERLOADED="$(row StopFailure claude error=overloaded message=overloaded)"
 # The failure a session whose context filled its window meets on every turn:
 # Claude Code's own `Prompt is too long` as the turn's last message.
 TOO_LONG="$(row StopFailure claude error=invalid_request "message=Prompt is too long")"
+# The same failure with the words in `error_details` and an empty message,
+# the two fields hooks/stop-failure-row.sh keeps apart.
+TOO_LONG_DETAILS="$(row StopFailure claude error=invalid_request message= "error_details=Prompt is too long")"
 STOP="$(row Stop claude)"
 CODEX_START="$(row SessionStart codex source=startup)"
 
@@ -90,6 +93,7 @@ while IFS='|' read -r name pane rows expected_event expected_launch expected_not
       wall) row_args+=("$FAILURE") ;;
       overloaded) row_args+=("$OVERLOADED") ;;
       toolong) row_args+=("$TOO_LONG") ;;
+      toolongdetails) row_args+=("$TOO_LONG_DETAILS") ;;
       stop) row_args+=("$STOP") ;;
       codex) row_args+=("$CODEX_START") ;;
       -) ;;
@@ -115,6 +119,7 @@ clear_is_live|blank|start clear|none||none
 lifted_wall|blank|start wall stop|none||none
 other_failure|blank|start overloaded|none||none
 wedged_rows|blank|start toolong|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=context|--dead-pane|none
+wedged_details|blank|start toolongdetails|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=context|--dead-pane|none
 wedged_rows_exited|exited|start toolong|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=process|--dead-pane|none
 wedge_lifted|blank|start toolong stop|none||none
 killed_process|exited|start|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=process|--dead-pane|none
@@ -282,6 +287,17 @@ CTX_FLEET_HARNESS=""
 # A start in the same pane naming a new session, as a session opened there by
 # hand, or a /clear, writes.
 RESTART="$(row SessionStart claude source=startup model=claude-fable-5-1 session_id=9a1b)"
+# ctx_record AT GAP — the context record the hook writes at AT, naming the
+# pane key CTX_KEY: a reading below the mark where GAP is `-`, else GAP.
+ctx_record() { # AT GAP
+  if [[ "$2" == - ]]; then
+    jq -cn --arg at "$1" --arg key "$CTX_KEY" '{harness: "claude", model: "claude-fable-5-1", tokens: 300000, window: 1000000,
+      used_pct: 30, session_id: "5f0c", pane_key: $key, gap: null, at: $at}' > "$(CTX_FILE)"
+  else
+    jq -cn --arg at "$1" --arg gap "$2" --arg key "$CTX_KEY" '{harness: "claude", model: null, tokens: null, window: null,
+      used_pct: null, session_id: "5f0c", pane_key: $key, gap: $gap, at: $at}' > "$(CTX_FILE)"
+  fi
+}
 context_case() { # NAME PANE_STATE RECORD_OFFSET NOW_OFFSET GAP ROW...
   local name="$1" pane_state="$2" at now="$((ROW_AT + $4))" gap="$5"
   at="$(iso "$((ROW_AT + $3))")"
@@ -292,13 +308,7 @@ context_case() { # NAME PANE_STATE RECORD_OFFSET NOW_OFFSET GAP ROW...
       && mv -- "$STUB_DIR/state.tmp" "$STUB_DIR/oversee-state.json"
   fi
   printf '%s\n' "$now" > "$STUB_DIR/now.epoch"
-  if [[ "$gap" == - ]]; then
-    jq -cn --arg at "$at" --arg key "$CTX_KEY" '{harness: "claude", model: "claude-fable-5-1", tokens: 300000, window: 1000000,
-      used_pct: 30, session_id: "5f0c", pane_key: $key, gap: null, at: $at}' > "$(CTX_FILE)"
-  else
-    jq -cn --arg at "$at" --arg gap "$gap" --arg key "$CTX_KEY" '{harness: "claude", model: null, tokens: null, window: null,
-      used_pct: null, session_id: "5f0c", pane_key: $key, gap: $gap, at: $at}' > "$(CTX_FILE)"
-  fi
+  ctx_record "$at" "$gap"
   run TMUX_PANE="$PANE" -- --max-loops 1
   CONTEXT_EVENT="$(grep '^EVENT overseer-context-' <<<"$OUT" || echo none)"
 }
@@ -355,13 +365,17 @@ assert_eq "events=$(grep -c '^EVENT overseer-context-' <<<"$OUT" || true) note=$
 # record, is read as dead, `source=context`, on the passes a death takes, and
 # relaunched from the recorded line with a fleet-log row naming the source.
 # The same reading with a Stop row after it is a turn that ended since, and
-# draws no death.
+# draws no death. A copilot reading's window is the point Copilot starts to
+# compact, so a copilot reading at it is no wedge. WEDGE_HARNESS names the
+# harness the record and the fleet record carry, claude where unset.
 wedge_case() { # NAME TOKENS ROW... [WATCH_BIN via env]
-  local name="$1" tokens="$2"
+  local name="$1" tokens="$2" harness="${WEDGE_HARNESS:-claude}"
   shift 2
   rows_case "$name" blank "$@"
+  jq --arg h "$harness" '.overseer.harness = $h' "$STUB_DIR/oversee-state.json" > "$STUB_DIR/state.tmp" \
+    && mv -- "$STUB_DIR/state.tmp" "$STUB_DIR/oversee-state.json"
   printf '%s\n' "$((ROW_AT + 600))" > "$STUB_DIR/now.epoch"
-  jq -cn --arg at "$(iso "$((ROW_AT + 60))")" --argjson t "$tokens" '{harness: "claude", model: "claude-fable-5-1",
+  jq -cn --arg at "$(iso "$((ROW_AT + 60))")" --argjson t "$tokens" --arg h "$harness" '{harness: $h, model: "claude-fable-5-1",
     tokens: $t, window: 1000000, used_pct: ($t / 10000 | floor), session_id: "5f0c", pane_key: "7000 %9", gap: null, at: $at}' > "$(CTX_FILE)"
   run TMUX_PANE="$PANE" -- --max-loops 2
   WEDGE="event=$(grep '^EVENT overseer-' <<<"$OUT" | head -n 1 || echo none) launched=$(succeed_calls --dead-pane)"
@@ -377,34 +391,79 @@ wedge_case wedged_context_turned 1000000 "$START" "$STOP_AFTER"
 assert_eq "$WEDGE" "event=none launched=0" "the same reading with a Stop row after it is a turn that ended since, and no wedge" "$ERR"
 wedge_case wedged_context_below 999999 "$START" "$STOP"
 assert_eq "$WEDGE" "event=none launched=0" "a reading below its window is no wedge" "$ERR"
+WEDGE_HARNESS=copilot wedge_case wedged_context_copilot 1000000 "$START" "$STOP"
+assert_eq "$WEDGE" "event=none launched=0" "a copilot reading at its window, Copilot's compaction point, is no wedge" "$ERR"
 
 # --- a gap the overseer does not close goes to the owner --------------------
 # The first long pass a gap stands on tells the overseer; the next, it goes to
 # the owner once, as a notice and a fleet-log row, and neither repeats while
-# that gap stands.
+# that gap stands. A notice the owner did not get is sent again the next
+# pass, and a reading between two passes of the same gap starts it again.
 # The owner notices the overseer mailbox holds naming the gap alert.
 owner_alerts() {
   local file="$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-overseer.jsonl"
   [[ -f "$file" ]] || { echo 0; return; }
   jq -r 'select(.to == "owner") | .text' "$file" | grep -c 'overseer-context-unmeasured: the overseer in pane' || true
 }
-gap_passes() { # NAME [WATCH_BIN]
-  WATCH_BIN="${2:-}" CTX_KEY="7000 $PANE" context_case "$1" blank -60 0 home-unnamed "$START"
-  local first="$CONTEXT_EVENT"
-  WATCH_BIN="${2:-}" run TMUX_PANE="$PANE" -- --max-loops 1
-  local second third alerts
-  second="$(grep '^EVENT overseer-context-' <<<"$OUT" || echo none)"
-  alerts="$(grep -c "^oversee-watch: overseer-context-alerted pane=$PANE gap=home-unnamed" "$ERR" || true)"
-  WATCH_BIN="${2:-}" run TMUX_PANE="$PANE" -- --max-loops 1
-  third="$(grep '^EVENT overseer-context-' <<<"$OUT" || echo none)"
-  GAP_PASSES="first=$first second=$second alerted=$alerts third=$third owner=$(owner_alerts)"
+# The fleet-log rows naming the gap alert.
+fleet_alerts() {
+  jq '(.fleet_log // []) | map(select(.item == "overseer" and (.text // "" | contains("has recorded no context reading on two consecutive watch passes")))) | length' \
+    "$STUB_DIR/oversee-state.json"
 }
-gap_passes context_gap_alert
-assert_eq "$GAP_PASSES" \
-  "first=EVENT overseer-context-unmeasured $PANE gap=home-unnamed second=none alerted=1 third=none owner=1" \
+# A lane-mail whose `notice --to owner` fails while STUB_DIR/owner-fails
+# stands, as it does where the overseer mailbox cannot be written, and which
+# hands every other call to the real one.
+cat > "$TMP_ROOT/bin/lane-mail-owner-fails.sh" <<'STUB'
+#!/usr/bin/env bash
+if [[ -e "$STUB_DIR/owner-fails" && " $* " == *" --to owner "* ]]; then
+  echo "lane-mail: mailbox-unwritable item=overseer" >&2
+  exit 1
+fi
+exec "$REAL_LANE_MAIL" "$@"
+STUB
+chmod +x "$TMP_ROOT/bin/lane-mail-owner-fails.sh"
+# gap_seq NAME STEP... [WATCH_BIN via env] — the home-unnamed gap on the first
+# long pass, then one long pass per STEP over the record it writes: `gap` the
+# same gap, `failing` the same gap with the owner's notice failing, `reading`
+# a reading below the mark. GAP_SEQ is one word per pass: `event` for the
+# overseer-context-unmeasured event, `alerted` for the owner's alert,
+# `failed` for an owner's notice that failed, `none` for none of them; then
+# the owner's notices and the fleet log's alert rows.
+gap_seq() { # NAME STEP...
+  local name="$1" step words="" word
+  shift
+  CTX_KEY="7000 $PANE" context_case "$name" blank -60 0 home-unnamed "$START"
+  for step in first "$@"; do
+    if [[ "$step" != first ]]; then
+      rm -f -- "${STUB_DIR:?}/owner-fails"
+      case "$step" in
+        gap) ctx_record "$(iso "$((ROW_AT - 60))")" home-unnamed ;;
+        failing) ctx_record "$(iso "$((ROW_AT - 60))")" home-unnamed; : > "$STUB_DIR/owner-fails" ;;
+        reading) ctx_record "$(iso "$((ROW_AT - 60))")" - ;;
+        *) echo "gap_seq: unknown step $step" >&2; exit 1 ;;
+      esac
+      run TMUX_PANE="$PANE" OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-owner-fails.sh" \
+        REAL_LANE_MAIL="$REAL_LANE_MAIL" -- --max-loops 1
+    fi
+    word=""
+    ! grep -q "^EVENT overseer-context-unmeasured $PANE gap=home-unnamed$" <<<"$OUT" || word+="event"
+    ! grep -q "^oversee-watch: overseer-context-alerted pane=$PANE gap=home-unnamed" "$ERR" || word+="alerted"
+    ! grep -q '^oversee-watch: overseer-notice-failed channel=owner' "$ERR" || word+="failed"
+    words+="${word:-none} "
+  done
+  GAP_SEQ="${words}owner=$(owner_alerts) fleet=$(fleet_alerts)"
+}
+gap_seq context_gap_alert gap gap
+assert_eq "$GAP_SEQ" "event alerted none owner=1 fleet=1" \
   "a gap still standing on the second long pass goes to the owner once, and neither repeats" "$ERR"
 assert_contains "$(fleet_log_text)" "overseer-context-unmeasured: the overseer in pane $PANE has recorded no context reading on two consecutive watch passes, gap=home-unnamed" \
   "and the fleet log carries the alert" "$ERR"
+gap_seq context_gap_owner_fails failing gap gap
+assert_eq "$GAP_SEQ" "event failed alerted none owner=1 fleet=1" \
+  "an owner's notice that failed is sent again the next pass, with one fleet-log row" "$ERR"
+gap_seq context_gap_reopened gap reading gap
+assert_eq "$GAP_SEQ" "event alerted none event owner=1 fleet=1" \
+  "a reading between two passes of the same gap tells the overseer again" "$ERR"
 
 # --- control ----------------------------------------------------------------
 # The rows verdict ignored: the SessionEnd row then settles nothing, and the
@@ -478,12 +537,29 @@ rows_case wedged_rows_mutant blank "$START" "$TOO_LONG"
 WATCH_BIN="$TOOLONG_CTL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
 assert_eq "event=$(grep '^EVENT overseer-' <<<"$OUT" || echo none) launched=$(succeed_calls --dead-pane)" "event=none launched=0" \
   "control: without the prompt-too-long verdict a wedged harness reads live and is never relaunched" "$ERR"
+# The error_details read dropped: a prompt-too-long failure whose words sit
+# there alone reads live and nothing relaunches it.
+DETAILS_CTL="$(mutant_scripts details-ctl/orch lib/session-rows.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/details-ctl/github"
+mutate_file "$DETAILS_CTL/lib/session-rows.sh" '+ (.error_details // "")' '+ ("")'
+rows_case wedged_details_mutant blank "$START" "$TOO_LONG_DETAILS"
+WATCH_BIN="$DETAILS_CTL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "event=$(grep '^EVENT overseer-' <<<"$OUT" || echo none) launched=$(succeed_calls --dead-pane)" "event=none launched=0" \
+  "control: without the error_details read a prompt-too-long failure named there reads live" "$ERR"
 # The context wedge dropped: a full window with no turn since reads live.
 WEDGE_CTL="$(mutant_scripts wedge-ctl/orch oversee-watch)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/wedge-ctl/github"
 mutate_file "$WEDGE_CTL/oversee-watch" '    OV_VERDICT=exited OV_SOURCE=context' '    :'
 WATCH_BIN="$WEDGE_CTL/oversee-watch" wedge_case wedged_context_mutant 1000000 "$START" "$STOP"
 assert_eq "$WEDGE" "event=none launched=0" "control: without the context wedge a full window reads live" "$ERR"
+# The copilot arm of the window judge dropped: a copilot reading at its
+# compaction point is taken for a wedge and the working overseer relaunched.
+COPILOT_CTL="$(mutant_scripts copilot-window-ctl/orch lib/lane-context.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/copilot-window-ctl/github"
+mutate_file "$COPILOT_CTL/lib/lane-context.sh" '    copilot) return 1 ;;' '    copilot) ;;'
+WEDGE_HARNESS=copilot WATCH_BIN="$COPILOT_CTL/oversee-watch" wedge_case wedged_context_copilot_mutant 1000000 "$START" "$STOP"
+assert_eq "$WEDGE" "event=EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=context launched=1" \
+  "control: without the copilot arm a copilot reading at its compaction point relaunches a working overseer" "$ERR"
 # The Stop-since test dropped: a turn that ended after the reading is taken
 # for a wedge and the working overseer is relaunched.
 WEDGETURN_CTL="$(mutant_scripts wedgeturn-ctl/orch oversee-watch)" || exit 1
@@ -497,10 +573,26 @@ assert_eq "$WEDGE" "event=EVENT overseer-dead $PANE window=$WINDOW passes=2 succ
 GAPTOLD_CTL="$(mutant_scripts gaptold-ctl/orch oversee-watch)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/gaptold-ctl/github"
 mutate_file "$GAPTOLD_CTL/oversee-watch" '    "$gap|told")' '    "$gap|never")'
-gap_passes context_gap_alert_mutant "$GAPTOLD_CTL/oversee-watch"
-assert_eq "$GAP_PASSES" \
-  "first=EVENT overseer-context-unmeasured $PANE gap=home-unnamed second=EVENT overseer-context-unmeasured $PANE gap=home-unnamed alerted=0 third=EVENT overseer-context-unmeasured $PANE gap=home-unnamed owner=0" \
+WATCH_BIN="$GAPTOLD_CTL/oversee-watch" gap_seq context_gap_alert_mutant gap gap
+assert_eq "$GAP_SEQ" "event event event owner=0 fleet=0" \
   "control: without the told arm the gap repeats as an event every pass and never reaches the owner" "$ERR"
+# The failed alert's hold on the row dropped: an owner's notice that failed
+# is taken as sent and never tried again.
+GAPRETRY_CTL="$(mutant_scripts gapretry-ctl/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/gapretry-ctl/github"
+mutate_file "$GAPRETRY_CTL/oversee-watch" '      overseer_gap_alert "$pane" "$gap" || return 0' '      overseer_gap_alert "$pane" "$gap" || :'
+WATCH_BIN="$GAPRETRY_CTL/oversee-watch" gap_seq context_gap_owner_fails_mutant failing gap gap
+assert_eq "$GAP_SEQ" "event failed none none owner=0 fleet=0" \
+  "control: without the hold a failed owner's notice is never sent again" "$ERR"
+# The reading's clear dropped: a gap back after a reading stays alerted and
+# the overseer is never told again.
+GAPCLEAR_CTL="$(mutant_scripts gapclear-ctl/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/gapclear-ctl/github"
+mutate_file "$GAPCLEAR_CTL/oversee-watch" \
+  '  OVERSEER_MARK_ROWS="$(lane_row_clear overseer-context-gap "$OVERSEER_MARK_ROWS" "$identity")"' '  :'
+WATCH_BIN="$GAPCLEAR_CTL/oversee-watch" gap_seq context_gap_reopened_mutant gap reading gap
+assert_eq "$GAP_SEQ" "event alerted none none owner=1 fleet=1" \
+  "control: without the reading's clear a gap back after a reading is never told again" "$ERR"
 
 # The context record's controls, one per rule: the gap read, the age bound,
 # the Stop-since test, the pane test, the harness test and the session test

@@ -53,7 +53,9 @@ The long pass's events, checked and reported in this order:
                              fills its window, so it takes no turn again: a
                              StopFailure row naming a prompt-too-long error,
                              or its context record a reading at or past the
-                             window it names with no Stop row after it;
+                             window it names with no Stop row after it, for
+                             a claude, codex or pi reading only: a copilot
+                             reading's window is where Copilot compacts;
                              `record`, the exit status `overseer-run`
                              wrote into the fleet state's overseer.exit once
                              the launch line returned, over a bare shell with
@@ -124,9 +126,10 @@ The long pass's events, checked and reported in this order:
                              context mark is its lane-mail-check hook's
                              alone, at every tool call and turn end. It
                              reaches an overseer BETWEEN turn ends, where that
-                             hook cannot: the hook refuses at the same marks,
-                             and a session part way
-                             through a long turn meets neither until this line.
+                             hook judges no account mark: the hook refuses at
+                             the same marks at a turn end, and a session part
+                             way through a long turn meets neither until this
+                             line.
                              The route follows on the next line. Emitted once
                              at the crossing and again every
                              ORCH_OVERSEER_MARK_REPEAT passes while it stands;
@@ -135,7 +138,7 @@ The long pass's events, checked and reported in this order:
   EVENT overseer-context-unmeasured <pane> gap=<reason>
                              this overseer's context record, context.json in
                              the overseer mailbox, carries no reading: its
-                             lane-mail-check turn-end hook read nothing and
+                             lane-mail-check hook read nothing and
                              wrote why as the gap, a word that hook's
                              description lists. Its context mark is judged at
                              its tool calls and turn ends alone, so it is not
@@ -145,8 +148,10 @@ The long pass's events, checked and reported in this order:
                              standing on the next, it goes to the owner
                              instead, as one `lane-mail notice --to owner`
                              and one fleet-log row, with an
-                             overseer-context-alerted line on stderr, and
-                             neither is repeated while that gap stands.
+                             overseer-context-alerted line on stderr; a
+                             notice that fails is tried again the next pass,
+                             and once it is sent neither is repeated while
+                             that gap stands.
                              A record another session wrote, naming another
                              pane, a harness other than the fleet record's or
                              a session other than the pane's latest start,
@@ -804,8 +809,8 @@ ow_message() { # REASON FIELD=VALUE...
     overseer-wall-unjudged) text='The overseer pane read walled and the account judgement that would confirm it could not be made, so nothing is acted on: this pane carries the limit banners this watch relays about OTHER lanes, and the screen alone cannot tell those from the overseer own account running out. The reading is left to the next pass.' ;;
     overseer-wall-unconfirmed) text='The overseer pane read walled and its own account measures room, so the banner on that screen is one this watch relayed about another lane and the overseer is working. Nothing is launched and no window is closed. The fields name the judgement that refuted it.' ;;
     overseer-wall-lifted) text='The overseer session rows last recorded a usage-limit failure and its own account now measures room, so the wall has lifted and the session is read as live. Only a finished turn writes the row that clears it.' ;;
-    overseer-context-alerted) text='The overseer context record carried the same gap on two consecutive long passes, so the owner was sent one notice and the fleet log took one row naming the pane and the gap; the event is not repeated while that gap stands.' ;;
-    overseer-context-unread) text='The overseer context record, or the session rows file its staleness is judged against, could not be read or is not a shape the turn-end hook writes, so neither overseer-context event is judged this pass.' ;;
+    overseer-context-alerted) text='The overseer context record carried the same gap on two consecutive long passes, so the owner was sent one notice naming the pane and the gap, and the fleet log took one row unless an overseer-notice-failed line for its channel precedes this one; the event is not repeated while that gap stands. A notice to the owner that fails prints no such line and is sent again the next pass.' ;;
+    overseer-context-unread) text='The overseer context record, or the session rows file its staleness is judged against, could not be read or is not a shape the lane-mail-check hook writes, so neither overseer-context event nor a context wedge is judged on it this pass. A harness field names a record whose harness no context adapter reads.' ;;
     overseer-unwatched) text='The overseer pane is not being watched, so an overseer that dies is reported by nothing. The field names what is missing.' ;;
     overseer-unreadable) text='The overseer pane could not be read, so its state settles nothing this pass.' ;;
     overseer-fallback) text='The overseer session rows could not judge it, so this pass judges its pane, the named fallback, as the watch did before the rows existed. The cause names why: no rows file recorded for this pane (unrecorded), a fleet state that could not be read (state-unreadable), no row in the file yet (none), a row naming a harness that emits no session end or usage-limit event (unsupported), or a file that could not be read (unreadable).' ;;

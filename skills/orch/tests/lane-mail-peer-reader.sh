@@ -134,7 +134,9 @@ none|-|lane-mail: no-reader=$PEER cause=unnamed|1|a peer with no fleet state nam
 {"server":"$LIVE","server_start":$START,"pane":"%4"}|$LIVE $START %9|lane-mail: no-reader=$PEER cause=pane-gone|1|a record naming a pane its server no longer lists names no reader
 {"server":"$LIVE","server_start":$EARLIER,"pane":"%9"}|$LIVE $START %9|lane-mail: no-reader=$PEER cause=pane-gone|1|a record naming an earlier server handed the same pid and pane names no reader
 {"server":"$LIVE","server_start":$START,"pane":"%9"}|$LIVE $START %9|-|0|a record naming a live pane says nothing
-{"server":"$LIVE","pane":"%9"}|$LIVE $START %9|lane-mail: no-reader=$PEER cause=unnamed|1|a record binding its server to no start names no reader
+{"server":"$LIVE","pane":"%9"}|$LIVE $START %9|-|0|a record carrying no start names the session in its pane on that server pid, as the hooks read it
+{"server":"$LIVE","pane":"%4"}|$LIVE $START %9|lane-mail: no-reader=$PEER cause=pane-gone|1|a record carrying no start names a pane its server no longer lists
+{"server":"$LIVE","server_start":"soon","pane":"%9"}|$LIVE $START %9|lane-mail: no-reader=$PEER cause=unnamed|1|a start that is not epoch seconds names no reader
 {"server":"$LIVE","server_start":$START,"pane":"%9"}|4242 $START %9|lane-mail: reader-unjudged=$PEER cause=server|0|a pane on a server this shell cannot ask is unjudged
 bad|-|lane-mail: reader-unjudged=$PEER cause=state|0|a fleet state its reader cannot parse is unjudged
 bad-settings|-|lane-mail: reader-unjudged=$PEER cause=state|0|peer settings their loader refuses are unjudged
@@ -249,7 +251,7 @@ send 'No state file.'
 assert_eq "$(first_err)" "lane-mail: reader-unjudged=$PEER cause=state" \
   "control: without the state file test a peer with no fleet state reads as a state it could not read"
 
-mutant no-pair-test '  if [ -z "$server" ] || [ -z "$start" ] || [ -z "$pane" ]; then' '  if [ -z "$start" ]; then'
+mutant no-pair-test '  if [ -z "$server" ] || [ "$start" = invalid ] || [ -z "$pane" ]; then' '  if [ "$start" = invalid ]; then'
 record "{\"window\":\"@1\",\"server_start\":$START}"
 send 'No pair.'
 assert_eq "$(first_err)" "lane-mail: no-reader=$PEER cause=pane-gone" \
@@ -266,12 +268,12 @@ printf '4242 %s %%9\n' "$START" > "$PANES"
 send 'Other server.'
 assert_eq "$(first_err)" "" "control: without the server notice a pane nothing here can ask says nothing"
 
-mutant no-start-test '  if [ -z "$server" ] || [ -z "$start" ] || [ -z "$pane" ]; then' '  if [ -z "$server" ] || [ -z "$pane" ]; then'
-record "{\"server\":\"$LIVE\",\"pane\":\"%9\"}"
+mutant no-start-test '  if [ -z "$server" ] || [ "$start" = invalid ] || [ -z "$pane" ]; then' '  if [ -z "$server" ] || [ -z "$pane" ]; then'
+record "{\"server\":\"$LIVE\",\"server_start\":\"soon\",\"pane\":\"%9\"}"
 printf '%s %s %%9\n' "$LIVE" "$START" > "$PANES"
-send 'No start.'
+send 'Bad start.'
 assert_eq "$(first_err)" "lane-mail: no-reader=$PEER cause=pane-gone" \
-  "control: without the start test a record binding no start is judged on a server it cannot name"
+  "control: without the start test a start that is not epoch seconds is judged as a server's"
 
 mutant state-silent '    lm_notice reader-unjudged "$ROOT" cause=state "$cause"' '    :'
 record bad
