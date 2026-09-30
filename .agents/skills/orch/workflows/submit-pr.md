@@ -164,21 +164,17 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` wor
    .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] children_detached true
    ```
 
-   Read the review gate's context and the pushed head:
-
-   ```bash
-   .agents/skills/orch/scripts/orch-env REVIEW_GATE_CONTEXT "Review gate"
-   ```
+   Read the pushed head:
 
    ```bash
    git -C "[WORKTREE_PATH]" rev-parse HEAD
    ```
 
    ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-merge [PR_NUMBER] --auto --require-context "[GATE_CONTEXT]" --expected-head [HEAD_SHA]
+   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-merge [PR_NUMBER] --auto --expected-head [HEAD_SHA]
    ```
 
-   Exit `75` armed it. GitHub then holds the merge until the review gate, every required check and thread resolution pass, so the CI wait, the gate wait and § 6.1 are the lane's triage and fix work, not preconditions of the arm, and a turn that ends mid-chain leaves the PR armed. The late-findings guard starts where [merge-pr.md](merge-pr.md) § 5 step 1 arms the prepared head again and waits in `queue-wait`; the window before it is the accepted gap [merge-pr.md](merge-pr.md) § 5 step 5 answers. Exit `0` merged it: § 6 enters [merge-pr.md](merge-pr.md), whose § 3.2 takes a merged PR straight to its post-merge steps. Every exit `1` armed nothing new, but an arm an earlier pass of this step made may still be live (`pr-merge --help`: a pre-existing queue entry or auto-merge request may remain active), and it would merge without what this refusal names. So on any exit `1` take [merge-pr-restack.md § Unarm at a stop](merge-pr-restack.md#unarm-at-a-stop) before going on, with `[STATE_KEY]` being `[ISSUE_ID]` and `[STOP_DIR]` being `[WORKTREE_PATH]/tmp`; it unarms only what it finds live. Exit `1` with first line `arm: no-merge-gate=unverified repo=<owner/repo>` armed nothing because the base branch's rules could not be read: a read failure, not a ruleset gap. Report it and continue; [merge-pr.md](merge-pr.md) § 5 arms the prepared head after § 6.1. Exit `1` with any other `arm: no-merge-gate=<gap>` armed nothing because that base branch does not require `[GATE_CONTEXT]`, or has no merge gate at all, and an arm there would merge before review: report the line once and continue. That repository's merge keeps the route [merge-pr.md](merge-pr.md) § 5 sets out, after § 6.1, and the fix that lets it arm here is its ruleset requiring the review gate. Any other exit `1` armed nothing, an open review thread among its causes: continue, and [merge-pr.md](merge-pr.md) § 5 arms the prepared head after § 6.1.
+   Exit `75` armed it. `pr-merge` arms only where the base requires an approval and thread resolution and dismisses stale approvals on push, so GitHub then holds the merge until an approval of the current head, thread resolution and every required check pass (`pr-merge --help` § Approvals and review threads), and the CI wait, the gate wait and § 6.1 are the lane's triage and fix work, not preconditions of the arm, and a turn that ends mid-chain leaves the PR armed. The late-findings guard starts where [merge-pr.md](merge-pr.md) § 5 step 1 arms the prepared head again and waits in `queue-wait`; the window before it is the accepted gap [merge-pr.md](merge-pr.md) § 5 step 5 answers. Exit `0` merged it: § 6 enters [merge-pr.md](merge-pr.md), whose § 3.2 takes a merged PR straight to its post-merge steps. Every exit `1` armed nothing new, but an arm an earlier pass of this step made may still be live (`pr-merge --help`: a pre-existing queue entry or auto-merge request may remain active), and it would merge without what this refusal names. So on any exit `1` take [merge-pr-restack.md § Unarm at a stop](merge-pr-restack.md#unarm-at-a-stop) before going on, with `[STATE_KEY]` being `[ISSUE_ID]` and `[STOP_DIR]` being `[WORKTREE_PATH]/tmp`; it unarms only what it finds live. Exit `1` with first line `arm: no-merge-gate=unverified repo=<owner/repo>` armed nothing because the base branch's rules could not be read: a read failure, not a ruleset gap. Report it and continue; [merge-pr.md](merge-pr.md) § 5 arms the prepared head after § 6.1. Exit `1` with any other `arm: no-merge-gate=<gap>` armed nothing because that repository has auto-merge off, or that base branch requires no approval, no thread resolution or no stale-approval dismissal, and an arm there would merge before review, past an open thread, or on an approval of an earlier head: report the line once and continue. That repository's merge keeps the route [merge-pr.md](merge-pr.md) § 5 sets out, after § 6.1, and the fix that lets it arm here is the setting the line names. Any other exit `1` armed nothing: continue, and [merge-pr.md](merge-pr.md) § 5 arms the prepared head after § 6.1.
 
 Once the PR exists, this run is a continuing action. Clear any stop a capped run left before entering another post-PR gate:
 
@@ -377,7 +373,7 @@ Gates 3 and 4 waive on that fresh answer alone: `exempt` only where this resolut
 
 Empty `json_paths` means no internal review is recorded: report the unmet gate and recommend `orch review-pr [PR_NUMBER]`.
 
-**Gate 2** = the recorded § 5 result — do not re-run ci-wait, and raw `gh pr checks` output is never the gate. On a `pr-merge --check` refusal run `.agents/skills/github/scripts/github.sh ci-classify-refusal [PR_NUMBER]` and route on its `cause:` line: `threads` → gate 3; anything else → report the cause with its printed detail (for `ci_failed` that includes the `fail:` and `superseded:` run ids) rather than forcing or abandoning the merge.
+**Gate 2** = the recorded § 5 result — do not re-run ci-wait, and raw `gh pr checks` output is never the gate. On a `pr-merge --check` refusal run `.agents/skills/github/scripts/github.sh ci-classify-refusal [PR_NUMBER]` and report its `cause:` line with its printed detail (for `ci_failed` that includes the `fail:` and `superseded:` run ids) rather than forcing or abandoning the merge.
 
 **Gate 3** — final live check. `exempt` from the resolution above waives both of its terms, the unresolved count and the `pr_comment_review.replied` obligation, and goes to gate 4. Replying to every bot comment stays § 3.1's hygiene rule, which is not a gate in any mode.
 

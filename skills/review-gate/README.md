@@ -35,17 +35,17 @@ Every repository applies this policy to the class from the shared `harness-ci` c
 
 | Change class | Review evidence | Review threads | Objections and suppressed findings |
 |---|---|---|---|
-| `render` | Not required | Review-bot threads resolved at merge; any other thread blocks | Not read |
-| `trivial` | Not required | Review-bot threads resolved at merge; any other thread blocks | Not read |
-| `micro` | Not required | Review-bot threads resolved at merge; any other thread blocks | Not read |
+| `render` | Not required | Not read by the gate; the lane answers every open thread before the merge | Not read |
+| `trivial` | Not required | Not read by the gate; the lane answers every open thread before the merge | Not read |
+| `micro` | Not required | Not read by the gate; the lane answers every open thread before the merge | Not read |
 | `small` | One normal bot round | Enforced | Enforced |
 | `standard` | Current review-gate behavior | Current review-gate behavior | Current review-gate behavior |
 
 `trivial` holds a documentation-set diff within the classifier's line ceiling, and a diff only under `docs/plans/` at any size; a `HARNESS_CI_TRIVIAL_PATHS` allowlist replaces both with a diff of its paths within that ceiling. Each holds once the classifier's configuration, instruction-pointer, narrow-change and render refusals have passed it, and a diff carrying an `AGENTS.md` or `SKILL.md` takes `small` in place of `trivial` or `micro`. `change-class --help` states each rule and the refusals ahead of them.
 
-A `none` row puts the pull request OUTSIDE the review gate, apart from the one thread term below: no review evidence, no thread wait, no standing objection and no suppressed finding is read for it, because a gate that cannot stop a bot from commenting must not run on a change it waives. What stays enforced is everything outside that gate — required CI checks, commit guards and merge conflicts — and the orch merge path still refuses a `CHANGES_REQUESTED` review at its readiness check, in every mode.
+A `none` row puts the pull request OUTSIDE the review gate: no review evidence, no thread wait, no standing objection and no suppressed finding is read for it, because a gate that cannot stop a bot from commenting must not run on a change it waives. What stays enforced is everything outside that gate — required CI checks, commit guards and merge conflicts — and the orch merge path still refuses a `CHANGES_REQUESTED` review at its readiness check, in every mode.
 
-The one thread term a `none` row keeps is `pr-merge`'s, because a base branch's own thread-resolution rule still holds the merge on every open thread. `pr-merge` resolves each thread only review bots have written in, the bots being the `[bot]` entries of `REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` (none under `REVIEW_GATE_THREADS = "off"`, whose predicate never counts a lapsed waiver), as its last step before it merges or arms: one reply naming the class and the head, then a resolve. Every other unresolved thread blocks it, outdated or not: a person's, a code-scanning alert, another app's, and a review bot's thread a person has replied in. A resolution it made lapses once the class policy at the current head no longer waives the thread, while that resolution is still the thread's last word: the resolver's newest comment in the thread is a waiver reply. The predicate's thread term and `pr-merge` both count a lapsed waiver as an open thread, by the one rule in `scripts/lib/waiver.sh`, and only `pr-merge`'s merge modes reopen it. A thread someone answered and resolved again is theirs, not a waiver. `pr-merge --help` § Review-thread gate holds the contract.
+A `none` row's open threads still stop its merge, by the readers orch's [thread-read.md § What reads an open thread](../orch/references/thread-read.md#what-reads-an-open-thread) lists. The predicate counts a thread the merge route resolved under its retired thread waiver as open while the waiver stands, by the rule in `scripts/lib/waiver.sh`.
 
 The table is applied only where the shared classifier measured a class, which it says on its own answer. It needs both endpoints present in the checkout, an ancestor they share, a readable generated-file inventory at the base end, and the `orch` skill beside `harness-ci` for its `references/narrow-change.conf` list and its `scripts/lib/branch-growth.sh` measurer. Missing any of those, the classifier falls back to `standard` and marks the answer unmeasured, and `review-policy` exits 2 naming the reason rather than apply a row to a class nothing earned. Fix what the reason names, then ask again.
 
@@ -57,7 +57,7 @@ A repository leaves this default only by a recorded choice. It can assign other 
 
 The active default applies whatever `REVIEW_GATE_MODE` says, and the docs-only and render-only lanes below run only under an inactive policy.
 
-Every consumer of `scripts/review-policy` applies the same answer: the orch skill's reviewer wait and thread gates, orch's micro admission and tier gate, and the `pr-merge` review-thread gate, which keeps the one thread term stated above.
+Every consumer of `scripts/review-policy` applies the same answer: the orch skill's reviewer wait and thread gates, and orch's micro admission and tier gate.
 
 - `REVIEW_GATE_CONTEXT` names the required commit status.
 - Select trusted reviewer logins and check names using [references/settings.md](references/settings.md).

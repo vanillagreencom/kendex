@@ -1,19 +1,11 @@
 #!/usr/bin/env bash
-# The world the pr-merge suites share: pr-merge.test.sh and
-# pr-merge-thread-waiver.test.sh source it after `set -euo pipefail`. It
+# The world pr-merge.test.sh runs in, sourced after `set -euo pipefail`. It
 # sources lib/check-stub.sh for the gh stub, as ci-classify-refusal.test.sh
 # does. Sourced, never run, so it lives one level below the suite glob.
 #
 # A row is `label|world|argv|rc|out|err|calls`:
 #   world  words for the stub, later words overriding earlier ones:
 #     checks:<name>  a checks fixture; checks-exit:<n> gh's exit for it
-#     threads:<actionable|outdated|malformed|large|bot|resolved100|->, and
-#     the bot-thread shapes threads:<bot-outdated|bot-and-person|two-bots|
-#     codeql|bot-with-reply|bot-partial|waived-resolved|waived-twice|waived-answered|
-#     waived-person-reply|bot-login-user>;
-#     `actionable` and `outdated` are a person's, typed User by GitHub
-#     threads:page2:<name>  a second page holding that fixture
-#     threads:<fetch-fail|page2-fail|page2-malformed>
 #     state:<MERGED|CLOSED>, merged-at, pr:missing
 #     state-err:<401|ratelimit|graphql-notfound|silent4|once>
 #     head:<sha>, post:<MERGED|OPEN>, post-head:<sha>, post-auto, post-queue
@@ -24,10 +16,12 @@
 #     review:<decision|none> GitHub's reviewDecision, none being empty, with
 #     no latest review; review-latest:<state> one latest review in that state
 #     require-token (the stub refuses a mutation without the bot token)
-#     reply:fail, resolve:fail, reopen:fail  that thread mutation errors
-#     repo:no-auto (allow_auto_merge=false), repo:no-rule (no ruleset check),
-#     repo:pr-rule (a ruleset pull_request rule only), repo:classic (no ruleset,
-#     one classic required context)
+#     repo:no-auto (allow_auto_merge=false), repo:no-rule (no ruleset rule),
+#     repo:classic (no ruleset, one classic required context)
+#     approvals:<n>/<t>/<d>[,<n>/<t>/<d>...] the ruleset pull_request rules
+#     alone, one per entry, each requiring n approvals, thread resolution t
+#     and stale-approval dismissal d (true|false); null leaves that
+#     parameter out
 #     required:<context> a ruleset requiring that one context, `+` a space;
 #     classic:<context> no ruleset, classic protection naming it under
 #     checks[]; classic-contexts:<context> the same under the legacy
@@ -46,10 +40,6 @@
 #     base:<branch> the PR's base; gate reads answer only its encoded path
 #     post-graphql:partial  the post-merge read answers HTTP 200 with an
 #     errors array beside data
-#     class-policy:<class|-|range-fail|unmeasured|range-absent>  an active
-#     review-gate class policy, and the classifier stub's answer for the
-#     pull request's range; head-moved:<sha> after it, the head every read
-#     but the policy's answers once the class was measured
 #     route:<true|false|-|fail|range-fail>  the classifier stub's queue-only
 #     line for the pull request's range: queue_only=true on a CI workflow,
 #     queue_only=false, no line, a classifier that fails, or a range read
@@ -59,29 +49,17 @@
 #          `+` a space, no --keep-branch) | mutant:<name>:<flag+flag> (the
 #          same, run from the mutant_copy named <name>) |
 #          expected:<sha> (--auto with --expected-head) | router:<flags> |
-#          gated:<context> (--auto with --require-context, `+` a space) |
-#          gated-immediate:<context> (--require-context without --auto) |
-#          gated-mutant:<context> (gated, run from $MUTANT_PR_MERGE, the copy
-#          pr-merge.test.sh builds with the required-context refusal cut) |
-#          gated-unread:<context> (gated, run from $UNREAD_PR_MERGE, the copy
-#          whose failed required-set read is not told apart) |
-#          gated-autoless:<context> (gated-immediate, run from
-#          $AUTOLESS_PR_MERGE, the copy whose needs-auto check is cut) |
-#          force | admin | admin-credential (the retired flags) | check-classified |
-#          auto-classified | immediate-classified | expected-classified:<sha> |
-#          dry-classified | admin-classified (--admin) | admin-classless
-#          (--admin from that suite's mirror with no harness-ci sibling,
-#          $CLASSLESS_PR_MERGE, on $CLASSLESS_PATH, which holds no
-#          change-class)
-#          (run from the mirror tree whose harness-ci sibling is the classifier
-#          stub, which pr-merge-thread-waiver.test.sh builds as $MIRROR) |
-#          check-no-rule | immediate-no-rule (run from that suite's mirror
-#          whose review gate lacks lib/waiver.sh, $NO_RULE_PR_MERGE)
+#          auto-mutant:<name> (--auto, run from the copy pr-merge.test.sh
+#          builds under that name with one line of pr-merge.sh replaced) |
+#          force | admin-credential (the retired flags) | admin (--admin) |
+#          admin-classified (--admin from the mirror tree whose harness-ci
+#          sibling is the classifier stub, which pr-merge.test.sh builds as
+#          $MIRROR) | admin-classless (--admin from that suite's mirror with
+#          no harness-ci sibling, $CLASSLESS_PR_MERGE, on $CLASSLESS_PATH,
+#          which holds no change-class)
 #   out    check: `merge=<bool> transient=<bool> state=<S> mergeable=<M>
-#          at=<mergedAt|-> runs=<ids|-> issues=[a;b] warnings=[c]`;
-#          check-classified and check-no-rule add ` waiver=<class>@<head>[<ids>]`, or
-#          ` waiver=-` for none, then ` reopen=[<ids>]`; otherwise stdout,
-#          `-` when empty
+#          at=<mergedAt|-> runs=<ids|-> issues=[a;b] warnings=[c]
+#          keys=[<the JSON's keys>]`; otherwise stdout, `-` when empty
 #   err    stderr's lines joined by `;`, leading spaces dropped, blank lines
 #          dropped, `{word}` macros expanded (see err_macro)
 #   calls  `calls=<each gh call by kind, in order> auth=<the GH_TOKEN each
@@ -99,12 +77,12 @@ source "$TEST_DIR/lib/check-stub.sh"
 TMPDIR_PHYSICAL="$(cd "$TMPDIR" && pwd -P)"
 REPO="$TMPDIR/repo"
 
-# The class policy asks a classifier to read the diff between two commits, and
-# pr-merge refuses a range this checkout does not hold. So the fixture repo is
-# a real repository with two commits, and the class-policy rows name them. No
-# remote is added: the slug resolution and the volatile note below still read
-# what they read for a checkout that names no GitHub repository locally.
-git -C "$REPO" init -q
+# --admin asks a classifier to read the diff between two commits, and
+# pr-merge reads a range this checkout does not hold as queue-only. So the
+# fixture repo is a real repository with two commits, and the route rows name
+# them. No remote is added: the slug resolution and the volatile note below
+# still read what they read for a checkout that names no GitHub repository
+# locally.
 git -C "$REPO" config gc.auto 0
 git -C "$REPO" config maintenance.auto false
 git -C "$REPO" config user.email tests@example.invalid
@@ -117,7 +95,6 @@ git -C "$REPO" add app.txt
 git -C "$REPO" commit -q -m head
 RANGE_BASE="$(git -C "$REPO" rev-parse HEAD~1)"
 RANGE_HEAD="$(git -C "$REPO" rev-parse HEAD)"
-ABSENT_SHA=3333333333333333333333333333333333333333
 
 # One checkout per project settings source, each planting a retired key the way
 # that source spells it. A settings table is exported by the loader and a
@@ -169,47 +146,6 @@ checks_of() {
   esac
 }
 
-# A waiver reply the merge route left at an earlier head.
-WAIVER_REPLY="Resolved by the merge route: change class trivial at 1111111111111111111111111111111111111111, review evidence none under REVIEW_GATE_CLASS_POLICY"
-threads_of() {
-  case "$1" in
-    actionable) printf '[{"id":"PRRT_actionable","isResolved":false,"isOutdated":false,"path":"src/lib.rs","line":12,"comments":{"nodes":[{"author":{"login":"reviewer","__typename":"User"},"body":"Fix this safety bug"}]}}]' ;;
-    outdated) printf '[{"id":"PRRT_outdated","isResolved":false,"isOutdated":true,"path":"src/old.rs","line":7,"comments":{"nodes":[{"author":{"login":"reviewer","__typename":"User"},"body":"Stale diff"}]}}]' ;;
-    # isResolved null, missing, and a string
-    malformed) printf '[{"id":"PRRT_null","isResolved":null,"isOutdated":false,"path":"src/null.rs","line":1,"comments":{"nodes":[]}},{"id":"PRRT_missing","isOutdated":false,"path":"src/missing.rs","line":2,"comments":{"nodes":[]}},{"id":"PRRT_string","isResolved":"false","isOutdated":false,"path":"src/string.rs","line":3,"comments":{"nodes":[]}}]' ;;
-    # a bot's unresolved thread posted after a merge
-    bot) printf '[{"id":"PRRT_post_merge_bot","isResolved":false,"isOutdated":false,"path":"src/lib.rs","line":3,"comments":{"totalCount":1,"nodes":[{"author":{"login":"review-bot","__typename":"Bot"},"body":"post-merge nit"}]}}]' ;;
-    # the bot shapes of a waived class: Copilot's reviewer carries no [bot]
-    # suffix in this view, so the type is the only thing marking it a bot
-    bot-outdated) printf '[{"id":"PRRT_bot_outdated","isResolved":false,"isOutdated":true,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":1,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Stale nit"}]}}]' ;;
-    bot-and-person) printf '[{"id":"PRRT_bot","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":1,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"}]}},{"id":"PRRT_person","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":9,"comments":{"nodes":[{"author":{"login":"reviewer","__typename":"User"},"body":"This contradicts the code"}]}}]' ;;
-    two-bots) printf '[{"id":"PRRT_bot_a","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":1,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"}]}},{"id":"PRRT_bot_b","isResolved":false,"isOutdated":true,"path":"docs/plans/a.md","line":7,"comments":{"totalCount":1,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Stale nit"}]}}]' ;;
-    # a full first page of resolved threads
-    resolved100) jq -cn '[range(0; 100) | {id: ("PRRT_resolved_" + tostring), isResolved: true, isOutdated: false, path: "src/first-page.rs", line: ., comments: {nodes: [{author: {login: "reviewer"}, body: "Resolved"}]}}]' ;;
-    # a code-scanning alert: a Bot, and not a review bot the gate reads
-    codeql) printf '[{"id":"PRRT_codeql","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":1,"nodes":[{"author":{"login":"github-advanced-security","__typename":"Bot"},"body":"Code scanning alert"}]}}]' ;;
-    # a review bot's thread a person has answered in, in the waiver reply's
-    # own words, which only a Bot's waiver reply may be
-    bot-with-reply) printf '[{"id":"PRRT_bot_reply","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":2,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"},{"author":{"login":"reviewer","__typename":"User"},"body":"%s"}]}}]' "$WAIVER_REPLY" ;;
-    # a review bot's thread whose comments were not all read
-    bot-partial) printf '[{"id":"PRRT_bot_partial","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":101,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"}]}}]' ;;
-    # a thread the merge route resolved under an earlier waiver
-    waived-resolved) printf '[{"id":"PRRT_waived","isResolved":true,"isOutdated":false,"resolvedBy":{"login":"vanillagreen-fleet-lanes[bot]"},"path":"docs/plans/a.md","line":4,"comments":{"totalCount":2,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"Resolved by the merge route: change class trivial at 1111111111111111111111111111111111111111, review evidence none under REVIEW_GATE_CLASS_POLICY"}]}}]' ;;
-    # that thread waived again on a later head: two waiver replies, both the
-    # resolver's, and nothing after the second
-    waived-twice) printf '[{"id":"PRRT_waived_twice","isResolved":true,"isOutdated":false,"resolvedBy":{"login":"vanillagreen-fleet-lanes[bot]"},"path":"docs/plans/a.md","line":4,"comments":{"totalCount":3,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"%s"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"%s"}]}}]' "$WAIVER_REPLY" "${WAIVER_REPLY/1111111111111111111111111111111111111111/3333333333333333333333333333333333333333}" ;;
-    # that thread after a reopen: its resolver answered and resolved it again
-    waived-answered) printf '[{"id":"PRRT_answered","isResolved":true,"isOutdated":false,"resolvedBy":{"login":"vanillagreen-fleet-lanes[bot]"},"path":"docs/plans/a.md","line":4,"comments":{"totalCount":3,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"%s"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"Fixed in 2222222"}]}}]' "$WAIVER_REPLY" ;;
-    # the waiver still the resolution, with a person's reply after it in the
-    # waiver reply's own words: the newest reply in them, but not the resolver's
-    waived-person-reply) printf '[{"id":"PRRT_waived_reply","isResolved":true,"isOutdated":false,"resolvedBy":{"login":"vanillagreen-fleet-lanes[bot]"},"path":"docs/plans/a.md","line":4,"comments":{"totalCount":3,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"},"body":"Issue KEN-1 does not exist"},{"author":{"login":"vanillagreen-fleet-lanes","__typename":"Bot"},"body":"%s"},{"author":{"login":"reviewer","__typename":"User"},"body":"%s"}]}}]' "$WAIVER_REPLY" "$WAIVER_REPLY" ;;
-    # a person's account spelling the review bot's login
-    bot-login-user) printf '[{"id":"PRRT_impostor","isResolved":false,"isOutdated":false,"path":"docs/plans/a.md","line":4,"comments":{"totalCount":1,"nodes":[{"author":{"login":"copilot-pull-request-reviewer","__typename":"User"},"body":"Issue KEN-1 does not exist"}]}}]' ;;
-    -) printf '[]' ;;
-    *) echo "UNKNOWN-THREADS: $1" >&2; exit 2 ;;
-  esac
-}
-
 merge_stderr_of() {
   case "$1" in
     already-queued) printf 'failed to run merge: GraphQL: Pull request Pull request is already queued to merge (enablePullRequestAutoMerge)' ;;
@@ -231,12 +167,6 @@ word() {
   case "$1" in
     checks:*) W_ENV+=("STUB_CHECKS=$(checks_of "$v")") ;;
     checks-exit:*) W_ENV+=("STUB_CHECKS_EXIT=$v") ;;
-    threads:fetch-fail) W_ENV+=("STUB_THREADS_FETCH_FAIL=true") ;;
-    threads:page2-fail) W_ENV+=("STUB_THREADS_PAGE2_JSON=[]" "STUB_THREADS_PAGE2_FETCH_FAIL=true") ;;
-    threads:page2-malformed) W_ENV+=("STUB_THREADS_PAGE2_JSON=[]" "STUB_THREADS_PAGE2_MALFORMED=true") ;;
-    threads:page2:*) W_ENV+=("STUB_THREADS_PAGE2_JSON=$(threads_of "${v#page2:}")") ;;
-    threads:large) W_ENV+=("STUB_THREADS_LARGE_PAGE=true") ;;
-    threads:*) W_ENV+=("STUB_THREADS_JSON=$(threads_of "$v")") ;;
     state:*) W_ENV+=("STUB_STATE=$v") ;;
     merged-at) W_ENV+=("STUB_MERGED_AT=2026-08-15T09:41:12Z") ;;
     pr:missing) W_ENV+=("STUB_PR_MISSING=true") ;;
@@ -259,12 +189,9 @@ word() {
     review:*) W_ENV+=("STUB_REVIEW_DECISION=$v" "STUB_REVIEW_LATEST=[]") ;;
     review-latest:*) W_ENV+=("STUB_REVIEW_LATEST=[{\"state\":\"$v\"}]") ;;
     require-token) W_ENV+=("STUB_REQUIRE_TOKEN=true") ;;
-    reply:fail) W_ENV+=("STUB_REPLY_FAIL=true") ;;
-    resolve:fail) W_ENV+=("STUB_RESOLVE_FAIL=true") ;;
-    reopen:fail) W_ENV+=("STUB_REOPEN_FAIL=true") ;;
     repo:no-auto) W_ENV+=("STUB_ALLOW_AUTO_MERGE=false") ;;
     repo:no-rule) W_ENV+=("STUB_GATE_RULES=[]") ;;
-    repo:pr-rule) W_ENV+=('STUB_GATE_RULES=[{"type":"pull_request"}]') ;;
+    approvals:*) W_ENV+=("STUB_GATE_RULES=$(jq -c --arg s "$v" '$s | split(",") | map(split("/") as [$n, $t, $d] | {type: "pull_request", parameters: ((if $n == "null" then {} else {required_approving_review_count: ($n | tonumber)} end) + (if $t == "null" then {} else {required_review_thread_resolution: ($t | fromjson)} end) + (if $d == "null" then {} else {dismiss_stale_reviews_on_push: ($d | fromjson)} end))})' <<<null)") || exit 2 ;;
     repo:classic) W_ENV+=("STUB_GATE_RULES=[]" 'STUB_CLASSIC_JSON={"protection":{"required_status_checks":{"contexts":["CI Required"],"checks":[]}}}') ;;
     required:*) W_ENV+=("STUB_GATE_RULES=$(jq -c --arg c "$(printf '%s' "$v" | tr '+' ' ')" '[{type: "required_status_checks", parameters: {required_status_checks: [{context: $c}]}}]' <<<null)") ;;
     classic:*) W_ENV+=("STUB_GATE_RULES=[]" "STUB_CLASSIC_JSON=$(jq -c --arg c "$v" '{protection: {required_status_checks: {contexts: [], checks: [{context: $c}]}}}' <<<null)") ;;
@@ -282,22 +209,8 @@ word() {
     queue:*) W_ENV+=("STUB_QUEUE_METHOD=$v") ;;
     queue-on:*) W_ENV+=("STUB_QUEUE_BRANCH=$v") ;;
     rule-methods:*) W_ENV+=("STUB_RULE_METHODS=$(printf '%s' "$v" | tr '+' ' ')") ;;
-    # An ACTIVE review-gate class policy. The value is the supported table; `-` leaves the classifier with no class to
-    # answer, which is the unreadable-policy shape.
-    class-policy:-) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS=$TRUSTED_LOGINS" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
-    class-policy:range-fail) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS=$TRUSTED_LOGINS" "STUB_POLICY_RANGE_FAIL=true") ;;
-    # A class the classifier did not measure: it names one on stdout and marks
-    # the answer a fallback, which is not a class any policy row applies to.
-    class-policy:unmeasured) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS=$TRUSTED_LOGINS" "STUB_CLASS=render" "STUB_MEASURED=false" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
-    # A base the fixture repository does not hold, and no origin to fetch it
-    # from: the range is unreadable and no class can be measured.
-    class-policy:range-absent) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS=$TRUSTED_LOGINS" "STUB_CLASS=render" "STUB_BASE_OID=$ABSENT_SHA" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$ABSENT_SHA" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
-    class-policy:*) W_ENV+=("REVIEW_GATE_CLASS_POLICY=$CLASS_POLICY" "REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS=$TRUSTED_LOGINS" "STUB_CLASS=$v" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
-    # The head moved after the class was measured: the policy read its range
-    # at the fixture head, and every later read answers this one.
-    head-moved:*) W_ENV+=("STUB_POLICY_HEAD=$RANGE_HEAD" "STUB_HEAD=$v") ;;
     # The classifier stub's queue-only line for the pull request's range.
-    route:range-fail) W_ENV+=("STUB_POLICY_RANGE_FAIL=true") ;;
+    route:range-fail) W_ENV+=("STUB_RANGE_FAIL=true") ;;
     route:fail) W_ENV+=("STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD") ;;
     route:-) W_ENV+=("STUB_CLASS=standard" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
     route:true) W_ENV+=("STUB_CLASS=standard" "STUB_QUEUE_LINE=$QUEUE_TRUE" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
@@ -325,19 +238,10 @@ build() {
 argv_for() {
   case "$1" in
     check) printf '%s\n' "$PR_MERGE" 123 --check ;;
-    # The mirrored tree, where the change classifier is the stub: a row whose
-    # verdict turns on the review gate's class policy runs here so the class
-    # is the row's own and not this repository's diff.
-    check-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --check ;;
-    auto-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --auto --keep-branch ;;
-    immediate-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --keep-branch ;;
-    expected-classified:*) printf '%s\n' "$MIRROR_PR_MERGE" 123 --auto --keep-branch --expected-head "${1#expected-classified:}" ;;
-    dry-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --auto --dry-run --keep-branch ;;
+    # The mirrored tree, where the change classifier is the stub, so the
+    # queue-only class is the row's own and not this repository's diff.
     admin-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --admin --keep-branch ;;
     admin-classless) printf '%s\n' env "PATH=$CLASSLESS_PATH" "$CLASSLESS_PR_MERGE" 123 --admin --keep-branch ;;
-    # The mirror whose review gate has no waiver rule beside its owner.
-    check-no-rule) printf '%s\n' "$NO_RULE_PR_MERGE" 123 --check ;;
-    immediate-no-rule) printf '%s\n' "$NO_RULE_PR_MERGE" 123 --keep-branch ;;
     auto) printf '%s\n' "$PR_MERGE" 123 --auto --keep-branch ;;
     immediate) printf '%s\n' "$PR_MERGE" 123 --keep-branch ;;
     with:*) printf '%s\n' "$PR_MERGE" 123; printf '%s' "${1#with:}" | tr '+' '\n'; echo ;;
@@ -350,11 +254,7 @@ argv_for() {
     force) printf '%s\n' "$PR_MERGE" 123 --force --keep-branch ;;
     admin) printf '%s\n' "$PR_MERGE" 123 --admin --keep-branch ;;
     expected:*) printf '%s\n' "$PR_MERGE" 123 --auto --keep-branch --expected-head "${1#expected:}" ;;
-    gated:*) printf '%s\n' "$PR_MERGE" 123 --auto --keep-branch --require-context "$(printf '%s' "${1#gated:}" | tr '+' ' ')" ;;
-    gated-immediate:*) printf '%s\n' "$PR_MERGE" 123 --keep-branch --require-context "$(printf '%s' "${1#gated-immediate:}" | tr '+' ' ')" ;;
-    gated-mutant:*) printf '%s\n' "$MUTANT_PR_MERGE" 123 --auto --keep-branch --require-context "$(printf '%s' "${1#gated-mutant:}" | tr '+' ' ')" ;;
-    gated-autoless:*) printf '%s\n' "$AUTOLESS_PR_MERGE" 123 --keep-branch --require-context "$(printf '%s' "${1#gated-autoless:}" | tr '+' ' ')" ;;
-    gated-unread:*) printf '%s\n' "$UNREAD_PR_MERGE" 123 --auto --keep-branch --require-context "$(printf '%s' "${1#gated-unread:}" | tr '+' ' ')" ;;
+    auto-mutant:*) printf '%s\n' "$TMPDIR/${1#auto-mutant:}/skills/github/scripts/commands/pr-merge.sh" 123 --auto --keep-branch ;;
     admin-credential) printf '%s\n' "$PR_MERGE" 123 --admin-credential --keep-branch ;;
     router-in:*) printf '%s\n' "$GITHUB" -C "$TMPDIR/settings-${1#router-in:}" pr-merge 123 --auto --keep-branch ;;
     router:*) printf '%s\n' "$GITHUB" -C "$REPO" pr-merge 123 "${1#router:}" --keep-branch ;;
@@ -365,18 +265,16 @@ argv_for() {
 # Each gh call by kind, in order. The log holds one call per `printf`, so a
 # multi-line argv (a GraphQL query) spills over several lines; only a line
 # beginning with a gh verb starts a call, the rest are its continuation and
-# are joined onto it, so a query is classified by its whole text. A thread
-# reply names its thread and the change class its body gives; a resolve names
-# its thread.
+# are joined onto it, so a query is classified by its whole text.
 calls() {
-  local line out="" kind class
+  local line out="" kind
   while IFS= read -r line; do
     case "$line" in
       "pr view 123 --json state,mergedAt"*) out="$out,view:state" ;;
       "pr view 123 --json mergeable"*) out="$out,view:mergeable" ;;
       "pr view 123 --json reviewDecision"*) out="$out,view:reviews" ;;
-      "pr view 123 --json baseRefOid,headRefOid"*) out="$out,view:policy-range" ;;
       "pr view 123 --json headRefOid"*) out="$out,view:head" ;;
+      "pr view 123 --json baseRefOid,headRefOid"*) out="$out,view:range" ;;
       "pr view 123 --json state,headRefOid"*) out="$out,view:post" ;;
       "pr checks"*) out="$out,checks" ;;
       # Each flag that changes what GitHub does with the merge is its own
@@ -392,22 +290,6 @@ calls() {
         out="$out,$kind"
         ;;
       "api graphql"*mergeQueueEntry*) out="$out,graphql:queue" ;;
-      "api graphql"*addPullRequestReviewThreadReply*)
-        kind="${line##*threadId=}"
-        kind="${kind%% *}"
-        class="?"
-        [[ ! "$line" =~ change\ class\ ([a-z]+)\ at\ ([0-9a-f]{40}), ]] || class="${BASH_REMATCH[1]}@${BASH_REMATCH[2]:0:7}"
-        out="$out,graphql:reply($kind:$class)"
-        ;;
-      "api graphql"*unresolveReviewThread*)
-        kind="${line##*threadId=}"
-        out="$out,graphql:reopen(${kind%% *})"
-        ;;
-      "api graphql"*resolveReviewThread*)
-        kind="${line##*threadId=}"
-        out="$out,graphql:resolve(${kind%% *})"
-        ;;
-      "api graphql"*) out="$out,graphql:threads" ;;
       "api user"*) out="$out,user" ;;
       "api -X DELETE repos/{owner}/{repo}/git/refs/heads/"*) out="$out,delete:${line##*/heads/}" ;;
       "auth status"*|"repo view"*|"api repos/"*|"pr view 123 --json baseRefName"*) ;;
@@ -428,16 +310,11 @@ auth() {
 }
 
 check_text() {
-  jq -r '"merge=\(.can_merge) transient=\(.transient) state=\(.state) mergeable=\(.mergeable) at=\(if .merged_at == "" then "-" else .merged_at end) runs=\(if (.head_runs | length) == 0 then "-" else (.head_runs | join(",")) end) issues=[\(.issues | join(";"))] warnings=[\(.warnings | join(";"))]"' 2>/dev/null || printf 'unparseable'
+  jq -r '"merge=\(.can_merge) transient=\(.transient) state=\(.state) mergeable=\(.mergeable) at=\(if .merged_at == "" then "-" else .merged_at end) runs=\(if (.head_runs | length) == 0 then "-" else (.head_runs | join(",")) end) issues=[\(.issues | join(";"))] warnings=[\(.warnings | join(";"))] keys=[\(keys_unsorted | join(","))]"' 2>/dev/null || printf 'unparseable'
 }
 stdout_text() {
   [[ -s "$TMPDIR/stdout" ]] || { printf -- '-'; return; }
   if [[ "$1" == check ]]; then check_text <"$TMPDIR/stdout"; return; fi
-  if [[ "$1" == check-classified || "$1" == check-no-rule ]]; then
-    printf '%s' "$(check_text <"$TMPDIR/stdout")"
-    jq -j '" waiver=" + (.thread_waiver | if . == null then "-" else "\(.class)@\(.head)[\(.threads | join(","))]" end) + " reopen=[\(.thread_reopen | join(","))]"' <"$TMPDIR/stdout" 2>/dev/null || printf ' waiver=unparseable'
-    return
-  fi
   sed 's/;/\\;/g' "$TMPDIR/stdout" | paste -s -d ';' -
 }
 err_lines() {
@@ -456,13 +333,9 @@ run() {
   # Every token name and GH_REPO come off: a row pins whole stderr lines and
   # the token each call saw, so a lane's own environment would decide them.
   # The retired merge settings come off too, so only a row's own env: word
-  # sets one. The class policy is assigned empty unless the row's W_ENV
-  # assigns it.
+  # sets one.
   (cd "$RUN_DIR" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u KENDEX_ENV_FILE \
     -u ORCH_ADMIN_MERGE_GH_CONFIG_DIR -u ORCH_ADMIN_MERGE_CLASSES -u ORCH_MERGE_BYPASS -u GH_CONFIG_DIR \
-    -u PR_REVIEW_GATE -u PR_APPROVAL_GATE -u REVIEW_GATE_MODE -u REVIEW_GATE_CONTEXT \
-    -u REVIEW_GATE_SETTINGS_FILE -u REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS \
-    -u REVIEW_GATE_THREADS REVIEW_GATE_CLASS_POLICY= \
     STUB_CALL_LOG="$CALL_LOG" STUB_AUTH_LOG="$AUTH_LOG" \
     ${W_ENV[@]+"${W_ENV[@]}"} "${argv[@]}" >"$TMPDIR/stdout" 2>"$TMPDIR/stderr") || rc=$?
   printf 'rc=%s out=%s err=%s calls=%s auth=%s' "$rc" "$(stdout_text "$1")" "$(err_lines)" "$(calls)" "$(auth)"
@@ -498,32 +371,24 @@ err_macro() {
     blocked) printf 'BLOCKED PR #123 — no merge attempted, none queued' ;;
     permanent) printf '(permanent — needs fix or review action)' ;;
     transient) printf '(transient — GitHub still computing or CI pending)' ;;
-    hint-threads) printf 'Resolve the review-thread gate and retry.' ;;
     # git's own words for a fetch in a repository with no origin, replayed
     # under this command's fixed line. Pinned here, in one place, because the
     # point of the row is that git's account survives rather than being
     # flattened into one sentence; a git that rewords this moves this macro.
     fetch-no-origin) printf "pr-merge: the pull request's range is not in this checkout and the fetch of its two commits from origin failed:;fatal: 'origin' does not appear to be a git repository;fatal: Could not read from remote repository.;Please make sure you have the correct access rights;and the repository exists." ;;
     hint-auto) printf 'Use --auto to queue for auto-merge.' ;;
-    hint-await) printf 'Hint: github.sh await-mergeable 123 && retry' ;;
     volatile) printf 'NOTE: queue/auto-merge state is VOLATILE — an ejection or a failed protection check disarms it silently\\; follow orch merge-pr.md § 5 for PR #123;Block on .agents/skills/orch/scripts/queue-wait 123 --json once, with a poll interval and budget sized as orch merge-pr.md § 5 step 1 does\\; route its verdict by that same step, and never re-arm an unrecognized verdict. The fleet reducer is .agents/skills/review-gate/scripts/pr-watch.sh with GH_REPO set to the repository (not resolvable locally here)\\; repair what the cause names before re-arming with .agents/skills/github/scripts/github.sh pr-merge 123 --auto' ;;
     merge-failed) printf 'BLOCKED PR #123 — gh pr merge failed' ;;
     no-token) printf 'Warning: GH_BOT_TOKEN not configured, using current user' ;;
     closed) printf 'CLOSED (not merged) PR #123;No merge attempted, none queued. Reopen the PR or supersede it.' ;;
-    threads:*) printf 'unresolved_threads: %s actionable thread(s) need attention' "${1#threads:}" ;;
-    fetch-failed) printf 'review_threads_fetch_failed: Failed to fetch actionable review threads from GitHub' ;;
-    malformed) printf 'review_threads_fetch_failed: GitHub returned malformed review thread data' ;;
     retired:*) printf 'The overseer'"'"'s admin merge and the ORCH_MERGE_BYPASS fast path are retired (kendex decision D003): every merge goes through the merge queue, armed with --auto.;Remove %s from kendex.settings.toml [env], .kendex/settings.toml [env], the private env file (.env.local unless KENDEX_ENV_FILE names another) and the environment, then retry.' "$(printf '%s' "${1#retired:}" | tr '+' ' ')" ;;
     admin-queue) printf 'A queue-only change runs in a merge group before it lands: arm it with --auto and wait in the queue. Nothing was merged or armed.' ;;
     admin-retired) printf 'The admin route is retired (kendex decision D003): every merge goes through the merge queue, armed with --auto. Nothing was merged or armed.' ;;
-    arm-remedy) printf 'Nothing mutated. Enable auto-merge and a required status check or review rule on the base branch.' ;;
+    auto-remedy) printf 'Nothing mutated. Enable auto-merge on the repository.' ;;
+    approval-remedy) printf "Nothing mutated. No ruleset on the base branch requires an approval, so GitHub would merge the armed PR before review\\; require at least 1 approval, thread resolution and stale-approval dismissal in its pull_request rule." ;;
+    thread-remedy) printf "Nothing mutated. No ruleset on the base branch requires thread resolution, so GitHub would merge the armed PR on its first approval past open review threads\\; require review threads resolved in its pull_request rule." ;;
+    stale-remedy) printf "Nothing mutated. No ruleset on the base branch dismisses stale approvals on push, so GitHub would merge the armed PR on an approval of an earlier head, with no review of the pushed one\\; dismiss stale approvals on push in its pull_request rule." ;;
     unverified-remedy) printf "Nothing mutated. The base branch's rules could not be read, so no merge gate is proven\\; retry once they read." ;;
-    context-remedy:*) printf "Nothing mutated. The base branch does not require '%s'\\; require it in the repository's ruleset." "$(printf '%s' "${1#context-remedy:}" | tr '+' ' ')" ;;
-    waived:*) printf "unresolved_threads_waived: %s review-bot thread(s) open, waived by the review gate's class policy for this change, and the merge route resolves them before it arms" "${1#waived:}" ;;
-    # resolved:<thread>:<class>
-    resolved:*) printf 'RESOLVED THREAD %s — change class %s, review evidence none' "$(printf '%s' "$1" | cut -d: -f2)" "$(printf '%s' "$1" | cut -d: -f3)" ;;
-    unreadable) printf "review_policy_unreadable: The review gate's class policy could not be resolved for this pull request" ;;
-    reopened:*) printf 'REOPENED THREAD %s — the waiver that resolved it no longer covers this pull request' "${1#reopened:}" ;;
     *) printf 'UNKNOWN-MACRO:%s' "$1" ;;
   esac
 }
@@ -559,18 +424,13 @@ run_table() {
   [[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 }
 
-# The calls a --check makes on an open PR, and a merge's calls before the mutation.
-CHECK="view:state,view:mergeable,checks,graphql:threads,view:reviews"
-# The supported class policy, the one value the review-gate README documents.
-CLASS_POLICY="render:none;trivial:none;micro:none;small:bot;standard:current"
-# The review gate's trusted logins beside it: two review bots and a person, so
-# --review-bots names the bots and drops the person.
-TRUSTED_LOGINS="copilot-pull-request-reviewer[bot];review-bot[bot];bmethod"
-# Its extra call: with a thread open, an active policy reads the pull request's
-# own endpoints once. A clean PR asks nothing and the trace is unchanged.
-CHECK_POLICY="view:state,view:mergeable,checks,graphql:threads,view:policy-range,view:reviews"
-PRE="view:state,view:mergeable,checks,graphql:threads,view:reviews,view:head"
+# The calls a --check makes on an open PR, and a merge's calls before the
+# mutation: no review-thread read among them.
+CHECK="view:state,view:mergeable,checks,view:reviews"
+PRE="view:state,view:mergeable,checks,view:reviews,view:head"
 OPEN="state=OPEN mergeable=MERGEABLE at=-"
+# The readiness JSON's keys, in order: no thread term among them.
+KEYS="keys=[can_merge,issues,warnings,mergeable,review,transient,state,merged_at,head_runs,checks,required_contexts]"
 # The classifier's queue-only lines, as harness-ci's change-class prints them.
 QUEUE_TRUE="queue_only=true cause=queue-path path=.github/workflows/ci.yml glob=.github/workflows/*"
 QUEUE_FALSE="queue_only=false cause=no-queue-path"

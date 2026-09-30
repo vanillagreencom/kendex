@@ -52,9 +52,17 @@ Lane side, rooted at the lane's own git worktree:
               the exception, and hands answers over too, because an overseer
               runs its watch rather than blocking in `wait`. With --peek, print
               the header below, then every such envelope after to-lane.cursor,
-              moving no cursor. With --ack N, print nothing and advance
-              to-lane.cursor to N, the count a --peek printed, never back and
-              never past an unread halt
+              moving no cursor but one already past the complete lines
+              present, which comes down to them. With --ack N, print nothing
+              and advance to-lane.cursor to N, the count a --peek printed,
+              never back, never past an unread halt and never past the
+              complete lines present: an N past them acknowledges that line
+              count, or the line before an unread halt, and prints
+              `lane-mail: ack-clamped=<count acknowledged> asked=<N>` on
+              stderr, so a line written later stays unread; a cursor already
+              past the lines present comes down to the count acknowledged.
+              A lowering by --peek or --ack prints
+              `lane-mail: cursor-lowered=<count> was=<cursor>` on stderr
   watch --item ITEM [--root ROOT] [--interval S] [--once]
               the lane's standing mailbox monitor, run under its harness's
               background wake. Every --interval, when envelopes `inbox` would
@@ -218,7 +226,8 @@ Options:
                 whose path it is
   --host        read and write through `lane-host`, not this disk
   --after N     drain only: the read cursor, the count a previous drain printed
-  --peek        inbox only: read to-lane.cursor and leave it where it is
+  --peek        inbox only: read to-lane.cursor and leave it where it is,
+                unless it stands past the complete lines present
   --ack N       inbox only: the count a --peek printed, acknowledged once its
                 envelopes were handed over
   --halt        send only: a directive that halts the lane, as above
@@ -406,6 +415,8 @@ fix=run `oversee register` from the orch skill in the session that should read t
     resolved-already) text='This ask is already resolved by the answer named above, and an ask resolves exactly once. Deliver later text for it as a directive with `send --item overseer --directive`.' ;;
     delivery-repeated) text='An envelope carrying this delivery id already stands in the mailbox, named by id= above: this send is a retry of a delivery that landed, so nothing is appended. Record that id against the delivery and go on.' ;;
     overseer-only) text='resolve closes an owner ask in the overseer mailbox alone. A lane ask is answered with `send --item ITEM --re MSGID`.' ;;
+    cursor-lowered) text='to-lane.cursor stood past the complete lines the mailbox holds, a count an --ack wrote before it was clamped, so it moved down to the count above. Every line up to that count stays read, and every line after it, the next line written included, is handed over.' ;;
+    ack-clamped) text='The --ack count is past the complete lines the mailbox holds, so the count acknowledged is the one above: those lines, or fewer where an unread halt stands among them. A line written later stays unread for the next read.' ;;
     duplicate) sep=' id='; text='This envelope was sent to this item less than a minute ago: every field of it but its own id and its stamp matches the envelope the id above names, so the send is a retry of a delivery that already landed rather than a second message. Change any field of the message, or wait out the minute, to send it again.' ;;
     *) printf 'lane-mail: message-invalid key=%s\n' "$1" >&2; return 2 ;;
   esac
@@ -1256,8 +1267,8 @@ lm_inbox_objects() { # FILE
 }
 
 # Replaced by rename, so a reader never meets a half-written count.
-# lm_cursor_put answers with its status alone, for the one caller that must
-# not refuse; lm_cursor_write refuses where it fails.
+# lm_cursor_put answers with its status alone, for the --peek reads, which
+# must not refuse; lm_cursor_write refuses where it fails.
 lm_cursor_put() { # COUNT
   printf '%s\n' "$1" >"$WORK_DIR/cursor" && mv -- "$WORK_DIR/cursor" "$CURSOR"
 }
@@ -1538,24 +1549,47 @@ case "$VERB" in
         lm_cursor_put 0 2>/dev/null || { : >>"$CURSOR"; } 2>/dev/null || :
       fi
     fi
+    # One snapshot of the mailbox and its complete-line count, which the
+    # --ack branch and the read below both take the cursor from.
+    lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
+    lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
+    COUNT="$(lm_count "$WORK_DIR/lane.jsonl")"
     if [ -n "$ACK" ]; then
+      # The count stops at the complete lines present: a cursor past them
+      # marks read a line not yet written, which no watch then announces and
+      # no inbox then prints.
+      ASKED="$ACK"
+      [ "$ACK" -le "$COUNT" ] || ACK="$COUNT"
       # A halt stands until a plain read: the count stops at the line before
       # the first unread halt, whatever a hook that showed it acknowledges.
-      lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
-      lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
       jq -r -R '(fromjson? // null) | if type == "object" and .halt == true then "halt" else "-" end' \
         <"$WORK_DIR/lane.jsonl" >"$WORK_DIR/kinds" || refuse file-unreadable "$TO_LANE"
       HALT_AT="$(awk -v seen="$SEEN" 'NR > seen && $0 == "halt" { print NR - 1; exit }' <"$WORK_DIR/kinds")" ||
         refuse file-unreadable "$TO_LANE"
       [ -z "$HALT_AT" ] || [ "$ACK" -le "$HALT_AT" ] || ACK="$HALT_AT"
-      # Forward only: a Stop hook that peeked before a workflow wait point
-      # handed more over acknowledges a count the cursor has already passed.
-      [ "$ACK" -le "$SEEN" ] || lm_cursor_write "$ACK"
+      [ "$ASKED" -le "$COUNT" ] || lm_notice ack-clamped "$ACK" "asked=$ASKED"
+      if [ "$SEEN" -gt "$COUNT" ]; then
+        # A cursor still past the lines present, one an --ack wrote before the
+        # clamp above that no peek could lower, comes down to the count acknowledged, never to the
+        # line count: a line that landed after the peek this count came from
+        # is not one the lane was shown.
+        lm_notice cursor-lowered "$ACK" "was=$SEEN"
+      elif [ "$ACK" -le "$SEEN" ]; then
+        # Forward only: a Stop hook that peeked before a workflow wait point
+        # handed more over acknowledges a count the cursor has already passed.
+        exit 0
+      fi
+      lm_cursor_write "$ACK"
       exit 0
     fi
-    lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
-    lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
-    COUNT="$(lm_count "$WORK_DIR/lane.jsonl")"
+    # A peek brings a cursor already past the lines present down to them, as a
+    # plain read does: the hooks --ack only after a peek that printed a line,
+    # and a peek over such a cursor prints none, so no --ack would ever lower
+    # it and the next line written would be marked read. Like the first-read
+    # 0 above, a write that cannot land never refuses the peek.
+    if [ "$PEEK" -eq 1 ] && [ "$SEEN" -gt "$COUNT" ] && lm_cursor_put "$COUNT" 2>/dev/null; then
+      lm_notice cursor-lowered "$COUNT" "was=$SEEN"
+    fi
     [ "$PEEK" -eq 0 ] || lm_header "$WORK_DIR/lane.jsonl"
     awk -v seen="$SEEN" 'NR > seen' <"$WORK_DIR/lane.jsonl" >"$WORK_DIR/unread"
     lm_inbox_objects "$WORK_DIR/unread"

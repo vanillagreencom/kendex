@@ -34,7 +34,7 @@ a pull request into main does not take develop's queue|$DONE base:main queue-on:
 
 run_table "what --dry-run and --check read" "\
 --dry-run names the method a merge-only repository allows|$DONE methods:merge|with:--dry-run|0|Would merge PR #123 (--merge, mode=immediate, delete_branch=false, token=not configured)|-|calls=$CHECK auth=<unset>
---check never reads the method, so a repository allowing none still reports readiness|$DONE methods:-|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[]|mergeable;head-run: none|calls=$CHECK auth=<unset>
+--check never reads the method, so a repository allowing none still reports readiness|$DONE methods:-|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[] $KEYS|mergeable;head-run: none|calls=$CHECK auth=<unset>
 "
 
 run_table "the head branch after a merge" "\

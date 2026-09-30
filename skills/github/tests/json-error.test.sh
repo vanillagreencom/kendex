@@ -52,8 +52,8 @@ git -C "$TMP_ROOT/repo" config maintenance.auto false
 . "$TEST_DIR/lib/gh-stub.sh"
 GH_STUB_DIR="$TMP_ROOT/gh-stub" gh_stub_install "$TMP_ROOT/bin"
 
-# A PR lookup that finds nothing: the answer both the branch-name resolver and
-# await-mergeable's existence check refuse on.
+# A PR lookup that finds nothing: the answer the branch-name resolver refuses
+# on.
 gh_stub_fail pr-view 1 'no pull requests found'
 
 MISSING="$TMP_ROOT/no\"such\\file"
@@ -69,7 +69,6 @@ find-comment surplus positional^-^find-comment^Unexpected argument: no\"^23^no\"
 resolve-thread malformed thread id^-^resolve-thread^Invalid thread ID: no\" (must start with PRRT_)^no\"
 unresolve-thread malformed thread id^-^unresolve-thread^Invalid thread ID: no\" (must start with PRRT_)^no\"
 dismiss-review unknown argument^-^dismiss-review^Unknown argument: no\"^no\"
-await-mergeable missing PR^-^await-mergeable^PR #1\" not found^1\"
 pr-data unknown option^-^pr-data^Unknown option: --no\"^--no\"
 pr-data surplus positional^-^pr-data^Unexpected argument: no\"^23^no\"
 pr-data unknown format^-^pr-data^Invalid format: no\". Use: safe, raw^--format^no\"

@@ -32,10 +32,10 @@ On any `gh` or `github.sh` failure, report the error. `auto-recommended` retries
 Triage what exists on the PR **right now** — never block on a bot reaching a terminal state. Bot prose is never a gate: emoji reactions, sticky comments, and checklist text carry no gating weight.
 
 ```bash
-.agents/skills/github/scripts/github.sh pr-data "[PR_NUMBER]" --actionable
+.agents/skills/github/scripts/github.sh pr-data "[PR_NUMBER]"
 ```
 
-The JSON carries `threads` (inline) and `comments` (PR-level).
+The JSON carries `threads` (inline) and `comments` (PR-level). It is read without `--actionable`, which drops outdated threads: [submit-pr.md](submit-pr.md) § 3 and [thread-read.md](../references/thread-read.md) count them with `pr-threads --unresolved`, so each one needs a reply and a resolve here.
 
 **Baseline for re-runs.** Find this session's own prior summary comment and use its `updated_at` as `SUMMARY_TS`:
 
@@ -44,7 +44,7 @@ gh api user -q .login
 .agents/skills/github/scripts/github.sh find-comment [PR_NUMBER] --pattern "Recommendations.*Processed" --author "[GH_USER_FROM_PREVIOUS_COMMAND]"
 ```
 
-**Filter.** Exclude noise bots (`dependabot[bot]`, `github-actions[bot]`, `renovate[bot]`, tracker sync bots) from both sources, plus anything created before `SUMMARY_TS` on a re-run. Exclude resolved and outdated review threads, and PR-level status updates with no actionable content. Keep every reviewer comment — human or bot — with actionable content on an unresolved, current thread.
+**Filter.** From PR-level `comments`, exclude noise bots (`dependabot`, `github-actions`, `renovate`, `codecov`, tracker sync bots; a match ignores a trailing `[bot]`, which pr-data's logins lack), anything created before `SUMMARY_TS` on a re-run, and status updates with no actionable content. From `threads`, exclude resolved threads only: every unresolved inline thread, whatever its author and outdated ones included, gets a § 6.3 reply and resolve, and a noise-bot thread gets `Declined: [REASON]`. Keep every reviewer comment — human or bot — on such a thread.
 
 **Bot review summaries.** Derive bot logins from the authors present in the data (anything ending in `[bot]`) and fetch each one's summary comment, one command per bot with the literal login:
 

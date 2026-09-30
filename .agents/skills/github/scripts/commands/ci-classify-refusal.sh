@@ -9,8 +9,8 @@
 #
 # Output (stdout, one item per line):
 #   cause: <word>          primary cause — fetch_error | merge_conflict |
-#                          changes_requested | threads | ci_failed |
-#                          ci_pending | computing | merged | closed | none.
+#                          changes_requested | ci_failed | ci_pending |
+#                          computing | merged | closed | none.
 #                          An issue prefix outside that vocabulary becomes
 #                          the cause word itself, so a new pr-merge prefix
 #                          names itself instead of reading as all-clear
@@ -123,10 +123,9 @@ fi
 cause=$(jq -r '
     def matched(re): any(.issues[]?; test(re));
     if (.issues // [] | length) == 0 then "none"
-    elif matched("^(not_found|gh_error|ci_fetch_failed|review_threads_fetch_failed|review_fetch_failed):") then "fetch_error"
+    elif matched("^(not_found|gh_error|ci_fetch_failed|review_fetch_failed):") then "fetch_error"
     elif matched("^conflicts:") then "merge_conflict"
     elif matched("^changes_requested:") then "changes_requested"
-    elif matched("^unresolved_threads:") then "threads"
     elif matched("^ci_failed:") then "ci_failed"
     elif matched("^ci_pending:") then "ci_pending"
     elif matched("^unknown:") then "computing"

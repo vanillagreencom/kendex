@@ -7,17 +7,16 @@
 # and STUB_STATE_FAIL_ONCE, a marker path the first lookup of a run creates;
 # the branch-rule reads' failures through STUB_RULES_EXIT and
 # STUB_BRANCH_EXIT). STUB_POST_GRAPHQL_PARTIAL makes the post-merge read a
-# GraphQL 200 carrying an errors array beside data, STUB_POST_VIEW_FAIL fails
-# its pr-view fallback, and STUB_BASE_OID is the base end of the class-policy
-# range, whose head end is STUB_POLICY_HEAD where set, else STUB_HEAD. STUB_REVIEW_DECISION and STUB_REVIEW_LATEST are the readiness check's
-# reviewDecision and latestReviews. STUB_REPLY_FAIL and STUB_RESOLVE_FAIL
-# make the review-thread reply and resolve mutations answer a GraphQL error,
-# STUB_REOPEN_FAIL the unresolve mutation,
-# and STUB_REQUIRE_TOKEN refuses either without the bot token. The
-# repository read answers STUB_MERGE_METHODS, STUB_DELETE_BRANCH_ON_MERGE,
-# STUB_DEFAULT_BRANCH and STUB_REPO_PUSHLESS, or fails on STUB_REPO_EXIT; the
-# branch-rule read adds STUB_QUEUE_METHOD's queue on STUB_QUEUE_BRANCH and
-# STUB_RULE_METHODS's pull_request rule; STUB_NO_REPO fails `repo view`.
+# GraphQL 200 carrying an errors array beside data, and STUB_POST_VIEW_FAIL
+# fails its pr-view fallback. STUB_BASE_OID is the base end of the pull
+# request's range, whose head end is STUB_HEAD, and STUB_RANGE_FAIL fails that
+# read. STUB_REVIEW_DECISION and STUB_REVIEW_LATEST are the readiness check's
+# reviewDecision and latestReviews, and STUB_REQUIRE_TOKEN refuses a
+# merge-path call without the bot token. The repository read answers
+# STUB_MERGE_METHODS, STUB_DELETE_BRANCH_ON_MERGE, STUB_DEFAULT_BRANCH and
+# STUB_REPO_PUSHLESS, or fails on STUB_REPO_EXIT; the branch-rule read adds
+# STUB_QUEUE_METHOD's queue on STUB_QUEUE_BRANCH and STUB_RULE_METHODS's
+# pull_request rule; STUB_NO_REPO fails `repo view`.
 # Sourced, never run — CI's suite glob picks up skills/*/tests/*.sh only, so
 # this file lives one level down.
 #
@@ -96,12 +95,13 @@ case "${1:-}" in
         fi
         ;;
     api)
-        # The branch-rule reads: the arming gate's presence check and the
+        # The branch-rule reads: the arming gate's approval count and the
         # required-context read share these endpoints, so both fixtures serve
-        # the caller's own --jq. The default world has auto-merge and a
-        # ruleset check requiring no named context.
+        # the caller's own --jq. The default world has auto-merge, a ruleset
+        # check requiring no named context, and a pull_request rule requiring
+        # 1 approval, thread resolution and stale-approval dismissal.
         # A slash after branches/ is an unencoded branch name: no answer.
-        rules='[{"type":"required_status_checks"}]'
+        rules='[{"type":"required_status_checks"},{"type":"pull_request","parameters":{"required_approving_review_count":1,"required_review_thread_resolution":true,"dismiss_stale_reviews_on_push":true}}]'
         [[ -z "${STUB_GATE_RULES:-}" ]] || rules="$STUB_GATE_RULES"
         classic='{"protection":{"required_status_checks":{"contexts":[],"checks":[]}}}'
         [[ -z "${STUB_CLASSIC_JSON:-}" ]] || classic="$STUB_CLASSIC_JSON"
@@ -164,14 +164,14 @@ case "${1:-}" in
                 jq -r "$jq_filter" <<<"$rules"
                 exit 0
                 ;;
-            # The gate's presence check filters with --jq; the required-context
-            # read takes the whole branch object and filters in-shell.
+            # The required-context read takes the whole branch object and
+            # filters in-shell.
             'repos/{owner}/{repo}/branches/'*)
                 if [[ "${STUB_BRANCH_EXIT:-0}" != "0" ]]; then
                     echo "gh: Not Found (HTTP 404)" >&2
                     exit "$STUB_BRANCH_EXIT"
                 fi
-                if [[ -n "$jq_filter" ]]; then jq -r "$jq_filter" <<<"$classic"; else printf '%s\n' "$classic"; fi
+                printf '%s\n' "$classic"
                 exit 0
                 ;;
         esac
@@ -209,75 +209,6 @@ case "${1:-}" in
                     '{data:{repository:{pullRequest:({state:$state,headRefOid:$head,headRefName:$branch,mergeCommit:(if $commit == "" then null else {oid:$commit} end),autoMergeRequest:$auto,isInMergeQueue:$in_queue,mergeQueueEntry:$queue_entry} + (if $asked then {isCrossRepository:$cross} else {} end))}}}'
                 exit 0
             fi
-            # The thread mutations post-reply.sh and resolve-thread.sh send.
-            if [[ "$*" == *unresolveReviewThread* ]]; then
-                if [[ "${STUB_REOPEN_FAIL:-false}" == "true" ]]; then
-                    echo '{"errors":[{"message":"reopen refused"}]}'
-                    exit 1
-                fi
-                echo '{"data":{"unresolveReviewThread":{"thread":{"id":"PRRT_x","isResolved":false}}}}'
-                exit 0
-            fi
-            if [[ "$*" == *addPullRequestReviewThreadReply* || "$*" == *resolveReviewThread* ]]; then
-                if [[ "${STUB_REQUIRE_TOKEN:-false}" == "true" && "${GH_TOKEN:-}" != "ghp_test_token" ]]; then
-                    echo "missing effective token for thread mutation" >&2
-                    exit 45
-                fi
-                if [[ "$*" == *addPullRequestReviewThreadReply* ]]; then
-                    if [[ "${STUB_REPLY_FAIL:-false}" == "true" ]]; then
-                        echo '{"errors":[{"message":"reply refused"}]}'
-                        exit 1
-                    fi
-                    echo '{"data":{"addPullRequestReviewThreadReply":{"comment":{"id":"C_1","url":"https://github.com/owner/repo/pull/123#discussion_r1"}}}}'
-                    exit 0
-                fi
-                if [[ "${STUB_RESOLVE_FAIL:-false}" == "true" ]]; then
-                    echo '{"errors":[{"message":"resolve refused"}]}'
-                    exit 1
-                fi
-                echo '{"data":{"resolveReviewThread":{"thread":{"id":"PRRT_x","isResolved":true}}}}'
-                exit 0
-            fi
-            if [[ "${STUB_THREADS_FETCH_FAIL:-false}" == "true" ]]; then
-                echo '{"errors":[{"message":"review threads unavailable"}]}'
-                exit 1
-            fi
-            if [[ "${STUB_THREADS_LARGE_PAGE:-false}" == "true" ]]; then
-                jq -cn '{data:{repository:{pullRequest:{reviewThreads:{
-                    nodes: [range(0; 40) | {
-                        id: ("PRRT_large_" + tostring),
-                        isResolved: true,
-                        isOutdated: false,
-                        path: "src/large-page.rs",
-                        line: .,
-                        comments: {nodes: [{author: {login: "reviewer"}, body: ("x" * 65536)}]}
-                    }],
-                    pageInfo:{hasNextPage:false,endCursor:null}
-                }}}}}'
-                exit 0
-            fi
-            if [[ "$*" == *"cursor=cursor-page-2"* ]]; then
-                if [[ "${STUB_THREADS_PAGE2_FETCH_FAIL:-false}" == "true" ]]; then
-                    echo '{"errors":[{"message":"second review thread page unavailable"}]}'
-                    exit 1
-                fi
-                if [[ "${STUB_THREADS_PAGE2_MALFORMED:-false}" == "true" ]]; then
-                    jq -cn --argjson nodes "${STUB_THREADS_PAGE2_JSON:-[]}" \
-                        '{data:{repository:{pullRequest:{reviewThreads:{nodes:$nodes,pageInfo:{hasNextPage:true,endCursor:null}}}}}}'
-                    exit 0
-                fi
-                jq -cn --argjson nodes "${STUB_THREADS_PAGE2_JSON:-[]}" \
-                    '{data:{repository:{pullRequest:{reviewThreads:{nodes:$nodes,pageInfo:{hasNextPage:false,endCursor:null}}}}}}'
-                exit 0
-            fi
-            if [[ -n "${STUB_THREADS_PAGE2_JSON:-}" ]]; then
-                jq -cn --argjson nodes "${STUB_THREADS_JSON:-[]}" \
-                    '{data:{repository:{pullRequest:{reviewThreads:{nodes:$nodes,pageInfo:{hasNextPage:true,endCursor:"cursor-page-2"}}}}}}'
-            else
-                jq -cn --argjson nodes "${STUB_THREADS_JSON:-[]}" \
-                    '{data:{repository:{pullRequest:{reviewThreads:{nodes:$nodes,pageInfo:{hasNextPage:false,endCursor:null}}}}}}'
-            fi
-            exit 0
         fi
         ;;
     pr)
@@ -311,15 +242,15 @@ case "${1:-}" in
                         '{state:$state,mergedAt:(if $merged_at == "" then null else $merged_at end)}'
                     exit 0
                 fi
-                # The review gate's class-policy range, read only where a
-                # class policy is active. Matched before the headRefOid
-                # handler, whose pattern this one contains.
+                # The pull request's range, read only by --admin. Matched
+                # before the headRefOid handler, whose pattern this one
+                # contains.
                 if [[ "$*" == *"--json baseRefOid,headRefOid"* ]]; then
-                    if [[ "${STUB_POLICY_RANGE_FAIL:-false}" == "true" ]]; then
+                    if [[ "${STUB_RANGE_FAIL:-false}" == "true" ]]; then
                         echo "could not read the pull request endpoints" >&2
                         exit 1
                     fi
-                    jq -cn --arg b "${STUB_BASE_OID-base-oid}" --arg h "${STUB_POLICY_HEAD:-${STUB_HEAD:-test-head}}" \
+                    jq -cn --arg b "${STUB_BASE_OID-base-oid}" --arg h "${STUB_HEAD:-test-head}" \
                         '{baseRefOid:(if $b == "" then null else $b end),headRefOid:$h}'
                     exit 0
                 fi

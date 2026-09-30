@@ -145,6 +145,10 @@ case "${1:-}" in
     # A connection whose host has not answered yet: a screen ending in a full
     # stop, which carries no prompt character.
     if [[ "$state" == ssh && -n "${OT_SSH_CONNECTS_ON:-}" && "$connections" -lt "$OT_SSH_CONNECTS_ON" ]]; then printf 'Connecting to lane.example...\n'
+    # $OT_HARNESS_SCREEN names a file holding the screen a hosted harness
+    # draws once the remote command, opened by the stub host's remote prefix,
+    # is typed into the connected session.
+    elif [[ "$state" == ssh && -n "${OT_HARNESS_SCREEN:-}" ]] && grep -q '^exec bash -lc ' "$OT_TMUX_LOG"; then cat "$OT_HARNESS_SCREEN"
     # With a gate named, the pane shows nothing a launch check accepts until
     # that file exists: a row can then hold "launched" back until the wrapper
     # has handed the account over, which is the order the real thing has.

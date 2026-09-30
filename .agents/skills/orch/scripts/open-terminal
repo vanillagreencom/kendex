@@ -234,11 +234,6 @@ fi
 # copy again.
 HOST_RELAUNCH=false
 [[ "$LANE_HOST" == local || "$RELAUNCH" != true ]] || HOST_RELAUNCH=true
-# A hosted codex relaunch resumes with no continuation line (`codex resume`
-# refuses a prompt beside --last), which resume-lineless tells the caller, and
-# which keeps that relaunch off the background hand-off whose output is a log.
-RESUME_LINELESS=false
-[[ "$HOST_RELAUNCH" != true || "$HARNESS" != codex ]] || RESUME_LINELESS=true
 # How lane_record_write treats an entry that already names the item.
 RECORD_MODE=launch
 [[ "$RELAUNCH" != true ]] || RECORD_MODE=relaunch
@@ -305,19 +300,22 @@ fi
 # Each bound is validated wherever a tmux launch will READ it, and nowhere
 # else: a broken tmux-only setting must not abort a launch that never consults
 # it. The readers of ORCH_TMUX_VERIFY_SECS, and what reaches each:
-#   the brief waits    a claude launch with no --cmd and no resumed session,
-#                      hosted or local, which is the one hosted shape that
-#                      reads this setting at all
-#   tmux_wait_harness  the premise ahead of the account read, so whatever
-#                      lane_account_ok reaches and nothing else
+#   the brief waits    a claude launch with no --cmd, no resumed session and
+#                      no resume-or-fresh relaunch route, hosted or local
+#   tmux_wait_harness  two callers: the premise ahead of the account read,
+#                      so whatever lane_account_ok reaches, and the
+#                      harness-screen wait of a resume-or-fresh relaunch, a
+#                      hosted claude relaunch with no --cmd
 #   lane_account_ok    a local claude, codex or copilot lane with a --lane and
 #                      no --cmd
-# Neither of the last two is reachable on a hosted lane: LANE_FORM stays
-# `unchecked` outside the local branch, which is what lane_account_readable
-# answers on, so a hosted codex lane, a hosted --cmd lane and a hosted relaunch
-# read this setting nowhere. The brief's condition here is the launch loop's
-# own, minus its session-file term, which a hosted lane never fills: a hosted
-# relaunch resumes on its host and this machine's session store is not scanned.
+# The account read and its premise are not reachable on a hosted lane: LANE_FORM
+# stays `unchecked` outside the local branch, which is what
+# lane_account_readable answers on, so a hosted codex lane and a hosted --cmd
+# lane read this setting nowhere. A hosted claude lane with no --cmd reads it
+# on one of the other two: the brief waits where the launch carries a brief,
+# the resume-or-fresh wait where it does not. The session-file term of the
+# brief's condition is never filled on a hosted lane: its sessions are on its
+# host and this machine's session store is not scanned.
 #
 # ORCH_LANE_SSH_PROMPT_SECS is read by tmux_wait_remote_prompt and
 # tmux_wait_ssh_gone, which every hosted lane reaches whatever its harness and
@@ -338,7 +336,7 @@ SSH_PROMPT_IS_READ=false
 if [[ "$TERMINAL_MODE" == "tmux" && "$WAKE" != true ]]; then
   if [[ "$LANE_HOST" != local ]]; then
     SSH_PROMPT_IS_READ=true
-    [[ -n "$CMD_TEMPLATE" || "$HARNESS" != claude || "$HOST_RELAUNCH" == true ]] || TIMEOUT_IS_READ=true
+    [[ -n "$CMD_TEMPLATE" || "$HARNESS" != claude ]] || TIMEOUT_IS_READ=true
   elif [[ -z "$CMD_TEMPLATE" ]]; then
     case "$HARNESS" in
       claude) TIMEOUT_IS_READ=true ;;
@@ -650,6 +648,9 @@ CLAIM_WRITE_FAILED=false
 # handed to a background job records with it; both empty for any other launch.
 LAUNCH_PANE=""
 LAUNCH_PREPARE=""
+# The pane of a launch whose open_tmux failed after its window opened, which
+# launch_finish sets on that failure alone; empty for every other outcome.
+UNTAKEN_PANE=""
 
 # One home for what a lane value may not contain, applied to the lane resolved
 # up front AND to every one a batch re-picks. Prints the reason and returns 0
@@ -1113,7 +1114,10 @@ UNPARK_JQ='def unpark($at): (if .parked.at == null then .
 # every field of an entry that already names the item; a relaunch rewrites
 # what a relaunch can change (a lane moved to another account, host or window)
 # and keeps launched_at, the fleet start the watch is given as --since, and
-# over_cap, the exception its launch was admitted on; a wake
+# over_cap, the exception its launch was admitted on. A relaunch that records
+# the lane preparing or stopped has not taken, so it also keeps harness, model,
+# account and session_id as the last launch that took wrote them: the next
+# relaunch's route is judged on them. A wake
 # rewrites the session it resumed and nothing else, and an item no entry names
 # is refused with status 2, since a lane this launcher never launched has no
 # record to rewrite. A launch created the state on the first item, before its
@@ -1159,7 +1163,8 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
   # that names no entry leaves the state as it was and reports so.
   report="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update-report oversee \
     "$UNPARK_JQ"'(.lanes // []) as $l
-     | ($rec | if $mode == "wake" then {session_id, status} elif $mode == "relaunch" then del(.launched_at, .over_cap) else . end) as $patch
+     | ($rec | if $mode == "wake" then {session_id, status} elif $mode == "relaunch" then del(.launched_at, .over_cap)
+       | if .status == "running" then . else del(.harness, .model, .account, .session_id) end else . end) as $patch
      | if any($l[]; .item == $rec.item)
        then {state: (.lanes = ($l | map(if .item == $rec.item then (if $mode == "wake" then . else del(.prepare) | unpark($rec.launched_at) end) + $patch else . end))), report: "rewritten"}
        elif $mode == "wake" then {state: ., report: "unrecorded"}
@@ -1167,21 +1172,28 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
   [[ "$report" != '"unrecorded"' ]] || return 2
 }
 
-# Whether the fleet state records the item parked: its sandbox stopped by
-# lane-close --park with its disk kept. Status 0 for a parked record, 1 for any
-# other record or none, 2 for a state that could not be read, which is neither
-# answer and is reported: a launch that read it as "not parked" would create
-# onto a stopped sandbox. `get` takes a path and no binding, so the id is
-# interpolated; it passed the launcher's id validation above, whose grammar
-# admits no quote.
-lane_record_parked() { # WT_ID
-  local answer
-  if ! answer="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee \
-      '[.lanes[]? | objects | select(.item == "'"$1"'") | .status] | first // "absent"')"; then
+# The FIELD the fleet state records for the item into LANE_RECORD_VALUE,
+# `absent` where no record or no value names it. Status 2 for a state that
+# could not be read, which is no answer and is reported: a launch that read it
+# as absent would act on a record it never saw. `get` takes a path and no
+# binding, so the id is interpolated; it passed the launcher's id validation
+# above, whose grammar admits no quote.
+LANE_RECORD_VALUE=
+lane_record_read() { # WT_ID FIELD
+  if ! LANE_RECORD_VALUE="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee \
+      '[.lanes[]? | objects | select(.item == "'"$1"'") | .'"$2"'] | first // "absent"')"; then
     ot_message state-read-failed "item=$1" >&2
     return 2
   fi
-  [[ "$answer" == parked ]]
+}
+
+# Whether the fleet state records the item parked: its sandbox stopped by
+# lane-close --park with its disk kept. Status 0 for a parked record, 1 for any
+# other record or none, 2 for a state that could not be read: a launch that
+# read it as "not parked" would create onto a stopped sandbox.
+lane_record_parked() { # WT_ID
+  lane_record_read "$1" status || return 2
+  [[ "$LANE_RECORD_VALUE" == parked ]]
 }
 
 # Ask the worktree tool whether the item's pull request landed, printing the
@@ -1310,8 +1322,18 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
   # hosted codex resume is promptless. The launch loop reports that as
   # resume-lineless, and the line reaches the lane the way a walled lane's
   # nudge does: pasted into the pane the hosted launch typed its ssh into.
-  if [[ "$HOST_RELAUNCH" == true ]]; then
-    case "$HARNESS" in claude) printf 'claude %s--continue%s\n' "$flags" "$line"; return ;;
+  #
+  # A relaunch_route verdict of fresh skips this block for the start brief
+  # below. The claude arm is resume-or-fresh: where claude answers "No
+  # conversation found to continue", which Claude Code 2.1.284 prints through
+  # its exitWithError path, process.exit(1), the start brief runs in the same
+  # call. Only status 1 falls through: a lane ended by a signal, lane-close's
+  # stop among them, must not start afresh behind the stop.
+  if [[ "$HOST_RELAUNCH" == true && "$RELAUNCH_ROUTE" != fresh ]]; then
+    case "$HARNESS" in claude)
+      local fresh
+      fresh="$(RELAUNCH_ROUTE=fresh start_cmd "$item" "$mail_id" "$repo")" || return 1
+      printf 'claude %s--continue%s || [ $? -ne 1 ] || exec %s\n' "$flags" "$line" "$fresh"; return ;;
       codex) printf 'codex %sresume --last\n' "$flags"; return ;;
       pi) printf 'pi %s-c%s\n' "$flags" "$line"; return ;; esac
   fi
@@ -1576,16 +1598,23 @@ tmux_wait_composer() { # PANE TITLE BRIEF EXPECT
 # keeping the premise inside the brief check left those two reading the pane
 # the instant after the keystrokes.
 #
-# BEST EFFORT, never a verdict: no harness screen inside the bound is not a
-# refusal, the read still happens, and the caller says on both lines that it was
-# taken without the premise. A pane drawing a screen this predicate does not
-# know stalls here for the whole bound, which is the cost of not refusing it.
-tmux_wait_harness() { # PANE
-  local pane="$1" waited=0 screen
+# Two callers read the answer differently. As the premise ahead of the account
+# read it is BEST EFFORT, never a verdict: no harness screen inside the bound is
+# not a refusal, the read still happens, and the caller says on both lines that
+# it was taken without the premise. The resume-or-fresh relaunch in open_tmux
+# treats the same answer as a refusal: the lane is not launched. A pane drawing
+# a screen this predicate does not know stalls here for the whole bound, which
+# is the cost of reading only screens it knows.
+#
+# SECONDS is the bound, ORCH_TMUX_VERIFY_SECS where none is given. Status 0 for
+# a harness screen, 1 for none inside the bound, 2 for a pane this machine
+# could not read, which is a local tmux failure and no answer about the pane.
+tmux_wait_harness() { # PANE [SECONDS]
+  local pane="$1" bound="${2:-$TMUX_VERIFY_SECS}" waited=0 screen
   while :; do
-    screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)" || return 1
+    screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)" || return 2
     pane_harness_up "$screen" && return 0
-    (( waited < TMUX_VERIFY_SECS )) || return 1
+    (( waited < bound )) || return 1
     sleep 1
     waited=$((waited + 1))
   done
@@ -2026,6 +2055,22 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
   local launch_rc=0 premise=skipped
   HARNESS_SCREEN_MISSED=false
   [[ -z "$brief" ]] || tmux_launch_verify "$pane" "$title" "$brief" "$running" || launch_rc=$?
+  # A resume-or-fresh relaunch has no brief to verify, so it counts as launched
+  # only once its pane draws a harness screen. The ssh login is already behind
+  # the paste, and what follows it can be two claude starts, the resume and
+  # the start brief after it, so the bound is one verification bound for each.
+  # A pane that draws none is no launched lane, whether both exited or the
+  # screen is one pane_harness_up does not know; under a fleet the launch loop
+  # ends it through launch_stop.
+  if [[ "$RELAUNCH_ROUTE" == resume-or-fresh ]]; then
+    local harness_rc=0 harness_secs=$((TMUX_VERIFY_SECS * 2))
+    tmux_wait_harness "$pane" "$harness_secs" || harness_rc=$?
+    case "$harness_rc" in
+      0) ;;
+      1) ot_message harness-screen-missing "item=$title" "seconds=$harness_secs" >&2; launch_rc=1 ;;
+      *) ot_message tmux-failed "operation=capture-pane" "item=$title" >&2; launch_rc=1 ;;
+    esac
+  fi
   # The premise for the read below, and the reason it is here rather than
   # inside the check above: every launch shape passes this line, including the
   # ones that carry no brief. It refuses nothing, so the read happens either
@@ -2234,32 +2279,60 @@ host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
   fi
 )
 
-# Whether a relaunch finds the item's session retired: its handoff record
-# stands, by the one judge `workflow-state handoff-standing` owns, read through
-# lib/lane-state.sh. A lane that wrote its record handed its work to the record
-# and ended its session, and only a fresh start carries the record on, since
-# start.md § 0 reads it and a resumed session never runs that step. So such a
-# relaunch looks for no session and renders the start brief, whatever the
-# harness.
+# How a relaunch starts its harness, one verdict in RELAUNCH_ROUTE, read by
+# start_cmd, which renders it, by launch_finish, which wraps it, and by
+# open_tmux, which checks it took:
+#   resume           the native resume; a local relaunch looks its session up
+#   fresh            the start brief, the session being none to resume
+#   resume-or-fresh  a hosted claude relaunch: `--continue`, and the start
+#                    brief in the same call where claude finds no session.
+#                    Its sandbox's sessions are on the host, which no scan
+#                    from here reaches.
 #
-# Asked from the lane's worktree with no --state-dir, which is where the lane
-# wrote the record and where the fresh start's § 0 reads it: the state
-# directory setting joined to the worktree's own common root. The fleet's
-# --state-dir can name another directory, a local lane in another repository's
-# worktree among them.
+# fresh has two causes. The fleet record names another harness as the last one
+# to run the lane: no session this harness holds carries that work, so the
+# relaunch starts fresh. Or a local lane's handoff record stands,
+# by the one judge `workflow-state handoff-standing` owns, read through
+# lib/lane-state.sh: the lane handed its work to the record and ended its
+# session, and only a fresh start carries the record on, since start.md § 0
+# reads it and a resumed session never runs that step.
 #
-# Sets RELAUNCH_RETIRED; a verdict it cannot read refuses as
+# The handoff record is asked from the lane's worktree with no --state-dir,
+# which is where the lane wrote it and where the fresh start's § 0 reads it:
+# the state directory setting joined to the worktree's own common root. The
+# fleet's --state-dir can name another directory, a local lane in another
+# repository's worktree among them. A verdict it cannot read refuses as
 # handoff-unreadable, naming the state file the item maps to, never read as no
 # record, which would resume the session the lane retired. The verb's own words
 # reach stderr.
-RELAUNCH_RETIRED=false
-relaunch_retired() { # ITEM STATE_ID WORKTREE
+#
+# Sets RESUME_LINELESS too: a hosted codex relaunch that resumes carries no
+# continuation line (`codex resume` refuses a prompt beside --last), which
+# resume-lineless tells the caller, and which keeps that relaunch off the
+# background hand-off whose output is a log. The launch loop resets both per
+# item.
+RELAUNCH_ROUTE=resume RESUME_LINELESS=false
+relaunch_route() { # ITEM STATE_ID WORKTREE
   local path
-  RELAUNCH_RETIRED=false
+  RELAUNCH_ROUTE=resume RESUME_LINELESS=false
+  LANE_RECORD_VALUE=absent
+  [[ "$FLEET" != true ]] || lane_record_read "$2" harness || return 1
+  if [[ "$LANE_RECORD_VALUE" != absent && "$LANE_RECORD_VALUE" != "$HARNESS" ]]; then
+    ot_message harness-switched "item=$1" "harness=$HARNESS" "recorded=$LANE_RECORD_VALUE"
+    RELAUNCH_ROUTE=fresh
+    return 0
+  fi
+  if [[ "$HOST_RELAUNCH" == true ]]; then
+    case "$HARNESS" in
+      claude) RELAUNCH_ROUTE=resume-or-fresh ;;
+      codex) RESUME_LINELESS=true ;;
+    esac
+    return 0
+  fi
   lane_handoff_standing "$3" "" "$WORKFLOW_STATE" handoff-standing "$2"
   case "$LANE_HANDOFF_STATE" in
     none) return 0 ;;
-    stands) RELAUNCH_RETIRED=true; return 0 ;;
+    stands) ot_message session-retired "item=$1" "harness=$HARNESS"; RELAUNCH_ROUTE=fresh; return 0 ;;
   esac
   path="$(cd -- "$3" && "$WORKFLOW_STATE" path "$2" 2>/dev/null)" || path=""
   ot_message handoff-unreadable "item=$1" "state=${path:-$2}" >&2
@@ -2285,13 +2358,8 @@ launch_finish() {
   session_file=""
   wake_args=()
   if [[ "$WAKE" == true ]]; then wake_args=("$wt"); fi
-  RELAUNCH_RETIRED=false
-  if [[ "$RELAUNCH" == true && "$HOST_RELAUNCH" == false && -z "$CMD_TEMPLATE" ]]; then
-    relaunch_retired "$item" "$wt_id" "$wt" || return 1
-    [[ "$RELAUNCH_RETIRED" == false ]] || ot_message session-retired "item=$item" "harness=$HARNESS"
-  fi
   # A Pi wake goes to the live session through pi-bridge and reads no store.
-  if [[ "$RELAUNCH" == true && "$HOST_RELAUNCH" == false && -z "$CMD_TEMPLATE" && "$RELAUNCH_RETIRED" == false && "$HARNESS" =~ ^(claude|codex|pi|copilot)$ || "$WAKE" == true && "$HARNESS" != pi ]]; then
+  if [[ "$RELAUNCH" == true && "$HOST_RELAUNCH" == false && -z "$CMD_TEMPLATE" && "$RELAUNCH_ROUTE" == resume && "$HARNESS" =~ ^(claude|codex|pi|copilot)$ || "$WAKE" == true && "$HARNESS" != pi ]]; then
     resume_rc=0
     session_file="$(find_relaunch_session "$HARNESS" "$item" "$wt")" || resume_rc=$?
     [[ "$resume_rc" -le 1 ]] || { ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; return 1; }
@@ -2330,9 +2398,11 @@ launch_finish() {
   cmd="$(start_cmd "$item" "$wt_id" "$repo" "$record_session" ${wake_args[@]+"${wake_args[@]}"})" || return 1
   # The brief the claude arms pass as the initial CLI prompt, restated for the
   # tmux delivery check (and its one re-send). Empty for other harnesses and
-  # custom --cmd templates, which disables the check.
+  # custom --cmd templates, which disables the check. A resume-or-fresh
+  # relaunch has none either: which of its two commands runs is the host's
+  # answer, and open_tmux checks for a harness screen instead.
   brief=""
-  if [[ -z "$CMD_TEMPLATE" && "$HARNESS" == "claude" && -z "$session_file" && "$HOST_RELAUNCH" == false ]]; then
+  if [[ -z "$CMD_TEMPLATE" && "$HARNESS" == "claude" && -z "$session_file" && "$RELAUNCH_ROUTE" != resume-or-fresh ]]; then
     if [[ "$TRACKER" == "linear" ]]; then brief="/orch start $item"; else brief="/orch start github $repo#$item"; fi
   fi
   # A quote-bearing lane dir was refused at lane resolution, before any
@@ -2350,7 +2420,11 @@ launch_finish() {
     # provider sets COPILOT_HOME alone (schemas/lane-host.md).
     # shellcheck disable=SC2016  # $HOME is the host's, expanded there.
     [[ "$HARNESS" != copilot ]] || cmd="$(lane_copilot_env "$cmd" '"$HOME/.agents/skills"') $cmd"
-    cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && exec $cmd")"
+    # A resume-or-fresh command is two, the second run only after the first
+    # exits, so the shell stays to run it rather than exec the first.
+    local run="exec $cmd"
+    [[ "$RELAUNCH_ROUTE" != resume-or-fresh ]] || run="{ $cmd; }"
+    cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && $run")"
   elif [[ -n "$LANE_ENV" || "$HARNESS" == codex || "$HARNESS" == copilot ]]; then
     # Folder trust belongs to the DIRECTORY the harness opens into, not to the
     # account a launch was aimed at, so the preparation runs for every local
@@ -2405,7 +2479,7 @@ launch_finish() {
   if [[ "$WAKE" == true ]]; then
     open_wake "$wt" "$title" "$cmd" || return 1
   elif [[ "$TERMINAL_MODE" == "tmux" ]]; then
-    open_tmux "$wt" "$title" "$cmd" "$brief" "$ssh_target" "$remote_path" || return 1
+    open_tmux "$wt" "$title" "$cmd" "$brief" "$ssh_target" "$remote_path" || { UNTAKEN_PANE="$LAUNCH_PANE"; return 1; }
   else
     open_gui "$wt" "$title" "$cmd" || return 1
   fi
@@ -2488,6 +2562,19 @@ launch_handoff() {
     return 1
   fi
   ot_message lane-preparing "item=$item" "log=$log"
+}
+
+# Ends a foreground hosted relaunch in a fleet whose open_tmux failed after its
+# window opened, UNTAKEN_PANE. The window closes first, which retires its claim
+# and ends whatever the pane runs, and the record is written stopped only once
+# that close succeeded: a close that failed returns 1 with the record as it
+# read, tmux-failed naming the cause. lane_record_write keeps the fields the
+# next relaunch's route is judged on.
+launch_stop() {
+  tmux_window_close "$UNTAKEN_PANE" "$title" || return 1
+  lane_record_write "$RECORD_MODE" "$wt_id" "$LAUNCH_SESSION:$title" "$remote_path" "" "$launched_at" stopped && return 0
+  ot_message record-stop-failed "item=$item" "state=oversee" >&2
+  return 1
 }
 
 # The background job launch_handoff starts. Its record is the outcome: running
@@ -2802,17 +2889,25 @@ for raw in "${ITEMS[@]}"; do
     fi
     wt="$CLAIM_ROOT"
   fi
-  LAUNCH_PANE="" LAUNCH_PREPARE=""
+  LAUNCH_PANE="" LAUNCH_PREPARE="" UNTAKEN_PANE=""
   # The launch time is read before the terminal opens. The first record's
   # launched_at is the floor the watch applies to merges and new issues, so a
   # stamp taken after the open and its verification would leave anything that
   # landed meanwhile below the floor for the life of the fleet.
   launched_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  # Judged before any record write: a preparing record already names this
+  # launch's harness, and the switch is read against the one before it.
+  RELAUNCH_ROUTE=resume RESUME_LINELESS=false
+  if [[ "$RELAUNCH" == true && -z "$CMD_TEMPLATE" ]] && ! relaunch_route "$item" "$wt_id" "$wt"; then
+    failed=$((failed + 1))
+    continue
+  fi
   # A host still preparing the item it accepted answers through `wait`. Under a
   # fleet a background job waits and the watch reports what it recorded;
   # without one there is no record to report through, so the launch waits here.
-  # A hosted codex relaunch is the exception: it resumes with no continuation
-  # line and says so as resume-lineless, which must reach the caller, not a log.
+  # A hosted codex relaunch that resumes is the exception: it carries no
+  # continuation line and says so as resume-lineless, which must reach the
+  # caller, not a log.
   if [[ "$host_state" == preparing && "$FLEET" == true && "$RESUME_LINELESS" != true ]]; then
     launch_handoff || { failed=$((failed + 1)); continue; }
     preparing=$((preparing + 1))
@@ -2828,7 +2923,15 @@ for raw in "${ITEMS[@]}"; do
       failed=$((failed + 1))
       continue
     fi
-    launch_finish || { failed=$((failed + 1)); continue; }
+    if ! launch_finish; then
+      # Only a hosted relaunch whose open_tmux failed after its window opened
+      # ends through launch_stop. Any other failure keeps its record as it
+      # read: a window that never opened started nothing, and one that opened
+      # and took, record-write-failed after it, stands.
+      [[ "$HOST_RELAUNCH" != true || "$FLEET" != true || -z "$UNTAKEN_PANE" ]] || launch_stop || true
+      failed=$((failed + 1))
+      continue
+    fi
     launched=$((launched + 1))
   fi
   # Recorded here, after the window exists: a lane picked for an item that

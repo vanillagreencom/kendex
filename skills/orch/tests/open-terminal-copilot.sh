@@ -434,7 +434,7 @@ assert_contains "$CMD" "--resume=66666666-ffff-4fff-8fff-666666666666 -i" \
 # The retirement cut from the lookup's gate: a standing record no longer stops
 # the relaunch from resuming the session its lane ended.
 stage "$TMP_ROOT/retired-ctrl"
-mutate_file "$TMP_ROOT/retired-ctrl/scripts/open-terminal" ' && "$RELAUNCH_RETIRED" == false && ' ' && '
+mutate_file "$TMP_ROOT/retired-ctrl/scripts/open-terminal" ' && "$RELAUNCH_ROUTE" == resume && ' ' && '
 handoff CC-738 '{"handoff":{"merged":[],"remaining":["open the PR"],"written_at":"2000-01-01T06:00:00Z"}}'
 OT="$TMP_ROOT/retired-ctrl/scripts/open-terminal" launch retired-ctrl --relaunch --harness copilot --launch-flags "$FLAGS" CC-738
 rm -f -- "${TMP_ROOT:?}/state/workflow-state-CC-738.json"

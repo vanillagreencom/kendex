@@ -6,11 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/../lib/github-api.sh"
 # Issue prefixes that resolve on their own once GitHub finishes computing or
-# CI completes. Callers should `await-mergeable` and retry rather than fix.
+# CI completes. Callers arm with --auto or retry rather than fix.
 TRANSIENT_PREFIXES='unknown:|ci_pending:|ci_unconfigured:|ci_fetch_failed:'
-# Issue prefixes that make up the review-thread gate. --auto never defers one,
-# and a block on one points the operator at the threads.
-THREAD_GATE_PREFIXES='unresolved_threads|review_threads_fetch_failed|review_policy_unreadable'
 
 # Scope a `gh pr checks` array to the current authoritative substantive run per
 # workflow. Shared with orch `ci-wait` so the merge gate and the waiter cannot
@@ -43,14 +40,12 @@ Options:
                    ci-classify-refusal names the cause.
   --auto           If immediate merge is blocked, enable GitHub auto-merge
                    (will fire when CI + branch protection clear). Exits 75.
-                   Never bypasses actionable unresolved review threads.
+                   Arms only where the base branch's rulesets require at
+                   least 1 approval and thread resolution and dismiss
+                   stale approvals on push; see Approvals and review
+                   threads below.
   --expected-head SHA
                    Bind GitHub's match-head merge guard to prepared SHA.
-  --require-context NAME
-                   With --auto only: arm only where the base branch requires
-                   the status-check context NAME, read from the same required
-                   set the CI gate uses. The arm right after a PR opens passes
-                   the review gate's context, so nothing merges before review.
   --dry-run        Show what would happen without merging
   --admin          Ask for the admin route. It is never taken: the PR's
                    queue-only class is read and the request refused, naming
@@ -72,10 +67,19 @@ Merge-mode exit codes:
        Classic auto-merge is armed until protection clears.
   1    BLOCKED PR #N
        The requested operation failed; a pre-existing queue entry or auto-merge request may remain active.
-  1    arm: no-merge-gate=<allow_auto_merge|required_check|required_context|unverified> repo=<owner/repo>
-       --auto refused, nothing mutated: GitHub would merge at once with nothing to wait on,
-       or, for required_context, without the --require-context check. unverified is a
-       rules read that failed, which proves no gate.
+  1    arm: no-merge-gate=<allow_auto_merge|required_approval|required_thread_resolution|dismiss_stale_reviews|unverified> repo=<owner/repo>
+       --auto refused, nothing mutated. allow_auto_merge: the repository has
+       auto-merge off. required_approval: no ruleset on the base branch
+       requires an approval, so GitHub would merge the armed PR before any
+       review. required_thread_resolution: an approval is required but no
+       ruleset requires thread resolution, so GitHub would merge the armed
+       PR on its first approval past open review threads.
+       dismiss_stale_reviews: approvals and thread resolution are required
+       but no ruleset dismisses stale approvals on push, so GitHub would
+       merge the armed PR on an approval of an earlier head, with no review
+       of the pushed one. unverified: a read failed, or a pull_request
+       rule's approval count did not read as a whole number or one of its
+       two flags as a boolean, which proves no gate.
   1    pr-merge: merge-method allowed=<method,...|none> accepted=<method,...>
   1    pr-merge: merge-method-unreadable cause=<base|rules|settings|queue>
        Nothing mutated: the base allows none of the accepted methods, or its
@@ -103,7 +107,27 @@ Exit 75 is volatile:
   A queue ejection can disarm merge state. Block on .agents/skills/orch/scripts/queue-wait <N> <poll> <budget> --json before returning; it produces the verdict for the head just armed. Size the poll and budget as orch merge-pr.md § 5 step 1 does: the default budget outlives any foreground call an agent harness holds, so a call without them is killed before the verdict.
   Route verdicts through queue-wait --help Verdicts, named by SKILL.md § PR Merge Outcomes; the review-gate reducer still reports fleet attention.
   Re-arm only through github.sh pr-merge <N> --auto after that route.
-  await-mergeable is not the lifecycle watcher; it stops when GitHub computes state.
+
+Approvals and review threads:
+  GitHub enforces both, through the base branch's ruleset pull_request
+  rules, the most restrictive of them applying: it holds the merge, and an
+  armed PR, until the required approvals are in and, only where a rule sets
+  required_review_thread_resolution, until every review thread is resolved.
+  An approval keeps counting after a push unless a rule sets
+  dismiss_stale_reviews_on_push. GitHub defaults both flags to false on a new
+  rule, so a base can require an approval and still merge past an open
+  thread, or merge a pushed head on the approval of an earlier one. This
+  command reads no review thread and resolves none. It reports
+  reviewDecision as review, blocks on a changes-requested review, and names
+  a missing approval as the not_approved warning.
+
+  --auto reads every pull_request rule on the base branch
+  (repos/{owner}/{repo}/rules/branches/<base>, which returns the rules of
+  every active ruleset, organization and repository) and arms only where
+  each of these is set by one rule, the same or another: at least 1
+  approval, thread resolution, and stale approvals dismissed on push.
+  Classic branch protection's review settings are not read: a base gated
+  there alone is refused as required_approval, which arms nothing.
 
 Merge route:
   Every merge goes through the base branch's merge queue where the base
@@ -116,9 +140,12 @@ Merge route:
   class, and refuses on both values, naming the class: admin-refused
   class=queue-only or admin-retired class=not-queue-only. It is read from
   <skills>/harness-ci/scripts/change-class, else change-class on PATH, over
-  the PR's base and head, fetched as the class policy's range is (see
-  Review-thread gate). Its stderr `queue-only: queue_only=true|false` line
-  is the class, and change-class --help states when it reads true. No
+  the PR's base and head. The classifier takes a merge-base diff, so both
+  commits AND an ancestor they share must be in this checkout, and
+  baseRefOid is the base branch's current tip: the two SHAs are fetched from
+  origin (no tags, no FETCH_HEAD rewrite) when the range is not readable,
+  and it is checked again. Its stderr `queue-only: queue_only=true|false`
+  line is the class, and change-class --help states when it reads true. No
   classifier, an unreadable range, a failed classifier and a missing line
   all read queue-only.
 
@@ -168,69 +195,6 @@ Terminal and mutation rules:
   absent. An OPEN PR with no queue or auto-merge proof fails closed. The
   --delete-branch cleanup after MERGED is best-effort, not merge-state mutation.
 
-Review-thread gate:
-  Unresolved, non-outdated review threads make can_merge false and block both
-  immediate merge and --auto. A failed or malformed thread lookup also blocks.
-  This is narrower than required_conversation_resolution, which requires every
-  conversation resolved and does not exclude outdated threads.
-
-  The review gate's class policy is the one thing that waives it, because this
-  gate is that gate's thread term. <skills>/review-gate/scripts/review-policy,
-  else review-policy on PATH, is the only owner asked, and only once an
-  unresolved thread, or a thread whose waiver resolution still stands, exists,
-  since nothing else here turns on its answer: --check-config says
-  whether a policy is active, and an active one is asked about this pull
-  request's own base and head. The classifier takes a merge-base diff, so both
-  commits AND an ancestor they share must be in this checkout for a class to
-  be measured at all, and baseRefOid is the base branch's current tip: the two
-  SHAs are fetched from origin (no tags, no FETCH_HEAD rewrite) when the range
-  is not readable, and it is checked again. required and current keep the
-  gate. No policy script and an inactive policy both keep it.
-
-  Which threads a none answer waives, the reply the merge route leaves, and
-  when a resolution it made lapses are the review gate's rule
-  (<skills>/review-gate/scripts/lib/waiver.sh, beside the review-policy
-  owner), which the review gate's own thread term reads too. An owner with
-  no rule beside it blocks with review_policy_unreadable only where the rule
-  could change the answer: an unresolved thread, or a resolved one carrying
-  the merge route's reply. REVIEW_GATE_THREADS=off leaves review-policy
-  --review-bots naming no bot, so nothing is waived there. A
-  review_evidence=none answer waives the threads only a review bot has
-  written in: the first comment and every other comment by an author GitHub
-  types Bot whose login review-policy --review-bots names, or a waiver reply
-  by an author GitHub types Bot, with the whole thread read. It reports them
-  as unresolved_threads_waived, a warning that gates nothing, and names them in
-  thread_waiver, outdated ones included, because GitHub's thread-resolution
-  rule counts those. Every other unresolved thread blocks with
-  unresolved_threads under that answer, outdated or not, for the same reason:
-  a person's thread, a code-scanning alert, another app's thread, and a bot
-  thread a person has replied in.
-
-  The merge modes, never --check or --dry-run, then resolve each waived thread
-  as the last step before the merge call, under the merge's own token: one
-  reply opening "Resolved by the merge route: change class <class> at <head>,",
-  then a resolve, each reported as RESOLVED THREAD <id> on stderr. They do so
-  only where the head the class was measured at is the head being merged. A
-  failed reply or resolve, or a head that moved, is BLOCKED with nothing armed.
-
-  A waiver resolution lapses while it is still the thread's last word (the
-  resolver's newest comment in the thread is a waiver reply) and the answer
-  at the current head does not waive the thread. A lapsed waiver
-  counts under unresolved_threads and is named in thread_reopen; the merge
-  modes, never --check or --dry-run, reopen it and report REOPENED THREAD
-  <id> on stderr, or pr-merge: thread-reopen-failed id=<id>. A thread someone
-  answered and resolved again is theirs and no longer a waiver.
-
-  An unreadable policy or review-bot list, or an endpoint still missing after
-  the fetch, blocks with review_policy_unreadable in --check, the immediate
-  merge and --auto alike, and is never a waiver; the child's own diagnostics
-  reach stderr so the cause is named. Conflicts, required contexts, the
-  exact-head guard and the base branch's own conversation-resolution rule are
-  untouched by every answer.
-
-  The gate is policy, not mechanism. It applies only through pr-merge. A raw
-  gh pr merge call or the GitHub UI Merge button bypasses it.
-
 --check JSON:
   stdout is one object with these fields:
     can_merge   boolean readiness result
@@ -245,13 +209,6 @@ Review-thread gate:
     checks      raw check rollup read by the classification
     required_contexts
                 base-branch contexts the classification may block on
-    thread_waiver
-                null, or {class, head, threads}: the change class, the head
-                SHA it was measured at and the review-bot thread IDs the
-                class policy waived, which the merge modes resolve
-    thread_reopen
-                the thread IDs whose waiver resolution has lapsed, which the
-                merge modes reopen and --check only names
 
   stderr carries mergeable, blocked, merged, or closed, followed by
   head-run: <ids> when CI runs were classified. can_merge=false with an empty
@@ -357,9 +314,8 @@ exit_terminal_state() {
     esac
 }
 
-# The base branch's required status-check contexts as a JSON array: the
-# ruleset and classic-protection endpoints merge_gate_gap already reads, read
-# for their context names instead of their presence. GitHub merges a PR whose
+# The base branch's required status-check contexts as a JSON array, read from
+# its ruleset and classic-protection endpoints. GitHub merges a PR whose
 # non-required checks are red, so these names are what the CI gate may block
 # on. Any answer that is not positive evidence of the whole required set
 # prints `[]`, which counts every check — a branch whose protection cannot be
@@ -375,8 +331,8 @@ exit_terminal_state() {
 # `required_status_checks` names its contexts; the types listed in the filter
 # below gate the ref, its commits, its files or its reviews and put nothing in
 # the check rollup. `pull_request` is the review gate among them: it demands a
-# REVIEW, which arrives as a review and is already carried by this command's
-# review-thread gates, never as a check on the head. `copilot_code_review`
+# REVIEW and, where set, resolved threads, which GitHub enforces itself and
+# never reports as a check on the head. `copilot_code_review`
 # only requests a review and gates no merge at all. Every other type — `workflows`, `code_scanning`,
 # `code_quality`, `code_coverage` and whatever GitHub adds next — gates the
 # merge on a check result whose context the rule never names, so naming a
@@ -400,79 +356,49 @@ RULESET_CONTEXTS_JQ='
   , (select($type == "required_status_checks")
      | .parameters.required_status_checks[]?
      | "ctx:" + (.context // ""))'
-# The rules behind that set, one line each: `ctx:<context>` for a context a
-# ruleset or classic protection names, `unnameable:<type>` for a ruleset rule
-# gating on a check it does not name. Exits 1 when a read fails, so a caller
-# can tell a failed read from a set that lacks a context.
-required_rule_lines() {
+# Both reads yield one line per rule: `ctx:<context>` for a context a ruleset
+# or classic protection names, `unnameable:<type>` for a ruleset rule gating
+# on a check it does not name. A failed read or an unnameable rule prints `[]`.
+required_contexts() {
     local pr_num="$1" base="" rules="" classic="" branch_json=""
     if ! base=$(gh pr view "$pr_num" --json baseRefName --jq '.baseRefName' 2>/dev/null) || [ -z "$base" ] \
         || ! base=$(jq -nr --arg v "$base" '$v | @uri') \
         || ! rules=$(gh api "repos/{owner}/{repo}/rules/branches/$base" --paginate --jq "$RULESET_CONTEXTS_JQ" 2>/dev/null) \
         || ! branch_json=$(gh api "repos/{owner}/{repo}/branches/$base" 2>/dev/null) \
         || ! jq -e 'type == "object" and has("protection")' >/dev/null 2>&1 <<<"$branch_json" \
-        || ! classic=$(jq -r '.protection.required_status_checks | (.contexts // []) + [(.checks // [])[] | .context] | .[] | "ctx:" + .' <<<"$branch_json" 2>/dev/null); then
-        return 1
-    fi
-    printf '%s\n%s\n' "$rules" "$classic"
-}
-
-required_contexts() {
-    local lines=""
-    if ! lines=$(required_rule_lines "$1") || grep -q '^unnameable:' <<<"$lines"; then
+        || ! classic=$(jq -r '.protection.required_status_checks | (.contexts // []) + [(.checks // [])[] | .context] | .[] | "ctx:" + .' <<<"$branch_json" 2>/dev/null) \
+        || grep -q '^unnameable:' <<<"$rules"; then
         echo '[]'
         return 0
     fi
-    printf '%s\n' "$lines" | jq -R -s -c 'split("\n") | map(select(startswith("ctx:")) | ltrimstr("ctx:")) | unique'
+    printf '%s\n%s\n' "$rules" "$classic" | jq -R -s -c 'split("\n") | map(select(startswith("ctx:")) | ltrimstr("ctx:")) | unique'
 }
 
-# Every child this command runs out of the checkout — the review gate's
-# class-policy owner, asked for its state and for one pull request's policy,
-# and harness-ci's classifier, asked for one pull request's queue-only class —
-# goes through here, so the two promises those calls share are made once.
-# First, GH_CONFIG_DIR is dropped: a GH_CONFIG_DIR the caller exported is a
-# credential of theirs that checkout code has no business reading. Second, the
-# child's stderr is held and replayed only when it fails, so a refusal names
-# its own cause instead of reading the same for a malformed policy, a missing
-# classifier, an unauthenticated gh and an unfetched base. With --stderr-to,
-# the stderr goes to the caller's FILE whatever the exit, replayed by no one
-# here: that caller reads its answer off the stderr and replays it itself.
-# Its stdout is this function's.
-run_checkout_child() { # [--stderr-to FILE] DIR ARGV...
-    local kept=""
-    if [ "$1" = --stderr-to ]; then
-        kept="$2"
-        shift 2
-    fi
-    local dir="$1"
-    shift
-    local err out status=0
-    if [ -n "$kept" ]; then
-        err="$kept"
-    elif ! err=$(mktemp "${TMPDIR:-/tmp}/pr-merge-child.XXXXXX"); then
-        echo "pr-merge: could not create a temporary file for a checkout child's diagnostics" >&2
-        return 1
-    fi
+# harness-ci's classifier, asked for one pull request's queue-only class, runs
+# out of the checkout through here. GH_CONFIG_DIR is dropped: a GH_CONFIG_DIR
+# the caller exported is a credential of theirs that checkout code has no
+# business reading. The child's stderr goes to the caller's FILE whatever the
+# exit, replayed by no one here: that caller reads its answer off the stderr
+# and replays it itself. Its stdout is this function's.
+run_checkout_child() { # FILE DIR ARGV...
+    local err="$1" dir="$2"
+    shift 2
+    local out status=0
     out=$(cd -- "$dir" && env -u GH_CONFIG_DIR "$@" 2>"$err") || status=$?
-    if [ -z "$kept" ]; then
-        [ "$status" -eq 0 ] || cat -- "$err" >&2
-        rm -f -- "${err:?}"
-    fi
     [ "$status" -eq 0 ] || return "$status"
     printf '%s' "$out"
 }
 
 # The checkout this command runs in: its repository root, else the working
-# directory. Every checkout child runs there, and the pull request's two
-# commits are fetched into it.
+# directory. The classifier runs there, and the pull request's two commits
+# are fetched into it.
 checkout_root() {
     git rev-parse --show-toplevel 2>/dev/null || pwd
 }
 
 # The pull request's range as GitHub reports it: the base branch's current
 # tip and the head, blank-separated. Non-zero where it cannot be read, with
-# gh's own words, or the missing end, on stderr for the caller to keep or
-# drop.
+# gh's own words, or the missing end, on stderr for the caller to keep.
 pr_range() { # PR
     local range_json base_sha head_sha
     range_json=$(gh pr view "$1" --json baseRefOid,headRefOid) || return 1
@@ -489,7 +415,7 @@ pr_range() { # PR
 # they share, since the classifier takes a merge-base diff and a shallow or
 # grafted checkout can hold two commits with no reachable ancestor between
 # them. The same three clauses review-predicate.sh materializes.
-policy_range_present() { # ROOT BASE HEAD
+pr_range_present() { # ROOT BASE HEAD
     git -C "$1" cat-file -e "$2^{commit}" 2>/dev/null &&
         git -C "$1" cat-file -e "$3^{commit}" 2>/dev/null &&
         git -C "$1" merge-base "$2" "$3" >/dev/null 2>&1
@@ -498,148 +424,30 @@ policy_range_present() { # ROOT BASE HEAD
 # Make the range readable here, or say why it is not. baseRefOid is the base
 # branch's CURRENT tip, which a checkout that has not fetched since another
 # pull request merged does not hold, and no classifier can read a diff to a
-# commit that is not here. Fetch the TWO SHAs — never every ref — with
-# --no-tags --no-write-fetch-head, so a readiness check neither downloads tags
-# nor rewrites FETCH_HEAD in a git directory other worktrees share. Then look
+# commit that is not here. Fetch the TWO SHAs, never every ref, without tags
+# and without writing FETCH_HEAD, so the read neither downloads tags nor
+# rewrites FETCH_HEAD in a git directory other worktrees share. Then look
 # again; a range still unreadable returns non-zero and the caller refuses.
 # git's own words for a failed fetch are replayed under the fixed line, so an
 # unreachable SHA, an auth failure and a dead network do not read alike.
-policy_range_materialize() { # ROOT BASE HEAD
+pr_range_materialize() { # ROOT BASE HEAD
     local root="$1" base_sha="$2" head_sha="$3" err
-    policy_range_present "$root" "$base_sha" "$head_sha" && return 0
+    pr_range_present "$root" "$base_sha" "$head_sha" && return 0
     if ! err=$(git -C "$root" fetch --quiet --no-tags --no-write-fetch-head \
         origin "$base_sha" "$head_sha" 2>&1); then
         echo "pr-merge: the pull request's range is not in this checkout and the fetch of its two commits from origin failed:" >&2
         printf '%s\n' "$err" >&2
     fi
-    policy_range_present "$root" "$base_sha" "$head_sha"
+    pr_range_present "$root" "$base_sha" "$head_sha"
 }
 
-# The review gate's class policy for one pull request, from the review-gate
-# skill's own review-policy — the single owner of the class-to-policy mapping.
-# This command asks; it never classifies a change and never maps a class. Its
-# stdout is the evidence word — none, required or current — and, where a
-# policy is active, the class and the head SHA the class was measured at,
-# blank-separated. "none" is the class the policy waives, and the review-thread
-# gate below is waived with it for review-bot threads, because that gate is the
-# review gate's thread term rather than a GitHub rule; the head is what the
-# merge route binds its thread resolution to. A
-# repository with no review-policy script has no class policy, which is the
-# inactive answer, not a failure. Every other failure returns nonzero and the
-# caller refuses: an unreadable policy must never resolve to a waiver, and it
-# must not silently hold a pull request either.
-# active, inactive, or non-zero when the owner cannot say.
 # A sibling skill's script: <skills>/SKILL/scripts/NAME beside this scripts
-# tree, else NAME on PATH, else nothing. The review-policy owner and the
-# queue-only classifier are both found here.
+# tree, else NAME on PATH, else nothing. The queue-only classifier is found
+# here.
 sibling_script() { # SKILL NAME
     local path="$SCRIPT_DIR/../../../$1/scripts/$2"
     [ -x "$path" ] || path=$(command -v "$2" 2>/dev/null) || path=""
     printf '%s' "$path"
-}
-
-review_policy_state() { # ROOT
-    local owner state
-    owner=$(sibling_script review-gate review-policy) || return 1
-    # No owner script is no class policy: the term is absent, not defaulted.
-    if [ -z "$owner" ]; then
-        printf 'inactive'
-        return 0
-    fi
-    # The cd is the engine's: it resolves its settings files relative to the
-    # repository root. The held diagnostics are run_checkout_child's.
-    state=$(run_checkout_child "$1" "$owner" --check-config) || return 1
-    case "$state" in
-    review-policy=inactive) printf 'inactive' ;;
-    review-policy=active) printf 'active' ;;
-    *) return 1 ;;
-    esac
-}
-
-review_policy_evidence() {
-    local pr_num="$1"
-    local owner root state record
-    local range base_sha head_sha class evidence
-    root=$(checkout_root) || return 1
-    state=$(review_policy_state "$root") || return 1
-    if [ "$state" = inactive ]; then
-        printf 'current'
-        return 0
-    fi
-    owner=$(sibling_script review-gate review-policy) || return 1
-    [ -n "$owner" ] || return 1
-    # An active policy answers for one pull request, so the endpoints are read
-    # HERE — no repository without a class policy pays for a call it has no
-    # question for. No range is no answer: it reaches the caller as a refusal,
-    # never as a waiver. The merge itself is still pinned by
-    # --match-head-commit and by the caller's --expected-head; this range only
-    # names the diff the policy is asked about.
-    range=$(pr_range "$pr_num" 2>/dev/null) || return 1
-    base_sha="${range% *}"
-    head_sha="${range#* }"
-    policy_range_materialize "$root" "$base_sha" "$head_sha" || return 1
-    # `--repo .` is the checkout this command runs in, which is where the two
-    # SHAs resolve.
-    record=$(run_checkout_child "$root" "$owner" \
-        --event pull_request --base "$base_sha" --head "$head_sha" --repo .) || return 1
-    case "$record" in
-    *$'\n'*) return 1 ;;
-    "change_class="*" review_evidence="*" policy=active") ;;
-    *) return 1 ;;
-    esac
-    class="${record#change_class=}"
-    class="${class%% *}"
-    evidence="${record#change_class=* review_evidence=}"
-    evidence="${evidence%% *}"
-    case "$class" in '' | *[!a-z]*) return 1 ;; esac
-    case "$evidence" in
-    none | required | current) printf '%s %s %s' "$evidence" "$class" "$head_sha" ;;
-    *) return 1 ;;
-    esac
-}
-
-# The review gate's waiver rule, loaded from the lib beside the review-policy
-# owner: RG_WAIVER_JQ and rg_waiver_reply. WAIVER_LOADED says what was found:
-#   absent   no owner, so no class policy: nothing is waived and no waiver
-#            resolution can stand
-#   present  the rule is loaded
-#   missing  an owner stands without a rule that loads, as where a review-gate
-#            older than this script is installed beside it; the caller refuses
-#            only where the rule could change its answer
-# Non-zero only when the owner lookup itself fails.
-WAIVER_LOADED=""
-load_waiver_rule() {
-    local owner lib
-    [ -z "$WAIVER_LOADED" ] || return 0
-    owner=$(sibling_script review-gate review-policy) || return 1
-    if [ -z "$owner" ]; then
-        WAIVER_LOADED=absent
-        return 0
-    fi
-    lib="$(dirname -- "$owner")/lib/waiver.sh"
-    WAIVER_LOADED=missing
-    [ -r "$lib" ] || return 0
-    # shellcheck source=../../../review-gate/scripts/lib/waiver.sh
-    if . "$lib" && [ -n "${RG_WAIVER_JQ:-}" ]; then
-        WAIVER_LOADED=present
-    fi
-}
-
-# The review bots a none row waives threads from, as a JSON array of logins
-# in the spelling GitHub's GraphQL API gives them. review-policy owns the
-# list; asked only once the policy answered none. Non-zero when it cannot say.
-review_bots_json() {
-    local owner root record
-    owner=$(sibling_script review-gate review-policy) || return 1
-    [ -n "$owner" ] || return 1
-    root=$(checkout_root) || return 1
-    record=$(run_checkout_child "$root" "$owner" --review-bots) || return 1
-    case "$record" in
-    *$'\n'* | *[!A-Za-z0-9=,._-]*) return 1 ;;
-    review-bots=*) ;;
-    *) return 1 ;;
-    esac
-    jq -cn --arg bots "${record#review-bots=}" '$bots | split(",") | map(select(. != ""))'
 }
 
 run_checks() {
@@ -651,7 +459,7 @@ run_checks() {
 
     local pr_state pr_merged_at
     if ! load_pr_state_json "$pr_num"; then
-        jq -n --arg issue "$PR_STATE_ERROR" '{can_merge: false, issues: [$issue], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: "UNKNOWN", merged_at: "", head_runs: [], checks: [], required_contexts: [], thread_waiver: null, thread_reopen: []}'
+        jq -n --arg issue "$PR_STATE_ERROR" '{can_merge: false, issues: [$issue], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: "UNKNOWN", merged_at: "", head_runs: [], checks: [], required_contexts: []}'
         return 0 # Return 0 so JSON is output, caller checks can_merge
     fi
     pr_state=$(jq -r '.state // "UNKNOWN"' <<<"$PR_STATE_JSON")
@@ -661,7 +469,7 @@ run_checks() {
     # check data is meaningless: `mergeable` is permanently UNKNOWN, post-merge
     # CI runs and bot comments are not blockers. Report the state, no issues.
     if [ "$pr_state" = "MERGED" ] || [ "$pr_state" = "CLOSED" ]; then
-        jq -n --arg state "$pr_state" --arg merged_at "$pr_merged_at" '{can_merge: false, issues: [], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: $state, merged_at: $merged_at, head_runs: [], checks: [], required_contexts: [], thread_waiver: null, thread_reopen: []}'
+        jq -n --arg state "$pr_state" --arg merged_at "$pr_merged_at" '{can_merge: false, issues: [], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: $state, merged_at: $merged_at, head_runs: [], checks: [], required_contexts: []}'
         return 0
     fi
 
@@ -674,7 +482,7 @@ run_checks() {
         issues+=("conflicts: PR has merge conflicts. Resolve by rebasing onto your default branch and force-pushing")
     else
         can_merge=false
-        issues+=("unknown: GitHub still computing mergeable status, await-mergeable then retry")
+        issues+=("unknown: GitHub still computing mergeable status; retry, or arm with --auto")
     fi
 
     # 2. Check CI status. The fetch tolerance (gh exit 8 with usable JSON)
@@ -719,112 +527,6 @@ run_checks() {
         fi
     fi
 
-    # 3. Check actionable review threads. GitHub does not protect merges on
-    # unresolved conversations by default, so this is a local hard gate rather
-    # than a warning. Outdated threads do not refer to the current diff and
-    # are not actionable. A failed or malformed lookup also blocks: treating an
-    # unknown review state as clean would recreate the unsafe merge path.
-    #
-    # The one exception is the review gate's own class policy, and the rule
-    # for it is the review gate's too (lib/waiver.sh, loaded beside the
-    # review-policy owner). Where the policy waives review for this change
-    # class it waives the thread term with the evidence term, for the threads
-    # that rule calls waivable: only review bots the gate lists have written
-    # in them. Those are reported as a warning that gates nothing here, and
-    # thread_waiver names them for the merge route to resolve, since GitHub's
-    # own thread-resolution rule would hold the merge on them otherwise;
-    # outdated ones too, because that rule counts them. Every other open thread
-    # blocks under that answer, outdated or not, for the same reason. A
-    # resolved thread whose waiver has lapsed, by the same rule, blocks as well
-    # and is named in thread_reopen; only the merge modes reopen it. The policy
-    # is asked only once a thread it could change exists. An unreadable policy
-    # is not a waiver: it blocks and says so.
-    local policy_answer class_evidence policy_class policy_head bots_json='[]'
-    local threads_json counts unresolved open standing marked verdict waived waiver_ids waiver_jq
-    local thread_waiver=null thread_reopen='[]'
-    # Fetch the complete unfiltered list. Filtering unresolved threads inside
-    # pr-threads would discard nodes whose isResolved value is missing, null,
-    # or malformed before this trust-boundary validation can reject them.
-    if ! threads_json=$("$SCRIPT_DIR/pr-threads.sh" "$pr_num" 2>/dev/null); then
-        can_merge=false
-        issues+=("review_threads_fetch_failed: Failed to fetch actionable review threads from GitHub")
-    elif ! jq -e '
-        (.threads | type == "array") and
-        all(.threads[];
-            (.is_resolved | type == "boolean") and
-            (.is_outdated | type == "boolean") and
-            (.comments | type == "array"))
-    ' >/dev/null 2>&1 <<<"$threads_json"; then
-        can_merge=false
-        issues+=("review_threads_fetch_failed: GitHub returned malformed review thread data")
-    elif ! load_waiver_rule; then
-        can_merge=false
-        issues+=("review_policy_unreadable: The review gate's class policy owner could not be located")
-    else
-        # Without a loaded rule nothing is waived and no waiver stands.
-        waiver_jq='def rg_waivable($b): false; def rg_waiver_stands: false; def rg_lapsed_waiver($e; $b): false;'
-        [ "$WAIVER_LOADED" != present ] || waiver_jq="$RG_WAIVER_JQ"
-        # marked: resolved threads a comment of which opens with the waiver
-        # reply's first words. It only says the rule could matter where the
-        # rule is missing; whether one stands is the rule's alone.
-        if ! counts=$(jq -r "$waiver_jq"'
-                [([.threads[] | select(.is_resolved == false and .is_outdated == false)] | length),
-                 ([.threads[] | select(.is_resolved == false)] | length),
-                 ([.threads[] | select(rg_waiver_stands)] | length),
-                 ([.threads[] | select(.is_resolved == true and any(.comments[]; (.body // "") | startswith("Resolved by the merge route: ")))] | length)]
-                | @tsv' <<<"$threads_json") || [ -z "$counts" ]; then
-            can_merge=false
-            issues+=("review_threads_fetch_failed: The review thread data could not be counted")
-        else
-            IFS=$'\t' read -r unresolved open standing marked <<<"$counts"
-            if [ "$WAIVER_LOADED" = missing ] && { [ "$open" -gt 0 ] || [ "$marked" -gt 0 ]; }; then
-                can_merge=false
-                issues+=("review_policy_unreadable: The review gate's waiver rule could not be loaded beside its class policy")
-            elif [ "$open" -gt 0 ] || [ "$standing" -gt 0 ]; then
-                if ! policy_answer=$(review_policy_evidence "$pr_num"); then
-                    can_merge=false
-                    issues+=("review_policy_unreadable: The review gate's class policy could not be resolved for this pull request")
-                    policy_answer=current
-                fi
-                read -r class_evidence policy_class policy_head <<<"$policy_answer"
-                if [ "$class_evidence" = none ] && ! bots_json=$(review_bots_json); then
-                    can_merge=false
-                    issues+=("review_policy_unreadable: The review bots the class policy waives threads from could not be read")
-                    class_evidence=current
-                    bots_json='[]'
-                fi
-                # Under a none answer the waivable threads leave the count and
-                # every other open thread joins it; otherwise the actionable
-                # count stands. A lapsed waiver joins it either way.
-                if ! verdict=$(jq -r --arg evidence "$class_evidence" --argjson bots "$bots_json" \
-                        --argjson actionable "$unresolved" "$waiver_jq"'
-                        (if $evidence == "none"
-                         then [.threads[] | select(.is_resolved == false and rg_waivable($bots)) | .id]
-                         else [] end) as $waive
-                        | [.threads[] | select(rg_lapsed_waiver($evidence; $bots)) | .id] as $lapsed
-                        | (if $evidence == "none"
-                           then [.threads[] | select(.is_resolved == false and (rg_waivable($bots) | not))] | length
-                           else $actionable end) as $held
-                        | [($waive | length), $held + ($lapsed | length), ($lapsed | tojson), ($waive | tojson)]
-                        | @tsv' <<<"$threads_json") || [ -z "$verdict" ]; then
-                    can_merge=false
-                    issues+=("review_threads_fetch_failed: The review thread data could not be judged against the class policy")
-                else
-                    IFS=$'\t' read -r waived unresolved thread_reopen waiver_ids <<<"$verdict"
-                    if [ "$waived" -gt 0 ]; then
-                        warnings+=("unresolved_threads_waived: $waived review-bot thread(s) open, waived by the review gate's class policy for this change, and the merge route resolves them before it arms")
-                        thread_waiver=$(jq -cn --arg class "$policy_class" --arg head "$policy_head" --argjson threads "$waiver_ids" \
-                            '{class: $class, head: $head, threads: $threads}')
-                    fi
-                    if [ "$unresolved" -gt 0 ]; then
-                        can_merge=false
-                        issues+=("unresolved_threads: $unresolved actionable thread(s) need attention")
-                    fi
-                fi
-            fi
-        fi
-    fi
-
     # reviewDecision requires branch protection; latestReviews covers both terminal review states.
     local review="" has_approved_review=false has_changes_requested=false
     local review_json
@@ -849,8 +551,8 @@ run_checks() {
     warnings_json=$(printf '%s\n' "${warnings[@]:-}" | jq -R -s -c 'split("\n") | map(select(. != ""))')
 
     # Classify whether the blocking issues are entirely transient. A transient
-    # block can be retried after `await-mergeable`; a permanent block needs
-    # human action (fix conflicts, push CI fix, dismiss review).
+    # block clears by waiting, so --auto or a retry answers it; a permanent
+    # block needs human action (fix conflicts, push CI fix, dismiss review).
     local transient
     transient=$(echo "$issues_json" | jq --arg p "^($TRANSIENT_PREFIXES)" '
         (length > 0) and (all(. | test($p)))
@@ -868,9 +570,7 @@ run_checks() {
         --argjson head_runs "$head_runs_json" \
         --argjson checks "$checks_json" \
         --argjson required_contexts "$required_json" \
-        --argjson thread_waiver "$thread_waiver" \
-        --argjson thread_reopen "$thread_reopen" \
-        '{can_merge: $can_merge, issues: $issues, warnings: $warnings, mergeable: $mergeable, review: $review, transient: $transient, state: $state, merged_at: $merged_at, head_runs: $head_runs, checks: $checks, required_contexts: $required_contexts, thread_waiver: $thread_waiver, thread_reopen: $thread_reopen}'
+        '{can_merge: $can_merge, issues: $issues, warnings: $warnings, mergeable: $mergeable, review: $review, transient: $transient, state: $state, merged_at: $merged_at, head_runs: $head_runs, checks: $checks, required_contexts: $required_contexts}'
 }
 
 print_blocked() {
@@ -888,18 +588,10 @@ print_blocked() {
     echo "$check_result" | jq -r '.issues[]' | sed 's/^/  ✗ /' >&2
     echo "$check_result" | jq -r '.warnings[]' | sed 's/^/  ⚠ /' >&2
     echo "" >&2
-    if [ "$transient" = "true" ]; then
-        echo "Hint: github.sh await-mergeable $pr_num && retry" >&2
-    fi
-    if jq -e --arg p "^($THREAD_GATE_PREFIXES):" '[.issues[] | select(test($p))] | length > 0' >/dev/null 2>&1 <<<"$check_result"; then
-        echo "Resolve the review-thread gate and retry." >&2
-    else
-        echo "Use --auto to queue for auto-merge." >&2
-    fi
+    echo "Use --auto to queue for auto-merge." >&2
 }
 
-# Run a command — gh, or a sibling script that calls it — with the same
-# effective identity used for the merge mutation. Keep the token scoped to the
+# Run gh with the same effective identity used for the merge mutation. Keep the token scoped to the
 # subprocess so the caller's environment is never changed.
 with_token() {
     local auth_token="${1:-}"
@@ -912,11 +604,30 @@ with_token() {
     fi
 }
 
-# Print what `gh pr merge --auto` would lack to wait on, or nothing. With
-# auto-merge off, or no required check or review rule on the base branch,
-# GitHub merges an armed PR at once. A failed read prints `unverified`.
+# Print why `gh pr merge --auto` must not arm, or nothing. With auto-merge off
+# GitHub cannot arm. Otherwise the arm needs every row of `shape`, the rule
+# shape under which GitHub holds an armed PR until a review of its current
+# head: each row names the gap word printed when no active pull_request rule
+# on the base meets it (GitHub applies the most restrictive rule, so any one
+# rule meeting a row meets it), the rule parameter, and its kind: a `count`
+# of at least 1 or a `flag` set true. Without the approval GitHub merges the
+# armed PR the moment its checks pass; without thread resolution, on the
+# approval past every open thread; without stale-approval dismissal, on an
+# approval of an earlier head after a push no review saw. A failed read, or a
+# pull_request rule whose value for any row is not of the row's kind, prints
+# `unverified`. Rows are checked in order, so the first gap is printed.
+#
+# review-gate's validate-standard.sh reads the thread-resolution flag inside
+# its own audit of the default branch; it is a sibling skill's report, not a
+# predicate this command can call, so the flag is read here too, beside the
+# approval count and stale-dismissal flag that audit does not read.
 merge_gate_gap() {
-    local pr_num="$1" token="$2" allow="" base="" rules="" classic=""
+    local pr_num="$1" token="$2" allow="" base="" rules="" gap=""
+    local -a shape=(
+        'required_approval required_approving_review_count count'
+        'required_thread_resolution required_review_thread_resolution flag'
+        'dismiss_stale_reviews dismiss_stale_reviews_on_push flag'
+    )
     allow=$(with_token "$token" gh api 'repos/{owner}/{repo}' --jq '.allow_auto_merge' 2>/dev/null) || allow=""
     case "$allow" in
         true) ;;
@@ -925,12 +636,21 @@ merge_gate_gap() {
     esac
     if ! base=$(with_token "$token" gh pr view "$pr_num" --json baseRefName --jq '.baseRefName' 2>/dev/null) || [ -z "$base" ] \
         || ! base=$(jq -nr --arg v "$base" '$v | @uri') \
-        || ! rules=$(with_token "$token" gh api "repos/{owner}/{repo}/rules/branches/$base" --paginate --jq '.[] | select(.type == "required_status_checks" or .type == "pull_request") | .type' 2>/dev/null) \
-        || ! classic=$(with_token "$token" gh api "repos/{owner}/{repo}/branches/$base" --jq '.protection.required_status_checks | (.contexts // []) + (.checks // []) | length' 2>/dev/null); then
+        || ! rules=$(with_token "$token" gh api "repos/{owner}/{repo}/rules/branches/$base" --paginate --jq '.[] | select(.type == "pull_request") | .parameters | tojson' 2>/dev/null); then
         echo unverified; return 0
     fi
-    case "$classic" in '' | *[!0-9]*) echo unverified; return 0 ;; esac
-    [ -n "$rules" ] || [ "$classic" -gt 0 ] || echo required_check
+    # One JSON line per pull_request rule; a base with none yields no line,
+    # so every row is unmet.
+    if ! gap=$(jq -rn --args '
+        def fits($kind): if $kind == "count" then type == "number" and . >= 0 and . == floor else type == "boolean" end;
+        def meets($kind): if $kind == "count" then . >= 1 else . == true end;
+        [$ARGS.positional[] | split(" ")] as $shape | [inputs] as $rules
+        | if any($rules[]; . as $rule | any($shape[]; . as [$gap, $key, $kind] | $rule[$key] | fits($kind) | not)) then "unverified"
+          else first($shape[] | . as [$gap, $key, $kind] | select(any($rules[]; .[$key] | meets($kind)) | not) | $gap) // empty end
+    ' "${shape[@]}" <<<"$rules" 2>/dev/null); then
+        echo unverified; return 0
+    fi
+    [ -z "$gap" ] || echo "$gap"
 }
 
 # The method the merge modes pass to gh pr merge: the first of the accepted
@@ -1004,80 +724,6 @@ volatile_note() {
     local reducer="GH_REPO=$repo .agents/skills/review-gate/scripts/pr-watch.sh (disarmed lines)"
     [ -n "$repo" ] || reducer=".agents/skills/review-gate/scripts/pr-watch.sh with GH_REPO set to the repository (not resolvable locally here)"
     echo "  Block on .agents/skills/orch/scripts/queue-wait $pr_num --json once, with a poll interval and budget sized as orch merge-pr.md § 5 step 1 does; route its verdict by that same step, and never re-arm an unrecognized verdict. The fleet reducer is $reducer; repair what the cause names before re-arming with .agents/skills/github/scripts/github.sh pr-merge $pr_num --auto" >&2
-}
-
-# Resolve the review-bot threads the class policy waived, one reply then one
-# resolve per thread, so GitHub's own thread-resolution rule does not hold the
-# merge on threads the review gate does not read for this class. The waiver names
-# the head its class was measured at, and nothing is touched unless that is
-# the head about to be merged: a class measured on another commit says nothing
-# about this one. Any failure stops the merge; a thread already resolved stays
-# resolved, and the rerun finds the rest.
-resolve_waived_threads() { # CHECK_JSON PR TOKEN HEAD
-    local check_json="$1" pr_num="$2" token="$3" head="$4"
-    local waiver class waived_head ids id body out
-    # run_checks builds the waiver with jq, so one that does not read back is a
-    # broken invariant, never an empty waiver.
-    if ! waiver=$(jq -c '.thread_waiver' <<<"$check_json") \
-        || { [ "$waiver" != null ] && ! { class=$(jq -r '.class' <<<"$waiver") \
-            && waived_head=$(jq -r '.head' <<<"$waiver") \
-            && ids=$(jq -r '.threads[]' <<<"$waiver"); }; }; then
-        echo "pr-merge: thread-waiver-unreadable pr=$pr_num" >&2
-        echo "  The readiness result's thread_waiver does not read as {class, head, threads}; nothing was resolved, merged or armed." >&2
-        return 1
-    fi
-    [ "$waiver" != null ] || return 0
-    if [ "$waived_head" != "$head" ]; then
-        echo "BLOCKED PR #$pr_num — the class policy waived its bot threads at $waived_head, not at the head being merged ($head)" >&2
-        return 1
-    fi
-    # A waiver exists only where the rule loaded; run_checks loaded it in its
-    # own subshell, so this shell loads it again.
-    if ! load_waiver_rule || [ "$WAIVER_LOADED" != present ] || ! body=$(rg_waiver_reply "$class" "$head"); then
-        echo "BLOCKED PR #$pr_num — the review gate's waiver rule could not be loaded to word the reply" >&2
-        return 1
-    fi
-    while IFS= read -r id; do
-        [ -n "$id" ] || continue
-        if ! out=$(with_token "$token" "$SCRIPT_DIR/post-reply.sh" "$id" --body "$body" 2>&1); then
-            echo "BLOCKED PR #$pr_num — the reply on waived bot thread $id failed" >&2
-            printf '%s\n' "$out" | sed 's/^/  /' >&2
-            return 1
-        fi
-        if ! out=$(with_token "$token" "$SCRIPT_DIR/resolve-thread.sh" "$id" 2>&1); then
-            echo "BLOCKED PR #$pr_num — resolving waived bot thread $id failed" >&2
-            printf '%s\n' "$out" | sed 's/^/  /' >&2
-            return 1
-        fi
-        echo "RESOLVED THREAD $id — change class $class, review evidence none" >&2
-    done <<<"$ids"
-}
-
-# Reopen the threads whose waiver has lapsed, by the review gate's rule: the
-# class policy stopped waiving them while the merge route's resolution is
-# still their last word. The readiness result already counts them as
-# blocking; reopening puts them where GitHub's thread-resolution rule and the
-# review-comment route see them again. The merge modes alone call this, never
-# --check or --dry-run. Every thread is tried, and the return is non-zero
-# when any stayed resolved.
-reopen_waived_threads() { # CHECK_JSON PR TOKEN
-    local check_json="$1" pr_num="$2" token="$3" ids id out status=0
-    if ! ids=$(jq -r '.thread_reopen[]' <<<"$check_json"); then
-        echo "pr-merge: thread-reopen-unreadable pr=$pr_num" >&2
-        echo "  The readiness result's thread_reopen does not read as a list of thread ids; nothing was reopened." >&2
-        return 1
-    fi
-    while IFS= read -r id; do
-        [ -n "$id" ] || continue
-        if out=$(with_token "$token" "$SCRIPT_DIR/unresolve-thread.sh" "$id" 2>&1); then
-            echo "REOPENED THREAD $id — the waiver that resolved it no longer covers this pull request" >&2
-        else
-            echo "pr-merge: thread-reopen-failed id=$id" >&2
-            printf '%s\n' "$out" | sed 's/^/  /' >&2
-            status=1
-        fi
-    done <<<"$ids"
-    return "$status"
 }
 
 post_merge_snapshot() {
@@ -1206,10 +852,10 @@ read_queue_only() { # PR
     else
         base_sha="${range% *}"
         head_sha="${range#* }"
-        if ! policy_range_materialize "$root" "$base_sha" "$head_sha" 2>"$notes"; then
+        if ! pr_range_materialize "$root" "$base_sha" "$head_sha" 2>"$notes"; then
             QUEUE_ONLY_DETAIL="cause=range-absent base=$base_sha head=$head_sha"
         else
-            run_checkout_child --stderr-to "$notes" "$root" "$classifier" --event pull_request \
+            run_checkout_child "$notes" "$root" "$classifier" --event pull_request \
                 --base "$base_sha" --head "$head_sha" --repo . >/dev/null || status=$?
             line=$(sed -n 's/^queue-only: //p' "$notes" | tail -1) || line=""
             case "$status:$line" in
@@ -1250,7 +896,7 @@ refuse_admin_route() { # PR
 main() {
     local pr_num="" delete_branch=false admin=false
     local -a accepted=()
-    local check_only=false dry_run=false auto=false supplied_head="" require_context=""
+    local check_only=false dry_run=false auto=false supplied_head=""
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -1279,15 +925,6 @@ main() {
             shift
             ;;
         --expected-head) supplied_head="${2:-}"; shift 2 ;;
-        --require-context)
-            # An empty name would read as the option being absent and skip
-            # the arm's required-context check, so it is refused here.
-            if [ -z "${2:-}" ]; then
-                echo "Error: --require-context needs a non-empty context name" >&2; exit 1
-            fi
-            require_context="$2"
-            shift 2
-            ;;
         --dry-run)
             dry_run=true
             shift
@@ -1316,9 +953,6 @@ main() {
     if [ -n "$supplied_head" ] && ! [[ "$supplied_head" =~ ^[0-9a-fA-F]{40}$ ]]; then
         echo "Error: --expected-head must be a 40-character commit SHA" >&2; exit 1
     fi
-    if [ -n "$require_context" ] && [ "$auto" != true ]; then
-        echo "Error: --require-context gates the --auto arm and needs --auto" >&2; exit 1
-    fi
     [ "$admin" = false ] || refuse_admin_route "$pr_num"
 
     if [ "$check_only" = true ]; then
@@ -1340,12 +974,12 @@ main() {
     selection=$(load_bot_token)
     local token="${selection#*=}" token_source="${selection%%=*}"
 
-    local check_result readiness can_merge has_review_thread_gate checked_state checked_merged_at
+    local check_result can_merge checked_state checked_merged_at
     check_result=$(run_checks "$pr_num")
 
     # The checks re-read a state the up-front lookup could not resolve, so
     # a PR that is terminal by now must be reported here too. Otherwise
-    # `--auto`, which defers every non-thread blocker, arms a merge on a PR
+    # `--auto`, which defers every blocker, arms a merge on a PR
     # that has already left OPEN.
     checked_state=$(echo "$check_result" | jq -r '.state // ""')
     checked_merged_at=$(echo "$check_result" | jq -r '.merged_at // ""')
@@ -1353,47 +987,32 @@ main() {
 
     # run_checks builds its result with jq, so an unreadable one is a broken
     # invariant, never a verdict: it refuses rather than read as either answer.
-    if ! readiness=$(jq -r --arg p "^($THREAD_GATE_PREFIXES):" '[.can_merge, ([.issues[] | select(test($p))] | length > 0)] | @tsv' <<<"$check_result"); then
+    if ! can_merge=$(jq -r 'if (.can_merge | type) == "boolean" and (.issues | type) == "array" then .can_merge else error("unreadable") end' <<<"$check_result" 2>/dev/null); then
         echo "pr-merge: readiness-unreadable pr=$pr_num" >&2
         echo "  The readiness result is not JSON with can_merge and issues; nothing was merged or armed." >&2
         exit 1
     fi
-    can_merge="${readiness%%$'\t'*}"
-    has_review_thread_gate="${readiness#*$'\t'}"
 
-    if [ "$can_merge" != "true" ]; then
-        # `--auto` may defer GitHub-enforced blockers, but it must never
-        # bypass local review-thread safety. GitHub can otherwise accept
-        # and immediately merge a PR whose conversations remain open.
-        if [ "$auto" != true ] || [ "$has_review_thread_gate" = "true" ]; then
-            [ "$dry_run" = true ] || reopen_waived_threads "$check_result" "$pr_num" "$token" || true
-            print_blocked "$check_result" "$pr_num"
-            exit 1
-        fi
+    # `--auto` defers every blocker: merge_gate_gap below arms only where
+    # GitHub holds the armed PR until its required checks, an approval of its
+    # current head and thread resolution pass.
+    if [ "$can_merge" != "true" ] && [ "$auto" != true ]; then
+        print_blocked "$check_result" "$pr_num"
+        exit 1
     fi
 
     # Before any other stderr: callers route on this refusal's first line.
     local gate_gap slug
     [ "$auto" = false ] || [ "$dry_run" = true ] || gate_gap=$(merge_gate_gap "$pr_num" "$token")
-    # Read on its own rather than from the check result, which carries the
-    # required set only when the checks rollup was readable: a PR opened
-    # seconds ago has no check yet, and its rollup read fails. A failed read
-    # proves no gate either way, which the ruleset remedy would misstate.
-    local rule_lines=""
-    if [ -z "${gate_gap:-}" ] && [ -n "$require_context" ] && [ "$dry_run" != true ]; then
-        if ! rule_lines=$(with_token "$token" required_rule_lines "$pr_num"); then
-            gate_gap=unverified
-        elif ! grep -qxF -- "ctx:$require_context" <<<"$rule_lines"; then
-            gate_gap=required_context
-        fi
-    fi
     if [ -n "${gate_gap:-}" ]; then
         slug=$(kendex_github_resolve_gh_repo "${PROJECT_ROOT:-$PWD}" 2>/dev/null) || slug=unresolved
         echo "arm: no-merge-gate=$gate_gap repo=$slug" >&2
         case "$gate_gap" in
-            required_context) echo "  Nothing mutated. The base branch does not require '$require_context'; require it in the repository's ruleset." >&2 ;;
-            unverified) echo "  Nothing mutated. The base branch's rules could not be read, so no merge gate is proven; retry once they read." >&2 ;;
-            *) echo "  Nothing mutated. Enable auto-merge and a required status check or review rule on the base branch." >&2 ;;
+            allow_auto_merge) echo "  Nothing mutated. Enable auto-merge on the repository." >&2 ;;
+            required_approval) echo "  Nothing mutated. No ruleset on the base branch requires an approval, so GitHub would merge the armed PR before review; require at least 1 approval, thread resolution and stale-approval dismissal in its pull_request rule." >&2 ;;
+            required_thread_resolution) echo "  Nothing mutated. No ruleset on the base branch requires thread resolution, so GitHub would merge the armed PR on its first approval past open review threads; require review threads resolved in its pull_request rule." >&2 ;;
+            dismiss_stale_reviews) echo "  Nothing mutated. No ruleset on the base branch dismisses stale approvals on push, so GitHub would merge the armed PR on an approval of an earlier head, with no review of the pushed one; dismiss stale approvals on push in its pull_request rule." >&2 ;;
+            *) echo "  Nothing mutated. The base branch's rules could not be read, so no merge gate is proven; retry once they read." >&2 ;;
         esac
         exit 1
     fi
@@ -1428,10 +1047,6 @@ main() {
     if [ "$current_head" != "$expected_head" ]; then
         echo "BLOCKED PR #$pr_num — prepared head changed before merge attempt (expected=$expected_head, actual=$current_head)" >&2; exit 1
     fi
-
-    # Last before the mutation: every refusal above has had its say, and the
-    # head is the one the merge is pinned to.
-    resolve_waived_threads "$check_result" "$pr_num" "$token" "$expected_head" || exit 1
 
     local -a cmd=(pr merge "$pr_num" "--$method" --match-head-commit "$expected_head")
     [ "$auto" = true ] && cmd+=(--auto)

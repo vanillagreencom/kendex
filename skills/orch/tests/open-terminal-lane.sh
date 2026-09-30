@@ -993,7 +993,10 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") calls=
   "rc=0 creates=nolog launched=1 claim_lanes=eclaude calls=accounts;create,--item,CC-40,--repo,o/r,--harness,claude,--account,eclaude;cat,--item,CC-40,/srv/lane/.git;put,--item,CC-40,/srv/clone/.git/lane-mail/cc-40;cat,--item,CC-40,/srv/clone/.git/lane-mail/cc-40;put,--item,CC-40,/srv/lane/tmp/lane-mail/CC-40/context.json ssh=1 remote=1 env=0 opened=1" \
   "a hosted launch creates through lane-host, types ssh then the remote line, and renders no lane env prefix"
 # A hosted relaunch continues natively. Q is how single_quote renders one quote
-# of the continuation line inside the remote command.
+# of the continuation line inside the remote command. A claude relaunch runs
+# the start brief behind its --continue, and counts only once its pane draws a
+# harness screen, which HARNESS_UP shows once the remote command is typed;
+# open-terminal-relaunch-route.sh holds that route's own rows.
 #
 # One row per harness, one asserted remote command each. The codex row pins an
 # absence, because `codex resume` declares its prompt as conflicting with
@@ -1005,12 +1008,18 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") calls=
 # the variable Qopus, which under `set -u` empties the whole substitution the
 # expectation was built in and leaves the row comparing against nothing.
 Q="'\\''"
+printf 'Working (esc to interrupt)\n' > "$TMP_ROOT/harness-screen"
+HARNESS_UP="OT_HARNESS_SCREEN=$TMP_ROOT/harness-screen"
+# The flags a hosted claude command leads with, as the remote command quotes them.
+CLAUDE_LEAD="$Q--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}$Q $Q--disallowedTools=AskUserQuestion,EnterPlanMode$Q $Q--model$Q ${Q}opus$Q $Q--effort$Q ${Q}high$Q"
+# hosted_resume ITEM NAME BRIEF — the remote command of a hosted claude relaunch.
+hosted_resume() { printf "exec bash -lc 'cd /srv/lane && { claude %s --continue %s%s%s || [ \$? -ne 1 ] || exec claude -n %s %s %s%s%s; }'" "$CLAUDE_LEAD" "$Q" "$HOSTED_LINE" "$Q" "$2" "$CLAUDE_LEAD" "$Q" "$3" "$Q"; }
 hosted_line() { printf 'Resume the orch workflow for %s from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item %s first and act on every directive it prints, then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item %s through your harness background wake.' "$1" "$1" "$1"; }
 HOSTED_LINE="$(hosted_line CC-41)"
-run_ot "$CHOICE" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --relaunch CC-41
-assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "exec bash -lc 'cd /srv/lane && exec claude $Q--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}$Q $Q--disallowedTools=AskUserQuestion,EnterPlanMode$Q $Q--model$Q ${Q}opus$Q $Q--effort$Q ${Q}high$Q --continue $Q$HOSTED_LINE$Q'")" \
+run_ot "$HARNESS_UP;$CHOICE" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --relaunch CC-41
+assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "$(hosted_resume CC-41 CC-41 '/orch start CC-41')")" \
   "rc=0 creates=nolog launched=1 calls=accounts;create,--item,CC-41,--repo,o/r,--harness,claude,--account,claude,--relaunch;cat,--item,CC-41,/srv/lane/.git;put,--item,CC-41,/srv/clone/.git/lane-mail/cc-41;cat,--item,CC-41,/srv/clone/.git/lane-mail/cc-41;put,--item,CC-41,/srv/lane/tmp/lane-mail/CC-41/context.json remote=1" \
-  "a hosted claude relaunch passes the picked account and --relaunch, and continues natively with the continuation line"
+  "a hosted claude relaunch passes the picked account and --relaunch, and continues natively with the continuation line, the start brief behind it"
 HOSTED_LINE="$(hosted_line CC-48)"
 # The unattended words a Pi continuation line closes on, the text read from
 # lib/lane-launch.sh, which renders and judges them.
@@ -1130,8 +1139,8 @@ fi
 # line with no transcript lookup, so it is where the two ids are visibly
 # distinct, and the assertion below is what reddens if the bare number returns.
 HOSTED_LINE="$(hosted_line issue-2708)"
-run_ot "ORCH_LANE_ALIASES=eclaude=work;$CHOICE" --host "$HOST_STUB" --tracker github --harness claude --lane work --repo o/r --relaunch 2708
-assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "exec bash -lc 'cd /srv/lane && exec claude $Q--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}$Q $Q--disallowedTools=AskUserQuestion,EnterPlanMode$Q $Q--model$Q ${Q}opus$Q $Q--effort$Q ${Q}high$Q --continue $Q$HOSTED_LINE$Q'")" \
+run_ot "$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;$CHOICE" --host "$HOST_STUB" --tracker github --harness claude --lane work --repo o/r --relaunch 2708
+assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "$(hosted_resume issue-2708 github-2708 '/orch start github o/r#2708')")" \
   "rc=0 creates=nolog launched=1 calls=accounts;create,--item,issue-2708,--repo,o/r,--harness,claude,--account,eclaude,--relaunch;cat,--item,issue-2708,/srv/lane/.git;put,--item,issue-2708,/srv/clone/.git/lane-mail/issue-2708;cat,--item,issue-2708,/srv/clone/.git/lane-mail/issue-2708;put,--item,issue-2708,/srv/lane/tmp/lane-mail/issue-2708/context.json remote=1" \
   "a GitHub relaunch names the worktree id its mailbox is bound under, never the bare issue number, and asks the provider nothing beyond the judge's one accounts read on an account that measured"
 
@@ -1157,7 +1166,7 @@ run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;$HOSTED_ACCOUNT;$CHOICE_CMD" --host
 assert_eq "$(observe "rc=1 launched=nolog credentialdead=lane=$H/.xclaude,host=$HOST_STUB unreadable=none")" \
   "rc=1 launched=nolog credentialdead=lane=$H/.xclaude,host=$HOST_STUB unreadable=none" \
   "a fresh hosted launch on an account this machine cannot renew is refused as host-credential-dead"
-run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;$HOSTED_ACCOUNT;flags=--model fable --effort high" --host "$HOST_STUB" --harness claude \
+run_ot "$HARNESS_UP;ORCH_LANES_CLAUDE_CLIENT_ID=client-1;$HOSTED_ACCOUNT;flags=--model fable --effort high" --host "$HOST_STUB" --harness claude \
   --lane "$H/.xclaude" --repo o/r --relaunch CC-78
 assert_eq "$(observe "rc=0 launched=1 credentialdead=none unreadable=none relaunchgate=1")" \
   "rc=0 launched=1 credentialdead=none unreadable=none relaunchgate=1" \
@@ -1172,7 +1181,7 @@ assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H
 # machine's account files to the host at every create — answers nothing, so the
 # relaunch is judged on the local reading it runs on. Silent: the absent verb is
 # no news.
-RELAUNCH_FLAGS='flags=--model fable --effort high'
+RELAUNCH_FLAGS="$HARNESS_UP;flags=--model fable --effort high"
 run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;LANE_HOST_STUB_NO_ACCOUNTS=1;$RELAUNCH_FLAGS" --host "$HOST_STUB" \
   --harness claude --lane "$H/.xclaude" --repo o/r --relaunch CC-100
 assert_eq "$(observe "rc=1 launched=nolog relaunchgate=0 unanswered=0 credentialdead=none unreadable=lane=$H/.xclaude,model=fable,step=windows")" \
@@ -1482,12 +1491,14 @@ assert_eq "$(observe "rc=1 promptmissing=item=CC-137,host=$HOST_STUB,reason=prom
   "rc=1 promptmissing=item=CC-137,host=$HOST_STUB,reason=prompt-silent,seconds=1,attempts=2" \
   "a prompt with a banner line under it is not the line the wait reads, and the bound is spent"
 
-# A hosted lane reads ORCH_TMUX_VERIFY_SECS only where a brief is rendered for
-# it: claude, no --cmd and no host relaunch. Its other two readers sit behind
-# lane_account_readable, which is false for every hosted lane. So a broken one
-# must not abort the hosted shapes that never consult it, and must still abort
-# the one that does. One row per term of that condition, the harness, the
-# --cmd template and the relaunch, and one for the shape it lets through.
+# A hosted lane reads ORCH_TMUX_VERIFY_SECS only where it is claude with no
+# --cmd: a fresh launch waits on its brief, a relaunch on its harness screen
+# through tmux_wait_harness. The account read, and tmux_wait_harness as its
+# premise, sit behind lane_account_readable, which is false for every hosted
+# lane. So a broken one must not abort the hosted shapes that
+# never consult it, and must still abort the ones that do. One row per term of
+# that condition, the harness and the --cmd template, and one for each shape it
+# lets through.
 run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_TMUX_VERIFY_SECS=abc;flags=-m gpt-6-astra -c model_reasoning_effort=high" --harness codex --lane "$H/.eclaude" --repo o/r CC-127
 assert_eq "$(observe "rc=0 launched=1 seconds_invalid=none")" "rc=0 launched=1 seconds_invalid=none" \
   "a hosted codex lane carries no brief and is not aborted by a broken verification timeout"
@@ -1495,12 +1506,13 @@ run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_TMUX_VERIFY_SECS=abc;$CHOICE_CMD" --harne
 assert_eq "$(observe "rc=0 launched=1 seconds_invalid=none")" "rc=0 launched=1 seconds_invalid=none" \
   "a hosted --cmd lane carries no brief either, and is not aborted by the same broken timeout"
 run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_TMUX_VERIFY_SECS=abc;$CHOICE" --harness claude --lane "$H/.eclaude" --repo o/r --relaunch CC-138
-assert_eq "$(observe "rc=0 launched=1 seconds_invalid=none")" "rc=0 launched=1 seconds_invalid=none" \
-  "a hosted claude relaunch continues on its host with no brief, and is not aborted by it either"
+assert_eq "$(observe "rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc")" \
+  "rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc" \
+  "a hosted claude relaunch waits on its harness screen, so it refuses that broken timeout before any create"
 run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_TMUX_VERIFY_SECS=abc;$CHOICE" --harness claude --lane "$H/.eclaude" --repo o/r CC-129
 assert_eq "$(observe "rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc")" \
   "rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc" \
-  "the one hosted shape that renders a brief still refuses that broken timeout before any create"
+  "a fresh hosted claude launch, which waits on its brief, refuses that broken timeout before any create"
 
 # A hosted lane's composer nudge and brief re-paste go into a pane ssh holds,
 # so both are written expecting ssh: the harness runs on the host, never under
