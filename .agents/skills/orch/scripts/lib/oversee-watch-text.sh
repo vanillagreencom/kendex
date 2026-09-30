@@ -265,8 +265,9 @@ The long pass's events, checked and reported in this order:
                              once this watch has seen that wall standing; one
                              naming a date is spent on sight
   EVENT lane-asking <lane> [<copilot note>]
-                             a question or selection prompt differs from the
-                             last one emitted for this lane; the dialog follows.
+                             a question or selection prompt, or its copilot
+                             note, differs from the last one emitted for this
+                             lane; the dialog follows.
                              A Copilot lane launched with allow-all
                              carries stop-cause=<cause> or
                              session-record=<reason> where its session

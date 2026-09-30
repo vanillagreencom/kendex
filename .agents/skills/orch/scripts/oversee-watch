@@ -251,16 +251,13 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 # rows it took before the other advanced them. The overseer mailbox has no
 # position here at all: its own to-lane.cursor is the one every reader
 # advances, a session start included.
-# Triage keys, lane-asking fingerprints and usage-limit sightings are rows in
-# the first repository's file, never a file of their own. The live pane
-# capture remains authoritative.
-# Per-lane rows in the first repository's baseline, beside the reducer's
-# `<pr>\t<kind>` and triage's `triage\t<id>`:
-#   lane-asking<TAB><lane><TAB><fingerprint>
+# Per-lane rows in the first repository's baseline, never a file of their own,
+# beside the reducer's `<pr>\t<kind>` and triage's `triage\t<id>`:
+#   lane-asking<TAB><lane><TAB><pane key>|<turn identity>|<copilot note>|<slice cksum>
 #   usage-limit<TAB><lane><TAB><first-seen-epoch>|<pane key>|<reported event>|<reset key>
 #   model-capacity<TAB><lane><TAB><pane key>|<turn identity>|model-capacity
 #   lane-exited<TAB><lane><TAB><pane key>[|reported]
-#   lane-idle<TAB><lane><TAB><pane key>|<screen key>[|reported]
+#   lane-idle<TAB><lane><TAB><pane key>|<copilot note>|<screen cksum>[|reported]
 #   handoff<TAB><item><TAB><record checksum>
 #   lane-prepare<TAB><item><TAB><preparation start epoch>|<ready|failed|stuck>
 #   start-stalled<TAB><item><TAB><running_at epoch>|<passes since reported, or seen>
@@ -3105,29 +3102,28 @@ check_lanes() {
     below="$(pane_below_last_turn "$pane")"
     pane_key="$(lane_field "$LANE_OBS" "$i" 5)"
     turn_identity="$(pane_turn_identity "$pane")"
-    fingerprint="${pane_key}|${turn_identity}|$(printf '%s' "$below" | cksum)"
+    # The note is keyed: a Copilot record that turns to a stop cause under an
+    # unchanged prompt is news.
+    lane_note "$lane"
+    fingerprint="${pane_key}|${turn_identity}|${COPILOT_SESSION_NOTE}|$(printf '%s' "$below" | cksum)"
     if ! prior="$(lane_row_get lane-asking "$asking_state" "$lane")"; then
       die state-read-failed "" "lane=$lane" "row=lane-asking"
     fi
     asking_state="$(lane_row_set lane-asking "$asking_state" "$lane" "$fingerprint")"
     if [[ "$fingerprint" == "$prior" ]]; then continue; fi
-    lane_note "$lane"
     echo "EVENT lane-asking $lane${COPILOT_SESSION_NOTE:+ $COPILOT_SESSION_NOTE}"
-    # The dialog, which is what gets answered. It is the bottom of the slice
-    # the question was found in, so the cap trims the turn above it and not
-    # the rows.
+    # The dialog to answer, the bottom of the slice the question was found
+    # in: the cap trims the turn above it, not the rows.
     bounded_tail "$below"
     PASS_EVENT=1
   done
   # The round is over and nobody is driving: the harness is up, at its input
   # prompt, with nothing in flight. Two consecutive passes, because the screen
   # between a finished tool call and the next one reads the same; the first is
-  # a `lane-idle` row keyed by the pane and the slice below its last turn, as
-  # for lane-exited above. The second pass reports it and marks the row, so a
-  # lane left sitting at the same screen is reported once, however many runs
-  # look at it; a turn taken changes the slice and starts the count over. A
-  # lane that is walled, asking, working or exited is not idle and drops its
-  # row.
+  # a `lane-idle` row, as for lane-exited above. The second pass reports it and
+  # marks the row, so a lane left at the same screen is reported once, however
+  # many runs look at it; a turn taken changes the slice and starts the count
+  # over. A lane that is walled, asking, working or exited drops its row.
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
@@ -3173,18 +3169,19 @@ check_lanes() {
     # lane shows is a different idle screen and news again. A repaint of an
     # older frame does not reach here, since a scrolled view carries `Jump to
     # bottom` and pane_working reads that frame as working. A Pi lane's key is
-    # its last row, so each turn end it writes is news once.
-    screen_key="${pane_key}|$(printf '%s' "$turn" | cksum)"
+    # its last row, so each turn end it writes is news once. The note is keyed
+    # as for lane-asking.
+    lane_note "$lane"
+    screen_key="${pane_key}|${COPILOT_SESSION_NOTE}|$(printf '%s' "$turn" | cksum)"
     prior="$(lane_row_get lane-idle "$asking_state" "$lane")"
     if [[ "$prior" == "$screen_key|reported" ]]; then continue; fi
     if [[ "$prior" == "$screen_key" ]]; then
       asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" "$screen_key|reported")"
-      # The lane's closing report, which is what decides whether it is free
-      # for another launch. Below the last turn is exactly the round that just
-      # ended, and the cap keeps its last lines. Unfiltered: the dead-worktree
+      # The lane's closing report, which decides whether it is free for
+      # another launch. Below the last turn is the round that just ended,
+      # and the cap keeps its last lines. Unfiltered: the dead-worktree
       # prompt noise is drawn by a shell that has the terminal back, and a
       # lane whose shell is drawing prompts reads exited, not idle.
-      lane_note "$lane"
       echo "EVENT idle-after-return $lane${COPILOT_SESSION_NOTE:+ $COPILOT_SESSION_NOTE}"
       bounded_tail "$below"
       PASS_EVENT=1

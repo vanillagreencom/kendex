@@ -186,18 +186,24 @@ copilot_events() {
   WATCH_BIN="${COPILOT_WATCH:-}" run_watch -- --state "$STUB_DIR/state.json" 2>"$STUB_DIR/err" </dev/null \
     | grep '^EVENT lane-asking\|^EVENT idle-after-return' | paste -sd '|' - || true
 }
-# GRANT|ALLOW|SCREEN|WANT
-while IFS='|' read -r grant allow screen want; do
+# GRANT|PRIOR|ALLOW|SCREEN|WANT: PRIOR, where not `-`, is the allow_all_enabled
+# an earlier run reported the same screen under, and WANT the events of the run
+# after the record says ALLOW.
+while IFS='|' read -r grant prior allow screen want; do
   [[ -n "$grant" ]] || continue
-  new_case "copilot_${grant}_${allow}_$screen"
+  new_case "copilot_${grant}_${prior}_${allow}_$screen"
+  if [[ "$prior" != - ]]; then copilot_lane "$prior" "$screen" "$grant"; copilot_events >/dev/null; fi
   copilot_lane "$allow" "$screen" "$grant"
   assert_eq "$(copilot_events)" "$want" \
-    "a Copilot lane launched with allow_all $grant whose record says allow_all_enabled $allow, at a $screen pane" "$STUB_DIR/err"
+    "a Copilot lane launched with allow_all $grant whose record says allow_all_enabled $prior then $allow, at a $screen pane" "$STUB_DIR/err"
 done <<'ROWS'
-true|false|prompt|EVENT lane-asking gh-2 stop-cause=allow-all-blocked-by-policy
-true|true|prompt|EVENT lane-asking gh-2
-true|false|idle|EVENT idle-after-return gh-2 stop-cause=allow-all-blocked-by-policy
-false|false|prompt|EVENT lane-asking gh-2
+true|-|false|prompt|EVENT lane-asking gh-2 stop-cause=allow-all-blocked-by-policy
+true|-|true|prompt|EVENT lane-asking gh-2
+true|-|false|idle|EVENT idle-after-return gh-2 stop-cause=allow-all-blocked-by-policy
+false|-|false|prompt|EVENT lane-asking gh-2
+true|true|false|prompt|EVENT lane-asking gh-2 stop-cause=allow-all-blocked-by-policy
+true|true|false|idle|EVENT idle-after-return gh-2 stop-cause=allow-all-blocked-by-policy
+true|true|true|prompt|
 ROWS
 # The control: a watch whose lane-asking line drops the note reports a
 # policy-blocked lane as a plain dialog to answer.
@@ -208,6 +214,23 @@ new_case copilot_mutant
 copilot_lane false prompt
 assert_eq "$(copilot_events)" "EVENT lane-asking gh-2" \
   "control: without the note a policy-blocked Copilot lane reads as a plain dialog" "$STUB_DIR/err"
+# One control per dedupe key: a watch that leaves the note out of it stays
+# silent on the unchanged screen whose record turned to a stop cause.
+# SCREEN KEY: the mutant drops the note from the key line that starts KEY.
+while read -r screen key; do
+  COPILOT_WATCH="$(mutant_scripts "copilot-key-$screen/orch" oversee-watch)/oversee-watch" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/copilot-key-$screen/github"
+  mutate_file "$COPILOT_WATCH" "$key\${COPILOT_SESSION_NOTE}|" "$key"
+  new_case "copilot_key_mutant_$screen"
+  copilot_lane true "$screen"
+  copilot_events >/dev/null
+  copilot_lane false "$screen"
+  assert_eq "$(copilot_events)" "" \
+    "control: a $screen key without the note hides a stop cause that follows an earlier report" "$STUB_DIR/err"
+done <<'ROWS'
+prompt fingerprint="${pane_key}|${turn_identity}|
+idle screen_key="${pane_key}|
+ROWS
 COPILOT_WATCH=""
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

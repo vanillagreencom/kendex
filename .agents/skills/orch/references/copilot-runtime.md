@@ -55,7 +55,7 @@ Enterprise managed settings can block the allow-all mode. GitHub delivers them p
 
 | Reader | When it reads | What it prints |
 |---|---|---|
-| `oversee-watch` | When it prints `lane-asking` or `idle-after-return` for a lane that a running fleet record names as a Copilot lane with `allow_all: true` | `stop-cause=allow-all-blocked-by-policy` on the event line, or `session-record=<reason>` where the record does not answer |
+| `oversee-watch` | At each pass where a lane that a running fleet record names as a Copilot lane with `allow_all: true` shows a prompt or sits idle. A changed note under an unchanged screen prints `lane-asking` or `idle-after-return` again | `stop-cause=allow-all-blocked-by-policy` on the event line, or `session-record=<reason>` where the record does not answer |
 | `lanes state [WINDOW]` | When a pane on this tmux server carries the window and a running fleet record names it as a Copilot lane with `allow_all: true` | `lanes: stop-cause=allow-all-blocked-by-policy` on stderr, beside the state the pane shows, or `lanes: session-record=<reason>` |
 | The `lane-mail-check` turn-end hook | At a turn end whose record answers, in a session whose `COPILOT_ALLOW_ALL` is `true` | `lane-mail-check: stop-cause=allow-all-blocked-by-policy`. The turn end is judged as usual. This hook reads no fleet record, so it takes the grant from the launch line's `COPILOT_ALLOW_ALL`, which is empty on a launch without allow-all. |
 
@@ -68,6 +68,7 @@ The first two find the session by the record's `session_id` where a relaunch or 
 | `store-unreadable` | The worktree or the account's `session-state` could not be read | Fix the path or its permissions |
 | `unbound` | The session id the fleet record or `workspace.yaml` names is empty or is not an id | Check the record's `session_id` and the session's `workspace.yaml` |
 | `unreadable`, `wrong-session`, `wrong-account` | The record file is not one `lib/copilot-session.sh` wrote for this session and account | Remove the file under `<account>/lane-status/` and let the status line write it again |
+| `wrong-transcript` | The record names another transcript than the one the turn-end hook's payload names. Only the hook passes a transcript, so only the hook prints this reason | Remove the file under `<account>/lane-status/` and let the status line write it again |
 
 The remedy for the block is the owner's. Tell the owner the account and the cause: an enterprise administrator lifts an account block, and the machine's administrator lifts a machine block. To move the item meanwhile:
 
