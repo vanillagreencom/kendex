@@ -120,7 +120,8 @@ The Breaking Changes table follows. A `roll` clears `<new>`; a `hold` clears `<o
 - Entry counts per bucket, and the verdict with each blocking entry and the pi-hooks change it waits for.
 - Commits shipped, packages touched, and tests run with pass counts.
 - Deferred Optional entries with their reasons; the Non-impact log.
-- The tested extension commit, the marker commit, the lane-mail receipt, the npm-deploy item, and the refresh result.
+- The tested extension commit, the marker commit, the npm-deploy item, and the refresh result.
+- How step 7's result was sent: from a lane, the exit status of `lane-mail notice`, which prints nothing on success; from the control VM, the receipt `lane-mail peer send` prints.
 - `git status --short` is clean.
 
 ## Notes
