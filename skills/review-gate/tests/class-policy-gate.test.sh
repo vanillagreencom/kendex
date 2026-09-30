@@ -233,9 +233,12 @@ done
 PREDICATE="$original_predicate"
 
 # Must-fail inverse: removing the early approval must fail an exempt class.
+# Every case after this control runs against the shipped predicate, restored
+# from this copy once the control has asserted.
+cp "$PREDICATE" "$TMP/predicate-original"
 count="$(grep -Fc '    none)' "$PREDICATE" || true)"
 assert_eq "$count" "1" "control has one no-review predicate branch"
-sed 's/^    none)$/    required)/' "$PREDICATE" >"$TMP/predicate-mutant"
+sed 's/^    none)$/    required)/' "$TMP/predicate-original" >"$TMP/predicate-mutant"
 cat "$TMP/predicate-mutant" >"$PREDICATE"
 reset
 set +e
@@ -247,6 +250,7 @@ if [ "$rc" -eq 0 ] && [ "$out" = 'verdict=approved detail=change class render re
 else
   ok "must-fail: removing the exemption fails the render contract"
 fi
+cat "$TMP/predicate-original" >"$PREDICATE"
 
 # Source preparation is bounded because the judged manifest chooses how much
 # work it asks for. Either bound refuses THIS pull request's classification and
@@ -288,7 +292,6 @@ else
 fi
 
 UNMEASURED_BRANCH='  if [ "$policy_status" -eq 3 ]; then'
-cp "$PREDICATE" "$TMP/predicate-original"
 assert_eq "$(grep -Fxc -- "$UNMEASURED_BRANCH" "$PREDICATE" || true)" "1" "control has one unmeasured branch"
 sed 's/^  if \[ "\$policy_status" -eq 3 \]; then$/  if [ "$policy_status" -eq 30 ]; then/' "$TMP/predicate-original" >"$TMP/predicate-mutant"
 if cmp -s "$TMP/predicate-mutant" "$TMP/predicate-original"; then
