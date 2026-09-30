@@ -864,7 +864,6 @@ HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-83 LANE_HOST_STUB_SELECTION=re
 assert_eq "rc=$RC waited=$(grep -c '^wait --item CC-83 $' "$TMP_ROOT/host.log" || true) handed=$(grep -c '^open-terminal: lane-preparing ' <<<"$OUT" || true) lineless=$(grep -c '^open-terminal: resume-lineless item=CC-83 harness=codex$' <<<"$ERR" || true) record=$(prepared CC-83)" \
   "rc=0 waited=1 handed=0 lineless=1 record=running none none" \
   "a hosted codex relaunch that resumes waits for its host in the foreground and reports resume-lineless to the caller"
-# A remote command that leaves the pane at its shell cannot renew this record.
 : > "$TMP_ROOT/host.log"
 HAND_OFF_HARNESS=codex HAND_OFF_CMD=- hand_off CC-83 STUB_BUFFER_LOG="$TMP_ROOT/codex-typed" ORCH_TMUX_VERIFY_SECS=1 "${CODEX_RELAUNCH[@]}"
 assert_eq "rc=$RC waited=$(grep -c '^wait --item CC-83 $' "$TMP_ROOT/host.log" || true) missing=$(grep -c '^open-terminal: harness-screen-missing item=CC-83 seconds=2$' <<<"$ERR" || true) record=$(prepared CC-83)" \

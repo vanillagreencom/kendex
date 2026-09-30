@@ -334,8 +334,7 @@ assert_not_contains "$OUT" "open-terminal: terminal-opened item=CC-1" "no lane i
 
 MERGED_DIR=""
 
-# The worktree owns the session even when its prompt names no item.
-# A newer foreign repository repeats the item but must lose before mtime.
+# Worktree ownership beats an item prompt in a newer foreign session.
 SESSION_HOME="$TMP_ROOT/session-home"; CLAUDE222=22222222-2222-2222-2222-222222222222; CODEX444=44444444-4444-4444-4444-444444444444; mkdir -p "$SESSION_HOME/.claude-shared/projects/repo" "$SESSION_HOME/.selected-codex/sessions/2026" "$SESSION_HOME/.pi/agent/sessions/repo"
 printf '%s\n' "{\"type\":\"user\",\"cwd\":\"$TMP_ROOT/wt/CC-1\",\"isSidechain\":false,\"message\":{\"content\":\"Continue.\"}}" >"$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222.jsonl"
 cp "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222.jsonl" "$SESSION_HOME/.claude-shared/projects/repo/11111111-1111-1111-1111-111111111111.jsonl"; touch -t 200001010000 "$SESSION_HOME/.claude-shared/projects/repo/11111111-1111-1111-1111-111111111111.jsonl"
