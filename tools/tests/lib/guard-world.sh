@@ -11,6 +11,7 @@
 #   R                        the world; GUARD, REPO, REAL_GIT, REAL_AWK, TMP
 #   run_guard [VAR=VALUE...] guard in the world, --full under FULL_GUARD=1;
 #                            sets OUT and RC
+#   GUARD_TEST_ENV           optional explicit child environment options
 #   mutant_guard SED-EXPR    stage a guard copy with the edit applied; false
 #                            when the edit changed nothing
 #   run_mutant               the copy at commit time; sets OUT and RC
@@ -115,7 +116,7 @@ run_guard() { # [VAR=VALUE...] — sets OUT and RC
   RC=0
   args=()
   [ "${FULL_GUARD:-0}" -eq 0 ] || args+=(--full)
-  OUT="$(cd "$R" && env "${GUARD_TEST_BOUNDS[@]}" "$@" "$GUARD" ${args[@]+"${args[@]}"} 2>&1 </dev/null)" || RC=$?
+  OUT="$(cd "$R" && env ${GUARD_TEST_ENV[@]+"${GUARD_TEST_ENV[@]}"} "${GUARD_TEST_BOUNDS[@]}" "$@" "$GUARD" ${args[@]+"${args[@]}"} 2>&1 </dev/null)" || RC=$?
 }
 
 # A mutant is a copy of guard with one edit, run in place of it: it removes
@@ -139,5 +140,5 @@ mutant_guard() { # SED-EXPR — stage a guard copy with that edit applied
 run_mutant() { # — sets OUT and RC
   OUT=""
   RC=0
-  OUT="$(cd "$R" && "$MUTANT_TOOLS/guard" 2>&1 </dev/null)" || RC=$?
+  OUT="$(cd "$R" && env ${GUARD_TEST_ENV[@]+"${GUARD_TEST_ENV[@]}"} "$MUTANT_TOOLS/guard" 2>&1 </dev/null)" || RC=$?
 }

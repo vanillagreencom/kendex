@@ -50,6 +50,10 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo "the bot instruction check refused the working tree; its own report above names each file." ;;
     decision-ids)
       echo "decisions check refused; its own records above say why. An error=id-* record names a decision ID two records share: renumber per the decider skill's workflows/create-decision.md. An error=base-unverified record means the base branch could not be fetched or read, and an error=index-row-invalid record names an INDEX row check could not parse; the reason and guidance follow each." ;;
+    shipped-decision-link)
+      echo 'a shipped decision citation needs a link: [D<digits>](https://github.com/vanillagreencom/kendex/blob/main/docs/decisions/<ID>-<name>.md). The file, line and bare ID follow.' ;;
+    shipped-decision-scan)
+      echo 'the shipped decision citation scan could not read that input; its diagnostic follows.' ;;
     homebrew-formula)
       echo "a Homebrew formula claims the plain kendex name — the cask owns it; name the formula KendexCli." ;;
     catalog-fs-read)
@@ -407,7 +411,66 @@ show() { # HITS — the same lines, safe to print
   printf '%s\n' "$1" | LC_ALL=C awk '{ gsub(/[\001-\010\013-\037\177]/, "?"); print }'
 }
 
-files=$({ git ls-files; git diff --cached --name-only; } | sort -u)
+files=$({ git ls-files && git diff --cached --name-only; } | sort -u) || refuse shipped-decision-scan file-set
+
+# Catalog prose travels to repositories without kendex's decision directory.
+# GitHub cannot judge that prose rule, so this repository's commit lane does.
+# Reuse md-refs' block, code-span, destination and ID readers. Only the link
+# masking belongs here; md-refs judges whether a citation resolves locally,
+# not whether shipped prose gives a consumer a link to the catalog decision.
+md_lib="$TOOLS_DIR/../.agents/skills/commit-guards/scripts/lib"
+while IFS= read -r f; do
+  case "$f" in
+    skills/*.md | agents/*.md | hooks/*.md) ;;
+    *) continue ;;
+  esac
+  case "$f" in */tests/* | */AGENTS.md | */DEVELOPMENT.md) continue ;; esac
+  [ -e "$f" ] || [ -L "$f" ] || continue # a deleted source has no prose
+  if [ ! -f "$f" ] || [ -L "$f" ]; then
+    say shipped-decision-scan "$f"
+    continue
+  fi
+  if ! lines=$(LC_ALL=C awk -v mode=lines -f "$md_lib/md-shapes.awk" -f "$md_lib/md-blocks.awk" "./$f" 2>&1); then
+    say shipped-decision-scan "$f"
+    show "$lines"
+    continue
+  fi
+  if ! ids=$(LC_ALL=C awk -v mode=refs -v src="$f" -v id_prefix=D -v id_width=1 \
+    -f "$md_lib/md-slug.awk" -f /dev/fd/3 -f "$md_lib/md-refs.awk" \
+    2>&1 3<<'AWK' <<<"$lines"
+{
+  # Content follows two protocol tabs, and can contain more tabs of its own.
+  first = index($0, "\t")
+  if (!first) next
+  rest = substr($0, first + 1)
+  second = index(rest, "\t")
+  line_no = substr(rest, 1, second - 1)
+  text = substr(rest, second + 1)
+  split_spans(text)
+  text = outside
+  # parse_dest is md-refs' owner of escaped and nested destinations and titles.
+  p = 1
+  while (match(substr(text, p), /\[[^][]*\]\(/)) {
+    start = p + RSTART - 1
+    dest = parse_dest(text, start + RLENGTH)
+    if (dest == "" || LINK_CLOSE == 0) { p = start + RLENGTH; continue }
+    p = LINK_CLOSE + 1
+    text = substr(text, 1, start - 1) sprintf("%*s", LINK_CLOSE - start + 1, "") substr(text, LINK_CLOSE + 1)
+  }
+  emit_ids(text)
+  next
+}
+AWK
+  ); then
+    say shipped-decision-scan "$f"
+    show "$ids"
+    continue
+  fi
+  if [ -n "$ids" ]; then
+    say shipped-decision-link "$f"
+    show "$ids"
+  fi
+done <<<"$files"
 
 # Content rules over hand-written source. Every caller names the tree it
 # means, so the only blanket skips left are the generated files inside those
