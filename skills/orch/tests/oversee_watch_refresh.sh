@@ -101,7 +101,7 @@ printf '[{"databaseId":202,"conclusion":"failure","createdAt":"2026-09-30T08:00:
 printf 'refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.202.txt"
 printf 'HTTP 502: bad gateway\n' > "$STUB_DIR/refresh.owner_repo.err"
 refresh_watch --repo owner/repo --repo other/repo
-assert_eq "rc=$REFRESH_RC lists=$REFRESH_LISTS log=$REFRESH_LOG_REQUESTS events=$REFRESH_EVENTS" "rc=0 lists=2 log=run view 202 --repo other/repo --log-failed events=${EVENT/owner\/repo/other\/repo}" "one unread repository does not hide another repository's failures" "$STUB_DIR/err"
+assert_eq "rc=$REFRESH_RC lists=$REFRESH_LISTS log=$REFRESH_LOG_REQUESTS events=$REFRESH_EVENTS" "rc=0 lists=2 log=run view 202 --repo other/repo --log-failed events=${EVENT/owner\/repo/other/repo}" "one unread repository does not hide another repository's failures" "$STUB_DIR/err"
 
 # A failed list read leaves the row intact and does not advance its repeat
 # clock. Restore the read and the next good pass is still quiet.
@@ -111,7 +111,7 @@ rm -- "$STUB_DIR/refresh.other_repo.err"
 refresh_watch --repo owner/repo --repo other/repo
 assert_eq "rc=$REFRESH_RC events=$REFRESH_EVENTS" 'rc=0 events=' "an unread list does not reset or advance a standing pair" "$STUB_DIR/err"
 refresh_watch --repo owner/repo --repo other/repo
-assert_eq "rc=$REFRESH_RC events=$REFRESH_EVENTS" "rc=0 events=${REPEAT/owner\/repo/other\/repo}" "the standing pair repeats after two good long passes" "$STUB_DIR/err"
+assert_eq "rc=$REFRESH_RC events=$REFRESH_EVENTS" "rc=0 events=${REPEAT/owner\/repo/other/repo}" "the standing pair repeats after two good long passes" "$STUB_DIR/err"
 
 # Each private mutant still reads the real completed-run list. The positive
 # event oracle rejects an unreachable threshold or an initial event marked repeat.
@@ -173,7 +173,7 @@ printf 'refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.202.txt"
 printf 'HTTP 502: bad gateway\n' > "$STUB_DIR/refresh.owner_repo.err"
 WATCH_BIN="$REPO_WATCH" refresh_watch --repo owner/repo --repo other/repo
 CONTROL_RC=0
-( assert_eq "rc=$REFRESH_RC lists=$REFRESH_LISTS log=$REFRESH_LOG_REQUESTS events=$REFRESH_EVENTS" "rc=0 lists=2 log=run view 202 --repo other/repo --log-failed events=${EVENT/owner\/repo/other\/repo}" 'multi-repository oracle'; [[ "$FAIL" -eq 0 ]] ) > "$STUB_DIR/control.out" || CONTROL_RC=$?
+( assert_eq "rc=$REFRESH_RC lists=$REFRESH_LISTS log=$REFRESH_LOG_REQUESTS events=$REFRESH_EVENTS" "rc=0 lists=2 log=run view 202 --repo other/repo --log-failed events=${EVENT/owner\/repo/other/repo}" 'multi-repository oracle'; [[ "$FAIL" -eq 0 ]] ) > "$STUB_DIR/control.out" || CONTROL_RC=$?
 assert_eq "watch=$REFRESH_RC oracle=$CONTROL_RC" 'watch=0 oracle=1' "control: the log assertion rejects an omitted repository" "$STUB_DIR/err"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
