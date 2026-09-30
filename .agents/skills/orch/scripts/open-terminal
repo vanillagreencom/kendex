@@ -2122,7 +2122,8 @@ launch_session_resolve() { # TITLE
 # launch handed to a background job opens it before the hand-off, so the next
 # item's pick counts this account while the host is still preparing.
 tmux_window_open() { # DIR TITLE
-  local dir="$1" title="$2" last_idx pane spec server
+  local dir="$1" title="$2" last_idx pane spec server matches row replace_idx=""
+  local window_args=()
   tmux_server_named || { ot_message tmux-missing "item=$title" >&2; return 1; }
   launchable_dir "$dir" "$title" || return 1
   launch_session_resolve "$title" || return 1
@@ -2131,10 +2132,26 @@ tmux_window_open() { # DIR TITLE
     ot_message tmux-failed "operation=list-windows" "item=$title" >&2
     return 1
   fi
+  window_args=(-a -t "=$LAUNCH_SESSION:$last_idx")
+  if [[ "$RELAUNCH" == true ]]; then
+    matches="$(tmux list-windows -t "=$LAUNCH_SESSION" -f "#{==:#{window_name},$title}" -F '#{window_index} #{window_id}')" || {
+      ot_message tmux-failed "operation=list-windows" "item=$title" >&2; return 1;
+    }
+    # Recover duplicate names left by a previous relaunch too. Window ids keep
+    # the targets stable even when the server renumbers after a close.
+    while IFS= read -r row; do
+      [[ -n "$row" ]] || continue
+      if [[ -z "$replace_idx" ]]; then replace_idx="${row%% *}"
+      else tmux kill-window -t "${row#* }" || { ot_message tmux-failed "operation=kill-window" "item=$title" >&2; return 1; }; fi
+    done <<<"$matches"
+    # new-window -k replaces in place without destroying a session whose only
+    # window is the old lane. A plain launch still inserts after the last one.
+    [[ -z "$replace_idx" ]] || window_args=(-k -t "=$LAUNCH_SESSION:$replace_idx")
+  fi
   # The server pid rides along with the pane id: it is the other half of a
   # lane claim's liveness key, and taking both from the creating call means no
   # second tmux round trip and no window between them.
-  if ! spec=$(tmux new-window -a -t "=$LAUNCH_SESSION:$last_idx" -n "$title" -c "$dir" -P -F '#{pid} #{pane_id}') || [[ -z "$spec" ]]; then
+  if ! spec=$(tmux new-window "${window_args[@]}" -n "$title" -c "$dir" -P -F '#{pid} #{pane_id}') || [[ -z "$spec" ]]; then
     ot_message tmux-failed "operation=new-window" "item=$title" >&2
     return 1
   fi

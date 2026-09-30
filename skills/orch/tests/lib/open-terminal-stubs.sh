@@ -118,7 +118,10 @@ case "${1:-}" in
       else echo "$OT_TMUX_SERVER_PID %$i"; fi
       i=$((i + 1))
     done ;;
-  list-windows) echo "1" ;;
+  list-windows)
+    # A relaunch asks for existing same-name windows. This neutral fixture
+    # holds none; the unfiltered index read still sees the controller window.
+    [[ " $* " == *' -f '* ]] || echo "1" ;;
   show-environment)
     # The tmux environment a new pane inherits, which is not the launcher's own.
     # tmux keeps TWO of them and the read names which: the SESSION scope without
