@@ -167,9 +167,12 @@ lane_context_caller_cfg() { # SHAPE
 # (lib/lane-claims.sh lane_running_record), into COPILOT_SESSION_NOTE: under
 # the record's `account`, else the account a launch with no --lane runs on, for
 # its `session_id`, which a relaunch or a wake writes, its `mail_root`, its
-# `allow_all`, which open-terminal writes, and its `launched_at`, which binds a
-# record with no session_id to the session its own launch started; a stamp
-# that does not parse is handed on empty. The store read is this machine's: a
+# `allow_all`, which open-terminal writes, and its `session_since`, the stamp
+# open-terminal reads before each launch or relaunch opens the terminal, which
+# binds a record with no session_id to the session that launch started. The
+# record's `launched_at` is not read: a relaunch keeps it, so it names the
+# first launch, whose session a fresh relaunch retired. A stamp that does not
+# parse is handed on empty. The store read is this machine's: a
 # fleet refuses a hosted Copilot lane (open-terminal,
 # `unsupported-for-oversee reason=hosted`). An empty REC is no lane and leaves
 # the note empty; 2 where REC could not be read.
@@ -178,7 +181,7 @@ lane_context_copilot_note() { # REC NOW
   COPILOT_SESSION_NOTE=""
   [ -n "$1" ] || return 0
   f="$(jq -r '[(.account, .session_id, .mail_root | strings // ""), (.allow_all == true | tostring),
-    (try (.launched_at | fromdateiso8601 | floor | tostring) catch "")] | join("\t")' <<<"$1" 2>/dev/null)" || return 2
+    (try (.session_since | fromdateiso8601 | floor | tostring) catch "")] | join("\t")' <<<"$1" 2>/dev/null)" || return 2
   home="${f%%	*}"; f="${f#*	}"
   session="${f%%	*}"; f="${f#*	}"
   root="${f%%	*}"; f="${f#*	}"

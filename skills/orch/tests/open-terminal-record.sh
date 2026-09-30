@@ -183,12 +183,14 @@ run_ot() {
 }
 
 # record ITEM — the item's record as `field=value` words, null spelled null.
-# running_at is left out: it is the clock at the write, which running_at ITEM
-# reads on its own rows below.
+# running_at and session_since are left out: each is a clock read at the
+# launch, which running_at ITEM and session_since ITEM read on their own rows
+# below.
 record() {
-  "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | to_entries | map(select(.key != "running_at")) | map("\(.key)=\(.value // "null")") | join(" ")'
+  "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | to_entries | map(select(.key != "running_at" and .key != "session_since")) | map("\(.key)=\(.value // "null")") | join(" ")'
 }
 running_at() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .running_at // "null"' | tr -d '"'; }
+session_since() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .session_since // "null"' | tr -d '"'; }
 records() { "$WS" --state-dir "$STATE" get oversee '[.lanes[] | select(.item == "'"$1"'")] | length'; }
 stamped() { [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] && echo iso || echo "$1"; }
 field() { sed -n "s/.* $2=\([^ ]*\).*/\1/p" <<<"$1"; }
@@ -207,6 +209,8 @@ assert_eq "$(sed "s/ launched_at=[^ ]*//" <<<"$REC")" \
 assert_eq "$(stamped "$(field "$REC" launched_at)")" "iso" "launched_at is a UTC timestamp"
 assert_eq "$(stamped "$(running_at CC-1)")" "iso" "a launch recording the lane running stamps running_at, the watch's start-stall anchor"
 LAUNCHED_AT="$(field "$REC" launched_at)"
+assert_eq "session_since=$(session_since CC-1)" "session_since=$LAUNCHED_AT" \
+  "a launch records its own launch stamp as session_since, the floor the lane readers bind its session to"
 
 # The choice words sit INSIDE the --cmd command, which is the command this
 # launch runs: a template is rendered verbatim and no launch flag is appended to
@@ -406,36 +410,50 @@ echo "=== a relaunch reads the handoff record where the lane wrote it ==="
 # The lane writes its record from its own worktree, whose common root is that
 # worktree here, while --state-dir names the fleet's directory, which holds
 # none. The relaunch asks where the lane wrote it and starts afresh.
-# retired_under SCRIPT — rc, the retirement line and the session id recorded.
+# retired_under SCRIPT — rc, the retirement line, the session id recorded,
+# whether session_since, first moved to the fixed past launched_at holds, was
+# renewed, and launched_at. The fresh start reads no session id, so the lane
+# readers bind its record through session_since alone, which must name this
+# relaunch and not the launch whose session it retired.
 retired_under() {
+  "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= (.session_since = "'"$LAUNCHED_AT"'")' >/dev/null
   mkdir -p "$TMP_ROOT/wt/CC-1/tmp"
   printf '%s\n' '{"handoff":{"merged":[],"remaining":["open the PR"],"written_at":"2000-01-01T06:00:00Z"}}' \
     > "$TMP_ROOT/wt/CC-1/tmp/workflow-state-CC-1.json"
   run_ot SCRIPT="$1" --relaunch --ghostty --harness claude --lane "$LANE_DIR" --launch-flags "--model opus --effort high" CC-1
   rm -f -- "${TMP_ROOT:?}/wt/CC-1/tmp/workflow-state-CC-1.json"
-  printf 'rc=%s retired=%s session=%s' "$RC" "$(grep -c '^open-terminal: session-retired item=CC-1 harness=claude$' <<<"$OUT" || true)" \
-    "$(field "$(record CC-1)" session_id)"
+  local since
+  since="$(session_since CC-1)"
+  printf 'rc=%s retired=%s session=%s since=%s launched_at=%s' "$RC" "$(grep -c '^open-terminal: session-retired item=CC-1 harness=claude$' <<<"$OUT" || true)" \
+    "$(field "$(record CC-1)" session_id)" "$([[ "$since" != "$LAUNCHED_AT" ]] && stamped "$since" || echo kept)" "$(field "$(record CC-1)" launched_at)"
 }
-assert_eq "$(retired_under "$OT")" "rc=0 retired=1 session=null" \
-  "a record only the lane's worktree state holds retires its session though --state-dir names another directory"
+assert_eq "$(retired_under "$OT")" "rc=0 retired=1 session=null since=iso launched_at=$LAUNCHED_AT" \
+  "a record only the lane's worktree state holds retires its session though --state-dir names another directory, and the fresh start renews session_since while launched_at stands"
+SINCE_MUTANT="$TMP_ROOT/since-mutant/scripts"
+mkdir -p "$SINCE_MUTANT"
+cp -R "$REPO/scripts/." "$SINCE_MUTANT/"
+mutate_file "$SINCE_MUTANT/open-terminal" 'del(.launched_at, .over_cap)' 'del(.launched_at, .session_since, .over_cap)'
+assert_eq "$(retired_under "$SINCE_MUTANT/open-terminal")" "rc=0 retired=1 session=null since=kept launched_at=$LAUNCHED_AT" \
+  "control: a relaunch that keeps session_since leaves the fresh start bound to the launch whose session it retired"
 RETIRED_MUTANT="$TMP_ROOT/retired-mutant/scripts"
 mkdir -p "$RETIRED_MUTANT"
 cp -R "$REPO/scripts/." "$RETIRED_MUTANT/"
 mutate_file "$RETIRED_MUTANT/open-terminal" 'lane_handoff_standing "$3" "" "$WORKFLOW_STATE" handoff-standing "$2"' \
   'lane_handoff_standing "$3" "" "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} handoff-standing "$2"'
-assert_eq "$(retired_under "$RETIRED_MUTANT/open-terminal")" "rc=0 retired=0 session=$CLAUDE222" \
+assert_eq "$(retired_under "$RETIRED_MUTANT/open-terminal")" "rc=0 retired=0 session=$CLAUDE222 since=iso launched_at=$LAUNCHED_AT" \
   "control: asked under the fleet's --state-dir the relaunch misses the record and resumes the retired session"
-# Both are relaunches, each renewing running_at, so the wake row below reads
-# the stamp the last of them left.
+# Each is a relaunch renewing running_at, so the wake row below reads the
+# stamp the last of them left.
 RELAUNCH_RUNNING_AT="$(running_at CC-1)"
 
 echo "=== a wake rewrites the session it resumed and nothing else ==="
-"$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= (.session_id = null | .status = "done")' >/dev/null
+"$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= (.session_id = null | .status = "done" | .session_since = "'"$LAUNCHED_AT"'")' >/dev/null
 run_ot --wake --harness claude CC-1
 assert_eq "rc=$RC woken=$(grep -c '^open-terminal: lane-woken item=CC-1 ' <<<"$OUT" || true) $(record CC-1)" \
   "rc=0 woken=1 item=CC-1 tracker=linear repo=null harness=claude window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running over_cap=null allow_all=null" \
   "a wake sets the resumed session id and status running and leaves the launch's fields as they were"
 assert_eq "running_at=$(running_at CC-1)" "running_at=$RELAUNCH_RUNNING_AT" "a wake keeps running_at: the lane it rouses already started"
+assert_eq "session_since=$(session_since CC-1)" "session_since=$LAUNCHED_AT" "a wake keeps session_since: it resumes the session the last launch started"
 
 echo "=== a wake is not judged on the fleet cap ==="
 # The fleet already runs more lanes than a cap of 1 allows; a wake rouses one of

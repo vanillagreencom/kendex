@@ -1315,7 +1315,11 @@ UNPARK_JQ='def unpark($at): (if .parked.at == null then .
 # relaunch recording the lane running stamps `running_at` with the time it
 # does so, which a relaunch renews and a wake keeps: oversee-watch measures a
 # lane's start from it, never from launched_at, which a background
-# preparation precedes and a relaunch keeps.
+# preparation precedes and a relaunch keeps. Every launch and relaunch writes
+# session_since, its own LAUNCHED_AT, which a wake keeps: the session a fresh
+# start opens is written at or after it, so the lane readers bind a record
+# with no session_id to the earliest session in its worktree since that stamp,
+# never to one a relaunch retired.
 # The park it drops is kept as one of the record's `pauses`, closed at the
 # resume, since oversee-cycle reads a lane's parked time from them.
 lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATUS]
@@ -1341,7 +1345,7 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
     --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$LAUNCH_MODEL" \
     --arg session_id "$session_id" --arg launched_at "$launched_at" --arg status "$status" --argjson prepare "${LAUNCH_PREPARE:-null}" \
     --arg over_cap "$CAP_PASSED" --arg running_at "$running_at" --argjson allow_all "${LAUNCH_ALLOW_ALL:-null}" \
-    '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, session_id: $session_id, launched_at: $launched_at, running_at: $running_at, status: $status, over_cap: $over_cap}
+    '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, session_id: $session_id, session_since: $launched_at, launched_at: $launched_at, running_at: $running_at, status: $status, over_cap: $over_cap}
      | map_values(if . == "" then null else . end) + {allow_all: $allow_all} + (if $prepare == null then {} else {prepare: $prepare} end)')" || return 1
   # update-report, so the refusal and the write are one locked step: a wake
   # that names no entry leaves the state as it was and reports so.

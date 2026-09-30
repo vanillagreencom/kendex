@@ -632,7 +632,8 @@ when absent); a launch with no --state-dir names no fleet, records nothing
 and creates no state. A record is one entry per
 item, keyed by its workflow-state id, the Linear id for a Linear item and
 issue-N for a GitHub item, carrying the tracker, repository, harness, window,
-account dir, host, mail_root, surface, model, session_id, allow_all
+account dir, host, mail_root, surface, model, session_id, session_since
+(the time this launch or relaunch read before its terminal opened), allow_all
 (whether a copilot command grants --allow-all or --yolo), launched_at,
 status `running`, or `preparing` with its `prepare` record for a hosted lane
 handed to a background job (see --host), and over_cap, `fleet` where an

@@ -195,10 +195,12 @@ copilot_session_cwd() { # WORKSPACE_YAML
 # the session a lane in WORKTREE runs under the account HOME, printed, 0: among
 # the `HOME/session-state/<id>/workspace.yaml` files whose `cwd:` line is
 # WORKTREE, resolved, and that hold events, the newest; with SINCE, epoch
-# seconds the lane launched at, the earliest written at or after SINCE, the
-# session that launch started. A later Copilot session in the same worktree on
-# the same account, a second-opinion run from it, is then not read in its
-# place. A session that ended before its first event, one whose sign-in
+# seconds the launch or relaunch that started the lane's running session read
+# before it opened the terminal, the earliest written at or after SINCE, the
+# session that launch started. A session a relaunch retired is written before
+# SINCE, and a later Copilot session in the same worktree on the same account,
+# a second-opinion run from it, after the lane's own, so neither is read in
+# its place. A session that ended before its first event, one whose sign-in
 # failed, leaves workspace.yaml and no events.jsonl, and
 # `copilot --resume=<id>` on it exits 1, so it is passed over. 1 where no
 # session qualifies; 2 where WORKTREE does not resolve or the store could not
@@ -226,7 +228,7 @@ copilot_session_in_worktree() { # HOME WORKTREE [SINCE]
   printf '%s\n' "$best"
 }
 
-# copilot_session_lane_note HOME SESSION_ID WORKTREE GRANTED NOW LAUNCHED — what the
+# copilot_session_lane_note HOME SESSION_ID WORKTREE GRANTED NOW SINCE — what the
 # session record of a Copilot lane on the account HOME says about a stop, for a
 # reader outside the session, which holds no payload naming it: `lanes state`
 # and oversee-watch, through lib/lane-context.sh lane_context_copilot_note.
@@ -235,7 +237,7 @@ copilot_session_in_worktree() { # HOME WORKTREE [SINCE]
 #   stop-cause=<cause>       copilot_session_stop_cause's cause
 #   session-record=<reason>  no record answered: copilot_session_read's reason,
 #                            `worktree-unmatched` for no SESSION_ID and no
-#                            session with events in WORKTREE since LAUNCHED, or
+#                            session with events in WORKTREE since SINCE, or
 #                            `store-unreadable` for a WORKTREE or a session
 #                            store that could not be read
 # GRANTED is `true` for a lane whose launch granted the full allow-all mode,
@@ -244,11 +246,11 @@ copilot_session_in_worktree() { # HOME WORKTREE [SINCE]
 # has an allow-all a policy can take, so any other GRANTED leaves the note
 # empty and reads no record: a record reason for a lane that can carry no
 # cause names nothing to act on. The session is SESSION_ID, else the one
-# copilot_session_in_worktree names for WORKTREE since LAUNCHED, the lane's
-# launch in epoch seconds, or the newest there where LAUNCHED is empty. Always
-# 0.
+# copilot_session_in_worktree names for WORKTREE since SINCE, in epoch seconds
+# the record's `session_since`, the launch that started the running session,
+# or the newest there where SINCE is empty. Always 0.
 COPILOT_SESSION_NOTE=""
-copilot_session_lane_note() { # HOME SESSION_ID WORKTREE GRANTED NOW LAUNCHED
+copilot_session_lane_note() { # HOME SESSION_ID WORKTREE GRANTED NOW SINCE
   local home="$1" session="$2" file rc=0
   COPILOT_SESSION_NOTE=""
   [ "$4" = true ] || return 0
