@@ -25,7 +25,7 @@ A finding in a class `.agents/skills/orch/references/finding-disposition.md` Ste
 
 ## Output
 
-Architecture violations, boundary breaches, spec holes, an indirect read of another system's state (not a read of its documented interface, text or JSON output included) that names no interface or no reason → `blockers[]`. Tech debt observations, minor improvements → `suggestions[]`.
+Architecture violations, boundary breaches, spec holes, an indirect read of another system's state (not a read of its documented interface, text or JSON output included) that does not name the documented interface it stands in for and why that interface cannot serve → `blockers[]`. Tech debt observations, minor improvements → `suggestions[]`.
 
 ## Required Skills
 
