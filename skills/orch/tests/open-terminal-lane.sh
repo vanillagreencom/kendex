@@ -11,21 +11,19 @@
 # mode, and an unstubbed launch would open a real window per row.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
-# Every lane this suite measures lives under LANES_HOME; an inherited lane
-# setting would point discovery at the operator's real accounts.
-unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANE_COPILOT_POOL ORCH_LANES_USAGE_TTL CODEX_HOME
+# Empty child values keep inherited and checkout lane settings out of fixtures.
+# Unsetting them would let the project loader restore the checkout values.
+# Each row's explicit settings follow these defaults and override them.
+LANE_ENV_DEFAULTS=(
+  ORCH_LANE_PREFERENCE= ORCH_LANE_DIRS= ORCH_LANE_ALIASES=
+  ORCH_LANE_EXCLUDE= ORCH_LANE_RETIRE= ORCH_LANE_COPILOT_POOL=
+  ORCH_LANE_BURN_PCT_PER_HOUR= ORCH_LANE_MAX_PCT= ORCH_LANE_HOST=local
+)
+unset ORCH_LANES_USAGE_TTL CODEX_HOME
 # The renewal's own settings, for the same reason: with one of these exported a
 # developer runs a different suite from CI, where the expired-lane rows below
 # stay expired, and a row could reach a live helper or the real token endpoint.
 unset ORCH_LANES_CLAUDE_CLIENT_ID ORCH_LANES_TOKEN_CMD ORCH_LANES_CLAUDE_TOKEN_URL
-# The caller's environment outranks project settings, so a pinned local host
-# keeps an inherited or configured provider out of the local rows; hosted rows
-# pass the stub themselves.
-export ORCH_LANE_HOST=local
-# The usage threshold is pinned per run (run_ot) rather than read from the
-# checkout kendex.settings.toml, so the rows below assert what a launch
-# actually does rather than the repository configuration.
-unset ORCH_LANE_MAX_PCT
 # shellcheck source=lib/shared-skill-libs.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -58,6 +56,11 @@ source "$SCRIPTS_DIR/lib/toml.sh"
 # launcher's own rule is what turns it back into the account.
 # shellcheck source=../scripts/lib/lane-home.sh
 source "$SCRIPTS_DIR/lib/lane-home.sh"
+# The command observations use the launcher's model reader. Its claims sibling
+# enables errexit; this suite collects refusal statuses instead of exiting.
+# shellcheck source=../scripts/lib/lane-launch.sh
+source "$SCRIPTS_DIR/lib/lane-launch.sh"
+set +e
 # mutant_scripts and mutate_file, the two halves of the control below.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
@@ -202,7 +205,7 @@ run_ot() {
   # screen, so each such wait runs to its bound; one second keeps the suite
   # honest and quick. Which waits read the ssh bound, and how many of them a
   # hosted launch makes, is named at open-terminal's validation gate.
-  OUT=$(cd "$cwd" && env LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
+  OUT=$(cd "$cwd" && env "${LANE_ENV_DEFAULTS[@]}" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
     LANE_HOST_STUB_DIR="$RUN/remote" \
     ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SSH_PROMPT_SECS=1 ${pct_pin[@]+"${pct_pin[@]}"} \
     TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" \
@@ -304,7 +307,13 @@ observe() {
       launched) value="$(counted '^new-window' "$RUN/tmux.log")" ;;
       creates) value="$(counted '^create ' "$RUN/worktree.log")" ;;
       claims) value="$([[ -d "$RUN/state/claims" ]] && ls -1 "$RUN/state/claims" | wc -l | tr -d '[:space:]' || echo nolog)" ;;
-      cmd_model) value="$(launch_choice_launch_model claude "$(cat -- "$RUN/tmux.log" 2>/dev/null || true)")"; value="${value:-none}" ;;
+      cmd_model)
+        # The tmux stub logs events before the command; the model reader takes
+        # one command line, not the complete event log.
+        value="$(sed -n '/^clear; env CLAUDE_CONFIG_DIR=/{p;q;}' "$RUN/tmux.log")" || return 1
+        value="$(launch_choice_launch_model claude "$value")" || return 1
+        value="${value:-none}"
+        ;;
       cmd_lane) value="$(grep -oE "env CLAUDE_CONFIG_DIR='[^']*'" "$RUN/tmux.log" 2>/dev/null | sed -E -e "s/^env CLAUDE_CONFIG_DIR='//" -e "s/'\$//" -e "s#^$H/\\.##" | sort -u | paste -sd, - || true)"; value="${value:-none}" ;;
       pi_root) value="$(grep -oE "env PI_CODING_AGENT_DIR='[^']*'" "$RUN/tmux.log" 2>/dev/null | sed -E -e "s/^env PI_CODING_AGENT_DIR='//" -e "s/'\$//" -e "s#^$H/\\.##" | sort -u | paste -sd, - || true)"; value="${value:-none}" ;;
       copilot_home) value="$(grep -oE "COPILOT_HOME='[^']*'" "$RUN/tmux.log" 2>/dev/null | sed -E -e "s/^COPILOT_HOME='//" -e "s/'\$//" -e "s#^$H/\\.##" | sort -u | paste -sd, - || true)"; value="${value:-none}" ;;
@@ -759,10 +768,10 @@ claude_usage 60 20 10 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 table \
   "a named lane with room whose live lanes project past the threshold is refused|cmd=true --model=fable --effort=high;prep=claude_claim;ORCH_LANE_BURN_PCT_PER_HOUR=50|--harness claude --lane $H/.claude CC-1641|rc=1 launched=0 creates=nolog walled=lane=$H/.claude,model=fable,pct=60,bucket=session,projected-headroom=-10" \
   "the same lane with nothing live on it launches|cmd=true --model=fable --effort=high;ORCH_LANE_BURN_PCT_PER_HOUR=50|--harness claude --lane $H/.claude CC-1642|rc=0 launched=1 walled=none"
-# This model's scoped window has room until an existing launch claim charges
-# its burn. The later Opus entry spends only the shared windows, which have
-# room even after that charge. `run_ot` seeds the same real claim as above.
-claude_usage 10 20 60 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
+# Fable's weekly window sits below the launch threshold until a live claim
+# charges the burn scaled by 5/168. Opus spends only the shared windows, which
+# still have room after the charge. `run_ot` seeds the same real claim as above.
+claude_usage 10 20 94 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 NAMED_PREFERENCE='ORCH_LANE_PREFERENCE=claude:fable:high,claude:opus:high;cmd=claude;ORCH_LANE_BURN_PCT_PER_HOUR=50'
 table \
   "a preference resolves a named alias before its pick|$NAMED_PREFERENCE;ORCH_LANE_ALIASES=claude=work;cwd=$COLLIDE|--harness claude --lane work CC-1643|rc=0 launched=1 cmd_lane=claude cmd_model=fable" \
@@ -1659,7 +1668,7 @@ git -C "$SCRIPTREPO" config maintenance.auto false
 git -C "$CALLERREPO" init -q
 git -C "$CALLERREPO" config gc.auto 0
 git -C "$CALLERREPO" config maintenance.auto false
-( cd "$CALLERREPO" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
+( cd "$CALLERREPO" && env "${LANE_ENV_DEFAULTS[@]}" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
   TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$TMP_ROOT/caller.tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$TMP_ROOT/caller.panes" \
   OT_WT_LOG="$TMP_ROOT/caller.worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
   "$SCRIPTREPO/scripts/open-terminal" --harness claude --lane auto \
@@ -1675,7 +1684,7 @@ assert_eq "caller=$(ls -1 "$CALLERREPO"/tmp/oversee-watch/claims 2>/dev/null | w
 git -C "$SCRIPTREPO" remote add origin git@github.com:script-owner/script-repo.git
 git -C "$CALLERREPO" remote add origin git@github.com:caller-owner/caller-repo.git
 REPO_LOG="$TMP_ROOT/caller.repo.tmux.log"
-( cd "$CALLERREPO" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
+( cd "$CALLERREPO" && env "${LANE_ENV_DEFAULTS[@]}" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
   TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$REPO_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$TMP_ROOT/caller.repo.panes" \
   OT_WT_LOG="$TMP_ROOT/caller.repo.worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
   "$SCRIPTREPO/scripts/open-terminal" --harness claude --lane auto \
@@ -1706,7 +1715,7 @@ run_bad_repo() {
   git -C "$caller" init -q
   git -C "$caller" config gc.auto 0
   git -C "$caller" config maintenance.auto false
-  ( cd "$caller" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
+  ( cd "$caller" && env "${LANE_ENV_DEFAULTS[@]}" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
     GH_REPO="$BAD_REPO" TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$log" OT_TMUX_SERVER_PID="$$" \
     OT_TMUX_PANES="$TMP_ROOT/$name.panes" OT_WT_LOG="$TMP_ROOT/$name.worktree.log" \
     PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
@@ -1748,7 +1757,7 @@ marked() {
   git -C "$caller" init -q
   git -C "$caller" config gc.auto 0
   git -C "$caller" config maintenance.auto false
-  out="$( cd "$caller" && GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" \
+  out="$( cd "$caller" && env "${LANE_ENV_DEFAULTS[@]}" GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" \
     OT_TMUX_PANES="$runs/panes" OT_WT_LOG="$runs/worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$3" \
     "$script" --harness claude --cmd "true $QUESTION_OFF_ALL" CC-40 2>&1 )" || rc=$?
@@ -1957,7 +1966,7 @@ lane_launch() {
   [[ "$late" != late ]] || trigger="$runs/trigger"
   [[ "$late" != gated ]] || gate="$runs/gate"
   "$TMP_ROOT/lane-tree" "$var" "$lane" "$leaf" "$trigger" "$gate" & tree=$!
-  out="$( cd "$caller" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
+  out="$( cd "$caller" && env "${LANE_ENV_DEFAULTS[@]}" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
     TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$runs/panes" \
     OT_PANE_PID="$tree" OT_PANE_TEXT="$text" ORCH_TMUX_VERIFY_SECS=5 OT_PANE_PID_TRIGGER="$trigger" \
     OT_LAUNCHED_GATE="$gate" \
