@@ -232,6 +232,11 @@ fn fetched_urls_are_always_positional_arguments() {
         curl_args("--output=/tmp/owned"),
         [
             "-fsS",
+            "--retry",
+            "3",
+            "--retry-delay",
+            "2",
+            "--retry-all-errors",
             "--location",
             "--max-redirs",
             "3",

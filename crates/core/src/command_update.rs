@@ -481,16 +481,21 @@ pub fn fetch(url: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("curl unavailable: {e}"))?;
     if !output.status.success() {
         return Err(format!(
-            "fetching {url} failed: {}",
+            "fetching {url} failed after 4 attempts: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
     Ok(output.stdout)
 }
 
-fn curl_args(url: &str) -> [&str; 10] {
+fn curl_args(url: &str) -> [&str; 15] {
     [
         "-fsS",
+        "--retry",
+        "3",
+        "--retry-delay",
+        "2",
+        "--retry-all-errors",
         "--location",
         "--max-redirs",
         "3",

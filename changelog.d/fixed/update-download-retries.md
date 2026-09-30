@@ -1,0 +1,1 @@
+- kendex update retries failed release downloads before reporting a failure and names the attempts in the error.
