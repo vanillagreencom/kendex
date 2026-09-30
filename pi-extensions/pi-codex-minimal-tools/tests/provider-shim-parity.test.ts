@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeContext } from "@earendil-works/pi-ai";
+import { streamSimple as piStreamSimple } from "@earendil-works/pi-ai/api/openai-codex-responses";
 import { buildRequestBody } from "../src/provider-shim.js";
 import { model } from "./helpers/responses.js";
 
@@ -79,4 +80,45 @@ test("Codex cache retention none suppresses session cache key", () => {
 		sessionId: "session-123",
 	} as any);
 	assert.equal(body.prompt_cache_key, undefined);
+});
+
+// Pi's own openai-codex-responses builds the request the shim replaces; its
+// onPayload hook hands the body over before any transport runs.
+async function piRequestBody(target: typeof model, reasoning: string | undefined): Promise<Record<string, unknown>> {
+	const claims = Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "acct_test" } })).toString("base64");
+	let body: Record<string, unknown> | undefined;
+	const stop = new Error("payload captured");
+	const stream = piStreamSimple(target, normalizeContext({ messages: [], tools: [] } as never), {
+		apiKey: `header.${claims}.signature`,
+		reasoning,
+		onPayload: (payload: unknown) => {
+			body = payload as Record<string, unknown>;
+			throw stop;
+		},
+	} as never);
+	const result = await stream.result();
+	assert.equal(result.errorMessage, stop.message, "Pi's provider must stop at the payload hook");
+	assert.ok(body, "Pi's provider must hand its request body to onPayload");
+	return body;
+}
+
+for (const row of [
+	{ name: "Off maps to the model's Off effort", map: { off: "none" }, reasoning: "off" },
+	{ name: "Off with no Off entry sends none", map: undefined, reasoning: "off" },
+	{ name: "no thinking level sends the Off effort", map: { off: "none" }, reasoning: undefined },
+	{ name: "Off unsupported clamps upward", map: { off: null, minimal: "low" }, reasoning: "off" },
+	{ name: "high keeps its summary", map: { off: "none" }, reasoning: "high" },
+]) {
+	test(`request reasoning effort matches Pi: ${row.name}`, async () => {
+		const target = { ...model, thinkingLevelMap: row.map } as typeof model;
+		const shim = buildRequestBody(target, normalizeContext({ messages: [], tools: [] } as never), { reasoning: row.reasoning } as never);
+		assert.deepEqual(shim.reasoning, (await piRequestBody(target, row.reasoning)).reasoning);
+	});
+}
+
+test("request reasoning effort matches Pi: a model without reasoning sends no field", async () => {
+	const target = { ...model, reasoning: false } as typeof model;
+	const shim = buildRequestBody(target, normalizeContext({ messages: [], tools: [] } as never), { reasoning: "off" } as never);
+	assert.equal(shim.reasoning, undefined);
+	assert.equal((await piRequestBody(target, "off")).reasoning, undefined);
 });

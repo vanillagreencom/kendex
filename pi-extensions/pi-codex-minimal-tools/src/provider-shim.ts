@@ -178,7 +178,7 @@ interface ResponsesBody {
 	tools?: unknown[];
 	reasoning?: {
 		effort: string;
-		summary: string;
+		summary?: string;
 	};
 	[key: string]: unknown;
 }
@@ -568,15 +568,21 @@ export function buildRequestBody<TApi extends Api>(model: Model<TApi>, context: 
 	}
 
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
-	const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
-	if (reasoningEffort !== undefined) {
-		const effort = model.thinkingLevelMap?.[reasoningEffort] ?? reasoningEffort;
-		if (effort === null) return body;
-		body.reasoning = {
-			effort: clampReasoningEffort(model.id, effort),
-			summary: ((options as { reasoningSummary?: string } | undefined)?.reasoningSummary ?? "auto") as string,
-		};
+	if (clampedReasoning === undefined || clampedReasoning === "off") {
+		// Pi 0.86.0 and later (earendil-works/pi#9191) send the model's Off effort
+		// rather than omitting the field, so the backend does not apply its default
+		// effort: pi-ai 0.87.1 `dist/api/openai-codex-responses.js` buildRequestBody.
+		// A `null` Off entry means the model takes no reasoning field at Off.
+		const offEffort = model.thinkingLevelMap?.off;
+		if (model.reasoning && offEffort !== null) body.reasoning = { effort: offEffort ?? "none" };
+		return body;
 	}
+	const effort = model.thinkingLevelMap?.[clampedReasoning] ?? clampedReasoning;
+	if (effort === null) return body;
+	body.reasoning = {
+		effort: clampReasoningEffort(model.id, effort),
+		summary: ((options as { reasoningSummary?: string } | undefined)?.reasoningSummary ?? "auto") as string,
+	};
 
 	return body;
 }

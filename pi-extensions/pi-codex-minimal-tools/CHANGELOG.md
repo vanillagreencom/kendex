@@ -6,6 +6,7 @@
 
 - **The Codex provider shim sends the system prompt and tools again on Pi 0.86.0 and later.** Pi 0.86 moved the system prompt and the tool declarations out of a provider's `systemPrompt` and `tools` fields and into the transcript's `system` messages. The Codex provider shim still read the old fields, so on Pi 0.86 and later every `openai-codex` request reached the model with no system prompt and no tools. The shim now reads both from the transcript, with later system messages folded into the instructions and the tool set, and sends no `system` message as an input item. On a Pi host below 0.86.0 it still reads the old fields, as before.
 - Long Codex sessions spend less of Pi's main thread per turn. Tool-call arguments are parsed when the call completes instead of on every streamed chunk, and streamed text is appended instead of rebuilt. A cached WebSocket request no longer serializes the whole transcript, and SSE request compression runs off the main thread.
+- Pi 0.86.0 parity: with thinking set to Off, a Codex request carries the model's Off reasoning effort, `none` unless the model maps Off to another value. Before, the shim sent no reasoning field and the backend applied the model's default effort.
 
 ### 2.0.2
 

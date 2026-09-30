@@ -80,8 +80,6 @@ Impact until the fix: every `openai-codex` request through the shim on Pi 0.86.0
 
 Fixed after this audit in KEN-2176: `buildRequestBody` and the vendored converter read the prompt and the tool set through Pi's `getCurrentSystemPrompt` and `getCurrentTools`, which fold later system messages in, and send no system message as an input item. A context with no system message, which a Pi below 0.86.0 hands, is still read from its `systemPrompt` and `tools` fields, so the package keeps its open peer range. Evidence: `pi-codex-minimal-tools/tests/transcript-context.test.ts` sends a real Pi session through the shim and fails on the old code, and builds a request from each context shape. Pi's own `openai-codex-responses` keeps later system messages in place and adds tools where they appear, when the model supports it (`resolveTranscript`, `resolveTranscriptTools`); the shim sends the folded prompt and the full current tool set instead, which is correct and forgoes that cached-prefix saving.
 
-Still open: Pi sends the model's Off reasoning effort instead of omitting it (0.86.0, [#9191](https://github.com/earendil-works/pi/issues/9191)), which the shim still omits.
-
 ## Deferred (Optional)
 
 | Item | Reasoning |
