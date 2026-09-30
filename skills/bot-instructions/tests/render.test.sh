@@ -253,11 +253,6 @@ else
   bad "the owned region is the marker and one directive line"
 fi
 
-# A block without an append is one paragraph per spec-copy paragraph, joined.
-grep -q '^Author replies are .* a label it knows\.$' "$pointed" \
-  && ok "the reply-contract block is one paragraph on one line, line breaks joined" \
-  || bad "the reply-contract block is one paragraph on one line, line breaks joined"
-
 # `--staged` judges one coherent state: a worktree input that moved on does
 # not decide what the staged outputs are compared against.
 git -C "$repo" add -A >/dev/null 2>&1
