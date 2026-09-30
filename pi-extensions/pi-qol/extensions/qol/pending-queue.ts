@@ -13,6 +13,10 @@ interface StatusTextAlignmentPatch {
 	originalRender: (this: unknown, width: number) => string[];
 }
 
+function isStatusTextAlignmentPatch(value: unknown): value is StatusTextAlignmentPatch {
+	return typeof value === "object" && value !== null && typeof (value as Partial<StatusTextAlignmentPatch>).originalRender === "function";
+}
+
 interface StatusTextClassification {
 	text: string;
 	status: boolean;
@@ -47,7 +51,8 @@ function isQueuedMessageStatusText(text: string): boolean {
 export function installStatusTextAlignmentPatch(ctx: ExtensionContext): void {
 	if (!ctx.hasUI) return;
 	const proto = Text.prototype as unknown as Record<PropertyKey, any>;
-	if (proto[STATUS_TEXT_ALIGNMENT_PATCH_SYMBOL]) return;
+	// Any marker already here keeps its wrapper, including pi-qol 2.2.0's `true`.
+	if (proto[STATUS_TEXT_ALIGNMENT_PATCH_SYMBOL] !== undefined) return;
 	const originalRender = proto.render;
 	if (typeof originalRender !== "function") return;
 	const classifications = new WeakMap<object, StatusTextClassification>();
@@ -75,10 +80,16 @@ export function installStatusTextAlignmentPatch(ctx: ExtensionContext): void {
 	};
 }
 
+/**
+ * Removes the patch, but only one this module's install wrote. Any other
+ * marker keeps its wrapper: pi-qol 2.2.0 marked the prototype with `true` and
+ * kept no original render, and Pi's `/reload` carries that marker into this
+ * module because pi-tui's prototype outlives the reload.
+ */
 export function restoreStatusTextAlignmentPatch(): void {
 	const proto = Text.prototype as unknown as Record<PropertyKey, any>;
-	const patch = proto[STATUS_TEXT_ALIGNMENT_PATCH_SYMBOL] as StatusTextAlignmentPatch | undefined;
-	if (!patch) return;
+	const patch: unknown = proto[STATUS_TEXT_ALIGNMENT_PATCH_SYMBOL];
+	if (!isStatusTextAlignmentPatch(patch)) return;
 	proto.render = patch.originalRender;
 	delete proto[STATUS_TEXT_ALIGNMENT_PATCH_SYMBOL];
 }

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open } from "node:fs/promises";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	DEFAULT_NOTIFICATION_BODY_MAX_CHARS,
@@ -68,24 +69,26 @@ function notificationBellMuted(cwd?: string): boolean {
 	return settingBoolean("notification.muteBellSound", false, cwd);
 }
 
-interface TmuxPaneIdentity {
+/** The source pane as one tmux query reports it when a notification fires. */
+interface TmuxPaneState {
 	paneTty: string;
+	windowActive: boolean;
 	sessionId: string;
 	windowId: string;
+	windowName: string;
 }
 
+/** `#W` is last: a window name may hold a tab, so every field after the fourth is the name. */
+const PANE_STATE_FORMAT = "#{pane_tty}\t#{window_active}\t#{session_id}\t#{window_id}\t#W";
+
 /**
- * The source pane's tty, session and window, looked up once per Pi session.
- * The ids (`$N`, `@N`) survive a session or window rename. A failed lookup is
- * not cached, so the next notification asks again.
- */
-let tmuxIdentity: Promise<TmuxPaneIdentity | undefined> | undefined;
-/**
- * Every terminal write joins this chain and runs alone, in queue order: a
- * write to a stalled terminal holds the writes behind it, not Pi, and ties up
- * one I/O thread rather than one per notification.
+ * Every terminal write joins this chain and runs alone, in queue order. Each
+ * write opens its tty non-blocking, so a full terminal fails the write rather
+ * than holding it, and the chain always advances.
  */
 let terminalWrites: Promise<void> = Promise.resolve();
+/** Bumped by `clearTmuxWindowMark`; a notification decided before the bump does not mark. */
+let tmuxMarkGeneration = 0;
 
 /**
  * Runs one tmux command under `TMUX_COMMAND_TIMEOUT_MS`. Undefined means no
@@ -104,37 +107,24 @@ async function tmux(pi: QolNotificationExec, args: string[]): Promise<string | u
 	}
 }
 
-function sourceTmuxIdentity(pi: QolNotificationExec): Promise<TmuxPaneIdentity | undefined> {
+/**
+ * Reads the source pane once per notification. The session and window are
+ * read fresh each time: tmux `break-pane`, `join-pane` and `move-window` move
+ * a pane to another window or session and keep its id and tty.
+ */
+async function sourceTmuxPaneState(pi: QolNotificationExec): Promise<TmuxPaneState | undefined> {
 	const pane = process.env.TMUX_PANE;
-	if (!pane) return Promise.resolve(undefined);
-	if (tmuxIdentity) return tmuxIdentity;
-	const lookup = tmux(pi, ["display-message", "-p", "-t", pane, "#{pane_tty}\t#{session_id}\t#{window_id}"]).then((stdout) => {
-		const [paneTty = "", sessionId = "", windowId = ""] = (stdout ?? "").replace(/\r?\n$/, "").split("\t");
-		if (!paneTty || !sessionId || !windowId) return undefined;
-		return { paneTty, sessionId, windowId };
-	});
-	tmuxIdentity = lookup;
-	void lookup.then((identity) => {
-		if (!identity && tmuxIdentity === lookup) tmuxIdentity = undefined;
-	});
-	return lookup;
+	if (!pane) return undefined;
+	const stdout = await tmux(pi, ["display-message", "-p", "-t", pane, PANE_STATE_FORMAT]);
+	const [paneTty = "", windowActive = "", sessionId = "", windowId = "", ...name] = (stdout ?? "").replace(/\r?\n$/, "").split("\t");
+	if (!paneTty || !sessionId || !windowId) return undefined;
+	return { paneTty, windowActive: windowActive === "1", sessionId, windowId, windowName: name.join("\t") };
 }
 
-/** Drops the cached tmux identity; the next Pi session looks it up again. */
-export function forgetTmuxIdentity(): void {
-	tmuxIdentity = undefined;
-}
-
-async function sourceTmuxWindowActive(pi: QolNotificationExec): Promise<boolean> {
-	const pane = process.env.TMUX_PANE;
-	if (!pane) return false;
-	return (await tmux(pi, ["display-message", "-p", "-t", pane, "#{window_active}"]))?.trim() === "1";
-}
-
-async function tmuxClientTtys(pi: QolNotificationExec, identity: TmuxPaneIdentity | undefined): Promise<string[]> {
+async function tmuxClientTtys(pi: QolNotificationExec, pane: TmuxPaneState | undefined): Promise<string[]> {
 	if (!process.env.TMUX) return [];
 	const args = ["list-clients", "-F", "#{client_tty}"];
-	if (identity) args.splice(1, 0, "-t", identity.sessionId);
+	if (pane) args.splice(1, 0, "-t", pane.sessionId);
 	const output = await tmux(pi, args);
 	if (output === undefined) return [];
 	return [...new Set(output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean))];
@@ -146,11 +136,26 @@ function queueTerminalWrite(write: () => Promise<void>): Promise<void> {
 	return queued;
 }
 
+/**
+ * Writes to a terminal without waiting on it. A tmux client whose SSH link
+ * dropped stays attached with a full tty buffer, and a blocking write to it
+ * would hang until the link times out; non-blocking, it fails with `EAGAIN`.
+ * `O_NOCTTY` keeps the open from making the tty Pi's controlling terminal.
+ */
+async function writeTty(path: string, output: string): Promise<void> {
+	const handle = await open(path, constants.O_WRONLY | constants.O_NONBLOCK | constants.O_NOCTTY);
+	try {
+		await handle.writeFile(output, "utf8");
+	} finally {
+		await handle.close();
+	}
+}
+
 async function writeRawToPaths(paths: string[], output: string): Promise<boolean> {
 	let wrote = false;
 	for (const path of paths) {
 		try {
-			await writeFile(path, output, "utf8");
+			await writeTty(path, output);
 			wrote = true;
 		} catch {
 			// Try remaining paths.
@@ -159,9 +164,9 @@ async function writeRawToPaths(paths: string[], output: string): Promise<boolean
 	return wrote;
 }
 
-async function writeToTerminal(identity: TmuxPaneIdentity | undefined, output: string): Promise<void> {
+async function writeToTerminal(pane: TmuxPaneState | undefined, output: string): Promise<void> {
 	try {
-		await writeFile(identity?.paneTty ?? "/dev/tty", output, "utf8");
+		await writeTty(pane?.paneTty ?? "/dev/tty", output);
 		return;
 	} catch {
 		// Fall through to stdout best-effort.
@@ -173,40 +178,40 @@ async function writeToTerminal(identity: TmuxPaneIdentity | undefined, output: s
 	}
 }
 
-async function writeTerminalSequence(pi: QolNotificationExec, identity: TmuxPaneIdentity | undefined, sequence: string, cwd?: string): Promise<void> {
+async function writeTerminalSequence(pi: QolNotificationExec, pane: TmuxPaneState | undefined, sequence: string, cwd?: string): Promise<void> {
 	// Inactive tmux windows do not forward arbitrary OSC output to the terminal.
 	// Send native terminal notifications straight to attached tmux client TTYs,
 	// while the explicit terminal bell still goes through the source pane when unmuted.
-	const clientTtys = process.env.TMUX && settingBoolean("notification.tmuxNativeClientTty", true, cwd) ? await tmuxClientTtys(pi, identity) : [];
+	const clientTtys = process.env.TMUX && settingBoolean("notification.tmuxNativeClientTty", true, cwd) ? await tmuxClientTtys(pi, pane) : [];
 	const output = process.env.TMUX && settingBoolean("notification.tmuxPassthrough", true, cwd) ? tmuxPassthrough(sequence) : sequence;
 	await queueTerminalWrite(async () => {
 		if (await writeRawToPaths(clientTtys, sequence)) return;
-		await writeToTerminal(identity, output);
+		await writeToTerminal(pane, output);
 	});
 }
 
-function writeTerminalBell(identity: TmuxPaneIdentity | undefined, cwd?: string): Promise<void> {
+function writeTerminalBell(pane: TmuxPaneState | undefined, cwd?: string): Promise<void> {
 	// Match Claude-style hooks: resolve the source pane TTY and write raw BEL there.
 	// This lets tmux set window_bell_flag for the correct source window.
 	const sequence = terminalBellSequence(notificationBellMuted(cwd));
 	if (!sequence) return Promise.resolve();
-	return queueTerminalWrite(() => writeToTerminal(identity, sequence));
+	return queueTerminalWrite(() => writeToTerminal(pane, sequence));
 }
 
-function notifyOSC777(pi: QolNotificationExec, identity: TmuxPaneIdentity | undefined, title: string, body: string, cwd?: string): Promise<void> {
-	return writeTerminalSequence(pi, identity, osc777NotificationSequence(title, body, notificationBellMuted(cwd)), cwd);
+function notifyOSC777(pi: QolNotificationExec, pane: TmuxPaneState | undefined, title: string, body: string, cwd?: string): Promise<void> {
+	return writeTerminalSequence(pi, pane, osc777NotificationSequence(title, body, notificationBellMuted(cwd)), cwd);
 }
 
-async function notifyOSC99(pi: QolNotificationExec, identity: TmuxPaneIdentity | undefined, title: string, body: string, cwd?: string): Promise<void> {
-	await writeTerminalSequence(pi, identity, `\x1b]99;i=1:d=0;${title}\x1b\\`, cwd);
-	await writeTerminalSequence(pi, identity, `\x1b]99;i=1:p=body;${body}\x1b\\`, cwd);
+async function notifyOSC99(pi: QolNotificationExec, pane: TmuxPaneState | undefined, title: string, body: string, cwd?: string): Promise<void> {
+	await writeTerminalSequence(pi, pane, `\x1b]99;i=1:d=0;${title}\x1b\\`, cwd);
+	await writeTerminalSequence(pi, pane, `\x1b]99;i=1:p=body;${body}\x1b\\`, cwd);
 }
 
 function notifyWindows(title: string, body: string): void {
 	execFile("powershell.exe", ["-NoProfile", "-Command", windowsToastScript(title, body)], () => undefined);
 }
 
-async function notifyNativeTerminal(pi: QolNotificationExec, identity: TmuxPaneIdentity | undefined, title: string, body: string, cwd?: string): Promise<void> {
+async function notifyNativeTerminal(pi: QolNotificationExec, pane: TmuxPaneState | undefined, title: string, body: string, cwd?: string): Promise<void> {
 	const protocol = settingString("notification.oscProtocol", "auto", cwd);
 	if (process.env.WT_SESSION) {
 		notifyWindows(title, body);
@@ -214,10 +219,10 @@ async function notifyNativeTerminal(pi: QolNotificationExec, identity: TmuxPaneI
 	}
 	if (protocol === "off") return;
 	if (protocol === "osc99" || (protocol === "auto" && process.env.KITTY_WINDOW_ID)) {
-		await notifyOSC99(pi, identity, title, body, cwd);
+		await notifyOSC99(pi, pane, title, body, cwd);
 		return;
 	}
-	await notifyOSC777(pi, identity, title, body, cwd);
+	await notifyOSC777(pi, pane, title, body, cwd);
 }
 
 function notifyTmux(pi: QolNotificationExec, title: string, body: string, cwd?: string): void {
@@ -230,9 +235,8 @@ function notifyTmux(pi: QolNotificationExec, title: string, body: string, cwd?: 
 	void tmux(pi, args);
 }
 
-export function clearTmuxWindowMark(pi: QolNotificationExec): void {
-	if (tmuxWindowMarkTimer) clearTimeout(tmuxWindowMarkTimer);
-	tmuxWindowMarkTimer = undefined;
+/** Renames the marked window back, if one is marked. */
+function unmarkTmuxWindow(pi: QolNotificationExec): void {
 	const target = tmuxMarkedTarget;
 	const original = tmuxOriginalWindowName;
 	tmuxMarkedTarget = undefined;
@@ -241,18 +245,27 @@ export function clearTmuxWindowMark(pi: QolNotificationExec): void {
 	void tmux(pi, ["rename-window", "-t", target, original]);
 }
 
-async function markTmuxWindow(pi: QolNotificationExec, identity: TmuxPaneIdentity | undefined, cwd?: string): Promise<void> {
+/** Removes the window mark, and keeps a notification still in flight from setting one. */
+export function clearTmuxWindowMark(pi: QolNotificationExec): void {
+	tmuxMarkGeneration += 1;
+	if (tmuxWindowMarkTimer) clearTimeout(tmuxWindowMarkTimer);
+	tmuxWindowMarkTimer = undefined;
+	unmarkTmuxWindow(pi);
+}
+
+function markTmuxWindow(pi: QolNotificationExec, pane: TmuxPaneState | undefined, generation: number, cwd?: string): void {
 	if (!settingBoolean("notification.tmuxWindowMark", false, cwd)) return;
-	if (!process.env.TMUX || !process.env.TMUX_PANE || !identity) return;
+	if (!process.env.TMUX || !pane || generation !== tmuxMarkGeneration) return;
 	const mark = sanitizeNotificationPart(settingString("notification.tmuxWindowMarkText", "!", cwd), 12) || "!";
 	const prefix = `${mark} `;
-	const target = identity.windowId;
-	const current = (await tmux(pi, ["display-message", "-p", "-t", process.env.TMUX_PANE, "#W"]))?.replace(/\r?\n$/, "");
+	const target = pane.windowId;
+	const current = pane.windowName;
 	if (!current) return;
-	const original = current.startsWith(prefix) ? current.slice(prefix.length) : current;
-	if (!tmuxMarkedTarget || tmuxMarkedTarget !== target) {
+	// The pane moved to another window since the last mark: that window gets its name back.
+	if (tmuxMarkedTarget && tmuxMarkedTarget !== target) unmarkTmuxWindow(pi);
+	if (!tmuxMarkedTarget) {
 		tmuxMarkedTarget = target;
-		tmuxOriginalWindowName = original;
+		tmuxOriginalWindowName = current.startsWith(prefix) ? current.slice(prefix.length) : current;
 	}
 	if (!current.startsWith(prefix)) void tmux(pi, ["rename-window", "-t", target, `${prefix}${current}`]);
 	const duration = Math.max(0, Math.floor(settingNumber("notification.tmuxWindowMarkDurationMs", 0, cwd)));
@@ -275,12 +288,17 @@ function notificationEnabledFor(kind: QolNotificationKind, cwd?: string): boolea
 	}
 }
 
-async function deliverTerminalNotification(pi: QolNotificationExec, title: string, text: string, cwd?: string): Promise<void> {
-	const [identity, tmuxWindowActive] = await Promise.all([sourceTmuxIdentity(pi), sourceTmuxWindowActive(pi)]);
-	if (settingBoolean("notification.bell", true, cwd) && (!tmuxWindowActive || settingBoolean("notification.bellWhenActive", false, cwd))) await writeTerminalBell(identity, cwd);
-	if (settingBoolean("notification.native", true, cwd)) await notifyNativeTerminal(pi, identity, title, text, cwd);
-	if (!tmuxWindowActive) await markTmuxWindow(pi, identity, cwd);
+/**
+ * The window mark and the tmux message never touch the terminal, so they start
+ * beside the terminal writes rather than behind them.
+ */
+async function deliverTerminalNotification(pi: QolNotificationExec, title: string, text: string, markGeneration: number, cwd?: string): Promise<void> {
+	const pane = await sourceTmuxPaneState(pi);
+	const windowActive = pane?.windowActive ?? false;
+	if (!windowActive) markTmuxWindow(pi, pane, markGeneration, cwd);
 	if (settingBoolean("notification.tmux", false, cwd)) notifyTmux(pi, title, text, cwd);
+	if (settingBoolean("notification.bell", true, cwd) && (!windowActive || settingBoolean("notification.bellWhenActive", false, cwd))) await writeTerminalBell(pane, cwd);
+	if (settingBoolean("notification.native", true, cwd)) await notifyNativeTerminal(pi, pane, title, text, cwd);
 }
 
 /**
@@ -304,7 +322,7 @@ export function sendQolNotification(pi: QolNotificationExec, ctx: ExtensionConte
 	if (ctx?.hasUI && settingBoolean("notification.piUi", false, cwd)) ctx.ui.notify(text, level);
 	// Every channel already absorbs its own failure; this catch keeps an
 	// unexpected throw from becoming an unhandled rejection, which ends Pi.
-	return deliverTerminalNotification(pi, title, text, cwd).catch(() => undefined);
+	return deliverTerminalNotification(pi, title, text, tmuxMarkGeneration, cwd).catch(() => undefined);
 }
 
 function questionNotificationTitle(request?: QuestionRequestLike): string {

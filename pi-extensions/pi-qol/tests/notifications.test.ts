@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { closeSync, constants, existsSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
+import { closeSync, constants, mkdtempSync, openSync, readSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { forgetTmuxIdentity, osc777NotificationSequence, sendQolNotification, terminalBellSequence } from "../extensions/qol/notifications.ts";
+import { clearTmuxWindowMark, osc777NotificationSequence, sendQolNotification, terminalBellSequence } from "../extensions/qol/notifications.ts";
 
 const bellRows = [
 	{ name: "audible terminal bell", muted: false, expected: "\x07" },
@@ -45,32 +45,83 @@ interface ExecCall {
 
 type TmuxAnswer = { code: number; killed: boolean; stdout: string } | "stall";
 
-const IDENTITY_FORMAT = "#{pane_tty}\t#{session_id}\t#{window_id}";
+const PANE_STATE_FORMAT = "#{pane_tty}\t#{window_active}\t#{session_id}\t#{window_id}\t#W";
 
-/** A fake `pi.exec` answering tmux by subcommand; `answers` overrides a query per call, in order. */
-function fakeTmux(paneTty: string, clientTty: string, answers: { identity?: TmuxAnswer[]; windowActive?: TmuxAnswer[] } = {}) {
+/** tmux's answer to the pane-state query, in `PANE_STATE_FORMAT` order. */
+function paneState(paneTty: string, { active = false, sessionId = "$3", windowId = "@7", windowName = "pi" } = {}): TmuxAnswer {
+	return { code: 0, killed: false, stdout: `${paneTty}\t${active ? 1 : 0}\t${sessionId}\t${windowId}\t${windowName}\n` };
+}
+
+/** A fake `pi.exec` answering tmux: the pane-state query takes `paneStates` in order, list-clients answers `clientTty` or stalls. */
+function fakeTmux(clientTty: string | "stall", paneStates: TmuxAnswer[]) {
 	const calls: ExecCall[] = [];
-	const ok = (stdout: string): TmuxAnswer => ({ code: 0, killed: false, stdout });
 	const exec = async (command: string, args: string[], options?: { timeout?: number }) => {
 		calls.push({ command, args, timeout: options?.timeout });
-		const format = args.at(-1);
 		let answer: TmuxAnswer = { code: 0, killed: false, stdout: "" };
-		if (args[0] === "display-message" && format === IDENTITY_FORMAT) answer = answers.identity?.shift() ?? ok(`${paneTty}\t$3\t@7\n`);
-		else if (args[0] === "display-message" && format === "#{window_active}") answer = answers.windowActive?.shift() ?? ok("0\n");
-		else if (args[0] === "list-clients") answer = ok(`${clientTty}\n`);
+		if (args[0] === "display-message" && args.at(-1) === PANE_STATE_FORMAT) answer = paneStates.shift() ?? { code: 1, killed: false, stdout: "" };
+		else if (args[0] === "list-clients") answer = clientTty === "stall" ? "stall" : { code: 0, killed: false, stdout: `${clientTty}\n` };
 		if (answer === "stall") return new Promise<never>(() => {});
 		return { ...answer, stderr: "" };
 	};
 	return { calls, pi: { exec } as never };
 }
 
-const identityLookups = (calls: ExecCall[]) => calls.filter((call) => call.args.at(-1) === IDENTITY_FORMAT).length;
+const argsOf = (calls: ExecCall[], subcommand: string) => calls.filter((call) => call.args[0] === subcommand).map((call) => call.args);
 
 let root = "";
 let keySeq = 0;
 const nextKey = () => `delivery-${++keySeq}`;
+const readers: number[] = [];
 const savedEnv: Record<string, string | undefined> = {};
 const ENV_KEYS = ["HOME", "PI_CODING_AGENT_DIR", "TMUX", "TMUX_PANE", "WT_SESSION", "KITTY_WINDOW_ID"];
+
+/** A FIFO with a reader that reads only when asked: a tty that takes writes without the test stepping it. */
+function fakeTty(name: string) {
+	const path = join(root, name);
+	execFileSync("mkfifo", ["--", path]);
+	const fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+	readers.push(fd);
+	const read = () => {
+		const chunk = Buffer.alloc(1 << 16);
+		let out = "";
+		for (;;) {
+			let size = 0;
+			try {
+				size = readSync(fd, chunk);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "EAGAIN") break;
+				throw error;
+			}
+			if (size === 0) break;
+			out += chunk.toString("utf8", 0, size);
+		}
+		return out;
+	};
+	return { path, read };
+}
+
+/** A tty whose reader never drains it, as a tmux client behind a dropped SSH link: its buffer is full. */
+function stalledTty(name: string): string {
+	const { path } = fakeTty(name);
+	const writer = openSync(path, constants.O_WRONLY | constants.O_NONBLOCK);
+	try {
+		for (;;) writeSync(writer, Buffer.alloc(4096));
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "EAGAIN") throw error;
+	} finally {
+		closeSync(writer);
+	}
+	return path;
+}
+
+function writeQolSettings(config: Record<string, unknown>): void {
+	writeFileSync(join(root, "settings.json"), `${JSON.stringify({ kendex: { extensionManager: { config: { "@vanillagreen/pi-qol": config } } } })}\n`, "utf8");
+}
+
+/** Settles with "stalled" when `promise` has not settled within `ms`. */
+function within<T>(promise: Promise<T>, ms: number): Promise<T | "stalled"> {
+	return Promise.race([promise, new Promise<"stalled">((resolve) => setTimeout(() => resolve("stalled"), ms))]);
+}
 
 beforeEach(() => {
 	root = mkdtempSync(join(tmpdir(), "pi-qol-notifications-"));
@@ -81,11 +132,11 @@ beforeEach(() => {
 	process.env.TMUX_PANE = "%1";
 	delete process.env.WT_SESSION;
 	delete process.env.KITTY_WINDOW_ID;
-	forgetTmuxIdentity();
 });
 
 afterEach(() => {
-	forgetTmuxIdentity();
+	clearTmuxWindowMark(fakeTmux("", []).pi);
+	for (const fd of readers.splice(0)) closeSync(fd);
 	for (const key of ENV_KEYS) {
 		if (savedEnv[key] === undefined) delete process.env[key];
 		else process.env[key] = savedEnv[key];
@@ -95,66 +146,96 @@ afterEach(() => {
 
 test("every tmux call carries a deadline, and a stalled tmux leaves the caller free", () => {
 	expect.hasAssertions();
-	const { calls, pi } = fakeTmux("", "", { identity: ["stall"], windowActive: ["stall"] });
+	const { calls, pi } = fakeTmux("", ["stall"]);
 	const delivery = sendQolNotification(pi, undefined, "test", "body", "info", nextKey());
-	expect({ returned: delivery instanceof Promise, timeouts: calls.map((call) => call.timeout) }).toEqual({ returned: true, timeouts: [1000, 1000] });
+	expect({ returned: delivery instanceof Promise, timeouts: calls.map((call) => call.timeout) }).toEqual({ returned: true, timeouts: [1000] });
 });
 
-test("the bell goes to the source pane tty and the OSC notification to the client tty", async () => {
+test("the bell goes to the source pane tty and the OSC notification to the pane's session's client tty", async () => {
 	expect.hasAssertions();
-	const paneTty = join(root, "pane-tty");
-	const clientTty = join(root, "client-tty");
-	const { pi } = fakeTmux(paneTty, clientTty);
+	const pane = fakeTty("pane-tty");
+	const client = fakeTty("client-tty");
+	const { calls, pi } = fakeTmux(client.path, [paneState(pane.path, { sessionId: "$5" })]);
 	await sendQolNotification(pi, undefined, "test", "body", "info", nextKey());
-	expect({ pane: readFileSync(paneTty, "utf8"), client: readFileSync(clientTty, "utf8") }).toEqual({ pane: "\x07", client: osc777NotificationSequence("Pi", "body") });
-});
-
-test("the tmux identity is looked up once per session, and a failed lookup is retried", async () => {
-	expect.hasAssertions();
-	const failed: TmuxAnswer = { code: 1, killed: false, stdout: "" };
-	const { calls, pi } = fakeTmux(join(root, "pane-tty"), join(root, "client-tty"), { identity: [failed] });
-	await sendQolNotification(pi, undefined, "test", "body", "info", nextKey());
-	await sendQolNotification(pi, undefined, "test", "body", "info", nextKey());
-	await sendQolNotification(pi, undefined, "test", "body", "info", nextKey());
-	const withinSession = identityLookups(calls);
-	forgetTmuxIdentity();
-	await sendQolNotification(pi, undefined, "test", "body", "info", nextKey());
-	expect({ withinSession, afterForget: identityLookups(calls) }).toEqual({ withinSession: 2, afterForget: 3 });
+	expect({ pane: pane.read(), client: client.read(), listClients: argsOf(calls, "list-clients") }).toEqual({
+		pane: "\x07",
+		client: osc777NotificationSequence("Pi", "body"),
+		listClients: [["list-clients", "-t", "$5", "-F", "#{client_tty}"]],
+	});
 });
 
 test("a tmux answer its deadline killed counts as no answer", async () => {
 	expect.hasAssertions();
-	const paneTty = join(root, "pane-tty");
+	writeQolSettings({ "notification.bell": false });
+	const client = fakeTty("client-tty");
 	// Pi's exec reports a killed command with code 0 when the signal left no exit status.
-	const killedActive: TmuxAnswer = { code: 0, killed: true, stdout: "1\n" };
-	const { pi } = fakeTmux(paneTty, join(root, "client-tty"), { windowActive: [killedActive] });
+	const killed: TmuxAnswer = { ...(paneState(join(root, "pane-tty")) as { stdout: string }), code: 0, killed: true };
+	const { calls, pi } = fakeTmux(client.path, [killed]);
 	await sendQolNotification(pi, undefined, "test", "body", "info", nextKey());
-	expect(readFileSync(paneTty, "utf8")).toBe("\x07");
+	expect(argsOf(calls, "list-clients")).toEqual([["list-clients", "-F", "#{client_tty}"]]);
 });
 
-test("a terminal write waits behind a stalled one instead of running beside it", async () => {
+test("the window mark renames the pane's window as tmux reports it at each notification, and clearing names it back", async () => {
 	expect.hasAssertions();
-	const paneTty = join(root, "pane-fifo");
-	const clientTty = join(root, "client-tty");
-	execFileSync("mkfifo", ["--", paneTty]);
-	// The first notification's window is inactive, so it rings the bell into a
-	// FIFO nobody reads: that open blocks the way a stalled terminal does. The
-	// second's window is active, so its only write is the OSC to the client tty.
-	const { pi } = fakeTmux(paneTty, clientTty, { windowActive: [{ code: 0, killed: false, stdout: "0\n" }, { code: 0, killed: false, stdout: "1\n" }] });
-	let reader: number | undefined;
-	try {
-		const first = sendQolNotification(pi, undefined, "test", "first", "info", nextKey());
-		const second = sendQolNotification(pi, undefined, "test", "second", "info", nextKey());
-		// Real wait: the writes run on the runtime's I/O threads, which this test cannot step.
-		await new Promise((resolve) => setTimeout(resolve, 150));
-		const whileStalled = existsSync(clientTty);
-		reader = openSync(paneTty, constants.O_RDONLY | constants.O_NONBLOCK);
-		await Promise.all([first, second]);
-		// The queue runs writes in the order they were queued: the first bell, the
-		// second's OSC, then the first's OSC, queued once its bell finished.
-		expect({ whileStalled, lastWrite: readFileSync(clientTty, "utf8") }).toEqual({ whileStalled: false, lastWrite: osc777NotificationSequence("Pi", "first") });
-	} finally {
-		if (reader === undefined) reader = openSync(paneTty, constants.O_RDONLY | constants.O_NONBLOCK);
-		closeSync(reader);
-	}
+	writeQolSettings({ "notification.tmuxWindowMark": true, "notification.bell": false, "notification.native": false });
+	// Between the two notifications tmux break-pane moved Pi's pane from @7 to a new window @8.
+	const paneTty = join(root, "pane-tty");
+	const { calls, pi } = fakeTmux("", [paneState(paneTty, { windowId: "@7", windowName: "editor" }), paneState(paneTty, { windowId: "@8", windowName: "pi" })]);
+	await sendQolNotification(pi, undefined, "test", "first", "info", nextKey());
+	await sendQolNotification(pi, undefined, "test", "second", "info", nextKey());
+	clearTmuxWindowMark(pi);
+	expect(argsOf(calls, "rename-window")).toEqual([
+		["rename-window", "-t", "@7", "! editor"],
+		["rename-window", "-t", "@7", "editor"],
+		["rename-window", "-t", "@8", "! pi"],
+		["rename-window", "-t", "@8", "pi"],
+	]);
+});
+
+test("a window mark cleared while its notification is in flight is not set", async () => {
+	expect.hasAssertions();
+	writeQolSettings({ "notification.tmuxWindowMark": true, "notification.bell": false, "notification.native": false });
+	const { calls, pi } = fakeTmux("", [paneState(join(root, "pane-tty"), { windowName: "pi" })]);
+	const delivery = sendQolNotification(pi, undefined, "test", "body", "info", nextKey());
+	// The user switches in and submits before tmux answers the pane-state query.
+	clearTmuxWindowMark(pi);
+	await delivery;
+	expect(argsOf(calls, "rename-window")).toEqual([]);
+});
+
+test("the window mark and the tmux message do not wait on the terminal writes", async () => {
+	expect.hasAssertions();
+	writeQolSettings({ "notification.tmuxWindowMark": true, "notification.tmux": true, "notification.bell": false });
+	// list-clients never answers, so the native notification's write never starts.
+	const { calls, pi } = fakeTmux("stall", [paneState(join(root, "pane-tty"), { windowName: "pi" })]);
+	// Real wait: bounds a delivery that cannot settle while list-clients stalls.
+	const settled = await within(sendQolNotification(pi, undefined, "test", "body", "info", nextKey()), 50);
+	expect({ settled, rename: argsOf(calls, "rename-window"), tmuxMessages: argsOf(calls, "display-message").filter((args) => args[1] === "-d").map((args) => args.at(-1)) }).toEqual({
+		settled: "stalled",
+		rename: [["rename-window", "-t", "@7", "! pi"]],
+		tmuxMessages: ["Pi: body"],
+	});
+});
+
+test("a tty that never drains leaves later notifications' OSC and tmux messages free", async () => {
+	expect.hasAssertions();
+	writeQolSettings({ "notification.tmux": true });
+	const pane = stalledTty("pane-tty");
+	const client = fakeTty("client-tty");
+	// The first notification's window is inactive, so it rings the bell into the
+	// full pane tty; the second's is active, so it writes only the OSC.
+	const { calls, pi } = fakeTmux(client.path, [paneState(pane), paneState(pane, { active: true })]);
+	const first = within(sendQolNotification(pi, undefined, "test", "first", "info", nextKey()), 2000);
+	const second = within(sendQolNotification(pi, undefined, "test", "second", "info", nextKey()), 2000);
+	const settled = await Promise.all([first, second]);
+	const written = client.read();
+	expect({
+		settled,
+		client: { first: written.includes(osc777NotificationSequence("Pi", "first")), second: written.includes(osc777NotificationSequence("Pi", "second")) },
+		tmuxMessages: argsOf(calls, "display-message").filter((args) => args[1] === "-d").map((args) => args.at(-1)),
+	}).toEqual({
+		settled: [undefined, undefined],
+		client: { first: true, second: true },
+		tmuxMessages: ["Pi: first", "Pi: second"],
+	});
 });

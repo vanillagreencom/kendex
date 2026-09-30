@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Text } from "@earendil-works/pi-tui";
 
 import * as ansi from "../extensions/qol/ansi.ts";
+import { STATUS_TEXT_ALIGNMENT_PATCH_SYMBOL } from "../extensions/qol/constants.ts";
 
 // Counts the classification's scans: each classification strips ANSI from the
 // whole text once, so a stripAnsi call is one scan. The wrapper delegates, so
@@ -55,6 +56,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	restoreStatusTextAlignmentPatch();
+	delete proto[STATUS_TEXT_ALIGNMENT_PATCH_SYMBOL];
 	delete proto.render;
 	delete proto.invalidate;
 	if (workdir) rmSync(workdir, { force: true, recursive: true });
@@ -104,6 +106,17 @@ test("restore puts pi-tui's own render back, and a later install patches again",
 	const restored = proto.render;
 	installStatusTextAlignmentPatch(uiCtx);
 	expect({ patched: patched !== hostRender, restored: restored === hostRender, reinstalled: proto.render !== hostRender }).toEqual({ patched: true, restored: true, reinstalled: true });
+});
+
+test("a marker this module did not write keeps its render through install, restore and install", () => {
+	expect.hasAssertions();
+	// pi-qol 2.2.0 marks the prototype with `true` at load, and Pi's /reload
+	// keeps that marker, and the 2.2.0 wrapper, on pi-tui's prototype.
+	proto[STATUS_TEXT_ALIGNMENT_PATCH_SYMBOL] = true;
+	installStatusTextAlignmentPatch(uiCtx);
+	restoreStatusTextAlignmentPatch();
+	installStatusTextAlignmentPatch(uiCtx);
+	expect({ render: proto.render, marker: proto[STATUS_TEXT_ALIGNMENT_PATCH_SYMBOL] }).toEqual({ render: hostRender, marker: true });
 });
 
 test("a session without a UI leaves Text unpatched", () => {

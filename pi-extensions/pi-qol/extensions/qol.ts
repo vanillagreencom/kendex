@@ -38,7 +38,6 @@ import { runHandoff } from "./qol/handoff.js";
 import { imageContentForPath, resolveSubmittedImagePaths } from "./qol/images.js";
 import {
 	clearTmuxWindowMark,
-	forgetTmuxIdentity,
 	notifyQuestionOpened,
 	sendQolNotification,
 	type QolNotificationService,
@@ -676,7 +675,6 @@ export default function qol(pi: ExtensionAPI): void {
 		sessionSearchWarmupTimer = undefined;
 		resetThinkingTimer(undefined);
 		clearTmuxWindowMark(pi);
-		forgetTmuxIdentity();
 		questionUnsubscribe?.();
 		questionUnsubscribe = undefined;
 		currentCtx = undefined;
