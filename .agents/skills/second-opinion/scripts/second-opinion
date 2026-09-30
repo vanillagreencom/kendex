@@ -2346,8 +2346,6 @@ if $MULTI_LANE; then
     if $lane_ok; then
       lane_cause=opinion
       SELECTED_MODELS+=("$(target_model "$lane")")
-    elif [[ -f "${lane_out}.failed.json" ]]; then
-      lane_cause=$(jq -r '.attempts[-1].cause // $cause' --arg cause "$lane_cause" < "${lane_out}.failed.json")
     fi
     # Keep actual child invocations, including its format retry. Only a child
     # killed before writing a record needs the parent's elapsed-time record.
