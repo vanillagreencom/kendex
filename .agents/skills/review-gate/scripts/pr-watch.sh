@@ -53,7 +53,11 @@ Attention kinds:
                      holds the merge. Reported beside threads-open
   disarmed           reviewDecision APPROVED on an open, un-queued,
                      non-draft PR with auto-merge NOT armed — nothing will
-                     merge it (the known eviction-disarm failure mode). The
+                     merge it (the known eviction-disarm failure mode). A
+                     PR orch's merge route takes past the queue with
+                     --admin is unarmed by design until its lane's direct
+                     merge attempt, so for such a PR the line reports that
+                     wait, not an eviction. The
                      line also carries the size orch's branch-size-check
                      recorded for this head branch at submit (workflow state
                      `pr.size_check`): the production lines it added, the
