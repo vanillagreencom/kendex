@@ -95,6 +95,18 @@ rg_settings_grep() { # REGEX FILE — matching lines on stdout; 1 = no match
   return "$status"
 }
 
+# Extraction commands share one failure rule. A failed read is never an
+# empty value: trust lists and refresh reports both act on resolved values.
+rg_settings_extract() { # FILE COMMAND [ARGS...] — stdin to extracted stdout
+  local file="$1" command="$2" status=0
+  shift 2
+  "$command" "$@" 2>/dev/null || status=$?
+  if [ "$status" -ne 0 ]; then
+    rg_message error settings-extract "$file" "::error::$file: setting extraction failed ($command exit $status)" >&2
+    return 2
+  fi
+}
+
 # The [env] table's lines. A table header is a lone [name] on its own line
 # (whitespace tolerated); a `[`-leading line in ANY other shape is a
 # configuration error — headers decide which assignments load, so
@@ -210,7 +222,7 @@ rg_dotenv_layer() { # FILE NAME
   rg_bom_guard "$file" || return 2
   matches="$(rg_settings_grep "^[[:space:]]*(export[[:space:]]+)?${name}=" "$file")" || status=$?
   [ "$status" -le 1 ] || return 2
-  line="$(printf '%s\n' "$matches" | tail -n 1)"
+  line="$(printf '%s\n' "$matches" | rg_settings_extract "$file" tail -n 1)" || return 2
   [ -n "$line" ] || return 1
   if ! val="$(rg_dotenv_value "${line#*=}")"; then
     rg_message error settings-dotenv "$name" "::error::$file: unsupported syntax for $name (a quoted value must end at its closing quote, optionally followed by a comment)" >&2
@@ -354,7 +366,7 @@ rg_setting() { # NAME DEFAULT [PRIVATE_FILE] — resolved value on stdout; nonze
         rg_message error settings-syntax "$name" "::error::$file: unsupported syntax for $name (expected a single-line basic string with no '\"' and no '\\': $name = \"value\"; list keys pack items with ';' separators)" >&2
         return 1
       fi
-      val="$(printf '%s\n' "$line" | sed -n "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*\$/\1/p")"
+      val="$(printf '%s\n' "$line" | rg_settings_extract "$file" sed -n "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*\$/\1/p")" || return 1
       printf '%s' "$val"
       return 0
     fi

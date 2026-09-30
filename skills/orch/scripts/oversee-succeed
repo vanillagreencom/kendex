@@ -898,11 +898,11 @@ if [[ "$MODE" != dead ]]; then
   # model with or without one: lib/overseer-launch.sh § ol_pi_model is the one
   # precedence over the three, so a turn-end judgement, handed no flags, and
   # the succession it asks for read one account.
-  caller_model="${OL_KNOWN_MODEL:-$reading_model}" flag_model=""
+  if ! flag_model="$(launch_choice_launch_model "$CALLER_HARNESS" "${HARNESS_FLAGS[*]+${HARNESS_FLAGS[*]}}")"; then
+    die launch-choice-failed "harness=$CALLER_HARNESS" step=model-read
+  fi
+  caller_model="${OL_KNOWN_MODEL:-${reading_model:-$flag_model}}"
   if [[ "$CALLER_HARNESS" == pi ]]; then
-    if ! flag_model="$(launch_choice_launch_model pi "${HARNESS_FLAGS[*]+${HARNESS_FLAGS[*]}}")"; then
-      die launch-choice-failed harness=pi step=model-read
-    fi
     caller_model="$(ol_pi_model "$OL_KNOWN_MODEL" "$flag_model" "$reading_model")"
   fi
   CALLER_MODEL="$(lane_context_mark_model "$CALLER_HARNESS" "$caller_model")"

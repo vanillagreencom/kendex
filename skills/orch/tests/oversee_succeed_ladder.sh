@@ -125,9 +125,9 @@ new_caller() {
   read -r CALLER_PANE CALLER_WINDOW <<<"$spec"
   mkdir -p "$MAILBOX_DIR"
   if [[ "${1:-}" == codex ]]; then
-    lane_context_record "$MAILBOX_DIR" codex 100000 258400 gpt-5.6-sol "" "$SERVER_PID $CALLER_PANE"
+    lane_context_record "$MAILBOX_DIR" codex 100000 258400 "${2-gpt-5.6-sol}" "" "$SERVER_PID $CALLER_PANE"
   else
-    lane_context_record "$MAILBOX_DIR" claude 100000 1000000 claude-fable-5-1 "" "$SERVER_PID $CALLER_PANE"
+    lane_context_record "$MAILBOX_DIR" claude 100000 1000000 "${2-claude-fable-5-1}" "" "$SERVER_PID $CALLER_PANE"
   fi
 }
 
@@ -225,19 +225,6 @@ assert_eq "$RC|$(keyed successor-lane-spent | awk '{print $2, $4}')|$(caller_ope
   "3|successor-lane-spent entry=claude:claude-opus-5-5:high|yes|none" \
   "control: a walled pick that keeps the walled account drops the Opus entry"
 seat claude 10 99 99
-
-# The numeric account form takes the caller's measured model, not a model
-# named by the number. Headroom still selects the account at the given effort.
-seat eclaude 10 10 10
-new_caller
-run_succeed numeric 'claude:1:high'
-assert_eq "$RC|$(caller_open)|$(launched claude)|$(grep -cx -e --effort -e high "$TMP_ROOT/argv.claude")" \
-  "0|no|$H/.eclaude claude-fable-5-1|2" \
-  "numeric preference launches the caller model at the supplied effort"
-assert_eq "$(grep '^preference-deprecated ' <<<"$OUT")" \
-  'preference-deprecated entry=claude:1:high form=harness:model:effort' \
-  "numeric preference warns once"
-seat eclaude 10 99 10
 
 # An entry naming no model, zero or an empty field, is a setting
 # to fix: refused with a keyed line before any pick, on a fleet with Opus room.
@@ -361,6 +348,70 @@ mutate_file "$COPILOTCTL/lib/lane-launch.sh" '    claude | codex | copilot) prin
 copilot_row "$COPILOTCTL/oversee-succeed"
 assert_eq "$RC|$(first_key)|$(launched copilot)" "1|lanes-failed|none" \
   "control: with lanes judging no copilot pick the copilot entry refuses and opens nothing"
+
+# Numeric entries keep the observed launch model before account normalization,
+# or the flags-only model where the caller has no recorded model. The supplied
+# preference effort replaces the caller flags' low effort.
+mkdir -p "$H/.2copilot"
+cp "$H/.1copilot/"*.json "$H/.2copilot/"
+cp "$FIXTURE_DIR/.1copilot.json" "$FIXTURE_DIR/.2copilot.json"
+seat eclaude 10 10 10
+codex_seat codex 99
+codex_seat dcodex 20
+for row in \
+  'claude|observed|claude-fable-5-1|CLAUDE_CONFIG_DIR|eclaude|--effort|high|2' \
+  'codex|observed|gpt-5.6-sol|CODEX_HOME|dcodex|model_reasoning_effort=high|model_reasoning_effort=high|1' \
+  'claude|flags|claude-fable-5-1|CLAUDE_CONFIG_DIR|eclaude|--effort|high|2' \
+  'codex|flags|gpt-5.6-sol|CODEX_HOME|dcodex|model_reasoning_effort=high|model_reasoning_effort=high|1' \
+  'copilot|flags|gpt-5.3-codex|COPILOT_HOME|2copilot|--reasoning-effort|high|2' \
+  'pi|flags|pi-claude/claude-fable-5-1|CLAUDE_CONFIG_DIR|eclaude|--thinking|high|2'; do
+  IFS='|' read -r harness source model var successor effort_word effort_value effort_count <<<"$row"
+  permission=""
+  [[ "$harness" == pi ]] || permission="$(launch_choice_permission_write "$harness")" || exit 1
+  if [[ "$source" == observed ]]; then
+    new_caller "$harness"
+    CALLER_FLAGS=("$permission")
+  else
+    new_caller "$harness" ""
+    case "$harness" in
+      claude) CALLER_FLAGS=(--model "$model" --effort low "$BYPASS") ;;
+      codex) CALLER_FLAGS=(-m "$model" -c model_reasoning_effort=low "$permission") ;;
+      copilot) CALLER_FLAGS=(--model "$model" --reasoning-effort low "$permission") ;;
+      pi) CALLER_FLAGS=(--provider pi-claude --model claude-fable-5-1 --thinking low) ;;
+    esac
+  fi
+  caller_lane="$H/.$harness"
+  case "$harness" in pi) caller_lane="$H/.claude" ;; copilot) caller_lane="$H/.1copilot" ;; esac
+  CALLER_LANE="$var=$caller_lane" LANE_DIRS="$H/.claude:$H/.eclaude:$H/.codex:$H/.dcodex:$H/.1copilot:$H/.2copilot" \
+    run_succeed "numeric-$harness-$source" "$harness:1:high" --walled-pane "$CALLER_PANE" --harness "$harness"
+  assert_eq "$RC|$(caller_open)|$(launched "$harness")|$(grep -cx -e "$effort_word" -e "$effort_value" "$TMP_ROOT/argv.$harness")|$(grep '^preference-deprecated ' <<<"$OUT")" \
+    "0|no|$H/.$successor $model|$effort_count|preference-deprecated entry=$harness:1:high form=harness:model:effort" \
+    "numeric $harness preference keeps the $source model and supplied effort"
+done
+# Normalizing the observed Codex model for account measurement must not erase
+# the model passed to its successor. A flags-only Codex caller covers the other
+# source of the same launch identity.
+permission="$(launch_choice_permission_write codex)" || exit 1
+for control in observed flags; do
+  NUMERICCTL="$(mutant_scripts "numeric-$control-ctl" oversee-succeed)" || exit 1
+  case "$control" in
+    observed)
+      mutate_file "$NUMERICCTL/oversee-succeed" '  OL_PREFERENCE_CALLER_MODEL="$caller_model"' '  : OL_PREFERENCE_CALLER_MODEL="$caller_model"; OL_PREFERENCE_CALLER_MODEL="$CALLER_MODEL"'
+      new_caller codex
+      CALLER_FLAGS=("$permission") ;;
+    flags)
+      mutate_file "$NUMERICCTL/oversee-succeed" '  caller_model="${OL_KNOWN_MODEL:-${reading_model:-$flag_model}}"' '  : caller_model="${OL_KNOWN_MODEL:-${reading_model:-$flag_model}}"; caller_model="${OL_KNOWN_MODEL:-$reading_model}"'
+      new_caller codex ""
+      CALLER_FLAGS=(-m gpt-5.6-sol -c model_reasoning_effort=low "$permission") ;;
+  esac
+  CALLER_LANE="CODEX_HOME=$H/.codex" SUCCEED_BIN="$NUMERICCTL/oversee-succeed" \
+    run_succeed "numeric-$control-ctl" 'codex:1:high' --walled-pane "$CALLER_PANE" --harness codex
+  assert_eq "$RC|$(launched codex)|$(grep -cx 'model_reasoning_effort=high' "$TMP_ROOT/argv.codex")" \
+    "0|$H/.dcodex |1" "control: dropping the $control model breaks numeric launch identity"
+done
+CALLER_FLAGS=("$BYPASS")
+seat eclaude 10 99 10
+codex_seat dcodex 99
 
 # A codex overseer under a permission posture no claude word matches, the
 # setting unset: the ladder's claude entries are skipped before their picks,

@@ -64,6 +64,12 @@ printf '%s\n' "$*" >>"$TEST_STATE/kendex"
 case "$1" in
   refresh)
     printf '%s\n' "$TEST_CONTENT" >rendered.txt
+    case "$TEST_ORCH_MODE" in
+      keep) ;;
+      absent) rm -rf -- .agents/skills/orch ;;
+      install) rm -rf -- .agents/skills/orch; cp -R "$TEST_FRESH_ORCH" .agents/skills/orch ;;
+      *) exit 2 ;;
+    esac
     if [ -n "${TEST_HOSTILE:-}" ]; then
       cp "$TEST_FRESH_TEMPLATES/"*.yml .agents/skills/review-gate/templates/
       for path in adopt-refresh.sh validate-standard.sh validate-workflow.sh lib/diagnostics.sh lib/settings.sh lib/standard.sh; do
@@ -320,9 +326,205 @@ git -C "$repo" push -q origin main
 creates_before="$(wc -l <"$TMP/state/creates" | tr -d ' ')"
 run_refresh stale pass render
 if [ "$RC" -eq 0 ] && [ "$(wc -l <"$TMP/state/creates" | tr -d ' ')" -gt "$creates_before" ]; then ok 'control exposes duplicate pull creation'; else bad 'control exposes duplicate pull creation' "$OUT"; fi
+# Keep the report runner in a distinct default-branch checkout. Refresh can
+# install orch for the first time, replace its parser, or remove it entirely.
+reset_default
+cp "$TMP/class-runner" "$runner"
+printf '[env]\nORCH_OVERSEER_PREFERENCE = "claude:1:high"\n' >"$repo/kendex.settings.toml"
+commit "$repo"
+git -C "$repo" push -q origin main
+git -C "$repo" worktree add --detach "$TMP/settings-trusted" HEAD
+runner="$TMP/settings-trusted/.agents/skills/review-gate/scripts/refresh-consumer.sh"
+cp "$runner" "$TMP/boundary-runner"
+cp -R "$repo/.agents/skills/orch" "$TMP/release-orch"
+FRESH_ORCH="$TMP/release-orch"
+# The release parser reads the real setting but refuses inherited credentials.
+python3 - "$FRESH_ORCH/scripts/lib/overseer-launch.sh" <<'PY_GUARD'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve()
+s = p.read_text()
+old = 'ol_preference_entries() { # VALUE'
+assert s.count(old) == 1
+changed = s.replace(old, old + '''
+  if [[ -n ${GH_TOKEN+x} || -n ${GITHUB_TOKEN+x} || -n ${TEST_SECRET+x} ]]; then
+    printf 'parse-error=credential-present\\n' >&2
+    return 87
+  fi''')
+assert changed != s
+p.write_text(changed)
+PY_GUARD
+cp "$FRESH_ORCH/scripts/lib/overseer-launch.sh" "$TMP/release-parser"
+# The preserved parser must not decide the refreshed release's answer.
+printf 'exit 89\n' >>"$TMP/settings-trusted/.agents/skills/orch/scripts/lib/overseer-launch.sh"
+for row in 'absent|absent' 'parser-update|install' 'first-install|install' 'token-absence|install'; do
+  IFS='|' read -r name ORCH_MODE <<<"$row"
+  reset_default
+  if [ "$name" = first-install ]; then
+    rm -rf -- "$repo/.agents/skills/orch" "$TMP/settings-trusted/.agents/skills/orch"
+    commit "$repo"
+    git -C "$repo" push -q origin main
+  fi
+  : >"$TMP/state/calls"
+  run_refresh "boundary-$name" pass render
+  if [ "$name" = absent ]; then
+    if [ "$RC" -eq 0 ] && ! grep -qxF '## Settings' "$TMP/state/body" &&
+        grep -qxF "refresh-settings=orch-absent value=$repo/.agents/skills/orch" <<<"$OUT"; then
+      ok 'absent optional orch refreshes without Settings'
+    else bad 'absent optional orch' "$OUT"; fi
+  elif [ "$RC" -eq 0 ] && grep -qF 'deprecated entry <code>claude:1:high</code>' "$TMP/state/body"; then
+    ok "$name uses the credential-free release parser"
+  else bad "$name parser boundary" "$OUT"; fi
+  if [ "$name" = parser-update ]; then
+    python3 - "$runner" <<'PY_PARSER_CONTROL'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve()
+s = p.read_text()
+for lib in ('kendex-env.sh', 'overseer-launch.sh'):
+    old = 'source "$2/.agents/skills/orch/scripts/lib/' + lib + '"'
+    assert s.count(old) == 1
+    changed = s.replace(old, '# ' + old + '\n' + old.replace('$2/.agents/skills', '$1/../..'))
+    assert changed != s
+    s = changed
+p.write_text(s)
+PY_PARSER_CONTROL
+    reset_default
+    before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || exit 1
+    : >"$TMP/state/calls"
+    run_refresh parser-update-control pass render
+    if refresh_stopped_at_settings "$before" "refresh-error=settings-extraction value=$repo/.agents/skills/orch"; then
+      ok 'control: preserved parser breaks the release parser assertion'
+    else bad 'post-refresh parser control' "$OUT"; fi
+    cp "$TMP/boundary-runner" "$runner"
+  fi
+  if [ "$name" = absent ]; then
+    # A forced parser block must break the same successful absent-orch row.
+    file_edit "$TMP/settings-trusted" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+      '^if \[ -e "\$ROOT/.agents/skills/orch" \]' \
+      's/^if \[ -e "\$ROOT\/\.agents\/skills\/orch" \].*; then$/if true; then # &/'
+    reset_default
+    before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || exit 1
+    : >"$TMP/state/calls"
+    run_refresh absent-control pass render
+    if refresh_stopped_at_settings "$before" "refresh-error=settings-extraction value=$repo/.agents/skills/orch"; then
+      ok 'control: forced parser block breaks absent optional orch'
+    else bad 'absent optional orch control' "$OUT"; fi
+    cp "$TMP/boundary-runner" "$runner"
+  fi
+done
+# Inheriting the environment exposes the token and makes the parser refuse.
+python3 - "$runner" <<'PY_ENV_CONTROL'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve()
+s = p.read_text()
+old = '  if ! env -i PATH="$PATH" HOME="$HOME" bash -s -- "$SCRIPT_DIR" "$ROOT" >"$TMP/settings.json" <<\'SETTINGS_PARSE\''
+assert s.count(old) == 1
+changed = s.replace(old, '# ' + old + '\n' + old.replace('env -i ', 'env '))
+assert changed != s
+p.write_text(changed)
+PY_ENV_CONTROL
+reset_default
+before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || exit 1
+: >"$TMP/state/calls"
+run_refresh token-control pass render
+if refresh_stopped_at_settings "$before" "refresh-error=settings-extraction value=$repo/.agents/skills/orch" &&
+    grep -qxF 'parse-error=credential-present' <<<"$OUT"; then
+  ok 'control: inherited environment breaks token absence'
+else bad 'token absence control' "$OUT"; fi
+cp "$TMP/boundary-runner" "$runner"
+# Unexpected parser stdout is data, never a command or a clean report.
+for output in noise extra-field empty; do
+  cp "$TMP/release-parser" "$FRESH_ORCH/scripts/lib/overseer-launch.sh"
+  case "$output" in
+    noise) printf '\nprintf "not-json\\n"\n' >>"$FRESH_ORCH/scripts/lib/overseer-launch.sh" ;;
+    extra-field) printf '\nprintf '\''{"refused":[],"deprecated":[],"extra":true}\\n'\''\nexit 0\n' >>"$FRESH_ORCH/scripts/lib/overseer-launch.sh" ;;
+    empty) printf '\nexit 0\n' >>"$FRESH_ORCH/scripts/lib/overseer-launch.sh" ;;
+  esac
+  reset_default
+  before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || exit 1
+  : >"$TMP/state/calls"
+  run_refresh "malformed-$output" pass render
+  if refresh_stopped_at_settings "$before" "refresh-error=settings-output value=$repo/.agents/skills/orch"; then
+    ok "$output parser output stops before publication or merge changes"
+  else bad "$output parser output refusal" "$OUT"; fi
+  if [ "$output" = extra-field ]; then
+    file_edit "$TMP/settings-trusted" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+      '^  if \[ "\$settings_lines" -ne 1 \] ||' \
+      's/^  if \[ "\$settings_lines" -ne 1 \].*; then$/  if false; then # &/'
+    reset_default
+    : >"$TMP/state/calls"
+    run_refresh malformed-control pass render
+    if [ "$RC" -eq 0 ] && ! refresh_stopped_at_settings "$before" "refresh-error=settings-output value=$repo/.agents/skills/orch"; then
+      ok 'control: dropped output refusal publishes malformed extraction as clean'
+    else bad 'parser data validation control' "$OUT"; fi
+    cp "$TMP/boundary-runner" "$runner"
+  fi
+done
+cp "$TMP/release-parser" "$FRESH_ORCH/scripts/lib/overseer-launch.sh"
+# tail and sed extract private and TOML values. Failures must name the source.
+cp "$TMP/settings-lib" "$TMP/boundary-settings"
+for command in tail sed; do
+  real_command="$(command -v "$command")" || exit 1
+  cat >"$TMP/bin/$command" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+input="\$(cat)" || exit 1
+if [[ "\$input" == *ORCH_OVERSEER_PREFERENCE* ]]; then exit 7; fi
+exec "$real_command" "\$@" <<<"\$input"
+SH
+  chmod +x "$TMP/bin/$command"
+  reset_default
+  rm -f -- "$repo/.env.local" "$repo/private.env"
+  source_path=kendex.settings.toml
+  committed=claude:1:high
+  [ "$command" != tail ] || committed=claude:fable:high
+  printf '[env]\nORCH_OVERSEER_PREFERENCE = "%s"\n' "$committed" >"$repo/kendex.settings.toml"
+  commit "$repo"
+  git -C "$repo" push -q origin main
+  if [ "$command" = tail ]; then
+    source_path="$repo/.env.local"
+    printf 'ORCH_OVERSEER_PREFERENCE=claude:1:high\n' >"$source_path"
+  fi
+  before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || exit 1
+  : >"$TMP/state/calls"
+  run_refresh "extract-$command" pass render
+  printf -v expected 'review-gate-error=settings-extract value=%q' "$source_path"
+  if refresh_stopped_at_settings "$before" "refresh-error=settings-extraction value=$repo/.agents/skills/orch" &&
+      grep -qxF -- "$expected" <<<"$OUT"; then
+    ok "$command extraction failure names its source and stops publication"
+  else bad "$command extraction failure" "$OUT"; fi
+  # Dropping the class-owned error return must turn both refusal rows red.
+  python3 - "$TMP/settings-trusted/.agents/skills/review-gate/scripts/lib/settings.sh" <<'PY_EXTRACT'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve()
+s = p.read_text()
+a = s.index('rg_settings_extract() {')
+b = s.index('\n}', a)
+old = s[a:b]
+assert old.count('return 2') == 1
+changed = s[:a] + old.replace('return 2', 'return 0 # return 2') + s[b:]
+assert changed != s
+p.write_text(changed)
+PY_EXTRACT
+  reset_default
+  : >"$TMP/state/calls"
+  run_refresh "extract-$command-control" pass render
+  if [ "$RC" -eq 0 ] && ! grep -qxF '## Settings' "$TMP/state/body"; then
+    ok "control: ignored $command failure publishes a clean report"
+  else bad "$command extraction failure control" "$OUT"; fi
+  cp "$TMP/boundary-settings" "$TMP/settings-trusted/.agents/skills/review-gate/scripts/lib/settings.sh"
+  rm -f -- "$TMP/bin/$command"
+done
+unset FRESH_ORCH ORCH_MODE
+rm -f -- "$repo/.env.local" "$repo/private.env"
+
 # The shipped workflow preserves a trusted checkout before refresh replaces
 # catalog files. Real adoption must read new template bytes without executing
-# any refreshed script or shell library, including for a renamed writer.
+# refreshed adoption code, including for a renamed writer. Only orch's read-only
+# parse runs from the refreshed tree, without the app credential.
 sandbox
 repo="$DIR"
 git -C "$repo" branch -M main
