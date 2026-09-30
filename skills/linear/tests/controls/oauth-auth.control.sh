@@ -153,7 +153,7 @@ control_replace scripts/commands/auth-mint.sh 1 \
 control_expect 'mint-host-reference: resolved pair reaches mint'
 control_replace scripts/lib/auth.sh 1 \
     '    local LINEAR_AUTH_KIND="app"' \
-    '    local LINEAR_AUTH_KIND="app-token"'
+    '    local LINEAR_AUTH_KIND="app"; if [[ "${LINEAR_SKIP_API_KEY_RESOLUTION:-}" == 1 && "${LINEAR_CLIENT_ID:-}" == op://* ]]; then LINEAR_AUTH_KIND="unset"; fi'
 
 control_expect 'mint-missing: refuses'
 control_replace scripts/lib/auth.sh 1 \
