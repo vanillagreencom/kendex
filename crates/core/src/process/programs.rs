@@ -105,8 +105,12 @@ impl Hardened {
         Hardened::new("gh", owned(args))
     }
 
-    pub fn curl(args: &[&str]) -> Hardened {
-        Hardened::new("curl", owned(args))
+    /// Run curl without converting native download paths to UTF-8.
+    pub fn curl(args: &[impl AsRef<OsStr>]) -> Hardened {
+        Hardened::new(
+            "curl",
+            args.iter().map(|arg| arg.as_ref().to_owned()).collect(),
+        )
     }
 
     /// Build and install a pinned source revision without inheriting a Git

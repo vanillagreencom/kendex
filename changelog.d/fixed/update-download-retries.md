@@ -1,1 +1,1 @@
-- kendex update retries failed release downloads before reporting a failure and names the attempts in the error.
+- kendex update retries failed release downloads without retaining partial bytes and names the attempts in the error.

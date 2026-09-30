@@ -473,9 +473,17 @@ impl SignedArtifact {
 }
 
 pub fn fetch(url: &str) -> Result<Vec<u8>, String> {
+    // Curl can truncate an output file before retrying a partial transfer,
+    // but cannot discard bytes already written to its stdout pipe.
+    // The private directory owns cleanup on success and every error path.
+    let temporary = tempfile::Builder::new()
+        .prefix("kendex-download-")
+        .tempdir()
+        .map_err(|e| format!("creating temporary download for {url}: {e}"))?;
+    let downloaded = temporary.path().join("body");
     // This fetches release binaries as well as the small feed, so it needs
     // room for a slow download.
-    let output = Hardened::curl(&curl_args(url))
+    let output = Hardened::curl(&curl_args(url, &downloaded))
         .timeout(Duration::from_secs(600))
         .run()
         .map_err(|e| format!("curl unavailable: {e}"))?;
@@ -485,11 +493,11 @@ pub fn fetch(url: &str) -> Result<Vec<u8>, String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    Ok(output.stdout)
+    std::fs::read(&downloaded).map_err(|e| format!("reading downloaded {url}: {e}"))
 }
 
-fn curl_args(url: &str) -> [&str; 15] {
-    [
+fn curl_args(url: &str, downloaded: &Path) -> Vec<OsString> {
+    let mut args = [
         "-fsS",
         "--retry",
         "3",
@@ -503,9 +511,12 @@ fn curl_args(url: &str) -> [&str; 15] {
         "=https,file",
         "--proto-redir",
         "=https",
-        "--",
-        url,
+        "--output",
     ]
+    .map(OsString::from)
+    .to_vec();
+    args.extend([downloaded.as_os_str().to_owned(), "--".into(), url.into()]);
+    args
 }
 
 /// Write `bytes` over an executable that may be running: the replacement
