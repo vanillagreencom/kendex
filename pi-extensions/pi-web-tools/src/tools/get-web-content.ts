@@ -1,4 +1,5 @@
 import { Type, type Static } from "typebox";
+import { sourceCutNote } from "../extract/byte-budget.js";
 import { getWebContent } from "../storage.js";
 import { truncateText } from "../utils/format.js";
 import { accent, emptyComponent, errorSummary, firstText, muted, providerDisplayName, providerLabel, successSummary, textComponent, tree, webCallText } from "../utils/render.js";
@@ -80,8 +81,9 @@ export function createGetWebContentToolDefinition(name = "get_web_content") {
 			const lengthMeta = details.truncated ? `${shownCharacters}/${contentLength} chars` : `${contentLength} chars`;
 			const excerpt = isStoredExcerpt(metadata);
 			const providerCap = typeof metadata?.providerTextMaxCharacters === "number" ? metadata.providerTextMaxCharacters : undefined;
-			const sourceCut = typeof metadata?.bodyTruncatedAtBytes === "number";
-			const meta = [lengthMeta, details.truncated ? "truncated" : excerpt ? "stored excerpt" : sourceCut ? `source cut at ${metadata.bodyTruncatedAtBytes} bytes` : "full"].filter(Boolean).join(" · ");
+			const cutAt = metadata?.bodyTruncatedAtBytes;
+			const sourceState = excerpt ? "stored excerpt" : typeof cutAt === "number" ? `source cut at ${cutAt} bytes` : "full";
+			const meta = [lengthMeta, details.truncated ? "truncated" : undefined, sourceState].filter(Boolean).join(" · ");
 			const rows = [provider ? "source" : undefined, providerCap ? "providerCap" : undefined, details.url ? "url" : undefined].filter(Boolean);
 			const lines = [successSummary(theme, providerLabel("Get Web Content", "session"), title, meta)];
 			if (provider) lines.push(`${tree(theme, rows.at(-1) === "source" ? "└" : "├")}${muted(theme, "source ")}${accent(theme, providerDisplayName(provider))}`);
@@ -94,7 +96,8 @@ export function createGetWebContentToolDefinition(name = "get_web_content") {
 			if (!item) throw new Error(`Stored content id not found: ${params.id}. ${missingContentGuidance(params.id)}`);
 			const maxCharacters = params.maxCharacters ?? DEFAULT_GET_WEB_CONTENT_CHARACTERS;
 			const { text, truncated } = truncateText(item.content, maxCharacters);
-			return { content: [{ type: "text", text: `${displayTitle(item)}\n${item.url ?? ""}\n\n${text}${truncated ? "\n\n[Use a larger maxCharacters value for more.]" : ""}` }], details: { ...item, truncated, maxCharacters, contentLength: item.content.length } };
+			const notes = [truncated ? "Use a larger maxCharacters value for more." : undefined, sourceCutNote(item.metadata)].filter(Boolean).map((note) => `\n\n[${note}]`).join("");
+			return { content: [{ type: "text", text: `${displayTitle(item)}\n${item.url ?? ""}\n\n${text}${notes}` }], details: { ...item, truncated, maxCharacters, contentLength: item.content.length } };
 		},
 	};
 }

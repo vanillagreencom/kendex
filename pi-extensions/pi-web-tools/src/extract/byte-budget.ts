@@ -253,6 +253,15 @@ export function truncationMetadata(cut: BoundedRead["cut"]): { bodyTruncatedAtBy
 	return cut === undefined ? {} : { bodyTruncatedAtBytes: cut.atBytes, bodyTruncatedBy: cut.by };
 }
 
+/** The model-facing note for a stored item whose source `truncationMetadata` marked as cut, or undefined for a whole source;
+ * the `web_fetch` preview and the `get_web_content` text both carry it. */
+export function sourceCutNote(metadata: Record<string, unknown> | undefined): string | undefined {
+	const cutAt = metadata?.bodyTruncatedAtBytes;
+	if (typeof cutAt !== "number") return undefined;
+	const byBudget = metadata?.bodyTruncatedBy === "call-budget";
+	return `source cut at ${cutAt} bytes${byBudget ? " because this call's byte budget ran out; fetch fewer URLs per call to read it whole" : ""}`;
+}
+
 export interface BoundedText {
 	text: string;
 	cut?: BoundedRead["cut"];

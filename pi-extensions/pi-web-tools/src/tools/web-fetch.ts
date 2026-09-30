@@ -2,7 +2,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { basename, isAbsolute, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import { ByteBudget, ByteBudgetExhausted, readLocalPdfWithin, readPdfWithin } from "../extract/byte-budget.js";
+import { ByteBudget, ByteBudgetExhausted, readLocalPdfWithin, readPdfWithin, sourceCutNote } from "../extract/byte-budget.js";
 import { extractGitHubUrl } from "../extract/github.js";
 import { fetchHttpContent, isProbablyPdf } from "../extract/http.js";
 import { extractLocalVideo, isLocalVideoPath } from "../extract/video.js";
@@ -325,9 +325,8 @@ export function buildWebFetchToolResult(
 	const ids = stored.map((item) => item.id).join(", ");
 	const previewBlocks = previewItems.map(({ item, text, stats }) => {
 		const label = displayTitle(item);
-		const cutAt = item.metadata?.bodyTruncatedAtBytes;
-		const cutByBudget = item.metadata?.bodyTruncatedBy === "call-budget";
-		const cut = typeof cutAt === "number" ? `; source cut at ${cutAt} bytes${cutByBudget ? " because this call's byte budget ran out; fetch fewer URLs per call to read it whole" : ""}` : "";
+		const cutNote = sourceCutNote(item.metadata);
+		const cut = cutNote ? `; ${cutNote}` : "";
 		const meta = `preview ${stats.shownCharacters}/${stats.fullCharacters} chars${stats.truncated ? "; full text stored" : ""}${cut}`;
 		return `- ${item.id}: ${label}\n[${meta}]\n${text}`;
 	}).join("\n\n");
