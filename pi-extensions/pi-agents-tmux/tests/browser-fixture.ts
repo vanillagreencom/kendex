@@ -30,7 +30,7 @@ export function filesystemCalls(run: () => void): number[] {
 	}
 }
 
-/** Load a disposable production edit. Relative runtime imports still use the real package. */
+/** Load a disposable production edit with the real package's modules and dependencies. */
 export async function importRuntimeCopy(fileName: string, before: string, after: string): Promise<unknown> {
 	const runtimeDir = resolve(import.meta.dir, "../extensions/subagent");
 	const original = fs.readFileSync(join(runtimeDir, fileName), "utf8");
@@ -38,7 +38,10 @@ export async function importRuntimeCopy(fileName: string, before: string, after:
 	const modified = original.replace(before, after);
 	assert.notEqual(modified, original);
 	const source = modified.replace(/from "\.\/([^\"]+)\.js"/g, (_match, name: string) => `from ${JSON.stringify(join(runtimeDir, `${name}.ts`))}`);
-	const copy = join(tempRuntime(), fileName);
+	const copyDir = tempRuntime();
+	// Bare imports resolve from the copy, outside the package's dependency tree.
+	fs.symlinkSync(resolve(import.meta.dir, "../node_modules"), join(copyDir, "node_modules"), "dir");
+	const copy = join(copyDir, fileName);
 	writeFileSync(copy, source);
 	return import(copy);
 }
