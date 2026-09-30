@@ -75,15 +75,17 @@ fn project_lane(cli: &Cli) -> Result<Option<String>, Box<dyn std::error::Error>>
     let cwd = env
         .cwd()
         .ok_or("cannot locate the command's working directory")?;
-    let Some(item) = kendex_core::lane::marked_worktree(cwd)? else {
+    let scopes = resolve_scopes_at(&env, filter?, target.path())?;
+    let Some(root) = scopes.iter().find_map(|scope| match scope {
+        Scope::Project { root } => Some(root),
+        Scope::Global => None,
+    }) else {
         return Ok(None);
     };
-    let scopes = resolve_scopes_at(&env, filter?, target.path())?;
-    if !scopes
-        .iter()
-        .any(|scope| matches!(scope, Scope::Project { .. }))
-    {
-        return Ok(None);
+    // Named targets do not bypass a marked caller. Git clone can put an
+    // unmarked checkout inside a lane whose manifest the resolver selects.
+    match kendex_core::lane::marked_worktree(cwd)? {
+        Some(item) => Ok(Some(item)),
+        None => Ok(kendex_core::lane::marked_worktree(root)?),
     }
-    Ok(Some(item))
 }

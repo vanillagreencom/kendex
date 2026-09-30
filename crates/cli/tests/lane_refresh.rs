@@ -58,28 +58,64 @@ fn refusal(output: &Output) -> bool {
 #[test]
 #[allow(clippy::expect_used, reason = "fixture marker removal must succeed")]
 fn every_project_writer_refuses_before_writes_and_its_unmarked_control_lands() {
-    for args in [
-        vec!["refresh", "--scope", "project", "--yes", "--leave"],
-        vec!["refresh", "--yes", "--leave"],
-        vec!["refresh", "--scope", "all", "--yes", "--leave"],
-        vec![
-            "refresh", "--global", "--scope", "project", "--yes", "--leave",
-        ],
-        vec!["refresh", "--project-path", "../main", "--yes", "--leave"],
-        vec!["apply", "--yes", "--leave"],
-        vec!["apply", "--scope", "all", "--yes", "--leave"],
-        vec!["updates", "--apply", "--refresh", "--yes", "--leave"],
+    for (directory, args) in [
+        (
+            "",
+            vec!["refresh", "--scope", "project", "--yes", "--leave"],
+        ),
+        ("", vec!["refresh", "--yes", "--leave"]),
+        ("", vec!["refresh", "--scope", "all", "--yes", "--leave"]),
+        (
+            "",
+            vec![
+                "refresh", "--global", "--scope", "project", "--yes", "--leave",
+            ],
+        ),
+        (
+            "",
+            vec!["refresh", "--project-path", "../main", "--yes", "--leave"],
+        ),
+        ("", vec!["apply", "--yes", "--leave"]),
+        ("", vec!["apply", "--scope", "all", "--yes", "--leave"]),
+        (
+            "",
+            vec!["updates", "--apply", "--refresh", "--yes", "--leave"],
+        ),
+        ("vendor", vec!["refresh", "--yes", "--leave"]),
+        ("vendor", vec!["apply", "--yes", "--leave"]),
+        (
+            "vendor",
+            vec!["updates", "--apply", "--refresh", "--yes", "--leave"],
+        ),
     ] {
         let fixture = world();
+        // Git clone produces a nearer repository with no project manifest.
+        // The project resolver still selects the enclosing lane's manifest.
+        if directory == "vendor" {
+            fixture.git(
+                &fixture.linked,
+                &[
+                    "clone",
+                    "-q",
+                    fixture.main.to_str().expect("fixture path"),
+                    directory,
+                ],
+            );
+        }
+        let cwd = fixture.linked.join(directory);
         fixture.mark();
         let before = snapshot(&fixture.root);
-        let output = kendex(&fixture, &fixture.linked, &args);
-        assert!(refusal(&output), "{args:?}: {output:?}");
-        assert_eq!(snapshot(&fixture.root), before, "refused {args:?} wrote");
+        let output = kendex(&fixture, &cwd, &args);
+        assert!(refusal(&output), "{directory} {args:?}: {output:?}");
+        assert_eq!(
+            snapshot(&fixture.root),
+            before,
+            "refused {directory} {args:?} wrote"
+        );
         // Removing the real launch marker plants the missing guard input.
         // The very same refusal assertion must turn red for each verb.
         fs::remove_file(&fixture.marker).expect("remove lane marker");
-        let output = kendex(&fixture, &fixture.linked, &args);
+        let output = kendex(&fixture, &cwd, &args);
         assert!(
             !refusal(&output),
             "must-fail control stayed green: {args:?}"
