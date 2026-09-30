@@ -235,7 +235,7 @@ assert_eq "rc=$RC $(record issue-2709 | sed -E 's/ (account|host|mail_root|surfa
 mkdir -p "$SESSION_HOME/.copilot/hooks"
 for name in lane-mail-check lane-mail-compact lane-mail-start; do : > "$SESSION_HOME/.copilot/hooks/$name.sh"; : > "$SESSION_HOME/.copilot/hooks/$name.json"; done
 copilot_allow_all() {
-  run_ot ${3:+SCRIPT="$3"} --ghostty --harness copilot --cmd "copilot $2 --no-ask-user -i start-{item}" "$1"
+  run_ot ${3:+SCRIPT="$3"} --ghostty --harness copilot --cmd "copilot $2 --no-ask-user -i start-{item} $UNATTENDED_ALL" "$1"
   printf 'rc=%s %s\n' "$RC" "$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .allow_all')"
 }
 while IFS='|' read -r item flags want; do
