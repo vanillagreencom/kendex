@@ -35,7 +35,7 @@ policy whose classifier fell back to standard; the detail names its cause.
 class-unresolved means that under an active class policy this head's change
 class or review policy could not be resolved for any other reason: the pull
 request's range, manifest or inventory, or a runner fault such as a scratch
-directory, a checkout or a missing kendex. The stderr diagnostics above it
+directory, a checkout or a source refresh. The stderr diagnostics above it
 name the cause, and no evidence was read. What the writer does with it:
 SKILL.md § Decision table.
 

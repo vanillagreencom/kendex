@@ -312,8 +312,9 @@ else
   set -e
   if [ "$rc:$out" = "$UNMEASURED_WANT" ]; then
     bad "must-fail: a predicate that ignores exit 3 must lose the unmeasured verdict" "$rc:$out"
-  elif [ "$rc:$out" = "2:" ] && grep -q 'review-gate-error=predicate-policy-resolve' "$TMP/stderr"; then
-    ok "must-fail: a predicate that ignores exit 3 fails the evaluation as predicate-policy-resolve"
+  elif [ "$rc" = 0 ] && [ "${out%% *}" = "verdict=class-unresolved" ] &&
+    grep -q 'review-gate-error=predicate-policy-resolve' "$TMP/stderr"; then
+    ok "must-fail: a predicate that ignores exit 3 falls to class-unresolved at the policy resolve"
   else
     bad "must-fail: the mutant failed somewhere other than the policy resolve" "$rc:$out $(cat "$TMP/stderr")"
   fi
