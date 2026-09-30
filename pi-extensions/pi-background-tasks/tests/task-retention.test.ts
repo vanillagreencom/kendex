@@ -19,5 +19,8 @@ test("task logs follow the lane retention rule, and finished tasks are bounded a
 		unloggedLog: "late-output",
 		// session_shutdown releases the task map.
 		listedAfterShutdown: "No background tasks.",
+		// A forked session forgets the tasks it restored from this session's
+		// branch, past the bound and on clear, and keeps their logs.
+		fork: { taskSession: "retention-session", listed: MAX_FINISHED_TASKS, logsKept: MAX_FINISHED_TASKS + 1, listedAfterClear: "No background tasks." },
 	});
 }, SPAWN_FIXTURE_TIMEOUT_MS);

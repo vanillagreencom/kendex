@@ -14,6 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { openLaneDir, pruneLanes } from "../scripts/lane-retention.js";
 
 import { shouldAdoptActiveContext } from "./active-context.js";
@@ -299,12 +300,18 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		else remove();
 	};
 
+	/** The lane directory this session's task logs are written to. */
+	const ownLaneDir = (): string => taskLaneDir(activeSessionId ?? `ephemeral-${process.pid}`);
+
+	// A task restored from another session's branch, as a forked session holds,
+	// keeps its log: the session that wrote it still reads it, and the lane
+	// prune removes it in time.
 	const forgetFinishedTask = (task: ManagedTask) => {
 		voidPendingTaskWakes(task, "clear", logWakeDiagnostic);
 		clearTaskTimers(task);
 		tasks.delete(task.id);
 		forgetSnapshot(task.id);
-		removeTaskLog(task);
+		if (dirname(task.logFile) === ownLaneDir()) removeTaskLog(task);
 	};
 
 	// Tasks that exited and whose exit wake waits for their log's flush.
@@ -754,7 +761,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		const now = Date.now();
 		const timeoutSeconds = typeof options.timeoutSeconds === "number" ? options.timeoutSeconds : settingNumber("defaultTimeoutSeconds", DEFAULT_TIMEOUT_MS / 1_000, cwd);
 		const expiresAt = timeoutSeconds > 0 ? now + timeoutSeconds * 1_000 : null;
-		const laneDir = openLaneDir(taskLaneDir(activeSessionId ?? `ephemeral-${process.pid}`), activeCtx?.cwd ?? cwd);
+		const laneDir = openLaneDir(ownLaneDir(), activeCtx?.cwd ?? cwd);
 		const logFile = logFilePath(laneDir, id, now);
 		writeFileSync(logFile, "");
 

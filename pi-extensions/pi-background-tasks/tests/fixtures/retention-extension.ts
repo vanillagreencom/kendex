@@ -18,9 +18,12 @@ interface ToolResult { content: { type: string; text: string }[]; details: { act
 interface Tool { name: string; execute(id: string, params: Record<string, unknown>): Promise<ToolResult> }
 const tools = new Map<string, Tool>();
 const events = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
+// The session the next event runs in; a forked session sets both.
+let sessionId = "retention-session";
+let branch: unknown[] = [];
 const ctx = {
 	cwd: process.cwd(), hasUI: false, isProjectTrusted: () => true,
-	sessionManager: { getSessionId: () => "retention-session", getSessionFile: () => join(process.cwd(), "session.jsonl"), getBranch: () => [], getEntries: () => [] },
+	sessionManager: { getSessionId: () => sessionId, getSessionFile: () => join(process.cwd(), `${sessionId}.jsonl`), getBranch: () => branch, getEntries: () => branch },
 	ui: { notify() {}, setWidget() {} },
 } as unknown as ExtensionContext;
 const pi = {
@@ -120,8 +123,34 @@ mkdirSync(unlogged.logFile as string);
 await waitForExit(unlogged.id as string);
 const unloggedLog = (await execute({ action: "log", id: unlogged.id })).content[0]!.text;
 
+const parentTask = (await execute({ action: "log", id: long.id })).details.task!;
+
 await dispatch("session_shutdown");
 const listedAfterShutdown = (await execute({ action: "list" })).content[0]!.text;
+
+// A fork of this session copies its branch, so it restores this session's
+// finished tasks: one past the bound, each with its log in this session's lane.
+// The bound at session_start and a clear in the fork forget them, and the
+// logs stay.
+const parentLogs: string[] = [];
+branch = Array.from({ length: MAX_FINISHED_TASKS + 1 }, (_, i) => {
+	const logFile = join(laneDir, `bg-${100 + i}-parent.log`);
+	writeFileSync(logFile, "parent-output");
+	parentLogs.push(logFile);
+	const task = { ...parentTask, id: `bg-${100 + i}`, logFile, updatedAt: (parentTask.updatedAt as number) + i };
+	return { type: "message", message: { role: "toolResult", toolName: "bg_task", details: { action: "log", task } } };
+});
+sessionId = "fork-session";
+await dispatch("session_start");
+const forkListed = ((await execute({ action: "list" })).details.tasks as unknown as unknown[]).length;
+await execute({ action: "clear" });
+const fork = {
+	taskSession: parentTask.sessionId,
+	listed: forkListed,
+	logsKept: parentLogs.filter((logFile) => existsSync(logFile)).length,
+	listedAfterClear: (await execute({ action: "list" })).content[0]!.text,
+};
+await dispatch("session_shutdown");
 
 process.stdout.write(JSON.stringify({
 	pruned,
@@ -135,4 +164,5 @@ process.stdout.write(JSON.stringify({
 	longLog: { tail: longLog.includes("TAIL-END"), head: longLog.includes("HEAD") },
 	unloggedLog,
 	listedAfterShutdown,
+	fork,
 }));
