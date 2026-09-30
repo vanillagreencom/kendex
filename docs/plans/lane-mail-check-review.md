@@ -38,7 +38,7 @@ Every current-source line range and byte count below belongs to revision `57ec19
 
 The comment's sizes agree with this checkout. Its checker name does not. Commit-guards `scripts/byte-ceiling` sets `COMMIT_GUARDS_BYTE_CEILING_KB` to 200 by default. It measures tracked blob bytes. That gives 204800 bytes. Its `CHECKS.md` § byte-ceiling states the failure and warning rules. `tools/guard` names that checker separately from doc-limits. Doc-limits governs documents, not these Bash scripts. Its generated-file exclusion does not exempt these renders from byte-ceiling.
 
-The next edit is not certain to fail. It fails if it consumes the remaining byte budget. The impact is a blocked fix and a wider review if a split must be added to that fix. The condition is reachable because every change to these files reaches the commit chain. The source does not establish how many future fixes exhaust the budget.
+The next edit is not certain to fail. For these files, it fails the size check only if its resulting tracked blob exceeds 204800 bytes. A blob of exactly 204800 bytes passes with a near-ceiling warning. The impact is a blocked fix and a wider review if a split must be added to that fix. The condition is reachable because every change to these files reaches the commit chain. The source does not establish how many future fixes exceed the budget.
 
 The hook's executable body starts after its frontmatter at line 12, byte offset 41619. Header size is a material part of this file. Moving function bodies does not remove the hook's declared contract. Do not cut the declaration to hide the size problem.
 
@@ -68,7 +68,7 @@ The current suite's lines 1325-1331 check the hook and its three renders for the
 
 ## Events and delivery
 
-An empty matcher applies the wrappers to all tools. Wrappers resolve the judge beside themselves and `exec` it through the running Bash. A missing judge produces a keyed refusal. They do not own a second judge.
+An empty matcher applies the wrappers to all tools. Wrappers resolve the judge beside themselves and `exec` it through the running Bash. A missing judge produces a keyed stderr report at exit 0 in `lane-mail-start.sh`, `lane-mail-prompt.sh`, `session-start-row.sh`, `session-end-row.sh`, and `stop-failure-row.sh`. Those events continue. The halt and deliver wrappers instead issue a keyed refusal at exit 2. The compact wrapper exits 2 with an operator warning, but cannot hold compaction. They do not own a second judge.
 
 | Harness event or producer | Entry point and arm | Actual reach and work |
 | --- | --- | --- |
