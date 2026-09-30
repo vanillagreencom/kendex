@@ -44,8 +44,8 @@
 # Usage:
 #   dev-validate-run --worktree PATH [--poll SECS] [--validate-mode full|range] [--base REF] [--attached]
 #       Start the run detached, then block until it ends. Prints the run
-#       directory first and the verdict last. Codex and Pi call this in the
-#       foreground; Claude Code runs it as a background command.
+#       directory first and the verdict last. Harness launch and resume routes:
+#       dev/SKILL.md § Long-Running Validation.
 #       --attached runs the same child in the caller's foreground instead,
 #       through lib/job-unit.sh attach: a child of this process that leads its
 #       own process group in the caller's session, under the same bound, class
