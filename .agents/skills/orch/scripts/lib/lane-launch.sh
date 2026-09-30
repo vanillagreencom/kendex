@@ -644,7 +644,7 @@ launch_choice_question_off() { # HARNESS
   [[ "$words" == - ]] || printf '%s\n' "$words"
 }
 
-# The unattended words every lane launch is briefed with, printed, whatever the
+# The unattended words every lane launch is briefed with, whatever the
 # harness: nobody reads a lane's pane on any of them, and a lane with its
 # question tool taken away can still ask the person in chat and end its turn
 # waiting on them, idle with nobody at its pane, so every brief states the
@@ -656,9 +656,6 @@ launch_choice_question_off() { # HARNESS
 # the last one. The text crosses the quoting layers a codex kickoff does, so it
 # holds only letters, spaces, commas, periods and hyphens.
 LAUNCH_UNATTENDED_TEXT='This is an unattended orch lane, and nobody reads this pane. Send every question for the overseer with lane-mail ask and block on lane-mail wait for its answer, never as a question in chat. Never end a turn waiting on the person, and end none before a lane-mail ask or notice says where the work stands. Where you would stop to ask, read lane-mail inbox and continue the workflow.'
-launch_choice_unattended() {
-  printf '%s\n' "$LAUNCH_UNATTENDED_TEXT"
-}
 
 # ORCH_QUESTION_TOOL, decided once here for every launcher: `off`, the
 # default, gives a launched overseer its harness row's question-off words in

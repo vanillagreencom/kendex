@@ -69,7 +69,7 @@ BRIEF='/orch start CC-737'
 BRIEFN='/orch+start+CC-737'   # the brief as a needle: `+` reads as a space
 # The unattended words every brief closes on, read from lib/lane-launch.sh, the
 # text open-terminal renders, and the whole prompt the claude arm passes.
-UNATTENDED="$(bash -c 'source "$1" && launch_choice_unattended' _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
+UNATTENDED="$(bash -c 'source "$1" && printf "%s" "$LAUNCH_UNATTENDED_TEXT"' _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
 PROMPT="$BRIEF $UNATTENDED"
 PROMPTN="${PROMPT// /+}"
 RESEND="loaded-text $PROMPT"

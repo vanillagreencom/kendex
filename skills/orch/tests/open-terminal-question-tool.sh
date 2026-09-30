@@ -103,7 +103,7 @@ launch() {
 # The unattended words every lane is briefed with, read from lib/lane-launch.sh,
 # the table open-terminal renders and judges them from, so no suite holds a
 # second copy of the text.
-UNATTENDED_TEXT="$(bash -c 'source "$1" && launch_choice_unattended' _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
+UNATTENDED_TEXT="$(bash -c 'source "$1" && printf "%s" "$LAUNCH_UNATTENDED_TEXT"' _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
 [[ -n "$UNATTENDED_TEXT" ]] || { echo "lib/lane-launch.sh named no unattended text" >&2; exit 1; }
 
 echo "=== every command open-terminal builds takes the question tool away ==="
@@ -221,7 +221,7 @@ assert_eq "$CMD" "claude -n CC-22 $SETTINGS$QUESTION '--model=sonnet' '/orch sta
   "control: without the check after it, that miss turns compaction off on the bare alias"
 # The unattended words gone from the table: a claude --cmd launch carrying
 # none of them then launches, which the gate row above refuses.
-lead_control '  printf '"'"'%s\n'"'"' "$LAUNCH_UNATTENDED_TEXT"' '  :'
+lead_control "LAUNCH_UNATTENDED_TEXT='$UNATTENDED_TEXT'" "LAUNCH_UNATTENDED_TEXT=''"
 launch CC-32 --harness claude --cmd "true --disallowedTools=AskUserQuestion,EnterPlanMode"
 assert_eq "rc=$RC created=$CREATED" "rc=0 created=yes" \
   "control: with no unattended words in the table a claude template without them launches"

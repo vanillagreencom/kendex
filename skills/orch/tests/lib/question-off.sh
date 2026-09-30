@@ -20,8 +20,7 @@ QUESTION_OFF_ALL="${QUESTION_OFF_ALL% }"
 # same way. open-terminal-question-tool.sh judges this gate too.
 UNATTENDED_ALL="$(bash -c '
   source "$1" || exit 1
-  text="$(launch_choice_unattended)" || exit 1
-  [[ -z "$text" ]] || printf "%q" "$text"
+  printf "%q" "$LAUNCH_UNATTENDED_TEXT"
 ' _ "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts/lib" && pwd)/lane-launch.sh")"
 [[ -n "$UNATTENDED_ALL" ]] || { echo "question-off.sh: lib/lane-launch.sh named no unattended words" >&2; exit 1; }
 QUESTION_OFF_ALL="$QUESTION_OFF_ALL $UNATTENDED_ALL"

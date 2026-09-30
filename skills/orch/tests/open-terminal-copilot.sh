@@ -131,7 +131,7 @@ FLAGS='--model claude-opus-5 --reasoning-effort high --allow-all'
 # The unattended words every lane is briefed with, read from lib/lane-launch.sh,
 # the text open-terminal renders, and the same text shell-quoted as one word
 # for a --cmd template to carry.
-UNATTENDED="$(bash -c 'source "$1" && launch_choice_unattended' _ "$REPO/scripts/lib/lane-launch.sh")"
+UNATTENDED="$(bash -c 'source "$1" && printf "%s" "$LAUNCH_UNATTENDED_TEXT"' _ "$REPO/scripts/lib/lane-launch.sh")"
 UNATTENDED_Q="$(printf '%q' "$UNATTENDED")"
 # The words every copilot command leads with, quoted per token as start_cmd
 # quotes each flag: the launch settings, then the question-off word, then the

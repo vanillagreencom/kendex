@@ -33,7 +33,7 @@ SRC_OT="$SCRIPTS_DIR/open-terminal"
 SRC_LIB_DIR="$SCRIPTS_DIR/lib"
 # The brief ends at the start command, then the unattended words every lane is
 # briefed with, read from lib/lane-launch.sh; start.md owns completion.
-TC=". $(bash -c 'source "$1" && launch_choice_unattended' _ "$SRC_LIB_DIR/lane-launch.sh")"
+TC=". $(bash -c 'source "$1" && printf "%s" "$LAUNCH_UNATTENDED_TEXT"' _ "$SRC_LIB_DIR/lane-launch.sh")"
 TMP_ROOT="$(mktemp -d)" || { echo "open-terminal-codex-prompt: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "open-terminal-codex-prompt: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "open-terminal-codex-prompt: scratch=resolve-failed" >&2; exit 1; }

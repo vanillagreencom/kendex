@@ -123,7 +123,7 @@ CODEX_WORDS='-c model_auto_compact_token_limit=9223372036854775807 -c model_auto
 # The unattended words every lane is briefed with, read from lib/lane-launch.sh,
 # shell-quoted as the one word a --cmd command carries them in, beside each
 # harness's question-tool words.
-UNATTENDED_TEXT="$(bash -c 'source "$1" && launch_choice_unattended' _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
+UNATTENDED_TEXT="$(bash -c 'source "$1" && printf "%s" "$LAUNCH_UNATTENDED_TEXT"' _ "$SCRIPTS_DIR/lib/lane-launch.sh")"
 [[ -n "$UNATTENDED_TEXT" ]] || { echo "lib/lane-launch.sh named no unattended text" >&2; exit 1; }
 UNATTENDED_WORD="$(printf '%q' "$UNATTENDED_TEXT")"
 CLAUDE_QUESTION="--disallowedTools=AskUserQuestion,EnterPlanMode $UNATTENDED_WORD"

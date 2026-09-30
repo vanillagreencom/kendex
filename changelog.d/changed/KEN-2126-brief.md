@@ -1,0 +1,1 @@
+- lanes: every lane brief, on every harness, carries the unattended words, and a `--cmd` launch naming a harness is refused without them.

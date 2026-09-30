@@ -512,14 +512,11 @@ fi
 # whole in one argument of its template or in its brief file, which reaches the
 # harness as one argument; one naming none is not judged, as the question-tool
 # gate above does not judge it. The refusal prints the text under the English,
-# whole, and a reading of it that fails is refused as its absence, never
-# skipped.
-LAUNCH_UNATTENDED=""
-if ! LAUNCH_UNATTENDED="$(launch_choice_unattended)" \
-   || { [[ -n "$CMD_TEMPLATE" && -n "$LAUNCH_HARNESS" && "$BRIEF_TEXT" != *"$LAUNCH_UNATTENDED"* ]] \
-        && ! launch_choice_phrase_present "$LAUNCH_UNATTENDED" "$CMD_TEMPLATE"; }; then
+# whole.
+if [[ -n "$CMD_TEMPLATE" && -n "$LAUNCH_HARNESS" && "$BRIEF_TEXT" != *"$LAUNCH_UNATTENDED_TEXT"* ]] \
+   && ! launch_choice_phrase_present "$LAUNCH_UNATTENDED_TEXT" "$CMD_TEMPLATE"; then
   ot_message launch-unattended-missing "harness=$LAUNCH_HARNESS" >&2
-  [[ -z "$LAUNCH_UNATTENDED" ]] || printf '%s\n' "$LAUNCH_UNATTENDED" >&2
+  printf '%s\n' "$LAUNCH_UNATTENDED_TEXT" >&2
   exit 1
 fi
 
@@ -1465,8 +1462,7 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
   done
   # The unattended words close every brief and continuation line, inside
   # their quotes: the text holds blanks and nothing a quoting layer acts on.
-  local unattended
-  unattended=" $(launch_choice_unattended)" || return 1
+  local unattended=" $LAUNCH_UNATTENDED_TEXT"
   # Both delivered lines obey the same shell-inert rule as the codex arms above.
   # A wake runs its line in print mode and exits; a relaunch resumes an
   # interactive session that is already mid-workflow, so the resumed command
@@ -2326,7 +2322,7 @@ tmux_launch_verify() { # PANE TITLE BRIEF EXPECT
   # The brief is the check's needle, the start of the prompt the claude arm
   # passed, short enough that no composer wraps it; the re-send carries the
   # whole prompt, the unattended words after it, as start_cmd rendered it.
-  launch_write brief-send "$title" "$pane" "$expect" text "$brief $(launch_choice_unattended)" || return 1
+  launch_write brief-send "$title" "$pane" "$expect" text "$brief $LAUNCH_UNATTENDED_TEXT" || return 1
   if tmux_wait_launched "$pane" "$brief"; then
     ot_message brief-redelivered "item=$title"
     return 0

@@ -151,8 +151,8 @@ GAP='lane-mail-check: account=unlisted'
 
 # A notice the lane sends through the real `lane-mail notice`, as a working
 # lane reports a step before its turn ends, so the idle judge reads a send
-# this turn. Each carries its own words: a repeat of one envelope inside a
-# minute is refused as a duplicate.
+# this turn. Each carries its own words, so a row reads which report the
+# outbound file holds; lane-mail does not deduplicate a notice.
 REPORTS=0
 report() { # ITEM
   REPORTS=$((REPORTS + 1))
@@ -335,6 +335,16 @@ plant_reader() { # MARKER
   printf '#!/bin/sh\ntouch %s\n' "$1" > "$LANE/.agents/skills/orch/scripts/lane-mail"
   chmod +x "$LANE/.agents/skills/orch/scripts/lane-mail"
   plant_siblings "$LANE/.agents/skills/orch/scripts"
+}
+
+# The real reader behind one planted shell line that runs first, so a case can
+# break one verb and keep every other one: the line decides on "$1".
+wrap_reader() { # LINE
+  rm -f -- "${LANE:?}/.agents/skills/orch/scripts"
+  mkdir -p "$LANE/.agents/skills/orch/scripts"
+  plant_siblings "$LANE/.agents/skills/orch/scripts"
+  printf '#!/usr/bin/env bash\n%s\nexec %q "$@"\n' "$1" "$LANE_MAIL" > "$LANE/.agents/skills/orch/scripts/lane-mail"
+  chmod +x "$LANE/.agents/skills/orch/scripts/lane-mail"
 }
 
 send() { # ITEM TEXT [--re MSGID]

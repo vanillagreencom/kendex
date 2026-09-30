@@ -198,6 +198,7 @@ new_lane payload ken-10
 send KEN-10 'x'
 run_payload 'not json'
 expect 2 "lane-mail-check: payload=invalid-json" "a payload that is not JSON is refused rather than skipped"
+REPORT_ITEM=KEN-10
 run_payload '{"stop_hook_active":true}'
 expect 0 "$GAP" "the turn the harness already continued is not blocked again"
 
@@ -1076,10 +1077,11 @@ assert_eq "said=$(grep -c "^lane-mail-check: harness-unlisted=$LANE/.other/hooks
 # A launched lane lead that ends its turn with nothing sent through lane mail
 # since its last judged turn end, no handoff recorded and no halt standing,
 # told nobody it stopped: the overseer reads the mailbox, never the pane. The
-# turn end is refused once with the continuation that reads the lane's mail;
-# ending idle again on the turn that refusal continued is reported to the
-# overseer as a lane notice, never refused a second time. Every fact is lane
-# mail's; no row writes a transcript, since the judge reads none.
+# turn end is refused once with the continuation that reads the lane's mail,
+# and the hold recorded; ending idle again on the turn that recorded hold
+# continued is reported to the overseer as a lane notice, never refused a
+# second time. Every fact is lane mail's: the transcript rows below give the
+# judge a lane's words and it reads none of them.
 
 # The lane's record of its sent count, and the notices its outbound file
 # holds, the first line of each, one per line.
@@ -1101,8 +1103,8 @@ new_handoff_lane idle_turn KEN-65
 REPORT_ITEM=""
 stop
 assert_eq "RC=$RC keys=$(hook_keys) record=$(sent_record KEN-65)" \
-  "RC=2 keys=account=unlisted;idle=KEN-65 record=none" \
-  "a lane that ends its turn having sent nothing through lane mail is held once, after the marks"
+  "RC=2 keys=account=unlisted;idle=KEN-65 record=0 held" \
+  "a lane that ends its turn having sent nothing through lane mail is held once, after the marks, and the hold recorded"
 printf -v INBOX_ROUTE 'inbox --item %q --root %q' KEN-65 "$LANE"
 printf -v ASK_ROUTE 'ask --item %q --root %q --file [PATH]' KEN-65 "$LANE"
 printf -v NOTICE_ROUTE 'notice --item %q --root %q --file [PATH]' KEN-65 "$LANE"
@@ -1113,7 +1115,7 @@ assert_eq "RC=$RC keys=$(hook_keys) notices=$(notices KEN-65) record=$(sent_reco
   "RC=0 keys=account=unlisted;idle-notice=KEN-65 notices=lane-mail-check: lane-idle=KEN-65 record=1" \
   "the continued turn ending idle again is reported to the overseer once, never held twice, and the record counts the notice"
 stop
-assert_eq "RC=$RC keys=$(hook_keys)" "RC=2 keys=account=unlisted;idle=KEN-65" \
+assert_eq "RC=$RC keys=$(hook_keys) record=$(sent_record KEN-65)" "RC=2 keys=account=unlisted;idle=KEN-65 record=1 held" \
   "the hook's own notice is no send of the lane's: the next turn ending idle is held again"
 report KEN-65
 stop
@@ -1132,6 +1134,32 @@ stop
 assert_eq "RC=$RC record=$(sent_record KEN-65)" "RC=0 record=3" \
   "a record above the count is a replaced mailbox: the turn ends and the record takes the count"
 
+# The continued turn is judged by who held it. A lane held here that then
+# sends a notice, as one waiting on a dispatched agent does, ends the
+# continued turn with no notice from the hook. A turn another stop hook
+# continued after the lane reported is held as a fresh one, and only the turn
+# that hold continued is reported.
+new_handoff_lane idle_wait KEN-76
+REPORT_ITEM=""
+stop
+report KEN-76
+stop_active
+assert_eq "RC=$RC keys=$(hook_keys) notices=$(notices KEN-76 | paste -sd'|' -) record=$(sent_record KEN-76)" \
+  "RC=0 keys=account=unlisted notices=step $REPORTS done record=1" \
+  "a held lane whose continuation sends a notice ends its turn, and the hook sends none"
+new_handoff_lane idle_other_hook KEN-77
+REPORT_ITEM=""
+report KEN-77
+stop
+stop_active
+assert_eq "RC=$RC keys=$(hook_keys) notices=$(notices KEN-77 | paste -sd'|' -) record=$(sent_record KEN-77)" \
+  "RC=2 keys=account=unlisted;idle=KEN-77 notices=step $REPORTS done record=1 held" \
+  "a turn another stop hook continued after the lane reported is held, and no notice is sent"
+stop_active
+assert_eq "RC=$RC keys=$(hook_keys) record=$(sent_record KEN-77)" \
+  "RC=0 keys=account=unlisted;idle-notice=KEN-77 record=2" \
+  "the turn this judge's own hold continued is the one reported"
+
 # What the overseer sends is no send of the lane's, and a halt it sent is the
 # one standing reason for a lane to sit idle, until a later directive lifts it.
 new_handoff_lane idle_halt KEN-66
@@ -1145,6 +1173,7 @@ send KEN-66 'Stop here.' --halt >/dev/null
 read_mail KEN-66
 stop
 expect 0 "$GAP" "a lane whose newest directive is a halt sits idle unheld"
+assert_eq "record=$(sent_record KEN-66)" "record=0" "and the hold the turn end before it recorded is cleared"
 send KEN-66 'Carry on.' >/dev/null
 read_mail KEN-66
 stop
@@ -1184,6 +1213,40 @@ for row in codex:.codex/hooks:KEN-70 pi:.pi/kendex/hooks:KEN-71; do
   assert_eq "RC=$RC notice=$(grep -c "^lane-mail-check: idle-notice=$IDLE_ITEM\$" "$ERR_FILE" || true)" "RC=0 notice=1" \
     "and on the turn its harness continued, reported to the overseer"
 done
+# The pi-hooks carrier runs no further request after a continued turn, so a
+# hold there reaches nobody: a Pi turn another stop hook continued is reported
+# in its place.
+report "$IDLE_ITEM"
+stop
+stop_active
+assert_eq "RC=$RC notice=$(grep -c "^lane-mail-check: idle-notice=$IDLE_ITEM\$" "$ERR_FILE" || true) record=$(sent_record "$IDLE_ITEM")" \
+  "RC=0 notice=1 record=3" \
+  "a Pi turn another stop hook continued ends with the notice, never a hold nobody runs"
+
+# The lane's words are in the transcript the payload names, and the judge
+# reads none of them. Each row writes the harness's own transcript spelling
+# whose final assistant text is WORDS, after SENDS notices this turn: a
+# statement from a lane that sent nothing is held as the transcript-free row
+# is, and a question from a lane that sent a notice passes.
+while IFS=: read -r WORDS_HARNESS WORDS_DIR WORDS_ITEM WORDS_SENDS WORDS_RC WORDS_KEY WORDS; do
+  new_handoff_lane "words_$WORDS_ITEM" "$WORDS_ITEM"
+  REPORT_ITEM=""
+  mkdir -p "$LANE/${WORDS_DIR%/hooks}/skills"
+  [ -e "$LANE/${WORDS_DIR%/hooks}/skills/orch" ] || ln -s "$LANE/.claude/skills/orch" "$LANE/${WORDS_DIR%/hooks}/skills/orch"
+  install_hook "$HOOK" "$LANE/$WORDS_DIR/lane-mail-check.sh"
+  usage_line "$WORDS_HARNESS" 1000 | jq -c --arg w "$WORDS" '.message.content = [{type: "text", text: $w}]' \
+    > "$TMP_ROOT/words.jsonl"
+  [ "$WORDS_SENDS" -eq 0 ] || report "$WORDS_ITEM"
+  run_payload "$(jq -nc --arg p "$TMP_ROOT/words.jsonl" \
+    '{session_id:"s1",stop_hook_active:false,transcript_path:$p,context_window:200000}')"
+  assert_eq "RC=$RC idle=$(grep -c "^lane-mail-check: idle=$WORDS_ITEM\$" "$ERR_FILE" || true)" "RC=$WORDS_RC idle=$WORDS_KEY" \
+    "a $WORDS_HARNESS lane that sent $WORDS_SENDS notices and wrote '$WORDS' is judged on its sends alone"
+done <<'ROWS'
+claude:.claude/hooks:KEN-86:0:2:1:All done.
+pi:.pi/kendex/hooks:KEN-87:0:2:1:All done.
+claude:.claude/hooks:KEN-88:1:0:0:Should I merge it?
+pi:.pi/kendex/hooks:KEN-89:1:0:0:Should I merge it?
+ROWS
 
 # A listing or a record the judge cannot read is reported and the turn ends:
 # nothing a lane does at its turn end repairs its mailbox. An outbound file
@@ -1194,16 +1257,19 @@ mkdir -p "$LANE/tmp/lane-mail/KEN-72/to-overseer.jsonl"
 stop
 assert_eq "RC=$RC keys=$(hook_keys)" "RC=0 keys=account=unlisted;events=2" \
   "an events listing the reader refuses is reported under its exit status and the turn ends"
-new_handoff_lane idle_record_bad KEN-73
-REPORT_ITEM=""
-printf 'many\n' > "$LANE/tmp/lane-mail/KEN-73/sent-count"
-stop
-assert_eq "RC=$RC keys=$(hook_keys) record=$(sent_record KEN-73)" \
-  "RC=0 keys=account=unlisted;idle-record=$LANE/tmp/lane-mail/KEN-73/sent-count record=0" \
-  "a record holding no whole number is reported, rewritten with the count, and the turn ends"
-stop
-assert_eq "RC=$RC keys=$(hook_keys)" "RC=2 keys=account=unlisted;idle=KEN-73" \
-  "and the rewritten record judges the next turn end"
+for BAD_RECORD in 'many' '0 maybe' '0 held 1'; do
+  new_handoff_lane idle_record_bad KEN-73
+  REPORT_ITEM=""
+  printf '%s\n' "$BAD_RECORD" > "$LANE/tmp/lane-mail/KEN-73/sent-count"
+  stop
+  assert_eq "RC=$RC keys=$(hook_keys) record=$(sent_record KEN-73)" \
+    "RC=0 keys=account=unlisted;idle-record=$LANE/tmp/lane-mail/KEN-73/sent-count record=0" \
+    "a record reading '$BAD_RECORD' is reported, rewritten with the count, and the turn ends"
+  stop
+  assert_eq "RC=$RC keys=$(hook_keys)" "RC=2 keys=account=unlisted;idle=KEN-73" \
+    "and the rewritten record judges the next turn end"
+  rm -rf -- "${LANE:?}"
+done
 new_handoff_lane idle_record_dir KEN-74
 REPORT_ITEM=""
 mkdir -p "$LANE/tmp/lane-mail/KEN-74/sent-count"
@@ -1211,23 +1277,38 @@ stop
 assert_eq "RC=$RC keys=$(hook_keys)" \
   "RC=0 keys=account=unlisted;idle-record=$LANE/tmp/lane-mail/KEN-74/sent-count;idle-unrecorded=$LANE/tmp/lane-mail/KEN-74/sent-count" \
   "a record that is a directory is reported as unreadable and as unwritable, and the turn ends"
+# A hold the record cannot take is not made: one with no record would be made
+# again on every turn it continued. A mailbox directory the hook cannot write
+# in leaves a readable record unwritable.
+new_handoff_lane idle_hold_unrecorded KEN-78
+REPORT_ITEM=""
+printf '0\n' > "$LANE/tmp/lane-mail/KEN-78/sent-count"
+chmod 555 "$LANE/tmp/lane-mail/KEN-78"
+stop
+chmod 755 "$LANE/tmp/lane-mail/KEN-78"
+assert_eq "RC=$RC idle=$(grep -c '^lane-mail-check: idle=' "$ERR_FILE" || true) unrecorded=$(grep -c "^lane-mail-check: idle-unrecorded=$LANE/tmp/lane-mail/KEN-78/sent-count\$" "$ERR_FILE" || true)" \
+  "RC=0 idle=0 unrecorded=1" \
+  "a hold the record cannot take is reported under idle-unrecorded and not made"
+# A listing jq cannot read is reported and the turn ends. This case's reader
+# prints a line that is no JSON for its `events` verb and runs every other one.
+new_handoff_lane idle_events_envelope KEN-79
+REPORT_ITEM=""
+NOT_JSON='[ "${1:-}" != events ] || { echo "planted: not json"; exit 0; }'
+wrap_reader "$NOT_JSON"
+stop
+assert_eq "RC=$RC keys=$(hook_keys) record=$(sent_record KEN-79)" \
+  "RC=0 keys=account=unlisted;events=envelope record=none" \
+  "an events listing whose envelopes jq cannot read is reported under events=envelope and the turn ends"
 # A notice that cannot be sent is reported and passed too: the lane has had
 # its one continuation, and refusing again is the loop. This case's reader
 # refuses its `notice` verb and runs every other one.
 new_handoff_lane idle_notice_unsent KEN-75
 REPORT_ITEM=""
-rm -f -- "${LANE:?}/.agents/skills/orch/scripts"
-mkdir -p "$LANE/.agents/skills/orch/scripts"
-for entry in "$REPO_ROOT/skills/orch/scripts/"*; do
-  ln -s -- "$entry" "$LANE/.agents/skills/orch/scripts/${entry##*/}"
-done
-rm -f -- "${LANE:?}/.agents/skills/orch/scripts/lane-mail"
-printf '#!/usr/bin/env bash\n[ "${1:-}" != notice ] || { echo "planted: notice refused" >&2; exit 3; }\nexec %q "$@"\n' \
-  "$LANE_MAIL" > "$LANE/.agents/skills/orch/scripts/lane-mail"
-chmod +x "$LANE/.agents/skills/orch/scripts/lane-mail"
+wrap_reader '[ "${1:-}" != notice ] || { echo "planted: notice refused" >&2; exit 3; }'
+stop
 stop_active
 assert_eq "RC=$RC keys=$(hook_keys) record=$(sent_record KEN-75)" \
-  "RC=0 keys=account=unlisted;idle-notice-unsent=3 record=none" \
+  "RC=0 keys=account=unlisted;idle-notice-unsent=3 record=0 held" \
   "a notice the reader refuses is reported under its exit status, the record untouched, and the turn ends"
 assert_eq "$(grep -c '^planted: notice refused$' "$ERR_FILE")" "1" "with the reader's own words under it"
 
@@ -2761,7 +2842,7 @@ stop
 expect 0 "$GAP" "control: without the box filter a directive the overseer sent passes a lane that sent nothing"
 
 # The halt fact dropped: a halted lane is held and told to continue.
-mutant idle-ignores-halt -e 's@^  \[ "\$HALTED" != true \] || return 0$@  :@'
+mutant idle-ignores-halt -e 's@^  if \[ "\$HALTED" = true \]; then$@  if false; then@'
 new_handoff_lane control_idle_halt KEN-83
 REPORT_ITEM=""
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
@@ -2772,20 +2853,22 @@ assert_eq "RC=$RC keys=$(hook_keys)" "RC=2 keys=account=unlisted;idle=KEN-83" \
   "control: without the halt fact a halted lane is held"
 
 # The continued-turn arm dropped: the refusal repeats, which is the loop.
-mutant idle-refused-twice -e 's@^  if \[ "\$CONTINUED" = true \]; then$@  if false; then@'
+mutant idle-refused-twice -e 's@^  if \[ "\$CONTINUED" = true \] && {@  if false \&\& {@'
 new_handoff_lane control_idle_twice KEN-84
 REPORT_ITEM=""
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+stop
 stop_active
 assert_eq "RC=$RC keys=$(hook_keys)" "RC=2 keys=account=unlisted;idle=KEN-84" \
   "control: without the continued-turn arm a lane is held twice in a row"
 
 # The notice left out of the record: the hook's own notice then passes the
 # lane's next idle turn as a send of its own.
-mutant idle-notice-uncounted -e '/^  record_sent "\$((SENT + 1))"$/d'
+mutant idle-notice-uncounted -e '/^  record_sent "\$((SENT + 1))" || :$/d'
 new_handoff_lane control_idle_notice KEN-85
 REPORT_ITEM=""
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+stop
 stop_active
 stop
 expect 0 "$GAP" "control: with the notice uncounted the lane's next idle turn passes"
@@ -2794,6 +2877,89 @@ expect 0 "$GAP" "control: with the notice uncounted the lane's next idle turn pa
 # it, so that row reads what it claims to.
 mutant text-read -e 's@^idle_check() {$@idle_check() { : jq -r '"'"'select(.type == "text")'"'"';@'
 assert_eq "$(text_reads "$MUTANT_PATH")" "1" "control: a copy that reads the transcript's text is counted"
+
+# A words-reading judge under a spelling the inventory row does not know:
+# it passes a turn whose final assistant text is no question. The transcript
+# rows hold the lane that wrote a statement and sent nothing.
+WORDS_READ='idle_check() { [ -n "$TRANSCRIPT" ] \&\& tail -n 1 -- "$TRANSCRIPT" | jq -r ".message.content[]?.text" | grep -q "?$" || return 0;'
+mutant words-read -e "s@^idle_check() {\$@$WORDS_READ@"
+new_handoff_lane control_words_read KEN-90
+REPORT_ITEM=""
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+usage_line claude 1000 | jq -c '.message.content = [{type: "text", text: "All done."}]' > "$TMP_ROOT/words.jsonl"
+run_payload "$(jq -nc --arg p "$TMP_ROOT/words.jsonl" \
+  '{session_id:"s1",stop_hook_active:false,transcript_path:$p,context_window:200000}')"
+assert_eq "RC=$RC idle=$(grep -c '^lane-mail-check: idle=' "$ERR_FILE" || true)" "RC=0 idle=0" \
+  "control: a judge that reads the lane's words passes a statement from a lane that sent nothing"
+
+# The envelope failure passed in silence: a listing jq cannot read ends the
+# turn with nothing said.
+mutant idle-envelope-silent -e 's@ || { message events envelope "\$FACTS"; return 0; }$@ || return 0@'
+new_handoff_lane control_idle_envelope KEN-98
+REPORT_ITEM=""
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+wrap_reader "$NOT_JSON"
+stop
+assert_eq "RC=$RC keys=$(hook_keys)" "RC=0 keys=account=unlisted" \
+  "control: without its report a listing jq cannot read ends the turn unsaid"
+
+# The recorded hold ignored: every continued turn is reported, so a turn
+# another stop hook continued after the lane reported sends the notice.
+mutant idle-hold-ignored -e 's@{ \[ -n "\$HOLD" \] || \[ "\$HARNESS" = pi \]; }@true@'
+new_handoff_lane control_idle_hold KEN-91
+REPORT_ITEM=""
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+report KEN-91
+stop
+stop_active
+assert_eq "RC=$RC keys=$(hook_keys)" "RC=0 keys=account=unlisted;idle-notice=KEN-91" \
+  "control: without the recorded hold a turn another stop hook continued is reported, never held"
+
+# The hold made and not recorded: the turn it continued is held again.
+mutant idle-hold-unrecorded -e 's@^  record_sent "\$SENT" held || return 0$@  record_sent "$SENT" || return 0@'
+new_handoff_lane control_idle_unrecorded KEN-92
+REPORT_ITEM=""
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+stop
+stop_active
+assert_eq "RC=$RC keys=$(hook_keys)" "RC=2 keys=account=unlisted;idle=KEN-92" \
+  "control: without the hold in the record the turn it continued is held again"
+
+# A hold the record could not take made all the same: the lane is held with
+# nothing to bound the next continued turn.
+mutant idle-hold-unguarded -e 's@^  record_sent "\$SENT" held || return 0$@  record_sent "$SENT" held || :@'
+new_handoff_lane control_idle_unguarded KEN-93
+REPORT_ITEM=""
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+printf '0\n' > "$LANE/tmp/lane-mail/KEN-93/sent-count"
+chmod 555 "$LANE/tmp/lane-mail/KEN-93"
+stop
+chmod 755 "$LANE/tmp/lane-mail/KEN-93"
+assert_eq "RC=$RC idle=$(grep -c '^lane-mail-check: idle=' "$ERR_FILE" || true)" "RC=2 idle=1" \
+  "control: without the guard a hold the record cannot take is made"
+
+# The Pi arm dropped: a Pi turn another stop hook continued is held, and the
+# carrier runs nothing for that hold.
+mutant idle-pi-held -e 's@ || \[ "\$HARNESS" = pi \]; }@; }@'
+new_pi_lane control_idle_pi KEN-94 "$MUTANT_PATH"
+REPORT_ITEM=""
+report KEN-94
+stop
+stop_active
+assert_eq "RC=$RC idle=$(grep -c '^lane-mail-check: idle=KEN-94$' "$ERR_FILE" || true)" "RC=2 idle=1" \
+  "control: without the Pi arm a Pi turn another stop hook continued is held"
+
+# The halt's clear dropped: the hold the turn end before the halt recorded
+# stands.
+mutant idle-halt-keeps-hold -e 's@^    \[ -z "\$HOLD" \] || record_sent "\$SENT" || :$@    :@'
+new_handoff_lane control_idle_halt_hold KEN-96
+REPORT_ITEM=""
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+stop
+send KEN-96 'Stop here.' --halt >/dev/null
+read_mail KEN-96
+stop
+assert_eq "record=$(sent_record KEN-96)" "record=0 held" "control: without the clear a halted turn end keeps the hold"
 
 # --- the checkout's overseer mailbox --------------------------------------
 # `lane-mail peer send --repo` writes the overseer mailbox of another

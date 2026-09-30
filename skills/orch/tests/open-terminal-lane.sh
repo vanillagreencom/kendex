@@ -1038,7 +1038,7 @@ HARNESS_UP="OT_HARNESS_SCREEN=$TMP_ROOT/harness-screen"
 CLAUDE_LEAD="$Q--settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}$Q $Q--disallowedTools=AskUserQuestion,EnterPlanMode$Q $Q--model$Q ${Q}opus$Q $Q--effort$Q ${Q}high$Q"
 # The unattended words every brief and continuation line closes on, the text
 # read from lib/lane-launch.sh, which renders and judges them.
-UNATTENDED_TEXT="$( source "$SCRIPTS_DIR/lib/lane-launch.sh" && launch_choice_unattended )"
+UNATTENDED_TEXT="$( source "$SCRIPTS_DIR/lib/lane-launch.sh" && printf '%s' "$LAUNCH_UNATTENDED_TEXT" )"
 [[ -n "$UNATTENDED_TEXT" ]] || { echo "lib/lane-launch.sh named no unattended text" >&2; exit 1; }
 # hosted_resume ITEM NAME BRIEF — the remote command of a hosted claude
 # relaunch, the continuation line and the start brief each closing on the
