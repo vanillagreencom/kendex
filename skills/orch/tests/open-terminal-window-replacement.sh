@@ -12,6 +12,7 @@ source "$TEST_DIR/lib/growth-state.sh"
 source "$TEST_DIR/lib/shared-skill-libs.sh"
 source "$TEST_DIR/lib/open-terminal-stubs.sh"
 source "$TEST_DIR/lib/lanes-fixture.sh"
+source "$TEST_DIR/lib/question-off.sh"
 TMP_ROOT="$(mktemp -d)" || { echo "open-terminal-window-replacement: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "open-terminal-window-replacement: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "open-terminal-window-replacement: scratch=resolve-failed" >&2; exit 1; }
@@ -119,7 +120,7 @@ run_row() { # LAUNCHER HOST COUNT SPLIT SOLE [FAILURE] [MODE] [OWNER] [TRACKER]
     TMUX="$ADDR" ORCH_TMUX_SESSION=fleet ORCH_LANE_HOST=local ORCH_OVERSEER_LANES=1000 \
     WORKTREE_CLI="$BIN/worktree" OT_WT_LOG="$RUN/worktree.log" OT_WT_FIXED="$RUN/tree" \
     REPLACEMENT_FAIL="$failure" ${host_env[@]+"${host_env[@]}"} \
-    "$launcher" --state-dir "$RUN/state" --repo o/r ${tracker_args[@]+"${tracker_args[@]}"} --harness claude --cmd "claude --model opus --effort high --disallowedTools=AskUserQuestion,EnterPlanMode --settings='{\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}'" \
+    "$launcher" --state-dir "$RUN/state" --repo o/r ${tracker_args[@]+"${tracker_args[@]}"} --harness claude --cmd "claude --model opus --effort high --disallowedTools=AskUserQuestion,EnterPlanMode --settings='{\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' $UNATTENDED_ALL" \
     ${host_args[@]+"${host_args[@]}"} "$mode" "$ITEM" 2>&1)" || RC=$?
   [[ "$RC" == 0 ]] || printf '%s\n' "$OUT"
   JOB="$("$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee .lanes | jq -r --arg item "$STATE_ID" \
