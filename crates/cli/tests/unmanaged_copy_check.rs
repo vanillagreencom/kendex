@@ -463,8 +463,16 @@ fn a_session_start_writes_nothing_git_sees() {
         );
         match (how, why) {
             (Run::Hook, Some(why)) => {
+                let opening = if shape == "hook, worktree" {
+                    "session-drift-check: lane=1\n"
+                } else {
+                    "session-drift-check: drift=found\n"
+                };
+                assert!(stdout.starts_with(opening), "{shape}: {all}");
                 assert!(
-                    stdout.starts_with("session-drift-check: drift=found\n"),
+                    stdout
+                        .lines()
+                        .any(|line| line == "session-drift-check: drift=found"),
                     "{shape}: {all}"
                 );
                 assert_unrecorded(&lane, &stdout, why, shape);
