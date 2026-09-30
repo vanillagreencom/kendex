@@ -55,14 +55,24 @@ export function runWorkspaceClippy(root: string, timeoutMs: number, signal?: Abo
 }
 
 /**
- * The host's one clippy slot: a file in the system temporary directory naming
- * the Pi process that holds it. Every Pi lane on a host runs its end-of-turn
- * clippy through this slot, one at a time, because each run already spreads
- * the compiler over every core, and two at once only compete for CPU and
- * memory. The temporary directory is the host's, where the Pi root is not: a
- * lane host can give each lane its own `PI_CODING_AGENT_DIR`.
+ * The host's clippy slot for this user: a file in the system temporary
+ * directory naming the Pi process that holds it. Every Pi lane a user runs on
+ * a host runs its end-of-turn clippy through this slot, one at a time, because
+ * each run already spreads the compiler over every core, and two at once only
+ * compete for CPU and memory. The temporary directory is the host's, where the
+ * Pi root is not: a lane host can give each lane its own
+ * `PI_CODING_AGENT_DIR`.
+ *
+ * The name carries the user id because that directory is shared and sticky on
+ * Linux and macOS: a slot another user's Pi left behind when it died cannot be
+ * removed by this user, and one shared name would lock this user's check out
+ * until a reboot. Windows gives each user a temporary directory of their own
+ * and no user id, so the name there carries none.
  */
-const CLIPPY_SLOT_FILE = "kendex-pi-hooks-clippy.slot";
+function clippySlotFile(): string {
+	const uid = process.getuid?.();
+	return uid === undefined ? "kendex-pi-hooks-clippy.slot" : `kendex-pi-hooks-clippy-${uid}.slot`;
+}
 
 /** How often a lane waiting for the slot looks again. */
 const SLOT_POLL_MS = 250;
@@ -91,13 +101,17 @@ function errorCode(error: unknown): string | undefined {
 	return (error as NodeJS.ErrnoException | undefined)?.code;
 }
 
+/**
+ * Whether the holder's process still runs. The slot is this user's, so its
+ * holder is a process this user can signal: EPERM is a pid the OS has since
+ * given to another user's process, and the holder is as gone as on ESRCH.
+ */
 function pidAlive(pid: number): boolean {
 	try {
 		process.kill(pid, 0);
 		return true;
-	} catch (error) {
-		// EPERM is a live process another user owns.
-		return errorCode(error) === "EPERM";
+	} catch {
+		return false;
 	}
 }
 
@@ -139,7 +153,7 @@ function pause(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /**
- * Wait for the host's clippy slot until `deadline` (epoch ms). A holder writes
+ * Wait for this user's clippy slot until `deadline` (epoch ms). A holder writes
  * its record to a file of its own and links it into place, so the slot file
  * is complete the moment it exists and two lanes can never both create it.
  *
@@ -152,7 +166,7 @@ function pause(ms: number, signal?: AbortSignal): Promise<void> {
  * be written or read is `failed` and the caller says so rather than running.
  */
 export async function claimClippySlot(deadline: number, signal?: AbortSignal): Promise<SlotClaim> {
-	const path = join(tmpdir(), CLIPPY_SLOT_FILE);
+	const path = join(tmpdir(), clippySlotFile());
 	const token = `${process.pid}-${randomUUID()}`;
 	const staged = `${path}.${token}`;
 	try {

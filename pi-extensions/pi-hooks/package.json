@@ -69,7 +69,7 @@
         {
           "key": "taskCompletedCheck",
           "label": "End-of-turn clippy",
-          "description": "At turn end, if any .rs files were touched during the turn, run a final `cargo clippy --workspace --all-targets -- -D warnings` beside Pi, never blocking its input, and steer the result to the agent, so a headless session reads it in the turn that follows; an interactive session also gets a UI notification. Every failing turn reports, an unchanged failure included; a turn that touched no .rs file runs no clippy and reports nothing. A run that established nothing — no workspace root, a timeout, a clippy failure printing no error line — says so rather than passing as clean. Ending the turn stops cargo and everything it started, and reports nothing. One run at a time holds the host's clippy slot, so Pi sessions on one machine do not compile at once. Pi has no equivalent of Claude Code's `TaskCompleted` block semantics, so this is advisory.",
+          "description": "At turn end, if any .rs files were touched during the turn, run a final `cargo clippy --workspace --all-targets -- -D warnings` beside Pi, never blocking its input, and steer the result to the agent, so a headless session reads it in the turn that follows; an interactive session also gets a UI notification. Every failing turn reports, an unchanged failure included; a turn that touched no .rs file runs no clippy and reports nothing. A run that established nothing — no workspace root, a clippy slot that could not be claimed (`clippy-slot=<path>`), a timeout, a clippy failure printing no error line — says so rather than passing as clean. Ending the turn stops cargo and everything it started, and reports nothing; the next turn's check covers that turn's edits, whether or not it edits a .rs file. The end-of-turn clippy runs of one user's Pi sessions on a machine take turns through a clippy slot. Pi has no equivalent of Claude Code's `TaskCompleted` block semantics, so this is advisory.",
           "type": "boolean",
           "default": true,
           "category": "Rust",
@@ -96,7 +96,7 @@
         {
           "key": "clippyTimeoutMs",
           "label": "Clippy timeout",
-          "description": "Maximum milliseconds the whole end-of-turn check may take: a quarter of it, capped at 5s, goes to the `cargo metadata` workspace lookup, and the rest to waiting for the host's clippy slot and running `cargo clippy`. Each part is abandoned past its share, cargo and every process it started killed, so the turn can continue. Raise for slow workspaces, or for a host where several sessions edit Rust at once.",
+          "description": "Maximum milliseconds the whole end-of-turn check may take: a quarter of it, capped at 5s, goes to the `cargo metadata` workspace lookup, and the rest to waiting for the clippy slot and running `cargo clippy`. Each part is abandoned past its share, cargo and every process it started killed, so the turn can continue. Raise for slow workspaces, or for a host where several sessions edit Rust at once.",
           "type": "number",
           "default": 30000,
           "category": "Rust",

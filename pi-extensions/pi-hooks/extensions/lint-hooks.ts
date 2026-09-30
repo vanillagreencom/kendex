@@ -3,11 +3,12 @@ import { claimClippySlot, filterClippyErrors, findCargoWorkspaceRoot, runWorkspa
 /**
  * What the end-of-turn clippy run established. `unavailable` is the state an
  * empty error list must not collapse into a clean tree: the workspace lookup
- * failed, the run was abandoned, or clippy failed printing nothing a filter
- * recognises. Nothing was proven about the tree in any of those, so the caller
- * says so rather than reporting a clean turn. `aborted` is the person ending
- * the turn: the check stopped because it was told to, and there is no one
- * left in that turn to tell.
+ * failed, the clippy slot could not be claimed, the run was abandoned, or
+ * clippy failed printing nothing a filter recognises. Nothing was proven about
+ * the tree in any of those, so the caller says so rather than reporting a
+ * clean turn. `aborted` is the person ending the turn: the check stopped
+ * because it was told to, there is no one left in that turn to tell, and the
+ * caller keeps the turn's edits for the next turn's check.
  */
 export type ClippyOutcome =
 	| { kind: "clean" }
@@ -29,7 +30,7 @@ type DetailedClippyOutcome = Exclude<ClippyOutcome, { kind: "unavailable" }>
  * nothing, so the turn pays for clippy once rather than once per edit.
  *
  * `timeoutMs` bounds the whole check. A quarter of it, capped at 5 seconds,
- * goes to the workspace lookup; the rest covers the wait for the host's
+ * goes to the workspace lookup; the rest covers the wait for this user's
  * clippy slot and the clippy run together, so a lane queued behind another
  * lane's run still ends its turn inside its own budget. `signal` is the
  * turn's: the person ending the turn stops the lookup, the wait and the run.
@@ -41,7 +42,7 @@ export async function workspaceClippyOutcome(cwd: string, timeoutMs: number, sig
 	if (!root) return { kind: "unavailable", code: "workspace", value: cwd, reason: "cargo metadata named no workspace root here" };
 
 	const clippyBudget = Math.max(1, timeoutMs - metadataBudget);
-	const timedOut = { kind: "unavailable", code: "timeout-ms", value: clippyBudget, reason: `the wait for the host's clippy slot and cargo clippy took more than ${clippyBudget}ms` } as const;
+	const timedOut = { kind: "unavailable", code: "timeout-ms", value: clippyBudget, reason: `the wait for the clippy slot and cargo clippy took more than ${clippyBudget}ms` } as const;
 	const deadline = Date.now() + clippyBudget;
 	const slot = await claimClippySlot(deadline, signal);
 	switch (slot.kind) {
@@ -50,7 +51,7 @@ export async function workspaceClippyOutcome(cwd: string, timeoutMs: number, sig
 		case "busy":
 			return timedOut;
 		case "failed":
-			return { kind: "unavailable", code: "slot", value: slot.path, reason: `the host's clippy slot could not be claimed: ${slot.cause}` };
+			return { kind: "unavailable", code: "slot", value: slot.path, reason: `the clippy slot could not be claimed: ${slot.cause}` };
 		case "held":
 			break;
 		default:

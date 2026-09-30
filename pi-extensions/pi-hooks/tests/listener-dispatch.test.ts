@@ -341,26 +341,24 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 	 * half, which is what this case holds: one dead channel must lose its own
 	 * line and not the rest of what the listener had to say.
 	 */
-	test("a channel that is gone loses its own line, not the rest of the report", async () => {
+	test("a channel that is gone loses its own text, not the rest of the report", async () => {
 		const project = initCleanRustRepo("pi-hooks-stale-session-");
 		writePiConfig(project, { sessionDriftCheck: false });
 		try {
-			let stale = true;
 			const carrier = installCarrier(() => {
-				if (!stale) return;
-				stale = false;
 				throw new Error("session-bound pi is stale after replacement");
 			});
 			const root = join(project, ".pi");
-			registerRendered(root, SESSION_START_LISTENER, undefined, 'echo "hook=first"');
-			registerRendered(root, SESSION_START_LISTENER, undefined, 'echo "hook=second"');
+			registerRendered(root, SESSION_START_LISTENER, undefined, 'echo "hook=agent"');
+			registerRendered(root, SESSION_START_LISTENER, undefined, 'echo "hook=person" >&2');
+			const notices: string[] = [];
 
-			carrier.handler(SESSION_START_LISTENER)({ type: "session_start", reason: "startup" }, trusted(project));
+			carrier.handler(SESSION_START_LISTENER)({ type: "session_start", reason: "startup" }, trusted(project, {
+				hasUI: true, ui: { notify: (message: string) => notices.push(message) },
+			}));
 			await settle();
-			expect(carrier.sent.map((call) => call.message.content)).toEqual([
-				"hook=first",
-				"hook=second",
-			]);
+			expect(carrier.sent.map((call) => call.message.content)).toEqual(["hook=agent"]);
+			expect(notices).toEqual(["hook=person"]);
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}
