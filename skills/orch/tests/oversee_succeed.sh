@@ -429,14 +429,14 @@ assert_eq "$(recorded_line)" \
 # control cuts that arm from a copy: the same caller is told it is below every
 # mark and nothing launches.
 new_caller "$MARK"
-run_succeed walkcontext 'claude:1:high' -- --dangerously-skip-permissions
+run_succeed walkcontext 'claude:fable:high' -- --dangerously-skip-permissions
 assert_eq "$RC|$(caller_open)|$(overseers)|$(recorded claude)" \
   "0|no|1|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;--dangerously-skip-permissions;$BRIEF;" \
   "a caller past the context mark with account room hands over to a successor on that mark"
 WALKCTL="$(mutant_scripts walkctl oversee-succeed)" || exit 1
 mutate_file "$WALKCTL/oversee-succeed" '  elif [[ "$CONTEXT_STATE" == due ]]; then' '  elif false; then'
 new_caller "$MARK"
-SUCCEED_BIN="$WALKCTL/oversee-succeed" run_succeed walkctl 'claude:1:high' -- --dangerously-skip-permissions
+SUCCEED_BIN="$WALKCTL/oversee-succeed" run_succeed walkctl 'claude:fable:high' -- --dangerously-skip-permissions
 assert_eq "$RC|$(caller_open)|$(overseers)|$(sed -n 1p <<<"$OUT" | cut -d' ' -f1-2)" \
   "0|yes|0|oversee-succeed: context-below-mark" \
   "control: without the walk's context arm a caller past its context mark launches no successor"
