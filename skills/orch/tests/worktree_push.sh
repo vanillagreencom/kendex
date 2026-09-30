@@ -768,7 +768,7 @@ echo "=== shared map owner controls through the push entry point ==="
 for row in \
   'pending|if [[ -n "$unmapped" ]]; then|if [[ -n "$unmapped" ]] && false; then|1|restack-map-grammar' \
   'boundary|local callback="$1" line lines=\x27\x27 open=false|local callback="$1" line lines=\x27\x27 open=true|0|mapped' \
-  'empty|[[ -n "$lines" ]] || { REBASE_MAP_FAIL_ARGS=(restack-map-grammar); return 1; }|[[ -n "$lines" ]] || return 0|0|mapped' \
+  'empty|[[ -n "$lines" ]] \x7c\x7c { REBASE_MAP_FAIL_ARGS=(restack-map-grammar); return 1; }|[[ -n "$lines" ]] \x7c\x7c return 0|0|mapped' \
   'old|if [[ ! "$old" =~ $sha_grammar ]]; then|if [[ ! "$old" =~ $sha_grammar ]] && false; then|0|mapped' \
   'new|if [[ "$new" != dropped && ! "$new" =~ $sha_grammar ]]; then|if [[ "$new" != dropped && ! "$new" =~ $sha_grammar ]] && false; then|0|invalid-target' \
   'nonchain|if ($e.key \x7c startswith($sha))|if (. as $current \x7c $e.key \x7c startswith($current))|0|chained'; do
