@@ -99,26 +99,6 @@ printf 'I am not going to answer in JSON today.\n' >"$TMP_ROOT/resp-prose.txt"
 # content, never on a timer: a bounded poll that gives up exits 1, which turns
 # the lane into a failed CLI and reddens the row.
 
-# lane-wait-review <home> [agent]: blocks until a lane review with that agent
-# (any external- agent when empty) lands in the artifact home; prints its path.
-cat >"$BIN/lane-wait-review" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-home="$1" agent="${2:-}" waited=0
-f=""
-while [[ $waited -lt 300 ]]; do
-  for f in $(find "$home" -type f 2>/dev/null); do
-    if jq -e --arg a "$agent" 'if $a == "" then (.agent // "" | startswith("external-")) else .agent == $a end' "$f" >/dev/null 2>&1; then
-      printf '%s\n' "$f"
-      exit 0
-    fi
-  done
-  sleep 0.1
-  waited=$((waited + 1))
-done
-echo "handshake never happened: no lane review reached the artifact home" >&2
-exit 1
-SH
 
 # lane-answer <response>
 cat >"$BIN/lane-answer" <<'SH'
@@ -177,16 +157,6 @@ done
 cat "$1"
 SH
 
-# lane-plant-dir <response> <home>: plants a directory matching the sibling's
-# sidecar glob, then answers.
-cat >"$BIN/lane-plant-dir" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-cat >/dev/null
-target="$("$(dirname "$0")/lane-wait-review" "$2" "")"
-mkdir -p -- "${target}.evil"
-cat "$1"
-SH
 
 # lane-cli-state <response> <dir> <prefix> [<artifact>]: creates the session
 # file and cache directory a model CLI keeps for itself under <dir>, puts an
@@ -287,7 +257,7 @@ word() {
 
 # The lane stub for a spec: answer:<claude|codex|codex-blocker|prose>,
 # fail:<text>:<rc>, reap, probe-perms, plant-locked,
-# plant-dir, cli-state:<prefix>[:reappear], kill (the lane child running the
+# cli-state:<prefix>[:reappear], kill (the lane child running the
 # stub is killed by TERM), die (the lane's CLI dies to TERM)
 lane_cmd() {
   local lane="$1" spec="$2" a b
@@ -299,7 +269,7 @@ lane_cmd() {
     reap) printf '%s %s %s' "$BIN/lane-reap" "$TMP_ROOT/resp-$lane.json" "$SCRATCH" ;;
     probe-perms) printf '%s %s %s %s %s' "$BIN/lane-probe-perms" "$TMP_ROOT/resp-$lane.json" "$SCRATCH" "$HOME_DIR" "$PERM_PROBE" ;;
     plant-locked) printf '%s %s %s' "$BIN/lane-plant-locked" "$TMP_ROOT/resp-$lane.json" "$SCRATCH" ;;
-    plant-dir) printf '%s %s %s' "$BIN/lane-plant-dir" "$TMP_ROOT/resp-$lane.json" "$HOME_DIR" ;;
+
     cli-state:*:reappear) printf '%s %s %s %s %s.%s.json' "$BIN/lane-cli-state" "$TMP_ROOT/resp-$lane.json" "$STATE_DIR" "$a" "$OUT" "$lane" ;;
     cli-state:*) printf '%s %s %s %s' "$BIN/lane-cli-state" "$TMP_ROOT/resp-$lane.json" "$STATE_DIR" "$a" ;;
     kill) printf '%s --output=%s.%s.json' "$BIN/lane-kill" "$OUT" "$lane" ;;
@@ -553,7 +523,7 @@ err_word() {
     replay-lost:*) printf '→ lane stderr replay unavailable (scratch capture unreadable): %s\n' "$a" ;;
     unusable:*) printf '→ lane produced an unusable artifact: %s (%s)\n' "$a" "$(unusable_reason "$b")" ;;
     rm-denied:*) printf 'rm: <scratch>/second-opinion.*/%s: Permission denied\n' "$a" ;;
-    rm-isdir:*) printf 'rm: <home>/%s: Is a directory\n' "$a" ;;
+
     capture-lost:*) printf '→ lane stderr capture could not be opened — log replay lost: %s\n' "$a" ;;
     home-unusable) printf '→ artifact home unusable, falling back to system temp: <ro-home>\n' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s\n' "$1" ;;

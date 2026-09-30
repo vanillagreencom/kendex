@@ -598,7 +598,7 @@ err_word() {
   case "$1" in
     -) ;;
     header:*) printf '→ second-opinion: target=claude mode=%s current=none\n' "$a" ;;
-    multi:*) printf '→ second-opinion: targets=%s mode=review (multi-lane) current=none\n' "$a" ;;
+    multi:*) printf '→ second-opinion: requested=%s mode=review (ordered lanes) current=none\n' "$a" ;;
     written) printf '→ Written: <out>\n' ;;
     union:*) printf '→ Written: <out> (union of %s lanes)\n' "$a" ;;
     # the gate: failed:<reason>:<where the record landed>[:<detail>], then the

@@ -2060,11 +2060,6 @@ if $MULTI_LANE; then
   trap 'exit 130' INT
   trap 'exit 143' TERM
 
-  # Parameter expansion, not basename: BSD basename's `--` handling is not
-  # something this branch can verify, and the shell needs no utility here —
-  # the same reasoning that gave this file path_dir instead of dirname.
-  LANE_OUTS=()
-  LANE_ERRS=()
   # A lane artifact and the sidecar family a child writes beside it hold the
   # model's raw review of the reviewed repository, and both are this tool's
   # files rather than the caller's. The child creates them owner-only, told so
@@ -2215,9 +2210,6 @@ if $MULTI_LANE; then
         >/dev/null 2>&3 3>&-
     ) &
     ACTIVE_LANE_PID=$!
-    LANE_OUTS+=("$lane_out")
-    LANE_ERRS+=("$lane_err")
-    lane="${REVIEW_LANES[$i]}"
     lane_rc=0
     wait "$ACTIVE_LANE_PID" || lane_rc=$?
     ACTIVE_LANE_PID=""
@@ -2238,7 +2230,7 @@ if $MULTI_LANE; then
     # exit 5 is diagnosed — goes to /dev/null on the success path, where no
     # verdict assertion would ever notice. The `jq … 2>&1 >/dev/null` capture
     # further down wants the opposite order and is correct as written.
-    if ! sed "s/^/[${lane}] /" "${LANE_ERRS[$i]}" >&2 2>/dev/null; then
+    if ! sed "s/^/[${lane}] /" "$lane_err" >&2 2>/dev/null; then
       echo "→ lane stderr replay unavailable (scratch capture unreadable): $lane" >&2
     fi
     lane_ok=false
@@ -2259,7 +2251,7 @@ if $MULTI_LANE; then
     # between the two lands in answered-unusably, because the gate
     # then has nothing to parse, and never in never-answered.
     lane_raw=""
-    if [[ $lane_rc -eq 0 && -s "${LANE_OUTS[$i]}" ]]; then
+    if [[ $lane_rc -eq 0 && -s "$lane_out" ]]; then
       # Read through a redirection, not a path operand: the lane artifact's
       # name carries the caller's --output value, which may begin with '-' and
       # would otherwise be parsed as options — the lane would then look like it
@@ -2287,7 +2279,7 @@ if $MULTI_LANE; then
       # and an artifact nobody managed to read would be merged as a healthy
       # lane. Appending the byte makes the truncation something jq refuses, so
       # a read that did not finish can only ever land in answered-unusably.
-      { lane_raw=$(tr '\000' '\001' 2>/dev/null < "${LANE_OUTS[$i]}" || printf '\001'; printf X); } 2>/dev/null
+      { lane_raw=$(tr '\000' '\001' 2>/dev/null < "$lane_out" || printf '\001'; printf X); } 2>/dev/null
       lane_raw="${lane_raw%X}"
       # A zero exit and readable content are not proof of a usable artifact —
       # it must survive LANE_WRAP_JQ, or one bad lane takes the whole merge
