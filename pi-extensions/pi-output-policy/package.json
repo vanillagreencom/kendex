@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-output-policy",
-  "version": "2.0.2",
+  "version": "2.1.0",
   "description": "Large-output policy for Pi: runaway model-output guards plus tool-result minimization, truncation, and spill preservation.",
   "license": "MIT",
   "keywords": [
@@ -126,7 +126,7 @@
         {
           "key": "inlineTailKb",
           "label": "Inline tail size (KB)",
-          "description": "Bytes retained inline for tail-truncated command/log output after spill. When unset, policyMode picks: balanced 16, compact 6, compat 100.",
+          "description": "Bytes retained inline for tail-truncated command/log output after spill, truncation notice included, capped by the max text block size. When unset, policyMode picks: balanced 16, compact 6, compat 100.",
           "type": "number",
           "category": "Truncation",
           "apply": "live"
@@ -134,7 +134,7 @@
         {
           "key": "inlineTailLines",
           "label": "Inline tail lines",
-          "description": "Lines retained inline for tail-truncated command/log output after spill. When unset, policyMode picks: balanced 400, compact 200, compat 2000.",
+          "description": "Lines retained inline for tail-truncated command/log output after spill, capped by the max line count. When unset, policyMode picks: balanced 400, compact 200, compat 2000.",
           "type": "number",
           "category": "Truncation",
           "apply": "live"
@@ -142,7 +142,7 @@
         {
           "key": "maxTextBlockKb",
           "label": "Max UI-safe text block (KB)",
-          "description": "Hard cap for text blocks even when spill is disabled or fails. When unset, policyMode picks: balanced 24, compact 8, compat 200.",
+          "description": "Hard cap for the inline text of one tool result: all its text blocks and the truncation notice together, even when spill is disabled or fails. When unset, policyMode picks: balanced 24, compact 8, compat 200.",
           "type": "number",
           "category": "UI Safety",
           "apply": "live"
@@ -150,7 +150,7 @@
         {
           "key": "maxLineCount",
           "label": "Max UI-safe line count",
-          "description": "Hard line cap for rendered/result text. When unset, policyMode picks: balanced 400, compact 200, compat 8000.",
+          "description": "Hard line cap for the text of one tool result, all its text blocks together. When unset, policyMode picks: balanced 400, compact 200, compat 8000.",
           "type": "number",
           "category": "UI Safety",
           "apply": "live"
@@ -175,7 +175,7 @@
         {
           "key": "sanitizeDetails",
           "label": "Sanitize details payloads",
-          "description": "Cap nested tool-result details. When unset, policyMode picks: balanced/compact on, compat off. State-bearing tools listed in 'Sanitize details allowlist' bypass this and pass through untouched.",
+          "description": "Cap nested tool-result details: size caps per array, object and string, plus one shared value and byte budget per result. When unset, policyMode picks: balanced/compact on, compat off. State-bearing tools listed in 'Sanitize details allowlist' bypass this and pass through untouched.",
           "type": "boolean",
           "category": "UI Safety",
           "apply": "live"

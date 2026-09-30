@@ -1,16 +1,16 @@
 import { describe, expect, test, beforeEach } from "bun:test";
-import outputPolicy, { __resetSessionCountersForTests, processText } from "../extensions/output-policy.ts";
-import { withConfig, withConfigAsync, fakeCtx, createFakePi } from "./fixtures.ts";
+import outputPolicy, { __resetSessionCountersForTests } from "../extensions/output-policy.ts";
+import { withConfigAsync, fakeCtx, createFakePi, processOne } from "./fixtures.ts";
 
 beforeEach(() => { __resetSessionCountersForTests(); });
 
 describe("saved-bytes counter", () => {
-	test("accumulates across multiple truncations within a turn", () => {
-		withConfig({}, (cwd) => {
+	test("accumulates across multiple truncations within a turn", async () => {
+		await withConfigAsync({}, async (cwd) => {
 			const ctx = fakeCtx(cwd);
 			const text = Array.from({ length: 4000 }, (_, i) => `payload ${i} ${"z".repeat(40)}`).join("\n");
-			const first = processText({ toolName: "grep", toolCallId: "a", input: {} }, ctx, text);
-			const second = processText({ toolName: "grep", toolCallId: "b", input: {} }, ctx, text);
+			const first = await processOne({ toolName: "grep", toolCallId: "a", input: {} }, ctx, text);
+			const second = await processOne({ toolName: "grep", toolCallId: "b", input: {} }, ctx, text);
 			expect(first.meta?.savedBytes).toBeGreaterThan(0);
 			expect(second.meta?.savedBytes).toBeGreaterThan(0);
 			expect(second.meta!.turnSavedBytes!).toBeGreaterThan(first.meta!.turnSavedBytes!);

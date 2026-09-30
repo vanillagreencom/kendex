@@ -19,3 +19,16 @@ test("shell minimizer configuration", () => {
 		});
 	}
 });
+
+test("shell minimizer keeps the first 20 lines, the last 80 and every important line", () => {
+	withConfig({}, (cwd) => {
+		const lines = Array.from({ length: 130 }, (_, i) => i === 35 ? "error: line 35" : `   Compiling crate_${i}`);
+		const result = minimizeShellOutput(lines.join("\r\n"), "cargo build", cwd);
+		expect(result.dropped).toBe(29);
+		// `null` stands for the explanation line under each notice key.
+		const expected = [...lines.slice(0, 20), "[output-policy:minimized-lines=15]", null, lines[35], "[output-policy:minimized-lines=14]", null, ...lines.slice(50)];
+		const out = result.text.split("\n");
+		expect(out).toHaveLength(expected.length);
+		expected.forEach((line, i) => { if (line !== null) expect(out[i]).toBe(line); });
+	});
+});

@@ -2,6 +2,15 @@
 
 ## Consumer-impacting changes
 
+### 2.1.0
+
+- One tool result now has one inline budget. All its text blocks share `maxTextBlockKb` and the line cap, or `inlineTailKb` and `inlineTailLines` for tail-truncated tools, and the truncation notice is counted inside it. A result of many small blocks no longer passes several times the budget to the model. Blocks past the budget are dropped from the preview, and one artifact holds the full text of every block. `details.kendexOutputPolicy` carries one entry per result.
+- The tail allowance (`inlineTailKb`, `inlineTailLines`) no longer exceeds `maxTextBlockKb` or `maxLineCount`.
+- Artifacts are written off Pi's main thread, at most two at a time. When no artifact can be written, a separate `[output-policy:artifact-error=...]` notice follows the truncation notice and names the error; before, the error was one clause inside the truncation notice. A partly written artifact is removed.
+- Large tool output is no longer split into whole-output line arrays. Only the lines the preview keeps are copied, and settings are read once per tool result instead of once per setting.
+- Detail sanitizing shares one budget of 2,000 values and 64 KiB of string text across a result's whole `details` tree, beside the per-array, per-object and per-string caps. A capped container ends with an `[output-policy:detail-node-budget=2000]` or `[output-policy:detail-byte-budget=65536]` notice. Details within every limit pass through unchanged, not copied.
+- A tool result within every limit now passes through unchanged. Before, its CRLF line ends were rewritten to LF.
+
 ### 2.0.2
 
 - Truncation, minimization and detail-sanitizing notices now open with an `[output-policy:<key>=<value>]` line followed by the explanation, replacing the single bracketed sentence.

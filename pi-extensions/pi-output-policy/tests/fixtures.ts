@@ -1,9 +1,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { processText } from "../extensions/output-policy.ts";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { recordProjectTrust } from "../extensions/output-policy.ts";
+import { processContent, recordProjectTrust, type TruncationMeta } from "../extensions/output-policy.ts";
 
 const CONFIG_ID = "@vanillagreen/pi-output-policy";
 
@@ -63,7 +62,7 @@ interface FakeResult {
 	details: {
 		[key: string]: unknown;
 		big: string;
-		kendexOutputPolicy: Array<NonNullable<ReturnType<typeof processText>["meta"]>>;
+		kendexOutputPolicy: TruncationMeta[];
 		kendexOutputPolicySanitized: { policyMode: string };
 	};
 }
@@ -92,3 +91,11 @@ export function createFakePi(): FakePi {
 	};
 }
 
+
+/** Polices one text part and returns the text the model would see, every
+ * remaining text part joined by newlines. */
+export async function processOne(event: Record<string, unknown>, ctx: ExtensionContext, text: string): Promise<{ text: string; meta?: TruncationMeta }> {
+	const result = await processContent(event, ctx, [{ type: "text", text }]);
+	const texts = result.content.map((part) => (part as { text: string }).text);
+	return { meta: result.meta, text: texts.join("\n") };
+}
