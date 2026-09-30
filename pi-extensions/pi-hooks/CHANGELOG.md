@@ -4,6 +4,7 @@
 
 ### 0.17.0
 
+- Session-start installation drift reports reach only the lead session. A child started by pi-agents-tmux no longer receives a `kendex-drift` message that can pull it away from its delegated task.
 - A `PostToolUse` payload now carries `context_window`, the context window of the session's model as Pi reports it, as the `Stop` payload does. orch's `lane-mail-check` judges the fleet overseer's context after each tool call against this window. With an older carrier, that judgement is skipped at the tool call, and the turn end still judges it.
 
 ### 0.16.0

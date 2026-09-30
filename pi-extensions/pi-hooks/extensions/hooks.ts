@@ -193,6 +193,9 @@ export default function piHooks(pi: ExtensionAPI): void {
 			deliver(notify(ctx, "warning"), hostLine);
 		});
 		if (!getBool(cfg, "sessionDriftCheck")) return;
+		// pi-agents-tmux children work on delegated tasks; the lead session
+		// owns installation drift and receives the report instead.
+		if (piSubagentName() !== undefined) return;
 
 		void deliverDrift(
 			runDriftCheck(ctx.cwd, {

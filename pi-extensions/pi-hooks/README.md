@@ -21,7 +21,7 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 - Run installed PostToolUse, Stop, TaskCompleted and SessionStart hooks and give the agent what they say.
 - Run configured custom hooks.
 - Report clippy errors after Rust edits.
-- Report installation drift when a session starts.
+- Report installation drift when a lead session starts, not in delegated children.
 - Wake an idle session the lane-mail hooks hand mail to.
 
 ## How it works

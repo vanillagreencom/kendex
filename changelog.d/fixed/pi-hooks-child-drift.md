@@ -1,0 +1,1 @@
+- Pi session-start installation drift reports now reach only the lead session, so delegated children stay on their assigned task.
