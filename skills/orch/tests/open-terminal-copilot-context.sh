@@ -121,9 +121,12 @@ stage "$REPO"
 CAN_DENY=1
 [[ "$(id -u)" -ne 0 ]] || CAN_DENY=0
 
-# The Copilot home every launch runs under, so the operator's own is never
-# read or written.
+# The Copilot home every launch runs under, and the HOME it runs with, where
+# the gate makes the context reader's pending directory, so the operator's own
+# are never read or written.
 COP_HOME="$TMP_ROOT/copilot-home"
+USER_HOME="$TMP_ROOT/user-home"
+PENDING_DIR="$USER_HOME/.cache/lane-mail/copilot-usage"
 COP_SETTINGS="$COP_HOME/settings.json"
 COP_EXT="$COP_HOME/extensions/kendex-lane-context/extension.mjs"
 EXTENSION="$SCRIPTS_DIR/copilot-lane-context/extension.mjs"
@@ -136,7 +139,8 @@ WTS="$TMP_ROOT/wt"
 # launch NAME [ARG...] — a fleet launch of CC-1 on copilot under the home, in
 # the worktree WTS/NAME, with ARGs; OT names another copy, KENDEX_DIR the
 # directory of the kendex it asks, ahead of any other, the stub where unset,
-# and LAUNCH_HOME the COPILOT_HOME it runs under, the home where unset.
+# LAUNCH_HOME the COPILOT_HOME it runs under, the home where unset, and
+# LAUNCH_USER_HOME the HOME it runs with, USER_HOME where unset.
 # The gate's line open-terminal wrote, or `passed`.
 launch() { # NAME [ARG...]
   local name="$1" line
@@ -144,6 +148,7 @@ launch() { # NAME [ARG...]
   ( cd "$REPO" && PATH="${KENDEX_DIR:-$TMP_ROOT/kendex-stub}:$BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/$name.state" WORKTREE_CLI="$BIN/worktree-stub" \
     OT_BASE="$BASE" OT_WT="$WTS/$name" \
     OT_TERM_LOG="$TMP_ROOT/$name.term" TERMINAL=term TMUX="" COPILOT_HOME="${LAUNCH_HOME:-$COP_HOME}" \
+    HOME="${LAUNCH_USER_HOME:-$USER_HOME}" \
     "${OT:-$REPO/scripts/open-terminal}" --ghostty --state-dir "$TMP_ROOT/fleet" --harness copilot \
       --launch-flags '--model claude-opus-5 --reasoning-effort high' "$@" CC-1 ) \
     >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err" || :
@@ -155,12 +160,12 @@ launch() { # NAME [ARG...]
 # (project: on the item's base; caller: only in the caller's checkout; global;
 # half: lane-mail-check alone on the base; none), each document an empty
 # hook registry; SETTINGS the home's settings.json, `-` for no file. No
-# worktree stands.
+# worktree stands, and USER_HOME is empty.
 copilot_world() { # HOOKS SETTINGS
   local dir="" names="lane-mail-check lane-mail-compact lane-mail-start" name
-  chmod -R u+rwx -- "$COP_HOME" 2>/dev/null || :
-  rm -rf -- "${REPO:?}/.github" "${COP_HOME:?}" "${BASE:?}" "${WTS:?}"
-  mkdir -p "$COP_HOME" "$BASE"
+  chmod -R u+rwx -- "$COP_HOME" "$USER_HOME" 2>/dev/null || :
+  rm -rf -- "${REPO:?}/.github" "${COP_HOME:?}" "${USER_HOME:?}" "${BASE:?}" "${WTS:?}"
+  mkdir -p "$COP_HOME" "$USER_HOME" "$BASE"
   case "$1" in
     project) dir="$BASE/.github/hooks" ;;
     caller) dir="$REPO/.github/hooks" ;;
@@ -214,6 +219,30 @@ copilot_world global '{"banner":"never","enabledFeatureFlags":{"AUTO_APPROVAL":t
 launch keep >/dev/null
 assert_eq "$(jq -c . "$COP_SETTINGS")" '{"banner":"never","enabledFeatureFlags":{"AUTO_APPROVAL":true,"EXTENSIONS":true}}' \
   "the settings already there are kept beside the flag"
+
+echo "=== the pending directory is made and proven writable before the lane starts ==="
+# pending_after — whether the pending directory stands, and what it holds.
+pending_after() {
+  [[ -d "$PENDING_DIR" ]] || { echo none; return; }
+  local held
+  held="$(ls -A -- "$PENDING_DIR")" || { echo unlisted; return; }
+  echo "made:${held:-empty}"
+}
+NO_PENDING="open-terminal: unsupported-for-oversee harness=copilot reason=no-context-reader file=$PENDING_DIR detail=pending-unwritable"
+copilot_world project -
+assert_eq "$(launch pending-made) pending=$(pending_after)" "passed pending=made:empty" \
+  "a lane that passes finds the directory made under its HOME, the probe gone from it"
+copilot_world project -
+: > "$USER_HOME/.cache"
+assert_eq "$(launch pending-blocked)" "$NO_PENDING" \
+  "a HOME whose .cache is a file, where the directory cannot be made, is refused, naming the directory"
+if [[ "$CAN_DENY" -eq 1 ]]; then
+  copilot_world project -
+  mkdir -p "$PENDING_DIR"
+  chmod 500 "$PENDING_DIR"
+  assert_eq "$(launch pending-denied)" "$NO_PENDING" \
+    "a directory that stands and cannot be written is refused, naming it"
+fi
 
 echo "=== a relative Copilot home is refused before anything is made ==="
 # open-terminal runs in the caller's checkout, REPO, and the lane's Copilot
@@ -386,7 +415,7 @@ copilot_world project -
 assert_eq "$(OT="$TMP_ROOT/relative-ctrl/scripts/open-terminal" LAUNCH_HOME=rel-home launch relative-ctrl) ext=$([[ -e "$REPO/rel-home/extensions/kendex-lane-context/extension.mjs" ]] && echo caller || echo none)" \
   "passed ext=caller" "control: without the absolute-home rule a relative home is configured in the caller's checkout and the lane passes"
 rm -rf -- "${REPO:?}/rel-home"
-copilot_ctrl reader-ctrl '  copilot_context_configure "$home" && return 0' '  return 0' \
+copilot_ctrl reader-ctrl '  copilot_context_configure "$home" && copilot_pending_establish && return 0' '  return 0' \
   project '{"enabledFeatureFlags":{"EXTENSIONS":false}}' "passed flag=false" \
   "control: without the reader's refusal a copilot fleet lane whose home loads no extension passes unmeasured"
 copilot_ctrl disabled-ctrl '      | if $on == true then "enabled" elif $on == false then "disabled"' '      | if $on == true then "enabled"' \
@@ -417,6 +446,25 @@ OT_KENDEX=empty copilot_ctrl empty-ctrl "  [[ \"\$query_rc\" -ne 0 ]] || off=\"\
   project - "passed flag=true" "control: read with a bare filter, an empty answer passes as no file"
 OT_KENDEX=keyless copilot_ctrl keyless-ctrl '    | if type == "object" and has("switched_off_by")' '    | if type == "object"' \
   project - "passed flag=true" "control: without the key rule an answer that names nothing passes as no file"
+copilot_ctrl pending-ctrl '  copilot_context_configure "$home" && copilot_pending_establish && return 0' '  copilot_context_configure "$home" && return 0' \
+  project - "passed flag=true" "control: the pending rule's copy launches as the world it replaces"
+copilot_world project -
+: > "$USER_HOME/.cache"
+assert_eq "$(OT="$TMP_ROOT/pending-ctrl/scripts/open-terminal" launch pending-ctrl-blocked)" "passed" \
+  "control: without the pending directory a lane whose reader cannot mark a reading passes"
+if [[ "$CAN_DENY" -eq 1 ]]; then
+  copilot_ctrl probe-ctrl '  mkdir -p -- "$dir" && probe="$(mktemp "$dir/.probe.XXXXXX")" && rm -f -- "$probe"' '  mkdir -p -- "$dir"' \
+    project - "passed flag=true" "control: the probe rule's copy launches as the world it replaces"
+  copilot_world project -
+  mkdir -p "$PENDING_DIR"
+  chmod 500 "$PENDING_DIR"
+  assert_eq "$(OT="$TMP_ROOT/probe-ctrl/scripts/open-terminal" launch probe-ctrl-denied)" "passed" \
+    "control: without the probe a directory that cannot be written passes"
+fi
+copilot_ctrl sweep-ctrl ' && rm -f -- "$probe"' '' project - "passed flag=true" \
+  "control: the probe removal's copy launches as the world it replaces"
+assert_eq "$(pending_after | sed -E 's/probe\.[A-Za-z0-9]+$/probe.X/')" "made:.probe.X" \
+  "control: without the removal the probe stays in the directory"
 copilot_ctrl source-ctrl '  [[ -r "$source" ]] || return 1' '  :' project - "passed flag=true" \
   "control: the source rule's copy launches as the world it replaces"
 rm -f -- "$TMP_ROOT/source-ctrl/scripts/copilot-lane-context/extension.mjs"

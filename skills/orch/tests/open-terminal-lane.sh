@@ -679,7 +679,8 @@ rm -f -- "${H:?}/.pi1/settings.json" "${H:?}/.pi2/settings.json"
 # drops the re-pick's gate, and the second item launches with neither reader.
 # Both homes hold the hooks in their global scope and the kendex stub answers
 # the hooks gate that none is switched off, so the context reader is the one
-# gate the two accounts differ on.
+# gate the two accounts differ on. The batch runs with HOME the fixture's, so
+# the reader's pending directory the gate makes lands there.
 mkdir -p "$H/.copilot1/hooks" "$H/.copilot2/hooks"
 printf '{}\n' > "$H/.copilot1/config.json"
 printf '{}\n' > "$H/.copilot2/config.json"
@@ -692,7 +693,7 @@ done
 printf '{"enabledFeatureFlags":{"EXTENSIONS":false}}\n' > "$H/.copilot2/settings.json"
 printf '#!/bin/sh\nprintf '"'"'{"switched_off_by":null}\\n'"'"'\n' > "$OT_STUB_BIN/kendex"
 chmod +x "$OT_STUB_BIN/kendex"
-CP_BATCH="ORCH_LANE_COPILOT_POOL=$H/.copilot1=100000/1000000,$H/.copilot2=200000/1000000;cmd=true --model claude-sonnet-5 --reasoning-effort high"
+CP_BATCH="HOME=$H;ORCH_LANE_COPILOT_POOL=$H/.copilot1=100000/1000000,$H/.copilot2=200000/1000000;cmd=true --model claude-sonnet-5 --reasoning-effort high"
 run_ot "$CP_BATCH" --harness copilot --lane auto --state-dir "$TMP_ROOT/cp-fleet-1" CC-1680 CC-1681
 assert_eq "$(observe "launched=1 copilot_home=copilot1 statusline=file=$H/.copilot2/settings.json,detail=disabled,cause=no-status-line")" \
   "launched=1 copilot_home=copilot1 statusline=file=$H/.copilot2/settings.json,detail=disabled,cause=no-status-line" \

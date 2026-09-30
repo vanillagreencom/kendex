@@ -71,10 +71,12 @@ REPO="$TMP_ROOT/repo"
 stage "$REPO"
 PI_AGENT="$TMP_ROOT/pi-agent"
 mkdir -p "$PI_AGENT"
-# The Copilot home every copilot launch runs under, so no row reads or writes
-# the developer's own.
+# The Copilot home every copilot launch runs under, and the HOME every launch
+# runs with, where a copilot fleet launch makes its context reader's pending
+# directory, so no row reads or writes the developer's own.
 CP_HOME="$TMP_ROOT/copilot-home"
-mkdir -p "$CP_HOME"
+USER_HOME="$TMP_ROOT/user-home"
+mkdir -p "$CP_HOME" "$USER_HOME"
 # The pi-hooks carrier Pi loads, sending the window on its Stop payload or not,
 # and listing the lane mail wake among its extensions or not.
 PI_WAKE_MANIFEST='{"pi":{"extensions":["./extensions/hooks.ts","./extensions/lane-mail-wake.ts"]}}'
@@ -107,7 +109,7 @@ launch() { # NAME ARGS...
   shift
   ( cd "$REPO" && PATH="$BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/$name.state" WORKTREE_CLI="${WT_CLI:-$BIN/worktree-stub}" \
     OT_TERM_LOG="$TMP_ROOT/$name.term" TERMINAL=term TMUX= PI_CODING_AGENT_DIR="$PI_AGENT" COPILOT_HOME="$CP_HOME" \
-    "${OT:-$REPO/scripts/open-terminal}" --ghostty "$@" CC-1 ) \
+    HOME="$USER_HOME" "${OT:-$REPO/scripts/open-terminal}" --ghostty "$@" CC-1 ) \
     >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err" || rc=$?
   line="$(grep -E "^open-terminal: ($GATE_KEYS) " "$TMP_ROOT/$name.err" || true)"
   printf '%s' "${line:-passed}"

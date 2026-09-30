@@ -414,6 +414,17 @@ lane_context_copilot_hooks() { # ROOT HOME
   return 1
 }
 
+# lane_context_copilot_pending_dir — the directory the orch
+# copilot-lane-context extension writes a session's pending marker in:
+# `.cache/lane-mail/copilot-usage` under HOME, the home a Copilot process
+# started from this environment runs under. The extension spells it again from
+# its own os.homedir(), being a copy in the Copilot home with no orch install
+# beside it, and tests/copilot-lane-context.sh holds the two spellings to the
+# same directory.
+lane_context_copilot_pending_dir() {
+  printf '%s\n' "${HOME:-}/.cache/lane-mail/copilot-usage"
+}
+
 # lane_context_record_fields RECORD — one record split into LANE_CTX_HARNESS,
 # LANE_CTX_TOKENS, LANE_CTX_WINDOW, LANE_CTX_MODEL, LANE_CTX_PANE_KEY,
 # LANE_CTX_SESSION, LANE_CTX_GAP, LANE_CTX_AT and LANE_CTX_SOURCE, the

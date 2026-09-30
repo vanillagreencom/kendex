@@ -170,6 +170,19 @@ for world in both:both both:- lane-mail-check:both sh-only:both -:both -:- lane-
   assert_eq "$(ext_scope)" "$(lib_scope)" "the extension and the library pick one scope for project=$project global=$global"
 done
 
+# The directory the extension leaves its marker in, asked of
+# lib/lane-context.sh's lane_context_copilot_pending_dir, the spelling
+# open-terminal's launch gate makes, and found where a run that exits 2 leaves
+# the extension's marker standing: the two name one directory under HOME.
+lib_pending() { HOME="$USER_HOME" bash -c 'source "$1/lib/lane-context.sh"; lane_context_copilot_pending_dir' _ "$SCRIPTS_DIR"; }
+ext_pending() {
+  run_ext pending-dir "$(events "$(event 0 10 100)")" FAKE_HOOK_EXIT=2
+  find "$USER_HOME" -type f -name s1 -exec dirname {} \; | paste -sd' ' -
+}
+clear_scopes
+hooks_in "$REPO/.github/hooks"
+assert_eq "$(ext_pending)" "$(lib_pending)" "the extension and the library name one pending directory"
+
 echo "=== every gap is written to the timeline once ==="
 MISSING="warning kendex-lane-context: hooks-missing=$REPO/.github/hooks,$COP_HOME/hooks"
 # With no scope holding the hooks, two readings run nothing. A session that
@@ -304,6 +317,9 @@ assert_eq "$(run_scope)" "$REPO/.github/hooks" "control: without lane-mail-start
 
 clear_scopes
 hooks_in "$REPO/.github/hooks"
+ext_ctrl pending-dir-ctrl 'const PENDING_DIR = join(homedir(), ".cache", "lane-mail", "copilot-usage");' \
+  'const PENDING_DIR = join(homedir(), ".cache", "lane-mail", "copilot-usage-x");'
+assert_eq "$(EXT="$EXT" ext_pending)" "$(lib_pending)-x" "control: an extension naming another directory is told apart from the library's"
 ext_ctrl mark-ctrl '  markPending();' ''
 EXT="$EXT" run_ext mark-ctrl "$(events "$(event 0 10 100)")"
 assert_eq "$(run_marks)" "unmarked" "control: without the marker a reading's run starts with nothing pending"

@@ -780,6 +780,24 @@ copilot_context_configure() { # HOME
   fi
 }
 
+# Make the directory the context reader leaves each session's pending marker
+# in, lib/lane-context.sh's lane_context_copilot_pending_dir under this
+# launcher's HOME, which the lane's Copilot inherits, and prove it writable by
+# making and removing one probe file there, the empty file a marker is. The
+# marker stands from the moment a reading lands until the lane-mail-check run
+# that records it exits 0, so a turn end during a run that fails never judges
+# the earlier record as room (D015 § Reader); a reading the extension could not
+# mark would leave that record standing as room. The extension still names a
+# marker write that fails after this, as `pending-unwritten`. Refused with
+# COPILOT_CONTEXT_FILE naming the directory and COPILOT_CONTEXT_DETAIL
+# `pending-unwritable`.
+copilot_pending_establish() {
+  local dir probe
+  dir="$(lane_context_copilot_pending_dir)"
+  COPILOT_CONTEXT_FILE="$dir" COPILOT_CONTEXT_DETAIL=pending-unwritable
+  mkdir -p -- "$dir" && probe="$(mktemp "$dir/.probe.XXXXXX")" && rm -f -- "$probe"
+}
+
 # A Copilot fleet lane is judged by what its own Copilot loads: the
 # lane-mail-check hook at its turn end, lane-mail-compact at its automatic
 # compaction and lane-mail-start at its start, from the project or the global
@@ -789,7 +807,8 @@ copilot_context_configure() { # HOME
 # lane-mail-check. Copilot runs no hook and no extension the home does not
 # name, and a lane running with either missing would be reported measured
 # while nothing measured it. copilot_fleet_gate makes the home run the
-# extension, or admits the fallback reader below, before any worktree. The project scope is the lane's worktree,
+# extension and makes the directory its pending markers land in, or admits the
+# fallback reader below, before any worktree. The project scope is the lane's worktree,
 # made from the item's base or kept from an earlier launch, never the caller's
 # checkout, so copilot_hooks_gate asks once that worktree stands and before the
 # harness starts in it. There it also asks whether Copilot runs those hooks at
@@ -830,7 +849,7 @@ copilot_fleet_gate() {
     ot_message unsupported-for-oversee harness=copilot reason=relative-home "home=$home" >&2
     return 1
   fi
-  copilot_context_configure "$home" && return 0
+  copilot_context_configure "$home" && copilot_pending_establish && return 0
   if [[ "$COPILOT_CONTEXT_DETAIL" != disabled ]]; then
     ot_message unsupported-for-oversee harness=copilot reason=no-context-reader \
       "file=$COPILOT_CONTEXT_FILE" "detail=$COPILOT_CONTEXT_DETAIL" >&2

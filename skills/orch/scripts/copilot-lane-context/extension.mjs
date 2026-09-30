@@ -37,9 +37,14 @@
 // beside the lead records lane-mail-check keeps under `~/.cache/lane-mail`,
 // before any branch that can return, an unreadable reading included; the turn
 // end judges a session whose marker stands unmeasured, never its earlier
-// record as room. Only a run that exits 0 carrying the newest root event
-// removes the marker: a run that fails, or one a later event overtook,
-// readable or not, leaves it standing until a later reading is recorded.
+// record as room. That directory is orch lib/lane-context.sh's
+// lane_context_copilot_pending_dir, which open-terminal's launch gate makes
+// and proves writable before a fleet lane starts, spelled again here as
+// PENDING_DIR; skills/orch/tests/copilot-lane-context.sh holds the two
+// spellings to the same directory. Only a run that exits 0 carrying the
+// newest root event removes the marker: a run that fails, or one a later event
+// overtook, readable or not, leaves it standing until a later reading is
+// recorded.
 //
 // A gap is written to the session timeline at level warning, once per
 // distinct first line:
@@ -48,7 +53,8 @@
 //   no hook and says nothing
 //   kendex-lane-context: reading=unreadable, with the marker left standing
 //   kendex-lane-context: pending-unwritten=<marker>, a marker that could not
-//   be written, so a turn end during the run reads the earlier record
+//   be written in a directory the launch gate proved writable, so a turn end
+//   during the run reads the earlier record
 //   kendex-lane-context: pending-unremoved=<marker>, a marker that could not
 //   be removed, so every turn end judges the session unmeasured
 //   kendex-lane-context: usage-spawn=<error code>
