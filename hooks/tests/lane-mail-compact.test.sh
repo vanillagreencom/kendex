@@ -67,9 +67,9 @@ handoff_record() { # ITEM
 }
 # A Copilot lane's turn end with no context reading of its session: the
 # context and the account are both reported unmeasured, and nothing holds it.
-# Each lane a row judges for its compaction reports a step before every turn
-# end, so the idle judge, whose rows are in lane-mail-check.test.sh, holds
-# none of them.
+# A lane that sets REPORT_ITEM reports a step before every turn end, so the
+# idle judge, whose rows are in lane-mail-check.test.sh, holds none of its
+# turn ends.
 UNREAD_FIRST() { printf 'lane-mail-check: reading-unrecorded=%s/context.json' "$BOX"; }
 
 new_compact_lane lane KEN-301
