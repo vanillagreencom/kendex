@@ -95,19 +95,9 @@ The app must be a member of every channel it posts to. `setup` creates the chann
 4. Run `slack install --root <checkout>` on a host with systemd, or `slack listen --root <checkout>` in a terminal. To add a checkout later, run `slack install` again with every `--root`; it restarts the running relay on the new list.
 5. Write in the channel. The overseer's reply lands in the thread.
 
-## The local run
-
-A workstation runs the relay by hand:
-
-```bash
-.agents/skills/slack/scripts/slack listen --root "$PWD"
-```
-
-The relay prints `slack: listening=1 poll_seconds=15`, then `slack: connected=<UTC second>`, and runs until stopped. `--once` opens no connection: it reads each root's channel and mailbox once and exits, which is the form a test uses. The doctor reads `listen --status`. A second relay on the same checkout is refused `relay-running`.
-
 ## The master hold
 
-On resume, the relay reads `<root>/tmp/lane-mail/overseer/to-overseer.seen`. The master's watch writes its drain count there as one bare integer. Notices at or below it stay off Slack. Open asks, held answers and later notices post. Missing or unreadable files skip nothing. Counts past the mailbox clamp.
+After reading the mailbox, the external master's watch writes its read line count to `<root>/tmp/lane-mail/overseer/to-overseer.seen` as one bare integer. The relay only reads this file. On resume, it clamps the count to the mailbox length, skips notices at or below it and journals their ids. Later notices post once. Open asks and held answers still post. Missing or unreadable files skip nothing. Hold times do not set a notice cutoff.
 
 ## Steering contract
 
