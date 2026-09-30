@@ -342,6 +342,15 @@ export function buildRawSidecar(response: NormalizedExaResponse, rawOutputPath?:
 	};
 }
 
+/** The research metadata a tool result's details and the session entry carry:
+ *  the mode, type and counts the renderer draws. Pi keeps both in the session
+ *  record, and the request bodies in the full metadata hold the text of every
+ *  context file, so those stay in the raw sidecar alone. */
+function researchDetailsMetadata(metadata: NormalizedExaResponse["metadata"]): Record<string, unknown> {
+	const { researchMode, type, queryCount, sourceCount, uniqueSourceCount } = metadata;
+	return { researchMode, type, queryCount, sourceCount, uniqueSourceCount };
+}
+
 export function renderWebResearchSourceTree(sources: any[], theme: any, expanded = false, limit = EXPANDED_SOURCE_LIMIT): string[] {
 	if (!expanded || sources.length === 0) return [];
 	const shown = sources.slice(0, Math.max(1, limit));
@@ -436,10 +445,11 @@ export function createWebResearchToolDefinition(pi: ExtensionAPI, getSettings: (
 			if (rawOutputPath) {
 				await writeQueued(rawOutputPath, JSON.stringify(buildRawSidecar(response, rawOutputPath), null, 2));
 			}
-			pi.appendEntry?.("pi-web-tools.web_research", { query: prepared.query, outputPath, rawOutputPath, metadata: response.metadata, sources: response.results.length });
+			const metadata = researchDetailsMetadata(response.metadata);
+			pi.appendEntry?.("pi-web-tools.web_research", { query: prepared.query, outputPath, rawOutputPath, metadata, sources: response.results.length });
 			return {
 				content: [{ type: "text", text: outputPath ? `Exa deep research complete. Report: ${outputPath}\nSources: ${response.results.length}${rawOutputPath ? `\nRaw metadata: ${rawOutputPath}` : ""}` : report }],
-				details: { outputPath, rawOutputPath, sources: response.results.map((result) => toResultRef(result)), metadata: response.metadata },
+				details: { outputPath, rawOutputPath, sources: response.results.map((result) => toResultRef(result)), metadata },
 			};
 		},
 	};

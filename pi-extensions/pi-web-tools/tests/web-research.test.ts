@@ -79,15 +79,32 @@ for (const { path, expected } of [{ path: "/repo/tmp/findings.md", expected: "tm
 	test(`research display path: ${path}`, () => assert.equal(displayWebResearchPath("/repo", path), expected));
 }
 
-test("web_research execute: details carry source refs and metadata, not the source text or raw response", async (t) => {
-	t.mock.method(globalThis, "fetch", async () => new Response(JSON.stringify({ output: { content: "Research answer." }, results: [{ title: "T", url: "https://example.com/t", publishedDate: "2026-01-01", text: "research page text", highlights: ["research highlight"] }] })));
-	const tool = createWebResearchToolDefinition({ appendEntry() {} } as any, () => ({ ...DEFAULT_SETTINGS, warnings: [], apiKeys: { exa: "k" } }));
-	const result = await tool.execute("call", { query: "q", researchMode: "lite" }, undefined, undefined, { cwd: tempDir(t) } as any);
+test("web_research execute: details and session entry carry source refs and counts, not source text, raw response or context file text", async (t) => {
+	const requestBodies: string[] = [];
+	t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
+		requestBodies.push(String(init.body));
+		return new Response(JSON.stringify({ output: { content: "Research answer." }, results: [{ title: "T", url: "https://example.com/t", publishedDate: "2026-01-01", text: "research page text", highlights: ["research highlight"] }] }));
+	});
+	const cwd = tempDir(t);
+	writeFileSync(join(cwd, "context.md"), "private context file text");
+	const entries: unknown[] = [];
+	const tool = createWebResearchToolDefinition({ appendEntry(_type: string, data: unknown) { entries.push(data); } } as any, () => ({ ...DEFAULT_SETTINGS, warnings: [], apiKeys: { exa: "k" } }));
+	const result = await tool.execute("call", { query: "q", researchMode: "lite", contextFiles: ["context.md"] }, undefined, undefined, { cwd } as any);
 	const { sources, metadata, ...rest } = result.details;
-	assert.deepEqual({ rest: JSON.parse(JSON.stringify(rest)), sources, mode: metadata.researchMode, detailsText: ["research page text", "research highlight"].some((text) => detailsHold(result.details, text)) }, {
+	const recorded = [result.details, ...entries];
+	assert.deepEqual({
+		rest: JSON.parse(JSON.stringify(rest)),
+		sources,
+		metadata,
+		entries: entries.length,
+		contextSent: requestBodies.some((body) => body.includes("private context file text")),
+		recordedText: ["research page text", "research highlight", "private context file text"].filter((text) => recorded.some((value) => detailsHold(value, text))),
+	}, {
 		rest: {},
 		sources: [{ title: "T", url: "https://example.com/t", publishedDate: "2026-01-01" }],
-		mode: "lite",
-		detailsText: false,
+		metadata: { researchMode: "lite", type: "deep-lite", queryCount: 1, sourceCount: 1, uniqueSourceCount: 1 },
+		entries: 1,
+		contextSent: true,
+		recordedText: [],
 	});
 });
