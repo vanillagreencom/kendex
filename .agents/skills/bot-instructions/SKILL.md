@@ -92,9 +92,7 @@ A repo enables `[bot-instructions.exclusions] derive_render` or lists every rend
 
 ## A pull request changing its own review
 
-- Treat every policy path below as invalidating prior review evidence.
-- Require trusted human approval on a pull request that touches a policy path.
-- Run `check` in CI from the default branch's package copy when the two copies are byte-identical, with `--spec` naming the pull request tree's copy; when they differ, the pull request upgrades the package and the default-branch checker cannot reproduce the candidate's render, so run the candidate's copy and print a warning naming both versions. GitHub's stale-approval dismissal invalidates earlier approvals on a push. The package's own source repository runs the pull request's checker always.
+- Run `check` in CI from the default branch's package copy when the two copies are byte-identical, with `--spec` naming the pull request tree's copy; when they differ, the pull request upgrades the package and the default-branch checker cannot reproduce the candidate's render, so run the candidate's copy and print a warning naming both versions. The package's own source repository runs the pull request's checker always.
 
 ## The render inputs
 
@@ -104,14 +102,6 @@ A repo enables `[bot-instructions.exclusions] derive_render` or lists every rend
 - `.bot-instructions/coderabbit-schema.json` when CodeRabbit is on.
 - The existing `AGENTS.md` when Codex is on.
 
-Policy set:
-
-- Every render input above.
-- This package's installed tree.
-- Every generated path.
-- Every `AGENTS.md` in the repo.
-- Every file under `.github/instructions/`, `.macroscope/correctness/`, `.macroscope/check-run-agents/`, and `.macroscope/approvability.md`.
-- Any repo-wide reviewer file kept by hand.
 
 Version and marker semantics: [schemas/renders.md](schemas/renders.md) § Common rules.
 

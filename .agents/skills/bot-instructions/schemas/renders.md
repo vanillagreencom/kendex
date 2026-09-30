@@ -197,7 +197,7 @@ Read by CodeRabbit from the pull request's head branch. The file outranks the re
 
 **Head.** The `yaml-language-server` schema line, then the marker comment, then a sentence stating that this file is not a delta and that a global override, if one exists, outranks it.
 
-**The vendored schema** `coderabbit-schema` validates against lives at `.bot-instructions/coderabbit-schema.json`. The path is fixed by this spec rather than configurable, because a configurable one is repointable by the same pull request whose file the schema is meant to judge, and it has to be enumerable to sit in the policy set at all. A change to it is a policy change: loosened, the validator goes green on a file CodeRabbit discards whole, and stays green afterwards.
+**The vendored schema** `coderabbit-schema` validates against lives at `.bot-instructions/coderabbit-schema.json`. The path is fixed by this spec rather than configurable, because a configurable one is repointable by the same pull request whose file the schema is meant to judge.
 
 **Keys.** The render **walks the vendored schema** and emits, at every depth, every property the schema defines a default for **plus every property this package chooses a value for**, taking the value from the posture below where this package has an opinion and from the schema's own default everywhere else. Full state means every such key, or the ones left out keep resolving down the ladder this package does not control, and the file's claim about itself stops being true.
 
