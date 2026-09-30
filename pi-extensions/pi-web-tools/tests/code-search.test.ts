@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { endWebContentSession, getWebContent } from "../src/storage.js";
+import { textOf } from "./fixtures.js";
 import test, { beforeEach, afterEach } from "node:test";
 import { createCodeSearchToolDefinition } from "../src/tools/code-search.js";
 import type { StoredWebContent } from "../src/storage.js";
@@ -35,6 +36,6 @@ for (const { name, contextStatus, expected } of [
 		const tool = createCodeSearchToolDefinition({ appendEntry(_type: string, data: StoredWebContent) { appended.push(data); } } as any, () => ({ apiKeys: { exa: "k" } } as any));
 		const result = await tool.execute("call", { query: "react hooks" }, undefined, undefined, { cwd: process.cwd() } as any);
 		const block = result.content[0]!;
-		assert.deepEqual({ provider: result.details.provider, contextCalls, searchCalls, ...(contextStatus === 200 ? { text: block.type === "text" && block.text.includes("code snippet body"), appended: appended.length, kind: appended[0]?.metadata?.contentKind, full: getWebContent(appended[0]!.id)?.content } : { results: result.details.results.length }) }, expected);
+		assert.deepEqual({ provider: result.details.provider, contextCalls, searchCalls, ...(contextStatus === 200 ? { text: block.type === "text" && block.text.includes("code snippet body"), appended: appended.length, kind: appended[0]?.metadata?.contentKind, full: textOf(getWebContent(appended[0]!.id)) } : { results: result.details.results.length }) }, expected);
 	});
 }

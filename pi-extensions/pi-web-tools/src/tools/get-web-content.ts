@@ -49,6 +49,11 @@ function missingContentGuidance(id: string | undefined): string {
 	return "Use a content id returned by web_search or web_fetch; content ids look like web-...";
 }
 
+function goneContentGuidance(url: string | undefined): string {
+	const refetch = url ? `run web_fetch on ${url} again` : "run the originating web tool again";
+	return `This session stored the id, but its text is no longer on disk: it expired after 5 days, its lane's worktree was removed, or an earlier version of pi-web-tools stored it. To read it, ${refetch}.`;
+}
+
 export function createGetWebContentToolDefinition(name = "get_web_content") {
 	return {
 		renderShell: "self" as const,
@@ -65,10 +70,11 @@ export function createGetWebContentToolDefinition(name = "get_web_content") {
 			if (options?.isPartial) return emptyComponent();
 			if (context?.isError) {
 				const rawMessage = firstText(result) || "stored content id not found";
-				const message = rawMessage.toLowerCase().includes("stored content id not found") ? "stored content id not found" : rawMessage;
+				const gone = rawMessage.toLowerCase().includes("stored content text gone");
+				const message = gone ? "stored content text gone" : rawMessage.toLowerCase().includes("stored content id not found") ? "stored content id not found" : rawMessage;
 				const lines = [errorSummary(theme, providerLabel("Get Web Content", "session"), message)];
 				if (context?.args?.id) lines.push(`${tree(theme, "├")}${muted(theme, "content id ")}${accent(theme, context.args.id)}`);
-				lines.push(`${tree(theme, "└")}${muted(theme, missingContentGuidance(context?.args?.id))}`);
+				lines.push(`${tree(theme, "└")}${muted(theme, gone ? goneContentGuidance(undefined) : missingContentGuidance(context?.args?.id))}`);
 				return textComponent(lines.join("\n"));
 			}
 			const details = result?.details ?? {};
@@ -92,8 +98,10 @@ export function createGetWebContentToolDefinition(name = "get_web_content") {
 			return textComponent(lines.join("\n"));
 		},
 		async execute(_toolCallId: string, params: GetWebContentInput) {
-			const item = getWebContent(params.id);
-			if (!item) throw new Error(`Stored content id not found: ${params.id}. ${missingContentGuidance(params.id)}`);
+			const lookup = getWebContent(params.id);
+			if (lookup.status === "unknown") throw new Error(`Stored content id not found: ${params.id}. ${missingContentGuidance(params.id)}`);
+			if (lookup.status === "missing") throw new Error(`Stored content text gone: ${params.id}. ${goneContentGuidance(lookup.ref.url)}`);
+			const { item } = lookup;
 			const maxCharacters = params.maxCharacters ?? DEFAULT_GET_WEB_CONTENT_CHARACTERS;
 			const { text, truncated } = truncateText(item.content, maxCharacters);
 			const notes = [truncated ? "Use a larger maxCharacters value for more." : undefined, sourceCutNote(item.metadata)].filter(Boolean).map((note) => `\n\n[${note}]`).join("");

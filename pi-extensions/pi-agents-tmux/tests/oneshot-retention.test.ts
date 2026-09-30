@@ -47,6 +47,7 @@ test("a oneshot result keeps bounded assistant previews and the end of stderr; t
 			parts: [...new Set(result.messages.flatMap((message: any) => message.content.map((part: any) => part.type)))].sort(),
 			argsBounded: toolCall.arguments.content.length < DETAIL_STRING_MAX_CHARS * 2,
 			finalOutput: getFinalOutput(result.messages),
+			dropped: result.droppedMessages,
 			turns: result.usage.turns,
 			stderrLength: result.stderr.length,
 			stderrTail: result.stderr.endsWith("tail"),
@@ -56,6 +57,7 @@ test("a oneshot result keeps bounded assistant previews and the end of stderr; t
 			parts: ["text", "toolCall"],
 			argsBounded: true,
 			finalOutput: "answer 999",
+			dropped: 1000 - MAX_RESULT_MESSAGES,
 			turns: 1000,
 			stderrLength: MAX_RESULT_STDERR_CHARS,
 			stderrTail: true,
@@ -64,6 +66,31 @@ test("a oneshot result keeps bounded assistant previews and the end of stderr; t
 		const messageEnds = records.filter((record) => record.event?.type === "message_end");
 		assert.equal(messageEnds.length, 2000);
 		assert.equal(records.filter((record) => record.event !== undefined && "raw" in record).length, 0);
+	} finally {
+		setSingleAgentSpawnForTests();
+	}
+});
+
+test("a oneshot result keeps the last text answer when the newest messages carry only tool calls", async () => {
+	const assistant = (content: unknown[]) => shapedStreamEvent("top-level", "message_end", { message: { role: "assistant", content } });
+	const toolCalls = MAX_RESULT_MESSAGES + 10;
+	const events = [
+		assistant([{ type: "text", text: "older answer" }]),
+		assistant([{ type: "text", text: "final answer" }]),
+		...Array.from({ length: toolCalls }, (_, i) => assistant([{ type: "toolCall", id: `call-${i}`, name: "read", arguments: { path: `f${i}` } }])),
+	];
+	installMockSpawn([{ code: 0, stdout: bridgeStdout(events) }]);
+	try {
+		const result = await runOneShot();
+		assert.deepEqual({
+			finalOutput: getFinalOutput(result.messages),
+			count: result.messages.length,
+			dropped: result.droppedMessages,
+		}, {
+			finalOutput: "final answer",
+			count: MAX_RESULT_MESSAGES + 1,
+			dropped: toolCalls + 2 - MAX_RESULT_MESSAGES - 1,
+		});
 	} finally {
 		setSingleAgentSpawnForTests();
 	}

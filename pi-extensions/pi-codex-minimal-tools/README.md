@@ -33,7 +33,7 @@ The extension checks the selected model and enables supported tools. An image re
 ## Memory use
 
 - A WebSocket response may queue at most 33,554,432 characters of received events ahead of the reader. Past that the response stops with an error whose first line starts `codex-websocket-queue-overflow=`.
-- Generated-image previews are read from disk in the background the first time a message shows them, and appear on the next redraw. At most 16,777,216 characters of base64 preview data are cached; the least recently shown previews are dropped. The cache is cleared when a session starts or ends.
+- Generated-image previews are read from disk in the background the first time a message shows them, and appear on the next redraw. At most 16,777,216 characters of base64 preview data are cached; the least recently shown previews are dropped. One preview larger than that bound by itself is still cached until the next preview loads. The cache is cleared when a session starts or ends.
 
 ## Settings
 

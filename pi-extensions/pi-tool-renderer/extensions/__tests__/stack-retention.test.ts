@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { clearTrackedToolExecutionComponents, refreshToolExecutionComponents, trackToolExecutionComponent } from "../tool-renderer/live-settings.js";
 import { CONFIG_ID, clearPackageConfigCache } from "../tool-renderer/settings.js";
-import { STACK_MAX_ITEMS, STACK_RESULT_MAX_CHARS, registerStackEvents, stackBatches, stackItems } from "../tool-renderer/stack.js";
+import { STACK_MAX_ITEMS, STACK_RESULT_MAX_CHARS, registerStackEvents, renderStackedToolResult, stackBatches, stackItems } from "../tool-renderer/stack.js";
 import { useWorld } from "./helpers/world.js";
 
 const world = useWorld();
@@ -29,13 +29,32 @@ function stackSetting(cwd: string, enabled: boolean): void {
 	clearPackageConfigCache();
 }
 
-function runReads(pi: ReturnType<typeof fakePi>, cwd: string, count: number, text = "line\n"): void {
+const theme = { fg: (_tone: string, text: string) => text, bold: (text: string) => text };
+
+function readResult(text = "line\n") {
+	return { content: [{ type: "text", text }] };
+}
+
+/** Start and finish `count` calls of `toolName` in one live run; `end: false`
+ *  leaves the run open, as a turn still making calls. */
+function runCalls(pi: ReturnType<typeof fakePi>, cwd: string, count: number, options: { prefix?: string; text?: string; toolName?: string; end?: boolean } = {}): string[] {
+	const { prefix = "call", text = "line\n", toolName = "read", end = true } = options;
+	const ids = Array.from({ length: count }, (_, i) => `${prefix}-${i}`);
 	pi.emit("agent_start", {}, { cwd });
-	for (let i = 0; i < count; i++) {
-		pi.emit("tool_execution_start", { toolName: "read", toolCallId: `call-${i}`, args: { path: `f${i}` } }, { cwd });
-		pi.emit("tool_execution_end", { toolName: "read", toolCallId: `call-${i}`, result: { content: [{ type: "text", text }] }, isError: false }, { cwd });
+	for (const id of ids) {
+		pi.emit("tool_execution_start", { toolName, toolCallId: id, args: { path: id, command: id } }, { cwd });
+		pi.emit("tool_execution_end", { toolName, toolCallId: id, result: readResult(text), isError: false }, { cwd });
 	}
-	pi.emit("agent_end", {}, { cwd });
+	if (end) pi.emit("agent_end", {}, { cwd });
+	return ids;
+}
+
+function runReads(pi: ReturnType<typeof fakePi>, cwd: string, count: number, text = "line\n"): void {
+	runCalls(pi, cwd, count, { text });
+}
+
+function batchShape(): string[] {
+	return [...stackBatches.values()].map((batch) => `${batch.anchorId}:${batch.items.length}`);
 }
 
 describe("stack retention", () => {
@@ -64,18 +83,46 @@ describe("stack retention", () => {
 		expect([stackItems.size, stackBatches.size]).toEqual([0, 0]);
 	});
 
-	test("caps the kept result text and counts lines from the whole result", () => {
+	for (const row of [
+		{ toolName: "read", kept: "head" },
+		{ toolName: "bash", kept: "tail" },
+	]) {
+		test(`caps the kept ${row.toolName} result text at its ${row.kept} and counts lines from the whole result`, () => {
+			const { cwd } = world();
+			stackSetting(cwd, true);
+			const pi = fakePi();
+			registerStackEvents(pi as any);
+			pi.emit("session_start", {}, { cwd });
+			const text = `HEAD\n${"0123456789\n".repeat(10_000)}TAIL`;
+			runCalls(pi, cwd, 1, { text, toolName: row.toolName });
+			const item = stackItems.get("call-0")!;
+			expect({
+				length: item.resultText.length,
+				lines: item.resultLines,
+				truncated: item.truncated,
+				head: item.resultText.startsWith("HEAD"),
+				tail: item.resultText.endsWith("TAIL"),
+			}).toEqual({ length: STACK_RESULT_MAX_CHARS, lines: 10_002, truncated: true, head: row.kept === "head", tail: row.kept === "tail" });
+		});
+	}
+
+	test("a render pass over evicted history leaves surviving batches and the live batch as they were", () => {
 		const { cwd } = world();
 		stackSetting(cwd, true);
 		const pi = fakePi();
 		registerStackEvents(pi as any);
 		pi.emit("session_start", {}, { cwd });
-		const text = "0123456789\n".repeat(10_000);
-		runReads(pi, cwd, 1, text);
-		const item = stackItems.get("call-0")!;
-		expect(item.resultText.length).toBe(STACK_RESULT_MAX_CHARS);
-		expect(item.resultLines).toBe(10_000);
-		expect(item.truncated).toBe(true);
+		const history = [1, 2, 3, 4, 5].flatMap((run) => runCalls(pi, cwd, 60, { prefix: `r${run}` }));
+		const live = runCalls(pi, cwd, 3, { prefix: "live", end: false });
+		const before = batchShape();
+		// Pi renders every tool display again, top to bottom, on ctrl+o or a resize.
+		for (const id of [...history, ...live]) {
+			renderStackedToolResult("read", readResult(), false, false, theme, { toolCallId: id, args: { path: id }, invalidate: () => {} }, cwd);
+		}
+		pi.emit("tool_execution_start", { toolName: "read", toolCallId: "live-3", args: { path: "live-3" } }, { cwd });
+		expect({ shape: batchShape(), liveJoined: stackItems.get("live-3")?.batchId === stackItems.get("live-0")?.batchId })
+			.toEqual({ shape: before.map((entry) => entry.startsWith("live-0:") ? "live-0:4" : entry), liveJoined: true });
+		expect(before.at(-1)).toBe("live-0:3");
 	});
 });
 

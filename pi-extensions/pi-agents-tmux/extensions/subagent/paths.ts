@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { openLaneDir } from "../../scripts/lane-retention.js";
 import { safeFileName } from "./names.js";
 import { piUserDir } from "./package-config.js";
 import type { PaneTaskRecord, TaskArtifactPaths } from "./types.js";
@@ -14,6 +15,31 @@ export function taskRegistryPath(runtimeRoot: string): string {
 
 export function transcriptDir(runtimeRoot: string): string {
 	return path.join(runtimeRoot, "transcripts");
+}
+
+/** Where a result too long for the tool result is saved in full. */
+export function fullOutputDir(runtimeRoot: string): string {
+	return path.join(runtimeRoot, "outputs");
+}
+
+/** The runtime-root folders that follow the lane retention rule. */
+export const RUNTIME_LANE_FOLDERS = ["transcripts", "outputs"] as const;
+
+/** The working directory recorded for this process's runtime lanes; set only
+ *  while the session that owns the runtime root is live. A child agent shares
+ *  its parent's root and never sets it, so it never rewrites the parent's
+ *  record. */
+let runtimeLaneCwd: string | undefined;
+
+export function setRuntimeLaneCwd(cwd: string | undefined): void {
+	runtimeLaneCwd = cwd;
+}
+
+/** Record `dir` as a live lane before a file is written into it. The record is
+ *  rewritten on each write, so a lane the prune removed while idle is marked
+ *  again, and a lane in use is never removed as empty and old. */
+export function openRuntimeLane(dir: string): void {
+	if (runtimeLaneCwd !== undefined) openLaneDir(dir, runtimeLaneCwd);
 }
 
 export function paneSessionPath(runtimeRoot: string, agentName: string): string {

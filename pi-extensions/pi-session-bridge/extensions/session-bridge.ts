@@ -433,7 +433,12 @@ export default function sessionBridge(pi: ExtensionAPI) {
 		});
 
 		socket.on("close", () => clients.delete(client));
-		socket.on("error", () => clients.delete(client));
+		socket.on("error", (error) => {
+			clients.delete(client);
+			// The stalled client cannot read a last line, so the session's user
+			// is told instead.
+			if (error.message.startsWith(CLIENT_STALLED_KEY) && currentCtx?.hasUI) currentCtx.ui.notify(`Session bridge: ${error.message}`, "warning");
+		});
 	}
 
 	async function handleLine(client: BridgeClient, line: string) {
@@ -960,22 +965,27 @@ function sendResponse(client: BridgeClient, id: unknown, command: string, succes
 	send(client, toJsonable({ type: "response", id, command, success, data, error }));
 }
 
-/** Bytes the bridge holds unsent for one client. A client that leaves that
- *  much unread is stalled: it is disconnected, never buffered for further. */
+/** Bytes the bridge holds unsent for one client. A client that still leaves
+ *  more than that unread when the next line is due is stalled: it is
+ *  disconnected, never buffered for further. One line is always accepted on
+ *  top, so a single response larger than the bound reaches a client that
+ *  reads. */
 export const CLIENT_QUEUE_MAX_BYTES = 8 * 1024 * 1024;
+
+/** The first line of the error a stalled client is disconnected with. */
+export const CLIENT_STALLED_KEY = "bridge-client-stalled";
 
 function send(client: BridgeClient, payload: unknown) {
 	const socket = client.socket;
 	if (socket.destroyed) return;
-	const line = `${JSON.stringify(toJsonable(payload))}\n`;
 	// `writableLength` is what write() has accepted and not yet flushed: the
 	// backlog a false return from write() reports.
-	const queued = socket.writableLength + Buffer.byteLength(line, "utf8");
+	const queued = socket.writableLength;
 	if (queued > CLIENT_QUEUE_MAX_BYTES) {
-		socket.destroy(new Error(`bridge-client-stalled=${queued}\nThe client left more than ${CLIENT_QUEUE_MAX_BYTES} bytes unread; it was disconnected.`));
+		socket.destroy(new Error(`${CLIENT_STALLED_KEY}=${queued}\nThe client left more than ${CLIENT_QUEUE_MAX_BYTES} bytes unread; it was disconnected.`));
 		return;
 	}
-	socket.write(line);
+	socket.write(`${JSON.stringify(toJsonable(payload))}\n`);
 }
 
 function normalizeDelivery(value: unknown, fallback: Delivery): Delivery {

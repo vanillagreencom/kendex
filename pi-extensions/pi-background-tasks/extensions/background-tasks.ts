@@ -14,7 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
-import { laneDirsUnder, openLaneDir, pruneLaneDirs } from "../scripts/lane-retention.js";
+import { openLaneDir, pruneLanes } from "../scripts/lane-retention.js";
 
 import { shouldAdoptActiveContext } from "./active-context.js";
 import {
@@ -74,7 +74,7 @@ import { applyCustomEntryWithBarrier, createPersistence, sessionIdForContext, si
 import { mapWithConcurrency, PROBE_CONCURRENCY } from "./probes.js";
 import { defaultSystemdUnitActive, planResourceControlledSpawn, stopResourceControlledTask } from "./resource-control.js";
 import { installSettingsCacheRefresh, recordProjectTrust } from "./package-config.js";
-import { logFilePath, settingBoolean, settingEnum, settingNumber, settingString, taskDir, taskEnv, taskLaneDir } from "./settings.js";
+import { logFilePath, settingBoolean, settingEnum, settingNumber, settingString, taskEnv, taskLaneDir, taskLanesRoot } from "./settings.js";
 import { applyBgToolResultTasksWithBarrier } from "./tool-result-details.js";
 import {
 	defaultReadProcessIdentity,
@@ -269,8 +269,10 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			const text = buffer.toString("utf8").replace(/^\uFFFD+/, "");
 			lastLogTail = { logFile, size, mtimeMs, text };
 			return text;
-		} catch {
-			return "";
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error);
+			logBackgroundDiagnostic("task log read failed", { logFile, error: reason });
+			return `[log unreadable: ${reason}]`;
 		} finally {
 			if (fd !== undefined) closeSync(fd);
 		}
@@ -305,15 +307,20 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		removeTaskLog(task);
 	};
 
-	// Keep at most MAX_FINISHED_TASKS finished tasks, dropping the oldest whose
-	// exit the agent was already told about (or never asked to hear).
+	// Tasks that exited and whose exit wake waits for their log's flush.
+	const exitWakeDue = new WeakSet<ManagedTask>();
+
+	// Keep at most MAX_FINISHED_TASKS finished tasks, dropping the oldest. Each
+	// finished task the bound counts has had its exit reported or never asked
+	// for it: an exit wake goes unsent only during session_shutdown, which
+	// empties the map first, and session_start replays missed exits before it
+	// bounds. A task whose exit wake waits for its log's flush is not counted.
 	const boundFinishedTasks = (): number => {
-		const finished = [...tasks.values()].filter((task) => task.status !== "running");
+		const finished = [...tasks.values()].filter((task) => task.status !== "running" && !exitWakeDue.has(task));
 		const excess = finished.length - MAX_FINISHED_TASKS;
 		let removed = 0;
 		for (const task of finished.sort((a, b) => a.updatedAt - b.updatedAt)) {
 			if (removed >= excess) break;
-			if (task.notifyOnExit && !task.exitNotified) continue;
 			forgetFinishedTask(task);
 			removed += 1;
 		}
@@ -579,15 +586,19 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 	// names the log file as the task's full output, so it waits for the log's
 	// flush to release. A task cleared or replaced meanwhile gets no wake.
 	// Once the log holds the output, the process handle and the in-memory
-	// output are released: an exited process has nothing left to report.
+	// output are released: an exited process has nothing left to report. A log
+	// whose last write failed or is still stalled keeps the in-memory output as
+	// the record.
 	const finalizeTask = (task: ManagedTask, exitCode: number | null, statusOverride?: BackgroundTaskStatus): void => {
 		if (!closeTaskLifecycle(task, exitCode, lifecycleHooks, statusOverride)) return;
 		task.child = null;
 		refreshUi();
+		exitWakeDue.add(task);
 		const settle = () => {
+			exitWakeDue.delete(task);
 			if (tasks.get(task.id) !== task) return;
 			sendExitWakeLifecycle(task, lifecycleHooks);
-			if (existsSync(task.logFile)) {
+			if (taskLogs.settled(task.logFile) && existsSync(task.logFile)) {
 				task.output = "";
 				task.lastAnnouncedLength = 0;
 			}
@@ -973,7 +984,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		shuttingDown = false;
 		recordProjectTrust(ctx);
 		activeCtx = ctx;
-		const pruned = pruneLaneDirs(laneDirsUnder(taskDir()));
+		const pruned = pruneLanes(taskLanesRoot());
 		for (const failure of pruned.failed) logBackgroundDiagnostic("task log prune failed", { path: failure.path, error: failure.error });
 		await restoreSnapshots(ctx);
 		replayMissedExits();
@@ -1024,6 +1035,8 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			clearTaskTimers(task);
 		}
 		persistSnapshots();
+		// The persisted snapshots carry the tasks to the next session_start.
+		tasks.clear();
 		clearWidget();
 		lastLogTail = undefined;
 		activeCtx = null;

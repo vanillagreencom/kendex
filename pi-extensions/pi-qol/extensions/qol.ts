@@ -40,6 +40,7 @@ import { imageContentForPath, resolveSubmittedImagePaths } from "./qol/images.js
 import {
 	clearTmuxWindowMark,
 	notifyQuestionOpened,
+	resetQolNotificationCooldowns,
 	sendQolNotification,
 	type QolNotificationService,
 } from "./qol/notifications.js";
@@ -694,6 +695,7 @@ export default function qol(pi: ExtensionAPI): void {
 		releaseQolSessionSearchCache();
 		resetThinkingTimer(undefined);
 		clearTmuxWindowMark(pi);
+		resetQolNotificationCooldowns();
 		questionUnsubscribe?.();
 		questionUnsubscribe = undefined;
 		currentCtx = undefined;

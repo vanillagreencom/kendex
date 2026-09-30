@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { laneDirsUnder, openLaneDir, pruneLaneDirs, type LanePruneResult } from "../scripts/lane-retention.js";
+import { openLaneDir, pruneLanes, type LanePruneResult } from "../scripts/lane-retention.js";
 import { piUserDir } from "./package-config.js";
 
 export interface StoredWebContent {
@@ -11,6 +11,9 @@ export interface StoredWebContent {
 	content: string;
 	metadata?: Record<string, unknown>;
 	createdAt: string;
+	/** The session whose content directory holds the text. A forked session
+	 *  copies the parent's records, so its ids still name the parent's files. */
+	sessionId?: string;
 }
 
 /** A stored item without its text: what a session record and a tool's details
@@ -21,6 +24,7 @@ export interface StoredWebContentRef {
 	url?: string;
 	metadata?: Record<string, unknown>;
 	createdAt: string;
+	sessionId?: string;
 	contentLength: number;
 }
 
@@ -33,8 +37,9 @@ const CONTENT_FOLDER = "content";
 export const MEMORY_MAX_CHARS = 8 * 1024 * 1024;
 
 interface SessionStore {
-	/** The lane's content directory; undefined before a session starts. */
-	dir?: string;
+	/** The session whose lane content directory new text goes to; undefined
+	 *  before a session starts. */
+	sessionId?: string;
 	cwd?: string;
 	refs: Map<string, StoredWebContentRef>;
 	/** Stored items in least-recently-used-first order. */
@@ -42,8 +47,8 @@ interface SessionStore {
 	memoryChars: number;
 }
 
-function emptyStore(dir?: string, cwd?: string): SessionStore {
-	return { dir, cwd, refs: new Map(), memory: new Map(), memoryChars: 0 };
+function emptyStore(sessionId?: string, cwd?: string): SessionStore {
+	return { sessionId, cwd, refs: new Map(), memory: new Map(), memoryChars: 0 };
 }
 
 let store = emptyStore();
@@ -64,8 +69,12 @@ function sessionsRoot(): string {
 	return join(piUserDir(), "kendex", "sessions");
 }
 
-function contentPath(dir: string, id: string): string {
-	return join(dir, `${safeFileName(id)}.json`);
+function contentDir(sessionId: string): string {
+	return join(sessionsRoot(), safeFileName(sessionId), PACKAGE_FOLDER, CONTENT_FOLDER);
+}
+
+function contentPath(sessionId: string, id: string): string {
+	return join(contentDir(sessionId), `${safeFileName(id)}.json`);
 }
 
 export function makeContentId(prefix = "web"): string {
@@ -99,8 +108,8 @@ function remember(item: StoredWebContent): void {
  * The text itself stays on disk until an id is read.
  */
 export function beginWebContentSession(ctx: ExtensionContext): LanePruneResult {
-	const pruned = pruneLaneDirs(laneDirsUnder(sessionsRoot(), PACKAGE_FOLDER, CONTENT_FOLDER));
-	store = emptyStore(join(sessionsRoot(), safeFileName(sessionIdForContext(ctx)), PACKAGE_FOLDER, CONTENT_FOLDER), ctx.cwd);
+	const pruned = pruneLanes(sessionsRoot(), [PACKAGE_FOLDER, CONTENT_FOLDER]);
+	store = emptyStore(sessionIdForContext(ctx), ctx.cwd);
 	for (const entry of ctx.sessionManager?.getEntries?.() ?? []) {
 		if ((entry as any).type !== "custom" || (entry as any).customType !== CUSTOM_TYPE) continue;
 		const ref = (entry as any).data as StoredWebContentRef | undefined;
@@ -114,11 +123,11 @@ export function endWebContentSession(): void {
 	store = emptyStore();
 }
 
-export function storeWebContent(pi: ExtensionAPI, item: Omit<StoredWebContent, "id" | "createdAt"> & { id?: string }): StoredWebContent {
-	const stored: StoredWebContent = { ...item, id: item.id ?? makeContentId(), createdAt: new Date().toISOString() };
-	if (store.dir) {
-		openLaneDir(store.dir, store.cwd ?? process.cwd());
-		writeFileSync(contentPath(store.dir, stored.id), JSON.stringify(stored), { mode: 0o600 });
+export function storeWebContent(pi: ExtensionAPI, item: Omit<StoredWebContent, "id" | "createdAt" | "sessionId"> & { id?: string }): StoredWebContent {
+	const stored: StoredWebContent = { ...item, id: item.id ?? makeContentId(), createdAt: new Date().toISOString(), sessionId: store.sessionId };
+	if (store.sessionId) {
+		openLaneDir(contentDir(store.sessionId), store.cwd ?? process.cwd());
+		writeFileSync(contentPath(store.sessionId, stored.id), JSON.stringify(stored), { mode: 0o600 });
 	}
 	const ref = toStoredRef(stored);
 	store.refs.set(stored.id, ref);
@@ -127,24 +136,35 @@ export function storeWebContent(pi: ExtensionAPI, item: Omit<StoredWebContent, "
 	return stored;
 }
 
-/** The stored item `id`, from memory or from this session's content directory.
- *  An id whose file the retention rule removed is gone. */
-export function getWebContent(id: string): StoredWebContent | undefined {
+/** What a lookup of a stored id found. `unknown`: this session never recorded
+ *  the id. `missing`: the session recorded it, but its text is no longer on
+ *  disk (the retention rule removed it, or an earlier version kept the text
+ *  in the session record instead). */
+export type WebContentLookup =
+	| { status: "found"; item: StoredWebContent }
+	| { status: "unknown" }
+	| { status: "missing"; ref: StoredWebContentRef };
+
+/** The stored item `id`, from memory or from the content directory of the
+ *  session that stored it. */
+export function getWebContent(id: string): WebContentLookup {
 	const held = store.memory.get(id);
 	if (held) {
 		remember(held);
-		return held;
+		return { status: "found", item: held };
 	}
-	if (!store.dir || !store.refs.has(id)) return undefined;
+	const ref = store.refs.get(id);
+	if (!ref) return { status: "unknown" };
+	if (!ref.sessionId) return { status: "missing", ref };
 	let raw: string;
 	try {
-		raw = readFileSync(contentPath(store.dir, id), "utf8");
+		raw = readFileSync(contentPath(ref.sessionId, id), "utf8");
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return { status: "missing", ref };
 		throw error;
 	}
 	const item = JSON.parse(raw) as StoredWebContent;
 	remember(item);
-	return item;
+	return { status: "found", item };
 }
 

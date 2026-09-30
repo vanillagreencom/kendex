@@ -5,8 +5,8 @@
 ### 2.3.0
 
 - A session without a UI (`pi -p`, headless lanes) no longer loads the session-search index at startup.
-- The session-search index is released after `sessionSearch.cacheTtlSeconds`, whose default is now 300 seconds instead of 0 (0 still keeps the index until the session ends). The index keeps at most 32,768 characters of message text per session and 8,388,608 characters in total, newest session first; a session past that total is searched by name, path and first prompt only.
-- Parsed session prompts are kept for at most 64 sessions and finished thinking times for at most 256 blocks. Thinking labels are released at the end of each agent run, and notification cooldown entries once their cooldown has passed.
+- The session-search index is released after `sessionSearch.cacheTtlSeconds`, whose default is now 300 seconds instead of 0 (0 still keeps the index until the session ends). A search after the index was released opens the overlay at once, shows that it is loading, and fills in when the index has loaded again. The index keeps at most 32,768 characters of message text per session and 8,388,608 characters in total, newest session first; a session past that total is searched by name, path and first prompt only.
+- Parsed session prompts are kept for at most 64 sessions and finished thinking times for at most 256 blocks. Thinking labels are released at the end of each agent run, and notification cooldown entries once their cooldown has passed and all of them when the session ends.
 
 ### 2.2.1
 

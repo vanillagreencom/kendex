@@ -30,9 +30,9 @@ The extension enables tools for the configured providers and available credentia
 
 ## Memory and disk use
 
-- Fetched text is written to `~/.pi/agent/kendex/sessions/<session>/pi-web-tools/content/`, one file per content id. The session record and the tool details carry the id, title, URL and length, not the text.
-- At most 8,388,608 characters of fetched text are held in memory; the least recently read items are dropped and read from disk again when needed. Memory is cleared when a session starts or ends.
-- A session's content directory is deleted once the session's working directory is gone (a merged worktree), and any content file older than 5 days is deleted. Pi applies both rules when a session starts. A deleted id can no longer be read with `get_web_content`.
+- Fetched text is written to `~/.pi/agent/kendex/sessions/<session>/pi-web-tools/content/`, one file per content id. The session record and the tool details carry the id, title, URL, length and the id of the session that stored the text, not the text. A forked session reads its parent's ids from the parent's directory.
+- At most 8,388,608 characters of fetched text are held in memory; the least recently read items are dropped and read from disk again when needed. One item larger than that bound by itself is still held until the next item is stored. Memory is cleared when a session starts or ends.
+- A session's content directory is deleted once the session's working directory is gone (a merged worktree), and any content file older than 5 days is deleted. Pi applies both rules when a session starts. A deleted id can no longer be read: `get_web_content` fails with `Stored content text gone: <id>` and names the URL to fetch again.
 
 ## Settings
 

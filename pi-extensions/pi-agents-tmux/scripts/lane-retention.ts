@@ -4,11 +4,16 @@
  * deleted once the lane's working directory is gone, which is how a merged
  * lane's worktree ends, and no file is kept past LANE_FILE_MAX_AGE_MS.
  *
+ * A lane directory is one the package made with openLaneDir: a real directory,
+ * owned by this user, that holds a LANE_CWD_FILE record. The prune touches
+ * nothing else under its root, so a folder another tool keeps there, or a
+ * symbolic link to one, is left alone.
+ *
  * Vendored byte-identical into every package that keeps such files, under
  * `scripts/`; pi-extensions/package-policy.test.mjs holds the copies equal.
  * Edit one copy, then copy it over the others.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export const LANE_FILE_MAX_AGE_MS = 5 * 24 * 60 * 60 * 1000;
@@ -34,28 +39,21 @@ export function openLaneDir(dir: string, cwd: string): string {
 	return dir;
 }
 
-/** Each existing `root/<entry>/<...below>` directory: the lane directories one
- *  package keeps under a root with one entry per session. An absent root has
- *  no lane directories. */
-export function laneDirsUnder(root: string, ...below: string[]): string[] {
-	let entries: string[];
-	try {
-		entries = readdirSync(root);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-		throw error;
-	}
-	return entries.map((entry) => join(root, entry, ...below)).filter((dir) => {
-		try {
-			return statSync(dir).isDirectory();
-		} catch {
-			return false;
-		}
-	});
-}
-
 function message(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+/** Whether `path` is a real directory, not a symbolic link, owned by this
+ *  user. A platform without user ids (Windows) checks the type alone. */
+function ownDirectory(path: string): boolean {
+	let stat;
+	try {
+		stat = lstatSync(path);
+	} catch {
+		return false;
+	}
+	const uid = process.getuid?.();
+	return stat.isDirectory() && (uid === undefined || stat.uid === uid);
 }
 
 function remove(path: string, result: LanePruneResult): void {
@@ -67,6 +65,8 @@ function remove(path: string, result: LanePruneResult): void {
 	}
 }
 
+/** The lane's recorded working directory; undefined when `dir` holds no
+ *  record, so the package did not make it. */
 function recordedCwd(dir: string): string | undefined {
 	try {
 		const cwd = readFileSync(join(dir, LANE_CWD_FILE), "utf8").trim();
@@ -76,7 +76,17 @@ function recordedCwd(dir: string): string | undefined {
 	}
 }
 
-/** Remove the files under `dir` older than `cutoff`; return how many remain. */
+function modifiedAt(path: string, result: LanePruneResult): number | undefined {
+	try {
+		return lstatSync(path).mtimeMs;
+	} catch (error) {
+		result.failed.push({ path, error: message(error) });
+		return undefined;
+	}
+}
+
+/** Remove the files under `dir` older than `cutoff`, never the lane record;
+ *  return how many entries other than the record remain. */
 function pruneOldFiles(dir: string, cutoff: number, result: LanePruneResult): number {
 	let remaining = 0;
 	let entries;
@@ -88,42 +98,63 @@ function pruneOldFiles(dir: string, cutoff: number, result: LanePruneResult): nu
 	}
 	for (const entry of entries) {
 		const path = join(dir, entry.name);
+		if (entry.name === LANE_CWD_FILE) continue;
 		if (entry.isDirectory()) {
 			if (pruneOldFiles(path, cutoff, result) === 0) remove(path, result);
 			else remaining++;
 			continue;
 		}
-		let mtime: number;
-		try {
-			mtime = statSync(path).mtimeMs;
-		} catch (error) {
-			result.failed.push({ path, error: message(error) });
-			remaining++;
-			continue;
-		}
-		if (mtime < cutoff) remove(path, result);
+		const mtime = modifiedAt(path, result);
+		if (mtime !== undefined && mtime < cutoff) remove(path, result);
 		else remaining++;
 	}
 	return remaining;
 }
 
 /**
- * Apply the retention rule to each lane directory in `laneDirs`. A directory
- * whose recorded working directory is gone is removed whole. Otherwise each
- * file older than LANE_FILE_MAX_AGE_MS is removed, and the directory goes too
- * once nothing is left in it. A failed removal is reported, never thrown, so
- * one unreadable lane does not stop the rest.
+ * Apply the retention rule to each lane directory at `root/<entry>/<...below>`,
+ * one entry per session. A lane whose recorded working directory is gone is
+ * removed whole. Otherwise each file older than LANE_FILE_MAX_AGE_MS is
+ * removed, and the lane goes too once only its record is left and the record
+ * is that old. The record is kept while the lane is: it is what marks the
+ * directory as the package's. An absent root has no lanes. Every failure,
+ * including an unreadable root, is reported, never thrown, so the caller's
+ * other session_start work still runs.
  */
-export function pruneLaneDirs(laneDirs: string[], now = Date.now()): LanePruneResult {
+export function pruneLanes(root: string, below: string[] = [], now = Date.now()): LanePruneResult {
 	const result: LanePruneResult = { removed: [], failed: [] };
+	let entries: string[];
+	try {
+		entries = readdirSync(root);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") result.failed.push({ path: root, error: message(error) });
+		return result;
+	}
+	if (!ownDirectory(root)) {
+		result.failed.push({ path: root, error: "lane-root-not-owned: not a directory this user owns; nothing under it was pruned" });
+		return result;
+	}
 	const cutoff = now - LANE_FILE_MAX_AGE_MS;
-	for (const dir of laneDirs) {
+	for (const entry of entries) {
+		let dir = root;
+		let owned = true;
+		for (const part of [entry, ...below]) {
+			dir = join(dir, part);
+			if (!ownDirectory(dir)) {
+				owned = false;
+				break;
+			}
+		}
+		if (!owned) continue;
 		const cwd = recordedCwd(dir);
-		if (cwd !== undefined && !existsSync(cwd)) {
+		if (cwd === undefined) continue;
+		if (!existsSync(cwd)) {
 			remove(dir, result);
 			continue;
 		}
-		if (pruneOldFiles(dir, cutoff, result) === 0) remove(dir, result);
+		if (pruneOldFiles(dir, cutoff, result) > 0) continue;
+		const recordAt = modifiedAt(join(dir, LANE_CWD_FILE), result);
+		if (recordAt !== undefined && recordAt < cutoff) remove(dir, result);
 	}
 	return result;
 }

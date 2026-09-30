@@ -291,6 +291,13 @@ function notificationEnabledFor(kind: QolNotificationKind, cwd?: string): boolea
 	}
 }
 
+/** Forget every notification cooldown and question dedup key; they belong to
+ *  the session that sent them. */
+export function resetQolNotificationCooldowns(): void {
+	lastNotificationAt.clear();
+	lastQuestionNotificationAt.clear();
+}
+
 /**
  * The window mark and the tmux message never touch the terminal, so they start
  * beside the terminal writes rather than behind them.

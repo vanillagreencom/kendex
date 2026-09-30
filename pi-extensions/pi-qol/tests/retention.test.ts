@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, jest, test } from "bun:test";
+import { afterEach, beforeEach, expect, jest, setSystemTime, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +13,8 @@ import {
 	THINKING_TIMER_MAX_DURATIONS,
 } from "../extensions/qol/constants.ts";
 import { capSessionSearchText, refreshQolSessionSearchCache, releaseQolSessionSearchCache, sessionUserMessages } from "../extensions/qol/session-search/cache.ts";
+import { sendQolNotification } from "../extensions/qol/notifications.ts";
+import { openQolSessionSearch } from "../extensions/qol/session-search/index.ts";
 import { getThinkingTimerStore } from "../extensions/qol/thinking-timer.ts";
 import type { QolSessionSearchSession } from "../extensions/qol/session-search/types.ts";
 import { makeCtx, makeFakeApi } from "./fake-pi.ts";
@@ -82,6 +84,67 @@ test("the loaded index and parsed prompts are released after the default TTL and
 	expect(listAllCalls).toBe(3);
 });
 
+test("opening session search after the index was released shows the overlay before the reload finishes", async () => {
+	const order: string[] = [];
+	let finishLoad: (sessions: unknown[]) => void = () => {};
+	stubSessionManager.listAll = () => new Promise((resolve) => { finishLoad = resolve; });
+	let renders = 0;
+	let close: (action: unknown) => void = () => {};
+	const ctx = makeCtx({
+		cwd: workdir,
+		hasUI: true,
+		ui: {
+			...makeCtx().ui,
+			custom: (factory: (tui: unknown, theme: unknown, keybindings: unknown, done: (action: unknown) => void) => unknown) => new Promise((resolve) => {
+				order.push("overlay");
+				close = resolve;
+				factory({ requestRender: () => { renders++; }, terminal: { rows: 40 } }, undefined, undefined, resolve);
+			}),
+		},
+	});
+	const opened = openQolSessionSearch(makeFakeApi().api, ctx as any);
+	await Promise.resolve();
+	order.push("load finished");
+	finishLoad([{ path: join(workdir, "a.jsonl"), allMessagesText: "text", modified: new Date(0) }]);
+	// The overlay is told to redraw once the loaded index reaches it.
+	for (let tick = 0; tick < 10 && renders === 0; tick++) await Promise.resolve();
+	close({ type: "cancel" });
+	await opened;
+	expect({ order, renders }).toEqual({ order: ["overlay", "load finished"], renders: 1 });
+});
+
+// Dropping an expired cooldown entry changes only memory, which no row can
+// see: an expired entry no longer suppresses anything. The rows hold that the
+// drop keeps an entry still inside its cooldown, and that session_shutdown
+// forgets every entry.
+for (const row of [
+	{ name: "a key inside its cooldown stays suppressed after another key is sent", shutdown: false, expected: ["A", "B"] },
+	{ name: "session_shutdown forgets every cooldown", shutdown: true, expected: ["A", "B", "A"] },
+]) {
+	test(`notification cooldowns: ${row.name}`, async () => {
+		writeFileSync(join(workdir, "settings.json"), JSON.stringify({ kendex: { extensionManager: { config: {
+			"@vanillagreen/pi-qol": { "notification.bell": false, "notification.native": false, "notification.piUi": true, "notification.cooldownSeconds": 8 },
+		} } } }));
+		const fake = makeFakeApi();
+		qolDefault(fake.api);
+		const sent: string[] = [];
+		const ctx = makeCtx({ cwd: workdir, hasUI: true, ui: { ...makeCtx().ui, notify: (text: string) => { sent.push(text); } } });
+		try {
+			setSystemTime(new Date(1_000_000));
+			sendQolNotification(ctx as any, "test", "A", "info", "A");
+			setSystemTime(new Date(1_001_000));
+			sendQolNotification(ctx as any, "test", "B", "info", "B");
+			if (row.shutdown) await fake.handlers.session_shutdown!({ type: "session_shutdown" }, ctx);
+			setSystemTime(new Date(1_002_000));
+			sendQolNotification(ctx as any, "test", "A", "info", "A");
+		} finally {
+			setSystemTime();
+			if (!row.shutdown) await fake.handlers.session_shutdown!({ type: "session_shutdown" }, ctx);
+		}
+		expect(sent).toEqual(row.expected);
+	});
+}
+
 function searchSession(index: number, chars: number): QolSessionSearchSession {
 	return {
 		allMessagesText: "x".repeat(chars),
@@ -118,7 +181,7 @@ test("parsed prompts are kept for a bounded number of sessions", () => {
 	expect([sessionUserMessages(paths[0]!)[0]?.text, sessionUserMessages(paths.at(-1)!)[0]?.text]).toEqual(["after 0", `before ${SESSION_SEARCH_USER_MESSAGES_MAX_SESSIONS}`]);
 });
 
-test("thinking durations are bounded and finished labels are released at agent_end", async () => {
+test("thinking durations are bounded and finished labels are released at agent_end, running ones kept", async () => {
 	const fake = makeFakeApi();
 	qolDefault(fake.api);
 	const ctx = makeCtx({ cwd: workdir, hasUI: true, ui: { ...makeCtx().ui, theme: undefined } });
@@ -129,9 +192,13 @@ test("thinking durations are bounded and finished labels are released at agent_e
 		store.labels.set(`${i}:0`, { setText() {} } as any);
 		fake.handlers.message_update!({ assistantMessageEvent: { type: "thinking_end", partial, contentIndex: 0 } }, ctx);
 	}
+	// One block still running when the agent ends keeps its ticking label.
+	const running = { timestamp: 1000 };
+	fake.handlers.message_update!({ assistantMessageEvent: { type: "thinking_start", partial: running, contentIndex: 0 } }, ctx);
+	store.labels.set("1000:0", { setText() {} } as any);
 	expect(store.durations.size).toBe(THINKING_TIMER_MAX_DURATIONS);
-	expect(store.labels.size).toBe(1000);
+	expect(store.labels.size).toBe(1001);
 	fake.handlers.agent_end!({ messages: [], type: "agent_end" }, { ...ctx, hasUI: false });
-	expect(store.labels.size).toBe(0);
+	expect([...store.labels.keys()]).toEqual(["1000:0"]);
 	await fake.handlers.session_shutdown!({ type: "session_shutdown" }, { ...ctx, hasUI: false });
 });

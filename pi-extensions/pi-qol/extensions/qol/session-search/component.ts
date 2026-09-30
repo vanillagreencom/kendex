@@ -29,6 +29,7 @@ import type {
 	QolSessionMessagesState,
 	QolSessionPaletteAction,
 	QolSessionSearchHit,
+	QolSessionSearchLoad,
 	QolSessionSearchResult,
 	QolSessionSearchScope,
 	QolSessionSearchSession,
@@ -108,7 +109,8 @@ export class QolSessionSearchComponent {
 	private readonly done: (action: QolSessionPaletteAction) => void;
 	private readonly tui: { requestRender(): void; terminal?: { rows?: number } };
 	private readonly theme: Theme;
-	private readonly sessions: QolSessionSearchSession[];
+	/** The index, while it loads, once loaded, or the load's failure. */
+	private sessions: QolSessionSearchLoad;
 	private readonly cwd: string;
 	private readonly currentModel: QolModelInfo | undefined;
 	private screen: "search" | "messages" | "actions" | "confirmContext" | "confirmFork" | "confirmModel" = "search";
@@ -125,7 +127,7 @@ export class QolSessionSearchComponent {
 		done: (action: QolSessionPaletteAction) => void,
 		tui: { requestRender(): void; terminal?: { rows?: number } },
 		theme: Theme,
-		sessions: QolSessionSearchSession[],
+		sessions: QolSessionSearchLoad,
 		cwd: string,
 		initialQuery = "",
 		currentModel: QolModelInfo | undefined = undefined,
@@ -150,6 +152,13 @@ export class QolSessionSearchComponent {
 	}
 
 	invalidate(): void {}
+
+	/** Show the index once its load settles; the overlay opens before that. */
+	setSessions(sessions: QolSessionSearchLoad): void {
+		this.sessions = sessions;
+		this.updateResults(false);
+		this.tui.requestRender();
+	}
 
 	private maxOverlayRows(): number {
 		const terminalRows = Number(this.tui.terminal?.rows ?? process.stdout.rows ?? 30);
@@ -213,8 +222,9 @@ export class QolSessionSearchComponent {
 	}
 
 	private sessionsForScope(scope = this.searchState.scope): QolSessionSearchSession[] {
-		if (scope === "all") return this.sessions;
-		return this.sessions.filter((session) => sameSessionSearchProject(session.cwd, this.cwd));
+		if (this.sessions.status !== "ready") return [];
+		if (scope === "all") return this.sessions.sessions;
+		return this.sessions.sessions.filter((session) => sameSessionSearchProject(session.cwd, this.cwd));
 	}
 
 	private updateResults(resetSelection = true): void {
@@ -614,7 +624,11 @@ export class QolSessionSearchComponent {
 		if (!compact) lines.push(row(dim(`tokens · re:<pattern> regex · "phrase" exact`)));
 		lines.push(divider());
 
-		if (state.results.length === 0) {
+		if (this.sessions.status === "loading") {
+			lines.push(row(muted("Loading sessions…")));
+		} else if (this.sessions.status === "failed") {
+			lines.push(row(muted(`Could not load sessions: ${this.sessions.error.split("\n")[0]}`)));
+		} else if (state.results.length === 0) {
 			lines.push(row(muted(state.query.trim() ? "No prompts match your search" : "No prompts found")));
 		} else {
 			lines.push(...this.renderSearchHitPane(inner, row, dim, muted, accent));

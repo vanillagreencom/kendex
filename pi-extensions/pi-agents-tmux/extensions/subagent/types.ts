@@ -195,6 +195,9 @@ export interface SingleResult {
 	attempts?: AttemptSummary[];
 	errorEnvelope?: string;
 	messages: Message[];
+	/** Assistant messages a bounded result no longer lists; the transcript
+	 *  still holds them. */
+	droppedMessages?: number;
 	stderr: string;
 	usage: UsageStats;
 	model?: string;

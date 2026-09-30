@@ -4,8 +4,8 @@
 
 ### 4.0.0
 
-- **Breaking**: fetched and searched text is stored once, on disk, under `~/.pi/agent/kendex/sessions/<session>/pi-web-tools/content/`. The session record, the `web_fetch` details (`stored`) and the `get_web_content` details now carry the id, title, URL, metadata and `contentLength`, not the text. Text stored in a session by an earlier version cannot be read with `get_web_content`.
-- At most 8,388,608 characters of stored text are held in memory, least recently read dropped first; a dropped item is read from disk again when requested. Memory is cleared when a session starts or ends.
+- **Breaking**: fetched and searched text is stored once, on disk, under `~/.pi/agent/kendex/sessions/<session>/pi-web-tools/content/`. The session record, the `web_fetch` details (`stored`) and the `get_web_content` details now carry the id, title, URL, metadata, `contentLength` and the `sessionId` of the session that stored the text, not the text. A forked session reads its parent's ids from the parent's directory. Text stored in a session by an earlier version cannot be read with `get_web_content`, which fails with `Stored content text gone: <id>`, as it does for any recorded id whose file was deleted.
+- At most 8,388,608 characters of stored text are held in memory, least recently read dropped first; a dropped item is read from disk again when requested. One item larger than that bound by itself is still held until the next item is stored. Memory is cleared when a session starts or ends.
 - A session's stored text is deleted once the session's working directory is gone (a merged worktree), and any stored file older than 5 days is deleted, when the next session starts.
 
 ### 3.1.0

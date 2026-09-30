@@ -61,6 +61,12 @@ export interface LogWriter {
 	 * or stall. Text appended after the call waits for the next window.
 	 */
 	drain(): Promise<void>;
+	/**
+	 * Whether the file has no pending text, no write in flight (a stalled one
+	 * included) and no failed write whose loss is not yet marked in it. False
+	 * after a flush settles means its last write failed or is still stalled.
+	 */
+	settled(file: string): boolean;
 }
 
 export interface LogWriterDeps extends CoalescedCallTimers {
@@ -202,6 +208,11 @@ export function createLogWriter(deps: LogWriterDeps = {}): LogWriter {
 		async drain() {
 			flushWindow.cancel();
 			await Promise.all([...queues].map(([file, queue]) => writeNow(file, queue)));
+		},
+		// A file's queue is dropped once its writes settle with nothing pending
+		// and no failure left to mark, so a queue that remains is unsettled.
+		settled(file) {
+			return !queues.has(file);
 		},
 	};
 }

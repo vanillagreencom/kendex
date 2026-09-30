@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
 import { ByteBudget, type UrlReads } from "../src/extract/byte-budget.js";
+import type { WebContentLookup } from "../src/storage.js";
 
 import { clearPackageConfigCache } from "../src/package-config.js";
 
@@ -73,4 +74,9 @@ export function githubFixtureRepo(t: TestContext, files: Record<string, string>)
 	git("-C", source, "-c", "user.email=test@example.com", "-c", "user.name=Test", "-c", "commit.gpgSign=false", "commit", "-q", "-m", "init");
 	git("config", "--file", config, `url.${source}.insteadOf`, "https://github.com/fixture/repo.git");
 	return { cache: join(root, "cache"), head: git("-C", source, "rev-parse", "HEAD") };
+}
+
+/** The stored text a lookup found, or undefined when it found none. */
+export function textOf(lookup: WebContentLookup): string | undefined {
+	return lookup.status === "found" ? lookup.item.content : undefined;
 }

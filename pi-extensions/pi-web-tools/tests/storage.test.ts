@@ -7,6 +7,7 @@ import { LANE_FILE_MAX_AGE_MS } from "../scripts/lane-retention.js";
 import { beginWebContentSession, endWebContentSession, getWebContent, MEMORY_MAX_CHARS, storeWebContent } from "../src/storage.js";
 import { createGetWebContentToolDefinition } from "../src/tools/get-web-content.js";
 import { buildWebFetchToolResult } from "../src/tools/web-fetch.js";
+import { textOf } from "./fixtures.js";
 
 type Appended = { type: string; data: any };
 
@@ -46,8 +47,8 @@ test("a session record and tool details carry the stored id, never the text", (t
 		record: w.appended.map((entry) => entry.data),
 		fetchDetails,
 	}, {
-		record: [{ id: stored.id, title: "T", url: "https://example.com", createdAt: stored.createdAt, contentLength: 9 }],
-		fetchDetails: [{ id: stored.id, title: "T", url: "https://example.com", createdAt: stored.createdAt, contentLength: 9 }],
+		record: [{ id: stored.id, title: "T", url: "https://example.com", createdAt: stored.createdAt, sessionId: "s1", contentLength: 9 }],
+		fetchDetails: [{ id: stored.id, title: "T", url: "https://example.com", createdAt: stored.createdAt, sessionId: "s1", contentLength: 9 }],
 	});
 });
 
@@ -65,10 +66,40 @@ test("a restarted session reads stored text back from disk by id", (t) => {
 	beginWebContentSession(w.ctx("s1"));
 	const stored = storeWebContent(w.pi, { title: "T", url: "https://example.com", content: "Body" });
 	endWebContentSession();
-	assert.equal(getWebContent(stored.id), undefined);
+	assert.deepEqual(getWebContent(stored.id), { status: "unknown" });
 	beginWebContentSession(w.ctx("s1"));
-	assert.deepEqual({ content: getWebContent(stored.id)?.content, url: getWebContent(stored.id)?.url }, { content: "Body", url: "https://example.com" });
+	const lookup = getWebContent(stored.id);
+	assert.deepEqual(lookup.status === "found" && { content: lookup.item.content, url: lookup.item.url }, { content: "Body", url: "https://example.com" });
 });
+
+test("a forked session reads ids its parent stored from the parent's content directory", (t) => {
+	const w = world(t);
+	beginWebContentSession(w.ctx("parent"));
+	const stored = storeWebContent(w.pi, { title: "T", content: "Body" });
+	// A fork copies the parent's records into a session with a new id.
+	beginWebContentSession(w.ctx("fork"));
+	assert.equal(textOf(getWebContent(stored.id)), "Body");
+});
+
+for (const row of [
+	{ name: "text file removed", legacy: false },
+	{ name: "record from an earlier version", legacy: true },
+]) {
+	test(`get_web_content reports a recorded id whose text is gone, not an unknown id: ${row.name}`, async (t) => {
+		const w = world(t);
+		beginWebContentSession(w.ctx("s1"));
+		let id: string;
+		if (row.legacy) {
+			id = "web-legacy";
+			w.appended.push({ type: "pi-web-tools.content", data: { id, url: "https://example.com", content: "inline", createdAt: "2026-01-01T00:00:00.000Z" } });
+		} else {
+			id = storeWebContent(w.pi, { title: "T", url: "https://example.com", content: "Body" }).id;
+			unlinkSync(join(w.contentDir("s1"), `${id}.json`));
+		}
+		beginWebContentSession(w.ctx("s1"));
+		await assert.rejects(createGetWebContentToolDefinition().execute("call", { id }), /^Error: Stored content text gone: web-.*web_fetch on https:\/\/example\.com again/);
+	});
+}
 
 test("a new session holds none of the previous session's items", (t) => {
 	const w = world(t);
@@ -76,7 +107,7 @@ test("a new session holds none of the previous session's items", (t) => {
 	const stored = storeWebContent(w.pi, { title: "T", content: "Body" });
 	w.appended.length = 0;
 	beginWebContentSession(w.ctx("s2"));
-	assert.equal(getWebContent(stored.id), undefined);
+	assert.deepEqual(getWebContent(stored.id), { status: "unknown" });
 });
 
 test("memory holds at most MEMORY_MAX_CHARS of text, dropping the least recently used", (t) => {
@@ -84,11 +115,14 @@ test("memory holds at most MEMORY_MAX_CHARS of text, dropping the least recently
 	beginWebContentSession(w.ctx("s1"));
 	const chunk = "x".repeat(Math.ceil(MEMORY_MAX_CHARS / 4));
 	const first = storeWebContent(w.pi, { title: "first", content: chunk });
-	const rest = Array.from({ length: 4 }, (_, i) => storeWebContent(w.pi, { title: `n${i}`, content: chunk }));
+	const second = storeWebContent(w.pi, { title: "second", content: chunk });
+	// Reading the first item makes the second the least recently used.
+	getWebContent(first.id);
+	for (let i = 0; i < 3; i++) storeWebContent(w.pi, { title: `n${i}`, content: chunk });
 	// With its file gone, an item still in memory is still served; a dropped one is not.
 	unlinkSync(join(w.contentDir("s1"), `${first.id}.json`));
-	unlinkSync(join(w.contentDir("s1"), `${rest.at(-1)!.id}.json`));
-	assert.deepEqual([getWebContent(first.id) === undefined, getWebContent(rest.at(-1)!.id)?.title], [true, "n3"]);
+	unlinkSync(join(w.contentDir("s1"), `${second.id}.json`));
+	assert.deepEqual([getWebContent(first.id).status, getWebContent(second.id).status], ["found", "missing"]);
 });
 
 test("a lane's stored text is gone once its working directory is gone", (t) => {
@@ -125,6 +159,14 @@ test("a lane directory with nothing left in it is removed", (t) => {
 	assert.equal(existsSync(dir), false);
 });
 
+test("an unreadable sessions root is reported as a prune failure, not thrown", (t) => {
+	const w = world(t);
+	const root = join(w.root, "agent", "kendex", "sessions");
+	mkdirSync(join(root, ".."), { recursive: true });
+	writeFileSync(root, "not a directory");
+	assert.deepEqual(beginWebContentSession(w.ctx("s1")).failed.map((failure) => failure.path), [root]);
+});
+
 test("the extension starts the store on session_start and releases it on session_shutdown", async (t) => {
 	const w = world(t);
 	const { default: webTools } = await import("../src/index.js");
@@ -143,5 +185,5 @@ test("the extension starts the store on session_start and releases it on session
 	const stored = storeWebContent(w.pi, { title: "T", content: "Body" });
 	assert.equal(existsSync(join(w.contentDir("s1"), `${stored.id}.json`)), true);
 	await handlers.get("session_shutdown")!({ type: "session_shutdown" }, ctx);
-	assert.equal(getWebContent(stored.id), undefined);
+	assert.deepEqual(getWebContent(stored.id), { status: "unknown" });
 });

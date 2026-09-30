@@ -46,9 +46,17 @@ async function execute(params: Record<string, unknown>) {
 	if (!tool) throw new Error("spawn_fixture.tool_missing=bg_task");
 	return await tool.execute("private-tool-call", params);
 }
+// session_shutdown releases the task list, so after it the task is read from
+// the snapshot it persisted for the next session to restore.
+function persistedTask(): Record<string, unknown> | undefined {
+	for (const entry of [...entries].reverse() as [string, { tasks?: Record<string, unknown>[] }][]) {
+		const task = entry[1]?.tasks?.find((candidate) => candidate.id === "bg-1");
+		if (task) return task;
+	}
+	return undefined;
+}
 async function state() {
-	const inspected = await execute({ action: "log", id: "bg-1" });
-	const task = inspected.details.task;
+	const task = shutDown ? persistedTask() : (await execute({ action: "log", id: "bg-1" })).details.task;
 	if (!task) throw new Error("spawn_fixture.task_missing=bg-1");
 	return { id: task.id, pid: task.pid, status: task.status, reason: task.terminationReason ?? null, exitCode: task.exitCode, exitNotified: task.exitNotified };
 }

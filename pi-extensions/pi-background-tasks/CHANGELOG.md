@@ -4,8 +4,8 @@
 
 ### 2.1.0
 
-- Task logs move into one directory per session under the task directory. A session's log directory is deleted once its working directory is gone (a merged worktree), and any log older than 5 days is deleted, when the next session starts.
-- A task's process handle and in-memory output are released when it exits; `log` and exit wakes read the end of the log file instead. At most 50 finished tasks are kept: past that, the oldest finished task whose exit was already reported is removed with its log. `clear` now deletes the logs of the tasks it removes.
+- Task logs move into one directory per session in the task directory's `lanes/` folder. A session's log directory is deleted once its working directory is gone (a merged worktree), and any log older than 5 days is deleted, when the next session starts. The prune reads only `lanes/`, and in it only real directories this user owns that the package marked as its own, so other folders in the task directory are never touched.
+- A task's process handle and in-memory output are released when it exits; `log` and exit wakes read the end of the log file instead. A task whose log missed a write keeps its in-memory output as the record, and a log that cannot be read shows `[log unreadable: <error>]` instead of empty output. At most 50 finished tasks are kept: past that, the oldest finished task is removed with its log. `clear` now deletes the logs of the tasks it removes. The task list is released when a session ends; the next session restores it from the saved snapshots.
 
 ### 2.0.4
 

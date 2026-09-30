@@ -363,7 +363,7 @@
         {
           "key": "widgetFinishedRetentionSeconds",
           "label": "Mini-dashboard finished retention",
-          "description": "Seconds to keep finished tasks visible in the inline mini-dashboard. Full dashboard entries persist until session end or manual clear.",
+          "description": "Seconds to keep finished tasks visible in the inline mini-dashboard. Full dashboard entries persist until session end or manual clear, and at most 50 finished tasks are kept: past that the oldest is removed with its log.",
           "type": "number",
           "default": 15,
           "category": "UI",
@@ -382,7 +382,7 @@
         {
           "key": "taskDir",
           "label": "Task log directory",
-          "description": "Directory for task log files. PI_BG_TASK_DIR still overrides this setting.",
+          "description": "Directory for task log files, kept in its lanes/ folder, one folder per session. PI_BG_TASK_DIR still overrides this setting.",
           "type": "path",
           "default": "",
           "category": "Storage",

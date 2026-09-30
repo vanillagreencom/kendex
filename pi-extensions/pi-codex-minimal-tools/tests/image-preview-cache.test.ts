@@ -63,14 +63,16 @@ test("previews past the cache bound are dropped, least recently shown first", as
 	const dir = mkdtempSync(join(tmpdir(), "codex-image-preview-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
 	const renderer = imageRenderer();
-	// Each preview holds a little over half the bound as base64, so two do not fit.
-	const bytes = Math.ceil((IMAGE_PREVIEW_CACHE_MAX_CHARS * 0.6 * 3) / 4);
+	// Each preview holds 40% of the bound as base64, so two fit and three do not.
+	const bytes = Math.ceil((IMAGE_PREVIEW_CACHE_MAX_CHARS * 0.4 * 3) / 4);
 	const first = writePng(dir, "first.png", bytes);
 	const second = writePng(dir, "second.png", bytes);
+	const third = writePng(dir, "third.png", bytes);
 	await renderLoaded(show(renderer, first));
 	await renderLoaded(show(renderer, second));
-	// A fresh message for the first image finds no cached preview.
-	assert.equal(hasDimensions(show(renderer, first).render(120)), false);
-	// The second is still cached, so a fresh message shows it at once.
-	assert.equal(hasDimensions(show(renderer, second).render(120)), true);
+	// Showing the first again makes the second the least recently shown.
+	assert.equal(hasDimensions(show(renderer, first).render(120)), true);
+	await renderLoaded(show(renderer, third));
+	// A fresh message shows a cached preview at once and a dropped one without it.
+	assert.deepEqual([first, second, third].map((path) => hasDimensions(show(renderer, path).render(120))), [true, false, true]);
 });

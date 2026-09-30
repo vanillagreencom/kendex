@@ -504,9 +504,9 @@
         {
           "key": "sessionSearch.cacheTtlSeconds",
           "label": "Session cache TTL",
-          "description": "Seconds before the in-memory session list is refreshed. Default 0 keeps the cache until you explicitly run /search refresh.",
+          "description": "Seconds a loaded session index is kept in memory before it is released; the next search opens at once and reloads it. 0 keeps the index until the session ends.",
           "type": "number",
-          "default": 0,
+          "default": 300,
           "category": "Session Search",
           "apply": "live"
         },

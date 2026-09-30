@@ -4,9 +4,13 @@ import * as net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { spawn } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import sessionBridge, { CLIENT_QUEUE_MAX_BYTES } from "../extensions/session-bridge.ts";
 
-import { fakeCtx, fakePi, shutdownBridge, writeBridgeSettings, type EventHandler } from "./lib/bridge-fixture.ts";
+import { fakeCtx, fakePi, sendCommand, shutdownBridge, writeBridgeSettings, type EventHandler } from "./lib/bridge-fixture.ts";
 
 let dir = "";
 let activeHandlers: Map<string, EventHandler> | undefined;
@@ -68,4 +72,59 @@ test("a subscriber that stops reading is disconnected once its unsent bytes pass
 	while (!closed && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
 	expect(closed).toBe(true);
 	expect(received).toBeLessThan(sentBytes);
+}, 30_000);
+
+test("one response larger than the bound reaches a client that reads it", async () => {
+	writeBridgeSettings(dir);
+	process.chdir(dir);
+	const { pi, handlers } = fakePi();
+	activeHandlers = handlers;
+	sessionBridge(pi);
+	await handlers.get("session_start")?.({ reason: "test" }, fakeCtx(dir));
+	// message_end spills the whole message, and history --raw restores it into one response line.
+	const finalText = "x".repeat(CLIENT_QUEUE_MAX_BYTES + 1024 * 1024);
+	await handlers.get("message_end")?.({ message: { role: "assistant", content: [{ type: "text", text: finalText }] } }, fakeCtx(dir));
+	const socketPath = join(process.env.PI_BRIDGE_DIR!, `pi-${process.pid}.sock`);
+	const response = await sendCommand(socketPath, { id: "big", type: "history", limit: 1, raw: true });
+	const restored = (response.data.events[0]?.data as { message: { content: Array<{ text: string }> } } | undefined)?.message.content[0]?.text;
+	expect(restored?.length).toBe(finalText.length);
+}, 30_000);
+
+test("pi-bridge stream stops reading while its stdout is full, delivers every line once drained, and exits non-zero when the bridge closes", async () => {
+	const socketPath = join(dir, "fake.sock");
+	const line = `${JSON.stringify({ type: "event", data: "y".repeat(1000) })}\n`;
+	const lines = 16 * 1024;
+	let server: net.Socket | undefined;
+	const listener = net.createServer((socket) => {
+		server = socket;
+		// A reader that exits early resets the socket; the assertions report it.
+		socket.on("error", () => {});
+		socket.once("data", () => {
+			for (let index = 0; index < lines; index++) socket.write(line);
+		});
+	});
+	await new Promise<void>((resolveListen) => listener.listen(socketPath, resolveListen));
+	const cli = resolve(dirname(fileURLToPath(import.meta.url)), "../bin/pi-bridge.js");
+	const child = spawn("node", [cli, "stream", "--socket", socketPath], { stdio: ["ignore", "pipe", "pipe"], env: { PATH: process.env.PATH, HOME: dir } });
+	try {
+		let stderr = "";
+		child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+		const exited = new Promise<number | null>((resolveExit) => child.once("close", resolveExit));
+		// stdout is not read yet. A reader that kept reading would take the whole
+		// 16 MiB off the socket; a paused one leaves most of it queued at the bridge.
+		const deadline = Date.now() + 10_000;
+		while ((server?.bytesWritten ?? 0) < line.length * lines / 2 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+		// A wait long enough for a reader that did not pause to drain the socket.
+		await new Promise((r) => setTimeout(r, 1000));
+		const unreadAtBridge = server!.writableLength;
+		let received = 0;
+		child.stdout.on("data", (chunk: Buffer) => { received += chunk.length; });
+		while (received < line.length * lines && Date.now() < deadline + 10_000) await new Promise((r) => setTimeout(r, 10));
+		server!.end();
+		expect({ unreadAtBridge: unreadAtBridge > CLIENT_QUEUE_MAX_BYTES, received, code: await exited, stderr: stderr.split("\n")[0] })
+			.toEqual({ unreadAtBridge: true, received: line.length * lines, code: 1, stderr: "bridge-stream-closed" });
+	} finally {
+		child.kill("SIGKILL");
+		await new Promise<void>((resolveClose) => listener.close(() => resolveClose()));
+	}
 }, 30_000);

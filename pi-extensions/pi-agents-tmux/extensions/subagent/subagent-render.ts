@@ -234,6 +234,7 @@ export const subagentToolRenderers = {
 				container.addChild(new Spacer(1));
 				const toolCalls = displayItems.filter((item) => item.type === "toolCall");
 				container.addChild(wrappedText(theme.fg("muted", "─── Tools used ───")));
+				if (r.droppedMessages) container.addChild(wrappedText(theme.fg("muted", `(${r.droppedMessages} earlier messages not shown)`)));
 				if (toolCalls.length === 0) container.addChild(wrappedText(theme.fg("muted", "(none)")));
 				else {
 					for (const item of toolCalls) {

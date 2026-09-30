@@ -13,7 +13,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "./agents.js";
 import { sanitizeCwdSnapshotText, setGitExecFileForTests as setSnapshotGitExecFileForTests, snapshotCwdGitState } from "./cwd-snapshot.js";
-import { getFinalOutput, stringifyError } from "./format.js";
+import { getFinalOutput, stringifyError, textFromMessageContent } from "./format.js";
 import { safeFileName } from "./names.js";
 import { unknownAgentRefusal } from "./messages.js";
 import {
@@ -25,7 +25,10 @@ import {
 	writePromptToTempFile,
 } from "./pane.js";
 import {
+	fullOutputDir,
 	oneShotTranscriptPath,
+	openRuntimeLane,
+	transcriptDir,
 } from "./paths.js";
 import { randomHex } from "./random.js";
 import {
@@ -104,15 +107,27 @@ export function setGitExecFileForTests(execFileOverride?: Parameters<typeof setS
  * Keep `message` in a result's message list as a bounded preview. Only
  * assistant messages are kept, because only they are displayed or read for the
  * final answer; each keeps its text and tool calls, with tool-call arguments
- * bounded as tool details bound them, and at most MAX_RESULT_MESSAGES are kept.
+ * bounded as tool details bound them. The newest MAX_RESULT_MESSAGES are kept.
+ * When none of those carries text, the newest earlier one that does is kept
+ * ahead of them, so the final answer survives a long run of tool calls.
+ * `droppedMessages` counts the messages no longer in the list.
  */
-export function retainResultMessage(messages: Message[], message: Message): void {
+export function retainResultMessage(result: Pick<SingleResult, "messages" | "droppedMessages">, message: Message): void {
 	if (message.role !== "assistant") return;
 	const content = message.content
 		.filter((part) => part.type === "text" || part.type === "toolCall")
 		.map((part) => part.type === "toolCall" ? { ...part, arguments: sanitizeDetailValue(part.arguments) as typeof part.arguments } : part);
-	messages.push({ ...message, content });
-	if (messages.length > MAX_RESULT_MESSAGES) messages.splice(0, messages.length - MAX_RESULT_MESSAGES);
+	const all = [...result.messages, { ...message, content }];
+	if (all.length <= MAX_RESULT_MESSAGES) {
+		result.messages.push(all.at(-1)!);
+		return;
+	}
+	const hasText = (candidate: Message) => textFromMessageContent(candidate.content) !== "";
+	const window = all.slice(-MAX_RESULT_MESSAGES);
+	const older = all.slice(0, -MAX_RESULT_MESSAGES);
+	const pinned = window.some(hasText) ? undefined : older.reverse().find(hasText);
+	result.droppedMessages = (result.droppedMessages ?? 0) + older.length - (pinned ? 1 : 0);
+	result.messages.splice(0, result.messages.length, ...(pinned ? [pinned] : []), ...window);
 }
 
 /** Append child stderr to a result, keeping the last MAX_RESULT_STDERR_CHARS. */
@@ -292,13 +307,14 @@ export async function writeFullOutputArtifact(
 	label: string,
 	text: string,
 ): Promise<{ error?: string; path?: string }> {
-	const dir = path.join(runtimeRoot, "outputs", safeFileName(agentName || "subagent"));
+	const dir = path.join(fullOutputDir(runtimeRoot), safeFileName(agentName || "subagent"));
 	const filePath = path.join(
 		dir,
 		`${Date.now()}-${randomHex(8)}-${safeFileName(label || "output")}.txt`,
 	);
 	try {
 		await withFileMutationQueue(filePath, async () => {
+			openRuntimeLane(fullOutputDir(runtimeRoot));
 			await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
 			await fs.promises.writeFile(filePath, text, { encoding: "utf-8", mode: 0o600 });
 		});
@@ -728,6 +744,7 @@ async function runSingleAgentAttempt(
 	};
 
 	try {
+		openRuntimeLane(transcriptDir(runtimeRoot));
 		await fs.promises.mkdir(path.dirname(transcriptPath), { recursive: true, mode: 0o700 });
 		await fs.promises.writeFile(transcriptPath, "", { encoding: "utf-8", mode: 0o600 });
 		if (agent.systemPrompt.trim()) {
@@ -1186,7 +1203,7 @@ async function runSingleAgentAttempt(
 				}
 				if (eventName === "message_end" && payload.message) {
 					const msg = payload.message as Message;
-					retainResultMessage(currentResult.messages, msg);
+					retainResultMessage(currentResult, msg);
 
 					if (msg.role === "assistant") {
 						if (sawSessionCompact && contentHasTextPart(msg.content)) postCompactAssistantHasText = true;

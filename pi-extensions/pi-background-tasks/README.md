@@ -30,9 +30,9 @@ The agent starts a command with the background task tool. The extension runs the
 
 ## Memory and disk use
 
-- A finished task's output is read from its log file; the process handle and the in-memory output are released when the task exits.
-- At most 50 finished tasks are kept; past that, the oldest finished task whose exit was already reported is removed with its log. `clear` also deletes the logs of the tasks it removes.
-- Logs live in one directory per session under the task directory (`taskDir`, default the system temporary directory's `kendex-pi-bg`). A session's directory is deleted once its working directory is gone (a merged worktree), and any log older than 5 days is deleted. Pi applies both rules when a session starts.
+- A finished task's output is read from its log file; the process handle and the in-memory output are released when the task exits. A task whose log missed a write keeps its in-memory output instead.
+- At most 50 finished tasks are kept; past that, the oldest finished task is removed with its log. `clear` also deletes the logs of the tasks it removes.
+- Logs live in one directory per session in the `lanes/` folder of the task directory (`taskDir`, default the system temporary directory's `kendex-pi-bg`). A session's directory is deleted once its working directory is gone (a merged worktree), and any log older than 5 days is deleted. Pi applies both rules when a session starts, to `lanes/` only, and only to directories the package made there.
 
 ## Settings
 

@@ -255,7 +255,12 @@ function request(target, command, options = {}) {
 		});
 		socket.on("error", reject);
 		socket.on("close", () => {
-			if (!settled && !options.stream) reject(new Error("Socket closed before response"));
+			if (settled) return;
+			// A stream ends only when the bridge closes it: the Pi session ended,
+			// or this reader fell too far behind and was disconnected. Neither is
+			// a clean end, so the stream exits non-zero.
+			if (options.stream) reject(new Error("bridge-stream-closed\nThe bridge closed the stream: the Pi session ended, or this reader left more than 8 MiB unread and was disconnected."));
+			else reject(new Error("Socket closed before response"));
 		});
 	});
 }
@@ -274,7 +279,8 @@ async function main() {
 	const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 	if (command === "stream") {
-		await request(target, { id, type: "subscribe", enabled: true }, { stream: true });
+		// The stream's end is always an error with a stable first line.
+		await request(target, { id, type: "subscribe", enabled: true }, { stream: true }).catch((error) => die(error.message));
 		return;
 	}
 

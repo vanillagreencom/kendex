@@ -13,6 +13,13 @@ export interface QolSessionSearchSession {
 	path: string;
 }
 
+/** The session-search index as the overlay sees it: still loading, loaded,
+ *  or failed with the load's error. */
+export type QolSessionSearchLoad =
+	| { status: "loading" }
+	| { status: "ready"; sessions: QolSessionSearchSession[] }
+	| { status: "failed"; error: string };
+
 export interface QolSessionSearchResult extends QolSessionSearchSession {
 	rank: number;
 	snippets: string[];
