@@ -1,1 +1,0 @@
-- DuckDuckGo web search preserves escaped entity text in result titles and snippets instead of decoding it twice.

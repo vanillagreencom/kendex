@@ -1,1 +1,0 @@
-- The Slack relay skips notices the master already read when a hold ends. It records skipped ids to prevent repeats after a restart and preserves open questions and held answers.

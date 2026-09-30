@@ -1,1 +1,0 @@
-- Add the `engineer` catalog agent for non-UI shell, Python and TypeScript runtime implementation. Dev routing and launch briefs select this role instead of using the maintenance-only generalist.

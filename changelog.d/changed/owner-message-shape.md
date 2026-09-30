@@ -1,1 +1,0 @@
-- Overseer reports check the owner's short Slack format before writing. Owner guidance adds spoken replies and on-screen approval for consequential voice requests.

@@ -1,1 +1,0 @@
-- **Breaking:** review-gate: `standard-required-approvals` and `standard-stale-dismissal` fail until the organization ruleset's pull-request rule requires 1 approval and dismisses stale approvals.

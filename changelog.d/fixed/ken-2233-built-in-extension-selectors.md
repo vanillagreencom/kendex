@@ -1,1 +1,0 @@
-- The Pi extension manager no longer lists built-in extension selectors as file-backed extension settings. Manage built-ins through `pi config`; configured extension paths remain listed.

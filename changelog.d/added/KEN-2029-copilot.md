@@ -1,1 +1,0 @@
-- orch: an `ORCH_OVERSEER_PREFERENCE` entry may name Copilot CLI as `copilot:MODEL:EFFORT`; the overseer opens on the Copilot account `lanes` picks, with that model and effort.

@@ -1,1 +1,0 @@
-- Owner notices that answer a delivered request carry its delivery id, so a relay can bind the reply to the request without a mailbox lookup.

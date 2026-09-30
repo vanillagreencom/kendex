@@ -1,1 +1,0 @@
-- Codex sessions reject completed Responses streams with unfinished tool calls instead of running tools with incomplete arguments.

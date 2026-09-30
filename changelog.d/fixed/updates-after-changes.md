@@ -1,1 +1,0 @@
-- Updates reflects package version changes, source fetches and project settings changes without a manual check or window refocus.

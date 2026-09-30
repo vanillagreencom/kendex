@@ -1,1 +1,0 @@
-- Pi hooks' `pi-contract.test.ts` rejects missing or extra literal `pi.on` events and dotted `pi`/`ctx` accesses in the update inventory. Named package exports remain manual.

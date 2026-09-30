@@ -1,1 +1,0 @@
-- `kendex updates` reuses its update report when it records the session-start snapshot, so listing updates no longer evaluates each package twice.

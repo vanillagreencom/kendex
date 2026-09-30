@@ -1,1 +1,0 @@
-- Pi's native session-start check sends `kendex-drift` only to lead sessions, not delegated children. Registered `SessionStart` hook output (`kendex-hook`) remains unchanged.

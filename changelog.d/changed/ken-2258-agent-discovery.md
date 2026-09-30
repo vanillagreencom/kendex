@@ -1,1 +1,0 @@
-- Pi agent previews use a cached inventory without render-time disk reads. File and directory changes update the cache. Bulk edits reload only changed files, not the whole inventory.

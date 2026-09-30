@@ -1,1 +1,0 @@
-- oversee: after upgrading, run `oversee register` in the overseer's pane; until then no session reads its mail, `oversee launch --predecessor` refuses it, and a watch start drops its launch identity.

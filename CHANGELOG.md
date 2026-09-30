@@ -8,6 +8,111 @@ change came from an outside contributor.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-30
+
+### Added
+
+- orch: `lanes` measures a Copilot CLI account's monthly AI credits from GitHub's usage endpoint with its stored login, and a Copilot lane's context comes from `copilot-statusline`.
+- orch: Copilot CLI lanes resume and take `open-terminal --wake`; Copilot commands get shared skills and, with `--allow-all`, folder trust; ones open-terminal builds get long context.
+- orch: fleet lanes and overseer successors can launch on Claude `sonnet` (Sonnet 5, 1M context) and `haiku` (Haiku 4.5, 200K context).
+- orch: an `ORCH_OVERSEER_PREFERENCE` entry may name Copilot CLI as `copilot:MODEL:EFFORT`; the overseer opens on the Copilot account `lanes` picks, with that model and effort.
+- CLI: `kendex hooks-off` names the Copilot settings file or `--hook-document` that turns hooks off; orch refuses a Copilot fleet lane whose hooks are off.
+- orch: a Copilot CLI lane's context comes first from a kendex Copilot extension the fleet launch installs, and falls back to `copilot-statusline` where that home turns extensions off.
+- review-gate: `REVIEW_GATE_STANDARD_QUEUE_BYPASS` and `REVIEW_GATE_STANDARD_CHECKS_BYPASS` name the bypass actors `validate-standard.sh` admits on a merge-queue-only and a checks-only ruleset.
+- orch: a Copilot fleet lane launched with allow-all whose managed settings block it now reports `stop-cause=allow-all-blocked-by-policy` in the watch, `lanes state` and its turn-end hook.
+- review-gate: `validate-standard.sh` adds the rows `standard-required-approvals` and `standard-stale-dismissal`, and judges required checks and the merge queue only from repository rulesets.
+- orch: the status report's `Escapes:` line counts merged pull requests that a revert, or a bug issue's `Regressed-by: #N` line, named within 14 days, this week, last week and the cap-change week.
+- commit-guards: `COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS` runs the repo-local pre-commit entry only for a commit that touches a path it names, and announces the skip otherwise.
+- orch: the `oversee-watch` heartbeat lists a Dependabot security pull request as `bot-fix pr=N alert=K`, and `alert=none` once every alert linking it has closed.
+- orch: `oversee-watch` reports each open Dependabot, code scanning and secret scanning alert once, until the fleet state records its verdict; `ORCH_SECURITY_ALERTS=off` turns the check off.
+- Add the `engineer` catalog agent for non-UI shell, Python and TypeScript runtime implementation. Dev routing and launch briefs select this role instead of using the maintenance-only generalist.
+- Owner notices that answer a delivered request carry its delivery id, so a relay can bind the reply to the request without a mailbox lookup.
+- Linear accepts OAuth app credentials beside personal keys, caches and renews tokens with fixed `read,write` scope, and reports the credential and actor in `auth-check`.
+- Fleet watches report consecutive consumer refresh failures with the latest run, cause and initial/repeat marker, so owners get a notice for each new incident without timed-repeat noise.
+
+### Changed
+
+- orch: Copilot CLI launches run on the account's stored login with `COPILOT_GITHUB_TOKEN` cleared, its skills and folder trust, on the 1M window, and local fleets take Copilot lanes.
+- orch: a local `open-terminal --relaunch` of a lane whose handoff record stands starts afresh from that record instead of resuming the session the lane ended.
+- lane mail: on Copilot CLI a lead session's tool calls now take and mark read its mail and see a halt's read command; a custom subagent's tool calls take none of the lead's mail.
+- The review-gate consumer refresh and writer templates pin the kendex v1.2.0 release and fetch its installer at the commit v1.2.0 names.
+- orch: `ORCH_OVERSEER_PREFERENCE` entries name their model and are the only model order overseer succession walks; a model name is not checked before launch.
+- orch: `lanes pick --harness pi` reads a Pi root's Copilot pool from the lane host's `accounts` row, with `ORCH_LANE_COPILOT_POOL` as the override; an unread pool's refusal names the failed read.
+- Skill renders, `kendex check --catalog`, the package preview and `kendex diff` leave out top-level `tests/`, `evals/` and `DEVELOPMENT.md`; the next refresh deletes old rendered copies.
+- oversee: after upgrading, run `oversee register` in the overseer's pane; until then no session reads its mail, `oversee launch --predecessor` refuses it, and a watch start drops its launch identity.
+- lane mail: a `peer send --repo` note or `peer ask` reaches only the session the checkout's fleet record names (`oversee register` names one); the sender sees `no-reader` otherwise.
+- orch: `oversee-cycle` micro and small class targets are now 1200 and 1800 seconds, the owner's 20- and 30-minute open-to-merge figures; `oversee-cycle --help` states each target's span and class.
+- `kendex verify` warns, and exits 0, where a project ignores a path an installed agent declares as tracked output; `--strict` still fails the run on it.
+- **Breaking:** harness-ci reads every change as queue-only until the base commit's `[env]` sets `HARNESS_CI_QUEUE_PATHS`; set it empty for none.
+- github: `pr-merge` merges past the merge queue where the queue is all its token bypasses and the change is not queue-only; `--auto --unless-admin` arms only a PR the queue takes; `--admin` is gone.
+- **Breaking:** review-gate's standard scripts refuse until `kendex.settings.toml` `[env]` sets `REVIEW_GATE_STANDARD_APP`, `REVIEW_GATE_STANDARD_ENVIRONMENT` and `REVIEW_GATE_STANDARD_SECRETS`.
+- orch: `approval-wait` takes its mode, `approval` or `off`, from the PR's review decision and its base's rulesets; an open thread holds an approved head at `comments`.
+- review-gate: `pr-watch.sh` reads GitHub's review state alone, with `disarmed` and `awaiting-stale` read from `reviewDecision`; `--heal`, `--no-evaluate` and the predicate kinds are gone.
+- **Breaking:** review-gate: `standard-required-approvals` and `standard-stale-dismissal` fail until the organization ruleset's pull-request rule requires 1 approval and dismisses stale approvals.
+- **Breaking:** review-gate: `standard-ruleset-source` fails an organization's required checks or merge queue (move both to repository rulesets) and an absent organization deletion or force-push rule.
+- **Breaking:** review-gate: `standard-required-contexts` fails until `[env]` sets `REVIEW_GATE_STANDARD_CONTEXTS` to the required checks; drop `Review gate` from the ruleset before the writer goes.
+- `pre-commit-check`, where git hooks are armed, reads the no-verify flag from the commit's git word on: a `-n` of tail or xargs in front of it passes, and a flag xargs reads from a pipe is unseen.
+- `pre-commit-check`, with no armed git hooks, refuses only a line whose command is git commit: a note or message that mentions it mid-line passes, and so does a commit that xargs, env or sudo runs.
+- orch: a restack runs `DEV_VALIDATE_RANGE_CMD` on the rebased branch before its push, stops unarmed on a red run, and reports the run's minutes; with no range command it restacks as before.
+- **Breaking:** `skill-load-check` runs on Copilot CLI; the `workflow` bundle adds `skill-load-record`. A scope that names the check alone must add that hook, or every guarded Copilot call is refused.
+- lanes: every lane brief, on every harness, carries the unattended words, and a `--cmd` launch naming a harness is refused without them.
+- lanes: where kendex hooks run, a launched lane that ends a turn with no `lane-mail ask` or `notice` sent is held or reported to its overseer; the hooks never read the lane's words.
+- orch: `workflow-state prune` now keeps records for 5 days by default, not 14; set `ORCH_RECORD_RETENTION_DAYS` in `[env]` to keep another window.
+- orch: a lane asks Copilot once to re-review a head that moved since Copilot last read it, sends the overseer its answers on a head Copilot already read, and the status report counts each outcome.
+- orch: review before a pull request is one fix round and one re-review: `REVIEW_MAX_CYCLES` defaults to 1, not 4. Set it in `[env]` to allow more.
+- pi-codex-minimal-tools: Background image status reuses layout during redraws. Its timer updates elapsed time without reinstalling the widget.
+- pi-questions: Question results normalize requests once and reuse layout during redraws. Answer wrapping preserves ANSI styles and wraps long words with Pi’s text wrapper.
+- pi-task-panel: Task panels reuse layout and sorted order. Bulk replacement and import keep explicitly active tasks.
+- pi-tool-renderer: User messages reuse Markdown layout during typing and streaming. Width, content and theme changes rebuild the layout.
+- Pi agent previews use a cached inventory without render-time disk reads. File and directory changes update the cache. Bulk edits reload only changed files, not the whole inventory.
+- Overseer reports check the owner's short Slack format before writing. Owner guidance adds spoken replies and on-screen approval for consequential voice requests.
+
+### Removed
+
+- orch: an `ORCH_OVERSEER_PREFERENCE` tier rank is refused; write the model the rank named, so `claude:1:high` becomes `claude:fable:high`.
+- orch: the `review` and `exempt` gate modes and the `PR_REVIEW_GATE`, `PR_APPROVAL_GATE` and `PR_REVIEW_CHECK` settings; orch no longer reads `REVIEW_GATE_MODE`.
+
+### Fixed
+
+- review-gate: a pull request whose change class cannot be measured gets a pending `unmeasured` status naming the cause, instead of failing the writer's whole pass. Run `kendex refresh` to update.
+- A catalog hook's preToolUse refusal on GitHub Copilot now shows the model its reason, not just `hook exited with code 2`. Run `kendex apply` in each project and `kendex apply --global` to update.
+- Copilot CLI no longer runs the hook scripts kendex installs for Claude Code, so a hook installed for both runs once there and a Claude-only one stays off Copilot; a command-declared hook still runs.
+- A hook matcher installed for Copilot names every tool its hooks are matched against, so a hook on `Write`, `Read`, `Edit` or `Bash` fires on `create`, `view`, `apply_patch` and `powershell` too.
+- `kendex verify` passes a hook that runs only on tools the project does not install on, and passes with no install record when every package the project declares is such a hook.
+- A command run below your home directory no longer takes a marked folder above home for its project. The walk up stops at home; a `.kendex-lock.json` at home still makes home the project.
+- `workflow-state remove --help` and `-h` now print the remove usage and change nothing, and an item key that starts with a dash is refused.
+- `lane-mail inbox --ack N` no longer marks a message read before it arrives. A count past the lines present stops at them, and a cursor already past them comes back down.
+- The Pi Claude bridge no longer reads the whole Claude binary or re-serializes history each turn, and its debug log no longer copies tool output or prompts (`@vanillagreen/pi-claude-bridge` 4.0.6).
+- A fleet overseer is told at its next tool call when it crosses its context mark, and its watch relaunches one whose context fills its window. Run `kendex apply` in each project to update.
+- With thinking Off, the Codex provider shim sends the model's Off reasoning effort, as Pi does since 0.86.0 (`@vanillagreen/pi-codex-minimal-tools` 2.0.4).
+- commit-guards: py-names passes a commit with no Python file without reading `.kendex-generated.json`, and an inventory refusal names its status, jq version and first rejected entry.
+- review-gate: a pull request whose base predates `.kendex-generated.json` gets a gate status again, and one with an unresolved change class gets `pending` while the rest converge.
+- A linked worktree is now judged by its own commit guards. `kendex check` reports them unverified until `kendex guard install` in the main checkout re-arms them.
+- Packages pages rows while keeping all results and selections. Safety previews stop queuing for rows you leave. Catalog reads share requests and offer a retry when they fail.
+- Hook and Pi session-start reports state the lane install rule and replace kendex fix advice with a drift-item count. Main-checkout reports stay unchanged.
+- Rolling consumer refreshes replace hand-edited renders when every conflict is a known edit hold, and list the held items in the pull request body.
+- Catalog checks and verification report failed delivery when a named harness cannot run a hook event. Intentional exclusions, advisory hooks, and unrelated skill reporting stay unchanged.
+- Detect hosted harness exits through the lane-host provider even when SSH stays open. Report confirmed exits in the same watch pass and leave failed status reads unjudged.
+- Pi tool renderer preserves structured tool results for codemode scripts, including bash output on Pi 0.99.0 and later, while keeping support for earlier Pi versions.
+- Codex sessions reject completed Responses streams with unfinished tool calls instead of running tools with incomplete arguments.
+- The Pi extension manager no longer lists built-in extension selectors as file-backed extension settings. Manage built-ins through `pi config`; configured extension paths remain listed.
+- `kendex updates` reuses its update report when it records the session-start snapshot, so listing updates no longer evaluates each package twice.
+- Updates reads only current and latest version details instead of complete package histories. Versions keeps its full history.
+- Consumer refreshes open pull requests at any measured class. Only render arms auto-merge; other classes show the classifier cause and path for maintainer review.
+- Slack relay WebSocket connections require TLS 1.2 or later on every supported Python version.
+- DuckDuckGo web search preserves escaped entity text in result titles and snippets instead of decoding it twice.
+- Refresh records supported hook copies when another harness cannot run the catalog event, warns for that harness, and keeps verification current for the rest of the install.
+- Pi's native session-start check sends `kendex-drift` only to lead sessions, not delegated children. Registered `SessionStart` hook output (`kendex-hook`) remains unchanged.
+- Pi hooks' `pi-contract.test.ts` rejects missing or extra literal `pi.on` events and dotted `pi`/`ctx` accesses in the update inventory. Named package exports remain manual.
+- The Slack relay skips notices the master already read when a hold ends. It records skipped ids to prevent repeats after a restart and preserves open questions and held answers.
+- Updates reflects package version changes, source fetches and project settings changes without a manual check or window refocus.
+- Returning to Updates keeps the current rows without repeating the background read. Startup reads them once. Check for updates and refreshes after changes or window focus still run.
+
+### Security
+
+- The desktop app's interface build and test tools no longer carry the published security advisories against vitest, js-yaml and undici. The shipped app is unchanged.
+- Pi's tool renderer no longer freezes on Git diff headers with unterminated quoted paths and repeated backslashes.
+
 ## [1.2.0] - 2026-09-28
 
 ### Added

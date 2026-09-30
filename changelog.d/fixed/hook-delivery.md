@@ -1,1 +1,0 @@
-- Catalog checks and verification report failed delivery when a named harness cannot run a hook event. Intentional exclusions, advisory hooks, and unrelated skill reporting stay unchanged.

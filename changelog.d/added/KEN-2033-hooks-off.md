@@ -1,1 +1,0 @@
-- CLI: `kendex hooks-off` names the Copilot settings file or `--hook-document` that turns hooks off; orch refuses a Copilot fleet lane whose hooks are off.
