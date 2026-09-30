@@ -1,0 +1,1 @@
+- Pi hooks tests compare the event and call inventory with extension source. Missing or extra entries fail the check, so an omitted event cannot hide a blocking Pi update.

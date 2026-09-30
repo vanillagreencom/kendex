@@ -1,9 +1,6 @@
 {
   "uses": {
-    "extensions/config.ts": {
-      "events": [],
-      "calls": ["ctx.isProjectTrusted"]
-    },
+
     "extensions/dispatch.ts": {
       "events": [],
       "calls": ["@earendil-works/pi-coding-agent.formatSize", "@earendil-works/pi-coding-agent.truncateTail"]
@@ -15,6 +12,10 @@
     "extensions/lane-mail-wake.ts": {
       "events": ["agent_settled", "session_shutdown", "session_start"],
       "calls": ["ctx.isIdle", "ctx.ui.notify", "pi.on", "pi.sendMessage", "pi.sendUserMessage"]
+    },
+    "extensions/package-config.ts": {
+      "events": ["session_shutdown", "session_start"],
+      "calls": ["ctx.isProjectTrusted", "pi.events.on", "pi.on"]
     },
     "extensions/vocab.ts": {
       "events": [],

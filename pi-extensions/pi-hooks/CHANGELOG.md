@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- Package tests now check the Pi compatibility audit's event and call inventory against the carrier's source. A missing or extra entry fails the tests, which prevents an omitted hook event from hiding a blocking Pi update.
+
 ### 0.17.0
 
 - The native session-start drift check sends its `kendex-drift` message only to the lead session. A child started by pi-agents-tmux no longer receives that message, which can pull it away from its delegated task. Registered `SessionStart` hook output (`kendex-hook`) remains unchanged.
