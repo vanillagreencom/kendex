@@ -28,15 +28,16 @@
 #
 # It writes the record's `cycle` object, appends one `cycle` row to the fleet
 # log, and prints the same line:
-#   cycle item=ITEM pr=N class=C tier=T target=S actual=S open=S verdict=V
+#   cycle item=ITEM pr=N class=C tier=T target=S merge_group=S actual=S open=S verdict=V
 #     phase=P phase_secs=S cause=W bot_wait=S thread_fix=S paused=S missing=A,B
 #     review=N fix=N bot=N full_validations=N pr_rounds=N escaped=B refixed=B
 # (one line). A value it could not read prints `-`.
 #   stamps    launched (the record's launched_at), first_commit, pr_opened,
 #             gate_green, ci_green, armed (armed, else queued), merged
 #   missing   the stamps that are null
-#   target    seconds, pull request open to merge, by class, from the table
-#             `--help` prints last
+#   target    seconds, pull request open to merge: the class target from the
+#             table below plus pr-timeline's ci_merge_group_secs, null as 0
+#   merge_group  those merge-group CI seconds, `-` when null
 #   actual    merged minus launched, lane launch to merge; the rollup reads it
 #   open      pr-timeline's open_secs, pull request open to merge, null where
 #             pr_opened or merged is missing
@@ -45,9 +46,12 @@
 #   phase     the longest gap between two consecutive stamps in time order
 #             among the stamps at or after pr_opened and at or before merged
 #             in time, the span the verdict judges, named by the stamp that
-#             ends it; the earliest wins a tie. A stamp outside that span
-#             enters no gap: a ci_green whose checks finished before the PR
-#             opened, or one an optional check completes after the merge.
+#             ends it; the earliest wins a tie.
+#             The gap ending at merged loses the merge-group CI seconds,
+#             floored at 0, before the longest gap is chosen.
+#             A stamp outside that span enters no gap: a ci_green whose
+#             checks finished before the PR opened, or one an optional check
+#             completes after the merge.
 #             Null while a stamp other than launched and first_commit is
 #             missing: a missing stamp has no time, and one that could fall
 #             in the span joins two gaps
@@ -327,7 +331,8 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
      gate_green: $s.gate_met, ci_green: $s.ci_green, armed: ($s.armed // $s.queued),
      merged: $s.merged} as $stamps
   | (if $class == "" then null else $class end) as $class
-  | (if $class == null then null else $targets[$class] end) as $target
+  | $t.ci_merge_group_secs as $merge_group
+  | (if $class == null then null else $targets[$class] + ($merge_group // 0) end) as $target
   | (if $stamps.launched == null or $stamps.merged == null then null
      else ($stamps.merged | fromdate) - ($stamps.launched | fromdate) end) as $actual
   | $t.open_secs as $open
@@ -337,13 +342,14 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
      | [$stamps | to_entries[] | select(.value != null) | {name: .key, at: (.value | fromdate)} | select(.at >= $o and .at <= $m)]
      | sort_by(.at) end) as $seq
   | (if $seq == null then {phase: null, secs: null} else
-       [range(1; $seq | length) as $i | {phase: $seq[$i].name, secs: ($seq[$i].at - $seq[$i - 1].at)}]
+       [range(1; $seq | length) as $i | {phase: $seq[$i].name, secs: ($seq[$i].at - $seq[$i - 1].at)}
+        | if .phase == "merged" then .secs = ([.secs - ($merge_group // 0), 0] | max) else . end]
        | sort_by(- .secs) | first end) as $dominant
   | ($seq // [] | map(.name) | index("gate_green")) as $gate
   | (if ($missing | length) > 0 or ($gate // 0) == 0 or $t.push_times == null then null
      else gate_waits($seq[$gate - 1].at; $seq[$gate].at) end) as $waits
   | {pr: $t.pr, class: $class, class_cause: (if $cause == "" then null else $cause end),
-     tier: $tier, stamps: $stamps, target: $target, actual: $actual, open: $open,
+     tier: $tier, stamps: $stamps, target: $target, merge_group: $merge_group, actual: $actual, open: $open,
      verdict: (if $class == null then "unclassified" elif $open == null then "unmeasured"
                elif $open > $target then "miss" else "met" end),
      phase: $dominant.phase, phase_secs: $dominant.secs, gate_waits: $waits,
@@ -364,6 +370,7 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
 
 line="$(jq -r --arg item "$ITEM" 'def n: if . == null then "-" else tostring end;
   "cycle item=\($item) pr=\(.pr) class=\(.class | n) tier=\(.tier) target=\(.target | n)"
+  + " merge_group=\(.merge_group | n)"
   + " actual=\(.actual | n) open=\(.open | n) verdict=\(.verdict) phase=\(.phase | n) phase_secs=\(.phase_secs | n)"
   + " cause=\(.cause | n) bot_wait=\(.gate_waits.bot_wait | n) thread_fix=\(.gate_waits.thread_fix | n)"
   + " paused=\(.gate_waits.paused | n)"

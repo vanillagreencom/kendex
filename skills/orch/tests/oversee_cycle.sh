@@ -147,7 +147,7 @@ while IFS='|' read -r class merged tier want_target want_verdict want_escaped; d
   timeline "$merged"
   got="$(record KEN-1 "$tier")"
   assert_eq "$(sed -E 's/ phase=.*//' <<<"$got") $(field escaped "$got")" \
-    "rc=0 cycle item=KEN-1 pr=7 class=$class tier=$tier target=$want_target actual=$merged open=$((merged - 120)) verdict=$want_verdict escaped=$want_escaped" \
+    "rc=0 cycle item=KEN-1 pr=7 class=$class tier=$tier target=$want_target merge_group=- actual=$merged open=$((merged - 120)) verdict=$want_verdict escaped=$want_escaped" \
     "$class at $merged s, tier $tier: target $want_target, $want_verdict, escaped $want_escaped"
 done <<'ROWS'
 render|421|standard|300|miss|false
@@ -163,6 +163,32 @@ standard|5521|standard|5400|miss|false
 standard|5520|micro|5400|met|true
 standard|5520|small|5400|met|true
 ROWS
+
+echo "=== merge-group CI widens the target and comes off only the merged gap ==="
+# The fleet example uses a 900 s micro target. Keep the shipped target table
+# unchanged and replay that input in a private copy of the real script.
+FLEET_BIN="$LAYOUT/orch/scripts/oversee-cycle-fleet"
+cp -- "$BIN" "$FLEET_BIN"
+mutate_file "$FLEET_BIN" '"micro":1200' '"micro":900'
+while IFS='|' read -r name bin merged group want; do
+  new_case "merge-group-$name"
+  printf micro > "$CASE/class"
+  RUN_BIN="$BIN"
+  [[ "$bin" != fleet ]] || RUN_BIN="$FLEET_BIN"
+  timeline "$merged"
+  edit_json "$CASE/timeline.json" ".ci_merge_group_secs = $group | .stamps |= (.gate_met = \"$(at 500)\" | .ci_green = \"$(at 560)\" | .armed = \"$(at 620)\")"
+  got="$(record KEN-1 micro)"
+  assert_eq "$(field target "$got") $(field merge_group "$got") $(field verdict "$got") $(field phase "$got") $(field phase_secs "$got")|$(state '.lanes[0].cycle | [.target, .merge_group, .actual, .open, .phase, .phase_secs, .gate_waits]')" \
+    "$want" "$name: the printed allowance and phase match the record; actual, open and gate waits keep their seconds"
+done <<'ROWS'
+allowance|fleet|1080|280|target=1180 merge_group=280 verdict=met phase=gate_green phase_secs=380|[1180,280,1080,960,"gate_green",380,{"bot_wait":380,"thread_fix":0,"paused":0}]
+null-control|fleet|1080|null|target=900 merge_group=- verdict=miss phase=merged phase_secs=460|[900,null,1080,960,"merged",460,{"bot_wait":380,"thread_fix":0,"paused":0}]
+queue-wait|fleet|2000|280|target=1180 merge_group=280 verdict=miss phase=merged phase_secs=1100|[1180,280,2000,1880,"merged",1100,{"bot_wait":380,"thread_fix":0,"paused":0}]
+shipped-target|shipped|1500|280|target=1480 merge_group=280 verdict=met phase=merged phase_secs=600|[1480,280,1500,1380,"merged",600,{"bot_wait":380,"thread_fix":0,"paused":0}]
+floor|shipped|200|280|target=1480 merge_group=280 verdict=met phase=merged phase_secs=0|[1480,280,200,80,"merged",0,null]
+zero|fleet|1080|0|target=900 merge_group=0 verdict=miss phase=merged phase_secs=460|[900,0,1080,960,"merged",460,{"bot_wait":380,"thread_fix":0,"paused":0}]
+ROWS
+RUN_BIN=""
 
 echo "=== the verdict reads open to merge, not launch to merge ==="
 # Launch to PR opened takes 900 s, so launch to merge is over the micro
@@ -183,7 +209,7 @@ echo "=== a class the classifier did not give is unclassified, never judged ==="
 new_case unclassified
 timeline 5401
 assert_eq "$(record KEN-1 standard)" \
-  "rc=0 cycle item=KEN-1 pr=7 class=- tier=standard target=- actual=5401 open=5281 verdict=unclassified phase=merged phase_secs=4981 cause=- bot_wait=180 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_validations=- pr_rounds=0 escaped=- refixed=false" \
+  "rc=0 cycle item=KEN-1 pr=7 class=- tier=standard target=- merge_group=- actual=5401 open=5281 verdict=unclassified phase=merged phase_secs=4981 cause=- bot_wait=180 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_validations=- pr_rounds=0 escaped=- refixed=false" \
   "the classifier's refusal records no class and no target"
 assert_eq "$(head -n 1 "$CASE/err")" "oversee-cycle: class-unread cause=classifier-exit-2" "and names the cause on stderr"
 
@@ -223,7 +249,7 @@ PR_ROUNDS="$PR_ROUNDS" timeline 1500 300 500
 jq -n '{first_panel: {agents: ["a"]}, rereview_cycles: 2, cycles: 5, pr_comment_review: {iterations: 4},
         validate_rounds: [{mode: "full"}, {mode: "range"}, {mode: "full"}]}' > "$REPO/tmp/workflow-state-KEN-2.json"
 assert_eq "$(record KEN-2 micro)" \
-  "rc=0 cycle item=KEN-2 pr=7 class=micro tier=micro target=1200 actual=1500 open=1380 verdict=miss phase=merged phase_secs=1080 cause=- bot_wait=180 thread_fix=0 paused=0 missing=- review=3 fix=5 bot=4 full_validations=2 pr_rounds=2 escaped=false refixed=true" \
+  "rc=0 cycle item=KEN-2 pr=7 class=micro tier=micro target=1200 merge_group=- actual=1500 open=1380 verdict=miss phase=merged phase_secs=1080 cause=- bot_wait=180 thread_fix=0 paused=0 missing=- review=3 fix=5 bot=4 full_validations=2 pr_rounds=2 escaped=false refixed=true" \
   "the printed line: a miss whose longest gap ends at the merge, and a push after the first gate pass"
 assert_eq "$(state '.lanes[] | select(.item == "KEN-2") | .cycle | [.class, .tier, .verdict, .stamps]')" \
   "[\"micro\",\"micro\",\"miss\",{\"launched\":\"$(at 0)\",\"first_commit\":\"$(at 60)\",\"pr_opened\":\"$(at 120)\",\"gate_green\":\"$(at 300)\",\"ci_green\":\"$(at 360)\",\"armed\":\"$(at 420)\",\"merged\":\"$(at 1500)\"}]" \
@@ -328,7 +354,7 @@ jq -n --arg merge "$MERGE" --arg fc "$(at 900)" --arg cr "$(at 960)" --arg gate 
   '{pr: 7, merge_commit: $merge, stamps: {first_commit: $fc, created: $cr, last_push: $cr, first_gate_met: null,
     gate_met: $gate, ci_green: $ci, armed: null, queued: $gate, merged: $m}, open_secs: 140, push_times: [], bot_review_times: []}' > "$CASE/timeline.json"
 assert_eq "$(record KEN-3 micro)" \
-  "rc=0 cycle item=KEN-3 pr=7 class=small tier=micro target=1800 actual=1100 open=140 verdict=met phase=merged phase_secs=90 cause=- bot_wait=40 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_validations=- pr_rounds=- escaped=true refixed=-" \
+  "rc=0 cycle item=KEN-3 pr=7 class=small tier=micro target=1800 merge_group=- actual=1100 open=140 verdict=met phase=merged phase_secs=90 cause=- bot_wait=40 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_validations=- pr_rounds=- escaped=true refixed=-" \
   "launch to first commit, the lane's longest gap, is outside the open span and names no phase; queued stands in for armed, a micro tier merged small escaped, and no gate pass leaves refixed unknown, a timeline with no rounds no pr_rounds"
 
 echo "=== the gate_green phase is split into the waits it holds ==="
@@ -518,6 +544,18 @@ control() { # NAME FILE ANCHOR REPLACEMENT — sets RUN_BIN to the mutant's over
 }
 
 echo "=== controls ==="
+control m-merge-target oversee-cycle '$targets[$class] + ($merge_group // 0)' '$targets[$class] + 0'
+new_case c-merge-target; printf micro > "$CASE/class"; timeline 1500
+edit_json "$CASE/timeline.json" '.ci_merge_group_secs = 280'
+assert_eq "$(field verdict "$(record KEN-1 micro)")" "verdict=miss" \
+  "control: without the allowance the shipped-target row turns from met to miss"
+
+control m-merge-gap oversee-cycle '.secs - ($merge_group // 0)' '.secs - 0'
+new_case c-merge-gap; printf micro > "$CASE/class"; timeline 1080
+edit_json "$CASE/timeline.json" ".ci_merge_group_secs = 280 | .stamps |= (.gate_met = \"$(at 500)\" | .ci_green = \"$(at 560)\" | .armed = \"$(at 620)\")"
+assert_eq "$(field phase "$(record KEN-1 micro)")" "phase=merged" \
+  "control: without the merged-gap subtraction the allowance row names merged"
+
 control m-record oversee-cycle 'elif $open > $target then "miss"' 'elif false then "miss"'
 new_case c-miss; printf standard > "$CASE/class"; timeline 5521
 assert_eq "$(field verdict "$(record KEN-1 standard)")" "verdict=met" \
