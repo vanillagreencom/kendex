@@ -146,8 +146,12 @@ Merge route:
         merge-queue rulesets, comma-joined. The next line is the
         classifier's queue-only line.
     merge-route: queue cause=<cause> [ruleset=<id>] [rule=<type>] [bypass=<value>] [allowed=<method,...|none> accepted=<method,...>] [read=<what>]
-        The merge call passes no --admin, so GitHub enrolls the PR in the
-        queue (exit 75). cause is rules-unreadable (the base branch's rules
+        The merge call passes --auto and no --admin, so GitHub enrolls the
+        PR in the queue (exit 75): GitHub refuses a merge call on a queue
+        base that passes neither. This --auto reads no approval rule, as
+        the plain merge does not. Where the base's rules could not be read,
+        the base may hold no queue, and the same --auto then arms auto-merge.
+        cause is rules-unreadable (the base branch's rules
         could not be read, or a rule names no ruleset), ruleset-unreadable
         (that ruleset could not be read), queue-ruleset-mixed (that
         merge-queue ruleset also holds the rule named as rule=), no-bypass
@@ -821,7 +825,7 @@ BYPASS_VALUES=" always pull_requests_only exempt "
 # holds that one rule and answers a bypass, every other ruleset on the base
 # answers never, and the base has no classic branch protection. Any read that
 # fails is the queue, never the admin route: the queue is the route GitHub
-# takes when --admin is absent, so a failure costs a queue wait, not a merge
+# takes on --auto without --admin, so a failure costs a queue wait, not a merge
 # past a gate. A merge past the queue is direct, so GitHub holds it to the
 # repository's methods and the pull_request rules, not to the queue's method:
 # the route needs one of the accepted methods there, MERGE_ROUTE_METHOD. The
@@ -831,7 +835,7 @@ MERGE_ROUTE=""
 MERGE_ROUTE_METHOD=""
 route_queue() { # FIELDS WHY
     echo "merge-route: queue $1" >&2
-    echo "  $2 The merge call passes no --admin." >&2
+    echo "  $2 The merge call passes --auto and no --admin." >&2
 }
 merge_route() { # PR TOKEN HEAD ACCEPTED...
     local pr_num="$1" token="$2" head="$3" branch base rules queue_ids ids id bypass bypasses="" rulesets="" unnamed mixed enabled direct rc=0
@@ -1162,8 +1166,10 @@ main() {
     fi
 
 
+    # GitHub enrolls a PR in a merge queue only through --auto: a merge call
+    # without it or --admin on a queue base is refused, gh exiting 0 on it.
     local -a cmd=(pr merge "$pr_num" "--$method" --match-head-commit "$expected_head")
-    [ "$auto" = true ] && cmd+=(--auto)
+    [ "$auto" != true ] && [ "$route" != queue ] || cmd+=(--auto)
     [ "$route" != admin ] || cmd+=(--admin)
 
     local merge_output merge_exit=0

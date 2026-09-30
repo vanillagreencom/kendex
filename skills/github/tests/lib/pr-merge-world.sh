@@ -178,6 +178,7 @@ RUN_DIR=""
 CALL_LOG="$TMPDIR/calls.log"
 AUTH_LOG="$TMPDIR/auth.log"
 FAIL_ONCE="$TMPDIR/state-failed-once"
+MERGE_REFUSED="$TMPDIR/merge-refused"
 word() {
   local v="${1#*:}"
   case "$1" in
@@ -262,7 +263,7 @@ build() {
   RUN_DIR="$REPO"
   : >"$CALL_LOG"
   : >"$AUTH_LOG"
-  rm -f "$FAIL_ONCE"
+  rm -f "$FAIL_ONCE" "$MERGE_REFUSED"
   for w in "$@"; do word "$w"; done
 }
 
@@ -373,7 +374,7 @@ run() {
   # the token each call saw, so a lane's own environment would decide them.
   (cd "$RUN_DIR" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u KENDEX_ENV_FILE \
     -u GH_CONFIG_DIR \
-    STUB_CALL_LOG="$CALL_LOG" STUB_AUTH_LOG="$AUTH_LOG" \
+    STUB_CALL_LOG="$CALL_LOG" STUB_AUTH_LOG="$AUTH_LOG" STUB_MERGE_REFUSED="$MERGE_REFUSED" \
     ${W_ENV[@]+"${W_ENV[@]}"} "${argv[@]}" >"$TMPDIR/stdout" 2>"$TMPDIR/stderr") || rc=$?
   printf 'rc=%s out=%s err=%s calls=%s auth=%s' "$rc" "$(stdout_text "$1")" "$(err_lines)" "$(calls)" "$(auth)"
 }
@@ -420,7 +421,7 @@ err_macro() {
     closed) printf 'CLOSED (not merged) PR #123;No merge attempted, none queued. Reopen the PR or supersede it.' ;;
     # route-queue:<why> the second line of a queue route; route-why:<name>
     # names the why.
-    route-queue:*) printf '%s The merge call passes no --admin.' "$(err_macro "route-why:${1#route-queue:}")" ;;
+    route-queue:*) printf '%s The merge call passes --auto and no --admin.' "$(err_macro "route-why:${1#route-queue:}")" ;;
     route-why:rules) printf "The base branch's rules could not be read, so no bypass is proven." ;;
     route-why:unnamed) printf 'A merge_queue rule on the base branch names no ruleset, so no bypass is proven.' ;;
     route-why:ruleset) printf 'The ruleset could not be read, so no bypass is proven.' ;;

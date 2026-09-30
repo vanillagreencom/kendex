@@ -19,7 +19,12 @@
 # STUB_MERGE_METHODS, STUB_DELETE_BRANCH_ON_MERGE, STUB_DEFAULT_BRANCH and
 # STUB_REPO_PUSHLESS, or fails on STUB_REPO_EXIT; the branch-rule read adds
 # STUB_QUEUE_METHOD's queue on STUB_QUEUE_BRANCH and STUB_RULE_METHODS's
-# pull_request rule; STUB_NO_REPO fails `repo view`.
+# pull_request rule; STUB_NO_REPO fails `repo view`. A merge call passing
+# neither --auto nor --admin on a base holding a merge_queue rule (in
+# STUB_GATE_RULES, or STUB_QUEUE_METHOD's on STUB_BASE) is refused as GitHub
+# refuses it: gh warns and exits 0, and where STUB_MERGE_REFUSED names a
+# file, the refusal creates it and every later post-merge read answers the
+# PR open, unqueued and unarmed.
 # Sourced, never run — CI's suite glob picks up skills/*/tests/*.sh only, so
 # this file lives one level down.
 #
@@ -76,6 +81,10 @@ if [[ -n "${STUB_CALL_LOG:-}" ]]; then
     printf '%s\n' "$*" >>"$STUB_CALL_LOG"
 fi
 [[ -z "${STUB_AUTH_LOG:-}" ]] || printf 'GH=%s|GITHUB=%s|%s\n' "${GH_TOKEN-<unset>}" "${GITHUB_TOKEN-<unset>}" "$*" >>"$STUB_AUTH_LOG"
+# A refused merge changed nothing, whatever outcome the row's world set.
+if [[ -n "${STUB_MERGE_REFUSED:-}" && -f "$STUB_MERGE_REFUSED" ]]; then
+    unset STUB_POST_STATE STUB_POST_AUTO_JSON STUB_POST_IN_QUEUE STUB_POST_QUEUE_ENTRY_JSON STUB_POST_QUEUE_STATE STUB_MERGE_COMMIT
+fi
 
 case "${1:-}" in
     auth)
@@ -335,6 +344,19 @@ case "${1:-}" in
                 if [[ "${STUB_MERGE_EXIT:-0}" != "0" ]]; then
                     printf '%s\n' "${STUB_MERGE_STDERR:-failed to run merge}" >&2
                     exit "${STUB_MERGE_EXIT}"
+                fi
+                if [[ " $* " != *" --auto "* && " $* " != *" --admin "* ]]; then
+                    queue_base=false
+                    if [[ -n "${STUB_QUEUE_METHOD:-}" && "${STUB_BASE:-main}" == "${STUB_QUEUE_BRANCH:-main}" ]]; then
+                        queue_base=true
+                    elif jq -e 'any(.[]; .type == "merge_queue")' <<<"${STUB_GATE_RULES:-[]}" >/dev/null; then
+                        queue_base=true
+                    fi
+                    if [[ "$queue_base" == true ]]; then
+                        [[ -z "${STUB_MERGE_REFUSED:-}" ]] || : >"$STUB_MERGE_REFUSED"
+                        echo "! The merge strategy for ${STUB_BASE:-main} is set by the merge queue" >&2
+                        exit 0
+                    fi
                 fi
                 echo "merge command accepted"
                 exit 0
