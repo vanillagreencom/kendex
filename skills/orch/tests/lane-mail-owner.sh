@@ -9,7 +9,7 @@
 # id, the attachment's confinement, the audience and deadline filters, the
 # cursor rule, the reply's owner-ask read, the owner-note class a reply names,
 # the ask's deadline field, the box `events` stamps, the owner ask's required
-# recommendation and the cursor `events` refuses.
+# recommendation, the cursor `events` refuses and the reply's delivery id.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -163,6 +163,34 @@ lm notice --item overseer --to owner --file "$(text n 'Reply.')" --ref "$OWNER_N
 assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" 'select(.text == "Reply.") | .ref')" "0=$OWNER_NOTE" \
   "a reply names the owner note it answers"
 
+# The host worker sends a voice request as an owner note with --delivery-id.
+# A reply carries that id only when --ref names the delivered request; a plain
+# owner note and an unreferenced notice produce no reply-delivery field.
+while IFS='|' read -r name delivery referenced has_delivery; do
+  new_repo "reply_$name"
+  args=(send --item overseer --directive --file "$(text d 'Owner request.')")
+  [[ -z "$delivery" ]] || args+=(--delivery-id "$delivery")
+  lm "${args[@]}"
+  assert_eq "$RC" "0" "$name: the owner request lands"
+  OWNER_NOTE="$(field "$BOX/to-lane.jsonl" '.id')"
+  args=(notice --item overseer --to owner --file "$(text n 'Reply.')")
+  WANT_REF=""; WANT_DELIVERY=""
+  if [[ "$referenced" == yes ]]; then
+    args+=(--ref "$OWNER_NOTE")
+    WANT_REF="$OWNER_NOTE"; WANT_DELIVERY="$delivery"
+  fi
+  lm "${args[@]}"
+  assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '[.ref // "", has("re_delivery_id"), .re_delivery_id // ""] | map(tostring) | join("|")')" \
+    "0=$WANT_REF|$has_delivery|$WANT_DELIVERY" "$name: the notice carries only the referenced delivery"
+  lm events --item overseer
+  assert_eq "$RC=$(jq -r 'select(.kind == "notice") | [.box, has("re_delivery_id"), .re_delivery_id // ""] | map(tostring) | join("|")' <<<"$OUT")" \
+    "0=to-overseer|$has_delivery|$WANT_DELIVERY" "$name: events exports the reply binding without a lookup"
+done <<'ROWS'
+delivered|voice:request-1|yes|true
+plain||yes|false
+unreferenced|voice:request-1|no|false
+ROWS
+
 # --- the attachment's confinement --------------------------------------------
 new_repo attach
 REPORTS="$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" progress-report-path)"
@@ -311,6 +339,22 @@ LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Which?' a,b a
 mutant ref-lane-only 'lm_owner_ask_find "$REF" ||' 'false ||'
 lm notice --item overseer --to owner --file "$(text n 'Ruled.')" --ref "$ASK"
 assert_eq "$RC=$ERR" "2=lane-mail: ref-unknown=$ASK" "control: without the to-overseer read a reply naming an owner ask is refused"
+
+new_repo control_reply_delivery
+LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 'Voice request.')" --delivery-id voice:request-1
+OWNER_NOTE="$(field "$BOX/to-lane.jsonl" '.id')"
+mutant reply-unbound '+ (if $re_delivery == "" then {} else {re_delivery_id: $re_delivery} end)' '+ {}'
+lm notice --item overseer --to owner --file "$(text n 'Voice reply.')" --ref "$OWNER_NOTE"
+lm events --item overseer
+# Run the binding assertion against the old envelope behavior. Its failure is
+# the control's expected result, not a failure of this suite.
+CONTROL_RC=0
+CONTROL_OUT="$(
+  assert_eq "$(jq -r 'select(.kind == "notice") | .re_delivery_id // ""' <<<"$OUT")" \
+    "voice:request-1" "the exported reply carries its request's delivery id"
+  [[ "$FAIL" -eq 0 ]]
+)" || CONTROL_RC=$?
+assert_eq "$RC=$CONTROL_RC" "0=1" "control: the reply-binding assertion fails without the copied field"
 
 # The owner-note class lives in lib/mailbox-append.sh, which a mutant of
 # lane-mail cannot reach: the copied library files a peer's line as an owner

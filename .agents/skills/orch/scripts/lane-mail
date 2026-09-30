@@ -145,7 +145,10 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               an owner note in to-lane.jsonl, one the owner wrote and not a
               peer's line or a resolution, or an owner ask in
               to-overseer.jsonl whose ruling it reports, so a relay puts the
-              reply where the note or the question was written. --attach
+              reply where the note or the question was written. Under that
+              file's mailbox lock, the notice copies the reference's
+              delivery_id, when present, as re_delivery_id. This field is
+              copied, never authored by a caller. --attach
               names a file the relay carries beside the text: a regular
               file, not itself a symlink, whose directory resolves
               physically to the progress-report directory workflow-state
@@ -255,7 +258,8 @@ file opening with another id is a replacement mailbox, not the one counted.
 Envelope, one JSON object per line: id, kind, at, from, re (answers only),
 halt (true on a directive sent with --halt), text and options (asks with
 choices), and the owner-channel fields each verb above writes: to, ref,
-attach, recommend, wait, deadline (UTC, at plus wait minutes), delivery_id
+attach, recommend, wait, deadline (UTC, at plus wait minutes), delivery_id,
+re_delivery_id (notice's copy of its --ref envelope's delivery_id)
 and by (`text` or `default`, on an answer `resolve` wrote). kind is ask,
 notice, answer or directive; at is UTC; id is <epoch>-<pid>-<random>. from
 is the sender, read from its own checkout and never from an option: a lane
@@ -1095,7 +1099,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
   line="$(jq -cn --arg id "$id" --arg kind "$1" --argjson now "$now" --arg re "${2:-}" \
     --arg from "$FROM" --arg halt "$HALT" --arg options "$OPTIONS" \
     --arg to "$TO" --arg ref "$REF" --arg attach "$ATTACH" --arg recommend "$RECOMMEND" \
-    --arg wait "$WAIT" --arg delivery "$DELIVERY_ID" --arg by "$BY" \
+    --arg wait "$WAIT" --arg delivery "$DELIVERY_ID" --arg re_delivery "$RE_DELIVERY_ID" --arg by "$BY" \
     --rawfile text "$FILE" '
       {id: $id, kind: $kind, at: ($now | todate), from: $from}
       + (if $re == "" then {} else {re: $re} end)
@@ -1106,6 +1110,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
       + (if $recommend == "" then {} else {recommend: $recommend} end)
       + (if $wait == "" then {} else {wait: ($wait | tonumber), deadline: (($now + ($wait | tonumber) * 60) | todate)} end)
       + (if $delivery == "" then {} else {delivery_id: $delivery} end)
+      + (if $re_delivery == "" then {} else {re_delivery_id: $re_delivery} end)
       + (if $by == "" then {} else {by: $by} end)
       + {text: ($text | sub("\n$"; ""))}
       + (if $options == "" then {} else {options: ($options | split(","))} end)' \
@@ -1113,6 +1118,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
   printf '%s\n' "$line"
 }
 BY=""
+RE_DELIVERY_ID=""
 
 # Serialized on the file itself; to-overseer.jsonl has many writers, to-lane
 # one. The lock, the created file and the closing of an unterminated last line
@@ -1171,6 +1177,37 @@ lm_owner_ask_find() { # ID
     refuse file-unreadable "$TO_OVERSEER"
   fi
   [ -n "$ASK_JSON" ]
+}
+
+# The host worker delivers owner requests with send --delivery-id. Read each
+# possible reference under the lock its writers take, then copy the delivery
+# id before releasing it. Take only one file lock at a time; the notice's
+# append takes its own lock after this read.
+lm_ref_find() {
+  local path ref_json
+  for path in "$TO_LANE" "$TO_OVERSEER"; do
+    [ -f "$path" ] || continue
+    exec 9<"$path" || refuse file-unreadable "$path"
+    orch_take_lock 9 "$path" 30 || { trap lm_cleanup EXIT; refuse lock-failed "$path"; }
+    trap lm_cleanup EXIT
+    if [ "$path" = "$TO_LANE" ]; then
+      lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
+      lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
+      ref_json="$(lm_objects "$WORK_DIR/lane.jsonl" |
+        jq -c --arg id "$REF" "$MAILBOX_CLASS_JQ"' select(.id == $id and overseer_mail_class == "owner-note")' |
+        awk 'NR == 1')" || refuse file-unreadable "$path"
+    else
+      lm_owner_ask_find "$REF" || ASK_JSON=""
+      ref_json="$ASK_JSON"
+    fi
+    if [ -n "$ref_json" ]; then
+      RE_DELIVERY_ID="$(jq -r '.delivery_id // empty' <<<"$ref_json")" || refuse file-unreadable "$path"
+    fi
+    exec 9<&-
+    orch_release_lock
+    [ -z "$ref_json" ] || return 0
+  done
+  refuse ref-unknown "$REF"
 }
 
 # The ask ID closes, refused where none stands.
@@ -1339,12 +1376,7 @@ case "$VERB" in
       # answer nothing the owner wrote. The note is judged by the class the
       # watch reports it under, so a line the watch calls a peer's is never
       # the owner's here.
-      lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
-      lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
-      lm_objects "$WORK_DIR/lane.jsonl" |
-        jq -e --arg id "$REF" "$MAILBOX_CLASS_JQ"' select(.id == $id and overseer_mail_class == "owner-note")' >/dev/null ||
-        lm_owner_ask_find "$REF" ||
-        refuse ref-unknown "$REF"
+      lm_ref_find
     fi
     [ -z "$ATTACH" ] || lm_attach_confined
     LINE="$(lm_envelope "$VERB")"

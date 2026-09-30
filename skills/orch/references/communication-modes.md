@@ -88,6 +88,8 @@ The ask closes exactly once, through `lane-mail resolve` and nothing else, and t
 
 The overseer records the ruling per § Recording and sends `lane-mail notice --item overseer --to owner --ref [ASK_ID]` naming it, so a relay posts the ruling where the question was asked.
 
+For a delivered owner request, `--ref` binds the reply to that request's delivery id through the [lane-mail owner-channel contract](../scripts/lane-mail).
+
 ## Opening question
 
 A session that starts with no item to work, no handoff file, no owner note and no pending owner ask (`lane-mail pending --item overseer --to owner`) asks this as an owner ask:
