@@ -70,9 +70,12 @@ observe() { # PREFERENCE WALL MODE TEXT
     while [[ ! -s "$RUN/command" ]] && (( SECONDS < end )); do sleep 0.01; done
     [[ -s "$RUN/command" ]] || { echo 'open-terminal-preference: capture=missing' >&2; exit 1; }
     cmd="$(cat -- "$RUN/command")"
-    case "$cmd" in
-      *'pi --model github-copilot/gpt-6.1-sol --thinking high'*|*'codex '*'-m gpt-6.1-sol -c model_reasoning_effort=high'*) written=yes ;;
-    esac
+    if { launch_choice_words_present 'pi' "$cmd" &&
+         launch_choice_words_present '--model github-copilot/gpt-6.1-sol --thinking high' "$cmd"; } ||
+       { launch_choice_words_present 'codex' "$cmd" &&
+         launch_choice_words_present '-m gpt-6.1-sol -c model_reasoning_effort=high' "$cmd"; }; then
+      written=yes
+    fi
   else
     key="$(sed -n 's/^open-terminal: \([^ ]*\).*/\1/p' "$RUN/err")"; key="${key%%$'\n'*}"
   fi
@@ -120,7 +123,7 @@ for control in routing grammar command; do
   OT="$MUTANT"
   case "$control" in
     routing)
-      mutate_file "$OT" '-n "${ORCH_LANE_PREFERENCE:-}"' '-z "${ORCH_LANE_PREFERENCE:-}"'
+      mutate_file "$OT" 'if [[ "$WAKE" != true && -n "${ORCH_LANE_PREFERENCE:-}"' 'if [[ "$WAKE" != true && -z "${ORCH_LANE_PREFERENCE:-}"'
       observe "$PREF" none flags ''
       assert_eq "$OBS" '1|launch-model-missing|none|none|none|no|0' 'control: the first-entry row turns red without routing' ;;
     grammar)
