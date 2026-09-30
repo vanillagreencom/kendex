@@ -47,7 +47,7 @@ if [[ "$*" == *'-K -'* ]]; then
     if [[ "$config" == *'https://api.linear.app/oauth/token'* ]]; then
         printf 'mint\n' >>"$LOG/mints"
         n=$(wc -l <"$LOG/mints")
-        if [[ "${MODE:-}" == token-failure || ( "${MODE:-}" == references &&
+        if [[ "${MODE:-}" == token-failure || ( "${FAIL_RENEWAL:-0}" == 1 && "$n" -gt 1 ) || ( "${MODE:-}" == references &&
             "$config" != *'client_id=resolved%2Fid&client_secret=resolved%26secret'* ) ]]; then
             printf '{"error":"invalid_client"}___HTTP_CODE___400'
         else
@@ -56,7 +56,10 @@ if [[ "$*" == *'-K -'* ]]; then
         exit
     fi
     if [[ "$config" == *'https://uploads.linear.app/'* ]]; then
-        sed -n 's/^header = "\(Authorization: .*\)"$/\1/p' <<<"$config" >"$LOG/download-auth"
+        sed -n 's/^header = "\(Authorization: .*\)"$/\1/p' <<<"$config" >>"$LOG/download-auth"
+        n=$(wc -l <"$LOG/download-auth")
+        IFS=, read -r -a codes <<<"${DOWNLOAD_RESPONSES:-200}"
+        code="${codes[n-1]:-200}"
         while [[ $# -gt 0 ]]; do
             case "$1" in
             -o) printf 'file body\n' >"$2"; shift 2 ;;
@@ -64,7 +67,8 @@ if [[ "$*" == *'-K -'* ]]; then
             *) shift ;;
             esac
         done
-        printf 200
+        if [[ "$code" == 000 ]]; then exit 7; fi
+        printf '%s' "$code"
         exit
     fi
     sed -n 's/^header = "Authorization: \(.*\)"$/\1/p' <<<"$config" >>"$LOG/auth"
@@ -197,6 +201,7 @@ for row in 'live:request' 'inventory:cache-fetch'; do
     : >"$LOG/mints"
     : >"$LOG/config"
     : >"$LOG/auth"
+    : >"$LOG/download-auth"
     run_oauth_request "$command" MODE=references
     assert_eq "$label references: request succeeds" "$RC" 0
     reads=$(sort -u "$LOG/op")
@@ -216,4 +221,39 @@ for row in 'live:request' 'inventory:cache-fetch'; do
     assert_eq "$label references: resolved credentials reuse the cache" "$RC" 0
     count=$(wc -l <"$LOG/mints")
     assert_eq "$label references: cache identity uses resolved values" "${count//[[:space:]]/}" 1
+done
+
+# Inventory succeeds before the upload server returns these download responses.
+printf 'LINEAR_API_KEY="personal-key"\n' >"$PROJECT/.env.local"
+for row in \
+    'app-renew|app/id|app&secret|401,200|0|0|2|2|Authorization: Bearer token-2' \
+    'app-second-401|app/id|app&secret|401,401,200|0|1|2|2|Authorization: Bearer token-2' \
+    'app-renew-failure|app/id|app&secret|401,200|1|1|1|2|Authorization: Bearer token-1' \
+    'app-terminal|app/id|app&secret|401,403,200|0|1|2|2|Authorization: Bearer token-2' \
+    'app-transport|app/id|app&secret|401,000,200|0|1|2|2|Authorization: Bearer token-2' \
+    'key-success|||200|0|0|1|0|Authorization: personal-key' \
+    'key-401|||401,200|0|1|1|0|Authorization: personal-key'; do
+    IFS='|' read -r label id secret codes fail_renewal expected_rc downloads mints last_auth <<<"$row"
+    rm -rf -- "$PROJECT/.cache/linear/oauth" "$PROJECT/.cache/linear/attachments"
+    : >"$LOG/mints"
+    : >"$LOG/auth"
+    : >"$LOG/download-auth"
+    : >"$LOG/curl-argv"
+    run_oauth_request cache-fetch LINEAR_CLIENT_ID="$id" LINEAR_CLIENT_SECRET="$secret" \
+        DOWNLOAD_RESPONSES="$codes" FAIL_RENEWAL="$fail_renewal"
+    assert_eq "$label: download result" "$RC" "$expected_rc"
+    count=$(wc -l <"$LOG/download-auth")
+    assert_eq "$label: download attempts" "${count//[[:space:]]/}" "$downloads"
+    count=$(wc -l <"$LOG/mints")
+    assert_eq "$label: mint count" "${count//[[:space:]]/}" "$mints"
+    header=$(tail -n 1 "$LOG/download-auth")
+    assert_eq "$label: download keeps selected actor" "$header" "$last_auth"
+    argv=$(cat "$LOG/curl-argv")
+    assert_not_contains "$label: renewed token stays out of curl arguments" "$argv" 'token-2'
+    if [[ "$expected_rc" == 0 ]]; then
+        assert_jq "$label: download is recorded" "$OUT" '.downloaded == 1 and .total_urls == 1'
+    else
+        manifest=$(cat "$PROJECT/.cache/linear/attachments/manifest.json")
+        assert_jq "$label: failed download is not recorded" "$manifest" 'length == 0'
+    fi
 done

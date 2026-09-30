@@ -45,9 +45,10 @@ control_replace scripts/lib/auth.sh 1 \
     '    payload=$(printf '\''%s\0%s'\'' "$LINEAR_CLIENT_ID" "$LINEAR_CLIENT_SECRET" | jq -Rsr --arg secret "$LINEAR_CLIENT_SECRET" '\'''
 
 control_expect 'attachment download keeps token out of curl arguments'
+control_expect 'app-renew: renewed token stays out of curl arguments'
 control_replace scripts/lib/attachments.sh 1 \
-    '        | curl -s -w "%{http_code}" -o "$tmp_file" -D "$tmp_headers" -K -' \
-    '        | curl -s -w "%{http_code}" -o "$tmp_file" -D "$tmp_headers" -K - -H "Authorization: $authorization"'
+    '            | curl -s -w "%{http_code}" -o "$tmp_file" -D "$tmp_headers" -K -' \
+    '            | curl -s -w "%{http_code}" -o "$tmp_file" -D "$tmp_headers" -K - -H "Authorization: $authorization"'
 
 control_expect 'live references: resolved credentials reach token endpoint'
 control_replace scripts/lib/auth.sh 1 \
@@ -63,3 +64,28 @@ control_expect 'inventory references: request succeeds'
 control_replace scripts/lib/auth.sh 1 \
     '    linear_resolve_credentials || return 1' \
     '    : linear_resolve_credentials || return 1'
+
+control_expect 'app-renew: download result'
+control_replace scripts/lib/attachments.sh 1 \
+    '        if [[ "$http_code" == "401" && "$LINEAR_AUTH_KIND" == "app" && "$auth_renewed" == 0 ]]; then' \
+    '        if [[ "$http_code" == "401" && "$LINEAR_AUTH_KIND" == "app" && "$auth_renewed" == 9 ]]; then'
+
+control_expect 'app-second-401: download result'
+control_replace scripts/lib/attachments.sh 1 \
+    '            auth_renewed=1' \
+    '            auth_renewed=0'
+
+control_expect 'key-401: download attempts'
+control_replace scripts/lib/attachments.sh 1 \
+    '        if [[ "$http_code" == "401" && "$LINEAR_AUTH_KIND" == "app" && "$auth_renewed" == 0 ]]; then' \
+    '        if [[ "$http_code" == "401" && "$auth_renewed" == 0 ]]; then'
+
+control_expect 'app-renew-failure: download result'
+control_replace scripts/lib/attachments.sh 1 \
+    '            if ! authorization=$(linear_authorization renew) ||' \
+    '            if authorization=$(linear_authorization renew) &&'
+
+control_expect 'app-renew: download keeps selected actor'
+control_replace scripts/lib/attachments.sh 1 \
+    '            if ! authorization=$(linear_authorization renew) ||' \
+    '            if ! authorization=$(linear_authorization) ||'

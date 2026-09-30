@@ -219,15 +219,27 @@ attach_download_url() {
     authorization_quote=$(curl_config_quote "Authorization: $authorization") || return 1
     url_quote=$(curl_config_quote "$url") || return 1
 
-    # Download to temp file, capture headers alongside (single request)
+    # Linear's upload server can reject an app token after inventory succeeds.
     local tmp_file tmp_headers
     tmp_file=$(mktemp)
     tmp_headers=$(mktemp)
-    local http_code
-    http_code=$(
-        printf '%s\n' "url = $url_quote" "header = $authorization_quote" \
-        | curl -s -w "%{http_code}" -o "$tmp_file" -D "$tmp_headers" -K -
-    ) || { rm -f "$tmp_file" "$tmp_headers"; return 1; }
+    local http_code auth_renewed=0
+    while true; do
+        http_code=$(
+            printf '%s\n' "url = $url_quote" "header = $authorization_quote" \
+            | curl -s -w "%{http_code}" -o "$tmp_file" -D "$tmp_headers" -K -
+        ) || { rm -f "$tmp_file" "$tmp_headers"; return 1; }
+        if [[ "$http_code" == "401" && "$LINEAR_AUTH_KIND" == "app" && "$auth_renewed" == 0 ]]; then
+            auth_renewed=1
+            if ! authorization=$(linear_authorization renew) ||
+                ! authorization_quote=$(curl_config_quote "Authorization: $authorization"); then
+                rm -f "$tmp_file" "$tmp_headers"
+                return 1
+            fi
+            continue
+        fi
+        break
+    done
 
     if [[ "$http_code" != "200" ]]; then
         rm -f "$tmp_file" "$tmp_headers"
