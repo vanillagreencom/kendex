@@ -1,0 +1,1 @@
+- Consumer refresh resolves outdated automatic review threads and findings on paths no single package claims, without filing them upstream or blocking the refresh.

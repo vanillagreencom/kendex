@@ -99,7 +99,12 @@ elif kind == 'pull':
 elif kind == 'review-comments':
     print(json.dumps(pr['comments']))
 elif kind == 'threads':
-    nodes = [{'id': t['id'], 'isResolved': t['resolved'], 'comments': {'nodes': [{'databaseId': t['root']}]}} for t in pr['threads']]
+    nodes = [{'id': t['id'], 'isResolved': t['resolved'],
+              **({'isOutdated': t.get('outdated', False)} if 'isOutdated' in fields['query'] else {}),
+              'comments': {'nodes': [{'databaseId': t['root']}]}} for t in pr['threads']]
+    if failure.get('mode') == 'missing-outdated':
+        for node in nodes:
+            node.pop('isOutdated', None)
     pages = [nodes[:1], nodes[1:]] if len(nodes) > 1 else [nodes]
     for index, nodes in enumerate(pages):
         next_page = index < len(pages) - 1 or failure.get('mode') == 'unfinished'

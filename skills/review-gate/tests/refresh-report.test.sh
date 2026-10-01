@@ -145,8 +145,7 @@ for overrides, extra in [({'KENDEX_ISSUES_TOKEN':''},{}), ({},{'deny':True})]:
  assert findings[0]['url'] in summary.read_text()
 # Permission recovery runs the same candidates even after earlier policy replies.
 reset(); run(overrides={'KENDEX_ISSUES_TOKEN':''}); assert len(run()['issues'])==1
-reset(); assert run(rows=[dict(findings[0],path='src/private.py')])['writes']==[]
-assert results==[{'root':10,'issue':None,'note':'Not a rendered file'}]
+
 # Only a kendex report route to kendex with a package label files. The lock and
 # a Copilot agent render are inventory paths no package claims, and a package
 # routed elsewhere is not kendex's: none is filed, the note says why, and the
@@ -157,6 +156,8 @@ foreign_lock['entries']['skill:review-gate:codex']['sourceRepo']='another/catalo
 unclaimed='No single kendex package claims this path'
 elsewhere='kendex report does not route review-gate to vanillagreencom/kendex'
 not_filed_rows=[
+ ('outside', dict(findings[0],path='src/private.py'), {}, unclaimed),
+ ('inventory', dict(findings[0],path='.kendex-generated.json'), {}, unclaimed),
  ('lock', dict(findings[0],path='.kendex-lock.json'), {}, unclaimed),
  ('agent', dict(findings[0],path='.github/agents/reviewer.agent.md'), {}, unclaimed),
  ('elsewhere', findings[0], {'HISTORICAL_LOCK':str(root/'foreign-lock.json')}, elsewhere),
@@ -188,7 +189,7 @@ assert results[0]['note']==elsewhere
 # Controls preserve matching text while removing each independent rule.
 source=(skill/'scripts/refresh-report.py').read_text()
 for needle,replacement,rows,expect in [
- ('if path not in records:', 'if True or path not in records:', findings, 'path'),
+ ('if path in records else set()', 'if False and path in records else set()', findings, 'path'),
  ('if existing:', 'if False and existing:', findings, 'dedup'),
  ('[repo, path, finding["body"]]', '[repo, path, finding["body"], finding["url"]]', inline_pair, 'instance'),
  ('            ).stderr', '            ).stdout', findings, 'stream'),

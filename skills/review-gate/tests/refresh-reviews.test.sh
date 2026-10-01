@@ -36,12 +36,14 @@ rows=json.load(sys.stdin)
 w.setdefault('reports', []).extend(rows)
 p.write_text(json.dumps(w))
 unfiled=w.get('unfiled', [])
+unclaimed=w.get('unclaimed', [])
 # report={pr, mode} makes this pull request's reporter fail or misreport.
 fault=w.get('report', {})
 mode=fault.get('mode') if str(fault.get('pr'))==sys.argv[2] else None
 if mode=='error': sys.exit(1)
-out=[{'root': r['root'], 'note': 'Issues token unavailable' if r['root'] in unfiled else 'Filed',
-      'issue': None if r['root'] in unfiled else f"https://github.com/vanillagreencom/kendex/issues/{r['root']}"}
+out=[{'root': r['root'], 'note': ('No single kendex package claims this path' if r['root'] in unclaimed
+                               else 'Issues token unavailable' if r['root'] in unfiled else 'Filed'),
+      'issue': None if r['root'] in unfiled + unclaimed else f"https://github.com/vanillagreencom/kendex/issues/{r['root']}"}
      for r in rows]
 if mode=='missing-root': out=out[1:]
 if mode=='bad-issue': out=[dict(r, issue=5) for r in out]
@@ -96,8 +98,11 @@ from pathlib import Path
 import sys
 p, needle, replacement = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 s = p.read_text()
+assert not p.is_symlink(), p
 assert s.count(needle) == 1, needle
-p.write_text(s.replace(needle, replacement))
+changed = s.replace(needle, replacement)
+assert changed != s, needle
+p.write_text(changed)
 MUTATE
   DRIVER="$TMP/skills/review-gate/$1/refresh-reviews.sh"
 }
@@ -162,6 +167,50 @@ unclassified_held() {
 idempotent() {
   [ "$RC" -eq 0 ] && jq -e '(.writes | length) == 4 and .proofs == [1,2] and (.reports | length) == 2' "$FIXTURE" >/dev/null
 }
+
+# The talk inventory threads arrive unresolved, with automatic authors and
+# no replies. The same fixture also tests a live unclaimed inventory path.
+skipped_fixture() { # OUTDATED PATH
+  jq --argjson outdated "$1" --arg path "$2" '.unclaimed=[10,20]
+    | .prs[0:2][] |= (.threads[0].outdated=$outdated | .comments[0].path=$path)' "$BASE" >"$FIXTURE"
+}
+skipped_and_resolved() { # CAUSE
+  [ "$RC" -eq 0 ] && jq -e --arg cause "$1" '
+    ([.writes[] | [.kind, .pr]] | sort) == [["reply",1],["reply",2],["resolve",1],["resolve",2]]
+    and .proofs == [1,2]
+    and ([.reports[]?.root] == (if $cause == "outdated" then [] else [10,20] end))
+    and all(.prs[0:2][]; .threads[0].resolved and (.threads[1].resolved | not))
+    and all(.prs[2:][]; all(.threads[]; .resolved | not))
+    and ([.writes[] | select(.kind == "reply") | .body | startswith("Not filed upstream: ")] == [true,true])
+    and ($cause != "outdated" or all(.writes[] | select(.kind == "reply"); .body | contains("outdated")))
+    ' "$FIXTURE" >/dev/null \
+    && [ "$(grep -c '^upstream-skipped ' <<<"$OUT")" -eq 2 ] \
+    && grep -q "^upstream-skipped pr=1 finding=10 cause=$1\$" <<<"$OUT" \
+    && grep -q "^upstream-skipped pr=2 finding=20 cause=$1\$" <<<"$OUT" \
+    && ! grep -q '^::error::' <<<"$OUT"
+}
+skipped_retry() { # CAUSE
+  [ "$RC" -eq 0 ] && jq -e --arg cause "$1" '(.writes | length) == 4 and .proofs == [1,2]
+    and ([.reports[]?.root] == (if $cause == "outdated" then [] else [10,20] end))' "$FIXTURE" >/dev/null \
+    && grep -q '^refresh-reviews=already-answered pr=1$' <<<"$OUT" \
+    && grep -q '^refresh-reviews=already-answered pr=2$' <<<"$OUT"
+}
+
+while IFS='|' read -r cause outdated path; do
+  skipped_fixture "$outdated" "$path"
+  run_writer
+  if skipped_and_resolved "$cause"; then
+    ok "$cause $path: a keyed skip, one not-filed reply and one resolve per automatic thread"
+  else bad "$cause $path skip-and-resolve" "$OUT"; fi
+  run_writer
+  if skipped_retry "$cause"; then
+    ok "$cause $path: the not-filed marker prevents a second reply, report and classification"
+  else bad "$cause $path retry" "$OUT"; fi
+done <<'SKIPPED'
+outdated|true|.kendex-generated.json
+unclaimed|false|.kendex-generated.json
+outdated|true|.agents/skill.sh
+SKIPPED
 
 cp "$BASE" "$FIXTURE"
 run_writer
@@ -260,6 +309,7 @@ threads|error
 threads|empty
 threads|object
 threads|unfinished
+threads|missing-outdated
 pull|error
 pull|empty
 pull|object
@@ -328,8 +378,8 @@ run_writer
 if ! unfiled_stays_open; then
   ok 'must-fail control: answering an unfiled finding fails the failed-filing case'
 else bad 'failed-filing control did not detect the planted defect' "$OUT"; fi
-mutant answered-mutant '.user.login == $author and (.body | startswith($prefix)))' \
-  '.user.login == $author and (.body | startswith($prefix)) and false)'
+mutant answered-mutant '.user.login == $author and (.body | startswith($prefix) or startswith($not_filed)))' \
+  '.user.login == $author and (.body | startswith($prefix) or startswith($not_filed)) and false)'
 cp "$BASE" "$FIXTURE"
 run_writer
 filed_and_resolved || bad 'control fixture reaches the guard' "$OUT"
@@ -350,7 +400,8 @@ if [ "$RC" -ne 0 ] && [ "$(jq '.writes | length' "$FIXTURE")" = 0 ] && \
     grep -q 'refresh-reviews-error=class-proof' <<<"$OUT"; then
   ok 'must-fail control: exporting the upstream credential fails the classifier boundary'
 else bad 'upstream credential control missed the leak' "$OUT"; fi
-mutant prefix-mutant '(.body | startswith($prefix))' '(.body | (startswith($prefix) or true))'
+mutant prefix-mutant '(.body | startswith($prefix) or startswith($not_filed))' \
+  '(.body | startswith($prefix) or startswith($not_filed) or true)'
 declined_fixture
 run_writer
 if ! declined_refiled; then
@@ -398,5 +449,31 @@ run_writer
 if ! unfiled_resolved_clear; then
   ok 'must-fail control: holding on a resolved thread fails the resolved not-filed case'
 else bad 'resolved-thread control did not detect the planted defect' "$OUT"; fi
+while IFS='|' read -r cause outdated needle; do
+  mutant "$cause-mutant" "$needle" "${needle/if /if false \&\& }"
+  skipped_fixture "$outdated" .kendex-generated.json
+  run_writer
+  if ! skipped_and_resolved "$cause"; then
+    ok "must-fail control: disabling $cause resolution fails its inventory-thread case"
+  else bad "$cause control did not detect the planted defect" "$OUT"; fi
+done <<'SKIP_CONTROLS'
+outdated|true|if [ "$outdated" = true ]; then
+unclaimed|false|if [ "$note" = 'No single kendex package claims this path' ]; then
+SKIP_CONTROLS
+mutant not-filed-marker-mutant 'startswith($not_filed)' '(startswith($not_filed) and false)'
+skipped_fixture true .kendex-generated.json
+run_writer
+skipped_and_resolved outdated || bad 'not-filed control fixture reaches the guard' "$OUT"
+run_writer
+if ! skipped_retry outdated; then
+  ok 'must-fail control: ignoring the not-filed marker fails the skip retry case'
+else bad 'not-filed marker control did not detect the planted defect' "$OUT"; fi
+mutant outdated-shape-mutant 'and (.isOutdated | type) == "boolean"' \
+  'and (true or (.isOutdated | type) == "boolean")'
+jq '.failure={kind:"threads",mode:"missing-outdated"}' "$BASE" >"$FIXTURE"
+run_writer
+if [ "$RC" -eq 0 ] && jq -e '(.writes | length) == 4' "$FIXTURE" >/dev/null; then
+  ok 'must-fail control: accepting missing thread state permits writes from an incomplete read'
+else bad 'outdated shape control did not detect the planted defect' "$OUT"; fi
 printf 'refresh-reviews: %s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

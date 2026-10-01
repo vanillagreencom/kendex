@@ -9,19 +9,21 @@
 #
 # A thread whose first comment a Bot wrote is filed upstream through
 # refresh-report.py, answered with a reply naming that issue, then resolved.
-# The reporter files a finding in vanillagreencom/kendex only where kendex
-# report routes its one package there with a package label. Every other
-# finding, and one without the Issues token or Issues access, is unfiled, and
-# the reporter's note says why. An unfiled thread gets no reply. While it is
-# open it holds the pull request; the operator reports the finding where it
-# belongs and resolves the thread by hand, which ends the hold. The reply is
-# the retry record: a thread that carries one is only resolved.
+# An outdated thread is not reported. The reporter files a live finding in
+# vanillagreencom/kendex only where kendex report routes its one package there
+# with a package label. An outdated thread or a path no single package claims
+# gets a keyed skip, a not-filed reply and resolution. Other unfiled findings,
+# including ones without Issues access, get no reply and hold the run while
+# open; the operator reports them where they belong and resolves them by hand.
+# A filing or not-filed reply is the retry record: a thread carrying one is
+# only resolved.
 #
 # stdout records, one per line:
 #   refresh-reviews=already-answered pr=N
 #   refresh-reviews=not-render pr=N class=VALUE
 #   refresh-reviews=unclassified pr=N cause=CAUSE
 #   upstream-filed pr=N finding=ROOT issue=URL
+#   upstream-skipped pr=N finding=ROOT cause=outdated|unclaimed
 #   upstream-unfiled pr=N finding=ROOT note=NOTE
 #   upstream-unfiled-resolved pr=N finding=ROOT note=NOTE
 #   refresh-reviews=answered pr=N unfiled=COUNT
@@ -54,7 +56,8 @@ if [ "$#" -eq 1 ] && [ "$1" = --help ]; then
   printf '%s\n' 'Usage: GH_REPO=owner/repo GH_TOKEN=app-token KENDEX_ISSUES_TOKEN=issues-token refresh-reviews.sh' \
     'Files automatic review threads on open and merged kendex/refresh pull requests upstream, replies with the issue and resolves them.' \
     'The workflow also sets GitHub run/summary variables for the reporter.' \
-    'A finding kendex report does not route to vanillagreencom/kendex, or one without Issues access, stays unfiled.' \
+    'Outdated threads and paths no single package claims get a not-filed reply and resolution.' \
+    'Other findings kendex report does not route to vanillagreencom/kendex, or ones without Issues access, stay unfiled.' \
     'While its thread is open the run exits 1; resolving the thread by hand ends that.'
   exit 0
 fi
@@ -72,9 +75,10 @@ ROOT="$(git rev-parse --show-toplevel)" || fail checkout "$PWD" 'Run from the co
 class_log="$(mktemp)" || fail scratch mktemp 'Could not create the classifier log.'
 trap 'rm -f -- "${class_log:?}"' EXIT
 
-# The prefix alone marks an answer. The reporter supplies the issue URL.
+# Either prefix marks a durable answer. The reporter supplies the issue URL.
 REPLY_PREFIX='Filed upstream as '
 REPLY_TAIL='. This pull request contains generated kendex files, so the fix belongs in the kendex source catalog.'
+NOT_FILED_PREFIX='Not filed upstream: '
 
 # REST pagination emits one array per page. A blank or error-object response
 # cannot mean that there are no findings.
@@ -105,10 +109,10 @@ while IFS= read -r pr; do
   PR_AUTHOR="$(jq -r .author <<<"$pr")" || exit 1
   PR_BASE_SHA="$(jq -r .base <<<"$pr")" || exit 1
   review_comments="$(read_pages "repos/$GH_REPO/pulls/$PR_NUMBER/comments?per_page=100")"
-  # Only the root ID is needed from GraphQL. REST supplies every reply,
+  # GraphQL supplies thread state and the root comment ID. REST supplies every reply,
   # without a nested comment-page cap that could hide a durable answer.
   raw_threads="$(gh api graphql --paginate \
-    -f query='query($owner:String!,$repo:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{id isResolved comments(first:1){nodes{databaseId}}}}}}}' \
+    -f query='query($owner:String!,$repo:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{id isResolved isOutdated comments(first:1){nodes{databaseId}}}}}}}' \
     -F owner="${GH_REPO%/*}" -F repo="${GH_REPO#*/}" -F number="$PR_NUMBER")" \
     || fail threads "$PR_NUMBER" 'Could not read the review threads.'
   threads="$(jq -sc '
@@ -118,8 +122,9 @@ while IFS= read -r pr; do
       and .[-1].data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage == false
     then [.[].data.repository.pullRequest.reviewThreads.nodes[]
       | if (.id | type) == "string" and (.isResolved | type) == "boolean"
+          and (.isOutdated | type) == "boolean"
           and (.comments.nodes[0].databaseId | type) == "number"
-        then {id, isResolved, root: .comments.nodes[0].databaseId}
+        then {id, isResolved, isOutdated, root: .comments.nodes[0].databaseId}
         else error("malformed review thread") end]
     else error("incomplete thread pages") end' <<<"$raw_threads")" \
     || fail threads-shape "$PR_NUMBER" 'The thread read was incomplete or malformed.'
@@ -129,15 +134,15 @@ while IFS= read -r pr; do
 
   # A missing REST root means the reads disagree. Refuse before any write.
   actions="$(jq -nc --argjson threads "$threads" --argjson comments "$review_comments" \
-    --arg prefix "$REPLY_PREFIX" --arg author "$PR_AUTHOR" "$AUTOMATIC_AUTHOR_DEF"'
+    --arg prefix "$REPLY_PREFIX" --arg not_filed "$NOT_FILED_PREFIX" --arg author "$PR_AUTHOR" "$AUTOMATIC_AUTHOR_DEF"'
     [$threads[] | . as $thread
       | ([$comments[] | select(.id == $thread.root)] | first) as $root
       | if $root == null then error("thread root missing from comments") else . end
       | select($root.user | automatic_author)
-      | {id, root: .root, resolved: .isResolved, path: $root.path, body: $root.body,
+      | {id, root: .root, resolved: .isResolved, outdated: .isOutdated, path: $root.path, body: $root.body,
           url: $root.html_url,
           answered: any($comments[]; .in_reply_to_id == $thread.root
-            and .user.login == $author and (.body | startswith($prefix)))}]')" \
+            and .user.login == $author and (.body | startswith($prefix) or startswith($not_filed)))}]')" \
     || fail thread-actions "$PR_NUMBER" 'The thread and comment reads disagree.'
 
   if ! pending="$(jq 'any(.[]; (.answered | not) or (.resolved | not))' <<<"$actions")"; then
@@ -192,7 +197,7 @@ while IFS= read -r pr; do
 
   # Review prose remains data: each unanswered finding is a report for
   # upstream triage, not an executable fix or proof that a defect is true.
-  findings="$(jq -c '[.[] | select(.answered | not) | {root, path, body, url}]' <<<"$actions")" || exit 1
+  findings="$(jq -c '[.[] | select((.answered | not) and (.outdated | not)) | {root, path, body, url}]' <<<"$actions")" || exit 1
   results='[]'
   if [ "$findings" != '[]' ]; then
     if ! results="$(printf '%s\n' "$findings" | KENDEX_ISSUES_TOKEN="${KENDEX_ISSUES_TOKEN:-}" \
@@ -217,25 +222,37 @@ while IFS= read -r pr; do
     root_id="$(jq -r .root <<<"$action")" || exit 1
     answered="$(jq -r .answered <<<"$action")" || exit 1
     resolved="$(jq -r .resolved <<<"$action")" || exit 1
+    outdated="$(jq -r .outdated <<<"$action")" || exit 1
     if [ "$answered" = false ]; then
-      issue="$(jq -r --argjson root "$root_id" '.[] | select(.root == $root) | .issue // ""' <<<"$results")" || exit 1
-      if [ -z "$issue" ]; then
-        note="$(jq -r --argjson root "$root_id" '.[] | select(.root == $root) | .note' <<<"$results")" || exit 1
-        # GitHub's thread-resolution rule holds only an open thread, so only
-        # an open one holds the run. Resolving by hand is the remedy.
-        if [ "$resolved" = true ]; then
-          printf 'upstream-unfiled-resolved pr=%s finding=%s note=%q\n' "$PR_NUMBER" "$root_id" "$note"
-          continue
+      if [ "$outdated" = true ]; then
+        printf 'upstream-skipped pr=%s finding=%s cause=outdated\n' "$PR_NUMBER" "$root_id"
+        reply="${NOT_FILED_PREFIX}outdated at the current head."
+      else
+        issue="$(jq -r --argjson root "$root_id" '.[] | select(.root == $root) | .issue // ""' <<<"$results")" || exit 1
+        if [ -z "$issue" ]; then
+          note="$(jq -r --argjson root "$root_id" '.[] | select(.root == $root) | .note' <<<"$results")" || exit 1
+          if [ "$note" = 'No single kendex package claims this path' ]; then
+            printf 'upstream-skipped pr=%s finding=%s cause=unclaimed\n' "$PR_NUMBER" "$root_id"
+            reply="$NOT_FILED_PREFIX$note."
+          else
+            # GitHub's thread-resolution rule holds only an open thread, so only
+            # an open one holds the run. Resolving by hand is the remedy.
+            if [ "$resolved" = true ]; then
+              printf 'upstream-unfiled-resolved pr=%s finding=%s note=%q\n' "$PR_NUMBER" "$root_id" "$note"
+              continue
+            fi
+            printf 'upstream-unfiled pr=%s finding=%s note=%q\n' "$PR_NUMBER" "$root_id" "$note"
+            printf '::error::upstream-unfiled pr=%s thread=%s finding=%s note=%s The thread stays open and holds the pull request.\n' \
+              "$PR_NUMBER" "$thread_id" "$root_id" "$note"
+            unfiled=$((unfiled + 1))
+            held=$((held + 1))
+            continue
+          fi
+        else
+          printf 'upstream-filed pr=%s finding=%s issue=%s\n' "$PR_NUMBER" "$root_id" "$issue"
+          reply="$REPLY_PREFIX$issue$REPLY_TAIL"
         fi
-        printf 'upstream-unfiled pr=%s finding=%s note=%q\n' "$PR_NUMBER" "$root_id" "$note"
-        printf '::error::upstream-unfiled pr=%s thread=%s finding=%s note=%s The thread stays open and holds the pull request.\n' \
-          "$PR_NUMBER" "$thread_id" "$root_id" "$note"
-        unfiled=$((unfiled + 1))
-        held=$((held + 1))
-        continue
       fi
-      printf 'upstream-filed pr=%s finding=%s issue=%s\n' "$PR_NUMBER" "$root_id" "$issue"
-      reply="$REPLY_PREFIX$issue$REPLY_TAIL"
       result="$(gh api -X POST "repos/$GH_REPO/pulls/$PR_NUMBER/comments/$root_id/replies" -f body="$reply")" \
         || fail reply "$thread_id" 'Could not post the upstream reply.'
       jq -e --arg author "$PR_AUTHOR" --arg body "$reply" \

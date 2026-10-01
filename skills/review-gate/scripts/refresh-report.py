@@ -2,7 +2,7 @@
 """File automatic rendered-file review findings for upstream triage.
 
 refresh-reviews supplies JSON [{root, path, body, url}] on stdin after the
-trusted render proof, one row per unanswered review thread, root being the
+trusted render proof, one row per live unanswered review thread, root being the
 thread's first comment id. The head's generated inventory binds each reported
 path. Review text is data; only the upstream verifier confirms a defect. GitHub
 issue titles carry the stable fingerprint consumed by later scheduled runs.
@@ -13,12 +13,17 @@ not filed: a path outside the inventory, a path no single package claims (the
 lock, the inventory, a Copilot .github/agents/*.agent.md render), or a package
 kendex report routes elsewhere. Review text about content kendex has not
 claimed is never published, and its step summary row offers no filing link.
+The writer skips outdated threads before reporting. It replies as not filed
+and resolves those threads and paths no single package claims. Other live
+unfiled threads stay open and hold the run until resolved by hand.
 
 stdout is one JSON array, read by refresh-reviews: [{root, issue, note}] with
 one row per input row. issue is the html_url of the open upstream issue the
 finding is filed under, or null when it is not filed: one of the routes above,
-no Issues token or denied Issues access. note names which. Log lines go to
-stderr.
+no Issues token or denied Issues access. note names which. The note
+"No single kendex package claims this path" tells the writer to skip with a
+not-filed reply and resolution, including paths outside the inventory.
+Log lines go to stderr.
 
 --settings formats ol_preference_entries' refused and deprecated arrays from
 refresh-consumer as a pull request Settings section. A clean parse emits no
@@ -95,14 +100,10 @@ def main():
     results = []
     for finding in json.load(sys.stdin):
         path = finding["path"]
-        if path not in records:
-            results.append({"root": finding["root"], "issue": None, "note": "Not a rendered file"})
-            print(f"refresh-report=Not a rendered file path={path!r}", file=sys.stderr)
-            continue
-        record = records[path]
+        record = records.get(path, path)
         package_path = record["template"] if isinstance(record, dict) else path
         parts = PurePosixPath(package_path).parts
-        matches = names.intersection((*parts, PurePosixPath(package_path).stem))
+        matches = names.intersection((*parts, PurePosixPath(package_path).stem)) if path in records else set()
         label = None
         unrouted = "No single kendex package claims this path"
         if len(matches) == 1:
