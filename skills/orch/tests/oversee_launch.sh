@@ -458,8 +458,8 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT" | awk '{print $2, $3}')|$(overseers)" "1|la
 # A first launch on a copilot entry: `lanes pick --harness copilot` judges a
 # Copilot account on its monthly pool, so the overseer opens on the account
 # the pick names, under COPILOT_HOME, with the model and effort the entry
-# names and copilot's full-bypass word. The account's status line writes the
-# session record the overseer's context is read from.
+# names and copilot's full-bypass word. The installed extension records the
+# overseer's context reading.
 cat > "$BIN/copilot" <<STUB
 #!/bin/sh
 { printf 'home=%s\n' "\${COPILOT_HOME:-}"; printf '%s\n' "\$@"; } > "$TMP_ROOT/argv.copilot"

@@ -64,9 +64,11 @@
 #        itself (lib/overseer-launch.sh § ol_pick_lane). An entry with no
 #        qualifying lane is skipped, and so is one whose harness row names no
 #        full-bypass word to launch it under, pi's, before its pick, with
-#        `entry-permission-unwritable` on stderr, and a copilot entry whose
-#        picked account runs no copilot-statusline status line, with
-#        `successor-status-line` on stderr; a preference set to empty
+#        `entry-permission-unwritable` on stderr. A copilot entry accepts the
+#        extension set up by the shared installer; only explicit
+#        `EXTENSIONS=false` requires the copilot-statusline statusLine fallback.
+#        Setup failure skips the entry with `successor-status-line` on stderr;
+#        a preference set to empty
 #        refuses `preference-empty`, because a first launch has no caller
 #        whose own harness and lane could stand in; a walk that ends empty
 #        refuses `no-lane-qualifies` at exit 3 with the counts each sweep found.
