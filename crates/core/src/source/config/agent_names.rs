@@ -5,8 +5,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::{CoreError, Result};
-use crate::manifest::Manifest;
+use crate::manifest::{HookAgents, Manifest};
 use crate::model::ItemKind;
+use crate::render::agent::{Selects, selects};
 
 const ALIASES: [(&str, &str); 2] = [("generalist", "maintainer"), ("engineer", "runtime")];
 
@@ -84,6 +85,17 @@ impl Uses {
                             ),
                         );
                     }
+                }
+            }
+        }
+        for (index, hook) in manifest.custom_hooks.iter_mut().enumerate() {
+            let names = match &mut hook.agents {
+                HookAgents::One(name) => std::slice::from_mut(name),
+                HookAgents::Many(names) => names.as_mut_slice(),
+            };
+            for name in names {
+                if selects(name) == Selects::Named {
+                    *name = self.name(name, &format!("kendex.toml: custom-hooks[{index}].agents"));
                 }
             }
         }

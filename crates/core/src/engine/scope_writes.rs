@@ -1,6 +1,6 @@
 //! Everything a scope plan writes that is not one item's own artifact: the
 //! shared config files edits land in, the install record, the manifest's
-//! format line, and the settings a project's skills seed.
+//! compatibility updates, and the project's settings.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -38,13 +38,9 @@ pub(super) fn manifest_pre(base: Option<&Base>, path: &Path) -> Result<Pre> {
     }
 }
 
-/// The plan's one manifest write, when anything needs it: skills an agent
-/// gained upstream. Nothing else asks for the file — only the current
-/// schema loads, so there is no upgrade to plan, and a write planned for
-/// its own sake would put a precondition and a plan line in front of the
-/// person for a write that lands nothing. One write whatever put it
-/// there: a second manifest write could never run, its precondition binds
-/// to the bytes the first one replaces.
+/// Persist the desired state's manifest update: newly required skills or
+/// canonical agent identities. One write covers both; a second write's
+/// precondition would bind to bytes the first one replaces.
 pub(super) fn plan_manifest_write(
     env: &Env,
     scope: &Scope,
@@ -60,7 +56,7 @@ pub(super) fn plan_manifest_write(
     // place deciding it is the whole point of stamping at the write.
     let written = update.clone();
     ops.push(PlannedOp {
-        description: "Add new catalog skills to kendex.toml".into(),
+        description: "Update agent settings in kendex.toml".into(),
         op: Op::WriteManifest {
             pre: manifest_pre(base, &path)?,
             path,

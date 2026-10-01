@@ -31,3 +31,33 @@ engineer = { allowed-subagents = ["generalist"] }
 
 [skill-instructions]
 review = "Use agent:generalist and agent:engineer. Keep agent:engineer-extra."
+
+[[custom-hooks]]
+name = "scalar"
+event = "PreToolUse"
+command = "./scalar.sh"
+agents = "generalist"
+
+[[custom-hooks]]
+name = "list"
+event = "PostToolUse"
+command = "./list.sh"
+agents = ["generalist", "reviewer", "all"]
+
+[[custom-hooks]]
+name = "role"
+event = "Stop"
+command = "./role.sh"
+agents = "engineer"
+
+[[custom-hooks]]
+name = "role-list"
+event = "SubagentStop"
+command = "./role-list.sh"
+agents = ["engineer"]
+
+[[custom-hooks]]
+name = "everyone"
+event = "PreToolUse"
+command = "./everyone.sh"
+agents = "all"

@@ -4,8 +4,10 @@
 //! comment blocks travel with their key. What it admits is a narrow set. A
 //! template applies once, when its skill arrives, and writes then only the
 //! keys it marks `# required`; a save writes the keys it names. Nothing
-//! else here ever reaches a consumer's file, so a refresh leaves it
-//! byte-identical and a key deleted from it stays deleted. A key nobody
+//! else here reaches a consumer's file. Seeding on refresh leaves it
+//! byte-identical and keeps deleted keys absent; the compatibility pass in
+//! [`crate::engine::settings_write`] can still update legacy agent labels.
+//! A key nobody
 //! answers is named by [`notes`] rather than written.
 //!
 //! The shell-side readers consume the `[env]` table only, but the presence

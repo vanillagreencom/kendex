@@ -6,8 +6,9 @@ use std::path::PathBuf;
 
 use crate::test_util::{rooted, source_path};
 use kendex_core::apply;
-use kendex_core::engine::{DeclarationStatus, audit};
+use kendex_core::engine::{DeclarationStatus, EngineReport, audit};
 use kendex_core::env::{Env, FakeOs};
+use kendex_core::manifest::HookAgents;
 use kendex_core::model::{ItemKind, Scope};
 use kendex_core::source::{find_item, source_config};
 use kendex_core::source_read::SealedSource;
@@ -162,6 +163,7 @@ fn a_legacy_consumer_renders_with_skills_labels_templates_and_one_warning_per_na
         .unwrap();
     assert!(manifest.agents.contains_key("maintainer"));
     assert!(manifest.agents.contains_key("runtime"));
+    assert_custom_hooks(&f, &manifest, &report);
     for (name, allowed, launch) in [
         ("maintainer", "runtime", "Launch agent:runtime."),
         ("runtime", "maintainer", "Launch agent:maintainer."),
@@ -183,7 +185,80 @@ fn a_legacy_consumer_renders_with_skills_labels_templates_and_one_warning_per_na
             .iter()
             .filter(|warning| ["generalist", "engineer"].contains(&warning.name.as_str()))
             .all(|warning| !warning.message.contains("agents.generalist")
-                && !warning.message.contains("agents.engineer"))
+                && !warning.message.contains("agents.engineer")
+                && !warning.message.contains("custom-hooks"))
+    );
+}
+
+#[allow(clippy::unwrap_used)]
+fn assert_custom_hooks(
+    f: &Fixture,
+    manifest: &kendex_core::manifest::Manifest,
+    report: &EngineReport,
+) {
+    let cases = [
+        (
+            "scalar",
+            HookAgents::One("maintainer".into()),
+            &["maintainer"][..],
+            true,
+        ),
+        (
+            "list",
+            HookAgents::Many(vec!["maintainer".into(), "reviewer".into(), "all".into()]),
+            &["maintainer"][..],
+            true,
+        ),
+        (
+            "role",
+            HookAgents::One("engineer".into()),
+            &["maintainer", "runtime"][..],
+            false,
+        ),
+        (
+            "role-list",
+            HookAgents::Many(vec!["engineer".into()]),
+            &["maintainer", "runtime"][..],
+            false,
+        ),
+        ("everyone", HookAgents::One("all".into()), &[][..], false),
+    ];
+    assert_eq!(manifest.custom_hooks.len(), cases.len());
+    for (index, (name, selector, recipients, renamed)) in cases.into_iter().enumerate() {
+        assert_eq!(manifest.custom_hooks[index].agents, selector, "{name}");
+        for old in ["generalist", "engineer"] {
+            let warning = report
+                .warnings
+                .iter()
+                .find(|warning| warning.name == old && warning.harness.is_none())
+                .unwrap();
+            let setting = format!("custom-hooks[{index}].agents");
+            assert_eq!(
+                warning.message.contains(&setting),
+                old == "generalist" && renamed,
+                "{setting}: {warning:?}"
+            );
+        }
+        for agent_name in ["maintainer", "runtime"] {
+            let agent = fs::read_to_string(
+                f.project
+                    .join(".claude/agents")
+                    .join(format!("{agent_name}.md")),
+            )
+            .unwrap();
+            assert_eq!(
+                agent.contains(&format!("command: \"./{name}.sh\"")),
+                recipients.contains(&agent_name),
+                "{name} on {agent_name}: {agent}"
+            );
+        }
+    }
+    let hook_registry: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(f.project.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        hook_registry["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+        "./everyone.sh"
     );
 }
 

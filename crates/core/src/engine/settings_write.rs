@@ -2,13 +2,14 @@
 //!
 //! Split from the rest of a scope's writes because what goes in this file
 //! is decided by a different question. The manifest and the lock are
-//! kendex's own records and every pass rewrites them; this one is the
+//! kendex's own records; this one is the
 //! consumer's, tracked in their repository, and a pass may put a line in
 //! it only when the skill the template comes from is arriving here, a
-//! save names the key, or the shared agent resolver replaces legacy labels. Arrival rides in on the plan's options, because the
+//! save names the key, or the shared agent resolver replaces legacy labels.
+//! Arrival rides in on the plan's options, because the
 //! only thing that arrives a skill is the `add` that declares it. What the
-//! rule IS lives in [`crate::settings_seed`]; this is where a scope asks
-//! it.
+//! seeding rule lives in [`crate::settings_seed`]; compatibility lives in
+//! [`crate::source::config::agent_names`].
 
 use crate::apply::{Op, PlannedOp, Pre};
 use crate::error::Result;
@@ -40,9 +41,9 @@ fn cannot_write(scope: &Scope, file: String, detail: String) -> DriftRow {
 
 /// What this pass writes into the project's kendex.settings.toml. A skill
 /// arriving here writes the keys its template marks `# required`, and a
-/// save writes the keys it names; a key the file already assigns anywhere
-/// is never touched, and a pass that arrives no skill and carries no save
-/// writes nothing except legacy agent-label replacements.
+/// save writes the keys it names. Seeding never overwrites an assigned key.
+/// The shared agent resolver can replace legacy labels in an existing
+/// taxonomy even without an arrival or save.
 ///
 /// A person's own edits are the other thing that reaches this file, and
 /// they compose here rather than following as a second write: the keys a

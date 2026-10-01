@@ -10,17 +10,19 @@ A skill may declare credentials and no settings. A template with a `[secrets]` t
 
 Seeding is a skill's alone: the same file under an agent, hook, command or MCP server installs normally and seeds nothing. It runs at project scope for an enabled skill at least one harness there targets; a global install writes nothing. A rendering the pass refuses does not take the settings write with it.
 
-Two things put a key in a consumer's `kendex.settings.toml`, and nothing else ever does:
+Two operations add keys to a consumer's `kendex.settings.toml`:
 
-- An arrival writes the keys the template marks `# required`, once. Arrival is the consumer's `kendex.toml` gaining the declaration, read expanded: a bundle arrives its members, a skill arrives the dependencies it pulls in. Only `add` gains a declaration, so every other pass writes nothing; a refresh leaves the file byte-identical and a key the consumer deleted stays deleted. A declaration written by hand has spent the arrival; removing and re-adding the skill is the way back.
+- An arrival writes the keys the template marks `# required`, once. Arrival is the consumer's `kendex.toml` gaining the declaration, read expanded: a bundle arrives its members, a skill arrives the dependencies it pulls in. Only `add` gains a declaration. Seeding on refresh writes nothing and keeps deleted keys absent. A declaration written by hand has spent the arrival; removing and re-adding the skill is the way back.
 - A save from the app writes the key it names, marked or not, inserting the assignment when there is none.
+
+Compatibility is a separate write: the shared agent resolver replaces complete legacy `agent:` tokens in an existing `[env].LINEAR_AGENT_LABELS` value, including on refresh without an arriving skill. It preserves comments and unrelated settings and emits one warning per old name with the affected setting. It does not restore deleted keys. The owner is `crates/core/src/source/config/agent_names.rs`; `crates/core/tests/agent_aliases.rs` proves the alias-only write.
 
 Mark a key `# required` only when the consumer has to decide it and no default could stand in; a key whose empty or shipped value already does something sensible is not one, however important. Everything else stays declared and unmarked, so no arrival writes it.
 
 - The marker is the template's own word, cut off before the assignment is written; it goes after the value and nowhere else. On a comment line of its own it marks nothing, and both misplacements are check findings. A marked key nobody has answered is reported in every plan and audit until they set it, so a template that gains a marked key after release reaches an existing consumer as a note, never a write.
-- A key already assigned anywhere in the consumer's file, inside `[env]` or not, is never seeded over and never rewritten. Whether it is answered is the readers' narrower question: an assignment under another table, one spelled quoted or dotted, one written twice, or one holding a value the loaders refuse is reported as unanswered, naming the line that took the name.
+- Seeding never overwrites a key assigned anywhere in the consumer's file, inside `[env]` or not. Whether it is answered is the readers' narrower question: an assignment under another table, one spelled quoted or dotted, one written twice, or one holding a value the loaders refuse is reported as unanswered, naming the line that took the name.
 - Where several packages ship the same key with the same default, nothing is said. Where they disagree, every plan and audit carries one note naming each owner and default, and a pass that writes the key writes the first declaration in package-name order that the pass admits: on an arrival, the first arriving package that marks it `# required`; on a save, the first in package-name order.
-- Nothing revisits a block already in the consumer's file. Once a key and its comment land they are the consumer's, and a revised template does not follow them in; the comment you ship is the wording every consumer who takes the key keeps.
+- Seeding does not revisit an existing block. Once a key and its comment land they are the consumer's, and a revised template does not follow them in; the comment you ship is the wording every consumer who takes the key keeps.
 - An entry is written whole or not at all: a value the template never closes is refused by name and the plan says so, and a value spanning lines is never marked, never arrives, and refuses a save.
 
 The seeding rules are `crates/core/src/settings_seed.rs`.
