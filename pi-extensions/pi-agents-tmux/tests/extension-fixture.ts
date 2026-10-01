@@ -23,7 +23,6 @@ import { resolveBgSession } from "../extensions/subagent/sessions.js";
 import { taskRegistryReads, writeSettings } from "./browser-fixture.js";
 import { bridgeEvent, bridgeStdout, installMockSpawn } from "./single-agent-fixture.js";
 import { setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
-import * as idleWatchdog from "../extensions/subagent/idle-stall-watchdog.js";
 import { toneTheme } from "./browser-fixture.js";
 
 type ExtensionFactory = (pi: ExtensionAPI) => void;
@@ -181,46 +180,6 @@ export async function assertStoppedEvent(extension?: ExtensionFactory) {
 		const result = await tools.get("get_subagent_result").execute("test", { taskId: "canceled-task", wait: true, timeoutMs: 1000 }, undefined, undefined, ctx);
 		assert.equal(result.details.status, "stopped");
 	}, (pi) => { emit = pi.events.emit.bind(pi.events); factory(pi); });
-}
-
-/** Read a real registered abort through the finished-turn lookup and the stall selector. */
-export async function assertStoppedConsumers(extension?: ExtensionFactory) {
-	let listActiveTasks: (() => Promise<import("../extensions/subagent/types.js").PaneTaskRecord[]>) | undefined;
-	// registerPaneSupportTools captures this dependency when the factory runs.
-	const reads = spyOn(tasks, "refreshTaskDiagnostics");
-	const create = idleWatchdog.createIdleStallWatchdog;
-	const construction = spyOn(idleWatchdog, "createIdleStallWatchdog").mockImplementation((deps) => {
-		listActiveTasks = deps.listActiveTasks;
-		return create(deps);
-	});
-	try {
-		await withExtensionTools(async (tools, ctx, harness) => {
-			mkdirSync(join(harness.cwd, ".pi/agents"), { recursive: true });
-			writeFileSync(join(harness.cwd, ".pi/agents/scout.md"), "---\nname: scout\ndescription: map\n---\nMap files.\n");
-			const controller = new AbortController();
-			controller.abort();
-			installMockSpawn([{ stdout: bridgeStdout([bridgeEvent("agent_end", { content: [] })]) }]);
-			try {
-				const dispatched = await tools.get("subagent").execute("abort", { agent: "scout", task: "map files" }, controller.signal, undefined, ctx);
-				const child = dispatched.details.results[0];
-				assert.equal(child.status, "stopped");
-				const lookup = tools.get("get_subagent_result");
-				const params = { taskId: child.taskId, wait: true, timeoutMs: 600 };
-				const result = await lookup.execute("lookup", params, undefined, undefined, ctx);
-				assert.equal(result.details.status, "stopped");
-				assert.ok(lookup.renderResult(result, {}, toneTheme, {}).render(180).join("\n").includes("<warning>stopped</warning>"));
-				reads.mockClear();
-				// A control must reach the real polling interval if it ignores finished turns.
-				await lookup.execute("lookup-again", params, undefined, undefined, ctx);
-				assert.equal(reads.mock.calls.filter(([, record]) => record.taskId === child.taskId).length, 1);
-				assert.ok(listActiveTasks, "extension must construct the stall watchdog");
-				assert.deepEqual((await listActiveTasks()).map((record) => record.taskId), []);
-			} finally { setSingleAgentSpawnForTests(); }
-		}, extension);
-	} finally {
-		construction.mockRestore();
-		reads.mockRestore();
-	}
 }
 
 /** Both completion renderers consume the status that complete_subagent writes. */

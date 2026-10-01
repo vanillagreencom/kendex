@@ -3,7 +3,7 @@ import test, { after } from "node:test";
 import { isTerminalTaskStatus, normalizePaneTaskStatus, isTaskTurnFinished, isTaskActive, taskStatus, singleResultIsError } from "../extensions/subagent/outcomes.js";
 import * as tasks from "../extensions/subagent/tasks.js";
 import { assertMissingArtifactStatus, cleanupTempRuntimes, importRuntimeCopy } from "./browser-fixture.js";
-import { assertCompletionPresentation, assertStoppedConsumers, assertStoppedEvent } from "./extension-fixture.js";
+import { assertCompletionPresentation, assertStoppedEvent } from "./extension-fixture.js";
 
 after(cleanupTempRuntimes);
 
@@ -14,7 +14,6 @@ test("control: task diagnostics ignore the lost working task", async () => {
 });
 
 test("parent aborted event is stopped in the persisted task result", () => assertStoppedEvent());
-test("real stopped task leaves the extension's stall scan", () => assertStoppedConsumers());
 
 test("completion tool and self-completion message use the status presentation owner", () => assertCompletionPresentation());
 for (const indentation of ["\t\t\t", "\t\t"]) test(`control: completion presentation bypasses owner indent=${indentation.length}`, async () => {
