@@ -168,13 +168,21 @@ async function modeAdmission(dispatch: typeof import("../extensions/subagent/dis
 	const pi = mockPiEvents([]);
 	let release!: () => void;
 	const held = withChildBudget(pi, cwd, undefined, () => new Promise<void>((resolve) => { release = resolve; }));
-	const spawns = installMockSpawn([{}]);
+	let spawned!: () => void;
+	const started = new Promise<void>((resolve) => { spawned = resolve; });
+	const spawns = installMockSpawn([{ defer(finish) { spawned(); queueMicrotask(finish); } }]);
 	const flow = { agents: [testAgent()], cwd, runtimeRoot: cwd, parentSessionId: "parent", pi,
 		makeDetails: () => makeDetails, removeDashboardAgent() {}, updateDashboard() {} };
 	const task = { agent: testAgent().name, task: "inspect" };
 	const call = mode === "single" ? dispatch.runSingleDispatch({ ...flow, ...task }) : dispatch.runChainDispatch({ ...flow, chain: [task] });
-	try { await new Promise(setImmediate); assert.equal(spawns.length, 0, `${mode} must wait for shared admission`); }
+	try {
+		// The real runner awaits session and transcript filesystem writes before
+		// spawn. Observe that boundary while the unrelated slot remains held.
+		await Promise.race([started, new Promise((resolve) => setTimeout(resolve, 200))]);
+		assert.equal(spawns.length, 0, `${mode} must wait for shared admission`);
+	}
 	finally { release(); await Promise.all([held, call]); }
+	assert.equal(spawns.length, 1, `${mode} must execute after admission`);
 }
 
 test("single and chain admission have independent controls", async () => {
@@ -210,16 +218,18 @@ async function shutdownRunner(runner: typeof import("../extensions/subagent/runn
 	const call = dispatch ? runSingleDispatch({ agents: [agent], cwd, runtimeRoot: cwd, parentSessionId: "parent", pi,
 		makeDetails: () => makeDetails, removeDashboardAgent() {}, updateDashboard() {}, agent: agent.name, task: "inspect" })
 		: withChildBudget(pi, cwd, undefined, () => runner.runSingleAgent(cwd, cwd, [agent], agent.name, "inspect", undefined, undefined, undefined, undefined, pi, undefined, undefined, makeDetails));
+	const settled = Promise.allSettled([call]);
 	try {
 		await started;
 		child!.stdout!.on("data", (data) => { output += String(data); });
 		await shutdown();
-		await call;
+		const [outcome] = await settled;
+		if (outcome.status === "rejected") assert.match(String(outcome.reason), /Agent was aborted/);
 		assert.ok(!output.includes("natural-exit"), "shutdown must reach runner without an explicit child signal");
 		assert.throws(() => process.kill(child!.pid!, 0), { code: "ESRCH" });
 	} finally {
 		child?.kill("SIGKILL");
-		await Promise.allSettled([call]);
+		await settled;
 		runner.setSingleAgentSpawnForTests();
 		runner.setBgTimeoutKillGraceMsForTests();
 	}

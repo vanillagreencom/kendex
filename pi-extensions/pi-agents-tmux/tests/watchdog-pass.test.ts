@@ -10,6 +10,7 @@ async function sharedPass(create: typeof createIdleStallWatchdog): Promise<void>
 	const gate = new Promise<void>((resolve) => { release = resolve; });
 	let lists = 0;
 	const watchdog = create({ intervalMs: 1000, thresholdMs: 0, isEnabled: () => true, now: () => 0,
+		isAwaitingRateLimitRetry: () => false,
 		listActiveTasks: async () => { lists++; await gate; return []; }, outboxExists: async () => false,
 		outboxPathFor: () => "unused", isPaneIdle: async () => false, lastActivityAt: () => 0,
 		writeSyntheticOutbox: async () => {}, markFired: async () => {}, logWarn() {} });
@@ -33,6 +34,7 @@ async function shutdownPass(create: typeof createIdleStallWatchdog): Promise<voi
 	const gate = new Promise<void>((resolve) => { release = resolve; });
 	const record = { taskId: "task", agent: "engineer", task: "inspect", status: "running" as const, createdAt: "2026-10-01T00:00:00Z" };
 	const watchdog = create({ intervalMs: 1000, thresholdMs: 0, isEnabled: () => true, now: () => 0,
+		isAwaitingRateLimitRetry: () => false,
 		listActiveTasks: async () => [record], outboxExists: async () => false, outboxPathFor: () => "unused",
 		isPaneIdle: async (_record, cancellation) => { signal = cancellation; await gate; return false; }, lastActivityAt: () => 0,
 		writeSyntheticOutbox: async () => {}, markFired: async () => {}, logWarn() {} });

@@ -220,19 +220,22 @@ test("stop_subagent reports no_pane for an agent whose latest task ran headless"
 
 async function stalledResolvers(runtime: typeof import("../extensions/subagent/dispatch.js")): Promise<void> {
 	const { childSignal } = await import("../extensions/subagent/child-budget.js");
+	process.env.TMUX = "/tmp/tmux-test/default,1,0";
 	const root = tempRuntime();
 	writeSettings(root, { maxConcurrency: 2 });
 	const pi = mockPiEvents([]);
 	const controller = new AbortController();
 	const signals: Array<AbortSignal | undefined> = [];
 	const releases: Array<() => void> = [];
+	let cleaning = false;
 	setPaneExecCaptureForTests(async () => {
 		const signal = childSignal();
 		signals.push(signal);
 		return new Promise((resolve) => {
 			const finish = () => resolve({ code: 1, stdout: "", stderr: "probe interrupted", error: new Error("probe interrupted") });
 			releases.push(finish);
-			signal?.addEventListener("abort", finish, { once: true });
+			if (cleaning || signal?.aborted) finish();
+			else signal?.addEventListener("abort", finish, { once: true });
 		});
 	});
 	const context = { ...flow(root, "single"), pi, signal: controller.signal };
@@ -251,6 +254,9 @@ async function stalledResolvers(runtime: typeof import("../extensions/subagent/d
 		await new Promise(setImmediate);
 		assert.equal(settledCount, 6, "stalled resolver cancellation must settle all modes");
 	} finally {
+		// Mutants can admit queued probes after the first release. Their fixture
+		// commands must settle too, before this case releases its runtime root.
+		cleaning = true;
 		controller.abort();
 		for (const release of releases) release();
 		await Promise.all(calls);
