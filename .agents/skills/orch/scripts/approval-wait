@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Wait for the reviewer-gate verdict on a PR, or print with --resolve-mode the
-# gate mode read from consumer policy and the native approval requirement.
-# print_usage owns the contract: run with --help.
+# gate mode from consumer policy and native approval. Contract: --help.
 # --resolve-mode stdout is the approval|off enum consumed by submit-pr,
 # merge-pr and ci-fix. --request-review prints the same enum after skipping
 # an off gate or requesting Copilot. --json stdout is consumed by their
@@ -102,10 +101,6 @@ approval_message() {
       printf 'approval-wait: invalid-mode value=%q\n' "$MODE"
       printf '%s\n' "approval-wait: invalid --mode '$MODE' (expected approval)"
       ;;
-    gate-off)
-      printf 'approval-wait: gate-off mode=%s branch=%q\n' "$MODE" "$RULES_BRANCH"
-      printf '%s\n' 'The consumer gate mode is off, so no local verdict is available to wait for.'
-      ;;
     timeout-fallback)
       printf 'approval-wait: timeout-fallback value=%q fallback=%s\n' "$ON_TIMEOUT" "block"
       printf '%s\n' "approval-wait: unrecognized PR_REVIEW_ON_TIMEOUT value '$ON_TIMEOUT'; using block"
@@ -174,16 +169,12 @@ vs proceeded deterministically (kendex#538, kendex#642).
                  its rulesets and the PR's reviewDecision (approval |
                  off), and exit: see Mode resolution
   --base-checkout PATH
-                 run this trusted mode owner from the consumer base checkout.
-                 Read committed REVIEW_GATE_MODE as data through the trusted
-                 review-gate settings reader. Never execute PATH's resolver.
-                 Clears inherited repository and review-setting overrides.
+                 use the consumer base directory; clear inherited repo/review overrides.
+                 Read committed policy with the caller's trusted settings reader, not PATH's code or private env.
                  Authentication stays with the caller's project.
   --request-review
-                 resolve through --base-checkout on every request, first or
-                 repeated. off requests nothing; approval requests Copilot.
-                 Print the mode only after success. A resolver or request
-                 failure is nonzero and authorizes no wait or retry.
+                 resolve through --base-checkout each time: off skips; approval requests Copilot.
+                 Print the mode on success; failure is nonzero and authorizes no wait or retry.
 
 Approval mode reads GitHub-native review state ONLY, on either signal:
   - reviewDecision == "APPROVED" (the aggregate GitHub computes from the
@@ -201,12 +192,9 @@ Approval mode reads GitHub-native review state ONLY, on either signal:
   resolution, so the caller triages it first. A CHANGES_REQUESTED without an
   approval reports "changes_requested" ahead of the thread count.
 
-Mode resolution requires --base-checkout. Waits take --mode approval after
-resolution; an implicit wait has no consumer context and returns no mode.
-Committed REVIEW_GATE_MODE=off prints off before any native approval read.
-enforce (the default) uses native resolution. Missing consumer context, a
-missing trusted reader, unreadable settings or an invalid policy is no mode:
-exit 2. The reader ignores machine-local settings and private env files.
+Mode resolution requires --base-checkout; waits require --mode approval.
+Committed REVIEW_GATE_MODE=off prints off before native resolution; enforce (default) uses it.
+Missing context, a missing trusted reader, unreadable settings or invalid policy exits 2.
 
 Native resolution: under enforce, read the PR's base branch and
 reviewDecision in one call (gh pr view --json baseRefName,reviewDecision),
@@ -220,8 +208,7 @@ non-empty; "off" prints only when both say no approval is required (no
 pull_request rule or one requiring 0, and an empty reviewDecision). A failed
 read of the base, the reviewDecision or the rules, or a rule whose
 required_approving_review_count is not a whole number, is no mode: exit 2
-with a diagnostic and nothing on stdout. A default wait whose gate resolves
-off exits 2 as well (gate-off): there is no local verdict to wait for.
+with a diagnostic and nothing on stdout.
 Callers read the mode only through this resolution, and never auto-detect it
 from the requested-reviewer list.
 
@@ -344,8 +331,7 @@ Exit codes:
      unreviewable (no automatic reviewer targets the PR's base and none
      arrived), or a non-auth error
   2  usage error: missing or empty argument, invalid --mode value,
-     unknown flag; or a mode resolution that failed, or a default wait
-     whose base resolves off
+     unknown flag; or a mode resolution that failed
   3  hard GitHub auth/CLI failure (matches ci-wait and queue-wait)
   5  lane mail, no result: stdout is only `approval-wait: mail=<count>`, or
      `approval-wait: mail-unreadable=<path>` when the mailbox cannot be read
@@ -415,6 +401,7 @@ if [[ "${#POSITIONAL[@]}" -lt 1 ]]; then
   print_usage >&2
   exit 2
 fi
+[[ -n "$MODE" ]] || $RESOLVE_MODE || $REQUEST_REVIEW || { approval_message missing-mode >&2; exit 2; }
 PR_NUM="${POSITIONAL[0]}"
 if $REQUEST_REVIEW || $RESOLVE_MODE || [[ -n "$BASE_CHECKOUT" ]]; then
   if [[ ${#POSITIONAL[@]} -ne 1 || -n "$MODE$ON_TIMEOUT_FLAG$ITEM" ]] \
@@ -432,38 +419,22 @@ if [[ -n "$BASE_CHECKOUT" ]]; then
   BASE_CHECKOUT="$base_root"
   cd -- "$BASE_CHECKOUT"
   PROJECT_ROOT="$BASE_CHECKOUT"
-  export PROJECT_ROOT
   # Fleet callers inherit catalog settings. Read only the consumer's policy.
   unset GH_REPO GITHUB_REPOSITORY PR_REVIEW_GATE REVIEW_GATE_MODE REVIEW_GATE_SETTINGS_FILE
   unset PR_REVIEW_ON_TIMEOUT PR_REVIEW_WAIT_SECS
 fi
 POLL_INTERVAL="${POSITIONAL[1]:-15}"
 lane_mail_resolve approval-wait "$ITEM"
-# Absent positional resolves through the per-repo quiet-period setting:
-# env > .env.local > .kendex/settings.toml > kendex.settings.toml > 900.
-# orch-env's numeric-default guard keeps
-# a non-numeric setting from breaking the deadline arithmetic. An explicit
-# positional arg always wins (callers that pass one keep exact behavior).
-MAX_WAIT=900
-if ! $RESOLVE_MODE && ! $REQUEST_REVIEW; then
+if $RESOLVE_MODE || $REQUEST_REVIEW; then
+  MAX_WAIT=900
+  ON_TIMEOUT=proceed
+else
   MAX_WAIT="${POSITIONAL[2]:-$("$SCRIPT_DIR/orch-env" PR_REVIEW_WAIT_SECS 900)}"
+  ON_TIMEOUT="${ON_TIMEOUT_FLAG:-$("$SCRIPT_DIR/orch-env" PR_REVIEW_ON_TIMEOUT proceed)}"
 fi
 START_TIME="$(date +%s)"
 elapsed=0
 
-# Reviewer-down flexibility (PR_REVIEW_ON_TIMEOUT, default "proceed"): controls
-# the deadline verdict when the gate signal never arrives. "block" reports
-# "timeout" (exit 1) as before — the caller prompts or keeps waiting.
-# "proceed" reports a distinct "proceeded" (exit 0) INSTEAD, but only when zero
-# threads are unresolved, so a credit-exhausted reviewer that posted nothing
-# never blocks the fleet. An open thread can never reach this path: an
-# unresolved thread exits the poll loop as "comments" first, so a real comment
-# is never bypassed. The --on-timeout flag overrides the setting for explicit
-# callers and tests; same orch-env settings ladder as MAX_WAIT above.
-ON_TIMEOUT=proceed
-if ! $RESOLVE_MODE && ! $REQUEST_REVIEW; then
-  ON_TIMEOUT="${ON_TIMEOUT_FLAG:-$("$SCRIPT_DIR/orch-env" PR_REVIEW_ON_TIMEOUT proceed)}"
-fi
 case "$ON_TIMEOUT" in
   block|proceed) ;;
   *)
@@ -761,14 +732,6 @@ if $RESOLVE_MODE || $REQUEST_REVIEW; then
   fi
   printf '%s\n' "$GATE_MODE"
   exit 0
-fi
-if [[ -z "$MODE" ]]; then
-  resolve_gate_mode || exit 2
-  MODE="$GATE_MODE"
-  if [[ "$MODE" == off ]]; then
-    approval_message gate-off >&2
-    exit 2
-  fi
 fi
 
 # --- automatic-review target set (resolved ONCE, before the poll loop) ---

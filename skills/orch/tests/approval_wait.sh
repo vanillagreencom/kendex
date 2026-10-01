@@ -515,7 +515,7 @@ table "$RESOLVE" \
 
 echo "=== waits require a resolved mode ==="
 table '1 1 3 --json' \
-  'an implicit wait has no consumer context||STUB_APPROVAL_MODE=approved_decision|rc=2 stdout=empty rules_reads=0 approval_polls=0' \
+  'a wait without --mode is refused||STUB_APPROVAL_MODE=approved_decision|rc=2 stdout=empty stderr_line=approval-wait:+missing-mode+option=--mode rules_reads=0 approval_polls=0' \
   '--mode approval reads no rules|1 1 3 --json --mode approval|STUB_RULES_MODE=fail,STUB_APPROVAL_MODE=approved_decision|rc=0 status=approved rules_reads=0'
 
 echo "=== approval mode: the verdict rule over the pr view payload and the thread count ==="
@@ -743,6 +743,9 @@ control decision-ignored '  if [ "$required" -ge 1 ] || [ -n "$decision" ]; then
 control fail-open '  if ! required=$(read_required_approvals "$RULES_BRANCH"); then' \
   '  if ! required=$(read_required_approvals "$RULES_BRANCH" || echo 0); then' \
   "$RESOLVE" 'STUB_RULES_MODE=fail' 'rc=2 stdout=empty'
+control wait-mode '[[ -n "$MODE" ]] || $RESOLVE_MODE || $REQUEST_REVIEW || { approval_message missing-mode >&2; exit 2; }' \
+  ': # [[ -n "$MODE" ]] || $RESOLVE_MODE || $REQUEST_REVIEW || { approval_message missing-mode >&2; exit 2; }' \
+  '1 1 3 --json' 'STUB_APPROVAL_MODE=approved_decision' 'rc=2 stdout=empty'
 control consumer-context '  [[ -n "$BASE_CHECKOUT" ]] || { approval_message base-checkout-invalid >&2; return 1; }' \
   '  : # [[ -n "$BASE_CHECKOUT" ]] || { approval_message base-checkout-invalid >&2; return 1; }' \
   '1 --resolve-mode' 'STUB_REQUIRED_APPROVALS=1' 'rc=2 stdout=empty rules_reads=0'
