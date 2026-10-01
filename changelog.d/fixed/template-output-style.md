@@ -1,0 +1,1 @@
+- Template installs reject combined output-style declarations before writing any group, including copied styles and disabled declarations.

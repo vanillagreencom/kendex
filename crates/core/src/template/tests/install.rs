@@ -218,6 +218,154 @@ fn project_repo(project: &super::create::Project) -> String {
     crate::paths::slashed(&project.catalog.canonicalize().unwrap())
 }
 
+/// Packages Add to template can save styles from different repositories.
+/// Project saves can carry disabled declarations too. These inputs must
+/// be judged together before even an unrelated group commits.
+#[test]
+#[allow(
+    clippy::unwrap_used,
+    clippy::too_many_lines,
+    reason = "the input table and shared install assertions stay together"
+)]
+fn output_style_intent_is_judged_before_template_writes() {
+    enum Expected {
+        Refused,
+        Installed,
+    }
+    use Expected::{Installed, Refused};
+
+    for (label, styles, existing, expected) in [
+        ("two repositories", vec![true, true], None, Refused),
+        ("disabled repositories", vec![false, false], None, Refused),
+        ("existing and direct", vec![true], Some(true), Refused),
+        (
+            "disabled existing and direct",
+            vec![false],
+            Some(false),
+            Refused,
+        ),
+        ("single direct", vec![true], None, Installed),
+        ("single disabled direct", vec![false], None, Installed),
+    ] {
+        for global in [false, true] {
+            let project = seeded();
+            let target = if global {
+                Scope::Global
+            } else {
+                destination(&project, "style-target")
+            };
+            let second = project.home.join("second-catalog");
+            fs::create_dir_all(&second).unwrap();
+            fs::write(
+                second.join("kendex.toml"),
+                "[marketplace]\nname = \"second\"\n",
+            )
+            .unwrap();
+            let market = |kind, name: &str, catalog: &std::path::Path, enabled| Member {
+                kind,
+                name: name.to_owned(),
+                enabled,
+                source: MemberSource::Marketplace {
+                    repo: crate::paths::slashed(catalog),
+                    rev: None,
+                },
+            };
+            let mut template = Template {
+                name: "Style intent".to_owned(),
+                id: "style-intent".to_owned(),
+                members: vec![market(MemberKind::Skill, "gh", &project.catalog, true)],
+                customizations: Customizations::default(),
+            };
+            for (enabled, (name, catalog)) in styles
+                .iter()
+                .zip([("first", &project.catalog), ("second", &second)])
+            {
+                let text = format!(
+                    "---\nname: {name}\ndescription: Writing style\nkeep-coding-instructions: true\n---\nUse short sentences.\n"
+                );
+                super::file_item(&catalog.join("output-styles"), &format!("{name}.md"), &text);
+                template
+                    .members
+                    .push(market(MemberKind::OutputStyle, name, catalog, *enabled));
+            }
+            let manifest_path = crate::manifest::manifest_path(&project.env, &target);
+            if let Some(enabled) = existing {
+                fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+                fs::write(
+                    &manifest_path,
+                    format!("schema = 6\n[output-styles.held]\nsource = \"local\"\nenabled = {enabled}\n"),
+                ).unwrap();
+            }
+            let resolution = resolve(&project.env, &template).unwrap();
+            assert!(
+                resolution.missing.is_empty(),
+                "{label}: {:?}",
+                resolution.missing
+            );
+            assert_eq!(resolution.count(), styles.len() + 1, "{label}");
+            // Includes both scopes' manifests, locks, local copies and
+            // harness files. Resolve has already prepared its read store.
+            let before = snapshot(&project.home);
+            let result = install(
+                &project.env,
+                &template,
+                &target,
+                Some(vec![HarnessId::Claude]),
+                None,
+            );
+            match expected {
+                Refused => {
+                    let Err(CoreError::ManifestInvalid { path, findings }) = result else {
+                        panic!("{label}: expected pre-write refusal, got {result:?}");
+                    };
+                    assert_eq!(path, manifest_path, "{label}");
+                    assert_eq!(findings.len(), 1, "{label}");
+                    assert_eq!(findings[0].location, "output-styles", "{label}");
+                    assert_eq!(
+                        snapshot(&project.home),
+                        before,
+                        "{label}: refusal wrote files"
+                    );
+                }
+                Installed => {
+                    let landed = result.unwrap();
+                    assert!(landed.stopped.is_none(), "{label}: {landed:?}");
+                    assert!(
+                        landed
+                            .declared
+                            .iter()
+                            .any(|name| name == "output-style first"),
+                        "{label}"
+                    );
+                    let declared = crate::manifest::load_current(&manifest_path)
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(declared.output_styles.len(), 1, "{label}");
+                    assert_eq!(
+                        declared.output_styles["first"].enabled, styles[0],
+                        "{label}"
+                    );
+                    let after = snapshot(&project.home);
+                    let repeated = install(
+                        &project.env,
+                        &template,
+                        &target,
+                        Some(vec![HarnessId::Claude]),
+                        None,
+                    )
+                    .unwrap();
+                    assert!(repeated.stopped.is_none(), "{label}: {repeated:?}");
+                    assert_eq!(
+                        snapshot(&project.home),
+                        after,
+                        "{label}: same-name reinstall changed files"
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// A populated destination keeps what it already had, and a local package
 /// it owns under a template member's name with other bytes is a refusal
 /// naming it — never a silent overwrite.
