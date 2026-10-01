@@ -78,14 +78,21 @@ let resolvedPiBridgeCommand: string | undefined;
 async function defaultExecCapture(command: string, args: string[], options: ExecCaptureOptions = {}, spawner: typeof spawn = spawn): Promise<ExecCaptureResult> {
 	const signal = options.signal ?? childSignal();
 	if (signal?.aborted) return { code: 1, stdout: "", stderr: "Command aborted", error: signal.reason };
-	// Bridge callers use this module's resolver; process.execPath runs the capture fixtures.
-	if (!new Set(["tmux", "ps", "bash", process.execPath, resolvedPiBridgeCommand]).has(command)) {
-		const error = new Error(`Command origin is not a fixed probe or the resolved pi-bridge: ${command}`);
-		return { code: 1, stdout: "", stderr: error.message, error };
-	}
 	const timeoutMs = Math.max(1, options.timeoutMs ?? 10_000);
 	return new Promise((resolve) => {
-		const proc = spawner(command, args, { cwd: options.cwd, env: options.env ?? process.env, detached: process.platform !== "win32", shell: false, stdio: ["ignore", "pipe", "pipe"] });
+		const spawnOptions = { cwd: options.cwd, env: options.env ?? process.env, detached: process.platform !== "win32", shell: false, stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"] };
+		// Keep the shell's fixed lookup separate from bridge arguments, which are data.
+		const proc = command === "tmux" ? spawner("tmux", args, spawnOptions)
+			: command === "ps" ? spawner("ps", args, spawnOptions)
+			: command === "bash" && args.length === 2 && args[0] === "-lc" && args[1] === "command -v pi-bridge || true" ? spawner("bash", ["-lc", "command -v pi-bridge || true"], spawnOptions)
+			: command === process.execPath ? spawner(process.execPath, args, spawnOptions)
+			: resolvedPiBridgeCommand !== undefined && command === resolvedPiBridgeCommand ? spawner(resolvedPiBridgeCommand, args, spawnOptions)
+			: undefined;
+		if (proc === undefined) {
+			const error = new Error(`Command origin is not a fixed probe or the resolved pi-bridge: ${command}`);
+			resolve({ code: 1, stdout: "", stderr: error.message, error });
+			return;
+		}
 		let stdout = "";
 		let stderr = "";
 		let failure: { cause: "timeout" | "aborted"; error: Error } | undefined;

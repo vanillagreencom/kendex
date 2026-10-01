@@ -14,16 +14,24 @@ test("command capture requires a fixed probe or a resolver-approved bridge", asy
    symlinkSync(process.execPath, bridge);
    const options = { env: { PATH: "/usr/bin:/bin", HOME: root, TMPDIR: root } };
    const refused = async (capture: typeof execCapture) => {
-      const result = await capture(bridge, ["-e", 'console.log("unexpected execution")'], options);
-      assert.equal(result.code, 1, "an unresolved executable must not start");
-      assert.equal(result.stdout, "");
-      assert.ok(result.error instanceof Error);
+      for (const [command, args] of [
+         [bridge, ["-e", 'console.log("unexpected execution")']],
+         ["bash", ["-c", "printf unexpected"]],
+         ["bash", ["-lc", "command -v pi-bridge || true", "extra"]],
+      ] as const) {
+         const result = await capture(command, [...args], options);
+         assert.equal(result.code, 1, "an unapproved command must not start");
+         assert.equal(result.stdout, "");
+         assert.ok(result.error instanceof Error);
+      }
    };
    await refused(execCapture);
-   const mutant = await importRuntimeCopy("pane.ts", 'if (!new Set(["tmux", "ps", "bash", process.execPath, resolvedPiBridgeCommand]).has(command)) {', 'if (!new Set(["tmux", "ps", "bash", process.execPath, resolvedPiBridgeCommand]).has(command) && false) {') as typeof runtime;
-   await assert.rejects(refused(mutant.execCapture), /an unresolved executable must not start/);
+   const mutant = await importRuntimeCopy("pane.ts", ': undefined;\n\t\tif (proc === undefined)', ': spawner(command, args, spawnOptions);\n\t\tif (proc === undefined)') as typeof runtime;
+   await assert.rejects(refused(mutant.execCapture), /an unapproved command must not start/);
+   const arbitraryShell = await importRuntimeCopy("pane.ts", 'command === "bash" && args.length === 2 && args[0] === "-lc" && args[1] === "command -v pi-bridge || true"', 'command === "bash"') as typeof runtime;
+   await assert.rejects(refused(arbitraryShell.execCapture), /an unapproved command must not start/);
    for (const [command, args] of [
-      ["tmux", ["-V"]], ["ps", ["-p", String(process.pid)]], ["bash", ["-c", "printf probe"]],
+      ["tmux", ["-V"]], ["ps", ["-p", String(process.pid)]], ["bash", ["-lc", "command -v pi-bridge || true"]],
       [process.execPath, ["-e", 'console.log("fixture")']],
    ] as const) {
       const result = await execCapture(command, [...args], options);
@@ -37,6 +45,9 @@ test("command capture requires a fixed probe or a resolver-approved bridge", asy
       const result = await execCapture(bridge, ["-e", 'console.log("resolved bridge")'], options);
       assert.equal(result.code, 0);
       assert.equal(result.stdout.trim(), "resolved bridge");
+      const bridgeArgs = await execCapture(bridge, ["-e", 'console.log(process.argv[1])', "--", "-c"], options);
+      assert.equal(bridgeArgs.code, 0);
+      assert.equal(bridgeArgs.stdout.trim(), "-c", "bridge arguments must stay data even when they match a shell flag");
    } finally {
       if (previous === undefined) delete process.env.PI_BRIDGE_BIN;
       else process.env.PI_BRIDGE_BIN = previous;

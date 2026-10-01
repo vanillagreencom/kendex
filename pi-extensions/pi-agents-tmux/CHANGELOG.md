@@ -4,6 +4,7 @@
 
 ### 3.3.2
 
+- Bridge arguments stay separate from the fixed Bash lookup at process launch. Custom bridge executable paths, including paths with spaces, remain supported.
 - Pane command capture accepts fixed probes and the resolved bridge executable without a shell. Shutdown tests pass file paths as data instead of constructing child code.
 
 ### 3.3.1
