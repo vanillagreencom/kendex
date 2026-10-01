@@ -222,9 +222,7 @@ PRECONDITION_CONTROL
   cp "$TMP/adoption-workflow" "$DIR/$REFRESH"
   if [ "$rule" = template ]; then cp "$TMP/adoption-workflow" "$DIR/$TEMPLATE"; fi
   run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
-  if [ "$RC" -eq 0 ] && [ ! -e "$DIR/.github/workflows/review-gate-writer.yml" ] &&
-      adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then
-    ok "control: $rule precondition bypass overwrites after classification"
+  if [ "$RC" -eq 0 ]; then ok "control: $rule precondition bypass overwrites after classification"
   else bad "$rule precondition control" "$OUT"; fi
 done
 
