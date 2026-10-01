@@ -121,7 +121,7 @@ for (const [mode, dispatch] of [
 	});
 }
 
-test("a headless pane agent arms no bg task deadline while a bg agent in the same dispatch keeps it", async () => {
+test("headless pane and background agents both keep the process deadline", async () => {
 	delete process.env.TMUX;
 	const runtimeRoot = tempRuntime();
 	writeSettings(runtimeRoot, { bgTaskTimeoutMs: 5 });
@@ -132,8 +132,8 @@ test("a headless pane agent arms no bg task deadline while a bg agent in the sam
 	const result = await runParallelDispatch({ ...flow(runtimeRoot, "parallel"), tasks: [{ agent: "generalist", task: "tidy the docs" }, { agent: "reviewer-test", task: "review code" }] });
 
 	const headless = resultFor(result.details.results, "generalist");
-	assert.notEqual(headless.stopReason, "unresponsive_timeout");
-	assert.equal(headless.exitCode, 0);
+	assert.equal(headless.stopReason, "unresponsive_timeout");
+	assert.equal(headless.exitCode, 1);
 	assert.equal(resultFor(result.details.results, "reviewer-test").stopReason, "unresponsive_timeout");
 });
 

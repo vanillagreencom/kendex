@@ -64,6 +64,7 @@ export function createHarness(env: { childAgent?: string; childPane?: string; tm
 		titleSpawnCalls.push({ command, args: [...(args ?? [])] });
 		const proc = new EventEmitter() as any;
 		proc.unref = () => undefined;
+		queueMicrotask(() => proc.emit("close", 0));
 		return proc;
 	}) as any);
 	return { cwd, piUserDir, titles: [], titleSpawnCalls, previousEnv };
@@ -98,6 +99,7 @@ export async function installExtension(harness: Harness, options: {
 		getThinkingLevel: () => undefined,
 		on: (event: string, handler: SessionHandler) => {
 			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+			return () => handlers.set(event, (handlers.get(event) ?? []).filter((registered) => registered !== handler));
 		},
 		registerCommand: () => undefined,
 		registerMessageRenderer: () => undefined,

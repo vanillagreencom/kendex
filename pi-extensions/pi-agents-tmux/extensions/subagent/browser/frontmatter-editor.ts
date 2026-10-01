@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execCapture } from "../pane.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
@@ -255,16 +255,15 @@ function upsertAgentFrontmatterToml(content: string, agentName: string, edit: Ag
 	return `${next.replace(/\n*$/, "")}\n`;
 }
 
-function refreshkendexManagedAgent(agent: AgentConfig, tomlPath: string): { ok: boolean; message?: string } {
+async function refreshkendexManagedAgent(agent: AgentConfig, tomlPath: string, signal: AbortSignal | undefined): Promise<{ ok: boolean; message?: string }> {
 	const projectRoot = path.dirname(tomlPath);
-	const result = spawnSync("kendex", ["refresh", "--scope", "project"], {
+	const result = await execCapture("kendex", ["refresh", "--scope", "project"], {
 		cwd: projectRoot,
-		encoding: "utf-8",
-		timeout: 120_000,
+		timeoutMs: 120_000,
+		signal,
 	});
-	if (result.error) return { ok: false, message: result.error.message };
-	if ((result.status ?? 0) !== 0) {
-		const detail = (result.stderr || result.stdout || `exit ${result.status}`).trim();
+	if (result.code !== 0) {
+		const detail = (result.stderr || result.stdout || `exit ${result.code}`).trim();
 		return { ok: false, message: detail.split(/\r?\n/).slice(-4).join(" ") };
 	}
 	if (!fs.existsSync(agent.filePath)) return { ok: false, message: `${compactAgentPath(agent.filePath)} was not regenerated.` };
@@ -315,7 +314,7 @@ export async function editAgentFrontmatterOverrides(ctx: ExtensionContext, agent
 			await fs.promises.mkdir(path.dirname(tomlPath), { recursive: true });
 			await fs.promises.writeFile(tomlPath, next, "utf-8");
 		});
-		const refresh = refreshkendexManagedAgent(agent, tomlPath);
+		const refresh = await refreshkendexManagedAgent(agent, tomlPath, ctx.signal);
 		if (!refresh.ok) return `Updated ${agent.name} overrides in ${compactAgentPath(tomlPath)}. Refresh failed: ${refresh.message || "unknown error"}. Run kendex refresh --scope project to regenerate ${compactAgentPath(agent.filePath)}.`;
 		return `Updated Pi overrides in ${compactAgentPath(tomlPath)} and regenerated project agents. Run /reload if Pi does not pick up the changed agent immediately.`;
 	}

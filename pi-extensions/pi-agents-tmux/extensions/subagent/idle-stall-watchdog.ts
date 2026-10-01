@@ -148,7 +148,14 @@ export function createIdleStallWatchdog(deps: IdleStallWatchdogDeps): IdleStallW
 		}
 	}
 
-	async function checkAll(): Promise<StallCheckOutcome[]> {
+	let passInFlight: Promise<StallCheckOutcome[]> | undefined;
+	function checkAll(): Promise<StallCheckOutcome[]> {
+		if (passInFlight) return passInFlight;
+		passInFlight = runPass().finally(() => { passInFlight = undefined; });
+		return passInFlight;
+	}
+
+	async function runPass(): Promise<StallCheckOutcome[]> {
 		if (!deps.isEnabled()) return [{ taskId: "", fired: false, skipped: "disabled" }];
 		let records: PaneTaskRecord[];
 		try {

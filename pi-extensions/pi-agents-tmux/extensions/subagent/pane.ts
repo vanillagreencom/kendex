@@ -1,5 +1,6 @@
 import { isTerminalTaskStatus, taskStatus } from "./outcomes.js";
 import { spawn } from "node:child_process";
+import { childSignal } from "./child-budget.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -67,17 +68,65 @@ import {
 	type SingleResult,
 } from "./types.js";
 
-type ExecCaptureFn = (command: string, args: string[], options?: { cwd?: string }) => Promise<{ code: number; stdout: string; stderr: string; error?: unknown }>;
+/** Command calls always have a deadline; dispatch cancellation propagates to nested probes. */
+export interface ExecCaptureOptions { cwd?: string; timeoutMs?: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv }
+type ExecCaptureResult = { code: number; stdout: string; stderr: string; error?: unknown };
+type ExecCaptureFn = (command: string, args: string[], options?: ExecCaptureOptions) => Promise<ExecCaptureResult>;
 
-async function defaultExecCapture(command: string, args: string[], options?: { cwd?: string }): Promise<{ code: number; stdout: string; stderr: string; error?: unknown }> {
+async function defaultExecCapture(command: string, args: string[], options: ExecCaptureOptions = {}, spawner: typeof spawn = spawn): Promise<ExecCaptureResult> {
+	const signal = options.signal ?? childSignal();
+	if (signal?.aborted) return { code: 1, stdout: "", stderr: "Command aborted", error: signal.reason };
+	const timeoutMs = Math.max(1, options.timeoutMs ?? 10_000);
 	return new Promise((resolve) => {
-		const proc = spawn(command, args, { cwd: options?.cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+		const proc = spawner(command, args, { cwd: options.cwd, env: options.env ?? process.env, detached: process.platform !== "win32", shell: false, stdio: ["ignore", "pipe", "pipe"] });
 		let stdout = "";
 		let stderr = "";
-		proc.stdout.on("data", (data) => (stdout += data.toString()));
-		proc.stderr.on("data", (data) => (stderr += data.toString()));
-		proc.on("close", (code) => resolve({ code: code ?? 0, stdout, stderr }));
-		proc.on("error", (error) => resolve({ code: 1, stdout, stderr: String(error), error }));
+		let failure: Error | undefined;
+		let settled = false;
+		let escalation: ReturnType<typeof setTimeout> | undefined;
+		let closeBound: ReturnType<typeof setTimeout> | undefined;
+		const kill = (sig: NodeJS.Signals) => {
+			try {
+				if (process.platform !== "win32" && proc.pid) process.kill(-proc.pid, sig);
+				else proc.kill(sig);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ESRCH") stderr += `\nUnable to send ${sig}: ${String(error)}`;
+			}
+		};
+		const finish = (code: number, error?: unknown) => {
+			if (settled) return;
+			settled = true;
+			if (failure) kill("SIGKILL");
+			clearTimeout(timer);
+			if (escalation) clearTimeout(escalation);
+			if (closeBound) clearTimeout(closeBound);
+			signal?.removeEventListener("abort", abort);
+			resolve({ code: failure || error ? 1 : code, stdout, stderr: [stderr, failure?.message, error ? String(error) : ""].filter(Boolean).join("\n"), error: failure ?? error });
+		};
+		const stop = (error: Error) => {
+			if (settled || failure) return;
+			failure = error;
+			escalation = setTimeout(() => {
+				kill("SIGKILL");
+				closeBound = setTimeout(() => {
+					stderr += "\nCommand termination unconfirmed after SIGKILL";
+					proc.stdout?.destroy();
+					proc.stderr?.destroy();
+					proc.unref();
+					finish(1);
+				}, 1000);
+			}, 1000);
+			kill("SIGTERM");
+		};
+		const abort = () => stop(new Error(`${command} aborted`));
+		const timer = setTimeout(() => stop(new Error(`${command} timed out after ${timeoutMs}ms`)), timeoutMs);
+		signal?.addEventListener("abort", abort, { once: true });
+		if (signal?.aborted) abort();
+		// Bridge and tmux output is diagnostic data, not an unbounded stream.
+		proc.stdout?.on("data", (data) => { stdout = (stdout + data.toString()).slice(-1024 * 1024); });
+		proc.stderr?.on("data", (data) => { stderr = (stderr + data.toString()).slice(-1024 * 1024); });
+		proc.on("close", (code) => finish(code ?? 1));
+		proc.on("error", (error) => finish(1, error));
 	});
 }
 
@@ -92,7 +141,7 @@ export function setTmuxPaneTitleSpawnForTests(spawner?: typeof spawn): void {
 	paneTitleSpawn = spawner ?? spawn;
 }
 
-export async function execCapture(command: string, args: string[], options?: { cwd?: string }): Promise<{ code: number; stdout: string; stderr: string; error?: unknown }> {
+export async function execCapture(command: string, args: string[], options?: ExecCaptureOptions): Promise<ExecCaptureResult> {
 	return execCaptureImpl(command, args, options);
 }
 
@@ -368,12 +417,14 @@ async function rebalanceColumns(registry: PaneRegistry, primaryPaneId: string): 
 	}
 }
 
-export function setCurrentTmuxPaneTitle(title: string): void {
+let titleInFlight: Promise<ExecCaptureResult> | undefined;
+export function setCurrentTmuxPaneTitle(title: string, signal?: AbortSignal): void {
 	const paneId = process.env.TMUX_PANE;
-	if (!paneId) return;
-	const proc = paneTitleSpawn("tmux", ["select-pane", "-t", paneId, "-T", title], { stdio: "ignore" });
-	proc.on("error", () => undefined);
-	proc.unref?.();
+	if (!paneId || titleInFlight) return;
+	titleInFlight = defaultExecCapture("tmux", ["select-pane", "-t", paneId, "-T", title], { signal }, paneTitleSpawn);
+	void titleInFlight.then((result) => {
+		if (result.code !== 0) console.warn(`tmux pane title failed: ${result.stderr}`);
+	}).catch((error) => console.warn(`tmux pane title failed: ${String(error)}`)).finally(() => { titleInFlight = undefined; });
 }
 
 function resolveSessionBridgeExtension(cwd?: string): string | undefined {

@@ -66,7 +66,7 @@
         {
           "key": "maxConcurrency",
           "label": "Max concurrency",
-          "description": "Maximum number of one-shot/background agent executions running concurrently in the parallel dispatch queue. Persistent pane agents occupy a worker only until launch/enqueue; they are not long-running bg workers after that.",
+          "description": "Maximum concurrent child executions across single, parallel and chain dispatches in this runtime. Persistent pane agents occupy a slot only until launch/enqueue.",
           "type": "number",
           "default": 4,
           "category": "Execution",
@@ -75,7 +75,7 @@
         {
           "key": "bgTaskTimeoutMs",
           "label": "Background task timeout (ms)",
-          "description": "Maximum runtime for one-shot/background child processes before they are marked unresponsive, failed, and terminated. A pane agent run headless where no tmux server answers has no deadline. Use 0 to disable.",
+          "description": "Maximum runtime for one-shot/background child processes, including headless pane agents, before termination. Nonpositive values use the default deadline.",
           "type": "number",
           "default": 1800000,
           "category": "Execution",
@@ -285,7 +285,7 @@
         {
           "kind": "tool",
           "name": "subagent",
-          "description": "Delegate tasks to isolated Pi agents. Bg calls use fresh one-shot sessions unless sessionKey is explicit; unknown agent names are rejected with available inventory; parallel calls run through a flat worker pool capped at maxConcurrency."
+          "description": "Delegate tasks to isolated Pi agents. Bg calls use fresh one-shot sessions unless sessionKey is explicit; unknown agent names are rejected with available inventory; all dispatch modes share a child budget capped at maxConcurrency."
         },
         {
           "kind": "tool",

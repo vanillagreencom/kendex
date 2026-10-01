@@ -166,7 +166,9 @@ export function resultLimits(cwd?: string): ResultLimits {
 }
 
 export function bgTaskTimeoutMs(cwd?: string): number {
-	return Math.max(0, Math.floor(settingNumber("bgTaskTimeoutMs", DEFAULT_BG_TASK_TIMEOUT_MS, cwd)));
+	const configured = Math.floor(settingNumber("bgTaskTimeoutMs", DEFAULT_BG_TASK_TIMEOUT_MS, cwd));
+	if (configured <= 0) console.warn(`bg-task-timeout: legacy-value=${configured}\nNonpositive timeouts now use the default deadline.`);
+	return configured > 0 ? configured : DEFAULT_BG_TASK_TIMEOUT_MS;
 }
 
 export function splitResultLimits(total: ResultLimits, parts: number): ResultLimits {

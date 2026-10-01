@@ -10,6 +10,8 @@ import { ensurePersistentPane, paneExists, stopPersistentPane, tmux } from "./pa
 import { readPaneRegistry, readTaskRegistry } from "./tasks.js";
 import { loadAgentPaneStatuses } from "./browser/shared.js";
 import { animateSpinnersEnabled } from "./settings.js";
+import { clearPopupLayouts } from "./browser/layout-cache.js";
+import { MonitorDetailCache } from "./browser/monitor-cache.js";
 import { liveDashboardSignature, mergeLiveDashboardItems, sortedMonitorRecords, taskNumberById } from "./task-records.js";
 import {
 	AGENTS_BROWSER_MAX_HEIGHT,
@@ -239,6 +241,8 @@ function createAgentsBrowserComponent(
 		if (resizeTimer) clearTimeout(resizeTimer);
 		resizeTimer = undefined;
 		clearInterval(liveTimer);
+		monitorCache.clear();
+		clearPopupLayouts();
 		process.off("SIGWINCH", scheduleResizeRender);
 	};
 	const finish = (action: AgentBrowserAction) => {
@@ -259,7 +263,7 @@ function createAgentsBrowserComponent(
 	};
 	const monitorCollapsedSections = new Set<MonitorSectionKind>();
 	const monitorCollapsedSessions = new Set<string>();
-	const monitorCache = new Map<string, MonitorDetailEntry>();
+	const monitorCache = new MonitorDetailCache();
 	// `taskRegistry` is the disk snapshot taken when the pop-up opened. The live
 	// dashboard items are overlaid on it so an open pop-up tracks lifecycle changes
 	// instead of the frozen snapshot, and agrees with the statusline/mini-dashboard.
@@ -279,12 +283,12 @@ function createAgentsBrowserComponent(
 		if (signature === monitorSignature) return false;
 		monitorSignature = signature;
 		const previousKey = selectedMonitorRow(currentMonitorRows(), ui)?.key;
-		const previousStatuses = new Map(monitorView.records.map((record) => [record.taskId, record.status]));
+		const previousRecords = new Map(monitorView.records.map((record) => [record.taskId, JSON.stringify(record)]));
 		monitorView = buildMonitorView(items);
 		// Detail panes cache per task; drop the ones whose lifecycle moved so the
 		// inspector reloads instead of serving a stale trace.
 		for (const record of monitorView.records) {
-			if (previousStatuses.has(record.taskId) && previousStatuses.get(record.taskId) !== record.status) monitorCache.delete(record.taskId);
+			if (previousRecords.get(record.taskId) !== JSON.stringify(record)) monitorCache.delete(record.taskId);
 		}
 		restoreMonitorSelectionByKey(ui, currentMonitorRows(), previousKey);
 		return true;
@@ -294,11 +298,14 @@ function createAgentsBrowserComponent(
 		const cacheKey = record.taskId;
 		const entry = monitorCache.get(cacheKey);
 		if (entry?.items || entry?.loading || entry?.error) return;
-		monitorCache.set(cacheKey, { loading: true });
+		const pending: MonitorDetailEntry = { loading: true };
+		monitorCache.set(cacheKey, pending);
 		void traceViewerItems(record, monitorView.taskNumbers.get(record.taskId), discovery, group?.sessionNumber).then((items) => {
+			if (closed || monitorCache.get(cacheKey) !== pending) return;
 			monitorCache.set(cacheKey, { items });
 			requestRender();
 		}).catch((error) => {
+			if (closed || monitorCache.get(cacheKey) !== pending) return;
 			monitorCache.set(cacheKey, { error: error instanceof Error ? error.message : String(error) });
 			requestRender();
 		});
@@ -545,7 +552,7 @@ function createAgentsBrowserComponent(
 		return agentFrame(lines, safeWidth, theme, layout.innerRows, "Agents");
 	}
 
-	return { handleInput, invalidate() {}, render };
+	return { handleInput, invalidate() { clearPopupLayouts(); }, render };
 }
 
 export async function openAgentsBrowser(

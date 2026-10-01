@@ -97,7 +97,6 @@ import {
 	inboxDir,
 	piPackageRuntimeRoots,
 	openRuntimeLane,
-	processingDir,
 	RUNTIME_LANE_FOLDERS,
 	RUNTIME_LANE_REFRESH_MS,
 	setRuntimeLaneCwd,
@@ -187,7 +186,6 @@ import {
 	readPaneCompletionFile,
 	readPaneRegistry,
 	readTaskRegistry,
-	recordTaskDispatchFailure,
 	refreshTaskDiagnostics,
 	taskNeedsSummaryBackfill,
 	resetPaneCompletionDedup,
@@ -237,6 +235,7 @@ import {
 	type UsageStats,
 } from "./types.js";
 import { extractBridgeState, waitForIdleTransition } from "./wait.js";
+import { pollChildInbox } from "./child-inbox.js";
 
 function bridgeTargetArgs(metadata: { socket?: string; pid?: string }): string[] {
 	if (metadata.socket) return ["--socket", metadata.socket];
@@ -514,6 +513,7 @@ export default function (pi: ExtensionAPI) {
 	let completionPollInFlight = false;
 	let childInboxPoller: ReturnType<typeof setInterval> | undefined;
 	let childTitlePoller: ReturnType<typeof setInterval> | undefined;
+	let childTitleCancellation = new AbortController();
 	let childPollInFlight = false;
 	let childCurrentTaskFile: string | undefined;
 	let agentCommandCompletions: Array<{ value: string; label: string; description: string; pane: boolean }> = [];
@@ -650,15 +650,9 @@ export default function (pi: ExtensionAPI) {
 			const registry = await readPaneRegistry(currentRuntimeRoot);
 			const probe = await probePaneIdle(record, {
 				resolveBridgeBin: resolveIdleProbeBridgeBin,
-				execCapture: async (command, args, options) => {
-					const timeoutMs = options?.timeoutMs ?? BRIDGE_IDLE_PROBE_DEFAULT_TIMEOUT_MS;
-					return Promise.race([
-						execCapture(command, args, options),
-						new Promise<{ code: number; stdout: string; stderr: string }>((_, reject) =>
-							setTimeout(() => reject(new Error(`pi-bridge state timed out after ${timeoutMs}ms`)), timeoutMs),
-						),
-					]);
-				},
+				execCapture: (command, args, options) => execCapture(command, args, {
+					...options, timeoutMs: options?.timeoutMs ?? BRIDGE_IDLE_PROBE_DEFAULT_TIMEOUT_MS,
+				}),
 				readPaneRegistryEntry: async (agent) => registry[agent],
 				logWarn: logIdleStallDiagnostic,
 			});
@@ -1371,6 +1365,8 @@ export default function (pi: ExtensionAPI) {
 
 	installSettingsCacheRefresh(pi);
 	pi.on("session_start", async (_event, ctx) => {
+		childTitleCancellation.abort();
+		childTitleCancellation = new AbortController();
 		recordProjectTrust(ctx);
 		dashboardCtx = ctx;
 		const mode = defaultDashboardMode(ctx.cwd);
@@ -1419,75 +1415,20 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			ctx.ui.setTitle(`pi agent - ${childAgentName}`);
-			setCurrentTmuxPaneTitle(`agent:${childAgentName}`);
-			childTitlePoller = setInterval(() => setCurrentTmuxPaneTitle(`agent:${childAgentName}`), 1000);
+			setCurrentTmuxPaneTitle(`agent:${childAgentName}`, childTitleCancellation.signal);
+			childTitlePoller = setInterval(() => setCurrentTmuxPaneTitle(`agent:${childAgentName}`, childTitleCancellation.signal), 1000);
 			childTitlePoller.unref?.();
 			ctx.ui.setStatus("agent", `${childAgentName} idle`);
 			if (ctx.hasUI) ctx.ui.setWidget("subagent-marker", undefined);
 			const pollInbox = () => {
 				if (childPollInFlight || childCurrentTaskFile || !ctx.isIdle()) return;
 				childPollInFlight = true;
-				(async () => {
-					const inbox = inboxDir(runtimeRoot, childAgentName);
-					let files: string[];
-					try {
-						files = (await fs.promises.readdir(inbox)).filter((file) => file.endsWith(".md")).sort();
-					} catch {
-						return;
-					}
-					const file = files[0];
-					if (!file) return;
-
-					const source = path.join(inbox, file);
-					const processing = path.join(processingDir(runtimeRoot, childAgentName), file);
-					await fs.promises.mkdir(path.dirname(processing), { recursive: true, mode: 0o700 });
-					try {
-						await fs.promises.rename(source, processing);
-					} catch {
-						return;
-					}
-
-					const prompt = await fs.promises.readFile(processing, "utf-8");
-					childCurrentTaskFile = processing;
-					const taskId = path.basename(processing, path.extname(processing));
-					const now = new Date().toISOString();
-					await updateTaskRegistry(runtimeRoot, (records) => {
-						const existing = records[taskId];
-						records[taskId] = {
-							...existing,
-							taskId,
-							agent: existing?.agent ?? childAgentName,
-							task: existing?.task ?? "",
-							status: "running",
-							kind: "pane",
-							inboxFile: existing?.inboxFile ?? source,
-							processingFile: processing,
-							outboxFile: existing?.outboxFile ?? completionPath(runtimeRoot, childAgentName, taskId),
-							transcriptPath: existing?.transcriptPath ?? ctx.sessionManager.getSessionFile() ?? undefined,
-							createdAt: existing?.createdAt ?? now,
-							updatedAt: now,
-						};
-					});
-					emitSubagentEvent(pi, "subagents:started", {
-						mode: "pane",
-						agent: childAgentName,
-						taskId,
-						status: "running",
-						runtimeRoot,
-						transcriptPath: ctx.sessionManager.getSessionFile() ?? undefined,
-						completionPath: completionPath(runtimeRoot, childAgentName, taskId),
-					});
-					ctx.ui.setStatus("agent", `${childAgentName} running ${file}`);
-					try {
-						await pi.sendUserMessage(prompt, { deliverAs: "followUp" });
-					} catch (error) {
-						const diagnostic = `Unable to dispatch child task prompt: ${(error as Error)?.message ?? error}`;
-						console.warn(`subagent child inbox dispatch failed for ${childAgentName} ${taskId}: ${diagnostic}`);
-						childCurrentTaskFile = undefined;
-						await recordTaskDispatchFailure(runtimeRoot, taskId, { processing, source }, diagnostic);
-						ctx.ui.setStatus("agent", `${childAgentName} idle`);
-					}
-				})().finally(() => {
+				void pollChildInbox(runtimeRoot, childAgentName, pi, ctx,
+					(file) => { childCurrentTaskFile = file; },
+					(file) => { if (childCurrentTaskFile === file) childCurrentTaskFile = undefined; },
+				).catch((error) => {
+					console.warn(`subagent child inbox failed for ${childAgentName}: ${String(error)}`);
+				}).finally(() => {
 					childPollInFlight = false;
 				});
 			};
@@ -1707,6 +1648,8 @@ export default function (pi: ExtensionAPI) {
 	registerSettledHandler(pi, handleChildSettled);
 
 	pi.on("session_shutdown", async () => {
+		childTitleCancellation.abort();
+		if (childTitlePoller) clearInterval(childTitlePoller);
 		if (completionPoller) clearInterval(completionPoller);
 		if (childInboxPoller) clearInterval(childInboxPoller);
 		if (runtimeLaneRefresh) clearInterval(runtimeLaneRefresh);
@@ -1806,8 +1749,8 @@ export default function (pi: ExtensionAPI) {
 				isError: true,
 			};
 		}
-		const wait = await waitForIdleTransition(async () => {
-			const result = await execCapture(bridgeBin, ["state", ...targetArgs], { cwd: entry.cwd });
+		const wait = await waitForIdleTransition(async (signal) => {
+			const result = await execCapture(bridgeBin, ["state", ...targetArgs], { cwd: entry.cwd, signal });
 			if (result.code !== 0) return undefined;
 			return extractBridgeState(result.stdout);
 		}, timeoutMs, 500);

@@ -47,20 +47,15 @@ test("settings metadata keeps maxConcurrency visible and scoped", () => {
 	const maxConcurrency = manifestSettings().find((item) => item.key === "maxConcurrency");
 	assert.ok(maxConcurrency, "maxConcurrency setting remains visible");
 	assert.equal(maxConcurrency.default, MAX_CONCURRENCY);
-	assert.match(maxConcurrency.description ?? "", /one-shot\/background agent executions/i);
-	assert.match(maxConcurrency.description ?? "", /parallel dispatch queue/i);
-	assert.match(maxConcurrency.description ?? "", /Persistent pane agents occupy a worker only until launch\/enqueue/i);
 });
 
-test("settings metadata keeps bgTaskTimeoutMs visible and disableable", () => {
+test("settings metadata keeps bgTaskTimeoutMs visible with a finite fallback", () => {
 	const bgTimeout = manifestSettings().find((item) => item.key === "bgTaskTimeoutMs");
 	assert.ok(bgTimeout, "bgTaskTimeoutMs setting remains visible");
 	assert.equal(bgTimeout.default, DEFAULT_BG_TASK_TIMEOUT_MS);
 	assert.equal(bgTimeout.type, "number");
 	assert.equal(bgTimeout.category, "Execution");
 	assert.equal(bgTimeout.apply, "live");
-	assert.match(bgTimeout.description ?? "", /marked unresponsive/i);
-	assert.match(bgTimeout.description ?? "", /0 to disable/i);
 
 	const cwd = mkdtempSync(join(tmpdir(), "pi-agents-bg-timeout-"));
 	tempDirs.push(cwd);
@@ -69,7 +64,7 @@ test("settings metadata keeps bgTaskTimeoutMs visible and disableable", () => {
 	process.env.PI_CODING_AGENT_DIR = join(cwd, "agent");
 	clearPackageConfigCache();
 	try {
-		assert.equal(bgTaskTimeoutMs(cwd), 0);
+		assert.equal(bgTaskTimeoutMs(cwd), DEFAULT_BG_TASK_TIMEOUT_MS);
 	} finally {
 		if (previousPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousPiDir;

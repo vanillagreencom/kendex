@@ -10,6 +10,10 @@
 - `get_subagent_result` accepts `agent` with a background `sessionKey`, plus the next dispatch's optional `cwd` and `agentScope`, and reports the reuse guard's own context estimate and threshold. Orchestration checks these values before reusing stored agent IDs.
 - `reusedSessionBudgetPolicy` no longer permits over-threshold reuse or truncates saved history. Existing values are read with a migration warning. Remove that setting. Keep `reusedSessionBudgetThreshold` and `reusedSessionContextLimitTokens`; use `sameSession: true` when a fresh agent cannot serve the task.
 
+### 3.2.4
+
+- Bridge and tmux commands enforce deadlines and terminate stalled children. All dispatch modes share one cancellation-aware child limit. Inbox claim failures restore the queued task before releasing ownership. Popup scrolling reuses formatted content, retained traces have memory limits, and managed-agent saves refresh asynchronously. Headless pane agents now keep the background deadline; a nonpositive timeout uses the default instead of disabling it.
+
 ### 3.2.3
 
 - Streamed sub-agent rows keep only their static call preview in the transcript, including after completion. Live progress stays in the existing Agents panel, which shows the tool's argument preview and last recorded progress time in UTC before usage totals. Expand a completed row with Ctrl+O to read its final result. Older rows no longer trigger Pi's off-screen transcript clear and replay on each child turn.

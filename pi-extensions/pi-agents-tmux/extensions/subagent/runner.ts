@@ -32,6 +32,7 @@ import {
 	transcriptDir,
 } from "./paths.js";
 import { randomHex } from "./random.js";
+import { childSignal } from "./child-budget.js";
 import {
 	bgTaskTimeoutMs,
 	resultLimits,
@@ -495,12 +496,6 @@ export function createTranscriptAppender(
 	};
 }
 
-/**
- * Whether a one-shot child runs under the `bgTaskTimeoutMs` wall-clock
- * deadline. A pane agent run headless has none, as its pane has none.
- */
-export type BgDeadline = "bg-task-timeout" | "none";
-
 export async function runSingleAgent(
 	defaultCwd: string,
 	runtimeRoot: string,
@@ -516,9 +511,10 @@ export async function runSingleAgent(
 	onUpdate: OnUpdateCallback | undefined,
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
 	sessionKey?: string,
-	deadline: BgDeadline = "bg-task-timeout",
 	sameSession = false,
 ): Promise<SingleResult> {
+	signal = childSignal() ?? signal;
+	signal?.throwIfAborted();
 	const agent = agents.find((a) => a.name === agentName);
 
 	if (!agent) {
@@ -594,7 +590,6 @@ export async function runSingleAgent(
 		makeDetails,
 		firstSession,
 		1,
-		deadline,
 		[reuseNotice, budgetGuard?.migrationWarning].filter(Boolean).join("\n") || undefined,
 	);
 
@@ -641,7 +636,6 @@ export async function runSingleAgent(
 		makeDetails,
 		retrySession,
 		2,
-		deadline,
 		first.reuseNotice,
 	);
 	const attempts = [summarizeAttempt(first), summarizeAttempt(retry)];
@@ -684,7 +678,6 @@ async function runSingleAgentAttempt(
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
 	session: BgSessionSelection,
 	attempt: number,
-	deadline: BgDeadline,
 	reuseNotice?: string,
 ): Promise<SingleResult> {
 	const args: string[] = ["--mode", "json", "-p", "--name", agent.name, "--session", session.path];
@@ -787,6 +780,7 @@ async function runSingleAgentAttempt(
 			// taskId. This runs outside the spawn promise so the
 		// throw rejects through the finally cleanup below instead of wedging
 		// inside the promise executor.
+		signal?.throwIfAborted();
 		const invocation = getPiInvocation(args);
 
 		emitSubagentEvent(pi, "subagents:started", {
@@ -832,6 +826,7 @@ async function runSingleAgentAttempt(
 			for (const key of Object.keys(childEnv)) {
 				if (key.startsWith("PI_BRIDGE_")) delete childEnv[key];
 			}
+			signal?.throwIfAborted();
 			const proc = spawnProcess(invocation.command, invocation.args, {
 				cwd: cwd ?? defaultCwd,
 				detached: process.platform !== "win32",
@@ -854,7 +849,7 @@ async function runSingleAgentAttempt(
 			const deliveredSettledSignals = new Set<NodeJS.Signals>();
 			let latestFilteredMessageUpdate: any;
 			const partialMessageState = createPartialAssistantMessageState();
-			const timeoutMs = deadline === "none" ? 0 : bgTaskTimeoutMs(cwd ?? defaultCwd);
+			const timeoutMs = bgTaskTimeoutMs(cwd ?? defaultCwd);
 			const timeoutDeadline = timeoutMs > 0 ? Date.now() + timeoutMs : undefined;
 			let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
 			let timeoutGeneration = 0;

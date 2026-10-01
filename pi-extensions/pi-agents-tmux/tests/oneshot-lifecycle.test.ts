@@ -112,7 +112,7 @@ const lifecycleRows: LifecycleRow[] = [
 		},
 	},
 	{
-		label: "timeout disabled: a delayed successful exit completes",
+		label: "default deadline: a delayed successful exit completes",
 		timeoutMs: 0,
 		mock: {
 			closeAfterMs: 10,

@@ -30,6 +30,8 @@ Streamed tool rows keep only the static call preview in the transcript. Follow l
 
 ## Memory and disk use
 
+- Popup layout keeps at most 16 content, width and theme combinations and 4 MiB of source and formatted text. Each popup keeps at most 32 loaded traces and 4 MiB of trace text. Closing the popup releases both caches. Resizing or changing content selects a new layout; changing the theme clears formatted layouts.
+- All dispatch modes share `maxConcurrency`. At most 256 tasks wait for a slot. Cancellation removes queued work before it launches. Session shutdown cancels both queued and active work. Command capture keeps at most 1 MiB per output stream.
 
 - Agent discovery keeps at most 8 working-directory and user-source combinations across Pi sessions in one process. It reuses parsed agent files until their metadata changes. File and directory checks run outside rendering every 250 ms. A listed-file change reloads only that file; a directory change rebuilds the inventory. After a check detects a change, the next tool-call preview uses the updated agents. Removing a cache entry stops its file checks.
 
@@ -49,6 +51,7 @@ Open `/extensions:settings`; settings appear under the **Agents (tmux)** tab. Pr
 
 - `enabled`: package toggle.
 - `maxConcurrency`, `bgTaskTimeoutMs`, `subagentModelSource`, `subagentThinkingSource`: how background children run and which model and thinking level they take.
+- `bgTaskTimeoutMs` also applies to headless pane agents. Nonpositive values use the default deadline instead of disabling it. Managed-agent saves run project refresh asynchronously with a 120-second deadline.
 - `reusedSessionBudgetThreshold`, `reusedSessionContextLimitTokens`: the context estimate that starts a fresh background agent instead of reusing a saved session. These budget settings use the child working directory. The former `reusedSessionBudgetPolicy` setting is read with a migration warning; remove it.
 - `dashboard`, `quietInlineWhenDashboard`, `dashboardMaxItems`, `dashboardCollapsed`, `animateSpinners`, `collapsedItemCount`, `glyphStyle`, `treeStyle`: the dashboard card and inline rendering.
 - `truncateResults`, `resultMaxBytes`, `resultMaxLines`, `preserveFullOutput`: how much agent output returns inline and whether the full output is kept as an artifact.

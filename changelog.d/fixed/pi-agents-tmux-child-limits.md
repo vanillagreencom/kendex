@@ -1,0 +1,1 @@
+- Pi agents share a child limit and terminate stalled bridge commands. Inbox failures restore tasks. Popup scrolling reuses formatted content, and managed-agent saves refresh asynchronously.

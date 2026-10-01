@@ -18,7 +18,7 @@ after(cleanupTempRuntimes);
 type Emitted = Array<{ name: string; payload: any }>;
 
 function runOneShot(options: { cwd: string; pi: any; runtimeRoot?: string; sessionKey?: string; sameSession?: boolean; signal?: AbortSignal }): Promise<SingleResult> {
-	return runSingleAgent(options.cwd, options.runtimeRoot ?? tempRuntime(), [testAgent()], "reviewer-test", "review code", undefined, undefined, undefined, undefined, options.pi, options.signal, undefined, makeDetails, options.sessionKey, "bg-task-timeout", options.sameSession);
+	return runSingleAgent(options.cwd, options.runtimeRoot ?? tempRuntime(), [testAgent()], "reviewer-test", "review code", undefined, undefined, undefined, undefined, options.pi, options.signal, undefined, makeDetails, options.sessionKey, options.sameSession);
 }
 
 // The pi bus as one line, in emit order. A `needs_completion` event must carry

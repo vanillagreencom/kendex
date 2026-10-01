@@ -1,5 +1,6 @@
 import type { AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig, AgentScope } from "./agents.js";
+import { withChildBudget } from "./child-budget.js";
 import { COMPLETION_SUMMARY_UNAVAILABLE, getFinalOutput, normalizeSummaryText } from "./format.js";
 import { probeTmux, runPersistentPaneAgent } from "./pane.js";
 import {
@@ -8,7 +9,6 @@ import {
 	prepareSingleResultForReturn,
 	runSingleAgent,
 	truncateForDetails,
-	type BgDeadline,
 	type OnUpdateCallback,
 } from "./runner.js";
 import { createOneShotSessionKey } from "./sessions.js";
@@ -66,6 +66,7 @@ interface DispatchFlowContext {
 type PaneLane = { kind: "pane" } | { kind: "headless"; cause: string };
 
 async function resolvePaneLane(flow: DispatchFlowContext, requested: readonly string[]): Promise<PaneLane> {
+	flow.signal?.throwIfAborted();
 	if (flow.paneOnly) return { kind: "pane" };
 	if (!requested.some((name) => flow.agents.find((agent) => agent.name === name)?.pane)) return { kind: "pane" };
 	const reach = await probeTmux();
@@ -74,11 +75,6 @@ async function resolvePaneLane(flow: DispatchFlowContext, requested: readonly st
 
 function runsInPane(agent: AgentConfig | undefined, lane: PaneLane): boolean {
 	return agent?.pane === true && lane.kind === "pane";
-}
-
-/** The deadline for an agent the one-shot runner takes: a pane agent there runs headless and keeps its pane's lack of one. */
-function oneShotDeadline(agent: AgentConfig | undefined): BgDeadline {
-	return agent?.pane === true ? "none" : "bg-task-timeout";
 }
 
 /**
@@ -132,6 +128,7 @@ export async function mapWithConcurrencyLimit<TIn, TOut>(
 	items: readonly TIn[],
 	concurrency: number,
 	fn: (item: TIn, index: number) => Promise<TOut>,
+	signal?: AbortSignal,
 ): Promise<TOut[]> {
 	if (items.length === 0) return [];
 	const limit = Math.max(1, Math.min(Math.floor(concurrency), items.length));
@@ -139,6 +136,7 @@ export async function mapWithConcurrencyLimit<TIn, TOut>(
 	let nextIndex = 0;
 	const workers = new Array(limit).fill(null).map(async () => {
 		while (true) {
+			signal?.throwIfAborted();
 			const i = nextIndex++;
 			if (i >= items.length) return;
 			results[i] = await fn(items[i], i);
@@ -278,7 +276,7 @@ async function chainDispatch(
 			: undefined;
 
 		const stepAgent = flow.agents.find((agent) => agent.name === step.agent);
-		const result = runsInPane(stepAgent, lane)
+		const result = await withChildBudget(flow.pi, flow.cwd, flow.signal, async () => runsInPane(stepAgent, lane)
 			? await runPersistentPaneAgent(
 					flow.cwd,
 					flow.runtimeRoot,
@@ -310,9 +308,8 @@ async function chainDispatch(
 					chainUpdate,
 					flow.makeDetails("chain"),
 					step.sessionKey,
-					oneShotDeadline(stepAgent),
 					step.sameSession ?? flow.sameSession,
-				);
+				));
 		results.push(result);
 		if (!runsInPane(stepAgent, lane) || singleResultStatus(result) === "refused") {
 			flow.updateDashboard({
@@ -468,7 +465,7 @@ async function parallelDispatch(
 		};
 		const taskAgent = flow.agents.find((agent) => agent.name === t.agent);
 		try {
-			const result = runsInPane(taskAgent, lane)
+			const result = await withChildBudget(flow.pi, flow.cwd, flow.signal, async () => runsInPane(taskAgent, lane)
 				? await runPersistentPaneAgent(
 						flow.cwd,
 						flow.runtimeRoot,
@@ -506,9 +503,8 @@ async function parallelDispatch(
 						},
 						flow.makeDetails("parallel"),
 						t.sessionKey,
-						oneShotDeadline(taskAgent),
 						t.sameSession ?? flow.sameSession,
-					);
+					));
 			allResults[index] = result;
 			if (!runsInPane(taskAgent, lane) || singleResultStatus(result) === "refused") await updateOneshotDashboard(result, true);
 			emitParallelUpdate();
@@ -533,7 +529,7 @@ async function parallelDispatch(
 			emitParallelUpdate();
 			return failed;
 		}
-	});
+	}, flow.signal);
 
 	const successCount = results.filter((r) => singleResultStatus(r) === "completed").length;
 	const needsCompletionCount = results.filter(singleResultNeedsCompletion).length;
@@ -570,7 +566,7 @@ async function singleDispatch(
 	lane: PaneLane,
 ): Promise<ToolTextResult> {
 	const agent = flow.agents.find((candidate) => candidate.name === flow.agent);
-	const result = runsInPane(agent, lane)
+	const result = await withChildBudget(flow.pi, flow.cwd, flow.signal, async () => runsInPane(agent, lane)
 		? await runPersistentPaneAgent(
 				flow.cwd,
 				flow.runtimeRoot,
@@ -602,9 +598,8 @@ async function singleDispatch(
 				flow.onUpdate,
 				flow.makeDetails("single"),
 				flow.sessionKey,
-				oneShotDeadline(agent),
 				flow.sameSession,
-			);
+			));
 	if (!runsInPane(agent, lane) || singleResultStatus(result) === "refused") {
 		flow.updateDashboard({
 			reuseNotice: result.reuseNotice,

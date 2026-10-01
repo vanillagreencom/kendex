@@ -23,7 +23,7 @@ export function extractBridgeState(stdout: string): BridgeStateSnapshot | undefi
 }
 
 export async function waitForIdleTransition(
-	readState: () => Promise<BridgeStateSnapshot | undefined>,
+	readState: (signal: AbortSignal) => Promise<BridgeStateSnapshot | undefined>,
 	timeoutMs = 30_000,
 	pollMs = 500,
 ): Promise<IdleTransitionResult> {
@@ -33,7 +33,24 @@ export async function waitForIdleTransition(
 	let samples = 0;
 	let lastState: BridgeStateSnapshot | undefined;
 	while (true) {
-		lastState = await readState();
+		const controller = new AbortController();
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			lastState = await Promise.race([
+				readState(controller.signal),
+				new Promise<never>((_, reject) => {
+					timer = setTimeout(() => {
+						controller.abort(new Error("Bridge state deadline exceeded"));
+						reject(controller.signal.reason);
+					}, Math.max(0, deadline - Date.now()));
+				}),
+			]);
+		} catch (error) {
+			if (!controller.signal.aborted) throw error;
+			return { lastState, samples, status: observedBusy ? "timeout" : "never-busy", timedOut: true, transitioned: false };
+		} finally {
+			if (timer) clearTimeout(timer);
+		}
 		samples += 1;
 		const currentIdle = lastState?.isIdle === true;
 		if (currentIdle && observedBusy) {

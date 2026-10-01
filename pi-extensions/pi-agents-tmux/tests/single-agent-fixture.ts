@@ -185,7 +185,7 @@ export async function assertDispatchOutcome(status: "refused" | "stopped" | "fai
 	return { result, row, events };
 }
 
-export function installMockSpawn(scenarios: Array<{ code?: number | null; delayMs?: number; error?: Error | string; signal?: string; stderr?: string; stdout?: string }>, install = setSingleAgentSpawnForTests) {
+export function installMockSpawn(scenarios: Array<{ code?: number | null; delayMs?: number; defer?: (finish: () => void) => void; error?: Error | string; signal?: string; stderr?: string; stdout?: string }>, install = setSingleAgentSpawnForTests) {
 	const calls: Array<{ args: string[]; prompt: string; promptFiles: string[]; kills: string[]; flow: { stdout: string[]; stderr: string[] } }> = [];
 	install(((command: string, args: string[]) => {
 		void command;
@@ -217,7 +217,8 @@ export function installMockSpawn(scenarios: Array<{ code?: number | null; delayM
 			}
 			proc.emit("close", scenario?.signal ? (scenario.code ?? null) : (scenario?.code ?? 0), scenario?.signal ?? null);
 		};
-		if (scenario?.delayMs !== undefined) setTimeout(finish, scenario.delayMs);
+		if (scenario?.defer) scenario.defer(finish);
+		else if (scenario?.delayMs !== undefined) setTimeout(finish, scenario.delayMs);
 		else queueMicrotask(finish);
 		return proc;
 	}) as any);
@@ -297,6 +298,7 @@ export function findAgentStartTranscriptPayload(records: any[]): any {
 
 export function mockPiEvents(events: Array<{ name: string; payload: any }>) {
 	return {
+		on: () => () => {},
 		getActiveTools: () => [],
 		events: {
 			emit: (name: string, payload: unknown) => events.push({ name, payload }),
