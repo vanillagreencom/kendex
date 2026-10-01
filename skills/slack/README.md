@@ -36,7 +36,6 @@ Requires Python 3.8+ and the orch skill, which the install adds.
 - The relay's first run reads Slack from the moment of the binding and the mailbox from its newest envelope, so neither side's past is replayed. Open questions are posted whatever their age inside `SLACK_THREAD_DAYS`.
 - While `SLACK_MASTER_FILE` is younger than `SLACK_MASTER_MAX_AGE`, a master session answers the overseer and the relay posts no questions, notices, reports or answers from the mailbox; owner messages in the channel still reach the overseer, the relay's replies to them still post, and `slack listen --status` shows `held-by=master`. When the file goes stale or is gone, the relay resumes. [The master hold](#the-master-hold) defines which envelopes post.
 - `slack compact` drops journal lines older than `SLACK_THREAD_DAYS` once resolved, keeping root records and reply mappings while a thread remains active. The relay runs it once a day, so the verb is refused `relay-running` while the relay runs on that checkout.
-- `slack install` writes the systemd user unit that runs the relay over the roots you name.
 
 ## Slack app
 
