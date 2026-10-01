@@ -271,12 +271,14 @@ assert_eq "$RC lines=$LINES $(first_err)" "0 lines=1 " "an answer to a peer's as
 # An ask lands one line in the peer's mailbox and one in the asker's own
 # record, prints its id, and is judged as a send is.
 ASKS=0
+ANSWERS=1
 ask() { # TEXT
   peer_call ask "$1"
   ASKS=$((ASKS + 1))
   local own
-  own="$(wc -l < "$TMP_ROOT/sender/tmp/lane-mail/overseer/to-overseer.jsonl" | tr -d ' ')"
-  assert_eq "$RC ${OUT%%=*} lines=$LINES own=$own" "0 id lines=1 own=$ASKS" \
+  own="$(jq -rs '[(map(select(.kind == "ask")) | length), (map(select(.kind == "answer")) | length)] | join("/")' \
+    "$TMP_ROOT/sender/tmp/lane-mail/overseer/to-overseer.jsonl")"
+  assert_eq "$RC ${OUT%%=*} lines=$LINES own=$own" "0 id lines=1 own=$ASKS/$ANSWERS" \
     "the ask lands, its id prints and the asker records it: $1" "$TMP_ROOT/err"
 }
 live_record
@@ -318,6 +320,7 @@ assert_eq "$(first_err)" "" "control: without the judgement a send to a checkout
 mutant answer-judged '      [ -n "$MSGID" ] || lm_peer_reader' '      lm_peer_reader'
 record '{"window":"@1"}'
 send 'Judged answer.' --re 1790000000-1-1
+ANSWERS=$((ANSWERS + 1))
 assert_eq "$(first_err)" "lane-mail: no-reader=$PEER cause=unnamed" \
   "control: judging an answer tells its sender nobody reads what the asker's wait reads"
 
