@@ -1,0 +1,57 @@
+schema = 6
+
+[install]
+harnesses = ["claude", "pi"]
+method = "copy"
+
+[agents.generalist]
+source = "local"
+
+[agents.engineer]
+source = "local"
+
+[agents.maintainer]
+source = "cat"
+
+[agents.runtime]
+source = "cat"
+
+[skills.review]
+source = "cat"
+
+[agent-skills]
+generalist = ["review"]
+engineer = ["review"]
+
+[agent-additional-instructions]
+generalist = "Local generalist instructions: agent:engineer."
+engineer = "Local engineer instructions: agent:generalist."
+
+[agent-launch-instructions]
+generalist = "Launch agent:engineer."
+engineer = "Launch agent:generalist."
+
+[agent-frontmatter.pi]
+generalist = { allowed-subagents = ["engineer"] }
+engineer = { allowed-subagents = ["generalist"] }
+
+[skill-instructions]
+review = "Use agent:generalist and agent:engineer."
+
+[[custom-hooks]]
+name = "local"
+event = "PreToolUse"
+command = "./local.sh"
+agents = "generalist"
+
+[forks.agent.generalist]
+source = "cat"
+repo = "owner/catalog"
+commit = "0123456789012345678901234567890123456789"
+forked-at = "2026-01-01"
+
+[forks.agent.engineer]
+source = "cat"
+repo = "owner/catalog"
+commit = "0123456789012345678901234567890123456789"
+forked-at = "2026-01-01"

@@ -489,7 +489,7 @@ fn desired_pass<'a>(
     Vec<HeldPin>,
 )> {
     let mut normalized = declared.clone();
-    let mut agent_names = crate::source::agent_names::Uses::default();
+    let mut agent_names = crate::source::agent_names::Uses::new(declared);
     agent_names.manifest(&mut normalized)?;
     let renamed = normalized != *declared;
     let (planning, held_pins) = desired::hold::planning_manifest(&normalized, lock, options);

@@ -5,14 +5,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::{CoreError, Result};
-use crate::manifest::{HookAgents, Manifest};
+use crate::manifest::{HookAgents, LOCAL_SOURCE_NAME, Manifest};
 use crate::model::ItemKind;
 use crate::render::agent::{Selects, selects};
 
 const ALIASES: [(&str, &str); 2] = [("generalist", "maintainer"), ("engineer", "runtime")];
 
-/// The catalog identity for an agent name, including consumer legacy names.
-pub(crate) fn resolve(name: &str) -> &str {
+/// Catalog aliases never change identities captured by adopt or fork.
+pub(crate) fn resolve<'a>(name: &'a str, source: &str) -> &'a str {
+    if source == LOCAL_SOURCE_NAME {
+        return name;
+    }
     ALIASES
         .iter()
         .find_map(|(old, new)| (*old == name).then_some(*new))
@@ -22,13 +25,31 @@ pub(crate) fn resolve(name: &str) -> &str {
 /// A planning pass collects all affected settings before emitting one notice
 /// per old name. Repeated harness renders contribute no duplicate notice.
 #[derive(Debug, Default)]
-pub(crate) struct Uses(BTreeMap<String, BTreeSet<String>>);
+pub(crate) struct Uses {
+    sources: BTreeMap<String, String>,
+    settings: BTreeMap<String, BTreeSet<String>>,
+}
 
 impl Uses {
+    pub(crate) fn new(manifest: &Manifest) -> Self {
+        Self {
+            sources: manifest
+                .agents
+                .iter()
+                .map(|(name, decl)| (name.clone(), decl.source.clone()))
+                .collect(),
+            settings: BTreeMap::new(),
+        }
+    }
+
+    fn source(&self, name: &str) -> &str {
+        self.sources.get(name).map_or("", String::as_str)
+    }
+
     fn name(&mut self, name: &str, setting: &str) -> String {
-        let resolved = resolve(name);
+        let resolved = resolve(name, self.source(name));
         if resolved != name {
-            self.0
+            self.settings
                 .entry(name.to_owned())
                 .or_default()
                 .insert(setting.to_owned());
@@ -37,7 +58,11 @@ impl Uses {
     }
 
     fn keys<T>(&mut self, values: &mut BTreeMap<String, T>, section: &str) -> Result<()> {
-        for (old, new) in ALIASES {
+        for (old, _) in ALIASES {
+            let new = resolve(old, self.source(old));
+            if old == new {
+                continue;
+            }
             if values.contains_key(old) && values.contains_key(new) {
                 return Err(CoreError::AgentAliasCollision {
                     old: old.to_owned(),
@@ -138,7 +163,7 @@ impl Uses {
                 .map_or(text.len(), |offset| name_start + offset);
             let name = text[name_start..name_end].trim_end_matches('.');
             let name_end = name_start + name.len();
-            if resolve(name) == name {
+            if resolve(name, self.source(name)) == name {
                 continue;
             }
             output.push_str(&text[end..name_start]);
@@ -190,18 +215,18 @@ impl Uses {
     }
 
     pub(crate) fn extend(&mut self, other: Self) {
-        for (name, settings) in other.0 {
-            self.0.entry(name).or_default().extend(settings);
+        for (name, settings) in other.settings {
+            self.settings.entry(name).or_default().extend(settings);
         }
     }
 
     pub(crate) fn warnings(&self) -> Vec<crate::engine::ItemWarning> {
-        self.0.iter().map(|(old, settings)| crate::engine::ItemWarning {
+        self.settings.iter().map(|(old, settings)| crate::engine::ItemWarning {
             kind: ItemKind::Agent,
             name: old.clone(),
             harness: None,
-            message: format!("agent name '{old}' is deprecated; use '{}'; legacy settings: {}", resolve(old), settings.iter().cloned().collect::<Vec<_>>().join(", ")),
-            remediation: Some(format!("Rename '{old}' to '{}' in the listed settings. Compatibility remains through 1.4.x.", resolve(old))),
+            message: format!("agent name '{old}' is deprecated; use '{}'; legacy settings: {}", resolve(old, self.source(old)), settings.iter().cloned().collect::<Vec<_>>().join(", ")),
+            remediation: Some(format!("Rename '{old}' to '{}' in the listed settings. Compatibility remains through 1.4.x.", resolve(old, self.source(old)))),
         }).collect()
     }
 }
