@@ -11,7 +11,7 @@ export const fixtureNow = 1_700_000_000_000;
 
 // deferProcReads holds each asynchronous /proc read until releaseProcReads();
 // deferAppends holds each asynchronous file append until releaseAppends().
-export async function interceptNativeEffects(options: { stopFails?: boolean; killFails?: boolean; signalGone?: boolean; deferProcReads?: boolean; deferAppends?: boolean } = {}) {
+export async function interceptNativeEffects(options: { stopFails?: boolean; killFails?: boolean; signalGone?: boolean; identityGone?: boolean; deferProcReads?: boolean; deferAppends?: boolean } = {}) {
 	const signals: { pid: number; signal: unknown }[] = [];
 	const childSignals: unknown[] = [];
 	const spawns: { file: string; args: string[]; options: Record<string, unknown> }[] = [];
@@ -64,6 +64,7 @@ export async function interceptNativeEffects(options: { stopFails?: boolean; kil
 	};
 	const procRead = (path: string): string => {
 		probeCalls.push({ file: path, args: [] });
+		if (options.identityGone) throw Object.assign(new Error("fixture process is gone"), { code: "ENOENT" });
 		if (path === `/proc/${fixturePid}/comm`) return "fixture-child\n";
 		if (path === `/proc/${fixturePid}/stat`) return `${fixturePid} (fixture-child) S ${Array(18).fill("0").join(" ")} 12345 0\n`;
 		return forbidden("unexpected proc read", path);
@@ -95,11 +96,11 @@ export async function interceptNativeEffects(options: { stopFails?: boolean; kil
 		else return forbidden(file, args);
 		return new FakeChild();
 	};
-	interface Timer { id: number; kind: "timeout" | "interval"; callback: () => void; ms: number; unref(): void }
+	interface Timer { id: number; kind: "timeout" | "interval"; callback: () => unknown; ms: number; unref(): void }
 	const timers = new Map<number, Timer>();
 	const timerEvents: { action: string; kind: string; ms: number }[] = [];
 	let timerSequence = 0;
-	const schedule = (kind: Timer["kind"], callback: () => void, ms: number): Timer => {
+	const schedule = (kind: Timer["kind"], callback: () => unknown, ms: number): Timer => {
 		const timer = { id: ++timerSequence, kind, callback, ms, unref() {} };
 		timers.set(timer.id, timer);
 		timerEvents.push({ action: "set", kind, ms });
@@ -149,7 +150,12 @@ export async function interceptNativeEffects(options: { stopFails?: boolean; kil
 			const matches = [...timers.values()].filter((timer) => timer.kind === "timeout" && timer.ms === ms);
 			if (matches.length !== 1) throw new Error(`spawn_fixture.timer_count=${matches.length}\ndelay_ms=${ms}`);
 			timers.delete(matches[0]!.id);
-			matches[0]!.callback();
+			return matches[0]!.callback();
+		},
+		fireInterval(ms: number) {
+			const matches = [...timers.values()].filter((timer) => timer.kind === "interval" && timer.ms === ms);
+			if (matches.length !== 1) throw new Error(`spawn_fixture.interval_count=${matches.length}\ndelay_ms=${ms}`);
+			return matches[0]!.callback();
 		},
 		restore() {
 			for (const child of children) { child.stdout.destroy(); child.stderr.destroy(); child.removeAllListeners(); }

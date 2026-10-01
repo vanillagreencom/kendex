@@ -1,4 +1,5 @@
 import { mock } from "bun:test";
+import assert from "node:assert/strict";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -6,7 +7,7 @@ import { interceptNativeEffects, fixtureNow, fixturePid } from "./spawn-native.j
 
 import type { BackgroundTaskSnapshot } from "../../extensions/types.js";
 
-interface Input { mode: "spawn" | "stop"; platform?: string; resource?: boolean; caller?: "tool" | "shutdown" | "slash"; command?: string; stopFails?: boolean; killFails?: boolean; signalGone?: boolean }
+interface Input { mode: "spawn" | "stop" | "matcher"; platform?: string; resource?: boolean; caller?: "tool" | "shutdown" | "slash"; command?: string; stopFails?: boolean; killFails?: boolean; signalGone?: boolean }
 const input: Input = JSON.parse(await Bun.stdin.text());
 const native = await interceptNativeEffects(input);
 const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
@@ -69,7 +70,9 @@ try {
 	started = true;
 	// Only the platform-sensitive spawn call runs under this row's platform.
 	if (input.platform) Object.defineProperty(process, "platform", { ...originalPlatform, value: input.platform });
-	const spawned = await execute({ action: "spawn", command: input.command ?? "fixture command", notifyOnExit: false });
+	const matcherMode = input.mode === "matcher";
+	const spawned = await execute({ action: "spawn", command: input.command ?? "fixture command", notifyOnExit: matcherMode,
+		notifyOnOutput: matcherMode, notifyPattern: matcherMode ? `/${"a".repeat(1000)}(a+)+$/` : undefined });
 	spawnedSnapshot = spawned.details.task;
 	Object.defineProperty(process, "platform", originalPlatform);
 	if (native.children.length !== 1 || native.spawns.length !== 1) throw new Error(`spawn_fixture.spawn_count=${native.spawns.length},children=${native.children.length}`);
@@ -81,6 +84,44 @@ try {
 	let stopResult: ToolResult | undefined;
 	let after: unknown;
 	let escalated: unknown;
+	let matcherEvidence: unknown;
+	if (matcherMode) {
+		let callbackCompletions = 0;
+		const react = async (text: string) => {
+			child.stdout.write(text);
+			try { await native.fireTimeout(1500); }
+			catch (error) { throw new Error("spawn_fixture.output_callback=rejected", { cause: error }); }
+			callbackCompletions += 1;
+			await execute({ action: "list" });
+		};
+		await react("a".repeat(1_000_000 - 1) + "!");
+		const drops = latestSnapshot(spawnedSnapshot)!.wakeEvents!;
+		assert.equal(drops.length, 1);
+		assert.equal(drops[0].droppedReason, "notify-pattern-timeout");
+		assert.equal(drops[0].deliveredAt, null);
+		for (let index = 0; index < 20; index += 1) await react("\nsubsequent output");
+		const emitted = messages as [{ details: { eventType: string; reason?: string; matchedPattern?: string; error?: string }; content: string }, { triggerTurn: boolean; deliverAs: string }][];
+		assert.equal(emitted.length, 1, "matcher must report one notice without output wakes");
+		assert.equal(emitted[0][0].details.eventType, "output-matcher-timeout");
+		assert.equal(emitted[0][0].details.reason, "notify-pattern-timeout");
+		assert.ok(emitted[0][0].details.error);
+		assert.ok(emitted[0][0].details.matchedPattern!.length <= 192);
+		assert.ok(Buffer.byteLength(JSON.stringify(emitted[0])) < 4096, "matcher notice must remain bounded");
+		assert.equal(emitted[0][1].triggerTurn, true);
+		assert.equal(emitted[0][1].deliverAs, "steer");
+		assert.equal(latestSnapshot(spawnedSnapshot)!.outputWakeBudget!.wakes, 0);
+		assert.equal(latestSnapshot(spawnedSnapshot)!.pendingWakes!.length, 0);
+		assert.equal(callbackCompletions, 21);
+		child.emit("close", 0);
+		const { taskLogs } = await import("../../extensions/log-writer.js");
+		await taskLogs.drain();
+		assert.equal(emitted.length, 2, "matcher timeout must retain exit delivery");
+		assert.equal(emitted[1][0].details.eventType, "exit");
+		assert.equal(emitted[1][1].deliverAs, "followUp");
+		assert.equal((await state()).exitNotified, true);
+		matcherEvidence = { callbackCompletions, notices: emitted.filter(([message]) => message.details.eventType === "output-matcher-timeout").length,
+			outputWakes: emitted.filter(([message]) => message.details.eventType === "output").length, exitWakes: emitted.filter(([message]) => message.details.eventType === "exit").length };
+	}
 	if (input.mode === "stop") {
 		if (input.caller === "shutdown") {
 			await dispatch("session_shutdown");
@@ -118,7 +159,7 @@ try {
 		spawn: { file: spawn.file, args: spawn.args, detached: spawn.options.detached, stdio: spawn.options.stdio, cwdIsPrivate: spawn.options.cwd === process.cwd(), piRootIsPrivate: (spawn.options.env as NodeJS.ProcessEnv).PI_CODING_AGENT_DIR === process.env.PI_CODING_AGENT_DIR, resultAction: spawned.details.action, resultId: spawned.details.task!.id, resultPid: spawned.details.task!.pid },
 		before, outcome, stopResult, after, escalated, final, log, stoppedTimers, stopCalls, signals, childSignals,
 		timerEvents: native.timerEvents, remainingTimers: native.activeTimers(), unexpected: native.unexpected, notifications, messages,
-		fixtureNow, fixturePid,
+		fixtureNow, fixturePid, matcherEvidence,
 	}));
 } finally {
 	Object.defineProperty(process, "platform", originalPlatform);

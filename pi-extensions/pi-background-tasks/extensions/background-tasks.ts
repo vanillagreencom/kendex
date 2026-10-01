@@ -114,6 +114,7 @@ import {
 	recordScheduledOutputDrop,
 	scheduleTaskWake,
 	sendOutputWakeBudgetExhaustedNotice,
+	sendOutputMatcherTimeoutNotice,
 	sendTaskWake,
 	shouldEmitOutputWake,
 	truncateForTranscript,
@@ -459,14 +460,14 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		eventType: TaskEventType,
 		task: ManagedTask,
 		options: { eventAt?: number; matchedPattern?: string; newOutputTail?: string; sequence?: number } = {},
-		output?: string,
+		output?: { text: string; truncated: boolean },
 	): boolean => {
 		// Lifecycle hooks remain synchronous. A restored exit reads its tail
 		// before marking the wake delivered, and a cleared task gets no wake.
 		if (eventType === "exit" && task.notifyOnExit && !task.exitNotified && task.output.length === 0 && output === undefined) {
 			if (exitWakeDue.has(task)) return false;
 			exitWakeDue.add(task);
-			void getTaskOutput(task, settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS, activeCtx?.cwd)).then((tail) => {
+			void taskOutput.readTail(task, settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS, activeCtx?.cwd)).then((tail) => {
 				exitWakeDue.delete(task);
 				if (tasks.get(task.id) !== task || shuttingDown) return;
 				sendExitWakeLifecycle(task, { ...lifecycleHooks, sendTaskEvent: (type, target) => sendTaskEvent(type, target, options, tail) });
@@ -478,7 +479,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			isShuttingDown: () => shuttingDown,
 			logDiagnostic: logWakeDiagnostic,
 			messageType: BG_MESSAGE_TYPE,
-			outputTail: (target) => tailText(output ?? target.output, settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS, activeCtx?.cwd)),
+			outputTail: (target) => tailText(output?.text ?? target.output, settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS, activeCtx?.cwd), output?.truncated),
 			rememberSnapshot,
 			sendMessage: (message, messageOptions) => pi.sendMessage(message as any, messageOptions as any),
 		}, eventType, task, options);
@@ -535,8 +536,14 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			} catch (error) {
 				if (!(error instanceof OutputMatcherBudgetError)) throw error;
 				logBackgroundDiagnostic("notify pattern over budget", { id: task.id, pattern: task.notifyPattern, error: error.message });
-				activeCtx?.ui.notify(`${task.id}: ${error.message} Pattern: ${compactText(task.notifyPattern ?? "", 96)}`, "warning");
-				patternMatched = false;
+				sendOutputMatcherTimeoutNotice({
+					logDiagnostic: logWakeDiagnostic,
+					messageType: BG_MESSAGE_TYPE,
+					rememberSnapshot,
+					sendMessage: (message, messageOptions) => pi.sendMessage(message as any, messageOptions as any),
+				}, task, error.message);
+				persistScheduledOutputDrop(task, pending, "notify-pattern-timeout", { matchedPattern: task.notifyPattern });
+				return;
 			}
 			if (!patternMatched) {
 				persistScheduledOutputDrop(task, pending, "notify-pattern-no-match", { matchedPattern: task.notifyPattern });

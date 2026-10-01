@@ -536,12 +536,8 @@ export function sendTaskWake(
 	return true;
 }
 
-/**
- * Build the concise "wake budget exhausted" notice. Emitted once
- * per task when the budget guard trips, instead of further inline-tail wakes.
- * The notice points at the on-disk log so callers can recover full output.
- */
-export interface SendBudgetExhaustedNoticeDeps {
+/** Task notices use the same bounded manifest and message path as task wakes. */
+export interface SendTaskNoticeDeps {
 	logDiagnostic: (diagnostic: WakeDiagnostic) => void;
 	messageType: string;
 	now?: () => number;
@@ -549,8 +545,31 @@ export interface SendBudgetExhaustedNoticeDeps {
 	sendMessage: (message: Record<string, unknown>, options: Record<string, unknown>) => void;
 }
 
+/** Report the matcher's once-only deadline failure without consuming an output wake. */
+export function sendOutputMatcherTimeoutNotice(deps: SendTaskNoticeDeps, task: ManagedTask, error: string): void {
+	const timestamp = (deps.now ?? Date.now)();
+	const boundedLogFile = truncateField(task.logFile, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "";
+	const boundedPattern = truncateField(task.notifyPattern, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "";
+	const boundedError = truncateField(error, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "";
+	deps.sendMessage({
+		content: `Background task ${task.id}: ${boundedError}\nPattern: ${boundedPattern}\nFull log: ${boundedLogFile}`,
+		customType: deps.messageType,
+		details: {
+			deliveredAt: timestamp,
+			eventType: "output-matcher-timeout",
+			reason: "notify-pattern-timeout",
+			error: boundedError,
+			matchedPattern: boundedPattern,
+			logFile: boundedLogFile,
+			task: compactBackgroundTaskSnapshot(deps.rememberSnapshot(task)),
+		},
+		display: true,
+	}, { deliverAs: "steer", triggerTurn: true });
+}
+
+/** Report budget exhaustion once and point callers at the full on-disk log. */
 export function sendOutputWakeBudgetExhaustedNotice(
-	deps: SendBudgetExhaustedNoticeDeps,
+	deps: SendTaskNoticeDeps,
 	task: ManagedTask,
 	limits: OutputWakeBudgetLimits,
 ): boolean {

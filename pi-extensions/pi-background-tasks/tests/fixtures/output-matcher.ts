@@ -21,9 +21,14 @@ const matcher = parseOutputMatcher("/(a+)+$/");
 assert.ok(matcher);
 const text = "a".repeat(1_000_000 - 1) + "!";
 const start = performance.now();
-assert.throws(() => matcher(text), (error: unknown) => error instanceof Error && error.constructor.name === "OutputMatcherBudgetError");
+let reports = 0;
+assert.throws(() => matcher(text), (error: unknown) => {
+	const timeout = error instanceof Error && error.constructor.name === "OutputMatcherBudgetError";
+	if (timeout) reports += 1;
+	return timeout;
+});
 const elapsedMs = performance.now() - start;
 // The real wait verifies Node's native timeout, with room for CI scheduling.
 assert.ok(elapsedMs < 250, `matcher elapsed ${elapsedMs} ms`);
 for (let index = 0; index < 20; index += 1) assert.equal(matcher(text), false);
-console.log(JSON.stringify({ bytes: Buffer.byteLength(text), elapsedMs, reports: 1, disabledCalls: 20, ordinaryCases: rows.length }));
+console.log(JSON.stringify({ bytes: Buffer.byteLength(text), elapsedMs, reports, disabledCalls: 20, ordinaryCases: rows.length }));

@@ -13,3 +13,11 @@ test("must-fail: bypassing the command cache fails the dashboard suite", () => {
 		to: "if (true || !cached || cached.value !== value || cached.width !== detailWidth)",
 	})).toThrow("unchanged command must use the cache");
 }, SPAWN_FIXTURE_TIMEOUT_MS);
+
+test("must-fail: dropping the selected-task guard lets a late read replace selected output", () => {
+	expect(() => runSpawnFixture("dashboard.ts", {}, {
+		file: "extensions/dashboard.ts",
+		from: "disposed || outputTask !== task || outputText === text",
+		to: "disposed || outputText === text",
+	})).toThrow("late prior read must retain selected output");
+}, SPAWN_FIXTURE_TIMEOUT_MS);

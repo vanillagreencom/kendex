@@ -31,7 +31,7 @@ The agent starts a command with the background task tool. The extension runs the
 ## Memory and disk use
 
 - The dashboard reads a log tail asynchronously and keeps it for each task until the log changes. `logTailMaxChars` limits the disk read in bytes, with a default of 10,000. Command layouts stay cached until the command, pane width or theme changes. These caches are released when their task or dashboard closes.
-- A notification regex has a 25 ms execution deadline. A pattern that exceeds it is disabled for that task and reported once. Exit notifications still work.
+- A notification regex has a 25 ms execution deadline. A pattern that exceeds it is disabled for that task. The agent receives one bounded failure notice, including in headless sessions. Exit notifications still work.
 - A finished task's output is read from its log file; the process handle and the in-memory output are released once the task has exited and its last log write has finished. A task whose last log write failed or stalled keeps its in-memory output instead.
 - At most 50 finished tasks are kept; past that, the oldest finished task is removed with its log. `clear` also deletes the logs of the tasks it removes. A forked session removes the tasks it copied from the original session but keeps their logs, which the original session still reads.
 - Logs live in one directory per session in the `lanes/` folder of the task directory (`taskDir`, default the system temporary directory's `kendex-pi-bg`). A session's directory is deleted once its working directory is gone (a merged worktree), and any log older than 5 days is deleted. Pi applies both rules when a session starts, to `lanes/` only, and only to directories the package made there.

@@ -16,8 +16,8 @@ import { WAKE_MANIFEST_FIELD_MAX_CHARS, truncateForTranscript } from "./wake-eve
 // tighter than the full manifest cap.
 export const TASK_DISPLAY_NAME_MAX_CHARS = 96;
 
-export function tailText(text: string, maxChars: number = settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS)): string {
-	if (text.length <= maxChars) return text;
+export function tailText(text: string, maxChars: number = settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS), truncated = false): string {
+	if (!truncated && text.length <= maxChars) return text;
 	return `[...truncated]\n${text.slice(-maxChars)}`;
 }
 

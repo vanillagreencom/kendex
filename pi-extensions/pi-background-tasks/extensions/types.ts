@@ -51,6 +51,7 @@ export type WakeDropReason =
 	| "notify-exit-disabled"
 	| "notify-output-disabled"
 	| "notify-pattern-no-match"
+	| "notify-pattern-timeout"
 	| "output-after-stop-suppressed"
 	| "output-transition-dedupe"
 	| "output-wake-rescheduled"
