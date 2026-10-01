@@ -1,0 +1,1 @@
+- Claude Code haiku-tier requests use sonnet and print one warning per run until KEN-2466 replaces the interim rule. Other model tiers and harnesses stay unchanged.

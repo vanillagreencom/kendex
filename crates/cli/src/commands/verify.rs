@@ -1030,7 +1030,10 @@ fn say_row(
                 .harness
                 .is_none_or(|harness| harness == entry.harness)
     }) {
-        ui::stderr(&style.report_detail(&[Span::Prose(&warning.message)], "  ! "));
+        match ui::report::is_run_model_warning(&warning.message) {
+            true => ui::report::run_model_warning(&warning.message),
+            false => ui::stderr(&style.report_detail(&[Span::Prose(&warning.message)], "  ! ")),
+        }
     }
     bad
 }

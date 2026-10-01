@@ -92,6 +92,9 @@ pub(super) fn warning_lines(
 ) -> Vec<String> {
     let mut lines = Vec::new();
     for warning in warnings {
+        if ui::report::is_run_model_warning(&warning.message) {
+            continue;
+        }
         let target = match warning.harness {
             Some(harness) => format!("{} ({})", warning.name, harness.display_name()),
             None => warning.name.clone(),

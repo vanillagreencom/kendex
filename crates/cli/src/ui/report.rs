@@ -249,6 +249,22 @@ pub fn warning(text: &str) {
     print(Status::Decision, |style| style.report_warning(text));
 }
 
+/// Whether a render warning describes the model substitution for the run,
+/// rather than a problem with one installed agent.
+pub fn is_run_model_warning(text: &str) -> bool {
+    text == kendex_core::harness::models::HAIKU_SUBSTITUTION_WARNING
+}
+
+/// Print the model substitution once at delivery. Silent previews and
+/// repeated compact/verbose drawings must not consume this notice.
+/// The notice stays one protocol line in both output modes.
+pub fn run_model_warning(text: &str) {
+    if is_run_model_warning(text) {
+        static WARNING: std::sync::Once = std::sync::Once::new();
+        WARNING.call_once(|| super::stderr(&[escaped(text)]));
+    }
+}
+
 /// A failure reported before the run closes.
 pub fn failure(text: &str) {
     print(Status::Failed, |style| {

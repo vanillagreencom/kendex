@@ -36,6 +36,9 @@ pub struct Attention {
 /// and the hook exclusions as one line.
 pub fn print_attention(env: &Env, report: &EngineReport, listing: Listing) -> Attention {
     let (lines, attention) = attention(&ui::style(), env, report, listing);
+    for warning in &report.warnings {
+        ui::report::run_model_warning(&warning.message);
+    }
     ui::stderr(&lines);
     attention
 }

@@ -20,8 +20,8 @@ pub struct ResolvedModel {
     /// `None` means "inherit the session/default model" — each renderer
     /// expresses that in its own dialect.
     pub id: Option<String>,
-    /// Set when the value passed through but is unlikely to load on this
-    /// harness — surfaced, never silently dropped.
+    /// Set when resolution substitutes a model or the value is unlikely
+    /// to load on this harness. Reporters surface it to the user.
     pub warning: Option<String>,
 }
 
@@ -90,6 +90,11 @@ pub fn effort_levels(harness: HarnessId) -> Option<&'static [&'static str]> {
 /// `resolve_model` without naming a model itself.
 pub const TIERS: [&str; 4] = ["fable", "opus", "sonnet", "haiku"];
 
+/// The interim substitution notice. Reporters print this run-wide warning
+/// once, rather than once for each agent that requests the tier.
+pub const HAIKU_SUBSTITUTION_WARNING: &str =
+    "lane-model: requested=haiku resolved=sonnet; KEN-2466 removes this substitution";
+
 pub fn resolve_model(harness: HarnessId, model: &str) -> ResolvedModel {
     let bare = model.trim().to_lowercase();
     if is_inherit(&bare) {
@@ -98,7 +103,10 @@ pub fn resolve_model(harness: HarnessId, model: &str) -> ResolvedModel {
     let tier = TIERS.contains(&bare.as_str());
     if tier {
         return match (harness, bare.as_str()) {
-            // Claude Code takes every tier alias as written.
+            (HarnessId::Claude, "haiku") => ResolvedModel {
+                id: Some("sonnet".to_owned()),
+                warning: Some(HAIKU_SUBSTITUTION_WARNING.to_owned()),
+            },
             (HarnessId::Claude, tier) => resolved(Some(tier)),
             (HarnessId::Codex, "fable") => resolved(Some("gpt-6-astra")),
             (HarnessId::Codex, "opus") => resolved(Some("gpt-5.6-sol")),
@@ -161,10 +169,17 @@ mod tests {
 
     #[test]
     fn tiers_stay_tiers_and_explicit_ids_pass_through() {
-        for tier in ["fable", "opus", "sonnet", "haiku"] {
+        for tier in ["fable", "opus", "sonnet"] {
+            let resolved = resolve_model(HarnessId::Claude, tier);
+            assert_eq!(resolved.id.as_deref(), Some(tier));
+            assert_eq!(resolved.warning, None);
+        }
+        for spelling in ["haiku", " Haiku "] {
+            let resolved = resolve_model(HarnessId::Claude, spelling);
+            assert_eq!(resolved.id.as_deref(), Some("sonnet"));
             assert_eq!(
-                resolve_model(HarnessId::Claude, tier).id.as_deref(),
-                Some(tier)
+                resolved.warning.as_deref(),
+                Some(HAIKU_SUBSTITUTION_WARNING)
             );
         }
         for (harness, tier, expected) in [

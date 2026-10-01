@@ -35,6 +35,7 @@ mod dev_sandbox;
 mod fixture_git;
 mod fixture_global_root;
 mod guard_hooks;
+mod haiku_model;
 mod in_place_verbs;
 mod index_cli;
 mod install_registers_project;
