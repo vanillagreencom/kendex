@@ -259,7 +259,10 @@ fn a_registered_hook_is_read_back_from_copilots_own_directory() {
     let hooks: Vec<_> = scanned
         .items
         .iter()
-        .filter(|item| item.harness == kendex_core::model::HarnessId::Copilot)
+        .filter(|item| {
+            item.harness == kendex_core::model::HarnessId::Copilot
+                && item.kind == kendex_core::model::ItemKind::Hook
+        })
         .map(|item| (item.name.as_str(), item.enabled))
         .collect();
     assert_eq!(hooks, [("preToolUse:bash|powershell:audit", Some(true))]);
