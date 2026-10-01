@@ -1245,7 +1245,9 @@ change came from an outside contributor.
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.4.0
+[1.3.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.3.0
 [1.2.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.2.0
 [1.1.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.1.0
 [1.0.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.0.1
