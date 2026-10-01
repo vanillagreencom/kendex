@@ -302,6 +302,67 @@ assert_eq "${ERR%% id=*}" "lane-mail: delivery-repeated=slack:1" "a replay after
 lm send --item overseer --re "$ASK" --delivery-id slack:3 --file "$(text a 'more words')"
 assert_eq "${ERR%% id=*}" "lane-mail: resolved-already=$ASK" "new answer delivery after close is refused"
 
+# Retained rows come from the pre-1.3 resolve --text/--default producer.
+for by in text default; do
+  new_repo "legacy_$by"
+  owner_ask 'Retained close?' a,b a
+  jq -cn --arg re "$ASK" --arg by "$by" '{id:"old-close",kind:"answer",re:$re,by:$by,text:"a",at:"2026-09-27T00:00:00Z",from:"owner"}' >"$BOX/to-lane.jsonl"
+  for verb in pending drain events; do
+    args=(--item overseer)
+    [ "$verb" != drain ] || args+=(--after 0)
+    lm "$verb" "${args[@]}"
+    assert_eq "$RC" "0" "$by: $verb reads the retained mailbox"
+    assert_eq "${ERR%%=*}" "lane-mail: legacy-close" "$by: $verb warns on the old closing format"
+    if [ "$verb" = events ]; then
+      assert_eq "$(jq -r 'select(.id == "old-close") | .mail_class' <<<"$OUT")" "close" "$by: events delegates closure to the mailbox rule"
+    else
+      assert_eq "$(jq -r 'select(.kind == "ask") | .id' <<<"$OUT")" "" "$by: $verb does not reopen a closed ask"
+    fi
+  done
+  lm send --item overseer --re "$ASK" --delivery-id new:reply --file "$(text a b)"
+  assert_eq "$RC=$ERR" "2=lane-mail: resolved-already=$ASK id=old-close" "$by: a retained close refuses a new answer"
+  lm resolve --item overseer --id "$ASK"
+  assert_eq "$RC=$ERR" "2=lane-mail: resolved-already=$ASK id=old-close" "$by: a retained close refuses another close"
+done
+
+# Inject jq failures only in the selected scan, not envelope construction.
+FAULT_DIR="$TMP_ROOT/jq-fault"
+mkdir -p "$FAULT_DIR"
+REAL_JQ="$(command -v jq)" || exit 1
+cat >"$FAULT_DIR/jq" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+for arg in "$@"; do
+  case "$arg" in
+    *'select(overseer_mail_class == "close"'*)
+      [ "$JQ_FAULT" != closure ] || { printf 'jq-fault=closure\n' >&2; exit 5; } ;;
+    *'select(.kind == "answer" and .re == $re)'*)
+      [ "$JQ_FAULT" != answers ] || { printf 'jq-fault=answers\n' >&2; exit 5; } ;;
+  esac
+done
+exec "$REAL_JQ" "$@"
+SH
+chmod +x "$FAULT_DIR/jq"
+export REAL_JQ
+while read -r verb fault; do
+  new_repo "scan_${verb}_${fault}"
+  owner_ask 'Faulted read?' a,b a
+  args=(--item overseer)
+  if [ "$verb" = send ]; then
+    args+=(--re "$ASK" --delivery-id fault:reply --file "$(text a b)")
+  else
+    args+=(--id "$ASK" --default)
+  fi
+  PATH="$FAULT_DIR:$PATH" JQ_FAULT="$fault" lm "$verb" "${args[@]}"
+  assert_eq "$RC=$ERR" "2=lane-mail: mail-read-failed=overseer" "$verb/$fault: an operational failure is not a close"
+  assert_eq "$(tail -n 1 "$TMP_ROOT/err")" "jq-fault=$fault" "$verb/$fault: the dependency diagnostic survives"
+  assert_eq "$(wc -l <"$BOX/to-lane.jsonl" | tr -d ' ')" "0" "$verb/$fault: failed scans append no words"
+done <<'ROWS'
+send closure
+resolve closure
+resolve answers
+ROWS
+
 # --- the delivery id under the lock -------------------------------------------
 new_repo delivery
 lm send --item overseer --directive --file "$(text d 'From Slack.')" --delivery-id slack:C1:3.3
@@ -407,6 +468,34 @@ mutant default-overrides '[ ! -s "$WORK_DIR/owner.answers" ] || return 0' ': "$W
 lm resolve --item overseer --id "$ASK" --default
 assert_eq "$(field "$BOX/to-lane.jsonl" 'select(.kind == "answer" and .by == "default") | .text')" "cut" \
   "control: bypassing the answered default guard adds a recommendation answer"
+
+# Keep the legacy row, but remove only its classification from the shared owner.
+new_repo control_legacy_close
+LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Retained?' a,b a
+jq -cn --arg re "$ASK" '{id:"old-close",kind:"answer",re:$re,by:"text",text:"a"}' >"$BOX/to-lane.jsonl"
+CLASS_DIR="$(mutant_scripts mutants/legacy-close lib/mailbox-append.sh)" || exit 1
+mutate_file "$CLASS_DIR/lib/mailbox-append.sh" 'or mailbox_legacy_close then' 'or false then'
+LANE_MAIL_BIN="$CLASS_DIR/lane-mail" lm pending --item overseer --to owner
+CONTROL_RC=0
+CONTROL_OUT="$(
+  FAIL=0
+  assert_eq "$OUT" "" "legacy close remains closed"
+  [[ "$FAIL" -eq 0 ]]
+)" || CONTROL_RC=$?
+assert_eq "$CONTROL_RC" "1" "control: losing the legacy closure rule reopens the ask"
+
+new_repo control_guard_error
+LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Faulted?' a,b a
+CLASS_DIR="$(mutant_scripts mutants/guard-error lib/mailbox-append.sh)" || exit 1
+mutate_file "$CLASS_DIR/lib/mailbox-append.sh" '*) return 5 ;;' '*) return 4 ;;'
+PATH="$FAULT_DIR:$PATH" JQ_FAULT=closure LANE_MAIL_BIN="$CLASS_DIR/lane-mail" lm send --item overseer --re "$ASK" --delivery-id fault:reply --file "$(text a b)"
+CONTROL_RC=0
+CONTROL_OUT="$(
+  FAIL=0
+  assert_eq "$RC=$ERR" "2=lane-mail: mail-read-failed=overseer" "failed scan remains an operational error"
+  [[ "$FAIL" -eq 0 ]]
+)" || CONTROL_RC=$?
+assert_eq "$CONTROL_RC" "1" "control: collapsing guard errors loses the operational refusal"
 
 new_repo control_delivery
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 'Once.')" --delivery-id k1

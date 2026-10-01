@@ -1656,13 +1656,10 @@ check_start_stall() {
   lane_row_commit "$rows"
 }
 
-# The owner asks past their deadline, resolved to their recommendation here,
-# on this clock and by nothing else: the overseer is told by the answer the
-# peek that follows reports as owner-ask-resolved, so a ruling made here and
-# one the owner made read through one event. A `resolved-already` is not a
-# failure: the owner's answer landed between the listing and the resolve.
-# Any other refusal fails the pass and names the ask, so an ask that cannot
-# close is never left standing in silence.
+# Close due owner asks through lane-mail's shared closure rule. Its default
+# supplies a recommendation only without an owner answer. The following peek
+# reports answers and closes separately. A resolved-already refusal means
+# another close won the mailbox lock; every other refusal fails this pass.
 resolve_due_owner_asks() {
   local due id rc=0
   due="$("$LANE_MAIL" pending --item overseer --to owner --due 2>"$WORK_DIR/due.err")" || rc=$?

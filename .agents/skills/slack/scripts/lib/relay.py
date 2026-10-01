@@ -53,8 +53,8 @@ absent the relay resumes. The master's watch writes its last mailbox read
 count as one bare integer in tmp/lane-mail/overseer/to-overseer.seen. A resume
 skips notices on lines at or below that count and journals their ids; later
 notices post. A missing or unreadable seen file skips nothing. The count is
-clamped to the lines listed. Open asks post whatever their line, and a held
-answer still posts so the thread of an ask the channel shows open is closed.
+clamped to the lines listed. Open asks post whatever their line. Held answers
+still post; closure records update thread state independently of post age.
 """
 
 from __future__ import annotations
@@ -517,13 +517,21 @@ class RootRelay:
         """Each envelope not yet carried and what it takes: `ask`, `notice`,
         `answer`, `resolution`, `seen` for a notice the master read on resume, or `skip`
         for another that never posts."""
-        closed = {e.get("re") for e in events if e.get("kind") == "resolution"}
+        closures = {str(e["id"]): e for e in events
+                    if e.get("box") == "to-lane" and e.get("mail_class") == "close"}
+        closed = {e.get("re") for e in closures.values()}
         horizon = self.settings.horizon(self.clock())
         state = self.state
 
         routed = []
         for envelope in events:
             env_id = str(envelope["id"])
+            if env_id in closures:
+                thread_ts = state.by_envelope.get(str(envelope.get("re", "")))
+                if thread_ts in state.threads and env_id not in state.resolutions:
+                    routed.append((envelope, "resolution"))
+                if envelope["kind"] == "resolution":
+                    continue
             if env_id in state.carried or env_id in self.skipped:
                 continue
             at = at_epoch(str(envelope["at"]))
@@ -538,8 +546,6 @@ class RootRelay:
                 route = "skip"
             elif owner and kind == "ask":
                 route = "skip" if env_id in closed else "ask"
-            elif box == "to-lane" and kind == "resolution":
-                route = "resolution"
             elif before(state.start_at, state.start_ids, at, env_id):
                 route = "skip"
             elif owner and kind == "notice":
@@ -565,8 +571,7 @@ class RootRelay:
             elif route == "answer":
                 self.post_answer(envelope)
             elif route == "resolution":
-                self.journal.append(t="resolved", id=str(envelope["re"]))
-                self.skipped.add(str(envelope["id"]))
+                self.journal.append(t="resolved", id=str(envelope["re"]), source=str(envelope["id"]))
             elif route in ("skip", "seen"):
                 self.skipped.add(str(envelope["id"]))
             else:

@@ -92,6 +92,7 @@ sk_ctl() { # PATH [JSON] — one control call, body on stdout
   fi
 }
 sk_state() { sk_ctl /_test/state | jq -r "$1"; } # JQ over the fake's state
+asks() { sk_state "[.messages.${1}[] | select(.text | contains(\"$2\"))] | length"; } # CHANNEL TEXT — posts carrying it
 # sk_inject CHANNEL USER TEXT [THREAD_TS] [EXTRA_JSON_FIELDS] — prints the ts
 sk_inject() {
   local extra="${5:-}" thread="" text

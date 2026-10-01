@@ -1,1 +1,1 @@
-- Slack delivers every reply to an open question as an answer with eyes reactions. Questions stay open until the overseer closes them or their deadline passes.
+- Slack delivers repeated replies as answers with eyes reactions until explicit close or deadline. Catalog updates preserve closed questions. Relay restarts retain closure state.

@@ -51,16 +51,17 @@ mailbox_terminate() { # FILE
 # operation, so a line whose right to land depends on what the file already
 # holds, a delivery id or an ask's one resolution, is judged against the file
 # it joins and never against a copy another writer has moved on from. The
-# guard returning nonzero refuses the append as exit 4 and lands nothing; what
-# it found is the guard's own to report.
+# guard returns 1 for an expected refusal, 2 for a read failure, and 3 for a
+# write failure. Its diagnostics stay on stderr.
 #
 # Exit 3 when the lock could not be taken within WAIT_SECONDS, 2 when a write
-# failed, 4 when the guard refused. The three are different repairs, a writer
+# failed, 4 when the guard refused, 5 when its read failed. These need different repairs, a writer
 # holding the mailbox, a disk or permission failure, a line already there, so
 # every caller turns the number into its own word before anyone reads it:
 # lane-mail into lock-failed, write-failed and the guard's key, the provider
 # and the fixture into lock-timeout and write-failed.
-mailbox_append_locked() { # FILE WAIT_SECONDS [GUARD] — bytes on stdin
+mailbox_append_locked() { # FILE WAIT_SECONDS [GUARD]: bytes on stdin
+  local guard_rc=0
   exec 9>>"$1" || return 2
   if ! orch_take_lock 9 "$1" "$2"; then
     exec 9>&-
@@ -71,10 +72,17 @@ mailbox_append_locked() { # FILE WAIT_SECONDS [GUARD] — bytes on stdin
     orch_release_lock
     return 2
   fi
-  if [ -n "${3:-}" ] && ! "$3" "$1"; then
+  if [ -n "${3:-}" ]; then
+    "$3" "$1" || guard_rc=$?
+  fi
+  if [ "$guard_rc" -ne 0 ]; then
     exec 9>&-
     orch_release_lock
-    return 4
+    case "$guard_rc" in
+      1) return 4 ;;
+      3) return 2 ;;
+      *) return 5 ;;
+    esac
   fi
   if ! cat >&9; then
     exec 9>&-
@@ -88,14 +96,29 @@ mailbox_append_locked() { # FILE WAIT_SECONDS [GUARD] — bytes on stdin
 # The class of an envelope in the overseer's own to-lane.jsonl, as a jq
 # definition a caller puts ahead of its filter, so the writer that checks a
 # reply's --ref and the watch that reports the line judge one rule: a
-# `close` is the separate resolution record; `resolution` is an owner answer
+# `close` is a resolution or a legacy closing answer; `resolution` is an owner answer
 # carrying `by`; a `peer` line names another repository's overseer in `from`;
 # an `owner-note` names owner or no sender; and a `stray` is an owner answer
 # missing the `by` field every owner-answer writer supplies.
 # shellcheck disable=SC2034  # read by the scripts that source this.
-MAILBOX_CLASS_JQ='def overseer_mail_class:
-  if .kind == "resolution" then "close"
+# Compatibility floor: kendex 1.3 mailboxes; remove legacy reads no earlier
+# than 1.5, after the release-standard minor-release warning period.
+MAILBOX_CLASS_JQ='def mailbox_legacy_close:
+  .kind == "answer" and (.by == "text" or .by == "default") and (has("closes") | not);
+def overseer_mail_class:
+  if .kind == "resolution" or mailbox_legacy_close then "close"
   elif .kind == "answer" and (.by | type) == "string" then "resolution"
   elif ((.from // "") | . != "" and . != "owner") then "peer"
   elif .kind == "answer" then "stray"
   else "owner-note" end;'
+
+# The pre-1.3 resolve producer wrote an answer without a closes field.
+mailbox_warn_legacy() { # FILE
+  local ids id
+  ids="$(jq -r -R "$MAILBOX_CLASS_JQ"' (fromjson? // empty) | objects
+    | select(mailbox_legacy_close) | .id' <"$1")" || return 2
+  [ -n "$ids" ] || return 0
+  while IFS= read -r id; do
+    printf 'lane-mail: legacy-close=%s\nLegacy closing answer retained; supported through kendex 1.4.\n' "$id" >&2
+  done <<<"$ids"
+}

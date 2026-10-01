@@ -39,7 +39,7 @@ LINE_KINDS = {
 # The lines a Socket Mode connection's changes write; replay reads nothing
 # from them, and `compact` drops one by its `at`.
 CONNECTION_KINDS = {"connect", "reconnect", "disconnect"}
-# A directive's receipt marks, the reaction names its `mark` lines carry.
+# Delivery and directive receipt marks, as their `mark` lines record them.
 SEEN = "eyes"
 READ = "white_check_mark"
 AT_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
@@ -159,6 +159,7 @@ class State:
     hold_at: str = ""
 
     carried: Set[str] = field(default_factory=set)
+    resolutions: Set[str] = field(default_factory=set)
     delivered: Dict[str, str] = field(default_factory=dict)
     threads: Dict[str, Thread] = field(default_factory=dict)
     by_envelope: Dict[str, str] = field(default_factory=dict)
@@ -222,6 +223,8 @@ class State:
                 self.threads[thread_ts].parent = line["parent"]
             self.by_envelope[env_id] = thread_ts
         elif kind == "resolved":
+            if "source" in line:
+                self.resolutions.add(str(line["source"]))
             thread_ts = self.by_envelope.get(str(line["id"]))
             if thread_ts in self.threads:
                 self.threads[thread_ts].open = False
@@ -330,6 +333,8 @@ def compact(root: Path, cutoff_ts: float) -> int:
             drop = str(line["thread"]) not in live
         elif kind == "resolved":
             thread_ts = state.by_envelope.get(str(line["id"]))
+            # Drop consumption with the thread it closes. Without its
+            # retained mapping the relay has no closure state left to update.
             drop = thread_ts not in live
         elif kind in ("bound", "thread", "parent") and old:
             drop = str(line["ts"]) not in live

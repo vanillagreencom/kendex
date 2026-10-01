@@ -127,6 +127,7 @@ Overseer side:
               to-lane.jsonl, each with `box` naming the file it came from,
               `line` its physical line number and `count` that file's complete
               line count, including lines filtered as invalid JSON,
+              and `mail_class` on to-lane records from the shared mailbox rule,
               answered asks and their answers included. Moves no cursor and
               marks nothing: a relay keeps its own record of what it carried,
               keyed by envelope id, so --after is refused `events-no-cursor`
@@ -278,6 +279,7 @@ choices), and the owner-channel fields each verb above writes: to, ref,
 attach, recommend, wait, deadline (UTC, at plus wait minutes), delivery_id,
 re_delivery_id (notice's copy of its --ref envelope's delivery_id), thread_ts
 and parent (threaded owner directives only),
+closes (false on new owner answers; absent on legacy closing answers),
 and by (`text` or `default` on an owner answer; `explicit`, `text` or
 `default` on a close). kind is ask, notice, answer, resolution or directive;
 at is UTC; id is <epoch>-<pid>-<random>. from
@@ -287,6 +289,8 @@ verb writes the item, a send into the overseer's own mailbox and a `resolve
 --default` included, writes `overseer:<repository>`. The repository is the `[marketplace]` name in the
 caller's kendex.toml, else the last segment of its origin URL, else the
 checkout's own directory name.
+Reads of legacy closing answers warn `lane-mail: legacy-close=<id>` on stderr.
+The old format remains readable through kendex 1.4.
 
 Receipt, the line a `send` and a `peer send` print on stdout once the envelope
 is appended: `lane-mail: sent item=<item> id=<id> bytes=<n> monitor=<m>`, where
@@ -925,12 +929,14 @@ lm_header() { # FILE
 # line numbers before that filtering, aligned with the master's seen count.
 lm_objects() { # FILE [BOX]
   local count=0
+  [ "$ITEM" != overseer ] || mailbox_warn_legacy "$1" || return 2
   if [ -n "${2:-}" ]; then
     count="$(lm_count "$1")" || return 1
   fi
-  jq -c -R --arg box "${2:-}" --argjson count "$count" 'input_line_number as $line
+  jq -c -R --arg box "${2:-}" --argjson count "$count" "$MAILBOX_CLASS_JQ"'input_line_number as $line
     | (fromjson? // empty) | select(type == "object")
-    | if $box == "" then . else . + {box: $box, line: $line, count: $count} end' <"$1"
+    | if $box == "" then . else . + {box: $box, line: $line, count: $count}
+        + (if $box == "to-lane" then {mail_class: overseer_mail_class} else {} end) end' <"$1"
 }
 
 # The id of an envelope to-lane.jsonl already holds that is this one again,
@@ -1166,6 +1172,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
       + (if $thread == "" then {} else {thread_ts: $thread, parent: $parent} end)
       + (if $re_delivery == "" then {} else {re_delivery_id: $re_delivery} end)
       + (if $by == "" then {} else {by: $by} end)
+      + (if $kind == "answer" and $by != "" then {closes: false} else {} end)
       + {text: ($text | sub("\n$"; ""))}
       + (if $options == "" then {} else {options: ($options | split(","))} end)' \
     2>"$WORK_DIR/jq.err")" || refuse file-unreadable "$FILE" "$(cat -- "$WORK_DIR/jq.err")"
@@ -1180,8 +1187,9 @@ RE_DELIVERY_ID=""
 # two paths cannot drift apart. The here-string carries the line with the
 # trailing newline a mailbox line ends on.
 # GUARD, where given, is the check the library runs under the lock before the
-# append; a guard that refused returns 4 here for the verb to name, with what
-# the guard found in the work directory, and nothing was appended.
+# append; only an expected guard refusal returns 4 for the verb to name.
+# Operational failures keep their diagnostics and never become a refusal
+# based on an incomplete scan.
 lm_append_local() { # FILE LINE [GUARD]
   local rc=0
   mkdir -p -- "$BOX" || refuse write-failed "$BOX"
@@ -1192,8 +1200,10 @@ lm_append_local() { # FILE LINE [GUARD]
   mailbox_append_locked "$1" 30 "${3:-}" <<<"$2" 2>"$WORK_DIR/local.err" || rc=$?
   trap lm_cleanup EXIT
   [ "$rc" -ne 4 ] || return 4
+  [ "$rc" -ne 5 ] || refuse mail-read-failed "$ITEM" "$(cat -- "$WORK_DIR/local.err")"
   [ "$rc" -ne 3 ] || refuse lock-failed "$1" "$(cat -- "$WORK_DIR/local.err")"
   [ "$rc" -eq 0 ] || refuse write-failed "$1" "$(cat -- "$WORK_DIR/local.err")"
+  cat -- "$WORK_DIR/local.err" >&2
 }
 
 # The guards the library runs under the lock. Each reads the file the line
@@ -1212,6 +1222,7 @@ lm_guard_delivery() { # FILE
 # The record already closing this ask, into WORK_DIR/resolved.earlier as
 # `<id> <by> <delivery_id>`; refuses where one stands.
 lm_guard_resolve() { # FILE
+  mailbox_warn_legacy "$1" || return 2
   jq -r -R --arg re "$MSGID" "$MAILBOX_CLASS_JQ"' (fromjson? // empty) | objects
     | select(overseer_mail_class == "close" and .re == $re)
     | "\(.id) \(.by) \(.delivery_id // "")"' <"$1" >"$WORK_DIR/resolved.earlier" || return 2
@@ -1221,7 +1232,7 @@ lm_guard_resolve() { # FILE
 # Slack answers and closes share this file's lock. A retry is judged before
 # the close, so a delivery that landed before closing still names its answer.
 lm_guard_owner_answer() { # FILE
-  [ -z "$DELIVERY_ID" ] || lm_guard_delivery "$1" || return 1
+  [ -z "$DELIVERY_ID" ] || lm_guard_delivery "$1" || return $?
   lm_guard_resolve "$1"
 }
 
@@ -1229,13 +1240,13 @@ lm_guard_owner_answer() { # FILE
 # append under the close's lock so a reply racing its deadline wins if it
 # landed first. The close record follows these optional answer bytes.
 lm_guard_close() { # FILE
-  lm_guard_resolve "$1" || return 1
+  lm_guard_resolve "$1" || return $?
   if [ "$BY" = default ]; then
     jq -r -R --arg re "$MSGID" '(fromjson? // empty) | objects
       | select(.kind == "answer" and .re == $re) | .id' <"$1" >"$WORK_DIR/owner.answers" || return 2
     [ ! -s "$WORK_DIR/owner.answers" ] || return 0
   fi
-  [ -z "$ANSWER_LINE" ] || printf '%s\n' "$ANSWER_LINE" >&9 || return 2
+  [ -z "$ANSWER_LINE" ] || printf '%s\n' "$ANSWER_LINE" >&9 || return 3
 }
 
 # The owner ask in to-overseer.jsonl with that id, into ASK_JSON, read through
@@ -1499,7 +1510,7 @@ case "$VERB" in
         fi
         REFUSE_EXTRA="id=$(awk '{ print $1 }' <"$WORK_DIR/resolved.earlier")" ||
           refuse file-unreadable "$WORK_DIR/resolved.earlier"
-        refuse resolved-already "$MSGID"
+        refuse resolved-already "$MSGID" "$(cat -- "$WORK_DIR/local.err")"
       fi
     elif [ -n "$DELIVERY_ID" ]; then
       lm_append_local "$TO_LANE" "$LINE" lm_guard_delivery || {
@@ -1553,7 +1564,7 @@ case "$VERB" in
         lm_resolved "$MSGID" "$EARLIER_BY" "$EARLIER_ID"
       else
         REFUSE_EXTRA="id=$EARLIER_ID"
-        refuse resolved-already "$MSGID"
+        refuse resolved-already "$MSGID" "$(cat -- "$WORK_DIR/local.err")"
       fi
     fi
     ;;
@@ -1834,7 +1845,7 @@ case "$VERB" in
     # deadline by this clock, the one deadline judge the watch resolves its
     # owner asks by.
     NOW_EPOCH="$(date -u +%s)" || refuse write-failed "$BOX"
-    lm_objects "$WORK_DIR/lane.jsonl" | jq -r 'select(.kind == "resolution") | .re' >"$WORK_DIR/closed" ||
+    lm_objects "$WORK_DIR/lane.jsonl" | jq -r "$MAILBOX_CLASS_JQ"'select(overseer_mail_class == "close") | .re' >"$WORK_DIR/closed" ||
       refuse file-unreadable "$TO_LANE"
     CLOSED="$(cat -- "$WORK_DIR/closed")" || refuse file-unreadable "$WORK_DIR/closed"
     lm_objects "$WORK_DIR/new" | jq -c --arg answered "$ANSWERED" --arg closed "$CLOSED" --arg verb "$VERB" \

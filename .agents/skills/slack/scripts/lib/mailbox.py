@@ -49,7 +49,9 @@ class LaneMail:
         disables master-read suppression, never delivery of that envelope."""
         code, out, err = self._run("events", "--item", "overseer")
         if code != 0:
-            raise Refusal("lane-mail-failed", _first(err))
+            raise Refusal("lane-mail-failed", err.strip() or _first(err))
+        if err:
+            sys.stderr.write(err)
         envelopes = []
         for raw in out.splitlines():
             if raw.strip():
@@ -58,7 +60,7 @@ class LaneMail:
                 # are checked here before routing or formatting consumes them.
                 invalid = False
                 for field in (
-                    "id", "at", "box", "kind", "text", "from", "to", "ref", "re", "by", "attach", "recommend", "deadline"
+                    "id", "at", "box", "kind", "text", "from", "to", "ref", "re", "by", "attach", "recommend", "deadline", "mail_class"
                 ):
                     required = field in ("id", "at", "box", "kind", "text") or field == "re" and envelope.get("kind") == "answer"
                     value = envelope.get(field)
@@ -129,7 +131,7 @@ class LaneMail:
         first = _first(err)
         if first.startswith(f"lane-mail: delivery-repeated={delivery_id} id="):
             return first.rsplit("id=", 1)[1].strip()
-        raise Refusal("lane-mail-failed", first)
+        raise Refusal("lane-mail-failed", err.strip() or first)
 
     def read_directives(self) -> Set[str]:
         """The ids of the directives the overseer has read: those on a line
@@ -169,7 +171,7 @@ class LaneMail:
             return "answered", first.rsplit("id=", 1)[1].strip()
         if first.startswith(f"lane-mail: resolved-already={ask_id} id="):
             return "resolved-already", first.rsplit("id=", 1)[1].strip()
-        raise Refusal("lane-mail-failed", first)
+        raise Refusal("lane-mail-failed", err.strip() or first)
 
 
 def _first(text: str) -> str:
