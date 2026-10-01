@@ -1596,6 +1596,9 @@ jobs:
         if: github.event_name != 'push'
         timeout-minutes: 10
         run: cargo test -p ${{ matrix.crate }} --locked --no-fail-fast
+        env:
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ${{ matrix.crate == 'kendex-cli' && github.token || '' }}
 
   # The app ships on macOS. tools/guard --full checks the core and CLI Apple
   # targets at development completion; these shards execute the tests on the
@@ -1725,6 +1728,9 @@ jobs:
       - name: test
         if: github.event_name != 'push'
         timeout-minutes: ${{ matrix.leg == 'render-lint' && 25 || 12 }}
+        env:
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ${{ matrix.crate == 'kendex-cli' && matrix.leg == 'rest' && github.token || '' }}
         run: |
           set -u
           rc=0

@@ -48,6 +48,8 @@ jobs:
   check:
     name: kendex check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -63,6 +65,7 @@ jobs:
       - name: Install latest released kendex
         env:
           GH_TOKEN: ""
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           kendex/skills/review-gate/scripts/install-latest.sh
       - name: Render the catalog with the released engine

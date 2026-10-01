@@ -37,6 +37,7 @@ jobs:
       - name: Install latest released kendex
         env:
           GH_TOKEN: ""
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           exec .agents/skills/review-gate/scripts/install-latest.sh

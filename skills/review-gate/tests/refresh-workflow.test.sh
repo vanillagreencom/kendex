@@ -60,12 +60,15 @@ def check(w):
  # The installer owns run-time release resolution. No workflow value can
  # keep a consumer on a version after the catalog moves forward.
  install=next(s for s in steps if s.get('name')=='Install latest released kendex')
- assert set(install['env'])=={'GH_TOKEN'}
+ assert set(install['env'])=={'GH_TOKEN','GITHUB_TOKEN'}
  assert install['env']['GH_TOKEN']=='""'
+ assert install['env']['GITHUB_TOKEN']=='${{ github.token }}'
+ assert [s for s in steps if 'github.token' in json.dumps(s)]==[install]
+ assert steps.index(consumer)>steps.index(install)
  assert install['run']=='set -euo pipefail\nexec .agents/skills/review-gate/scripts/install-latest.sh\n'
  assert 'KENDEX_VERSION' not in json.dumps(w)
 check(workflow)
-for mutation in ('repository','permission','exposure','branch','fallback','self','pin','installer'):
+for mutation in ('repository','permission','exposure','branch','fallback','self','pin','installer','api-token','app-token','gh-token','early-app'):
  w=copy.deepcopy(workflow);job=w['jobs']['refresh'];steps=job['steps'];token=next(s for s in steps if s.get('id')=='issues-token')
  if mutation=='repository': token['with']['repositories']='kendex,consumer'
  elif mutation=='permission': token['with']['permission-contents']='write'
@@ -74,6 +77,11 @@ for mutation in ('repository','permission','exposure','branch','fallback','self'
  elif mutation=='self': job['if']=job['if'].split(' && ')[1]
  elif mutation=='pin': next(s for s in steps if s.get('name')=='Install latest released kendex')['env']['KENDEX_VERSION']='v1.2.0'
  elif mutation=='installer': next(s for s in steps if s.get('name')=='Install latest released kendex')['run']='set -euo pipefail\ntrue # exec .agents/skills/review-gate/scripts/install-latest.sh\n'
+ elif mutation=='api-token': next(s for s in steps if s.get('name')=='Install latest released kendex')['env'].pop('GITHUB_TOKEN')
+ elif mutation=='app-token': next(s for s in steps if s.get('name')=='Install latest released kendex')['env']['GITHUB_TOKEN']='${{ steps.token.outputs.token }}'
+ elif mutation=='gh-token': next(s for s in steps if s.get('name')=='Install latest released kendex')['env']['GH_TOKEN']='${{ github.token }}'
+ elif mutation=='early-app':
+  consumer=next(s for s in steps if s.get('id')=='token');steps.remove(consumer);steps.insert(0,consumer)
  else: token['continue-on-error']=False
  try: check(w)
  except AssertionError: pass

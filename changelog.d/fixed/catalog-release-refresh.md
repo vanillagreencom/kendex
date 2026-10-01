@@ -1,1 +1,1 @@
-- Consumer refresh uses the latest released kendex. Catalog CI checks declared hook delivery before install and honors caller advisory policy. Release updates keep writer pins checked.
+- Consumer refresh uses the latest released kendex with read-only API authentication. Catalog CI checks declared hook delivery and honors caller advisory policy.

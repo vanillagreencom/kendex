@@ -51,4 +51,3 @@ message = "this line pipes a download straight into a shell from `https://raw.gi
 rule = "rce"
 line = 660
 message = "this line pipes a download straight into a shell from `https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/$KE… c4e2972fc18a3f5a`, so whatever the far end serves is what runs"
-

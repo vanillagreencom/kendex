@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use super::{run_script, step};
+use super::{job, run_script, step};
 use crate::test_util::rooted;
 
 #[allow(clippy::unwrap_used)]
@@ -40,7 +40,8 @@ fn the_current_catalog_renders_and_incomplete_delivery_fails() {
     let script = repository.join("tools/catalog-release-check");
     let home = root.join("release-home");
     fs::create_dir(&home).unwrap();
-    let install = Command::new("/bin/bash")
+    let mut installer = Command::new("/bin/bash");
+    installer
         .arg(repository.join("skills/review-gate/scripts/install-latest.sh"))
         .current_dir(&root)
         .env_clear()
@@ -49,10 +50,18 @@ fn the_current_catalog_renders_and_incomplete_delivery_fails() {
         .env("KENDEX_REAL_HOME", "1")
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_DATA_HOME", home.join(".local/share"))
-        .env("XDG_CACHE_HOME", home.join(".cache"))
-        .output()
-        .unwrap();
-    assert!(install.status.success(), "release install: {install:?}");
+        .env("XDG_CACHE_HOME", home.join(".cache"));
+    // CI supplies its read-only API token. No other caller credentials enter
+    // this isolated process, and the helper clears the token before install.
+    if let Some(token) = std::env::var_os("GITHUB_TOKEN").filter(|token| !token.is_empty()) {
+        installer.env("GITHUB_TOKEN", token);
+    }
+    let install = installer.output().unwrap();
+    assert!(
+        install.status.success(),
+        "release install status: {}",
+        install.status
+    );
     eprintln!("{}", String::from_utf8_lossy(&install.stdout));
     let binary = home.join(".local/bin/kendex");
     let output = check(&binary, &script, &repository, &root);
@@ -135,11 +144,58 @@ fn the_current_catalog_renders_and_incomplete_delivery_fails() {
 #[allow(clippy::unwrap_used)]
 fn catalog_ci_installs_the_release_and_runs_its_render_check() {
     let text = fs::read_to_string(repo().join(".github/workflows/catalog-check.yml")).unwrap();
-    let install = run_script(&step(&text, "name: Install latest released kendex"));
-    assert_eq!(
-        install.trim(),
-        "kendex/skills/review-gate/scripts/install-latest.sh"
-    );
+    let assert_install_scope = |workflow: &str| {
+        let install_step = step(workflow, "name: Install latest released kendex");
+        assert_eq!(
+            run_script(&install_step).trim(),
+            "kendex/skills/review-gate/scripts/install-latest.sh"
+        );
+        let environment: Vec<_> = install_step
+            .iter()
+            .skip_while(|line| line.trim() != "env:")
+            .skip(1)
+            .take_while(|line| line.starts_with("          "))
+            .map(|line| line.trim())
+            .collect();
+        assert_eq!(
+            environment,
+            ["GH_TOKEN: \"\"", "GITHUB_TOKEN: ${{ github.token }}"]
+        );
+        assert_eq!(workflow.matches("${{ github.token }}").count(), 1);
+        assert_eq!(workflow.matches("GITHUB_TOKEN:").count(), 1);
+        let check_job = job(workflow, "check");
+        let permissions: Vec<_> = check_job
+            .iter()
+            .take_while(|line| line.trim() != "steps:")
+            .skip_while(|line| line.trim() != "permissions:")
+            .skip(1)
+            .take_while(|line| line.starts_with("      "))
+            .map(|line| line.trim())
+            .collect();
+        assert_eq!(permissions, ["contents: read"]);
+    };
+    assert_install_scope(&text);
+    for (target, replacement) in [
+        ("      contents: read", "      contents: write"),
+        (
+            "          GH_TOKEN: \"\"",
+            "          GH_TOKEN: ${{ github.token }}",
+        ),
+        ("          GITHUB_TOKEN: ${{ github.token }}\n", ""),
+        (
+            "          GITHUB_TOKEN: ${{ github.token }}",
+            "          GITHUB_TOKEN: ${{ steps.token.outputs.token }}",
+        ),
+        (
+            "      - name: Render the catalog with the released engine\n        env:\n",
+            "      - name: Render the catalog with the released engine\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n",
+        ),
+    ] {
+        assert_eq!(text.matches(target).count(), 1);
+        let mutated = text.replace(target, replacement);
+        assert_ne!(text, mutated);
+        assert!(std::panic::catch_unwind(|| assert_install_scope(&mutated)).is_err());
+    }
     let assert_blocking_render = |workflow: &str| {
         let render_step = step(
             workflow,

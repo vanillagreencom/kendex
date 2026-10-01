@@ -132,3 +132,46 @@ expect_fail() { # NAME DIR CHECK VALUE [NOTE_CHECK NOTE_VALUE]
     bad "$1 (rc=$RC, expected $expected)" "$OUT"
   fi
 }
+
+# The install suite supplies its recording curl in TMP/bin. Each run starts
+# with an explicit environment and empty records, including for controls.
+run_install_latest() { # SCRIPT RELEASE COMMIT FAIL_AT INSTALL_RC [GITHUB_ASSIGNMENT GH_ASSIGNMENT]
+  local script="$1" release="$2" commit="$3" fail_at="$4" install_rc="$5"
+  local github_env="${6:-}" gh_env="${7:-}" token_env=()
+  INSTALL_TOKENS=("${github_env#*=}" "${gh_env#*=}")
+  [ -z "$github_env" ] || token_env+=("$github_env")
+  [ -z "$gh_env" ] || token_env+=("$gh_env")
+  : >"$TMP/calls"
+  : >"$TMP/transport"
+  : >"$TMP/github-path"
+  rm -f "$TMP/install-log" "$TMP/install-env"
+  OUT="" RC=0
+  OUT="$(env -i PATH="$TMP/bin:/usr/bin:/bin" HOME="$TMP" \
+    CALLS="$TMP/calls" TRANSPORT_LOG="$TMP/transport" INSTALL_LOG="$TMP/install-log" INSTALL_ENV="$TMP/install-env" \
+    GITHUB_PATH="$TMP/github-path" RELEASE="$release" COMMIT="$commit" FAIL_AT="$fail_at" INSTALL_RC="$install_rc" \
+    ${token_env[@]+"${token_env[@]}"} bash "$script" 2>&1)" || RC=$?
+}
+
+# One assertion holds the transport, installer arguments, environment and
+# path record together. Controls use the same assertion as the success rows.
+install_latest_matches() { # VERSION SHA API_AUTHORIZATION
+  local version="$1" sha="$2" authorization="$3" calls transport arguments environment github_path token
+  calls="$(cat "$TMP/calls")" || return 1
+  transport="$(cat "$TMP/transport")" || return 1
+  arguments="$(cat "$TMP/install-log")" || return 1
+  environment="$(cat "$TMP/install-env")" || return 1
+  github_path="$(cat "$TMP/github-path")" || return 1
+  [ "$calls" = "https://api.github.com/repos/vanillagreencom/kendex/releases/latest
+https://api.github.com/repos/vanillagreencom/kendex/commits/$version
+https://raw.githubusercontent.com/vanillagreencom/kendex/$sha/install.sh" ] || return 1
+  [ "$transport" = "https://api.github.com/repos/vanillagreencom/kendex/releases/latest|$authorization|unset|unset
+https://api.github.com/repos/vanillagreencom/kendex/commits/$version|$authorization|unset|unset
+https://raw.githubusercontent.com/vanillagreencom/kendex/$sha/install.sh||unset|unset" ] || return 1
+  [ "$arguments" = "--version $version --cli-only" ] && [ "$environment" = 'unset|unset' ] &&
+    [ "$github_path" = "$TMP/.local/bin" ] || return 1
+  for token in "${INSTALL_TOKENS[@]}"; do
+    [ -n "$token" ] || continue
+    case "$OUT" in *"$token"*) return 1 ;; esac
+  done
+  return 0
+}
