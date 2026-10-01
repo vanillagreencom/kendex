@@ -209,13 +209,9 @@ Options:
                     refused as brief-quoted. A brief written inline must
                     balance its own quotes, and one that leaves a quote open
                     is refused as cmd-unbalanced-quote.
-                    It is the WHOLE command: it is rendered verbatim and no
-                    launch flag is appended to it, so a --cmd launch names its
-                    own model, reasoning effort, permission posture and
-                    question-tool words (see --launch-flags) inside the
-                    command. --launch-flags beside it reach nothing and are
-                    refused as launch-flags-unreachable, rather than gating and
-                    recording a model the harness never runs.
+                    Command selection and settings follow lane-directive.md
+                    § Lane preference. --launch-flags beside --cmd are refused
+                    as launch-flags-unreachable. Put caller flags inside --cmd.
   --brief-file PATH The brief a --cmd command places as {brief}: the file's
                     text less its trailing newlines, the one route for a brief
                     holding any quote, `$` or backtick. The two come as a pair:
@@ -405,18 +401,12 @@ Options:
                     (handoff.md § 2).
   --launch-flags S  Flags for the harness command THIS LAUNCHER BUILDS, chosen
                     per task by the caller (model, effort, permission posture).
-                    They reach a harness only through that command, so a --cmd
-                    launch with an explicit model, rendered verbatim, names those
-                    words inside the command instead and these flags beside it
-                    are refused as launch-flags-unreachable. Plain
+                    They reach a harness only through that command. A --cmd
+                    launch puts caller flags inside --cmd; these flags beside
+                    it are refused as launch-flags-unreachable. Plain
                     flag words only — the string is interpolated into a
-                    shell-executed launch command. With no model,
-                    ORCH_LANE_PREFERENCE supplies the first harness:model:effort
-                    entry with room, using lanes pick. Unset or empty keeps the
-                    caller's route. The chosen preference_entry joins model on
-                    the lane record. Entry grammar: kendex.settings.toml.example
-                    § Fleet. A model-free --cmd starts with the plain harness
-                    name; its remaining arguments must suit the chosen harness.
+                    shell-executed launch command. Harness, model and effort
+                    selection follow lane-directive.md § Lane preference.
                     A harness row that names an unattended
                     permission posture warns when the flags carry none of its
                     spellings, because a prompting mode stalls the lane at its
@@ -518,9 +508,9 @@ Options:
                     run the start brief in the same call when none exists.
                     These hosted no-command relaunches count as launched only
                     after the pane shows a harness screen, including a fresh
-                    start after a harness switch. A --cmd relaunch renders its
-                    template verbatim: no session lookup, no harness-switch
-                    check and no start brief after it. Before the
+                    start after a harness switch. A --cmd relaunch follows
+                    lane-directive.md § Lane preference: no session lookup,
+                    harness-switch check or start brief. Before the
                     worktree step an existing tree is asked whether its pull
                     request merged (`worktree merged`). A merged item keeps its
                     tree as it stands and is reported as worktree-reuse-merged
