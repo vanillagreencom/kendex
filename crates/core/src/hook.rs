@@ -24,12 +24,13 @@ pub struct HookSource {
     pub timeout: Option<u32>,
     /// Harness allowlist; `None` = every harness.
     pub harnesses: Option<Vec<String>>,
-    /// The hooks this one cannot work without, by name, from its own
-    /// catalog: a wrapper that only runs another hook from beside itself
-    /// names that hook, and the hook run names its wrappers. The engine's
-    /// dependency walk installs them together and refuses a scope that
-    /// keeps one removed.
+    /// Companion hooks from the same catalog. A companion is required only
+    /// on harnesses its own header allows. A removed or disabled companion
+    /// withholds this hook where that companion is required.
     pub requires: Vec<String>,
+    /// Skills required on every harness this hook uses, from the same
+    /// catalog. The dependency walk installs their own dependencies too.
+    pub requires_skills: Vec<String>,
     pub script: String,
 }
 
@@ -46,6 +47,7 @@ pub fn parse_hook(text: &str) -> Result<HookSource, String> {
         timeout: None,
         harnesses: None,
         requires: Vec::new(),
+        requires_skills: Vec::new(),
         script: text.to_owned(),
     };
     for line in text.lines() {
@@ -83,6 +85,7 @@ pub fn parse_hook(text: &str) -> Result<HookSource, String> {
                 }
             }
             "requires" => hook.requires = names(value),
+            "requires-skills" => hook.requires_skills = names(value),
             _ => {}
         }
     }
@@ -290,7 +293,7 @@ mod tests {
     use super::*;
     use crate::model::HarnessId;
 
-    const SCRIPT: &str = "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: block dangerous commands\n# timeout: 10\n# harnesses: [claude-code, codex]\n# requires: [\"judge\", helper]\n# ---\nexit 0\n";
+    const SCRIPT: &str = "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: block dangerous commands\n# timeout: 10\n# harnesses: [claude-code, codex]\n# requires: [\"judge\", helper]\n# requires-skills: [\"commit-guards\", orch]\n# ---\nexit 0\n";
 
     #[test]
     fn parses_v1_comment_frontmatter() {
@@ -300,6 +303,7 @@ mod tests {
         assert_eq!(hook.matcher.as_deref(), Some("Bash"));
         assert_eq!(hook.timeout, Some(10));
         assert_eq!(hook.requires, ["judge", "helper"]);
+        assert_eq!(hook.requires_skills, ["commit-guards", "orch"]);
         let spec = HookSpec::from(hook);
         assert!(spec.applies_to(HarnessId::Claude));
         assert!(spec.applies_to(HarnessId::Codex));
@@ -319,12 +323,11 @@ mod tests {
     fn a_hook_without_a_requires_line_needs_nothing() {
         for header in [
             "# ---\n# name: x\n# event: Stop\n# ---\n",
-            "# ---\n# name: x\n# event: Stop\n# requires: []\n# ---\n",
+            "# ---\n# name: x\n# event: Stop\n# requires: []\n# requires-skills: []\n# ---\n",
         ] {
-            assert!(
-                parse_hook(header).unwrap().requires.is_empty(),
-                "{header:?}"
-            );
+            let hook = parse_hook(header).unwrap();
+            assert!(hook.requires.is_empty(), "{header:?}");
+            assert!(hook.requires_skills.is_empty(), "{header:?}");
         }
     }
 

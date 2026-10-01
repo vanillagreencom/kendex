@@ -32,11 +32,11 @@ const NARROW_DELIVER: &str = "#!/usr/bin/env bash\n# ---\n# name: deliver\n# eve
 pub(super) const LATE_JUDGE: &str = "#!/usr/bin/env bash\n# ---\n# name: judge\n# event: TaskCompleted\n# description: judge the task end\n# requires: [deliver, halt]\n# ---\nexit 0\n";
 const LATE_JUDGE_ALONE: &str = "#!/usr/bin/env bash\n# ---\n# name: judge\n# event: TaskCompleted\n# description: judge the task end\n# requires: [deliver]\n# ---\nexit 0\n";
 const LATE_DELIVER: &str = "#!/usr/bin/env bash\n# ---\n# name: deliver\n# event: TaskCompleted\n# description: hand mail over after a task\n# requires: [judge]\n# ---\nexit 0\n";
-/// A hook requiring two companions that require nothing back: one with a
-/// harnesses line of its own that leaves Codex out, one with none. The
+/// A hook requiring two companions that require nothing back: one whose
+/// event Codex does not support, one deliverable on both tools. The
 /// one-way edges, where nothing spreads upward from the companions.
 pub(super) const BOSS: &str = "#!/usr/bin/env bash\n# ---\n# name: boss\n# event: PreToolUse\n# description: run before a tool call with both companions\n# requires: [narrow, extra]\n# ---\nexit 0\n";
-pub(super) const NARROW: &str = "#!/usr/bin/env bash\n# ---\n# name: narrow\n# event: PreToolUse\n# description: run before a tool call on Claude Code alone\n# harnesses: [claude]\n# ---\nexit 0\n";
+pub(super) const NARROW: &str = "#!/usr/bin/env bash\n# ---\n# name: narrow\n# event: TaskCompleted\n# description: run after a task completes\n# ---\nexit 0\n";
 pub(super) const EXTRA: &str = "#!/usr/bin/env bash\n# ---\n# name: extra\n# event: PostToolUse\n# description: run after a tool call\n# ---\nexit 0\n";
 /// The companion with a chain of its own: it requires `mid`, which requires
 /// `last`, which requires nothing — or, once lacking, a hook the catalog
@@ -308,18 +308,15 @@ fn manifest_rows() -> [Row; 6] {
 /// that leaves a tool out, on the companion and on the parent.
 fn header_rows() -> [Row; 4] {
     [
-        // The judge's own harnesses line leaves Codex out, so the plan
-        // never writes it there, whatever the manifest says.
+        // The judge's own harnesses line makes it unnecessary on Codex.
+        // The deliver hook still runs there without the judge.
         Row {
             declarations: "[hooks.deliver]\nsource = \"cat\"\n",
             judge: NARROW_JUDGE,
             deliver: DELIVER,
             parent: "deliver",
-            finding: Finding::Dependency(
-                "missing required dependency: Codex runs deliver without judge, whose own harnesses line leaves Codex out",
-                "add Codex to judge's harnesses line in the catalog, or list deliver's harnesses in kendex.toml without Codex",
-            ),
-            lands: [true, false],
+            finding: Finding::None,
+            lands: [true, true],
         },
         // The wrapper's own harnesses line leaves Codex out: it never runs
         // there, so a judge declared for Claude Code alone is not missing.
@@ -861,9 +858,9 @@ fn a_companion_is_withheld_where_every_hook_that_requires_it_is() {
             [
                 (
                     "boss",
-                    "missing required dependency: Codex runs boss without narrow, whose own harnesses line leaves Codex out",
+                    "missing required dependency: Codex runs boss without narrow, which cannot be delivered there: Codex never fires TaskCompleted",
                     Some(
-                        "add Codex to narrow's harnesses line in the catalog, or list boss's harnesses in kendex.toml without Codex"
+                        "make narrow deliverable on Codex, or list boss's harnesses in kendex.toml without Codex"
                     ),
                 ),
                 (

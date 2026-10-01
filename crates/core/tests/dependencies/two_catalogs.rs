@@ -6,7 +6,7 @@
 //! copy of the judge.
 
 use super::hooks::{
-    BOSS, DELIVER, EXTRA, HALT, JUDGE, LATE_JUDGE, NARROW as NARROW_CLAUDE, drift_details,
+    BOSS, DELIVER, EXTRA, HALT, JUDGE, LATE_JUDGE, NARROW as UNDELIVERABLE_NARROW, drift_details,
     findings_on, hook_fixture, hook_on_disk, messages, registered,
 };
 use super::*;
@@ -860,8 +860,8 @@ fn a_silent_companion_catalog_takes_nothing_and_yields_to_a_missing_one() {
 
 /// The silence reaches the boss's extra companion up a chain, one step per
 /// pass of the spread, while the boss itself is withheld from Codex at
-/// once, its narrow companion's harnesses line having dropped Codex since
-/// the install. Whether extra's own companion mid is orphaned on Codex is
+/// once, its narrow companion's event having become unsupported on Codex
+/// since the install. Whether extra's own companion mid is orphaned on Codex is
 /// read off extra's final withholding — a silence, which takes nothing —
 /// and never off the orphaning that a shorter chain would have let extra
 /// hold first: mid stays on Codex whatever the chain's length.
@@ -891,7 +891,7 @@ fn a_companion_is_orphaned_only_by_its_requirers_final_withholding() {
                 "{label}: {name}"
             );
         }
-        fs::write(f.source.join("hooks/narrow.sh"), NARROW_CLAUDE).unwrap();
+        fs::write(f.source.join("hooks/narrow.sh"), UNDELIVERABLE_NARROW).unwrap();
         fs::write(other.join("kendex.toml"), UNPARSABLE).unwrap();
 
         let report = plan_apply(

@@ -114,10 +114,20 @@ fn the_whole_workflow_set_carries_what_its_members_require() {
         });
         let declared = crate::engine::deps::declared_dependencies(&sealed, member.kind, &dir)
             .expect("a member's frontmatter reads");
-        for required in &declared.required {
+        for (kind, required) in declared
+            .required
+            .iter()
+            .map(|name| (member.kind, name))
+            .chain(
+                declared
+                    .required_skills
+                    .iter()
+                    .map(|name| (ItemKind::Skill, name)),
+            )
+        {
             seen.push((member.name.clone(), required.clone()));
             assert!(
-                carries(&bundle, member.kind, required),
+                carries(&bundle, kind, required),
                 "the set '{WHOLE}' carries {} '{}', which requires \
                  '{required}' — add '{required}' to the set",
                 member.kind.name(),

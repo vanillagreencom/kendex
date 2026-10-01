@@ -23,12 +23,15 @@ use super::expansion::{CatalogKey, Catalogs, Expansion, Offer, OpenCatalog};
 pub(crate) struct Dependencies {
     pub(crate) required: Vec<String>,
     pub(crate) optional: Vec<String>,
+    pub(crate) required_skills: Vec<String>,
 }
 
-/// The kinds whose frontmatter declares dependencies, and so the kinds
-/// [`expand`] walks. A skill names skills, a hook names hooks; no kind
-/// names another.
-const DEPENDENT_KINDS: [ItemKind; 2] = [ItemKind::Skill, ItemKind::Hook];
+/// Each supported edge: the declaring kind and its dependency kind.
+const DEPENDENT_KINDS: [(ItemKind, ItemKind); 3] = [
+    (ItemKind::Skill, ItemKind::Skill),
+    (ItemKind::Hook, ItemKind::Hook),
+    (ItemKind::Hook, ItemKind::Skill),
+];
 
 /// What an item's frontmatter declares it needs, `found` being what
 /// [`find_item`] returned for it: a skill's directory, whose SKILL.md is
@@ -46,11 +49,14 @@ pub(crate) fn declared_dependencies(
         ItemKind::Skill => sealed
             .read_if_exists(&found.join("SKILL.md"))?
             .map(|text| declared_in(&text)),
-        ItemKind::Hook => sealed.read_if_exists(found)?.map(|text| Dependencies {
-            required: crate::hook::parse_hook(&text)
-                .map(|hook| hook.requires)
-                .unwrap_or_default(),
-            optional: Vec::new(),
+        ItemKind::Hook => sealed.read_if_exists(found)?.map(|text| {
+            crate::hook::parse_hook(&text)
+                .map(|hook| Dependencies {
+                    required: hook.requires,
+                    optional: Vec::new(),
+                    required_skills: hook.requires_skills,
+                })
+                .unwrap_or_default()
         }),
         // No other kind's frontmatter has a dependency field to read.
         ItemKind::Agent
@@ -79,11 +85,12 @@ pub(crate) fn declared_in(text: &str) -> Dependencies {
     Dependencies {
         required: map.string_list("required").unwrap_or_default(),
         optional: map.string_list("optional").unwrap_or_default(),
+        required_skills: Vec::new(),
     }
 }
 
 /// One item the walk names: its kind and its name, since a skill and a hook
-/// may share a name and never a dependency.
+/// may share a name without being the same dependency.
 type Node = (ItemKind, String);
 
 /// Everything the skills and hooks in this expansion require, walked until
@@ -99,6 +106,9 @@ pub(super) fn expand(
     state: &mut DesiredState,
 ) {
     let mut queue: VecDeque<Node> = DEPENDENT_KINDS
+        .into_iter()
+        .map(|(kind, _)| kind)
+        .collect::<BTreeSet<_>>()
         .into_iter()
         .flat_map(|kind| {
             expansion
@@ -134,6 +144,7 @@ pub(super) fn expand(
         };
         let decl = derived_decl(&parent_decl);
         for Dep {
+            kind: dep_kind,
             name: dep,
             on: harnesses,
             ..
@@ -147,10 +158,10 @@ pub(super) fn expand(
                     name: parent.clone(),
                     harness: *harness,
                 };
-                grew |= expansion.add(kind, dep, &decl, *harness, Reason::RequiredBy { by });
+                grew |= expansion.add(*dep_kind, dep, &decl, *harness, Reason::RequiredBy { by });
             }
             if grew {
-                queue.push_back((kind, dep.clone()));
+                queue.push_back((*dep_kind, dep.clone()));
             }
         }
         wanted.insert((kind, parent.clone()), found);
@@ -172,7 +183,7 @@ pub(super) fn expand(
                 .deps
                 .iter()
                 .filter(|dep| !dep.on.is_empty())
-                .map(|dep| (*kind, dep.name.clone()))
+                .map(|dep| (dep.kind, dep.name.clone()))
                 .collect();
             ((*kind, parent.clone()), deps)
         })
@@ -264,6 +275,7 @@ impl Wanted {
 /// under; and its header as that catalog holds it, for the question asked
 /// again once the walk is complete ([`settle_after_walk`]).
 struct Dep {
+    kind: ItemKind,
     name: String,
     on: Vec<HarnessId>,
     source: String,
@@ -290,6 +302,7 @@ fn withhold_requirers(wanted: &mut BTreeMap<Node, Wanted>, expansion: &Expansion
 /// A companion the hook requires, read from the catalog `source`, is
 /// withheld from these tools for a reason the hook takes on.
 struct Companion {
+    kind: ItemKind,
     dep: String,
     source: String,
     tools: Vec<HarnessId>,
@@ -309,13 +322,14 @@ fn spread_upward(wanted: &mut BTreeMap<Node, Wanted>) {
                 continue;
             }
             for Dep {
+                kind: dep_kind,
                 name: dep,
                 on,
                 source,
                 ..
             } in &found.deps
             {
-                let Some(theirs) = wanted.get(&(*kind, dep.clone())) else {
+                let Some(theirs) = wanted.get(&(*dep_kind, dep.clone())) else {
                     continue;
                 };
                 let mut taken: BTreeMap<Withholding, Vec<HarnessId>> = BTreeMap::new();
@@ -333,6 +347,7 @@ fn spread_upward(wanted: &mut BTreeMap<Node, Wanted>) {
                     spread.push((
                         (*kind, parent.clone()),
                         Companion {
+                            kind: *dep_kind,
                             dep: dep.clone(),
                             source: source.clone(),
                             tools,
@@ -350,6 +365,7 @@ fn spread_upward(wanted: &mut BTreeMap<Node, Wanted>) {
                 unreachable!("{parent} was read from this map a moment ago");
             };
             let Companion {
+                kind: dep_kind,
                 dep,
                 source,
                 tools,
@@ -359,6 +375,7 @@ fn spread_upward(wanted: &mut BTreeMap<Node, Wanted>) {
             found.findings.push(finding(
                 &NotWritten::Withheld,
                 kind,
+                dep_kind,
                 &parent,
                 &dep,
                 &tools,
@@ -627,21 +644,32 @@ fn wanted_by(
     // Each name taken to the companion it names, and that companion to
     // the catalog the plan writes it from. A name that resolves to nothing
     // derives nothing, which withholds an armed hook everywhere.
-    let mut companions: Vec<(String, CatalogKey)> = Vec::new();
+    let mut companions: Vec<(ItemKind, String, CatalogKey)> = Vec::new();
     let mut unresolved = false;
-    for name in declared
-        .required
+    for (_, dep_kind) in DEPENDENT_KINDS
         .iter()
-        .chain(declared.optional.iter().filter(|o| chosen.contains(o)))
+        .filter(|(parent_kind, _)| *parent_kind == kind)
     {
-        match resolve(kind, name, parent, sealed, config, offered, &own.0, found) {
-            Some(dep) => {
-                let planned = expansion
-                    .decl_of(kind, &dep)
-                    .unwrap_or_else(|| derived_decl(parent_decl));
-                companions.push((dep, (planned.source, planned.rev)));
+        let (required, optional) = if *dep_kind == kind {
+            (declared.required.as_slice(), declared.optional.as_slice())
+        } else {
+            (declared.required_skills.as_slice(), [].as_slice())
+        };
+        for name in required
+            .iter()
+            .chain(optional.iter().filter(|o| chosen.contains(o)))
+        {
+            match resolve(
+                kind, *dep_kind, name, parent, sealed, config, offered, &own.0, found,
+            ) {
+                Some(dep) => {
+                    let planned = expansion
+                        .decl_of(*dep_kind, &dep)
+                        .unwrap_or_else(|| derived_decl(parent_decl));
+                    companions.push((*dep_kind, dep, (planned.source, planned.rev)));
+                }
+                None => unresolved = true,
             }
-            None => unresolved = true,
         }
     }
     if unresolved && kind == ItemKind::Hook && wanted.armed {
@@ -705,7 +733,7 @@ fn derive(
     kind: ItemKind,
     parent: &str,
     harnesses: &[HarnessId],
-    companions: Vec<(String, CatalogKey)>,
+    companions: Vec<(ItemKind, String, CatalogKey)>,
     manifest: &Manifest,
     catalogs: &mut Catalogs,
     state: &mut DesiredState,
@@ -715,18 +743,19 @@ fn derive(
     let withholds = kind == ItemKind::Hook && wanted.armed;
     // Every companion's catalog is opened before any is read, since an
     // open may move what is already open.
-    for (_, key) in &companions {
+    for (_, _, key) in &companions {
         catalogs.get(&key.0, key.1.as_deref(), state);
     }
-    for (dep, key) in companions {
+    for (dep_kind, dep, key) in companions {
         let source = key.0.as_str();
         let found = &mut wanted.findings;
-        let because = match catalogs.offer(&key, kind, &dep) {
+        let because = match catalogs.offer(&key, dep_kind, &dep) {
             Offer::Item(catalog, path) => {
-                let lands = companion(
+                let landed = companion(
                     env,
                     scope,
                     kind,
+                    dep_kind,
                     dep,
                     parent,
                     harnesses,
@@ -736,20 +765,8 @@ fn derive(
                     catalog,
                     &path,
                     source,
-                    found,
+                    wanted,
                 );
-                let Some(landed) = lands else {
-                    if withholds {
-                        wanted.withhold(harnesses.iter().copied(), Withholding::Requires);
-                    }
-                    continue;
-                };
-                if withholds {
-                    wanted.withhold(
-                        harnesses.iter().copied().filter(|h| !landed.on.contains(h)),
-                        Withholding::Requires,
-                    );
-                }
                 wanted.deps.push(landed);
                 continue;
             }
@@ -768,6 +785,7 @@ fn derive(
             }
             Offer::Silent => silent(
                 kind,
+                dep_kind,
                 &dep,
                 parent,
                 harnesses,
@@ -794,6 +812,7 @@ fn derive(
 #[allow(clippy::too_many_arguments)]
 fn silent(
     kind: ItemKind,
+    dep_kind: ItemKind,
     dep: &str,
     parent: &str,
     harnesses: &[HarnessId],
@@ -802,11 +821,13 @@ fn silent(
     source: &str,
     found: &mut Vec<ItemWarning>,
 ) -> Withholding {
-    match manifest_refusal(manifest, kind, dep) {
+    match manifest_refusal(manifest, dep_kind, dep) {
         Some(reason) => {
             let quiet = reason == NotWritten::SwitchedOff && !armed;
             if !quiet {
-                found.push(finding(&reason, kind, parent, dep, harnesses, source));
+                found.push(finding(
+                    &reason, kind, dep_kind, parent, dep, harnesses, source,
+                ));
             }
             Withholding::Requires
         }
@@ -828,18 +849,15 @@ fn silent(
 
 /// One resolved companion, offered at `path` by `catalog`, the one the
 /// plan writes it from, taken to the tools it runs on beside its parent.
-/// `None` where nothing is derived: the name is an item the manifest keeps
-/// removed or switched off, or a hook whose header will not read — each a
-/// finding on the parent, except that a parent switched off itself misses
-/// nothing in a companion switched off too. Every tool the companion will
-/// not run on is a finding on the parent as well, in the words of the one
-/// answer the planner gives (`desired_kinds::not_written`); what the
-/// finding then costs the parent is [`derive()`]'s to decide.
+/// A companion's own harness exclusions define where it is needed, even
+/// when the manifest removes or disables it. Every other refusal is a
+/// finding and withholds an armed requiring hook on the affected tools.
 #[allow(clippy::too_many_arguments)]
 fn companion(
     env: &Env,
     scope: &Scope,
     kind: ItemKind,
+    dep_kind: ItemKind,
     dep: String,
     parent: &str,
     harnesses: &[HarnessId],
@@ -849,18 +867,28 @@ fn companion(
     catalog: &OpenCatalog,
     path: &std::path::Path,
     source: &str,
-    found: &mut Vec<ItemWarning>,
-) -> Option<Dep> {
-    let header = hook_header(&catalog.sealed, kind, path);
+    wanted: &mut Wanted,
+) -> Dep {
+    let header = hook_header(&catalog.sealed, dep_kind, path);
     let mut on = Vec::new();
     let mut refused: BTreeMap<NotWritten, Vec<HarnessId>> = BTreeMap::new();
     for harness in harnesses {
+        // A Copilot-only recorder has no job beside the parent elsewhere.
+        // Its own header, not a user opt-out, defines that requirement.
+        if header
+            .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
+            .is_some_and(|own| !own.applies_to(*harness))
+        {
+            continue;
+        }
         let answer = not_written(
             env,
             scope,
             manifest,
             state,
-            kind,
+            dep_kind,
             &dep,
             header.as_ref().map(Option::as_ref).map_err(String::as_str),
             *harness,
@@ -870,29 +898,26 @@ fn companion(
             Some(reason) => refused.entry(reason).or_default().push(*harness),
         }
     }
-    // The reasons that hold on every tool decide whether the companion is
-    // derived at all; the rest name the tools it misses.
     for (reason, tools) in refused {
-        let whole = matches!(
-            reason,
-            NotWritten::KeptRemoved | NotWritten::SwitchedOff | NotWritten::UnreadableHeader(_)
-        );
         // A parent that is off arms nothing, so a companion switched off
         // beside it is missing nowhere and says nothing.
         let quiet = reason == NotWritten::SwitchedOff && !armed;
         if !quiet {
-            found.push(finding(&reason, kind, parent, &dep, &tools, source));
+            wanted.findings.push(finding(
+                &reason, kind, dep_kind, parent, &dep, &tools, source,
+            ));
         }
-        if whole {
-            return None;
+        if kind == ItemKind::Hook && armed {
+            wanted.withhold(tools, Withholding::Requires);
         }
     }
-    Some(Dep {
+    Dep {
+        kind: dep_kind,
         name: dep,
         on,
         source: source.to_owned(),
         header: header.ok().flatten(),
-    })
+    }
 }
 
 /// The finding on a parent for a companion that will not run on `tools`,
@@ -900,6 +925,7 @@ fn companion(
 fn finding(
     reason: &NotWritten,
     kind: ItemKind,
+    dep_kind: ItemKind,
     parent: &str,
     dep: &str,
     tools: &[HarnessId],
@@ -912,7 +938,7 @@ fn finding(
             format!("missing required dependency: {parent} requires {dep}, which is kept removed"),
             format!(
                 "add the {} {dep} again to restore it, or drop it from {parent}'s dependencies",
-                kind.name()
+                dep_kind.name()
             ),
         ),
         NotWritten::SwitchedOff => (
@@ -985,7 +1011,7 @@ fn settle_after_walk(
         if *kind != ItemKind::Hook || !found.armed {
             continue;
         }
-        let mut settled: Vec<(BTreeMap<NotWritten, Vec<HarnessId>>, String, String)> = Vec::new();
+        let mut settled = Vec::new();
         for dep in &found.deps {
             let mut refused: BTreeMap<NotWritten, Vec<HarnessId>> = BTreeMap::new();
             for harness in &dep.on {
@@ -994,7 +1020,7 @@ fn settle_after_walk(
                     scope,
                     manifest,
                     state,
-                    *kind,
+                    dep.kind,
                     &dep.name,
                     Ok(dep.header.as_ref()),
                     *harness,
@@ -1003,14 +1029,14 @@ fn settle_after_walk(
                     refused.entry(reason).or_default().push(*harness);
                 }
             }
-            settled.push((refused, dep.name.clone(), dep.source.clone()));
+            settled.push((refused, dep.kind, dep.name.clone(), dep.source.clone()));
         }
-        for (refused, dep, source) in settled {
+        for (refused, dep_kind, dep, source) in settled {
             for (reason, tools) in refused {
                 found.withhold(tools.iter().copied(), Withholding::Requires);
-                found
-                    .findings
-                    .push(finding(&reason, *kind, parent, &dep, &tools, &source));
+                found.findings.push(finding(
+                    &reason, *kind, dep_kind, parent, &dep, &tools, &source,
+                ));
             }
         }
     }
@@ -1046,6 +1072,7 @@ fn hook_header(
 #[allow(clippy::too_many_arguments)]
 fn resolve(
     kind: ItemKind,
+    dep_kind: ItemKind,
     name: &str,
     parent: &str,
     sealed: &SealedSource,
@@ -1054,14 +1081,14 @@ fn resolve(
     source: &str,
     found: &mut Vec<ItemWarning>,
 ) -> Option<String> {
-    let resolved = match kind {
+    let resolved = match dep_kind {
         ItemKind::Skill => offered.resolve(sealed, config, name),
         ItemKind::Hook
         | ItemKind::Agent
         | ItemKind::Command
         | ItemKind::McpServer
         | ItemKind::Plugin
-        | ItemKind::PiExtension => find_item(sealed, config, kind, name)
+        | ItemKind::PiExtension => find_item(sealed, config, dep_kind, name)
             .map(|_| name.to_owned())
             .ok_or_else(Vec::new),
     };

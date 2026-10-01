@@ -1,0 +1,1 @@
+- Hooks install required skills and tool-specific companions together. Missing or disabled requirements withhold affected hooks instead of leaving a partial install.

@@ -5,7 +5,7 @@
 #![cfg(unix)]
 
 use crate::test_util;
-use test_util::source_path;
+use test_util::{rooted, source_path};
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -41,7 +41,7 @@ fn skill(source: &Path, name: &str, dependencies: &str) {
 #[allow(clippy::unwrap_used)]
 fn fixture(declarations: &str) -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().to_path_buf();
+    let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();
@@ -373,6 +373,7 @@ fn a_reference_that_does_not_reach_every_tool_claims_no_co_install() {
     }
 }
 
+mod hook_skills;
 mod hooks;
 mod more;
 mod two_catalogs;
