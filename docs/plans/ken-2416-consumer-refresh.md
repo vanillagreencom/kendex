@@ -12,6 +12,10 @@ KEN-2416 completes at this PR merge with the measured fleet report and workflow/
 - **Assumptions**: None. The supplied inventory and private histories resolve the earlier access gap. The overseer confirms no local refresh runs outside Actions. No fixture substitutes for a consumer after observation.
 - **Planning boundary**: the planner integrates supplied evidence into reports and data reductions only. It executes no proposed controls and changes no production file, test, install record, lockfile or tracker item. The runtime fix commit includes these reports with its final validated contents.
 
+## Refresh gate
+
+KEN-2462's [Consumer refresh gate](ken-2416-refresh-runs.md#consumer-refresh-gate) owns pre-merge consumer replay and its deployment order. That section names the exact required context, the main-only snapshot collector and the owner ruleset step. This check is fixture proof before the first snapshot and consumer compatibility proof after it; neither is the comparable Actions after-rate below.
+
 ## Before measurement
 
 [Raw runs](ken-2416-refresh-runs.md) owns the interval, denominators, run URLs, individual evidence paths and observation gaps.

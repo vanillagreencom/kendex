@@ -1,0 +1,40 @@
+name: Consumer refresh
+
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    name: Consumer refresh
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          path: baseline
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the consumer's released engine
+        env:
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ${{ github.token }}
+        run: baseline/skills/review-gate/scripts/install-latest.sh
+      - name: Fixture pass and writer-template removal control
+        env:
+          REVIEW_GATE_REQUIRE_KENDEX: "1"
+        run: bash tools/tests/consumer-refresh.test.sh
+      - name: Replay committed consumer inputs
+        run: |
+          set -euo pipefail
+          binary="$(command -v kendex)"
+          tools/consumer-refresh check --snapshot .github/consumer-snapshots.json.gz \
+            --baseline baseline --catalog . --kendex "$binary"

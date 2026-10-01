@@ -173,6 +173,25 @@ gh run view RUN_ID --repo vanillagreencom/CONSUMER --log-failed
 - Live source requirements and prior issue bindings remain in `tmp/ken-2416-issue-live.json`, `tmp/ken-2416-related-live.json` and `tmp/ken-2416-class-bindings-live.json`. The new scope ruling comes from the calling brief.
 - Scratch evidence is not a tracked deliverable. The calling lane retains or attaches it. All 2853 run URLs and observed rows remain in tracked companion reports. The index split satisfies the existing 64 KiB document class without truncating rows or changing its limit.
 
+## Consumer refresh gate
+
+[Consumer refresh](../../.github/workflows/consumer-refresh.yml) is the refresh gate. Its exact required-context name is `Consumer refresh`. [The inventory](../../.github/consumer-refresh-repos.txt) selects the measured current consumers. The job runs on pull requests and merge groups without a private-consumer credential. It runs each snapshot's committed refresh runner and manifest against both the base catalog and the proposed catalog. Git and GitHub publication use disposable repositories and the existing API fixture. A matching keyed baseline refusal reports `baseline-failure`, not a consumer pass. An unknown cause fails because the job cannot establish that the proposed catalog did not introduce it.
+
+[Consumer snapshots](../../.github/workflows/consumer-snapshots.yml) reads committed inputs on main through the lanes app. It reads environment policy and secret names, never secret values. Collection executes no captured consumer code. `tools/lock-record --snapshot` lands the compressed input through the rolling `kendex/consumer-snapshots` pull request. The collector excludes source files that the refresh inputs do not select. The manifest's other private catalogs or external local sources are named collection failures because the secret-free gate cannot reconstruct them.
+
+| Deployment step | Owner | Completion evidence |
+| --- | --- | --- |
+| Merge collector and gate | This pull request | Both workflows on main |
+| Dispatch the collector on main | Orchestrator | Collector run URL and snapshot pull request number |
+| Merge the snapshot rolling pull request | Overseer | Complete committed consumer inventory |
+| Require `Consumer refresh` on main | Repository owner | Required-context ruleset change; KEN-2462 Done-when completes here |
+
+Before any snapshot file exists, the job runs the passing consumer fixture and the KEN-2089 writer-template-removal control. It prints only `consumer-snapshot=absent` for real consumers and exits successfully. This bootstrap mode ends when any snapshot file exists. Empty, partial or unreadable snapshots then fail. The owner adds the required context only after the first complete snapshot lands. KEN-2462 stays In Review at the collector/gate pull request merge until that ruleset step completes.
+
+The collector uses the existing `kendex` environment's `FLEET_GH_APP_ID` and `FLEET_GH_APP_PRIVATE_KEY`. Its consumer token requests Contents, Metadata, Environments and Secrets read access. Its separate publication token requests kendex Contents and Pull requests write access. PR and merge-group runs need neither secret. The supplied `tmp/consumer-snapshots-gen78.tgz` is test-only, captured on 2026-09-30 and a day old at handoff. It lacks talk and vg, committed refresh scripts and some recorded render paths. It does not become a production inventory or substitute for the scheduled collector.
+
+`tools/tests/consumer-refresh.test.sh` reuses the review-gate consumer fixtures and pre-platform committed scripts. It runs real kendex against a disposable catalog. Its removal control deletes `skills/review-gate/templates/review-gate-writer.yml` from that catalog and requires the gate to report a regression. `tools/tests/consumer-snapshots.test.sh` checks complete platform collection. `tools/tests/lock-record-snapshot.test.sh` checks snapshot publication through the existing rolling-PR owner.
+
 ## Completion and gaps
 
 KEN-2416 completes at this PR merge with the measurement and workflow/render edit preservation. Requirement 4 transfers after merge through Proposal to an owner-observed successor. The successor owns deployment evidence and the comparable consumer after-rate. It does not delay this PR's completion.

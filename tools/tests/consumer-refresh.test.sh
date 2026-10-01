@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# The gate uses the existing consumer world and pre-platform committed scripts.
+# Real kendex refreshes only disposable consumers; no catalog checkout is applied.
+set -euo pipefail
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+REAL_KENDEX="$(command -v kendex)" || { printf 'consumer-refresh-test: kendex=missing\n' >&2; exit 1; }
+TEST_DIR="$ROOT/skills/review-gate/tests"
+SKILL_DIR="$ROOT/skills/review-gate"
+TMP="$(mktemp -d)" || { echo 'consumer-refresh-test: scratch=mktemp-failed' >&2; exit 1; }
+[[ -d $TMP && ! -L $TMP ]] || { echo "consumer-refresh-test: scratch=not-a-directory value=[$TMP]" >&2; exit 1; }
+TMP="$(cd -- "$TMP" && pwd -P)" || { echo 'consumer-refresh-test: scratch=resolve-failed' >&2; exit 1; }
+trap 'rm -rf -- "${TMP:?}"' EXIT
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+. "$TEST_DIR/lib/refresh-fixture.sh"
+mkdir -p "$TMP/candidate"
+# Export the current catalog, not its unrelated historical blobs. A hosted
+# checkout can be a blob-filtered clone whose upload-pack cannot lazily fetch
+# those old blobs; this fixture needs the current tree, not shipment history.
+git -C "$ROOT" archive --format=tar HEAD >"$TMP/catalog.tar"
+tar -xf "$TMP/catalog.tar" -C "$TMP/candidate"
+git -C "$TMP/candidate" init -q -b main
+git -C "$TMP/candidate" -c core.hooksPath=/dev/null -c user.name=fixture -c user.email=fixture@example.invalid add -A
+git -C "$TMP/candidate" -c core.hooksPath=/dev/null -c user.name=fixture -c user.email=fixture@example.invalid commit -qm 'catalog fixture'
+git -C "$TMP/candidate" config gc.auto 0
+git -C "$TMP/candidate" config maintenance.auto false
+git -C "$TMP/candidate" config user.name fixture
+git -C "$TMP/candidate" config user.email fixture@example.invalid
+mkdir -p "$TMP/catalogs/vanillagreencom"
+ln -s "$TMP/candidate" "$TMP/catalogs/vanillagreencom/kendex"
+# The refresh fixture owner supplies the consumer repository and adoption
+# inventory. Replace its neutral skill copies with real catalog installations.
+sandbox
+consumer="$DIR"
+rm -rf -- "${consumer:?}/.agents/skills"
+mkdir -p "$TMP/home/.claude"
+printf 'schema = 6\n[sources.kendex]\nrepo = "vanillagreencom/kendex"\n[install]\nharnesses = ["codex"]\nmethod = "copy"\n[skills.review-gate]\nsource = "kendex"\n' >"$consumer/kendex.toml"
+# The fixture installer records real hashes and the real generated inventory.
+(cd -- "$consumer" && env -i PATH="$PATH" HOME="$TMP/home" KENDEX_REAL_HOME=1 \
+  KENDEX_BACKGROUND_REFRESH=off KENDEX_GIT_BASE="file://$TMP/catalogs" KENDEX_UI=plain \
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+  "$REAL_KENDEX" refresh --scope project --yes --leave)
+cp "$TEST_DIR/fixtures/pre-platform/"*.sh "$consumer/.agents/skills/review-gate/scripts/"
+chmod +x "$consumer/.agents/skills/review-gate/scripts/"*.sh
+printf '#!/usr/bin/env bash\nexit 1\n' >"$consumer/.agents/skills/review-gate/scripts/review-writer.sh"
+cp "$SKILL_DIR/templates/review-gate-writer.yml" "$consumer/.github/workflows/review-gate-writer.yml"
+cp "$SKILL_DIR/templates/kendex-refresh.yml" "$consumer/.github/workflows/kendex-refresh.yml"
+record_adoption "$consumer" .github/workflows/review-gate-writer.yml .agents/skills/review-gate/templates/review-gate-writer.yml
+record_adoption "$consumer" .github/workflows/kendex-refresh.yml .agents/skills/review-gate/templates/kendex-refresh.yml
+# Capture the same input format the platform collector produces. The fixture
+# seed provided to this lane lacks committed skills and is not used as inventory.
+python3 - "$consumer" "$FIXTURES" "$TMP/snapshot.gz" <<'PY'
+import base64, gzip, json
+from pathlib import Path
+import sys
+root, platform, target = map(Path, sys.argv[1:])
+files = {p.relative_to(root).as_posix(): {"mode": "100755" if p.stat().st_mode & 0o111 else "100644",
+         "data": base64.b64encode(p.read_bytes()).decode()}
+         for p in root.rglob("*") if p.is_file() and ".git" not in p.relative_to(root).parts}
+world = {p.stem: json.loads(p.read_text()) for p in platform.glob("*.json")}
+world["repository"]["full_name"] = "vanillagreencom/fixture"
+snapshot = {"schema": 1, "consumers": {"fixture": {"commit": "fixture", "platform": world, "files": files}}}
+target.write_bytes(gzip.compress(json.dumps(snapshot).encode(), mtime=0))
+PY
+printf 'fixture\n' >"$TMP/inventory"
+gate() {
+  RC=0
+  OUT="$(env -i PATH="$PATH" HOME="$TMP" python3 "${GATE:-$ROOT/tools/consumer-refresh}" check \
+    --inventory "$TMP/inventory" --snapshot "$1" --baseline "${BASELINE:-$TMP/candidate}" \
+    --catalog "$2" --kendex "$REAL_KENDEX" 2>&1)" || RC=$?
+}
+gate "$TMP/snapshot.gz" "$TMP/candidate"
+if [ "$RC" -eq 0 ] && grep -qxF 'consumer-refresh=pass repository=fixture baseline-exit=0 candidate-exit=0' <<<"$OUT"; then
+  ok 'real committed consumer refresh passes against the retained catalog'
+else bad 'real consumer baseline' "$OUT"; fi
+# Remove the writer template in a disposable candidate catalog. This is the
+# historical production defect, not a mutation of a fixture's fake refresh.
+git clone -q --no-hardlinks "$TMP/candidate" "$TMP/removed"
+git -C "$TMP/removed" config gc.auto 0
+git -C "$TMP/removed" config maintenance.auto false
+rm -- "$TMP/removed/skills/review-gate/templates/review-gate-writer.yml"
+git -C "$TMP/removed" -c core.hooksPath=/dev/null -c user.name=fixture -c user.email=fixture@example.invalid add -A
+git -C "$TMP/removed" -c core.hooksPath=/dev/null -c user.name=fixture -c user.email=fixture@example.invalid commit -qm 'remove writer template'
+gate "$TMP/snapshot.gz" "$TMP/removed"
+if [ "$RC" -eq 1 ] && grep -qxF 'consumer-refresh=regression repository=fixture baseline-exit=0 candidate-exit=2' <<<"$OUT" &&
+  grep -qxF 'review-gate-error=template-missing value=<sandbox>/consumer/.agents/skills/review-gate/templates/review-gate-writer.yml' <<<"$OUT"; then
+  ok 'control: writer-template removal turns the gate red'
+else bad 'writer-template removal control' "$OUT"; fi
+BASELINE="$TMP/removed" gate "$TMP/snapshot.gz" "$TMP/removed"
+if [ "$RC" -eq 0 ] && grep -qxF 'consumer-refresh=baseline-failure repository=fixture baseline-exit=2 candidate-exit=2' <<<"$OUT"; then
+  ok 'an unchanged keyed baseline refusal is not a consumer pass or PR regression'
+else bad 'baseline failure comparison' "$OUT"; fi
+# Gate controls keep the matched condition visible and remove its behavior.
+python3 - "$ROOT/tools/consumer-refresh" "$TMP/mutant" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = 'failed = True'
+assert text.count(old) == 1
+changed = text.replace(old, '# ' + old + '\n                failed = False')
+assert changed != text
+path = Path(sys.argv[2])
+path.write_text(changed.replace('ROOT = Path(__file__).resolve().parent.parent',
+    'ROOT = Path(' + repr(str(Path(sys.argv[1]).resolve().parent.parent)) + ')'))
+path.chmod(0o755)
+PY
+GATE="$TMP/mutant" gate "$TMP/snapshot.gz" "$TMP/removed"
+if [ "$RC" -eq 0 ]; then ok 'control: disabled regression refusal turns the removal assertion red'; else bad 'regression refusal mutant' "$OUT"; fi
+for row in absent empty missing-consumer missing-input unsafe-path unsafe-link unknown-mode; do
+  path="$TMP/$row.gz"
+  if [ "$row" != absent ]; then
+    python3 - "$TMP/snapshot.gz" "$path" "$row" <<'PY'
+import gzip, json
+from pathlib import Path
+import sys
+source, target, row = sys.argv[1:]
+data = json.loads(gzip.decompress(Path(source).read_bytes()))
+if row == 'empty': data = {}
+elif row == 'missing-consumer': data['consumers'] = {}
+elif row == 'missing-input': del data['consumers']['fixture']['files']['.kendex-lock.json']
+elif row in ('unsafe-path', 'unsafe-link', 'unknown-mode'):
+    import base64
+    name = '../escape' if row == 'unsafe-path' else 'probe'
+    mode = '120000' if row == 'unsafe-link' else '160000' if row == 'unknown-mode' else '100644'
+    data['consumers']['fixture']['files'][name] = {'mode': mode, 'data': base64.b64encode(b'../escape').decode()}
+else: raise AssertionError(row)
+Path(target).write_bytes(gzip.compress(json.dumps(data).encode()))
+PY
+  fi
+  gate "$path" "$TMP/candidate"
+  if [ "$row" = absent ]; then
+    if [ "$RC" -eq 0 ] && [ "$OUT" = consumer-snapshot=absent ]; then ok 'bootstrap permits only total absence'; else bad 'bootstrap' "$OUT"; fi
+  elif [ "$row" = missing-input ]; then
+    if [ "$RC" -eq 1 ] && grep -qxF 'consumer-refresh-error=input-missing value=.kendex-lock.json' <<<"$OUT"; then ok "$row refuses before execution"; else bad "$row" "$OUT"; fi
+  elif [ "$RC" -eq 1 ]; then ok "$row refuses before execution"; else bad "$row" "$OUT"; fi
+done
+printf '\nconsumer-refresh-test: pass=%s fail=%s\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]
