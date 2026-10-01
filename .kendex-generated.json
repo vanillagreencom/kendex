@@ -553,6 +553,7 @@
   ".agents/skills/orch/references/copilot-runtime.md",
   ".agents/skills/orch/references/finding-disposition.md",
   ".agents/skills/orch/references/gates.md",
+  ".agents/skills/orch/references/heartbeat-audit.md",
   ".agents/skills/orch/references/job-units.md",
   ".agents/skills/orch/references/lane-directive.md",
   ".agents/skills/orch/references/lane-reach.md",
