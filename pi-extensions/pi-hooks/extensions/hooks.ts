@@ -114,7 +114,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 	};
 
 	/**
-	 * Everything an event's hooks said on a listener Pi gives no verdict to.
+	 * Everything an event's hooks said outside a tool refusal's reason.
 	 * `toAgent` is the listener's own way of putting words in front of the
 	 * model — a patched tool result, an entry the settle boundary appends, a
 	 * session's opening context — and it is called at most once, with every
@@ -250,13 +250,15 @@ export default function piHooks(pi: ExtensionAPI): void {
 				reason: unreadableLine(TOOL_CALL_LISTENER, run.unreadable),
 			};
 		}
-		// Said whatever the answer is: a guard that let the call through with
-		// something to tell the person told it before the guard behind it
-		// refused, and a refusal is not a reason to swallow it.
-		for (const result of run.results) {
-			const advisory = personLine(result);
-			if (advisory !== undefined && ctx.hasUI) ctx.ui.notify(advisory, "info");
-		}
+		// Successful hooks contribute context even when a later guard refuses.
+		// Pi owns delivery before the next model request in every session mode;
+		// no new turn is needed because this tool call already has a follow-up.
+		await report(
+			TOOL_CALL_LISTENER,
+			{ results: run.results.filter(({ outcome }) => outcome.ran && outcome.exitCode === 0) },
+			ctx,
+			(content) => pi.sendMessage({ customType: "kendex-hook", content, display: true }, { triggerTurn: false }),
+		);
 		// A refusal's reason is a hook's own stderr, and the model reads it.
 		return verdict === undefined ? undefined : { block: true, reason: await boundForAgent(verdict.reason) };
 	});

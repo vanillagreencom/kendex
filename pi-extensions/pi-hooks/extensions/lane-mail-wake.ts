@@ -38,21 +38,6 @@ function standing(dir: string): boolean {
 	}
 }
 
-/**
- * The mail delivery judge's context, `additionalContext` in the PostToolUse
- * answer the lane-mail-check hook writes on stdout, or the stdout whole where
- * it is not that answer, so an answer this carrier cannot read is said rather
- * than dropped.
- */
-function deliveredContext(stdout: string): string {
-	try {
-		const context = (JSON.parse(stdout) as { hookSpecificOutput?: { additionalContext?: unknown } }).hookSpecificOutput?.additionalContext;
-		if (typeof context === "string") return context;
-	} catch {
-		// Not the JSON answer; handed over as written below.
-	}
-	return stdout;
-}
 
 /**
  * Starts a turn in an idle session when mail the lane-mail hooks hand it
@@ -127,8 +112,7 @@ export default function laneMailWake(pi: ExtensionAPI): void {
 			const result = { hook, outcome };
 			const forPerson = personLine(result);
 			if (forPerson !== undefined && ctx.hasUI) ctx.ui.notify(forPerson, "info");
-			const said = agentLine(result, ctx);
-			text = outcome.ran && outcome.exitCode === 0 && said !== undefined ? deliveredContext(said) : said;
+			text = agentLine(result, ctx);
 		}
 		if (text === undefined || text === "") {
 			lastWake = undefined;

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -15,6 +15,21 @@ export const CONFIG_ID = "@vanillagreen/pi-hooks";
  * manager, and this one has an id and no session file. */
 export const SESSION_ID = "pi-hooks-session";
 export const sessionManager = { getSessionId: () => SESSION_ID, getSessionFile: (): string | undefined => undefined };
+
+/** A disposable carrier whose named behavior is removed without deleting its
+ * matched code. The same real-session assertions run against this copy. */
+export function mutatedCarrier(root: string, name: string, file: string, before: string, after: string): string {
+	const copy = join(root, `${name}-extensions`);
+	cpSync(join(import.meta.dir, "..", "extensions"), copy, { recursive: true });
+	const path = join(copy, file);
+	if (lstatSync(path).isSymbolicLink()) throw new Error(`${file} mutation target is a symlink`);
+	const source = readFileSync(path, "utf8");
+	if (source.split(before).length !== 2) throw new Error(`${file} holds the mutation target other than once`);
+	const mutant = source.replace(before, after);
+	if (mutant === source) throw new Error(`${file} mutation changed nothing`);
+	writeFileSync(path, mutant);
+	return join(copy, "hooks.ts");
+}
 
 export type ToolCallHandler = (event: { toolName: string; input: Record<string, unknown> }, ctx: Record<string, unknown>) => Promise<unknown>;
 

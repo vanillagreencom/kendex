@@ -157,14 +157,12 @@ export async function runListener(
 }
 
 /**
- * What a hook has to say to the agent on a listener Pi gives no verdict to —
- * `tool_result`, `turn_end`, `session_start` — or `undefined` where it said
- * nothing. One rule for all three, because Pi refuses nothing on any of them
- * and delivering the words is the whole consequence available:
+ * What a hook has to say to the agent, or `undefined` where it said nothing.
+ * The caller decides whether a failure blocks a tool or becomes context:
  *
- * - Exit 0: stdout is what the hook contributes, which is the one stream
- *   Claude Code ever routes into a model's context (`SessionStart`). Silence
- *   is silence. Anything on stderr beside a 0 is an advisory for the person,
+ * - Exit 0: stdout is what the hook contributes. Silence is silence.
+ *   A hook JSON envelope contributes its additionalContext,
+ *   not the envelope. Anything on stderr beside a 0 is an advisory for the person,
  *   and `personLine` carries it instead.
  * - Exit 2: the refusal Claude Code's own `PostToolUse`, `Stop` and
  *   `SessionStart` hooks make, and its stderr is written for the model. Pi
@@ -185,9 +183,32 @@ export function agentLine(result: HookResult, ctx: ExtensionContext): string | u
 			? `hook-missing=${outcome.missing}\n${name} did not run. Run kendex refresh.`
 			: `hook-timeout-ms=${outcome.timedOutAfterMs}\n${name} did not reach a verdict in ${ctx.cwd}.`;
 	}
-	if (outcome.exitCode === 0) return outcome.stdout === "" ? undefined : outcome.stdout;
+	if (outcome.exitCode === 0) {
+		const context = deliveredContext(outcome.stdout);
+		return context === "" ? undefined : context;
+	}
 	if (outcome.exitCode === 2) return outcome.stderr === "" ? `hook-refused=${name}\nThe hook supplied no reason.` : outcome.stderr;
 	return `hook-exit=${outcome.exitCode}\n${name} did not reach a verdict.${outcome.stderr === "" ? "" : `\n${outcome.stderr}`}`;
+}
+
+/** Successful hook context, or the stdout whole when it is not a context
+ * envelope, so an answer this carrier cannot read is reported, not dropped. */
+function deliveredContext(stdout: string): string {
+	let output: unknown;
+	try {
+		output = JSON.parse(stdout);
+	} catch {
+		// Hook stdout can also be plain text.
+		return stdout;
+	}
+	if (typeof output === "object" && output !== null && "hookSpecificOutput" in output) {
+		const specific = output.hookSpecificOutput;
+		if (typeof specific === "object" && specific !== null
+			&& "additionalContext" in specific && typeof specific.additionalContext === "string") {
+			return specific.additionalContext;
+		}
+	}
+	return stdout;
 }
 
 /** The advisory a hook wrote for the person rather than the agent: stderr

@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 0.17.2
+
+- Successful PreToolUse hooks give their additionalContext to the agent in interactive and headless sessions. Install-gap notices reach the model without blocking the call or bypassing later guards.
+
 ### 0.17.1
 
 - `tests/pi-contract.test.ts` compares literal `pi.on` events and dotted `pi`/`ctx` accesses with the Pi compatibility audit inventory. Missing or extra entries for these uses fail the tests, so an omitted literal hook event cannot hide a blocking Pi update. Named package exports remain manual, as [DEVELOPMENT.md](DEVELOPMENT.md) documents.

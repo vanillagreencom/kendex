@@ -1,5 +1,5 @@
 import { createFauxCore, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
-import { type AgentSession, createAgentSession, DefaultResourceLoader, type ExtensionAPI, type ExtensionFactory, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { type AgentSession, createAgentSession, DefaultResourceLoader, type ExtensionAPI, type ExtensionBindings, type ExtensionFactory, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 
 /* A whole Pi session in process, on the Pi this package's test script
  * installs, with a scripted model in place of a provider. */
@@ -11,12 +11,18 @@ const MODEL = "scripted";
  * The model: it runs the command an opening `RUN: ` prompt names, and ends
  * every other turn at once. Each request's last message is pushed to
  * `prompts` as `<role>: <text>`, so a case reads what the model was handed.
+ * `requests`, where supplied, keeps all messages of each model request.
  */
-function scriptedModel(pi: ExtensionAPI, prompts: string[]): void {
+function scriptedModel(pi: ExtensionAPI, prompts: string[], requests?: string[][]): void {
 	const core = createFauxCore({ api: PROVIDER, provider: PROVIDER, models: [{ id: MODEL, contextWindow: 200_000, maxTokens: 1_000 }] });
 	const answer = (context: { messages: { role: string; content: unknown }[] }) => {
-		const last = context.messages[context.messages.length - 1]!;
-		const text = typeof last.content === "string" ? last.content : (last.content as { type: string; text?: string }[]).map((part) => part.text ?? "").join("\n");
+		const messages = context.messages.map((message) => ({
+			role: message.role,
+			text: typeof message.content === "string" ? message.content : (message.content as { text?: string }[]).map((part) => part.text ?? "").join("\n"),
+		}));
+		requests?.push(messages.map((message) => `${message.role}: ${message.text}`));
+		const last = messages.at(-1)!;
+		const text = last.text;
 		prompts.push(`${last.role}: ${text}`);
 		if (last.role === "user" && text.startsWith("RUN: ")) return fauxAssistantMessage([fauxToolCall("bash", { command: text.slice(5) })], { stopReason: "toolUse" });
 		return fauxAssistantMessage([fauxText("done")]);
@@ -44,17 +50,22 @@ export async function startSession(options: {
 	paths: string[];
 	prompts: string[];
 	factories?: ExtensionFactory[];
+	requests?: string[][];
+	bindings?: ExtensionBindings;
+	settingsManager?: SettingsManager;
 }): Promise<AgentSession> {
+	const settingsManager = options.settingsManager ?? SettingsManager.inMemory({ compaction: { enabled: false } });
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: options.cwd,
 		agentDir: options.agentDir,
+		settingsManager,
 		noExtensions: true,
 		noSkills: true,
 		noPromptTemplates: true,
 		noThemes: true,
 		noContextFiles: true,
 		additionalExtensionPaths: options.paths,
-		extensionFactories: [(pi) => scriptedModel(pi, options.prompts), ...(options.factories ?? [])],
+		extensionFactories: [(pi) => scriptedModel(pi, options.prompts, options.requests), ...(options.factories ?? [])],
 	});
 	await resourceLoader.reload();
 	const { session } = await createAgentSession({
@@ -62,11 +73,11 @@ export async function startSession(options: {
 		agentDir: options.agentDir,
 		resourceLoader,
 		sessionManager: SessionManager.inMemory(options.cwd),
-		settingsManager: SettingsManager.inMemory({ compaction: { enabled: false } }),
+		settingsManager,
 		tools: ["bash"],
 	});
 	try {
-		await session.bindExtensions({});
+		await session.bindExtensions(options.bindings ?? {});
 		await session.setModel(session.modelRuntime.getModel(PROVIDER, MODEL)!);
 	} catch (error) {
 		session.dispose();

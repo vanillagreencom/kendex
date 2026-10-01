@@ -16,7 +16,7 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 
 ## Features
 
-- Run installed PreToolUse hooks before Pi tool calls.
+- Run installed PreToolUse hooks before Pi tool calls and give their additionalContext to the agent in interactive and headless sessions.
 - Stop a tool call when a hook refuses it or cannot complete.
 - Run installed PostToolUse, Stop, TaskCompleted and SessionStart hooks and give the agent what they say.
 - Run configured custom hooks.
@@ -31,6 +31,7 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 - Before Pi runs a tool, this extension reads the registry for your user account, and the project's own registry once Pi has marked the workspace trusted.
 - It gives each hook whose matcher fits the tool's name and the arguments it was called with, and stops at the first refusal.
 - Pi runs the tool only once every one of those hooks has allowed the call.
+- A hook that allows the call can also send context. The agent receives it before the next model request, even when a later hook refuses the call. Error output beside an allowed call remains a UI notice only.
 
 The other hook events cannot stop anything in Pi, so the extension delivers what a hook says instead:
 
