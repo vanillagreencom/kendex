@@ -122,6 +122,17 @@ sk_new_root() {
   printf '%s' "$root"
 }
 sk_box() { printf '%s/tmp/lane-mail/overseer' "$1"; }     # ROOT
+# sk_event_filter ROOT JQ — a lane-mail producer with changed event fields.
+sk_event_filter() {
+  rm -- "$1/.agents/skills/orch/scripts"
+  mkdir -p "$1/.agents/skills/orch/scripts"
+  python3 - "$1/.agents/skills/orch/scripts/lane-mail" "$SK_LANE_MAIL" "$2" <<'PY'
+import pathlib, shlex, sys
+path, mail, expression = pathlib.Path(sys.argv[1]), shlex.quote(sys.argv[2]), shlex.quote(sys.argv[3])
+path.write_text(f'#!/usr/bin/env bash\nset -o pipefail\nif [ "$1" = events ]; then\n  {mail} "$@" | jq -c {expression}\nelse\n  exec {mail} "$@"\nfi\n')
+path.chmod(0o755)
+PY
+}
 sk_journal() { printf '%s/tmp/slack/journal.jsonl' "$1"; } # ROOT
 sk_lm() { ( cd "$1" && shift && env -u ORCH_ASK_WAIT_MINUTES "$SK_LANE_MAIL" "$@" ); } # ROOT ARGS...
 sk_text() { printf '%s\n' "$2" > "$SK_TMP/$1.txt"; printf '%s' "$SK_TMP/$1.txt"; }   # NAME CONTENT

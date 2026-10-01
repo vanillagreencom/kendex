@@ -1,0 +1,1 @@
+- Slack continues routing healthy checkouts when another checkout's mailbox fails, and posts notices from older orch installs that omit mailbox positions.

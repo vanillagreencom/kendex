@@ -13,19 +13,23 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
-from refusals import Refusal
+from refusals import Refusal, keyed
+from store import parse_at
 
 LANE_MAIL = Path(".agents/skills/orch/scripts/lane-mail")
+FIELD_CHOICES = {"box": ("to-overseer", "to-lane"), "kind": ("ask", "notice", "answer", "directive")}
 
 
 class LaneMail:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.script = root / LANE_MAIL
+        self.reported_fields: Set[Tuple[str, str]] = set()
         if not os.access(self.script, os.X_OK):
             raise Refusal("orch-missing", str(root))
 
@@ -41,16 +45,61 @@ class LaneMail:
         return proc.returncode, proc.stdout, proc.stderr
 
     def events(self) -> List[Dict]:
-        """All envelopes with their box and physical line number, as
-        lane-mail lists them; line numbers align with the master's count."""
+        """Validated envelopes from lane-mail; absent position metadata
+        disables master-read suppression, never delivery of that envelope."""
         code, out, err = self._run("events", "--item", "overseer")
         if code != 0:
             raise Refusal("lane-mail-failed", _first(err))
         envelopes = []
         for raw in out.splitlines():
             if raw.strip():
-                envelopes.append(json.loads(raw))
+                envelope = json.loads(raw)
+                # lane-mail writes these fields; optional owner-channel fields
+                # are checked here before routing or formatting consumes them.
+                invalid = False
+                for field in (
+                    "id", "at", "box", "kind", "text", "from", "to", "ref", "re", "by", "attach", "recommend", "deadline"
+                ):
+                    required = field in ("id", "at", "box", "kind", "text") or field == "re" and envelope.get("kind") == "answer"
+                    value = envelope.get(field)
+                    if field not in envelope and not required:
+                        continue
+                    if not isinstance(value, str) or (field != "text" and required and not value):
+                        self.bad_field(envelope.get("id"), field)
+                        invalid = True
+                    elif field in ("at", "deadline") and value:
+                        try:
+                            parse_at(value)
+                        except ValueError:
+                            self.bad_field(envelope.get("id"), field)
+                            invalid = True
+                    elif value not in FIELD_CHOICES.get(field, (value,)):
+                        self.bad_field(envelope.get("id"), field)
+                        invalid = True
+                options = envelope.get("options", [])
+                if not isinstance(options, list) or not all(isinstance(option, str) for option in options):
+                    self.bad_field(envelope.get("id"), "options")
+                    invalid = True
+                if invalid:
+                    continue
+                # events filters invalid JSON rows, so its output index cannot
+                # replace a physical line number supplied by lane-mail.
+                for field in ("line", "count"):
+                    value = envelope.get(field)
+                    if type(value) is not int or value < 1:
+                        self.bad_field(envelope["id"], field)
+                        envelope[field] = None
+                envelopes.append(envelope)
         return envelopes
+
+    def bad_field(self, env_id: object, field: str) -> None:
+        """One keyed system journal diagnostic per envelope field per process.
+        Envelope bodies never enter the diagnostic."""
+        env_id = env_id if isinstance(env_id, str) and env_id else "unknown"
+        pair = (env_id, field)
+        if pair not in self.reported_fields:
+            self.reported_fields.add(pair)
+            print(keyed("envelope-field", f"{self.root} id={env_id} field={field}"), file=sys.stderr, flush=True)
 
     def _text_file(self, text: str) -> str:
         directory = self.root / "tmp" / "slack"

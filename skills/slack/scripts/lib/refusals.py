@@ -50,6 +50,7 @@ EXPLAIN = {
         " first; the binding names the channel the relay reads."
     ),
     "root-unreadable": "The root is not a directory that can be read.",
+    "root-poll-failed": "This checkout's poll failed. Other checkouts still run; this checkout retries on the next poll.",
     "binding-invalid": "The binding file is not the shape `slack setup` writes; run setup again.",
     "journal-invalid": (
         "A journal line is not one the relay writes. The journal is a"

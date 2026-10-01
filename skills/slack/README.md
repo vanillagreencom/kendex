@@ -19,7 +19,7 @@ Requires Python 3.8+ and the orch skill, which the install adds.
 - Mark each directive's message with :eyes: once it reaches the overseer's mailbox, and :white_check_mark: once the overseer reads it.
 - Post the overseer's notices and rulings, and upload its progress reports with the notice as the comment.
 - Post an alert or a file to any channel from a script, with `--mention` for the owners.
-- Send a text posted alone as standard Markdown, so bold, lists, headings, links and code blocks render; a file's comment renders as Slack's mrkdwn markup. Which post is which: [SKILL.md § Message standard](SKILL.md#message-standard).
+- Send text as standard Markdown and file comments as Slack's mrkdwn markup. [Message standard](SKILL.md#message-standard) defines the difference.
 - Refuse any text or file that matches the secret-value pattern.
 - Run as a systemd user unit and report its health in one line per checkout.
 
@@ -33,7 +33,7 @@ Requires Python 3.8+ and the orch skill, which the install adds.
 - An owner's text reaches the overseer as typed: Slack's escapes, links, mentions, channel names and dates read back as plain text, and emoji stay `:name:`.
 - Each file on an owner's message is downloaded with the bot token to `tmp/slack/files/<file id>-<name>` in the checkout, directory mode 700, file mode 600. The message reaches the overseer with one line per file after its text: the saved path, or `file <id> not fetched: <why>`, such as `HTTP 403` or a download cut short. A failed download never holds the message back.
 - A directive's message gets an :eyes: reaction as it is delivered. Once the overseer's mailbox read passes that directive, the relay swaps it for :white_check_mark:. Neither mark posts a message. A mark Slack refuses is made again on the next poll.
-- The mailbox's new envelopes for the owner are posted to the channel: a question with its options, recommendation and deadline, a notice in the thread of the message it answers, a report as an uploaded file. An envelope older than `SLACK_THREAD_DAYS` is never posted.
+- The relay posts new owner-bound mailbox envelopes: questions with choices, recommendations and deadlines, threaded notices, and uploaded reports. It skips envelopes older than `SLACK_THREAD_DAYS`.
 - The relay's first run reads Slack from the moment of the binding and the mailbox from its newest envelope, so neither side's past is replayed. Open questions are posted whatever their age inside `SLACK_THREAD_DAYS`.
 - While `SLACK_MASTER_FILE` is younger than `SLACK_MASTER_MAX_AGE`, a master session answers the overseer and the relay posts no questions, notices, reports or answers from the mailbox; owner messages in the channel still reach the overseer, the relay's replies to them still post, and `slack listen --status` shows `held-by=master`. When the file goes stale or is gone, the relay resumes. [The master hold](#the-master-hold) defines which envelopes post.
 - `slack compact` drops journal lines older than `SLACK_THREAD_DAYS` once resolved. The relay runs it once a day, so the verb is refused `relay-running` while the relay runs on that checkout.
@@ -83,7 +83,7 @@ settings:
 | `reactions:write` | Mark a directive's message as delivered and as read |
 | `users:read`, `users:read.email` | Resolve an owner's email to a user, and name a user an owner mentions |
 
-An app made from an earlier copy of this manifest lacks the scopes and settings added since. Add each missing scope under the app's OAuth settings, turn on Socket Mode, subscribe the bot to `message.groups` under Event Subscriptions, and reinstall it to the workspace.
+For an existing app, add missing OAuth scopes, enable Socket Mode, subscribe to `message.groups` under Event Subscriptions, then reinstall it to the workspace.
 
 The app must be a member of every channel it posts to. `setup` creates the channel with the app in it, or invites the owners to one the app already belongs to; for an alert channel, invite the app in Slack.
 
@@ -97,7 +97,9 @@ The app must be a member of every channel it posts to. `setup` creates the chann
 
 ## The master hold
 
-After reading the mailbox, the external master's watch writes its read line count to `<root>/tmp/lane-mail/overseer/to-overseer.seen` as one bare integer. The relay only reads this file. On resume, it clamps the count to the mailbox length, skips notices at or below it and journals their ids. Later notices post once. Open asks and held answers still post. Missing or unreadable files skip nothing. Hold times do not set a notice cutoff.
+The master's watch writes its read line count to `<root>/tmp/lane-mail/overseer/to-overseer.seen` as a bare integer. The relay reads this file and clamps the count to the mailbox length. On resume, it skips notices at or below the count and journals their ids. Later notices, open asks and held answers still post. A missing or unreadable file skips nothing. Hold times do not set the cutoff.
+
+`lane-mail events`, not the envelope writer, supplies `line` (physical position) and `count` (complete line count). Filtered invalid JSON rows prevent the relay from computing either. The oldest supported producer is orch 3.0.0 with its [owner channel](https://github.com/vanillagreencom/kendex/commit/ac62981e). [Position metadata](https://github.com/vanillagreencom/kendex/commit/e9c9497e) enables master-read suppression. Missing or malformed positions still route without that suppression. Each bad field gets one `envelope-field` journal line with root and id. Other bad fields skip the envelope. A checkout poll failure names the root; other checkouts still run.
 
 ## Steering contract
 
@@ -142,4 +144,4 @@ Settings go in the project's `kendex.settings.toml` under `[env]` and the tokens
 
 ## Proof
 
-The suites under [`tests/`](https://github.com/vanillagreencom/kendex/tree/main/skills/slack/tests) prove the package's behaviour against a fake Slack API and the real `lane-mail`. [DEVELOPMENT.md § Live proof](https://github.com/vanillagreencom/kendex/blob/main/skills/slack/DEVELOPMENT.md#live-proof) lists the rows that need the owner's Slack app and channel, each with the command that proves it.
+The [suites](https://github.com/vanillagreencom/kendex/tree/main/skills/slack/tests) use a fake Slack API and the real `lane-mail`. [Live proof](https://github.com/vanillagreencom/kendex/blob/main/skills/slack/DEVELOPMENT.md#live-proof) covers checks that need the owner's Slack app and channel.
