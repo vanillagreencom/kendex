@@ -3,6 +3,30 @@ use crate::error::CoreError;
 use crate::model::ItemKind;
 
 #[test]
+fn catalog_alias_uses_the_native_catalog_basename() {
+    // Add and subscription requests carry native local paths or remote references.
+    let sep = std::path::MAIN_SEPARATOR;
+    let native = format!("C:{sep}catalogs{sep}builtin");
+    let manifest = Manifest::default();
+    for (reference, expected) in [
+        (native.clone(), "builtin-2"),
+        (format!("{native}{sep}"), "builtin-2"),
+        (format!("{native}.git{sep}"), "builtin-2"),
+        ("git@example.com:catalogs/builtin.git/".into(), "builtin-2"),
+        #[cfg(unix)]
+        ("/catalogs/literal\\builtin".into(), "literal\\builtin"),
+        #[cfg(unix)]
+        ("/catalogs/builtin\\".into(), "builtin\\"),
+    ] {
+        assert_eq!(
+            catalog_alias(&manifest, &reference),
+            expected,
+            "{reference}"
+        );
+    }
+}
+
+#[test]
 fn bot_instructions_survive_manifest_and_app_round_trips() {
     let text = include_str!("../../../../skills/bot-instructions/tests/fixtures/canonical.toml");
     let tmp = tempfile::tempdir().unwrap();

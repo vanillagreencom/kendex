@@ -59,10 +59,10 @@ pub(crate) fn check_source_alias(name: &str) -> crate::error::Result<()> {
 
 /// Allocate a catalog alias from a reference without rebinding a source.
 pub(crate) fn catalog_alias(manifest: &Manifest, reference: &str) -> String {
-    let trimmed = reference.trim_end_matches('/');
+    let trimmed = reference.trim_end_matches(['/', std::path::MAIN_SEPARATOR]);
     let trimmed = trimmed.strip_suffix(".git").unwrap_or(trimmed);
     let base = trimmed
-        .rsplit(['/', ':'])
+        .rsplit(['/', ':', std::path::MAIN_SEPARATOR])
         .next()
         .filter(|segment| !segment.is_empty())
         .unwrap_or("source");
