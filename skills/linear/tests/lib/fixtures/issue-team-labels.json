@@ -1,0 +1,63 @@
+{
+  "issueLabels": {
+    "nodes": [
+      {
+        "id": "469598a4-6a78-4ff9-be12-25b92244b2c2",
+        "name": "agent:runtime",
+        "team": null
+      },
+      {
+        "id": "ec145e59-9257-4f6e-b36e-c58f4e090f93",
+        "name": "secrets",
+        "team": {
+          "name": "fleet"
+        }
+      },
+      {
+        "id": "e79890c4-77ea-414a-9c92-b41ca6de4501",
+        "name": "harness",
+        "team": {
+          "name": "fleet"
+        }
+      },
+      {
+        "id": "df791230-7c5c-43b4-89b1-989564d021a4",
+        "name": "skills",
+        "team": {
+          "name": "vsys"
+        }
+      },
+      {
+        "id": "dbbbb9af-c331-480e-bdbc-f948ff7d32c0",
+        "name": "harness",
+        "team": {
+          "name": "vsys"
+        }
+      },
+      {
+        "id": "19771d95-12c6-47fe-8f09-a820ec98b927",
+        "name": "harness",
+        "team": {
+          "name": "kendex"
+        }
+      },
+      {
+        "id": "ffe14296-09dd-4fa7-a53e-3da3515a3e0f",
+        "name": "skills",
+        "team": {
+          "name": "kendex"
+        }
+      },
+      {
+        "id": "e308b7eb-1c70-4d3f-bd86-9cb359f2b088",
+        "name": "baseline",
+        "team": null
+      },
+      {
+        "id": "7bb984bd-bf49-445e-8ed8-bfac4d0add89",
+        "name": "bug",
+        "team": null
+      }
+    ]
+  }
+}

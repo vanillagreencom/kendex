@@ -759,27 +759,38 @@ resolve_state_id() {
 }
 
 # Resolve label name to UUID
-# Usage: resolve_label_id "backend"
+# Usage: resolve_label_id "backend" ["issue-team-name"]
+# With an issue team, only that team's labels and workspace labels can match.
 # Exit 1 = the workspace has no such label (a caller handling several labels may
 # skip it). Exit 2 = the lookup itself failed, so whether the label exists is
 # unknown — a caller rebuilding a label set must abort rather than drop it,
 # because "not found" and "could not ask" produce the same empty result.
 resolve_label_id() {
     local label_name="$1"
+    local team_name="${2:-}"
 
     local query='query GetLabel($name: String!) { issueLabels(filter: {name: {eq: $name}}) { nodes { id } } }'
     local vars result
-    vars=$(jq -cn --arg name "$label_name" '{name: $name}')
+    if [ -n "$team_name" ]; then
+        query='query GetLabel($name: String!, $teamName: String!) { issueLabels(filter: {name: {eq: $name}, or: [{team: {name: {eq: $teamName}}}, {team: {null: true}}]}) { nodes { id } } }'
+    fi
+    vars=$(jq -cn --arg name "$label_name" --arg teamName "$team_name" \
+        '{name: $name} + (if $teamName == "" then {} else {teamName: $teamName} end)') || return 2
     if ! result=$(graphql_query "$query" "$vars"); then
         jq -cn --arg name "$label_name" \
             '{error: ("Label lookup failed for " + ($name | tojson) + ": Linear API request failed (see previous error)")}' >&2
         return 2
     fi
     local label_id
-    label_id=$(echo "$result" | jq -r '.issueLabels.nodes[0].id // empty')
+    label_id=$(echo "$result" | jq -r '.issueLabels.nodes[0].id // empty') || return 2
 
     if [ -z "$label_id" ]; then
-        echo "Warning: Label not found: '$label_name'" >&2
+        if [ -n "$team_name" ]; then
+            jq -cn --arg team "$team_name" --arg label "$label_name" \
+                '{error: ("Label not found for team " + ($team | tojson) + ": " + ($label | tojson))}' >&2
+        else
+            echo "Warning: Label not found: '$label_name'" >&2
+        fi
         return 1
     fi
 

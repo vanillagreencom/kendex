@@ -1774,9 +1774,9 @@ update_issue() {
 
     local input_parts=()
 
-    # Get issue to find team ID (needed for state lookup) - use raw format
+    # Get issue to find its team for state and label lookup - use raw format
     local issue_result
-    issue_result=$(get_issue "$issue_id" --format=raw)
+    issue_result=$(get_issue "$issue_id" --format=raw) || return 1
     local team_name
     team_name=$(echo "$issue_result" | jq -r '.issue.team.name // empty')
     # The scope a milestone name resolves in when --project is absent: the
@@ -1817,25 +1817,18 @@ update_issue() {
     # refusal-capable labels for the same reason).
     local resolved_label_json=""
     if [ "$clear_labels" != "true" ] && [ -n "$labels" ]; then
+        if [ -z "$team_name" ]; then
+            jq -cn --arg issue "$issue_id" '{error: ("Issue team missing: " + $issue)}' >&2
+            return 1
+        fi
         IFS=',' read -ra label_names <<<"$labels"
-        local label_ids=() label_rc=0
+        local label_ids=()
         for label_name in "${label_names[@]}"; do
             local label_id
-            label_rc=0
-            label_id=$(resolve_label_id "$label_name") && label_ids+=("\"$label_id\"") || label_rc=$?
-            if [ "$label_rc" = "2" ]; then
-                jq -cn --arg label "$label_name" \
-                    '{error: ("Label lookup failed for " + $label + " - refusing the update: --labels replaces the label set, so proceeding would strip labels this lookup could not confirm")}' >&2
-                return 1
-            fi
-            # A label that resolves to nothing (rc=1) must refuse too: --labels
-            # replaces the whole set, so silently dropping one requested name
-            # ships a partial set — the same wipe class as the lookup failure.
-            if [ "$label_rc" != "0" ]; then
-                jq -cn --arg label "$label_name" \
-                    '{error: ("Unknown label " + $label + " - refusing the update: --labels replaces the label set, so a dropped name would ship a partial set. Fix the name or remove it from --labels")}' >&2
-                return 1
-            fi
+            # --labels replaces the whole set, so neither a miss nor a failed
+            # lookup may drop a name and send a partial replacement.
+            label_id=$(resolve_label_id "$label_name" "$team_name") || return 1
+            label_ids+=("\"$label_id\"")
         done
         if [ ${#label_ids[@]} -eq 0 ]; then
             jq -cn --arg labels "$labels" \
@@ -2739,14 +2732,6 @@ activate_issue() {
     local agent_label=""
     if [ -n "$agent" ]; then
         agent_label="agent:$agent"
-        # Fail before the state change when the agent label doesn't resolve —
-        # update_issue's own label handling is warn+skip, which would silently
-        # activate without the label.
-        local agent_label_id
-        if ! agent_label_id=$(resolve_label_id "$agent_label") || [ -z "$agent_label_id" ]; then
-            echo "{\"error\": \"Agent label not found: '$agent_label'. Issue state unchanged. Verify agent labels with 'linear.sh cache labels list --format=safe'.\"}" >&2
-            return 1
-        fi
     fi
 
     local user_email="${KENDEX_USER_EMAIL:-}"

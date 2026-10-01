@@ -1,0 +1,1 @@
+- Linear activation and label replacement resolve live labels for the issue's team, including workspace labels, and refuse unknown names before any write.

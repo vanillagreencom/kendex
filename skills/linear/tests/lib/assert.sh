@@ -300,6 +300,77 @@ run_oauth_git_redirects() {
 	done
 }
 
+# Install the recorded Linear issue and label responses for both label-write
+# commands. The curl fixture applies only filters the request actually sends,
+# so an unscoped lookup returns the other team's same-name label first.
+install_label_team_fixture() {
+	local project="$1"
+	mkdir -p "$project/bin" "$project/.cache/linear"
+	jq '[.issueLabels.nodes[] | select(.team.name == "fleet")]' \
+		"$SKILL_DIR/tests/lib/fixtures/issue-team-labels.json" >"$project/.cache/linear/labels.json"
+	cat >"$project/bin/curl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+config=$(cat)
+payload=$(sed -n 's/^data = //p' <<<"$config" | jq -r)
+query=$(jq -r '.query' <<<"$payload")
+printf '%s\n' "$payload" >>"${CURL_LOG:?}"
+case "$query" in
+*"issueLabels(filter:"*)
+  if [[ "$FIXTURE_FAIL" == labels ]]; then
+    printf '%s' '{"errors":[{"message":"label service unavailable"}]}___HTTP_CODE___200'
+    exit 0
+  fi
+  scoped=false workspace=false
+  [[ "$query" != *'team: {name: {eq: $teamName}}'* ]] || scoped=true
+  [[ "$query" != *'team: {null: true}'* ]] || workspace=true
+  jq -cj --argjson payload "$payload" --argjson scoped "$scoped" --argjson workspace "$workspace" '
+    {data: {issueLabels: {nodes: [.issueLabels.nodes[]
+      | select(.name == $payload.variables.name)
+      | select(($scoped | not) or .team.name == $payload.variables.teamName
+        or ($workspace and .team == null))
+      | {id}]}}}' "$FIXTURE_DIR/issue-team-labels.json"
+  ;;
+*"issue(id:"*)
+  if [[ "$FIXTURE_FAIL" == issue ]]; then
+    printf '%s' '{"errors":[{"message":"issue service unavailable"}]}___HTTP_CODE___200'
+    exit 0
+  fi
+  jq -cj --arg fail "$FIXTURE_FAIL" \
+    '{data: (if $fail == "team" then del(.issue.team) else . end)}' "$FIXTURE_DIR/label-team-issue.json"
+  ;;
+*"teams(filter:"*)
+  printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-uuid"}]}}}'
+  ;;
+*"workflowStates(filter:"*)
+  printf '%s' '{"data":{"workflowStates":{"nodes":[{"id":"state-in-progress"}]}}}'
+  ;;
+*"issueUpdate(id:"*)
+  jq -cj '{data: {issueUpdate: {success: true, issue: .issue}}}' "$FIXTURE_DIR/label-team-issue.json"
+  ;;
+*)
+  printf '%s' '{"errors":[{"message":"unexpected fixture query"}]}'
+  ;;
+esac
+printf '%s' '___HTTP_CODE___200'
+SH
+	chmod +x "$project/bin/curl"
+}
+
+# Each request has its own payload log and failure input. The configured team
+# differs from the recorded issue's team, and the cache holds fleet-only IDs.
+run_label_team_request() {
+	local project="$1" name="$2" fail="$3"
+	shift 3
+	: >"$TMP_ROOT/$name.jsonl"
+	(cd -- "$project" && env -i HOME="$TMP_ROOT" PATH="$project/bin:$PATH" \
+		LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=vsys KENDEX_USER_EMAIL= \
+		LINEAR_CACHE_ROOT="$project" FIXTURE_FAIL="$fail" \
+		FIXTURE_DIR="$SKILL_DIR/tests/lib/fixtures" CURL_LOG="$TMP_ROOT/$name.jsonl" \
+		"$BASH" "$project/.agents/skills/linear/scripts/linear.sh" issues "$@") \
+		>"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err"
+}
+
 # assert_stop DESC [DIAGNOSTIC...] — assert_fail, then end the suite.
 assert_stop() {
 	assert_fail "$@"

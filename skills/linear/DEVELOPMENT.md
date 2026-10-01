@@ -53,6 +53,8 @@ skills/linear/tests/must-fail-controls.sh
 
 Each test stands up its own fixture root and a `curl` shim on `PATH`, so none reaches the network. `LINEAR_API_KEY_OVERRIDE` is the inline auth channel they use.
 
+`tests/issues-activate-agent.test.sh` and `tests/issues-update-unknown-label-refuses.test.sh` use projected live Linear responses in `tests/lib/fixtures/` for cross-team labels. The curl fixture applies the request's team filter to the recorded duplicate names. The cache contains another team's IDs. Their controls remove the scope or the refusal, so either error must turn the suite red.
+
 `tests/oauth-auth.test.sh` distinguishes the selected credential from unused key provenance in credential reports. `tests/api-key-precedence.test.sh` and `tests/team-target-fail-closed.test.sh` cover personal-key and team warnings.
 
 The cache is isolated for you. Sourcing `tests/lib/assert.sh` exports `LINEAR_CACHE_ROOT` at a scratch root that goes with the suite's other scratch directories at exit, and the scripts check that variable before anything derived from where the process is standing, so a suite that asks for nothing writes nowhere near the real `.cache/linear`. A suite that stands up its own project root points `LINEAR_CACHE_ROOT` at that root instead; one whose subject is the root resolution runs its invocations under `env -u LINEAR_CACHE_ROOT`. The verdict refuses a suite that ends with the variable unset or aimed outside the scratch it registered. `PROJECT_ROOT` is not a redirect and cannot be made one: `common.sh` assigns it from `git rev-parse` on every source, so a value you export never survives to be read.

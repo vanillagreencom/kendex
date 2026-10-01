@@ -10,6 +10,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 assert_tmpdir TMP_ROOT
+TMP_ROOT=$(cd -- "$TMP_ROOT" && pwd -P)
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
@@ -17,6 +19,8 @@ cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 # throwaway root — without this, cache writes land in the real project's
 # `.cache/linear`.
 git -C "$TMP_ROOT" init -q -b main
+git -C "$TMP_ROOT" config gc.auto 0
+git -C "$TMP_ROOT" config maintenance.auto false
 
 cat >"$TMP_ROOT/bin/curl" <<'SH'
 #!/usr/bin/env bash
@@ -63,8 +67,8 @@ run_activate() {
   local payload_log="$1"
   shift
   : >"$payload_log"
-  (cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" \
-    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam KENDEX_USER_EMAIL= \
+  (cd -- "$TMP_ROOT" && env -i HOME="$TMP_ROOT" PATH="$TMP_ROOT/bin:$PATH" \
+    LINEAR_CACHE_ROOT="$TMP_ROOT" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam KENDEX_USER_EMAIL= \
     CURL_PAYLOAD_LOG="$payload_log" \
     bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues activate "$@")
 }
@@ -90,8 +94,8 @@ rc=0
 run_activate "$bogus_payload" CC-760 --agent bogus >"$TMP_ROOT/bogus.out" 2>"$TMP_ROOT/bogus.err" || rc=$?
 
 assert_ne "activate --agent with an unknown agent fails" "$rc" 0
-assert_file_contains "the refusal names the missing agent label" \
-  "$TMP_ROOT/bogus.err" "Agent label not found: 'agent:bogus'"
+assert_jq "the refusal names the issue team and missing agent label" \
+  "$(cat "$TMP_ROOT/bogus.err")" '.error | contains("Claude") and contains("agent:bogus")'
 assert_not "an unknown agent label mutates no issue state" \
   jq -s -e 'any(.[]; .query | contains("issueUpdate"))' "$bogus_payload"
 
@@ -107,3 +111,19 @@ assert "plain activate sends the state change without labelIds" \
   jq -s -e 'any(.[]; (.query | contains("issueUpdate"))
     and .variables.input.stateId == "state-in-progress"
     and (.variables.input | has("labelIds") | not))' "$plain_payload"
+
+install_label_team_fixture "$TMP_ROOT"
+run_status live_rc run_label_team_request "$TMP_ROOT" live "" activate KEN-2413 --agent runtime
+assert_eq "recorded activation succeeds across the configured team boundary" "$live_rc" 0
+assert "activation uses live issue-team and workspace label IDs" \
+  jq -s -e '[.[] | select(.query | contains("issueUpdate")) | .variables.input]
+    == [{stateId: "state-in-progress", labelIds: ["19771d95-12c6-47fe-8f09-a820ec98b927", "469598a4-6a78-4ff9-be12-25b92244b2c2"]}]' \
+  "$TMP_ROOT/live.jsonl"
+assert_file_lacks "activation never sends the cached fleet label ID" \
+  "$TMP_ROOT/live.jsonl" "e79890c4-77ea-414a-9c92-b41ca6de4501"
+
+run_status missing_rc run_label_team_request "$TMP_ROOT" missing "" activate KEN-2413 --agent bogus
+assert_ne "recorded activation refuses an unresolved agent" "$missing_rc" 0
+assert_jq "recorded activation refusal names the team and agent" \
+  "$(cat "$TMP_ROOT/missing.err")" '.error | contains("kendex") and contains("agent:bogus")'
+assert_file_lacks "recorded activation refusal sends no mutation" "$TMP_ROOT/missing.jsonl" "issueUpdate"
