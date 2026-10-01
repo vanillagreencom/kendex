@@ -37,7 +37,7 @@ Reads go through `cache`; writes go through the live commands, which write throu
 | `comments` / `labels` / `project-labels` | list, create, update, delete |
 | `projects` | list, get, create, update, delete, list-dependencies, add-dependency, remove-dependency, post-update, list-updates, reorder, set-sort-order |
 | `initiatives` / `milestones` | list, get, create, update, delete (`initiatives` also add-project, remove-project) |
-| `teams` / `users` / `statuses` / `documents` | list, get (`users` also has `me`) |
+| `teams` / `users` / `statuses` / `documents` | list, get (`users` also has `me`; `teams keys` reads `{urlKey, keys}` for outbound tracker links without changing `teams list`'s array) |
 | `cycles` | list, create, update |
 | `sync` | Refresh the local cache (`--full`, `--reconcile`, `--if-stale N`, `--stats`) |
 | `cache` | Cache-only reads: issues, projects, comments, labels, initiatives, cycles, attachments, status |

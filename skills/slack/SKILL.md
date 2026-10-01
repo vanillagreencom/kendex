@@ -6,6 +6,7 @@ license: MIT
 user-invocable: true
 dependencies:
   required: [orch]
+  optional: [linear]
 metadata:
   author: vanillagreen
   source: kendex
@@ -44,8 +45,10 @@ What each verb does, every setting, and every keyed line: `slack --help`. Python
 
 ## Message standard
 
+- `markup.py` owns outbound tracker links and their representation. Consumers set nothing new: each root's `LINEAR_TEAM`, read through `orch-env`, selects Linear; otherwise its GitHub repository selects GitHub issues. With neither, text stays unchanged. Linear keys and the workspace URL key come from the sibling Linear skill's `teams keys` action, cached per root for a day. A missing or failed read leaves text unlinked with one `tracker-links-unavailable` notice per root and process.
+- The relay and `slack post` link bare tracker ids before checking secrets and the Markdown cap. Existing links, Slack angle tokens, bare URLs, inline code and fenced code stay literal. Never put a tracker id in a code span.
 - `slack post` text without `--file`, and the relay's ask, notice and answer posts, go out as standard Markdown, which Slack renders: `**bold**`, lists, headings, links and code blocks.
-- Slack takes at most 12,000 characters of standard Markdown. `slack post` refuses a longer text `text-too-long`; send the long part as a file. The relay posts a longer text as Slack's mrkdwn, its Markdown marks shown as typed, so an ask still reaches the owner before its deadline.
+- Slack takes at most 12,000 characters of standard Markdown. `slack post` refuses an input already longer than that `text-too-long`; send the long part as a file. Link expansion across the cap selects mrkdwn for both outbound paths. The relay also posts a longer input as mrkdwn, its Markdown marks shown as typed, so an ask still reaches the owner before its deadline.
 - A file's comment, the text beside `--file` or a notice's `--attach`, renders as Slack's own mrkdwn markup, not standard Markdown. It is outside the 12,000-character cap, and Slack's own message limits still bound it. How to write it: [orch communication-modes.md § Owner messages](../orch/references/communication-modes.md#owner-messages), the rule for a text sent beside a file.
 - The words and markup of every post follow [orch communication-modes.md § Owner messages](../orch/references/communication-modes.md#owner-messages).
 

@@ -66,9 +66,9 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from api import MARKDOWN_LIMIT, Slack
+from api import Slack
 from mailbox import LaneMail
-from markup import plain
+from markup import outbound, plain
 from refusals import Refusal, keyed, notice, print_refusal
 from secret import check as secret_check
 from secret import checked_file
@@ -601,6 +601,7 @@ class RootRelay:
         never sees would stand at its deadline unread. Returns the message
         ts or the upload's file id; None when nothing landed."""
         env_id = str(envelope["id"])
+        text, body_arg = outbound(self.path, text, file_comment=bool(attach))
         try:
             secret_check(text.encode(), f"id={env_id}")
             data = checked_file(attach, f"id={env_id} file={attach}") if attach else None
@@ -611,7 +612,6 @@ class RootRelay:
         try:
             if data is not None:
                 return self.api.upload(Path(attach).name, data, self.channel, text, thread_ts)
-            body_arg = "markdown_text" if len(text) <= MARKDOWN_LIMIT else "text"
             return str(self.api.post("chat.postMessage", channel=self.channel, thread_ts=thread_ts,
                                      **{body_arg: text})["ts"])
         except Refusal as err:

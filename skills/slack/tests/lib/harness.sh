@@ -251,6 +251,9 @@ sk_mutant() {
   cp -R "$SK_ROOT/skills/slack/scripts" "$dir/skills/slack/scripts"
   cp -R "$SK_ROOT/skills/slack/systemd" "$dir/skills/slack/systemd"
   ln -sfn "$SK_ROOT/skills/orch" "$dir/skills/orch"
+  if [ -n "${SK_LINEAR_STUB:-}" ]; then
+    ln -sfn "$SK_LINEAR_STUB" "$dir/skills/linear"
+  fi
   if ! python3 - "$dir/skills/slack/scripts/lib/$2" "$3" "$4" <<'PY'
 import re, sys
 path, pattern, repl = sys.argv[1:4]
@@ -267,6 +270,43 @@ PY
   SK_BIN="$dir/skills/slack/scripts/slack"
 }
 sk_bin_reset() { SK_BIN="$SK_SLACK"; }
+
+# sk_tracker_fixture: local discovery stubs, never the developer's trackers.
+sk_tracker_fixture() {
+  mkdir -p "$SK_TMP/tracker/skills/slack" "$SK_TMP/tracker/skills/linear/scripts" "$SK_TMP/bin"
+  cp -R "$SK_ROOT/skills/slack/scripts" "$SK_TMP/tracker/skills/slack/scripts"
+  cp -R "$SK_ROOT/skills/slack/systemd" "$SK_TMP/tracker/skills/slack/systemd"
+  ln -s "$SK_ROOT/skills/orch" "$SK_TMP/tracker/skills/orch"
+  cp "$SK_ROOT/skills/slack/tests/lib/tracker_stub.py" "$SK_TMP/tracker/skills/linear/scripts/linear.sh"
+  cp "$SK_ROOT/skills/slack/tests/lib/tracker_stub.py" "$SK_TMP/bin/gh"
+  chmod +x "$SK_TMP/tracker/skills/linear/scripts/linear.sh" "$SK_TMP/bin/gh"
+  SK_LINEAR_STUB="$SK_TMP/tracker/skills/linear"
+  SK_SLACK="$SK_TMP/tracker/skills/slack/scripts/slack"
+  SK_BIN="$SK_SLACK"
+  PATH="$SK_TMP/bin:$PATH"
+}
+
+# sk_tracker_root NAME TEAM REPO: a root's declared tracker and read fixtures.
+sk_tracker_root() {
+  local root
+  root="$(sk_new_root "$1")" || return $?
+  if [ -n "$2" ]; then
+    printf '[env]\nLINEAR_TEAM = "%s"\n' "$2" > "$root/kendex.settings.toml"
+  fi
+  printf '{"urlKey":"workspace","keys":["HT","HTIO","KEN"]}\n' > "$root/linear.json"
+  if [ -n "$3" ]; then printf '{"nameWithOwner":"%s"}\n' "$3" > "$root/github.json"; fi
+  printf '%s' "$root"
+}
+
+# sk_markup ROOT MODE [TEXT] [FILE]: execute the real judge with an explicit env.
+sk_markup() {
+  RC=0
+  OUT="$(env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+    SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_LINEAR_DIR="$SK_LINEAR_STUB" \
+    PYTHONPATH="${SK_BIN%/*}/lib" python3 "$SK_ROOT/skills/slack/tests/lib/markup_probe.py" "$@" \
+    2>"$SK_TMP/err")" || RC=$?
+  ERR="$(cat "$SK_TMP/err")"
+}
 
 # sk_master_read ROOT COUNT — the file the master's watch writes after drain.
 sk_master_read() { printf '%s\n' "$2" > "$(sk_box "$1")/to-overseer.seen"; }

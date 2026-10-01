@@ -1,6 +1,7 @@
 #!/bin/bash
 # Linear GraphQL API - Team Operations
 # Usage: teams.sh <action> [options]
+# `keys` prints {urlKey: string, keys: string[]} for Slack's outbound linker.
 
 set -euo pipefail
 
@@ -15,6 +16,7 @@ Usage: teams.sh <action> [options]
 Actions:
   list    List teams
   get     Get a single team by ID or name
+  keys    Read the workspace URL key and all team keys
 
 List Options:
   --limit <n>           Max results (default: 50)
@@ -76,6 +78,12 @@ list_teams() {
             format_teams_list "$result"
             ;;
     esac
+}
+
+team_keys() {
+    local result
+    result=$(graphql_query 'query TeamKeys { organization { urlKey teams { nodes { key } } } }' '{}') || return $?
+    jq -e '{urlKey: .organization.urlKey, keys: [.organization.teams.nodes[].key]}' <<<"$result"
 }
 
 get_team() {
@@ -145,6 +153,9 @@ action="${1:-help}"
 shift || true
 
 case "$action" in
+    keys)
+        team_keys "$@"
+        ;;
     list)
         list_teams "$@"
         ;;

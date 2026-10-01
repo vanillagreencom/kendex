@@ -13,6 +13,7 @@ set -euo pipefail
 
 here="$(cd -- "$(dirname -- "$0")" && pwd -P)"
 orch="$here/../../orch"
+linear="$here/../../linear"
 
 refuse() { # KEY=VALUE LINES...
   printf 'slack: %s\n' "$1" >&2
@@ -37,12 +38,23 @@ fi
 # serving several roots takes every setting from here, once.
 # shellcheck source=../../orch/scripts/lib/kendex-env.sh
 source "$orch/scripts/lib/kendex-env.sh"
+tracker_team="${LINEAR_TEAM-}"
+tracker_team_set="${LINEAR_TEAM+set}"
 project="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
 if ! kendex_load_project_env "$project"; then
   refuse "settings-unreadable=$project" "a settings file of this checkout could not be loaded; the lines above say which"
+fi
+# Tracker discovery loads each root's settings through orch-env. Keep only a
+# caller's explicit team, not a team the launch checkout injected globally.
+if [ "$tracker_team_set" = set ]; then
+  export LINEAR_TEAM="$tracker_team"
+else
+  unset LINEAR_TEAM
 fi
 
 export PYTHONDONTWRITEBYTECODE=1
 SLACK_ORCH_DIR="$orch"
 export SLACK_ORCH_DIR
+SLACK_LINEAR_DIR="$linear"
+export SLACK_LINEAR_DIR
 exec python3 -B "$here/lib/main.py" "$@"

@@ -87,13 +87,13 @@ sk_run -- post --root "$ROOT" --text 'key xoxb-0123456789-abcdefghij'
 assert_eq "$RC" "0" "control: the text check gone, the token posts"
 sk_bin_reset
 
-sk_mutant body-arg verbs.py 'channel=channel, markdown_text=body, thread_ts=thread' 'channel=channel, text=body, thread_ts=thread'
+sk_mutant body-arg verbs.py 'channel=channel, \*\*\{body_arg: body\}, thread_ts=thread' 'channel=channel, text=body, thread_ts=thread'
 sk_run -- post --root "$ROOT" --text 'Lane 4 stalled.'
 MTS="${OUT#slack: posted=}"; MTS="${MTS%% *}"
 assert_eq "$RC=$(arg_of C001 "$MTS")" "0=text" "control: the body sent as text, Slack renders mrkdwn"
 sk_bin_reset
 
-sk_mutant length verbs.py '    markdown_checked\(body, "text"\)\n' ''
+sk_mutant length verbs.py 'markdown_checked\(body, "text"\)' 'markdown_checked("", "text")'
 sk_run -- post --root "$ROOT" --text "$LONG"
 assert_eq "$ERR1" "slack: slack-api-failed=chat.postMessage error=msg_blocks_too_long" \
   "control: the length check gone, a text past the cap reaches Slack, which refuses it"
