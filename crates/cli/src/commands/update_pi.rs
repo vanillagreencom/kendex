@@ -35,6 +35,12 @@ enum Status {
     },
 }
 
+/// Packages eligible for settlement, split at the process boundary.
+enum Settlement {
+    Copy(Status),
+    Process,
+}
+
 struct Row {
     name: String,
     version: Option<String>,
@@ -108,7 +114,27 @@ pub fn pending_settle(env: &Env, scope: &Scope) -> Result<Vec<String>, Box<dyn s
     let (root, other_roots) = pi_ext::paired_roots(env, &settings, scope);
     Ok(settleable(env, scope, &root, &other_roots)?
         .into_iter()
-        .map(|(name, _)| name)
+        .filter_map(|(name, settlement)| match settlement {
+            Settlement::Copy(_) => Some(name),
+            Settlement::Process => None,
+        })
+        .collect())
+}
+
+/// Packages left out only because refresh may not run an install process.
+/// All other settlement checks still apply, including completed bytes and origin.
+pub(super) fn deferred_settle(
+    env: &Env,
+    scope: &Scope,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let settings = settings::load(env)?;
+    let (root, other_roots) = pi_ext::paired_roots(env, &settings, scope);
+    Ok(settleable(env, scope, &root, &other_roots)?
+        .into_iter()
+        .filter_map(|(name, settlement)| match settlement {
+            Settlement::Copy(_) => None,
+            Settlement::Process => Some(name),
+        })
         .collect())
 }
 
@@ -136,10 +162,13 @@ pub fn settle_scope(
     let rows = settleable(env, scope, &root, &other_roots)?
         .into_iter()
         .filter(|(name, _)| names.contains(name))
-        .map(|(name, status)| Row {
-            version: installed_version(&root, &name),
-            name,
-            status,
+        .filter_map(|(name, settlement)| match settlement {
+            Settlement::Copy(status) => Some(Row {
+                version: installed_version(&root, &name),
+                name,
+                status,
+            }),
+            Settlement::Process => None,
         })
         .collect();
     let plan = ScopePlan {
@@ -156,7 +185,7 @@ pub fn settle_scope(
 /// What a settle may install, decided once and here: a declared package
 /// whose source resolves, which no other root Pi loads already registers
 /// under this or an earlier name, whose own root holds no copy under an
-/// earlier name either, and whose install runs no process; and either the
+/// earlier name either; and either the
 /// install record does not hold it at all, which is what a fresh clone
 /// carries, and its installed copy is absent or byte-equal to that source
 /// (`Missing`), or the record holds it from the same origin, its installed
@@ -178,7 +207,7 @@ fn settleable(
     scope: &Scope,
     root: &Path,
     other_roots: &[PathBuf],
-) -> Result<Vec<(String, Status)>, Box<dyn std::error::Error>> {
+) -> Result<Vec<(String, Settlement)>, Box<dyn std::error::Error>> {
     let Ok(ManifestFile::Current(manifest)) = manifest::load(&manifest::manifest_path(env, scope))
     else {
         return Ok(Vec::new());
@@ -247,9 +276,12 @@ fn settleable(
             }
             (Some(_), _) | (_, Err(_)) => continue,
         };
-        if pi_ext::declares_runtime_deps(&package.source_dir).is_ok_and(|deps| !deps) {
-            found.push((name.clone(), status));
-        }
+        let settlement = match pi_ext::declares_runtime_deps(&package.source_dir) {
+            Ok(false) => Settlement::Copy(status),
+            Ok(true) => Settlement::Process,
+            Err(_) => continue,
+        };
+        found.push((name.clone(), settlement));
     }
     Ok(found)
 }

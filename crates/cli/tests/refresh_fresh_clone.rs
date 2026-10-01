@@ -705,8 +705,8 @@ fn without_a_yes_a_fresh_clone_is_refused_before_anything_is_written() {
 /// A package declaring dependencies installs through `npm install`, and
 /// with it the package's own lifecycle scripts, which arrived with the
 /// fetch this refresh made. Refresh leaves that package to `update-pi`:
-/// no process runs, the package stays drift, and the run fails naming the
-/// verb that installs it.
+/// no process runs, and a notice names the verb that installs it without
+/// failing the refresh. Retaining the process-only drift must fail this row.
 #[cfg(unix)]
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -729,7 +729,8 @@ fn a_package_whose_install_runs_npm_is_left_to_update_pi() {
         &["refresh", "--scope", "project", "--yes", "--leave"],
     );
 
-    assert_eq!(refreshed.status.code(), Some(1), "{}", said(&refreshed));
+    assert_eq!(refreshed.status.code(), Some(0), "{}", said(&refreshed));
+    assert_eq!(said(&refreshed).matches("kendex update-pi").count(), 1);
     assert!(
         said(&refreshed).contains("update-pi"),
         "{}",
@@ -741,6 +742,197 @@ fn a_package_whose_install_runs_npm_is_left_to_update_pi() {
             .join(".pi/packages/pi-widgets/postinstall-ran")
             .exists()
     );
+}
+
+/// Installed packages with no defect; cases change source or install evidence.
+#[cfg(unix)]
+#[allow(clippy::unwrap_used)]
+fn process_packages(
+    home: &Path,
+    project: &Path,
+    scope: &kendex_core::model::Scope,
+    package: &str,
+) -> (PathBuf, PathBuf, PathBuf) {
+    use kendex_core::{env::Env, manifest, model::Scope, pi_ext};
+    let env = Env::host_rooted(home);
+    let (base, scope_name) = match scope {
+        Scope::Global => (home, "global"),
+        Scope::Project { root } => (root.as_path(), "project"),
+    };
+    write(
+        &manifest::manifest_path(&env, scope),
+        "schema = 6\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-widgets]\nsource = 'cat'\n[pi-extensions.pi-second]\nsource = 'cat'\n[pi-extensions.pi-copy]\nsource = 'cat'\n",
+    );
+    let catalog = base.join("catalog/pi-extensions");
+    for (name, package) in [
+        ("pi-widgets", package.to_owned()),
+        ("pi-second", package.replace("pi-widgets", "pi-second")),
+        ("pi-copy", NO_DEPENDENCIES.replace("pi-widgets", "pi-copy")),
+    ] {
+        write(&catalog.join(name).join("package.json"), &package);
+        write(
+            &catalog.join(name).join("index.js"),
+            "export const version = 1;\n",
+        );
+    }
+    let marker = home.join("npm-ran");
+    npm_that_marks(home, &marker);
+    let installed = kendex(home, project, &["update-pi", "--scope", scope_name]);
+    assert_eq!(installed.status.code(), Some(0), "{}", said(&installed));
+    assert!(marker.is_file(), "fixture npm must be reached");
+    fs::remove_file(&marker).unwrap();
+    (catalog, pi_ext::scope_root(&env, scope).unwrap(), marker)
+}
+
+#[cfg(unix)]
+#[allow(clippy::unwrap_used)]
+fn assert_copy_record(
+    env: &kendex_core::env::Env,
+    scope: &kendex_core::model::Scope,
+    catalog: &Path,
+    root: &Path,
+    defect: &str,
+) {
+    use kendex_core::{
+        lock,
+        model::{HarnessId, ItemKind},
+        pi_ext,
+    };
+    let record = lock::load(&lock::lock_path(env, scope)).unwrap();
+    let key = lock::entry_key(ItemKind::PiExtension, "pi-copy", HarnessId::Pi);
+    let copy = record.entries.get(&key).unwrap();
+    assert_eq!(
+        copy.rendered_hash,
+        pi_ext::package_hash(&root.join("packages/pi-copy")).unwrap(),
+        "{defect}: settle record was rolled back"
+    );
+    assert_eq!(
+        fs::read(root.join("packages/pi-copy/index.js")).unwrap(),
+        fs::read(catalog.join("pi-copy/index.js")).unwrap(),
+        "{defect}"
+    );
+}
+
+/// npm packages produced by catalogs can have stale sources, edited installs,
+/// rebound origins, incomplete records or unreadable metadata. Each row keeps
+/// a copy-only package beside them to prove settlement retains its record.
+/// Must-fail controls: classify process installs as copy installs (npm marker),
+/// retain their drift (notice rows), or bypass each eligibility check (refusal
+/// rows). The two-package rows also reject a notice collapsed across packages.
+#[cfg(unix)]
+#[test]
+fn process_only_pi_drift_is_deferred_but_other_pi_drift_fails() {
+    let rows = [
+        ("source", "project", true),
+        ("source", "global", true),
+        ("optional", "project", true),
+        ("process-only", "project", true),
+        ("edited", "project", false),
+        ("origin", "project", false),
+        ("metadata", "project", false),
+        ("completion", "project", false),
+        ("record-only", "project", false),
+    ];
+    for (defect, scope_name, deferred) in rows {
+        assert_process_pi_drift(defect, scope_name, deferred);
+    }
+}
+
+#[cfg(unix)]
+#[allow(clippy::unwrap_used)]
+fn assert_process_pi_drift(defect: &str, scope_name: &str, deferred: bool) {
+    use kendex_core::{
+        env::Env,
+        lock,
+        model::{HarnessId, ItemKind, Scope},
+    };
+
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home.join("project");
+    fs::create_dir_all(&project).unwrap();
+    let env = Env::host_rooted(&home);
+    let scope = match scope_name {
+        "global" => Scope::Global,
+        "project" => Scope::Project {
+            root: project.clone(),
+        },
+        _ => unreachable!(),
+    };
+    let package = if defect == "optional" {
+        WITH_A_DEPENDENCY.replace("\"dependencies\"", "\"optionalDependencies\"")
+    } else {
+        WITH_A_DEPENDENCY.to_owned()
+    };
+    let (catalog, root, marker) = process_packages(&home, &project, &scope, &package);
+    let destination = root.join("packages/pi-widgets");
+    for name in ["pi-widgets", "pi-second", "pi-copy"] {
+        if !(defect == "record-only" && name == "pi-widgets"
+            || defect == "process-only" && name == "pi-copy")
+        {
+            write(
+                &catalog.join(name).join("index.js"),
+                "export const version = 2;\n",
+            );
+        }
+    }
+    let lock_path = lock::lock_path(&env, &scope);
+    let key = lock::entry_key(ItemKind::PiExtension, "pi-widgets", HarnessId::Pi);
+    match defect {
+        "source" | "optional" | "process-only" => {}
+        "edited" => write(
+            &destination.join("index.js"),
+            "export const local = true;\n",
+        ),
+        "metadata" => write(&catalog.join("pi-widgets/package.json"), "{not json"),
+        "origin" | "completion" | "record-only" => {
+            let mut record = lock::load(&lock_path).unwrap();
+            let entry = record.entries.get_mut(&key).unwrap();
+            match defect {
+                "origin" => entry.source_repo = "https://example.com/other.git".to_owned(),
+                "completion" => entry.rendered_hash = None,
+                "record-only" => entry.rendered_hash = Some("wrong-completed-hash".to_owned()),
+                _ => unreachable!(),
+            }
+            lock::save(&lock_path, &record).unwrap();
+        }
+        _ => unreachable!(),
+    }
+    let before = fs::read(destination.join("index.js")).unwrap();
+    let refreshed = kendex(
+        &home,
+        &project,
+        &["refresh", "--scope", scope_name, "--yes", "--leave"],
+    );
+    let printed = said(&refreshed);
+    assert_eq!(
+        refreshed.status.code(),
+        Some(if deferred { 0 } else { 1 }),
+        "{defect}/{scope_name}: {printed}"
+    );
+    assert_eq!(
+        printed.matches("kendex update-pi").count(),
+        if deferred { 2 } else { 1 },
+        "{defect}/{scope_name}: {printed}"
+    );
+    let notices: Vec<_> = printed
+        .lines()
+        .filter(|line| line.contains("kendex update-pi"))
+        .collect();
+    for (name, count) in [("pi-widgets:", usize::from(deferred)), ("pi-second:", 1)] {
+        assert_eq!(
+            notices.iter().filter(|line| line.contains(name)).count(),
+            count,
+            "{defect}: {printed}"
+        );
+    }
+    assert!(!marker.exists(), "{defect}: refresh ran npm");
+    assert_eq!(
+        fs::read(destination.join("index.js")).unwrap(),
+        before,
+        "{defect}"
+    );
+    assert_copy_record(&env, &scope, &catalog, &root, defect);
 }
 
 /// A catalog declared beside the project (`../catalog`) resolves to a

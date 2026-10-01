@@ -331,6 +331,30 @@ fn print_refusal_context(env: &Env, prepared: &[PreparedScope], verbose: bool) {
     }
 }
 
+/// Remove only dependency-only Pi drift from this verb's failure report.
+/// Settlement owns eligibility; the install plan and durable record stay intact.
+fn defer_process_installs(
+    env: &Env,
+    scope: &kendex_core::model::Scope,
+    report: &mut EngineReport,
+) -> CliResult {
+    let deferred = super::update_pi::deferred_settle(env, scope)?;
+    report.drift.retain(|row| {
+        let defer = row.kind == kendex_core::model::ItemKind::PiExtension
+            && row.harness == kendex_core::model::HarnessId::Pi
+            && row.state == kendex_core::engine::DriftState::Stale
+            && deferred.contains(&row.name);
+        if defer {
+            ui::report::notice(&format!(
+                "{}: install needs a process; use kendex update-pi to settle it",
+                row.name
+            ));
+        }
+        !defer
+    });
+    Ok(())
+}
+
 /// One scope's write: the yes it needs, the settle that yes covers, and
 /// the plan applied after it.
 ///
@@ -346,7 +370,7 @@ fn write_scope(
     pending: &[String],
     options: &PlanOptions,
     yes: bool,
-    report_after_settle: impl FnOnce(&mut kendex_core::engine::EngineReport),
+    report_after_settle: impl FnOnce(&mut kendex_core::engine::EngineReport) -> CliResult,
 ) -> Result<Written, Box<dyn std::error::Error>> {
     if pending.is_empty() {
         let count = match (report.plan.is_empty(), report.set_changes.is_empty()) {
@@ -379,7 +403,7 @@ fn write_scope(
     };
     // The carrier can make hooks enforceable. Show their diagnostics
     // before confirming the final writes, using this plan for the ledger.
-    report_after_settle(&mut after);
+    report_after_settle(&mut after)?;
     let approved: std::collections::BTreeSet<String> =
         report.plan.ops.iter().map(|op| op.line()).collect();
     let added_changes: Vec<_> = after
@@ -455,7 +479,7 @@ pub fn run(
         // every other catalog still refreshes.
         print_synced(&prepared.synced);
         failures.extend(prepared.synced.failures.iter().cloned());
-        let (report, pending) = match prepared.planned {
+        let (mut report, pending) = match prepared.planned {
             Ok(planned) => planned,
             Err(error) => {
                 failures.push(error);
@@ -469,7 +493,7 @@ pub fn run(
         // read here, to be shown before the yes that lets it write. The
         // diagnostics come from the plan derived after settlement, so a
         // package this run settles never prints a stale update-pi remedy.
-        // A package it would not settle stays drift and fails the run.
+        // Only process-only deferrals become notices; every other Pi drift fails.
         // The record refusing to read is what stops the scope here.
         let mut attention = Attention::default();
         let lock = load_lock(&lock_path(env, &scope))?;
@@ -478,6 +502,7 @@ pub fn run(
         // carrying a refusal is never passed over. A scope that settles is
         // reported off the plan derived after its settle.
         if pending.is_empty() {
+            defer_process_installs(env, &scope, &mut report)?;
             attention = print_attention(env, &report, listing(verbose));
             let reported = refresh_failures(&report);
             let failed = !prepared.synced.failures.is_empty() || !reported.is_empty();
@@ -507,7 +532,9 @@ pub fn run(
             yes,
             |after| {
                 prepared.synced.suppress_busy_pending(&mut after.notes);
+                defer_process_installs(env, &scope, after)?;
                 attention = print_attention(env, after, listing(verbose));
+                Ok(())
             },
         ) {
             Ok(written) => {

@@ -298,7 +298,10 @@ fn an_npm_failure_records_only_the_sibling_whose_install_completed() {
                 "{updates:?}"
             );
             let refresh = kendex(&root, &project, &["refresh", "--scope", "project", "--yes"]);
-            assert!(!refresh.status.success(), "{refresh:?}");
+            // An unrecorded matching copy is eligible but needs npm. Recorded
+            // incomplete installs still fail. Retaining process-only drift is
+            // the must-fail control for the first-install row.
+            assert_eq!(refresh.status.success(), !upgrade, "{refresh:?}");
             assert_eq!(
                 kendex_core::lock::load(&lock_path)
                     .unwrap()
