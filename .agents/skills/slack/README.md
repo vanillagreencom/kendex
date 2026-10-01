@@ -29,15 +29,15 @@ Requires Python 3.8+ and the orch skill, which the install adds.
 - Each time the connection opens, the relay reads each channel's history, so a message sent while it was stopped or disconnected still lands. A dropped connection is opened again at once.
 - Every `SLACK_POLL_SECONDS` the relay reads each checkout's mailbox for posts and receipt marks.
 - An owner's message reaches the overseer through the checkout's `lane-mail`, keyed by the Slack message id, so the relay never carries a message twice.
-- An owner's text reaches the overseer as typed: Slack's escapes, links, mentions, channel names and dates read back as plain text, and emoji stay `:name:`.
-- Each file on an owner's message is downloaded with the bot token to `tmp/slack/files/<file id>-<name>` in the checkout, directory mode 700, file mode 600. The message reaches the overseer with one line per file after its text: the saved path, or `file <id> not fetched: <why>`, such as `HTTP 403` or a download cut short. A failed download never holds the message back.
+- Owner text arrives as plain text. Slack links, mentions, channel names and dates expand; emoji stay `:name:`.
+- Owner files go to `tmp/slack/files/`, readable only by the checkout's user. The overseer receives the text and each saved path, or `file <id> not fetched: <why>`. A failed download never holds the message back.
 - Each delivered owner message gets an :eyes: reaction. Once the overseer's mailbox read passes a directive, the relay swaps its mark for :white_check_mark:. Neither mark posts a message. A mark Slack refuses is made again on the next poll.
 - The relay posts new owner-bound mailbox envelopes: questions with choices, recommendations and deadlines, threaded notices, and uploaded reports. It skips envelopes older than `SLACK_THREAD_DAYS`.
 - Posts get an `inflight` record before sending. After a stop or lost response, they stay `unknown` in `listen --status`, never repeated. Explicit refusals retry after a token fix if needed.
-- Catch-up reads active threads under old parents. Temporary refusals retry next poll. `thread-read-failed` names the thread and envelope; other threads and posts continue. Deleted questions close in the relay, not the mailbox. [Journal](schemas/journal.md) defines the records.
+- Catch-up reads active threads under old parents. Temporary refusals retry next poll. `thread-read-failed` names the thread and envelope; other threads and posts continue. Deleted questions close in the relay, not the mailbox. Later answers and referenced notices go to the channel. [Journal](schemas/journal.md) defines the records.
 - The relay's first run reads Slack from the moment of the binding and the mailbox from its newest envelope, so neither side's past is replayed. Open questions are posted whatever their age inside `SLACK_THREAD_DAYS`.
 - A master session can hold a root's mailbox posts. Owner messages and relay replies still pass. [The master hold](#the-master-hold) defines the hold and resume.
-- The relay compacts its journal daily, keeping active threads. Run `slack compact` only while the relay is stopped. [Journal](schemas/journal.md) defines retention.
+- The relay compacts its journal daily. Run `slack compact` only while the relay is stopped.
 
 ## Slack app
 
@@ -123,7 +123,7 @@ A question answered in the overseer's chat shows in its Slack thread as "Answere
 - The relay reads and writes one channel per checkout, the one `setup` bound. `setup --take` binds a private channel only, and a relay given two checkouts bound to one channel refuses to start. `post --channel` reaches another channel only from the command line.
 - Every text and file leaving the host passes the secret-value pattern the orch skill ships. A match is refused and never sent, and the report stays on disk.
 - The binding stores channel and owner identifiers, names and the binding time, not message text. The journal stores delivery identifiers and parent context, including an excerpt of the parent's first 300 characters with newlines collapsed.
-- A file an owner sends is kept under `tmp/slack/files/`, readable by the checkout's user alone. Only that user removes it.
+- Owner files stay in `tmp/slack/files/` until the checkout's user removes them.
 - Anyone in the channel reads what the overseer posts. Only the owners steer.
 
 ## Settings

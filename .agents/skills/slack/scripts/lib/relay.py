@@ -686,7 +686,7 @@ class RootRelay:
 
     def post_notice(self, envelope: Dict) -> None:
         ref = envelope.get("ref")
-        thread_ts = self.state.by_envelope.get(str(ref)) if ref else None
+        thread_ts = self.state.post_thread(str(ref)) if ref else None
         attach = str(envelope.get("attach") or "")
         landed = self._send(envelope, "notice", envelope.get("text", ""), thread_ts, attach)
         if landed is None:
@@ -700,16 +700,19 @@ class RootRelay:
 
     def post_answer(self, envelope: Dict) -> None:
         ask_id = str(envelope.get("re", ""))
-        thread_ts = self.state.by_envelope.get(ask_id)
-        if thread_ts is None:
+        if ask_id not in self.state.by_envelope:
             self.skipped.add(str(envelope["id"]))
             return
+        thread_ts = self.state.post_thread(ask_id)
         if envelope.get("by") == "default":
             text = f"No answer by the deadline: {envelope.get('text', '')} stands."
         else:
             text = f"Answered in the chat: {envelope.get('text', '')}"
-        if self._send(envelope, "answer", text, thread_ts) is not None:
-            self._out(envelope, "answer", "resolved", thread=thread_ts)
+        landed = self._send(envelope, "answer", text, thread_ts)
+        if landed is not None:
+            fields = {} if thread_ts else {"parent": self.parent_of(
+                {"ts": landed, "text": text}, "bot", str(envelope["id"]))}
+            self._out(envelope, "answer", "resolved", thread=thread_ts or landed, **fields)
 
 
     # -- the record --status reads --------------------------------------------

@@ -103,8 +103,10 @@ for mode in normal control; do
 done
 
 # A deleted open ask cannot block a healthy thread or same-poll outbound mail.
-for mode in normal control; do
-  ROOT="$(sk_new_root "missing-$mode")"
+# lane-mail emits default/text answers and notices that reference the ask.
+for mode in normal control target-control; do
+while read -r answer; do
+  ROOT="$(sk_new_root "missing-$mode-$answer")"
   sk_bind "$ROOT"
   CH="$(sk_channel "$ROOT")"
   sk_poll "$ROOT"
@@ -115,14 +117,16 @@ for mode in normal control; do
   sk_ctl /_test/delete "{\"channel\":\"$CH\",\"ts\":\"$ASK_TS\"}" >/dev/null
   GOOD="$(sk_inject "$CH" U001 'Healthy parent.')"
   REPLY="$(sk_inject "$CH" U001 'Healthy reply.' "$GOOD")"
-  sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text "missing-$mode" "Outbound $mode.")" >/dev/null
+  sk_lm "$ROOT" notice --item overseer --to owner --ref "$ID" --file "$(sk_text "missing-$mode" "Outbound $mode.")" >/dev/null
   if [ "$mode" = control ]; then
     sk_mutant thread-refusal relay.py '        notice\("thread-read-failed",' '        raise err\n        notice("thread-read-failed",'
+  elif [ "$mode" = target-control ]; then
+    sk_mutant missing-target store.py 'return None if self.threads\[thread_ts\].missing else thread_ts' 'return thread_ts if self.threads[thread_ts].missing else thread_ts'
   fi
   sk_recovery "$ROOT" poll
   GOT="$(printf '%s\n' "$OUT" | tail -n 1 | jq -r .caught_up)|$(asks "$CH" "Outbound $mode.")"
-  if [ "$mode" = normal ]; then
-    assert_eq "$GOT" 'true|1' 'a deleted open ask leaves catch-up complete and outbound posts on the same poll'
+  if [ "$mode" != control ]; then
+    assert_eq "$GOT" 'true|1' "$mode/$answer: a deleted open ask leaves catch-up complete and outbound posts on the same poll"
     assert_has "$OUT" "slack: thread-read-failed=ts=$ASK_TS id=$ID reason=slack-api-failed" 'the per-thread failure line names its thread and envelope'
     assert_eq "$(jq -s --arg id "$ID" '[.[] | select(.t == "resolved" and .id == $id and .reason == "thread_not_found")] | length' "$(sk_journal "$ROOT")")|$(sk_lm "$ROOT" pending --item overseer --to owner | jq -r .id)" "1|$ID" 'only the journal thread closes; the mailbox ask stays open'
     assert_eq "$(jq -s --arg d "$CH:$REPLY" '[.[] | select(.delivery_id == $d)] | length' "$(sk_box "$ROOT")/to-lane.jsonl")" '1' 'another thread reply still lands'
@@ -130,10 +134,29 @@ for mode in normal control; do
     sk_poll "$ROOT"
     assert_lacks "$OUT" "ts=$ASK_TS" 'restart skips the deleted ask thread'
     assert_eq "$(jq -s --arg id "$ID" '[.[] | select(.t == "resolved" and .id == $id)] | length' "$(sk_journal "$ROOT")")" '1' 'restart does not close the missing thread again'
+    case "$answer" in
+      default) sk_lm "$ROOT" resolve --item overseer --id "$ID" --default >/dev/null || exit 1 ;;
+      text) sk_lm "$ROOT" resolve --item overseer --id "$ID" --text "$(sk_text missing-answer 'yes, in chat')" >/dev/null || exit 1 ;;
+    esac
+    sk_poll "$ROOT"
+    GOT="$RC|$(sk_state "[.messages.${CH}[] | select(.bot_id != null) | (.thread_ts // \"\")] | @json")"
+    if [ "$mode" = normal ]; then
+      assert_eq "$GOT" '0|["",""]' "$answer: the referenced notice and later answer both post to the channel, never to the deleted ask"
+      LAST_TS="$(sk_state ".messages.${CH}[-1].ts")"
+      assert_eq "$(jq -sr '[.[] | select(.t == "out" and .kind == "answer" and .state == "resolved")][-1].thread' "$(sk_journal "$ROOT")")" "$LAST_TS" "$answer: the answer outcome records its new channel parent"
+      sk_poll "$ROOT"
+      assert_eq "$(sk_state "[.messages.${CH}[] | select(.bot_id != null)] | length")|$(sk_lm "$ROOT" pending --item overseer --to owner | wc -l | tr -d ' ')" '2|0' "$answer: restart repeats neither post and mailbox resolution closes the ask"
+    else
+      sk_assert_red "$GOT" '0|["",""]' "$answer: allowing missing outbound targets breaks the actual notice and answer destinations"
+    fi
   else
     sk_assert_red "$GOT" 'true|1' 'control: re-raising the per-thread refusal breaks same-poll outbound'
   fi
   sk_bin_reset
+done <<'ROWS'
+default
+text
+ROWS
 done
 
 # A temporary conversations.replies refusal leaves catch-up due on the same

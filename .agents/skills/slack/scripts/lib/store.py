@@ -171,6 +171,14 @@ class State:
     directives: Set[str] = field(default_factory=set)
     marks: Dict[str, str] = field(default_factory=dict)
 
+    def post_thread(self, envelope_id: str) -> Optional[str]:
+        """Select an outbound thread without discarding its journal provenance.
+        A known-missing thread sends later posts to the channel instead."""
+        thread_ts = self.by_envelope.get(envelope_id)
+        if thread_ts is None:
+            return None
+        return None if self.threads[thread_ts].missing else thread_ts
+
     def apply(self, line: Dict) -> None:
         kind = line.get("t")
         if kind == "seen":
