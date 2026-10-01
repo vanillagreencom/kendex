@@ -48,7 +48,7 @@ sk_poll "$ROOT"
 ASK_TS="$(sk_state ".messages.${CH}[] | select(.text | contains(\"Proceed?\")) | .ts")"
 ANSWER="$(sk_inject "$CH" U001 yes "$ASK_TS")"
 sk_event "$ROOT" "$CH" "$ANSWER"
-assert_eq "$(jq -r --arg d "$CH:$ANSWER" 'select(.delivery_id == $d) | [.kind, has("thread_ts"), has("parent")] | @json' "$(sk_box "$ROOT")/to-lane.jsonl")" '["answer",false,false]' "an open ask still resolves without a pointer"
+assert_eq "$(jq -r --arg d "$CH:$ANSWER" 'select(.delivery_id == $d) | [.kind, has("thread_ts"), has("parent")] | @json' "$(sk_box "$ROOT")/to-lane.jsonl")" '["answer",false,false]' "an open ask answer carries no pointer"
 # Retained relay roots have envelopes before their parent cache is populated.
 mkdir -p "$ROOT/tmp/progress-reports"
 printf '# Report\n' > "$ROOT/tmp/progress-reports/replay.md"
@@ -58,6 +58,7 @@ sk_poll "$ROOT"
 sk_poll "$ROOT"
 REPORT_TS="$(jq -r 'select(.t == "bound") | .ts' "$(sk_journal "$ROOT")")"
 ASK_ID="$(jq -r 'select(.kind == "ask") | .id' "$(sk_box "$ROOT")/to-overseer.jsonl")"
+sk_lm "$ROOT" resolve --item overseer --id "$ASK_ID" >/dev/null || exit 1
 for root in "$POST" "$ASK_TS" "$REPORT_TS" "$TOP"; do
   case "$root" in "$POST") envelope="$NOTICE" ;; "$ASK_TS") envelope="$ASK_ID" ;; "$REPORT_TS") envelope="$REPORT" ;; "$TOP") envelope="" ;; esac
   jq -c --arg ts "$root" 'if (.t == "out" and .thread == $ts) or (.t == "bound" and .ts == $ts) then del(.parent) else . end' "$(sk_journal "$ROOT")" > "$SK_TMP/legacy-journal"
