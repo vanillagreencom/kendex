@@ -480,7 +480,14 @@ fn no_default_subscription_anywhere_is_a_typed_error_never_a_guess() {
 fn catalog_aliases_never_use_reserved_source_names() {
     use kendex_core::manifest::{self, ItemDecl, SourceDecl};
     use kendex_core::model::{HarnessId, ItemKind};
-    for reserved in ["builtin", "local", "in-place"] {
+    for (reserved, project) in [
+        ("builtin", false),
+        ("builtin", true),
+        ("local", false),
+        ("local", true),
+        ("in-place", false),
+        ("in-place", true),
+    ] {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let env = Env::fake(&home, FakeOs::Linux);
@@ -494,7 +501,14 @@ fn catalog_aliases_never_use_reserved_source_names() {
         )
         .unwrap();
         let reference = catalog.to_str().unwrap();
-        let scope = Scope::Global;
+        fs::create_dir_all(home.join("project/.github")).unwrap();
+        let scope = if project {
+            Scope::Project {
+                root: home.join("project"),
+            }
+        } else {
+            Scope::Global
+        };
         let path = manifest::manifest_path(&env, &scope);
         let subscribed = source_ops::subscribe(&env, &scope, reference, None).unwrap();
         assert_eq!(subscribed.name, format!("{reserved}-2"));
@@ -529,8 +543,22 @@ fn catalog_aliases_never_use_reserved_source_names() {
                 .any(|entry| entry.kind == ItemKind::Skill && entry.name == "deploy")
         );
 
-        // Handwritten manifests can still introduce a conflicting reserved alias.
+        // add::ensure_source and subscribe::auto_alias used the catalog's basename.
+        // Reconstruct their saved builtin declaration and record without rebinding provenance.
+        let lock_path = kendex_core::lock::lock_path(&env, &scope);
+        let mut record = kendex_core::lock::load(&lock_path).unwrap();
+        if reserved == "builtin" {
+            for entry in record.entries.values_mut() {
+                assert_eq!(entry.source, "builtin-2");
+                entry.source = "builtin".into();
+            }
+            if let Some(revision) = record.sources.remove("builtin-2") {
+                record.sources.insert("builtin".into(), revision);
+            }
+            kendex_core::lock::save(&lock_path, &record).unwrap();
+        }
         let mut conflict = saved;
+        conflict.sources.remove(&format!("{reserved}-2"));
         conflict.sources.insert(
             reserved.into(),
             SourceDecl {
@@ -548,5 +576,10 @@ fn catalog_aliases_never_use_reserved_source_names() {
             matches!(ops::add(&env, &scope, &ops::AddRequest { source: Some(reserved.into()), ..request }), Err(CoreError::SourceRefInvalid { reference, .. }) if reference == reserved)
         );
         assert_eq!(fs::read(&path).unwrap(), before);
+        if reserved == "builtin" {
+            assert!(matches!(kendex_core::engine::audit(&env, &scope),
+                Err(CoreError::SourceRefInvalid { reference, .. }) if reference == "builtin"));
+            assert_eq!(kendex_core::lock::load(&lock_path).unwrap(), record);
+        }
     }
 }

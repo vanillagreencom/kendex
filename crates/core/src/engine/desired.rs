@@ -7,7 +7,7 @@ use crate::env::Env;
 use crate::error::Result;
 use crate::hash::{hash_bytes, hash_files};
 use crate::lock::Lock;
-use crate::manifest::{ItemDecl, Manifest, Method};
+use crate::manifest::{self, ItemDecl, Manifest, Method};
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::{SourceConfig, SourceState, find_item, list_items};
 use crate::source_read::SealedSource;
@@ -465,6 +465,9 @@ fn compute(
     hold_upstream_skills: bool,
     held: Option<&hold::HeldPins>,
 ) -> Result<DesiredState> {
+    if manifest.sources.contains_key(manifest::BUILTIN_SOURCE_NAME) {
+        manifest::check_source_alias(manifest::BUILTIN_SOURCE_NAME)?;
+    }
     let mut state = DesiredState {
         agent_names: crate::source::agent_names::Uses::new(manifest),
         ..DesiredState::default()

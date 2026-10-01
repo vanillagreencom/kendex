@@ -124,10 +124,11 @@ fn cli_builtin_disable_enable_verify_and_remove() {
 
 #[test]
 fn cli_builtin_legacy_settings_refuse_verify_and_toggle() {
+    use kendex_core::{lock, manifest};
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     fs::create_dir_all(home.join(".copilot")).unwrap();
-    let path = home.join(".copilot/settings.json");
+    let settings_path = home.join(".copilot/settings.json");
     let out = kendex(
         &home,
         &["disable", "github-mcp-server", "--scope", "global", "--yes"],
@@ -135,20 +136,132 @@ fn cli_builtin_legacy_settings_refuse_verify_and_toggle() {
     assert!(out.status.success(), "{out:?}");
     let legacy = home.join(".copilot/config.json");
     fs::write(&legacy, "{\"theme\":\"dark\"}").unwrap();
-    fs::remove_file(&path).unwrap();
-    assert!(
-        !kendex(&home, &["verify", "github-mcp-server", "--scope", "global"])
-            .status
-            .success()
-    );
-    for verb in ["enable", "disable"] {
-        let out = kendex(
-            &home,
-            &[verb, "github-mcp-server", "--scope", "global", "--yes"],
-        );
-        assert!(!out.status.success(), "{out:?}");
-        assert!(!path.exists());
-        assert_eq!(fs::read_to_string(&legacy).unwrap(), "{\"theme\":\"dark\"}");
+    fs::remove_file(&settings_path).unwrap();
+    let env = Env::host_rooted(&home);
+    let watched = [
+        manifest::manifest_path(&env, &Scope::Global),
+        lock::lock_path(&env, &Scope::Global),
+        legacy,
+    ];
+    let before: Vec<_> = watched
+        .iter()
+        .map(|path| (path, fs::read(path).unwrap()))
+        .collect();
+    for verb in ["verify", "enable", "disable"] {
+        let mut args = vec![verb, "github-mcp-server", "--scope", "global"];
+        if verb != "verify" {
+            args.push("--yes");
+        }
+        let out = kendex(&home, &args);
+        assert_eq!(out.status.code(), Some(1), "{verb}: {out:?}");
+        for (path, bytes) in &before {
+            assert_eq!(&fs::read(path).unwrap(), bytes, "{verb}: {path:?}");
+        }
+        assert!(!settings_path.exists());
+    }
+}
+
+#[test]
+fn cli_builtin_legacy_catalog_refuses_verify_toggle_and_remove() {
+    use kendex_core::{apply, engine::ops, lock, manifest};
+    for project in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        fs::create_dir_all(home.join(".copilot")).unwrap();
+        fs::create_dir_all(home.join(".github/copilot")).unwrap();
+        let env = Env::host_rooted(&home);
+        let scope = if project {
+            Scope::Project { root: home.clone() }
+        } else {
+            Scope::Global
+        };
+        let scope_arg = if project { "project" } else { "global" };
+        let path = manifest::manifest_path(&env, &scope);
+        let lock_path = lock::lock_path(&env, &scope);
+        let settings_path = kendex_core::harness::copilot::settings::settings_file(&env, &scope);
+        let names = ["deploy", "githubiq", "github-mcp-server"];
+        let source = home.join("builtin");
+        for (relative, body) in [
+            ("kendex.toml", "is_source_catalog = true\n"),
+            (
+                "skills/deploy/SKILL.md",
+                "---\nname: deploy\ndescription: Ship\n---\nSteps.\n",
+            ),
+            ("mcp/githubiq.toml", "command = \"custom\"\n"),
+            ("mcp/github-mcp-server.toml", "command = \"custom\"\n"),
+        ] {
+            let file = source.join(relative);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, body).unwrap();
+        }
+        let report = ops::add(
+            &env,
+            &scope,
+            &ops::AddRequest {
+                source: Some(source.to_str().unwrap().into()),
+                skills: vec!["deploy".into()],
+                mcp_servers: names[1..].iter().map(|name| (*name).into()).collect(),
+                harnesses: Some(vec![HarnessId::Copilot]),
+                method: Some(manifest::Method::Copy),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        apply::execute(&env, &report.plan).unwrap();
+        fs::write(
+            &settings_path,
+            "{\"theme\":\"dark\",\"disabledMcpServers\":[\"githubiq\",\"github-mcp-server\"]}\n",
+        )
+        .unwrap();
+
+        let verified = kendex(&home, &["verify", "--scope", scope_arg]);
+        assert_eq!(verified.status.code(), Some(0), "{verified:?}");
+        let record = lock::load(&lock_path).unwrap();
+        let skill =
+            &record.entries[&lock::entry_key(ItemKind::Skill, "deploy", HarnessId::Copilot)];
+        fs::remove_file(skill.emitted.as_ref().unwrap().paths[0].join("SKILL.md")).unwrap();
+        let missing = kendex(&home, &["verify", "deploy", "--scope", scope_arg]);
+        assert_eq!(missing.status.code(), Some(1), "{missing:?}");
+        // The shipped basename allocators saved the catalog alias in both files.
+        // Only alias tokens change; recorded positions and catalog provenance stay intact.
+        let aliases = 3 + usize::from(record.sources.contains_key("builtin-2"));
+        for (file, count) in [(&path, 4), (&lock_path, aliases)] {
+            let before = fs::read_to_string(file).unwrap();
+            assert_eq!(before.matches("builtin-2").count(), count);
+            let legacy = before.replace("builtin-2", "builtin");
+            assert_ne!(legacy, before);
+            fs::write(file, legacy).unwrap();
+        }
+        let watched = [
+            path,
+            lock_path,
+            settings_path,
+            if project {
+                home.join(".github/mcp.json")
+            } else {
+                home.join(".copilot/mcp-config.json")
+            },
+        ];
+        let before: Vec<_> = watched
+            .iter()
+            .map(|path| (path, fs::read(path).unwrap()))
+            .collect();
+        for name in names {
+            for verb in ["verify", "enable", "disable", "remove"] {
+                let mut args = vec![verb, name, "--scope", scope_arg];
+                if verb == "enable" || verb == "disable" {
+                    args.push("--yes");
+                }
+                if verb == "remove" {
+                    args.push("--no-sweep");
+                }
+                let out = kendex(&home, &args);
+                assert_eq!(out.status.code(), Some(1), "{name} {verb}: {out:?}");
+                for (path, bytes) in &before {
+                    assert_eq!(&fs::read(path).unwrap(), bytes, "{verb}: {path:?}");
+                }
+            }
+        }
     }
 }
 
