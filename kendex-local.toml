@@ -481,6 +481,16 @@ harnesses = [
     "copilot",
 ]
 
+[skills.xcode-run]
+source = "."
+harnesses = [
+    "claude",
+    "codex",
+    "pi",
+    "copilot",
+]
+enabled = true
+
 [hooks.block-bare-cd]
 source = "."
 harnesses = [

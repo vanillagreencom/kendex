@@ -1,0 +1,90 @@
+name: Mac run
+
+"on":
+  workflow_dispatch:
+    inputs:
+      step:
+        description: Operation to run
+        type: choice
+        required: true
+        default: build
+        options:
+          - build
+          - test
+          - screenshots
+
+permissions:
+  contents: read
+
+env:
+  XCODE_SCHEME: App
+  XCODE_DESTINATION: platform=iOS Simulator,name=iPhone 16,OS=latest
+
+jobs:
+  mac-run:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run selected operation
+        shell: bash
+        env:
+          STEP: ${{ inputs.step }}
+        run: |
+          set -euo pipefail
+          mkdir -p logs screenshots
+          {
+            case "$STEP" in
+              build|test)
+                xcodebuild -scheme "$XCODE_SCHEME" -destination "$XCODE_DESTINATION" \
+                  "$STEP" CODE_SIGNING_ALLOWED=NO
+                ;;
+              screenshots)
+                xcodebuild -scheme "$XCODE_SCHEME" -destination "$XCODE_DESTINATION" \
+                  -derivedDataPath "$RUNNER_TEMP/mac-run" -showBuildSettings -json \
+                  CODE_SIGNING_ALLOWED=NO | tee "$RUNNER_TEMP/mac-run-settings.json"
+                product="$(python3 - "$RUNNER_TEMP/mac-run-settings.json" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          with open(sys.argv[1]) as source:
+              targets = json.load(source)
+          applications = [target["buildSettings"] for target in targets
+                          if target["buildSettings"].get("PRODUCT_TYPE") == "com.apple.product-type.application"]
+          if len(applications) != 1:
+              raise SystemExit(f"mac-run: application-targets={len(applications)}\nSelect a scheme with one simulator app.")
+          settings = applications[0]
+          print(settings["TARGET_DEVICE_IDENTIFIER"])
+          print(Path(settings["TARGET_BUILD_DIR"]) / settings["FULL_PRODUCT_NAME"])
+          PY
+                )"
+                simulator="${product%%$'\n'*}"
+                app="${product#*$'\n'}"
+                # bootstatus -b boots the selected device if it is not running.
+                xcrun simctl bootstatus "$simulator" -b
+                xcodebuild -scheme "$XCODE_SCHEME" -destination "$XCODE_DESTINATION" \
+                  -derivedDataPath "$RUNNER_TEMP/mac-run" build CODE_SIGNING_ALLOWED=NO
+                bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")"
+                xcrun simctl install "$simulator" "$app"
+                xcrun simctl launch "$simulator" "$bundle_id"
+                # launch returns before the first frame; allow the launch view to draw.
+                sleep 5
+                xcrun simctl io booted screenshot screenshots/launch.png
+                ;;
+              *)
+                printf 'mac-run: step=%s\n' "$STEP" >&2
+                exit 2
+                ;;
+            esac
+          } 2>&1 | tee "logs/$STEP.log"
+      - name: Upload logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: mac-run
+          path: |
+            logs/
+            screenshots/
+          if-no-files-found: error
