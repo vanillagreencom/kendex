@@ -218,7 +218,7 @@ check_helper() { # -> 0 armed, 1 not armed, 3 unverifiable
     head_status=1
   fi
   if { [ "$head_status" -ne 0 ] && [ "$head_status" -ne 2 ]; } \
-    || ! helper_program 2>/dev/null | cmp -s - <(sed -e "1,${head_lines}d" "$helper"); then
+    || ! helper_program 2>/dev/null | diff -q - <(sed -e "1,${head_lines}d" "$helper") >/dev/null; then
     add_reason helper-unverified "$HELPER_NAME" "helper $HELPER_NAME is not the one this installer generates, so what it runs cannot be verified"
     return 3
   fi

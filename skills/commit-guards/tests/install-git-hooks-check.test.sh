@@ -204,7 +204,7 @@ fx_payload_quote() { armed payload-quote; rebake "'/tmp/x'; echo PWNED >\\&2; :'
 fx_payload_reopen() { armed payload-reopen; rebake "'/nope'; touch \"\$TMPDIR/PWNED-\$\$\" 2>/dev/null; installed_scripts='/nope'"; }
 fx_payload_project_rel() { armed payload-project-rel; edit "$R/.git/hooks/kendex-guards" "s|^project_rel='.*'\$|project_rel='x'; echo PWNED >\\&2; :'|"; }
 fx_skill_roots_changed() { armed skill-roots-changed; edit "$R/.git/hooks/kendex-guards" "s|^skill_roots='.*'\$|skill_roots='.somewhere'|"; }
-fx_program_changed() { armed program-changed; edit "$R/.git/hooks/kendex-guards" 's|^mode=.*$|mode=pre-commit|'; }
+fx_program_changed() { armed "${1:-program-changed}"; edit "$R/.git/hooks/kendex-guards" 's|^mode=.*$|mode=pre-commit|'; }
 fx_baked_line_missing() { armed baked-line-missing; edit "$R/.git/hooks/kendex-guards" "/^installed_scripts='/d"; }
 # A checkout path carrying an apostrophe goes through the POSIX escape, so
 # the check has to read that escape as the quoter writes it; the same
@@ -221,6 +221,30 @@ run_rows \
   "a helper missing a baked line is unverifiable|fx_baked_line_missing||check||rc=2 $CND$UNVERIFIED|" \
   "a checkout path carrying an apostrophe is armed through the escape the quoter writes|fx_apostrophe||check||rc=0 commit-guards git hooks: armed=<root>/check\\ o\\'brien/.git/hooks|helper=$X:ours['<root>/check o'\\''brien/.agents/skills/commit-guards/scripts'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
   "a bare apostrophe where the escape belongs is unverifiable|fx_apostrophe_bare||check||rc=2 $CND$UNVERIFIED|"
+
+echo "=== must-fail: the helper comparison drains a delayed writer ==="
+fx_program_changed program-delayed
+REAL_SED="$(command -v sed)"
+mkdir "$TMP/delayed-sed"
+cat >"$TMP/delayed-sed/sed" <<'SED'
+#!/bin/sh
+set -eu
+case "${1-}:${2-}" in
+  -e:1,*d)
+    # The changed mode line makes the first write differ from helper_program.
+    "$REAL_SED" -n '/^mode=/p' "$3"
+    # Let an early-closing comparator exit before the remaining write.
+    sleep 1
+    # Overflow the pipe buffer even if cmp waits for a full read block.
+    "$REAL_SED" "$@"; printf '%1048576s\n' ''; exit
+    ;;
+esac
+exec "$REAL_SED" "$@"
+SED
+chmod +x "$TMP/delayed-sed/sed"
+assert_eq "must-fail: an early-closing reader adds stderr to the verdict" \
+  "rc=2 $CND$UNVERIFIED" \
+  "$(trap '' PIPE; run "PATH=$TMP/delayed-sed:$PATH,REAL_SED=$REAL_SED" check '')"
 
 echo "=== the two recorded scripts paths are held to the tree that armed them ==="
 # The helper records the armed scripts directory and where it sits under the
