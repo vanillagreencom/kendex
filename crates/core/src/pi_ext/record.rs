@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 
-use super::files::package_path;
 use super::{PackageState, RecordBasis, declared_state, find_by_package_name};
 
 /// One declared Pi package resolved to the catalog bytes and provenance that
@@ -90,7 +89,6 @@ pub fn matching_lock_entry(
         .map_or_else(crate::clock::timestamp, |machine| {
             machine.installed_at.clone()
         });
-    let dest = package_path(scope_root, name)?;
     Ok(Some(crate::lock::LockEntry {
         name: name.to_owned(),
         kind: crate::model::ItemKind::PiExtension,
@@ -106,11 +104,7 @@ pub fn matching_lock_entry(
         rendered_hash: Some(rendered_hash),
         enabled: true,
         upstream_skills: None,
-        emitted: Some(crate::lock::EmittedArtifact {
-            kind: crate::model::ItemKind::PiExtension,
-            name: name.to_owned(),
-            paths: vec![dest],
-        }),
+        emitted: None,
         registration: None,
         reasons: std::collections::BTreeSet::from([crate::lock::Reason::Requested]),
     }))

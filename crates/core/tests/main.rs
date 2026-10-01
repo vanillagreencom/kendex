@@ -43,6 +43,7 @@ mod drift_hook_install;
 mod drift_hook_script;
 mod drift_worktree_remedy;
 mod edits_and_forks;
+mod emitted_paths;
 mod fixture_manifest_paths;
 mod gemini;
 mod gemini_reports;

@@ -45,7 +45,7 @@ pub(super) fn declared(
         rendered_hash: artifact.rendered_hash(),
         source: Some(ctx.source(kind, &artifact)?),
         upstream_skills: None,
-        emitted: None,
+        emitted: artifact.emitted(kind, ctx.name),
         reasons: ctx.reasons_for(harness),
         artifact,
     })

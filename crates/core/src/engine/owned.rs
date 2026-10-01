@@ -38,22 +38,8 @@ pub(crate) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
     let mut files: Vec<PathBuf> = Vec::new();
     let mut edits: Vec<(PathBuf, ConfigEdit)> = Vec::new();
     let in_place = in_place_source(env, scope, (entry.kind, &entry.source, &entry.name));
-    match (&entry.emitted, entry.kind) {
-        // What an install recorded landing at beats deriving a place it
-        // never took: a codex command stored as a skill tree under a name
-        // the collision rules may have changed, a skill's tree and the
-        // link a tool's directory has since moved away from. The in-place
-        // source is never among them, whatever an older record says: no
-        // entry owns the person's tree, so no edit hold, take-over or
-        // removal reaches it — the one place that rule is kept.
-        (Some(emitted), _) => files.extend(
-            emitted
-                .paths
-                .iter()
-                .filter(|path| in_place.as_ref() != Some(path))
-                .cloned(),
-        ),
-        (None, ItemKind::Agent) => {
+    match entry.kind {
+        ItemKind::Agent => {
             if let Some(dir) = native_dir(env, scope, entry.harness, ItemKind::Agent) {
                 files.push(dir.join(file_name(entry.harness, &entry.name)));
             }
@@ -61,8 +47,8 @@ pub(crate) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
         // A skill owns exactly what it recorded, and a record naming
         // nothing owns nothing: deriving today's place for it would claim
         // a position this install may never have written.
-        (None, ItemKind::Skill) => {}
-        (None, ItemKind::Command) => {
+        ItemKind::Skill => {}
+        ItemKind::Command => {
             if let Some(dir) = native_dir(env, scope, entry.harness, ItemKind::Command) {
                 files.push(dir.join(super::desired_command::command_file(
                     entry.harness,
@@ -70,8 +56,8 @@ pub(crate) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
                 )));
             }
         }
-        (None, ItemKind::Hook) => hook_owned(env, scope, entry, &mut files, &mut edits),
-        (None, ItemKind::McpServer) => {
+        ItemKind::Hook => hook_owned(env, scope, entry, &mut files, &mut edits),
+        ItemKind::McpServer => {
             if let Some(registry) = mcp_registry(env, scope, entry.harness) {
                 edits.push((registry, mcp_remove(entry.harness, &entry.name)));
             }
@@ -91,7 +77,7 @@ pub(crate) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
                 ));
             }
         }
-        (None, ItemKind::Plugin) => {
+        ItemKind::Plugin => {
             if let Some(settings) = plugin_settings(env, scope, entry.harness) {
                 edits.push((
                     settings,
@@ -102,7 +88,19 @@ pub(crate) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
                 ));
             }
         }
-        (None, ItemKind::PiExtension) => {}
+        ItemKind::PiExtension => {}
+    }
+    if let Some(emitted) = &entry.emitted {
+        // Recorded whole-file positions come from the desired artifact.
+        // Keep reversal edits even when paths were recorded: a hook's
+        // registry must not retain a command pointing at a removed script.
+        // No installation owns the person's in-place source tree.
+        files = emitted
+            .paths
+            .iter()
+            .filter(|path| in_place.as_ref() != Some(path))
+            .cloned()
+            .collect();
     }
     Owned { files, edits }
 }

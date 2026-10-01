@@ -45,9 +45,8 @@ pub struct Desired {
     /// command the declaration itself carries.
     pub source: Option<CatalogSource>,
     pub upstream_skills: Option<Vec<String>>,
-    /// Set where deriving the place again could name another one — a
-    /// command stored as a skill, a skill's tree and link — so the lock
-    /// records it and removal targets what was written.
+    /// Whole-file positions the artifact writes. The lock records them so
+    /// ownership and removal use the written locations, not today's layout.
     pub emitted: Option<crate::lock::EmittedArtifact>,
     /// Every reason this installation is wanted, derived fresh each pass.
     pub reasons: BTreeSet<crate::lock::Reason>,
@@ -176,6 +175,28 @@ impl Artifact {
             .into_iter()
             .map(|position| position.path)
             .collect()
+    }
+
+    /// Whole files written by this artifact, excluding shared config keys.
+    /// Skill trees retain their separate in-place source exclusion.
+    pub(super) fn emitted(
+        &self,
+        kind: ItemKind,
+        name: &str,
+    ) -> Option<crate::lock::EmittedArtifact> {
+        let paths: Vec<_> = self
+            .positions()
+            .into_iter()
+            .filter_map(|position| match position.owns {
+                Owns::File | Owns::Tree => Some(position.path),
+                Owns::Keys => None,
+            })
+            .collect();
+        (!paths.is_empty()).then(|| crate::lock::EmittedArtifact {
+            kind,
+            name: name.to_owned(),
+            paths,
+        })
     }
 
     /// The command this artifact registers, if it registers one. What makes

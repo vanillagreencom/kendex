@@ -112,6 +112,10 @@ fn a_carrier_record_keeps_its_install_time_with_the_machine_half_and_takes_a_fre
     )
     .unwrap()
     .expect("the installed bytes match the declared ones");
+    assert!(
+        recorded.emitted.is_none(),
+        "Pi packages are not rendered files"
+    );
     recorded.machine.as_mut().unwrap().installed_at = planted.to_owned();
     for (label, half_present) in [("the half present", true), ("the half gone", false)] {
         let mut existing = recorded.clone();

@@ -1,0 +1,1 @@
+- The install lock now lists the files kendex renders for agents, commands and hooks, without claiming shared settings or registry files.

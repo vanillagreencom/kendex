@@ -120,7 +120,7 @@ pub(super) fn desired_custom_hooks(
                 rendered_hash: artifact.rendered_hash(),
                 source: None,
                 upstream_skills: None,
-                emitted: None,
+                emitted: artifact.emitted(ItemKind::Hook, &spec.name),
                 reasons: BTreeSet::from([Reason::Requested]),
                 artifact,
             });

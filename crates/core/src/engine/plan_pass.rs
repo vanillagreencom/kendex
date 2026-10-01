@@ -85,7 +85,7 @@ pub(super) fn plan_items(
 /// when kendex wrote one) and this pass wants no position the record does
 /// not carry — a new one is a layout move between kendex versions, whose
 /// recorded file may still be on disk for `stale` to sweep. A record with
-/// no positions (a hook's script, an agent) reads on `rendered_hash` alone.
+/// no positions from an older apply reads on `rendered_hash` alone.
 fn gone_from_record(existing: Option<&crate::lock::LockEntry>, item: &desired::Desired) -> bool {
     existing.is_some_and(|entry| {
         entry.rendered_hash.is_some()

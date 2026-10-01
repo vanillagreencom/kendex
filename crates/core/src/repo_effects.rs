@@ -266,6 +266,8 @@ pub fn recorded_roots(
         .values()
         .filter(|entry| entry.kind == crate::model::ItemKind::Skill && entry.name == name)
         .filter_map(|entry| entry.emitted.as_ref())
+        // Only skill entries authorize package installers; emitted files
+        // from other kinds are not package roots.
         // The tree, never the link beside it: a link is where a tool reads
         // the package through, not a directory its scripts live in.
         .filter_map(|emitted| emitted.paths.first().cloned())

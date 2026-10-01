@@ -56,9 +56,9 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
 /// that reads it, while the record holds one row per declared tool, so
 /// the rows that wrote the observed path (`emitted`) answer for every
 /// observation of it, and only where all of them name kendex is it
-/// kendex's. A kind that records no paths (an agent, a hook, a server, a
-/// plugin) lands at a place of its own per tool, so its row is the one
-/// keyed by the observing tool. An installation no row accounts for is
+/// kendex's. Entries without whole-file positions, including old records
+/// for agents, commands and hooks, answer by the observing tool's key.
+/// An installation no row accounts for is
 /// nobody's, which is what a hand-placed copy is. An absent record names
 /// nothing; one this build refuses is refused here too, as the audit over
 /// the same scope refuses it.

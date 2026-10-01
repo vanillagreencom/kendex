@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use crate::error::Result;
-use crate::lock::EmittedArtifact;
+
 use crate::model::{HarnessId, ItemKind};
 
 use super::ItemWarning;
@@ -206,11 +206,7 @@ fn as_skill(
         in_place: false,
     };
     let mut item = declared(ctx, ItemKind::Command, harness, artifact)?;
-    item.emitted = Some(EmittedArtifact {
-        kind: ItemKind::Skill,
-        name,
-        paths: vec![tree],
-    });
+    item.emitted = item.artifact.emitted(ItemKind::Skill, &name);
     Ok(Some(item))
 }
 

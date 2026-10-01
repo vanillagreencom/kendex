@@ -203,10 +203,10 @@ pub struct LockEntry {
     /// across cache loss and machines.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upstream_skills: Option<Vec<String>>,
-    /// Where the artifact landed: a command a harness stores as another
-    /// kind, a skill's tree plus the link where the tool reads it through
-    /// one. Removal and refresh read it instead of deriving a path the
-    /// install never took.
+    /// Whole-file positions written by agents, commands, scripted hooks
+    /// and skills, including a skill's tree and link. Shared registry keys
+    /// are excluded. Removal and refresh read the recorded locations.
+    /// Entries without this data are re-recorded by the next apply.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emitted: Option<EmittedArtifact>,
     /// The registry entry this hook registered, as the registry keys it.
@@ -271,8 +271,10 @@ pub struct HookRegistration {
 }
 
 /// The artifact one installation actually put on disk, in the harness's own
-/// terms: a codex command lands as a skill, under a name the user types; a
-/// skill lands as one tree, plus the link where the tool reads it through one.
+/// terms. Every file-writing kind records its whole files or trees here;
+/// shared registry and settings files are never owned whole. A Codex command
+/// records its skill kind and installed name. Project paths are slashed
+/// remainders of the root on disk, checked by `lock::roots` at both ends.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct EmittedArtifact {

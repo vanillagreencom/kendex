@@ -132,11 +132,9 @@ fn a_command_reaches_claude_as_a_file_and_codex_as_a_skill() {
         Value::from(".agents/skills/ship"),
         "recorded as a remainder of the project"
     );
-    assert!(
-        lock["entries"]["command:ship:claude"]
-            .get("emitted")
-            .is_none(),
-        "claude writes a command file, not an emitted artifact"
+    assert_eq!(
+        lock["entries"]["command:ship:claude"]["emitted"]["paths"],
+        serde_json::json!([".claude/commands/ship.md"])
     );
     assert!(is_clean(&f));
 }

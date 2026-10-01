@@ -462,7 +462,20 @@ fn differs(recorded: &LockEntry, would_record: &LockEntry) -> Option<&'static st
             "upstreamSkills",
             *upstream_skills != would_record.upstream_skills,
         ),
-        ("emitted", *emitted != would_record.emitted),
+        // Older agent, command and hook records lack this optional
+        // inventory. Apply records it without changing the rendered bytes.
+        // Present inventories must still match, including skill layouts.
+        (
+            "emitted",
+            *emitted != would_record.emitted
+                && (emitted.is_some()
+                    || !matches!(
+                        recorded.kind,
+                        crate::model::ItemKind::Agent
+                            | crate::model::ItemKind::Command
+                            | crate::model::ItemKind::Hook
+                    )),
+        ),
         ("registration", *registration != would_record.registration),
         ("reasons", *reasons != would_record.reasons),
     ]
