@@ -81,7 +81,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `ORCH_SIZE_RENDER_ROOTS` | Render-mirror roots excluded from production and test counts when their source changes in the same branch | `.agents .claude .codex .pi` |
 | `ORCH_SIZE_TEST_PATHS` | Path globs counted as test lines in size reports and cut comparisons | empty |
 
-`ORCH_OVERSEER_PREFERENCE` reads deprecated `harness:positive-integer:effort` until the next minor release after this change. It uses the caller's model at the supplied effort and warns once per run. Replace the number with a model name: `harness:model:effort`.
+`ORCH_OVERSEER_PREFERENCE` reads deprecated `harness:positive-integer:effort` until the next minor release after this change. It uses the caller's model at the supplied effort, never on another harness, and warns once per run. Replace the number with a model name: `harness:model:effort`.
 
 Launch settings and Codex compaction limits: [skill-rules.md](references/skill-rules.md#coordination), Compaction.
 

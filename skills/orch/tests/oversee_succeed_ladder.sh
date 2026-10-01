@@ -141,15 +141,18 @@ new_caller() {
 CALLER_FLAGS=("$BYPASS")
 run_succeed() {
   local row="$1" pref=(ORCH_OVERSEER_PREFERENCE="$2") lane="${CALLER_LANE:-CLAUDE_CONFIG_DIR=$H/.claude}"
+  local -a wait=(--wait-secs 20)
   [[ "$2" != unset ]] || pref=()
+  # --check-marks refuses --wait-secs, so a check row sets NO_WAIT.
+  [[ -z "${NO_WAIT:-}" ]] || wait=()
   shift 2
   RC=0
   OUT="$(cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$BIN:$PATH" TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" \
     LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-$row" \
     "$lane" ORCH_LANES_FETCH_CMD="$FETCHER" \
     ORCH_LANE_DIRS="${LANE_DIRS:-$H/.claude:$H/.eclaude:$H/.fclaude:$H/.codex:$H/.dcodex}" ORCH_LANES_USAGE_TTL=0 \
-    ORCH_OVERSEER_WALL_MINUTES=0 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=0 ORCH_QUESTION_TOOL=overseer \
-    ${pref[@]+"${pref[@]}"} "${SUCCEED_BIN:-$SUCCEED}" --wait-secs 20 "$@" -- "${CALLER_FLAGS[@]}" 2>&1)" || RC=$?
+    ORCH_OVERSEER_WALL_MINUTES=0 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS="${SUCCESSOR_ACCOUNTS:-0}" ORCH_QUESTION_TOOL=overseer \
+    ${pref[@]+"${pref[@]}"} "${SUCCEED_BIN:-$SUCCEED}" ${wait[@]+"${wait[@]}"} "$@" -- ${CALLER_FLAGS[@]+"${CALLER_FLAGS[@]}"} 2>&1)" || RC=$?
   printf '%s\n' "$OUT" > "$TMP_ROOT/out"
 }
 # A claim from this suite's tmux server on a pane that stays live, on LANE.
@@ -456,12 +459,23 @@ assert_eq "$RC|$(first_key)|$(launched claude)|$(launched codex)" \
   "control: a walk that chooses the untransferable entry refuses and launches nothing"
 CALLER_FLAGS=("$BYPASS")
 
-# A Copilot overseer whose ladder starts on claude: the deprecated numeric
-# entry would run the caller's Copilot model spelling on the claude CLI, so it
-# is skipped with the keyed line naming that model, and the named Opus entry
-# launches with claude's own model id. The caller's full bypass crosses as
-# claude's word; its `--autopilot`, a Copilot run mode, does not cross.
-copilot_ladder() { # ROW [SUCCEED_BIN]
+# A Copilot overseer whose ladder starts on claude, under the whole line a
+# Copilot overseer runs: the deprecated numeric entry would run the caller's
+# Copilot model spelling on the claude CLI, so it is skipped with the keyed
+# line naming that model, and the named Opus entry launches on claude's own
+# words alone, the caller's full bypass written as claude's. No other caller
+# word crosses: the run mode, its count, the context tier and the update
+# setting are all words of the Copilot CLI.
+COPILOT_LINE=(--model claude-opus-5.5 --reasoning-effort high --yolo --autopilot
+  --max-autopilot-continues 5 --context long_context --no-auto-update)
+CLAUDE_COMPACT="$(launch_choice_compaction_off claude)"
+BRIEF='Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'
+# copilot_ladder ROW walled|check [SUCCEED_BIN] — the Copilot caller, its
+# launch record naming its account, run as the wall recovery under its whole
+# line, or as --check-marks, handed no flags, against the same preference.
+copilot_ladder() { # ROW walled|check [SUCCEED_BIN]
+  local -a mode_args=(--walled-pane)
+  local no_wait=""
   new_caller copilot ""
   jq -n --arg server "$SERVER_PID" --argjson start "$SERVER_START" --arg pane "$CALLER_PANE" \
     --arg account "$H/.1copilot" \
@@ -469,35 +483,59 @@ copilot_ladder() { # ROW [SUCCEED_BIN]
       server_start: $start, pane: $pane, harness: "copilot", account: $account,
       home: $account, model: "", effort: "", cwd: null, launch_line: "recorded"}}' \
     > "$TMP_ROOT/work/tmp/workflow-state-oversee.json"
-  CALLER_FLAGS=(--model claude-opus-5.5 --reasoning-effort high --yolo --autopilot)
+  CALLER_FLAGS=("${COPILOT_LINE[@]}")
+  if [[ "$2" == check ]]; then
+    CALLER_FLAGS=() mode_args=(--check-marks) no_wait=1
+  else
+    mode_args+=("$CALLER_PANE")
+  fi
   CALLER_LANE="COPILOT_HOME=$H/.1copilot" LANE_DIRS="$H/.claude:$H/.eclaude:$H/.1copilot:$H/.2copilot" \
-    SUCCEED_BIN="${2:-}" run_succeed "$1" 'claude:1:high,claude:claude-opus-5-5:high' \
-    --walled-pane "$CALLER_PANE" --harness copilot
+    SUCCEED_BIN="${3:-}" NO_WAIT="$no_wait" \
+    run_succeed "$1" 'claude:1:high,claude:claude-opus-5-5:high' "${mode_args[@]}" --harness copilot
   CALLER_FLAGS=("$BYPASS")
 }
-# copilot_crossed — what crossed onto the claude line: its lane and model, then
-# how many --autopilot words and Copilot model spellings it carries.
-copilot_crossed() {
-  printf '%s|%s|%s' "$(launched claude)" "$(grep -cx -e --autopilot "$TMP_ROOT/argv.claude" || true)" \
-    "$(grep -cxF -e claude-opus-5.5 "$TMP_ROOT/argv.claude" || true)"
-}
-copilot_ladder copilotcaller
-assert_eq "$RC|$(keyed entry-permission-untransferable)|$(copilot_crossed)|$(grep -cx -e "$BYPASS" "$TMP_ROOT/argv.claude")" \
-  "0|oversee-succeed: entry-permission-untransferable entry=claude::high source=copilot target=claude model=claude-opus-5.5|$H/.eclaude claude-opus-5-5|0|0|1" \
-  "a Copilot caller onto claude skips the numeric entry and carries neither --autopilot nor its model spelling"
-# Its controls, one per rule: a launch table holding --autopilot inside the
-# run with its count lets the bare word cross, and a walk that admits the
-# numeric entry hands claude the Copilot model spelling.
-AUTOCTL="$(mutant_scripts autoctl lib/lane-launch.sh)" || exit 1
-mutate_file "$AUTOCTL/lib/lane-launch.sh" '|--autopilot;--max-autopilot-continues 3;' '|--autopilot --max-autopilot-continues 3;'
-copilot_ladder autoctl "$AUTOCTL/oversee-succeed"
-assert_eq "$RC|$(copilot_crossed)" "0|$H/.eclaude claude-opus-5-5|1|0" \
-  "control: --autopilot kept in one run with its count crosses onto the claude line"
+# claude_argv — the claude successor's recorded lane and argv, `;`-joined.
+claude_argv() { if [[ -f "$TMP_ROOT/argv.claude" ]]; then tr '\n' ';' < "$TMP_ROOT/argv.claude"; else printf none; fi; }
+CLAUDE_SUCCESSOR="lane=$H/.eclaude;-n;overseer;--model;claude-opus-5-5;--effort;high;$BYPASS;$CLAUDE_COMPACT"
+copilot_ladder copilotcaller walled
+assert_eq "$RC|$(keyed entry-permission-untransferable)|$(claude_argv)" \
+  "0|oversee-succeed: entry-permission-untransferable entry=claude::high source=copilot target=claude model=claude-opus-5.5|$CLAUDE_SUCCESSOR;$BRIEF;" \
+  "a Copilot caller onto claude skips the numeric entry and carries no Copilot word onto the claude line"
+# Its controls, one per rule: a walk that hands the caller's other words on,
+# as the cross-harness line once did, puts the Copilot words on the claude
+# line, and a walk that admits the numeric entry hands claude the Copilot
+# model spelling.
+CARRYCTL="$(mutant_scripts carryctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$CARRYCTL/lib/overseer-launch.sh" '    LAUNCH_CHOICE_KEPT=()' '    launch_choice_strip "$source" "$@"'
+copilot_ladder carryctl walled "$CARRYCTL/oversee-succeed"
+assert_eq "$RC|$(claude_argv)" \
+  "0|$CLAUDE_SUCCESSOR;--yolo;--autopilot;--max-autopilot-continues;5;$BRIEF;" \
+  "control: a cross-harness line keeping the caller's other words carries Copilot's run mode onto claude"
 NUMCTL="$(mutant_scripts numctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$NUMCTL/lib/overseer-launch.sh" '  if [[ "$1" == *::* ]]; then' '  if false; then'
-copilot_ladder numctl "$NUMCTL/oversee-succeed"
-assert_eq "$RC|$(keyed entry-permission-untransferable)|$(copilot_crossed)" "0|none|$H/.eclaude claude-opus-5.5|0|1" \
+copilot_ladder numctl walled "$NUMCTL/oversee-succeed"
+assert_eq "$RC|$(keyed entry-permission-untransferable)|$(launched claude)" "0|none|$H/.eclaude claude-opus-5.5" \
   "control: a walk admitting the numeric entry hands claude the Copilot model spelling"
+# The judgement oversee-watch and the turn-end hook ask, --check-marks, walks
+# the same preference to learn whether a qualifying mark has a successor: the
+# other Copilot account has more room than the caller's, and two accounts
+# above the trigger are at the setting. It skips the numeric entry in
+# silence, as it skips every entry it cannot judge permission words for, and
+# the claude entry the succession took settles the mark.
+printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":950}}}' > "$FIXTURE_DIR/.2copilot.json"
+SUCCESSOR_ACCOUNTS=2 copilot_ladder copilotcheck check
+assert_eq "$RC|$(keyed mark-reached)|$(keyed entry-permission-untransferable)" \
+  "0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=90|none" \
+  "the check judgement of a Copilot caller skips the numeric entry silently and takes the claude entry"
+# Its control: a check that reports the numeric skip prints the line the
+# succession's own walk prints, on every watch pass.
+QUIETCTL="$(mutant_scripts quietctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$QUIETCTL/lib/overseer-launch.sh" '    (( OL_WALK_SOURCE_ROWS )) \' '    false \'
+SUCCESSOR_ACCOUNTS=2 copilot_ladder quietctl check "$QUIETCTL/oversee-succeed"
+assert_eq "$RC|$(keyed entry-permission-untransferable)" \
+  "0|oversee-succeed: entry-permission-untransferable entry=claude::high source=copilot target=claude model=none" \
+  "control: a check that does not keep the numeric skip silent prints it"
+cp "$FIXTURE_DIR/.1copilot.json" "$FIXTURE_DIR/.2copilot.json"
 
 # The ladder's first rung: a claude seat with Fable room takes a Fable
 # successor, although another seat has Opus room. A default that starts on

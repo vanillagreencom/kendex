@@ -35,7 +35,7 @@ Every Copilot command `open-terminal`, `oversee` and `oversee-succeed` build car
 | `COPILOT_SKILLS_DIRS=~/.agents/skills` | Any `COPILOT_HOME` hides the shared skills under `~/.agents/skills`, and this names them back: measured by `tools/harness-smoke`, row `skill-dirs:COPILOT_HOME`. |
 | `COPILOT_HOME=<account>` | The account: the lane a local launch names, or with none the `COPILOT_HOME` `open-terminal` runs under, `~/.copilot` where that is unset, which is the store a relaunch reads (`lib/lane-relaunch.sh`). A hosted launch's provider sets it. |
 
-The first three rows are launch settings. A caller's copy of any one of them, typed whole, is dropped, so none appears twice; `--autopilot` is dropped on its own too, so it never reaches a successor on another harness. A `--cmd` template gets the environment words and no flag words: its command is the caller's own ([lane-directive.md](lane-directive.md)).
+The first three rows are launch settings. A caller's copy of any one of them, typed whole, is dropped, so none appears twice. A `--cmd` template gets the environment words and no flag words: its command is the caller's own ([lane-directive.md](lane-directive.md)).
 
 | Words the caller passes in `--launch-flags` | Why |
 |---------------------------------------------|-----|

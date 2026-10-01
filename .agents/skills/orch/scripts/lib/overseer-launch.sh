@@ -7,8 +7,8 @@
 # What differs between them is policy and stays with the caller: which marks
 # fire and which entries the account walk tries; the walk and the flag
 # assembly apply that policy the same way for both. `oversee-watch` sources
-# it too, through lib/watch-overseer-record.sh, for OL_JQ_DEFS, ol_preference
-# and ol_session_inspect. What is shared is here:
+# it too, through lib/watch-overseer-record.sh, for OL_JQ_DEFS, ol_preference,
+# ol_session_inspect and ol_fleet_log. What is shared is here:
 #
 #   ol_preference          the ORCH_OVERSEER_PREFERENCE value, its default
 #                          where the setting is unset
@@ -51,6 +51,7 @@
 #   ol_session_stop        the runtime's `stop`
 #   ol_session_abandon     the close-out every refusal after `create` takes:
 #                          the session stopped, the prior record put back
+#   ol_fleet_log           one `close` row about the overseer in the fleet log
 #
 # Every function returns 0 for the answer its name promises and 1 for a
 # refusal the caller prints, with the reason in OL_REASON and its fields in
@@ -463,8 +464,10 @@ ol_entry_permitted() { # ENTRY
 # entry names EFFORT alone. One of the same harness strips
 # the predecessor's model and effort and keeps its permission words exactly.
 # One of another harness, a first launch among them, writes HARNESS's
-# full-bypass permission words and keeps none of the predecessor's, whose
-# posture must transfer (launch_choice_permission_transferable). The words
+# full-bypass permission words and keeps no predecessor word at all: its
+# posture must transfer (launch_choice_permission_transferable), and every
+# other word is spelled for the predecessor's CLI, a run-mode word such as
+# copilot's `--autopilot` or a count beside it among them. The words
 # kept are led by the harness's launch settings, the compaction words for the
 # model the launch runs (MODEL, else the one the kept words name, else
 # PICK_MODEL) and, with --question-off, its question-tool words
@@ -491,7 +494,6 @@ ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [F
     words="$(launch_choice_permission_write "$harness")" || return 1
     eval "OL_FLAGS+=($words)"
     LAUNCH_CHOICE_KEPT=()
-    [[ -z "$source" ]] || launch_choice_strip "$source" --permissions "$@" || { OL_FIELDS=("harness=$source"); return 1; }
     OL_FIELDS=()
   fi
   lead_model="$model"
@@ -822,7 +824,8 @@ ol_succession() { # PREDECESSOR CWD LINE IDENTITY PENDING LANE_VAR LANE_DIR FORM
 # the fleet log's time from its own clock, so the record written here and the
 # one an overseer writes by hand are dated by one reader. Every overseer notice
 # the fleet log carries goes through here: the watch's, at its start and from
-# its passes, and a succession refused after its successor opened.
+# its passes, and oversee-succeed's refusal of a self-succession once its
+# successor launch began.
 ol_fleet_log() { # NOTICE_FILE RECORD_FILE ERR_FILE [STATE_CMD...]
   local notice="$1" record="$2" errf="$3"
   shift 3

@@ -478,16 +478,13 @@ assert_eq "$RC|$(caller_open)|$(overseers)|$(recorded codex)|$(keyed launch-trus
   "1|yes|0|none|oversee-succeed: launch-trust-missing lane=$H/.codex dir=$TRUSTFAIL_CWD reason=config-unreadable" \
   "an unreadable account config refuses the successor and keeps the caller"
 
-# A NAMED entry's launch takes the model and effort words its OWN row writes,
-# and out of the flags after -- everything but that pair. Those flags are the
-# claude caller's: codex has no effort flag at all, so a successor handed
-# --effort high does not start, and --model fable beside the -m gpt-6-astra
-# this entry chose names a model the pick was never judged on. Which two words
-# to drop is lib/lane-launch.sh's row for the CALLER's harness, so nothing here
-# spells them and a row added there reaches both halves. The caller word this
-# fixture carries through states nothing about permissions: what a caller's
-# permission switches should do at a successor of ANOTHER harness is a
-# separate question from the pair this strip owns.
+# A NAMED entry of another harness takes the model and effort words its OWN
+# row writes, its own full-bypass word, and none of the flags after --. Those
+# flags are the claude caller's, each spelled for claude's CLI: codex has no
+# effort flag at all, so a successor handed --effort high does not start,
+# --model fable beside the -m gpt-6-astra this entry chose names a model the
+# pick was never judged on, and an unrelated word such as --verbose is one
+# codex need not take either.
 #
 # A claude caller's question-tool words are a flag codex refuses, so a codex
 # entry never carries them either: it carries codex's own words exactly when
@@ -495,10 +492,10 @@ assert_eq "$RC|$(caller_open)|$(overseers)|$(recorded codex)|$(keyed launch-trus
 # caller's permission switch is spelled on one line for every row.
 # QUESTION_TOOL|CALLER WORDS AFTER THE PERMISSION SWITCH|LINE TAIL|WHAT
 for row in \
-  "overseer|--verbose|;--verbose|a named entry keeps unrelated words and replaces the caller's model, effort and permission posture" \
-  "overseer|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|;--verbose|a claude caller's question-tool words never reach a codex successor: overseer, the codex line carries no question-tool word" \
-  "unset|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|;-c;features.default_mode_request_user_input=false;--verbose|a claude caller's question-tool words never reach a codex successor: unset, the codex line carries codex's own words and not claude's" \
-  "off|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|;-c;features.default_mode_request_user_input=false;--verbose|a claude caller's question-tool words never reach a codex successor: off, the codex line carries codex's own words and not claude's" \
+  "overseer|--verbose||a named entry of another harness carries no caller word and replaces the caller's model, effort and permission posture" \
+  "overseer|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose||a claude caller's question-tool words never reach a codex successor: overseer, the codex line carries no question-tool word" \
+  "unset|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|;-c;features.default_mode_request_user_input=false|a claude caller's question-tool words never reach a codex successor: unset, the codex line carries codex's own words and not claude's" \
+  "off|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|;-c;features.default_mode_request_user_input=false|a claude caller's question-tool words never reach a codex successor: off, the codex line carries codex's own words and not claude's" \
   ; do
   IFS='|' read -r row_value row_words row_tail row_what <<<"$row"
   new_caller "$MARK"
@@ -521,9 +518,9 @@ assert_eq "$RC|$(overseers)|$(recorded claude)" \
   "a same-harness named entry preserves the restricted permission spelling"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 
-# The reverse crossing reads the same table in the other direction. A codex
-# caller's permission word is removed with its model and effort, and the claude
-# entry writes the one its own launch accepts.
+# The reverse crossing reads the same table in the other direction. No codex
+# caller word crosses, and the claude entry writes the permission word its own
+# launch accepts.
 new_caller "$CODEX_SCREEN" 'Context 48% left'
 codex_usage 95 > "$FIXTURE_DIR/.codex.json"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
@@ -532,8 +529,8 @@ CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codex-to-claude 'claude:fable:hig
   --dangerously-bypass-approvals-and-sandbox --verbose
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 assert_eq "$RC|$(overseers)|$(recorded claude)|$(recorded codex)" \
-  "0|1|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--dangerously-skip-permissions;$CLAUDE_COMPACT;--verbose;$BRIEF;|none" \
-  "a codex caller picking claude carries claude's permission word and none of codex's, its update setting included"
+  "0|1|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--dangerously-skip-permissions;$CLAUDE_COMPACT;$BRIEF;|none" \
+  "a codex caller picking claude carries claude's permission word and no codex word, its update setting included"
 
 # An alternate full-bypass spelling has the same meaning across harnesses.
 new_caller "$MARK"
@@ -544,8 +541,8 @@ ALT_HOME="$(lane_codex_home_path "$H/.codex" "$ALT_CWD")"
 CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.claude" run_succeed alternate-bypass 'codex:gpt-6-astra:high' -- \
   --model fable --effort high --permission-mode bypassPermissions --verbose
 assert_eq "$RC|$(overseers)|$(recorded codex)" \
-  "0|1|lane=$ALT_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;$CODEX_COMPACT;--verbose;$BRIEF;" \
-  "an alternate claude full-bypass spelling transfers to codex"
+  "0|1|lane=$ALT_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-bypass-approvals-and-sandbox;-c;check_for_update_on_startup=false;$CODEX_COMPACT;$BRIEF;" \
+  "an alternate claude full-bypass spelling transfers to codex, and no other caller word does"
 
 # Permission modes without exact full-bypass equivalence skip the cross-harness
 # entry before its pick: nothing of that harness is launched, and the walk goes
@@ -838,10 +835,10 @@ idle_budget="$(in_range spent "$idle_waited" "$IDLE_WAIT" "$((IDLE_WAIT + SCHED_
 assert_eq "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/window=@[0-9]*/window=@N/; s/waited=[0-9]*/waited=N/')|$idle_budget|$(grep -cF 'FIXTURE successor startup waiting' <<<"$OUT")|$(caller_open)|$(overseers)|$(grep -c '^oversee-succeed: watch-' <<<"$OUT")|$(idle_log)" \
   "1|oversee-succeed: successor-not-working window=@N waited=N|spent|1|yes|0|0|close overseer oversee-succeed: successor-not-working window=@N waited=N The successor never showed a running turn; the caller keeps running." \
   "never working: refused after its whole budget, caller kept, successor closed, no watch handed over, the refusal in the fleet log"
-# Its control: a refusal that writes no fleet log row leaves the session that
+# Its control: an abandon that writes no fleet log row leaves the session that
 # reads the log next with no word that the succession failed.
 IDLECTL="$(mutant_scripts idlectl oversee-succeed)" || exit 1
-mutate_file "$IDLECTL/oversee-succeed" '      fleet_log_refusal successor-not-working "window=$SUCC_WINDOW" "waited=$OL_WAITED"' '      :'
+mutate_file "$IDLECTL/oversee-succeed" '  [[ "$MODE" != succeed ]] || fleet_log_refusal "$@"' '  :'
 new_caller "$MARK"
 fleet_state
 touch "$TMP_ROOT/idle"
@@ -849,7 +846,27 @@ SUCCEED_BIN="$IDLECTL/oversee-succeed" run_succeed idlectl 'claude:fable:high' -
 rm -f "${TMP_ROOT:?}/idle"
 assert_eq "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | cut -d' ' -f1-2)|$(idle_log)" \
   "1|oversee-succeed: successor-not-working|" \
-  "control: a refusal that skips the fleet log row leaves no row"
+  "control: an abandon that skips the fleet log row leaves no row"
+# A fleet log that refuses the row: the refusal still closes the successor,
+# keeps the caller and exits 1, and the notice names the refusal and the step
+# before the refusal's own line. The stand-in refuses `append-file` alone, so
+# every record write the succession makes still lands.
+LOGFAIL="$(mutant_scripts logfail)" || exit 1
+rm -f -- "${LOGFAIL:?}/workflow-state"
+cat > "$LOGFAIL/workflow-state" <<STUB
+#!/usr/bin/env bash
+[[ "\$1" != append-file ]] || { echo 'fixture: append refused' >&2; exit 1; }
+exec "$SRC_DIR/workflow-state" "\$@"
+STUB
+chmod +x "$LOGFAIL/workflow-state"
+new_caller "$MARK"
+fleet_state
+touch "$TMP_ROOT/idle"
+SUCCEED_BIN="$LOGFAIL/oversee-succeed" run_succeed logfail 'claude:fable:high' --wait-secs "$IDLE_WAIT"
+rm -f "${TMP_ROOT:?}/idle"
+assert_eq "$RC|$(grep -e '^oversee-succeed: fleet-log-unwritten ' -e '^oversee-succeed: successor-not-working ' -e '^fixture: ' <<<"$OUT" | sed 's/window=@[0-9]*/window=@N/; s/waited=[0-9]*/waited=N/' | tr '\n' ';')|$(caller_open)|$(overseers)|$(idle_log)" \
+  "1|oversee-succeed: fleet-log-unwritten key=successor-not-working step=append;fixture: append refused;oversee-succeed: successor-not-working window=@N waited=N;|yes|0|" \
+  "a fleet log that refuses the row leaves the refusal standing: successor closed, caller kept, the notice keyed"
 
 # The wait asks the turn-in-flight predicate, not the lane_state judge beside
 # it. A successor drawing a dialog line in its very first turn is a launched
@@ -1831,6 +1848,30 @@ SUCCESSION=off run_succeed deadoff '' --dead-pane "$DEAD_PANE" --line-file "$TMP
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(dead_open)|$(recorded claude)" \
   "0|oversee-succeed: succession-off ORCH_OVERSEER_SUCCESSION=off|0|yes|none" \
   "succession off refuses the relaunch, and the dead window stays as it was"
+# A relaunch whose successor never shows a running turn is refused, and the
+# watch that ran it logs that failure itself, so this run writes no fleet log
+# row: its words would say a caller keeps running that is dead.
+new_caller "$MARK"
+new_dead_pane
+fleet_state
+touch "$TMP_ROOT/idle"
+run_succeed deadidle '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file" --wait-secs "$IDLE_WAIT"
+rm -f "${TMP_ROOT:?}/idle"
+assert_eq "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | cut -d' ' -f1-2)|$(idle_log)" \
+  "1|oversee-succeed: successor-not-working|" \
+  "a dead-pane relaunch whose successor never works writes no fleet log row"
+# Its control: an abandon that logs in every mode writes the row here too.
+DEADLOGCTL="$(mutant_scripts deadlogctl oversee-succeed)" || exit 1
+mutate_file "$DEADLOGCTL/oversee-succeed" '  [[ "$MODE" != succeed ]] || fleet_log_refusal "$@"' '  fleet_log_refusal "$@"'
+new_caller "$MARK"
+new_dead_pane
+fleet_state
+touch "$TMP_ROOT/idle"
+SUCCEED_BIN="$DEADLOGCTL/oversee-succeed" run_succeed deadlogctl '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file" --wait-secs "$IDLE_WAIT"
+rm -f "${TMP_ROOT:?}/idle"
+assert_eq "$RC|$(idle_log | cut -d' ' -f1-4)" \
+  "1|close overseer oversee-succeed: successor-not-working" \
+  "control: an abandon logging in every mode writes a dead-pane row"
 
 # What the four modes refuse of each other. Each is a different run, and a
 # combination read as one of the others would send a line built for another
