@@ -270,6 +270,20 @@ fx_wt_previous_helper() {
   worktree_of wt-previous-helper
   edit "$R/.git/hooks/kendex-guards" '/^# kendex-guards-helper-version=/d'
 }
+fx_bare_previous_helper() {
+  R="$TMP/bare-host.git"
+  git -c init.defaultBranch=main init -q --bare "$R"
+  git -C "$R" config user.email test@example.com
+  git -C "$R" config user.name test
+  W="$TMP/bare-host-wt"
+  git -C "$R" worktree add -q -b bm "$W"
+  mkdir -p "$W/.agents/skills"
+  cp -R "$GG_SKILL_TEMPLATE" "$W/.agents/skills/commit-guards"
+  ln -s "$SKILL_DIR/../doc-limits" "$W/.agents/skills/doc-limits"
+  install_in "$W"
+  assert_eq "the bare-host worktree arms its shared hooks" "0" "$RC"
+  edit "$R/hooks/kendex-guards" '/^# kendex-guards-helper-version=/d'
+}
 # Freeze the copied installer's stamp at the installed version after pulling
 # a changed payload. The older-stamp row's exact drift assertion then fails:
 # byte verification reports unknown and loses the main-checkout remedy.
@@ -287,6 +301,7 @@ run_rows \
   "a pulled payload change makes the installed stamp outdated with its main-checkout installer|fx_older_stamp||check||rc=1 $NA$OUTDATED|$FRESH" \
   "control: the current helper body reads armed after re-arming|fx_helper_rearmed||check||rc=0 $ARMED_CHECK|" \
   "a worktree names the main-checkout installer, not its own absolute path|fx_wt_previous_helper||check-wt||rc=1 $NA$OUTDATED|" \
+  "a bare-host worktree names this checkout because there is no main checkout|fx_bare_previous_helper||check-wt||rc=1 ${NA}helper-outdated=kendex-guards fix=.agents/skills/commit-guards/scripts/install-git-hooks (run from this checkout)|" \
   "must-fail: a frozen stamp loses the pulled-render drift and remedy|fx_blind_version||check||rc=2 $CND$UNVERIFIED|$FRESH"
 
 echo "=== usage ==="
