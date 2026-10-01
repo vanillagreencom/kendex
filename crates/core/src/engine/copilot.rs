@@ -102,10 +102,26 @@ pub(super) fn switched_off_elsewhere(
     enabled: bool,
     state: &mut DesiredState,
 ) {
+    switched_off_by(
+        settings::disabled_above(env, scope, kind, name),
+        kind,
+        name,
+        enabled,
+        state,
+    );
+}
+
+pub(super) fn switched_off_by(
+    path: Option<std::path::PathBuf>,
+    kind: ItemKind,
+    name: &str,
+    enabled: bool,
+    state: &mut DesiredState,
+) {
     if !enabled {
         return;
     }
-    let Some(path) = settings::disabled_above(env, scope, kind, name) else {
+    let Some(path) = path else {
         return;
     };
     let key = match kind {
@@ -117,7 +133,7 @@ pub(super) fn switched_off_elsewhere(
         name: name.to_owned(),
         harness: Some(HarnessId::Copilot),
         message: format!(
-            "kendex-item-disabled: harness=copilot item={record_arg0} setting={record_key}\nYour personal Copilot settings list {name} in `{key}`, and a repository can only add names to that list — as configured, this project cannot switch it back on",
+            "kendex-item-disabled: harness=copilot item={record_arg0} setting={record_key}\nCopilot settings outside this edit list {name} in `{key}`. As configured, this project cannot switch it back on",
             record_arg0 = crate::names::shown(name),
             record_key = crate::names::shown(key),
         ),

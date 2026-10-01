@@ -7,13 +7,14 @@ use super::hooks::Registration;
 use super::readers::read_json;
 
 pub(super) fn builtin_mcps(
-    env: &crate::env::Env,
+    root: &Path,
     scope: &crate::model::Scope,
 ) -> crate::error::Result<Vec<crate::model::ObservedItem>> {
     use crate::harness::copilot::settings;
     use crate::model::{FileState, HarnessId, ItemKind, ObservedItem};
-    let disabled = settings::disabled_mcps(env, scope)?;
-    let path = settings::settings_file(env, scope);
+    let settings = settings::McpSettings::at(root, scope);
+    let disabled = settings.disabled()?;
+    let path = settings.file();
     Ok(crate::harness::COPILOT_BUILTIN_MCPS
         .iter()
         .map(|name| ObservedItem {

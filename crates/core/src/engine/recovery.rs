@@ -189,11 +189,16 @@ pub fn compare_unmanaged_copies(
         .map(|planned| proven_entries(&report, planned))
         .unwrap_or_default();
     proven.version = crate::lock::LOCK_VERSION;
-    proven.entries.retain(|key, entry| {
-        !rewrites_manifest
-            && !disk.entries.contains_key(key)
-            && untouched(env, scope, entry, &touched)
-    });
+    let mut kept = BTreeMap::new();
+    for (key, entry) in proven.entries {
+        if !rewrites_manifest
+            && !disk.entries.contains_key(&key)
+            && untouched(env, scope, &entry, &touched)?
+        {
+            kept.insert(key, entry);
+        }
+    }
+    proven.entries = kept;
     let take_over_settles = take_over_settles(&report.drift);
     let mut measured = BTreeMap::new();
     for (key, install) in occupied {
@@ -338,17 +343,18 @@ fn untouched(
     scope: &Scope,
     entry: &crate::lock::LockEntry,
     touched: &BTreeSet<PathBuf>,
-) -> bool {
+) -> Result<bool> {
     let owned = owned::installed(env, scope, entry);
-    owned
+    let edits = owned.edits?;
+    Ok(owned
         .files
         .iter()
-        .chain(owned.edits.iter().map(|(path, _)| path))
+        .chain(edits.iter().map(|(path, _)| path))
         .all(|position| {
             !touched
                 .iter()
                 .any(|path| path.starts_with(position) || position.starts_with(path))
-        })
+        }))
 }
 
 /// Record matching committed renders after the unreadable lock has been moved
@@ -458,12 +464,13 @@ fn bind_reads(
     });
     for (key, entry) in &matching.entries {
         let owned = owned::installed(env, scope, entry);
+        let edits = owned.edits?;
         let proven = registrations
             .iter()
             .find(|(held, _)| held == key)
             .map(|(_, edits)| edits.as_slice())
             .unwrap_or_default();
-        for (path, _) in &owned.edits {
+        for (path, _) in &edits {
             if path.exists() && !proven.iter().any(|(held, _)| held == path) {
                 return Err(crate::error::CoreError::PlanStale { path: path.clone() });
             }
@@ -539,7 +546,7 @@ fn bind_reads(
                 });
             }
         }
-        for (path, _) in owned.edits {
+        for (path, _) in edits {
             plan.reads.push(ReadCheck::File {
                 pre: Pre::observed(&path)?,
                 path,

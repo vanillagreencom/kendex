@@ -279,6 +279,8 @@ beforeEach(() => {
     status: "ok",
     data: null,
   });
+  useScanStore.setState({ generation: 0 });
+  useProvenanceStore.setState({ read: READ_LANDED, reading: false });
   useEditorStore.setState({
     scope: { scope: "global" },
     draft: null,
@@ -366,6 +368,121 @@ it.each([false, true])(
     );
   },
 );
+
+it("routes grouped native and catalog MCP toggles through each scope's observation", async () => {
+  const global: Scope = { scope: "global" };
+  const native = observed({
+    ...installedAt(VG, "mcp-server"),
+    scope: global,
+    name: "githubiq",
+    harness: "copilot",
+    path: "/home/pat/.copilot/settings.json",
+    fileState: { state: "builtin" },
+    enabled: false,
+    origin: null,
+  });
+  const catalog = observed({
+    ...installedAt(VG, "mcp-server"),
+    name: "githubiq",
+    harness: "copilot",
+    path: `${VG.root}/.github/mcp.json`,
+    fileState: { state: "file" },
+  });
+  const result = {
+    harnesses: [],
+    items: [native, catalog],
+    missingProjects: [],
+    readProjects: [],
+    warnings: [],
+  };
+  useScanStore.setState({ result });
+  joinAnswered(
+    [native, catalog].map((item) => ({
+      scope: item.scope,
+      kind: item.kind,
+      name: item.name,
+      harness: item.harness,
+      at: item.at,
+      origin:
+        item === native
+          ? { origin: "builtin" }
+          : { origin: "marketplace", source: "cat", repo: "o/r" },
+      summary: null,
+      package: { kind: item.kind, name: item.name },
+    })),
+  );
+  useNavStore.setState({
+    page: "package",
+    packageRef: {
+      kind: "mcp-server",
+      name: "githubiq",
+      scope: global,
+      identity: "recorded",
+    },
+    packageView: null,
+  });
+  vi.mocked(commands.getManifest).mockImplementation((scope) =>
+    Promise.resolve({
+      status: "ok",
+      data: {
+        manifest: {
+          schema: 1,
+          install: {},
+          "mcp-servers": {
+            githubiq: {
+              source: scope.scope === "global" ? "builtin" : "cat",
+              enabled: false,
+              harnesses: ["copilot"],
+            },
+          },
+        },
+        base: null,
+        file: "kendex.toml",
+      },
+    }),
+  );
+  vi.mocked(commands.scanMachine).mockResolvedValue({
+    status: "ok",
+    data: result,
+  });
+  vi.mocked(commands.toggleItem).mockImplementation((scope) =>
+    Promise.resolve({
+      status: "ok",
+      data: {
+        scope,
+        drift: [],
+        plan: [],
+        notes: [],
+        warnings: [],
+        safety: [],
+        adoptable: ADOPTABLE,
+        exits: [],
+      },
+    }),
+  );
+  const host = mount(<PackagePage />);
+  await settle();
+  const control = host.querySelector("#package-enabled");
+  expect(control).not.toBeNull();
+  await userEvent.click(control as HTMLElement);
+  await settle();
+  expect(commands.toggleItem).toHaveBeenNthCalledWith(
+    1,
+    global,
+    "mcp-server",
+    "githubiq",
+    true,
+    { state: "builtin" },
+  );
+  expect(commands.toggleItem).toHaveBeenNthCalledWith(
+    2,
+    VG,
+    "mcp-server",
+    "githubiq",
+    true,
+    { state: "file" },
+  );
+});
 
 /** One place's audit view with gh scored 58, one finding to show under it. */
 const scoredView: AuditView = {

@@ -363,7 +363,7 @@ fn scan_scope(
             harness: HarnessId::Copilot,
             kind: ItemKind::McpServer,
         };
-        match copilot::builtin_mcps(env, scope) {
+        match copilot::builtin_mcps(&root, scope) {
             Ok(items) => pass.result.items.extend(items),
             Err(crate::error::CoreError::JsonParse { path, message }) => push_warning(
                 &mut pass.result.warnings,

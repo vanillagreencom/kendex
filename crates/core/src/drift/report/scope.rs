@@ -860,7 +860,13 @@ impl ScopeCheck<'_> {
             // hook whose body is a command) is its registration instead,
             // which has no rendered hash to name.
             let files = crate::engine::installed_paths(self.env, self.scope, entry);
-            let registered = crate::engine::registered_in(self.env, self.scope, entry);
+            let registered = match crate::engine::registered_in(self.env, self.scope, entry) {
+                Ok(registered) => registered,
+                Err(error) => {
+                    sections.unknown.push(unknown(error.to_string()));
+                    continue;
+                }
+            };
             let at = match (files.is_empty(), registered.is_empty()) {
                 (false, _) => format!(
                     ": {}, recorded hash none, rendered hash {}",

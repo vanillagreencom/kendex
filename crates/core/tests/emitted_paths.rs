@@ -140,7 +140,7 @@ fn records(kind: ItemKind, harness: HarnessId, relative: &str) {
             }
         );
         assert_eq!(emitted.name, "helper");
-        let registries = registered_in(&f.env, &f.scope, entry);
+        let registries = registered_in(&f.env, &f.scope, entry).unwrap();
         let expected_registry = if kind == ItemKind::Hook {
             match harness {
                 HarnessId::Claude => Some(".claude/settings.json"),

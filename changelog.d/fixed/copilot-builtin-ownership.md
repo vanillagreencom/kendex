@@ -1,1 +1,1 @@
-- Keep custom MCP registrations separate from Copilot's built-in servers. Refuse legacy builtin catalogs and stale native settings. Preserve local-source verification.
+- List Copilot's built-in servers and switch them on or off per scope. Enable or disable any installed package from the CLI.

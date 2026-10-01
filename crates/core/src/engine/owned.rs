@@ -29,7 +29,7 @@ pub(super) fn paths(env: &Env, scope: &Scope, lock: &Lock) -> BTreeSet<PathBuf> 
 
 pub(crate) struct Owned {
     pub(crate) files: Vec<PathBuf>,
-    pub(super) edits: Vec<(PathBuf, ConfigEdit)>,
+    pub(super) edits: crate::error::Result<Vec<(PathBuf, ConfigEdit)>>,
 }
 
 /// What one installation put on this machine: files it wrote, and the
@@ -59,14 +59,23 @@ pub(crate) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
         ItemKind::Hook => hook_owned(env, scope, entry, &mut files, &mut edits),
         ItemKind::McpServer => {
             if entry.source == crate::manifest::BUILTIN_SOURCE_NAME {
-                edits.push((
-                    crate::harness::copilot::settings::settings_file(env, scope),
-                    ConfigEdit::SetJsonArrayMember {
-                        key: "disabledMcpServers".into(),
-                        name: entry.name.clone(),
-                        present: false,
-                    },
-                ));
+                // File-only ownership remains available when app settings
+                // cannot be read. Registration consumers must report that error.
+                return Owned {
+                    files,
+                    edits: crate::harness::copilot::settings::McpSettings::load(env, scope).map(
+                        |settings| {
+                            vec![(
+                                settings.file(),
+                                ConfigEdit::SetJsonArrayMember {
+                                    key: "disabledMcpServers".into(),
+                                    name: entry.name.clone(),
+                                    present: false,
+                                },
+                            )]
+                        },
+                    ),
+                };
             } else if let Some(registry) = mcp_registry(env, scope, entry.harness) {
                 edits.push((registry, mcp_remove(entry.harness, &entry.name)));
             }
@@ -111,7 +120,10 @@ pub(crate) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
             .cloned()
             .collect();
     }
-    Owned { files, edits }
+    Owned {
+        files,
+        edits: Ok(edits),
+    }
 }
 
 /// A hook's remains: the entry it registered, and the script it wrote if

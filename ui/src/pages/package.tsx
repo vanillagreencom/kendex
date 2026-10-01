@@ -398,7 +398,7 @@ export function PackagePage() {
                   group.kind,
                   group.name,
                   enable,
-                  builtin ? primary.fileState : undefined,
+                  installationAt(group, scope)?.fileState,
                 ),
               )
           : undefined

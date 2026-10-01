@@ -93,6 +93,7 @@ pub(super) fn removal_ops(
     config_edits: &mut super::config_edits::ConfigEditPlan,
 ) -> Result<Vec<PlannedOp>> {
     let Owned { files, edits } = installed(env, scope, entry);
+    let edits = edits?;
     let mut ops = Vec::new();
     for path in files {
         for candidate in [disabled_name(&path), path] {

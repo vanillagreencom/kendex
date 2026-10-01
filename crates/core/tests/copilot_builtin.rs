@@ -116,6 +116,213 @@ fn builtin_mcp_toggle_verify_and_removal_use_the_native_switch() {
 }
 
 #[test]
+fn configured_copilot_root_owns_native_mcp_reads_writes_and_removal() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux).with_var(
+        "COPILOT_HOME",
+        home.join("environment-copilot").to_str().unwrap(),
+    );
+    let default = home.join("environment-copilot/settings.json");
+    let selected = home.join("selected-copilot");
+    fs::create_dir_all(default.parent().unwrap()).unwrap();
+    fs::create_dir_all(&selected).unwrap();
+    fs::create_dir_all(home.join("project/.github/copilot")).unwrap();
+    let untouched = "{\"disabledMcpServers\":[\"github-mcp-server\"],\"theme\":\"default\"}\n";
+    fs::write(&default, untouched).unwrap();
+    let mut settings = kendex_core::settings::AppSettings::default();
+    settings
+        .harness_roots
+        .insert("copilot".into(), selected.clone());
+    fs::create_dir_all(env.settings_file().parent().unwrap()).unwrap();
+    fs::write(env.settings_file(), toml::to_string(&settings).unwrap()).unwrap();
+    for scope in [
+        Scope::Global,
+        Scope::Project {
+            root: home.join("project"),
+        },
+    ] {
+        fs::write(
+            selected.join("settings.json"),
+            "{\"disabledMcpServers\":[\"githubiq\"],\"theme\":\"selected\"}\n",
+        )
+        .unwrap();
+        let target = match &scope {
+            Scope::Global => selected.join("settings.json"),
+            Scope::Project { root } => root.join(".github/copilot/settings.json"),
+        };
+        let scanned =
+            scan::scan_scopes(&env, &settings.harness_roots, std::slice::from_ref(&scope));
+        let native = scanned
+            .items
+            .iter()
+            .find(|item| item.name == "githubiq")
+            .unwrap();
+        assert_eq!(native.path, target);
+        assert_eq!(native.enabled, Some(false));
+        let names = ["githubiq".to_owned()];
+        // Enabling an undeclared native row depends on the selected root's disabled list.
+        let enabled = ops::toggle(&env, &scope, &names, None, true, None).unwrap();
+        assert_eq!(
+            enabled
+                .installations
+                .values()
+                .filter(|item| item.name == "githubiq")
+                .count(),
+            1,
+            "configured root must make undeclared native row eligible"
+        );
+        apply::execute(&env, &enabled.plan).unwrap();
+        let disabled = ops::toggle(&env, &scope, &names, None, false, None).unwrap();
+        apply::execute(&env, &disabled.plan).unwrap();
+        let value: Value = serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
+        assert_eq!(value["disabledMcpServers"], json!(["githubiq"]));
+        let audit = engine::audit(&env, &scope).unwrap();
+        assert!(audit.drift.is_empty());
+        let entry = &audit
+            .installations
+            .values()
+            .find(|item| item.name == "githubiq")
+            .unwrap();
+        assert_eq!(entry.name, "githubiq");
+        let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&env, &scope)).unwrap();
+        let record = lock
+            .entries
+            .values()
+            .find(|entry| entry.name == "githubiq")
+            .unwrap();
+        assert_eq!(
+            engine::registered_in(&env, &scope, record).unwrap(),
+            vec![target.clone()]
+        );
+        let removed = ops::remove(&env, &scope, &names, None, false).unwrap();
+        apply::execute(&env, &removed.plan).unwrap();
+        let value: Value = serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
+        assert!(value.get("disabledMcpServers").is_none());
+        assert_eq!(fs::read_to_string(&default).unwrap(), untouched);
+        if matches!(scope, Scope::Global) {
+            assert_eq!(value["theme"], "selected");
+            fs::write(env.settings_file(), "schema = [").unwrap();
+            assert!(engine::registered_in(&env, &scope, record).is_err());
+            fs::write(env.settings_file(), toml::to_string(&settings).unwrap()).unwrap();
+        }
+    }
+}
+
+#[test]
+fn commented_native_mcp_settings_refuse_toggle_removal_and_reconciliation() {
+    for (project, text) in [
+        (
+            false,
+            "// keep this note\n{\"disabledMcpServers\":[\"githubiq\"]}\n",
+        ),
+        (
+            true,
+            "// keep this note\n{\"disabledMcpServers\":[\"githubiq\"]}\n",
+        ),
+        (false, "{\"disabledMcpServers\":[\"githubiq\"],}\n"),
+        (true, "{\"disabledMcpServers\":[\"githubiq\"],}\n"),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let env = Env::fake(&home, FakeOs::Linux);
+        fs::create_dir_all(home.join(".copilot")).unwrap();
+        fs::create_dir_all(home.join("project/.github/copilot")).unwrap();
+        let scope = if project {
+            Scope::Project {
+                root: home.join("project"),
+            }
+        } else {
+            Scope::Global
+        };
+        let path = kendex_core::harness::copilot::settings::settings_file(&env, &scope);
+        let names = ["githubiq".to_owned()];
+        let seeded = ops::toggle(&env, &scope, &names, None, false, None).unwrap();
+        apply::execute(&env, &seeded.plan).unwrap();
+        fs::write(&path, text).unwrap();
+        let manifest_path = manifest::manifest_path(&env, &scope);
+        let lock_path = kendex_core::lock::lock_path(&env, &scope);
+        let before = (
+            fs::read(&manifest_path).unwrap(),
+            fs::read(&lock_path).unwrap(),
+        );
+        // Reads remain tolerant, while both a repair and an enable refuse the edit.
+        assert_eq!(
+            kendex_core::harness::copilot::settings::disabled_mcps(&env, &scope).unwrap(),
+            names
+        );
+        for report in [
+            engine::audit(&env, &scope).unwrap(),
+            ops::toggle(&env, &scope, &names, None, true, None).unwrap(),
+        ] {
+            assert!(
+                report
+                    .drift
+                    .iter()
+                    .any(|row| row.name == "githubiq" && row.state == engine::DriftState::Conflict),
+                "commented native settings must be an edit conflict"
+            );
+            assert!(!report.plan.ops.iter().any(|planned| matches!(&planned.op, apply::Op::EditFile { path: edited, .. } if edited == &path)));
+        }
+        assert!(matches!(
+            ops::remove(&env, &scope, &names, None, false),
+            Err(kendex_core::error::CoreError::ConfigEdit { .. })
+        ));
+        assert_eq!(fs::read_to_string(&path).unwrap(), text);
+        assert_eq!(fs::read(&manifest_path).unwrap(), before.0);
+        assert_eq!(fs::read(&lock_path).unwrap(), before.1);
+    }
+}
+
+#[test]
+fn project_local_builtin_hold_warns_on_enable_and_verify_without_writes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let scope = Scope::Project {
+        root: home.join("project"),
+    };
+    fs::create_dir_all(home.join(".copilot")).unwrap();
+    fs::create_dir_all(home.join("project/.github/copilot")).unwrap();
+    let local = home.join("project/.github/copilot/settings.local.json");
+    let bytes = "// personal project choice\n{\"disabledMcpServers\":[\"githubiq\"],}\n";
+    fs::write(&local, bytes).unwrap();
+    let report = ops::toggle(&env, &scope, &["githubiq".into()], None, true, None).unwrap();
+    let held = |report: &engine::EngineReport| {
+        report.warnings.iter().any(|warning| {
+            warning.name == "githubiq"
+                && warning.message.starts_with("kendex-item-disabled:")
+                && warning
+                    .remediation
+                    .as_ref()
+                    .is_some_and(|remedy| remedy.contains(local.to_str().unwrap()))
+        })
+    };
+    assert!(
+        held(&report),
+        "project-local hold warning missing from enable"
+    );
+    apply::execute(&env, &report.plan).unwrap();
+    let verified = engine::audit(&env, &scope).unwrap();
+    assert!(
+        held(&verified),
+        "project-local hold warning missing from verify"
+    );
+    assert!(verified.drift.is_empty());
+    assert_eq!(fs::read_to_string(&local).unwrap(), bytes);
+    let scanned = scan::scan_scopes(&env, &BTreeMap::new(), &[scope]);
+    assert_eq!(
+        scanned
+            .items
+            .iter()
+            .find(|item| item.name == "githubiq")
+            .unwrap()
+            .enabled,
+        Some(false)
+    );
+}
+
+#[test]
 fn native_mcp_settings_union_holds_and_bad_layers_never_report_on() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);

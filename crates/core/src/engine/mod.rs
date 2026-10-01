@@ -95,15 +95,15 @@ pub fn registered_in(
     env: &crate::env::Env,
     scope: &crate::model::Scope,
     entry: &crate::lock::LockEntry,
-) -> Vec<std::path::PathBuf> {
+) -> Result<Vec<std::path::PathBuf>> {
     let mut files: Vec<std::path::PathBuf> = owned::installed(env, scope, entry)
-        .edits
+        .edits?
         .into_iter()
         .map(|(path, _)| path)
         .collect();
     files.sort();
     files.dedup();
-    files
+    Ok(files)
 }
 
 /// Every file path one lock entry put on this machine — what a cheap

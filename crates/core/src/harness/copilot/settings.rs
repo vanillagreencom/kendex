@@ -18,8 +18,12 @@ use crate::model::{ItemKind, Scope};
 /// Where a scope's own settings live. Plugin toggles and built-in MCP
 /// disabled-list edits land here; personal overrides remain untouched.
 pub fn settings_file(env: &Env, scope: &Scope) -> PathBuf {
+    settings_at(&super::Copilot.default_global_root(env), scope)
+}
+
+fn settings_at(user_root: &Path, scope: &Scope) -> PathBuf {
     match scope {
-        Scope::Global => user_settings_file(env),
+        Scope::Global => user_root.join("settings.json"),
         Scope::Project { root } => root.join(".github/copilot/settings.json"),
     }
 }
@@ -137,31 +141,99 @@ pub fn disabled_above(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> O
 /// settings subset excludes this key, so those files are not MCP layers.
 /// A malformed layer is an error, never an answer of "enabled".
 pub fn disabled_mcps(env: &Env, scope: &Scope) -> Result<Vec<String>> {
-    let mut files = vec![legacy_user_settings_file(env), user_settings_file(env)];
-    if let Scope::Project { root } = scope {
-        files.extend(repo_settings_files(root));
+    McpSettings::load(env, scope)?.disabled()
+}
+
+/// Native MCP settings at the selected Copilot installation. Project writes
+/// stay in the repository, but personal disabled lists use the selected root.
+pub(crate) struct McpSettings<'a> {
+    root: PathBuf,
+    scope: &'a Scope,
+}
+
+impl<'a> McpSettings<'a> {
+    pub(crate) fn load(env: &Env, scope: &'a Scope) -> Result<Self> {
+        let settings = crate::settings::load(env)?;
+        let root = settings
+            .harness_roots
+            .get("copilot")
+            .cloned()
+            .unwrap_or_else(|| super::Copilot.default_global_root(env));
+        Ok(Self::at(&root, scope))
     }
-    let mut names = Vec::new();
-    for path in files {
-        let Some(value) = settings_json(&path)? else {
-            continue;
-        };
-        let Some(list) = value.get("disabledMcpServers") else {
-            continue;
-        };
-        let list = list
-            .as_array()
-            .filter(|list| list.iter().all(|name| name.is_string()))
-            .ok_or_else(|| CoreError::JsonParse {
-                path: path.clone(),
-                message: "disabledMcpServers is not a string array".into(),
-            })?;
-        names.extend(
-            list.iter()
-                .filter_map(|name| name.as_str().map(str::to_owned)),
-        );
+
+    pub(crate) fn at(root: &Path, scope: &'a Scope) -> Self {
+        Self {
+            root: root.to_owned(),
+            scope,
+        }
     }
-    Ok(names)
+
+    pub(crate) fn file(&self) -> PathBuf {
+        settings_at(&self.root, self.scope)
+    }
+
+    pub(crate) fn unmanageable(&self) -> Option<String> {
+        legacy_only(
+            self.scope,
+            &self.root.join("settings.json"),
+            &self.root.join("config.json"),
+        )
+    }
+
+    pub(crate) fn held_by(&self, name: &str) -> Result<Option<PathBuf>> {
+        if matches!(self.scope, Scope::Global) {
+            return Ok(None);
+        }
+        let mut files = vec![
+            self.root.join("config.json"),
+            self.root.join("settings.json"),
+        ];
+        if let Scope::Project { root } = self.scope {
+            files.push(repo_settings_files(root)[1].clone());
+        }
+        for path in files {
+            if mcp_names_in(&path)?.iter().any(|listed| listed == name) {
+                return Ok(Some(path));
+            }
+        }
+        Ok(None)
+    }
+
+    pub(crate) fn disabled(&self) -> Result<Vec<String>> {
+        let mut files = vec![
+            self.root.join("config.json"),
+            self.root.join("settings.json"),
+        ];
+        if let Scope::Project { root } = self.scope {
+            files.extend(repo_settings_files(root));
+        }
+        let mut names = Vec::new();
+        for path in files {
+            names.extend(mcp_names_in(&path)?);
+        }
+        Ok(names)
+    }
+}
+
+fn mcp_names_in(path: &Path) -> Result<Vec<String>> {
+    let Some(value) = settings_json(path)? else {
+        return Ok(Vec::new());
+    };
+    let Some(list) = value.get("disabledMcpServers") else {
+        return Ok(Vec::new());
+    };
+    let list = list
+        .as_array()
+        .filter(|list| list.iter().all(|name| name.is_string()))
+        .ok_or_else(|| CoreError::JsonParse {
+            path: path.to_owned(),
+            message: "disabledMcpServers is not a string array".into(),
+        })?;
+    Ok(list
+        .iter()
+        .filter_map(|name| name.as_str().map(str::to_owned))
+        .collect())
 }
 
 fn names_in(path: &Path, key: &str) -> Vec<String> {
@@ -184,9 +256,15 @@ fn names_in(path: &Path, key: &str) -> Vec<String> {
 /// `settings.json` has never run a CLI that reads what kendex would write,
 /// so the write is refused rather than left somewhere nothing loads it.
 pub fn unmanageable(env: &Env, scope: &Scope) -> Option<String> {
-    let stale = matches!(scope, Scope::Global)
-        && !user_settings_file(env).exists()
-        && legacy_user_settings_file(env).exists();
+    legacy_only(
+        scope,
+        &user_settings_file(env),
+        &legacy_user_settings_file(env),
+    )
+}
+
+fn legacy_only(scope: &Scope, user: &Path, legacy: &Path) -> Option<String> {
+    let stale = matches!(scope, Scope::Global) && !user.exists() && legacy.exists();
     stale.then(|| {
         "this machine still keeps Copilot's settings in the older config.json, so the installed CLI would not read what kendex writes".to_owned()
     })

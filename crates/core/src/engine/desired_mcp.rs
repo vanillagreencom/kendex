@@ -139,16 +139,17 @@ pub(super) fn desired_builtin(
         ));
         return Ok(());
     }
-    if let Some(reason) = settings::unmanageable(env, scope) {
+    let settings = settings::McpSettings::load(env, scope)?;
+    if let Some(reason) = settings.unmanageable() {
         return Err(crate::error::CoreError::ConfigEdit {
-            path: settings::settings_file(env, scope),
+            path: settings.file(),
             message: reason,
         });
     }
     // Read every native layer before reporting or planning a switch. A bad
     // personal layer must not turn into a false enabled answer.
-    settings::disabled_mcps(env, scope)?;
-    super::copilot::switched_off_elsewhere(env, scope, kind, name, decl.enabled, state);
+    settings.disabled()?;
+    super::copilot::switched_off_by(settings.held_by(name)?, kind, name, decl.enabled, state);
     state
         .processed
         .insert((kind, name.to_owned()), "builtin".to_owned());
@@ -172,7 +173,7 @@ pub(super) fn desired_builtin(
         artifact: Artifact::Registration {
             script: None,
             edits: vec![(
-                settings::settings_file(env, scope),
+                settings.file(),
                 ConfigEdit::SetJsonArrayMember {
                     key: "disabledMcpServers".into(),
                     name: name.to_owned(),

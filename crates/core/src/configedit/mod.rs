@@ -205,12 +205,7 @@ impl ConfigEdit {
                 let mut root: Value = if current.trim().is_empty() {
                     json!({})
                 } else {
-                    let text = if matches!(self, ConfigEdit::SetJsonArrayMember { .. }) {
-                        crate::scan::jsonc::to_json(current)
-                    } else {
-                        current.to_owned()
-                    };
-                    serde_json::from_str(&text).map_err(|e| e.to_string())?
+                    serde_json::from_str(current).map_err(|e| e.to_string())?
                 };
                 json_edit.apply_json(&mut root)?;
                 let mut text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
