@@ -532,6 +532,38 @@ exec git "$@"
         result = self.call("append", "--item", "TEST-1", "--", str(target), data=repeated)
         self.assertEqual((result.returncode, len(target.read_bytes().splitlines())), (0, 2))
 
+    def test_append_compares_sender_stamps_on_a_lagging_host(self):
+        """Sequential UTC envelopes repeat even when the provider clock lags."""
+        self.assertEqual(self.create().returncode, 0)
+        library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/mailbox-append.sh"
+        original = library.read_text()
+        self.addCleanup(library.write_text, original)
+        rule = '| ($candidate.at | at_epoch) as $now'
+        self.assertEqual(original.count(rule), 1)
+        # The control restores the provider's clock without removing the judge.
+        mutant = original.replace(rule, '| 1699999999 as $now # ' + rule)
+        self.assertNotEqual(mutant, original)
+        target = self.root / "lane/tmp/lane-mail/TEST-1/to-lane.jsonl"
+        target.parent.mkdir(parents=True)
+        envelope = dict(id="first", kind="directive", at="2023-11-14T22:13:20Z",
+                        **{"from": "owner"}, text="one report")
+        for clock, source, expected in ((1700000000, original, (4, 1)),
+                                        (1699999999, original, (4, 1)),
+                                        (1699999999, mutant, (0, 2))):
+            with self.subTest(clock=clock, control=source == mutant):
+                self.executable(self.bin / "date", f"#!/bin/sh\nprintf '%s\\n' {clock}\n")
+                library.write_text(source)
+                target.write_bytes(b"")
+                first = self.call("append", "--item", "TEST-1", "--", str(target),
+                                  data=(json.dumps(envelope) + "\n").encode())
+                self.assertEqual(first.returncode, 0, first.stderr)
+                second = self.call("append", "--item", "TEST-1", "--", str(target),
+                                   data=(json.dumps(dict(envelope, id="second")) + "\n").encode())
+                self.assertEqual((second.returncode, len(target.read_bytes().splitlines())), expected,
+                                 second.stderr)
+                if expected == (4, 1):
+                    self.assertIn(b"duplicate id=first\n", second.stderr)
+
     def test_append_names_its_failure_in_a_word(self):
         """The library's number is decoded where it is printed, not passed on."""
         self.assertEqual(self.create().returncode, 0)

@@ -50,9 +50,7 @@ MAILBOX_TIME_JQ='def at_epoch: try (strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) cat
 # The envelope crosses a file, not argv: a message can exceed one argument's
 # kernel limit. Raw provider appends that are not envelopes remain raw bytes.
 mailbox_duplicate_id() { # FILE ENVELOPE_FILE
-  local now=""
-  now="$(date -u +%s)" || return 2
-  jq -r -R --argjson now "$now" --rawfile sent "$2" "$MAILBOX_TIME_JQ"'
+  jq -r -R --rawfile sent "$2" "$MAILBOX_TIME_JQ"'
     def content:
       if has("deadline") then
         (.deadline | at_epoch) as $deadline | (.at | at_epoch) as $stamp
@@ -60,11 +58,13 @@ mailbox_duplicate_id() { # FILE ENVELOPE_FILE
             .deadline = ($deadline - $stamp)
           else . end
       else . end | del(.id, .at);
-    ($sent | fromjson? // empty | objects | content) as $want
+    ($sent | fromjson? // empty | objects) as $candidate
+    | ($candidate.at | at_epoch) as $now
+    | ($candidate | content) as $want
     | (fromjson? // empty) | objects
     | select(content == $want)
     | (.at | at_epoch) as $at
-    | select($at != null and ($now - $at) >= 0 and ($now - $at) <= 60)
+    | select($now != null and $at != null and ($now - $at) >= 0 and ($now - $at) <= 60)
     | .id | strings' <"$1" |
     awk '{ last = $0 } END { if (NR > 0) print last }'
 }
