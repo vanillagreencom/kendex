@@ -125,7 +125,7 @@ for row in \
       "-resets=\(reset(.[2]))\tmodel-label=\(.[3])"' > "$H/accounts"
   if [[ "$label" == Sonnet ]]; then
     printf '\tweekly-pct=0\n' > "$H/shared"
-    paste -d '' "$H/accounts" "$H/shared" > "$H/accounts.tmp"; mv "$H/accounts.tmp" "$H/accounts"
+    paste -d '\0' "$H/accounts" "$H/shared" > "$H/accounts.tmp"; mv "$H/accounts.tmp" "$H/accounts"
   fi
   args=(pick --harness "$harness" --model claude-opus-5-5 --json)
   [[ "$harness" != pi ]] || args=(pick --harness pi --model github-copilot/claude-opus-5-5 --json)
