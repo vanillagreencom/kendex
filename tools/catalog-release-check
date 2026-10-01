@@ -40,6 +40,10 @@ def main():
             "XDG_CACHE_HOME": str(home / ".cache"),
             "KENDEX_REAL_HOME": "1",
             "KENDEX_UI": "plain",
+            # An archived catalog and the render project must not inherit an
+            # enclosing checkout's ignored tmp/ directory. A catalog's own
+            # repository remains discoverable, including its ignore rules.
+            "GIT_CEILING_DIRECTORIES": os.pathsep.join((str(Path(catalog).parent), str(root))),
         }
         version = subprocess.run(
             [binary, "--version"], env=environment, cwd=project,

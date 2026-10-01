@@ -3,12 +3,14 @@
 //! its checker against that binary. A checkout build is not release evidence.
 #![cfg(unix)]
 
+use std::ffi::OsStr;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use super::{job, run_script, step};
-use crate::test_util::rooted;
+use crate::test_util::{fixture_env, rooted};
 
 #[allow(clippy::unwrap_used)]
 fn repo() -> PathBuf {
@@ -31,6 +33,123 @@ fn check(binary: &Path, script: &Path, catalog: &Path, root: &Path) -> Output {
         .unwrap()
 }
 
+// Only an anonymous release API read may be unavailable on a hosted lane.
+// CI supplies GITHUB_TOKEN; an authenticated failure must still fail CI.
+fn require_install(install: &Output, token: Option<&OsStr>) -> Result<(), String> {
+    if install.status.success() {
+        return Ok(());
+    }
+    let diagnostic = format!(
+        "release install status: {}\nstdout:\n{}\nstderr:\n{}",
+        install.status,
+        String::from_utf8_lossy(&install.stdout),
+        String::from_utf8_lossy(&install.stderr),
+    );
+    if token.is_none()
+        && String::from_utf8_lossy(&install.stderr)
+            .lines()
+            .any(|line| line == "kendex-install: cause=release-read")
+    {
+        return Err(format!(
+            "anonymous GitHub release read unavailable; GITHUB_TOKEN is unset\n{diagnostic}"
+        ));
+    }
+    panic!("{diagnostic}");
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn install_failures_keep_both_streams_and_only_anonymous_release_reads_skip() {
+    // This holds the test's handling of the installer's report protocol, not
+    // shipped behavior. Dropping either stream from require_install makes
+    // the failure assertion red; accepting installer-run makes it red too.
+    for (cause, token) in [
+        ("release-read", None),
+        ("release-read", Some(OsStr::new("read-only"))),
+        ("installer-run", None),
+    ] {
+        let output = Command::new("/bin/sh")
+            .args([
+                "-c",
+                "printf 'installer-stdout'; printf 'kendex-install: cause=%s\\ninstaller-stderr' \"$1\" >&2; exit 1",
+                "installer-fixture",
+                cause,
+            ])
+            .env_clear()
+            .output()
+            .unwrap();
+        let result = std::panic::catch_unwind(|| require_install(&output, token));
+        let diagnostic = if cause == "release-read" && token.is_none() {
+            result.unwrap().unwrap_err()
+        } else {
+            *result.unwrap_err().downcast::<String>().unwrap()
+        };
+        assert!(diagnostic.contains("exit status: 1"), "{diagnostic}");
+        assert!(diagnostic.contains("installer-stdout"), "{diagnostic}");
+        assert!(diagnostic.contains("installer-stderr"), "{diagnostic}");
+    }
+}
+
+#[allow(clippy::unwrap_used)]
+fn ignored_catalog_keeps_its_own_ignore_rules(
+    binary: &Path,
+    script: &Path,
+    root: &Path,
+    home: &Path,
+    text: &str,
+) {
+    // Hosted snapshots can live under an enclosing checkout's ignored tmp/.
+    // Model that layout without changing this checkout or its ignore rules.
+    let ignored = root.join("ignored");
+    let catalog = ignored.join("catalog");
+    fs::create_dir_all(catalog.join("agents")).unwrap();
+    fs::write(root.join(".gitignore"), "ignored/\n").unwrap();
+    fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    fs::write(
+        catalog.join("agents/planner.md"),
+        "---\nname: planner\ndescription: Write a plan\ntracked-outputs: [docs/plans/<slug>.md]\n---\nWrite a plan.\n",
+    )
+    .unwrap();
+    for directory in [root, catalog.as_path()] {
+        if directory == catalog.as_path() {
+            fs::write(catalog.join(".gitignore"), "docs/plans/\n").unwrap();
+        }
+        let init = Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(directory)
+            .env_clear()
+            .envs(fixture_env(home))
+            .env("PATH", std::env::var("PATH").unwrap())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(init.status.success(), "{init:?}");
+        let output = check(binary, script, &catalog, &ignored);
+        if directory == root {
+            assert!(output.status.success(), "ignored snapshot: {output:?}");
+            let target = "            \"GIT_CEILING_DIRECTORIES\": os.pathsep.join((str(Path(catalog).parent), str(root))),\n";
+            assert_eq!(text.matches(target).count(), 1);
+            let mutated = text.replace(target, "            \"GIT_CEILING_DIRECTORIES\": \"\",\n");
+            assert_ne!(text, mutated);
+            let mutant = root.join("unbounded-git.py");
+            fs::write(&mutant, mutated).unwrap();
+            let output = check(binary, &mutant, &catalog, &ignored);
+            assert_eq!(output.status.code(), Some(1), "{output:?}");
+            assert!(
+                String::from_utf8_lossy(&output.stdout).contains("tracked-output"),
+                "{output:?}"
+            );
+        } else {
+            // The catalog's own ignore policy is real authoring input.
+            assert_eq!(output.status.code(), Some(1), "{output:?}");
+            assert!(
+                String::from_utf8_lossy(&output.stdout).contains("docs/plans/"),
+                "{output:?}"
+            );
+        }
+    }
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_current_catalog_renders_and_incomplete_delivery_fails() {
@@ -46,22 +165,20 @@ fn the_current_catalog_renders_and_incomplete_delivery_fails() {
         .current_dir(&root)
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap())
-        .env("HOME", &home)
-        .env("KENDEX_REAL_HOME", "1")
-        .env("XDG_CONFIG_HOME", home.join(".config"))
-        .env("XDG_DATA_HOME", home.join(".local/share"))
-        .env("XDG_CACHE_HOME", home.join(".cache"));
+        .envs(fixture_env(&home));
     // CI supplies its read-only API token. No other caller credentials enter
     // this isolated process, and the helper clears the token before install.
-    if let Some(token) = std::env::var_os("GITHUB_TOKEN").filter(|token| !token.is_empty()) {
+    let token = std::env::var_os("GITHUB_TOKEN").filter(|token| !token.is_empty());
+    if let Some(token) = &token {
         installer.env("GITHUB_TOKEN", token);
     }
     let install = installer.output().unwrap();
-    assert!(
-        install.status.success(),
-        "release install status: {}",
-        install.status
-    );
+    if let Err(reason) = require_install(&install, token.as_deref()) {
+        // Bypass libtest's capture so a successful-but-skipped network test
+        // reports its reason even in the full validation's quiet run.
+        writeln!(std::io::stderr(), "catalog-release: skip={reason}").unwrap();
+        return;
+    }
     eprintln!("{}", String::from_utf8_lossy(&install.stdout));
     let binary = home.join(".local/bin/kendex");
     let output = check(&binary, &script, &repository, &root);
@@ -75,6 +192,8 @@ fn the_current_catalog_renders_and_incomplete_delivery_fails() {
     assert!(record.contains(" result=pass"), "{record}");
 
     let text = fs::read_to_string(&script).unwrap();
+    ignored_catalog_keeps_its_own_ignore_rules(&binary, &script, &root, &home, &text);
+
     // Both declarations parse. Core's catalog check must refuse delivery
     // to the named unsupported harness before the wrapper installs anything.
     let manifest = "is_source_catalog = true\n";
