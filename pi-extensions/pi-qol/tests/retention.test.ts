@@ -124,6 +124,8 @@ test("opening session search after the index was released shows the overlay befo
 	let finishLoad: (sessions: unknown[]) => void = () => {};
 	stubSessionManager.listAll = () => new Promise((resolve) => { finishLoad = resolve; });
 	let renders = 0;
+	let rendered!: () => void;
+	const firstRender = new Promise<void>((resolve) => { rendered = resolve; });
 	let close: (action: unknown) => void = () => {};
 	const ctx = makeCtx({
 		cwd: workdir,
@@ -133,7 +135,7 @@ test("opening session search after the index was released shows the overlay befo
 			custom: (factory: (tui: unknown, theme: unknown, keybindings: unknown, done: (action: unknown) => void) => unknown) => new Promise((resolve) => {
 				order.push("overlay");
 				close = resolve;
-				factory({ requestRender: () => { renders++; }, terminal: { rows: 40 } }, undefined, undefined, resolve);
+				factory({ requestRender: () => { renders++; rendered(); }, terminal: { rows: 40 } }, undefined, undefined, resolve);
 			}),
 		},
 	});
@@ -142,7 +144,7 @@ test("opening session search after the index was released shows the overlay befo
 	order.push("load finished");
 	finishLoad([{ path: join(workdir, "a.jsonl"), allMessagesText: "text", modified: new Date(0) }]);
 	// The overlay is told to redraw once the loaded index reaches it.
-	for (let tick = 0; tick < 10 && renders === 0; tick++) await Promise.resolve();
+	await firstRender;
 	close({ type: "cancel" });
 	await opened;
 	expect({ order, renders }).toEqual({ order: ["overlay", "load finished"], renders: 1 });

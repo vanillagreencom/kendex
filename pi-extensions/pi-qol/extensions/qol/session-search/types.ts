@@ -11,6 +11,9 @@ export interface QolSessionSearchSession {
 	name?: string;
 	parentSessionPath?: string;
 	path: string;
+	/** Prepared once per index load, not read from disk during a query. */
+	canonicalCwd?: string;
+	userMessages?: QolSessionUserMessage[];
 }
 
 /** The session-search index as the overlay sees it: still loading, loaded,

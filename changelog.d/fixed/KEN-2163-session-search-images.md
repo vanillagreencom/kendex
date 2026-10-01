@@ -1,0 +1,1 @@
+- Pi QOL indexes session searches asynchronously and stops slow regex searches with a deadline error. Image submissions use asynchronous reads and refuse totals above 20 MiB before reading files.

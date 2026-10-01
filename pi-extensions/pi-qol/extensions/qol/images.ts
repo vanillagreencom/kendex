@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { applyVisibleReplacements, buildVisibleMap, type VisibleReplacement } from "./ansi.js";
@@ -42,11 +43,44 @@ function mimeTypeForPath(path: string): string {
 	return "image/png";
 }
 
-export function imageContentForPath(path: string): { type: "image"; data: string; mimeType: string } | undefined {
+/** Submitted image paths and clipboard images share this raw-byte budget. */
+export const SUBMITTED_IMAGES_MAX_BYTES = 20 * 1024 * 1024;
+
+/** Stat every open file before reading any of them. Read only the observed
+ * bytes and one growth probe, so a growing file cannot bypass the budget. */
+export async function imageContentsForPaths(paths: string[], existing: Array<{ data: string }> = []): Promise<Array<{ type: "image"; data: string; mimeType: string }>> {
+	const files: Array<{ path: string; handle: Awaited<ReturnType<typeof open>>; size: number }> = [];
+	let total = existing.reduce((sum, image) => sum + Buffer.byteLength(image.data, "base64"), 0);
+	const checkSize = () => {
+		if (total > SUBMITTED_IMAGES_MAX_BYTES) throw new Error(`IMAGE_SIZE_LIMIT: ${total} bytes exceeds ${SUBMITTED_IMAGES_MAX_BYTES}`);
+	};
 	try {
-		return { data: readFileSync(path).toString("base64"), mimeType: mimeTypeForPath(path), type: "image" };
-	} catch {
-		return undefined;
+		checkSize();
+		for (const path of paths) {
+			const handle = await open(path, "r");
+			const file = { path, handle, size: 0 };
+			files.push(file);
+			const stat = await handle.stat();
+			if (!stat.isFile()) throw new Error(`IMAGE_NOT_FILE: ${path}`);
+			file.size = stat.size;
+			total += stat.size;
+			checkSize();
+		}
+		const buffers: Buffer[] = [];
+		for (const file of files) {
+			const buffer = Buffer.alloc(file.size + 1);
+			let offset = 0;
+			while (offset < buffer.length) {
+				const { bytesRead } = await file.handle.read(buffer, offset, buffer.length - offset, offset);
+				if (bytesRead === 0) break;
+				offset += bytesRead;
+			}
+			if (offset > file.size) throw new Error(`IMAGE_SIZE_CHANGED: ${file.path}`);
+			buffers.push(buffer.subarray(0, offset));
+		}
+		return files.map((file, index) => ({ type: "image", data: buffers[index]!.toString("base64"), mimeType: mimeTypeForPath(file.path) }));
+	} finally {
+		await Promise.all(files.map((file) => file.handle.close()));
 	}
 }
 

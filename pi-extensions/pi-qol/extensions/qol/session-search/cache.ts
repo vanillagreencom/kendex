@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -14,7 +14,7 @@ import {
 } from "../constants.js";
 import { expandHome, piSettingsPaths, readSettingsFiles } from "../package-config.js";
 import { settingBoolean, settingNumber, settingString, settingStringAllowEmpty } from "../settings.js";
-import { forEachSessionJsonlLine } from "./jsonl.js";
+import { forEachSessionJsonlLine, forEachSessionJsonlLineAsync } from "./jsonl.js";
 import type {
 	QolSessionPaletteAction,
 	QolSessionSearchPendingMessage,
@@ -27,6 +27,7 @@ import type {
 let qolSessionSearchCache: QolSessionSearchSession[] = [];
 let qolSessionSearchLoadedAt = 0;
 let qolSessionSearchLoading: Promise<QolSessionSearchSession[]> | undefined;
+let qolSessionSearchLoadController: AbortController | undefined;
 let qolSessionSearchReleaseTimer: ReturnType<typeof setTimeout> | undefined;
 /** Parsed user prompts per session path, oldest insertion first; at most
  *  SESSION_SEARCH_USER_MESSAGES_MAX_SESSIONS entries. */
@@ -115,17 +116,57 @@ function configuredSessionDir(cwd: string): string | undefined {
 	return configured;
 }
 
-function canonicalPathForSessionSearch(path: string | undefined): string | undefined {
-	if (!path) return undefined;
+/** Resolve a project once at index entry. A deleted directory keeps its
+ * absolute spelling; other filesystem failures remain visible. */
+export async function canonicalPathForSessionSearch(path: string): Promise<string> {
 	try {
-		return realpathSync.native(path);
-	} catch {
-		return resolve(path);
+		return await realpath(path);
+	} catch (error) {
+		if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) return resolve(path);
+		throw error;
 	}
 }
 
-export function sameSessionSearchProject(sessionCwd: string | undefined, cwd: string): boolean {
-	return canonicalPathForSessionSearch(sessionCwd) === canonicalPathForSessionSearch(cwd);
+/** Prepare prompts and canonical projects asynchronously. Both the shared
+ * cache and an overlay supplied with sessions use this index entry point. */
+export async function prepareQolSessionSearchSessions(sessions: QolSessionSearchSession[], signal: AbortSignal): Promise<QolSessionSearchSession[]> {
+	const paths = new Map<string, string>();
+	let budget = SESSION_SEARCH_TEXT_MAX_CHARS;
+	const prepared: QolSessionSearchSession[] = [];
+	for (const session of [...sessions].sort((a, b) => b.modified.getTime() - a.modified.getTime())) {
+		signal.throwIfAborted();
+		let canonicalCwd = session.canonicalCwd ?? paths.get(session.cwd);
+		if (canonicalCwd === undefined) {
+			canonicalCwd = session.cwd ? await canonicalPathForSessionSearch(session.cwd) : "";
+			paths.set(session.cwd, canonicalCwd);
+		}
+		const messages: QolSessionUserMessage[] = [];
+		let remaining = Math.min(SESSION_SEARCH_TEXT_MAX_CHARS_PER_SESSION, budget);
+		const keep = (message: QolSessionUserMessage) => {
+			if (remaining <= 0) return;
+			const text = message.text.slice(0, remaining);
+			remaining -= text.length;
+			budget -= text.length;
+			messages.push({ ...message, text });
+		};
+		if (session.userMessages !== undefined) session.userMessages.forEach(keep);
+		else if (remaining > 0) {
+			try {
+				let index = 0;
+				await forEachSessionJsonlLineAsync(session.path, (line) => {
+					const message = userMessageFromLine(line, index + 1);
+					if (message) { index++; keep(message); }
+				}, signal);
+			} catch (error) {
+				signal.throwIfAborted();
+				// Pi can list a session which is removed before its prompt read.
+				if (!["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+			}
+		}
+		prepared.push({ ...session, canonicalCwd, userMessages: messages });
+	}
+	signal.throwIfAborted();
+	return prepared;
 }
 
 export function defaultSessionSearchScope(cwd?: string): QolSessionSearchScope {
@@ -145,17 +186,21 @@ export function capSessionSearchText(sessions: QolSessionSearchSession[]): QolSe
 	return sessions;
 }
 
-async function loadQolSessionSearchSessions(ctx: ExtensionContext, onProgress?: (loaded: number, total: number) => void): Promise<QolSessionSearchSession[]> {
+async function loadQolSessionSearchSessions(ctx: ExtensionContext, signal: AbortSignal, onProgress?: (loaded: number, total: number) => void): Promise<QolSessionSearchSession[]> {
 	const customSessionDir = configuredSessionDir(ctx.cwd);
 	const infos = customSessionDir
-		? await SessionManager.list(ctx.cwd, customSessionDir, onProgress)
-		: await SessionManager.listAll(onProgress);
-	return capSessionSearchText(infos.map(sessionInfoToSearchSession).filter((session): session is QolSessionSearchSession => session !== undefined));
+		? await SessionManager.list(ctx.cwd, customSessionDir, onProgress, signal)
+		: await SessionManager.listAll(onProgress, signal);
+	signal.throwIfAborted();
+	return prepareQolSessionSearchSessions(capSessionSearchText(infos.map(sessionInfoToSearchSession).filter((session): session is QolSessionSearchSession => session !== undefined)), signal);
 }
 
 /** Drop the loaded index and the parsed prompts. Runs when the index outlives
  *  its TTL and on session shutdown; the next search loads the index again. */
 export function releaseQolSessionSearchCache(): void {
+	qolSessionSearchLoadController?.abort();
+	qolSessionSearchLoadController = undefined;
+	qolSessionSearchLoading = undefined;
 	if (qolSessionSearchReleaseTimer) clearTimeout(qolSessionSearchReleaseTimer);
 	qolSessionSearchReleaseTimer = undefined;
 	qolSessionSearchCache = [];
@@ -171,9 +216,14 @@ export async function refreshQolSessionSearchCache(ctx: ExtensionContext, option
 	if (qolSessionSearchLoading) return qolSessionSearchLoading;
 
 	if (!options?.quiet && ctx.hasUI) ctx.ui.setStatus(SESSION_SEARCH_STATUS_KEY, "Loading sessions...");
-	qolSessionSearchLoading = loadQolSessionSearchSessions(ctx, (loaded, total) => {
+	const controller = new AbortController();
+	qolSessionSearchLoadController = controller;
+	qolSessionSearchLoading = loadQolSessionSearchSessions(ctx, controller.signal, (loaded, total) => {
+		if (controller.signal.aborted) return;
 		if (!options?.quiet && ctx.hasUI) ctx.ui.setStatus(SESSION_SEARCH_STATUS_KEY, `Loading sessions ${loaded}/${total}`);
 	}).then((sessions) => {
+		controller.signal.throwIfAborted();
+		qolSessionSearchLoadController = undefined;
 		releaseQolSessionSearchCache();
 		qolSessionSearchCache = sessions;
 		qolSessionSearchLoadedAt = Date.now();
@@ -183,8 +233,11 @@ export async function refreshQolSessionSearchCache(ctx: ExtensionContext, option
 		}
 		return sessions;
 	}).finally(() => {
-		qolSessionSearchLoading = undefined;
-		if (!options?.quiet && ctx.hasUI) ctx.ui.setStatus(SESSION_SEARCH_STATUS_KEY, undefined);
+		if (qolSessionSearchLoadController === controller || !controller.signal.aborted) {
+			qolSessionSearchLoadController = undefined;
+			qolSessionSearchLoading = undefined;
+			if (!options?.quiet && ctx.hasUI) ctx.ui.setStatus(SESSION_SEARCH_STATUS_KEY, undefined);
+		}
 	});
 	return qolSessionSearchLoading;
 }
@@ -209,26 +262,30 @@ function sessionMessageTimestamp(entry: any, message: any): number | undefined {
 	return undefined;
 }
 
+function userMessageFromLine(line: string, index: number): QolSessionUserMessage | undefined {
+	let entry: { type?: string; id?: unknown; parentId?: unknown; timestamp?: unknown; message?: { role?: string; content?: unknown; timestamp?: unknown } };
+	try { entry = JSON.parse(line); } catch { return undefined; }
+	const message = entry?.type === "message" ? entry.message : undefined;
+	if (message?.role !== "user") return undefined;
+	const text = oneLine(messageContentText(message.content));
+	if (!text) return undefined;
+	return {
+		entryId: typeof entry.id === "string" ? entry.id : undefined,
+		index,
+		parentId: typeof entry.parentId === "string" || entry.parentId === null ? entry.parentId : undefined,
+		text,
+		timestamp: sessionMessageTimestamp(entry, message),
+	};
+}
+
 export function sessionUserMessages(sessionPath: string): QolSessionUserMessage[] {
 	const cached = qolSessionUserMessagesCache.get(sessionPath);
 	if (cached) return cached;
 	const messages: QolSessionUserMessage[] = [];
 	try {
 		forEachSessionJsonlLine(sessionPath, (line) => {
-			if (!line.trim()) return;
-			let entry: any;
-			try { entry = JSON.parse(line); } catch { return; }
-			const message = entry?.type === "message" ? entry.message : undefined;
-			if (!message || message.role !== "user") return;
-			const text = oneLine(messageContentText(message.content));
-			if (!text) return;
-			messages.push({
-				entryId: typeof entry.id === "string" ? entry.id : undefined,
-				index: messages.length + 1,
-				parentId: typeof entry.parentId === "string" || entry.parentId === null ? entry.parentId : undefined,
-				text,
-				timestamp: sessionMessageTimestamp(entry, message),
-			});
+			const message = userMessageFromLine(line, messages.length + 1);
+			if (message) messages.push(message);
 		});
 	} catch {
 		// Ignore unreadable sessions; callers fall back to SessionInfo.firstMessage.
@@ -242,7 +299,7 @@ export function sessionUserMessages(sessionPath: string): QolSessionUserMessage[
 }
 
 export function userMessagesForResult(result: QolSessionSearchResult): QolSessionUserMessage[] {
-	const messages = sessionUserMessages(result.path);
+	const messages = result.userMessages ?? sessionUserMessages(result.path);
 	if (messages.length > 0) return messages;
 	return [{ index: 1, text: oneLine(result.firstMessage || "No user messages") }];
 }

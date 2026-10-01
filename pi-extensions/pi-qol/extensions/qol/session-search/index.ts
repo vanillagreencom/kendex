@@ -129,11 +129,12 @@ export async function openQolSessionSearch(pi: ExtensionAPI, ctx: ExtensionConte
 	);
 	const releaseModalLock = acquirekendexModalLock();
 	let action: QolSessionPaletteAction | undefined;
+	let component: QolSessionSearchComponent | undefined;
 	try {
 		const currentModel = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined;
 		action = await ctx.ui.custom<QolSessionPaletteAction>((tui, theme, _keybindings, done) => {
-			const component = new QolSessionSearchComponent(done, tui, theme, { status: "loading" }, ctx.cwd, initialQuery, currentModel);
-			void loading.then((load) => component.setSessions(load));
+			component = new QolSessionSearchComponent(done, tui, theme, { status: "loading" }, ctx.cwd, initialQuery, currentModel);
+			void loading.then((load) => component?.setSessions(load));
 			return component;
 		}, {
 			overlay: true,
@@ -144,6 +145,7 @@ export async function openQolSessionSearch(pi: ExtensionAPI, ctx: ExtensionConte
 			},
 		});
 	} finally {
+		component?.dispose();
 		releaseModalLock();
 	}
 	if (!action || action.type === "cancel" || !action.result) return;

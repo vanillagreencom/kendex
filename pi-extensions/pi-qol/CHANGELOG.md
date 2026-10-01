@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.3.3
+
+- Session search prepares prompts and project paths asynchronously, cancels obsolete searches, and waits for a pause in typing before searching. Regex searches stop with a deadline error instead of freezing Pi. Submitted image paths load asynchronously and refuse a combined image size above 20 MiB before reading or encoding the files.
+
 ### 2.3.2
 
 - Session startup keeps fresh budget handoff files when their working directory exists and its name ends in whitespace. Cleanup previously trimmed the name and could delete these files.

@@ -1,5 +1,37 @@
-import { closeSync, openSync, readSync } from "node:fs";
+import { closeSync, createReadStream, openSync, readSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
+
+/** Stream the search index off the input path. Oversized JSONL records are
+ * skipped because tool output can put an entire artifact on one line. */
+export async function forEachSessionJsonlLineAsync(sessionPath: string, onLine: (line: string) => void, signal: AbortSignal): Promise<void> {
+	const stream = createReadStream(sessionPath, { signal, highWaterMark: 64 * 1024 });
+	const decoder = new StringDecoder("utf8");
+	const maxLineChars = 2 * 1024 * 1024;
+	let pending = "";
+	let skipping = false;
+	try {
+		for await (const chunk of stream) {
+			signal.throwIfAborted();
+			const text = decoder.write(chunk);
+			let start = 0;
+			for (;;) {
+				const end = text.indexOf("\n", start);
+				const part = text.slice(start, end < 0 ? undefined : end);
+				if (!skipping && pending.length + part.length <= maxLineChars) pending += part;
+				else { pending = ""; skipping = true; }
+				if (end < 0) break;
+				if (!skipping) onLine(pending.endsWith("\r") ? pending.slice(0, -1) : pending);
+				pending = "";
+				skipping = false;
+				start = end + 1;
+			}
+		}
+		pending += decoder.end();
+		if (!skipping && pending.length > 0) onLine(pending.endsWith("\r") ? pending.slice(0, -1) : pending);
+	} finally {
+		stream.destroy();
+	}
+}
 
 export function forEachSessionJsonlLine(sessionPath: string, onLine: (line: string) => void, chunkSize = 64 * 1024): void {
 	const fd = openSync(sessionPath, "r");
