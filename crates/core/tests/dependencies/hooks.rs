@@ -727,6 +727,7 @@ fn judge_switches() -> [(&'static str, Switch); 6] {
                 &["judge".to_owned()],
                 Some(ItemKind::Hook),
                 false,
+                None,
             )
             .unwrap()
         }),

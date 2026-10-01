@@ -353,6 +353,34 @@ fn scan_scope(
             }
         }
     }
+    let copilot = crate::harness::copilot::Copilot;
+    let root = harness_roots
+        .get("copilot")
+        .cloned()
+        .unwrap_or_else(|| copilot.default_global_root(env));
+    if kinds.contains(&ItemKind::McpServer) && copilot.detect(env, &root).is_some() {
+        let owner = SurfaceOwner {
+            harness: HarnessId::Copilot,
+            kind: ItemKind::McpServer,
+        };
+        match copilot::builtin_mcps(env, scope) {
+            Ok(items) => pass.result.items.extend(items),
+            Err(crate::error::CoreError::JsonParse { path, message }) => push_warning(
+                &mut pass.result.warnings,
+                owner.warning(path, ScanProblem::InvalidJson { message }),
+            ),
+            Err(crate::error::CoreError::Io { path, source }) => push_warning(
+                &mut pass.result.warnings,
+                owner.warning(
+                    path,
+                    ScanProblem::Unreadable {
+                        message: source.to_string(),
+                    },
+                ),
+            ),
+            Err(error) => unreachable!("MCP settings reader only emits IO or JSON errors: {error}"),
+        }
+    }
 }
 
 fn scan_surface(

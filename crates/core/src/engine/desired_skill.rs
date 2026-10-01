@@ -170,7 +170,14 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
         }
     }
     if ctx.harnesses.contains(&HarnessId::Copilot) {
-        super::copilot::switched_off_elsewhere(ctx, ItemKind::Skill, state);
+        super::copilot::switched_off_elsewhere(
+            ctx.env,
+            ctx.scope,
+            ItemKind::Skill,
+            ctx.name,
+            ctx.decl.enabled,
+            state,
+        );
     }
     let variants = groups
         .iter()

@@ -32,6 +32,7 @@ mod command_names;
 mod command_update_fetch;
 mod commands;
 mod copilot;
+mod copilot_builtin;
 mod copilot_reports;
 mod credential_lock_process;
 mod credential_transactions;

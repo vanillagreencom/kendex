@@ -15,11 +15,8 @@ use crate::error::{CoreError, Result};
 use crate::harness::HarnessAdapter;
 use crate::model::{ItemKind, Scope};
 
-/// Where a scope's own settings live — the file kendex writes plugin
-/// toggles into. Only a fixed list of keys is honored in a repository file
-/// and the rest are ignored in silence, so `enabledPlugins` is the one key
-/// kendex ever writes there; everything else it manages for Copilot is a
-/// file of its own (matrix §2).
+/// Where a scope's own settings live. Plugin toggles and built-in MCP
+/// disabled-list edits land here; personal overrides remain untouched.
 pub fn settings_file(env: &Env, scope: &Scope) -> PathBuf {
     match scope {
         Scope::Global => user_settings_file(env),
@@ -134,6 +131,37 @@ pub fn disabled_above(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> O
     [legacy_user_settings_file(env), user_settings_file(env)]
         .into_iter()
         .find(|path| names_in(path, key).iter().any(|listed| listed == name))
+}
+
+/// The union of Copilot's MCP disabled lists at this scope. Claude's shared
+/// settings subset excludes this key, so those files are not MCP layers.
+/// A malformed layer is an error, never an answer of "enabled".
+pub fn disabled_mcps(env: &Env, scope: &Scope) -> Result<Vec<String>> {
+    let mut files = vec![legacy_user_settings_file(env), user_settings_file(env)];
+    if let Scope::Project { root } = scope {
+        files.extend(repo_settings_files(root));
+    }
+    let mut names = Vec::new();
+    for path in files {
+        let Some(value) = settings_json(&path)? else {
+            continue;
+        };
+        let Some(list) = value.get("disabledMcpServers") else {
+            continue;
+        };
+        let list = list
+            .as_array()
+            .filter(|list| list.iter().all(|name| name.is_string()))
+            .ok_or_else(|| CoreError::JsonParse {
+                path: path.clone(),
+                message: "disabledMcpServers is not a string array".into(),
+            })?;
+        names.extend(
+            list.iter()
+                .filter_map(|name| name.as_str().map(str::to_owned)),
+        );
+    }
+    Ok(names)
 }
 
 fn names_in(path: &Path, key: &str) -> Vec<String> {

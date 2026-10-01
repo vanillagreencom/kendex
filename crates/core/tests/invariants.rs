@@ -364,7 +364,15 @@ fn invariant_5_toggle_is_lossless_rename() {
     apply_now(&f);
     let enabled_agent = fs::read_to_string(agent_file(&f)).unwrap();
 
-    let report = ops::toggle(&f.env, &f.scope, &["rust".into(), "gh".into()], None, false).unwrap();
+    let report = ops::toggle(
+        &f.env,
+        &f.scope,
+        &["rust".into(), "gh".into()],
+        None,
+        false,
+        None,
+    )
+    .unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
     assert!(!agent_file(&f).exists());
     assert!(f.project.join(".claude/agents/rust.md.disabled").is_file());
@@ -373,7 +381,15 @@ fn invariant_5_toggle_is_lossless_rename() {
     // Disabled is a state, not drift.
     assert_eq!(drift_states(&f), vec![]);
 
-    let report = ops::toggle(&f.env, &f.scope, &["rust".into(), "gh".into()], None, true).unwrap();
+    let report = ops::toggle(
+        &f.env,
+        &f.scope,
+        &["rust".into(), "gh".into()],
+        None,
+        true,
+        None,
+    )
+    .unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
     assert_eq!(fs::read_to_string(agent_file(&f)).unwrap(), enabled_agent);
     assert!(canonical_skill(&f).join("SKILL.md").is_file());

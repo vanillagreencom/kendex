@@ -211,7 +211,9 @@ export const commands = {
 	applyPlan: (scope: Scope, removeOrphans: boolean) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("apply_plan", { scope, removeOrphans })),
 	adoptItem: (scope: Scope, kind: ItemKind, name: string, harnesses: HarnessId[]) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("adopt_item", { scope, kind, name, harnesses })),
 	replaceUnmanagedItem: (scope: Scope, kind: ItemKind, name: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("replace_unmanaged_item", { scope, kind, name })),
-	toggleItem: (scope: Scope, kind: ItemKind, name: string, enabled: boolean) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("toggle_item", { scope, kind, name, enabled })),
+	toggleItem: (scope: Scope, kind: ItemKind, name: string, enabled: boolean, fileState: { state: "file" } | { state: "dir" } | { state: "symlink"; target: string; broken: boolean } | { state: "config-entry" } | 
+/**  Shipped by the harness, with a native switch rather than catalog bytes. */
+{ state: "builtin" } | null) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("toggle_item", { scope, kind, name, enabled, fileState })),
 	removeItem: (scope: Scope, kind: ItemKind, name: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("remove_item", { scope, kind, name })),
 	getManifest: (scope: Scope) => typedError<ManifestRead_Serialize, string>(__TAURI_INVOKE("get_manifest", { scope })).then((v) => ((v.status === "ok" ? { ...v, data: ({...v.data,manifest:v.data.manifest==null?v.data.manifest:v.data.manifest}) } : v) as typeof v)),
 	/**
@@ -2259,7 +2261,9 @@ export type FileRole =
  *  How an observed item exists on disk. Kinds that live as entries inside a
  *  shared config file (MCP servers, some hooks) are `ConfigEntry`.
  */
-export type FileState = { state: "file" } | { state: "dir" } | { state: "symlink"; target: string; broken: boolean } | { state: "config-entry" };
+export type FileState = { state: "file" } | { state: "dir" } | { state: "symlink"; target: string; broken: boolean } | { state: "config-entry" } | 
+/**  Shipped by the harness, with a native switch rather than catalog bytes. */
+{ state: "builtin" };
 
 export type FileStatus = "added" | "removed" | "modified" | 
 /**  Holds a NUL byte on either side — compared, never rendered as text. */
@@ -3541,6 +3545,8 @@ export type OpenResult = { kind: "opened"; url: string } | { kind: "refused"; re
 
 /**  Where one installation came from. */
 export type Origin = 
+/**  Shipped by the harness; kendex controls only its native switch. */
+{ origin: "builtin" } | 
 /**
  *  Installed from a subscription: its declared alias as the lock
  *  recorded it, and the marketplace's identity on this machine

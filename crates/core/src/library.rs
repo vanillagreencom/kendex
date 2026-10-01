@@ -23,6 +23,8 @@ pub use identity::PackageRef;
     rename_all_fields = "camelCase"
 )]
 pub enum Origin {
+    /// Shipped by the harness; kendex controls only its native switch.
+    Builtin,
     /// Installed from a subscription: its declared alias as the lock
     /// recorded it, and the marketplace's identity on this machine
     /// (`crate::source::machine_identity`) — the repository reference as
@@ -397,6 +399,9 @@ fn observed_origin(
     // observed it. A shared tree is written once and read by several tools,
     // so most readers have no record of their own — asking for one would
     // call the writer's own file unmanaged everywhere but at the writer.
+    if item.file_state == crate::model::FileState::Builtin {
+        return Origin::Builtin;
+    }
     let recorded = claimed.and_then(|(_, key)| {
         records.lock.entries.get(key).map(|entry| {
             (
@@ -447,6 +452,9 @@ fn origin_of(
     source: &str,
     repo: &str,
 ) -> Origin {
+    if source == crate::manifest::BUILTIN_SOURCE_NAME {
+        return Origin::Builtin;
+    }
     if crate::manifest::is_reserved_source(source) {
         return Origin::Own {
             source: source.to_owned(),

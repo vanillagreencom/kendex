@@ -29,8 +29,13 @@ pub fn run(env: &Env, filter: ScopeFilter, harness: Option<String>) -> CliResult
                     Scope::Global => "global".to_owned(),
                     Scope::Project { .. } => "project".to_owned(),
                 },
-                match i.enabled {
-                    Some(false) => "switched off".to_owned(),
+                match (
+                    matches!(i.file_state, kendex_core::model::FileState::Builtin),
+                    i.enabled,
+                ) {
+                    (true, Some(false)) => "built-in, switched off".to_owned(),
+                    (true, _) => "built-in, on".to_owned(),
+                    (_, Some(false)) => "switched off".to_owned(),
                     _ => String::new(),
                 },
             ]

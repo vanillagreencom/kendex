@@ -58,7 +58,16 @@ pub(crate) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
         }
         ItemKind::Hook => hook_owned(env, scope, entry, &mut files, &mut edits),
         ItemKind::McpServer => {
-            if let Some(registry) = mcp_registry(env, scope, entry.harness) {
+            if entry.source == crate::manifest::BUILTIN_SOURCE_NAME {
+                edits.push((
+                    crate::harness::copilot::settings::settings_file(env, scope),
+                    ConfigEdit::SetJsonArrayMember {
+                        key: "disabledMcpServers".into(),
+                        name: entry.name.clone(),
+                        present: false,
+                    },
+                ));
+            } else if let Some(registry) = mcp_registry(env, scope, entry.harness) {
                 edits.push((registry, mcp_remove(entry.harness, &entry.name)));
             }
             // Gemini's record of whether a server is on lives in a file of

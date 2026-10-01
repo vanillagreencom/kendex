@@ -158,6 +158,10 @@ const fn format_defaults() -> FormatCaps {
     }
 }
 
+/// Copilot CLI's native servers, enabled by default. Source: Copilot CLI
+/// 1.0.90 `--help`, under `--disable-builtin-mcps`.
+pub const COPILOT_BUILTIN_MCPS: &[&str] = &["github-mcp-server", "githubiq"];
+
 pub const fn format_caps(harness: HarnessId) -> FormatCaps {
     match harness {
         // Claude's three transports are the ones the MCP writer emits.

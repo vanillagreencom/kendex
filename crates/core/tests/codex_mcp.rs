@@ -82,7 +82,7 @@ fn apply_now(f: &Fixture) -> EngineReport {
 
 #[allow(clippy::unwrap_used)]
 fn toggle(f: &Fixture, name: &str, enabled: bool) {
-    let report = ops::toggle(&f.env, &f.scope, &[name.to_owned()], None, enabled).unwrap();
+    let report = ops::toggle(&f.env, &f.scope, &[name.to_owned()], None, enabled, None).unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
 }
 

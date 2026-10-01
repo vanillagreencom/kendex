@@ -483,6 +483,10 @@ fn compute(
     for kind in super::expansion::PLANNED_KINDS {
         for (name, planned) in expansion.of(kind) {
             let decl = &planned.decl;
+            if decl.source == crate::manifest::BUILTIN_SOURCE_NAME {
+                super::desired_mcp::desired_builtin(env, scope, kind, name, decl, &mut state)?;
+                continue;
+            }
             // Before anything can fail: a skill starts out of reach and
             // the pass overwrites that the moment it can say better, so
             // every way of not getting there lands on one answer rather

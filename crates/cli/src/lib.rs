@@ -66,6 +66,10 @@ enum Command {
     Versions(commands::versions::VersionsArgs),
     /// Find package updates and manage update notifications
     Updates(commands::updates_cmd::UpdatesArgs),
+    /// Switch installed packages on
+    Enable(commands::toggle::ToggleArgs),
+    /// Switch installed packages off
+    Disable(commands::toggle::ToggleArgs),
     /// Remove installed packages
     Remove {
         names: Vec<String>,
@@ -492,6 +496,8 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         Command::Pin(args) => commands::pin::run(&env, args)?,
         Command::Versions(args) => commands::versions::run(&env, args)?,
         Command::Updates(args) => commands::updates_cmd::run(&env, args)?,
+        Command::Enable(args) => commands::toggle::run(&env, args, true)?,
+        Command::Disable(args) => commands::toggle::run(&env, args, false)?,
         Command::Remove {
             names,
             global,

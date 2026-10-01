@@ -100,6 +100,7 @@ vi.mock("@/bindings", async (importOriginal) => ({
     packageDiff: vi.fn(),
     // The page's safety tab asks for a fresh audit as it mounts.
     auditAll: vi.fn(),
+    toggleItem: vi.fn(),
     // What a repair pressed on the page runs, and the two reads behind it.
     packageUpdate: vi.fn(),
     scanMachine: vi.fn(),
@@ -300,6 +301,71 @@ beforeEach(() => {
     read: READ_LANDED,
   });
 });
+
+it.each([false, true])(
+  "offers the native MCP switch with recorded=%s",
+  async (recorded) => {
+    const item = observed({
+      ...installedAt(VG, "mcp-server"),
+      name: "githubiq",
+      harness: "copilot",
+      path: `${VG.root}/.github/copilot/settings.json`,
+      fileState: { state: "builtin" },
+      origin: null,
+    });
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [item],
+        missingProjects: [],
+        readProjects: [],
+        warnings: [],
+      },
+    });
+    joinAnswered([
+      {
+        scope: VG,
+        kind: item.kind,
+        name: item.name,
+        harness: item.harness,
+        at: item.at,
+        origin: { origin: "builtin" },
+        summary: null,
+        package: recorded ? { kind: item.kind, name: item.name } : null,
+      },
+    ]);
+    useNavStore.setState({
+      page: "package",
+      packageRef: {
+        kind: item.kind,
+        name: item.name,
+        scope: VG,
+        identity: recorded ? "recorded" : "observed",
+        at: item.at,
+      },
+      packageView: null,
+    });
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: PLAIN, base: null, file: "kendex.toml" },
+    });
+    vi.mocked(commands.toggleItem).mockResolvedValue(nothing);
+    const host = mount(<PackagePage />);
+    await settle();
+    const control = host.querySelector("#package-enabled");
+    expect(control).not.toBeNull();
+    expect(commands.packageMeta).not.toHaveBeenCalled();
+    expect(commands.packageVersions).not.toHaveBeenCalled();
+    await userEvent.click(control as HTMLElement);
+    expect(commands.toggleItem).toHaveBeenCalledWith(
+      VG,
+      "mcp-server",
+      "githubiq",
+      false,
+      { state: "builtin" },
+    );
+  },
+);
 
 /** One place's audit view with gh scored 58, one finding to show under it. */
 const scoredView: AuditView = {

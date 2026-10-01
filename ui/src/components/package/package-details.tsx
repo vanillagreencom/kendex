@@ -32,17 +32,18 @@ export function PackageDetails({
   busy: boolean;
   /** Every place this package sits in is switched together, so the caller
    *  needs no scope from here. */
-  /** Absent where this page addresses no declaration — the switch writes
-   *  one, and there is none behind an installation nothing recorded. */
+  /** Present for a declaration or a native built-in whose switch creates one. */
   onToggle?: (enable: boolean) => void;
   onSwitchVersion: (row: VersionRow) => void;
   onCompare: (row: VersionRow) => void;
   onFollow: () => void;
 }) {
-  // A switch needs a declaration to write, and a kind that has one.
+  // The page grants the handler only to declarations and native built-ins.
   const managed =
     onToggle !== undefined &&
-    (group.kind === "agent" || group.kind === "skill");
+    (group.kind === "agent" ||
+      group.kind === "skill" ||
+      group.kind === "mcp-server");
   const anyDisabled = group.installations.some((i) => i.enabled === false);
   return (
     <div className="space-y-7">

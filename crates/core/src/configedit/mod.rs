@@ -113,6 +113,12 @@ pub enum ConfigEdit {
         key: String,
         enabled: Option<bool>,
     },
+    /// Add or remove a name in a JSON string array without changing other keys.
+    SetJsonArrayMember {
+        key: String,
+        name: String,
+        present: bool,
+    },
     /// gemini `mcp-server-enablement.json`, whose whole content is
     /// `{"<server>": {"enabled": bool}}` — one global file recording
     /// whether a server is on, wherever it was declared (matrix §1).
@@ -199,7 +205,12 @@ impl ConfigEdit {
                 let mut root: Value = if current.trim().is_empty() {
                     json!({})
                 } else {
-                    serde_json::from_str(current).map_err(|e| e.to_string())?
+                    let text = if matches!(self, ConfigEdit::SetJsonArrayMember { .. }) {
+                        crate::scan::jsonc::to_json(current)
+                    } else {
+                        current.to_owned()
+                    };
+                    serde_json::from_str(&text).map_err(|e| e.to_string())?
                 };
                 json_edit.apply_json(&mut root)?;
                 let mut text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
@@ -248,6 +259,29 @@ impl ConfigEdit {
             }
             ConfigEdit::SetGeminiMcpEnabled { name, enabled } => {
                 set_gemini_mcp_enabled(object, name, *enabled)
+            }
+            ConfigEdit::SetJsonArrayMember { key, name, present } => {
+                if !object.contains_key(key) && !present {
+                    return Ok(());
+                }
+                let value = object.entry(key).or_insert_with(|| json!([]));
+                let Some(list) = value.as_array_mut() else {
+                    return Err(format!("{key} is not an array"));
+                };
+                if list.iter().any(|entry| !entry.is_string()) {
+                    return Err(format!("{key} is not a string array"));
+                }
+                if *present {
+                    if !list.iter().any(|entry| entry.as_str() == Some(name)) {
+                        list.push(json!(name));
+                    }
+                } else {
+                    list.retain(|entry| entry.as_str() != Some(name));
+                    if list.is_empty() {
+                        object.shift_remove(key);
+                    }
+                }
+                Ok(())
             }
             ConfigEdit::GeminiAddContextFile { name } => gemini_add_context_file(object, name),
             ConfigEdit::OpencodeAddInstruction {

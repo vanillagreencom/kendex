@@ -142,6 +142,8 @@ export function PackagePage() {
     [ref, result, packageOf, summaryOf],
   );
 
+  const builtin =
+    installationAt(group, ref?.scope)?.fileState.state === "builtin";
   const mutating = useManifestBusy(switching);
   const {
     meta,
@@ -150,7 +152,7 @@ export function PackagePage() {
     versions,
     reads,
     load: reload,
-  } = usePackageData(ref);
+  } = usePackageData(builtin ? null : ref);
   const diff = usePackageDiff(
     ref,
     comparison,
@@ -388,10 +390,16 @@ export function PackagePage() {
       busy={mutating}
       declares={declares}
       onToggle={
-        declares
+        declares || builtin
           ? (enable) =>
               void inEveryScope((scope) =>
-                toggle(scope, group.kind, group.name, enable),
+                toggle(
+                  scope,
+                  group.kind,
+                  group.name,
+                  enable,
+                  builtin ? primary.fileState : undefined,
+                ),
               )
           : undefined
       }

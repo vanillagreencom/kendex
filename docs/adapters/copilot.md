@@ -19,11 +19,12 @@ Project markers: `.github/copilot-instructions.md`, or a `.github/agents`, `.git
 | skill | `~/.agents/skills/<name>/SKILL.md`, or `~/.copilot/skills/<name>/SKILL.md` for a copy delivery | `.agents/skills/<name>/SKILL.md`, or `.github/skills/<name>/SKILL.md` for a copy delivery | managed, both |
 | hook | `~/.copilot/hooks/*.json`, each file a document, plus `~/.copilot/settings.json` → `hooks` | `.github/hooks/*.json`, plus `.github/copilot/settings.json` and `settings.local.json` → `hooks` | managed, both, enforced; an empty or absent matcher is written without the `matcher` key, which Copilot reads as every tool |
 | mcp-server | `~/.copilot/mcp-config.json` | `.github/mcp.json` | managed, both |
+| built-in mcp-server | `~/.copilot/settings.json` → `disabledMcpServers` | `.github/copilot/settings.json` → `disabledMcpServers` | list and toggle, both |
 | plugin | `~/.copilot/settings.json` → `enabledPlugins` | `.github/copilot/settings.json` and `settings.local.json` → `enabledPlugins` | observe and toggle, both |
 | command | — | — | unsupported |
 | pi-extension | — | — | unsupported |
 
-Commands are unsupported because Copilot CLI reads no command surface of its own: prompt files (`.github/prompts/*.prompt.md`) are IDE-only, read by neither the CLI nor github.com, and the one command directory the CLI does read, top-level `.claude/commands/*.md` as "commands (alternative skill format)", is Claude Code's, which the Claude adapter owns. Hooks are read from two places and written to one: every `*.json` under the hooks directory is a whole `{version, hooks}` document, the settings file carries a `hooks` key of the same entries, and only the files are written. Only the plugin `enabledPlugins` flip is written.
+Commands are unsupported because Copilot CLI reads no command surface of its own: prompt files (`.github/prompts/*.prompt.md`) are IDE-only, read by neither the CLI nor github.com, and the one command directory the CLI does read, top-level `.claude/commands/*.md` as "commands (alternative skill format)", is Claude Code's, which the Claude adapter owns. Hooks are read from two places and written to one: every `*.json` under the hooks directory is a whole `{version, hooks}` document, the settings file carries a `hooks` key of the same entries, and only the files are written. Only the plugin `enabledPlugins` flip and built-in MCP `disabledMcpServers` membership are written into settings.
 
 ## Format
 
@@ -33,6 +34,15 @@ Commands are unsupported because Copilot CLI reads no command surface of its own
 - Model dialect: every tier and `inherit` omit the key; an explicit id passes through as free text (`crates/core/src/harness/models.rs`). The agent file's model outranks the `--model` a launch passes ([CLI programmatic reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-programmatic-reference); not measured here), so any id written for a tier, `auto` included, would replace the model the operator chose ([D008](../decisions/D008-copilot-agent-model.md)). No `reasoningEffort` is written either, so no agent names an effort of its own; whether a subagent with none runs at the session's effort or at Copilot's default is not measured, and the `agent:effort` row of `tools/harness-smoke --only copilot` reads skipped for that reason.
 - Tool vocabulary: `read`, `grep`, `glob`, `bash`, `edit`, `multiedit`, `write`, `webfetch`, `websearch`, `todowrite`, `agent`, `notebookread`, `notebookedit`; a name Copilot does not document is left alone (`copilot_tool_name`, `crates/core/src/render/vocab/mod.rs`).
 - Permissions: `tools:` is a real allowlist, so an `AllowOnly` intent renders natively; a `DenyExtra` intent cannot be expressed, so the rendering warns, names the tools the agent keeps, and installs.
+
+## Built-in MCP servers
+
+| Native name | Default | Source |
+|---|---|---|
+| `github-mcp-server` | on | Copilot CLI `--help`, `--disable-builtin-mcps` |
+| `githubiq` | on | Copilot CLI `--help`, `--disable-builtin-mcps` |
+
+An ordinary `[mcp-servers.<name>]` declaration with `source = "builtin"` and `harnesses = ["copilot"]` controls the native switch. Disable adds the name to this scope's `disabledMcpServers`; enable or removal takes it out. Without a declaration, apply writes no native switch. The CLI and app create a declaration for disable, or for an enable of a built-in already off in native settings. Lock and verify use the ordinary MCP registration paths. An app toggle on a built-in refuses a name already declared from another source, instead of changing that package. `crates/core/tests/copilot_builtin.rs` checks the native switch, hand-edit detection, settings preservation and removal.
 
 ## Hooks
 
@@ -63,7 +73,7 @@ Agent scoping: none; only `agents = "all"` custom hooks are enforced.
 Three reads decide whether an install is live, each a read of a file on disk that says how things are configured and never what a run will do (`crates/core/src/engine/copilot.rs`, `crates/core/src/harness/copilot/settings.rs`):
 
 - `disableAllHooks` switches off every Copilot hook. kendex reads the whole layer stack, lowest first, and names the file that threw the switch: legacy `~/.copilot/config.json`, `~/.copilot/settings.json`, `.claude/settings.json`, `.claude/settings.local.json`, `.github/copilot/settings.json`, `.github/copilot/settings.local.json`; later wins.
-- `disabledSkills` and `disabledMcpServers` merge as a union: a repository may add a name to a disabled list and never take one off. kendex never writes a project-scope enable over a user-scope disable; it reports the hold per item, naming the file and the key.
+- `disabledSkills` and `disabledMcpServers` merge as a union: a repository may add a name to a disabled list and never take one off. An enable removes this scope's own built-in MCP override, but a personal disable still holds it off. kendex reports that hold per item, naming the file and the key. MCP lists come from the legacy and current user files and the shared and local Copilot repository files, not Claude's settings subset.
 - `.github/allowed_models.txt` restricts model ids with `*` globs; a `fallback:` line is not a pattern. An agent naming a model outside the list warns; `auto` is exempt.
 
 Legacy `~/.copilot/config.json` is read and never written; a global scope holding it with no `settings.json` refuses settings-backed writes, with that reason.

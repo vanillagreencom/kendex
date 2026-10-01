@@ -37,6 +37,7 @@ pub mod show;
 pub mod source_cmd;
 pub mod template_cmd;
 pub mod tier_model;
+pub mod toggle;
 pub mod trash_cmd;
 pub mod update;
 pub mod update_pi;

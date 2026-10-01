@@ -270,6 +270,7 @@ pub fn toggle_item(
     kind: ItemKind,
     name: String,
     enabled: bool,
+    file_state: Option<kendex_core::model::FileState>,
 ) -> Result<AuditView, String> {
     let env = env()?;
     let report = ops::toggle(
@@ -278,6 +279,7 @@ pub fn toggle_item(
         std::slice::from_ref(&name),
         Some(kind),
         enabled,
+        file_state.as_ref(),
     )
     .map_err(|e| e.to_string())?;
     settle_report(&env, &scope, &report)

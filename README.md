@@ -46,7 +46,7 @@ A package on a local path needs no git. On Windows, `kendex guard` runs the comm
 | Skills | ● | ● | ● | ●¹ | ● | ● | ● | ● |
 | Hooks | ● | ● | ●³ | ●¹ ³ | ●⁴ | ● | ● | ● |
 | Commands | ● | ●⁵ | ● | ○⁶ | ● | ● | -⁷ | - |
-| MCP servers | ● | ● | ● | ● | - | ●⁸ | ● | ● |
+| MCP servers | ● | ● | ● | ● | - | ●⁸ | ●⁹ | ● |
 | Plugins | ◐ | ○ | ○ | ○ | - | ○ | ◐ | ○ |
 | Pi extensions | - | - | - | - | ● | - | - | - |
 
@@ -60,6 +60,7 @@ A package on a local path needs no git. On Windows, `kendex guard` runs the comm
 6. Cursor has deprecated slash commands in favour of skills, so a command there is shown and never written.
 7. Copilot CLI reads no command directory of its own; the one it does read is Claude Code's.
 8. Gemini records whether an MCP server is on in one machine-wide file, so a project can declare a server but not switch it off there.
+9. Copilot also lists its built-in MCP servers and controls them through native settings. A project's enable cannot override a personal disable.
 
 The full per-tool facts are in [docs/adapters](docs/adapters/README.md).
 

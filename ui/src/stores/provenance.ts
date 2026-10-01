@@ -6,6 +6,7 @@ import {
   type Scope,
 } from "@/bindings";
 import type { PackageIdentityRef } from "@/lib/derive";
+import { BUILTIN_LABEL } from "@/lib/labels";
 import { READ_PENDING, type ReadState, readOf } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
 import { settled } from "@/lib/settled";
@@ -232,6 +233,7 @@ export function originFor(
 /** How an origin reads in the From column and its filter. */
 export function originLabel(origin: Origin | null): string {
   if (!origin) return "";
+  if (origin.origin === "builtin") return BUILTIN_LABEL;
   if (origin.origin === "marketplace") return origin.source;
   if (origin.origin === "own") return "Your own";
   return "Not managed";

@@ -39,6 +39,8 @@ fn project_lane(cli: &Cli) -> Result<Option<String>, Box<dyn std::error::Error>>
         | Command::Pin(_)
         | Command::Versions(_)
         | Command::Remove { .. }
+        | Command::Enable(_)
+        | Command::Disable(_)
         | Command::Verify { .. }
         | Command::Adopt { .. }
         | Command::Project(_)

@@ -186,6 +186,12 @@ describe("the From column's join", () => {
         origin: { origin: "unmanaged" },
         expected: "Not managed",
       },
+      {
+        name: "builtin",
+        read: originLabel,
+        origin: { origin: "builtin" },
+        expected: "Built-in",
+      },
       { name: "unknown", read: originLabel, origin: null, expected: "" },
     ];
     expect(rows.length).toBeGreaterThan(0);

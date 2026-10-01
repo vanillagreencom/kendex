@@ -62,6 +62,7 @@ mod remote_e2e;
 mod safety_print;
 mod template_cli;
 mod terms_first_run;
+mod toggle;
 mod trash_cli;
 mod unmanaged;
 mod unmanaged_copy_check;

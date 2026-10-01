@@ -119,7 +119,7 @@ fn apply_now(f: &Fixture) -> EngineReport {
 
 #[allow(clippy::unwrap_used)]
 fn toggle(f: &Fixture, name: &str, enabled: bool) {
-    let report = ops::toggle(&f.env, &f.scope, &[name.to_owned()], None, enabled).unwrap();
+    let report = ops::toggle(&f.env, &f.scope, &[name.to_owned()], None, enabled, None).unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
 }
 
@@ -172,14 +172,14 @@ fn an_agent_installs_under_the_global_root_and_toggles_by_rename() {
     assert!(audit(&f.env, &Scope::Global).unwrap().drift.is_empty());
 
     let names = ["rust".to_owned()];
-    let report = ops::toggle(&f.env, &Scope::Global, &names, None, false).unwrap();
+    let report = ops::toggle(&f.env, &Scope::Global, &names, None, false, None).unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
     assert!(!file.exists());
     let parked = f.env.home.join(".gemini/config/agents/rust.md.disabled");
     assert_eq!(fs::read_to_string(&parked).unwrap(), text);
     assert!(audit(&f.env, &Scope::Global).unwrap().drift.is_empty());
 
-    let report = ops::toggle(&f.env, &Scope::Global, &names, None, true).unwrap();
+    let report = ops::toggle(&f.env, &Scope::Global, &names, None, true, None).unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
     assert!(file.is_file() && !parked.exists());
 

@@ -170,8 +170,13 @@ impl Scope {
 pub enum FileState {
     File,
     Dir,
-    Symlink { target: PathBuf, broken: bool },
+    Symlink {
+        target: PathBuf,
+        broken: bool,
+    },
     ConfigEntry,
+    /// Shipped by the harness, with a native switch rather than catalog bytes.
+    Builtin,
 }
 
 /// One item as the scanner found it — read-only truth, no interpretation of
@@ -242,8 +247,10 @@ pub fn observed_at(path: &Path, file_state: &FileState, action: Option<&str>) ->
     match file_state {
         // Every entry of its kind shares the file holding it, so the file
         // alone names none of them; what the entry runs is the rest of it.
-        FileState::ConfigEntry => format!("{at}{ENTRY}{}", action.unwrap_or_default()),
-        _ => at,
+        FileState::ConfigEntry | FileState::Builtin => {
+            format!("{at}{ENTRY}{}", action.unwrap_or_default())
+        }
+        FileState::File | FileState::Dir | FileState::Symlink { .. } => at,
     }
 }
 

@@ -2,6 +2,7 @@ import { toast } from "sonner";
 import {
   type AuditView,
   commands,
+  type FileState,
   type HarnessId,
   type ItemKind,
   type Scope,
@@ -54,6 +55,7 @@ export interface ItemActions {
     kind: ItemKind,
     name: string,
     enabled: boolean,
+    fileState?: FileState,
   ) => Promise<boolean>;
   removeItem: (scope: Scope, kind: ItemKind, name: string) => Promise<boolean>;
 }
@@ -154,11 +156,15 @@ export function itemActions(run: Run): ItemActions {
           "If it keeps failing, check the project folder is writable",
         ],
       }),
-    toggle: (scope, kind, name, enabled) =>
-      run(() => commands.toggleItem(scope, kind, name, enabled), {
-        title: `Couldn't ${enabled ? "switch on" : "switch off"} ${name}`,
-        steps: ["Try again"],
-      }),
+    toggle: (scope, kind, name, enabled, fileState) =>
+      run(
+        () =>
+          commands.toggleItem(scope, kind, name, enabled, fileState ?? null),
+        {
+          title: `Couldn't ${enabled ? "switch on" : "switch off"} ${name}`,
+          steps: ["Try again"],
+        },
+      ),
     removeItem: (scope, kind, name) =>
       run(() => commands.removeItem(scope, kind, name), {
         title: `Couldn't remove ${name}`,

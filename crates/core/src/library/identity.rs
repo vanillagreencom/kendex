@@ -10,7 +10,7 @@
 //! display name, a script basename or a shortened spelling, which say
 //! nothing about who wrote the file.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -62,6 +62,8 @@ pub(super) struct Recorded {
     /// Every declared name recorded for a harness and kind, for the
     /// observations that have no artifact position of their own.
     declared: HashMap<(HarnessId, ItemKind), Vec<String>>,
+    /// Records from the reserved native source, not same-named catalog entries.
+    builtin_records: BTreeSet<String>,
 }
 
 /// One recorded registration: the package, and the command it went in
@@ -111,6 +113,7 @@ pub(super) fn index(env: &Env, scope: &Scope, lock: &Lock) -> Recorded {
     let mut by_registration: HashMap<(HarnessId, PathBuf, String), Option<Registered>> =
         HashMap::new();
     let mut declared: HashMap<(HarnessId, ItemKind), Vec<String>> = HashMap::new();
+    let mut builtin_records = BTreeSet::new();
     for entry in lock.entries.values() {
         let held: Claim = (
             PackageRef {
@@ -119,6 +122,9 @@ pub(super) fn index(env: &Env, scope: &Scope, lock: &Lock) -> Recorded {
             },
             crate::lock::entry_key(entry.kind, &entry.name, entry.harness),
         );
+        if entry.source == crate::manifest::BUILTIN_SOURCE_NAME {
+            builtin_records.insert(held.1.clone());
+        }
         for path in crate::engine::owned::installed(env, scope, entry).files {
             // Both spellings, because a switched-off artifact is observed
             // under the name the rename gave it while the record still
@@ -182,6 +188,7 @@ pub(super) fn index(env: &Env, scope: &Scope, lock: &Lock) -> Recorded {
         by_artifact,
         by_registration,
         declared,
+        builtin_records,
     }
 }
 
@@ -225,14 +232,19 @@ impl Recorded {
                 .filter(|held| item.action.as_deref() == Some(held.command.as_str()))
                 .map(|held| held.claim.clone());
         }
-        self.named(item)
+        let claim = self.named(item)?;
+        if item.file_state == FileState::Builtin && !self.builtin_records.contains(&claim.1) {
+            return None;
+        }
+        Some(claim)
     }
 
     /// Whether this observation has no artifact position a record could
     /// claim: an entry inside a shared config file, and a kind whose
     /// records own no path of their own.
     fn positionless(item: &ObservedItem) -> bool {
-        item.file_state == FileState::ConfigEntry || item.kind == ItemKind::PiExtension
+        matches!(item.file_state, FileState::ConfigEntry | FileState::Builtin)
+            || item.kind == ItemKind::PiExtension
     }
 
     /// The one recorded declaration this observed name answers to, through

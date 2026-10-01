@@ -197,7 +197,14 @@ fn sees_gemini_and_copilot_without_double_counting_claude_files() {
     // skill under `.claude/` stays Claude Code's alone.
     assert_eq!(
         of(HarnessId::Copilot),
-        [(ItemKind::Agent, "review"), (ItemKind::Skill, "deploy")]
+        [
+            (ItemKind::Agent, "review"),
+            (ItemKind::McpServer, "github-mcp-server"),
+            (ItemKind::McpServer, "githubiq"),
+            (ItemKind::Skill, "deploy"),
+            (ItemKind::McpServer, "github-mcp-server"),
+            (ItemKind::McpServer, "githubiq"),
+        ]
     );
 }
 

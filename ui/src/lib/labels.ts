@@ -16,6 +16,8 @@ export const HARNESS_NAMES: Record<HarnessId, string> = {
 
 export const harnessName = (id: HarnessId): string => HARNESS_NAMES[id];
 
+export const BUILTIN_LABEL = "Built-in";
+
 const KIND_LABELS: Record<ItemKind, { one: string; many: string }> = {
   agent: { one: "Agent", many: "Agents" },
   skill: { one: "Skill", many: "Skills" },

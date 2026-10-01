@@ -6,6 +6,35 @@ use super::RawEntry;
 use super::hooks::Registration;
 use super::readers::read_json;
 
+pub(super) fn builtin_mcps(
+    env: &crate::env::Env,
+    scope: &crate::model::Scope,
+) -> crate::error::Result<Vec<crate::model::ObservedItem>> {
+    use crate::harness::copilot::settings;
+    use crate::model::{FileState, HarnessId, ItemKind, ObservedItem};
+    let disabled = settings::disabled_mcps(env, scope)?;
+    let path = settings::settings_file(env, scope);
+    Ok(crate::harness::COPILOT_BUILTIN_MCPS
+        .iter()
+        .map(|name| ObservedItem {
+            kind: ItemKind::McpServer,
+            name: (*name).to_owned(),
+            harness: HarnessId::Copilot,
+            scope: scope.clone(),
+            path: path.clone(),
+            file_state: FileState::Builtin,
+            enabled: Some(!disabled.iter().any(|off| off == name)),
+            origin: None,
+            summary: None,
+            action: None,
+            tags: Vec::new(),
+            modified_at: None,
+            vendor: None,
+            at: crate::model::observed_at(&path, &FileState::Builtin, Some(name)),
+        })
+        .collect())
+}
+
 /// `{version, disableAllHooks, hooks: {<event>: [entry]}}` — a Copilot hook
 /// file, or the `hooks` key of one of its settings files
 /// ([hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference),

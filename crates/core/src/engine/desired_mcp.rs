@@ -37,7 +37,14 @@ pub(super) fn desired_mcp(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()>
                 continue;
             };
             if harness == HarnessId::Copilot {
-                super::copilot::switched_off_elsewhere(ctx, ItemKind::McpServer, state);
+                super::copilot::switched_off_elsewhere(
+                    ctx.env,
+                    ctx.scope,
+                    ItemKind::McpServer,
+                    ctx.name,
+                    ctx.decl.enabled,
+                    state,
+                );
             }
             if let Some(reason) = refusal(harness, &value) {
                 state.refused.push(super::desired::Refused {
@@ -105,6 +112,74 @@ pub(super) fn desired_mcp(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()>
             .items
             .push(declared(ctx, ItemKind::McpServer, harness, artifact)?);
     }
+    Ok(())
+}
+
+/// A native Copilot server has no catalog bytes. Its declaration and record
+/// still pass through the ordinary MCP registration planner and verifier.
+pub(super) fn desired_builtin(
+    env: &crate::env::Env,
+    scope: &crate::model::Scope,
+    kind: ItemKind,
+    name: &str,
+    decl: &crate::manifest::ItemDecl,
+    state: &mut DesiredState,
+) -> Result<()> {
+    use crate::harness::copilot::settings;
+    use std::collections::BTreeSet;
+    let harness = HarnessId::Copilot;
+    let valid = kind == ItemKind::McpServer
+        && crate::harness::COPILOT_BUILTIN_MCPS.contains(&name)
+        && decl.harnesses.as_deref() == Some(&[harness]);
+    if !valid {
+        state.mark_incomplete();
+        state.notes.push(format!(
+            "{} {name}: builtin requires a native Copilot MCP name and harnesses = [\"copilot\"]",
+            kind.name()
+        ));
+        return Ok(());
+    }
+    if let Some(reason) = settings::unmanageable(env, scope) {
+        state.mark_incomplete();
+        state.notes.push(format!("mcp-server {name}: {reason}"));
+        return Ok(());
+    }
+    // Read every native layer before reporting or planning a switch. A bad
+    // personal layer must not turn into a false enabled answer.
+    settings::disabled_mcps(env, scope)?;
+    super::copilot::switched_off_elsewhere(env, scope, kind, name, decl.enabled, state);
+    state
+        .processed
+        .insert((kind, name.to_owned()), "builtin".to_owned());
+    state.items.push(super::desired::Desired {
+        key: crate::lock::entry_key(kind, name, harness),
+        kind,
+        name: name.to_owned(),
+        harness,
+        enabled: decl.enabled,
+        method: crate::manifest::Method::Copy,
+        source_name: crate::manifest::BUILTIN_SOURCE_NAME.to_owned(),
+        provenance: "builtin".to_owned(),
+        source_commit: None,
+        recorded_fork: false,
+        hash: crate::hash::hash_bytes(format!("builtin:{name}:{}", decl.enabled).as_bytes()),
+        rendered_hash: None,
+        source: None,
+        upstream_skills: None,
+        emitted: None,
+        reasons: BTreeSet::from([crate::lock::Reason::Requested]),
+        artifact: Artifact::Registration {
+            script: None,
+            edits: vec![(
+                settings::settings_file(env, scope),
+                ConfigEdit::SetJsonArrayMember {
+                    key: "disabledMcpServers".into(),
+                    name: name.to_owned(),
+                    present: !decl.enabled,
+                },
+            )],
+        },
+    });
     Ok(())
 }
 

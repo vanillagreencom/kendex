@@ -98,6 +98,7 @@ fn reads(
     observed: &BTreeMap<String, PathBuf>,
 ) -> Vec<OriginRead> {
     match &row.origin {
+        Origin::Builtin => Vec::new(),
         Origin::Own { source, .. } => {
             // The reserved source names where the bytes live: the local
             // capture, or the shared tree an in-place skill is read from

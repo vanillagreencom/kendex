@@ -37,10 +37,13 @@ pub const LOCAL_SOURCE_NAME: &str = "local";
 /// the person owns.
 pub const INPLACE_SOURCE_NAME: &str = "in-place";
 
-/// Whether a source name is one of the reserved ones, which read from the
-/// scope's own roots whatever a declaration under that name says.
+/// Harness-shipped MCP servers controlled through native settings, not a catalog.
+pub const BUILTIN_SOURCE_NAME: &str = "builtin";
+
+/// Whether a source name is reserved for scope-owned content or a native
+/// switch rather than a subscription the user can rebind.
 pub fn is_reserved_source(name: &str) -> bool {
-    name == LOCAL_SOURCE_NAME || name == INPLACE_SOURCE_NAME
+    name == LOCAL_SOURCE_NAME || name == INPLACE_SOURCE_NAME || name == BUILTIN_SOURCE_NAME
 }
 
 /// The directory that source reads, inside a project.

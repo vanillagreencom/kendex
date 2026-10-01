@@ -329,13 +329,15 @@ fn unreadable_origins(
 
 /// Flip declarations; disabling is non-destructive (invariant 5).
 /// Toggle by name; `kind` narrows to one declaration, the same way and
-/// for the same reason as [`remove`].
+/// for the same reason as [`remove`]. The app carries `observed` for native
+/// rows so they cannot switch a same-named item from another source.
 pub fn toggle(
     env: &Env,
     scope: &Scope,
     names: &[String],
     kind: Option<ItemKind>,
     enabled: bool,
+    observed: Option<&crate::model::FileState>,
 ) -> Result<EngineReport> {
     let mut manifest = manifest_for_mutation(env, scope)?;
     let lock = crate::lock::load(&lock_path(env, scope))?;
@@ -350,6 +352,31 @@ pub fn toggle(
                     plugin.enabled = enabled;
                 }
                 continue;
+            }
+            if kind == ItemKind::McpServer
+                && observed == Some(&crate::model::FileState::Builtin)
+                && let Some(decl) = manifest.mcp_servers.get(name)
+                && decl.source != manifest::BUILTIN_SOURCE_NAME
+            {
+                return Err(crate::error::CoreError::SourceCollision {
+                    name: name.clone(),
+                    existing: decl.source.clone(),
+                    requested: manifest::BUILTIN_SOURCE_NAME.to_owned(),
+                });
+            }
+            if kind == ItemKind::McpServer
+                && !manifest.mcp_servers.contains_key(name)
+                && crate::harness::COPILOT_BUILTIN_MCPS.contains(&name.as_str())
+                && (!enabled
+                    || crate::harness::copilot::settings::disabled_mcps(env, scope)?
+                        .iter()
+                        .any(|off| off == name))
+            {
+                manifest.mcp_servers.entry(name.clone()).or_insert_with(|| {
+                    let mut decl = manifest::ItemDecl::from_source(manifest::BUILTIN_SOURCE_NAME);
+                    decl.harnesses = Some(vec![HarnessId::Copilot]);
+                    decl
+                });
             }
             if let Some(decl) = manifest.declared_mut(kind).get_mut(name) {
                 decl.enabled = enabled;

@@ -92,34 +92,37 @@ pub(super) fn hook(
 /// A skill or server this project declares on that Copilot's own settings
 /// hold down. A repository file may add a name to `disabledSkills` or
 /// `disabledMcpServers` but can never take one off, so kendex does not write
-/// a project-scope switch that Copilot would ignore — it says so instead
-/// (matrix §R7).
-pub(super) fn switched_off_elsewhere(ctx: &ItemCtx, kind: ItemKind, state: &mut DesiredState) {
-    if !ctx.decl.enabled {
+/// a project-scope enable that lifts a personal hold; the warning names
+/// that hold even when the plan removes this scope's own override (matrix §R7).
+pub(super) fn switched_off_elsewhere(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    enabled: bool,
+    state: &mut DesiredState,
+) {
+    if !enabled {
         return;
     }
-    let Some(path) = settings::disabled_above(ctx.env, ctx.scope, kind, ctx.name) else {
+    let Some(path) = settings::disabled_above(env, scope, kind, name) else {
         return;
     };
     let key = match kind {
         ItemKind::McpServer => "disabledMcpServers",
         _ => "disabledSkills",
     };
-    state.warnings.push(warning(
-        ctx,
+    state.warnings.push(ItemWarning {
         kind,
-        format!(
-            "kendex-item-disabled: harness=copilot item={record_arg0} setting={record_key}\nYour personal Copilot settings list {arg0} in `{key}`, and a repository can only add names to that list — as configured, this project cannot switch it back on",
-            arg0 = ctx.name,
-            record_arg0 = crate::names::shown(ctx.name),
+        name: name.to_owned(),
+        harness: Some(HarnessId::Copilot),
+        message: format!(
+            "kendex-item-disabled: harness=copilot item={record_arg0} setting={record_key}\nYour personal Copilot settings list {name} in `{key}`, and a repository can only add names to that list — as configured, this project cannot switch it back on",
+            record_arg0 = crate::names::shown(name),
             record_key = crate::names::shown(key),
         ),
-        Some(format!(
-            "take {} out of `{key}` in {}",
-            ctx.name,
-            path.display()
-        )),
-    ));
+        remediation: Some(format!("take {name} out of `{key}` in {}", path.display())),
+    });
 }
 
 /// What a repository allows an agent to run on. The allowlist is a real file
