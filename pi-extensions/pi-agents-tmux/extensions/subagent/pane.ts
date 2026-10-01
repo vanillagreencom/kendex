@@ -71,7 +71,7 @@ import {
 
 /** Command calls always have a deadline; dispatch cancellation propagates to nested probes. */
 export interface ExecCaptureOptions { cwd?: string; timeoutMs?: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv }
-type ExecCaptureResult = { code: number; stdout: string; stderr: string; error?: unknown };
+type ExecCaptureResult = { code: number; stdout: string; stderr: string; error?: unknown; interruption?: "timeout" | "aborted" };
 type ExecCaptureFn = (command: string, args: string[], options?: ExecCaptureOptions) => Promise<ExecCaptureResult>;
 
 async function defaultExecCapture(command: string, args: string[], options: ExecCaptureOptions = {}, spawner: typeof spawn = spawn): Promise<ExecCaptureResult> {
@@ -82,7 +82,7 @@ async function defaultExecCapture(command: string, args: string[], options: Exec
 		const proc = spawner(command, args, { cwd: options.cwd, env: options.env ?? process.env, detached: process.platform !== "win32", shell: false, stdio: ["ignore", "pipe", "pipe"] });
 		let stdout = "";
 		let stderr = "";
-		let failure: Error | undefined;
+		let failure: { cause: "timeout" | "aborted"; error: Error } | undefined;
 		let settled = false;
 		let escalation: ReturnType<typeof setTimeout> | undefined;
 		let closeBound: ReturnType<typeof setTimeout> | undefined;
@@ -99,11 +99,11 @@ async function defaultExecCapture(command: string, args: string[], options: Exec
 			if (escalation) clearTimeout(escalation);
 			if (closeBound) clearTimeout(closeBound);
 			signal?.removeEventListener("abort", abort);
-			resolve({ code: failure || error ? 1 : code, stdout, stderr: [stderr, failure?.message, error ? String(error) : ""].filter(Boolean).join("\n"), error: failure ?? error });
+			resolve({ code: failure || error ? 1 : code, stdout, stderr: [stderr, failure?.error.message, error ? String(error) : ""].filter(Boolean).join("\n"), error: failure?.error ?? error, interruption: failure?.cause });
 		};
-		const stop = (error: Error) => {
+		const stop = (error: Error, cause: "timeout" | "aborted" = "timeout") => {
 			if (settled || failure) return;
-			failure = error;
+			failure = { cause, error };
 			escalation = setTimeout(() => {
 				kill("SIGKILL");
 				closeBound = setTimeout(() => {
@@ -116,7 +116,7 @@ async function defaultExecCapture(command: string, args: string[], options: Exec
 			}, 1000);
 			kill("SIGTERM");
 		};
-		const abort = () => stop(new Error(`${command} aborted`));
+		const abort = () => stop(new Error(`${command} aborted`), "aborted");
 		const timer = setTimeout(() => stop(new Error(`${command} timed out after ${timeoutMs}ms`)), timeoutMs);
 		signal?.addEventListener("abort", abort, { once: true });
 		if (signal?.aborted) abort();

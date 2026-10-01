@@ -5,7 +5,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test, { after } from "node:test";
 import { registerPaneSupportTools } from "../extensions/subagent/pane-support-tools.js";
+import { execCapture } from "../extensions/subagent/pane.js";
 import type { PaneTaskRecord } from "../extensions/subagent/types.js";
+import { cleanupTempRuntimes, importRuntimeCopy } from "./browser-fixture.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const INDEX_SRC = resolve(HERE, "../extensions/subagent/index.ts");
@@ -20,6 +22,7 @@ const tempDirs: string[] = [];
 after(() => {
 	for (const dir of tempDirs) rmSync(dir, { force: true, recursive: true });
 });
+after(cleanupTempRuntimes);
 
 function tempRuntime(): string {
 	const dir = mkdtempSync(join(tmpdir(), "pi-agents-steer-status-"));
@@ -189,4 +192,59 @@ test("steer_subagent still delivers message when dashboardStatusFor is missing (
 	assert.ok(fallbackFile && existsSync(fallbackFile), "fallback inbox file still written");
 	const contents = readFileSync(fallbackFile, "utf-8");
 	assert.ok(contents.includes("missing helper"), "steering message still reaches inbox");
+});
+
+const deliveryRows = [
+	{ name: "success", exitCode: 0, fallback: false, unknown: false },
+	{ name: "nonzero exit", exitCode: 2, fallback: true, unknown: false },
+	{ name: "deadline after delivery", exitCode: undefined, fallback: false, unknown: true },
+] as const;
+
+async function assertBridgeDelivery(row: typeof deliveryRows[number], register = registerPaneSupportTools): Promise<void> {
+	for (const command of ["steer", "send", "follow-up"] as const) {
+		const runtimeRoot = tempRuntime();
+		const delivered = join(runtimeRoot, "delivered");
+		const { deps, capturedTools } = buildDeps({ runtimeRoot, dashboardStatusForFn: (status) => status,
+			dashboardStatusForCallCount: { count: 0 }, updateDashboardSpy: { calls: [] } });
+		deps.ensurePaneBridgeMetadata = async () => ({ pid: "42", socket: "test.sock" });
+		deps.bridgeTargetArgs = () => ["--pid", "42"];
+		deps.resolvePiBridgeBin = async () => "faux-pi-bridge";
+		deps.execCapture = async (bin: string, args: string[]) => {
+			assert.equal(bin, "faux-pi-bridge");
+			assert.equal(args[0], command);
+			assert.equal(args.includes("--auto"), command === "send");
+			// A real child records delivery before it exits or stalls. The real wait
+			// lets the OS start that child and the command owner enforce its deadline.
+			return execCapture(process.execPath, ["-e", `require("node:fs").writeFileSync(${JSON.stringify(delivered)}, "delivered"); ${row.exitCode === undefined ? "setInterval(() => {}, 1000)" : `process.exit(${row.exitCode})`}`], {
+				cwd: runtimeRoot, timeoutMs: 500, env: { PATH: "/usr/bin:/bin", HOME: runtimeRoot, TMPDIR: runtimeRoot },
+			});
+		};
+		const events: string[] = [];
+		deps.emitSubagentEvent = (_pi: unknown, event: string) => { events.push(event); };
+		register(deps as any);
+		const warnings: string[] = [];
+		const warn = console.warn;
+		console.warn = (message: string) => { warnings.push(message); };
+		let result: any;
+		try {
+			result = await getSteerHandler(capturedTools).execute("delivery", { taskId: "task-steer-1", message: "pivot", deliverAs: command }, undefined, undefined, {});
+		} finally { console.warn = warn; }
+		assert.equal(readFileSync(delivered, "utf8"), "delivered", "faux bridge must deliver before capture settles");
+		assert.equal(existsSync(join(runtimeRoot, "inbox", "planner")), row.fallback, "deadline delivery must not queue a duplicate inbox fallback");
+		assert.equal(result.details.fallbackFile !== undefined, row.fallback);
+		if (row.fallback) assert.equal(readFileSync(result.details.fallbackFile, "utf8"), "STEER:planner:pivot");
+		assert.equal(result.isError === true, row.unknown);
+		assert.equal(result.content[0].text.startsWith(`bridge_delivery=unknown command=${command}\n`), row.unknown);
+		assert.equal(warnings.length, row.unknown ? 1 : 0);
+		assert.deepEqual(events, row.unknown ? [] : ["subagents:steered"]);
+	}
+}
+
+for (const row of deliveryRows) test(`bridge delivery: ${row.name}`, () => assertBridgeDelivery(row));
+
+test("must-fail control: inbox fallback after unknown delivery duplicates the message", async () => {
+	const mutant = await importRuntimeCopy("pane-support-tools.ts", 'if (result.interruption === "timeout") {', 'if (false && result.interruption === "timeout") {') as typeof import("../extensions/subagent/pane-support-tools.js");
+	await assert.rejects(() => assertBridgeDelivery(deliveryRows[2], mutant.registerPaneSupportTools), {
+		name: "AssertionError", actual: true, expected: false, operator: "strictEqual",
+	});
 });

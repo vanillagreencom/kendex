@@ -13,6 +13,7 @@ import {
 import { sanitizeCwdSnapshot } from "./cwd-snapshot.js";
 import { readLastAssistantTextFromTranscript } from "./format.js";
 import { bgSessionPath, guardReusedSessionBudget } from "./sessions.js";
+import type { execCapture } from "./pane.js";
 import {
 	GetSubagentResultParams,
 	SteerSubagentParams,
@@ -32,6 +33,7 @@ import {
 interface PaneSupportToolDeps {
 	[key: string]: any;
 	ensurePaneBridgeMetadata: (runtimeRoot: string, entry: PaneRegistryEntry) => Promise<BridgeMetadata | undefined>;
+	execCapture: typeof execCapture;
 	pi: ExtensionAPI;
 }
 
@@ -279,6 +281,16 @@ export function registerPaneSupportTools(deps: PaneSupportToolDeps): void {
 				if (command === "send") args.push("--auto");
 				args.push(formatSteeringForChild(agentName, params.message, true, deliverAs, followUpTask));
 				const result = await execCapture(bridgeBin, args, { cwd: entry.cwd });
+				if (result.interruption === "timeout") {
+					// pi-bridge can deliver before its deadline kills the client.
+					const notice = `bridge_delivery=unknown command=${command}\nBridge delivery to ${agentName} timed out. The message may have arrived. No inbox fallback was written.`;
+					console.warn(notice);
+					return {
+						content: [{ type: "text", text: [notice, result.stderr, ...steerDiagnostics(baseDetails)].filter(Boolean).join("\n") }],
+						details: baseDetails,
+						isError: true,
+					};
+				}
 				if (result.code === 0) {
 					patchDashboard(followUpTask?.taskId ?? params.taskId ?? record?.taskId, { bridge: true, paneId: entry.paneId });
 					emitSubagentEvent(pi, "subagents:steered", {
