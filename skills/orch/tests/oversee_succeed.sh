@@ -227,7 +227,7 @@ row="\$1" pref="\$2"
 shift 2
 source "$TEST_DIR/lib/assertions.sh"
 case " \$* " in
-  *' --check-marks '*|*' --print-launch-line '*) ;;
+  *' --check-marks '*|*' --print-launch-line '*|*' --dead-pane '*|*' --walled-pane '*) ;;
   *)
     if [[ "\${HANDOFF_FIXTURE:-on}" == on ]]; then
       fixture_succession_handoff "$TMP_ROOT/work/tmp/workflow-state-oversee.json" "$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md" || exit 1
@@ -1901,6 +1901,46 @@ printf 'Start here: 2026-10-01T00:00:00Z generation=0\n' > "$HANDOFF_FILE"
 run_succeed handoff-rewritten ''
 assert_eq "$RC|$(caller_open)|$(overseers)|$(orec generation)" '0|no|1|2' \
   'a replacement snapshot admits one succession'
+
+# The watch recovers a predecessor that could not rewrite its handoff.
+# Its dead and walled modes must launch without a current snapshot.
+RECOVERYCTL="$(mutant_scripts recoveryctl oversee-succeed)" || exit 1
+mutate_file "$RECOVERYCTL/oversee-succeed" \
+  'if [[ "$MODE" == succeed ]]; then' \
+  'if [[ "$MODE" == succeed || "$MODE" == dead || "$MODE" == walled ]]; then'
+claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+for row in \
+  'dead|stale|normal|0|1|yes|2|0' \
+  'dead|missing|normal|0|1|yes|2|0' \
+  'walled|stale|normal|0|1|no|2|0' \
+  'walled|missing|normal|0|1|no|2|0' \
+  'walled|stale|control|1|0|yes|1|1' \
+  ; do
+  IFS='|' read -r row_mode row_handoff row_script row_rc row_count row_open row_generation row_stale <<<"$row"
+  fleet_state
+  new_caller "$MARK"
+  row_text='Start here: 2026-10-01T00:00:00Z generation=0'
+  printf '%s\n' "$row_text" > "$HANDOFF_FILE"
+  if [[ "$row_handoff" == missing ]]; then
+    rm -- "$HANDOFF_FILE"
+    row_text=absent
+  fi
+  row_args=(--walled-pane "$CALLER_PANE")
+  if [[ "$row_mode" == dead ]]; then
+    new_dead_pane
+    row_args=(--dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file")
+  fi
+  row_bin="$SUCCEED"
+  [[ "$row_script" != control ]] || row_bin="$RECOVERYCTL/oversee-succeed"
+  SUCCEED_BIN="$row_bin" run_succeed "recovery-$row_mode-$row_handoff-$row_script" '' "${row_args[@]}"
+  handoff_text=absent
+  [[ ! -f "$HANDOFF_FILE" ]] || handoff_text="$(cat -- "$HANDOFF_FILE")"
+  stale_count="$(awk '/^oversee-succeed: handoff-stale / { n++ } END { print n+0 }' <<<"$OUT")"
+  assert_eq "$RC|$(overseers)|$(caller_open)|$(orec generation)|$stale_count|$handoff_text" \
+    "$row_rc|$row_count|$row_open|$row_generation|$row_stale|$row_text" \
+    "recovery $row_mode/$row_handoff/$row_script: only live self-succession requires a current handoff"
+done
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 
 HANDOFFCTL="$(mutant_scripts handoffctl oversee-succeed)" || exit 1
 mutate_file "$HANDOFFCTL/oversee-succeed" \

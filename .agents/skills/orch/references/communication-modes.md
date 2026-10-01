@@ -204,7 +204,7 @@ Watch: [ONE REPEAT WATCH, LOG TAIL AND NATIVE WAIT, RE-ARM RULE, RUN DIRECTORY A
 Progress log: [CURRENT SESSION'S OPEN PROGRESS ONLY]
 ```
 
-The handoff is a current snapshot. At every rewrite, replace the file, never prepend. Use the exact UTC write time and the writer's fleet generation. `oversee-succeed` refuses `handoff-stale` when the Start here generation is absent or differs from the fleet record; it does not judge the time. At succession, promote open progress into the sections above and cut the log. Keep no archive copy: commits, the tracker, mailboxes and Slack hold history.
+The handoff is a current snapshot. At every rewrite, replace the file, never prepend. Use the exact UTC write time and the writer's fleet generation. For live self-succession, `oversee-succeed` refuses `handoff-stale` when the Start here generation is absent or differs from the fleet record; it does not judge the time. Dead and walled recovery use the existing handoff plus bounded live records, even when the handoff is stale or absent: their callers cannot write a live snapshot. At succession, promote open progress into the sections above and cut the log. Keep no archive copy: commits, the tracker, mailboxes and Slack hold history.
 
 Drop each done item. Keep a line only when the successor would act wrongly or redo work without it, including lane facts held in another record. Instructions in force holds instructions no skill states; move a lasting instruction to its owning file. Each Context line names the open item it serves. Account, PID and watch facts otherwise stay in their own records. Hosted idle wakes use [oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane)'s Pane paste.
 

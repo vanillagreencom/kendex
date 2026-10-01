@@ -142,9 +142,12 @@ new_caller() {
 CALLER_FLAGS=("$BYPASS")
 run_succeed() {
   local row="$1" pref=(ORCH_OVERSEER_PREFERENCE="$2") lane="${CALLER_LANE:-CLAUDE_CONFIG_DIR=$H/.claude}"
-  fixture_succession_handoff "$TMP_ROOT/work/tmp/workflow-state-oversee.json" "$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md"
   [[ "$2" != unset ]] || pref=()
   shift 2
+  case " $* " in
+    *' --check-marks '*|*' --print-launch-line '*|*' --dead-pane '*|*' --walled-pane '*) ;;
+    *) fixture_succession_handoff "$TMP_ROOT/work/tmp/workflow-state-oversee.json" "$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md" ;;
+  esac
   RC=0
   OUT="$(cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$BIN:$PATH" TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" \
     LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-$row" \

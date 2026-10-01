@@ -1,1 +1,1 @@
-- Overseer handoffs replace old state, keep active instructions and context, and bound resume reads. Succession refuses missing or stale generations.
+- Overseer handoffs replace old state and bound resume reads. Live self-succession refuses missing or stale generations. Dead and walled recovery remain available.

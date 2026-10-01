@@ -147,7 +147,7 @@ run_succeed() {
   local lane="$1"
   shift
   case " $* " in
-    *' --check-marks '*|*' --print-launch-line '*) ;;
+    *' --check-marks '*|*' --print-launch-line '*|*' --dead-pane '*|*' --walled-pane '*) ;;
     *) fixture_succession_handoff "$FLEET_STATE" "$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md" ;;
   esac
   RC=0

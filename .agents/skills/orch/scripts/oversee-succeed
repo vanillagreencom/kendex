@@ -314,8 +314,8 @@
 #   --handoff PATH   The handoff file the brief names (default
 #                    tmp/handoffs/OVERSEER-HANDOFF.md); letters, digits and
 #                    ./_- only, so the brief survives the pane's shell
-#                    Every launch requires its Start here generation to match
-#                    the fleet record (../references/communication-modes.md § Handoff).
+#                    Live self-succession checks its Start here generation
+#                    per ../references/communication-modes.md § Handoff.
 #                    Check and print modes read no handoff.
 #   --wait-secs N    Seconds the successor has to come up: ONE bound over
 #                    reading its account, waiting for its running turn, and
@@ -427,11 +427,12 @@
 #
 # `line-unrecorded` and `record-unwritten` are notices on stderr too: the
 # fleet state could not take this run's launch line or its session record,
-# and the succession stands. So is `record-unread`, in every mode but
-# --dead-pane, which reads no caller record and reports an unreadable state
-# as `record-unwritten step=read`: the fleet state could not be read, so the
-# caller's launch record was not consulted and --harness, its pane, its
-# context reading and its environment answer for it. Under
+# and the succession stands. `record-unread` reports a failed caller-record
+# lookup in modes other than --dead-pane; --harness, the pane, its context
+# reading and its environment answer for it. Live self-succession later
+# refuses `handoff-stale` if the fleet generation or handoff cannot be read
+# or does not match. Recovery continues after an unreadable state with
+# `record-unwritten step=read`. Under
 # --print-launch-line it stays out of the line, since the watch start records
 # the print's stdout alone.
 # `succession-off`, `context-unmeasured`, `context-below-mark`,
@@ -1427,19 +1428,24 @@ fi
 # The caller's own session record, read before anything below writes to the
 # `overseer` object: it is what an abandoned launch puts back whole, launch
 # line included, so a later dead-overseer relaunch never replays a line this
-# run refused. Succession needs this record to check the handoff the overseer
-# writes; a missing generation cannot prove it current.
+# run refused. Only live self-succession has a writer that can make the
+# handoff current; recovery cannot demand a snapshot from a dead or walled
+# predecessor (../references/communication-modes.md § Handoff).
 if ! ol_record_read; then
-  die handoff-stale "path=$HANDOFF" expected=unknown
+  [[ "$MODE" != succeed ]] || die handoff-stale "path=$HANDOFF" expected=unknown
+  message record-unwritten field=overseer step=read >&2
+  [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
 fi
-generation="$(jq -er '.generation // empty' <<<"$OL_PRIOR" 2>"$DEP_ERR")" \
-  || die handoff-stale "path=$HANDOFF" expected=unknown
-[[ "$generation" =~ ^[0-9]+$ ]] \
-  || die handoff-stale "path=$HANDOFF" expected=unknown
-handoff_generation="$(sed -n 's/^Start here: .* generation=\([0-9][0-9]*\)$/\1/p' 2>"$DEP_ERR" < "$HANDOFF")" \
-  || die handoff-stale "path=$HANDOFF" "expected=$generation"
-[[ "$handoff_generation" == "$generation" ]] \
-  || die handoff-stale "path=$HANDOFF" "expected=$generation"
+if [[ "$MODE" == succeed ]]; then
+  generation="$(jq -er '.generation // empty' <<<"$OL_PRIOR" 2>"$DEP_ERR")" \
+    || die handoff-stale "path=$HANDOFF" expected=unknown
+  [[ "$generation" =~ ^[0-9]+$ ]] \
+    || die handoff-stale "path=$HANDOFF" expected=unknown
+  handoff_generation="$(sed -n 's/^Start here: .* generation=\([0-9][0-9]*\)$/\1/p' 2>"$DEP_ERR" < "$HANDOFF")" \
+    || die handoff-stale "path=$HANDOFF" "expected=$generation"
+  [[ "$handoff_generation" == "$generation" ]] \
+    || die handoff-stale "path=$HANDOFF" "expected=$generation"
+fi
 # The successor is recorded BEFORE its window opens, not after the close: the
 # close kills this script's own window and a write placed after it may never
 # run. Its line and launch identity are the record's `pending` member until

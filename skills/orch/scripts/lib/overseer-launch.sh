@@ -804,9 +804,8 @@ ol_succession() { # PREDECESSOR CWD LINE IDENTITY PENDING LANE_VAR LANE_DIR FORM
 # ---------------------------------------------------------------------------
 
 # ol_record_read — the current object into OL_PRIOR as JSON, `null` where the
-# state carries none. A state that cannot be read at all returns 1: the
-# fleet's state is where the record lives, and a run outside a fleet has none,
-# which a caller reports as a notice and never as a reason to stop a launch.
+# state carries none. A state that cannot be read at all returns 1 and leaves
+# OL_PRIOR empty. The caller decides whether that absence permits a launch.
 OL_PRIOR=""
 ol_record_read() {
   OL_PRIOR="$(ol_record_get)" || { OL_PRIOR=""; return 1; }
