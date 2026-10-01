@@ -377,7 +377,7 @@ control() { # NAME OLD NEW
   mutate_file "$TMP_ROOT/$1/scripts/open-terminal" "$2" "$3"
   CTRL_OT="$TMP_ROOT/$1/scripts/open-terminal"
 }
-control unsupported-ctrl '*) ot_message unsupported-for-oversee "harness=${LAUNCH_HARNESS:-none}" >&2; exit 1 ;;' '*) ;;'
+control unsupported-ctrl '*) ot_message unsupported-for-oversee "harness=${LAUNCH_HARNESS:-none}" >&2; return 1 ;;' $'*) : \'ot_message unsupported-for-oversee "harness=${LAUNCH_HARNESS:-none}" >&2; return 1\' ;;'
 assert_eq "$(OT="$CTRL_OT" launch unsupported-ctrl "${FLEET[@]}" --harness opencode --launch-flags '--model m')" passed \
   "control: without its refusal an opencode fleet launch passes the gate"
 control window-ctrl 'ot_message launch-window-unknown "harness=$LAUNCH_HARNESS" "model=${LAUNCH_MODEL:-none}" >&2' ': '

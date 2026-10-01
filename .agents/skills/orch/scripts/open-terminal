@@ -399,7 +399,7 @@ preference_select() {
     CMD_TEMPLATE="$OL_ENTRY_HARNESS"
     for preference_word in ${OL_FLAGS[@]+"${OL_FLAGS[@]}"}; do
       if [[ "$preference_word" == '{brief}' ]]; then CMD_TEMPLATE+=" {brief}"
-      else CMD_TEMPLATE+=" $(lane_single_quote "$preference_word")"; fi
+      else CMD_TEMPLATE+=" $(printf %q "$preference_word")"; fi
     done
   else
     LAUNCH_FLAGS="${OL_FLAGS[*]+${OL_FLAGS[*]}}"
