@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, type ExecFileException } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
@@ -257,7 +257,7 @@ function upsertAgentFrontmatterToml(content: string, agentName: string, edit: Ag
 
 async function refreshkendexManagedAgent(agent: AgentConfig, tomlPath: string): Promise<{ ok: true } | { ok: false; message: string }> {
 	const projectRoot = path.dirname(tomlPath);
-	const result = await new Promise<{ error: Error | null; stdout: string; stderr: string }>((resolve) => {
+	const result = await new Promise<{ error: ExecFileException | null; stdout: string; stderr: string }>((resolve) => {
 		execFile("kendex", ["refresh", "--scope", "project"], {
 			cwd: projectRoot,
 			encoding: "utf-8",
@@ -267,8 +267,14 @@ async function refreshkendexManagedAgent(agent: AgentConfig, tomlPath: string): 
 		}, (error, stdout, stderr) => resolve({ error, stdout, stderr }));
 	});
 	if (result.error) {
-		const detail = (result.stderr || result.stdout || result.error.message).trim();
-		return { ok: false, message: detail.split(/\r?\n/).slice(-4).join(" ") };
+		const error = result.error;
+		const cause = [
+			error.message.trim(),
+			...(["code", "signal", "killed"] as const).flatMap((field) =>
+				error[field] === undefined ? [] : [`${field}=${error[field]}`]),
+		].join(" ");
+		const outputTail = (result.stderr || result.stdout).trim().split(/\r?\n/).slice(-4).join(" ");
+		return { ok: false, message: outputTail ? `${cause} Output: ${outputTail}` : cause };
 	}
 	if (!fs.existsSync(agent.filePath)) return { ok: false, message: `${compactAgentPath(agent.filePath)} was not regenerated.` };
 	return { ok: true };
