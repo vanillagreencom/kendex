@@ -48,6 +48,8 @@ After trusted removal, the shipped `templates/kendex-refresh.yml` checks for upd
 
 Provision the `kendex` environment before adoption. It must contain `FLEET_GH_APP_ID` and `FLEET_GH_APP_PRIVATE_KEY` and allow deployments from the default branch only. The organization owner uses `scripts/provision-environment.sh --org ORG` from their own machine. `scripts/adopt-refresh.sh` reads the existing environment through `validate-standard.sh --environment-only`. It checks the environment and secret names the refresh template it installs reads, whatever the consumer's `REVIEW_GATE_STANDARD_*` settings say, so refresh adoption needs none of those keys. A missing environment, secret or branch policy stops adoption with the failed check and provisioning remedy.
 
+`refresh-consumer.sh` reports the exact `kendex --version` output in the rolling pull request body, or in `GITHUB_STEP_SUMMARY` when the consumer is current. A failed version read stops publication. `tests/refresh-consumer.test.sh` holds these report paths. The retained writer template also uses `install-latest.sh` for its release engine; only its optional main-build installer keeps a fixed commit. `tests/refresh-workflow.test.sh` checks that call, and `tests/install-latest.test.sh` checks immutable installer resolution.
+
 Run from the consumer root after installing the skill:
 
 ```bash

@@ -163,12 +163,18 @@ else
   printf 'refresh-settings=orch-absent value=%s\n' "$ROOT/.agents/skills/orch"
 fi
 kendex verify --scope project
+if ! engine_version="$(kendex --version)"; then
+  printf 'refresh-error=read value=engine-version\n' >&2
+  exit 1
+fi
+printf -v version_report 'Engine version: `%s`.' "$engine_version"
 git add -A
 if git diff --cached --quiet; then
   if [ -n "$pr" ]; then
     gh pr close "$pr" --repo "$GH_REPO"
   fi
   printf 'refresh-state=current pr=none class=none\n'
+  printf '%s\n' "$version_report" >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
   exit 0
 fi
 if ! tree="$(git write-tree)"; then
@@ -214,7 +220,7 @@ else
     gh pr merge "$pr" --repo "$GH_REPO" --disable-auto
   fi
 fi
-printf -v body 'Generated kendex updates.\n\nChange class: `%s`.\n\nClassifier:\n```text\n%s\n```\n\n%s\n' "$class" "$class_line" "$merge_note"
+printf -v body 'Generated kendex updates.\n\n%s\n\nChange class: `%s`.\n\nClassifier:\n```text\n%s\n```\n\n%s\n' "$version_report" "$class" "$class_line" "$merge_note"
 if [ -n "$settings_report" ]; then
   printf -v body '%s\n%s\n' "$body" "$settings_report"
 fi

@@ -612,25 +612,20 @@ jobs:
       - name: Install kendex for change classification
         env:
           # The installer runs in the writer job, before the credentialed step
-          # below. It never sees the writer token, and pinning it is what keeps
-          # it from rewriting that step's code or environment: a mutable script
-          # fetched here would run before, and persist into, the step that
-          # holds the credential.
+          # below. It never sees the writer token. install-latest.sh resolves
+          # the release tag to an immutable installer commit before execution.
           GH_TOKEN: ""
-          # The installer is fetched at an immutable commit, the one the
-          # release tag names; the tag only names the version installed. A
-          # tag can be moved, and a moved one would run another installer
-          # here. Both values are written together from one tag.
-          KENDEX_VERSION: v1.3.0
+          GITHUB_TOKEN: ${{ github.token }}
+          # Only the optional main-build installer uses this fixed commit.
           KENDEX_INSTALLER_SHA: f6ad9491a810a9256f04f66f8d083eb9db709602
           KENDEX_INSTALLER_REPO: vanillagreencom/kendex
         # REVIEW_GATE_LOCK_KENDEX=main adds a second kendex for the one diff
         # whose only changed path is the install record: kendex's rolling main
-        # build, installed by the same pinned installer with --git into a
+        # build, installed by the fixed-commit installer with --git into a
         # directory of its own and handed to change-class as
         # HARNESS_CI_LOCK_KENDEX. A repository that records .kendex-lock.json
         # with a kendex built from its own tree writes a registration shape
-        # the pinned release may not know yet, and that release refuses the
+        # the latest release may not know yet, and that release refuses the
         # record. In kendex's own repository that build is the default
         # branch's code, lagging it until the next main build publishes; a
         # failed main build leaves the rolling-main pointer, and the lag,
@@ -640,17 +635,17 @@ jobs:
         # the record names either: the record names none, and the commit it
         # names often has no published build. The main build is a release
         # asset kendex's own release workflow published, fetched by the same
-        # pinned installer with no credential in reach, so it takes no trust
-        # the pinned release does not. Every other diff keeps the pinned
+        # fixed-commit installer with no writer credential in reach, so it takes no trust
+        # the latest release does not. Every other diff keeps the latest
         # release, and so does every diff where the setting is empty. A main
         # build that fails to install is a warning, never a step failure: the
-        # lock-only diff falls back to the pinned release, which refuses a
+        # lock-only diff falls back to the latest release, which refuses a
         # record it cannot read, and every other pull request converges.
         run: |
           set -euo pipefail
           policy="$(.agents/skills/review-gate/scripts/review-policy --check-config)"
           if [ "$policy" = "review-policy=active" ]; then
-            curl -fsSL "https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/$KENDEX_INSTALLER_SHA/install.sh" | sh -s -- --version "$KENDEX_VERSION"
+            .agents/skills/review-gate/scripts/install-latest.sh
             lock="$(.agents/skills/review-gate/scripts/review-policy --lock-kendex)"
             case "$lock" in
               review-policy-lock-kendex=off) ;;
@@ -661,7 +656,7 @@ jobs:
                 if [ "$lock_rc" -eq 0 ]; then
                   printf 'HARNESS_CI_LOCK_KENDEX=%s\n' "$lock_home/.local/bin/kendex" >>"$GITHUB_ENV"
                 else
-                  echo "::warning::lock-kendex-install exit=$lock_rc: kendex's main build did not install, so a pull request whose only change is .kendex-lock.json is judged by the pinned release"
+                  echo "::warning::lock-kendex-install exit=$lock_rc: kendex's main build did not install, so a pull request whose only change is .kendex-lock.json is judged by the latest release"
                 fi
                 ;;
               *)

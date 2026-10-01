@@ -62,6 +62,7 @@ cat >"$TMP/bin/kendex" <<'SH'
 set -euo pipefail
 printf '%s\n' "$*" >>"$TEST_STATE/kendex"
 case "$1" in
+  --version) printf 'kendex 7.8.9 (release-build)\n'; exit "${TEST_VERSION_EXIT:-0}" ;;
   refresh)
     printf '%s\n' "$TEST_CONTENT" >rendered.txt
     if [ -n "$TEST_REFRESH_SKILL" ]; then
@@ -135,15 +136,68 @@ runner="$repo/.agents/skills/review-gate/scripts/refresh-consumer.sh"
 
 run_refresh current pass render
 if [ "$RC" -eq 0 ] && [ ! -s "$TMP/state/creates" ] && grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT"; then ok 'current consumer opens no pull request'; else bad 'current consumer opens no pull request' "$OUT"; fi
+if grep -qxF 'Engine version: `kendex 7.8.9 (release-build)`.' "$TMP/state/summary"; then ok 'current run summary reports the exact engine version'; else bad 'current run engine version missing'; fi
 reset_default
 run_refresh stale pass render
 first="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
 if [ "$RC" -eq 0 ] && [ "$(wc -l <"$TMP/state/creates" | tr -d ' ')" -eq 1 ]; then ok 'stale consumer opens one rolling pull request'; else bad 'stale consumer opens one rolling pull request' "$OUT"; fi
+if grep -qxF 'Engine version: `kendex 7.8.9 (release-build)`.' "$TMP/state/body"; then ok 'pushed body reports the exact engine version'; else bad 'pushed body engine version missing'; fi
 reset_default
 run_refresh stale pass render
 second="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
 if [ "$RC" -eq 0 ] && [ "$first" = "$second" ] && [ "$(wc -l <"$TMP/state/creates" | tr -d ' ')" -eq 1 ]; then ok 'repeat keeps one pull request and its commit'; else bad 'repeat keeps one pull request and its commit' "$OUT"; fi
 cp "$TMP/state/body" "$TMP/clean-body"
+# GitHub reads a published version line. A failed CLI version read must stop
+# publication, not leave that line blank or report the selected release tag.
+reset_default
+VERSION_EXIT=73
+before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+: >"$TMP/state/calls"
+run_refresh version-failure pass render
+if [ "$RC" -eq 1 ] && grep -qxF 'refresh-error=read value=engine-version' <<<"$OUT" &&
+    [ "$before" = "$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" ] &&
+    ! grep -qE '^api --method (POST|PATCH)|^pr merge ' "$TMP/state/calls"; then
+  ok 'failed engine version read stops publication'
+else bad 'failed engine version read' "$OUT"; fi
+unset VERSION_EXIT
+reset_default
+cp "$runner" "$TMP/version-runner"
+for mutation in body summary failure; do
+  reset_default
+  cp "$TMP/version-runner" "$runner"
+  case "$mutation" in
+    body)
+      file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 '^printf -v body ' \
+        's/"\$version_report"/""/' ;;
+    summary)
+      file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 '^  printf .*GITHUB_STEP_SUMMARY' \
+        's/"\$version_report"/""/' ;;
+    failure)
+      file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 '^if ! engine_version=' \
+        '/^if ! engine_version=/,/^fi$/s/exit 1/: # exit 1/' ;;
+  esac
+  commit "$repo"
+  git -C "$repo" push -q origin main
+  content=version-control
+  [ "$mutation" != summary ] || content=current
+  [ "$mutation" != failure ] || VERSION_EXIT=73
+  run_refresh "$content" pass render
+  case "$mutation" in
+    body | summary)
+      if [ "$RC" -eq 0 ] && ! grep -qxF 'Engine version: `kendex 7.8.9 (release-build)`.' "$TMP/state/$mutation"; then
+        ok "control: dropped $mutation version turns its assertion red"
+      else bad "$mutation version control" "$OUT"; fi ;;
+    failure)
+      if [ "$RC" -eq 0 ] && grep -qxF 'refresh-error=read value=engine-version' <<<"$OUT"; then
+        ok 'control: bypassed version failure turns the stop assertion red'
+      else bad 'version failure control' "$OUT"; fi ;;
+  esac
+  unset VERSION_EXIT
+done
+reset_default
+cp "$TMP/version-runner" "$runner"
+commit "$repo"
+git -C "$repo" push -q origin main
 # Committed settings and private overrides are real consumer inputs. Neither
 # the parse nor the report is doubled in these rolling-refresh fixtures.
 for row in \
