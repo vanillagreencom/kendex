@@ -953,8 +953,10 @@ jobs:
           exit "$fail"
 
       # Whole-suite mutation controls drove guards-hooks macOS jobs to
-      # 1466-1819s. Controls now run only their asserted rows. Re-measure the
-      # summed suite time against the fourteen-minute macOS target; the
+      # 1466-1819s. Selected controls still cancelled at 1754s and 1786s;
+      # whole-hook Bash pattern edits preceded the slow callbacks. Literal
+      # edits and bounded session-row fixtures need a complete macOS receipt
+      # against the fourteen-minute summed-suite target; the
       # thirty-minute job cap stays unchanged.
       - name: hook and moved commit-guards suites
         if: matrix.shard == 'guards-hooks'

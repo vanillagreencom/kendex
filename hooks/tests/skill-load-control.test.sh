@@ -31,6 +31,54 @@ assert_eq "$HOOK" "$TMP_ROOT/source.sh" 'the override does not replace the paren
 assert_eq "$(cat -- "$TMP_ROOT/invoked")" "$TMP_ROOT/selected.sh" 'only the selected callback runs once on the mutant'
 assert_eq "$(env -i PATH="$PATH" HOME="$TMP_ROOT" "$BASH_BIN" "$HOOK")" expected 'the original source stays unchanged'
 
+# The real skill-load-check hook puts its anchors deep inside a large file.
+# Pattern characters in a comment must remain literal, and no other byte
+# may change when the helper inserts the mutation.
+HOOK="$TMP_ROOT/deep-source.sh"
+ANCHOR='value=expected # [*?] \ $ literal'
+perl -e 'print "#" . ("p" x 22000) . "\n"' >"$HOOK"
+printf '%s\nprintf "%%s\\n" "$value"\n' "$ANCHOR" >>"$HOOK"
+perl -e 'print "#" . ("s" x 22000) . "\n"' >>"$HOOK"
+perl -e 'print "#" . ("p" x 22000) . "\n"' >"$TMP_ROOT/deep-expected.sh"
+printf '%s\nvalue=broken\nprintf "%%s\\n" "$value"\n' "$ANCHOR" >>"$TMP_ROOT/deep-expected.sh"
+perl -e 'print "#" . ("s" x 22000) . "\n"' >>"$TMP_ROOT/deep-expected.sh"
+skill_load_control deep "$HOOK" "$ANCHOR" value=broken HOOK selected_rows \
+  'first selected row' 'second selected row'
+status=0
+cmp -s -- "$TMP_ROOT/deep.sh" "$TMP_ROOT/deep-expected.sh" || status=$?
+assert_eq "$status" 0 'the deep literal edit preserves every other source byte'
+HOOK="$TMP_ROOT/source.sh"
+
+# Bad anchors and failed file operations must stop before the row callback.
+# A directory at the output path forces a write failure even as root.
+while IFS='|' read -r MODE want; do
+  source="$HOOK"
+  anchor=value=expected
+  case "$MODE" in
+    missing) anchor=value=absent ;;
+    ambiguous) source="$TMP_ROOT/repeated.sh"; printf '%s\n' "$anchor" "$anchor" >"$source" ;;
+    unreadable) source="$TMP_ROOT/absent.sh" ;;
+    symlink) source="$TMP_ROOT/linked.sh"; ln -s "$HOOK" "$source" ;;
+    unwritable) mkdir "$TMP_ROOT/invalid.sh" ;;
+    *) echo "skill-load-control-test: mode=$MODE" >&2; exit 2 ;;
+  esac
+  set +e
+  (
+    set -e
+    skill_load_control invalid "$source" "$anchor" value=broken HOOK selected_rows 'first selected row'
+  ) >"$TMP_ROOT/invalid.log" 2>&1
+  status=$?
+  set -e
+  IFS= read -r first <"$TMP_ROOT/invalid.log"
+  assert_eq "status=$status first=$first" "status=2 first=skill-load-control: $want" "the helper rejects $MODE mutation input"
+done <<'ROWS'
+missing|anchor=missing
+ambiguous|anchor=ambiguous
+unreadable|source=unreadable
+symlink|source=symlink
+unwritable|mutation=unwritable
+ROWS
+
 # These callback outcomes are the helper's observable input, not substitutes
 # for the helper. Each is checked through skill_load_control itself. The
 # caller's outcome.log must not overlap the helper's callback capture, which

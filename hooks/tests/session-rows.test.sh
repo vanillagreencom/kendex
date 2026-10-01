@@ -7,7 +7,7 @@
 # TMP_ROOT with the install a kendex project renders, runs a wrapper with a
 # payload in the shape Claude Code 2.1.283 emits, and asserts the exit status,
 # the keyed first line of stderr and the row. HOOK_UNDER_TEST overrides the
-# lane-mail-check copy the control at the end runs against.
+# lane-mail-check copy the selected control rows run against.
 set -euo pipefail
 
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -24,14 +24,8 @@ ERR_FILE="$TMP_ROOT/stderr"
 PASS=0
 FAIL=0
 
-assert_eq() { # GOT WANT LABEL
-  if [[ "$1" == "$2" ]]; then
-    PASS=$((PASS + 1)); printf '  ok    %s\n' "$3"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        want: %s\n        got:  %s\n' "$3" "$2" "$1"
-  fi
-}
+# shellcheck source=lib/assert.sh
+. "$TEST_DIR/lib/assert.sh"
 
 # shellcheck source=lib/first-line.sh
 . "$TEST_DIR/lib/first-line.sh"
@@ -60,7 +54,7 @@ chmod +x "$TMUX_BIN/tmux"
 CHECKOUT=""
 ROWS=""
 HOOK_HOME=.claude/hooks
-new_checkout() { # NAME [HOOK_HOME]
+new_checkout() { # NAME [HOOK_HOME] [STOP-COUNT]
   HOOK_HOME="${2:-.claude/hooks}"
   CHECKOUT="$TMP_ROOT/$1"
   mkdir -p "$CHECKOUT"
@@ -76,6 +70,15 @@ new_checkout() { # NAME [HOOK_HOME]
     cp "$HOOKS/$wrapper.sh" "$CHECKOUT/$HOOK_HOME/$wrapper.sh"
   done
   ROWS="$CHECKOUT/tmp/lane-mail/overseer/session-7000-9.jsonl"
+  if [ "${3:-0}" -gt 0 ]; then
+    # Reader distance needs valid rows, not a fresh wrapper for each turn.
+    # Use the real writer's compact Stop as the fixture for every padding row.
+    local stop i
+    run session-start-row "$START"
+    run session-start-row "$STOP"
+    stop=$(tail -n 1 -- "$ROWS") || exit 2
+    for ((i=1; i<$3; i++)); do printf '%s\n' "$stop" >>"$ROWS"; done
+  fi
 }
 
 RC=0
@@ -121,14 +124,22 @@ row_count() { [ -f "$ROWS" ] && wc -l < "$ROWS" | tr -d ' ' || echo 0; }
 
 echo "=== session rows ==="
 
-# One table: each wrapper and payload, and the row it leaves. `-` is no row.
-while IFS='|' read -r label wrapper payload want; do
+# The start control shares the same writer assertion as the normal pass.
+wrapper_row() { # LABEL WRAPPER PAYLOAD WANT
+  local label="$1" wrapper="$2" payload="$3" want="$4" got
   new_checkout "$label"
   run "$wrapper" "$payload"
-  got="$(last_row '[.event, .harness, .session_id, .transcript_path, .cwd, .account, (.source // .reason // .error // "-")] | join(",")')"
+  got="$(last_row '[.event, .harness, .session_id, .transcript_path, .cwd, .account, (.source // .reason // .error // "-")] | join(",")')" || exit 2
   assert_eq "RC=$RC first=$(first_line) row=$got" "RC=0 first=- row=$want" "$label"
+}
+start_row() {
+  wrapper_row start session-start-row "$START" 'SessionStart,claude,5f0c,/t/5f0c.jsonl,/work,/accounts/one,startup'
+}
+start_row
+# One table: the other wrapper payloads and the rows they leave.
+while IFS='|' read -r label wrapper payload want; do
+  wrapper_row "$label" "$wrapper" "$payload" "$want"
 done <<ROWSTABLE
-start|session-start-row|$START|SessionStart,claude,5f0c,/t/5f0c.jsonl,/work,/accounts/one,startup
 end|session-end-row|$END|SessionEnd,claude,5f0c,/t/5f0c.jsonl,/work,/accounts/one,prompt_input_exit
 wall|stop-failure-row|$WALL|StopFailure,claude,5f0c,/t/5f0c.jsonl,/work,/accounts/one,rate_limit
 ROWSTABLE
@@ -159,7 +170,7 @@ assert_eq "RC=$RC rows=$(row_count) last=$(last_row .event) path=$(last_row .tra
   "a Stop over a StopFailure row is written whole and lifts it"
 # A start many turns back is still the session's start: its readers look for
 # the last row of an event among the rows naming it, not in the last lines.
-for _ in $(seq 70); do run session-start-row "$STOP"; done
+new_checkout start_span .claude/hooks 70
 start_found() { # LIBRARY
   bash -c 'set -euo pipefail; . "$1"; session_rows_start "$2" && printf "%s\n" "$SR_MODEL"' _ "$1" "$ROWS" 2>/dev/null || echo none
 }
@@ -191,10 +202,13 @@ assert_eq "RC=$RC first=$(first_line) rows=$(row_count)" "RC=0 first=- rows=0" \
   "a harness nested in the pane's own harness writes no row"
 
 # The harness a row names is the one the hook's install directory names.
-new_checkout codex_install .codex/hooks
-run session-start-row "$START"
-assert_eq "RC=$RC harness=$(last_row .harness)" "RC=0 harness=codex" \
-  "a hook installed under .codex/hooks writes a codex row"
+codex_row() {
+  new_checkout codex_install .codex/hooks
+  run session-start-row "$START"
+  assert_eq "RC=$RC harness=$(last_row .harness)" "RC=0 harness=codex" \
+    "a hook installed under .codex/hooks writes a codex row"
+}
+codex_row
 
 # What is reported and passed: an install whose orch scripts lack the row
 # library, a key tmux cannot answer, and a wrapper with no judge beside it.
@@ -239,16 +253,9 @@ assert_eq "RC=$RC rows=$(row_count) last=$(last_row .event)" "RC=0 rows=2 last=S
   "the overseer's turn end, whose payload names no event, writes the Stop over its wall"
 
 # --- control ------------------------------------------------------------------
-# The row arm's write removed from a copy of the hook: the start row is gone.
+# Disable the writer's effect, keeping its code in the copy: no start row.
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  MUTANT="$TMP_ROOT/mutant-lane-mail-check.sh"
-  cp "$HOOK" "$MUTANT"
-  assert_eq "$(grep -c -F '  [ -n "$ITEM" ] || session_row' "$MUTANT")" "1" "control finds the row arm's write"
-  sed -i.bak 's/  \[ -n "\$ITEM" \] || session_row/  :/' "$MUTANT"
-  assert_eq "$(grep -c -F '  [ -n "$ITEM" ] || session_row' "$MUTANT")" "0" "control removed it"
-  CONTROL_OUT="$(HOOK_UNDER_TEST="$MUTANT" bash "${BASH_SOURCE[0]}" 2>&1 || true)"
-  assert_eq "$(grep -c '^  FAIL  start$' <<<"$CONTROL_OUT")" "1" \
-    "control: without the row arm's write the start row is not written"
+  skill_load_control writer "$HOOK" 'session_row() {' '  return 0' HOOK start_row start
 fi
 # The library's compact Stop rule removed from a copy of the orch scripts: a
 # Stop with no wall standing then lands whole.
@@ -267,9 +274,7 @@ READ_RULE='    lines="$(grep -F -- "\"event\":\"$2\"" "$1")" || rc=$?'
 assert_eq "$(grep -c -F -- "$READ_RULE" "$LIB")" "1" "control finds the event list"
 READ_RULE="$READ_RULE" perl -i -pe 's/\Q$ENV{READ_RULE}\E/    lines="\$(cat -- "\$1")" || rc=\$?/' "$LIB"
 assert_eq "$(grep -c -F -- "$READ_RULE" "$LIB")" "0" "control removed the event list"
-new_checkout start_span_control
-run session-start-row "$START"
-for _ in $(seq 70); do run session-start-row "$STOP"; done
+new_checkout start_span_control .claude/hooks 70
 assert_eq "$(start_found "$LIB")" "none" "control: a reader taking the last lines alone loses a start seventy Stops back"
 # The top-level gate removed from the same copy: a nested harness writes.
 mutate_lib() { # OLD NEW
@@ -287,14 +292,8 @@ assert_eq "rows=$(row_count)" "rows=1" "control: without the top-level gate a ne
 # The harness read from the install replaced by a fixed word: a codex install
 # writes claude.
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  HARNESS_MUTANT="$TMP_ROOT/harness-mutant.sh"
-  cp "$HOOK" "$HARNESS_MUTANT"
-  assert_eq "$(grep -c -F '    _ "$SCRIPTS" "$ROOT" "$HARNESS" "$ROW_EVENT"' "$HARNESS_MUTANT")" "1" "control finds the row's harness"
-  sed -i.bak 's/    _ "\$SCRIPTS" "\$ROOT" "\$HARNESS" "\$ROW_EVENT"/    _ "$SCRIPTS" "$ROOT" claude "$ROW_EVENT"/' "$HARNESS_MUTANT"
-  assert_eq "$(grep -c -F '    _ "$SCRIPTS" "$ROOT" "$HARNESS" "$ROW_EVENT"' "$HARNESS_MUTANT")" "0" "control replaced it"
-  CONTROL_OUT="$(HOOK_UNDER_TEST="$HARNESS_MUTANT" bash "${BASH_SOURCE[0]}" 2>&1 || true)"
-  assert_eq "$(grep -c '^  FAIL  a hook installed under .codex/hooks writes a codex row$' <<<"$CONTROL_OUT")" "1" \
-    "control: a row harness fixed at claude fails the codex install row"
+  skill_load_control harness "$HOOK" 'session_row() {' '  HARNESS=claude' HOOK codex_row \
+    'a hook installed under .codex/hooks writes a codex row'
 fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
