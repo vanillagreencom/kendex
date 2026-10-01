@@ -50,12 +50,8 @@ fn kendex_web_record_owes_no_copilot_only_workflow_hooks() {
     use kendex_core::env::Env;
     use kendex_core::model::{HarnessId, ItemKind, Scope};
 
-    const EXCLUDED: &[&str] = &[
-        "lane-mail-compact",
-        "lane-mail-prompt",
-        "lane-mail-start",
-        "skill-load-record",
-    ];
+    const EXCLUDED: &[&str] = &["lane-mail-compact", "lane-mail-prompt", "lane-mail-start"];
+    const RECORDER: &str = "skill-load-record";
     const MANIFEST: &str = include_str!("fixtures/kendex-web/manifest.toml");
     const RECORD: &str = include_str!("fixtures/kendex-web/install-record.json");
 
@@ -94,11 +90,11 @@ fn kendex_web_record_owes_no_copilot_only_workflow_hooks() {
         "catalog expansion must finish"
     );
     let record: serde_json::Value = serde_json::from_str(RECORD).unwrap();
-    for name in EXCLUDED {
+    for name in EXCLUDED.iter().copied().chain([RECORDER]) {
         assert!(
             planned
                 .iter()
-                .any(|item| item.kind == ItemKind::Hook && item.name == *name),
+                .any(|item| item.kind == ItemKind::Hook && item.name == name),
             "catalog expansion must reach hook {name}"
         );
         assert!(
@@ -106,37 +102,40 @@ fn kendex_web_record_owes_no_copilot_only_workflow_hooks() {
                 .as_object()
                 .unwrap()
                 .values()
-                .any(|entry| entry["kind"] == "hook" && entry["name"] == *name),
+                .any(|entry| entry["kind"] == "hook" && entry["name"] == name),
             "consumer record must lack hook {name}"
         );
     }
 
     let mut args = vec!["verify", "--scope", "project", "--json", "lane-mail-check"];
     args.extend(EXCLUDED);
+    args.push(RECORDER);
     let verified = kendex(&home, &project, &args);
     let document: Document = serde_json::from_slice(&verified.stdout)
         .unwrap_or_else(|error| panic!("verify document: {error}\n{}", said(&verified)));
     // Missing renders fail their rows in this read-only fixture. A recorded
     // sibling proves the audit ran; the assertion concerns only record gaps.
-    assert!(
-        row(
-            &document,
-            "hook",
-            "lane-mail-check",
-            Some(HarnessId::Claude)
-        )
-        .is_some(),
-        "{}",
-        said(&verified)
+    let recorded_sibling = row(
+        &document,
+        "hook",
+        "lane-mail-check",
+        Some(HarnessId::Claude),
     );
-    let unrecorded: Vec<_> = document
+    assert!(recorded_sibling.is_some(), "{}", said(&verified));
+    let mut unrecorded: Vec<_> = document
         .rows
         .iter()
         .filter(|row| row.state == State::Unrecorded)
         .map(|row| (row.kind.as_str(), row.name.as_str(), row.harness))
         .collect();
-    assert!(
-        unrecorded.is_empty(),
+    unrecorded.sort_unstable();
+    assert_eq!(
+        unrecorded,
+        [
+            ("hook", RECORDER, Some(HarnessId::Claude)),
+            ("hook", RECORDER, Some(HarnessId::Codex)),
+            ("hook", RECORDER, Some(HarnessId::Pi)),
+        ],
         "listed/not-recorded: {unrecorded:?}\n{}",
         said(&verified)
     );
