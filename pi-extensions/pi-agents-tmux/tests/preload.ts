@@ -6,9 +6,7 @@ import { join } from "node:path";
 
 // The whole run gets its OWN tmp root (os.tmpdir()
 // re-reads TMPDIR per call, and this preload runs before any test module),
-// so concurrent pi-agents-tmux runs never share live dirs,
-// and the final sweep removes the root wholesale. A short settle pass
-// absorbs writes that land during shutdown before cleanup.
+// so runs never share live dirs; a short settle pass precedes final cleanup.
 const RUN_TMP_ROOT = mkdtempSync(join(tmpdir(), "pi-agents-tmux-run-"));
 process.env.TMPDIR = RUN_TMP_ROOT;
 
