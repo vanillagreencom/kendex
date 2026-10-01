@@ -1,4 +1,5 @@
 import { open } from "node:fs/promises";
+import { PROBE_CONCURRENCY } from "./probes.js";
 import type { ManagedTask } from "./types.js";
 
 interface OutputTail {
@@ -16,8 +17,10 @@ interface Tail extends OutputTail {
 }
 
 /** Asynchronous log tails owned by the task that consumes them. */
-export function createTaskOutputReader(report: (logFile: string, error: string) => void) {
+export function createTaskOutputReader(report: (logFile: string, error: string) => void, isCurrent: (task: ManagedTask) => boolean = () => true) {
 	let tails = new WeakMap<ManagedTask, { tail?: Tail; pending?: Promise<OutputTail> }>();
+	let active = 0;
+	const queued: (() => void)[] = [];
 	return {
 		async read(task: ManagedTask, maxChars: number): Promise<string> {
 			return (await this.readTail(task, maxChars)).text;
@@ -32,12 +35,17 @@ export function createTaskOutputReader(report: (logFile: string, error: string) 
 			}
 			if (state.pending) {
 				await state.pending;
+				if (tails.get(task) !== state || !isCurrent(task)) return { text: "", truncated: false };
 				// A concurrent caller can ask for a different tail limit.
 				return this.readTail(task, maxChars);
 			}
 			const owned = state;
 			const lengthLimit = Math.max(1, Math.floor(maxChars));
 			owned.pending = (async () => {
+				const valid = () => tails.get(task) === owned && isCurrent(task);
+				while (active >= PROBE_CONCURRENCY && valid()) await new Promise<void>((resolve) => queued.push(resolve));
+				if (!valid()) return { text: "", truncated: false };
+				active += 1;
 				let file: Awaited<ReturnType<typeof open>> | undefined;
 				try {
 					file = await open(task.logFile, "r");
@@ -63,7 +71,8 @@ export function createTaskOutputReader(report: (logFile: string, error: string) 
 					owned.tail = { logFile: task.logFile, maxChars: lengthLimit, size, mtimeMs, ctimeMs, ino, text, truncated: size > read || decoded.length > lengthLimit };
 					return owned.tail;
 				} finally {
-					if (file) await file.close();
+					try { if (file) await file.close(); }
+					finally { active -= 1; queued.shift()?.(); }
 				}
 			})().catch((error: unknown) => {
 				if ((error as NodeJS.ErrnoException).code === "ENOENT") return { text: "", truncated: false };
@@ -77,6 +86,10 @@ export function createTaskOutputReader(report: (logFile: string, error: string) 
 				owned.pending = undefined;
 			}
 		},
-		clear(): void { tails = new WeakMap(); },
+		clear(): void {
+			tails = new WeakMap();
+			// Old descriptors retain capacity until close, even across sessions.
+			for (const wake of queued.splice(0)) wake();
+		},
 	};
 }

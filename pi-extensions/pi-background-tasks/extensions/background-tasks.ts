@@ -256,7 +256,8 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 
 	const sortedTasks = (): ManagedTask[] => [...tasks.values()].sort((a, b) => b.startedAt - a.startedAt);
 
-	const taskOutput = createTaskOutputReader((logFile, error) => logBackgroundDiagnostic("task log read failed", { logFile, error }));
+	const taskOutput = createTaskOutputReader((logFile, error) => logBackgroundDiagnostic("task log read failed", { logFile, error }),
+		(task) => tasks.get(task.id) === task && !shuttingDown);
 	const getTaskOutput = (task: ManagedTask, maxChars = settingNumber("outputBufferMaxChars", DEFAULT_OUTPUT_BUFFER_MAX_CHARS, activeCtx?.cwd)): Promise<string> =>
 		taskOutput.read(task, maxChars);
 
@@ -456,12 +457,6 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		return announced;
 	};
 
-	const readExitTail = async (task: ManagedTask) => {
-		if (tasks.get(task.id) !== task || shuttingDown || task.exitNotified) return undefined;
-		const tail = await taskOutput.readTail(task, settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS, activeCtx?.cwd));
-		if (tasks.get(task.id) !== task || shuttingDown || task.exitNotified) return undefined;
-		return tail;
-	};
 
 	const releaseExit = (task: ManagedTask) => {
 		exitWakeDue.delete(task);
@@ -480,8 +475,8 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		if (eventType === "exit" && task.notifyOnExit && !task.exitNotified && task.output.length === 0 && output === undefined) {
 			if (exitWakeDue.has(task)) return false;
 			exitWakeDue.add(task);
-			void readExitTail(task).then((tail) => {
-				if (tail === undefined) return;
+			void taskOutput.readTail(task, settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS, activeCtx?.cwd)).then((tail) => {
+				if (tasks.get(task.id) !== task || shuttingDown || task.exitNotified) return;
 				sendExitWakeLifecycle(task, { ...lifecycleHooks, sendTaskEvent: (type, target) => sendTaskEvent(type, target, options, tail) });
 			}).finally(() => releaseExit(task));
 			return false;
@@ -659,20 +654,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 	// (handled by restoredTaskFromSnapshot) and are skipped by
 	// selectMissedExits, so kill -9 / OOM with an orphaned-but-alive child
 	// does not get a fake exit.
-	const replayMissedExits = () => {
-		void replayMissedExitsLifecycle(tasks.values(), {
-			...lifecycleHooks,
-			protectExit: (task) => { exitWakeDue.add(task); },
-			releaseExit,
-			sendTaskEvent: async (type, task) => {
-				const tail = await readExitTail(task);
-				if (tail === undefined) return false;
-				return sendTaskEvent(type, task, {}, tail);
-			},
-		}).then((replayed) => {
-			if (replayed > 0) logBackgroundDiagnostic("replayed missed exit wakes", { replayed, session: activeSessionId ?? "unknown" });
-		});
-	};
+	const replayMissedExits = () => replayMissedExitsLifecycle(tasks.values(), lifecycleHooks);
 
 	// A non-null result is the log writer's hold: the task's output should
 	// pause until it resolves.

@@ -4,7 +4,7 @@
 
 ### 2.1.2
 
-- The dashboard reads only a bounded log tail without blocking Pi, preserves configured character limits for Unicode output, reuses unchanged tails for each task, and reuses command layouts between frames. A notification regex that exceeds its execution deadline is disabled and reported once to the agent, including in headless sessions. Restored exit notifications mark omitted log output and read at most four log tails at once.
+- The dashboard reads only a bounded log tail without blocking Pi, preserves configured character limits for Unicode output, reuses unchanged tails for each task, and reuses command layouts between frames. A notification regex that exceeds its execution deadline is disabled and reported once to the agent, including in headless sessions. Exit notifications mark omitted log output. Notifications, the dashboard and log tools share a limit of four disk reads at once.
 
 ### 2.1.1
 

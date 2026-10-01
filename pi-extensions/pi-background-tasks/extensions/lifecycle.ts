@@ -8,7 +8,6 @@
 // record the calls.
 
 import { selectMissedExits } from "./snapshot.js";
-import { mapWithConcurrency, PROBE_CONCURRENCY } from "./probes.js";
 import type {
 	BackgroundTaskSnapshot,
 	BackgroundTaskStatus,
@@ -111,31 +110,10 @@ function resolveTerminationReason(
 	return "self-exit";
 }
 
-/** Replay hooks keep queued and active exits out of finished-history eviction. */
-export interface MissedExitReplayHooks extends Pick<LifecycleHooks, "rememberSnapshot" | "persistSnapshots"> {
-	sendTaskEvent: (eventType: TaskEventType, task: ManagedTask) => boolean | Promise<boolean>;
-	protectExit: (task: ManagedTask) => void;
-	releaseExit: (task: ManagedTask) => void;
-}
-
-/** Replay pending terminal exits, holding each slot through read and delivery. */
-export async function replayMissedExitsLifecycle(
+/** Replay pending terminal exits through the same sender as live completion. */
+export function replayMissedExitsLifecycle(
 	tasks: Iterable<ManagedTask>,
-	hooks: MissedExitReplayHooks,
-): Promise<number> {
-	const pending = selectMissedExits(tasks);
-	for (const task of pending) hooks.protectExit(task);
-	let replayed = 0;
-	await mapWithConcurrency(pending, PROBE_CONCURRENCY, async (task) => {
-		try {
-			if (!await hooks.sendTaskEvent("exit", task)) return;
-			task.exitNotified = true;
-			hooks.rememberSnapshot(task);
-			replayed += 1;
-		} finally {
-			hooks.releaseExit(task);
-		}
-	});
-	if (replayed > 0) hooks.persistSnapshots();
-	return replayed;
+	hooks: LifecycleHooks,
+): void {
+	for (const task of selectMissedExits(tasks)) sendExitWakeLifecycle(task, hooks);
 }

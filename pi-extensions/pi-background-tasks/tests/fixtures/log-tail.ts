@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
+import { setImmediate } from "node:timers/promises";
 import { createTaskOutputReader } from "../../extensions/log-tail.js";
+import { PROBE_CONCURRENCY } from "../../extensions/probes.js";
 import type { ManagedTask } from "../../extensions/types.js";
 
 const nativeOpen = fs.open;
@@ -9,7 +11,11 @@ let reads = 0;
 let bytes = 0;
 let closes = 0;
 let failRead = false;
+let opens = 0;
+let holdClose = false;
+const heldCloses: (() => void)[] = [];
 fs.open = async (...args: Parameters<typeof nativeOpen>) => {
+	opens += 1;
 	const handle = await nativeOpen(...args);
 	return new Proxy(handle, {
 		get(target, key) {
@@ -21,7 +27,10 @@ fs.open = async (...args: Parameters<typeof nativeOpen>) => {
 				bytes += result.bytesRead;
 				return result;
 			};
-			if (key === "close") return async () => { closes += 1; await target.close(); };
+			if (key === "close") return async () => {
+				if (holdClose) await new Promise<void>((resolve) => heldCloses.push(resolve));
+				closes += 1; await target.close();
+			};
 			const value: unknown = Reflect.get(target, key);
 			return typeof value === "function" ? value.bind(target) : value;
 		},
@@ -29,7 +38,8 @@ fs.open = async (...args: Parameters<typeof nativeOpen>) => {
 };
 syncBuiltinESMExports();
 const errors: string[] = [];
-const reader = createTaskOutputReader((_file, error) => errors.push(error));
+const invalid = new Set<ManagedTask>();
+const reader = createTaskOutputReader((_file, error) => errors.push(error), (task) => !invalid.has(task));
 const first = { logFile: "first.log", output: "" } as ManagedTask;
 const second = { logFile: "second.log", output: "" } as ManagedTask;
 // Commands can emit all of these UTF-8 characters, including U+FFFD itself.
@@ -83,4 +93,35 @@ failRead = true;
 assert.match(await reader.read(first, 10), /^\[log unreadable:/);
 assert.equal(errors.length, 1);
 assert.ok(closes > 0);
+failRead = false;
+holdClose = true;
+// Exits, dashboard and tools ask the same owner for different tasks and limits.
+for (const action of ["invalid", "clear"] as const) {
+	const tasks = Array.from({ length: PROBE_CONCURRENCY * 2 + 1 }, () => ({ ...second }));
+	const beforeOpens = opens;
+	const pending = tasks.map((task, index) => index % 2 ? reader.read(task, 4) : reader.readTail(task, 4).then((tail) => tail.text));
+	const duplicate = reader.read(tasks.at(-1)!, 4);
+	// Real file reads reach finally.close; the fixture holds that close, not a timer.
+	while (heldCloses.length < PROBE_CONCURRENCY) await setImmediate();
+	assert.equal(opens - beforeOpens, PROBE_CONCURRENCY, "shared admission must hold through close");
+	let replacement: Promise<string> | undefined;
+	if (action === "invalid") invalid.add(tasks.at(-1)!);
+	else { reader.clear(); replacement = reader.read({ ...second }, 4); }
+	await setImmediate();
+	assert.equal(opens - beforeOpens, PROBE_CONCURRENCY, "clear must not release active descriptors");
+	for (const release of heldCloses.splice(0)) release();
+	const remaining = action === "invalid" ? PROBE_CONCURRENCY : 1;
+	while (heldCloses.length < remaining) await setImmediate();
+	assert.equal(opens - beforeOpens, PROBE_CONCURRENCY + remaining, "stale queued reads must not open");
+	for (const release of heldCloses.splice(0)) release();
+	// A stale acquisition can reach held close after the released batches.
+	// No timer keeps that blocked await alive; beforeExit makes it an assertion.
+	const blocked = () => assert.fail(`stale queued reads must not open: ${action} left unresolved reads after close release`);
+	process.once("beforeExit", blocked);
+	try {
+		assert.deepEqual(await Promise.all(pending), tasks.map((_, index) => index < PROBE_CONCURRENCY || action === "invalid" && index < tasks.length - 1 ? "tail" : ""));
+		assert.equal(await duplicate, "", "stale pending deduplication must not restart acquisition");
+		if (replacement) assert.equal(await replacement, "tail", "new session waits for old close");
+	} finally { process.removeListener("beforeExit", blocked); }
+}
 console.log(JSON.stringify({ reads, bytes, closes, errors: errors.length }));

@@ -28,19 +28,21 @@ const rows: ReplayRow[] = [
 	{ name: "sender false leaves notification pending", tasks: [{ id: "bg-2", status: "stopped", exitNotified: false }], sendReturns: false, expected: { replayed: 0, eventIds: ["bg-2"], notified: [false], persists: 0, remembers: 0 } },
 	{ name: "empty task collection causes no effects", tasks: [], expected: { replayed: 0, eventIds: [], notified: [], persists: 0, remembers: 0 } },
 	{
-		name: "multiple successful replays persist once",
+		name: "each successful replay persists its acknowledgement",
 		tasks: [{ id: "bg-1", status: "completed", exitCode: 0 }, { id: "bg-2", status: "failed", exitCode: 1 }],
-		expected: { replayed: 2, eventIds: ["bg-1", "bg-2"], notified: [true, true], persists: 1, remembers: 2 },
+		expected: { replayed: 2, eventIds: ["bg-1", "bg-2"], notified: [true, true], persists: 2, remembers: 2 },
 	},
 ];
 
-test("missed exit replay outcomes", async () => {
+test("missed exit replay outcomes", () => {
 	expect.assertions(rows.length + 1);
 	expect(rows.length, "replay table must contain rows").toBeGreaterThan(0);
 	for (const row of rows) {
 		const tasks = row.tasks.map((task) => fakeTask(task));
 		const recorder = recordingHooks(row.sendReturns);
-		const replayed = await replayMissedExitsLifecycle(tasks, recorder.replayHooks);
+		const before = tasks.filter((task) => task.exitNotified).length;
+		replayMissedExitsLifecycle(tasks, recorder.hooks);
+		const replayed = tasks.filter((task) => task.exitNotified).length - before;
 		expect({ replayed, notified: tasks.map((task) => task.exitNotified), hooks: recorder.observe(tasks) }, row.name).toStrictEqual({
 			replayed: row.expected.replayed,
 			notified: row.expected.notified,
