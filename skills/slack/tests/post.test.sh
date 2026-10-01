@@ -78,7 +78,7 @@ sk_run -- post --root "$BARE" --text 'no binding needed' --channel C777
 assert_eq "$RC=$(last C777)" "0=top | UBOT | no binding needed" "--channel needs no binding"
 
 # --- controls, one per check ------------------------------------------------------
-sk_mutant thread-only verbs.py 'markdown_text=body, thread_ts=thread\)' 'markdown_text=body, thread_ts=thread, reply_broadcast=True)'
+sk_mutant thread-only verbs.py '\*\*\{body_arg: body\}, thread_ts=thread\)' '**{body_arg: body}, thread_ts=thread, reply_broadcast=True)'
 sk_run -- post --root "$ROOT" --text 'In the thread.' --thread "$TS"
 assert_eq "$(sk_state '.messages.C001[-1].reply_broadcast')" "true" "control: broadcasting a thread post breaks the thread-only assertion"
 sk_bin_reset
