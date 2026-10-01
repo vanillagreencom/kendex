@@ -140,6 +140,11 @@ control_replace scripts/lib/common.sh 1 \
     '            linear_auth_unauthorized' \
     '            : linear_auth_unauthorized'
 
+control_expect 'token-401: token replacement guidance'
+control_replace scripts/lib/auth.sh 1 \
+    '          (if $kind == "app-token" then "\nApplication token is expired or revoked. Replace LINEAR_APP_TOKEN." else "" end))}'\'' >&2' \
+    '          (if $kind == "app-token" then "" else "" end))}'\'' >&2'
+
 control_expect 'token-download-401: credential diagnostic'
 control_replace scripts/lib/attachments.sh 1 \
     '            linear_auth_unauthorized' \

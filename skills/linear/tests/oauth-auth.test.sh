@@ -302,6 +302,8 @@ for row in 'token-check|auth-check||0' 'token-401|request|always-401|1'; do
             '.ok and .credential == "app-token" and .actor == {kind:"application",id:"actor-id",name:"Actor name"}'
     else
         assert_file_contains 'token-401: credential diagnostic' "$LOG/error" 'linear-auth: http=401 credential=app-token'
+        assert 'token-401: token replacement guidance' jq -e \
+            '.error | test("expir|revok"; "i") and test("replac[^\n]*LINEAR_APP_TOKEN"; "i")' "$LOG/error"
     fi
 done
 
