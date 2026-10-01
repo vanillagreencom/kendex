@@ -22,7 +22,14 @@ Use `get_subagent_result` only as a recovery/status reader for missed or truncat
 
 A Pi lane uses the `pi-hooks` lane mail wake and arms no mailbox monitor ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)): its launch brief and relaunch line carry no arm line, and the package starts a turn in the idle lane when mail other than an answer lands, or when the session settles with such mail unread, by running the `lane-mail-deliver` hook's judge, and the turn opens with what that judge hands over after a tool call: `lane-mail-check: unread=[N]` and the envelopes, already marked read. Act on every directive it carries; a halt among them names the `lane-mail inbox` command that reads it. A turn opening on any other `lane-mail-check:` line is the judge's refusal, which the lane clears as it would after a tool call. What the package does is its [README](https://github.com/vanillagreencom/kendex/blob/main/pi-extensions/pi-hooks/README.md) § Lane mail wake.
 
-`open-terminal` refuses a fleet launch with `pi-mail-wake-missing` if the installed `pi-hooks` lists no lane mail wake. Update pi-hooks with `kendex update-pi` on the machine where the lane runs, then launch again. `tests/open-terminal-harness-gate.sh` covers local installs; `tests/open-terminal-record.sh` covers hosted installs.
+`open-terminal` refuses a fleet launch with `pi-mail-wake-missing` if the selected `pi-hooks` lists no lane mail wake. Its `root`, `scope` and `location` fields name the deciding install. Repair it on the lane machine, on the host for `location=hosted`:
+
+| Scope | Recovery |
+|---|---|
+| `global` | Set `PI_CODING_AGENT_DIR` to the reported `root`; resolve a home-relative host root under that host home. Run `kendex update-pi --scope global`. |
+| `project` | Run `kendex update-pi --scope project` from the project containing `root`. In a linked worktree, `update-pi` refuses project writes and has no `--project-path` option. Have the install owner replace the carrier at `root/packages/@vanillagreen/pi-hooks` from its updated declared source. A global update does not repair this project carrier. |
+
+Repeat the original launch after repair. A hosted `create` already owns the item, so add `--relaunch`. `tests/open-terminal-harness-gate.sh` covers local recovery fields; `tests/open-terminal-record.sh` covers hosted recovery fields.
 
 ## Standing watch (Pi)
 

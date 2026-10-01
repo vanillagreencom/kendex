@@ -276,7 +276,7 @@ compaction off with a carrier that sends the window passes|sends|{"compaction":{
 a project turning compaction back on is refused, naming the project file|sends|{"compaction":{"enabled":false}}|{"compaction":{"enabled":true}}|${FLEET[*]} --harness pi|open-terminal: compaction-on harness=pi file=$REPO/.pi/settings.json
 a carrier that sends no window is refused|old|{"compaction":{"enabled":false}}|-|${FLEET[*]} --harness pi|open-terminal: unsupported-for-oversee harness=pi reason=no-window-read
 no carrier installed is refused|none|{"compaction":{"enabled":false}}|-|${FLEET[*]} --harness pi|open-terminal: unsupported-for-oversee harness=pi reason=no-window-read
-a stale carrier that lists no lane mail wake is refused|nowake|{"compaction":{"enabled":false}}|-|${FLEET[*]} --harness pi|open-terminal: pi-mail-wake-missing harness=pi version=0.12.0
+a stale carrier that lists no lane mail wake is refused|nowake|{"compaction":{"enabled":false}}|-|${FLEET[*]} --harness pi|open-terminal: pi-mail-wake-missing harness=pi version=0.12.0 root=$PI_AGENT scope=global location=local update=kendex update-pi --scope global retry=launch
 a settings file jq cannot read is named|sends|not json|-|${FLEET[*]} --harness pi|open-terminal: pi-settings-unreadable @FILE@
 a hosted Pi fleet lane is not judged on this machine's settings or carrier, which are its host's to hold|none|{"compaction":{"enabled":true}}|-|${FLEET[*]} --harness pi --host $BIN/provider|passed
 no fleet passes whatever its settings|none|-|-|--harness pi|passed
@@ -290,8 +290,36 @@ printf '{"compaction":{"enabled":false}}\n' > "$PI_AGENT/settings.json"
 pi_carrier nowake
 answer="$(WT_CLI="$BIN/worktree-make" launch pi-stale "${FLEET[@]}" --harness pi)"
 assert_eq "$answer rc=$(cat "$TMP_ROOT/pi-stale.status") terminal=$([[ -e "$TMP_ROOT/pi-stale.term" ]] && echo opened || echo none)" \
-  "open-terminal: pi-mail-wake-missing harness=pi version=0.12.0 rc=1 terminal=none" \
+  "open-terminal: pi-mail-wake-missing harness=pi version=0.12.0 root=$PI_AGENT scope=global location=local update=kendex update-pi --scope global retry=launch rc=1 terminal=none" \
   "a stale local Pi carrier refuses the launch before any terminal opens"
+# A project carrier installed by update-pi takes precedence over the user's
+# current one. Recovery must name the project, not update that user install.
+mkdir -p "$REPO/.pi/packages/@vanillagreen"
+cp -R "$PI_AGENT/packages/@vanillagreen/pi-hooks" "$REPO/.pi/packages/@vanillagreen/"
+pi_carrier sends
+assert_eq "$(launch pi-project-stale "${FLEET[@]}" --harness pi)" \
+  "open-terminal: pi-mail-wake-missing harness=pi version=0.12.0 root=$REPO/.pi scope=project location=local update=kendex update-pi --scope project retry=launch" \
+  "recovery names the stale project carrier even when the global carrier has a wake"
+stage "$TMP_ROOT/pi-root-control"
+mutate_file "$TMP_ROOT/pi-root-control/scripts/lib/adapters/pi.sh" \
+  '    LANE_ADAPTER_PI_CARRIER_ROOT="$root"' '    LANE_ADAPTER_PI_CARRIER_ROOT="/wrong/packages"'
+assert_eq "$(OT="$TMP_ROOT/pi-root-control/scripts/open-terminal" launch pi-root-control "${FLEET[@]}" --harness pi)" \
+  "open-terminal: pi-mail-wake-missing harness=pi version=0.12.0 root=/wrong scope=global location=local update=kendex update-pi --scope global retry=launch" \
+  "control: losing the selector's deciding root breaks the project recovery fields"
+stage "$TMP_ROOT/pi-scope-control"
+mutate_file "$TMP_ROOT/pi-scope-control/scripts/open-terminal" \
+  '    [[ "$3" != "$4" ]] || scope=project' '    [[ "$3" != "$4" ]] || scope=global'
+assert_eq "$(OT="$TMP_ROOT/pi-scope-control/scripts/open-terminal" launch pi-scope-control "${FLEET[@]}" --harness pi)" \
+  "open-terminal: pi-mail-wake-missing harness=pi version=0.12.0 root=$REPO/.pi scope=global location=local update=kendex update-pi --scope global retry=launch" \
+  "control: a global scope misclassification gives the project install the wrong update"
+rm -rf -- "${REPO:?}/.pi/packages"
+pi_carrier nowake
+stage "$TMP_ROOT/pi-update-control"
+mutate_file "$TMP_ROOT/pi-update-control/scripts/open-terminal" \
+  '"update=kendex update-pi --scope $scope"' '"update=kendex update-pi"'
+assert_eq "$(OT="$TMP_ROOT/pi-update-control/scripts/open-terminal" launch pi-update-control "${FLEET[@]}" --harness pi)" \
+  "open-terminal: pi-mail-wake-missing harness=pi version=0.12.0 root=$PI_AGENT scope=global location=local update=kendex update-pi retry=launch" \
+  "control: dropping the explicit scope breaks the recovery command in linked worktrees"
 rm -f -- "$PI_AGENT/settings.json"
 
 echo "=== a local Pi fleet launch on a Copilot model is judged on the Pi root its lane leaves ==="

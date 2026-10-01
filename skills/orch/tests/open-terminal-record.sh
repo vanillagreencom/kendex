@@ -990,7 +990,8 @@ echo "=== a hosted Pi fleet lane is judged on its host's own Pi settings and car
 # so compaction on, are not the lane's, nor is its carrier, which sends the
 # window. `label|pi-root|carrier|user settings|project settings|env|answer`,
 # `-` for none; carrier is `sends` or `old` under the root, `nowake`, one
-# under the root that sends and lists no lane mail wake, `none`, or
+# under the root that sends and lists no lane mail wake, `project-nowake`, a
+# stale project carrier ahead of the current global carrier, `none`, or
 # `shadowed`, a tree carrier from before vocab.ts ahead of a root one that
 # sends. The answer is `launched` or the refusal line.
 PI_LOCAL="$TMP_ROOT/pi-local"
@@ -1024,6 +1025,8 @@ hosted_pi() {
   case "$carrier" in
     sends) pi_carrier_at "$pi_dir/packages" 'export const f = { context_window: 1 };' "$PI_WAKE_MANIFEST" ;;
     nowake) pi_carrier_at "$pi_dir/packages" 'export const f = { context_window: 1 };' '{"version":"0.12.0","pi":{"extensions":["./extensions/hooks.ts"]}}' ;;
+    project-nowake) pi_carrier_at /srv/lane/.pi/packages 'export const f = { context_window: 1 };' '{"version":"0.12.0","pi":{"extensions":["./extensions/hooks.ts"]}}'
+                    pi_carrier_at "$pi_dir/packages" 'export const f = { context_window: 1 };' "$PI_WAKE_MANIFEST" ;;
     old) pi_carrier_at "$pi_dir/packages" 'export const f = { session_id: 1 };' "$PI_WAKE_MANIFEST" ;;
     shadowed) pi_carrier_at /srv/lane/.pi/packages
               pi_carrier_at "$pi_dir/packages" 'export const f = { context_window: 1 };' "$PI_WAKE_MANIFEST" ;;
@@ -1054,7 +1057,9 @@ a settings read the host fails is unreadable|/pi|sends|$OFF|-|LANE_HOST_STUB_CAT
 a host carrier that sends no window is refused though this machine's sends one|/pi|old|$OFF|-|-|open-terminal: unsupported-for-oversee harness=pi reason=no-window-read
 a host with no carrier installed is refused|/pi|none|$OFF|-|-|open-terminal: unsupported-for-oversee harness=pi reason=no-window-read
 a tree carrier from before the field decides over the root's that sends|/pi|shadowed|$OFF|-|-|open-terminal: unsupported-for-oversee harness=pi reason=no-window-read
-a stale host carrier that lists no lane mail wake is refused|/pi|nowake|$OFF|-|-|open-terminal: pi-mail-wake-missing harness=pi version=0.12.0
+a stale host carrier that lists no lane mail wake is refused|/pi|nowake|$OFF|-|-|open-terminal: pi-mail-wake-missing harness=pi version=0.12.0 root=/pi scope=global location=hosted update=kendex update-pi --scope global retry=--relaunch
+a stale default host carrier names the host home-relative root|-|nowake|$OFF|-|-|open-terminal: pi-mail-wake-missing harness=pi version=0.12.0 root=.pi/agent scope=global location=hosted update=kendex update-pi --scope global retry=--relaunch
+a stale project carrier names the host project instead of the current global install|/pi|project-nowake|$OFF|-|-|open-terminal: pi-mail-wake-missing harness=pi version=0.12.0 root=/srv/lane/.pi scope=project location=hosted update=kendex update-pi --scope project retry=--relaunch
 a carrier read the host fails is unreadable|/pi|sends|$OFF|-|LANE_HOST_STUB_CAT_STATUS=1 LANE_HOST_STUB_CAT_PATH=$VOCAB|open-terminal: pi-carrier-unreadable file=$VOCAB
 ROWS
 # Each refusal replaced by a pass, in a copy of the launcher.
@@ -1074,6 +1079,16 @@ busy_mutant pi-wake '  if [[ "$1" -ne 0 ]]; then' '  if [[ "$1" -ne 0 ]] && fals
 hosted_pi /pi nowake "$OFF" - -- SCRIPT="$BUSY_MUTANT_OT"
 assert_eq "$PI_OUTCOME" "rc=0 launched windows=1 marker=root" \
   "control: without the mail wake refusal a stale hosted Pi carrier launches"
+busy_mutant pi-recovery-root '"${packages[i]}" "${packages[0]}" hosted' '"${packages[0]}" "${packages[0]}" hosted'
+hosted_pi /pi nowake "$OFF" - -- SCRIPT="$BUSY_MUTANT_OT"
+assert_eq "$PI_OUTCOME" \
+  "rc=1 open-terminal: pi-mail-wake-missing harness=pi version=0.12.0 root=/srv/lane/.pi scope=project location=hosted update=kendex update-pi --scope project retry=--relaunch windows=0 marker=none" \
+  "control: losing the download-to-host mapping repairs the wrong carrier"
+busy_mutant pi-recovery-retry '    [[ "$5" != hosted ]] || retry=--relaunch' '    [[ "$5" != hosted ]] || retry=launch'
+hosted_pi /pi nowake "$OFF" - -- SCRIPT="$BUSY_MUTANT_OT"
+assert_eq "$PI_OUTCOME" \
+  "rc=1 open-terminal: pi-mail-wake-missing harness=pi version=0.12.0 root=/pi scope=global location=hosted update=kendex update-pi --scope global retry=launch windows=0 marker=none" \
+  "control: losing the relaunch flag breaks recovery of the item create already owns"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

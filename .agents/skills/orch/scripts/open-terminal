@@ -565,9 +565,13 @@ fi
 PI_GATE_DEFERRED=false
 # Pi loads the extensions listed by pi-hooks. A carrier without the mail wake
 # cannot start an idle lane's turn when mail lands.
-pi_mail_wake_gate() { # WAKES VERSION — refuse a carrier that lists no mail wake
+pi_mail_wake_gate() { # WAKES VERSION PACKAGES PROJECT_PACKAGES LOCATION
   if [[ "$1" -ne 0 ]]; then
-    ot_message pi-mail-wake-missing "harness=pi" "version=$2" >&2
+    local root="${3%/packages}" scope=global retry=launch
+    [[ "$3" != "$4" ]] || scope=project
+    [[ "$5" != hosted ]] || retry=--relaunch
+    ot_message pi-mail-wake-missing "harness=pi" "version=$2" "root=$root" \
+      "scope=$scope" "location=$5" "update=kendex update-pi --scope $scope" "retry=$retry" >&2
     return 1
   fi
 }
@@ -583,7 +587,8 @@ pi_local_gate() {
   lane_adapter_pi_window_read "$CLAIM_ROOT" || { ot_message unsupported-for-oversee "harness=pi" "reason=no-window-read" >&2; return 1; }
   local wakes=0
   lane_adapter_pi_mail_wake "$CLAIM_ROOT" || wakes=$?
-  pi_mail_wake_gate "$wakes" "$LANE_ADAPTER_PI_CARRIER_VERSION"
+  pi_mail_wake_gate "$wakes" "$LANE_ADAPTER_PI_CARRIER_VERSION" \
+    "$LANE_ADAPTER_PI_CARRIER_ROOT" "$CLAIM_ROOT/.pi/packages" local
 }
 if [[ "$FLEET" == true && "$WAKE" != true ]]; then
   case "$LAUNCH_HARNESS" in
@@ -2483,7 +2488,10 @@ host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
     || { ot_message unsupported-for-oversee "harness=pi" "reason=no-window-read" >&2; return 1; }
   local wakes=0
   lane_adapter_pi_carrier_wakes "$dir/packages0" "$dir/packages1" || wakes=$?
-  pi_mail_wake_gate "$wakes" "$LANE_ADAPTER_PI_CARRIER_VERSION"
+  # i still names the host path whose carrier was downloaded, never the
+  # temporary path the shared adapter read.
+  pi_mail_wake_gate "$wakes" "$LANE_ADAPTER_PI_CARRIER_VERSION" \
+    "${packages[i]}" "${packages[0]}" hosted
 )
 
 # How a relaunch starts its harness, one verdict in RELAUNCH_ROUTE, read by

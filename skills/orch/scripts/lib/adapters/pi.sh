@@ -135,13 +135,17 @@ lane_adapter_pi_mail_wake() { # DIR
 # deciding, as lane_adapter_pi_carrier_sends reads them. The deciding
 # carrier's package.json version lands in LANE_ADAPTER_PI_CARRIER_VERSION,
 # `none` where no carrier is installed and `unread` where its package.json
-# names none or does not read.
+# names none or does not read. LANE_ADAPTER_PI_CARRIER_ROOT names the deciding
+# package root so the launch refusal repairs that install, not another scope.
 LANE_ADAPTER_PI_CARRIER_VERSION=none
+LANE_ADAPTER_PI_CARRIER_ROOT=""
 lane_adapter_pi_carrier_wakes() { # ROOT...
   local root manifest
   LANE_ADAPTER_PI_CARRIER_VERSION=none
+  LANE_ADAPTER_PI_CARRIER_ROOT=""
   for root in "$@"; do
     [ -d "$root/@vanillagreen/pi-hooks/extensions" ] || continue
+    LANE_ADAPTER_PI_CARRIER_ROOT="$root"
     manifest="$root/@vanillagreen/pi-hooks/package.json"
     LANE_ADAPTER_PI_CARRIER_VERSION=$(jq -r '.version | strings' "$manifest" 2>/dev/null) || LANE_ADAPTER_PI_CARRIER_VERSION=""
     LANE_ADAPTER_PI_CARRIER_VERSION=${LANE_ADAPTER_PI_CARRIER_VERSION:-unread}
