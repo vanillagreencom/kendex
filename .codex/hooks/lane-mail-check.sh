@@ -211,6 +211,9 @@ message() { # KEY VALUE [CAUSE]
       reader=unlocatable)
         echo "this hook's own directory could not be resolved, so the reader beside it could not be found"
         ;;
+      context-reader=missing*)
+        echo "This Copilot overseer starts without a context reader. Register its Copilot home with oversee register, then start a new session so the reader loads."
+        ;;
       reader=*)
         echo "the lane mailbox has a to-lane.jsonl and $2 is not an executable reader, so whatever it holds cannot be handed over; install the orch skill beside this hook"
         ;;
@@ -2837,6 +2840,17 @@ if [ "$ARM" = usage ]; then
   exit 0
 fi
 lane_row
+
+# SessionStart must report the missing reader even before the first mailbox
+# file exists. The fleet identity, not the mailbox, names an overseer.
+if [ "$ARM" = start ] && [ "$HARNESS" = copilot ] && [ "$CALLER" = lead ]; then
+  if resolve_reader && overseer_identified; then
+    if ! "$BASH" -euo pipefail -c '. "$1/lib/lane-context.sh" && copilot_context_reader "$2"' \
+        _ "$SCRIPTS" "$OVERSEER_HOME" 2>"$WORK_DIR/reader.err"; then
+      TOOL_NOTICE="$(message context-reader "missing home=$OVERSEER_HOME fix=oversee register --account $OVERSEER_HOME then start a new session" 2>&1)$NL"
+    fi
+  fi
+fi
 # The overseer's context at this tool call, judged ahead of the mailbox so a
 # gap it tells rides with any mail the same call hands over.
 if [ "$ARM" = deliver ] && [ -z "$ITEM" ] && [ "$CALLER" = lead ]; then

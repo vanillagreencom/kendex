@@ -597,6 +597,11 @@ assert_eq "RC=$RC keyed=$(hook_keys) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 key
 # it is the overseer's, whose marks a judge rules on.
 new_copilot_named() { # NAME [JUDGE]
   new_copilot_lane "$1" main "${2:-$HOOK}"
+  # Mailbox delivery uses a configured reader. The missing-reader SessionStart
+  # rule has its own fixture in orch/tests/oversee_launch.sh.
+  env -i PATH="$PATH" HOME="$COP_HOME" bash -euo pipefail -c \
+    '. "$1/lib/lane-context.sh" && copilot_context_install "$2"' \
+    _ "$REPO_ROOT/skills/orch/scripts" "$COP_HOME/.copilot"
   unmark_lanes
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
   record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER"
@@ -621,8 +626,9 @@ CALL_ENV=("HOME=$COP_HOME")
 assert_eq "$(overseer_unread 'For the named session.')" "1" "and the note stays unread for the named session"
 CALL_ENV=("${COP_NAMED_ENV[@]}")
 copilot_context start
-assert_eq "RC=$RC context=$(stdout_field '.additionalContext' | head -n 1) carried=$(stdout_field '.additionalContext' | grep -cF 'For the named session.')" \
-  "RC=0 context=lane-mail-check: unread=1 carried=1" "the named Copilot session is handed the note at its session start"
+assert_eq "RC=$RC context=$(stdout_field '.additionalContext | split("\n") | map(select(startswith("lane-mail-check: "))) | map(split(" ")[0:2] | join(" ")) | join(";")') carried=$(stdout_field '.additionalContext' | grep -cF 'For the named session.')" \
+  "RC=0 context=lane-mail-check: context-reader=missing;lane-mail-check: unread=1 carried=1" \
+  "the named Copilot session is handed the missing-reader notice above the note at its session start"
 copilot_context prompt
 CALL_ENV=("HOME=$COP_HOME")
 assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout") unread=$(overseer_unread 'For the named session.')" "RC=0 stdout= unread=0" \

@@ -216,7 +216,7 @@ message() { # KEY FIELD=VALUE...
     lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
     no-lane-qualifies) text='No lane of any harness the preference names is above the headroom trigger; nothing was launched. entries counts the preference entries walked; walled and unmeasured are the accounts the sweeps refused and the accounts nothing could measure.' ;;
     entry-permission-unwritable) text='The launch flag table names no full-bypass permission word for this entry'\''s harness, so a first launch there would stop at its first approval prompt with nobody at the pane. The entry is skipped and the walk goes on; oversee-succeed takes such an entry for a caller of the same harness.' ;;
-    successor-status-line) text='The pick named a Copilot account whose settings.json does not run copilot-statusline as its status line often enough for its session record to stay fresh, so an overseer opened there would run with its context unmeasured. cause names what failed (lib/adapters/copilot.sh). The entry is skipped and the walk goes on to the next one.' ;;
+    successor-status-line) text='The shared installer could not configure this Copilot home or its statusLine fallback. detail names the setup failure and cause names the fallback failure. The entry is skipped.' ;;
     launch-choice-failed) text='The launch flag table cannot state this harness'\''s model, effort or permission words. Nothing was launched.' ;;
     model-window-unknown) text='The claude adapter names no context window for the model this entry names, and an overseer runs with its compaction off, so it would reach its wall with no handoff mark. Nothing was launched. Name a claude model the window table in lib/adapters/claude.sh names.' ;;
     launch-trust-missing) text='The folder-trust entry for the launch directory could not be made in the config this session would read, so nothing was launched; the reason field is lib/lane-launch.sh'\''s.' ;;
@@ -236,6 +236,9 @@ message() { # KEY FIELD=VALUE...
     pane-unreadable) text='This session'\''s own pane could not be read; tmux says why below.' ;;
     registered) text='The session record names this session.' ;;
     identity-fallback) text='No SessionStart row of this session stands, so its harness, account and directory are read off its pane and environment, the named fallback. No model or effort is read; a record proven to name this same pane keeps fields the fallback cannot read.' ;;
+    context-reader=missing) text='The Copilot context reader could not be configured. The running session is registered, but its context mark has no new reader. Repair the named home and register again.' ;;
+    context-reader=next-start) text='The configured Copilot reader loads at the next session start. This running session does not load a newly installed extension.' ;;
+    turn-end-hook=missing) text='The checkout does not provide active turn-end hook coverage for this harness. The running session is registered. Add the harness to [install] harnesses in kendex.toml and run kendex apply.' ;;
   esac
   printf 'oversee: %s' "$key"
   printf ' %s' "$@"
@@ -417,12 +420,47 @@ if [[ "$COMMAND" == register ]]; then
     claude) harness=claude ;;
     codex) harness=codex; home="${CODEX_HOME:-$ACCOUNT}" ;;
     copilot) harness=copilot ;;
-    *) ;;
+    both) ;;
+    *) harness="$shape" ;;
   esac
   ol_identity "$harness" "$ACCOUNT" "$home" "$model" "" "$cwd" || die record-unwritten field=overseer step=identity
   state_ready
   ol_record_write tmux "$TMUX_PANE" "$window" "$server" "$OL_IDENTITY" "" \
     || die record-unwritten field=overseer
+  # The writer retains unknown fields only for this same session. Check that
+  # resulting identity, not the fallback's empty fields.
+  record="$(ol_record_get)" || die state-unreadable field=overseer
+  fields="$(jq -r '[.harness // "", .home // "", .cwd // ""] | join("\u001f")' <<<"$record" 2>"$DEP_ERR")" \
+    || die state-unreadable field=overseer
+  IFS=$'\x1f' read -r harness home cwd <<<"$fields"
+  if [[ "$harness" == copilot ]]; then
+    reader_before=missing
+    ! copilot_context_reader "$home" || reader_before=present
+    if copilot_context_install "$home"; then
+      [[ "$reader_before" != missing || "$COPILOT_CONTEXT_MODE" != extension ]] \
+        || message context-reader=next-start "home=$home" >&2
+    else
+      message context-reader=missing "home=$home" "file=$COPILOT_CONTEXT_FILE" "detail=$COPILOT_CONTEXT_DETAIL" \
+        "cause=${COPILOT_CONTEXT_CAUSE:-none}" >&2
+    fi
+    if ! copilot_hooks_gate "$cwd" "$home"; then
+      message turn-end-hook=missing harness=copilot "reason=$COPILOT_HOOK_REASON" \
+        'fix=add copilot to [install] harnesses in kendex.toml and run kendex apply' >&2
+      [[ -z "$COPILOT_HOOK_ERROR" ]] || printf '%s\n' "$COPILOT_HOOK_ERROR" >&2
+    fi
+  elif [[ -n "$harness" ]]; then
+    # kendex owns the inventory for every non-Copilot harness. Its list table
+    # is on stderr, with columns kind, name, harness, scope and optional state.
+    inventory_rc=0
+    inventory="$(cd -- "$cwd" && kendex list --harness "$harness" 2>&1)" || inventory_rc=$?
+    if [[ "$inventory_rc" != 0 ]] || ! awk -v h="$harness" \
+        '$1 == "hook" && $2 == "lane-mail-check" && $3 == h && NF == 4 { found=1 }
+         END { exit !found }' <<<"$inventory"; then
+      message turn-end-hook=missing "harness=$harness" "exit=$inventory_rc" \
+        "fix=add $harness to [install] harnesses in kendex.toml and run kendex apply" >&2
+      [[ "$inventory_rc" == 0 ]] || printf '%s\n' "$inventory" >&2
+    fi
+  fi
   message registered "session=$TMUX_PANE" "window=$window" "server=$server" \
     "generation=$OL_GENERATION" "account=${ACCOUNT:-none}" \
     "retained=$OL_RECORD_RETAINED" "fresh=$OL_RECORD_FRESH"

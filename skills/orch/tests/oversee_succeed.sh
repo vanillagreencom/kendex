@@ -8,6 +8,8 @@
 # script inside the caller's own pane, whose close HUPs it.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+# shellcheck source=lib/copilot-context-world.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/copilot-context-world.sh"
 # shellcheck source=lib/lanes-fixture.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/lanes-fixture.sh"
 # mutant_scripts and mutate_file, the two halves of each mode's control.
@@ -15,10 +17,13 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/lanes-fixture.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SRC_DIR="$(cd "$TEST_DIR/../scripts" && pwd)"
 SUCCEED="${OVERSEE_SUCCEED_UNDER_TEST:-$TEST_DIR/../scripts/oversee-succeed}"
 CODEX_COMPACTION='{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"0"}}'
 
-TMP_ROOT="$(mktemp -d)"
+TMP_ROOT="$(mktemp -d)" || { echo "oversee_succeed: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "oversee_succeed: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "oversee_succeed: scratch=resolve-failed" >&2; exit 1; }
 SOCK="oversee-succeed-$$"
 cleanup() {
   tmux -L "$SOCK" kill-server 2>/dev/null || true
@@ -1615,6 +1620,13 @@ COP_SUCCESSOR="lane=$H/.2copilot;--autopilot;--max-autopilot-continues;3;--conte
 LANE_DIRS="$COPILOT_PAIR" copilot_row copsucceed '' --harness copilot -- --allow-all
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded copilot)" "0|1 overseer;|no|$COP_SUCCESSOR" \
   "a copilot overseer at its headroom mark succeeds onto the second copilot account"
+# The successor starts without a statusLine dependency; its installed
+# extension supplies the first usage event to the real hook.
+copilot_context_flow "$TMP_ROOT/work" "$H" "$H/.2copilot" "$SRC_DIR" \
+  TMUX="$TMUX_ADDR" TMUX_PANE="$(jq -r .overseer.pane "$FLEET_STATE")" \
+  ORCH_LANES_FETCH_CMD="$FETCHER" FIXTURE_DIR="$FIXTURE_DIR"
+assert_eq "$FLOW_RECORD|$(jq -r '.decision' <<<"$FLOW_STOP")" '199000:217600|block' \
+  "oversee-succeed installs a reader that reaches the successor's first turn end"
 fleet_state
 new_caller "$UNDER_MARK"
 record_account "$CALLER_PANE" "$H/.1copilot"
@@ -1624,9 +1636,9 @@ assert_eq "$RC|$(layout)|$(caller_open)|$(recorded copilot)" "0|1 overseer;|no|$
 fleet_state
 # The second account's status line gone: it writes no record, so it is no
 # successor, and the walk ends with no lane qualifying.
-printf '{}\n' > "$H/.2copilot/settings.json"
+printf '{"enabledFeatureFlags":{"EXTENSIONS":false}}\n' > "$H/.2copilot/settings.json"
 LANE_DIRS="$COPILOT_PAIR" copilot_row copnostatus '' --harness copilot -- --allow-all
-assert_eq "$RC|$(grep -c "^oversee-succeed: successor-status-line lane=$H/.2copilot entry=caller cause=no-status-line" <<<"$OUT")|$(recorded copilot)" "3|1|none" \
+assert_eq "$RC|$(grep -c "^oversee-succeed: successor-status-line lane=$H/.2copilot entry=caller detail=disabled cause=no-status-line" <<<"$OUT")|$(recorded copilot)" "3|1|none" \
   "a copilot account whose status line writes no record is skipped as a successor"
 printf '{"statusLine":{"type":"command","command":"%s","refreshInterval":30}}\n' "$COP_SL" > "$H/.2copilot/settings.json"
 fleet_state
@@ -1640,8 +1652,8 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "1|oversee-succeed: lanes-failed entry=ca
 # Control: the successor status-line check cut, the account writing no record
 # is picked.
 COPILOTSL="$(mutant_scripts copilotsl lib/overseer-launch.sh)" || exit 1
-mutate_file "$COPILOTSL/lib/overseer-launch.sh" '    if [[ "$OL_HARNESS" == copilot ]] && ! lane_adapter_copilot_status_line "$OL_PICKED_DIR"; then' '    if false; then'
-printf '{}\n' > "$H/.2copilot/settings.json"
+mutate_file "$COPILOTSL/lib/overseer-launch.sh" '    if [[ "$OL_HARNESS" == copilot ]] && ! copilot_context_install "$OL_PICKED_DIR"; then' '    if false; then'
+printf '{"enabledFeatureFlags":{"EXTENSIONS":false}}\n' > "$H/.2copilot/settings.json"
 LANE_DIRS="$COPILOT_PAIR" copilot_row copnostatusctl "$COPILOTSL/oversee-succeed" --harness copilot -- --allow-all
 assert_eq "$RC|$(recorded copilot)" "0|$COP_SUCCESSOR" \
   "control: without the check a successor opens on an account whose context nothing measures"
@@ -1669,8 +1681,8 @@ mutate_file "$COPILOTACCT/oversee-succeed" '[[ "$CALLER_HARNESS" != copilot || -
 fleet_state
 new_caller "$UNDER_MARK"
 SUCCEED_BIN="$COPILOTACCT/oversee-succeed" run_succeed printcopilotnonectl '' --print-launch-line --harness copilot -- --allow-all
-assert_eq "$RC|$(grep -c "^copilot " <<<"$OUT")" "0|1" \
-  "control: without the refusal the line opens copilot on no account"
+assert_eq "$RC|$(grep -cF 'detail=relative-home' <<<"$OUT")" "3|1" \
+  "control: without the account refusal an unknown account reaches the retained reader gate"
 fleet_state
 
 # The printed line is replayed verbatim into a DEAD pane, and nobody is at that

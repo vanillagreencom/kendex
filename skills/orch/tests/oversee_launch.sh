@@ -9,6 +9,8 @@
 # usage bodies.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+# shellcheck source=lib/copilot-context-world.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/copilot-context-world.sh"
 # shellcheck source=lib/lanes-fixture.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/lanes-fixture.sh"
 # mutant_scripts and mutate_file, the two halves of the launch verb's control.
@@ -72,6 +74,21 @@ echo 'esc to interrupt'
 exec sleep 100000
 STUB
 chmod +x "$BIN/claude" "$BIN/codex"
+cat > "$BIN/kendex" <<'STUB'
+#!/bin/sh
+case "$1" in
+  list)
+    [ "${FIXTURE_HOOK_STATE:-enabled}" != fail ] || { echo 'fixture inventory unread' >&2; exit 3; }
+    [ "${FIXTURE_HOOK_STATE:-enabled}" != missing ] || exit 0
+    printf 'hook lane-mail-check %s project' "$3" >&2
+    [ "${FIXTURE_HOOK_STATE:-enabled}" != disabled ] || printf ' switched off' >&2
+    printf '\n' >&2
+    ;;
+  hooks-off) printf '{"switched_off_by":null}\n' ;;
+  *) exit 2 ;;
+esac
+STUB
+chmod +x "$BIN/kendex"
 # A pane whose foreground process names claude, for `register` to read the
 # harness off: a copy of sleep, since a script or a shell named for the
 # harness can reset the process name tmux reads.
@@ -455,7 +472,7 @@ mkdir -p "$TMP_ROOT/sl" "$H/.1copilot"
 printf '#!/bin/sh\n' > "$COP_SL"
 chmod +x "$COP_SL"
 printf '{"copilot_tokens":"gho_fixture"}\n' > "$H/.1copilot/config.json"
-printf '{"statusLine":{"type":"command","command":"%s","refreshInterval":30}}\n' "$COP_SL" > "$H/.1copilot/settings.json"
+printf '{}\n' > "$H/.1copilot/settings.json"
 printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":900}}}' > "$FIXTURE_DIR/.1copilot.json"
 copilot_first_row() { # [OVERSEE_BIN]
   OVERSEE_BIN="${1:-}" LAUNCH_PREF='copilot:gpt-5.3-codex:high' \
@@ -465,6 +482,46 @@ copilot_first_row
 assert_eq "$RC|$(recorded harness)|$(recorded account)|$(recorded model)|$(recorded effort)|$(sed -n 1p "$TMP_ROOT/argv.copilot" 2>/dev/null)|$(grep -cx -e --model -e gpt-5.3-codex -e --reasoning-effort -e high -e "$(launch_choice_permission_write copilot)" "$TMP_ROOT/argv.copilot" 2>/dev/null)" \
   "0|copilot|$H/.1copilot|gpt-5.3-codex|high|home=$H/.1copilot|5" \
   "a first launch on a copilot entry opens on the picked copilot account with its model and effort"
+copilot_context_flow "$TMP_ROOT/work" "$H" "$H/.1copilot" "$SRC_DIR" \
+  TMUX="$TMUX_ADDR" TMUX_PANE="$(recorded pane)" TMUX_TMPDIR="$TMUX_DIR" \
+  ORCH_LANES_FETCH_CMD="$FETCHER" FIXTURE_DIR="$FIXTURE_DIR"
+assert_eq "$FLOW_RECORD|$(jq -r '.decision' <<<"$FLOW_STOP")|$(sed -n 's/^oversee-succeed: mark-reached kind=\([^ ]*\).*/\1/p' <<<"$FLOW_VERDICT")" \
+  '199000:217600|block|context' "oversee launch records the first turn and the real judge reaches succession"
+tm kill-window -t "$(recorded window)"
+# Main's admission checks only the statusLine setting and installs no reader.
+# Restore that behavior on a disposable copy, with an executable statusLine
+# that emits no reading. The real hook and --check-marks stay unchanged.
+DROPINSTALL="$(mutant_scripts dropinstall lib/overseer-launch.sh)" || exit 1
+mutate_file "$DROPINSTALL/lib/overseer-launch.sh" \
+  '    if [[ "$OL_HARNESS" == copilot ]] && ! copilot_context_install "$OL_PICKED_DIR"; then' \
+  '    if [[ "$OL_HARNESS" == copilot ]] && ! lane_adapter_copilot_status_line "$OL_PICKED_DIR"; then'
+rm -rf -- "${H:?}/.1copilot/extensions"
+printf '{"statusLine":{"type":"command","command":"%s","refreshInterval":30}}\n' "$COP_SL" > "$H/.1copilot/settings.json"
+copilot_first_row "$DROPINSTALL/oversee"
+assert_eq "$RC" 0 "control reaches the launch, not an unrelated refusal"
+copilot_context_flow "$TMP_ROOT/work" "$H" "$H/.1copilot" "$SRC_DIR" \
+  TMUX="$TMUX_ADDR" TMUX_PANE="$(recorded pane)" TMUX_TMPDIR="$TMUX_DIR" \
+  ORCH_LANES_FETCH_CMD="$FETCHER" FIXTURE_DIR="$FIXTURE_DIR"
+assert_eq "$FLOW_RECORD|$(grep -c '^oversee-succeed: mark-reached ' <<<"$FLOW_VERDICT" || true)" \
+  'none|0' "control: main's missing installer produces no context succession verdict"
+# A configured statusLine is a reader even if this fixture emits no record.
+# Remove it to exercise SessionStart's independent missing-reader rule.
+printf '{}\n' > "$H/.1copilot/settings.json"
+copilot_context_flow "$TMP_ROOT/work" "$H" "$H/.1copilot" "$SRC_DIR" \
+  TMUX="$TMUX_ADDR" TMUX_PANE="$(recorded pane)" TMUX_TMPDIR="$TMUX_DIR" \
+  ORCH_LANES_FETCH_CMD="$FETCHER" FIXTURE_DIR="$FIXTURE_DIR"
+assert_eq "$(jq -r '.additionalContext | split("\n")[0] | startswith("lane-mail-check: context-reader=missing ")' <<<"$FLOW_START")" \
+  true "SessionStart reports the fleet overseer's missing reader as context without a mailbox file"
+# The start notice's control keeps the real mark judge and changes only the
+# missing-reader report in a private copy of the hook.
+cp "$TEST_DIR/../../../hooks/lane-mail-check.sh" "$TMP_ROOT/no-start-reader.sh"
+mutate_file "$TMP_ROOT/no-start-reader.sh" \
+  '    if ! "$BASH" -euo pipefail -c '\''. "$1/lib/lane-context.sh" && copilot_context_reader "$2"' \
+  '    if false && ! "$BASH" -euo pipefail -c '\''. "$1/lib/lane-context.sh" && copilot_context_reader "$2"'
+FLOW_JUDGE="$TMP_ROOT/no-start-reader.sh" copilot_context_flow "$TMP_ROOT/work" "$H" "$H/.1copilot" "$SRC_DIR" \
+  TMUX="$TMUX_ADDR" TMUX_PANE="$(recorded pane)" TMUX_TMPDIR="$TMUX_DIR" \
+  ORCH_LANES_FETCH_CMD="$FETCHER" FIXTURE_DIR="$FIXTURE_DIR"
+assert_eq "$FLOW_START" '' "control: suppressing the missing-reader check loses its SessionStart context"
 tm kill-window -t "$(recorded window)"
 # Its control: a preference parse naming no copilot refuses the entry and
 # opens nothing.
@@ -566,7 +623,25 @@ register_on() { # PANE [OVERSEE_BIN] [ARGS...]
 # A real wait: each pane's program starts its children a moment after the
 # window opens, and the process read must find them there.
 sleep 0.5
+rm -rf -- "${H:?}/.1copilot/extensions" "${TMP_ROOT:?}/work/.github"
+printf '{}\n' > "$H/.1copilot/settings.json"
 register_on "$COPILOT_PANE" '' --account "$H/.1copilot"
+assert_eq "$(grep -c '^oversee: turn-end-hook=missing harness=copilot .*fix=' <<<"$OUT")|$(grep -c '^oversee: context-reader=next-start ' <<<"$OUT")" '1|1' \
+  "register warns about absent Copilot coverage and the next-start reader"
+REGISTERHOOKCTL="$(mutant_scripts registerhookctl oversee)" || exit 1
+mutate_file "$REGISTERHOOKCTL/oversee" '    if ! copilot_hooks_gate "$cwd" "$home"; then' \
+  '    if false && ! copilot_hooks_gate "$cwd" "$home"; then'
+register_on "$COPILOT_PANE" "$REGISTERHOOKCTL/oversee" --account "$H/.1copilot"
+assert_eq "$RC|$(grep -c '^oversee: turn-end-hook=missing harness=copilot ' <<<"$OUT" || true)" '0|0' \
+  "control: register without its Copilot hook gate loses the missing-hook notice"
+# Registration configures the running home's reader. The next session start
+# loads it, then its first turn end uses the real succession judge.
+copilot_context_flow "$TMP_ROOT/work" "$H" "$H/.1copilot" "$SRC_DIR" \
+  TMUX="$TMUX_ADDR" TMUX_PANE="$COPILOT_PANE" TMUX_TMPDIR="$TMUX_DIR" \
+  ORCH_LANES_FETCH_CMD="$FETCHER" FIXTURE_DIR="$FIXTURE_DIR"
+assert_eq "$FLOW_RECORD|$(jq -r '.decision' <<<"$FLOW_STOP")" '199000:217600|block' \
+  "registered Copilot loads the reader at the next start and records its first turn"
+rm -f -- "$TMP_ROOT/work/tmp/lane-mail/overseer/session-$SERVER_PID-${COPILOT_PANE#%}.jsonl"
 assert_eq "$RC|$(recorded harness)|$(recorded account)|$(recorded home)" \
   "0|copilot|$H/.1copilot|$H/.1copilot" \
   "register on a copilot pane records harness copilot, read off the process under it, on --account"
@@ -941,6 +1016,27 @@ for row in \
     "control: $name turns the numeric launch assertion red"
   tm kill-window -t "$(recorded window)"
 done
+
+echo "=== register asks kendex's inventory for other harnesses ==="
+# SessionStart is the producer of a harness other than the fallback's three.
+# The inventory table comes from kendex, never a harness-specific hook file.
+for harness in claude codex pi; do
+  jq -cn --arg harness "$harness" --arg cwd "$WORK_REAL" --arg account "$H/.claude" \
+    '{at:1,event:"SessionStart",harness:$harness,cwd:$cwd,account:$account}' > "$HAND_ROWS"
+  for state in enabled missing disabled fail; do
+    run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" FIXTURE_HOOK_STATE="$state" -- register
+    want=1
+    [[ "$state" != enabled ]] || want=0
+    assert_eq "$RC|$(recorded harness)|$(grep -c '^oversee: turn-end-hook=missing .*fix=' <<<"$OUT" || true)" \
+      "0|$harness|$want" "register $harness checks inventory state $state and still registers"
+  done
+done
+INVENTORYCTL="$(mutant_scripts inventoryctl oversee)" || exit 1
+mutate_file "$INVENTORYCTL/oversee" '    if [[ "$inventory_rc" != 0 ]] || ! awk -v h="$harness"' \
+  '    if false && [[ "$inventory_rc" != 0 ]] || false && ! awk -v h="$harness"'
+OVERSEE_BIN="$INVENTORYCTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" FIXTURE_HOOK_STATE=missing -- register
+assert_eq "$RC|$(grep -c '^oversee: turn-end-hook=missing ' <<<"$OUT" || true)" '0|0' \
+  "control: without the inventory check a missing hook goes unreported"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

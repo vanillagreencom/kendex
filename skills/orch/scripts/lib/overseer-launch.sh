@@ -323,12 +323,10 @@ ol_account_id() { # DIR
 #
 # A named entry is launched under a permission posture its source allows
 # (ol_entry_permitted), and skipped before its pick where it cannot be. A
-# Copilot entry's pick is skipped as successor-status-line where the account's
-# settings run no copilot-statusline (lib/adapters/copilot.sh §
-# lane_adapter_copilot_status_line): a succession installs no
-# kendex-lane-context extension, so the record that status line writes is the
-# one reading it can count on, the turn end's fallback where no extension
-# reading of the session stands. The rules a succession adds, each off while its setting is
+# Copilot entry installs the shared context reader before it can be chosen,
+# including a retained caller account. A failed setup skips the entry as
+# successor-status-line, with the installer detail and fallback cause.
+# The rules a succession adds, each off while its setting is
 # empty or 0: each skip is a notice for the caller to print, one line of
 # tab-separated key and fields in OL_WALK_SKIPS.
 #   OL_WALK_REFUSE_ID       a pick naming this account (ol_account_id) is
@@ -364,6 +362,11 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
       fi
       if (( OL_WALK_CALLER_KEEP )); then
         OL_LANE_DIR="$OL_WALK_CALLER_LANE" OL_CHOSEN=caller
+        if [[ "$OL_HARNESS" == copilot ]] && ! copilot_context_install "$OL_LANE_DIR"; then
+          OL_WALK_SKIPS+=("successor-status-line${tab}lane=$OL_LANE_DIR${tab}entry=$entry${tab}detail=$COPILOT_CONTEXT_DETAIL${tab}cause=${COPILOT_CONTEXT_CAUSE:-none}")
+          OL_CHOSEN=""
+          continue
+        fi
         return 0
       fi
     else
@@ -383,8 +386,8 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
       OL_WALK_SKIPS+=("successor-lane-spent${tab}lane=$exclude${tab}entry=$entry")
       continue
     fi
-    if [[ "$OL_HARNESS" == copilot ]] && ! lane_adapter_copilot_status_line "$OL_PICKED_DIR"; then
-      OL_WALK_SKIPS+=("successor-status-line${tab}lane=$OL_PICKED_DIR${tab}entry=$entry${tab}cause=$LANE_ADAPTER_COPILOT_STATUS_REASON")
+    if [[ "$OL_HARNESS" == copilot ]] && ! copilot_context_install "$OL_PICKED_DIR"; then
+      OL_WALK_SKIPS+=("successor-status-line${tab}lane=$OL_PICKED_DIR${tab}entry=$entry${tab}detail=$COPILOT_CONTEXT_DETAIL${tab}cause=${COPILOT_CONTEXT_CAUSE:-none}")
       continue
     fi
     if (( OL_WALK_SUCCESSOR_BOUND > 0 )); then

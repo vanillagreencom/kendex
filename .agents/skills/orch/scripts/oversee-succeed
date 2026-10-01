@@ -186,7 +186,7 @@
 #        or cannot be read, or whose pi-hooks carrier sends no window, read
 #        under the Pi root it runs on: the picked account's on the Copilot
 #        pool. An entry with no qualifying lane IS skipped, and so is a
-#        copilot entry whose picked account runs no copilot-statusline
+#        copilot entry whose picked account cannot load a context reader or fallback
 #        status line, after its pick, with `successor-status-line` on
 #        stderr.
 #        A named entry's LAUNCH carries the model and effort words its own row
@@ -495,7 +495,7 @@ message() { # KEY FIELD=VALUE...
     interrupted) text='A signal stopped the script; the successor window was closed and the caller keeps running.' ;;
     successor-launch) text='The successor command is built; the form names how the picked lane reaches the harness.' ;;
     entry-permission-untransferable) text='The caller runs under permission words with no equivalent on the harness this entry names, so a successor there would change what it may do. The entry is skipped and the walk goes on to the next one, ending at the harness the caller runs.' ;;
-    successor-status-line) text='The pick named a Copilot account whose settings.json does not run copilot-statusline as its status line often enough for its session record to stay fresh. A succession installs no kendex-lane-context extension, so that record is the one context reading a successor there can count on. cause names what failed (lib/adapters/copilot.sh). The entry is skipped.' ;;
+    successor-status-line) text='The shared installer could not configure this Copilot home or its statusLine fallback. detail names the setup failure and cause names the fallback failure. The entry is skipped.' ;;
     successor-lane-spent) text='The pick named the very account this walled overseer is running on, which its successor may never open on: an inventory that has not caught up with the wall on that pane can still report room there. The entry is skipped, so a fleet whose only candidate is that account refuses rather than relaunching into the wall.' ;;
     successor-dialog) text='The successor stopped at a dialog nobody is there to answer; the caller keeps running. The pane line follows.' ;;
     successor-not-working) text='The successor never showed a running turn; the caller keeps running.' ;;

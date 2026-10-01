@@ -1,0 +1,1 @@
+- Copilot overseer launch, registration and succession install the context reader. Registration warns about missing turn-end hooks, and session start reports a missing reader.

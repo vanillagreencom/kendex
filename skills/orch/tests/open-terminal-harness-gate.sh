@@ -234,10 +234,10 @@ cp_control() { # NAME FILE OLD NEW SETTINGS ARGS WANT LABEL
 }
 cp_control cp-call open-terminal '  copilot_fleet_gate || exit 1' '  :' '{@OFF@}' "${FLEET[*]} --harness copilot $CP_FLAGS" passed \
   "control: without the gate's call a home with no reader launches into the fleet"
-cp_control cp-fallback open-terminal '  lane_adapter_copilot_status_line "$home" && return 0' '  false && return 0' \
-  '{@OFF@,"statusLine":{"type":"command","command":"@SL@","refreshInterval":30}}' "${FLEET[*]} --harness copilot $CP_FLAGS" "$CP_OFF_REFUSED cause=" \
+cp_control cp-fallback lib/adapters/copilot.sh '  if lane_adapter_copilot_status_line "$1"; then' '  if false; then' \
+  '{@OFF@,"statusLine":{"type":"command","command":"@SL@","refreshInterval":30}}' "${FLEET[*]} --harness copilot $CP_FLAGS" "$CP_OFF_REFUSED" \
   "control: without the fallback's call a home with extensions off is refused although its status line serves"
-cp_control cp-disabled-only open-terminal '  if [[ "$COPILOT_CONTEXT_DETAIL" != disabled ]]; then' '  if false; then' \
+cp_control cp-disabled-only lib/adapters/copilot.sh '  [[ "$COPILOT_CONTEXT_DETAIL" == disabled ]] || return 1' '  :' \
   '{"enabledFeatureFlags":{"EXTENSIONS":"yes"},"statusLine":{"type":"command","command":"@SL@","refreshInterval":30}}' "${FLEET[*]} --harness copilot $CP_FLAGS" passed \
   "control: without the fallback held to a home with extensions off, a home this launcher could not set up passes on its status line"
 cp_control cp-match lib/adapters/copilot.sh '[ "${command##*/}" = copilot-statusline ]' '[ -n "$command" ]' \

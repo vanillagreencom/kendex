@@ -27,6 +27,8 @@
 # own line, or `passed` where stderr carries none.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+# shellcheck source=lib/copilot-context-world.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/copilot-context-world.sh"
 export ORCH_LANE_HOST=local
 # shellcheck source=lib/shared-skill-libs.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
@@ -365,12 +367,12 @@ ROWS
   assert_eq "$(grep -c "real-document-broken/.github/hooks/lane-mail-check.json: invalid JSON" "$TMP_ROOT/real-document-broken.err" || true)" 1 \
     "the unjudged document is named in kendex's words under the refusal"
   # real_ctrl NAME OLD NEW — a staged copy of open-terminal with OLD cut.
-  real_ctrl() { stage "$TMP_ROOT/$1" && mutate_file "$TMP_ROOT/$1/scripts/open-terminal" "$2" "$3"; }
+  real_ctrl() { stage "$TMP_ROOT/$1" && mutate_file "$TMP_ROOT/$1/scripts/lib/adapters/copilot.sh" "$2" "$3"; }
   real_ctrl off-ctrl '  [[ -n "$off" ]] || return 0' '  return 0'
   real_world home
   assert_eq "$(OT="$TMP_ROOT/off-ctrl/scripts/open-terminal" KENDEX_DIR="$KX_REAL" launch off-ctrl)" passed \
     "control: without the hooks-disabled refusal a lane whose home switches every hook off passes"
-  real_ctrl project-ctrl 'hooks-off --copilot-home "$home" --project "$1"' 'hooks-off --copilot-home "$home" --project "$CLAIM_ROOT"'
+  real_ctrl project-ctrl 'hooks-off --copilot-home "$2" --project "$1"' 'hooks-off --copilot-home "$2" --project "$CLAIM_ROOT"'
   real_world claude
   assert_eq "$(OT="$TMP_ROOT/project-ctrl/scripts/open-terminal" KENDEX_DIR="$KX_REAL" launch project-ctrl)" passed \
     "control: asked of the caller's checkout, the worktree's own switch is never read"
@@ -384,38 +386,88 @@ ROWS
     "control: without the hook documents a lane whose lane-mail-check document switches its hooks off passes"
 fi
 
+echo "=== first turn end reads the installed extension ==="
+# The missing-reader control reaches the real mark judge, which inspects its pane.
+cat > "$BIN/tmux" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+  list-panes) printf '%%1\n' ;;
+  capture-pane) ;;
+  display-message)
+    case "${*: -1}" in
+      '#{window_id}') printf '@1\n' ;;
+      '#{pid}') printf '1\n' ;;
+      '#{pid} #{start_time}') printf '1 1\n' ;;
+      '#{pane_id}') printf '%%1\n' ;;
+      '#{pane_pid} #{pane_current_command}') printf '1 bash\n' ;;
+      '#{pane_current_path}') pwd -P ;;
+      *) exit 1 ;;
+    esac ;;
+  *) exit 1 ;;
+esac
+STUB
+chmod +x "$BIN/tmux"
+# open-terminal's gate has run; this fixture starts the first Copilot session
+# under that configured home and the item's launch marker.
+open_context_row() { # [OPEN_TERMINAL]
+  copilot_world project -
+  OT="${1:-}" launch first-reading >/dev/null
+  local root="$WTS/first-reading" common
+  git -C "$root" init -q
+  git -C "$root" config gc.auto 0
+  git -C "$root" config maintenance.auto false
+  common="$(git -C "$root" rev-parse --git-common-dir)" || return 1
+  mkdir -p "$root/$common/lane-mail" "$root/tmp/lane-mail/CC-1"
+  printf '%s\n' "$root" > "$root/$common/lane-mail/cc-1"
+  jq -nc --arg home "$COP_HOME" '{overseer: {runtime: "tmux", server: "1", server_start: 1,
+    pane: "%1", harness: "copilot", account: $home, home: $home}}' \
+    > "$root/tmp/workflow-state-oversee.json" || return 1
+  copilot_context_flow "$root" "$USER_HOME" "$COP_HOME" "$REPO/scripts" \
+    LANE_MAIL_ITEM=CC-1 PATH="$BIN:$PATH" TMUX=fake TMUX_PANE=%1
+}
+open_context_row
+assert_eq "$FLOW_RECORD|$(jq -r '.decision' <<<"$FLOW_STOP")" '199000:217600|block' \
+  "open-terminal's installed reader reaches the first turn end"
+stage "$TMP_ROOT/drop-install"
+mutate_file "$TMP_ROOT/drop-install/scripts/open-terminal" \
+  '  copilot_context_install "$home" && return 0' '  return 0'
+open_context_row "$TMP_ROOT/drop-install/scripts/open-terminal"
+assert_eq "$FLOW_RECORD" none "control: dropping open-terminal's installer loses the first reading"
+
 echo "=== must-fail controls ==="
 # copilot_ctrl NAME OLD NEW HOOKS SETTINGS WANT LABEL — the rule OLD cut from
 # a staged copy of open-terminal, and what a launch in that world reads then.
 copilot_ctrl() { # NAME OLD NEW HOOKS SETTINGS WANT LABEL
   stage "$TMP_ROOT/$1"
-  mutate_file "$TMP_ROOT/$1/scripts/open-terminal" "$2" "$3"
+  local target="$TMP_ROOT/$1/scripts/lib/adapters/copilot.sh"
+  [[ "$2" != *copilot_install_call* && "$2" != *copilot_context_install* && "$2" != *LANE_HOST* ]] || target="$TMP_ROOT/$1/scripts/open-terminal"
+  mutate_file "$target" "$2" "$3"
   copilot_world "$4" "$5"
   assert_eq "$(OT="$TMP_ROOT/$1/scripts/open-terminal" launch "$1") flag=$(flag_after)" "$6" "$7"
 }
 copilot_ctrl admit-ctrl '    copilot) [[ "$LANE_HOST" == local ]] ||' '    copilot-x) [[ "$LANE_HOST" == local ]] ||' project - \
   "open-terminal: unsupported-for-oversee harness=copilot flag=none" \
   "control: without its admission a copilot fleet launch is refused as a harness nothing judges"
-copilot_ctrl hooks-ctrl '  if ! home="$(copilot_launch_home)" || ! scope="$(lane_context_copilot_hooks "$1" "$home")"; then' '  if ! home="$(copilot_launch_home)"; then' \
+copilot_ctrl hooks-ctrl '  scope="$(lane_context_copilot_hooks "$1" "$2")" || return 1' '  scope="$1/.github/hooks"' \
   none - "passed flag=true" "control: without the hook check a copilot fleet lane nothing would judge passes"
-copilot_ctrl caller-ctrl '  if ! home="$(copilot_launch_home)" || ! scope="$(lane_context_copilot_hooks "$1" "$home")"; then' \
-  '  if ! home="$(copilot_launch_home)" || ! scope="$(lane_context_copilot_hooks "$CLAIM_ROOT" "$home")"; then' \
+copilot_ctrl caller-ctrl '  scope="$(lane_context_copilot_hooks "$1" "$2")" || return 1' \
+  '  scope="$(lane_context_copilot_hooks "$CLAIM_ROOT" "$2")" || return 1' \
   caller - "passed flag=true" "control: judged in the caller's checkout, hooks the worktree lacks pass"
 stage "$TMP_ROOT/reuse-ctrl"
 mutate_file "$TMP_ROOT/reuse-ctrl/scripts/open-terminal" \
-  '  if [[ "$COPILOT_HOOKS_GATED" == true ]] && ! copilot_hooks_gate "$wt" "$item"; then' \
-  '  if [[ "$COPILOT_HOOKS_GATED" == true && "$RELAUNCH" != true ]] && ! copilot_hooks_gate "$wt" "$item"; then'
+  '  if [[ "$COPILOT_HOOKS_GATED" == true ]]; then' \
+  '  if [[ "$COPILOT_HOOKS_GATED" == true && "$RELAUNCH" != true ]]; then'
 copilot_world project -
 mkdir -p "$WTS/reuse-ctrl"
 assert_eq "$(OT="$TMP_ROOT/reuse-ctrl/scripts/open-terminal" launch reuse-ctrl --relaunch)" "passed" \
   "control: without the relaunch's check a kept worktree that lacks the hooks passes"
 stage "$TMP_ROOT/relative-ctrl"
-mutate_file "$TMP_ROOT/relative-ctrl/scripts/open-terminal" '  if ! home="$(copilot_launch_home)" || [[ "$home" != /* ]]; then' '  if ! home="$(copilot_launch_home)"; then'
+mutate_file "$TMP_ROOT/relative-ctrl/scripts/lib/adapters/copilot.sh" '  [[ "$1" == /* ]] || return 1' '  :'
 copilot_world project -
 assert_eq "$(OT="$TMP_ROOT/relative-ctrl/scripts/open-terminal" LAUNCH_HOME=rel-home launch relative-ctrl) ext=$([[ -e "$REPO/rel-home/extensions/kendex-lane-context/extension.mjs" ]] && echo caller || echo none)" \
   "passed ext=caller" "control: without the absolute-home rule a relative home is configured in the caller's checkout and the lane passes"
 rm -rf -- "${REPO:?}/rel-home"
-copilot_ctrl reader-ctrl '  copilot_context_configure "$home" && copilot_pending_establish && return 0' '  return 0' \
+copilot_ctrl reader-ctrl '  copilot_context_install "$home" && return 0' '  return 0' \
   project '{"enabledFeatureFlags":{"EXTENSIONS":false}}' "passed flag=false" \
   "control: without the reader's refusal a copilot fleet lane whose home loads no extension passes unmeasured"
 copilot_ctrl disabled-ctrl '      | if $on == true then "enabled" elif $on == false then "disabled"' '      | if $on == true then "enabled"' \
@@ -446,7 +498,7 @@ OT_KENDEX=empty copilot_ctrl empty-ctrl "  [[ \"\$query_rc\" -ne 0 ]] || off=\"\
   project - "passed flag=true" "control: read with a bare filter, an empty answer passes as no file"
 OT_KENDEX=keyless copilot_ctrl keyless-ctrl '    | if type == "object" and has("switched_off_by")' '    | if type == "object"' \
   project - "passed flag=true" "control: without the key rule an answer that names nothing passes as no file"
-copilot_ctrl pending-ctrl '  copilot_context_configure "$home" && copilot_pending_establish && return 0' '  copilot_context_configure "$home" && return 0' \
+copilot_ctrl pending-ctrl '  if copilot_context_configure "$1" && copilot_pending_establish; then' '  if copilot_context_configure "$1"; then' \
   project - "passed flag=true" "control: the pending rule's copy launches as the world it replaces"
 copilot_world project -
 : > "$USER_HOME/.cache"

@@ -722,179 +722,21 @@ copilot_launch_home() {
   fi
 }
 
-# Make the Copilot home HOME run the kendex context reader, the Copilot
-# extension copilot-lane-context/extension.mjs beside this script: copied to
-# HOME/extensions/kendex-lane-context/extension.mjs, rewritten only where its
-# content differs, and loaded by the EXTENSIONS feature, which Copilot keeps
-# off until `enabledFeatureFlags.EXTENSIONS` is true in HOME/settings.json.
-# Both hold for every session on that home. A settings.json that is a link is
-# written through to its target, so the link stays. Each file is renamed into
-# place from its own directory, so Copilot never reads half of one. Refused,
-# with COPILOT_CONTEXT_FILE naming the file and COPILOT_CONTEXT_DETAIL why:
-# `disabled`, an EXTENSIONS flag set false, the operator's choice and never
-# overridden; `unreadable`, a file that cannot be read, or settings that are
-# no JSON object or carry an EXTENSIONS flag that is no boolean; `unwritable`,
-# a write that failed.
-COPILOT_CONTEXT_FILE=""
-COPILOT_CONTEXT_DETAIL=""
-copilot_context_configure() { # HOME
-  local source="$SCRIPT_DIR/copilot-lane-context/extension.mjs" dest target link hops=0 doc='{}' verdict staged
-  dest="$1/extensions/kendex-lane-context/extension.mjs"
-  COPILOT_CONTEXT_FILE="$source" COPILOT_CONTEXT_DETAIL=unreadable
-  [[ -r "$source" ]] || return 1
-  COPILOT_CONTEXT_FILE="$dest" COPILOT_CONTEXT_DETAIL=unwritable
-  if ! cmp -s -- "$source" "$dest"; then
-    mkdir -p -- "${dest%/*}" && staged="$(mktemp "${dest%/*}/.extension.mjs.XXXXXX")" || return 1
-    if ! cp -- "$source" "$staged" || ! mv -f -- "$staged" "$dest"; then
-      rm -f -- "${staged:?}"
-      return 1
-    fi
-  fi
-  # The link's own target, hop by hop: readlink with no option is the one
-  # spelling every platform this runs on shares.
-  target="$1/settings.json"
-  COPILOT_CONTEXT_FILE="$target" COPILOT_CONTEXT_DETAIL=unreadable
-  while [[ -L "$target" ]]; do
-    hops=$((hops + 1))
-    (( hops <= 40 )) && link="$(readlink -- "$target")" || return 1
-    case "$link" in /*) target="$link" ;; *) target="${target%/*}/$link" ;; esac
-  done
-  if [[ -e "$target" ]]; then
-    doc="$(cat -- "$target")" || return 1
-  fi
-  # jq refuses to index a flags value that is no object, which reads as
-  # unreadable below.
-  verdict="$(jq -r '
-    if type != "object" then "unreadable"
-    else .enabledFeatureFlags.EXTENSIONS as $on
-      | if $on == true then "enabled" elif $on == false then "disabled"
-        elif $on == null then "absent" else "unreadable" end
-    end' <<<"$doc")" || verdict=unreadable
-  case "$verdict" in
-    enabled) return 0 ;;
-    absent) ;;
-    disabled) COPILOT_CONTEXT_DETAIL=disabled; return 1 ;;
-    *) return 1 ;;
-  esac
-  COPILOT_CONTEXT_DETAIL=unwritable
-  staged="$(mktemp "${target%/*}/.settings.json.XXXXXX")" || return 1
-  if ! jq '.enabledFeatureFlags = ((.enabledFeatureFlags // {}) + {EXTENSIONS: true})' <<<"$doc" >"$staged" \
-     || ! mv -f -- "$staged" "$target"; then
-    rm -f -- "${staged:?}"
-    return 1
-  fi
-}
-
-# Make the directory the context reader leaves each session's pending marker
-# in, lib/lane-context.sh's lane_context_copilot_pending_dir under this
-# launcher's HOME, which the lane's Copilot inherits, and prove it writable by
-# making and removing one probe file there, the empty file a marker is. The
-# marker stands from the moment a reading lands until the lane-mail-check run
-# that records it exits 0, so a turn end during a run that fails never judges
-# the earlier record as room (D015 § Reader); a reading the extension could not
-# mark would leave that record standing as room. The extension still names a
-# marker write that fails after this, as `pending-unwritten`. Refused with
-# COPILOT_CONTEXT_FILE naming the directory and COPILOT_CONTEXT_DETAIL
-# `pending-unwritable`.
-copilot_pending_establish() {
-  local dir probe
-  dir="$(lane_context_copilot_pending_dir)"
-  COPILOT_CONTEXT_FILE="$dir" COPILOT_CONTEXT_DETAIL=pending-unwritable
-  mkdir -p -- "$dir" && probe="$(mktemp "$dir/.probe.XXXXXX")" && rm -f -- "$probe"
-}
-
-# A Copilot fleet lane is judged by what its own Copilot loads: the
-# lane-mail-check hook at its turn end, lane-mail-compact at its automatic
-# compaction and lane-mail-start at its start, from the project or the global
-# hook scope
-# (lib/lane-context.sh § lane_context_copilot_hooks), and the context reading
-# the copilot-lane-context extension of the lane's Copilot home hands
-# lane-mail-check. Copilot runs no hook and no extension the home does not
-# name, and a lane running with either missing would be reported measured
-# while nothing measured it. copilot_fleet_gate makes the home run the
-# extension and makes the directory its pending markers land in, or admits the
-# fallback reader below, before any worktree. The project scope is the lane's worktree,
-# made from the item's base or kept from an earlier launch, never the caller's
-# checkout, so copilot_hooks_gate asks once that worktree stands and before the
-# harness starts in it. There it also asks whether Copilot runs those hooks at
-# all: `disableAllHooks` true in any settings layer Copilot reads for that home
-# and worktree switches every hook off, and true in one of the three hooks'
-# own documents in the scope that holds them switches off what that document
-# registers, while the extension still records the readings. kendex's Copilot
-# settings reader owns those layers, which one wins and a hook document's own
-# switch, so the gate asks it through `kendex hooks-off`, naming each of those
-# documents with `--hook-document`, whose stdout is one JSON object whose
-# `switched_off_by` names the file or is null; a kendex that is missing, fails
-# or answers anything else refuses the lane, since an unanswered question is
-# not hooks that run. A settings file or named document there that it cannot
-# read or parse as commented JSON fails it, naming the file.
-#
-# The home must be an absolute path. A relative one is configured and judged
-# here against this launcher's directory, the caller's checkout, while the
-# Copilot process starts in the lane's worktree and reads the same value from
-# there: the lane would pass the gate and run with no context reader.
-#
-# A home whose settings turn EXTENSIONS off (`detail=disabled`) runs no
-# extension, and that choice is the operator's. There the lane is admitted
-# only where the fallback reader serves: the account's statusLine runs
-# copilot-statusline often enough for its session record to stay fresh
-# (lib/adapters/copilot.sh § lane_adapter_copilot_status_line, whose reason
-# the refusal carries as `cause=`), the record the turn end reads where no
-# extension reading stands. Every other failure refuses, since the fallback
-# stands in for an extension the operator switched off, never for a home
-# this launcher could not set up.
-#
-# Called for the lane resolved up front and again for each one a batch
-# re-picks, so it asks whether this launch is a Copilot fleet one itself.
-# Returns 1 with the refusal printed.
+# The shared Copilot adapter owns reader installation and the hook gate.
+# Reader setup follows the resolved lane; hook coverage follows the item's
+# worktree, not this caller's checkout. Re-picking a lane repeats its setup.
 copilot_fleet_gate() {
   local home
   [[ "$FLEET" == true && "$WAKE" != true && "$LAUNCH_HARNESS" == copilot ]] || return 0
-  if ! home="$(copilot_launch_home)" || [[ "$home" != /* ]]; then
+  home="$(copilot_launch_home)" || return 1
+  copilot_context_install "$home" && return 0
+  if [[ "$COPILOT_CONTEXT_DETAIL" == relative-home ]]; then
     ot_message unsupported-for-oversee harness=copilot reason=relative-home "home=$home" >&2
     return 1
   fi
-  copilot_context_configure "$home" && copilot_pending_establish && return 0
-  if [[ "$COPILOT_CONTEXT_DETAIL" != disabled ]]; then
-    ot_message unsupported-for-oversee harness=copilot reason=no-context-reader \
-      "file=$COPILOT_CONTEXT_FILE" "detail=$COPILOT_CONTEXT_DETAIL" >&2
-    return 1
-  fi
-  lane_adapter_copilot_status_line "$home" && return 0
   ot_message unsupported-for-oversee harness=copilot reason=no-context-reader \
     "file=$COPILOT_CONTEXT_FILE" "detail=$COPILOT_CONTEXT_DETAIL" \
-    "cause=$LANE_ADAPTER_COPILOT_STATUS_REASON" >&2
-  return 1
-}
-copilot_hooks_gate() { # WORKTREE ITEM
-  local home scope="" name answer err query_rc=0 off="" documents=()
-  if ! home="$(copilot_launch_home)" || ! scope="$(lane_context_copilot_hooks "$1" "$home")"; then
-    ot_message unsupported-for-oversee harness=copilot reason=no-context-hooks "item=$2" \
-      "scope=$1/.github/hooks" "scope=$home/hooks" >&2
-    return 1
-  fi
-  if ! err="$(mktemp)"; then
-    ot_message unsupported-for-oversee harness=copilot reason=hooks-unjudged "item=$2" exit=scratch >&2
-    return 1
-  fi
-  for name in $LANE_CONTEXT_COPILOT_HOOKS; do
-    documents+=(--hook-document "$scope/$name.json")
-  done
-  answer="$(kendex hooks-off --copilot-home "$home" --project "$1" "${documents[@]}" 2>"$err")" || query_rc=$?
-  # `input` refuses an empty answer, which a bare filter would read as none.
-  [[ "$query_rc" -ne 0 ]] || off="$(jq -rn 'input
-    | if type == "object" and has("switched_off_by")
-        and ((.switched_off_by | type) as $t | $t == "string" or $t == "null")
-      then .switched_off_by // "" else error("no switched_off_by answer") end' <<<"$answer" 2>>"$err")" || query_rc=answer
-  if [[ "$query_rc" != 0 ]]; then
-    ot_message unsupported-for-oversee harness=copilot reason=hooks-unjudged "item=$2" "exit=$query_rc" >&2
-    cat -- "$err" >&2
-    rm -f -- "${err:?}"
-    return 1
-  fi
-  rm -f -- "${err:?}"
-  [[ -n "$off" ]] || return 0
-  ot_message unsupported-for-oversee harness=copilot reason=hooks-disabled "item=$2" "file=$off" >&2
+    ${COPILOT_CONTEXT_CAUSE:+"cause=$COPILOT_CONTEXT_CAUSE"} >&2
   return 1
 }
 
@@ -3101,9 +2943,15 @@ for raw in "${ITEMS[@]}"; do
     failed=$((failed + 1))
     continue
   fi
-  if [[ "$COPILOT_HOOKS_GATED" == true ]] && ! copilot_hooks_gate "$wt" "$item"; then
-    failed=$((failed + 1))
-    continue
+  if [[ "$COPILOT_HOOKS_GATED" == true ]]; then
+    copilot_home="$(copilot_launch_home)" || exit 1
+    if ! copilot_hooks_gate "$wt" "$copilot_home"; then
+      ot_message unsupported-for-oversee harness=copilot "reason=$COPILOT_HOOK_REASON" "item=$item" \
+        ${COPILOT_HOOK_FIELDS[@]+"${COPILOT_HOOK_FIELDS[@]}"} >&2
+      [[ -z "$COPILOT_HOOK_ERROR" ]] || printf '%s\n' "$COPILOT_HOOK_ERROR" >&2
+      failed=$((failed + 1))
+      continue
+    fi
   fi
   # A Pi wake enters the live session through pi-bridge. Any other wake starts
   # a second process on the session, so a working one is refused.
