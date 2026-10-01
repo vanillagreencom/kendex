@@ -429,7 +429,7 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 |--------|-------|
 | PR | #[PR_NUMBER] |
 | CI | ✅ passing / ❌ failing |
-| Review gate | ✅ approved / ⏳ pending / forced / off (the base's rulesets require no approval and the pull request's `reviewDecision` is empty) |
+| Review gate | ✅ approved / ⏳ pending / forced / off ([Gate-mode routing](../references/gates.md#gate-mode-routing)) |
 | Unresolved threads | [N] |
 | Comment iterations | [N] |
 | Fixes applied | [N] |

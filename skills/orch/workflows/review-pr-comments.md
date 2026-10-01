@@ -393,7 +393,7 @@ Auto-resolve every thread where a reply was posted; keep open only threads await
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]
 ```
 
-`off`, or a non-zero exit, which is reported, ends this step: no rule holds the pull request for an approval, or no mode was read. On `approval`, bind the head:
+`off` ends this step per [Gate-mode routing](../references/gates.md#gate-mode-routing). A non-zero exit is no mode: report it and end this step. On `approval`, bind the head:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
