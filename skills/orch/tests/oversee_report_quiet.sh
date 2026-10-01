@@ -80,6 +80,41 @@ for surface in due render write; do
     write) assert_eq "$RC|$(wc -l < "$CASE/mail.calls" | tr -d ' ')" "0|1" "control: without suppression write sends a 02:00 notice" ;;
   esac
 done
+
+# Project owners can set a quiet window that crosses midnight. Excluding
+# its start in a disposable copy must send the otherwise suppressed notice.
+NOW="$(jq -rn '"2026-09-26T06:00:00Z" | fromdateiso8601')" || exit 1
+mutant="$(mutant_scripts "quiet-wrapping-control/orch" oversee-report)/oversee-report" || exit 1
+github_dir="$(cd "$TEST_DIR/../../github" && pwd)" || exit 1
+ln -s "$github_dir" "$TMP_ROOT/quiet-wrapping-control/github"
+mutate_file "$mutant" '[[ "$hour" -ge "$QUIET_START" || "$hour" -lt "$QUIET_END" ]]' \
+  '[[ "$hour" -gt "$QUIET_START" || "$hour" -lt "$QUIET_END" ]]'
+envs=(TZ=UTC ORCH_OWNER_TIME_ZONE=America/Los_Angeles ORCH_REPORT_QUIET_HOURS=23-7)
+for version in live control; do
+  new_case "quiet_wrapping_$version"
+  printf '%s\n' "$NOW" > "$CASE/now"
+  report -10800
+  since="$(at -10800)" || exit 1
+  fleet ''
+  printf 'Work continues overnight.\n%s\n' "$OWNER_ROWS" > "$CASE/summary.txt"
+  target="$REPORT_BIN"; want=0
+  if [[ "$version" == control ]]; then target="$mutant"; want=1; fi
+  REPORT_UNDER_TEST="$target" run "${envs[@]}" -- due --state "$CASE/state.json" --repo owner/repo
+  assert_eq "$RC|$OUT" "0|report-due reason=minutes since=$since" "23:00 Pacific is due with a 23-7 window ($version)"
+  REPORT_UNDER_TEST="$target" run "${envs[@]}" -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
+  written="$(cat "$CASE/progress-reports/09-26-06-00.md")" || exit 1
+  notices=0; [[ ! -f "$CASE/mail.calls" ]] || notices="$(wc -l < "$CASE/mail.calls" | tr -d ' ')" || exit 1
+  assert_eq "$RC|$OUT|$notices" "0|$written|$want" \
+    "23:00 writes and prints; start-inclusive suppression sends no notice, its control sends one ($version)"
+  [[ "$version" == live ]] || continue
+  printf '%s\n' "$((NOW + 28800))" > "$CASE/now"
+  run "${envs[@]}" -- due --state "$CASE/state.json" --repo owner/repo
+  assert_eq "$RC|$OUT" "0|report-due reason=minutes since=$since" "07:00 Pacific is due at the exclusive end of a 23-7 window"
+  run "${envs[@]}" -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
+  written="$(cat "$CASE/progress-reports/09-26-14-00.md")" || exit 1
+  notices="$(wc -l < "$CASE/mail.calls" | tr -d ' ')" || exit 1
+  assert_eq "$RC|$OUT|$notices" "0|$written|1" "07:00 writes and prints its report and sends one notice after the wrapping window"
+done
 NOW="$SAVED_NOW"
 
 new_case report_history_unread
