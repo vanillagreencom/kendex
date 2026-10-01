@@ -307,7 +307,7 @@ REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"
 REVIEW_GATE_STANDARD_SECRETS = "FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY"
 # The contexts kendex's own required-checks ruleset requires once "Review
 # gate" leaves it: the CI jobs the ruleset lists, by name.
-REVIEW_GATE_STANDARD_CONTEXTS = "Cargo (workspace tests);Skill suites (shell + node);macOS cargo (workspace tests);Windows cargo (core and CLI targets compile);Windows cargo (workspace tests);Preflight (diff-scoped deterministic checks);Markdown (format + references)"
+REVIEW_GATE_STANDARD_CONTEXTS = "CI"
 
 # The bypass actors this organization's standard admits, as TYPE:ID:MODE
 # (docs/decisions/D013-admin-merge-green-prs.md, and the overseer app of
