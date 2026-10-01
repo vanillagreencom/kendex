@@ -134,8 +134,8 @@ cp -- "$CARRIER" "$GLOBAL_CARRIER"
 cp -- "$HOOK" "${GLOBAL_CARRIER%/*}/skill-load-check.sh"
 printf '{}\n' >"${GLOBAL_CARRIER%.sh}.json"
 printf '{}\n' >"${GLOBAL_CARRIER%/*}/skill-load-check.json"
-run_at "$GLOBAL_CARRIER" "$(post global skill '{"skill":"code-quality"}')"
-global_record=$(cat "$RECORDS/global") || exit 1
+run_at "$GLOBAL_CARRIER" "$(post global-recorder skill '{"skill":"code-quality"}')"
+global_record=$(cat "$RECORDS/global-recorder") || exit 1
 assert_eq "rc=$rc first=$(first_line) recorded=$global_record" \
   'rc=0 first=- recorded=code-quality' 'the global Copilot registry marker enables recording'
 skill_load_control inactive-recorder "$CARRIER" 'case "$HOOK_DIR" in' \
