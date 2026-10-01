@@ -1,1 +1,1 @@
-- Hooks install required skills and companions together. Skill removals stay removed when catalogs return. Hand-installed skill checks report missing dependencies without blocking the session.
+- Hooks install required skills and companions together. Invalid harness IDs withhold callers. Skill removals stay removed. Hand-installed skill checks report dependency gaps without blocking.

@@ -306,8 +306,33 @@ fn manifest_rows() -> [Row; 6] {
 
 /// The rows the hooks' own headers decide: a harnesses line or an event
 /// that leaves a tool out, on the companion and on the parent.
-fn header_rows() -> [Row; 4] {
+fn header_rows() -> [Row; 6] {
     [
+        // Authored path catalogs can offer invalid companion headers.
+        // An unknown entry makes the whole header unreadable, even beside
+        // a valid entry, rather than excluding the companion everywhere.
+        Row {
+            declarations: "[hooks.deliver]\nsource = \"cat\"\n",
+            judge: "# ---\n# name: judge\n# event: Stop\n# harnesses: [copliot]\n# ---\nexit 0\n",
+            deliver: DELIVER,
+            parent: "deliver",
+            finding: Finding::Dependency(
+                "missing required dependency: deliver requires judge, whose header cannot be read: unknown hook harness: copliot",
+                "repair judge's header in the catalog 'cat', or drop it from deliver's dependencies",
+            ),
+            lands: [false, false],
+        },
+        Row {
+            declarations: "[hooks.deliver]\nsource = \"cat\"\n",
+            judge: "# ---\n# name: judge\n# event: Stop\n# harnesses: [claude, copliot]\n# ---\nexit 0\n",
+            deliver: DELIVER,
+            parent: "deliver",
+            finding: Finding::Dependency(
+                "missing required dependency: deliver requires judge, whose header cannot be read: unknown hook harness: copliot",
+                "repair judge's header in the catalog 'cat', or drop it from deliver's dependencies",
+            ),
+            lands: [false, false],
+        },
         // The judge's own harnesses line makes it unnecessary on Codex.
         // The deliver hook still runs there without the judge.
         Row {
