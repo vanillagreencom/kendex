@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # Codex 0.159.3 supplies apply_patch under tool_input.command and persists
 # exec_command calls and their output under response_item.payload. Only the
-# header before Output: carries the completed process status. The child
-# thread already has its own transcript_path, not Claude's subagents layout.
+# header before Output: carries the completed process status. Codex 0.160.0
+# functions.exec instead persists custom_tool_call and custom_tool_call_output.
+# The fixtures preserve the standalone TLK-33 read and a credentialed failed
+# read from gpt-6.1-sol. Script completed appears even when cat exits 1, so
+# only the adjacent CommandExecution event proves shell success. The fixture
+# projections omit account metadata and repeated command output, not status.
+# The child thread already has its own transcript_path, not Claude's layout.
 # HOOK_UNDER_TEST lets the same assertions judge a planted copy of the hook.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -175,6 +180,82 @@ done <<'ROWS'
 .codex|ok|rc=0 first=-
 relocated|ok|rc=0 first=-
 ROWS
+
+# The measured functions.exec wrapper runs one literal shell read and prints
+# its output. These rows keep the authentic envelope and output; each defect
+# changes a private copy, never the captured fixtures.
+functions_exec_row() { # FIXTURE SCENARIO WANT LABEL
+  local fixture="$1" scenario="$2" want="$3" label="$4" command skill
+  cp -- "$HOOK" "$JUDGE"
+  jq -c --arg scenario "$scenario" '
+    if $scenario == "failed-status" and .type == "event_msg" then
+      .payload.item.status = "failed" | .payload.item.exit_code = 1
+    elif $scenario == "missing-event" then select(.type != "event_msg")
+    elif $scenario == "extra-event" and .type == "event_msg" then ., .
+    elif $scenario == "wrong-command" and .type == "event_msg" then
+      .payload.item.command[-1] = "cat other/SKILL.md"
+    elif $scenario == "other-id" and .payload.type == "custom_tool_call_output" then
+      .payload.call_id = "other"
+    elif $scenario == "compound-js" and .payload.type == "custom_tool_call" then
+      .payload.input += "await tools.exec_command({cmd:\"true\"});"
+    elif $scenario == "compound-shell" and .payload.type == "custom_tool_call" then
+      .payload.input = "const r=await tools.exec_command({cmd:\"cat .agents/skills/linear/SKILL.md; true\"});text(r.output);"
+    elif $scenario == "compound-shell" and .type == "event_msg" then
+      .payload.item.command[-1] = "cat .agents/skills/linear/SKILL.md; true"
+    elif $scenario == "failed-wrapper" and .payload.type == "custom_tool_call_output" then
+      .payload.output[0].text = "Script failed\nOutput:\n"
+    else . end' "$TEST_DIR/fixtures/$fixture.jsonl" >"$TRANSCRIPT"
+  case "$fixture" in
+    *-failed) skill=missing-KEN-2484; command=skill-capture-command ;;
+    *) skill=linear; command=.agents/skills/linear/scripts/linear.sh ;;
+  esac
+  payload=$(jq -n -c --arg t "$TRANSCRIPT" --arg c "$command" \
+    '{tool_name:"Bash",tool_input:{command:$c},transcript_path:$t}')
+  set +e
+  env -i PATH="$PATH" HOME="$TMP_ROOT" KENDEX_SKILL_LOAD_RULES="bash:^skill-capture-command$=$skill" \
+    "$BASH_BIN" "$JUDGE" >"$OUT_FILE" 2>"$ERR_FILE" <<<"$payload"
+  rc=$?
+  set -e
+  assert_eq "rc=$rc first=$(first_line) stdout=$(cat -- "$OUT_FILE")" "$want stdout=" "$label"
+}
+exec_rows() { # optional row key for a planted-copy control
+  local key fixture scenario want label
+  while IFS='|' read -r key fixture scenario want label; do
+    [ -z "${1:-}" ] || [ "$key" = "$1" ] || continue
+    functions_exec_row "$fixture" "$scenario" "$want" "$label"
+  done <<'ROWS'
+success|skill-load-check-codex-0.160.0|original|rc=0 first=-|functions.exec successful skill read
+failed|skill-load-check-codex-0.160.0-failed|original|rc=2 first=skill-load-check: unloaded=missing-KEN-2484|functions.exec authentic failed read
+compound-js|skill-load-check-codex-0.160.0|compound-js|rc=2 first=skill-load-check: unloaded=linear|functions.exec compound JavaScript
+compound-shell|skill-load-check-codex-0.160.0|compound-shell|rc=2 first=skill-load-check: unloaded=linear|functions.exec compound shell
+failed-wrapper|skill-load-check-codex-0.160.0|failed-wrapper|rc=2 first=skill-load-check: unloaded=linear|functions.exec failed wrapper
+other-id|skill-load-check-codex-0.160.0|other-id|rc=2 first=skill-load-check: unloaded=linear|functions.exec another call output
+failed-status|skill-load-check-codex-0.160.0|failed-status|rc=2 first=skill-load-check: unloaded=linear|functions.exec failed shell with successful skill body
+missing-event|skill-load-check-codex-0.160.0|missing-event|rc=2 first=skill-load-check: unloaded=linear|functions.exec without shell completion
+extra-event|skill-load-check-codex-0.160.0|extra-event|rc=2 first=skill-load-check: unloaded=linear|functions.exec ambiguous shell completion
+wrong-command|skill-load-check-codex-0.160.0|wrong-command|rc=2 first=skill-load-check: unloaded=linear|functions.exec another command completion
+ROWS
+}
+exec_success_row() { exec_rows success; }
+exec_failed_row() { exec_rows failed; }
+exec_compound_row() { exec_rows compound-js; }
+exec_shell_row() { exec_rows compound-shell; }
+exec_output_row() { exec_rows failed-wrapper; }
+exec_id_row() { exec_rows other-id; }
+exec_rows
+
+skill_load_control exec-recognition "$HOOK" '    def exec_cmd:' \
+  '      empty |' HOOK exec_success_row 'functions.exec successful skill read'
+skill_load_control exec-completion "$HOOK" '| select(.type == "CommandExecution")' \
+  '        | .status = "completed" | .exit_code = 0' HOOK exec_failed_row 'functions.exec authentic failed read'
+skill_load_control exec-standalone-js "$HOOK" '      | .input | strings' \
+  '      | (split(";")[0:2] | join(";") + ";")' HOOK exec_compound_row 'functions.exec compound JavaScript'
+skill_load_control exec-standalone-shell "$HOOK" '| ($skill | gsub("[.]"; "\\.")) as $escaped' \
+  '    | ($cmd | split(";")[0]) as $cmd' HOOK exec_shell_row 'functions.exec compound shell'
+skill_load_control exec-output "$HOOK" '| .text | strings' \
+  '          | "Script completed\nOutput:\n"' HOOK exec_output_row 'functions.exec failed wrapper'
+skill_load_control exec-call-id "$HOOK" '    | (.call_id | strings | select(. != "")) as $id' \
+  '    | "other" as $id' HOOK exec_id_row 'functions.exec another call output'
 
 # Codex exec --ephemeral's PreToolUse producer always emits transcript_path,
 # null when Session::hook_transcript_path has no live_thread. Missing is not

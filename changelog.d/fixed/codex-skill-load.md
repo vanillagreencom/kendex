@@ -1,0 +1,1 @@
+- Codex skill reads through functions.exec count as loaded skills, so the next guarded command can run. Failed and compound reads still refuse.

@@ -3,7 +3,7 @@
 # name: skill-load-check
 # event: PreToolUse
 # matcher: Edit|MultiEdit|NotebookEdit|Write|Bash
-# description: Refuses a call a repository rule ties to a skill until the agent making the call has loaded that skill, so each "load skill X before doing Y" rule is decided rather than remembered. The rules are one table of trigger and skill. The defaults: an Edit, MultiEdit, NotebookEdit or Write onto a path inside a git work tree that ends in `.md` needs docs-writing, and one onto any other path there needs code-quality; a Bash call naming `linear.sh` at the word it executes or at any word after it needs linear whatever it asks of Linear, so a call that only mentions the name inside a quoted note or a heredoc body is no command, while a call that hands the name to another command, such as `echo /tmp/linear.sh` or `cat .../linear.sh`, is refused alongside the calls that really run it: a word that launches what follows it, `bash` and `env` among them, picks its command by options nothing here reads, so every word after the first is judged rather than any launcher being listed. KENDEX_SKILL_LOAD_RULES appends a repository's own rules: `<glob>=<skill>` for an edit, the glob matched against the path from the work tree's root with `*` crossing `/` and extended patterns such as `!(*.md)` read, and `bash:<regex>=<skill>` for a command, the regex matched against each command the shell would run from the word it executes on, past leading assignments, and from every word after that one, entries separated by `;`. A call needing two skills is refused on the first one not loaded. Loaded is read off the transcript that records that agent's tool calls: a `Skill` tool call whose `skill` input names the skill, or, in a Pi session file, a successful `read` tool call whose `path` ends in `<skill>/SKILL.md`: one whose result is recorded under the same `toolCallId` and is not an error. That transcript is the session transcript the payload names, or, when the payload carries `agent_id` because a subagent made the call, the subagent's own `agent-<agent_id>.jsonl` under the session's `subagents/` directory, directly or one directory below; the lead session's load does not pass a subagent's call. A Pi subagent is its own process with its own session file, which is the transcript its payload names. On Copilot, whose payload names no transcript, loaded is read off a record kept per agent outside every repository, `$XDG_STATE_HOME/kendex/skill-load-check/<sessionId>` or under `~/.local/state` where that is unset: the skill-load-record hook beside this one runs it with the argument `record` after each `skill` tool call and appends the skill `toolArgs.skill` names only when `toolResult.resultType` is `success`, and the payload's `sessionId` names the agent, a subagent apart from the session that launched it, so the lead's load does not pass a subagent's call there either. A record untouched for 30 days is removed. There the matcher names every runtime tool Copilot's hooks reference lists for Edit, Write and Bash: the command is `toolArgs.command` of a `bash` or `powershell` call, the edit's target `toolArgs.path` of an `edit`, `create` or `str_replace_editor` call, whatever the last one's own command, and each file an `apply_patch` call's patch names on an `*** Add File: `, `*** Update File: `, `*** Delete File: ` or `*** Move to: ` line, a call with no target it can read being refused as `payload=no-file-path`; a refusal is also Copilot's `permissionDecision` deny on stdout, its reason the refusal's text, under the same exit 2. A Copilot call reaching another harness's copy, which Copilot runs from `.claude/settings.json` only through a registration made there by hand or one kendex wrote before its Copilot skip and no refresh has rewritten, passes there under `skill-load-check: harness=copilot`, the Copilot copy being its judge, so where no Copilot copy is installed that line is the one trace of a call nothing judged. A call needing a skill that reaches a Copilot copy with no skill-load-record beside it passes with `carrier=<path>` as context: nothing writes the record there, so loading a skill cannot clear a refusal. Install skill-load-record beside skill-load-check in this scope. The work tree's own `tmp/` is scratch and passes, and so does every path outside a work tree. KENDEX_SKILL_LOAD_HOOK=off disables it for a session that is not working under those rules. On Codex, an `apply_patch` call names its patch under `tool_input.command`, and uses the same file-line parser as Copilot. Loaded is a completed `exec_command` shell read (`cat`, `sed`, `head` or `tail`) of `<skill>/SKILL.md` in the calling thread's rollout, joined to its successful `function_call_output` by `call_id`; the child thread's transcript is already its own. The shell read must stand alone, so another command's success cannot hide a failed read. Not run on gemini: its tool-call payload and its record of a skill load are unmeasured. Not run on antigravity: the file arrives as `toolCall.args.TargetFile` and a skill load is a `view_file` read with no skill record.
+# description: Refuses a call a repository rule ties to a skill until the agent making the call has loaded that skill, so each "load skill X before doing Y" rule is decided rather than remembered. The rules are one table of trigger and skill. The defaults: an Edit, MultiEdit, NotebookEdit or Write onto a path inside a git work tree that ends in `.md` needs docs-writing, and one onto any other path there needs code-quality; a Bash call naming `linear.sh` at the word it executes or at any word after it needs linear whatever it asks of Linear, so a call that only mentions the name inside a quoted note or a heredoc body is no command, while a call that hands the name to another command, such as `echo /tmp/linear.sh` or `cat .../linear.sh`, is refused alongside the calls that really run it: a word that launches what follows it, `bash` and `env` among them, picks its command by options nothing here reads, so every word after the first is judged rather than any launcher being listed. KENDEX_SKILL_LOAD_RULES appends a repository's own rules: `<glob>=<skill>` for an edit, the glob matched against the path from the work tree's root with `*` crossing `/` and extended patterns such as `!(*.md)` read, and `bash:<regex>=<skill>` for a command, the regex matched against each command the shell would run from the word it executes on, past leading assignments, and from every word after that one, entries separated by `;`. A call needing two skills is refused on the first one not loaded. Loaded is read off the transcript that records that agent's tool calls: a `Skill` tool call whose `skill` input names the skill, or, in a Pi session file, a successful `read` tool call whose `path` ends in `<skill>/SKILL.md`: one whose result is recorded under the same `toolCallId` and is not an error. That transcript is the session transcript the payload names, or, when the payload carries `agent_id` because a subagent made the call, the subagent's own `agent-<agent_id>.jsonl` under the session's `subagents/` directory, directly or one directory below; the lead session's load does not pass a subagent's call. A Pi subagent is its own process with its own session file, which is the transcript its payload names. On Copilot, whose payload names no transcript, loaded is read off a record kept per agent outside every repository, `$XDG_STATE_HOME/kendex/skill-load-check/<sessionId>` or under `~/.local/state` where that is unset: the skill-load-record hook beside this one runs it with the argument `record` after each `skill` tool call and appends the skill `toolArgs.skill` names only when `toolResult.resultType` is `success`, and the payload's `sessionId` names the agent, a subagent apart from the session that launched it, so the lead's load does not pass a subagent's call there either. A record untouched for 30 days is removed. There the matcher names every runtime tool Copilot's hooks reference lists for Edit, Write and Bash: the command is `toolArgs.command` of a `bash` or `powershell` call, the edit's target `toolArgs.path` of an `edit`, `create` or `str_replace_editor` call, whatever the last one's own command, and each file an `apply_patch` call's patch names on an `*** Add File: `, `*** Update File: `, `*** Delete File: ` or `*** Move to: ` line, a call with no target it can read being refused as `payload=no-file-path`; a refusal is also Copilot's `permissionDecision` deny on stdout, its reason the refusal's text, under the same exit 2. A Copilot call reaching another harness's copy, which Copilot runs from `.claude/settings.json` only through a registration made there by hand or one kendex wrote before its Copilot skip and no refresh has rewritten, passes there under `skill-load-check: harness=copilot`, the Copilot copy being its judge, so where no Copilot copy is installed that line is the one trace of a call nothing judged. A call needing a skill that reaches a Copilot copy with no skill-load-record beside it passes with `carrier=<path>` as context: nothing writes the record there, so loading a skill cannot clear a refusal. Install skill-load-record beside skill-load-check in this scope. The work tree's own `tmp/` is scratch and passes, and so does every path outside a work tree. KENDEX_SKILL_LOAD_HOOK=off disables it for a session that is not working under those rules. On Codex, an `apply_patch` call names its patch under `tool_input.command`, and uses the same file-line parser as Copilot. Loaded is a completed shell read (`cat`, `sed`, `head` or `tail`) of `<skill>/SKILL.md` in the calling thread's rollout. A direct `exec_command` call joins its successful `function_call_output` by `call_id`. A Codex 0.160.0 `functions.exec` wrapper joins its `custom_tool_call_output` by `call_id` and needs the adjacent `CommandExecution` event to report the same command completed with exit code 0; `Script completed` alone can follow a failed shell read. The child thread's transcript is already its own. The shell read and its JavaScript wrapper must stand alone, so another command's success cannot hide a failed read. Not run on gemini: its tool-call payload and its record of a skill load are unmeasured. Not run on antigravity: the file arrives as `toolCall.args.TargetFile` and a skill load is a `view_file` read with no skill record.
 # summary: Holds back edits and Linear commands until the agent making them has loaded the skill the repository ties to them, so the standard is applied rather than remembered.
 # safety: Reads the payload, asks git where an edit's target is, reads a command with the commit-guards skill's command-position library, and reads the transcript of the agent making the call, or on Copilot the record of the skills that agent loaded; writes only that record, from a finished skill load, in a directory under the user's state home created private to the user. A payload, a rule, a git answer or a persistent transcript it cannot read is refused, never passed. A missing command library on Bash or a missing skill-load-record on Copilot is an install defect: refusing traps a session that cannot repair the install. These calls pass with a keyed gap and repair context; Edit and Write checks that need no missing dependency still refuse an unloaded skill. Codex exec --ephemeral and Pi --no-session cannot persist tool calls; their supported payloads get a keyed gap notice and allowance because loading a skill cannot lift a transcript refusal. An unreadable state never reads as loaded: an `agent_id` that is not a string of ASCII letters, digits, `_` and `-`, the alphabet the harness names subagents in, or that names no single subagent transcript, is refused, and so is a Copilot `sessionId` outside that alphabet. The refusal names the skill to load and the path or command it refused, and never a bypass. Every refusal opens with `skill-load-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 15
@@ -638,10 +638,11 @@ while IFS= read -r skill; do
 done <<EOF
 $REQUIRED
 EOF
-# Codex completion bodies need not name a skill. Read only function calls
-# first, then the outputs matching the required skill reads found below.
+# Codex completion bodies need not name a skill. Direct shell calls need only
+# their matching outputs below. A functions.exec wrapper also needs the
+# adjacent command event and wrapper output to prove the nested read ended.
 if [ "$CALL" = codex ]; then
-  set -- -e '"function_call"'
+  set -- -e '"function_call"' -e '"custom_tool_call"' -e '"custom_tool_call_output"' -e '"CommandExecution"'
 else
   set -- "$@" -e '"toolResult"'
 fi
@@ -661,23 +662,50 @@ esac
 # Its persisted function_call_output omits the internal success flag, so the
 # exec_command header is the fallback for completion. Read only the header
 # before Output: a skill body that prints an exit-code line proves nothing.
+# Codex 0.160.0 functions.exec records a JavaScript custom_tool_call instead.
+# Its Script completed header can follow a failed shell read. The adjacent
+# CommandExecution event must prove shell success before the matching output.
+# Only a literal exec_command followed by text of its output can be judged;
+# other JavaScript could hide another command or a failed read.
 # The whole command must be a read, not a compound shell command whose final
 # exit status could hide a failed read. These are the shell reads agents use
 # for SKILL.md; no shell text is executed by this hook.
 if [ "$CALL" = codex ]; then
   READ_CALLS=$(printf '%s\n' "$CANDIDATES" | jq -R -n -c --arg required "$REQUIRED" '
+    def exec_cmd:
+      "[A-Za-z_$][A-Za-z0-9_$]*" as $identifier
+      | "\"(?:[^\"\\\\]|\\\\.)*\"|[0-9]+" as $literal
+      | ($identifier + "\\s*:\\s*(?:" + $literal + ")") as $field
+      | .input | strings
+      | capture("^\\s*const\\s+(?<variable>" + $identifier + ")\\s*=\\s*await\\s+tools[.]exec_command\\(\\s*\\{\\s*(?<fields>" + $field + "(?:\\s*,\\s*" + $field + ")*)\\s*\\}\\s*\\)\\s*;\\s*text\\(\\s*\\k<variable>[.]output\\s*\\)\\s*;?\\s*$")?
+      | .fields
+      | [match("(?<key>" + $identifier + ")\\s*:\\s*(?<value>" + $literal + ")"; "g")
+        | .captures | map({key:.name, value:.string}) | from_entries
+        | (.value | fromjson?) as $value | {key:.key, value:$value}]
+      | from_entries | .cmd | strings;
     ($required | split("\n") | map(select(. != ""))) as $skills
-    | [inputs | fromjson? | objects | select(.type == "response_item") | .payload | objects
-    | select(.type == "function_call" and .name == "exec_command")
+    | [inputs | fromjson? | objects
+      | select(.type == "response_item" or .type == "event_msg") | .payload | objects] as $items
+    | [$items | to_entries[] | .key as $index | .value
+    | select((.type == "function_call" and .name == "exec_command")
+      or (.type == "custom_tool_call" and .name == "exec"))
+    | .type as $kind
     | (.call_id | strings | select(. != "")) as $id
-    | (.arguments | strings | fromjson? | objects | .cmd | strings) as $cmd
+    | (if $kind == "function_call" then .arguments | strings | fromjson? | objects | .cmd | strings
+      else exec_cmd end) as $cmd
+    | if $kind == "custom_tool_call" then
+        $items[$index + 1].item | objects | select(.type == "CommandExecution")
+        | select(.status == "completed" and .exit_code == 0 and (.command | arrays | .[-1]) == $cmd)
+        | select($items[$index + 2].type == "custom_tool_call_output"
+          and $items[$index + 2].call_id == $id)
+      else . end
     | $skills[] as $skill
     | ($skill | gsub("[.]"; "\\.")) as $escaped
     | ("(?:[^\\s\"\u0027\\\\$`&;|<>()]+/)?" + $escaped + "/SKILL[.]md") as $bare
     | ("(?:\"(?:[^\"\\\\$`\n]*/)?" + $escaped + "/SKILL[.]md\"|\u0027(?:[^\u0027\n]*/)?" + $escaped + "/SKILL[.]md\u0027|" + $bare + ")") as $path
     | ("^\\s*(?:cat(?:\\s+--)?|sed\\s+-n\\s+[\"\u0027][0-9]+(?:,[0-9]+)?p[\"\u0027]|(?:head|tail)(?:\\s+-n\\s+[0-9]+)?)(?:\\s+--)?\\s+" + $path + "\\s*$") as $read
     | select($cmd | test($read))
-    | {id:$id, skill:$skill}]' 2>&1) || refuse transcript unread "$READ_CALLS"
+    | {id:$id, skill:$skill, kind:$kind}]' 2>&1) || refuse transcript unread "$READ_CALLS"
   CALL_IDS=$(printf '%s' "$READ_CALLS" | jq -r '.[].id | @json' 2>&1) || refuse transcript unread "$CALL_IDS"
   [ -n "$CALL_IDS" ] || refuse unloaded "$FIRST"
   set --
@@ -697,11 +725,18 @@ EOF
   esac
   LOADED=$(printf '%s\n' "$CANDIDATES" | jq -R -n -r --argjson calls "$READ_CALLS" '
     inputs | fromjson? | objects | select(.type == "response_item") | .payload | objects
-    | select(.type == "function_call_output")
+    | select(.type == "function_call_output" or .type == "custom_tool_call_output")
     | . as $result
     | $calls[] | select(.id == $result.call_id)
-    | select($result.output | strings | split("\nOutput:")[0]
-      | test("(^|\n)Process exited with code 0(\n|$)"))
+    | if .kind == "function_call" then
+        select($result.type == "function_call_output")
+        | select($result.output | strings | split("\nOutput:")[0]
+          | test("(^|\n)Process exited with code 0(\n|$)"))
+      else
+        select($result.type == "custom_tool_call_output")
+        | select($result.output | arrays | .[0] | objects | .text | strings
+          | split("\nOutput:")[0] | test("^Script completed(\n|$)"))
+      end
     | .skill' 2>&1) || refuse transcript unread "$LOADED"
   judge_loaded
 fi
