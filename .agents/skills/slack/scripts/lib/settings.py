@@ -34,6 +34,7 @@ ROOT_ENV = r'''
 set -euo pipefail
 source "$1/scripts/lib/kendex-env.sh"
 kendex_load_project_env "$2" || exit 1
+export SLACK_MASTER_FILE="${SLACK_MASTER_FILE-}" SLACK_MASTER_MAX_AGE="${SLACK_MASTER_MAX_AGE-}"
 exec "$3" -c 'import json, os, sys; print(json.dumps({name: os.environ.get(name, "") for name in sys.argv[1:]}))' SLACK_MASTER_FILE SLACK_MASTER_MAX_AGE
 '''
 

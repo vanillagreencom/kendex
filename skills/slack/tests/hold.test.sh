@@ -289,7 +289,9 @@ SK_RUN_FROM=""
 
 # Each source is loaded by kendex_load_project_env. Tokens and owners in a
 # served root must not replace the process settings from the launch checkout.
-while read -r name source file age caller posts; do
+# Private files permit bare assignments. The export control keeps their shell
+# values but prevents the Python child from receiving them.
+while read -r name source file age caller control posts; do
   R="$(sk_new_root "settings-$name")"
   sk_bind "$R"
   sk_poll "$R"
@@ -300,29 +302,50 @@ while read -r name source file age caller posts; do
     absent) FILE="" ;;
     *) FILE="$MASTER"; fresh; aged 900 ;;
   esac
-  printf '[env]\nSLACK_MASTER_FILE = "%s"\nSLACK_MASTER_MAX_AGE = "600"\nSLACK_BOT_TOKEN = "wrong-root-token"\nSLACK_OWNERS = "wrong@example.test"\nSLACK_API_URL = "http://invalid.test"\n' "$FILE" > "$R/kendex.settings.toml"
+  printf '[env]\nSLACK_BOT_TOKEN = "wrong-root-token"\nSLACK_OWNERS = "wrong@example.test"\nSLACK_API_URL = "http://invalid.test"\n' > "$R/kendex.settings.toml"
+  case "$source" in
+    local|private|named) printf 'SLACK_MASTER_FILE = "%s"\nSLACK_MASTER_MAX_AGE = "600"\n' "$FILE" >> "$R/kendex.settings.toml" ;;
+  esac
   case "$source" in
     local) printf '[env]\nSLACK_MASTER_MAX_AGE = "%s"\n' "$age" > "$R/.kendex/settings.toml" ;;
     private) printf '[env]\nSLACK_MASTER_MAX_AGE = "600"\n' > "$R/.kendex/settings.toml"; printf 'SLACK_MASTER_MAX_AGE=%s\n' "$age" > "$R/.env.local" ;;
     named) printf 'SLACK_MASTER_MAX_AGE=%s\n' "$age" > "$R/private.env"; printf 'KENDEX_ENV_FILE = "private.env"\n' >> "$R/kendex.settings.toml" ;;
+    private-only) printf 'SLACK_MASTER_FILE=%s\nSLACK_MASTER_MAX_AGE=%s\n' "$FILE" "$age" > "$R/.env.local" ;;
+    named-only) printf 'SLACK_MASTER_FILE=%s\nSLACK_MASTER_MAX_AGE=%s\n' "$FILE" "$age" > "$R/private.env"; printf 'KENDEX_ENV_FILE = "private.env"\n' >> "$R/kendex.settings.toml" ;;
+    private-age) printf 'SLACK_MASTER_MAX_AGE=%s\n' "$age" > "$R/.env.local" ;;
+    named-age) printf 'SLACK_MASTER_MAX_AGE=%s\n' "$age" > "$R/private.env"; printf 'KENDEX_ENV_FILE = "private.env"\n' >> "$R/kendex.settings.toml" ;;
+  esac
+  case "$control" in
+    export) sk_mutant presence-export settings.py 'export (SLACK_MASTER_FILE="\$\{SLACK_MASTER_FILE-\}" SLACK_MASTER_MAX_AGE="\$\{SLACK_MASTER_MAX_AGE-\}")' '\1' ;;
   esac
   notice "$R" "settings-$name" "Settings notice $name."
   case "$caller" in
     age) sk_poll "$R" SLACK_MASTER_MAX_AGE=600 ;;
     file) sk_poll "$R" "SLACK_MASTER_FILE=$SK_TMP/no-master" ;;
     empty) sk_poll "$R" SLACK_MASTER_FILE= ;;
+    configured-file) sk_poll "$R" "SLACK_MASTER_FILE=$FILE" ;;
     *) sk_poll "$R" ;;
   esac
   assert_eq "$RC=$(count "$(sk_channel "$R")" "Settings notice $name.")" "0=$posts" \
     "$name: root settings and caller precedence apply only to presence"
+  sk_bin_reset
 done <<'ROWS'
-relative local relative 3600 none 0
-tilde private tilde 3600 none 0
-named named absolute 3600 none 0
-caller-age private absolute 3600 age 1
-caller-file local absolute 3600 file 1
-caller-empty private absolute 3600 empty 1
-root-empty local absent 3600 none 1
+relative local relative 3600 none real 0
+tilde private tilde 3600 none real 0
+named named absolute 3600 none real 0
+caller-age private absolute 3600 age real 1
+caller-file local absolute 3600 file real 1
+caller-empty private absolute 3600 empty real 1
+root-empty local absent 3600 none real 1
+private-only private-only absolute 3600 none real 0
+named-only named-only absolute 3600 none real 0
+private-age private-age absolute 3600 configured-file real 0
+named-age named-age absolute 3600 configured-file real 0
+private-caller-age private-only absolute 3600 age real 1
+private-caller-file private-only absolute 3600 file real 1
+private-caller-empty private-only absolute 3600 empty real 1
+private-export-control private-only absolute 3600 none export 1
+private-age-export-control private-age absolute 3600 configured-file export 1
 ROWS
 
 R="$(sk_new_root invalid-age)"
