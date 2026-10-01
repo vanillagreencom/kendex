@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { stringifyError } from "./format.js";
 import { host } from "./host.js";
 import { expandHome } from "./package-config.js";
@@ -304,9 +304,8 @@ export async function buildInventory(pi: ExtensionAPI, ctx: ExtensionContext): P
 			}
 
 			const packageName = manifest?.name ?? fallbackName;
-			// Registered local paths are relative to their scope, not the machine root.
-			const installationPath = isAbsolute(normalized.resolved) ? relative(file.baseDir, normalized.resolved) : normalized.source;
-			const pkgId = `package:${file.scope}:${installationPath}:${packageName}`;
+			// Persisted ids share the registration's scope and source, never its physical target.
+			const pkgId = `package:${file.scope}:${normalized.source}:${packageName}`;
 			const packageItem: InventoryItem = {
 				brokenError,
 				description: manifest?.description ?? "Pi package",

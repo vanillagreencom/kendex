@@ -279,21 +279,38 @@ test("rejects unsafe git package clone components", async () => {
 	expect(item?.sourcePath).toBe(maliciousSource);
 });
 
-test("toggles project npm packages by original settings source", async () => {
-	const project = join(rootTmp, "project");
-	const projectPi = join(project, ".pi");
-	const projectPackageDir = join(projectPi, "npm", "node_modules", "@scope", "toggle-settings");
-	const settingsPath = join(projectPi, "settings.json");
-	writeJson(settingsPath, { packages: ["npm:@scope/toggle-settings"] });
-	writePackage(projectPackageDir, "@scope/toggle-settings", "Toggle Settings", "enabled");
-
-	const inv = await inventoryWithTrust(project, true);
-	const item = inv.packages.find((pkg) => pkg.packageName === "@scope/toggle-settings");
-	expect(item?.sourcePath).toBe(projectPackageDir);
-	await toggleItem({} as never, { cwd: project, ui: { notify() {} } } as never, inv, item!);
-
+// Pi SettingsManager.setProjectPackages retains rooted registrations; CLI installs use relative paths.
+test.each([
+	[["./packages/first", "./packages/second"], [join(rootTmp, "original", ".pi", "packages", "first"), join(rootTmp, "original", ".pi", "packages", "second")]],
+	[[join(rootTmp, "external", "first"), join(rootTmp, "external", "second")], [join(rootTmp, "external", "first"), join(rootTmp, "external", "second")]],
+	[["npm:@scope/relocate"], [join(rootTmp, "original", ".pi", "npm", "node_modules", "@scope", "relocate")]],
+	[["git:github.com/acme/relocate@v1.0.0"], [join(rootTmp, "original", ".pi", "git", "github.com", "acme", "relocate")]],
+])("relocated registrations retain ids, grouping and first-enable behavior: %j", async (sources, dirs) => {
+	const project = join(rootTmp, "original");
+	writeJson(join(project, ".pi", "settings.json"), { packages: sources });
+	for (const dir of dirs) writePackage(dir, "@scope/relocate", "Relocate", "enabled");
+	const ctx = { cwd: project, isProjectTrusted: () => true, ui: { notify() {} } } as never;
+	const original = await buildInventory({} as never, ctx);
+	for (const pkg of original.packages) expect(packageExtensions(original.items, pkg)).toHaveLength(1);
+	const selected = packageExtensions(original.items, original.packages[0]!)[0]!;
+	expect(original.packages.map((pkg) => pkg.packageDir)).toEqual(dirs);
+	await toggleItem({} as never, ctx, original, selected);
+	const moved = join(rootTmp, "deeper", "relocated");
+	cpSync(project, moved, { recursive: true });
+	const movedCtx = { cwd: moved, isProjectTrusted: () => true, ui: { notify() {} } } as never;
+	const relocated = await buildInventory({} as never, movedCtx);
+	expect(relocated.packages.map((pkg) => pkg.id)).toEqual(sources.map((source) => `package:project:${source}:@scope/relocate`));
+	const module = relocated.items.find((item) => item.id === selected.id)!;
+	expect(module.state).toBe("disabled");
+	expect(packageExtensions(relocated.items, relocated.packages[0]!)[0]!.id).toBe(selected.id);
+	await toggleItem({} as never, movedCtx, relocated, module);
+	const settingsPath = join(moved, ".pi", "settings.json");
 	const saved = JSON.parse(readFileSync(settingsPath, "utf8"));
-	expect(saved.packages).toEqual([{ source: "npm:@scope/toggle-settings", extensions: [] }]);
+	expect(saved.packages).toEqual(sources);
+	expect(saved.kendex.extensionManager.disabledItems).toEqual([]);
+	const enabled = await buildInventory({} as never, movedCtx);
+	await toggleItem({} as never, movedCtx, enabled, enabled.packages[0]!);
+	expect(JSON.parse(readFileSync(settingsPath, "utf8")).packages).toEqual([{ source: sources[0], extensions: [] }, ...sources.slice(1)]);
 });
 
 test("inventory refuses more than 10000 package and extension rows", async () => {
@@ -302,31 +319,6 @@ test("inventory refuses more than 10000 package and extension rows", async () =>
 	writeJson(join(process.env.PI_CODING_AGENT_DIR!, "settings.json"), { packages: [packageDir] });
 	writeJson(join(packageDir, "package.json"), { name: "large", pi: { extensions: Array.from({ length: 10000 }, (_, i) => `extension-${i}.ts`) } });
 	await expect(inventory(project)).rejects.toThrow("inventory-limit: items=10001 limit=10000");
-});
-
-test("relocated local installations retain module ids and first enable removes the exclusion", async () => {
-	const project = join(rootTmp, "original");
-	const sources = ["./packages/first", "./packages/second"];
-	writeJson(join(project, ".pi", "settings.json"), { packages: sources });
-	for (const source of sources) writePackage(join(project, ".pi", source), "@scope/relocate", "Relocate", "enabled");
-	const ctx = { cwd: project, isProjectTrusted: () => true, ui: { notify() {} } } as never;
-	const original = await buildInventory({} as never, ctx);
-	expect(original.packages.map((pkg) => pkg.id)).toEqual(["first", "second"].map((name) => `package:project:${join("packages", name)}:@scope/relocate`));
-	for (const pkg of original.packages) expect(packageExtensions(original.items, pkg)).toHaveLength(1);
-	const selected = packageExtensions(original.items, original.packages[0]!)[0]!;
-	await toggleItem({} as never, ctx, original, selected);
-	const moved = join(rootTmp, "relocated");
-	cpSync(project, moved, { recursive: true });
-	const movedCtx = { cwd: moved, isProjectTrusted: () => true, ui: { notify() {} } } as never;
-	const relocated = await buildInventory({} as never, movedCtx);
-	expect(relocated.packages.map((pkg) => pkg.id)).toEqual(original.packages.map((pkg) => pkg.id));
-	const module = relocated.items.find((item) => item.id === selected.id)!;
-	expect(module.state).toBe("disabled");
-	expect(packageExtensions(relocated.items, relocated.packages[0]!)[0]!.id).toBe(selected.id);
-	await toggleItem({} as never, movedCtx, relocated, module);
-	const saved = JSON.parse(readFileSync(join(moved, ".pi", "settings.json"), "utf8"));
-	expect(saved.packages).toEqual(sources);
-	expect(saved.kendex.extensionManager.disabledItems).toEqual([]);
 });
 
 test("toggle writes stay in the selected scope through disable, other-scope toggle and re-enable", async () => {
