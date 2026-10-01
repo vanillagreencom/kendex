@@ -42,5 +42,15 @@ fn temporary_directories_inside_a_checkout_leave_ancestor_hooks_unchanged() {
             said(&output)
         );
         assert!(output.status.success(), "{test}: {}", said(&output));
+        // libtest succeeds when an exact filter matches nothing. Its named
+        // completion record proves the requested child ran and passed.
+        let passed = format!("test {test} ... ok");
+        assert!(
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .any(|line| line == passed),
+            "{test} did not run and pass: {}",
+            said(&output)
+        );
     }
 }
