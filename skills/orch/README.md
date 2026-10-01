@@ -1,6 +1,6 @@
 # Orchestration
 
-orch takes Linear or GitHub issues through implementation, review and merge with coding agents. A primary agent assigns each issue's work to coding and review agents, and an overseer can run many issues at once, each in its own agent session, called a lane. It is for people who run coding agents against a tracked backlog.
+orch takes Linear or GitHub issues through implementation, review and merge with coding agents. A primary agent assigns each issue's work to coding and review agents, and an overseer can run many issues at once, each in its own agent session, called a lane.
 
 ## Install
 
@@ -30,7 +30,7 @@ A directive is handed over at the lane's turn end where the harness runs hooks, 
 
 ## How it works
 
-In a single-issue cycle, the primary agent reads the issue in its worktree and assigns implementation to a coding agent. Review agents inspect the change and return findings, and the coding agent applies the required fixes. The primary agent opens the PR and, by the merge policy, arms auto-merge where the base requires the review gate. In overseer mode, the overseer selects unblocked issues and launches a lane for each, and every lane runs the single-issue cycle. `oversee-watch` waits until a lane needs attention, and the overseer then answers the lane's question, relaunches a stopped lane, or runs the post-merge steps after a merge.
+The primary agent opens the PR and, by the merge policy, arms auto-merge where the base requires the review gate. In overseer mode, the overseer selects unblocked issues and launches a lane for each, and every lane runs the single-issue cycle. `oversee-watch` waits until a lane needs attention, and the overseer then answers the lane's question, relaunches a stopped lane, or runs the post-merge steps after a merge.
 
 ## Settings
 
