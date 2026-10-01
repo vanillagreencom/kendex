@@ -21,7 +21,7 @@ Requires jq, Bash 3.2, flock, setsid and timeout or gtimeout; the included SSH h
 - `oversee-report` writes the overseer's status reports; `oversee-cycle` times each merge against its class target.
 - `open-terminal --relaunch` resumes a stopped lane's own agent session, on the same account or another, and workflow state and handoff files let a lane or overseer continue where it stopped.
 - Each review finding is fixed, filed as an issue or declined by the rules in [references/finding-disposition.md](references/finding-disposition.md), settings cap the review and CI-fix rounds, and `branch-size-check` compares the branch's added lines with the issue's expected size.
-- [references/secret-value.ere](references/secret-value.ere) holds a pattern of secret values: GitHub and Slack tokens and private-key headers, for a package or a fleet script to refuse to send text or a file that matches it. Its header says how to read it.
+- [references/secret-value.ere](references/secret-value.ere) matches GitHub and Slack tokens and private-key headers for scripts to refuse to send matching text or files. Its header states how to read it.
 - Lanes run on Claude Code, Codex, OpenCode, Pi and Copilot CLI, remotely and in a fleet on all but OpenCode (Copilot fleets local); account selection, succession and preference entries cover all but OpenCode.
 
 Dependabot security updates open the fleet's fix pull requests; an organization owner turns them on for every repository through an organization security configuration.
