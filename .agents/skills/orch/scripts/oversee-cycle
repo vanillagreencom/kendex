@@ -3,8 +3,8 @@
 # and the fleet's per-class rollup of those records.
 #
 # Usage:
-#   oversee-cycle [--state-dir DIR] record --pr N [--tier micro|small|standard]
-#                 [--repo OWNER/REPO] ITEM
+#   oversee-cycle [--state-dir DIR] record (--pr N | --commit SHA)
+#                 [--tier micro|small|standard] [--repo OWNER/REPO] ITEM
 #   oversee-cycle [--state-dir DIR] rollup
 #
 # --state-dir is the fleet state's directory, as workflow-state takes it.
@@ -21,6 +21,15 @@
 # defaults to the lane record's repo, then this checkout's. The recorded launch
 # tier wins; a differing --tier refuses as tier-mismatch naming launch and given.
 # An old record with no tier warns as launch-tier-missing and requires --tier.
+# --commit records a single-commit direct push. The caller must refuse a
+# multi-commit push: no push-before value is an input. The supplied commit's
+# authored date is first_commit and its committer date is merged, not the
+# network push time. Its first parent to the commit uses the same classifier.
+# No CI check is read. pr_opened, gate_green, ci_green and armed are null,
+# as are open, phase, gate waits, pr_rounds and refixed; verdict is unmeasured
+# when classified. The cycle object carries commit instead of pr, and the
+# cycle line below uses commit=SHA instead of pr=N. actual and escaped still
+# enter the per-class rollup. Exactly one of --pr and --commit is required.
 # The round counts come from
 # the lane's own workflow state, read as oversee-report reads it through
 # lib/lane-gitfile.sh's lane_item_state; a lane whose state is gone, which
@@ -121,7 +130,7 @@
 # Every refusal's first stderr line is `oversee-cycle: KEY=VALUE`.
 # Exit status: 0 done; 1 a refusal (state-missing, state-unreadable,
 # record-missing, pauses-unreadable, timeline-failed, not-merged,
-# state-write-failed, fleet-log-failed); 2 usage.
+# commit-unreadable, state-write-failed, fleet-log-failed); 2 usage.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -224,21 +233,25 @@ if [[ "$VERB" == rollup ]]; then
   exit 0
 fi
 
-PR="" TIER="" REPO="" ITEM=""
+PR="" COMMIT="" TIER="" REPO="" ITEM=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --pr | --tier | --repo)
+    --pr | --commit | --tier | --repo)
       [[ -n "${2:-}" ]] || usage_error "$1"
       case "$1" in
-        --pr) PR="$2" ;; --tier) TIER="$2" ;; --repo) REPO="$2" ;;
+        --pr) PR="$2" ;; --commit) COMMIT="$2" ;; --tier) TIER="$2" ;; --repo) REPO="$2" ;;
       esac
       shift 2 ;;
     -*) usage_error "$1" ;;
     *) [[ -z "$ITEM" ]] || usage_error "$1"; ITEM="$1"; shift ;;
   esac
 done
+# The overseer's record call selects one delivery form, never both or none.
+if [[ -z "$PR" && -z "$COMMIT" ]] || [[ -n "$PR" && -n "$COMMIT" ]]; then
+  usage_error '--pr,--commit'
+fi
 [[ -n "$ITEM" ]] || usage_error item
-[[ "$PR" =~ ^[1-9][0-9]*$ ]] || usage_error --pr
+[[ -z "$PR" || "$PR" =~ ^[1-9][0-9]*$ ]] || usage_error --pr
 case "$TIER" in '' | micro | small | standard) ;; *) usage_error --tier ;; esac
 
 if ! lane="$(jq -c --arg item "$ITEM" '[.lanes[]? | select(.item == $item)] | first // empty' "$STATE_FILE")"; then
@@ -272,10 +285,14 @@ elif [[ -n "$LANE_ITEM_STATE" ]]; then
     <<<"$LANE_ITEM_STATE" 2>"$WORK/state.err")" || { rounds=null; rounds_unread="$WORK/state.err"; }
 fi
 
-timeline="$("$GITHUB" pr-timeline "$PR" ${REPO:+--repo "$REPO"} 2>"$WORK/timeline.err")" \
-  || refuse timeline-failed "$PR" "$WORK/timeline.err"
-merge="$(jq -r '.merge_commit // empty' <<<"$timeline")" || refuse timeline-failed "$PR"
-[[ -n "$merge" ]] || refuse not-merged "$PR"
+if [[ -n "$PR" ]]; then
+  timeline="$("$GITHUB" pr-timeline "$PR" ${REPO:+--repo "$REPO"} 2>"$WORK/timeline.err")" \
+    || refuse timeline-failed "$PR" "$WORK/timeline.err"
+  merge="$(jq -r '.merge_commit // empty' <<<"$timeline")" || refuse timeline-failed "$PR"
+  [[ -n "$merge" ]] || refuse not-merged "$PR"
+else
+  merge="$COMMIT"
+fi
 
 # other_repo CHECKOUT — true where CHECKOUT is provably not a checkout of the
 # lane's repository: a local lane's worktree names another origin, or the
@@ -323,6 +340,17 @@ elif change_class_read "$base" "$merge" "$checkout" "$WORK/class.err"; then
   fi
 else
   class_cause="$CHANGE_CLASS_CAUSE"
+fi
+
+if [[ -n "$COMMIT" ]]; then
+  COMMIT="$(git rev-parse --verify --end-of-options "$merge^{commit}" 2>"$WORK/commit.err")" \
+    || refuse commit-unreadable "$merge" "$WORK/commit.err"
+  dates="$(git show -s --format='%at %ct' "$COMMIT" -- 2>"$WORK/commit.err")" \
+    || refuse commit-unreadable "$COMMIT" "$WORK/commit.err"
+  timeline="$(jq -cn --arg commit "$COMMIT" --arg dates "$dates" '
+    ($dates | split(" ") | map(tonumber | todate)) as $d
+    | {commit: $commit, stamps: {first_commit: $d[0], merged: $d[1]}}')" \
+    || refuse commit-unreadable "$COMMIT"
 fi
 
 # The lane's pauses in epoch seconds: each one the record keeps, and a park
@@ -374,7 +402,8 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
   | ($seq // [] | map(.name) | index("gate_green")) as $gate
   | (if ($missing | length) > 0 or ($gate // 0) == 0 or $t.push_times == null then null
      else gate_waits($seq[$gate - 1].at; $seq[$gate].at) end) as $waits
-  | {pr: $t.pr, class: $class, class_cause: (if $cause == "" then null else $cause end),
+  | (if $t.commit == null then {pr: $t.pr} else {commit: $t.commit} end)
+    + {class: $class, class_cause: (if $cause == "" then null else $cause end),
      class_reason: (if $class_reason == "" then null else $class_reason end),
      tier_inputs: $lane.tier_inputs, tier: $tier, stamps: $stamps, target: $target, merge_group: $merge_group, actual: $actual, open: $open,
      verdict: (if $class == null then "unclassified" elif $open == null then "unmeasured"
@@ -393,14 +422,15 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
       elif $class_reason == "several-subsystems" or ($evidence | test("(^| )path=")) then "path-miss"
       elif ($class_reason | startswith("production-")) then "estimate-miss"
       else null end)')" \
-  || refuse timeline-failed "$PR"
+  || refuse timeline-failed "${PR:-$COMMIT}"
 
 "$WORKFLOW_STATE" ${WS_ARGS[@]+"${WS_ARGS[@]}"} update oversee --arg item "$ITEM" --argjson cycle "$cycle" \
   '(.lanes[] | select(.item == $item)).cycle = $cycle' >/dev/null 2>"$WORK/ws.err" \
   || refuse state-write-failed "$ITEM" "$WORK/ws.err"
 
 line="$(jq -r --arg item "$ITEM" 'def n: if . == null then "-" else tostring end;
-  "cycle item=\($item) pr=\(.pr) class=\(.class | n) tier=\(.tier) target=\(.target | n)"
+  "cycle item=\($item) " + (if .commit == null then "pr=\(.pr)" else "commit=\(.commit)" end)
+  + " class=\(.class | n) tier=\(.tier) target=\(.target | n)"
   + " merge_group=\(.merge_group | n)"
   + " actual=\(.actual | n) open=\(.open | n) verdict=\(.verdict) phase=\(.phase | n) phase_secs=\(.phase_secs | n)"
   + " cause=\(.cause | n) bot_wait=\(.gate_waits.bot_wait | n) thread_fix=\(.gate_waits.thread_fix | n)"

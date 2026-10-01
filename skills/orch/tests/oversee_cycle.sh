@@ -80,7 +80,8 @@ git init -q "$REPO"
 git -C "$REPO" config gc.auto 0
 git -C "$REPO" config maintenance.auto false
 commit "$REPO" base
-commit "$REPO" merge
+env GIT_AUTHOR_DATE='1790000060 +0000' GIT_COMMITTER_DATE='1790000900 +0000' \
+  git -C "$REPO" -c user.name=t -c user.email=t@t commit -q --allow-empty -m merge
 MERGE="$(git -C "$REPO" rev-parse HEAD)"
 BASE="$(git -C "$REPO" rev-parse HEAD^)"
 git -C "$REPO" remote add origin "$ORIGIN"
@@ -126,17 +127,61 @@ timeline() {
 }
 edit_json() { jq "$2" "$1" > "$1.new" && mv -- "$1.new" "$1"; } # FILE FILTER
 
+RECORD_ARGS=(--pr 7)
 record() { # ITEM TIER [ARGS...]
   local item="$1" tier="$2" rc=0 tier_args=()
   shift 2
   [[ -z "$tier" ]] || tier_args=(--tier "$tier")
-  (cd "$REPO" && PATH="$TMP_ROOT/bin:$PATH" env -u ORCH_STATE_DIR -u GH_REPO "${RUN_BIN:-$BIN}" --state-dir "$CASE/state" record --pr 7 ${tier_args[@]+"${tier_args[@]}"} "$@" "$item") \
+  (cd "$REPO" && PATH="$TMP_ROOT/bin:$PATH" env -u ORCH_STATE_DIR -u GH_REPO "${RUN_BIN:-$BIN}" --state-dir "$CASE/state" record ${RECORD_ARGS[@]+"${RECORD_ARGS[@]}"} ${tier_args[@]+"${tier_args[@]}"} "$@" "$item") \
     > "$CASE/out" 2> "$CASE/err" || rc=$?
   printf 'rc=%s %s' "$rc" "$(cat "$CASE/out")"
 }
 field() { grep -o " $1=[^ ]*" <<<"$2" | head -n 1 | sed 's/^ //'; } # NAME LINE
 
 state() { jq -c "$1" "$CASE/state/workflow-state-oversee.json"; }
+
+# Both delivery forms use the same reader and writer. The direct-push case
+# has no timeline fixture: calling pr-timeline would fail the record.
+echo "=== direct push and the mutually exclusive delivery flags ==="
+while IFS='|' read -r name form want; do
+  new_case "delivery-$name"
+  printf small > "$CASE/class"
+  edit_json "$CASE/state/workflow-state-oversee.json" '.lanes[0].tier = "micro"'
+  case "$form" in
+    pr) RECORD_ARGS=(--pr 7); timeline 900 ;;
+    commit) RECORD_ARGS=(--commit "$MERGE") ;;
+    both) RECORD_ARGS=(--pr 7 --commit "$MERGE"); timeline 900 ;;
+    neither) RECORD_ARGS=() ;;
+  esac
+  got="$(record KEN-1 '')"
+  assert_eq "$(sed -E 's/ phase=.*//' <<<"$got")|$(sed -n '/^oversee-cycle: usage=/p' "$CASE/err")" \
+    "${want//SHA/$MERGE}" "delivery flags: $name"
+done <<'ROWS'
+PR|pr|rc=0 cycle item=KEN-1 pr=7 class=small tier=micro target=1800 merge_group=- actual=900 open=780 verdict=met|
+direct push|commit|rc=0 cycle item=KEN-1 commit=SHA class=small tier=micro target=1800 merge_group=- actual=900 open=- verdict=unmeasured|
+both|both|rc=2 |oversee-cycle: usage=--pr,--commit
+neither|neither|rc=2 |oversee-cycle: usage=--pr,--commit
+ROWS
+assert_eq "$(state '[.lanes[] | has("cycle")] | any')" false "neither form writes no cycle"
+
+new_case direct-stamps
+printf small > "$CASE/class"
+edit_json "$CASE/state/workflow-state-oversee.json" '.lanes[0].tier = "micro"'
+RECORD_ARGS=(--commit "$MERGE")
+got="$(record KEN-1 '')"
+assert_eq "$got" \
+  "rc=0 cycle item=KEN-1 commit=$MERGE class=small tier=micro target=1800 merge_group=- actual=900 open=- verdict=unmeasured phase=- phase_secs=- cause=- bot_wait=- thread_fix=- paused=- missing=pr_opened,gate_green,ci_green,armed review=- fix=- bot=- full_validations=- pr_rounds=- escaped=true tier_inputs=- class_reason=stub escape_cause=- refixed=-" \
+  "direct push prints the commit, elapsed time, escape and absent PR fields"
+assert_eq "$(state '.lanes[0].cycle | [.commit, has("pr"), .class, .tier, .actual, .escaped, .stamps]')" \
+  "[\"$MERGE\",false,\"small\",\"micro\",900,true,{\"launched\":\"$(at 0)\",\"first_commit\":\"$(at 60)\",\"pr_opened\":null,\"gate_green\":null,\"ci_green\":null,\"armed\":null,\"merged\":\"$(at 900)\"}]" \
+  "direct push persists authored and committer dates in UTC"
+assert_eq "$(state '.fleet_log[-1].text')" "\"${got#rc=0 }\"" "direct cycle row is the printed row"
+assert_eq "$(grep -o -- '--base [^ ]* --head [^ ]*' "$CASE/class.calls")" "--base $BASE --head $MERGE" \
+  "direct push reuses the first-parent classifier"
+assert_eq "$(test -f "$CASE/github.calls" && echo called || echo absent)" absent "direct push reads no PR or CI checks"
+assert_contains "$(cd "$REPO" && "$BIN" --state-dir "$CASE/state" rollup)" \
+  'rollup class=small items=1 median=900 p90=900 misses=0' "rollup includes the direct push in its class"
+RECORD_ARGS=(--pr 7)
 
 # --- the target per class, and the miss verdict ------------------------------
 # One row per class, open to merge one second over its target, and each class
@@ -547,6 +592,30 @@ control() { # NAME FILE ANCHOR REPLACEMENT — sets RUN_BIN to the mutant's over
 }
 
 echo "=== controls ==="
+# Each independent refusal is disabled alone. The mutant must get past the
+# flag guard, so a different refusal is not credited as this guard working.
+while IFS='|' read -r name anchor replacement form; do
+  control "m-delivery-$name" oversee-cycle "$anchor" "$replacement"
+  new_case "c-delivery-$name"; printf small > "$CASE/class"; timeline 900
+  case "$form" in
+    both) RECORD_ARGS=(--pr 7 --commit "$MERGE") ;;
+    neither) RECORD_ARGS=() ;;
+  esac
+  got="$(record KEN-1 micro)"
+  assert_not_contains "$(cat "$CASE/err")" 'oversee-cycle: usage=--pr,--commit' \
+    "control: disabling $name turns its keyed refusal assertion red"
+  assert_not_contains "$got" 'rc=2 ' "control: $name reaches beyond the flag guard"
+done <<'ROWS'
+neither|[[ -z "$PR" && -z "$COMMIT" ]]|{ [[ -z "$PR" && -z "$COMMIT" ]] && false; }|neither
+both|[[ -n "$PR" && -n "$COMMIT" ]]; then|{ [[ -n "$PR" && -n "$COMMIT" ]] && false; }; then|both
+ROWS
+RECORD_ARGS=(--commit "$MERGE")
+control m-direct-stamp oversee-cycle 'merged: $d[1]' 'merged: $d[0]'
+new_case c-direct-stamp; printf small > "$CASE/class"
+assert_eq "$(field actual "$(record KEN-1 micro)")" 'actual=60' \
+  "control: using the authored date as merged turns the direct elapsed-time assertion red"
+RECORD_ARGS=(--pr 7)
+
 control m-merge-target oversee-cycle '$targets[$class] + ($merge_group // 0)' '$targets[$class] + 0'
 new_case c-merge-target; printf micro > "$CASE/class"; timeline 1500
 edit_json "$CASE/timeline.json" '.ci_merge_group_secs = 280'
