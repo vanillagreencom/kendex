@@ -329,20 +329,20 @@ named_lane_resolve() {
   lane_check "$lane_dir"
 }
 
-# A caller's model is authoritative, including in an arbitrary --cmd. A
-# model-free harness command takes the program's ordered preference instead.
-# The shared builder replaces harness-required settings; the remaining words
-# keep the caller's permission posture and brief. An arbitrary shell command
-# cannot be replaced without discarding its work.
+# Keep the caller's input for every preference walk, including a batch's
+# rejudge and the cap's wait-slot callback. Explicit-model launches never enter.
 PREFERENCE_ENTRY="" PREFERENCE_LANE_ENV=""
+preference_pi_root="${PI_CODING_AGENT_DIR-}"
 CMD_INPUT="$CMD_TEMPLATE"
 preference_harness="$HARNESS"
 [[ -n "$preference_harness" || "$LANE" != auto:* ]] || preference_harness="${LANE#auto:}"
 preference_text="$CMD_TEMPLATE $LAUNCH_FLAGS"
 [[ -n "$preference_harness" || -z "$CMD_TEMPLATE" ]] || preference_harness="${CMD_TEMPLATE%% *}"
+PREFERENCE_ACTIVE=false
 if [[ "$WAKE" != true && -n "${ORCH_LANE_PREFERENCE:-}" \
       && -n "$(launch_choice_row "$preference_harness")" \
       && -z "$(launch_choice_launch_model "" "$preference_text")" ]]; then
+  PREFERENCE_ACTIVE=true
   # shellcheck source=lib/overseer-launch.sh
   source "$SCRIPT_DIR/lib/overseer-launch.sh"
   ol_preference_entries "$ORCH_LANE_PREFERENCE" || {
@@ -354,46 +354,62 @@ if [[ "$WAKE" != true && -n "${ORCH_LANE_PREFERENCE:-}" \
     ''|auto|auto:*) ;;
     *) named_lane_resolve; preference_pick_args=(--lane "$lane_dir" --projected) ;;
   esac
+  preference_input=()
+  if [[ -n "$CMD_INPUT" ]]; then
+    launch_choice_shell_words "$CMD_INPUT"
+    [[ "${LAUNCH_CHOICE_ARGV[0]}" == "$preference_harness" ]] || {
+      ot_message preference-command-invalid "harness=$preference_harness" >&2; exit 1;
+    }
+    preference_input=("${LAUNCH_CHOICE_ARGV[@]:1}")
+  else
+    launch_choice_shell_words "$LAUNCH_FLAGS"
+    preference_input=(${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"})
+  fi
+  OL_WALK_SOURCE_HARNESS="$preference_harness" OL_WALK_SOURCE_FLAGS="${preference_input[*]+${preference_input[*]}}"
+fi
+
+# One owner chooses and rebuilds a preference launch from the original input.
+# Permission eligibility and flag translation belong to the overseer walk.
+preference_select() {
+  local preference_entry preference_rc preference_word
+  PREFERENCE_ENTRY="" PREFERENCE_LANE_ENV=""
   for preference_entry in "${OL_ENTRIES[@]}"; do
     ol_entry_model "$preference_entry"
+    OL_HARNESS="$OL_ENTRY_HARNESS" OL_WALK_SKIPS=()
+    if ! ol_entry_permitted "$preference_entry"; then
+      ot_message entry-permission-untransferable "entry=$preference_entry" \
+        "source=$preference_harness" "target=$OL_ENTRY_HARNESS" >&2
+      continue
+    fi
     LANE_HARNESS="$OL_ENTRY_HARNESS" LAUNCH_MODEL="$OL_ENTRY_MODEL"
     preference_rc=0
     PREFERENCE_LANE_ENV="$(pick_auto_lane ${preference_pick_args[@]+"${preference_pick_args[@]}"})" || preference_rc=$?
     case "$preference_rc" in
       0) PREFERENCE_ENTRY="$preference_entry"; break ;;
       3) continue ;;
-      *) ot_message lane-resolution-failed "entry=$preference_entry" "exit=$preference_rc" >&2; exit 1 ;;
+      *) ot_message lane-resolution-failed "entry=$preference_entry" "exit=$preference_rc" >&2; return 1 ;;
     esac
   done
-  [[ -n "$PREFERENCE_ENTRY" ]] || { ot_message lane-unavailable "walk=$ORCH_LANE_PREFERENCE" >&2; exit 1; }
-  preference_words="$(launch_choice_write "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" "$OL_ENTRY_EFFORT")" || {
-    ot_message lane-resolution-failed "entry=$PREFERENCE_ENTRY" step=launch-flags >&2; exit 1;
+  [[ -n "$PREFERENCE_ENTRY" ]] || { ot_message lane-unavailable "walk=$ORCH_LANE_PREFERENCE" >&2; return 1; }
+  ol_launch_flags --question-off "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" "$OL_ENTRY_EFFORT" \
+    "$OL_ENTRY_MODEL" "$preference_harness" ${preference_input[@]+"${preference_input[@]}"} || {
+    ot_message lane-resolution-failed "entry=$PREFERENCE_ENTRY" "step=$OL_REASON" >&2; return 1;
   }
-  if [[ -n "$CMD_TEMPLATE" ]]; then
-    launch_choice_shell_words "$CMD_TEMPLATE"
-    [[ "${LAUNCH_CHOICE_ARGV[0]}" == "$preference_harness" ]] || {
-      ot_message preference-command-invalid "harness=$preference_harness" >&2; exit 1;
-    }
-    launch_choice_strip "$preference_harness" "${LAUNCH_CHOICE_ARGV[@]:1}" || exit 1
-  else
-    launch_choice_shell_words "$LAUNCH_FLAGS"
-    launch_choice_strip "$preference_harness" ${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"} || exit 1
-  fi
-  launch_choice_lead_settings --question-off --model "$OL_ENTRY_MODEL" "$OL_ENTRY_HARNESS" \
-    ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}
-  if [[ -n "$CMD_TEMPLATE" ]]; then
-    CMD_TEMPLATE="$OL_ENTRY_HARNESS $preference_words"
-    for preference_word in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}; do
+  if [[ -n "$CMD_INPUT" ]]; then
+    CMD_TEMPLATE="$OL_ENTRY_HARNESS"
+    for preference_word in ${OL_FLAGS[@]+"${OL_FLAGS[@]}"}; do
       if [[ "$preference_word" == '{brief}' ]]; then CMD_TEMPLATE+=" {brief}"
       else CMD_TEMPLATE+=" $(lane_single_quote "$preference_word")"; fi
     done
   else
-    LAUNCH_FLAGS="$preference_words"
-    for preference_word in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}; do LAUNCH_FLAGS+=" $preference_word"; done
+    LAUNCH_FLAGS="${OL_FLAGS[*]+${OL_FLAGS[*]}}"
   fi
   HARNESS="$OL_ENTRY_HARNESS"
   case "$LANE" in ''|auto|auto:*) LANE=auto ;; esac
-fi
+  if [[ -n "$preference_pi_root" ]]; then PI_CODING_AGENT_DIR="$preference_pi_root"
+  else unset PI_CODING_AGENT_DIR; fi
+  launch_judge
+}
 # How lane_record_write treats an entry that already names the item.
 RECORD_MODE=launch
 [[ "$RELAUNCH" != true ]] || RECORD_MODE=relaunch
@@ -547,6 +563,7 @@ fi
 # script renders into the harness command it builds. The refusal above leaves at
 # most one of the two non-empty, so this is the launch's single text and not a
 # precedence between two.
+launch_judge() {
 LAUNCH_TEXT="$CMD_TEMPLATE"
 [[ -n "$LAUNCH_TEXT" ]] || LAUNCH_TEXT="$LAUNCH_FLAGS"
 
@@ -612,7 +629,7 @@ if [[ -n "$LANE" && -n "$(launch_choice_row "$LAUNCH_HARNESS")" ]]; then
       "spellings=${LAUNCH_EFFORT_SPELLINGS// /,}" >&2
     launch_choice_missing=true
   fi
-  [[ "$launch_choice_missing" != true ]] || exit 1
+  [[ "$launch_choice_missing" != true ]] || return 1
 fi
 
 # Every command start_cmd builds carries the words its harness row names to
@@ -630,7 +647,7 @@ if ! LAUNCH_QUESTION_OFF="$(launch_choice_question_off "$LAUNCH_HARNESS")" \
   read -r -a question_words <<<"$LAUNCH_QUESTION_OFF"
   for question_word in ${question_words[@]+"${question_words[@]}"}; do question_fields+=("word=$question_word"); done
   ot_message launch-question-tool-missing "harness=$LAUNCH_HARNESS" ${question_fields[@]+"${question_fields[@]}"} >&2
-  exit 1
+  return 1
 fi
 
 # Every lane is briefed with the unattended words: start_cmd puts them in
@@ -643,7 +660,7 @@ if [[ -n "$CMD_TEMPLATE" && -n "$LAUNCH_HARNESS" && "$BRIEF_TEXT" != *"$LAUNCH_U
    && ! launch_choice_phrase_present "$LAUNCH_UNATTENDED_TEXT" "$CMD_TEMPLATE"; then
   ot_message launch-unattended-missing "harness=$LAUNCH_HARNESS" >&2
   printf '%s\n' "$LAUNCH_UNATTENDED_TEXT" >&2
-  exit 1
+  return 1
 fi
 
 # A fleet lane hands off at a share of its own window, which a harness adapter
@@ -725,14 +742,14 @@ if [[ "$FLEET" == true && "$WAKE" != true ]]; then
       fi
       if [[ "$gate_window" != true ]]; then
         ot_message launch-window-unknown "harness=$LAUNCH_HARNESS" "model=${LAUNCH_MODEL:-none}" >&2
-        exit 1
+        return 1
       fi
       if [[ -n "$CMD_TEMPLATE" ]] && ! launch_choice_words_present "$LAUNCH_COMPACTION_OFF" "$CMD_TEMPLATE"; then
         compaction_fields=()
         read -r -a compaction_words <<<"$LAUNCH_COMPACTION_OFF"
         for compaction_word in "${compaction_words[@]}"; do compaction_fields+=("word=$compaction_word"); done
         ot_message launch-compaction-missing "harness=$LAUNCH_HARNESS" "${compaction_fields[@]}" >&2
-        exit 1
+        return 1
       fi
       ;;
     pi)
@@ -740,13 +757,18 @@ if [[ "$FLEET" == true && "$WAKE" != true ]]; then
         if [[ -n "$LANE" && "$(lane_pick_harness pi "$LAUNCH_MODEL")" == pi ]]; then
           PI_GATE_DEFERRED=true
         else
-          pi_local_gate || exit 1
+          pi_local_gate || return 1
         fi
       fi
       ;;
-    copilot) [[ "$LANE_HOST" == local ]] || { ot_message unsupported-for-oversee "harness=copilot" "reason=hosted" >&2; exit 1; } ;;
-    *) ot_message unsupported-for-oversee "harness=${LAUNCH_HARNESS:-none}" >&2; exit 1 ;;
+    copilot) [[ "$LANE_HOST" == local ]] || { ot_message unsupported-for-oversee "harness=copilot" "reason=hosted" >&2; return 1; } ;;
+    *) ot_message unsupported-for-oversee "harness=${LAUNCH_HARNESS:-none}" >&2; return 1 ;;
   esac
+fi
+
+if [[ -n "$LANE" && "$LANE_HOST" != local && "$LAUNCH_HARNESS" == pi && "$(lane_pick_harness pi "$LAUNCH_MODEL")" == claude ]]; then
+  ot_message host-pi-claude-seat "host=$LANE_HOST" "model=$LAUNCH_MODEL" >&2
+  return 1
 fi
 
 # Handoff is unattended. A harness whose row names a permission posture stalls
@@ -760,6 +782,10 @@ if LAUNCH_PERMISSION_SPELLINGS="$(launch_choice_permission_spellings "$LAUNCH_HA
     ot_message permission-prompt "flags=$LAUNCH_FLAGS" >&2
   fi
 fi
+
+}
+if [[ "$PREFERENCE_ACTIVE" == true ]]; then preference_select || exit 1
+else launch_judge || exit 1; fi
 
 # Resolve the launch lane BEFORE creating any worktree. A fleet launch that
 # discovers "every account is full" after spawning three worktrees has already
@@ -1038,10 +1064,6 @@ if [[ -n "$LANE" ]]; then
   # `create`), so the seat would be copied as a Pi login that is not there and
   # pi-claude-bridge would run on the host's own Claude login. Refused before
   # any pick, judge or host work.
-  if [[ "$LANE_HOST" != local && "$LAUNCH_HARNESS" == pi && "$(lane_pick_harness pi "$LAUNCH_MODEL")" == claude ]]; then
-    ot_message host-pi-claude-seat "host=$LANE_HOST" "model=$LAUNCH_MODEL" >&2
-    exit 1
-  fi
   case "$LANE" in
     auto|auto:*)
       # The spec's own harness where it names one, parsed once above beside
@@ -2773,7 +2795,15 @@ fi
 # refusal printed.
 lane_rejudge() { # ITEM
   local next rc=0
-  if [[ "$LANE_AUTO" == true ]]; then
+  if [[ "$PREFERENCE_ACTIVE" == true ]]; then
+    preference_select || return 1
+    LANE_ENV="$PREFERENCE_LANE_ENV"
+    ! lane_value_error "$LANE_ENV" || return 1
+    ot_message lane-selected "lane=$LANE_ENV"
+    pi_lane_root_apply && copilot_fleet_gate || return 1
+    COPILOT_HOOKS_GATED=false
+    [[ "$FLEET" != true || "$LAUNCH_HARNESS" != copilot ]] || COPILOT_HOOKS_GATED=true
+  elif [[ "$LANE_AUTO" == true ]]; then
     next="$(pick_auto_lane)" || rc=$?
     [[ "$rc" -eq 0 ]] || { auto_pick_refusal "$rc" "item=$1" "launched=$launched"; return 1; }
     ! lane_value_error "$next" || return 1
@@ -2857,12 +2887,12 @@ for raw in "${ITEMS[@]}"; do
   # A claim an earlier item failed to write is a lane an auto re-pick, which
   # reads claims, cannot see, so it would not move off that account. That stops
   # the batch, before this item's re-pick.
-  if [[ "$CLAIM_WRITE_FAILED" == true && "$LANE_AUTO" == true ]]; then
+  if [[ "$CLAIM_WRITE_FAILED" == true && ( "$LANE_AUTO" == true || "$PREFERENCE_ACTIVE" == true ) ]]; then
     ot_message claim-unrecorded "item=$item" "launched=$launched" >&2
     failed=$((failed + 1))
     break
   fi
-  if [[ "$LANE_AUTO" == true && "$TERMINAL_MODE" == "tmux" && "$attempted" -gt 1 ]] && ! lane_rejudge "$item"; then
+  if [[ ( "$LANE_AUTO" == true || "$PREFERENCE_ACTIVE" == true ) && "$TERMINAL_MODE" == "tmux" && "$attempted" -gt 1 ]] && ! lane_rejudge "$item"; then
     failed=$((failed + 1))
     break
   fi

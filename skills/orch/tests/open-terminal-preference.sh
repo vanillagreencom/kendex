@@ -8,6 +8,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/open-terminal-stubs.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/lanes-fixture.sh"
 TEST_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SCRIPTS_DIR="$(cd -- "$TEST_DIR/../scripts" && pwd -P)"
 TMP_ROOT="$(mktemp -d)" || { echo "open-terminal-preference: scratch=mktemp-failed" >&2; exit 1; }
@@ -36,7 +37,7 @@ for a in "$@"; do
 done
 printf '%s:%s\n' "$h" "$m" >> "$PICK_LOG"
 case "$WALL:$h" in all:*|pi:pi) exit 3 ;; error:*) exit 6 ;; esac
-case "$h" in pi) printf 'PI_CODING_AGENT_DIR=%s\n' "$PI_CODING_AGENT_DIR" ;; codex) printf 'CODEX_HOME=%s\n' "$CODEX_TEST_HOME" ;; esac
+case "$h" in claude) printf 'CLAUDE_CONFIG_DIR=%s\n' "$HOME/.claude" ;; pi) printf 'PI_CODING_AGENT_DIR=%s\n' "$PI_CODING_AGENT_DIR" ;; codex) printf 'CODEX_HOME=%s\n' "$CODEX_TEST_HOME" ;; esac
 STUB
 chmod +x "$BIN/lanes"
 source "$SCRIPTS_DIR/lib/lane-launch.sh"
@@ -51,7 +52,7 @@ OT="$REPO/scripts/open-terminal"
 # stub. A successful GUI dispatch is asynchronous, so wait for its capture,
 # bounded by wall time, rather than reading a log before the stub writes it.
 observe() { # PREFERENCE WALL MODE TEXT
-  local preference="$1" wall="$2" mode="$3" text="$4" rc=0 key=none record='none|none|none' cmd="" written=no end args=()
+  local preference="$1" wall="$2" mode="$3" text="$4" caller="${5:-pi}" rc=0 key=none record='none|none|none' cmd="" written=no end args=()
   RUN="$TMP_ROOT/run"
   rm -rf -- "${RUN:?}"
   mkdir -p "$RUN"
@@ -63,7 +64,7 @@ observe() { # PREFERENCE WALL MODE TEXT
     OVERSEE_WATCH_STATE_DIR="$RUN/claims" WORKTREE_CLI="$BIN/worktree" LANES_CLI="$BIN/lanes" \
     PI_CODING_AGENT_DIR="$TMP_ROOT/pi" CODEX_TEST_HOME="$TMP_ROOT/codex" \
     WALL="$wall" PICK_LOG="$RUN/picks" OT_WT_LOG="$RUN/worktrees" OT_CAPTURE="$RUN/command" TERMINAL=ghostty \
-    GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' "$OT" --ghostty --state-dir "$RUN/state" --harness pi --lane auto \
+    GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' "$OT" --ghostty --state-dir "$RUN/state" --harness "$caller" --lane auto \
     ${args[@]+"${args[@]}"} CC-1 > "$RUN/out" 2> "$RUN/err") || rc=$?
   if [[ "$rc" -eq 0 ]]; then
     end=$((SECONDS + 10))
@@ -77,7 +78,7 @@ observe() { # PREFERENCE WALL MODE TEXT
       written=yes
     fi
   else
-    key="$(sed -n 's/^open-terminal: \([^ ]*\).*/\1/p' "$RUN/err")"; key="${key%%$'\n'*}"
+    key="$(sed -n '/^open-terminal: entry-permission-untransferable /d; s/^open-terminal: \([^ ]*\).*/\1/p' "$RUN/err")"; key="${key%%$'\n'*}"
   fi
   if [[ -f "$RUN/state/workflow-state-oversee.json" ]]; then
     record="$("$REPO/scripts/workflow-state" --state-dir "$RUN/state" get oversee \
@@ -102,15 +103,15 @@ while IFS='|' read -r label pref wall mode text want; do
   assert_eq "$OBS" "$want" "$label" "$RUN/err"
 done <<'ROWS'
 first entry with room|default|none|flags||0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|yes|pi:github-copilot/gpt-6.1-sol
-walled pool falls to native codex|default|pi|flags||0|none|codex|gpt-6.1-sol|codex:gpt-6.1-sol:high|yes|pi:github-copilot/gpt-6.1-sol,codex:gpt-6.1-sol
+walled Pi pool cannot grant Codex permissions|default|pi|flags||1|lane-unavailable|none|none|none|no|pi:github-copilot/gpt-6.1-sol
 model-free command gets the preference|default|none|cmd|template|0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|yes|pi:github-copilot/gpt-6.1-sol
-model-free command falls to native codex|default|pi|cmd|template|0|none|codex|gpt-6.1-sol|codex:gpt-6.1-sol:high|yes|pi:github-copilot/gpt-6.1-sol,codex:gpt-6.1-sol
+walled Pi command retains its permission route|default|pi|cmd|template|1|lane-unavailable|none|none|none|no|pi:github-copilot/gpt-6.1-sol
 preference replaces an effort-only flag|default|none|flags|--thinking low|0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|yes|pi:github-copilot/gpt-6.1-sol
 preference preserves brief quoting refusal|default|none|cmd|pi --exclude-tools question '{brief}'|1|brief-quoted|none|none|none|no|pi:github-copilot/gpt-6.1-sol
 invalid later entry refuses before a pick|pi:github-copilot/gpt-6.1-sol:high,pi:bare:high|none|flags||1|invalid-preference|none|none|none|no|none
-full walk refuses|default|all|flags||1|lane-unavailable|none|none|none|no|pi:github-copilot/gpt-6.1-sol,codex:gpt-6.1-sol
+full walk refuses|default|all|flags||1|lane-unavailable|none|none|none|no|pi:github-copilot/gpt-6.1-sol
 judge failure does not try another entry|default|error|flags||1|lane-resolution-failed|none|none|none|no|pi:github-copilot/gpt-6.1-sol
-arbitrary command is not replaced|default|none|cmd|true {brief}|1|preference-command-invalid|none|none|none|no|pi:github-copilot/gpt-6.1-sol
+arbitrary command is not replaced|default|none|cmd|true {brief}|1|preference-command-invalid|none|none|none|no|none
 unset preserves the missing-model gate||none|flags||1|launch-model-missing|none|none|none|no|none
 explicit flags bypass even an invalid preference|invalid|none|flags|--model github-copilot/gpt-6.1-sol --thinking high|0|none|pi|github-copilot/gpt-6.1-sol|none|yes|pi:github-copilot/gpt-6.1-sol
 explicit command bypasses even an invalid preference|invalid|none|cmd|pi --model github-copilot/gpt-6.1-sol --thinking high --exclude-tools question {brief}|0|none|pi|github-copilot/gpt-6.1-sol|none|yes|pi:github-copilot/gpt-6.1-sol
@@ -119,10 +120,43 @@ ROWS
 observe "$PREF" all flags ''
 assert_file_contains "$RUN/err" "walk=$PREF" 'no-room refusal names the preference walk'
 
+# Pi emits no permission word. A Codex entry is skipped before its picker,
+# and the next Pi entry uses the caller's own permissions and brief.
+for mode in flags cmd; do
+  text=''; [[ "$mode" != cmd ]] || text='pi --exclude-tools question {brief}'
+  observe 'codex:gpt-6.1-sol:high,pi:github-copilot/gpt-6.1-sol:high' none "$mode" "$text"
+  assert_eq "$OBS" '0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|yes|pi:github-copilot/gpt-6.1-sol' 'Pi skips Codex and selects the next eligible entry'
+  assert_file_contains "$RUN/err" 'open-terminal: entry-permission-untransferable entry=codex:gpt-6.1-sol:high source=pi target=codex' 'permission skip names entry and both harnesses'
+  assert_file_not_contains "$RUN/command" '--dangerously-bypass-approvals-and-sandbox' 'Pi preference does not grant target bypass'
+done
+# The caller chooses permissions, not the model preference. Only an exact
+# full-bypass posture reaches the cross-harness flag writer.
+while IFS='|' read -r mode flags want model entry; do
+  text="$flags"; [[ "$mode" != cmd ]] || text="claude $flags {brief}"
+  observe 'codex:gpt-6.1-sol:high,claude:fable:high' none "$mode" "$text" claude
+  record="$("$REPO/scripts/workflow-state" --state-dir "$RUN/state" get oversee '.lanes[0] | [.harness,.model,.preference_entry] | join("|")' | tr -d '\"')"
+  assert_eq "$record" "$want|$model|$entry" "$mode permission eligibility for [$flags]" "$RUN/err"
+  if [[ "$want" == codex ]]; then
+    if launch_choice_words_present '--dangerously-bypass-approvals-and-sandbox' "$(cat -- "$RUN/command")"; then pass 'cross-harness launch writes the authorized target bypass'
+    else fail 'cross-harness launch lacks its authorized target bypass'; fi
+    if launch_choice_words_present '--dangerously-skip-permissions' "$(cat -- "$RUN/command")"; then fail 'source bypass was retained'; else pass 'source bypass is replaced'; fi
+  else
+    assert_file_contains "$RUN/err" 'open-terminal: entry-permission-untransferable entry=codex:gpt-6.1-sol:high source=claude target=codex' 'nontransferable caller posture skips Codex'
+  fi
+done <<'ROWS'
+flags|--dangerously-skip-permissions|codex|gpt-6.1-sol|codex:gpt-6.1-sol:high
+cmd|--dangerously-skip-permissions|codex|gpt-6.1-sol|codex:gpt-6.1-sol:high
+flags||claude|fable|claude:fable:high
+flags|--permission-mode dontAsk|claude|fable|claude:fable:high
+flags|--dangerously-skip-permissions --permission-mode dontAsk|claude|fable|claude:fable:high
+ROWS
+
 # One control for routing and one for each new refusal rule. Each mutation
 # keeps the tested call or comparison, but removes its effect in a private copy.
-for control in routing model settings grammar command; do
-  MUTANT="$(mutant_scripts "mutant-$control" open-terminal)/open-terminal"
+for control in routing model settings grammar command permission; do
+  mutant_file=open-terminal
+  [[ "$control" != settings ]] || mutant_file=lib/overseer-launch.sh
+  MUTANT="$(mutant_scripts "mutant-$control" "$mutant_file")/open-terminal"
   orch_fixture_shared_libs "$TMP_ROOT/mutant-$control"
   git -C "$TMP_ROOT/mutant-$control" init -q
   git -C "$TMP_ROOT/mutant-$control" config gc.auto 0
@@ -138,9 +172,9 @@ for control in routing model settings grammar command; do
       observe "$PREF" none flags ''
       assert_eq "$OBS" '0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|yes|pi:' 'control: the first-entry row turns red when its pick loses the model' ;;
     settings)
-      mutate_file "$OT" 'launch_choice_lead_settings --question-off --model "$OL_ENTRY_MODEL"' 'true --question-off --model "$OL_ENTRY_MODEL"'
-      observe "$PREF" pi cmd 'pi --exclude-tools question {brief}'
-      assert_eq "$OBS" '1|launch-question-tool-missing|none|none|none|no|pi:github-copilot/gpt-6.1-sol,codex:gpt-6.1-sol' 'control: the model-free fallback row turns red without harness settings' ;;
+      mutate_file "${OT%/*}/lib/overseer-launch.sh" 'launch_choice_lead_settings ${question[@]+"${question[@]}"}' 'true ${question[@]+"${question[@]}"}'
+      observe 'codex:gpt-6.1-sol:high' none cmd 'claude --dangerously-skip-permissions {brief}' claude
+      assert_eq "$OBS" '1|launch-question-tool-missing|none|none|none|no|codex:gpt-6.1-sol' 'control: the model-free fallback row turns red without harness settings' ;;
     grammar)
       mutate_file "$OT" 'ol_preference_entries "$ORCH_LANE_PREFERENCE" || {' 'ol_preference_entries "$ORCH_LANE_PREFERENCE" || true; false && {'
       observe 'pi:github-copilot/gpt-6.1-sol:high,pi:bare:high' none flags ''
@@ -149,7 +183,84 @@ for control in routing model settings grammar command; do
       mutate_file "$OT" '[[ "${LAUNCH_CHOICE_ARGV[0]}" == "$preference_harness" ]]' '[[ -n "${LAUNCH_CHOICE_ARGV[0]}" ]]'
       observe "$PREF" none cmd 'true --exclude-tools question {brief}'
       assert_eq "$OBS" '0|none|pi|github-copilot/gpt-6.1-sol|pi:github-copilot/gpt-6.1-sol:high|yes|pi:github-copilot/gpt-6.1-sol' 'control: the arbitrary-command row turns red without refusal' ;;
+    permission)
+      mutate_file "$OT" 'if ! ol_entry_permitted "$preference_entry"; then' 'if ! { ol_entry_permitted "$preference_entry" || true; }; then'
+      observe 'codex:gpt-6.1-sol:high,pi:github-copilot/gpt-6.1-sol:high' none flags ''
+      assert_eq "$OBS" '1|lane-resolution-failed|none|none|none|no|codex:gpt-6.1-sol' 'control: without permission eligibility the walk tries forbidden Codex instead of Pi' ;;
   esac
+done
+# The real claim writer is the producer that walls Fable between batch items.
+# Its weekly window has room before one live claim's scaled burn, while the
+# shared windows Opus spends still have room after it. No picker is stubbed.
+make_lane "$TMP_ROOT/home" claude
+mkdir -p "$TMP_ROOT/usage"
+claude_usage 10 20 94 'Fable 5.1' > "$TMP_ROOT/usage/.claude.json"
+make_fetcher "$TMP_ROOT/fetch"
+WAIT_BIN="$TMP_ROOT/wait-bin"
+mkdir -p "$WAIT_BIN"
+# Advance the real cap wait without a timed sleep. The fixture models another
+# fleet leaving this cap while a real live claim on the account remains.
+cat > "$WAIT_BIN/sleep" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == 5 ]] || exit 0
+"$TEST_SCRIPTS/workflow-state" --state-dir "$TEST_STATE" set oversee lanes '[]' >/dev/null
+source "$TEST_SCRIPTS/lib/lane-claims.sh"
+lane_claim_write "$(lane_claims_dir "$TEST_REPO")" "$OT_TMUX_SERVER_PID" %1 "$HOME/.claude" other-fleet
+STUB
+chmod +x "$WAIT_BIN/sleep"
+for surface in batch wait; do
+  for control in live mutant; do
+    OT="$REPO/scripts/open-terminal"
+    if [[ "$control" == mutant ]]; then
+      OT="$(mutant_scripts "mutant-rejudge-$surface" open-terminal)/open-terminal"
+      orch_fixture_shared_libs "$TMP_ROOT/mutant-rejudge-$surface"
+      git -C "$TMP_ROOT/mutant-rejudge-$surface" init -q
+      git -C "$TMP_ROOT/mutant-rejudge-$surface" config gc.auto 0
+      git -C "$TMP_ROOT/mutant-rejudge-$surface" config maintenance.auto false
+      mutate_file "$OT" 'preference_select || return 1' 'PREFERENCE_LANE_ENV="$(pick_auto_lane)" || return 1'
+    fi
+    RUN="$TMP_ROOT/real-$surface-$control"
+    mkdir -p "$RUN"
+    args=(--lane auto CC-11 CC-12)
+    cap=3
+    if [[ "$surface" == wait ]]; then
+      cap=1
+      args=(--lane "$TMP_ROOT/home/.claude" --wait-slot CC-12)
+      "$REPO/scripts/workflow-state" --state-dir "$RUN/state" init oversee >/dev/null
+      "$REPO/scripts/workflow-state" --state-dir "$RUN/state" set oversee lanes '[{"item":"CC-9","status":"running","window":"stub:CC-9"}]' >/dev/null
+      printf 1 > "$RUN/panes"
+    fi
+    rc=0
+    (cd -- "$REPO" && env -i PATH="$WAIT_BIN:$BIN:$PATH" HOME="$TMP_ROOT/home" ORCH_LANE_HOST=local \
+      ORCH_LANE_PREFERENCE='claude:fable:high,claude:opus:medium' ORCH_OVERSEER_LANES="$cap" ORCH_TMUX_SESSION=stub \
+      ORCH_LANE_DIRS="$TMP_ROOT/home/.claude" ORCH_LANE_BURN_PCT_PER_HOUR=50 ORCH_LANES_USAGE_TTL=0 \
+      ORCH_LANES_FETCH_CMD="$TMP_ROOT/fetch" FIXTURE_DIR="$TMP_ROOT/usage" OVERSEE_WATCH_STATE_DIR="$RUN/claims" \
+      WORKTREE_CLI="$BIN/worktree" LANES_CLI="$REPO/scripts/lanes" TEST_SCRIPTS="$REPO/scripts" TEST_STATE="$RUN/state" TEST_REPO="$REPO" \
+      OT_TMUX_LOG="$RUN/tmux" OT_TMUX_PANES="$RUN/panes" OT_TMUX_SERVER_PID="$$" OT_WT_LOG="$RUN/worktrees" \
+      GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' "$OT" --tmux --state-dir "$RUN/state" --harness claude \
+      --cmd 'claude --dangerously-skip-permissions {brief}' --brief-file "$TMP_ROOT/brief" \
+      "${args[@]}" > "$RUN/out" 2> "$RUN/err") || rc=$?
+    commands=''
+    while IFS= read -r command; do
+      [[ -n "$command" ]] || continue
+      commands+="$(launch_choice_launch_model claude "$command"):$(launch_choice_effort claude "$command"),"
+    done <<<"$(sed -n '/^clear; /p' "$RUN/tmux" 2>/dev/null || true)"
+    records="$("$REPO/scripts/workflow-state" --state-dir "$RUN/state" get oversee '.lanes | map([.item,.harness,.model,.preference_entry] | join(":")) | join(",")' | tr -d '\"')"
+    if [[ "$surface:$control" == batch:live ]]; then
+      want='0|fable:high,opus:medium,|CC-11:claude:fable:claude:fable:high,CC-12:claude:opus:claude:opus:medium'
+    elif [[ "$surface:$control" == batch:mutant ]]; then
+      want='1|fable:high,|CC-11:claude:fable:claude:fable:high'
+    elif [[ "$control" == live ]]; then
+      want='0|opus:medium,|CC-12:claude:opus:claude:opus:medium'
+    else
+      want='1||'
+    fi
+    assert_eq "$rc|$commands|$records" "$want" "$surface $control rewalk uses the real claim and records the chosen command" "$RUN/err"
+    if [[ "$surface" == wait ]]; then
+      assert_file_contains "$RUN/out" 'open-terminal: slot-waiting item=CC-12' 'wait regression reaches the cap callback'
+    fi
+  done
 done
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

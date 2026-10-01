@@ -273,7 +273,8 @@ ORCH_EXTERNAL_TRIAGE = "on"
 
 # Lane defaults use the same entry grammar above. open-terminal walks them
 # through lanes pick only when --cmd and --launch-flags name no model.
-# The first entry with room supplies the harness, model and effort. Explicit
+# The first eligible entry with room supplies the harness, model and effort.
+# Eligibility follows references/lane-directive.md § Lane preference. Explicit
 # models keep the caller's route. Unset or empty leaves that route unchanged.
 # ORCH_LANE_PREFERENCE = ""
 
