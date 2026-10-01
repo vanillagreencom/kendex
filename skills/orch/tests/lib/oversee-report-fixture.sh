@@ -135,6 +135,7 @@ if [[ "$1 $2 $3 $4 $5 $6" == "notice --item overseer --to owner --attach" && "$8
   printf '%s\n' "$*" >> "$CASE/mail.calls"
   [[ ! -f "$CASE/notice-fail" ]] || { echo "lane-mail: write-failed=$7" >&2; exit 2; }
   jq -cn --arg file "$7" '{kind: "notice", to: "owner", attach: $file}' >> "$CASE/events.jsonl"
+  echo 'lane-mail: sent item=overseer id=notice-1 bytes=6 to=owner ref='
   exit 0
 fi
 [[ "$1 $2" == "pending --item" ]] || { echo "unexpected lane-mail call: $*" >&2; exit 2; }

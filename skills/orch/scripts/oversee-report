@@ -7,6 +7,8 @@
 # nothing, which oversee-watch relays as its event. `render` and `write` print
 # the report itself, the text the overseer pastes into its chat; `write` puts
 # the same bytes in the report file, so the chat and the file cannot differ.
+# Stderr's report-written line names the file and notice-id, so the overseer
+# knows the report already reached the owner.
 set -euo pipefail
 # The caller's stderr, which this script's own lines alone are written to.
 exec 3>&2
@@ -888,6 +890,7 @@ fi
 # the notice's text alone, written in Slack's mrkdwn for the upload comment,
 # so it stays out of the Markdown file and the chat.
 printf '%s\n' "$SUMMARY_TEXT" > "$WORK_DIR/notice.txt" || refuse write "$WORK_DIR/notice.txt"
-"$LANE_MAIL" notice --item overseer --to owner --attach "$TARGET" --file "$WORK_DIR/notice.txt" \
-  2>"$WORK_DIR/notice.err" || refuse notice "$TARGET" "$(cat "$WORK_DIR/notice.err")"
-message report-written "$TARGET"
+NOTICE_RECEIPT="$("$LANE_MAIL" notice --item overseer --to owner --attach "$TARGET" --file "$WORK_DIR/notice.txt" \
+  2>"$WORK_DIR/notice.err")" || refuse notice "$TARGET" "$(cat "$WORK_DIR/notice.err")"
+NOTICE_ID="${NOTICE_RECEIPT#* id=}"
+message report-written "$TARGET notice-id=${NOTICE_ID%% *}"

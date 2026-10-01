@@ -97,7 +97,8 @@ assert_eq "$(jq -r '.id' < "$BOX/to-overseer.jsonl")" "$ID" "the printed id is t
 assert_eq "$(jq -r '.at | test("^[0-9-]{10}T[0-9:]{8}Z$")' < "$BOX/to-overseer.jsonl")" "true" "the envelope stamps a UTC time"
 
 lm notice --item KEN-1 --file "$(text n 'Rebased onto main.')"
-assert_eq "$RC=$OUT" "0=" "notice exits 0 and prints nothing"
+assert_eq "$RC=$OUT" "0=lane-mail: sent item=KEN-1 id=$(jq -r 'select(.kind == "notice") | .id' "$BOX/to-overseer.jsonl") bytes=18 to= ref=" \
+  "notice prints its appended id and text bytes"
 assert_eq "$(jq -rs '.[1] | .kind + " " + (has("options") | tostring)' < "$BOX/to-overseer.jsonl")" \
   "notice false" "a notice carries no options"
 lm notice --item KEN-1 --file "$(text n 'x')" --options a,b
@@ -449,9 +450,9 @@ for row in "${CURSOR_ROWS[@]}"; do
 done
 
 new_lane concurrent
-printf 'parallel\n' > "$TMP_ROOT/p.txt"
 for i in 1 2 3 4 5 6 7 8; do
-  (cd "$LANE" && "$LANE_MAIL" notice --item KEN-1 --file "$TMP_ROOT/p.txt") &
+  printf 'parallel %s\n' "$i" > "$TMP_ROOT/p-$i.txt"
+  (cd "$LANE" && "$LANE_MAIL" notice --item KEN-1 --file "$TMP_ROOT/p-$i.txt") &
 done
 wait
 BOX="$LANE/tmp/lane-mail/KEN-1"
@@ -620,6 +621,11 @@ assert_eq "$RC=$(jq -rs 'map(select(.text == "Both of us.")) | map(.from) | join
 lm peer send --repo peer_b --file "$(text d 'Both of us.')"
 assert_eq "$RC=$ERR" "2=lane-mail: duplicate id=$PEER_C_SENT" \
   "a peer send repeating its own envelope inside a minute is refused"
+lm peer ask --repo peer_b --file "$(text q 'Retry the question?')"
+PEER_ASK_ID="${OUT#id=}"
+lm peer ask --repo peer_b --file "$(text q 'Retry the question?')"
+assert_eq "$RC=$ERR" "2=lane-mail: duplicate id=$PEER_ASK_ID" \
+  "a peer ask repeats against the mailbox it joins before recording itself"
 assert_eq "$(jq -rs 'map(select(.text == "Both of us.")) | length' \
   < "$PEER_B/tmp/lane-mail/overseer/to-lane.jsonl")" "2" \
   "and the peer's mailbox still holds only the two that landed"

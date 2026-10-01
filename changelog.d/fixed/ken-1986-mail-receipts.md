@@ -1,0 +1,1 @@
+- Owner notices print delivery receipts. Repeated mail is refused within the existing minute window. Progress reports name their sent notice.

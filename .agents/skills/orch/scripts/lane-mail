@@ -10,7 +10,8 @@
 # counted and not emitted, keeping `--after` and the cursor aligned with the
 # file. A halt is acknowledged by a plain `inbox` read alone: `--ack` stops
 # short of an unread one, so a hook that hands mail over never consumes it.
-# A send prints its receipt, so silence is a send that did not land; a repeat
+# A send or notice prints its receipt; oversee-report reads the notice id.
+# Silence is a send or notice that did not land; a repeat
 # of one envelope to one item inside a minute is refused before the append
 # rather than delivered a second time. The Receipt section of usage() owns
 # what counts as a repeat, and nothing here restates it.
@@ -292,8 +293,8 @@ checkout's own directory name.
 Reads of legacy closing answers warn `lane-mail: legacy-close=<id>` on stderr.
 The old format remains readable through kendex 1.4.
 
-Receipt, the line a `send` and a `peer send` print on stdout once the envelope
-is appended: `lane-mail: sent item=<item> id=<id> bytes=<n> monitor=<m>`, where
+Receipt, the line a `send`, a `peer send` and a `notice` print on stdout once
+the envelope is appended: `lane-mail: sent item=<item> id=<id> bytes=<n> monitor=<m>`, where
 bytes is the length of the text the envelope carries, the message file less the
 one trailing newline it drops. monitor is `live` when the mailbox's
 to-lane.watch, `at=<epoch> interval=<s>` rewritten by `watch` at every poll,
@@ -306,9 +307,12 @@ announced and is not yet re-armed, and the re-armed watch announces what
 still stands unread; the orch watch-delivery reference says what the
 overseer does where that watch's exit does not wake the lane. A `peer send` writes a peer's overseer mailbox, so
 its receipt always names item `overseer` rather than the repository it reached.
-Silence is not a success: a send that printed no receipt appended nothing.
+A `notice` receipt replaces `monitor=<m>` with `to=<owner|peer> ref=<ref>`;
+ref is empty when no --ref was given, and a lane notice has an empty to field.
+`oversee-report write` reads the notice receipt's id for its report-written line.
+Silence is not a success: a send or notice that printed no receipt appended nothing.
 
-A send repeating an envelope the mailbox already holds is a retry of a delivery
+A send, ask or notice repeating an envelope the mailbox already holds is a retry of a delivery
 that landed, not a second message. A send carrying --delivery-id is judged by
 that key alone, under the lock, and never by this window. What is compared is the envelope whole,
 every field of it but the id it is minted with and the stamp, which the window
@@ -939,7 +943,7 @@ lm_objects() { # FILE [BOX]
         + (if $box == "to-lane" then {mail_class: overseer_mail_class} else {} end) end' <"$1"
 }
 
-# The id of an envelope to-lane.jsonl already holds that is this one again,
+# The id of an envelope the destination mailbox holds that is this one again,
 # stamped within the last minute; nothing when the mailbox holds no such line.
 # A sender that saw no receipt retries, and a wrapper run twice sends twice, so
 # an envelope landing again inside a minute is that delivery rather than a
@@ -957,14 +961,14 @@ lm_objects() { # FILE [BOX]
 # file its own line would join and a hosted read that fails refuses the send
 # there. An `at` no clock wrote, a fixture's or a hand-edited line's, parses to
 # nothing and is passed over rather than taken as now.
-lm_duplicate_id() { # LINE — prints the earlier envelope's id, or nothing
+lm_duplicate_id() { # FILE LINE — prints the earlier envelope's id, or nothing
   local now=""
   now="$(date -u +%s)" || refuse write-failed "$BOX"
-  lm_fetch "$TO_LANE" "$WORK_DIR/dup.raw"
+  lm_fetch "$1" "$WORK_DIR/dup.raw"
   lm_terminated "$WORK_DIR/dup.raw" "$WORK_DIR/dup.jsonl"
   lm_objects "$WORK_DIR/dup.jsonl" >"$WORK_DIR/dup.objects" ||
-    refuse file-unreadable "$TO_LANE"
-  printf '%s\n' "$1" >"$WORK_DIR/sent.json" || refuse write-failed "$WORK_DIR/sent.json"
+    refuse file-unreadable "$1"
+  printf '%s\n' "$2" >"$WORK_DIR/sent.json" || refuse write-failed "$WORK_DIR/sent.json"
   jq -r --argjson now "$now" --slurpfile sent "$WORK_DIR/sent.json" "$LM_JQ_DEFS"'
     # Every field but the two a second send cannot repeat: the id, minted once
     # per call, and the stamp, which the window below judges instead. Every
@@ -977,7 +981,7 @@ lm_duplicate_id() { # LINE — prints the earlier envelope's id, or nothing
     | (.at | at_epoch) as $at
     | select($at != null and ($now - $at) >= 0 and ($now - $at) <= 60)
     | .id | strings' <"$WORK_DIR/dup.objects" >"$WORK_DIR/dup.ids" ||
-    refuse file-unreadable "$TO_LANE"
+    refuse file-unreadable "$1"
   # The last match, the most recent envelope this send repeats, so a refusal
   # names the copy a retry would sit beside rather than an older one.
   awk '{ last = $0 } END { if (NR > 0) print last }' <"$WORK_DIR/dup.ids" ||
@@ -988,9 +992,9 @@ lm_duplicate_id() { # LINE — prints the earlier envelope's id, or nothing
 # second copy the refusal is about. Every failure inside the substitution
 # writes its own keyed line and leaves that subshell, and errexit carries the
 # status out, as it does for lm_envelope's callers.
-lm_no_duplicate() { # LINE
+lm_no_duplicate() { # FILE LINE
   local earlier=""
-  earlier="$(lm_duplicate_id "$1")" || exit "$?"
+  earlier="$(lm_duplicate_id "$1" "$2")" || exit "$?"
   [ -z "$earlier" ] || refuse duplicate "$earlier"
 }
 
@@ -1024,7 +1028,11 @@ lm_monitor() {
 # appended, the bytes of message text that envelope carries, and whether a
 # monitor stands on the mailbox.
 lm_sent() {
-  printf 'lane-mail: sent item=%s id=%s bytes=%s monitor=%s\n' "$ITEM" "$SENT_ID" "$SENT_BYTES" "$SENT_MONITOR"
+  if [ "$VERB" = notice ]; then
+    printf 'lane-mail: sent item=%s id=%s bytes=%s to=%s ref=%s\n' "$ITEM" "$SENT_ID" "$SENT_BYTES" "$TO" "$REF"
+  else
+    printf 'lane-mail: sent item=%s id=%s bytes=%s monitor=%s\n' "$ITEM" "$SENT_ID" "$SENT_BYTES" "$SENT_MONITOR"
+  fi
 }
 
 # Whether the peer checkout's overseer mailbox has a reader, said on stderr
@@ -1465,9 +1473,13 @@ case "$VERB" in
     fi
     [ -z "$ATTACH" ] || lm_attach_confined
     LINE="$(lm_envelope "$VERB")"
+    lm_no_duplicate "$TO_OVERSEER" "$LINE"
+    [ "$VERB" != notice ] || lm_receipt_fields "$LINE"
     lm_append_local "$TO_OVERSEER" "$LINE"
     if [ "$VERB" = ask ]; then
       printf 'id=%s\n' "$(cat -- "$WORK_DIR/id")"
+    else
+      lm_sent
     fi
     ;;
 
@@ -1498,7 +1510,7 @@ case "$VERB" in
     fi
     # A send naming its delivery is judged by that name under the lock and by
     # nothing else: the minute window is for a sender with no name of its own.
-    [ -n "$DELIVERY_ID" ] || lm_no_duplicate "$LINE"
+    [ -n "$DELIVERY_ID" ] || lm_no_duplicate "$TO_LANE" "$LINE"
     lm_receipt_fields "$LINE"
     if [ "$HOST" -eq 1 ]; then
       lm_append_host "$TO_LANE" "$LINE"
@@ -1587,8 +1599,8 @@ case "$VERB" in
     else
       LINE="$(lm_envelope directive)"
     fi
+    lm_no_duplicate "$TO_LANE" "$LINE"
     if [ "$PEER_VERB" = send ]; then
-      lm_no_duplicate "$LINE"
       lm_receipt_fields "$LINE"
     fi
     if [ "$HOST" -eq 1 ]; then

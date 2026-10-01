@@ -97,6 +97,42 @@ new_repo wait_default
 owner_ask 'Settle it?' yes,no yes
 assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.wait')" "0=120" "with no setting the wait is 120 minutes"
 
+# The overseer retries a silent notice or ask. Keep the clock fixed so the
+# minute guard does not depend on how long the runner spends on these rows.
+source "$REPO_ROOT/skills/orch/tests/lib/virtual-clock.sh"
+mkdir -p "$TMP_ROOT/clock-bin"
+virtual_clock_install "$TMP_ROOT/clock-bin" "$TMP_ROOT/clock"
+SAVED_PATH="$PATH"; PATH="$TMP_ROOT/clock-bin:$PATH"
+new_repo notice_receipt
+for delivery in first second; do
+  lm send --item overseer --directive --delivery-id "$delivery" --file "$(text d 'Reply owed.')"
+done
+REF_ROWS="$(jq -rs 'map(.id) | join(" ")' < "$BOX/to-lane.jsonl")" || exit 1
+read -r -a REFS <<<"$REF_ROWS"
+FIRST_ID=""
+while IFS='|' read -r audience ref words want; do
+  lm notice --item overseer --to "$audience" --ref "${REFS[$ref]}" --file "$(text n "$words")"
+  if [[ "$want" == duplicate ]]; then
+    assert_eq "$RC=$ERR=$OUT=$(field "$BOX/to-overseer.jsonl" '.id')" \
+      "2=lane-mail: duplicate id=$FIRST_ID==$FIRST_ID" "notice repeat refuses before appending"
+  else
+    ID="$(jq -rs 'last.id' < "$BOX/to-overseer.jsonl")" || exit 1
+    assert_eq "$RC=$OUT" "0=lane-mail: sent item=overseer id=$ID bytes=6 to=$audience ref=${REFS[$ref]}" \
+      "notice $want prints its appended receipt"
+    [[ -n "$FIRST_ID" ]] || FIRST_ID="$ID"
+  fi
+done <<'ROWS'
+owner|0|Reply.|first
+owner|0|Reply.|duplicate
+owner|1|Reply.|changed-ref
+owner|0|Other.|changed-text
+ROWS
+owner_ask 'Retry?' yes,no yes
+FIRST_ASK="$ASK"
+owner_ask 'Retry?' yes,no yes
+assert_eq "$RC=$ERR" "2=lane-mail: duplicate id=$FIRST_ASK" "an owner ask uses the same destination repeat guard"
+PATH="$SAVED_PATH"
+
 # --- refusals, one row per rule -----------------------------------------------
 new_repo refusals
 lm notice --item overseer --to owner --file "$(text n 'A note.')"
@@ -205,14 +241,16 @@ ln -s "$REPORTS" "$LANE/reports-link"
 # PATH|WANT
 while IFS='|' read -r path want; do
   lm notice --item overseer --to owner --file "$(text n 'Report.')" --attach "$path"
+  [[ "$want" != duplicate ]] || want="2=lane-mail: duplicate id=$ATTACH_ID"
   assert_eq "$RC=$ERR" "$want" "attach $path"
+  [[ "$RC" != 0 ]] || ATTACH_ID="$(field "$BOX/to-overseer.jsonl" '.id')"
 done <<ROWS
 $REPORTS/09-26-01-00.md|0=
-tmp/progress-reports/09-26-01-00.md|0=
+tmp/progress-reports/09-26-01-00.md|duplicate
 $REPORTS/deeper/09-26-01-01.md|2=lane-mail: attach-outside=$REPORTS/deeper/09-26-01-01.md
 $LANE/elsewhere/09-26-01-02.md|2=lane-mail: attach-outside=$LANE/elsewhere/09-26-01-02.md
 $REPORTS/09-26-01-03.md|2=lane-mail: attach-outside=$REPORTS/09-26-01-03.md
-$LANE/reports-link/09-26-01-00.md|0=
+$LANE/reports-link/09-26-01-00.md|duplicate
 $REPORTS|2=lane-mail: attach-outside=$REPORTS
 ROWS
 assert_eq "$(field "$BOX/to-overseer.jsonl" '.attach' | sort -u)" "$(cd "$REPORTS" && pwd -P)/09-26-01-00.md" \

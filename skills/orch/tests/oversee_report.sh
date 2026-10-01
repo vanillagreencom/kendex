@@ -535,7 +535,7 @@ echo "[$(merged_pr 9 ken-3 0 9999999aaa)]" > "$CASE/merged.json"
 merged_pr 7 ken-2 1 7777777aaa > "$CASE/merge-on-read-KEN-1.json"
 printf 'One lane is running.\n%s\n' "$OWNER_ROWS" > "$CASE/summary.txt"
 run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
-FILE="$(awk -F= 'NR == 1 { print $2 }' "$CASE/err")"
+FILE="$(awk -F= 'NR == 1 { split($2, path, " "); print path[1] }' "$CASE/err")"
 STAMPED="$(stat -c %Y -- "$FILE" 2>/dev/null || stat -f %m -- "$FILE")"
 assert_eq "$RC|$(awk '/^Landed/' <<<"$OUT")|$STAMPED|$([[ -f "$CASE/merge-on-read-KEN-1.json" ]] && echo unmerged || echo merged)" \
   "0|Landed: none|$NOW|merged" "a write covers merges before the moment it read its lists, and its file carries that moment"
@@ -550,7 +550,7 @@ printf 'Two items landed and one waits on you.\n%s\n\n\n' "$OWNER_ROWS" > "$CASE
 run -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt" --succession
 NAME="$("$REAL_DATE" -u -d "@$NOW" +%m-%d-%H-%M 2>/dev/null || "$REAL_DATE" -u -r "$NOW" +%m-%d-%H-%M)-succession.md"
 FILE="$CASE/progress-reports/$NAME"
-assert_eq "$RC|$(first_err)" "0|oversee-report: report-written=$FILE" "a succession write names its file MM-DD-HH-MM-succession.md"
+assert_eq "$RC|$(first_err)" "0|oversee-report: report-written=$FILE notice-id=notice-1" "a succession write names its file MM-DD-HH-MM-succession.md"
 assert_eq "printed=$([[ -n "$OUT" ]] && echo yes)|$OUT" "printed=yes|$(cat "$FILE" 2>/dev/null)" "what write prints is the file's content, byte for byte"
 assert_eq "$(grep -c -E '^(Landed|Running|Validation|Use 1|Next|Waiting on you):' <<<"$OUT")|$(awk 'NR == 1' <<<"$OUT")|$(grep -c -F 'Two items landed' <<<"$OUT")" \
   "6|Landed:|0" "the report is the six rows alone: the summary is in neither the file nor the print"
@@ -584,8 +584,47 @@ assert_eq "$RC|$(first_err)|$([[ -f "$FILE" ]] && echo written || echo missing)|
 seed_fleet write_report_off
 printf 'The overseer hands over.\n%s\n' "$OWNER_ROWS" > "$CASE/summary.txt"
 run ORCH_REPORT=off -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt" --succession
-assert_eq "$RC|$(first_err)" "0|oversee-report: report-written=$CASE/progress-reports/$NAME" \
+assert_eq "$RC|$(first_err)" "0|oversee-report: report-written=$CASE/progress-reports/$NAME notice-id=notice-1" \
   "ORCH_REPORT=off silences due alone: a succession write still writes"
+
+echo "=== write: notice receipt and retry against the real mailbox ==="
+NOTICE_MUTANT="$(mutant_scripts notice-repeat/orch lane-mail)/lane-mail" || exit 1
+mutate_file "$NOTICE_MUTANT" '    lm_no_duplicate "$TO_OVERSEER" "$LINE"' \
+  '    : lm_no_duplicate "$TO_OVERSEER" "$LINE"'
+RECEIPT_MUTANT="$(mutant_scripts receipt/orch oversee-report)/oversee-report" || exit 1
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/receipt/github"
+mutate_file "$RECEIPT_MUTANT" 'message report-written "$TARGET notice-id=${NOTICE_ID%% *}"' \
+  'message report-written "$TARGET"'
+for mode in live unguarded missing-id; do
+  new_case "notice_retry_$mode"
+  git -C "$CASE" init -q
+  git -C "$CASE" config gc.auto 0
+  git -C "$CASE" config maintenance.auto false
+  fleet ''
+  printf 'Work continues.\n%s\n' "$OWNER_ROWS" > "$CASE/summary.txt"
+  MAIL_UNDER_TEST="$TEST_DIR/../scripts/lane-mail"; REPORT_UNDER_TEST="$REPORT_BIN"
+  [[ "$mode" != unguarded ]] || MAIL_UNDER_TEST="$NOTICE_MUTANT"
+  [[ "$mode" != missing-id ]] || REPORT_UNDER_TEST="$RECEIPT_MUTANT"
+  run OVERSEE_REPORT_LANE_MAIL="$MAIL_UNDER_TEST" -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
+  MAILBOX="$CASE/tmp/lane-mail/overseer/to-overseer.jsonl"
+  ID="$(jq -r '.id' < "$MAILBOX")" || exit 1
+  FILE="$(jq -r '.attach' < "$MAILBOX")" || exit 1
+  WRITE_RESULT="$RC|$(first_err)|$OUT"
+  RC=0
+  OUT="$(cd "$CASE" && env -u ORCH_ASK_WAIT_MINUTES -u ORCH_STATE_DIR \
+    PATH="$TMP_ROOT/bin:$PATH" CASE="$CASE" ORCH_PROGRESS_REPORT_DIR="$CASE/progress-reports" \
+    "$MAIL_UNDER_TEST" notice --item overseer --to owner --attach "$FILE" --file "$CASE/summary.txt" 2>"$CASE/err")" || RC=$?
+  CONTROL_RC=0
+  CONTROL_OUT="$(
+    FAIL=0
+    assert_eq "$WRITE_RESULT" "0|oversee-report: report-written=$FILE notice-id=$ID|$(cat "$FILE")" "write names its sent notice"
+    assert_eq "$RC|$(first_err)|$(jq -rs 'length' < "$MAILBOX")" "2|lane-mail: duplicate id=$ID|1" "retry refuses before appending"
+    [[ "$FAIL" -eq 0 ]]
+  )" || CONTROL_RC=$?
+  WANT=1; [[ "$mode" != live ]] || WANT=0
+  assert_eq "$CONTROL_RC" "$WANT" "$mode: the same receipt fixture passes live and turns red with the planted defect" "$CASE/err"
+done
+REPORT_UNDER_TEST="$REPORT_BIN"
 
 echo "=== write: owner summary shape before any report or notice ==="
 # The real producer is the overseer's --summary-file upload comment.
@@ -623,7 +662,7 @@ while IFS='~' read -r name lead mode setting rule; do
     esac
     mutate_file "$mutant" "$old" "$new"
     REPORT_UNDER_TEST="$mutant" run ${envs[@]+"${envs[@]}"} -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
-    assert_eq "$RC|$(first_err)" "0|oversee-report: report-written=$CASE/progress-reports/${NAME%-succession.md}.md" \
+    assert_eq "$RC|$(first_err)" "0|oversee-report: report-written=$CASE/progress-reports/${NAME%-succession.md}.md notice-id=notice-1" \
       "control: removing $rule lets its defective summary write, reddening the refusal check"
   fi
 done <<'ROWS'
