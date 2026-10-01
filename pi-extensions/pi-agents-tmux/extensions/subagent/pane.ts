@@ -417,14 +417,29 @@ async function rebalanceColumns(registry: PaneRegistry, primaryPaneId: string): 
 	}
 }
 
+type PaneTitleRequest = { paneId: string; title: string; options: ExecCaptureOptions };
 let titleInFlight: Promise<ExecCaptureResult> | undefined;
-export function setCurrentTmuxPaneTitle(title: string, signal?: AbortSignal): void {
-	const paneId = process.env.TMUX_PANE;
-	if (!paneId || titleInFlight) return;
-	titleInFlight = defaultExecCapture("tmux", ["select-pane", "-t", paneId, "-T", title], { signal }, paneTitleSpawn);
+let pendingTitle: PaneTitleRequest | undefined;
+
+function drainPaneTitle(): void {
+	if (titleInFlight || !pendingTitle) return;
+	const { paneId, title, options } = pendingTitle;
+	pendingTitle = undefined;
+	titleInFlight = defaultExecCapture("tmux", ["select-pane", "-t", paneId, "-T", title], options, paneTitleSpawn);
 	void titleInFlight.then((result) => {
 		if (result.code !== 0) console.warn(`tmux pane title failed: ${result.stderr}`);
-	}).catch((error) => console.warn(`tmux pane title failed: ${String(error)}`)).finally(() => { titleInFlight = undefined; });
+	}).catch((error) => console.warn(`tmux pane title failed: ${String(error)}`)).finally(() => {
+		titleInFlight = undefined;
+		drainPaneTitle();
+	});
+}
+
+/** Serialize title commands and keep only the latest pending title, with its target environment. */
+export function setCurrentTmuxPaneTitle(title: string, signal?: AbortSignal): void {
+	const paneId = process.env.TMUX_PANE;
+	if (!paneId) return;
+	pendingTitle = { paneId, title, options: { signal: signal ?? childSignal(), env: { ...process.env } } };
+	drainPaneTitle();
 }
 
 function resolveSessionBridgeExtension(cwd?: string): string | undefined {

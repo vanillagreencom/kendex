@@ -86,8 +86,11 @@ export async function assertStoppedActivity(mapper?: typeof import("../extension
 	const published: Array<{ type: string }> = [];
 	globals[key] = { publish: (event: { type: string }) => { published.push(event); } };
 	const controller = new AbortController();
-	controller.abort();
-	installMockSpawn([{ stdout: bridgeStdout([bridgeEvent("agent_end", { content: [] })]) }]);
+	installMockSpawn([{
+		stdout: bridgeStdout([bridgeEvent("agent_end", { content: [] })]),
+		// The spawn must return before the runner can receive cancellation.
+		defer: (finish) => queueMicrotask(() => { controller.abort(); finish(); }),
+	}]);
 	try {
 		const { events } = await dispatchOutcome({ signal: controller.signal });
 		const stopped = events.find(({ name }) => name === "subagents:failed");
@@ -185,7 +188,36 @@ export async function assertDispatchOutcome(status: "refused" | "stopped" | "fai
 	return { result, row, events };
 }
 
-export function installMockSpawn(scenarios: Array<{ code?: number | null; delayMs?: number; defer?: (finish: () => void) => void; error?: Error | string; signal?: string; stderr?: string; stdout?: string }>, install = setSingleAgentSpawnForTests) {
+/** Observe real children while replacing only the Pi executable with a finite faux bridge. */
+export function observeChildSpawns(root: string) {
+	let active = 0;
+	let peak = 0;
+	let launches = 0;
+	const children = new Set<ReturnType<typeof spawn>>();
+	const spawner = ((command: string, args: string[], options: { cwd?: string; detached?: boolean }) => {
+		void command;
+		void args;
+		// Real time keeps the faux bridge alive long enough to observe overlapping dispatches.
+		const script = 'setTimeout(() => { console.log(JSON.stringify({type:"event",event:"agent_end",data:{content:[{type:"text",text:"done"}]}})); }, 100)';
+		const proc = spawn(process.execPath, ["-e", script], {
+			cwd: options.cwd, detached: options.detached, shell: false, stdio: ["ignore", "pipe", "pipe"],
+			env: { PATH: "/usr/bin:/bin", HOME: root, TMPDIR: root },
+		});
+		children.add(proc);
+		active++;
+		launches++;
+		peak = Math.max(peak, active);
+		proc.once("close", () => { active--; children.delete(proc); });
+		return proc;
+	}) as typeof spawn;
+	return {
+		spawner,
+		counts: () => ({ active, peak, launches }),
+		stop: () => { for (const child of children) child.kill("SIGKILL"); },
+	};
+}
+
+export function installMockSpawn(scenarios: Array<{ code?: number | null; delayMs?: number; defer?: (finish: () => void) => void; afterStdout?: () => void; error?: Error | string; signal?: string; stderr?: string; stdout?: string }>, install = setSingleAgentSpawnForTests) {
 	const calls: Array<{ args: string[]; prompt: string; promptFiles: string[]; kills: string[]; flow: { stdout: string[]; stderr: string[] } }> = [];
 	install(((command: string, args: string[]) => {
 		void command;
@@ -209,7 +241,10 @@ export function installMockSpawn(scenarios: Array<{ code?: number | null; delayM
 		};
 		const scenario = scenarios.shift();
 		const finish = () => {
-			if (scenario?.stdout) proc.stdout.emit("data", Buffer.from(scenario.stdout));
+			if (scenario?.stdout) {
+				proc.stdout.emit("data", Buffer.from(scenario.stdout));
+				scenario.afterStdout?.();
+			}
 			if (scenario?.stderr) proc.stderr.emit("data", Buffer.from(scenario.stderr));
 			if (scenario?.error) {
 				proc.emit("error", scenario.error instanceof Error ? scenario.error : new Error(scenario.error));
@@ -403,12 +438,22 @@ export async function assertFreshHandoff(runtime: Pick<typeof import("../extensi
 /** Parent cancellation owns the end even if the stream carried an overflow. */
 export async function assertAbortNoRetry(runtime: Pick<typeof import("../extensions/subagent/runner.js"), "runSingleAgent" | "setSingleAgentSpawnForTests">) {
 	const controller = new AbortController();
-	controller.abort();
 	const cwd = tempRuntime();
-	const calls = installMockSpawn([{ stdout: bridgeStdout([{ error: { code: "context_length_exceeded" } }]) }, {}], runtime.setSingleAgentSpawnForTests);
+	const events: Array<{ name: string; payload: unknown }> = [];
+	const calls = installMockSpawn([{
+		stdout: bridgeStdout([{ error: { code: "context_length_exceeded" } }]),
+		defer: (finish) => queueMicrotask(finish),
+		// The data listener records the overflow before cancellation owns the close.
+		afterStdout: () => controller.abort(),
+	}, {}], runtime.setSingleAgentSpawnForTests);
 	try {
-		const result = await runtime.runSingleAgent(cwd, tempRuntime(), [testAgent()], "reviewer-test", "task", undefined, undefined, undefined, undefined, mockPiEvents([]), controller.signal, undefined, makeDetails);
+		const run = runtime.runSingleAgent(cwd, tempRuntime(), [testAgent()], "reviewer-test", "task", undefined, undefined, undefined, undefined, mockPiEvents(events), controller.signal, undefined, makeDetails);
+		// A retry attempt can reject at the retained pre-spawn cancellation guard.
+		await assert.doesNotReject(run, "parent cancellation must return without retrying");
+		const result = await run;
 		assert.deepEqual([calls.length, result.status, result.stopReason], [1, "stopped", "aborted"]);
+		assert.deepEqual(JSON.parse(result.errorEnvelope ?? "null"), { error: { code: "context_length_exceeded" } }, "the runner must record overflow before cancellation");
+		assert.deepEqual(events.filter(({ name }) => name === "subagents:retrying"), []);
 	} finally { runtime.setSingleAgentSpawnForTests(); }
 }
 

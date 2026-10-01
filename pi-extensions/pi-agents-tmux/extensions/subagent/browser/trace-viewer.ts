@@ -1,5 +1,5 @@
 import { taskStatus } from "../outcomes.js";
-import { execCapture } from "../pane.js";
+import { spawn } from "node:child_process";
 import { type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import { ansiYellow, compactPath, divider, simpleFrame } from "../format.js";
@@ -10,8 +10,7 @@ import {
 	type TraceViewerItem,
 	type TraceViewerState,
 } from "../types.js";
-import { renderTraceContentLines, renderTraceTabBar } from "./monitor-task-detail.js";
-import { cachedPopupLayout, clearPopupLayouts } from "./layout-cache.js";
+import { renderTraceContentLine, renderTraceTabBar } from "./monitor-task-detail.js";
 
 function traceViewerLines(state: TraceViewerState, width: number, rows: number, theme: Theme): string[] {
 	const innerWidth = Math.max(1, width - 4);
@@ -26,9 +25,8 @@ function traceViewerLines(state: TraceViewerState, width: number, rows: number, 
 		item?.createdAt ? theme.fg("dim", item.createdAt) : "",
 	].filter(Boolean).join(theme.fg("dim", " · "));
 	const file = item?.path ? theme.fg("dim", `file ${compactPath(item.path, { maxChars: Math.max(24, innerWidth - 8) })}`) : "";
-	const text = item?.text || "(empty)";
-	const content = cachedPopupLayout(`trace:${item?.type}`, text, innerWidth, theme,
-		() => renderTraceContentLines(text.split(/\r?\n/), item?.type, innerWidth, theme).map((line) => truncateToWidth(line, innerWidth, "")));
+	const rawContent = (item?.text || "(empty)").split(/\r?\n/);
+	const content = rawContent.flatMap((line) => renderTraceContentLine(line, item?.type, innerWidth, theme)).map((line) => truncateToWidth(line, innerWidth, ""));
 	const fixedRowsInsideFrame = 8;
 	const bodyRows = Math.max(1, frameRows - 2 - fixedRowsInsideFrame);
 	const maxScroll = Math.max(0, content.length - bodyRows);
@@ -69,9 +67,9 @@ export function openTraceItemInEditor(ctx: ExtensionContext, path: string | unde
 		ctx.ui.notify(`Not inside tmux — open manually: ${editor} ${path}`, "warning");
 		return;
 	}
-	void execCapture("tmux", ["new-window", "-n", "transcript", `${editor} ${shellQuote(path)}`], { signal: ctx.signal }).then((result) => {
-		if (result.code !== 0) ctx.ui.notify(`Could not open editor window: ${result.stderr}`, "error");
-	}).catch((error) => ctx.ui.notify(`Could not open editor window: ${String(error)}`, "error"));
+	const child = spawn("tmux", ["new-window", "-n", "transcript", `${editor} ${shellQuote(path)}`], { detached: true, stdio: "ignore" });
+	child.on("error", (error) => ctx.ui.notify(`Could not open editor window: ${error instanceof Error ? error.message : String(error)}`, "error"));
+	child.unref();
 }
 
 export async function openTraceViewer(ctx: ExtensionContext, title: string, items: TraceViewerItem[]): Promise<void> {
@@ -81,7 +79,7 @@ export async function openTraceViewer(ctx: ExtensionContext, title: string, item
 	}
 	const state: TraceViewerState = { items: items.length ? items : [{ label: "Empty", text: "No traces found." }], selected: 0, scroll: 0, title };
 	await ctx.ui.custom<void>((tui, theme, _kb, done) => ({
-		invalidate() { clearPopupLayouts(); },
+		invalidate() {},
 		handleInput(data: string) {
 			const tracePageRows = Math.max(1, Math.min(30, Math.max(12, Math.floor(tui.terminal.rows * 0.72))) - 10);
 			if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) return done();

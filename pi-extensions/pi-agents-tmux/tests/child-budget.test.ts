@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { after, afterEach } from "node:test";
-import { withChildBudget } from "../extensions/subagent/child-budget.js";
+import { withChildBudget, childSignal } from "../extensions/subagent/child-budget.js";
 import { runChainDispatch, runParallelDispatch, runSingleDispatch } from "../extensions/subagent/dispatch.js";
 import { setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
 import { cleanupTempRuntimes, importRuntimeCopy } from "./browser-fixture.js";
@@ -30,6 +30,76 @@ test("one abort-aware budget admits work across calls", async () => {
 	await budgetBound(withChildBudget);
 	const mutant = await importRuntimeCopy("child-budget.ts", "if (this.active >= limit) return;", "if (this.active >= limit) void 0;") as typeof import("../extensions/subagent/child-budget.js");
 	await assert.rejects(budgetBound(mutant.withChildBudget), /5 !== 2/);
+});
+
+async function pendingBound(run: typeof withChildBudget): Promise<void> {
+	const cwd = tempRuntime();
+	writeSettings(cwd, { maxConcurrency: 1 });
+	const pi = mockPiEvents([]);
+	let finish!: () => void;
+	const gate = new Promise<void>((resolve) => { finish = resolve; });
+	const active = run(pi, cwd, undefined, () => gate);
+	let refused = 0;
+	const queued = Array.from({ length: 257 }, () => run(pi, cwd, undefined, () => gate).catch((error) => {
+		assert.match(String(error), /pending limit=256/);
+		refused++;
+	}));
+	try {
+		await new Promise(setImmediate);
+		assert.equal(refused, 1, "pending work must be bounded");
+	} finally {
+		finish();
+		await Promise.all([active, ...queued]);
+	}
+}
+
+async function cancelledAdmission(run: typeof withChildBudget): Promise<void> {
+	const cwd = tempRuntime();
+	const controller = new AbortController();
+	let launched = 0;
+	const call = run(mockPiEvents([]), cwd, controller.signal, async () => { launched++; });
+	const settled = Promise.allSettled([call]);
+	// Admission is synchronous, but action begins on the next microtask. Pi can
+	// cancel the tool in that gap, before the runner's separate pre-spawn check.
+	controller.abort(new Error("cancelled-after-admission"));
+	await settled;
+	assert.equal(launched, 0, "cancelled admission must not execute");
+}
+
+async function shutdownBudget(runtime: { withChildBudget: typeof withChildBudget; childSignal: typeof childSignal }): Promise<void> {
+	const cwd = tempRuntime();
+	writeSettings(cwd, { maxConcurrency: 1 });
+	let shutdown!: () => Promise<void>;
+	const pi = mockPiEvents([]);
+	pi.on = (_event: string, handler: () => Promise<void>) => { shutdown = handler; return () => {}; };
+	let signal: AbortSignal | undefined;
+	let finish!: () => void;
+	const gate = new Promise<void>((resolve) => { finish = resolve; });
+	const active = runtime.withChildBudget(pi, cwd, undefined, async () => { signal = runtime.childSignal(); await gate; });
+	let launched = 0;
+	const queued = runtime.withChildBudget(pi, cwd, undefined, async () => { launched++; });
+	const settled = Promise.allSettled([active, queued]);
+	try {
+		await new Promise(setImmediate);
+		await shutdown();
+		assert.equal(signal?.aborted, true, "shutdown must cancel active work");
+	} finally {
+		finish();
+		await settled;
+	}
+	assert.equal(launched, 0, "shutdown must cancel queued work");
+}
+
+test("pending work, post-admission cancellation and shutdown guards have controls", async () => {
+	await pendingBound(withChildBudget);
+	const unbounded = await importRuntimeCopy("child-budget.ts", "if (this.queued.length >= 256)", "if (this.queued.length >= 257)") as typeof import("../extensions/subagent/child-budget.js");
+	await assert.rejects(pendingBound(unbounded.withChildBudget), /pending work must be bounded/);
+	await cancelledAdmission(withChildBudget);
+	const late = await importRuntimeCopy("child-budget.ts", "try {\n\t\t\tsignal.throwIfAborted();", "try {\n\t\t\tvoid signal.aborted;") as typeof import("../extensions/subagent/child-budget.js");
+	await assert.rejects(cancelledAdmission(late.withChildBudget), /cancelled admission must not execute/);
+	await shutdownBudget({ withChildBudget, childSignal });
+	const live = await importRuntimeCopy("child-budget.ts", 'owner.shutdown.abort(new Error("Child dispatch session shut down"));', 'void new Error("Child dispatch session shut down");') as typeof import("../extensions/subagent/child-budget.js");
+	await assert.rejects(shutdownBudget(live), /shutdown must cancel active work/);
 });
 
 test("five parallel dispatches share one cap; single and chain modes use it too", async () => {

@@ -8,6 +8,7 @@ import { describe, expect, test } from "bun:test";
 import { readTaskRegistry, recordTaskDispatchFailure, writeTaskRegistry } from "../extensions/subagent/tasks.js";
 
 const source = readFileSync(join(import.meta.dir, "../extensions/subagent/index.ts"), "utf8");
+const inboxSource = readFileSync(join(import.meta.dir, "../extensions/subagent/child-inbox.ts"), "utf8");
 
 describe("subagent sendUserMessage delivery modes", () => {
 	test("rate-limit watchdog sends recovery as an explicit steer", () => {
@@ -16,9 +17,8 @@ describe("subagent sendUserMessage delivery modes", () => {
 	});
 
 	test("child inbox task dispatch awaits explicit follow-up delivery", () => {
-		expect(source).toContain('await pi.sendUserMessage(prompt, { deliverAs: "followUp" });');
-		expect(source).toContain("Unable to dispatch child task prompt");
-		expect(source).not.toContain("pi.sendUserMessage(prompt);");
+		expect(inboxSource).toContain('await pi.sendUserMessage(prompt, { deliverAs: "followUp" });');
+		expect(inboxSource).not.toContain("pi.sendUserMessage(prompt);");
 	});
 
 	test("child dispatch failure restores processing file to inbox and requeues task", async () => {

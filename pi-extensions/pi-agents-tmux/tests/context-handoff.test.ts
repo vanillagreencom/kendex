@@ -81,6 +81,8 @@ test("parent cancellation does not retry a recorded overflow", () => assertAbort
 
 test("control: checking only overflow retries after parent cancellation", async () => {
 	const mutant = await importRuntimeCopy("runner.ts", 'first.stopReason === "aborted" || !resultHasContextLengthExceeded(first)', 'false && first.stopReason === "aborted" || !resultHasContextLengthExceeded(first)') as typeof runner;
+	// Retained pre-spawn guards reject the attempted retry. The helper turns
+	// that rejection into the same no-retry assertion failure as a second launch.
 	await assert.rejects(() => assertAbortNoRetry(mutant), assert.AssertionError);
 });
 

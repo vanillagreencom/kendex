@@ -2,7 +2,6 @@ import { taskStatus } from "../outcomes.js";
 import { type Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { AgentConfig } from "../agents.js";
-import { cachedPopupLayout } from "./layout-cache.js";
 import {
 	ansiMagenta,
 	ansiYellow,
@@ -146,9 +145,8 @@ export function renderMonitorDetail(
 			agentDivider(safeWidth, theme),
 		]
 			: [];
-	const text = item?.text || "(empty)";
-	const wrapped = cachedPopupLayout(`trace:${item?.type}`, text, safeWidth, theme,
-		() => renderTraceContentLines(text.split(/\r?\n/), item?.type, safeWidth, theme));
+	const rawLines = (item?.text || "(empty)").split(/\r?\n/);
+	const wrapped = renderTraceContentLines(rawLines, item?.type, safeWidth, theme);
 	const header: string[] = [titleLine, "", subtabLine, "", ...fileLines];
 	const headerRows = header.length;
 	const footerRows = 1;

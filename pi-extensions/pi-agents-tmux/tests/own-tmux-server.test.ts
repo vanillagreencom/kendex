@@ -9,6 +9,10 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { rmSync } from "node:fs";
 import { setCurrentTmuxPaneTitle } from "../extensions/subagent/pane.js";
+import { cleanupTempRuntimes, importRuntimeCopy } from "./browser-fixture.js";
+import { after } from "node:test";
+
+after(cleanupTempRuntimes);
 
 interface TmuxWorld {
 	socket: string;
@@ -49,6 +53,32 @@ async function titleLanded(worlds: TmuxWorld[], title: string): Promise<void> {
 		await new Promise((resolve) => setTimeout(resolve, 50));
 	}
 }
+
+async function latestTitle(setTitle: typeof setCurrentTmuxPaneTitle): Promise<void> {
+	const suite = worldFromEnv(process.env.TMUX ?? "", process.env.TMUX_PANE ?? "");
+	const launching = startScratchServer();
+	try {
+		setTitle("control-burst-first");
+		process.env.TMUX = launching.TMUX;
+		process.env.TMUX_PANE = launching.TMUX_PANE;
+		setTitle("control-burst-last");
+		process.env.TMUX = suite.TMUX;
+		process.env.TMUX_PANE = suite.TMUX_PANE;
+		await titleLanded([launching], "control-burst-last");
+		assert.ok(paneLabel(launching).endsWith("\tcontrol-burst-last"), "latest title must retain its launching-server target");
+	} finally {
+		process.env.TMUX = suite.TMUX;
+		process.env.TMUX_PANE = suite.TMUX_PANE;
+		spawnSync("tmux", ["-S", launching.socket, "kill-server"], { stdio: "ignore", env: process.env });
+		rmSync(launching.socket, { force: true });
+	}
+}
+
+test("overlapping title requests keep the latest title and its server", async () => {
+	await latestTitle(setCurrentTmuxPaneTitle);
+	const mutant = await importRuntimeCopy("pane.ts", "pendingTitle = { paneId, title, options:", "if (titleInFlight) return; pendingTitle = { paneId, title, options:") as typeof import("../extensions/subagent/pane.js");
+	await assert.rejects(latestTitle(mutant.setCurrentTmuxPaneTitle), /latest title must retain/);
+});
 
 // label | the environment the title is set under | expect: where the title and the child's values landed
 const rows: Array<[string, "suite" | "launching", string]> = [

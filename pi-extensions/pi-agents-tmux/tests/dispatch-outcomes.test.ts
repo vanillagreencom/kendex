@@ -69,8 +69,11 @@ test("exact-session context refusal carries the guard text and fresh-agent remed
 
 test("parent abort is stopped in the panel and tool result", async () => {
 	const controller = new AbortController();
-	controller.abort();
-	installMockSpawn([{ stdout: bridgeStdout([bridgeEvent("agent_end", { content: [] })]) }]);
+	installMockSpawn([{
+		stdout: bridgeStdout([bridgeEvent("agent_end", { content: [] })]),
+		// The spawn must return before the runner can receive cancellation.
+		defer: (finish) => queueMicrotask(() => { controller.abort(); finish(); }),
+	}]);
 	try {
 		const { result, row } = await assertDispatchOutcome("stopped", { signal: controller.signal }, "Agent was aborted");
 		const tool = stripAnsi(subagentToolRenderers.renderResult(result, { expanded: false }, theme, {}).render(200).join("\n"));
@@ -103,9 +106,11 @@ for (const status of ["refused", "stopped", "failed"] as const) {
 		mkdirSync(dirname(session.path), { recursive: true });
 		writeFileSync(session.path, "x".repeat(432));
 		const controller = new AbortController();
-		if (status === "stopped") controller.abort();
 		const diagnostic = status === "failed" ? providerRows[0]! : status === "stopped" ? "Agent was aborted" : "108/100";
-		installMockSpawn([{ stdout: bridgeStdout([bridgeEvent("message_end", { message: { role: "assistant", content: [], stopReason: "error", errorMessage: providerRows[0] } })]) }]);
+		installMockSpawn([{
+			stdout: bridgeStdout([bridgeEvent("message_end", { message: { role: "assistant", content: [], stopReason: "error", errorMessage: providerRows[0] } })]),
+			defer: status === "stopped" ? (finish) => queueMicrotask(() => { controller.abort(); finish(); }) : undefined,
+		}]);
 		try {
 			await assert.rejects(() => assertDispatchOutcome(status, { run: mutant.runSingleDispatch, cwd, runtimeRoot: root, sessionKey: status === "refused" ? "reuse" : undefined, sameSession: true, signal: controller.signal }, diagnostic), assert.AssertionError);
 		} finally { setSingleAgentSpawnForTests(); }

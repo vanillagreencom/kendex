@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { importRuntimeCopy } from "./browser-fixture.js";
 import { dirname } from "node:path";
 import test, { after } from "node:test";
 import { runSingleAgent, setGitExecFileForTests, setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
@@ -17,8 +18,8 @@ after(cleanupTempRuntimes);
 
 type Emitted = Array<{ name: string; payload: any }>;
 
-function runOneShot(options: { cwd: string; pi: any; runtimeRoot?: string; sessionKey?: string; sameSession?: boolean; signal?: AbortSignal }): Promise<SingleResult> {
-	return runSingleAgent(options.cwd, options.runtimeRoot ?? tempRuntime(), [testAgent()], "reviewer-test", "review code", undefined, undefined, undefined, undefined, options.pi, options.signal, undefined, makeDetails, options.sessionKey, options.sameSession);
+function runOneShot(options: { cwd: string; pi: any; runtimeRoot?: string; sessionKey?: string; sameSession?: boolean; signal?: AbortSignal }, run = runSingleAgent): Promise<SingleResult> {
+	return run(options.cwd, options.runtimeRoot ?? tempRuntime(), [testAgent()], "reviewer-test", "review code", undefined, undefined, undefined, undefined, options.pi, options.signal, undefined, makeDetails, options.sessionKey, options.sameSession);
 }
 
 // The pi bus as one line, in emit order. A `needs_completion` event must carry
@@ -164,11 +165,13 @@ test("the end of a one-shot run", async () => {
 test("an aborted run stops with the partial answer flushed to its transcript", async () => {
 	const emitted: Emitted = [];
 	const cwd = tempRuntime();
+	const controller = new AbortController();
 	const calls = installMockSpawn([{ code: 0, stdout: bridgeStdout([
 		shapedStreamEvent("top-level", "message_update", { message: { role: "assistant", content: [{ type: "text", text: "aborted partial" }] } }),
-	]) }]);
-	const controller = new AbortController();
-	controller.abort();
+	]),
+		// The spawn must return before the runner can receive cancellation.
+		defer: (finish) => queueMicrotask(() => { controller.abort(); finish(); }),
+	}]);
 	try {
 		const result = await runOneShot({ cwd, pi: mockPiEvents(emitted), signal: controller.signal });
 		assert.equal(result.status, "stopped");
@@ -182,6 +185,30 @@ test("an aborted run stops with the partial answer flushed to its transcript", a
 	} finally {
 		setSingleAgentSpawnForTests();
 	}
+});
+
+async function alreadyAborted(run: typeof runSingleAgent, setSpawn = setSingleAgentSpawnForTests): Promise<void> {
+	const emitted: Emitted = [];
+	const cwd = tempRuntime();
+	const calls = installMockSpawn([{ code: 0 }], setSpawn);
+	const controller = new AbortController();
+	controller.abort(new Error("cancelled-before-spawn"));
+	try {
+		await assert.rejects(runOneShot({ cwd, pi: mockPiEvents(emitted), signal: controller.signal }, run), (error) => error === controller.signal.reason, "pre-spawn cancellation must retain reason");
+		assert.equal(calls.length, 0);
+		assert.deepEqual(emitted, []);
+	} finally {
+		setSpawn();
+	}
+}
+
+test("an already aborted request launches no child", async () => {
+	await alreadyAborted(runSingleAgent);
+	const mutant = await importRuntimeCopy("runner.ts", "signal?.throwIfAborted();\n\tconst agent", "void signal;\n\tconst agent", [
+		{ before: "signal?.throwIfAborted();\n\t\tconst invocation", after: "void signal;\n\t\tconst invocation" },
+		{ before: "signal?.throwIfAborted();\n\t\t\tconst proc", after: "void signal;\n\t\t\tconst proc" },
+	]) as typeof import("../extensions/subagent/runner.js");
+	await assert.rejects(alreadyAborted(mutant.runSingleAgent, mutant.setSingleAgentSpawnForTests), /pre-spawn cancellation must retain reason/);
 });
 
 // label | the text or envelope under test | expect
