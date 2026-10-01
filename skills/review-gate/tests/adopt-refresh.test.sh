@@ -140,6 +140,7 @@ sandbox
 cp "$TMP/shipped-historical" "$DIR/$REFRESH"
 file_edit "$DIR" "$ADOPT" 1 '^    shipped_copy = shipped_copy or copied == candidate$' \
   's/copied == candidate/copied == replacement # copied == candidate/'
+chmod +x "$DIR/$ADOPT"
 run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
 if [ "$RC" -eq 1 ] && grep -qxF "refresh-error=workflow-edited value=$DIR/$REFRESH" <<<"$OUT"; then
   ok 'control: removed historical equality breaks the f7db7e89 acceptance row'
