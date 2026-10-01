@@ -308,8 +308,10 @@ def cause(output):
 def check(args):
     """Compare independent baseline and candidate replays of the same consumer state."""
     if not os.path.lexists(args.snapshot):
-        # The main-only collector must land its first snapshot before the owner
-        # requires this context. Only total absence permits fixture-only bootstrap.
+        # lock-record publishes this committed path. Once the baseline carries
+        # it, a PR deletion must not reopen fixture-only bootstrap.
+        if os.path.lexists(args.baseline / ".github/consumer-snapshots.json.gz"):
+            refuse("input-missing", args.snapshot)
         print("consumer-snapshot=absent")
         return
     data = json.loads(gzip.decompress(args.snapshot.read_bytes()))

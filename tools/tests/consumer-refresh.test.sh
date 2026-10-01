@@ -90,25 +90,66 @@ BASELINE="$TMP/removed" gate "$TMP/snapshot.gz" "$TMP/removed"
 if [ "$RC" -eq 0 ] && grep -qxF 'consumer-refresh=baseline-failure repository=fixture baseline-exit=2 candidate-exit=2' <<<"$OUT"; then
   ok 'an unchanged keyed baseline refusal is not a consumer pass or PR regression'
 else bad 'baseline failure comparison' "$OUT"; fi
-# Gate controls keep the matched condition visible and remove its behavior.
-python3 - "$ROOT/tools/consumer-refresh" "$TMP/mutant" <<'PY'
+# The preserved adopter extracts the job environment from the refreshed
+# template. Its absence is a different keyed refusal than the missing writer.
+git clone -q --no-hardlinks "$TMP/candidate" "$TMP/no-environment"
+git -C "$TMP/no-environment" config gc.auto 0
+git -C "$TMP/no-environment" config maintenance.auto false
+python3 - "$TMP/no-environment/skills/review-gate/templates/kendex-refresh.yml" <<'PY'
 from pathlib import Path
 import sys
-text = Path(sys.argv[1]).read_text()
-old = 'failed = True'
+path = Path(sys.argv[1]).resolve()
+text = path.read_text()
+old = '    environment: kendex\n'
 assert text.count(old) == 1
-changed = text.replace(old, '# ' + old + '\n                failed = False')
+changed = text.replace(old, '')
 assert changed != text
-path = Path(sys.argv[2])
-path.write_text(changed.replace('ROOT = Path(__file__).resolve().parent.parent',
-    'ROOT = Path(' + repr(str(Path(sys.argv[1]).resolve().parent.parent)) + ')'))
-path.chmod(0o755)
+path.write_text(changed)
+PY
+git -C "$TMP/no-environment" -c core.hooksPath=/dev/null -c user.name=fixture -c user.email=fixture@example.invalid add -A
+git -C "$TMP/no-environment" -c core.hooksPath=/dev/null -c user.name=fixture -c user.email=fixture@example.invalid commit -qm 'remove refresh environment'
+BASELINE="$TMP/removed" gate "$TMP/snapshot.gz" "$TMP/no-environment"
+if [ "$RC" -eq 1 ] && grep -qxF 'consumer-refresh=regression repository=fixture baseline-exit=2 candidate-exit=2' <<<"$OUT" &&
+  grep -qxF 'review-gate-error=template-missing value=<sandbox>/consumer/.agents/skills/review-gate/templates/review-gate-writer.yml' <<<"$OUT" &&
+  grep -qxF 'review-gate-error=standard-setting-missing value=REVIEW_GATE_STANDARD_ENVIRONMENT' <<<"$OUT"; then
+  ok 'different keyed baseline and candidate refusals are a regression'
+else bad 'different baseline failure comparison' "$OUT"; fi
+# Gate controls keep the matched condition visible and remove its behavior.
+python3 - "$ROOT/tools/consumer-refresh" "$TMP" <<'PY'
+from pathlib import Path
+import sys
+source = Path(sys.argv[1]).resolve()
+text = source.read_text()
+for name, old, new in (
+    ('mutant', 'failed = True', '# failed = True\n                failed = False'),
+    ('cause-mutant', 'elif base_rc != 0 and cause(out) and cause(out) == cause(base_out):',
+     '# elif base_rc != 0 and cause(out) and cause(out) == cause(base_out):\n'
+     '            elif base_rc != 0 and cause(out):'),
+    ('snapshot-mutant', 'if os.path.lexists(args.baseline / ".github/consumer-snapshots.json.gz"):',
+     '# if os.path.lexists(args.baseline / ".github/consumer-snapshots.json.gz"):\n'
+     '        if False:'),
+):
+    assert text.count(old) == 1
+    changed = text.replace(old, new)
+    assert changed != text
+    path = Path(sys.argv[2]) / name
+    path.write_text(changed.replace('ROOT = Path(__file__).resolve().parent.parent',
+        'ROOT = Path(' + repr(str(source.parent.parent)) + ')'))
+    path.chmod(0o755)
 PY
 GATE="$TMP/mutant" gate "$TMP/snapshot.gz" "$TMP/removed"
 if [ "$RC" -eq 0 ]; then ok 'control: disabled regression refusal turns the removal assertion red'; else bad 'regression refusal mutant' "$OUT"; fi
-for row in absent empty missing-consumer missing-input unsafe-path unsafe-link unknown-mode; do
+GATE="$TMP/cause-mutant" BASELINE="$TMP/removed" gate "$TMP/snapshot.gz" "$TMP/no-environment"
+if [ "$RC" -eq 0 ] && grep -qxF 'consumer-refresh=baseline-failure repository=fixture baseline-exit=2 candidate-exit=2' <<<"$OUT" &&
+  grep -qxF 'review-gate-error=template-missing value=<sandbox>/consumer/.agents/skills/review-gate/templates/review-gate-writer.yml' <<<"$OUT" &&
+  grep -qxF 'review-gate-error=standard-setting-missing value=REVIEW_GATE_STANDARD_ENVIRONMENT' <<<"$OUT"; then
+  ok 'control: disabled cause equality turns the different-refusal assertion red'
+else bad 'cause equality mutant' "$OUT"; fi
+mkdir -p "$TMP/bootstrap" "$TMP/deployed/.github"
+cp "$TMP/snapshot.gz" "$TMP/deployed/.github/consumer-snapshots.json.gz"
+for row in absent removed empty missing-consumer missing-input unsafe-path unsafe-link unknown-mode; do
   path="$TMP/$row.gz"
-  if [ "$row" != absent ]; then
+  if [ "$row" != absent ] && [ "$row" != removed ]; then
     python3 - "$TMP/snapshot.gz" "$path" "$row" <<'PY'
 import gzip, json
 from pathlib import Path
@@ -127,12 +168,23 @@ else: raise AssertionError(row)
 Path(target).write_bytes(gzip.compress(json.dumps(data).encode()))
 PY
   fi
-  gate "$path" "$TMP/candidate"
+  baseline="$TMP/candidate"
+  if [ "$row" = absent ]; then baseline="$TMP/bootstrap"; fi
+  if [ "$row" = removed ]; then baseline="$TMP/deployed"; fi
+  BASELINE="$baseline" gate "$path" "$TMP/candidate"
   if [ "$row" = absent ]; then
     if [ "$RC" -eq 0 ] && [ "$OUT" = consumer-snapshot=absent ]; then ok 'bootstrap permits only total absence'; else bad 'bootstrap' "$OUT"; fi
+  elif [ "$row" = removed ]; then
+    if [ "$RC" -eq 1 ] && [ "$OUT" = "consumer-refresh-error=input-missing value=$path" ]; then
+      ok 'control: post-deployment snapshot removal turns the gate red'
+    else bad 'post-deployment snapshot removal' "$OUT"; fi
   elif [ "$row" = missing-input ]; then
     if [ "$RC" -eq 1 ] && grep -qxF 'consumer-refresh-error=input-missing value=.kendex-lock.json' <<<"$OUT"; then ok "$row refuses before execution"; else bad "$row" "$OUT"; fi
   elif [ "$RC" -eq 1 ]; then ok "$row refuses before execution"; else bad "$row" "$OUT"; fi
 done
+GATE="$TMP/snapshot-mutant" BASELINE="$TMP/deployed" gate "$TMP/removed.gz" "$TMP/candidate"
+if [ "$RC" -eq 0 ] && [ "$OUT" = consumer-snapshot=absent ]; then
+  ok 'control: disabled baseline snapshot check turns the removal assertion red'
+else bad 'baseline snapshot mutant' "$OUT"; fi
 printf '\nconsumer-refresh-test: pass=%s fail=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
