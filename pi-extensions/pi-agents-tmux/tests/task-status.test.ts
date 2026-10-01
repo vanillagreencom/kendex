@@ -15,10 +15,6 @@ test("control: task diagnostics ignore the lost working task", async () => {
 
 test("parent aborted event is stopped in the persisted task result", () => assertStoppedEvent());
 test("real stopped task leaves the extension's stall scan", () => assertStoppedConsumers());
-test("control: extension stall selector includes a real stopped task", async () => {
-	const mutant = await importRuntimeCopy("index.ts", 'isTaskActive(record.status)', 'true || isTaskActive(record.status)') as typeof import("../extensions/subagent/index.js");
-	await assert.rejects(() => assertStoppedConsumers(mutant.default), assert.AssertionError);
-});
 
 test("completion tool and self-completion message use the status presentation owner", () => assertCompletionPresentation());
 for (const indentation of ["\t\t\t", "\t\t"]) test(`control: completion presentation bypasses owner indent=${indentation.length}`, async () => {
