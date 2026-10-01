@@ -36,7 +36,7 @@ import type { ManagedTask } from "./types.js";
 export interface DashboardDeps {
 	sortedTasks(): ManagedTask[];
 	getTask(id: string): ManagedTask | null;
-	getTaskOutput(task: ManagedTask): string;
+	getTaskOutput(task: ManagedTask): Promise<string>;
 	requestStop(task: ManagedTask | null, reason: "user"): { ok: boolean; message: string };
 	clearFinishedTasks(): number;
 	formatTaskListText(): string;
@@ -93,7 +93,31 @@ export async function openDashboard(
 				const dashboardInnerRows = (): number => Math.max(4, dashboardFrameRows() - DASHBOARD_FRAME_VERTICAL_OVERHEAD);
 				const dashboardBodyRows = (): number => Math.max(1, dashboardInnerRows() - 2);
 				const taskRows = (): number => Math.max(1, dashboardBodyRows() - 1);
-				const getOutputLines = (task: ManagedTask | null): string[] => splitOutputLines(task ? deps.getTaskOutput(task) : "");
+				let disposed = false;
+				let outputTask: ManagedTask | null = null;
+				let outputText = "";
+				let outputLines = splitOutputLines("");
+				const pendingReads = new WeakSet<ManagedTask>();
+				const getOutputLines = (task: ManagedTask | null): string[] => {
+					if (outputTask !== task) {
+						outputTask = task;
+						outputText = "";
+						outputLines = splitOutputLines("");
+					}
+					if (task && !pendingReads.has(task)) {
+						pendingReads.add(task);
+						void deps.getTaskOutput(task).then((text) => {
+							pendingReads.delete(task);
+							if (disposed || outputTask !== task || outputText === text) return;
+							outputText = text;
+							outputLines = splitOutputLines(text);
+							tui.requestRender();
+						});
+					}
+					return outputLines;
+				};
+				// Each label keeps only its current content and width for this modal.
+				const detailCache = new Map<string, { value: string; width: number; lines: string[] }>();
 				const sanitizeDashboardLine = (line: string): string => line
 					.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
 					.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
@@ -107,16 +131,20 @@ export async function openDashboard(
 				const pushDetail = (target: string[], label: string, value: string, detailWidth: number, maxLines = 6): number => {
 					const prefix = `${theme.fg("muted", label)}: `;
 					const indent = " ".repeat(Math.max(0, `${label}: `.length));
-					const chunks = String(value).split(/\r?\n/);
-					const lines: string[] = [];
-					chunks.forEach((chunk, index) => {
-						const lead = index === 0 ? prefix : theme.fg("muted", indent);
-						const available = Math.max(1, detailWidth - (index === 0 ? visibleWidth(`${label}: `) : indent.length));
-						const wrapped = wrapDashboardLine(chunk, available);
-						wrapped.forEach((part, partIndex) => {
-							lines.push(`${partIndex === 0 ? lead : theme.fg("muted", indent)}${part}`);
+					let cached = detailCache.get(label);
+					if (!cached || cached.value !== value || cached.width !== detailWidth) {
+						const lines: string[] = [];
+						String(value).split(/\r?\n/).forEach((chunk, index) => {
+							const lead = index === 0 ? prefix : theme.fg("muted", indent);
+							const available = Math.max(1, detailWidth - (index === 0 ? visibleWidth(`${label}: `) : indent.length));
+							wrapDashboardLine(chunk, available).forEach((part, partIndex) => {
+								lines.push(`${partIndex === 0 ? lead : theme.fg("muted", indent)}${part}`);
+							});
 						});
-					});
+						cached = { value, width: detailWidth, lines };
+						detailCache.set(label, cached);
+					}
+					const lines = cached.lines;
 					if (lines.length > maxLines) {
 						target.push(...lines.slice(0, Math.max(1, maxLines - 1)));
 						target.push(`${theme.fg("muted", indent)}… ${lines.length - (maxLines - 1)} more line(s)`);
@@ -233,6 +261,11 @@ export async function openDashboard(
 
 				return {
 					dispose() {
+						disposed = true;
+						detailCache.clear();
+						outputTask = null;
+						outputLines = [];
+						outputText = "";
 						if (timer) clearInterval(timer);
 						timer = null;
 					},
@@ -283,7 +316,7 @@ export async function openDashboard(
 							tui.requestRender();
 						}
 					},
-					invalidate() {},
+					invalidate() { detailCache.clear(); outputLines = splitOutputLines(outputText); },
 					render(width: number) {
 						ensureDashboardTimer();
 						const sorted = deps.sortedTasks();

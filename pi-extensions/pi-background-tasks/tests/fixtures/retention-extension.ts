@@ -12,6 +12,7 @@ mock.module("@earendil-works/pi-tui", () => ({ matchesKey: unused, truncateToWid
 mock.module("@earendil-works/pi-coding-agent", () => ({ getShellConfig: () => ({ shell: "/bin/sh", args: ["-c"] }) }));
 
 const { MAX_FINISHED_TASKS } = await import("../../extensions/constants.js");
+const { taskLogs } = await import("../../extensions/log-writer.js");
 const { LANE_FILE_MAX_AGE_MS } = await import("../../scripts/lane-retention.js");
 
 interface ToolResult { content: { type: string; text: string }[]; details: { action: string; task?: Record<string, unknown>; tasks?: Record<string, unknown>[] } }
@@ -93,6 +94,9 @@ const waitForExit = async (id: string) => {
 		if (Date.now() > deadline) throw new Error(`retention_fixture.task_running=${id}`);
 		await new Promise((resolve) => setTimeout(resolve, 10));
 	}
+	// Terminal status precedes the log flush that releases output and bounds tasks.
+	await taskLogs.drain();
+	await Promise.resolve();
 };
 
 const spawned = MAX_FINISHED_TASKS + 5;

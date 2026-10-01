@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.1.2
+
+- The dashboard reads only a bounded log tail without blocking Pi, reuses unchanged tails for each task, and reuses command layouts between frames. A notification regex that exceeds its execution deadline is disabled and reported once instead of freezing Pi.
+
 ### 2.1.1
 
 - Session startup keeps fresh task logs when their working directory exists and its name ends in whitespace. Cleanup previously trimmed the name and could delete these files.

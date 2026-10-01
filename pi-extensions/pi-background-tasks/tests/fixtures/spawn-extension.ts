@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { interceptNativeEffects, fixtureNow, fixturePid } from "./spawn-native.js";
 
+import type { BackgroundTaskSnapshot } from "../../extensions/types.js";
+
 interface Input { mode: "spawn" | "stop"; platform?: string; resource?: boolean; caller?: "tool" | "shutdown" | "slash"; command?: string; stopFails?: boolean; killFails?: boolean; signalGone?: boolean }
 const input: Input = JSON.parse(await Bun.stdin.text());
 const native = await interceptNativeEffects(input);
@@ -13,15 +15,16 @@ mock.module("@earendil-works/pi-ai", () => ({ StringEnum: (values: readonly stri
 mock.module("typebox", () => ({ Type: { Object: (value: unknown) => value, Optional: (value: unknown) => value, Number: () => ({}), String: () => ({}), Boolean: () => ({}) } }));
 mock.module("@earendil-works/pi-tui", () => ({ matchesKey: unused, truncateToWidth: unused, visibleWidth: unused, wrapTextWithAnsi: unused }));
 mock.module("@earendil-works/pi-coding-agent", () => ({ getShellConfig: () => ({ shell: "fixture-shell", args: ["-c"] }) }));
+const { latestSnapshot } = await import("../../extensions/snapshot.js");
 
-interface ToolResult { content: { type: string; text: string }[]; details: { action: string; task?: Record<string, unknown>; tasks?: Record<string, unknown>[] } }
+interface ToolResult { content: { type: string; text: string }[]; details: { action: string; task?: BackgroundTaskSnapshot } }
 interface Tool { name: string; execute(id: string, params: Record<string, unknown>): Promise<ToolResult> }
 const tools = new Map<string, Tool>();
 const commands = new Map<string, { handler(args: string, ctx: ExtensionContext): unknown }>();
 const events = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
 const messages: unknown[] = [];
 const notifications: unknown[] = [];
-const entries: unknown[] = [];
+
 const ctx = {
 	cwd: process.cwd(), hasUI: false, isProjectTrusted: () => true,
 	sessionManager: { getSessionId: () => "spawn-hardening-private-session", getSessionFile: () => join(process.cwd(), "session.jsonl"), getBranch: () => [] },
@@ -31,11 +34,12 @@ const pi = {
 	registerTool(tool: Tool) { tools.set(tool.name, tool); },
 	registerCommand(name: string, command: { handler(args: string, ctx: ExtensionContext): unknown }) { commands.set(name, command); }, registerShortcut() {}, registerMessageRenderer() {},
 	on(event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) { events.set(event, handler); },
-	appendEntry: (...args: unknown[]) => entries.push(args),
+	appendEntry() {},
 	sendMessage: (...args: unknown[]) => messages.push(args),
 } as unknown as ExtensionAPI;
 let started = false;
 let shutDown = false;
+let spawnedSnapshot: BackgroundTaskSnapshot | undefined;
 async function dispatch(event: string) {
 	const handler = events.get(event);
 	if (!handler) throw new Error(`spawn_fixture.event_missing=${event}`);
@@ -46,17 +50,10 @@ async function execute(params: Record<string, unknown>) {
 	if (!tool) throw new Error("spawn_fixture.tool_missing=bg_task");
 	return await tool.execute("private-tool-call", params);
 }
-// session_shutdown releases the task list, so after it the task is read from
-// the snapshot it persisted for the next session to restore.
-function persistedTask(): Record<string, unknown> | undefined {
-	for (const entry of [...entries].reverse() as [string, { tasks?: Record<string, unknown>[] }][]) {
-		const task = entry[1]?.tasks?.find((candidate) => candidate.id === "bg-1");
-		if (task) return task;
-	}
-	return undefined;
-}
 async function state() {
-	const task = shutDown ? persistedTask() : (await execute({ action: "log", id: "bg-1" })).details.task;
+	// The product accessor retains current status even when list details are a
+	// bounded manifest or shutdown has released the live task collection.
+	const task = latestSnapshot(spawnedSnapshot);
 	if (!task) throw new Error("spawn_fixture.task_missing=bg-1");
 	return { id: task.id, pid: task.pid, status: task.status, reason: task.terminationReason ?? null, exitCode: task.exitCode, exitNotified: task.exitNotified };
 }
@@ -73,6 +70,7 @@ try {
 	// Only the platform-sensitive spawn call runs under this row's platform.
 	if (input.platform) Object.defineProperty(process, "platform", { ...originalPlatform, value: input.platform });
 	const spawned = await execute({ action: "spawn", command: input.command ?? "fixture command", notifyOnExit: false });
+	spawnedSnapshot = spawned.details.task;
 	Object.defineProperty(process, "platform", originalPlatform);
 	if (native.children.length !== 1 || native.spawns.length !== 1) throw new Error(`spawn_fixture.spawn_count=${native.spawns.length},children=${native.children.length}`);
 	const child = native.children[0]!;

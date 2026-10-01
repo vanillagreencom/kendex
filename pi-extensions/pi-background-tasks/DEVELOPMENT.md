@@ -14,6 +14,12 @@ For maintainers. What it does for a consumer is [README.md](README.md); the agen
 - Broker publication is best-effort and outside control flow. `extensions/activity.ts::publishBackgroundTaskActivity` and `publishBackgroundTaskStarted` publish `bg_task.*` events to `pi-session-bridge`'s broker when present, catch every publisher error, and are never awaited by task control.
 - Diagnostics never touch the terminal. `extensions/diagnostics.ts::logBackgroundDiagnostic` writes to a log file only when `PI_BG_TASK_DEBUG`, `PI_BG_TASK_DIAGNOSTICS` or `PI_BG_TASK_DIAGNOSTIC_LOG` is set; stdout and stderr would corrupt the TUI widgets.
 
+## Log reads and matching
+
+The dashboard's synchronous renderer consumes the last completed asynchronous log read. A read completion requests another frame only when the selected task's output changes. The log reader owns a weak per-task cache and checks file metadata before reusing a tail. Disk-backed exit wakes wait for their tail read before recording delivery; clearing a task or ending the session suppresses that completion.
+
+Notification regexes run in a Node VM context with an execution timeout. Only pattern data enters the context, not executable source. The matcher releases the input after each attempt and disables a timed-out pattern. `tests/output-matcher.test.ts` runs the native deadline under Node and checks both a disposable copy with its deadline removed and the main branch's matcher. Bun runs the rest of the suite, but it is not the host used to prove this deadline.
+
 ## Mechanics worth knowing
 
 - Auto-backgrounding covers the agent's `bash` tool, interactive `!` commands, and bash issued over RPC; an RPC caller gets the acknowledgement text in place of the output. The built-in patterns and the `sleep`-loop heuristic are `extensions/auto-background.ts::autoBackgroundDecision`; user patterns are `/regex/flags` or a case-insensitive plain regex per line.
@@ -27,4 +33,8 @@ For maintainers. What it does for a consumer is [README.md](README.md); the agen
 bun test ./tests ./extensions/__tests__
 ```
 
-Lifecycle, wake budgets, orphan identity (including a live probe of exec drift), resource-control planning and stop semantics, bounded snapshots, tool-result details, and the per-chunk write path and restore probe count (`tests/write-path.test.ts`) each have a suite under `tests/`. A change to a bound above ships with the control that overruns it.
+Lifecycle, wake budgets, orphan identity (including a live probe of exec drift), resource-control planning and stop semantics, bounded snapshots, tool-result details, and the per-chunk write path and restore probe count (`tests/write-path.test.ts`) each have a suite under `tests/`. A change to a bound above ships with the control that overruns it. `tests/log-tail.test.ts` checks byte bounds, short reads, independent caches and file changes. `tests/dashboard.test.ts` checks non-blocking output reads and command layout reuse across frames, expansion, width and theme changes. Both include controls against disposable production copies.
+
+`tests/component-benchmark.test.ts` drives the production dashboard and its extension-owned log reader with a restored log. It counts file reads, bytes and command wraps across repeated frames, then checks expansion, width, content, theme and task selection changes. Each measured step includes asynchronous read completion and must fit within the dashboard's refresh interval. The terminal peer uses plain-text fixture rendering; the benchmark does not measure terminal drawing or interactive Pi. Ordinary package CI checks the branch and a cache-bypass control without requiring git history.
+
+Set `PI_BG_BENCHMARK_BASE_REF` to the main commit under comparison when running the package suite to enable the main controls and print both measurements. Main code comes from a disposable copy of that tracked extension tree; fixture code stays on the branch. The same setting enables the pathological matcher control against main. An unreadable baseline fails the measurement instead of skipping it.

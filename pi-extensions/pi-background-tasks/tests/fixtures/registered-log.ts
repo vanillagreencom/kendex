@@ -32,7 +32,7 @@ for (const row of rows) {
 		setActiveCtx: unused,
 		rememberSnapshot(value) { calls.push({ rememberSameTask: value === task }); return taskSnapshot(value); },
 		sortedTasks: unused, formatTaskListText: unused,
-		getTaskOutput(value) { calls.push({ outputSameTask: value === task }); return row.output; },
+		async getTaskOutput(value) { calls.push({ outputSameTask: value === task }); return row.output; },
 		resolveTask(id, pid) { calls.push({ id: id ?? null, pid: pid ?? null }); return task; },
 		requestStop: unused, spawnTask: unused, clearFinishedTasks: unused,
 		armForcedBackground: unused, toggleWidget: unused,

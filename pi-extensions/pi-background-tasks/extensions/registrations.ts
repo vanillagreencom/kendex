@@ -28,7 +28,7 @@ export interface RegistrationDeps {
 	rememberSnapshot: (task: ManagedTask) => BackgroundTaskSnapshot;
 	sortedTasks: () => ManagedTask[];
 	formatTaskListText: () => string;
-	getTaskOutput: (task: ManagedTask) => string;
+	getTaskOutput: (task: ManagedTask) => Promise<string>;
 	resolveTask: (id?: string, pid?: number) => ManagedTask | null;
 	requestStop: (task: ManagedTask | null, reason: "user") => { ok: boolean; message: string };
 	spawnTask: (options: SpawnTaskOptions) => ManagedTask;
@@ -61,7 +61,7 @@ function registerTools(pi: ExtensionAPI, deps: RegistrationDeps): void {
 			const task = deps.resolveTask(undefined, params.pid);
 			if (!task) throw new Error("No background task matched that pid.");
 			if (params.action === "log") {
-				const output = deps.getTaskOutput(task);
+				const output = await deps.getTaskOutput(task);
 				const cwd = deps.getActiveCtx()?.cwd;
 				const truncation = taskLogTruncation(output, task.logFile, cwd);
 				return makeToolResult(formatTaskLog(output, task.logFile, cwd), {
@@ -152,7 +152,7 @@ function registerTools(pi: ExtensionAPI, deps: RegistrationDeps): void {
 			const task = deps.resolveTask(params.id, params.pid);
 			if (!task) throw new Error("No background task matched that id or pid.");
 			if (params.action === "log") {
-				const output = deps.getTaskOutput(task);
+				const output = await deps.getTaskOutput(task);
 				const cwd = deps.getActiveCtx()?.cwd;
 				const truncation = taskLogTruncation(output, task.logFile, cwd);
 				return makeToolResult(formatTaskLog(output, task.logFile, cwd), {
@@ -230,7 +230,7 @@ function registerCommands(pi: ExtensionAPI, deps: RegistrationDeps): void {
 			if (inspectMatch) {
 				const task = deps.resolveTask(inspectMatch[1]?.trim());
 				if (!task) { ctx.ui.notify("No background task matched that id or pid.", "warning"); return; }
-				if (trimmed.startsWith("log ")) ctx.ui.notify(formatTaskLog(deps.getTaskOutput(task), task.logFile, ctx.cwd), "info");
+				if (trimmed.startsWith("log ")) ctx.ui.notify(formatTaskLog(await deps.getTaskOutput(task), task.logFile, ctx.cwd), "info");
 				else await openDashboard(ctx, deps.dashboardDeps, task);
 				return;
 			}
