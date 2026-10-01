@@ -54,6 +54,43 @@ fn the_harness_does_not_change_what_a_rule_finds() {
     assert_eq!(claude, pi);
 }
 
+#[test]
+fn installed_style_inputs_read_the_whole_document_or_only_the_owned_block() {
+    for (harness, state, text, expected) in [
+        (
+            HarnessId::Claude,
+            FileState::File,
+            "---\nname: STE\nkeep-coding-instructions: true\n---\nClaude whole document.\n",
+            "---\nname: STE\nkeep-coding-instructions: true\n---\nClaude whole document.\n",
+        ),
+        (
+            HarnessId::Pi,
+            FileState::ConfigEntry,
+            "Unrelated before.\n<!-- kendex:append-system output-style-other begin -->\nOther style.\n<!-- kendex:append-system output-style-other end -->\n\n<!-- kendex:append-system output-style-STE begin -->\nInstalled Pi body.\n<!-- kendex:append-system output-style-STE end -->\nUnrelated after.\n",
+            "<!-- kendex:append-system output-style-STE begin -->\nInstalled Pi body.\n<!-- kendex:append-system output-style-STE end -->\n",
+        ),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::paths::canonical(tmp.path()).unwrap();
+        let path = root.join("style.md");
+        std::fs::write(&path, text).unwrap();
+        let observed = ObservedItem {
+            kind: ItemKind::OutputStyle,
+            name: "STE".into(),
+            file_state: state,
+            ..agent_at(&path, harness)
+        };
+        let input = input_for(&observed, Publisher::Other);
+        assert_eq!(
+            input.content,
+            Content::Document {
+                text: expected.into()
+            },
+            "{harness:?}"
+        );
+    }
+}
+
 fn skill_at(path: &Path) -> ObservedItem {
     ObservedItem {
         kind: ItemKind::Skill,

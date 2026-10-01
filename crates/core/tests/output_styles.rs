@@ -135,22 +135,34 @@ fn routes_reapply_and_record_only_owned_content() {
 #[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
 fn existing_selections_and_local_settings_remain_user_owned() {
     for global in [false, true] {
-        for local in [false, true] {
-            let f = fixture(global, &[HarnessId::Claude]);
-            let (_, settings, _) = paths(&f);
-            let selected = if local {
+        for owner in ["kendex", "settings", "local"] {
+            let f = fixture(global, &[HarnessId::Claude, HarnessId::Pi]);
+            let (style, settings, append) = paths(&f);
+            let selected = if owner == "local" {
                 settings.with_file_name("settings.local.json")
             } else {
                 settings.clone()
             };
-            fs::write(
-                &selected,
-                "{\"outputStyle\":\"Explanatory\",\"model\":\"opus\"}\n",
-            )
-            .unwrap();
+            let original = if owner == "kendex" {
+                "{\"model\":\"opus\"}\n"
+            } else {
+                "{\"outputStyle\":\"Explanatory\",\"model\":\"opus\"}\n"
+            };
+            fs::write(&selected, original).unwrap();
+            fs::write(&append, "Personal instructions.\n").unwrap();
             let before = fs::read(&selected).unwrap();
             install(&f);
-            assert_eq!(fs::read(&selected).unwrap(), before);
+            if owner != "kendex" {
+                assert_eq!(fs::read(&selected).unwrap(), before);
+            }
+            let record = lock::load(&lock::lock_path(&f.env, &f.scope)).unwrap();
+            assert_eq!(
+                record.entries["output-style:STE:claude"].output_style,
+                Some(lock::OutputStyleRecord::Claude {
+                    path: settings.clone(),
+                    selection: (owner == "kendex").then(|| "STE".into()),
+                })
+            );
             assert!(engine::audit(&f.env, &f.scope).unwrap().drift.is_empty());
             let report = engine::ops::remove(
                 &f.env,
@@ -161,13 +173,184 @@ fn existing_selections_and_local_settings_remain_user_owned() {
             )
             .unwrap();
             apply::execute(&f.env, &report.plan).unwrap();
-            assert_eq!(fs::read(&selected).unwrap(), before);
+            assert!(!style.exists(), "{owner}");
+            assert_eq!(
+                fs::read_to_string(&append).unwrap(),
+                "Personal instructions.\n"
+            );
+            if owner == "kendex" {
+                let remaining: serde_json::Value =
+                    serde_json::from_slice(&fs::read(&selected).unwrap()).unwrap();
+                assert_eq!(remaining, serde_json::json!({"model":"opus"}));
+            } else {
+                assert_eq!(fs::read(&selected).unwrap(), before);
+            }
+            assert!(
+                lock::load(&lock::lock_path(&f.env, &f.scope))
+                    .unwrap()
+                    .entries
+                    .is_empty()
+            );
         }
     }
 }
 
 #[test]
 #[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeps lifecycle and ownership rows in one table"
+)]
+fn selection_acquisition_follows_enable_and_composed_replacement() {
+    for global in [false, true] {
+        for transition in [
+            "first-disabled",
+            "disable-enable",
+            "replace",
+            "replace-kept",
+        ] {
+            for owner in ["kendex", "settings", "local", "removed"] {
+                let f = fixture(global, &[HarnessId::Claude, HarnessId::Pi]);
+                let (style, settings, append) = paths(&f);
+                let selected = if owner == "local" {
+                    settings.with_file_name("settings.local.json")
+                } else {
+                    settings.clone()
+                };
+                let user = "{\"outputStyle\":\"Learning\",\"model\":\"opus\"}\n";
+                if owner != "kendex" {
+                    fs::write(&selected, user).unwrap();
+                } else {
+                    fs::write(&selected, "{\"model\":\"opus\"}\n").unwrap();
+                }
+                let manifest_path = manifest::manifest_path(&f.env, &f.scope);
+                let original = fs::read_to_string(&manifest_path).unwrap();
+                if transition != "first-disabled" {
+                    install(&f);
+                }
+                let name = if transition.starts_with("replace") {
+                    fs::write(
+                        f.source.join("output-styles/Other.md"),
+                        STYLE.replace("name: STE", "name: Other"),
+                    )
+                    .unwrap();
+                    fs::write(
+                        &manifest_path,
+                        original.replace("output-styles.STE", "output-styles.Other"),
+                    )
+                    .unwrap();
+                    "Other"
+                } else {
+                    fs::write(&manifest_path, format!("{original}enabled = false\n")).unwrap();
+                    install(&f);
+                    assert!(!style.exists());
+                    assert!(style.with_file_name("STE.md.disabled").exists());
+                    assert!(
+                        kendex_core::configedit::style_blocks(
+                            &fs::read_to_string(&append).unwrap_or_default()
+                        )
+                        .is_empty()
+                    );
+                    let record = lock::load(&lock::lock_path(&f.env, &f.scope)).unwrap();
+                    if transition == "first-disabled" && owner == "kendex" {
+                        assert_eq!(record.entries["output-style:STE:claude"].output_style, None);
+                    }
+                    fs::write(&manifest_path, &original).unwrap();
+                    "STE"
+                };
+                if owner == "removed" {
+                    fs::write(&selected, "{\"model\":\"opus\"}\n").unwrap();
+                }
+                if transition == "replace-kept" {
+                    install(&f);
+                    if owner == "kendex" {
+                        let record = lock::load(&lock::lock_path(&f.env, &f.scope)).unwrap();
+                        assert_eq!(
+                            record.entries["output-style:Other:claude"].output_style,
+                            None
+                        );
+                    }
+                }
+                let manifest = manifest::load_current(&manifest_path).unwrap().unwrap();
+                let record = lock::load(&lock::lock_path(&f.env, &f.scope)).unwrap();
+                let report = engine::plan_scope(
+                    &f.env,
+                    &f.scope,
+                    &manifest,
+                    &record,
+                    &engine::PlanOptions {
+                        remove_orphans: true,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                assert!(
+                    !report
+                        .drift
+                        .iter()
+                        .any(|row| row.state == engine::DriftState::Conflict),
+                    "{transition}/{owner}: {report:?}"
+                );
+                apply::execute(&f.env, &report.plan).unwrap();
+                let record = lock::load(&lock::lock_path(&f.env, &f.scope)).unwrap();
+                assert_eq!(
+                    record.entries[&format!("output-style:{name}:claude")].output_style,
+                    Some(lock::OutputStyleRecord::Claude {
+                        path: settings.clone(),
+                        selection: (owner == "kendex").then(|| name.into()),
+                    }),
+                    "{transition}/{owner}"
+                );
+                let selection: serde_json::Value =
+                    serde_json::from_slice(&fs::read(&selected).unwrap()).unwrap();
+                let expected = match owner {
+                    "kendex" => serde_json::json!(name),
+                    "removed" => serde_json::Value::Null,
+                    "settings" | "local" => serde_json::json!("Learning"),
+                    _ => unreachable!(),
+                };
+                assert_eq!(selection["outputStyle"], expected);
+                assert_eq!(selection["model"], "opus");
+                if owner != "kendex" {
+                    assert_eq!(
+                        fs::read_to_string(&selected).unwrap(),
+                        if owner == "removed" {
+                            "{\"model\":\"opus\"}\n"
+                        } else {
+                            user
+                        }
+                    );
+                }
+                assert!(style.with_file_name(format!("{name}.md")).exists());
+                assert!(!style.with_file_name("STE.md.disabled").exists());
+                assert_eq!(
+                    kendex_core::configedit::style_blocks(&fs::read_to_string(&append).unwrap()),
+                    vec![name]
+                );
+                assert!(engine::audit(&f.env, &f.scope).unwrap().drift.is_empty());
+                // Ownership must still detect the user's deletion after either acquisition.
+                if owner == "kendex" {
+                    fs::write(&settings, "{\"model\":\"opus\"}\n").unwrap();
+                    assert!(
+                        engine::audit(&f.env, &f.scope)
+                            .unwrap()
+                            .drift
+                            .iter()
+                            .any(|row| row.harness == HarnessId::Claude
+                                && row.state == engine::DriftState::Conflict)
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeps edit protection and discard rows in one table"
+)]
 fn content_and_selection_edits_are_drift_and_are_not_overwritten() {
     for global in [false, true] {
         for route in [
@@ -215,6 +398,215 @@ fn content_and_selection_edits_are_drift_and_are_not_overwritten() {
             );
             apply::execute(&f.env, &report.plan).unwrap();
             assert_eq!(fs::read(&edited).unwrap(), before);
+            let manifest = manifest::load_current(&manifest::manifest_path(&f.env, &f.scope))
+                .unwrap()
+                .unwrap();
+            let record = lock::load(&lock::lock_path(&f.env, &f.scope)).unwrap();
+            for name in ["unrelated", "STE"] {
+                let report = engine::plan_scope(
+                    &f.env,
+                    &f.scope,
+                    &manifest,
+                    &record,
+                    &engine::PlanOptions {
+                        overwrite_edited_names: Some(vec![(ItemKind::OutputStyle, name.into())]),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                let repair = name == "STE" && matches!(route, "claude-file" | "pi-block");
+                assert_eq!(
+                    report
+                        .drift
+                        .iter()
+                        .any(|row| row.state == engine::DriftState::Conflict),
+                    !repair,
+                    "{route}/{name}: {report:?}"
+                );
+                apply::execute(&f.env, &report.plan).unwrap();
+                if repair {
+                    if route == "claude-file" {
+                        assert_eq!(fs::read_to_string(&edited).unwrap(), STYLE);
+                    } else {
+                        assert_eq!(
+                            kendex_core::configedit::marker_block(
+                                &fs::read_to_string(&edited).unwrap(),
+                                "output-style-STE"
+                            ),
+                            Some(
+                                "<!-- kendex:append-system output-style-STE begin -->\nWrite short sentences.\n<!-- kendex:append-system output-style-STE end -->\n"
+                            )
+                        );
+                    }
+                    assert!(engine::audit(&f.env, &f.scope).unwrap().drift.is_empty());
+                } else {
+                    assert_eq!(fs::read(&edited).unwrap(), before);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
+fn explicit_discard_does_not_authorize_unrecorded_blocks_or_non_files() {
+    for global in [false, true] {
+        for obstacle in ["unrecorded-block", "directory"] {
+            let f = fixture(global, &[HarnessId::Pi]);
+            let (_, _, append) = paths(&f);
+            if obstacle == "directory" {
+                fs::create_dir(&append).unwrap();
+            } else {
+                fs::write(&append, "Personal text.\n<!-- kendex:append-system output-style-STE begin -->\nUser style.\n<!-- kendex:append-system output-style-STE end -->\n").unwrap();
+            }
+            let manifest = manifest::load_current(&manifest::manifest_path(&f.env, &f.scope))
+                .unwrap()
+                .unwrap();
+            let report = engine::plan_scope(
+                &f.env,
+                &f.scope,
+                &manifest,
+                &lock::Lock::default(),
+                &engine::PlanOptions {
+                    overwrite_edited: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert!(
+                report
+                    .drift
+                    .iter()
+                    .any(|row| row.state == engine::DriftState::Conflict),
+                "{obstacle}: {report:?}"
+            );
+            apply::execute(&f.env, &report.plan).unwrap();
+            assert!(
+                lock::load(&lock::lock_path(&f.env, &f.scope))
+                    .unwrap()
+                    .entries
+                    .is_empty()
+            );
+            if obstacle == "directory" {
+                assert!(append.is_dir());
+            } else {
+                assert_eq!(
+                    fs::read_to_string(&append).unwrap(),
+                    "Personal text.\n<!-- kendex:append-system output-style-STE begin -->\nUser style.\n<!-- kendex:append-system output-style-STE end -->\n"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeps cleanup and edit-hold rows in one table"
+)]
+fn orphan_cleanup_removes_owned_content_and_holds_each_edited_route() {
+    for global in [false, true] {
+        for edit in [
+            "clean",
+            "claude-file",
+            "pi-block",
+            "claude-setting",
+            "missing-setting",
+            "disabled",
+        ] {
+            let f = fixture(global, &[HarnessId::Claude, HarnessId::Pi]);
+            let (style, settings, append) = paths(&f);
+            fs::write(&settings, "{\"model\":\"opus\"}\n").unwrap();
+            fs::write(&append, "Before.\n").unwrap();
+            install(&f);
+            let current = fs::read_to_string(&append).unwrap();
+            fs::write(&append, format!("{current}After.\n")).unwrap();
+            let manifest_path = manifest::manifest_path(&f.env, &f.scope);
+            let original = fs::read_to_string(&manifest_path).unwrap();
+            match edit {
+                "claude-file" => fs::write(&style, "User document.\n").unwrap(),
+                "pi-block" => fs::write(
+                    &append,
+                    fs::read_to_string(&append)
+                        .unwrap()
+                        .replace("Write short sentences.", "User block."),
+                )
+                .unwrap(),
+                "claude-setting" => fs::write(
+                    &settings,
+                    "{\"outputStyle\":\"Learning\",\"model\":\"opus\"}\n",
+                )
+                .unwrap(),
+                "missing-setting" => fs::write(&settings, "{\"model\":\"opus\"}\n").unwrap(),
+                "disabled" => {
+                    fs::write(&manifest_path, format!("{original}enabled = false\n")).unwrap();
+                    install(&f);
+                }
+                "clean" => {}
+                _ => unreachable!(),
+            }
+            let before_append = fs::read(&append).unwrap();
+            let before_settings = fs::read(&settings).unwrap();
+            let before_style = fs::read(&style).ok();
+            fs::write(
+                &manifest_path,
+                original.split("[output-styles.STE]").next().unwrap(),
+            )
+            .unwrap();
+            let manifest = manifest::load_current(&manifest_path).unwrap().unwrap();
+            let record = lock::load(&lock::lock_path(&f.env, &f.scope)).unwrap();
+            let report = engine::plan_scope(
+                &f.env,
+                &f.scope,
+                &manifest,
+                &record,
+                &engine::PlanOptions {
+                    remove_orphans: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let hold_claude = matches!(edit, "claude-file" | "claude-setting" | "missing-setting");
+            let hold_pi = edit == "pi-block";
+            assert_eq!(
+                report
+                    .drift
+                    .iter()
+                    .filter(|row| row.state == engine::DriftState::Conflict)
+                    .count(),
+                usize::from(hold_claude) + usize::from(hold_pi),
+                "{edit}: {report:?}"
+            );
+            apply::execute(&f.env, &report.plan).unwrap();
+            let record = lock::load(&lock::lock_path(&f.env, &f.scope)).unwrap();
+            assert_eq!(
+                record.entries.contains_key("output-style:STE:claude"),
+                hold_claude,
+                "{edit}"
+            );
+            assert_eq!(
+                record.entries.contains_key("output-style:STE:pi"),
+                hold_pi,
+                "{edit}"
+            );
+            if hold_claude {
+                assert_eq!(fs::read(&style).ok(), before_style);
+                assert_eq!(fs::read(&settings).unwrap(), before_settings);
+            } else {
+                assert!(!style.exists());
+                assert!(!style.with_file_name("STE.md.disabled").exists());
+                assert_eq!(
+                    serde_json::from_slice::<serde_json::Value>(&fs::read(&settings).unwrap())
+                        .unwrap(),
+                    serde_json::json!({"model":"opus"})
+                );
+            }
+            if hold_pi {
+                assert_eq!(fs::read(&append).unwrap(), before_append);
+            } else {
+                assert_eq!(fs::read_to_string(&append).unwrap(), "Before.\n\nAfter.\n");
+            }
         }
     }
 }
@@ -336,6 +728,39 @@ fn linked_directories_land_once_and_linked_settings_refuse() {
     );
     apply::execute(&f.env, &report.plan).unwrap();
     assert_eq!(fs::read(&outside).unwrap(), before);
+    for global in [false, true] {
+        let f = fixture(global, &[HarnessId::Pi]);
+        install(&f);
+        let (_, _, append) = paths(&f);
+        let outside = f.env.home.join("personal-append.md");
+        fs::rename(&append, &outside).unwrap();
+        symlink(&outside, &append).unwrap();
+        let before = fs::read(&outside).unwrap();
+        let manifest = manifest::load_current(&manifest::manifest_path(&f.env, &f.scope))
+            .unwrap()
+            .unwrap();
+        let record = lock::load(&lock::lock_path(&f.env, &f.scope)).unwrap();
+        let report = engine::plan_scope(
+            &f.env,
+            &f.scope,
+            &manifest,
+            &record,
+            &engine::PlanOptions {
+                overwrite_edited: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            report
+                .drift
+                .iter()
+                .any(|row| row.state == engine::DriftState::Conflict)
+        );
+        apply::execute(&f.env, &report.plan).unwrap();
+        assert_eq!(fs::read(&outside).unwrap(), before);
+        assert!(append.is_symlink());
+    }
 }
 
 #[cfg(unix)]

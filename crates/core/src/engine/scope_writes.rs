@@ -71,9 +71,10 @@ pub(super) fn plan_manifest_write(
 /// bytes cannot.
 pub(super) fn plan_config_edits(
     config_edits: config_edits::ConfigEditPlan,
+    new_lock: &mut Lock,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
-    for (path, (labels, edits)) in config_edits.by_file {
+    for (path, (labels, mut edits)) in config_edits.by_file {
         // Config edits bind to the bytes reachable at planning. A link
         // already there is kept and its target updated; a same-byte link
         // arriving later also satisfies this precondition.
@@ -89,6 +90,7 @@ pub(super) fn plan_config_edits(
             crate::apply::Pre::observed(&path)?
         };
         let current = crate::fs::read_if_exists(&path)?.unwrap_or_default();
+        let written = config_edits::ConfigEditPlan::compose(&path, &current, &mut edits, new_lock)?;
         let remove_empty = crate::configedit::ConfigEdit::removes_empty_document(&edits, &current)
             .map_err(|message| crate::error::CoreError::ConfigEdit {
                 path: path.clone(),
@@ -99,6 +101,9 @@ pub(super) fn plan_config_edits(
                 "Move empty OpenCode settings to the trash".into(),
                 path,
             )?);
+            continue;
+        }
+        if written == current {
             continue;
         }
         let file = path

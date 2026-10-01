@@ -1,1 +1,1 @@
-- Declare one output-style package per scope. kendex installs native Claude Code styles and Pi system instructions, preserves user selections, and reports edited style content.
+- Install one output-style package per scope in Claude Code and Pi. Preserve user selections, select enabled or replacement styles, and repair edited Pi content with explicit discard.

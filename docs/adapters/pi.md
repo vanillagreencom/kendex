@@ -76,4 +76,4 @@ Pi also loads what sits under each root's `extensions/`, the global root's and t
 | Global | `<Pi root>/APPEND_SYSTEM.md`, `kendex:append-system output-style-<name>` block | Block position, marker and content hash; never ownership of the whole file |
 | Project | `.pi/APPEND_SYSTEM.md`, the same marker block | Block position, marker and content hash; no repository `AGENTS.md` block |
 
-The block contains the style body without its Claude frontmatter. Reapply preserves the surrounding instructions. An edited block is a conflict; missing content is drift. Linked files are refused; linked directories still follow the scope containment rule. `crates/core/tests/output_styles.rs` holds both scopes, reapply and hand edits.
+The block contains the style body without its Claude frontmatter. Reapply preserves the surrounding instructions. An edited block is a conflict unless explicit discard names the recorded style; missing content is drift. Discard does not authorize an unrecorded block. Linked files are refused; linked directories still follow the scope containment rule. `crates/core/tests/output_styles.rs` holds both scopes, reapply and hand edits.

@@ -245,6 +245,10 @@ fn the_corrupt_lock_refusal_asks_for_a_move_and_names_no_path_of_its_own() {
 /// with the root it was written under. Read back here the two halves are
 /// one record again, with every path absolute under this root.
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "pins committed and machine fields in one record table"
+)]
 fn a_committed_record_spells_what_sits_under_the_root_as_remainders() {
     let tmp = tempfile::tempdir().unwrap();
     let root = crate::paths::canonical(tmp.path()).unwrap();
@@ -276,6 +280,34 @@ fn a_committed_record_spells_what_sits_under_the_root_as_remainders() {
             commit: "abc123".to_owned(),
         },
     );
+    let styles = [
+        (
+            HarnessId::Claude,
+            ".claude/settings.json",
+            OutputStyleRecord::Claude {
+                path: root.join(".claude/settings.json"),
+                selection: Some("STE".into()),
+            },
+        ),
+        (
+            HarnessId::Pi,
+            ".pi/APPEND_SYSTEM.md",
+            OutputStyleRecord::Block {
+                path: root.join(".pi/APPEND_SYSTEM.md"),
+                marker: "output-style-STE".into(),
+                hash: "block-hash".into(),
+            },
+        ),
+    ];
+    for (harness, _, style) in &styles {
+        let mut installed = entry(None);
+        installed.kind = ItemKind::OutputStyle;
+        installed.name = "STE".into();
+        installed.harness = *harness;
+        installed.output_style = Some(style.clone());
+        lock.entries
+            .insert(entry_key(ItemKind::OutputStyle, "STE", *harness), installed);
+    }
     save(&path, &lock).unwrap();
 
     let committed: serde_json::Value =
@@ -288,6 +320,22 @@ fn a_committed_record_spells_what_sits_under_the_root_as_remainders() {
     assert_eq!(recorded["sourceRepo"], "../catalog");
     assert_eq!(committed["sources"]["self"]["repo"], ".");
     assert_eq!(committed["bundles"]["set"]["sourceRepo"], ".");
+    for (harness, relative, _) in &styles {
+        let key = entry_key(ItemKind::OutputStyle, "STE", *harness);
+        assert_eq!(committed["entries"][key]["outputStyle"]["path"], *relative);
+    }
+    assert_eq!(
+        committed["entries"]["output-style:STE:claude"]["outputStyle"]["selection"],
+        "STE"
+    );
+    assert_eq!(
+        committed["entries"]["output-style:STE:pi"]["outputStyle"]["marker"],
+        "output-style-STE"
+    );
+    assert_eq!(
+        committed["entries"]["output-style:STE:pi"]["outputStyle"]["hash"],
+        "block-hash"
+    );
     for absent in ["method", "installedAt"] {
         assert!(recorded.get(absent).is_none(), "{absent} is this machine's");
     }
@@ -331,6 +379,10 @@ fn a_committed_record_spells_what_sits_under_the_root_as_remainders() {
 /// directory reached through two spellings is one root: the read
 /// resolves the path it was handed once and joins onto that.
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "pins each route under every receiving root in one table"
+)]
 fn a_committed_record_reads_as_the_project_reading_it() {
     /// The reading root, made.
     type Plant = fn(&Path) -> PathBuf;
@@ -357,7 +409,8 @@ fn a_committed_record_reads_as_the_project_reading_it() {
     }));
     for (label, plant) in rows {
         let tmp = tempfile::tempdir().unwrap();
-        let root = plant(tmp.path());
+        let temp_root = crate::paths::canonical(tmp.path()).unwrap();
+        let root = plant(&temp_root);
         let path = root.join(LOCK_FILE);
         std::fs::write(
             &path,
@@ -367,8 +420,53 @@ fn a_committed_record_reads_as_the_project_reading_it() {
         )
         .unwrap();
 
+        // Handwritten committed rows bypass the write conversion, so the
+        // read cannot pass by undoing the same defect at both ends.
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        for (harness, style) in [
+            (
+                "claude",
+                serde_json::json!({"route":"claude", "path":".claude/settings.json", "selection":"STE"}),
+            ),
+            (
+                "pi",
+                serde_json::json!({"route":"block", "path":".pi/APPEND_SYSTEM.md", "marker":"output-style-STE", "hash":"block-hash"}),
+            ),
+        ] {
+            document["entries"][format!("output-style:STE:{harness}")] = serde_json::json!({
+                "name":"STE", "kind":"output-style", "harness":harness,
+                "source":"cat", "sourceRepo":"../catalog", "sourceHash":"abc", "enabled":true,
+                "outputStyle":style
+            });
+        }
+        std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+
         let lock = load(&path).unwrap();
         let here = crate::paths::canonical(&root).unwrap();
+        for (harness, expected) in [
+            (
+                HarnessId::Claude,
+                OutputStyleRecord::Claude {
+                    path: here.join(".claude/settings.json"),
+                    selection: Some("STE".into()),
+                },
+            ),
+            (
+                HarnessId::Pi,
+                OutputStyleRecord::Block {
+                    path: here.join(".pi/APPEND_SYSTEM.md"),
+                    marker: "output-style-STE".into(),
+                    hash: "block-hash".into(),
+                },
+            ),
+        ] {
+            assert_eq!(
+                lock.entries[&entry_key(ItemKind::OutputStyle, "STE", harness)].output_style,
+                Some(expected),
+                "{label}"
+            );
+        }
         let entry = &lock.entries["skill:gh:claude"];
         assert_eq!(
             entry.emitted.as_ref().unwrap().paths,

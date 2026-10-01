@@ -59,6 +59,7 @@ pub(super) struct PlanSink<'a> {
 /// a codex command that landed as a skill tree, and the tree several
 /// harnesses share. A path in it is ours to replace whichever entry holds
 /// it now, and never a stranger's to refuse or to take over.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn plan_item(
     env: &Env,
     item: &Desired,
@@ -66,6 +67,7 @@ pub(super) fn plan_item(
     lock: &Lock,
     ownership: &super::PlanOwnership,
     replace_unmanaged: bool,
+    discard: bool,
     sink: &mut PlanSink,
 ) -> Result<()> {
     let PlanSink {
@@ -115,6 +117,7 @@ pub(super) fn plan_item(
             existing,
             ownership.recovered_registrations.get(&item.key),
             replace_unmanaged,
+            discard,
             &ownership.paths,
             ops,
             config_edits,
@@ -182,9 +185,10 @@ pub(super) fn plan_item(
         .filter(|_| !dirty && !hash_moved)
         .and_then(|entry| entry.machine.as_ref())
         .map_or_else(timestamp, |machine| machine.installed_at.clone());
-    new_lock
-        .entries
-        .insert(item.key.clone(), record(item, installed_at, existing)?);
+    new_lock.entries.insert(
+        item.key.clone(),
+        record(env, scope, item, installed_at, existing)?,
+    );
     Ok(())
 }
 
@@ -208,7 +212,13 @@ pub(super) fn rebound(entry: &LockEntry, provenance: &str, recorded_fork: bool) 
 }
 
 /// What this pass records about the installation it just planned.
-fn record(item: &Desired, installed_at: String, existing: Option<&LockEntry>) -> Result<LockEntry> {
+fn record(
+    env: &Env,
+    scope: &Scope,
+    item: &Desired,
+    installed_at: String,
+    existing: Option<&LockEntry>,
+) -> Result<LockEntry> {
     // The artifact's own hash every pass, never the record's copy of it:
     // an entry in sync renders to the bytes on disk, so the value written
     // last time is this one already, and a recorded value that is not it
@@ -231,7 +241,7 @@ fn record(item: &Desired, installed_at: String, existing: Option<&LockEntry>) ->
         upstream_skills: item.upstream_skills.clone(),
         emitted: item.emitted.clone(),
         registration: registration(item),
-        output_style: super::output_style::record(item, existing)?,
+        output_style: super::output_style::record(env, scope, item, existing)?,
         reasons: item.reasons.clone(),
     })
 }
@@ -338,6 +348,7 @@ fn plan_registration(
     existing: Option<&LockEntry>,
     recovered_registration: Option<&crate::lock::HookRegistration>,
     replace_unmanaged: bool,
+    discard: bool,
     owned: &std::collections::BTreeSet<PathBuf>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut ConfigEditPlan,
@@ -346,7 +357,7 @@ fn plan_registration(
         return Ok(Planned::Clean);
     };
     let locked = existing.is_some();
-    if let Some(reason) = super::output_style::conflict(item, existing)? {
+    if let Some(reason) = super::output_style::conflict(item, existing, discard)? {
         return Ok(Planned::Conflict(reason));
     }
     // What the record says this installation registered, where that is no
@@ -368,8 +379,13 @@ fn plan_registration(
     for (path, edit) in edits {
         let current = crate::fs::read_if_exists(path)?.unwrap_or_default();
         match edit.in_sync(&current) {
+            // An orphan removal can free an occupied selection later.
+            // The shared-file planner owns the composed insertion result.
+            Ok(true) if matches!(edit, ConfigEdit::ClaudeOutputStyle { .. }) => {
+                pending.push((path, edit, false));
+            }
             Ok(true) => {}
-            Ok(false) => pending.push((path, edit)),
+            Ok(false) => pending.push((path, edit, true)),
             Err(message) => {
                 return Ok(Planned::Conflict(format!(
                     "{} could not be edited: {message}",
@@ -390,13 +406,13 @@ fn plan_registration(
     ) {
         return Ok(planned);
     }
-    for (path, edit) in pending {
+    for (path, edit, out_of_sync) in pending {
         config_edits.push(
             path.clone(),
             format!("register {}", item.name),
             edit.clone(),
         );
-        if matches!(planned, Planned::Clean) {
+        if out_of_sync && matches!(planned, Planned::Clean) {
             planned = match locked {
                 true => Planned::Drift(
                     DriftState::Stale,

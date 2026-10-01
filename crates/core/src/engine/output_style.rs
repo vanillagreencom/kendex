@@ -102,20 +102,18 @@ fn claude(ctx: &ItemCtx, bytes: &[u8]) -> Result<Artifact> {
     let local = settings.with_file_name("settings.local.json");
     let local_value = crate::fs::read_if_exists(&local)?.unwrap_or_default();
     let locally_selected = selection(&local, &local_value)?.is_some();
-    let previous = ctx.lock.entries.get(&crate::lock::entry_key(
-        ItemKind::OutputStyle,
-        ctx.name,
-        HarnessId::Claude,
-    ));
-    let unowned = previous.is_some_and(|entry| {
-        matches!(
-            entry.output_style,
-            Some(OutputStyleRecord::Claude {
-                selection: None,
-                ..
-            })
-        )
-    });
+    let mut unowned = false;
+    for entry in
+        ctx.lock.entries.values().filter(|entry| {
+            entry.kind == ItemKind::OutputStyle && entry.harness == HarnessId::Claude
+        })
+    {
+        if let Some(record @ OutputStyleRecord::Claude { selection, .. }) = &entry.output_style {
+            // Selection ownership belongs to the scope's settings key,
+            // including a user's change or removal during replacement.
+            unowned |= selection.is_none() || (entry.enabled && changed(record)?);
+        }
+    }
     let dir =
         super::desired::native_dir(ctx.env, ctx.scope, HarnessId::Claude, ItemKind::OutputStyle)
             .ok_or_else(|| CoreError::ConfigEdit {
@@ -184,6 +182,8 @@ fn selection(path: &Path, text: &str) -> Result<Option<serde_json::Value>> {
 }
 
 pub(super) fn record(
+    env: &crate::env::Env,
+    scope: &crate::model::Scope,
     item: &Desired,
     existing: Option<&LockEntry>,
 ) -> Result<Option<OutputStyleRecord>> {
@@ -207,38 +207,40 @@ pub(super) fn record(
                 hash: hash_bytes(owned.as_bytes()),
             }));
         }
-        if let ConfigEdit::ClaudeOutputStyle { name } = edit {
+        if let ConfigEdit::ClaudeOutputStyle { .. } = edit {
             if let Some(record @ OutputStyleRecord::Claude { .. }) =
                 existing.and_then(|entry| entry.output_style.as_ref())
             {
                 return Ok(Some(record.clone()));
             }
-            let current = crate::fs::read_if_exists(path)?.unwrap_or_default();
+            // The shared-file planner records acquisition after composing
+            // removals with this insertion. An existing user value is unowned.
             return Ok(Some(OutputStyleRecord::Claude {
                 path: path.clone(),
-                selection: selection(path, &current)?.is_none().then(|| name.clone()),
+                selection: None,
             }));
         }
     }
-    Ok(existing
-        .and_then(|entry| entry.output_style.clone())
-        .or_else(|| {
-            if item.harness == HarnessId::Claude {
-                let Artifact::Registration {
-                    script: Some((path, _)),
-                    ..
-                } = &item.artifact
-                else {
-                    return None;
-                };
-                Some(OutputStyleRecord::Claude {
-                    path: path.parent()?.parent()?.join("settings.json"),
-                    selection: None,
-                })
-            } else {
-                None
-            }
-        }))
+    if let Some(record) = existing.and_then(|entry| entry.output_style.clone()) {
+        return Ok(Some(record));
+    }
+    if item.harness != HarnessId::Claude {
+        return Ok(None);
+    }
+    let path = super::targets::claude_settings(env, scope);
+    if !item.enabled {
+        let local = path.with_file_name("settings.local.json");
+        let current = crate::fs::read_if_exists(&path)?.unwrap_or_default();
+        let local_value = crate::fs::read_if_exists(&local)?.unwrap_or_default();
+        if selection(&path, &current)?.is_none() && selection(&local, &local_value)?.is_none() {
+            // No selection has been acquired or left to the user yet.
+            return Ok(None);
+        }
+    }
+    Ok(Some(OutputStyleRecord::Claude {
+        path,
+        selection: None,
+    }))
 }
 
 /// A shared-file edit changes only the owned part; surrounding text is never hashed.
@@ -269,7 +271,11 @@ pub(super) fn file_problem(path: &Path) -> Option<String> {
 }
 
 /// Refuse linked shared files and edits to recorded style content.
-pub(super) fn conflict(item: &Desired, existing: Option<&LockEntry>) -> Result<Option<String>> {
+pub(super) fn conflict(
+    item: &Desired,
+    existing: Option<&LockEntry>,
+    discard: bool,
+) -> Result<Option<String>> {
     if item.kind != ItemKind::OutputStyle {
         return Ok(None);
     }
@@ -302,6 +308,7 @@ pub(super) fn conflict(item: &Desired, existing: Option<&LockEntry>) -> Result<O
     if let Some(style) = existing
         .filter(|entry| entry.enabled)
         .and_then(|entry| entry.output_style.as_ref())
+        && !(discard && matches!(style, OutputStyleRecord::Block { .. }))
         && changed(style)?
     {
         return Ok(Some(

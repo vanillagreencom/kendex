@@ -69,7 +69,9 @@ pub(super) fn plan_items(
             options.replace_unmanaged,
             &options.replace_unmanaged_names,
         );
-        plan_item(env, item, scope, lock, &ownership, replace, &mut sink)?;
+        plan_item(
+            env, item, scope, lock, &ownership, replace, discard, &mut sink,
+        )?;
         let missing = drift[before..]
             .iter()
             .any(|row| row.state == DriftState::Missing);

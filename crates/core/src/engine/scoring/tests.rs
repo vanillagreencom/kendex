@@ -70,6 +70,65 @@ fn input_identity_keeps_item_name_and_kind() {
     assert_eq!(typed.len(), 2, "an audit row belongs to one item kind");
 }
 
+#[test]
+fn planned_style_inputs_keep_the_claude_document_and_pi_body() {
+    use crate::configedit::ConfigEdit;
+    use crate::engine::desired::Artifact;
+    use crate::quality::Content;
+
+    for (harness, script, edits, expected) in [
+        (
+            HarnessId::Claude,
+            Some((
+                "claude/output-styles/STE.md".into(),
+                b"---\nname: STE\nkeep-coding-instructions: true\n---\nClaude whole document.\n"
+                    .to_vec(),
+            )),
+            vec![(
+                "claude/settings.json".into(),
+                ConfigEdit::ClaudeOutputStyle { name: "STE".into() },
+            )],
+            "---\nname: STE\nkeep-coding-instructions: true\n---\nClaude whole document.\n",
+        ),
+        (
+            HarnessId::Pi,
+            None,
+            vec![
+                (
+                    "pi/APPEND_SYSTEM.md".into(),
+                    ConfigEdit::RemoveMarkerBlock {
+                        name: "other-package".into(),
+                    },
+                ),
+                (
+                    "pi/APPEND_SYSTEM.md".into(),
+                    ConfigEdit::UpsertMarkerBlock {
+                        name: "output-style-STE".into(),
+                        block: "Pi planned body.\nSecond sentence.".into(),
+                    },
+                ),
+            ],
+            "Pi planned body.\nSecond sentence.",
+        ),
+    ] {
+        let style = item(
+            ItemKind::OutputStyle,
+            "STE",
+            harness,
+            Artifact::Registration { script, edits },
+            None,
+        );
+        let input = super::input::input_for(&style);
+        assert_eq!(
+            input.content,
+            Content::Document {
+                text: expected.into()
+            },
+            "{harness:?}"
+        );
+    }
+}
+
 /// Also the evidence that the CLI's equal-score control tests a real
 /// shape: these two commands are what `audit` scores alike while finding
 /// different things in them.

@@ -242,7 +242,7 @@ pub fn plan_scope(
     )?;
 
     stale::stale_instruction_rows(env, scope, lock, &new_lock, &state.items, &mut config_edits)?;
-    plan_config_edits(config_edits, &mut ops)?;
+    plan_config_edits(config_edits, &mut new_lock, &mut ops)?;
     let set_changes = set_changes(lock, &new_lock);
     let kept = kept_members(lock, &new_lock, &options.uninstalled_bundles);
     let repo_effects_leaving = repo_effects::leaving(env, scope, lock, &new_lock)?;
