@@ -329,14 +329,14 @@ export function renderDashboardWidgetLines(state: SubagentDashboardState, theme:
 		const sessionChip = sessionModeChipLabel(item);
 		if (sessionChip) rowParts.push(theme.fg("dim", sessionChip));
 		if (item.bridge) rowParts.push(theme.fg("success", "bridge"));
+		if (isDashboardWorkingStatus(item.status)) {
+			const activity = latestDashboardActivity(item);
+			if (activity) rowParts.push(theme.fg("toolOutput", activity));
+		}
 		if (item.usage) {
 			for (const part of formatUsageStatsForDashboard(item.usage)) {
 				rowParts.push(theme.fg("dim", part));
 			}
-		}
-		if (isDashboardWorkingStatus(item.status)) {
-			const activity = latestDashboardActivity(item);
-			if (activity) rowParts.push(theme.fg("toolOutput", activity));
 		}
 		lines.push(`${branch}${dashboardStatusIcon(item.status, theme, { animateSpinners })} ${name}${dotSep}${rowParts.join(dotSep)}`);
 		if (state.mode === "expanded" && !state.collapsed) {

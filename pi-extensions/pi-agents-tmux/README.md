@@ -25,7 +25,7 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 
 The parent Pi session selects an agent file and sends it a task. The extension starts a separate Pi process with that agent's instructions. Agents configured for panes appear in tmux; other agents run in the background. The child returns its result to the parent. The dashboard shows the task state and saved transcript.
 
-Streamed tool rows keep only the static call preview in the transcript. Follow live progress in the existing Agents panel. After completion, press Ctrl+O to expand the row and read its final result. A restored session shows saved final results.
+Streamed tool rows keep only the static call preview in the transcript. Follow live progress in the existing Agents panel, which shows each working child's operation and last recorded progress time in UTC. The time changes only when a child writes another transcript record, not when the panel refreshes. After completion, press Ctrl+O to expand the row and read its final result. A restored session shows saved final results.
 
 ## Memory and disk use
 
@@ -36,6 +36,7 @@ Streamed tool rows keep only the static call preview in the transcript. Follow l
 
 - A one-shot result keeps its last 20 assistant messages, and the newest earlier one with text when those 20 carry only tool calls, so the final answer is kept. Each keeps only its text and tool-call parts. Tool-call arguments are cut to the tool-details bound: 8,192 characters per string, 50 array items, 80 object fields and a nesting depth of 4. The expanded view says how many earlier messages it does not show. The result also keeps the last 65,536 characters of the child's stderr.
 - The transcript keeps every event except the per-token `message_update` events; `PI_AGENTS_TMUX_TRANSCRIPT_FULL=1` keeps those too. Each record holds its event once. When more than 8 MiB of transcript records wait to be written, the extension stops reading the child's stdout and stderr until the writer catches up.
+- The dashboard caches one activity line of at most 180 characters per retained transcript, including its last-progress time. It reads appended records outside rendering and keeps no argument history.
 - Transcripts live in `~/.pi/agent/kendex/sessions/<session>/pi-agents-tmux/transcripts/`, and full outputs too long for a tool result in `.../pi-agents-tmux/outputs/`. Each directory is deleted once the session's working directory is gone (a merged worktree), and any file in it older than 5 days is deleted. Pi applies both rules when a session starts. Pi applies them only to a directory that holds the ownership record this package writes from 3.2.0 on. A transcript directory an earlier version wrote gets that record when its session next starts; until then Pi deletes nothing in it.
 
 ## Settings

@@ -4,7 +4,7 @@
 
 ### 3.2.3
 
-- Streamed sub-agent rows keep only their static call preview in the transcript, including after completion. Live progress stays in the existing Agents panel. Expand a completed row with Ctrl+O to read its final result. Older rows no longer trigger Pi's off-screen transcript clear and replay on each child turn.
+- Streamed sub-agent rows keep only their static call preview in the transcript, including after completion. Live progress stays in the existing Agents panel, which shows the tool's argument preview and last recorded progress time in UTC before usage totals. Expand a completed row with Ctrl+O to read its final result. Older rows no longer trigger Pi's off-screen transcript clear and replay on each child turn.
 
 ### 3.2.2
 

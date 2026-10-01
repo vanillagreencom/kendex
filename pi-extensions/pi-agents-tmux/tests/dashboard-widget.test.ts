@@ -18,9 +18,9 @@ after(cleanupTempRuntimes);
 
 const SPINNER = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/;
 
-function widget(cwd: string, items: SubagentDashboardItem[], mode: SubagentDashboardState["mode"] = "normal", numbers?: Map<string, number>): string {
+function widget(cwd: string, items: SubagentDashboardItem[], mode: SubagentDashboardState["mode"] = "normal", numbers?: Map<string, number>, width = 220): string {
 	const state: SubagentDashboardState = { collapsed: false, mode, visible: true, items: Object.fromEntries(items.map((item, index) => [String(index), item])) };
-	return stripAnsi(renderDashboardWidgetLines(state, theme as any, cwd, 220, numbers).join("\n"));
+	return stripAnsi(renderDashboardWidgetLines(state, theme as any, cwd, width, numbers).join("\n"));
 }
 
 const paneA = dashboardItem({ agent: "rust", kind: "pane", startedAt: "2026-07-05T00:22:19.571Z", taskId: "rust-1783210939571-15037f22b196ea06", transcriptPath: "/tmp/rust.jsonl" });
@@ -122,7 +122,7 @@ const bridgeTranscript = [
 // label | transcript lines (none = no transcript) | item patch | expect
 const activityRows: Array<[string, string[] | undefined, Partial<SubagentDashboardItem>, string]> = [
 	["the latest agent action, not the prompt", toolCallTranscript, { status: "running", task: "initial prompt", message: "initial prompt" }, "tool: Bash"],
-	["the latest assistant text through a raw bridge shape", bridgeTranscript, { status: "running" }, "said: Raw bridge summary"],
+	["the latest assistant text through a raw bridge shape", bridgeTranscript, { status: "running" }, "last 05:02:00Z · said: Raw bridge summary"],
 	["no transcript while running: nothing, never the prompt", undefined, { status: "running", task: "initial prompt", message: "initial prompt" }, ABSENT],
 	["queued with a task", undefined, { status: "queued", task: "initial  prompt" }, "queued: initial prompt"],
 	["queued without a task", undefined, { status: "queued", task: undefined }, "queued"],
@@ -142,16 +142,23 @@ test("latest activity of a working row", async () => {
 	}
 });
 
-test("the compact widget prints the cached activity, not the prompt, and never reads the transcript", async () => {
+test("working rows show cached operation and progress time before usage, never reading the transcript", async () => {
 	const cwd = tempRuntime();
 	writeSettings(cwd, { dashboard: true });
 	const transcriptPath = join(cwd, "compact.jsonl");
-	writeFileSync(transcriptPath, toolCallTranscript.join("\n"));
+	// The background writer supplies ts and Pi's tool_execution_start supplies args.
+	writeFileSync(transcriptPath, JSON.stringify({ ts: "2026-05-14T05:00:00Z", event: { type: "tool_execution_start", toolName: "bash", args: { command: "while [ ! -f approval ]; do sleep 1; done" } } }));
 	const activity = (await new TranscriptTailCache().read(transcriptPath))?.activity;
-	const rendered = widget(cwd, [dashboardItem({ status: "running", task: "initial prompt", message: "initial prompt", transcriptPath, activity })], "compact");
+	const waiting = dashboardItem({ agent: "release", status: "running", task: "initial prompt", message: "initial prompt", transcriptPath, activity, sessionMode: "fresh", usage: { input: 100, output: 100, cacheRead: 100, cacheWrite: 100, cost: 1, contextTokens: 100, turns: 10 } });
+	writeFileSync(transcriptPath, JSON.stringify({ ts: "2026-05-14T05:02:00Z", event: { type: "tool_execution_start", toolName: "bash", args: { command: "printf checks" } } }));
+	const progressing = dashboardItem({ ...waiting, agent: "checks", taskId: "checks", activity: (await new TranscriptTailCache().read(transcriptPath))?.activity });
+	for (const mode of ["compact", "normal", "expanded"] as const) {
+		const rendered = widget(cwd, [waiting, progressing], mode, undefined, 100);
+		assert.deepEqual([rendered.includes("last 05:00:00Z · tool: bash $ while [ ! -f"), rendered.includes("last 05:02:00Z · tool: bash $ printf checks")], [true, mode !== "compact"], `${mode}\n${rendered}`);
+	}
 	const uncached = widget(cwd, [dashboardItem({ status: "running", task: "initial prompt", message: "initial prompt", transcriptPath })], "compact");
 	const promptOnly = widget(cwd, [dashboardItem({ status: "running", task: "initial prompt", message: "initial prompt" })], "compact");
-	assert.equal([/tool: Bash/.test(rendered), /initial prompt/.test(rendered), /tool: Bash/.test(uncached), /initial prompt/.test(promptOnly)].join(","), "true,false,false,false");
+	assert.equal([/tool: bash/.test(uncached), /initial prompt/.test(promptOnly)].join(","), "false,false");
 });
 
 // The expanded message lines, each as `<branch> <direction> <text>`.

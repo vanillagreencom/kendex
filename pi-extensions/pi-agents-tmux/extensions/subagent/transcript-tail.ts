@@ -7,6 +7,7 @@
 
 import * as fs from "node:fs";
 import { fileVersion } from "./file-version.js";
+import { formatToolCall } from "./format.js";
 import { normalizeTranscriptRecordEvent, oneLine } from "./transcripts.js";
 import type { UsageStats } from "./types.js";
 
@@ -39,6 +40,8 @@ interface TranscriptFold {
 	/** Largest streamed per-turn usage, counted only when no final message carries usage. */
 	peak?: TurnPeak;
 	activity?: string;
+	/** Last record time supplied by the child transcript writer, not the dashboard poll. */
+	progressAt?: number;
 }
 
 interface TailState {
@@ -124,11 +127,17 @@ function toolNameFromPart(part: any): string | undefined {
 			: undefined;
 }
 
+function toolCallActivity(name: string, args: unknown): string {
+	if (!args || typeof args !== "object" || Array.isArray(args)) return name;
+	const preview = formatToolCall(name, args as Record<string, unknown>, (_color, text) => text);
+	return oneLine(name === "bash" ? `${name} ${preview}` : preview, ACTIVITY_MAX_CHARS);
+}
+
 function activityFromMessageContent(content: unknown): { kind: "text" | "tool"; text: string } | undefined {
 	if (typeof content === "string") return { kind: "text", text: oneLine(content, ACTIVITY_MAX_CHARS) };
 	if (!Array.isArray(content)) return undefined;
 	const tool = content.find((part: any) => part?.type === "toolCall" || part?.type === "tool_call" || part?.type === "tool-call");
-	if (tool) return { kind: "tool", text: toolNameFromPart(tool) ?? "call" };
+	if (tool) return { kind: "tool", text: toolCallActivity(toolNameFromPart(tool) ?? "call", tool.arguments) };
 	const text = content.find((part: any) => part?.type === "text" && typeof part.text === "string");
 	if (text?.text) return { kind: "text", text: oneLine(String(text.text), ACTIVITY_MAX_CHARS) };
 	return undefined;
@@ -140,7 +149,7 @@ function activityFromRecord(parsed: any, inner: any): string | undefined {
 	if (parsed.type === "exit" && typeof parsed.code !== "undefined") return `exit ${parsed.code}`;
 	const type = typeof inner?.type === "string" ? inner.type : undefined;
 	const toolName = typeof inner?.toolName === "string" ? inner.toolName : toolNameFromPart(inner?.toolCall) ?? toolNameFromPart(inner?.tool_call);
-	if (type === "tool_execution_start" && toolName) return `tool: ${toolName}`;
+	if ((type === "tool_execution_start" || type === "tool_execution_update") && toolName) return `tool: ${toolCallActivity(toolName, inner.args)}`;
 	if ((type === "tool_execution_end" || type === "tool_result_end") && toolName) return `tool: ${toolName}`;
 	if (type === "tool_result_end") return "tool: result";
 	const msg = inner?.message && typeof inner.message === "object" ? inner.message : undefined;
@@ -175,6 +184,11 @@ function foldLine(fold: TranscriptFold, rawLine: string, terminated: boolean): v
 	foldUsage(fold, inner);
 	const activity = activityFromRecord(parsed, inner);
 	if (activity) fold.activity = activity;
+	// Background appender records use ts; native pane session entries use timestamp.
+	const record = parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : undefined;
+	const ts = record?.ts ?? record?.timestamp;
+	const progressAt = typeof ts === "number" ? ts : typeof ts === "string" ? Date.parse(ts) : NaN;
+	if (Number.isFinite(progressAt)) fold.progressAt = progressAt;
 }
 
 function usageFromFold(fold: TranscriptFold): TranscriptUsage | undefined {
@@ -288,7 +302,8 @@ export class TranscriptTailCache {
 			foldLine(fold, remainder, false);
 		}
 		tail.mtimeMs = stat.mtimeMs;
-		tail.snapshot = { version: fileVersion(stat, tail.size), usage: usageFromFold(fold), activity: fold.activity };
+		const progress = fold.progressAt === undefined ? "" : `last ${new Date(fold.progressAt).toISOString().slice(11, 19)}Z · `;
+		tail.snapshot = { version: fileVersion(stat, tail.size), usage: usageFromFold(fold), activity: fold.activity ? oneLine(`${progress}${fold.activity}`, ACTIVITY_MAX_CHARS) : undefined };
 		this.tails.set(filePath, tail);
 		return tail.snapshot;
 	}

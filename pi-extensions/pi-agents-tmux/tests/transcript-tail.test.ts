@@ -12,7 +12,7 @@ import { ABSENT, cleanupTempRuntimes, tempRuntime } from "./browser-fixture.js";
 after(cleanupTempRuntimes);
 
 const usageLine = (input: number) => JSON.stringify({ event: { type: "message_end", message: { role: "assistant", usage: { input, output: 1 } } } });
-const toolLine = (name: string) => JSON.stringify({ event: { type: "tool_execution_start", toolName: name } });
+
 
 function observe(snapshot: TranscriptSnapshot | undefined): string {
 	if (!snapshot) return ABSENT;
@@ -85,10 +85,12 @@ const tailRows: Array<[string, Step[], string[]]> = [
 	[
 		"the latest action wins across reads",
 		[
-			(p) => writeFileSync(p, `${toolLine("Bash")}\n`),
-			(p) => appendFileSync(p, `${toolLine("Read")}\n`),
+			(p) => writeFileSync(p, `${JSON.stringify({ ts: "2026-05-14T05:00:00Z", event: { type: "message_end", message: { role: "assistant", content: [{ type: "toolCall", name: "bash", arguments: { command: "while [ ! -f approval ]; do sleep 1; done" } }] } } })}\n`),
+			(p) => appendFileSync(p, `${JSON.stringify({ ts: "2026-05-14T05:01:00Z", event: { type: "tool_execution_update", toolName: "bash", args: { command: "printf checks" } } })}\n`),
+			(p) => appendFileSync(p, `${JSON.stringify({ ts: "2026-05-14T05:02:00Z", event: { type: "turn_end" } })}\n`),
+			(p) => appendFileSync(p, `${JSON.stringify({ timestamp: "2026-05-14T05:03:00Z", type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "read", arguments: { path: "approval" } }] } })}\n`),
 		],
-		["usage=none activity=tool: Bash", "usage=none activity=tool: Read"],
+		["usage=none activity=last 05:00:00Z · tool: bash $ while [ ! -f approval ]; do sleep 1; done", "usage=none activity=last 05:01:00Z · tool: bash $ printf checks", "usage=none activity=last 05:02:00Z · tool: bash $ printf checks", "usage=none activity=last 05:03:00Z · tool: read approval"],
 	],
 	[
 		"a missing file reads as no snapshot",
