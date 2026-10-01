@@ -134,11 +134,12 @@ done
 printf '**Expected delta**: %s lines, 1 test line\n' "$((SMALL_MAX + 1))" > "$TMP_ROOT/body"
 printf 'No sizing headers\n' > "$TMP_ROOT/empty-body"
 printf '**Expected delta**: junk\n' > "$TMP_ROOT/bad-body"
-while IFS='|' read -r args want; do
-  assert_eq "$(run_tier - $args)" "$want" "body input: $args"
+while IFS='|' read -r args want raw; do
+  assert_eq "$(TIER_RAW="${raw:-false}" run_tier - $args)" "$want" "body input: $args"
 done <<ROWS
 --production 1 --body $TMP_ROOT/body|tier=standard brief=start cause=estimate-past-small rc=0
 --body $TMP_ROOT/body|tier=standard brief=start cause=estimate-past-small rc=0
+--production $((SMALL_MAX + 2)) --body $TMP_ROOT/body|tier=standard brief=start cause=estimate-past-small production=$((SMALL_MAX + 2)) estimate=$((SMALL_MAX + 2)) delta=$((SMALL_MAX + 1)) paths=0 rc=0|true
 --production 1 --body $TMP_ROOT/empty-body|tier=standard brief=start cause=body-without-tier-inputs rc=0
 --production 1 --body $TMP_ROOT/empty-body --path src/main.rs|tier=micro brief=micro cause=estimate-within-micro rc=0
 --production 1 --body $TMP_ROOT/bad-body|rc=2

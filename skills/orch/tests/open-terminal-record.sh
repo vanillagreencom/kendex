@@ -204,7 +204,9 @@ field() { sed -n "s/.* $2=\([^ ]*\).*/\1/p" <<<"$1"; }
 FLEET_CMD=(--harness claude --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL")
 
 echo "=== a launch appends one record under the item's workflow-state id ==="
-run_ot --ghostty --harness claude --launch-flags "--model opus --verbose" CC-1
+printf '%s\n' '/orch small CC-1' \
+  'tier=small brief=small cause=estimate-within-small production=40 estimate=12 delta=40 paths=3' > "$TMP_ROOT/brief"
+run_ot --ghostty --harness claude --cmd "true --model opus --verbose --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL {brief}" --brief-file "$TMP_ROOT/brief" CC-1
 REC="$(record CC-1)"
 assert_eq "rc=$RC records=$(records CC-1)" "rc=0 records=1" "a GUI launch writes one record and the state is created for it"
 assert_eq "$(sed "s/ launched_at=[^ ]*//" <<<"$REC")" \
@@ -217,8 +219,8 @@ assert_eq "session_since=$(session_since CC-1)" "session_since=$LAUNCHED_AT" \
   "a launch records its own launch stamp as session_since, the floor the lane readers bind its session to"
 
 # Every launcher, not only an overseer, records its brief and sizing line.
-assert_eq "$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-1") | [.tier, .tier_inputs]' | jq -e '. == ["standard", {estimate:null, delta:null, paths:null}]')" \
-  'true' "a native standard launch records unknown inputs"
+assert_eq "$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-1") | [.tier, .tier_inputs]' | jq -e '. == ["small", {estimate:12, delta:40, paths:3}]')" \
+  'true' "a sized file-backed small launch records its tier and inputs"
 while IFS='|' read -r item prompt tier; do
   run_ot --ghostty --harness claude --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL \"$prompt $item
  tier=$tier brief=small cause=estimate-within-small production=40 estimate=12 delta=40 paths=3\"" "$item"
@@ -294,6 +296,8 @@ COPILOT_HOME="$COP_RECORD_HOME" RUN_TMUX=stub,1,0 run_ot --tmux --harness copilo
 assert_eq "rc=$RC $(record CC-140 | sed -E 's/ (launched_at|over_cap|allow_all)=[^ ]*//g') extensions=$(jq -r .enabledFeatureFlags.EXTENSIONS "$COP_RECORD_HOME/settings.json" 2>/dev/null)" \
   "rc=0 item=CC-140 tracker=linear repo=null harness=copilot window=stub:CC-140 account=null host=null mail_root=$TMP_ROOT/wt/CC-140 surface=tmux model=claude-opus-5 session_id=null status=running extensions=true" \
   "a Copilot fleet launch opens its window and records the lane, its harness and model, its home loading the reader"
+assert_eq "$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-140") | [.tier, .tier_inputs]' | jq -e '. == ["standard", {estimate:null, delta:null, paths:null}]')" \
+  'true' "a native standard launch records unknown inputs"
 
 echo "=== a tmux launch opens its window in the fleet's named session ==="
 # A window target with no session is the client's current session, and a
@@ -429,6 +433,8 @@ assert_eq "$(stamped "$RELAUNCH_RUNNING_AT") renewed=$([[ "$RELAUNCH_RUNNING_AT"
 assert_eq "rc=$RC records=$(records CC-1) $(record CC-1)" \
   "rc=0 records=1 item=CC-1 tracker=linear repo=null harness=claude window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running over_cap=null allow_all=null" \
   "a relaunch keeps one record: the resumed session id and the new account land, launched_at stands, and a done lane runs again"
+assert_eq "$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-1") | [.tier, .tier_inputs]' | jq -e '. == ["small", {estimate:12, delta:40, paths:3}]')" \
+  'true' "a native relaunch retains the first file-backed launch tier and inputs"
 
 echo "=== a relaunch reads the handoff record where the lane wrote it ==="
 # The lane writes its record from its own worktree, whose common root is that
@@ -476,6 +482,8 @@ run_ot --wake --harness claude CC-1
 assert_eq "rc=$RC woken=$(grep -c '^open-terminal: lane-woken item=CC-1 ' <<<"$OUT" || true) $(record CC-1)" \
   "rc=0 woken=1 item=CC-1 tracker=linear repo=null harness=claude window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running over_cap=null allow_all=null" \
   "a wake sets the resumed session id and status running and leaves the launch's fields as they were"
+assert_eq "$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-1") | [.tier, .tier_inputs]' | jq -e '. == ["small", {estimate:12, delta:40, paths:3}]')" \
+  'true' "a wake retains the first file-backed launch tier and inputs"
 assert_eq "running_at=$(running_at CC-1)" "running_at=$RELAUNCH_RUNNING_AT" "a wake keeps running_at: the lane it rouses already started"
 assert_eq "session_since=$(session_since CC-1)" "session_since=$LAUNCHED_AT" "a wake keeps session_since: it resumes the session the last launch started"
 
