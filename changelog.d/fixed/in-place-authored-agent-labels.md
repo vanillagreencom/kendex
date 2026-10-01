@@ -1,0 +1,1 @@
+- Preserve authored legacy agent labels in in-place skills while updating labels in managed instructions and rendered copies.

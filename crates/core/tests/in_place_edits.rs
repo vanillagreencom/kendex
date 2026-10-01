@@ -8,6 +8,8 @@
 //! moves_no_record` and `an_old_record_is_re_recorded_by_one_refresh`; the
 //! block never written reddens `apply_writes_the_instructions_block_and_
 //! nothing_else` and `a_changed_instruction_rewrites_the_block_alone`; a
+//! source tree taken from the label-normalized copy reddens
+//! `legacy_agent_labels_survive_outside_the_managed_block`; a
 //! `SKILL.md` decode read as exact whatever it repaired reddens
 //! `a_skill_file_that_is_not_text_is_refused_and_not_written`; the
 //! in-place answer taken per item rather than per artifact reddens
@@ -207,6 +209,38 @@ fn apply_writes_the_instructions_block_and_nothing_else() {
         );
     }
     assert_eq!(world.check_text(), "");
+}
+
+/// Adopt declares these authored files as an in-place source. Alias
+/// normalization may update managed instructions, but not the source text.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn legacy_agent_labels_survive_outside_the_managed_block() {
+    let world = world();
+    let authored = "---\nname: deploy\ndescription: Delegate to agent:generalist\n---\nOwned agent:generalist and agent:engineer text.\n";
+    fs::write(world.skill_file(), authored).unwrap();
+
+    for (instructions, normalized) in [
+        (None, None),
+        (
+            Some("Delegate to agent:generalist and agent:engineer."),
+            Some(
+                "<!-- kendex:shared-instructions:start -->\nDelegate to agent:maintainer and agent:runtime.\n<!-- kendex:shared-instructions:end -->",
+            ),
+        ),
+        (None, None),
+    ] {
+        world.declare(instructions);
+        world.apply();
+
+        assert_eq!(
+            world.read(&world.skill_file()),
+            kendex_core::render::skill::inject_instructions(authored, normalized),
+            "instructions: {instructions:?}"
+        );
+        let settled = world.plan();
+        assert!(settled.plan.ops.is_empty(), "{:?}", op_lines(&settled));
+    }
 }
 
 /// An edit to the tree is the source changing, which kendex neither

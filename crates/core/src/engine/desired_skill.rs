@@ -35,6 +35,7 @@ enum Variant {
     Refused,
     Rendered {
         files: Files,
+        source_files: Files,
         hash: String,
         read_as: SkillText,
     },
@@ -193,6 +194,7 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
     for (index, group) in groups.iter().enumerate() {
         let Variant::Rendered {
             files,
+            source_files,
             hash,
             read_as,
         } = &variants[index]
@@ -222,7 +224,10 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
         }
         trees.push(Some(Tree {
             canonical,
-            files: files.clone(),
+            files: match in_place {
+                true => source_files.clone(),
+                false => files.clone(),
+            },
             link,
             in_place,
         }));
@@ -397,6 +402,10 @@ fn render_variant(
     enabled: bool,
 ) -> Result<Variant> {
     let (mut rendered, read_as) = render_skill(ctx.sealed, ctx.item_path, ctx.manifest, ctx.name)?;
+    // The planning manifest already normalizes managed instructions. Keep
+    // the authored tree with only that block for a destination at the source;
+    // whole-tree label normalization belongs to rendered copies alone.
+    let source_files = rendered.files().to_vec();
     let files = rendered
         .into_files()
         .into_iter()
@@ -472,6 +481,7 @@ fn render_variant(
     let hash = hash_files(rendered.files());
     Ok(Variant::Rendered {
         files: rendered.into_files(),
+        source_files,
         hash,
         read_as,
     })
