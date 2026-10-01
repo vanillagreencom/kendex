@@ -26,7 +26,7 @@ TMP_ROOT="$(mktemp -d)" || { echo "lane-mail-world: scratch=mktemp-failed" >&2; 
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "lane-mail-world: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "lane-mail-world: scratch=resolve-failed" >&2; exit 1; }
 # FAKE_WATCH is the stand-in watch process the overseer mailbox rows start.
-trap '[ -z "${FAKE_WATCH:-}" ] || kill "$FAKE_WATCH" 2>/dev/null || :; chmod -R u+rwx -- "${TMP_ROOT:?}" 2>/dev/null || :; rm -rf -- "${TMP_ROOT:?}"' EXIT
+trap 'stop_wake_processes; [ -z "${FAKE_WATCH:-}" ] || kill "$FAKE_WATCH" 2>/dev/null || :; chmod -R u+rwx -- "${TMP_ROOT:?}" 2>/dev/null || :; rm -rf -- "${TMP_ROOT:?}"' EXIT
 ERR_FILE="$TMP_ROOT/stderr"
 # Whether this world can hold two names differing only in case. On a
 # case-insensitive filesystem, every macOS default one, the second name is the
@@ -204,7 +204,7 @@ run_payload() { # RAW-JSON [ENV=VAL...]
   printf '%s' "$payload" |
     (cd "${CALL_DIR:-$LANE}" && env -u CLAUDE_CONFIG_DIR -u CLAUDE_PROJECT_DIR -u CODEX_HOME -u COPILOT_HOME -u LANE_MAIL_ITEM \
       -u ORCH_HANDOFF_CONTEXT_PCT -u ORCH_HANDOFF_HEADROOM_PCT -u ORCH_STATE_DIR \
-      -u ORCH_OVERSEER_HEADROOM_PCT -u ORCH_OVERSEER_SUCCESSION -u TMUX -u TMUX_PANE \
+      -u ORCH_OVERSEER_HEADROOM_PCT -u ORCH_OVERSEER_SUCCESSION -u ORCH_WAKE_PROCESS -u ORCH_WAKE_START -u TMUX -u TMUX_PANE \
       "LANES_HOME=$OFFLINE_HOME" "PI_CODING_AGENT_DIR=$OFFLINE_HOME/.pi/agent" \
       DISABLE_AUTO_COMPACT=1 DISABLE_COMPACT=0 "ORCH_COMPACTION_OVERRIDES=$CODEX_COMPACTION" "ORCH_LANES_FETCH_CMD=$NO_FETCH" ${CONTEXT_PCT_ENV:+"$CONTEXT_PCT_ENV"} \
       ${CALL_ENV[@]+"${CALL_ENV[@]}"} "$@" bash "$CASE_HOOK" ${ARM_ARGS[@]+"${ARM_ARGS[@]}"}) >"$TMP_ROOT/stdout" 2>"$ERR_FILE" || RC=$?
@@ -494,6 +494,140 @@ new_overseer() { # NAME [PANE] [SERVER]
   plant_judge
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
   record_overseer "${2:-$OVERSEER_PANE}" "${3:-$OVERSEER_SERVER}"
+}
+
+# Real processes with the argv the wake check reads, not a pgrep answer stub.
+# A FIFO holds each shell without a child process; the parent reads its ready
+# handshake before the hook can inspect it. The environment is only this
+# fixture's, and the owner stops and reaps every process before removal.
+WAKE_PIDS=()
+WAKE_SEQUENCE=0
+WAKE_PID=""
+WAKE_STATE=""
+wake_process() { # SCRIPT ARGS...
+  local script="$1" dir
+  shift
+  WAKE_SEQUENCE=$((WAKE_SEQUENCE + 1))
+  dir="$TMP_ROOT/wake-process-$WAKE_SEQUENCE"
+  mkdir -p -- "$dir" "${script%/*}"
+  mkfifo "$dir/ready" "$dir/wait"
+  printf '%s\n' '#!/bin/sh' 'printf "ready\n" > "$WAKE_READY"' 'read -r line < "$WAKE_WAIT"' > "$script"
+  env -i "PATH=$PATH" "WAKE_READY=$dir/ready" "WAKE_WAIT=$dir/wait" sh "$script" "$@" &
+  WAKE_PID=$!
+  WAKE_PIDS+=("$WAKE_PID")
+  read -r _ < "$dir/ready"
+}
+stop_wake_processes() {
+  local pid
+  for pid in ${WAKE_PIDS[@]+"${WAKE_PIDS[@]}"}; do
+    kill "$pid" 2>/dev/null || :
+    wait "$pid" 2>/dev/null || :
+  done
+  WAKE_PIDS=()
+}
+start_follow() { # [CWD]
+  local cwd="${1:-$LANE}"
+  wake_process "$cwd/tmp/waiter.fixture/follow.sh" "$cwd/tmp/waiter.fixture/watch.log" 1
+}
+start_wake_watch() { # repeat|single [CWD]
+  WAKE_STATE=$(cd -- "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" path oversee) || return 1
+  wake_process "$TMP_ROOT/watch-$WAKE_SEQUENCE/oversee-watch" --state "$WAKE_STATE"
+  [ "$1" = repeat ] || return 0
+  printf 'pid=%s\nstate=%s\npane=none\norigin=hand\ncwd=%s\n' "$WAKE_PID" "$WAKE_STATE" "${2:-$LANE}" \
+    > "${WAKE_STATE%/*}/oversee-watch.pid"
+}
+
+# A literal one-line substitution for wake controls. It retains the message
+# and changes the action, so a control cannot pass by deleting its subject.
+wake_mutant() { # NAME OLD NEW
+  local count line
+  [ ! -L "$HOOK" ] || { echo "wake-mutant: source=symlink" >&2; exit 1; }
+  count=$(grep -Fxc -- "$2" "$HOOK") || { echo "wake-mutant: match=missing" >&2; exit 1; }
+  [ "$count" -eq 1 ] || { echo "wake-mutant: match=$count" >&2; exit 1; }
+  MUTANT_PATH="$TMP_ROOT/$1.sh"
+  while IFS= read -r line; do
+    if [ "$line" = "$2" ]; then printf '%s\n' "$3"; else printf '%s\n' "$line"; fi
+  done < "$HOOK" > "$MUTANT_PATH"
+  cmp -s -- "$HOOK" "$MUTANT_PATH" && { echo "wake-mutant: changed=no" >&2; exit 1; }
+  return 0
+}
+
+wake_overseer() { # NAME HARNESS [HOOK]
+  local dir
+  new_overseer "$1"
+  judge_says "$BELOW_MARK_LINE"
+  case "$2" in
+    claude) dir=.claude ;;
+    codex) dir=.codex ;;
+    copilot)
+      dir=.github
+      record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER" "$COP_HOME"
+      mkdir -p "$COP_HOME/session-state/s1" "$LANE/tmp/lane-mail/overseer"
+      : > "$COP_HOME/session-state/s1/events.jsonl"
+      bash -c 'set -euo pipefail; . "$1/lib/lane-context.sh"
+        lane_context_record "$2" copilot 100000 800000 "" s1 "$3" "" "$LANE_CONTEXT_COPILOT_CAPACITY_SOURCE"' \
+        _ "$REPO_ROOT/skills/orch/scripts" "$LANE/tmp/lane-mail/overseer" "$OVERSEER_SERVER $OVERSEER_PANE"
+      ;;
+    pi) dir=.pi ;;
+    *) echo "wake-world: harness=unknown value=$2" >&2; exit 1 ;;
+  esac
+  if [ "$dir" != .claude ]; then
+    mkdir -p "$LANE/$dir/skills"
+    ln -s "$LANE/.claude/skills/orch" "$LANE/$dir/skills/orch"
+  fi
+  if [ "$2" = pi ]; then dir="$dir/kendex"; fi
+  install_hook "${3:-$HOOK}" "$LANE/$dir/hooks/lane-mail-check.sh"
+  CALL_ENV=("PATH=$TMUX_BIN:$PATH" TMUX=fake "TMUX_PANE=$OVERSEER_PANE"
+    "TMUX_SERVER_ID=$OVERSEER_SERVER" "TMUX_SERVER_START=$OVERSEER_SERVER_START" "HOME=$COP_HOME")
+}
+
+# A refusal's key is first on stderr. A passed gap is model context instead.
+# The Start value is protocol data: the command the caller must run.
+wake_observation() { # START
+  local decision=- context=- command=0 text first answer
+  first=$(first_line) || return 1
+  text=$(cat -- "$ERR_FILE") || return 1
+  if [ -s "$TMP_ROOT/stdout" ]; then
+    decision=$(jq -r '.decision // "-"' "$TMP_ROOT/stdout") || return 1
+    context=$(jq -r '(.additionalContext // .hookSpecificOutput.additionalContext // "-") | split("\n")[0]' "$TMP_ROOT/stdout") || return 1
+    answer=$(jq -r '.additionalContext // .hookSpecificOutput.additionalContext // ""' "$TMP_ROOT/stdout") || return 1
+    [ -z "$answer" ] || text=$answer
+  fi
+  [ -z "$1" ] || command=$(grep -Fc -- "$1" <<< "$text" || :)
+  printf 'RC=%s first=%s decision=%s context=%s command=%s' "$RC" "$first" "$decision" "$context" "$command"
+}
+
+# A hook install with its ordinary command dependencies but no pgrep. This
+# reaches the wake probe's availability branch, not a payload dependency gap.
+wake_without_pgrep() {
+  local cmd executable bin="$TMP_ROOT/no-pgrep"
+  mkdir -p "$bin"
+  for cmd in bash jq cat git tr awk mktemp tail dirname sed ps flock date rm mv sleep basename grep realpath readlink mkdir chmod touch find head wc stat; do
+    if executable=$(command -v "$cmd"); then ln -s -f -- "$executable" "$bin/$cmd"; fi
+  done
+  ln -s -f -- "$TMUX_BIN/tmux" "$bin/tmux"
+  CALL_ENV+=("PATH=$bin")
+}
+
+# session-rows reads ancestry through ps. This table names one top-level
+# harness under the fixture's pane, and delegates all other process queries.
+wake_row_process_table() {
+  local executable
+  executable=$(command -v ps) || return 1
+  {
+    printf '#!/bin/sh\n'
+    printf 'if [ "$1" = -o ] && [ "$2" = ppid= ]; then printf "%%s claude\\n" %s; exit 0; fi\n' "$OVERSEER_SERVER"
+    printf 'exec %q "$@"\n' "$executable"
+  } > "$TMUX_BIN/ps"
+  chmod +x "$TMUX_BIN/ps"
+}
+
+wake_control() { # NAME ROW OLD NEW
+  local status=0
+  wake_mutant "$1" "$3" "$4"
+  env -i "PATH=$PATH" "HOME=$COP_HOME" "HOOK_UNDER_TEST=$MUTANT_PATH" \
+    bash "$TEST_DIR/lane-mail-check-wake.test.sh" --wake-row "$2" > "$TMP_ROOT/$1.control.log" 2>&1 || status=$?
+  assert_eq "$status" 1 "control: $1 makes the $2 assertion red"
 }
 
 # The record that ends an overseer's refusal, written on the fleet's own item.

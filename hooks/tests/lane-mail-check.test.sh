@@ -2459,7 +2459,9 @@ expect 0 - "control: without the halt check a subagent's call carrying the ackno
 
 # The agent_type read dropped, agent_id still read: a subagent the pi-hooks
 # carrier marks is judged as the lead.
-mutant no-agent-type -e 's@str(\.agent_id) + str(\.agent_type) == ""@str(.agent_id) == ""@'
+wake_mutant no-agent-type \
+  '   (if .hook_event_name == "SubagentStop" or str(.agent_id) + str(.agent_type) != "" then "subagent" else "lead" end),' \
+  '   (if .hook_event_name == "SubagentStop" or str(.agent_id) != "" then "subagent" else "lead" end),'
 new_lane control_sub_type ken-38
 install_arms "$MUTANT_PATH"
 send KEN-38 'For the lead.'
@@ -3090,13 +3092,15 @@ start_watch() {
   local state
   state="$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" path oversee)"
   mkdir -p "${state%/*}"
-  bash -c 'exec -a oversee-watch sleep 600' &
+  env -i "PATH=$PATH" bash -c 'exec -a oversee-watch sleep 600' &
   FAKE_WATCH=$!
-  printf 'pid=%s\nstate=%s\npane=none\norigin=hand\n' "$FAKE_WATCH" "$state" > "${state%/*}/oversee-watch.pid"
+  printf 'pid=%s\nstate=%s\npane=none\norigin=hand\ncwd=%s\n' "$FAKE_WATCH" "$state" "$LANE" > "${state%/*}/oversee-watch.pid"
+  start_follow
 }
 stop_watch() {
   kill "$FAKE_WATCH" 2>/dev/null || :
   wait "$FAKE_WATCH" 2>/dev/null || :
+  stop_wake_processes
 }
 # Every orch library but the watch record's, linked one by one, since the
 # reader sources its own from the install's directory.
@@ -3169,7 +3173,8 @@ expect 0 - "nor a session the fleet record does not name"
 named_session peer_no_mailbox
 state_stub path-fails
 stop "${SESSION_ENV[@]}"
-expect 0 - "the named session with no overseer mailbox never judges the fleet state"
+assert_eq "RC=$RC fleet-state=$(grep -c '^lane-mail-check: fleet-state=' "$ERR_FILE" || :)" "RC=0 fleet-state=0" \
+  "the named session with no overseer mailbox never judges mail protection, independent of the wake probe"
 
 named_session peer_library_absent
 peer_send 'No library.'
@@ -3261,7 +3266,8 @@ named_session control_peer_state "$MUTANT_PATH"
 peer_send 'Path unread.'
 state_stub path-fails
 stop "${SESSION_ENV[@]}"
-expect 0 - "control: without the path refusal a failed state read passes the turn with the note unread"
+assert_eq "RC=$RC unread=$(overseer_unread 'Path unread.')" "RC=0 unread=1" \
+  "control: without the path refusal a failed state read passes mail protection and leaves the note unread"
 
 mutant peer-library-passes -e 's@^    \*) refuse fleet-state "\$SCRIPTS/lib/watch-pid.sh" .*$@    *) return 1 ;;@'
 named_session control_peer_library "$MUTANT_PATH"

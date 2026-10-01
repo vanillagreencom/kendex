@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+# The registered session's wake, over real processes with the follow and
+# single-pass argv watch-delivery produces. The harness rows drive the hook's
+# existing lead identity and refusal formats, not a second wake implementation.
+# HOOK_UNDER_TEST selects the planted copy for each must-fail control.
+set -euo pipefail
+
+# shellcheck source=lib/lane-mail-world.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/lane-mail-world.sh"
+
+SELECTED=""
+if [ "${1:-}" = --wake-row ]; then SELECTED=$2; fi
+REARM='sh "[RUN_DIR]/follow.sh" "[RUN_DIR]/watch.log" [NEXT_LINE]'
+MASTER_START='run-master-wake --resume'
+
+# CASE|HARNESS|EXIT|STDERR-KEY|DECISION|CONTEXT-KEY|COMMAND-COUNT[|WAKE-NOTICE]
+# Stop, Codex Stop and Copilot agentStop are held. Pi's carrier can make only
+# one further model request, so these are hook-format tests, not proof of an
+# indefinitely held Pi turn. Unsupported harnesses dispatch no hook at all.
+while IFS='|' read -r scenario harness want_rc first decision context commands wake_notice; do
+  [ -z "$SELECTED" ] || [ "$scenario:$harness" = "$SELECTED" ] || continue
+  stop_wake_processes
+  wake_overseer "wake-$scenario-$harness" "$harness"
+  command=$REARM
+  payload='{"session_id":"s1","stop_hook_active":false}'
+  if [ "$harness" = copilot ]; then
+    payload=$(jq -nc --arg p "$COP_HOME/session-state/s1/events.jsonl" '{sessionId:"s1",transcriptPath:$p,timestamp:1}') || exit 1
+  fi
+  case "$scenario" in
+    armed) start_wake_watch repeat; start_follow ;;
+    no-follow | continuation | continuation-mark | agent-id | agent-type | subagent-stop | other-session | no-pgrep | probe-error | probe-error-mark | record-cwd | record-armed | missing-cwd | unreadable-record)
+      start_wake_watch repeat
+      ;;
+    single) start_wake_watch single ;;
+    master-live | master-dead | master-continuation | incomplete-master)
+      command=$MASTER_START
+      if [ "$scenario" = master-live ]; then
+        wake_process "$TMP_ROOT/master-wake" --fleet "$LANE"
+        CALL_ENV+=("ORCH_WAKE_PROCESS=master-wake --fleet $LANE")
+      else
+        CALL_ENV+=("ORCH_WAKE_PROCESS=master-wake --fleet $LANE")
+      fi
+      CALL_ENV+=("ORCH_WAKE_START=$MASTER_START")
+      ;;
+    empty-keys | absent-keys) command="" ;;
+    no-record)
+      command=""
+      (cd -- "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" set oversee overseer null >/dev/null)
+      CALL_ENV+=(ORCH_WAKE_PROCESS=never-matched "ORCH_WAKE_START=$MASTER_START")
+      ;;
+    *) echo "wake-suite: case=unknown value=$scenario" >&2; exit 1 ;;
+  esac
+  case "$scenario" in
+    no-follow)
+      # A matched master setting cannot replace a repeat follow. The live
+      # watch is also deliberately left running throughout the refusal.
+      CALL_ENV+=("ORCH_WAKE_PROCESS=oversee-watc[h]" "ORCH_WAKE_START=$MASTER_START")
+      ;;
+    continuation | continuation-mark | master-continuation) payload=$(jq -c '. + {stop_hook_active:true}' <<< "$payload") || exit 1 ;;
+    agent-id) payload=$(jq -c '. + {agent_id:"child"}' <<< "$payload") || exit 1 ;;
+    agent-type) payload=$(jq -c '. + {agent_type:"worker"}' <<< "$payload") || exit 1 ;;
+    subagent-stop) payload=$(jq -c '. + {hook_event_name:"SubagentStop"}' <<< "$payload") || exit 1 ;;
+    other-session) CALL_ENV+=(TMUX_PANE=%3) ;;
+    no-pgrep) wake_without_pgrep ;;
+    probe-error | probe-error-mark)
+      printf '#!/bin/sh\necho "probe failed" >&2\nexit 2\n' > "$TMUX_BIN/pgrep"
+      chmod +x "$TMUX_BIN/pgrep"
+      ;;
+    record-cwd | record-armed)
+      # A follow on the session root does not arm a watch whose claim names
+      # another cwd. The path includes regex characters and a space.
+      stop_wake_processes
+      start_wake_watch repeat "$TMP_ROOT/watch [cwd].root"
+      if [ "$scenario" = record-armed ]; then start_follow "$TMP_ROOT/watch [cwd].root"; else start_follow; fi
+      ;;
+    missing-cwd)
+      sed '/^cwd=/d' "${WAKE_STATE%/*}/oversee-watch.pid" > "$TMP_ROOT/claim"
+      mv -- "$TMP_ROOT/claim" "${WAKE_STATE%/*}/oversee-watch.pid"
+      ;;
+    unreadable-record)
+      rm -- "${WAKE_STATE%/*}/oversee-watch.pid"
+      mkdir -- "${WAKE_STATE%/*}/oversee-watch.pid"
+      ;;
+    empty-keys) CALL_ENV+=(ORCH_WAKE_PROCESS= ORCH_WAKE_START=) ;;
+    incomplete-master) CALL_ENV+=(ORCH_WAKE_START=); command="" ;;
+  esac
+  if [ -n "$wake_notice" ]; then
+    # An unarmed continuation or failed wake probe coincides with a handoff
+    # mark. Its Stop row and context record must still land.
+    judge_says "$CONTEXT_MARK_LINE"
+    wake_row_process_table
+    mkdir -p "$LANE/tmp/lane-mail/overseer"
+  fi
+  case "$context" in
+    record) context="wake-record=${WAKE_STATE%/*}/oversee-watch.pid" ;;
+    process)
+      # The process error reports the actual query under its own key. Do
+      # not pin the prose pgrep wrote below it.
+      context="wake-process=follow[.]sh ${LANE//./\\.}/tmp/waiter[.][^/]*/watch[.]log"
+      ;;
+  esac
+  case "$first" in record | process) first=${context#lane-mail-check: } ;; esac
+  [ "$first" = - ] || first="lane-mail-check: $first"
+  [ "$context" = - ] || context="lane-mail-check: $context"
+  run_payload "$payload"
+  got=$(wake_observation "$command") || exit 1
+  want="RC=$want_rc first=$first decision=$decision context=$context command=$commands"
+  if [ -n "$wake_notice" ]; then
+    row=$(jq -rs 'map([.event, .harness] | join(":")) | join(",")' \
+      "$LANE/tmp/lane-mail/overseer/session-$OVERSEER_SERVER-${OVERSEER_PANE#%}.jsonl") || exit 1
+    record=$(jq -r '[.harness, .session_id, .pane_key, (.tokens | tostring)] | join(":")' \
+      "$LANE/tmp/lane-mail/overseer/context.json") || exit 1
+    notices=$(grep -c "^lane-mail-check: $wake_notice" "$ERR_FILE") || exit 1
+    objects=$(jq -s 'length' "$TMP_ROOT/stdout") || exit 1
+    case "$harness" in
+      copilot)
+        # The wake warning joins the block reason, never a second JSON reply.
+        reason=$(jq -r '.reason | split("\n") | map(select(startswith("lane-mail-check: wake"))) | length' "$TMP_ROOT/stdout") || exit 1
+        output="objects=1 reason=1"
+        tokens=100000
+        ;;
+      *) reason=-; output="objects=0 reason=-"; tokens=null ;;
+    esac
+    got="$got row=$row record=$record notices=$notices objects=$objects reason=$reason"
+    want="$want row=Stop:$harness record=$harness:s1:$OVERSEER_SERVER $OVERSEER_PANE:$tokens notices=1 $output"
+  fi
+  assert_eq "$got" "$want" "$scenario:$harness"
+  rm -f -- "$TMUX_BIN/pgrep" "$TMUX_BIN/ps"
+done <<'ROWS'
+armed|claude|0|-|-|-|0
+armed|codex|0|-|-|-|0
+armed|copilot|0|-|-|-|0
+armed|pi|0|-|-|-|0
+no-follow|claude|2|wake=unarmed|-|-|1
+no-follow|codex|2|wake=unarmed|-|-|1
+no-follow|copilot|0|wake=unarmed|block|-|1
+no-follow|pi|2|wake=unarmed|-|-|1
+continuation|claude|0|wake=unarmed|-|wake=unarmed|1
+continuation|codex|0|wake=unarmed|-|wake=unarmed|1
+continuation|copilot|0|wake=unarmed|-|wake=unarmed|1
+continuation|pi|0|wake=unarmed|-|wake=unarmed|1
+continuation-mark|claude|2|context=612000|-|-|1|wake=unarmed
+continuation-mark|codex|2|context=612000|-|-|1|wake=unarmed
+continuation-mark|copilot|0|context=612000|block|-|1|wake=unarmed
+continuation-mark|pi|2|context=612000|-|-|1|wake=unarmed
+probe-error-mark|claude|2|context=612000|-|-|0|wake-process=
+probe-error-mark|codex|2|context=612000|-|-|0|wake-process=
+probe-error-mark|copilot|0|context=612000|block|-|0|wake-process=
+probe-error-mark|pi|2|context=612000|-|-|0|wake-process=
+agent-id|claude|0|-|-|-|0
+agent-type|codex|0|-|-|-|0
+subagent-stop|claude|0|-|-|-|0
+other-session|claude|0|-|-|-|0
+single|claude|0|-|-|-|0
+master-live|claude|0|-|-|-|0
+master-dead|claude|2|wake=unarmed|-|-|1
+master-continuation|claude|0|wake=unarmed|-|wake=unarmed|1
+empty-keys|claude|0|-|-|-|0
+absent-keys|claude|0|-|-|-|0
+no-record|claude|0|-|-|-|0
+no-pgrep|claude|0|wake-tools=pgrep|-|wake-tools=pgrep|0
+probe-error|claude|0|process|-|process|0
+record-cwd|claude|2|wake=unarmed|-|-|1
+record-armed|claude|0|-|-|-|0
+missing-cwd|claude|0|record|-|record|0
+unreadable-record|claude|0|record|-|record|0
+incomplete-master|claude|0|wake-setting=ORCH_WAKE_START|-|wake-setting=ORCH_WAKE_START|0
+ROWS
+
+# Copilot's custom subagent names its own session and the lead's transcript.
+# This is the measured agentStop producer, distinct from agent_id/type.
+if [ -z "$SELECTED" ]; then
+  stop_wake_processes
+  wake_overseer wake-copilot-child copilot
+  start_wake_watch repeat
+  payload=$(jq -nc --arg p "$COP_HOME/session-state/s1/events.jsonl" '{sessionId:"child",transcriptPath:$p,timestamp:1}') || exit 1
+  run_payload "$payload"
+  got=$(wake_observation "$REARM") || exit 1
+  assert_eq "$got" 'RC=0 first=- decision=- context=- command=0' 'Copilot custom subagent exclusion'
+
+  wake_control disabled no-follow:claude \
+    '      refuse wake unarmed "$start"' \
+    '      message wake unarmed "$start"; return 0'
+  wake_control continued-held continuation:claude \
+    '      [ "$CONTINUED" != true ] || { wake_report wake unarmed "$start"; return 0; }' \
+    '      [ "$CONTINUED" != true ] || refuse wake unarmed "$start"'
+  wake_control empty-held absent-keys:claude \
+    '      [ "$mode" != single ] || return 0' \
+    '      [ "$mode" != single ] || refuse wake unarmed "$start"'
+  wake_control unavailable-held no-pgrep:claude \
+    '  command -v pgrep >/dev/null 2>&1 || { wake_report wake-tools pgrep; return 0; }' \
+    '  command -v pgrep >/dev/null 2>&1 || refuse wake-tools pgrep'
+  wake_control warning-exits continuation-mark:claude \
+    '  WAKE_NOTICE=$(message "$@" 2>&1) || refuse notice unwritten "$WAKE_NOTICE"' \
+    '  WAKE_NOTICE=$(message "$@" 2>&1) || refuse notice unwritten "$WAKE_NOTICE"; exit 0'
+fi
+
+printf '\n=== %s passed, %s failed ===\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]
