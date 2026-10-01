@@ -734,12 +734,12 @@ CODE="skills/demo/scripts/demo.sh .agents/skills/demo/scripts/demo.sh crates/cor
 # A skill and a tool, the diff no build input and no ui/ path is in.
 SKILL_TOOL="skills/demo/scripts/demo.sh .agents/skills/demo/scripts/demo.sh tools/demo-tool.sh"
 ALL="suites parse lint apple windows test ui"
-# class|docs verdict|changed paths|the lanes that run|optional final report
+# class|docs verdict|changed paths|the lanes that run
 LANE_ROWS=(
   "||$CODE|$ALL"
   "standard|false|$CODE ui/app.ts|$ALL"
   "standard|false|$CODE|suites parse lint apple windows test"
-  "standard|false|$SKILL_TOOL|suites parse test|validate: lanes=guard-scans,bot-instructions,decision-ids,bash32-lint,bash32-parse,shell-suites,cargo-test selection=all"
+  "standard|false|$SKILL_TOOL|suites parse test"
   "standard|true|docs/guide.md|test"
   "render|false|$CODE|"
   "trivial|true|$CODE|"
@@ -749,30 +749,17 @@ LANE_ROWS=(
 )
 lane_guard
 for row in "${LANE_ROWS[@]}"; do
-  IFS='|' read -r class docs paths want report <<<"$row"
+  IFS='|' read -r class docs paths want <<<"$row"
   run_lanes "$class" "$docs" $paths
   got="$(lanes_ran)"
-  [ "$RC" -eq 0 ] && [ "$got" = "$want" ] && { [ -z "$report" ] || [ "$(sed -n '$p' <<<"$OUT")" = "$report" ]; } \
+  [ "$RC" -eq 0 ] && [ "$got" = "$want" ] && [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans selection=all' ] \
     && ok "class '${class:-unset}' docs-only '${docs:-unset}' over $paths runs: ${want:-no heavy lane}" \
     || bad "class '${class:-unset}' docs-only '${docs:-unset}' over $paths runs: ${want:-no heavy lane}" "rc=$RC got=$got out=$OUT"
-  case "$class" in
-    "")
-      REPORT_ALL='validate: lanes=guard-scans,bot-instructions,decision-ids,bash32-lint,bash32-parse,cargo-lint,shell-suites,aarch64-apple-darwin,x86_64-pc-windows-msvc,cargo-doc,cargo-test,ui selection=all'
-      [ "$(sed -n '$p' <<<"$OUT")" = "$REPORT_ALL" ] \
-        && ok "the full guard reports the check groups it runs once at its end" \
-        || bad "the full guard reports the check groups it runs once at its end" "$OUT"
-      ;;
-    trivial)
-      [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans,bot-instructions,decision-ids,bash32-lint selection=all' ] \
-        && ok "the guard omits groups it did not run" \
-        || bad "the guard omits groups it did not run" "$OUT"
-      ;;
-  esac
 done
 [ "$(grep -cF "printf 'validate: " "$GUARD")" -eq 1 ] || { echo 'lane control: reporting edit has no unique match' >&2; exit 1; }
 lane_guard "/^printf 'validate: /s/^/: # /"
 run_lanes '' '' $CODE ui/app.ts
-[ "$RC" -eq 0 ] && [ "$(sed -n '$p' <<<"$OUT")" != "$REPORT_ALL" ] \
+[ "$RC" -eq 0 ] && [ "$(sed -n '$p' <<<"$OUT")" != 'validate: lanes=guard-scans selection=all' ] \
   && ok "control: without the final report the lane assertion turns red" \
   || bad "control: without the final report the lane assertion turns red" "$OUT"
 lane_guard

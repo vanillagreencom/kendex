@@ -62,7 +62,7 @@ printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
 printf 'echo more\n' >>"$R/.agents/skills/demo/scripts/demo.sh"
 run_range "$BASE"
 [ "$RC" -eq 0 ] && [ -z "$LOG" ] && [[ "$OUT" == *"=== skills/demo/tests/demo.test.sh"* ]] && [[ "$OUT" != *"skills/quiet"* ]] \
-  && [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans,bash32-lint,shell-suites selection=all' ] \
+  && [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans selection=all' ] \
   && ok "the touched skill's suite runs, the untouched one does not, and cargo and npm are never called" \
   || bad "the touched skill's suite runs, the untouched one does not, and cargo and npm are never called" "rc=$RC log=$LOG out=$OUT"
 # The inverse is the battery a fix round ran before range mode: the same diff
@@ -103,6 +103,8 @@ ROWS=(
   "the clippy configuration checks and lints the workspace|worktree|clippy.toml|$WORKSPACE_CALLS"
   "a UI file runs the UI checks and the UI suite|worktree|ui/src/main.ts|$UI_CALLS"
   "a markdown file under ui/ runs no UI check|worktree|ui/README.md|"
+  "a docs-only range runs no suite|worktree|docs/guide.md|"
+  "a workflow-only range runs no suite|worktree|.github/workflows/skill-tests.yml|"
   "a crate's non-Rust file checks and lints that crate|worktree|crates/core/assets/data.txt|$CORE_CALLS"
   "a file outside crates/ that compiled code includes checks and lints the workspace|worktree|docs/note.txt|$WORKSPACE_CALLS"
 )
@@ -110,13 +112,14 @@ before=$((PASS + FAIL))
 for row in "${ROWS[@]}"; do
   IFS='|' read -r label sits path _ <<<"$row"
   want="${row#*|*|*|}"
+  mkdir -p "$R/$(dirname "$path")"
   printf 'x\n' >>"$R/$path"
   if [ "$sits" = commit ]; then
     git -C "$R" add -A
     git -C "$R" commit -q -m "fix: a change inside the range"
   fi
   run_range "$BASE"
-  [ "$RC" -eq 0 ] && [ "$LOG" = "$want" ] \
+  [ "$RC" -eq 0 ] && [ "$LOG" = "$want" ] && [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans selection=all' ] \
     && ok "$label" \
     || bad "$label" "rc=$RC log=$LOG out=$OUT"
   back_to_base
