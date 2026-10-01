@@ -25,10 +25,6 @@ set -euo pipefail
 # harness-scoped companion walk; recording still belongs only to Copilot.
 HOOK_DIR=${BASH_SOURCE[0]%/*}
 [ "$HOOK_DIR" != "${BASH_SOURCE[0]}" ] || HOOK_DIR=.
-case "$HOOK_DIR" in
-  */.github/hooks) ;;
-  *) [ -f "${BASH_SOURCE[0]%.sh}.json" ] || exit 0 ;;
-esac
 
 # The judge is the skill-load-check hook installed beside this one: the one
 # reader and writer of the record. A finished tool call is never refused, so

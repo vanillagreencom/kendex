@@ -208,6 +208,13 @@ case "${1:-check}" in
   *) refuse arm "$1" ;;
 esac
 
+# The recorder delegates installation classification here. Released engines
+# deliver it on transcript-based harnesses too; those calls need no payload
+# or external commands because only Copilot records finished skill loads.
+case "$ARM:$INSTALL" in
+  record:) exit 0 ;;
+esac
+
 # The off switch stands before everything, so a session that is not working
 # under these rules needs none of the tools below.
 if [ "${KENDEX_SKILL_LOAD_HOOK:-}" = off ]; then

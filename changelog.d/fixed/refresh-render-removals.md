@@ -1,1 +1,1 @@
-- Keep skill-load checks installed with released engines, and classify verified refresh removals from the base render inventory.
+- Keep skill-load checks installed with released engines. Refuse render classification for deletions without trusted whole-file ownership proof.

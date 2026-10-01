@@ -47,9 +47,11 @@
 #            owned by a position a passing row of that run printed: a file it
 #            owns whole, a tree it owns whole, or keys inside a shared file
 #            whose rest that run says did not move since the range's base.
-#            A removed path instead needs ownership in the base inventory,
-#            proved by harness-only, and absence from the head inventory
-#            that this passing verify weighed. Any other changed path answers
+#            A removed path needs base inventory membership, absence from the
+#            verified head inventory, and trusted base whole-file ownership.
+#            verify exposes only current positions, so unproved retirement
+#            answers standard with cause=render-retirement-unproved, including
+#            whole-file and tree removals. Any other changed path answers
 #            standard with cause=render-path-unowned, and a shared file whose rest the run
 #            cannot vouch for answers cause=render-path-partial. That verdict
 #            is that every installed file equals a fresh render of its
@@ -702,14 +704,19 @@ render_paths_covered() {
     if [ -z "$head_entry" ]; then
       # harness-only already required this deleted file in the base's
       # inventory. Never use the branch's record to grant that ownership.
-      # A passing head verify sanctions removal only when its inventory
-      # no longer names the position, including files under a surviving tree.
+      # Head inventory absence is necessary, but does not prove the base
+      # owned the whole file: its inventory includes shared keys and regions.
       inventory_status=0
       jq -e --arg path "$path" \
         'all(.[]; (if type == "string" then . else .path end) != $path)' \
         "$proof_tree/.kendex-generated.json" >/dev/null 2>&1 || inventory_status=$?
       case "$inventory_status" in
-        0) [ "$harness_verdict" != harness_only=true ] || continue ;;
+        0)
+          # verify --base in kendex 1.2.0 and 1.3.0 exposes current positions,
+          # not trusted base ownership. Refuse retirement until the engine
+          # exposes that proof; even a current tree cannot grant base ownership.
+          RENDER_REFUSAL="cause=render-retirement-unproved path=$path"
+          return 1 ;;
         1) ;;
         *) RENDER_REFUSAL="cause=unreadable-head-inventory head=$head_rev"; return 1 ;;
       esac
