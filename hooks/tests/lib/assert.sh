@@ -25,7 +25,9 @@ skill_load_control() { # NAME SOURCE ANCHOR INSERT OVERRIDE ROWS FAILED-ROW...
   changed=${text/"$anchor"/"$anchor"$'\n'"$insert"}
   [ "$changed" != "$text" ] || { echo "skill-load-control: mutation=unchanged" >&2; exit 2; }
   printf '%s\n' "$changed" >"$TMP_ROOT/$name.sh"
-  log="$TMP_ROOT/$name.log"
+  # The caller can capture control results at a name-based path of its own.
+  # Give the callback an exclusive log so those writes cannot overwrite rows.
+  log=$(mktemp "$TMP_ROOT/$name.log.XXXXXX") || { echo "skill-load-control: log=mktemp-failed" >&2; exit 2; }
   set +e
   (
     set -e

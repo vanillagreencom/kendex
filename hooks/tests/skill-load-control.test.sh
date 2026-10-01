@@ -32,7 +32,9 @@ assert_eq "$(cat -- "$TMP_ROOT/invoked")" "$TMP_ROOT/selected.sh" 'only the sele
 assert_eq "$(env -i PATH="$PATH" HOME="$TMP_ROOT" "$BASH_BIN" "$HOOK")" expected 'the original source stays unchanged'
 
 # These callback outcomes are the helper's observable input, not substitutes
-# for the helper. Each is checked through skill_load_control itself.
+# for the helper. Each is checked through skill_load_control itself. The
+# caller's outcome.log must not overlap the helper's callback capture, which
+# would let control output overwrite the duplicate FAIL row before matching.
 callback_outcome() {
   case "$MODE" in
     missing) assert_eq broken expected 'another row' ;;
@@ -64,8 +66,8 @@ wrong-status|1
 passing|1
 ROWS
 
-# Resetting the callback's failure count keeps the FAIL lines but removes its
-# nonzero verdict. The helper's own suite must then turn red.
+# Reusing the caller's name-based log lets control output overwrite a FAIL
+# row. The helper's own duplicate-row rejection test must then turn red.
 helper_rows() {
   local status
   set +e
@@ -73,11 +75,11 @@ helper_rows() {
     HELPER_CONTROL_ACTIVE=1 "$BASH_BIN" "$TEST_DIR/skill-load-control.test.sh" >"$TMP_ROOT/helper-suite.log" 2>&1
   status=$?
   set -e
-  assert_eq "$status" 0 'the helper preserves callback failures'
+  assert_eq "$status" 0 'the helper isolates its callback log'
 }
 if [ "${HELPER_CONTROL_ACTIVE:-}" != 1 ]; then
-  skill_load_control helper "$LIBRARY" '    "$rows"' '    FAIL=0' LIBRARY helper_rows \
-    'the helper preserves callback failures'
+  skill_load_control helper "$LIBRARY" '  set +e' '  log="$TMP_ROOT/$name.log"' LIBRARY helper_rows \
+    'the helper isolates its callback log'
 fi
 
 echo "passed: $PASS  failed: $FAIL"
