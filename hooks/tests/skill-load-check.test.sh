@@ -549,6 +549,7 @@ env -i PATH="$RELEASE_HOME/.local/bin:$PATH" HOME="$RELEASE_HOME" \
 RELEASED="$RELEASE_HOME/.local/bin/kendex"
 release_version=$(env -i PATH="$PATH" HOME="$RELEASE_HOME" "$RELEASED" --version)
 assert_eq "$release_version" 'kendex 1.3.0' 'catalog hook proof uses released v1.3.0'
+RECORDER_HARNESSES='["claude", "codex", "pi", "copilot"]'
 
 released_hook_rows() {
   local world catalog project home tool judge recorder status
@@ -571,6 +572,10 @@ harnesses = ["claude", "codex", "pi", "copilot"]
 method = "copy"
 [hooks.skill-load-check]
 source = "cat"
+harnesses = ["claude", "codex", "pi", "copilot"]
+[hooks.skill-load-record]
+source = "cat"
+harnesses = $RECORDER_HARNESSES
 EOF
   status=0
   (cd -- "$project" && env -i PATH="$PATH" HOME="$home" \
@@ -594,6 +599,26 @@ skill_load_control released-companion "$CARRIER" \
   'released planner retains the hook pair on claude' \
   'released planner retains the hook pair on codex' \
   'released planner retains the hook pair on pi'
+
+# Keep the positive expectation independent of the declaration under test.
+# This control restores the local opt-out, not the catalog header restriction.
+control_status=0
+(
+  PASS=0
+  FAIL=0
+  RECORDER_HARNESSES='["copilot"]'
+  released_hook_rows
+  [ "$FAIL" -eq 0 ]
+) >"$TMP_ROOT/local-restriction.log" 2>&1 || control_status=$?
+assert_eq "$control_status" 1 'control local-restriction: the old declaration turns the suite red'
+for tool in claude codex pi; do
+  control_matches=$(grep -Fxc -e "  FAIL  released planner retains the hook pair on $tool" \
+    -- "$TMP_ROOT/local-restriction.log") || {
+    control_status=$?
+    [ "$control_status" -eq 1 ] || exit "$control_status"
+  }
+  assert_eq "$control_matches" 1 "control local-restriction: $tool loses its hook pair"
+done
 
 skill_load_control markdown "$HOOK" 'require() { # SKILL' \
   '  [ "$1" != docs-writing ] || return 0' HOOK markdown_rows \

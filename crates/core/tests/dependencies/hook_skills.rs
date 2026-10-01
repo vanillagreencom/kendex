@@ -155,6 +155,100 @@ fn a_hook_installs_required_skills_on_every_tool_and_its_companion_only_where_ne
     );
 }
 
+/// The local recorder declaration must deliver the catalog companion wherever
+/// this repository requests its judge. Retained records are not planned deliveries.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn local_skill_load_declarations_retain_all_four_judges() {
+    let checkout = test_util::checkout_root();
+    let local = manifest::load_current(&checkout.join("kendex-local.toml"))
+        .unwrap()
+        .unwrap();
+    let expected = [
+        HarnessId::Claude,
+        HarnessId::Codex,
+        HarnessId::Pi,
+        HarnessId::Copilot,
+    ];
+    let f = world();
+    fs::create_dir_all(f.project.join(".pi")).unwrap();
+    fs::write(
+        f.project.join(".pi/settings.json"),
+        r#"{"packages":["./packages/@vanillagreen/pi-hooks"]}"#,
+    )
+    .unwrap();
+    let mut declared = manifest_of(&f);
+    declared.install.harnesses = expected.to_vec();
+    declared.hooks.clear();
+    for name in ["skill-load-check", "skill-load-record"] {
+        fs::copy(
+            checkout.join(format!("hooks/{name}.sh")),
+            f.source.join(format!("hooks/{name}.sh")),
+        )
+        .unwrap();
+        let mut declaration = local.hooks[name].clone();
+        declaration.source = "cat".to_owned();
+        declared.hooks.insert(name.to_owned(), declaration);
+    }
+    fs::write(
+        f.project.join("kendex.toml"),
+        toml::to_string_pretty(&declared).unwrap(),
+    )
+    .unwrap();
+    let report = audit(&f.env, &f.scope).unwrap();
+    assert_eq!(
+        report.declaration_status,
+        kendex_core::engine::DeclarationStatus::Complete,
+        "{:?}",
+        messages(&report)
+    );
+    apply::execute(&f.env, &report.plan).unwrap();
+    let lock = lock_of(&f);
+    for tool in expected {
+        for name in ["skill-load-check", "skill-load-record"] {
+            let key = format!("hook:{name}:{}", tool.name());
+            assert!(lock.entries.contains_key(&key), "{tool:?}: {name}");
+            assert!(report.installations.contains_key(&key), "{tool:?}: {name}");
+        }
+    }
+
+    // The planted local restriction reaches the current removal pass with a
+    // record of all four judges, rather than only checking a fresh install.
+    declared
+        .hooks
+        .get_mut("skill-load-record")
+        .unwrap()
+        .harnesses = Some(vec![HarnessId::Copilot]);
+    fs::write(
+        f.project.join("kendex.toml"),
+        toml::to_string_pretty(&declared).unwrap(),
+    )
+    .unwrap();
+    let report = audit(&f.env, &f.scope).unwrap();
+    assert_eq!(
+        report.declaration_status,
+        kendex_core::engine::DeclarationStatus::Incomplete
+    );
+    apply::execute(&f.env, &report.plan).unwrap();
+    let lock = lock_of(&f);
+    // Without a sweep, the orphaned recorder retains its record and keeps the
+    // judge it required. The engine's installation set holds current delivery.
+    for tool in expected {
+        for name in ["skill-load-check", "skill-load-record"] {
+            let key = format!("hook:{name}:{}", tool.name());
+            assert!(
+                lock.entries.contains_key(&key),
+                "retained: {tool:?}: {name}"
+            );
+            assert_eq!(
+                report.installations.contains_key(&key),
+                tool == HarnessId::Copilot,
+                "control local-restriction: {tool:?}: {name}"
+            );
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Missing {
     Removed,
