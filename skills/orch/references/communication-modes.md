@@ -128,7 +128,7 @@ This standard holds for the master and every overseer: each post the relay makes
 |---|---|---|---|
 | Decision needed | Slack and chat | At the moment the question exists: one question per message, with the options and a recommendation, in the ceo template. A question only in the chat has not been asked. | Yes |
 | Critical notice | Slack and chat | A failure that stops work, loses data or money, or needs the owner within the hour. | Yes |
-| Progress report | Slack and chat | The master every hour, an overseer by `ORCH_REPORT_EVERY_MINUTES` ([Settings](../README.md#settings)), while the session runs, and before a succession: what landed, what runs, what blocks, and **Waiting on you** with every open owner question and its link. | No |
+| Progress report | Slack and chat | The master every hour, an overseer by `ORCH_REPORT_EVERY_MINUTES` ([Settings](../README.md#settings)), while the session runs, and before a succession. `oversee-report` still writes and prints during `ORCH_REPORT_QUIET_HOURS` (default midnight to 7 am in `ORCH_OWNER_TIME_ZONE`, default `America/Los_Angeles`), but sends no owner notice. Empty quiet hours turns suppression off. The first due report after the window sends the morning brief: **Landed**, **Running**, **Blocked** and **Waiting on you** cover the work since the last report sent to the owner, including overnight merges. Decisions needed and critical notices remain immediate. | No |
 | Reply | Where the owner's message arrived | An answer to an owner message. A reply on Slack shows in the chat as at most one line naming the post. | No |
 
 - Nothing else goes to Slack: no acknowledgement, no mechanism, no history. The same routing holds for every overseer.

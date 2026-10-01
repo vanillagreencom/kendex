@@ -51,6 +51,7 @@ message() { # KEY VALUE [CAUSE]
       tracker-read) echo "The issue could not be read from the tracker:" ;;
       mail-read) echo "The lane's mailbox could not be read, so whether it waits on an answer is unknown:" ;;
       owner-asks) echo "The overseer mailbox's owner asks could not be listed, so what waits on the owner is unknown:" ;;
+      owner-reports) echo "The overseer mailbox's report notices could not be read, so the last report sent to the owner is unknown:" ;;
       notice) echo "The report file stands and was printed above, and the notice carrying it to the owner could not be sent:" ;;
       item-state) echo "The lane's own workflow state could not be read, so whether a post-PR stop holds it is unknown:" ;;
       lane-host-busy) echo "lane-host refused a provider call for this lane at its per-home cap on provider calls, so what the lane waits on is unknown and nothing is rendered from a partial fleet. Run the report again:" ;;
@@ -92,12 +93,14 @@ Running, Validation, Use 1, Next, Waiting on you.
 the owner progress report record schemas/workflow-state.md § Recording policy
 states: its directory and its names are `workflow-state progress-report-path`'s,
 and this script reads and writes them through that verb alone. The newest
-report there is the last report: what landed since its modification time is
-news, and its age is what the cadence measures. With no report yet, the fleet start, the earliest lanes[] launch,
-stands in for it. A report covers merges up to the moment it read its lists,
-and `write` stamps its file with that moment, so each merge lands in exactly
-one report, with one limit: Landed reaches back 7 days at most, whatever the
-settings. Where the last report, or with none the fleet start, is older, the
+report there is the last written report: its age is what the cadence measures.
+Report contents start at the last report sent to the owner, identified by
+its attachment in `lane-mail events --item overseer`. A quiet report sends
+no notice and does not advance that owner baseline. With no retained sent
+report, the fleet start, the earliest lanes[] launch, stands in for it.
+A report covers merges up to the moment it read its lists, and `write`
+stamps its file with that moment. Landed reaches back 7 days at most,
+whatever the settings. Where the last sent report or fleet start is older, the
 row reads `Landed (since <UTC>, earlier merges not listed):` and merges before
 that time are in no report.
 
@@ -109,6 +112,9 @@ due      prints `report-due reason=minutes since=<UTC>` once the last report
          enough, and landed= counts the lookback alone. Nothing under
          ORCH_REPORT=off, and nothing where no report exists and no lanes[]
          record has a launched_at.
+         Quiet hours do not silence due. Outside quiet hours, a quiet report
+         newer than the last sent report makes the morning brief due even
+         before the next cadence interval, unless both triggers are off.
 render   prints the rows.
 write    prints the rows and writes the same bytes to the path
          `workflow-state progress-report-path` prints, with --succession
@@ -119,7 +125,12 @@ write    prints the rows and writes the same bytes to the path
          in the file or the print: the relay posts it as the file's Slack
          comment, in Slack's mrkdwn markup, which Markdown does not read
          the same way. The new file is
-         the next report's starting point. A path that already stands is
+         the next cadence's starting point. During ORCH_REPORT_QUIET_HOURS
+         it still writes and prints, but sends no owner notice. The first
+         due report after the window ends sends the morning brief, covering
+         the work since the last sent report. Decisions needed and critical
+         notices use lane-mail directly and remain immediate at any hour.
+         A path that already stands is
          refused; a notice that cannot be sent is refused as `notice`
          after the report is printed, the file standing.
          Before rendering or writing, write checks the summary in its posted
@@ -195,6 +206,13 @@ Settings, read through the kendex settings ladder:
                              turns this trigger off
   ORCH_REPORT_EVERY_ISSUES   landed items that make a report due, default 0,
                              which turns this trigger off
+  ORCH_REPORT_QUIET_HOURS    owner-local start-end hours, default 0-7; empty
+                             turns suppression off. Each hour is 0 to 23,
+                             without leading zeros; start and end differ.
+                             Start is included, end excluded; 23-7 wraps
+                             midnight. Suppresses write's owner notice only
+  ORCH_OWNER_TIME_ZONE       named zone in the host's zoneinfo, default
+                             America/Los_Angeles; never the runner's zone
   ORCH_REPORT_UPCOMING       Next rows, default 5
   ORCH_REPORT_COLUMNS        comma-separated column names, default
                              `issue,what it is,why it matters`
@@ -313,6 +331,32 @@ EVERY_MINUTES="${ORCH_REPORT_EVERY_MINUTES-120}"
 [[ "$EVERY_MINUTES" =~ ^(0|[1-9][0-9]*)?$ ]] || refuse setting "ORCH_REPORT_EVERY_MINUTES:$EVERY_MINUTES"
 EVERY_ISSUES="${ORCH_REPORT_EVERY_ISSUES-0}"
 [[ "$EVERY_ISSUES" =~ ^(0|[1-9][0-9]*)$ ]] || refuse setting "ORCH_REPORT_EVERY_ISSUES:$EVERY_ISSUES"
+QUIET_HOURS="${ORCH_REPORT_QUIET_HOURS-0-7}"
+OWNER_ZONE="${ORCH_OWNER_TIME_ZONE-America/Los_Angeles}"
+# date accepts an unknown TZ as UTC on some hosts. The owner's named zone
+# must exist in the host's zoneinfo, as usage-reset's named-zone reader needs.
+[[ -n "$OWNER_ZONE" && -f "${TZDIR:-/usr/share/zoneinfo}/$OWNER_ZONE" && -r "${TZDIR:-/usr/share/zoneinfo}/$OWNER_ZONE" ]] || refuse setting "ORCH_OWNER_TIME_ZONE:$OWNER_ZONE"
+QUIET_START=0
+QUIET_END=0
+if [[ -n "$QUIET_HOURS" ]]; then
+  [[ "$QUIET_HOURS" =~ ^([0-9]|1[0-9]|2[0-3])-([0-9]|1[0-9]|2[0-3])$ ]] || refuse setting "ORCH_REPORT_QUIET_HOURS:$QUIET_HOURS"
+  QUIET_START="${BASH_REMATCH[1]}"
+  QUIET_END="${BASH_REMATCH[2]}"
+  [[ "$QUIET_START" -ne "$QUIET_END" ]] || refuse setting "ORCH_REPORT_QUIET_HOURS:$QUIET_HOURS"
+fi
+# One judgement for due's morning catch-up and write's notice suppression.
+# Hours are start-inclusive and end-exclusive; a window can cross midnight.
+quiet_at() {
+  local hour
+  [[ -n "$QUIET_HOURS" ]] || return 1
+  hour="$(from_epoch "$1" %H "$OWNER_ZONE")" || refuse clock "$1"
+  hour=$((10#$hour))
+  if [[ "$QUIET_START" -lt "$QUIET_END" ]]; then
+    [[ "$hour" -ge "$QUIET_START" && "$hour" -lt "$QUIET_END" ]]
+  else
+    [[ "$hour" -ge "$QUIET_START" || "$hour" -lt "$QUIET_END" ]]
+  fi
+}
 UPCOMING="${ORCH_REPORT_UPCOMING-5}"
 [[ "$UPCOMING" =~ ^(0|[1-9][0-9]*)$ ]] || refuse setting "ORCH_REPORT_UPCOMING:$UPCOMING"
 COLUMNS_SETTING="${ORCH_REPORT_COLUMNS-issue,what it is,why it matters}"
@@ -378,11 +422,12 @@ fi
 # written report is stamped NOW, so a merge the lists could not yet see falls
 # in the next one, and every merge inside the lookback below in exactly one.
 NOW="$(date -u +%s)" || refuse clock now
+NOTICE_MODE=send
+if quiet_at "$NOW"; then NOTICE_MODE=quiet; fi
 
 # MARKER is the epoch the cadence measures from: the newest report's
 # modification time, else the fleet start, else empty where the state records
-# no lane. LANDED_SINCE is where Landed starts: MARKER, or LANDED_LOOKBACK
-# before NOW where MARKER is older, on every path.
+# no lane. Owner notices keep a separate starting point for report contents.
 # report_path [--succession] — sets REPORT_PATH to the path workflow-state
 # gives the next report, and REPORT_GLOB to its name's shape, each digit a
 # [0-9]: a report is a file of that shape, and nothing here spells the name.
@@ -402,6 +447,17 @@ SUCCESSION_GLOB="$REPORT_GLOB"
 report_path
 REPORT_DIR="${REPORT_PATH%/*}"
 MARKER=""
+# lane-mail events is the existing record of notices actually sent. Match
+# report attachments, not other owner notices, and use the file's list-read
+# time rather than the notice's later time, which could skip a mid-render merge.
+if ! OWNER_REPORTS="$("$LANE_MAIL" events --item overseer 2>"$WORK_DIR/mail.err")"; then
+  refuse owner-reports overseer "$(cat "$WORK_DIR/mail.err")"
+fi
+if ! OWNER_REPORTS="$(jq -s '[.[] | select(.kind == "notice" and .to == "owner") | .attach // empty]' \
+  <<<"$OWNER_REPORTS" 2>"$WORK_DIR/mail.err")"; then
+  refuse owner-reports overseer "$(cat "$WORK_DIR/mail.err")"
+fi
+OWNER_MARKER=""
 for file in "$REPORT_DIR"/*; do
   [[ -f "$file" ]] || continue
   # Unquoted on purpose: each glob is a pattern.
@@ -409,20 +465,31 @@ for file in "$REPORT_DIR"/*; do
   [[ "${file##*/}" == $REPORT_GLOB || "${file##*/}" == $SUCCESSION_GLOB ]] || continue
   stamp="$(stat -c %Y -- "$file" 2>/dev/null || stat -f %m -- "$file" 2>/dev/null)" || refuse clock "$file"
   [[ -n "$MARKER" && "$MARKER" -ge "$stamp" ]] || MARKER="$stamp"
+  sent="$(jq -r --arg file "$file" 'index($file) != null' <<<"$OWNER_REPORTS")" || refuse owner-reports overseer
+  if [[ "$sent" == true ]]; then
+    [[ -n "$OWNER_MARKER" && "$OWNER_MARKER" -ge "$stamp" ]] || OWNER_MARKER="$stamp"
+  fi
 done
-if [[ -z "$MARKER" ]]; then
+if [[ -z "$MARKER" || -z "$OWNER_MARKER" ]]; then
   start="$(jq -r '[.lanes[] | .launched_at // empty] | sort | first // ""' <<<"$STATE_JSON")" || refuse state "$STATE"
   if [[ -n "$start" ]]; then
-    MARKER="$(to_epoch "$start")" || refuse state "$STATE"
+    start="$(to_epoch "$start")" || refuse state "$STATE"
+    [[ -n "$MARKER" ]] || MARKER="$start"
+    [[ -n "$OWNER_MARKER" ]] || OWNER_MARKER="$start"
   fi
 fi
+# Cadence counts from every written report. The report itself counts from
+# the last sent one. If retention removed that file, the fleet start is a
+# conservative floor; the existing lookback still bounds the merged search.
+WINDOW_MARKER="$OWNER_MARKER"
+[[ "$VERB" != due ]] || WINDOW_MARKER="$MARKER"
 # A window as old as a fleet that ran for weeks, or one resumed after a long
 # pause, passes the merged search's ceiling, and a refusal there would stand
 # on every call until someone edited the report directory. Landed stops at the
 # lookback instead, and its row says it did.
-LANDED_SINCE="$MARKER"
+LANDED_SINCE="$WINDOW_MARKER"
 LANDED_CUT=0
-if [[ -n "$MARKER" && $((NOW - LANDED_LOOKBACK)) -gt "$MARKER" ]]; then
+if [[ -n "$WINDOW_MARKER" && $((NOW - LANDED_LOOKBACK)) -gt "$WINDOW_MARKER" ]]; then
   LANDED_SINCE=$((NOW - LANDED_LOOKBACK))
   LANDED_CUT=1
 fi
@@ -471,6 +538,14 @@ landed_read() {
 if [[ "$VERB" == due ]]; then
   [[ -n "$MARKER" ]] || exit 0
   since="$(from_epoch "$MARKER" %Y-%m-%dT%H:%M:%SZ)" || refuse clock "$MARKER"
+  # A recent quiet report must not delay the morning brief by another interval.
+  # A disabled cadence remains disabled, including after the quiet window.
+  if [[ "$NOTICE_MODE" == send && -n "$OWNER_MARKER" && "$MARKER" -gt "$OWNER_MARKER" &&
+        ("${EVERY_MINUTES:-0}" -gt 0 || "$EVERY_ISSUES" -gt 0) ]] && quiet_at "$MARKER"; then
+    since="$(from_epoch "$OWNER_MARKER" %Y-%m-%dT%H:%M:%SZ)" || refuse clock "$OWNER_MARKER"
+    echo "report-due reason=minutes since=$since"
+    exit 0
+  fi
   if [[ -n "$EVERY_MINUTES" && "$EVERY_MINUTES" -gt 0 && $((NOW - MARKER)) -ge $((EVERY_MINUTES * 60)) ]]; then
     echo "report-due reason=minutes since=$since"
     exit 0
@@ -741,7 +816,7 @@ render() {
   # The overseer's use1 fleet log rows stamped since the last report, counted
   # by outcome. An outcome outside the three is counted as unrecognized rather
   # than dropped, and a row whose stamp does not read refuses the report.
-  if ! list="$(jq -r --argjson since "${MARKER:-0}" --argjson until "$NOW" '
+  if ! list="$(jq -r --argjson since "${WINDOW_MARKER:-0}" --argjson until "$NOW" '
     [(.fleet_log // [])[] | select(.kind == "use1")
       | select((.at | fromdateiso8601) as $t | $t >= $since and $t < $until) | .outcome] as $rows
     | ["approved-on-rerequest", "fallback", "declined-unchanged"] as $known
@@ -802,6 +877,12 @@ TZ=UTC touch -t "$STAMP" -- "$TMP_FILE" || refuse write "$TMP_FILE"
 mv -- "$TMP_FILE" "$TARGET" || refuse write "$TARGET"
 TMP_FILE=""
 cat -- "$TARGET" || refuse write "$TARGET"
+# A quiet report advances the file cadence, but has no owner notice in the
+# mailbox, so the next owner report still includes the night's merges.
+if [[ "$NOTICE_MODE" == quiet ]]; then
+  message report-written "$TARGET"
+  exit 0
+fi
 # The report reaches the owner as one notice carrying the file, after the
 # print so the chat has the report whatever the notice does. The summary is
 # the notice's text alone, written in Slack's mrkdwn for the upload comment,

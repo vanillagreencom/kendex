@@ -37,7 +37,8 @@ report() {
 watch() {
   printf '%s\n' "$NOW" > "$STUB_DIR/now.epoch"
   RC=0
-  EVENTS="$(run_watch ORCH_REPORT=on ORCH_PROGRESS_REPORT_DIR="$STUB_DIR/progress-reports" "$@" \
+  EVENTS="$(run_watch ORCH_REPORT=on ORCH_REPORT_QUIET_HOURS= ORCH_OWNER_TIME_ZONE=America/Los_Angeles \
+    ORCH_PROGRESS_REPORT_DIR="$STUB_DIR/progress-reports" "$@" \
     -- --max-loops 1 --state "$STUB_DIR/state.json" 2>"$STUB_DIR/err" </dev/null)" || RC=$?
   EVENTS="$(grep '^EVENT report-due' <<<"$EVENTS" | paste -sd '|' - || true)"
 }
