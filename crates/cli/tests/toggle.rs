@@ -63,6 +63,22 @@ fn cli_builtin_disable_enable_verify_and_remove() {
                 None
             }
         );
+        let listed = kendex(
+            &home,
+            &["list", "--scope", "global", "--harness", "copilot"],
+        );
+        assert!(listed.status.success());
+        let table = String::from_utf8_lossy(&listed.stderr);
+        let state = if verb == "disable" {
+            "built-in, off"
+        } else {
+            "built-in, on"
+        };
+        assert!(
+            table
+                .lines()
+                .any(|line| line.contains("github-mcp-server") && line.contains(state))
+        );
         assert!(
             kendex(&home, &["verify", "github-mcp-server", "--scope", "global"])
                 .status
@@ -96,6 +112,36 @@ fn cli_builtin_disable_enable_verify_and_remove() {
             .status
             .success()
     );
+}
+
+#[test]
+fn cli_builtin_legacy_settings_refuse_verify_and_toggle() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    fs::create_dir_all(home.join(".copilot")).unwrap();
+    let path = home.join(".copilot/settings.json");
+    let out = kendex(
+        &home,
+        &["disable", "github-mcp-server", "--scope", "global", "--yes"],
+    );
+    assert!(out.status.success(), "{out:?}");
+    let legacy = home.join(".copilot/config.json");
+    fs::write(&legacy, "{\"theme\":\"dark\"}").unwrap();
+    fs::remove_file(&path).unwrap();
+    assert!(
+        !kendex(&home, &["verify", "github-mcp-server", "--scope", "global"])
+            .status
+            .success()
+    );
+    for verb in ["enable", "disable"] {
+        let out = kendex(
+            &home,
+            &[verb, "github-mcp-server", "--scope", "global", "--yes"],
+        );
+        assert!(!out.status.success(), "{out:?}");
+        assert!(!path.exists());
+        assert_eq!(fs::read_to_string(&legacy).unwrap(), "{\"theme\":\"dark\"}");
+    }
 }
 
 #[test]

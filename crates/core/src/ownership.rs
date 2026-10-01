@@ -3,7 +3,7 @@
 use crate::env::Env;
 use crate::lock::{Lock, LockFile};
 use crate::manifest::Manifest;
-use crate::model::{HarnessId, ItemKind, Scope};
+use crate::model::{ItemKind, Scope};
 use crate::source_ref::repo_identity;
 
 /// Current records and the failures preserved alongside fallback evidence.
@@ -94,16 +94,11 @@ pub fn find(
     records: &mut Records,
     subject: Subject<'_>,
 ) -> Option<Evidence> {
-    let (name, kind, harness, observation) = match subject {
-        Subject::Named { name, kind } => (name, kind, None, None),
-        Subject::Observed(item) => (
-            item.name.as_str(),
-            Some(item.kind),
-            Some(item.harness),
-            Some(item),
-        ),
+    let (name, kind, observation) = match subject {
+        Subject::Named { name, kind } => (name, kind, None),
+        Subject::Observed(item) => (item.name.as_str(), Some(item.kind), Some(item)),
     };
-    match locked(&records.lock, name, kind, harness) {
+    match locked(&records.lock, name, kind, observation) {
         Recorded::Found(evidence) => return Some(evidence),
         Recorded::Ambiguous => return None,
         Recorded::Absent => {}
@@ -111,8 +106,10 @@ pub fn find(
     if let Some(manifest) = &records.manifest {
         let mut candidates = Vec::new();
         for declared in crate::engine::planned_declarations(env, scope, manifest) {
-            if harness.is_some_and(|harness| !declared.harnesses.contains(&harness))
-                || kind.is_some_and(|kind| kind != declared.kind)
+            if observation.is_some_and(|item| {
+                !declared.harnesses.contains(&item.harness)
+                    || !matches_observation(&declared.decl.source, item)
+            }) || kind.is_some_and(|kind| kind != declared.kind)
             {
                 continue;
             }
@@ -191,7 +188,7 @@ pub(crate) fn locked(
     lock: &Lock,
     name: &str,
     kind: Option<ItemKind>,
-    harness: Option<HarnessId>,
+    observation: Option<&crate::model::ObservedItem>,
 ) -> Recorded {
     let candidates: Vec<_> = lock
         .entries
@@ -199,7 +196,9 @@ pub(crate) fn locked(
         .filter(|entry| {
             matches_name(entry.kind, &entry.name, name)
                 && kind.is_none_or(|wanted| wanted == entry.kind)
-                && harness.is_none_or(|wanted| wanted == entry.harness)
+                && observation.is_none_or(|item| {
+                    item.harness == entry.harness && matches_observation(&entry.source, item)
+                })
         })
         .map(|entry| Evidence {
             kind: Some(entry.kind),
@@ -213,6 +212,13 @@ pub(crate) fn locked(
         return Recorded::Absent;
     }
     agreed(candidates).map_or(Recorded::Ambiguous, Recorded::Found)
+}
+
+/// Native records and declarations describe only native observations, and
+/// catalog evidence describes only custom installations, even at the same name.
+pub(crate) fn matches_observation(source: &str, item: &crate::model::ObservedItem) -> bool {
+    (source == crate::manifest::BUILTIN_SOURCE_NAME)
+        == (item.file_state == crate::model::FileState::Builtin)
 }
 
 /// Whether a declared `actual` name answers to an observed `requested`

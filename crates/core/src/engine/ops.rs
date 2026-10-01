@@ -353,16 +353,16 @@ pub fn toggle(
                 }
                 continue;
             }
-            if kind == ItemKind::McpServer
-                && observed == Some(&crate::model::FileState::Builtin)
-                && let Some(decl) = manifest.mcp_servers.get(name)
-                && decl.source != manifest::BUILTIN_SOURCE_NAME
-            {
-                return Err(crate::error::CoreError::SourceCollision {
-                    name: name.clone(),
-                    existing: decl.source.clone(),
-                    requested: manifest::BUILTIN_SOURCE_NAME.to_owned(),
-                });
+            if kind == ItemKind::McpServer && observed == Some(&crate::model::FileState::Builtin) {
+                add::ensure_item_source(
+                    env,
+                    scope,
+                    &manifest,
+                    &lock,
+                    kind,
+                    name,
+                    manifest::BUILTIN_SOURCE_NAME,
+                )?;
             }
             if kind == ItemKind::McpServer
                 && !manifest.mcp_servers.contains_key(name)
@@ -372,6 +372,15 @@ pub fn toggle(
                         .iter()
                         .any(|off| off == name))
             {
+                add::ensure_item_source(
+                    env,
+                    scope,
+                    &manifest,
+                    &lock,
+                    kind,
+                    name,
+                    manifest::BUILTIN_SOURCE_NAME,
+                )?;
                 manifest.mcp_servers.entry(name.clone()).or_insert_with(|| {
                     let mut decl = manifest::ItemDecl::from_source(manifest::BUILTIN_SOURCE_NAME);
                     decl.harnesses = Some(vec![HarnessId::Copilot]);

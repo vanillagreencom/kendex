@@ -10,7 +10,7 @@
 //! display name, a script basename or a shortened spelling, which say
 //! nothing about who wrote the file.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -61,9 +61,7 @@ pub(super) struct Recorded {
     by_registration: HashMap<(HarnessId, PathBuf, String), Option<Registered>>,
     /// Every declared name recorded for a harness and kind, for the
     /// observations that have no artifact position of their own.
-    declared: HashMap<(HarnessId, ItemKind), Vec<String>>,
-    /// Records from the reserved native source, not same-named catalog entries.
-    builtin_records: BTreeSet<String>,
+    declared: HashMap<(HarnessId, ItemKind), Vec<(String, String)>>,
 }
 
 /// One recorded registration: the package, and the command it went in
@@ -112,8 +110,7 @@ pub(super) fn index(env: &Env, scope: &Scope, lock: &Lock) -> Recorded {
     let mut by_artifact = HashMap::new();
     let mut by_registration: HashMap<(HarnessId, PathBuf, String), Option<Registered>> =
         HashMap::new();
-    let mut declared: HashMap<(HarnessId, ItemKind), Vec<String>> = HashMap::new();
-    let mut builtin_records = BTreeSet::new();
+    let mut declared: HashMap<(HarnessId, ItemKind), Vec<(String, String)>> = HashMap::new();
     for entry in lock.entries.values() {
         let held: Claim = (
             PackageRef {
@@ -122,9 +119,7 @@ pub(super) fn index(env: &Env, scope: &Scope, lock: &Lock) -> Recorded {
             },
             crate::lock::entry_key(entry.kind, &entry.name, entry.harness),
         );
-        if entry.source == crate::manifest::BUILTIN_SOURCE_NAME {
-            builtin_records.insert(held.1.clone());
-        }
+
         for path in crate::engine::owned::installed(env, scope, entry).files {
             // Both spellings, because a switched-off artifact is observed
             // under the name the rename gave it while the record still
@@ -182,13 +177,12 @@ pub(super) fn index(env: &Env, scope: &Scope, lock: &Lock) -> Recorded {
         declared
             .entry((entry.harness, entry.kind))
             .or_default()
-            .push(entry.name.clone());
+            .push((entry.name.clone(), entry.source.clone()));
     }
     Recorded {
         by_artifact,
         by_registration,
         declared,
-        builtin_records,
     }
 }
 
@@ -232,11 +226,7 @@ impl Recorded {
                 .filter(|held| item.action.as_deref() == Some(held.command.as_str()))
                 .map(|held| held.claim.clone());
         }
-        let claim = self.named(item)?;
-        if item.file_state == FileState::Builtin && !self.builtin_records.contains(&claim.1) {
-            return None;
-        }
-        Some(claim)
+        self.named(item)
     }
 
     /// Whether this observation has no artifact position a record could
@@ -256,10 +246,11 @@ impl Recorded {
     /// through to here.
     fn named(&self, item: &ObservedItem) -> Option<Claim> {
         let names = self.declared.get(&(item.harness, item.kind))?;
-        let mut found = names
-            .iter()
-            .filter(|declared| crate::ownership::matches_name(item.kind, declared, &item.name));
-        let first = found.next()?;
+        let mut found = names.iter().filter(|(declared, source)| {
+            crate::ownership::matches_name(item.kind, declared, &item.name)
+                && crate::ownership::matches_observation(source, item)
+        });
+        let (first, _) = found.next()?;
         found.next().is_none().then(|| {
             (
                 PackageRef {

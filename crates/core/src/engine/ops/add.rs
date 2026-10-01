@@ -389,34 +389,7 @@ fn declare(
     request: &AddRequest,
     hold_at: Option<&str>,
 ) -> Result<()> {
-    // Invariant 4: same-source redeclare is a no-op; a name already claimed
-    // from elsewhere is a hard error naming the original. The claim is either
-    // a lock entry (installed) or a manifest declaration not yet applied —
-    // both count, or a declared name could be silently rebound to another
-    // marketplace, which is exactly the collision the browse view warns about.
-    let collision_repo = lock
-        .entries
-        .values()
-        .find(|entry| entry.kind == kind && entry.name == name && entry.source != source_name)
-        .map(|entry| entry.source_repo.clone())
-        .or_else(|| {
-            manifest
-                .declared(kind)
-                .get(name)
-                .filter(|decl| decl.source != source_name)
-                .map(|decl| source_repo_label(manifest, &decl.source))
-        });
-    if let Some(existing) = collision_repo {
-        let requested = match source::resolve(env, scope, source_name, manifest)? {
-            source::SourceState::Ready(ready) => ready.provenance,
-            _ => source_name.to_owned(),
-        };
-        return Err(CoreError::SourceCollision {
-            name: name.to_owned(),
-            existing,
-            requested,
-        });
-    }
+    ensure_item_source(env, scope, manifest, lock, kind, name, source_name)?;
     let decl = manifest
         .declared_mut(kind)
         .entry(name.to_owned())
@@ -437,5 +410,50 @@ fn declare(
         held.retain(|suppressed| suppressed != name);
     }
     manifest.suppressed.retain(|_, held| !held.is_empty());
+    Ok(())
+}
+
+/// Refuse a rebind proven by either a declaration or an installed record.
+pub(super) fn ensure_item_source(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    lock: &Lock,
+    kind: ItemKind,
+    name: &str,
+    source_name: &str,
+) -> Result<()> {
+    // Invariant 4: same-source redeclare is a no-op; a name already claimed
+    // from elsewhere is a hard error naming the original. The claim is either
+    // a lock entry (installed) or a manifest declaration not yet applied —
+    // both count, or a declared name could be silently rebound to another
+    // marketplace, which is exactly the collision the browse view warns about.
+    let collision_repo = lock
+        .entries
+        .values()
+        .find(|entry| entry.kind == kind && entry.name == name && entry.source != source_name)
+        .map(|entry| entry.source_repo.clone())
+        .or_else(|| {
+            manifest
+                .declared(kind)
+                .get(name)
+                .filter(|decl| decl.source != source_name)
+                .map(|decl| source_repo_label(manifest, &decl.source))
+        });
+    if let Some(existing) = collision_repo {
+        let requested = if manifest::is_reserved_source(source_name) {
+            source_name.to_owned()
+        } else {
+            match source::resolve(env, scope, source_name, manifest)? {
+                source::SourceState::Ready(ready) => ready.provenance,
+                _ => source_name.to_owned(),
+            }
+        };
+        return Err(CoreError::SourceCollision {
+            name: name.to_owned(),
+            existing,
+            requested,
+        });
+    }
     Ok(())
 }

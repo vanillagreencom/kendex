@@ -1,0 +1,1 @@
+- Keep custom MCP registrations separate from Copilot's built-in servers. Refuse source collisions and stale native settings before saving a toggle.

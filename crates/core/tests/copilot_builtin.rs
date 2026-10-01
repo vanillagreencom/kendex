@@ -190,11 +190,16 @@ fn native_mcp_settings_union_holds_and_bad_layers_never_report_on() {
         json!({})
     );
     let read = scan::scan_scopes(&env, &BTreeMap::new(), std::slice::from_ref(&scope));
-    assert!(
+    assert_eq!(
         read.items
             .iter()
             .filter(|i| i.file_state == kendex_core::model::FileState::Builtin)
-            .all(|i| i.enabled == Some(false))
+            .map(|i| (i.name.as_str(), i.enabled))
+            .collect::<Vec<_>>(),
+        vec![
+            ("github-mcp-server", Some(false)),
+            ("githubiq", Some(false))
+        ]
     );
     for invalid in [
         "{",
@@ -243,60 +248,256 @@ fn builtin_source_refuses_non_native_declarations_and_legacy_settings() {
         );
         assert!(report.installations.is_empty());
     }
-    fs::write(home.join(".copilot/config.json"), "{}").unwrap();
+    let settings = home.join(".copilot/settings.json");
+    let legacy = home.join(".copilot/config.json");
+    let path = manifest::manifest_path(&env, &scope);
+    let lock_path = kendex_core::lock::lock_path(&env, &scope);
     let report = ops::toggle(&env, &scope, &["githubiq".into()], None, false, None).unwrap();
-    assert_eq!(
-        report.declaration_status,
-        engine::DeclarationStatus::Incomplete
-    );
     apply::execute(&env, &report.plan).unwrap();
-    assert!(!home.join(".copilot/settings.json").exists());
+    assert!(engine::audit(&env, &scope).unwrap().drift.is_empty());
+    // Copilot reset leaves the old file and removes the native switch's file.
+    fs::write(&legacy, "{\"theme\":\"dark\"}").unwrap();
+    fs::remove_file(&settings).unwrap();
+    let before = fs::read(&path).unwrap();
+    let recorded = fs::read(&lock_path).unwrap();
+    assert!(matches!(
+        engine::audit(&env, &scope),
+        Err(kendex_core::error::CoreError::ConfigEdit { path, .. }) if path == settings
+    ));
+    for (name, enabled, observed) in [
+        ("githubiq", true, None),
+        (
+            "githubiq",
+            false,
+            Some(kendex_core::model::FileState::Builtin),
+        ),
+        ("github-mcp-server", false, None),
+    ] {
+        assert!(matches!(
+            ops::toggle(&env, &scope, &[name.into()], Some(ItemKind::McpServer), enabled, observed.as_ref()),
+            Err(kendex_core::error::CoreError::ConfigEdit { path, .. }) if path == settings
+        ));
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert_eq!(fs::read(&lock_path).unwrap(), recorded);
+        assert!(!settings.exists());
+        assert_eq!(fs::read_to_string(&legacy).unwrap(), "{\"theme\":\"dark\"}");
+    }
 }
 
 #[test]
 fn a_native_row_never_claims_or_toggles_a_same_named_catalog_server() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let env = Env::fake(&home, FakeOs::Linux);
-    let scope = Scope::Global;
-    fs::create_dir_all(home.join(".copilot")).unwrap();
-    let local = kendex_core::source::local_source_root(&env, &scope);
-    fs::create_dir_all(local.join("mcp")).unwrap();
-    fs::write(local.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
-    fs::write(local.join("mcp/githubiq.toml"), "command = \"custom\"\n").unwrap();
-    let mut declared = manifest::Manifest {
-        schema: manifest::MANIFEST_SCHEMA,
-        ..Default::default()
-    };
-    declared.install.harnesses = vec![HarnessId::Copilot];
-    declared
-        .mcp_servers
-        .insert("githubiq".into(), manifest::ItemDecl::from_source("local"));
-    let path = manifest::manifest_path(&env, &scope);
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(&path, toml::to_string(&declared).unwrap()).unwrap();
-    let report = engine::audit(&env, &scope).unwrap();
-    apply::execute(&env, &report.plan).unwrap();
-    let rows = library::provenance(&env, std::slice::from_ref(&scope)).unwrap();
-    let natives: Vec<_> = rows
-        .iter()
-        .filter(|row| row.origin == Origin::Builtin)
-        .collect();
-    assert_eq!(natives.len(), 2);
-    assert!(natives.iter().all(|row| row.package.is_none()));
-    let before = fs::read(&path).unwrap();
-    let result = ops::toggle(
-        &env,
-        &scope,
-        &["githubiq".into()],
-        Some(ItemKind::McpServer),
-        false,
-        Some(&kendex_core::model::FileState::Builtin),
-    );
-    assert!(matches!(
-        result,
-        Err(kendex_core::error::CoreError::SourceCollision { .. })
-    ));
-    assert_eq!(fs::read(&path).unwrap(), before);
-    assert!(!kendex_core::harness::copilot::settings::settings_file(&env, &scope).exists());
+    for (name, project, bundle) in [
+        ("githubiq", false, false),
+        ("githubiq", true, false),
+        ("github-mcp-server", false, false),
+        ("github-mcp-server", true, false),
+        ("githubiq", false, true),
+        ("githubiq", true, true),
+        ("github-mcp-server", false, true),
+        ("github-mcp-server", true, true),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let env = Env::fake(&home, FakeOs::Linux);
+        let scope = if project {
+            fs::create_dir_all(home.join("project/.github")).unwrap();
+            Scope::Project {
+                root: home.join("project"),
+            }
+        } else {
+            Scope::Global
+        };
+        fs::create_dir_all(home.join(".copilot")).unwrap();
+        let local = kendex_core::source::local_source_root(&env, &scope);
+        fs::create_dir_all(local.join("mcp")).unwrap();
+        fs::write(
+            local.join("kendex.toml"),
+            format!("is_source_catalog = true\n[bundles.starter]\nmcp-servers = [\"{name}\"]\n"),
+        )
+        .unwrap();
+        fs::write(
+            local.join(format!("mcp/{name}.toml")),
+            "command = \"custom\"\n",
+        )
+        .unwrap();
+        let mut declared = manifest::Manifest {
+            schema: manifest::MANIFEST_SCHEMA,
+            ..Default::default()
+        };
+        declared.install.harnesses = vec![HarnessId::Copilot];
+        if bundle {
+            declared
+                .bundles
+                .insert("starter".into(), manifest::ItemDecl::from_source("local"));
+        } else {
+            declared
+                .mcp_servers
+                .insert(name.into(), manifest::ItemDecl::from_source("local"));
+        }
+        let path = manifest::manifest_path(&env, &scope);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, toml::to_string(&declared).unwrap()).unwrap();
+        let report = engine::audit(&env, &scope).unwrap();
+        apply::execute(&env, &report.plan).unwrap();
+        assert!(engine::audit(&env, &scope).unwrap().drift.is_empty());
+        let rows = library::provenance(&env, std::slice::from_ref(&scope)).unwrap();
+        let natives: Vec<_> = rows
+            .iter()
+            .filter(|row| row.origin == Origin::Builtin)
+            .collect();
+        assert_eq!(natives.len(), 2);
+        assert!(natives.iter().all(|row| row.package.is_none()));
+        let before = fs::read(&path).unwrap();
+        let lock_path = kendex_core::lock::lock_path(&env, &scope);
+        let recorded = fs::read(&lock_path).unwrap();
+        let observations = if bundle {
+            vec![None, Some(kendex_core::model::FileState::Builtin)]
+        } else {
+            vec![Some(kendex_core::model::FileState::Builtin)]
+        };
+        for observed in observations {
+            assert!(matches!(
+                ops::toggle(&env, &scope, &[name.into()], Some(ItemKind::McpServer), false, observed.as_ref()),
+                Err(kendex_core::error::CoreError::SourceCollision { requested, .. }) if requested == "builtin"
+            ));
+            assert_eq!(fs::read(&path).unwrap(), before);
+            assert_eq!(fs::read(&lock_path).unwrap(), recorded);
+            assert!(!kendex_core::harness::copilot::settings::settings_file(&env, &scope).exists());
+        }
+    }
+}
+
+#[test]
+fn a_bundle_native_named_member_can_be_declared_and_toggled_from_its_source() {
+    for (name, project) in [
+        ("githubiq", false),
+        ("githubiq", true),
+        ("github-mcp-server", false),
+        ("github-mcp-server", true),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let env = Env::fake(&home, FakeOs::Linux);
+        fs::create_dir_all(home.join(".copilot")).unwrap();
+        fs::create_dir_all(home.join("project/.github")).unwrap();
+        let scope = if project {
+            Scope::Project {
+                root: home.join("project"),
+            }
+        } else {
+            Scope::Global
+        };
+        let local = kendex_core::source::local_source_root(&env, &scope);
+        fs::create_dir_all(local.join("mcp")).unwrap();
+        fs::write(
+            local.join("kendex.toml"),
+            format!("is_source_catalog = true\n[bundles.starter]\nmcp-servers = [\"{name}\"]\n"),
+        )
+        .unwrap();
+        fs::write(
+            local.join(format!("mcp/{name}.toml")),
+            "command = \"custom\"\n",
+        )
+        .unwrap();
+        let mut declared = manifest::Manifest {
+            schema: manifest::MANIFEST_SCHEMA,
+            ..Default::default()
+        };
+        declared.install.harnesses = vec![HarnessId::Copilot];
+        declared
+            .bundles
+            .insert("starter".into(), manifest::ItemDecl::from_source("local"));
+        let path = manifest::manifest_path(&env, &scope);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, toml::to_string(&declared).unwrap()).unwrap();
+        let report = engine::audit(&env, &scope).unwrap();
+        apply::execute(&env, &report.plan).unwrap();
+        let report = ops::add(
+            &env,
+            &scope,
+            &ops::AddRequest {
+                source: Some("local".into()),
+                mcp_servers: vec![name.into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        apply::execute(&env, &report.plan).unwrap();
+        for enabled in [false, true] {
+            let report = ops::toggle(
+                &env,
+                &scope,
+                &[name.into()],
+                Some(ItemKind::McpServer),
+                enabled,
+                None,
+            )
+            .unwrap();
+            apply::execute(&env, &report.plan).unwrap();
+            let saved = ops::manifest_for_reading(&env, &scope).unwrap();
+            assert_eq!(saved.mcp_servers[name].source, "local");
+            assert_eq!(saved.mcp_servers[name].enabled, enabled);
+            assert!(engine::audit(&env, &scope).unwrap().drift.is_empty());
+        }
+    }
+}
+
+#[test]
+fn a_builtin_record_never_claims_a_handwritten_registration() {
+    for (name, project) in [
+        ("githubiq", false),
+        ("githubiq", true),
+        ("github-mcp-server", false),
+        ("github-mcp-server", true),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let env = Env::fake(&home, FakeOs::Linux);
+        fs::create_dir_all(home.join(".copilot")).unwrap();
+        fs::create_dir_all(home.join("project/.github")).unwrap();
+        let scope = if project {
+            Scope::Project {
+                root: home.join("project"),
+            }
+        } else {
+            Scope::Global
+        };
+        let registry = if project {
+            home.join("project/.github/mcp.json")
+        } else {
+            home.join(".copilot/mcp-config.json")
+        };
+        let custom = json!({"mcpServers": {name: {"type": "local", "command": "custom"}}});
+        fs::write(&registry, serde_json::to_string(&custom).unwrap()).unwrap();
+        let before = fs::read(&registry).unwrap();
+        let report = ops::toggle(
+            &env,
+            &scope,
+            &[name.into()],
+            Some(ItemKind::McpServer),
+            false,
+            None,
+        )
+        .unwrap();
+        apply::execute(&env, &report.plan).unwrap();
+        for recorded in [true, false] {
+            if !recorded {
+                fs::remove_file(kendex_core::lock::lock_path(&env, &scope)).unwrap();
+            }
+            let rows = library::provenance(&env, std::slice::from_ref(&scope)).unwrap();
+            let same_name: Vec<_> = rows.iter().filter(|row| row.name == name).collect();
+            assert_eq!(same_name.len(), 2, "{name} {scope:?} recorded={recorded}");
+            let native = same_name
+                .iter()
+                .find(|row| row.origin == Origin::Builtin)
+                .unwrap();
+            assert_eq!(native.package.is_some(), recorded);
+            let custom = same_name
+                .iter()
+                .find(|row| row.origin == Origin::Unmanaged)
+                .unwrap();
+            assert!(custom.package.is_none());
+            assert_eq!(fs::read(&registry).unwrap(), before);
+        }
+    }
 }

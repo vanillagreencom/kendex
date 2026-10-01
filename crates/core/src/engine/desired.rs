@@ -469,6 +469,9 @@ fn compute(
         agent_names: crate::source::agent_names::Uses::new(manifest),
         ..DesiredState::default()
     };
+    for name in manifest.sources.keys() {
+        crate::manifest::check_source_alias(name)?;
+    }
     let mut updated_manifest = manifest.clone();
     let mut manifest_changed = false;
     // Everything is planned from the closure — what was declared, what the

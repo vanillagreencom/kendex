@@ -5,7 +5,7 @@
 #![cfg(unix)]
 
 use crate::test_util;
-use test_util::source_path;
+use test_util::{rooted, source_path};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -474,4 +474,82 @@ fn no_default_subscription_anywhere_is_a_typed_error_never_a_guess() {
     apply::execute(&env, &report.plan).unwrap();
     let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
     assert!(manifest.contains("source = \"other\""), "{manifest}");
+}
+
+#[test]
+fn catalog_aliases_never_use_reserved_source_names() {
+    use kendex_core::manifest::{self, ItemDecl, SourceDecl};
+    use kendex_core::model::{HarnessId, ItemKind};
+    for reserved in ["builtin", "local", "in-place"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let env = Env::fake(&home, FakeOs::Linux);
+        fs::create_dir_all(home.join(".copilot")).unwrap();
+        let catalog = home.join(reserved);
+        fs::create_dir_all(catalog.join("skills/deploy")).unwrap();
+        fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+        fs::write(
+            catalog.join("skills/deploy/SKILL.md"),
+            "---\nname: deploy\ndescription: Ship\n---\nSteps.\n",
+        )
+        .unwrap();
+        let reference = catalog.to_str().unwrap();
+        let scope = Scope::Global;
+        let path = manifest::manifest_path(&env, &scope);
+        let subscribed = source_ops::subscribe(&env, &scope, reference, None).unwrap();
+        assert_eq!(subscribed.name, format!("{reserved}-2"));
+        assert!(!path.exists());
+        // Both explicit subscription APIs use the same reserved-source decision.
+        for result in [
+            source_ops::subscribe(&env, &scope, reference, Some(reserved)).map(|s| s.report),
+            source_ops::add_source(&env, &scope, reserved, reference),
+        ] {
+            assert!(
+                matches!(result, Err(CoreError::SourceRefInvalid { reference, .. }) if reference == reserved)
+            );
+            assert!(!path.exists());
+        }
+        let request = ops::AddRequest {
+            source: Some(reference.into()),
+            skills: vec!["deploy".into()],
+            harnesses: Some(vec![HarnessId::Copilot]),
+            ..Default::default()
+        };
+        let report = ops::add(&env, &scope, &request).unwrap();
+        apply::execute(&env, &report.plan).unwrap();
+        let saved = ops::manifest_for_reading(&env, &scope).unwrap();
+        assert_eq!(saved.skills["deploy"].source, format!("{reserved}-2"));
+        assert!(saved.sources.contains_key(&format!("{reserved}-2")));
+        let audit = kendex_core::engine::audit(&env, &scope).unwrap();
+        assert!(audit.drift.is_empty());
+        assert!(
+            audit
+                .installations
+                .values()
+                .any(|entry| entry.kind == ItemKind::Skill && entry.name == "deploy")
+        );
+
+        // Handwritten manifests can still introduce a conflicting reserved alias.
+        let mut conflict = saved;
+        conflict.sources.insert(
+            reserved.into(),
+            SourceDecl {
+                path: Some(reference.into()),
+                enabled: true,
+                ..Default::default()
+            },
+        );
+        conflict
+            .skills
+            .insert("deploy".into(), ItemDecl::from_source(reserved));
+        fs::write(&path, toml::to_string(&conflict).unwrap()).unwrap();
+        let before = fs::read(&path).unwrap();
+        assert!(
+            matches!(kendex_core::engine::audit(&env, &scope), Err(CoreError::SourceRefInvalid { reference, .. }) if reference == reserved)
+        );
+        assert!(
+            matches!(ops::add(&env, &scope, &ops::AddRequest { source: Some(reserved.into()), ..request }), Err(CoreError::SourceRefInvalid { reference, .. }) if reference == reserved)
+        );
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
 }

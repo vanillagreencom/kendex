@@ -140,9 +140,10 @@ pub(super) fn desired_builtin(
         return Ok(());
     }
     if let Some(reason) = settings::unmanageable(env, scope) {
-        state.mark_incomplete();
-        state.notes.push(format!("mcp-server {name}: {reason}"));
-        return Ok(());
+        return Err(crate::error::CoreError::ConfigEdit {
+            path: settings::settings_file(env, scope),
+            message: reason,
+        });
     }
     // Read every native layer before reporting or planning a switch. A bad
     // personal layer must not turn into a false enabled answer.

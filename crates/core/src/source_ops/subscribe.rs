@@ -166,7 +166,9 @@ fn declared(env: &Env, scope: &Scope, reference: &str, alias: Option<&str>) -> R
     check_subscription(&manifest, alias, &decl, reference)?;
     let name = match alias {
         Some(name) => name.to_owned(),
-        None => auto_alias(&manifest, decl.repo.as_deref().unwrap_or(reference)),
+        None => {
+            crate::manifest::catalog_alias(&manifest, decl.repo.as_deref().unwrap_or(reference))
+        }
     };
     Ok(Declared {
         manifest,
@@ -339,6 +341,9 @@ fn check_subscription(
     decl: &SourceDecl,
     reference: &str,
 ) -> Result<()> {
+    if let Some(alias) = alias {
+        crate::manifest::check_source_alias(alias)?;
+    }
     if let Some(repo) = &decl.repo {
         let identity = crate::source_ref::repo_identity(repo);
         for (existing_name, existing) in &manifest.sources {
@@ -381,26 +386,6 @@ fn check_subscription(
         }
     }
     Ok(())
-}
-
-/// An alias derived from the reference's last path segment, uniquified
-/// against what the scope already declares.
-fn auto_alias(manifest: &Manifest, reference: &str) -> String {
-    let trimmed = reference.trim_end_matches('/');
-    let trimmed = trimmed.strip_suffix(".git").unwrap_or(trimmed);
-    let base = trimmed
-        .rsplit(['/', ':'])
-        .next()
-        .filter(|segment| !segment.is_empty())
-        .unwrap_or("source")
-        .to_owned();
-    let mut name = base.clone();
-    let mut counter = 2;
-    while manifest.sources.contains_key(&name) {
-        name = format!("{base}-{counter}");
-        counter += 1;
-    }
-    name
 }
 
 /// A tree URL's `<ref>/<path>` split needs the repository's refs, so this

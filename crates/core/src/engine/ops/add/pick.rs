@@ -11,6 +11,9 @@ use crate::manifest::{DEFAULT_SOURCE_NAME, Manifest, SourceDecl};
 /// repository already subscribed under any spelling reuses that
 /// subscription.
 pub(super) fn ensure_source(manifest: &mut Manifest, requested: Option<&str>) -> Result<String> {
+    for name in manifest.sources.keys() {
+        crate::manifest::check_source_alias(name)?;
+    }
     let Some(requested) = requested else {
         return default_source(manifest);
     };
@@ -71,19 +74,7 @@ pub(super) fn ensure_source(manifest: &mut Manifest, requested: Option<&str>) ->
         .clone()
         .or_else(|| decl.path.clone())
         .unwrap_or_default();
-    let base = reference
-        .trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .filter(|s| !s.is_empty())
-        .unwrap_or(&reference)
-        .to_owned();
-    let mut name = base.clone();
-    let mut counter = 2;
-    while manifest.sources.contains_key(&name) {
-        name = format!("{base}-{counter}");
-        counter += 1;
-    }
+    let name = crate::manifest::catalog_alias(manifest, &reference);
     manifest.sources.insert(name.clone(), decl);
     Ok(name)
 }
