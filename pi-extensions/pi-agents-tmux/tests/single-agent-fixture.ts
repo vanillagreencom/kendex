@@ -350,7 +350,7 @@ export async function assertFreshHandoff(runtime: Pick<typeof import("../extensi
 	const calls = installMockSpawn([{ error: transport === "child-error" ? new Error("child launch failed") : undefined, stdout: bridgeStdout([bridgeEvent("agent_start"), bridgeEvent("message_end", { message: { role: "assistant", content: [{ type: "text", text: "fresh answer" }] } })]) }], runtime.setSingleAgentSpawnForTests);
 	const files: string[] = [];
 	const agent = { ...testAgent(), systemPrompt: "System instructions stay separate." };
-	const composed = `Task: new task\n\nPrior agent final result (${session.path}):\n${priorResult}`;
+	const composed = `Task: new task\n\nPrior agent final result (${session.path}):\n${priorResult.trim()}`;
 	if (transport === "long-report") {
 		const child = join(root, "prompt-reader.cjs");
 		writeFileSync(child, `
