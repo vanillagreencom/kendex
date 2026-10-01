@@ -12,6 +12,8 @@ Commands:
                    again
   versions         List available versions of a package
   updates          Find package updates and manage update notifications
+  enable           Switch installed packages on
+  disable          Switch installed packages off
   remove           Remove installed packages
   refresh          Update installed packages from your saved setup
   verify           Check that installed files match your saved setup
