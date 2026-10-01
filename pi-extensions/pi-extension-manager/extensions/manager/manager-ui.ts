@@ -440,7 +440,7 @@ export async function openManager(pi: ExtensionAPI, ctx: ExtensionCommandContext
 				].join("\n");
 				const confirmed = await ctx.ui.confirm(`Update ${plan.item.displayName}?`, body);
 				if (!confirmed) continue;
-				const result = await runUpdate(pi, plan);
+				const result = runUpdate(plan);
 				if (result.ok) ctx.ui.notify(`${result.message} Run /reload to apply.`, "warning");
 				else ctx.ui.notify(result.message, "error");
 				continue;
@@ -468,7 +468,7 @@ export async function openManager(pi: ExtensionAPI, ctx: ExtensionCommandContext
 				].join("\n");
 				const confirmed = await ctx.ui.confirm(`Uninstall ${plan.item.displayName}?`, body);
 				if (!confirmed) continue;
-				const result = await runUninstall(pi, plan, inventory);
+				const result = runUninstall(plan, inventory);
 				if (result.ok) ctx.ui.notify(`${result.message} Run /reload to apply.`, "warning");
 				else ctx.ui.notify(result.message, "error");
 				continue;

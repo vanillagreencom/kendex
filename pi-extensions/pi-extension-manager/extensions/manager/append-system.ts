@@ -1,4 +1,3 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { managerNotice } from "./format.js";
@@ -18,17 +17,20 @@ const APPEND_SYSTEM_TIMEOUT_MS = 10_000;
  * which resolves the scope from its own package dir. A package that ships no
  * script declares no `pi.appendSystem` and gets no block.
  */
-async function runAppendSystemScript(pi: ExtensionAPI, signal: AbortSignal, packageDir: string | undefined, action: "install" | "remove"): Promise<void> {
+function runAppendSystemScript(packageDir: string | undefined, action: "install" | "remove"): void {
 	if (!packageDir) return;
 	const script = join(packageDir, "scripts", "append-system.mjs");
 	if (!existsSync(script)) return;
-	const result = await runCommand(pi, "node", [script, action], { cwd: packageDir, signal, timeout: APPEND_SYSTEM_TIMEOUT_MS });
-	if (!result.ok) throw new Error(managerNotice(`append-system-${result.cause}`, `${action}:${script}`, result.detail));
+	// A package-supplied script runs on Pi's TUI thread at every toggle, so the
+	// wait is bounded.
+	const result = runCommand("node", [script, action], { cwd: packageDir, killSignal: "SIGKILL", timeout: APPEND_SYSTEM_TIMEOUT_MS });
+	if (result.error) throw new Error(managerNotice("append-system-launch", `${action}:${script}`, String(result.error)));
+	if ((result.status ?? 1) !== 0) throw new Error(managerNotice("append-system-exit", `${action}:${script}`, result.stderr.trim() || result.stdout.trim() || `termination ${result.status ?? result.signal ?? "unknown"}`));
 }
 
-export async function syncAppendSystemForPackage(pi: ExtensionAPI, signal: AbortSignal, item: InventoryItem, willDisable: boolean): Promise<void> {
+export function syncAppendSystemForPackage(item: InventoryItem, willDisable: boolean): void {
 	if (item.kind !== "package" || !item.packageName) return;
-	await runAppendSystemScript(pi, signal, item.packageDir, willDisable ? "remove" : "install");
+	runAppendSystemScript(item.packageDir, willDisable ? "remove" : "install");
 }
 
 /**
@@ -37,7 +39,7 @@ export async function syncAppendSystemForPackage(pi: ExtensionAPI, signal: Abort
  * the package tree stays on disk. Removing by package name is idempotent, so
  * running it after a `preuninstall` that already won is harmless.
  */
-export async function removeAppendSystemBlockForUninstall(pi: ExtensionAPI, signal: AbortSignal, item: InventoryItem): Promise<void> {
+export function removeAppendSystemBlockForUninstall(item: InventoryItem): void {
 	if (!item.packageName) return;
-	await runAppendSystemScript(pi, signal, item.packageDir, "remove");
+	runAppendSystemScript(item.packageDir, "remove");
 }

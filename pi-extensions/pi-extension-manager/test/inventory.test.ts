@@ -1,6 +1,7 @@
-import { testPi, sandboxExec } from "./fixtures/exec.ts";
+import { spawnSync } from "node:child_process";
+import { __setSpawnSyncForTests } from "../extensions/manager/process.ts";
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { clearPackageConfigCache } from "../extensions/manager/package-config.ts";
@@ -62,9 +63,11 @@ beforeEach(() => {
 	process.env.npm_config_prefix = process.env.NPM_CONFIG_PREFIX;
 	process.env.PI_CODING_AGENT_DIR = join(rootTmp, "home", ".pi", "agent");
 	clearPackageConfigCache();
+	__setSpawnSyncForTests(((command: string, args: string[], options: object) => spawnSync(command, args, { ...options, env: { ...process.env, HOME: process.env.HOME, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR } })) as never);
 });
 
 afterEach(() => {
+	__setSpawnSyncForTests(undefined);
 	if (originalEnv.HOME === undefined) delete process.env.HOME;
 	else process.env.HOME = originalEnv.HOME;
 	if (originalEnv.NPM_CONFIG_PREFIX === undefined) delete process.env.NPM_CONFIG_PREFIX;
@@ -233,11 +236,11 @@ test("toggle runs the package's own append-system script", async () => {
 	const ctx = { cwd: project, ui: { notify() {} } } as never;
 
 	const disable = await inventoryWithTrust(project, true);
-	await toggleItem(testPi(sandboxExec({ ...process.env, HOME: process.env.HOME, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR })), ctx, disable, disable.packages.find((pkg) => pkg.packageName === "@scope/append-toggle")!);
+	await toggleItem({} as never, ctx, disable, disable.packages.find((pkg) => pkg.packageName === "@scope/append-toggle")!);
 	expect(existsSync(target) ? readFileSync(target, "utf8") : "").not.toContain("Toggle instructions");
 
 	const enable = await inventoryWithTrust(project, true);
-	await toggleItem(testPi(sandboxExec({ ...process.env, HOME: process.env.HOME, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR })), ctx, enable, enable.packages.find((pkg) => pkg.packageName === "@scope/append-toggle")!);
+	await toggleItem({} as never, ctx, enable, enable.packages.find((pkg) => pkg.packageName === "@scope/append-toggle")!);
 	expect(readFileSync(target, "utf8")).toContain("Toggle instructions");
 });
 
@@ -287,7 +290,7 @@ test("toggles project npm packages by original settings source", async () => {
 	const inv = await inventoryWithTrust(project, true);
 	const item = inv.packages.find((pkg) => pkg.packageName === "@scope/toggle-settings");
 	expect(item?.sourcePath).toBe(projectPackageDir);
-	await toggleItem(testPi(sandboxExec({ ...process.env, HOME: process.env.HOME, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR })), { cwd: project, ui: { notify() {} } } as never, inv, item!);
+	await toggleItem({} as never, { cwd: project, ui: { notify() {} } } as never, inv, item!);
 
 	const saved = JSON.parse(readFileSync(settingsPath, "utf8"));
 	expect(saved.packages).toEqual([{ source: "npm:@scope/toggle-settings", extensions: [] }]);
@@ -299,6 +302,31 @@ test("inventory refuses more than 10000 package and extension rows", async () =>
 	writeJson(join(process.env.PI_CODING_AGENT_DIR!, "settings.json"), { packages: [packageDir] });
 	writeJson(join(packageDir, "package.json"), { name: "large", pi: { extensions: Array.from({ length: 10000 }, (_, i) => `extension-${i}.ts`) } });
 	await expect(inventory(project)).rejects.toThrow("inventory-limit: items=10001 limit=10000");
+});
+
+test("relocated local installations retain module ids and first enable removes the exclusion", async () => {
+	const project = join(rootTmp, "original");
+	const sources = ["./packages/first", "./packages/second"];
+	writeJson(join(project, ".pi", "settings.json"), { packages: sources });
+	for (const source of sources) writePackage(join(project, ".pi", source), "@scope/relocate", "Relocate", "enabled");
+	const ctx = { cwd: project, isProjectTrusted: () => true, ui: { notify() {} } } as never;
+	const original = await buildInventory({} as never, ctx);
+	expect(original.packages.map((pkg) => pkg.id)).toEqual(["first", "second"].map((name) => `package:project:${join("packages", name)}:@scope/relocate`));
+	for (const pkg of original.packages) expect(packageExtensions(original.items, pkg)).toHaveLength(1);
+	const selected = packageExtensions(original.items, original.packages[0]!)[0]!;
+	await toggleItem({} as never, ctx, original, selected);
+	const moved = join(rootTmp, "relocated");
+	cpSync(project, moved, { recursive: true });
+	const movedCtx = { cwd: moved, isProjectTrusted: () => true, ui: { notify() {} } } as never;
+	const relocated = await buildInventory({} as never, movedCtx);
+	expect(relocated.packages.map((pkg) => pkg.id)).toEqual(original.packages.map((pkg) => pkg.id));
+	const module = relocated.items.find((item) => item.id === selected.id)!;
+	expect(module.state).toBe("disabled");
+	expect(packageExtensions(relocated.items, relocated.packages[0]!)[0]!.id).toBe(selected.id);
+	await toggleItem({} as never, movedCtx, relocated, module);
+	const saved = JSON.parse(readFileSync(join(moved, ".pi", "settings.json"), "utf8"));
+	expect(saved.packages).toEqual(sources);
+	expect(saved.kendex.extensionManager.disabledItems).toEqual([]);
 });
 
 test("legacy toggle ids migrate to the owning installation with a warning", async () => {

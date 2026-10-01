@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { stringifyError } from "./format.js";
 import { host } from "./host.js";
 import { expandHome } from "./package-config.js";
@@ -38,8 +38,8 @@ function readPackageManifest(dir: string): { manifest?: PackageManifest; error?:
 	}
 }
 
-async function readNpmPackageManifest(pi: ExtensionAPI, signal: AbortSignal, npmName: string, scope: Scope, baseDir: string, cwd: string): Promise<{ dir?: string; manifest?: PackageManifest; error?: string }> {
-	const dir = await resolveNpmPackageDir(pi, signal, npmName, scope, baseDir, cwd);
+function readNpmPackageManifest(signal: AbortSignal, npmName: string, scope: Scope, baseDir: string, cwd: string): { dir?: string; manifest?: PackageManifest; error?: string } {
+	const dir = resolveNpmPackageDir(signal, npmName, scope, baseDir, cwd);
 	if (!dir) return { error: `package source not found: npm:${npmName}` };
 	return { dir, ...readPackageManifest(dir) };
 }
@@ -291,7 +291,7 @@ export async function buildInventory(pi: ExtensionAPI, ctx: ExtensionContext): P
 				manifest = read.manifest;
 				brokenError = read.error;
 			} else if (npmName) {
-				const read = await readNpmPackageManifest(pi, signal, npmName, file.scope, file.baseDir, ctx.cwd);
+				const read = readNpmPackageManifest(signal, npmName, file.scope, file.baseDir, ctx.cwd);
 				packageDir = read.dir ?? normalized.resolved;
 				manifest = read.manifest ?? { name: npmName, description: "External npm package source" };
 				brokenError = read.error;
@@ -305,7 +305,9 @@ export async function buildInventory(pi: ExtensionAPI, ctx: ExtensionContext): P
 			}
 
 			const packageName = manifest?.name ?? fallbackName;
-			const pkgId = `package:${file.scope}:${packageDir}:${packageName}`;
+			// Registered local paths are relative to their scope, not the machine root.
+			const installationPath = isAbsolute(normalized.resolved) ? relative(file.baseDir, normalized.resolved) : normalized.source;
+			const pkgId = `package:${file.scope}:${installationPath}:${packageName}`;
 			const packageItem: InventoryItem = {
 				brokenError,
 				description: manifest?.description ?? "Pi package",

@@ -1,8 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { npmCachePath } from "./paths.js";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { NPM_ROOT_TIMEOUT_MS, runCommand } from "./process.js";
+import { runCommand } from "./process.js";
 import { request } from "node:https";
 import { NPM_CACHE_TTL_MS, type NpmCache, type Scope, type SettingsFile, type SourceIndex, type SourceIndexEntry } from "./types.js";
 
@@ -86,7 +85,7 @@ export function readSourceRepoVersion(repoRoot: string, packageName: string, sou
 	return readPackageVersionFromDir(sourcePath) ?? readPackageVersionFromDir(join(repoRoot, "pi-extensions", localPackageDirName(packageName)));
 }
 
-async function npmRoot(pi: ExtensionAPI, signal: AbortSignal, args: string[], cwd?: string): Promise<string | undefined> {
+function npmRoot(signal: AbortSignal, args: string[], cwd?: string): string | undefined {
 	let memo = npmRootCaches.get(signal);
 	if (!memo) {
 		memo = new Map();
@@ -96,9 +95,8 @@ async function npmRoot(pi: ExtensionAPI, signal: AbortSignal, args: string[], cw
 	}
 	const key = JSON.stringify([args, cwd]);
 	if (memo.has(key)) return memo.get(key);
-	const result = await runCommand(pi, "npm", ["root", ...args], { cwd, signal, timeout: NPM_ROOT_TIMEOUT_MS });
-	if (!result.ok) throw new Error(`npm root ${result.cause}: ${result.detail}`);
-	const value = result.stdout.trim() || undefined;
+	const result = runCommand("npm", ["root", ...args], { cwd });
+	const value = result.error || (result.status ?? 1) !== 0 ? undefined : (result.stdout.trim() || undefined);
 	memo.set(key, value);
 	return value;
 }
@@ -127,26 +125,26 @@ function cheapNpmRoots(scope: Scope, baseDir: string): string[] {
 	return roots;
 }
 
-async function expensiveNpmRoots(pi: ExtensionAPI, signal: AbortSignal, scope: Scope, baseDir: string, cwd: string): Promise<string[]> {
+function expensiveNpmRoots(signal: AbortSignal, scope: Scope, baseDir: string, cwd: string): string[] {
 	const roots: string[] = [];
 	if (scope === "project") {
-		const projectRoot = await npmRoot(pi, signal, ["--prefix", join(baseDir, "npm")], cwd);
+		const projectRoot = npmRoot(signal, ["--prefix", join(baseDir, "npm")], cwd);
 		if (projectRoot) roots.push(projectRoot);
-		const cwdRoot = await npmRoot(pi, signal, [], cwd);
+		const cwdRoot = npmRoot(signal, [], cwd);
 		if (cwdRoot) roots.push(cwdRoot);
 	} else if (scope === "user") {
-		const globalRoot = await npmRoot(pi, signal, ["-g"], cwd);
+		const globalRoot = npmRoot(signal, ["-g"], cwd);
 		if (globalRoot) roots.push(globalRoot);
 	} else {
-		const localRoot = await npmRoot(pi, signal, [], cwd);
+		const localRoot = npmRoot(signal, [], cwd);
 		if (localRoot) roots.push(localRoot);
-		const globalRoot = await npmRoot(pi, signal, ["-g"], cwd);
+		const globalRoot = npmRoot(signal, ["-g"], cwd);
 		if (globalRoot) roots.push(globalRoot);
 	}
 	return roots;
 }
 
-export async function resolveNpmPackageDir(pi: ExtensionAPI, signal: AbortSignal, npmName: string, scope: Scope, baseDir: string, cwd: string): Promise<string | undefined> {
+export function resolveNpmPackageDir(signal: AbortSignal, npmName: string, scope: Scope, baseDir: string, cwd: string): string | undefined {
 	const seen = new Set<string>();
 	const tryRoot = (root: string): string | undefined => {
 		const dir = npmPackageDir(root, npmName);
@@ -158,7 +156,7 @@ export async function resolveNpmPackageDir(pi: ExtensionAPI, signal: AbortSignal
 		const hit = tryRoot(root);
 		if (hit) return hit;
 	}
-	for (const root of await expensiveNpmRoots(pi, signal, scope, baseDir, cwd)) {
+	for (const root of expensiveNpmRoots(signal, scope, baseDir, cwd)) {
 		const hit = tryRoot(root);
 		if (hit) return hit;
 	}

@@ -8,10 +8,11 @@ import type { Inventory, ManagerUiState } from "../../extensions/manager/types.t
 // The parent reads the JSON result and the stable benchmark-cache assertion key.
 const [source, root, mode] = process.argv.slice(2);
 assert(source && root && (mode === "cached" || mode === "main"));
-const counts = { buildInventory: 0, packageExtensions: 0, childComparisons: 0, scopedManagerState: 0, completionLabels: 0, exec: 0 };
+const counts = { buildInventory: 0, packageExtensions: 0, childComparisons: 0, scopedManagerState: 0, completionLabels: 0, commands: 0 };
 Object.assign(globalThis, { __managerBenchmark: counts });
 const probes = [
 	["inventory.ts", "buildInventory", "buildInventory"],
+	["process.ts", "runCommand", "commands"],
 	["filters.ts", "packageExtensions", "packageExtensions"],
 	["filters.ts", "itemBelongsToPackage", "childComparisons"],
 	["settings.ts", "scopedManagerState", "scopedManagerState"],
@@ -53,7 +54,7 @@ const inventoryModule = await import(join(source, "manager", "inventory.ts"));
 const filters = await import(join(source, "manager", "filters.ts"));
 const settings = await import(join(source, "manager", "settings.ts"));
 const quick = await import(join(source, "manager", "quick-settings-ui.ts"));
-const pi = { exec: async () => { counts.exec += 1; throw new Error("benchmark-exec: unexpected npm root lookup"); } } as unknown as ExtensionAPI;
+const pi = {} as ExtensionAPI;
 const ctx = { cwd, hasUI: true, isProjectTrusted: () => true } as unknown as ExtensionContext;
 const coldStart = performance.now();
 const inventory: Inventory = await inventoryModule.buildInventory(pi, ctx);
@@ -84,5 +85,5 @@ if (mode === "cached") {
 	assert.equal(hotCounts.completionLabels, 1, "benchmark-cache: completion-labels");
 	assert.equal(hotCounts.childComparisons, 18 * 18, "benchmark-cache: children");
 	assert.equal(hotCounts.scopedManagerState, 2, "benchmark-cache: scoped-config");
-	assert.equal(counts.exec, 0, "benchmark-cache: npm-root");
+	assert.equal(counts.commands, 0, "benchmark-cache: npm-root");
 }

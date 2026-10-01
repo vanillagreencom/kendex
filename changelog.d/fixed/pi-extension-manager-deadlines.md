@@ -1,1 +1,1 @@
-- The Pi extension manager bounds and cancels package commands, targets the selected user or project install, and reuses cached package and settings data during search and completion.
+- The Pi extension manager keeps scoped toggles after project moves, saves settings only after instruction scripts pass, caches search data, and bounds npm version requests.

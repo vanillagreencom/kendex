@@ -1,4 +1,4 @@
-import { testPi } from "./fixtures/exec.ts";
+import { __setSpawnSyncForTests } from "../extensions/manager/process.ts";
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { YAML } from "bun";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -68,6 +68,7 @@ beforeEach(async () => {
 	clearPackageConfigCache();
 });
 afterEach(async () => {
+	__setSpawnSyncForTests(undefined);
 	await selectHost({ getAgentDir: piUserDir, SettingsManager: class {} }, async () => { throw new Error("not OMP"); });
 	rmSync(root, { recursive: true, force: true });
 	clearPackageConfigCache();
@@ -154,8 +155,8 @@ test("native capabilities refuse Pi update, uninstall, module toggles and other-
 	const item = inv.packages[0]!;
 	expect(planUninstall(item, inv, ctx as never)).toBeUndefined();
 	expect(planUpdate({ ...item, updateAvailable: true, updateSource: "npm", npmName: name }, inv, ctx as never)).toBeUndefined();
-	const update = await runUpdate({} as never, { item } as never);
-	const uninstall = await runUninstall({} as never, { item } as never, inv);
+	const update = runUpdate({ item } as never);
+	const uninstall = runUninstall({ item } as never, inv);
 	expect([update.ok, update.message.split("\n")[0]]).toEqual([false, `pi-extension-manager: update-unsupported=${item.id}`]);
 	expect([uninstall.ok, uninstall.message.split("\n")[0]]).toEqual([false, `pi-extension-manager: uninstall-unsupported=${item.id}`]);
 	expect(npmCandidatesFromInventory(inv)).toEqual([]);
@@ -401,15 +402,17 @@ test("Pi popup actions address the selected user install when both scopes are vi
 		json(join(base, "npm", "node_modules", "@example", "duplicate", "package.json"), { name: "@example/duplicate", version: "1.0.0", pi: { extensions: ["index.ts"] } });
 	}
 	const calls: Array<{ command: string; args: string[]; cwd?: string }> = [];
-	const pi = testPi(async (command, args, options) => {
+	const pi = {} as never;
+	__setSpawnSyncForTests(((command: string, args: string[], options: { cwd?: string }) => {
 		calls.push({ command, args, cwd: options?.cwd });
-		return { code: 0, killed: false, stdout: "", stderr: "" };
-	});
+		return { status: 0, signal: null, stdout: "", stderr: "", output: [], pid: 0 };
+	}) as never);
 	const inv = await refreshInventory(pi, ctx as never);
 	const user = inv.packages.find((item) => item.scope === "user")!;
 	const project = inv.packages.find((item) => item.scope === "project")!;
 	expect(user.id).not.toBe(project.id);
-	expect(user.id).toContain(user.packageDir!);
+	expect(user.id).toBe("package:user:npm:@example/duplicate:@example/duplicate");
+	expect(project.id).toBe("package:project:npm:@example/duplicate:@example/duplicate");
 	for (const type of ["toggle-item", "update-package", "uninstall-package"] as const) {
 		let selected = false;
 		await openManager(pi, { ...ctx, ui: {
@@ -437,7 +440,7 @@ test("Pi popup actions address the selected user install when both scopes are vi
 
 test("completion labels reuse the session inventory until a refresh boundary", async () => {
 	nativePackage(plugins, MANAGER_ID);
-	const pi = testPi();
+	const pi = {} as never;
 	await refreshInventory(pi, ctx as never);
 	const first = quickSettingsCompletions(pi, "");
 	expect(first?.map((item) => item.value)).toEqual([MANAGER_ID]);
@@ -463,7 +466,7 @@ test("closing the package popup cancels its pending npm response", async () => {
 	json(join(agent, "npm/node_modules/@example/popup-cancel/package.json"), { name: "@example/popup-cancel", version: "1.0.0" });
 	const { openManager: open } = await import(join(copy, "manager-ui.ts"));
 	const theme = { fg: (_color: string, text: string) => text, bg: (_color: string, text: string) => text, bold: (text: string) => text, inverse: (text: string) => text };
-	await open(testPi(), { ...ctx, ui: {
+	await open({} as never, { ...ctx, ui: {
 		custom: async (factory: (...args: unknown[]) => PopupComponent) => {
 			factory({ terminal: { rows: 60 }, requestRender() { throw new Error("Closed popup must not redraw"); } }, theme, {}, () => {});
 			expect(pendingRequest().destroyedCount).toBe(0);

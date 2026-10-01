@@ -1,4 +1,4 @@
-import { testPi } from "./fixtures/exec.ts";
+import { __setSpawnSyncForTests } from "../extensions/manager/process.ts";
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -14,8 +14,8 @@ const originalEnv = {
 	PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
 };
 
-const spawnSyncMock = mock((_command: string, _args: string[], _options?: unknown) => ({ code: 0, killed: false, stdout: "", stderr: "" }));
-let pi = testPi(spawnSyncMock);
+const spawnSyncMock = mock((_command: string, _args: string[], _options?: unknown) => ({ status: 0, signal: null, stdout: "", stderr: "", error: undefined, output: [], pid: 0 }));
+let pi = {} as never;
 
 function resetTmp(): void {
 	rmSync(rootTmp, { force: true, recursive: true });
@@ -57,6 +57,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+	__setSpawnSyncForTests(undefined);
 	if (originalEnv.HOME === undefined) delete process.env.HOME;
 	else process.env.HOME = originalEnv.HOME;
 	if (originalEnv.NPM_CONFIG_PREFIX === undefined) delete process.env.NPM_CONFIG_PREFIX;
@@ -70,7 +71,8 @@ afterEach(async () => {
 });
 
 async function loadFreshModules() {
-	pi = testPi(spawnSyncMock);
+	pi = {} as never;
+	__setSpawnSyncForTests(spawnSyncMock as never);
 	return import("../extensions/manager/inventory.ts");
 }
 
@@ -112,10 +114,10 @@ test("buildInventory memoizes npm root spawns across many packages when cheap pa
 		const subArgs = args.slice(1);
 		const minusG = subArgs.includes("-g");
 		return {
-			code: 0,
+			status: 0,
 			stdout: minusG ? `${fakeNpmRoot}\n` : "",
 			stderr: "",
-			killed: false,
+			signal: null, error: undefined, output: [], pid: 0,
 		};
 	});
 

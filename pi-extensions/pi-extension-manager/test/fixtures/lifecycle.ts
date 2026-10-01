@@ -18,7 +18,6 @@ const api = {
 	registerCommand() {}, registerShortcut() {},
 	events: { on() { return () => {}; } },
 	on(name: string, handler: Handler) { events.set(name, [...(events.get(name) ?? []), handler]); },
-	exec() { throw new Error("lifecycle-exec: empty inventory needs no process"); },
 } as unknown as ExtensionAPI;
 await extensionManager(api);
 const ctx = { cwd, hasUI: false, isProjectTrusted: () => true } as ExtensionContext;

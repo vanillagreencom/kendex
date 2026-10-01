@@ -36,8 +36,8 @@ On OMP the manager cannot toggle a plugin's modules, update or uninstall a plugi
 
 ## Resource limits
 
-- Package updates and removals stop waiting after 60 seconds. Package instruction scripts have a 10-second deadline. npm directory lookups have a 4-second deadline. The host receives cancellation for each command.
-- Each npm version request has a total 4-second deadline and a 256 KiB response limit. Closing the package browser cancels requests it started. Session shutdown cancels startup requests and commands.
+- Package updates, removals and npm directory lookups run synchronously without a deadline. A hung command can freeze the terminal. Package instruction scripts retain their existing 10-second bound and also block the terminal while they run.
+- Each npm version request has a total 4-second deadline and a 256 KiB response limit. Closing the package browser cancels requests it started. Session shutdown cancels startup requests.
 - The session keeps one inventory with at most 10,000 package and extension rows. Opening a popup or completing a package action refreshes it. Completion labels, package children and scoped setting values reuse that snapshot. Shutdown releases it. Reopen settings to read a change made outside the manager.
 
 ## Settings
