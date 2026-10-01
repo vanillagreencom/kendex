@@ -48,7 +48,7 @@ that most often survive and they are the two the flat rule forbids.
    `kendex.toml` names. The same reviewers see this content in the catalog
    repo before it arrives here. Nothing under this glob is edited in this
    repo. Interactive refresh holds a hand edit until someone forks it or
-   discards it. The rolling refresh replaces hand edits under the contract in
+   discards it. The rolling refresh preserves hand edits and refuses publication under the contract in
    `.agents/skills/review-gate/SKILL.md` § Scripts. A local fix does not reach
    the repos that share this render.
 

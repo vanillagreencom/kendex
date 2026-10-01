@@ -58,15 +58,16 @@ git add -A
 
 Commit the workflow and inventory with the installed skill. Without `--retire-writer`, adoption keeps a recorded retired gate workflow and its inventory entry and prints one `refresh-warning=legacy-writer` line. Retirement belongs to the trusted removal route above. That route removes an unedited retired copy, proved by the committed adoption hash. An edited, symlinked or unrecorded retired copy needs an owner decision and stops adoption without changing the files.
 
-Refresh workflow reconciliation in `scripts/adopt-refresh.sh` uses exact bytes, independently of the adoption record:
+Refresh workflow adoption in `scripts/adopt-refresh.sh` compares exact bytes with `skills/review-gate/templates/kendex-refresh.yml` in kendex's default-branch ancestry. It fetches that history from `https://github.com/vanillagreencom/kendex.git` as data only. Both the replacement template and any existing workflow must match shipped bytes. Consumer history and adoption records supply no replacement permission.
 
 | Existing `.github/workflows/kendex-refresh.yml` | Refresh result |
 |---|---|
-| Absent, or equal to the current template, the preserved consumer's vendored template, or a template in checkout history | Write the current template and its adoption record without a warning. A missing or stale record does not count as a hand edit. |
-| Equal to no shipped template | Write the current template and its adoption record. Print one `refresh-warning=workflow-edited value=.github/workflows/kendex-refresh.yml` line without failing adoption. The rolling pull request's Workflow edits section names the path and first divergent line. |
-| Symlink | Stop with `refresh-error=workflow-symlink`. Leave its target unchanged. |
+| Absent, or equal to a shipped template | Write the selected shipped template and its adoption record. A missing, matching or stale record does not change acceptance. |
+| Equal to no shipped template | Stop with `refresh-error=workflow-edited value=PATH` before writer adoption. Preserve the workflow and inventory. |
+| Symlink | Stop with `refresh-error=workflow-symlink value=PATH`. Leave its target unchanged. |
+| Bytes changed during writer adoption | Stop with `refresh-error=workflow-changed value=PATH` before refresh replacement or inventory writes. Preserve the new bytes. |
 
-`--workflow-edit-report FILE` writes the Workflow edits section for `scripts/refresh-consumer.sh`, or an empty file when no hand edit exists. The section is separate from other refresh reports. `tests/adopt-refresh.test.sh` checks reconciliation and the symlink stop. `tests/refresh-consumer.test.sh` checks publication of the edit report, including an unchanged rolling tree.
+An unshipped replacement stops with `refresh-error=template-edited value=PATH`. A replacement changed during writer adoption stops with `refresh-error=template-changed value=PATH`. A Git history or blob read failure stops with `refresh-error=read value=workflow-history` before adoption. It does not classify the workflow as edited. `tests/adopt-refresh.test.sh` checks historical acceptance, edit preservation, read refusal and concurrent changes. `tests/refresh-consumer.test.sh` checks that refused workflow or render edits cause no publication. A held render edit prints `refresh-error=render-edited value=COUNT`, followed by its held records. COUNT is the distinct item count, not the harness-row count.
 
 When orch is present after refresh, the refresh pull request adds Settings only for refused or deprecated `ORCH_OVERSEER_PREFERENCE` entries. The release-installed parser runs read-only with only `PATH` and `HOME` in its environment. The preserved default-branch runner validates its stdout as data. A failed extraction stops publication and auto-merge. Each row names the entry and `harness:model:effort` as the replacement form. A setting joins this report by exposing its existing parse the same way. An absent orch or a clean parse leaves the body unchanged. `tests/refresh-consumer.test.sh` checks committed settings, private overrides, first installations and credential isolation.
 

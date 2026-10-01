@@ -1,0 +1,1 @@
+- Consumer refresh preserves edited renders and stops before workflow adoption or publication instead of discarding the edits.

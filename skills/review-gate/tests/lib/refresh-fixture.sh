@@ -2,6 +2,54 @@
 # Consumer workflow fixtures use the shared sandbox and real API parser.
 . "$TEST_DIR/lib/sandbox.sh"
 . "$TEST_DIR/lib/workflow-edit.sh"
+# Shipment history is a data-only catalog. Only the transport in disposable
+# adopter copies changes; production has no fixture setting or acceptance path.
+CATALOG="$TMP/catalog"
+mkdir -p "$CATALOG/skills/review-gate/templates"
+git -C "$CATALOG" init -q -b main
+git -C "$CATALOG" config gc.auto 0
+git -C "$CATALOG" config maintenance.auto false
+git -C "$CATALOG" config user.name fixture
+git -C "$CATALOG" config user.email fixture@example.invalid
+git -C "$SKILL_DIR" show f7db7e89:skills/review-gate/templates/kendex-refresh.yml >"$TMP/shipped-historical"
+cp "$TMP/shipped-historical" "$CATALOG/skills/review-gate/templates/kendex-refresh.yml"
+commit "$CATALOG"
+cp "$SKILL_DIR/templates/kendex-refresh.yml" "$CATALOG/skills/review-gate/templates/kendex-refresh.yml"
+commit "$CATALOG"
+
+trust_refresh_transport() { # DISPOSABLE_ROOT
+  python3 - "$1/.agents/skills/review-gate/scripts/adopt-refresh.sh" "$CATALOG" <<'TRANSPORT'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve(); text = p.read_text()
+old = 'https://github.com/vanillagreencom/kendex.git'
+assert text.count(old) == 1
+changed = text.replace(old, sys.argv[2])
+assert changed != text
+p.write_text(changed)
+TRANSPORT
+}
+trust_refresh_transport "$PRISTINE"
+
+ship_refresh_template() { # TEMPLATE_FILE
+  cp "$1" "$CATALOG/skills/review-gate/templates/kendex-refresh.yml"
+  commit "$CATALOG"
+}
+
+snapshot_adoption() {
+  cp "$DIR/.kendex-generated.json" "$TMP/adoption-inventory"
+  cp "$DIR/.github/workflows/review-gate-writer.yml" "$TMP/adoption-writer"
+  cp "$DIR/.github/workflows/kendex-refresh.yml" "$TMP/adoption-workflow"
+}
+
+adoption_preserved() { # EXACT_ERROR_RECORD
+  [ "$RC" -ne 0 ] && grep -qxF -- "$1" <<<"$OUT" &&
+    cmp -s "$TMP/adoption-inventory" "$DIR/.kendex-generated.json" &&
+    cmp -s "$TMP/adoption-writer" "$DIR/.github/workflows/review-gate-writer.yml" &&
+    cmp -s "$TMP/adoption-workflow" "$DIR/.github/workflows/kendex-refresh.yml" &&
+    ! grep -qE '^(ok|FAIL|note) check=workflow-' <<<"$OUT"
+}
+
 # Refresh settings reporting uses the optional installed orch parser.
 cp -R "$SKILL_DIR/../orch" "$PRISTINE/.agents/skills/orch"
 BIN="$TMP/bin"
@@ -29,7 +77,7 @@ run_refresh_command() {
 run_refresh() { # CONTENT VERIFY CLASS
   local result=0
   rm -f -- "${TMP:?}/state/auth"
-  OUT="$(cd "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=test-token GITHUB_TOKEN=other-test-token TEST_SECRET=private-test-value GH_REPO=acme/test REFRESH_APP_SLUG=lanes TEST_STATE="$TMP/state" TEST_REAL_GIT="$REAL_GIT" TEST_CONTENT="$1" TEST_VERIFY="$2" TEST_CLASS="$3" TEST_MEASURED="${MEASURED:-true}" TEST_REASON="${CLASS_REASON:-cause=renders-match-their-sources}" TEST_CLASS_EXIT="${CLASS_EXIT:-0}" TEST_HOSTILE="${HOSTILE:-}" TEST_FRESH_ORCH="${FRESH_ORCH:-}" TEST_ORCH_MODE="${ORCH_MODE:-keep}" TEST_REFRESH_SKILL="${REFRESH_SKILL:-}" TEST_FRESH_TEMPLATES="$TMP/fresh-templates" TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" bash "$runner" 2>&1)" || result=$?
+  OUT="$(cd "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=test-token GITHUB_TOKEN=other-test-token TEST_SECRET=private-test-value GH_REPO=acme/test REFRESH_APP_SLUG=lanes TEST_STATE="$TMP/state" TEST_REAL_GIT="$REAL_GIT" TEST_CONTENT="$1" TEST_VERIFY="$2" TEST_CLASS="$3" TEST_MEASURED="${MEASURED:-true}" TEST_REASON="${CLASS_REASON:-cause=renders-match-their-sources}" TEST_CLASS_EXIT="${CLASS_EXIT:-0}" TEST_LEASE_RACE="${LEASE_RACE:-}" TEST_LEASE_REMOTE="$TMP/remote" TEST_HOSTILE="${HOSTILE:-}" TEST_FRESH_ORCH="${FRESH_ORCH:-}" TEST_ORCH_MODE="${ORCH_MODE:-keep}" TEST_REFRESH_SKILL="${REFRESH_SKILL:-}" TEST_FRESH_TEMPLATES="$TMP/fresh-templates" TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" bash "$runner" 2>&1)" || result=$?
   RC="$result"
 }
 
@@ -137,16 +185,6 @@ path.write_text(json.dumps(entries) + "\n")
 PY
 }
 
-# The diagnostic count and the PATH:LINE report token are adoption's output
-# contract. Prose surrounding the token is not part of the assertion.
-workflow_edit_matches() { # REPORT PATH:LINE
-  local count
-  count="$(grep -c '^refresh-warning=workflow-edited value=' <<<"$OUT")" || return 1
-  [ "$RC" -eq 0 ] && [ "$count" -eq 1 ] &&
-    grep -qxF "refresh-warning=workflow-edited value=${2%:*}" <<<"$OUT" &&
-    grep -qF -- "\`$2\`" "$1"
-}
-
 # Each row owns its local catalog, HOME, edit and install record.
 real_refresh_fixture() { # NAME
   sandbox
@@ -171,7 +209,7 @@ real_refresh_fixture() { # NAME
   git -C "$repo" config user.name fixture
   git -C "$repo" config user.email fixture@example.invalid
   cp "$TMP/case.1/.agents/skills/harness-ci/scripts/change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
-  printf '#!/usr/bin/env bash\nset -euo pipefail\n: >"$4"\n' >"$repo/.agents/skills/review-gate/scripts/adopt-refresh.sh"
+  printf '#!/usr/bin/env bash\nset -euo pipefail\n: >"$TEST_STATE/adopted"\n' >"$repo/.agents/skills/review-gate/scripts/adopt-refresh.sh"
   printf 'Hand edit.\n' >>"$repo/.agents/skills/probe/SKILL.md"
 }
 
@@ -187,7 +225,7 @@ publish_real_fixture() {
   : >"$TMP/state/creates"
   : >"$TMP/state/calls"
   : >"$TMP/state/kendex"
-  rm -f -- "$TMP/state/body"
+  rm -f -- "$TMP/state/body" "$TMP/state/adopted"
 }
 
 run_real_refresh() {
@@ -201,18 +239,14 @@ run_real_refresh() {
     KENDEX_REAL_HOME=1 KENDEX_GIT_BASE="file://$real_root/git" KENDEX_UI=plain bash "$runner" 2>&1)" || RC=$?
 }
 
-real_refresh_published() {
-  [ "$RC" -eq 0 ] &&
-    grep -qxF 'refresh --scope project --yes --leave' "$TMP/state/kendex" &&
-    grep -qxF 'refresh --scope project --yes --leave --discard-edits' "$TMP/state/kendex" &&
-    grep -qxF 'verify --scope project' "$TMP/state/kendex" &&
-    grep -qxF 'refresh-state=pushed pr=1 class=render' <<<"$OUT" &&
-    [ -s "$TMP/state/creates" ] &&
+real_refresh_preserved() { # DISTINCT_ITEM_COUNT
+  real_refresh_stopped "refresh-error=render-edited value=$1" &&
+    [ ! -e "$TMP/state/adopted" ] &&
     while IFS= read -r hold; do
-      grep -qxF -- "- $hold" "$TMP/state/body" || return 1
+      grep -qxF -- "- $hold" <<<"$OUT" || return 1
     done <<<"$expected_holds" &&
     while IFS= read -r edited; do
-      [ -s "$repo/$edited" ] && ! grep -qF 'Hand edit.' "$repo/$edited" || return 1
+      cmp -s "$real_root/before/$edited" "$repo/$edited" || return 1
     done <<<"$expected_edits"
 }
 

@@ -106,12 +106,13 @@ if [ -n "$conflict_count" ] || [ "$held_count" -ne 0 ]; then
     printf 'refresh-error=conflict-count value=%s held=%s\n' "${conflict_count:-0}" "$held_count" >&2
     exit 1
   fi
-  kendex refresh --scope project --yes --leave --discard-edits
+  printf 'refresh-error=render-edited value=%s\n' "$held_count" >&2
+  printf '%s' "$held_items" >&2
+  exit 1
 fi
 TMP="$(mktemp -d)"
 trap 'rm -rf -- "${TMP:?}"' EXIT
-"$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$ROOT/.agents/skills/review-gate/templates" --workflow-edit-report "$TMP/workflow-edits"
-workflow_edits="$(cat "$TMP/workflow-edits")"
+"$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$ROOT/.agents/skills/review-gate/templates"
 settings_report=""
 # The release-installed parser must judge its own settings, including on a
 # first install. It reads and prints data without the refresh app credential.
@@ -214,12 +215,6 @@ else
   fi
 fi
 printf -v body 'Generated kendex updates.\n\nChange class: `%s`.\n\nClassifier:\n```text\n%s\n```\n\n%s\n' "$class" "$class_line" "$merge_note"
-if [ -n "$workflow_edits" ]; then
-  printf -v body '%s\n%s\n' "$body" "$workflow_edits"
-fi
-if [ -n "$conflict_count" ]; then
-  printf -v body '%s\nOverwritten hand-edited items (from refresh):\n%s' "$body" "$held_items"
-fi
 if [ -n "$settings_report" ]; then
   printf -v body '%s\n%s\n' "$body" "$settings_report"
 fi

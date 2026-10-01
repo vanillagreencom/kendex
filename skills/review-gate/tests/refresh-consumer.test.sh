@@ -90,6 +90,14 @@ cat >"$TMP/bin/git" <<'SH'
 set -euo pipefail
 # A private repository's fetch fails until the app credential is installed.
 if [ "${1:-}" = fetch ] && [ ! -f "$TEST_STATE/auth" ]; then exit 88; fi
+if [ "${1:-}" = push ] && [ -n "${TEST_LEASE_RACE:-}" ]; then
+  old="$("$TEST_REAL_GIT" --git-dir="$TEST_LEASE_REMOTE" rev-parse refs/heads/kendex/refresh)"
+  tree="$("$TEST_REAL_GIT" rev-parse 'main^{tree}')"
+  competing="$(GIT_AUTHOR_NAME=competitor GIT_AUTHOR_EMAIL=competitor@example.invalid GIT_COMMITTER_NAME=competitor GIT_COMMITTER_EMAIL=competitor@example.invalid "$TEST_REAL_GIT" commit-tree "$tree" -p "$old" -m competitor)"
+  "$TEST_REAL_GIT" --git-dir="$TEST_LEASE_REMOTE" fetch -q "$PWD" "$competing"
+  "$TEST_REAL_GIT" --git-dir="$TEST_LEASE_REMOTE" update-ref refs/heads/kendex/refresh "$competing" "$old"
+  printf '%s\n' "$competing" >"$TEST_STATE/competing"
+fi
 exec "$TEST_REAL_GIT" "$@"
 SH
 REAL_GIT="$(command -v git)"
@@ -111,7 +119,7 @@ fi
 printf 'class: class=%s measured=%s %s\n' "$TEST_CLASS" "$TEST_MEASURED" "$TEST_REASON" >&2
 printf 'change_class=%s\n' "$TEST_CLASS"
 SH
-printf '#!/usr/bin/env bash\nset -euo pipefail\n: >"$4"\n' >"$repo/.agents/skills/review-gate/scripts/adopt-refresh.sh"
+printf '#!/usr/bin/env bash\nset -euo pipefail\n: >"$TEST_STATE/adopted"\n' >"$repo/.agents/skills/review-gate/scripts/adopt-refresh.sh"
 chmod +x "$repo/.agents/skills/harness-ci/scripts/change-class"
 chmod +x "$repo/.agents/skills/review-gate/scripts/adopt-refresh.sh"
 printf 'current\n' >"$repo/rendered.txt"
@@ -311,6 +319,41 @@ git -C "$repo" add -A
 git -C "$repo" commit -qm 'restore class rules'
 git -C "$repo" push -q origin main
 MEASURED=true; CLASS_EXIT=0; CLASS_REASON='cause=renders-match-their-sources'
+# A remote head can change after the runner reads its lease. The real Git
+# remote must keep the competitor, with no pull request or merge call.
+for row in lease lease-control; do
+  reset_default
+  runner="$repo/.agents/skills/review-gate/scripts/refresh-consumer.sh"
+  if [ "$row" = lease-control ]; then
+    python3 - "$runner" <<'LEASE_CONTROL'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]).resolve(); s=p.read_text()
+old='"--force-with-lease=refs/heads/kendex/refresh:$old"'; assert s.count(old)==1
+changed='# '+old+'\n'+s.replace(old,'--force'); assert changed != s; p.write_text(changed)
+LEASE_CONTROL
+    commit "$repo"
+    git -C "$repo" push -q origin main
+  fi
+  LEASE_RACE=1
+  : >"$TMP/state/calls"
+  run_refresh "$row" pass render
+  after="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+  competing="$(cat "$TMP/state/competing")"
+  if [ "$row" = lease ]; then
+    if [ "$RC" -ne 0 ] && [ "$after" = "$competing" ] &&
+        ! grep -qE '^api --method (POST|PATCH)|^pr merge .*--auto' "$TMP/state/calls"; then
+      ok 'lease refuses a competing remote head before publication'
+    else bad 'lease competing head' "$OUT"; fi
+  elif [ "$RC" -eq 0 ] && [ "$after" != "$competing" ]; then
+    ok 'control: force without lease replaces the competing head'
+  else bad 'lease control' "$OUT"; fi
+  unset LEASE_RACE
+  reset_default
+  cp "$TMP/class-runner" "$runner"
+  commit "$repo"
+  git -C "$repo" push -q origin main
+done
 # One production mutation proves the rolling-PR count assertion observes
 # the runner's create decision, rather than merely the fake API's state.
 reset_default
@@ -590,6 +633,7 @@ git -C "$repo" worktree add --detach "$TMP/trusted" HEAD
 runner="$TMP/trusted/.agents/skills/review-gate/scripts/refresh-consumer.sh"
 cp -R "$repo/.agents/skills/review-gate/templates" "$TMP/fresh-templates"
 printf '\n# fresh refresh template\n' >>"$TMP/fresh-templates/kendex-refresh.yml"
+ship_refresh_template "$TMP/fresh-templates/kendex-refresh.yml"
 : >"$TMP/state/pr"
 : >"$TMP/state/creates"
 HOSTILE=1
@@ -610,29 +654,26 @@ for entry in (e for e in entries if e['path'] == '.github/workflows/kendex-refre
 INVENTORY
 then ok 'automatic adoption reads fresh templates and keeps the retired writer and record without executing refreshed code'
 else bad 'automatic adoption boundary and fresh data' "$OUT"; fi
-# A hand edit committed on the default branch must reach the rolling body's
-# own section, even when adoption produces the same rolling tree as before.
+# A committed hand edit refuses before writer adoption and every publication.
 reset_default
 cp "$repo/.agents/skills/review-gate/templates/kendex-refresh.yml" "$repo/.github/workflows/kendex-refresh.yml"
 file_edit "$repo" .github/workflows/kendex-refresh.yml 1 '^name: ' 's/^name: .*/name: consumer edit/'
 commit "$repo"
 git -C "$repo" push -q origin main
+cp "$repo/.github/workflows/kendex-refresh.yml" "$TMP/workflow-before"
+cp "$repo/.github/workflows/gate.yml" "$TMP/writer-before"
+cp "$repo/.kendex-generated.json" "$TMP/inventory-before"
+before="$(git --git-dir="$TMP/secure-remote" rev-parse refs/heads/kendex/refresh)"
+: >"$TMP/state/calls"
 run_refresh refreshed pass render
-if workflow_edit_matches "$TMP/state/body" '.github/workflows/kendex-refresh.yml:8' &&
-    grep -qxF 'refresh-state=unchanged pr=1 class=render' <<<"$OUT" &&
-    cmp -s "$repo/.github/workflows/kendex-refresh.yml" "$TMP/fresh-templates/kendex-refresh.yml"; then
-  ok 'hand-edit adoption warns once and updates the unchanged rolling pull request body with its first divergence'
-else bad 'workflow edit body publication' "$OUT"; fi
-cp "$runner" "$TMP/body-runner"
-file_edit "$TMP/trusted" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 '^if \[ -n "\$workflow_edits" \]; then$' \
-  's/^if \[ -n "\$workflow_edits" \]; then$/if false; then # if [ -n "$workflow_edits" ]; then/'
-reset_default
-run_refresh refreshed pass render
-if [ "$RC" -eq 0 ] && grep -q '^refresh-warning=workflow-edited value=' <<<"$OUT" &&
-    ! workflow_edit_matches "$TMP/state/body" '.github/workflows/kendex-refresh.yml:8'; then
-  ok 'control: skipped body section breaks the workflow edit publication assertion'
-else bad 'workflow edit body control' "$OUT"; fi
-cp "$TMP/body-runner" "$runner"
+if [ "$RC" -eq 1 ] && grep -qxF "refresh-error=workflow-edited value=$repo/.github/workflows/kendex-refresh.yml" <<<"$OUT" &&
+    cmp -s "$TMP/workflow-before" "$repo/.github/workflows/kendex-refresh.yml" &&
+    cmp -s "$TMP/writer-before" "$repo/.github/workflows/gate.yml" &&
+    cmp -s "$TMP/inventory-before" "$repo/.kendex-generated.json" &&
+    [ "$before" = "$(git --git-dir="$TMP/secure-remote" rev-parse refs/heads/kendex/refresh)" ] &&
+    ! grep -qE '^api --method (POST|PATCH)|^pr merge ' "$TMP/state/calls"; then
+  ok 'workflow hand edit preserves files and stops publication'
+else bad 'workflow hand edit preservation' "$OUT"; fi
 # Restoring execution from the refreshed checkout must reach the hostile
 # script before verification, even when that script retains the expected name.
 python3 - "$runner" <<'TRUST_CONTROL'
@@ -676,7 +717,7 @@ if [ "$RC" -eq 0 ] && [ ! -e "$TMP/state/hostile" ] && [ "$(wc -l <"$TMP/state/c
   ok 'no-writer refresh adopts the refresh workflow and opens its pull request'
 else bad 'no-writer refresh' "$OUT"; fi
 # The CLI producer succeeds on a hold. The runner must read its ledger,
-# discard only a fully classified set, then retain verify as the final gate.
+# preserve a fully classified edit set before adoption or publication.
 if [ -z "$REAL_KENDEX" ]; then
   printf '  SKIP: real held-render consumer rows need kendex on PATH\n'
 else
@@ -689,13 +730,13 @@ if [ "$TEST_KENDEX_OUTPUT" = failed ] && [ "$1" = refresh ]; then
   exit 17
 fi
 if [ "$TEST_KENDEX_OUTPUT" = truncated ] && [ "$1" = refresh ]; then
-  # A lost held-item record must never authorize a discard pass.
+  # A lost held-item record must never permit adoption or publication.
   "$TEST_REAL_KENDEX" "$@" 2>&1 | sed '/^  .*: edited on disk since install /d'
 else
   exec "$TEST_REAL_KENDEX" "$@"
 fi
 REAL_KENDEX_SH
-  for row in local upstream shared body-control; do
+  for row in local upstream shared multiple discard-control baseline; do
     real_refresh_fixture "$row"
     expected_edits='.agents/skills/probe/SKILL.md'
     expected_holds='skill probe for Claude Code: edited on disk since install — keep it as a fork, or apply with edits discarded'
@@ -708,7 +749,7 @@ REAL_KENDEX_SH
         's/harnesses = \["claude"\]/harnesses = ["claude", "pi"]/'
       expected_holds="$expected_holds
 skill probe for Pi: its files were edited on disk after another tool installed them — keep the edits as a fork, or apply with edits discarded"
-    else
+    elif [ "$row" != local ]; then
       mkdir -p "$real_root/git/owner/catalog/skills/second"
       cp "$real_root/git/owner/catalog/skills/probe/SKILL.md" "$real_root/git/owner/catalog/skills/second/SKILL.md"
       file_edit "$real_root/git/owner/catalog" skills/second/SKILL.md 1 '^name: probe$' 's/^name: probe$/name: second/'
@@ -724,52 +765,40 @@ skill second for Claude Code: edited on disk since install — keep it as a fork
 .agents/skills/second/SKILL.md"
     fi
     publish_real_fixture
-    if [ "$row" = body-control ]; then
-      python3 - "$runner" <<'BODY_CONTROL'
+    mkdir -p "$real_root/before"
+    while IFS= read -r edited; do
+      mkdir -p "$real_root/before/${edited%/*}"
+      cp "$repo/$edited" "$real_root/before/$edited"
+    done <<<"$expected_edits"
+    if [ "$row" = discard-control ]; then
+      python3 - "$runner" <<'DISCARD_CONTROL'
 from pathlib import Path
 import sys
-p = Path(sys.argv[1]).resolve()
-s = p.read_text()
-old = '        held_items="$held_items- ${line#  }'
-assert s.count(old) == 1
-changed = s.replace(old, '        held_items="" # reset accumulator\n' + old)
-assert changed != s
-p.write_text(changed)
-BODY_CONTROL
+p=Path(sys.argv[1]).resolve(); s=p.read_text()
+old='  exit 1\nfi\nTMP="$(mktemp -d)"'
+assert s.count(old)==1
+changed=s.replace(old, '  kendex refresh --scope project --yes --leave --discard-edits\nfi\nTMP="$(mktemp -d)"')
+assert changed != s; p.write_text(changed)
+DISCARD_CONTROL
+      commit "$repo"
+      git -C "$repo" push -q origin main
+    elif [ "$row" = baseline ]; then
+      git -C "$SKILL_DIR" show b315ac64:skills/review-gate/scripts/refresh-consumer.sh >"$runner"
       commit "$repo"
       git -C "$repo" push -q origin main
     fi
     run_real_refresh
-    if [ "$row" = body-control ]; then
-      if [ "$RC" -eq 0 ] && ! real_refresh_published; then
-        ok 'control: resetting the accumulator breaks the complete body assertion'
-      else bad 'held-item body control' "$OUT"; fi
-    elif real_refresh_published; then ok "$row hand edits refresh and their pull request lists every held record"
-    else bad "$row real consumer publication" "$OUT"; fi
+    items=2
+    case "$row" in local | upstream | shared) items=1 ;; esac
+    if [ "$row" = discard-control ] || [ "$row" = baseline ]; then
+      if ! real_refresh_preserved "$items" &&
+          grep -qxF 'refresh --scope project --yes --leave --discard-edits' "$TMP/state/kendex" &&
+          ! cmp -s "$real_root/before/.agents/skills/probe/SKILL.md" "$repo/.agents/skills/probe/SKILL.md"; then
+        ok "control: $row breaks byte preservation"
+      else bad "$row discard control" "$OUT"; fi
+    elif real_refresh_preserved "$items"; then ok "$row preserves exact edit bytes and refuses before adoption or publication"
+    else bad "$row real edit preservation" "$OUT"; fi
   done
-  real_refresh_fixture no-discard
-  publish_real_fixture
-  # Only the disposable runner changes; the tracked source is never mutated.
-  python3 - "$runner" <<'DISCARD_CONTROL'
-from pathlib import Path
-import sys
-p = Path(sys.argv[1]).resolve()
-s = p.read_text()
-old = '  kendex refresh --scope project --yes --leave --discard-edits'
-assert s.count(old) == 1
-changed = s.replace(old, '  : # ' + old.strip())
-assert changed != s
-p.write_text(changed)
-DISCARD_CONTROL
-  commit "$repo"
-  git -C "$repo" push -q origin main
-  run_real_refresh
-  if [ "$RC" -eq 1 ] && ! real_refresh_published &&
-      grep -qxF 'verify --scope project' "$TMP/state/kendex" &&
-      grep -qF '✗ skill probe [claude]: edited on disk since install' <<<"$OUT" &&
-      [ ! -s "$TMP/state/creates" ]; then
-    ok 'control: removing discard reaches verify and fails on the held row'
-  else bad 'discard control' "$OUT"; fi
   # An unmanaged render is another real CLI conflict producer. It is not a
   # hold from holds.rs, even when the same run also holds a hand-edited item.
   for row in non-hold mixed same-unmanaged same-orphan truncated failed count-control record-control; do
@@ -853,8 +882,8 @@ RECORD_CONTROL
     run_real_refresh
     if [ "$row" = count-control ] || [ "$row" = record-control ]; then
       if ! real_refresh_stopped "$expected_error" &&
-          grep -qxF 'refresh --scope project --yes --leave --discard-edits' "$TMP/state/kendex"; then
-        ok "control: $row bypass permits an unauthorized discard"
+          grep -qE '^refresh-error=render-edited value=[0-9]+$' <<<"$OUT"; then
+        ok "control: $row bypass misclassifies a conflict as an edit hold"
       else bad 'conflict count control' "$OUT"; fi
     elif real_refresh_stopped "$expected_error"; then
       if { grep -qF 'Hand edit.' "$repo/.agents/skills/probe/SKILL.md" || [ "$row" = non-hold ]; } &&

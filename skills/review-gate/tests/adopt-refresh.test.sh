@@ -11,101 +11,193 @@ trap 'rm -rf -- "${TMP:?}"' EXIT
 ADOPT='.agents/skills/review-gate/scripts/adopt-refresh.sh'
 REFRESH='.github/workflows/kendex-refresh.yml'
 TEMPLATE='.agents/skills/review-gate/templates/kendex-refresh.yml'
+# Seed a committed, owned writer to make retirement ordering observable.
+printf 'retired workflow\n' >"$PRISTINE/.github/workflows/review-gate-writer.yml"
+record_adoption "$PRISTINE" .github/workflows/review-gate-writer.yml .agents/skills/review-gate/templates/review-gate-writer.yml
+commit "$PRISTINE"
 
 
 sandbox
-run_refresh_command "$DIR" "$DIR/$ADOPT"
-if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then ok 'adoption copies both templates and records exact metadata'; else bad "initial adoption (rc=$RC)" "$OUT"; fi
+run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then ok 'adoption retires the owned writer and records the refresh copy'; else bad "initial adoption (rc=$RC)" "$OUT"; fi
 cp "$DIR/.kendex-generated.json" "$TMP/inventory-before"
-run_refresh_command "$DIR" "$DIR/$ADOPT"
+run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
 if [ "$RC" -eq 0 ] && cmp -s "$TMP/inventory-before" "$DIR/.kendex-generated.json"; then ok 'repeated adoption keeps the inventory unchanged'; else bad "repeated adoption (rc=$RC)" "$OUT"; fi
 
-# Refresh records the new template hash before adoption. The earlier template
-# in history proves that the old workflow copy remains unedited.
-commit "$DIR"
-printf '\n# new template bytes\n' >>"$DIR/$TEMPLATE"
-record_template_hash
-run_refresh_command "$DIR" "$DIR/$ADOPT"
-if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE" && ! grep -q '^refresh-warning=' <<<"$OUT"; then ok 'template history permits a silent update despite a changed inventory hash'; else bad "template history adoption (rc=$RC)" "$OUT"; fi
-
-# Consumer installs can lack workflow records. A preserved checkout supplies
-# both its vendored bytes and older shipped versions in history.
-# input | record | warning
-while IFS='|' read -r input record warning; do
+# Only the catalog fixture licenses updates. Consumer records, current
+# templates and consumer commits cannot supply shipment evidence.
+# input | record | result | writer
+while IFS='|' read -r input record result writer; do
   sandbox
-  cp "$DIR/$TEMPLATE" "$DIR/$REFRESH"
-  if [ "$input" = hand-edit ]; then
-    file_edit "$DIR" "$REFRESH" 1 '^name: ' 's/^name: .*/name: consumer edit/'
+  if [ "$writer" = absent ]; then
+    rm -- "${DIR:?}/.github/workflows/review-gate-writer.yml"
+    printf '[]\n' >"$DIR/.kendex-generated.json"
   fi
-  if [ "$record" = matching ]; then
-    python3 - "$DIR" "$REFRESH" "$TEMPLATE" <<'RECORD'
+  cp "$DIR/$TEMPLATE" "$DIR/$REFRESH"
+  case "$input" in
+    historical) cp "$TMP/shipped-historical" "$DIR/$REFRESH" ;;
+    hand-edit) file_edit "$DIR" "$REFRESH" 1 '^name: ' 's/^name: .*/name: consumer edit/' ;;
+    fake-history) printf '# consumer edit\n' >>"$DIR/$TEMPLATE"; cp "$DIR/$TEMPLATE" "$DIR/$REFRESH" ;;
+  esac
+  if [ "$record" != missing ]; then
+    python3 - "$DIR" "$REFRESH" "$TEMPLATE" "$record" <<'RECORD'
 import hashlib, json, sys
 from pathlib import Path
 root = Path(sys.argv[1]); inventory = root / '.kendex-generated.json'
 entries = json.loads(inventory.read_text())
-entries.append({'path': sys.argv[2], 'template': sys.argv[3], 'templateHash': 'sha256:' + hashlib.sha256((root / sys.argv[2]).read_bytes()).hexdigest()})
+value = hashlib.sha256((root / sys.argv[2]).read_bytes()).hexdigest() if sys.argv[4] == 'matching' else '0' * 64
+entries.append({'path': sys.argv[2], 'template': sys.argv[3], 'templateHash': 'sha256:' + value})
 inventory.write_text(json.dumps(entries))
 RECORD
   fi
-  # Later committed templates must not make older history unreachable.
-  if [ "$input" = historical ]; then printf '# intermediate shipped bytes\n' >>"$DIR/$TEMPLATE"; fi
   commit "$DIR"
-  trusted="$TMP/trusted-$SANDBOX_N"
-  git -C "$DIR" worktree add --detach -q "$trusted" HEAD
-  if [ "$input" = vendored ]; then
-    # Neither history nor the refreshed template holds this version.
-    printf '# preserved vendored bytes\n' >>"$trusted/$TEMPLATE"
-    cp "$trusted/$TEMPLATE" "$DIR/$REFRESH"
+  # The owned writer must remain until refresh shipment is proved.
+  cp "$DIR/.kendex-generated.json" "$TMP/adoption-inventory"
+  cp "$DIR/$REFRESH" "$TMP/adoption-workflow"
+  if [ "$writer" != absent ]; then cp "$DIR/.github/workflows/review-gate-writer.yml" "$TMP/adoption-writer"; fi
+  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+  if [ "$result" = accept ]; then
+    if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE" && [ ! -e "$DIR/.github/workflows/review-gate-writer.yml" ]; then ok "$input record=$record writer=$writer adopts shipped bytes"
+    else bad "$input record=$record writer=$writer (rc=$RC)" "$OUT"; fi
+  elif [ "$writer" = absent ]; then
+    if [ "$RC" -eq 1 ] && grep -qxF "refresh-error=workflow-edited value=$DIR/$REFRESH" <<<"$OUT" &&
+        cmp -s "$TMP/adoption-workflow" "$DIR/$REFRESH" && cmp -s "$TMP/adoption-inventory" "$DIR/.kendex-generated.json" &&
+        ! grep -qE '^(ok|FAIL|note) check=workflow-' <<<"$OUT"; then ok 'no-writer edit refuses before adoption'
+    else bad 'no-writer edit preservation' "$OUT"; fi
+  else
+    target="$REFRESH"
+    [ "$result" != template-edited ] || target="$TEMPLATE"
+    if adoption_preserved "refresh-error=$result value=$DIR/$target"; then
+      ok "$input record=$record refuses before writer effects"
+    else bad "$input record=$record preservation (rc=$RC)" "$OUT"; fi
   fi
-  if [ "$input" != current ]; then printf '# new template bytes\n' >>"$DIR/$TEMPLATE"; fi
-  run_refresh_command "$DIR" "$trusted/$ADOPT" --templates-dir "$DIR/.agents/skills/review-gate/templates" --workflow-edit-report "$TMP/edit-report"
-  if [ "$warning" = yes ]; then
-    if workflow_edit_matches "$TMP/edit-report" "$REFRESH:8" && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then
-      ok "$input record=$record replaces the edit with one warning and a first-line report"
-    else bad "$input record=$record (rc=$RC)" "$OUT"; fi
-  elif [ "$RC" -eq 0 ] && ! grep -q '^refresh-warning=' <<<"$OUT" && [ ! -s "$TMP/edit-report" ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then
-    ok "$input record=$record adopts silently and records the written copy"
-  else bad "$input record=$record (rc=$RC)" "$OUT"; fi
 done <<'ROWS'
-current|missing|no
-historical|missing|no
-historical|matching|no
-vendored|missing|no
-hand-edit|missing|yes
-hand-edit|matching|yes
+current|missing|accept|present
+current|matching|accept|present
+current|stale|accept|present
+historical|missing|accept|present
+historical|matching|accept|present
+historical|stale|accept|present
+historical|missing|accept|absent
+hand-edit|missing|workflow-edited|present
+hand-edit|matching|workflow-edited|present
+hand-edit|missing|workflow-edited|absent
+fake-history|matching|template-edited|present
 ROWS
 
-# Keep the warning text but disable its producer. The edited copy still
-# updates; the warning/report assertion must turn red.
-file_edit "$trusted" "$ADOPT" 1 '^    if not shipped:$' 's/^    if not shipped:$/    if False and not shipped:/'
-chmod +x "$trusted/$ADOPT"
-file_edit "$DIR" "$REFRESH" 1 '^name: ' 's/^name: .*/name: consumer edit/'
-run_refresh_command "$DIR" "$trusted/$ADOPT" --templates-dir "$DIR/.agents/skills/review-gate/templates" --workflow-edit-report "$TMP/edit-report"
-if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE" && ! workflow_edit_matches "$TMP/edit-report" "$REFRESH:8"; then
-  ok 'control: silenced edit detection breaks the warning/report assertion'
-else bad 'workflow edit warning control' "$OUT"; fi
+# Independent identity, evidence-read and link rules each keep their
+# diagnostic text while disabling behavior in a disposable copy.
+for rule in workflow template history symlink baseline; do
+  sandbox
+  cp "$DIR/$TEMPLATE" "$DIR/$REFRESH"
+  case "$rule" in
+    workflow | baseline) printf '# consumer edit\n' >>"$DIR/$REFRESH"; key=workflow-edited; target="$REFRESH" ;;
+    template) printf '# consumer template edit\n' >>"$DIR/$TEMPLATE"; key=template-edited; target="$TEMPLATE" ;;
+    history) key=read; target=workflow-history
+      python3 - "$DIR/$ADOPT" "$CATALOG" <<'BROKEN_TRANSPORT'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); s=p.read_text(); assert s.count(sys.argv[2]) == 1
+p.write_text(s.replace(sys.argv[2], sys.argv[2] + '-missing'))
+BROKEN_TRANSPORT
+      ;;
+    symlink) mv "$DIR/$REFRESH" "$TMP/symlink-target"; ln -s "$TMP/symlink-target" "$DIR/$REFRESH"; key=workflow-symlink; target="$REFRESH" ;;
+  esac
+  snapshot_adoption
+  error="refresh-error=$key value=$DIR/$target"
+  [ "$rule" != history ] || error='refresh-error=read value=workflow-history'
+  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+  if adoption_preserved "$error"; then ok "$rule refuses without workflow, writer or inventory changes"
+  else bad "$rule refusal" "$OUT"; fi
+  if [ "$rule" = baseline ]; then
+    git -C "$SKILL_DIR" show b315ac64:skills/review-gate/scripts/adopt-refresh.sh >"$DIR/$ADOPT"
+  else
+    python3 - "$DIR/$ADOPT" "$rule" <<'CONTROL'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); s=p.read_text()
+mutations={
+ 'workflow': ('if not shipped_copy:', 'if False and not shipped_copy:', 1),
+ 'template': ('if not shipped_template:', 'if False and not shipped_template:', 1),
+ 'symlink': ('if refresh.is_symlink():', 'if False and refresh.is_symlink():', 2),
+ 'history': ('print("refresh-error=read value=workflow-history", file=sys.stderr)', 'if False: print("refresh-error=read value=workflow-history", file=sys.stderr)', 1),
+}
+old,new,count=mutations[sys.argv[2]]; assert s.count(old)==count
+changed=s.replace(old,new)
+if sys.argv[2]=='history':
+ old='raise SystemExit(2) from error'; assert changed.count(old)==1
+ changed=changed.replace(old, 'return b"" # ' + old)
+assert changed != s; p.write_text(changed)
+CONTROL
+  fi
+  run_refresh_command "$DIR" "$DIR/$ADOPT"
+  if ! adoption_preserved "$error"; then ok "control: $rule breaks its preservation assertion"
+  else bad "$rule control" "$OUT"; fi
+done
 
-# A workflow symlink comes from a consumer checkout. Never write its target.
+# An exact historical shipped workflow still needs the history lookup.
 sandbox
-cp "$DIR/$TEMPLATE" "$TMP/symlink-target"
-ln -s "$TMP/symlink-target" "$DIR/$REFRESH"
-cp "$DIR/.kendex-generated.json" "$TMP/symlink-inventory"
-run_refresh_command "$DIR" "$DIR/$ADOPT"
-if [ "$RC" -eq 1 ] && grep -qxF "refresh-error=workflow-symlink value=$DIR/$REFRESH" <<<"$OUT" &&
-    cmp -s "$TMP/symlink-target" "$DIR/$TEMPLATE" && cmp -s "$TMP/symlink-inventory" "$DIR/.kendex-generated.json"; then
-  ok 'workflow-symlink stops adoption without writing its target or inventory'
-else bad 'workflow symlink stop' "$OUT"; fi
-file_edit "$DIR" "$ADOPT" 1 '^if refresh\.is_symlink\(\):$' 's/^if refresh\.is_symlink():$/if False and refresh.is_symlink():/'
-chmod +x "$DIR/$ADOPT"
-run_refresh_command "$DIR" "$DIR/$ADOPT"
-if [ "$RC" -eq 0 ] && ! grep -q '^refresh-error=workflow-symlink ' <<<"$OUT"; then
-  ok 'control: disabled symlink guard breaks the must-fail row'
-else bad 'workflow symlink control' "$OUT"; fi
+cp "$TMP/shipped-historical" "$DIR/$REFRESH"
+file_edit "$DIR" "$ADOPT" 1 '^    shipped_copy = shipped_copy or copied == candidate$' \
+  's/copied == candidate/copied == replacement # copied == candidate/'
+run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+if [ "$RC" -eq 1 ] && grep -qxF "refresh-error=workflow-edited value=$DIR/$REFRESH" <<<"$OUT"; then
+  ok 'control: removed historical equality breaks the f7db7e89 acceptance row'
+else bad 'historical equality control' "$OUT"; fi
+
+# A concurrent writer can change bytes or introduce a link after shipment
+# classification. The second check refuses before refresh replacement or inventory.
+for rule in workflow template symlink; do
+  sandbox
+  cp "$DIR/$TEMPLATE" "$DIR/$REFRESH"
+  snapshot_adoption
+  python3 - "$DIR/$ADOPT" "$rule" "$DIR" "$TMP" <<'CONCURRENT'
+from pathlib import Path
+import shlex, sys
+p=Path(sys.argv[1]); s=p.read_text(); old='PREFLIGHT\n# Re-read inventory'
+assert s.count(old)==1
+root=Path(sys.argv[3]); workflow=root/'.github/workflows/kendex-refresh.yml'
+if sys.argv[2]=='symlink':
+ target=Path(sys.argv[4])/'concurrent-target'; target.write_bytes(workflow.read_bytes())
+ effect='rm -- '+shlex.quote(str(workflow))+'; ln -s '+shlex.quote(str(target))+' '+shlex.quote(str(workflow))
+else:
+ target=workflow if sys.argv[2]=='workflow' else root/'.agents/skills/review-gate/templates/kendex-refresh.yml'
+ effect="printf '# concurrent edit\\n' >>"+shlex.quote(str(target))
+changed=s.replace(old, 'PREFLIGHT\n'+effect+'\n# Re-read inventory'); assert changed != s; p.write_text(changed)
+CONCURRENT
+  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+  if [ "$rule" = template ]; then key=template-changed; target="$TEMPLATE"; else key=workflow-changed; target="$REFRESH"; fi
+  [ "$rule" != symlink ] || key=workflow-symlink
+  if [ "$RC" -eq 1 ] && grep -qxF "refresh-error=$key value=$DIR/$target" <<<"$OUT" &&
+      cmp -s "$TMP/adoption-inventory" "$DIR/.kendex-generated.json" &&
+      { [ "$rule" != workflow ] || grep -qxF '# concurrent edit' "$DIR/$REFRESH"; } &&
+      { [ "$rule" != symlink ] || cmp -s "$TMP/concurrent-target" "$TMP/adoption-workflow"; }; then
+    ok "$rule precondition preserves the concurrent edit and inventory"
+  else bad "$rule precondition" "$OUT"; fi
+  python3 - "$DIR/$ADOPT" "$rule" <<'PRECONDITION_CONTROL'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); s=p.read_text()
+old={'workflow':'if (refresh.read_bytes() if refresh.exists() else None) != observed:',
+     'template':'if template.read_bytes() != template_bytes:',
+     'symlink':'if refresh.is_symlink():'}[sys.argv[2]]
+assert s.count(old)==(2 if sys.argv[2]=='symlink' else 1)
+changed=s.replace(old, 'if False: # '+old); assert changed != s; p.write_text(changed)
+PRECONDITION_CONTROL
+  # The preflight now sees the concurrent edit. Reset it before the mutant
+  # runs so the planted change again arrives only after classification.
+  if [ "$rule" = symlink ]; then rm -- "$DIR/$REFRESH"; fi
+  cp "$TMP/adoption-workflow" "$DIR/$REFRESH"
+  if [ "$rule" = template ]; then cp "$TMP/adoption-workflow" "$DIR/$TEMPLATE"; fi
+  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+  if [ "$RC" -eq 0 ]; then ok "control: $rule precondition bypass overwrites after classification"
+  else bad "$rule precondition control" "$OUT"; fi
+done
 
 sandbox
 printf '{"environments":[]}\n' >"$FIXTURES/environments.json"
 cp "$DIR/.kendex-generated.json" "$TMP/inventory-before"
-run_refresh_command "$DIR" "$DIR/$ADOPT"
+run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
 if [ "$RC" -eq 1 ] && grep -qF 'scripts/provision-environment.sh --org acme' <<<"$OUT" &&
     [ ! -e "$DIR/$REFRESH" ] &&
     cmp -s "$TMP/inventory-before" "$DIR/.kendex-generated.json"; then
@@ -119,7 +211,7 @@ fi
 file_edit "$DIR" "$ADOPT" 1 '^  "\$SCRIPT_DIR/validate-standard.sh" --environment-only$' \
   's/ --environment-only$/ --environment-only || true/'
 chmod +x "$DIR/$ADOPT"
-run_refresh_command "$DIR" "$DIR/$ADOPT"
+run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
 if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then ok 'control: ignored environment failure allows adoption'; else bad "control: environment guard (rc=$RC)" "$OUT"; fi
 
 # Adoption judges the environment and secrets the refresh template reads. The
@@ -137,7 +229,7 @@ while IFS='~' read -r name environments secrets verdict; do
   commit "$DIR"
   printf '{"environments":[%s]}\n' "$environments" >"$FIXTURES/environments.json"
   printf '{"secrets":[%s]}\n' "$secrets" >"$FIXTURES/environment-secrets-kendex.json"
-  run_refresh_command "$DIR" "$DIR/$ADOPT"
+  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
   if [ "$RC" -eq 1 ] && grep -qxF "$verdict" <<<"$OUT" && [ ! -e "$DIR/$REFRESH" ]; then
     ok "$name refuses adoption whatever the settings name"
   else
@@ -153,7 +245,7 @@ ROWS
 file_edit "$DIR" "$ADOPT" 1 '^REVIEW_GATE_STANDARD_ENVIRONMENT="\$template_environment" REVIEW_GATE_STANDARD_SECRETS=' \
   's/^REVIEW_GATE_STANDARD_ENVIRONMENT=\(.*\) REVIEW_GATE_STANDARD_SECRETS=/TEMPLATE_ENVIRONMENT=\1 TEMPLATE_SECRETS=/'
 chmod +x "$DIR/$ADOPT"
-run_refresh_command "$DIR" "$DIR/$ADOPT"
+run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
 if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then
   ok 'control: the settings-named environment adopts once the template names stay unpassed'
 else bad "control: template names (rc=$RC)" "$OUT"; fi
@@ -163,7 +255,7 @@ cp "$TMP/kendex-secrets" "$FIXTURES/environment-secrets-kendex.json"
 sandbox
 printf '{"full_name":"vanillagreencom/kendex","default_branch":"main"}\n' >"$FIXTURES/repository.json"
 cp "$DIR/.kendex-generated.json" "$TMP/self-inventory"
-run_refresh_command "$DIR" "$DIR/$ADOPT"
+run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
 if [ "$RC" -eq 0 ] && [ ! -e "$DIR/$REFRESH" ] && cmp -s "$TMP/self-inventory" "$DIR/.kendex-generated.json"; then
   ok 'kendex adoption leaves workflows and inventory unchanged'
 else bad 'kendex self-exclusion' "$OUT"; fi
@@ -171,48 +263,43 @@ file_edit "$DIR" "$ADOPT" 1 'if \[ "\$repository" = vanillagreencom/kendex \]; t
   's/if \[ "\$repository" = vanillagreencom\/kendex \]; then/if false; then/'
 chmod +x "$DIR/$ADOPT"
 printf '{"environments":[{"name":"kendex","deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}]}\n' >"$FIXTURES/environments.json"
-run_refresh_command "$DIR" "$DIR/$ADOPT"
+run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
 if [ "$RC" -eq 0 ] && [ -e "$DIR/$REFRESH" ]; then
   ok 'control: removed self-exclusion adopts the consumer workflow in kendex'
 else bad 'self-exclusion control did not reach adoption' "$OUT"; fi
 
 sandbox
+rm -- "$DIR/.github/workflows/review-gate-writer.yml"
+printf '[]\n' >"$DIR/.kendex-generated.json"
 printf '{"full_name":"acme/widgets","default_branch":"main"}\n' >"$FIXTURES/repository.json"
-run_refresh_command "$DIR" "$DIR/$ADOPT"
+run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
 [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE" || exit 1
 # Refresh records the new template hash before adoption, as above.
 commit "$DIR"
 printf '\n# new template bytes\n' >>"$DIR/$TEMPLATE"
+ship_refresh_template "$DIR/$TEMPLATE"
 record_template_hash
-run_refresh_command "$DIR" "$DIR/$ADOPT"
+run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
 if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then
   ok 'no-writer refresh updates an unedited refresh workflow'
 else bad "no-writer template update (rc=$RC)" "$OUT"; fi
 commit "$DIR"
-# The appended blank line differs first, immediately after the unedited copy.
-first_edit_line="$(awk 'END { print NR + 1 }' "$DIR/$REFRESH")" || exit 1
-printf '\n# consumer edit\n' >>"$DIR/$REFRESH"
-run_refresh_command "$DIR" "$DIR/$ADOPT" --workflow-edit-report "$TMP/no-writer-report"
-if workflow_edit_matches "$TMP/no-writer-report" "$REFRESH:$first_edit_line" && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then
-  ok 'no-writer adoption reconciles an edited refresh workflow and reports its first divergent line'
-else bad "no-writer edited refresh (rc=$RC)" "$OUT"; fi
-
-# Keep the report and warning but replace the measured line with the name
-# field's line. A later edit must not accept that constant location.
-file_edit "$DIR" "$ADOPT" 1 '\{relative\}:\{line\}' 's/{relative}:{line}/{relative}:8/'
-chmod +x "$DIR/$ADOPT"
-printf '\n# consumer edit\n' >>"$DIR/$REFRESH"
-run_refresh_command "$DIR" "$DIR/$ADOPT" --workflow-edit-report "$TMP/no-writer-report"
-if adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE" && workflow_edit_matches "$TMP/no-writer-report" "$REFRESH:8" &&
-    ! workflow_edit_matches "$TMP/no-writer-report" "$REFRESH:$first_edit_line"; then
-  ok 'control: a constant report line breaks the appended-edit location assertion'
-else bad 'first divergent line control' "$OUT"; fi
+printf '# consumer edit\n' >>"$DIR/$REFRESH"
+cp "$DIR/$REFRESH" "$TMP/adoption-workflow"
+cp "$DIR/.kendex-generated.json" "$TMP/adoption-inventory"
+run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+if [ "$RC" -eq 1 ] && grep -qxF "refresh-error=workflow-edited value=$DIR/$REFRESH" <<<"$OUT" &&
+    cmp -s "$TMP/adoption-workflow" "$DIR/$REFRESH" && cmp -s "$TMP/adoption-inventory" "$DIR/.kendex-generated.json"; then
+  ok 'no-writer adoption preserves a later workflow edit'
+else bad 'no-writer later edit' "$OUT"; fi
 
 OWNER=".agents/skills/review-gate/templates/review-gate-writer.yml"
 # The automatic runner invokes its preserved adopter without retirement
 # input, while reading templates from the refreshed checkout.
 while IFS='|' read -r mutation expected; do
   sandbox
+  rm -- "$DIR/.github/workflows/review-gate-writer.yml"
+  printf '[]\n' >"$DIR/.kendex-generated.json"
   writer='.github/workflows/retired.yml'
   printf 'retired workflow\n' >"$DIR/$writer"
   record_adoption "$DIR" "$writer" "$OWNER"
@@ -241,6 +328,8 @@ AUTOMATIC
 
 while IFS='|' read -r kind expected; do
   sandbox
+  rm -- "$DIR/.github/workflows/review-gate-writer.yml"
+  printf '[]\n' >"$DIR/.kendex-generated.json"
   writer="$DIR/.github/workflows/retired.yml"
   printf 'retired workflow\n' >"$writer"
   record_adoption "$DIR" .github/workflows/retired.yml "$OWNER"
@@ -263,7 +352,7 @@ while IFS='|' read -r kind expected; do
       commit "$DIR"
       case "$kind" in
         refresh-symlink) mv "$DIR/$REFRESH" "$DIR/refresh-target"; ln -s ../../refresh-target "$DIR/$REFRESH" ;;
-        update) printf '\n# updated template\n' >>"$DIR/$TEMPLATE" ;;
+        update) printf '\n# updated template\n' >>"$DIR/$TEMPLATE"; ship_refresh_template "$DIR/$TEMPLATE" ;;
       esac ;;
     environment) SHIM_FAIL='environments' ;;
     excluded) printf '{"full_name":"vanillagreencom/kendex","default_branch":"main"}\n' >"$FIXTURES/repository.json" ;;
@@ -317,6 +406,8 @@ CASES
 # the control disables its condition in a disposable script copy.
 while IFS='|' read -r kind pattern replacement; do
   sandbox
+  rm -- "$DIR/.github/workflows/review-gate-writer.yml"
+  printf '[]\n' >"$DIR/.kendex-generated.json"
   writer="$DIR/.github/workflows/retired.yml"
   printf 'retired workflow\n' >"$writer"
   record_adoption "$DIR" .github/workflows/retired.yml "$OWNER"
@@ -331,7 +422,9 @@ while IFS='|' read -r kind pattern replacement; do
       commit "$DIR"
       mv "$DIR/$REFRESH" "$DIR/refresh-target"; ln -s ../../refresh-target "$DIR/$REFRESH" ;;
   esac
-  file_edit "$DIR" "$ADOPT" 1 "$pattern" "$replacement" 1
+  matches=1
+  [ "$kind" != refresh-symlink ] || matches=2
+  file_edit "$DIR" "$ADOPT" "$matches" "$pattern" "$replacement" 1
   run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
   if [ "$RC" -eq 0 ]; then ok "$kind control allows the forbidden mutation"; else bad "$kind control did not reach the guard" "$OUT"; fi
 done <<'CONTROLS'

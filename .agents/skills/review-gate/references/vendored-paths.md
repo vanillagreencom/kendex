@@ -65,7 +65,7 @@ Read the current head, its reviews and every unresolved thread before resolving 
 
 ## The harness-render variant
 
-For consumers that commit `kendex refresh` output and merge refresh PRs. No pin covers that tree. Interactive refresh holds a hand edit until someone forks it or discards it. The rolling refresh replaces hand edits under the [SKILL.md refresh contract](../SKILL.md#scripts). Two things change; everything above holds.
+For consumers that commit `kendex refresh` output and merge refresh PRs. No pin covers that tree. Interactive refresh holds a hand edit until someone forks it or discards it. The rolling refresh preserves hand edits and refuses publication under the [SKILL.md refresh contract](../SKILL.md#scripts). Two things change; everything above holds.
 
 **The rule is flat, with no carve-out.** The vendored rule routes upstream-remedy findings to the review summary body and keeps one carve-out for a correctness, security, or data-loss regression the bump introduces. One refresh lands in several repos at once, so that thread blocks the merge in each of them for a fix that can land in none. Over a render both go: no finding over the render on any surface, and a defect that would ship goes to the catalog repo and to the PR author out of band. Under a flat rule there is no on-PR surface left, which also removes the consolidated-comment fallback the vendored template gives a location-bound reviewer.
 
