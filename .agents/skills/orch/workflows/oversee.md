@@ -4,6 +4,8 @@ Standing fleet mode: burn down unblocked work items by launching one orch sessio
 
 ## 1. Resolve The Launch Surface
 
+Launch only this repository's items; file prioritized foreign work in its own tracker and route it with `lane-mail peer send --repo [REPO]`, or, with no live repository overseer, ask a live registered master, else the owner, with a recommendation to launch that repository's overseer in its repository-named tmux session with `overseer` at the base index.
+
 Once per session, first match wins:
 
 1. `$TMUX` set → tmux lanes: launch each item with `open-terminal` (`handoff.md` § 2), a claude, codex or copilot item, or a pi item on a `pi-claude/` or `github-copilot/` model, under § 3 Lane directive.
@@ -12,7 +14,7 @@ Once per session, first match wins:
 
 A lane's questions arrive at least once as `lane-question` and new tracker items as `triage`, both from the § 4 watch, on every surface. Only session banners are surface-specific: off the tmux surface, read them through the harness's own session tooling.
 
-Owner notes use `.agents/skills/orch/scripts/lane-mail send --item overseer --directive --file [PATH]` from any project checkout (`lane-mail --help`). The § 4 watch reports them at least once as `owner-note`; act on chat notes the same way. Reply with `lane-mail notice --item overseer --to owner --ref [NOTE_ID] --file [PATH]`. One notice covers several owed refs: name the others in its text and use one as `--ref` (`lane-mail` accepts one ref). Owner questions use [communication-modes.md § Owner asks](../references/communication-modes.md#owner-asks), never a question dialog. Peer overseers write the same mailbox, reported as `peer-note` ([peer-mail.md](../references/peer-mail.md)). The repeat watch reports both. With single passes, lane-mail hooks hand them over as `lane-mail-check: unread=` at turn end and after tool calls; the watch reports neither ([peer-mail.md § Who reads a note](../references/peer-mail.md#who-reads-a-note)).
+Owner notes use `.agents/skills/orch/scripts/lane-mail send --item overseer --directive --file [PATH]` from any project checkout (`lane-mail --help`). The § 4 watch reports them at least once as `owner-note`. Reply to mailbox notes with `lane-mail notice --item overseer --to owner --ref [NOTE_ID] --file [PATH]`. One notice covers several owed refs: name the others in its text and use one as `--ref` (`lane-mail` accepts one ref). Owner questions use [communication-modes.md § Owner asks](../references/communication-modes.md#owner-asks), never a question dialog. Peer overseers write the same mailbox, reported as `peer-note` ([peer-mail.md](../references/peer-mail.md)). The repeat watch reports both. With single passes, lane-mail hooks hand them over as `lane-mail-check: unread=` at turn end and after tool calls; the watch reports neither ([peer-mail.md § Who reads a note](../references/peer-mail.md#who-reads-a-note)).
 
 A session a person opened by hand registers itself first, so the hooks and the watch know which session is the overseer: `.agents/skills/orch/scripts/oversee register`. The master registers as its checkout's overseer the same way so the turn-end hook judges its wake. A session `oversee launch` or a succession opened is already recorded.
 
@@ -33,6 +35,8 @@ Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gate
 ```
 
 ## 3. Launch
+
+For foreign work, follow [§ 1](#1-resolve-the-launch-surface): send its prioritized tracker issue by peer mail, or ask a live registered master, else the owner, with a launch recommendation when no repository overseer runs.
 
 ### Item Tier
 

@@ -235,7 +235,7 @@
 #        tmux, because this script reads the successor's account off its
 #        pane: ORCH_OVERSEER_HOST naming another refuses `runtime-unsupported`
 #        before anything is printed, recorded or opened. On tmux the session
-#        is a window named `overseer` right after the caller's, the harness
+#        is a window named `overseer` at the session's base index, the harness
 #        launched there with a brief naming the handoff file. The steps from
 #        here to the close are
 #        lib/overseer-launch.sh's, the one launcher `oversee launch` runs a
@@ -1531,10 +1531,10 @@ trap 'interrupted HUP' HUP
 
 # The succession itself is lib/overseer-launch.sh's ol_succession, the one
 # `oversee launch --predecessor` runs: the pending record, the runtime's
-# create right after the caller's window, the session record, the account and
+# create at the session's base index, the session record, the account and
 # first-turn verification inside the one --wait-secs bound (ol_session_verify
-# says why the account is asked twice), and the stop that swaps the successor
-# into the caller's slot, the commit point. These are this script's words at
+# says why the account is asked twice), and the predecessor's stop, which
+# keeps the successor at the base index, the commit point. These are this script's words at
 # each step it reports. `verified` arranges step 6 of the header before the
 # close, because nothing after it can be counted on to run; the helper is
 # started before the commit point ignores any signal, so it inherits none of

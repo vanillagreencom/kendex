@@ -100,6 +100,7 @@ codex_seat() { # LANE USED_PCT
 }
 
 env PATH="$BIN:$PATH" tmux -L "$SOCK" -f /dev/null new-session -d -s fleet -x 220 -y 50 'exec sleep 100000'
+KEEP_WINDOW="$(tm display-message -p -t fleet:0 '#{window_id}')"
 tm set-option -g default-shell /bin/sh
 tm set-option -g renumber-windows off
 # The successor pane is a non-login shell under this fixture's PATH, so the
@@ -120,7 +121,8 @@ new_caller() {
   local spec cmd="exec '$BIN/hclaude' 100000"
   [[ -f "$TMP_ROOT/work/tmp/workflow-state-oversee.json" ]] || printf '{"issue_id":"oversee","overseer":{"generation":1}}\n' > "$TMP_ROOT/work/tmp/workflow-state-oversee.json"
   [[ "${1:-}" != codex ]] || cmd="exec '$TMP_ROOT/cbin/codex' 100000"
-  tm kill-window -a -t fleet:0
+  tm kill-window -a -t "$KEEP_WINDOW"
+  tm move-window -r -t fleet
   rm -f -- "${TMP_ROOT:?}"/argv.*
   spec="$(tm new-window -d -t fleet:1 -P -F '#{pane_id} #{window_id}' "$cmd")"
   read -r CALLER_PANE CALLER_WINDOW <<<"$spec"
@@ -561,7 +563,8 @@ assert_eq "$RC|$(launched claude)|$(launched codex)" \
 # claude account: the pick leaves the walled account out and lands on .eclaude.
 FLEET_STATE="$TMP_ROOT/work/tmp/workflow-state-oversee.json"
 new_pi_caller() { # [norecord]
-  tm kill-window -a -t fleet:0
+  tm kill-window -a -t "$KEEP_WINDOW"
+  tm move-window -r -t fleet
   rm -f -- "${TMP_ROOT:?}"/argv.* "${FLEET_STATE:?}"
   CALLER_PANE="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id}' 'exec sleep 100000')"
   CALLER_WINDOW="$(tm display-message -p -t "$CALLER_PANE" '#{window_id}')"

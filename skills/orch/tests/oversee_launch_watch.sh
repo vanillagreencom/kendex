@@ -79,6 +79,7 @@ make_fetcher "$FETCHER"
 claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
 env PATH="$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" tmux -L default -f /dev/null new-session -d -s fleet -x 200 -y 40 'exec sleep 100000'
+KEEP_WINDOW="$(tm display-message -p -t fleet:0 '#{window_id}')"
 tm set-option -g renumber-windows off
 tm set-option -g default-shell /bin/sh
 tm set-option -g default-command "PATH=$BIN:\$PATH; export PATH; exec /bin/sh"
@@ -155,7 +156,8 @@ WATCH_ARGS="--repeat 60 --state $FLEET_STATE"
 # watch, two forks deep so a stopped one is reaped rather than left a zombie
 # that still answers kill -0. Sets PRED and OLD.
 new_predecessor() {
-  tm kill-window -a -t fleet:0
+  tm kill-window -a -t "$KEEP_WINDOW"
+  tm move-window -r -t fleet
   rm -f -- "$FLEET_STATE"
   run_oversee -- launch --wait-secs 20
   PRED="$(recorded pane)"
@@ -215,7 +217,8 @@ assert_eq "$(grep -c "^oversee-succeed: watch-restarted pid=$NEW pane=$SUCC $SET
 watch_stop "$NEW" "$FLEET_STATE" || true
 
 # No watch runs on the fleet state: nothing is started, and the run says so.
-tm kill-window -a -t fleet:0
+tm kill-window -a -t "$KEEP_WINDOW"
+tm move-window -r -t fleet
 rm -f -- "$FLEET_STATE"
 run_oversee -- launch --wait-secs 20
 PRED="$(recorded pane)"
@@ -273,7 +276,7 @@ if command -v setsid >/dev/null 2>&1; then
 #!/usr/bin/env bash
 "$REAL_TMUX" "\$@"
 rc=\$?
-if [ "\$1" = swap-window ]; then
+if [ "\$1" = kill-window ]; then
   pg=\$(ps -o pgid= -p \$\$ | tr -d ' ')
   [ "\$pg" = "$TEST_PGID" ] || kill -KILL -- "-\$pg"
 fi
@@ -313,7 +316,8 @@ chmod +x "$WSTUBS"/*
 WATCH_ENV=(PATH="$WSTUBS:$NO_MANAGER:$BIN:$PATH" ORCH_REPORT=off ORCH_WATCH_MAIL_INTERVAL=0
   OVERSEE_WATCH_SUCCEED="$WSTUBS/succeed" OVERSEE_WATCH_PR_WATCH="$WSTUBS/silent"
   OVERSEE_WATCH_TRACKER="$WSTUBS/silent" OVERSEE_WATCH_LANES="$WSTUBS/lanes")
-tm kill-window -a -t fleet:0
+tm kill-window -a -t "$KEEP_WINDOW"
+tm move-window -r -t fleet
 rm -f -- "$FLEET_STATE"
 run_oversee -- launch --wait-secs 20
 PRED="$(recorded pane)"

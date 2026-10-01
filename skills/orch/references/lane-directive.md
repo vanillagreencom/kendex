@@ -18,6 +18,8 @@ A model-free `--cmd` is an argument template starting with the plain harness nam
 
 ## Launch gate
 
+`open-terminal` refuses foreign GitHub repositories and, with `LINEAR_TEAM` configured, foreign Linear team keys as `item-foreign repo=[REPO] route=peer-mail`; route their prioritized tracker issues with `lane-mail peer send --repo [REPO]`, or ask a live registered master, else the owner, with a launch recommendation when no repository overseer runs.
+
 After applying [§ Lane preference](#lane-preference), `open-terminal` refuses a lane launch on a harness its flag table names that names no model, and one that names no effort where that harness has an effort flag, one keyed refusal per missing half, because a harness default changes without notice.
 
 `open-terminal` reads the model and the effort out of the one text the launch runs: the `--cmd` command where there is one, `--launch-flags` where there is not. It refuses a launch that names either nowhere, and refuses `--launch-flags` beside `--cmd`, which are appended to no command and reach nothing. For a preference walk on a named lane, it resolves and checks that lane once and asks each pick with `--projected`. It uses the successful pick at launch. An explicit-model launch judges the named lane on that model again, so a lane picked without `--model` can be refused here. A hosted launch, `--relaunch` included, is judged on the provider's reading of that window where its `accounts` row for the account carries one, and on this machine's reading otherwise; only an account nothing measured then turns on whether the provider holds it, per `open-terminal --help` § `--host`. It still names a model and an effort. The gate emits eleven refusals, each with its own answer:

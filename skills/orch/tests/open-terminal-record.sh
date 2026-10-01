@@ -246,7 +246,7 @@ RUN_TMUX=stub,1,0 run_ot --tmux --harness claude --lane "$LANE_DIR" --cmd "true 
 assert_eq "rc=$RC $(sed "s/ launched_at=[^ ]*//" <<<"$(record CC-2)")" \
   "rc=0 item=CC-2 tracker=linear repo=null harness=claude window=stub:CC-2 account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-2 surface=tmux model=opus effort=high session_id=null status=running over_cap=null allow_all=null" \
   "a tmux launch under a lane records its window, its account dir, the tmux surface and the model its own command names"
-RUN_TMUX=stub,1,0 run_ot --tmux --tracker github --repo o/r "${FLEET_CMD[@]}" 2709
+STUB_GH_REPO=o/r RUN_TMUX=stub,1,0 run_ot --tmux --tracker github --repo o/r "${FLEET_CMD[@]}" 2709
 assert_eq "rc=$RC $(record issue-2709 | sed -E 's/ (account|host|mail_root|surface|model|effort|session_id|launched_at|over_cap|allow_all)=[^ ]*//g')" \
   "rc=0 item=issue-2709 tracker=github repo=o/r harness=claude window=stub:gh-2709 status=running" \
   "a GitHub item is recorded under its workflow-state id with the window the watch reads it through"

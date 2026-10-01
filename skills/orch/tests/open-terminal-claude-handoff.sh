@@ -89,6 +89,7 @@ exit 0
 EOF
 cat > "$BIN/gh" <<'EOF'
 #!/usr/bin/env bash
+[[ "$*" != 'repo view --json nameWithOwner -q .nameWithOwner' ]] || { echo acme/widgets; exit 0; }
 exit 1
 EOF
 cat > "$BIN/tmux" <<'EOF'

@@ -17,8 +17,8 @@
 #   uid when $TMUX is unset.
 #
 #   create   opens a window named NAME (default overseer) with its shell in
-#            DIR, right after the window SESSION sits in, or at the end of the
-#            tmux session NAME when no predecessor is named, and types COMMAND
+#            DIR, at the base index of SESSION's tmux session or the named
+#            tmux session when no predecessor is named, and types COMMAND
 #            into it followed by Enter through lib/pane-write.sh, the one
 #            writer into a pane, which refuses a pane no longer at its
 #            shell. Prints one line, `session=%N
@@ -48,8 +48,8 @@
 #            proves the session is live and prints `deliver=watch-log
 #            session=%N`. A session the server no longer lists refuses.
 #   stop     closes the session's window. With --successor, the successor
-#            first takes the stopped session's window slot, in one client
-#            call, so no other window moves. Prints `stopped session=%N
+#            stays at the base index while the predecessor closes, in one
+#            client call. Prints `stopped session=%N
 #            window=@N`; a session the server no longer lists is already
 #            stopped and prints `window=none`.
 #
@@ -199,7 +199,7 @@ case "$VERB" in
     [[ -z "$AFTER" || -z "$TMUX_SESSION_NAME" ]] || die_status 2 option-conflict verb=create
     if [[ -n "$AFTER" ]]; then
       matches "$AFTER" '^%[0-9]+$' || die_status 2 invalid-session "value=$AFTER"
-      target="$(pane_field "$AFTER" '#{window_id}')" || die session-unreadable "session=$AFTER"
+      TMUX_SESSION_NAME="$(pane_field "$AFTER" '#{session_name}')" || die session-unreadable "session=$AFTER"
     else
       # Exact, by the library's one reading of tmux's answer: absent is a
       # missing session, anything else the call failing.
@@ -210,19 +210,18 @@ case "$VERB" in
         [[ "$probe" -eq 3 ]] || die tmux-failed operation=has-session "session=$TMUX_SESSION_NAME"
         die tmux-session-missing "session=$TMUX_SESSION_NAME"
       fi
-      if ! last_idx="$(tmux list-windows -t "=$TMUX_SESSION_NAME" -F '#{window_index}' 2>"$DEP_ERR" | tail -1)" \
-         || [[ -z "$last_idx" ]]; then
-        die create-failed step=list-windows "session=$TMUX_SESSION_NAME"
-      fi
-      target="=$TMUX_SESSION_NAME:$last_idx"
     fi
+    base_idx="$(tmux display-message -p -t "=$TMUX_SESSION_NAME:" '#{base-index}' 2>"$DEP_ERR")" \
+      || die create-failed step=base-index "session=$TMUX_SESSION_NAME"
+    matches "$base_idx" '^[0-9]+$' || die create-failed step=base-index "session=$TMUX_SESSION_NAME"
+    target="=$TMUX_SESSION_NAME:$base_idx"
     # From the window opening to the answer, a group signal would leave a window
     # no caller can name: create runs to its answer through these signals, the
     # pane write included, so the caller's close-out reads the session off it. A
     # tmux client sets its own HUP and TERM handlers once running, so only its
     # own brief run stays exposed.
     trap '' HUP INT TERM
-    spec="$(tmux new-window -d -a -t "$target" -n "$NAME" -c "$CWD" \
+    spec="$(tmux new-window -d -b -t "$target" -n "$NAME" -c "$CWD" \
       -P -F '#{pane_id} #{window_id} #{pid}' 2>"$DEP_ERR")" || die create-failed step=new-window
     read -r pane window server <<<"$spec"
     [[ -n "$window" && -n "$server" ]] || die create-failed step=new-window
@@ -289,10 +288,9 @@ case "$VERB" in
     window="$(pane_field "$SESSION" '#{window_id}')" || die session-unreadable "session=$SESSION" field=window_id
     if [[ -n "$SUCCESSOR" ]]; then
       succ_window="$(pane_field "$SUCCESSOR" '#{window_id}')" || die session-unreadable "session=$SUCCESSOR" field=window_id
-      # One client call: the successor takes the slot, then that window
-      # closes; with renumber-windows on, tmux renumbers as for any closed
-      # window.
-      tmux swap-window -d -s "$succ_window" -t "$window" \; kill-window -t "$window" \; select-window -t "$succ_window" \
+      # create already placed the successor at the base index. Swapping
+      # it into the predecessor's shifted slot would move it away again.
+      tmux kill-window -t "$window" \; select-window -t "$succ_window" \
         2>"$DEP_ERR" || die stop-failed "session=$SESSION" "window=$window" "successor=$SUCCESSOR"
     else
       tmux kill-window -t "$window" 2>"$DEP_ERR" || die stop-failed "session=$SESSION" "window=$window"

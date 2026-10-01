@@ -656,7 +656,7 @@ ol_record_line_identity() { # LINE
 # named NAME with its shell in CWD running LINE under `overseer-run`, which
 # writes the harness's exit status into the session record once LINE returns
 # (ol_record_exit), placed by PLACEMENT, which is
-# `--after SESSION` for a successor beside its predecessor or `--session
+# `--after SESSION` for a successor in its predecessor's session or `--session
 # NAME` for a first launch into a tmux session. Into OL_SESSION, OL_WINDOW
 # and OL_SERVER. Returns 1 with OL_REASON=create-failed; the provider's own
 # line is in DEP_ERR.
@@ -762,11 +762,11 @@ ol_session_abandon() {
 #   1. With PENDING `pending`, LINE and IDENTITY become the record's pending
 #      successor (ol_record_pending); `replay`, a relaunch of the line the
 #      record already holds, writes none.
-#   2. The runtime's `create` opens LINE in CWD right after PREDECESSOR.
+#   2. The runtime's `create` opens LINE in CWD at the session's base index.
 #   3. The record names the successor (ol_record_write over OL_PRIOR), where
 #      the caller's ol_record_read could read one.
 #   4. The session is verified (ol_session_verify, LANE_VAR to WAIT_SECS).
-#   5. The predecessor is stopped with the successor taking its slot: the
+#   5. The predecessor is stopped with the successor keeping the base index: the
 #      commit point, so HUP, INT and TERM are ignored from here on, and a
 #      caller running in the predecessor's own window ends with it.
 # The step order is this function's; what a failed record write at step 1 or

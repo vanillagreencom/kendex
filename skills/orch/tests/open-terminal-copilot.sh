@@ -47,7 +47,11 @@ cat > "$BIN/ghostty" <<'EOF'
 printf '%s\n' "${!#}" > "$OT_CAPTURE"
 exit 0
 EOF
-printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/gh"
+cat > "$BIN/gh" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" != 'repo view --json nameWithOwner -q .nameWithOwner' ]] || { echo acme/widgets; exit 0; }
+exit 1
+EOF
 # The harness a wake runs detached, in place of a terminal: its argv lands in
 # the capture the same way, and the environment it was handed beside it,
 # written first, so a row that waits for the capture finds it whole.

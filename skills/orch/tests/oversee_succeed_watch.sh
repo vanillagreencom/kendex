@@ -54,6 +54,7 @@ make_fetcher "$FETCHER"
 claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
 env PATH="$BIN:$PATH" tmux -L "$SOCK" -f /dev/null new-session -d -s fleet -x 220 -y 50 'exec sleep 100000'
+KEEP_WINDOW="$(tm display-message -p -t fleet:0 '#{window_id}')"
 tm set-option -g default-shell /bin/sh
 tm set-option -g default-command "PATH=$BIN:\$PATH; export PATH; exec /bin/sh"
 TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
@@ -68,7 +69,8 @@ SERVER_PID="$(tm display-message -p '#{pid}')"
 new_caller() {
   local f="$TMP_ROOT/caller.screen" spec
   printf '%s\n' "$MARK" > "$f"
-  tm kill-window -a -t fleet:0
+  tm kill-window -a -t "$KEEP_WINDOW"
+  tm move-window -r -t fleet
   spec="$(tm new-window -d -t fleet:1 -P -F '#{pane_id} #{window_id}' "cat '$f'; exec sleep 100000")"
   read -r CALLER_PANE CALLER_WINDOW <<<"$spec"
   mkdir -p "$TMP_ROOT/work/tmp/lane-mail/overseer"
@@ -131,7 +133,7 @@ run_succeed() {
     ORCH_QUESTION_TOOL=overseer \
     "${1:-$SUCCEED}" --context 950000:1000000 -- --permission-mode dontAsk --verbose 2>&1)" || RC=$?
   # The window the caller held, which the successor holds once the close ran.
-  SUCC_PANE="$(tm list-panes -t fleet:1 -F '#{pane_id}' 2>/dev/null || true)"
+  SUCC_PANE="$(tm list-panes -t fleet:0 -F '#{pane_id}' 2>/dev/null || true)"
 }
 
 # The stand-in watch: it records itself as the real loop does, with its words
@@ -320,7 +322,7 @@ if command -v setsid >/dev/null 2>&1; then
 #!/usr/bin/env bash
 "$REAL_TMUX" "\$@"
 rc=\$?
-if [ "\$1" = swap-window ]; then
+if [ "\$1" = kill-window ]; then
   pg=\$(ps -o pgid= -p \$\$ | tr -d ' ')
   [ "\$pg" = "$TEST_PGID" ] || kill -KILL -- "-\$pg"
 fi

@@ -146,8 +146,16 @@ received() {
 OT="$SCRIPTS_DIR/open-terminal"
 mkdir -p "$TMP_ROOT/home"
 
+# A valid file lets the repository refusal run before the quoted-placeholder
+# gate in brief rendering. The file read itself remains ahead of both gates.
+run_ot "$OT" "TMUX=;LINEAR_TEAM=kendex" --ghostty --harness claude \
+  --cmd "$HARNESS_STUB --model opus --effort high $QUESTION_OFF_ALL '{brief}'" --brief-file "$BRIEF_FILE" CC-5
+assert_eq "rc=$RC first=$(sed -n 1p <<<"$OUT") creates=$(grep -c '^create ' "$RUN/worktree.log")" \
+  "rc=1 first=open-terminal: item-foreign repo=CC route=peer-mail creates=0" \
+  "a foreign item refuses before brief rendering and creates no worktree" "$OUT"
+
 echo "=== a brief file reaches the harness verbatim on every launch path ==="
-run_ot "$OT" "TMUX=" --ghostty --harness claude --cmd "$CMD" --brief-file "$BRIEF_FILE" CC-1
+run_ot "$OT" "TMUX=" --ghostty --harness claude --cmd "$CMD" --brief-file "$BRIEF_FILE" KEN-1
 line="$(gui_line)" || line=""
 assert_eq "rc=$RC harness=$(received "$line")" "rc=0 harness=verbatim" \
   "the GUI launch hands bash -lc a line whose brief the harness receives verbatim" "$OUT"
@@ -156,7 +164,7 @@ TMUX_BRIEF_ASSERTION="the local tmux fleet launch pastes a line whose brief the 
 while IFS='|' read -r harness flags; do
   run_ot "$OT" "TMUX=stub,1,0;ORCH_TMUX_SESSION=stub;PI_CODING_AGENT_DIR=$PI_AGENT" \
     --tmux --state-dir "$TMP_ROOT/fleet-$RUN_SEQ" --harness "$harness" \
-    --cmd "$HARNESS_STUB $flags $QUESTION_OFF_ALL $COMPACTION_OFF_ALL {brief}" --brief-file "$BRIEF_FILE" CC-2
+    --cmd "$HARNESS_STUB $flags $QUESTION_OFF_ALL $COMPACTION_OFF_ALL {brief}" --brief-file "$BRIEF_FILE" KEN-2
   line="$(typed_line "clear; $HARNESS_STUB ")" || line=""
   assert_eq "rc=$RC harness=$(received "$line")" "rc=0 harness=verbatim" \
     "$TMUX_BRIEF_ASSERTION ($harness)" "$OUT"
@@ -168,7 +176,7 @@ ROWS
 # The provider's prefix is the reference one, a login shell, so the remote
 # shell reads the brief through one more quoting layer than a local pane.
 run_ot "$OT" "TMUX=stub,1,0;ORCH_TMUX_SESSION=stub;ORCH_LANE_ALIASES=eclaude=work;LANE_HOST_STUB_CREATE_LINE=ssh-target=lane.example"$'\t'"path=$REMOTE_LANE"$'\t'"remote-prefix=exec bash -lc" \
-  --host "$HOST_STUB" --harness claude --lane work --repo o/r --cmd "$CMD" --brief-file "$BRIEF_FILE" CC-3
+  --host "$HOST_STUB" --harness claude --lane work --repo o/r --cmd "$CMD" --brief-file "$BRIEF_FILE" KEN-3
 line="$(typed_line "exec bash -lc 'cd ")" || line=""
 assert_eq "rc=$RC ssh=$(grep -cxF "clear; ssh 'lane.example'" "$RUN/tmux.log") harness=$(received "$line")" "rc=0 ssh=1 harness=verbatim" \
   "the hosted launch types a remote line whose brief the harness receives verbatim through the provider's shell" "$OUT"
@@ -182,7 +190,7 @@ QUOTE_OT="$(mutant_scripts brief-double-quoted open-terminal)/open-terminal" || 
 git -C "$TMP_ROOT/brief-double-quoted" init -q
 orch_fixture_shared_libs "$TMP_ROOT/brief-double-quoted"
 mutate_file "$QUOTE_OT" 'quoted="$(lane_single_quote "$brief")"' 'quoted="\"$brief\""'
-run_ot "$QUOTE_OT" "TMUX=" --ghostty --harness claude --cmd "$CMD" --brief-file "$BRIEF_FILE" CC-4
+run_ot "$QUOTE_OT" "TMUX=" --ghostty --harness claude --cmd "$CMD" --brief-file "$BRIEF_FILE" KEN-4
 line="$(gui_line)" || line=""
 assert_eq "rc=$RC harness=$(received "$line")" "rc=0 harness=altered" \
   "control: a brief placed between bare double quotes reaches the harness altered" "$OUT"
@@ -198,7 +206,7 @@ mutate_file "$APPEND_OT" 'local text rendered="" quoted brief="$BRIEF_TEXT"' \
   'local text rendered="" quoted brief="${BRIEF_TEXT}"; if [[ "$HARNESS" == pi ]]; then brief+=" As your first step, arm the mailbox monitor .agents/skills/orch/scripts/lane-mail watch --item $mail_id through bg_task per watch-delivery.md."; fi'
 run_ot "$APPEND_OT" "TMUX=stub,1,0;ORCH_TMUX_SESSION=stub;PI_CODING_AGENT_DIR=$PI_AGENT" \
   --tmux --state-dir "$TMP_ROOT/fleet-$RUN_SEQ" --harness pi \
-  --cmd "$HARNESS_STUB --model github-copilot/claude-sonnet-5 --thinking high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL {brief}" --brief-file "$BRIEF_FILE" CC-2
+  --cmd "$HARNESS_STUB --model github-copilot/claude-sonnet-5 --thinking high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL {brief}" --brief-file "$BRIEF_FILE" KEN-2
 line="$(typed_line "clear; $HARNESS_STUB ")" || line=""
 APPEND_GOT="rc=$RC harness=$(received "$line")"
 assert_eq "$APPEND_GOT" "rc=0 harness=altered" \
@@ -218,7 +226,7 @@ echo "=== a brief file and its placeholder come as a pair ==="
 refusal_row() {
   local label="$1" ot="$2" key="$3" field="$4"
   shift 4
-  run_ot "$ot" "TMUX=" --ghostty --harness claude "$@" CC-5
+  run_ot "$ot" "TMUX=" --ghostty --harness claude "$@" KEN-5
   assert_eq "rc=$RC first=$(sed -n 1p <<<"$OUT") creates=$(grep -c '^create ' "$RUN/worktree.log")" \
     "rc=1 first=open-terminal: $key $field creates=0" "$label" "$OUT"
 }
@@ -227,7 +235,7 @@ refusal_row() {
 control_row() {
   local label="$1" ot="$2"
   shift 2
-  run_ot "$ot" "TMUX=" --ghostty --harness claude "$@" CC-5
+  run_ot "$ot" "TMUX=" --ghostty --harness claude "$@" KEN-5
   assert_eq "rc=$RC creates=$(grep -c '^create ' "$RUN/worktree.log")" "rc=0 creates=1" "$label" "$OUT"
 }
 # mutant NAME OLD NEW — sets MUTANT_OT to a copy of open-terminal with one
@@ -285,7 +293,7 @@ mutant brief-quoted 'if [[ "${text:i:7}" == "{brief}" &&' 'if false && [[ "${tex
 QUOTED_OT="$MUTANT_OT"
 for placed in "'{brief}'" '"{brief}"' '\{brief}'; do
   refusal_row "a {brief} written as $placed is refused before a worktree" \
-    "$OT" brief-quoted item=CC-5 --cmd "$HARNESS_STUB --model opus --effort high $QUESTION_OFF_ALL $placed" --brief-file "$BRIEF_FILE"
+    "$OT" brief-quoted item=KEN-5 --cmd "$HARNESS_STUB --model opus --effort high $QUESTION_OFF_ALL $placed" --brief-file "$BRIEF_FILE"
   control_row "control: without its refusal a {brief} written as $placed launches" \
     "$QUOTED_OT" --cmd "$HARNESS_STUB --model opus --effort high $QUESTION_OFF_ALL $placed" --brief-file "$BRIEF_FILE"
 done

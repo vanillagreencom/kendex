@@ -104,6 +104,7 @@ claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 
 env PATH="$BIN:$PATH" TMUX_TMPDIR="$TMUX_DIR" tmux -L default -f /dev/null new-session -d -s fleet -x 200 -y 40 'exec sleep 100000'
+KEEP_WINDOW="$(tm display-message -p -t fleet:0 '#{window_id}')"
 tm set-option -g renumber-windows off
 tm set-option -g default-shell /bin/sh
 tm set-option -g default-command "PATH=$BIN:\$PATH; export PATH; exec /bin/sh"
@@ -134,7 +135,7 @@ FLEET_STATE="$TMP_ROOT/work/tmp/workflow-state-oversee.json"
 recorded() { jq -r ".overseer.$1 // \"none\"" "$FLEET_STATE" 2>/dev/null || echo unreadable; }
 keyed() { awk -v k="oversee: $1" 'index($0, k) == 1 { found = 1 } found' <<<"$2"; }
 field() { sed -n "s/.* $2=\([^ ]*\).*/\1/p" <<<"$(sed -n 1p <<<"$1")"; }
-layout() { tm list-windows -t fleet -F '#{window_index} #{window_name}' | awk '$1 > 0' | tr '\n' ';'; }
+layout() { tm list-windows -t fleet -F '#{window_id} #{window_index} #{window_name}' | awk -v keep="$KEEP_WINDOW" '$1 != keep { print $2, $3 }' | tr '\n' ';'; }
 overseers() { tm list-windows -t fleet -F '#{window_name}' | awk '$0 == "overseer"' | wc -l | tr -d ' '; }
 listed() { tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$1" || true; }
 recorded_argv() { if [[ -f "$TMP_ROOT/argv.claude" ]]; then tr '\n' ';' < "$TMP_ROOT/argv.claude"; else printf 'none'; fi; }
@@ -150,8 +151,8 @@ run_oversee -- launch --wait-secs 20
 LAUNCHED="$(keyed overseer-launched "$OUT" | sed -n 1p)"
 SESSION="$(field "$LAUNCHED" session)"
 assert_eq "$RC|$(sed -n 's/window=@[0-9]*/window=@N/; s/session=%[0-9]*/session=%N/p' <<<"$LAUNCHED")|$(layout)|$(recorded_argv)" \
-  "0|oversee: overseer-launched session=%N window=@N server=$SOCKET generation=1 lane=$H/.claude|1 overseer;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
-  "a first launch from outside tmux opens the overseer at the end of the named session and records it"
+  "0|oversee: overseer-launched session=%N window=@N server=$SOCKET generation=1 lane=$H/.claude|0 overseer;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
+  "a first launch from outside tmux opens the overseer at the base index and records it"
 assert_eq "$(recorded runtime)|$(recorded server)|$(recorded server_start)|$(recorded pane)|$(recorded window)|$(recorded account)|$(recorded generation)|$(recorded launch_line)" \
   "tmux|$SERVER_PID|$SERVER_START|$SESSION|$(tm display-message -p -t "$SESSION" '#{window_id}')|$H/.claude|1|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high $BYPASS $(printf '%q' "$COMPACT") $(printf '%q' "$QUESTION_OFF") '$BRIEF'" \
   "the session record names the runtime, server and its start, pane, window, account, line and generation"
@@ -272,12 +273,34 @@ assert_eq "$RC|$(keyed overseer-not-working "$OUT" | sed -n 1p | sed 's/session=
   "1|oversee: overseer-not-working session=%N waited=N|1|0|3" \
   "a session that never shows a working turn is closed and the record put back"
 
+# No configured session: the repository name is the default, not tmux's current.
+RUN_DIR="$TMP_ROOT/fleet"
+mkdir -p "$RUN_DIR"
+PRIOR_FLEET_STATE="$FLEET_STATE"
+FLEET_STATE="$RUN_DIR/tmp/workflow-state-oversee.json"
+run_oversee ORCH_TMUX_SESSION= -- launch --wait-secs 20
+DEFAULT_SESSION="$(recorded pane)"
+assert_eq "$RC|$(tm display-message -p -t "$DEFAULT_SESSION" '#{session_name} #{window_index} #{window_name}')" \
+  "0|fleet 0 overseer" "an unset session defaults to the repository name at the base index"
+tm kill-window -t "$DEFAULT_SESSION"
+DEFAULTCTL="$(mutant_scripts defaultctl oversee)" || exit 1
+# shellcheck source=lib/shared-skill-libs.sh
+source "$TEST_DIR/lib/shared-skill-libs.sh"
+orch_fixture_shared_libs "$TMP_ROOT/defaultctl"
+mutate_file "$DEFAULTCTL/oversee" '1) SESSION_NAME="${PROJECT_ROOT##*/}" ;;' '1) SESSION_NAME="wrong-repository" ;;'
+OVERSEE_BIN="$DEFAULTCTL/oversee" run_oversee ORCH_TMUX_SESSION= -- launch --wait-secs 20
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  "1|oversee: tmux-session-missing session=wrong-repository server=$SOCKET" \
+  "control: the wrong default session refuses the same launch"
+RUN_DIR=""
+FLEET_STATE="$PRIOR_FLEET_STATE"
+
 # The refusals before anything opens.
 for row in \
   "ORCH_OVERSEER_PREFERENCE=|preference-empty setting=ORCH_OVERSEER_PREFERENCE|an empty preference" \
   "ORCH_OVERSEER_PREFERENCE=claude:Opus:high|invalid-preference entry=claude:Opus:high|an entry outside the shape" \
   "ORCH_OVERSEER_PREFERENCE=claude:claude-sonnet-4-6:high|model-window-unknown entry=claude:claude-sonnet-4-6:high model=claude-sonnet-4-6|a claude model the adapter names no window for" \
-  "ORCH_TMUX_SESSION=|session-unresolved consulted=--session,ORCH_TMUX_SESSION|no session named" \
+  "ORCH_TMUX_SESSION=|tmux-session-missing session=work server=$SOCKET|the default repository session is absent" \
   "ORCH_TMUX_SESSION=fleetz|tmux-session-missing session=fleetz server=$SOCKET|a session tmux does not hold" \
   "ORCH_OVERSEER_HOST=$TMP_ROOT/other|runtime-unsupported host=$TMP_ROOT/other|a runtime other than tmux" \
   "ORCH_OVERSEER_HEADROOM_PCT=101|invalid-headroom-trigger ORCH_OVERSEER_HEADROOM_PCT=101|a headroom trigger past 100" \
@@ -737,13 +760,13 @@ tm kill-window -t "$UNNAMED_PANE"
 run_oversee -- launch --wait-secs 20
 PRED="$(recorded pane)"
 PRED_GEN="$(recorded generation)"
-PRED_INDEX="$(tm display-message -p -t "$PRED" '#{window_index}')"
+PRED_INDEX="$(tm show-options -Av -t fleet base-index)"
 run_oversee -- launch --predecessor "$PRED" --wait-secs 20
 SUCCEEDED="$(keyed overseer-launched "$OUT" | sed -n 1p)"
 SUCC="$(field "$SUCCEEDED" session)"
 assert_eq "$RC|$(sed 's/window=@[0-9]*/window=@N/; s/session=%[0-9]*/session=%N/' <<<"$SUCCEEDED")|$(overseers)|$(recorded pane)|$(recorded generation)|$(recorded pending)|$(tm display-message -p -t "$SUCC" '#{window_index}')|$(listed "$PRED")" \
   "0|oversee: overseer-launched session=%N window=@N server=$SOCKET generation=$((PRED_GEN + 1)) lane=$H/.claude predecessor=$PRED|1|$SUCC|$((PRED_GEN + 1))|none|$PRED_INDEX|0" \
-  "a launch naming the live overseer as predecessor opens its successor in its slot, stops it and records the next generation"
+  "a launch naming the live overseer as predecessor opens its successor at the base index, stops it and records the next generation"
 # A predecessor other than the live recorded overseer is refused before
 # anything opens, naming the live one, or none where none is recorded: a pane
 # the fleet never recorded, which the succession would otherwise stop.
@@ -819,8 +842,8 @@ assert_eq "$PENDING_SEEN" "none" "control: a succession that skips the pending w
 # tmux on the run's PATH refuses the swap `stop --successor` makes.
 STOP_BIN="$TMP_ROOT/stop-refused-bin"
 mkdir -p "$STOP_BIN"
-printf '#!/bin/sh\n[ "$1" != swap-window ] || { echo "fixture: swap refused" >&2; exit 1; }\nexec %s "$@"\n' \
-  "$(command -v tmux)" > "$STOP_BIN/tmux"
+printf '#!/bin/sh\n[ "$1 $3" != "kill-window %s" ] || { echo "fixture: stop refused" >&2; exit 1; }\nexec %s "$@"\n' \
+  "$(recorded window)" "$(command -v tmux)" > "$STOP_BIN/tmux"
 chmod +x "$STOP_BIN/tmux"
 stop_refused() { # [OVERSEE_BIN]
   PRED_GEN="$(recorded generation)"

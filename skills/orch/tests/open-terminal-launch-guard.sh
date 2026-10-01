@@ -56,6 +56,7 @@ exit 1
 EOF
 cat > "$BIN/gh" <<'EOF'
 #!/usr/bin/env bash
+[[ "$*" != 'repo view --json nameWithOwner -q .nameWithOwner' ]] || { echo o/r; exit 0; }
 exit 1
 EOF
 chmod +x "$BIN/term" "$BIN/tmux" "$BIN/gh"
@@ -69,6 +70,7 @@ cat > "$STUB" <<EOF
 set -euo pipefail
 [[ "\${1:-}" == "create" ]] || { echo "unexpected worktree stub call: \$*" >&2; exit 1; }
 case "\$STUB_MODE" in
+  valid) d="$TMP_ROOT/wt/\${2:-item}"; mkdir -p "\$d"; git init -q "\$d"; printf '%s\n' "\$d"; exit 0 ;;
   empty)   exit 0 ;;
   missing) printf '%s\n' "$TMP_ROOT/gone/\${2:-item}"; exit 0 ;;
 esac
@@ -90,6 +92,17 @@ stage() {
 
 REPO="$TMP_ROOT/repo"
 stage "$REPO" "$SRC_OT"
+mkdir -p "$REPO/.agents/skills/linear/scripts"
+cat > "$REPO/.agents/skills/linear/scripts/linear.sh" <<'EOF'
+#!/bin/sh
+[ "$*" = 'teams get Checkout team --format raw' ] || exit 2
+case "${TEAM_READ:-ok}" in
+  ok) printf '{"team":{"key":"CC"}}\n' ;;
+  invalid) printf '{"team":null}\n' ;;
+  failed) exit 7 ;;
+esac
+EOF
+chmod +x "$REPO/.agents/skills/linear/scripts/linear.sh"
 
 # run NAME OT MODE ARGS... — sets RC, ERR, TERM_LOG_TEXT and TMUX_LOG_TEXT.
 run() {
@@ -99,7 +112,9 @@ run() {
   : > "$term_log"
   : > "$tmux_log"
   set +e
-  PATH="$BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/$name.state" WORKTREE_CLI="$STUB" STUB_MODE="$mode" \
+  env -i HOME="$TMP_ROOT" PATH="$BIN:$PATH" ORCH_LANE_HOST=local \
+    LINEAR_TEAM="${OT_LINEAR_TEAM:-}" TEAM_READ="${OT_TEAM_READ:-ok}" GH_REPO="${OT_GH_REPO:-}" \
+    ORCH_STATE_DIR="$TMP_ROOT/$name.state" WORKTREE_CLI="$STUB" STUB_MODE="$mode" \
     OT_TERM_LOG="$term_log" OT_TMUX_LOG="$tmux_log" \
     TMUX="${OT_TMUX_VALUE:-}" ORCH_TMUX_SESSION=stub TERMINAL=term \
     "$ot" --cmd 'echo {item}' "$@" >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err"
@@ -168,6 +183,45 @@ run mutant "$MUTANT_OT" missing --ghostty CC-1
 assert_eq "$RC" "0" "control: without the guard the deleted-path launch is reported as successful"
 assert_contains "$TERM_LOG_TEXT" "term -e bash -lc" \
   "control: and a terminal really is opened at the directory that is gone"
+
+# open-terminal's tracker arguments produce these two foreign item forms.
+# The checkout's GitHub identity is independent of --repo and GH_REPO.
+for tracker in github linear; do
+  args=(--ghostty)
+  OT_LINEAR_TEAM="" OT_GH_REPO=""
+  case "$tracker" in
+    github) args+=(--tracker github --repo other/repo 42); foreign=other/repo; OT_GH_REPO=other/repo ;;
+    linear) args+=(OTHER-42); foreign=OTHER; OT_LINEAR_TEAM='Checkout team' ;;
+  esac
+  run "foreign-$tracker" "$REPO/scripts/open-terminal" valid "${args[@]}"
+  assert_eq "$RC|${ERR%%$'\n'*}|$TERM_LOG_TEXT|$TMUX_LOG_TEXT" \
+    "1|open-terminal: item-foreign repo=$foreign route=peer-mail||" \
+    "$tracker foreign item refuses and launches nothing"
+  MUTANT_REPO="$TMP_ROOT/foreign-$tracker"
+  MUTANT_OT="$(mutant_scripts "foreign-$tracker" open-terminal)/open-terminal" || exit 1
+  git -C "$MUTANT_REPO" init -q
+  orch_fixture_shared_libs "$MUTANT_REPO"
+  mkdir -p "$MUTANT_REPO/.agents/skills/linear/scripts"
+  cp "$REPO/.agents/skills/linear/scripts/linear.sh" "$MUTANT_REPO/.agents/skills/linear/scripts/"
+  mutate_file "$MUTANT_OT" 'if [[ "$repo_match" != true ]]; then' \
+    'if false && [[ "$repo_match" != true ]]; then'
+  run "foreign-$tracker-control" "$MUTANT_OT" valid "${args[@]}"
+  assert_eq "$RC" 0 "$tracker control: removing the refusal admits the foreign item"
+  assert_contains "$TERM_LOG_TEXT" 'term -e bash -lc' "$tracker control: a terminal opens"
+done
+OT_LINEAR_TEAM='Checkout team' OT_GH_REPO=""
+run own-linear "$REPO/scripts/open-terminal" valid --ghostty cc-42
+assert_eq "$RC" 0 "the configured team name resolves to its key and admits the canonical item"
+OT_LINEAR_TEAM=""
+run own-github "$REPO/scripts/open-terminal" valid --ghostty --tracker github --repo O/R 42
+assert_eq "$RC" 0 "GitHub repository identity comparison ignores case"
+OT_LINEAR_TEAM='Checkout team'
+for OT_TEAM_READ in failed invalid; do
+  run "team-$OT_TEAM_READ" "$REPO/scripts/open-terminal" valid --ghostty CC-42
+  assert_eq "$RC|${ERR%%$'\n'*}|$TERM_LOG_TEXT|$TMUX_LOG_TEXT" \
+    '1|open-terminal: item-repo-unresolved tracker=linear team=Checkout team||' \
+    "a $OT_TEAM_READ configured team read launches nothing"
+done
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

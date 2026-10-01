@@ -16,7 +16,9 @@ SRC_DIR="$(cd "$TEST_DIR/../scripts" && pwd)"
 HOST="$SRC_DIR/overseer-host"
 PROVIDER="$SRC_DIR/overseer-host-tmux"
 
-TMP_ROOT="$(mktemp -d)"
+TMP_ROOT="$(mktemp -d)" || { echo "overseer-host: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "overseer-host: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "overseer-host: scratch=resolve-failed" >&2; exit 1; }
 SOCK="overseer-host-$$"
 cleanup() {
   tmux -L "$SOCK" kill-server 2>/dev/null || true
@@ -85,11 +87,12 @@ tm set-option -g default-shell /bin/sh
 tm set-option -g default-command "exec /bin/sh"
 TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 SERVER_PID="$(tm display-message -p '#{pid}')"
+KEEP_WINDOW="$(tm display-message -p -t fleet:0 '#{window_id}')"
 run_tmux() { # ARGS...
   RC=0
   OUT="$(cd "$TMP_ROOT/work" && env -i HOME="$TMP_ROOT" PATH="${RUN_PATH:-$PATH}" TMUX="$TMUX_ADDR" "${PROVIDER_BIN:-$HOST}" "$@" 2>&1 </dev/null)" || RC=$?
 }
-layout() { tm list-windows -t fleet -F '#{window_index} #{window_name}' | awk '$1 > 0' | tr '\n' ';'; }
+layout() { tm list-windows -t fleet -F '#{window_id} #{window_name}' | awk -v keep="$KEEP_WINDOW" '$1 != keep { print $2 }' | sort | tr '\n' ';'; }
 field() { awk -v k="$2=" 'NR == 1 { for (i = 1; i <= NF; i++) if (index($i, k) == 1) { print substr($i, length(k) + 1); exit } }' <<<"$1"; }
 # A pane at INDEX running COMMAND, its pane id printed. The window is named
 # for the index so a layout reads which one moved.
@@ -105,17 +108,20 @@ wait_for() { # PANE TEXT
   return 1
 }
 
-# create after a predecessor: the window lands right after the predecessor's
-# index, named overseer, in the directory named, and runs the line typed.
-tm kill-window -a -t fleet:0
+# create after a predecessor: the window starts at the base index, named
+# overseer, in the directory named, and runs the line typed.
+tm kill-window -a -t "$KEEP_WINDOW"
+tm move-window -r -t fleet
 PRED="$(new_pane 3 'exec sleep 100000')"
 new_pane 5 'exec sleep 100000' >/dev/null
 run_tmux create --cwd "$TMP_ROOT/work" --after "$PRED" --line "pwd > $TMP_ROOT/typed; printf 'esc to interrupt\\n'; exec sleep 100000"
 SESSION="$(field "$OUT" session)"; WINDOW="$(field "$OUT" window)"
 wait_for "$SESSION" 'esc to interrupt' || true
 assert_eq "$RC|$(layout)|$(field "$OUT" server)|$(cat "$TMP_ROOT/typed" 2>/dev/null)|$(tm display-message -p -t "$SESSION" '#{window_id}')" \
-  "0|3 w3;4 overseer;5 w5;|$SERVER_PID|$TMP_ROOT/work|$WINDOW" \
-  "create --after opens the window right after the predecessor's and types the line"
+  "0|overseer;w3;w5;|$SERVER_PID|$TMP_ROOT/work|$WINDOW" \
+  "create --after opens the window at the base index and types the line"
+assert_eq "$(tm display-message -p -t "$SESSION" '#{window_index} #{window_name}')" "0 overseer" \
+  "create --after reads back the actual base-index placement"
 
 # inspect --launch: the first-turn reading over the whole screen.
 run_tmux inspect --launch --session "$SESSION"
@@ -263,52 +269,58 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "4|overseer-host-tmux: session-gone session=%999" \
   "deliver on a session the server does not list refuses at 4"
 
-# stop with a successor: the successor takes the predecessor's index in one
-# client call and nothing else moves.
+# stop with a successor: close the predecessor without moving the successor
+# away from the base index create gave it.
 SUCC_WINDOW="$(tm display-message -p -t "$SESSION" '#{window_id}')"
 PRED_WINDOW="$(tm display-message -p -t "$PRED" '#{window_id}')"
 run_tmux stop --session "$PRED" --successor "$SESSION"
 assert_eq "$RC|$OUT|$(layout)|$(tm display-message -p -t "$SESSION" '#{window_id}')" \
-  "0|stopped session=$PRED window=$PRED_WINDOW|3 overseer;5 w5;7 w7;8 w8;9 w9;10 w10;|$SUCC_WINDOW" \
-  "stop --successor swaps the successor into the predecessor's slot and closes it"
-# The must-fail control: a provider whose stop only kills the predecessor
-# leaves the successor at its own index and a gap where the caller sat.
+  "0|stopped session=$PRED window=$PRED_WINDOW|overseer;w10;w5;w7;w8;w9;|$SUCC_WINDOW" \
+  "stop --successor closes the predecessor and keeps the successor's window"
+assert_eq "$(tm display-message -p -t "$SESSION" '#{window_index} #{window_name}')" "0 overseer" \
+  "stop --successor keeps the base-index placement"
+# The must-fail control restores the swap that moves the successor away
+# from the base index after create.
 MUTANT="$(mutant_scripts mutant overseer-host-tmux)" || exit 1
 mutate_file "$MUTANT/overseer-host-tmux" \
-  '      tmux swap-window -d -s "$succ_window" -t "$window" \; kill-window -t "$window" \; select-window -t "$succ_window" \' \
-  '      tmux kill-window -t "$window" \'
-tm kill-window -a -t fleet:0
+  '      tmux kill-window -t "$window" \; select-window -t "$succ_window" \' \
+  '      tmux swap-window -d -s "$succ_window" -t "$window" \; kill-window -t "$window" \; select-window -t "$succ_window" \'
+tm kill-window -a -t "$KEEP_WINDOW"
+tm move-window -r -t fleet
 PRED2="$(new_pane 3 'exec sleep 100000')"
 new_pane 5 'exec sleep 100000' >/dev/null
 run_tmux create --cwd "$TMP_ROOT/work" --after "$PRED2" --line "exec sleep 100000"
 SUCC2="$(field "$OUT" session)"
 PROVIDER_BIN="$MUTANT/overseer-host-tmux" run_tmux stop --session "$PRED2" --successor "$SUCC2"
-assert_eq "$RC|$(layout)" \
-  "0|4 overseer;5 w5;" \
-  "control: without the swap the successor keeps index 4 and the predecessor's slot is a gap"
+assert_eq "$RC|$(layout)" "0|overseer;w5;" "control: the swapped successor still exists"
+MISPLACED_INDEX="$(tm display-message -p -t "$SUCC2" '#{window_index}')"
+if [[ "$MISPLACED_INDEX" == 0 ]]; then MISPLACED_AT_BASE=yes; else MISPLACED_AT_BASE=no; fi
+assert_eq "$MISPLACED_AT_BASE" no \
+  "control: the swap moves the successor away from the base index"
 
 # stop alone, then on a session already gone: the second is a stop with
 # nothing left to do, never a failure.
 SUCC2_WINDOW="$(tm display-message -p -t "$SUCC2" '#{window_id}')"
 run_tmux stop --session "$SUCC2"
 assert_eq "$RC|$OUT|$(layout)" \
-  "0|stopped session=$SUCC2 window=$SUCC2_WINDOW|5 w5;" \
+  "0|stopped session=$SUCC2 window=$SUCC2_WINDOW|w5;" \
   "stop closes the session's window"
 run_tmux stop --session "$SUCC2"
 assert_eq "$RC|$OUT" \
   "0|stopped session=$SUCC2 window=none" \
   "stop on a session the server no longer lists is already done"
 
-# create into a session: appended after its last window, and a session tmux
+# create into a session: the configured base index, and a session tmux
 # does not hold is refused before anything opens.
+tm set-option -t fleet base-index 2
 run_tmux create --cwd "$TMP_ROOT/work" --session fleet --name overseer --line "exec sleep 100000"
 FIRST="$(field "$OUT" session)"
-assert_eq "$RC|$(layout)" \
-  "0|5 w5;6 overseer;" \
-  "create --session appends the window after the session's last"
+assert_eq "$RC|$(layout)|$(tm display-message -p -t "$FIRST" '#{window_index} #{window_name}')" \
+  "0|overseer;w5;|2 overseer" \
+  "create --session reads back the configured base index"
 run_tmux create --cwd "$TMP_ROOT/work" --session fleetz --line "exec sleep 100000"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(layout)" \
-  "1|overseer-host-tmux: tmux-session-missing session=fleetz|5 w5;6 overseer;" \
+  "1|overseer-host-tmux: tmux-session-missing session=fleetz|overseer;w5;" \
   "create into a session tmux does not hold refuses naming it"
 # A pane write that fails once the window is open closes that window again: a
 # tmux shim on PATH fails the paste, and the layout is what it was.
@@ -322,7 +334,7 @@ chmod +x "$BIN/tmux"
 PATH="$BIN:$PATH" run_tmux create --cwd "$TMP_ROOT/work" --session fleet --line "exec sleep 100000"
 rm -f -- "${BIN:?}/tmux"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT" | sed 's/window=@[0-9]*/window=@N/')|$(layout)" \
-  "1|overseer-host-tmux: create-failed step=pane-write window=@N|5 w5;6 overseer;" \
+  "1|overseer-host-tmux: create-failed step=pane-write window=@N|overseer;w5;" \
   "create whose pane write fails closes the window it opened"
 # A has-session answer that is not "can't find session" is the call failing,
 # not a missing session: TMUX pointed at a socket with no server refuses
@@ -331,6 +343,14 @@ OUT="$(cd "$TMP_ROOT/work" && env -i HOME="$TMP_ROOT" PATH="$PATH" TMUX="$TMP_RO
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "1|overseer-host-tmux: tmux-failed operation=has-session session=fleet" \
   "create against a socket with no server refuses tmux-failed, not a missing session"
+tm move-window -s "$FIRST" -t fleet:2
+CREATECTL="$(mutant_scripts createctl overseer-host-tmux)" || exit 1
+mutate_file "$CREATECTL/overseer-host-tmux" 'tmux new-window -d -b -t "$target"' 'tmux new-window -d -a -t "$target"'
+PROVIDER_BIN="$CREATECTL/overseer-host-tmux" run_tmux create --cwd "$TMP_ROOT/work" --session fleet --line "exec sleep 100000"
+MISPLACED="$(field "$OUT" session)"
+assert_eq "$RC|$(tm display-message -p -t "$MISPLACED" '#{window_index}')" "0|3" \
+  "control: insertion after the base window moves the new overseer away from the base index"
+run_tmux stop --session "$MISPLACED"
 run_tmux create --cwd "$TMP_ROOT/work" --session fleet --after "$FIRST" --line "exec sleep 100000"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "2|overseer-host-tmux: option-conflict verb=create" \

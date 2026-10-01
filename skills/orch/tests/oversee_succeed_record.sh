@@ -86,6 +86,7 @@ jq -n '{compaction: {enabled: false}}' > "$PI_AGENT/settings.json"
 printf 'payload.context_window = usage.contextWindow;\n' > "$PI_AGENT/packages/@vanillagreen/pi-hooks/extensions/stop.ts"
 
 env PATH="$BIN:$PATH" tmux -L "$SOCK" -f /dev/null new-session -d -s fleet -x 220 -y 50 'exec sleep 100000'
+KEEP_WINDOW="$(tm display-message -p -t fleet:0 '#{window_id}')"
 tm set-option -g default-shell /bin/sh
 # A relaunch types its line into a fresh pane: a non-login shell under this
 # fixture's PATH, so the stubs above are the harness it runs.
@@ -105,7 +106,8 @@ MAILBOX_DIR="$TMP_ROOT/work/tmp/lane-mail/overseer"
 new_caller() {
   local cmd="exec sleep 100000"
   [[ "${1:-}" != claude ]] || cmd="exec '$BIN/hclaude' 100000"
-  tm kill-window -a -t fleet:0
+  tm kill-window -a -t "$KEEP_WINDOW"
+  tm move-window -r -t fleet
   rm -f -- "${MAILBOX_DIR:?}/$LANE_CONTEXT_RECORD"
   CALLER_PANE="$(tm new-window -d -t fleet:1 -P -F '#{pane_id}' "$cmd")"
 }
@@ -463,7 +465,8 @@ assert_eq "$RC|$OUT" "0|env CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer -
 # where no pi project settings stand.
 PI_BRIEF="'/skill:orch oversee after reading the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'"
 pi_print_row() { # [SUCCEED_BIN] [MODEL]
-  tm kill-window -a -t fleet:0
+  tm kill-window -a -t "$KEEP_WINDOW"
+  tm move-window -r -t fleet
   CALLER_PANE="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id}' 'exec sleep 100000')"
   state none
   SUCCEED_BIN="${1:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line --harness pi \
@@ -488,7 +491,8 @@ assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: invalid-harness value
 # bare model names no provider and no account, and is refused rather than
 # printed with no lane.
 pi_claude_row() { # MODEL [SUCCEED_BIN]
-  tm kill-window -a -t fleet:0
+  tm kill-window -a -t "$KEEP_WINDOW"
+  tm move-window -r -t fleet
   CALLER_PANE="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id}' 'exec sleep 100000')"
   state none
   SUCCEED_BIN="${2:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.eclaude" --print-launch-line --harness pi \
@@ -512,7 +516,8 @@ assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: pi-account-unknown mo
 mkdir -p "$TMP_ROOT/pibin"
 cp "$(command -v sleep)" "$TMP_ROOT/pibin/pi"
 pi_reading_row() { # [SUCCEED_BIN]
-  tm kill-window -a -t fleet:0
+  tm kill-window -a -t "$KEEP_WINDOW"
+  tm move-window -r -t fleet
   CALLER_PANE="$(tm new-window -d -t fleet:1 -P -F '#{pane_id}' "exec '$TMP_ROOT/pibin/pi' 100000")"
   mkdir -p "$MAILBOX_DIR"
   lane_context_record "$MAILBOX_DIR" pi 100000 1000000 pi-claude/claude-opus-5 "" "$SERVER_PID $CALLER_PANE"

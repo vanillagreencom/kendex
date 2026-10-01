@@ -67,6 +67,7 @@ EOF
 cat > "$BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${0##*/}" == lanes ]]; then [[ "$*" == "list --local --harness codex --json" ]] || exit 1; printf '%s\n' "${CODEX_INVENTORY:-[]}"; exit; fi
+[[ "$*" != 'repo view --json nameWithOwner -q .nameWithOwner' ]] || { echo o/r; exit 0; }
 exit 1
 EOF
 chmod +x "$BIN/ghostty" "$BIN/gh"

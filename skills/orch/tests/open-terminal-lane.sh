@@ -531,18 +531,18 @@ echo "=== a lane is resolved before anything launches ==="
 # (a malformed setting) is reported as that failure, never as a covered lane.
 table \
   "--help exits 0 outside a git repository|cwd=$NOREPO|--help|rc=0 stdout=line" \
-  "no lane under the threshold: nothing launched, no worktree created|$CHOICE_CMD|--harness claude --lane auto --lane-max-pct 15 CC-1|rc=1 launched=nolog creates=nolog" \
-  "an explicit --lane that is not a directory is refused|$CHOICE|--harness claude --lane /nonexistent/lane CC-1|rc=1 launched=nolog" \
-  "an unknown --lane alias is refused|ORCH_LANE_ALIASES=eclaude=work;$CHOICE_CMD|--harness claude --lane nosuchlane CC-1|rc=1 launched=nolog" \
-  "a retired lane named by its alias is refused before anything launches|ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_RETIRE=eclaude=2000-01-01;$CHOICE_CMD|--harness claude --lane work CC-1|rc=1 launched=nolog refused=lane=work" \
-  "an excluded lane named by its config dir is refused before anything launches|ORCH_LANE_EXCLUDE=eclaude;$CHOICE_CMD|--harness claude --lane $H/.eclaude CC-1|rc=1 launched=nolog refused=lane=$H/.eclaude" \
-  "an excluded lane's alias is refused even beside a same-named cwd directory|ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_EXCLUDE=eclaude;cwd=$COLLIDE;$CHOICE_CMD|--harness claude --lane work CC-1|rc=1 launched=nolog refused=lane=work" \
-  "an excluded lane's alias with no same-named directory is refused, not unknown|ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_EXCLUDE=eclaude;cwd=$BARE;$CHOICE_CMD|--harness claude --lane work CC-1|rc=1 launched=nolog refused=lane=work" \
-  "a named lane whose check fails on a malformed setting is a resolution failure, not a refusal|ORCH_LANES_USAGE_TTL=soon;$CHOICE_CMD|--harness claude --lane $H/.eclaude CC-1|rc=1 launched=nolog refused=none failed=exit=1" \
-  "an ALIAS-spelled lane whose lookup fails on the same setting is that failure too, never an unknown alias|ORCH_LANE_ALIASES=eclaude=work;ORCH_LANES_USAGE_TTL=soon;$CHOICE_CMD|--harness claude --lane work CC-1|rc=1 launched=nolog refused=none failed=exit=1"
+  "no lane under the threshold: nothing launched, no worktree created|$CHOICE_CMD|--harness claude --lane auto --lane-max-pct 15 KEN-1|rc=1 launched=nolog creates=nolog" \
+  "an explicit --lane that is not a directory is refused|$CHOICE|--harness claude --lane /nonexistent/lane KEN-1|rc=1 launched=nolog" \
+  "an unknown --lane alias is refused|ORCH_LANE_ALIASES=eclaude=work;$CHOICE_CMD|--harness claude --lane nosuchlane KEN-1|rc=1 launched=nolog" \
+  "a retired lane named by its alias is refused before anything launches|ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_RETIRE=eclaude=2000-01-01;$CHOICE_CMD|--harness claude --lane work KEN-1|rc=1 launched=nolog refused=lane=work" \
+  "an excluded lane named by its config dir is refused before anything launches|ORCH_LANE_EXCLUDE=eclaude;$CHOICE_CMD|--harness claude --lane $H/.eclaude KEN-1|rc=1 launched=nolog refused=lane=$H/.eclaude" \
+  "an excluded lane's alias is refused even beside a same-named cwd directory|ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_EXCLUDE=eclaude;cwd=$COLLIDE;$CHOICE_CMD|--harness claude --lane work KEN-1|rc=1 launched=nolog refused=lane=work" \
+  "an excluded lane's alias with no same-named directory is refused, not unknown|ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_EXCLUDE=eclaude;cwd=$BARE;$CHOICE_CMD|--harness claude --lane work KEN-1|rc=1 launched=nolog refused=lane=work" \
+  "a named lane whose check fails on a malformed setting is a resolution failure, not a refusal|ORCH_LANES_USAGE_TTL=soon;$CHOICE_CMD|--harness claude --lane $H/.eclaude KEN-1|rc=1 launched=nolog refused=none failed=exit=1" \
+  "an ALIAS-spelled lane whose lookup fails on the same setting is that failure too, never an unknown alias|ORCH_LANE_ALIASES=eclaude=work;ORCH_LANES_USAGE_TTL=soon;$CHOICE_CMD|--harness claude --lane work KEN-1|rc=1 launched=nolog refused=none failed=exit=1"
 
 # The separator-bearing path cannot ride through a table row's word split.
-run_ot "$CHOICE_CMD" --harness claude --lane "$TABBED" CC-21
+run_ot "$CHOICE_CMD" --harness claude --lane "$TABBED" KEN-21
 assert_eq "$(observe "rc=1 launched=nolog")" "rc=1 launched=nolog" "a tab-bearing lane config dir is refused"
 
 echo "=== a lane launch names a model and an effort, or nothing launches ==="
@@ -558,23 +558,23 @@ echo "=== a lane launch names a model and an effort, or nothing launches ==="
 # `model_reasoning_effort=` config token, pi `--model` and `--thinking`, and
 # opencode's launch form has no effort flag at all, so it asks the model alone.
 table \
-  "a launch naming a model and no effort is refused, naming the flag that harness takes|cmd=true --model opus|--harness claude --lane $H/.claude CC-81|rc=1 launched=nolog creates=nolog modelmissing=none effortmissing=harness=claude,lane=$H/.claude,spellings=--effort" \
-  "a launch naming neither is refused for both, one keyed line each||--harness claude --lane $H/.claude --cmd true CC-82|rc=1 launched=nolog creates=nolog modelmissing=harness=claude,lane=$H/.claude,spellings=--model effortmissing=harness=claude,lane=$H/.claude,spellings=--effort" \
-  "a pi launch naming neither is refused the same way, on pi's own spellings||--harness pi --lane $H/.claude --cmd true CC-83|rc=1 launched=nolog creates=nolog modelmissing=harness=pi,lane=$H/.claude,spellings=--model effortmissing=harness=pi,lane=$H/.claude,spellings=--thinking" \
-  "a codex launch naming neither is refused on codex's config-token spelling of the effort||--harness codex --lane $H/.claude --cmd true CC-84|rc=1 launched=nolog creates=nolog modelmissing=harness=codex,lane=$H/.claude,spellings=-m,--model effortmissing=harness=codex,lane=$H/.claude,spellings=model_reasoning_effort=" \
-  "a copilot launch naming neither is refused on copilot's own spellings||--harness copilot --lane $H/.claude --cmd true CC-184|rc=1 launched=nolog creates=nolog modelmissing=harness=copilot,lane=$H/.claude,spellings=--model effortmissing=harness=copilot,lane=$H/.claude,spellings=--reasoning-effort" \
-  "a relaunch naming neither is refused too, the choice being the launch's and not the session's||--harness claude --relaunch --lane $H/.claude --cmd true CC-85|rc=1 launched=nolog modelmissing=harness=claude,lane=$H/.claude,spellings=--model" \
-  "a launch naming both launches, which is what the usage gate below then judges|$CHOICE_CMD|--harness claude --lane $H/.claude CC-86|rc=0 launched=1 modelmissing=none effortmissing=none" \
-  "opencode has no effort flag to name, so its launch asks the model alone|cmd=true --model anthropic/claude-opus-5|--harness opencode --lane $H/.claude CC-87|rc=0 launched=1 modelmissing=none effortmissing=none"
+  "a launch naming a model and no effort is refused, naming the flag that harness takes|cmd=true --model opus|--harness claude --lane $H/.claude KEN-81|rc=1 launched=nolog creates=nolog modelmissing=none effortmissing=harness=claude,lane=$H/.claude,spellings=--effort" \
+  "a launch naming neither is refused for both, one keyed line each||--harness claude --lane $H/.claude --cmd true KEN-82|rc=1 launched=nolog creates=nolog modelmissing=harness=claude,lane=$H/.claude,spellings=--model effortmissing=harness=claude,lane=$H/.claude,spellings=--effort" \
+  "a pi launch naming neither is refused the same way, on pi's own spellings||--harness pi --lane $H/.claude --cmd true KEN-83|rc=1 launched=nolog creates=nolog modelmissing=harness=pi,lane=$H/.claude,spellings=--model effortmissing=harness=pi,lane=$H/.claude,spellings=--thinking" \
+  "a codex launch naming neither is refused on codex's config-token spelling of the effort||--harness codex --lane $H/.claude --cmd true KEN-84|rc=1 launched=nolog creates=nolog modelmissing=harness=codex,lane=$H/.claude,spellings=-m,--model effortmissing=harness=codex,lane=$H/.claude,spellings=model_reasoning_effort=" \
+  "a copilot launch naming neither is refused on copilot's own spellings||--harness copilot --lane $H/.claude --cmd true KEN-184|rc=1 launched=nolog creates=nolog modelmissing=harness=copilot,lane=$H/.claude,spellings=--model effortmissing=harness=copilot,lane=$H/.claude,spellings=--reasoning-effort" \
+  "a relaunch naming neither is refused too, the choice being the launch's and not the session's||--harness claude --relaunch --lane $H/.claude --cmd true KEN-85|rc=1 launched=nolog modelmissing=harness=claude,lane=$H/.claude,spellings=--model" \
+  "a launch naming both launches, which is what the usage gate below then judges|$CHOICE_CMD|--harness claude --lane $H/.claude KEN-86|rc=0 launched=1 modelmissing=none effortmissing=none" \
+  "opencode has no effort flag to name, so its launch asks the model alone|cmd=true --model anthropic/claude-opus-5|--harness opencode --lane $H/.claude KEN-87|rc=0 launched=1 modelmissing=none effortmissing=none"
 
 # The --cmd template carries the same two words for the same reason: a launch
 # writing its own harness argv still made the choice, and a template a row
 # cannot spell inside a word-split args field is passed through run_ot's argv.
-run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model opus --effort high $QUESTION_OFF_ALL" CC-88
+run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model opus --effort high $QUESTION_OFF_ALL" KEN-88
 assert_eq "$(observe "rc=0 launched=1 modelmissing=none effortmissing=none")" \
   "rc=0 launched=1 modelmissing=none effortmissing=none" \
   "a model and an effort named only in the --cmd template are named"
-run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model opus $QUESTION_OFF_ALL" CC-89
+run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model opus $QUESTION_OFF_ALL" KEN-89
 assert_eq "$(observe "rc=1 launched=nolog effortmissing=harness=claude,lane=$H/.claude,spellings=--effort")" \
   "rc=1 launched=nolog effortmissing=harness=claude,lane=$H/.claude,spellings=--effort" \
   "a --cmd template naming a model and no effort is refused for the effort"
@@ -590,20 +590,20 @@ assert_eq "$(observe "rc=1 launched=nolog effortmissing=harness=claude,lane=$H/.
 # alias with no --harness — because nothing in that argv says which harness
 # reads the words in the caller's own command.
 table \
-  "a launch naming its harness only in the lane spec is judged by that harness's row|cmd=true|--lane auto:claude CC-114|rc=1 launched=nolog creates=nolog modelmissing=harness=claude,lane=auto:claude,spellings=--model effortmissing=harness=claude,lane=auto:claude,spellings=--effort" \
-  "the same launch naming both words inside its command launches|$CHOICE_CMD|--lane auto:claude CC-115|rc=0 launched=1 modelmissing=none effortmissing=none" \
-  "a named lane with no --harness names no harness anywhere, and is the one shape left exempt|cmd=true|--lane $H/.claude CC-116|rc=0 launched=1 modelmissing=none effortmissing=none"
+  "a launch naming its harness only in the lane spec is judged by that harness's row|cmd=true|--lane auto:claude KEN-114|rc=1 launched=nolog creates=nolog modelmissing=harness=claude,lane=auto:claude,spellings=--model effortmissing=harness=claude,lane=auto:claude,spellings=--effort" \
+  "the same launch naming both words inside its command launches|$CHOICE_CMD|--lane auto:claude KEN-115|rc=0 launched=1 modelmissing=none effortmissing=none" \
+  "a named lane with no --harness names no harness anywhere, and is the one shape left exempt|cmd=true|--lane $H/.claude KEN-116|rc=0 launched=1 modelmissing=none effortmissing=none"
 
 # --launch-flags beside a --cmd template reach NOTHING: start_cmd renders the
 # template verbatim and appends no flag to it. Left ungated, the choice words
 # there would be read, judged and recorded while the harness ran its own
 # default. The refusal is the launch's, not the lane's, so it lands on a launch
 # with no --lane too, and the model or effort the flags name is never read.
-run_ot "flags=--model opus --effort high" --harness claude --lane "$H/.claude" --cmd true CC-99
+run_ot "flags=--model opus --effort high" --harness claude --lane "$H/.claude" --cmd true KEN-99
 assert_eq "$(observe "rc=1 launched=nolog creates=nolog flagsunreachable=option=--launch-flags,flags=--model,opus,--effort,high modelmissing=none effortmissing=none")" \
   "rc=1 launched=nolog creates=nolog flagsunreachable=option=--launch-flags,flags=--model,opus,--effort,high modelmissing=none effortmissing=none" \
   "launch flags beside a --cmd template refuse the launch, naming the flags that reach nothing"
-run_ot "flags=--model opus --effort high" --cmd true CC-112
+run_ot "flags=--model opus --effort high" --cmd true KEN-112
 assert_eq "$(observe "rc=1 launched=nolog flagsunreachable=option=--launch-flags,flags=--model,opus,--effort,high")" \
   "rc=1 launched=nolog flagsunreachable=option=--launch-flags,flags=--model,opus,--effort,high" \
   "a wholly custom launch with no harness and no lane is refused for the same unreachable flags"
@@ -612,7 +612,7 @@ assert_eq "$(observe "rc=1 launched=nolog flagsunreachable=option=--launch-flags
 # question-tool words itself, and one that leaves them out is refused before
 # its worktree, its window or its claim. Called without run_ot's cmd= item,
 # which appends the words every other row here needs.
-run_ot "" --harness claude --lane "$H/.claude" --cmd "true --model opus --effort high" CC-140
+run_ot "" --harness claude --lane "$H/.claude" --cmd "true --model opus --effort high" KEN-140
 assert_eq "$(observe "rc=1 launched=nolog creates=nolog claims=nolog questionmissing=harness=claude,word=--disallowedTools=AskUserQuestion,EnterPlanMode")" \
   "rc=1 launched=nolog creates=nolog claims=nolog questionmissing=harness=claude,word=--disallowedTools=AskUserQuestion,EnterPlanMode" \
   "a --lane --cmd launch without the question-tool words is refused before anything launches or is claimed"
@@ -628,12 +628,12 @@ assert_eq "$(observe "rc=1 launched=nolog creates=nolog claims=nolog questionmis
 # The last row is the inverse: an arbitrary value carrying the same character on
 # a harness whose row names no separator is a model value and nothing more.
 table \
-  "pi's level on the model value names the effort, so the launch is not asked for it again|cmd=true --model pi-claude/sonnet:high|--harness pi --lane $H/.claude CC-95|rc=0 launched=1 modelmissing=none effortmissing=none" \
-  "a separator with no level after it names no effort, so that launch is still refused|cmd=true --model sonnet:|--harness pi --lane $H/.claude CC-97|rc=1 launched=nolog modelmissing=none effortmissing=harness=pi,lane=$H/.claude,spellings=--thinking" \
-  "a claude launch whose model value carries a colon is still asked for its effort, its row naming no separator|cmd=true --model opus:1m|--harness claude --lane $H/.claude CC-98|rc=1 launched=nolog modelmissing=none effortmissing=harness=claude,lane=$H/.claude,spellings=--effort"
+  "pi's level on the model value names the effort, so the launch is not asked for it again|cmd=true --model pi-claude/sonnet:high|--harness pi --lane $H/.claude KEN-95|rc=0 launched=1 modelmissing=none effortmissing=none" \
+  "a separator with no level after it names no effort, so that launch is still refused|cmd=true --model sonnet:|--harness pi --lane $H/.claude KEN-97|rc=1 launched=nolog modelmissing=none effortmissing=harness=pi,lane=$H/.claude,spellings=--thinking" \
+  "a claude launch whose model value carries a colon is still asked for its effort, its row naming no separator|cmd=true --model opus:1m|--harness claude --lane $H/.claude KEN-98|rc=1 launched=nolog modelmissing=none effortmissing=harness=claude,lane=$H/.claude,spellings=--effort"
 # The same value inside a --cmd template, which a word-split args field cannot
 # spell.
-run_ot "" --harness pi --lane "$H/.claude" --cmd "pi --model pi-claude/sonnet:high $QUESTION_OFF_ALL" CC-96
+run_ot "" --harness pi --lane "$H/.claude" --cmd "pi --model pi-claude/sonnet:high $QUESTION_OFF_ALL" KEN-96
 assert_eq "$(observe "rc=0 launched=1 modelmissing=none effortmissing=none")" \
   "rc=0 launched=1 modelmissing=none effortmissing=none" \
   "pi's level named on the model value inside the --cmd template names the effort too"
@@ -668,14 +668,14 @@ PI_POOL="ORCH_LANE_COPILOT_POOL=$H/.pi1"
 PI_COPILOT='cmd=true --model github-copilot/claude-sonnet-5:high'
 PI_PROVIDER='cmd=true --provider github-copilot --model claude-sonnet-5 --thinking high'
 table \
-  "auto launches on the stated pool under Pi's root variable while every Claude seat is walled|$PI_POOL=100000/1000000;$PI_COPILOT|--harness pi --lane auto --lane-max-pct 15 CC-1660|rc=0 launched=1 pi_root=pi1 cmd_lane=none claim_lanes=pi1" \
-  "auto with no stated pool refuses by the setting, before anything launches, naming the repair once|$PI_COPILOT|--harness pi --lane auto CC-1661|rc=1 launched=nolog creates=nolog pickrefusal=copilot-pool-unstated,setting=ORCH_LANE_COPILOT_POOL poolfix=local:any_Pi_root" \
-  "auto with every stated pool spent refuses as the owner's reading, not a reset to wait for|$PI_POOL=1000000/1000000;$PI_COPILOT|--harness pi --lane auto CC-1666|rc=1 launched=nolog creates=nolog pickrefusal=copilot-pool-walled,setting=ORCH_LANE_COPILOT_POOL" \
-  "a named account the pool reading does not cover is refused as unmeasured, naming the repair|$PI_POOL=100000/1000000;$PI_COPILOT|--harness pi --lane $H/.eclaude CC-1662|rc=1 launched=nolog unreadable=lane=$H/.eclaude,model=github-copilot/claude-sonnet-5:high,step=windows poolfix=local:$H/.eclaude" \
-  "a named account whose pool is spent is refused on the monthly bucket|$PI_POOL=1000000/1000000;$PI_COPILOT|--harness pi --lane $H/.pi1 CC-1663|rc=1 launched=nolog walled=lane=$H/.pi1,model=github-copilot/claude-sonnet-5:high,pct=100,bucket=monthly,projected-headroom=0" \
-  "a named account whose pool has room launches under Pi's root variable while every Claude seat is walled|$PI_POOL=100000/1000000;$PI_COPILOT|--harness pi --lane $H/.pi1 --lane-max-pct 15 CC-1664|rc=0 launched=1 pi_root=pi1 cmd_lane=none walled=none unreadable=none poolfix=none" \
-  "the provider on Pi's own flag is the Copilot pool too, judged on the named account|$PI_POOL=100000/1000000;$PI_PROVIDER|--harness pi --lane $H/.eclaude CC-1667|rc=1 launched=nolog unreadable=lane=$H/.eclaude,model=github-copilot/claude-sonnet-5,step=windows" \
-  "a named Pi lane on a model naming no provider is refused by that cause, never launched|cmd=true --model sonnet:high|--harness pi --lane $H/.eclaude CC-1668|rc=1 launched=nolog unreadable=none pickrefusal=lane-provider-unmeasured,harness=pi,model=sonnet:high"
+  "auto launches on the stated pool under Pi's root variable while every Claude seat is walled|$PI_POOL=100000/1000000;$PI_COPILOT|--harness pi --lane auto --lane-max-pct 15 KEN-1660|rc=0 launched=1 pi_root=pi1 cmd_lane=none claim_lanes=pi1" \
+  "auto with no stated pool refuses by the setting, before anything launches, naming the repair once|$PI_COPILOT|--harness pi --lane auto KEN-1661|rc=1 launched=nolog creates=nolog pickrefusal=copilot-pool-unstated,setting=ORCH_LANE_COPILOT_POOL poolfix=local:any_Pi_root" \
+  "auto with every stated pool spent refuses as the owner's reading, not a reset to wait for|$PI_POOL=1000000/1000000;$PI_COPILOT|--harness pi --lane auto KEN-1666|rc=1 launched=nolog creates=nolog pickrefusal=copilot-pool-walled,setting=ORCH_LANE_COPILOT_POOL" \
+  "a named account the pool reading does not cover is refused as unmeasured, naming the repair|$PI_POOL=100000/1000000;$PI_COPILOT|--harness pi --lane $H/.eclaude KEN-1662|rc=1 launched=nolog unreadable=lane=$H/.eclaude,model=github-copilot/claude-sonnet-5:high,step=windows poolfix=local:$H/.eclaude" \
+  "a named account whose pool is spent is refused on the monthly bucket|$PI_POOL=1000000/1000000;$PI_COPILOT|--harness pi --lane $H/.pi1 KEN-1663|rc=1 launched=nolog walled=lane=$H/.pi1,model=github-copilot/claude-sonnet-5:high,pct=100,bucket=monthly,projected-headroom=0" \
+  "a named account whose pool has room launches under Pi's root variable while every Claude seat is walled|$PI_POOL=100000/1000000;$PI_COPILOT|--harness pi --lane $H/.pi1 --lane-max-pct 15 KEN-1664|rc=0 launched=1 pi_root=pi1 cmd_lane=none walled=none unreadable=none poolfix=none" \
+  "the provider on Pi's own flag is the Copilot pool too, judged on the named account|$PI_POOL=100000/1000000;$PI_PROVIDER|--harness pi --lane $H/.eclaude KEN-1667|rc=1 launched=nolog unreadable=lane=$H/.eclaude,model=github-copilot/claude-sonnet-5,step=windows" \
+  "a named Pi lane on a model naming no provider is refused by that cause, never launched|cmd=true --model sonnet:high|--harness pi --lane $H/.eclaude KEN-1668|rc=1 launched=nolog unreadable=none pickrefusal=lane-provider-unmeasured,harness=pi,model=sonnet:high"
 # Controls, one per rule: the named gate back on claude and codex alone
 # launches the unmeasured account unjudged; the prefix back on the Claude
 # variable for the pool starts Pi on a root nobody picked; and the provider
@@ -691,15 +691,15 @@ pi_control() { # NAME FILE OLD NEW ENV ARGS... — sets OPEN_TERMINAL back after
   OPEN_TERMINAL="$shipped"
 }
 pi_control ctl-pi-gate open-terminal '"$LANE_AUTO" == true || -z "$(lane_pick_harness "$LAUNCH_HARNESS" "$LAUNCH_MODEL")"' \
-  '"$LANE_AUTO" == true || ! "$LAUNCH_HARNESS" =~ ^(claude|codex)$' "$PI_POOL=100000/1000000;$PI_COPILOT" --harness pi --lane "$H/.eclaude" CC-1662
+  '"$LANE_AUTO" == true || ! "$LAUNCH_HARNESS" =~ ^(claude|codex)$' "$PI_POOL=100000/1000000;$PI_COPILOT" --harness pi --lane "$H/.eclaude" KEN-1662
 assert_eq "$(observe "rc=0 launched=1 unreadable=none")" "rc=0 launched=1 unreadable=none" \
   "control: a named-lane gate for claude and codex alone launches a Pi lane on an unmeasured Copilot pool"
 pi_control ctl-pi-root lib/lane-launch.sh '[[ "$(lane_pick_harness "$1" "${3:-}")" != pi ]] || var=PI_CODING_AGENT_DIR' ':' \
-  "$PI_POOL=100000/1000000;$PI_COPILOT" --harness pi --lane "$H/.pi1" CC-1664
+  "$PI_POOL=100000/1000000;$PI_COPILOT" --harness pi --lane "$H/.pi1" KEN-1664
 assert_eq "$(observe "rc=0 pi_root=none cmd_lane=pi1")" "rc=0 pi_root=none cmd_lane=pi1" \
   "control: the Claude variable for a Pi lane on the pool leaves Pi on a root nobody picked"
 pi_control ctl-pi-provider lib/lane-launch.sh '[[ -z "$provider" ]] || model="$provider/$model"' ':' \
-  "$PI_POOL=100000/1000000;$PI_PROVIDER" --harness pi --lane "$H/.eclaude" CC-1667
+  "$PI_POOL=100000/1000000;$PI_PROVIDER" --harness pi --lane "$H/.eclaude" KEN-1667
 assert_eq "$(observe "rc=1 pickrefusal=lane-provider-unmeasured,harness=pi,model=claude-sonnet-5")" \
   "rc=1 pickrefusal=lane-provider-unmeasured,harness=pi,model=claude-sonnet-5" \
   "control: the provider flag unread judges a Pi lane on the Copilot pool as a model naming no provider"
@@ -720,12 +720,12 @@ pi_fleet_root() { # DIR COMPACTION
 pi_fleet_root "$H/.pi1" false
 pi_fleet_root "$H/.pi2" true
 PI_BATCH="ORCH_LANE_COPILOT_POOL=$H/.pi1=100000/1000000,$H/.pi2=100000/1000000;ORCH_LANE_BURN_PCT_PER_HOUR=5;STUB_CLOCK=$TMP_ROOT/pick-clock;$PI_COPILOT"
-run_ot "$PI_BATCH" --harness pi --lane auto --state-dir "$TMP_ROOT/pi-fleet-1" CC-1670 CC-1671
+run_ot "$PI_BATCH" --harness pi --lane auto --state-dir "$TMP_ROOT/pi-fleet-1" KEN-1670 KEN-1671
 assert_eq "$(observe "launched=1 pi_root=pi1 compactionon=file=$H/.pi2/settings.json")" \
   "launched=1 pi_root=pi1 compactionon=file=$H/.pi2/settings.json" \
   "a fleet batch's re-pick onto a second pool account is gated on that account's own settings"
 pi_control ctl-pi-repick open-terminal 'ot_message lane-selected "lane=$LANE_ENV"; pi_lane_root_apply && copilot_fleet_gate || return 1; }' \
-  'ot_message lane-selected "lane=$LANE_ENV"; copilot_fleet_gate || return 1; }' "$PI_BATCH" --harness pi --lane auto --state-dir "$TMP_ROOT/pi-fleet-2" CC-1670 CC-1671
+  'ot_message lane-selected "lane=$LANE_ENV"; copilot_fleet_gate || return 1; }' "$PI_BATCH" --harness pi --lane auto --state-dir "$TMP_ROOT/pi-fleet-2" KEN-1670 KEN-1671
 assert_eq "$(observe "launched=2 pi_root=pi1,pi2 compactionon=none")" "launched=2 pi_root=pi1,pi2 compactionon=none" \
   "control: a re-pick that keeps the first root launches the second item on an account nobody gated"
 rm -f -- "${H:?}/.pi1/settings.json" "${H:?}/.pi2/settings.json"
@@ -754,12 +754,12 @@ printf '{"enabledFeatureFlags":{"EXTENSIONS":false}}\n' > "$H/.copilot2/settings
 printf '#!/bin/sh\nprintf '"'"'{"switched_off_by":null}\\n'"'"'\n' > "$OT_STUB_BIN/kendex"
 chmod +x "$OT_STUB_BIN/kendex"
 CP_BATCH="HOME=$H;ORCH_LANE_COPILOT_POOL=$H/.copilot1=100000/1000000,$H/.copilot2=100000/1000000;ORCH_LANE_BURN_PCT_PER_HOUR=5;STUB_CLOCK=$TMP_ROOT/pick-clock;cmd=true --model claude-sonnet-5 --reasoning-effort high"
-run_ot "$CP_BATCH" --harness copilot --lane auto --state-dir "$TMP_ROOT/cp-fleet-1" CC-1680 CC-1681
+run_ot "$CP_BATCH" --harness copilot --lane auto --state-dir "$TMP_ROOT/cp-fleet-1" KEN-1680 KEN-1681
 assert_eq "$(observe "launched=1 copilot_home=copilot1 statusline=file=$H/.copilot2/settings.json,detail=disabled,cause=no-status-line")" \
   "launched=1 copilot_home=copilot1 statusline=file=$H/.copilot2/settings.json,detail=disabled,cause=no-status-line" \
   "a Copilot batch's re-pick onto a second pool account is gated on that account's own context reader"
 pi_control ctl-copilot-repick open-terminal 'pi_lane_root_apply && copilot_fleet_gate || return 1; }' \
-  'pi_lane_root_apply || return 1; }' "$CP_BATCH" --harness copilot --lane auto --state-dir "$TMP_ROOT/cp-fleet-2" CC-1680 CC-1681
+  'pi_lane_root_apply || return 1; }' "$CP_BATCH" --harness copilot --lane auto --state-dir "$TMP_ROOT/cp-fleet-2" KEN-1680 KEN-1681
 assert_eq "$(observe "launched=2 copilot_home=copilot1,copilot2 statusline=none")" "launched=2 copilot_home=copilot1,copilot2 statusline=none" \
   "control: a re-pick with no Copilot gate launches the second item on an account whose context reader nobody set up"
 rm -rf -- "${H:?}/.copilot1" "${H:?}/.copilot2"
@@ -773,20 +773,20 @@ echo "=== a Pi launch on a pi-claude model is judged on the Claude seat it spend
 # measures is refused by its own cause before anything launches.
 PI_CLAUDE='cmd=true --model pi-claude/claude-opus-5-5:high'
 table \
-  "auto launches a pi-claude model on the Claude seat with room, under the Claude variable|$PI_CLAUDE|--harness pi --lane auto CC-1680|rc=0 launched=1 cmd_lane=claude pi_root=none claim_lanes=claude" \
-  "auto refuses a pi-claude model when every Claude seat is walled|$PI_CLAUDE|--harness pi --lane auto --lane-max-pct 15 CC-1681|rc=1 launched=nolog creates=nolog pickrefusal=lane-unavailable,harness=pi" \
-  "a named walled Claude seat is refused for a pi-claude model|$PI_CLAUDE|--harness pi --lane $H/.nclaude CC-1682|rc=1 launched=nolog walled=lane=$H/.nclaude,model=pi-claude/claude-opus-5-5:high,pct=95,bucket=weekly,projected-headroom=5" \
-  "a named Claude seat with room launches a pi-claude model under the Claude variable|$PI_CLAUDE|--harness pi --lane $H/.claude CC-1683|rc=0 launched=1 cmd_lane=claude pi_root=none walled=none" \
-  "auto refuses a provider nothing measures by its own cause|cmd=true --model openai/gpt-6:high|--harness pi --lane auto CC-1684|rc=1 launched=nolog creates=nolog pickrefusal=lane-provider-unmeasured,harness=pi,model=openai/gpt-6:high"
+  "auto launches a pi-claude model on the Claude seat with room, under the Claude variable|$PI_CLAUDE|--harness pi --lane auto KEN-1680|rc=0 launched=1 cmd_lane=claude pi_root=none claim_lanes=claude" \
+  "auto refuses a pi-claude model when every Claude seat is walled|$PI_CLAUDE|--harness pi --lane auto --lane-max-pct 15 KEN-1681|rc=1 launched=nolog creates=nolog pickrefusal=lane-unavailable,harness=pi" \
+  "a named walled Claude seat is refused for a pi-claude model|$PI_CLAUDE|--harness pi --lane $H/.nclaude KEN-1682|rc=1 launched=nolog walled=lane=$H/.nclaude,model=pi-claude/claude-opus-5-5:high,pct=95,bucket=weekly,projected-headroom=5" \
+  "a named Claude seat with room launches a pi-claude model under the Claude variable|$PI_CLAUDE|--harness pi --lane $H/.claude KEN-1683|rc=0 launched=1 cmd_lane=claude pi_root=none walled=none" \
+  "auto refuses a provider nothing measures by its own cause|cmd=true --model openai/gpt-6:high|--harness pi --lane auto KEN-1684|rc=1 launched=nolog creates=nolog pickrefusal=lane-provider-unmeasured,harness=pi,model=openai/gpt-6:high"
 # The controls drop the unmeasured arm of the auto refusal, which then names
 # lanes failing rather than the provider, and the named judge's, which then
 # names a window nobody read.
 pi_control ctl-pi-unmeasured open-terminal '5:unmeasured)' '5:unmeasured-dropped)' \
-  "cmd=true --model openai/gpt-6:high" --harness pi --lane auto CC-1684
+  "cmd=true --model openai/gpt-6:high" --harness pi --lane auto KEN-1684
 assert_eq "$(observe "rc=1 pickrefusal=none failed=exit=5")" "rc=1 pickrefusal=none failed=exit=5" \
   "control: without its arm an auto pick on an unmeasured provider is reported as lanes failing"
 pi_control ctl-pi-named-unmeasured open-terminal '"$LAUNCH_MODEL")" == unmeasured ]]; then' '"$LAUNCH_MODEL")" == unmeasured-dropped ]]; then' \
-  "cmd=true --model sonnet:high" --harness pi --lane "$H/.eclaude" CC-1668
+  "cmd=true --model sonnet:high" --harness pi --lane "$H/.eclaude" KEN-1668
 assert_eq "$(observe "rc=1 pickrefusal=none unreadable=lane=$H/.eclaude,model=sonnet:high,step=windows")" \
   "rc=1 pickrefusal=none unreadable=lane=$H/.eclaude,model=sonnet:high,step=windows" \
   "control: without its arm a named Pi lane naming no provider is refused as an unread window"
@@ -803,11 +803,11 @@ echo "=== a launch is refused when the model it passes has no window left ==="
 # clause and the relaunch row below is the shaped input for all of them.
 claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 table \
-  "a named lane whose window for this model is walled is refused before anything launches|cmd=true --model=fable --effort=high|--harness claude --lane $H/.claude CC-60|rc=1 launched=nolog creates=nolog walled=lane=$H/.claude,model=fable,pct=95,bucket=model,projected-headroom=5" \
-  "a relaunch onto that same lane is refused the same way|cmd=true --model=fable --effort=high|--harness claude --relaunch --lane $H/.claude CC-61|rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95,bucket=model,projected-headroom=5" \
-  "the same lane launches for a model whose own window has room|$CHOICE_CMD|--harness claude --lane $H/.claude CC-62|rc=0 launched=1 walled=none" \
-  "--lane auto takes the account with the most room for the model being passed|$CHOICE_CMD|--harness claude --lane auto CC-64|rc=0 cmd_lane=claude walled=none" \
-  "--lane auto moves off the account whose window for that model is walled|cmd=true --model=fable --effort=high|--harness claude --lane auto CC-65|rc=0 cmd_lane=eclaude walled=none"
+  "a named lane whose window for this model is walled is refused before anything launches|cmd=true --model=fable --effort=high|--harness claude --lane $H/.claude KEN-60|rc=1 launched=nolog creates=nolog walled=lane=$H/.claude,model=fable,pct=95,bucket=model,projected-headroom=5" \
+  "a relaunch onto that same lane is refused the same way|cmd=true --model=fable --effort=high|--harness claude --relaunch --lane $H/.claude KEN-61|rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95,bucket=model,projected-headroom=5" \
+  "the same lane launches for a model whose own window has room|$CHOICE_CMD|--harness claude --lane $H/.claude KEN-62|rc=0 launched=1 walled=none" \
+  "--lane auto takes the account with the most room for the model being passed|$CHOICE_CMD|--harness claude --lane auto KEN-64|rc=0 cmd_lane=claude walled=none" \
+  "--lane auto moves off the account whose window for that model is walled|cmd=true --model=fable --effort=high|--harness claude --lane auto KEN-65|rc=0 cmd_lane=eclaude walled=none"
 
 # The named lane is judged on the projection `lanes pick` drops a lane on: its
 # 5-hour window at 60 with room, but the one lane already live on it charged
@@ -815,19 +815,19 @@ table \
 # with nothing live on it.
 claude_usage 60 20 10 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 table \
-  "a named lane with room whose live lanes project past the threshold is refused|cmd=true --model=fable --effort=high;prep=claude_claim;ORCH_LANE_BURN_PCT_PER_HOUR=50|--harness claude --lane $H/.claude CC-1641|rc=1 launched=0 creates=nolog walled=lane=$H/.claude,model=fable,pct=60,bucket=session,projected-headroom=-10" \
-  "the same lane with nothing live on it launches|cmd=true --model=fable --effort=high;ORCH_LANE_BURN_PCT_PER_HOUR=50|--harness claude --lane $H/.claude CC-1642|rc=0 launched=1 walled=none"
+  "a named lane with room whose live lanes project past the threshold is refused|cmd=true --model=fable --effort=high;prep=claude_claim;ORCH_LANE_BURN_PCT_PER_HOUR=50|--harness claude --lane $H/.claude KEN-1641|rc=1 launched=0 creates=nolog walled=lane=$H/.claude,model=fable,pct=60,bucket=session,projected-headroom=-10" \
+  "the same lane with nothing live on it launches|cmd=true --model=fable --effort=high;ORCH_LANE_BURN_PCT_PER_HOUR=50|--harness claude --lane $H/.claude KEN-1642|rc=0 launched=1 walled=none"
 # Fable's weekly window sits below the launch threshold until a live claim
 # charges the burn scaled by 5/168. Opus spends only the shared windows, which
 # still have room after the charge. `run_ot` seeds the same real claim as above.
 claude_usage 10 20 94 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 NAMED_PREFERENCE='ORCH_LANE_PREFERENCE=claude:fable:high,claude:opus:high;cmd=claude;ORCH_LANE_BURN_PCT_PER_HOUR=50'
 table \
-  "a preference resolves a named alias before its pick|$NAMED_PREFERENCE;ORCH_LANE_ALIASES=claude=work;cwd=$COLLIDE|--harness claude --lane work CC-1643|rc=0 launched=1 cmd_lane=claude cmd_model=fable" \
-  "a preference skips the model its live claim projects past the wall|$NAMED_PREFERENCE;prep=claude_claim|--harness claude --lane $H/.claude CC-1644|rc=0 launched=1 cmd_lane=claude cmd_model=opus" \
-  "a preference checks an excluded alias before a same-named directory|$NAMED_PREFERENCE;ORCH_LANE_ALIASES=claude=work;ORCH_LANE_EXCLUDE=claude;cwd=$COLLIDE|--harness claude --lane work CC-1645|rc=1 launched=nolog refused=lane=work"
+  "a preference resolves a named alias before its pick|$NAMED_PREFERENCE;ORCH_LANE_ALIASES=claude=work;cwd=$COLLIDE|--harness claude --lane work KEN-1643|rc=0 launched=1 cmd_lane=claude cmd_model=fable" \
+  "a preference skips the model its live claim projects past the wall|$NAMED_PREFERENCE;prep=claude_claim|--harness claude --lane $H/.claude KEN-1644|rc=0 launched=1 cmd_lane=claude cmd_model=opus" \
+  "a preference checks an excluded alias before a same-named directory|$NAMED_PREFERENCE;ORCH_LANE_ALIASES=claude=work;ORCH_LANE_EXCLUDE=claude;cwd=$COLLIDE|--harness claude --lane work KEN-1645|rc=1 launched=nolog refused=lane=work"
 pi_control ctl-preference-projected open-terminal 'preference_pick_args=(--lane "$lane_dir" --projected)' 'preference_pick_args=(--lane "$lane_dir")' \
-  "$NAMED_PREFERENCE;prep=claude_claim" --harness claude --lane "$H/.claude" CC-1644
+  "$NAMED_PREFERENCE;prep=claude_claim" --harness claude --lane "$H/.claude" KEN-1644
 assert_eq "$(observe "rc=0 launched=1 cmd_model=fable")" "rc=0 launched=1 cmd_model=fable" \
   "control: without projected use the preference launches the walled first model"
 claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
@@ -836,7 +836,7 @@ claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 # spell `--model=X`; these spell `--model X` and codex's `-m X`, so deleting the
 # arm that takes the value from the NEXT token reddens a row instead of silently
 # unguarding every space-form and codex launch.
-run_ot "cmd=true --model fable --effort high" --harness claude --lane "$H/.claude" CC-67
+run_ot "cmd=true --model fable --effort high" --harness claude --lane "$H/.claude" KEN-67
 assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95,bucket=model,projected-headroom=5")" \
   "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95,bucket=model,projected-headroom=5" \
   "the space-spelled --model in the launch command gates the lane too"
@@ -846,14 +846,14 @@ assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct
 # waved through, and the same wall is judged as for a launch whose command this
 # launcher builds. The second row is the inverse, a model with room in the same
 # template still launching.
-run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model fable --effort high $QUESTION_OFF_ALL" CC-75
+run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model fable --effort high $QUESTION_OFF_ALL" KEN-75
 assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95,bucket=model,projected-headroom=5")" \
   "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95,bucket=model,projected-headroom=5" \
   "a model named inside the --cmd command gates the lane on that model's wall"
 # cmd_home beside the launch: a claude lane names no CODEX_HOME and builds no
 # home of its own, since the folder-trust record that harness reads is its
 # own config dir's .claude.json, which the launch writes the entry into.
-run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model opus --effort high $QUESTION_OFF_ALL" CC-76
+run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model opus --effort high $QUESTION_OFF_ALL" KEN-76
 assert_eq "$(observe "rc=0 launched=1 walled=none cmd_home=none trust_route=account-config")" \
   "rc=0 launched=1 walled=none cmd_home=none trust_route=account-config" \
   "a --cmd naming a model with room still launches, under no CODEX_HOME, trusted in its own config dir"
@@ -863,7 +863,7 @@ assert_eq "$(observe "rc=0 launched=1 walled=none cmd_home=none trust_route=acco
 make_lane "$H" jclaude 3600
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.jclaude.json"
 printf '{"projects": ' > "$H/.jclaude/.claude.json"
-run_ot "" --harness claude --lane "$H/.jclaude" --cmd "claude --model opus --effort high $QUESTION_OFF_ALL" CC-93
+run_ot "" --harness claude --lane "$H/.jclaude" --cmd "claude --model opus --effort high $QUESTION_OFF_ALL" KEN-93
 assert_eq "$(observe "rc=1 launched=nolog trustfail=1 trustdetail=1")" \
   "rc=1 launched=nolog trustfail=1 trustdetail=1" \
   "a claude config that does not parse refuses the item with the parser's words under the refusal"
@@ -872,7 +872,7 @@ rm -rf -- "${H:?}/.jclaude" "${FIXTURE_DIR:?}/.jclaude.json"
 make_codex_lane "$H/.codex"
 jq -n '{rate_limit: {primary_window: {used_percent: 95, reset_at: 1785000000,
                                       limit_window_seconds: 18000}}}' > "$FIXTURE_DIR/.codex.json"
-run_ot "cmd=true -m fable -c model_reasoning_effort=high" --harness codex --lane "$H/.codex" CC-68
+run_ot "cmd=true -m fable -c model_reasoning_effort=high" --harness codex --lane "$H/.codex" KEN-68
 assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.codex,model=fable,pct=95,bucket=session,projected-headroom=5")" \
   "rc=1 launched=nolog walled=lane=$H/.codex,model=fable,pct=95,bucket=session,projected-headroom=5" \
   "codex spells the model -m, and that launch is gated on the same wall"
@@ -887,7 +887,7 @@ assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.codex,model=fable,pct=
 make_codex_lane "$H/.tcodex"
 jq -n '{rate_limit: {primary_window: {used_percent: 5, reset_at: 1785000000,
                                       limit_window_seconds: 18000}}}' > "$FIXTURE_DIR/.tcodex.json"
-run_ot "cmd=true -m gpt-5 -c model_reasoning_effort=high" --harness codex --lane "$H/.tcodex" CC-1632
+run_ot "cmd=true -m gpt-5 -c model_reasoning_effort=high" --harness codex --lane "$H/.tcodex" KEN-1632
 assert_eq "$(observe "rc=0 launched=1 cmd_home=private home_trusts=yes trust_route=launch-home")" \
   "rc=0 launched=1 cmd_home=private home_trusts=yes trust_route=launch-home" \
   "a codex launch runs under a home whose config trusts the worktree it opens in, and names that route"
@@ -916,12 +916,12 @@ assert_eq "$(observe "rc=0 launched=1 cmd_home=private home_trusts=yes trust_rou
 # host the account a pane inherits is the global one. A read without -g answers
 # `unknown variable` there and sends the launch to the harness default instead.
 for row in \
-  "|CC-1634|.codex|the default account under LANES_HOME" \
-  "CODEX_HOME=$H/.tcodex;|CC-1636|.codex|the launcher's own CODEX_HOME, which no pane inherits" \
-  "OT_TMUX_ENV_GLOBAL_CODEX_HOME=$H/.tcodex;|CC-1637|.tcodex|the tmux GLOBAL scope, where a server's own environment lands" \
-  "OT_TMUX_ENV_SESSION_CODEX_HOME=$H/.tcodex;|CC-1638|.tcodex|the tmux SESSION scope, which a set-environment writes" \
-  "OT_TMUX_ENV_SESSION_CODEX_HOME=$H/.tcodex;OT_TMUX_ENV_GLOBAL_CODEX_HOME=$H/.codex;|CC-1639|.tcodex|a session entry, which the pane takes over the global one" \
-  "OT_TMUX_ENV_SESSION_CODEX_HOME=-;OT_TMUX_ENV_GLOBAL_CODEX_HOME=$H/.tcodex;|CC-1640|.codex|a session removal marker, which hides the global value from the pane" \
+  "|KEN-1634|.codex|the default account under LANES_HOME" \
+  "CODEX_HOME=$H/.tcodex;|KEN-1636|.codex|the launcher's own CODEX_HOME, which no pane inherits" \
+  "OT_TMUX_ENV_GLOBAL_CODEX_HOME=$H/.tcodex;|KEN-1637|.tcodex|the tmux GLOBAL scope, where a server's own environment lands" \
+  "OT_TMUX_ENV_SESSION_CODEX_HOME=$H/.tcodex;|KEN-1638|.tcodex|the tmux SESSION scope, which a set-environment writes" \
+  "OT_TMUX_ENV_SESSION_CODEX_HOME=$H/.tcodex;OT_TMUX_ENV_GLOBAL_CODEX_HOME=$H/.codex;|KEN-1639|.tcodex|a session entry, which the pane takes over the global one" \
+  "OT_TMUX_ENV_SESSION_CODEX_HOME=-;OT_TMUX_ENV_GLOBAL_CODEX_HOME=$H/.tcodex;|KEN-1640|.codex|a session removal marker, which hides the global value from the pane" \
   ; do
   extra="${row%%|*}"; rest="${row#*|}"
   item="${rest%%|*}"; rest="${rest#*|}"
@@ -942,7 +942,7 @@ make_codex_lane "$DANGLING_LANE"
 jq -n '{rate_limit: {primary_window: {used_percent: 5, reset_at: 1785000000,
                                       limit_window_seconds: 18000}}}' > "$FIXTURE_DIR/.dcodex.json"
 ln -sfn "$H/no-such-render.toml" "${DANGLING_LANE:?}/config.toml"
-run_ot "cmd=true -m gpt-5 -c model_reasoning_effort=high" --harness codex --lane "$DANGLING_LANE" CC-1635
+run_ot "cmd=true -m gpt-5 -c model_reasoning_effort=high" --harness codex --lane "$DANGLING_LANE" KEN-1635
 assert_eq "$(observe "rc=1 launched=nolog trustfail=1")" "rc=1 launched=nolog trustfail=1" \
   "an account config that cannot be read refuses the item and opens no window"
 
@@ -953,7 +953,7 @@ assert_eq "$(observe "rc=1 launched=nolog trustfail=1")" "rc=1 launched=nolog tr
 TRUSTED_WT="$TMP_ROOT/trusted-wt"
 printf '[projects."%s"]\ntrust_level = "trusted"\n' "$TRUSTED_WT" > "$H/.tcodex/config.toml"
 run_ot "OT_WT_FIXED=$TRUSTED_WT;cmd=true -m gpt-5 -c model_reasoning_effort=high" \
-  --harness codex --lane "$H/.tcodex" CC-1633
+  --harness codex --lane "$H/.tcodex" KEN-1633
 assert_eq "$(observe "rc=0 launched=1 cmd_home=.tcodex home_trusts=yes trust_route=preapproved")" \
   "rc=0 launched=1 cmd_home=.tcodex home_trusts=yes trust_route=preapproved" \
   "an account config that already trusts the worktree launches on the account itself, under the other route"
@@ -961,7 +961,7 @@ assert_eq "$(observe "rc=0 launched=1 cmd_home=.tcodex home_trusts=yes trust_rou
 # The model-scoped window has room, but the shared 5-hour window walls every
 # model on the account. The launcher reports that shared bucket as the cause.
 claude_usage 85 20 10 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
-run_ot "ORCH_LANE_MAX_PCT=80;cmd=true --model fable --effort high" --harness claude --lane "$H/.claude" CC-118
+run_ot "ORCH_LANE_MAX_PCT=80;cmd=true --model fable --effort high" --harness claude --lane "$H/.claude" KEN-118
 assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=85,bucket=session,projected-headroom=15")" \
   "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=85,bucket=session,projected-headroom=15" \
   "a shared 5-hour wall refuses a launch whose model-scoped bucket has room"
@@ -975,7 +975,7 @@ claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 make_lane "$H" uclaude 3600
 jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
                   scope: {model: {display_name: "Opus"}}}]}' > "$FIXTURE_DIR/.uclaude.json"
-run_ot "cmd=true --model sonnet --effort high" --harness claude --lane "$H/.uclaude" CC-69
+run_ot "cmd=true --model sonnet --effort high" --harness claude --lane "$H/.uclaude" KEN-69
 assert_eq "$(observe "rc=1 launched=nolog unreadable=lane=$H/.uclaude,model=sonnet,step=windows walled=none")" \
   "rc=1 launched=nolog unreadable=lane=$H/.uclaude,model=sonnet,step=windows walled=none" \
   "a lane whose windows name no such model is unreadable, never reported as full"
@@ -983,7 +983,7 @@ assert_eq "$(observe "rc=1 launched=nolog unreadable=lane=$H/.uclaude,model=sonn
 # A lane whose usage could not be fetched at all is the same answer for the same
 # reason: nobody read a window, so nobody may say the allowance is gone. The
 # openclaude dir is discovered as a lane and has no credentials to measure.
-run_ot "cmd=true --model fable --effort high" --harness claude --lane "$H/.openclaude" CC-73
+run_ot "cmd=true --model fable --effort high" --harness claude --lane "$H/.openclaude" KEN-73
 assert_eq "$(observe "rc=1 launched=nolog unreadable=lane=$H/.openclaude,model=fable,step=windows walled=none poolfix=none")" \
   "rc=1 launched=nolog unreadable=lane=$H/.openclaude,model=fable,step=windows walled=none poolfix=none" \
   "a lane whose usage could not be read is unreadable, never reported as full, and names no Copilot pool repair"
@@ -993,7 +993,7 @@ assert_eq "$(observe "rc=1 launched=nolog unreadable=lane=$H/.openclaude,model=f
 # given, and this gate does not take that away.
 OUTSIDE_LANE="$TMP_ROOT/outside-any-lane"
 mkdir -p "$OUTSIDE_LANE"
-run_ot "cmd=true --model fable --effort high" --harness claude --lane "$OUTSIDE_LANE" CC-70
+run_ot "cmd=true --model fable --effort high" --harness claude --lane "$OUTSIDE_LANE" KEN-70
 assert_eq "$(observe "rc=0 launched=1 walled=none unreadable=none")" \
   "rc=0 launched=1 walled=none unreadable=none" \
   "a config dir outside every lane record launches, the gate holding no record to judge it by"
@@ -1001,7 +1001,7 @@ assert_eq "$(observe "rc=0 launched=1 walled=none unreadable=none")" \
 # The threshold is forwarded, never evaluated here: a value this script once
 # fed to bash arithmetic is now refused by the one parser that owns it, and the
 # launch stops rather than proceeding on a comparison that errored.
-run_ot "cmd=true --model fable --effort high" --harness claude --lane "$H/.claude" --lane-max-pct '90%' CC-71
+run_ot "cmd=true --model fable --effort high" --harness claude --lane "$H/.claude" --lane-max-pct '90%' KEN-71
 assert_eq "$(observe "rc=1 launched=nolog judgefailed=lane=$H/.claude,model=fable,exit=1 unreadable=none")" \
   "rc=1 launched=nolog judgefailed=lane=$H/.claude,model=fable,exit=1 unreadable=none" \
   "a malformed --lane-max-pct on a named lane refuses the launch, named as the judge failing and not as an unread window"
@@ -1009,7 +1009,7 @@ assert_eq "$(observe "rc=1 launched=nolog judgefailed=lane=$H/.claude,model=fabl
 # A claims path that is not a directory refuses the named lane as it refuses
 # `--lane auto`: this gate charges the lanes already on the account, and a
 # store nobody could read is not an account running none.
-run_ot "prep=claims_file;$CHOICE_CMD" --harness claude --lane "$H/.claude" CC-74
+run_ot "prep=claims_file;$CHOICE_CMD" --harness claude --lane "$H/.claude" KEN-74
 assert_eq "$(observe "rc=1 launched=nolog claimsnotice=0 walled=none judgefailed=none") refused=$(grep -c "^open-terminal: lane-claims-unreadable lane=$H/.claude\$" <<<"$OUT" || true)" \
   "rc=1 launched=nolog claimsnotice=0 walled=none judgefailed=none refused=1" \
   "an unreadable claim store refuses the named lane, naming the store as the cause"
@@ -1025,8 +1025,8 @@ echo "=== a bare --lane word is an alias first, then a directory ==="
 # otherwise win and launch under a config dir nobody configured, silently. A
 # word no alias claims still resolves as a directory.
 table \
-  "a cwd directory does not shadow the alias it collides with|ORCH_LANE_ALIASES=eclaude=work;cwd=$COLLIDE;$CHOICE_CMD|--harness claude --lane work CC-1|rc=0 out_lanes=eclaude" \
-  "a bare word no alias claims falls back to the directory|ORCH_LANE_ALIASES=eclaude=work;cwd=$BARE;$CHOICE_CMD|--harness claude --lane somelane CC-1|rc=0 out_lanes=somelane"
+  "a cwd directory does not shadow the alias it collides with|ORCH_LANE_ALIASES=eclaude=work;cwd=$COLLIDE;$CHOICE_CMD|--harness claude --lane work KEN-1|rc=0 out_lanes=eclaude" \
+  "a bare word no alias claims falls back to the directory|ORCH_LANE_ALIASES=eclaude=work;cwd=$BARE;$CHOICE_CMD|--harness claude --lane somelane KEN-1|rc=0 out_lanes=somelane"
 
 echo "=== a tmux launch under a lane runs under it and records its claim ==="
 # The launched command carries the lane as a single-quoted env prefix; the
@@ -1035,9 +1035,9 @@ echo "=== a tmux launch under a lane runs under it and records its claim ==="
 # launch has no pane to keep a claim alive, so a GUI batch records nothing
 # and stays on the lane resolved up front.
 table \
-  "--lane <alias> launches under that lane's env prefix and records one claim naming lane, window and pane|ORCH_LANE_ALIASES=eclaude=work;$CHOICE_CMD|--harness claude --lane work CC-2|rc=0 cmd_lane=eclaude claims=1 claim_lanes=eclaude claim_window=CC-2 claim_pane=%1" \
-  'a launch with no --lane still opens its window and records no claim|cmd=true|--harness claude CC-3|launched=1 claims=nolog' \
-  "a GUI batch launches, records no claim, and reports the one lane it resolved|TERMINAL=ghostty;$CHOICE_CMD|--ghostty --harness claude --lane auto CC-10 CC-11|rc=0 claims=nolog summary=lane=claude"
+  "--lane <alias> launches under that lane's env prefix and records one claim naming lane, window and pane|ORCH_LANE_ALIASES=eclaude=work;$CHOICE_CMD|--harness claude --lane work KEN-2|rc=0 cmd_lane=eclaude claims=1 claim_lanes=eclaude claim_window=KEN-2 claim_pane=%1" \
+  'a launch with no --lane still opens its window and records no claim|cmd=true|--harness claude KEN-3|launched=1 claims=nolog' \
+  "a GUI batch launches, records no claim, and reports the one lane it resolved|TERMINAL=ghostty;$CHOICE_CMD|--ghostty --harness claude --lane auto KEN-10 KEN-11|rc=0 claims=nolog summary=lane=claude"
 
 echo "=== --lane auto over a batch re-picks on projected room and reset ==="
 # In the private score-crossing world, a claim moves the next item off its lane; a window created and
@@ -1050,37 +1050,37 @@ echo "=== --lane auto over a batch re-picks on projected room and reset ==="
 BATCH_SHARED_HOME="$H"
 H="$SPREADHOME"
 table \
-  "a two-item batch spreads across two accounts, reset-weighted room first|$SPREAD_ENV;$CHOICE_CMD| --harness claude --lane auto CC-4 CC-5|rc=0 launched=2 claim_lanes=claude,eclaude out_lanes=claude,eclaude summary=spread=2" \
-  "a claimed window whose launch failed still moves the next item off that lane|$SPREAD_ENV;OT_TMUX_FAIL=send-keys;$CHOICE_CMD|--harness claude --lane auto CC-8 CC-9|launched=2 claim_lanes=claude,eclaude out_lanes=claude,eclaude" \
-  "a third item returning to a used lane still reports two distinct lanes|$SPREAD_ENV;$CHOICE_CMD|--harness claude --lane auto CC-12 CC-13 CC-14|launched=3 summary=spread=2"
+  "a two-item batch spreads across two accounts, reset-weighted room first|$SPREAD_ENV;$CHOICE_CMD| --harness claude --lane auto KEN-4 KEN-5|rc=0 launched=2 claim_lanes=claude,eclaude out_lanes=claude,eclaude summary=spread=2" \
+  "a claimed window whose launch failed still moves the next item off that lane|$SPREAD_ENV;OT_TMUX_FAIL=send-keys;$CHOICE_CMD|--harness claude --lane auto KEN-8 KEN-9|launched=2 claim_lanes=claude,eclaude out_lanes=claude,eclaude" \
+  "a third item returning to a used lane still reports two distinct lanes|$SPREAD_ENV;$CHOICE_CMD|--harness claude --lane auto KEN-12 KEN-13 KEN-14|launched=3 summary=spread=2"
 
 # The old ordering reverses the batch: its first pick ignores the sooner
 # reset and takes eclaude's greater unweighted room instead.
 pi_control ctl-batch-claims-first lib/lane-model.sh \
   'sort_by([(0 - .selection_score), .claims, (0 - .projected_headroom_pct), .wall])' \
   'sort_by([.claims, (0 - .projected_headroom_pct), .wall])' \
-  "$SPREAD_ENV;$CHOICE_CMD" --harness claude --lane auto CC-4 CC-5
+  "$SPREAD_ENV;$CHOICE_CMD" --harness claude --lane auto KEN-4 KEN-5
 assert_eq "$(observe "rc=0 launched=2 claim_lanes=claude,eclaude out_lanes=eclaude,claude")" \
   "rc=0 launched=2 claim_lanes=claude,eclaude out_lanes=eclaude,claude" \
   "control: claims-first ordering turns the reset-weighted batch order red"
 H="$BATCH_SHARED_HOME"
 
 table \
-  "a re-picked lane carrying a separator stops the batch after the first launch|LANES_HOME=$TABHOME;FIXTURE_DIR=$TABFIX;ORCH_LANE_BURN_PCT_PER_HOUR=20;STUB_CLOCK=$TMP_ROOT/pick-clock;$CHOICE_CMD|--harness claude --lane auto CC-22 CC-23|rc=1 launched=1 claims=1" \
-  "a re-pick that cannot place its item stops the batch after the first launch|ORCH_LANES_FETCH_CMD=$TMP_ROOT/fetch-flaky;FLAKY_COUNT=$TMP_ROOT/flaky-count;FLAKY_OK=3;ORCH_LANES_USAGE_TTL=0;$CHOICE_CMD|--harness claude --lane auto CC-6 CC-7|rc=1 launched=1 claims=1" \
-  "a lane picked for an item another session owns is not one the batch ran on|WORKTREE_CLI=$OWNED_STUB;OWNED_COUNT=$TMP_ROOT/owned-count;OWNED_ROOT=$TMP_ROOT;$CHOICE_CMD|--harness claude --lane auto CC-17 CC-18|launched=1 summary=lane=claude"
+  "a re-picked lane carrying a separator stops the batch after the first launch|LANES_HOME=$TABHOME;FIXTURE_DIR=$TABFIX;ORCH_LANE_BURN_PCT_PER_HOUR=20;STUB_CLOCK=$TMP_ROOT/pick-clock;$CHOICE_CMD|--harness claude --lane auto KEN-22 KEN-23|rc=1 launched=1 claims=1" \
+  "a re-pick that cannot place its item stops the batch after the first launch|ORCH_LANES_FETCH_CMD=$TMP_ROOT/fetch-flaky;FLAKY_COUNT=$TMP_ROOT/flaky-count;FLAKY_OK=3;ORCH_LANES_USAGE_TTL=0;$CHOICE_CMD|--harness claude --lane auto KEN-6 KEN-7|rc=1 launched=1 claims=1" \
+  "a lane picked for an item another session owns is not one the batch ran on|WORKTREE_CLI=$OWNED_STUB;OWNED_COUNT=$TMP_ROOT/owned-count;OWNED_ROOT=$TMP_ROOT;$CHOICE_CMD|--harness claude --lane auto KEN-17 KEN-18|launched=1 summary=lane=claude"
 
 # A claims path that is not a directory is a misconfiguration, not an empty
 # store: the pick refuses before anything launches.
 table \
-  "a non-directory claims path refuses the launch|prep=claims_file;$CHOICE_CMD|--harness claude --lane auto CC-19|rc=1 launched=nolog"
+  "a non-directory claims path refuses the launch|prep=claims_file;$CHOICE_CMD|--harness claude --lane auto KEN-19|rc=1 launched=nolog"
 
 # Root writes into a mode-555 directory, so the row cannot fail a write there.
 if [[ "$(id -u)" -eq 0 ]]; then
   printf '  skip  unwritable claim store (running as root)\n'
 else
   table \
-    "a claim that could not be recorded stops the batch after the launch that stands|prep=store_ro;$CHOICE_CMD|--harness claude --lane auto CC-15 CC-16|rc=1 launched=1"
+    "a claim that could not be recorded stops the batch after the launch that stands|prep=store_ro;$CHOICE_CMD|--harness claude --lane auto KEN-15 KEN-16|rc=1 launched=1"
 fi
 
 echo "=== a hosted launch goes through lane-host create and an ssh pane ==="
@@ -1100,9 +1100,9 @@ host_call() { [[ -f "$RUN/host.log" ]] || { echo nolog; return; }; sed -E -e 's/
 typed() { grep -cF -- "$1" "$RUN/tmux.log" 2>/dev/null || true; }
 said() { grep -cxF -- "$1" <<<"$OUT" || true; }
 
-run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_ALIASES=eclaude=work;$CHOICE_CMD" --harness claude --lane work --repo o/r CC-40
-assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") calls=$(host_call) ssh=$(typed "clear; ssh 'lane.example'") remote=$(typed "exec bash -lc 'cd /srv/lane && exec true --model opus --effort high $QUESTION_OFF_ALL'") env=$(typed CLAUDE_CONFIG_DIR=) opened=$(said "open-terminal: tmux-opened item=CC-40 host=$HOST_STUB path=/srv/lane")" \
-  "rc=0 creates=nolog launched=1 claim_lanes=eclaude calls=accounts;create,--item,CC-40,--repo,o/r,--harness,claude,--account,eclaude;cat,--item,CC-40,/srv/lane/.git;put,--item,CC-40,/srv/clone/.git/lane-mail/cc-40;cat,--item,CC-40,/srv/clone/.git/lane-mail/cc-40;put,--item,CC-40,/srv/lane/tmp/lane-mail/CC-40/context.json ssh=1 remote=1 env=0 opened=1" \
+run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_ALIASES=eclaude=work;$CHOICE_CMD" --harness claude --lane work --repo o/r KEN-40
+assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") calls=$(host_call) ssh=$(typed "clear; ssh 'lane.example'") remote=$(typed "exec bash -lc 'cd /srv/lane && exec true --model opus --effort high $QUESTION_OFF_ALL'") env=$(typed CLAUDE_CONFIG_DIR=) opened=$(said "open-terminal: tmux-opened item=KEN-40 host=$HOST_STUB path=/srv/lane")" \
+  "rc=0 creates=nolog launched=1 claim_lanes=eclaude calls=accounts;create,--item,KEN-40,--repo,o/r,--harness,claude,--account,eclaude;cat,--item,KEN-40,/srv/lane/.git;put,--item,KEN-40,/srv/clone/.git/lane-mail/ken-40;cat,--item,KEN-40,/srv/clone/.git/lane-mail/ken-40;put,--item,KEN-40,/srv/lane/tmp/lane-mail/KEN-40/context.json ssh=1 remote=1 env=0 opened=1" \
   "a hosted launch creates through lane-host, types ssh then the remote line, and renders no lane env prefix"
 # Q is how single_quote renders one quote of the continuation line inside the
 # remote command. A hosted relaunch selects a resume or the start brief and
@@ -1129,24 +1129,24 @@ UNATTENDED_TEXT="$( source "$SCRIPTS_DIR/lib/lane-launch.sh" && printf '%s' "$LA
 # unattended words.
 hosted_resume() { printf "exec bash -lc 'cd /srv/lane && { claude %s --continue %s%s %s%s || [ \$? -ne 1 ] || exec claude -n %s %s %s%s %s%s; }'" "$CLAUDE_LEAD" "$Q" "$HOSTED_LINE" "$UNATTENDED_TEXT" "$Q" "$2" "$CLAUDE_LEAD" "$Q" "$3" "$UNATTENDED_TEXT" "$Q"; }
 hosted_line() { printf 'Resume the orch workflow for %s from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item %s first and act on every directive it prints, then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item %s through your harness background wake.' "$1" "$1" "$1"; }
-HOSTED_LINE="$(hosted_line CC-41)"
-run_ot "$HARNESS_UP;$CHOICE" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --relaunch CC-41
-assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "$(hosted_resume CC-41 CC-41 '/orch start CC-41')")" \
-  "rc=0 creates=nolog launched=1 calls=accounts;create,--item,CC-41,--repo,o/r,--harness,claude,--account,claude,--relaunch;cat,--item,CC-41,/srv/lane/.git;put,--item,CC-41,/srv/clone/.git/lane-mail/cc-41;cat,--item,CC-41,/srv/clone/.git/lane-mail/cc-41;put,--item,CC-41,/srv/lane/tmp/lane-mail/CC-41/context.json remote=1" \
+HOSTED_LINE="$(hosted_line KEN-41)"
+run_ot "$HARNESS_UP;$CHOICE" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --relaunch KEN-41
+assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "$(hosted_resume KEN-41 KEN-41 '/orch start KEN-41')")" \
+  "rc=0 creates=nolog launched=1 calls=accounts;create,--item,KEN-41,--repo,o/r,--harness,claude,--account,claude,--relaunch;cat,--item,KEN-41,/srv/lane/.git;put,--item,KEN-41,/srv/clone/.git/lane-mail/ken-41;cat,--item,KEN-41,/srv/clone/.git/lane-mail/ken-41;put,--item,KEN-41,/srv/lane/tmp/lane-mail/KEN-41/context.json remote=1" \
   "a hosted claude relaunch passes the picked account and --relaunch, and continues natively with the continuation line, the start brief behind it"
-HOSTED_LINE='Resume the orch workflow for CC-48 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item CC-48 first and act on every directive it prints.'
+HOSTED_LINE='Resume the orch workflow for KEN-48 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item KEN-48 first and act on every directive it prints.'
 PI_RELAUNCH="$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;flags=--model github-copilot/opus --thinking high"
-run_ot "$PI_RELAUNCH" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-48
+run_ot "$PI_RELAUNCH" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch KEN-48
 PI_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1
 PI_RESUME="0) exec pi '--exclude-tools' 'question' '--model' 'github-copilot/opus' '--thinking' 'high' --session \"\$session\" '$HOSTED_LINE $UNATTENDED_TEXT' ;; 1) exec pi"
-assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") lookup=$(grep -cF 'session=$(bash .agents/skills/orch/scripts/lib/lane-relaunch.sh pi CC-48 ' <<<"$PI_REMOTE" || true) resume=$(grep -cF "$PI_RESUME" <<<"$PI_REMOTE" || true) fresh=$(grep -cF "'/skill:orch start CC-48 $UNATTENDED_TEXT'" <<<"$PI_REMOTE" || true)" \
+assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") lookup=$(grep -cF 'session=$(bash .agents/skills/orch/scripts/lib/lane-relaunch.sh pi KEN-48 ' <<<"$PI_REMOTE" || true) resume=$(grep -cF "$PI_RESUME" <<<"$PI_REMOTE" || true) fresh=$(grep -cF "'/skill:orch start KEN-48 $UNATTENDED_TEXT'" <<<"$PI_REMOTE" || true)" \
   "rc=0 creates=nolog launched=1 claim_lanes=eclaude lookup=1 resume=1 fresh=1" \
   "a hosted pi relaunch selects its host session or the start brief, keeping its lane and continuation line"
 PI_OT_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-pi-native/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-pi-native/orch"
 mutate_file "$OPEN_TERMINAL" '      codex | pi)' '      pi) printf '\''pi %s-c%s\n'\'' "$flags" "$line"; return ;;'$'\n''      pi | codex)'
-run_ot "$PI_RELAUNCH" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-48
+run_ot "$PI_RELAUNCH" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch KEN-48
 PI_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1
 assert_eq "rc=$RC selection=$(grep -cF "$PI_RESUME" <<<"$PI_REMOTE" || true) native=$(grep -cF " -c '$HOSTED_LINE $UNATTENDED_TEXT'" <<<"$PI_REMOTE" || true)" \
   "rc=0 selection=0 native=1" "control: the old pi -c form fails the resume-or-fresh assertion"
@@ -1156,7 +1156,7 @@ OPEN_TERMINAL="$PI_OT_SHIPPED"
 # account as its Pi root and carries no Claude seat. The control drops the
 # refusal, and the auto launch goes on to the provider.
 for pi_seat_lane in auto work; do
-  run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=--model pi-claude/opus --thinking high" --host "$HOST_STUB" --harness pi --lane "$pi_seat_lane" --repo o/r CC-1690
+  run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=--model pi-claude/opus --thinking high" --host "$HOST_STUB" --harness pi --lane "$pi_seat_lane" --repo o/r KEN-1690
   assert_eq "$(observe "rc=1 launched=nolog hostseat=host=$HOST_STUB,model=pi-claude/opus") calls=$(host_call)" \
     "rc=1 launched=nolog hostseat=host=$HOST_STUB,model=pi-claude/opus calls=nolog" \
     "a hosted Pi launch on a pi-claude model under --lane $pi_seat_lane is refused before any host call"
@@ -1165,7 +1165,7 @@ PI_OT_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-pi-seat/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-pi-seat/orch"
 mutate_file "$OPEN_TERMINAL" '"$(lane_pick_harness pi "$LAUNCH_MODEL")" == claude ]]; then' '"$(lane_pick_harness pi "$LAUNCH_MODEL")" == claude-dropped ]]; then'
-run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=--model pi-claude/opus --thinking high" --host "$HOST_STUB" --harness pi --lane auto --repo o/r CC-1690
+run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=--model pi-claude/opus --thinking high" --host "$HOST_STUB" --harness pi --lane auto --repo o/r KEN-1690
 assert_eq "$(observe "hostseat=none") called=$([[ "$(host_call)" == nolog ]] && echo no || echo yes)" "hostseat=none called=yes" \
   "control: without the refusal a hosted Pi launch on a pi-claude model goes on to the provider"
 OPEN_TERMINAL="$PI_OT_SHIPPED"
@@ -1173,7 +1173,7 @@ OPEN_TERMINAL="$PI_OT_SHIPPED"
 # harness=pi row nor the override reads is refused as unmeasured, with the fix
 # naming the provider's accounts read, and open-terminal does not ask whether
 # the provider holds the account: the judge already read the provider's row.
-run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=--model github-copilot/claude-sonnet-5 --thinking high" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-1665
+run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=--model github-copilot/claude-sonnet-5 --thinking high" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch KEN-1665
 assert_eq "$(observe "rc=1 launched=nolog unreadable=lane=$H/.eclaude,model=github-copilot/claude-sonnet-5,step=windows unanswered=0 relaunchgate=0 poolfix=host:$H/.eclaude")" \
   "rc=1 launched=nolog unreadable=lane=$H/.eclaude,model=github-copilot/claude-sonnet-5,step=windows unanswered=0 relaunchgate=0 poolfix=host:$H/.eclaude" \
   "a hosted Pi relaunch on an unread Copilot pool is refused as unmeasured, naming the accounts read, open-terminal never asking whether the provider holds the account"
@@ -1185,11 +1185,11 @@ pi_hosted_row() { # PCT
   printf 'account=%s\tharness=pi\tmonthly-pct=%s\tmonthly-resets=2026-10-07T00:00:00Z\n' "$H/.eclaude" "$1" > "$PI_ROW_FILE"
 }
 pi_hosted_row 40
-run_ot "$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;LANE_HOST_STUB_ACCOUNTS=$PI_ROW_FILE;flags=--model github-copilot/claude-sonnet-5 --thinking high" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-1669
+run_ot "$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;LANE_HOST_STUB_ACCOUNTS=$PI_ROW_FILE;flags=--model github-copilot/claude-sonnet-5 --thinking high" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch KEN-1669
 assert_eq "$(observe "rc=0 launched=1 unreadable=none poolfix=none")" "rc=0 launched=1 unreadable=none poolfix=none" \
   "a hosted Pi relaunch is admitted on the provider's pool row with no stated reading"
 pi_hosted_row 97
-run_ot "ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;LANE_HOST_STUB_ACCOUNTS=$PI_ROW_FILE;flags=--model github-copilot/claude-sonnet-5 --thinking high" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-1669
+run_ot "ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;LANE_HOST_STUB_ACCOUNTS=$PI_ROW_FILE;flags=--model github-copilot/claude-sonnet-5 --thinking high" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch KEN-1669
 assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.eclaude,model=github-copilot/claude-sonnet-5,pct=97,bucket=monthly,projected-headroom=3")" \
   "rc=1 launched=nolog walled=lane=$H/.eclaude,model=github-copilot/claude-sonnet-5,pct=97,bucket=monthly,projected-headroom=3" \
   "a hosted Pi relaunch is refused on a walled provider row, the stated override replaced"
@@ -1198,25 +1198,25 @@ assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.eclaude,model=github-c
 # open-terminal would take the row as held and relaunch on a pool nobody read.
 printf 'account=%s\tharness=pi\tstatus=refused\tdetail=http-403-forbidden\n' "$H/.eclaude" > "$PI_ROW_FILE"
 PI_HELD="ORCH_LANE_ALIASES=eclaude=work;LANE_HOST_STUB_ACCOUNTS=$PI_ROW_FILE;flags=--model github-copilot/claude-sonnet-5 --thinking high"
-run_ot "$PI_HELD" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-1669
+run_ot "$PI_HELD" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch KEN-1669
 assert_eq "$(observe "rc=1 launched=nolog relaunchgate=0 poolfix=row:$H/.eclaude")" "rc=1 launched=nolog relaunchgate=0 poolfix=row:$H/.eclaude" \
   "a hosted Pi relaunch on a provider row that reads no pool is refused, never relaunched as held"
 # The same row under `auto` is the unstated refusal, its fix naming the row,
 # never a walled pool: nobody read it. The control drops the unstated arm, and
 # the refusal is reported as lanes failing.
-run_ot "$PI_HELD" --host "$HOST_STUB" --harness pi --lane auto --repo o/r CC-1669
+run_ot "$PI_HELD" --host "$HOST_STUB" --harness pi --lane auto --repo o/r KEN-1669
 assert_eq "$(observe "rc=1 launched=nolog pickrefusal=copilot-pool-unstated,setting=ORCH_LANE_COPILOT_POOL poolfix=row:$H/.eclaude")" \
   "rc=1 launched=nolog pickrefusal=copilot-pool-unstated,setting=ORCH_LANE_COPILOT_POOL poolfix=row:$H/.eclaude" \
   "a hosted auto Pi launch on a provider row that reads no pool is refused as unstated, naming the row"
 pi_control ctl-pi-auto-row open-terminal '    5:pi) ot_message copilot-pool-unstated' '    5:pi-dropped) ot_message copilot-pool-unstated' \
-  "$PI_HELD" --host "$HOST_STUB" --harness pi --lane auto --repo o/r CC-1669
+  "$PI_HELD" --host "$HOST_STUB" --harness pi --lane auto --repo o/r KEN-1669
 assert_eq "$(observe "rc=1 pickrefusal=none failed=exit=5")" "rc=1 pickrefusal=none failed=exit=5" \
   "control: without the unstated arm the auto refusal on an unread row is reported as lanes failing"
 PI_OT_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-pi-host/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-pi-host/orch"
 mutate_file "$OPEN_TERMINAL" '[[ "$LANE_HOST" == local || "$LAUNCH_HARNESS" == pi ]]' '[[ "$LANE_HOST" == local ]]'
-run_ot "$HARNESS_UP;$PI_HELD" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-1669
+run_ot "$HARNESS_UP;$PI_HELD" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch KEN-1669
 assert_eq "$(observe "rc=0 relaunchgate=1")" "rc=0 relaunchgate=1" \
   "control: a Pi relaunch that asks the provider relaunches on a held row whose pool nobody read"
 OPEN_TERMINAL="$PI_OT_SHIPPED"
@@ -1229,32 +1229,32 @@ mkdir -p "$H/.1copilot"
 printf '{"copilot_tokens":"gho_fixture"}\n' > "$H/.1copilot/config.json"
 printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":900}}}' > "$FIXTURE_DIR/.1copilot.json"
 COPILOT_HOSTED="flags=--model claude-opus-5 --reasoning-effort high --allow-all"
-run_ot "$COPILOT_HOSTED" --host "$HOST_STUB" --harness copilot --lane "$H/.1copilot" --repo o/r CC-1935
+run_ot "$COPILOT_HOSTED" --host "$HOST_STUB" --harness copilot --lane "$H/.1copilot" --repo o/r KEN-1935
 COPILOT_REMOTE="exec bash -lc 'cd /srv/lane && exec env -u COPILOT_GITHUB_TOKEN COPILOT_SKILLS_DIRS=\"\$HOME/.agents/skills\" COPILOT_ALLOW_ALL=true copilot $Q--autopilot$Q"
-assert_eq "$(observe "rc=0 launched=1") create=$(host_call | tr ';' '\n' | grep -c '^create,--item,CC-1935,--repo,o/r,--harness,copilot,--account,1copilot$') remote=$(typed "$COPILOT_REMOTE") local=$(typed COPILOT_HOME=)" \
+assert_eq "$(observe "rc=0 launched=1") create=$(host_call | tr ';' '\n' | grep -c '^create,--item,KEN-1935,--repo,o/r,--harness,copilot,--account,1copilot$') remote=$(typed "$COPILOT_REMOTE") local=$(typed COPILOT_HOME=)" \
   "rc=0 launched=1 create=1 remote=1 local=0" \
   "a hosted copilot launch creates with --harness copilot and runs copilot under the launch policy, the provider setting COPILOT_HOME"
 COPILOT_OT_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-copilot-host/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-copilot-host/orch"
 mutate_file "$OPEN_TERMINAL" '"$LANE_ENV" || ! "$HARNESS" =~ ^(claude|codex|pi|copilot)$ ) ]]; then' '"$LANE_ENV" || ! "$HARNESS" =~ ^(claude|codex|pi)$ ) ]]; then'
-run_ot "$COPILOT_HOSTED" --host "$HOST_STUB" --harness copilot --lane "$H/.1copilot" --repo o/r CC-1935
+run_ot "$COPILOT_HOSTED" --host "$HOST_STUB" --harness copilot --lane "$H/.1copilot" --repo o/r KEN-1935
 assert_eq "$(observe "rc=1 launched=nolog") invalid=$(awk '$2 == "host-invalid" { print $NF }' <<<"$OUT")" "rc=1 launched=nolog invalid=harness=copilot" \
   "control: without copilot in the host protocol's harnesses a hosted copilot launch is host-invalid"
 OPEN_TERMINAL="$COPILOT_OT_SHIPPED"
 OPEN_TERMINAL="$(mutant_scripts ctl-copilot-policy/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-copilot-policy/orch"
 mutate_file "$OPEN_TERMINAL" '[[ "$HARNESS" != copilot ]] || cmd="$(lane_copilot_env' '[[ "$HARNESS" == copilot ]] || cmd="$(lane_copilot_env'
-run_ot "$COPILOT_HOSTED" --host "$HOST_STUB" --harness copilot --lane "$H/.1copilot" --repo o/r CC-1936
+run_ot "$COPILOT_HOSTED" --host "$HOST_STUB" --harness copilot --lane "$H/.1copilot" --repo o/r KEN-1936
 assert_eq "$(observe "rc=0 launched=1") policy=$(typed "COPILOT_ALLOW_ALL=true copilot")" "rc=0 launched=1 policy=0" \
   "control: without the hosted policy a hosted copilot lane keeps the COPILOT_GITHUB_TOKEN its host exports"
 OPEN_TERMINAL="$COPILOT_OT_SHIPPED"
 CODEX_RELAUNCH="$HARNESS_UP;LANE_HOST_STUB_SELECTION=resume;ORCH_LANE_ALIASES=eclaude=work;flags=-m gpt-6-astra -c model_reasoning_effort=high"
-run_ot "$CODEX_RELAUNCH" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch CC-49
+run_ot "$CODEX_RELAUNCH" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch KEN-49
 CODEX_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1
 CODEX_LEAD="codex '-c' 'check_for_update_on_startup=false' '-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0' '-c' 'features.default_mode_request_user_input=false' '-m' 'gpt-6-astra' '-c' 'model_reasoning_effort=high'"
-CODEX_RESUME="0) printf resume > tmp/lane-mail/CC-49/relaunch-selection || exit 2; exec $CODEX_LEAD resume \"\$session\" ;; 1) printf fresh > tmp/lane-mail/CC-49/relaunch-selection || exit 2; exec $CODEX_LEAD 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-49. $UNATTENDED_TEXT'"
-assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") lookup=$(grep -cF 'session=$(bash .agents/skills/orch/scripts/lib/lane-relaunch.sh codex CC-49 ' <<<"$CODEX_REMOTE" || true) arms=$(grep -cF "$CODEX_RESUME" <<<"$CODEX_REMOTE" || true) compaction=$(typed "ORCH_COMPACTION_OVERRIDES=$Q$CODEX_COMPACTION$Q") line=$(typed 'Resume the orch workflow for CC-49')" \
+CODEX_RESUME="0) printf resume > tmp/lane-mail/KEN-49/relaunch-selection || exit 2; exec $CODEX_LEAD resume \"\$session\" ;; 1) printf fresh > tmp/lane-mail/KEN-49/relaunch-selection || exit 2; exec $CODEX_LEAD 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for KEN-49. $UNATTENDED_TEXT'"
+assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") lookup=$(grep -cF 'session=$(bash .agents/skills/orch/scripts/lib/lane-relaunch.sh codex KEN-49 ' <<<"$CODEX_REMOTE" || true) arms=$(grep -cF "$CODEX_RESUME" <<<"$CODEX_REMOTE" || true) compaction=$(typed "ORCH_COMPACTION_OVERRIDES=$Q$CODEX_COMPACTION$Q") line=$(typed 'Resume the orch workflow for KEN-49')" \
   "rc=0 creates=nolog launched=1 claim_lanes=eclaude lookup=1 arms=1 compaction=1 line=0" \
   "a hosted codex relaunch selects its host session promptless or the start brief, keeping its lane and compaction flags"
 # The lane comes up idle, so the launcher owes the operator a record saying the
@@ -1262,7 +1262,7 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") lookup
 # launched and nothing distinguishes it from a lane that got its instruction.
 # The assertion named "the promptless resume is recorded as owing its
 # continuation line" is what reddens if the record goes away.
-assert_eq "$(said "open-terminal: resume-lineless item=CC-49 harness=codex")" "1" \
+assert_eq "$(said "open-terminal: resume-lineless item=KEN-49 harness=codex")" "1" \
   "the promptless resume is recorded as owing its continuation line"
 # Parse-level control against the real codex parser. The host lookup supplies
 # the session id. Appending one prompt parses (exit 1, stdin is not a terminal)
@@ -1285,7 +1285,7 @@ CODEX_OT_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-codex-native/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-codex-native/orch"
 mutate_file "$OPEN_TERMINAL" '      codex | pi)' '      codex) printf '\''codex %sresume --last\n'\'' "$flags"; return ;;'$'\n''      pi | codex)'
-run_ot "$CODEX_RELAUNCH" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch CC-49
+run_ot "$CODEX_RELAUNCH" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch KEN-49
 CODEX_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1
 assert_eq "rc=$RC selection=$(grep -cF "$CODEX_RESUME" <<<"$CODEX_REMOTE" || true) native=$(grep -cF ' resume --last' <<<"$CODEX_REMOTE" || true)" \
   "rc=0 selection=0 native=1" "control: the old codex resume --last form fails the resume-or-fresh assertion"
@@ -1295,7 +1295,7 @@ CODEX_UNATTENDED_SCRIPTS="$(mutant_scripts ctl-codex-unattended/orch lib/lane-la
 orch_fixture_shared_libs "$TMP_ROOT/ctl-codex-unattended/orch"
 mutate_file "$CODEX_UNATTENDED_SCRIPTS/lib/lane-launch.sh" "LAUNCH_UNATTENDED_TEXT='This is" "LAUNCH_UNATTENDED_TEXT='changed unattended text. This is"
 OPEN_TERMINAL="$CODEX_UNATTENDED_SCRIPTS/open-terminal"
-run_ot "$CODEX_RELAUNCH" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch CC-49
+run_ot "$CODEX_RELAUNCH" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch KEN-49
 CODEX_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1
 assert_eq "rc=$RC arms=$(grep -cF "$CODEX_RESUME" <<<"$CODEX_REMOTE" || true) changed=$(grep -cF 'changed unattended text.' <<<"$CODEX_REMOTE" || true)" \
   "rc=0 arms=0 changed=1" "control: changed unattended text fails the exact codex resume-or-fresh assertion"
@@ -1331,17 +1331,17 @@ make_dead_lane "$H" xclaude
 printf 'account=%s\tharness=claude\n' "$H/.xclaude" > "$TMP_ROOT/hosted-accounts.tsv"
 HOSTED_ACCOUNT="LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts.tsv"
 run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;$HOSTED_ACCOUNT;$CHOICE_CMD" --host "$HOST_STUB" --harness claude \
-  --lane "$H/.xclaude" --repo o/r CC-77
+  --lane "$H/.xclaude" --repo o/r KEN-77
 assert_eq "$(observe "rc=1 launched=nolog credentialdead=lane=$H/.xclaude,host=$HOST_STUB unreadable=none")" \
   "rc=1 launched=nolog credentialdead=lane=$H/.xclaude,host=$HOST_STUB unreadable=none" \
   "a fresh hosted launch on an account this machine cannot renew is refused as host-credential-dead"
 run_ot "$HARNESS_UP;ORCH_LANES_CLAUDE_CLIENT_ID=client-1;$HOSTED_ACCOUNT;flags=--model fable --effort high" --host "$HOST_STUB" --harness claude \
-  --lane "$H/.xclaude" --repo o/r --relaunch CC-78
+  --lane "$H/.xclaude" --repo o/r --relaunch KEN-78
 assert_eq "$(observe "rc=0 launched=1 credentialdead=none unreadable=none relaunchgate=1")" \
   "rc=0 launched=1 credentialdead=none unreadable=none relaunchgate=1" \
   "a hosted relaunch on that same dead local copy proceeds, and says which credential runs it"
 run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;$CHOICE_CMD" --host "$HOST_STUB" --harness claude \
-  --lane "$H/.xclaude" --repo o/r CC-79
+  --lane "$H/.xclaude" --repo o/r KEN-79
 assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xclaude,model=opus,step=windows")" \
   "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xclaude,model=opus,step=windows" \
   "a provider holding no credential for the account leaves the refusal the unread window it was"
@@ -1352,7 +1352,7 @@ assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H
 # no news.
 RELAUNCH_FLAGS="$HARNESS_UP;flags=--model fable --effort high"
 run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;LANE_HOST_STUB_NO_ACCOUNTS=1;$RELAUNCH_FLAGS" --host "$HOST_STUB" \
-  --harness claude --lane "$H/.xclaude" --repo o/r --relaunch CC-100
+  --harness claude --lane "$H/.xclaude" --repo o/r --relaunch KEN-100
 assert_eq "$(observe "rc=1 launched=nolog relaunchgate=0 unanswered=0 credentialdead=none unreadable=lane=$H/.xclaude,model=fable,step=windows")" \
   "rc=1 launched=nolog relaunchgate=0 unanswered=0 credentialdead=none unreadable=lane=$H/.xclaude,model=fable,step=windows" \
   "a hosted relaunch whose provider implements no accounts verb keeps the usage gate, and says nothing about a verb that is absent"
@@ -1367,7 +1367,7 @@ jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:
                   scope: {model: {display_name: "Haiku"}}}]}' > "$FIXTURE_DIR/.vclaude.json"
 printf 'account=%s\tharness=claude\n' "$H/.vclaude" > "$TMP_ROOT/hosted-accounts-vclaude.tsv"
 run_ot "LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-vclaude.tsv;cmd=true --model sonnet --effort high" \
-  --host "$HOST_STUB" --harness claude --lane "$H/.vclaude" --repo o/r CC-110
+  --host "$HOST_STUB" --harness claude --lane "$H/.vclaude" --repo o/r KEN-110
 assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.vclaude,model=sonnet,step=windows")" \
   "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.vclaude,model=sonnet,step=windows" \
   "a hosted account the provider holds, unmeasured for this model but not expired, is the unread window and not a login to renew"
@@ -1376,7 +1376,7 @@ assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H
 # comparison is what stands between a held account and a neighbour's.
 printf 'account=%s\tharness=claude\n' "$H/.eclaude" > "$TMP_ROOT/hosted-accounts-other.tsv"
 run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-other.tsv;$CHOICE_CMD" \
-  --host "$HOST_STUB" --harness claude --lane "$H/.xclaude" --repo o/r CC-111
+  --host "$HOST_STUB" --harness claude --lane "$H/.xclaude" --repo o/r KEN-111
 assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xclaude,model=opus,step=windows")" \
   "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xclaude,model=opus,step=windows" \
   "a provider naming other accounts of this harness holds nothing for this one, so the refusal stays the unread window"
@@ -1385,14 +1385,14 @@ assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H
 # not to the copy of the credential that reads it, so a window measured at the
 # threshold here is the window the sandbox meets; resuming would spend the
 # sandbox start, the worktree step and the continuation line to open on a usage
-# banner. The local twin is CC-61 above, refused on the same shape, and the
+# banner. The local twin is KEN-61 above, refused on the same shape, and the
 # provider holds this account — which changes the UNMEASURED answer and nothing
 # about the wall. Its own lane, so no row that follows reads this window.
 make_lane "$H" wclaude 3600
 claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.wclaude.json"
 printf 'account=%s\tharness=claude\n' "$H/.wclaude" > "$TMP_ROOT/hosted-accounts-walled.tsv"
 run_ot "LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-walled.tsv;$RELAUNCH_FLAGS" --host "$HOST_STUB" \
-  --harness claude --lane "$H/.wclaude" --repo o/r --relaunch CC-107
+  --harness claude --lane "$H/.wclaude" --repo o/r --relaunch KEN-107
 assert_eq "$(observe "rc=1 launched=nolog creates=nolog relaunchgate=0 walled=lane=$H/.wclaude,model=fable,pct=95,bucket=model,projected-headroom=5")" \
   "rc=1 launched=nolog creates=nolog relaunchgate=0 walled=lane=$H/.wclaude,model=fable,pct=95,bucket=model,projected-headroom=5" \
   "a hosted relaunch onto an account the provider holds meets the wall its local twin meets"
@@ -1401,7 +1401,7 @@ assert_eq "$(observe "rc=1 launched=nolog creates=nolog relaunchgate=0 walled=la
 # provider's own bytes under its keyed line, this launcher adds one of its own,
 # and the gate still holds, because no answer establishes nothing.
 run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;LANE_HOST_STUB_ACCOUNTS_STATUS=7;$RELAUNCH_FLAGS" --host "$HOST_STUB" \
-  --harness claude --lane "$H/.xclaude" --repo o/r --relaunch CC-101
+  --harness claude --lane "$H/.xclaude" --repo o/r --relaunch KEN-101
 assert_eq "$(observe "rc=1 launched=nolog relaunchgate=0 unanswered=1 unreadable=lane=$H/.xclaude,model=fable,step=windows") provider=$(said 'lane-host-fixture: accounts-failed') reader=$(grep -c "^lanes: host-accounts-unreadable host=$HOST_STUB exit=7\$" <<<"$OUT" || true)" \
   "rc=1 launched=nolog relaunchgate=0 unanswered=1 unreadable=lane=$H/.xclaude,model=fable,step=windows provider=2 reader=2" \
   "a hosted relaunch whose provider fails the accounts verb keeps the gate, and the provider's and reader's lines appear for the judge's read and the arm's, beside the launcher's line"
@@ -1411,7 +1411,7 @@ assert_eq "$(observe "rc=1 launched=nolog relaunchgate=0 unanswered=1 unreadable
 # owner cannot act on.
 printf 'account=%s\tharness=claude\tweekly-pct=999\n' "$H/.xclaude" > "$TMP_ROOT/hosted-accounts-bad.tsv"
 run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-bad.tsv;$CHOICE_CMD" \
-  --host "$HOST_STUB" --harness claude --lane "$H/.xclaude" --repo o/r CC-102
+  --host "$HOST_STUB" --harness claude --lane "$H/.xclaude" --repo o/r KEN-102
 assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xclaude,model=opus,step=windows") dropped=$(grep -c "^lanes: host-account-invalid account=$H/.xclaude field=weekly-pct\$" <<<"$OUT" || true)" \
   "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xclaude,model=opus,step=windows dropped=2" \
   "an accounts row the reader drops, once for the judge's read and once for the arm's, holds no account for the launcher either"
@@ -1419,7 +1419,7 @@ assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H
 # account under the other harness is not this launch's account.
 printf 'account=%s\tharness=codex\n' "$H/.xclaude" > "$TMP_ROOT/hosted-accounts-codex.tsv"
 run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=client-1;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-codex.tsv;$CHOICE_CMD" \
-  --host "$HOST_STUB" --harness claude --lane "$H/.xclaude" --repo o/r CC-103
+  --host "$HOST_STUB" --harness claude --lane "$H/.xclaude" --repo o/r KEN-103
 assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xclaude,model=opus,step=windows")" \
   "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xclaude,model=opus,step=windows" \
   "an accounts row naming this account under another harness holds nothing for this launch"
@@ -1430,14 +1430,14 @@ assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H
 make_codex_lane "$H/.xcodex"
 printf 'account=%s\tharness=codex\n' "$H/.xcodex" > "$TMP_ROOT/hosted-accounts-xcodex.tsv"
 run_ot "LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-xcodex.tsv;cmd=true -m gpt-6-astra -c model_reasoning_effort=high" \
-  --host "$HOST_STUB" --harness codex --lane "$H/.xcodex" --repo o/r CC-104
+  --host "$HOST_STUB" --harness codex --lane "$H/.xcodex" --repo o/r KEN-104
 assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xcodex,model=gpt-6-astra,step=windows")" \
   "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xcodex,model=gpt-6-astra,step=windows" \
   "a codex lane this machine cannot measure is the unread window, never the login remedy"
 make_codex_token_lane "$H/.ycodex" -60
 printf 'account=%s\tharness=codex\n' "$H/.ycodex" > "$TMP_ROOT/hosted-accounts-ycodex.tsv"
 run_ot "LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-ycodex.tsv;cmd=true -m gpt-6-astra -c model_reasoning_effort=high" \
-  --host "$HOST_STUB" --harness codex --lane "$H/.ycodex" --repo o/r CC-105
+  --host "$HOST_STUB" --harness codex --lane "$H/.ycodex" --repo o/r KEN-105
 assert_eq "$(observe "rc=1 launched=nolog credentialdead=lane=$H/.ycodex,host=$HOST_STUB unreadable=none")" \
   "rc=1 launched=nolog credentialdead=lane=$H/.ycodex,host=$HOST_STUB unreadable=none" \
   "a codex lane whose expired token cannot be renewed is refused as host-credential-dead"
@@ -1450,7 +1450,7 @@ printf '{}\n' > "$H/.tokclaude/.claude.json"
 printf 'account=%s\tharness=claude\tsession-5h-pct=10\tweekly-pct=20\tmodel-pct=5\tmodel-label=Opus\n' \
   "$H/.tokclaude" > "$TMP_ROOT/hosted-accounts-token.tsv"
 TOKEN_ROW="LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-token.tsv;$CHOICE_CMD"
-run_ot "$TOKEN_ROW" --host "$HOST_STUB" --harness claude --lane "$H/.tokclaude" --repo o/r CC-120
+run_ot "$TOKEN_ROW" --host "$HOST_STUB" --harness claude --lane "$H/.tokclaude" --repo o/r KEN-120
 assert_eq "$(observe "rc=0 launched=1 unreadable=none")" "rc=0 launched=1 unreadable=none" \
   "a --host launch on a token-only folder the provider measures is judged on the provider's row and launches"
 # A relaunch onto a host row that measured nothing proceeds on the provider's
@@ -1460,7 +1460,7 @@ printf 'account=%s\tharness=claude\tstatus=unreachable\n' "$H/.tokclaude" > "$TM
 : > "$TMP_ROOT/hosted-accounts-none.tsv"
 TOKEN_STATE="$TMP_ROOT/token-state"
 run_ot "OVERSEE_WATCH_STATE_DIR=$TOKEN_STATE;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-token-dark.tsv;$RELAUNCH_FLAGS" --host "$HOST_STUB" \
-  --harness claude --lane "$H/.tokclaude" --repo o/r --relaunch CC-122
+  --harness claude --lane "$H/.tokclaude" --repo o/r --relaunch KEN-122
 assert_eq "$(observe "rc=0 launched=1 relaunchgate=1") accounts=$(grep -c '^accounts' "$RUN/host.log" || true)" \
   "rc=0 launched=1 relaunchgate=1 accounts=2" \
   "a relaunch onto a host row that measured nothing proceeds on the arm's own accounts read"
@@ -1469,7 +1469,7 @@ assert_eq "$(observe "rc=0 launched=1 relaunchgate=1") accounts=$(grep -c '^acco
 # says it is gone, so the relaunch is refused as the unread window it is. That
 # read also refreshes the cache, so the control below warms a state of its own.
 run_ot "OVERSEE_WATCH_STATE_DIR=$TOKEN_STATE;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-none.tsv;$RELAUNCH_FLAGS" \
-  --host "$HOST_STUB" --harness claude --lane "$H/.tokclaude" --repo o/r --relaunch CC-123
+  --host "$HOST_STUB" --harness claude --lane "$H/.tokclaude" --repo o/r --relaunch KEN-123
 assert_eq "$(observe "rc=1 launched=0 relaunchgate=0 unreadable=lane=$H/.tokclaude,model=fable,step=windows")" \
   "rc=1 launched=0 relaunchgate=0 unreadable=lane=$H/.tokclaude,model=fable,step=windows" \
   "a relaunch whose cached host row the provider has since dropped is refused on the arm's fresh read"
@@ -1477,7 +1477,7 @@ assert_eq "$(observe "rc=1 launched=0 relaunchgate=0 unreadable=lane=$H/.tokclau
 # the account relaunches onto the dropped account.
 TOKEN_CTL_STATE="$TMP_ROOT/token-state-ctl"
 run_ot "OVERSEE_WATCH_STATE_DIR=$TOKEN_CTL_STATE;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-token-dark.tsv;$RELAUNCH_FLAGS" \
-  --host "$HOST_STUB" --harness claude --lane "$H/.tokclaude" --repo o/r --relaunch CC-124
+  --host "$HOST_STUB" --harness claude --lane "$H/.tokclaude" --repo o/r --relaunch KEN-124
 assert_eq "$RC" "0" "control warm-up: the relaunch caches the provider's row naming the account"
 TOKEN_OT_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-held-cached/orch open-terminal)/open-terminal" || exit 1
@@ -1485,7 +1485,7 @@ orch_fixture_shared_libs "$TMP_ROOT/ctl-held-cached/orch"
 mutate_file "$OPEN_TERMINAL" '[[ "$LANE_HOST" == local || "$LAUNCH_HARNESS" == pi ]] || host_account_read "${LANE_ENV#*=}" "$LAUNCH_HARNESS"' \
   '[[ "$LANE_HOST" == local || "$LAUNCH_HARNESS" == pi ]] || { [[ "$(jq -r .measured_through <<<"$lane_record")" == host ]] && HOST_ACCOUNT=held; } || host_account_read "${LANE_ENV#*=}" "$LAUNCH_HARNESS"'
 run_ot "OVERSEE_WATCH_STATE_DIR=$TOKEN_CTL_STATE;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-none.tsv;$RELAUNCH_FLAGS" \
-  --host "$HOST_STUB" --harness claude --lane "$H/.tokclaude" --repo o/r --relaunch CC-125
+  --host "$HOST_STUB" --harness claude --lane "$H/.tokclaude" --repo o/r --relaunch KEN-125
 assert_eq "$(observe "rc=0 launched=1 relaunchgate=1")" "rc=0 launched=1 relaunchgate=1" \
   "control: an arm trusting the judge's cached host row relaunches onto an account the provider dropped"
 OPEN_TERMINAL="$TOKEN_OT_SHIPPED"
@@ -1496,10 +1496,10 @@ OPEN_TERMINAL="$TOKEN_OT_SHIPPED"
 # unread window and the refusal it always had.
 printf 'account=%s\tharness=claude\tstatus=unreachable\n' "$H/.claude" > "$TMP_ROOT/hosted-accounts-claude-dark.tsv"
 CLAUDE_DARK="LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-claude-dark.tsv;$CHOICE_CMD"
-run_ot "$CLAUDE_DARK" --host "$HOST_STUB" --harness claude --lane "$H/.claude" --repo o/r CC-126
+run_ot "$CLAUDE_DARK" --host "$HOST_STUB" --harness claude --lane "$H/.claude" --repo o/r KEN-126
 assert_eq "$(observe "rc=0 launched=1 unreadable=none localreading=1")" "rc=0 launched=1 unreadable=none localreading=1" \
   "a fresh --host launch on an account the provider cannot read is judged on this machine's fresh reading, under its keyed line, and launches"
-run_ot "LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-token-dark.tsv;$CHOICE_CMD" --host "$HOST_STUB" --harness claude --lane "$H/.tokclaude" --repo o/r CC-127
+run_ot "LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-token-dark.tsv;$CHOICE_CMD" --host "$HOST_STUB" --harness claude --lane "$H/.tokclaude" --repo o/r KEN-127
 assert_eq "$(observe "rc=1 launched=nolog localreading=0 unreadable=lane=$H/.tokclaude,model=opus,step=windows")" \
   "rc=1 launched=nolog localreading=0 unreadable=lane=$H/.tokclaude,model=opus,step=windows" \
   "the same row for a folder this machine holds no credentials for stays the unread window on a fresh launch"
@@ -1507,11 +1507,11 @@ assert_eq "$(observe "rc=1 launched=nolog localreading=0 unreadable=lane=$H/.tok
 # endpoint set to refuse, so the second launch's refresh serves that old figure
 # as rate_limited: measured, but not fresh.
 DARK_STATE="$TMP_ROOT/claude-dark-state"
-run_ot "OVERSEE_WATCH_STATE_DIR=$DARK_STATE;$CLAUDE_DARK" --host "$HOST_STUB" --harness claude --lane "$H/.claude" --repo o/r CC-128
+run_ot "OVERSEE_WATCH_STATE_DIR=$DARK_STATE;$CLAUDE_DARK" --host "$HOST_STUB" --harness claude --lane "$H/.claude" --repo o/r KEN-128
 assert_eq "$RC" "0" "warm-up: the launch under its own state measures the account fresh"
 age_usage_record "$DARK_STATE" "$H/.claude" 600
 printf '429 0\n' > "$FIXTURE_DIR/.claude.status"
-run_ot "OVERSEE_WATCH_STATE_DIR=$DARK_STATE;$CLAUDE_DARK" --host "$HOST_STUB" --harness claude --lane "$H/.claude" --repo o/r CC-129
+run_ot "OVERSEE_WATCH_STATE_DIR=$DARK_STATE;$CLAUDE_DARK" --host "$HOST_STUB" --harness claude --lane "$H/.claude" --repo o/r KEN-129
 assert_eq "$(observe "rc=1 launched=0 localreading=0 unreadable=lane=$H/.claude,model=opus,step=windows")" \
   "rc=1 launched=0 localreading=0 unreadable=lane=$H/.claude,model=opus,step=windows" \
   "a local figure older than the TTL does not stand in for the unreachable row, so the fresh launch is refused"
@@ -1522,30 +1522,30 @@ TOKEN_OT_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-judge-host/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-judge-host/orch"
 mutate_file "$OPEN_TERMINAL" 'lane_record="$(ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --lane' 'lane_record="$("$LANES_CLI" pick --lane'
-run_ot "$TOKEN_ROW" --host "$HOST_STUB" --harness claude --lane "$H/.tokclaude" --repo o/r CC-121
+run_ot "$TOKEN_ROW" --host "$HOST_STUB" --harness claude --lane "$H/.tokclaude" --repo o/r KEN-121
 assert_eq "$(observe "rc=1 launched=nolog unreadable=lane=$H/.tokclaude,model=opus,step=windows")" \
   "rc=1 launched=nolog unreadable=lane=$H/.tokclaude,model=opus,step=windows" \
   "control: a judge run without the resolved host refuses the token-only folder as an unread window"
 OPEN_TERMINAL="$TOKEN_OT_SHIPPED"
-run_ot "LANE_HOST_STUB_STATUS=75;$CHOICE_CMD" --host "$HOST_STUB" --harness claude --lane auto --repo o/r CC-42
-assert_eq "$(observe "rc= launched=") owned=$(awk '$2 == "item-owned" { print $3 }' <<<"$OUT")" "rc=75 launched=nolog owned=item=CC-42" \
+run_ot "LANE_HOST_STUB_STATUS=75;$CHOICE_CMD" --host "$HOST_STUB" --harness claude --lane auto --repo o/r KEN-42
+assert_eq "$(observe "rc= launched=") owned=$(awk '$2 == "item-owned" { print $3 }' <<<"$OUT")" "rc=75 launched=nolog owned=item=KEN-42" \
   "a hosted create exit 75 skips the item as owned by another session"
-run_ot "LANE_HOST_STUB_STATUS=1;$CHOICE_CMD" --host "$HOST_STUB" --harness claude --lane auto --repo o/r CC-43
-assert_eq "$(observe "rc= launched= creates=") failed=$(said "open-terminal: host-create-failed item=CC-43 exit=1")" "rc=1 launched=nolog creates=nolog failed=1" \
+run_ot "LANE_HOST_STUB_STATUS=1;$CHOICE_CMD" --host "$HOST_STUB" --harness claude --lane auto --repo o/r KEN-43
+assert_eq "$(observe "rc= launched= creates=") failed=$(said "open-terminal: host-create-failed item=KEN-43 exit=1")" "rc=1 launched=nolog creates=nolog failed=1" \
   "a hosted create failure is host-create-failed and opens no window"
-run_ot "" --host "$HOST_STUB" --lane "$H/.eclaude" --repo o/r --cmd true CC-44
+run_ot "" --host "$HOST_STUB" --lane "$H/.eclaude" --repo o/r --cmd true KEN-44
 assert_eq "$(observe "rc= launched= creates=") create=$(host_call) invalid=$(awk '$2 == "host-invalid" { print $NF }' <<<"$OUT")" "rc=1 launched=nolog creates=nolog create=nolog invalid=harness=" \
   "a hosted launch without a host-protocol harness is host-invalid before any create"
-run_ot "" --host "$HOST_STUB" --harness claude --wake CC-45
+run_ot "" --host "$HOST_STUB" --harness claude --wake KEN-45
 assert_eq "$(observe "rc=") create=$(host_call) wake=$(awk '$2 == "wake-invalid"' <<<"$OUT" | wc -l | tr -d '[:space:]')" "rc=1 create=nolog wake=1" \
   "a hosted wake is wake-invalid before any create"
-run_ot "LANE_HOST_STUB_CREATE_LINE=ssh-target=lane.example"$'\t'"path=/srv/lane;$CHOICE_CMD" --host "$HOST_STUB" --harness claude --lane auto --repo o/r CC-46
-assert_eq "$(observe "rc= launched=") invalid=$(said "open-terminal: host-line-invalid item=CC-46")" "rc=1 launched=nolog invalid=1" \
+run_ot "LANE_HOST_STUB_CREATE_LINE=ssh-target=lane.example"$'\t'"path=/srv/lane;$CHOICE_CMD" --host "$HOST_STUB" --harness claude --lane auto --repo o/r KEN-46
+assert_eq "$(observe "rc= launched=") invalid=$(said "open-terminal: host-line-invalid item=KEN-46")" "rc=1 launched=nolog invalid=1" \
   "a create line missing its remote prefix is host-line-invalid and opens no window"
 # lane-host create writes the hosted lane's marker on its host. A local one
 # would bind the caller's own checkout, which would then pose as a lane.
 HOSTCALLER="$TMP_ROOT/hostcaller"; mkdir -p "$HOSTCALLER"; git -C "$HOSTCALLER" init -q; git -C "$HOSTCALLER" config gc.auto 0; git -C "$HOSTCALLER" config maintenance.auto false
-run_ot "cwd=$HOSTCALLER;$CHOICE_CMD" --host "$HOST_STUB" --harness claude --lane auto --repo o/r CC-47
+run_ot "cwd=$HOSTCALLER;$CHOICE_CMD" --host "$HOST_STUB" --harness claude --lane auto --repo o/r KEN-47
 assert_eq "$(observe "rc= launched=") local_marker=$([[ -e "$HOSTCALLER/.git/lane-mail" ]] && echo present || echo absent)" "rc=0 launched=1 local_marker=absent" \
   "a hosted launch writes no lane marker into the caller's own checkout"
 
@@ -1565,40 +1565,40 @@ echo "=== the hosted ssh prompt wait has its own bound and one retry ==="
 # line, whose reason, bound and attempt count are the facts only it carries.
 SSH_LINE="clear; ssh 'lane.example'"
 INTERRUPT="send-keys -t %1 C-c"
-run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_CONNECTS_ON=1;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-120
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_CONNECTS_ON=1;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r KEN-120
 assert_eq "$(observe "rc=0 launched=1 promptmissing=none") ssh=$(typed "$SSH_LINE") int=$(typed "$INTERRUPT")" \
   "rc=0 launched=1 promptmissing=none ssh=1 int=0" \
   "a prompt on the first dial launches the lane on one ssh paste, with no interrupt and no retry"
-run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_CONNECTS_ON=2;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-121
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_CONNECTS_ON=2;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r KEN-121
 assert_eq "$(observe "rc=0 launched=1 promptmissing=none") ssh=$(typed "$SSH_LINE") int=$(typed "$INTERRUPT")" \
   "rc=0 launched=1 promptmissing=none ssh=2 int=1" \
   "a host that answers only the second dial is reached by the interrupt and the retry, and the lane launches"
-run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_CONNECTS_ON=3;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-122
-assert_eq "$(observe "rc=1 promptmissing=item=CC-122,host=$HOST_STUB,reason=prompt-silent,seconds=1,attempts=2") ssh=$(typed "$SSH_LINE") int=$(typed "$INTERRUPT")" \
-  "rc=1 promptmissing=item=CC-122,host=$HOST_STUB,reason=prompt-silent,seconds=1,attempts=2 ssh=2 int=1" \
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_CONNECTS_ON=3;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r KEN-122
+assert_eq "$(observe "rc=1 promptmissing=item=KEN-122,host=$HOST_STUB,reason=prompt-silent,seconds=1,attempts=2") ssh=$(typed "$SSH_LINE") int=$(typed "$INTERRUPT")" \
+  "rc=1 promptmissing=item=KEN-122,host=$HOST_STUB,reason=prompt-silent,seconds=1,attempts=2 ssh=2 int=1" \
   "a host that answers neither dial is remote-prompt-missing naming prompt-silent, the bound and both attempts"
 # A pane no longer running ssh is a session that died, not a client to
 # interrupt: nothing is interrupted and nothing is dialled a second time.
-run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_CONNECTS_ON=3;OT_SSH_DIES_AFTER=1;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-123
-assert_eq "$(observe "rc=1 promptmissing=item=CC-123,host=$HOST_STUB,reason=session-gone,seconds=1,attempts=1") ssh=$(typed "$SSH_LINE") int=$(typed "$INTERRUPT")" \
-  "rc=1 promptmissing=item=CC-123,host=$HOST_STUB,reason=session-gone,seconds=1,attempts=1 ssh=1 int=0" \
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_CONNECTS_ON=3;OT_SSH_DIES_AFTER=1;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r KEN-123
+assert_eq "$(observe "rc=1 promptmissing=item=KEN-123,host=$HOST_STUB,reason=session-gone,seconds=1,attempts=1") ssh=$(typed "$SSH_LINE") int=$(typed "$INTERRUPT")" \
+  "rc=1 promptmissing=item=KEN-123,host=$HOST_STUB,reason=session-gone,seconds=1,attempts=1 ssh=1 int=0" \
   "a pane whose ssh session died under the first wait is session-gone on one paste, with no interrupt"
 # The new bound is judged by the block that judges ORCH_TMUX_VERIFY_SECS, so it
 # takes the same keyed refusal under its own name, before any window opens.
-run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_SSH_PROMPT_SECS=abc;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-124
+run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_SSH_PROMPT_SECS=abc;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r KEN-124
 assert_eq "$(observe "rc=1 launched=nolog seconds_invalid=setting=ORCH_LANE_SSH_PROMPT_SECS,value=abc") create=$(host_call)" \
   "rc=1 launched=nolog seconds_invalid=setting=ORCH_LANE_SSH_PROMPT_SECS,value=abc create=nolog" \
   "a non-integer ssh bound is the verify-seconds-invalid refusal under its own setting name, before any create"
 # The ceiling the --help text promises, which is 300 and not the 120 the
 # verification timeout takes. The host answers the first dial, so the clamped
 # value is never waited out.
-run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_SSH_PROMPT_SECS=400;OT_SSH_CONNECTS_ON=1;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-130
+run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_SSH_PROMPT_SECS=400;OT_SSH_CONNECTS_ON=1;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r KEN-130
 assert_eq "$(observe "rc=0 launched=1 seconds_clamped=setting=ORCH_LANE_SSH_PROMPT_SECS,value=400,limit=300")" \
   "rc=0 launched=1 seconds_clamped=setting=ORCH_LANE_SSH_PROMPT_SECS,value=400,limit=300" \
   "an oversized ssh bound is clamped loudly to its own ceiling of 300, and the lane still launches"
 # The other direction of the gate: a local lane reaches neither ssh wait, so a
-# broken ssh bound must not abort one. Its hosted twin is CC-124 above.
-run_ot "ORCH_LANE_SSH_PROMPT_SECS=abc;$CHOICE_CMD" --harness claude --lane "$H/.claude" CC-131
+# broken ssh bound must not abort one. Its hosted twin is KEN-124 above.
+run_ot "ORCH_LANE_SSH_PROMPT_SECS=abc;$CHOICE_CMD" --harness claude --lane "$H/.claude" KEN-131
 assert_eq "$(observe "rc=0 launched=1 seconds_invalid=none")" "rc=0 launched=1 seconds_invalid=none" \
   "a local claude tmux lane reads the ssh bound nowhere and is not aborted by a broken one"
 
@@ -1608,13 +1608,13 @@ assert_eq "$(observe "rc=0 launched=1 seconds_invalid=none")" "rc=0 launched=1 s
 # aimed at the wait's own call, because the two subcommands have other readers
 # in the same run: display-message also reads pane_in_mode before every paste,
 # and capture-pane also carries the brief verification.
-run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_TMUX_FAIL_NTH=display-message:3;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-132
-assert_eq "$(observe "rc=1 tmuxfailed=operation=display-message,item=CC-132 promptmissing=none")" \
-  "rc=1 tmuxfailed=operation=display-message,item=CC-132 promptmissing=none" \
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_TMUX_FAIL_NTH=display-message:3;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r KEN-132
+assert_eq "$(observe "rc=1 tmuxfailed=operation=display-message,item=KEN-132 promptmissing=none")" \
+  "rc=1 tmuxfailed=operation=display-message,item=KEN-132 promptmissing=none" \
   "a failed pane-command read during the ssh wait is tmux-failed naming display-message, not remote-prompt-missing"
-run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_TMUX_FAIL_NTH=capture-pane:1;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-133
-assert_eq "$(observe "rc=1 tmuxfailed=operation=capture-pane,item=CC-133 promptmissing=none")" \
-  "rc=1 tmuxfailed=operation=capture-pane,item=CC-133 promptmissing=none" \
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_TMUX_FAIL_NTH=capture-pane:1;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r KEN-133
+assert_eq "$(observe "rc=1 tmuxfailed=operation=capture-pane,item=KEN-133 promptmissing=none")" \
+  "rc=1 tmuxfailed=operation=capture-pane,item=KEN-133 promptmissing=none" \
   "a failed pane capture during the ssh wait is tmux-failed naming capture-pane, not remote-prompt-missing"
 
 # The two bounds are told apart by the polling, not by the refusal's own field:
@@ -1622,9 +1622,9 @@ assert_eq "$(observe "rc=1 tmuxfailed=operation=capture-pane,item=CC-133 promptm
 # answers neither dial is looked at four times per wait plus the one look that
 # finds the pane back at its shell. Read against ORCH_TMUX_VERIFY_SECS the same
 # run makes five looks, so a wait that took the wrong bound cannot pass here.
-run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_SSH_PROMPT_SECS=3;ORCH_TMUX_VERIFY_SECS=1;OT_SSH_CONNECTS_ON=3;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-126
-assert_eq "$(observe "rc=1 promptmissing=item=CC-126,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=2") polls=$(grep -c '^display-message .*pane_current_command' "$RUN/tmux.log" || true)" \
-  "rc=1 promptmissing=item=CC-126,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=2 polls=9" \
+run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_SSH_PROMPT_SECS=3;ORCH_TMUX_VERIFY_SECS=1;OT_SSH_CONNECTS_ON=3;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r KEN-126
+assert_eq "$(observe "rc=1 promptmissing=item=KEN-126,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=2") polls=$(grep -c '^display-message .*pane_current_command' "$RUN/tmux.log" || true)" \
+  "rc=1 promptmissing=item=KEN-126,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=2 polls=9" \
   "both waits poll on the ssh bound, which the run's look count separates from the verification timeout"
 
 # A client already past connect keeps the pane through the interrupt: its
@@ -1635,18 +1635,18 @@ assert_eq "$(observe "rc=1 promptmissing=item=CC-126,host=$HOST_STUB,reason=prom
 # the ssh bound: at three seconds against one for the verification timeout the
 # run makes four looks per wait, where the harness bound would make two in the
 # second wait and eight looks in all.
-run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_SSH_PROMPT_SECS=3;ORCH_TMUX_VERIFY_SECS=1;OT_SSH_CONNECTS_ON=2;OT_SSH_IGNORES_INTERRUPT=1;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-134
-assert_eq "$(observe "rc=1 promptmissing=item=CC-134,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=1") ssh=$(typed "$SSH_LINE") int=$(typed "$INTERRUPT") polls=$(grep -c '^display-message .*pane_current_command' "$RUN/tmux.log" || true)" \
-  "rc=1 promptmissing=item=CC-134,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=1 ssh=1 int=1 polls=8" \
+run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_SSH_PROMPT_SECS=3;ORCH_TMUX_VERIFY_SECS=1;OT_SSH_CONNECTS_ON=2;OT_SSH_IGNORES_INTERRUPT=1;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r KEN-134
+assert_eq "$(observe "rc=1 promptmissing=item=KEN-134,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=1") ssh=$(typed "$SSH_LINE") int=$(typed "$INTERRUPT") polls=$(grep -c '^display-message .*pane_current_command' "$RUN/tmux.log" || true)" \
+  "rc=1 promptmissing=item=KEN-134,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=1 ssh=1 int=1 polls=8" \
   "a client that keeps the pane through the interrupt is refused on its one dial, the wait for the shell spending the ssh bound"
 # The interrupt is a keystroke that can fail on this machine like any other,
 # and it is refused under its own operation name: an operator sent to debug an
 # ssh paste would be looking at a line that was never typed. The send-keys the
 # interrupt makes is the second of the run, the first being the Enter that
 # submits the ssh line.
-run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_CONNECTS_ON=2;OT_TMUX_FAIL_NTH=send-keys:2;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-135
-assert_eq "$(observe "rc=1 tmuxfailed=operation=interrupt,item=CC-135 promptmissing=none")" \
-  "rc=1 tmuxfailed=operation=interrupt,item=CC-135 promptmissing=none" \
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_CONNECTS_ON=2;OT_TMUX_FAIL_NTH=send-keys:2;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r KEN-135
+assert_eq "$(observe "rc=1 tmuxfailed=operation=interrupt,item=KEN-135 promptmissing=none")" \
+  "rc=1 tmuxfailed=operation=interrupt,item=KEN-135 promptmissing=none" \
   "an interrupt that fails on this machine is tmux-failed naming interrupt, not a host that showed no prompt"
 
 # The screen is read for its LAST non-blank line, because a real login prints a
@@ -1658,13 +1658,13 @@ BANNER_FIRST="$TMP_ROOT/ssh-screen-banner-first"
 printf 'Last login from 100.64.0.2 >\ndev@lane:~$\n' > "$BANNER_FIRST"
 BANNER_LAST="$TMP_ROOT/ssh-screen-banner-last"
 printf 'dev@lane:~$\nThis sandbox rejoins the tailnet on boot.\n' > "$BANNER_LAST"
-run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_SCREEN=$BANNER_FIRST;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-136
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_SCREEN=$BANNER_FIRST;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r KEN-136
 assert_eq "$(observe "rc=0 launched=1 promptmissing=none") ssh=$(typed "$SSH_LINE")" \
   "rc=0 launched=1 promptmissing=none ssh=1" \
   "a prompt under a banner line is the line the wait reads, and the lane launches on one dial"
-run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_SCREEN=$BANNER_LAST;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-137
-assert_eq "$(observe "rc=1 promptmissing=item=CC-137,host=$HOST_STUB,reason=prompt-silent,seconds=1,attempts=2")" \
-  "rc=1 promptmissing=item=CC-137,host=$HOST_STUB,reason=prompt-silent,seconds=1,attempts=2" \
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_SCREEN=$BANNER_LAST;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r KEN-137
+assert_eq "$(observe "rc=1 promptmissing=item=KEN-137,host=$HOST_STUB,reason=prompt-silent,seconds=1,attempts=2")" \
+  "rc=1 promptmissing=item=KEN-137,host=$HOST_STUB,reason=prompt-silent,seconds=1,attempts=2" \
   "a prompt with a banner line under it is not the line the wait reads, and the bound is spent"
 
 # A hosted lane reads ORCH_TMUX_VERIFY_SECS only where it is claude with no
@@ -1675,17 +1675,17 @@ assert_eq "$(observe "rc=1 promptmissing=item=CC-137,host=$HOST_STUB,reason=prom
 # never consult it, and must still abort the ones that do. One row per term of
 # that condition, the harness and the --cmd template, and one for each shape it
 # lets through.
-run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_TMUX_VERIFY_SECS=abc;flags=-m gpt-6-astra -c model_reasoning_effort=high" --harness codex --lane "$H/.eclaude" --repo o/r CC-127
+run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_TMUX_VERIFY_SECS=abc;flags=-m gpt-6-astra -c model_reasoning_effort=high" --harness codex --lane "$H/.eclaude" --repo o/r KEN-127
 assert_eq "$(observe "rc=0 launched=1 seconds_invalid=none")" "rc=0 launched=1 seconds_invalid=none" \
   "a hosted codex lane carries no brief and is not aborted by a broken verification timeout"
-run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_TMUX_VERIFY_SECS=abc;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-128
+run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_TMUX_VERIFY_SECS=abc;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r KEN-128
 assert_eq "$(observe "rc=0 launched=1 seconds_invalid=none")" "rc=0 launched=1 seconds_invalid=none" \
   "a hosted --cmd lane carries no brief either, and is not aborted by the same broken timeout"
-run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_TMUX_VERIFY_SECS=abc;$CHOICE" --harness claude --lane "$H/.eclaude" --repo o/r --relaunch CC-138
+run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_TMUX_VERIFY_SECS=abc;$CHOICE" --harness claude --lane "$H/.eclaude" --repo o/r --relaunch KEN-138
 assert_eq "$(observe "rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc")" \
   "rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc" \
   "a hosted claude relaunch waits on its harness screen, so it refuses that broken timeout before any create"
-run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_TMUX_VERIFY_SECS=abc;$CHOICE" --harness claude --lane "$H/.eclaude" --repo o/r CC-129
+run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_TMUX_VERIFY_SECS=abc;$CHOICE" --harness claude --lane "$H/.eclaude" --repo o/r KEN-129
 assert_eq "$(observe "rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc")" \
   "rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc" \
   "a fresh hosted claude launch, which waits on its brief, refuses that broken timeout before any create"
@@ -1700,8 +1700,8 @@ brief_resend() { # ITEM
     "$(grep -cxF -- "/orch start $1 $UNATTENDED_TEXT" "$RUN/tmux.log" || true)" "$(said "open-terminal: brief-redelivered item=$1")" \
     "$(awk '$1 == "open-terminal:" && $2 == "pane-refused" { print $3, $4; exit }' <<<"$OUT" | tr ' ' ',')"
 }
-run_ot "$BRIEF_ROW" --harness claude --lane "$H/.eclaude" --repo o/r CC-151
-assert_eq "$(brief_resend CC-151)" "rc=0 enters=4 brief=1 redelivered=1 refused=" \
+run_ot "$BRIEF_ROW" --harness claude --lane "$H/.eclaude" --repo o/r KEN-151
+assert_eq "$(brief_resend KEN-151)" "rc=0 enters=4 brief=1 redelivered=1 refused=" \
   "a hosted claude lane whose first screen lacks the brief is nudged and re-sent the brief through its ssh pane"
 
 # Control: the same launch against a copy that expects the harness in that
@@ -1712,8 +1712,8 @@ BRIEF_OT_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-running-ssh/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-running-ssh/orch"
 mutate_file "$OPEN_TERMINAL" '    running=ssh' '    running="$HARNESS"'
-run_ot "$BRIEF_ROW" --harness claude --lane "$H/.eclaude" --repo o/r CC-152
-assert_eq "$(brief_resend CC-152)" "rc=1 enters=2 brief=0 redelivered=0 refused=operation=nudge,item=CC-152" \
+run_ot "$BRIEF_ROW" --harness claude --lane "$H/.eclaude" --repo o/r KEN-152
+assert_eq "$(brief_resend KEN-152)" "rc=1 enters=2 brief=0 redelivered=0 refused=operation=nudge,item=KEN-152" \
   "control: a hosted lane expecting its harness under the ssh pane has its nudge refused and never gets the brief"
 OPEN_TERMINAL="$BRIEF_OT_SHIPPED"
 
@@ -1736,7 +1736,7 @@ git -C "$CALLERREPO" config maintenance.auto false
   TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$TMP_ROOT/caller.tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$TMP_ROOT/caller.panes" \
   OT_WT_LOG="$TMP_ROOT/caller.worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
   "$SCRIPTREPO/scripts/open-terminal" --harness claude --lane auto \
-  --cmd "true --model opus --effort high $QUESTION_OFF_ALL" CC-20 ) >/dev/null 2>&1
+  --cmd "true --model opus --effort high $QUESTION_OFF_ALL" KEN-20 ) >/dev/null 2>&1
 assert_eq "caller=$(ls -1 "$CALLERREPO"/tmp/oversee-watch/claims 2>/dev/null | wc -l | tr -d '[:space:]') script=$(ls -1 "$SCRIPTREPO"/tmp/oversee-watch/claims 2>/dev/null | wc -l | tr -d '[:space:]')" \
   "caller=1 script=0" "the claim lands in the caller checkout, where lanes reads it, never under the script's"
 
@@ -1750,9 +1750,9 @@ git -C "$CALLERREPO" remote add origin git@github.com:caller-owner/caller-repo.g
 REPO_LOG="$TMP_ROOT/caller.repo.tmux.log"
 ( cd "$CALLERREPO" && env "${LANE_ENV_DEFAULTS[@]}" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
   TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$REPO_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$TMP_ROOT/caller.repo.panes" \
-  OT_WT_LOG="$TMP_ROOT/caller.repo.worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
+  OT_CHECKOUT_REPO= OT_WT_LOG="$TMP_ROOT/caller.repo.worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
   "$SCRIPTREPO/scripts/open-terminal" --harness claude --lane auto \
-  --cmd "true {repo} --model opus --effort high $QUESTION_OFF_ALL" CC-21 ) >/dev/null 2>&1
+  --cmd "true {repo} --model opus --effort high $QUESTION_OFF_ALL" KEN-21 ) >/dev/null 2>&1
 assert_eq "caller=$(grep -c '^clear; .*true caller-owner/caller-repo ' "$REPO_LOG" || true) script=$(grep -c 'script-owner/script-repo' "$REPO_LOG" || true)" \
   "caller=1 script=0" "the launch line names the caller checkout's repository, never the script checkout's"
 assert_eq "$(sed -n 's/^set-option -w -t [^ ]* @kendex_lane //p' "$REPO_LOG" | jq -r '.[1]')" \
@@ -1784,7 +1784,7 @@ run_bad_repo() {
     OT_TMUX_PANES="$TMP_ROOT/$name.panes" OT_WT_LOG="$TMP_ROOT/$name.worktree.log" \
     PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
     "$script" --harness claude --lane auto \
-      --cmd "true {repo} --model opus --effort high $QUESTION_OFF_ALL" CC-30 ) >/dev/null 2>&1
+      --cmd "true {repo} --model opus --effort high $QUESTION_OFF_ALL" KEN-30 ) >/dev/null 2>&1
   printf 'launched=%s rejected=%s' \
     "$(grep -c '^new-window' "$log" || true)" "$(grep -cF "$BAD_REPO" "$log" || true)"
 }
@@ -1809,7 +1809,7 @@ exit 0
 STUBEOF
 chmod +x "$NOGIT_STUB"
 
-# marked SCRIPT NAME WORKTREE_CLI — one launch of CC-40 from a caller checkout
+# marked SCRIPT NAME WORKTREE_CLI — one launch of KEN-40 from a caller checkout
 # of its own. Prints `rc=<rc> marker=<root|none|other> box=<made|none>
 # refused=<marker-failed lines>`. `box` is the lane's own mailbox directory,
 # which the launch makes in the item's own spelling: lane-mail-check resolves
@@ -1824,15 +1824,15 @@ marked() {
   out="$( cd "$caller" && env "${LANE_ENV_DEFAULTS[@]}" GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" \
     OT_TMUX_PANES="$runs/panes" OT_WT_LOG="$runs/worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$3" \
-    "$script" --harness claude --cmd "true $QUESTION_OFF_ALL" CC-40 2>&1 )" || rc=$?
+    "$script" --harness claude --cmd "true $QUESTION_OFF_ALL" KEN-40 2>&1 )" || rc=$?
   wt="$(find "$runs" -maxdepth 1 -type d -name 'wt.*')"
-  if [[ -f "$wt/.git/lane-mail/cc-40" ]]; then
+  if [[ -f "$wt/.git/lane-mail/ken-40" ]]; then
     marker=other
-    [[ "$(cat "$wt/.git/lane-mail/cc-40")" != "$wt" ]] || marker=root
+    [[ "$(cat "$wt/.git/lane-mail/ken-40")" != "$wt" ]] || marker=root
   fi
   # A plain directory, never a link a row planted: -d alone follows one.
-  { [[ -L "$wt/tmp/lane-mail/CC-40" ]] || [[ ! -d "$wt/tmp/lane-mail/CC-40" ]]; } || box=made
-  printf 'rc=%s marker=%s box=%s refused=%s' "$rc" "$marker" "$box" "$(grep -c '^open-terminal: marker-failed item=CC-40 ' <<<"$out" || true)"
+  { [[ -L "$wt/tmp/lane-mail/KEN-40" ]] || [[ ! -d "$wt/tmp/lane-mail/KEN-40" ]]; } || box=made
+  printf 'rc=%s marker=%s box=%s refused=%s' "$rc" "$marker" "$box" "$(grep -c '^open-terminal: marker-failed item=KEN-40 ' <<<"$out" || true)"
 }
 
 assert_eq "$(marked "$OPEN_TERMINAL" marked "$OT_STUB_BIN/worktree")" "rc=0 marker=root box=made refused=0" \
@@ -1869,7 +1869,7 @@ git init -q "$d"
 git -C "$d" config gc.auto 0
 git -C "$d" config maintenance.auto false
 mkdir -p "$d/.git/lane-mail"
-ln -s "$(dirname "$OT_WT_LOG")/marker-target" "$d/.git/lane-mail/cc-40"
+ln -s "$(dirname "$OT_WT_LOG")/marker-target" "$d/.git/lane-mail/ken-40"
 printf '%s\n' "$d"
 STUBEOF
 chmod +x "$LINKED_STUB"
@@ -1971,7 +1971,7 @@ kill_tree() { local p; for p in $(pgrep -P "$1" 2>/dev/null || true); do kill_tr
 #   text=      the pane screen the tmux stub draws, in place of the brief plus
 #              the live-input marker the row's own harness draws
 lane_launch() {
-  local script="$1" name="$2" harness="$3" lane="$4" leaf="$5" late="$6" fields="$7" item="CC-50"
+  local script="$1" name="$2" harness="$3" lane="$4" leaf="$5" late="$6" fields="$7" item="KEN-50"
   shift 7
   local runs="$TMP_ROOT/$name-runs" caller="$TMP_ROOT/$name-caller" out rc=0 tree form=none launcher trigger="" var f value got=""
   # A row whose leaf names a path derived from the launch directory pins that
@@ -2119,20 +2119,20 @@ assert_eq "$(lane_launch "$OPEN_TERMINAL" template claude "$LNLANE" "$LNLANE" - 
 # a config dir no lane record covers, so a launch that gets past the refusal
 # meets no usage verdict and the row reads the refusal alone.
 OPEN_TERMINAL_SHIPPED="$OPEN_TERMINAL"
-run_ot "" --harness claude --lane "$OUTSIDE_LANE" --cmd true CC-90
+run_ot "" --harness claude --lane "$OUTSIDE_LANE" --cmd true KEN-90
 assert_eq "$(observe "rc=1 launched=nolog modelmissing=harness=claude,lane=$OUTSIDE_LANE,spellings=--model")" \
   "rc=1 launched=nolog modelmissing=harness=claude,lane=$OUTSIDE_LANE,spellings=--model" \
   "a lane launch naming no model is refused for it"
 OPEN_TERMINAL="$(mutant_scripts ctl-model-rule/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-model-rule/orch"
 mutate_file "$OPEN_TERMINAL" 'if [[ -z "$LAUNCH_MODEL" ]]; then' 'if [[ -n "$LAUNCH_MODEL" ]]; then'
-run_ot "" --harness claude --lane "$OUTSIDE_LANE" --cmd true CC-91
+run_ot "" --harness claude --lane "$OUTSIDE_LANE" --cmd true KEN-91
 assert_eq "$(observe "modelmissing=none effortmissing=harness=claude,lane=$OUTSIDE_LANE,spellings=--effort")" \
   "modelmissing=none effortmissing=harness=claude,lane=$OUTSIDE_LANE,spellings=--effort" \
   "control: without the model rule a launch naming no model is not refused for it"
 OPEN_TERMINAL="$OPEN_TERMINAL_SHIPPED"
 
-run_ot "cmd=true --model opus" --harness claude --lane "$OUTSIDE_LANE" CC-92
+run_ot "cmd=true --model opus" --harness claude --lane "$OUTSIDE_LANE" KEN-92
 assert_eq "$(observe "rc=1 launched=nolog effortmissing=harness=claude,lane=$OUTSIDE_LANE,spellings=--effort")" \
   "rc=1 launched=nolog effortmissing=harness=claude,lane=$OUTSIDE_LANE,spellings=--effort" \
   "a lane launch naming no effort is refused for it"
@@ -2146,7 +2146,7 @@ claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 make_lane "$H" uclaude 3600
 jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
                   scope: {model: {display_name: "Opus"}}}]}' > "$FIXTURE_DIR/.uclaude.json"
-run_ot "cmd=true --model sonnet --effort high" --harness claude --lane "$H/.uclaude" CC-80
+run_ot "cmd=true --model sonnet --effort high" --harness claude --lane "$H/.uclaude" KEN-80
 assert_eq "$(observe "rc=1 launched=nolog modelmissing=none unreadable=lane=$H/.uclaude,model=sonnet,step=windows")" \
   "rc=1 launched=nolog modelmissing=none unreadable=lane=$H/.uclaude,model=sonnet,step=windows" \
   "the space-spelled model is judged against that lane's own window, which measures nothing for it"
@@ -2271,8 +2271,8 @@ cp -R "$SCRIPTS_DIR/." "$OUTSIDE_SCRIPTS/" || { printf 'outside copy failed\n' >
 orch_fixture_shared_libs "$OUTSIDE_ROOT"
 OT_REAL="$OPEN_TERMINAL"; OPEN_TERMINAL="$OUTSIDE_SCRIPTS/open-terminal"
 table \
-  "a named lane at 92 percent used launches, the launcher forwarding no threshold of its own|max_pct=unset;cwd=$NOSETTINGS;$CHOICE_CMD|--harness claude --lane $H/.claude CC-75|rc=0 launched=1 cmd_lane=claude walled=none" \
-  "--lane auto is judged on the same bound, passing over the account above it|max_pct=unset;cwd=$NOSETTINGS;$CHOICE_CMD|--harness claude --lane auto CC-76|rc=0 launched=1 cmd_lane=claude"
+  "a named lane at 92 percent used launches, the launcher forwarding no threshold of its own|max_pct=unset;cwd=$NOSETTINGS;$CHOICE_CMD|--harness claude --lane $H/.claude KEN-75|rc=0 launched=1 cmd_lane=claude walled=none" \
+  "--lane auto is judged on the same bound, passing over the account above it|max_pct=unset;cwd=$NOSETTINGS;$CHOICE_CMD|--harness claude --lane auto KEN-76|rc=0 launched=1 cmd_lane=claude"
 OPEN_TERMINAL="$OT_REAL"
 
 # Hermeticity proof: every window the launch rows created went through the

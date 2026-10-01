@@ -2827,6 +2827,20 @@ lane_rejudge() { # ITEM
 }
 
 repo="$(resolve_repo)"
+# The checkout, not GH_REPO or --repo, owns the fleet. GitHub names and
+# configured Linear team names are resolved by their existing tracker owners.
+checkout_repo=""
+if [[ "$TRACKER" == github ]]; then
+  checkout_repo="$(cd -- "${CLAIM_ROOT:-$PWD}" && GH_REPO= orch_resolve_gh_repo "${CLAIM_ROOT:-$PWD}")" \
+    || { ot_message item-repo-unresolved "tracker=$TRACKER" >&2; exit 1; }
+elif [[ -n "${LINEAR_TEAM:-}" ]]; then
+  linear_cli="$SKILLS_DIR/linear/scripts/linear.sh"
+  [[ -x "$linear_cli" ]] || { ot_message helper-missing "path=$linear_cli" >&2; exit 1; }
+  team_record="$("$linear_cli" teams get "$LINEAR_TEAM" --format raw)" \
+    || { ot_message item-repo-unresolved tracker=linear "team=$LINEAR_TEAM" >&2; exit 1; }
+  checkout_repo="$(jq -er '.team.key | strings | select(length > 0)' <<<"$team_record")" \
+    || { ot_message item-repo-unresolved tracker=linear "team=$LINEAR_TEAM" >&2; exit 1; }
+fi
 launched=0
 preparing=0
 failed=0
@@ -2874,6 +2888,17 @@ for raw in "${ITEMS[@]}"; do
     [[ -n "$repo" ]] || { ot_message repo-missing "option=--repo" >&2; exit 1; }
     wt_id="issue-$item"
     title="gh-$item"
+  fi
+  item_repo="$repo"
+  [[ "$TRACKER" != linear ]] || item_repo="${item%-*}"
+  if [[ -n "$checkout_repo" ]]; then
+    repo_match="$(jq -n --arg item "$item_repo" --arg checkout "$checkout_repo" \
+      '$item | ascii_downcase == ($checkout | ascii_downcase)')" \
+      || { ot_message item-repo-unresolved "tracker=$TRACKER" >&2; exit 1; }
+    if [[ "$repo_match" != true ]]; then
+      ot_message item-foreign "repo=$item_repo" route=peer-mail >&2
+      exit 1
+    fi
   fi
   if [[ "$FLEET" == true && "$state_ready" != true ]]; then
     if ! "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} exists oversee; then
