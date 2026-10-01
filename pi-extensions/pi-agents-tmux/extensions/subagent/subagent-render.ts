@@ -1,4 +1,4 @@
-import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import { getMarkdownTheme, type AgentToolResult, type ToolRenderContext } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { cachedAgentDiscovery, type AgentScope } from "./agents.js";
 import { dashboardKindLabel } from "./dashboard.js";
@@ -33,6 +33,10 @@ import {
 	type SubagentDetails,
 	type UsageStats,
 } from "./types.js";
+
+interface SubagentRenderState {
+	transcriptMode?: "streamed";
+}
 
 export const subagentToolRenderers = {
 	renderCall(args: any, theme: any, _context: any) {
@@ -75,7 +79,16 @@ export const subagentToolRenderers = {
 		return wrappedText(text);
 	},
 
-	renderResult(result: any, { expanded }: { expanded?: boolean }, theme: any, context: any) {
+	renderResult(result: AgentToolResult<SubagentDetails>, { expanded, isPartial }: { expanded?: boolean; isPartial?: boolean }, theme: any, context: Partial<ToolRenderContext<SubagentRenderState>>) {
+		// Pi exposes row-local state, not transcript position. Keep streamed results
+		// out of history, even on completion: their first update can arrive after
+		// a later row. The static call preview stays; live data belongs to Agents.
+		const state = context.state;
+		if (isPartial) {
+			if (state) state.transcriptMode = "streamed";
+			return new Container();
+		}
+		if (state?.transcriptMode === "streamed" && !expanded) return new Container();
 		const cwd = context?.cwd;
 		const collapsedItemCount = Math.max(1, Math.floor(settingNumber("collapsedItemCount", COLLAPSED_ITEM_COUNT, context?.cwd)));
 		const details = result.details as SubagentDetails | undefined;

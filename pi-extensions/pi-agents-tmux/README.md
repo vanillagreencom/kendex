@@ -25,7 +25,10 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 
 The parent Pi session selects an agent file and sends it a task. The extension starts a separate Pi process with that agent's instructions. Agents configured for panes appear in tmux; other agents run in the background. The child returns its result to the parent. The dashboard shows the task state and saved transcript.
 
+Streamed tool rows keep only the static call preview in the transcript. Follow live progress in the existing Agents panel. After completion, press Ctrl+O to expand the row and read its final result. A restored session shows saved final results.
+
 ## Memory and disk use
+
 
 - Agent discovery keeps at most 8 working-directory and user-source combinations across Pi sessions in one process. It reuses parsed agent files until their metadata changes. File and directory checks run outside rendering every 250 ms. A listed-file change reloads only that file; a directory change rebuilds the inventory. After a check detects a change, the next tool-call preview uses the updated agents. Removing a cache entry stops its file checks.
 
