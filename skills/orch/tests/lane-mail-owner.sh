@@ -129,8 +129,43 @@ owner|0|Other.|changed-text
 ROWS
 owner_ask 'Retry?' yes,no yes
 FIRST_ASK="$ASK"
+sleep 5
 owner_ask 'Retry?' yes,no yes
-assert_eq "$RC=$ERR" "2=lane-mail: duplicate id=$FIRST_ASK" "an owner ask uses the same destination repeat guard"
+ASK_REPEAT_WANT="2=lane-mail: duplicate id=$FIRST_ASK=$FIRST_ASK"
+ASK_REPEAT_ASSERTION="an owner ask retry after the clock advances refuses without appending"
+assert_eq "$RC=$ERR=$(field "$BOX/to-overseer.jsonl" 'select(.kind == "ask") | .id')" \
+  "$ASK_REPEAT_WANT" "$ASK_REPEAT_ASSERTION"
+# Caller changes remain distinct even while the generated deadline moves.
+while IFS='|' read -r name words options recommend wait advance; do
+  new_repo "ask_$name"
+  owner_ask 'Retry?' yes,no yes
+  sleep "$advance"
+  owner_ask "$words" "$options" "$recommend" "$wait"
+  assert_eq "$RC=$(wc -l < "$BOX/to-overseer.jsonl" | tr -d ' ')" "0=2" "ask $name lands a new row"
+done <<'ROWS'
+wait|Retry?|yes,no|yes|121|5
+recommend|Retry?|yes,no|no||5
+options|Retry?|yes,no,later|yes||5
+text|Other?|yes,no|yes||5
+expired|Retry?|yes,no|yes||61
+ROWS
+new_repo control_ask_retry
+owner_ask 'Retry?' yes,no yes
+FIRST_ASK="$ASK"
+ASK_REPEAT_WANT="2=lane-mail: duplicate id=$FIRST_ASK=$FIRST_ASK"
+mutant_dir="$(mutant_scripts mutants/ask-retry lane-mail)" || exit 1
+mutate_file "$mutant_dir/lane-mail" '.deadline = ($deadline - $stamp)' '. # .deadline = ($deadline - $stamp)'
+sleep 5
+LANE_MAIL_BIN="$mutant_dir/lane-mail" owner_ask 'Retry?' yes,no yes
+CONTROL_RC=0
+CONTROL_OUT="$(
+  FAIL=0
+  assert_eq "$RC=$ERR=$(field "$BOX/to-overseer.jsonl" 'select(.kind == "ask") | .id')" \
+    "$ASK_REPEAT_WANT" "$ASK_REPEAT_ASSERTION"
+  [[ "$FAIL" -eq 0 ]]
+)" || CONTROL_RC=$?
+assert_eq "$RC=$CONTROL_RC=$(wc -l < "$BOX/to-overseer.jsonl" | tr -d ' ')" "0=1=2" \
+  "control: the advancing-clock retry assertion fails without deadline normalization"
 PATH="$SAVED_PATH"
 
 # --- refusals, one row per rule -----------------------------------------------

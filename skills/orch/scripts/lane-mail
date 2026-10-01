@@ -316,7 +316,8 @@ A send, ask or notice repeating an envelope the mailbox already holds is a retry
 that landed, not a second message. A send carrying --delivery-id is judged by
 that key alone, under the lock, and never by this window. What is compared is the envelope whole,
 every field of it but the id it is minted with and the stamp, which the window
-judges instead, against a line already in the mailbox stamped within the minute
+judges instead; a generated deadline is compared as its offset from the stamp.
+The comparison is against a line already in the mailbox stamped within the minute
 before this send. Any one field differing makes a message of its own, so the
 same words answering two asks both land, a `--halt` after an identical plain
 directive lands and halts the lane, and two overseers writing one mailbox never
@@ -970,14 +971,21 @@ lm_duplicate_id() { # FILE LINE — prints the earlier envelope's id, or nothing
     refuse file-unreadable "$1"
   printf '%s\n' "$2" >"$WORK_DIR/sent.json" || refuse write-failed "$WORK_DIR/sent.json"
   jq -r --argjson now "$now" --slurpfile sent "$WORK_DIR/sent.json" "$LM_JQ_DEFS"'
-    # Every field but the two a second send cannot repeat: the id, minted once
-    # per call, and the stamp, which the window below judges instead. Every
+    # The deadline lm_envelope generates moves with the stamp. Compare its
+    # offset so a retry keeps the same content as the clock advances. Every
     # line in this mailbox is one lm_envelope wrote, so comparing the objects
     # whole is what keeps this guard from drifting away from it: a field the
     # envelope gains later is compared the day it appears, rather than waiting
     # for someone to add it to a list kept here by hand.
-    ($sent[0] | del(.id, .at)) as $want
-    | select(del(.id, .at) == $want)
+    def content:
+      if has("deadline") then
+        (.deadline | at_epoch) as $deadline | (.at | at_epoch) as $stamp
+        | if $deadline != null and $stamp != null then
+            .deadline = ($deadline - $stamp)
+          else . end
+      else . end | del(.id, .at);
+    ($sent[0] | content) as $want
+    | select(content == $want)
     | (.at | at_epoch) as $at
     | select($at != null and ($now - $at) >= 0 and ($now - $at) <= 60)
     | .id | strings' <"$WORK_DIR/dup.objects" >"$WORK_DIR/dup.ids" ||
