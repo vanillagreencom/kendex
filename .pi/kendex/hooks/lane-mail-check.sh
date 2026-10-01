@@ -9,6 +9,7 @@
 # timeout: 30
 # harnesses: [claude, codex, pi, copilot, opencode, cursor]
 # requires: [lane-mail-deliver, lane-mail-halt]
+# requires-skills: [orch]
 # ---
 
 set -euo pipefail

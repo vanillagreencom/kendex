@@ -2,9 +2,9 @@
 //! hook delivery decision, and the committed file is held to that rendering.
 //! Every cell is `hook::delivery` for one hook on one harness at project
 //! scope, the pi-hooks carrier registered the way a Pi install enforces
-//! hooks. A harness the hook's own `harnesses:` line leaves out, a harness
-//! the `harnesses:` line of a hook it `requires:` leaves out, and any
-//! refusal other than the by-name-only one, show the hook's
+//! hooks. A harness the hook's own `harnesses:` line leaves out, an
+//! applicable companion core cannot deliver, and any refusal other than
+//! the by-name-only one, show the hook's
 //! `Not run on <id>: <reason>.` sentence instead, and a missing or
 //! unterminated sentence fails the rendering naming the hook and harness.
 //!
@@ -110,15 +110,24 @@ fn reason(description: &str, hook: &str, harness: HarnessId) -> Result<String, S
     }
 }
 
-/// Whether a catalog hook this one `requires:` leaves `harness` out of its
-/// own `harnesses:` line. The dependency walk (`engine/deps.rs`) withholds the
-/// requirer there, so its cell is its own reason too. Only the hooks it names
-/// directly are read, not what those require in turn.
-fn companion_absent(hook: &HookSource, catalog: &[HookSpec], harness: HarnessId) -> bool {
+/// Whether core cannot deliver a directly required companion on `harness`.
+/// The dependency walk (`engine/deps.rs::companion`) skips companions whose
+/// own `harnesses:` line excludes it: they are not required there.
+fn companion_absent(
+    world: &World,
+    hook: &HookSource,
+    catalog: &[HookSpec],
+    harness: HarnessId,
+) -> bool {
     hook.requires.iter().any(|name| {
-        catalog
-            .iter()
-            .any(|spec| spec.name == *name && !spec.applies_to(harness))
+        catalog.iter().any(|spec| {
+            spec.name == *name
+                && spec.applies_to(harness)
+                && matches!(
+                    delivery(&world.env, &world.scope, harness, spec),
+                    Delivery::NotInstallable(_)
+                )
+        })
     })
 }
 
@@ -178,7 +187,7 @@ fn render(world: &World, hooks: &[HookSource]) -> Result<String, Vec<String>> {
         let spec = HookSpec::from(hook.clone());
         let mut row = format!("| `{}` |", spec.name);
         for harness in &columns {
-            let withheld = companion_absent(hook, &catalog, *harness);
+            let withheld = companion_absent(world, hook, &catalog, *harness);
             match cell(world, &spec, withheld, *harness) {
                 Ok(text) => row.push_str(&format!(" {text} |")),
                 Err(finding) => findings.push(finding),
@@ -254,6 +263,51 @@ fn regenerate_hooks_readme() {
         .expect("hooks/README.md is writable");
 }
 
+#[test]
+#[allow(
+    clippy::expect_used,
+    reason = "the catalog must hold the hook and its companion"
+)]
+fn a_companion_is_required_only_on_its_own_harnesses() {
+    let world = world();
+    let hooks = catalog_hooks();
+    let hook = hooks
+        .iter()
+        .find(|source| source.name == "skill-load-check")
+        .expect("the requiring hook");
+    let catalog: Vec<HookSpec> = hooks.iter().cloned().map(HookSpec::from).collect();
+    let mut undeliverable = catalog.clone();
+    undeliverable
+        .iter_mut()
+        .find(|spec| spec.name == "skill-load-record")
+        .expect("the companion")
+        .event = "TaskCompleted".to_owned();
+
+    // An unsupported event withholds the requirer only where the recorder
+    // applies. Its own exclusions still mean it has no job there.
+    let rows = [
+        (HarnessId::Claude, [false, false]),
+        (HarnessId::Codex, [false, false]),
+        (HarnessId::Pi, [false, false]),
+        (HarnessId::Gemini, [false, false]),
+        (HarnessId::Copilot, [false, true]),
+        (HarnessId::Antigravity, [false, false]),
+        (HarnessId::Opencode, [false, false]),
+        (HarnessId::Cursor, [false, false]),
+    ];
+    for (harness, expected) in rows {
+        assert_eq!(
+            [
+                companion_absent(&world, hook, &catalog, harness),
+                companion_absent(&world, hook, &undeliverable, harness),
+            ],
+            expected,
+            "companion applicability on {}",
+            harness.name()
+        );
+    }
+}
+
 /// One planted defect: the hook it edits, the edit, and the keyed line
 /// that refuses it.
 type PlantedRow = (&'static str, fn(&mut HookSource), &'static str);
@@ -279,18 +333,15 @@ fn each_planted_defect_is_refused_on_its_keyed_line() {
     );
 
     let planted_rows: [PlantedRow; 3] = [
-        // skill-load-record names copilot on its own harnesses line and
-        // carries no copilot reason: dropping copilot from skill-load-check,
-        // the hook it requires, leaves only the companion rule to read one.
+        // Copilot never fires TaskCompleted. The recorder's own reason is
+        // present, so only its requirer's companion check needs a reason.
         (
-            "skill-load-check",
+            "skill-load-record",
             |source| {
-                if let Some(harnesses) = source.harnesses.as_mut() {
-                    harnesses.retain(|id| id != "copilot");
-                }
+                source.event = "TaskCompleted".to_owned();
                 source.description.push_str(" Not run on copilot: planted.");
             },
-            "hooks-readme: missing-reason=skill-load-record:copilot",
+            "hooks-readme: missing-reason=skill-load-check:copilot",
         ),
         (
             "reviewer-stop-check",

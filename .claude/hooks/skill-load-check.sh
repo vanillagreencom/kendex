@@ -3,11 +3,13 @@
 # name: skill-load-check
 # event: PreToolUse
 # matcher: Edit|MultiEdit|NotebookEdit|Write|Bash
-# description: Refuses a call a repository rule ties to a skill until the agent making the call has loaded that skill, so each "load skill X before doing Y" rule is decided rather than remembered. The rules are one table of trigger and skill. The defaults: an Edit, MultiEdit, NotebookEdit or Write onto a path inside a git work tree that ends in `.md` needs docs-writing, and one onto any other path there needs code-quality; a Bash call naming `linear.sh` at the word it executes or at any word after it needs linear whatever it asks of Linear, so a call that only mentions the name inside a quoted note or a heredoc body is no command, while a call that hands the name to another command, such as `echo /tmp/linear.sh` or `cat .../linear.sh`, is refused alongside the calls that really run it: a word that launches what follows it, `bash` and `env` among them, picks its command by options nothing here reads, so every word after the first is judged rather than any launcher being listed. KENDEX_SKILL_LOAD_RULES appends a repository's own rules: `<glob>=<skill>` for an edit, the glob matched against the path from the work tree's root with `*` crossing `/` and extended patterns such as `!(*.md)` read, and `bash:<regex>=<skill>` for a command, the regex matched against each command the shell would run from the word it executes on, past leading assignments, and from every word after that one, entries separated by `;`. A call needing two skills is refused on the first one not loaded. Loaded is read off the transcript that records that agent's tool calls: a `Skill` tool call whose `skill` input names the skill, or, in a Pi session file, a successful `read` tool call whose `path` ends in `<skill>/SKILL.md`: one whose result is recorded under the same `toolCallId` and is not an error. That transcript is the session transcript the payload names, or, when the payload carries `agent_id` because a subagent made the call, the subagent's own `agent-<agent_id>.jsonl` under the session's `subagents/` directory, directly or one directory below; the lead session's load does not pass a subagent's call. A Pi subagent is its own process with its own session file, which is the transcript its payload names. On Copilot, whose payload names no transcript, loaded is read off a record kept per agent outside every repository, `$XDG_STATE_HOME/kendex/skill-load-check/<sessionId>` or under `~/.local/state` where that is unset: the skill-load-record hook beside this one runs it with the argument `record` after each `skill` tool call and appends the skill `toolArgs.skill` names only when `toolResult.resultType` is `success`, and the payload's `sessionId` names the agent, a subagent apart from the session that launched it, so the lead's load does not pass a subagent's call there either. A record untouched for 30 days is removed. There the matcher names every runtime tool Copilot's hooks reference lists for Edit, Write and Bash: the command is `toolArgs.command` of a `bash` or `powershell` call, the edit's target `toolArgs.path` of an `edit`, `create` or `str_replace_editor` call, whatever the last one's own command, and each file an `apply_patch` call's patch names on an `*** Add File: `, `*** Update File: `, `*** Delete File: ` or `*** Move to: ` line, a call with no target it can read being refused as `payload=no-file-path`; a refusal is also Copilot's `permissionDecision` deny on stdout, its reason the refusal's text, under the same exit 2. A Copilot call reaching another harness's copy, which Copilot runs from `.claude/settings.json` only through a registration made there by hand or one kendex wrote before its Copilot skip and no refresh has rewritten, passes there under `skill-load-check: harness=copilot`, the Copilot copy being its judge, so where no Copilot copy is installed that line is the one trace of a call nothing judged. A call needing a skill that reaches a Copilot copy with no skill-load-record beside it is refused as `carrier=<path>`: nothing writes the record there, and the remedy is `skill-load-record` added to the manifest's hooks list beside skill-load-check. The work tree's own `tmp/` is scratch and passes, and so does every path outside a work tree. KENDEX_SKILL_LOAD_HOOK=off disables it for a session that is not working under those rules. On Codex, an `apply_patch` call names its patch under `tool_input.command`, and uses the same file-line parser as Copilot. Loaded is a completed `exec_command` shell read (`cat`, `sed`, `head` or `tail`) of `<skill>/SKILL.md` in the calling thread's rollout, joined to its successful `function_call_output` by `call_id`; the child thread's transcript is already its own. The shell read must stand alone, so another command's success cannot hide a failed read. Not run on gemini: its tool-call payload and its record of a skill load are unmeasured. Not run on antigravity: the file arrives as `toolCall.args.TargetFile` and a skill load is a `view_file` read with no skill record.
+# description: Refuses a call a repository rule ties to a skill until the agent making the call has loaded that skill, so each "load skill X before doing Y" rule is decided rather than remembered. The rules are one table of trigger and skill. The defaults: an Edit, MultiEdit, NotebookEdit or Write onto a path inside a git work tree that ends in `.md` needs docs-writing, and one onto any other path there needs code-quality; a Bash call naming `linear.sh` at the word it executes or at any word after it needs linear whatever it asks of Linear, so a call that only mentions the name inside a quoted note or a heredoc body is no command, while a call that hands the name to another command, such as `echo /tmp/linear.sh` or `cat .../linear.sh`, is refused alongside the calls that really run it: a word that launches what follows it, `bash` and `env` among them, picks its command by options nothing here reads, so every word after the first is judged rather than any launcher being listed. KENDEX_SKILL_LOAD_RULES appends a repository's own rules: `<glob>=<skill>` for an edit, the glob matched against the path from the work tree's root with `*` crossing `/` and extended patterns such as `!(*.md)` read, and `bash:<regex>=<skill>` for a command, the regex matched against each command the shell would run from the word it executes on, past leading assignments, and from every word after that one, entries separated by `;`. A call needing two skills is refused on the first one not loaded. Loaded is read off the transcript that records that agent's tool calls: a `Skill` tool call whose `skill` input names the skill, or, in a Pi session file, a successful `read` tool call whose `path` ends in `<skill>/SKILL.md`: one whose result is recorded under the same `toolCallId` and is not an error. That transcript is the session transcript the payload names, or, when the payload carries `agent_id` because a subagent made the call, the subagent's own `agent-<agent_id>.jsonl` under the session's `subagents/` directory, directly or one directory below; the lead session's load does not pass a subagent's call. A Pi subagent is its own process with its own session file, which is the transcript its payload names. On Copilot, whose payload names no transcript, loaded is read off a record kept per agent outside every repository, `$XDG_STATE_HOME/kendex/skill-load-check/<sessionId>` or under `~/.local/state` where that is unset: the skill-load-record hook beside this one runs it with the argument `record` after each `skill` tool call and appends the skill `toolArgs.skill` names only when `toolResult.resultType` is `success`, and the payload's `sessionId` names the agent, a subagent apart from the session that launched it, so the lead's load does not pass a subagent's call there either. A record untouched for 30 days is removed. There the matcher names every runtime tool Copilot's hooks reference lists for Edit, Write and Bash: the command is `toolArgs.command` of a `bash` or `powershell` call, the edit's target `toolArgs.path` of an `edit`, `create` or `str_replace_editor` call, whatever the last one's own command, and each file an `apply_patch` call's patch names on an `*** Add File: `, `*** Update File: `, `*** Delete File: ` or `*** Move to: ` line, a call with no target it can read being refused as `payload=no-file-path`; a refusal is also Copilot's `permissionDecision` deny on stdout, its reason the refusal's text, under the same exit 2. A Copilot call reaching another harness's copy, which Copilot runs from `.claude/settings.json` only through a registration made there by hand or one kendex wrote before its Copilot skip and no refresh has rewritten, passes there under `skill-load-check: harness=copilot`, the Copilot copy being its judge, so where no Copilot copy is installed that line is the one trace of a call nothing judged. A call needing a skill that reaches a Copilot copy with no skill-load-record beside it passes with `carrier=<path>` as context: nothing writes the record there, so loading a skill cannot clear a refusal. Install skill-load-record beside skill-load-check in this scope. The work tree's own `tmp/` is scratch and passes, and so does every path outside a work tree. KENDEX_SKILL_LOAD_HOOK=off disables it for a session that is not working under those rules. On Codex, an `apply_patch` call names its patch under `tool_input.command`, and uses the same file-line parser as Copilot. Loaded is a completed `exec_command` shell read (`cat`, `sed`, `head` or `tail`) of `<skill>/SKILL.md` in the calling thread's rollout, joined to its successful `function_call_output` by `call_id`; the child thread's transcript is already its own. The shell read must stand alone, so another command's success cannot hide a failed read. Not run on gemini: its tool-call payload and its record of a skill load are unmeasured. Not run on antigravity: the file arrives as `toolCall.args.TargetFile` and a skill load is a `view_file` read with no skill record.
 # summary: Holds back edits and Linear commands until the agent making them has loaded the skill the repository ties to them, so the standard is applied rather than remembered.
-# safety: Reads the payload, asks git where an edit's target is, reads a command with the commit-guards skill's command-position library, and reads the transcript of the agent making the call, or on Copilot the record of the skills that agent loaded; writes only that record, from a finished skill load, in a directory under the user's state home created private to the user. A payload, a rule, a git answer, the library or a persistent transcript it cannot read is refused, never passed. Codex exec --ephemeral and Pi --no-session cannot persist tool calls; their supported payloads get a keyed gap notice and allowance because loading a skill cannot lift a transcript refusal. An unreadable state never reads as loaded: an `agent_id` that is not a string of ASCII letters, digits, `_` and `-`, the alphabet the harness names subagents in, or that names no single subagent transcript, is refused, and so is a Copilot `sessionId` outside that alphabet. The refusal names the skill to load and the path or command it refused, and never a bypass. Every refusal opens with `skill-load-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the payload, asks git where an edit's target is, reads a command with the commit-guards skill's command-position library, and reads the transcript of the agent making the call, or on Copilot the record of the skills that agent loaded; writes only that record, from a finished skill load, in a directory under the user's state home created private to the user. A payload, a rule, a git answer or a persistent transcript it cannot read is refused, never passed. A missing command library on Bash or a missing skill-load-record on Copilot is an install defect: refusing traps a session that cannot repair the install. These calls pass with a keyed gap and repair context; Edit and Write checks that need no missing dependency still refuse an unloaded skill. Codex exec --ephemeral and Pi --no-session cannot persist tool calls; their supported payloads get a keyed gap notice and allowance because loading a skill cannot lift a transcript refusal. An unreadable state never reads as loaded: an `agent_id` that is not a string of ASCII letters, digits, `_` and `-`, the alphabet the harness names subagents in, or that names no single subagent transcript, is refused, and so is a Copilot `sessionId` outside that alphabet. The refusal names the skill to load and the path or command it refused, and never a bypass. Every refusal opens with `skill-load-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 15
 # harnesses: [claude, codex, pi, copilot, opencode, cursor]
+# requires-skills: [commit-guards]
+# requires: [skill-load-record]
 # ---
 
 set -euo pipefail
@@ -72,7 +74,7 @@ message() { # KEY VALUE [CAUSE]
       echo "KENDEX_SKILL_LOAD_RULES holds an entry that is not <glob>=<skill> or bash:<regex>=<skill>, with a non-empty glob, a regex that compiles and a skill named in letters, digits, '.', '_', ':' and '-'; refusing rather than dropping the rule"
       ;;
     missing-library=*)
-      echo "the commit-guards skill's $2 is not installed beside this hook, and it is what reads the command; install the commit-guards skill in this scope. Refusing rather than skipping the guard"
+      echo "the commit-guards skill's $2 is not installed beside this hook, so the command cannot be checked. The call is allowed because an install defect must not trap the session. Install the commit-guards skill in this scope, then make the call again"
       ;;
     payload=unreadable)
       echo "the hook payload could not be read from stdin"
@@ -120,7 +122,10 @@ message() { # KEY VALUE [CAUSE]
       echo "the load was recorded, but the records untouched for 30 days could not be removed from $STATE_DIR:"
       ;;
     carrier=*)
-      echo "the skill-load-record hook that writes down a Copilot agent's skill loads is not installed beside this one, so no load this agent made can be read, and the call is refused as though none were made. Add skill-load-record to the hooks list of the kendex manifest for this scope, beside skill-load-check, and run kendex apply; then load the skill and make the call again"
+      echo "the skill-load-record hook that writes down a Copilot agent's skill loads is not installed beside this one, so no load this agent made can be read. The call is allowed because loading a skill cannot clear this install defect. Install skill-load-record beside skill-load-check in this scope, then load the skill and make the call again"
+      ;;
+    notice=unwritten)
+      echo "the install gap could not be handed to the session as context; refusing rather than passing an unreported gap:"
       ;;
     harness=*)
       echo "a Copilot call reached this install of the hook, which is not the Copilot one: the call is left to the skill-load-check Copilot installs under .github/hooks or in its own hooks directory, and where that copy is not installed it is not judged"
@@ -172,10 +177,25 @@ refuse() { # KEY VALUE [CAUSE]
   exit 2
 }
 
-# A condition no call can end, reported and passed: the keyed line on stderr
-# at exit 0, for the operator reading the hook log.
+# A condition no call can end, reported and passed. Install gaps also reach
+# the model as context: stderr alone is hidden from it on Claude Code and
+# Copilot. The context uses the harness contract lane-mail-check::hand_over
+# uses, with the keyed line first, so a repair is actionable at exit 0.
 notice() { # KEY VALUE [CAUSE]
-  message "$@" >&2
+  local text context shape
+  text=$(message "$@")
+  printf '%s\n' "$text" >&2
+  case "$1" in
+    missing-library | carrier)
+      if [ "$INSTALL" = copilot ]; then
+        shape='{additionalContext: $text}'
+      else
+        shape='{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $text}}'
+      fi
+      context=$(jq -nc --arg text "$text" "$shape" 2>&1) || refuse notice unwritten "$context"
+      printf '%s\n' "$context"
+      ;;
+  esac
   exit 0
 }
 
@@ -395,8 +415,8 @@ if [ "$(printf '%s' "$INPUT" | jq -r "$IS_BASH" 2>/dev/null)" = true ]; then
   # level's `skills/` and shared `.agents/skills/` tree; then the home's shared
   # tree, for a harness root CODEX_HOME, PI_CODING_AGENT_DIR or COPILOT_HOME
   # moved out of the home; then the repository's own copy, only where this hook
-  # is installed in that repository. Without it no command can be read, and the
-  # call is refused.
+  # is installed in that repository. Without it no command can be read, so
+  # the install gap passes with repair context rather than trapping the session.
   LIBRARY=commit-guards/scripts/lib/command-position.sh
   AT=$(cd -P -- "$HOOK_DIR" 2>/dev/null && pwd -P) || AT=""
   HOME_DIR=$(cd -P -- "${HOME:-/}" 2>/dev/null && pwd -P) || HOME_DIR=""
@@ -425,7 +445,7 @@ if [ "$(printf '%s' "$INPUT" | jq -r "$IS_BASH" 2>/dev/null)" = true ]; then
       "$ROOT"/*) FOUND_LIBRARY="$ROOT/.agents/skills/$LIBRARY" ;;
     esac
   fi
-  [ -n "$FOUND_LIBRARY" ] || refuse missing-library "$LIBRARY"
+  [ -n "$FOUND_LIBRARY" ] || notice missing-library "$LIBRARY"
   # shellcheck source=../skills/commit-guards/scripts/lib/command-position.sh
   source "$FOUND_LIBRARY"
 
@@ -540,10 +560,10 @@ EOF
 # A Copilot agent's loads are the record the run above keeps for its session:
 # no record is no load yet, and a record that cannot be read is refused.
 # Without the skill-load-record hook beside this one nothing writes that
-# record, which is state this hook cannot read, so a call that needs a skill
-# is refused under its own key, naming the manifest line that installs it.
+# record. Loading a skill cannot repair that install, so the call passes with
+# the gap and its repair as context instead of a refusal the session cannot end.
 if [ "$CALL" = copilot ]; then
-  [ -f "$HOOK_DIR/skill-load-record.sh" ] || refuse carrier "$HOOK_DIR/skill-load-record.sh"
+  [ -f "$HOOK_DIR/skill-load-record.sh" ] || notice carrier "$HOOK_DIR/skill-load-record.sh"
   [ -e "$STATE" ] || refuse unloaded "$FIRST"
   [ -f "$STATE" ] || refuse state unreadable
   LOADED=$(cat -- "$STATE" 2>&1) || refuse state unreadable "$LOADED"

@@ -17,8 +17,8 @@
 # Copilot's hooks reference lists for Bash, Write and Edit is judged from its
 # own toolArgs, an apply_patch call by every file its patch names; a Copilot
 # call reaching another harness's copy passes there under
-# `harness=copilot`; a call needing a skill is refused where no carrier is
-# installed; and the fail-closed edges of the record: an id or a record it
+# `harness=copilot`; a call needing a skill passes with repair context where
+# no carrier is installed; and the fail-closed edges of the record: an id or a record it
 # cannot read, one it cannot write.
 #
 # HOOK_UNDER_TEST overrides the judge the rows install and CARRIER_UNDER_TEST
@@ -272,13 +272,32 @@ assert_eq "rc=$rc first=$(first_line) decision=$(jq -r '.permissionDecision' <"$
   "rc=2 first=skill-load-check: unloaded=code-quality decision=deny" \
   "the same copy with its registry document beside it judges the call"
 
-echo "a judge with no carrier refuses what needs a skill; a carrier with no judge is reported"
+echo "a judge with no carrier reports the install gap; a carrier with no judge is reported"
+missing_carrier_row() {
 mkdir -p "$TMP_ROOT/lone/.github/hooks"
 cp "$HOOK" "$TMP_ROOT/lone/.github/hooks/skill-load-check.sh"
 run_at "$TMP_ROOT/lone/.github/hooks/skill-load-check.sh" "$(edit_of lone)"
-assert_eq "rc=$rc first=$(first_line) decision=$(jq -r '.permissionDecision' <"$OUT_FILE")" \
-  "rc=2 first=skill-load-check: carrier=$TMP_ROOT/lone/.github/hooks/skill-load-record.sh decision=deny" \
-  "a judge with no carrier beside it refuses a call that needs a skill, naming the carrier"
+assert_eq "rc=$rc first=$(first_line) context=$(jq -r '.additionalContext | split("\n")[0]' <"$OUT_FILE") decision=$(jq -r '.permissionDecision // "none"' <"$OUT_FILE")" \
+  "rc=0 first=skill-load-check: carrier=$TMP_ROOT/lone/.github/hooks/skill-load-record.sh context=skill-load-check: carrier=$TMP_ROOT/lone/.github/hooks/skill-load-record.sh decision=none" \
+  "a judge with no carrier passes an edit with the carrier gap first"
+assert_eq "$(jq -r '.additionalContext' <"$OUT_FILE")" "$(cat "$ERR_FILE")" \
+  "the missing carrier and its repair reach the model as the same keyed message"
+run_at "$TMP_ROOT/lone/.github/hooks/skill-load-check.sh" \
+  "$(pre lone create "$("${JQ[@]}" --arg p "$REPO/src/lib.rs" '{path:$p, file_text:"x"}')")"
+assert_eq "rc=$rc first=$(first_line)" \
+  "rc=0 first=skill-load-check: carrier=$TMP_ROOT/lone/.github/hooks/skill-load-record.sh" \
+  "a judge with no carrier also passes a write with the carrier gap"
+run_at "$TMP_ROOT/lone/.github/hooks/skill-load-check.sh" \
+  "$(pre lone edit '{"old_str":"a", "new_str":"b"}')"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=skill-load-check: payload=no-file-path" \
+  "a judge with no carrier still refuses an edit with no target"
+run_at "$TMP_ROOT/lone/.github/hooks/skill-load-check.sh" \
+  "$(pre lone bash "$("${JQ[@]}" --arg c "$LINEAR_CALL" '{command:$c}')")"
+assert_eq "rc=$rc first=$(first_line) context=$(jq -r '.additionalContext | split("\n")[0]' <"$OUT_FILE")" \
+  "rc=0 first=skill-load-check: missing-library=commit-guards/scripts/lib/command-position.sh context=skill-load-check: missing-library=commit-guards/scripts/lib/command-position.sh" \
+  "a Copilot Bash call with neither dependency reports the library gap first"
+}
+missing_carrier_row
 run_at "$TMP_ROOT/lone/.github/hooks/skill-load-check.sh" "$(edit_of lone "$TMP_ROOT/outside/notes.rs")"
 assert_eq "rc=$rc first=$(first_line)" "rc=0 first=-" \
   "and passes one that needs none, an edit outside every work tree"
@@ -385,6 +404,9 @@ skill_load_control markdown "$HOOK" 'require() { # SKILL' \
 skill_load_control recorder "$CARRIER" '  JUDGE="$HOOK_DIR/skill-load-check.sh"' \
   '  exit 0' CARRIER recorded_markdown_row \
   'the markdown edit passes after skill-load-record records docs-writing'
+skill_load_control missing-carrier "$HOOK" 'notice() { # KEY VALUE [CAUSE]' \
+  '  [ "$1" != carrier ] || refuse "$@"' HOOK missing_carrier_row \
+  'a judge with no carrier passes an edit with the carrier gap first'
 
 echo
 echo "passed: $PASS  failed: $FAIL"

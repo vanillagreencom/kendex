@@ -43,6 +43,7 @@ TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "skill-load-check: scratch=r
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 BASH_BIN="$(command -v bash)"
 ERR_FILE="$TMP_ROOT/stderr"
+OUT_FILE="$TMP_ROOT/stdout"
 
 fgit() {
   env HOME="$TMP_ROOT" git "$@"
@@ -106,11 +107,11 @@ run_payload() { # raw-json [PATH] -> rc, stderr in $err
   set +e
   if [ -n "${2:-}" ]; then
     env -i HOME="$TMP_ROOT" PWD="$TMP_ROOT" PATH="$2" ${RULES_UNDER_TEST:+"KENDEX_SKILL_LOAD_RULES=$RULES_UNDER_TEST"} \
-      "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE" <<<"$1"
+      "$BASH_BIN" "$HOOK" >"$OUT_FILE" 2>"$ERR_FILE" <<<"$1"
   else
     env -i PATH="$PATH" HOME="${HOME_AT:-$TMP_ROOT}" \
       ${RULES_UNDER_TEST:+"KENDEX_SKILL_LOAD_RULES=$RULES_UNDER_TEST"} "$BASH_BIN" "${HOOK_AT:-$HOOK}" \
-      >/dev/null 2>"$ERR_FILE" <<<"$1"
+      >"$OUT_FILE" 2>"$ERR_FILE" <<<"$1"
   fi
   rc=$?
   set -e
@@ -328,14 +329,28 @@ run_payload "$("${JQ[@]}" --arg tr "$NONE_T" '{tool_name:"Bash",tool_input:{},tr
 assert_eq "rc=$rc first=$(first_line)" "rc=2 first=skill-load-check: payload=no-command" \
   "a Bash payload naming no command refuses, and names that"
 # The hook alone, with no commit-guards install within reach of it.
+missing_library_row() {
+  local HOOK_AT="$TMP_ROOT/lone/hooks/skill-load-check.sh" tool
 mkdir -p "$TMP_ROOT/lone/hooks"
-cp "$HOOK" "$TMP_ROOT/lone/hooks/skill-load-check.sh"
-HOOK_AT="$TMP_ROOT/lone/hooks/skill-load-check.sh"
+cp "$HOOK" "$HOOK_AT"
 run_bash "$LINEAR_CALL" "$LINEAR_T"
-HOOK_AT=""
 assert_eq "rc=$rc first=$(first_line)" \
-  "rc=2 first=skill-load-check: missing-library=commit-guards/scripts/lib/command-position.sh" \
-  "without commit-guards' command-position library a command is refused, and the value names it"
+  "rc=0 first=skill-load-check: missing-library=commit-guards/scripts/lib/command-position.sh" \
+  "without the command library a Bash call passes with the library gap first"
+assert_eq "$(jq -r '.hookSpecificOutput.hookEventName' <"$OUT_FILE")" PreToolUse \
+  "the library gap uses the pre-tool context event"
+assert_eq "$(jq -r '.hookSpecificOutput.additionalContext' <"$OUT_FILE")" "$err" \
+  "the library gap and repair reach the model as the same keyed message"
+while IFS= read -r tool; do
+  run_tool "$tool" file_path "$REPO/src/lib.rs" "$NONE_T"
+  assert_eq "rc=$rc first=$(first_line)" "rc=2 first=$REFUSAL" \
+    "$tool still refuses an unloaded skill without the command library"
+done <<'ROWS'
+Edit
+Write
+ROWS
+}
+missing_library_row
 # A global Pi install sits four directories under the home, and a harness root
 # a setting relocated sits outside it; both find the library in the home's
 # shared tree.
@@ -526,6 +541,9 @@ skill_load_control markdown "$HOOK" 'require() { # SKILL' \
   'a Pi read of .agents/skills/docs-writing/SKILL.md, result none'
 skill_load_control nonpersistent "$HOOK" 'notice() { # KEY VALUE [CAUSE]' \
   '  [ "$1" != gap ] || refuse "$@"' HOOK pi_nonpersistent_row 'Pi nonpersistent session'
+skill_load_control missing-library "$HOOK" 'notice() { # KEY VALUE [CAUSE]' \
+  '  [ "$1" != missing-library ] || refuse "$@"' HOOK missing_library_row \
+  'without the command library a Bash call passes with the library gap first'
 
 echo
 echo "passed: $PASS  failed: $FAIL"
