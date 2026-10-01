@@ -4,8 +4,8 @@
 # the camelCase payloads Copilot's hooks reference gives for preToolUse and
 # postToolUse. The skill tool's own payload, `toolName` "skill" with the
 # skill under `toolArgs.skill`, is the one Copilot CLI 1.0.88 sent in the
-# probe KEN-1980 records; the reference does not list that tool. Every other
-# harness's rows are skill-load-check.test.sh.
+# probe KEN-1980 records; the reference does not list that tool. Claude and Pi rows
+# are skill-load-check.test.sh; Codex rows are skill-load-check-codex.test.sh.
 #
 # Pinned: a Copilot agent is refused until a finished load of the skill is
 # recorded under its own sessionId, a subagent apart from its parent; the
@@ -44,16 +44,8 @@ ERR_FILE="$TMP_ROOT/stderr"
 OUT_FILE="$TMP_ROOT/stdout"
 JQ=(jq --null-input --compact-output)
 
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
+# shellcheck source=lib/assert.sh
+. "$TEST_DIR/lib/assert.sh"
 
 # shellcheck source=lib/first-line.sh
 . "$TEST_DIR/lib/first-line.sh"
@@ -166,6 +158,11 @@ load lead linear
 run_at "$JUDGE" "$(pre lead bash "$("${JQ[@]}" --arg c "$LINEAR_CALL" '{command:$c}')")"
 assert_eq "rc=$rc first=$(first_line)" "rc=0 first=-" \
   "once it loads linear, its linear.sh call passes"
+
+load lead docs-writing
+run_at "$JUDGE" "$(edit_of lead "$REPO/README.md")"
+assert_eq "rc=$rc first=$(first_line)" "rc=0 first=-" \
+  "the markdown edit passes after skill-load-record records docs-writing"
 
 echo "a subagent is judged by its own sessionId"
 run_at "$JUDGE" "$(edit_of child)"
@@ -365,6 +362,15 @@ tools_row() { # TOOL
     "a record run without $tool records nothing, and the value names it"
 }
 for tool in jq cat mkdir find; do tools_row "$tool"; done
+
+if [ "${SKILL_LOAD_CONTROL_ACTIVE:-}" != 1 ]; then
+  skill_load_control markdown "$HOOK" 'require() { # SKILL' \
+    '  [ "$1" != docs-writing ] || return 0' HOOK_UNDER_TEST \
+    'and so is its edit of a markdown file'
+  skill_load_control recorder "$CARRIER" '  JUDGE="$HOOK_DIR/skill-load-check.sh"' \
+    '  exit 0' CARRIER_UNDER_TEST \
+    'the markdown edit passes after skill-load-record records docs-writing'
+fi
 
 echo
 echo "passed: $PASS  failed: $FAIL"

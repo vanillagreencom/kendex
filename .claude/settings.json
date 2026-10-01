@@ -70,6 +70,11 @@
             "type": "command",
             "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/reviewer-read-only.sh\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/skill-load-check.sh\"",
+            "timeout": 15
           }
         ]
       },

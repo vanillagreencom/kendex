@@ -1,0 +1,1 @@
+- Skill-load checks now support Codex and run by default on Claude, Copilot, Pi and Codex. Explicit opt-outs remain unchanged.

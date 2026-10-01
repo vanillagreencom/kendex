@@ -46,6 +46,16 @@
             "timeout": 30
           }
         ]
+      },
+      {
+        "matcher": "Edit|MultiEdit|NotebookEdit|Write|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p='.codex/hooks/skill-load-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+            "timeout": 15
+          }
+        ]
       }
     ],
     "SessionStart": [

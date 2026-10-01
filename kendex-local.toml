@@ -515,10 +515,14 @@ enabled = true
 source = "."
 harnesses = [
     "claude",
+    "codex",
     "pi",
+    "copilot",
 ]
-# Off for every harness until an installed fix for kendex#3031 or #3034 lets Copilot's transcript-less import of this hook see a loaded skill.
-enabled = false
+
+[hooks.skill-load-record]
+source = "."
+harnesses = ["copilot"]
 
 [hooks.reviewer-read-only]
 source = "."

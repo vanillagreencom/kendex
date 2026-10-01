@@ -39,7 +39,9 @@ HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/skill-load-check.sh}"
 
 PASS=0
 FAIL=0
-TMP_ROOT="$(mktemp -d)"
+TMP_ROOT="$(mktemp -d)" || { echo "skill-load-check: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "skill-load-check: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "skill-load-check: scratch=resolve-failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 BASH_BIN="$(command -v bash)"
 ERR_FILE="$TMP_ROOT/stderr"
@@ -108,7 +110,7 @@ run_payload() { # raw-json [PATH] -> rc, stderr in $err
     env -i HOME="$TMP_ROOT" PWD="$TMP_ROOT" PATH="$2" ${RULES_UNDER_TEST:+"KENDEX_SKILL_LOAD_RULES=$RULES_UNDER_TEST"} \
       "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE" <<<"$1"
   else
-    env -u KENDEX_SKILL_LOAD_HOOK -u KENDEX_SKILL_LOAD_RULES HOME="${HOME_AT:-$TMP_ROOT}" \
+    env -i PATH="$PATH" HOME="${HOME_AT:-$TMP_ROOT}" \
       ${RULES_UNDER_TEST:+"KENDEX_SKILL_LOAD_RULES=$RULES_UNDER_TEST"} "$BASH_BIN" "${HOOK_AT:-$HOOK}" \
       >/dev/null 2>"$ERR_FILE" <<<"$1"
   fi
@@ -117,16 +119,8 @@ run_payload() { # raw-json [PATH] -> rc, stderr in $err
   err="$(cat "$ERR_FILE")"
 }
 
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
+# shellcheck source=lib/assert.sh
+. "$TEST_DIR/lib/assert.sh"
 
 assert_contains() {
   local got="$1" needle="$2" name="$3"
@@ -202,7 +196,7 @@ assert_eq "rc=$rc first=$(first_line)" "rc=2 first=$REFUSAL" \
 # it failed. A row's result is `ok`, `error` or `none` (never written); the
 # result's text never names the skill, as a real file body need not.
 PI_T="$TMP_ROOT/pi-session.jsonl"
-while IFS='|' read -r want path result; do
+while IFS='|' read -r want path result target; do
   [ -n "$want" ] || continue
   {
     "${JQ[@]}" --arg p "$path" \
@@ -216,7 +210,7 @@ while IFS='|' read -r want path result; do
       *) printf 'an unknown result word builds no transcript: %s\n' "$result" >&2; exit 2 ;;
     esac
   } >"$PI_T"
-  run_tool Write file_path "$REPO/src/lib.rs" "$PI_T"
+  run_tool Write file_path "$REPO/${target:-src/lib.rs}" "$PI_T"
   assert_eq "rc=$rc first=$(first_line)" "$want" "a Pi read of $path, result $result"
 done <<ROWS
 rc=0 first=-|/home/u/.pi/agent/skills/code-quality/SKILL.md|ok
@@ -225,6 +219,8 @@ rc=2 first=$REFUSAL|/home/u/.pi/agent/skills/code-quality/SKILL.md|error
 rc=2 first=$REFUSAL|/home/u/.pi/agent/skills/code-quality/SKILL.md|none
 rc=2 first=$REFUSAL|.agents/skills/not-code-quality/SKILL.md|ok
 rc=2 first=$REFUSAL|.agents/skills/code-quality/references/rules.md|ok
+rc=2 first=skill-load-check: unloaded=docs-writing|.agents/skills/docs-writing/SKILL.md|none|README.md
+rc=0 first=-|.agents/skills/docs-writing/SKILL.md|ok|README.md
 ROWS
 
 echo "skill-load-check: each default rule refuses until its skill is loaded"
@@ -483,6 +479,13 @@ tools_table() { # TOOLS
   [ "$((PASS + FAIL))" -gt "$before" ] || { echo "tools: no row was asserted" >&2; exit 2; }
 }
 tools_table "jq git cat grep dirname"
+
+if [ "${SKILL_LOAD_CONTROL_ACTIVE:-}" != 1 ]; then
+  skill_load_control markdown "$HOOK" 'require() { # SKILL' \
+    '  [ "$1" != docs-writing ] || return 0' HOOK_UNDER_TEST \
+    'a markdown edit without docs-writing refuses, naming it' \
+    'a Pi read of .agents/skills/docs-writing/SKILL.md, result none'
+fi
 
 echo
 echo "passed: $PASS  failed: $FAIL"
