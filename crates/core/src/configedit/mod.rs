@@ -300,22 +300,7 @@ impl ConfigEdit {
                 Ok(())
             }
             ConfigEdit::OpencodePruneInstructions { prefix, keep } => {
-                if let Some(list) = object.get_mut("instructions").and_then(Value::as_array_mut) {
-                    list.retain(|v| {
-                        v.as_str()
-                            .is_none_or(|row| !row.starts_with(prefix) || keep.contains_key(row))
-                    });
-                    if list.is_empty() {
-                        object.shift_remove("instructions");
-                    }
-                }
-                if !keep.values().any(|bash| *bash)
-                    && object.get("permission").and_then(|v| v.get("bash"))
-                        == Some(&json!({"*": "ask"}))
-                {
-                    remove_from_map(object, "permission", "bash");
-                }
-                Ok(())
+                opencode_prune_instructions(object, prefix, keep)
             }
             _ => Ok(()),
         }
@@ -412,6 +397,28 @@ fn opencode_add_instruction(
         permission
             .entry("bash")
             .or_insert_with(|| json!({"*": "ask"}));
+    }
+    Ok(())
+}
+
+fn opencode_prune_instructions(
+    object: &mut Map<String, Value>,
+    prefix: &str,
+    keep: &std::collections::BTreeMap<String, bool>,
+) -> Result<(), String> {
+    if let Some(list) = object.get_mut("instructions").and_then(Value::as_array_mut) {
+        list.retain(|v| {
+            v.as_str()
+                .is_none_or(|row| !row.starts_with(prefix) || keep.contains_key(row))
+        });
+        if list.is_empty() {
+            object.shift_remove("instructions");
+        }
+    }
+    if !keep.values().any(|bash| *bash)
+        && object.get("permission").and_then(|v| v.get("bash")) == Some(&json!({"*": "ask"}))
+    {
+        remove_from_map(object, "permission", "bash");
     }
     Ok(())
 }
