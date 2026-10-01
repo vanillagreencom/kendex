@@ -583,8 +583,8 @@ fn orphan_cleanup_takes_the_pi_package_its_registration_and_its_record_together(
             .success()
     );
     fs::write(project.join("kendex.toml"), "schema = 6\n").unwrap();
-    // Undeclared, the package is an orphan the refresh keeps and reports
-    // like any other; it no longer refuses the scope over it.
+    // Refresh keeps and reports orphaned Pi packages without refusing
+    // the scope over them.
     let refresh = kendex(
         tmp.path(),
         &project,

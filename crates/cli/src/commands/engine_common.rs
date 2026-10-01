@@ -308,8 +308,8 @@ pub fn require_yes_in_non_interactive(yes: bool) -> CliResult {
 
 /// A refresh failure: any per-item failure or a locked item missing from
 /// its source is a hard error. An orphaned Pi package is the one Pi row
-/// that is not one: a refresh keeps every orphan and reports it, and
-/// `apply` or `remove` takes it.
+/// that is not one: refresh keeps orphaned Pi packages and reports them;
+/// `apply` or `remove` takes them.
 pub fn refresh_failures(report: &EngineReport) -> Vec<String> {
     report
         .notes

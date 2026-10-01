@@ -9,7 +9,7 @@ use kendex_core::env::Env;
 use kendex_core::lock::{load, lock_path};
 use kendex_core::model::{ItemKind, Scope};
 
-use crate::test_util::{fixture_env, rooted, source_path};
+use crate::test_util::{agent_manifest, fixture_env, rooted};
 
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -31,15 +31,7 @@ fn a_project_refresh_retires_dropped_agents_and_verify_passes() {
             let text = format!("---\nname: {name}\ndescription: Review code\n---\nReview code.\n");
             fs::write(catalog.join(format!("agents/{name}.md")), text).unwrap();
         }
-        let source = source_path(&catalog);
-        let manifest = |agent: Option<&str>| {
-            let declarations = agent.map_or(String::new(), |name| {
-                format!("\n[agents.{name}]\nsource = \"cat\"\n")
-            });
-            format!(
-                "schema = 6\n[install]\nharnesses = [\"claude\"]\n[sources.cat]\n{source}\n{declarations}"
-            )
-        };
+        let manifest = |agent| agent_manifest(&catalog, agent);
         let [scope, sibling_scope] =
             [project.clone(), sibling.clone()].map(|root| Scope::Project { root });
         for (root, target) in [(&project, &scope), (&sibling, &sibling_scope)] {
@@ -97,20 +89,26 @@ fn a_project_refresh_retires_dropped_agents_and_verify_passes() {
         let control = (old.is_file() || parked.is_file()) && recorded() && !removed();
         let verify_failed = !kendex(&verify).status.success();
         assert!(control && verify_failed, "{case}: control failed");
+        if case == "rename" {
+            // Removing `new` must leave the unrelated requested orphan `old`.
+            // Removing dropped_agent's unfiltered guard makes this assertion red.
+            let named = kendex(&["remove", "new", "--sweep", "--scope", "project", "--leave"]);
+            assert!(named.status.success(), "{case}: {named:?}");
+            assert!(!project.join(".claude/agents/new.md").exists());
+            assert!(old.is_file() && recorded(), "named sweep took old");
+            fs::write(project.join("kendex.toml"), manifest(Some("new"))).unwrap();
+        }
         let mut refresh = vec!["refresh", "--scope", "project", "--yes", "--leave"];
-        let refreshed = kendex(&refresh);
-        assert!(refreshed.status.success(), "{case}: {refreshed:?}");
-        let completed = if edited {
+        let mut completed = kendex(&refresh);
+        assert!(completed.status.success(), "{case}: {completed:?}");
+        if edited {
             assert!(!removed(), "edited orphan must wait for discard-edits");
             assert_eq!(fs::read_to_string(&old).unwrap(), "My hand edit.\n");
             assert!(!kendex(&verify).status.success());
             refresh.push("--discard-edits");
-            let retried = kendex(&refresh);
-            assert!(retried.status.success(), "{case}: {retried:?}");
-            retried
-        } else {
-            refreshed
-        };
+            completed = kendex(&refresh);
+            assert!(completed.status.success(), "{case}: {completed:?}");
+        }
         let report = String::from_utf8_lossy(&completed.stderr);
         let reported = report.contains("remove agent old for Claude Code");
         assert!(reported, "{case}: removal was not reported: {completed:?}");

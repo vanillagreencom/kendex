@@ -204,6 +204,21 @@ pub fn source_path(path: &Path) -> String {
         .to_owned()
 }
 
+/// A fixture manifest for Claude Code with an optional agent from a local catalog.
+#[allow(
+    dead_code,
+    reason = "every test binary includes this whole module and uses the part it needs"
+)]
+pub fn agent_manifest(catalog: &Path, agent: Option<&str>) -> String {
+    let source = source_path(catalog);
+    let declarations = agent.map_or(String::new(), |name| {
+        format!("\n[agents.{name}]\nsource = \"cat\"\n")
+    });
+    format!(
+        "schema = 6\n[install]\nharnesses = [\"claude\"]\n[sources.cat]\n{source}\n{declarations}"
+    )
+}
+
 /// Whether this runner can observe the record `kendex` writes for the
 /// command it installed.
 ///
