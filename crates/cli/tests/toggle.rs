@@ -1,4 +1,9 @@
 use crate::test_util::{fixture_env, rooted, source_path};
+use kendex_core::{
+    env::Env,
+    model::{FileState, HarnessId, ItemKind, Scope},
+    scan, settings,
+};
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -31,14 +36,9 @@ fn cli_builtin_disable_enable_verify_and_remove() {
         &["list", "--scope", "global", "--harness", "copilot"],
     );
     assert!(listed.status.success());
-    let table = String::from_utf8_lossy(&listed.stderr);
-    for name in ["github-mcp-server", "githubiq"] {
-        assert!(
-            table
-                .lines()
-                .any(|line| line.contains(name) && line.contains("built-in, on"))
-        );
-    }
+    let env = Env::host_rooted(&home);
+    let roots = settings::load(&env).unwrap().harness_roots;
+    let scopes = [Scope::Global];
     for verb in ["disable", "enable", "disable"] {
         let out = kendex(
             &home,
@@ -68,16 +68,24 @@ fn cli_builtin_disable_enable_verify_and_remove() {
             &["list", "--scope", "global", "--harness", "copilot"],
         );
         assert!(listed.status.success());
-        let table = String::from_utf8_lossy(&listed.stderr);
-        let state = if verb == "disable" {
-            "built-in, off"
-        } else {
-            "built-in, on"
-        };
-        assert!(
-            table
-                .lines()
-                .any(|line| line.contains("github-mcp-server") && line.contains(state))
+        let scanned = scan::scan_scopes(&env, &roots, &scopes);
+        assert_eq!(
+            scanned
+                .items
+                .iter()
+                .filter(
+                    |item| item.harness == HarnessId::Copilot && item.kind == ItemKind::McpServer
+                )
+                .map(|item| (item.name.as_str(), item.file_state.clone(), item.enabled))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    "github-mcp-server",
+                    FileState::Builtin,
+                    Some(verb == "enable")
+                ),
+                ("githubiq", FileState::Builtin, Some(true)),
+            ]
         );
         assert!(
             kendex(&home, &["verify", "github-mcp-server", "--scope", "global"])
