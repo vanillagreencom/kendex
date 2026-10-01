@@ -62,6 +62,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
@@ -521,6 +522,7 @@ class RootRelay:
         closures = {str(e["id"]): e for e in events
                     if e.get("box") == "to-lane" and e.get("mail_class") == "close"}
         closed = {e.get("re") for e in closures.values()}
+        by_id = {str(e["id"]): e for e in events}
         horizon = self.settings.horizon(self.clock())
         state = self.state
 
@@ -550,7 +552,15 @@ class RootRelay:
             elif before(state.start_at, state.start_ids, at, env_id):
                 route = "skip"
             elif owner and kind == "notice":
-                route = "notice"
+                ref = envelope.get("ref")
+                reference = by_id.get(ref, {})
+                # send_directive writes Slack's channel:ts and thread pointer.
+                # Owner asks originate here, so their rulings still post.
+                slack_reply = reference.get("thread_ts") or re.fullmatch(
+                    r"[CDG][A-Z0-9]+:[0-9]+\.[0-9]+", str(reference.get("delivery_id", ""))
+                )
+                owner_ask = reference.get("kind") == "ask" and reference.get("to") == "owner"
+                route = "notice" if not ref or slack_reply or owner_ask else "skip"
             elif box == "to-lane" and kind == "answer":
                 route = "answer"
             else:

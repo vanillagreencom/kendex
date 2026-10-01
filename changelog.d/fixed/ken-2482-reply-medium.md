@@ -1,0 +1,1 @@
+- Voice and terminal replies stay out of Slack. Consequential voice requests can use a server-verified spoken one-time code or authenticated on-screen approval.
