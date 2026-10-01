@@ -146,6 +146,10 @@ PENDING="$(jq -cn --arg h "$H" '{pending: {launch_line: "pending", harness: "cod
 run_succeed() {
   local lane="$1"
   shift
+  case " $* " in
+    *' --check-marks '*|*' --print-launch-line '*) ;;
+    *) fixture_succession_handoff "$FLEET_STATE" "$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md" ;;
+  esac
   RC=0
   OUT="$(cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$BIN:$PATH" TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" \
     LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/lanes-state" \

@@ -69,7 +69,7 @@ mutate_file() {
     open my $output, ">", $file or die "mutate_file: write=$! file=$file\n";
     print {$output} $after or die "mutate_file: write=$! file=$file\n";
     close $output or die "mutate_file: close=$! file=$file\n";
-  ' "$old" "$new" "$file" || exit 1
+  ' -- "$old" "$new" "$file" || exit 1
 }
 
 init_growth_state() {

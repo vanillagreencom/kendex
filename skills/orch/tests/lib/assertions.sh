@@ -15,6 +15,19 @@
 PASS=0
 FAIL=0
 
+# Prepare a current handoff for suites that test other succession rules.
+# A fixture without identity starts with a registered predecessor generation.
+# Missing or broken state stays missing or broken for refusal cases.
+fixture_succession_handoff() { # STATE HANDOFF
+  local state="$1" handoff="$2" generation
+  [[ -f "$state" ]] || return 0
+  jq '.overseer.generation //= 1' "$state" > "$state.fixture" || return 1
+  mv -- "$state.fixture" "$state" || return 1
+  generation="$(jq -er '.overseer.generation' "$state")" || return 1
+  mkdir -p -- "${handoff%/*}" || return 1
+  printf 'Start here: 2026-10-01T00:00:00Z generation=%s\n' "$generation" > "$handoff"
+}
+
 dump_stderr() {
   local file="$1"
   [[ -n "$file" && -f "$file" ]] || return 0

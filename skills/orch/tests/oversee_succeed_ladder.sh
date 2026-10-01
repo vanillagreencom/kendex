@@ -118,6 +118,7 @@ MAILBOX_DIR="$TMP_ROOT/work/tmp/lane-mail/overseer"
 # and CALLER_WINDOW.
 new_caller() {
   local spec cmd="exec '$BIN/hclaude' 100000"
+  [[ -f "$TMP_ROOT/work/tmp/workflow-state-oversee.json" ]] || printf '{"issue_id":"oversee","overseer":{"generation":1}}\n' > "$TMP_ROOT/work/tmp/workflow-state-oversee.json"
   [[ "${1:-}" != codex ]] || cmd="exec '$TMP_ROOT/cbin/codex' 100000"
   tm kill-window -a -t fleet:0
   rm -f -- "${TMP_ROOT:?}"/argv.*
@@ -141,6 +142,7 @@ new_caller() {
 CALLER_FLAGS=("$BYPASS")
 run_succeed() {
   local row="$1" pref=(ORCH_OVERSEER_PREFERENCE="$2") lane="${CALLER_LANE:-CLAUDE_CONFIG_DIR=$H/.claude}"
+  fixture_succession_handoff "$TMP_ROOT/work/tmp/workflow-state-oversee.json" "$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md"
   [[ "$2" != unset ]] || pref=()
   shift 2
   RC=0
@@ -480,6 +482,7 @@ new_pi_caller() { # [norecord]
   rm -f -- "${TMP_ROOT:?}"/argv.* "${FLEET_STATE:?}"
   CALLER_PANE="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id}' 'exec sleep 100000')"
   CALLER_WINDOW="$(tm display-message -p -t "$CALLER_PANE" '#{window_id}')"
+  printf '{"issue_id": "oversee", "overseer": {"generation": 1}}\n' > "$FLEET_STATE"
   [[ "${1:-}" != norecord ]] || return 0
   jq -n --arg server "$SERVER_PID" --arg pane "$CALLER_PANE" --arg account "$H/.claude" --arg cwd "$TMP_ROOT/work" \
     --argjson start "$SERVER_START" \

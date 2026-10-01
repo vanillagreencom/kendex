@@ -52,7 +52,7 @@ assert_eq "$(succeed_calls --dead-pane)" "1" "the launch path is called once" "$
 # read with that path's leading directories replaced, so the row pins the
 # call's shape and the file it names rather than one run's temporary path.
 assert_eq "$(sed 's|--line-file .*/|--line-file |' "$STUB_DIR/succeed.launched")" \
-  "--dead-pane $PANE --line-file overseer-line" \
+  "--dead-pane $PANE --handoff $HANDOFF_DEFAULT --line-file overseer-line" \
   "the relaunch names the dead pane and the file holding its line" "$ERR"
 assert_eq "$(cat "$STUB_DIR/succeed.line-file")" "$LINE" \
   "the file holds the recorded launch line, quoting and all" "$ERR"
@@ -1692,6 +1692,24 @@ pane_gone_in_flight() {
 pane_gone_in_flight
 assert_eq "longs=$LONGS drains-in-flight=$IN_FLIGHT" "longs=1 drains-in-flight=0" \
   "an unreadable overseer pane holds the mail while a long pass is in flight" "$ERR"
+
+overseer_case dead_custom_handoff exited
+state_with "$LINE"
+run TMUX_PANE="$PANE" -- --max-loops 2 --handoff tmp/handoffs/CURRENT.md
+assert_eq "$(sed 's|--line-file .*/|--line-file |' "$STUB_DIR/succeed.launched")" \
+  "--dead-pane $PANE --handoff tmp/handoffs/CURRENT.md --line-file overseer-line" \
+  'the recovery checks the handoff path the watch names' "$ERR"
+HANDOFF_CTL="$(mutant_scripts handoff-ctl/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/handoff-ctl/github"
+mutate_file "$HANDOFF_CTL/oversee-watch" \
+  '--dead-pane "$pane" --handoff "$HANDOFF" --line-file' \
+  '--dead-pane "$pane" --line-file'
+overseer_case dead_custom_handoff_control exited
+state_with "$LINE"
+WATCH_BIN="$HANDOFF_CTL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2 --handoff tmp/handoffs/CURRENT.md
+assert_eq "$(sed 's|--line-file .*/|--line-file |' "$STUB_DIR/succeed.launched")" \
+  "--dead-pane $PANE --line-file overseer-line" \
+  'control: removing the forwarded handoff path loses the custom snapshot' "$ERR"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

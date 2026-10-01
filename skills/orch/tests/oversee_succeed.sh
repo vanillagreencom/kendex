@@ -222,9 +222,17 @@ new_known_claude_caller() {
 # environment, with TMUX and TMUX_PANE taken from the caller of this file: the
 # test passes them, and a pane's own shell already carries them.
 cat > "$TMP_ROOT/succeed-env" <<ENV
-#!/bin/sh
+#!/usr/bin/env bash
 row="\$1" pref="\$2"
 shift 2
+source "$TEST_DIR/lib/assertions.sh"
+case " \$* " in
+  *' --check-marks '*|*' --print-launch-line '*) ;;
+  *)
+    if [[ "\${HANDOFF_FIXTURE:-on}" == on ]]; then
+      fixture_succession_handoff "$TMP_ROOT/work/tmp/workflow-state-oversee.json" "$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md" || exit 1
+    fi ;;
+esac
 # Only a row that speaks about the trigger sets it, so every other row runs on
 # the script's own default and a drift in that default reddens them.
 hp=""
@@ -386,7 +394,11 @@ lane_process_env_readable ||
 # so rather than leaving a later relaunch nothing. Every row below runs from
 # $TMP_ROOT/work, which is where workflow-state resolves `tmp` to.
 FLEET_STATE="$TMP_ROOT/work/tmp/workflow-state-oversee.json"
-fleet_state() { mkdir -p "$(dirname "$FLEET_STATE")"; printf '{"issue_id": "oversee"}\n' > "$FLEET_STATE"; }
+fleet_state() {
+  mkdir -p "$(dirname "$FLEET_STATE")"
+  printf '{"issue_id": "oversee", "overseer": {"generation": 1}}\n' > "$FLEET_STATE"
+  fixture_succession_handoff "$FLEET_STATE" "$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md"
+}
 recorded_line() { jq -r '.overseer.launch_line // "none"' "$FLEET_STATE" 2>/dev/null || echo unreadable; }
 orec() { jq -r ".overseer.$1 // \"none\"" "$FLEET_STATE" 2>/dev/null || echo unreadable; }
 fleet_state
@@ -409,11 +421,11 @@ assert_eq "$(layout)|$(caller_open)|$(grep '^oversee-succeed:' "$TMP_ROOT/in-pan
   "success in the caller's own pane: successor at the caller's index, caller window gone"
 
 # The record that succession wrote before the successor's first turn, over the
-# fresh state above: runtime tmux, generation 1, the account picked, and the
+# registered predecessor above: runtime tmux, generation 2, the account picked, and the
 # successor's own pane, which is the one the successor-working line names.
 SUCC_REC_PANE="$(sed -n 's/.*successor-working window=@[0-9]* pane=\(%[0-9]*\).*/\1/p' "$TMP_ROOT/in-pane.out")"
 assert_eq "runtime=$(orec runtime) generation=$(orec generation) account=$(orec account) pane=$(orec pane)" \
-  "runtime=tmux generation=1 account=$H/.claude pane=$SUCC_REC_PANE" \
+  "runtime=tmux generation=2 account=$H/.claude pane=$SUCC_REC_PANE" \
   "the successor record names the runtime, generation, account and successor pane"
 # The same record's launch identity, read out of the command the successor was
 # built with, and no pending successor: the one this launch wrote before its
@@ -1844,16 +1856,75 @@ for row in \
     "$row_label: refused, nothing launched"
 done
 
-# A succession outside a fleet has no state to record its line in. That is a
-# notice on the way out, never a reason to leave the fleet unattended.
+# A succession without fleet state cannot prove the handoff generation.
 mv -- "$FLEET_STATE" "$TMP_ROOT/fleet-state.away"
 new_caller "$MARK"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 run_succeed nostate ''
-assert_eq "$RC|$(keyed line-unrecorded "$OUT" | sed -n 1p)|$(overseers)|$(caller_open)" \
-  "0|oversee-succeed: line-unrecorded field=overseer.pending|1|no" \
-  "a succession with no fleet state names the unrecorded line and still opens the successor"
+assert_eq "$RC|$(keyed handoff-stale "$OUT" | sed -n 1p)|$(overseers)|$(caller_open)" \
+  "1|oversee-succeed: handoff-stale path=tmp/handoffs/OVERSEER-HANDOFF.md expected=unknown|0|yes" \
+  "a succession without fleet state refuses before opening a successor"
 mv -- "$TMP_ROOT/fleet-state.away" "$FLEET_STATE"
+
+# The predecessor writes this text protocol (../references/communication-modes.md § Handoff).
+# Older handoffs have no header; a delayed writer can carry an earlier generation.
+HANDOFF_FILE="$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md"
+for row in \
+  'legacy|1|In flight: open item|1' \
+  'stale|1|Start here: 2026-10-01T00:00:00Z generation=0|1' \
+  'future|1|Start here: 2026-10-01T00:00:00Z generation=2|1' \
+  'prepended|1|Start here: 2026-10-01T00:00:00Z generation=1\nStart here: 2026-10-01T00:00:00Z generation=1|1' \
+  'missing|1||1' \
+  'empty-generation|""|In flight: open item|unknown' \
+  'text-generation|"current"|Start here: 2026-10-01T00:00:00Z generation=1|unknown' \
+  'fractional-generation|1.5|Start here: 2026-10-01T00:00:00Z generation=1|unknown' \
+  'negative-generation|-1|Start here: 2026-10-01T00:00:00Z generation=1|unknown' \
+  ; do
+  IFS='|' read -r row_name row_generation row_text row_expected <<<"$row"
+  fleet_state
+  jq --argjson generation "$row_generation" '.overseer.generation = $generation' \
+    "$FLEET_STATE" > "$FLEET_STATE.tmp" || exit 1
+  mv -- "$FLEET_STATE.tmp" "$FLEET_STATE"
+  new_caller "$MARK"
+  printf '%b\n' "$row_text" > "$HANDOFF_FILE"
+  [[ "$row_name" != missing ]] || rm -- "$HANDOFF_FILE"
+  HANDOFF_FIXTURE=off run_succeed "handoff-$row_name" ''
+  assert_eq "$RC|$(keyed handoff-stale "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)" \
+    "1|oversee-succeed: handoff-stale path=tmp/handoffs/OVERSEER-HANDOFF.md expected=$row_expected|yes|0" \
+    "handoff $row_name: refuse before launching"
+done
+# One current snapshot replaces the predecessor's stale header, then the real
+# succession launches and records the successor generation.
+fleet_state
+new_caller "$MARK"
+printf 'Start here: 2026-10-01T00:00:00Z generation=0\n' > "$HANDOFF_FILE"
+run_succeed handoff-rewritten ''
+assert_eq "$RC|$(caller_open)|$(overseers)|$(orec generation)" '0|no|1|2' \
+  'a replacement snapshot admits one succession'
+
+HANDOFFCTL="$(mutant_scripts handoffctl oversee-succeed)" || exit 1
+mutate_file "$HANDOFFCTL/oversee-succeed" \
+  '[[ "$handoff_generation" == "$generation" ]]' \
+  '[[ "$handoff_generation" == "$generation" ]] || true'
+fleet_state
+new_caller "$MARK"
+printf 'Start here: 2026-10-01T00:00:00Z generation=0\n' > "$HANDOFF_FILE"
+HANDOFF_FIXTURE=off SUCCEED_BIN="$HANDOFFCTL/oversee-succeed" run_succeed handoffctl ''
+assert_eq "$RC|$(caller_open)|$(overseers)" '0|no|1' \
+  'control: disabling the generation comparison admits the stale snapshot'
+
+HANDOFFGENCTL="$(mutant_scripts handoffgenctl oversee-succeed)" || exit 1
+mutate_file "$HANDOFFGENCTL/oversee-succeed" \
+  '[[ "$generation" =~ ^[0-9]+$ ]]' \
+  '[[ "$generation" =~ ^[0-9]+$ ]] || true'
+fleet_state
+jq '.overseer.generation = ""' "$FLEET_STATE" > "$FLEET_STATE.tmp" || exit 1
+mv -- "$FLEET_STATE.tmp" "$FLEET_STATE"
+new_caller "$MARK"
+printf 'In flight: open item\n' > "$HANDOFF_FILE"
+HANDOFF_FIXTURE=off SUCCEED_BIN="$HANDOFFGENCTL/oversee-succeed" run_succeed handoffgenctl ''
+assert_eq "$RC|$(caller_open)|$(overseers)" '0|no|1' \
+  'control: disabling generation validation admits an empty generation without Start here'
 
 # --dead-pane's one control: the dead pane asked for its harness after all.
 # It runs none, so the relaunch refuses and the fleet keeps no overseer —

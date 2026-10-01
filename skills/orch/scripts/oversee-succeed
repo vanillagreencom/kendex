@@ -314,6 +314,9 @@
 #   --handoff PATH   The handoff file the brief names (default
 #                    tmp/handoffs/OVERSEER-HANDOFF.md); letters, digits and
 #                    ./_- only, so the brief survives the pane's shell
+#                    Every launch requires its Start here generation to match
+#                    the fleet record (../references/communication-modes.md § Handoff).
+#                    Check and print modes read no handoff.
 #   --wait-secs N    Seconds the successor has to come up: ONE bound over
 #                    reading its account, waiting for its running turn, and
 #                    confirming the account once that turn shows, not one each.
@@ -456,6 +459,7 @@ message() { # KEY FIELD=VALUE...
     unknown-option) text="$(usage | sed -n '/^Usage:/,/^$/p')" ;;
     invalid-wait-secs) text='--wait-secs takes a positive whole number of seconds.' ;;
     invalid-handoff) text='The handoff path takes letters, digits and ./_- only.' ;;
+    handoff-stale) text='The handoff must carry one Start here line with the current fleet generation. Rewrite it before succession; no successor was launched.' ;;
     invalid-dead-pane) text='--dead-pane takes a tmux pane id, %N.' ;;
     invalid-walled-pane) text='--walled-pane takes a tmux pane id, %N.' ;;
     invalid-line-file) text='--line-file names no readable file with a launch line in it.' ;;
@@ -1423,12 +1427,19 @@ fi
 # The caller's own session record, read before anything below writes to the
 # `overseer` object: it is what an abandoned launch puts back whole, launch
 # line included, so a later dead-overseer relaunch never replays a line this
-# run refused. A state that cannot be read is a notice, the same notice the
-# line write below gives: a run outside a fleet has none.
+# run refused. Succession needs this record to check the handoff the overseer
+# writes; a missing generation cannot prove it current.
 if ! ol_record_read; then
-  message record-unwritten field=overseer step=read >&2
-  [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+  die handoff-stale "path=$HANDOFF" expected=unknown
 fi
+generation="$(jq -er '.generation // empty' <<<"$OL_PRIOR" 2>"$DEP_ERR")" \
+  || die handoff-stale "path=$HANDOFF" expected=unknown
+[[ "$generation" =~ ^[0-9]+$ ]] \
+  || die handoff-stale "path=$HANDOFF" expected=unknown
+handoff_generation="$(sed -n 's/^Start here: .* generation=\([0-9][0-9]*\)$/\1/p' 2>"$DEP_ERR" < "$HANDOFF")" \
+  || die handoff-stale "path=$HANDOFF" "expected=$generation"
+[[ "$handoff_generation" == "$generation" ]] \
+  || die handoff-stale "path=$HANDOFF" "expected=$generation"
 # The successor is recorded BEFORE its window opens, not after the close: the
 # close kills this script's own window and a write placed after it may never
 # run. Its line and launch identity are the record's `pending` member until

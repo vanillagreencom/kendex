@@ -3074,7 +3074,7 @@ check_overseer() {
   else
     printf '%s\n' "$OVERSEER_LINE" > "$WORK_DIR/overseer-line" \
       || { overseer_relaunch_failed "$row" "$rows" "$identity" "$pane" "$window" "$attempt" line-file; return 1; }
-    "$SUCCEED" --dead-pane "$pane" --line-file "$WORK_DIR/overseer-line" >&2 || succeed_rc=$?
+    "$SUCCEED" --dead-pane "$pane" --handoff "$HANDOFF" --line-file "$WORK_DIR/overseer-line" >&2 || succeed_rc=$?
   fi
   # Exit 3 is that script's own "no account qualifies", which a retry cannot
   # improve on; every other non-zero status is this launch failing and takes

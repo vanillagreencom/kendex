@@ -27,7 +27,7 @@ WALL_RESETS=2026-09-02T16:50:00Z
 WALL_MARK_LINE="oversee-succeed: mark-reached kind=headroom value=0 mark=10 succession=on account=$WALL_ACCOUNT resets=$WALL_RESETS"
 
 # oversee-succeed stub. `--print-launch-line` answers with succeed.line (or the
-# default below), `--dead-pane PANE --line-file PATH` records the relaunch
+# default below), `--dead-pane PANE [--handoff PATH] --line-file PATH` records the relaunch
 # and the file's contents, and `--walled-pane PANE` records the relaunch and
 # prints the line it would have built. `--check-marks` answers with succeed.check, or with
 # a below-mark line, which is the world every case that does not speak about
@@ -88,9 +88,18 @@ case "${1:-}" in
     exit 0 ;;
   --dead-pane)
     printf '%s\n' "$*" >> "$STUB_DIR/succeed.launched"
-    [[ "${3:-}" != --line-file ]] || cat -- "$4" >> "$STUB_DIR/succeed.line-file"
+    pane="$2"; line_file=""
+    shift 2
+    while (( $# )); do
+      case "$1" in
+        --line-file) line_file="$2"; shift 2 ;;
+        --handoff|--wait-secs) shift 2 ;;
+        *) printf 'unexpected oversee-succeed option: %s\n' "$1" >&2; exit 2 ;;
+      esac
+    done
+    cat -- "${line_file:?}" >> "$STUB_DIR/succeed.line-file" || exit 1
     rc=0; [[ ! -f "$STUB_DIR/succeed.rc" ]] || rc="$(cat "$STUB_DIR/succeed.rc")"
-    [[ "$rc" -eq 0 ]] || echo "oversee-succeed: pane-unreadable pane=$2" >&2
+    [[ "$rc" -eq 0 ]] || echo "oversee-succeed: pane-unreadable pane=$pane" >&2
     exit "$rc" ;;
   --walled-pane)
     printf '%s\n' "$*" >> "$STUB_DIR/succeed.launched"

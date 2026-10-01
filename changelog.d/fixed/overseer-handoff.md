@@ -1,0 +1,1 @@
+- Overseer handoffs replace old state, keep active instructions and context, and bound resume reads. Succession refuses missing or stale generations.

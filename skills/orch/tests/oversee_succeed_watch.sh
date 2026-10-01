@@ -118,6 +118,7 @@ SETSID_LINE='runner=setsid reason=probe-failed detail=Failed to connect to bus: 
 # host's user manager; any other value runs behind the failing systemd-run.
 ROW_PATH="" ROW_LAUNCH="" ROW_MANAGER=""
 run_succeed() {
+  fixture_succession_handoff "$FLEET_STATE" "$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md"
   local manager=(PATH="${ROW_PATH:+$ROW_PATH:}$NO_MANAGER:$BIN:$PATH")
   [[ "$ROW_MANAGER" != unit ]] || manager=(PATH="${ROW_PATH:+$ROW_PATH:}$LINGERING:$BIN:$PATH"
     XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}")

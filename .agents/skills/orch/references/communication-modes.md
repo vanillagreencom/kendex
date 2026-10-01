@@ -192,14 +192,23 @@ Use this mrkdwn template for the report file's comment. For a post without a fil
 ## Handoff
 
 ```text
+Start here: [YYYY-MM-DDThh:mm:ssZ] generation=[FLEET RECORD'S .overseer.generation]
+Instructions in force: [TEMPORARY OWNER OR MASTER INSTRUCTION, WHO GAVE IT, WHEN, AND WHEN IT ENDS]
 Standing rulings: [EACH STANDING RULING AND WHO MADE IT]
 In flight: [ITEM, ITS PULL REQUEST, ITS NEXT STEP]
-Open questions: [EACH QUESTION SENT AND NOT ANSWERED]
+Open asks and directives: [EACH OPEN OWNER OR PEER ANSWER, WITH ITS LANE-MAIL ID]
+Owed items: [EACH ITEM AND ITS ACCEPTANCE LINE]
+Context: [OPEN ITEM, CAUSE NOT FIXED, MEASURED FACT, FAILED APPROACH AND WHY, OR HALF-FINISHED OPERATION]
 Traps: [WHAT WOULD BREAK IF THE NEXT SESSION MISSED IT]
-Watch: [REPEAT MODE: THE WAKE MECHANISM IN FORCE, ITS RE-ARM RULE, THE WATCH RUN DIRECTORY AND THE NEXT LOG LINE; AFTER A STOP, `stopped` AND THE WATCH RUN DIRECTORY. SINGLE PASSES: `single passes` ALONE]
+Watch: [ONE REPEAT WATCH, LOG TAIL AND NATIVE WAIT, RE-ARM RULE, RUN DIRECTORY AND NEXT LOG LINE; AFTER STOP, `stopped` AND RUN DIRECTORY. SINGLE PASSES: `single passes`]
+Progress log: [CURRENT SESSION'S OPEN PROGRESS ONLY]
 ```
 
-The overseer handoff file [oversee.md](../workflows/oversee.md) § 5 rewrites carries this shape. The stance itself is this file and is never copied into a handoff. A handoff's owner summary uses [§ Owner messages](#owner-messages) and its template.
+The handoff is a current snapshot. At every rewrite, replace the file, never prepend. Use the exact UTC write time and the writer's fleet generation. `oversee-succeed` refuses `handoff-stale` when the Start here generation is absent or differs from the fleet record; it does not judge the time. At succession, promote open progress into the sections above and cut the log. Keep no archive copy: commits, the tracker, mailboxes and Slack hold history.
+
+Drop each done item. Keep a line only when the successor would act wrongly or redo work without it, including lane facts held in another record. Instructions in force holds instructions no skill states; move a lasting instruction to its owning file. Each Context line names the open item it serves. Account, PID and watch facts otherwise stay in their own records. Hosted idle wakes use [oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane)'s Pane paste.
+
+[oversee.md](../workflows/oversee.md) § 5 uses this shape. This file's stance is not copied into a handoff. Its owner summary uses [§ Owner messages](#owner-messages).
 
 ## Recording
 
