@@ -456,6 +456,9 @@ shared_fleet() {
   local root pass out
   for root in "$SHARED_ALPHA" "$SHARED_BETA"; do
     rm -rf -- "${root:?}/tmp"
+    "$REPO_ROOT/skills/orch/scripts/workflow-state" --no-private-env --state-dir "$root/tmp" init oversee >/dev/null
+    "$REPO_ROOT/skills/orch/scripts/workflow-state" --no-private-env --state-dir "$root/tmp" \
+      set oversee overseer '{"server":"7000","pane":"%0"}' >/dev/null
     printf 'Hold the lane.\n' > "$TMP_ROOT/shared-note.txt"
     (cd "$root" && "$LANE_MAIL" send --item overseer --directive \
       --file "$TMP_ROOT/shared-note.txt" >/dev/null)
