@@ -18,8 +18,8 @@ A file download is no API method: Slack answers it with the file, an HTTP
 status, or, when the app lacks `files:read`, its sign-in page with 200. A
 body that ends short of its Content-Length reads as a clean end in
 http.client, so the download counts the bytes itself. A chunked body cut
-short raises http.client's own `HTTPException`, which the download alone
-refuses as `file-not-fetched`; every other call leaves it uncaught.
+short raises http.client's own `HTTPException`. The download refuses it as
+`file-not-fetched`; an API response cut short is `slack-response-lost`.
 """
 
 from __future__ import annotations
@@ -102,7 +102,7 @@ class Slack:
             raise
         except urllib.error.URLError as err:
             raise Refusal("slack-unreachable", f"{label} ({err.reason})") from err
-        except OSError as err:
+        except (OSError, http.client.HTTPException) as err:
             raise Refusal("slack-response-lost", f"{label} ({err})") from err
 
     def _request(self, req: urllib.request.Request, method: str) -> Dict:
@@ -171,12 +171,15 @@ class Slack:
         def copy(resp) -> None:
             declared = resp.headers.get("Content-Length")
             copied = 0
-            while True:
-                chunk = resp.read(COPY_BYTES)
-                if not chunk:
-                    break
-                out.write(chunk)
-                copied += len(chunk)
+            try:
+                while True:
+                    chunk = resp.read(COPY_BYTES)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    copied += len(chunk)
+            except http.client.HTTPException as err:
+                raise Refusal("file-not-fetched", f"download ({err})") from err
             if declared is not None and declared.strip().isdigit() and copied != int(declared):
                 raise Refusal("file-not-fetched", f"truncated {copied} of {declared.strip()} bytes")
             if resp.headers.get_content_type() == "text/html" and copied != size:
@@ -188,8 +191,7 @@ class Slack:
             self._open(req, "download", copy)
         except urllib.error.HTTPError as err:
             raise Refusal("file-not-fetched", f"HTTP {err.code}") from err
-        except http.client.HTTPException as err:
-            raise Refusal("file-not-fetched", f"download ({err})") from err
+
 
     def upload(self, filename: str, data: bytes, channel: str, comment: str, thread_ts: Optional[str]) -> str:
         """The three-step external upload; returns the file id."""

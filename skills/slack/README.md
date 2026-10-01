@@ -33,9 +33,11 @@ Requires Python 3.8+ and the orch skill, which the install adds.
 - Each file on an owner's message is downloaded with the bot token to `tmp/slack/files/<file id>-<name>` in the checkout, directory mode 700, file mode 600. The message reaches the overseer with one line per file after its text: the saved path, or `file <id> not fetched: <why>`, such as `HTTP 403` or a download cut short. A failed download never holds the message back.
 - Each delivered owner message gets an :eyes: reaction. Once the overseer's mailbox read passes a directive, the relay swaps its mark for :white_check_mark:. Neither mark posts a message. A mark Slack refuses is made again on the next poll.
 - The relay posts new owner-bound mailbox envelopes: questions with choices, recommendations and deadlines, threaded notices, and uploaded reports. It skips envelopes older than `SLACK_THREAD_DAYS`.
+- Each mailbox post gets an `inflight` record before sending. A stop or lost response leaves it `unknown` in `listen --status`, never repeated. Explicit Slack refusals retry later.
+- Catch-up reads recently active threads even under old parents. A refusal prints `thread-read-failed` with thread and envelope ids; other threads and posts continue. A deleted question's thread closes only in the relay, not the mailbox. [Journal](schemas/journal.md) defines both records.
 - The relay's first run reads Slack from the moment of the binding and the mailbox from its newest envelope, so neither side's past is replayed. Open questions are posted whatever their age inside `SLACK_THREAD_DAYS`.
 - A master session can hold a root's mailbox posts. Owner messages and relay replies still pass. [The master hold](#the-master-hold) defines the hold and resume.
-- `slack compact` drops journal lines older than `SLACK_THREAD_DAYS` once resolved, keeping root records and reply mappings while a thread remains active. The relay runs it once a day, so the verb is refused `relay-running` while the relay runs on that checkout.
+- The relay compacts its journal daily, keeping active threads. Run `slack compact` only while the relay is stopped. [Journal](schemas/journal.md) defines retention.
 
 ## Slack app
 

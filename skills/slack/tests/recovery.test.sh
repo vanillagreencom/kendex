@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+# The relay's post and catch-up recovery through a fake Slack and real lane-mail.
+# Controls mutate disposable runtimes and run the same behavioral assertions.
+set -uo pipefail
+. "$(dirname "$0")/lib/harness.sh"
+
+sk_fake_start --page 2
+echo '=== slack recovery ==='
+
+# Slack can accept a post, then cut either a fixed-length or chunked response.
+# The in-flight journal also prevents repetition when the API catch is removed;
+# that control must still fail the successful-poll and unknown-outcome assertion.
+for cut in length chunked control; do
+  ROOT="$(sk_new_root "cut-$cut")"
+  sk_bind "$ROOT"
+  CH="$(sk_channel "$ROOT")"
+  sk_poll "$ROOT"
+  sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text "$cut" "Cut $cut.")" >/dev/null
+  ID="$(jq -r .id "$(sk_box "$ROOT")/to-overseer.jsonl")"
+  if [ "$cut" = control ]; then
+    sk_mutant response-catch api.py 'except \(OSError, http.client.HTTPException\) as err:' 'except OSError as err:'
+  fi
+  HOW="$cut"
+  [ "$cut" != control ] || HOW=length
+  sk_ctl /_test/fault "{\"method\":\"chat.postMessage\",\"cut\":\"$HOW\"}" >/dev/null
+  sk_recovery "$ROOT" poll
+  STATES="$(jq -sr --arg id "$ID" '[.[] | select(.t == "out" and .id == $id) | .state] | join(",")' "$(sk_journal "$ROOT")")"
+  GOT="$(printf '%s\n' "$OUT" | tail -n 1 | jq -r .error)|$STATES"
+  if [ "$cut" = control ]; then
+    sk_assert_red "$GOT" '|inflight,unknown' 'control: the API catch is required to settle a truncated response'
+  else
+    assert_eq "$GOT" '|inflight,unknown' "$cut: a truncated response settles unknown without failing the poll"
+    assert_has "$ERR1" 'slack: slack-response-lost=chat.postMessage' "$cut: the response-phase HTTPException has the lost-response key"
+  fi
+  sk_bin_reset
+  sk_poll "$ROOT"
+  assert_eq "$(asks "$CH" "Cut $cut.")|$(jq -c .unknown "$ROOT/tmp/slack/status.json")" "1|[\"$ID\"]" "$cut: restart reports unknown and does not post again"
+done
+
+# A failed pre-send append sends nothing. The next run can still post it.
+ROOT="$(sk_new_root disk-full)"
+sk_bind "$ROOT"
+CH="$(sk_channel "$ROOT")"
+sk_poll "$ROOT"
+sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text disk 'Disk full.')" >/dev/null
+sk_recovery "$ROOT" append-fail
+assert_eq "$(printf '%s\n' "$OUT" | tail -n 1 | jq -r .error)|$(asks "$CH" 'Disk full.')" 'OSError|0' 'a failed in-flight append sends nothing'
+sk_poll "$ROOT"
+assert_eq "$RC|$(asks "$CH" 'Disk full.')" '0|1' 'a later poll can post after storage recovers'
+
+# Stop the real process after the real API accepts, before _send returns.
+# Moving the in-flight append after the post leaves no record before this stop.
+for mode in normal control replay-control; do
+  ROOT="$(sk_new_root "kill-$mode")"
+  sk_bind "$ROOT"
+  CH="$(sk_channel "$ROOT")"
+  sk_poll "$ROOT"
+  sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text "kill-$mode" "Kill $mode.")" >/dev/null
+  ID="$(jq -r .id "$(sk_box "$ROOT")/to-overseer.jsonl")"
+  if [ "$mode" = control ]; then
+    sk_mutant post-first relay.py '        self._out\(envelope, kind, "inflight"\)\n        try:\n            if data is not None:\n                return self.api.upload\(Path\(attach\).name, data, self.channel, text, thread_ts\)\n            return str\(self.api.post\("chat.postMessage", channel=self.channel, thread_ts=thread_ts,\n                                     \*\*\{body_arg: text\}\)\["ts"\]\)' '        try:\n            if data is not None:\n                return self.api.upload(Path(attach).name, data, self.channel, text, thread_ts)\n            ts = str(self.api.post("chat.postMessage", channel=self.channel, thread_ts=thread_ts,\n                                     **{body_arg: text})["ts"])\n            self._out(envelope, kind, "inflight")\n            return ts'
+  fi
+  sk_recovery "$ROOT" kill
+  assert_eq "$RC|$(asks "$CH" "Kill $mode.")" '9|1' "$mode: Slack accepts before the process stops"
+  sk_bin_reset
+  if [ "$mode" = replay-control ]; then
+    sk_mutant inflight-replay store.py 'state in \("inflight", "unknown"\)' 'state in ("unknown",)'
+  fi
+  sk_poll "$ROOT"
+  GOT="$RC|$(asks "$CH" "Kill $mode.")|$(jq -c .unknown "$ROOT/tmp/slack/status.json")"
+  if [ "$mode" = normal ]; then
+    assert_eq "$GOT" "0|1|[\"$ID\"]" 'restart replays a lone in-flight line as unknown and posts nothing'
+  else
+    sk_assert_red "$GOT" "0|1|[\"$ID\"]" "$mode: the crash recovery assertion fails with the journal rule removed"
+    if [ "$mode" = control ]; then
+      assert_eq "$(asks "$CH" "Kill $mode.")" '2' 'control: a post before its in-flight append posts twice across the stop'
+    fi
+  fi
+  sk_bin_reset
+done
+
+# Slack's exhausted rate limit is an explicit refusal, not an uncertain post.
+for mode in normal control; do
+  ROOT="$(sk_new_root "rate-$mode")"
+  sk_bind "$ROOT"
+  CH="$(sk_channel "$ROOT")"
+  sk_poll "$ROOT"
+  sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text "rate-$mode" "Rate $mode.")" >/dev/null
+  if [ "$mode" = control ]; then
+    sk_mutant retry-line relay.py '        self._out\(envelope, kind, "retry", reason=err.key\)' '        None if True else self._out(envelope, kind, "retry", reason=err.key)'
+  fi
+  sk_ctl /_test/fault '{"method":"chat.postMessage","status":429,"times":4,"retry_after":0}' >/dev/null
+  sk_poll "$ROOT"
+  assert_eq "$RC|$(asks "$CH" "Rate $mode.")" '1|0' "$mode: exhausted 429 retries fail the poll without a post"
+  sk_bin_reset
+  sk_poll "$ROOT"
+  GOT="$RC|$(asks "$CH" "Rate $mode.")|$(jq -c .unknown "$ROOT/tmp/slack/status.json")"
+  if [ "$mode" = normal ]; then
+    assert_eq "$GOT" '0|1|[]' 'an explicit retry line leaves the rate-limited envelope postable on restart'
+  else
+    sk_assert_red "$GOT" '0|1|[]' 'control: removing the retry line breaks later delivery'
+  fi
+done
+
+# A deleted open ask cannot block a healthy thread or same-poll outbound mail.
+for mode in normal control; do
+  ROOT="$(sk_new_root "missing-$mode")"
+  sk_bind "$ROOT"
+  CH="$(sk_channel "$ROOT")"
+  sk_poll "$ROOT"
+  sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text "ask-$mode" 'Deleted ask?')" --options yes,no --recommend no --wait 30 >"$SK_TMP/ask.out"
+  ID="$(sed 's/^id=//' "$SK_TMP/ask.out")"
+  sk_poll "$ROOT"
+  ASK_TS="$(sk_state ".messages.${CH}[-1].ts")"
+  sk_ctl /_test/delete "{\"channel\":\"$CH\",\"ts\":\"$ASK_TS\"}" >/dev/null
+  GOOD="$(sk_inject "$CH" U001 'Healthy parent.')"
+  REPLY="$(sk_inject "$CH" U001 'Healthy reply.' "$GOOD")"
+  sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text "missing-$mode" "Outbound $mode.")" >/dev/null
+  if [ "$mode" = control ]; then
+    sk_mutant thread-refusal relay.py '        notice\("thread-read-failed",' '        raise err\n        notice("thread-read-failed",'
+  fi
+  sk_recovery "$ROOT" poll
+  GOT="$(printf '%s\n' "$OUT" | tail -n 1 | jq -r .caught_up)|$(asks "$CH" "Outbound $mode.")"
+  if [ "$mode" = normal ]; then
+    assert_eq "$GOT" 'true|1' 'a deleted open ask leaves catch-up complete and outbound posts on the same poll'
+    assert_has "$OUT" "slack: thread-read-failed=ts=$ASK_TS id=$ID reason=slack-api-failed" 'the per-thread failure line names its thread and envelope'
+    assert_eq "$(jq -s --arg id "$ID" '[.[] | select(.t == "resolved" and .id == $id and .reason == "thread_not_found")] | length' "$(sk_journal "$ROOT")")|$(sk_lm "$ROOT" pending --item overseer --to owner | jq -r .id)" "1|$ID" 'only the journal thread closes; the mailbox ask stays open'
+    assert_eq "$(jq -s --arg d "$CH:$REPLY" '[.[] | select(.delivery_id == $d)] | length' "$(sk_box "$ROOT")/to-lane.jsonl")" '1' 'another thread reply still lands'
+    sk_ctl /_test/calls-reset >/dev/null
+    sk_poll "$ROOT"
+    assert_lacks "$OUT" "ts=$ASK_TS" 'restart skips the deleted ask thread'
+    assert_eq "$(jq -s --arg id "$ID" '[.[] | select(.t == "resolved" and .id == $id)] | length' "$(sk_journal "$ROOT")")" '1' 'restart does not close the missing thread again'
+  else
+    sk_assert_red "$GOT" 'true|1' 'control: re-raising the per-thread refusal breaks same-poll outbound'
+  fi
+  sk_bin_reset
+done
+
+# An acknowledged live reply whose parent is deleted remains in pending_live
+# after its first refusal, then is dropped once on poll without blocking posts.
+for mode in normal control; do
+ROOT="$(sk_new_root "pending-deleted-$mode")"
+sk_bind "$ROOT"
+CH="$(sk_channel "$ROOT")"
+sk_poll "$ROOT"
+sk_run -- post --root "$ROOT" --text 'External parent.'
+PARENT="$(sk_state ".messages.${CH}[-1].ts")"
+REPLY="$(sk_inject "$CH" U001 'Deleted reply.' "$PARENT")"
+sk_ctl /_test/state | jq --arg c "$CH" --arg ts "$REPLY" '.messages[$c][] | select(.ts == $ts)' >"$SK_TMP/event.json" || exit 1
+sk_ctl /_test/delete "{\"channel\":\"$CH\",\"ts\":\"$PARENT\"}" >/dev/null
+sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text pending 'Pending outbound.')" >/dev/null
+if [ "$mode" = control ]; then
+  sk_mutant pending-refusal relay.py 'err.error != "thread_not_found"' 'err.error == "thread_not_found"'
+fi
+sk_recovery "$ROOT" pending "$SK_TMP/event.json"
+GOT="$(printf '%s\n' "$OUT" | tail -n 1 | jq -r '[.error,.pending,.caught_up] | @json')|$(asks "$CH" 'Pending outbound.')"
+if [ "$mode" = normal ]; then
+  assert_eq "$GOT" '["",0,true]|1' 'a permanently refused live event is dropped and outbound mail posts'
+  assert_eq "$(grep -c 'slack: thread-read-failed=' <<<"$OUT")" '1' 'the deleted live parent prints one keyed line across two polls'
+else
+  sk_assert_red "$GOT" '["",0,true]|1' 'control: retaining a permanently refused live event blocks outbound mail'
+fi
+sk_bin_reset
+done
+
+# A new ref notice makes an old parent eligible even outside history.
+for mode in normal age-control discovery-control; do
+  ROOT="$(sk_new_root "active-$mode")"
+  sk_bind "$ROOT"
+  CH="$(sk_channel "$ROOT")"
+  sk_poll "$ROOT"
+  OLD_TS="$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400))')"
+  PARENT="$(sk_inject "$CH" U001 'Old parent.' '' "\"ts\":\"$OLD_TS\"")"
+  sk_event "$ROOT" "$CH" "$PARENT"
+  REF="$(jq -r --arg d "$CH:$PARENT" 'select(.delivery_id == $d) | .id' "$(sk_box "$ROOT")/to-lane.jsonl")"
+  sk_lm "$ROOT" notice --item overseer --to owner --ref "$REF" --file "$(sk_text "active-$mode" 'Recent activity.')" >/dev/null
+  sk_poll "$ROOT"
+  assert_eq "$(sk_state ".messages.${CH}[] | select(.text == \"Recent activity.\") | .thread_ts")" "$PARENT" "$mode: the notice posts into the old parent by ref"
+  REPLY="$(sk_inject "$CH" U001 'Reply while stopped.' "$PARENT")"
+  case "$mode" in
+    age-control) sk_mutant parent-age relay.py 'max\(float\(thread.ts\), thread.active\)' 'float(thread.ts)' ;;
+    discovery-control) sk_mutant replied-only relay.py 'thread.open or thread.ts not in replied or replied\[thread.ts\]' 'thread.open or False or replied.get(thread.ts, 0.0)' ;;
+  esac
+  sk_poll "$ROOT"
+  sk_poll "$ROOT"
+  GOT="$(jq -s --arg d "$CH:$REPLY" '[.[] | select(.kind == "directive" and .delivery_id == $d)] | length' "$(sk_box "$ROOT")/to-lane.jsonl")"
+  if [ "$mode" = normal ]; then
+    assert_eq "$GOT" '1' 'restart reads the recently active old thread and delivers the reply once'
+  else
+    sk_assert_red "$GOT" '1' "$mode: omitting recent activity or absent-history threads drops the reply"
+  fi
+  sk_bin_reset
+done
+
+sk_summary

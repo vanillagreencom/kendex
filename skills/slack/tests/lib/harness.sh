@@ -216,6 +216,24 @@ relay = RootRelay(pathlib.Path(sys.argv[1]), settings, Presence("", DEFAULT_MAST
 relay.on_message(json.loads(pathlib.Path(sys.argv[2]).read_text()), "UBOT")
 PY
 }
+# sk_recovery ROOT MODE [ARG]: storage failure, crash or live retry through the real relay.
+sk_recovery() {
+  RC=0
+  OUT="$(env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+    SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
+    SLACK_ORCH_DIR="$SK_ROOT/skills/orch" \
+    python3 "$SK_ROOT/skills/slack/tests/lib/recovery_probe.py" "${SK_BIN%/*}/lib" "$2" "$1" "${3:-}" \
+    2>"$SK_TMP/err")" || RC=$?
+  ERR="$(cat "$SK_TMP/err")"
+  ERR1="$(sed -n '1p' "$SK_TMP/err")"
+}
+# sk_assert_red GOT WANT NAME: the same behavioral assertion must fail on a mutant.
+sk_assert_red() {
+  local output result=0 before="$SK_FAIL"
+  output="$(assert_eq "$1" "$2" "$3"; [ "$SK_FAIL" -eq "$before" ])" || result=$?
+  assert_eq "$result" "1" "$3"
+  [ "$result" -eq 1 ] || printf '%s\n' "$output"
+}
 sk_channel() { jq -r .channel "$1/tmp/slack/binding.json"; }   # ROOT — the bound channel
 sk_reactions() { sk_state "[.messages.${1}[] | select(.ts == \"$2\") | (.reactions // [])[].name] | join(\",\")"; } # CHANNEL TS — its reaction names
 # sk_rebind_at ROOT TS — the binding's moment moved to TS, so a first start

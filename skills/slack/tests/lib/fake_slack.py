@@ -18,7 +18,9 @@ which refuses or times out before the redirected request is written, or with
 `signin` Slack's sign-in page, or with `cut` a body the connection closes
 halfway through: `length` under its full Content-Length, `chunked` inside
 its first chunk, or with `chunked: true` the whole file in two chunks and
-no Content-Length. A download's method is `download`.
+no Content-Length. API cuts run the method before cutting its response.
+An optional `ts` limits a fault to that thread. A download's method is `download`.
+POST /_test/delete removes a parent and its replies by channel and ts.
 
 Socket Mode: apps.connections.open, called with the app token, answers the
 URL of a WebSocket on this same port. Its first frame is Slack's `hello`;
@@ -206,6 +208,9 @@ class Handler(BaseHTTPRequestHandler):
         return
 
     def send_json(self, body: dict, status: int = 200, headers: dict = None) -> None:
+        if getattr(self, "response_cut", None):
+            how, self.response_cut = self.response_cut, None
+            return self.send_cut(how, json.dumps(body).encode())
         self.send_bytes(json.dumps(body).encode(), "application/json", status, headers)
 
     def send_bytes(self, data: bytes, content_type: str, status: int = 200, headers: dict = None) -> None:
@@ -316,7 +321,9 @@ class Handler(BaseHTTPRequestHandler):
             token = self.ws.app_token if method == "apps.connections.open" else self.ws.token
             self.ws.calls.append(method)
             for fault in list(self.ws.faults):
-                if fault["method"] == method and fault["times"] > 0:
+                if fault["method"] == method and fault["times"] > 0 and (
+                    "ts" not in fault or fault["ts"] == params.get("ts")
+                ):
                     fault["times"] -= 1
                     if fault.get("drop"):
                         self.close_connection = True
@@ -327,7 +334,10 @@ class Handler(BaseHTTPRequestHandler):
                     if fault.get("signin"):
                         return self.send_bytes(SIGNIN, "text/html; charset=utf-8")
                     if fault.get("cut"):
-                        return self.send_cut(fault["cut"], self.ws.files[path[len("/_files/") :]][0])
+                        if method == "download":
+                            return self.send_cut(fault["cut"], self.ws.files[path[len("/_files/") :]][0])
+                        self.response_cut = fault["cut"]
+                        break
                     if fault.get("chunked"):
                         return self.send_chunked(*self.ws.files[path[len("/_files/") :]])
                     if fault.get("status"):
@@ -371,6 +381,10 @@ class Handler(BaseHTTPRequestHandler):
             ws.channels.setdefault(channel, {"id": channel, "name": channel, "members": [BOT], "is_private": True})
             message = ws.add_message(channel, body)
             return self.send_json({"ok": True, "ts": message["ts"]})
+        if path == "/_test/delete":
+            ws.messages[body["channel"]] = [m for m in ws.messages[body["channel"]]
+                                             if m["ts"] != body["ts"] and m.get("thread_ts") != body["ts"]]
+            return self.send_json({"ok": True})
         if path == "/_test/channel":
             body.setdefault("members", [BOT])
             body.setdefault("is_private", True)
@@ -454,6 +468,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(self.ws.page_of(items, params, "messages"))
 
     def m_conversations_replies(self, params):
+        if not any(m["ts"] == params["ts"] for m in self.ws.messages.get(params["channel"], [])):
+            return self.send_json({"ok": False, "error": "thread_not_found"})
         items = sorted(self.ws.thread(params["channel"], params["ts"]), key=lambda m: float(m["ts"]))
         self.send_json(self.ws.page_of(items, params, "messages"))
 

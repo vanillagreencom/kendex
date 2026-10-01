@@ -296,7 +296,7 @@ SECRET_ID="$(jq -r 'select(.kind == "notice") | .id' "$(sk_box "$GAMMA")/to-over
 assert_eq "$RC=$ERR1" "0=slack: secret-value=id=$SECRET_ID" "a notice matching the secret-value pattern is refused by id"
 assert_eq "$(sk_state '[.messages.C002[] | select(.text | contains("xoxb"))] | length')" "0" "nothing matching the pattern is posted"
 assert_eq "$(jq -r "select(.t == \"out\" and .id == \"$SECRET_ID\") | .state" "$(sk_journal "$GAMMA")")" "refused" "the refusal is journaled"
-refused_line() { jq -r "select(.t == \"out\" and .id == \"$2\") | [.state, .reason] | join(\" \")" "$(sk_journal "$1")"; } # ROOT ID
+refused_line() { jq -r "select(.t == \"out\" and .id == \"$2\" and .state != \"inflight\") | [.state, .reason] | join(\" \")" "$(sk_journal "$1")"; } # ROOT ID
 notice_id() { jq -r "select(.text == \"$2\") | .id" "$(sk_box "$1")/to-overseer.jsonl"; } # ROOT TEXT
 mkdir -p "$GAMMA/tmp/progress-reports"
 LEAK="$GAMMA/tmp/progress-reports/leak.md"
@@ -323,7 +323,7 @@ assert_eq "$RC=$(refused_line "$GAMMA" "$LONG_ID")=$(sk_state '[.messages.C002[]
 sk_lm "$GAMMA" ask --item overseer --to owner --file "$(sk_text s7 "q$LONG")" --options a,b --recommend a >"$SK_TMP/ask-long.out"
 LONG_ASK="$(sed 's/^id=//' "$SK_TMP/ask-long.out")"
 sk_poll "$GAMMA"
-assert_eq "$RC=$(jq -r "select(.t == \"out\" and .id == \"$LONG_ASK\") | .state" "$(sk_journal "$GAMMA")")=$(sk_state '[.messages.C002[] | select(.text | contains("qxxxx")) | [.body_arg, (.text | contains("xxxx\n\nOptions: a, b. Recommended: a.") | tostring)] | join(" ")] | join(",")')" \
+assert_eq "$RC=$(jq -r "select(.t == \"out\" and .id == \"$LONG_ASK\" and .state != \"inflight\") | .state" "$(sk_journal "$GAMMA")")=$(sk_state '[.messages.C002[] | select(.text | contains("qxxxx")) | [.body_arg, (.text | contains("xxxx\n\nOptions: a, b. Recommended: a.") | tostring)] | join(" ")] | join(",")')" \
   "0=open=text true" "an ask past the cap lands as text with its options tail and stands open"
 LONG_REPORT="$GAMMA/tmp/progress-reports/long.md"
 printf '# Long\n' > "$LONG_REPORT"
@@ -331,7 +331,7 @@ UPLOADS="$(sk_state '.uploads | length')"
 sk_lm "$GAMMA" notice --item overseer --to owner --attach "$LONG_REPORT" --file "$(sk_text s6 "y$LONG")" >/dev/null
 sk_poll "$GAMMA"
 LONG_FILE_ID="$(notice_id "$GAMMA" "y$LONG")"
-assert_eq "$RC=$(jq -r "select(.t == \"out\" and .id == \"$LONG_FILE_ID\") | .state" "$(sk_journal "$GAMMA")")=$(sk_state '.uploads | length')" \
+assert_eq "$RC=$(jq -r "select(.t == \"out\" and .id == \"$LONG_FILE_ID\" and .state != \"inflight\") | .state" "$(sk_journal "$GAMMA")")=$(sk_state '.uploads | length')" \
   "0=file=$((UPLOADS + 1))" "a notice past the cap beside a report uploads with it as the comment, the cap being markdown_text's alone"
 
 # --- a 429 is honoured by Retry-After -------------------------------------------------------
@@ -366,8 +366,8 @@ sk_run -- listen --status --root "$GAMMA"
 assert_has "$(printf '%s' "$OUT" | sed -n '1p')" " state=failing " "the doctor row reads failing"
 assert_has "$(printf '%s' "$OUT" | sed -n '1p')" " fix=slack-api-failed=chat.postMessage error=not_in_channel id=$ASK5" \
   "the row's fix names the Slack error and the envelope"
-assert_eq "$(jq -r "select(.t == \"out\" and .id == \"$ASK5\") | .state" "$(sk_journal "$GAMMA")" | wc -l | tr -d ' ')" "0" \
-  "nothing is journaled for the refused post"
+assert_eq "$(jq -r "select(.t == \"out\" and .id == \"$ASK5\") | .state" "$(sk_journal "$GAMMA")" | wc -l | tr -d ' ')" "2" \
+  "the refused post records its in-flight and retry lines"
 sk_poll "$GAMMA"
 assert_eq "$RC=$(asks C002 'Refused once?')" "0=1" "the next poll posts the ask and exits 0"
 
@@ -381,8 +381,8 @@ assert_eq "$RC=${ERR1%% *}" "1=slack:" "a refused connection fails the poll"
 # envelope and root are the contract, not the operating system's error text.
 assert_eq "${ERR1%% (*}|${ERR1##*)}" "slack: slack-unreachable=chat.postMessage| id=$ASK6 root=$GAMMA" \
   "the unsent request has the unreachable key, naming the envelope and root"
-assert_eq "$(jq -r "select(.t == \"out\" and .id == \"$ASK6\") | .state" "$(sk_journal "$GAMMA")" | wc -l | tr -d ' ')" "0" \
-  "a request Slack never received is not journaled"
+assert_eq "$(jq -r "select(.t == \"out\" and .id == \"$ASK6\") | .state" "$(sk_journal "$GAMMA")" | wc -l | tr -d ' ')" "2" \
+  "a request Slack never received records its in-flight and retry lines"
 sk_poll "$GAMMA"
 assert_eq "$RC=$(asks C002 'Refused connection?')" "0=1" "the next poll posts the ask"
 sk_lm "$GAMMA" ask --item overseer --to owner --file "$(sk_text q7 'Lost response?')" --options a,b --recommend a >"$SK_TMP/ask7.out"
@@ -390,7 +390,7 @@ ASK7="$(sed 's/^id=//' "$SK_TMP/ask7.out")"
 sk_ctl /_test/fault '{"method": "chat.postMessage", "drop": true, "times": 1}' >/dev/null
 sk_poll "$GAMMA"
 assert_eq "$RC=${ERR1%%=*}" "0=slack: slack-response-lost" "a dropped response is reported and the poll goes on"
-assert_eq "$(jq -r "select(.t == \"out\" and .id == \"$ASK7\") | .state" "$(sk_journal "$GAMMA")")" "unknown" "the lost response is journaled unknown"
+assert_eq "$(jq -r "select(.t == \"out\" and .id == \"$ASK7\" and .state != \"inflight\") | .state" "$(sk_journal "$GAMMA")")" "unknown" "the lost response is journaled unknown"
 sk_poll "$GAMMA"
 assert_eq "$(asks C002 'Lost response?')" "0" "an unknown post is never repeated"
 sk_run -- listen --status --root "$GAMMA"
@@ -797,7 +797,7 @@ sk_run -- listen --root "$PAIR_A" --root "$PAIR_B" --once
 assert_eq "$RC" "0" "control: the one-channel rule gone, both roots poll one channel"
 sk_bin_reset
 
-sk_mutant horizon relay.py 'return thread\.open or float\(thread\.ts\) >= self\.settings\.horizon\(self\.clock\(\)\)' 'return True'
+sk_mutant horizon relay.py 'return not thread.missing and \(thread.open or max\(float\(thread.ts\), thread.active\) >= self.settings.horizon\(self.clock\(\)\)\)' 'return True'
 ZETA="$(sk_new_root zeta)"
 sk_bind "$ZETA"
 sk_rebind_at "$ZETA" "$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400))')"
@@ -877,10 +877,10 @@ assert_eq "$(text_of "$ZETA" "$ZETA_CH:$FC8")" "file F919 not fetched: truncated
 sk_bin_reset
 
 sk_mutant http-exception api.py 'except http\.client\.HTTPException as err:' 'except LookupError as err:'
+sk_file F918 j.png image/png 'cut bytes' >/dev/null
 sk_ctl /_test/fault '{"method": "download", "cut": "chunked"}' >/dev/null
-FC7="$(sk_inject "$ZETA_CH" U001 'chunks' '' "\"files\": [$(sk_file F918 j.png image/png 'cut bytes')]")"
-sk_poll "$ZETA"
-assert_eq "$RC $(text_of "$ZETA" "$ZETA_CH:$FC7")" "1 " "control: http.client's own error uncaught, a cut chunked body stops the poll"
+sk_recovery "$ZETA" download "$SK_URL/_files/F918"
+sk_assert_red "$(printf '%s\n' "$OUT" | tail -n 1 | jq -r .error)" 'file-not-fetched' 'control: omitting the download catch breaks its file-not-fetched key'
 sk_bin_reset
 
 sk_mutant mark-seen relay.py 'if self\.react\("reactions\.add", ts, SEEN\):' 'if False and self.react("reactions.add", ts, SEEN):'
@@ -1024,7 +1024,7 @@ sk_ctl /_test/fault '{"method": "chat.postMessage", "refuse": true, "times": 1}'
 sk_poll "$NET"
 assert_eq "${ERR1%% (*}" "slack: slack-response-lost=chat.postMessage" \
   "control: the network mutant classifies the unsent request as a lost response"
-assert_eq "$RC=$(jq -r "select(.t == \"out\" and .id == \"$ASK10\") | .state" "$(sk_journal "$NET")")=$(asks "$(sk_channel "$NET")" 'Never sent?')" "0=unknown=0" \
+assert_eq "$RC=$(jq -r "select(.t == \"out\" and .id == \"$ASK10\" and .state != \"inflight\") | .state" "$(sk_journal "$NET")")=$(asks "$(sk_channel "$NET")" 'Never sent?')" "0=unknown=0" \
   "control: a refused connection read as a lost response, the unsent ask is journaled unknown"
 sk_bin_reset
 

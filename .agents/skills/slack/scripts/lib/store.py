@@ -142,6 +142,7 @@ class Thread:
     open: bool = False
     parent: Optional[Dict] = None
     active: float = 0.0
+    missing: bool = False
 
 
 
@@ -203,11 +204,14 @@ class State:
             env_id = str(line["id"])
             state = line["state"]
             parse_at(str(line["at"]))  # the age `compact` judges the line by
-            if state == "unknown":
+            if state in ("inflight", "unknown"):
                 self.unknown[env_id] = str(line["kind"])
                 self.carried.add(env_id)
                 return
             self.unknown.pop(env_id, None)
+            if state == "retry":
+                self.carried.discard(env_id)
+                return
             self.carried.add(env_id)
             if state == "refused":
                 self.refused[env_id] = str(line["reason"])
@@ -228,6 +232,8 @@ class State:
             thread_ts = self.by_envelope.get(str(line["id"]))
             if thread_ts in self.threads:
                 self.threads[thread_ts].open = False
+                if line.get("reason") == "thread_not_found":
+                    self.threads[thread_ts].missing = True
         elif kind == "bound":
             env_id = self.pending_files.pop(str(line["file"]), str(line["id"]))
             thread_ts = str(line["ts"])
