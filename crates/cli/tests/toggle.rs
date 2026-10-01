@@ -153,6 +153,112 @@ fn cli_builtin_legacy_settings_refuse_verify_and_toggle() {
 }
 
 #[test]
+fn cli_pi_extension_toggles_native_filters_and_verify_reads_them_back() {
+    use kendex_core::{lock, manifest, pi_ext};
+    for scope_arg in ["global", "project"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let scope = match scope_arg {
+            "global" => Scope::Global,
+            "project" => Scope::Project { root: home.clone() },
+            _ => unreachable!(),
+        };
+        let env = Env::host_rooted(&home);
+        let source = home.join("catalog/pi-extensions/pi-widgets");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            home.join("catalog/kendex.toml"),
+            "is_source_catalog = true\n",
+        )
+        .unwrap();
+        fs::write(
+            source.join("package.json"),
+            r#"{"name":"pi-widgets","pi":{"extensions":["index.js"]}}"#,
+        )
+        .unwrap();
+        fs::write(
+            source.join("index.js"),
+            "export default function widgets(pi) {}\n",
+        )
+        .unwrap();
+        let path = manifest::manifest_path(&env, &scope);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, format!(
+            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.pi-widgets]\nsource = \"cat\"\nenabled = false\n", source_path(&home.join("catalog"))
+        )).unwrap();
+        if matches!(&scope, Scope::Project { .. }) {
+            // Discovery accepts home as a project only when it carries a lock.
+            lock::save(&lock::lock_path(&env, &scope), &lock::Lock::default()).unwrap();
+        }
+        let installed = kendex(&home, &["update-pi", "--scope", scope_arg]);
+        assert!(installed.status.success(), "{installed:?}");
+        let root = pi_ext::scope_root(&env, &scope).unwrap();
+        let settings_path = pi_ext::settings_path(&root);
+        let mut native: Value = serde_json::from_slice(&fs::read(&settings_path).unwrap()).unwrap();
+        assert_eq!(native["packages"][0]["extensions"], json!([]));
+        native["theme"] = json!("dark");
+        native["packages"][0]["skills"] = json!([]);
+        fs::write(&settings_path, serde_json::to_string(&native).unwrap()).unwrap();
+        let payload = fs::read(root.join("packages/pi-widgets/index.js")).unwrap();
+        let key = lock::entry_key(ItemKind::PiExtension, "pi-widgets", HarnessId::Pi);
+        for (explicit, verb) in [
+            (true, "enable"),
+            (false, "disable"),
+            (false, "enable"),
+            (true, "disable"),
+        ] {
+            let mut args = vec![verb, "pi-widgets", "--scope", scope_arg, "--yes"];
+            if explicit {
+                args.extend(["--kind", "pi-extension"]);
+            }
+            let result = kendex(&home, &args);
+            assert!(result.status.success(), "{verb} {result:?}");
+            let config: Value = serde_json::from_slice(&fs::read(&settings_path).unwrap()).unwrap();
+            assert_eq!(config["theme"], "dark");
+            assert_eq!(config["packages"][0]["skills"], json!([]));
+            assert_eq!(
+                config["packages"][0].get("extensions").cloned(),
+                (verb == "disable").then(|| json!([]))
+            );
+            assert_eq!(
+                fs::read(root.join("packages/pi-widgets/index.js")).unwrap(),
+                payload
+            );
+            assert_eq!(
+                lock::load(&lock::lock_path(&env, &scope)).unwrap().entries[&key].enabled,
+                verb == "enable"
+            );
+            let verified = kendex(&home, &["verify", "pi-widgets", "--scope", scope_arg]);
+            assert!(verified.status.success(), "{verified:?}");
+        }
+        // A source update replaces bytes but does not enable a disabled package.
+        fs::write(
+            source.join("index.js"),
+            "export default function updated(pi) {}\n",
+        )
+        .unwrap();
+        let updated = kendex(&home, &["update-pi", "--scope", scope_arg]);
+        assert!(updated.status.success(), "{updated:?}");
+        assert!(!lock::load(&lock::lock_path(&env, &scope)).unwrap().entries[&key].enabled);
+        let verified = kendex(&home, &["verify", "pi-widgets", "--scope", scope_arg]);
+        assert!(verified.status.success(), "{verified:?}");
+        let check = kendex(&home, &["check", "--scope", scope_arg, "--report-only"]);
+        assert_eq!(check.status.code(), Some(0), "{check:?}");
+        // Removing the native filter must fail verification with a completed lock.
+        let mut config: Value = serde_json::from_slice(&fs::read(&settings_path).unwrap()).unwrap();
+        config["packages"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("extensions");
+        fs::write(&settings_path, serde_json::to_string(&config).unwrap()).unwrap();
+        let verified = kendex(&home, &["verify", "pi-widgets", "--scope", scope_arg]);
+        assert_eq!(verified.status.code(), Some(1), "{verified:?}");
+        let check = kendex(&home, &["check", "--scope", scope_arg, "--report-only"]);
+        assert_eq!(check.status.code(), Some(1), "{check:?}");
+    }
+}
+
+#[test]
 fn cli_toggle_installed_server_skill_and_hook() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);

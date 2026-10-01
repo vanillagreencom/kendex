@@ -387,6 +387,9 @@ pub fn toggle(
                     decl
                 });
             }
+            if kind == ItemKind::PiExtension && manifest.pi_extensions.contains_key(name) {
+                crate::pi_ext::ensure_toggle_ready(env, scope, &manifest, &lock, name)?;
+            }
             if let Some(decl) = manifest.declared_mut(kind).get_mut(name) {
                 decl.enabled = enabled;
             }

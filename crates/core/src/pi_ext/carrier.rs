@@ -1,7 +1,7 @@
 //! The carrier that makes hooks real on Pi. Pi has no per-hook artifact:
 //! the `pi-hooks` extension package hosts native listeners, and hook
 //! content rides in the registry kendex renders beside them. A hook
-//! "installed" for Pi without the carrier registered anywhere Pi loads is
+//! "installed" for Pi without an enabled carrier registered anywhere Pi loads is
 //! written but never runs — so every label reads carrier reality instead
 //! of claiming enforcement the runtime cannot deliver.
 
@@ -46,8 +46,8 @@ fn entry_is_carrier(entry: &Value) -> bool {
     }
 }
 
-/// Whether one settings file registers the carrier. Unreadable or absent
-/// reads as not registered — the conservative answer, which downgrades a
+/// Whether one settings file registers an enabled carrier. Unreadable or
+/// absent reads as inactive: the conservative answer, which downgrades a
 /// label rather than upgrading one.
 fn settings_register_carrier(scope_root: &Path) -> bool {
     let path = super::settings_path(scope_root);
@@ -60,10 +60,14 @@ fn settings_register_carrier(scope_root: &Path) -> bool {
     value
         .get("packages")
         .and_then(Value::as_array)
-        .is_some_and(|packages| packages.iter().any(entry_is_carrier))
+        .is_some_and(|packages| {
+            packages
+                .iter()
+                .any(|entry| entry_is_carrier(entry) && super::extensions_enabled(entry))
+        })
 }
 
-/// Where the carrier is registered, of the settings layers Pi loads for
+/// Where an enabled carrier is registered, of the settings layers Pi loads for
 /// this scope. Pi loads project and global settings both, so a
 /// project-installed hook with only a global carrier still runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,7 +94,7 @@ pub fn presence(env: &Env, scope: &Scope) -> CarrierPresence {
 }
 
 /// What a Pi hook label may honestly claim at this scope: enforced only
-/// while the carrier is really registered somewhere Pi loads, advisory
+/// while an enabled carrier is registered somewhere Pi loads, advisory
 /// otherwise — a rendered registry nothing executes is prose.
 pub fn enforcement(env: &Env, scope: &Scope) -> Enforcement {
     match presence(env, scope).anywhere() {

@@ -129,6 +129,18 @@ fn carrier_presence_is_read_per_settings_layer_and_either_scope_enforces() {
         Enforcement::Enforced
     );
 
+    // A registered carrier with Pi's native off filter enforces nothing.
+    fs::write(
+        w.project.join(".pi/settings.json"),
+        r#"{"packages":[{"source":"./packages/@vanillagreen/pi-hooks","extensions":[]}]}"#,
+    )
+    .unwrap();
+    assert!(!carrier::presence(&w.env, &project_scope).anywhere());
+    assert_eq!(
+        carrier::enforcement(&w.env, &project_scope),
+        Enforcement::Advisory
+    );
+
     // The global scope reads only the layers Pi loads globally.
     assert_eq!(
         carrier::enforcement(&w.env, &Scope::Global),
@@ -174,8 +186,18 @@ fn retiring_pi_inventory_keeps_declared_packages_until_pi_remove() {
         fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
         fs::write(&manifest_path, &declaration).unwrap();
         let pi_root = pi_ext::scope_root(&w.env, &scope).unwrap();
-        let installed = pi_ext::install(&w.env, &pi_root, &source).unwrap().dest;
+        let installed = pi_ext::install(&w.env, &pi_root, &source, true)
+            .unwrap()
+            .dest;
         let settings = fs::read(pi_ext::settings_path(&pi_root)).unwrap();
+        let before = fs::read(&manifest_path).unwrap();
+        assert!(
+            kendex_core::engine::ops::toggle(&w.env, &scope, &[name.to_owned()], None, false, None)
+                .is_err()
+        );
+        assert_eq!(fs::read(&manifest_path).unwrap(), before);
+        assert_eq!(fs::read(pi_ext::settings_path(&pi_root)).unwrap(), settings);
+
         let lock_path = lock::lock_path(&w.env, &scope);
         let mut previous = lock::load(&lock_path).unwrap();
         let declared = manifest::load_for_mutation(&manifest_path)
@@ -187,6 +209,7 @@ fn retiring_pi_inventory_keeps_declared_packages_until_pi_remove() {
             &declared,
             &mut previous,
             pi_ext::RecordBasis::MatchedBytes,
+            None,
         )
         .unwrap();
         assert!(drift.is_empty(), "{scope:?}: {drift:?}");
@@ -260,6 +283,111 @@ fn retiring_pi_inventory_keeps_declared_packages_until_pi_remove() {
         assert!(!installed.exists());
         assert!(!pi_ext::registered(&pi_root, name).unwrap());
         assert!(!lock::load(&lock_path).unwrap().entries.contains_key(&key));
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn native_package_toggles_keep_files_settings_and_records_at_both_scopes() {
+    use kendex_core::{apply, engine, lock, manifest, pi_ext, scan, settings};
+    use serde_json::json;
+    let w = world();
+    let name = "pi-widgets";
+    let catalog = w.home.join("cat");
+    let source = catalog.join("pi-extensions/pi-widgets");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    fs::write(
+        source.join("package.json"),
+        r#"{"name":"pi-widgets","pi":{"extensions":["index.js"]}}"#,
+    )
+    .unwrap();
+    let payload = b"export default function widgets(pi) {}\n";
+    fs::write(source.join("index.js"), payload).unwrap();
+    for scope in [Scope::Global, scope(&w)] {
+        let path = manifest::manifest_path(&w.env, &scope);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, format!(
+            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n", source_path(&catalog)
+        )).unwrap();
+        let root = pi_ext::scope_root(&w.env, &scope).unwrap();
+        let dest = pi_ext::install(&w.env, &root, &source, true).unwrap().dest;
+        let settings_path = pi_ext::settings_path(&root);
+        let entry = json!({"source":dest, "skills":["keep"], "themes":[], "prompts":["keep.md"]});
+        let original = json!({"theme":"dark", "packages":["npm:first", entry, "npm:last"]});
+        let text = serde_json::to_string_pretty(&original)
+            .unwrap()
+            .replace('\n', "\r\n");
+        fs::write(&settings_path, format!("{text}\r\n")).unwrap();
+        let declared = engine::ops::manifest_for_reading(&w.env, &scope).unwrap();
+        let mut record = lock::Lock::default();
+        let seeded = pi_ext::record_matching_manifest(
+            &w.env,
+            &scope,
+            &declared,
+            &mut record,
+            pi_ext::RecordBasis::MatchedBytes,
+            None,
+        )
+        .unwrap();
+        assert!(seeded.is_empty());
+        lock::save(&lock::lock_path(&w.env, &scope), &record).unwrap();
+        let key = lock::entry_key(ItemKind::PiExtension, name, HarnessId::Pi);
+        for (kind, enabled) in [
+            (Some(ItemKind::PiExtension), false),
+            (None, true),
+            (None, false),
+        ] {
+            let before = fs::read(&settings_path).unwrap();
+            let report =
+                engine::ops::toggle(&w.env, &scope, &[name.to_owned()], kind, enabled, None)
+                    .unwrap();
+            assert_eq!(
+                fs::read(&settings_path).unwrap(),
+                before,
+                "preview writes nothing"
+            );
+            apply::execute(&w.env, &report.plan).unwrap();
+            let text = fs::read_to_string(&settings_path).unwrap();
+            assert!(text.contains("\r\n"));
+            let observed: Value = serde_json::from_str(&text).unwrap();
+            let mut expected = original.clone();
+            if !enabled {
+                expected["packages"][1]["extensions"] = json!([]);
+            }
+            assert_eq!(observed, expected);
+            assert_eq!(fs::read(dest.join("index.js")).unwrap(), payload);
+            let record = lock::load(&lock::lock_path(&w.env, &scope)).unwrap();
+            let declared = engine::ops::manifest_for_reading(&w.env, &scope).unwrap();
+            assert_eq!(
+                (
+                    record.entries[&key].enabled,
+                    declared.pi_extensions[name].enabled
+                ),
+                (enabled, enabled)
+            );
+            assert!(engine::audit(&w.env, &scope).unwrap().drift.is_empty());
+            let scanned = scan::scan_scopes(
+                &w.env,
+                &settings::load(&w.env).unwrap().harness_roots,
+                std::slice::from_ref(&scope),
+            );
+            let item = scanned
+                .items
+                .iter()
+                .find(|item| item.kind == ItemKind::PiExtension && item.name == name)
+                .unwrap();
+            assert_eq!(item.enabled, Some(enabled));
+        }
+        // The native read, not the completed record, judges a hand edit.
+        fs::write(&settings_path, serde_json::to_string(&original).unwrap()).unwrap();
+        assert!(
+            engine::audit(&w.env, &scope)
+                .unwrap()
+                .drift
+                .iter()
+                .any(|row| row.kind == ItemKind::PiExtension && row.name == name)
+        );
     }
 }
 

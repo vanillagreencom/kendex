@@ -30,7 +30,7 @@ pub(crate) fn unsupported_hook_event(
 /// What installing a hook on this harness actually buys. A tool that only
 /// reads the file must never be presented as one that acts on it: the
 /// warning travels with the plan, the preview, and the audit page. Read
-/// through `hook_enforcement`, so a Pi hook with no carrier registered
+/// through `hook_enforcement`, so a Pi hook with no enabled carrier registered
 /// anywhere Pi loads gets its downgrade said here, per item.
 pub(super) fn advisory_notice(
     env: &Env,
@@ -45,11 +45,11 @@ pub(super) fn advisory_notice(
     let (message, remediation) = match harness {
         HarnessId::Pi => (
             format!(
-                "kendex-hook-carrier-missing: harness=pi hook={record_name} carrier=pi-hooks\nThe pi-hooks carrier is not registered in any settings pi loads here — the hook is written but nothing will run it",
+                "kendex-hook-carrier-missing: harness=pi hook={record_name} carrier=pi-hooks\nThe pi-hooks carrier is absent or disabled in the settings Pi loads here. The hook is written but nothing will run it.",
                 record_name = crate::names::shown(name),
             ),
             format!(
-                "install the {} extension at either scope",
+                "install or enable the {} extension at either scope",
                 crate::pi_ext::carrier::CARRIER
             ),
         ),

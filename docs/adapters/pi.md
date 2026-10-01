@@ -20,7 +20,7 @@ Project markers: a `.pi/` or `.agents/` directory.
 | agent | `~/.pi/agent/agents/*.md` | `.pi/agents/*.md` | managed, both |
 | skill | `~/.agents/skills/<name>/SKILL.md`, shared with Codex, OpenCode, Gemini and Copilot; `~/.pi/agent/skills/<name>/SKILL.md` for a copy delivery | `.agents/skills/<name>/SKILL.md`, shared with Codex and Antigravity | managed, both |
 | command | `~/.pi/agent/prompts/*.md` | `.pi/prompts/*.md` | managed, both |
-| hook | `~/.pi/agent/kendex/hooks/<name>.sh` plus `kendex/hooks.json` | `.pi/kendex/hooks/<name>.sh` plus `.pi/kendex/hooks.json` | managed, both; enforced while the `pi-hooks` carrier is registered |
+| hook | `~/.pi/agent/kendex/hooks/<name>.sh` plus `kendex/hooks.json` | `.pi/kendex/hooks/<name>.sh` plus `.pi/kendex/hooks.json` | managed, both; enforced while the `pi-hooks` carrier is registered and enabled |
 | mcp-server | — | — | unsupported |
 | plugin | — | — | unsupported |
 | pi-extension | `~/.pi/agent/settings.json` `packages[]`, and `~/.pi/agent/extensions/*.{ts,js,mts,mjs,cts,cjs}` | `.pi/settings.json` `packages[]`, and `.pi/extensions/*.{ts,js,mts,mjs,cts,cjs}` | managed, both |
@@ -51,7 +51,7 @@ The carrier's rules:
 - The carrier resolves the project with `discover.rs::project_root_from`, not the adapter's two markers: a walk up that stops at home. The lock file wins, home's own included, else the nearest ancestor carrying one of the seven `MARKER_DIRS`; home itself is never a project otherwise, and nothing above home answers for a start below it. A start outside home walks to the filesystem root. That is what kendex asks before it renders, so the carrier reads where the renderer wrote.
 - The project's registry is read only where Pi reports the workspace trusted; Pi saves that decision for the folder or any parent. Untrusted or outside any project, the project scope contributes nothing and the global root still answers.
 
-Enforcement is read live (`enforcement`, `crates/core/src/pi_ext/carrier.rs`): with the carrier registered in either scope's settings the hook is enforced; with no carrier anywhere Pi loads, the install downgrades to advisory, said per item.
+Enforcement is read live (`enforcement`, `crates/core/src/pi_ext/carrier.rs`): with the carrier registered and its extension filter enabled in either scope's settings the hook is enforced; with no enabled carrier anywhere Pi loads, the install downgrades to advisory, said per item.
 
 Reserved names: Pi warns on two directory names directly beside a root it loads and halts an interactive start until a keypress, `hooks/` on the name alone and `tools/` when it holds entries beyond Pi's own `fd` and `rg` binaries and dotfiles. kendex keeps scripts and registry under `kendex/` (`HOOK_HOME`, `crates/core/src/harness/pi.rs`) and writes nothing to `tools/`; an extension's `bin` entries link into the scope's `bin/`.
 
@@ -62,6 +62,8 @@ Agent scoping: none; only `agents = "all"` custom hooks are enforced, carrier pe
 ## Pi extensions
 
 An extension is an npm-shaped package a source ships under `pi-extensions/<name>/`. kendex copies it into the scope's `packages/` directory, resolves its production dependencies with npm (`--omit=dev --package-lock=false --legacy-peer-deps --no-audit --no-fund`), links its `bin` entries into the scope's `bin/`, registers it in the scope's `settings.json`, and mirrors its `pi.appendSystem` file into the scope's `APPEND_SYSTEM.md` as a marker block (`crates/core/src/pi_ext/`).
+
+The native switch is the package object's `extensions` filter, documented in [Pi packages](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md#select-package-resources). Disable writes `"extensions": []`; enable removes that empty filter. Other package filters and settings stay unchanged. This switches extension code only, not skills, prompts, themes, bin links or the mirrored system instructions. Package files and registration order stay unchanged. Install and update preserve a disabled filter, and a disabled declaration starts with that filter. A toggle refuses an incomplete or unmatched carrier rather than saving only the manifest. Lock and list read the native switch; verify reports a filter that differs from the declaration. The tests are `crates/core/tests/pi_carrier.rs` and `crates/cli/tests/toggle.rs`.
 
 The same package under two names or at two scopes registers twice and crashes Pi at startup, so kendex checks for the duplicate before writing (`duplicate_elsewhere`, `crates/core/src/pi_ext/renames.rs`). Catalog packages live under the `@vanillagreen/` npm scope, and `RENAMES` in the same file maps every current name to each name an install or lock may carry for it, so an install under another of its names is recognized rather than reinstalled beside itself. `same_package` in that file decides whether two spellings are one package by folding each to the current name its rename family carries, so any two members of one family are one registration, two earlier names among them. `duplicate_elsewhere` builds its candidate set from that same current name, so a copy installed under one member is found from a declaration written under another.
 

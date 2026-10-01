@@ -46,7 +46,7 @@ struct Fixture {
 fn scope() -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
     let env = Env::fake(tmp.path().join("home"), FakeOs::Linux);
-    let root = tmp.path().to_path_buf();
+    let root = tmp.path().canonicalize().unwrap();
     let scope = root.join("proj/.pi");
     Fixture {
         _tmp: tmp,
@@ -61,7 +61,7 @@ fn install_copies_registers_links_and_mirrors_append_system() {
     let f = scope();
     let source = fixture(&f.root, "pi-widgets", "Use the widget tool.\n");
 
-    let outcome = install(&f.env, &f.scope, &source).unwrap();
+    let outcome = install(&f.env, &f.scope, &source, true).unwrap();
 
     assert_eq!(outcome.version.as_deref(), Some("1.2.3"));
     assert!(outcome.unbuilt_bins.is_empty());
@@ -96,7 +96,7 @@ fn a_carrier_record_keeps_its_install_time_with_the_machine_half_and_takes_a_fre
     let planted = "2020-01-01T00:00:00Z";
     let f = scope();
     let source = fixture(&f.root, "pi-widgets", "Use the widget tool.\n");
-    install(&f.env, &f.scope, &source).unwrap();
+    install(&f.env, &f.scope, &source, true).unwrap();
     let package = DeclaredPackage {
         source_dir: source,
         source: "cat".to_owned(),
@@ -149,17 +149,23 @@ fn a_carrier_record_keeps_its_install_time_with_the_machine_half_and_takes_a_fre
 fn reinstalling_keeps_load_order_and_refreshes_the_append_system_block() {
     let f = scope();
     let first = fixture(&f.root, "pi-widgets", "Old guidance.\n");
-    install(&f.env, &f.scope, &first).unwrap();
+    install(&f.env, &f.scope, &first, true).unwrap();
     let other = fixture(&f.root, "pi-other", "Other guidance.\n");
-    install(&f.env, &f.scope, &other).unwrap();
+    install(&f.env, &f.scope, &other, true).unwrap();
+    let path = settings_path(&f.scope);
+    let text = settings::toggled_packages(&path, [("pi-widgets", false)].into_iter()).unwrap();
+    std::fs::write(&path, text).unwrap();
 
     write(&first.join("system.md"), "New guidance.\n");
     write(&first.join("dist/index.js"), "export const x = 2;\n");
-    install(&f.env, &f.scope, &first).unwrap();
+    install(&f.env, &f.scope, &first, true).unwrap();
 
     assert_eq!(
         settings_json(&f.scope)["packages"],
-        serde_json::json!(["./packages/pi-widgets", "./packages/pi-other"])
+        serde_json::json!([
+            {"source": "./packages/pi-widgets", "extensions": []},
+            "./packages/pi-other"
+        ])
     );
     let append = std::fs::read_to_string(append_system_path(&f.scope)).unwrap();
     assert!(append.contains("New guidance."));
@@ -172,10 +178,41 @@ fn reinstalling_keeps_load_order_and_refreshes_the_append_system_block() {
 }
 
 #[test]
+fn a_disabled_declaration_installs_with_no_extensions_and_records_the_native_switch() {
+    let f = scope();
+    let source = fixture(&f.root, "pi-widgets", "Guidance.\n");
+    install(&f.env, &f.scope, &source, false).unwrap();
+    assert_eq!(
+        settings_json(&f.scope)["packages"],
+        serde_json::json!([
+            {"source": "./packages/pi-widgets", "extensions": []}
+        ])
+    );
+    let package = DeclaredPackage {
+        source_dir: source,
+        source: "cat".to_owned(),
+        source_repo: "owner/repo".to_owned(),
+        source_commit: None,
+    };
+    let record = matching_lock_entry(
+        &f.scope,
+        "pi-widgets",
+        &package,
+        None,
+        RecordBasis::MatchedBytes,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(!record.enabled);
+    assert!(f.scope.join("bin/pi-widgets").is_symlink());
+    assert!(append_system_path(&f.scope).is_file());
+}
+
+#[test]
 fn installed_hash_ignores_the_dependency_tree_and_reports_absence() {
     let f = scope();
     let source = fixture(&f.root, "pi-widgets", "Guidance.\n");
-    install(&f.env, &f.scope, &source).unwrap();
+    install(&f.env, &f.scope, &source, true).unwrap();
 
     let installed = f.scope.join("packages/pi-widgets");
     write(&installed.join("node_modules/left-pad/index.js"), "dep\n");
@@ -197,8 +234,8 @@ fn remove_leaves_no_trace_and_keeps_the_other_package() {
     let f = scope();
     let widgets = fixture(&f.root, "pi-widgets", "Widget guidance.\n");
     let other = fixture(&f.root, "pi-other", "Other guidance.\n");
-    install(&f.env, &f.scope, &widgets).unwrap();
-    install(&f.env, &f.scope, &other).unwrap();
+    install(&f.env, &f.scope, &widgets, true).unwrap();
+    install(&f.env, &f.scope, &other, true).unwrap();
 
     remove(&f.env, &f.scope, "pi-widgets").unwrap();
 
@@ -230,7 +267,7 @@ fn remove_leaves_no_trace_and_keeps_the_other_package() {
 fn scoped_packages_install_under_their_npm_scope() {
     let f = scope();
     let source = fixture(&f.root, "@vg/pi-hooks", "Hook guidance.\n");
-    install(&f.env, &f.scope, &source).unwrap();
+    install(&f.env, &f.scope, &source, true).unwrap();
 
     assert!(f.scope.join("packages/@vg/pi-hooks/package.json").is_file());
     assert_eq!(list_installed(&f.scope).unwrap(), ["@vg/pi-hooks"]);
@@ -287,7 +324,7 @@ fn a_real_file_in_the_bin_dir_is_a_conflict_not_a_clobber_target() {
     let source = fixture(&f.root, "pi-widgets", "Guidance.\n");
     write(&f.scope.join("bin/pi-widgets"), "#!/bin/sh\necho mine\n");
 
-    let error = install(&f.env, &f.scope, &source).unwrap_err();
+    let error = install(&f.env, &f.scope, &source, true).unwrap_err();
     assert!(matches!(error, CoreError::PiPackage { .. }), "{error}");
     assert!(f.scope.join("bin/pi-widgets").is_file());
 }
@@ -298,7 +335,7 @@ fn a_bin_the_package_has_not_built_is_reported_not_linked() {
     let source = fixture(&f.root, "pi-widgets", "Guidance.\n");
     std::fs::remove_file(source.join("cli.js")).unwrap();
 
-    let outcome = install(&f.env, &f.scope, &source).unwrap();
+    let outcome = install(&f.env, &f.scope, &source, true).unwrap();
     assert_eq!(outcome.unbuilt_bins, ["pi-widgets"]);
     assert!(outcome.bins.is_empty());
     assert!(!f.scope.join("bin/pi-widgets").exists());
@@ -308,11 +345,11 @@ fn a_bin_the_package_has_not_built_is_reported_not_linked() {
 fn a_package_without_an_append_system_file_writes_no_block() {
     let f = scope();
     let source = fixture(&f.root, "pi-widgets", "Guidance.\n");
-    install(&f.env, &f.scope, &source).unwrap();
+    install(&f.env, &f.scope, &source, true).unwrap();
     assert!(append_system_path(&f.scope).exists());
 
     std::fs::remove_file(source.join("system.md")).unwrap();
-    install(&f.env, &f.scope, &source).unwrap();
+    install(&f.env, &f.scope, &source, true).unwrap();
     assert!(!append_system_path(&f.scope).exists());
 }
 

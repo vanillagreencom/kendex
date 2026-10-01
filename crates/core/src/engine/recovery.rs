@@ -39,6 +39,7 @@ pub fn audit_without_record(
         manifest,
         &mut seed,
         crate::pi_ext::RecordBasis::MatchedBytes,
+        None,
     )?;
     let mut report = plan_scope(env, scope, manifest, &seed, &PlanOptions::default())?;
     let matching = proven_entries(

@@ -16,6 +16,7 @@ use crate::process::Hardened;
 
 pub mod carrier;
 mod record;
+pub(crate) use record::ensure_toggle_ready;
 pub use record::{
     DeclaredPackage, check_origin, clear_install_completion, matching_lock_entry, paired_roots,
     record_matching_manifest, record_matching_name, resolve_declared, scope_root, session_roots,
@@ -31,7 +32,8 @@ use files::{copy_package, inside, read_dir};
 pub(crate) use files::{owned_package_exact_hash, owned_package_hash, owned_package_identity};
 pub use files::{package_hash, package_path};
 pub use renames::{duplicate_elsewhere, family, installed_under, same_package};
-pub use settings::list_npm_entries;
+pub(crate) use settings::extensions_enabled;
+pub use settings::{list_npm_entries, package_enabled};
 pub use shadow::{ShadowLines, ShadowPackage, ShadowScan, shadows};
 
 const NPM_INSTALL_ARGS: &[&str] = &[
@@ -202,7 +204,14 @@ pub struct InstallOutcome {
 }
 
 /// Replace a package and register it without changing Pi's package order.
-pub fn install(env: &Env, scope_root: &Path, source_pkg_dir: &Path) -> Result<InstallOutcome> {
+/// A disabled declaration loads no extensions. An enabled declaration keeps
+/// any existing native filter, including a disable the user already set.
+pub fn install(
+    env: &Env,
+    scope_root: &Path,
+    source_pkg_dir: &Path,
+    enabled: bool,
+) -> Result<InstallOutcome> {
     let package = read(source_pkg_dir)?;
     let dest = package_path(scope_root, &package.name)?;
     if dest.symlink_metadata().is_ok() {
@@ -211,7 +220,7 @@ pub fn install(env: &Env, scope_root: &Path, source_pkg_dir: &Path) -> Result<In
     copy_package(source_pkg_dir, &dest)?;
     npm_install(&package.name, &dest)?;
     let (bins, unbuilt_bins) = link_bins(scope_root, &package, &dest)?;
-    settings::upsert_package(&settings_path(scope_root), &package.name)?;
+    settings::upsert_package(&settings_path(scope_root), &package.name, enabled)?;
     write_append_system(scope_root, &package, &dest)?;
     Ok(InstallOutcome {
         name: package.name,

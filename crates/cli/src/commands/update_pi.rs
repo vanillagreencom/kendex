@@ -560,14 +560,19 @@ fn install_rows(env: &Env, plan: &ScopePlan) -> Result<Installed, Box<dyn std::e
         count: 0,
         failed: Vec::new(),
     };
+    let manifest = kendex_core::engine::ops::manifest_for_reading(env, &plan.scope)?;
     for row in &plan.rows {
         let (source_dir, verb) = match &row.status {
             Status::Stale { source_dir } => (source_dir, "updated"),
             Status::Missing { source_dir } => (source_dir, "installed"),
             _ => continue,
         };
+        let decl = manifest
+            .pi_extensions
+            .get(&row.name)
+            .ok_or_else(|| format!("planned Pi install '{}' has no declaration", row.name))?;
         pi_ext::clear_install_completion(env, &plan.scope, &row.name)?;
-        match pi_ext::install(env, &plan.root, source_dir) {
+        match pi_ext::install(env, &plan.root, source_dir, decl.enabled) {
             Ok(outcome) => {
                 record_pi_installs(env, plan, Some(&row.name))?;
                 installed.count += 1;
@@ -636,6 +641,7 @@ fn record_pi_installs(env: &Env, plan: &ScopePlan, completed: Option<&str>) -> C
             &manifest,
             &mut lock,
             pi_ext::RecordBasis::Recorded,
+            None,
         )?,
     };
     if lock != before {

@@ -377,7 +377,7 @@ pub fn capabilities(harness: HarnessId, kind: ItemKind) -> KindCaps {
         // mechanism supports; the surfaces that label an installation read
         // carrier reality through `pi_ext::carrier::enforcement`, which
         // downgrades to advisory wherever no settings layer Pi loads
-        // registers the carrier.
+        // registers an enabled carrier.
         (Pi, Hook) => enforced(managed(BOTH)),
         // A prompt template is one `prompts/<name>.md` per command at either
         // scope, read with the same `description` and `argument-hint` keys

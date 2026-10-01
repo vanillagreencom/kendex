@@ -131,7 +131,7 @@ pub(super) fn check_scope(
     let mut scan = crate::pi_ext::ShadowScan::default();
     if let Some(manifest) = manifest.current() {
         ctx.pi_scope_duplicate_lines(manifest, sections);
-        for name in manifest.pi_extensions.keys() {
+        for (name, decl) in &manifest.pi_extensions {
             let key =
                 crate::lock::entry_key(ItemKind::PiExtension, name, crate::model::HarnessId::Pi);
             let unrecorded = match &lock {
@@ -140,7 +140,7 @@ pub(super) fn check_scope(
                 Err(_) => false,
             };
             if unrecorded {
-                ctx.pi_installation_line(name, None, true, sections);
+                ctx.pi_installation_line(name, None, decl.enabled, true, sections);
             }
         }
         scan = ctx.pi_shadow_scan(manifest.pi_extensions.keys().cloned().collect(), sections);
@@ -337,16 +337,21 @@ impl ScopeCheck<'_> {
                             .insert(entry.harness);
                         continue;
                     }
-                    if !entry.enabled {
-                        continue;
-                    }
                     if entry.kind == ItemKind::PiExtension {
+                        let enabled = manifest
+                            .current()
+                            .and_then(|manifest| manifest.pi_extensions.get(&entry.name))
+                            .map_or(entry.enabled, |decl| decl.enabled);
                         self.pi_installation_line(
                             &entry.name,
                             entry.rendered_hash.as_deref(),
+                            enabled,
                             true,
                             sections,
                         );
+                        continue;
+                    }
+                    if !entry.enabled {
                         continue;
                     }
                     let paths = crate::engine::installed_paths(self.env, self.scope, entry);
@@ -413,6 +418,7 @@ impl ScopeCheck<'_> {
         &self,
         name: &str,
         expected: Option<&str>,
+        enabled: bool,
         declared: bool,
         sections: &mut Sections,
     ) {
@@ -421,15 +427,30 @@ impl ScopeCheck<'_> {
             .as_ref()
             .map_err(ToString::to_string)
             .and_then(|(root, _)| {
-                crate::pi_ext::installed_state(root, name, expected).map_err(|e| e.to_string())
+                let state = crate::pi_ext::installed_state(root, name, expected)
+                    .map_err(|e| e.to_string())?;
+                let native =
+                    crate::pi_ext::package_enabled(&crate::pi_ext::settings_path(root), name)
+                        .map_err(|e| e.to_string())?;
+                Ok((state, native))
             });
+        let switch_only = state
+            .as_ref()
+            .is_ok_and(|(state, _)| matches!(state, crate::pi_ext::PackageState::Current { .. }));
         let detail = match state {
-            Ok(crate::pi_ext::PackageState::Current { .. }) => return,
-            Ok(crate::pi_ext::PackageState::Missing) => "has no files on disk",
-            Ok(crate::pi_ext::PackageState::Different) if expected.is_none() => {
+            Ok((crate::pi_ext::PackageState::Current { .. }, native))
+                if native == Some(enabled) =>
+            {
+                return;
+            }
+            Ok((crate::pi_ext::PackageState::Current { .. }, _)) => {
+                "has a native extension filter that differs from its declaration"
+            }
+            Ok((crate::pi_ext::PackageState::Missing, _)) => "has no files on disk",
+            Ok((crate::pi_ext::PackageState::Different, _)) if expected.is_none() => {
                 "has no completed install record"
             }
-            Ok(crate::pi_ext::PackageState::Different) => {
+            Ok((crate::pi_ext::PackageState::Different, _)) => {
                 "has files that differ from its install record"
             }
             Err(error) => {
@@ -448,8 +469,14 @@ impl ScopeCheck<'_> {
                 self.prefix,
                 shown(name)
             ),
-            declared.then_some(Remedy::UpdatePi {
-                global: self.global,
+            declared.then_some(if switch_only {
+                Remedy::Apply {
+                    global: self.global,
+                }
+            } else {
+                Remedy::UpdatePi {
+                    global: self.global,
+                }
             }),
         ));
     }

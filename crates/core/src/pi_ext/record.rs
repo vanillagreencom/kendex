@@ -67,7 +67,8 @@ pub fn resolve_declared(
 
 /// Build a durable record only when the installed copy matches the declared
 /// source byte for byte or under the destination path's Git text policy.
-/// Any other difference is not ownership evidence.
+/// Any other difference is not ownership evidence. The entry's enabled flag
+/// records the native extension filter, not an assumed installation default.
 pub fn matching_lock_entry(
     scope_root: &Path,
     name: &str,
@@ -102,7 +103,11 @@ pub fn matching_lock_entry(
         source_hash,
         source_commit: package.source_commit.clone(),
         rendered_hash: Some(rendered_hash),
-        enabled: true,
+        enabled: super::settings::package_enabled(&super::settings_path(scope_root), name)?
+            .ok_or_else(|| CoreError::PiPackage {
+                name: name.to_owned(),
+                message: "matching package lost its settings registration".to_owned(),
+            })?,
         upstream_skills: None,
         emitted: None,
         registration: None,
@@ -112,12 +117,15 @@ pub fn matching_lock_entry(
 
 /// Compare each declared carrier package and preserve durable provenance.
 /// Missing or unreadable bytes produce drift rather than an omitted row.
+/// With `ops`, plan native switches and record their intended state. Without
+/// `ops`, retain the observed switch for read-only recovery and installation.
 pub fn record_matching_manifest(
     env: &Env,
     scope: &crate::model::Scope,
     manifest: &crate::manifest::Manifest,
     lock: &mut crate::lock::Lock,
     basis: RecordBasis,
+    ops: Option<&mut Vec<crate::apply::PlannedOp>>,
 ) -> Result<Vec<crate::engine::DriftRow>> {
     record_matching(
         env,
@@ -126,6 +134,7 @@ pub fn record_matching_manifest(
         lock,
         manifest.pi_extensions.iter(),
         basis,
+        ops,
     )
 }
 
@@ -144,6 +153,7 @@ pub fn record_matching_name(
         lock,
         manifest.pi_extensions.get_key_value(name).into_iter(),
         RecordBasis::MatchedBytes,
+        None,
     )
 }
 
@@ -154,20 +164,30 @@ fn record_matching<'a>(
     lock: &mut crate::lock::Lock,
     declarations: impl Iterator<Item = (&'a String, &'a crate::manifest::ItemDecl)>,
     basis: RecordBasis,
+    ops: Option<&mut Vec<crate::apply::PlannedOp>>,
 ) -> Result<Vec<crate::engine::DriftRow>> {
     use crate::engine::{DriftRow, DriftState};
     use crate::model::{HarnessId, ItemKind};
     let root = scope_root(env, scope)?;
     let mut drift = Vec::new();
+    let mut switches = Vec::new();
     for (name, decl) in declarations {
         let key = crate::lock::entry_key(ItemKind::PiExtension, name, HarnessId::Pi);
         let result = resolve_declared(env, scope, manifest, name, decl).and_then(|package| {
             matching_lock_entry(&root, name, &package, lock.entries.get(&key), basis)
         });
         let detail = match result {
-            Ok(Some(entry)) => {
+            Ok(Some(mut entry)) => {
+                let differs = entry.enabled != decl.enabled;
+                if differs && ops.is_some() {
+                    switches.push((name.as_str(), decl.enabled));
+                    entry.enabled = decl.enabled;
+                }
                 lock.entries.insert(key, entry);
-                continue;
+                if !differs {
+                    continue;
+                }
+                "native extension filter does not match the enabled declaration".to_owned()
             }
             Ok(None) => {
                 "carrier package or completed install record does not match; update-pi must settle it"
@@ -187,7 +207,56 @@ fn record_matching<'a>(
             also_in_the_way: Vec::new(),
         });
     }
+    if let Some(ops) = ops
+        && !switches.is_empty()
+    {
+        let path = super::settings_path(&root);
+        let pre = crate::apply::Pre::observed(&path)?;
+        let text = super::settings::toggled_packages(&path, switches.into_iter())?;
+        ops.push(crate::apply::PlannedOp {
+            description: "Set Pi package extension filters".into(),
+            op: crate::apply::Op::WriteFile {
+                path,
+                bytes: text.into_bytes(),
+                pre,
+            },
+        });
+    }
     Ok(drift)
+}
+
+/// Refuse a toggle that the carrier comparison cannot plan. A manifest-only
+/// toggle must not claim it changed what Pi loads.
+pub(crate) fn ensure_toggle_ready(
+    env: &Env,
+    scope: &crate::model::Scope,
+    manifest: &crate::manifest::Manifest,
+    lock: &crate::lock::Lock,
+    name: &str,
+) -> Result<()> {
+    let decl = &manifest.pi_extensions[name];
+    let root = scope_root(env, scope)?;
+    let package = resolve_declared(env, scope, manifest, name, decl)?;
+    let key = crate::lock::entry_key(
+        crate::model::ItemKind::PiExtension,
+        name,
+        crate::model::HarnessId::Pi,
+    );
+    if matching_lock_entry(
+        &root,
+        name,
+        &package,
+        lock.entries.get(&key),
+        RecordBasis::Recorded,
+    )?
+    .is_none()
+    {
+        return Err(CoreError::PiPackage {
+            name: name.to_owned(),
+            message: "carrier package or completed install record does not match; update-pi before toggling".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 /// Refuse a source rebind before the carrier changes any installed bytes.

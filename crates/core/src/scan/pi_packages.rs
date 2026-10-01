@@ -22,17 +22,17 @@ pub(super) fn pi_packages(path: &Path) -> Result<Vec<RawEntry>, super::ScanProbl
     Ok(packages
         .iter()
         .filter_map(|entry| match entry {
-            serde_json::Value::String(spec) => Some(spec.clone()),
+            serde_json::Value::String(spec) => Some((spec.clone(), true)),
             other => other
                 .get("source")
                 .and_then(|s| s.as_str())
-                .map(str::to_owned),
+                .map(|spec| (spec.to_owned(), crate::pi_ext::extensions_enabled(entry))),
         })
-        .map(|spec| {
+        .map(|(spec, enabled)| {
             let local = settings_dir.and_then(|dir| pi_local_package(dir, &spec));
             RawEntry {
                 name: pi_package_name(&spec),
-                enabled: None,
+                enabled: Some(enabled),
                 // A package with a folder beside the settings file carries
                 // its own words in its `package.json`; one installed from a
                 // registry carries none here, and the spec that names it is
