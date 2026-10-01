@@ -42,6 +42,8 @@ new_repo() { # NAME
   git -C "$LANE" config maintenance.auto false
   ln -sfn "$REPO_ROOT/skills/orch/scripts" "$LANE/.agents/skills/orch/scripts"
   BOX="$LANE/tmp/lane-mail/overseer"
+  mkdir -p "$LANE/tmp"
+  printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$LANE/tmp/workflow-state-oversee.json"
 }
 
 RC=0

@@ -197,27 +197,32 @@ Peer side, one other repository's overseer mailbox per call:
               to-overseer.jsonl and to REPO's overseer to-lane.jsonl; print
               `id=<id>`. `pending --item overseer` lists it until REPO answers
               and `wait --item overseer --id <id>` blocks for that answer.
-              REPO's reader is judged as `peer send` judges it, the notice
-              following the `id=` line
+              REPO's record is required before either append; its pane is
+              judged as `peer send` judges it after the `id=` line
   peer send --repo REPO --file PATH [--re MSGID]
               append to REPO's overseer to-lane.jsonl the answer to MSGID, or
               a directive that answers no ask; prints the same receipt `send`
               prints, whose item is the `overseer` mailbox it wrote and never
               the repository that holds it. That mailbox has one reader, the
               session REPO's fleet record names by the `server` and `pane` of
-              its `overseer` member (orch schemas/workflow-state.md). Where
-              the record names none or a `server_start` that is not epoch
+              its `overseer` member (orch schemas/workflow-state.md). A local
+              send, an answer included, refuses before appending where no
+              overseer is recorded here: `lane-mail: overseer-absent=<root>`
+              names the owner's owner-note tool for a remote overseer. The
+              owner form, `send --item overseer`, requires the same record.
+              An unreadable record refuses as `overseer-unreadable`. Where
+              a recorded overseer names no pane or a `server_start` not epoch
               seconds, or a pane that no longer runs on the server its
               `server_start` names, or on that server pid where it carries
               no `server_start`, stderr
               opens `lane-mail: no-reader=<REPO root> cause=unnamed|pane-gone`
               with a `fix=` line naming `oversee register`; where that cannot
               be judged from here, `lane-mail: reader-unjudged=<REPO root>
-              cause=hosted|state|server`. Either is a notice after the
+              cause=hosted|server`. Either is a notice after the
               receipt, at exit 0: the note landed. Only ORCH_STATE_DIR is
               read from REPO's settings files, as data, to place its record,
-              and no file of REPO's is sourced. An answer (--re) is not
-              judged: the asker's `wait --item overseer --id` reads it with
+              and no file of REPO's is sourced. An answer (--re) has no pane
+              check: the asker's `wait --item overseer --id` reads it with
               no named session
 
 Options:
@@ -415,7 +420,8 @@ lm_message() { # KEY VALUE
     lane-foreign) text='That mailbox belongs to another repository. A send reaches only this repository: its lanes, and its own overseer mailbox. Reach a peer overseer with `lane-mail peer`.' ;;
     no-reader) text='The note or ask landed, and no session reads that checkout'\''s overseer mailbox: its fleet record names no tmux pane, or binds it to a tmux server start time that is not epoch seconds (cause=unnamed), or names one that no longer runs on the tmux server the record binds it to by its start time, or on that server process where the record carries no start time (cause=pane-gone). The lane-mail hooks hand that mailbox only to the session the record names, so it waits unread until one is named, and an ask'\''s answer with it.
 fix=run `oversee register` from the orch skill in the session that should read that checkout'\''s mail, which makes that session the checkout'\''s overseer, its turn end held at the context marks for a succession as a fleet overseer'\''s is; or start its fleet with `oversee launch`' ;;
-    reader-unjudged) text='The note or ask landed, and whether a session reads that checkout'\''s overseer mailbox is unknown: a hosted peer keeps its fleet record and tmux server on its own host (cause=hosted), the record could not be read (cause=state, the reader'\''s keyed refusal below where it made one), or the pane it names is on a tmux server this shell does not reach (cause=server).' ;;
+    reader-unjudged) text='The note or ask landed, and whether a session reads that checkout'\''s overseer mailbox is unknown: a hosted peer keeps its fleet record and tmux server on its own host (cause=hosted), or the pane it names is on a tmux server this shell does not reach (cause=server).' ;;
+    overseer-unreadable) text='The checkout overseer record could not be read. Nothing was appended.' ;;
     mailbox-unsafe) text='A mailbox directory, file, cursor or lock is a symlink or not the kind of file it names, so nothing is read or written through it. Remove it; the next write recreates it.' ;;
     item-case-variant) text='A mailbox for this item already exists under another spelling of the same name, so a lane and an overseer would read separate folders on a case-sensitive disk. Use that spelling, or drain it and remove it.' ;;
     cursor-invalid) text='The cursor file does not hold a line count. Remove it to restart the lane read.' ;;
@@ -1044,29 +1050,18 @@ lm_sent() {
 # hosted peer's record and tmux server sit on its own host, out of this
 # shell's reach.
 lm_peer_reader() {
-  local path record server start pane cause rc=0
+  local record server start pane rc=0
   # shellcheck source=lib/overseer-launch.sh
   . "$SCRIPT_DIR/lib/overseer-launch.sh"
   if [ "$HOST" -eq 1 ]; then
     lm_notice reader-unjudged "$ROOT" cause=hosted
     return 0
   fi
-  # No state file is no record, and so is an empty one: the pair test below
-  # names nobody for either.
-  path="$(lm_peer_state path oversee)" || rc=$?
-  [ -n "$path" ] || [ "$rc" -ne 0 ] || rc=1
-  record=""
-  [ "$rc" -ne 0 ] || [ ! -e "$path" ] || record="$(lm_peer_state get oversee "$OL_JQ_DEFS"'
-    .overseer as $o | ($o.server // "") as $s
+  record="$(jq -r "$OL_JQ_DEFS"'
+    . as $o | ($o.server // "") as $s
     | [($s | tostring), (if $o | ol_unstarted($s; ($o.pane // $o.session // "")) then "unstarted"
-            else ($o.server_start // "" | tostring) end), ($o.pane // "" | tostring)] | join(" ")')" || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    # The keyed first line of a refusal workflow-state or its settings loader
-    # made, never the rest: those words come from a file of the peer's.
-    cause="$(awk 'NR == 1 && /^(workflow-state|kendex-env): / { print }' "$WORK_DIR/reader.err")" || cause=""
-    lm_notice reader-unjudged "$ROOT" cause=state "$cause"
-    return 0
-  fi
+            else ($o.server_start // "" | tostring) end), ($o.pane // "" | tostring)] | join(" ")' \
+    <<<"$LM_OVERSEER_RECORD")" || refuse overseer-unreadable "$ROOT"
   server="${record%% *}"
   record="${record#* }"
   start="${record%% *}"
@@ -1105,6 +1100,29 @@ lm_peer_reader() {
 # the sender's own ORCH_STATE_DIR names no directory of the peer's.
 lm_peer_state() { # ARGS...
   (cd -- "$ROOT" && env -u ORCH_STATE_DIR "$SCRIPT_DIR/workflow-state" --no-private-env "$@") 2>"$WORK_DIR/reader.err"
+}
+
+# oversee register and oversee launch write the checkout-local fleet record.
+# A missing record here is not a route to a remote overseer: owner-note owns
+# that delivery. Hosted mail already addresses its destination through the
+# provider; this shell cannot read that host's fleet state.
+LM_OVERSEER_RECORD=""
+lm_require_overseer() {
+  local path
+  [ "$HOST" -eq 0 ] || return 0
+  if ! path="$(lm_peer_state path oversee)"; then
+    refuse overseer-unreadable "$ROOT" "$(cat -- "$WORK_DIR/reader.err")"
+  fi
+  [ -n "$path" ] || refuse overseer-unreadable "$ROOT"
+  LM_OVERSEER_RECORD=null
+  if [ -e "$path" ]; then
+    LM_OVERSEER_RECORD="$(lm_peer_state get oversee '.overseer // null')" ||
+      refuse overseer-unreadable "$ROOT" "$(cat -- "$WORK_DIR/reader.err")"
+  fi
+  if [ "$LM_OVERSEER_RECORD" = null ]; then
+    printf 'lane-mail: overseer-absent=%s no overseer is recorded here; use the owner-note tool for a remote overseer\n' "$ROOT" >&2
+    exit 2
+  fi
 }
 
 # A notice on stderr that ends nothing: the keyed line closed by FIELD, the
@@ -1485,6 +1503,7 @@ case "$VERB" in
       lm_owner_ask "$MSGID"
       BY=text
     fi
+    [ "$ITEM" != overseer ] || lm_require_overseer
     # The delivery-id check runs under the lock on the disk that holds the
     # file; a provider's append takes no guard, so a hosted send carries none.
     [ -z "$DELIVERY_ID" ] || [ "$HOST" -eq 0 ] || refuse option-conflict '--host,--delivery-id'
@@ -1580,6 +1599,7 @@ case "$VERB" in
 
   peer)
     lm_read_file
+    lm_require_overseer
     if [ "$PEER_VERB" = ask ]; then
       LINE="$(lm_envelope ask)"
     elif [ -n "$MSGID" ]; then

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# lane-mail peer send and peer ask: whether the peer checkout's overseer
-# mailbox has a reader, the notice written on stderr once the line lands. The
+# lane-mail requires the checkout-local overseer record before a delivery.
+# For a recorded peer, it reports whether the mailbox has a reader. The
 # reader is the one session the peer's fleet record names by tmux server and
 # pane, bound to the server by its start time; each row builds a sender and a peer checkout, writes the peer's
 # record, and drives the real script with a tmux stub whose pane list the row
@@ -19,8 +19,9 @@ WORKFLOW_STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
 FIXTURE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
 # mktemp alone, so set -e stops the suite on its failure: nested in the cd,
 # a failed mktemp would resolve to this directory and the trap would remove it.
-TMP_ROOT="$(mktemp -d)"
-TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)"
+TMP_ROOT="$(mktemp -d)" || { echo "lane-mail-peer-reader: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "lane-mail-peer-reader: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "lane-mail-peer-reader: scratch=resolve-failed" >&2; exit 1; }
 LIVE=""
 trap '[ -z "$LIVE" ] || kill "$LIVE" 2>/dev/null; rm -rf -- "${TMP_ROOT:?}"' EXIT
 
@@ -103,7 +104,10 @@ peer_call() { # VERB TEXT [ARGS...]
   OUT="$(cd "$TMP_ROOT/sender" && env -u TMUX -u TMUX_PANE -u ORCH_STATE_DIR PATH="$STUB_BIN:$PATH" \
     ${SEND_ENV[@]+"${SEND_ENV[@]}"} \
     "${LANE_MAIL_BIN:-$LANE_MAIL}" peer "$verb" --repo "$PEER" --file "$TMP_ROOT/msg.txt" "$@" 2>"$TMP_ROOT/err")" || RC=$?
-  LINES="$(wc -l < "$PEER/tmp/lane-mail/overseer/to-lane.jsonl" | tr -d ' ')"
+  LINES=0
+  if [ -f "$PEER/tmp/lane-mail/overseer/to-lane.jsonl" ]; then
+    LINES="$(wc -l < "$PEER/tmp/lane-mail/overseer/to-lane.jsonl" | tr -d ' ')"
+  fi
 }
 send() { peer_call send "$@"; }
 first_err() { awk 'NR == 1' "$TMP_ROOT/err"; }
@@ -126,7 +130,6 @@ while IFS='|' read -r rec listing first fix label; do
     "the note lands and its receipt prints: $label" "$TMP_ROOT/err"
   assert_eq "$(first_err) fix=$(fix_lines) $(sourced)" "${first/#-/} fix=$fix unsourced" "$label" "$TMP_ROOT/err"
 done <<EOF
-none|-|lane-mail: no-reader=$PEER cause=unnamed|1|a peer with no fleet state names no reader
 {"window":"@1"}|-|lane-mail: no-reader=$PEER cause=unnamed|1|a record naming no server and pane names no reader
 {"server":"$LIVE","server_start":$START,"pane":"9"}|$LIVE $START %9|lane-mail: no-reader=$PEER cause=unnamed|1|a pane not spelled %N names no reader
 {"server":"a$LIVE","server_start":$START,"pane":"%9"}|$LIVE $START %9|lane-mail: no-reader=$PEER cause=unnamed|1|a server not spelled as a pid names no reader
@@ -138,19 +141,43 @@ none|-|lane-mail: no-reader=$PEER cause=unnamed|1|a peer with no fleet state nam
 {"server":"$LIVE","pane":"%4"}|$LIVE $START %9|lane-mail: no-reader=$PEER cause=pane-gone|1|a record carrying no start names a pane its server no longer lists
 {"server":"$LIVE","server_start":"soon","pane":"%9"}|$LIVE $START %9|lane-mail: no-reader=$PEER cause=unnamed|1|a start that is not epoch seconds names no reader
 {"server":"$LIVE","server_start":$START,"pane":"%9"}|4242 $START %9|lane-mail: reader-unjudged=$PEER cause=server|0|a pane on a server this shell cannot ask is unjudged
-bad|-|lane-mail: reader-unjudged=$PEER cause=state|0|a fleet state its reader cannot parse is unjudged
-bad-settings|-|lane-mail: reader-unjudged=$PEER cause=state|0|peer settings their loader refuses are unjudged
 EOF
 
-# Under a state notice stands the keyed first line of the reader's own
-# refusal, and nothing else the reader printed.
-record bad
-send 'Unkeyed words.'
-assert_eq "$(err_lines)" "2" "words the state reader did not key stay off the notice" "$TMP_ROOT/err"
-record bad-settings
-send 'Keyed words.'
-assert_eq "$(awk 'NR == 3 { print $1 " " $2 }' "$TMP_ROOT/err") lines=$(err_lines)" \
-  "kendex-env: value-syntax lines=3" "the loader's keyed refusal stands under the notice, alone" "$TMP_ROOT/err"
+# No local record means no delivery, including an owner-form send.
+# The record's writers are oversee register and oversee launch; neither
+# records a machine hostname, so the missing-record diagnostic names here.
+while IFS='|' read -r verb args; do
+  record none
+  if [ "$verb" = owner ]; then
+    printf '%s\n' 'Owner note.' > "$TMP_ROOT/msg.txt"
+    RC=0
+    OUT="$(cd "$PEER" && env -u TMUX -u TMUX_PANE -u ORCH_STATE_DIR \
+      "$LANE_MAIL" send --item overseer --directive --file "$TMP_ROOT/msg.txt" 2>"$TMP_ROOT/err")" || RC=$?
+  else
+    peer_call "$verb" 'No local reader.' $args
+  fi
+  error="$(first_err)"
+  route=missing
+  case "$error" in *owner-note*) route=owner-note ;; esac
+  appended=absent
+  [ ! -e "$PEER/tmp/lane-mail/overseer/to-lane.jsonl" ] || appended=present
+  assert_eq "$RC $OUT ${error%% no overseer*} lines=$(err_lines) $(sourced) route=$route mailbox=$appended" \
+    "2  lane-mail: overseer-absent=$PEER lines=1 unsourced route=owner-note mailbox=absent" \
+    "a missing record refuses without appending: $verb $args" "$TMP_ROOT/err"
+done <<EOF
+send|
+send|--re 1790000000-1-1
+ask|
+owner|
+EOF
+
+# A dependency failure refuses before the append.
+for rec in bad bad-settings; do
+  record "$rec"
+  send 'Unreadable record.'
+  assert_eq "$RC $(first_err) lines=$LINES" "2 lane-mail: overseer-unreadable=$PEER lines=0" \
+    "an unreadable record refuses: $rec" "$TMP_ROOT/err"
+done
 
 # The sender's own state directory names nothing of the peer's.
 live_record
@@ -160,7 +187,7 @@ SEND_ENV=()
 assert_eq "$(first_err)" "" "a sender's ORCH_STATE_DIR does not move the peer's record" "$TMP_ROOT/err"
 
 # An answer is read by the asker's wait, which names no session.
-record none
+live_record
 send 'Answer.' --re 1790000000-1-1
 assert_eq "$RC lines=$LINES $(first_err)" "0 lines=1 " "an answer to a peer's ask says nothing of a reader" "$TMP_ROOT/err"
 
@@ -175,10 +202,6 @@ ask() { # TEXT
   assert_eq "$RC ${OUT%%=*} lines=$LINES own=$own" "0 id lines=1 own=$ASKS" \
     "the ask lands, its id prints and the asker records it: $1" "$TMP_ROOT/err"
 }
-record none
-ask 'an ask to a peer with no fleet state names no reader'
-assert_eq "$(first_err) fix=$(fix_lines) $(sourced)" "lane-mail: no-reader=$PEER cause=unnamed fix=1 unsourced" \
-  "an ask to a peer with no fleet state names no reader" "$TMP_ROOT/err"
 live_record
 ask 'an ask to a peer naming a live pane says nothing'
 assert_eq "$(first_err)" "" "an ask to a peer naming a live pane says nothing" "$TMP_ROOT/err"
@@ -211,18 +234,18 @@ mutant() {
 }
 
 mutant no-judgement '      [ -n "$MSGID" ] || lm_peer_reader' '      [ -n "$MSGID" ] || :'
-record none
+record '{"window":"@1"}'
 send 'Unjudged send.'
 assert_eq "$(first_err)" "" "control: without the judgement a send to a checkout no session reads says nothing"
 
 mutant answer-judged '      [ -n "$MSGID" ] || lm_peer_reader' '      lm_peer_reader'
-record none
+record '{"window":"@1"}'
 send 'Judged answer.' --re 1790000000-1-1
 assert_eq "$(first_err)" "lane-mail: no-reader=$PEER cause=unnamed" \
   "control: judging an answer tells its sender nobody reads what the asker's wait reads"
 
 mutant ask-unjudged '      lm_peer_reader' '      :'
-record none
+record '{"window":"@1"}'
 ask 'control: an unjudged ask lands'
 assert_eq "$(first_err)" "" "control: without the judgement an ask to a checkout no session reads says nothing"
 
@@ -243,20 +266,18 @@ live_record
 SEND_ENV=("ORCH_STATE_DIR=$TMP_ROOT/sender-state")
 send 'Sender state dir.'
 SEND_ENV=()
-assert_eq "$(first_err)" "lane-mail: no-reader=$PEER cause=unnamed" \
+assert_eq "$RC lines=$LINES" "2 lines=0" \
   "control: a sender's ORCH_STATE_DIR reaching the reader misplaces the peer's record"
 
-mutant raw-words 'cause="$(awk '\''NR == 1 && /^(workflow-state|kendex-env): / { print }'\'' "$WORK_DIR/reader.err")"' \
-  'cause="$(cat -- "$WORK_DIR/reader.err")"'
-record bad
-send 'Raw words.'
-assert_eq "$(err_lines)" "3" "control: relaying the reader's stderr whole puts unkeyed words under the notice"
-
-mutant no-state-file-test ' || [ ! -e "$path" ]' ''
+mutant absent-allowed '  if [ "$LM_OVERSEER_RECORD" = null ]; then' '  if [ "$LM_OVERSEER_RECORD" = null ] && false; then'
 record none
 send 'No state file.'
-assert_eq "$(first_err)" "lane-mail: reader-unjudged=$PEER cause=state" \
-  "control: without the state file test a peer with no fleet state reads as a state it could not read"
+assert_eq "$RC lines=$LINES" "0 lines=1" \
+  "control: disabling the missing-record refusal appends to an unread mailbox"
+live_record
+send 'Present record control.'
+assert_eq "$RC lines=$LINES" "0 lines=1" \
+  "control: the present-record path still appends"
 
 mutant no-pair-test '  if [ -z "$server" ] || [ "$start" = invalid ] || [ -z "$pane" ]; then' '  if [ "$start" = invalid ]; then'
 record "{\"window\":\"@1\",\"server_start\":$START}"
@@ -281,11 +302,6 @@ printf '%s %s %%9\n' "$LIVE" "$START" > "$PANES"
 send 'Bad start.'
 assert_eq "$(first_err)" "lane-mail: no-reader=$PEER cause=pane-gone" \
   "control: without the start test a start that is not epoch seconds is judged as a server's"
-
-mutant state-silent '    lm_notice reader-unjudged "$ROOT" cause=state "$cause"' '    :'
-record bad
-send 'Bad state.'
-assert_eq "$(first_err)" "" "control: without the state notice a fleet state nothing could read says nothing"
 
 mutant hosted-silent '    lm_notice reader-unjudged "$ROOT" cause=hosted' '    :'
 hosted_send 'Hosted control.'

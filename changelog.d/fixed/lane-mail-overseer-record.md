@@ -1,0 +1,1 @@
+- Lane mail refuses local overseer deliveries with no recorded overseer, instead of leaving unread notes; use the owner's owner-note tool for remote delivery.

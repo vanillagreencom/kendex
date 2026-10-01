@@ -120,6 +120,8 @@ sk_new_root() {
   git -C "$root" config gc.auto 0
   git -C "$root" config maintenance.auto false
   ln -sfn "$SK_ROOT/skills/orch/scripts" "$root/.agents/skills/orch/scripts"
+  mkdir -p "$root/tmp"
+  printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$root/tmp/workflow-state-oversee.json"
   printf '%s' "$root"
 }
 sk_box() { printf '%s/tmp/lane-mail/overseer' "$1"; }     # ROOT

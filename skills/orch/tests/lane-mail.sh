@@ -39,6 +39,8 @@ new_lane() { # NAME
     mkdir -p "$LANE"; git -C "$LANE" init -q; git -C "$LANE" checkout -q -b ken-1
   }
   ln -sfn "$REPO_ROOT/skills/orch/scripts" "$LANE/.agents/skills/orch/scripts"
+  mkdir -p "$LANE/tmp"
+  printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$LANE/tmp/workflow-state-oversee.json"
 }
 
 RC=0
