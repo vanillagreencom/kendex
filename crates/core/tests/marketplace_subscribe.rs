@@ -545,9 +545,6 @@ fn catalog_aliases_never_use_reserved_source_names() {
         fs::write(&path, toml::to_string(&conflict).unwrap()).unwrap();
         let before = fs::read(&path).unwrap();
         assert!(
-            matches!(kendex_core::engine::audit(&env, &scope), Err(CoreError::SourceRefInvalid { reference, .. }) if reference == reserved)
-        );
-        assert!(
             matches!(ops::add(&env, &scope, &ops::AddRequest { source: Some(reserved.into()), ..request }), Err(CoreError::SourceRefInvalid { reference, .. }) if reference == reserved)
         );
         assert_eq!(fs::read(&path).unwrap(), before);

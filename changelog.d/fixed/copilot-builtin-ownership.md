@@ -1,1 +1,1 @@
-- Keep custom MCP registrations separate from Copilot's built-in servers. Refuse source collisions and stale native settings before saving a toggle.
+- Keep custom MCP registrations separate from Copilot's built-in servers. Refuse collisions and stale native settings before saving a toggle. Preserve verification rows for existing local sources.
