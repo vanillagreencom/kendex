@@ -1,7 +1,7 @@
 import { expect, spyOn } from "bun:test";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
-import { cpSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { QolSessionSearchComponent } from "../extensions/qol/session-search/component.ts";
@@ -31,7 +31,10 @@ export const theme: NeutralTheme = {
 	getBashModeBorderColor: () => plainText,
 };
 
-export function scratch(): string { return realpathSync(mkdtempSync(join(tmpdir(), "qol-search-test-"))); }
+export function scratch(directory = tmpdir()): string {
+	mkdirSync(directory, { recursive: true });
+	return realpathSync(mkdtempSync(join(directory, "qol-search-test-")));
+}
 
 export function session(root: string, index = 0): QolSessionSearchSession {
 	return { allMessagesText: "", created: new Date(index), cwd: root, firstMessage: "alpha beta", id: `s${index}`, messageCount: 1, modified: new Date(index), path: join(root, `s${index}.jsonl`) };
@@ -54,7 +57,8 @@ export async function settled(component: QolSessionSearchComponent): Promise<voi
 }
 
 export async function runtimeCopy<T>(relative: string, patches: Array<{ file: string; from: string; to: string; count?: number }>, use: (runtime: T, root: string) => Promise<void>): Promise<void> {
-	const root = scratch();
+	// Bun resolves copied runtime imports through the package's installed peers.
+	const root = scratch(resolve(import.meta.dir, "../tmp"));
 	try {
 		cpSync(resolve(import.meta.dir, "../extensions"), join(root, "extensions"), { recursive: true });
 		cpSync(resolve(import.meta.dir, "../scripts"), join(root, "scripts"), { recursive: true });

@@ -1170,7 +1170,7 @@ jobs:
         if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-qol
         run: |
-          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.80.5 @earendil-works/pi-ai@0.80.5 @earendil-works/pi-coding-agent@0.80.5 @earendil-works/pi-tui@0.80.5
+          npm install --save-prod --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.86.0 @earendil-works/pi-ai@0.86.0 @earendil-works/pi-coding-agent@0.86.0 @earendil-works/pi-tui@0.86.0
           npm test
 
       - name: pi-output-policy suite
