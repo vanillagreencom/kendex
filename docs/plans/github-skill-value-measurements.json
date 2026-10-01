@@ -1,6 +1,69 @@
 {
  "issue": "KEN-2334",
  "revision": "ead8bd34d8f062cc2a070c4193d0f37ed6b3440c",
+ "final_dispositions": {
+  "source": "overseer final rulings supplied in tmp/ken-2334-report-finalize.md and tmp/ken-2334-research/finding-dispositions.md",
+  "measurement_boundary": "The 289-request research phase is closed. Report finalization adds no live trial and changes no measured values.",
+  "verification_boundary": "The overseer's stub-gh verification is separate from this lane's measured workload.",
+  "publication_owner": "parent; owed Linear evidence comments and publication",
+  "entries": [
+   {
+    "finding": "Repeated placeholder-token validation",
+    "disposition": "FILED",
+    "issue": "KEN-2401",
+    "url": "https://linear.app/vanillagreen/issue/KEN-2401",
+    "verified_by": "overseer stub-gh run",
+    "verified_cause": "Three validation pairs: token selection runs in a subshell that loses its cache, the apply step probes again, and pr-view validates after exec.",
+    "stub_result": "Seven requests, six for validation. This is not another measured workload trial.",
+    "accepted_scope": "Keep the installation-token fallback; validate once per invocation."
+   },
+   {
+    "finding": "pr-data bounded selections without complete coverage metadata",
+    "disposition": "FILED",
+    "issue": "KEN-2402",
+    "url": "https://linear.app/vanillagreen/issue/KEN-2402",
+    "complete_connection": "The shared pager already completes the thread list.",
+    "remaining_limits": "Files 100, PR comments 50, comments per thread 10.",
+    "likelihood_boundary": "Live occurrence is unmeasured."
+   },
+   {
+    "finding": "GraphQL helper retries rejected authentication",
+    "disposition": "DROP as a defect",
+    "reason": "Reached only by setup that bypassed the required proxy; no workload failure appears on the successful path.",
+    "retained_observation": "Original broken-proxy probes retry failed reads twice."
+   },
+   {
+    "finding": "ci-logs calls an initial auth failure PR not found",
+    "disposition": "DROP as a defect",
+    "reason": "Wrong diagnosis reached only by setup that bypassed the required proxy; no failed legitimate log task is observed."
+   },
+   {
+    "finding": "Readiness list uses a separate CI judgement",
+    "disposition": "DROP as a defect; retain Slim",
+    "reason": "The list is advisory, not the authoritative merge gate. The static raw-rollup difference establishes no affected legitimate merge verdict."
+   },
+   {
+    "finding": "Unknown lane execution counts",
+    "disposition": "DROP any fleet-wide zero-use conclusion",
+    "reason": "Archives contain no lane execution records. Prose and wrapper calls cannot supply missing counts."
+   },
+   {
+    "finding": "Complete four-harness definition-token cost claim",
+    "disposition": "DROP as unsupported",
+    "reason": "Codex account bootstrap refuses. Pi's accessible statistics instrument does not attribute definition tokens. Both costs remain unmeasured, not pending work under KEN-2334."
+   },
+   {
+    "finding": "Issue phrase never --admin",
+    "disposition": "FIXED in report",
+    "reason": "The active D016 route owns a conditional admin call. The report states that contract."
+   },
+   {
+    "finding": "Old Pi descriptions, proposed-feature estimates, hosted hidden fanout",
+    "disposition": "DROP from quantitative conclusions",
+    "reason": "They cannot establish installed behavior or measured client costs."
+   }
+  ]
+ },
  "request_counter": {
   "sent": 289,
   "refused": 0,

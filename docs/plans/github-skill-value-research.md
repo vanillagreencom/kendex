@@ -171,6 +171,7 @@ Local evidence is separate from Exa documentary evidence. Every local aggregate 
 - [G] [Official server configuration](https://github.com/github/github-mcp-server/blob/main/docs/server-configuration.md), [remote authentication](https://github.com/github/github-mcp-server/blob/main/docs/host-integration.md), [local release](https://github.com/github/github-mcp-server/releases/tag/v1.12.2), [released PR implementation](https://github.com/github/github-mcp-server/blob/v1.12.2/pkg/github/pullrequests.go), and [native merge flags](https://cli.github.com/manual/gh_pr_merge). Release schema and source audit replace assumptions about proposed merge features.
 - [A] [Claude MCP loading](https://code.claude.com/docs/en/mcp), [Copilot tool search](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/tool-search), [Copilot context accounting](https://docs.github.com/en/enterprise-cloud@latest/copilot/concepts/agents/copilot-cli/context-management), and [Codex MCP configuration](https://developers.openai.com/codex/mcp).
 - [P] Installed Pi documentation: complete MCP, CLI, and Sessions documentation, with its RPC statistics contract. Public references: [MCP](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md) and [RPC commands](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc-commands.md). The installed version controls the local finding.
+- [F] The aggregate's `final_dispositions` preserves the overseer's final rulings and stub verification. It records the filed [KEN-2401](https://linear.app/vanillagreen/issue/KEN-2401) and [KEN-2402](https://linear.app/vanillagreen/issue/KEN-2402) bindings. The stub verification is separate from this lane's measured workload. No new live trial occurs during report finalization.
 
 The source audit excludes cloud-agent configuration as evidence for Copilot CLI. It excludes old Pi “No MCP” descriptions, namesakes, and proposed-feature token estimates. Exa's resumed search returns an older release and an open PR. Neither establishes v1.12.2 behavior. The downloaded release's actual schema and tagged source establish that behavior. [G, H, P]
 
@@ -208,11 +209,11 @@ Keep CLI plus skill as the service route. `Keep` means retain the named behavior
 
 | Verb | Decision | Evidence-backed scope |
 | --- | --- | --- |
-| `pr-data` | Slim | Retain a compact composite. Its first-100 files, first-50 PR comments, and first-10 comments per thread are not a complete evidence contract. Make those limits explicit or refuse partial results. One direct call; lane use unmeasured. [C, S] |
-| `pr-view` | Slim | Retain bounded structured refusal. Successful output is identical to native view, but 7 requests replace 1 on this credential path. Remove repeated validation, not the error contract. [M, S] |
+| `pr-data` | Slim | Retain a compact composite. The shared pager already completes the thread list. Files remain limited to 100, PR comments to 50, and comments per thread to 10. [KEN-2402](https://linear.app/vanillagreen/issue/KEN-2402) records those remaining limits. One direct call; lane use unmeasured. [C, S, F] |
+| `pr-view` | Slim | Retain bounded structured refusal. Successful output is identical to native view, but 7 requests replace 1 on this credential path. [KEN-2401](https://linear.app/vanillagreen/issue/KEN-2401) records repeated validation. Retain the installation-token fallback and validate once per invocation. [M, S, F] |
 | `pr-threads` | Slim | Retain complete paging, thread IDs, resolver and actor types. Native retrieval supplies those fields with 1 request versus 6. Remove repeated validation without changing the returned field contract. The 182 calls make this measured read-path cost material. [C, M, S] |
 | `pr-timeline` | Keep | Derives phase and authoritative-run times; refuses capped connections. Native retrieval needs calculation and MCP misses required history. `oversee-cycle` consumes it internally. [M, S, W] |
-| `pr-list-ready` | Slim | Retain scoped listing. Its separate raw-rollup readiness logic is not the shared authoritative-run gate and cannot replace `pr-merge --check`. Zero direct calls do not establish no consumers. [C, S] |
+| `pr-list-ready` | Slim | Retain scoped listing. The list is advisory, not the authoritative merge gate. Its raw-rollup result cannot replace `pr-merge --check`. This difference is not an accepted defect. Zero direct calls do not establish no consumers. [C, S, F] |
 | `pr-list-failing` | Keep | Retain the scoped failure-list result consumed by `oversee-report`. That wrapper has 207 recorded invocations, so zero direct verb calls do not justify removal. [C, S, W] |
 | `pr-create` | Keep | Retain head/base, committed/pushed-head checks and selected write identity. The API fixture does not test replacement of these preconditions; lane usage is unmeasured. [M, S] |
 | `pr-edit-body` | Slim | Retain sanitized body input and write routing. The command delegates the body update to native `gh pr edit`; the native operation is not a separate policy. Five mapped plain-gh calls confirm the primitive is used. [C, S] |
@@ -222,7 +223,7 @@ Keep CLI plus skill as the service route. `Keep` means retain the named behavior
 | `pr-issue` | Slim | Retain configurable branch-to-issue extraction. It needs a branch name, not a second remote read when the caller already has PR metadata. One direct call; workflow demand beyond that is unmeasured. [C, S] |
 | `label-add` | Keep | Retain live inventory validation and required/optional refusal modes. These are more than an endpoint wrapper. No observed zero-use claim extends to lanes. [C, S] |
 | `label-remove` | Slim | Retain sanitized mutation routing and result status. Native label removal supplies the remote operation; the static contract adds no inventory gate here. No write comparison for labels is claimed. [C, S] |
-| `ci-logs` | Keep | Retain PR-to-failed-run evidence selection and bounded logs. The plain-gh census records 107 log reads. Its initial-read error diagnosis requires correction below. [C, M, S] |
+| `ci-logs` | Keep | Retain PR-to-failed-run evidence selection and bounded logs. The plain-gh census records 107 log reads. The wrong diagnosis appears only in setup that bypasses the required proxy. No failed legitimate log task is observed. [C, M, S, F] |
 | `bot-token` | Keep | Retain selected-credential/source diagnosis without exposing the token. Installation credentials cannot be diagnosed with `/user` alone. Two direct calls and successful fallback evidence support the distinct contract. [C, M, S] |
 | `dismiss-review` | Keep | Retain reviewer selection and aggregate mutation-result status. A native dismissal primitive does not select that set. Independent approval/dismissal behavior remains unmeasured. [C, S] |
 | `resolve-thread` | Slim | Retain thread-ID access and failure status. Actual fixture resolution succeeds on all three routes; skill uses 5 requests, native and MCP use 1. Slim repeated validation, not thread identity. [M, S] |
@@ -237,17 +238,17 @@ Keep CLI plus skill as the service route. `Keep` means retain the named behavior
 
 | Finding | Disposition | Impact and likelihood boundary |
 | --- | --- | --- |
-| Repeated placeholder-token validation | Required fix to the read-path scope | Adds requests and latency to every sampled view/thread call on this credential path. The accepted installation-token fallback stays. [M, S] |
-| `pr-data` bounded selections without complete coverage metadata | Required fix to the completeness contract | A large PR can omit files/comments while returning success. Reached beyond its named static limits; live frequency is unmeasured. [S] |
-| GraphQL helper retries rejected authentication | Required fix to auth-failure classification | The original broken-proxy probes retry failed reads twice. This proves failure handling under rejected credentials, not a current fleet outage. [M, S] |
-| `ci-logs` calls an initial auth failure “PR not found” | Required fix to error classification | The original setup probe produces the wrong diagnosis. Reached when its initial PR read fails; successful log retrieval is not measured here. [M, S] |
-| Readiness list uses a separate CI judgement | Required fix to contract scope | Its raw-rollup list must not be treated as the authoritative merge verdict. Static difference established; an affected live result is unmeasured. [S] |
-| Unknown lane execution counts | Drop any fleet-wide zero-use conclusion | Archives contain no execution records for lanes. Prose and wrapper calls cannot supply missing counts. [C] |
-| Codex and Pi definition-token gaps | Required evidence correction before claiming a complete four-harness token comparison | Codex account bootstrap refuses. Pi's accessible statistics instrument does not attribute definition tokens. Neither boundary changes the per-verb scope decisions. [H, P] |
-| Issue phrase “never --admin” | Required wording correction, applied in this report | The active D016 route owns a conditional admin call. Treating the phrase as current behavior would misstate its safety contract. [D, O] |
-| Old Pi descriptions, proposed-feature estimates, hosted hidden fanout | Drop from quantitative conclusions | They cannot establish installed behavior or measured client costs. [G, H, P] |
+| Repeated placeholder-token validation | FILED: [KEN-2401](https://linear.app/vanillagreen/issue/KEN-2401) | Adds requests and latency to every sampled view/thread call on this credential path. Keep the installation-token fallback; validate once per invocation. The overseer's separate stub verification confirms three validation pairs: token selection loses its cache in a subshell, the apply step probes again, and `pr-view` validates after exec. That stub confirms seven requests, six for validation; it is not another measured workload trial. [M, S, F] |
+| `pr-data` bounded selections without complete coverage metadata | FILED: [KEN-2402](https://linear.app/vanillagreen/issue/KEN-2402) | The shared pager already completes the thread list. Remaining limits are files 100, PR comments 50, and comments per thread 10. A large PR can omit files or comments while returning success. Live occurrence is unmeasured. [S, F] |
+| GraphQL helper retries rejected authentication | DROP as a defect | Original broken-proxy probes retry failed reads twice. Only setup that bypasses the required proxy reaches this failure; no workload failure appears on the successful path. [M, F] |
+| `ci-logs` calls an initial auth failure “PR not found” | DROP as a defect | The wrong diagnosis appears only in setup that bypasses the required proxy. No failed legitimate log task is observed. [M, F] |
+| Readiness list uses a separate CI judgement | DROP as a defect; retain Slim | The list is advisory, not the authoritative merge gate. The static raw-rollup difference establishes no affected legitimate merge verdict. [S, F] |
+| Unknown lane execution counts | DROP any fleet-wide zero-use conclusion | Archives contain no execution records for lanes. Prose and wrapper calls cannot supply missing counts. [C] |
+| Complete four-harness definition-token cost claim | DROP as unsupported | Codex account bootstrap refuses. Pi's accessible statistics instrument does not attribute definition tokens. Both costs remain unmeasured, not pending work under KEN-2334. [H, P, F] |
+| Issue phrase “never --admin” | FIXED in this report | The active D016 route owns a conditional admin call. Treating the phrase as current behavior would misstate its safety contract. [D, O] |
+| Old Pi descriptions, proposed-feature estimates, hosted hidden fanout | DROP from quantitative conclusions | They cannot establish installed behavior or measured client costs. [G, H, P] |
 
-These findings do not create tracker items or claim filed issue IDs. The parent owns tracker writes. Accepted kendex-owned skill defects go through `kendex report` under the skill's ownership rule. [S, O]
+The overseer binds repeated validation to KEN-2401 and the remaining `pr-data` limits to KEN-2402. These are filed findings, not promises of pending fixes under KEN-2334. The parent owns the owed Linear evidence comments and publication. [F, O]
 
 ## Risks / Unknowns
 
@@ -262,7 +263,7 @@ These findings do not create tracker items or claim filed issue IDs. The parent 
 
 - Lane execution transcripts become available. Replace unmeasured counts, then reassess low direct-use verbs and wrapper demand. [C]
 - A native/MCP collector produces the same complete policy output and safety controls as the retained composites. Compare that output, not raw evidence alone. [M, D]
-- Codex reaches a usable account session, or Pi supplies per-definition attribution from its own instrument. Complete those token rows without byte/token estimates. [H, P]
+- Codex reaches a usable account session, or Pi supplies per-definition attribution from its own instrument. Such evidence could support a later token comparison. It is not pending work under KEN-2334. [H, P, F]
 - A release or supported-model configuration changes connected tool loading, schema fields, or required-history reach. Repeat the same-workload measurement before changing the CLI default. [M, H, O]
 
 ## Research Metadata
