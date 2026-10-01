@@ -1,1 +1,0 @@
-- Major release checks require a named Breaking entry for the app and Pi packages; all release channels use one version and migration standard.

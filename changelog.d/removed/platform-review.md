@@ -1,1 +1,0 @@
-- GitHub approvals and thread resolution replace the custom review status. Breaking: remove the retired status from required checks before consumer refresh removes its workflow.

@@ -1,1 +1,0 @@
-- Refresh removes recorded agents no longer declared in the selected scope, so agent renames do not need a separate remove before verification.

@@ -1,1 +1,0 @@
-- kendex update retries failed release downloads without retaining partial bytes, supports older system curl, and names the actual attempts in the error.

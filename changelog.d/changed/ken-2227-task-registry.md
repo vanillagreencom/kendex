@@ -1,1 +1,0 @@
-- Pi agent completion polling and task updates reuse the cached task registry, including after local child usage writes. External registry changes apply on the next poll or update.

@@ -1,1 +1,0 @@
-- Fix Pi QOL regression checks to load installed dependencies from disposable runtime copies.

@@ -1,1 +1,0 @@
-- Cancelling a queued Claude message stops the replay child and releases the Pi turn without waiting for more output. Silent replay children also receive the idle deadline.

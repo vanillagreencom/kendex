@@ -1,1 +1,0 @@
-- Pi batch children pass through tool-call guards, so commands refused by pi-hooks cannot run through `tool_batch`. pi-tool-renderer requires Pi 0.99.0 or later; upgrade Pi before use.

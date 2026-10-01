@@ -1,1 +1,0 @@
-- Consumer refresh uses the latest released kendex with read-only API authentication. Catalog CI checks declared hook delivery and honors caller advisory policy.

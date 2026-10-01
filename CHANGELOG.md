@@ -8,6 +8,65 @@ change came from an outside contributor.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-01
+
+### Added
+
+- Linear accepts a pre-minted application token through `LINEAR_APP_TOKEN`. Use `auth-mint` on the credential host to print token and expiry JSON without writing files.
+- Project-scope `refresh`, `apply` without `--plan`, and `updates --apply` refuse writes in marked lane worktrees, including Windows worktrees. Refresh lanes can pass `--lane-refresh` to proceed.
+- Major release checks require a named Breaking entry for the app and Pi packages; all release channels use one version and migration standard.
+- Repeat-watch overseers and configured masters must arm their wake process before ending a fresh lead turn. The refusal prints the start command.
+
+### Changed
+
+- The install lock lists rendered agent, command and hook files, not shared settings or registries. Apply and refresh keep declared Pi packages when clearing old file inventory.
+- **Breaking:** Update subscriptions and routes: generalist to maintainer; engineer to runtime. Frontend covers React/QML/JavaScript UI; runtime adds non-UI Go. Rust excludes Iced views.
+- Pi agent completion polling and task updates reuse the cached task registry, including after local child usage writes. External registry changes apply on the next poll or update.
+- Skill-load checks now support Codex and run by default on Claude, Copilot, Pi and Codex. Explicit opt-outs remain unchanged.
+- Slack routes owner thread replies at any age with parent context, keeps replies in their threads, supports thread reads, and shares one owner message standard for masters and overseers.
+- Validation records and fleet reports show which check lanes each round ran and whether the command selected all lanes or a subset.
+
+### Removed
+
+- **Breaking:** Pi fleet lanes refuse pi-hooks without mail wake. Repair the reported root and scope on the lane machine per the refusal; retry hosted launches with `--relaunch`.
+- GitHub approvals and thread resolution replace the custom review status. Breaking: remove the retired status from required checks before consumer refresh removes its workflow.
+
+### Fixed
+
+- Pi background tasks cache bounded log tails and command layouts, limit concurrent log reads, and stop notification regexes at their deadline instead of freezing Pi.
+- Regex session-search snippets keep the matched text in prompts with repeated spaces or newlines.
+- Pi QOL Copy and Fork load complete prompts before closing search. Copy and image refusals preserve newer editor drafts. Headless image refusals report errors.
+- Pi QOL indexes session searches asynchronously and stops slow regex searches with a deadline error. Image submissions use asynchronous reads and refuse totals above 20 MiB before reading files.
+- Overseer registration keeps unread identity fields and the launch command only for the same proven pane, and reports retained and freshly read fields.
+- Dead references in lock-listed kendex files warn instead of blocking consumer commits. Catalog CI checks references after installation, including hooks and scripts.
+- Project refresh, apply and package updates refuse writes to a marked lane from a nested Git checkout unless you pass `--lane-refresh`.
+- Hosted lanes use pane judgment when their provider has no harness status verb, instead of remaining unjudged.
+- Consumer refresh uses the latest released kendex with read-only API authentication. Catalog CI checks declared hook delivery and honors caller advisory policy.
+- Codex requests stay cancellable after headers and stop when response streams or WebSockets go silent. Background image jobs have a concurrency limit and stop when the session ends.
+- Fleet lanes and overseers honor committed consumer REVIEW_GATE_MODE before Copilot requests. Disabled gates skip first and repeated requests without executing consumer-base scripts.
+- Copilot overseer launch, registration and succession install the context reader. Registration warns about missing turn-end hooks, and session start reports a missing reader.
+- Preserve authored legacy agent labels in in-place skills while updating labels in managed instructions and rendered copies.
+- Session Bridge reuses serialized events and saves raw history through a bounded asynchronous queue only while an event subscriber is attached, so unused bridges do not write large results to disk.
+- Cancelling a queued Claude message stops the replay child and releases the Pi turn without waiting for more output. Silent replay children also receive the idle deadline.
+- Second opinions advance after exit, timeout or quota refusal and report each attempt. kendex tries Claude Opus on Copilot before native harnesses.
+- Read deprecated numeric overseer preferences with a warning until the next minor release, and show refused or deprecated preferences in consumer refresh pull requests.
+- Account selection uses fresh local model readings when host windows are absent, and weights projected room by reset time with a bounded bonus.
+- Local completion checks catch document growth near byte limits before push, measured against the branch point.
+- Consumer refresh accepts legacy catalog agent names, keeps local agent names and customizations, updates agent labels, and reports affected settings. Compatibility remains through 1.4.x.
+- Copilot hook updates replace older commands for the same script instead of running both. Hooks for other scripts stay unchanged.
+- The Pi extension manager keeps scoped toggles after project moves, saves settings only after instruction scripts pass, caches search data, and bounds npm version requests.
+- Fix Pi QOL regression checks to load installed dependencies from disposable runtime copies.
+- Refresh removes recorded agents no longer declared in the selected scope, so agent renames do not need a separate remove before verification.
+- Refresh reports each Pi package that only needs npm install as a notice naming `kendex update-pi`. These notices no longer fail refresh. Other Pi drift still fails.
+- Homebrew and Arch packages install kendex 1.3.0. Review-gate workflows use its released CLI and an installer pinned to the release commit.
+- Slack continues routing healthy checkouts when another checkout's mailbox fails, and posts notices from older orch installs that omit mailbox positions.
+- kendex update retries failed release downloads without retaining partial bytes, supports older system curl, and names the actual attempts in the error.
+
+### Security
+
+- Alert reads use the overseer app token, not lane credentials. Supply and renew its private file through `ORCH_SECURITY_ALERT_TOKEN_FILE` on the control VM.
+- Pi batch children pass through tool-call guards, so commands refused by pi-hooks cannot run through `tool_batch`. pi-tool-renderer requires Pi 0.99.0 or later; upgrade Pi before use.
+
 ## [1.3.0] - 2026-09-30
 
 ### Added

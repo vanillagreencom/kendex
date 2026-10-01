@@ -1,1 +1,0 @@
-- Refresh reports each Pi package that only needs npm install as a notice naming `kendex update-pi`. These notices no longer fail refresh. Other Pi drift still fails.

@@ -1,1 +1,0 @@
-- The Pi extension manager keeps scoped toggles after project moves, saves settings only after instruction scripts pass, caches search data, and bounds npm version requests.

@@ -1,1 +1,0 @@
-- Codex requests stay cancellable after headers and stop when response streams or WebSockets go silent. Background image jobs have a concurrency limit and stop when the session ends.

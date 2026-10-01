@@ -1,1 +1,0 @@
-- Read deprecated numeric overseer preferences with a warning until the next minor release, and show refused or deprecated preferences in consumer refresh pull requests.

@@ -1,1 +1,0 @@
-- Regex session-search snippets keep the matched text in prompts with repeated spaces or newlines.
