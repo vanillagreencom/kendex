@@ -2377,7 +2377,7 @@ table \
   "a local figure older than the TTL does not stand in: the chooser refuses on the unreachable row|$LOCAL_STALE|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.fclaude=host" \
   "nor does it for the named form|$LOCAL_STALE|$PICK_LANE $H/.fclaude|rc=5 status=unreachable measured_through=host"
 # Control: a judge with no freshness bound picks the stale figure.
-lanes_mutant mutant-local-any-age lanes '\.usage_age_s < \$bound' 'true'
+lanes_mutant mutant-local-any-age lib/lane-model.sh '\.usage_age_s < \$bound' 'true'
 LANES="$TMP_ROOT/mutant-local-any-age/scripts/lanes"
 table \
   "control: with no freshness bound the chooser picks the stale local figure|$LOCAL_STALE|$PICK|rc=0 config_dir=$H/.fclaude measured_through=local" \
@@ -2406,7 +2406,7 @@ table \
   "and for the chooser|$LOCAL_WINDOWLESS|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.wclaude=host"
 # Control: a judge that takes any local reading with an age lets the
 # window-less one stand in and names it.
-lanes_mutant mutant-local-unmeasured lanes 'if \.headroom_pct == null then empty' 'if false then empty'
+lanes_mutant mutant-local-unmeasured lib/lane-model.sh 'if \.headroom_pct == null then empty' 'if false then empty'
 LANES="$TMP_ROOT/mutant-local-unmeasured/scripts/lanes"
 table \
   "control: with no figure required, the named form answers the window-less local reading|$LOCAL_WINDOWLESS|$PICK_LANE $H/.wclaude|rc=5 status=no_usage_data measured_through=local key=pick-local-reading,lane=$H/.wclaude,host=$HOST_FIXTURE,age-s=0" \
@@ -2414,7 +2414,7 @@ table \
 LANES="$LANES_PATCHED"
 # Control: a judge that never reads a host row as unreachable refuses the
 # account this machine measured fresh.
-lanes_mutant mutant-host-row-always-stands lanes '\.status == "unreachable" end' '.status == "never-unreachable" end'
+lanes_mutant mutant-host-row-always-stands lib/lane-model.sh '\.status == "unreachable" end' '.status == "never-unreachable" end'
 LANES="$TMP_ROOT/mutant-host-row-always-stands/scripts/lanes"
 table \
   "control: with every host row standing, the chooser refuses the fresh local account on the unreachable row|$LOCAL_DARK|$PICK|rc=3 considered.fclaude=host" \
@@ -2439,7 +2439,7 @@ table \
   "two cold lanes behind unreachable rows spend one retry between them|$COLD_DARK|$PICK|rc=3 fetched=fclaude,fclaude,gclaude"
 # Control: the measurement forked into a subshell, which spends a retry per
 # lane.
-lanes_mutant mutant-stand-in-forked lanes 'measure_lane "\$1" "\$2" >&7' '(measure_lane "$1" "$2") >\&7'
+lanes_mutant mutant-stand-in-forked lib/lane-model.sh 'measure_lane "\$1" "\$2" >&7' '(measure_lane "$1" "$2") >\&7'
 LANES="$TMP_ROOT/mutant-stand-in-forked/scripts/lanes"
 table \
   "control: a forked measurement retries for every cold lane|$COLD_DARK|$PICK|rc=3 fetched=fclaude,fclaude,gclaude,gclaude"

@@ -196,9 +196,24 @@ table \
   "--projected is refused without --lane, the chooser judging the projection always|$ALL_DIRS|||$PICK --projected|rc=1 key=unknown-option,arg1=--projected" \
   "a weekly-bound account is charged the default by its window's length and stays a candidate|ORCH_LANE_DIRS=$H/.wclaude|claim:w:2||$PICK|rc=0 config_dir=$H/.wclaude binding_bucket=weekly" \
   "a burn of 0 charges a claim nothing|ORCH_LANE_DIRS=$H/.aclaude;ORCH_LANE_BURN_PCT_PER_HOUR=0|claim:a:3||pick --lane $H/.aclaude --harness claude --projected --json|rc=0 projected_headroom_pct=80" \
-  "a measured rate is shared out across the claims on the account|ORCH_LANE_DIRS=$H/.aclaude|claim:a:2|a:20:15|pick --lane $H/.aclaude --harness claude --json|rc=0 usage_rate_state=measured burn_pct_per_lane_hour=15 projected_headroom_pct=50" \
+  "each claim inherits the measured account rate|ORCH_LANE_DIRS=$H/.aclaude|claim:a:2|a:20:15|pick --lane $H/.aclaude --harness claude --json|rc=0 usage_rate_state=measured burn_pct_per_lane_hour=30 projected_headroom_pct=20" \
   "a measured rate with nothing claimed charges nothing and names the default burn|ORCH_LANE_DIRS=$H/.aclaude||a:20:15|pick --lane $H/.aclaude --harness claude --json|rc=0 burn_pct_per_lane_hour=5 projected_headroom_pct=80" \
   "the listing carries the projection beside the verdict of the reading, whose wall lifts at its reset|ORCH_LANE_DIRS=$H/.aclaude;ORCH_LANE_BURN_PCT_PER_HOUR=30|claim:a:3||list --harness claude --json|rc=0 [0].verdict=room [0].projected_headroom_pct=-10"
+
+# open-terminal records claims and re-picks before cached usage refreshes.
+# A cached six-point hourly burn leaves 74 room with one claim, then 68
+# with two. The idle competitor keeps 70. Both samples stay unchanged.
+table \
+  "one measured claim still leaves more projected room than the idle account|ORCH_LANE_DIRS=$H/.aclaude:$H/.bclaude|claim:a:1|a:20:19|$PICK|rc=0 config_dir=$H/.aclaude projected_headroom_pct=74" \
+  "another claim on the same measured samples sends the chooser to the idle account|ORCH_LANE_DIRS=$H/.aclaude:$H/.bclaude|claim:a:2|a:20:19|$PICK|rc=0 config_dir=$H/.bclaude projected_headroom_pct=70" \
+  "the named projection charges the added measured claim too|ORCH_LANE_DIRS=$H/.aclaude|claim:a:2|a:20:19|pick --lane $H/.aclaude --harness claude --projected --json|rc=0 claims=2 burn_pct_per_lane_hour=6 projected_headroom_pct=68" \
+  "enough claims wall the named measured projection|ORCH_LANE_DIRS=$H/.aclaude|claim:a:13|a:20:19|pick --lane $H/.aclaude --harness claude --projected --json|rc=3 projected_headroom_pct=2"
+
+CTRL="$(mutant_scripts mutant-rate-divided lib/lane-model.sh)" || exit 1
+mutate_file "$CTRL/lib/lane-model.sh" 'then .usage_rate_pct_per_min * 60' 'then (.usage_rate_pct_per_min * 60) / .claims'
+LANES_UNDER_TEST="$CTRL/lanes" table \
+  "control: dividing by current claims keeps stacking launches on cached measured room|ORCH_LANE_DIRS=$H/.aclaude:$H/.bclaude|claim:a:2|a:20:19|$PICK|rc=0 config_dir=$H/.aclaude projected_headroom_pct=74" \
+  "control: the divided rate also admits a named launch whose claims spend its room|ORCH_LANE_DIRS=$H/.aclaude|claim:a:13|a:20:19|pick --lane $H/.aclaude --harness claude --projected --json|rc=0 projected_headroom_pct=74"
 
 # Control: a verdict read off the wall alone keeps the account the lanes on it
 # will spend, in both pick forms.

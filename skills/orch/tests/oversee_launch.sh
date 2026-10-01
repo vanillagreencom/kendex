@@ -283,7 +283,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
 HOSTED_WORK="$TMP_ROOT/hosted-work"
 mkdir -p "$HOSTED_WORK/tmp"
 git -C "$HOSTED_WORK" init -q -b main
-printf 'account=%s\tharness=claude\tsession-5h-pct=5\tweekly-pct=5\n' "$H/.claude" > "$TMP_ROOT/accounts-room.tsv"
+printf 'account=%s\tharness=claude\tsession-5h-pct=5\tweekly-pct=5\tmodel-pct=5\tmodel-label=Fable 5.1\n' "$H/.claude" > "$TMP_ROOT/accounts-room.tsv"
 HOSTED_ENV=(ORCH_LANE_HOST="$TEST_DIR/fixtures/lane-host" LANE_HOST_STUB_ACCOUNTS="$TMP_ROOT/accounts-room.tsv" LANE_HOST_STUB_LOG="$TMP_ROOT/host.log")
 RUN_DIR="$HOSTED_WORK" run_oversee "${HOSTED_ENV[@]}" -- launch --wait-secs 5
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \

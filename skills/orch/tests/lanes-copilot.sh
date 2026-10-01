@@ -515,11 +515,11 @@ assert_eq "rc=$RC" rc=5 "control: without harness=pi admitted the provider row i
 lanes_control ctl-pi-unstated lanes '[[ "$harness" == pi && -z "$pool_roots" && "$hosted" == "[]" ]]' '[[ "$harness" == pi && -z "$pool_roots" ]]'
 pi_run room - pick "${PI_MODEL[@]}" --json
 assert_eq "rc=$RC" rc=5 "control: an unstated check that skips the provider rows refuses a pool the provider read"
-lanes_control ctl-pi-replace lanes 'if $h == "pi" then .headroom_pct == null' 'if $h == "pi" then true'
+lanes_control ctl-pi-replace lib/lane-model.sh 'if $h == "pi" then .headroom_pct == null' 'if $h == "pi" then true'
 pi_run room 99/100 pick "${PI_MODEL[@]}" --json
 assert_eq "rc=$RC walled=$(pi_fields .walled)" 'rc=3 walled=1' \
   "control: an override that outranks the provider row walls a pool the provider read with room"
-lanes_control ctl-pi-override lanes 'if $h == "pi" then .headroom_pct == null' 'if $h == "pi" then .status == "unreachable"'
+lanes_control ctl-pi-override lib/lane-model.sh 'if $h == "pi" then .headroom_pct == null' 'if $h == "pi" then .status == "unreachable"'
 pi_run refused 10/100 pick --lane "$H/.pi1" "${PI_MODEL[@]}" --json
 assert_eq "rc=$RC $(pi_fields '.measured_through')" 'rc=5 "host"' \
   "control: under the unreachable rule a refused Pi row hides the override"
@@ -529,7 +529,7 @@ assert_eq "$(pi_fields '[.[] | select(.harness == "pi")] | length')" 1 "control:
 lanes_control ctl-pi-fix lanes 'lane_copilot_pool_fix "${ORCH_LANE_HOST:-local}" "$HOSTED_READ"; } >&2' ':; } >&2'
 pi_run none - pick "${PI_MODEL[@]}"
 assert_eq "rc=$RC fix=$(fix_line)" "rc=5 fix=" "control: without the fix call the unstated refusal names no repair"
-lanes_control ctl-pi-stated lanes 'if [[ "$age" == stated ]]; then' 'if false; then'
+lanes_control ctl-pi-stated lib/lane-model.sh 'if [[ "$age" == stated ]]; then' 'if false; then'
 pi_run refused 10/100 pick --lane "$H/.pi1" "${PI_MODEL[@]}" --json
 assert_eq "rc=$RC local=$(grep -c '^lanes: pick-local-reading' <<<"$ERR")" "rc=0 local=1" \
   "control: without the stated arm a stated override is reported as a local reading the provider never made"

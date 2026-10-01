@@ -1047,7 +1047,7 @@ git -C "$HOSTED_WORK" init -q -b main
 git -C "$HOSTED_WORK" config gc.auto 0
 git -C "$HOSTED_WORK" config maintenance.auto false
 hosted_caller() { new_caller "$UNDER_MARK" && cp -- "$OVERSEER_RECORD" "$HOSTED_WORK/tmp/lane-mail/overseer/context.json"; }
-printf 'account=%s\tharness=claude\tsession-5h-pct=5\tweekly-pct=5\tmodel-pct=5\tmodel-label=Opus\n' "$H/.claude" > "$TMP_ROOT/accounts-room.tsv"
+printf 'account=%s\tharness=claude\tsession-5h-pct=5\tweekly-pct=5\tmodel-pct=5\tmodel-label=Fable 5.1\n' "$H/.claude" > "$TMP_ROOT/accounts-room.tsv"
 hosted_caller
 RUN_DIR="$HOSTED_WORK" LANE_HOST_ACCOUNTS="$TMP_ROOT/accounts-room.tsv" run_succeed hostedcaller '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
