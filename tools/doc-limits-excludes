@@ -2,3 +2,4 @@
 
 CHANGELOG*.md	append-only release record, read by release rather than as agent instructions
 hooks/README.md	rendered whole from every catalog hook's frontmatter and pinned by crates/core/tests/hooks_readme.rs, one bullet and one table row per hook; a split needs that renderer to write more than one file
+docs/plans/kendex-checks-audit-research.md	single-file exhaustive guard inventory required by KEN-2320; reference report read on demand, not agent-loaded instructions
