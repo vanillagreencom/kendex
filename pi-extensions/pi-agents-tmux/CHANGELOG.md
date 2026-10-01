@@ -4,14 +4,13 @@
 
 ### 3.3.0
 
-
 - Earlier handoff keys remain visible when a later chain step stops. Stopped and refused Monitor rows use warning indicators. Intended parent stops publish no failure activity.
 - Reused background sessions above their context guard threshold start a fresh agent of the same type. The fresh brief includes the new task and the prior final result. The tool result and Agents panel report `reused as fresh (context N%)`. `sameSession: true` instead reports `refused`, with the guard's estimate, threshold and fresh-agent remedy.
 - Empty agent and task strings no longer reject valid parallel or chain calls. Parent cancellation reports `stopped`. Provider failures keep their error status and message in the panel and tool result, including failures whose child process exits zero.
 - `get_subagent_result` accepts `agent` with a background `sessionKey`, plus the next dispatch's optional `cwd` and `agentScope`, and reports the reuse guard's own context estimate and threshold. Orchestration checks these values before reusing stored agent IDs.
 - `reusedSessionBudgetPolicy` no longer permits over-threshold reuse or truncates saved history. Existing values are read with a migration warning. Remove that setting. Keep `reusedSessionBudgetThreshold` and `reusedSessionContextLimitTokens`; use `sameSession: true` when a fresh agent cannot serve the task.
 
-- Bridge and tmux commands enforce deadlines and terminate stalled children. All dispatch modes and their initial probes share one cancellation-aware child limit. Shutdown waits for child termination. Inbox claim failures restore the queued task before releasing ownership. Headless pane agents now keep the background deadline; a nonpositive timeout uses the default instead of disabling it.
+- Bridge and tmux commands enforce deadlines and terminate stalled children. All dispatch modes and their initial probes share one cancellation-aware child limit. Shutdown cancels and drains queued or active dispatch actions and owned commands. Inbox claim failures restore the queued task before releasing ownership. Headless pane agents now keep the background deadline; a nonpositive timeout uses the default instead of disabling it.
 
 ### 3.2.3
 
