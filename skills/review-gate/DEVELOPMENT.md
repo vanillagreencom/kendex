@@ -24,7 +24,7 @@ Automatic refresh starts only after the [trusted removal PR](references/adoption
 
 Run the shell suites under `tests/` through the repository's skill-suite entry point. `tests/adopt-refresh.test.sh` proves refresh updates and retired workflow removal. Its controls disable each ownership guard in a disposable script copy.
 
-`tests/settings-parsing.test.sh` holds settings precedence and refusal of unreadable sources. The standard-report and provisioning suites drive GitHub API fixtures. The consumer-refresh and refresh-review suites hold branch creation, render proof and upstream filing before thread resolution.
+`tests/settings-parsing.test.sh` holds settings precedence and refusal of unreadable sources. The standard-report and provisioning suites drive GitHub API fixtures. The consumer-refresh and refresh-review suites hold branch creation, render proof and the [automatic-review thread rules](references/adoption.md#automatic-consumer-refresh).
 
 `tests/refresh-report.test.sh` holds issue identity, historical routing and credential isolation. `tests/refresh-workflow.test.sh` holds the workflow's token boundaries. `tests/refresh-consumer.test.sh` proves that an unchanged tree keeps its remote commit and CI results. `tests/refresh-reviews.test.sh` holds retry records and containment of a reporter failure to its own pull request.
 

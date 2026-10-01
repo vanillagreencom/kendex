@@ -8,7 +8,7 @@
 
 **Research**: [KEN-2067 design note](../plans/review-gate-platform.md)
 
-**Approval**: owner direction 1790636017 and owner note 1790642054, recorded in the design note; KEN-2089 requires this record.
+**Approval**: owner direction 1790636017 and owner note 1790642054, recorded in the design note; KEN-2089 requires this record. KEN-2488 amends the consumer-refresh operational references without changing the decision or its Active status.
 
 **Supersedes**: [D003](D003-one-merge-path.md) item 3's required review status and item 2's review-finding answer contract; [D013](D013-admin-merge-green-prs.md) item 1's approval and required review status. [D016](D016-merge-route-reads-bypass.md) keeps ownership of the merge route and emergency bypass.
 
@@ -18,7 +18,7 @@
 
 **Emergency merge**: the overseer app's `pull_request`-mode bypass on the required-checks and merge-queue rulesets permits an emergency merge when a required check cannot pass. The organization approval and thread-resolution rules still hold. The overseer posts the pull request, head, broken check and reason. No temporary bypass entry is added.
 
-**Consumer refresh**: an existing consumer first takes a one-time trusted removal PR from its owning lane. The lane runs the reviewed new adopter to remove the unedited retired gate workflow and its inventory entry. The PR takes normal CI, final-head Copilot approval and resolved threads. Before arming, the owner removes the retired required context and binds the surviving Actions contexts to app 15368. Automatic refresh starts from the migrated default branch and never performs retirement or executes refreshed scripts under its app token. Automatic review threads are resolved only after upstream filing succeeds and the reply names the issue. A thread that cannot be filed stays open until it is resolved by hand. Review bodies are not read by the refresh runner.
+**Consumer refresh**: an existing consumer first takes a one-time trusted removal PR from its owning lane. The lane runs the reviewed new adopter to remove the unedited retired gate workflow and its inventory entry. The PR takes normal CI, final-head Copilot approval and resolved threads. Before arming, the owner removes the retired required context and binds the surviving Actions contexts to app 15368. Automatic refresh starts from the migrated default branch and never performs retirement or executes refreshed scripts under its app token. [Automatic consumer refresh](../../skills/review-gate/references/adoption.md#automatic-consumer-refresh) owns the automatic-review thread rules. Review bodies are not read by the refresh runner.
 
 **Rationale**:
 
@@ -28,6 +28,6 @@
 
 **Revisit When**: a served repository cannot use Copilot approvals or GitHub rulesets, or GitHub stops counting Copilot approvals toward merge requirements.
 
-**Verification**: the design note records the sandbox approval, unresolved-thread refusal and stale-approval dismissal proof. `skills/review-gate/tests/adopt-refresh.test.sh` proves workflow and inventory retirement. `skills/review-gate/tests/refresh-reviews.test.sh` proves filing before thread resolution. The kendex overseer distributes the trusted removal route to fleet, vg, vsys, drovr, hyprtrade, hyprtrade-io and memsira after the catalog merge. Fleet owns the consumer proof and the decision superseding fleet D061 item 6. The kendex overseer records fleet’s merge evidence and closes KEN-2089.
+**Verification**: the design note records the sandbox approval, unresolved-thread refusal and stale-approval dismissal proof. `skills/review-gate/tests/adopt-refresh.test.sh` proves workflow and inventory retirement. `skills/review-gate/tests/refresh-reviews.test.sh` proves the [automatic-review thread rules](../../skills/review-gate/references/adoption.md#automatic-consumer-refresh). The kendex overseer distributes the trusted removal route to fleet, vg, vsys, drovr, hyprtrade, hyprtrade-io and memsira after the catalog merge. Fleet owns the consumer proof and the decision superseding fleet D061 item 6. The kendex overseer records fleet’s merge evidence and closes KEN-2089.
 
 **References**: KEN-2089, KEN-2067, [D003](D003-one-merge-path.md), [D013](D013-admin-merge-green-prs.md)

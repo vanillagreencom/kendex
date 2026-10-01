@@ -12,11 +12,11 @@ Install with `kendex add review-gate`, then run `kendex refresh` and commit the 
 - Report repository rules and app-secret placement against an organization standard.
 - Provision app-secret environments from the owner's machine.
 - Open or update a consumer refresh pull request.
-- File automatic review findings upstream before resolving their threads.
+- Handle automatic review findings during consumer refresh.
 
 ## How it works
 
-The pull-request watcher reads GitHub's review state. It reports open threads, objections and approvals that do not arrive within the wait period. The standard report compares GitHub configuration with the repository's settings. Consumer refresh updates one rolling branch and requests auto-merge. A finding that cannot be filed keeps its thread open and holds the merge.
+The pull-request watcher reads GitHub's review state. It reports open threads, objections and approvals that do not arrive within the wait period. The standard report compares GitHub configuration with the repository's settings. Consumer refresh updates one rolling branch and requests auto-merge. The [consumer refresh rules](references/adoption.md#automatic-consumer-refresh) define how it handles automatic review threads.
 
 ## Settings
 
