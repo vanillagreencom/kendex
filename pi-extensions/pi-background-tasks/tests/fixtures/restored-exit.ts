@@ -75,6 +75,7 @@ try {
 			assert.equal(tail.outputTail.startsWith("[...truncated]\n"), truncated, `exit omission marker: ${action}`);
 			assert.ok(tail.outputTail.length <= 2015);
 			if (action === "delivered" || action === "orphan") assert.equal(tail.outputTail, "[...truncated]\n" + "x".repeat(1996) + "TAIL");
+			if (action === "unicode") assert.equal(tail.outputTail, "[...truncated]\n" + "😀".repeat(998) + "TAIL", "restored exit character limit");
 			if (!truncated) assert.equal(tail.outputTail, output);
 			if (action === "orphan") assert.equal(tail.task.terminationReason, "orphaned-pid-gone");
 		}

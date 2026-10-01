@@ -257,8 +257,8 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 	const sortedTasks = (): ManagedTask[] => [...tasks.values()].sort((a, b) => b.startedAt - a.startedAt);
 
 	const taskOutput = createTaskOutputReader((logFile, error) => logBackgroundDiagnostic("task log read failed", { logFile, error }));
-	const getTaskOutput = (task: ManagedTask, maxBytes = settingNumber("outputBufferMaxChars", DEFAULT_OUTPUT_BUFFER_MAX_CHARS, activeCtx?.cwd)): Promise<string> =>
-		taskOutput.read(task, maxBytes);
+	const getTaskOutput = (task: ManagedTask, maxChars = settingNumber("outputBufferMaxChars", DEFAULT_OUTPUT_BUFFER_MAX_CHARS, activeCtx?.cwd)): Promise<string> =>
+		taskOutput.read(task, maxChars);
 
 	// A write the log writer still holds for the file would create it again,
 	// so the removal waits for the file's writes to settle.

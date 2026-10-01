@@ -30,7 +30,7 @@ The agent starts a command with the background task tool. The extension runs the
 
 ## Memory and disk use
 
-- The dashboard reads a log tail asynchronously and keeps it for each task until the log changes. `logTailMaxChars` limits the disk read in bytes, with a default of 10,000. Command layouts stay cached until the command, pane width or theme changes. These caches are released when their task or dashboard closes.
+- The dashboard reads a log tail asynchronously and keeps it for each task until the log changes. `logTailMaxChars` limits the decoded tail by JavaScript string length, with a default of 10,000. The disk read is bounded to three bytes per character plus one byte. Command layouts stay cached until the command, pane width or theme changes; closing the dashboard releases them. Task tails stay cached while finished history retains the task. Clear, finished-task eviction or session replacement makes them eligible for release; session shutdown clears the reader.
 - A notification regex has a 25 ms execution deadline. A pattern that exceeds it is disabled for that task. The agent receives one bounded failure notice, including in headless sessions. Exit notifications still work.
 - A finished task's output is read from its log file; the process handle and the in-memory output are released once the task has exited and its last log write has finished. A task whose last log write failed or stalled keeps its in-memory output instead.
 - At most 50 finished tasks are kept; past that, the oldest finished task is removed with its log. `clear` also deletes the logs of the tasks it removes. A forked session removes the tasks it copied from the original session but keeps their logs, which the original session still reads.

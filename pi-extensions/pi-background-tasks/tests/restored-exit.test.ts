@@ -26,6 +26,6 @@ test("must-fail: dropping the forced omission marker loses exit-tail metadata", 
 
 test("must-fail: forgetting bounded-read omissions loses exit-tail metadata", () => {
 	expect(() => runSpawnFixture("restored-exit.ts", {}, {
-		file: "extensions/log-tail.ts", from: "truncated: size > read", to: "truncated: false",
+		file: "extensions/log-tail.ts", from: "truncated: size > read || decoded.length > lengthLimit", to: "truncated: false",
 	})).toThrow("exit omission metadata: delivered");
 }, SPAWN_FIXTURE_TIMEOUT_MS);

@@ -12,12 +12,12 @@ const logFile = `${process.cwd()}/restored.log`;
 const secondLog = `${process.cwd()}/second.log`;
 const logs = new Set([logFile, secondLog]);
 const logBytes = 50_000_000;
-const tailBytes = 12_000;
+const tailChars = 12_000;
 fs.writeFileSync(logFile, Buffer.alloc(logBytes, "a"));
 fs.writeFileSync(secondLog, "second tail");
 const settingsPath = `${process.env.PI_CODING_AGENT_DIR}/settings.json`;
 const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
-settings.kendex.extensionManager.config["@vanillagreen/pi-background-tasks"].logTailMaxChars = tailBytes;
+settings.kendex.extensionManager.config["@vanillagreen/pi-background-tasks"].logTailMaxChars = tailChars;
 fs.writeFileSync(settingsPath, JSON.stringify(settings));
 
 const counts = { wholeLogReads: 0, syncReads: 0, asyncReads: 0, bytes: 0, syncOpens: 0, asyncOpens: 0 };
@@ -129,4 +129,4 @@ await events.get("session_start")!({}, ctx);
 assert.ok(deps, "the extension must supply its dashboard dependencies");
 ctx.hasUI = true;
 try { await openDashboard(ctx, deps); } finally { await events.get("session_shutdown")!({}, ctx); }
-process.stdout.write(JSON.stringify({ logBytes, tailBytes, commandChars: snapshots[0].command.length, phases }));
+process.stdout.write(JSON.stringify({ logBytes, tailChars, commandChars: snapshots[0].command.length, phases }));

@@ -8,7 +8,7 @@ interface OutputTail {
 
 interface Tail extends OutputTail {
 	logFile: string;
-	maxBytes: number;
+	maxChars: number;
 	mtimeMs: number;
 	ctimeMs: number;
 	size: number;
@@ -19,11 +19,11 @@ interface Tail extends OutputTail {
 export function createTaskOutputReader(report: (logFile: string, error: string) => void) {
 	let tails = new WeakMap<ManagedTask, { tail?: Tail; pending?: Promise<OutputTail> }>();
 	return {
-		async read(task: ManagedTask, maxBytes: number): Promise<string> {
-			return (await this.readTail(task, maxBytes)).text;
+		async read(task: ManagedTask, maxChars: number): Promise<string> {
+			return (await this.readTail(task, maxChars)).text;
 		},
 		/** Keep disk omission information for consumers that format a bounded excerpt. */
-		async readTail(task: ManagedTask, maxBytes: number): Promise<OutputTail> {
+		async readTail(task: ManagedTask, maxChars: number): Promise<OutputTail> {
 			if (task.output.length > 0) return { text: task.output, truncated: false };
 			let state = tails.get(task);
 			if (!state) {
@@ -33,19 +33,21 @@ export function createTaskOutputReader(report: (logFile: string, error: string) 
 			if (state.pending) {
 				await state.pending;
 				// A concurrent caller can ask for a different tail limit.
-				return this.readTail(task, maxBytes);
+				return this.readTail(task, maxChars);
 			}
 			const owned = state;
-			const lengthLimit = Math.max(1, Math.floor(maxBytes));
+			const lengthLimit = Math.max(1, Math.floor(maxChars));
 			owned.pending = (async () => {
 				let file: Awaited<ReturnType<typeof open>> | undefined;
 				try {
 					file = await open(task.logFile, "r");
 					const { size, mtimeMs, ctimeMs, ino } = await file.stat();
 					const tail = owned.tail;
-					if (tail?.logFile === task.logFile && tail.maxBytes === lengthLimit && tail.size === size
+					if (tail?.logFile === task.logFile && tail.maxChars === lengthLimit && tail.size === size
 						&& tail.mtimeMs === mtimeMs && tail.ctimeMs === ctimeMs && tail.ino === ino) return tail;
-					const length = Math.min(size, lengthLimit);
+					// UTF-8 needs at most three bytes per UTF-16 code unit, plus one
+					// when the suffix starts with the second half of a surrogate pair.
+					const length = Math.min(size, 3 * lengthLimit + 1);
 					const buffer = Buffer.alloc(length);
 					let read = 0;
 					while (read < length) {
@@ -53,9 +55,12 @@ export function createTaskOutputReader(report: (logFile: string, error: string) 
 						if (bytesRead === 0) break;
 						read += bytesRead;
 					}
-					// A byte-limited tail can start inside a UTF-8 character.
-					const text = buffer.subarray(0, read).toString("utf8").replace(/^\uFFFD+/, "");
-					owned.tail = { logFile: task.logFile, maxBytes: lengthLimit, size, mtimeMs, ctimeMs, ino, text, truncated: size > read };
+					// Skip only a cut UTF-8 prefix, not a literal replacement character.
+					let start = 0;
+					if (size > length) while (start < read && (buffer[start] & 0xc0) === 0x80) start += 1;
+					const decoded = buffer.subarray(start, read).toString("utf8");
+					const text = decoded.slice(-lengthLimit);
+					owned.tail = { logFile: task.logFile, maxChars: lengthLimit, size, mtimeMs, ctimeMs, ino, text, truncated: size > read || decoded.length > lengthLimit };
 					return owned.tail;
 				} finally {
 					if (file) await file.close();

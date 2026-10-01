@@ -10,7 +10,7 @@ export const SPAWN_FIXTURE_TIMEOUT_MS = 30_000;
 
 export interface ComponentBenchmark {
 	logBytes: number;
-	tailBytes: number;
+	tailChars: number;
 	commandChars: number;
 	phases: { name: string; frames: number; wholeLogReads: number; syncReads: number; asyncReads: number; bytes: number; syncOpens: number; asyncOpens: number; commandWraps: number; maxFrameMs: number; maxStepMs: number }[];
 }
@@ -18,9 +18,10 @@ export interface ComponentBenchmark {
 /** Hold the operation bound separately from timing so a fast cache bypass still fails. */
 export function assertComponentBenchmarkBounds(result: ComponentBenchmark): void {
 	assert.equal(result.logBytes, 50_000_000);
-	assert.equal(result.tailBytes, 12_000);
+	assert.equal(result.tailChars, 12_000);
 	const rows = [
-		{ name: "steady", frames: 30, reads: 1, bytes: 12_000, wraps: 1 },
+		// Three UTF-8 bytes per UTF-16 unit, plus one for a split surrogate pair.
+		{ name: "steady", frames: 30, reads: 1, bytes: 36_001, wraps: 1 },
 		{ name: "expanded", frames: 10, reads: 0, bytes: 0, wraps: 0 },
 		{ name: "width", frames: 10, reads: 0, bytes: 0, wraps: 1 },
 		{ name: "content", frames: 10, reads: 0, bytes: 0, wraps: 1 },

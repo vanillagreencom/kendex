@@ -32,10 +32,29 @@ const errors: string[] = [];
 const reader = createTaskOutputReader((_file, error) => errors.push(error));
 const first = { logFile: "first.log", output: "" } as ManagedTask;
 const second = { logFile: "second.log", output: "" } as ManagedTask;
+// Commands can emit all of these UTF-8 characters, including U+FFFD itself.
+const characterRows = [
+	{ name: "bmp", output: "€".repeat(10_001), maxChars: 10_000, expected: "€".repeat(10_000), truncated: true },
+	{ name: "surrogate suffix", output: "x".repeat(100) + "😀" + "€".repeat(9), maxChars: 10, expected: "\uDE00" + "€".repeat(9), truncated: true },
+	{ name: "single surrogate", output: "😀", maxChars: 1, expected: "\uDE00", truncated: true },
+	{ name: "decoded clipping", output: "😀".repeat(10), maxChars: 10, expected: "😀".repeat(5), truncated: true },
+	{ name: "partial prefix", output: "€".repeat(30), maxChars: 10, expected: "€".repeat(10), truncated: true },
+	{ name: "replacement character", output: "\uFFFDok", maxChars: 4, expected: "\uFFFDok", truncated: false },
+	{ name: "short unicode", output: "€ok", maxChars: 4, expected: "€ok", truncated: false },
+	{ name: "exact unicode", output: "€".repeat(10), maxChars: 10, expected: "€".repeat(10), truncated: false },
+];
+for (const row of characterRows) {
+	await fs.writeFile(first.logFile, row.output);
+	const beforeBytes = bytes;
+	const tail = await reader.readTail(first, row.maxChars);
+	assert.deepEqual({ text: tail.text, truncated: tail.truncated }, { text: row.expected, truncated: row.truncated }, `character tail: ${row.name}`);
+	assert.equal(bytes - beforeBytes, Math.min(Buffer.byteLength(row.output), 3 * row.maxChars + 1), `UTF-8 byte bound: ${row.name}`);
+}
 await fs.writeFile(first.logFile, "x".repeat(1024) + "0123456789");
 await fs.writeFile(second.logFile, "second tail");
+const beforeAscii = bytes;
 assert.equal(await reader.read(first, 10), "0123456789");
-assert.equal(bytes, 10);
+assert.equal(bytes - beforeAscii, 31);
 assert.equal(await reader.read(second, 10), "econd tail");
 const readCount = reads;
 for (const task of [first, second, first]) await reader.read(task, 10);
@@ -51,9 +70,7 @@ assert.equal(await reader.read(second, 4), "tail", "limit changes must invalidat
 reader.clear();
 const before = reads;
 await Promise.all([reader.read(second, 4), reader.read(second, 4)]);
-assert.equal(reads - before, 2, "concurrent reads must share the byte read, including short reads");
-await fs.writeFile(first.logFile, "€ok");
-assert.equal(await reader.read(first, 4), "ok", "discard partial leading UTF-8 bytes");
+assert.equal(reads - before, 4, "concurrent reads must share the byte read, including short reads");
 await fs.writeFile(first.logFile, "");
 assert.equal(await reader.read(first, 10), "");
 await fs.rm(first.logFile);
