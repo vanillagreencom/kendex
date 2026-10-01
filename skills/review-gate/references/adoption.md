@@ -33,7 +33,7 @@ A consumer with the retired gate package needs a one-time trusted removal PR bef
 
    ```bash
    kendex refresh
-   .agents/skills/review-gate/scripts/adopt-refresh.sh
+   .agents/skills/review-gate/scripts/adopt-refresh.sh --retire-writer
    kendex verify --scope project
    git add -A
    ```
@@ -56,7 +56,7 @@ kendex verify --scope project
 git add -A
 ```
 
-Commit the workflow and inventory with the installed skill. Retirement belongs to the trusted removal route above, not an automatic run. Adoption removes an unedited retired gate workflow and its inventory entry, proved by the committed adoption hash. An edited, symlinked or unrecorded retired copy needs an owner decision and stops adoption without changing the files.
+Commit the workflow and inventory with the installed skill. Without `--retire-writer`, adoption keeps a recorded retired gate workflow and its inventory entry and prints one `refresh-warning=legacy-writer` line. Retirement belongs to the trusted removal route above. That route removes an unedited retired copy, proved by the committed adoption hash. An edited, symlinked or unrecorded retired copy needs an owner decision and stops adoption without changing the files.
 
 Refresh workflow reconciliation in `scripts/adopt-refresh.sh` uses exact bytes, independently of the adoption record:
 

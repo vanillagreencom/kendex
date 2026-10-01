@@ -1,1 +1,1 @@
-- Restored the retained review-gate template so consumers with old refresh scripts can open the pull request that updates them.
+- Restored the review-gate template so old consumer refresh scripts can open their update pull request. Automatic refresh keeps the retired writer until explicit trusted removal.

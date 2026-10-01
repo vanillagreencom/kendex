@@ -209,6 +209,36 @@ if adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE" && workflow_edit_matches "$TM
 else bad 'first divergent line control' "$OUT"; fi
 
 OWNER=".agents/skills/review-gate/templates/review-gate-writer.yml"
+# The automatic runner invokes its preserved adopter without retirement
+# input, while reading templates from the refreshed checkout.
+while IFS='|' read -r mutation expected; do
+  sandbox
+  writer='.github/workflows/retired.yml'
+  printf 'retired workflow\n' >"$DIR/$writer"
+  record_adoption "$DIR" "$writer" "$OWNER"
+  commit "$DIR"
+  trusted="$TMP/automatic-$SANDBOX_N"
+  git -C "$DIR" worktree add --detach -q "$trusted" HEAD
+  case "$mutation" in
+    none) ;;
+    retirement)
+      file_edit "$trusted" "$ADOPT" 1 '^retiring = retired if ' 's/else \[\]$/else retired/' ;;
+    warning)
+      file_edit "$trusted" "$ADOPT" 1 '^    print\("refresh-warning=legacy-writer' 's/^    print/    # print/' ;;
+    *) exit 2 ;;
+  esac
+  run_refresh_command "$DIR" "$trusted/$ADOPT" --templates-dir "$DIR/.agents/skills/review-gate/templates"
+  warning_count="$(awk '/^refresh-warning=legacy-writer / { count++ } END { print count + 0 }' <<<"$OUT")" || exit 1
+  matched=no
+  if retirement_matches "$DIR" "$writer" "$OWNER" preserved &&
+      [ "$warning_count" -eq 1 ] && grep -qxF "refresh-warning=legacy-writer value=$OWNER" <<<"$OUT"; then matched=yes; fi
+  if [ "$RC" -eq 0 ] && [ "$matched" = "$expected" ]; then ok "automatic legacy writer mutation=$mutation"; else bad "automatic legacy writer mutation=$mutation (rc=$RC)" "$OUT"; fi
+done <<'AUTOMATIC'
+none|yes
+retirement|no
+warning|no
+AUTOMATIC
+
 while IFS='|' read -r kind expected; do
   sandbox
   writer="$DIR/.github/workflows/retired.yml"
@@ -240,25 +270,24 @@ while IFS='|' read -r kind expected; do
     *) exit 2 ;;
   esac
   cp "$DIR/.kendex-generated.json" "$TMP/before"
-  run_refresh_command "$DIR" "$DIR/$ADOPT"
+  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
   if [ "$expected" = pass ]; then
     if [ "$RC" -eq 0 ] && [ ! -e "$writer" ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then ok "$kind"; else bad "$kind (rc=$RC)" "$OUT"; fi
     if [ "$kind" = retired ]; then
-      if grep -qxF "refresh-warning=legacy-writer value=$OWNER" <<<"$OUT"; then
-        ok 'legacy writer adoption emits its warning'
-      else bad 'legacy writer warning' "$OUT"; fi
+      if retirement_matches "$DIR" .github/workflows/retired.yml "$OWNER" removed; then
+        ok 'explicit trusted retirement removes the writer and record'
+      else bad 'explicit trusted retirement' "$OUT"; fi
       cp "$TMP/before" "$DIR/.kendex-generated.json"
       printf 'retired workflow\n' >"$writer"
-      file_edit "$DIR" "$ADOPT" 1 '^    print\("refresh-warning=legacy-writer' 's/^    print/    # print/'
-      run_refresh_command "$DIR" "$DIR/$ADOPT"
-      if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE" &&
-          ! grep -qxF "refresh-warning=legacy-writer value=$OWNER" <<<"$OUT"; then
-        ok 'control: silencing legacy detection breaks the warning assertion'
-      else bad 'legacy writer warning control' "$OUT"; fi
+      file_edit "$DIR" "$ADOPT" 1 '^retiring = retired if ' 's/^retiring = retired if /retiring = [] if /'
+      run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+      if [ "$RC" -eq 0 ] && ! retirement_matches "$DIR" .github/workflows/retired.yml "$OWNER" removed; then
+        ok 'control: disabled explicit retirement breaks the removal assertion'
+      else bad 'explicit retirement control' "$OUT"; fi
     fi
     if [ "$kind" = repeat ]; then
       cp "$DIR/.kendex-generated.json" "$TMP/repeated"
-      run_refresh_command "$DIR" "$DIR/$ADOPT"
+      run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
       if [ "$RC" -eq 0 ] && cmp -s "$TMP/repeated" "$DIR/.kendex-generated.json" &&
           ! grep -q '^refresh-warning=legacy-writer ' <<<"$OUT"; then ok 'repeat unchanged without a legacy warning'; else bad 'repeat unchanged' "$OUT"; fi
     fi
@@ -303,7 +332,7 @@ while IFS='|' read -r kind pattern replacement; do
       mv "$DIR/$REFRESH" "$DIR/refresh-target"; ln -s ../../refresh-target "$DIR/$REFRESH" ;;
   esac
   file_edit "$DIR" "$ADOPT" 1 "$pattern" "$replacement" 1
-  run_refresh_command "$DIR" "$DIR/$ADOPT"
+  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
   if [ "$RC" -eq 0 ]; then ok "$kind control allows the forbidden mutation"; else bad "$kind control did not reach the guard" "$OUT"; fi
 done <<'CONTROLS'
 retired-edited|^        if not copied.is_file|s/^        if \(.*\):$/        if False and (\1):/

@@ -594,20 +594,22 @@ printf '\n# fresh refresh template\n' >>"$TMP/fresh-templates/kendex-refresh.yml
 : >"$TMP/state/creates"
 HOSTILE=1
 run_refresh refreshed pass render
+warning_count="$(awk '/^refresh-warning=legacy-writer / { count++ } END { print count + 0 }' <<<"$OUT")" || exit 1
 if [ "$RC" -eq 0 ] && [ ! -e "$TMP/state/hostile" ] &&
-    [ ! -e "$repo/.github/workflows/gate.yml" ] &&
+    retirement_matches "$repo" .github/workflows/gate.yml .agents/skills/review-gate/templates/review-gate-writer.yml preserved &&
+    [ "$warning_count" -eq 1 ] && grep -qxF 'refresh-warning=legacy-writer value=.agents/skills/review-gate/templates/review-gate-writer.yml' <<<"$OUT" &&
     cmp -s "$repo/.github/workflows/kendex-refresh.yml" "$TMP/fresh-templates/kendex-refresh.yml" &&
     python3 - "$repo" <<'INVENTORY'
 import hashlib,json,sys
 from pathlib import Path
 root=Path(sys.argv[1]); entries=json.loads((root/'.kendex-generated.json').read_text())
-assert {e['path'] for e in entries}=={'.github/workflows/kendex-refresh.yml'}
-for entry in entries:
+assert {e['path'] for e in entries}=={'.github/workflows/kendex-refresh.yml', '.github/workflows/gate.yml'}
+for entry in (e for e in entries if e['path'] == '.github/workflows/kendex-refresh.yml'):
  assert entry['templateHash']=='sha256:'+hashlib.sha256((root/entry['path']).read_bytes()).hexdigest()
  assert (root/entry['path']).read_bytes()==(root/entry['template']).read_bytes()
 INVENTORY
-then ok 'trusted adoption reads fresh templates and removes a renamed retired workflow without executing refreshed code'
-else bad 'trusted adoption boundary and fresh data' "$OUT"; fi
+then ok 'automatic adoption reads fresh templates and keeps the retired writer and record without executing refreshed code'
+else bad 'automatic adoption boundary and fresh data' "$OUT"; fi
 # A hand edit committed on the default branch must reach the rolling body's
 # own section, even when adoption produces the same rolling tree as before.
 reset_default

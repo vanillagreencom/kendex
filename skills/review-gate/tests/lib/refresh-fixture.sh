@@ -81,6 +81,32 @@ inventory.write_text(json.dumps(entries) + "\n")
 PY
 }
 
+# The committed writer and record are independent expected values for both
+# automatic preservation and explicit trusted retirement.
+retirement_matches() { # ROOT PATH TEMPLATE preserved|removed
+  [ "$RC" -eq 0 ] || return 1
+  python3 - "$@" <<'PY'
+import json
+from pathlib import Path
+import subprocess
+import sys
+root = Path(sys.argv[1])
+path, owner, disposition = sys.argv[2:]
+before = json.loads(subprocess.check_output(["git", "show", "HEAD:.kendex-generated.json"], cwd=root, text=True))
+expected = [e for e in before if isinstance(e, dict) and e["template"] == owner]
+assert len(expected) == 1 and expected[0]["path"] == path
+after = json.loads((root / ".kendex-generated.json").read_text())
+actual = [e for e in after if isinstance(e, dict) and e["template"] == owner]
+if disposition == "preserved":
+    assert actual == expected
+    assert (root / path).read_bytes() == subprocess.check_output(["git", "show", "HEAD:" + path], cwd=root)
+elif disposition == "removed":
+    assert actual == [] and not (root / path).exists()
+else:
+    raise AssertionError("unknown retirement disposition: " + disposition)
+PY
+}
+
 adoption_metadata() { # ROOT PATH TEMPLATE
   python3 - "$@" <<'PY'
 import hashlib

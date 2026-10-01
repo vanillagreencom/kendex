@@ -6,16 +6,19 @@
 # naming PATH:LINE and both first-divergent lines; it is empty without an edit.
 # The committed adoption hash proves ownership of a retired writer copy.
 # Retired adoption records emit refresh-warning=legacy-writer value=TEMPLATE.
+# Only the trusted removal route passes --retire-writer.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "${1:-}" = --help ] && [ "$#" -eq 1 ]; then
-  printf '%s\n' 'Usage: adopt-refresh.sh [--templates-dir DIR] [--workflow-edit-report FILE]' 'Reads the provisioned kendex environment, adopts the refresh workflow, and retires an unedited gate workflow and its inventory entry.' 'Refresh hand edits are overwritten with a warning; FILE receives the workflow-edit section for the pull request body.'
+  printf '%s\n' 'Usage: adopt-refresh.sh [--templates-dir DIR] [--workflow-edit-report FILE] [--retire-writer]' 'Reads the provisioned kendex environment and adopts the refresh workflow. --retire-writer removes an unedited gate workflow and its inventory entry on the trusted removal route.' 'Refresh hand edits are overwritten with a warning; FILE receives the workflow-edit section for the pull request body.'
   exit 0
 fi
 templates="$SCRIPT_DIR/../templates"
 edit_report=""
+adoption=refresh
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --retire-writer) adoption=retire-writer; shift ;;
     --templates-dir|--workflow-edit-report)
       [ "$#" -ge 2 ] && [ -n "$2" ] || { printf 'refresh-error=arguments value=%s\n' "$1" >&2; exit 2; }
       if [ "$1" = --templates-dir ]; then templates="$2"; else edit_report="$2"; fi
@@ -41,7 +44,7 @@ REVIEW_GATE_STANDARD_ENVIRONMENT="$template_environment" REVIEW_GATE_STANDARD_SE
   "$SCRIPT_DIR/validate-standard.sh" --environment-only
 # Python supplies the same SHA-256 on every supported host. Template paths
 # remain repository-relative so verification resolves them against its plan.
-python3 - "$templates" "$SCRIPT_DIR/../templates" "$edit_report" <<'PY'
+python3 - "$templates" "$SCRIPT_DIR/../templates" "$edit_report" "$adoption" <<'PY'
 import hashlib
 from itertools import zip_longest
 import json
@@ -66,8 +69,9 @@ refresh = root / ".github/workflows/kendex-refresh.yml"
 template = templates / refresh.name
 retired_owner = (templates / "review-gate-writer.yml").relative_to(root).as_posix()
 retired = [e for e in entries if isinstance(e, dict) and e["template"] == retired_owner]
+retiring = retired if sys.argv[4] == "retire-writer" else []
 # Core refresh preserves adopted records when their template disappears.
-# A renamed copy keeps that owner, so its record selects the retirement path.
+# A renamed copy keeps that owner, so its record still identifies the writer.
 prior = {}
 if retired:
     print("refresh-warning=legacy-writer value=" + retired_owner, file=sys.stderr)
@@ -130,12 +134,12 @@ if refresh.exists():
         report = f"## Workflow edits\n\nReplaced a hand-edited refresh workflow with the shipped template. First divergence: `{relative}:{line}`.\n\n```text\ncopy: {copied_line}\ntemplate: {expected_line}\n```\n"
         print("refresh-warning=workflow-edited value=" + relative, file=sys.stderr)
 # Complete the ownership checks before removing or writing any consumer file.
-for record in retired:
+for record in retiring:
     (root / record["path"]).unlink(missing_ok=True)
 refresh.parent.mkdir(parents=True, exist_ok=True)
 refresh.write_bytes(template_bytes)
 owner = template.relative_to(root).as_posix()
-entries = [e for e in entries if not isinstance(e, dict) or e["template"] not in (retired_owner, owner)]
+entries = [e for e in entries if e not in retiring and (not isinstance(e, dict) or e["template"] != owner)]
 entries.append({"path": refresh.relative_to(root).as_posix(), "template": owner, "templateHash": digest(template)})
 inventory.write_text("[\n" + ",\n".join("  " + json.dumps(e, ensure_ascii=False, separators=(",", ":")) for e in sorted(entries, key=path_of)) + "\n]\n")
 if sys.argv[3]:

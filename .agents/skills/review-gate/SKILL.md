@@ -53,7 +53,7 @@ The overseer's fallback approval and emergency merge follow the managing reposit
 | `scripts/pr-watch.sh` | Reduce open pull requests to attention lines from GitHub's review state. |
 | `scripts/validate-standard.sh` | Report rulesets, required checks, app installation and secret placement. |
 | `scripts/provision-environment.sh` | Provision the organization's declared app-secret environment. |
-| `scripts/adopt-refresh.sh` | Adopt the refresh workflow and retire an unedited gate workflow. |
+| `scripts/adopt-refresh.sh` | Adopt the refresh workflow. `--retire-writer` opts into trusted retirement. |
 | `scripts/install-latest.sh` | Install the latest stable release selected at run time before refresh. |
 | `scripts/refresh-consumer.sh` | Rebuild the rolling refresh branch from the default branch and open or update its pull request at any measured class. Only `render` arms app-token auto-merge. A `standard` refresh pull request stays unarmed; its body names the class, classifier cause and path. A repository maintainer reviews and merges it through the normal review and CI gates. An unmeasured class stops publication. |
 | `scripts/refresh-reviews.sh` | File automatic review findings upstream before resolving their threads. |
