@@ -191,7 +191,7 @@ run_ot() {
 # launch, which running_at ITEM and session_since ITEM read on their own rows
 # below.
 record() {
-  "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | to_entries | map(select(.key != "running_at" and .key != "session_since")) | map("\(.key)=\(.value // "null")") | join(" ")'
+  "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | to_entries | map(select(.key != "running_at" and .key != "session_since" and .key != "tier" and .key != "tier_inputs")) | map("\(.key)=\(.value // "null")") | join(" ")'
 }
 running_at() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .running_at // "null"' | tr -d '"'; }
 session_since() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .session_since // "null"' | tr -d '"'; }
@@ -215,6 +215,27 @@ assert_eq "$(stamped "$(running_at CC-1)")" "iso" "a launch recording the lane r
 LAUNCHED_AT="$(field "$REC" launched_at)"
 assert_eq "session_since=$(session_since CC-1)" "session_since=$LAUNCHED_AT" \
   "a launch records its own launch stamp as session_since, the floor the lane readers bind its session to"
+
+# Every launcher, not only an overseer, records its brief and sizing line.
+assert_eq "$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-1") | [.tier, .tier_inputs]' | jq -e '. == ["standard", {estimate:null, delta:null, paths:null}]')" \
+  'true' "a native standard launch records unknown inputs"
+while IFS='|' read -r item prompt tier; do
+  run_ot --ghostty --harness claude --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL \"$prompt $item
+ tier=$tier brief=small cause=estimate-within-small production=40 estimate=12 delta=40 paths=3\"" "$item"
+  assert_eq "rc=$RC metadata=$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$item"'") | [.tier, .tier_inputs]' | jq -e --arg tier "$tier" '. == [$tier, {estimate:12, delta:40, paths:3}]')" \
+    'rc=0 metadata=true' "launch tier inputs: $prompt"
+done <<'ROWS'
+CC-170|/orch micro|micro
+CC-171|/skill:orch small|small
+CC-172|$orch small|small
+CC-173|Read .agents/skills/orch/SKILL.md and execute the orch start workflow for|standard
+ROWS
+TIER_OT="$(mutant_scripts tier-mutant open-terminal)/open-terminal" || exit 1
+mutate_file "$TIER_OT" '+ $tier_record' '+ ($tier_record | .tier_inputs.estimate = null)'
+run_ot SCRIPT="$TIER_OT" --ghostty --harness claude --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL \"/orch small CC-174
+ tier=small brief=small cause=estimate-within-small estimate=12 delta=40 paths=3\"" CC-174
+assert_eq "rc=$RC $("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-174") | .tier_inputs.estimate')" \
+  'rc=0 null' "control: a discarded estimate turns the launch input assertion red"
 
 # The choice words sit INSIDE the --cmd command, which is the command this
 # launch runs: a template is rendered verbatim and no launch flag is appended to
@@ -435,7 +456,7 @@ assert_eq "$(retired_under "$OT")" "rc=0 retired=1 session=null since=iso launch
 SINCE_MUTANT="$TMP_ROOT/since-mutant/scripts"
 mkdir -p "$SINCE_MUTANT"
 cp -R "$REPO/scripts/." "$SINCE_MUTANT/"
-mutate_file "$SINCE_MUTANT/open-terminal" 'del(.launched_at, .over_cap)' 'del(.launched_at, .session_since, .over_cap)'
+mutate_file "$SINCE_MUTANT/open-terminal" 'del(.launched_at, .over_cap, .tier, .tier_inputs)' 'del(.launched_at, .session_since, .over_cap, .tier, .tier_inputs)'
 assert_eq "$(retired_under "$SINCE_MUTANT/open-terminal")" "rc=0 retired=1 session=null since=kept launched_at=$LAUNCHED_AT" \
   "control: a relaunch that keeps session_since leaves the fresh start bound to the launch whose session it retired"
 RETIRED_MUTANT="$TMP_ROOT/retired-mutant/scripts"

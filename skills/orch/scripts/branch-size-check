@@ -98,7 +98,6 @@ source "$SCRIPT_DIR/lib/branch-growth.sh"
 
 ID_GRAMMAR='^[A-Za-z0-9._-]+$'
 NO_ISSUE_KEY_GRAMMAR='^(pr-[0-9]+|local-[0-9]+-[0-9]+-[0-9]+)$'
-DELTA_GRAMMAR='^(1 line|[2-9] lines|[1-9][0-9]+ lines)(, (1 test line|[2-9] test lines|[1-9][0-9]+ test lines))?$'
 
 # Callers preserve positional values for this diagnostic catalog.
 message() {
@@ -162,8 +161,8 @@ message() {
       printf '%s\n' "issue '$issue' could not be read from the Linear cache"
       ;;
     invalid-delta)
-      printf 'branch-size-check: invalid-delta issue=%s delta-line=%s\n' "$issue" "$delta_line"
-      printf '%s\n' "the expected delta stated by '$issue' does not parse: '$delta_line' — use singular forms for count=1 (1 line, 1 test line) and plural for count≥2 (250 lines, 120 test lines)"
+      printf 'branch-size-check: invalid-delta issue=%s body=%s\n' "$issue" "$issue_body"
+      printf '%s\n' "the expected delta stated by '$issue' does not parse: '$issue_body'; use singular forms for count=1 (1 line, 1 test line) and plural for count≥2 (250 lines, 120 test lines)"
       ;;
     invalid-round)
       printf 'branch-size-check: invalid-round path=%s\n' "$cut_from_round"
@@ -285,13 +284,6 @@ else
   issue_body="$(jq -r '.issue.description // ""' <<<"$raw")"
 fi
 
-# Read from the template's own header line and nowhere else: a sentence
-# elsewhere in the body is prose, not a declared allowance.
-delta_line="$(
-  printf '%s\n' "$issue_body" \
-    | sed -n 's/^[[:space:]]*[*_]*[Ee]xpected delta[*_]*[[:space:]]*:[[:space:]]*//p' \
-    | head -n 1 | sed 's/[[:space:]]*$//'
-)"
 allowance=""
 test_allowance=""
 if [[ -n "$cut_from_round" ]]; then
@@ -299,12 +291,10 @@ if [[ -n "$cut_from_round" ]]; then
     || die invalid-round
   test_allowance="$(jq -r '.cut_comparison | if .production_allowance == null then .test_lines else .test_allowance // empty end' "$cut_from_round")" \
     || die invalid-round
-elif [[ -n "$delta_line" ]]; then
-  [[ "$delta_line" =~ $DELTA_GRAMMAR ]] \
-    || die invalid-delta "$@"
-  # Extract numeric values from captured strings like "1 line" or "2 lines"
-  allowance="${BASH_REMATCH[1]%% *}"
-  test_allowance="${BASH_REMATCH[3]%% *}"
+else
+  expected_delta_read "$issue_body" || die invalid-delta "$@"
+  allowance="$EXPECTED_DELTA_PRODUCTION"
+  test_allowance="$EXPECTED_DELTA_TEST"
 fi
 
 # --- Measure ----------------------------------------------------------------

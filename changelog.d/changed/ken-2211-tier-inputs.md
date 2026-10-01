@@ -1,0 +1,1 @@
+- Orch launch tiers use Expected delta counts. Lane records retain tier inputs, reject conflicting merge-time tiers, and explain estimate and path misses.

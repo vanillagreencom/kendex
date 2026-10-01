@@ -3,7 +3,7 @@
 # and the fleet's per-class rollup of those records.
 #
 # Usage:
-#   oversee-cycle [--state-dir DIR] record --pr N --tier micro|small|standard
+#   oversee-cycle [--state-dir DIR] record --pr N [--tier micro|small|standard]
 #                 [--repo OWNER/REPO] ITEM
 #   oversee-cycle [--state-dir DIR] rollup
 #
@@ -18,8 +18,10 @@
 # another origin, or --repo another repository, the class is unread with
 # cause checkout-other-repo. A classifier answer whose `measured=` marker is
 # not true is no class. --repo
-# defaults to the lane record's repo, then this checkout's. --tier is the tier oversee.md
-# § Item Tier gave the item at its first launch. The round counts come from
+# defaults to the lane record's repo, then this checkout's. The recorded launch
+# tier wins; a differing --tier refuses as tier-mismatch naming launch and given.
+# An old record with no tier warns as launch-tier-missing and requires --tier.
+# The round counts come from
 # the lane's own workflow state, read as oversee-report reads it through
 # lib/lane-gitfile.sh's lane_item_state; a lane whose state is gone, which
 # ../workflows/merge-pr.md § 5 removes, records its rounds as null, never as zero, and a
@@ -78,6 +80,13 @@
 #             other phase
 #   escaped   a micro tier whose merged class is small or standard, or a small
 #             tier whose merged class is standard
+#   tier_inputs  the launch record's {estimate, delta, paths}, null on old records
+#   class_reason  the classifier's class: cause= value, separate from class_cause,
+#             which names an unread class
+#   escape_cause  estimate-miss for production-size evidence, path-miss for path
+#             or several-subsystems evidence; null without that evidence or no escape
+#             The cycle line and fleet log retain all three fields; rollup counts
+#             estimate_miss and path_miss.
 #   refixed   a push landed after the first review-gate pass; null where no
 #             gate pass or no push was read
 #   pr_rounds the count of review rounds in the record's `pr_rounds` list,
@@ -197,6 +206,8 @@ if [[ "$VERB" == rollup ]]; then
       + " full_validations=\(sum(.full_validations) | n)"
       + " rounds_unread=\([$c[] | select(.rounds == null)] | length)"
       + " escaped=\([$c[] | select(.escaped == true)] | length)"
+      + " estimate_miss=\([$c[] | select(.escape_cause == "estimate-miss")] | length)"
+      + " path_miss=\([$c[] | select(.escape_cause == "path-miss")] | length)"
       + " refixed=\([$c[] | select(.refixed == true)] | length)"
       + " pr_rounds=\([$c[] | .pr_rounds // empty | [.[] | select(.kind == "review")] | length] | nr(0.5))"
       + " pr_rounds_unread=\([$c[] | select(.pr_rounds == null)] | length)"
@@ -228,12 +239,23 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -n "$ITEM" ]] || usage_error item
 [[ "$PR" =~ ^[1-9][0-9]*$ ]] || usage_error --pr
-case "$TIER" in micro | small | standard) ;; *) usage_error --tier ;; esac
+case "$TIER" in '' | micro | small | standard) ;; *) usage_error --tier ;; esac
 
 if ! lane="$(jq -c --arg item "$ITEM" '[.lanes[]? | select(.item == $item)] | first // empty' "$STATE_FILE")"; then
   refuse state-unreadable "$STATE_FILE"
 fi
 [[ -n "$lane" ]] || refuse record-missing "$ITEM"
+launch_tier="$(jq -r '.tier // empty' <<<"$lane")" || refuse state-unreadable "$STATE_FILE"
+if [[ -n "$launch_tier" ]]; then
+  if [[ -n "$TIER" && "$TIER" != "$launch_tier" ]]; then
+    printf 'oversee-cycle: tier-mismatch item=%s launch=%s given=%s\n' "$ITEM" "$launch_tier" "$TIER" >&2
+    exit 1
+  fi
+  TIER="$launch_tier"
+else
+  printf 'oversee-cycle: launch-tier-missing item=%s\n' "$ITEM" >&2
+fi
+case "$TIER" in micro | small | standard) ;; *) usage_error --tier ;; esac
 [[ -n "$REPO" ]] || REPO="$(jq -r '.repo // empty' <<<"$lane")"
 LANE_HOST_SPEC="$(jq -r '.host // empty' <<<"$lane")"
 LANE_ROOT="$(jq -r '.mail_root // empty' <<<"$lane")"
@@ -278,7 +300,7 @@ other_repo() {
 # the lane against a target it was never measured into. It is read from this
 # checkout, which must be one of the lane's repository: another repository's
 # merge commit is never fetched from this one's origin.
-class="" class_cause=""
+class="" class_cause="" class_reason="" class_evidence=""
 checkout="$(git rev-parse --show-toplevel 2>/dev/null)" || checkout=""
 if [[ -z "$checkout" ]]; then
   class_cause="checkout-absent"
@@ -289,6 +311,9 @@ elif ! base="$(git -C "$checkout" rev-parse --verify -q "$merge^1^{commit}")" \
          && base="$(git -C "$checkout" rev-parse --verify -q "$merge^1^{commit}")"; }; then
   class_cause="merge-commit-absent"
 elif change_class_read "$base" "$merge" "$checkout" "$WORK/class.err"; then
+  class_evidence="$(sed -n 's/^class: class=[^ ]* measured=[^ ]* cause=//p' "$WORK/class.err" | tail -1)" \
+    || refuse class-log-unreadable "$ITEM"
+  class_reason="${class_evidence%% *}"
   if [[ "$CHANGE_CLASS_MEASURED" != true ]]; then
     class_cause="class-unmeasured"
   elif jq -e --arg c "$CHANGE_CLASS" 'has($c)' >/dev/null <<<"$TARGETS"; then
@@ -307,7 +332,8 @@ pauses="$(jq -c '[(.pauses // [])[] | {from: (.from | fromdate), to: (if .to == 
   || refuse pauses-unreadable "$ITEM" "$WORK/pauses.err"
 
 cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson rounds "$rounds" --argjson pauses "$pauses" \
-  --argjson targets "$TARGETS" --arg class "$class" --arg cause "$class_cause" --arg tier "$TIER" '
+  --argjson targets "$TARGETS" --arg class "$class" --arg cause "$class_cause" --arg tier "$TIER" \
+  --arg class_reason "$class_reason" --arg evidence "$class_evidence" '
   # The gate waits of the gap FROM..TO, epoch seconds: an instant a pause
   # covers is paused, any other is the wait the latest push or bot review at
   # or before it opened, bot_wait where neither came yet. A push and a bot
@@ -349,7 +375,8 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
   | (if ($missing | length) > 0 or ($gate // 0) == 0 or $t.push_times == null then null
      else gate_waits($seq[$gate - 1].at; $seq[$gate].at) end) as $waits
   | {pr: $t.pr, class: $class, class_cause: (if $cause == "" then null else $cause end),
-     tier: $tier, stamps: $stamps, target: $target, merge_group: $merge_group, actual: $actual, open: $open,
+     class_reason: (if $class_reason == "" then null else $class_reason end),
+     tier_inputs: $lane.tier_inputs, tier: $tier, stamps: $stamps, target: $target, merge_group: $merge_group, actual: $actual, open: $open,
      verdict: (if $class == null then "unclassified" elif $open == null then "unmeasured"
                elif $open > $target then "miss" else "met" end),
      phase: $dominant.phase, phase_secs: $dominant.secs, gate_waits: $waits,
@@ -361,7 +388,11 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
                else ($tier == "micro" and ($class | IN("small", "standard")))
                  or ($tier == "small" and $class == "standard") end),
      refixed: (if $s.first_gate_met == null or $s.last_push == null then null
-               else $s.last_push > $s.first_gate_met end)}')" \
+               else $s.last_push > $s.first_gate_met end)}
+  | .escape_cause = (if .escaped != true then null
+      elif $class_reason == "several-subsystems" or ($evidence | test("(^| )path=")) then "path-miss"
+      elif ($class_reason | startswith("production-")) then "estimate-miss"
+      else null end)')" \
   || refuse timeline-failed "$PR"
 
 "$WORKFLOW_STATE" ${WS_ARGS[@]+"${WS_ARGS[@]}"} update oversee --arg item "$ITEM" --argjson cycle "$cycle" \
@@ -378,7 +409,8 @@ line="$(jq -r --arg item "$ITEM" 'def n: if . == null then "-" else tostring end
   + " review=\(.rounds.review | n) fix=\(.rounds.fix | n) bot=\(.rounds.bot | n)"
   + " full_validations=\(.rounds.full_validations | n)"
   + " pr_rounds=\(if .pr_rounds == null then null else [.pr_rounds[] | select(.kind == "review")] | length end | n)"
-  + " escaped=\(.escaped | n) refixed=\(.refixed | n)"' <<<"$cycle")"
+  + " escaped=\(.escaped | n) tier_inputs=\(.tier_inputs | n)"
+  + " class_reason=\(.class_reason | n) escape_cause=\(.escape_cause | n) refixed=\(.refixed | n)"' <<<"$cycle")"
 log_row "$ITEM" "$line"
 printf '%s\n' "$line"
 [[ -z "$class_cause" ]] || printf 'oversee-cycle: class-unread cause=%s\n' "$class_cause" >&2

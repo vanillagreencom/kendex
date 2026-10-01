@@ -45,7 +45,9 @@ printf '%s\n' "$*" >> "$CASE/class.calls"
 [[ -f "$CASE/class" ]] || { echo "change-class: cause=stub" >&2; exit 2; }
 measured=true
 [[ ! -f "$CASE/measured" ]] || measured="$(cat "$CASE/measured")"
-printf 'class: class=%s measured=%s cause=stub\n' "$(cat "$CASE/class")" "$measured" >&2
+reason=stub
+[[ ! -f "$CASE/reason" ]] || reason="$(cat "$CASE/reason")"
+printf 'class: class=%s measured=%s cause=%s\n' "$(cat "$CASE/class")" "$measured" "$reason" >&2
 printf 'change_class=%s\n' "$(cat "$CASE/class")"
 SH
 # `cat --item ITEM PATH` serves PATH from the case's host directory, exit 2
@@ -125,9 +127,10 @@ timeline() {
 edit_json() { jq "$2" "$1" > "$1.new" && mv -- "$1.new" "$1"; } # FILE FILTER
 
 record() { # ITEM TIER [ARGS...]
-  local item="$1" tier="$2" rc=0
+  local item="$1" tier="$2" rc=0 tier_args=()
   shift 2
-  (cd "$REPO" && PATH="$TMP_ROOT/bin:$PATH" env -u ORCH_STATE_DIR -u GH_REPO "${RUN_BIN:-$BIN}" --state-dir "$CASE/state" record --pr 7 --tier "$tier" "$@" "$item") \
+  [[ -z "$tier" ]] || tier_args=(--tier "$tier")
+  (cd "$REPO" && PATH="$TMP_ROOT/bin:$PATH" env -u ORCH_STATE_DIR -u GH_REPO "${RUN_BIN:-$BIN}" --state-dir "$CASE/state" record --pr 7 ${tier_args[@]+"${tier_args[@]}"} "$@" "$item") \
     > "$CASE/out" 2> "$CASE/err" || rc=$?
   printf 'rc=%s %s' "$rc" "$(cat "$CASE/out")"
 }
@@ -209,15 +212,15 @@ echo "=== a class the classifier did not give is unclassified, never judged ==="
 new_case unclassified
 timeline 5401
 assert_eq "$(record KEN-1 standard)" \
-  "rc=0 cycle item=KEN-1 pr=7 class=- tier=standard target=- merge_group=- actual=5401 open=5281 verdict=unclassified phase=merged phase_secs=4981 cause=- bot_wait=180 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_validations=- pr_rounds=0 escaped=- refixed=false" \
+  "rc=0 cycle item=KEN-1 pr=7 class=- tier=standard target=- merge_group=- actual=5401 open=5281 verdict=unclassified phase=merged phase_secs=4981 cause=- bot_wait=180 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_validations=- pr_rounds=0 escaped=- tier_inputs=- class_reason=- escape_cause=- refixed=false" \
   "the classifier's refusal records no class and no target"
-assert_eq "$(head -n 1 "$CASE/err")" "oversee-cycle: class-unread cause=classifier-exit-2" "and names the cause on stderr"
+assert_eq "$(grep '^oversee-cycle: class-unread' "$CASE/err")" "oversee-cycle: class-unread cause=classifier-exit-2" "and names the cause on stderr"
 
 new_case unmeasured-class
 printf standard > "$CASE/class"; printf false > "$CASE/measured"
 timeline 1000
 got="$(record KEN-1 micro)"
-assert_eq "$(field class "$got") $(field verdict "$got") $(field escaped "$got")|$(head -n 1 "$CASE/err")" \
+assert_eq "$(field class "$got") $(field verdict "$got") $(field escaped "$got")|$(grep '^oversee-cycle: class-unread' "$CASE/err")" \
   "class=- verdict=unclassified escaped=-|oversee-cycle: class-unread cause=class-unmeasured" \
   "the classifier's fallback to standard, measured=false, is no class"
 
@@ -226,7 +229,7 @@ printf micro > "$CASE/class"
 timeline 1000
 edit_json "$CASE/timeline.json" '.merge_commit = "0123456789abcdef0123456789abcdef01234567"'
 got="$(record KEN-1 micro)"
-assert_eq "$(field class "$got") $(field verdict "$got")|$(head -n 1 "$CASE/err")" \
+assert_eq "$(field class "$got") $(field verdict "$got")|$(grep '^oversee-cycle: class-unread' "$CASE/err")" \
   "class=- verdict=unclassified|oversee-cycle: class-unread cause=merge-commit-absent" \
   "a merge commit neither the checkout nor origin holds is no class"
 
@@ -249,7 +252,7 @@ PR_ROUNDS="$PR_ROUNDS" timeline 1500 300 500
 jq -n '{first_panel: {agents: ["a"]}, rereview_cycles: 2, cycles: 5, pr_comment_review: {iterations: 4},
         validate_rounds: [{mode: "full"}, {mode: "range"}, {mode: "full"}]}' > "$REPO/tmp/workflow-state-KEN-2.json"
 assert_eq "$(record KEN-2 micro)" \
-  "rc=0 cycle item=KEN-2 pr=7 class=micro tier=micro target=1200 merge_group=- actual=1500 open=1380 verdict=miss phase=merged phase_secs=1080 cause=- bot_wait=180 thread_fix=0 paused=0 missing=- review=3 fix=5 bot=4 full_validations=2 pr_rounds=2 escaped=false refixed=true" \
+  "rc=0 cycle item=KEN-2 pr=7 class=micro tier=micro target=1200 merge_group=- actual=1500 open=1380 verdict=miss phase=merged phase_secs=1080 cause=- bot_wait=180 thread_fix=0 paused=0 missing=- review=3 fix=5 bot=4 full_validations=2 pr_rounds=2 escaped=false tier_inputs=- class_reason=stub escape_cause=- refixed=true" \
   "the printed line: a miss whose longest gap ends at the merge, and a push after the first gate pass"
 assert_eq "$(state '.lanes[] | select(.item == "KEN-2") | .cycle | [.class, .tier, .verdict, .stamps]')" \
   "[\"micro\",\"micro\",\"miss\",{\"launched\":\"$(at 0)\",\"first_commit\":\"$(at 60)\",\"pr_opened\":\"$(at 120)\",\"gate_green\":\"$(at 300)\",\"ci_green\":\"$(at 360)\",\"armed\":\"$(at 420)\",\"merged\":\"$(at 1500)\"}]" \
@@ -354,7 +357,7 @@ jq -n --arg merge "$MERGE" --arg fc "$(at 900)" --arg cr "$(at 960)" --arg gate 
   '{pr: 7, merge_commit: $merge, stamps: {first_commit: $fc, created: $cr, last_push: $cr, first_gate_met: null,
     gate_met: $gate, ci_green: $ci, armed: null, queued: $gate, merged: $m}, open_secs: 140, push_times: [], bot_review_times: []}' > "$CASE/timeline.json"
 assert_eq "$(record KEN-3 micro)" \
-  "rc=0 cycle item=KEN-3 pr=7 class=small tier=micro target=1800 merge_group=- actual=1100 open=140 verdict=met phase=merged phase_secs=90 cause=- bot_wait=40 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_validations=- pr_rounds=- escaped=true refixed=-" \
+  "rc=0 cycle item=KEN-3 pr=7 class=small tier=micro target=1800 merge_group=- actual=1100 open=140 verdict=met phase=merged phase_secs=90 cause=- bot_wait=40 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_validations=- pr_rounds=- escaped=true tier_inputs=- class_reason=stub escape_cause=- refixed=-" \
   "launch to first commit, the lane's longest gap, is outside the open span and names no phase; queued stands in for armed, a micro tier merged small escaped, and no gate pass leaves refixed unknown, a timeline with no rounds no pr_rounds"
 
 echo "=== the gate_green phase is split into the waits it holds ==="
@@ -433,7 +436,7 @@ a tier item-tier never prints|KEN-1 start|oversee-cycle: usage=--tier
 ROWS
 edit_json "$CASE/timeline.json" '.merge_commit = null'
 record KEN-1 standard >/dev/null || true
-assert_eq "$(head -n 1 "$CASE/err")" "oversee-cycle: not-merged=7" "a PR with no merge commit writes nothing"
+assert_eq "$(grep '^oversee-cycle: not-merged=' "$CASE/err")" "oversee-cycle: not-merged=7" "a PR with no merge commit writes nothing"
 assert_eq "$(state '[.lanes[] | has("cycle")] | any')" "false" "and no refusal wrote a record"
 
 # --- the repeat-miss bar -----------------------------------------------------
@@ -512,10 +515,10 @@ PS="[$(pr_round review 1200),$(pr_round fix 60),$(pr_round review 900)]"
 jq -n --argjson c "[$(cycle '"micro"' 100 met "$R" false false "$P1"),$(cycle '"micro"' 400 met "$R" true true "$P2"),$(cycle '"micro"' 1000 miss null false null "$P3"),$(cycle '"micro"' 200 met "$R" false false),$(cycle '"render"' 30 met "$R" false false),$(cycle '"standard"' 6000 miss "$R" false true "$PS"),$(cycle null 50 unclassified null null false)]" \
   '{lanes: ([$c | to_entries[] | {item: "KEN-\(.key)", status: "done", cycle: .value}] + [{item: "KEN-99", status: "running"}]), fleet_log: []}' \
   > "$CASE/state/workflow-state-oversee.json"
-want='rollup class=render items=1 median=30 p90=30 misses=0 review=1 fix=2 bot=1 full_validations=1 rounds_unread=0 escaped=0 refixed=0 pr_rounds=- pr_rounds_unread=1 round_median=- fix_median=- rounds_untimed=0
-rollup class=micro items=4 median=200 p90=1000 misses=1 review=3 fix=6 bot=3 full_validations=3 rounds_unread=1 escaped=1 refixed=1 pr_rounds=1 pr_rounds_unread=1 round_median=500 fix_median=900 rounds_untimed=1
-rollup class=standard items=1 median=6000 p90=6000 misses=1 review=1 fix=2 bot=1 full_validations=1 rounds_unread=0 escaped=0 refixed=1 pr_rounds=2 pr_rounds_unread=0 round_median=900 fix_median=60 rounds_untimed=0
-rollup class=unclassified items=1 median=50 p90=50 misses=0 review=- fix=- bot=- full_validations=- rounds_unread=1 escaped=0 refixed=0 pr_rounds=- pr_rounds_unread=1 round_median=- fix_median=- rounds_untimed=0'
+want='rollup class=render items=1 median=30 p90=30 misses=0 review=1 fix=2 bot=1 full_validations=1 rounds_unread=0 escaped=0 estimate_miss=0 path_miss=0 refixed=0 pr_rounds=- pr_rounds_unread=1 round_median=- fix_median=- rounds_untimed=0
+rollup class=micro items=4 median=200 p90=1000 misses=1 review=3 fix=6 bot=3 full_validations=3 rounds_unread=1 escaped=1 estimate_miss=0 path_miss=0 refixed=1 pr_rounds=1 pr_rounds_unread=1 round_median=500 fix_median=900 rounds_untimed=1
+rollup class=standard items=1 median=6000 p90=6000 misses=1 review=1 fix=2 bot=1 full_validations=1 rounds_unread=0 escaped=0 estimate_miss=0 path_miss=0 refixed=1 pr_rounds=2 pr_rounds_unread=0 round_median=900 fix_median=60 rounds_untimed=0
+rollup class=unclassified items=1 median=50 p90=50 misses=0 review=- fix=- bot=- full_validations=- rounds_unread=1 escaped=0 estimate_miss=0 path_miss=0 refixed=0 pr_rounds=- pr_rounds_unread=1 round_median=- fix_median=- rounds_untimed=0'
 rollup() { (cd "$REPO" && "${RUN_BIN:-$BIN}" --state-dir "$CASE/state" rollup) 2>"$CASE/err"; }
 assert_eq "$(rollup)" "$want" "one row per class with a record, in target order, unclassified last"
 assert_eq "$(state '.fleet_log | map(.item) | join(",")')" '"render,micro,standard,unclassified"' "each row joins the fleet log under its class"
@@ -606,5 +609,47 @@ assert_eq "$(field phase "$got") $(field cause "$got") $(field paused "$got")" "
 RUN_BIN=""
 
 echo
+# Launch tier is authoritative, while old records remain visibly unbound.
+new_case launch-tier
+printf standard > "$CASE/class"; timeline 5520
+edit_json "$CASE/state/workflow-state-oversee.json" '.lanes[0] += {tier:"small", tier_inputs:{estimate:12,delta:40,paths:3}}'
+printf 'production-past-small production=328' > "$CASE/reason"
+got="$(record KEN-1 '')"
+assert_eq "$(field tier "$got") $(field class_reason "$got") $(field escape_cause "$got")" \
+  'tier=small class_reason=production-past-small escape_cause=estimate-miss' "stored launch tier needs no hand tier"
+assert_eq "$(state '.lanes[0].cycle | [.tier_inputs, .class_cause, .class_reason, .escape_cause]')" \
+  '[{"estimate":12,"delta":40,"paths":3},null,"production-past-small","estimate-miss"]' "measured reason stays separate from unread-class cause"
+assert_contains "$(state '.fleet_log[-1].text')" 'class_reason=production-past-small escape_cause=estimate-miss' "fleet log retains escape evidence"
+assert_eq "$(record KEN-1 standard)|$(cat "$CASE/err")" \
+  'rc=1 |oversee-cycle: tier-mismatch item=KEN-1 launch=small given=standard' "a hand tier cannot erase a launch escape"
+assert_eq "$(wc -l < "$CASE/class.calls" | tr -d ' ')" '1' "tier mismatch refuses before classification"
+control m-tier-check oversee-cycle '[[ -n "$TIER" && "$TIER" != "$launch_tier" ]]; then' '[[ -n "$TIER" && "$TIER" != "$launch_tier" ]] && false; then'
+assert_contains "$(record KEN-1 standard)" 'rc=0 cycle' "control: disabling the comparison accepts the mismatched tier"
+RUN_BIN=""
+
+# Existing classifier evidence explains misses without another classifier.
+while IFS='|' read -r reason want; do
+  new_case "escape-$want-${reason%% *}"; printf standard > "$CASE/class"; timeline 5520
+  edit_json "$CASE/state/workflow-state-oversee.json" '.lanes[0] += {tier:"small", tier_inputs:{estimate:12,delta:40,paths:3}}'
+  printf '%s' "$reason" > "$CASE/reason"
+  got="$(record KEN-1 small)"
+  assert_eq "$(field escape_cause "$got")" "escape_cause=$want" "escape reason: $reason"
+  assert_contains "$(rollup)" "${want/-/_}=1" "rollup counts the missed input"
+done <<'ROWS'
+production-past-small production=328|estimate-miss
+excluded-path path=.github/workflows/build.yml glob=.github/workflows/*|path-miss
+instruction-file path=AGENTS.md measured-class=micro|path-miss
+several-subsystems production=40|path-miss
+ROWS
+control m-class-reason oversee-cycle 'class_reason="${class_evidence%% *}"' 'class_reason="" # ${class_evidence%% *}'
+got="$(record KEN-1 small)"
+assert_eq "$(field class_reason "$got") $(field escape_cause "$got")" 'class_reason=- escape_cause=-' \
+  "control: discarding the classifier reason turns the escape assertion red"
+RUN_BIN=""
+new_case legacy-tier; printf micro > "$CASE/class"; timeline 1000
+got="$(record KEN-1 micro)"
+assert_contains "$(cat "$CASE/err")" 'oversee-cycle: launch-tier-missing item=KEN-1' "legacy launch warns instead of inventing inputs"
+assert_eq "$(state '.lanes[0].cycle.tier_inputs')" 'null' "legacy inputs remain unknown"
+
 echo "pass: $PASS  fail: $FAIL"
 [[ "$FAIL" -eq 0 ]]

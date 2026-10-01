@@ -39,10 +39,10 @@ Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gate
 Every selected item takes a tier before it launches. `item-tier` assigns it, and its `--help` owns the rule:
 
 ```bash
-.agents/skills/orch/scripts/item-tier --production [ESTIMATE] --path [LOCATION_PATH] --repo [MAIN_REPO_ROOT]
+.agents/skills/orch/scripts/item-tier --production [ESTIMATE] --body [ITEM_BODY_FILE] --path [LOCATION_PATH] --repo [MAIN_REPO_ROOT]
 ```
 
-`[ESTIMATE]` is this session's estimate of the production lines the item adds, made from the body read once under § Lane directive step 2. An `**Expected delta**` line is one input to that estimate and never the tier source; `branch-size-check --help` owns that line. Pass one `--path` per file the item's `**Location**` names, and none when it names none. The output line's `brief=` word is the brief § Lane directive mints:
+`[ESTIMATE]` is this session's estimate of the production lines the item adds, made from the body read once under § Lane directive step 2. Save that body as `[ITEM_BODY_FILE]` and pass it with `--body`; `item-tier` floors the estimate with its Expected delta production count. `branch-size-check --help` owns the header format. Pass every Location path, one `--path` per file, and none when it names none. No Location and no Expected delta means standard. Copy the complete `item-tier` output line into the launch brief so `open-terminal` records `tier_inputs`. The output line's `brief=` word is the brief § Lane directive mints:
 
 - `micro`: `/orch micro [ISSUE_ID]`, which runs [micro.md](micro.md): no dev subagent, no review cycle, no QA cycle.
 - `small`: `/orch small [ISSUE_ID]`, which runs [small.md](small.md): the standard session under thin review bounds.

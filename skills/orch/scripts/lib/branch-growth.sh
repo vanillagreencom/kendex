@@ -6,6 +6,20 @@ branch_growth_fail() {
   return 1
 }
 BRANCH_GROWTH_BASE_REF=""
+# Reads the issue header shared by branch-size-check and item-tier. Missing
+# is permitted; malformed allowance text returns 1 with no numeric result.
+expected_delta_read() { # BODY
+  local line grammar='^(1 line|[2-9] lines|[1-9][0-9]+ lines)(, (1 test line|[2-9] test lines|[1-9][0-9]+ test lines))?$'
+  EXPECTED_DELTA_PRODUCTION="" EXPECTED_DELTA_TEST=""
+  line="$(sed -n 's/^[[:space:]]*[*_]*[Ee]xpected delta[*_]*[[:space:]]*:[[:space:]]*//p' <<<"$1")" || return 1
+  line="${line%%$'\n'*}"
+  line="$(sed 's/[[:space:]]*$//' <<<"$line")" || return 1
+  [[ -z "$line" ]] || {
+    [[ "$line" =~ $grammar ]] || return 1
+    EXPECTED_DELTA_PRODUCTION="${BASH_REMATCH[1]%% *}"
+    EXPECTED_DELTA_TEST="${BASH_REMATCH[3]%% *}"
+  }
+}
 # What a caller outside this package checks before it uses the measurement.
 # A package installed at its own revision can be older than the caller beside
 # it, and a call into a signature this library has not got yet does not fail:

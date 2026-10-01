@@ -25,7 +25,7 @@ mkdir -p "$LAYOUT/orch/scripts/lib" "$LAYOUT/orch/references" \
   "$LAYOUT/harness-ci/scripts/lib"
 cp "$ORCH_DIR/../harness-ci/scripts/lib/change-class.sh" "$LAYOUT/harness-ci/scripts/lib/"
 cp "$ORCH_DIR/scripts/item-tier" "$LAYOUT/orch/scripts/"
-cp "$ORCH_DIR/scripts/lib/change-class.sh" "$LAYOUT/orch/scripts/lib/"
+cp "$ORCH_DIR/scripts/lib/change-class.sh" "$ORCH_DIR/scripts/lib/branch-growth.sh" "$LAYOUT/orch/scripts/lib/"
 cp "$ORCH_DIR/references/narrow-change.conf" "$LAYOUT/orch/references/"
 cat >"$LAYOUT/harness-ci/scripts/change-class" <<'SH'
 #!/usr/bin/env bash
@@ -74,7 +74,9 @@ run_tier() { # CLASS ARG...
   shift
   out="$(env -i PATH="$PATH" TMPDIR="$TMP_ROOT" STUB_ARGV="$STUB_ARGV" STUB_CLASS="$class" \
     "${TIER_BIN:-$TIER}" --repo "$TMP_ROOT" "$@" 2>/dev/null)" || rc=$?
-  out="$(sed -n '1s/^\(tier=[a-z]* brief=[a-z]* cause=[a-z-]*\( class=[a-z]*\)\{0,1\}\).*/\1/p' <<<"$out")"
+  if [[ "${TIER_RAW:-false}" != true ]]; then
+    out="$(sed -n '1s/^\(tier=[a-z]* brief=[a-z]* cause=[a-z-]*\( class=[a-z]*\)\{0,1\}\).*/\1/p' <<<"$out")"
+  fi
   printf '%s' "${out:+$out }rc=$rc"
 }
 
@@ -98,6 +100,7 @@ ROWS=(
   "-|--production 1 --path kendex-local.toml|tier=standard brief=start cause=configuration-source rc=0|a catalog manifest Location takes the classifier's class and cause"
   "-|--production 1 --path .kendex/settings.toml|tier=standard brief=start cause=configuration-source rc=0|a local settings Location takes the classifier's class and cause"
   "-|--production 1 --path src/main.rs|tier=micro brief=micro cause=estimate-within-micro rc=0|a plain source Location keeps the estimate's class"
+  "-|--production 1 --path .github/workflows/build.yml|tier=standard brief=start cause=excluded-path rc=0|a workflow Location is standard at any estimate"
   "-|--production 1 --path src/main.rs --path kendex.settings.toml|tier=standard brief=start cause=configuration-source rc=0|each Location is classified, not only the first"
   "-|--production 1 --path .pi/settings.json|tier=standard brief=start cause=configuration-source rc=0|a registry Location proves no render"
   "-|--production 1 --path CLAUDE.md|tier=standard brief=start cause=instruction-pointer rc=0|an instruction pointer Location proves no render"
@@ -126,6 +129,52 @@ for row in "${ROWS[@]}"; do
   # shellcheck disable=SC2086
   assert_eq "$(run_tier "$class" $args)" "$want" "$name"
 done
+
+# The filer emits Expected delta headers; launch passes the same body file.
+printf '**Expected delta**: %s lines, 1 test line\n' "$((SMALL_MAX + 1))" > "$TMP_ROOT/body"
+printf 'No sizing headers\n' > "$TMP_ROOT/empty-body"
+printf '**Expected delta**: junk\n' > "$TMP_ROOT/bad-body"
+while IFS='|' read -r args want; do
+  assert_eq "$(run_tier - $args)" "$want" "body input: $args"
+done <<ROWS
+--production 1 --body $TMP_ROOT/body|tier=standard brief=start cause=estimate-past-small rc=0
+--body $TMP_ROOT/body|tier=standard brief=start cause=estimate-past-small rc=0
+--production 1 --body $TMP_ROOT/empty-body|tier=standard brief=start cause=body-without-tier-inputs rc=0
+--production 1 --body $TMP_ROOT/empty-body --path src/main.rs|tier=micro brief=micro cause=estimate-within-micro rc=0
+--production 1 --body $TMP_ROOT/bad-body|rc=2
+--production 1 --body $TMP_ROOT/missing|rc=2
+ROWS
+TIER_RAW=true
+assert_eq "$(run_tier - --production 1 --body "$TMP_ROOT/body" --path src/a --path src/b)" \
+  "tier=standard brief=start cause=estimate-past-small production=$((SMALL_MAX + 1)) estimate=1 delta=$((SMALL_MAX + 1)) paths=2 rc=0" \
+  "launch output retains the unfloored estimate, production delta and every path"
+unset TIER_RAW
+
+# The floor control retains the assignment but stops applying the header.
+cp -R "$LAYOUT" "$TMP_ROOT/no-delta-floor"
+awk '$0 == "    production=\"$delta\"" {hits++; print "    production=\"$production\""; next} {print} END {exit hits == 1 ? 0 : 3}' \
+  "$TIER" > "$TMP_ROOT/no-delta-floor/orch/scripts/item-tier"
+if cmp -s "$TIER" "$TMP_ROOT/no-delta-floor/orch/scripts/item-tier"; then
+  echo 'FAIL: delta floor control changed nothing' >&2; exit 1
+fi
+TIER_BIN="$TMP_ROOT/no-delta-floor/orch/scripts/item-tier"
+control_out="$(run_tier - --production 1 --body "$TMP_ROOT/body")"
+if (PASS=0; FAIL=0; assert_eq "$control_out" "tier=standard brief=start cause=estimate-past-small rc=0" "delta floor" >/dev/null; [[ "$FAIL" -eq 0 ]]); then
+  fail "delta floor regression accepts an unapplied delta"
+else
+  pass "delta floor regression turns red without the floor"
+fi
+unset TIER_BIN
+cp -R "$LAYOUT" "$TMP_ROOT/no-body-default"
+awk '$0 == "  consider standard body-without-tier-inputs" {hits++; print "  : # consider standard body-without-tier-inputs"; next} {print} END {exit hits == 1 ? 0 : 3}' \
+  "$TIER" > "$TMP_ROOT/no-body-default/orch/scripts/item-tier"
+if cmp -s "$TIER" "$TMP_ROOT/no-body-default/orch/scripts/item-tier"; then
+  echo 'FAIL: body default control changed nothing' >&2; exit 1
+fi
+TIER_BIN="$TMP_ROOT/no-body-default/orch/scripts/item-tier"
+assert_eq "$(run_tier - --production 1 --body "$TMP_ROOT/empty-body")" \
+  'tier=micro brief=micro cause=estimate-within-micro rc=0' "control: without the body default an unsized brief narrows"
+unset TIER_BIN
 
 # Must-fail control for the hook body row: the list's one-segment glob needs
 # extglob, and a copy without it reads a hook body as off the list.

@@ -213,6 +213,17 @@ elif [[ "$CMD_TEMPLATE" == *"{brief}"* ]]; then
   ot_message brief-file-missing "option=--cmd" >&2
   exit 1
 fi
+# The launch brief is the declared interface, not a harness status read.
+# Its workflow word names what runs; the item-tier line retains the inputs
+# without calling a tracker or classifying the item again. Older callers
+# supply no line, so their inputs are explicitly unknown.
+LAUNCH_TIER_RECORD="$(jq -cn --arg text "$CMD_TEMPLATE"$'\n'"$BRIEF_TEXT" '
+  def count: if . == "-" then null else tonumber end;
+  ([ $text | capture("(?:/orch|/skill:orch|\\$orch|execute the orch) (?<verb>micro|small|start)(?:[[:space:]]|$)"; "i") ] | first | .verb // "start") as $verb
+  | ([ $text | capture("tier=(?:micro|small|standard) brief=(?:micro|small|start) cause=[^\\n]*? estimate=(?<estimate>[0-9]+|-) delta=(?<delta>[0-9]+|-) paths=(?<paths>[0-9]+)") ] | first) as $inputs
+  | {tier: (if $verb == "start" then "standard" else $verb end),
+     tier_inputs: {estimate: ($inputs.estimate // "-" | count), delta: ($inputs.delta // "-" | count), paths: ($inputs.paths // "-" | count)}}
+')" || { ot_message tier-inputs-unreadable "option=--cmd" >&2; exit 1; }
 [[ "$HARNESS" != "codex-app" ]] || { ot_message desktop-harness "harness=$HARNESS" >&2; exit 1; }
 # lane-host owns the setting's reading; it runs from this script's checkout,
 # whose project settings this script loaded, or from the caller's directory
@@ -1287,15 +1298,16 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
     --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$LAUNCH_MODEL" --arg preference_entry "$PREFERENCE_ENTRY" \
     --arg session_id "$session_id" --arg launched_at "$launched_at" --arg status "$status" --argjson prepare "${LAUNCH_PREPARE:-null}" \
     --arg over_cap "$CAP_PASSED" --arg running_at "$running_at" --argjson allow_all "${LAUNCH_ALLOW_ALL:-null}" \
+    --argjson tier_record "$LAUNCH_TIER_RECORD" \
     '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, session_id: $session_id, session_since: $launched_at, launched_at: $launched_at, running_at: $running_at, status: $status, over_cap: $over_cap}
-     | map_values(if . == "" then null else . end) + {allow_all: $allow_all}
+     | map_values(if . == "" then null else . end) + {allow_all: $allow_all} + $tier_record
        + (if $preference_entry == "" then {} else {preference_entry: $preference_entry} end)
        + (if $prepare == null then {} else {prepare: $prepare} end)')" || return 1
   # update-report, so the refusal and the write are one locked step: a wake
   # that names no entry leaves the state as it was and reports so.
   report="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update-report oversee \
     "$UNPARK_JQ"'(.lanes // []) as $l
-     | ($rec | if $mode == "wake" then {session_id, status} elif $mode == "relaunch" then del(.launched_at, .over_cap)
+     | ($rec | if $mode == "wake" then {session_id, status} elif $mode == "relaunch" then del(.launched_at, .over_cap, .tier, .tier_inputs)
        | if .status == "running" then . else del(.harness, .model, .preference_entry, .account, .session_id) end else . end) as $patch
      | if any($l[]; .item == $rec.item)
        then {state: (.lanes = ($l | map(if .item == $rec.item then (if $mode == "wake" then . else del(.prepare) | unpark($rec.launched_at)

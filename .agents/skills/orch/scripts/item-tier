@@ -2,7 +2,7 @@
 # item-tier — the cycle a work item runs: micro, small or standard.
 #
 # Usage:
-#   item-tier [--production N] [--floor CLASS] [--path PATH]...
+#   item-tier [--production N] [--body FILE] [--floor CLASS] [--path PATH]...
 #             [--base REF --head REF] [--repo DIR]
 #
 # Every input names a class, and the widest one wins, in the order
@@ -24,15 +24,18 @@
 #                    `measured=` marker says it did not measure answers
 #                    standard as classifier-unmeasured.
 #
-# At least one of --production, --floor and --base is required. --repo
-# (default .) is the checkout the classifier reads. No `**Expected delta**`
-# line is read here: that line is branch-size-check's optional allowance, and
-# the estimate is the caller's.
+# --body reads the Expected delta production allowance (branch-size-check
+# owns its format) and floors --production with it. With no Location paths
+# and no Expected delta in a supplied body, the launch is standard.
+# At least one of --production, --body, --floor and --base is required.
+# --repo (default .) is the checkout the classifier reads.
 #
 # A ceiling list or a classifier this script cannot read answers standard,
 # naming the cause, never a narrower class.
 #
-# stdout is one line, `tier=CLASS brief=VERB cause=CAUSE[ DETAIL]`. VERB is
+# stdout is one line, `tier=CLASS brief=VERB cause=CAUSE[ DETAIL] estimate=N delta=N paths=N`.
+# open-terminal records these inputs from the launch brief. Missing counts
+# print `-`; paths is the count of --path arguments. VERB is
 # the orch command the launch brief runs: micro, small, or start for
 # standard. CAUSE names the input that decided. Exit 2 is a usage or
 # environment failure, its `item-tier-error: cause=` line naming which, and
@@ -45,6 +48,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NARROW_CONF="$SCRIPT_DIR/../references/narrow-change.conf"
 # shellcheck source=lib/change-class.sh
 . "$SCRIPT_DIR/lib/change-class.sh"
+# shellcheck source=lib/branch-growth.sh
+. "$SCRIPT_DIR/lib/branch-growth.sh"
 
 usage() { sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
 
@@ -58,6 +63,7 @@ need_value() { # FLAG REMAINING
 }
 
 production=""
+body=""
 floor=""
 base=""
 head=""
@@ -66,6 +72,7 @@ paths=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --production) need_value "$1" "$#"; production="$2"; shift 2 ;;
+    --body) need_value "$1" "$#"; body="$2"; shift 2 ;;
     --floor) need_value "$1" "$#"; floor="$2"; shift 2 ;;
     --path) need_value "$1" "$#"; paths+=("$2"); shift 2 ;;
     --base) need_value "$1" "$#"; base="$2"; shift 2 ;;
@@ -87,8 +94,19 @@ esac
 if { [ -n "$base" ] && [ -z "$head" ]; } || { [ -z "$base" ] && [ -n "$head" ]; }; then
   die range-incomplete "--base and --head are given together"
 fi
-[ -n "$production" ] || [ -n "$floor" ] || [ -n "$base" ] ||
-  die no-input "name --production, --floor or --base"
+[ -n "$production" ] || [ -n "$body" ] || [ -n "$floor" ] || [ -n "$base" ] ||
+  die no-input "name --production, --body, --floor or --base"
+
+estimate="$production"
+delta=""
+if [ -n "$body" ]; then
+  body_text="$(cat -- "$body")" || die body-unreadable "cannot read --body '$body'"
+  expected_delta_read "$body_text" || die invalid-delta "--body has a malformed Expected delta"
+  delta="$EXPECTED_DELTA_PRODUCTION"
+  if [ -n "$delta" ] && { [ -z "$production" ] || [ "$delta" -gt "$production" ]; }; then
+    production="$delta"
+  fi
+fi
 
 rank() { # CLASS
   case "$1" in
@@ -108,6 +126,10 @@ consider() { # CLASS CAUSE
     cause="$2"
   fi
 }
+
+if [ -n "$body" ] && [ -z "$delta" ] && [ "${#paths[@]}" -eq 0 ]; then
+  consider standard body-without-tier-inputs
+fi
 
 # The ceilings, read once and only when an estimate needs them.
 micro_max=""
@@ -183,4 +205,5 @@ case "$tier" in
   standard) brief=start ;;
   *) die internal-tier "no tier was decided" ;;
 esac
-printf 'tier=%s brief=%s cause=%s\n' "$tier" "$brief" "$cause"
+printf 'tier=%s brief=%s cause=%s estimate=%s delta=%s paths=%s\n' \
+  "$tier" "$brief" "$cause" "${estimate:--}" "${delta:--}" "${#paths[@]}"
