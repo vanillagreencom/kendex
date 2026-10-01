@@ -34,13 +34,13 @@ const rows: ReplayRow[] = [
 	},
 ];
 
-test("missed exit replay outcomes", () => {
+test("missed exit replay outcomes", async () => {
 	expect.assertions(rows.length + 1);
 	expect(rows.length, "replay table must contain rows").toBeGreaterThan(0);
 	for (const row of rows) {
 		const tasks = row.tasks.map((task) => fakeTask(task));
 		const recorder = recordingHooks(row.sendReturns);
-		const replayed = replayMissedExitsLifecycle(tasks, recorder.hooks);
+		const replayed = await replayMissedExitsLifecycle(tasks, recorder.replayHooks);
 		expect({ replayed, notified: tasks.map((task) => task.exitNotified), hooks: recorder.observe(tasks) }, row.name).toStrictEqual({
 			replayed: row.expected.replayed,
 			notified: row.expected.notified,

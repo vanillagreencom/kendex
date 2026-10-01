@@ -289,14 +289,14 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		if (dirname(task.logFile) === ownLaneDir()) removeTaskLog(task);
 	};
 
-	// Tasks that exited and whose exit wake waits for their log's flush.
+	// Tasks whose exit wake waits for a log flush, queued read or delivery.
 	const exitWakeDue = new WeakSet<ManagedTask>();
 
 	// Keep at most MAX_FINISHED_TASKS finished tasks, dropping the oldest. Each
 	// finished task the bound counts has had its exit reported or never asked
 	// for it: an exit wake goes unsent only during session_shutdown, which
 	// empties the map first, and session_start replays missed exits before it
-	// bounds. A task whose exit wake waits for its log's flush is not counted.
+	// bounds. A task whose exit wake is queued or active is not counted.
 	const boundFinishedTasks = (): number => {
 		const finished = [...tasks.values()].filter((task) => task.status !== "running" && !exitWakeDue.has(task));
 		const excess = finished.length - MAX_FINISHED_TASKS;
@@ -456,23 +456,34 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		return announced;
 	};
 
+	const readExitTail = async (task: ManagedTask) => {
+		if (tasks.get(task.id) !== task || shuttingDown || task.exitNotified) return undefined;
+		const tail = await taskOutput.readTail(task, settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS, activeCtx?.cwd));
+		if (tasks.get(task.id) !== task || shuttingDown || task.exitNotified) return undefined;
+		return tail;
+	};
+
+	const releaseExit = (task: ManagedTask) => {
+		exitWakeDue.delete(task);
+		if (boundFinishedTasks() > 0) persistSnapshots();
+	};
+
 	const sendTaskEvent = (
 		eventType: TaskEventType,
 		task: ManagedTask,
 		options: { eventAt?: number; matchedPattern?: string; newOutputTail?: string; sequence?: number } = {},
 		output?: { text: string; truncated: boolean },
 	): boolean => {
+		if (eventType === "exit" && (tasks.get(task.id) !== task || shuttingDown)) return false;
 		// Lifecycle hooks remain synchronous. A restored exit reads its tail
 		// before marking the wake delivered, and a cleared task gets no wake.
 		if (eventType === "exit" && task.notifyOnExit && !task.exitNotified && task.output.length === 0 && output === undefined) {
 			if (exitWakeDue.has(task)) return false;
 			exitWakeDue.add(task);
-			void taskOutput.readTail(task, settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS, activeCtx?.cwd)).then((tail) => {
-				exitWakeDue.delete(task);
-				if (tasks.get(task.id) !== task || shuttingDown) return;
+			void readExitTail(task).then((tail) => {
+				if (tail === undefined) return;
 				sendExitWakeLifecycle(task, { ...lifecycleHooks, sendTaskEvent: (type, target) => sendTaskEvent(type, target, options, tail) });
-				if (boundFinishedTasks() > 0) persistSnapshots();
-			});
+			}).finally(() => releaseExit(task));
 			return false;
 		}
 		const sent = sendTaskWake({
@@ -649,10 +660,18 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 	// selectMissedExits, so kill -9 / OOM with an orphaned-but-alive child
 	// does not get a fake exit.
 	const replayMissedExits = () => {
-		const replayed = replayMissedExitsLifecycle(tasks.values(), lifecycleHooks);
-		if (replayed > 0) {
-			logBackgroundDiagnostic("replayed missed exit wakes", { replayed, session: activeSessionId ?? "unknown" });
-		}
+		void replayMissedExitsLifecycle(tasks.values(), {
+			...lifecycleHooks,
+			protectExit: (task) => { exitWakeDue.add(task); },
+			releaseExit,
+			sendTaskEvent: async (type, task) => {
+				const tail = await readExitTail(task);
+				if (tail === undefined) return false;
+				return sendTaskEvent(type, task, {}, tail);
+			},
+		}).then((replayed) => {
+			if (replayed > 0) logBackgroundDiagnostic("replayed missed exit wakes", { replayed, session: activeSessionId ?? "unknown" });
+		});
 	};
 
 	// A non-null result is the log writer's hold: the task's output should

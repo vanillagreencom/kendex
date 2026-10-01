@@ -8,6 +8,12 @@ import { join, resolve } from "node:path";
 // one child exceeded a 10000 ms budget. 30000 ms is about 7x that mean and 3x the exceeded value.
 export const SPAWN_FIXTURE_TIMEOUT_MS = 30_000;
 
+/** Wait only for native asynchronous I/O the fixture cannot complete synchronously. */
+export async function waitForSpawnEffects(done: () => boolean, label: string): Promise<void> {
+	for (let waited = 0; waited < 5_000 && !done(); waited += 1) await Bun.sleep(1);
+	assert.ok(done(), label);
+}
+
 export interface ComponentBenchmark {
 	logBytes: number;
 	tailChars: number;

@@ -50,7 +50,7 @@ test("restore followed by missed exit replay", async () => {
 		});
 		// Capture the restore result before replay can change exitNotified.
 		const before = { status: restored.status, closed: restored.closed, exitNotified: restored.exitNotified };
-		const replayed = replayMissedExitsLifecycle([restored], recorder.hooks);
+		const replayed = await replayMissedExitsLifecycle([restored], recorder.replayHooks);
 		expect({ before, replayed, afterNotified: restored.exitNotified, hooks: recorder.observe([restored]) }, row.name).toStrictEqual({
 			before: { status: row.expected.status, closed: row.expected.closed, exitNotified: row.expected.beforeNotified },
 			replayed: row.expected.replayed, afterNotified: row.expected.afterNotified,

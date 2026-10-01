@@ -49,6 +49,7 @@ export function recordingHooks(sendReturns = true) {
 	};
 	return {
 		hooks,
+		replayHooks: { ...hooks, protectExit() {}, releaseExit() {} },
 		observe(tasks: readonly ManagedTask[]) {
 			return {
 				events: events.map(({ type, task, id, reason }) => ({

@@ -8,6 +8,7 @@
 // record the calls.
 
 import { selectMissedExits } from "./snapshot.js";
+import { mapWithConcurrency, PROBE_CONCURRENCY } from "./probes.js";
 import type {
 	BackgroundTaskSnapshot,
 	BackgroundTaskStatus,
@@ -110,22 +111,31 @@ function resolveTerminationReason(
 	return "self-exit";
 }
 
-// Replay 'exit' wakeups for any restored task that hit terminal state
-// without an exit notification. Returns the number of tasks replayed.
-// selectMissedExits gates on (status != running, notifyOnExit, exitNotified === false)
-// so cross-session leaks are filtered upstream.
-export function replayMissedExitsLifecycle(
+/** Replay hooks keep queued and active exits out of finished-history eviction. */
+export interface MissedExitReplayHooks extends Pick<LifecycleHooks, "rememberSnapshot" | "persistSnapshots"> {
+	sendTaskEvent: (eventType: TaskEventType, task: ManagedTask) => boolean | Promise<boolean>;
+	protectExit: (task: ManagedTask) => void;
+	releaseExit: (task: ManagedTask) => void;
+}
+
+/** Replay pending terminal exits, holding each slot through read and delivery. */
+export async function replayMissedExitsLifecycle(
 	tasks: Iterable<ManagedTask>,
-	hooks: LifecycleHooks,
-): number {
+	hooks: MissedExitReplayHooks,
+): Promise<number> {
+	const pending = selectMissedExits(tasks);
+	for (const task of pending) hooks.protectExit(task);
 	let replayed = 0;
-	for (const task of selectMissedExits(tasks)) {
-		const notified = hooks.sendTaskEvent("exit", task);
-		if (!notified) continue;
-		task.exitNotified = true;
-		hooks.rememberSnapshot(task);
-		replayed += 1;
-	}
+	await mapWithConcurrency(pending, PROBE_CONCURRENCY, async (task) => {
+		try {
+			if (!await hooks.sendTaskEvent("exit", task)) return;
+			task.exitNotified = true;
+			hooks.rememberSnapshot(task);
+			replayed += 1;
+		} finally {
+			hooks.releaseExit(task);
+		}
+	});
 	if (replayed > 0) hooks.persistSnapshots();
 	return replayed;
 }
