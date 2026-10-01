@@ -40,8 +40,7 @@ const renderTheme = {
 	inverse: (text: string) => text,
 };
 
-// The pi-tui Container stub in tests/preload.ts renders to [] and only records
-// its children, so expanded output has to be flattened from the child tree.
+// Read both container children and leaf renderers through the same observer.
 function flatten(component: any, width = 220): string {
 	const children = component?.children;
 	if (Array.isArray(children)) return children.map((child) => flatten(child, width)).join("\n");

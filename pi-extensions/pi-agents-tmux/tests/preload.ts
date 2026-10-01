@@ -159,16 +159,21 @@ mock.module("@earendil-works/pi-coding-agent", () => {
 
 mock.module("@earendil-works/pi-tui", () => {
 	class Container {
-		children: unknown[] = [];
-		addChild(child: unknown) { this.children.push(child); }
-		render() { return []; }
+		children: Array<{ render(width: number): string[] }> = [];
+		addChild(child: { render(width: number): string[] }) { this.children.push(child); }
+		render(width: number) { return this.children.flatMap((child) => child.render(width)); }
+	}
+	class Markdown {
+		text: string;
+		constructor(text: string) { this.text = text; }
+		render() { return this.text.split(/\r?\n/); }
 	}
 	class Spacer {
 		render() { return [""]; }
 	}
 	return {
 		Container,
-		Markdown: Container,
+		Markdown,
 		matchesKey() {
 			return false;
 		},

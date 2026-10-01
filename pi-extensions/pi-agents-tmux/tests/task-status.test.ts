@@ -22,7 +22,7 @@ test("control: extension stall selector includes a real stopped task", async () 
 
 test("completion tool and self-completion message use the status presentation owner", () => assertCompletionPresentation());
 for (const indentation of ["\t\t\t", "\t\t"]) test(`control: completion presentation bypasses owner indent=${indentation.length}`, async () => {
-	const mutant = await importRuntimeCopy("index.ts", `${indentation}const tone = taskStatus(statusWord).tone;`, `${indentation}const tone = "error";`) as typeof import("../extensions/subagent/index.js");
+	const mutant = await importRuntimeCopy("index.ts", `\n${indentation}const tone = taskStatus(statusWord).tone;`, `\n${indentation}const tone = "error";`) as typeof import("../extensions/subagent/index.js");
 	await assert.rejects(() => assertCompletionPresentation(mutant.default), assert.AssertionError);
 });
 

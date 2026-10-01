@@ -3,13 +3,13 @@
 // an observer that reads a rendered pane back as `label=value` pairs.
 // Nothing here plants a defect; a row that needs one builds it inline.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import { spyOn } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { AgentConfig } from "../extensions/subagent/agents.js";
 import type { AgentBrowserUiState, AgentPaneStatus, PaneTaskRecord, SubagentDashboardItem } from "../extensions/subagent/types.js";
+import { PANE_LAUNCHER_VERSION } from "../extensions/subagent/types.js";
 import { tempRuntime } from "./single-agent-fixture.js";
 import { clearPackageConfigCache } from "../extensions/subagent/package-config.js";
 import { taskRegistryPath } from "../extensions/subagent/paths.js";
@@ -56,22 +56,36 @@ export async function importRuntimeCopy(fileName: string, before: string, after:
 	return import(copy);
 }
 
-/** Hold a real idle pane on the suite-owned server while the queue checks a live duplicate. */
+/** Check duplicate queueing through the existing pane transport, without launching Pi. */
 export async function assertQueuedPaneDedup(runtime: typeof import("../extensions/subagent/pane.js")): Promise<void> {
 	const root = tempRuntime();
-	const cwd = tempRuntime();
-	const env = { PATH: process.env.PATH, HOME: cwd, TMUX: process.env.TMUX, TMUX_PANE: process.env.TMUX_PANE };
-	assert.ok(env.TMUX, "preload must install the suite-owned tmux server");
-	// The pane stays alive only for this check; finally kills it without launching Pi.
-	const paneId = execFileSync("tmux", ["split-window", "-h", "-d", "-P", "-F", "#{pane_id}", "-c", cwd, "sleep 300"], { encoding: "utf8", env }).trim();
-	const tasks = await import("../extensions/subagent/tasks.js");
+	// The real Linux cwd check reads this process, whose cwd remains alive.
+	const cwd = fs.realpathSync(process.cwd());
+	const paneId = "%42";
+	const previousTmux = process.env.TMUX;
+	process.env.TMUX = join(root, "tmux.sock") + ",0,0";
+	runtime.setPaneExecCaptureForTests(async (command, args) => {
+		assert.equal(command, "tmux");
+		assert.equal(args[0], "display-message", "queue must reuse the seeded pane");
+		const format = args.at(-1);
+		if (format === "#S") return { code: 0, stdout: "test\n", stderr: "" };
+		assert.equal(args[args.indexOf("-t") + 1], paneId);
+		if (format === "#{pane_id}") return { code: 0, stdout: `${paneId}\n`, stderr: "" };
+		assert.equal(format, "#{pane_pid}");
+		return { code: 0, stdout: `${process.pid}\n`, stderr: "" };
+	});
 	try {
+		const tasks = await import("../extensions/subagent/tasks.js");
 		const profile = agent("scout", true);
-		await tasks.writePaneRegistry(root, { scout: { agent: "scout", paneId, cwd, windowName: "scout", sessionFile: join(root, "session.jsonl"), promptFile: "", launcherFile: "", startedAt: "2026-05-14T05:00:00Z" } });
+		await tasks.writePaneRegistry(root, { scout: { agent: "scout", paneId, cwd, windowName: "scout", sessionFile: join(root, "session.jsonl"), promptFile: "", launcherFile: "", launcherVersion: PANE_LAUNCHER_VERSION, startedAt: "2026-05-14T05:00:00Z" } });
 		await tasks.writeTaskRegistry(root, { active: record("scout", "active", "2026-05-14T05:00:00Z", { status: "running", kind: "pane", paneId, task: "map files" }) });
 		const result = await runtime.queuePersistentPaneTask(root, "test", cwd, profile, "map files", undefined, undefined, undefined, { events: { emit() {} } } as unknown as Parameters<typeof runtime.queuePersistentPaneTask>[8]);
-		assert.deepEqual([result.taskId, result.duplicate], ["active", true]);
-	} finally { execFileSync("tmux", ["kill-pane", "-t", paneId], { env }); }
+		assert.deepEqual([result.taskId, result.duplicate], ["active", true], "working task must remain the only queued task");
+	} finally {
+		runtime.setPaneExecCaptureForTests();
+		if (previousTmux === undefined) delete process.env.TMUX;
+		else process.env.TMUX = previousTmux;
+	}
 }
 
 /** A reset removes a queued pane's handoff file; the diagnostics reader must stop calling it queued. */

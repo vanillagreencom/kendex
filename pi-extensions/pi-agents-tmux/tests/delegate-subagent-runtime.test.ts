@@ -5,75 +5,27 @@
 
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import test, { after } from "node:test";
+import test from "node:test";
 import { clearPackageConfigCache } from "../extensions/subagent/package-config.js";
 import { setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
-import { removeSettled } from "./remove-settled.js";
+import { withExtensionTools } from "./extension-fixture.js";
 
-type Execute = (toolCallId: string, params: Record<string, unknown>, signal: undefined, onUpdate: undefined, ctx: unknown) => Promise<{ content: Array<{ text?: string }>; isError?: boolean }>;
+type Execute = (toolCallId: string, params: Record<string, unknown>, signal: undefined, onUpdate: undefined, ctx: unknown) => Promise<{ content: Array<{ text?: string }>; isError?: boolean; details: { results: Array<{ sessionKey?: string }> } }>;
 type Spawn = { args: string[]; env: NodeJS.ProcessEnv | undefined };
 type Agents = Record<string, string[]>;
 
 // Every pane-only marker the parent may carry is set to a sentinel so the
 // success row can read that the child was handed none of them.
 const PARENT_ENV = { PI_BRIDGE_CHILD_ROLE: "bridge-role", PI_BRIDGE_PARENT_SESSION_ID: "bridge-parent", PI_SUBAGENT_CHILD_PANE: "%9", PI_SUBAGENT_PARENT_SESSION_ID: "parent-session" };
-const ENV_KEYS = ["PI_SUBAGENT_CHILD_AGENT", "PI_CODING_AGENT_DIR", ...Object.keys(PARENT_ENV)] as const;
-
-const tempDirs: string[] = [];
-
-// The task-registry writes behind a dispatch are fire-and-forget and can
-// recreate a row's cwd after its removal; sweep once more when the file is
-// done so nothing is left in tmpdir.
-after(async () => {
-	for (const dir of tempDirs) await removeSettled(dir);
-});
+const ENV_KEYS = Object.keys(PARENT_ENV);
 
 function writeAgents(cwd: string, agents: Agents): void {
 	for (const [name, frontmatter] of Object.entries(agents)) {
 		const lines = ["---", `name: ${name}`, `description: ${name} test agent`, ...frontmatter, "---", ""];
 		writeFileSync(join(cwd, ".pi", "agents", `${name}.md`), `${lines.join("\n")}\n`, "utf8");
 	}
-}
-
-function fakeCtx(cwd: string): unknown {
-	return {
-		cwd,
-		hasUI: false,
-		isIdle: () => true,
-		model: undefined,
-		sessionManager: { getBranch: () => [], getSessionFile: () => undefined, getSessionId: () => "test-session-id" },
-		ui: { confirm: async () => true, setStatus: () => undefined, setTitle: () => undefined, setWidget: () => undefined },
-	};
-}
-
-// The extension reads PI_SUBAGENT_CHILD_AGENT once at module load, so each
-// row imports it afresh under its own environment (bun keys its import cache
-// by URL; the query parameter forces a new evaluation).
-async function installTool(): Promise<Execute | undefined> {
-	const url = new URL("../extensions/subagent/index.ts", import.meta.url);
-	url.searchParams.set("t", `${Date.now()}${Math.random().toString(36).slice(2)}`);
-	const extension = (await import(url.href)).default;
-	const bus = new EventEmitter();
-	let execute: Execute | undefined;
-	extension({
-		appendEntry: () => undefined,
-		events: { emit: bus.emit.bind(bus), on: bus.on.bind(bus) },
-		getActiveTools: () => ["delegate_subagent"],
-		getThinkingLevel: () => undefined,
-		on: () => undefined,
-		registerCommand: () => undefined,
-		registerMessageRenderer: () => undefined,
-		registerShortcut: () => undefined,
-		registerTool: (def: { name?: string; execute?: Execute }) => {
-			if (def.name === "delegate_subagent" && typeof def.execute === "function") execute = def.execute;
-		},
-		sendMessage: () => undefined,
-		sendUserMessage: async () => undefined,
-	});
-	return execute;
 }
 
 // A child that announces itself, reports once and exits clean.
@@ -94,18 +46,6 @@ function fakeSpawns(): Spawn[] {
 		return proc;
 	}) as never);
 	return spawns;
-}
-
-// The queued/running/completed registry updates behind a dispatch are
-// fire-and-forget; wait for the terminal one so the row's cwd is settled.
-async function settleRegistry(cwd: string): Promise<void> {
-	const deadline = Date.now() + 2000;
-	while (Date.now() < deadline) {
-		const registry = readdirSync(cwd, { recursive: true }).map(String).find((entry) => entry.endsWith("tasks.json"));
-		if (registry && readFileSync(join(cwd, registry), "utf8").includes('"completed"')) return;
-		await new Promise((resolve) => setTimeout(resolve, 10));
-	}
-	throw new Error("task registry never recorded a completed dispatch");
 }
 
 // A refusal by the guard that wrote it, any other text printed whole; a
@@ -129,37 +69,53 @@ function resultLine(result: Awaited<ReturnType<Execute>>, spawns: Spawn[]): stri
 	}
 	const env = spawns[0]?.env ?? {};
 	const markers = Object.keys(PARENT_ENV).filter((key) => key in env);
-	return `spawned:${env.PI_SUBAGENT_CHILD_AGENT} markers=[${markers.join(",")}] spawns=${spawns.length} task=${JSON.stringify(spawns[0]?.args.at(-1))} text=${JSON.stringify(text)}`;
+	assert.equal(result.details.results.length, 1);
+	const sessionKey = result.details.results[0]!.sessionKey;
+	assert.ok(sessionKey, "delegation must return its child session key");
+	assert.equal(text, `Session: agent=scout sessionKey=${sessionKey}\n\nscout report`);
+	const observed = text.replace(`sessionKey=${sessionKey}`, "sessionKey=<returned-key>");
+	return `spawned:${env.PI_SUBAGENT_CHILD_AGENT} markers=[${markers.join(",")}] spawns=${spawns.length} task=${JSON.stringify(spawns[0]?.args.at(-1))} text=${JSON.stringify(observed)}`;
 }
 
 async function delegateLine(caller: string | undefined, agents: Agents, params: Record<string, unknown>): Promise<string> {
-	const cwd = mkdtempSync(join(tmpdir(), "delegate-subagent-runtime-"));
-	tempDirs.push(cwd);
-	mkdirSync(join(cwd, ".pi", "agents"), { recursive: true });
-	mkdirSync(join(cwd, ".pi-agent-home"), { recursive: true });
-	writeAgents(cwd, agents);
 	const saved = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
-	Object.assign(process.env, PARENT_ENV, { PI_CODING_AGENT_DIR: join(cwd, ".pi-agent-home") });
-	if (caller === undefined) delete process.env.PI_SUBAGENT_CHILD_AGENT;
-	else process.env.PI_SUBAGENT_CHILD_AGENT = caller;
-	clearPackageConfigCache();
+	const url = new URL("../extensions/subagent/index.ts", import.meta.url);
+	url.searchParams.set("t", `${Date.now()}${Math.random().toString(36).slice(2)}`);
+	const extension = (await import(url.href)).default;
+	let observed: string | undefined;
 	try {
-		const execute = await installTool();
-		if (!execute) return "unregistered";
-		const spawns = fakeSpawns();
-		const result = await execute("call-1", params, undefined, undefined, fakeCtx(cwd));
-		if (!result.isError) await settleRegistry(cwd);
-		return resultLine(result, spawns);
+		await withExtensionTools(async (tools, ctx, harness) => {
+			mkdirSync(join(harness.cwd, ".pi", "agents"), { recursive: true });
+			writeAgents(harness.cwd, agents);
+			const execute = tools.get("delegate_subagent")?.execute as Execute | undefined;
+			if (!execute) {
+				observed = "unregistered";
+				return;
+			}
+			const spawns = fakeSpawns();
+			try {
+				const result = await execute("call-1", params, undefined, undefined, ctx);
+				observed = resultLine(result, spawns);
+			} finally { setSingleAgentSpawnForTests(); }
+		}, (pi) => {
+			// The factory captures caller identity. Keep the sentinel pane markers
+			// present through dispatch so the child environment assertion reaches them.
+			Object.assign(process.env, PARENT_ENV);
+			if (caller === undefined) delete process.env.PI_SUBAGENT_CHILD_AGENT;
+			else process.env.PI_SUBAGENT_CHILD_AGENT = caller;
+			clearPackageConfigCache();
+			extension(pi);
+		});
+		assert.notEqual(observed, undefined, "registered delegation observer must run");
+		return observed!;
 	} catch (error) {
 		return `threw:${(error as Error).constructor.name}: ${(error as Error).message}`;
 	} finally {
-		setSingleAgentSpawnForTests();
 		for (const key of ENV_KEYS) {
 			if (saved[key] === undefined) delete process.env[key];
 			else process.env[key] = saved[key];
 		}
 		clearPackageConfigCache();
-		await removeSettled(cwd);
 	}
 }
 
@@ -178,7 +134,7 @@ const rows: Array<[string, string | undefined, Agents, Record<string, unknown>, 
 	["an allowlisted target not on disk", "rust", { rust: ["allowed-subagents: ghost"] }, { agent: "ghost", task: "Ghostly task." }, "refused:target-unknown spawns=0"],
 	["an allowlisted pane target", "rust", { planner: ["pane: true"], rust: ["allowed-subagents: planner"] }, { agent: "planner", task: "Plan a thing." }, "refused:pane-target spawns=0"],
 	["a blank task", "rust", RUST_TO_SCOUT, { agent: "scout", task: "  " }, "refused:no-task spawns=0"],
-	["an allowlisted bg target is spawned as the child with the pane markers stripped", "rust", RUST_TO_SCOUT, { agent: "scout", task: "Map the unknown area." }, 'spawned:scout markers=[] spawns=1 task="Task: Map the unknown area." text="scout report"'],
+	["an allowlisted bg target is spawned as the child with the pane markers stripped", "rust", RUST_TO_SCOUT, { agent: "scout", task: "Map the unknown area." }, 'spawned:scout markers=[] spawns=1 task="Task: Map the unknown area." text="Session: agent=scout sessionKey=<returned-key>\\n\\nscout report"'],
 ];
 
 test("delegate_subagent refuses by guard or spawns the child", async () => {

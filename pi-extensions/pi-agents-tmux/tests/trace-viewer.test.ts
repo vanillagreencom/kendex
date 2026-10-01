@@ -19,8 +19,10 @@ test("trace viewer derives the stopped header tone from task status", async () =
 		},
 	} as unknown as ExtensionContext;
 	await viewer.openTraceViewer(ctx, "task", items);
-	assert.ok(lines.join("\n").includes("<warning>stopped</warning>"));
+	// The frame places metadata after the tab bar and its blank line. The body
+	// also prints status, so only the metadata line can prove the header tone.
+	assert.ok(lines[3]?.includes("<warning>stopped</warning>"));
 	const mutant = await importRuntimeCopy("browser/trace-viewer.ts", 'taskStatus(item.status).tone', '"error"') as typeof viewer;
 	await mutant.openTraceViewer(ctx, "task", items);
-	assert.throws(() => assert.ok(lines.join("\n").includes("<warning>stopped</warning>")), assert.AssertionError);
+	assert.throws(() => assert.ok(lines[3]?.includes("<warning>stopped</warning>")), assert.AssertionError);
 });
