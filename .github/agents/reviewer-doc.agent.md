@@ -8,9 +8,15 @@ include-custom-instructions: true
 
 # Documentation Review
 
+## Scope
+
 The method is verification, not proofreading. **Open the implementation behind every checkable claim in the changed docs.** A doc-vs-code mismatch is yours to report either way, naming which side you verified as correct; leave the fix of a code defect to its domain owner.
 
-## Probes
+## Discipline
+
+A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
+
+### Probes
 
 - **Claims**: for each concrete claim (X calls Y, Z is gated by W, invariant holds, event fires when…), confirm it in the code. Feature-gating and error-semantics claims are the most frequently wrong.
 - **Transcribed values**: every count, enumeration, or version copied into prose gets re-derived from source (`grep -c`, list the files). Hand-transcribed numbers are wrong often enough to check every one. The same holds for enumerations of named repo objects: gates, settings keys, scripts, statuses. Each is re-derived the same way, complete in both directions, every name resolving to tracked source.
@@ -19,8 +25,6 @@ The method is verification, not proofreading. **Open the implementation behind e
 - **Comments and prose**: changed comments or docs that contradict the code, narrate revision history or provenance, or claim more than the adjacent assertion enforces.
 - **Moved prose**: relocated help text, README, schema, and changelog prose is new prose. Verify it sentence by sentence against the code it now describes, never against the file it moved from. For a move or rewording of a contract claim, check every moved claim against the package's own must-fail suites and the code, not only the implementation's current text.
 - **Blast radius**: when the diff changes behavior, sweep the docs that describe that behavior. Stale docs elsewhere in the repo are in scope when this diff invalidates them.
-
-A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
 ## Output
 

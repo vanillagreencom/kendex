@@ -87,3 +87,13 @@ A bare `issues update [ID] --labels "agent:new"` strips every other label; use i
 **Never create a label unprompted** — all label creation requires explicit user authorization, workflow and classification labels included. An `agent:*` label additionally requires the agent definition and the taxonomy entry to exist first; `agent:researcher` is reserved for research issues owned by the researcher agent.
 
 Create only when the taxonomy requires a label the tracker lacks and the user authorizes it. Do not create for a one-off categorization, when an existing label covers the case, or for a project label. After creating, update the taxonomy and rerun preflight before mutating.
+
+## Label drift check
+
+Read every open issue's `agent:` labels against the repository's effective manifest and installed harness files. Done and Canceled issue labels are historical. `agent:multi` and `agent:human` are coordination markers, not launch identities.
+
+| Check | Rule | Result |
+| --- | --- | --- |
+| Routed agent | Each non-marker `agent:X` on an open issue names an enabled agent installed for the repository's execution harness. Check the catalog definition, effective subscription and rendered agent file separately. | Stop and return the issue ID, label, harness, evidence paths and cause: missing catalog definition, missing subscription or missing render. Do not replace a routing label merely because installation is missing. |
+
+An unreadable manifest or incomplete issue inventory stops the check without a verdict.

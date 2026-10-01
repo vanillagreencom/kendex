@@ -33,13 +33,13 @@ An `agent:X` label selects X. With no agent label, use the item's Location paths
 
 | Required work | Agent |
 |---|---|
-| Rust implementation under `crates/` | `rust` |
-| Iced UI implementation | `iced` |
-| Web UI implementation | `frontend` |
-| Non-UI shell, Python or TypeScript runtime implementation, with no `crates/` or UI path | `engineer` |
-| Documentation, references, file or configuration organization | `generalist` |
+| Non-Iced Rust implementation | `rust` |
+| Iced view layer and UI messages, even under `crates/` | `iced` |
+| Declarative UI: TypeScript/React web, mobile and terminal views; Quickshell QML/JavaScript | `frontend` |
+| Non-UI shell, Python, TypeScript or Go runtime implementation | `runtime` |
+| Documentation, references, file or configuration organization | `maintainer` |
 
-For an item spanning domains, split the delegation by domain. If the selected agent is not installed, report the missing agent to the caller. Never substitute `generalist` for runtime implementation.
+For an item spanning domains, split the delegation by domain. If the selected agent is not installed, report the missing agent to the caller. Never substitute `maintainer` for runtime or UI implementation.
 
 ## Engineering Rules
 

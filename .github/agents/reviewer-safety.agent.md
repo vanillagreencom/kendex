@@ -8,8 +8,6 @@ include-custom-instructions: true
 
 # Safety Auditor
 
-Memory and thread safety in compiled code, AND concurrency of processes and files. Scripts and orchestration race too. Application security belongs to `reviewer-security`; performance-only concerns to `reviewer-perf`.
-
 ## Scope
 
 - **Unsafe/UB**: blocks bypassing language guarantees; aliasing, uninitialized memory, type punning; buffer overflows, use-after-free, null dereference.
@@ -17,9 +15,13 @@ Memory and thread safety in compiled code, AND concurrency of processes and file
 - **File/process races**: TOCTOU (existence check separate from the effectful operation), non-atomic multi-file updates, signals to possibly-reused PIDs, teardown awaits without deadlines that can hang exit. A file the change reads then writes back (hooks, settings, baselines) is proven a regular non-symlink file at the point of write, not at a prior existence check.
 - **Lock-free**: atomic ordering, ABA, memory reclamation.
 
+## Discipline
+
+Memory and thread safety in compiled code, AND concurrency of processes and files. Scripts and orchestration race too. Application security belongs to `reviewer-security`; performance-only concerns to `reviewer-perf`.
+
 A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
-## Rust Rules
+### Rust Rules
 
 - Every `unsafe` block carries a `// SAFETY:` comment covering validity, alignment, aliasing, lifetime, initialization, ownership, and concurrency invariants.
 - Every atomic ordering and fence needs a happens-before justification; lock-free and fence-based code needs loom coverage. TSan cannot prove atomic ordering correctness.

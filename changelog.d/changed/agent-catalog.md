@@ -1,0 +1,1 @@
+- **Breaking:** Update subscriptions and routes: generalist to maintainer; engineer to runtime. Frontend covers React/QML/JavaScript UI; runtime adds non-UI Go. Rust excludes Iced views.

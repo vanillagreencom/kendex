@@ -84,10 +84,11 @@ The full per-tool facts are in [docs/adapters](docs/adapters/README.md).
 
 The default catalog includes implementation and maintenance agents:
 
-- [engineer](agents/engineer.md): non-UI runtime code in shell, Python and TypeScript.
-- [rust](agents/rust.md): Rust systems implementation and performance work.
+- [runtime](agents/runtime.md): non-UI runtime code in shell, Python, TypeScript and Go.
+- [rust](agents/rust.md): non-Iced Rust implementation and performance work.
 - [iced](agents/iced.md): Iced desktop UI implementation.
-- [generalist](agents/generalist.md): documentation, references and configuration organization.
+- [frontend](agents/frontend.md): declarative web, mobile and terminal UI, including React and Quickshell QML/JavaScript.
+- [maintainer](agents/maintainer.md): documentation, references and configuration organization.
 
 ## Documentation
 

@@ -31,7 +31,7 @@ project-management = '''
 
 Require one agent and one surface label. Surface means where a person meets the work. Agent names are declared by LINEAR_AGENT_LABELS in kendex.settings.toml. Labels outside these categories are legacy and are not assigned.
 
-Scope: `cli`, `harness` and `skills` belong to team `kendex`. All other labels in this taxonomy have workspace scope. `1.0` identifies kendex’s release set and requires team scope in a separately approved migration.
+Scope: `cli`, `harness` and `skills` belong to team `kendex`. All agent labels are excluded from team scope. All other labels in this taxonomy have workspace scope. `1.0` identifies kendex’s release set and requires team scope in a separately approved migration.
 
 Brad Mahaffey owns shared label names and scope. Follow the Linear skill’s Shared label maintenance procedure for definition changes.
 
@@ -62,7 +62,7 @@ harnesses = [
 ]
 method = "symlink"
 
-[agents.engineer]
+[agents.runtime]
 source = "."
 harnesses = [
     "claude",
@@ -72,7 +72,17 @@ harnesses = [
 ]
 enabled = true
 
-[agents.generalist]
+[agents.maintainer]
+source = "."
+harnesses = [
+    "claude",
+    "codex",
+    "pi",
+    "copilot",
+]
+enabled = true
+
+[agents.frontend]
 source = "."
 harnesses = [
     "claude",
@@ -582,7 +592,7 @@ harnesses = [
 ]
 enabled = true
 
-[agent-frontmatter.claude.engineer]
+[agent-frontmatter.claude.runtime]
 effort = "high"
 color = "orange"
 deny-tools = [
@@ -591,8 +601,17 @@ deny-tools = [
 ]
 background = false
 
-[agent-frontmatter.claude.generalist]
+[agent-frontmatter.claude.maintainer]
 color = "green"
+deny-tools = [
+    "Agent",
+    "AskUserQuestion",
+]
+background = false
+
+[agent-frontmatter.claude.frontend]
+effort = "high"
+color = "cyan"
 deny-tools = [
     "Agent",
     "AskUserQuestion",
@@ -718,26 +737,37 @@ deny-tools = [
 ]
 background = true
 
-[agent-frontmatter.codex.engineer]
+[agent-frontmatter.codex.runtime]
 sandbox-mode = "danger-full-access"
 nickname-candidates = [
-    "Engineer-Atlas",
-    "Engineer-Delta",
-    "Engineer-Echo",
-    "Engineer-Nova",
-    "Engineer-Orion",
-    "Engineer-Vector",
+    "Runtime-Atlas",
+    "Runtime-Delta",
+    "Runtime-Echo",
+    "Runtime-Nova",
+    "Runtime-Orion",
+    "Runtime-Vector",
 ]
 
-[agent-frontmatter.codex.generalist]
+[agent-frontmatter.codex.maintainer]
 sandbox-mode = "danger-full-access"
 nickname-candidates = [
-    "Generalist-Atlas",
-    "Generalist-Delta",
-    "Generalist-Echo",
-    "Generalist-Nova",
-    "Generalist-Orion",
-    "Generalist-Vector",
+    "Maintainer-Atlas",
+    "Maintainer-Delta",
+    "Maintainer-Echo",
+    "Maintainer-Nova",
+    "Maintainer-Orion",
+    "Maintainer-Vector",
+]
+
+[agent-frontmatter.codex.frontend]
+sandbox-mode = "danger-full-access"
+nickname-candidates = [
+    "Frontend-Atlas",
+    "Frontend-Delta",
+    "Frontend-Echo",
+    "Frontend-Nova",
+    "Frontend-Orion",
+    "Frontend-Vector",
 ]
 
 [agent-frontmatter.codex.iced]
@@ -905,7 +935,7 @@ nickname-candidates = [
     "TPM-Vector",
 ]
 
-[agent-frontmatter.pi.engineer]
+[agent-frontmatter.pi.runtime]
 color = "orange"
 deny-tools = [
     "subagent",
@@ -917,8 +947,20 @@ deny-tools = [
 allowed-subagents = ["scout"]
 pane = true
 
-[agent-frontmatter.pi.generalist]
+[agent-frontmatter.pi.maintainer]
 color = "green"
+deny-tools = [
+    "subagent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "question",
+]
+allowed-subagents = ["scout"]
+pane = true
+
+[agent-frontmatter.pi.frontend]
+color = "cyan"
 deny-tools = [
     "subagent",
     "get_subagent_result",

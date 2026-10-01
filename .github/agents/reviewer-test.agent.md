@@ -8,15 +8,17 @@ include-custom-instructions: true
 
 # Test Review
 
-The highest-value question is not "is there a test?" but "**can this test still fail?**" Hunt for tests that stay green when the behavior they guard is weakened, inverted, or deleted.
-
 ## Scope
 
 Coverage of changed paths (branches, error paths, boundaries), test quality, determinism, environment assumptions. Leave the underlying product bug to `reviewer-correctness`. You report the missing or weak test. Demand tests that catch real bugs, not coverage theater.
 
+## Discipline
+
+The highest-value question is not "is there a test?" but "**can this test still fail?**" Hunt for tests that stay green when the behavior they guard is weakened, inverted, or deleted.
+
 A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
-## Probes
+### Probes
 
 - **Must-fail control**: every changed behavioral surface with a test must be shown able to fail: a planted-defect fixture, red-first evidence, or a mutation check. A new or modified production gate or guard takes one control per rule it enforces; every other changed surface takes one control, however many rows invoke it, or the statement `.agents/skills/code-quality/SKILL.md` § Tests takes in its place. A guard nobody has seen fail is unverified. A control that deletes the code under test only proves the assertion runs; for any guard matching source text, the required control is the inverse: keep the matched text, remove the behavior. The guard must still fail. Never demand a battery beyond those controls. Authoring copy: `.agents/skills/code-quality/SKILL.md` § Prove Your Guards and § Tests.
 - **Fixture reaches the bound**: a "20-page cap" test whose fixture exits at page 2 proves nothing. Verify the fixture actually drives the guarded limit, not a prior guard.

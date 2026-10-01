@@ -115,7 +115,7 @@ reset(); first=run()
 assert len(first['writes'])==1
 issue=first['issues'][0]
 assert results==[{'root':10,'issue':issue['html_url'],'note':'Filed for upstream confirmation'}]
-assert issue['labels']==['bug','ci-infra','agent:generalist']
+assert issue['labels']==['bug','ci-infra','agent:maintainer']
 assert issue['title'].startswith('[kendex-render:')
 assert 'Reached by:' in issue['body'] and env['GITHUB_RUN_ID'] in issue['body']
 assert findings[0]['path'] in issue['body'] and findings[0]['url'] in issue['body']

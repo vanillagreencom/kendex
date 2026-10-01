@@ -27,7 +27,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 Require one agent and one surface label. Surface means where a person meets the work. Agent names are declared by LINEAR_AGENT_LABELS in kendex.settings.toml. Labels outside these categories are legacy and are not assigned.
 
-Scope: `cli`, `harness` and `skills` belong to team `kendex`. All other labels in this taxonomy have workspace scope. `1.0` identifies kendex’s release set and requires team scope in a separately approved migration.
+Scope: `cli`, `harness` and `skills` belong to team `kendex`. All agent labels are excluded from team scope. All other labels in this taxonomy have workspace scope. `1.0` identifies kendex’s release set and requires team scope in a separately approved migration.
 
 Brad Mahaffey owns shared label names and scope. Follow the Linear skill’s Shared label maintenance procedure for definition changes.
 

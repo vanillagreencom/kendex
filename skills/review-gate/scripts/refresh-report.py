@@ -161,7 +161,7 @@ def main():
                         url = result["html_url"]
                 else:
                     created = api("issues", {"title": title, "body": body,
-                                            "labels": ["bug", label, "agent:generalist"]})
+                                            "labels": ["bug", label, "agent:maintainer"]})
                     url = filed = created["html_url"]
                     open_issues.append(created)
                     note = "Filed for upstream confirmation"

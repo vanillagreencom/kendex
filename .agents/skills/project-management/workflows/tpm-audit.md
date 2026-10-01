@@ -209,6 +209,7 @@ Skip Done and Canceled issues throughout; their metadata is historical.
 |-------|------|--------|
 | Priority | In `A blocks B` with both active, A's priority must not be lower-urgency than B's; a `critical-path` label demands P1. Proposed issues with no priority are skipped | `priority_misalignment[]`: `{id, current, should_be, reason}` |
 | Agent label | Compare the issue's `agent` category label against its content and resolved target path (`ls`, `rg -n "pub fn\|export function\|def "`). In `docs-only` mode infer ownership from the contract, project definition, and documented paths | `agent_mismatch[]`: `{id, current, should_be, reason, signals[]}` |
+| Routed agent | Apply [labels § Label drift check](../references/labels.md#label-drift-check) against the repository's effective install | Stop and return its installation evidence to the caller. An installation failure alone is not `agent_mismatch[]` |
 | Label co-occurrence | An issue missing a required taxonomy category whose title or description matches 2+ detection signals for it | `label_cooccurrence[]`: `{id, title, present, missing, reason}` |
 
 Validate every recommended replacement against the § 1.2 inventory first. If the desired label does not exist or is a parent/group label, state the failure in `reason` and recommend no mutation.

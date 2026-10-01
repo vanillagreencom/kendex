@@ -10,17 +10,19 @@ tags: [review]
 
 # Correctness Review
 
-Does the changed code still do what the product intends, for every input, caller, and consumer? Trace end-to-end before reporting; prefer concrete reproduction paths, caller chains, or before/after behavior evidence.
-
 ## Scope
 
 Behavior regressions; API/CLI/contract compatibility (including two components implementing one contract, such as validator pairs and writer/reader conventions, drifting apart); cross-module side effects; feature-gate leaks; data/migration/state semantics, including idempotency of interrupted-then-retried flows; developer-workflow breakage (report only changes to how contributors build, run, configure, or connect, not routine dependency bumps). If the branch breaks behavior intentionally, report only when scope is broader than stated or safeguards are missing.
 
 Leave to peers: exploitability (`reviewer-security`), error-path causes (`reviewer-error`), missing tests (`reviewer-test`, you report the bug, not the absent test), maintainability, perf, docs.
 
+## Discipline
+
+Does the changed code still do what the product intends, for every input, caller, and consumer? Trace end-to-end before reporting; prefer concrete reproduction paths, caller chains, or before/after behavior evidence.
+
 A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
-## Boundary Probes
+### Boundary Probes
 
 For each changed predicate, parser, or guard, mentally execute:
 
@@ -38,11 +40,11 @@ For each changed predicate, parser, or guard, mentally execute:
 - **Staged vs worktree.** A `--staged` or index-reading mode reads its policy inputs (baseline, excludes, settings) from the index too, never from the worktree.
 - **Workflow order.** A `→ §N` route, a `Skip if`, or a `[PLACEHOLDER]` the diff adds to a workflow is executed in document order; name the section that runs it and the line that binds the placeholder, or the route is a finding.
 
-## Removed Behavior
+### Removed Behavior
 
 For every line the diff deletes or replaces, name the invariant or behavior it enforced, then find where the new code re-establishes it. Not re-established → a finding: a removed guard, a dropped error path, a narrowed validation, a deleted test that covered a real case.
 
-## Wrapper Routing
+### Wrapper Routing
 
 When a change adds or modifies a type wrapping another (cache, proxy, decorator, adapter):
 
