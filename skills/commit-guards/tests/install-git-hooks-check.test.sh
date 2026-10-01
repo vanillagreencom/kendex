@@ -246,7 +246,8 @@ run_rows \
 
 echo "=== a pulled render leaves an older helper until the installer re-arms it ==="
 # Removing the stamp reproduces the helper body written by the unstamped
-# installer. A mismatched stamp covers helpers from other installer versions.
+# installer. A pulled render changes the payload but leaves the installed
+# helper and its installer-generated stamp untouched.
 fx_previous_helper() {
   armed "${1:-previous-helper}"
   assert_eq "the previous body removes one stamp" "1" \
@@ -255,7 +256,10 @@ fx_previous_helper() {
 }
 fx_older_stamp() {
   armed "${1:-older-stamp}"
-  edit "$R/.git/hooks/kendex-guards" 's/^# kendex-guards-helper-version=.*/# kendex-guards-helper-version=old/'
+  local body="$R/.agents/skills/commit-guards/scripts/lib/helper-body.sh" matches=""
+  matches="$(grep -cFx 'mode="${1-}"' "$body")" || return 1
+  assert_eq "the pulled render changes one payload line" "1" "$matches"
+  edit "$body" 's/^mode="${1-}"$/mode="${1:-}"/'
 }
 fx_helper_rearmed() {
   fx_older_stamp rearmed-stamp
@@ -266,22 +270,24 @@ fx_wt_previous_helper() {
   worktree_of wt-previous-helper
   edit "$R/.git/hooks/kendex-guards" '/^# kendex-guards-helper-version=/d'
 }
-# The copied checker keeps its version comparison but drops the refusal.
-# The previous-body row's drift assertion then turns red: the helper is armed.
+# Freeze the copied installer's stamp at the installed version after pulling
+# a changed payload. The older-stamp row's exact drift assertion then fails:
+# byte verification reports unknown and loses the main-checkout remedy.
 fx_blind_version() {
-  fx_previous_helper blind-helper
-  local checker="$R/.agents/skills/commit-guards/scripts/lib/hook-check.sh"
-  assert_eq "the version control mutates one refusal" "1" \
-    "$(grep -cF 'add_reason helper-outdated ' "$checker")"
-  edit "$checker" '/add_reason helper-outdated /{n;s/return 1/return 0/;}'
+  fx_older_stamp blind-helper
+  local body="$R/.agents/skills/commit-guards/scripts/lib/helper-body.sh" stamp="" matches=""
+  stamp="$(sed -n 's/^# kendex-guards-helper-version=//p' "$R/.git/hooks/kendex-guards")" || return 1
+  matches="$(grep -cFx '  version="$(helper_payload | cksum)" || return 1' "$body")" || return 1
+  assert_eq "the version control freezes one checksum" "1" "$matches"
+  edit "$body" "s/^  version=.*$/  version=\"$stamp\"/"
 }
 OUTDATED="helper-outdated=kendex-guards fix=.agents/skills/commit-guards/scripts/install-git-hooks (run from the main checkout)"
 run_rows \
   "the previous helper body is drift with its main-checkout installer|fx_previous_helper||check||rc=1 $NA$OUTDATED|" \
-  "an older stamp is the same keyed drift|fx_older_stamp||check||rc=1 $NA$OUTDATED|" \
-  "control: the current helper body reads armed after re-arming|fx_helper_rearmed||check||rc=0 $ARMED_CHECK|$FRESH" \
+  "a pulled payload change makes the installed stamp outdated with its main-checkout installer|fx_older_stamp||check||rc=1 $NA$OUTDATED|$FRESH" \
+  "control: the current helper body reads armed after re-arming|fx_helper_rearmed||check||rc=0 $ARMED_CHECK|" \
   "a worktree names the main-checkout installer, not its own absolute path|fx_wt_previous_helper||check-wt||rc=1 $NA$OUTDATED|" \
-  "must-fail: dropping the version refusal calls the previous body armed|fx_blind_version||check||rc=0 $ARMED_CHECK|"
+  "must-fail: a frozen stamp loses the pulled-render drift and remedy|fx_blind_version||check||rc=2 $CND$UNVERIFIED|$FRESH"
 
 echo "=== usage ==="
 fx_fresh() { R="$(new_repo fresh)"; }
