@@ -143,6 +143,8 @@ export async function stalledHttpServer(t: Pick<TestContext, "after">, transport
 	const closed = new Promise<void>(resolve => { close = resolve; });
 	let upgrade: () => void = () => {};
 	const upgraded = new Promise<void>(resolve => { upgrade = resolve; });
+	let clientEnd: () => void = () => {};
+	const clientEnded = new Promise<void>(resolve => { clientEnd = resolve; });
 	const sockets = new Set<import("node:net").Socket>();
 	const server = createServer((_request, response) => {
 		response.writeHead(200, { "content-type": "text/event-stream" });
@@ -155,9 +157,9 @@ export async function stalledHttpServer(t: Pick<TestContext, "after">, transport
 	server.on("upgrade", (request, socket) => {
 		upgrade();
 		if (transport === "connect") {
-			// Upgraded HTTP sockets allow half-open connections. Consume the
-			// client's FIN and finish the peer side without fixture teardown.
-			socket.on("end", () => socket.end());
+			// An HTTP upgrade leaves the peer half-open. Draining exposes
+			// client EOF before we finish the peer side, without fixture teardown.
+			socket.on("end", () => { clientEnd(); socket.end(); });
 			socket.resume();
 			return;
 		}
@@ -176,7 +178,7 @@ export async function stalledHttpServer(t: Pick<TestContext, "after">, transport
 	});
 	const address = server.address();
 	assert.ok(address && typeof address !== "string");
-	return { url: `http://127.0.0.1:${address.port}/backend-api`, closed, upgraded };
+	return { url: `http://127.0.0.1:${address.port}/backend-api`, closed, upgraded, clientEnded };
 }
 
 type Listener = (event: unknown) => void;

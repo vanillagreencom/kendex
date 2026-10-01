@@ -17,6 +17,7 @@ for (const row of [
 		const result = await withinDeadline(runCodexProvider({ transport: "websocket", ...row.options, signal: controller.signal }, { baseUrl: server.url }));
 		assert.equal(result.stopReason, "error");
 		assert.equal(result.errorMessage?.split("\n")[0], row.key);
+		if (row.mode === "connect") await withinDeadline(server.clientEnded);
 		await withinDeadline(server.closed);
 	});
 }
@@ -31,6 +32,7 @@ test("parent cancellation terminates a stalled WebSocket upgrade", async (t) => 
 	await withinDeadline(server.upgraded);
 	controller.abort();
 	assert.equal((await withinDeadline(pending)).stopReason, "aborted");
+	await withinDeadline(server.clientEnded);
 	await withinDeadline(server.closed);
 });
 
