@@ -130,7 +130,8 @@ FULL_GUARD=1
 echo "=== full validation checks document growth from the branch's merge base ==="
 # A lane can start with a document already in the margin. Only its own
 # growth must fail, even when origin/main later grows the same document.
-GUARD_TEST_ENV=(-i "PATH=$PATH" "HOME=$TMP")
+# The Bash 3.2 container uses host-owned storage, outside the fixture's cleanup.
+GUARD_TEST_ENV=(-i "PATH=$PATH" "HOME=$HOME")
 git -C "$R" config gc.auto 0
 git -C "$R" config maintenance.auto false
 mkdir -p "$R/docs"
@@ -498,7 +499,7 @@ gated_skipped() { # — neither a cross target nor cargo doc, and the host test 
     grep -qFx "test --workspace --quiet" "$CARGO_CALL_LOG"
 }
 # RC CALLS TEXT — the last run exited RC, ran (run) or skipped (skip) both
-# checks, and printed TEXT; a run with no TEXT printed no notice.
+# checks, and printed TEXT; a run with no TEXT printed no cross-doc notice.
 gated_verdict() {
   [ "$RC" -eq "$1" ] || return 1
   case "$2" in
@@ -509,7 +510,7 @@ gated_verdict() {
   if [ -n "$3" ]; then
     [[ "$OUT" == *"$3"* ]]
   else
-    [[ "$OUT" != *"guard-note:"* ]]
+    [[ "$OUT" != *"guard-note: cross-doc-skipped="* ]]
   fi
 }
 # One row per input the gate decides on: TOUCH|SETTING|BASE|ENV|RC|CALLS|TEXT|LABEL.
@@ -540,6 +541,10 @@ ROWS
 # One control per rule: each mutant removes that rule from a guard copy, and
 # the row the rule decides turns to the verdict the rule was there to refuse.
 # An edit carries no |, the column separator. EDIT|TOUCH|SETTING|BASE|ENV|RC|CALLS|TEXT|LABEL.
+base_rule_matches="$(grep -c '^  \[ "\$base_resolved" -eq 1 \].*rust_input=1$' "$GUARD")" \
+  || { echo 'cross-doc control: base rule match failed' >&2; exit 1; }
+[ "$base_rule_matches" -eq 1 ] \
+  || { echo 'cross-doc control: base rule edit has no unique match' >&2; exit 1; }
 before=$((PASS + FAIL))
 while IFS='|' read -r edit touch setting base extra rc calls text label; do
   [ -n "$edit" ] || continue
@@ -560,7 +565,7 @@ s/if \[ "\$cross_doc" = ci \]; then/if false; then/|crates/app/src/mine.rs|ci|ma
 s/say cross-doc-setting "\$cross_doc"; //|crates/app/src/mine.rs|never|main||0|run||with the refusal removed an unknown setting passes
 /\[ -n "\$touched" \]/d|-||main||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the empty-set rule removed a branch that touches nothing skips both
 /^  workspace_every=1$/d|docs/notes.md||main|FAIL_FIND=1|1|skip|guard: rust-reads=crates|with the failed read left undecided a prose file skips both
-/\[ "\$base_resolved" -eq 1 \]/d|docs/notes.md||none||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the base rule removed a committed crate change with no origin/main skips both
+s/^\(  \[ "\$base_resolved" -eq 1 \].*rust_input=1\)$/  : #\1/|docs/notes.md||none||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the base rule removed a committed crate change with no origin/main skips both
 ROWS
 [ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the cross-doc gate controls" >&2; exit 2; }
 rm -f "$R/fake-bin/find"
