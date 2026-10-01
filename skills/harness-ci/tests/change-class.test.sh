@@ -204,6 +204,63 @@ excluded-path|standard|dirty|.github/workflows/ci.yml:3
 CASES
 require_rows change-class-table "$table_rows"
 
+# Refresh can retire an entire hook or agent, leaving no passing head row
+# for that position. Base ownership and the verified head inventory decide
+# the deletion, including a deleted file under a still-installed skill tree.
+removed_repo=$(new_repo removed-render)
+commit_paths "$removed_repo" 'recorded renders' .codex/agents/rust.md .agents/skills/orch/app.ts
+removed_base=$(git -C "$removed_repo" rev-parse HEAD)
+removed_rows=0
+while IFS='|' read -r label path inventory verifier want cause; do
+  removed_rows=$((removed_rows + 1))
+  git -C "$removed_repo" checkout -q -B removal "$removed_base"
+  rm -- "$removed_repo/$path"
+  if [ "$inventory" = absent ]; then
+    jq --arg path "$path" 'map(select(. != $path))' "$removed_repo/.kendex-generated.json" \
+      >"$SANDBOX/removed-inventory"
+    mv -- "$SANDBOX/removed-inventory" "$removed_repo/.kendex-generated.json"
+  fi
+  git -C "$removed_repo" add -A
+  git -C "$removed_repo" commit -q -m "$label"
+  set_verifier "$verifier"
+  PATH="$stub_bin:$PATH" assert_class "$label" "$want" --repo "$removed_repo" --event pull_request \
+    --base "$removed_base" --head HEAD
+  if [ "$cause" != - ]; then
+    removed_err=$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$removed_repo" \
+      --event pull_request --base "$removed_base" --head HEAD 2>&1 >/dev/null)
+    assert_eq "$label names the refusal" "cause=$cause path=$path" \
+      "$(sed -n 's/^class: class=standard measured=false //p' <<<"$removed_err")"
+    unsanctioned_head=$(git -C "$removed_repo" rev-parse HEAD)
+  fi
+done <<'REMOVALS'
+retired render with no head position|.codex/agents/rust.md|absent|clean|render|-
+retired file under a surviving skill tree|.agents/skills/orch/app.ts|absent|clean|render|-
+a deletion still named in the head inventory|.codex/agents/rust.md|retained|clean|standard|render-path-unowned
+a deletion under a tree still named in the head inventory|.agents/skills/orch/app.ts|retained|clean|standard|render-path-unowned
+verify refuses an unsanctioned deletion|.codex/agents/rust.md|absent|dirty|standard|-
+REMOVALS
+require_rows change-class-removals "$removed_rows"
+
+# Must-fail control: keep the membership expression but discard its answer.
+removal_mutant="$SANDBOX/removal-mutant.sh"
+perl -e '
+  local $/;
+  my $text = <>;
+  my $old = q{all(.[]; (if type == "string" then . else .path end) != $path)};
+  my $count = () = $text =~ /\Q$old\E/g;
+  die "removal-control: anchor=$count\n" unless $count == 1;
+  my $changed = $text;
+  $changed =~ s/\Q$old\E/$old or true/;
+  die "removal-control: mutation=unchanged\n" if $changed eq $text;
+  print $changed;
+' "$CHANGE_CLASS" >"$removal_mutant"
+removal_class=$(plant "$SANDBOX/removal-control" change-class "$removal_mutant")
+set_verifier clean
+control_out=$(PATH="$stub_bin:$PATH" "$removal_class" --repo "$removed_repo" \
+  --event pull_request --base "$removed_base" --head "$unsanctioned_head" 2>/dev/null)
+assert_eq "the removal control turns the unsanctioned-deletion row red" \
+  change_class=render "$control_out"
+
 # `standard` is two answers in one word, and `measured=` is the only thing
 # that separates them. Both shapes, from the same fixtures the table above
 # uses: a rule that names standard as its verdict, and the fallback taken when

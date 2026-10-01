@@ -34,6 +34,7 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/skill-load-check.sh}"
+CARRIER="${CARRIER_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/skill-load-record.sh}"
 
 PASS=0
 FAIL=0
@@ -534,6 +535,65 @@ tools_table() { # TOOLS
   [ "$((PASS + FAIL))" -gt "$before" ] || { echo "tools: no row was asserted" >&2; exit 2; }
 }
 tools_table "jq git cat grep dirname"
+
+# The current engine scopes companion requirements by harness. The released
+# engines do not, so the catalog proof must run their actual planner.
+RELEASE_HOME="$TMP_ROOT/release-home"
+mkdir -p "$RELEASE_HOME/.local/bin"
+env -i PATH="$RELEASE_HOME/.local/bin:$PATH" HOME="$RELEASE_HOME" \
+  XDG_DATA_HOME="$RELEASE_HOME/data" sh "$TEST_DIR/../../install.sh" \
+  --version v1.3.0 --cli-only >"$TMP_ROOT/install.log" 2>&1 || {
+    cat "$TMP_ROOT/install.log" >&2
+    exit 1
+  }
+RELEASED="$RELEASE_HOME/.local/bin/kendex"
+release_version=$(env -i PATH="$PATH" HOME="$RELEASE_HOME" "$RELEASED" --version)
+assert_eq "$release_version" 'kendex 1.3.0' 'catalog hook proof uses released v1.3.0'
+
+released_hook_rows() {
+  local world catalog project home tool judge recorder status
+  world=$(mktemp -d "$TMP_ROOT/catalog.XXXXXX") || exit 1
+  catalog="$world/catalog"
+  project="$world/project"
+  home="$world/home"
+  mkdir -p "$catalog/hooks" "$catalog/skills/commit-guards" "$project/.agents" "$home"
+  cp -- "$HOOK" "$catalog/hooks/skill-load-check.sh"
+  cp -- "$CARRIER" "$catalog/hooks/skill-load-record.sh"
+  printf 'is_source_catalog = true\n' >"$catalog/kendex.toml"
+  printf '%s\n' '---' 'name: commit-guards' 'description: Fixture skill' '---' \
+    >"$catalog/skills/commit-guards/SKILL.md"
+  cat >"$project/kendex.toml" <<EOF
+schema = 6
+[sources.cat]
+path = "$catalog"
+[install]
+harnesses = ["claude", "codex", "pi", "copilot"]
+method = "copy"
+[hooks.skill-load-check]
+source = "cat"
+EOF
+  status=0
+  (cd -- "$project" && env -i PATH="$PATH" HOME="$home" \
+    XDG_CONFIG_HOME="$home/config" XDG_DATA_HOME="$home/data" XDG_CACHE_HOME="$home/cache" \
+    KENDEX_REAL_HOME=1 KENDEX_UI=plain "$RELEASED" apply --scope project --yes) \
+    >"$world/apply.log" 2>&1 || status=$?
+  while IFS='|' read -r tool judge recorder; do
+    assert_eq "status=$status judge=$([ -f "$project/$judge" ] && echo present || echo absent) recorder=$([ -f "$project/$recorder" ] && echo present || echo absent)" \
+      'status=0 judge=present recorder=present' "released planner retains the hook pair on $tool"
+  done <<'TOOLS'
+claude|.claude/hooks/skill-load-check.sh|.claude/hooks/skill-load-record.sh
+codex|.codex/hooks/skill-load-check.sh|.codex/hooks/skill-load-record.sh
+pi|.pi/kendex/hooks/skill-load-check.sh|.pi/kendex/hooks/skill-load-record.sh
+copilot|.github/hooks/skill-load-check.sh|.github/hooks/skill-load-record.sh
+TOOLS
+}
+released_hook_rows
+skill_load_control released-companion "$CARRIER" \
+  '# harnesses: [claude, codex, pi, copilot, opencode, cursor]' \
+  '# harnesses: [copilot]' CARRIER released_hook_rows \
+  'released planner retains the hook pair on claude' \
+  'released planner retains the hook pair on codex' \
+  'released planner retains the hook pair on pi'
 
 skill_load_control markdown "$HOOK" 'require() { # SKILL' \
   '  [ "$1" != docs-writing ] || return 0' HOOK markdown_rows \

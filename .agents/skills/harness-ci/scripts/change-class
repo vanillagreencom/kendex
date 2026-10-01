@@ -47,8 +47,10 @@
 #            owned by a position a passing row of that run printed: a file it
 #            owns whole, a tree it owns whole, or keys inside a shared file
 #            whose rest that run says did not move since the range's base.
-#            Any other changed path answers standard with
-#            cause=render-path-unowned, and a shared file whose rest the run
+#            A removed path instead needs ownership in the base inventory,
+#            proved by harness-only, and absence from the head inventory
+#            that this passing verify weighed. Any other changed path answers
+#            standard with cause=render-path-unowned, and a shared file whose rest the run
 #            cannot vouch for answers cause=render-path-partial. That verdict
 #            is that every installed file equals a fresh render of its
 #            declared source. Under `--at-record` a package that follows
@@ -61,8 +63,8 @@
 #            trails. The two files kendex keeps about itself are as it
 #            writes them, and that
 #            every recorded entry is one the declarations back. Provenance
-#            is proved by rendering, never by trusting .kendex-generated.json
-#            or the install record, either of which the branch can rewrite;
+#            for surviving positions is proved by rendering, never by trusting
+#            the head inventory or install record, which the branch can rewrite;
 #            those two files are owned like any other rendered position,
 #            from the row `kendex verify` prints for each, and by name to
 #            nobody. The proof reads that program's `--json` document,
@@ -683,7 +685,7 @@ renders_match() {
 # foreign judgement or `-`, and the path.
 named_positions() { jq -r '.rows[] | select(.state == "ok") | .positions[] | [.owns, (.foreign // "-"), .path] | @tsv' <<<"$VERIFY_JSON"; }
 render_paths_covered() {
-  local path owns foreign position owned partial
+  local path owns foreign position owned partial head_entry inventory_status
   if ! named_positions >"$work/render-named" 2>/dev/null; then
     RENDER_REFUSAL="cause=verify-document-unreadable version=$VERIFY_DOCUMENT_VERSION"
     return 1
@@ -693,6 +695,28 @@ render_paths_covered() {
   printf 'render-coverage: named=%s\n' "$(grep -c '' "$work/render-named")" >&2
   while IFS= read -r path; do
     [ -n "$path" ] || continue
+    if ! head_entry=$(git -C "$proof_tree" ls-tree --full-tree "$head_rev" -- "$path" 2>/dev/null); then
+      RENDER_REFUSAL="cause=file-lookup-failed path=$path"
+      return 1
+    fi
+    if [ -z "$head_entry" ]; then
+      # harness-only already required this deleted file in the base's
+      # inventory. Never use the branch's record to grant that ownership.
+      # A passing head verify sanctions removal only when its inventory
+      # no longer names the position, including files under a surviving tree.
+      inventory_status=0
+      jq -e --arg path "$path" \
+        'all(.[]; (if type == "string" then . else .path end) != $path)' \
+        "$proof_tree/.kendex-generated.json" >/dev/null 2>&1 || inventory_status=$?
+      case "$inventory_status" in
+        0) [ "$harness_verdict" != harness_only=true ] || continue ;;
+        1) ;;
+        *) RENDER_REFUSAL="cause=unreadable-head-inventory head=$head_rev"; return 1 ;;
+      esac
+      render_refused_at "$path"
+      RENDER_REFUSAL="cause=render-path-unowned path=$path"
+      return 1
+    fi
     owned=false
     partial=""
     while IFS="$TAB" read -r owns foreign position; do

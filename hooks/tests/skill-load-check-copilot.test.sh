@@ -109,6 +109,40 @@ LINEAR_CALL='.agents/skills/linear/scripts/linear.sh issues list --state Todo'
 
 echo "=== skill-load-check: copilot ==="
 
+# Released engines install the companion beside every judge. Only Copilot
+# needs a recorder; other copies must exit before reading their payload.
+inactive_recorder_rows() {
+  local tool dir inactive
+  while IFS='|' read -r tool dir; do
+    inactive="$TMP_ROOT/inactive/$dir"
+    mkdir -p "$inactive"
+    cp -- "$CARRIER" "$inactive/skill-load-record.sh"
+    cp -- "$HOOK" "$inactive/skill-load-check.sh"
+    run_at "$inactive/skill-load-record.sh" '{}'
+    assert_eq "rc=$rc first=$(first_line) out=$(cat "$OUT_FILE")" 'rc=0 first=- out=' \
+      "the recorder is inactive on $tool"
+  done <<'TOOLS'
+claude|.claude/hooks
+codex|.codex/hooks
+pi|.pi/kendex/hooks
+TOOLS
+}
+inactive_recorder_rows
+GLOBAL_CARRIER="$TMP_ROOT/global/skill-load-record.sh"
+mkdir -p "${GLOBAL_CARRIER%/*}"
+cp -- "$CARRIER" "$GLOBAL_CARRIER"
+cp -- "$HOOK" "${GLOBAL_CARRIER%/*}/skill-load-check.sh"
+printf '{}\n' >"${GLOBAL_CARRIER%.sh}.json"
+printf '{}\n' >"${GLOBAL_CARRIER%/*}/skill-load-check.json"
+run_at "$GLOBAL_CARRIER" "$(post global skill '{"skill":"code-quality"}')"
+global_record=$(cat "$RECORDS/global") || exit 1
+assert_eq "rc=$rc first=$(first_line) recorded=$global_record" \
+  'rc=0 first=- recorded=code-quality' 'the global Copilot registry marker enables recording'
+skill_load_control inactive-recorder "$CARRIER" 'case "$HOOK_DIR" in' \
+  '  */.claude/hooks|*/.codex/hooks|*/.pi/kendex/hooks) ;;' \
+  CARRIER inactive_recorder_rows 'the recorder is inactive on claude' \
+  'the recorder is inactive on codex' 'the recorder is inactive on pi'
+
 echo "an agent is refused until its own finished load is recorded"
 run_at "$JUDGE" "$(edit_of lead)"
 assert_eq "rc=$rc first=$(first_line)" "rc=2 first=skill-load-check: unloaded=code-quality" \
