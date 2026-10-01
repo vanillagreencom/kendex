@@ -32,7 +32,7 @@ Maintainer notes. Consumer docs: [README.md](README.md); the agent contract: [SK
 for t in skills/slack/tests/*.test.sh; do bash "$t"; done
 ```
 
-Each suite but `websocket.test.sh`, which drives the client over a socket pair, starts `tests/lib/fake_slack.py`, a fake Slack Web API and Socket Mode WebSocket with a control surface under `/_test/`, and builds checkouts that link the real orch scripts, so every mailbox write goes through the real `lane-mail`. The assertion library and the fixture builders are `tests/lib/harness.sh`. A control runs a mutant: `sk_mutant` copies `scripts/` and replaces one pattern exactly once.
+`markup.test.sh` tests the markup module directly in fixture checkouts, without Slack or mailbox writes. `websocket.test.sh` drives the client over a socket pair. The other suites start `tests/lib/fake_slack.py`, a fake Slack Web API and Socket Mode WebSocket with a control surface under `/_test/`. They build checkouts that link the real orch scripts, so every mailbox write goes through the real `lane-mail`. The assertion library and the fixture builders are `tests/lib/harness.sh`. A control runs a mutant: `sk_mutant` copies `scripts/` and replaces one pattern exactly once.
 
 | Suite | Proves |
 |-------|--------|

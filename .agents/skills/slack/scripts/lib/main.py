@@ -61,6 +61,7 @@ listen    the relay: one Socket Mode connection opened with SLACK_APP_TOKEN
           longest wait
 post      one message to the bound channel, or --channel for another, its
           text sent as standard Markdown of at most 12,000 characters;
+          link expansion past that cap selects Slack's mrkdwn instead;
           --mention prefixes every owner; --file uploads the file with the
           text as its comment instead, in Slack's mrkdwn and outside the
           12,000-character cap;
@@ -94,7 +95,8 @@ Non-fatal diagnostics on stderr:
 """ + textwrap.fill(
     "Keyed lines, `slack: <key>=<value>` first: bound, posted, uploaded, updated,"
     " compacted, installed, enabled, active, restarted, listening, connected,"
-    " reconnected, slack-relay on stdout; refusals on stderr with exit 2: python3 and"
+    " reconnected, slack-relay on stdout; tracker-links-unavailable is a non-fatal"
+    " notice on stdout; refusals on stderr with exit 2: python3 and"
     " settings-unreadable from the launcher before Python starts, then "
     + ", ".join(EXPLAIN) + ".",
     width=78, break_on_hyphens=False,

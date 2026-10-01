@@ -55,8 +55,11 @@ assert_eq "$RC=$(jq -c '[.result[0],.notices]' <<<"$OUT")" '0=["KEN-1 #2",[]]' '
 sk_markup "$ROOT" roots "$ROOT" "$GH" "$NONE"
 assert_eq "$RC=$(jq -c '.result' <<<"$OUT")" '0=["[KEN-1](https://linear.app/workspace/issue/KEN-1) #2 org/other#3","KEN-1 [#2](https://github.com/org/repo/issues/2) [org/other#3](https://github.com/org/other/issues/3)","KEN-1 #2 org/other#3"]' 'one process selects each root tracker'
 : > "$ROOT/linear.calls"
-sk_markup "$ROOT" lifetime
-assert_eq "$RC=$(jq -r '.result.reads' <<<"$OUT")" '0=2' 'metadata reads once then refreshes at one day'
+sk_markup "$ROOT" lifetime refresh
+assert_eq "$RC=$(jq -r '.result.reads | join(",")' <<<"$OUT")" '0=1,1,1,2,2' 'metadata reads once then refreshes at one day'
+BEFORE='[HTIO-5](https://linear.app/workspace/issue/HTIO-5) NEW-6'
+AFTER='HTIO-5 [NEW-6](https://linear.app/workspace/issue/NEW-6)'
+assert_eq "$RC=$(jq -r '.result.texts | join(";")' <<<"$OUT")" "0=$BEFORE;$BEFORE;$BEFORE;$AFTER;$AFTER" 'cached keys stay linked until expiry, then refreshed keys link'
 
 # Real producers can fail or return incomplete JSON; no stale links survive.
 for fixture in exit json slug keys item empty; do
@@ -70,7 +73,10 @@ for fixture in exit json slug keys item empty; do
     empty) printf '{"urlKey":"workspace","keys":[]}\n' > "$BROKEN/linear.json" ;;
   esac
   sk_markup "$BROKEN" lifetime
-  assert_eq "$RC=$(jq -r '[.result.reads, (.result.texts | unique | join(" ")), (.notices | length), (.notices[0] | startswith("slack: tracker-links-unavailable="))] | join(" ")' <<<"$OUT")" '0=2 HTIO-5 1 true' "failed $fixture read stays unlinked and notices once"
+  assert_eq "$RC=$(jq -r '[(.result.reads | join(",")), (.result.texts | unique | join(" ")), (.notices | length), (.notices[0] | startswith("slack: tracker-links-unavailable="))] | join(" ")' <<<"$OUT")" '0=1,1,1,2,2 HTIO-5 1 true' "failed $fixture read stays unlinked and notices once"
+  if [ "$fixture" = exit ]; then
+    assert_has "$OUT" "cause=$SK_LINEAR_STUB/scripts/linear.sh exit=1" 'failed exit read names the subprocess and status'
+  fi
 done
 
 # One mutation per skip zone, preserving the matching input.
@@ -89,23 +95,22 @@ fence|fenced
 ROWS
 sk_mutant cache markup.py 'now - cached\[0\] < METADATA_SECONDS' 'now - cached[0] < 0'
 : > "$ROOT/linear.calls"
-sk_markup "$ROOT" lifetime
-assert_eq "$RC=$(jq -r '.result.reads' <<<"$OUT")" '0=5' 'control: without cache lifetime every call reads'
+sk_markup "$ROOT" lifetime refresh
+assert_eq "$RC=$(jq -r '.result.reads | join(",")' <<<"$OUT")" '0=1,2,3,4,5' 'control: without cache lifetime every call reads'
 sk_bin_reset
 sk_mutant expiry markup.py 'now - cached\[0\] < METADATA_SECONDS' 'True'
 : > "$ROOT/linear.calls"
-sk_markup "$ROOT" lifetime
-assert_eq "$RC=$(jq -r '.result.reads' <<<"$OUT")" '0=1' 'control: without expiry metadata never refreshes'
+sk_markup "$ROOT" lifetime refresh
+assert_eq "$RC=$(jq -r '.result.reads | join(",")' <<<"$OUT")" '0=1,1,1,1,1' 'control: without expiry metadata never refreshes'
+assert_eq "$RC=$(jq -r '.result.texts | join(";")' <<<"$OUT")" "0=$BEFORE;$BEFORE;$BEFORE;$BEFORE;$BEFORE" 'control: without expiry refreshed keys never link'
 sk_bin_reset
 sk_mutant warning markup.py 'if root not in self.warned:' 'if True:'
 sk_markup "$SK_TMP/broken-exit" lifetime
 assert_eq "$RC=$(jq -r '.notices | length' <<<"$OUT")" '0=2' 'control: without notice deduplication failure repeats its notice'
 sk_bin_reset
 sk_mutant status markup.py 'if proc.returncode != 0:' 'if False:'
-printf '1\n' > "$ROOT/linear.exit"
-sk_markup "$ROOT" outbound 'KEN-1' markdown
-assert_lacks "$OUT" 'exit=1' 'control: ignoring exit status loses the actual cause'
-rm "$ROOT/linear.exit"
+sk_markup "$SK_TMP/broken-exit" lifetime
+assert_lacks "$OUT" "cause=$SK_LINEAR_STUB/scripts/linear.sh exit=1" 'control: ignoring exit status loses the failed-exit baseline cause'
 sk_bin_reset
 sk_mutant slug markup.py 'if not isinstance\(slug, str\) or re.fullmatch\(r"\[a-zA-Z0-9_\-\]\+", slug\) is None:' 'if False:'
 sk_markup "$SK_TMP/broken-slug" outbound 'KEN-1' markdown
