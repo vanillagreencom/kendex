@@ -48,7 +48,7 @@ NEVER_EDIT=".agents/,.claude/,.codex/,.pi/,.gemini/,.opencode/,.cursor/"
 # enabled flag instead of a source; it is a declared install like any other.
 # `tests/session-drift-check.test.sh` reads ITEM_TABLES out of that file and
 # holds this list to it, so a kind added in Rust reddens this hook's suite.
-COUNTED_KINDS="agents skills hooks commands mcp-servers pi-extensions bundles plugins"
+COUNTED_KINDS="agents skills hooks commands mcp-servers pi-extensions bundles plugins output-styles"
 
 # The project's declared packages and bundles, counted where kendex itself
 # cannot be asked: the command is the manifest's parser, and the command is
