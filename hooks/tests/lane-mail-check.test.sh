@@ -1203,12 +1203,14 @@ for row in codex:.codex/hooks:KEN-70 pi:.pi/kendex/hooks:KEN-71; do
 done
 # The pi-hooks carrier runs no further request after a continued turn, so a
 # hold there reaches nobody: a Pi turn another stop hook continued is reported
-# in its place.
+# in its place. A fresh lane has no identical idle notice in the minute window.
+new_pi_lane idle_pi_other_hook "$IDLE_ITEM"
+REPORT_ITEM=""
 report "$IDLE_ITEM"
 stop
 stop_active
 assert_eq "RC=$RC notice=$(grep -c "^lane-mail-check: idle-notice=$IDLE_ITEM\$" "$ERR_FILE" || true) record=$(sent_record "$IDLE_ITEM")" \
-  "RC=0 notice=1 record=3" \
+  "RC=0 notice=1 record=2" \
   "a Pi turn another stop hook continued ends with the notice, never a hold nobody runs"
 
 # The lane's words are in the transcript the payload names, and the judge
