@@ -170,6 +170,12 @@ sk_run() {
   ERR1="$(sed -n '1p' "$SK_TMP/err")"
 }
 sk_bind() { sk_run -- setup --root "$1"; }                 # ROOT
+# sk_help_field: the help command succeeds and advertises the envelope key.
+sk_help_field() {
+  sk_run -- --help
+  [ "$RC=$ERR" = "0=" ] || return 1
+  case "$OUT" in *"envelope-field=ROOT id=ID field=FIELD"*) return 0 ;; *) return 1 ;; esac
+}
 # sk_relay_start ROOT [--root ROOT]... [VAR=VALUE]... — a relay on its Socket
 # Mode connection over every ROOT in the background, polling every second
 # unless a VAR says otherwise, its pid in SK_BG_PIDS, its stdout and stderr in

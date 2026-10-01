@@ -895,9 +895,22 @@ assert_eq "$RC=$(asks "$(sk_channel "$LEGACY")" 'Multi-root notice.')=$(asks "$(
 LEGACY_ID="$(jq -r .id "$(sk_box "$LEGACY")/to-overseer.jsonl")" || exit 1
 printf -v LEGACY_WARNINGS 'slack: envelope-field=%s id=%s field=line\nslack: envelope-field=%s id=%s field=count' \
   "$LEGACY" "$LEGACY_ID" "$LEGACY" "$LEGACY_ID"
+HELP_RC=0
+sk_help_field || HELP_RC=$?
+assert_eq "$HELP_RC" "0" "help advertises the envelope-field diagnostic reached by legacy events"
 RC=0
 WARNINGS="$(sk_legacy_warnings "$LEGACY" "$LEGACY_WARNINGS")" || RC=$?
 assert_eq "$RC=$WARNINGS" "0=$LEGACY_WARNINGS" "reading legacy events twice through one LaneMail warns once per root, id and field"
+
+# Keep HELP and the runtime diagnostic intact; conceal only its help output.
+sk_mutant help-field main.py 'sys\.stdout\.write\(HELP\)' 'sys.stdout.write(HELP.replace("envelope-field=ROOT id=ID field=FIELD", ""))'
+HELP_RC=0
+sk_help_field || HELP_RC=$?
+assert_eq "$HELP_RC" "1" "control: concealing the help key fails the help assertion while diagnostics remain"
+RC=0
+WARNINGS="$(sk_legacy_warnings "$LEGACY" "$LEGACY_WARNINGS")" || RC=$?
+assert_eq "$RC=$WARNINGS" "0=$LEGACY_WARNINGS" "control: the hidden help key leaves legacy envelope diagnostics unchanged"
+sk_bin_reset
 
 # A corrupt UTF-8 subprocess response is a root read error, not an envelope
 # field. The healthy root must post even when the first root cannot decode it.

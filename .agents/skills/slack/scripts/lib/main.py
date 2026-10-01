@@ -82,6 +82,11 @@ mailbox posts and --status shows held-by=master; README.md says what posts on
 resume. SLACK_API_URL names another API endpoint (default
 https://slack.com/api).
 
+Non-fatal diagnostics on stderr:
+  envelope-field=ROOT id=ID field=FIELD
+    Missing or invalid line/count fields disable master-read suppression.
+    Other invalid fields skip that envelope. The relay continues.
+
 """ + textwrap.fill(
     "Keyed lines, `slack: <key>=<value>` first: bound, posted, uploaded, updated,"
     " compacted, installed, enabled, active, restarted, listening, connected,"
