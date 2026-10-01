@@ -34,7 +34,9 @@ The primary agent opens the PR and, by the merge policy, arms auto-merge where t
 
 ## Settings
 
-Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secrets in `.env.local`. Nothing is marked required, so installing writes nothing to your settings file; [kendex.settings.toml.example](kendex.settings.toml.example) comments the keys worth changing first.
+Set defaults in `kendex.settings.toml` `[env]` and secrets in `.env.local`; installation adds no settings ([key guide](kendex.settings.toml.example)).
+
+Until KEN-2466 lands, Claude Code resolves the `haiku` tier to `sonnet` and prints one warning per run; other harness mappings stay unchanged.
 
 | Variable | Purpose | Default |
 |---------|---------|---------|
