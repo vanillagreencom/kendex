@@ -153,16 +153,49 @@ class Compaction(unittest.TestCase):
         self.assertEqual(self.run_cli(repo, "inbox", "--peek").stdout.splitlines()[0], "count=2 first=original")
 
     def test_open_ask(self):
-        repo, box = self.world()
-        self.rows(box, "to-overseer", [{"id": "old-open", "kind": "ask", "to": "owner", "at": OLD}])
-        self.run_cli(repo, "compact")
-        self.assertEqual(json.loads(self.run_cli(repo, "pending", "--to", "owner").stdout)["id"], "old-open")
-        self.assertEqual(json.loads(self.run_cli(repo, "events").stdout)["id"], "old-open")
-        mutant = self.mutant("closed", "lib/lane-mail-store.py", "or unread or open_ask", "or unread or False")
-        other, other_box = self.world()
-        self.rows(other_box, "to-overseer", [{"id": "old-open", "kind": "ask", "at": OLD}])
-        self.run_cli(other, "compact", scripts=mutant)
-        self.assertEqual(self.run_cli(other, "events", scripts=mutant).stdout, "")
+        cases = [
+            ("unanswered", ["old-open"], "or unread or open_ask", "or unread or False"),
+            ("answered", ["old-open"], 'row["class"] == "close"',
+             'row["class"] in ("close", "resolution")'),
+            ("resolved", [], 'row["class"] == "close"', 'row["class"] == "resolution"'),
+            ("legacy", [], None, None),
+        ]
+        for mode, expected, old, new in cases:
+            variants = [SCRIPTS]
+            if old is not None:
+                variants.append(self.mutant(mode, "lib/lane-mail-store.py", old, new))
+            for scripts in variants:
+                with self.subTest(mode=mode, control=scripts != SCRIPTS):
+                    repo, box = self.world()
+                    self.rows(box, "to-overseer", [
+                        {"id": "old-open", "kind": "ask", "to": "owner", "at": OLD}])
+                    self.env["TEST_NOW"] = "946684800"
+                    if mode == "answered":
+                        text = repo / "message.txt"
+                        text.write_text("continue\n")
+                        self.run_cli(repo, "send", "--re", "old-open", "--file", str(text), scripts=scripts)
+                    elif mode == "resolved":
+                        self.run_cli(repo, "resolve", "--id", "old-open", scripts=scripts)
+                    elif mode == "legacy":
+                        # The pre-1.3 resolve producer wrote no closes field.
+                        self.rows(box, "to-lane", [{"id": "legacy-close", "kind": "answer",
+                                                  "by": "text", "re": "old-open", "at": OLD}])
+                    self.run_cli(repo, "inbox", scripts=scripts)
+                    self.env["TEST_NOW"] = "1790870400"
+                    self.run_cli(repo, "compact", scripts=scripts)
+                    retained = [json.loads(row)["id"] for row in
+                                (box / "to-overseer.jsonl").read_text().splitlines()]
+                    if scripts == SCRIPTS:
+                        self.assertEqual(retained, expected)
+                        pending = [json.loads(row)["id"] for row in
+                                   self.run_cli(repo, "pending", "--to", "owner").stdout.splitlines()]
+                        self.assertEqual(pending, expected)
+                        events = [json.loads(row) for row in self.run_cli(repo, "events").stdout.splitlines()]
+                        self.assertEqual([row["id"] for row in events if row["kind"] == "ask"], expected)
+                        self.assertEqual(len(events), 2 if mode == "answered" else len(expected))
+                    else:
+                        with self.assertRaises(AssertionError):
+                            self.assertEqual(retained, expected)
 
     def peer_exchange(self, scripts):
         requester, requester_box = self.world()

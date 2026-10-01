@@ -65,10 +65,12 @@ def snapshot(fd, path, dest):
         f"count={len(rows) + record['dropped'] + bool(fragment)} first={record['first']}\n")
 
 
-def row_epochs(rows, jq_defs):
-    """Use lane-mail's existing stamp parser, with one jq call per mailbox."""
+def row_metadata(rows, jq_defs):
+    """Use lane-mail's stamp parser and mailbox classifier in one jq call."""
     program = jq_defs + ''' split("\\n")[:-1] | map((fromjson? // null)
-        | if type == "object" then (.at // "" | at_epoch) else null end)'''
+        | if type == "object" then
+            {epoch: (.at // "" | at_epoch), class: overseer_mail_class}
+          else {epoch: null, class: null} end)'''
     result = subprocess.run(["jq", "-Rs", program], input=b"".join(rows),
                             capture_output=True, check=True)
     return json.loads(result.stdout)
@@ -78,19 +80,22 @@ def plan(box, dest, cutoff, seen, jq_defs):
     """Keep unread rows and each ask's complete, still-needed exchange."""
     boxes = [read_box(8, box / "to-overseer.jsonl"), read_box(9, box / "to-lane.jsonl")]
     objects = [[envelope(row) for row in data[0]] for data in boxes]
+    metadata = [row_metadata(data[0], jq_defs) for data in boxes]
     answers = {obj.get("re") for group in objects for obj in group
                if obj and obj.get("kind") == "answer" and isinstance(obj.get("re"), str)}
+    owner_closed = {obj.get("re") for obj, row in zip(objects[1], metadata[1])
+                    if obj and row["class"] == "close" and isinstance(obj.get("re"), str)}
     protected = set()
     links = []
     keep = []
     for b, group in enumerate(objects):
         selected = []
-        epochs = row_epochs(boxes[b][0], jq_defs)
         for i, obj in enumerate(group):
-            at = epochs[i]
+            at = metadata[b][i]["epoch"]
             unread = b == 1 and boxes[b][1][i] > seen
             open_ask = obj and obj.get("kind") == "ask" and (
-                not isinstance(obj.get("id"), str) or obj["id"] not in answers)
+                not isinstance(obj.get("id"), str) or obj["id"] not in (
+                    owner_closed if obj.get("to") == "owner" else answers))
             retain = at is None or at >= cutoff or unread or open_ask
             selected.append(retain)
             if obj:
