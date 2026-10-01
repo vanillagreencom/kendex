@@ -8,7 +8,7 @@ orch takes Linear or GitHub issues from implementation to merge with coding and 
 kendex add vanillagreencom/kendex --skill orch
 ```
 
-Requires jq, Bash 3.2, flock, setsid and timeout or gtimeout; the included SSH host provider also needs Python 3.8+ on the controlling machine. kendex installs the required skills. Add linear for Linear issues. Second-opinion and review-gate are optional.
+Requires jq, Bash 3.2, Python 3.8+, flock, setsid and timeout or gtimeout. Local lane-mail and the included SSH host provider use Python on the controlling machine. kendex installs the required skills. Add linear for Linear issues. Second-opinion and review-gate are optional.
 
 ## Features
 

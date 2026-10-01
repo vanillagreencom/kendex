@@ -237,7 +237,9 @@ Peer side, one other repository's overseer mailbox per call:
               read from REPO's settings files, as data, to place its record,
               and no file of REPO's is sourced. An answer (--re) has no pane
               check: the asker's `wait --item overseer --id` reads it with
-              no named session
+              no named session. After delivery, an answer also appends to
+              this repository's own to-overseer.jsonl so compact can close
+              the inbound ask without reading REPO
 
 Options:
   --item ITEM   one path segment of ASCII letters, digits, `.`, `_` and `-`,
@@ -851,8 +853,8 @@ if { [ "$VERB" = send ] || [ "$VERB" = resolve ]; } && [ "$HOST" -eq 0 ]; then
   { [ -n "$LANE_ROOT" ] && [ "$LANE_ROOT" = "$OWN_ROOT" ]; } || refuse lane-foreign "$ROOT"
 fi
 
-# The mailbox a verb reads or writes. A peer ask moves it once: the same
-# envelope lands in the caller's own record and then in the peer's mailbox.
+# The mailbox a verb reads or writes. A peer exchange moves it once: the same
+# envelope lands in the peer's mailbox and then in the caller's own record.
 lm_box() { # ROOT
   MAIL_ROOT="$1"
   BOX="$MAIL_ROOT/tmp/lane-mail/$ITEM"
@@ -1735,17 +1737,15 @@ case "$VERB" in
       lm_sent
       [ -n "$MSGID" ] || lm_peer_reader
     fi
-    # The caller's own record follows the delivery. Both files are append-only
-    # and nothing removes a line, so a record written before a delivery that
-    # refused would owe an answer to a question the peer never received, and
-    # no later message could clear it. The opposite gap is recoverable: the
-    # peer's reply still arrives in to-lane.jsonl, where `wait --item overseer
-    # --id` and the watch both read it. The id prints before that record for
-    # the same reason, so a record that fails still leaves the caller the id
-    # the peer now holds, rather than a delivered ask it cannot wait on.
+    # Record both directions locally for retention, only after delivery:
+    # an undelivered ask must owe no answer, and an undelivered answer must
+    # leave its inbound ask open. The id or receipt precedes the record so a
+    # local write failure still tells the caller what the peer received.
     if [ "$PEER_VERB" = ask ]; then
       printf 'id=%s\n' "$(cat -- "$WORK_DIR/id")"
       lm_peer_reader
+    fi
+    if [ "$PEER_VERB" = ask ] || [ -n "$MSGID" ]; then
       lm_box "$OWN_ROOT"
       lm_plain
       lm_one_spelling

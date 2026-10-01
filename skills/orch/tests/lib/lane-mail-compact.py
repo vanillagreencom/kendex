@@ -28,7 +28,7 @@ class Compaction(unittest.TestCase):
         self.bin.mkdir()
         date = shutil.which("date", path=self.env["PATH"])
         (self.bin / "date").write_text(
-            f'#!/bin/sh\nif [ "$*" = "-u +%s" ]; then echo 1790870400; else exec "{date}" "$@"; fi\n')
+            f'#!/bin/sh\nif [ "$*" = "-u +%s" ]; then echo "${{TEST_NOW:-1790870400}}"; else exec "{date}" "$@"; fi\n')
         (self.bin / "date").chmod(0o755)
         self.env["PATH"] = str(self.bin) + os.pathsep + self.env["PATH"]
         self.serial = 0
@@ -43,10 +43,13 @@ class Compaction(unittest.TestCase):
                            env=self.env, check=True)
         box = repo / "tmp/lane-mail/overseer"
         box.mkdir(parents=True)
+        (repo / "tmp/workflow-state-oversee.json").write_text(
+            json.dumps({"overseer": {"server": "7000", "pane": "%0"}}) + "\n")
         return repo, box
 
     def run_cli(self, repo, *args, scripts=SCRIPTS, check=True):
-        result = subprocess.run([str(scripts / "lane-mail"), *args, "--item", "overseer", "--root", str(repo)],
+        target = [] if args[0] == "peer" else ["--item", "overseer", "--root", str(repo)]
+        result = subprocess.run([str(scripts / "lane-mail"), *args, *target],
                                 cwd=repo, env=self.env, text=True, capture_output=True)
         if check:
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -160,6 +163,43 @@ class Compaction(unittest.TestCase):
         self.rows(other_box, "to-overseer", [{"id": "old-open", "kind": "ask", "at": OLD}])
         self.run_cli(other, "compact", scripts=mutant)
         self.assertEqual(self.run_cli(other, "events", scripts=mutant).stdout, "")
+
+    def peer_exchange(self, scripts):
+        requester, requester_box = self.world()
+        receiver, receiver_box = self.world()
+        text = requester / "message.txt"
+        self.env["TEST_NOW"] = "946684800"
+        asks = []
+        for words in ("closed", "open"):
+            text.write_text(words + "\n")
+            sent = self.run_cli(requester, "peer", "ask", "--repo", str(receiver), "--file", str(text))
+            self.assertTrue(sent.stdout.startswith("id="), sent.stdout)
+            asks.append(sent.stdout.strip()[3:])
+        self.assertEqual([json.loads(row)["id"] for row in
+                          self.run_cli(receiver, "inbox").stdout.splitlines()], asks)
+        text.write_text("done\n")
+        self.run_cli(receiver, "peer", "send", "--repo", str(requester), "--re", asks[0],
+                     "--file", str(text), scripts=scripts)
+        self.assertEqual(self.run_cli(requester, "wait", "--id", asks[0], "--timeout", "1").stdout, "done\n")
+        self.env["TEST_NOW"] = "1790870400"
+        self.assertEqual(self.run_cli(receiver, "compact", scripts=scripts).stdout,
+                         "compacted item=overseer to-lane=1 to-overseer=1\n")
+        self.assertEqual(json.loads((receiver_box / "to-lane.jsonl").read_text())["id"], asks[1])
+        self.assertEqual((receiver_box / "to-overseer.jsonl").read_text(), "")
+        self.assertEqual(self.run_cli(requester, "compact").stdout,
+                         "compacted item=overseer to-lane=0 to-overseer=0\n")
+        self.assertEqual(json.loads(self.run_cli(requester, "inbox").stdout)["re"], asks[0])
+        self.assertEqual(self.run_cli(requester, "compact").stdout,
+                         "compacted item=overseer to-lane=1 to-overseer=1\n")
+        self.assertEqual(json.loads((requester_box / "to-overseer.jsonl").read_text())["id"], asks[1])
+
+    def test_peer_exchange(self):
+        self.peer_exchange(SCRIPTS)
+        mutant = self.mutant("unrecorded-reply", "lane-mail",
+                             'if [ "$PEER_VERB" = ask ] || [ -n "$MSGID" ]; then',
+                             'if [ "$PEER_VERB" = ask ]; then')
+        with self.assertRaisesRegex(AssertionError, "compacted item=overseer to-lane=0 to-overseer=0"):
+            self.peer_exchange(mutant)
 
     def race(self, scripts):
         repo, box = self.world()

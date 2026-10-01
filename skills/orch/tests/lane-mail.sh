@@ -394,7 +394,8 @@ assert_eq "$PENDING_DIRECTIVE" "Unread." "pending lists a directive past an answ
 # and h a halt, both carrying their line number as text; cN plants cursor N; p
 # peeks; aN acknowledges N; r reads. STEPS records each inbox step: its first
 # stderr line, then for p the header count, the cursor and the texts printed,
-# for aN the exit and the cursor, for r the texts printed.
+# for aN the exit and the cursor, for r the texts printed. tN sets the clock
+# to epoch N; x compacts and records its exit and counts.
 cursor_steps() { # NAME OPS
   local op line=0 box
   new_lane "$1"
@@ -404,8 +405,14 @@ cursor_steps() { # NAME OPS
     case "$op" in
       d | h)
         line=$((line + 1))
-        LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" \
+        LANE_MAIL_BIN="$LANE_MAIL" clock_lm send --item KEN-1 --root "$LANE" \
           "$([ "$op" = h ] && echo --halt || echo --directive)" --file "$(text d "$line")"
+        ;;
+      t*) printf '%s\n' "${op#t}" >"$STUB_CLOCK" ;;
+      x)
+        FLEET_DIR="$TMP_ROOT/fleet" ORCH_RECORD_RETENTION_DAYS=5 SLACK_THREAD_DAYS=5 \
+          LANE_MAIL_BIN="$LANE_MAIL" clock_lm compact --item KEN-1 --root "$LANE"
+        STEPS+=" x:$RC:$OUT"
         ;;
       c*) printf '%s\n' "${op#c}" >"$box/to-lane.cursor" ;;
       p)
@@ -430,6 +437,7 @@ CURSOR_ROWS=(
   "stale_ack|d p d r a1|p::count=1:0:1 r::1,2 a1::0:2|an --ack older than the cursor never moves it back, and one at the line count lowers nothing"
   "over_ack|d a2 d r|a2:lane-mail: ack-clamped=1 asked=2:0:1 r::2|an --ack past the lines present stops at them, so a line that lands later is still handed over"
   "halt_clamp|d h d a5|a5:lane-mail: ack-clamped=1 asked=5:0:1|an --ack past the lines present names the count it acknowledged, the line before an unread halt"
+  "compact_halt|t946684800 d d r t1790870400 h d x p a4 r|r::1,2 x:0:compacted item=KEN-1 to-lane=2 to-overseer=0 p::count=4:2:3,4 a4::0:2 r::3,4|after compaction an --ack at the logical count stops before the unread halt"
   "peek_lowers|d c2 p d p r p|p:lane-mail: cursor-lowered=1 was=2:count=1:1: p::count=2:1:2 r::2 p::count=2:2:|a peek brings a cursor past the lines present down to them before any --ack, so a line that lands later is handed over"
   "ack_lowers|d c3 d a1 r|a1:lane-mail: cursor-lowered=1 was=3:0:1 r::2|an --ack lowers a cursor past the lines present to the count acknowledged, not to a line that landed after the peek"
 )
@@ -1221,6 +1229,11 @@ mutant ack-notice-early '[ "$ASKED" -le "$COUNT" ] || lm_notice ack-clamped "$AC
 cursor_control halt_clamp
 assert_eq "$STEPS" "a5:lane-mail: ack-clamped=3 asked=5:0:1" \
   "control: a notice taking the line count names a count the halt clamp did not acknowledge"
+
+mutant ack-physical-halt 'line[FNR] > seen && $0 == "halt" { print line[FNR] - 1; exit }' 'FNR > seen && $0 == "halt" { print FNR - 1; exit }'
+cursor_control compact_halt
+assert_eq "$STEPS" "r::1,2 x:0:compacted item=KEN-1 to-lane=2 to-overseer=0 p::count=4:2:3,4 a4::0:4 r::" \
+  "control: physical halt positions let --ack consume a compacted unread halt"
 
 mutant peek-kept-high '[ "$PEEK" -eq 1 ] && [ "$SEEN" -gt "$COUNT" ] &&' 'false &&'
 cursor_control peek_lowers
