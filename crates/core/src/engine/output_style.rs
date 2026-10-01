@@ -190,6 +190,10 @@ pub(super) fn record(
     if item.kind != ItemKind::OutputStyle {
         return Ok(None);
     }
+    // Disable removes the Pi block and releases its position, not its provenance.
+    if item.harness == HarnessId::Pi && !item.enabled {
+        return Ok(None);
+    }
     let Artifact::Registration { edits, .. } = &item.artifact else {
         return Ok(None);
     };
@@ -279,35 +283,28 @@ pub(super) fn conflict(
     if item.kind != ItemKind::OutputStyle {
         return Ok(None);
     }
+    let live = live_record(existing);
     if let Artifact::Registration { edits, .. } = &item.artifact {
         for (path, _) in edits {
             if let Some(reason) = file_problem(path) {
                 return Ok(Some(reason));
             }
         }
-        if existing.is_none() {
-            for (path, edit) in edits {
-                if let ConfigEdit::UpsertMarkerBlock { name, .. } = edit {
-                    let current = crate::fs::read_if_exists(path)?.unwrap_or_default();
-                    if marker_block(&current, name).is_some()
-                        && !edit
-                            .in_sync(&current)
-                            .map_err(|message| CoreError::ConfigEdit {
-                                path: path.clone(),
-                                message,
-                            })?
-                    {
-                        return Ok(Some(
-                            "an unrecorded output-style block already occupies the marker".into(),
-                        ));
-                    }
+        for (path, edit) in edits {
+            if let ConfigEdit::UpsertMarkerBlock { name, .. }
+            | ConfigEdit::RemoveMarkerBlock { name } = edit
+            {
+                let current = crate::fs::read_if_exists(path)?.unwrap_or_default();
+                let owned = matches!(live, Some(OutputStyleRecord::Block { path: owned_path, marker, .. }) if owned_path == path && marker == name);
+                if marker_block(&current, name).is_some() && !owned {
+                    return Ok(Some(
+                        "an unrecorded output-style block already occupies the marker".into(),
+                    ));
                 }
             }
         }
     }
-    if let Some(style) = existing
-        .filter(|entry| entry.enabled)
-        .and_then(|entry| entry.output_style.as_ref())
+    if let Some(style) = live
         && !(discard && matches!(style, OutputStyleRecord::Block { .. }))
         && changed(style)?
     {
@@ -318,14 +315,25 @@ pub(super) fn conflict(
     Ok(None)
 }
 
+/// A disabled installation has released its shared position.
+fn live_record(existing: Option<&LockEntry>) -> Option<&OutputStyleRecord> {
+    existing
+        .filter(|entry| entry.enabled)
+        .and_then(|entry| entry.output_style.as_ref())
+}
+
 pub(super) fn removal(entry: &LockEntry) -> Vec<(std::path::PathBuf, ConfigEdit)> {
     match &entry.output_style {
-        Some(OutputStyleRecord::Block { path, marker, .. }) => vec![(
-            path.clone(),
-            ConfigEdit::RemoveMarkerBlock {
-                name: marker.clone(),
-            },
-        )],
+        Some(OutputStyleRecord::Block { path, marker, .. })
+            if live_record(Some(entry)).is_some() =>
+        {
+            vec![(
+                path.clone(),
+                ConfigEdit::RemoveMarkerBlock {
+                    name: marker.clone(),
+                },
+            )]
+        }
         Some(OutputStyleRecord::Claude {
             path,
             selection: Some(name),
@@ -336,6 +344,7 @@ pub(super) fn removal(entry: &LockEntry) -> Vec<(std::path::PathBuf, ConfigEdit)
         Some(OutputStyleRecord::Claude {
             selection: None, ..
         })
+        | Some(OutputStyleRecord::Block { .. })
         | None => Vec::new(),
     }
 }

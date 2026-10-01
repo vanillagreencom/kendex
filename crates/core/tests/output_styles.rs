@@ -65,12 +65,14 @@ fn paths(f: &Fixture) -> (PathBuf, PathBuf, PathBuf) {
 #[allow(clippy::unwrap_used, reason = "fixture installation")]
 fn install(f: &Fixture) {
     let report = engine::audit(&f.env, &f.scope).unwrap();
-    assert!(
+    assert_eq!(
         report
             .drift
             .iter()
-            .all(|row| row.state != engine::DriftState::Conflict),
-        "{report:?}"
+            .filter(|row| row.state == engine::DriftState::Conflict)
+            .count(),
+        0,
+        "installation conflict count"
     );
     apply::execute(&f.env, &report.plan).unwrap();
 }
@@ -98,7 +100,7 @@ fn routes_reapply_and_record_only_owned_content() {
             "Personal instructions.\r\n"
         );
         let report = engine::audit(&f.env, &f.scope).unwrap();
-        assert!(report.drift.is_empty(), "{report:?}");
+        assert_eq!(report.drift.len(), 0, "reapply drift count");
         let record = lock::load(&lock::lock_path(&f.env, &f.scope)).unwrap();
         for harness in [HarnessId::Claude, HarnessId::Pi] {
             let entry = &record.entries[&lock::entry_key(ItemKind::OutputStyle, "STE", harness)];
@@ -124,7 +126,7 @@ fn routes_reapply_and_record_only_owned_content() {
                         && item.harness == harness)
                     .count(),
                 1,
-                "{observed:?}"
+                "observed style count for {harness:?}"
             );
         }
         assert!(!f.project.join("AGENTS.md").exists());
@@ -284,12 +286,14 @@ fn selection_acquisition_follows_enable_and_composed_replacement() {
                     },
                 )
                 .unwrap();
-                assert!(
-                    !report
+                assert_eq!(
+                    report
                         .drift
                         .iter()
-                        .any(|row| row.state == engine::DriftState::Conflict),
-                    "{transition}/{owner}: {report:?}"
+                        .filter(|row| row.state == engine::DriftState::Conflict)
+                        .count(),
+                    0,
+                    "{transition}/{owner}: conflict count"
                 );
                 apply::execute(&f.env, &report.plan).unwrap();
                 let record = lock::load(&lock::lock_path(&f.env, &f.scope)).unwrap();
@@ -394,7 +398,7 @@ fn content_and_selection_edits_are_drift_and_are_not_overwritten() {
                     .iter()
                     .any(|row| row.kind == ItemKind::OutputStyle
                         && row.state == engine::DriftState::Conflict),
-                "{route}: {report:?}"
+                "{route}: output-style conflict missing"
             );
             apply::execute(&f.env, &report.plan).unwrap();
             assert_eq!(fs::read(&edited).unwrap(), before);
@@ -421,7 +425,7 @@ fn content_and_selection_edits_are_drift_and_are_not_overwritten() {
                         .iter()
                         .any(|row| row.state == engine::DriftState::Conflict),
                     !repair,
-                    "{route}/{name}: {report:?}"
+                    "{route}/{name}: conflict state"
                 );
                 apply::execute(&f.env, &report.plan).unwrap();
                 if repair {
@@ -449,51 +453,137 @@ fn content_and_selection_edits_are_drift_and_are_not_overwritten() {
 
 #[test]
 #[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeps live-ownership transitions in one table"
+)]
 fn explicit_discard_does_not_authorize_unrecorded_blocks_or_non_files() {
     for global in [false, true] {
-        for obstacle in ["unrecorded-block", "directory"] {
-            let f = fixture(global, &[HarnessId::Pi]);
-            let (_, _, append) = paths(&f);
-            if obstacle == "directory" {
-                fs::create_dir(&append).unwrap();
-            } else {
-                fs::write(&append, "Personal text.\n<!-- kendex:append-system output-style-STE begin -->\nUser style.\n<!-- kendex:append-system output-style-STE end -->\n").unwrap();
-            }
-            let manifest = manifest::load_current(&manifest::manifest_path(&f.env, &f.scope))
-                .unwrap()
-                .unwrap();
-            let report = engine::plan_scope(
-                &f.env,
-                &f.scope,
-                &manifest,
-                &lock::Lock::default(),
-                &engine::PlanOptions {
-                    overwrite_edited: true,
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-            assert!(
-                report
-                    .drift
-                    .iter()
-                    .any(|row| row.state == engine::DriftState::Conflict),
-                "{obstacle}: {report:?}"
-            );
-            apply::execute(&f.env, &report.plan).unwrap();
-            assert!(
-                lock::load(&lock::lock_path(&f.env, &f.scope))
-                    .unwrap()
-                    .entries
-                    .is_empty()
-            );
-            if obstacle == "directory" {
-                assert!(append.is_dir());
-            } else {
-                assert_eq!(
-                    fs::read_to_string(&append).unwrap(),
-                    "Personal text.\n<!-- kendex:append-system output-style-STE begin -->\nUser style.\n<!-- kendex:append-system output-style-STE end -->\n"
+        for transition in [
+            "first-enabled",
+            "first-disabled",
+            "disable-enable",
+            "disabled-repeat",
+            "historical-disabled",
+        ] {
+            for obstacle in ["unrecorded-block", "matching-block", "directory"] {
+                let f = fixture(global, &[HarnessId::Pi]);
+                let (_, _, append) = paths(&f);
+                let manifest_path = manifest::manifest_path(&f.env, &f.scope);
+                let original = fs::read_to_string(&manifest_path).unwrap();
+                let mut historical = None;
+                if matches!(
+                    transition,
+                    "disable-enable" | "disabled-repeat" | "historical-disabled"
+                ) {
+                    install(&f);
+                    historical = Some(lock::load(&lock::lock_path(&f.env, &f.scope)).unwrap());
+                    fs::write(&manifest_path, format!("{original}enabled = false\n")).unwrap();
+                    install(&f);
+                    let disabled = lock::load(&lock::lock_path(&f.env, &f.scope)).unwrap();
+                    assert!(!disabled.entries["output-style:STE:pi"].enabled);
+                    assert_eq!(disabled.entries["output-style:STE:pi"].output_style, None);
+                    if transition == "disable-enable" {
+                        fs::write(&manifest_path, &original).unwrap();
+                    }
+                } else if transition == "first-disabled" {
+                    fs::write(&manifest_path, format!("{original}enabled = false\n")).unwrap();
+                }
+                // The normal disable/apply lifecycle releases the position before
+                // the user supplies a complete same-marker block.
+                let body = if obstacle == "matching-block" {
+                    "Write short sentences."
+                } else {
+                    "User style."
+                };
+                let user = format!(
+                    "Personal text.\n<!-- kendex:append-system output-style-STE begin -->\n{body}\n<!-- kendex:append-system output-style-STE end -->\n"
                 );
+                if obstacle == "directory" {
+                    if append.exists() {
+                        fs::remove_file(&append).unwrap();
+                    }
+                    fs::create_dir(&append).unwrap();
+                } else {
+                    fs::write(&append, &user).unwrap();
+                }
+                let manifest = manifest::load_current(&manifest_path).unwrap().unwrap();
+                let mut record = lock::load(&lock::lock_path(&f.env, &f.scope)).unwrap();
+                if transition == "historical-disabled" {
+                    // A disabled lock can retain the hash of the block it removed.
+                    record = historical.as_ref().unwrap().clone();
+                    record
+                        .entries
+                        .get_mut("output-style:STE:pi")
+                        .unwrap()
+                        .enabled = false;
+                }
+                for discard in ["none", "all", "named"] {
+                    let report = engine::plan_scope(
+                        &f.env,
+                        &f.scope,
+                        &manifest,
+                        &record,
+                        &engine::PlanOptions {
+                            overwrite_edited: discard == "all",
+                            overwrite_edited_names: (discard == "named")
+                                .then(|| vec![(ItemKind::OutputStyle, "STE".into())]),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        report
+                            .drift
+                            .iter()
+                            .filter(|row| row.state == engine::DriftState::Conflict)
+                            .count(),
+                        1,
+                        "{transition}/{obstacle}/{discard}: conflict count"
+                    );
+                    apply::execute(&f.env, &report.plan).unwrap();
+                    if obstacle == "directory" {
+                        assert!(append.is_dir());
+                    } else {
+                        assert_eq!(fs::read_to_string(&append).unwrap(), user);
+                    }
+                    assert_eq!(
+                        lock::load(&lock::lock_path(&f.env, &f.scope))
+                            .unwrap()
+                            .entries
+                            .contains_key("output-style:STE:pi"),
+                        historical.is_some(),
+                        "{transition}/{discard}: installation retained"
+                    );
+                }
+                if transition == "historical-disabled" && obstacle != "directory" {
+                    // Named removal reloads the fixture lock, not the planner's record.
+                    let lock_path = lock::lock_path(&f.env, &f.scope);
+                    lock::save(&lock_path, &record).unwrap();
+                    let saved = lock::load(&lock_path).unwrap();
+                    let entry = &saved.entries["output-style:STE:pi"];
+                    assert!(!entry.enabled);
+                    assert!(matches!(
+                        entry.output_style,
+                        Some(lock::OutputStyleRecord::Block { .. })
+                    ));
+                    let report = engine::ops::remove(
+                        &f.env,
+                        &f.scope,
+                        &["STE".into()],
+                        Some(ItemKind::OutputStyle),
+                        false,
+                    )
+                    .unwrap();
+                    apply::execute(&f.env, &report.plan).unwrap();
+                    assert_eq!(fs::read_to_string(&append).unwrap(), user);
+                    assert!(
+                        lock::load(&lock::lock_path(&f.env, &f.scope))
+                            .unwrap()
+                            .entries
+                            .is_empty()
+                    );
+                }
             }
         }
     }
@@ -514,6 +604,7 @@ fn orphan_cleanup_removes_owned_content_and_holds_each_edited_route() {
             "claude-setting",
             "missing-setting",
             "disabled",
+            "disabled-user-block",
         ] {
             let f = fixture(global, &[HarnessId::Claude, HarnessId::Pi]);
             let (style, settings, append) = paths(&f);
@@ -539,9 +630,12 @@ fn orphan_cleanup_removes_owned_content_and_holds_each_edited_route() {
                 )
                 .unwrap(),
                 "missing-setting" => fs::write(&settings, "{\"model\":\"opus\"}\n").unwrap(),
-                "disabled" => {
+                "disabled" | "disabled-user-block" => {
                     fs::write(&manifest_path, format!("{original}enabled = false\n")).unwrap();
                     install(&f);
+                    if edit == "disabled-user-block" {
+                        fs::write(&append, "Before.\n<!-- kendex:append-system output-style-STE begin -->\nUser block.\n<!-- kendex:append-system output-style-STE end -->\nAfter.\n").unwrap();
+                    }
                 }
                 "clean" => {}
                 _ => unreachable!(),
@@ -576,7 +670,7 @@ fn orphan_cleanup_removes_owned_content_and_holds_each_edited_route() {
                     .filter(|row| row.state == engine::DriftState::Conflict)
                     .count(),
                 usize::from(hold_claude) + usize::from(hold_pi),
-                "{edit}: {report:?}"
+                "{edit}: conflict count"
             );
             apply::execute(&f.env, &report.plan).unwrap();
             let record = lock::load(&lock::lock_path(&f.env, &f.scope)).unwrap();
@@ -602,7 +696,7 @@ fn orphan_cleanup_removes_owned_content_and_holds_each_edited_route() {
                     serde_json::json!({"model":"opus"})
                 );
             }
-            if hold_pi {
+            if hold_pi || edit == "disabled-user-block" {
                 assert_eq!(fs::read(&append).unwrap(), before_append);
             } else {
                 assert_eq!(fs::read_to_string(&append).unwrap(), "Before.\n\nAfter.\n");
@@ -690,8 +784,7 @@ fn unsupported_targets_are_reported_without_instruction_files() {
                 .notes
                 .iter()
                 .any(|note| note.contains(&format!("harness={}", harness.name()))),
-            "{harness:?}: {:?}",
-            report.notes
+            "{harness:?}: unsupported-target note missing"
         );
     }
     assert!(!f.project.join("AGENTS.md").exists());

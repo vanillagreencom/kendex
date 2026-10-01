@@ -7,7 +7,7 @@ Two advisory scores over an item's own bytes: safety answers "is this dangerous"
 ## Boundaries
 
 - Rules read typed per-kind inputs and say when they cannot read: a skill carries its rendered tree, without the top-level entries a render leaves out ([generated-paths.md § Boundaries](generated-paths.md#boundaries)), a hook its registration and script, an MCP server its command, args, env and headers, a plugin its manifest and lifecycle scripts; a rule whose bytes are not in the input reports itself not applicable. Enforced by `crates/core/tests/quality/kinds.rs` and `crates/core/tests/quality/reading.rs`.
-- `crates/core/src/quality/observe.rs::input_for` reads an observed output style as a whole file, or only its named marker block for `ConfigEntry`; a missing block is unread. This read choice is separate from the observation key defined by `quality::observe::same_reading` in that file, which does not include file state. No scoring rule reads the harness.
+- Output styles use the authored-content rules in `quality::rules::AUTHORED`. `quality::observe::input_for` reads a whole file or only its named marker block for `ConfigEntry`; a missing block is unread. `quality::observe::same_reading` keys observations without file state. No rule reads the harness. Planned and installed findings are pinned by `engine/scoring/tests.rs` and `quality/observe/tests.rs` under `crates/core/src/`.
 
 ## Invariants
 

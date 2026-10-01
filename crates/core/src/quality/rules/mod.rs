@@ -79,6 +79,7 @@ pub(super) const AUTHORED: &[ItemKind] = &[
     ItemKind::Command,
     ItemKind::Plugin,
     ItemKind::PiExtension,
+    ItemKind::OutputStyle,
 ];
 
 /// Where a line rule fired, as the two values a finding keeps apart: the

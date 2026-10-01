@@ -1,1 +1,1 @@
-- Install one output-style package per scope in Claude Code and Pi. Preserve user selections, select enabled or replacement styles, and repair edited Pi content with explicit discard.
+- Install one output style per scope in Claude Code and Pi. Show safety findings, preserve user selections and unowned Pi blocks, and repair owned Pi edits with named discard.
