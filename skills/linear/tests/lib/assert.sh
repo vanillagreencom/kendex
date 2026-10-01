@@ -493,4 +493,99 @@ __assert_on_exit() {
 	exit 0
 }
 
+# Exercise pages.sh with synthetic GraphQL replies and an explicit child env.
+# The dependency selects replies by owner and cursor, not by the function's
+# output. The suite supplies independent counts and field expectations.
+pages_case() {
+	local name="$1" mode="$2" limit=0
+	[[ "$name" != bounded ]] || limit=1
+	jq -cn --arg name "$name" '
+		def conn($rows; $more; $cursor): {nodes:$rows,pageInfo:{hasNextPage:$more,endCursor:$cursor}};
+		def issue($id; $size): {id:$id,identifier:"FIX-1",title:"synthetic",description:("s" * $size),
+			archivedAt:null,assignee:null,createdAt:"synthetic",cycle:null,estimate:null,
+			inverseRelations:conn([];false;null),labels:conn([];false;null),parent:null,
+			priority:0,project:null,projectMilestone:null,relations:conn([];false;null),
+			sortOrder:0,state:{name:"synthetic",type:"started"},trashed:false,updatedAt:"synthetic",url:"https://example.invalid"};
+		def reply($id; $after; $response): {id:$id,after:$after,response:$response};
+		def root($rows; $more; $cursor): {issues:conn($rows;$more;$cursor)};
+		def owner: issue("owner";180000) | .labels=conn([{name:("n" * 180000)}];true;"l1");
+		def labelReply($id): reply($id;"l1";{issue:{id:$id,labels:conn([{name:("n" * 180000)}];false;null)}});
+		if $name == "shape" then
+			{initial:root([range(75)|issue("synthetic";4500)];true;"c1"),
+			 replies:[reply(null;"c1";root([issue("last-a";1),issue("last-b";1)];false;null))]}
+		elif $name == "single" then {initial:root([issue("owner";180000)];false;null),replies:[]}
+		elif $name == "cumulative" then
+			{initial:root([issue("first";60000)];true;"c1"),replies:[range(1;4) as $n |
+			 reply(null;("c"+($n|tostring));root([issue(($n|tostring);60000)];$n<3;("c"+(($n+1)|tostring))))]}
+		elif $name == "entity" or $name == "nested" then {initial:{issue:owner},replies:[labelReply("owner")]}
+		elif $name == "create" or $name == "update" then
+			{initial:{("issue"+(if $name == "create" then "Create" else "Update" end)):{success:true,issue:owner}},replies:[labelReply("owner")]}
+		elif $name == "root-rows" then
+			{initial:root([issue("first";180000),issue("second";180000)];false;null),replies:[]}
+		elif $name == "absent" then {initial:{issue:{id:"owner",description:"short"},project:null},replies:[]}
+		elif $name == "children" or $name == "children-failure" then
+			{initial:{issue:(issue("parent";180000) | .children=conn([
+				issue("child-a";180000) | .labels=conn([{name:("n"*180000)}];true;"l1")];true;"ch1"))},
+			 replies:[labelReply("child-a"),
+			 reply("parent";"ch1";{issue:{id:"parent",children:conn([
+				issue("child-b";180000) | .children=conn([issue("grand-a";180000)];true;"g1")];false;null)}}),
+			 reply("child-b";"g1";{issue:{id:"child-b",children:conn([issue("grand-b";180000)];false;null)}})]}
+		elif $name == "nested-metadata" then
+			{initial:{issue:(issue("owner";1)|.labels={nodes:[]})},replies:[]}
+		elif $name == "nested-malformed" then
+			{initial:{issue:(issue("owner";1)|.labels.pageInfo.hasNextPage=null)},replies:[]}
+		elif $name == "nested-missing-nodes" then
+			{initial:{issue:(issue("owner";1)|del(.labels.nodes))},replies:[]}
+		elif $name == "nested-failure" then {initial:{issue:owner},replies:[]}
+		elif $name == "cap" then
+			{initial:root([];true;"c1"),replies:[range(1;401) as $n |
+			 reply(null;("c"+($n|tostring));root([];$n<400;("c"+(($n+1)|tostring))))]}
+		else {initial:root([issue("first";1)];true;"c1"),replies:[reply(null;"c1";root([issue("last";1)];false;null))]}
+		end |
+		if $name == "missing-metadata" then del(.initial.issues.pageInfo)
+		elif $name == "malformed-metadata" then .initial.issues.pageInfo.hasNextPage="true"
+		elif $name == "malformed-nodes" then .initial.issues.nodes={}
+		elif $name == "missing-cursor" then .initial.issues.pageInfo.endCursor=null
+		elif $name == "repeated-cursor" then .replies[0].response.issues.pageInfo={hasNextPage:true,endCursor:"c1"}
+		elif $name == "later-page" then .replies=[]
+		elif $name == "children-failure" then .replies |= map(select(.after != "g1"))
+		else . end
+	' >"$PAGE_ROOT/fixture.json" || { assert_fail "$name: fixture generation"; return; }
+	cat >"$PAGE_ROOT/subject" <<'SUBJECT'
+#!/bin/bash
+set -euo pipefail
+source "$1"
+fixture="$2" mode="$3" limit="$4" log="$5"
+fixture_data=$(cat -- "$fixture") || exit 1
+LINEAR_CHILD_DEPTH=2
+LINEAR_ISSUE_CHILD_MODE=bundle
+ISSUE_RELATION_FIELDS='relations(first: 1) { pageInfo { hasNextPage endCursor } nodes { id } }'
+graphql_request() {
+    local query="$1" variables="$2" response
+    printf '%s %s\n' "$query" "$variables" >>"$log"
+    response=$(jq -cs '.[0] as $vars | .[1] |
+        if ($vars.after // null) == null then .initial
+        else [.replies[] | select(.id == ($vars.id // null) and .after == $vars.after) | .response][0] end |
+        select(. != null)' <<<"$variables"$'\n'"$fixture_data") || return 1
+    if [[ -z "$response" ]]; then
+        printf 'fixture: later page failed\n' >&2
+        return 1
+    fi
+    printf '%s\n' "$response"
+}
+case "$mode" in
+pages) graphql_pages 'fixture query' '{}' issues "$limit" ;;
+entity)
+    data=$(jq -c '.initial.issue' "$fixture") || exit 1
+    linear_complete_entity issue "$data" ;;
+query) graphql_query 'fixture query' '{}' ;;
+*) exit 2 ;;
+esac
+SUBJECT
+	: >"$PAGE_ROOT/requests"
+	PAGE_OUT=$(env -i PATH="$PATH" HOME="$PAGE_ROOT" bash "$PAGE_ROOT/subject" \
+		"$SKILL_DIR/scripts/lib/pages.sh" "$PAGE_ROOT/fixture.json" "$mode" "$limit" \
+		"$PAGE_ROOT/requests" 2>"$PAGE_ROOT/error") && PAGE_RC=0 || PAGE_RC=$?
+}
+
 trap __assert_on_exit EXIT

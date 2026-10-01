@@ -538,6 +538,7 @@
   ".agents/skills/linear/scripts/lib/formatters.sh",
   ".agents/skills/linear/scripts/lib/issue-validation.sh",
   ".agents/skills/linear/scripts/lib/kendex-env.sh",
+  ".agents/skills/linear/scripts/lib/pages.sh",
   ".agents/skills/linear/scripts/linear.sh",
   ".agents/skills/orch/README.md",
   ".agents/skills/orch/SKILL.md",
