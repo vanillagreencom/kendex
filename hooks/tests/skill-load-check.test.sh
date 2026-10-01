@@ -24,9 +24,7 @@
 # not be read, is the value. The path refused and the skill to load are
 # pinned as themselves under it, and git's own words when it could not answer.
 #
-# HOOK_UNDER_TEST overrides the script under test so the must-fail controls
-# (a no-op hook, an always-refuse hook) can be run against these same
-# assertions.
+# HOOK_UNDER_TEST overrides the script under test for these assertions.
 set -euo pipefail
 
 # A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
@@ -196,8 +194,8 @@ assert_eq "rc=$rc first=$(first_line)" "rc=2 first=$REFUSAL" \
 # it failed. A row's result is `ok`, `error` or `none` (never written); the
 # result's text never names the skill, as a real file body need not.
 PI_T="$TMP_ROOT/pi-session.jsonl"
-while IFS='|' read -r want path result target; do
-  [ -n "$want" ] || continue
+pi_read_row() { # WANT PATH RESULT [TARGET]
+  local want="$1" path="$2" result="$3" target="${4:-src/lib.rs}"
   {
     "${JQ[@]}" --arg p "$path" \
       '{type:"message",message:{role:"assistant",content:[{type:"toolCall",id:"call-1",name:"read",arguments:{path:$p}}]}}'
@@ -212,6 +210,15 @@ while IFS='|' read -r want path result target; do
   } >"$PI_T"
   run_tool Write file_path "$REPO/${target:-src/lib.rs}" "$PI_T"
   assert_eq "rc=$rc first=$(first_line)" "$want" "a Pi read of $path, result $result"
+}
+pi_markdown_row() {
+  pi_read_row 'rc=2 first=skill-load-check: unloaded=docs-writing' \
+    .agents/skills/docs-writing/SKILL.md none README.md
+}
+pi_markdown_row
+while IFS='|' read -r want path result target; do
+  [ -n "$want" ] || continue
+  pi_read_row "$want" "$path" "$result" "$target"
 done <<ROWS
 rc=0 first=-|/home/u/.pi/agent/skills/code-quality/SKILL.md|ok
 rc=0 first=-|code-quality/SKILL.md|ok
@@ -219,7 +226,6 @@ rc=2 first=$REFUSAL|/home/u/.pi/agent/skills/code-quality/SKILL.md|error
 rc=2 first=$REFUSAL|/home/u/.pi/agent/skills/code-quality/SKILL.md|none
 rc=2 first=$REFUSAL|.agents/skills/not-code-quality/SKILL.md|ok
 rc=2 first=$REFUSAL|.agents/skills/code-quality/references/rules.md|ok
-rc=2 first=skill-load-check: unloaded=docs-writing|.agents/skills/docs-writing/SKILL.md|none|README.md
 rc=0 first=-|.agents/skills/docs-writing/SKILL.md|ok|README.md
 ROWS
 
@@ -263,9 +269,16 @@ rule_table() { # ROWS
   [ "$((PASS + FAIL))" -gt "$before" ] || { echo "rule_table: no row was asserted" >&2; exit 2; }
 }
 LINEAR_CALL='.agents/skills/linear/scripts/linear.sh issues list --state Todo'
+markdown_row() {
+  rule_table "a markdown edit without docs-writing refuses, naming it|edit|docs/guide.md|$LOADED_T|-|rc=2 first=skill-load-check: unloaded=docs-writing"
+}
+markdown_rows() {
+  markdown_row
+  pi_markdown_row
+}
+markdown_row
 rule_table "\
 a markdown edit with docs-writing loaded and code-quality not passes|edit|docs/guide.md|$DOCS_T|-|rc=0 first=-
-a markdown edit without docs-writing refuses, naming it|edit|docs/guide.md|$LOADED_T|-|rc=2 first=skill-load-check: unloaded=docs-writing
 a source edit with docs-writing loaded and code-quality not refuses, naming code-quality|edit|src/lib.rs|$DOCS_T|-|rc=2 first=skill-load-check: unloaded=code-quality
 a linear.sh read without linear refuses, naming it|bash|$LINEAR_CALL|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
 the same call inside a quoted string is no command|bash|echo \"run $LINEAR_CALL\"|$NONE_T|-|rc=0 first=-
@@ -429,15 +442,21 @@ assert_eq "$rc" 2 "a transcript_path naming a directory refuses"
 # when SessionManager.getSessionFile() is undefined (--no-session). Unlike
 # that omission, a present but invalid value is a malformed payload.
 mkdir -p "$TMP_ROOT/.pi/kendex/hooks"
-cp -- "$HOOK" "$TMP_ROOT/.pi/kendex/hooks/skill-load-check.sh"
-HOOK_AT="$TMP_ROOT/.pi/kendex/hooks/skill-load-check.sh"
-while IFS='|' read -r label fields want; do
-  [ -n "$label" ] || continue
+pi_session_row() { # LABEL FIELDS WANT
+  local label="$1" fields="$2" want="$3" HOOK_AT="$TMP_ROOT/.pi/kendex/hooks/skill-load-check.sh"
+  cp -- "$HOOK" "$HOOK_AT"
   run_payload "$("${JQ[@]}" --arg p "$REPO/README.md" --argjson f "$fields" \
     '{tool_name:"Write",tool_input:{file_path:$p},session_id:"pi-session"} + $f')"
   assert_eq "rc=$rc first=$(first_line)" "$want" "$label"
+}
+pi_nonpersistent_row() {
+  pi_session_row 'Pi nonpersistent session' '{}' 'rc=0 first=skill-load-check: gap=nonpersistent-pi'
+}
+pi_nonpersistent_row
+while IFS='|' read -r label fields want; do
+  [ -n "$label" ] || continue
+  pi_session_row "$label" "$fields" "$want"
 done <<'ROWS'
-Pi nonpersistent session|{}|rc=0 first=skill-load-check: gap=nonpersistent-pi
 Pi null transcript|{"transcript_path":null}|rc=2 first=skill-load-check: payload=no-transcript
 Pi malformed transcript|{"transcript_path":[]}|rc=2 first=skill-load-check: payload=no-transcript
 Pi empty transcript|{"transcript_path":""}|rc=2 first=skill-load-check: payload=no-transcript
@@ -501,14 +520,12 @@ tools_table() { # TOOLS
 }
 tools_table "jq git cat grep dirname"
 
-if [ "${SKILL_LOAD_CONTROL_ACTIVE:-}" != 1 ]; then
-  skill_load_control markdown "$HOOK" 'require() { # SKILL' \
-    '  [ "$1" != docs-writing ] || return 0' HOOK_UNDER_TEST \
-    'a markdown edit without docs-writing refuses, naming it' \
-    'a Pi read of .agents/skills/docs-writing/SKILL.md, result none'
-  skill_load_control nonpersistent "$HOOK" 'notice() { # KEY VALUE [CAUSE]' \
-    '  [ "$1" != gap ] || refuse "$@"' HOOK_UNDER_TEST 'Pi nonpersistent session'
-fi
+skill_load_control markdown "$HOOK" 'require() { # SKILL' \
+  '  [ "$1" != docs-writing ] || return 0' HOOK markdown_rows \
+  'a markdown edit without docs-writing refuses, naming it' \
+  'a Pi read of .agents/skills/docs-writing/SKILL.md, result none'
+skill_load_control nonpersistent "$HOOK" 'notice() { # KEY VALUE [CAUSE]' \
+  '  [ "$1" != gap ] || refuse "$@"' HOOK pi_nonpersistent_row 'Pi nonpersistent session'
 
 echo
 echo "passed: $PASS  failed: $FAIL"

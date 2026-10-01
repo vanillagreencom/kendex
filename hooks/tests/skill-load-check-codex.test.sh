@@ -77,7 +77,15 @@ PATCH="*** Begin Patch
 +new
 *** End Patch"
 
+markdown_row() {
+  cp -- "$HOOK" "$JUDGE"
+  rollout 'cat .agents/skills/docs-writing/SKILL.md' absent
+  run_patch "$PATCH" "$TRANSCRIPT"
+  assert_eq "rc=$rc first=$(first_line)" 'rc=2 first=skill-load-check: unloaded=docs-writing' \
+    'markdown before its skill load'
+}
 echo "=== skill-load-check: codex ==="
+markdown_row
 # One row per command or result shape the Codex producer emits. A successful
 # command that only names the skill, or hides a failed read, is not a load.
 while IFS='|' read -r label cmd result want; do
@@ -86,7 +94,6 @@ while IFS='|' read -r label cmd result want; do
   run_patch "$PATCH" "$TRANSCRIPT"
   assert_eq "rc=$rc first=$(first_line)" "$want" "$label"
 done <<'ROWS'
-markdown before its skill load|cat .agents/skills/docs-writing/SKILL.md|absent|rc=2 first=skill-load-check: unloaded=docs-writing
 markdown after a completed cat read|cat .agents/skills/docs-writing/SKILL.md|ok|rc=0 first=-
 markdown after a read among unrelated outputs|cat .agents/skills/docs-writing/SKILL.md|noisy|rc=0 first=-
 markdown after a completed sed read|sed -n '1,200p' .agents/skills/docs-writing/SKILL.md|ok|rc=0 first=-
@@ -112,6 +119,14 @@ run_patch "$PATCH" "$CHILD" child-thread
 assert_eq "rc=$rc first=$(first_line)" "rc=2 first=skill-load-check: unloaded=docs-writing" \
   "the child does not inherit the parent rollout load"
 
+delete_row() {
+  cp -- "$HOOK" "$JUDGE"
+  rollout 'cat .agents/skills/docs-writing/SKILL.md' ok
+  run_patch "*** Delete File: $REPO/old.sh" "$TRANSCRIPT"
+  assert_eq "rc=$rc first=$(first_line)" 'rc=2 first=skill-load-check: unloaded=code-quality' delete
+}
+delete_row
+
 # Every patch file line is judged, including a moved destination. The first
 # target is cleared by docs-writing; a later source target is not.
 while IFS='|' read -r label lines want; do
@@ -122,7 +137,6 @@ while IFS='|' read -r label lines want; do
   assert_eq "rc=$rc first=$(first_line)" "$want" "$label"
 done <<'ROWS'
 update then add|*** Update File: @REPO@/README.md\n*** Add File: @REPO@/new.sh|rc=2 first=skill-load-check: unloaded=code-quality
-delete|*** Delete File: @REPO@/old.sh|rc=2 first=skill-load-check: unloaded=code-quality
 move destination|*** Update File: @REPO@/README.md\n*** Move to: @REPO@/new.sh|rc=2 first=skill-load-check: unloaded=code-quality
 relative markdown target|*** Update File: README.md|rc=0 first=-
 relative source target|*** Add File: new.sh|rc=2 first=skill-load-check: unloaded=code-quality
@@ -135,7 +149,9 @@ assert_eq "rc=$rc first=$(first_line)" "rc=0 first=-" "a source patch passes aft
 echo "Codex Bash commands use the same required skills"
 mkdir -p "$REPO/relocated/hooks"
 cp -- "$HOOK" "$REPO/relocated/hooks/skill-load-check.sh"
-while IFS='|' read -r install result want; do
+linear_shell_row() { # INSTALL RESULT WANT
+  local install="$1" result="$2" want="$3"
+  cp -- "$HOOK" "$REPO/$install/hooks/skill-load-check.sh"
   rollout 'cat .agents/skills/linear/SKILL.md' "$result"
   payload=$(jq -n -c --arg t "$TRANSCRIPT" '{tool_name:"Bash",
     tool_input:{command:".agents/skills/linear/scripts/linear.sh cache issues get KEN-2337"},transcript_path:$t}')
@@ -147,17 +163,25 @@ while IFS='|' read -r install result want; do
   set -e
   assert_eq "rc=$rc first=$(first_line) stdout=$(cat -- "$OUT_FILE")" "$want stdout=" \
     "linear shell load $install $result"
+}
+linear_row() {
+  linear_shell_row relocated absent 'rc=2 first=skill-load-check: unloaded=linear'
+}
+linear_row
+while IFS='|' read -r install result want; do
+  linear_shell_row "$install" "$result" "$want"
 done <<'ROWS'
 .codex|absent|rc=2 first=skill-load-check: unloaded=linear
 .codex|ok|rc=0 first=-
-relocated|absent|rc=2 first=skill-load-check: unloaded=linear
 relocated|ok|rc=0 first=-
 ROWS
 
 # Codex exec --ephemeral's PreToolUse producer always emits transcript_path,
 # null when Session::hook_transcript_path has no live_thread. Missing is not
 # that protocol, and a persistent path still has to name a readable file.
-while IFS='|' read -r label fields want; do
+ephemeral_row() { # LABEL FIELDS WANT
+  local label="$1" fields="$2" want="$3"
+  cp -- "$HOOK" "$JUDGE"
   payload=$(jq -n -c --arg p "$PATCH" --arg c "$REPO" --argjson f "$fields" \
     '{tool_name:"apply_patch",tool_input:{command:$p},cwd:$c} + $f')
   set +e
@@ -166,8 +190,15 @@ while IFS='|' read -r label fields want; do
   rc=$?
   set -e
   assert_eq "rc=$rc first=$(first_line)" "$want" "$label"
+}
+nonpersistent_row() {
+  ephemeral_row 'Codex ephemeral session' '{"transcript_path":null}' \
+    'rc=0 first=skill-load-check: gap=nonpersistent-codex'
+}
+nonpersistent_row
+while IFS='|' read -r label fields want; do
+  ephemeral_row "$label" "$fields" "$want"
 done <<'ROWS'
-Codex ephemeral session|{"transcript_path":null}|rc=0 first=skill-load-check: gap=nonpersistent-codex
 Codex missing transcript field|{}|rc=2 first=skill-load-check: payload=no-transcript
 Codex malformed transcript|{"transcript_path":[]}|rc=2 first=skill-load-check: payload=no-transcript
 Codex empty transcript|{"transcript_path":""}|rc=2 first=skill-load-check: payload=no-transcript
@@ -175,18 +206,17 @@ Codex unreadable persistent transcript|{"transcript_path":"/no-such-rollout.json
 Codex malformed ephemeral agent|{"transcript_path":null,"agent_id":[]}|rc=2 first=skill-load-check: payload=invalid-agent-id
 ROWS
 
-if [ "${SKILL_LOAD_CONTROL_ACTIVE:-}" != 1 ]; then
-  while IFS='|' read -r skill row; do
-    skill_load_control "$skill" "$HOOK" 'require() { # SKILL' \
-      "  [ \"\$1\" != $skill ] || return 0" HOOK_UNDER_TEST "$row"
-  done <<'ROWS'
-docs-writing|markdown before its skill load
-code-quality|delete
-linear|linear shell load relocated absent
+while IFS='|' read -r skill callback row; do
+  skill_load_control "$skill" "$HOOK" 'require() { # SKILL' \
+    "  [ \"\$1\" != $skill ] || return 0" HOOK "$callback" "$row"
+done <<'ROWS'
+docs-writing|markdown_row|markdown before its skill load
+code-quality|delete_row|delete
+linear|linear_row|linear shell load relocated absent
 ROWS
-  skill_load_control nonpersistent "$HOOK" 'notice() { # KEY VALUE [CAUSE]' \
-    '  [ "$1" != gap ] || refuse "$@"' HOOK_UNDER_TEST 'Codex ephemeral session'
-fi
+skill_load_control nonpersistent "$HOOK" 'notice() { # KEY VALUE [CAUSE]' \
+  '  [ "$1" != gap ] || refuse "$@"' HOOK nonpersistent_row 'Codex ephemeral session'
+
 
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

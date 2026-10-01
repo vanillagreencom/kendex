@@ -11,12 +11,12 @@ assert_eq() {
   fi
 }
 
-# Insert a defect into a private copy and require the named production row to
-# turn red. The same suite reruns with controls disabled, not a second model
-# of the hook. Keep the matched code and remove only its effect.
-skill_load_control() { # NAME SOURCE ANCHOR INSERT OVERRIDE FAILED-ROW...
-  local name="$1" source="$2" anchor="$3" insert="$4" override="$5" text rest changed log status row matches
-  shift 5
+# Run the suite's own row callback on a private mutant, not the whole suite.
+# The subshell keeps the override and assertion counts out of the parent.
+# Keep the matched code and remove only its effect.
+skill_load_control() { # NAME SOURCE ANCHOR INSERT OVERRIDE ROWS FAILED-ROW...
+  local name="$1" source="$2" anchor="$3" insert="$4" override="$5" rows="$6" text rest changed log status row matches
+  shift 6
   [ ! -L "$source" ] || { echo "skill-load-control: source=symlink" >&2; exit 2; }
   text=$(cat -- "$source") || { echo "skill-load-control: source=unreadable" >&2; exit 2; }
   rest=${text#*"$anchor"}
@@ -27,8 +27,14 @@ skill_load_control() { # NAME SOURCE ANCHOR INSERT OVERRIDE FAILED-ROW...
   printf '%s\n' "$changed" >"$TMP_ROOT/$name.sh"
   log="$TMP_ROOT/$name.log"
   set +e
-  env -i PATH="$PATH" HOME="$TMP_ROOT" SKILL_LOAD_CONTROL_ACTIVE=1 \
-    "$override=$TMP_ROOT/$name.sh" "$BASH_BIN" "$TEST_DIR/${BASH_SOURCE[1]##*/}" >"$log" 2>&1
+  (
+    set -e
+    PASS=0
+    FAIL=0
+    printf -v "$override" '%s' "$TMP_ROOT/$name.sh"
+    "$rows"
+    [ "$FAIL" -eq 0 ]
+  ) >"$log" 2>&1
   status=$?
   set -e
   assert_eq "$status" 1 "control $name: the mutated hook turns the suite red"

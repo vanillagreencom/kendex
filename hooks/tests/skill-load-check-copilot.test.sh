@@ -140,9 +140,16 @@ assert_eq "rc=$rc first=$(first_line) out=$(cat "$OUT_FILE")" "rc=0 first=- out=
 run_at "$JUDGE" "$(pre lead bash "$("${JQ[@]}" --arg c "$LINEAR_CALL" '{command:$c}')")"
 assert_eq "rc=$rc first=$(first_line)" "rc=2 first=skill-load-check: unloaded=linear" \
   "its linear.sh call is still refused: code-quality is not linear"
-run_at "$JUDGE" "$(edit_of lead "$REPO/README.md")"
-assert_eq "rc=$rc first=$(first_line)" "rc=2 first=skill-load-check: unloaded=docs-writing" \
-  "and so is its edit of a markdown file"
+markdown_row() {
+  local JUDGE="$TMP_ROOT/markdown/.github/hooks/skill-load-check.sh"
+  mkdir -p "${JUDGE%/*}"
+  cp -- "$HOOK" "$JUDGE"
+  cp -- "$CARRIER" "${JUDGE%/*}/skill-load-record.sh"
+  run_at "$JUDGE" "$(edit_of markdown "$REPO/README.md")"
+  assert_eq "rc=$rc first=$(first_line)" "rc=2 first=skill-load-check: unloaded=docs-writing" \
+    "and so is its edit of a markdown file"
+}
+markdown_row
 run_at "$JUDGE" "$(pre lead apply_patch "$(jq -c -n --arg p "*** Begin Patch
 *** Update File: $REPO/src/lib.rs
 @@
@@ -160,9 +167,18 @@ assert_eq "rc=$rc first=$(first_line)" "rc=0 first=-" \
   "once it loads linear, its linear.sh call passes"
 
 load lead docs-writing
-run_at "$JUDGE" "$(edit_of lead "$REPO/README.md")"
-assert_eq "rc=$rc first=$(first_line)" "rc=0 first=-" \
-  "the markdown edit passes after skill-load-record records docs-writing"
+recorded_markdown_row() {
+  local JUDGE="$TMP_ROOT/recorder/.github/hooks/skill-load-check.sh"
+  mkdir -p "${JUDGE%/*}"
+  cp -- "$HOOK" "$JUDGE"
+  cp -- "$CARRIER" "${JUDGE%/*}/skill-load-record.sh"
+  rm -f -- "${RECORDS:?}/recorder"
+  run_at "${JUDGE%/*}/skill-load-record.sh" "$(post recorder skill '{"skill":"docs-writing"}')"
+  run_at "$JUDGE" "$(edit_of recorder "$REPO/README.md")"
+  assert_eq "rc=$rc first=$(first_line)" "rc=0 first=-" \
+    "the markdown edit passes after skill-load-record records docs-writing"
+}
+recorded_markdown_row
 
 echo "a subagent is judged by its own sessionId"
 run_at "$JUDGE" "$(edit_of child)"
@@ -363,14 +379,12 @@ tools_row() { # TOOL
 }
 for tool in jq cat mkdir find; do tools_row "$tool"; done
 
-if [ "${SKILL_LOAD_CONTROL_ACTIVE:-}" != 1 ]; then
-  skill_load_control markdown "$HOOK" 'require() { # SKILL' \
-    '  [ "$1" != docs-writing ] || return 0' HOOK_UNDER_TEST \
-    'and so is its edit of a markdown file'
-  skill_load_control recorder "$CARRIER" '  JUDGE="$HOOK_DIR/skill-load-check.sh"' \
-    '  exit 0' CARRIER_UNDER_TEST \
-    'the markdown edit passes after skill-load-record records docs-writing'
-fi
+skill_load_control markdown "$HOOK" 'require() { # SKILL' \
+  '  [ "$1" != docs-writing ] || return 0' HOOK markdown_row \
+  'and so is its edit of a markdown file'
+skill_load_control recorder "$CARRIER" '  JUDGE="$HOOK_DIR/skill-load-check.sh"' \
+  '  exit 0' CARRIER recorded_markdown_row \
+  'the markdown edit passes after skill-load-record records docs-writing'
 
 echo
 echo "passed: $PASS  failed: $FAIL"

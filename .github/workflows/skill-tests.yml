@@ -812,11 +812,8 @@ jobs:
       # suite sums over those legs, Linux then macOS:
       #   guards-tools       the rest of tools/tests   326-372s   533-674s
       #   guards-tools-tail  those two tools/ suites    269-341s   488-617s
-      #   guards-hooks       hooks/tests and the two    183-216s   364-463s
-      #                      moved commit-guards suites
-      # md-refs, the step's last suite, was cut short on the four cancelled
-      # Linux legs, so their `guards-hooks` figure is a floor. The
-      # `guards-tools-tail` step spells its two suites as paths and the
+      # The guards-hooks budget is stated above its step below.
+      # `guards-tools-tail` spells its two suites as paths and the
       # `guards-tools` step reads this file for them, the fallback the
       # `guards-commit` step carries.
       # tools/tests/orch-shard-partition.test.sh owns that invariant: it runs
@@ -955,6 +952,10 @@ jobs:
           fi
           exit "$fail"
 
+      # Whole-suite mutation controls drove guards-hooks macOS jobs to
+      # 1466-1819s. Controls now run only their asserted rows. Re-measure the
+      # summed suite time against the fourteen-minute macOS target; the
+      # thirty-minute job cap stays unchanged.
       - name: hook and moved commit-guards suites
         if: matrix.shard == 'guards-hooks'
         run: |
