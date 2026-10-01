@@ -4,7 +4,7 @@
 
 ### 2.1.3
 
-- Codex SSE requests remain cancellable after headers arrive. Stalled SSE bodies and silent WebSockets end at the HTTP idle timeout; WebSocket handshakes use the connect timeout. Background image commands run at most four jobs at once, and session shutdown aborts them.
+- Codex SSE requests remain cancellable after headers arrive. Stalled SSE bodies and silent WebSockets end at the HTTP idle timeout; WebSocket handshakes use the connect timeout. A timed-out or cancelled handshake releases its transport instead of retaining sockets. Background image commands run at most four jobs at once, and session shutdown aborts them.
 
 ### 2.1.2
 

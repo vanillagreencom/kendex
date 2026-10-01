@@ -17,8 +17,22 @@ for (const row of [
 		const result = await withinDeadline(runCodexProvider({ transport: "websocket", ...row.options, signal: controller.signal }, { baseUrl: server.url }));
 		assert.equal(result.stopReason, "error");
 		assert.equal(result.errorMessage?.split("\n")[0], row.key);
+		await withinDeadline(server.closed);
 	});
 }
+
+test("parent cancellation terminates a stalled WebSocket upgrade", async (t) => {
+	providerWorld(t);
+	const server = await stalledHttpServer(t, "connect");
+	const controller = new AbortController();
+	t.after(() => controller.abort());
+	const pending = runCodexProvider({ transport: "websocket", websocketConnectTimeoutMs: 0, signal: controller.signal }, { baseUrl: server.url });
+	// Wait for the peer to receive the handshake, not a test-clock delay.
+	await withinDeadline(server.upgraded);
+	controller.abort();
+	assert.equal((await withinDeadline(pending)).stopReason, "aborted");
+	await withinDeadline(server.closed);
+});
 
 test("WebSocket receive deadline resets after events and zero disables the deadline", async (t) => {
 	providerWorld(t);

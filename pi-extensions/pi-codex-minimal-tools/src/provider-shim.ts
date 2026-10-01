@@ -1,6 +1,7 @@
 // Pi retry classification consumes HTTP status prefixes in errorMessage.
 // withHttpStatusPrefix preserves an existing HTTP <status> prefix verbatim.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Agent, type Dispatcher } from "undici";
 import { access } from "node:fs/promises";
 import { arch, platform, release } from "node:os";
 import { dirname, join, normalize, relative } from "node:path";
@@ -133,8 +134,12 @@ interface WebSocketConstructorLike {
 	new (url: string, options?: { headers?: Record<string, string>; dispatcher?: unknown } | string | string[]): WebSocketLike;
 }
 
-interface SessionWebSocketCacheEntry {
+interface WebSocketConnection {
 	socket: WebSocketLike;
+	dispatcher: Dispatcher;
+}
+
+interface SessionWebSocketCacheEntry extends WebSocketConnection {
 	busy: boolean;
 	idleTimer?: ReturnType<typeof setTimeout>;
 	continuation?: CachedWebSocketContinuationState;
@@ -144,7 +149,7 @@ interface AcquiredWebSocket {
 	socket: WebSocketLike;
 	entry?: SessionWebSocketCacheEntry;
 	reused: boolean;
-	release: (options?: { keep?: boolean }) => void;
+	release: (options?: { keep?: boolean }) => Promise<void>;
 }
 
 interface CachedWebSocketContinuationState {
@@ -816,16 +821,16 @@ export function proxyForWebSocketUrl(rawUrl: string): string | undefined {
 	return undefined;
 }
 
-async function proxyDispatcherForUrl(rawUrl: string): Promise<unknown | undefined> {
+async function proxyDispatcherForUrl(rawUrl: string): Promise<Dispatcher | undefined> {
 	const proxy = proxyForWebSocketUrl(rawUrl);
 	if (!proxy) return undefined;
 	const { ProxyAgent } = await import("undici");
 	return new ProxyAgent(proxy);
 }
 
-export async function webSocketOptionsForUrl(url: string, headers: Record<string, string>): Promise<{ headers: Record<string, string>; dispatcher?: unknown }> {
-	const dispatcher = await proxyDispatcherForUrl(url);
-	return dispatcher ? { headers, dispatcher } : { headers };
+/** Each connection owns its dispatcher so cancelling an upgrade cannot affect another request. */
+export async function webSocketOptionsForUrl(url: string, headers: Record<string, string>): Promise<{ headers: Record<string, string>; dispatcher: Dispatcher }> {
+	return { headers, dispatcher: await proxyDispatcherForUrl(url) ?? new Agent() };
 }
 
 function getWebSocketReadyState(socket: WebSocketLike): number | undefined {
@@ -837,11 +842,13 @@ function isWebSocketReusable(socket: WebSocketLike): boolean {
 	return readyState === undefined || readyState === 1;
 }
 
-function closeWebSocketSilently(socket: WebSocketLike, code = 1000, reason = "done"): void {
+async function closeWebSocket(connection: WebSocketConnection, code = 1000, reason = "done"): Promise<void> {
 	try {
-		socket.close(code, reason);
-	} catch {
-		// ignore close errors
+		connection.socket.close(code, reason);
+	} finally {
+		// close() only starts the WebSocket closing handshake. The owned
+		// dispatcher also aborts a stalled HTTP upgrade through its public API.
+		await connection.dispatcher.destroy();
 	}
 }
 
@@ -852,8 +859,10 @@ function scheduleSessionWebSocketExpiry(cacheKey: string, entry: SessionWebSocke
 	}
 	entry.idleTimer = setTimeout(() => {
 		if (entry.busy) return;
-		closeWebSocketSilently(entry.socket, 1000, "idle_timeout");
 		websocketSessionCache.delete(cacheKey);
+		void closeWebSocket(entry, 1000, "idle_timeout").catch(error => {
+			console.error("Codex WebSocket idle cleanup failed:", error);
+		});
 	}, SESSION_WEBSOCKET_CACHE_TTL_MS);
 }
 
@@ -878,7 +887,7 @@ function extractWebSocketCloseError(event: unknown): Error {
 	return new Error("WebSocket closed");
 }
 
-async function connectWebSocket(url: string, headers: Headers, signal: AbortSignal | undefined, timeoutMs: number): Promise<WebSocketLike> {
+async function connectWebSocket(url: string, headers: Headers, signal: AbortSignal | undefined, timeoutMs: number): Promise<WebSocketConnection> {
 	const WebSocketCtor = getWebSocketConstructor();
 	if (!WebSocketCtor) {
 		throw new Error("WebSocket transport is not available in this runtime");
@@ -887,45 +896,38 @@ async function connectWebSocket(url: string, headers: Headers, signal: AbortSign
 	const wsHeaders = headersToRecord(headers);
 	delete wsHeaders["OpenAI-Beta"];
 	const options = await webSocketOptionsForUrl(url, wsHeaders);
-	if (signal?.aborted) throw new Error("Request was aborted");
+	if (signal?.aborted) {
+		await options.dispatcher.destroy();
+		throw new Error("Request was aborted");
+	}
+	let socket: WebSocketLike;
+	try {
+		socket = new WebSocketCtor(url, options);
+	} catch (error) {
+		await options.dispatcher.destroy();
+		throw error;
+	}
+	const connection: WebSocketConnection = { socket, dispatcher: options.dispatcher };
 
 	return new Promise((resolve, reject) => {
 		let settled = false;
-		let socket: WebSocketLike;
 		let timeout: ReturnType<typeof setTimeout> | undefined;
-
-		try {
-			socket = new WebSocketCtor(url, options);
-		} catch (error) {
-			reject(error instanceof Error ? error : new Error(String(error)));
-			return;
-		}
 
 		const onOpen = () => {
 			if (settled) return;
 			settled = true;
 			cleanup();
-			resolve(socket);
+			resolve(connection);
 		};
-		const onError = (event: unknown) => {
+		const fail = (error: Error, reason: string) => {
 			if (settled) return;
 			settled = true;
 			cleanup();
-			reject(extractWebSocketError(event));
+			void closeWebSocket(connection, 1000, reason).then(() => reject(error), reject);
 		};
-		const onClose = (event: unknown) => {
-			if (settled) return;
-			settled = true;
-			cleanup();
-			reject(extractWebSocketCloseError(event));
-		};
-		const onAbort = () => {
-			if (settled) return;
-			settled = true;
-			cleanup();
-			closeWebSocketSilently(socket, 1000, "aborted");
-			reject(new Error("Request was aborted"));
-		};
+		const onError = (event: unknown) => fail(extractWebSocketError(event), "connect_error");
+		const onClose = (event: unknown) => fail(extractWebSocketCloseError(event), "connect_closed");
+		const onAbort = () => fail(new Error("Request was aborted"), "aborted");
 
 		const cleanup = () => {
 			clearTimeout(timeout);
@@ -939,12 +941,9 @@ async function connectWebSocket(url: string, headers: Headers, signal: AbortSign
 		socket.addEventListener("error", onError);
 		socket.addEventListener("close", onClose);
 		signal?.addEventListener("abort", onAbort);
+		if (signal?.aborted) { onAbort(); return; }
 		if (timeoutMs > 0) timeout = setTimeout(() => {
-			if (settled) return;
-			settled = true;
-			cleanup();
-			closeWebSocketSilently(socket, 1000, "connect_timeout");
-			reject(new Error(`websocket_connect_timeout_ms=${timeoutMs}\nCodex WebSocket connect timeout`));
+			fail(new Error(`websocket_connect_timeout_ms=${timeoutMs}\nCodex WebSocket connect timeout`), "connect_timeout");
 		}, timeoutMs);
 	});
 }
@@ -957,17 +956,11 @@ async function acquireWebSocket(
 	connectTimeoutMs: number,
 ): Promise<AcquiredWebSocket> {
 	if (!sessionId) {
-		const socket = await connectWebSocket(url, headers, signal, connectTimeoutMs);
+		const connection = await connectWebSocket(url, headers, signal, connectTimeoutMs);
 		return {
-			socket,
+			socket: connection.socket,
 			reused: false,
-			release: ({ keep } = {}) => {
-				if (keep === false) {
-					closeWebSocketSilently(socket);
-					return;
-				}
-				closeWebSocketSilently(socket);
-			},
+			release: () => closeWebSocket(connection),
 		};
 	}
 
@@ -984,10 +977,10 @@ async function acquireWebSocket(
 				socket: cached.socket,
 				entry: cached,
 				reused: true,
-				release: ({ keep } = {}) => {
+				release: async ({ keep } = {}) => {
 					if (!keep || !isWebSocketReusable(cached.socket)) {
-						closeWebSocketSilently(cached.socket);
 						websocketSessionCache.delete(sessionId);
+						await closeWebSocket(cached);
 						return;
 					}
 					cached.busy = false;
@@ -997,36 +990,34 @@ async function acquireWebSocket(
 		}
 
 		if (cached.busy) {
-			const socket = await connectWebSocket(url, headers, signal, connectTimeoutMs);
+			const connection = await connectWebSocket(url, headers, signal, connectTimeoutMs);
 			return {
-				socket,
+				socket: connection.socket,
 				reused: false,
-				release: () => {
-					closeWebSocketSilently(socket);
-				},
+				release: () => closeWebSocket(connection),
 			};
 		}
 
 		if (!isWebSocketReusable(cached.socket)) {
-			closeWebSocketSilently(cached.socket);
 			websocketSessionCache.delete(sessionId);
+			await closeWebSocket(cached);
 		}
 	}
 
-	const socket = await connectWebSocket(url, headers, signal, connectTimeoutMs);
-	const entry: SessionWebSocketCacheEntry = { socket, busy: true };
+	const connection = await connectWebSocket(url, headers, signal, connectTimeoutMs);
+	const entry: SessionWebSocketCacheEntry = { ...connection, busy: true };
 	websocketSessionCache.set(sessionId, entry);
 	return {
-		socket,
+		socket: entry.socket,
 		entry,
 		reused: false,
-		release: ({ keep } = {}) => {
+		release: async ({ keep } = {}) => {
 			if (!keep || !isWebSocketReusable(entry.socket)) {
-				closeWebSocketSilently(entry.socket);
 				if (entry.idleTimer) clearTimeout(entry.idleTimer);
 				if (websocketSessionCache.get(sessionId) === entry) {
 					websocketSessionCache.delete(sessionId);
 				}
+				await closeWebSocket(entry);
 				return;
 			}
 			entry.busy = false;
@@ -1489,10 +1480,10 @@ async function processWebSocketStream<TApi extends Api>(
 		const fullBody = body;
 		const requestBody = useCachedContext && entry ? buildCachedWebSocketRequestBody(entry, fullBody) : fullBody;
 
-		const releaseOnce = (releaseOptions?: { keep?: boolean }) => {
+		const releaseOnce = async (releaseOptions?: { keep?: boolean }) => {
 			if (released) return;
 			released = true;
-			release(releaseOptions);
+			await release(releaseOptions);
 		};
 
 		try {
@@ -1531,14 +1522,14 @@ async function processWebSocketStream<TApi extends Api>(
 					lastResponseItems: responseItems,
 				};
 			}
-			releaseOnce({ keep: keepConnection });
+			await releaseOnce({ keep: keepConnection });
 			return;
 		} catch (error) {
 			if (entry) {
 				entry.continuation = undefined;
 			}
 			keepConnection = false;
-			releaseOnce({ keep: false });
+			await releaseOnce({ keep: false });
 			// A cached continuation can disappear server-side. Clear local state above,
 			// reconnect, and retry once with the full request body.
 			if (attempt === 0 && !options?.signal?.aborted && isPreviousResponseNotFoundError(error)) {
@@ -1553,7 +1544,7 @@ async function processWebSocketStream<TApi extends Api>(
 			}
 			throw error;
 		} finally {
-			releaseOnce({ keep: keepConnection });
+			await releaseOnce({ keep: keepConnection });
 		}
 	}
 }

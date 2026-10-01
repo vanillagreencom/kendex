@@ -141,6 +141,8 @@ export async function withinDeadline<T>(pending: Promise<T>): Promise<T> {
 export async function stalledHttpServer(t: Pick<TestContext, "after">, transport: "sse" | "websocket" | "connect" = "sse") {
 	let close: () => void = () => {};
 	const closed = new Promise<void>(resolve => { close = resolve; });
+	let upgrade: () => void = () => {};
+	const upgraded = new Promise<void>(resolve => { upgrade = resolve; });
 	const sockets = new Set<import("node:net").Socket>();
 	const server = createServer((_request, response) => {
 		response.writeHead(200, { "content-type": "text/event-stream" });
@@ -151,7 +153,14 @@ export async function stalledHttpServer(t: Pick<TestContext, "after">, transport
 		socket.on("close", () => { sockets.delete(socket); close(); });
 	});
 	server.on("upgrade", (request, socket) => {
-		if (transport === "connect") return;
+		upgrade();
+		if (transport === "connect") {
+			// Upgraded HTTP sockets allow half-open connections. Consume the
+			// client's FIN and finish the peer side without fixture teardown.
+			socket.on("end", () => socket.end());
+			socket.resume();
+			return;
+		}
 		const key = request.headers["sec-websocket-key"];
 		assert.equal(typeof key, "string");
 		const accept = createHash("sha1").update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64");
@@ -167,7 +176,7 @@ export async function stalledHttpServer(t: Pick<TestContext, "after">, transport
 	});
 	const address = server.address();
 	assert.ok(address && typeof address !== "string");
-	return { url: `http://127.0.0.1:${address.port}/backend-api`, closed };
+	return { url: `http://127.0.0.1:${address.port}/backend-api`, closed, upgraded };
 }
 
 type Listener = (event: unknown) => void;
