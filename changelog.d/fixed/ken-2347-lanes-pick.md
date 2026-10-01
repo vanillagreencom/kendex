@@ -1,0 +1,1 @@
+- Account selection uses fresh local model readings when host windows are absent, and weights projected room by reset time with a bounded bonus.

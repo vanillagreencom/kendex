@@ -1097,7 +1097,7 @@ PICK='pick --harness claude'
 claims_table \
   "with nothing in flight, pick still takes the most headroom|live:%1,live:%2|||$PICK|out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "a live claim is counted against its lane only|live:%1,live:%2|one:live:%1:claude||$LIST|claude.claims=1 eclaude.claims=0" \
-  "pick prefers the lane with nothing in flight over the one with more headroom|live:%1,live:%2|one:live:%1:claude||$PICK|out=CLAUDE_CONFIG_DIR=$H/.eclaude" \
+  "a live claim reduces room but does not outrank the remaining projected room|live:%1,live:%2|one:live:%1:claude||$PICK|out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "a claimed lane does not lower the threshold for the rest|live:%1,live:%2|one:live:%1:claude||$PICK --max-pct 15|rc=3" \
   "with claims tied, headroom breaks the tie|live:%1,live:%2|one:live:%1:claude;two:live:%2:eclaude||$PICK|out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "a claim whose pane is gone stops counting and its file is removed|live:%2|one:live:%1:claude;two:live:%2:eclaude||$LIST|claude.claims=0 files=two" \
@@ -2272,7 +2272,7 @@ table \
   "a host row with no reading of its own leaves this machine's reading of the account in place|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token-bare.tsv|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.tclaude=local"
 # Control: a pick that never asks for the host rows reads the token-only folder
 # as this machine's no_credentials, and nothing is picked.
-lanes_mutant mutant-pick-local-only lanes '"\$SEATS" "\$hosted")"' '"$SEATS")"'
+lanes_mutant mutant-pick-local-only lanes '"\$SEATS" "\$hosted" "\$model")"' '"$SEATS" "[]" "$model")"'
 LANES_PATCHED="$LANES"
 LANES="$TMP_ROOT/mutant-pick-local-only/scripts/lanes"
 table \

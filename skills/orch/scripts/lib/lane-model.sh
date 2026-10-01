@@ -98,17 +98,18 @@ def shared_bindings:
    {bucket: "monthly", pct: (.monthly_pct // null),
     resets_at: (.resets.monthly // null)}];
 
-def model_binding($model):
+def model_bindings($model):
   ($model | lane_norm) as $m
-  | (shared_bindings
-     + [ (.model_buckets // [])[]
+  | [ (.model_buckets // [])[]
          | ((.label // "") | lane_norm) as $l
          | select(.label == null
                   or ($l != "" and $m != ""
                       and (($l | contains($m)) or ($m | contains($l)))))
          | {bucket: "model", label: (.label // null), pct: .pct,
-            resets_at: (.resets_at // null)} ])
-  | max_binding;
+            resets_at: (.resets_at // null)} | select(.pct != null) ];
+
+def model_binding($model):
+  (shared_bindings + model_bindings($model)) | max_binding;
 
 # binding_bucket over one lane record: the account-wide binding bucket, or null.
 # Null is "nothing measured this", which every caller refuses on and none may
@@ -257,6 +258,16 @@ def judged_wall:
   else 100 - .projected_headroom_pct
   end;
 
+# The reset bonus is bounded to [1, 2]: a short reset cannot let small room
+# outrank an account with more than twice that room. An unknown reset earns
+# no bonus. The caller supplies the clock so one pick judges every row at once.
+def with_lane_selection_score($now):
+  (.binding_resets_at | reset_epoch) as $reset
+  | (if $reset == null then null else ([0, ($reset - $now) / 3600] | max) end) as $hours
+  | . + {selection_score:
+      (if .projected_headroom_pct == null then null
+       else .projected_headroom_pct * (if $hours == null then 1 else 1 + 1 / (1 + $hours) end) end)};
+
 def lane_public: del(._rate_prior, ._rate_elapsed_s, ._id);
 
 # One spelling for every reset a lane record carries: whole-second UTC with a
@@ -291,4 +302,30 @@ def wall_verdict($max):
   elif . < $max then "room"
   else "walled"
   end;
+
+# Partition on the same verdict the named pick reads. Score only orders room
+# lanes; it cannot buy a launch past the projected wall. The counts preserve
+# the distinction between an allowance spent and one never measured.
+def lane_selection($model; $floor; $burn; $now; $max):
+  [ .[] | with_lane_binding($model; $floor) | with_lane_projection($burn)
+    | with_lane_selection_score($now)
+    | . + {verdict: (judged_wall | wall_verdict($max))} ]
+  | { chosen: ([ .[] | select(.verdict == "room") ]
+                | sort_by([(0 - .selection_score), .claims, (0 - .projected_headroom_pct), .wall]) | first
+                | if . == null then null
+                  else . + {effective_headroom_pct: (if .wall == null then null else 100 - .wall end)}
+                  | del(.wall, .verdict) | lane_public end),
+      qualifying: ([ .[] | select(.verdict == "room") ] | length),
+      walled: ([ .[] | select(.verdict == "walled") ] | length),
+      unmeasured: ([ .[] | select(.verdict == "unmeasured") ] | length),
+      unread: [ .[] | select(.verdict == "unmeasured") ] };
 '
+
+# Read lane records on stdin and judge all their reset bonuses at one instant.
+lane_select() { # MODEL BINDING_FLOOR BURN MAX_PCT
+  local now
+  now="$(date +%s)" || return 1
+  jq -c --arg model "$1" --argjson floor "$2" --argjson burn "$3" \
+    --argjson max "$4" --argjson now "$now" "$LANE_MODEL_JQ"'
+    lane_selection($model; $floor; $burn; $now; $max)'
+}

@@ -100,8 +100,14 @@
 #         answer through the cache, as they read every usage window.
 #   pick  Print the launch env prefix for the lane to launch on (e.g.
 #         `CLAUDE_CONFIG_DIR=/home/me/.eclaude`): among the lanes under
-#         --max-pct, the one with the fewest launches already in flight, the
-#         projected room under that same threshold breaking the tie. A lane is
+#         --max-pct, the one with the largest selection_score. Its formula is
+#         H * (1 + 1 / (1 + T)), where H is projected headroom in percent and
+#         T is hours to the binding reset, floored at zero. An unknown reset
+#         earns no bonus (score H). For example, 80% room resetting in 1 hour
+#         scores 120; 90% resetting in 9 hours scores 99. Equal room favors the
+#         sooner reset. The bonus is at most twofold, so 11% cannot beat 100%
+#         on reset time alone. Equal scores favor fewer live claims, then more
+#         projected room. A lane is
 #         judged on its PROJECTED wall: the reading plus, for each live claim
 #         on it, the burn one lane is expected to spend in the next hour, the
 #         account's measured rate shared out across its claims where the rate
@@ -117,7 +123,7 @@
 #         --json prints that lane's whole record, which carries headroom_pct,
 #         binding_bucket (session, weekly, model or monthly), the matching
 #         binding_resets_at, claims, burn_pct_per_lane_hour,
-#         projected_headroom_pct, and qualifying_count from that same
+#         projected_headroom_pct, selection_score, and qualifying_count from that same
 #         judgement. With
 #         --model those fields name the most-consumed
 #         bucket among the shared 5-hour window, the all-model weekly window,
@@ -161,7 +167,11 @@
 #         age; where the local reading measures nothing or is older than that,
 #         the unreachable row stays, so the refusal names the read that
 #         failed. Every other host status is the provider's reading of its own
-#         copy, `refused` and `expired` included, and stands as above. An absent
+#         copy, `refused` and `expired` included, and stands as above, except
+#         for a successful Claude reading with no window for --model: where a
+#         fresh local reading measures that model window, pick uses the local
+#         reading under `pick-local-model-reading`. It keeps an account neither
+#         reading measures for the model unmeasured, not empty. An absent
 #         or failed verb leaves the local reading alone, as it does for `list`.
 #         `pick --lane` judges its one account by this same rule, and a dir
 #         the provider reports with a reading is judged even where discovery
@@ -745,6 +755,10 @@ message() {
     copilot-pool-unstated)
       printf 'lanes: copilot-pool-unstated model=%s setting=%s read=%s\n' "$1" "ORCH_LANE_COPILOT_POOL" "$2"
       printf '%s\n' "no lane host row and no ORCH_LANE_COPILOT_POOL entry reads a Copilot pool for any Pi account, so nothing measures what this launch spends, and an unmeasured pool is not an empty one; the fix= line below names the read that failed"
+      ;;
+    pick-local-model-reading)
+      printf 'lanes: pick-local-model-reading lane=%s host=%s model=%s age-s=%s\n' "$1" "$2" "$3" "$4"
+      printf '%s\n' "the provider has no window for this model, so this machine's fresh measured model reading is judged in its place"
       ;;
     copilot-pool-unread)
       printf 'lanes: copilot-pool-unread host=%s model=%s setting=%s\n' "$1" "$2" "ORCH_LANE_COPILOT_POOL"
@@ -2304,7 +2318,7 @@ load_lane_claims() {
 # local loop, in the local dir's place, and the tail carries only the rows
 # naming a dir discovery does not reach.
 collect_lanes() {
-	local harness_filter="$1" exclude="${2:-}" hosted="${3:-[]}" excluded="" held="" reached="" id d h row x
+	local harness_filter="$1" exclude="${2:-}" hosted="${3:-[]}" model="${4:-}" excluded="" held="" reached="" id d h row x
 	while IFS= read -r x; do
 		[[ -z "$x" ]] || excluded+="$(lane_claims_canon "$x")"$'\n'
 	done <<<"$exclude"
@@ -2330,7 +2344,7 @@ collect_lanes() {
 							# caller picks. This group runs in a pipeline, so a
 							# status raised here would reach no caller.
 							row="$(jq -c --arg id "$id" 'map(select(._id == $id)) | first' <<<"$hosted")" \
-								&& host_row_or_local "$h" "$d" "$row" \
+								&& host_row_or_local "$h" "$d" "$row" "$model" \
 								|| { message pick-lane-failed "$d" local-reading >&2; printf '%s\n' "$row"; }
 							continue
 							;;
@@ -2349,10 +2363,9 @@ collect_lanes() {
 
 # The record `pick` judges for a config dir discovery reaches and the provider
 # reports: HOSTROW, or this machine's own reading of DIR where HOSTROW is
-# `unreachable`, under the rule the header states at `pick`. The trigger is
-# that one word because it is the one status a usage read produces without
-# reaching the credential: `refused` is the endpoint answering through the
-# provider's copy, and stands for that copy like every other reading.
+# `unreachable`, or a successful Claude read missing MODEL whose fresh local
+# reading has that scoped window, under the header rule at `pick`. `refused`
+# is the endpoint answering through the provider's copy and stays authoritative.
 #
 # `headroom_pct` is emit_lane's one word for a lane that measured a figure: it
 # is null for every status that carries no reading and for a measured status
@@ -2370,9 +2383,13 @@ collect_lanes() {
 # the pool replaces the override; one that reads nothing, whatever its status,
 # leaves the override standing where it states a reading, and stands itself,
 # with the provider's status and detail, where it states none.
-host_row_or_local() { # HARNESS DIR HOSTROW
-	local trigger local_record="" age tmp
+host_row_or_local() { # HARNESS DIR HOSTROW MODEL
+	local trigger local_record="" age tmp missing_model bound
 	trigger="$(jq -r --arg h "$1" 'if $h == "pi" then .headroom_pct == null else .status == "unreachable" end' <<<"$3")" || return 1
+	missing_model="$(jq -r --arg h "$1" --arg model "$4" "$LANE_MODEL_JQ"'
+		$h == "claude" and $model != "" and (lane_measured or .status == "no_usage_data")
+		and (model_bindings($model) | length) == 0' <<<"$3")" || return 1
+	[[ "$missing_model" != true ]] || trigger=true
 	if [[ "$trigger" != true ]]; then
 		printf '%s\n' "$3"
 		return 0
@@ -2392,15 +2409,21 @@ host_row_or_local() { # HARNESS DIR HOSTROW
 	exec 7>&-
 	IFS= read -r local_record <&6 || { exec 6<&-; return 1; }
 	exec 6<&-
-	age="$(jq -r --arg h "$1" --argjson bound "$(usage_serve_max_age)" '
+	bound="$(usage_serve_max_age)" || return 1
+	age="$(jq -r --arg h "$1" --arg model "$4" --argjson missing "$missing_model" --argjson bound "$bound" "$LANE_MODEL_JQ"'
 		if .headroom_pct == null then empty
+		elif $missing and (model_bindings($model) | length) == 0 then empty
 		elif $h == "pi" then "stated"
 		elif (.usage_age_s | type) == "number" and (.usage_age_s == 0 or .usage_age_s < $bound)
 		then .usage_age_s else empty end' <<<"$local_record")" || return 1
 	if [[ "$age" == stated ]]; then
 		printf '%s\n' "$local_record"
 	elif [[ -n "$age" ]]; then
-		message pick-local-reading "$2" "$ORCH_LANE_HOST" "$age" >&2
+		if [[ "$missing_model" == true ]]; then
+			message pick-local-model-reading "$2" "$ORCH_LANE_HOST" "$4" "$age" >&2
+		else
+			message pick-local-reading "$2" "$ORCH_LANE_HOST" "$age" >&2
+		fi
 		printf '%s\n' "$local_record"
 	else
 		printf '%s\n' "$3"
@@ -2852,15 +2875,8 @@ render_table() {
 # account with room now and ten lanes burning it walls in the middle of a
 # shift; charging each claim its burn drops it before it is handed another.
 #
-# Among the lanes that clear it, the fewest live claims wins, then the most
-# projected room, then the wall. The claim count leads because a measured rate
-# lags a launch the way the reading does: back-to-back picks read the same
-# rate, and a rate shared out across more claims projects each one cheaper, so
-# ordering on the projection first would hand the account that looked best the
-# whole batch. The count moves the moment a launch is claimed. The wall that
-# orders is the one that filtered — the binding bucket, or the model's own
-# under --model — so the lane chosen is the one with the most room for the
-# launch actually being made.
+# Among qualifying lanes, lib/lane-model.sh ranks projected room weighted by
+# time to the binding reset. Claims reduce that room before it is scored.
 # The threshold is never traded away for a claim count — a lane whose
 # projection is at or above --max-pct is out before this ordering runs.
 #
@@ -2992,7 +3008,7 @@ cmd_pick_lane() {
 	if [[ -n "$record" && -z "$found" ]]; then
 		found="$(jq -r '.config_dir' <<<"$record")" || { message pick-lane-failed "$dir" host >&2; return 1; }
 	elif [[ -n "$record" ]]; then
-		record="$(host_row_or_local "$harness" "$found" "$record")" || { message pick-lane-failed "$dir" local-reading >&2; return 1; }
+		record="$(host_row_or_local "$harness" "$found" "$record" "$model")" || { message pick-lane-failed "$dir" local-reading >&2; return 1; }
 	fi
 	# Every directory is a Pi account the Copilot pool reading can be asked
 	# about: one the setting states nothing for is unmeasured, never unlisted,
@@ -3157,27 +3173,8 @@ cmd_pick() {
 		{ message copilot-pool-unstated "${model:-none}" "$HOSTED_READ"; lane_copilot_pool_fix "${ORCH_LANE_HOST:-local}" "$HOSTED_READ"; } >&2
 		return 5
 	fi
-	lanes="$(collect_lanes "$harness" "$exclude"$'\n'"$SEATS" "$hosted")"
-	# PARTITIONED on lib/lane-model.sh's verdict, never filtered on a predicate
-	# written out again here: the named form reads the same definition, so the
-	# chooser cannot lose a state that form knows. The counts are what the
-	# refusal below reports, which is why nothing qualifying is not one answer.
-	# A room lane's claims and projection are numbers: the store was read, and
-	# a room verdict needs a wall.
-	judged="$(jq -c --argjson max "$max_pct" --arg model "$model" --argjson floor "$binding_floor" \
-		--argjson burn "$burn" "$LANE_MODEL_JQ"'
-		[ .[] | with_lane_binding($model; $floor) | with_lane_projection($burn)
-		  | . + {verdict: (judged_wall | wall_verdict($max))} ]
-		| { chosen: ([ .[] | select(.verdict == "room") ]
-		              | sort_by([.claims, (0 - .projected_headroom_pct), .wall]) | first
-		              | if . == null then null
-		                else . + {effective_headroom_pct: (if .wall == null then null else 100 - .wall end)}
-		                | del(.wall, .verdict) | lane_public end),
-		    qualifying: ([ .[] | select(.verdict == "room") ] | length),
-		    walled: ([ .[] | select(.verdict == "walled") ] | length),
-		    unmeasured: ([ .[] | select(.verdict == "unmeasured") ] | length),
-		    unread: [ .[] | select(.verdict == "unmeasured") ] }
-	' <<<"$lanes")"
+	lanes="$(collect_lanes "$harness" "$exclude"$'\n'"$SEATS" "$hosted" "$model")"
+	judged="$(lane_select "$model" "$binding_floor" "$burn" "$max_pct" <<<"$lanes")" || return 1
 	chosen="$(jq -c '.chosen' <<<"$judged" 2>/dev/null || true)"
 	if [[ -z "$chosen" || "$chosen" == "null" ]]; then
 		walled="$(jq -r '.walled // 0' <<<"$judged" 2>/dev/null || true)"

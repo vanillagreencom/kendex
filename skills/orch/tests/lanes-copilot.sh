@@ -82,7 +82,8 @@ new_home pool
 copilot_account 1copilot "$(pool 1000000 900000)"
 copilot_account 2copilot "$(pool 1000000 0)"
 copilot_account 3copilot "$(pool 1000000 1)"
-copilot_account 4copilot '{"quota_snapshots":{"premium_interactions":{"unlimited":true}}}'
+# Equal resets keep the chooser row focused on unlimited room, not its bonus.
+copilot_account 4copilot '{"quota_reset_date_utc":"2026-10-01","quota_snapshots":{"premium_interactions":{"unlimited":true}}}'
 copilot_account 5copilot '{"quota_snapshots":{"premium_interactions":{"unlimited":"true","percent_remaining":100}}}'
 copilot_account 6copilot "$(pool 0 0)"
 copilot_account 7copilot '{"quota_snapshots":{"premium_interactions":{"entitlement":"1000000","remaining":900000}}}'

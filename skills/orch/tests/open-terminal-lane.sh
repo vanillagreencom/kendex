@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests for open-terminal's --lane wiring: how a lane is resolved (auto, an
 # alias, a directory), applied to the launched command, and claimed in the
-# in-flight store so the next pick of a batch moves off it. The `lanes` helper
+# in-flight store so the next pick of a batch charges its projected room. The `lanes` helper
 # itself is lanes.sh; the two share lib/lanes-fixture.sh.
 #
 # One case per behaviour surface; shaped input is one table per case, one
@@ -68,6 +68,14 @@ make_fetcher "$FETCHER"
 # --- stubs -----------------------------------------------------------------
 OT_STUB_BIN="$TMP_ROOT/ot-bin"
 ot_stub_bin "$OT_STUB_BIN"
+# Only the scoring rows use a fixed epoch. Keep real sleeps for the launch
+# waits, and the real clock for token expiry and renewal rows.
+source "$TEST_DIR/lib/virtual-clock.sh"
+mkdir -p "$TMP_ROOT/clock-bin"
+virtual_clock_install "$TMP_ROOT/clock-bin" "$TMP_ROOT/pick-clock"
+printf '%s\n' 1790812800 > "$TMP_ROOT/pick-clock"
+ln -s "$TMP_ROOT/clock-bin/date" "$OT_STUB_BIN/date"
+STUB_CLOCK=""
 
 # A worktree whose `create` owns every item after the first, the way the real
 # one exits 75 for work another session holds.
@@ -99,16 +107,29 @@ STUB
 chmod +x "$TMP_ROOT/fetch-flaky"
 
 # A second home whose discovery hands back a lane carrying the claim record's
-# field separator: aclaude has the most headroom, the tab lane is the re-pick.
+# field separator. At the fixed epoch, aclaude's 70 room resetting in one
+# hour scores 105; the tab lane's 80 resetting in nine hours scores 88.
+# A claim charged 20 session points drops aclaude to 75, so the tab lane wins.
 new_home tabhome
 TABHOME="$H"; TABFIX="$FIXTURE_DIR"
 TABDIR="$TABHOME/.tab	claude"
 make_lane "$TABHOME" aclaude 3600
 mkdir -p "$TABDIR"
 cp "$TABHOME/.aclaude/.credentials.json" "$TABDIR/.credentials.json"
-claude_usage 10 20 5  Opus > "$TABFIX/.aclaude.json"
-claude_usage 30 30 30 Opus > "$TABFIX/.tab	claude.json"
+claude_usage 30 10 5 Opus | jq '.five_hour.resets_at = "2026-10-01T01:00:00Z"' > "$TABFIX/.aclaude.json"
+claude_usage 20 10 5 Opus | jq '.five_hour.resets_at = "2026-10-01T09:00:00Z"' > "$TABFIX/.tab	claude.json"
 TABBED="$TMP_ROOT/tab	lane"; mkdir -p "$TABBED"
+
+# A private batch world uses the same score crossing without the separator.
+# After both accounts have a claim, claude scores 75 and eclaude scores 66,
+# so the third item returns to claude. Claims-first picks eclaude first.
+new_home spreadhome
+SPREADHOME="$H"; SPREADFIX="$FIXTURE_DIR"
+make_lane "$H" claude 3600
+make_lane "$H" eclaude 3600
+claude_usage 30 10 5 Opus | jq '.five_hour.resets_at = "2026-10-01T01:00:00Z"' > "$FIXTURE_DIR/.claude.json"
+claude_usage 20 10 5 Opus | jq '.five_hour.resets_at = "2026-10-01T09:00:00Z"' > "$FIXTURE_DIR/.eclaude.json"
+SPREAD_ENV="LANES_HOME=$SPREADHOME;FIXTURE_DIR=$SPREADFIX;ORCH_LANE_BURN_PCT_PER_HOUR=20;STUB_CLOCK=$TMP_ROOT/pick-clock"
 
 # Checkouts a row can run from: one holding a directory named like a lane
 # alias, one holding a bare directory no alias claims, one with no git at all.
@@ -649,7 +670,9 @@ assert_eq "$(observe "rc=1 pickrefusal=lane-provider-unmeasured,harness=pi,model
 
 # A fleet batch on the pool re-picks each item after the first, and the Pi root
 # that re-pick names is the one the fleet gate reads: here pi1 (10) takes the
-# first item, its claim moves the second onto pi2 (20), whose own settings turn
+# first item. Both pools have 90 room and no known reset, so each scores 90.
+# A claim costs 5 * 5 / 720 monthly points: pi1 then scores less than pi2.
+# The second item moves onto pi2, whose own settings turn
 # compaction on, so the second is refused naming that file. Its control drops
 # the re-pick's root and gate, and the second item launches unchecked.
 pi_fleet_root() { # DIR COMPACTION
@@ -660,7 +683,7 @@ pi_fleet_root() { # DIR COMPACTION
 }
 pi_fleet_root "$H/.pi1" false
 pi_fleet_root "$H/.pi2" true
-PI_BATCH="ORCH_LANE_COPILOT_POOL=$H/.pi1=100000/1000000,$H/.pi2=200000/1000000;$PI_COPILOT"
+PI_BATCH="ORCH_LANE_COPILOT_POOL=$H/.pi1=100000/1000000,$H/.pi2=100000/1000000;ORCH_LANE_BURN_PCT_PER_HOUR=5;STUB_CLOCK=$TMP_ROOT/pick-clock;$PI_COPILOT"
 run_ot "$PI_BATCH" --harness pi --lane auto --state-dir "$TMP_ROOT/pi-fleet-1" CC-1670 CC-1671
 assert_eq "$(observe "launched=1 pi_root=pi1 compactionon=file=$H/.pi2/settings.json")" \
   "launched=1 pi_root=pi1 compactionon=file=$H/.pi2/settings.json" \
@@ -673,8 +696,9 @@ rm -f -- "${H:?}/.pi1/settings.json" "${H:?}/.pi2/settings.json"
 
 # The same re-pick on the Copilot pool is gated on the second account's own
 # context reader: copilot1 (10) takes the first item, the extension reader
-# installed in its home and the hooks in its global scope, and its claim moves
-# the second onto copilot2 (20), whose settings turn extensions off and run no
+# installed in its home and the hooks in its global scope. Both pools have
+# 90 room and unknown resets. A claim costs 5 * 5 / 720 monthly points,
+# so the second item moves onto copilot2, whose settings turn extensions off and run no
 # status line for the fallback reader, so the second is refused. Its control
 # drops the re-pick's gate, and the second item launches with neither reader.
 # Both homes hold the hooks in their global scope and the kendex stub answers
@@ -693,7 +717,7 @@ done
 printf '{"enabledFeatureFlags":{"EXTENSIONS":false}}\n' > "$H/.copilot2/settings.json"
 printf '#!/bin/sh\nprintf '"'"'{"switched_off_by":null}\\n'"'"'\n' > "$OT_STUB_BIN/kendex"
 chmod +x "$OT_STUB_BIN/kendex"
-CP_BATCH="HOME=$H;ORCH_LANE_COPILOT_POOL=$H/.copilot1=100000/1000000,$H/.copilot2=200000/1000000;cmd=true --model claude-sonnet-5 --reasoning-effort high"
+CP_BATCH="HOME=$H;ORCH_LANE_COPILOT_POOL=$H/.copilot1=100000/1000000,$H/.copilot2=100000/1000000;ORCH_LANE_BURN_PCT_PER_HOUR=5;STUB_CLOCK=$TMP_ROOT/pick-clock;cmd=true --model claude-sonnet-5 --reasoning-effort high"
 run_ot "$CP_BATCH" --harness copilot --lane auto --state-dir "$TMP_ROOT/cp-fleet-1" CC-1680 CC-1681
 assert_eq "$(observe "launched=1 copilot_home=copilot1 statusline=file=$H/.copilot2/settings.json,detail=disabled,cause=no-status-line")" \
   "launched=1 copilot_home=copilot1 statusline=file=$H/.copilot2/settings.json,detail=disabled,cause=no-status-line" \
@@ -966,19 +990,34 @@ table \
   'a launch with no --lane still opens its window and records no claim|cmd=true|--harness claude CC-3|launched=1 claims=nolog' \
   "a GUI batch launches, records no claim, and reports the one lane it resolved|TERMINAL=ghostty;$CHOICE_CMD|--ghostty --harness claude --lane auto CC-10 CC-11|rc=0 claims=nolog summary=lane=claude"
 
-echo "=== --lane auto over a batch re-picks off every claimed lane ==="
-# Each recorded claim moves the next item off that lane; a window created and
+echo "=== --lane auto over a batch re-picks on projected room and reset ==="
+# In the private score-crossing world, a claim moves the next item off its lane; a window created and
 # then failed still holds its account (the trigger is an attempted item); the
 # summary counts distinct lanes. A claim that could not be written, a claims
 # path that is not a directory, a re-picked lane carrying the separator, or a
 # re-pick that cannot place its item stops the batch instead of launching the
 # next item blind; an item another session owns never carried a session and
 # is not a lane the batch ran on.
+BATCH_SHARED_HOME="$H"
+H="$SPREADHOME"
 table \
-  "a two-item batch spreads across two accounts, most headroom first|$CHOICE_CMD| --harness claude --lane auto CC-4 CC-5|rc=0 launched=2 claim_lanes=claude,eclaude out_lanes=claude,eclaude summary=spread=2" \
-  "a claimed window whose launch failed still moves the next item off that lane|OT_TMUX_FAIL=send-keys;$CHOICE_CMD|--harness claude --lane auto CC-8 CC-9|launched=2 claim_lanes=claude,eclaude out_lanes=claude,eclaude" \
-  "a third item returning to a used lane still reports two distinct lanes|$CHOICE_CMD|--harness claude --lane auto CC-12 CC-13 CC-14|launched=3 summary=spread=2" \
-  "a re-picked lane carrying a separator stops the batch after the first launch|LANES_HOME=$TABHOME;FIXTURE_DIR=$TABFIX;$CHOICE_CMD|--harness claude --lane auto CC-22 CC-23|rc=1 launched=1 claims=1" \
+  "a two-item batch spreads across two accounts, reset-weighted room first|$SPREAD_ENV;$CHOICE_CMD| --harness claude --lane auto CC-4 CC-5|rc=0 launched=2 claim_lanes=claude,eclaude out_lanes=claude,eclaude summary=spread=2" \
+  "a claimed window whose launch failed still moves the next item off that lane|$SPREAD_ENV;OT_TMUX_FAIL=send-keys;$CHOICE_CMD|--harness claude --lane auto CC-8 CC-9|launched=2 claim_lanes=claude,eclaude out_lanes=claude,eclaude" \
+  "a third item returning to a used lane still reports two distinct lanes|$SPREAD_ENV;$CHOICE_CMD|--harness claude --lane auto CC-12 CC-13 CC-14|launched=3 summary=spread=2"
+
+# The old ordering reverses the batch: its first pick ignores the sooner
+# reset and takes eclaude's greater unweighted room instead.
+pi_control ctl-batch-claims-first lib/lane-model.sh \
+  'sort_by([(0 - .selection_score), .claims, (0 - .projected_headroom_pct), .wall])' \
+  'sort_by([.claims, (0 - .projected_headroom_pct), .wall])' \
+  "$SPREAD_ENV;$CHOICE_CMD" --harness claude --lane auto CC-4 CC-5
+assert_eq "$(observe "rc=0 launched=2 claim_lanes=claude,eclaude out_lanes=eclaude,claude")" \
+  "rc=0 launched=2 claim_lanes=claude,eclaude out_lanes=eclaude,claude" \
+  "control: claims-first ordering turns the reset-weighted batch order red"
+H="$BATCH_SHARED_HOME"
+
+table \
+  "a re-picked lane carrying a separator stops the batch after the first launch|LANES_HOME=$TABHOME;FIXTURE_DIR=$TABFIX;ORCH_LANE_BURN_PCT_PER_HOUR=20;STUB_CLOCK=$TMP_ROOT/pick-clock;$CHOICE_CMD|--harness claude --lane auto CC-22 CC-23|rc=1 launched=1 claims=1" \
   "a re-pick that cannot place its item stops the batch after the first launch|ORCH_LANES_FETCH_CMD=$TMP_ROOT/fetch-flaky;FLAKY_COUNT=$TMP_ROOT/flaky-count;FLAKY_OK=3;ORCH_LANES_USAGE_TTL=0;$CHOICE_CMD|--harness claude --lane auto CC-6 CC-7|rc=1 launched=1 claims=1" \
   "a lane picked for an item another session owns is not one the batch ran on|WORKTREE_CLI=$OWNED_STUB;OWNED_COUNT=$TMP_ROOT/owned-count;OWNED_ROOT=$TMP_ROOT;$CHOICE_CMD|--harness claude --lane auto CC-17 CC-18|launched=1 summary=lane=claude"
 
