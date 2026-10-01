@@ -21,9 +21,9 @@ const tool = { name: "echo", description: "Return a supplied value", parameters:
 const collect = async (stream) => { const events = []; for await (const event of stream) events.push(event); return events; };
 
 /** `prompt` is the user message that opens the query. */
-export async function withBridge(ids, run, { prompt = "run" } = {}) {
+export async function withBridge(ids, run, { prompt = "run", continuationQuery, completionMessages = [{ type: "result", subtype: "success", result: "done" }], idleTimeout = "0" } = {}) {
 	const root = mkdtempSync(join(tmpdir(), "bridge-queue-"));
-	const env = { CLAUDE_CONFIG_DIR: root, PI_CODING_AGENT_DIR: root, CLAUDE_CODE_OAUTH_TOKEN: "offline-test", CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT: "0" };
+	const env = { CLAUDE_CONFIG_DIR: root, PI_CODING_AGENT_DIR: root, CLAUDE_CODE_OAUTH_TOKEN: "offline-test", CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT: idleTimeout };
 	const previous = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
 	Object.assign(process.env, env);
 	clearPackageConfigCache();
@@ -39,7 +39,8 @@ export async function withBridge(ids, run, { prompt = "run" } = {}) {
 	__testSetSdkQueryFactory(({ options }) => {
 		// Every query after the first replays a deferred user message and
 		// answers at once.
-		if (++queries > 1) return {
+		if (++queries > 1 && continuationQuery) return continuationQuery();
+		if (queries > 1) return {
 			async *[Symbol.asyncIterator]() {
 				yield { type: "system", subtype: "init", session_id: "offline-queue" };
 				yield { type: "result", subtype: "success", result: "continued" };
@@ -54,7 +55,7 @@ export async function withBridge(ids, run, { prompt = "run" } = {}) {
 					yield { type: "system", subtype: "init", session_id: "offline-queue" };
 					yield { type: "assistant", message: { content: ids.map((id) => ({ type: "tool_use", id, name: "mcp__custom-tools__echo", input: { id } })) } };
 					await gate.promise;
-					yield { type: "result", subtype: "success", result: "done" };
+					for (const message of completionMessages) yield message;
 				} finally { finished.resolve(); }
 			},
 			close() { gate.resolve(); },
@@ -82,12 +83,14 @@ export async function withBridge(ids, run, { prompt = "run" } = {}) {
 			},
 			/** `steer` is a user message Pi appended after the results. */
 			deliver(results, { steer } = {}) {
-				streamClaudeAgentSdk(model, piContext({ tools: [tool], messages: [
+				return streamClaudeAgentSdk(model, piContext({ tools: [tool], messages: [
 					{ role: "assistant", content: ids.map((id) => ({ type: "toolCall", id, name: "echo", arguments: { id } })) },
 					...results.map(({ id, text = id, isError = false }) => ({ role: "toolResult", toolCallId: id, content: [{ type: "text", text }], isError })),
 					...(steer === undefined ? [] : [{ role: "user", content: steer }]),
 				] }), { cwd: root });
 			},
+			/** Let the original child finish so queued input can replay. */
+			release() { gate.resolve(); },
 			/** End the query unaborted, so its deferred user messages replay, and
 			 *  wait until every query has settled. */
 			async finish() {

@@ -1,3 +1,22 @@
+/** A child transport that can stay silent even after interrupt and close.
+ *  Claude SDK teardown does not guarantee another iterator message. */
+export function heldSdkQuery(messages = []) {
+	const entered = Promise.withResolvers();
+	const released = Promise.withResolvers();
+	const record = { closed: false, interruptions: 0, entered: entered.promise };
+	const query = {
+		async *[Symbol.asyncIterator]() {
+			for (const message of messages) yield message;
+			entered.resolve();
+			const lateMessages = await released.promise;
+			for (const message of lateMessages) yield message;
+		},
+		close() { record.closed = true; },
+		async interrupt() { record.interruptions++; },
+	};
+	return { query, record, release(lateMessages = []) { released.resolve(lateMessages); } };
+}
+
 export function fakeSdkQuery(messages, accountLabel, observed) {
 	let closed = false;
 	return {

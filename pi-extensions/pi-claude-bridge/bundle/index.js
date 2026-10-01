@@ -55920,6 +55920,14 @@ function streamClaudeAgentSdkInLane(model, context, options) {
   ctx().activeQuery = sdkQuery;
   const abortCtx = ctx();
   const attemptFailure = {};
+  let stopConsumption;
+  const consumptionStopped = new Promise((resolve8) => {
+    stopConsumption = () => resolve8({});
+  });
+  const consumeAttempt = (child, failureBox) => Promise.race([
+    consumeQuery(child, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted || streamIdleTimedOut, recordBillingIdentity, account, router, failureBox),
+    consumptionStopped
+  ]);
   const persistSession = (next) => {
     if (isReentrant || foreignContext) return;
     const restartPending = abortCtx.restartRequest !== null;
@@ -55976,7 +55984,8 @@ function streamClaudeAgentSdkInLane(model, context, options) {
       turnStarted: abortCtx.turnStarted
     }),
     onTimeout: ({ idleMs, timeoutMs }) => {
-      if (streamIdleTimedOut || wasAborted || options?.signal?.aborted || abortCtx.activeQuery !== sdkQuery) return;
+      const activeQuery = abortCtx.activeQuery;
+      if (streamIdleTimedOut || wasAborted || options?.signal?.aborted || activeQuery === null) return;
       streamIdleTimedOut = true;
       dropDeferredUserMessages("stream-idle-timeout");
       markRebuildForThisQuery({ forceRotate: true });
@@ -55984,7 +55993,8 @@ function streamClaudeAgentSdkInLane(model, context, options) {
       debug("provider: stream idle timeout", `model=${queryModel.id}`, `timeout=${timeoutMs}`, `idle=${idleMs}`);
       const idleFailure = { kind: "network", message: errorMessage };
       if (requestRotation(idleFailure)) {
-        abortSdkQuery(sdkQuery);
+        abortSdkQuery(activeQuery);
+        stopConsumption();
         return;
       }
       abortCtx.handledTerminalError = true;
@@ -56012,7 +56022,8 @@ function streamClaudeAgentSdkInLane(model, context, options) {
       abortCtx.currentPiStream?.push({ type: "error", reason: "error", error: abortCtx.turnOutput });
       abortCtx.currentPiStream?.end();
       abortCtx.currentPiStream = null;
-      abortSdkQuery(sdkQuery);
+      abortSdkQuery(activeQuery);
+      stopConsumption();
     },
     timeoutMs: streamIdleTimeoutMs
   }) : null;
@@ -56030,12 +56041,12 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     const drained = drainPendingToolCalls(abortCtx, "abort");
     if (drained > 0) debug(`provider: abort drained ${drained} waiting MCP handler(s) as errors`);
     abortCtx.pendingResults.clear();
-    abortSdkQuery(sdkQuery);
+    markRebuildForThisQuery({ forceRotate: true });
+    abortCtx.handledTerminalError = true;
+    if (abortCtx.currentPiStream) surfaceFailure({ message: "Operation aborted" }, true);
+    if (abortCtx.activeQuery !== null) abortSdkQuery(abortCtx.activeQuery);
+    stopConsumption();
   });
-  if (options?.signal) {
-    if (options.signal.aborted) onAbort();
-    else options.signal.addEventListener("abort", onAbort, { once: true });
-  }
   const surfaceFailure = (failure, aborted2 = false) => {
     attemptBuffer?.commit();
     if (failure.rateLimitInfo) {
@@ -56062,7 +56073,11 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     abortCtx.currentPiStream?.end();
     abortCtx.currentPiStream = null;
   };
-  consumeQuery(sdkQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, recordBillingIdentity, account, router, attemptFailure).then(async ({ capturedSessionId, failure }) => {
+  if (options?.signal) {
+    if (options.signal.aborted) onAbort();
+    else options.signal.addEventListener("abort", onAbort, { once: true });
+  }
+  consumeAttempt(sdkQuery, attemptFailure).then(async ({ capturedSessionId, failure }) => {
     debug(`provider: consumeQuery completed, stopReason=${abortCtx.turnOutput?.stopReason}, failure=${failure?.kind ?? "none"}, aborted=${wasAborted}`);
     if (abortCtx.restartRequest) {
       debug("provider: query ended for a history restart; leaving the outcome to the replacement query");
@@ -56077,7 +56092,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
       markRebuildForThisQuery({ forceRotate: true });
       dropDeferredUserMessages("abort-completion");
       debug(`provider: abort detected, marked sharedSession needsRebuild + forceRotate`);
-      surfaceFailure({ message: "Operation aborted" }, true);
+      if (!abortCtx.handledTerminalError) surfaceFailure({ message: "Operation aborted" }, true);
       return;
     }
     if (failure) {
@@ -56116,10 +56131,11 @@ function streamClaudeAgentSdkInLane(model, context, options) {
         const contOptions = { ...queryOptions, resume: resumeId, ...makeCliDebugOptions("continuation") };
         const contQuery = sdkQueryFactory({ prompt: steer.blocks ? wrapPromptStream(steer.blocks) : steer.text, options: contOptions });
         abortCtx.activeQuery = contQuery;
+        streamIdleWatchdog?.refresh();
         debug(`provider: continuation query, model=${queryModel.id}, resume=${resumeId.slice(0, 8)}, account=${account?.label ?? "legacy"}, prompt ${describePrompt(steer.text, steer.blocks)}`);
         try {
-          const continuation = await consumeQuery(contQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, recordBillingIdentity, account, router);
-          if (abortCtx.restartRequest) break;
+          const continuation = await consumeAttempt(contQuery);
+          if (abortCtx.restartRequest || wasAborted || streamIdleTimedOut) break;
           if (continuation.failure) {
             recordAttemptFailure(continuation.failure);
             if (!abortCtx.handledTerminalError) surfaceFailure(continuation.failure);
@@ -56134,7 +56150,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
             persistSession({ sessionId: sid, cursor: activeSession2?.cursor ?? 0, cwd, ...accountScope });
           }
         } catch (contError) {
-          if (abortCtx.restartRequest) break;
+          if (abortCtx.restartRequest || wasAborted || streamIdleTimedOut) break;
           debug(`provider: continuation query error:`, contError);
           const continuationFailure = {
             kind: classifyClaudeFailure(contError),

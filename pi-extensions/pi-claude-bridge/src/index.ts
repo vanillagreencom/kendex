@@ -62,7 +62,7 @@ import {
 import { BRIDGE_ACCOUNT_HOST } from "./account-host.js";
 import { BRIDGE_BILLING_IDENTITY, CLAUDE_BILLING_IDENTITY_SYMBOL, beginBillingIdentityAttempt, deleteBillingIdentityLane } from "./billing-identity.js";
 import { registerBridgeCommands } from "./bridge-commands.js";
-import { consumeQuery, emitRateLimitEvent, type ClaudeAttemptFailure } from "./consume-query.js";
+import { consumeQuery, emitRateLimitEvent, type ClaudeAttemptFailure, type ConsumeQueryResult } from "./consume-query.js";
 import { buildClaudeQueryOptions } from "./query-options.js";
 import { sdkQueryFactory } from "./sdk-query.js";
 import { currentRequestLaneId, runInRequestLane } from "./request-lane.js";
@@ -1126,6 +1126,16 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	// Failure metadata from consumeQuery survives an iterator throw. The catch
 	// below reuses it instead of re-classifying it; see the C5 note.
 	const attemptFailure: { failure?: ClaudeAttemptFailure } = {};
+	// A closed SDK transport need not settle its pending iterator read. The
+	// request owns the stop promise across the original child and every replay.
+	let stopConsumption: () => void;
+	const consumptionStopped = new Promise<ConsumeQueryResult>((resolve) => {
+		stopConsumption = () => resolve({});
+	});
+	const consumeAttempt = (child: typeof sdkQuery, failureBox?: { failure?: ClaudeAttemptFailure }): Promise<ConsumeQueryResult> => Promise.race([
+		consumeQuery(child, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted || streamIdleTimedOut, recordBillingIdentity, account, router, failureBox),
+		consumptionStopped,
+	]);
 	// A reentrant (subagent) query must never write the module-level shared
 	// session: its completion/failure handlers would overwrite the PARENT's
 	// record with the child's session id and cursor. A foreign-conversation
@@ -1219,7 +1229,8 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 				turnStarted: abortCtx.turnStarted,
 			}),
 			onTimeout: ({ idleMs, timeoutMs }) => {
-				if (streamIdleTimedOut || wasAborted || options?.signal?.aborted || abortCtx.activeQuery !== sdkQuery) return;
+				const activeQuery = abortCtx.activeQuery;
+				if (streamIdleTimedOut || wasAborted || options?.signal?.aborted || activeQuery === null) return;
 				streamIdleTimedOut = true;
 				dropDeferredUserMessages("stream-idle-timeout");
 				markRebuildForThisQuery({ forceRotate: true });
@@ -1231,7 +1242,8 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 				// specifics (needsRebuild/forceRotate, killing the child) stay here;
 				// eligibility and retry bookkeeping are requestRotation's.
 				if (requestRotation(idleFailure)) {
-					abortSdkQuery(sdkQuery);
+					abortSdkQuery(activeQuery);
+					stopConsumption();
 					return;
 				}
 				abortCtx.handledTerminalError = true;
@@ -1259,7 +1271,8 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 				abortCtx.currentPiStream?.push({ type: "error", reason: "error", error: abortCtx.turnOutput! });
 				abortCtx.currentPiStream?.end();
 				abortCtx.currentPiStream = null;
-				abortSdkQuery(sdkQuery);
+				abortSdkQuery(activeQuery);
+				stopConsumption();
 			},
 			timeoutMs: streamIdleTimeoutMs,
 		})
@@ -1282,12 +1295,14 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		const drained = drainPendingToolCalls(abortCtx, "abort");
 		if (drained > 0) debug(`provider: abort drained ${drained} waiting MCP handler(s) as errors`);
 		abortCtx.pendingResults.clear();
-		abortSdkQuery(sdkQuery);
+		markRebuildForThisQuery({ forceRotate: true });
+		abortCtx.handledTerminalError = true;
+		// End Pi's live turn without waiting for the child to yield or throw.
+		// A tool-use turn already delivered to Pi must not be rewritten.
+		if (abortCtx.currentPiStream) surfaceFailure({ message: "Operation aborted" }, true);
+		if (abortCtx.activeQuery !== null) abortSdkQuery(abortCtx.activeQuery);
+		stopConsumption();
 	});
-	if (options?.signal) {
-		if (options.signal.aborted) onAbort();
-		else options.signal.addEventListener("abort", onAbort, { once: true });
-	}
 
 	const surfaceFailure = (failure: ClaudeAttemptFailure, aborted = false): void => {
 		attemptBuffer?.commit();
@@ -1313,6 +1328,10 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		abortCtx.currentPiStream?.end();
 		abortCtx.currentPiStream = null;
 	};
+	if (options?.signal) {
+		if (options.signal.aborted) onAbort();
+		else options.signal.addEventListener("abort", onAbort, { once: true });
+	}
 
 	// Background consumer — runs until this attempt's query ends. Before any
 	// visible output, a classified failure on a managed attempt is replayed once
@@ -1323,7 +1342,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	// query CAN end in that window (abort, child process death throwing out of
 	// the generator). Live-ctx handlers there mutated the subagent's turn state
 	// and stream and skipped the parent's own teardown entirely.
-	consumeQuery(sdkQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, recordBillingIdentity, account, router, attemptFailure)
+	consumeAttempt(sdkQuery, attemptFailure)
 		.then(async ({ capturedSessionId, failure }) => {
 			debug(`provider: consumeQuery completed, stopReason=${abortCtx.turnOutput?.stopReason}, failure=${failure?.kind ?? "none"}, aborted=${wasAborted}`);
 			if (abortCtx.restartRequest) {
@@ -1344,7 +1363,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 				markRebuildForThisQuery({ forceRotate: true });
 				dropDeferredUserMessages("abort-completion");
 				debug(`provider: abort detected, marked sharedSession needsRebuild + forceRotate`);
-				surfaceFailure({ message: "Operation aborted" }, true);
+				if (!abortCtx.handledTerminalError) surfaceFailure({ message: "Operation aborted" }, true);
 				return;
 			}
 
@@ -1414,15 +1433,16 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 					// the images survive; text-only runs stay plain strings.
 					const contQuery = sdkQueryFactory({ prompt: steer.blocks ? wrapPromptStream(steer.blocks) : steer.text, options: contOptions });
 					abortCtx.activeQuery = contQuery;
+					streamIdleWatchdog?.refresh();
 
 					debug(`provider: continuation query, model=${queryModel.id}, resume=${resumeId.slice(0, 8)}, account=${account?.label ?? "legacy"}, prompt ${describePrompt(steer.text, steer.blocks)}`);
 
 					try {
-						const continuation = await consumeQuery(contQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, recordBillingIdentity, account, router);
+						const continuation = await consumeAttempt(contQuery);
 						// Superseded: the restart killed this attempt, so its end is not
 						// an outcome to record. The replacement carries the remaining
 						// steers, which pi's history holds and the rebuild imports.
-						if (abortCtx.restartRequest) break;
+						if (abortCtx.restartRequest || wasAborted || streamIdleTimedOut) break;
 						if (continuation.failure) {
 							// Continuations never rotate: the original prompt already
 							// committed on this account.
@@ -1445,7 +1465,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 						// Killing the child can throw out of its iterator; that is this
 						// restart's own doing, not an attempt failure to charge to the
 						// account or a reason to drop input the rebuild carries.
-						if (abortCtx.restartRequest) break;
+						if (abortCtx.restartRequest || wasAborted || streamIdleTimedOut) break;
 						debug(`provider: continuation query error:`, contError);
 						const continuationFailure: ClaudeAttemptFailure = {
 							kind: classifyClaudeFailure(contError),

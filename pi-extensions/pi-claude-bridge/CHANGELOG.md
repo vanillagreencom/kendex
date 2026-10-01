@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 4.0.10
+
+- Escape during queued-message replay stops the current Claude Code child and ends the Pi turn as aborted, even when the child sends no further message. Silent replay children also receive the stream-idle deadline.
+
 ### 4.0.9
 
 - An explicit `provider.settingSources` list now loads verbatim with connectors off and `appendSystemPrompt` on. Loading `user` settings skips the Pi agent-directory `AGENTS.md` fallback, as it does with connectors on. Project context and Pi skills still append. Unset source defaults are unchanged. The bridge pins `ENABLE_CLAUDEAI_MCP_SERVERS=0` in command-line settings as well as the child environment, because a user settings `env` map can replace inherited values. Strict MCP config is now mandatory with connectors off, even if `strictMcpConfig` is false, because user-scope MCP servers otherwise load independently of the source list. Only bridge-declared MCP servers load in that mode.
