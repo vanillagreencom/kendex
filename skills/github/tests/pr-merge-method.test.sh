@@ -13,7 +13,10 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pr-merge-world.sh"
 
 MERGED="{no-token};MERGED PR #123"
-QUEUED="{no-token};QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}"
+# The method-only fixture has no ruleset ids. A live arm reads that
+# fixture as a mixed queue ruleset; it still selects the queue's method.
+QUEUE_ROUTE="merge-route: queue cause=queue-ruleset-mixed ruleset=null rule=required_status_checks;{route-queue:mixed}"
+QUEUED="$QUEUE_ROUTE;{no-token};QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}"
 DONE="checks:ci-required post:MERGED merge-commit:merged-oid"
 
 run_table "the merge method" "\
@@ -23,11 +26,11 @@ one that allows rebase alone merges with --rebase|$DONE methods:rebase|immediate
 a pull_request rule narrows the repository's set|$DONE methods:squash+merge+rebase rule-methods:rebase+merge|immediate|0|-|$MERGED|calls=$PRE,merge:merge,graphql:queue auth=<unset>
 a merge queue's method wins over the repository's|checks:ci-required post-queue methods:squash queue:MERGE|auto|75|-|$QUEUED|calls=$PRE,merge:merge:auto,graphql:queue auth=<unset>
 the caller's order decides among the allowed methods|$DONE methods:squash+merge+rebase|with:--rebase+--merge|0|-|$MERGED|calls=$PRE,merge:rebase,graphql:queue auth=<unset>
-a base allowing none of the accepted methods refuses on one line, nothing mutated|$DONE methods:merge|with:--squash|1|-|pr-merge: merge-method allowed=merge accepted=squash|calls=$CHECK auth=<unset>
-a queue method the caller does not accept refuses the same way|checks:ci-required post-queue queue:MERGE|with:--squash+--rebase+--auto|1|-|pr-merge: merge-method allowed=merge accepted=squash,rebase|calls=$CHECK auth=<unset>
-a repository allowing no method names none|$DONE methods:-|immediate|1|-|pr-merge: merge-method allowed=none accepted=squash,merge,rebase|calls=$CHECK auth=<unset>
-settings GitHub withholds from a token without push access refuse as unreadable|$DONE repo:pushless|immediate|1|-|pr-merge: merge-method-unreadable cause=settings|calls=$CHECK auth=<unset>
-a base whose rules cannot be read refuses as unreadable|$DONE rules:fail|immediate|1|-|pr-merge: merge-method-unreadable cause=rules|calls=$CHECK auth=<unset>
+a base allowing none of the accepted methods refuses on one line, nothing mutated|$DONE methods:merge|with:--squash|1|-|pr-merge: merge-method allowed=merge accepted=squash|calls=$PRE auth=<unset>
+a queue method the caller does not accept refuses the same way|checks:ci-required post-queue queue:MERGE|with:--squash+--rebase+--auto|1|-|$QUEUE_ROUTE;pr-merge: merge-method allowed=merge accepted=squash,rebase|calls=$PRE auth=<unset>
+a repository allowing no method names none|$DONE methods:-|immediate|1|-|pr-merge: merge-method allowed=none accepted=squash,merge,rebase|calls=$PRE auth=<unset>
+settings GitHub withholds from a token without push access refuse as unreadable|$DONE repo:pushless|immediate|1|-|pr-merge: merge-method-unreadable cause=settings|calls=$PRE auth=<unset>
+a base whose rules cannot be read refuses as unreadable|$DONE rules:fail|immediate|1|-|pr-merge: merge-method-unreadable cause=rules|calls=$PRE auth=<unset>
 a pull request into develop takes develop's queue method|checks:ci-required post-queue base:develop queue-on:develop queue:MERGE methods:squash|auto|75|-|$QUEUED|calls=$PRE,merge:merge:auto,graphql:queue auth=<unset>
 a pull request into main does not take develop's queue|$DONE base:main queue-on:develop queue:MERGE methods:squash|immediate|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue auth=<unset>
 "
@@ -69,9 +72,9 @@ mutant_copy unasked '        -f query='"'"'query($owner: String!, $repo: String!
 run_table "the must-fail controls" "\
 must-fail: with the method pinned, a merge-only repository is squashed|$DONE methods:merge|mutant:fixed:--keep-branch|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue auth=<unset>
 must-fail: with the accepted methods ignored, the refused base merges|$DONE methods:merge|mutant:deaf:--squash|0|-|$MERGED|calls=$PRE,merge:merge,graphql:queue auth=<unset>
-must-fail: with the queue's precedence cut, the queue's base has no method|checks:ci-required post-queue methods:squash queue:MERGE|mutant:queueless:--auto|1|-|pr-merge: merge-method-unreadable cause=settings|calls=$CHECK auth=<unset>
+must-fail: with the queue's precedence cut, the queue's base has no method|checks:ci-required post-queue methods:squash queue:MERGE|mutant:queueless:--auto|1|-|$QUEUE_ROUTE;pr-merge: merge-method-unreadable cause=settings|calls=$PRE auth=<unset>
 must-fail: with the narrowing cut, the rule's excluded squash is taken|$DONE methods:squash+merge+rebase rule-methods:rebase+merge|mutant:unnarrowed:--keep-branch|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue auth=<unset>
-must-fail: with withheld settings read, the refusal names an empty set|$DONE repo:pushless|mutant:withheld:--keep-branch|1|-|pr-merge: merge-method allowed=none accepted=squash,merge,rebase|calls=$CHECK auth=<unset>
+must-fail: with withheld settings read, the refusal names an empty set|$DONE repo:pushless|mutant:withheld:--keep-branch|1|-|pr-merge: merge-method allowed=none accepted=squash,merge,rebase|calls=$PRE auth=<unset>
 must-fail: with the repository's setting not read, pr-merge deletes what GitHub deletes|$DONE deletes-on-merge:true|mutant:deleter:--delete-branch|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue,delete:issue-123 auth=<unset>
 must-fail: with the fork check cut, a fork's head name is deleted in this repository|$DONE deletes-on-merge:false cross-repository|mutant:forker:--delete-branch|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue,delete:issue-123 auth=<unset>
 must-fail: with isCrossRepository not asked for, this repository's head is kept|$DONE deletes-on-merge:false|mutant:unasked:--delete-branch|0|-|$MERGED;pr-merge: branch-kept branch=issue-123 cause=cross-repository-unreadable;GitHub did not say which repository holds the head branch, so it was not deleted.|calls=$PRE,merge:squash,graphql:queue auth=<unset>

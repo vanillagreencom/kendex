@@ -111,7 +111,7 @@ change came from an outside contributor.
 - orch: `oversee-cycle` micro and small class targets are now 1200 and 1800 seconds, the owner's 20- and 30-minute open-to-merge figures; `oversee-cycle --help` states each target's span and class.
 - `kendex verify` warns, and exits 0, where a project ignores a path an installed agent declares as tracked output; `--strict` still fails the run on it.
 - **Breaking:** harness-ci reads every change as queue-only until the base commit's `[env]` sets `HARNESS_CI_QUEUE_PATHS`; set it empty for none.
-- github: `pr-merge` merges past the merge queue where the queue is all its token bypasses and the change is not queue-only; `--auto --unless-admin` arms only a PR the queue takes; `--admin` is gone.
+- github: `pr-merge` merges past the merge queue where the queue is all its token bypasses and the change is not queue-only; `--auto` arms only a PR the queue takes; `--admin` is gone.
 - **Breaking:** review-gate's standard scripts refuse until `kendex.settings.toml` `[env]` sets `REVIEW_GATE_STANDARD_APP`, `REVIEW_GATE_STANDARD_ENVIRONMENT` and `REVIEW_GATE_STANDARD_SECRETS`.
 - orch: `approval-wait` takes its mode, `approval` or `off`, from the PR's review decision and its base's rulesets; an open thread holds an approved head at `comments`.
 - review-gate: `pr-watch.sh` reads GitHub's review state alone, with `disarmed` and `awaiting-stale` read from `reviewDecision`; `--heal`, `--no-evaluate` and the predicate kinds are gone.

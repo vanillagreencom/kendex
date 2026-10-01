@@ -72,9 +72,7 @@
 #          pr-merge.test.sh builds as $MIRROR) | immediate-classless (the
 #          immediate merge from that suite's mirror with no harness-ci
 #          sibling, $CLASSLESS_PR_MERGE, on $CLASSLESS_PATH, which holds no
-#          change-class) | auto-unless-admin (--auto --unless-admin, the arm
-#          at creation) | auto-unless-admin-classified (the same, from
-#          $MIRROR) | route-mutant:<name> | auto-route-mutant:<name> (the
+#          change-class) | route-mutant:<name> | auto-route-mutant:<name> (the
 #          immediate merge, or the arm at creation, from the copy mutant_copy
 #          built as <name>, with the classifier stub beside it)
 #   out    check: `merge=<bool> transient=<bool> state=<S> mergeable=<M>
@@ -287,10 +285,8 @@ argv_for() {
     admin) printf '%s\n' "$PR_MERGE" 123 --admin --keep-branch ;;
     expected:*) printf '%s\n' "$PR_MERGE" 123 --auto --keep-branch --expected-head "${1#expected:}" ;;
     auto-mutant:*) printf '%s\n' "$TMPDIR/${1#auto-mutant:}/skills/github/scripts/commands/pr-merge.sh" 123 --auto --keep-branch ;;
-    auto-unless-admin) printf '%s\n' "$PR_MERGE" 123 --auto --unless-admin --keep-branch ;;
-    auto-unless-admin-classified) printf '%s\n' "$MIRROR_PR_MERGE" 123 --auto --unless-admin --keep-branch ;;
     route-mutant:*) printf '%s\n' "$TMPDIR/${1#route-mutant:}/skills/github/scripts/commands/pr-merge.sh" 123 --keep-branch ;;
-    auto-route-mutant:*) printf '%s\n' "$TMPDIR/${1#auto-route-mutant:}/skills/github/scripts/commands/pr-merge.sh" 123 --auto --unless-admin --keep-branch ;;
+    auto-route-mutant:*) printf '%s\n' "$TMPDIR/${1#auto-route-mutant:}/skills/github/scripts/commands/pr-merge.sh" 123 --auto --keep-branch ;;
     admin-credential) printf '%s\n' "$PR_MERGE" 123 --admin-credential --keep-branch ;;
     router-in:*) printf '%s\n' "$GITHUB" -C "$TMPDIR/settings-${1#router-in:}" pr-merge 123 --auto --keep-branch ;;
     router:*) printf '%s\n' "$GITHUB" -C "$REPO" pr-merge 123 "${1#router:}" --keep-branch ;;
@@ -411,7 +407,7 @@ err_macro() {
     # flattened into one sentence; a git that rewords this moves this macro.
     fetch-no-origin) printf "pr-merge: the pull request's range is not in this checkout and the fetch of its two commits from origin failed:;fatal: 'origin' does not appear to be a git repository;fatal: Could not read from remote repository.;Please make sure you have the correct access rights;and the repository exists." ;;
     hint-auto) printf 'Use --auto to queue for auto-merge.' ;;
-    volatile) printf 'NOTE: queue/auto-merge state is VOLATILE — an ejection or a failed protection check disarms it silently\\; follow orch merge-pr.md § 5 for PR #123;Block on .agents/skills/orch/scripts/queue-wait 123 --json once, with a poll interval and budget sized as orch merge-pr.md § 5 step 1 does\\; route its verdict by that same step, and never re-arm an unrecognized verdict. The fleet reducer is .agents/skills/review-gate/scripts/pr-watch.sh with GH_REPO set to the repository (not resolvable locally here)\\; repair what the cause names, then re-arm only through the merge route of orch merge-pr.md § 5 step 1, never a bare pr-merge 123 --auto, which queues a PR the admin route would take' ;;
+    volatile) printf 'NOTE: queue/auto-merge state is VOLATILE — an ejection or a failed protection check disarms it silently\\; follow orch merge-pr.md § 5 for PR #123;Block on .agents/skills/orch/scripts/queue-wait 123 --json once, with a poll interval and budget sized as orch merge-pr.md § 5 step 1 does\\; route its verdict by that same step, and never re-arm an unrecognized verdict. The fleet reducer is .agents/skills/review-gate/scripts/pr-watch.sh with GH_REPO set to the repository (not resolvable locally here)\\; repair what the cause names, then re-arm only through the merge route of orch merge-pr.md § 5 step 1, which picks the direct attempt or an explicit queue arm after readiness and approval checks' ;;
     merge-failed) printf 'BLOCKED PR #123 — gh pr merge failed' ;;
     no-token) printf 'Warning: GH_BOT_TOKEN not configured, using current user' ;;
     closed) printf 'CLOSED (not merged) PR #123;No merge attempted, none queued. Reopen the PR or supersede it.' ;;
@@ -424,6 +420,7 @@ err_macro() {
     route-why:other-bypass) printf 'This token may bypass another ruleset on the base, which --admin would skip too.' ;;
     route-why:classic) printf 'The base branch has classic branch protection, which --admin would skip too.' ;;
     route-why:protection) printf "The base branch's classic protection could not be read, so no bypass is proven." ;;
+    route-why:explicit) printf 'The caller explicitly requested the queue for a PR eligible for a direct merge.' ;;
     arm-admin) printf 'Nothing armed: the immediate merge takes this PR past the queue once its gates pass, and an arm now would queue it first.' ;;
     route-why:direct-method) printf "A merge past the queue takes the repository's methods and the base's pull_request rules, which allow none of the accepted methods." ;;
     route-why:direct-unread) printf 'The methods a merge past the queue may take could not be read.' ;;
@@ -443,6 +440,14 @@ err_text() {
     text="${text//\{$name\}/$(err_macro "$name")}"
   done
   printf '%s' "$text"
+}
+
+# Apply the unchanged assertion to a disposable mutant. Its red output is
+# part of the suite log, which is the control receipt.
+assert_mutant_fails() { # GOT WANT NAME
+  local rc=0
+  (FAIL=0; assert_eq "$1" "$2" "$3"; [[ "$FAIL" -eq 0 ]]) || rc=$?
+  assert_eq "$rc" 1 "must-fail control: $3"
 }
 
 run_table() {
