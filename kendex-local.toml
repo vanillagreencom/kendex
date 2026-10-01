@@ -92,6 +92,16 @@ harnesses = [
 ]
 enabled = true
 
+[agents.swift]
+source = "."
+harnesses = [
+    "claude",
+    "codex",
+    "pi",
+    "copilot",
+]
+enabled = true
+
 [agents.iced]
 source = "."
 harnesses = [
@@ -618,6 +628,15 @@ deny-tools = [
 ]
 background = false
 
+[agent-frontmatter.claude.swift]
+effort = "high"
+color = "cyan"
+deny-tools = [
+    "Agent",
+    "AskUserQuestion",
+]
+background = false
+
 [agent-frontmatter.claude.iced]
 effort = "high"
 color = "cyan"
@@ -768,6 +787,17 @@ nickname-candidates = [
     "Frontend-Nova",
     "Frontend-Orion",
     "Frontend-Vector",
+]
+
+[agent-frontmatter.codex.swift]
+sandbox-mode = "danger-full-access"
+nickname-candidates = [
+    "Swift-Atlas",
+    "Swift-Delta",
+    "Swift-Echo",
+    "Swift-Nova",
+    "Swift-Orion",
+    "Swift-Vector",
 ]
 
 [agent-frontmatter.codex.iced]
@@ -960,6 +990,18 @@ allowed-subagents = ["scout"]
 pane = true
 
 [agent-frontmatter.pi.frontend]
+color = "cyan"
+deny-tools = [
+    "subagent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "question",
+]
+allowed-subagents = ["scout"]
+pane = true
+
+[agent-frontmatter.pi.swift]
 color = "cyan"
 deny-tools = [
     "subagent",

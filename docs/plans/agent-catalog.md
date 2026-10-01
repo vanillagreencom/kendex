@@ -229,7 +229,7 @@ The owner authorizes frontend to cover declarative UI, including Quickshell QML 
 
 ### Deferred gaps
 
-- Memsira Swift remains outside the catalog scopes. Route it to `agent:human` or an owner-approved follow-up. Maintainer remains limited to changes settled by reading.
+- Memsira's Swift application work routes to `agent:swift` through [swift](../../agents/swift.md). Non-UI runtime and persistence stay with their owners. Maintainer remains limited to changes settled by reading.
 - Do not add separate Next.js, Expo, Tailwind, Base UI, Radix, or React-terminal agents. The same view-layer boundary and frontend route cover those consumers. Consumer instructions select framework versions and test tools.
 
 ## Source structure and permissions proposal
@@ -266,7 +266,7 @@ Proposed short section for [docs/DEVELOPMENT.md](../DEVELOPMENT.md), Phase 2 onl
 
 ## Labels and repository handoff
 
-Proposed workspace implementer labels: `agent:maintainer`, `agent:runtime`, `agent:rust`, `agent:iced`, `agent:frontend`. Keep `agent:researcher` for its separate executable research path. Keep `agent:multi` and `agent:human` as coordination markers, not catalog agents. No labels for scout, planner, TPM, or reviewers without an issue execution route.
+Proposed workspace implementer labels: `agent:maintainer`, `agent:runtime`, `agent:rust`, `agent:iced`, `agent:frontend`, `agent:swift`. Keep `agent:researcher` for its separate executable research path. Keep `agent:multi` and `agent:human` as coordination markers, not catalog agents. No labels for scout, planner, TPM, or reviewers without an issue execution route.
 
 - Every repository labels every issue at creation, with no exception. An implementation issue has exactly one installed implementer label. Research uses its one research-role label. Containers use multi; human work uses human. All occupy the exclusive workspace Agent group, but multi/human never become specialist launch identities.
 - Preserve present-label priority. No code-path inference replaces a valid label. Classify an unlabelled legacy item only to propose its explicit label before launch. Reject multiple role labels rather than choosing the first.
@@ -281,7 +281,7 @@ These are final proposed values for [KEN-2332](https://linear.app/vanillagreen/i
 
 | Repository | Proposed `LINEAR_AGENT_LABELS` | Evidence and later repository action |
 | --- | --- | --- |
-| kendex | `agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:rust, agent:iced, agent:frontend` | React/Tauri UI, Rust core, runtime scripts/extensions. Keep iced for maintained Iced catalog examples/skill work, not a claim that the desktop app uses Iced. Rename maintenance/runtime installs; add frontend. |
+| kendex | `agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:rust, agent:iced, agent:frontend, agent:swift` | React/Tauri UI, Rust core, runtime scripts/extensions. Keep iced and swift for maintained catalog work, not a claim that the desktop app uses Iced or Swift. Rename maintenance/runtime installs; add frontend and swift. |
 | fleet | `agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime` | 115 Python and 93 shell files. Engineer is declared now, but its control Pi render is missing. Rename and render runtime; verify the effective install. |
 | vgs | `agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:frontend` | Quickshell QML/JavaScript views go to frontend. Go product code and the 59 Python and 46 shell helpers go to runtime. Install both shared owners; replace the generalist-for-QML/Go fallback and human implementation routing. |
 | vsys | `agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:frontend` | Bun/OpenTUI React terminal UI: 96 TS, 26 TSX, no Rust in tree or history. Frontend explicitly includes this view layer. Runtime owns non-UI TS. Drop rust/iced labels and the unused rust subscription; install runtime/frontend. |
@@ -291,7 +291,7 @@ These are final proposed values for [KEN-2332](https://linear.app/vanillagreen/i
 | hyprtrade-io | `agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:frontend` | React/Vite/Base UI; api serverless TS. No Rust files. Drop unused rust subscription; install runtime/frontend. |
 | drovr | `agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:rust, agent:frontend` | TS services, React dashboard/Base UI, Rust Tauri. Add runtime/frontend; replace activation-only policy. Repository work remains on hold, but its future value has no creation-time exception. |
 | kendex-web | `agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:frontend` | Next.js UI uses Radix, with non-UI TS library/database code. Install implementers and base roles, not only the current reviewer workflow bundle. Shared KEN team does not imply identical installs. |
-| memsira | `agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:rust, agent:frontend` | Rust/Tauri, 189 React TSX files, TS sidecar, Python/shell helpers. Add runtime/frontend. Its 100 Swift files remain an uncovered human-routed scope. |
+| memsira | `agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:rust, agent:frontend, agent:swift` | Rust/Tauri, 189 React TSX files, TS sidecar, Python/shell helpers. Add runtime/frontend/swift. Its 100 Swift files route to swift for application and view work. Non-UI runtime and persistence stay with their owners. |
 
 Evidence is the supplied read-only control-host repository census on 2026-09-30, updated by the 2026-10-01 install measurement. It reads each repository's `kendex.toml` (`kendex-local.toml` for kendex), `kendex.settings.toml`, tracked product paths, and rendered agent directories. It is not a claim that this checkout contains those other repositories. Initial provisional frontend and talk entries are resolved above.
 

@@ -88,6 +88,7 @@ The default catalog includes implementation and maintenance agents:
 - [rust](agents/rust.md): non-Iced Rust implementation and performance work.
 - [iced](agents/iced.md): Iced desktop UI implementation.
 - [frontend](agents/frontend.md): declarative web, mobile and terminal UI, including React and Quickshell QML/JavaScript.
+- [swift](agents/swift.md): SwiftUI and UIKit views, Swift app code, and Xcode and Swift Package Manager builds and tests.
 - [maintainer](agents/maintainer.md): documentation, references and configuration organization.
 
 ## Documentation

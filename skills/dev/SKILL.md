@@ -36,6 +36,7 @@ An `agent:X` label selects X. With no agent label, use the item's Location paths
 | Non-Iced Rust implementation | `rust` |
 | Iced view layer and UI messages, even under `crates/` | `iced` |
 | Declarative UI: TypeScript/React web, mobile and terminal views; Quickshell QML/JavaScript | `frontend` |
+| SwiftUI and UIKit views, Swift application code, Xcode and Swift Package Manager builds/tests; excludes non-UI runtime and data persistence | `swift` |
 | Non-UI shell, Python, TypeScript or Go runtime implementation | `runtime` |
 | Documentation, references, file or configuration organization | `maintainer` |
 

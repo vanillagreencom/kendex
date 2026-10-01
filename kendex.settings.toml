@@ -18,7 +18,7 @@ LINEAR_TEAM_PREFIX = "KEN"
 # Declared agent-routing label set (e.g. "agent:maintainer, agent:rust").
 # Non-empty makes `issues create` refuse a create carrying none of them —
 # such an issue is invisible to agent routing. Empty = guard off.
-LINEAR_AGENT_LABELS = "agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:rust, agent:iced, agent:frontend"
+LINEAR_AGENT_LABELS = "agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:rust, agent:iced, agent:frontend, agent:swift"
 
 # Catalog source ceiling; harness renders use the generated inventory exemption.
 DOC_LIMITS_CLASSES = "agents/*.md=5k"
