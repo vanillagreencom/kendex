@@ -50,6 +50,14 @@ OT_STUB_BIN="$TMP_ROOT/ot-bin"
 ot_stub_bin "$OT_STUB_BIN"
 HOST_STUB="$TEST_DIR/fixtures/lane-host"
 
+# A current Pi fleet install sends the window and lists the mail wake. The
+# file-brief route used by oversee must not add a mailbox-monitor instruction.
+PI_AGENT="$TMP_ROOT/pi-agent"
+mkdir -p "$PI_AGENT/packages/@vanillagreen/pi-hooks/extensions"
+printf '{"compaction":{"enabled":false}}\n' > "$PI_AGENT/settings.json"
+printf 'export const f = { context_window: 1 };\n' > "$PI_AGENT/packages/@vanillagreen/pi-hooks/extensions/vocab.ts"
+printf '{"pi":{"extensions":["./extensions/hooks.ts","./extensions/lane-mail-wake.ts"]}}\n' > "$PI_AGENT/packages/@vanillagreen/pi-hooks/package.json"
+
 # The harness the rendered line starts, by absolute path so a login shell's
 # rebuilt PATH cannot answer with another: it writes its last argument, the
 # brief, to RECEIVED byte for byte.
@@ -144,10 +152,18 @@ line="$(gui_line)" || line=""
 assert_eq "rc=$RC harness=$(received "$line")" "rc=0 harness=verbatim" \
   "the GUI launch hands bash -lc a line whose brief the harness receives verbatim" "$OUT"
 
-run_ot "$OT" "TMUX=stub,1,0;ORCH_TMUX_SESSION=stub" --tmux --harness claude --cmd "$CMD" --brief-file "$BRIEF_FILE" CC-2
-line="$(typed_line "clear; $HARNESS_STUB ")" || line=""
-assert_eq "rc=$RC harness=$(received "$line")" "rc=0 harness=verbatim" \
-  "the local tmux launch pastes a line whose brief the harness receives verbatim" "$OUT"
+TMUX_BRIEF_ASSERTION="the local tmux fleet launch pastes a line whose brief the harness receives verbatim"
+while IFS='|' read -r harness flags; do
+  run_ot "$OT" "TMUX=stub,1,0;ORCH_TMUX_SESSION=stub;PI_CODING_AGENT_DIR=$PI_AGENT" \
+    --tmux --state-dir "$TMP_ROOT/fleet-$RUN_SEQ" --harness "$harness" \
+    --cmd "$HARNESS_STUB $flags $QUESTION_OFF_ALL $COMPACTION_OFF_ALL {brief}" --brief-file "$BRIEF_FILE" CC-2
+  line="$(typed_line "clear; $HARNESS_STUB ")" || line=""
+  assert_eq "rc=$RC harness=$(received "$line")" "rc=0 harness=verbatim" \
+    "$TMUX_BRIEF_ASSERTION ($harness)" "$OUT"
+done <<'ROWS'
+claude|--model opus --effort high
+pi|--model github-copilot/claude-sonnet-5 --thinking high
+ROWS
 
 # The provider's prefix is the reference one, a login shell, so the remote
 # shell reads the brief through one more quoting layer than a local pane.
@@ -170,6 +186,31 @@ run_ot "$QUOTE_OT" "TMUX=" --ghostty --harness claude --cmd "$CMD" --brief-file 
 line="$(gui_line)" || line=""
 assert_eq "rc=$RC harness=$(received "$line")" "rc=0 harness=altered" \
   "control: a brief placed between bare double quotes reaches the harness altered" "$OUT"
+
+# An append still launches Pi and preserves the original text, but the same
+# receiver assertion must fail. Keep its expected failure in a subshell.
+APPEND_OT="$(mutant_scripts brief-pi-append open-terminal)/open-terminal" || exit 1
+git -C "$TMP_ROOT/brief-pi-append" init -q
+git -C "$TMP_ROOT/brief-pi-append" config gc.auto 0
+git -C "$TMP_ROOT/brief-pi-append" config maintenance.auto false
+orch_fixture_shared_libs "$TMP_ROOT/brief-pi-append"
+mutate_file "$APPEND_OT" 'local text rendered="" quoted brief="$BRIEF_TEXT"' \
+  'local text rendered="" quoted brief="${BRIEF_TEXT}"; if [[ "$HARNESS" == pi ]]; then brief+=" As your first step, arm the mailbox monitor .agents/skills/orch/scripts/lane-mail watch --item $mail_id through bg_task per watch-delivery.md."; fi'
+run_ot "$APPEND_OT" "TMUX=stub,1,0;ORCH_TMUX_SESSION=stub;PI_CODING_AGENT_DIR=$PI_AGENT" \
+  --tmux --state-dir "$TMP_ROOT/fleet-$RUN_SEQ" --harness pi \
+  --cmd "$HARNESS_STUB --model github-copilot/claude-sonnet-5 --thinking high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL {brief}" --brief-file "$BRIEF_FILE" CC-2
+line="$(typed_line "clear; $HARNESS_STUB ")" || line=""
+APPEND_GOT="rc=$RC harness=$(received "$line")"
+assert_eq "$APPEND_GOT" "rc=0 harness=altered" \
+  "control: Pi still launches but receives the appended mailbox-monitor instruction" "$OUT"
+CONTROL_RC=0
+(
+  FAIL=0
+  assert_eq "$APPEND_GOT" "rc=0 harness=verbatim" "$TMUX_BRIEF_ASSERTION (pi)"
+  [[ "$FAIL" -eq 0 ]]
+) > "$TMP_ROOT/append-assertion.out" 2>&1 || CONTROL_RC=$?
+assert_eq "$CONTROL_RC" "1" \
+  "control: the verbatim receiver assertion fails on the Pi append" "$TMP_ROOT/append-assertion.out"
 
 echo "=== a brief file and its placeholder come as a pair ==="
 # refusal_row LABEL OT KEY FIELD ARGS... — a launch refused before any window
