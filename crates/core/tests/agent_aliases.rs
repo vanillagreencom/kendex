@@ -101,20 +101,15 @@ fn a_legacy_consumer_renders_with_skills_labels_templates_and_one_warning_per_na
     let f = fixture(include_str!("fixtures/agent_aliases.toml"));
     fs::write(f.project.join("kendex.settings.toml"), "# consumer settings\n[env]\nKEEP = 'untouched' # consumer\nLINEAR_AGENT_LABELS = 'agent:generalist,agent:engineer,agent:rust' # taxonomy\n").unwrap();
     let report = audit(&f.env, &f.scope).unwrap();
-    assert_eq!(
-        report.declaration_status,
-        DeclarationStatus::Complete,
-        "legacy consumer manifest did not render: {:?}",
-        report.notes
-    );
-    assert!(report.refused.is_empty(), "{:?}", report.refused);
+    assert_eq!(report.declaration_status, DeclarationStatus::Complete);
+    assert!(report.refused.is_empty());
     for (old, new) in [("generalist", "maintainer"), ("engineer", "runtime")] {
         let warnings: Vec<_> = report
             .warnings
             .iter()
             .filter(|warning| warning.name == old && warning.harness.is_none())
             .collect();
-        assert_eq!(warnings.len(), 1, "{:?}", report.warnings);
+        assert_eq!(warnings.len(), 1);
         let warning = warnings[0];
         assert!(warning.message.contains(new));
         for setting in [
@@ -308,7 +303,7 @@ fn two_settings_for_one_agent_are_refused_before_writes() {
                 result,
                 Err(kendex_core::error::CoreError::AgentAliasCollision { .. })
             ),
-            "{section}: {result:?}"
+            "{section}"
         );
         assert_eq!(fs::read(f.project.join("kendex.toml")).unwrap(), before);
     }
@@ -345,18 +340,15 @@ fn local_forks_and_adoptions_keep_their_names_and_customizations() {
             assert_eq!(
                 report.declaration_status,
                 DeclarationStatus::Complete,
-                "local identity lost for {origin:?} in {scope:?}: {:?}",
-                report.notes
+                "local identity lost for {origin:?} in {scope:?}"
             );
-            assert!(report.refused.is_empty(), "{:?}", report.refused);
+            assert!(report.refused.is_empty());
             assert!(
                 report
                     .warnings
                     .iter()
                     .all(|warning| warning.harness.is_some()
-                        || !["generalist", "engineer"].contains(&warning.name.as_str())),
-                "{:?}",
-                report.warnings
+                        || !["generalist", "engineer"].contains(&warning.name.as_str()))
             );
             apply::execute(&f.env, &report.plan).unwrap();
             let after = kendex_core::manifest::load_for_mutation(&path)
@@ -377,7 +369,7 @@ fn local_forks_and_adoptions_keep_their_names_and_customizations() {
             }
             let settled = audit(&f.env, &scope).unwrap();
             assert_eq!(settled.declaration_status, DeclarationStatus::Complete);
-            assert!(settled.drift.is_empty(), "{:?}", settled.drift);
+            assert!(settled.drift.is_empty());
         }
     }
 }
