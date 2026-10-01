@@ -149,8 +149,9 @@ case "$1" in
     # before the other starts, and no lock is ever contended.
     [ -z "${LANE_HOST_STUB_APPEND_DELAY:-}" ] || sleep "$LANE_HOST_STUB_APPEND_DELAY"
     appended=0
-    mailbox_append_locked "$dest" 30 < "$landing" || appended=$?
+    mailbox_append_locked "$dest" 30 "" "$landing" < "$landing" || appended=$?
     rm -f -- "${landing:?}"
+    [ "$appended" -ne 4 ] || exit 4
     if [ "$appended" -ne 0 ]; then
       case "$appended" in 3) why=lock-timeout ;; *) why=write-failed ;; esac
       printf 'lane-host-fixture: append-failed path=%s reason=%s\n' "$dest" "$why" >&2

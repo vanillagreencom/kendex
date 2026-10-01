@@ -106,3 +106,32 @@ assert_file_not_contains() {
     pass "$name"
   fi
 }
+
+# A background writer holding one file's lock, through the same orch_take_lock
+# every mailbox append calls. It signals NAME.taken once it holds the lock and
+# lets go when NAME.release appears, or after a minute, so a case that aborts
+# before releasing it leaves no process spinning behind the suite.
+hold_lock() { # FILE NAME
+  local waited=0
+  . "$REPO_ROOT/skills/orch/scripts/lib/file-lock.sh"
+  exec 9>>"$1"
+  orch_take_lock 9 "$1" 30 || return 1
+  : > "$TMP_ROOT/$2.taken"
+  while [ ! -e "$TMP_ROOT/$2.release" ]; do
+    waited=$((waited + 1))
+    [ "$waited" -lt 1200 ] || return 1
+    sleep 0.05
+  done
+}
+
+# Wait for a holder's marker, bounded at five seconds. A holder that failed
+# before writing it would otherwise spin the suite to the CI job's own timeout,
+# with nothing on screen saying which assertion was in flight.
+await_marker() { # PATH
+  local tries=0
+  while [ ! -e "$1" ]; do
+    tries=$((tries + 1))
+    [ "$tries" -lt 100 ] || return 1
+    sleep 0.05
+  done
+}

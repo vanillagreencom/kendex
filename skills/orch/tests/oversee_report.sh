@@ -588,9 +588,10 @@ assert_eq "$RC|$(first_err)" "0|oversee-report: report-written=$CASE/progress-re
   "ORCH_REPORT=off silences due alone: a succession write still writes"
 
 echo "=== write: notice receipt and retry against the real mailbox ==="
-NOTICE_MUTANT="$(mutant_scripts notice-repeat/orch lane-mail)/lane-mail" || exit 1
-mutate_file "$NOTICE_MUTANT" '    lm_no_duplicate "$TO_OVERSEER" "$LINE"' \
-  '    : lm_no_duplicate "$TO_OVERSEER" "$LINE"'
+NOTICE_DIR="$(mutant_scripts notice-repeat/orch lib/mailbox-append.sh)" || exit 1
+NOTICE_MUTANT="$NOTICE_DIR/lane-mail"
+mutate_file "$NOTICE_DIR/lib/mailbox-append.sh" 'if [ -n "${4:-}" ]; then' \
+  'if false && [ -n "${4:-}" ]; then'
 RECEIPT_MUTANT="$(mutant_scripts receipt/orch oversee-report)/oversee-report" || exit 1
 ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/receipt/github"
 mutate_file "$RECEIPT_MUTANT" 'message report-written "$TARGET notice-id=${NOTICE_ID%% *}"' \

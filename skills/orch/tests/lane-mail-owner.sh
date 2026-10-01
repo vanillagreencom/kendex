@@ -153,8 +153,8 @@ new_repo control_ask_retry
 owner_ask 'Retry?' yes,no yes
 FIRST_ASK="$ASK"
 ASK_REPEAT_WANT="2=lane-mail: duplicate id=$FIRST_ASK=$FIRST_ASK"
-mutant_dir="$(mutant_scripts mutants/ask-retry lane-mail)" || exit 1
-mutate_file "$mutant_dir/lane-mail" '.deadline = ($deadline - $stamp)' '. # .deadline = ($deadline - $stamp)'
+mutant_dir="$(mutant_scripts mutants/ask-retry lib/mailbox-append.sh)" || exit 1
+mutate_file "$mutant_dir/lib/mailbox-append.sh" '.deadline = ($deadline - $stamp)' '. # .deadline = ($deadline - $stamp)'
 sleep 5
 LANE_MAIL_BIN="$mutant_dir/lane-mail" owner_ask 'Retry?' yes,no yes
 CONTROL_RC=0
@@ -167,6 +167,83 @@ CONTROL_OUT="$(
 assert_eq "$RC=$CONTROL_RC=$(wc -l < "$BOX/to-overseer.jsonl" | tr -d ' ')" "0=1=2" \
   "control: the advancing-clock retry assertion fails without deadline normalization"
 PATH="$SAVED_PATH"
+
+FIXTURE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
+REMOTE_DISK="$TMP_ROOT/repeat-remote"
+STUB_LOG="$TMP_ROOT/repeat-host.log"
+# Both senders reach the append while a third process holds its lock. The
+# markers instrument a disposable library, not the sender or the repeat rule.
+# A fixed clock gives both envelopes the same second, as Copilot reports do.
+race_repeats() { # NAME MODE ACTION LIB
+  local name="$1" mode="$2" action="$3" lib="$4" sender receiver box n holder first codes
+  local pids=() args=()
+  new_repo "repeat-$name-sender"; sender="$LANE"
+  new_repo "repeat-$name-receiver"; receiver="$LANE"
+  case "$action" in
+    ask) args=(ask --item overseer --to owner --options keep,stop --recommend keep); box="$sender/tmp/lane-mail/overseer/to-overseer.jsonl" ;;
+    notice) args=(notice --item overseer --to owner); box="$sender/tmp/lane-mail/overseer/to-overseer.jsonl" ;;
+    send) args=(send --item overseer --directive --root "$sender"); box="$sender/tmp/lane-mail/overseer/to-lane.jsonl" ;;
+    send-peer | ask-peer) args=(peer "${action%-peer}" --repo "$receiver"); box="$receiver/tmp/lane-mail/overseer/to-lane.jsonl" ;;
+    *) echo "lane-mail suite: action=$action" >&2; exit 1 ;;
+  esac
+  if [ "$mode" = hosted ]; then args+=(--host); box="$REMOTE_DISK$box"; fi
+  mkdir -p -- "${box%/*}" "$TMP_ROOT/repeat-home"
+  : > "$box"
+  printf 'one progress report\n' > "$TMP_ROOT/repeat.txt"
+  hold_lock "$box" "$name" & holder=$!
+  await_marker "$TMP_ROOT/$name.taken" || exit 1
+  for n in 1 2; do
+    (cd -- "$sender" && rc=0
+      env -i PATH="$TMP_ROOT/clock-bin:$PATH" HOME="$TMP_ROOT/repeat-home" LC_ALL=C \
+        STUB_CLOCK="$STUB_CLOCK" STUB_REAL_DATE="$STUB_REAL_DATE" STUB_REAL_SLEEP="$STUB_REAL_SLEEP" \
+        RACE_MARKER="$TMP_ROOT/$name-$n.waiting" ORCH_LANE_HOST="$FIXTURE_HOST" \
+        LANE_HOST_STUB_LOG="$STUB_LOG" LANE_HOST_STUB_DIR="$REMOTE_DISK" LANE_HOST_STUB_LIB="$lib" \
+        "$lib/../lane-mail" "${args[@]}" --file "$TMP_ROOT/repeat.txt" \
+        >"$TMP_ROOT/$name-$n.out" 2>"$TMP_ROOT/$name-$n.err" || rc=$?
+      printf '%s\n' "$rc" >"$TMP_ROOT/$name-$n.rc") &
+    pids+=("$!")
+  done
+  for n in 1 2; do await_marker "$TMP_ROOT/$name-$n.waiting" || exit 1; done
+  : > "$TMP_ROOT/$name.release"
+  wait "$holder" "${pids[@]}"
+  first="$(jq -r '.id' "$box" | sed -n '1p')" || exit 1
+  codes="$(sort -n "$TMP_ROOT/$name-1.rc" "$TMP_ROOT/$name-2.rc" | tr '\n' ',')" || exit 1
+  RACE_RESULT="$codes|$(wc -l < "$box" | tr -d ' ')|$(sed -n '/^lane-mail: duplicate /p' "$TMP_ROOT/$name-1.err" "$TMP_ROOT/$name-2.err")"
+  RACE_WANT="0,2,|1|lane-mail: duplicate id=$first"
+}
+RACE_DIR="$(mutant_scripts fixtures/repeat-lock lib/mailbox-append.sh)" || exit 1
+mutate_file "$RACE_DIR/lib/mailbox-append.sh" '  if ! orch_take_lock 9 "$1" "$2"; then' \
+  '  : > "$RACE_MARKER"
+  if ! orch_take_lock 9 "$1" "$2"; then'
+EARLY_DIR="$(mutant_scripts mutants/repeat-before-lock lib/mailbox-append.sh)" || exit 1
+mutate_file "$EARLY_DIR/lib/mailbox-append.sh" '  local duplicate=""' \
+  '  local duplicate=""
+  [ -z "${4:-}" ] || duplicate="$(mailbox_duplicate_id "$1" "$4")" || return 2'
+mutate_file "$EARLY_DIR/lib/mailbox-append.sh" '    if ! duplicate="$(mailbox_duplicate_id "$1" "$4")"; then' \
+  '    if false; then # if ! duplicate="$(mailbox_duplicate_id "$1" "$4")"; then'
+mutate_file "$EARLY_DIR/lib/mailbox-append.sh" '  if ! orch_take_lock 9 "$1" "$2"; then' \
+  '  : > "$RACE_MARKER"
+  if ! orch_take_lock 9 "$1" "$2"; then'
+for implementation in live early; do
+  lib="$RACE_DIR/lib"; [ "$implementation" != early ] || lib="$EARLY_DIR/lib"
+  while IFS='|' read -r name mode action; do
+    race_repeats "$implementation-$name" "$mode" "$action" "$lib"
+    control_rc=0
+    (FAIL=0; assert_eq "$RACE_RESULT" "$RACE_WANT" "identical $mode $action writers refuse under the append lock"; [[ "$FAIL" -eq 0 ]]) \
+      >"$TMP_ROOT/repeat-assertion" || control_rc=$?
+    want=0; [ "$implementation" != early ] || want=1
+    assert_eq "$control_rc" "$want" "$implementation $name: the locked repeat assertion turns red with an early read" "$TMP_ROOT/repeat-assertion"
+  done <<'ROWS'
+ask|local|ask
+notice|local|notice
+send|local|send
+peer-send|local|send-peer
+peer-ask|local|ask-peer
+host-send|hosted|send
+host-peer-send|hosted|send-peer
+host-peer-ask|hosted|ask-peer
+ROWS
+done
 
 # --- refusals, one row per rule -----------------------------------------------
 new_repo refusals
@@ -529,7 +606,7 @@ LANE_MAIL_BIN="$LANE_MAIL"
 new_repo control_resolve
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Cut?' cut,keep cut 0
 LANE_MAIL_BIN="$LANE_MAIL" lm resolve --item overseer --id "$ASK" --default
-mutant resolve-twice 'lm_append_local "$TO_LANE" "$LINE" lm_guard_close' 'lm_append_local "$TO_LANE" "$LINE"'
+mutant resolve-twice 'select(overseer_mail_class == "close" and .re == $re)' 'select(false and overseer_mail_class == "close" and .re == $re)'
 lm resolve --item overseer --id "$ASK" --default
 assert_eq "$RC=$(wc -l < "$BOX/to-lane.jsonl" | tr -d ' ')" "0=3" \
   "control: without the resolve guard a second resolution lands"
@@ -572,7 +649,7 @@ assert_eq "$CONTROL_RC" "1" "control: collapsing guard errors loses the operatio
 
 new_repo control_delivery
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 'Once.')" --delivery-id k1
-mutant delivery-twice 'lm_append_local "$TO_LANE" "$LINE" lm_guard_delivery' 'lm_append_local "$TO_LANE" "$LINE"'
+mutant delivery-twice 'select(.delivery_id == $key)' 'select(false and .delivery_id == $key)'
 lm send --item overseer --directive --file "$(text d 'Once.')" --delivery-id k1
 assert_eq "$RC=$(wc -l < "$BOX/to-lane.jsonl" | tr -d ' ')" "0=2" \
   "control: without the delivery guard the retry lands a second time"

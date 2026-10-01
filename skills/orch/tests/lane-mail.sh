@@ -895,35 +895,6 @@ raced_texts() {
   jq -rs 'map(.text) | sort | join(",")' < "$RACED" 2>/dev/null || printf 'lost'
 }
 
-# A background writer holding one file's lock, through the same orch_take_lock
-# every mailbox append calls. It signals NAME.taken once it holds the lock and
-# lets go when NAME.release appears, or after a minute, so a case that aborts
-# before releasing it leaves no process spinning behind the suite.
-hold_lock() { # FILE NAME
-  local waited=0
-  . "$REPO_ROOT/skills/orch/scripts/lib/file-lock.sh"
-  exec 9>>"$1"
-  orch_take_lock 9 "$1" 30 || return 1
-  : > "$TMP_ROOT/$2.taken"
-  while [ ! -e "$TMP_ROOT/$2.release" ]; do
-    waited=$((waited + 1))
-    [ "$waited" -lt 1200 ] || return 1
-    sleep 0.05
-  done
-}
-
-# Wait for a holder's marker, bounded at five seconds. A holder that failed
-# before writing it would otherwise spin the suite to the CI job's own timeout,
-# with nothing on screen saying which assertion was in flight.
-await_marker() { # PATH
-  local tries=0
-  while [ ! -e "$1" ]; do
-    tries=$((tries + 1))
-    [ "$tries" -lt 100 ] || return 1
-    sleep 0.05
-  done
-}
-
 # The lock the provider takes, observed without a race, because a race only
 # ever samples one interleaving. The holder takes the mailbox's own lock
 # through the same orch_take_lock the library calls, so a hosted send cannot
@@ -970,12 +941,11 @@ assert_eq "$(tail -n +2 <<<"$OUT")" "" "a hosted drain skips the ask its hosted 
 assert_eq "$(grep -c -- "append --item KEN-1" "$STUB_LOG")" "1" "the hosted send crosses lane-host append once"
 assert_eq "$(grep -c -- "put --item KEN-1" "$STUB_LOG")" "0" "and never put, which would replace the whole mailbox"
 
-# The repeat is judged on the remote file, read through the transport the
-# append writes, so a hosted send judges the mailbox its own line would join.
+# The provider judges the repeat under the lock on the remote file.
 host_lm send --item KEN-1 --root "$REMOTE_ROOT" --host --re remote-ask --file "$(text a 'Hosted answer.')"
 assert_eq "$RC=$ERR" "2=lane-mail: duplicate id=$HOSTED_ID" \
   "a hosted repeat is refused against the mailbox its own transport reads"
-assert_eq "$(grep -c -- "append --item KEN-1" "$STUB_LOG")" "1" "and crosses no second append"
+assert_eq "$(grep -c -- "append --item KEN-1" "$STUB_LOG")" "2" "the second append call judges the repeat without adding a row"
 
 # A fresh watch record on the lane's host is a monitor polling there. The
 # sender's own disk holds none, so a receipt judged there reads no monitor.
@@ -1007,7 +977,7 @@ assert_eq "$RC=$ERR=$OUT" "2=lane-mail: mail-read-failed=KEN-1=" \
 assert_eq "$(jq -rs 'map(select(.text == "Unjudged.")) | length' \
   < "$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/KEN-1/to-lane.jsonl")" "0" \
   "and nothing of it reached the remote mailbox"
-assert_eq "$(grep -c -- "append --item KEN-1" "$STUB_LOG")" "1" "and it crossed no second append"
+assert_eq "$(grep -c -- "append --item KEN-1" "$STUB_LOG")" "2" "and the failed monitor read crossed no further append"
 
 # A provider predating the verb fails it. The send refuses and names the verb;
 # reading the mailbox and putting it back is what loses a line, so no write

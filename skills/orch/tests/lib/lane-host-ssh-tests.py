@@ -498,18 +498,39 @@ exec git "$@"
             self.assertIsNone(holder.poll(), "the lock holder exited without taking the lock")
             self.assertLess(time.monotonic(), deadline, f"the lock holder never wrote {taken}")
             time.sleep(0.05)
-        append = subprocess.Popen(
-            [str(self.script), "append", "--item", "TEST-1", "--", str(target)],
-            cwd=self.root, env=self.env, stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        append.stdin.write(b'{"id":"held"}\n')
-        append.stdin.close()
+        appends = []
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        for identity in ("first", "second"):
+            append = subprocess.Popen(
+                [str(self.script), "append", "--item", "TEST-1", "--", str(target)],
+                cwd=self.root, env=self.env, stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            append.stdin.write((json.dumps(dict(id=identity, kind="directive", at=stamp,
+                                               **{"from": "owner"}, text="one report")) + "\n").encode())
+            append.stdin.close()
+            appends.append(append)
+        # Both transfers wait behind the holder before either can append.
         time.sleep(2)
         during = len(target.read_bytes().splitlines())
         release.write_bytes(b"")
-        append.wait()
+        reports = [append.stderr.read() for append in appends]
+        codes = sorted(append.wait() for append in appends)
         holder.wait()
-        self.assertEqual((during, len(target.read_bytes().splitlines())), (0, 1))
+        rows = [json.loads(line) for line in target.read_bytes().splitlines()]
+        self.assertEqual((during, len(rows), codes), (0, 1, [0, 4]))
+        self.assertIn(f"duplicate id={rows[0]['id']}\n".encode(), b"".join(reports))
+        self.assertEqual(list(target.parent.glob("to-lane.jsonl.kendex-append.*")), [])
+        # The provider must pass its staged envelope to the shared guard.
+        original = self.script.read_text()
+        rule = 'mailbox_append_locked "$1" 30 "" "$staged"'
+        self.assertEqual(original.count(rule), 1)
+        self.addCleanup(self.script.write_text, original)
+        self.script.write_text(original.replace(rule, rule.replace('"$staged"', '""')))
+        identity = "second" if rows[0]["id"] == "first" else "first"
+        repeated = (json.dumps(dict(id=identity, kind="directive", at=stamp,
+                                   **{"from": "owner"}, text="one report")) + "\n").encode()
+        result = self.call("append", "--item", "TEST-1", "--", str(target), data=repeated)
+        self.assertEqual((result.returncode, len(target.read_bytes().splitlines())), (0, 2))
 
     def test_append_names_its_failure_in_a_word(self):
         """The library's number is decoded where it is printed, not passed on."""

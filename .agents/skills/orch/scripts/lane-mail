@@ -325,13 +325,11 @@ silence each other. A repeat is refused before the append as
 `lane-mail: duplicate id=<id>`, naming the line already there; another item, or
 more than a minute later, appends as any send does.
 
-The mailbox is read through the route the append writes, `lane-host cat` for a
-hosted send, so the file judged is the file the line would join. A hosted
-mailbox that cannot be read is refused `mail-read-failed` before the append,
-since a mailbox no read could judge is one no send can be judged against. The
-read and the append are two steps under no lock held across both, so this
-refuses a repeat its own sender can see and orders nothing between two senders
-racing one file.
+The repeat check and append hold the destination mailbox's same lock through
+`lib/mailbox-append.sh`, locally and on a provider's host. Two identical sends
+cannot both append: the second checks the first row while it holds that lock
+and refuses with its id. A mailbox read failure refuses the write as
+`write-failed` locally or `host-append` on a provider, never as an empty mailbox.
 
 A send writes a mailbox of the caller's own repository alone, its own lanes
 and its own overseer mailbox: a --root whose common root is not the caller's,
@@ -944,68 +942,6 @@ lm_objects() { # FILE [BOX]
         + (if $box == "to-lane" then {mail_class: overseer_mail_class} else {} end) end' <"$1"
 }
 
-# The id of an envelope the destination mailbox holds that is this one again,
-# stamped within the last minute; nothing when the mailbox holds no such line.
-# A sender that saw no receipt retries, and a wrapper run twice sends twice, so
-# an envelope landing again inside a minute is that delivery rather than a
-# second message. Every field a reader acts on is compared, never the words
-# alone: an answer to another ask, a halt after a plain directive of the same
-# words, and another overseer's line are each a message of their own, and a
-# guard reading the text alone would swallow them. The envelope this send built
-# is what it is judged by, so lm_envelope stays the one owner of the trailing
-# newline rule and nothing reads the message file twice. That envelope reaches
-# jq through the work directory rather than an argument: a message is as long
-# as a diff or a log tail, and a single argument has a ceiling the kernel
-# enforces, which is why text crosses a file here as everywhere else in this
-# script. The mailbox is read
-# through lm_fetch, the route the append writes, so a hosted send judges the
-# file its own line would join and a hosted read that fails refuses the send
-# there. An `at` no clock wrote, a fixture's or a hand-edited line's, parses to
-# nothing and is passed over rather than taken as now.
-lm_duplicate_id() { # FILE LINE — prints the earlier envelope's id, or nothing
-  local now=""
-  now="$(date -u +%s)" || refuse write-failed "$BOX"
-  lm_fetch "$1" "$WORK_DIR/dup.raw"
-  lm_terminated "$WORK_DIR/dup.raw" "$WORK_DIR/dup.jsonl"
-  lm_objects "$WORK_DIR/dup.jsonl" >"$WORK_DIR/dup.objects" ||
-    refuse file-unreadable "$1"
-  printf '%s\n' "$2" >"$WORK_DIR/sent.json" || refuse write-failed "$WORK_DIR/sent.json"
-  jq -r --argjson now "$now" --slurpfile sent "$WORK_DIR/sent.json" "$LM_JQ_DEFS"'
-    # The deadline lm_envelope generates moves with the stamp. Compare its
-    # offset so a retry keeps the same content as the clock advances. Every
-    # line in this mailbox is one lm_envelope wrote, so comparing the objects
-    # whole is what keeps this guard from drifting away from it: a field the
-    # envelope gains later is compared the day it appears, rather than waiting
-    # for someone to add it to a list kept here by hand.
-    def content:
-      if has("deadline") then
-        (.deadline | at_epoch) as $deadline | (.at | at_epoch) as $stamp
-        | if $deadline != null and $stamp != null then
-            .deadline = ($deadline - $stamp)
-          else . end
-      else . end | del(.id, .at);
-    ($sent[0] | content) as $want
-    | select(content == $want)
-    | (.at | at_epoch) as $at
-    | select($at != null and ($now - $at) >= 0 and ($now - $at) <= 60)
-    | .id | strings' <"$WORK_DIR/dup.objects" >"$WORK_DIR/dup.ids" ||
-    refuse file-unreadable "$1"
-  # The last match, the most recent envelope this send repeats, so a refusal
-  # names the copy a retry would sit beside rather than an older one.
-  awk '{ last = $0 } END { if (NR > 0) print last }' <"$WORK_DIR/dup.ids" ||
-    refuse file-unreadable "$WORK_DIR/dup.ids"
-}
-
-# Refuse a repeat before anything is appended, so the mailbox never holds the
-# second copy the refusal is about. Every failure inside the substitution
-# writes its own keyed line and leaves that subshell, and errexit carries the
-# status out, as it does for lm_envelope's callers.
-lm_no_duplicate() { # FILE LINE
-  local earlier=""
-  earlier="$(lm_duplicate_id "$1" "$2")" || exit "$?"
-  [ -z "$earlier" ] || refuse duplicate "$earlier"
-}
-
 # The receipt's measured fields, read before the append so that nothing able
 # to fail sits between the append and the line reporting it: a send that
 # landed always prints its receipt, and a caller reads silence as a send that
@@ -1132,10 +1068,6 @@ lm_notice() { # KEY VALUE FIELD [CAUSE]
   [ -z "${4:-}" ] || printf '%s\n' "$4" >&2
 }
 
-# The `at` stamp as epoch seconds, null where it does not parse: the one
-# parse every reader of a stamp shares, prefixed to its jq program.
-LM_JQ_DEFS='def at_epoch: try (strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) catch null;'
-
 # Every directive in a terminated to-lane.jsonl, one `{line, envelope}` object
 # per line. Numbered over every complete line, parsing or not, as the cursor
 # counts them, so a line number and the cursor are one scale: the one answer
@@ -1207,15 +1139,23 @@ RE_DELIVERY_ID=""
 # Operational failures keep their diagnostics and never become a refusal
 # based on an incomplete scan.
 lm_append_local() { # FILE LINE [GUARD]
-  local rc=0
+  local rc=0 candidate="" report=""
   mkdir -p -- "$BOX" || refuse write-failed "$BOX"
+  if [ -z "${3:-}" ]; then
+    candidate="$WORK_DIR/sent.json"
+    printf '%s\n' "$2" >"$candidate" || refuse write-failed "$candidate"
+  fi
   # The library opens the file itself, so a mailbox the lane cannot write is
   # the shell's own message on its stderr. Captured here and replayed under
   # the key, like every other failing command this script runs, so the keyed
   # line stays first and a reader is never met by a library path instead.
-  mailbox_append_locked "$1" 30 "${3:-}" <<<"$2" 2>"$WORK_DIR/local.err" || rc=$?
+  mailbox_append_locked "$1" 30 "${3:-}" "$candidate" <<<"$2" 2>"$WORK_DIR/local.err" || rc=$?
   trap lm_cleanup EXIT
-  [ "$rc" -ne 4 ] || return 4
+  if [ "$rc" -eq 4 ]; then
+    [ -z "${3:-}" ] || return 4
+    report="$(cat -- "$WORK_DIR/local.err")" || refuse file-unreadable "$WORK_DIR/local.err"
+    refuse duplicate "${report#duplicate id=}"
+  fi
   [ "$rc" -ne 5 ] || refuse mail-read-failed "$ITEM" "$(cat -- "$WORK_DIR/local.err")"
   [ "$rc" -ne 3 ] || refuse lock-failed "$1" "$(cat -- "$WORK_DIR/local.err")"
   [ "$rc" -eq 0 ] || refuse write-failed "$1" "$(cat -- "$WORK_DIR/local.err")"
@@ -1373,11 +1313,17 @@ lm_attach_confined() {
 # is probed like a failed read, so a host out of reach keeps its own key and
 # the state an operator acts on, and `host-append` is a host that answered.
 lm_append_host() { # FILE LINE
-  local rc=0
+  local rc=0 report=""
   printf '%s\n' "$2" >"$WORK_DIR/send.line" || refuse write-failed "$WORK_DIR/send.line"
   "$SCRIPT_DIR/lane-host" append --item "$ITEM" "$1" <"$WORK_DIR/send.line" \
     >/dev/null 2>"$WORK_DIR/append.err" || rc=$?
   [ "$rc" -ne 0 ] || return 0
+  if [ "$rc" -eq 4 ]; then
+    report="$(cat -- "$WORK_DIR/append.err")" || refuse file-unreadable "$WORK_DIR/append.err"
+    case "$report" in
+      'duplicate id='*) refuse duplicate "${report#duplicate id=}" ;;
+    esac
+  fi
   lm_host_busy "$rc" "$WORK_DIR/append.err"
   lm_host_answers
   refuse host-append "$ITEM" "$(cat -- "$WORK_DIR/append.err")"
@@ -1481,7 +1427,6 @@ case "$VERB" in
     fi
     [ -z "$ATTACH" ] || lm_attach_confined
     LINE="$(lm_envelope "$VERB")"
-    lm_no_duplicate "$TO_OVERSEER" "$LINE"
     [ "$VERB" != notice ] || lm_receipt_fields "$LINE"
     lm_append_local "$TO_OVERSEER" "$LINE"
     if [ "$VERB" = ask ]; then
@@ -1516,9 +1461,8 @@ case "$VERB" in
     else
       LINE="$(lm_envelope answer "$MSGID")"
     fi
-    # A send naming its delivery is judged by that name under the lock and by
-    # nothing else: the minute window is for a sender with no name of its own.
-    [ -n "$DELIVERY_ID" ] || lm_no_duplicate "$TO_LANE" "$LINE"
+    # A send naming its delivery uses that key's guard under the append lock.
+    # Other sends use the shared whole-envelope minute guard there.
     lm_receipt_fields "$LINE"
     if [ "$HOST" -eq 1 ]; then
       lm_append_host "$TO_LANE" "$LINE"
@@ -1607,7 +1551,6 @@ case "$VERB" in
     else
       LINE="$(lm_envelope directive)"
     fi
-    lm_no_duplicate "$TO_LANE" "$LINE"
     if [ "$PEER_VERB" = send ]; then
       lm_receipt_fields "$LINE"
     fi
@@ -1884,7 +1827,7 @@ case "$VERB" in
     elif [ "$RECEIPTS" -eq 1 ]; then
       HEADER="$(lm_header "$WORK_DIR/lane.jsonl")"
       printf 'receipts cursor=%s %s\n' "$SEEN" "$HEADER"
-      jq -r "$LM_JQ_DEFS"'
+      jq -r "$MAILBOX_TIME_JQ"'
         .envelope as $e
         | select(($e.id | type) == "string" and ($e.id | test("^[A-Za-z0-9._-]+$")))
         | "\(.line) \($e.id) \(($e.at | at_epoch) // "")"' <"$WORK_DIR/directives" ||

@@ -40,6 +40,35 @@ mailbox_terminate() { # FILE
   printf '\n' >>"$1" || return 1
 }
 
+# The `at` stamp as epoch seconds, null where it does not parse: the one
+# parse every reader of a stamp shares, prefixed to its jq program.
+MAILBOX_TIME_JQ='def at_epoch: try (strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) catch null;'
+
+# The destination's most recent whole-envelope repeat within a minute. Both
+# lane-mail and lane-host append call this under the destination's own lock.
+# Deadline offsets stay equal on a retry even when its timestamp advances.
+# The envelope crosses a file, not argv: a message can exceed one argument's
+# kernel limit. Raw provider appends that are not envelopes remain raw bytes.
+mailbox_duplicate_id() { # FILE ENVELOPE_FILE
+  local now=""
+  now="$(date -u +%s)" || return 2
+  jq -r -R --argjson now "$now" --rawfile sent "$2" "$MAILBOX_TIME_JQ"'
+    def content:
+      if has("deadline") then
+        (.deadline | at_epoch) as $deadline | (.at | at_epoch) as $stamp
+        | if $deadline != null and $stamp != null then
+            .deadline = ($deadline - $stamp)
+          else . end
+      else . end | del(.id, .at);
+    ($sent | fromjson? // empty | objects | content) as $want
+    | (fromjson? // empty) | objects
+    | select(content == $want)
+    | (.at | at_epoch) as $at
+    | select($at != null and ($now - $at) >= 0 and ($now - $at) <= 60)
+    | .id | strings' <"$1" |
+    awk '{ last = $0 } END { if (NR > 0) print last }'
+}
+
 # Add stdin's bytes to FILE under a lock on FILE itself, which every writer of
 # it on that disk opens. A lock anywhere else is one writer's own: two writers
 # holding separate locks both read the file and the second write loses the
@@ -54,14 +83,18 @@ mailbox_terminate() { # FILE
 # guard returns 1 for an expected refusal, 2 for a read failure, and 3 for a
 # write failure. Its diagnostics stay on stderr.
 #
+# ENVELOPE_FILE, where given, names the candidate bytes on stdin. The minute
+# repeat check runs under this same lock and prints `duplicate id=FIRST` on
+# stderr when it refuses. Delivery-id and resolution callers use GUARD alone.
+#
 # Exit 3 when the lock could not be taken within WAIT_SECONDS, 2 when a write
 # failed, 4 when the guard refused, 5 when its read failed. These need different repairs, a writer
 # holding the mailbox, a disk or permission failure, a line already there, so
 # every caller turns the number into its own word before anyone reads it:
 # lane-mail into lock-failed, write-failed and the guard's key, the provider
 # and the fixture into lock-timeout and write-failed.
-mailbox_append_locked() { # FILE WAIT_SECONDS [GUARD]: bytes on stdin
-  local guard_rc=0
+mailbox_append_locked() { # FILE WAIT_SECONDS [GUARD [ENVELOPE_FILE]]: bytes on stdin
+  local duplicate="" guard_rc=0
   exec 9>>"$1" || return 2
   if ! orch_take_lock 9 "$1" "$2"; then
     exec 9>&-
@@ -71,6 +104,19 @@ mailbox_append_locked() { # FILE WAIT_SECONDS [GUARD]: bytes on stdin
     exec 9>&-
     orch_release_lock
     return 2
+  fi
+  if [ -n "${4:-}" ]; then
+    if ! duplicate="$(mailbox_duplicate_id "$1" "$4")"; then
+      exec 9>&-
+      orch_release_lock
+      return 2
+    fi
+    if [ -n "$duplicate" ]; then
+      printf 'duplicate id=%s\n' "$duplicate" >&2
+      exec 9>&-
+      orch_release_lock
+      return 4
+    fi
   fi
   if [ -n "${3:-}" ]; then
     "$3" "$1" || guard_rc=$?

@@ -1,1 +1,1 @@
-- Owner notices print delivery receipts. Repeated mail is refused within the existing minute window. Progress reports name their sent notice.
+- Owner notices print receipts. Local and hosted mail refuse identical concurrent writes under the mailbox lock. Progress reports name their sent notice.
