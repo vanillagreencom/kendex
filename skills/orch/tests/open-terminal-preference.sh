@@ -131,6 +131,14 @@ for mode in flags cmd; do
 done
 # The caller chooses permissions, not the model preference. Only an exact
 # full-bypass posture reaches the cross-harness flag writer.
+printf '%s\n' \
+  'flags|--dangerously-skip-permissions|codex|gpt-6.1-sol|codex:gpt-6.1-sol:high' \
+  'cmd|--dangerously-skip-permissions|codex|gpt-6.1-sol|codex:gpt-6.1-sol:high' \
+  'flags||claude|fable|claude:fable:high' \
+  'flags|--permission-mode dontAsk|claude|fable|claude:fable:high' \
+  'flags|--dangerously-skip-permissions --permission-mode dontAsk|claude|fable|claude:fable:high' \
+  > "$TMP_ROOT/permission-rows"
+expected_source_bypass='--dangerously-skip-permissions'
 while IFS='|' read -r mode flags want model entry; do
   text="$flags"; [[ "$mode" != cmd ]] || text="claude $flags {brief}"
   observe 'codex:gpt-6.1-sol:high,claude:fable:high' none "$mode" "$text" claude
@@ -139,17 +147,11 @@ while IFS='|' read -r mode flags want model entry; do
   if [[ "$want" == codex ]]; then
     if launch_choice_words_present '--dangerously-bypass-approvals-and-sandbox' "$(cat -- "$RUN/command")"; then pass 'cross-harness launch writes the authorized target bypass'
     else fail 'cross-harness launch lacks its authorized target bypass'; fi
-    if launch_choice_words_present '--dangerously-skip-permissions' "$(cat -- "$RUN/command")"; then fail 'source bypass was retained'; else pass 'source bypass is replaced'; fi
+    if launch_choice_words_present "$expected_source_bypass" "$(cat -- "$RUN/command")"; then fail 'source bypass was retained'; else pass 'source bypass is replaced'; fi
   else
     assert_file_contains "$RUN/err" 'open-terminal: entry-permission-untransferable entry=codex:gpt-6.1-sol:high source=claude target=codex' 'nontransferable caller posture skips Codex'
   fi
-done <<'ROWS'
-flags|--dangerously-skip-permissions|codex|gpt-6.1-sol|codex:gpt-6.1-sol:high
-cmd|--dangerously-skip-permissions|codex|gpt-6.1-sol|codex:gpt-6.1-sol:high
-flags||claude|fable|claude:fable:high
-flags|--permission-mode dontAsk|claude|fable|claude:fable:high
-flags|--dangerously-skip-permissions --permission-mode dontAsk|claude|fable|claude:fable:high
-ROWS
+done < "$TMP_ROOT/permission-rows"
 
 # One control for routing and one for each new refusal rule. Each mutation
 # keeps the tested call or comparison, but removes its effect in a private copy.
@@ -209,6 +211,7 @@ source "$TEST_SCRIPTS/lib/lane-claims.sh"
 lane_claim_write "$(lane_claims_dir "$TEST_REPO")" "$OT_TMUX_SERVER_PID" %1 "$HOME/.claude" other-fleet
 STUB
 chmod +x "$WAIT_BIN/sleep"
+rejudge_command='claude --dangerously-skip-permissions {brief}'
 for surface in batch wait; do
   for control in live mutant; do
     OT="$REPO/scripts/open-terminal"
@@ -239,7 +242,7 @@ for surface in batch wait; do
       WORKTREE_CLI="$BIN/worktree" LANES_CLI="$REPO/scripts/lanes" TEST_SCRIPTS="$REPO/scripts" TEST_STATE="$RUN/state" TEST_REPO="$REPO" \
       OT_TMUX_LOG="$RUN/tmux" OT_TMUX_PANES="$RUN/panes" OT_TMUX_SERVER_PID="$$" OT_WT_LOG="$RUN/worktrees" \
       GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' "$OT" --tmux --state-dir "$RUN/state" --harness claude \
-      --cmd 'claude --dangerously-skip-permissions {brief}' --brief-file "$TMP_ROOT/brief" \
+      --cmd "$rejudge_command" --brief-file "$TMP_ROOT/brief" \
       "${args[@]}" > "$RUN/out" 2> "$RUN/err") || rc=$?
     commands=''
     while IFS= read -r command; do

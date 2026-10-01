@@ -133,15 +133,14 @@ fn the_guard_hooks_scan_clean() {
     }
 }
 
-/// Twenty-three lines of this skill spell `--dangerously-skip-permissions`.
-/// One is a row of the launch table's source, which a lane launch really
-/// runs: the one Critical finding, which kendex's own table accepts for
-/// exactly those bytes and a verbose reading still lists. The launch
-/// table's comment naming the switch is a mention.
+/// The launch table's source spells `--dangerously-skip-permissions` in a
+/// row a lane launch really runs: the one Critical finding, which kendex's
+/// own table accepts for exactly those bytes and a verbose reading still
+/// lists. The launch table's comment naming the switch is a mention.
 ///
-/// The other twenty-one are in the open-terminal and oversee-succeed tests
-/// and the overseer-watch test library, which hand the launch lines they
-/// check to their stubs and assertions: a string a test assigns or prints, and an
+/// The open-terminal handoff and preference tests, oversee-succeed tests
+/// and overseer-watch test library hand the launch lines they check to their
+/// stubs and assertions: a quoted string a test assigns or prints, and an
 /// argument of a function the tests define, on the line that names the
 /// function or a line continuing it. Each is a mention, and the
 /// skill scores clean. A reading that counted them again would be reading
@@ -153,6 +152,7 @@ fn orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted() {
     let result = shipped("orch");
     let lane_launch = "skills/orch/scripts/lib/lane-launch.sh";
     let open_terminal = "skills/orch/tests/open-terminal-claude-handoff.sh";
+    let open_terminal_preference = "skills/orch/tests/open-terminal-preference.sh";
     let oversee_succeed = "skills/orch/tests/oversee_succeed.sh";
     let overseer_watch = "skills/orch/tests/lib/overseer-watch-case.sh";
     assert_eq!(found(&result), vec![], "{:#?}", result.findings);
@@ -179,6 +179,7 @@ fn orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted() {
     );
     for (fixture, lines) in [
         (open_terminal, 6),
+        (open_terminal_preference, 6),
         (oversee_succeed, 17),
         (overseer_watch, 1),
     ] {
@@ -199,7 +200,14 @@ fn orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted() {
         .map(|mention| mention.location.as_str())
         .filter(|location| !location.ends_with(".md"))
         .filter(|location| {
-            ![lane_launch, open_terminal, oversee_succeed, overseer_watch].contains(location)
+            ![
+                lane_launch,
+                open_terminal,
+                open_terminal_preference,
+                oversee_succeed,
+                overseer_watch,
+            ]
+            .contains(location)
         })
         .collect();
     assert_eq!(elsewhere, Vec::<&str>::new(), "{:#?}", result.mentions);
