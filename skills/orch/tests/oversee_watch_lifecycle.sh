@@ -310,6 +310,38 @@ assert_eq "$RECORDED_ARGV|$(sed -n 's/^cwd=//p' "$STUB_DIR/oversee-watch.pid")" 
   "--interval 0 --max-loops 2 --repo owner/repo --max-loops 1 --repeat 0 --state $STUB_DIR/state.json |$TMP_ROOT/repo" \
   "the record keeps the loop's own words and directory, and none of the overseer's flags"
 
+# A failed ps read of that live claim is unknown, not an absent claim.
+# The control retains the cause but makes the reader return absence instead.
+mutant probe_absent lib/watch-pid.sh '    return 2' '    return 1'
+probe_mutant="$(dirname "$MUTANT")/lib/watch-pid.sh"
+mkdir -p "$TMP_ROOT/probe-bin"
+printf '#!/bin/sh\necho "watch-query-failed" >&2\nexit 1\n' > "$TMP_ROOT/probe-bin/ps"
+chmod +x "$TMP_ROOT/probe-bin/ps"
+while IFS='|' read -r reader want_rc; do
+  case "$reader" in
+    source) reader="$REPO_ROOT/skills/orch/scripts/lib/watch-pid.sh" ;;
+    mutant) reader=$probe_mutant ;;
+  esac
+  rc=0
+  env -i "PATH=$TMP_ROOT/probe-bin:$PATH" bash -euo pipefail -c '
+    source "$1"
+    source "$2"
+    rc=0
+    watch_pid_live "$3" 2>"$4" || rc=$?
+    first="" cause=""
+    { IFS= read -r first; IFS= read -r cause; } < "$4"
+    assert_eq "rc=$rc first=$first cause=$cause" \
+      "rc=2 first=watch-pid: process=unknown pid=$5 cause=watch-query-failed" \
+      "a failed query of a live watch claim is unknown"
+    [[ "$FAIL" == 0 ]]' \
+    _ "$REPO_ROOT/skills/orch/tests/lib/assertions.sh" "$reader" \
+    "$STUB_DIR/state.json" "$TMP_ROOT/probe.err" "$LOOP" > "$TMP_ROOT/probe.log" 2>&1 || rc=$?
+  assert_eq "$rc" "$want_rc" "watch reader probe/control verdict=$want_rc" "$TMP_ROOT/probe.log"
+done <<'READERS'
+source|0
+mutant|1
+READERS
+
 # A second start on the same state is refused, naming the live loop, and
 # leaves the record and the loop as they were.
 err="$TMP_ROOT/e-record_second"

@@ -57,7 +57,8 @@ watch_pid_paths() { # STATE
 # Whether a live watch holds the record for STATE, with its WATCH_PID,
 # WATCH_PANE, WATCH_ORIGIN, WATCH_SCRIPT and WATCH_CWD set. Returns 1 where
 # there is no record, its state is another file, or its pid runs no
-# oversee-watch.
+# oversee-watch. Returns 2 when the process query is unknown, with its cause
+# on stderr; callers must not treat that answer as an absent claim.
 watch_pid_live() { # STATE
   local line state=""
   WATCH_PID="" WATCH_PANE="" WATCH_ORIGIN="" WATCH_SCRIPT="" WATCH_CWD=""
@@ -78,11 +79,17 @@ watch_pid_live() { # STATE
 }
 
 # Whether PID runs an oversee-watch: it is running, is no zombie nobody has
-# reaped, and its command line names oversee-watch.
+# reaped, and its command line names oversee-watch. Returns 2 if ps fails
+# while PID still exists, rather than reporting that process as dead.
 watch_pid_runs() { # PID
   local line
   kill -0 "$1" 2>/dev/null || return 1
-  line="$(ps -o stat= -o args= -p "$1" 2>/dev/null)" || return 1
+  if ! line="$(ps -o stat= -o args= -p "$1" 2>&1)"; then
+    # The process can exit between kill and ps. Only that race is absence.
+    kill -0 "$1" 2>/dev/null || return 1
+    printf 'watch-pid: process=unknown pid=%s\n%s\n' "$1" "$line" >&2
+    return 2
+  fi
   [[ "${line# }" != Z* && "$line" == *oversee-watch* ]]
 }
 

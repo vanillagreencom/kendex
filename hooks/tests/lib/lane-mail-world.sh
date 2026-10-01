@@ -581,7 +581,8 @@ wake_overseer() { # NAME HARNESS [HOOK]
     "TMUX_SERVER_ID=$OVERSEER_SERVER" "TMUX_SERVER_START=$OVERSEER_SERVER_START" "HOME=$COP_HOME")
 }
 
-# A refusal's key is first on stderr. A passed gap is model context instead.
+# A refusal or passed wake warning has its key first on stderr.
+# Stop context would continue the turn.
 # The Start value is protocol data: the command the caller must run.
 wake_observation() { # START
   local decision=- context=- command=0 text first answer

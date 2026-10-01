@@ -1,1 +1,1 @@
-- Registered overseers and configured masters must arm their wake process before ending a fresh lead turn. The refusal prints the start command.
+- Repeat-watch overseers and configured masters must arm their wake process before ending a fresh lead turn. The refusal prints the start command.

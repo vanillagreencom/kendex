@@ -28,7 +28,7 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
   fi
   case "$scenario" in
     armed) start_wake_watch repeat; start_follow ;;
-    no-follow | continuation | continuation-mark | agent-id | agent-type | subagent-stop | other-session | no-pgrep | probe-error | probe-error-mark | record-cwd | record-armed | missing-cwd | unreadable-record)
+    no-follow | continuation | continuation-mark | agent-id | agent-type | subagent-stop | other-session | no-pgrep | probe-error | probe-error-mark | watch-probe-error | record-cwd | record-armed | missing-cwd | unreadable-record)
       start_wake_watch repeat
       ;;
     single) start_wake_watch single ;;
@@ -66,6 +66,15 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
       printf '#!/bin/sh\necho "probe failed" >&2\nexit 2\n' > "$TMUX_BIN/pgrep"
       chmod +x "$TMUX_BIN/pgrep"
       ;;
+    watch-probe-error)
+      executable=$(command -v ps) || exit 1
+      {
+        printf '#!/bin/sh\n'
+        printf 'if [ "$2" = stat= ]; then echo "watch-query-failed" >&2; exit 1; fi\n'
+        printf 'exec %q "$@"\n' "$executable"
+      } > "$TMUX_BIN/ps"
+      chmod +x "$TMUX_BIN/ps"
+      ;;
     record-cwd | record-armed)
       # A follow on the session root does not arm a watch whose claim names
       # another cwd. The path includes regex characters and a space.
@@ -91,20 +100,23 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
     wake_row_process_table
     mkdir -p "$LANE/tmp/lane-mail/overseer"
   fi
-  case "$context" in
-    record) context="wake-record=${WAKE_STATE%/*}/oversee-watch.pid" ;;
-    process)
-      # The process error reports the actual query under its own key. Do
-      # not pin the prose pgrep wrote below it.
-      context="wake-process=follow[.]sh ${LANE//./\\.}/tmp/waiter[.][^/]*/watch[.]log"
-      ;;
-  esac
-  case "$first" in record | process) first=${context#lane-mail-check: } ;; esac
+  record_key="wake-record=${WAKE_STATE%/*}/oversee-watch.pid"
+  process_key="wake-process=follow[.]sh ${LANE//./\\.}/tmp/waiter[.][^/]*/watch[.]log"
+  case "$context" in record) context=$record_key ;; process) context=$process_key ;; esac
+  case "$first" in record) first=$record_key ;; process) first=$process_key ;; esac
   [ "$first" = - ] || first="lane-mail-check: $first"
   [ "$context" = - ] || context="lane-mail-check: $context"
   run_payload "$payload"
   got=$(wake_observation "$command") || exit 1
   want="RC=$want_rc first=$first decision=$decision context=$context command=$commands"
+  # Exit 0 alone does not end Claude Stop: additionalContext requests a turn.
+  # Pin the whole output count.
+  objects=$(jq -s 'length' "$TMP_ROOT/stdout") || exit 1
+  event=$(jq -rs '.[0].hookSpecificOutput.hookEventName // "-"' "$TMP_ROOT/stdout") || exit 1
+  want_objects=0 want_event=-
+  if [ "$decision" = block ]; then want_objects=1; fi
+  got="$got replies=$objects event=$event"
+  want="$want replies=$want_objects event=$want_event"
   if [ -n "$wake_notice" ]; then
     row=$(jq -rs 'map([.event, .harness] | join(":")) | join(",")' \
       "$LANE/tmp/lane-mail/overseer/session-$OVERSEER_SERVER-${OVERSEER_PANE#%}.jsonl") || exit 1
@@ -135,10 +147,10 @@ no-follow|claude|2|wake=unarmed|-|-|1
 no-follow|codex|2|wake=unarmed|-|-|1
 no-follow|copilot|0|wake=unarmed|block|-|1
 no-follow|pi|2|wake=unarmed|-|-|1
-continuation|claude|0|wake=unarmed|-|wake=unarmed|1
-continuation|codex|0|wake=unarmed|-|wake=unarmed|1
-continuation|copilot|0|wake=unarmed|-|wake=unarmed|1
-continuation|pi|0|wake=unarmed|-|wake=unarmed|1
+continuation|claude|0|wake=unarmed|-|-|1
+continuation|codex|0|wake=unarmed|-|-|1
+continuation|copilot|0|wake=unarmed|-|-|1
+continuation|pi|0|wake=unarmed|-|-|1
 continuation-mark|claude|2|context=612000|-|-|1|wake=unarmed
 continuation-mark|codex|2|context=612000|-|-|1|wake=unarmed
 continuation-mark|copilot|0|context=612000|block|-|1|wake=unarmed
@@ -154,17 +166,18 @@ other-session|claude|0|-|-|-|0
 single|claude|0|-|-|-|0
 master-live|claude|0|-|-|-|0
 master-dead|claude|2|wake=unarmed|-|-|1
-master-continuation|claude|0|wake=unarmed|-|wake=unarmed|1
+master-continuation|claude|0|wake=unarmed|-|-|1
 empty-keys|claude|0|-|-|-|0
 absent-keys|claude|0|-|-|-|0
 no-record|claude|0|-|-|-|0
-no-pgrep|claude|0|wake-tools=pgrep|-|wake-tools=pgrep|0
-probe-error|claude|0|process|-|process|0
+no-pgrep|claude|0|wake-tools=pgrep|-|-|0
+probe-error|claude|0|process|-|-|0
+watch-probe-error|claude|0|record|-|-|0
 record-cwd|claude|2|wake=unarmed|-|-|1
 record-armed|claude|0|-|-|-|0
-missing-cwd|claude|0|record|-|record|0
-unreadable-record|claude|0|record|-|record|0
-incomplete-master|claude|0|wake-setting=ORCH_WAKE_START|-|wake-setting=ORCH_WAKE_START|0
+missing-cwd|claude|0|record|-|-|0
+unreadable-record|claude|0|record|-|-|0
+incomplete-master|claude|0|wake-setting=ORCH_WAKE_START|-|-|0
 ROWS
 
 # Copilot's custom subagent names its own session and the lead's transcript.
@@ -193,6 +206,12 @@ if [ -z "$SELECTED" ]; then
   wake_control warning-exits continuation-mark:claude \
     '  WAKE_NOTICE=$(message "$@" 2>&1) || refuse notice unwritten "$WAKE_NOTICE"' \
     '  WAKE_NOTICE=$(message "$@" 2>&1) || refuse notice unwritten "$WAKE_NOTICE"; exit 0'
+  wake_control warning-continues continuation:claude \
+    '      printf '\''%s\n'\'' "$WAKE_NOTICE" >&2' \
+    '      printf '\''%s\n'\'' "$WAKE_NOTICE" >&2; CONTEXT_EVENT=Stop; hand_over "$WAKE_NOTICE"'
+  wake_control watch-unknown-skips watch-probe-error:claude \
+    '        *) exit "$rc" ;;' \
+    '        *) printf "single\t" ;;'
 fi
 
 printf '\n=== %s passed, %s failed ===\n' "$PASS" "$FAIL"
