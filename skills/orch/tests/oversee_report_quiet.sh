@@ -13,6 +13,7 @@ SAVED_NOW="$NOW"
 NOW="$(jq -rn '"2026-09-26T09:00:00Z" | fromdateiso8601')"
 for mode in quiet off morning; do
   new_case "quiet_$mode"
+  printf '%s\n' "$NOW" > "$CASE/now"
   report -10800
   fleet '' "$(lane KEN-1 done)" "$(lane KEN-2 done)"
   for n in 1 2; do issue "KEN-$n" "Title $n" "Outcome $n"; done
@@ -59,6 +60,7 @@ for surface in due render write; do
     write) mutate_file "$mutant" 'if [[ "$NOTICE_MODE" == quiet ]]; then' 'if [[ "$NOTICE_MODE" == disabled ]]; then' ;;
   esac
   new_case "quiet_mutant_$surface"
+  printf '%s\n' "$NOW" > "$CASE/now"
   report -10800
   fleet '' "$(lane KEN-1 done)"
   issue KEN-1 "Title 1" "Outcome 1"
@@ -81,6 +83,7 @@ done
 NOW="$SAVED_NOW"
 
 new_case report_history_unread
+printf '%s\n' "$NOW" > "$CASE/now"
 fleet '' "$(lane KEN-1 done)"
 touch "$CASE/events-fail"
 run -- render --state "$CASE/state.json" --repo owner/repo
@@ -90,6 +93,7 @@ echo "=== quiet settings: refusals and must-fail controls ==="
 # These are settings a project author can supply, not upstream data.
 while IFS='~' read -r name setting old new; do
   new_case "quiet_setting_$name"
+  printf '%s\n' "$NOW" > "$CASE/now"
   fleet ''
   run "$setting" -- render --state "$CASE/state.json" --repo owner/repo
   assert_eq "$RC|$(first_err)" "2|oversee-report: setting=${setting/=/:}" "$setting refuses before a report is rendered"
@@ -104,6 +108,7 @@ equal~ORCH_REPORT_QUIET_HOURS=7-7~[[ "$QUIET_START" -ne "$QUIET_END" ]]~[[ "$QUI
 zone~ORCH_OWNER_TIME_ZONE=Mars/Olympus~[[ -n "$OWNER_ZONE" && -f "${TZDIR:-/usr/share/zoneinfo}/$OWNER_ZONE" && -r "${TZDIR:-/usr/share/zoneinfo}/$OWNER_ZONE" ]]~[[ -n "$OWNER_ZONE" ]]
 ROWS
 new_case quiet_setting_directory
+printf '%s\n' "$NOW" > "$CASE/now"
 fleet ''
 run ORCH_OWNER_TIME_ZONE=America -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)" "2|oversee-report: setting=ORCH_OWNER_TIME_ZONE:America" "a zoneinfo directory is not a time zone"

@@ -521,7 +521,7 @@ other-key|2|lane-mail: item-case-variant=KEN-8
 ROWS
 seed_fleet mail_helper_missing
 run OVERSEE_REPORT_LANE_MAIL="$CASE/no-lane-mail" -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC|$(first_err)" "2|oversee-report: mail-read=KEN-2" "a lane-mail helper that is not there refuses the report"
+assert_eq "$RC|$(first_err)" "2|oversee-report: owner-reports=overseer" "a lane-mail helper that is not there refuses the report"
 
 echo "=== write: each merge lands in exactly one report ==="
 # KEN-3 merged at the second the lists are read, and KEN-2 merges while the
