@@ -284,7 +284,8 @@ fn project_local_builtin_hold_warns_on_enable_and_verify_without_writes() {
     };
     fs::create_dir_all(home.join(".copilot")).unwrap();
     fs::create_dir_all(home.join("project/.github/copilot")).unwrap();
-    let local = home.join("project/.github/copilot/settings.local.json");
+    let project = kendex_core::paths::canonical(&home.join("project")).unwrap();
+    let local = kendex_core::harness::copilot::settings::repo_settings_files(&project)[1].clone();
     let bytes = "// personal project choice\n{\"disabledMcpServers\":[\"githubiq\"],}\n";
     fs::write(&local, bytes).unwrap();
     let report = ops::toggle(&env, &scope, &["githubiq".into()], None, true, None).unwrap();

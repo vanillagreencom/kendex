@@ -370,15 +370,24 @@ fn link_bins(
 
 /// Drop every link that resolves into the package, npm scope dirs included.
 fn unlink_bins(dir: &Path, dest: &Path) -> Result<()> {
+    // Containment uses canonicalize's single representation. Reducing the
+    // ancestor and descendant separately can drop only one verbatim prefix
+    // when their lengths differ (paths::reduced).
+    let dest = match dest.canonicalize() {
+        Ok(dest) => dest,
+        // Repeated removal has no package left to own a bin link.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(CoreError::io(dest, error)),
+    };
     for entry in read_dir(dir)? {
         let link = entry.path();
         if link.is_symlink() {
-            let target = std::fs::read_link(&link).map_err(|e| CoreError::io(&link, e))?;
-            if target.starts_with(dest) {
+            let target = link.canonicalize().map_err(|e| CoreError::io(&link, e))?;
+            if target.starts_with(&dest) {
                 std::fs::remove_file(&link).map_err(|e| CoreError::io(&link, e))?;
             }
         } else if link.is_dir() {
-            unlink_bins(&link, dest)?;
+            unlink_bins(&link, &dest)?;
         }
     }
     Ok(())

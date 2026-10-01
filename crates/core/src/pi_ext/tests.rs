@@ -45,8 +45,8 @@ struct Fixture {
 
 fn scope() -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
-    let env = Env::fake(tmp.path().join("home"), FakeOs::Linux);
-    let root = tmp.path().canonicalize().unwrap();
+    let root = crate::test_util::rooted(&tmp);
+    let env = Env::fake(root.join("home"), FakeOs::Linux);
     let scope = root.join("proj/.pi");
     Fixture {
         _tmp: tmp,
@@ -72,8 +72,8 @@ fn install_copies_registers_links_and_mirrors_append_system() {
     let link = f.scope.join("bin/pi-widgets");
     assert_eq!(outcome.bins, [f.scope.join("bin/pi-widgets")]);
     assert_eq!(
-        std::fs::read_link(&link).unwrap(),
-        f.scope.join("packages/pi-widgets/cli.js")
+        crate::paths::canonical(&link).unwrap(),
+        crate::paths::canonical(&f.scope.join("packages/pi-widgets/cli.js")).unwrap()
     );
     assert_eq!(
         settings_json(&f.scope)["packages"][0],
@@ -280,6 +280,37 @@ fn scoped_packages_install_under_their_npm_scope() {
     remove(&f.env, &f.scope, "@vg/pi-hooks").unwrap();
     assert!(!f.scope.join("bin/@vg/pi-hooks").is_symlink());
     assert!(!f.scope.join("packages/@vg/pi-hooks").exists());
+}
+
+#[test]
+fn removal_resolves_owned_bin_targets_before_containment() {
+    let f = scope();
+    let widgets = fixture(&f.root, "@vg/pi-widgets", "Widget guidance.\n");
+    let other = fixture(&f.root, "pi-other", "Other guidance.\n");
+    let roots = vec![(f.scope.clone(), false), (f.scope.clone(), true)];
+    // Windows installation can return a plain link target under a verbatim
+    // root. The relative-link row exercises resolved containment on any host.
+    #[cfg(windows)]
+    let roots = {
+        std::fs::create_dir_all(&f.scope).unwrap();
+        let mut roots = roots;
+        roots.push((f.scope.canonicalize().unwrap(), false));
+        roots
+    };
+    for (root, relative) in roots {
+        install(&f.env, &root, &widgets, true).unwrap();
+        install(&f.env, &root, &other, true).unwrap();
+        let link = root.join("bin/@vg/pi-widgets");
+        if relative {
+            std::fs::remove_file(&link).unwrap();
+            make_symlink(Path::new("../../packages/@vg/pi-widgets/cli.js"), &link).unwrap();
+        }
+        remove(&f.env, &root, "@vg/pi-widgets").unwrap();
+        assert!(!link.is_symlink(), "resolved owned bin must be removed");
+        assert!(root.join("bin/pi-other").is_symlink());
+        remove(&f.env, &root, "@vg/pi-widgets").unwrap();
+        remove(&f.env, &root, "pi-other").unwrap();
+    }
 }
 
 #[test]

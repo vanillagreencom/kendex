@@ -1,0 +1,1 @@
+- Pi package removal deletes owned bin links when Windows uses different path prefixes or a link uses a relative target. Links to other packages stay in place.
