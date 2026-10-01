@@ -211,6 +211,7 @@ while read -r error key status unread; do
   refused_resume "$R" "$error" >/dev/null
   CH_R="$(sk_channel "$R")"
   assert_has "$ERR1" "slack: $key=" "$error: the ask refusal reports its key"
+  assert_eq "$(jq -c .unknown "$R/tmp/slack/status.json")" '[]' "$error: an explicit rejection clears the in-flight unknown before restart"
   assert_eq "$RC=$(count "$CH_R" "Refused on resume in refused-$error?")=$(resumed_asks "$R")=$(jq -r 'select(.t == "resume") | "\(.seen)=\(.skipped | join(","))"' "$(sk_journal "$R")")=$(count "$CH_R" "Read after the ask in refused-$error.")=$(count "$CH_R" "Unread after the ask in refused-$error.")=$(holds "$R")" \
     "$status=0==2=$REFUSED_READ=0=$unread=hold resume " "$error: the failed ask is omitted and every read notice id survives the refusal"
   rm -- "$(sk_box "$R")/to-overseer.seen"

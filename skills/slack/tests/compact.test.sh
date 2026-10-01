@@ -50,8 +50,10 @@ cat > "$JOURNAL" <<EOF
 {"at": "$OLD_AT", "reason": "connection ended", "t": "disconnect"}
 {"at": "$YOUNG_AT", "t": "connect"}
 EOF
+sk_inject C001 UBOT 'Open ask parent.' '' "\"ts\": \"$OLD_REPLY\", \"bot_id\": \"B01\"" >/dev/null
 YOUNG="$(sk_inject C001 U001 'young')"
 sk_poll "$ROOT"
+assert_eq "$(jq -c .open_asks "$ROOT/tmp/slack/status.json")" '["ASK-OPEN"]' "the matching Slack parent keeps ASK-OPEN open before compaction"
 BEFORE="$(wc -l < "$JOURNAL" | tr -d ' ')"
 sk_run -- compact --root "$ROOT"
 assert_eq "$RC=$OUT" "0=slack: compacted=$ROOT dropped=12" "compact prints the lines it dropped"
@@ -117,6 +119,53 @@ EOF
 sk_run -- compact --root "$RESUMES"
 assert_eq "$RC=$(jq -cr 'select(.t == "resume") | .skipped' "$(sk_journal "$RESUMES")")" '0=["YOUNG-SKIP"]' \
   "compaction keeps skipped ids with the young resume and drops them with the aged resume"
+
+# Replay the real journal after its completed posts age out. A lone pre-send
+# line is still uncertain; a later outcome, including retry, settles it.
+for mode in production settled-control unknown-control; do
+  SETTLED="$(sk_new_root "settled-$mode")"
+  sk_bind "$SETTLED"
+  SETTLED_CH="$(sk_channel "$SETTLED")"
+  SETTLED_JOURNAL="$(sk_journal "$SETTLED")"
+  printf '%s\n' '{"t":"start","at":"","ids":[]}' >"$SETTLED_JOURNAL"
+  while read -r id kind outcome; do
+    printf '{"t":"out","channel":"%s","id":"%s","kind":"%s","state":"inflight","at":"%s"}\n' "$SETTLED_CH" "$id" "$kind" "$OLD_AT" >>"$SETTLED_JOURNAL"
+    case "$outcome" in
+      lone) ;;
+      file) printf '{"t":"out","channel":"%s","id":"%s","kind":"%s","state":"file","at":"%s","file":"F-SETTLED"}\n' "$SETTLED_CH" "$id" "$kind" "$OLD_AT" >>"$SETTLED_JOURNAL" ;;
+      retry|unknown) printf '{"t":"out","channel":"%s","id":"%s","kind":"%s","state":"%s","at":"%s","reason":"slack-rate-limited"}\n' "$SETTLED_CH" "$id" "$kind" "$outcome" "$OLD_AT" >>"$SETTLED_JOURNAL" ;;
+      open|resolved)
+        printf '{"t":"out","channel":"%s","id":"%s","kind":"%s","state":"%s","at":"%s","thread":"%s"}\n' "$SETTLED_CH" "$id" "$kind" "$outcome" "$OLD_AT" "$OLD_TS" >>"$SETTLED_JOURNAL"
+        [ "$outcome" != open ] || printf '{"t":"resolved","id":"%s"}\n' "$id" >>"$SETTLED_JOURNAL"
+        ;;
+      *) printf 'unknown compaction outcome: %s\n' "$outcome" >&2; exit 1 ;;
+    esac
+  done <<'ROWS'
+NOTICE notice resolved
+ANSWER answer resolved
+REPORT notice file
+ASK ask open
+RETRY notice retry
+UNKNOWN notice unknown
+UNSETTLED notice lone
+ROWS
+  case "$mode" in
+    production) ;;
+    settled-control) sk_mutant settled-inflight store.py 'drop = str\(line\["id"\]\) not in state.unknown' 'drop = False' ;;
+    unknown-control) sk_mutant unknown-inflight store.py 'drop = str\(line\["id"\]\) not in state.unknown' 'drop = True' ;;
+  esac
+  sk_run -- compact --root "$SETTLED"
+  assert_eq "$RC" 0 "$mode: the post journal compacts"
+  sk_recovery "$SETTLED" journal
+  GOT="$(printf '%s\n' "$OUT" | tail -n 1 | jq -cr '[.error,.unknown]')"
+  if [ "$mode" = production ]; then
+    assert_eq "$GOT" '["",["UNKNOWN","UNSETTLED"]]' 'compaction replay keeps uncertain posts without resurrecting a notice, answer, report, closed ask or retry'
+    assert_eq "$(jq -s '[.[] | select(.t == "out" and (.id == "NOTICE" or .id == "ANSWER" or .id == "REPORT" or .id == "ASK"))] | length' "$SETTLED_JOURNAL")" 0 'aged completed posts leave no pre-send or outcome record'
+  else
+    sk_assert_red "$GOT" '["",["UNKNOWN","UNSETTLED"]]' "$mode: the same compaction replay assertion fails on the planted retention defect"
+  fi
+  sk_bin_reset
+done
 
 # --- controls, one per rule -------------------------------------------------------
 sk_mutant keep store.py 'if drop:\n            dropped \+= 1' 'if False:\n            dropped += 1'

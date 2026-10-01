@@ -427,7 +427,7 @@ assert_eq "$(directives "$DELTA" | tail -n 1)" "C777:$H4 history 4" "the next me
 assert_eq "$(asks C777 'New notice.')" "1" "a notice written after the start is posted"
 
 # --- an external parent missed during disconnect is discovered by catch-up ------
-while read -r mode want; do
+for mode in production control; do
   DISCOVERY="$(sk_new_root "discovery-$mode")"
   sk_bind "$DISCOVERY"
   DISCOVERY_CH="$(sk_channel "$DISCOVERY")"
@@ -446,12 +446,13 @@ while read -r mode want; do
   else
     DISCOVERED=0
   fi
-  assert_eq "$RC=$DISCOVERED" "0=$want" "$mode: catch-up discovers an unknown external parent and carries the reply pointer"
+  if [ "$mode" = control ]; then
+    sk_assert_red "$RC=$DISCOVERED" '0=1' 'control: disabled external-parent discovery breaks reply delivery'
+  else
+    assert_eq "$RC=$DISCOVERED" '0=1' 'catch-up discovers an unknown external parent and carries the reply pointer'
+  fi
   sk_bin_reset
-done <<'ROWS'
-production 1
-control 0
-ROWS
+done
 
 # --- a notice under an owner message past the horizon posts once across compaction --------------------
 # A fresh notice keeps the old message's thread live through compaction.
@@ -507,7 +508,7 @@ ROWS
 # Each old owner root is read, so an unread receipt cannot keep it alive.
 # The controls use the same cases: bypass the age gate on an unposted notice,
 # or drop an aged post despite recent activity in its thread.
-# CASE AGE POSTED RECENT_REPLY MUTANT OUT_LINES ROOT_LINES POSTS
+# CASE AGE POSTED RECENT_REPLY MUTANT OUTCOMES ROOT_LINES POSTS
 while read -r name age posted active mutant want_out want_root want_posts; do
   RET="$(sk_new_root "retention-$name")"
   sk_bind "$RET"
@@ -541,8 +542,11 @@ while read -r name age posted active mutant want_out want_root want_posts; do
   esac
   jq '.compacted_day = "2000-01-01"' "$RET/tmp/slack/status.json" > "$SK_TMP/day.json" && cp "$SK_TMP/day.json" "$RET/tmp/slack/status.json"
   sk_poll "$RET"
-  assert_eq "$RC=$(jq -s --arg id "$NOTE_ID" '[.[] | select(.t == "out" and .id == $id)] | length' "$(sk_journal "$RET")")=$(jq -s --arg id "$RET_ID" '[.[] | select(.t == "in" and .id == $id)] | length' "$(sk_journal "$RET")")=$(asks "$RET_CH" 'Retention ruling.')" \
+  assert_eq "$RC=$(jq -s --arg id "$NOTE_ID" '[.[] | select(.t == "out" and .id == $id and .state != "inflight")] | length' "$(sk_journal "$RET")")=$(jq -s --arg id "$RET_ID" '[.[] | select(.t == "in" and .id == $id)] | length' "$(sk_journal "$RET")")=$(asks "$RET_CH" 'Retention ruling.')" \
     "0=$want_out=$want_root=$want_posts" "daily compaction: $name (post record, owner root, Slack posts)"
+  if [ "$name" = aged-post-inactive-thread ]; then
+    assert_eq "$(jq -s --arg id "$NOTE_ID" '[.[] | select(.t == "out" and .id == $id and .state == "inflight")] | length' "$(sk_journal "$RET")")" 0 'daily compaction drops the aged inactive post pre-send record with its outcome'
+  fi
   sk_bin_reset
 done <<'ROWS'
 young-post-old-root young 1 0 none 1 1 1

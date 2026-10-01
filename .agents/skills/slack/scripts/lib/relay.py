@@ -24,7 +24,8 @@ channel's history from the journal's position or SLACK_THREAD_DAYS back,
 whichever is older, delivers the top-level messages past the position, and
 reads every open ask and every recently active thread, including parents
 older than the history lookback. A refused thread read does not block the
-other threads or outbound mail. So a message sent while the relay was disconnected, one whose
+other threads or outbound mail; a temporary refusal leaves catch-up due
+on the next poll. So a message sent while the relay was disconnected, one whose
 envelope never arrived, and one acknowledged before a stop cut its delivery
 off land on a catch-up within that lookback, and lane-mail's delivery id judges any repeat.
 The connection opens before the catch-up reads, so no message falls between
@@ -305,33 +306,37 @@ class RootRelay:
             self.bind_file_share(message)
             self.handle(message, bot_user)
         replied = {str(m["ts"]): float(m["latest_reply"]) for m in messages if m.get("latest_reply")}
+        complete = True
         for thread_ts in dict.fromkeys([*replied, *self.state.threads]):
             if thread_ts not in self.state.threads:
                 try:
                     self.parent_context(thread_ts)
                 except Refusal as err:
-                    self.thread_refused(err, thread_ts)
+                    complete = self.thread_refused(err, thread_ts) and complete
                     continue
             thread = self.state.threads[thread_ts]
             if self.live(thread) and (
                 thread.open or thread.ts not in replied or replied[thread.ts] > float(thread.seen)
             ):
-                self.read_replies(thread, bot_user)
+                complete = self.read_replies(thread, bot_user) and complete
         if new:
             self.journal.append(t="seen", ts=new[-1]["ts"])
-        self.caught_up = True
+        self.caught_up = complete
 
-    def thread_refused(self, err: Refusal, thread_ts: str) -> None:
+    def thread_refused(self, err: Refusal, thread_ts: str) -> bool:
         """Report one thread's refusal without stopping the root. Slack's
         thread_not_found closes only the journal's ask, not lane-mail's ask.
-        Authentication failure still stops the relay, not just one thread."""
+        Authentication failure still stops the relay, not just one thread.
+        Returns whether the refusal needs no later catch-up retry."""
         if err.key == "slack-auth-failed":
             raise err
         thread = self.state.threads.get(thread_ts)
         envelope = thread.envelope if thread is not None else ""
         notice("thread-read-failed", f"ts={thread_ts} id={envelope} reason={err.key} {err.value}")
-        if err.key == "slack-api-failed" and err.error == "thread_not_found" and thread is not None and thread.open:
+        missing = err.key == "slack-api-failed" and err.error == "thread_not_found"
+        if missing and thread is not None and thread.open:
             self.journal.append(t="resolved", id=thread.envelope, reason="thread_not_found")
+        return missing
 
     def on_message(self, message: Dict, bot_user: str) -> None:
         """One live message event, without a thread-age or parent-origin gate."""
@@ -353,7 +358,8 @@ class RootRelay:
                 self.journal.append(t="bound", file=file_id, id=envelope, ts=message["ts"],
                                     parent=self.parent_of(message, "bot", envelope))
 
-    def read_replies(self, thread: Thread, bot_user: str) -> None:
+    def read_replies(self, thread: Thread, bot_user: str) -> bool:
+        """Read one thread; return whether catch-up can finish without retry."""
         # Binding owns the lower boundary; thread.seen owns delivery progress.
         oldest = max(thread.seen, self.binding.bound_at, key=float)
         try:
@@ -361,14 +367,14 @@ class RootRelay:
                 self.api.paged("conversations.replies", "messages", channel=self.channel, ts=thread.ts, oldest=oldest)
             )
         except Refusal as err:
-            self.thread_refused(err, thread.ts)
-            return
+            return self.thread_refused(err, thread.ts)
         replies = [r for r in replies if r["ts"] != thread.ts and float(r["ts"]) > float(oldest)]
         replies.sort(key=lambda m: float(m["ts"]))
         for reply in replies:
             self.handle(reply, bot_user)
         if replies:
             self.journal.append(t="thread", ts=thread.ts, seen=replies[-1]["ts"])
+        return True
 
     def handle(self, message: Dict, bot_user: str) -> None:
         ts = str(message["ts"])
@@ -623,9 +629,9 @@ class RootRelay:
             self._out(envelope, kind, "unknown")
             print_refusal(err)
             return
+        self._out(envelope, kind, "retry", reason=err.key)
         if err.key == "slack-auth-failed":
             raise err
-        self._out(envelope, kind, "retry", reason=err.key)
         if self.post_failed is None:
             self.post_failed = Refusal(err.key, f"{err.value} id={envelope['id']}")
 

@@ -333,6 +333,10 @@ def compact(root: Path, cutoff_ts: float) -> int:
             drop = aged
         elif kind == "in" and old:
             drop = line["kind"] == "ignored" or not (pending or str(line.get("thread", "")) in live)
+        elif kind == "out" and line["state"] == "inflight":
+            # A later outcome owns retention; its redundant pre-send line
+            # must not become unknown when that outcome leaves the journal.
+            drop = str(line["id"]) not in state.unknown
         elif aged and line["state"] == "file":
             drop = True
         elif aged and line["state"] in ("open", "resolved"):

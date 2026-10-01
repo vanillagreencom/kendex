@@ -433,7 +433,7 @@ sk_relay_stop
 sk_ctl /_test/faults-reset >/dev/null
 sk_bin_reset
 
-sk_mutant event-age relay.py '        if thread_ts == ts:\n            self.bind_file_share\(message\)' '        if thread_ts != ts and (thread_ts not in self.state.threads or not self.live(self.state.threads[thread_ts])):\n            return\n        if thread_ts == ts:\n            self.bind_file_share(message)'
+sk_mutant event-age relay.py '        if thread_ts == ts:\n            self.bind_file_share\(message\)' '        if thread_ts != ts and float(thread_ts) < self.settings.horizon(self.clock()):\n            return\n        if thread_ts == ts:\n            self.bind_file_share(message)'
 relay "$BETA"
 OR2="$(sk_inject C002 U001 'late under the old one' "$OLD")"
 assert_eq "$(landed "$BETA" "C002:$OR2")" "" "control: the obsolete live age gate loses the old-thread reply"

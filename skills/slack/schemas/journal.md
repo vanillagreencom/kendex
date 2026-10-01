@@ -36,9 +36,9 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 | `in` | `channel`, `ts`, `kind` = `ignored`, `reason` | A message answered once and not routed: `reason` is `not-owner`, or `no-text` for a message with no text and no file |
 | `out` | `channel`, `id`, `kind`, `state`, `at`, `thread` | A mailbox envelope posted: `kind` is `ask`, `notice` or `answer`; `state` is `open` for an ask not yet closed, `resolved` for a completed post, not question closure; `thread` the stamp the post is under, the ask's own for an ask |
 | `out` | `channel`, `id`, `kind` = `notice`, `state` = `file`, `at`, `file` | A report uploaded; its thread is bound by a later `bound` line |
-| `out` | `channel`, `id`, `kind`, `state` = `inflight`, `at` | Written and synced before sending a mailbox post or upload. Replay treats it as `unknown` until a later outcome line for the same id. An append failure sends nothing |
+| `out` | `channel`, `id`, `kind`, `state` = `inflight`, `at` | Written and synced before sending a mailbox post or upload. Replay treats it as `unknown` until a later outcome line for the same id. An append failure sends nothing. Compaction drops redundant settled pre-send lines; lone in-flight lines stay unknown |
 | `out` | `channel`, `id`, `kind`, `state` = `unknown`, `at` | A post whose response was lost, including a truncated response; shown by `--status`, never repeated |
-| `out` | `channel`, `id`, `kind`, `state` = `retry`, `at`, `reason` | Slack refused the post or never received it. `reason` is the refusal key. Replay clears `unknown` and makes the envelope postable again. A token refusal stops the relay without this line |
+| `out` | `channel`, `id`, `kind`, `state` = `retry`, `at`, `reason` | Slack refused the post or never received it. `reason` is the refusal key. Replay clears `unknown` and makes the envelope postable again. A token refusal writes this line before stopping the relay |
 | `out` | `channel`, `id`, `kind`, `state` = `refused`, `at`, `reason` | A post refused before sending; `reason` is the refusal key, `secret-value` or `file-unreadable` |
 | `resolved` | `id`, optional `source`, optional `reason` | The journal's ask thread with envelope `id` is closed. `source` names the consumed mailbox close under [Owner asks](../../orch/references/communication-modes.md#owner-asks); absent on older journal lines. Replay remembers each source while its thread mapping survives compaction. `reason=thread_not_found` marks a deleted thread and excludes it from later catch-ups; the mailbox ask stays open until its deadline or resolve. Closure reads have no outbound posting horizon. Live later replies become directives; reconnect reads remain bounded |
 | `bound` | `file`, `id`, `ts` | The share message Slack made for an uploaded file; its thread now carries the notice's envelope |
@@ -67,7 +67,7 @@ A root `out` line carries `parent` for a relay-posted ask or notice. A `bound` l
 
 | Keyed line | Meaning |
 |------------|---------|
-| `slack: thread-read-failed=ts=TS id=ID reason=KEY VALUE` | One thread read was refused. `TS` is the parent stamp; `ID` is its envelope, empty for a parent with no known envelope. `KEY VALUE` names the refusal. Catch-up continues with other threads and outbound mail; a token refusal still stops the relay. A deleted open ask writes `resolved` with `reason=thread_not_found`. A retained live event whose parent is deleted is dropped on poll with this line, not retried on every poll |
+| `slack: thread-read-failed=ts=TS id=ID reason=KEY VALUE` | One thread read was refused. `TS` is the parent stamp; `ID` is its envelope, empty for a parent with no known envelope. `KEY VALUE` names the refusal. Catch-up continues with other threads and outbound mail; a temporary refusal keeps catch-up due next poll, for known threads and parent discovery. A token refusal still stops the relay. A deleted open ask writes `resolved` with `reason=thread_not_found`. A retained live event whose parent is deleted is dropped on poll with this line, not retried on every poll |
 
 ## The status record
 

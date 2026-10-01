@@ -47,8 +47,16 @@ relay = RootRelay(root, settings, api, time.time)
 if mode == "append-fail":
     relay.journal = FullJournal(root, relay.state)
 error = ""
+polls = []
 try:
-    if mode == "download":
+    if mode == "journal":
+        pass
+    elif mode == "catchup-retry":
+        for _ in range(2):
+            relay.poll("UBOT")
+            polls.append({"caught_up": relay.caught_up, "delivered": sorted(relay.state.delivered),
+                          "carried": sorted(relay.state.carried)})
+    elif mode == "download":
         api.download(sys.argv[4], None, io.BytesIO())
     else:
         if mode == "pending":
@@ -63,4 +71,4 @@ try:
 except (Refusal, OSError, http.client.HTTPException) as err:
     error = err.key if isinstance(err, Refusal) else type(err).__name__
 print(json.dumps({"error": error, "caught_up": relay.caught_up, "pending": len(relay.pending_live),
-                  "unknown": sorted(relay.state.unknown)}))
+                  "unknown": sorted(relay.state.unknown), "polls": polls}))
