@@ -22,8 +22,6 @@ Load `github` and `worktree` before anything else; a Linear work item also needs
 
 > **MODE SWITCH**: you are the orchestrator. Delegate every implementation, review, and QA task to a specialist sub-agent. Never edit code unless the user explicitly asks, or the item runs the `micro` tier ([workflows/micro.md](workflows/micro.md)), whose runner makes the edit itself.
 
-When the caller requests a technical implementation plan, delegate to the installed `planner`. Report a missing planner instead of planning in the primary session. Pass any TPM handoff through the caller. `roadmap-plan` consumes a finished plan; it does not launch planner.
-
 ## The Cycle
 
 Get the issue → dev implements → review → dev fixes blockers → re-review → push PR → review gate → shepherd to merge.
@@ -139,7 +137,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; `.env.
 
 ## Skill Rules
 
-Delegation, agent lifecycle, round closure, coordination, and lane output: [references/skill-rules.md](references/skill-rules.md). A design, an item brief or research on another system is held to [code-quality § Over-Engineering](../code-quality/SKILL.md#over-engineering).
+Delegation, planner launch, lifecycle, round closure, coordination, and lane output: [skill-rules](references/skill-rules.md). A design, an item brief or research on another system is held to [code-quality § Over-Engineering](../code-quality/SKILL.md#over-engineering).
 
 ### Workflow Execution
 

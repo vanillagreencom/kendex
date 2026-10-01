@@ -10,6 +10,8 @@ Rules the orch workflows execute. [../SKILL.md](../SKILL.md) § Skill Rules rout
 | Message only | Re-delegation to a live agent | Send delegation to the running agent |
 | Self-create | No team context | Full instructions in the prompt |
 
+When the caller requests a technical implementation plan, delegate to the installed `planner`. Report a missing planner instead of planning in the primary session. Pass any TPM handoff through the caller. `roadmap-plan` consumes a finished plan; it does not launch planner.
+
 **No duplicate spawns.** Never spawn a fresh agent while the same role is alive. Reuse by stored ID; respawn only after one recovery attempt or a confirmed stuck/closed status.
 
 ### Format Tags Are Literal
