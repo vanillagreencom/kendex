@@ -1579,7 +1579,7 @@ case "$VERB" in
       lm_box "$OWN_ROOT"
       lm_plain
       lm_one_spelling
-      lm_append_local "$TO_OVERSEER" "$LINE"
+      lm_append_local "$TO_OVERSEER" "$LINE" :
     fi
     ;;
 

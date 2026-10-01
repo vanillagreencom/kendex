@@ -1283,6 +1283,34 @@ assert_eq "$RECORD_FIRST_OUT" "2=" \
   "control: with the id behind the record a delivered ask leaves the caller nothing to wait on"
 LANE_MAIL_BIN=""
 
+# One overseer can ask two repositories the same question. Its own records
+# track delivered ids, not whether the second recipient repeats the first.
+mutant guarded-bookkeeping 'lm_append_local "$TO_OVERSEER" "$LINE" :' 'lm_append_local "$TO_OVERSEER" "$LINE"'
+CROSS_PEER_MUTANT="$LANE_MAIL_BIN"
+for row in original control; do
+  new_lane "${row}_cross_peer"
+  LANE_MAIL_BIN="$LANE_MAIL"
+  [ "$row" != control ] || LANE_MAIL_BIN="$CROSS_PEER_MUTANT"
+  IDS=""; CODES=""
+  for peer in "$PEER_B" "$PEER_C"; do
+    lm peer ask --repo "$peer" --file "$(text q 'Who owns this work?')"
+    IDS="${IDS:+$IDS }${OUT#id=}"
+    CODES="${CODES:+$CODES }$RC"
+    assert_eq "${OUT#id=}" "$(jq -rs 'last.id' < "$peer/tmp/lane-mail/overseer/to-lane.jsonl")" \
+      "$row: each peer receives its ask under the printed id"
+  done
+  lm pending --item overseer --to peer
+  PENDING_IDS="$(jq -rs 'map(.id) | join(" ")' <<<"$OUT")"
+  if [ "$row" = original ]; then
+    assert_eq "$CODES" "0 0" "identical asks to two peers both return success"
+    assert_eq "$RC=$PENDING_IDS" "0=$IDS" "both delivered peer asks remain pending"
+  else
+    assert_eq "$CODES" "0 2" "control: judging bookkeeping refuses the second delivered ask"
+    assert_eq "$RC=$PENDING_IDS" "0=${IDS%% *}" "control: the second delivered ask is absent from pending"
+  fi
+done
+LANE_MAIL_BIN=""
+
 mutant_lib unlocked 'if ! orch_take_lock 9 "$1" "$2"; then' 'if false; then'
 held_hosted_send "$MUTANT_LIB"
 assert_eq "$HELD" "1/1" \

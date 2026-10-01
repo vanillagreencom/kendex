@@ -111,6 +111,11 @@ for library in file-lock.sh mailbox-append.sh; do
   fi
   . "$lib/$library"
 done
+if ! declare -F mailbox_duplicate_id >/dev/null; then
+  printf 'lane-host-ssh: append-library-outdated path=%s\\n' "$lib/mailbox-append.sh" >&2
+  printf 'update the host clone to a build carrying the mailbox repeat guard\\n' >&2
+  exit 1
+fi
 '''
 
 

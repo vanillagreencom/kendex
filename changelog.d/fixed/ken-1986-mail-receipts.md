@@ -1,1 +1,1 @@
-- Owner notices print receipts. Local and hosted mail refuse identical concurrent writes under the mailbox lock. Progress reports name their sent notice.
+- Owner notices print receipts. Mail refuses repeats under its lock and requires the host guard. Peer asks retain both recipients' pending records. Reports name their sent notice.
