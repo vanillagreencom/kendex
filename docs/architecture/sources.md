@@ -3,7 +3,7 @@
 Covers: crates/core/src/source/, crates/core/src/source.rs, crates/core/src/source_read.rs, crates/core/src/source_ref.rs, crates/core/src/remote/, crates/core/src/package/, crates/core/src/drift/, crates/core/src/check_catalog.rs, crates/core/src/library.rs
 
 
-The reserved `builtin` source names harness-shipped content instead of catalog bytes. `library::Origin::Builtin` keeps it distinct from the user's own content and from unmanaged files. [The engine](engine.md) owns its declarations.
+`library::Origin::Builtin` marks harness content, not user or unmanaged files; [engine](engine.md).
 
 ## Boundaries
 
