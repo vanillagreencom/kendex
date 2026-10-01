@@ -51,6 +51,8 @@ inventory.write_text(json.dumps(entries))
 RECORD
   fi
   commit "$DIR"
+  # Refresh restores the shipped template, not the committed workflow edit.
+  if [ "$input" = fake-history ]; then cp "$PRISTINE/$TEMPLATE" "$DIR/$TEMPLATE"; fi
   # The owned writer must remain until refresh shipment is proved.
   cp "$DIR/.kendex-generated.json" "$TMP/adoption-inventory"
   cp "$DIR/$REFRESH" "$TMP/adoption-workflow"
@@ -70,6 +72,31 @@ RECORD
     if adoption_preserved "refresh-error=$result value=$DIR/$target"; then
       ok "$input record=$record refuses before writer effects"
     else bad "$input record=$record preservation (rc=$RC)" "$OUT"; fi
+    if [ "$input" = fake-history ]; then
+      python3 - "$DIR/$ADOPT" <<'CONSUMER_HISTORY_CONTROL'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve(); s = p.read_text()
+old = 'if not shipped_copy:'
+assert s.count(old) == 1
+new = '''consumer_path = ".agents/skills/review-gate/templates/kendex-refresh.yml"
+consumer_commits = subprocess.check_output(
+    ["git", "-C", str(root), "log", "--full-history", "--format=%H", "HEAD", "--", consumer_path],
+    env=environment).decode().splitlines()
+for consumer_commit in consumer_commits:
+    candidate = subprocess.check_output(
+        ["git", "-C", str(root), "show", consumer_commit + ":" + consumer_path], env=environment)
+    shipped_copy = shipped_copy or copied == candidate
+''' + old
+changed = s.replace(old, new)
+assert changed != s
+p.write_text(changed)
+CONSUMER_HISTORY_CONTROL
+      run_refresh_command "$DIR" "$DIR/$ADOPT"
+      if [ "$RC" -eq 0 ] && ! adoption_preserved "refresh-error=$result value=$DIR/$target"; then
+        ok 'control: consumer-history acceptance breaks the fake-history preservation assertion'
+      else bad 'consumer-history control' "$OUT"; fi
+    fi
   fi
 done <<'ROWS'
 current|missing|accept|present
@@ -82,7 +109,7 @@ historical|missing|accept|absent
 hand-edit|missing|workflow-edited|present
 hand-edit|matching|workflow-edited|present
 hand-edit|missing|workflow-edited|absent
-fake-history|matching|template-edited|present
+fake-history|matching|workflow-edited|present
 ROWS
 
 # Independent identity, evidence-read and link rules each keep their

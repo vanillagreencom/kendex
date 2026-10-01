@@ -483,6 +483,8 @@ jobs:
       REVIEW_GATE_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # ---- macOS leg: Bash 3.2 first on PATH, asserted, and its probe -----
       # gnubin goes on PATH before the shell's directory does, so the
