@@ -181,6 +181,24 @@ check_helper() { # -> 0 armed, 1 not armed, 3 unverifiable
     add_reason helper-disabled "$HELPER_NAME" "helper $HELPER_NAME is not executable (commits are blocked, not guarded)"
     return 1
   fi
+  # Pulled renders leave the locally installed helper untouched. Check the
+  # installer's version before comparing the current head: older installers
+  # also wrote different heads. A current stamp still needs the byte check.
+  local stamp="" expected_stamp="" fix="" where="this checkout"
+  if ! stamp="$(sed -n '/^# kendex-guards-helper-version=/p' <"$helper")"; then
+    add_reason helper-read "$HELPER_NAME" "helper $HELPER_NAME could not be read"
+    return 2
+  fi
+  if ! expected_stamp="$(helper_stamp)"; then
+    add_reason helper-version-read "$HELPER_NAME" "this installer's helper version could not be computed"
+    return 2
+  fi
+  if [ "$stamp" != "$expected_stamp" ]; then
+    fix="${INSTALLED_SCRIPTS_REL:-$SCRIPT_DIR}/install-git-hooks"
+    [ "$MAIN_CHECKOUT" -eq 0 ] || where="the main checkout"
+    add_reason helper-outdated "$HELPER_NAME fix=$(gg_shown "$fix") (run from $where)" "helper $HELPER_NAME has an older or missing installer version; re-arm with the named installer"
+    return 1
+  fi
   # The marker is a comment, and anything can carry one: an executable
   # `# kendex commit-guards git hooks` plus `exit 0` passes every test above
   # while bypassing every guard. `--check` is READ-ONLY, so "the installer

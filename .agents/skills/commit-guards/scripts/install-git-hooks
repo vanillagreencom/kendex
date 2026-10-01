@@ -22,6 +22,7 @@
 # stdout contract: kendex check recognizes the exact prefix
 # "commit-guards git hooks:". Each summary starts with key=value;
 # indented lines explain the verdict that the exit status carries.
+# helper-outdated is drift; its fix= names the installer and checkout to use.
 set -euo pipefail
 
 HELPER_NAME="kendex-guards"

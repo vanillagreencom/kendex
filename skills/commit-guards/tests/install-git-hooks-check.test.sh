@@ -25,6 +25,9 @@ REARM_WT=""
 CND="commit-guards git hooks: unknown="
 UNVERIFIED="helper-unverified=kendex-guards"
 STUB='#!/bin/sh\n# kendex commit-guards git hooks\nexit 0\n'
+# A current version does not license a stub: its bytes must still verify.
+STAMP="$(sed -n '/^# kendex-guards-helper-version=/p' "$R/.git/hooks/kendex-guards")"
+STUB="$STUB$STAMP\n"
 HELPER_NOEXEC="$RW:ours['<repo>/.agents/skills/commit-guards/scripts']"
 rebake() { edit "$R/.git/hooks/kendex-guards" "s|^installed_scripts=.*|installed_scripts=$1|"; }
 
@@ -71,7 +74,7 @@ run_rows \
   "a symlink at the helper path is not a regular file, whatever it points at|fx_helper_symlink||check||rc=1 ${NA}helper-not-file=kendex-guards$REARM|helper=symlink-><root>/helper-target[ours['<repo>/.agents/skills/commit-guards/scripts']] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
   "a file without the marker was not written by this installer|fx_helper_foreign||check||rc=1 ${NA}helper-foreign=kendex-guards$REARM|helper=$X:#!/bin/sh~exit 0 pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
   "a helper without its execute bit blocks every commit, so it is not armed|fx_helper_noexec||check||rc=1 ${NA}helper-disabled=kendex-guards$REARM|helper=$HELPER_NOEXEC pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
-  "a marker-carrying stub in place of the helper is unverifiable, not armed|fx_helper_stub||check||rc=2 $CND$UNVERIFIED|helper=$X:#!/bin/sh~# kendex commit-guards git hooks~exit 0 pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a marker-carrying stub with the current stamp is unverifiable, not armed|fx_helper_stub||check||rc=2 $CND$UNVERIFIED|helper=$X:#!/bin/sh~# kendex commit-guards git hooks~exit 0~$STAMP pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
   "and that stub really does let a violation through every guard|fx_helper_stub_commit|$ONE|commit|feat: add b|rc=0|" \
   "from the arming checkout, a scripts directory whose pre-commit program is gone is unverifiable|fx_lane_missing||check||rc=2 $CND$UNVERIFIED|" \
   "a provably missing shim outranks an unverifiable helper, and both are named|fx_drift_and_unknown||check||rc=1 $NA$UNVERIFIED; hook-missing=pre-commit$REARM|"
@@ -240,6 +243,45 @@ run_rows \
   "control: re-arming the moved checkout reads armed|fx_moved_rearmed||check||rc=0 $ARMED_CHECK|$FRESH" \
   "a recorded place other than where this project keeps its scripts is drift|fx_rel_elsewhere||check||rc=1 $NA$MOVED$REARM|" \
   "a payload on the recorded place is unverifiable|fx_rel_payload||check||rc=2 $CND$UNVERIFIED|"
+
+echo "=== a pulled render leaves an older helper until the installer re-arms it ==="
+# Removing the stamp reproduces the helper body written by the unstamped
+# installer. A mismatched stamp covers helpers from other installer versions.
+fx_previous_helper() {
+  armed "${1:-previous-helper}"
+  assert_eq "the previous body removes one stamp" "1" \
+    "$(grep -c '^# kendex-guards-helper-version=' "$R/.git/hooks/kendex-guards")"
+  edit "$R/.git/hooks/kendex-guards" '/^# kendex-guards-helper-version=/d'
+}
+fx_older_stamp() {
+  armed "${1:-older-stamp}"
+  edit "$R/.git/hooks/kendex-guards" 's/^# kendex-guards-helper-version=.*/# kendex-guards-helper-version=old/'
+}
+fx_helper_rearmed() {
+  fx_older_stamp rearmed-stamp
+  install_in "$R"
+  assert_eq "re-arming replaces the older helper" "0" "$RC"
+}
+fx_wt_previous_helper() {
+  worktree_of wt-previous-helper
+  edit "$R/.git/hooks/kendex-guards" '/^# kendex-guards-helper-version=/d'
+}
+# The copied checker keeps its version comparison but drops the refusal.
+# The previous-body row's drift assertion then turns red: the helper is armed.
+fx_blind_version() {
+  fx_previous_helper blind-helper
+  local checker="$R/.agents/skills/commit-guards/scripts/lib/hook-check.sh"
+  assert_eq "the version control mutates one refusal" "1" \
+    "$(grep -cF 'add_reason helper-outdated ' "$checker")"
+  edit "$checker" '/add_reason helper-outdated /{n;s/return 1/return 0/;}'
+}
+OUTDATED="helper-outdated=kendex-guards fix=.agents/skills/commit-guards/scripts/install-git-hooks (run from the main checkout)"
+run_rows \
+  "the previous helper body is drift with its main-checkout installer|fx_previous_helper||check||rc=1 $NA$OUTDATED|" \
+  "an older stamp is the same keyed drift|fx_older_stamp||check||rc=1 $NA$OUTDATED|" \
+  "control: the current helper body reads armed after re-arming|fx_helper_rearmed||check||rc=0 $ARMED_CHECK|$FRESH" \
+  "a worktree names the main-checkout installer, not its own absolute path|fx_wt_previous_helper||check-wt||rc=1 $NA$OUTDATED|" \
+  "must-fail: dropping the version refusal calls the previous body armed|fx_blind_version||check||rc=0 $ARMED_CHECK|"
 
 echo "=== usage ==="
 fx_fresh() { R="$(new_repo fresh)"; }

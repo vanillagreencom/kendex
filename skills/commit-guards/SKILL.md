@@ -69,6 +69,8 @@ Exit codes: `0` clean, `1` violations, `2` usage, configuration, or collection e
 
 Run `scripts/install-git-hooks [--repo PATH]` to arm the shims.
 
+A pulled render does not re-arm the helper; `scripts/install-git-hooks --check` names an outdated helper and the installer to run from the main checkout.
+
 Pre-commit order: `doc-limits --staged` when installed -> `preflight --staged` when installed -> `bot-instructions check --staged` when installed -> `commit-guards all --staged` -> `COMMIT_GUARDS_PRE_COMMIT_LOCAL` when configured. `commit-msg` runs the message gate.
 
 A repo-local entry names the paths it reads in `COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS`. The chain runs it only when the commit touches one of those paths, a deletion or either side of a rename included, and otherwise prints `pre-commit: local-entry=skipped` and leaves the verdict to the other lanes. The chain reads the entry's exit as it reads every lane's: `0` clean, `1` violations, anything else a step that did not complete. It prints no install command of its own. An entry that needs a missing tool should print that tool's install command and exit `2`; with the paths set, that refusal blocks only a commit that touches them.

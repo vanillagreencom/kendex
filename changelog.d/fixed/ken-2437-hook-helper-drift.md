@@ -1,0 +1,1 @@
+- Commit guard checks report an outdated hook helper after a pulled render and name the installer to run from the main checkout.

@@ -123,7 +123,7 @@ HELPER_HEAD
 # Generating and VERIFYING both go through here, so a checker cannot drift
 # from a writer and start blessing a helper that only resembles one. These
 # bytes carry no per-checkout value, so they are compared exactly.
-helper_program() { # -> the part of the helper every checkout writes alike
+helper_payload() { # -> the unstamped program, identical in every checkout
   cat <<'HELPER'
 # kendex commit-guards git hooks. Managed by the commit-guards skill and
 # rewritten on every install — do not edit.
@@ -275,6 +275,19 @@ for root in ${main:+"$main/$project_rel"} "$top/$project_rel" ${main:+"$main/"} 
 done
 fail lane-missing "$mode" "no executable commit-guards $mode script at $installed_scripts, nor under $main or $top (project '$project_rel', roots $skill_roots)"
 HELPER
+}
+
+# The checksum versions the program, not the baked paths or the stamp itself.
+# It is not an authenticity check: hook-check still compares every byte.
+helper_stamp() { # -> this installer's owned helper version, on stdout
+  local version=""
+  version="$(helper_payload | cksum)" || return 1
+  printf '# kendex-guards-helper-version=%s\n' "$version"
+}
+
+helper_program() { # -> the versioned program every checkout writes alike
+  helper_payload || return 1
+  helper_stamp
 }
 
 helper_body() { # -> the helper this installer would write, on stdout
