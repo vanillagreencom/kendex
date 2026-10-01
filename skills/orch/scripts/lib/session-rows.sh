@@ -67,6 +67,36 @@ session_rows_path() { # BOX SERVER PANE
   printf '%s/session-%s-%s.jsonl\n' "$1" "$2" "${3#%}"
 }
 
+# SESSION_ROWS_DEAD lists files of confirmed gone panes, never files named by
+# the current or pending fleet record. An unreachable server is not dead.
+# workflow-state prune archives this list before removing any of it.
+SESSION_ROWS_DEAD=()
+session_rows_dead() { # BOX FLEET_STATE
+  local named="" file name server pane rc nl='
+'
+  SESSION_ROWS_DEAD=()
+  if [ -f "$2" ]; then
+    named="$(jq -r '[.overseer.session_rows, .overseer.pending.session_rows,
+      .pending.session_rows] | .[] | strings' "$2")" || return 2
+  fi
+  for file in "$1"/session-*-*.jsonl; do
+    [ -f "$file" ] && [ ! -L "$file" ] || continue
+    case "$nl$named$nl" in *"$nl$file$nl"*) continue ;; esac
+    name="${file##*/session-}"
+    server="${name%%-*}"
+    pane="${name#*-}"; pane="${pane%.jsonl}"
+    case "$server:$pane" in *[!0-9:]*) continue ;; esac
+    [ -n "$server" ] && [ -n "$pane" ] || continue
+    rc=0
+    tmux_pane_live "$server" "" "%$pane" || rc=$?
+    case "$rc" in
+      0 | 2) ;;
+      1) SESSION_ROWS_DEAD+=("$file") ;;
+      *) return 2 ;;
+    esac
+  done
+}
+
 # session_rows_overseer_file DIR SERVER PANE — the same file for a session of
 # the checkout DIR is in: the path every writer and every reader asks here, so
 # a hook and a record writer cannot name one session's file two ways.

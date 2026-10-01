@@ -1144,44 +1144,8 @@ unit_names_item() { # UNIT ITEM
     [[ "${1##*/}" =~ $re ]]
 }
 
-# The one archive the prune and an item's close-out each write before they
-# remove anything: PATHS, each absolute, and RECORDS, where it is not empty,
-# as records.json, in one tarball FLEET_DIR/archive/REPO/oversee/STEM-RANDOM.tgz.
-# FLEET_DIR defaults to ~/.fleet, the root lane-host close also archives
-# under, and REPO is the main checkout's directory name. Private, as
-# lane-host close keeps a lane's archive: it holds whatever the removed paths
-# held, secrets included. Paths are relative to /, as that close archives
-# them, so a path outside the state directory archives the same way, and tar
-# keeps each file's bytes and modification time as written. Sets ARCHIVE to
-# the tarball; a failure removes what it wrote and returns 1, ARCHIVE_DIR and
-# ARCHIVE_ERR, the failing step's own words, left for the caller's refusal.
-ARCHIVE="" ARCHIVE_DIR="" ARCHIVE_ERR=""
-archive_write() { # STEM RECORDS PATH...
-    local stem="$1" records="$2" repo_root stage="" saved_umask unit rc=0
-    shift 2
-    ARCHIVE="" ARCHIVE_DIR="" ARCHIVE_ERR=""
-    repo_root=$(project_root) || return 1
-    ARCHIVE_DIR="${FLEET_DIR:-$HOME/.fleet}/archive/${repo_root##*/}/oversee"
-    saved_umask=$(umask)
-    umask 077
-    if ! ARCHIVE_ERR=$(mkdir -p -- "$ARCHIVE_DIR" 2>&1); then
-        rc=1
-    elif ! stage=$(mktemp -d "$ARCHIVE_DIR/$stem-XXXXXX" 2>&1); then
-        ARCHIVE_ERR="$stage"; stage=""; rc=1
-    elif ! { { [[ -z "$records" ]] || printf '%s\n' "$records" > "$stage/records.json"; } \
-             && { [[ -z "$records" ]] || printf '%s\n' "${stage#/}/records.json"
-                  for unit in "$@"; do printf '%s\n' "${unit#/}"; done
-                } > "$stage/paths" \
-             && tar -czf "$stage.tgz" -C / -T "$stage/paths" 2>"$stage/tar.err"; }; then
-        ARCHIVE_ERR=$(cat -- "$stage/tar.err" 2>/dev/null) || ARCHIVE_ERR=""
-        rc=1
-    else
-        ARCHIVE="$stage.tgz"
-    fi
-    umask "$saved_umask"
-    [[ -z "$stage" ]] || rm -rf -- "${stage:?}"
-    [[ "$rc" -eq 0 ]] || { [[ -z "$stage" ]] || rm -f -- "${stage:?}.tgz"; return 1; }
-}
+# shellcheck source=lib/state-archive.sh
+. "$SCRIPT_DIR/lib/state-archive.sh"
 
 # `prune [--keep PATH]...`: the retention that
 # ../schemas/workflow-state.md § Recording policy states, applied to the fleet
@@ -1194,14 +1158,13 @@ archive_write() { # STEM RECORDS PATH...
 # live too; a checkout with no fleet state, where no overseer runs, has only
 # the workflow states to judge by. The
 # keep list is explicit, and a path on it is never a candidate whatever its age.
-# Nothing leaves the disk or the state before one archive holding all of it is
-# written: a failed archive removes nothing, and the rows are dropped from the
-# state before any path is removed, so a failure part way leaves the archive a
-# superset of what went.
+# Each owner archives before its removal. Mailbox compaction uses the same
+# writer for its rows. State rows leave before paths, so a failed path removal
+# leaves that owner's archive holding everything it had selected.
 #
 # Output, one keyed line each: `pruned path=PATH` per removed path, then
-# `pruned fleet_log=N lanes=N progress_reports=N paths=N`, then `kept=ARCHIVE`,
-# or `kept=none` where there was nothing to archive.
+# `pruned fleet_log=N lanes=N progress_reports=N paths=N to-lane=N to-overseer=N sessions=N`,
+# then `kept=ARCHIVE` per archive, or `kept=none` when nothing was archived.
 cmd_prune() {
     local -a keeps=() units=() candidates=()
     local keep
@@ -1233,11 +1196,15 @@ cmd_prune() {
     [[ -n "$cutoff" ]] || { state_message clock-unreadable "$@" >&2; return 1; }
 
     local sd pd="" unit err="" f live="" rows='{"fleet_log":[],"lanes":[]}'
-    if [[ ! -d "$STATE_DIR" ]]; then
-        printf 'pruned fleet_log=0 lanes=0 progress_reports=0 paths=0\nkept=none\n'
+    local root mailbox
+    root=$(project_root) || return 1
+    mailbox="$root/tmp/lane-mail/overseer"
+    if [[ ! -d "$STATE_DIR" && ! -d "$mailbox" ]]; then
+        printf 'pruned fleet_log=0 lanes=0 progress_reports=0 paths=0 to-lane=0 to-overseer=0 sessions=0\nkept=none\n'
         return 0
     fi
-    sd=$(cd -P -- "$STATE_DIR" && pwd -P) || return 1
+    sd="$STATE_DIR"
+    [[ ! -d "$sd" ]] || sd=$(cd -P -- "$sd" && pwd -P) || return 1
     if [[ "$fleet" == true ]]; then
         # A lane whose record is anything but `done` is live: `running`, and a
         # `preparing` or `stopped` one a relaunch resumes into its own files.
@@ -1259,7 +1226,7 @@ cmd_prune() {
     # round-prune reads it, never the main checkout. A state past the
     # retention that names no such worktree is an item nothing resumes, one a
     # close-out never reached, and it ages out with its files.
-    local recent wt branch root=""
+    local recent wt branch
     for f in "$sd/$STATE_PREFIX-"*.json; do
         [[ -f "$f" && "$f" != "$sd/${state_file##*/}" ]] || continue
         if ! recent=$(find "$f" -mtime "-$days" -print 2>&1); then
@@ -1281,7 +1248,7 @@ cmd_prune() {
         state_message prune-progress-overlap "$@" >&2; return 1
     fi
 
-    state_units "$sd" "$state_file" "$pd" || return 1
+    if [[ -d "$sd" ]]; then state_units "$sd" "$state_file" "$pd" || return 1; fi
     units=(${UNITS[@]+"${UNITS[@]}"})
     if [[ -n "$pd" ]]; then
         shopt -s nullglob
@@ -1311,12 +1278,29 @@ cmd_prune() {
         [[ -z "$pd" || "$unit" != "$pd"/* ]] || reports=$((reports + 1))
     done
 
+    # The mailbox is rooted at the main checkout, not at a custom state dir.
+    # Its rows and session files have owners independent of state_units.
+    root=$(project_root) || return 1
+    local compacted to_lane to_overseer mailbox_archive sessions=0
+    compacted=$("$SCRIPT_DIR/lane-mail" compact --item overseer --root "$root" 2>&1) || {
+        printf '%s\n' "$compacted" >&2; return 1;
+    }
+    to_lane=$(awk '/^compacted / { sub(/^to-lane=/, "", $3); print $3 }' <<<"$compacted") || return 1
+    to_overseer=$(awk '/^compacted / { sub(/^to-overseer=/, "", $4); print $4 }' <<<"$compacted") || return 1
+    mailbox_archive=$(sed -n 's/^lane-mail: archived=//p' <<<"$compacted") || return 1
+    session_rows_dead "$mailbox" "$state_file" || return 1
+    for unit in ${SESSION_ROWS_DEAD[@]+"${SESSION_ROWS_DEAD[@]}"}; do
+        candidates+=("$unit")
+        sessions=$((sessions + 1))
+    done
+
     local n_rows n_log n_lanes archive=none
     n_log=$(jq '.fleet_log | length' <<<"$rows") || return 1
     n_lanes=$(jq '.lanes | length' <<<"$rows") || return 1
     n_rows=$((n_log + n_lanes))
     if [[ "$n_rows" -gt 0 || "${#candidates[@]}" -gt 0 ]]; then
-        archive_write "prune-$now_epoch" "$rows" ${candidates[@]+"${candidates[@]}"} \
+        root=$(project_root) || return 1
+        archive_write "$root" "prune-$now_epoch" "$rows" ${candidates[@]+"${candidates[@]}"} \
             || { state_message prune-archive-failed "$@" >&2; return 1; }
         archive="$ARCHIVE"
         # The rows reach jq on stdin, never argv: every row past the retention
@@ -1331,9 +1315,10 @@ cmd_prune() {
             printf 'pruned path=%s\n' "$unit"
         done
     fi
-    printf 'pruned fleet_log=%s lanes=%s progress_reports=%s paths=%s\n' \
-        "$n_log" "$n_lanes" "$reports" "${#candidates[@]}"
-    printf 'kept=%s\n' "$archive"
+    printf 'pruned fleet_log=%s lanes=%s progress_reports=%s paths=%s to-lane=%s to-overseer=%s sessions=%s\n' \
+        "$n_log" "$n_lanes" "$reports" "${#candidates[@]}" "$to_lane" "$to_overseer" "$sessions"
+    [[ -z "$mailbox_archive" ]] || printf 'kept=%s\n' "$mailbox_archive"
+    if [[ "$archive" != none || -z "$mailbox_archive" ]]; then printf 'kept=%s\n' "$archive"; fi
 }
 
 # `remove ITEM [--archive PATH]...`: the item's close-out. Every entry
@@ -1382,7 +1367,9 @@ cmd_remove() {
     fi
     if [[ "${#targets[@]}" -gt 0 || "${#extra[@]}" -gt 0 ]]; then
         now_epoch=$(date -u +%s) || { state_message clock-unreadable "$@" >&2; return 1; }
-        archive_write "close-$item-$now_epoch" "" ${evidence[@]+"${evidence[@]}"} ${extra[@]+"${extra[@]}"} \
+        local archive_root
+        archive_root=$(project_root) || return 1
+        archive_write "$archive_root" "close-$item-$now_epoch" "" ${evidence[@]+"${evidence[@]}"} ${extra[@]+"${extra[@]}"} \
             || { state_message remove-archive-failed "$@" >&2; return 1; }
         archive="$ARCHIVE"
     fi
@@ -1710,6 +1697,10 @@ parse_rc=0
 source "$SCRIPT_DIR/lib/date-ladder.sh"
 # shellcheck source=lib/file-lock.sh
 source "$SCRIPT_DIR/lib/file-lock.sh"
+# shellcheck source=lib/tmux-server.sh
+source "$SCRIPT_DIR/lib/tmux-server.sh"
+# shellcheck source=lib/session-rows.sh
+source "$SCRIPT_DIR/lib/session-rows.sh"
 # shellcheck source=lib/watch-pid.sh
 source "$SCRIPT_DIR/lib/watch-pid.sh"
 # shellcheck source=lib/kendex-env.sh

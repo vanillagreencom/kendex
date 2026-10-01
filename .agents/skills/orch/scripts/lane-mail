@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# One append-only mailbox per lane, read and written through this one CLI;
+# One numbered mailbox per lane, read and written through this one CLI;
 # usage() states the protocol, the layout and every refusal key. The
 # invariants: every write adds a line under a lock on the file itself, taken
-# on the disk that holds it, so no line is rewritten or removed however many
-# writers the file has, and a message survives a crashed or restarted sender
+# on the disk that holds it. Compaction rewrites through that same inode and
+# keeps logical numbers beside it. A message survives a restarted sender
 # and receiver alike. Every reader consumes only newline-terminated
 # lines, so a local or a `lane-host append` write in flight costs one poll and
 # never a lost or duplicated message; a terminated line that does not parse is
@@ -30,6 +30,7 @@ usage() {
   cat <<'USAGE'
 Usage: lane-mail ask|notice|wait|inbox|watch --item ITEM [options]
        lane-mail send|drain|pending|events --item ITEM [--root ROOT] [--host] [options]
+       lane-mail compact --item ITEM [--root ROOT]
        lane-mail resolve --item overseer --id MSGID [--text PATH | --default] [options]
        lane-mail peer ask|send --repo REPO [--host] [options]
 
@@ -86,6 +87,18 @@ Lane side, rooted at the lane's own git worktree:
               orch watch-delivery reference owns that premise
 
 Overseer side:
+  compact --item ITEM [--root ROOT]
+              archive expired, read, closed rows before rewriting under the
+              mailbox inode locks. ORCH_RECORD_RETENTION_DAYS defaults to 5
+              with SLACK_THREAD_DAYS (relay default 7) as its minimum.
+              to-overseer.jsonl uses age alone because its readers own their
+              read records. Keep unread to-lane rows and open exchanges.
+              Each FILE.numbering records dropped, first and retained logical
+              lines under the same lock. All readers keep logical numbers and
+              the original first id, including after every row is removed.
+              Prints `compacted item=ITEM to-lane=N to-overseer=N`.
+              When rows leave, stderr names their archive as
+              `lane-mail: archived=PATH`; prune consumes this path.
   send --item ITEM (--re MSGID | --directive | --halt) --file PATH
               append to to-lane.jsonl the answer to MSGID, or a directive that
               answers no ask. --halt sends a directive the lane-mail-halt
@@ -126,7 +139,7 @@ Overseer side:
   events --item ITEM
               print every envelope of both files, to-overseer.jsonl then
               to-lane.jsonl, each with `box` naming the file it came from,
-              `line` its physical line number and `count` that file's complete
+              `line` its logical line number and `count` that file's logical
               line count, including lines filtered as invalid JSON,
               and `mail_class` on to-lane records from the shared mailbox rule,
               answered asks and their answers included. Moves no cursor and
@@ -278,6 +291,7 @@ Header, the first line drain and inbox --peek print: `count=<complete lines>
 first=<id>`, the id carried by the file's first line, empty when that line is
 no envelope or its id is outside the item alphabet. A reader keeps both: a
 file opening with another id is a replacement mailbox, not the one counted.
+Counts include compacted rows. The first id stays original.
 
 Envelope, one JSON object per line: id, kind, at, from, re (answers and closes),
 halt (true on a directive sent with --halt), text and options (asks with
@@ -355,7 +369,7 @@ overseer-only, events-no-cursor,
 command-missing, file-unreadable, root-unresolved, repo-unresolved, repo-self,
 lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
 write-failed, host-append, host-unreachable, mail-read-failed, lane-host-busy,
-timeout, item-case-variant, mailbox-missing. `duplicate` is the one key whose
+timeout, item-case-variant, mailbox-missing, retention-invalid, archive-failed, archived. `duplicate` is the one key whose
 value follows ` id=` rather than `=`, so it names the earlier envelope through
 the same field the receipt above prints; `resolved-already` and
 `delivery-repeated` close their own value with ` id=<id>` naming the envelope
@@ -430,6 +444,9 @@ fix=run `oversee register` from the orch skill in the session that should read t
     cursor-invalid) text='The cursor file does not hold a line count. Remove it to restart the lane read.' ;;
     lock-failed) text='The mailbox lock could not be taken; another writer holds it.' ;;
     write-failed) text='The mailbox could not be written.' ;;
+    retention-invalid) text='Retention and relay thread age must be positive integers.' ;;
+    archive-failed) text='Expired mailbox rows could not be archived, so nothing was removed.' ;;
+    archived) text='Expired mailbox rows are kept in this archive.' ;;
     host-append) text='The hosted mailbox could not be appended through lane-host append. The host answered the probe, so the provider declined the write and the line below is what it reported; a provider with no append verb fails here too. Nothing falls back to reading the mailbox and putting it back, which drops a line when two machines write one file.' ;;
     host-unreachable) text='The lane host could not be reached, so the mailbox state is unknown: a read is refused rather than reported as empty, and a write rather than reported as delivered. A stopped host is started; a gone one is relaunched.' ;;
     mail-read-failed) text='The hosted mailbox could not be read and its host answers, so the read is refused rather than reported as empty. A send stopped here appended nothing: a mailbox no read could judge is one no send can be judged against.' ;;
@@ -480,7 +497,7 @@ if [ "$VERB" = peer ]; then
   esac
 fi
 case "$VERB" in
-  ask | notice | wait | inbox | watch | send | drain | pending | events | resolve | peer) ;;
+  ask | notice | wait | inbox | watch | send | drain | pending | events | resolve | compact | peer) ;;
   *) refuse verb-invalid "$VERB" ;;
 esac
 
@@ -553,6 +570,12 @@ while [ "$#" -gt 0 ]; do
     *) refuse option-unknown "$1" ;;
   esac
 done
+
+if [ "$VERB" = compact ]; then
+  for given in $OPTS_GIVEN; do
+    case "$given" in --item | --root) ;; *) refuse option-unknown "$given" ;; esac
+  done
+fi
 
 # A peer verb addresses a repository, not a lane, and writes that repository's
 # overseer mailbox. One rule rather than a list of rejects: these are the
@@ -645,6 +668,44 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$SCRIPT_DIR/lib/lane-host-slots.sh"
 # shellcheck source=lib/tmux-server.sh
 . "$SCRIPT_DIR/lib/tmux-server.sh"
+
+# Nested subshells keep each mutex's lifetime separate on hosts without flock.
+# A reader can hold the cursor lock while taking a mailbox snapshot.
+lm_locked() ( # FD PATH COMMAND...
+  local fd="$1" path="$2"
+  shift 2
+  ORCH_LOCK_MUTEX_DIR=""
+  if [ "$VERB" = compact ] && [ "$fd" -ne 7 ]; then
+    eval "exec $fd<>\"\$path\"" 2>"$WORK_DIR/open.err" ||
+      refuse write-failed "$path" "$(cat -- "$WORK_DIR/open.err")"
+  else
+    eval "exec $fd<\"\$path\"" 2>"$WORK_DIR/open.err" ||
+      refuse file-unreadable "$path" "$(cat -- "$WORK_DIR/open.err")"
+  fi
+  orch_take_lock "$fd" "$path" 30 2>"$WORK_DIR/locked.err" ||
+    refuse lock-failed "$path" "$(cat -- "$WORK_DIR/locked.err")"
+  trap orch_release_lock EXIT
+  "$@"
+)
+
+# Missing mail files have no rows to rewrite. Do not create a cursor lock on
+# an unread mailbox: pending treats that lock without a cursor as a missed read.
+lm_existing_lock() ( # FD PATH COMMAND...
+  local fd="$1" path="$2"
+  shift 2
+  if [ -f "$path" ]; then
+    lm_locked "$fd" "$path" "$@"
+  else
+    eval "exec $fd</dev/null" || refuse file-unreadable /dev/null
+    "$@"
+  fi
+)
+
+lm_store() {
+  command -v python3 >/dev/null 2>&1 || refuse command-missing python3
+  python3 "$SCRIPT_DIR/lib/lane-mail-store.py" "$@" 2>"$WORK_DIR/store.err" ||
+    refuse file-unreadable "$BOX" "$(cat -- "$WORK_DIR/store.err")"
+}
 
 # The template names TMPDIR outright, as lib/review-artifact-gates.sh does: a
 # bare `mktemp` reads it only on GNU, and BSD mktemp, the one macOS ships,
@@ -761,7 +822,7 @@ if [ -z "$ROOT" ]; then
     overseer:*)
       ROOT="$("$SCRIPT_DIR/git-context" common-root . 2>/dev/null)" || ROOT=""
       ;;
-    *:send | *:drain | *:pending | *:events)
+    *:send | *:drain | *:pending | *:events | *:compact)
       WORKTREE="$SCRIPT_DIR/../../worktree/scripts/worktree"
       if [ -x "$WORKTREE" ]; then
         ROOT="$("$WORKTREE" path "$ITEM" 2>/dev/null)" || ROOT=""
@@ -809,7 +870,7 @@ lm_box "$ROOT"
 # mailbox is judged by its provider behind `lane-host cat` and `append`.
 lm_plain() {
   local path kind
-  for path in "$MAIL_ROOT/tmp/lane-mail" "$BOX" "$TO_OVERSEER" "$TO_LANE" "$CURSOR" "$CURSOR.lock" "$WATCH_FILE"; do
+  for path in "$MAIL_ROOT/tmp/lane-mail" "$BOX" "$TO_OVERSEER" "$TO_LANE" "$TO_OVERSEER.numbering" "$TO_LANE.numbering" "$CURSOR" "$CURSOR.lock" "$WATCH_FILE"; do
     kind=-f
     case "$path" in "$MAIL_ROOT/tmp/lane-mail" | "$BOX") kind=-d ;; esac
     { [ ! -L "$path" ] && { [ ! -e "$path" ] || test "$kind" "$path"; }; } || refuse mailbox-unsafe "$path"
@@ -873,12 +934,30 @@ lm_fetch() { # REMOTE_PATH DEST — LM_FETCH_ABSENT 1 where the file was not the
   : >"$2" || refuse write-failed "$2"
   if [ "$HOST" -eq 0 ]; then
     [ -f "$1" ] || { LM_FETCH_ABSENT=1; return 0; }
+    case "$1" in
+      "$TO_LANE" | "$TO_OVERSEER")
+        if [ "${LM_HELD_PATH:-}" = "$1" ]; then
+          lm_store snapshot 9 "$1" "$2"
+        else
+          lm_locked 8 "$1" lm_store snapshot 8 "$1" "$2"
+        fi
+        return ;;
+    esac
     cat -- "$1" >"$2" 2>"$WORK_DIR/read.err" \
       || refuse file-unreadable "$1" "$(cat -- "$WORK_DIR/read.err")"
     return 0
   fi
   "$SCRIPT_DIR/lane-host" cat --item "$ITEM" "$1" >"$2" 2>"$WORK_DIR/host.err" || rc=$?
-  [ "$rc" -ne 0 ] || return 0
+  if [ "$rc" -eq 0 ]; then
+    case "$1" in
+      "$TO_LANE" | "$TO_OVERSEER")
+        lm_fetch "$1.numbering" "$2.numbering"
+        [ "$LM_FETCH_ABSENT" -eq 0 ] || rm -f -- "$2.numbering"
+        (exec 8<"$2"; lm_store snapshot 8 "$2" "$2") ;;
+    esac
+    LM_FETCH_ABSENT=0
+    return 0
+  fi
   lm_host_busy "$rc" "$WORK_DIR/host.err"
   lm_host_answers
   [ "$rc" -eq 2 ] || refuse mail-read-failed "$ITEM" "$(cat -- "$WORK_DIR/host.err")"
@@ -904,6 +983,11 @@ lm_host_state() {
 lm_terminated() { # SRC DEST
   local complete=0
   : >"$2" || refuse write-failed "$2"
+  if [ -f "$1.index" ]; then
+    cp -- "$1.index" "$2.index" && cp -- "$1.header" "$2.header" || refuse write-failed "$2"
+  else
+    awk '{ print NR }' <"$1" >"$2.index" || refuse file-unreadable "$1"
+  fi
   [ -s "$1" ] || return 0
   [ -r "$1" ] || refuse file-unreadable "$1"
   mailbox_line_complete "$1" || complete=$?
@@ -914,11 +998,27 @@ lm_terminated() { # SRC DEST
   else
     awk 'NR > 1 { print prev } { prev = $0 }' <"$1" >"$2" 2>"$WORK_DIR/read.err" \
       || refuse file-unreadable "$1" "$(cat -- "$WORK_DIR/read.err")"
+    # Raw snapshots reserve the next logical number for the fragment. Only
+    # this terminated-prefix decision makes that number readable.
+    awk 'NR > 1 { print prev } { prev = $0 }' <"$1.index" >"$2.index" || refuse file-unreadable "$1"
+    if [ -f "$1.header" ]; then
+      awk '{ sub(/^count=/, "", $1); printf "count=%d %s\n", $1 - 1, $2 }' <"$1.header" >"$2.header" || refuse file-unreadable "$1"
+    fi
   fi
 }
 
-lm_count() { # FILE — complete lines, parsing or not
+lm_count() { # FILE — logical complete lines, parsing or not
+  if [ -f "$1.header" ]; then
+    awk '{ sub(/^count=/, "", $1); print $1 }' <"$1.header"
+    return
+  fi
   awk 'END { print NR + 0 }' <"$1"
+}
+
+# Filter a snapshot by logical number, not by its compacted physical offset.
+lm_after_file() { # FILE SEEN DEST
+  awk -v seen="$2" 'FILENAME == ARGV[1] { line[FNR] = $0; next }
+    line[FNR] > seen' "$1.index" "$1" >"$3" || refuse file-unreadable "$1"
 }
 
 # The line a cursor reader saves: the count, and the id its first line carries,
@@ -927,6 +1027,10 @@ lm_count() { # FILE — complete lines, parsing or not
 # old count can tell the file it was taken on from one that has as many lines.
 lm_header() { # FILE
   local first
+  if [ -f "$1.header" ]; then
+    cat -- "$1.header" || refuse file-unreadable "$1.header"
+    return
+  fi
   first="$(awk 'NR == 1 { print; exit }' <"$1" |
     jq -r -R '(fromjson? // empty) | objects | .id | strings | select(test("^[A-Za-z0-9._-]+$"))')" \
     || refuse file-unreadable "$1"
@@ -934,17 +1038,18 @@ lm_header() { # FILE
 }
 
 # The parsing JSON objects among FILE's lines. A terminated line that does not
-# parse is dropped here and counted above. Events name BOX to carry physical
+# parse is dropped here and counted above. Events name BOX to carry logical
 # line numbers before that filtering, aligned with the master's seen count.
 lm_objects() { # FILE [BOX]
-  local count=0
+  local count=0 numbers=/dev/null
   [ "$ITEM" != overseer ] || mailbox_warn_legacy "$1" || return 2
   if [ -n "${2:-}" ]; then
     count="$(lm_count "$1")" || return 1
+    numbers="$1.index"
   fi
-  jq -c -R --arg box "${2:-}" --argjson count "$count" "$MAILBOX_CLASS_JQ"'input_line_number as $line
+  jq -c -R --arg box "${2:-}" --argjson count "$count" --slurpfile numbers "$numbers" "$MAILBOX_CLASS_JQ"'input_line_number as $physical
     | (fromjson? // empty) | select(type == "object")
-    | if $box == "" then . else . + {box: $box, line: $line, count: $count}
+    | if $box == "" then . else . + {box: $box, line: $numbers[$physical - 1], count: $count}
         + (if $box == "to-lane" then {mail_class: overseer_mail_class} else {} end) end' <"$1"
 }
 
@@ -1093,8 +1198,8 @@ lm_notice() { # KEY VALUE FIELD [CAUSE]
 # counts them, so a line number and the cursor are one scale: the one answer
 # to which directives a reader has passed.
 lm_directives() { # FILE
-  jq -c -R -n 'foreach inputs as $raw (0; . + 1;
-    . as $line
+  jq -c -R -n --slurpfile numbers "$1.index" 'foreach inputs as $raw (0; . + 1;
+    $numbers[. - 1] as $line
     | ($raw | try fromjson catch null)
     | select(type == "object" and .kind == "directive")
     | {line: $line, envelope: .})' <"$1" || refuse file-unreadable "$TO_LANE"
@@ -1251,6 +1356,7 @@ lm_ref_find() {
     exec 9<"$path" || refuse file-unreadable "$path"
     orch_take_lock 9 "$path" 30 || { trap lm_cleanup EXIT; refuse lock-failed "$path"; }
     trap lm_cleanup EXIT
+    LM_HELD_PATH="$path"
     if [ "$path" = "$TO_LANE" ]; then
       lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
       lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
@@ -1264,6 +1370,7 @@ lm_ref_find() {
     if [ -n "$ref_json" ]; then
       RE_DELIVERY_ID="$(jq -r '.delivery_id // empty' <<<"$ref_json")" || refuse file-unreadable "$path"
     fi
+    LM_HELD_PATH=""
     exec 9<&-
     orch_release_lock
     [ -z "$ref_json" ] || return 0
@@ -1404,7 +1511,47 @@ lm_seconds() { # OPTION VALUE
   esac
 }
 
+# Cursor, outbound, inbound: inbox takes the same cursor-before-mail order.
+# Both mailbox locks span the exchange classification and the rewrite.
+lm_compact_locked() {
+  local counts root total
+  lm_cursor_read
+  lm_store plan "$BOX" "$WORK_DIR" "$COMPACT_CUTOFF" "$SEEN" "$LM_JQ_DEFS"
+  counts="$(cat -- "$WORK_DIR/counts.json")" || refuse file-unreadable "$BOX"
+  total="$(jq '.["to-lane"] + .["to-overseer"]' <<<"$counts")" || refuse file-unreadable "$BOX"
+  if [ "$total" -gt 0 ]; then
+    # shellcheck source=lib/state-archive.sh
+    . "$SCRIPT_DIR/lib/state-archive.sh"
+    root="$OWN_ROOT"
+    [ -n "$root" ] || root="$ROOT"
+    archive_write "$root" "compact-$ITEM-$COMPACT_NOW" "" "$WORK_DIR/to-lane.jsonl" "$WORK_DIR/to-overseer.jsonl" ||
+      refuse archive-failed "$ARCHIVE_DIR" "$ARCHIVE_ERR"
+    REFUSE_EXTRA="kept=$ARCHIVE"
+    lm_store rewrite "$BOX" "$WORK_DIR"
+    REFUSE_EXTRA=""
+    lm_message archived "$ARCHIVE" >&2
+  fi
+  jq -r --arg item "$ITEM" '"compacted item=\($item) to-lane=\(.["to-lane"]) to-overseer=\(.["to-overseer"])"' <<<"$counts"
+}
+
 case "$VERB" in
+  compact)
+    # Retention reads settings here, not on the hooks' reader path.
+    COMPACT_DAYS="$("$SCRIPT_DIR/orch-env" ORCH_RECORD_RETENTION_DAYS 5)" || refuse retention-invalid ORCH_RECORD_RETENTION_DAYS
+    # The relay's settings.py uses seven days when the setting is absent.
+    THREAD_DAYS="$("$SCRIPT_DIR/orch-env" SLACK_THREAD_DAYS 7)" || refuse retention-invalid SLACK_THREAD_DAYS
+    case "$COMPACT_DAYS:$THREAD_DAYS" in *[!0-9:]*) refuse retention-invalid "$COMPACT_DAYS:$THREAD_DAYS" ;; esac
+    [ "$COMPACT_DAYS" -gt 0 ] && [ "$THREAD_DAYS" -gt 0 ] || refuse retention-invalid "$COMPACT_DAYS:$THREAD_DAYS"
+    [ "$COMPACT_DAYS" -ge "$THREAD_DAYS" ] || COMPACT_DAYS="$THREAD_DAYS"
+    COMPACT_NOW="$(date -u +%s)" || refuse write-failed "$BOX"
+    COMPACT_CUTOFF="$((COMPACT_NOW - COMPACT_DAYS * 86400))"
+    if [ ! -d "$BOX" ]; then
+      printf 'compacted item=%s to-lane=0 to-overseer=0\n' "$ITEM"
+    else
+      lm_existing_lock 7 "$CURSOR.lock" lm_existing_lock 8 "$TO_OVERSEER" lm_existing_lock 9 "$TO_LANE" lm_compact_locked
+    fi
+    ;;
+
   ask | notice)
     lm_read_file
     if [ "$VERB" = notice ] && [ -n "$OPTIONS" ]; then
@@ -1684,7 +1831,8 @@ case "$VERB" in
       # the first unread halt, whatever a hook that showed it acknowledges.
       jq -r -R '(fromjson? // null) | if type == "object" and .halt == true then "halt" else "-" end' \
         <"$WORK_DIR/lane.jsonl" >"$WORK_DIR/kinds" || refuse file-unreadable "$TO_LANE"
-      HALT_AT="$(awk -v seen="$SEEN" 'NR > seen && $0 == "halt" { print NR - 1; exit }' <"$WORK_DIR/kinds")" ||
+      HALT_AT="$(awk -v seen="$SEEN" 'FILENAME == ARGV[1] { line[FNR] = $0; next }
+        line[FNR] > seen && $0 == "halt" { print line[FNR] - 1; exit }' "$WORK_DIR/lane.jsonl.index" "$WORK_DIR/kinds")" ||
         refuse file-unreadable "$TO_LANE"
       [ -z "$HALT_AT" ] || [ "$ACK" -le "$HALT_AT" ] || ACK="$HALT_AT"
       [ "$ASKED" -le "$COUNT" ] || lm_notice ack-clamped "$ACK" "asked=$ASKED"
@@ -1711,7 +1859,7 @@ case "$VERB" in
       lm_notice cursor-lowered "$COUNT" "was=$SEEN"
     fi
     [ "$PEEK" -eq 0 ] || lm_header "$WORK_DIR/lane.jsonl"
-    awk -v seen="$SEEN" 'NR > seen' <"$WORK_DIR/lane.jsonl" >"$WORK_DIR/unread"
+    lm_after_file "$WORK_DIR/lane.jsonl" "$SEEN" "$WORK_DIR/unread"
     lm_inbox_objects "$WORK_DIR/unread"
     # Rewritten only when it moves, so a read that found nothing new leaves
     # the file as it was.
@@ -1750,7 +1898,7 @@ case "$VERB" in
       [ "$ANNOUNCED" -ge "$SEEN" ] || ANNOUNCED="$SEEN"
       lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
       lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
-      awk -v seen="$ANNOUNCED" 'NR > seen' <"$WORK_DIR/lane.jsonl" >"$WORK_DIR/unread"
+      lm_after_file "$WORK_DIR/lane.jsonl" "$ANNOUNCED" "$WORK_DIR/unread"
       NEW="$(lm_inbox_objects "$WORK_DIR/unread" | awk 'END { print NR + 0 }')" ||
         refuse file-unreadable "$TO_LANE"
       if [ "$NEW" -ne 0 ]; then
@@ -1822,7 +1970,7 @@ case "$VERB" in
     lm_terminated "$WORK_DIR/over.raw" "$WORK_DIR/over.jsonl"
     if [ "$VERB" = drain ]; then
       lm_header "$WORK_DIR/over.jsonl"
-      awk -v seen="$AFTER" 'NR > seen' <"$WORK_DIR/over.jsonl" >"$WORK_DIR/new"
+      lm_after_file "$WORK_DIR/over.jsonl" "$AFTER" "$WORK_DIR/new"
     else
       cat -- "$WORK_DIR/over.jsonl" >"$WORK_DIR/new"
     fi

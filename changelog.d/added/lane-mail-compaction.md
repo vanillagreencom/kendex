@@ -1,0 +1,1 @@
+- Orch archives expired mailbox rows without changing read positions and removes session records for panes that no longer run.

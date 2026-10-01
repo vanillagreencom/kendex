@@ -748,7 +748,8 @@ unsafe_inbox() { # KIND COMPONENT — relative to tmp/lane-mail, empty for tmp/l
   UNSAFE="$RC=$ERR"
 }
 for row in link: link:KEN-1 link:KEN-1/to-overseer.jsonl link:KEN-1/to-lane.jsonl link:KEN-1/to-lane.cursor \
-  link:KEN-1/to-lane.cursor.lock link:KEN-1/to-lane.watch kind:KEN-1 kind:KEN-1/to-lane.jsonl; do
+  link:KEN-1/to-lane.cursor.lock link:KEN-1/to-lane.watch link:KEN-1/to-lane.jsonl.numbering \
+  link:KEN-1/to-overseer.jsonl.numbering kind:KEN-1/to-lane.jsonl.numbering kind:KEN-1 kind:KEN-1/to-lane.jsonl; do
   component="${row#*:}"
   unsafe_inbox "${row%%:*}" "$component"
   assert_eq "$UNSAFE" "2=lane-mail: mailbox-unsafe=$UNSAFE_PATH" \
@@ -926,7 +927,7 @@ held_hosted_send() { # LIB — sets HELD to the line counts during and after
 host_lm drain --item KEN-1 --root "$REMOTE_ROOT" --host --after 0
 assert_eq "$RC=$(count_line)" "0=count=1" "a hosted drain counts the remote mailbox"
 assert_eq "$(tail -n +2 <<<"$OUT" | jq -r '.text')" "Hosted question" "a hosted drain reads the lane's own host"
-assert_eq "$(grep -c -- "$REMOTE_ROOT/tmp/lane-mail/KEN-1/to-overseer.jsonl" "$STUB_LOG")" "1" \
+assert_eq "$(grep -c -- "$REMOTE_ROOT/tmp/lane-mail/KEN-1/to-overseer.jsonl $" "$STUB_LOG")" "1" \
   "the hosted read names the remote path in the transport's call log"
 host_lm send --item KEN-1 --root "$REMOTE_ROOT" --host --re remote-ask --file "$(text a 'Hosted answer.')"
 assert_eq "$RC" "0" "a hosted send exits 0"

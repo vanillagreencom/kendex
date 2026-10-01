@@ -59,6 +59,27 @@ assert_eq "$(head -1 <<<"$out")" "EVENT lane-question KEN-7 $SECOND" "a second a
 assert_not_contains "$out" "Cut the scanner or keep it?" \
   "the second pass carries only the message the first did not" "$err"
 
+# Removing the original first row must preserve the watch's count and first id.
+# The unread ask stays open, so the next pass must not deliver it again.
+answer KEN-7 "$ID" 'Keep it.' >/dev/null
+MAIL_BOX="$CASE_REPO_ROOT/tmp/lane-mail/KEN-7"
+for MAIL_FILE in to-overseer to-lane; do
+  jq -c --arg id "$ID" 'if .id == $id or .re == $id then .at = "2000-01-01T00:00:00Z" else . end' \
+    "$MAIL_BOX/$MAIL_FILE.jsonl" > "$TMP_ROOT/aged-mail"
+  mv -- "$TMP_ROOT/aged-mail" "$MAIL_BOX/$MAIL_FILE.jsonl"
+done
+(cd "$CASE_REPO_ROOT" && "$LANE_MAIL" inbox --item KEN-7 >/dev/null)
+COMPACTED="$(cd "$CASE_REPO_ROOT" && env ORCH_RECORD_RETENTION_DAYS=5 SLACK_THREAD_DAYS=5 \
+  FLEET_DIR="$TMP_ROOT/mail-archive" "$LANE_MAIL" compact --item KEN-7 --root "$CASE_REPO_ROOT")"
+assert_eq "$COMPACTED" 'compacted item=KEN-7 to-lane=1 to-overseer=1' 'compact removes the closed first exchange'
+err="$TMP_ROOT/mail-compacted"
+out="$(run_watch -- --max-loops 1 --item KEN-7 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "$HEARTBEAT" 'compaction delivers no envelope twice' "$err"
+THIRD="$(say KEN-7 ask 'And the parser?')"
+THIRD="${THIRD#id=}"
+out="$(run_watch -- --max-loops 1 --item KEN-7 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-question KEN-7 $THIRD" 'mail appended after compaction is delivered once' "$err"
+
 new_case mail_notice
 mail_reset KEN-8
 say KEN-8 notice 'Rebased onto main; CI is green.' >/dev/null

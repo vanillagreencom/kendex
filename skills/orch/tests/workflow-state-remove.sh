@@ -118,7 +118,7 @@ rc=0
 out="$(remove "$WS" "$nf" KEN-1 2>&1)" || rc=$?
 [[ "$rc" -eq 0 && ! -e "$nf/waiter.abc" && -e "$nf/completion-summary-KEN-2.md" \
    && "$(grep -c '^removed path=' <<<"$out" || true)" == 6 \
-   && "$(grep '^pruned fleet_log=' <<<"$out" || true)" == "pruned fleet_log=0 lanes=0 progress_reports=0 paths=1" \
+   && "$(grep '^pruned fleet_log=' <<<"$out" || true)" == "pruned fleet_log=0 lanes=0 progress_reports=0 paths=1 to-lane=0 to-overseer=0 sessions=0" \
    && "$(tail -n 1 <<<"$out")" == "kept=$nf.fleet/"*.tgz ]] \
   && pass "with no fleet state the close-out prunes an old file no item names and names its archive" \
   || fail "with no fleet state the close-out prunes an old file no item names and names its archive" "rc=$rc out=$out"
@@ -302,7 +302,7 @@ remove "$NO_ITEM_MATCH" "$mp" KEN-1 >/dev/null 2>&1 || true
 # The archive's must-fail control: the close-out's archive dropped, so the
 # removed worktree's records and the item's state are gone with it.
 NO_ARCHIVE="$(mutant_scripts no-archive workflow-state)/workflow-state" || exit 1
-mutate_file "$NO_ARCHIVE" 'archive_write "close-$item-$now_epoch"' 'true'
+mutate_file "$NO_ARCHIVE" 'archive_write "$archive_root" "close-$item-$now_epoch"' 'true'
 worktree_run no-archive "$NO_ARCHIVE"
 [[ "$WORKTREE" == *" state=removed back=unreadable"* ]] \
   && pass "control: without the close-out archive the removed evidence cannot be read back" \

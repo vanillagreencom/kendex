@@ -163,7 +163,7 @@ start_after="$(jq -r '.lanes[0].launched_at' "$sd/workflow-state-oversee.json")"
   || fail "the fleet start, the first lane record's launched_at, is unchanged" "before=$start_before after=$start_after"
 
 count="$(grep '^pruned fleet_log=' "$TMP_ROOT/main.out" || true)"
-[[ "$count" == "pruned fleet_log=1 lanes=2 progress_reports=2 paths=10" ]] \
+[[ "$count" == "pruned fleet_log=1 lanes=2 progress_reports=2 paths=10 to-lane=0 to-overseer=0 sessions=0" ]] \
   && pass "the count line names each record removed" \
   || fail "the count line names each record removed" "got=$count"
 
@@ -249,7 +249,7 @@ kept|waiter.run/watch.log|the --keep run directory
 kept|fresh.md|a file inside the retention
 ROWS
 count="$(grep '^pruned fleet_log=' <<<"$out" || true)"
-[[ "$count" == "pruned fleet_log=0 lanes=0 progress_reports=0 paths=6" && ! -e "$bare/tmp/workflow-state-oversee.json" ]] \
+[[ "$count" == "pruned fleet_log=0 lanes=0 progress_reports=0 paths=6 to-lane=0 to-overseer=0 sessions=0" && ! -e "$bare/tmp/workflow-state-oversee.json" ]] \
   && pass "with no fleet state the count names the paths alone and no fleet state is written" \
   || fail "with no fleet state the count names the paths alone and no fleet state is written" "got=$count"
 archive="$(sed -n 's/^kept=//p' <<<"$out")"
@@ -261,7 +261,7 @@ grep -qxF -- "${bare#/}/tmp/mutstab-diag/run.log" <<<"$listing" \
 mkdir -p "$TMP_ROOT/empty"
 rc=0
 out="$( (cd "$TMP_ROOT/empty" && ORCH_RECORD_RETENTION_DAYS=2 FLEET_DIR="$TMP_ROOT/empty/fleet" "$WS" prune) 2>&1)" || rc=$?
-[[ "$rc" -eq 0 && "$out" == $'pruned fleet_log=0 lanes=0 progress_reports=0 paths=0\nkept=none' && ! -e "$TMP_ROOT/empty/tmp" ]] \
+[[ "$rc" -eq 0 && "$out" == $'pruned fleet_log=0 lanes=0 progress_reports=0 paths=0 to-lane=0 to-overseer=0 sessions=0\nkept=none' && ! -e "$TMP_ROOT/empty/tmp" ]] \
   && pass "a prune with no state directory removes nothing and creates none" \
   || fail "a prune with no state directory removes nothing and creates none" "rc=$rc out=$out"
 
@@ -510,7 +510,7 @@ big_run() { # NAME SCRIPT
   BIG="rc=$rc $(grep '^pruned fleet_log=' <<<"$out" || true) left=$(jq '.fleet_log | length' "$bp/tmp/workflow-state-oversee.json")"
 }
 big_run shipped "$WS"
-[[ "$BIG" == "rc=0 pruned fleet_log=4000 lanes=0 progress_reports=0 paths=0 left=0" ]] \
+[[ "$BIG" == "rc=0 pruned fleet_log=4000 lanes=0 progress_reports=0 paths=0 to-lane=0 to-overseer=0 sessions=0 left=0" ]] \
   && pass "aged rows past both argument limits are pruned from the state" \
   || fail "aged rows past both argument limits are pruned from the state" "$BIG"
 

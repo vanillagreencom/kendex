@@ -797,15 +797,15 @@ assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '[has("wait"), has("deadline")] 
 
 new_repo control_box
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 'Owner wrote.')"
-mutant boxless 'box: $box, line: $line' 'line: $line'
+mutant boxless 'box: $box, line: $numbers[$physical - 1]' 'line: $numbers[$physical - 1]'
 lm events --item overseer
 assert_eq "$RC=$(jq -r '.box // "none"' <<<"$OUT")" "0=none" "control: without the box field a to-lane envelope names no file"
 
 new_repo control_lines
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 'Owner wrote.')"
-mutant lineless '{box: $box, line: $line, count: $count}' '{box: $box, line: 0, count: $count}'
+mutant lineless '{box: $box, line: $numbers[$physical - 1], count: $count}' '{box: $box, line: 0, count: $count}'
 lm events --item overseer
-assert_eq "$RC=$(jq -r '.line' <<<"$OUT")" "0=0" "control: without physical numbering an envelope has no usable cursor position"
+assert_eq "$RC=$(jq -r '.line' <<<"$OUT")" "0=0" "control: without logical numbering an envelope has no usable cursor position"
 
 new_repo control_recommend
 mutant recommend-optional 'if [ "$VERB:$ITEM" = ask:overseer ]; then' 'if [ -n "$RECOMMEND" ]; then'
