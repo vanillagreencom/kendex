@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, jest, setSystemTime, test } from "bun:test";
+import { afterEach, beforeEach, expect, jest, setSystemTime, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -99,30 +99,39 @@ test("only the latest queued resume action stays pending, and session_shutdown d
 });
 
 test("the loaded index and parsed prompts are released after the default TTL and on release", async () => {
-	jest.useFakeTimers();
 	const ctx = makeCtx({ cwd: workdir });
 	const prompts = join(workdir, "prompts.jsonl");
 	const line = (text: string) => JSON.stringify({ type: "message", message: { role: "user", content: text } });
-	writeFileSync(prompts, line("before"));
-	await refreshQolSessionSearchCache(ctx as any);
-	await refreshQolSessionSearchCache(ctx as any);
-	sessionUserMessages(prompts);
-	expect(listAllCalls).toBe(1);
-	// The timer drops the parsed prompts with the index, with no search to trigger it.
-	writeFileSync(prompts, line("after"));
-	jest.advanceTimersByTime(DEFAULT_SESSION_SEARCH_CACHE_TTL_SECONDS * 1000);
-	expect(sessionUserMessages(prompts)[0]?.text).toBe("after");
-	await refreshQolSessionSearchCache(ctx as any);
-	expect(listAllCalls).toBe(2);
-	releaseQolSessionSearchCache();
-	await refreshQolSessionSearchCache(ctx as any);
-	expect(listAllCalls).toBe(3);
+	// Advance only the cache's registered expiry. Global fake timers also
+	// control scheduling while the real asynchronous file reads are pending.
+	const timer = spyOn(globalThis, "setTimeout");
+	try {
+		writeFileSync(prompts, line("before"));
+		await refreshQolSessionSearchCache(ctx as any);
+		await refreshQolSessionSearchCache(ctx as any);
+		expect(sessionUserMessages(prompts)[0]?.text).toBe("before");
+		expect(listAllCalls).toBe(1);
+		const expiry = timer.mock.calls.find(([callback]) => callback === releaseQolSessionSearchCache);
+		expect(expiry?.[1]).toBe(DEFAULT_SESSION_SEARCH_CACHE_TTL_SECONDS * 1000);
+		// No search triggers expiry: the timer drops both index and parsed prompts.
+		writeFileSync(prompts, line("after"));
+		(expiry![0] as () => void)();
+		expect(sessionUserMessages(prompts)[0]?.text).toBe("after");
+		await refreshQolSessionSearchCache(ctx as any);
+		expect(listAllCalls).toBe(2);
+		writeFileSync(prompts, line("released"));
+		releaseQolSessionSearchCache();
+		expect(sessionUserMessages(prompts)[0]?.text).toBe("released");
+		await refreshQolSessionSearchCache(ctx as any);
+		expect(listAllCalls).toBe(3);
+	} finally { timer.mockRestore(); }
 });
 
 test("opening session search after the index was released shows the overlay before the reload finishes", async () => {
 	const order: string[] = [];
-	let finishLoad: (sessions: unknown[]) => void = () => {};
-	stubSessionManager.listAll = () => new Promise((resolve) => { finishLoad = resolve; });
+	let finishLoad!: (sessions: unknown[]) => void;
+	const pendingLoad = new Promise<unknown[]>((resolve) => { finishLoad = resolve; });
+	stubSessionManager.listAll = () => pendingLoad;
 	let renders = 0;
 	let rendered!: () => void;
 	const firstRender = new Promise<void>((resolve) => { rendered = resolve; });
@@ -140,7 +149,8 @@ test("opening session search after the index was released shows the overlay befo
 		},
 	});
 	const opened = openQolSessionSearch(makeFakeApi().api, ctx as any);
-	await Promise.resolve();
+	expect(order).toEqual(["overlay"]);
+	expect(renders).toBe(0);
 	order.push("load finished");
 	finishLoad([{ path: join(workdir, "a.jsonl"), allMessagesText: "text", modified: new Date(0) }]);
 	// The overlay is told to redraw once the loaded index reaches it.

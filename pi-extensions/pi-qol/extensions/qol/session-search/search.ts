@@ -93,9 +93,11 @@ function sessionTitleSearchText(session: QolSessionSearchSession): string {
 }
 
 export function buildPromptSnippet(message: QolSessionUserMessage, parsed: QolParsedSessionQuery, regexMatch?: SessionRegexMatch | null): string {
+	// Worker offsets refer to the original prompt, before whitespace collapses.
+	if (parsed.mode === "regex" && regexMatch) return snippetAround(message.text, regexMatch.index, Math.min(regexMatch.length, 160), 160, 24).replace(/\s+/g, " ").trim();
 	const source = message.text.replace(/\s+/g, " ").trim();
 	if (!source) return "";
-	if (parsed.mode === "regex") return regexMatch ? snippetAround(source, regexMatch.index, Math.min(regexMatch.length, 160), 160, 24) : source.slice(0, 160);
+	if (parsed.mode === "regex") return source.slice(0, 160);
 	const lower = source.toLowerCase();
 	for (const token of parsed.tokens) {
 		const value = normalizeSearchText(token.value);
