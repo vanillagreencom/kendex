@@ -420,8 +420,11 @@ fn verdicts<'a>(
         }
         let unneeded = derived_only(entry);
         let unfiltered = options.removal_filter.is_none();
+        // Refresh's unfiltered sweep retires agents dropped by a manifest
+        // rename. A named removal does not sweep unrelated requested agents.
+        let dropped_agent = unfiltered && entry.kind == ItemKind::Agent;
         let removable = (options.remove_orphans && (named || unfiltered))
-            || (options.sweep_unneeded && (unneeded || departed_harness));
+            || (options.sweep_unneeded && (unneeded || departed_harness || dropped_agent));
         if !removable {
             verdicts.push((key, Verdict::Left { unneeded }));
             continue;

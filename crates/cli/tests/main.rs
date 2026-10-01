@@ -54,6 +54,7 @@ mod pi_shadow_package;
 mod pi_staleness;
 mod presentation;
 mod project_path_target;
+mod refresh_agent_cleanup;
 mod refresh_fresh_clone;
 mod refresh_ledger;
 mod release_workflow;

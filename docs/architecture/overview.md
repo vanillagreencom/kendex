@@ -66,7 +66,7 @@ The desktop app and CLI project one Rust model: scan, declare, diff and apply. T
 
 ## Topics
 
-- [engine.md](engine.md): read before changing planning, apply, locks, manifests, ownership, take-over or forks.
+- [engine](engine.md), [refresh](refresh.md): planning, apply, locks, manifests, ownership, take-over or forks.
 - [sources.md](sources.md): read before changing the source store, discovery, browsing, subscriptions, bundles, unsubscribe or the drift snapshot.
 - [harnesses.md](harnesses.md): read before changing an adapter, the capability table, rendering, hook delivery or the Pi carrier.
 - [in-place.md](in-place.md): read before changing project resolution, the worktree guard or in-place packages.

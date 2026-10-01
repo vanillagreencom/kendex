@@ -17,8 +17,8 @@ use crate::ui::{self, Span};
 /// Regenerate every declared installation, and re-derive what those
 /// declarations pull in — a dependency that appeared upstream, one that went
 /// away. Regenerating is automatic; changing *what is installed* is shown
-/// first and needs an answer. Orphans nobody derived are left alone:
-/// `remove` and `apply` clean those up.
+/// first and needs an answer. Recorded agents no longer declared here
+/// are removed; other orphans nobody derived are left for `remove` and `apply`.
 #[derive(clap::Args)]
 pub struct RefreshArgs {
     #[arg(short = 'g', long)]

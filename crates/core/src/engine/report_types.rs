@@ -473,8 +473,9 @@ pub struct PlanOptions {
     /// keeps declarations sets this: its plan writes no manifest, so a merge
     /// rendered and recorded here would never reach the file.
     pub hold_upstream_skills: bool,
-    /// Remove orphaned (locked-but-undeclared) artifacts. Refresh keeps
-    /// them (v1 semantics); reconcile and `remove` clean them up.
+    /// Remove orphaned (locked-but-undeclared) artifacts, limited by
+    /// `removal_filter` when present. Apply selects all orphans and
+    /// `remove` selects the names requested.
     pub remove_orphans: bool,
     /// Restrict orphan removal to these names. One list rather than a
     /// typed one beside an untyped one: a caller that set both would have
@@ -483,7 +484,8 @@ pub struct PlanOptions {
     pub removal_filter: Option<Vec<RemovalName>>,
     /// Also remove installations nothing asked for that nothing needs
     /// anymore — a dependency whose last dependent went away, or one an
-    /// upstream item stopped requiring.
+    /// upstream item stopped requiring. An unfiltered sweep also retires
+    /// recorded agents no longer declared, as refresh does after a rename.
     pub sweep_unneeded: bool,
     /// Bundles this plan uninstalls. Their members that survive are named in
     /// the preview with what keeps them, so an uninstall says both halves:
