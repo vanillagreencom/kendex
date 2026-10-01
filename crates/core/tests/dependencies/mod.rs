@@ -367,8 +367,7 @@ fn a_reference_that_does_not_reach_every_tool_claims_no_co_install() {
                 .iter()
                 .any(|w| w.message.contains("missing required dependency")),
             missing,
-            "{what}: {:?}",
-            report.warnings
+            "{what}"
         );
     }
 }

@@ -372,8 +372,7 @@ fn a_same_named_hook_does_not_undo_a_skill_removal_when_its_catalog_returns() {
                         == "missing required dependency: shared requires shared, which is kept removed"
             }),
             kind.is_some(),
-            "{kind:?} offline={offline}: {:?}",
-            returned.warnings
+            "{kind:?} offline={offline}"
         );
         apply::execute(&f.env, &returned.plan).unwrap();
         let manifest = manifest_of(&f);
