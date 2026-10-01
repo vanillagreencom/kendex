@@ -50,10 +50,19 @@ control_replace scripts/lib/pages.sh 1 \
     '            data=$(jq -cs --arg root "$root" '\''.[1] as $value | .[0] | .[$root] = $value'\'' <<<"$data"$'\''\n'\''"$value") || return 1' \
     '            data=$(jq -c --arg root "$root" --argjson value "$value" '\''.[$root] = $value'\'' <<<"$data") || return 1'
 
+# Root truncation leaves nested completion intact. An open nested page passed
+# to linear_complete_result would otherwise re-enter that same broken pager.
 control_expect 'shape: rows and fields'
 control_replace scripts/lib/pages.sh 1 \
     '        if [[ "$next" == false ]]; then break; fi' \
-    '        if [[ "$next" == false || "$count" == 1 ]]; then break; fi'
+    '        if [[ "$next" == false || ( "$path" == issues && "$count" == 1 ) ]]; then break; fi'
+
+# Skip nested continuation at its owner, so the first page reaches the existing
+# row assertion instead of recursively passing open metadata to the pager.
+control_expect 'nested: rows and fields'
+control_replace scripts/lib/pages.sh 1 \
+    '        next=$(jq -r --arg field "$field" '\''.[$field].pageInfo.hasNextPage'\'' <<<"$data") || return 1' \
+    '        next=$(jq -r --arg field "$field" '\''.[$field].pageInfo.hasNextPage and false'\'' <<<"$data") || return 1'
 
 control_expect 'missing-metadata: cause'
 control_replace scripts/lib/pages.sh 1 \
