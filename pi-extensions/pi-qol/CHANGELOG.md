@@ -5,7 +5,7 @@
 ### 2.3.3
 
 - Session search prepares prompts and project paths asynchronously, cancels obsolete searches, and waits for a pause in typing before searching. Regex searches stop with a deadline error instead of freezing Pi. Submitted image paths load asynchronously and refuse a combined image size above 20 MiB before reading or encoding the files.
-- Copy and Fork retrieve the complete selected prompt instead of the shortened search text. Image refusal preserves a newer editor draft and reports the error on stderr in print and JSON modes.
+- Copy and Fork keep the search overlay open while they retrieve the complete selected prompt. Copy fills the editor before the overlay closes, so a delayed read cannot replace a newer draft. Image refusal preserves a newer editor draft and reports the error on stderr in print and JSON modes.
 
 ### 2.3.2
 

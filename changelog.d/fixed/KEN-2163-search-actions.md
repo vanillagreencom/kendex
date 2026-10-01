@@ -1,1 +1,1 @@
-- Pi QOL Copy and Fork keep the complete selected prompt. Image refusals report errors to headless callers and preserve a newer editor draft.
+- Pi QOL Copy and Fork load complete prompts before closing search. Copy and image refusals preserve newer editor drafts. Headless image refusals report errors.

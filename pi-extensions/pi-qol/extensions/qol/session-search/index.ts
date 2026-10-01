@@ -9,7 +9,6 @@ import {
 	queueSessionSearchPendingAction,
 	refreshQolSessionSearchCache,
 	sessionDisplayName,
-	sessionUserMessageForAction,
 	setPendingSessionSearchMessage,
 } from "./cache.js";
 import { QolSessionSearchComponent } from "./component.js";
@@ -47,7 +46,7 @@ export async function runSessionSearchResumeOrFork(pi: ExtensionAPI, ctx: Extens
 	const currentThinking = action.keepCurrentModel && typeof pi.getThinkingLevel === "function" ? pi.getThinkingLevel() : undefined;
 	let replacementStarted = false;
 	try {
-		const selectedMessage = action.type === "fork" ? await sessionUserMessageForAction(action.result, action.message, ctx.signal) : undefined;
+		const selectedMessage = action.type === "fork" ? action.message : undefined;
 		if (currentModel) pinSessionModel(action.result.path, currentModel, currentThinking);
 		const result = await commandCtx.switchSession(action.result.path, {
 			withSession: async (replacementCtx: any) => {
@@ -134,7 +133,13 @@ export async function openQolSessionSearch(pi: ExtensionAPI, ctx: ExtensionConte
 	try {
 		const currentModel = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined;
 		action = await ctx.ui.custom<QolSessionPaletteAction>((tui, theme, _keybindings, done) => {
-			component = new QolSessionSearchComponent(done, tui, theme, { status: "loading" }, ctx.cwd, initialQuery, currentModel);
+			component = new QolSessionSearchComponent((selected) => {
+				if (selected.type === "copy") {
+					ctx.ui.setEditorText(selected.message!.text);
+					ctx.ui.notify("Copied selected prompt into the editor", "info");
+				}
+				done(selected);
+			}, tui, theme, { status: "loading" }, ctx.cwd, initialQuery, currentModel);
 			void loading.then((load) => component?.setSessions(load));
 			return component;
 		}, {
@@ -152,16 +157,6 @@ export async function openQolSessionSearch(pi: ExtensionAPI, ctx: ExtensionConte
 	if (!action || action.type === "cancel" || !action.result) return;
 	if (action.type === "resume" || action.type === "fork") {
 		if (!(await runSessionSearchResumeOrFork(pi, ctx, action))) queueSessionSearchCommandAction(ctx, action);
-		return;
-	}
-	if (action.type === "copy") {
-		try {
-			const message = await sessionUserMessageForAction(action.result, action.message, ctx.signal);
-			ctx.ui.setEditorText(message.text);
-			ctx.ui.notify("Copied selected prompt into the editor", "info");
-		} catch (error) {
-			ctx.ui.notify(`Copy failed: ${stringifyError(error)}`, "error");
-		}
 		return;
 	}
 	if (action.type === "summarize") {

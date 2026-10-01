@@ -9,15 +9,14 @@ import {
 	prepareQolSessionSearchSessions,
 	modelLabel,
 	sameModel,
-
 	sessionModelInfo,
 	sessionResumeTitle,
 	shortPathForUi,
 	userMessagesForResult,
+	sessionUserMessageForAction,
 	type QolModelInfo,
 } from "./cache.js";
 import {
-
 	formatSessionSearchDate,
 	parseSessionSearchQuery,
 	promptRecencyTime,
@@ -127,7 +126,7 @@ export class QolSessionSearchComponent {
 	private queryController: AbortController | undefined;
 	private debounceTimer: ReturnType<typeof setTimeout> | undefined;
 	private currentSessions: QolSessionSearchSession[] = [];
-	private searchStatus: { status: "searching" } | { status: "ready" } | { status: "failed"; error: string } = { status: "ready" };
+	private searchStatus: { status: "searching" | "action" } | { status: "ready" } | { status: "failed"; error: string } = { status: "ready" };
 
 
 	constructor(
@@ -139,7 +138,22 @@ export class QolSessionSearchComponent {
 		initialQuery = "",
 		currentModel: QolModelInfo | undefined = undefined,
 	) {
-		this.done = (action) => { this.dispose(); done(action); };
+		this.done = async (action) => {
+			try {
+				if (action.type === "copy" || action.type === "fork") {
+					this.screen = "search";
+					this.searchStatus = { status: "action" };
+					this.tui.requestRender();
+					action = { ...action, message: await sessionUserMessageForAction(action.result!, action.message, this.indexController.signal) };
+				}
+				if (this.indexController.signal.aborted) return;
+				this.dispose(); done(action);
+			} catch (error) {
+				if (this.indexController.signal.aborted) return;
+				this.searchStatus = { status: "failed", error: `${action.type === "copy" ? "Copy" : "Fork"} failed: ${String(error)}` };
+				this.tui.requestRender();
+			}
+		};
 		this.tui = tui;
 		this.theme = theme;
 		this.sessions = sessions;
@@ -241,6 +255,7 @@ export class QolSessionSearchComponent {
 	}
 
 	handleInput(data: string): void {
+		if (this.searchStatus.status === "action") return matchesKey(data, "escape") ? this.done({ type: "cancel" }) : undefined;
 		if (this.screen === "messages" && this.messagesState) this.handleMessagesInput(data);
 		else if (this.screen === "actions" && this.actionState) this.handleActionInput(data);
 		else if (this.screen === "confirmContext" && this.contextConfirmState) this.handleContextConfirmInput(data);
@@ -687,8 +702,8 @@ export class QolSessionSearchComponent {
 			lines.push(row(muted(`Could not load sessions: ${this.sessions.error.split("\n")[0]}`)));
 		} else if (this.searchStatus.status === "failed") {
 			lines.push(row(muted(`Search failed: ${this.searchStatus.error.split("\n")[0]}`)));
-		} else if (this.searchStatus.status === "searching") {
-			lines.push(row(muted("Searching…")));
+		} else if (this.searchStatus.status === "searching" || this.searchStatus.status === "action") {
+			lines.push(row(muted(this.searchStatus.status === "action" ? "Loading prompt…  Esc cancel" : "Searching…")));
 		} else if (state.results.length === 0) {
 			lines.push(row(muted(state.query.trim() ? "No prompts match your search" : "No prompts found")));
 		} else {

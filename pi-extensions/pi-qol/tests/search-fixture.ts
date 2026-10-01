@@ -7,7 +7,29 @@ import { join, resolve } from "node:path";
 import type { QolSessionSearchComponent } from "../extensions/qol/session-search/component.ts";
 import type { QolSessionSearchSession, QolSessionSearchState } from "../extensions/qol/session-search/types.ts";
 
-export const theme = { fg: (_color: string, text: string) => text, bg: (_color: string, text: string) => text };
+type ComponentTheme = ConstructorParameters<typeof QolSessionSearchComponent>[2];
+type NeutralTheme = {
+	[Key in keyof ComponentTheme as ComponentTheme[Key] extends (...args: never[]) => unknown ? Key : never]: ComponentTheme[Key];
+};
+
+const plainText = (text: string) => text;
+
+/** The neutral fixture implements the component theme's full method API. */
+export const theme: NeutralTheme = {
+	style: plainText,
+	fg: (_color, text) => text,
+	bg: (_color, text) => text,
+	bold: plainText,
+	italic: plainText,
+	underline: plainText,
+	inverse: plainText,
+	strikethrough: plainText,
+	getFgAnsi: () => "",
+	getBgAnsi: () => "",
+	getColorMode: () => "truecolor",
+	getThinkingBorderColor: () => plainText,
+	getBashModeBorderColor: () => plainText,
+};
 
 export function scratch(): string { return realpathSync(mkdtempSync(join(tmpdir(), "qol-search-test-"))); }
 
