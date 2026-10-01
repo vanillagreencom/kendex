@@ -2,7 +2,7 @@
 //! transactional apply. The must-fail control runs this fixture on main.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::test_util::{rooted, source_path};
 use kendex_core::apply;
@@ -125,7 +125,10 @@ fn a_legacy_consumer_renders_with_skills_labels_templates_and_one_warning_per_na
             format!("agent-frontmatter.pi.{old}"),
             "skill-instructions.review".to_owned(),
             "env.LINEAR_AGENT_LABELS".to_owned(),
-            "templates/issue.md".to_owned(),
+            Path::new("templates")
+                .join("issue.md")
+                .display()
+                .to_string(),
             "kendex.settings.toml.example".to_owned(),
         ] {
             assert!(
