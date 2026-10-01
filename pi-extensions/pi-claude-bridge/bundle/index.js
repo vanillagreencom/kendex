@@ -36323,7 +36323,7 @@ function connectorsEnabledFor(config2) {
 }
 function settingSourcesForQuery(connectorsEnabled, appendSystemPrompt, configured) {
   if (connectorsEnabled) return configured ?? ["user"];
-  return appendSystemPrompt ? void 0 : configured ?? ["user", "project"];
+  return configured ?? (appendSystemPrompt ? void 0 : ["user", "project"]);
 }
 var CLAUDE_AI_CONNECTOR_TOOL_PATTERNS = [
   "mcp__claude_ai_Gmail__*",
@@ -55284,7 +55284,7 @@ function buildClaudeQueryOptions(input) {
   const promptContextAppend = buildPromptContextAppend(systemPrompt, cwd, bridgeConfig.promptContext ?? {});
   const appendParts = [agentsAppend, skillsAppend, promptContextAppend.text].filter((part) => Boolean(part));
   const systemPromptAppend = appendParts.length > 0 ? appendParts.join("\n\n") : void 0;
-  const strictMcpConfigEnabled = !appendSystemPrompt && providerSettings.strictMcpConfig !== false;
+  const strictMcpConfigEnabled = !enableCloudMcp || !appendSystemPrompt && providerSettings.strictMcpConfig !== false;
   const requestedEffort = reasoning ? queryModel.thinkingLevelMap?.[reasoning] ?? REASONING_TO_EFFORT[reasoning] : void 0;
   const effort = resolveConfiguredEffort(queryModel.id, requestedEffort, providerSettings);
   const extraArgs = {};
@@ -55303,7 +55303,13 @@ function buildClaudeQueryOptions(input) {
     permissionMode: "bypassPermissions",
     includePartialMessages: true,
     ...fallbackModel ? { fallbackModel } : {},
-    ...providerSettings.fastMode ? { settings: { fastMode: true } } : {},
+    // Filesystem settings.env overrides the inherited child environment.
+    // SDK settings maps to --settings, above user/project/local settings, so
+    // pin the connector switch there as well without dropping fastMode.
+    ...!enableCloudMcp || providerSettings.fastMode ? { settings: {
+      ...!enableCloudMcp ? { env: { ENABLE_CLAUDEAI_MCP_SERVERS: "0" } } : {},
+      ...providerSettings.fastMode ? { fastMode: true } : {}
+    } } : {},
     systemPrompt: {
       type: "preset",
       preset: "claude_code",

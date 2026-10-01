@@ -58,6 +58,7 @@ export interface Config {
 		 * so for checkouts you trust.
 		 */
 		settingSources?: SettingSource[];
+		/** Connectors-off queries always enforce strict MCP, regardless of this value. */
 		strictMcpConfig?: boolean;
 		pathToClaudeCodeExecutable?: string;
 		/**

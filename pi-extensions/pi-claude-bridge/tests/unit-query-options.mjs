@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { ALWAYS_DENIED_BUILTIN_TOOLS, DISALLOWED_BUILTIN_TOOLS, SUBSTITUTED_BUILTIN_TOOLS } from "../src/index.ts";
 import { buildClaudeQueryOptions } from "../src/query-options.ts";
 import { clearPackageConfigCache } from "../src/package-config.ts";
+import { assertSourceControl } from "./lib/source-control.mjs";
 
 const model = { id: "claude-haiku-4-5", api: "claude-bridge", provider: "pi-claude", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
 const bridgedServer = { "custom-tools": { name: "custom-tools", instance: {} } };
@@ -112,13 +113,43 @@ describe("bridge query options: the substituted built-ins follow the bridged too
 	});
 });
 
+describe("must-fail controls: connectors-off query enforcement", () => {
+	const rows = [
+		{
+			why: "loaded settings cannot enable cloud connectors",
+			before: '...(!enableCloudMcp ? { env: { ENABLE_CLAUDEAI_MCP_SERVERS: "0" } } : {}),',
+			after: '...(!enableCloudMcp ? { env: { ENABLE_CLAUDEAI_MCP_SERVERS: "1" } } : {}),',
+			failure: /command-line settings override user env without dropping fastMode/,
+		},
+		{
+			why: "user-scope MCP cannot load undeclared servers",
+			before: 'const strictMcpConfigEnabled = !enableCloudMcp || (!appendSystemPrompt && providerSettings.strictMcpConfig !== false);',
+			after: 'const strictMcpConfigEnabled = enableCloudMcp || (!appendSystemPrompt && providerSettings.strictMcpConfig !== false);',
+			failure: /only bridge-declared MCP servers load/,
+		},
+	];
+	for (const row of rows) {
+		it(row.why, () => assertSourceControl({
+			source: "src/query-options.ts",
+			...row,
+			suite: "unit-query-options.mjs",
+			pattern: "user sources load with connectors off",
+		}));
+	}
+});
+
 // One session outside any repository, with a marker in the Pi agent-dir
-// AGENTS.md: a connectors session loads Claude user settings, whose user level
-// is then the only source of global instructions, so the append omits the file.
+// AGENTS.md: loaded Claude user settings supply global instructions regardless
+// of the connectors switch, so the append omits the file.
 describe("bridge query options: the Pi agent-dir AGENTS.md is forwarded once without Claude user settings and not with them", () => {
 	const rows = [
-		{ why: "connectors off keeps SDK isolation", provider: {}, settingSources: undefined, forwarded: 1 },
+		{ why: "sources are unset with connectors off", provider: {}, settingSources: undefined, forwarded: 1 },
 		{ why: "connectors on loads Claude user settings", provider: { enableConnectors: true }, settingSources: ["user"], forwarded: 0 },
+		{ why: "user sources load with connectors off", provider: { settingSources: ["user"] }, settingSources: ["user"], forwarded: 0 },
+		{ why: "user and project sources load with connectors off", provider: { settingSources: ["user", "project"] }, settingSources: ["user", "project"], forwarded: 0 },
+		{ why: "strict MCP cannot opt out of connectors-off loaded sources", provider: { settingSources: ["user"], strictMcpConfig: false, fastMode: true }, settingSources: ["user"], forwarded: 0 },
+		{ why: "project-only sources keep Pi global instructions", provider: { settingSources: ["project"] }, settingSources: ["project"], forwarded: 1 },
+		{ why: "empty sources stay empty", provider: { settingSources: [] }, settingSources: [], forwarded: 1 },
 	];
 	for (const row of rows) {
 		it(`forwards it ${row.forwarded} time(s) when ${row.why}`, () => {
@@ -136,11 +167,27 @@ describe("bridge query options: the Pi agent-dir AGENTS.md is forwarded once wit
 				delete process.env.CLAUDE_BRIDGE_ISOLATED;
 				delete process.env.CLAUDE_BRIDGE_ENABLE_CONNECTORS;
 				process.chdir(outsideRepo);
-				const built = build({ bridgeConfig: { provider: row.provider } });
+				const skills = "The following skills provide specialized instructions for specific tasks.\n<available_skills>skill marker</available_skills>";
+				const built = build({ bridgeConfig: { provider: row.provider }, mcpServers: bridgedServer, systemPrompt: skills });
 
+				assert.equal(built.appendSystemPrompt, true);
 				assert.deepEqual(built.queryOptions.settingSources, row.settingSources);
 				const append = built.queryOptions.systemPrompt.append ?? "";
 				assert.equal(append.split("global style marker").length - 1, row.forwarded);
+				assert.ok(append.includes("skill marker"), "Pi skills still append with loaded settings");
+				if (!row.provider.enableConnectors) {
+					assert.equal(built.queryOptions.env.ENABLE_CLAUDEAI_MCP_SERVERS, "0");
+					assert.deepEqual(built.queryOptions.settings, {
+						env: { ENABLE_CLAUDEAI_MCP_SERVERS: "0" },
+						...(row.provider.fastMode ? { fastMode: true } : {}),
+					}, "command-line settings override user env without dropping fastMode");
+					assert.equal(built.queryOptions.strictMcpConfig, true, "only bridge-declared MCP servers load");
+					assert.deepEqual(built.queryOptions.mcpServers, bridgedServer, "no connector servers are declared");
+					assert.deepEqual(built.queryOptions.allowedTools, ["mcp__custom-tools__*"], "no connector allow patterns");
+					assert.deepEqual(built.queryOptions.disallowedTools, DISALLOWED_BUILTIN_TOOLS);
+					assert.deepEqual(built.queryOptions.tools, []);
+					assert.equal(built.queryOptions.hooks, undefined, "uses non-connector isolation");
+				}
 			} finally {
 				process.chdir(oldCwd);
 				for (const [key, value] of Object.entries(saved)) {

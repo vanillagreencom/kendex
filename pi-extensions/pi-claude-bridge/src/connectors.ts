@@ -69,12 +69,7 @@ export function connectorsEnabledFor(config?: Config): boolean {
 
 // Which filesystem setting sources the `claude` child may load.
 //
-// claude.ai cloud MCP connectors only load when Claude Code resolves its
-// filesystem setting sources at all: the SDK treats settingSources=undefined as
-// isolation (no sources), which drops the connectors even with
-// ENABLE_CLAUDEAI_MCP_SERVERS=1. So connectors mode must pass SOME source list.
-//
-// It must be `["user"]` and nothing more. Connector state lives in
+// Connectors default to `["user"]` and nothing more. Connector state lives in
 // USER scope — the account's config dir (CLAUDE_CONFIG_DIR for managed router
 // profiles) — so user scope is sufficient for connectors to surface. Claude
 // Code settings files can also carry an `env` map and `apiKeyHelper`; including
@@ -94,12 +89,9 @@ export function settingSourcesForQuery(
 	configured?: SettingSource[],
 ): SettingSource[] | undefined {
 	if (connectorsEnabled) return configured ?? ["user"];
-	// Non-connectors: appendSystemPrompt=true (default) keeps SDK isolation
-	// (undefined = no filesystem settings; configured sources deliberately do
-	// not apply in isolation mode). If users turn it off they opted into Claude
-	// Code's own settings behavior; project scope there is the historical
-	// contract and runs alongside --strict-mcp-config (see the query builder).
-	return appendSystemPrompt ? undefined : configured ?? ["user", "project"];
+	// Keep the historical defaults when no list is configured. Prompt appending
+	// does not override an explicit selection of Claude Code settings sources.
+	return configured ?? (appendSystemPrompt ? undefined : ["user", "project"]);
 }
 
 // Cloud MCP connector tool namespaces auto-allowed when connectors are enabled.

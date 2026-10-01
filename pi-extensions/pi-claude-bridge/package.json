@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-claude-bridge",
-  "version": "4.0.8",
+  "version": "4.0.9",
   "description": "Pi provider bridge that runs Claude Code through the Claude Agent SDK, with opt-in forwarding for Pi prompt context.",
   "type": "module",
   "keywords": [
@@ -79,7 +79,7 @@
         {
           "key": "strictMcpConfig",
           "label": "Strict MCP config",
-          "description": "When Claude Code filesystem settings are loaded, tell Claude Code to use only MCP servers passed by the bridge, avoiding token-heavy MCP auto-loads.",
+          "description": "Use only MCP servers passed by the bridge. Always enforced with connectors off; configurable with connectors on when prompt appending is off.",
           "type": "boolean",
           "default": true,
           "category": "Claude Code",

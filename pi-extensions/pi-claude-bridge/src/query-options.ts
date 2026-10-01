@@ -105,13 +105,9 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Bu
 	// before the CLI has fetched them.
 	const connectorServers = enableCloudMcp ? connectorServersSnapshot(accountScope.claudeConfigDir) : {};
 	const appendSystemPrompt = providerSettings.appendSystemPrompt !== false;
-	// MCP auto-loading suppression: with appendSystemPrompt=true (default), the
-	// SDK uses isolation mode and avoids filesystem settings. If users turn that
-	// off, load user/project settings but pass --strict-mcp-config so Claude Code
-	// ignores auto-discovered filesystem MCP servers while Pi owns tool execution.
-	// Connectors mode needs settings resolution ON but restricted to USER scope
-	// only — project/local settings files can smuggle `env`/`apiKeyHelper` from
-	// a hostile checkout. Full rationale on settingSourcesForQuery.
+	// Settings sources and prompt appending are independent. The default source
+	// selection and the trust implications of project/local sources belong to
+	// settingSourcesForQuery.
 	const settingSources: SettingSource[] | undefined = settingSourcesForQuery(
 		enableCloudMcp, appendSystemPrompt, providerSettings.settingSources);
 	const agentsAppend = appendSystemPrompt ? extractAgentsAppend(settingSources) : undefined;
@@ -120,7 +116,10 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Bu
 	const appendParts = [agentsAppend, skillsAppend, promptContextAppend.text].filter((part): part is string => Boolean(part));
 	const systemPromptAppend = appendParts.length > 0 ? appendParts.join("\n\n") : undefined;
 
-	const strictMcpConfigEnabled = !appendSystemPrompt && providerSettings.strictMcpConfig !== false;
+	// settingSources does not exclude user-scope MCP in ~/.claude.json, even
+	// with an empty list. --strict-mcp-config is the SDK/CLI boundary that keeps
+	// connectors-off children limited to the bridge's declared servers.
+	const strictMcpConfigEnabled = !enableCloudMcp || (!appendSystemPrompt && providerSettings.strictMcpConfig !== false);
 	// Prefer the model's own thinkingLevelMap when present (pi-ai 0.72+ ships
 	// per-model overrides — e.g. opus-4-7 wants xhigh→xhigh, not xhigh→max).
 	// Fall back to our generic table for older pi-ai or unmapped levels.
@@ -148,8 +147,8 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Bu
 		: fallbackModelForPrimaryModel(queryModel.id);
 
 	// Suppress claude.ai cloud MCP servers (Figma/Canva/etc. auto-discovered via OAuth
-	// when the user is logged into Anthropic). These are a separate code path from
-	// filesystem MCP and are NOT blocked by --strict-mcp-config or settingSources=undefined.
+	// when the user is logged into Anthropic). Keep the environment gate as well
+	// as strict MCP; selecting filesystem settings sources alone does not block them.
 	// The native CC binary gates them on env var ENABLE_CLAUDEAI_MCP_SERVERS: setting it
 	// to "0"/"false"/"no"/"off" makes the loader return early before any cloud fetch.
 	// DISABLE_AUTO_COMPACT=1: pi owns context-management and propagates its own
@@ -172,7 +171,13 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Bu
 		permissionMode: "bypassPermissions",
 		includePartialMessages: true,
 		...(fallbackModel ? { fallbackModel } : {}),
-		...(providerSettings.fastMode ? { settings: { fastMode: true } } : {}),
+		// Filesystem settings.env overrides the inherited child environment.
+		// SDK settings maps to --settings, above user/project/local settings, so
+		// pin the connector switch there as well without dropping fastMode.
+		...(!enableCloudMcp || providerSettings.fastMode ? { settings: {
+			...(!enableCloudMcp ? { env: { ENABLE_CLAUDEAI_MCP_SERVERS: "0" } } : {}),
+			...(providerSettings.fastMode ? { fastMode: true } : {}),
+		} } : {}),
 		systemPrompt: {
 			type: "preset", preset: "claude_code",
 			append: systemPromptAppend ? systemPromptAppend : undefined,
