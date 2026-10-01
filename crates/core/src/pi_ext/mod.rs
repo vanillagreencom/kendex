@@ -382,7 +382,14 @@ fn unlink_bins(dir: &Path, dest: &Path) -> Result<()> {
     for entry in read_dir(dir)? {
         let link = entry.path();
         if link.is_symlink() {
-            let target = link.canonicalize().map_err(|e| CoreError::io(&link, e))?;
+            // Windows can reject a relative link's stored slash separators.
+            // Resolve its text with platform components before containment.
+            let target = std::fs::read_link(&link)
+                .and_then(|target| {
+                    dir.join(target.components().collect::<PathBuf>())
+                        .canonicalize()
+                })
+                .map_err(|e| CoreError::io(&link, e))?;
             if target.starts_with(&dest) {
                 std::fs::remove_file(&link).map_err(|e| CoreError::io(&link, e))?;
             }

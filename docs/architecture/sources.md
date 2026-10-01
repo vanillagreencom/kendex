@@ -3,8 +3,6 @@
 Covers: crates/core/src/source/, crates/core/src/source.rs, crates/core/src/source_read.rs, crates/core/src/source_ref.rs, crates/core/src/remote/, crates/core/src/package/, crates/core/src/drift/, crates/core/src/check_catalog.rs, crates/core/src/library.rs
 
 
-`library::Origin::Builtin` marks harness content, not user or unmanaged files; [engine](engine.md).
-
 ## Boundaries
 
 - `source/config/agent_names.rs` owns agent aliases and complete `agent:` label tokens, not roles or skills. Declared and resolved `local` sources keep literal names, keyed settings, fork records and references. Other sources read canonical files only. Hook selectors change only when `render::agent::selects` returns `Named`. Plans normalize consumer keys and `LINEAR_AGENT_LABELS`, preserve comments and unrelated values, and refuse duplicate identities. One warning per old name lists affected settings. Compatibility follows [the release standard](../../changelog.d/README.md). Enforced by `crates/core/tests/agent_aliases.rs`.

@@ -1,0 +1,1 @@
+- Pi package removal resolves bin link targets with platform path components before it checks package ownership.
