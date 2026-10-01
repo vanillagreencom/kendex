@@ -14,6 +14,11 @@ git -C "$PROJECT" config gc.auto 0
 git -C "$PROJECT" config maintenance.auto false
 fixture_root=$(git -C "$PROJECT" rev-parse --show-toplevel)
 assert_eq 'fixture Git root stays in scratch' "$fixture_root" "$PROJECT"
+# Only fixture setup inherits Git redirects. Request children use env -i,
+# so repeating their OAuth cases cannot test the caller's Git environment.
+if [[ "${OAUTH_GIT_REDIRECT_CHILD:-0}" == 1 ]]; then
+    exit 0
+fi
 cp -R -- "$SKILL_DIR" "$PROJECT/.agents/skills/linear"
 LINEAR="$PROJECT/.agents/skills/linear/scripts/linear.sh"
 REAL_JQ=$(command -v jq)
@@ -386,6 +391,4 @@ for row in 'token-failure|token-http=400' 'token-transport|token=transport-faile
     assert_eq "mint-$mode: no stdout" "$OUT" ''
 done
 
-if [[ "${OAUTH_GIT_REDIRECT_CHILD:-0}" != 1 ]]; then
-    run_oauth_git_redirects "$SCRIPT_DIR/oauth-auth.test.sh" "$TMP_ROOT/git-callers"
-fi
+run_oauth_git_redirects "$SCRIPT_DIR/oauth-auth.test.sh" "$TMP_ROOT/git-callers"

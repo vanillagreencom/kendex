@@ -255,8 +255,9 @@ run_oauth_request() {
 		"$@" bash "$command" "${action[@]}" 2>"$LOG/error") && RC=0 || RC=$?
 }
 
-# Run the OAuth suite with repository redirects emitted by Git for normal and
-# linked caller worktrees. The child flag prevents recursive isolation probes.
+# Run the OAuth fixture setup with repository redirects emitted by Git for
+# normal and linked caller worktrees. The child stops before OAuth requests,
+# whose explicit environment already removes the caller's Git redirects.
 run_oauth_git_redirects() {
 	local suite="$1" root="$2" kind caller base git_dir common_dir work_tree index_file rc
 	local before after
