@@ -199,7 +199,10 @@ lane_copilot_pool_fix() { # HOST READ [DIR [STATUS [DETAIL]]]
 #             and URLs asking. `--autopilot` starts the session in autopilot
 #             mode, which sends the session continuation messages of its own,
 #             as many as `--max-autopilot-continues <count>` allows, 5 by
-#             default. `--context long_context` selects the 1M window where
+#             default; the row holds the two as runs of their own, so a
+#             caller's bare `--autopilot` is taken out and never reaches a
+#             successor on another harness. `--context long_context`
+#             selects the 1M window where
 #             the default is about 200K, so the handoff's 400000-token cap
 #             comes before the automatic compaction Copilot starts at about 80
 #             percent of the window, and `--no-auto-update` keeps a newer CLI
@@ -242,7 +245,7 @@ LAUNCH_CHOICE_FLAGS=(
   'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never|--dangerously-bypass-approvals-and-sandbox|-c check_for_update_on_startup=false|-c features.default_mode_request_user_input=false|-c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0'
   'opencode|-m --model|-|-|-|-|-|-|-|-'
   'pi|--model|--thinking|:|-|-|-|-|--exclude-tools question|-'
-  'copilot|--model|--reasoning-effort|-|-|--allow-all --yolo --allow-all-tools|--allow-all --yolo|--autopilot --max-autopilot-continues 3;--context long_context;--no-auto-update|--no-ask-user|-'
+  'copilot|--model|--reasoning-effort|-|-|--allow-all --yolo --allow-all-tools|--allow-all --yolo|--autopilot;--max-autopilot-continues 3;--context long_context;--no-auto-update|--no-ask-user|-'
 )
 # The row for harness $1, empty where the table names no such harness.
 launch_choice_row() { # HARNESS

@@ -169,6 +169,8 @@ while IFS='|' read -r label config want_status want_reason; do
   assert_eq "$(record 1copilot .status)|$reason" "\"$want_status\"|$want_reason" "$label"
 done <<'ROWS'
 a login as a bare string reads|{"copilot_tokens":"gho_bare"}|ok|none
+the login under the key Copilot CLI 1.0.90 writes reads|{"copilotTokens":{"https://github.com:user":"gho_cur"}}|ok|none
+the current key is read ahead of the 1.0.88 one|{"copilotTokens":{"https://github.com:a":"x","https://github.com:b":"y"},"copilot_tokens":"gho_old"}|no_credentials|login unread: token-ambiguous
 no config.json is no login|-|no_credentials|login unread: config-missing
 a config.json that is not JSON is unreadable|{"copilot_tokens":|no_credentials|login unread: config-unreadable
 no copilot_tokens key is no login|{"logged_in_users":[]}|no_credentials|login unread: token-missing
@@ -180,6 +182,22 @@ ROWS
 printf '// This file is managed automatically\n{"copilot_tokens":{"https://github.com:user":"gho_c"}}\n' > "$H/.1copilot/config.json"
 run_lanes list --harness copilot --local --json
 assert_eq "$(record 1copilot .status)" '"ok"' "the comment line the CLI writes ahead of the JSON is skipped"
+# An account a Copilot CLI 1.0.90 session runs on, its login as that CLI writes
+# it, is measured by `list` and named by `pick --lane`; with the reader held to
+# the 1.0.88 key it reads no_credentials and the pick refuses it unmeasured.
+printf '// This file is managed automatically\n{"copilotTokens":{"https://github.com:user":"gho_cur"}}\n' > "$H/.1copilot/config.json"
+CTL_KEY="$(mutant_scripts ctl-login-key lib/copilot-credits.sh)" || exit 1
+mutate_file "$CTL_KEY/lib/copilot-credits.sh" '(.copilotTokens // .copilot_tokens) as $t' '.copilot_tokens as $t'
+for bin in "" "$CTL_KEY/lanes"; do
+  LANES_BIN="$bin" run_lanes list --harness copilot --local --json
+  listed="$(record 1copilot '[.status, .monthly_pct]')"
+  LANES_BIN="$bin" run_lanes pick --lane "$H/.1copilot" --harness copilot --json
+  if [[ -z "$bin" ]]; then
+    assert_eq "$listed|rc=$RC" '["ok",10]|rc=0' "the running session's account under the current login key is measured"
+  else
+    assert_eq "$listed|rc=$RC" '["no_credentials",null]|rc=5' "control: a reader of the 1.0.88 key alone leaves that account unmeasured"
+  fi
+done
 rm -f -- "${H:?}/.1copilot/config.json"
 ROW_ENV=(ORCH_LANE_COPILOT_POOL="$H/.1copilot=250/1000")
 run_lanes pick --lane "$H/.1copilot" --harness copilot --json

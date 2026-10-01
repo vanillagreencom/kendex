@@ -456,6 +456,49 @@ assert_eq "$RC|$(first_key)|$(launched claude)|$(launched codex)" \
   "control: a walk that chooses the untransferable entry refuses and launches nothing"
 CALLER_FLAGS=("$BYPASS")
 
+# A Copilot overseer whose ladder starts on claude: the deprecated numeric
+# entry would run the caller's Copilot model spelling on the claude CLI, so it
+# is skipped with the keyed line naming that model, and the named Opus entry
+# launches with claude's own model id. The caller's full bypass crosses as
+# claude's word; its `--autopilot`, a Copilot run mode, does not cross.
+copilot_ladder() { # ROW [SUCCEED_BIN]
+  new_caller copilot ""
+  jq -n --arg server "$SERVER_PID" --argjson start "$SERVER_START" --arg pane "$CALLER_PANE" \
+    --arg account "$H/.1copilot" \
+    '{issue_id: "oversee", overseer: {runtime: "tmux", generation: 1, server: $server,
+      server_start: $start, pane: $pane, harness: "copilot", account: $account,
+      home: $account, model: "", effort: "", cwd: null, launch_line: "recorded"}}' \
+    > "$TMP_ROOT/work/tmp/workflow-state-oversee.json"
+  CALLER_FLAGS=(--model claude-opus-5.5 --reasoning-effort high --yolo --autopilot)
+  CALLER_LANE="COPILOT_HOME=$H/.1copilot" LANE_DIRS="$H/.claude:$H/.eclaude:$H/.1copilot:$H/.2copilot" \
+    SUCCEED_BIN="${2:-}" run_succeed "$1" 'claude:1:high,claude:claude-opus-5-5:high' \
+    --walled-pane "$CALLER_PANE" --harness copilot
+  CALLER_FLAGS=("$BYPASS")
+}
+# copilot_crossed — what crossed onto the claude line: its lane and model, then
+# how many --autopilot words and Copilot model spellings it carries.
+copilot_crossed() {
+  printf '%s|%s|%s' "$(launched claude)" "$(grep -cx -e --autopilot "$TMP_ROOT/argv.claude" || true)" \
+    "$(grep -cxF -e claude-opus-5.5 "$TMP_ROOT/argv.claude" || true)"
+}
+copilot_ladder copilotcaller
+assert_eq "$RC|$(keyed entry-permission-untransferable)|$(copilot_crossed)|$(grep -cx -e "$BYPASS" "$TMP_ROOT/argv.claude")" \
+  "0|oversee-succeed: entry-permission-untransferable entry=claude::high source=copilot target=claude model=claude-opus-5.5|$H/.eclaude claude-opus-5-5|0|0|1" \
+  "a Copilot caller onto claude skips the numeric entry and carries neither --autopilot nor its model spelling"
+# Its controls, one per rule: a launch table holding --autopilot inside the
+# run with its count lets the bare word cross, and a walk that admits the
+# numeric entry hands claude the Copilot model spelling.
+AUTOCTL="$(mutant_scripts autoctl lib/lane-launch.sh)" || exit 1
+mutate_file "$AUTOCTL/lib/lane-launch.sh" '|--autopilot;--max-autopilot-continues 3;' '|--autopilot --max-autopilot-continues 3;'
+copilot_ladder autoctl "$AUTOCTL/oversee-succeed"
+assert_eq "$RC|$(copilot_crossed)" "0|$H/.eclaude claude-opus-5-5|1|0" \
+  "control: --autopilot kept in one run with its count crosses onto the claude line"
+NUMCTL="$(mutant_scripts numctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$NUMCTL/lib/overseer-launch.sh" '  if [[ "$1" == *::* ]]; then' '  if false; then'
+copilot_ladder numctl "$NUMCTL/oversee-succeed"
+assert_eq "$RC|$(keyed entry-permission-untransferable)|$(copilot_crossed)" "0|none|$H/.eclaude claude-opus-5.5|0|1" \
+  "control: a walk admitting the numeric entry hands claude the Copilot model spelling"
+
 # The ladder's first rung: a claude seat with Fable room takes a Fable
 # successor, although another seat has Opus room. A default that starts on
 # Opus, or puts Opus ahead of Fable, moves this successor down a model.

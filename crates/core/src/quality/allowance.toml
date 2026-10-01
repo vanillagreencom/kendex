@@ -14,11 +14,11 @@ name = "orch"
 
 [[package.file]]
 path = "scripts/lib/lane-launch.sh"
-hash = "fe38dd9d3a7537f6f210b45f2181e1dd048ccfda5f05941577143ee042abdfa1"
+hash = "c317776b75c7e1b06b0bdef77ff2730c8f70f76033b7b4781679bdb0f8419dae"
 
 [[package.file.finding]]
 rule = "safety-bypass"
-line = 241
+line = 244
 message = "`--dangerously-skip-permissions` turns off permission prompts"
 
 [[package]]

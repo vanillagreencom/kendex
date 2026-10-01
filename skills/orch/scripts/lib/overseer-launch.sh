@@ -199,7 +199,9 @@ ol_pi_model() { # MODEL...
 
 # ol_entry_model ENTRY — one entry ol_preference_entries admitted, split into
 # OL_ENTRY_HARNESS, OL_ENTRY_MODEL and OL_ENTRY_EFFORT. A normalized numeric
-# entry has no model word and uses the caller's launch or observed model. The
+# entry has no model word and uses the caller's launch or observed model, which
+# is spelled for the caller's harness: ol_entry_permitted skips such an entry
+# naming another harness rather than hand that spelling to its CLI. The
 # setting is the one source of which models the walk tries and in what order,
 # so nothing here holds a model list to check a name against: the launch line
 # carries the model the entry names, and a name its harness does not know is
@@ -421,7 +423,11 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
 # launch_choice_permission_transferable), entry-permission-untransferable
 # where not; with OL_WALK_SOURCE_ROWS 1, a judgement handed no permission
 # words, the source row naming a transferable posture, and a skip says
-# nothing. So no posture crosses to or from pi, whose row names none.
+# nothing. So no posture crosses to or from pi, whose row names none. A
+# numeric entry of another harness than its source is skipped the same way,
+# with `model=` naming the caller's model: that model is spelled for the
+# source harness (copilot's `claude-opus-5.5` is claude's `claude-opus-5-5`),
+# and no table here translates one harness's spelling into another's.
 ol_entry_permitted() { # ENTRY
   local tab=$'\t'
   if [[ -z "$OL_WALK_SOURCE_HARNESS" ]]; then
@@ -430,6 +436,11 @@ ol_entry_permitted() { # ENTRY
     return 1
   fi
   [[ "$OL_HARNESS" != "$OL_WALK_SOURCE_HARNESS" ]] || return 0
+  if [[ "$1" == *::* ]]; then
+    (( OL_WALK_SOURCE_ROWS )) \
+      || OL_WALK_SKIPS+=("entry-permission-untransferable${tab}entry=$1${tab}source=$OL_WALK_SOURCE_HARNESS${tab}target=$OL_HARNESS${tab}model=${OL_MODEL:-none}")
+    return 1
+  fi
   if launch_choice_permission_write "$OL_HARNESS" >/dev/null; then
     if (( OL_WALK_SOURCE_ROWS )); then
       [[ -z "$(launch_choice_transfer_permission_spellings "$OL_WALK_SOURCE_HARNESS")" ]] || return 0
@@ -802,6 +813,24 @@ ol_succession() { # PREDECESSOR CWD LINE IDENTITY PENDING LANE_VAR LANE_DIR FORM
 # account and model the NEXT session will run, and judging this one against
 # them would hand the running overseer another session's marks.
 # ---------------------------------------------------------------------------
+
+# ol_fleet_log NOTICE_FILE RECORD_FILE ERR_FILE [STATE_CMD...] — one `close`
+# row about the overseer in the fleet log: the text in NOTICE_FILE, the record
+# built in RECORD_FILE, jq's and the writer's words in ERR_FILE. STATE_CMD is
+# the workflow-state command and its arguments, this package's own where none
+# is given. The record carries no `at`: `workflow-state append-file` stamps
+# the fleet log's time from its own clock, so the record written here and the
+# one an overseer writes by hand are dated by one reader. Every overseer notice
+# the fleet log carries goes through here: the watch's, at its start and from
+# its passes, and a succession refused after its successor opened.
+ol_fleet_log() { # NOTICE_FILE RECORD_FILE ERR_FILE [STATE_CMD...]
+  local notice="$1" record="$2" errf="$3"
+  shift 3
+  [[ $# -gt 0 ]] || set -- "$SCRIPT_DIR/workflow-state"
+  jq -n --rawfile text "$notice" \
+    '{kind: "close", item: "overseer", text: ($text | rtrimstr("\n"))}' > "$record" 2>"$errf" || return 1
+  "$@" append-file oversee fleet_log "$record" >/dev/null 2>"$errf"
+}
 
 # ol_record_read — the current object into OL_PRIOR as JSON, `null` where the
 # state carries none. A state that cannot be read at all returns 1: the

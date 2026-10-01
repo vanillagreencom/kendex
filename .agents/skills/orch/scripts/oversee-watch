@@ -719,20 +719,6 @@ fleet_merge() { # [quiet]
   fi
 }
 
-# One `close` row about the overseer in the fleet log: the text in
-# NOTICE_FILE, the record built in RECORD_FILE, jq's and the writer's words in
-# ERR_FILE. The record carries no `at`: `workflow-state append-file` stamps
-# the fleet log's time from its own clock, so the record written here and the
-# one an overseer writes by hand are dated by one reader. Every overseer
-# notice the fleet log carries goes through here, at the watch's start and
-# from its passes alike.
-overseer_fleet_log() { # NOTICE_FILE RECORD_FILE ERR_FILE
-  jq -n --rawfile text "$1" \
-    '{kind: "close", item: "overseer", text: ($text | rtrimstr("\n"))}' > "$2" 2>"$3" || return 1
-  "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
-    append-file oversee fleet_log "$2" >/dev/null 2>"$3"
-}
-
 # A session record the start could not write, said on stderr and in the fleet
 # log and then left behind: the watch goes on to judge the session, from the
 # exit status and rows file the record already holds for this pane where it
@@ -763,7 +749,7 @@ overseer_record_notice() { # DETAIL HELD REASON PANE_FIELD FIELD=VALUE...
   esac
   if printf '%s: the start could not record this session; the pane is still watched. %s %s\n' "$1 $2" "$OW_REPLAY_RULE" "$held_text" > "$notice"
   then
-    if ! overseer_fleet_log "$notice" "$record" "$errf"; then
+    if ! ol_fleet_log "$notice" "$record" "$errf" "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"}; then
       ow_message overseer-notice-failed "channel=fleet-log" >&2
       [[ ! -s "$errf" ]] || cat -- "$errf" >&2
     fi
@@ -2267,10 +2253,10 @@ overseer_note() { # REASON FIELD=VALUE...
 }
 
 # The two channels a pass's overseer notice reaches: the fleet log through
-# overseer_fleet_log, and the overseer mailbox as a directive.
+# lib/overseer-launch.sh § ol_fleet_log, and the overseer mailbox as a directive.
 overseer_publish() { # NOTICE RECORD ERR_FILE
   local notice="$1" record="$2" errf="$3"
-  overseer_fleet_log "$notice" "$record" "$errf" \
+  ol_fleet_log "$notice" "$record" "$errf" "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
     || overseer_note overseer-notice-failed "channel=fleet-log"
   "$LANE_MAIL" send --item overseer --directive --file "$notice" >/dev/null 2>"$errf" \
     || overseer_note overseer-notice-failed "channel=lane-mail"
@@ -2706,7 +2692,7 @@ overseer_gap_alert() { # PANE GAP
     "$1" "$2" > "$notice" || { overseer_note overseer-notice-failed "channel=file"; return 1; }
   "$LANE_MAIL" notice --item overseer --to owner --file "$notice" >/dev/null 2>"$errf" \
     || { overseer_note overseer-notice-failed "channel=owner"; return 1; }
-  overseer_fleet_log "$notice" "$record" "$errf" \
+  ol_fleet_log "$notice" "$record" "$errf" "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
     || overseer_note overseer-notice-failed "channel=fleet-log"
   ow_message overseer-context-alerted "pane=$1" "gap=$2" >&2
 }

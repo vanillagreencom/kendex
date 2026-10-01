@@ -825,15 +825,31 @@ SCHED_SLACK=2
 # that figure is about: never less than --wait-secs, since the loop abandons
 # only once the budget is gone, and never more than a late schedule can add.
 IDLE_WAIT=2
+# idle_log — the fleet log rows the refusal left, `kind item text`, its window
+# and wait normalized.
+idle_log() { jq -r '(.fleet_log // [])[] | "\(.kind) \(.item) \(.text)"' "$FLEET_STATE" | sed 's/window=@[0-9]*/window=@N/; s/waited=[0-9]*/waited=N/'; }
 new_caller "$MARK"
+fleet_state
 touch "$TMP_ROOT/idle"
 run_succeed idle 'claude:fable:high' --wait-secs "$IDLE_WAIT"
 rm -f "$TMP_ROOT/idle"
 idle_waited="$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/.*waited=//')"
 idle_budget="$(in_range spent "$idle_waited" "$IDLE_WAIT" "$((IDLE_WAIT + SCHED_SLACK))")"
-assert_eq "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/window=@[0-9]*/window=@N/; s/waited=[0-9]*/waited=N/')|$idle_budget|$(grep -cF 'FIXTURE successor startup waiting' <<<"$OUT")|$(caller_open)|$(overseers)" \
-  "1|oversee-succeed: successor-not-working window=@N waited=N|spent|1|yes|0" \
-  "never working: refused after its whole budget, caller kept, successor closed"
+assert_eq "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/window=@[0-9]*/window=@N/; s/waited=[0-9]*/waited=N/')|$idle_budget|$(grep -cF 'FIXTURE successor startup waiting' <<<"$OUT")|$(caller_open)|$(overseers)|$(grep -c '^oversee-succeed: watch-' <<<"$OUT")|$(idle_log)" \
+  "1|oversee-succeed: successor-not-working window=@N waited=N|spent|1|yes|0|0|close overseer oversee-succeed: successor-not-working window=@N waited=N The successor never showed a running turn; the caller keeps running." \
+  "never working: refused after its whole budget, caller kept, successor closed, no watch handed over, the refusal in the fleet log"
+# Its control: a refusal that writes no fleet log row leaves the session that
+# reads the log next with no word that the succession failed.
+IDLECTL="$(mutant_scripts idlectl oversee-succeed)" || exit 1
+mutate_file "$IDLECTL/oversee-succeed" '      fleet_log_refusal successor-not-working "window=$SUCC_WINDOW" "waited=$OL_WAITED"' '      :'
+new_caller "$MARK"
+fleet_state
+touch "$TMP_ROOT/idle"
+SUCCEED_BIN="$IDLECTL/oversee-succeed" run_succeed idlectl 'claude:fable:high' --wait-secs "$IDLE_WAIT"
+rm -f "${TMP_ROOT:?}/idle"
+assert_eq "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | cut -d' ' -f1-2)|$(idle_log)" \
+  "1|oversee-succeed: successor-not-working|" \
+  "control: a refusal that skips the fleet log row leaves no row"
 
 # The wait asks the turn-in-flight predicate, not the lane_state judge beside
 # it. A successor drawing a dialog line in its very first turn is a launched
