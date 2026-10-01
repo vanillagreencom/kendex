@@ -1,0 +1,1 @@
+- Pi pane command capture checks executable origin and keeps shell execution disabled. Shutdown tests pass paths as data, not child code.

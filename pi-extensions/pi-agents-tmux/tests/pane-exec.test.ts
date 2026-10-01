@@ -5,6 +5,44 @@ import { cleanupTempRuntimes, importRuntimeCopy, tempRuntime } from "./browser-f
 
 after(cleanupTempRuntimes);
 
+test("command capture requires a fixed probe or a resolver-approved bridge", async () => {
+   const { symlinkSync } = await import("node:fs");
+   const { join } = await import("node:path");
+   const runtime = await import("../extensions/subagent/pane.js");
+   const root = tempRuntime();
+   const bridge = join(root, "bridge path ' with spaces");
+   symlinkSync(process.execPath, bridge);
+   const options = { env: { PATH: "/usr/bin:/bin", HOME: root, TMPDIR: root } };
+   const refused = async (capture: typeof execCapture) => {
+      const result = await capture(bridge, ["-e", 'console.log("unexpected execution")'], options);
+      assert.equal(result.code, 1, "an unresolved executable must not start");
+      assert.equal(result.stdout, "");
+      assert.ok(result.error instanceof Error);
+   };
+   await refused(execCapture);
+   const mutant = await importRuntimeCopy("pane.ts", 'if (!new Set(["tmux", "ps", "bash", process.execPath, resolvedPiBridgeCommand]).has(command)) {', 'if (!new Set(["tmux", "ps", "bash", process.execPath, resolvedPiBridgeCommand]).has(command) && false) {') as typeof runtime;
+   await assert.rejects(refused(mutant.execCapture), /an unresolved executable must not start/);
+   for (const [command, args] of [
+      ["tmux", ["-V"]], ["ps", ["-p", String(process.pid)]], ["bash", ["-c", "printf probe"]],
+      [process.execPath, ["-e", 'console.log("fixture")']],
+   ] as const) {
+      const result = await execCapture(command, [...args], options);
+      assert.equal(result.code, 0);
+      assert.equal(result.error, undefined);
+   }
+   const previous = process.env.PI_BRIDGE_BIN;
+   process.env.PI_BRIDGE_BIN = bridge;
+   try {
+      assert.equal(await runtime.resolvePiBridgeBin(), bridge);
+      const result = await execCapture(bridge, ["-e", 'console.log("resolved bridge")'], options);
+      assert.equal(result.code, 0);
+      assert.equal(result.stdout.trim(), "resolved bridge");
+   } finally {
+      if (previous === undefined) delete process.env.PI_BRIDGE_BIN;
+      else process.env.PI_BRIDGE_BIN = previous;
+   }
+});
+
 async function stalled(capture: typeof execCapture): Promise<void> {
 	const root = tempRuntime();
 	// Real time here lets the OS start and reap a SIGTERM-resistant faux bridge.
@@ -155,7 +193,7 @@ async function nestedShutdown(capture: typeof execCapture): Promise<void> {
 	let shutdown!: () => Promise<void>;
 	const pi = mockPiEvents([]);
 	pi.on = (_event: string, handler: () => Promise<void>) => { shutdown = handler; return () => {}; };
-	const call = withChildBudget(pi, root, undefined, () => capture(process.execPath, ["-e", `process.on("SIGTERM", () => {}); require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(naturalFile)}, "natural-exit"), 2000)`], { timeoutMs: 10_000, env: { PATH: "/usr/bin:/bin", HOME: root, TMPDIR: root } }));
+	const call = withChildBudget(pi, root, undefined, () => capture(process.execPath, ["-e", 'process.on("SIGTERM", () => {}); require("node:fs").writeFileSync(process.argv[1], String(process.pid)); setTimeout(() => require("node:fs").writeFileSync(process.argv[2], "natural-exit"), 2000)', pidFile, naturalFile], { timeoutMs: 10_000, env: { PATH: "/usr/bin:/bin", HOME: root, TMPDIR: root } }));
 	const settled = Promise.allSettled([call]);
 	try {
 		// Wait for the real child to install its signal handler before shutdown.

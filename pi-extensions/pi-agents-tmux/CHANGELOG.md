@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 3.3.2
+
+- Pane command capture accepts fixed probes and the resolved bridge executable without a shell. Shutdown tests pass file paths as data instead of constructing child code.
+
 ### 3.3.1
 
 - Scrolling the Agents popup reuses Markdown and trace layout until content, width or theme changes. The popup retains at most 16 task traces. Saving a managed agent refreshes asynchronously with a 120-second deadline, so Pi can process other events while it waits.

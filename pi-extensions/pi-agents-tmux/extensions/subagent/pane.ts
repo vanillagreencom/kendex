@@ -73,10 +73,16 @@ import {
 export interface ExecCaptureOptions { cwd?: string; timeoutMs?: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv }
 type ExecCaptureResult = { code: number; stdout: string; stderr: string; error?: unknown; interruption?: "timeout" | "aborted" };
 type ExecCaptureFn = (command: string, args: string[], options?: ExecCaptureOptions) => Promise<ExecCaptureResult>;
+let resolvedPiBridgeCommand: string | undefined;
 
 async function defaultExecCapture(command: string, args: string[], options: ExecCaptureOptions = {}, spawner: typeof spawn = spawn): Promise<ExecCaptureResult> {
 	const signal = options.signal ?? childSignal();
 	if (signal?.aborted) return { code: 1, stdout: "", stderr: "Command aborted", error: signal.reason };
+	// Bridge callers use this module's resolver; process.execPath runs the capture fixtures.
+	if (!new Set(["tmux", "ps", "bash", process.execPath, resolvedPiBridgeCommand]).has(command)) {
+		const error = new Error(`Command origin is not a fixed probe or the resolved pi-bridge: ${command}`);
+		return { code: 1, stdout: "", stderr: error.message, error };
+	}
 	const timeoutMs = Math.max(1, options.timeoutMs ?? 10_000);
 	return new Promise((resolve) => {
 		const proc = spawner(command, args, { cwd: options.cwd, env: options.env ?? process.env, detached: process.platform !== "win32", shell: false, stdio: ["ignore", "pipe", "pipe"] });
@@ -479,12 +485,12 @@ async function resolvePiBridgeBin(): Promise<string | undefined> {
 		path.join(projectPackagesDir, SESSION_BRIDGE_PACKAGE_ID, "bin", "pi-bridge.js"),
 	].filter((candidate): candidate is string => Boolean(candidate));
 	for (const candidate of candidates) {
-		if (fs.existsSync(candidate)) return candidate;
+		if (fs.existsSync(candidate)) return resolvedPiBridgeCommand = candidate;
 	}
 	const result = await execCapture("bash", ["-lc", "command -v pi-bridge || true"]);
 	if (result.error) throw result.error;
 	const found = result.stdout.trim().split(/\r?\n/)[0];
-	return found || undefined;
+	return resolvedPiBridgeCommand = found || undefined;
 }
 
 type DiagnosticLogger = (message: string) => void;
