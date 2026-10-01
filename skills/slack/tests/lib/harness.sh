@@ -134,6 +134,26 @@ path.chmod(0o755)
 PY
 }
 sk_journal() { printf '%s/tmp/slack/journal.jsonl' "$1"; } # ROOT
+# sk_legacy_warnings ROOT EXPECTED: read older lane-mail events twice in one process;
+# print the diagnostics and fail unless each position warning appears once.
+sk_legacy_warnings() {
+  env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+    python3 - "${SK_BIN%/*}/lib" "$1" "$2" <<'PY'
+import contextlib, io, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from mailbox import LaneMail
+mail = LaneMail(Path(sys.argv[2]))
+warnings = io.StringIO()
+with contextlib.redirect_stderr(warnings):
+    mail.events()
+    mail.events()
+output = warnings.getvalue()
+sys.stdout.write(output)
+expected = sys.argv[3] + "\n"
+sys.exit(0 if output == expected else 1)
+PY
+}
 sk_lm() { ( cd "$1" && shift && env -u ORCH_ASK_WAIT_MINUTES "$SK_LANE_MAIL" "$@" ); } # ROOT ARGS...
 sk_text() { printf '%s\n' "$2" > "$SK_TMP/$1.txt"; printf '%s' "$SK_TMP/$1.txt"; }   # NAME CONTENT
 

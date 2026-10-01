@@ -892,6 +892,12 @@ sk_event_filter "$LEGACY" 'del(.line, .count)'
 sk_run -- listen --once --root "$LEGACY" --root "$HEALTHY"
 assert_eq "$RC=$(asks "$(sk_channel "$LEGACY")" 'Multi-root notice.')=$(asks "$(sk_channel "$HEALTHY")" 'Multi-root notice.')" \
   "0=1=1" "a legacy root without line or count and a healthy root both post"
+LEGACY_ID="$(jq -r .id "$(sk_box "$LEGACY")/to-overseer.jsonl")" || exit 1
+printf -v LEGACY_WARNINGS 'slack: envelope-field=%s id=%s field=line\nslack: envelope-field=%s id=%s field=count' \
+  "$LEGACY" "$LEGACY_ID" "$LEGACY" "$LEGACY_ID"
+RC=0
+WARNINGS="$(sk_legacy_warnings "$LEGACY" "$LEGACY_WARNINGS")" || RC=$?
+assert_eq "$RC=$WARNINGS" "0=$LEGACY_WARNINGS" "reading legacy events twice through one LaneMail warns once per root, id and field"
 
 # A corrupt UTF-8 subprocess response is a root read error, not an envelope
 # field. The healthy root must post even when the first root cannot decode it.
@@ -909,6 +915,13 @@ sk_run -- listen --once --root "$BROKEN" --root "$HEALTHY"
 assert_eq "$RC=$(asks "$(sk_channel "$HEALTHY")" 'Healthy after root error.')=$(printf '%s\n' "$ERR" | grep -c '^slack: root-poll-failed=')" \
   "1=1=1" "a root read error reports once and does not stop healthy-root routing"
 assert_has "$ERR1" "slack: root-poll-failed=$BROKEN cause=UnicodeDecodeError:" "the root error names the root and actual cause"
+
+sk_mutant repeated-fields mailbox.py 'if pair not in self\.reported_fields:' 'if True:'
+RC=0
+WARNINGS="$(sk_legacy_warnings "$LEGACY" "$LEGACY_WARNINGS")" || RC=$?
+assert_eq "$RC=$WARNINGS" "1=$LEGACY_WARNINGS"$'\n'"$LEGACY_WARNINGS" \
+  "control: bypassing the repeat check keeps diagnostics and fails the once-per-field assertion"
+sk_bin_reset
 
 sk_mutant missing-line relay.py 'envelope\["line"\] is not None and ' ''
 sk_lm "$LEGACY" notice --item overseer --to owner --file "$(sk_text line-control 'Line control.')" >/dev/null
