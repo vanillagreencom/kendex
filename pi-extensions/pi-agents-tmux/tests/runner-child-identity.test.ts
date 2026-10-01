@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -42,7 +42,7 @@ async function launchLine(opts: Launch): Promise<string> {
 	const spawns: Array<{ args: string[]; env: NodeJS.ProcessEnv }> = [];
 	setSingleAgentSpawnForTests(((command: string, args: string[], options: { env: NodeJS.ProcessEnv }) => {
 		void command;
-		spawns.push({ args, env: options.env });
+		spawns.push({ args: args.map(arg => arg.startsWith("@") ? readFileSync(arg.slice(1), "utf8") : arg), env: options.env });
 		const proc = Object.assign(new EventEmitter(), { kill: () => true, killed: false, stderr: new EventEmitter(), stdout: new EventEmitter() });
 		queueMicrotask(() => proc.emit("close", 0, null));
 		return proc;

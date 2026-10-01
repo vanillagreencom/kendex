@@ -5,7 +5,7 @@
 
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { clearPackageConfigCache } from "../extensions/subagent/package-config.js";
@@ -32,7 +32,7 @@ function writeAgents(cwd: string, agents: Agents): void {
 function fakeSpawns(): Spawn[] {
 	const spawns: Spawn[] = [];
 	setSingleAgentSpawnForTests(((_command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
-		spawns.push({ args, env: options?.env });
+		spawns.push({ args: args.map(arg => arg.startsWith("@") ? readFileSync(arg.slice(1), "utf8") : arg), env: options?.env });
 		const proc = Object.assign(new EventEmitter(), { killed: false, stderr: new EventEmitter(), stdout: new EventEmitter() });
 		proc.kill = () => ((proc.killed = true), true);
 		queueMicrotask(() => {
@@ -71,10 +71,9 @@ function resultLine(result: Awaited<ReturnType<Execute>>, spawns: Spawn[]): stri
 	const markers = Object.keys(PARENT_ENV).filter((key) => key in env);
 	assert.equal(result.details.results.length, 1);
 	const sessionKey = result.details.results[0]!.sessionKey;
-	assert.ok(sessionKey, "delegation must return its child session key");
-	assert.equal(text, `Session: agent=scout sessionKey=${sessionKey}\n\nscout report`);
-	const observed = text.replace(`sessionKey=${sessionKey}`, "sessionKey=<returned-key>");
-	return `spawned:${env.PI_SUBAGENT_CHILD_AGENT} markers=[${markers.join(",")}] spawns=${spawns.length} task=${JSON.stringify(spawns[0]?.args.at(-1))} text=${JSON.stringify(observed)}`;
+	assert.ok(sessionKey, "structured details retain the internal child session key");
+	assert.equal(text, "scout report");
+	return `spawned:${env.PI_SUBAGENT_CHILD_AGENT} markers=[${markers.join(",")}] spawns=${spawns.length} task=${JSON.stringify(spawns[0]?.args.at(-1))} text=${JSON.stringify(text)}`;
 }
 
 async function delegateLine(caller: string | undefined, agents: Agents, params: Record<string, unknown>): Promise<string> {
@@ -134,7 +133,7 @@ const rows: Array<[string, string | undefined, Agents, Record<string, unknown>, 
 	["an allowlisted target not on disk", "rust", { rust: ["allowed-subagents: ghost"] }, { agent: "ghost", task: "Ghostly task." }, "refused:target-unknown spawns=0"],
 	["an allowlisted pane target", "rust", { planner: ["pane: true"], rust: ["allowed-subagents: planner"] }, { agent: "planner", task: "Plan a thing." }, "refused:pane-target spawns=0"],
 	["a blank task", "rust", RUST_TO_SCOUT, { agent: "scout", task: "  " }, "refused:no-task spawns=0"],
-	["an allowlisted bg target is spawned as the child with the pane markers stripped", "rust", RUST_TO_SCOUT, { agent: "scout", task: "Map the unknown area." }, 'spawned:scout markers=[] spawns=1 task="Task: Map the unknown area." text="Session: agent=scout sessionKey=<returned-key>\\n\\nscout report"'],
+	["an allowlisted bg target is spawned as the child with the pane markers stripped", "rust", RUST_TO_SCOUT, { agent: "scout", task: "Map the unknown area." }, 'spawned:scout markers=[] spawns=1 task="Task: Map the unknown area." text="scout report"'],
 ];
 
 test("delegate_subagent refuses by guard or spawns the child", async () => {

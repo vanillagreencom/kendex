@@ -82,13 +82,13 @@ function oneShotDeadline(agent: AgentConfig | undefined): BgDeadline {
 }
 
 /**
- * Reports returned session keys outside answer truncation, then adds one
+ * Reports explicit session keys outside answer truncation, then adds one
  * `pane-fallback reason=no-tmux` line when a
  * pane agent ran headless, and names each such task the way a queued pane
  * task is named, so a caller stores the same `Task ID:` in both modes.
  */
 function withPaneFallbackNotice(result: ToolTextResult, lane: PaneLane, agents: AgentConfig[]): ToolTextResult {
-	const sessions = result.details.results.flatMap((item, index) => item.sessionKey ? [`Session: agent=${item.agent}${result.details.mode === "chain" ? ` step=${item.step ?? index + 1}` : result.details.mode === "parallel" ? ` item=${index + 1}` : ""} sessionKey=${item.sessionKey}`] : []);
+	const sessions = result.details.results.flatMap((item, index) => item.sessionKeyExplicit && item.sessionKey ? [`Session: agent=${item.agent}${result.details.mode === "chain" ? ` step=${item.step ?? index + 1}` : result.details.mode === "parallel" ? ` item=${index + 1}` : ""} sessionKey=${item.sessionKey}`] : []);
 	if (sessions.length) {
 		const [first, ...rest] = result.content;
 		result = { ...result, content: [{ type: "text", text: `${sessions.join("\n")}\n\n${first?.text ?? ""}` }, ...rest] };

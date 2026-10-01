@@ -82,7 +82,7 @@ test("oneshot transcript filters message_update and enriches agent_start for sup
 			assert.ok(Array.isArray(agentStart.args), shape);
 			assert.ok(agentStart.args.includes("--model"), shape);
 			assert.ok(agentStart.args.includes("openai-codex/gpt-6-astra:xhigh"), shape);
-			assert.equal(agentStart.args.some((arg: string) => arg.startsWith("Task: ")), false, shape);
+			assert.equal(agentStart.args.some((arg: string) => arg.startsWith("@")), false, shape);
 		} finally {
 			setSingleAgentSpawnForTests();
 		}

@@ -166,7 +166,7 @@ interface AgentStartTranscriptMetadata {
 
 function transcriptMetadataArgs(args: string[]): string[] {
 	const sanitized = [...args];
-	if (sanitized.at(-1)?.startsWith("Task: ")) sanitized.pop();
+	if (sanitized.at(-1)?.startsWith("@")) sanitized.pop();
 	return sanitized;
 }
 
@@ -428,8 +428,8 @@ export async function prepareSingleResultForReturn(
 ): Promise<PreparedSingleResult> {
 	const finalOutput = getFinalOutput(result.messages);
 	const isError = singleResultIsError(result);
-	const rawText = textOverride ?? (finalOutput || (isError ? result.errorMessage || result.stderr : finalOutput));
-	const direction = isError && !finalOutput ? "tail" : "head";
+	const rawText = textOverride ?? (isError ? result.errorMessage || result.stderr || finalOutput : finalOutput);
+	const direction = isError ? "tail" : "head";
 	const output = rawText
 		? await truncateForToolResult(rawText, runtimeRoot, cwd, result.agent, label, direction, limits)
 		: { text: rawText };
@@ -699,8 +699,7 @@ async function runSingleAgentAttempt(
 	if (selectedTools && selectedTools.length > 0) args.push("--tools", selectedTools.join(","));
 	else if (inheritedActiveTools.length > 0) args.push("--no-tools");
 
-	let tmpPromptDir: string | null = null;
-	let tmpPromptPath: string | null = null;
+	const tmpPromptDirs: string[] = [];
 	const oneShotTaskId = createTaskId(agent.name);
 	const transcriptPath = oneShotTranscriptPath(runtimeRoot, agent.name, oneShotTaskId);
 	// A dropped record leaves the transcript incomplete for whoever reads the
@@ -769,12 +768,15 @@ async function runSingleAgentAttempt(
 		await fs.promises.writeFile(transcriptPath, "", { encoding: "utf-8", mode: 0o600 });
 		if (agent.systemPrompt.trim()) {
 			const tmp = await writePromptToTempFile(agent.name, agent.systemPrompt);
-			tmpPromptDir = tmp.dir;
-			tmpPromptPath = tmp.filePath;
-			args.push("--append-system-prompt", tmpPromptPath);
+			tmpPromptDirs.push(tmp.dir);
+			args.push("--append-system-prompt", tmp.filePath);
 		}
 
-		args.push(`Task: ${task}`);
+		// Pi's JSON CLI accepts @absolute-file user input. A handoff can exceed
+		// the operating system's per-argument limit even within model context.
+		const tmpTask = await writePromptToTempFile(agent.name, `Task: ${task}`);
+		tmpPromptDirs.push(tmpTask.dir);
+		args.push(`@${tmpTask.filePath}`);
 		let wasAborted = false;
 		let timedOut = false;
 
@@ -1434,6 +1436,6 @@ async function runSingleAgentAttempt(
 		await transcript.settled();
 		// recursive+force removal so the session tmp dir is reclaimed
 		// on child failure/refusal paths too, not only after a clean unlink.
-		if (tmpPromptDir) removePromptTempDir(tmpPromptDir);
+		for (const dir of tmpPromptDirs) removePromptTempDir(dir);
 	}
 }
