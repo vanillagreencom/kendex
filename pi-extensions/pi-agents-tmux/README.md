@@ -30,7 +30,7 @@ Streamed tool rows keep only the static call preview in the transcript. Follow l
 
 ## Memory and disk use
 
-- All dispatch modes share `maxConcurrency`. At most 256 tasks wait for a slot. Cancellation removes queued work before it launches. Session shutdown cancels both queued and active work. Command capture keeps at most 1 MiB per output stream. Pane title updates keep one active command and the latest pending title.
+- All dispatch modes share `maxConcurrency`. At most 256 tasks wait for a slot. Cancellation removes queued work before it launches. Session shutdown cancels queued and active work, then waits for active children to finish. Command capture keeps the last 1,048,576 UTF-16 code units per output stream, with additional failure and signal diagnostics in stderr. Pane title updates keep one active command and the latest pending title.
 
 - Agent discovery keeps at most 8 working-directory and user-source combinations across Pi sessions in one process. It reuses parsed agent files until their metadata changes. File and directory checks run outside rendering every 250 ms. A listed-file change reloads only that file; a directory change rebuilds the inventory. After a check detects a change, the next tool-call preview uses the updated agents. Removing a cache entry stops its file checks.
 

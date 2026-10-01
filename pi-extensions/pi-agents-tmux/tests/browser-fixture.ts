@@ -101,8 +101,11 @@ export async function assertMissingArtifactStatus(runtime: typeof import("../ext
 	assert.equal(refreshed.record.status, "unknown");
 }
 
-/** Load main's components from git objects without building or changing its checkout. */
-export async function importMainRuntime(): Promise<{
+/** Immutable pre-change components, also fetched by the existing CI suite. */
+export const BENCHMARK_BASELINE = "f8b9eff8b1aaf7c8698fdead68c00f6eb7c12382";
+
+/** Load baseline components from git objects without changing a checkout. */
+export async function importMainRuntime(repo = resolve(import.meta.dir, "../../..")): Promise<{
 	pane: typeof import("../extensions/subagent/pane.js");
 	dispatch: typeof import("../extensions/subagent/dispatch.js");
 	runner: typeof import("../extensions/subagent/runner.js");
@@ -110,9 +113,8 @@ export async function importMainRuntime(): Promise<{
 	ref: string;
 }> {
 	const root = tempRuntime();
-	const repo = resolve(import.meta.dir, "../../..");
 	const env = { PATH: "/usr/bin:/bin", HOME: root, TMPDIR: root };
-	const ref = execFileSync("git", ["rev-parse", "origin/main"], { cwd: repo, env, encoding: "utf8" }).trim();
+	const ref = execFileSync("git", ["rev-parse", `${BENCHMARK_BASELINE}^{commit}`], { cwd: repo, env, encoding: "utf8" }).trim();
 	const archive = execFileSync("git", ["archive", ref, "pi-extensions/pi-agents-tmux/extensions", "pi-extensions/pi-agents-tmux/scripts", "pi-extensions/pi-agents-tmux/package.json"], { cwd: repo, env, maxBuffer: 16 * 1024 * 1024 });
 	execFileSync("tar", ["-x", "-C", root], { input: archive, env });
 	const pkg = join(root, "pi-extensions/pi-agents-tmux");

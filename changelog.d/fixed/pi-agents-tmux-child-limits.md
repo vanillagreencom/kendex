@@ -1,1 +1,1 @@
-- Pi agents share a child limit and terminate stalled bridge commands. Inbox failures restore tasks.
+- Pi agents share a child limit, cancel pane preparation, and drain stalled commands on shutdown. Inbox failures restore tasks.

@@ -1,14 +1,18 @@
+import assert from "node:assert/strict";
+import { pollChildInbox } from "../extensions/subagent/child-inbox.js";
+import { cleanupTempRuntimes, importRuntimeCopy, tempRuntime } from "./browser-fixture.js";
+afterAll(cleanupTempRuntimes);
 // Pi 0.75 requires an explicit delivery mode when sendUserMessage may run while streaming.
 // These subagent dispatch paths are timer/poller-driven, so keep the mode explicit.
 
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { readTaskRegistry, recordTaskDispatchFailure, writeTaskRegistry } from "../extensions/subagent/tasks.js";
 
 const source = readFileSync(join(import.meta.dir, "../extensions/subagent/index.ts"), "utf8");
-const inboxSource = readFileSync(join(import.meta.dir, "../extensions/subagent/child-inbox.ts"), "utf8");
+
 
 describe("subagent sendUserMessage delivery modes", () => {
 	test("rate-limit watchdog sends recovery as an explicit steer", () => {
@@ -16,10 +20,6 @@ describe("subagent sendUserMessage delivery modes", () => {
 		expect(source).not.toContain("pi.sendUserMessage(message);");
 	});
 
-	test("child inbox task dispatch awaits explicit follow-up delivery", () => {
-		expect(inboxSource).toContain('await pi.sendUserMessage(prompt, { deliverAs: "followUp" });');
-		expect(inboxSource).not.toContain("pi.sendUserMessage(prompt);");
-	});
 
 	test("child dispatch failure restores processing file to inbox and requeues task", async () => {
 		const runtimeRoot = mkdtempSync(join(tmpdir(), "subagent-dispatch-failure-"));
@@ -61,4 +61,44 @@ describe("subagent sendUserMessage delivery modes", () => {
 			rmSync(runtimeRoot, { force: true, recursive: true });
 		}
 	});
+});
+
+async function inboxDelivery(poll: typeof pollChildInbox): Promise<void> {
+	for (const reject of [false, true]) {
+		const root = tempRuntime();
+		const source = join(root, "inbox", "engineer", "work.md");
+		mkdirSync(join(root, "inbox", "engineer"), { recursive: true });
+		writeFileSync(source, "inspect the code");
+		const delivered: Array<[string, unknown]> = [];
+		let finish!: () => void;
+		let fail!: (error: Error) => void;
+		const gate = new Promise<void>((resolve, reject) => { finish = resolve; fail = reject; });
+		const pi = { events: { emit() {} }, sendUserMessage(prompt: string, options: unknown) { delivered.push([prompt, options]); return gate; } } as unknown as Parameters<typeof poll>[2];
+		const ctx = { ui: { setStatus() {} }, sessionManager: { getSessionFile() {} } } as unknown as Parameters<typeof poll>[3];
+		let owner: string | undefined;
+		let settled = false;
+		const result = poll(root, "engineer", pi, ctx, (file) => { owner = file; }, () => { owner = undefined; });
+		const observed = result.then(() => { settled = true; }, () => { settled = true; });
+		try {
+			// Wait for the real asynchronous claim and registry replacement, not a fake poll.
+			for (let i = 0; i < 100 && delivered.length === 0 && !settled; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+			assert.deepEqual(delivered, [["inspect the code", { deliverAs: "followUp" }]], "inbox must deliver the claimed prompt as followUp");
+			assert.equal(settled, false, "inbox must await delivery settlement");
+			assert.ok(owner);
+			if (reject) {
+				fail(new Error("delivery rejected"));
+				await assert.rejects(result, /delivery rejected/);
+				assert.equal(owner, undefined);
+				assert.equal(readFileSync(source, "utf8"), "inspect the code");
+			} else { finish(); await result; assert.equal(existsSync(source), false); }
+		} finally { finish(); await observed; }
+	}
+}
+
+test("child inbox awaits actual followUp delivery and recovers rejected delivery", async () => {
+	await inboxDelivery(pollChildInbox);
+	const mutant = await importRuntimeCopy("child-inbox.ts", 'await pi.sendUserMessage(prompt, { deliverAs: "followUp" });', 'if (false) await pi.sendUserMessage(prompt, { deliverAs: "followUp" });') as typeof import("../extensions/subagent/child-inbox.js");
+	await assert.rejects(inboxDelivery(mutant.pollChildInbox), /inbox must deliver/);
+	const unawaited = await importRuntimeCopy("child-inbox.ts", 'await pi.sendUserMessage(prompt, { deliverAs: "followUp" });', 'void pi.sendUserMessage(prompt, { deliverAs: "followUp" });') as typeof import("../extensions/subagent/child-inbox.js");
+	await assert.rejects(inboxDelivery(unawaited.pollChildInbox), /inbox must await/);
 });

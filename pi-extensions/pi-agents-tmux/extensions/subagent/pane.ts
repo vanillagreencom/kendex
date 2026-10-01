@@ -1,4 +1,5 @@
 import { isTerminalTaskStatus, taskStatus } from "./outcomes.js";
+import { signalProcessGroupOrChild } from "./process-signal.js";
 import { spawn } from "node:child_process";
 import { childSignal } from "./child-budget.js";
 import * as fs from "node:fs";
@@ -86,11 +87,8 @@ async function defaultExecCapture(command: string, args: string[], options: Exec
 		let escalation: ReturnType<typeof setTimeout> | undefined;
 		let closeBound: ReturnType<typeof setTimeout> | undefined;
 		const kill = (sig: NodeJS.Signals) => {
-			try {
-				if (process.platform !== "win32" && proc.pid) process.kill(-proc.pid, sig);
-				else proc.kill(sig);
-			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code !== "ESRCH") stderr += `\nUnable to send ${sig}: ${String(error)}`;
+			for (const outcome of signalProcessGroupOrChild(proc, sig)) {
+				if (!outcome.ok) stderr += `\nUnable to send ${sig} to ${outcome.target}: ${outcome.error}`;
 			}
 		};
 		const finish = (code: number, error?: unknown) => {
@@ -142,11 +140,16 @@ export function setTmuxPaneTitleSpawnForTests(spawner?: typeof spawn): void {
 }
 
 export async function execCapture(command: string, args: string[], options?: ExecCaptureOptions): Promise<ExecCaptureResult> {
-	return execCaptureImpl(command, args, options);
+	childSignal()?.throwIfAborted();
+	const result = await execCaptureImpl(command, args, options);
+	childSignal()?.throwIfAborted();
+	return result;
 }
 
 export async function tmux(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
-	return execCapture("tmux", args);
+	const result = await execCapture("tmux", args);
+	if (result.error) throw result.error;
+	return result;
 }
 
 /** Whether a tmux server answers this process; `absent` carries the refusal a pane launch reports. */
@@ -157,6 +160,12 @@ export async function probeTmux(): Promise<TmuxReach> {
 	const result = await tmux(["display-message", "-p", "#S"]);
 	if (result.code !== 0) return { kind: "absent", cause: `tmux is unavailable: ${result.stderr || result.stdout}`.trim() };
 	return { kind: "reachable" };
+}
+
+async function killPane(paneId: string): Promise<void> {
+	childSignal()?.throwIfAborted();
+	const result = await tmux(["kill-pane", "-t", paneId]);
+	if (result.code !== 0) throw new Error(`Failed to kill tmux pane ${paneId}: ${result.stderr || result.stdout}`);
 }
 
 async function ensureTmux(): Promise<void> {
@@ -364,7 +373,7 @@ async function cleanupPaneRegistry(registry: PaneRegistry): Promise<boolean> {
 			continue;
 		}
 		if (entry.launcherVersion !== PANE_LAUNCHER_VERSION) {
-			await tmux(["kill-pane", "-t", entry.paneId]);
+			await killPane(entry.paneId);
 			delete registry[agentName];
 			changed = true;
 		}
@@ -442,6 +451,12 @@ export function setCurrentTmuxPaneTitle(title: string, signal?: AbortSignal): vo
 	drainPaneTitle();
 }
 
+/** Drop queued title work and drain the active command after its caller cancels it. */
+export async function drainCurrentTmuxPaneTitle(): Promise<void> {
+	pendingTitle = undefined;
+	await titleInFlight;
+}
+
 function resolveSessionBridgeExtension(cwd?: string): string | undefined {
 	const projectPackagesDir = path.join(path.dirname(projectSettingsPath(cwd ?? process.cwd())), "packages");
 	const candidates = [
@@ -467,6 +482,7 @@ async function resolvePiBridgeBin(): Promise<string | undefined> {
 		if (fs.existsSync(candidate)) return candidate;
 	}
 	const result = await execCapture("bash", ["-lc", "command -v pi-bridge || true"]);
+	if (result.error) throw result.error;
 	const found = result.stdout.trim().split(/\r?\n/)[0];
 	return found || undefined;
 }
@@ -523,6 +539,7 @@ async function discoverBridgeMetadataForPane(entry: PaneRegistryEntry, timeoutMs
 	const deadline = Date.now() + Math.max(0, timeoutMs);
 	do {
 		const result = await execCapture(bin, ["list", "--json"]);
+		if (result.error) throw result.error;
 		if (result.code === 0 && result.stdout.trim()) {
 			try {
 				const instances = (JSON.parse(result.stdout) as Array<Record<string, unknown>>)
@@ -1036,6 +1053,7 @@ export async function queuePersistentPaneTask(
 	const delegation = buildDelegation(agent, task, outboxFile, taskId);
 	const taskFile = path.join(inboxDir(runtimeRoot, agent.name), `${safeFileName(taskId)}.md`);
 	await fs.promises.mkdir(path.dirname(taskFile), { recursive: true, mode: 0o700 });
+	childSignal()?.throwIfAborted();
 	await fs.promises.writeFile(taskFile, delegation, { encoding: "utf-8", mode: 0o600 });
 	const now = new Date().toISOString();
 	await updatePaneRegistry(runtimeRoot, (registry) => {
@@ -1082,7 +1100,8 @@ export async function stopPersistentPane(runtimeRoot: string, agentName: string)
 	await updatePaneRegistry(runtimeRoot, async (registry) => {
 		const entry = registry[agentName];
 		if (!entry) throw new Error(`No pane registry entry for agent: ${agentName || "(missing)"}`);
-		if (await paneExists(entry.paneId)) await tmux(["kill-pane", "-t", entry.paneId]);
+		if (await paneExists(entry.paneId)) await killPane(entry.paneId);
+		childSignal()?.throwIfAborted();
 		stopped = entry;
 		delete registry[entry.agent];
 	});
@@ -1105,6 +1124,7 @@ export async function stopPersistentPane(runtimeRoot: string, agentName: string)
 export type SubagentRetirement = { kind: "pane"; entry: PaneRegistryEntry } | { kind: "headless"; record: PaneTaskRecord };
 
 export async function retireSubagent(runtimeRoot: string, agentName: string): Promise<SubagentRetirement> {
+	childSignal()?.throwIfAborted();
 	if (!(await readPaneRegistry(runtimeRoot))[agentName]) {
 		const latest = latestTaskRecord(await readTaskRegistry(runtimeRoot), agentName);
 		if (latest?.kind === "oneshot") return { kind: "headless", record: latest };
@@ -1113,6 +1133,7 @@ export async function retireSubagent(runtimeRoot: string, agentName: string): Pr
 }
 
 export async function resetPersistentPaneSession(runtimeRoot: string, agentName: string): Promise<string | undefined> {
+	childSignal()?.throwIfAborted();
 	const sessionFile = paneSessionPath(runtimeRoot, agentName);
 	try {
 		await fs.promises.access(sessionFile);
@@ -1122,6 +1143,7 @@ export async function resetPersistentPaneSession(runtimeRoot: string, agentName:
 	const archiveDir = path.join(runtimeRoot, "sessions", "archived");
 	await fs.promises.mkdir(archiveDir, { recursive: true, mode: 0o700 });
 	const archived = path.join(archiveDir, `${safeFileName(agentName)}-${Date.now()}.jsonl`);
+	childSignal()?.throwIfAborted();
 	await fs.promises.rename(sessionFile, archived);
 	return archived;
 }
@@ -1136,6 +1158,7 @@ export async function restoreArchivedPaneSession(runtimeRoot: string, agentName:
 	if (!selected) throw new Error(`No archived pane session for ${agentName} matched "${wanted}". Available: ${archives.map((file) => path.basename(file)).join(", ")}`);
 	await resetPersistentPaneSession(runtimeRoot, agentName);
 	await fs.promises.mkdir(path.dirname(paneSessionPath(runtimeRoot, agentName)), { recursive: true, mode: 0o700 });
+	childSignal()?.throwIfAborted();
 	await fs.promises.copyFile(selected, paneSessionPath(runtimeRoot, agentName));
 	return selected;
 }

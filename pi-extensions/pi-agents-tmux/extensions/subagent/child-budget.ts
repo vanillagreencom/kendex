@@ -15,7 +15,20 @@ type Waiter = { signal: AbortSignal; admit: () => void; reject: (error: unknown)
 class ChildBudget {
 	private active = 0;
 	private readonly queued: Waiter[] = [];
+	private readonly pending = new Set<Promise<unknown>>();
 	readonly shutdown = new AbortController();
+
+	run<T>(cwd: string, signal: AbortSignal, action: () => Promise<T>): Promise<T> {
+		const work = this.runAction(cwd, signal, action);
+		this.pending.add(work);
+		void work.then(() => this.pending.delete(work), () => this.pending.delete(work));
+		return work;
+	}
+
+	async close(): Promise<void> {
+		this.shutdown.abort(new Error("Child dispatch session shut down"));
+		await Promise.allSettled(this.pending);
+	}
 
 	private drain(): void {
 		while (this.queued.length) {
@@ -35,7 +48,7 @@ class ChildBudget {
 		}
 	}
 
-	async run<T>(cwd: string, signal: AbortSignal, action: () => Promise<T>): Promise<T> {
+	private async runAction<T>(cwd: string, signal: AbortSignal, action: () => Promise<T>): Promise<T> {
 		signal.throwIfAborted();
 		// Tool calls supply this queue; refuse excess work instead of retaining it indefinitely.
 		if (this.queued.length >= 256) throw new Error("child-budget: pending limit=256");
@@ -68,7 +81,7 @@ export function withChildBudget<T>(pi: ExtensionAPI, cwd: string, signal: AbortS
 		budgets.set(pi, budget);
 		const owner = budget;
 		const unsubscribe = pi.on("session_shutdown", async () => {
-			owner.shutdown.abort(new Error("Child dispatch session shut down"));
+			await owner.close();
 			budgets.delete(pi);
 			unsubscribe();
 		});

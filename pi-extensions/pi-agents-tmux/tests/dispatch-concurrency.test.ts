@@ -73,3 +73,27 @@ const rows: Array<[string, number, number, Step[], string]> = [
 test("mapWithConcurrencyLimit", async () => {
 	for (const [label, count, concurrency, script, expect] of rows) assert.equal(await poolLine(count, concurrency, script), expect, label);
 });
+
+async function abortBeforeDequeue(map: typeof mapWithConcurrencyLimit): Promise<void> {
+	const controller = new AbortController();
+	let release!: () => void;
+	let starts = 0;
+	const result = map([0, 1], 1, async () => {
+		starts++;
+		if (starts === 1) await new Promise<void>((resolve) => { release = resolve; });
+	}, controller.signal);
+	const settled = Promise.allSettled([result]);
+	controller.abort(new Error("pool cancelled"));
+	release();
+	await settled;
+	assert.equal(starts, 1, "pool must check cancellation before dequeue");
+}
+
+test("pool cancellation does not depend on a downstream budget", async () => {
+	await abortBeforeDequeue(mapWithConcurrencyLimit);
+	const { importRuntimeCopy, cleanupTempRuntimes } = await import("./browser-fixture.js");
+	try {
+		const mutant = await importRuntimeCopy("dispatch.ts", "			signal?.throwIfAborted();", "			void signal;", []) as typeof import("../extensions/subagent/dispatch.js");
+		await assert.rejects(abortBeforeDequeue(mutant.mapWithConcurrencyLimit), /pool must check cancellation/);
+	} finally { cleanupTempRuntimes(); }
+});

@@ -87,6 +87,7 @@ import {
 	retireSubagent,
 	runPersistentPaneAgent,
 	setCurrentTmuxPaneTitle,
+	drainCurrentTmuxPaneTitle,
 	tmux,
 	hasSavedPaneSession,
 } from "./pane.js";
@@ -640,7 +641,7 @@ export default function (pi: ExtensionAPI) {
 		outboxPathFor: (record) =>
 			record.outboxFile ??
 			completionPath(currentRuntimeRoot ?? "", record.agent, record.taskId),
-		isPaneIdle: async (record) => {
+		isPaneIdle: async (record, signal) => {
 			// Probe the child Pi's bridge state directly via pi-bridge state and treat
 			// the response's data.isIdle === true as the authoritative
 			// signal. Any error / timeout / missing-metadata defaults to
@@ -651,7 +652,7 @@ export default function (pi: ExtensionAPI) {
 			const probe = await probePaneIdle(record, {
 				resolveBridgeBin: resolveIdleProbeBridgeBin,
 				execCapture: (command, args, options) => execCapture(command, args, {
-					...options, timeoutMs: options?.timeoutMs ?? BRIDGE_IDLE_PROBE_DEFAULT_TIMEOUT_MS,
+					...options, signal, timeoutMs: options?.timeoutMs ?? BRIDGE_IDLE_PROBE_DEFAULT_TIMEOUT_MS,
 				}),
 				readPaneRegistryEntry: async (agent) => registry[agent],
 				logWarn: logIdleStallDiagnostic,
@@ -1366,6 +1367,7 @@ export default function (pi: ExtensionAPI) {
 	installSettingsCacheRefresh(pi);
 	pi.on("session_start", async (_event, ctx) => {
 		childTitleCancellation.abort();
+		await drainCurrentTmuxPaneTitle();
 		childTitleCancellation = new AbortController();
 		recordProjectTrust(ctx);
 		dashboardCtx = ctx;
@@ -1650,6 +1652,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_shutdown", async () => {
 		childTitleCancellation.abort();
 		if (childTitlePoller) clearInterval(childTitlePoller);
+		await drainCurrentTmuxPaneTitle();
 		if (completionPoller) clearInterval(completionPoller);
 		if (childInboxPoller) clearInterval(childInboxPoller);
 		if (runtimeLaneRefresh) clearInterval(runtimeLaneRefresh);
@@ -1666,7 +1669,7 @@ export default function (pi: ExtensionAPI) {
 		resetPaneCompletionDedup();
 		setRuntimeLaneCwd(undefined);
 
-		idleStallWatchdog.stop();
+		await idleStallWatchdog.stop();
 		currentRuntimeRoot = undefined;
 	});
 

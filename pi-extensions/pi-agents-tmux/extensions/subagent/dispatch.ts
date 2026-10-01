@@ -69,7 +69,7 @@ async function resolvePaneLane(flow: DispatchFlowContext, requested: readonly st
 	flow.signal?.throwIfAborted();
 	if (flow.paneOnly) return { kind: "pane" };
 	if (!requested.some((name) => flow.agents.find((agent) => agent.name === name)?.pane)) return { kind: "pane" };
-	const reach = await probeTmux();
+	const reach = await withChildBudget(flow.pi, flow.cwd, flow.signal, probeTmux);
 	return reach.kind === "reachable" ? { kind: "pane" } : { kind: "headless", cause: reach.cause };
 }
 

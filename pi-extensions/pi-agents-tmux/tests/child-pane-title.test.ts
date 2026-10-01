@@ -34,3 +34,40 @@ describe("child pane title ownership", () => {
 		});
 	});
 });
+
+async function shutdownTitle(extension: (pi: import("@earendil-works/pi-coding-agent").ExtensionAPI) => void): Promise<void> {
+	const { EventEmitter } = await import("node:events");
+	const { setTmuxPaneTitleSpawnForTests, drainCurrentTmuxPaneTitle } = await import("../extensions/subagent/pane.js");
+	const harness = createHarness({ childAgent: "engineer", childPane: "1", tmuxPane: "%42" });
+	const handlers: NonNullable<Parameters<typeof installExtension>[1]>["handlers"] = new Map();
+	let closed = false;
+	setTmuxPaneTitleSpawnForTests((() => {
+		const proc = new EventEmitter() as import("node:child_process").ChildProcess;
+		proc.kill = (signal) => {
+			if (signal === "SIGKILL") queueMicrotask(() => { closed = true; proc.emit("close", 1); });
+			return true;
+		};
+		return proc;
+	}) as typeof import("node:child_process").spawn);
+	try {
+		await withoutRealIntervals(async () => {
+			const start = await installExtension(harness, { extension, handlers });
+			await start({}, fakeCtx(harness));
+		});
+		for (const handler of handlers.get("session_shutdown") ?? []) await handler({}, fakeCtx(harness));
+		expect(closed, "shutdown must drain the active title command").toBe(true);
+	} finally {
+		await drainCurrentTmuxPaneTitle();
+		teardown(harness);
+	}
+}
+
+test("installed shutdown drains the SIGTERM-resistant title command", async () => {
+	const { cleanupTempRuntimes, importRuntimeCopy } = await import("./browser-fixture.js");
+	try {
+		const runtime = await import("../extensions/subagent/index.js");
+		await shutdownTitle(runtime.default);
+		const mutant = await importRuntimeCopy("index.ts", 'pi.on("session_shutdown", async () => {\n\t\tchildTitleCancellation.abort();\n\t\tif (childTitlePoller) clearInterval(childTitlePoller);\n\t\tawait drainCurrentTmuxPaneTitle();', 'pi.on("session_shutdown", async () => {\n\t\tchildTitleCancellation.abort();\n\t\tif (childTitlePoller) clearInterval(childTitlePoller);\n\t\tvoid drainCurrentTmuxPaneTitle();') as typeof runtime;
+		await expect(shutdownTitle(mutant.default)).rejects.toThrow("shutdown must drain the active title command");
+	} finally { cleanupTempRuntimes(); }
+});

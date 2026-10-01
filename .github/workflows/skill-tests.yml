@@ -1203,6 +1203,7 @@ jobs:
         if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-agents-tmux
         run: |
+          git fetch --no-tags --depth=1 origin "$(sed -n 's/^export const BENCHMARK_BASELINE = "\([0-9a-f]*\)";.*/\1/p' tests/browser-fixture.ts)"
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox
           npm test
 

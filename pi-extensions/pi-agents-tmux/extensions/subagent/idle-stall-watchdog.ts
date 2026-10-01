@@ -65,7 +65,7 @@ export interface IdleStallWatchdogDeps {
 	isAwaitingRateLimitRetry: (record: PaneTaskRecord) => boolean;
 	outboxExists: (outboxFile: string) => Promise<boolean>;
 	outboxPathFor: (record: PaneTaskRecord) => string;
-	isPaneIdle: (record: PaneTaskRecord) => Promise<boolean>;
+	isPaneIdle: (record: PaneTaskRecord, signal: AbortSignal) => Promise<boolean>;
 	lastActivityAt: (record: PaneTaskRecord) => number;
 	writeSyntheticOutbox: (outboxFile: string, payload: StallSyntheticOutboxPayload) => Promise<void>;
 	markFired: (record: PaneTaskRecord, payload: StallSyntheticOutboxPayload) => Promise<void>;
@@ -97,7 +97,7 @@ export interface IdleStallWatchdog {
 	checkAll(): Promise<StallCheckOutcome[]>;
 	checkOne(record: PaneTaskRecord): Promise<StallCheckOutcome>;
 	start(): void;
-	stop(): void;
+	stop(): Promise<void>;
 	isRunning(): boolean;
 	hasFired(taskId: string): boolean;
 }
@@ -105,6 +105,7 @@ export interface IdleStallWatchdog {
 export function createIdleStallWatchdog(deps: IdleStallWatchdogDeps): IdleStallWatchdog {
 	const fired = new Set<string>();
 	let timer: unknown;
+	let cancellation = new AbortController();
 	const scheduler = deps.setInterval ?? setInterval;
 	const cancel = deps.clearInterval ?? clearInterval;
 
@@ -115,13 +116,15 @@ export function createIdleStallWatchdog(deps: IdleStallWatchdogDeps): IdleStallW
 		if (isTerminalTaskStatus(record.status)) return { taskId, fired: false, skipped: "task-terminal" };
 		if (record.status === "needs_completion") return { taskId, fired: false, skipped: "task-needs-completion" };
 		try {
+			cancellation.signal.throwIfAborted();
 			if (deps.isAwaitingRateLimitRetry(record)) return { taskId, fired: false, skipped: "rate-limited" };
 			const outboxFile = deps.outboxPathFor(record);
 			if (await deps.outboxExists(outboxFile)) return { taskId, fired: false, skipped: "outbox-present" };
 			const lastActivity = deps.lastActivityAt(record);
 			const staleMs = Math.max(0, deps.now() - lastActivity);
 			if (staleMs < deps.thresholdMs) return { taskId, fired: false, skipped: "not-stale" };
-			const idle = await deps.isPaneIdle(record);
+			const idle = await deps.isPaneIdle(record, cancellation.signal);
+			cancellation.signal.throwIfAborted();
 			if (!idle) return { taskId, fired: false, skipped: "pane-busy" };
 			if (fired.has(taskId)) return { taskId, fired: false, skipped: "already-fired" };
 			const payload = buildStallSyntheticOutbox(record.agent, taskId, Math.floor(staleMs / 1000));
@@ -175,16 +178,18 @@ export function createIdleStallWatchdog(deps: IdleStallWatchdogDeps): IdleStallW
 		start() {
 			if (timer !== undefined) return;
 			if (!deps.isEnabled()) return;
+			if (cancellation.signal.aborted) cancellation = new AbortController();
 			timer = scheduler(() => {
 				checkAll().catch((err) => {
 					deps.logWarn(`idle-stall watchdog: tick threw: ${(err as Error)?.message ?? err}`);
 				});
 			}, Math.max(0, deps.intervalMs));
 		},
-		stop() {
-			if (timer === undefined) return;
-			cancel(timer);
+		async stop() {
+			if (timer !== undefined) cancel(timer);
 			timer = undefined;
+			cancellation.abort(new Error("Idle watchdog shut down"));
+			await passInFlight;
 		},
 		isRunning() {
 			return timer !== undefined;

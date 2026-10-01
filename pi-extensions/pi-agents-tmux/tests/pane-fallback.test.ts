@@ -217,3 +217,52 @@ test("stop_subagent reports no_pane for an agent whose latest task ran headless"
 	assert.equal(result.content[0].text.split("\n")[0], "no_pane=generalist");
 	assert.equal(result.isError, undefined);
 });
+
+async function stalledResolvers(runtime: typeof import("../extensions/subagent/dispatch.js")): Promise<void> {
+	const { childSignal } = await import("../extensions/subagent/child-budget.js");
+	const root = tempRuntime();
+	writeSettings(root, { maxConcurrency: 2 });
+	const pi = mockPiEvents([]);
+	const controller = new AbortController();
+	const signals: Array<AbortSignal | undefined> = [];
+	const releases: Array<() => void> = [];
+	setPaneExecCaptureForTests(async () => {
+		const signal = childSignal();
+		signals.push(signal);
+		return new Promise((resolve) => {
+			const finish = () => resolve({ code: 1, stdout: "", stderr: "probe interrupted", error: new Error("probe interrupted") });
+			releases.push(finish);
+			signal?.addEventListener("abort", finish, { once: true });
+		});
+	});
+	const context = { ...flow(root, "single"), pi, signal: controller.signal };
+	const task = { agent: "generalist", task: "inspect" };
+	let settledCount = 0;
+	const calls = [
+		...Array.from({ length: 2 }, () => runtime.runSingleDispatch({ ...context, ...task })),
+		...Array.from({ length: 2 }, () => runtime.runParallelDispatch({ ...context, tasks: [task] })),
+		...Array.from({ length: 2 }, () => runtime.runChainDispatch({ ...context, chain: [task] })),
+	].map((call) => call.then(() => { settledCount++; }, () => { settledCount++; }));
+	try {
+		await new Promise(setImmediate);
+		assert.equal(signals.length, 2, "resolver probes must share admission");
+		assert.ok(signals.every(Boolean), "resolver probes must inherit cancellation");
+		controller.abort(new Error("cancel probes"));
+		await new Promise(setImmediate);
+		assert.equal(settledCount, 6, "stalled resolver cancellation must settle all modes");
+	} finally {
+		controller.abort();
+		for (const release of releases) release();
+		await Promise.all(calls);
+	}
+}
+
+test("single, parallel and chain resolver probes share admission and cancellation", async () => {
+	const { importRuntimeCopy } = await import("./browser-fixture.js");
+	const runtime = await import("../extensions/subagent/dispatch.js");
+	await stalledResolvers(runtime);
+	const unbounded = await importRuntimeCopy("dispatch.ts", "await withChildBudget(flow.pi, flow.cwd, flow.signal, probeTmux)", "await probeTmux()") as typeof runtime;
+	await assert.rejects(stalledResolvers(unbounded), /resolver probes must share admission/);
+	const uncancelled = await importRuntimeCopy("dispatch.ts", "await withChildBudget(flow.pi, flow.cwd, flow.signal, probeTmux)", "await withChildBudget(flow.pi, flow.cwd, undefined, probeTmux)") as typeof runtime;
+	await assert.rejects(stalledResolvers(uncancelled), /stalled resolver cancellation/);
+});

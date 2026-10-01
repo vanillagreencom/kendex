@@ -89,6 +89,7 @@ export async function installExtension(harness: Harness, options: {
 	handlers?: Map<string, SessionHandler[]>;
 	appendEntry?: (customType: string, data: unknown) => void;
 	registerTool?: (tool: any) => void;
+	sendUserMessage?: (prompt: string, options: { deliverAs: string }) => Promise<void>;
 } = {}): Promise<(event: unknown, ctx: ExtensionContext) => Promise<void>> {
 	const handlers = options.handlers ?? new Map<string, SessionHandler[]>();
 	const bus = new EventEmitter();
@@ -106,7 +107,7 @@ export async function installExtension(harness: Harness, options: {
 		registerShortcut: () => undefined,
 		registerTool: options.registerTool ?? (() => undefined),
 		sendMessage: () => undefined,
-		sendUserMessage: async () => undefined,
+		sendUserMessage: options.sendUserMessage ?? (async () => undefined),
 	} as any;
 	const url = new URL("../extensions/subagent/index.ts", import.meta.url);
 	url.searchParams.set("t", `${Date.now()}-${Math.random().toString(36).slice(2)}`);

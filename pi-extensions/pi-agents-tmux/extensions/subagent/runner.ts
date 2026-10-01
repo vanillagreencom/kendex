@@ -1,3 +1,4 @@
+import { signalProcessGroupOrChild, type SignalOutcome } from "./process-signal.js";
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -230,38 +231,6 @@ function formatDurationMs(ms: number): string {
 	const minutes = seconds / 60;
 	if (minutes < 60) return `${Math.round(minutes)}m`;
 	return `${Math.round(minutes / 60)}h`;
-}
-
-interface SignalOutcome {
-	error?: string;
-	ok: boolean;
-	signal: NodeJS.Signals;
-	target: "child" | "process-group";
-}
-
-function signalProcessGroupOrChild(proc: ReturnType<SpawnProcess>, signal: NodeJS.Signals): SignalOutcome[] {
-	const outcomes: SignalOutcome[] = [];
-	const pid = typeof proc.pid === "number" && proc.pid > 0 ? proc.pid : undefined;
-	if (pid && process.platform !== "win32") {
-		try {
-			process.kill(-pid, signal);
-			return [{ ok: true, signal, target: "process-group" }];
-		} catch (error) {
-			outcomes.push({ error: stringifyError(error), ok: false, signal, target: "process-group" });
-		}
-	}
-	try {
-		const ok = proc.kill(signal);
-		outcomes.push({
-			error: ok ? undefined : "proc.kill returned false",
-			ok,
-			signal,
-			target: "child",
-		});
-	} catch (error) {
-		outcomes.push({ error: stringifyError(error), ok: false, signal, target: "child" });
-	}
-	return outcomes;
 }
 
 function formatSignalOutcomes(outcomes: SignalOutcome[]): string {
