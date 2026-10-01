@@ -515,6 +515,8 @@ assert_eq "$(head -1 <<<"$out")" "EVENT peer-note peer-repo $PEER_ANSWER kind=an
 # outbox, so the two must not arrive in one shape.
 new_case mail_peer_ask
 mail_reset overseer
+(cd "$PEER_REPO" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null &&
+  "$REPO_ROOT/skills/orch/scripts/workflow-state" set oversee overseer '{"server":"7000","pane":"%0"}' >/dev/null)
 printf 'Do you own VSY-47?\n' > "$TMP_ROOT/peer-ask.txt"
 (cd "$PEER_REPO" && "$LANE_MAIL" peer ask --repo "$CASE_REPO_ROOT" --file "$TMP_ROOT/peer-ask.txt" >/dev/null)
 PEER_INBOUND="$(jq -r .id "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl" 2>/dev/null)" || PEER_INBOUND=unsent

@@ -3076,7 +3076,10 @@ assert_eq "$(overseer_unread 'Start unread.')" "1" "and the note stays unread"
 # A checkout with no fleet record names no reader: no session there is handed
 # a note, inside tmux or out.
 new_plain_session peer_unnamed
+(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
+record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER"
 peer_send 'Nobody named.'
+(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
 stop "${SESSION_ENV[@]}"
 expect 0 - "a checkout whose fleet state names no pane hands a session nothing"
 stop
@@ -3131,6 +3134,8 @@ expect 2 "lane-mail-check: unread=1" "a watch record whose pid has exited holds 
 # A lane reads its own mailbox and never the overseer's beside it.
 new_lane peer_lane ken-71
 install_arms
+(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
+record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER"
 send KEN-71 'Rebase onto main.'
 peer_send 'Not for the lane.'
 stop
@@ -3294,6 +3299,8 @@ expect 0 - "control: without the no-watch rule a checkout with no live watch lea
 mutant lane-reads-overseer -e 's@^    MAILBOX_ITEM="\$ITEM"$@    MAILBOX_ITEM=overseer@'
 new_lane control_peer_lane ken-72
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
+record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER"
 send KEN-72 'Own directive.'
 peer_send 'Peer note.'
 stop

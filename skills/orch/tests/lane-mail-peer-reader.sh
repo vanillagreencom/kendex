@@ -66,6 +66,8 @@ checkout() { # NAME
   git -C "$TMP_ROOT/$1" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
 }
 checkout sender
+(cd "$TMP_ROOT/sender" && "$WORKFLOW_STATE" init oversee >/dev/null &&
+  "$WORKFLOW_STATE" set oversee overseer '{"window":"@1"}' >/dev/null)
 PEER="$TMP_ROOT/peer"
 
 # The peer's fleet record: `none` for no state file, `bad` for a state file
@@ -153,8 +155,10 @@ while IFS='|' read -r verb args; do
     RC=0
     OUT="$(cd "$PEER" && env -u TMUX -u TMUX_PANE -u ORCH_STATE_DIR \
       "$LANE_MAIL" send --item overseer --directive --file "$TMP_ROOT/msg.txt" 2>"$TMP_ROOT/err")" || RC=$?
+    env_result=sourced
   else
     peer_call "$verb" 'No local reader.' $args
+    env_result=unsourced
   fi
   error="$(first_err)"
   route=missing
@@ -162,7 +166,7 @@ while IFS='|' read -r verb args; do
   appended=absent
   [ ! -e "$PEER/tmp/lane-mail/overseer/to-lane.jsonl" ] || appended=present
   assert_eq "$RC $OUT ${error%% no overseer*} lines=$(err_lines) $(sourced) route=$route mailbox=$appended" \
-    "2  lane-mail: overseer-absent=$PEER lines=1 unsourced route=owner-note mailbox=absent" \
+    "2  lane-mail: overseer-absent=$PEER lines=1 $env_result route=owner-note mailbox=absent" \
     "a missing record refuses without appending: $verb $args" "$TMP_ROOT/err"
 done <<EOF
 send|
@@ -170,6 +174,57 @@ send|--re 1790000000-1-1
 ask|
 owner|
 EOF
+
+# A caller without a record cannot receive the reply peer send would refuse.
+live_record
+(cd "$TMP_ROOT/sender" && "$WORKFLOW_STATE" init oversee >/dev/null)
+peer_call ask 'No return reader.'
+own_lines=0
+if [ -f "$TMP_ROOT/sender/tmp/lane-mail/overseer/to-overseer.jsonl" ]; then
+  own_lines="$(wc -l < "$TMP_ROOT/sender/tmp/lane-mail/overseer/to-overseer.jsonl" | tr -d ' ')"
+fi
+error="$(first_err)"
+assert_eq "$RC $OUT ${error%% no overseer*} lines=$(err_lines) peer=$LINES own=$own_lines" \
+  "2  lane-mail: overseer-absent=$TMP_ROOT/sender lines=1 peer=0 own=0" \
+  "an unrecorded caller's ask refuses before either append" "$TMP_ROOT/err"
+(cd "$TMP_ROOT/sender" && "$WORKFLOW_STATE" set oversee overseer '{"window":"@1"}' >/dev/null)
+
+# Own record reads use the same environment as register and launch writers.
+# Each state directory is non-default and the default has no record.
+own_state_send() { # process|private
+  local mode="$1" state="$TMP_ROOT/own-$1-state"
+  rm -rf -- "$state" "$TMP_ROOT/sender/tmp/lane-mail/overseer"
+  (cd "$TMP_ROOT/sender" && "$WORKFLOW_STATE" init oversee >/dev/null)
+  SEND_ENV=()
+  if [ "$mode" = process ]; then
+    SEND_ENV=("ORCH_STATE_DIR=$state")
+  else
+    printf 'export ORCH_STATE_DIR=%q\n' "$state" > "$TMP_ROOT/sender/.env.local"
+  fi
+  (cd "$TMP_ROOT/sender" && env -u ORCH_STATE_DIR ${SEND_ENV[@]+"${SEND_ENV[@]}"} \
+    "$WORKFLOW_STATE" init oversee >/dev/null &&
+    env -u ORCH_STATE_DIR ${SEND_ENV[@]+"${SEND_ENV[@]}"} \
+    "$WORKFLOW_STATE" set oversee overseer '{"window":"@1"}' >/dev/null)
+  printf 'Own %s note.\n' "$mode" > "$TMP_ROOT/msg.txt"
+  RC=0
+  OUT="$(cd "$TMP_ROOT/sender" && env -u ORCH_STATE_DIR ${SEND_ENV[@]+"${SEND_ENV[@]}"} \
+    "${LANE_MAIL_BIN:-$LANE_MAIL}" send --item overseer --directive \
+    --file "$TMP_ROOT/msg.txt" 2>"$TMP_ROOT/err")" || RC=$?
+  OWN_LINES=0
+  if [ -f "$TMP_ROOT/sender/tmp/lane-mail/overseer/to-lane.jsonl" ]; then
+    OWN_LINES="$(wc -l < "$TMP_ROOT/sender/tmp/lane-mail/overseer/to-lane.jsonl" | tr -d ' ')"
+  fi
+  rm -f -- "$TMP_ROOT/sender/.env.local"
+  SEND_ENV=()
+}
+for mode in process private; do
+  own_state_send "$mode"
+  assert_eq "$RC ${OUT%% id=*} lines=$OWN_LINES $(first_err)" \
+    "0 lane-mail: sent item=overseer lines=1 " \
+    "an owner send finds the writer's record through $mode environment" "$TMP_ROOT/err"
+done
+rm -rf -- "$TMP_ROOT/sender/tmp/lane-mail/overseer"
+(cd "$TMP_ROOT/sender" && "$WORKFLOW_STATE" set oversee overseer '{"window":"@1"}' >/dev/null)
 
 # A dependency failure refuses before the append.
 for rec in bad bad-settings; do
@@ -261,13 +316,35 @@ live_record
 send 'Sourced.'
 assert_eq "$(sourced)" "sourced" "control: a reader loading the peer's full ladder runs its private env file"
 
-mutant sender-state-dir '(cd -- "$ROOT" && env -u ORCH_STATE_DIR ' '(cd -- "$ROOT" && env '
+mutant sender-state-dir '(cd -- "$root" && env -u ORCH_STATE_DIR ' '(cd -- "$root" && env '
 live_record
 SEND_ENV=("ORCH_STATE_DIR=$TMP_ROOT/sender-state")
 send 'Sender state dir.'
 SEND_ENV=()
 assert_eq "$RC lines=$LINES" "2 lines=0" \
   "control: a sender's ORCH_STATE_DIR reaching the reader misplaces the peer's record"
+
+mutant caller-allowed '    [ "$PEER_VERB" != ask ] || lm_require_overseer own "$OWN_ROOT"' '    [ "$PEER_VERB" != ask ] || :'
+live_record
+(cd "$TMP_ROOT/sender" && "$WORKFLOW_STATE" init oversee >/dev/null)
+peer_call ask 'Control: no return reader.'
+assert_eq "$RC ${OUT%%=*} peer=$LINES" "0 id peer=1" \
+  "control: disabling the caller check delivers an ask whose reply would refuse" "$TMP_ROOT/err"
+(cd "$TMP_ROOT/sender" && "$WORKFLOW_STATE" set oversee overseer '{"window":"@1"}' >/dev/null)
+
+mutant own-state-cleared '(cd -- "$root" && "$SCRIPT_DIR/workflow-state" "$@")' '(cd -- "$root" && env -u ORCH_STATE_DIR "$SCRIPT_DIR/workflow-state" "$@")'
+own_state_send process
+error="$(first_err)"
+assert_eq "$RC ${error%% no overseer*} lines=$OWN_LINES" \
+  "2 lane-mail: overseer-absent=$TMP_ROOT/sender lines=0" \
+  "control: clearing own ORCH_STATE_DIR loses the writer's record" "$TMP_ROOT/err"
+
+mutant own-private-skipped '(cd -- "$root" && "$SCRIPT_DIR/workflow-state" "$@")' '(cd -- "$root" && "$SCRIPT_DIR/workflow-state" --no-private-env "$@")'
+own_state_send private
+error="$(first_err)"
+assert_eq "$RC ${error%% no overseer*} lines=$OWN_LINES" \
+  "2 lane-mail: overseer-absent=$TMP_ROOT/sender lines=0" \
+  "control: skipping own private environment loses the writer's record" "$TMP_ROOT/err"
 
 mutant absent-allowed '  if [ "$LM_OVERSEER_RECORD" = null ]; then' '  if [ "$LM_OVERSEER_RECORD" = null ] && false; then'
 record none
