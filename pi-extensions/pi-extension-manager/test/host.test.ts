@@ -1,3 +1,4 @@
+import { testPi } from "./fixtures/exec.ts";
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { YAML } from "bun";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -19,7 +20,6 @@ mock.module("@earendil-works/pi-tui", () => ({
 }));
 const { openManager } = await import("../extensions/manager/manager-ui.ts");
 const { openQuickSettings, quickSettingsCompletions } = await import("../extensions/manager/quick-settings-ui.ts");
-import { testPi } from "./fixtures/exec.ts";
 import { pendingRequest } from "./fixtures/http.ts";
 
 const root = join(process.cwd(), "tmp", "manager-host-tests");

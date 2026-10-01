@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
-import { runCommand } from "../extensions/manager/process.ts";
 import { testPi } from "./fixtures/exec.ts";
+import { runCommand } from "../extensions/manager/process.ts";
+
+test("runCommand reports a rejected host launch", async () => {
+	const pi = testPi(async () => { throw new Error("launch-failed"); });
+	const result = await runCommand(pi, "npm", ["root"], { signal: new AbortController().signal, timeout: 4_000 });
+	expect(result).toEqual({ ok: false, cause: "launch", detail: "Error: launch-failed" });
+});
 
 // Real waits exercise the host-call deadline, not Date.now(). The fake host never delivers.
 test("runCommand returns a timeout and cancels a host call that never exits", async () => {

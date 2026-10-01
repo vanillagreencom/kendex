@@ -38,6 +38,7 @@ type ExternalConfigResolver = (key: string, cwd: string) => { explicit: boolean;
 
 - Project settings and package declarations are read only when the host reports the workspace trusted (`test/inventory.test.ts`).
 - npm actions use the scope-local npm directory. Git entries are inspected only under Pi's managed clone root; unsafe host or path components produce broken inventory items.
+- `runCommand` uses Pi's shell resolver and `pi.exec`. A bounded random completion footer confirms a zero exit from the requested command because `ExecResult` maps natural signal termination to code zero. Missing proof refuses success without classifying stderr. `test/process-sdk.test.ts` exercises the installed SDK with a real npm heap crash and preserves uninstall settings.
 - The manager delegates append-system changes to the package's vendored `scripts/append-system.mjs` through the host's `pi.exec` API. Cancellation and a deadline bound delivery; script failures stop the action. Uninstall removes the block before npm deletes that script (`test/actions.test.ts`).
 - Inventory awaits `pi.exec` only when cheap package roots miss and memoizes npm roots for the session. Shutdown cancels lookups and clears the root cache. `test/popup-perf.test.ts` enforces the existing popup budget.
 - `HostAdapter.configScope` owns the manager's global-only `enabled` key. Value resolution, merged manager state, saves, resets and recovery honor that owner regardless of package scope; bootstrap never consumes project enable flags. Other keys retain project layering (`test/host.test.ts`, `test/bootstrap.test.ts`).
@@ -51,6 +52,8 @@ bun test ./test
 From the repository root, also run `node --test pi-extensions/package-policy.test.mjs`.
 
 `test/component-benchmark.test.ts` measures inventory construction and the completion/filter path in disposable source copies. It counts inventory builds, child comparisons, scoped config builds and label construction without adding runtime instrumentation. Set `COMPONENT_BENCHMARK_BASE` to an immutable main commit when running the suite to report both timings and verify that main fails the hot-work bounds. Timings are evidence, not a machine-dependent test threshold.
+
+Disposable benchmark and lifecycle copies contain explicit neutral Pi and terminal dependencies from `test/fixtures/isolated-host.ts`. Their children disable automatic package installation so an isolated HOME cannot cause network lookup. `test/lifecycle.test.ts` drives the factory's registered handlers separately from host bootstrap coverage. The real-SDK regression locates the declared peer or the Pi CLI already on PATH; it installs nothing.
 
 The native disabled-package regression in `test/host.test.ts` has no settings JSON and no YAML package list. Replacing native inventory with Pi's package-settings loop must fail that fixture even if the OMP directory and YAML codec remain correct.
 

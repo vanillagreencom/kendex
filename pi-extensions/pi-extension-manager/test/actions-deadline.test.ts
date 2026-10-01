@@ -1,7 +1,7 @@
+import { testPi } from "./fixtures/exec.ts";
 import { afterAll, expect, test } from "bun:test";
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { testPi } from "./fixtures/exec.ts";
 
 // Keep the real deadline scheduler, with a short deadline in a disposable runtime copy.
 const root = join(process.cwd(), "tmp", "manager-action-deadline-tests");

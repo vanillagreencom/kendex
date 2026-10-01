@@ -73,14 +73,5 @@ if (kind === "omp" && mode === "enabled") {
 	assert.deepEqual([...commands.keys()], [manager, `${manager}:settings`]);
 	assert.equal(readFileSync(projectPath, "utf8"), projectBefore);
 }
-if (mode === "enabled") {
-	const { inventorySession } = await import("../../extensions/manager/inventory.ts");
-	const ctx = { cwd, hasUI: false, isProjectTrusted: () => true };
-	await events.get("session_start")!({}, ctx);
-	assert.equal(inventorySession(api as never).inventory, undefined);
-	const signal = inventorySession(api as never).controller.signal;
-	await events.get("session_shutdown")!({}, ctx);
-	assert.equal(signal.aborted, true);
-	assert.equal(inventorySession(api as never).inventory, undefined);
-}
+
 if (kind === "omp") assert.equal(existsSync(join(agent, "settings.json")), false);

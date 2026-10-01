@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { randomUUID } from "node:crypto";
 
 export const PACKAGE_COMMAND_TIMEOUT_MS = 60_000;
 export const NPM_ROOT_TIMEOUT_MS = 4_000;
@@ -28,10 +29,17 @@ export async function runCommand(pi: Pick<ExtensionAPI, "exec">, command: string
 		if (options.signal.aborted) return await interrupted;
 		const execution = (async (): Promise<CommandResult> => {
 			try {
-				const result = await pi.exec(command, args, { ...options, signal: controller.signal });
+				const { getShellConfig } = await import("@earendil-works/pi-coding-agent");
+				if (controller.signal.aborted) return await interrupted;
+				const { shell } = getShellConfig();
+				const proof = `\npi-manager-complete:${randomUUID()}\n`;
+				// ExecResult loses natural signal exits. The host's shell writes this
+				// bounded footer only after the requested command returns zero.
+				const result = await pi.exec(shell, ["-c", '"$@" && printf "\\n%s\\n" "$0"', proof.trim(), command, ...args], { ...options, signal: controller.signal });
 				if (result.killed) return { ok: false, cause: options.signal.aborted ? "cancelled" : "timeout", detail: "Command was stopped." };
 				if (result.code !== 0) return { ok: false, cause: "exit", detail: result.stderr.trim() || result.stdout.trim() || `exit ${result.code}` };
-				return { ok: true, stdout: result.stdout, stderr: result.stderr };
+				if (!result.stdout.endsWith(proof)) return { ok: false, cause: "exit", detail: "Command ended without confirmed successful termination." };
+				return { ok: true, stdout: result.stdout.slice(0, -proof.length), stderr: result.stderr };
 			} catch (error) {
 				return { ok: false, cause: "launch", detail: String(error) };
 			}

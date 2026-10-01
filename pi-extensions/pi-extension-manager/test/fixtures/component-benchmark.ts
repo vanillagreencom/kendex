@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { mock } from "bun:test";
+
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Inventory, ManagerUiState } from "../../extensions/manager/types.ts";
 
@@ -48,12 +48,7 @@ for (const name of names) {
 	mkdirSync(join(dir, "extensions"), { recursive: true });
 	writeFileSync(join(dir, "extensions", "index.ts"), "export default function () {}\n");
 }
-mock.module("@earendil-works/pi-coding-agent", () => ({ getAgentDir: () => agent, SettingsManager: class {} }));
-mock.module("@earendil-works/pi-tui", () => ({
-	matchesKey: (input: string, key: string) => input === key,
-	truncateToWidth: (text: string) => text, visibleWidth: (text: string) => text.length,
-	wrapTextWithAnsi: (text: string) => [text],
-}));
+
 const inventoryModule = await import(join(source, "manager", "inventory.ts"));
 const filters = await import(join(source, "manager", "filters.ts"));
 const settings = await import(join(source, "manager", "settings.ts"));

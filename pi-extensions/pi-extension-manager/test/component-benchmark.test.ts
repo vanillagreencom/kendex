@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { isolatedHost } from "./fixtures/isolated-host.ts";
 
 const packageRoot = resolve(import.meta.dir, "..");
 const repo = resolve(packageRoot, "..", "..");
@@ -22,9 +23,10 @@ test("component benchmark bounds hot work with 18 packages and 20 completion/fil
 		return stdout;
 	}
 	async function run(label: string, source: string, expectedStatus: "pass" | "control"): Promise<void> {
+		isolatedHost(source);
 		const home = join(root, label, "home");
 		mkdirSync(home, { recursive: true });
-		const child = Bun.spawn([process.execPath, fixture, source, home, "cached"], {
+		const child = Bun.spawn([process.execPath, "--no-install", fixture, source, home, "cached"], {
 			env: { PATH: process.env.PATH, HOME: home, PI_CODING_AGENT_DIR: join(home, "agent") },
 			stdout: "pipe", stderr: "pipe", timeout: 10_000,
 		});
