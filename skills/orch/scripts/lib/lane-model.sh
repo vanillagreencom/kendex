@@ -331,11 +331,9 @@ lane_select() { # MODEL BINDING_FLOOR BURN MAX_PCT
     lane_selection($model; $floor; $burn; $now; $max)'
 }
 
-# The record `pick` judges for a config dir discovery reaches and the provider
-# reports: HOSTROW, or this machine's own reading of DIR where HOSTROW is
-# `unreachable`, or a successful Claude read missing MODEL whose fresh local
-# reading has that scoped window, under the header rule at `pick`. `refused`
-# is the endpoint answering through the provider's copy and stays authoritative.
+# Consult DIR for an unreachable host or a measured Claude row missing MODEL.
+# Host credential refusals stay authoritative. Every local Claude result for
+# a named MODEL must measure its window, regardless of the consultation cause.
 #
 # `headroom_pct` is emit_lane's one word for a lane that measured a figure: it
 # is null for every status that carries no reading and for a measured status
@@ -354,13 +352,14 @@ lane_select() { # MODEL BINDING_FLOOR BURN MAX_PCT
 # leaves the override standing where it states a reading, and stands itself,
 # with the provider's status and detail, where it states none.
 host_row_or_local() { # HARNESS DIR HOSTROW MODEL
-	local trigger local_record="" age tmp missing_model bound detail
-	trigger="$(jq -r --arg h "$1" 'if $h == "pi" then .headroom_pct == null else .status == "unreachable" end' <<<"$3")" || return 1
-	missing_model="$(jq -r --arg h "$1" --arg model "$4" "$LANE_MODEL_JQ"'
-		$h == "claude" and $model != "" and (lane_measured or .status == "no_usage_data")
-		and (model_bindings($model) | length) == 0' <<<"$3")" || return 1
-	[[ "$missing_model" != true ]] || trigger=true
-	if [[ "$trigger" != true ]]; then
+	local trigger local_record="" age tmp bound detail
+	trigger="$(jq -r --arg h "$1" --arg model "$4" "$LANE_MODEL_JQ"'
+		if $h == "pi" then (if .headroom_pct == null then "local" else "host" end)
+		elif .status == "unreachable" then "local"
+		elif $h == "claude" and $model != "" and (lane_measured or .status == "no_usage_data")
+		     and (model_bindings($model) | length) == 0 then "model"
+		else "host" end' <<<"$3")" || return 1
+	if [[ "$trigger" == host ]]; then
 		printf '%s\n' "$3"
 		return 0
 	fi
@@ -380,22 +379,22 @@ host_row_or_local() { # HARNESS DIR HOSTROW MODEL
 	IFS= read -r local_record <&6 || { exec 6<&-; return 1; }
 	exec 6<&-
 	bound="$(usage_serve_max_age)" || return 1
-	age="$(jq -r --arg h "$1" --arg model "$4" --argjson missing "$missing_model" --argjson bound "$bound" "$LANE_MODEL_JQ"'
+	age="$(jq -r --arg h "$1" --arg model "$4" --argjson bound "$bound" "$LANE_MODEL_JQ"'
 		if .headroom_pct == null then empty
-		elif $missing and (model_bindings($model) | length) == 0 then empty
+		elif $h == "claude" and $model != "" and (model_bindings($model) | length) == 0 then empty
 		elif $h == "pi" then "stated"
 		elif (.usage_age_s | type) == "number" and (.usage_age_s == 0 or .usage_age_s < $bound)
 		then .usage_age_s else empty end' <<<"$local_record")" || return 1
 	if [[ "$age" == stated ]]; then
 		printf '%s\n' "$local_record"
 	elif [[ -n "$age" ]]; then
-		if [[ "$missing_model" == true ]]; then
+		if [[ "$trigger" == model ]]; then
 			message pick-local-model-reading "$2" "$ORCH_LANE_HOST" "$4" "$age" >&2
 		else
 			message pick-local-reading "$2" "$ORCH_LANE_HOST" "$age" >&2
 		fi
 		printf '%s\n' "$local_record"
-	elif [[ "$missing_model" == true ]]; then
+	elif [[ "$trigger" == model ]]; then
 		local_record="$(jq -c --arg model "$4" "$LANE_MODEL_JQ"'
 			. + {status: (if lane_measured then "no_usage_data" else .status end),
 			     headroom_pct: null, detail: (.detail // ("no fresh local model window for " + $model))}

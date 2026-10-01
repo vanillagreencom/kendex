@@ -34,7 +34,7 @@ mutate_file "$CTRL/lib/lane-model.sh" 'measure_lane "$1" "$2" >&7' '{ echo "loca
 FAILED="$CTRL/lanes"
 if [[ -z "${LANES_UNDER_TEST:-}" ]]; then
   CTRL="$(mutant_scripts mutant-missing-model lib/lane-model.sh)"
-  mutate_file "$CTRL/lib/lane-model.sh" '[[ "$missing_model" != true ]] || trigger=true' '[[ "$missing_model" != true ]] || trigger=false'
+  mutate_file "$CTRL/lib/lane-model.sh" 'elif $h == "claude" and $model != "" and (lane_measured or .status == "no_usage_data")' 'elif false and $h == "claude" and $model != "" and (lane_measured or .status == "no_usage_data")'
   FALLBACK="$CTRL/lanes"
   CTRL="$(mutant_scripts mutant-reset-score lib/lane-model.sh)"
   mutate_file "$CTRL/lib/lane-model.sh" 'else 1 + 1 / (1 + $hours) end' 'else 1 end'
@@ -43,13 +43,13 @@ if [[ -z "${LANES_UNDER_TEST:-}" ]]; then
   mutate_file "$CTRL/lib/lane-model.sh" 'else 1 + 1 / (1 + $hours) end' 'else 1 + 1000 / (1 + $hours) end'
   BOUND="$CTRL/lanes"
   CTRL="$(mutant_scripts mutant-local-scope lib/lane-model.sh)"
-  mutate_file "$CTRL/lib/lane-model.sh" 'elif $missing and (model_bindings($model) | length) == 0 then empty' 'elif false then empty'
+  mutate_file "$CTRL/lib/lane-model.sh" 'elif $h == "claude" and $model != "" and (model_bindings($model) | length) == 0 then empty' 'elif false and $h == "claude" and $model != "" and (model_bindings($model) | length) == 0 then empty'
   LOCAL="$CTRL/lanes"
   CTRL="$(mutant_scripts mutant-unknown-bonus lib/lane-model.sh)"
   mutate_file "$CTRL/lib/lane-model.sh" 'if $hours == null then 1 else' 'if $hours == null then 1.1 else'
   UNKNOWN="$CTRL/lanes"
   CTRL="$(mutant_scripts mutant-restore-shared lib/lane-model.sh)"
-  mutate_file "$CTRL/lib/lane-model.sh" 'elif [[ "$missing_model" == true ]]; then' 'elif false; then'
+  mutate_file "$CTRL/lib/lane-model.sh" 'elif [[ "$trigger" == model ]]; then' 'elif false; then'
   RESTORE="$CTRL/lanes"
   CTRL="$(mutant_scripts mutant-helper-row lib/lane-model.sh)"
   mutate_file "$CTRL/lib/lane-model.sh" 'measure_lane "$1" "$2" >&7' '{ echo "local-reader: failed" >&2; false; }'
@@ -65,6 +65,10 @@ for row in \
   "named-fresh-8claude|claude|null|75|11|67|0|Opus|8|named|$LANES" \
   "neither-measures-opus|claude|100|75|11|67|0|Sonnet|10|reject|$LANES|Sonnet" \
   "named-neither-measures-opus|claude|100|75|11|67|0|Sonnet|8|refuse|$LANES|Sonnet" \
+  "unreachable-wrong-model|claude|100|75|11|67|0|Sonnet|10|dropped|$LANES|Sonnet|ok|unreachable" \
+  "named-unreachable-wrong-model|claude|100|75|11|67|0|Sonnet|8|host-refused|$LANES|Sonnet|ok|unreachable" \
+  "unreachable-matching-model|claude|100|75|11|67|0|Sonnet|8|unknown|$LANES|Opus|ok|unreachable" \
+  "named-unreachable-matching-model|claude|100|75|11|67|0|Sonnet|8|named|$LANES|Opus|ok|unreachable" \
   "local-http-failed|claude|100|75|11|67|0|Sonnet|10|reject|$LANES|Opus|503" \
   "named-local-http-failed|claude|100|75|11|67|0|Sonnet|8|refuse|$LANES|Opus|503" \
   "local-transport-failed|claude|100|75|11|67|0|Sonnet|10|reject|$LANES|Opus|transport" \
@@ -87,6 +91,8 @@ for row in \
   "control-bound|claude|11|0|100|10000|null|Opus|10|unknown|$BOUND" \
   "control-local-scope|claude|100|75|11|67|0|Sonnet|10|reject|$LOCAL|Sonnet" \
   "control-named-local-scope|claude|100|75|11|67|0|Sonnet|8|refuse|$LOCAL|Sonnet" \
+  "control-unreachable-local-scope|claude|100|75|11|67|0|Sonnet|10|dropped|$LOCAL|Sonnet|ok|unreachable" \
+  "control-named-unreachable-local-scope|claude|100|75|11|67|0|Sonnet|8|host-refused|$LOCAL|Sonnet|ok|unreachable" \
   "control-unknown-reset|claude|80|null|40|1|null|Opus|8|80|$UNKNOWN" \
   "control-local-http|claude|100|75|11|67|0|Sonnet|10|reject|$RESTORE|Opus|503" \
   "control-named-local-http|claude|100|75|11|67|0|Sonnet|8|refuse|$RESTORE|Opus|503" \
@@ -125,7 +131,7 @@ for row in \
   [[ "$harness" != pi ]] || args=(pick --harness pi --model github-copilot/claude-opus-5-5 --json)
   want_rc=0
   case "$score" in
-    named) args+=(--lane "$H/.8claude") ;;
+    named) args+=(--lane "$H/.8claude" --projected) ;;
     refuse|host-refused) args+=(--lane "$H/.8claude" --projected); want_rc=5 ;;
     failed) args+=(--lane "$H/.8claude" --projected); want_rc=1 ;;
   esac
@@ -141,12 +147,12 @@ for row in \
   want="$H/.${winner}claude"
   case "$score" in
     unknown|named) ;;
-    reject) got+=" qualifying=$(jq -r '.qualifying_count' <<<"$out")"; want+=" qualifying=1" ;;
+    reject|dropped) got+=" qualifying=$(jq -r '.qualifying_count' <<<"$out")"; want+=" qualifying=1" ;;
     refuse)
       got+=" status=$(jq -r '.status' <<<"$out") detail=$(jq -r '.detail' <<<"$out")"
       want+=" status=$status detail=$detail"
       ;;
-    host-refused) got+=" status=$(jq -r '.status' <<<"$out")"; want+=" status=refused" ;;
+    host-refused) got+=" status=$(jq -r '.status' <<<"$out")"; want+=" status=$host_status" ;;
     failed) want=none ;;
     local80) got+=" room=$(jq -r '.effective_headroom_pct' <<<"$out")"; want+=" room=80" ;;
     *) got+=" score=$(jq -r '.selection_score' <<<"$out") room=$(jq -r '.projected_headroom_pct' <<<"$out")"; want+=" score=$score room=$room" ;;

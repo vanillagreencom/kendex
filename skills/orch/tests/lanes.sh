@@ -2414,7 +2414,7 @@ table \
 LANES="$LANES_PATCHED"
 # Control: a judge that never reads a host row as unreachable refuses the
 # account this machine measured fresh.
-lanes_mutant mutant-host-row-always-stands lib/lane-model.sh '\.status == "unreachable" end' '.status == "never-unreachable" end'
+lanes_mutant mutant-host-row-always-stands lib/lane-model.sh 'elif \.status == "unreachable" then "local"' 'elif .status == "never-unreachable" then "local"'
 LANES="$TMP_ROOT/mutant-host-row-always-stands/scripts/lanes"
 table \
   "control: with every host row standing, the chooser refuses the fresh local account on the unreachable row|$LOCAL_DARK|$PICK|rc=3 considered.fclaude=host" \

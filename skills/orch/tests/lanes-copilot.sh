@@ -515,11 +515,11 @@ assert_eq "rc=$RC" rc=5 "control: without harness=pi admitted the provider row i
 lanes_control ctl-pi-unstated lanes '[[ "$harness" == pi && -z "$pool_roots" && "$hosted" == "[]" ]]' '[[ "$harness" == pi && -z "$pool_roots" ]]'
 pi_run room - pick "${PI_MODEL[@]}" --json
 assert_eq "rc=$RC" rc=5 "control: an unstated check that skips the provider rows refuses a pool the provider read"
-lanes_control ctl-pi-replace lib/lane-model.sh 'if $h == "pi" then .headroom_pct == null' 'if $h == "pi" then true'
+lanes_control ctl-pi-replace lib/lane-model.sh 'if $h == "pi" then (if .headroom_pct == null then "local" else "host" end)' 'if $h == "pi" then "local"'
 pi_run room 99/100 pick "${PI_MODEL[@]}" --json
 assert_eq "rc=$RC walled=$(pi_fields .walled)" 'rc=3 walled=1' \
   "control: an override that outranks the provider row walls a pool the provider read with room"
-lanes_control ctl-pi-override lib/lane-model.sh 'if $h == "pi" then .headroom_pct == null' 'if $h == "pi" then .status == "unreachable"'
+lanes_control ctl-pi-override lib/lane-model.sh 'if $h == "pi" then (if .headroom_pct == null then "local" else "host" end)' 'if $h == "pi" then (if .status == "unreachable" then "local" else "host" end)'
 pi_run refused 10/100 pick --lane "$H/.pi1" "${PI_MODEL[@]}" --json
 assert_eq "rc=$RC $(pi_fields '.measured_through')" 'rc=5 "host"' \
   "control: under the unreachable rule a refused Pi row hides the override"
