@@ -24,7 +24,7 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 
 ## How it works
 
-The parent Pi session selects an agent file and sends it a task. The extension starts a separate Pi process with that agent's instructions. Agents configured for panes appear in tmux; other agents run in the background. The child returns its result and current session key to the parent, including after a context handoff. The parent can use that key to continue the new agent. The dashboard shows the task state and saved transcript.
+The parent Pi session selects an agent file and sends it a task. The extension starts a separate Pi process with that agent's instructions. Agents configured for panes appear in tmux; other agents run in the background. The child returns its result to the parent. The dashboard shows the task state and saved transcript.
 
 Streamed tool rows keep only the static call preview in the transcript. Follow live progress in the existing Agents panel, which shows each working child's operation and last recorded progress time in UTC. The time changes only when a child writes another transcript record, not when the panel refreshes. After completion, press Ctrl+O to expand the row and read its final result. A restored session shows saved final results.
 
