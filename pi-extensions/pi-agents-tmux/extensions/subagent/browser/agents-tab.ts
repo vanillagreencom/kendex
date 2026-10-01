@@ -13,6 +13,7 @@ import {
 	agentEntityTitle,
 	agentPad,
 	agentPaneTitle,
+	cachedPopupLayout,
 	compactAgentPath,
 } from "./shared.js";
 
@@ -126,8 +127,10 @@ export function renderAgentList(rows: AgentBrowserRow[], statuses: Map<string, A
 
 function renderAgentPromptViewport(agent: AgentConfig, ui: AgentBrowserUiState, width: number, rows: number, theme: Theme): string[] {
 	const prompt = agent.systemPrompt.trim() || theme.fg("dim", "(empty prompt)");
-	const renderedPrompt = new Markdown(prompt, 0, 0, agentSystemPromptMarkdownTheme(theme)).render(width);
-	const promptLines = renderedPrompt.length > 0 ? renderedPrompt : wrapTextWithAnsi(prompt, width);
+	const promptLines = cachedPopupLayout(ui, "prompt", prompt, undefined, width, theme, () => {
+		const renderedPrompt = new Markdown(prompt, 0, 0, agentSystemPromptMarkdownTheme(theme)).render(width);
+		return renderedPrompt.length > 0 ? renderedPrompt : wrapTextWithAnsi(prompt, width);
+	});
 	const visibleRows = Math.max(1, rows - 1);
 	const maxScroll = Math.max(0, promptLines.length - visibleRows);
 	ui.inspectorScroll = Math.max(0, Math.min(ui.inspectorScroll, maxScroll));

@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 3.3.1
+
+- Scrolling the Agents popup reuses Markdown and trace layout until content, width or theme changes. The popup retains at most 16 task traces. Saving a managed agent refreshes asynchronously with a 120-second deadline, so Pi can process other events while it waits.
+
 ### 3.3.0
 
 - Earlier handoff keys remain visible when a later chain step stops. Stopped and refused Monitor rows use warning indicators. Intended parent stops publish no failure activity.

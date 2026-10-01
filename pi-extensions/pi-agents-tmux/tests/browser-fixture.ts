@@ -5,7 +5,10 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { execFileSync } from "node:child_process";
+import * as childProcess from "node:child_process";
 import { spyOn } from "bun:test";
+import * as tui from "@earendil-works/pi-tui";
+import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { AgentConfig } from "../extensions/subagent/agents.js";
@@ -20,6 +23,55 @@ import { patchTaskRecordUsage } from "../extensions/subagent/index.js";
 export { cleanupTempRuntimes, tempRuntime, writeSettings } from "./single-agent-fixture.js";
 
 export const ABSENT = "ABSENT";
+
+/** Assert prompt scrolling does not repeat Markdown layout after the first frame. */
+export function assertPromptLayoutReuse(render: typeof import("../extensions/subagent/browser/agents-tab.js").renderAgentInspector): void {
+   const config = agent("layout", false, { systemPrompt: Array.from({ length: 100 }, (_, i) => `Prompt row ${i}`).join("\n") });
+   const ui = uiState();
+   const spy = spyOn(tui.Markdown.prototype, "render");
+   try {
+      render(config, new Map(), ui, 80, 25, theme as unknown as Theme);
+      const firstCalls = spy.mock.calls.length;
+      assert.equal(firstCalls, 1);
+      for (let scroll = 1; scroll <= 10; scroll++) {
+         ui.inspectorScroll = scroll;
+         const lines = render(config, new Map(), ui, 80, 25, theme as unknown as Theme);
+         assert.ok(lines.some((line) => line === `Prompt row ${scroll}`));
+      }
+      assert.equal(spy.mock.calls.length - firstCalls, 0, "scrolling repeated Markdown layout");
+   } finally { spy.mockRestore(); }
+}
+
+/** Assert scrolling reuses trace wrapping without freezing the visible viewport. */
+export function assertTraceLayoutReuse(render: typeof import("../extensions/subagent/browser/monitor-task-detail.js").renderMonitorDetail): void {
+   const task = record("layout", "layout-task", "2026-05-14T05:00:00.000Z");
+   const cache = new Map([[task.taskId, { items: [{ label: "Trace", text: Array.from({ length: 100 }, (_, i) => `Trace row ${i}`).join("\n"), type: "transcript" as const }] }]]);
+   const ui = uiState();
+   const spy = spyOn(tui, "wrapTextWithAnsi");
+   try {
+      render(task, cache, ui, 80, 20, theme as unknown as Theme);
+      const firstCalls = spy.mock.calls.length;
+      assert.equal(firstCalls, 100);
+      for (let scroll = 1; scroll <= 10; scroll++) {
+         ui.inspectorScroll = scroll;
+         const lines = render(task, cache, ui, 80, 20, theme as unknown as Theme);
+         assert.ok(lines.some((line) => line === `Trace row ${scroll}`));
+      }
+      assert.equal(spy.mock.calls.length - firstCalls, 0, "scrolling repeated trace layout");
+   } finally { spy.mockRestore(); }
+}
+
+/** Assert the trace cache evicts the least recently viewed task at its bound. */
+export function assertMonitorCacheBound(cache: Map<string, import("../extensions/subagent/types.js").MonitorDetailEntry>): void {
+   for (let i = 0; i < 16; i++) cache.set(String(i), { loading: true });
+   const first = cache.get("0");
+   cache.set("16", { error: "fixture-error" });
+   assert.equal(cache.size, 16, "trace cache exceeded its bound");
+   assert.equal(cache.has("1"), false);
+   assert.equal(cache.get("0"), first);
+   cache.clear();
+   assert.equal(cache.size, 0);
+}
 
 /** Count synchronous filesystem work during a warmed renderer call. */
 export function filesystemCalls(run: () => void): number[] {
@@ -312,6 +364,61 @@ export function assertDiscoveryEviction(runtime: Pick<typeof import("../extensio
 			unwatch.mockRestore();
 		}
 	});
+}
+
+/** A managed agent and an editor response, without a kendex process. */
+export function managedEditFixture(): { root: string; config: AgentConfig; ctx: ExtensionContext } {
+   const root = tempRuntime();
+   const filePath = join(root, ".pi/agents/managed.md");
+   mkdirSync(dirname(filePath), { recursive: true });
+   writeFileSync(filePath, "---\nname: managed\n---\nNever edit this file directly; kendex refresh writes it.\n");
+   writeFileSync(join(root, "kendex.toml"), "[agent-frontmatter.pi]\n");
+   const config = agent("managed", false, { filePath });
+   const ctx = { cwd: root, ui: { editor: async () => "model: test/model\ndeny-tools: bash\ncolor: green" } } as unknown as ExtensionContext;
+   return { root, config, ctx };
+}
+
+/** Drive an unfinished refresh callback and prove the editor yields before it exits. */
+export async function assertAsyncManagedEdit(runtime: Pick<typeof import("../extensions/subagent/browser/frontmatter-editor.js"), "editAgentFrontmatterOverrides">): Promise<void> {
+   const { root, config, ctx } = managedEditFixture();
+   let complete: ((error: Error | null, stdout: string, stderr: string) => void) | undefined;
+   let started!: () => void;
+   const ready = new Promise<void>((resolve) => { started = resolve; });
+   const asynchronous = spyOn(childProcess, "execFile").mockImplementation(((command: string, args: string[], options: childProcess.ExecFileOptions, callback: typeof complete) => {
+      complete = callback;
+      started();
+      return {} as childProcess.ChildProcess;
+   }) as typeof childProcess.execFile);
+   const synchronous = spyOn(childProcess, "spawnSync").mockImplementation(() => {
+      started();
+      return { status: 0, stdout: "", stderr: "", pid: 0, output: [null, "", ""], signal: null };
+   });
+   const save = runtime.editAgentFrontmatterOverrides(ctx, config);
+   try {
+      await ready;
+      assert.equal(synchronous.mock.calls.length, 0, "managed save used a blocking process");
+      assert.equal(asynchronous.mock.calls.length, 1);
+      const [command, args, options] = asynchronous.mock.calls[0]!;
+      assert.equal(command, "kendex");
+      assert.deepEqual(args, ["refresh", "--scope", "project"]);
+      assert.equal((options as childProcess.ExecFileOptions).cwd, root);
+      assert.equal((options as childProcess.ExecFileOptions).timeout, 120_000);
+      assert.equal((options as childProcess.ExecFileOptions).killSignal, "SIGKILL");
+      assert.equal((options as childProcess.ExecFileOptions).maxBuffer, 1024 * 1024);
+      let settled = false;
+      void save.then(() => { settled = true; });
+      await Promise.resolve();
+      assert.equal(settled, false, "save must await the refresh result");
+      assert.ok(fs.readFileSync(join(root, "kendex.toml"), "utf8").includes('model = "test/model"'));
+      complete!(null, "", "");
+      complete = undefined;
+      assert.equal(typeof await save, "string");
+   } finally {
+      complete?.(null, "", "");
+      await save;
+      synchronous.mockRestore();
+      asynchronous.mockRestore();
+   }
 }
 
 export const theme = {

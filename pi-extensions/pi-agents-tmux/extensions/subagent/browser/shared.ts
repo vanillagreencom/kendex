@@ -13,11 +13,56 @@ import {
 	MONITOR_BROWSER_TAB,
 	KENDEX_MODAL_LOCK_SYMBOL,
 	type AgentBrowserLayout,
+	type AgentBrowserUiState,
 	type AgentBrowserTabDef,
 	type AgentBrowserTabId,
 	type AgentPaneStatus,
 	type kendexModalLock,
 } from "../types.js";
+
+interface PopupLayout {
+	content: string;
+	variant: string | undefined;
+	width: number;
+	themeKey: string;
+	lines: string[];
+}
+
+// Each popup holds only its current prompt and current trace layout. The weak
+// owner releases both when the popup's navigation state is no longer used.
+const popupLayouts = new WeakMap<AgentBrowserUiState, Map<"prompt" | "trace", PopupLayout>>();
+
+/** Release coloured layouts when Pi invalidates or closes the popup. */
+export function invalidatePopupLayouts(ui: AgentBrowserUiState): void {
+	popupLayouts.delete(ui);
+}
+
+/** Reuse layout across scrolling, but not changed content, width or colours. */
+export function cachedPopupLayout(
+	ui: AgentBrowserUiState,
+	kind: "prompt" | "trace",
+	content: string,
+	variant: string | undefined,
+	width: number,
+	theme: Theme,
+	render: () => string[],
+): string[] {
+	// Pi can update a theme in place, so its object identity alone is not a key.
+	const themeKey = JSON.stringify([
+		...(["accent", "dim", "muted", "text", "toolOutput", "success", "warning", "error"] as const).map((tone) => theme.fg(tone, "x")),
+		theme.bold("x"),
+	]);
+	let layouts = popupLayouts.get(ui);
+	if (!layouts) {
+		layouts = new Map();
+		popupLayouts.set(ui, layouts);
+	}
+	const previous = layouts.get(kind);
+	if (previous && previous.content === content && previous.variant === variant && previous.width === width && previous.themeKey === themeKey) return previous.lines;
+	const lines = render();
+	layouts.set(kind, { content, variant, width, themeKey, lines });
+	return lines;
+}
 
 export function acquirekendexModalLock(): () => void {
 	const host = globalThis as unknown as Record<PropertyKey, unknown>;

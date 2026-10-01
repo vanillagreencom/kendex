@@ -1,0 +1,1 @@
+- Agents popup scrolling reuses text layout and retains at most 16 task traces. Managed-agent saves refresh asynchronously with a 120-second deadline.

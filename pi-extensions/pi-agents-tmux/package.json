@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-agents-tmux",
-  "version": "3.3.0",
+  "version": "3.3.1",
   "description": "Pi extension for delegating work to project or user agents, including persistent tmux agent panes.",
   "license": "MIT",
   "keywords": [
@@ -20,6 +20,7 @@
   },
   "scripts": {
     "test": "bun test ./tests ./extensions/subagent/__tests__",
+    "bench:popup": "bun ./tests/popup-layout.bench.ts",
     "postinstall": "node scripts/append-system.mjs install",
     "preuninstall": "node scripts/append-system.mjs remove"
   },

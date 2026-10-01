@@ -21,7 +21,30 @@ import {
 	type TraceViewerItem,
 } from "../types.js";
 import { formatLocalDateTime, monitorTaskRunTime } from "./monitor-tree.js";
-import { agentActivePill, agentDivider, agentInactivePill, agentPaneTitle } from "./shared.js";
+import { agentActivePill, agentDivider, agentInactivePill, agentPaneTitle, cachedPopupLayout } from "./shared.js";
+
+/** The popup retains at most 16 task traces, including pending loads. */
+export class MonitorDetailCache extends Map<string, MonitorDetailEntry> {
+	override get(key: string): MonitorDetailEntry | undefined {
+		const entry = super.get(key);
+		if (entry) {
+			super.delete(key);
+			super.set(key, entry);
+		}
+		return entry;
+	}
+
+	override set(key: string, entry: MonitorDetailEntry): this {
+		super.delete(key);
+		super.set(key, entry);
+		if (this.size > 16) {
+			const oldest = this.keys().next();
+			if (oldest.done) throw new Error("Monitor detail cache exceeds its bound but has no oldest entry.");
+			super.delete(oldest.value);
+		}
+		return this;
+	}
+}
 
 function wrapPlainNoEllipsis(text: string, width: number): string[] {
 	const targetWidth = Math.max(1, width);
@@ -145,8 +168,9 @@ export function renderMonitorDetail(
 			agentDivider(safeWidth, theme),
 		]
 			: [];
-	const rawLines = (item?.text || "(empty)").split(/\r?\n/);
-	const wrapped = renderTraceContentLines(rawLines, item?.type, safeWidth, theme);
+	const text = item?.text || "(empty)";
+	const wrapped = cachedPopupLayout(ui, "trace", text, item?.type, safeWidth, theme,
+		() => renderTraceContentLines(text.split(/\r?\n/), item?.type, safeWidth, theme));
 	const header: string[] = [titleLine, "", subtabLine, "", ...fileLines];
 	const headerRows = header.length;
 	const footerRows = 1;

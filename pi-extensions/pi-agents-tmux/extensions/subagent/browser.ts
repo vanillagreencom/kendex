@@ -53,6 +53,7 @@ import {
 	monitorSubtabCount,
 	renderMonitorDetail,
 	traceViewerItems,
+	MonitorDetailCache,
 } from "./browser/monitor-task-detail.js";
 import { renderMonitorSessionDetail } from "./browser/monitor-session-detail.js";
 import {
@@ -62,6 +63,7 @@ import {
 	agentFrame,
 	agentFrameContentWidth,
 	agentPad,
+	invalidatePopupLayouts,
 	isAgentBrowserCancelInput,
 	renderAgentBrowserTabs,
 	tabNext,
@@ -240,6 +242,8 @@ function createAgentsBrowserComponent(
 		resizeTimer = undefined;
 		clearInterval(liveTimer);
 		process.off("SIGWINCH", scheduleResizeRender);
+		monitorCache.clear();
+		invalidatePopupLayouts(ui);
 	};
 	const finish = (action: AgentBrowserAction) => {
 		cleanup();
@@ -259,7 +263,7 @@ function createAgentsBrowserComponent(
 	};
 	const monitorCollapsedSections = new Set<MonitorSectionKind>();
 	const monitorCollapsedSessions = new Set<string>();
-	const monitorCache = new Map<string, MonitorDetailEntry>();
+	const monitorCache = new MonitorDetailCache();
 	// `taskRegistry` is the disk snapshot taken when the pop-up opened. The live
 	// dashboard items are overlaid on it so an open pop-up tracks lifecycle changes
 	// instead of the frozen snapshot, and agrees with the statusline/mini-dashboard.
@@ -294,11 +298,14 @@ function createAgentsBrowserComponent(
 		const cacheKey = record.taskId;
 		const entry = monitorCache.get(cacheKey);
 		if (entry?.items || entry?.loading || entry?.error) return;
-		monitorCache.set(cacheKey, { loading: true });
+		const loading = { loading: true };
+		monitorCache.set(cacheKey, loading);
 		void traceViewerItems(record, monitorView.taskNumbers.get(record.taskId), discovery, group?.sessionNumber).then((items) => {
+			if (closed || monitorCache.get(cacheKey) !== loading) return;
 			monitorCache.set(cacheKey, { items });
 			requestRender();
 		}).catch((error) => {
+			if (closed || monitorCache.get(cacheKey) !== loading) return;
 			monitorCache.set(cacheKey, { error: error instanceof Error ? error.message : String(error) });
 			requestRender();
 		});
@@ -545,7 +552,7 @@ function createAgentsBrowserComponent(
 		return agentFrame(lines, safeWidth, theme, layout.innerRows, "Agents");
 	}
 
-	return { handleInput, invalidate() {}, render };
+	return { handleInput, invalidate() { invalidatePopupLayouts(ui); }, render };
 }
 
 export async function openAgentsBrowser(

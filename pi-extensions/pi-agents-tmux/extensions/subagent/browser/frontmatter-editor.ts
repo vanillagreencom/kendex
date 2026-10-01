@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
@@ -255,16 +255,19 @@ function upsertAgentFrontmatterToml(content: string, agentName: string, edit: Ag
 	return `${next.replace(/\n*$/, "")}\n`;
 }
 
-function refreshkendexManagedAgent(agent: AgentConfig, tomlPath: string): { ok: boolean; message?: string } {
+async function refreshkendexManagedAgent(agent: AgentConfig, tomlPath: string): Promise<{ ok: true } | { ok: false; message: string }> {
 	const projectRoot = path.dirname(tomlPath);
-	const result = spawnSync("kendex", ["refresh", "--scope", "project"], {
-		cwd: projectRoot,
-		encoding: "utf-8",
-		timeout: 120_000,
+	const result = await new Promise<{ error: Error | null; stdout: string; stderr: string }>((resolve) => {
+		execFile("kendex", ["refresh", "--scope", "project"], {
+			cwd: projectRoot,
+			encoding: "utf-8",
+			timeout: 120_000,
+			killSignal: "SIGKILL",
+			maxBuffer: 1024 * 1024,
+		}, (error, stdout, stderr) => resolve({ error, stdout, stderr }));
 	});
-	if (result.error) return { ok: false, message: result.error.message };
-	if ((result.status ?? 0) !== 0) {
-		const detail = (result.stderr || result.stdout || `exit ${result.status}`).trim();
+	if (result.error) {
+		const detail = (result.stderr || result.stdout || result.error.message).trim();
 		return { ok: false, message: detail.split(/\r?\n/).slice(-4).join(" ") };
 	}
 	if (!fs.existsSync(agent.filePath)) return { ok: false, message: `${compactAgentPath(agent.filePath)} was not regenerated.` };
@@ -315,7 +318,7 @@ export async function editAgentFrontmatterOverrides(ctx: ExtensionContext, agent
 			await fs.promises.mkdir(path.dirname(tomlPath), { recursive: true });
 			await fs.promises.writeFile(tomlPath, next, "utf-8");
 		});
-		const refresh = refreshkendexManagedAgent(agent, tomlPath);
+		const refresh = await refreshkendexManagedAgent(agent, tomlPath);
 		if (!refresh.ok) return `Updated ${agent.name} overrides in ${compactAgentPath(tomlPath)}. Refresh failed: ${refresh.message || "unknown error"}. Run kendex refresh --scope project to regenerate ${compactAgentPath(agent.filePath)}.`;
 		return `Updated Pi overrides in ${compactAgentPath(tomlPath)} and regenerated project agents. Run /reload if Pi does not pick up the changed agent immediately.`;
 	}
