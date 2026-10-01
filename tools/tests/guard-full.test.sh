@@ -734,12 +734,12 @@ CODE="skills/demo/scripts/demo.sh .agents/skills/demo/scripts/demo.sh crates/cor
 # A skill and a tool, the diff no build input and no ui/ path is in.
 SKILL_TOOL="skills/demo/scripts/demo.sh .agents/skills/demo/scripts/demo.sh tools/demo-tool.sh"
 ALL="suites parse lint apple windows test ui"
-# class|docs verdict|changed paths|the lanes that run
+# class|docs verdict|changed paths|the lanes that run|optional final report
 LANE_ROWS=(
   "||$CODE|$ALL"
   "standard|false|$CODE ui/app.ts|$ALL"
   "standard|false|$CODE|suites parse lint apple windows test"
-  "standard|false|$SKILL_TOOL|suites parse test"
+  "standard|false|$SKILL_TOOL|suites parse test|validate: lanes=guard-scans,bot-instructions,decision-ids,bash32-lint,bash32-parse,shell-suites,cargo-test selection=all"
   "standard|true|docs/guide.md|test"
   "render|false|$CODE|"
   "trivial|true|$CODE|"
@@ -749,10 +749,10 @@ LANE_ROWS=(
 )
 lane_guard
 for row in "${LANE_ROWS[@]}"; do
-  IFS='|' read -r class docs paths want <<<"$row"
+  IFS='|' read -r class docs paths want report <<<"$row"
   run_lanes "$class" "$docs" $paths
   got="$(lanes_ran)"
-  [ "$RC" -eq 0 ] && [ "$got" = "$want" ] \
+  [ "$RC" -eq 0 ] && [ "$got" = "$want" ] && { [ -z "$report" ] || [ "$(sed -n '$p' <<<"$OUT")" = "$report" ]; } \
     && ok "class '${class:-unset}' docs-only '${docs:-unset}' over $paths runs: ${want:-no heavy lane}" \
     || bad "class '${class:-unset}' docs-only '${docs:-unset}' over $paths runs: ${want:-no heavy lane}" "rc=$RC got=$got out=$OUT"
   case "$class" in
