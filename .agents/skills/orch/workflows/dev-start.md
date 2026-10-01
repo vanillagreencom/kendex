@@ -58,7 +58,7 @@ gh issue view [N] --json labels --jq '.labels[].name'
 
 ## 2. Delegate
 
-Apply [Delegation](../references/skill-rules.md#delegation) before choosing a stored dev agent or starting a replacement. Persistence follows [Agent Lifecycle](../references/skill-rules.md#agent-lifecycle).
+Apply [Delegation](../references/skill-rules.md#delegation) for the target worktree before choosing a stored dev agent or starting a replacement. Persistence follows [Agent Lifecycle](../references/skill-rules.md#agent-lifecycle).
 
 Before EVERY implementation delegation, including each group's delegation in bundled mode, run these four as separate tool calls; the third is the round-start prune, [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure):
 

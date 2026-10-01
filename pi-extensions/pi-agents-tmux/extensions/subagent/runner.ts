@@ -16,6 +16,7 @@ import { sanitizeCwdSnapshotText, setGitExecFileForTests as setSnapshotGitExecFi
 import { getFinalOutput, stringifyError, textFromMessageContent } from "./format.js";
 import { safeFileName } from "./names.js";
 import { unknownAgentRefusal } from "./messages.js";
+import { singleResultIsError, singleResultStatus } from "./outcomes.js";
 import {
 	getPiInvocation,
 	PI_SUBAGENT_CHILD_PANE_ENV,
@@ -426,7 +427,7 @@ export async function prepareSingleResultForReturn(
 	limits?: ResultLimits,
 ): Promise<PreparedSingleResult> {
 	const finalOutput = getFinalOutput(result.messages);
-	const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
+	const isError = singleResultIsError(result);
 	const rawText = textOverride ?? (finalOutput || (isError ? result.errorMessage || result.stderr : finalOutput));
 	const direction = isError && !finalOutput ? "tail" : "head";
 	const output = rawText
@@ -598,6 +599,12 @@ export async function runSingleAgent(
 	);
 
 	if (first.stopReason === "aborted" || !resultHasContextLengthExceeded(first)) return first;
+	if (sameSession) {
+		const diagnostic = `Context length exceeded for ${agent.name} session ${firstSession.key}; exact-session request cannot retry in a fresh session. Start a fresh agent without sameSession.`;
+		first.errorMessage = [first.errorMessage || first.stderr, diagnostic].filter(Boolean).join("\n");
+		first.stderr = [first.stderr, diagnostic].filter(Boolean).join("\n");
+		return first;
+	}
 
 	const retrySession = resolveBgSession(runtimeRoot, agent.name);
 	const warning = `Context length exceeded for ${agent.name} session ${firstSession.key}; retrying once with fresh session ${retrySession.key}.`;
@@ -639,7 +646,7 @@ export async function runSingleAgent(
 	);
 	const attempts = [summarizeAttempt(first), summarizeAttempt(retry)];
 	retry.attempts = attempts;
-	const retryFailed = retry.exitCode !== 0 || retry.stopReason === "error" || retry.stopReason === "aborted" || resultHasContextLengthExceeded(retry);
+	const retryFailed = singleResultIsError(retry) || resultHasContextLengthExceeded(retry);
 	if (!retryFailed) {
 		retry.stderr = [warning, retry.stderr].filter(Boolean).join("\n");
 		return retry;
@@ -1398,7 +1405,8 @@ async function runSingleAgentAttempt(
 			}
 			return currentResult;
 		}
-		const failed = exitCode !== 0 || currentResult.stopReason === "error" || currentResult.stopReason === "aborted";
+		const status = singleResultStatus(currentResult);
+		const failed = singleResultIsError(currentResult);
 		const finalOutput = getFinalOutput(currentResult.messages);
 		emitSubagentEvent(pi, failed ? "subagents:failed" : "subagents:completed", {
 			reuseNotice,
@@ -1406,7 +1414,7 @@ async function runSingleAgentAttempt(
 			agent: agent.name,
 			taskId: oneShotTaskId,
 			task,
-			status: failed ? "failed" : "completed",
+			status,
 			...(failed ? { summary: currentResult.errorMessage || currentResult.stderr || finalOutput } : finalOutput ? { summary: finalOutput, finalOutput } : {}),
 			runtimeRoot,
 			transcriptPath,

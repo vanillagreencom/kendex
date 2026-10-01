@@ -188,7 +188,7 @@ function dashboardMessageForOneShotResult(result: SingleResult, persistedSummary
 }
 
 function dashboardMessageProvenanceForOneShotResult(result: SingleResult, persistedSummary?: string): SubagentDashboardItem["messageProvenance"] {
-	if (result.refused || result.errorMessage || result.stderr) return "diagnostic";
+	if (singleResultStatus(result) === "refused" || result.errorMessage || result.stderr) return "diagnostic";
 	if (normalizeSummaryText(persistedSummary) || getFinalOutput(result.messages).trim()) return "persisted";
 	return singleResultStatus(result) === "running" ? "task-echo-fallback" : "placeholder";
 }
@@ -308,7 +308,7 @@ async function chainDispatch(
 					step.sameSession ?? flow.sameSession,
 				);
 		results.push(result);
-		if (!runsInPane(stepAgent, lane) || result.refused) {
+		if (!runsInPane(stepAgent, lane) || singleResultStatus(result) === "refused") {
 			flow.updateDashboard({
 				reuseNotice: result.reuseNotice,
 				agent: result.agent,
@@ -418,8 +418,8 @@ async function parallelDispatch(
 
 	const emitParallelUpdate = () => {
 		if (flow.onUpdate) {
-			const running = allResults.filter((r) => r.exitCode === -1).length;
-			const done = allResults.filter((r) => r.exitCode !== -1).length;
+			const running = allResults.filter((r) => singleResultStatus(r) === "running").length;
+			const done = allResults.length - running;
 			const updateResults = allResults.map((result) => {
 				const rawOutput = getFinalOutput(result.messages);
 				return {
@@ -504,7 +504,7 @@ async function parallelDispatch(
 						t.sameSession ?? flow.sameSession,
 					);
 			allResults[index] = result;
-			if (!runsInPane(taskAgent, lane) || result.refused) await updateOneshotDashboard(result, true);
+			if (!runsInPane(taskAgent, lane) || singleResultStatus(result) === "refused") await updateOneshotDashboard(result, true);
 			emitParallelUpdate();
 			return result;
 		} catch (error) {
@@ -599,7 +599,7 @@ async function singleDispatch(
 				oneShotDeadline(agent),
 				flow.sameSession,
 			);
-	if (!runsInPane(agent, lane) || result.refused) {
+	if (!runsInPane(agent, lane) || singleResultStatus(result) === "refused") {
 		flow.updateDashboard({
 			reuseNotice: result.reuseNotice,
 			agent: result.agent,

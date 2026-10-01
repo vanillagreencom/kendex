@@ -256,14 +256,6 @@ function launchInventory(cwd: string, scope: AgentScope, allowed: AgentConfig[])
 	return { allowed, project, user };
 }
 
-function collectRequestedAgentNames(params: Record<string, any>): Set<string> {
-	const requested = new Set<string>();
-	if (Array.isArray(params.chain)) for (const step of params.chain) if (step?.agent && step?.task) requested.add(step.agent);
-	if (Array.isArray(params.tasks)) for (const task of params.tasks) if (task?.agent && task?.task) requested.add(task.agent);
-	if (params.agent && params.task) requested.add(params.agent);
-	return requested;
-}
-
 type FollowUpTask = { taskId: string; outboxFile: string; taskFile?: string };
 
 interface PersistedSubagentRuntimeState {
@@ -2116,7 +2108,11 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			const requestedAgentNames = collectRequestedAgentNames(params as Record<string, any>);
+			const requestedAgentNames = new Set(
+				hasChain ? params.chain!.map((step) => step.agent)
+					: hasTasks ? params.tasks!.map((task) => task.agent)
+						: [params.agent!],
+			);
 			const inventoryError = validateAgentInventory(requestedAgentNames, launchInventory(ctx.cwd, agentScope, agents), agentScope);
 			if (inventoryError) {
 				const mode = hasChain ? "chain" : hasTasks ? "parallel" : "single";

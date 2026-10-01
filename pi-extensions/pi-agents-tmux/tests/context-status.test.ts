@@ -9,7 +9,9 @@ import { importRuntimeCopy } from "./browser-fixture.js";
 
 after(cleanupTempRuntimes);
 
-test("stored-ID reuse can read the child's own guard estimate and threshold", () => assertAgentContextBudget());
+for (const route of ["background", "pane"] as const) {
+	test(`stored-ID reuse reads the target guard estimate and model: ${route}`, () => assertAgentContextBudget(undefined, route));
+}
 
 for (const policy of ["refuse-and-warn", "warn", "compact-then-resume"]) {
 	test(`legacy policy ${policy} is read with a migration warning`, () => assertBudgetMigration(guardReusedSessionBudget, policy));
@@ -51,3 +53,23 @@ test("control: the old result lookup supplies no background context figure", asy
 		await assert.rejects(() => assertAgentContextBudget(extension.default), assert.AssertionError);
 	} finally { delete globals[key]; }
 });
+
+for (const defect of ["pane-report", "background-cwd", "pane-cwd", "background-model"] as const) {
+	test(`control: context lookup loses ${defect}`, async () => {
+		const edits = {
+			"pane-report": ['const contextBudget = finalRecord.transcriptPath ?', 'const contextBudget = false && finalRecord.transcriptPath ?'],
+			"background-cwd": ['params.agent, model, params.cwd ?? ctx.cwd)', 'params.agent, model, ctx.cwd)'],
+			"pane-cwd": ['pane?.cwd ?? params.cwd ?? ctx.cwd)', 'ctx.cwd)'],
+			"background-model": ['const model = selectedModelForAgent(agent, parentModel, ctx.cwd);', 'const model = undefined;'],
+		} as const;
+		const [before, after] = edits[defect];
+		const tools = await importRuntimeCopy("pane-support-tools.ts", before, after) as typeof import("../extensions/subagent/pane-support-tools.js");
+		const key = Symbol.for("test.context-status");
+		const globals = globalThis as unknown as Record<symbol, unknown>;
+		globals[key] = tools.registerPaneSupportTools;
+		try {
+			const extension = await importRuntimeCopy("index.ts", 'import { registerPaneSupportTools } from "./pane-support-tools.js";', 'const registerPaneSupportTools = globalThis[Symbol.for("test.context-status")];') as typeof import("../extensions/subagent/index.js");
+			await assert.rejects(() => assertAgentContextBudget(extension.default, defect.startsWith("pane") ? "pane" : "background"), assert.AssertionError);
+		} finally { delete globals[key]; }
+	});
+}

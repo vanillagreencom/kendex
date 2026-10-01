@@ -1,5 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Container } from "@earendil-works/pi-tui";
+import { discoverAgents } from "./agents.js";
+import { selectedModelForAgent } from "./settings.js";
 import {
 	addArtifactPathSection,
 	addWrappedSection,
@@ -72,7 +74,7 @@ export function registerPaneSupportTools(deps: PaneSupportToolDeps): void {
 		renderShell: "self",
 		name: "get_subagent_result",
 		label: "Get Agent Result",
-		description: "Retrieve status/results for persistent pane agent tasks by taskId or latest agent task. Use waitFor: \"idle\" to wait for pane isIdle transition without shell polling. This is a recovery/status tool for pane tasks and does not change orchestration ownership.",
+		description: "Retrieve task status/results by taskId or latest agent task. With agent and sessionKey, read the background context guard for the next dispatch; pass its cwd and agentScope. Use waitFor: \"idle\" to wait for pane isIdle transition without shell polling. This tool does not change orchestration ownership.",
 		parameters: GetSubagentResultParams,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			if (!params.taskId && !params.agent) {
@@ -105,8 +107,12 @@ export function registerPaneSupportTools(deps: PaneSupportToolDeps): void {
 			}
 			if (params.sessionKey) {
 				if (!params.agent) return { content: [{ type: "text", text: "Provide agent with sessionKey." }], details: {}, isError: true };
+				const agent = discoverAgents(ctx.cwd, params.agentScope ?? "project").agents.find((agent) => agent.name === params.agent);
+				if (!agent) return { content: [{ type: "text", text: `No agent profile found for ${params.agent}.` }], details: {}, isError: true };
+				const parentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
+				const model = selectedModelForAgent(agent, parentModel, ctx.cwd);
 				const sessionPath = bgSessionPath(runtimeRoot, params.agent, params.sessionKey);
-				const contextBudget = await guardReusedSessionBudget(sessionPath, params.agent, undefined, ctx.cwd);
+				const contextBudget = await guardReusedSessionBudget(sessionPath, params.agent, model, params.cwd ?? ctx.cwd);
 				const summary = contextBudget.estimate.exists ? await readLastAssistantTextFromTranscript(sessionPath) : undefined;
 				return {
 					content: [{ type: "text", text: JSON.stringify({ agent: params.agent, sessionKey: params.sessionKey, contextBudget, summary }) }],
@@ -140,7 +146,8 @@ export function registerPaneSupportTools(deps: PaneSupportToolDeps): void {
 				record = backfilled.record;
 			}
 			const finalRecord = record as PaneTaskRecord;
-			const contextBudget = finalRecord.transcriptPath ? await guardReusedSessionBudget(finalRecord.transcriptPath, finalRecord.agent, finalRecord.model, ctx.cwd) : undefined;
+			const pane = finalRecord.paneId ? (await readPaneRegistry(runtimeRoot))[finalRecord.agent] as PaneRegistryEntry | undefined : undefined;
+			const contextBudget = finalRecord.transcriptPath ? await guardReusedSessionBudget(finalRecord.transcriptPath, finalRecord.agent, pane?.model ?? finalRecord.model, pane?.cwd ?? params.cwd ?? ctx.cwd) : undefined;
 			updateDashboardFromTaskRecord({ ...finalRecord, updatedAt: new Date().toISOString() }, runtimeRoot);
 			await persistRuntimeSnapshot(ctx, runtimeRoot);
 			const diagnosticBlock = params.verbose && diagnostics.length > 0 ? `\n\n### Artifact diagnostics\n${diagnostics.map((line) => `- ${line}`).join("\n")}` : "";

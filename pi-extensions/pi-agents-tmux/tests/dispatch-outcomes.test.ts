@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import test, { after } from "node:test";
+import { spyOn } from "bun:test";
+import * as runner from "../extensions/subagent/runner.js";
+import { assertRegisteredExactSession } from "./extension-fixture.js";
 import * as dispatch from "../extensions/subagent/dispatch.js";
 import { setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
 import { resolveBgSession } from "../extensions/subagent/sessions.js";
 import { renderDashboardWidgetLines } from "../extensions/subagent/dashboard.js";
 import { subagentToolRenderers } from "../extensions/subagent/subagent-render.js";
-import { assertDispatchOutcome, bridgeEvent, bridgeStdout, cleanupTempRuntimes, dispatchOutcome, installMockSpawn, tempRuntime, writeSettings } from "./single-agent-fixture.js";
+import { assertProviderProducer, assertDispatchOutcome, bridgeEvent, bridgeStdout, cleanupTempRuntimes, dispatchOutcome, installMockSpawn, tempRuntime, writeSettings } from "./single-agent-fixture.js";
 import { importRuntimeCopy, stripAnsi, theme } from "./browser-fixture.js";
 
 after(cleanupTempRuntimes);
@@ -126,3 +129,67 @@ test("control: exit-code-only tool rendering calls provider errors completed", a
 		assert.throws(() => assert.ok(rendered.includes("failed")), assert.AssertionError);
 	} finally { setSingleAgentSpawnForTests(); }
 });
+
+const sessionRows = [
+	{ name: "single", params: { agent: "scout", task: "map", sessionKey: "reuse", sameSession: true } },
+	{ name: "parallel/top", params: { tasks: [{ agent: "scout", task: "map", sessionKey: "reuse" }], sameSession: true } },
+	{ name: "chain/top", params: { chain: [{ agent: "scout", task: "map", sessionKey: "reuse" }], sameSession: true } },
+	{ name: "parallel/item", params: { tasks: [{ agent: "scout", task: "map", sessionKey: "reuse", sameSession: true }] } },
+	{ name: "chain/item", params: { chain: [{ agent: "scout", task: "map", sessionKey: "reuse", sameSession: true }] } },
+];
+
+for (const overflow of ["guard", "provider"] as const) {
+	for (const { name, params } of sessionRows) {
+		test(`registered exact session survives ${overflow} overflow: ${name}`, () => assertRegisteredExactSession(params, overflow));
+	}
+}
+
+for (const { name, params } of sessionRows.slice(0, 3)) {
+	test(`control: public dispatch drops sameSession: ${name}`, async () => {
+		const following = name === "single" ? "signal," : name.startsWith("parallel") ? "updateDashboard," : "cwd: ctx.cwd,";
+		const mutant = await importRuntimeCopy("index.ts", `sameSession: params.sameSession,\n\t\t\t\t\t${following}`, `sameSession: undefined,\n\t\t\t\t\t${following}`) as typeof import("../extensions/subagent/index.js");
+		await assert.rejects(() => assertRegisteredExactSession(params, "guard", mutant.default), assert.AssertionError);
+	});
+}
+
+for (const { name, params } of sessionRows.slice(3)) {
+	test(`control: dispatch drops per-item sameSession: ${name}`, async () => {
+		const item = name.startsWith("parallel") ? "t" : "step";
+		const dispatcher = name.startsWith("parallel") ? "runParallelDispatch" : "runChainDispatch";
+		const mutant = await importRuntimeCopy("dispatch.ts", `${item}.sameSession ?? flow.sameSession`, 'flow.sameSession') as typeof dispatch;
+		const key = Symbol.for("test.session-dispatch");
+		const globals = globalThis as unknown as Record<symbol, unknown>;
+		globals[key] = mutant[dispatcher];
+		try {
+			const extension = await importRuntimeCopy("index.ts", `\t${dispatcher},`, '', [{ before: 'function bridgeTargetArgs(', after: `const ${dispatcher} = globalThis[Symbol.for("test.session-dispatch")];\nfunction bridgeTargetArgs(` }]) as typeof import("../extensions/subagent/index.js");
+			await assert.rejects(() => assertRegisteredExactSession(params, "guard", extension.default), assert.AssertionError);
+		} finally { delete globals[key]; }
+	});
+}
+
+test("control: provider overflow retries an exact session as fresh", async () => {
+	const mutant = await importRuntimeCopy("runner.ts", '\tif (sameSession) {', '\tif (false && sameSession) {') as typeof runner;
+	const key = Symbol.for("test.session-runner");
+	const globals = globalThis as unknown as Record<symbol, unknown>;
+	globals[key] = mutant.runSingleAgent;
+	try {
+		const dispatcher = await importRuntimeCopy("dispatch.ts", '\trunSingleAgent,', '', [{ before: 'import { createOneShotSessionKey }', after: 'const runSingleAgent = globalThis[Symbol.for("test.session-runner")];\nimport { createOneShotSessionKey }' }]) as typeof dispatch;
+		globals[key] = dispatcher.runSingleDispatch;
+		const extension = await importRuntimeCopy("index.ts", '\trunSingleDispatch,', '', [{ before: 'function bridgeTargetArgs(', after: 'const runSingleDispatch = globalThis[Symbol.for("test.session-runner")];\nfunction bridgeTargetArgs(' }]) as typeof import("../extensions/subagent/index.js");
+		// The runner copy owns its spawn mock, so install it while the public fixture runs.
+		const install = spyOn(runner, "setSingleAgentSpawnForTests").mockImplementation(mutant.setSingleAgentSpawnForTests);
+		try { await assert.rejects(() => assertRegisteredExactSession(sessionRows[0]!.params, "provider", extension.default), assert.AssertionError); }
+		finally { install.mockRestore(); }
+	} finally { delete globals[key]; }
+});
+
+test("provider producer and saved output share the outcome judge", () => assertProviderProducer(runner));
+
+for (const surface of ["producer", "saved-output"] as const) {
+	test(`control: shared judge is bypassed in ${surface}`, async () => {
+		const mutant = surface === "producer"
+			? await importRuntimeCopy("runner.ts", 'import { singleResultIsError, singleResultStatus } from "./outcomes.js";', exitOnly)
+			: await importRuntimeCopy("runner.ts", 'const isError = singleResultIsError(result);', 'const isError = false && singleResultIsError(result);');
+		await assert.rejects(() => assertProviderProducer(mutant as typeof runner), assert.AssertionError);
+	});
+}

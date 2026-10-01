@@ -204,12 +204,12 @@ export const subagentToolRenderers = {
 			// stopReason) is a real failure.
 			const status = singleResultStatus(r);
 			const isRunning = status === "running";
-			const needsCompletion = r.status === "needs_completion";
+			const needsCompletion = status === "needs_completion";
 			const isError = singleResultIsError(r);
 			// A refused dispatch never started an agent: no queued task, no process,
 			// no usage. It is reported as its own state so the row does not read as a
 			// run that blew up.
-			const isRefused = !isRunning && Boolean(r.refused);
+			const isRefused = status === "refused";
 			const refusalReason = r.errorMessage ?? r.stderr;
 			const isQueued = !needsCompletion && !isError && !isRunning && Boolean(r.taskId && r.paneId);
 			const displayItems = getDisplayItems(r.messages);
@@ -345,8 +345,8 @@ export const subagentToolRenderers = {
 
 		if (details.mode === "chain") {
 			const successCount = details.results.filter((r) => singleResultStatus(r) === "completed").length;
-			const runningCount = details.results.filter((r) => r.exitCode === -1).length;
-			const needsCompletionCount = details.results.filter((r) => r.status === "needs_completion").length;
+			const runningCount = details.results.filter((r) => singleResultStatus(r) === "running").length;
+			const needsCompletionCount = details.results.filter((r) => singleResultStatus(r) === "needs_completion").length;
 			const chainStepIcon = (r: SingleResult) => {
 				const status = singleResultStatus(r);
 				switch (status) {
@@ -447,8 +447,8 @@ export const subagentToolRenderers = {
 		}
 
 		if (details.mode === "parallel") {
-			const running = details.results.filter((r) => r.exitCode === -1).length;
-			const needsCompletionCount = details.results.filter((r) => r.status === "needs_completion").length;
+			const running = details.results.filter((r) => singleResultStatus(r) === "running").length;
+			const needsCompletionCount = details.results.filter((r) => singleResultStatus(r) === "needs_completion").length;
 			const successCount = details.results.filter((r) => singleResultStatus(r) === "completed").length;
 			const failCount = details.results.filter(singleResultIsError).length;
 			const queuedPaneCount = details.results.filter((r) => singleResultStatus(r) === "completed" && r.taskId && r.paneId).length;

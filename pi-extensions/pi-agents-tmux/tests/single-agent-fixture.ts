@@ -65,21 +65,23 @@ export async function dispatchOutcome(options: {
 } = {}) {
 	const cwd = options.cwd ?? tempRuntime();
 	const rows: SubagentDashboardItem[] = [];
+	const events: Array<{ name: string; payload: unknown }> = [];
 	const result = await (options.run ?? runSingleDispatch)({
 		agents: [testAgent()], cwd, runtimeRoot: options.runtimeRoot ?? tempRuntime(),
-		parentSessionId: "test", pi: mockPiEvents([]),
+		parentSessionId: "test", pi: mockPiEvents(events),
 		agent: "reviewer-test", task: "new task", sessionKey: options.sessionKey,
 		sameSession: options.sameSession, signal: options.signal,
 		makeDetails: (mode) => (results) => ({ mode, agentScope: "project", projectAgentsDir: null, results }),
 		removeDashboardAgent: () => undefined, updateDashboard: (item) => { rows.push(item); },
 	});
-	return { result, row: rows.at(-1)! };
+	return { result, row: rows.at(-1)!, events };
 }
 
 /** Assert the outcome independently in model-facing data and the panel. */
 export async function assertDispatchOutcome(status: "refused" | "stopped" | "failed", options: Parameters<typeof dispatchOutcome>[0], diagnostic: string) {
-	const { result, row } = await dispatchOutcome(options);
+	const { result, row, events } = await dispatchOutcome(options);
 	assert.deepEqual([row.status, result.isError, row.message?.includes(diagnostic), result.content[0]?.text.includes(diagnostic)], [status, true, true, true]);
+	if (status !== "refused") assert.equal((events.findLast(({ name }) => name === "subagents:failed" || name === "subagents:completed")?.payload as { status: string })?.status, status);
 	return { result, row };
 }
 
@@ -237,12 +239,13 @@ export async function assertFreshHandoff(runtime: Pick<typeof import("../extensi
 	writeSettings(cwd, { reusedSessionContextLimitTokens: 100, reusedSessionBudgetThreshold: 0.8 });
 	const session = resolveBgSession(root, "reviewer-test", "reuse");
 	mkdirSync(join(root, "sessions"), { recursive: true });
-	const prior = `${JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "prior final result" }] } })}\n`.padEnd(432, " ");
+	const priorResult = "handoff-proof: amber gearbox inspected";
+	const prior = `${JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: priorResult }] } })}\n`.padEnd(432, " ");
 	writeFileSync(session.path, prior);
 	const calls = installMockSpawn([{ stdout: bridgeStdout([bridgeEvent("message_end", { message: { role: "assistant", content: [{ type: "text", text: "fresh answer" }] } })]) }], runtime.setSingleAgentSpawnForTests);
 	try {
 		const result = await runtime.runSingleAgent(cwd, root, [testAgent()], "reviewer-test", "new task", undefined, undefined, undefined, undefined, mockPiEvents([]), undefined, undefined, makeDetails, "reuse");
-		assert.deepEqual([calls.length, result.exitCode, result.refused ?? false, result.sessionMode, result.reuseNotice, result.sessionKey !== "reuse" && result.sessionKeyExplicit === true, calls[0]?.args.at(-1)?.startsWith("Task: new task"), calls[0]?.args.at(-1)?.includes("prior final result"), readFileSync(session.path, "utf8") === prior], [1, 0, false, "fresh", "reused as fresh (context 108%)", true, true, true, true]);
+		assert.deepEqual([calls.length, result.exitCode, result.refused ?? false, result.sessionMode, result.reuseNotice, result.sessionKey !== "reuse" && result.sessionKeyExplicit === true, calls[0]?.args.at(-1)?.startsWith("Task: new task"), calls[0]?.args.at(-1)?.includes(priorResult), readFileSync(session.path, "utf8") === prior], [1, 0, false, "fresh", "reused as fresh (context 108%)", true, true, true, true]);
 	} finally { runtime.setSingleAgentSpawnForTests(); }
 }
 
@@ -271,3 +274,18 @@ export function cleanupTempRuntimes() {
 	tempRuntimeDirs.clear();
 }
 
+
+/** A zero-exit Pi provider failure stays failed in events and saved error output. */
+export async function assertProviderProducer(runtime: Pick<typeof import("../extensions/subagent/runner.js"), "runSingleAgent" | "setSingleAgentSpawnForTests" | "prepareSingleResultForReturn">) {
+	const diagnostic = "github-copilot API error (403): 403 forbidden";
+	const cwd = tempRuntime();
+	const root = tempRuntime();
+	const events: Array<{ name: string; payload: unknown }> = [];
+	installMockSpawn([{ stdout: bridgeStdout([bridgeEvent("message_end", { message: { role: "assistant", content: [], stopReason: "error", errorMessage: diagnostic } })]) }], runtime.setSingleAgentSpawnForTests);
+	try {
+		const result = await runtime.runSingleAgent(cwd, root, [testAgent()], "reviewer-test", "map", undefined, undefined, undefined, undefined, mockPiEvents(events), undefined, undefined, makeDetails);
+		assert.deepEqual([events.at(-1)?.name, (events.at(-1)?.payload as { status: string })?.status], ["subagents:failed", "failed"]);
+		const prepared = await runtime.prepareSingleResultForReturn(result, root, cwd, "provider-error");
+		assert.equal(prepared.text, diagnostic);
+	} finally { runtime.setSingleAgentSpawnForTests(); }
+}

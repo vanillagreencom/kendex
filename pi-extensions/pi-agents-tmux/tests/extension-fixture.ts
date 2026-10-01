@@ -1,6 +1,6 @@
 // The extension entry point loaded fresh against a fake Pi, in a private Pi
 // user directory, for suites that drive its session_start handler.
-import { expect } from "bun:test";
+import { expect, spyOn } from "bun:test";
 import assert from "node:assert/strict";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { EventEmitter } from "node:events";
@@ -14,10 +14,15 @@ import {
 import { taskRegistryPath } from "../extensions/subagent/paths.js";
 import { sessionRuntimeDir } from "../extensions/subagent/settings.js";
 import { taskRegistryReader } from "../extensions/subagent/task-records.js";
-import { writeTaskRegistry } from "../extensions/subagent/tasks.js";
+import * as tasks from "../extensions/subagent/tasks.js";
+import { writeTaskRegistry, writePaneRegistry } from "../extensions/subagent/tasks.js";
+import * as sessions from "../extensions/subagent/sessions.js";
+import { singleResultStatus } from "../extensions/subagent/outcomes.js";
 import { resolveBgSession } from "../extensions/subagent/sessions.js";
-import { removeSettled } from "./remove-settled.js";
+
 import { taskRegistryReads, writeSettings } from "./browser-fixture.js";
+import { bridgeEvent, bridgeStdout, installMockSpawn } from "./single-agent-fixture.js";
+import { setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
 
 type ExtensionFactory = (pi: ExtensionAPI) => void;
 type SessionHandler = (event: unknown, ctx: ExtensionContext) => void | Promise<void>;
@@ -138,6 +143,14 @@ export async function withExtensionTools(run: (tools: Map<string, any>, ctx: any
 	const ctx = fakeCtx(harness);
 	const handlers = new Map<string, SessionHandler[]>();
 	const tools = new Map<string, any>();
+	const pending = new Set<Promise<unknown>>();
+	const updateTaskRegistry = tasks.updateTaskRegistry;
+	const writes = spyOn(tasks, "updateTaskRegistry").mockImplementation((...args) => {
+		const write = updateTaskRegistry(...args);
+		pending.add(write);
+		void write.then(() => pending.delete(write), () => pending.delete(write));
+		return write;
+	});
 	try {
 		await withoutRealIntervals(async () => {
 			const start = await installExtension(harness, { extension, handlers, registerTool: (tool) => tools.set(tool.name, tool) });
@@ -145,9 +158,13 @@ export async function withExtensionTools(run: (tools: Map<string, any>, ctx: any
 			await run(tools, ctx, harness);
 		});
 	} finally {
-		for (const handler of handlers.get("session_shutdown") ?? []) await handler({ reason: "quit" }, ctx);
-		teardown(harness);
-		await removeSettled(harness.cwd);
+		try {
+			for (const handler of handlers.get("session_shutdown") ?? []) await handler({ reason: "quit" }, ctx);
+			while (pending.size > 0) await Promise.allSettled([...pending]);
+		} finally {
+			writes.mockRestore();
+			teardown(harness);
+		}
 	}
 }
 
@@ -164,18 +181,56 @@ export async function assertStoppedEvent(extension?: ExtensionFactory) {
 	}, (pi) => { emit = pi.events.emit.bind(pi.events); factory(pi); });
 }
 
-/** A parent reads the child guard's exact estimate before choosing reuse. */
-export async function assertAgentContextBudget(extension?: ExtensionFactory) {
+/** The registered tool must keep exact-session requests in every dispatch mode. */
+export async function assertRegisteredExactSession(params: Record<string, unknown>, overflow: "guard" | "provider", extension?: ExtensionFactory) {
 	await withExtensionTools(async (tools, ctx, harness) => {
-		writeSettings(harness.cwd, { reusedSessionContextLimitTokens: 100, reusedSessionBudgetThreshold: 0.8 });
+		mkdirSync(join(harness.cwd, ".pi/agents"), { recursive: true });
+		writeFileSync(join(harness.cwd, ".pi/agents/scout.md"), "---\nname: scout\ndescription: map\n---\nMap files.\n");
+		writeSettings(harness.cwd, { reusedSessionContextLimitTokens: overflow === "guard" ? 100 : 1000, reusedSessionBudgetThreshold: 0.8 });
+		const root = sessionRuntimeDir(ctx.sessionManager.getSessionId());
+		const session = resolveBgSession(root, "scout", "reuse");
+		mkdirSync(join(root, "sessions"), { recursive: true });
+		writeFileSync(session.path, " ".repeat(432));
+		const calls = installMockSpawn([{ stdout: bridgeStdout([bridgeEvent("message_end", { message: { role: "assistant", content: [], stopReason: "error", errorMessage: "context_length_exceeded" } })]) }, { stdout: bridgeStdout([bridgeEvent("message_end", { message: { role: "assistant", content: [{ type: "text", text: "unwanted fresh answer" }] } })]) }]);
+		try {
+			const result = await tools.get("subagent").execute("test", params, undefined, undefined, ctx);
+			const child = result.details.results[0];
+			assert.deepEqual([calls.length, singleResultStatus(child), child.sessionKey, child.refused ?? false, result.content[0].text.includes("Start a fresh agent")], [overflow === "guard" ? 0 : 1, overflow === "guard" ? "refused" : "failed", "reuse", overflow === "guard", true]);
+			if (result.details.mode !== "parallel") assert.equal(result.isError, true);
+			assert.ok(result.content[0].text.includes(overflow === "guard" ? "108/100 tokens (108%) exceeds 80%" : "context_length_exceeded"));
+		} finally { setSingleAgentSpawnForTests(); }
+	}, extension);
+}
+
+/** A parent reads the child guard's exact estimate before choosing reuse. */
+export async function assertAgentContextBudget(extension?: ExtensionFactory, route: "background" | "pane" = "background") {
+	await withExtensionTools(async (tools, ctx, harness) => {
+		const childCwd = join(harness.cwd, "child-project");
+		writeSettings(harness.cwd, { reusedSessionContextLimitTokens: 1000, reusedSessionBudgetThreshold: 0.9, subagentModelSource: "parent" });
+		writeSettings(childCwd, { reusedSessionContextLimitTokens: 100, reusedSessionBudgetThreshold: 0.8 });
+		mkdirSync(join(harness.cwd, ".pi/agents"), { recursive: true });
+		writeFileSync(join(harness.cwd, ".pi/agents/scout.md"), "---\nname: scout\ndescription: map\nmodel: profile/model\n---\nMap files.\n");
+		ctx.model = { provider: "parent", id: "model" };
 		const root = sessionRuntimeDir(ctx.sessionManager.getSessionId());
 		const session = resolveBgSession(root, "scout", "reuse");
 		mkdirSync(join(root, "sessions"), { recursive: true });
 		writeFileSync(session.path, `${JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "prior result" }] } })}\n`.padEnd(432, " "));
-		const result = await tools.get("get_subagent_result").execute("test", { agent: "scout", sessionKey: "reuse" }, undefined, undefined, ctx);
-		const budget = result.details.contextBudget;
-		assert.deepEqual([result.isError ?? false, budget?.ok, budget?.estimate.tokens, budget?.estimate.contextLimitTokens, budget?.estimate.ratio, budget?.estimate.threshold, result.details.summary], [false, false, 108, 100, 1.08, 0.8, "prior result"]);
-		assert.deepEqual(JSON.parse(result.content[0].text).contextBudget, budget);
+		if (route === "pane") {
+			await writePaneRegistry(root, { scout: { agent: "scout", paneId: "%missing", windowName: "scout", cwd: childCwd, sessionFile: session.path, promptFile: "", launcherFile: "", model: "pane/model", startedAt: "2026-09-30T00:00:00Z" } });
+			await writeTaskRegistry(root, { "pane-task": { taskId: "pane-task", agent: "scout", task: "map", kind: "pane", paneId: "%missing", status: "completed", transcriptPath: session.path, model: "stale/model", summary: "prior result", createdAt: "2026-09-30T00:00:00Z" } });
+		}
+		// The guard currently uses configured limits. Observe its model argument as well.
+		const guard = spyOn(sessions, "guardReusedSessionBudget");
+		try {
+			const params = route === "background" ? { agent: "scout", sessionKey: "reuse", cwd: childCwd } : { taskId: "pane-task" };
+			const result = await tools.get("get_subagent_result").execute("test", params, undefined, undefined, ctx);
+			const budget = result.details.contextBudget;
+			assert.deepEqual([result.isError ?? false, budget?.ok, budget?.estimate.tokens, budget?.estimate.contextLimitTokens, budget?.estimate.ratio, budget?.estimate.threshold, result.details.summary], [false, false, 108, 100, 1.08, 0.8, "prior result"]);
+			assert.deepEqual(guard.mock.calls.at(-1)?.slice(2), [route === "pane" ? "pane/model" : "parent/model", childCwd]);
+			const content = result.content[0].text;
+			const reportedBudget = route === "background" ? JSON.parse(content).contextBudget : JSON.parse(content.split("\nContext budget: ")[1]);
+			assert.deepEqual(reportedBudget, budget);
+		} finally { guard.mockRestore(); }
 	}, extension);
 }
 

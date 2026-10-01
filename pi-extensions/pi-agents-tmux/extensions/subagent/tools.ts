@@ -62,6 +62,8 @@ export const SubagentParams = Type.Object({
 });
 
 export const GetSubagentResultParams = Type.Object({
+	cwd: Type.Optional(Type.String({ description: "Target working directory of the next background dispatch. Defaults to the caller's cwd. Pane task checks use the pane registry cwd." })),
+	agentScope: Type.Optional(AgentScopeSchema),
 	sessionKey: Type.Optional(Type.String({ description: "With agent, read a background lane's own context estimate and guard threshold before reuse. Returns its prior final result." })),
 	taskId: Type.Optional(Type.String({ description: "Persistent pane task ID to retrieve" })),
 	agent: Type.Optional(Type.String({ description: "Persistent pane agent name; selects that agent's latest task when taskId is omitted" })),

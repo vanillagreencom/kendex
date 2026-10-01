@@ -31,7 +31,7 @@ for (const params of rows) {
 }
 
 test("control: collecting empty names rejects a valid tasks dispatch", async () => {
-	const mutant = await importRuntimeCopy("index.ts", 'if (params.agent && params.task) requested.add(params.agent);', 'if (typeof params.agent === "string") requested.add(params.agent);') as typeof import("../extensions/subagent/index.js");
+	const mutant = await importRuntimeCopy("index.ts", 'const inventoryError = validateAgentInventory(requestedAgentNames,', 'if (typeof params.agent === "string") requestedAgentNames.add(params.agent);\nconst inventoryError = validateAgentInventory(requestedAgentNames,') as typeof import("../extensions/subagent/index.js");
 	await withExtensionTools(async (tools, ctx, harness) => {
 		mkdirSync(join(harness.cwd, ".pi", "agents"), { recursive: true });
 		writeFileSync(join(harness.cwd, ".pi", "agents", "scout.md"), "---\nname: scout\ndescription: map\n---\nmap\n");

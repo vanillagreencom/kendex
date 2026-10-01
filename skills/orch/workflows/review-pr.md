@@ -96,7 +96,7 @@ Read existing reviewer state before any spawn:
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{review_agents: (.review_agents // []), review_agent_ids: (.review_agent_ids // {}), review_agent_runtime_types: (.review_agent_runtime_types // {})}'
 ```
 
-Classify each reviewer in `[AGENTS]` as reusable, context-exhausted, missing, closed, or confirmed-stuck. A live recorded ID is reusable only under [Delegation](../references/skill-rules.md#delegation). Apply that rule after a name-only resume too. Retire context-exhausted sessions and add them with the missing, closed, or confirmed-stuck sessions to `REVIEWERS_TO_LAUNCH`. Carry a reusable reviewer's existing runtime-type entry forward. On a RE-REVIEW whose panel shrank (§ 4 scopes it), retire the out-of-panel sessions first. **Do not spawn yet** — resolve § 2.1 first.
+Classify each reviewer in `[AGENTS]` as reusable, context-exhausted, missing, closed, or confirmed-stuck. Reuse a live ID only under [Delegation](../references/skill-rules.md#delegation) for the target worktree. Apply that rule after a name-only resume too. Retire context-exhausted sessions and add them with the missing, closed, or confirmed-stuck sessions to `REVIEWERS_TO_LAUNCH`. Carry a reusable reviewer's existing runtime-type entry forward. On a RE-REVIEW whose panel shrank (§ 4 scopes it), retire the out-of-panel sessions first. **Do not spawn yet** — resolve § 2.1 first.
 
 ### 2.1 External Review Availability
 

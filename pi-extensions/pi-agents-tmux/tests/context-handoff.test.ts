@@ -45,10 +45,10 @@ test("control: refusing ordinary over-threshold reuse prevents the fresh-agent h
 	await assert.rejects(() => assertFreshHandoff(mutant), assert.AssertionError);
 });
 
-test("control: carrying only the prior answer drops the caller's new task", async () => {
+for (const omitted of ["task", "prior-result"] as const) test(`control: handoff drops ${omitted}`, async () => {
 	const mutant = await importRuntimeCopy("sessions.ts",
 		'task: `${task}\\n\\nPrior agent final result (${estimate.path}):\\n${priorResult ?? "No prior final result available."}`',
-		'task: `Prior agent final result (${estimate.path}):\\n${priorResult ?? "No prior final result available."}`',
+		omitted === "task" ? 'task: `Prior agent final result (${estimate.path}):\\n${priorResult ?? "No prior final result available."}`' : 'task: `${task}\\n\\nPrior agent final result (${estimate.path}):\\nNo prior final result available.`',
 	) as typeof import("../extensions/subagent/sessions.js");
 	const key = Symbol.for("test.context-handoff");
 	const globals = globalThis as unknown as Record<symbol, unknown>;
