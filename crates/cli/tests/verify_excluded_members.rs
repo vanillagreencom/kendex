@@ -34,7 +34,122 @@ use test_util::{rooted, source_path};
 
 use std::fs;
 
-use super::verify_records::{kendex, said, write};
+use super::verify_records::{git, kendex, row, said, write};
+
+/// The consumer record holds no Copilot installations. Verify must not ask
+/// for them, even when the catalog adds Copilot-only bundle members.
+/// The real kendex-web inputs stay unchanged; a local mirror supplies
+/// this checkout's catalog without reaching the network or a live consumer.
+/// The control restores verify's unfiltered declaration set in a disposable
+/// source copy: these four hooks then produce `Unrecorded` rows.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn kendex_web_record_owes_no_copilot_only_workflow_hooks() {
+    use kendex_core::attest::{Document, State};
+    use kendex_core::engine::{DeclarationStatus, planned_closure};
+    use kendex_core::env::Env;
+    use kendex_core::model::{HarnessId, ItemKind, Scope};
+
+    const EXCLUDED: &[&str] = &[
+        "lane-mail-compact",
+        "lane-mail-prompt",
+        "lane-mail-start",
+        "skill-load-record",
+    ];
+    const MANIFEST: &str = include_str!("fixtures/kendex-web/manifest.toml");
+    const RECORD: &str = include_str!("fixtures/kendex-web/install-record.json");
+
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home.join("consumer");
+    write(&project.join("kendex.toml"), MANIFEST);
+    write(&project.join(".kendex-lock.json"), RECORD);
+    let env = Env::host_rooted(&home);
+    let key = kendex_core::remote::cache_key(&env, "vanillagreencom/kendex");
+    let mirror = kendex_core::remote::store::mirror_dir(&env, &key);
+    fs::create_dir_all(mirror.parent().unwrap()).unwrap();
+    git(
+        &home,
+        &[
+            "clone",
+            "--bare",
+            test_util::checkout_root().to_str().unwrap(),
+            mirror.to_str().unwrap(),
+        ],
+    );
+
+    let manifest = kendex_core::manifest::load_current(&project.join("kendex.toml"))
+        .unwrap()
+        .unwrap();
+    let (planned, status) = planned_closure(
+        &env,
+        &Scope::Project {
+            root: project.clone(),
+        },
+        &manifest,
+    );
+    assert_eq!(
+        status,
+        DeclarationStatus::Complete,
+        "catalog expansion must finish"
+    );
+    let record: serde_json::Value = serde_json::from_str(RECORD).unwrap();
+    for name in EXCLUDED {
+        assert!(
+            planned
+                .iter()
+                .any(|item| item.kind == ItemKind::Hook && item.name == *name),
+            "catalog expansion must reach hook {name}"
+        );
+        assert!(
+            !record["entries"]
+                .as_object()
+                .unwrap()
+                .values()
+                .any(|entry| entry["kind"] == "hook" && entry["name"] == *name),
+            "consumer record must lack hook {name}"
+        );
+    }
+
+    let mut args = vec!["verify", "--scope", "project", "--json", "lane-mail-check"];
+    args.extend(EXCLUDED);
+    let verified = kendex(&home, &project, &args);
+    let document: Document = serde_json::from_slice(&verified.stdout)
+        .unwrap_or_else(|error| panic!("verify document: {error}\n{}", said(&verified)));
+    // Missing renders fail their rows in this read-only fixture. A recorded
+    // sibling proves the audit ran; the assertion concerns only record gaps.
+    assert!(
+        row(
+            &document,
+            "hook",
+            "lane-mail-check",
+            Some(HarnessId::Claude)
+        )
+        .is_some(),
+        "{}",
+        said(&verified)
+    );
+    let unrecorded: Vec<_> = document
+        .rows
+        .iter()
+        .filter(|row| row.state == State::Unrecorded)
+        .map(|row| (row.kind.as_str(), row.name.as_str(), row.harness))
+        .collect();
+    assert!(
+        unrecorded.is_empty(),
+        "listed/not-recorded: {unrecorded:?}\n{}",
+        said(&verified)
+    );
+    for name in EXCLUDED {
+        assert!(
+            !document
+                .rows
+                .iter()
+                .any(|row| row.kind == "hook" && row.name == *name),
+            "excluded hook {name} must have no verification row"
+        );
+    }
+}
 
 /// The one line a scope prints for the hook it passed over.
 const PASSED_OVER: &str = "1 package installs on no tool here, its own harnesses line names none of them: hook claude-only";
