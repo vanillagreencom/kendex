@@ -527,7 +527,7 @@ new_repo control_close_class
 CLASS_DIR="$(mutant_scripts mutants/close-class lib/mailbox-append.sh)" || exit 1
 rm -- "$CLASS_DIR/lane-mail"
 cp -p -- "$LANE_MAIL" "$CLASS_DIR/lane-mail"
-mutate_file "$CLASS_DIR/lib/mailbox-append.sh" 'if .kind == "resolution" then "close"' 'if .kind == "resolution" then "stray"'
+mutate_file "$CLASS_DIR/lib/mailbox-append.sh" 'if .kind == "resolution" or mailbox_legacy_close then "close"' 'if .kind == "resolution" or mailbox_legacy_close then "stray"'
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Which?' a,b a
 LANE_MAIL_BIN="$LANE_MAIL" lm resolve --item overseer --id "$ASK"
 LANE_MAIL_BIN="$CLASS_DIR/lane-mail" lm resolve --item overseer --id "$ASK"

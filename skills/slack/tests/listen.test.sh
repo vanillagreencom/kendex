@@ -140,45 +140,6 @@ sk_poll "$ROOT"
 assert_has "$(directives "$ROOT")" "C001:$R3 too late" "a reply after the default is a directive"
 assert_eq "$(sk_lm "$ROOT" pending --item overseer --to owner | wc -l | tr -d ' ')" "0" "no ask is left open"
 
-# Closures first observed after the posting horizon still update state.
-# Legacy rows model the retained pre-1.3 resolve producer.
-while read -r mode close; do
-  LATE="$(sk_new_root "late-$mode-$close")"
-  sk_bind "$LATE"
-  sk_lm "$LATE" ask --item overseer --to owner --file "$(sk_text late 'Late close?')" --options a,b --recommend a >"$SK_TMP/late.out"
-  LATE_ASK="$(sed 's/^id=//' "$SK_TMP/late.out")"
-  sk_poll "$LATE"
-  LATE_CH="$(sk_channel "$LATE")"
-  LATE_TS="$(sk_state ".messages.${LATE_CH}[-1].ts")"
-  assert_eq "$(jq -c .open_asks "$LATE/tmp/slack/status.json")" "[\"$LATE_ASK\"]" "$mode/$close: the posted ask is open before closure"
-  args=(--item overseer --id "$LATE_ASK")
-  case "$close" in
-    text) args+=(--text "$(sk_text late-answer b)") ;;
-    default) args+=(--default) ;;
-  esac
-  sk_lm "$LATE" resolve "${args[@]}" >/dev/null
-  if [ "$mode" = legacy ]; then
-    jq -c 'select(.kind != "resolution") | del(.closes)' "$(sk_box "$LATE")/to-lane.jsonl" >"$SK_TMP/legacy-close.jsonl"
-    cp "$SK_TMP/legacy-close.jsonl" "$(sk_box "$LATE")/to-lane.jsonl"
-  fi
-  LATE_CLOSE="$(jq -r 'select(.kind == "resolution" or .kind == "answer") | .id' "$(sk_box "$LATE")/to-lane.jsonl" | tail -n 1)"
-  sk_age_envelope "$LATE" "$LATE_CLOSE" 172800
-  sk_poll "$LATE" SLACK_THREAD_DAYS=1
-  assert_eq "$(jq -c .open_asks "$LATE/tmp/slack/status.json")" "[]" "$mode/$close: late first observation closes relay state"
-  sk_poll "$LATE" SLACK_THREAD_DAYS=1
-  sk_run SLACK_THREAD_DAYS=1 -- compact --root "$LATE"
-  sk_poll "$LATE" SLACK_THREAD_DAYS=1
-  assert_eq "$(jq -s --arg source "$LATE_CLOSE" '[.[] | select(.t == "resolved" and .source == $source)] | length' "$(sk_journal "$LATE")")" "1" "$mode/$close: restart and compaction retain closure consumption"
-  LATE_REPLY="$(sk_inject "$LATE_CH" U001 'after close' "$LATE_TS")"
-  sk_poll "$LATE" SLACK_THREAD_DAYS=1
-  assert_has "$(directives "$LATE")" "$LATE_CH:$LATE_REPLY after close" "$mode/$close: the retained close routes a later reply as a directive"
-done <<'ROWS'
-current explicit
-current default
-legacy text
-legacy default
-ROWS
-
 # --- a notice threads on its ref -----------------------------------------------
 D1="$(jq -r 'select(.kind == "directive") | .id' "$(sk_box "$ROOT")/to-lane.jsonl" | sed -n '1p')"
 sk_lm "$ROOT" notice --item overseer --to owner --ref "$D1" --file "$(sk_text n1 'Shipping.')" >/dev/null
@@ -501,6 +462,46 @@ sk_run -- compact --root "$GAMMA"
 sk_poll "$GAMMA"
 assert_eq "$RC=$(asks C002 'Late ruling.')" "0=1" "a notice under an owner message past the horizon posts once across compaction"
 assert_has "$(posts C002)" "$OLD | Late ruling." "it lands in that message's thread"
+
+# Bind these roots after gamma, whose cases use the fake API's C002 channel.
+# Closures first observed after the posting horizon still update state.
+# Legacy rows model the retained pre-1.3 resolve producer.
+while read -r mode close; do
+  LATE="$(sk_new_root "late-$mode-$close")"
+  sk_bind "$LATE"
+  sk_lm "$LATE" ask --item overseer --to owner --file "$(sk_text late 'Late close?')" --options a,b --recommend a >"$SK_TMP/late.out"
+  LATE_ASK="$(sed 's/^id=//' "$SK_TMP/late.out")"
+  sk_poll "$LATE"
+  LATE_CH="$(sk_channel "$LATE")"
+  LATE_TS="$(sk_state ".messages.${LATE_CH}[-1].ts")"
+  assert_eq "$(jq -c .open_asks "$LATE/tmp/slack/status.json")" "[\"$LATE_ASK\"]" "$mode/$close: the posted ask is open before closure"
+  args=(--item overseer --id "$LATE_ASK")
+  case "$close" in
+    text) args+=(--text "$(sk_text late-answer b)") ;;
+    default) args+=(--default) ;;
+  esac
+  sk_lm "$LATE" resolve "${args[@]}" >/dev/null
+  if [ "$mode" = legacy ]; then
+    jq -c 'select(.kind != "resolution") | del(.closes)' "$(sk_box "$LATE")/to-lane.jsonl" >"$SK_TMP/legacy-close.jsonl"
+    cp "$SK_TMP/legacy-close.jsonl" "$(sk_box "$LATE")/to-lane.jsonl"
+  fi
+  LATE_CLOSE="$(jq -r 'select(.kind == "resolution" or .kind == "answer") | .id' "$(sk_box "$LATE")/to-lane.jsonl" | tail -n 1)"
+  sk_age_envelope "$LATE" "$LATE_CLOSE" 172800
+  sk_poll "$LATE" SLACK_THREAD_DAYS=1
+  assert_eq "$(jq -c .open_asks "$LATE/tmp/slack/status.json")" "[]" "$mode/$close: late first observation closes relay state"
+  sk_poll "$LATE" SLACK_THREAD_DAYS=1
+  sk_run SLACK_THREAD_DAYS=1 -- compact --root "$LATE"
+  sk_poll "$LATE" SLACK_THREAD_DAYS=1
+  assert_eq "$(jq -s --arg source "$LATE_CLOSE" '[.[] | select(.t == "resolved" and .source == $source)] | length' "$(sk_journal "$LATE")")" "1" "$mode/$close: restart and compaction retain closure consumption"
+  LATE_REPLY="$(sk_inject "$LATE_CH" U001 'after close' "$LATE_TS")"
+  sk_poll "$LATE" SLACK_THREAD_DAYS=1
+  assert_has "$(directives "$LATE")" "$LATE_CH:$LATE_REPLY after close" "$mode/$close: the retained close routes a later reply as a directive"
+done <<'ROWS'
+current explicit
+current default
+legacy text
+legacy default
+ROWS
 
 # --- daily compaction: envelope age and thread activity are separate ------------------
 # Each old owner root is read, so an unread receipt cannot keep it alive.
