@@ -22,7 +22,7 @@ A session keeps its state under `${COPILOT_HOME:-~/.copilot}/session-state/<sess
 
 ## Launch environment
 
-Every Copilot command `open-terminal`, `oversee` and `oversee-succeed` build carries every row below, on a fresh start, a relaunch, a wake and a successor alike. A `--cmd` template `open-terminal` wraps carries the environment rows alone. `scripts/lib/lane-launch.sh` holds them: the `LAUNCH_CHOICE_FLAGS` copilot row, and `lane_copilot_env` for the environment, in front of a local launch with `COPILOT_HOME` (`lane_launch_line`) and of a hosted one, whose provider sets `COPILOT_HOME`.
+`scripts/lib/lane-launch.sh` owns the Copilot rows below: `LAUNCH_CHOICE_FLAGS` for launch settings and `lane_copilot_env` for environment. `lane_launch_line` supplies the local `COPILOT_HOME`; a hosted provider supplies its own. Command templates follow [lane-directive.md § Lane preference](lane-directive.md#lane-preference).
 
 | Words orch adds | Why |
 |-----------------|-----|
@@ -31,11 +31,9 @@ Every Copilot command `open-terminal`, `oversee` and `oversee-succeed` build car
 | `--no-auto-update` | The CLI runs the version the host installed and downloads none. |
 | `--no-ask-user` | Takes the `ask_user` tool away, on every lane and on an overseer while `ORCH_QUESTION_TOOL` is `off`, its default. A lane asks through `lane-mail` ([skill-rules.md § Coordination](skill-rules.md#coordination)). |
 | `-u COPILOT_GITHUB_TOKEN` | Copilot reads `COPILOT_GITHUB_TOKEN`, then `GH_TOKEN`, then `GITHUB_TOKEN`, then the login stored in the account's `config.json` (`copilot help environment`). Copilot refuses a placeholder handed in `COPILOT_GITHUB_TOKEN`, so that one is cleared. `GH_TOKEN` and `GITHUB_TOKEN` stay, so a lane's own `gh` calls keep signing in: a fleet host holds the GitHub App token (`ghs_`) there, which Copilot 1.0.88 skips with `Unsupported token type, ignoring`, and the identity stays the account's stored login (§ Account setup). On a workstation, a user token in either one, a `gho_` token or a personal access token, signs Copilot in as that user instead. No token value enters a command. |
-| `COPILOT_ALLOW_ALL=true` or `COPILOT_ALLOW_ALL=` (empty) | `true` only where the command carries `--allow-all` or `--yolo`. `copilot help environment`: any truthy value approves every tool, and exactly `true` also trusts the working directory without prompting and loads its hooks and skills. So it adds folder trust to the posture the caller chose. Every other command carries it empty, so a `COPILOT_ALLOW_ALL` the launching shell exports does not reach it: it keeps its permission prompts and its folder-trust dialog. An assignment a `--cmd` template writes itself comes after, and wins. |
+| `COPILOT_ALLOW_ALL=true` or `COPILOT_ALLOW_ALL=` (empty) | `true` only where the command carries `--allow-all` or `--yolo`. `copilot help environment`: any truthy value approves every tool, and exactly `true` also trusts the working directory without prompting and loads its hooks and skills. So it adds folder trust to the posture the caller chose. Every other command carries it empty, so a `COPILOT_ALLOW_ALL` the launching shell exports does not reach it: it keeps its permission prompts and its folder-trust dialog. An assignment an explicit-model `--cmd` writes itself comes after, and wins. |
 | `COPILOT_SKILLS_DIRS=~/.agents/skills` | Any `COPILOT_HOME` hides the shared skills under `~/.agents/skills`, and this names them back: measured by `tools/harness-smoke`, row `skill-dirs:COPILOT_HOME`. |
 | `COPILOT_HOME=<account>` | The account: the lane a local launch names, or with none the `COPILOT_HOME` `open-terminal` runs under, `~/.copilot` where that is unset, which is the store a relaunch reads (`lib/lane-relaunch.sh`). A hosted launch's provider sets it. |
-
-The first three rows are launch settings. A caller's copy of any one of them, typed whole, is dropped, so none appears twice. A `--cmd` template gets the environment words and no flag words: its command is the caller's own ([lane-directive.md](lane-directive.md)).
 
 | Words the caller passes in `--launch-flags` | Why |
 |---------------------------------------------|-----|
