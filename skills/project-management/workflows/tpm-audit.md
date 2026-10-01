@@ -34,6 +34,8 @@ Analyze issues and projects for relations, labels, hierarchy, placement, duplica
 
 **Done and Canceled issues are historical records.** Never recommend a change to their labels, agent, priority, or state — whichever set they arrive in, they take no disposition. They participate in relation analysis and duplicate detection as § 1.5 comparison evidence, which is the only way a Canceled issue reaches the analysis at all. Only Backlog, Todo, In Progress, and In Review issues are candidates for fixes.
 
+For an existing-issue entry in `INPUT_ITEMS`, use its `identifier` as the requested ID in § 1.4. Analyze the resolved tracker issue, not a proposed creation; preserve its input `index` and `identifier` in the issue-mode output. Proposed entries use their supplied fields.
+
 ### 1.1.1 Resolve Team Scope
 
 **Skip if** TRACKER=github — a repository is one scope. Otherwise refresh the cache and resolve the scope ([SKILL.md](../SKILL.md) § Execution Rules) before any cached read:

@@ -149,6 +149,8 @@ Spawn a one-shot `[TPM]` sub-agent (not a teammate).
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the input file's `worktree` when the invocation supplied one, the current repo root otherwise.
 
+For `audit-issues issue [ISSUE_ID] ...`, write an [audit-issues-input.md](../schemas/audit-issues-input.md) file under that worktree's `tmp/`. Set `source: "oversee"`, `parent_issue` to the first supplied ID, and `tracker` and `worktree` to the resolved values. Keep every supplied ID in order as an existing-issue `items[]` entry. Bind that path as `[FILE_PATH]` and delegate `--issues [FILE_PATH]`; file invocations retain their supplied file.
+
 <delegation_format>
 Follow workflow: .agents/skills/project-management/workflows/tpm-audit.md
 

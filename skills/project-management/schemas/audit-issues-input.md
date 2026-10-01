@@ -59,6 +59,8 @@ Input file for `audit-issues --issues` and `audit-issues --single`, written by t
 
 ### Item Fields
 
+An existing-issue entry is `{"index": 1, "identifier": "PROJ-123"}` (or `issue-N` for GitHub). Its index is sequential and 1-based. The TPM resolves the identifier through [tpm-audit § 1.4](../workflows/tpm-audit.md#14-fetch-input-issues), retaining the index and identifier in its output. The proposed-item fields below do not apply to that entry; `--single` accepts proposed items only.
+
 | Field | Required | Description |
 |-------|----------|-------------|
 | `index` | Yes | Sequential, 1-based |
