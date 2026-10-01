@@ -34,8 +34,12 @@ if [ ! -f "$orch/scripts/lib/kendex-env.sh" ] || [ ! -f "$orch/references/secret
 fi
 
 # The settings of the checkout the command runs in: the process environment
-# first, then that checkout's private env file and settings files. A relay
-# serving several roots takes every setting from here, once.
+# first, then that checkout's private env file and settings files. Presence
+# settings are root-local. Preserve the caller before this load so the root
+# reader cannot mistake the launch checkout's exports for caller overrides.
+if ! _slack_caller_env="$(python3 -c 'import json, os; print(json.dumps(dict(os.environ)))')"; then
+  refuse "settings-unreadable=caller-environment" "the caller environment could not be saved"
+fi
 # shellcheck source=../../orch/scripts/lib/kendex-env.sh
 source "$orch/scripts/lib/kendex-env.sh"
 tracker_team="${LINEAR_TEAM-}"
@@ -57,4 +61,6 @@ SLACK_ORCH_DIR="$orch"
 export SLACK_ORCH_DIR
 SLACK_LINEAR_DIR="$linear"
 export SLACK_LINEAR_DIR
+# Internal transport, consumed and removed by settings.py, not a setting.
+export _KENDEX_SLACK_CALLER_ENV="$_slack_caller_env"
 exec python3 -B "$here/lib/main.py" "$@"

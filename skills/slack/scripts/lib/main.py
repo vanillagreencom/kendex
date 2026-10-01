@@ -78,14 +78,16 @@ install   write the systemd user unit for `listen` over the roots given, then
           daemon-reload, enable and restart it, so a running relay takes the
           new roots; --print writes the unit to stdout only
 
-Settings, read from the process environment after the checkout's private env
-file and settings files: SLACK_BOT_TOKEN, SLACK_APP_TOKEN (listen without
+Process settings, read once from the launch checkout's private env and settings
+files, with caller exports taking precedence: SLACK_BOT_TOKEN, SLACK_APP_TOKEN (listen without
 --once), SLACK_OWNERS (default KENDEX_USER_EMAIL), SLACK_POLL_SECONDS (15),
-SLACK_THREAD_DAYS (7), SLACK_MASTER_FILE (empty) and SLACK_MASTER_MAX_AGE
-(600): while that file is younger than that many seconds, listen holds its
-mailbox posts and --status shows held-by=master; README.md says what posts on
-resume. SLACK_API_URL names another API endpoint (default
-https://slack.com/api).
+SLACK_THREAD_DAYS (7) and SLACK_API_URL (default https://slack.com/api).
+SLACK_MASTER_FILE (empty) and SLACK_MASTER_MAX_AGE (600) are read per root
+from that root's files, with the original caller exports taking precedence.
+A relative file path starts at its root; ~ expands to the home directory.
+While its file is younger than its age bound, listen holds only that root's
+mailbox posts and --status shows held-by=master. A root naming no file has
+no hold. README.md says what posts on resume.
 
 Non-fatal diagnostics on stderr:
   envelope-field=ROOT id=ID field=FIELD

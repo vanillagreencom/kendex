@@ -13,6 +13,7 @@ export PYTHONDONTWRITEBYTECODE=1
 SK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd -P)"
 SK_SLACK="$SK_ROOT/skills/slack/scripts/slack"
 SK_BIN="$SK_SLACK"
+SK_RUN_FROM=""
 SK_FAKE="$SK_ROOT/skills/slack/tests/lib/fake_slack.py"
 SK_LANE_MAIL="$SK_ROOT/skills/orch/scripts/lane-mail"
 SK_TOKEN="test-token-$$"
@@ -163,7 +164,7 @@ sk_run() {
   while [ $# -gt 0 ] && [ "$1" != "--" ]; do vars+=("$1"); shift; done
   [ $# -eq 0 ] || shift
   RC=0
-  OUT="$(cd "$SK_TMP/home" && env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C \
+  OUT="$(cd "${SK_RUN_FROM:-$SK_TMP/home}" && env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C \
     SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
     SLACK_POLL_SECONDS=1 ${vars[@]+"${vars[@]}"} "$SK_BIN" "$@" 2>"$SK_TMP/err")" || RC=$?
   ERR="$(cat "$SK_TMP/err")"
@@ -207,10 +208,10 @@ sk_event() {
 import json, pathlib, sys, time
 sys.path.insert(0, sys.argv[3])
 from relay import RootRelay
-from settings import load
+from settings import DEFAULT_MASTER_MAX_AGE, Presence, load
 from verbs import api_for
 settings = load()
-relay = RootRelay(pathlib.Path(sys.argv[1]), settings, api_for(settings), time.time)
+relay = RootRelay(pathlib.Path(sys.argv[1]), settings, Presence("", DEFAULT_MASTER_MAX_AGE), api_for(settings), time.time)
 relay.on_message(json.loads(pathlib.Path(sys.argv[2]).read_text()), "UBOT")
 PY
 }
@@ -306,6 +307,11 @@ sk_markup() {
     PYTHONPATH="${SK_BIN%/*}/lib" python3 "$SK_ROOT/skills/slack/tests/lib/markup_probe.py" "$@" \
     2>"$SK_TMP/err")" || RC=$?
   ERR="$(cat "$SK_TMP/err")"
+}
+
+# sk_age_file PATH SECONDS: move a fixture's mtime without a real wait.
+sk_age_file() {
+  python3 -c 'import os, sys, time; t = time.time() - int(sys.argv[2]); os.utime(sys.argv[1], (t, t))' "$1" "$2"
 }
 
 # sk_master_read ROOT COUNT — the file the master's watch writes after drain.

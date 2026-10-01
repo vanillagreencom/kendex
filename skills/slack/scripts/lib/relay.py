@@ -72,7 +72,7 @@ from markup import outbound, plain
 from refusals import Refusal, keyed, notice, print_refusal
 from secret import check as secret_check
 from secret import checked_file
-from settings import MASTER, Settings
+from settings import MASTER, Presence, Settings, load_presence
 from store import (
     READ,
     SEEN,
@@ -172,9 +172,10 @@ def mention(binding: Binding) -> str:
 
 
 class RootRelay:
-    def __init__(self, path: Path, settings: Settings, api: Slack, clock: Callable[[], float]) -> None:
+    def __init__(self, path: Path, settings: Settings, presence: Presence, api: Slack, clock: Callable[[], float]) -> None:
         self.path = path
         self.settings = settings
+        self.presence = presence
         self.api = api
         self.clock = clock
         self.mail = LaneMail(path)
@@ -243,7 +244,7 @@ class RootRelay:
         self.mark_read()
         now = self.clock()
         touched = self.master_touched()
-        if touched is not None and now - touched < self.settings.master_max_age:
+        if touched is not None and now - touched < self.presence.master_max_age:
             if not self.state.held:
                 self.journal.append(t="hold", at=format_at(touched))
         else:
@@ -470,7 +471,7 @@ class RootRelay:
     def master_touched(self) -> Optional[float]:
         """SLACK_MASTER_FILE's mtime; None for an empty setting or an absent
         file, which is no master."""
-        path = self.settings.master_file
+        path = self.presence.master_file
         if not path:
             return None
         try:
@@ -719,7 +720,7 @@ class Relay:
         self.api = api
         self.clock = clock
         self.sleep = sleep
-        self.roots = [RootRelay(root, settings, api, clock) for root in roots]
+        self.roots = [RootRelay(root, settings, load_presence(root), api, clock) for root in roots]
         # Two roots on one channel would each deliver every owner message
         # into their own mailbox and both post there.
         first: Dict[str, Path] = {}
