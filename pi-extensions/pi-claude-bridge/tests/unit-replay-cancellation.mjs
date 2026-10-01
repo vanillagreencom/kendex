@@ -59,8 +59,14 @@ it("idle watchdog stops a silent continuation after the original child emitted o
 			bridge.release();
 			await child.record.entered;
 			assert.equal(bridge.query.turnStarted, false, "the replay has not emitted output");
-			t.mock.timers.tick(1000);
+			t.mock.timers.tick(999);
 			// Teardown and stream forwarding use microtasks, not the mocked clock.
+			for (let turn = 0; turn < 100; turn++) await Promise.resolve();
+			assert.equal(bridge.query.activeQuery, child.query, "the continuation stays active before its deadline");
+			assert.equal(child.record.interruptions, 0, "the watchdog cannot interrupt before its deadline");
+			assert.equal(child.record.closed, false, "the watchdog cannot close the transport before its deadline");
+			assert.deepEqual(events.filter((event) => event.type === "error" || event.type === "done"), [], "the stream has no terminal event before its deadline");
+			t.mock.timers.tick(1);
 			for (let turn = 0; turn < 100; turn++) await Promise.resolve();
 			assert.equal(child.record.interruptions, 1, "the watchdog targets the continuation");
 			assert.equal(child.record.closed, true);
