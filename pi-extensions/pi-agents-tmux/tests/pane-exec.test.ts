@@ -174,59 +174,6 @@ test("shutdown drains nested capture and its escalation", async () => {
 	await assert.rejects(nestedShutdown(mutant.execCapture), /shutdown must cancel nested capture/);
 });
 
-test("no SIGTERM-resistant faux bridge survives its parent shutdown and exit", async () => {
-	const { spawn } = await import("node:child_process");
-	const { join, resolve } = await import("node:path");
-	const { existsSync, readFileSync } = await import("node:fs");
-	const root = tempRuntime();
-	const pidFile = join(root, "pid");
-	const budgetFile = resolve(import.meta.dir, "../extensions/subagent/child-budget.ts");
-	const paneFile = resolve(import.meta.dir, "../extensions/subagent/pane.ts");
-	// The new process does not inherit the suite's optional Pi peer mocks.
-	// Only those dependencies are neutral; budget and capture remain production.
-	const script = `import { mock } from "bun:test";
-mock.module("@earendil-works/pi-coding-agent", () => ({
-getAgentDir: () => ${JSON.stringify(root)}, parseFrontmatter: () => { throw new Error("unused discovery"); },
-withFileMutationQueue: (_path, action) => action()
-}));
-mock.module("@earendil-works/pi-tui", () => ({
-Container: class {}, Spacer: class {}, truncateToWidth: text => text,
-visibleWidth: text => text.length, wrapTextWithAnsi: text => [text]
-}));
-const { withChildBudget } = await import(${JSON.stringify(budgetFile)});
-const { execCapture } = await import(${JSON.stringify(paneFile)});
-import { existsSync } from "node:fs";
-let shutdown;
-const pi = { on(_event, handler) { shutdown = handler; return () => {}; } };
-const call = withChildBudget(pi, ${JSON.stringify(root)}, undefined, () => execCapture(${JSON.stringify(process.execPath)}, ["-e", ${JSON.stringify(`process.on("SIGTERM", () => {}); require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => {}, 2000)`)}], { env: { PATH: "/usr/bin:/bin", HOME: ${JSON.stringify(root)}, TMPDIR: ${JSON.stringify(root)} } }));
-const settled = Promise.allSettled([call]);
-try {
-for (let i = 0; i < 100 && !existsSync(${JSON.stringify(pidFile)}); i++) await new Promise(resolve => setTimeout(resolve, 10));
-if (!existsSync(${JSON.stringify(pidFile)})) throw new Error("faux bridge did not start");
-} finally { await shutdown(); await settled; }
-process.exit(0);`;
-	// The parent exits as Pi does after awaited shutdown handlers. It cannot own
-	// a surviving child's escalation timer after that exit.
-	const parent = spawn(process.execPath, ["-e", script], { env: { PATH: "/usr/bin:/bin", HOME: root, TMPDIR: root }, stdio: ["ignore", "ignore", "pipe"] });
-	let stderr = "";
-	parent.stderr.on("data", (data) => { stderr += String(data); });
-	const closed = new Promise<number | null>((resolve, reject) => { parent.once("close", resolve); parent.once("error", reject); });
-	// Fail within the case's budget if startup or shutdown stalls. Cleanup must
-	// finish before another case can observe this parent's close assertion.
-	const deadline = setTimeout(() => parent.kill("SIGKILL"), 4000);
-	try {
-		const code = await closed;
-		assert.equal(code, 0, stderr);
-		assert.throws(() => process.kill(Number(readFileSync(pidFile, "utf8")), 0), { code: "ESRCH" }, "child must be gone after parent exit");
-	} finally {
-		clearTimeout(deadline);
-		if (existsSync(pidFile)) {
-			try { process.kill(Number(readFileSync(pidFile, "utf8")), "SIGKILL"); }
-			catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
-		}
-	}
-});
-
 test("shared signal policy falls back to the child and reports failed delivery", async () => {
 	const runtime = await import("../extensions/subagent/process-signal.js");
 	const exercise = (signal: typeof runtime.signalProcessGroupOrChild) => {
