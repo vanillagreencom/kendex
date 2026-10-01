@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.1.3
+
+- Codex SSE requests remain cancellable after headers arrive. Stalled SSE bodies and silent WebSockets end at the HTTP idle timeout; WebSocket handshakes use the connect timeout. Background image commands run at most four jobs at once, and session shutdown aborts them.
+
 ### 2.1.2
 
 - A completed Responses stream with an unfinished tool call ends with an error instead of handing the agent a runnable call with incomplete arguments.

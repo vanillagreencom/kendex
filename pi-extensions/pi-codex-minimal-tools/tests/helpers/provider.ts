@@ -1,5 +1,8 @@
 import { normalizeContext, type AssistantMessage, type AssistantMessageEventStream, type Context } from "@earendil-works/pi-ai";
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import { createHash } from "node:crypto";
+import { once } from "node:events";
 import { setImmediate } from "node:timers/promises";
 import type { TestContext } from "node:test";
 import { registerOpenAICodexCustomProvider } from "../../src/provider-shim.js";
@@ -121,6 +124,51 @@ export function successSseResponse(): Response {
 	return sseResponse(`data: ${JSON.stringify(completedEvent)}\n\n`);
 }
 
+
+/** Bound a real network assertion; always clear the test's deadline timer. */
+export async function withinDeadline<T>(pending: Promise<T>): Promise<T> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([pending, new Promise<never>((_resolve, reject) => {
+			timer = setTimeout(() => reject(new Error("transport did not settle within the test deadline")), 2_000);
+		})]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+/** Send HTTP or WebSocket headers on a loopback socket, then remain silent. */
+export async function stalledHttpServer(t: Pick<TestContext, "after">, transport: "sse" | "websocket" | "connect" = "sse") {
+	let close: () => void = () => {};
+	const closed = new Promise<void>(resolve => { close = resolve; });
+	const sockets = new Set<import("node:net").Socket>();
+	const server = createServer((_request, response) => {
+		response.writeHead(200, { "content-type": "text/event-stream" });
+		response.flushHeaders();
+	});
+	server.on("connection", socket => {
+		sockets.add(socket);
+		socket.on("close", () => { sockets.delete(socket); close(); });
+	});
+	server.on("upgrade", (request, socket) => {
+		if (transport === "connect") return;
+		const key = request.headers["sec-websocket-key"];
+		assert.equal(typeof key, "string");
+		const accept = createHash("sha1").update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64");
+		socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+		// A close frame ends the faux server's socket; no response frames are sent.
+		socket.on("data", data => { if ((data[0]! & 0x0f) === 8) socket.end(); });
+	});
+	server.listen(0, "127.0.0.1");
+	await once(server, "listening");
+	t.after(async () => {
+		for (const socket of sockets) socket.destroy();
+		await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+	});
+	const address = server.address();
+	assert.ok(address && typeof address !== "string");
+	return { url: `http://127.0.0.1:${address.port}/backend-api`, closed };
+}
 
 type Listener = (event: unknown) => void;
 

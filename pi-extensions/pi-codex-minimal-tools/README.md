@@ -30,6 +30,12 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 
 The extension checks the selected model and enables supported tools. An image request goes to the configured provider and saves the result in the output directory. An image-view request reads a local file into the model context. A patch request updates workspace files and reports the changes.
 
+## Request limits
+
+- Codex SSE requests remain cancellable after response headers arrive. A body that stops sending data ends at Pi's HTTP idle timeout. The same timeout applies to a silent WebSocket. A WebSocket that cannot open ends at Pi's WebSocket connect timeout.
+- The HTTP idle timeout defaults to 300,000 ms. The WebSocket connect timeout defaults to 15,000 ms. Pi passes its `httpIdleTimeoutMs` setting to providers as `timeoutMs`; `websocketConnectTimeoutMs` controls the handshake. Zero disables the corresponding idle or connect deadline.
+- `/image-gen` runs at most four jobs at once. An additional command reports that the limit is reached. Session shutdown aborts every active image request and clears its status.
+
 ## Memory use
 
 - The background-image status keeps one rendered layout of at most 65,536 characters and elapsed-time keys for at most four displayed jobs. Job changes, resizing, elapsed seconds and theme invalidation replace the layout. Session shutdown clears the cache and stops its redraw timer.

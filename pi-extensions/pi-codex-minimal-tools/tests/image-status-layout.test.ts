@@ -61,14 +61,16 @@ test("image status reuses layout, refreshes elapsed time without reinstalling an
 		await setImmediate();
 		assert.notEqual(widget.render(80), beforeCompletion);
 		assert.ok(widget.render(80).join("\n").includes("1 running"));
+		const displayed = widget;
 		shutdown!();
-		assert.deepEqual(widget.render(80), []);
+		assert.equal(widget, undefined);
+		assert.deepEqual(displayed.render(80), []);
 		const rendersAtShutdown = redraws;
 		t.mock.timers.tick(1000);
 		assert.equal(redraws, rendersAtShutdown);
 		releases[1]!({ ok: false, error: "Controlled authentication failure" });
 		await setImmediate();
-		assert.equal(installs, 1);
+		assert.equal(installs, 2);
 	} finally {
 		shutdown?.();
 	}

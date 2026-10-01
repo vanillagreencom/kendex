@@ -25,6 +25,7 @@ const OPENAI_CODEX_PROVIDER = "openai-codex";
 const OPENAI_CODEX_MODEL_PROBE_IDS = ["gpt-6-astra", "gpt-5.4", "gpt-5.3-codex", "gpt-5.2", "gpt-5.1", "gpt-5", "gpt-4.1", "o4-mini"];
 
 interface ActiveImageJob {
+	controller: AbortController;
 	id: string;
 	startedAt: number;
 	prompt: string;
@@ -32,6 +33,7 @@ interface ActiveImageJob {
 	imageModel: string;
 }
 
+const MAX_ACTIVE_IMAGE_JOBS = 4;
 const activeImageJobs = new Map<string, ActiveImageJob>();
 let activeStatusCtx: ExtensionCommandContext | undefined;
 let statusTimer: ReturnType<typeof setInterval> | undefined;
@@ -260,6 +262,7 @@ function updateImageGenStatus(ctx: ExtensionCommandContext): void {
 
 function startImageJob(ctx: ExtensionCommandContext, parsed: ParsedImageGenCommand, imageModel: string): ActiveImageJob {
 	const job: ActiveImageJob = {
+		controller: new AbortController(),
 		id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
 		startedAt: Date.now(),
 		prompt: parsed.prompt,
@@ -454,11 +457,13 @@ function renderImageGenError(details: ImageGenerationErrorDetails, theme: Theme)
 	};
 }
 
-async function runBackgroundImageGeneration(pi: ExtensionAPI, ctx: ExtensionCommandContext, parsed: ParsedImageGenCommand): Promise<void> {
+async function runBackgroundImageGeneration(pi: ExtensionAPI, ctx: ExtensionCommandContext, parsed: ParsedImageGenCommand, signal: AbortSignal): Promise<void> {
+	signal.throwIfAborted();
 	const settings = loadSettings(ctx.cwd);
 	const model = selectCodexImageModel(ctx.model as ModelLike | undefined, ctx.modelRegistry as ModelRegistryLike | undefined) as Model<Api> | undefined;
 	if (!model) throw new Error("No image-capable openai-codex model is available. Update Pi's model registry or select an openai-codex image-capable model.");
 	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+	signal.throwIfAborted();
 	if (!auth.ok) throw new Error(auth.error);
 	if (!auth.apiKey) throw new Error("No Codex OAuth token is configured. Run /login openai-codex.");
 	const referenceImages = await Promise.all(parsed.imagePaths.map((path) => loadReferenceImage(ctx.cwd, path)));
@@ -468,7 +473,9 @@ async function runBackgroundImageGeneration(pi: ExtensionAPI, ctx: ExtensionComm
 		responsesModel: model.id,
 		imageModel: settings.imageModel,
 	});
+	signal.throwIfAborted();
 	const response = await fetch(resolveCodexUrl(model.baseUrl), {
+		signal,
 		method: "POST",
 		headers: buildHeaders(model, auth.apiKey, auth.headers),
 		body: JSON.stringify(body),
@@ -490,9 +497,11 @@ async function runBackgroundImageGeneration(pi: ExtensionAPI, ctx: ExtensionComm
 			if (Array.isArray(responseOutput)) for (const item of responseOutput) collectImageResult(results, item, settings.imageModel);
 		}
 	}
+	signal.throwIfAborted();
 	if (results.length === 0) throw new Error(summarizeNonImageResponse(lastResponse));
 	const savedImages = [];
 	for (const result of results) {
+		signal.throwIfAborted();
 		savedImages.push(await saveOpenAICodexGeneratedImage(ctx.cwd, {
 			responseId,
 			callId: result.id,
@@ -502,6 +511,7 @@ async function runBackgroundImageGeneration(pi: ExtensionAPI, ctx: ExtensionComm
 			revisedPrompt: result.revisedPrompt ?? parsed.prompt,
 		}));
 	}
+	signal.throwIfAborted();
 	pi.sendMessage({
 		customType: IMAGE_SAVE_DISPLAY_MESSAGE_TYPE,
 		content: [{ type: "text", text: buildGeneratedImageDisplayText(savedImages[0], { expanded: false }) }],
@@ -512,6 +522,9 @@ async function runBackgroundImageGeneration(pi: ExtensionAPI, ctx: ExtensionComm
 
 export function registerBackgroundImageGenerationCommand(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", () => {
+		for (const job of activeImageJobs.values()) job.controller.abort();
+		activeStatusCtx?.ui.setStatus(IMAGE_GEN_STATUS_KEY, undefined);
+		activeStatusCtx?.ui.setWidget(IMAGE_GEN_STATUS_KEY, undefined);
 		if (statusTimer) clearInterval(statusTimer);
 		statusTimer = undefined;
 		activeImageJobs.clear();
@@ -545,11 +558,16 @@ export function registerBackgroundImageGenerationCommand(pi: ExtensionAPI): void
 				ctx.ui.notify("Usage: /image-gen prompt text [@reference.png]", "warning");
 				return;
 			}
+			if (activeImageJobs.size >= MAX_ACTIVE_IMAGE_JOBS) {
+				ctx.ui.notify(`Image generation is limited to ${MAX_ACTIVE_IMAGE_JOBS} concurrent jobs. Wait for a job to finish.`, "warning");
+				return;
+			}
 			const settings = loadSettings(ctx.cwd);
 			const job = startImageJob(ctx, parsed, settings.imageModel);
 			ctx.ui.notify(`Queued image generation with ${settings.imageModel}${parsed.imagePaths.length ? ` (${parsed.imagePaths.length} reference image${parsed.imagePaths.length === 1 ? "" : "s"})` : ""}.`, "info");
-			void runBackgroundImageGeneration(pi, ctx, parsed)
+			void runBackgroundImageGeneration(pi, ctx, parsed, job.controller.signal)
 				.catch((error) => {
+					if (job.controller.signal.aborted) return;
 					const message = error instanceof Error ? error.message : String(error);
 					pi.sendMessage({
 						customType: IMAGE_GEN_ERROR_MESSAGE_TYPE,
