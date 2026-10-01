@@ -1,3 +1,4 @@
+import { normalizePaneTaskStatus, taskStatus } from "./outcomes.js";
 import { sanitizeCwdSnapshot } from "./cwd-snapshot.js";
 import type { CwdSnapshot } from "./types.js";
 
@@ -36,7 +37,7 @@ export function publishSubagentActivity(eventName: string, payload: Record<strin
 export function buildSubagentActivity(eventName: string, payload: Record<string, unknown>): PiActivityEvent | null {
 	const agent = stringValue(payload.agent);
 	const taskId = stringValue(payload.taskId);
-	const status = stringValue(payload.status);
+	const status = normalizePaneTaskStatus(payload.status);
 	const reason = stringValue(payload.reason);
 	const mappedType = activityType(eventName, status, reason);
 	if (!mappedType) return null;
@@ -62,23 +63,19 @@ function activityBroker(): PiActivityBroker | undefined {
 		: undefined;
 }
 
-function activityType(eventName: string, status?: string, reason?: string): string | null {
+function activityType(eventName: string, status: unknown, reason?: string): string | null {
 	if (eventName === "subagents:created") return "agent.spawned";
 	if (eventName === "subagents:queued") return "agent.task_queued";
 	if (eventName === "subagents:started") return "agent.task_started";
 	if (eventName === "subagents:steered") return "agent.steered";
-	if (eventName === "subagents:needs_completion" && reason === "compact-then-empty") return "agent.empty_after_compact";
-	if (eventName === "subagents:needs_completion") return "agent.needs_completion";
+	if (taskStatus(status).activity === "agent.needs_completion" && reason === "compact-then-empty") return "agent.empty_after_compact";
 	if (reason === "pane-cwd-stale") return "agent.pane_cwd_stale";
 	if (eventName === "subagents:rate_limited") return "agent.rate_limited";
 	if (eventName === "subagents:rate_limit_retry") return "agent.rate_limit_retry";
 	if (eventName === "subagents:rate_limit_skipped") return "agent.rate_limit_skipped";
 	if (eventName === "subagents:rate_limit_resolved") return "agent.rate_limit_resolved";
 	if (eventName === "subagents:rate_limit_exhausted") return "agent.rate_limit_exhausted";
-	if (eventName === "subagents:completed" || status === "completed") return "agent.task_completed";
-	if (status === "blocked") return "agent.task_blocked";
-	if (eventName === "subagents:failed" || status === "failed" || status === "aborted") return "agent.task_failed";
-	return null;
+	return taskStatus(status).activity;
 }
 
 function severityFor(type: string): PiActivitySeverity {

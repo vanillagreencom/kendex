@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import assert from "node:assert/strict";
+import { assertStoppedActivity } from "../../../tests/single-agent-fixture.js";
+import { importRuntimeCopy } from "../../../tests/browser-fixture.js";
 
 import { buildSubagentActivity, publishSubagentActivity, type PiActivityEvent } from "../activity.js";
 
@@ -17,6 +20,11 @@ beforeEach(() => {
 });
 
 describe("subagent activity", () => {
+	test("real parent cancellation publishes no failure activity", () => assertStoppedActivity());
+	test("control: failed envelope overrides the real stopped status", async () => {
+		const mutant = await importRuntimeCopy("activity.ts", 'return taskStatus(status).activity;', 'return eventName === "subagents:failed" ? "agent.task_failed" : taskStatus(status).activity;') as typeof import("../activity.js");
+		await assert.rejects(() => assertStoppedActivity(mutant), assert.AssertionError);
+	});
 	test("spawn/queued/started/completed/failed/blocked/needs_completion each publish", () => {
 		const events = installBroker();
 		publishSubagentActivity("subagents:created", { agent: "rust", paneId: "%11" });

@@ -1,3 +1,4 @@
+import { isTerminalTaskStatus } from "./outcomes.js";
 // Polling watchdog for subagent tasks that stall
 // after pi-core auto-compaction.
 //
@@ -16,7 +17,7 @@
 //   KENDEX_STALL_WATCHDOG_INTERVAL_SEC     poll cadence (default 60s).
 //   KENDEX_STALL_WATCHDOG_THRESHOLD_SEC    staleness gate (default 300s).
 
-import type { PaneTaskRecord, PaneTaskStatus } from "./types.js";
+import type { PaneTaskRecord } from "./types.js";
 import type { SyntheticOutboxPayload } from "./agent-end-watchdog.js";
 
 export const STALL_WATCHDOG_REASON = "stalled-idle-no-progress" as const;
@@ -99,17 +100,6 @@ export interface IdleStallWatchdog {
 	stop(): void;
 	isRunning(): boolean;
 	hasFired(taskId: string): boolean;
-}
-
-const TERMINAL_STATUSES = new Set<PaneTaskStatus>([
-	"completed",
-	"failed",
-	"blocked",
-]);
-
-function isTerminalTaskStatus(status: PaneTaskStatus | undefined): boolean {
-	if (!status) return false;
-	return TERMINAL_STATUSES.has(status);
 }
 
 export function createIdleStallWatchdog(deps: IdleStallWatchdogDeps): IdleStallWatchdog {

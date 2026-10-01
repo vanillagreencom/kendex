@@ -1,3 +1,4 @@
+import { isTaskActive, isTaskTurnFinished, normalizePaneTaskStatus } from "./outcomes.js";
 import * as fs from "node:fs";
 import { fileVersion } from "./file-version.js";
 import { taskRegistryPath } from "./paths.js";
@@ -22,11 +23,11 @@ export function recordMonitorKind(record: PaneTaskRecord): "pane" | "oneshot" {
 }
 
 export function monitorStatusIsActive(status: PaneTaskStatus | string | undefined): boolean {
-	return !monitorStatusIsTerminal(status);
+	return isTaskActive(status);
 }
 
 export function monitorStatusIsTerminal(status: PaneTaskStatus | string | undefined): boolean {
-	return status === "completed" || status === "failed" || status === "stopped" || status === "refused" || status === "blocked" || status === "needs_completion" || status === "cancelled";
+	return isTaskTurnFinished(status);
 }
 
 export function monitorSessionKey(record: PaneTaskRecord): { id: string; type: MonitorSessionType } {
@@ -65,7 +66,7 @@ export function sortedMonitorRecords(registry: PaneTaskRegistry): PaneTaskRecord
 
 export function monitorStatusFromDashboard(status: SubagentDashboardStatus): PaneTaskStatus {
 	// `waiting` only exists on the dashboard; the registry models that as `queued`.
-	return status === "waiting" ? "queued" : status;
+	return normalizePaneTaskStatus(status);
 }
 
 // One live lifecycle fingerprint for the whole dashboard item set. Cheap enough to

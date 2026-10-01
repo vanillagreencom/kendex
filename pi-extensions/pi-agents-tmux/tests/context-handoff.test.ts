@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
 import * as runner from "../extensions/subagent/runner.js";
-import { assertAbortNoRetry, assertFreshHandoff, bridgeEvent, bridgeStdout, cleanupTempRuntimes, dispatchOutcome, installMockSpawn, tempRuntime, writeSettings } from "./single-agent-fixture.js";
+import * as dispatch from "../extensions/subagent/dispatch.js";
+import { assertAbortNoRetry, assertFreshHandoff, assertSessionMetadata, bridgeEvent, bridgeStdout, cleanupTempRuntimes, dispatchOutcome, installMockSpawn, tempRuntime, writeSettings } from "./single-agent-fixture.js";
 import { importRuntimeCopy, stripAnsi, theme } from "./browser-fixture.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -11,6 +12,22 @@ import { renderDashboardWidgetLines } from "../extensions/subagent/dashboard.js"
 after(cleanupTempRuntimes);
 
 test("context threshold hands the new task and prior final result to a fresh agent", () => assertFreshHandoff(runner));
+
+for (const mode of ["single", "parallel", "chain"] as const) {
+	test(`${mode} returns replacement session keys outside truncated answers`, () => assertSessionMetadata(dispatch, mode));
+	test(`control: ${mode} omits model-facing session metadata`, async () => {
+		const mutant = await importRuntimeCopy("dispatch.ts", `return withPaneFallbackNotice(await ${mode}Dispatch(flow, lane), lane, flow.agents);`, `return ${mode}Dispatch(flow, lane);`) as typeof dispatch;
+		await assert.rejects(() => assertSessionMetadata(mutant, mode), assert.AssertionError);
+	});
+}
+
+for (const ending of ["failed", "needs_completion"] as const) {
+	test(`chain retains every executed session key before ${ending}`, () => assertSessionMetadata(dispatch, "chain", ending));
+	test(`control: early ${ending} drops an earlier handoff key`, async () => {
+		const mutant = await importRuntimeCopy("dispatch.ts", 'result.details.results.flatMap((item, index)', 'result.details.results.slice(-1).flatMap((item, index)') as typeof dispatch;
+		await assert.rejects(() => assertSessionMetadata(mutant, "chain", ending), assert.AssertionError);
+	});
+}
 
 test("fresh handoff reaches the tool result and compact panel", async () => {
 	const root = tempRuntime();

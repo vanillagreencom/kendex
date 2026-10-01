@@ -1,3 +1,4 @@
+import { taskStatus } from "./outcomes.js";
 import { getMarkdownTheme, type AgentToolResult, type ToolRenderContext } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { cachedAgentDiscovery, type AgentScope } from "./agents.js";
@@ -220,8 +221,8 @@ export const subagentToolRenderers = {
 			if (expanded) {
 				if (isQueued) return expandedQueuedTaskComponent(r);
 				const container = new Container();
-				const statusLabel = isQueued ? "Queued task" : isRunning ? "working" : needsCompletion ? "needs completion" : status;
-				const statusTone = isQueued || isRunning || needsCompletion || isRefused ? "warning" : isError ? "error" : "success";
+				const statusLabel = isQueued ? "Queued task" : taskStatus(status).label;
+				const statusTone = isQueued ? taskStatus("queued").tone : taskStatus(status).tone;
 				let header = agentStatusLine(theme, r.agent, statusLabel, statusTone, `${laneBadge(r)}${resultSessionChip(r)}`);
 				if (isRefused && r.stopReason) header += ` ${theme.fg("warning", `[${r.stopReason}]`)}`;
 				else if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
@@ -303,8 +304,8 @@ export const subagentToolRenderers = {
 				return wrappedText(text);
 			}
 
-			const compactStatusLabel = isRunning ? "working" : needsCompletion ? "needs completion" : status;
-			const compactStatusTone = isRunning || needsCompletion || isRefused ? "warning" : isError ? "error" : "success";
+			const compactStatusLabel = taskStatus(status).label;
+			const compactStatusTone = taskStatus(status).tone;
 			let text = queued || agentStatusLine(theme, r.agent, compactStatusLabel, compactStatusTone, `${laneBadge(r)}${resultSessionChip(r)}${theme.fg("dim", " · ctrl+o to expand")}`);
 			if (isRefused && r.stopReason) text += ` ${theme.fg("warning", `[${r.stopReason}]`)}`;
 			else if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
@@ -349,15 +350,8 @@ export const subagentToolRenderers = {
 			const needsCompletionCount = details.results.filter((r) => singleResultStatus(r) === "needs_completion").length;
 			const chainStepIcon = (r: SingleResult) => {
 				const status = singleResultStatus(r);
-				switch (status) {
-					case "needs_completion":
-					case "refused":
-					case "stopped": return theme.fg("warning", ICONS.warning);
-					case "running": return theme.fg("warning", ICONS.cog);
-					case "completed": return theme.fg("success", ICONS.check);
-					case "failed": return theme.fg("error", ICONS.times);
-					default: { const unreachable: never = status; throw new Error(`Unknown result status: ${unreachable}`); }
-				}
+				const presentation = taskStatus(status);
+				return theme.fg(presentation.tone, presentation.icon);
 			};
 			const icon = runningCount > 0
 				? theme.fg("warning", ICONS.cog)

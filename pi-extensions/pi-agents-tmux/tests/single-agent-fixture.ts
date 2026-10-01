@@ -12,6 +12,7 @@ import { setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
 import { guardReusedSessionBudget, resolveBgSession } from "../extensions/subagent/sessions.js";
 import { clearPackageConfigCache, recordProjectTrust } from "../extensions/subagent/package-config.js";
 import { runSingleDispatch } from "../extensions/subagent/dispatch.js";
+import * as dispatch from "../extensions/subagent/dispatch.js";
 import type { SubagentDashboardItem } from "../extensions/subagent/types.js";
 import type { SingleResult, SubagentDetails } from "../extensions/subagent/types.js";
 
@@ -77,12 +78,75 @@ export async function dispatchOutcome(options: {
 	return { result, row: rows.at(-1)!, events };
 }
 
+/** Capture the real cancellation producer, optionally replaying its envelope through a real mapper copy. */
+export async function assertStoppedActivity(mapper?: typeof import("../extensions/subagent/activity.js")) {
+	const key = Symbol.for("kendex.pi.activity");
+	const globals = globalThis as unknown as Record<symbol, unknown>;
+	const previous = globals[key];
+	const published: Array<{ type: string }> = [];
+	globals[key] = { publish: (event: { type: string }) => { published.push(event); } };
+	const controller = new AbortController();
+	controller.abort();
+	installMockSpawn([{ stdout: bridgeStdout([bridgeEvent("agent_end", { content: [] })]) }]);
+	try {
+		const { events } = await dispatchOutcome({ signal: controller.signal });
+		const stopped = events.find(({ name }) => name === "subagents:failed");
+		assert.equal((stopped?.payload as { status: string })?.status, "stopped");
+		if (mapper) {
+			published.length = 0;
+			mapper.publishSubagentActivity(stopped!.name, stopped!.payload as Record<string, unknown>);
+		}
+		assert.deepEqual(published.filter((event) => event.type === "agent.task_failed"), []);
+	} finally {
+		setSingleAgentSpawnForTests();
+		if (previous === undefined) delete globals[key];
+		else globals[key] = previous;
+	}
+}
+
+/** Exercise returned handoff keys after answer truncation in every dispatch return path. */
+export async function assertSessionMetadata(runtime: typeof dispatch, mode: "single" | "parallel" | "chain", ending: "completed" | "failed" | "needs_completion" = "completed") {
+	const cwd = tempRuntime();
+	const root = tempRuntime();
+	writeSettings(cwd, { reusedSessionContextLimitTokens: 100, reusedSessionBudgetThreshold: 0.8, resultMaxBytes: 1024, resultMaxLines: 40 });
+	const session = resolveBgSession(root, "reviewer-test", "reuse");
+	mkdirSync(join(root, "sessions"), { recursive: true });
+	writeFileSync(session.path, `${JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "prior result" }] } })}\n`.padEnd(432, " "));
+	const answer = bridgeStdout([bridgeEvent("message_end", { message: { role: "assistant", content: [{ type: "text", text: "fresh answer\n".repeat(2000) }] } })]);
+	const second = ending === "failed"
+		? bridgeStdout([bridgeEvent("message_end", { message: { role: "assistant", content: [], stopReason: "error", errorMessage: "403 forbidden" } })])
+		: ending === "needs_completion" ? bridgeStdout([bridgeEvent("session_compact"), bridgeEvent("agent_end", { content: [] })]) : answer;
+	const calls = installMockSpawn(mode === "single" ? [{ stdout: answer }] : [{ stdout: answer }, { stdout: second }]);
+	const rows: SubagentDashboardItem[] = [];
+	const flow = {
+		agents: [testAgent()], cwd, runtimeRoot: root, parentSessionId: "test", pi: mockPiEvents([]),
+		makeDetails: (dispatchMode: "single" | "parallel" | "chain") => (results: SingleResult[]): SubagentDetails => ({ mode: dispatchMode, agentScope: "project", projectAgentsDir: null, results }),
+		removeDashboardAgent: () => undefined, updateDashboard: (item: SubagentDashboardItem) => { rows.push(item); },
+	};
+	try {
+		const result = mode === "single"
+			? await runtime.runSingleDispatch({ ...flow, agent: "reviewer-test", task: "new task", sessionKey: "reuse" })
+			: mode === "parallel"
+				? await runtime.runParallelDispatch({ ...flow, tasks: [{ agent: "reviewer-test", task: "first", sessionKey: "reuse" }, { agent: "reviewer-test", task: "second" }] })
+				: await runtime.runChainDispatch({ ...flow, chain: [{ agent: "reviewer-test", task: "first", sessionKey: "reuse" }, { agent: "reviewer-test", task: "second {previous}" }, ...(ending === "completed" ? [] : [{ agent: "reviewer-test", task: "must not run" }])] });
+		assert.equal(calls.length, mode === "single" ? 1 : 2);
+		assert.notEqual(result.details.results[0]!.sessionKey, "reuse");
+		assert.equal(result.details.results[0]!.truncation?.truncated, true);
+		const text = result.content.map((part) => part.text).join("\n");
+		for (const [index, child] of result.details.results.entries()) {
+			assert.ok(child.sessionKey);
+			const position = mode === "chain" ? ` step=${index + 1}` : mode === "parallel" ? ` item=${index + 1}` : "";
+			assert.ok(text.includes(`Session: agent=${child.agent}${position} sessionKey=${child.sessionKey}`), `${mode}/${ending} returned key for executed item ${index + 1}`);
+		}
+	} finally { setSingleAgentSpawnForTests(); }
+}
+
 /** Assert the outcome independently in model-facing data and the panel. */
 export async function assertDispatchOutcome(status: "refused" | "stopped" | "failed", options: Parameters<typeof dispatchOutcome>[0], diagnostic: string) {
 	const { result, row, events } = await dispatchOutcome(options);
 	assert.deepEqual([row.status, result.isError, row.message?.includes(diagnostic), result.content[0]?.text.includes(diagnostic)], [status, true, true, true]);
 	if (status !== "refused") assert.equal((events.findLast(({ name }) => name === "subagents:failed" || name === "subagents:completed")?.payload as { status: string })?.status, status);
-	return { result, row };
+	return { result, row, events };
 }
 
 export function installMockSpawn(scenarios: Array<{ code?: number | null; delayMs?: number; error?: Error | string; signal?: string; stderr?: string; stdout?: string }>, install = setSingleAgentSpawnForTests) {

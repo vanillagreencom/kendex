@@ -1,16 +1,15 @@
+import { taskStatus } from "../outcomes.js";
 import { type Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { AgentConfig } from "../agents.js";
 import {
 	ansiMagenta,
 	ansiYellow,
-	COMPLETION_SUMMARY_UNAVAILABLE,
 	compactPath,
-	completionBodyWithoutPromptEcho,
 	formatUsageStats,
 	highlightInlinePreview,
 } from "../format.js";
-import { readTextFileIfExists, readTranscriptTail, recordTraceRef } from "../renderers.js";
+import { readTextFileIfExists, readTranscriptTail, recordTraceRef, taskRecordSummary } from "../renderers.js";
 import { monitorStatusIsTerminal } from "../task-records.js";
 import { formatTranscriptForDisplay } from "../transcript-timeline.js";
 import { inputDeliveryLabel } from "../transcripts.js";
@@ -51,7 +50,7 @@ function wrapPlainNoEllipsis(text: string, width: number): string[] {
 function colorTraceValue(label: string, value: string, theme: Theme): string {
 	let renderedValue = theme.fg("text", value);
 	if (label.toLowerCase() === "status") {
-		renderedValue = theme.fg(value === "completed" ? "success" : value === "failed" ? "error" : "warning", value);
+		renderedValue = theme.fg(taskStatus(value).tone, value);
 	}
 	return `${theme.fg("muted", `${label}: `.padEnd(12))}${renderedValue}`;
 }
@@ -205,11 +204,7 @@ export function renderTraceTabBar(items: TraceViewerItem[], selected: number, wi
 export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: number, _discovery?: { agents: AgentConfig[] }, _sessionNumber?: number): Promise<TraceViewerItem[]> {
 	const ref = recordTraceRef(record);
 	const usage = record.usage ? formatUsageStats(record.usage) : "";
-	const summaryText = record.summary?.trim()
-		? completionBodyWithoutPromptEcho(record.summary, record.task)
-		: record.status === "completed" || record.status === "failed" || record.status === "blocked"
-			? COMPLETION_SUMMARY_UNAVAILABLE
-			: "No summary yet.";
+	const summaryText = taskRecordSummary(record);
 	// `" "` (single space) is a sentinel for an intentional blank line; it
 	// survives the `.filter(Boolean)` pass below that drops conditionally
 	// empty entries (e.g. record.completedAt missing -> no `Done` line).

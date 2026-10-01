@@ -1,3 +1,4 @@
+import { isTaskTurnFinished, taskStatus } from "./outcomes.js";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Container } from "@earendil-works/pi-tui";
 import { discoverAgents } from "./agents.js";
@@ -47,7 +48,6 @@ export function registerPaneSupportTools(deps: PaneSupportToolDeps): void {
 		formatTaskRecordResult,
 		inferTaskRecordKind,
 		isFollowUpDelivery,
-		isTerminalTaskStatus,
 		latestTaskRecord,
 		paneExists,
 		paneSessionBelongsToRuntime,
@@ -132,7 +132,7 @@ export function registerPaneSupportTools(deps: PaneSupportToolDeps): void {
 					record = refreshed.record;
 					diagnostics = refreshed.diagnostics;
 				}
-				if (!params.wait || (record && (isTerminalTaskStatus(record.status) || record.status === "needs_completion"))) break;
+				if (!params.wait || (record && (isTaskTurnFinished(record.status)))) break;
 				if (Date.now() >= deadline) break;
 				await new Promise((resolve) => setTimeout(resolve, 500));
 			} while (true);
@@ -165,7 +165,7 @@ export function registerPaneSupportTools(deps: PaneSupportToolDeps): void {
 			if (context?.isError) return wrappedText(`${theme.fg("error", ICONS.times)} ${theme.fg("toolTitle", "Agent result lookup failed")}\n${theme.fg("muted", raw)}`);
 			if (details?.completionMessageEmitted) return new Container();
 			const target = details?.agent ? details.agent : "unknown";
-			const tone = details?.status === "completed" ? "success" : details?.status === "failed" ? "error" : "warning";
+			const tone = taskStatus(details?.status).tone;
 			return wrappedText(agentStatusLine(theme, target, details?.status ?? "result", tone));
 		},
 	});

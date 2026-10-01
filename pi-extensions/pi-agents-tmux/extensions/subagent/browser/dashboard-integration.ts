@@ -1,13 +1,5 @@
 import { sortDashboardItems } from "../dashboard.js";
-import { completionBodyWithoutPromptEcho } from "../format.js";
-import { taskNumberById } from "../task-records.js";
-import type {
-	ChatMessage,
-	CompletionMessageProvenance,
-	PaneTaskRecord,
-	PaneTaskRegistry,
-	SubagentDashboardItem,
-} from "../types.js";
+import type { SubagentDashboardItem } from "../types.js";
 
 export function activeDashboardItems(items: SubagentDashboardItem[]): SubagentDashboardItem[] {
 	return sortDashboardItems(items);
@@ -50,49 +42,4 @@ export function dashboardDisplayLabels(items: SubagentDashboardItem[], persisten
 		labels.set(item.taskId, label);
 	}
 	return labels;
-}
-
-function completionBodyFromRecord(record: PaneTaskRecord | undefined, fallback: string | undefined, task: string | undefined, fallbackProvenance: CompletionMessageProvenance = "fallback"): string {
-	if (record?.summary?.trim()) return completionBodyWithoutPromptEcho(record.summary, record.task ?? task, "persisted");
-	return completionBodyWithoutPromptEcho(fallback, record?.task ?? task, fallbackProvenance);
-}
-
-export function appendBgChatMessages(messages: ChatMessage[], items: SubagentDashboardItem[], taskRegistry: PaneTaskRegistry = {}): void {
-	// Bg/oneshot agents skip the file bus (no inbox/outbox/.md/.json), so the
-	// file-based scan never sees them. Synthesize delegation+completion records
-	// from the dashboard item itself; the data we need is already on it.
-	// Use the persistent task registry's #N so chat row attribution matches
-	// the Monitor tab and Detail header (not the in-memory counter).
-	const persistentTaskNumbers = taskNumberById(Object.values(taskRegistry));
-	const labels = dashboardDisplayLabels(items, persistentTaskNumbers);
-	for (const item of items) {
-		if (item.kind !== "oneshot") continue;
-		const label = labels.get(item.taskId) ?? item.agent;
-		const startTs = item.startedAt ? Date.parse(item.startedAt) : Number.NaN;
-		if (Number.isFinite(startTs) && item.task) {
-			messages.push({
-				timestamp: startTs,
-				agent: item.agent,
-				taskId: item.taskId,
-				kind: "delegation",
-				from: "@orch",
-				to: `@${label}`,
-				body: item.task,
-			});
-		}
-		const isTerminal = item.status === "completed" || item.status === "failed" || item.status === "blocked" || item.status === "needs_completion";
-		if (!isTerminal) continue;
-		const endTs = item.completedAt ? Date.parse(item.completedAt) : item.updatedAt ? Date.parse(item.updatedAt) : Number.NaN;
-		if (!Number.isFinite(endTs)) continue;
-		messages.push({
-			timestamp: endTs,
-			agent: item.agent,
-			taskId: item.taskId,
-			kind: "completion",
-			from: `@${label}`,
-			to: "@orch",
-			body: completionBodyFromRecord(taskRegistry[item.taskId], item.message, item.task, item.messageProvenance ?? "task-echo-fallback"),
-			status: item.status,
-		});
-	}
 }

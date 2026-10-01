@@ -1,3 +1,4 @@
+import { isTaskTurnFinished, taskStatus } from "./outcomes.js";
 import * as fs from "node:fs";
 import { formatSize, getMarkdownTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer } from "@earendil-works/pi-tui";
@@ -32,27 +33,16 @@ import {
 } from "./types.js";
 
 export function paneCompletionIcon(status: PaneTaskStatus, theme: Theme): string {
-	if (status === "completed") return theme.fg("success", ICONS.check);
-	if (status === "blocked") return theme.fg("error", ICONS.times);
-	if (status === "failed") return theme.fg("error", ICONS.times);
-	if (status === "needs_completion") return theme.fg("warning", ICONS.warning);
-	if (status === "queued") return theme.fg("warning", ICONS.clock);
-	return theme.fg("muted", ICONS.dotSmall);
+	const presentation = taskStatus(status);
+	return theme.fg(presentation.tone, presentation.icon);
 }
 
 export function paneCompletionStatus(status: PaneTaskStatus, theme: Theme): string {
-	if (status === "completed") return theme.fg("success", status);
-	if (status === "needs_completion") return theme.fg("warning", "needs completion");
-	if (status === "blocked") return theme.fg("warning", status);
-	if (status === "failed") return theme.fg("error", status);
-	return theme.fg("muted", status);
+	return theme.fg(taskStatus(status).tone, taskStatus(status).label);
 }
 
-export function paneCompletionTone(status: PaneTaskStatus): "success" | "warning" | "error" | "muted" {
-	if (status === "completed") return "success";
-	if (status === "blocked" || status === "queued" || status === "needs_completion") return "warning";
-	if (status === "failed") return "error";
-	return "muted";
+export function paneCompletionTone(status: PaneTaskStatus): "success" | "warning" | "error" {
+	return taskStatus(status).tone;
 }
 
 export function renderAgentsCommandMessage(message: { content: string; details?: unknown }, _options: unknown, theme: Theme) {
@@ -159,19 +149,19 @@ export function renderPaneCompletionMessage(message: { content: string; details?
 	return framedComponent(container, theme);
 }
 
+/** Finished turns never claim that a missing summary is still pending. */
+export function taskRecordSummary(record: PaneTaskRecord): string {
+	if (record.summary?.trim()) return completionBodyWithoutPromptEcho(record.summary, record.task);
+	if (taskStatus(record.status).phase === "recoverable") return "Task turn ended without a valid completion record; see diagnostics.";
+	return isTaskTurnFinished(record.status) ? COMPLETION_SUMMARY_UNAVAILABLE : "No summary yet.";
+}
+
 export function formatTaskRecordResult(record: PaneTaskRecord, verbose = false): string {
 	const files = record.filesChanged?.length ? record.filesChanged.map((file) => `- ${file}`).join("\n") : "None reported";
 	const validation = record.validation?.length ? record.validation.map((item) => `- ${item}`).join("\n") : "None reported";
 	const diagnostics = record.diagnostics?.length ? record.diagnostics.map((item) => `- ${item}`).join("\n") : "";
 	const cwdSnapshot = record.cwdSnapshot ? formatCwdSnapshot(record.cwdSnapshot) : "";
-	const terminal = record.status === "completed" || record.status === "failed" || record.status === "blocked";
-	const summary = record.summary?.trim()
-		? completionBodyWithoutPromptEcho(record.summary, record.task)
-		: record.status === "needs_completion"
-			? "Task turn ended without a valid completion record; see diagnostics."
-			: terminal
-				? COMPLETION_SUMMARY_UNAVAILABLE
-				: "No summary yet.";
+	const summary = taskRecordSummary(record);
 	const usage = record.usage ? formatUsageStats(record.usage, record.model) : "";
 	const metaParts = [
 		`Status: **${record.status}**`,

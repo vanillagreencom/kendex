@@ -1,3 +1,4 @@
+import { isTerminalTaskStatus, isTaskActive, isTaskTurnFinished, normalizePaneTaskStatus, taskStatus } from "./outcomes.js";
 /**
  * Agent delegation tool — delegate tasks to specialized agents.
  *
@@ -178,10 +179,8 @@ import {
 	createTaskId,
 	emitSubagentEvent,
 	inferTaskRecordKind,
-	isTerminalTaskStatus,
 	latestTaskRecord,
 	markTaskNeedsCompletion,
-	normalizePaneTaskStatus,
 	normalizeUsageStats,
 	paneSessionBelongsToRuntime,
 	pollPaneCompletions,
@@ -270,7 +269,7 @@ function latestRecordTimestamp(record: PaneTaskRecord | undefined): string {
 }
 
 function isLiveDashboardStatus(status: SubagentDashboardItem["status"] | undefined): boolean {
-	return status === "queued" || status === "running" || status === "waiting";
+	return taskStatus(status).phase === "working";
 }
 
 function timestampMs(value: string | undefined): number {
@@ -634,10 +633,7 @@ export default function (pi: ExtensionAPI) {
 			return Object.values(records).filter(
 				(record) =>
 					record?.taskId &&
-					record.status !== "completed" &&
-					record.status !== "failed" &&
-					record.status !== "blocked" &&
-					record.status !== "needs_completion",
+					isTaskActive(record.status),
 			);
 		},
 		outboxExists: defaultOutboxExists,
@@ -918,7 +914,7 @@ export default function (pi: ExtensionAPI) {
 		// updaters in parallel/single/chain mode (updateOneshotDashboard, the
 		// post-await dashboard refreshes) write only status/message/usage and
 		// would otherwise blow away the startedAt set by subagents:started —
-		// without which appendBgChatMessages cannot emit a delegation row.
+		// The Monitor reads these timestamps for task duration.
 		dashboardState.items[key] = {
 			...item,
 			reuseNotice: item.reuseNotice ?? existing?.reuseNotice,
@@ -1249,7 +1245,7 @@ export default function (pi: ExtensionAPI) {
 			bridge: existing?.bridge,
 			completedAt: typeof event.timestamp === "string" ? event.timestamp : new Date().toISOString(),
 			kind,
-			message: eventSummary ?? (isTerminalTaskStatus(eventStatus) || eventStatus === "needs_completion" ? completionBodyWithoutPromptEcho(existing?.message, existing?.task) : existing?.message),
+			message: eventSummary ?? (isTaskTurnFinished(eventStatus) ? completionBodyWithoutPromptEcho(existing?.message, existing?.task) : existing?.message),
 			paneId: kind === "pane" ? existing?.paneId ?? (typeof event.paneId === "string" ? event.paneId : undefined) : undefined,
 			sessionMode,
 			sessionKey,
@@ -1304,7 +1300,7 @@ export default function (pi: ExtensionAPI) {
 			let outboxFile = taskId ? completionPath(runtimeRoot, childAgentName, taskId) : "";
 			if (!taskId) {
 				const records = Object.values(await readTaskRegistry(runtimeRoot))
-					.filter((record) => record.agent === childAgentName && (record.status === "queued" || record.status === "running"))
+					.filter((record) => record.agent === childAgentName && (taskStatus(record.status).phase === "working"))
 					.sort((a, b) => (b.updatedAt ?? b.createdAt).localeCompare(a.updatedAt ?? a.createdAt));
 				const record = records[0];
 				if (!record) return { content: [{ type: "text", text: "No active agent task file or bridge follow-up task is being processed." }], details: {}, isError: true };
@@ -1335,8 +1331,8 @@ export default function (pi: ExtensionAPI) {
 		renderResult(result, _options, theme, _context) {
 			const details = result.details as { agent?: string; status?: string; outboxFile?: string } | undefined;
 			const agent = details?.agent ?? childAgentName ?? "agent";
-			const statusWord = details?.status === "failed" ? "failed" : details?.status === "blocked" ? "blocked" : "completed";
-			const tone = details?.status === "failed" || details?.status === "blocked" ? "error" : "success";
+			const statusWord = normalizePaneTaskStatus(details?.status);
+			const tone = taskStatus(statusWord).tone;
 			return wrappedText(agentStatusLine(theme, agent, statusWord, tone, theme.fg("muted", " · reported")));
 		},
 	});
@@ -1344,8 +1340,8 @@ export default function (pi: ExtensionAPI) {
 	pi.registerMessageRenderer("subagent-self-completion", (message, options, theme) => {
 		const details = message.details as { agent?: string; status?: string; outboxFile?: string } | undefined;
 		const agent = details?.agent ?? "unknown";
-		const statusWord = details?.status === "failed" ? "failed" : details?.status === "blocked" ? "blocked" : "completed";
-		const tone = details?.status === "failed" || details?.status === "blocked" ? "error" : "success";
+		const statusWord = normalizePaneTaskStatus(details?.status);
+		const tone = taskStatus(statusWord).tone;
 		const tail = statusWord === "completed" ? theme.fg("muted", " · now waiting") : "";
 		const headline = agentStatusLine(theme, agent, statusWord, tone, tail);
 		if (options?.expanded && details?.outboxFile) {
@@ -1591,7 +1587,7 @@ export default function (pi: ExtensionAPI) {
 			const records = await readTaskRegistry(runtimeRoot);
 			for (const record of Object.values(records)) {
 				if (!record?.taskId || record.agent !== childAgentName) continue;
-				if (isTerminalTaskStatus(record.status) || record.status === "needs_completion") continue;
+				if (isTaskTurnFinished(record.status)) continue;
 				agentEndWatchdog.onAgentEnd({ runtimeRoot, agentName: childAgentName, taskId: record.taskId });
 			}
 		} catch (err) {
@@ -1851,7 +1847,6 @@ export default function (pi: ExtensionAPI) {
 		formatTaskRecordResult,
 		inferTaskRecordKind,
 		isFollowUpDelivery,
-		isTerminalTaskStatus,
 		latestTaskRecord,
 		paneExists,
 		paneSessionBelongsToRuntime,

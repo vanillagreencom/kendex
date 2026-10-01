@@ -12,7 +12,6 @@ import {
 	type MonitorSessionType,
 } from "../task-records.js";
 import {
-	ICONS,
 	type AgentBrowserUiState,
 	type PaneTaskRecord,
 	type PaneTaskStatus,
@@ -66,14 +65,7 @@ export function formatRelativeTime(iso: string | undefined): string {
 }
 
 export function monitorStatusIcon(status: PaneTaskStatus, theme: Theme, animateSpinners = true): string {
-	if (status === "completed") return theme.fg("success", ICONS.check);
-	if (status === "failed") return theme.fg("error", ICONS.times);
-	if (status === "blocked") return theme.fg("warning", ICONS.times);
-	if (status === "needs_completion") return theme.fg("warning", ICONS.warning);
-	if (status === "running") return dashboardStatusIcon("running", theme, { animateSpinners });
-	if (status === "queued") return theme.fg("warning", ICONS.clock);
-	if (status === "unknown") return theme.fg("warning", ICONS.warning);
-	return theme.fg("muted", "·");
+	return dashboardStatusIcon(status, theme, { animateSpinners });
 }
 
 export function monitorStatusText(status: PaneTaskStatus, theme: Theme): string {

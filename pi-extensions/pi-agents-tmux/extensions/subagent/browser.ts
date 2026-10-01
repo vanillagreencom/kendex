@@ -100,7 +100,6 @@ export {
 } from "./browser/frontmatter-editor.js";
 export {
 	activeDashboardItems,
-	appendBgChatMessages,
 	dashboardDisplayLabels,
 } from "./browser/dashboard-integration.js";
 export { openTraceViewer } from "./browser/trace-viewer.js";

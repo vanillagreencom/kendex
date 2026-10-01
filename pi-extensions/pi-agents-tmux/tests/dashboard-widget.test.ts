@@ -7,12 +7,12 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test, { after } from "node:test";
 import { buildMonitorSessionGroups, monitorTreeRows, renderMonitorSessionDetail, renderMonitorTree, taskNumberById } from "../extensions/subagent/browser.js";
-import { dashboardStatusIcon, latestDashboardActivity, renderDashboardWidgetLines, shouldReplaceDashboardItem, sortDashboardItems } from "../extensions/subagent/dashboard.js";
+import { dashboardStatusIcon, dashboardStatusText, isDashboardWorkingStatus, isDashboardAttentionStatus, isDashboardAnimatingStatus, latestDashboardActivity, renderDashboardWidgetLines, shouldReplaceDashboardItem, sortDashboardItems } from "../extensions/subagent/dashboard.js";
 import { animateSpinnersEnabled } from "../extensions/subagent/settings.js";
 import { readTaskRegistry, updateTaskRegistry } from "../extensions/subagent/tasks.js";
 import { TranscriptTailCache } from "../extensions/subagent/transcript-tail.js";
 import { ICONS, type SubagentDashboardItem, type SubagentDashboardState } from "../extensions/subagent/types.js";
-import { ABSENT, cleanupTempRuntimes, dashboardItem, record, stripAnsi, tempRuntime, theme, uiState, withTempPiUserDir, writeSettings, writeUserSettings } from "./browser-fixture.js";
+import { ABSENT, cleanupTempRuntimes, importRuntimeCopy, toneTheme, dashboardItem, record, stripAnsi, tempRuntime, theme, uiState, withTempPiUserDir, writeSettings, writeUserSettings } from "./browser-fixture.js";
 
 after(cleanupTempRuntimes);
 
@@ -255,4 +255,25 @@ test("spinner setting precedence", () => {
 			assert.equal(animateSpinnersEnabled(cwd), expect, label);
 		});
 	}
+});
+
+const lifecycleRows = [
+	["queued", true, false, false], ["waiting", true, false, false], ["running", true, false, true],
+	["unknown", false, true, false], ["needs_completion", false, true, false], ["completed", false, false, false],
+	["blocked", false, true, false], ["failed", false, true, false], ["refused", false, true, false], ["stopped", false, false, false],
+] as const;
+test("dashboard lifecycle decisions use the task status contract", () => {
+	for (const [status, working, attention, animate] of lifecycleRows) assert.deepEqual([isDashboardWorkingStatus(status), isDashboardAttentionStatus(status), isDashboardAnimatingStatus(status)], [working, attention, animate], status);
+	assert.deepEqual([dashboardStatusIcon("stopped", toneTheme as any, { animateSpinners: false }), dashboardStatusText(dashboardItem({ status: "stopped" }), toneTheme as any)], [`<warning>${ICONS.warning}</warning>`, "<warning>stopped</warning>"]);
+});
+for (const [surface, before, replacement, check] of [
+	["working", 'return taskStatus(status).phase === "working";', 'return true || taskStatus(status).phase === "working";', (runtime: typeof import("../extensions/subagent/dashboard.js")) => assert.equal(runtime.isDashboardWorkingStatus("stopped"), false)],
+	["attention", 'return taskStatus(status).rank === 1;', 'return false && taskStatus(status).rank === 1;', (runtime: typeof import("../extensions/subagent/dashboard.js")) => assert.equal(runtime.isDashboardAttentionStatus("refused"), true)],
+	["animation", 'return taskStatus(status).animate === true;', 'return true || taskStatus(status).animate === true;', (runtime: typeof import("../extensions/subagent/dashboard.js")) => assert.equal(runtime.isDashboardAnimatingStatus("stopped"), false)],
+	["icon", 'return theme.fg(presentation.tone, icon);', 'return theme.fg("muted", icon);', (runtime: typeof import("../extensions/subagent/dashboard.js")) => assert.equal(runtime.dashboardStatusIcon("stopped", toneTheme as any), `<warning>${ICONS.warning}</warning>`)],
+	["text", 'return theme.fg(presentation.tone, item.status === "waiting" ? "waiting" : presentation.label);', 'return theme.fg("muted", item.status === "waiting" ? "waiting" : presentation.label);', (runtime: typeof import("../extensions/subagent/dashboard.js")) => assert.equal(runtime.dashboardStatusText(dashboardItem({ status: "stopped" }), toneTheme as any), "<warning>stopped</warning>")],
+	["order", 'return taskStatus(status).rank;', 'return 3;', (runtime: typeof import("../extensions/subagent/dashboard.js")) => assert.deepEqual(runtime.sortDashboardItems([dashboardItem({ status: "stopped", taskId: "stopped" }), dashboardItem({ status: "running", taskId: "running" })]).map((item) => item.status), ["running", "stopped"])],
+] as const) test(`control: dashboard ${surface} bypasses the status owner`, async () => {
+	const mutant = await importRuntimeCopy("dashboard.ts", before, replacement) as typeof import("../extensions/subagent/dashboard.js");
+	assert.throws(() => check(mutant), assert.AssertionError);
 });

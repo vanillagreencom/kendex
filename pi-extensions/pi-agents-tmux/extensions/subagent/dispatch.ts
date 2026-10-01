@@ -82,11 +82,17 @@ function oneShotDeadline(agent: AgentConfig | undefined): BgDeadline {
 }
 
 /**
- * Heads the tool result with one `pane-fallback reason=no-tmux` line when a
+ * Reports returned session keys outside answer truncation, then adds one
+ * `pane-fallback reason=no-tmux` line when a
  * pane agent ran headless, and names each such task the way a queued pane
  * task is named, so a caller stores the same `Task ID:` in both modes.
  */
 function withPaneFallbackNotice(result: ToolTextResult, lane: PaneLane, agents: AgentConfig[]): ToolTextResult {
+	const sessions = result.details.results.flatMap((item, index) => item.sessionKey ? [`Session: agent=${item.agent}${result.details.mode === "chain" ? ` step=${item.step ?? index + 1}` : result.details.mode === "parallel" ? ` item=${index + 1}` : ""} sessionKey=${item.sessionKey}`] : []);
+	if (sessions.length) {
+		const [first, ...rest] = result.content;
+		result = { ...result, content: [{ type: "text", text: `${sessions.join("\n")}\n\n${first?.text ?? ""}` }, ...rest] };
+	}
 	if (lane.kind === "pane") return result;
 	const fellBack = result.details.results.filter((item) => agents.find((agent) => agent.name === item.agent)?.pane);
 	if (fellBack.length === 0) return result;
@@ -179,7 +185,7 @@ function singleResultNeedsCompletion(result: SingleResult): boolean {
 
 function dashboardMessageForOneShotResult(result: SingleResult, persistedSummary?: string): string {
 	const status = singleResultStatus(result);
-	if (status === "refused" || status === "failed" || status === "stopped") return result.errorMessage || result.stderr || getFinalOutput(result.messages) || COMPLETION_SUMMARY_UNAVAILABLE;
+	if (singleResultIsError(result)) return result.errorMessage || result.stderr || getFinalOutput(result.messages) || COMPLETION_SUMMARY_UNAVAILABLE;
 	const persisted = normalizeSummaryText(persistedSummary);
 	if (persisted) return [result.reuseNotice, persisted].filter(Boolean).join("\n");
 	const finalOutput = getFinalOutput(result.messages);

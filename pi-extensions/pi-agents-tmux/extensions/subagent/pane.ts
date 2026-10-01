@@ -1,3 +1,4 @@
+import { isTerminalTaskStatus, taskStatus } from "./outcomes.js";
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -43,7 +44,6 @@ import {
 	appendUniqueDiagnostic,
 	createTaskId,
 	emitSubagentEvent,
-	isTerminalTaskStatus,
 	latestTaskRecord,
 	normalizedTaskForDedup,
 	paneSessionBelongsToRuntime,
@@ -926,7 +926,7 @@ export async function queuePersistentPaneTask(
 	const existing = existingRegistry[agent.name];
 	const liveExisting = existing && (await paneExists(existing.paneId)) ? existing : undefined;
 	const activeDuplicate = Object.values(await readTaskRegistry(runtimeRoot))
-		.filter((record) => record.agent === agent.name && (record.status === "queued" || record.status === "running"))
+		.filter((record) => record.agent === agent.name && (taskStatus(record.status).phase === "working"))
 		.find((record) => normalizedTaskForDedup(record.task) === normalizedTaskForDedup(task));
 	const ensureReusablePane = async () => {
 		try {

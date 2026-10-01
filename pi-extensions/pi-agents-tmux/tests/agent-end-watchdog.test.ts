@@ -22,9 +22,11 @@ import {
 	watchdogEnabledFromEnv,
 	watchdogGraceMsFromEnv,
 } from "../extensions/subagent/agent-end-watchdog.js";
+import { importRuntimeCopy, cleanupTempRuntimes } from "./browser-fixture.js";
 import type { PaneTaskRecord } from "../extensions/subagent/types.js";
 
 const tempDirs: string[] = [];
+after(cleanupTempRuntimes);
 after(() => {
 	for (const dir of tempDirs) rmSync(dir, { force: true, recursive: true });
 });
@@ -69,7 +71,7 @@ function failing(failure: Failure): () => Promise<never> {
 	};
 }
 
-function world(opts: WorldOpts = {}): World {
+function world(opts: WorldOpts = {}, create = createAgentEndWatchdog): World {
 	const runtimeRoot = tempRuntime();
 	const outboxFile = join(runtimeRoot, "outbox", AGENT, `${TASK}.json`);
 	// The path the watchdog computes itself, distinct from the record's own.
@@ -131,7 +133,7 @@ function world(opts: WorldOpts = {}): World {
 				},
 		logWarn: (msg) => void w.warnings.push(msg),
 	};
-	w.watchdog = createAgentEndWatchdog(deps);
+	w.watchdog = create(deps);
 	return w;
 }
 
@@ -361,4 +363,17 @@ const graceRows: Array<[string, string | undefined, number]> = [
 
 test("KENDEX_AGENT_END_WATCHDOG_GRACE_SEC", () => {
 	for (const [label, value, expect] of graceRows) assert.equal(watchdogGraceMsFromEnv(value === undefined ? {} : { KENDEX_AGENT_END_WATCHDOG_GRACE_SEC: value }), expect, label);
+});
+
+for (const status of ["stopped", "refused"] as const) test(`settled watchdog excludes ${status} before bridge probing`, async () => {
+	const w = world({ record: status });
+	assert.deepEqual(await w.watchdog.checkNow({ runtimeRoot: w.runtimeRoot, agentName: AGENT, taskId: TASK }), { fired: false, skipped: "task-terminal" });
+	assert.deepEqual(w.probes, { record: 1, outbox: 0, idle: 0 });
+});
+
+test("control: settled watchdog probes a stopped task", async () => {
+	const mutant = await importRuntimeCopy("agent-end-watchdog.ts", '!isTaskActive(record.status)', 'false && !isTaskActive(record.status)') as typeof import("../extensions/subagent/agent-end-watchdog.js");
+	const w = world({ record: "stopped" }, mutant.createAgentEndWatchdog);
+	await w.watchdog.checkNow({ runtimeRoot: w.runtimeRoot, agentName: AGENT, taskId: TASK });
+	assert.throws(() => assert.deepEqual(w.probes, { record: 1, outbox: 0, idle: 0 }), assert.AssertionError);
 });

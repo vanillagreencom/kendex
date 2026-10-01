@@ -3,10 +3,11 @@
 // an observer that reads a rendered pane back as `label=value` pairs.
 // Nothing here plants a defect; a row that needs one builds it inline.
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import { spyOn } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { AgentConfig } from "../extensions/subagent/agents.js";
 import type { AgentBrowserUiState, AgentPaneStatus, PaneTaskRecord, SubagentDashboardItem } from "../extensions/subagent/types.js";
 import { tempRuntime } from "./single-agent-fixture.js";
@@ -45,13 +46,44 @@ export async function importRuntimeCopy(fileName: string, before: string, after:
 		modified = next;
 	}
 	assert.notEqual(modified, original);
-	const source = modified.replace(/from "(\.{1,2}\/[^\"]+)\.js"/g, (_match, name: string) => `from ${JSON.stringify(resolve(runtimeDir, `${name}.ts`))}`);
+	const source = modified.replace(/from "(\.{1,2}\/[^\"]+)\.js"/g, (_match, name: string) => `from ${JSON.stringify(resolve(dirname(join(runtimeDir, fileName)), `${name}.ts`))}`);
 	const copyDir = tempRuntime();
 	// Bare imports resolve from the copy, outside the package's dependency tree.
 	fs.symlinkSync(resolve(import.meta.dir, "../node_modules"), join(copyDir, "node_modules"), "dir");
 	const copy = join(copyDir, fileName);
+	mkdirSync(dirname(copy), { recursive: true });
 	writeFileSync(copy, source);
 	return import(copy);
+}
+
+/** Hold a real idle pane on the suite-owned server while the queue checks a live duplicate. */
+export async function assertQueuedPaneDedup(runtime: typeof import("../extensions/subagent/pane.js")): Promise<void> {
+	const root = tempRuntime();
+	const cwd = tempRuntime();
+	const env = { PATH: process.env.PATH, HOME: cwd, TMUX: process.env.TMUX, TMUX_PANE: process.env.TMUX_PANE };
+	assert.ok(env.TMUX, "preload must install the suite-owned tmux server");
+	// The pane stays alive only for this check; finally kills it without launching Pi.
+	const paneId = execFileSync("tmux", ["split-window", "-h", "-d", "-P", "-F", "#{pane_id}", "-c", cwd, "sleep 300"], { encoding: "utf8", env }).trim();
+	const tasks = await import("../extensions/subagent/tasks.js");
+	try {
+		const profile = agent("scout", true);
+		await tasks.writePaneRegistry(root, { scout: { agent: "scout", paneId, cwd, windowName: "scout", sessionFile: join(root, "session.jsonl"), promptFile: "", launcherFile: "", startedAt: "2026-05-14T05:00:00Z" } });
+		await tasks.writeTaskRegistry(root, { active: record("scout", "active", "2026-05-14T05:00:00Z", { status: "running", kind: "pane", paneId, task: "map files" }) });
+		const result = await runtime.queuePersistentPaneTask(root, "test", cwd, profile, "map files", undefined, undefined, undefined, { events: { emit() {} } } as unknown as Parameters<typeof runtime.queuePersistentPaneTask>[8]);
+		assert.deepEqual([result.taskId, result.duplicate], ["active", true]);
+	} finally { execFileSync("tmux", ["kill-pane", "-t", paneId], { env }); }
+}
+
+/** A reset removes a queued pane's handoff file; the diagnostics reader must stop calling it queued. */
+export async function assertMissingArtifactStatus(runtime: typeof import("../extensions/subagent/tasks.js")): Promise<void> {
+	const root = tempRuntime();
+	const inboxFile = join(root, "handoff.md");
+	const queued = record("scout", "queued", "2026-05-14T05:00:00Z", { status: "queued", kind: "pane", paneId: "%1", inboxFile });
+	writeFileSync(inboxFile, "map files");
+	await runtime.writeTaskRegistry(root, { queued });
+	fs.unlinkSync(inboxFile);
+	const refreshed = await runtime.refreshTaskDiagnostics(root, queued);
+	assert.equal(refreshed.record.status, "unknown");
 }
 
 /** Count reads of registry content through both Node file APIs, without replacing their behavior. */
@@ -241,6 +273,9 @@ export const theme = {
 	fg: (_tone: string, text: string) => text,
 	inverse: (text: string) => text,
 };
+
+/** Observe semantic colors without an ANSI-dependent assertion. */
+export const toneTheme = { ...theme, fg: (tone: string, text: string) => `<${tone}>${text}</${tone}>` };
 
 export function stripAnsi(text: string): string {
 	return text.replace(/\x1b\[[0-9;]*m/g, "");

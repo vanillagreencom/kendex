@@ -5,8 +5,8 @@ import assert from "node:assert/strict";
 import test, { after } from "node:test";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { subagentToolRenderers } from "../extensions/subagent/subagent-render.js";
-import type { SingleResult, SubagentDetails } from "../extensions/subagent/types.js";
-import { cleanupTempRuntimes, stripAnsi, tempRuntime, theme, writeProjectAgent, writeSettings } from "./browser-fixture.js";
+import { ICONS, type SingleResult, type SubagentDetails } from "../extensions/subagent/types.js";
+import { cleanupTempRuntimes, importRuntimeCopy, toneTheme, stripAnsi, tempRuntime, theme, writeProjectAgent, writeSettings } from "./browser-fixture.js";
 
 after(cleanupTempRuntimes);
 
@@ -109,4 +109,24 @@ test("quiet dashboard hides the single bg call preview", () => {
 		const rendered = stripAnsi(subagentToolRenderers.renderCall({ agent: "scout", task: "Inspect duplicate output." }, theme, { cwd }).render(220).join("\n"));
 		assert.equal(rendered.replace(/^[^\w\n└]+/gm, "").replace(/[ \t]+$/gm, ""), expect, label);
 	}
+});
+
+for (const expanded of [false, true]) test(`stopped result uses warning presentation expanded=${expanded}`, async () => {
+	const details: SubagentDetails = { mode: "single", agentScope: "project", projectAgentsDir: null, results: [singleResult({ status: "stopped", stopReason: "aborted", exitCode: 1 })] };
+	const result = { content: [], details };
+	const rendered = subagentToolRenderers.renderResult(result, { expanded }, toneTheme as any, {}).render(220).join("\n");
+	assert.ok(rendered.includes("<warning>stopped</warning>"));
+	const before = expanded ? 'const statusTone = isQueued ? taskStatus("queued").tone : taskStatus(status).tone;' : 'const compactStatusTone = taskStatus(status).tone;';
+	const replacement = expanded ? 'const statusTone = "error";' : 'const compactStatusTone = "error";';
+	const mutant = await importRuntimeCopy("subagent-render.ts", before, replacement) as typeof import("../extensions/subagent/subagent-render.js");
+	assert.throws(() => assert.ok(mutant.subagentToolRenderers.renderResult(result, { expanded }, toneTheme as any, {}).render(220).join("\n").includes("<warning>stopped</warning>")), assert.AssertionError);
+});
+
+test("control: chain step icon bypasses the presentation owner", async () => {
+	const details: SubagentDetails = { mode: "chain", agentScope: "project", projectAgentsDir: null, results: [singleResult({ status: "stopped", exitCode: 1 })] };
+	const result = { content: [], details };
+	const runtime = subagentToolRenderers.renderResult(result, { expanded: true }, toneTheme as any, {}).render(220).join("\n");
+	assert.ok(runtime.includes(`<warning>${ICONS.warning}</warning>`));
+	const mutant = await importRuntimeCopy("subagent-render.ts", 'return theme.fg(presentation.tone, presentation.icon);', 'return theme.fg("error", presentation.icon);') as typeof import("../extensions/subagent/subagent-render.js");
+	assert.throws(() => assert.ok(mutant.subagentToolRenderers.renderResult(result, { expanded: true }, toneTheme as any, {}).render(220).join("\n").includes(`<warning>${ICONS.warning}</warning>`)), assert.AssertionError);
 });

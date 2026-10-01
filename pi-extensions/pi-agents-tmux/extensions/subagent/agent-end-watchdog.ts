@@ -1,3 +1,4 @@
+import { isTaskActive } from "./outcomes.js";
 /**
  * Settled-run missing-completion watchdog.
  *
@@ -19,7 +20,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { atomicWriteFile } from "./file-lock.js";
-import type { PaneCompletion, PaneTaskRecord, PaneTaskStatus } from "./types.js";
+import type { PaneCompletion, PaneTaskRecord } from "./types.js";
 
 export const WATCHDOG_REASON = "turn-ended-without-complete-subagent" as const;
 export const WATCHDOG_DEFAULT_GRACE_SEC = 10;
@@ -77,13 +78,6 @@ export interface AgentEndWatchdog {
 	cancel(taskId: string): boolean;
 }
 
-const ACTIVE_TASK_STATUSES = new Set<PaneTaskStatus>(["queued", "running", "unknown"]);
-
-function isActiveStatus(status: PaneTaskStatus | undefined): boolean {
-	if (!status) return true;
-	return ACTIVE_TASK_STATUSES.has(status);
-}
-
 export function buildSyntheticOutbox(agentName: string, taskId: string): SyntheticOutboxPayload {
 	return {
 		agent: agentName,
@@ -109,7 +103,7 @@ export function createAgentEndWatchdog(deps: AgentEndWatchdogDeps): AgentEndWatc
 		try {
 			const record = await deps.readTaskRecord(runtimeRoot, taskId);
 			if (!record) return { fired: false, skipped: "no-record" };
-			if (!isActiveStatus(record.status)) return { fired: false, skipped: "task-terminal" };
+			if (!isTaskActive(record.status)) return { fired: false, skipped: "task-terminal" };
 			const outboxFile = record.outboxFile ?? deps.outboxPathFor(runtimeRoot, agentName, taskId);
 			if (await deps.outboxExists(outboxFile)) return { fired: false, skipped: "outbox-present" };
 			const idle = await deps.isPaneIdle(runtimeRoot, agentName);

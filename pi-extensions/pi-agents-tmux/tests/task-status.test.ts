@@ -1,39 +1,76 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
-import { isTerminalTaskStatus, normalizePaneTaskStatus } from "../extensions/subagent/tasks.js";
-import { cleanupTempRuntimes, importRuntimeCopy } from "./browser-fixture.js";
-import { assertStoppedEvent } from "./extension-fixture.js";
+import { isTerminalTaskStatus, normalizePaneTaskStatus, isTaskTurnFinished, isTaskActive, taskStatus, singleResultIsError } from "../extensions/subagent/outcomes.js";
+import * as tasks from "../extensions/subagent/tasks.js";
+import { assertMissingArtifactStatus, cleanupTempRuntimes, importRuntimeCopy } from "./browser-fixture.js";
+import { assertCompletionPresentation, assertStoppedConsumers, assertStoppedEvent } from "./extension-fixture.js";
 
 after(cleanupTempRuntimes);
 
+test("task diagnostics use the owner's working phase after a handoff reset", () => assertMissingArtifactStatus(tasks));
+test("control: task diagnostics ignore the lost working task", async () => {
+	const mutant = await importRuntimeCopy("tasks.ts", 'taskStatus(record.status).phase === "working"', 'false && taskStatus(record.status).phase === "working"') as typeof tasks;
+	await assert.rejects(() => assertMissingArtifactStatus(mutant), assert.AssertionError);
+});
+
 test("parent aborted event is stopped in the persisted task result", () => assertStoppedEvent());
+test("real stopped task leaves the extension's stall scan", () => assertStoppedConsumers());
+test("control: extension stall selector includes a real stopped task", async () => {
+	const mutant = await importRuntimeCopy("index.ts", 'isTaskActive(record.status)', 'true || isTaskActive(record.status)') as typeof import("../extensions/subagent/index.js");
+	await assert.rejects(() => assertStoppedConsumers(mutant.default), assert.AssertionError);
+});
+
+test("completion tool and self-completion message use the status presentation owner", () => assertCompletionPresentation());
+for (const indentation of ["\t\t\t", "\t\t"]) test(`control: completion presentation bypasses owner indent=${indentation.length}`, async () => {
+	const mutant = await importRuntimeCopy("index.ts", `${indentation}const tone = taskStatus(statusWord).tone;`, `${indentation}const tone = "error";`) as typeof import("../extensions/subagent/index.js");
+	await assert.rejects(() => assertCompletionPresentation(mutant.default), assert.AssertionError);
+});
 
 test("control: the old event mapper marks parent cancellation failed", async () => {
 	const mutant = await importRuntimeCopy("index.ts", 'const payloadStatus = normalizePaneTaskStatus(event.status);', 'const raw = event.status;\n\t\tconst payloadStatus = raw === "queued" || raw === "running" || raw === "completed" || raw === "blocked" || raw === "failed" || raw === "needs_completion" ? raw : "unknown";') as typeof import("../extensions/subagent/index.js");
 	await assert.rejects(() => assertStoppedEvent(mutant.default), assert.AssertionError);
 });
 
+// Raw status, normalized status, irreversible, finished turn, tone, completion activity.
 const rows = [
-	["stopped", "stopped", true],
-	["refused", "refused", true],
-	["aborted", "stopped", true],
-	["running", "running", false],
-	["needs_completion", "needs_completion", false],
+	["queued", "queued", false, false, "warning", null],
+	["running", "running", false, false, "warning", null],
+	["unknown", "unknown", false, false, "warning", null],
+	["completed", "completed", true, true, "success", "agent.task_completed"],
+	["blocked", "blocked", true, true, "warning", "agent.task_blocked"],
+	["failed", "failed", true, true, "error", "agent.task_failed"],
+	["stopped", "stopped", true, true, "warning", null],
+	["refused", "refused", true, true, "warning", null],
+	["aborted", "stopped", true, true, "warning", null],
+	["cancelled", "stopped", true, true, "warning", null],
+	["waiting", "queued", false, false, "warning", null],
+	[undefined, "unknown", false, false, "warning", null],
+	["needs_completion", "needs_completion", false, true, "warning", "agent.needs_completion"],
 ] as const;
 
 test("task status parsing retains unsuccessful outcomes without calling them failed", () => {
-	for (const [raw, normalized, terminal] of rows) {
+	for (const [raw, normalized, terminal, finished, tone, activity] of rows) {
 		const status = normalizePaneTaskStatus(raw);
-		assert.deepEqual([status, isTerminalTaskStatus(status)], [normalized, terminal]);
+		const contract = taskStatus(status);
+		assert.deepEqual([status, isTerminalTaskStatus(status), isTaskTurnFinished(status), isTaskActive(status), contract.tone, contract.activity], [normalized, terminal, finished, !finished, tone, activity]);
 	}
 });
 
 test("control: the old parser loses parent cancellation", async () => {
-	const mutant = await importRuntimeCopy("tasks.ts", 'if (status === "aborted") return "stopped";', 'if (status === "aborted") return "unknown";') as typeof import("../extensions/subagent/tasks.js");
+	const mutant = await importRuntimeCopy("outcomes.ts", 'case "aborted":', 'case "aborted": return "unknown";') as typeof import("../extensions/subagent/outcomes.js");
 	assert.throws(() => assert.equal(mutant.normalizePaneTaskStatus("aborted"), "stopped"), assert.AssertionError);
 });
 
+for (const [label, before, after, check] of [
+	["recoverable turn stays active", 'return phase === "terminal" || phase === "recoverable";', 'return phase === "terminal";', (runtime: typeof import("../extensions/subagent/outcomes.js")) => assert.equal(runtime.isTaskTurnFinished("needs_completion"), true)],
+	["active includes stopped", 'return !isTaskTurnFinished(status);', 'return isTaskTurnFinished(status);', (runtime: typeof import("../extensions/subagent/outcomes.js")) => assert.equal(runtime.isTaskActive("stopped"), false)],
+	["result adapter ignores stopped", 'return taskStatus(singleResultStatus(result)).isError;', 'return false && taskStatus(singleResultStatus(result)).isError;', (runtime: typeof import("../extensions/subagent/outcomes.js")) => assert.equal(runtime.singleResultIsError({ status: "stopped", exitCode: 1 } as Parameters<typeof singleResultIsError>[0]), true)],
+] as const) test(`control: ${label}`, async () => {
+	const mutant = await importRuntimeCopy("outcomes.ts", before, after) as typeof import("../extensions/subagent/outcomes.js");
+	assert.throws(() => check(mutant), assert.AssertionError);
+});
+
 test("control: the old terminal set keeps a stopped task running", async () => {
-	const mutant = await importRuntimeCopy("tasks.ts", 'return status === "completed" || status === "blocked" || status === "failed" || status === "stopped" || status === "refused";', 'return status === "completed" || status === "blocked" || status === "failed";') as typeof import("../extensions/subagent/tasks.js");
+	const mutant = await importRuntimeCopy("outcomes.ts", 'case "stopped": return { phase: "terminal"', 'case "stopped": return { phase: "working"') as typeof import("../extensions/subagent/outcomes.js");
 	assert.throws(() => assert.equal(mutant.isTerminalTaskStatus("stopped"), true), assert.AssertionError);
 });

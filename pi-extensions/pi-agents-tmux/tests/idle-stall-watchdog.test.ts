@@ -5,7 +5,10 @@
 // tables of their own.
 
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
+import { importRuntimeCopy, cleanupTempRuntimes } from "./browser-fixture.js";
+
+after(cleanupTempRuntimes);
 import {
 	createIdleStallWatchdog,
 	type IdleStallWatchdogDeps,
@@ -62,7 +65,7 @@ function record(rec: Rec): PaneTaskRecord {
 	return { agent: rec.agent ?? "planner", createdAt: activity, status: rec.status ?? "running", task: "Plan.", taskId: rec.taskId ?? "task-1", updatedAt: activity };
 }
 
-function world(opts: WorldOpts): World {
+function world(opts: WorldOpts, create = createIdleStallWatchdog): World {
 	const w: World = {
 		watchdog: undefined as never,
 		opts,
@@ -116,7 +119,7 @@ function world(opts: WorldOpts): World {
 			w.intervals = w.intervals.filter((entry) => entry.handle !== handle);
 		},
 	};
-	w.watchdog = createIdleStallWatchdog(deps);
+	w.watchdog = create(deps);
 	return w;
 }
 
@@ -189,6 +192,8 @@ const rows: Array<[string, WorldOpts, Step[], string]> = [
 	["a disabled watchdog checks nothing", { enabled: false }, [tick], `:skip:disabled probes=o0i0 ${QUIET}`],
 	["a completed task is terminal", { records: [{ status: "completed" }] }, [tick], `task-1:skip:task-terminal probes=o0i0 ${QUIET}`],
 	["a failed task is terminal", { records: [{ status: "failed" }] }, [tick], `task-1:skip:task-terminal probes=o0i0 ${QUIET}`],
+	["a stopped task is terminal", { records: [{ status: "stopped" }] }, [tick], `task-1:skip:task-terminal probes=o0i0 ${QUIET}`],
+	["a refused task is terminal", { records: [{ status: "refused" }] }, [tick], `task-1:skip:task-terminal probes=o0i0 ${QUIET}`],
 	["a blocked task is terminal", { records: [{ status: "blocked" }] }, [tick], `task-1:skip:task-terminal probes=o0i0 ${QUIET}`],
 	["a task already needing completion", { records: [{ status: "needs_completion" }] }, [tick], `task-1:skip:task-needs-completion probes=o0i0 ${QUIET}`],
 	["a queued task is judged", { records: [{ status: "queued" }] }, [tick], FIRED],
@@ -279,4 +284,11 @@ test("KENDEX_STALL_WATCHDOG_INTERVAL_SEC and _THRESHOLD_SEC", () => {
 		for (const [label, value, expect] of secondsRows) assert.equal(parse(value === undefined ? {} : { [key]: value }), expect === "default" ? defaultMs : expect, `${name}: ${label}`);
 	}
 	assert.notEqual(stallWatchdogIntervalMsFromEnv({}), stallWatchdogThresholdMsFromEnv({}), "the two defaults differ");
+});
+
+test("control: idle watchdog probes a stopped task", async () => {
+	const mutant = await importRuntimeCopy("idle-stall-watchdog.ts", 'if (isTerminalTaskStatus(record.status))', 'if (false && isTerminalTaskStatus(record.status))') as typeof import("../extensions/subagent/idle-stall-watchdog.js");
+	const w = world({ records: [{ status: "stopped" }] }, mutant.createIdleStallWatchdog);
+	await w.watchdog.checkAll();
+	assert.throws(() => assert.deepEqual(w.probes, { outbox: 0, idle: 0 }), assert.AssertionError);
 });

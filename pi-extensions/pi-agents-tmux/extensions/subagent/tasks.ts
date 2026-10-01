@@ -1,3 +1,4 @@
+import { isTerminalTaskStatus, isTaskTurnFinished, normalizePaneTaskStatus, taskStatus } from "./outcomes.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -131,18 +132,6 @@ export async function upsertTaskRecord(runtimeRoot: string, record: PaneTaskReco
 	await updateTaskRegistry(runtimeRoot, (records) => {
 		records[record.taskId] = { ...records[record.taskId], ...record };
 	});
-}
-
-export function normalizePaneTaskStatus(status: unknown): PaneTaskStatus {
-	// Pi names parent cancellation aborted.
-	if (status === "aborted") return "stopped";
-	return status === "queued" || status === "running" || status === "completed" || status === "blocked" || status === "failed" || status === "stopped" || status === "refused" || status === "needs_completion"
-		? status
-		: "unknown";
-}
-
-export function isTerminalTaskStatus(status: PaneTaskStatus | undefined): boolean {
-	return status === "completed" || status === "blocked" || status === "failed" || status === "stopped" || status === "refused";
 }
 
 export function inferTaskRecordKind(runtimeRoot: string, record: PaneTaskRecord): DashboardKind {
@@ -553,7 +542,7 @@ export async function refreshTaskDiagnostics(runtimeRoot: string, record: PaneTa
 			// Bridge-delivered follow-up tasks (created without an inbox file) legitimately have no
 			// on-disk artifacts until the child writes its outbox. Only treat the missing-artifact
 			// state as a lost task when the record came from the inbox.
-			if (record.inboxFile && (record.status === "queued" || record.status === "running")) {
+			if (record.inboxFile && (taskStatus(record.status).phase === "working")) {
 				nextStatus = "unknown";
 				add(`No task handoff or completion artifacts are present for ${record.taskId}; the pane may have been reset or the runtime was cleaned.`);
 			}
@@ -770,7 +759,7 @@ async function ensureCompletionOutboxRetrySource(filePath: string, archivePath: 
 async function persistCompletionArchivePath(runtimeRoot: string, taskId: string, archivePath: string, updatedAt: string): Promise<PaneTaskRegistry> {
 	return updateTaskRegistry(runtimeRoot, (records) => {
 		const existing = records[taskId];
-		if (!existing || (!isTerminalTaskStatus(existing.status) && existing.status !== "needs_completion")) return;
+		if (!existing || (!isTaskTurnFinished(existing.status))) return;
 		records[taskId] = {
 			...existing,
 			completionArchivePath: archivePath,

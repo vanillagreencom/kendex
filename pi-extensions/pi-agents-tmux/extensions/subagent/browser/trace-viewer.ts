@@ -1,3 +1,4 @@
+import { taskStatus } from "../outcomes.js";
 import { spawn } from "node:child_process";
 import { type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
@@ -20,7 +21,7 @@ function traceViewerLines(state: TraceViewerState, width: number, rows: number, 
 	const meta = [
 		item?.ref ? theme.fg("accent", item.ref) : "",
 		item?.agent ? theme.fg("muted", item.agent) : "",
-		item?.status ? theme.fg(item.status === "completed" ? "success" : item.status === "failed" ? "error" : "warning", item.status) : "",
+		item?.status ? theme.fg(taskStatus(item.status).tone, item.status) : "",
 		item?.createdAt ? theme.fg("dim", item.createdAt) : "",
 	].filter(Boolean).join(theme.fg("dim", " · "));
 	const file = item?.path ? theme.fg("dim", `file ${compactPath(item.path, { maxChars: Math.max(24, innerWidth - 8) })}`) : "";

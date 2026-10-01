@@ -69,7 +69,6 @@ function buildDeps(opts: {
 		formatTaskRecordResult: () => "",
 		inferTaskRecordKind: () => "pane",
 		isFollowUpDelivery: (mode: string) => mode === "follow-up",
-		isTerminalTaskStatus: () => false,
 		latestTaskRecord: () => record,
 		paneExists: async () => true,
 		paneSessionBelongsToRuntime: () => true,

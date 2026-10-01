@@ -2,12 +2,13 @@
 // trace's Summary, Completion and Transcript tabs, and the subtab clamp.
 
 import assert from "node:assert/strict";
+import { COMPLETION_SUMMARY_UNAVAILABLE } from "../extensions/subagent/format.js";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test, { after } from "node:test";
 import { buildMonitorSessionGroups, monitorSubtabCount, renderMonitorDetail, renderMonitorSessionDetail, taskNumberById, traceViewerItems } from "../extensions/subagent/browser.js";
 import type { PaneTaskRecord } from "../extensions/subagent/types.js";
-import { ABSENT, agent, cleanupTempRuntimes, fields, labelledLines, record, stripAnsi, tempRuntime, theme, uiState } from "./browser-fixture.js";
+import { ABSENT, agent, cleanupTempRuntimes, importRuntimeCopy, toneTheme, fields, labelledLines, record, stripAnsi, tempRuntime, theme, uiState } from "./browser-fixture.js";
 
 after(cleanupTempRuntimes);
 
@@ -183,4 +184,18 @@ test("detail subtab clamp", async () => {
 		const marker = /Transcript file could not be read\./.test(rendered) ? "Transcript file could not be read." : /Loading…/.test(rendered) ? "Loading…" : "other";
 		assert.equal(`${ui.monitorSubtab} ${marker}`, expect, label);
 	}
+});
+
+test("Monitor detail uses the finished-turn summary and status tone", async () => {
+	const stopped = record("scout", "stopped", at(0), { status: "stopped" });
+	const items = await traceViewerItems(stopped);
+	assert.ok(items[1]!.text.includes(COMPLETION_SUMMARY_UNAVAILABLE));
+	const render = (runtime: typeof import("../extensions/subagent/browser/monitor-task-detail.js")) => runtime.renderMonitorDetail(stopped, new Map([[stopped.taskId, { items }]]), uiState({ tab: "monitor", pane: "inspector" }), 180, 40, toneTheme as any).join("\n");
+	const original = await import("../extensions/subagent/browser/monitor-task-detail.js");
+	assert.ok(render(original).includes("<warning>stopped</warning>"));
+	const toneMutant = await importRuntimeCopy("browser/monitor-task-detail.ts", 'renderedValue = theme.fg(taskStatus(value).tone, value);', 'renderedValue = theme.fg("muted", value);') as typeof original;
+	assert.throws(() => assert.ok(render(toneMutant).includes("<warning>stopped</warning>")), assert.AssertionError);
+	const summaryMutant = await importRuntimeCopy("browser/monitor-task-detail.ts", 'const summaryText = taskRecordSummary(record);', 'const summaryText = record.summary ?? "No summary yet.";') as typeof original;
+	const changed = await summaryMutant.traceViewerItems(stopped);
+	assert.throws(() => assert.ok(changed[1]!.text.includes(COMPLETION_SUMMARY_UNAVAILABLE)), assert.AssertionError);
 });

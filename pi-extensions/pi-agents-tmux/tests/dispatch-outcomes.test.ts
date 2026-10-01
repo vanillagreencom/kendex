@@ -11,7 +11,10 @@ import { resolveBgSession } from "../extensions/subagent/sessions.js";
 import { renderDashboardWidgetLines } from "../extensions/subagent/dashboard.js";
 import { subagentToolRenderers } from "../extensions/subagent/subagent-render.js";
 import { assertProviderProducer, assertDispatchOutcome, bridgeEvent, bridgeStdout, cleanupTempRuntimes, dispatchOutcome, installMockSpawn, tempRuntime, writeSettings } from "./single-agent-fixture.js";
-import { importRuntimeCopy, stripAnsi, theme } from "./browser-fixture.js";
+import { importRuntimeCopy, stripAnsi, theme, toneTheme } from "./browser-fixture.js";
+import { monitorStatusIcon, monitorStatusText, buildMonitorSessionGroups } from "../extensions/subagent/browser/monitor-tree.js";
+import { mergeLiveDashboardItems } from "../extensions/subagent/task-records.js";
+import { ICONS } from "../extensions/subagent/types.js";
 
 after(cleanupTempRuntimes);
 
@@ -50,9 +53,14 @@ test("exact-session context refusal carries the guard text and fresh-agent remed
 	writeFileSync(session.path, "x".repeat(432));
 	const calls = installMockSpawn([]);
 	try {
-		const { result, row } = await assertDispatchOutcome("refused", { cwd, runtimeRoot: root, sessionKey: "reuse", sameSession: true }, "108/100 tokens (108%) exceeds 80% guard threshold");
+		const { result, row, events } = await assertDispatchOutcome("refused", { cwd, runtimeRoot: root, sessionKey: "reuse", sameSession: true }, "108/100 tokens (108%) exceeds 80% guard threshold");
 		assert.deepEqual([calls.length, row.message?.includes("Start a fresh agent"), result.content[0]?.text.includes("Start a fresh agent")], [0, true, true]);
 		assert.equal(readFileSync(session.path, "utf8").length, 432);
+		assert.deepEqual(events, [], "pre-dispatch refusal remains event-free");
+		const monitorRecord = Object.values(mergeLiveDashboardItems({}, [row]))[0]!;
+		assert.deepEqual([monitorStatusIcon(monitorRecord.status, toneTheme as any, false), monitorStatusText(monitorRecord.status, toneTheme as any), buildMonitorSessionGroups([monitorRecord])[0]!.isActive], [`<warning>${ICONS.warning}</warning>`, "<warning>refused</warning>", false]);
+		const mutant = await importRuntimeCopy("browser/monitor-tree.ts", 'return dashboardStatusIcon(status, theme, { animateSpinners });', 'return theme.fg("muted", "·");') as typeof import("../extensions/subagent/browser/monitor-tree.js");
+		assert.throws(() => assert.equal(mutant.monitorStatusIcon(monitorRecord.status, toneTheme as any), `<warning>${ICONS.warning}</warning>`), assert.AssertionError);
 		const panel = stripAnsi(renderDashboardWidgetLines({ items: { task: row }, mode: "compact", collapsed: false, visible: true }, theme, cwd, 160).join("\n"));
 		assert.ok(panel.includes("refused") && panel.includes("108/100") && panel.includes("80%") && panel.includes("Start a fresh agent"));
 		assert.ok(!panel.includes("failed"));
@@ -69,6 +77,8 @@ test("parent abort is stopped in the panel and tool result", async () => {
 		assert.ok(tool.includes("stopped"));
 		assert.ok(!tool.includes("failed"));
 		assert.equal(row.status, "stopped");
+		const monitorRecord = Object.values(mergeLiveDashboardItems({}, [row]))[0]!;
+		assert.deepEqual([monitorStatusIcon(monitorRecord.status, toneTheme as any, false), monitorStatusText(monitorRecord.status, toneTheme as any), buildMonitorSessionGroups([monitorRecord])[0]!.isActive], [`<warning>${ICONS.warning}</warning>`, "<warning>stopped</warning>", false]);
 	} finally { setSingleAgentSpawnForTests(); }
 });
 
@@ -103,14 +113,14 @@ for (const status of ["refused", "stopped", "failed"] as const) {
 }
 
 test("control: terminal dashboard placeholder loses the provider reason", async () => {
-	const mutant = await importRuntimeCopy("dispatch.ts", '\tif (status === "refused" || status === "failed" || status === "stopped") return result.errorMessage || result.stderr || getFinalOutput(result.messages) || COMPLETION_SUMMARY_UNAVAILABLE;', '\tif (false) return result.errorMessage || result.stderr || getFinalOutput(result.messages) || COMPLETION_SUMMARY_UNAVAILABLE;') as typeof dispatch;
+	const mutant = await importRuntimeCopy("dispatch.ts", '\tif (singleResultIsError(result)) return result.errorMessage || result.stderr || getFinalOutput(result.messages) || COMPLETION_SUMMARY_UNAVAILABLE;', '\tif (false) return result.errorMessage || result.stderr || getFinalOutput(result.messages) || COMPLETION_SUMMARY_UNAVAILABLE;') as typeof dispatch;
 	installMockSpawn([{ code: 1, stdout: bridgeStdout([bridgeEvent("message_end", { message: { role: "assistant", content: [], stopReason: "error", errorMessage: providerRows[0] } })]) }]);
 	try { await assert.rejects(() => assertDispatchOutcome("failed", { run: mutant.runSingleDispatch }, providerRows[0]!), assert.AssertionError); }
 	finally { setSingleAgentSpawnForTests(); }
 });
 
 test("control: the old panel row omits the provider message", async () => {
-	const condition = 'item.status === "failed" || item.status === "refused" || item.status === "stopped" || item.reuseNotice';
+	const condition = 'taskStatus(item.status).diagnostic || item.reuseNotice';
 	const mutant = await importRuntimeCopy("dashboard.ts", `if (${condition}) {`, `if (false && (${condition})) {`) as typeof import("../extensions/subagent/dashboard.js");
 	installMockSpawn([{ stdout: bridgeStdout([bridgeEvent("message_end", { message: { role: "assistant", content: [], stopReason: "error", errorMessage: providerRows[0] } })]) }]);
 	try {
