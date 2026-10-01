@@ -17,6 +17,7 @@ PASS=0
 FAIL=0
 BASH_BIN="$(command -v bash)"
 ERR_FILE="$TMP_ROOT/stderr"
+OUT_FILE="$TMP_ROOT/stdout"
 # shellcheck source=lib/assert.sh
 . "$TEST_DIR/lib/assert.sh"
 # shellcheck source=lib/first-line.sh
@@ -52,6 +53,13 @@ rollout() { # COMMAND RESULT
   local header id=load
   case "$2" in
     ok) header=$'Process exited with code 0\nOutput:\nfile body' ;;
+    noisy)
+      # Codex exec_command outputs can dwarf the read. Their ids share a
+      # prefix here, and their bodies name the skill but are not skill reads.
+      jq -n -c 'range(1000) | {type:"response_item",payload:{type:"function_call_output",
+        call_id:("load-" + tostring),output:("Process exited with code 0\nOutput:\ndocs-writing " + ("x" * 16384))}}' >>"$TRANSCRIPT"
+      header=$'Process exited with code 0\nOutput:\nfile body'
+      ;;
     failed) header=$'Process exited with code 1\nOutput:\nProcess exited with code 0\nOutput:\nbody' ;;
     running) header=$'Process running with session ID 123\nOutput:\nfile body' ;;
     other) header=$'Process exited with code 0\nOutput:\nfile body'; id=other ;;
@@ -80,6 +88,7 @@ while IFS='|' read -r label cmd result want; do
 done <<'ROWS'
 markdown before its skill load|cat .agents/skills/docs-writing/SKILL.md|absent|rc=2 first=skill-load-check: unloaded=docs-writing
 markdown after a completed cat read|cat .agents/skills/docs-writing/SKILL.md|ok|rc=0 first=-
+markdown after a read among unrelated outputs|cat .agents/skills/docs-writing/SKILL.md|noisy|rc=0 first=-
 markdown after a completed sed read|sed -n '1,200p' .agents/skills/docs-writing/SKILL.md|ok|rc=0 first=-
 quoted skill path|cat "/home/a user/.agents/skills/docs-writing/SKILL.md"|ok|rc=0 first=-
 head read|head -n 200 .agents/skills/docs-writing/SKILL.md|ok|rc=0 first=-
@@ -124,19 +133,46 @@ run_patch "*** Add File: $REPO/new.sh" "$TRANSCRIPT"
 assert_eq "rc=$rc first=$(first_line)" "rc=0 first=-" "a source patch passes after code-quality loads"
 
 echo "Codex Bash commands use the same required skills"
-while IFS='|' read -r result want; do
+mkdir -p "$REPO/relocated/hooks"
+cp -- "$HOOK" "$REPO/relocated/hooks/skill-load-check.sh"
+while IFS='|' read -r install result want; do
   rollout 'cat .agents/skills/linear/SKILL.md' "$result"
   payload=$(jq -n -c --arg t "$TRANSCRIPT" '{tool_name:"Bash",
     tool_input:{command:".agents/skills/linear/scripts/linear.sh cache issues get KEN-2337"},transcript_path:$t}')
   set +e
-  env -i PATH="$PATH" HOME="$TMP_ROOT" "$BASH_BIN" "$JUDGE" \
-    >/dev/null 2>"$ERR_FILE" <<<"$payload"
+  env -i PATH="$PATH" HOME="$TMP_ROOT" CODEX_HOME="$REPO/$install" \
+    "$BASH_BIN" "$REPO/$install/hooks/skill-load-check.sh" \
+    >"$OUT_FILE" 2>"$ERR_FILE" <<<"$payload"
   rc=$?
   set -e
-  assert_eq "rc=$rc first=$(first_line)" "$want" "linear shell load $result"
+  assert_eq "rc=$rc first=$(first_line) stdout=$(cat -- "$OUT_FILE")" "$want stdout=" \
+    "linear shell load $install $result"
 done <<'ROWS'
-absent|rc=2 first=skill-load-check: unloaded=linear
-ok|rc=0 first=-
+.codex|absent|rc=2 first=skill-load-check: unloaded=linear
+.codex|ok|rc=0 first=-
+relocated|absent|rc=2 first=skill-load-check: unloaded=linear
+relocated|ok|rc=0 first=-
+ROWS
+
+# Codex exec --ephemeral's PreToolUse producer always emits transcript_path,
+# null when Session::hook_transcript_path has no live_thread. Missing is not
+# that protocol, and a persistent path still has to name a readable file.
+while IFS='|' read -r label fields want; do
+  payload=$(jq -n -c --arg p "$PATCH" --arg c "$REPO" --argjson f "$fields" \
+    '{tool_name:"apply_patch",tool_input:{command:$p},cwd:$c} + $f')
+  set +e
+  (cd -- "$REPO" && env -i PATH="$PATH" HOME="$TMP_ROOT" "$BASH_BIN" "$JUDGE" \
+    >/dev/null 2>"$ERR_FILE" <<<"$payload")
+  rc=$?
+  set -e
+  assert_eq "rc=$rc first=$(first_line)" "$want" "$label"
+done <<'ROWS'
+Codex ephemeral session|{"transcript_path":null}|rc=0 first=skill-load-check: gap=nonpersistent-codex
+Codex missing transcript field|{}|rc=2 first=skill-load-check: payload=no-transcript
+Codex malformed transcript|{"transcript_path":[]}|rc=2 first=skill-load-check: payload=no-transcript
+Codex empty transcript|{"transcript_path":""}|rc=2 first=skill-load-check: payload=no-transcript
+Codex unreadable persistent transcript|{"transcript_path":"/no-such-rollout.jsonl"}|rc=2 first=skill-load-check: transcript=unreadable
+Codex malformed ephemeral agent|{"transcript_path":null,"agent_id":[]}|rc=2 first=skill-load-check: payload=invalid-agent-id
 ROWS
 
 if [ "${SKILL_LOAD_CONTROL_ACTIVE:-}" != 1 ]; then
@@ -146,8 +182,10 @@ if [ "${SKILL_LOAD_CONTROL_ACTIVE:-}" != 1 ]; then
   done <<'ROWS'
 docs-writing|markdown before its skill load
 code-quality|delete
-linear|linear shell load absent
+linear|linear shell load relocated absent
 ROWS
+  skill_load_control nonpersistent "$HOOK" 'notice() { # KEY VALUE [CAUSE]' \
+    '  [ "$1" != gap ] || refuse "$@"' HOOK_UNDER_TEST 'Codex ephemeral session'
 fi
 
 echo "passed: $PASS  failed: $FAIL"

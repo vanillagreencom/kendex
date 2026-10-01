@@ -425,6 +425,27 @@ assert_eq "rc=$rc first=$(first_line)" "rc=2 first=skill-load-check: transcript=
 run_tool Edit file_path "$REPO/src/lib.rs" "$TMP_ROOT"
 assert_eq "$rc" 2 "a transcript_path naming a directory refuses"
 
+# pi-hooks/extensions/vocab.ts::claudeSessionFields omits transcript_path
+# when SessionManager.getSessionFile() is undefined (--no-session). Unlike
+# that omission, a present but invalid value is a malformed payload.
+mkdir -p "$TMP_ROOT/.pi/kendex/hooks"
+cp -- "$HOOK" "$TMP_ROOT/.pi/kendex/hooks/skill-load-check.sh"
+HOOK_AT="$TMP_ROOT/.pi/kendex/hooks/skill-load-check.sh"
+while IFS='|' read -r label fields want; do
+  [ -n "$label" ] || continue
+  run_payload "$("${JQ[@]}" --arg p "$REPO/README.md" --argjson f "$fields" \
+    '{tool_name:"Write",tool_input:{file_path:$p},session_id:"pi-session"} + $f')"
+  assert_eq "rc=$rc first=$(first_line)" "$want" "$label"
+done <<'ROWS'
+Pi nonpersistent session|{}|rc=0 first=skill-load-check: gap=nonpersistent-pi
+Pi null transcript|{"transcript_path":null}|rc=2 first=skill-load-check: payload=no-transcript
+Pi malformed transcript|{"transcript_path":[]}|rc=2 first=skill-load-check: payload=no-transcript
+Pi empty transcript|{"transcript_path":""}|rc=2 first=skill-load-check: payload=no-transcript
+Pi unreadable persistent transcript|{"transcript_path":"/no-such-session.jsonl"}|rc=2 first=skill-load-check: transcript=unreadable
+Pi malformed nonpersistent agent|{"agent_id":[]}|rc=2 first=skill-load-check: payload=invalid-agent-id
+ROWS
+HOOK_AT=""
+
 echo "skill-load-check: git cannot say where the path is"
 BROKEN_BIN="$TMP_ROOT/brokengit"
 mkdir -p "$BROKEN_BIN"
@@ -485,6 +506,8 @@ if [ "${SKILL_LOAD_CONTROL_ACTIVE:-}" != 1 ]; then
     '  [ "$1" != docs-writing ] || return 0' HOOK_UNDER_TEST \
     'a markdown edit without docs-writing refuses, naming it' \
     'a Pi read of .agents/skills/docs-writing/SKILL.md, result none'
+  skill_load_control nonpersistent "$HOOK" 'notice() { # KEY VALUE [CAUSE]' \
+    '  [ "$1" != gap ] || refuse "$@"' HOOK_UNDER_TEST 'Pi nonpersistent session'
 fi
 
 echo
