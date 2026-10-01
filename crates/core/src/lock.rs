@@ -270,9 +270,9 @@ pub struct HookRegistration {
     pub matcher: Option<String>,
 }
 
-/// The artifact one installation actually put on disk, in the harness's own
-/// terms. Every file-writing kind records its whole files or trees here;
-/// shared registry and settings files are never owned whole. A Codex command
+/// The rendered artifact one installation put on disk, in the harness's own
+/// terms. Rendered whole files and trees are recorded here; copied Pi packages
+/// and shared registry or settings files are excluded. A Codex command
 /// records its skill kind and installed name. Project paths are slashed
 /// remainders of the root on disk, checked by `lock::roots` at both ends.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]

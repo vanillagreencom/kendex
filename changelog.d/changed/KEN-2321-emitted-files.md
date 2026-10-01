@@ -1,1 +1,1 @@
-- The install lock now lists the files kendex renders for agents, commands and hooks, without claiming shared settings or registry files.
+- The install lock lists rendered agent, command and hook files, not shared settings or registries. Apply and refresh keep declared Pi packages when clearing old file inventory.

@@ -33,6 +33,11 @@ pub(super) fn stale_emitted(
         let Some(entry) = lock.entries.get(key) else {
             continue;
         };
+        // PiRemove owns copied packages and their registrations together.
+        // Retiring an optional inventory must not remove only the payload.
+        if entry.kind == ItemKind::PiExtension {
+            continue;
+        }
         let Some(previous) = entry.emitted.as_ref() else {
             continue;
         };

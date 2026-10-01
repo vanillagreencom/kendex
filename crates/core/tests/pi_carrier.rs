@@ -137,6 +137,133 @@ fn carrier_presence_is_read_per_settings_layer_and_either_scope_enforces() {
 }
 
 #[test]
+#[allow(
+    clippy::unwrap_used,
+    clippy::too_many_lines,
+    reason = "one scope and mode table keeps package retention and PiRemove ownership assertions together"
+)]
+fn retiring_pi_inventory_keeps_declared_packages_until_pi_remove() {
+    use kendex_core::apply::{self, Op};
+    use kendex_core::engine::{PlanOptions, plan_apply};
+    use kendex_core::lock::{self, EmittedArtifact, entry_key};
+    use kendex_core::{manifest, pi_ext};
+
+    let w = world();
+    let name = "@vanillagreen/pi-hooks";
+    let catalog = w.home.join("cat");
+    let source = catalog.join("pi-extensions/pi-hooks");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    // pi_ext::install produces a copied package with no runtime dependencies.
+    // Its package hash therefore also matches generic stale-file cleanup.
+    fs::write(
+        source.join("package.json"),
+        r#"{"name":"@vanillagreen/pi-hooks","version":"1.0.0","pi":{"extensions":["index.js"]}}"#,
+    )
+    .unwrap();
+    let payload = b"export default function hooks(pi) {}\n";
+    fs::write(source.join("index.js"), payload).unwrap();
+    let declaration = format!(
+        "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"pi\"]\n\n[pi-extensions.\"{name}\"]\nsource = \"cat\"\n",
+        source_path(&catalog)
+    );
+    let key = entry_key(ItemKind::PiExtension, name, HarnessId::Pi);
+
+    for scope in [Scope::Global, scope(&w)] {
+        let manifest_path = manifest::manifest_path(&w.env, &scope);
+        fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+        fs::write(&manifest_path, &declaration).unwrap();
+        let pi_root = pi_ext::scope_root(&w.env, &scope).unwrap();
+        let installed = pi_ext::install(&w.env, &pi_root, &source).unwrap().dest;
+        let settings = fs::read(pi_ext::settings_path(&pi_root)).unwrap();
+        let lock_path = lock::lock_path(&w.env, &scope);
+        let mut previous = lock::load(&lock_path).unwrap();
+        let declared = manifest::load_for_mutation(&manifest_path)
+            .unwrap()
+            .unwrap();
+        let drift = pi_ext::record_matching_manifest(
+            &w.env,
+            &scope,
+            &declared,
+            &mut previous,
+            pi_ext::RecordBasis::MatchedBytes,
+        )
+        .unwrap();
+        assert!(drift.is_empty(), "{scope:?}: {drift:?}");
+        assert!(previous.entries[&key].emitted.is_none());
+        // The Pi record writer shipped an inventory of the package directory.
+        previous.entries.get_mut(&key).unwrap().emitted = Some(EmittedArtifact {
+            kind: ItemKind::PiExtension,
+            name: name.into(),
+            paths: vec![installed.clone()],
+        });
+
+        for (mode, options) in [
+            ("refresh", PlanOptions::default()),
+            (
+                "apply",
+                PlanOptions {
+                    remove_orphans: true,
+                    ..PlanOptions::default()
+                },
+            ),
+        ] {
+            lock::save(&lock_path, &previous).unwrap();
+            let report = plan_apply(&w.env, &scope, &options).unwrap();
+            assert!(
+                report.drift.is_empty(),
+                "{scope:?} {mode}: {:?}",
+                report.drift
+            );
+            assert!(
+                !report.plan.ops.iter().any(|op| matches!(&op.op,
+                    Op::Trash { path, .. } if path.starts_with(&installed)
+                ) || matches!(&op.op, Op::PiRemove { .. })),
+                "{scope:?} {mode}: a declared package must stay installed: {:?}",
+                report.plan.ops
+            );
+            apply::execute(&w.env, &report.plan).unwrap();
+            assert_eq!(fs::read(installed.join("index.js")).unwrap(), payload);
+            assert_eq!(fs::read(pi_ext::settings_path(&pi_root)).unwrap(), settings);
+            let settled = plan_apply(&w.env, &scope, &options).unwrap();
+            assert!(
+                settled.plan.ops.is_empty(),
+                "{scope:?} {mode}: {:?}",
+                settled.plan.ops
+            );
+        }
+
+        // Removing the declaration still retires payload and registration
+        // through their existing owner, not generic rendered-file cleanup.
+        fs::write(
+            &manifest_path,
+            "schema = 6\n\n[install]\nharnesses = [\"pi\"]\n",
+        )
+        .unwrap();
+        let removal = plan_apply(
+            &w.env,
+            &scope,
+            &PlanOptions {
+                remove_orphans: true,
+                ..PlanOptions::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            removal.plan.ops.iter().any(|op| matches!(&op.op,
+                Op::PiRemove { package, .. } if package == &installed
+            )),
+            "{scope:?}: {:?}",
+            removal.plan.ops
+        );
+        apply::execute(&w.env, &removal.plan).unwrap();
+        assert!(!installed.exists());
+        assert!(!pi_ext::registered(&pi_root, name).unwrap());
+        assert!(!lock::load(&lock_path).unwrap().entries.contains_key(&key));
+    }
+}
+
+#[test]
 #[allow(clippy::unwrap_used)]
 fn a_mappable_event_renders_the_registry_in_pi_listener_names() {
     let w = world();
