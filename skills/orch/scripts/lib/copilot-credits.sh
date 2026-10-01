@@ -25,6 +25,15 @@
 # the value is a placeholder the host's proxy rewrites for api.github.com. The
 # token crosses to curl on stdin, never in argv.
 #
+# This read is the fallback for interfaces Copilot CLI documents and that
+# cannot serve here (1.0.90). Its login inputs, `copilot login` and the
+# COPILOT_GITHUB_TOKEN, GH_TOKEN and GITHUB_TOKEN variables (`copilot help
+# environment`), hand the CLI a token; none reads back the login an account
+# already stored. Its credit budget is shown only inside a running session,
+# in the footer, the `/statusline` quota option and `/usage` (`copilot help
+# billing`), and no command or SDK reports an account's pool from outside
+# one, while `lanes` measures accounts no session runs on.
+#
 # THE ENDPOINT is internal and its shape can change, so every field is checked
 # for its type. `quota_snapshots.premium_interactions` gives `entitlement`,
 # `remaining`, `unlimited`, `overage_permitted`, `overage_count`,
