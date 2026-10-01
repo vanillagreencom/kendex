@@ -174,7 +174,8 @@ if [ "$RC" -eq 1 ] && grep -qxF "refresh-error=workflow-edited value=$DIR/$REFRE
 else bad 'historical equality control' "$OUT"; fi
 
 # A concurrent writer can change bytes or introduce a link after shipment
-# classification. The second check refuses before refresh replacement or inventory.
+# classification. The final check owns that link, not the initial-link preflight.
+# Refusal precedes retired-writer removal, refresh replacement and inventory.
 for rule in workflow template symlink; do
   sandbox
   cp "$DIR/$TEMPLATE" "$DIR/$REFRESH"
@@ -198,8 +199,9 @@ CONCURRENT
   [ "$rule" != symlink ] || key=workflow-symlink
   if [ "$RC" -eq 1 ] && grep -qxF "refresh-error=$key value=$DIR/$target" <<<"$OUT" &&
       cmp -s "$TMP/adoption-inventory" "$DIR/.kendex-generated.json" &&
+      cmp -s "$TMP/adoption-writer" "$DIR/.github/workflows/review-gate-writer.yml" &&
       { [ "$rule" != workflow ] || grep -qxF '# concurrent edit' "$DIR/$REFRESH"; } &&
-      { [ "$rule" != symlink ] || cmp -s "$TMP/concurrent-target" "$TMP/adoption-workflow"; }; then
+      { [ "$rule" != symlink ] || { [ -L "$DIR/$REFRESH" ] && cmp -s "$TMP/concurrent-target" "$TMP/adoption-workflow"; }; }; then
     ok "$rule precondition preserves the concurrent edit and inventory"
   else bad "$rule precondition" "$OUT"; fi
   python3 - "$DIR/$ADOPT" "$rule" <<'PRECONDITION_CONTROL'
@@ -210,7 +212,9 @@ old={'workflow':'if (refresh.read_bytes() if refresh.exists() else None) != obse
      'template':'if template.read_bytes() != template_bytes:',
      'symlink':'if refresh.is_symlink():'}[sys.argv[2]]
 assert s.count(old)==(2 if sys.argv[2]=='symlink' else 1)
-changed=s.replace(old, 'if False: # '+old); assert changed != s; p.write_text(changed)
+before, after = s.rsplit(old, 1)
+changed=before + 'if False: # ' + old + after
+assert changed != s; p.write_text(changed)
 PRECONDITION_CONTROL
   # The preflight now sees the concurrent edit. Reset it before the mutant
   # runs so the planted change again arrives only after classification.
@@ -218,7 +222,9 @@ PRECONDITION_CONTROL
   cp "$TMP/adoption-workflow" "$DIR/$REFRESH"
   if [ "$rule" = template ]; then cp "$TMP/adoption-workflow" "$DIR/$TEMPLATE"; fi
   run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
-  if [ "$RC" -eq 0 ]; then ok "control: $rule precondition bypass overwrites after classification"
+  if [ "$RC" -eq 0 ] && [ ! -e "$DIR/.github/workflows/review-gate-writer.yml" ] &&
+      adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then
+    ok "control: $rule precondition bypass overwrites after classification"
   else bad "$rule precondition control" "$OUT"; fi
 done
 
@@ -444,22 +450,14 @@ while IFS='|' read -r kind pattern replacement; do
     retired-edited) printf 'consumer edit\n' >>"$writer" ;;
     retired-symlink) mv "$writer" "$DIR/target"; ln -s ../../target "$writer" ;;
     unrecorded) mv "$writer" "$DIR/.github/workflows/review-gate-writer.yml" ;;
-    refresh-symlink)
-      cp "$DIR/$TEMPLATE" "$DIR/$REFRESH"
-      record_adoption "$DIR" "$REFRESH" "$TEMPLATE"
-      commit "$DIR"
-      mv "$DIR/$REFRESH" "$DIR/refresh-target"; ln -s ../../refresh-target "$DIR/$REFRESH" ;;
   esac
-  matches=1
-  [ "$kind" != refresh-symlink ] || matches=2
-  file_edit "$DIR" "$ADOPT" "$matches" "$pattern" "$replacement" 1
+  file_edit "$DIR" "$ADOPT" 1 "$pattern" "$replacement" 1
   run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
   if [ "$RC" -eq 0 ]; then ok "$kind control allows the forbidden mutation"; else bad "$kind control did not reach the guard" "$OUT"; fi
 done <<'CONTROLS'
 retired-edited|^        if not copied.is_file|s/^        if \(.*\):$/        if False and (\1):/
 retired-symlink|^    if copied.is_symlink|s/^    if \(.*\):$/    if False and (\1):/
 unrecorded|^if.*unrecorded.exists|s/^if \(.*\):$/if False and (\1):/
-refresh-symlink|^if refresh.is_symlink|s/^if \(.*\):$/if False and (\1):/
 CONTROLS
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
