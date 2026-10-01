@@ -1,530 +1,495 @@
 # Kendex checks audit
 
-The audited checks include consumer and lane refusals whose repair belongs to the catalog, refresh, installation or platform owner.
+The inventory judges each check's harm and repair owner.
 
-## Contract and evidence
+## Contract
 
-- Issue: KEN-2320. This report judges user harm and repair ownership. It changes no production check code. The only landing enabler is a reasoned exact-path report exception in tools/doc-limits-excludes, required after the unchanged cap rejected this single-file inventory.
-- Source revision: `8d95c78d7bcf144dfab70a2958ea5e5dc6646268`. Own-check logs record the command date and revision separately. Source evidence is the repository, not web research.
-- Active decisions: [D007](../decisions/D007-lock-record-on-main.md) assigns record ownership. [D003](../decisions/D003-one-merge-path.md) retains consumer pull and organization governance; [D013](../decisions/D013-admin-merge-green-prs.md) and [D016](../decisions/D016-merge-route-reads-bypass.md) supersede its one-path/zero-bypass and repair-route parts. Check verdicts do not delete native protections, expand app authority or supersede those decisions. D016's exact-head and queue-only proofs remain.
-- The reached-by column gives the triggering condition for each risk. This audit does not measure incident frequency or infer that a passing local suite proves live delivery.
-- Live issue reads are saved as `tmp/KEN-2320-live.json` and `tmp/KEN-2320-related-live.json`. The parent files follow-up issues after review. This lane creates none and does not mark the issue Done.
-- KEN-1981 remains the final efficiency and rewrite pass. Its scope includes cost, test selection, classifier structure and one verification path. It consumes these harm verdicts without re-judging them. This report does not measure performance or select a replacement architecture.
-- KEN-2298 owns consumer md-refs warnings and installed-layout source proof. C17 is bound to it. No duplicate issue is owed.
-- KEN-2309 is In Progress and its major-bump refusal is planned here, not implemented. The audited changelog-entries source carries no major-bump comparison. A71 evaluates the proposed author check.
-- KEN-2299 is In Review. The audited CLI/core has no marked-lane refusal. A68 evaluates the proposal. H06/H07 evaluate the different implemented worktree hook.
-- KEN-2127 is Done and implemented in tools/harness-smoke. A69 evaluates its actual build-input/ancestry check, not simple version equality.
-- Distinct rows split different harms, actors, fixability or verdicts. Repeated I/O failures share a row only where their outcome and repair owner are the same. A row does not stand for every test assertion inside a suite.
-- A source anchor identifies code or a diagnostic token, never a line number. Proposal rows name the proposed owner's current file and distinguish absent behavior in their action.
+- KEN-2320 is report only. No check/runtime/render/record change remains. One report fits the existing 65536-byte cap without exemption or appendix.
+- Sources: revision `8d95c78d7bcf144dfab70a2958ea5e5dc6646268`, repository reads, dated command logs. Reached-by cells state risk conditions, not measured frequency. Live reads: `tmp/KEN-2320-live.json`, `tmp/KEN-2320-related-live.json`.
+- [D007](../decisions/D007-lock-record-on-main.md) assigns main record repair. [D003](../decisions/D003-one-merge-path.md) retains consumer pull/org governance; [D013](../decisions/D013-admin-merge-green-prs.md)/[D016](../decisions/D016-merge-route-reads-bypass.md) supersede merge/bypass routes. Native protection/app authority and D016 exact-head/queue-only proof stay.
+- KEN-1981 owns cost/selection/rewrite. KEN-2298 owns consumer md-refs warnings. KEN-2309 major-bump/KEN-2299 lane CLI refusal are planned, absent here. KEN-2127 smoke proof is implemented. Other bindings stay in rows.
+- Parent files unbound change/remove scopes from Reach/Action. No lane issue creation or Done state.
 
-## Ownership and verdicts
+## Legend
 
-| Term | Meaning |
+- A: package/catalog author. C: consumer, owns manifest/settings/forks, not renders/upstream. L: item lane, no shared base/main record repair. F: refresh/install owner, main record under D007. O: qualified machine/repo/service/org operator/admin.
+- b: block; w: warning. Refuse/nonzero/pending/hold deny the named operation; item refusal can coexist with overall success. Post-write refusal is not rollback. Planned means absent.
+- Repair Y: actor owns input and can fix it. `no: X`: X owns repair, not actor. Split cells separate own input from upstream/host failure. `no fix needed`: safe fallback works.
+- keep/K: retain named check for harm. change: retain safety, change scope/evidence/severity/owner. remove: delete isolated `none`-harm refusal and ceremony-only tests. U: source check to A, C gets safe skip/warning/report/choices, no render edit or unsafe install. E: unavailable host/service/config, not bad source; unexercised/no verdict, O provisions/retries before admission. Row text narrows shared actions; IDs remain independent.
+- Source prefix/file keys expand by the tables. `::` names function/check/diagnostic, not line number. No anchor means file-level rule. Proposal sources are proposed owners, not implemented checks.
+
+|Prefix|Repository directory|
 |---|---|
-| Author | Package/catalog author. Owns shipped source, adapters and tests. |
-| Consumer | Owns manifest, local settings and sanctioned forks. Does not own kendex-managed rendered files or the upstream catalog. |
-| Lane | Works on an item branch. Cannot alter the base checkout or repair main-owned install records. |
-| Refresh owner | Owns committed install/render updates. In this repository, [D007](../decisions/D007-lock-record-on-main.md) assigns the install record to main and its rolling pull request. |
-| Operator/admin | Owns machine provisioning, service tokens, branch protection or organization policy. Not an ordinary consumer committer. |
-| Block/refuse | Denies the stated operation. An item refusal can coexist with a successful overall apply/refresh. A post-write refusal does not undo installed files unless transaction recovery says so. |
-| Warning | Reports without denying the operation. A skipped unsafe install is not a claim that its guard is active. |
-| keep | Named harm and a repair/operational route at the rightful owner. |
-| change | Preserve named safety protection where needed, but change scope, evidence, severity or repair owner. Never turn a failed trust check into a successful install attestation. |
-| remove | Harm is exactly `none` for the isolated rule. Delete the refusal and tests that only enforce that ceremony. |
+|T/|`tools/`|
+|CG/|`skills/commit-guards/scripts/`|
+|PF/|`skills/preflight/scripts/`|
+|DL/|`skills/doc-limits/scripts/`|
+|RG/|`skills/review-gate/scripts/`|
+|HC/|`skills/harness-ci/scripts/`|
+|OR/|`skills/orch/scripts/`|
+|H/|`hooks/`|
+|CLI/|`crates/cli/src/commands/`|
+|CORE/|`crates/core/src/`|
+|W/|`.github/workflows/`|
+|ACT/|`.github/actions/`|
 
-The reached-by column is the issue-ready reproduction scope. Each change/remove row's action is the requested deliverable. Existing issue bindings stay with their rows. The parent can combine implementation work only after preserving each row's separate acceptance condition.
+|File key|Source (prefixes above)|
+|---|---|
+|g|T/guard|
+|pf|PF/preflight|
+|rs|RG/validate-standard.sh|
+|rv|RG/validate.sh|
+|hm|H/lane-mail-check.sh|
+|rp|RG/review-predicate.sh|
+|pn|T/publish-npm|
+|st|W/skill-tests.yml|
+|at|CORE/attest.rs|
+|v|CLI/verify.rs|
+|ce|CG/changelog-entries|
+|ra|CORE/render/validate/agent.rs|
+|hd|H/doc-drift-check.sh|
+|ds|CORE/drift/report/scope.rs|
+|up|CLI/update.rs|
+|rw|RG/validate-workflow.sh|
+|ww|W/review-gate-writer.yml|
+|hc|HC/change-class|
+|hp|H/pre-commit-check.sh|
+|hr|H/reviewer-stop-check.sh|
+|rf|CLI/refresh.rs|
+|lr|T/lock-record|
+|pa|T/publish-aur|
+|rel|W/release.yml|
 
 ## Totals
 
-- Inventory: 367 rows. keep: 174. change: 169. remove: 24.
-- Reproduce counts by reading table rows whose first cell matches `[A-Z][0-9]+` and counting the Verdict cell. Count each ID once. Own-check result rows below are not inventory rows.
-- Machine-checkable inventory and counts: `tmp/KEN-2320-report-rows.tsv` and `tmp/KEN-2320-counts.json`.
+370 rows: keep 175, change 170, remove 25. Count first-cell `[A-Z][0-9]+` IDs once, by Verdict; exclude evidence tables. Records: `tmp/KEN-2320-report-rows.tsv`, `tmp/KEN-2320-counts.json`, `tmp/KEN-2320-coverage.md`.
 
-## Repository guard
+## Inventory
 
-| ID | Actual check and owner | Reached by | Prevented harm | Effect and actor | Can that actor fix it? | Verdict | Action and boundary |
+IDs: G repository guard, C commit guards, P preflight, D doc limits, R review gate, I CI/workflows, H hooks, V verify/drift, A apply/refresh/update, X shipping/validation.
+
+Review evidence/thread terms run only when class policy reaches them. Class none returns approved first; thread mode off skips dispositions. Native protection remains separate.
+
+|ID|Check source|Reached by|Prevented harm|Effect/actor|Repair|Verdict|Action/boundary|
 |---|---|---|---|---|---|---|---|
-| G01 | `tools/guard::bot-instructions` | Full validation | Reviewers use rules nobody selected | block author | Yes, source config and tracked output | keep | Retain check of rendered review instructions. |
-| G02 | `tools/guard::decision-ids` | Full validation after another decision merges | Two decisions share an ID and citations resolve to the wrong rule | block author | Yes, renumber this change | keep | Retain collision and base-read checks; unavailable base is not a duplicate ID. |
-| G03 | `tools/guard::shipped-decision-link` | Commit catalog prose with a bare decision ID | Consumer resolves a kendex decision against their unrelated decision directory | block author | Yes, link the source decision | keep | Retain source-catalog link check. |
-| G04 | `tools/guard::homebrew-formula` | Commit formula named Kendex | Install command selects CLI instead of desktop app | block author | Yes, rename formula | keep | Retain package-name ownership check. |
-| G05 | `tools/guard::catalog-fs-read` | Commit raw catalog read in scanned modules | Catalog can include host secrets or traverse links | block author | Yes, use SealedSource | keep | Retain secure-read check; scan is not proof of all call sites. |
-| G06 | `tools/guard::ui-tauri-import` | Commit direct Tauri import outside generated bindings | UI can call an API with no generated type contract | block author | Yes, use bindings | keep | Retain typed API boundary. |
-| G07 | `tools/guard::ui-color-literal` | Commit a color literal | none | block author | Yes | remove | Delete color-spelling gate. Theme policy can be a review rule. |
-| G08 | `tools/guard::command_safety_policy` | Commit empty, unreadable, invalid or behaviorally changed deny policy | Chosen dangerous commands run, or ordinary validation is denied | block author | Yes, fix owned policy/example | keep | Retain loader and refuse/allow controls for each shipped policy. |
-| G09 | `tools/guard::ci-correlation-copy` | Commit a second run-correlation reducer | Merge readiness can count a superseded failure or miss the current failure | block author | Yes, use shared reducer | keep | Retain single-authority check for these callers. |
-| G10 | `tools/guard::raw-command-new` | Commit an unhardened external process launch | Host environment changes tool behavior; child can hang indefinitely | block author | Yes, use hardened constructor | keep | Retain external-process boundary. |
-| G11 | `tools/guard::cli-raw-output` | Commit terminal escapes or stream handles outside UI owner | Foreign text can control terminal output instead of appearing as data | block author | Yes, use escaping UI components | keep | Retain output boundary. |
-| G12 | `tools/guard::fixture-home` | Commit fixture HOME without sandbox opt-out | Test runs against the developer sandbox instead of its fixture | block author | Yes, use fixture environment | keep | Retain per-launch pairing. |
-| G13 | `tools/guard::binary-home` | Commit CLI test launch with no isolated home | Release-profile tests change real installed packages or registry | block author | Yes, isolate child environment | keep | Retain per-builder fixture check. |
-| G14 | `tools/test-roster` | Commit a crate test not reached by a test root | A test never compiles or runs, while the suite reports green | block author | Yes, declare its module/target | keep | Retain roster check in guard and cargo workflow. |
-| G15 | `tools/guard::unrooted-fixture` | Add temp Rust fixture without canonical root | macOS path comparisons fail only because aliases differ | block author | Yes, bind rooted fixture | keep | Retain changed-fixture rule. |
-| G16 | `tools/bash32-lint` | Commit unsupported Bash constructs | Shipped scripts fail on macOS Bash | block author | Yes, change source | keep | Retain portability scan, not a claim of complete parsing. |
-| G17 | `tools/bash32-parse` | Full validation parses source with real Bash 3.2 | A shipped shell file cannot start on supported macOS | block author/lane | Source: yes; absent interpreter: install owner | change | Separate source parse failure from unavailable interpreter. Keep CI parsing; report missing local runtime without blocking unrelated prose. |
-| G18 | `tools/guard::missing-skill-instructions` | Commit render without configured instruction delimiters | Installed agents miss repository-specific requirements | block author | Yes, land source-derived block | keep | Retain block-presence check. |
-| G19 | `tools/guard::require_render` | Commit source without its tracked render | Own checkout runs an earlier rule while the catalog ships the changed rule | block author | Yes, replay source diff into render | keep | Retain source/render pairing; no lock regeneration in item lanes. |
-| G20 | `tools/guard::tauri-dependency` | Commit core dependency on Tauri | CLI core inherits desktop runtime requirements | block author | Yes, correct owned dependency | keep | Retain dependency boundary. |
-| G21 | `tools/guard::crate-lints` | Commit crate manifest without workspace lint inheritance | Security and correctness lints silently stop applying to that crate | block author | Yes, inherit workspace lints | keep | Retain lint inheritance check. |
-| G22 | `tools/guard::clippy` | Compile changed Rust or full workspace | Compiler errors and correctness lints reach released code | block author/lane | Own code: yes; host/dependency: not always | change | Keep errors and applicable lints. Separate cosmetic warnings, pre-existing foreign defects and missing host dependencies; route those to their owner. |
-| G23 | `tools/guard::cargo-fmt` | Validate Rust formatting | none | block author | Yes | remove | Delete format-only refusal. Formatting may remain an author tool. |
-| G24 | `tools/guard::cargo-space-free` | Start full validation below exhaustion floor | Build fills shared disk and other writers fail | block lane | No, lane may not delete shared caches | change | Move capacity provisioning to hosted-lane owner; refuse build admission there, not report validation as bad source. |
-| G25 | `tools/guard::cargo-space-start` | Start full validation with inadequate reusable target plus free space | Cold build exhausts shared volume | block lane | No, shared storage owner | change | Use owner-controlled build admission and an environment result. Preserve diagnostic evidence. |
-| G26 | `tools/guard::cargo-space-end` | Finish below floor or cannot measure ending space | Next writer can exhaust disk; unreadable probe proves no source defect | block lane | No, storage owner | change | Report capacity separately from suite verdict. Owner repairs disk or probe. |
-| G27 | `tools/guard::cross-check` | Full check of core/CLI for Apple and Windows targets | Platform-only compile errors ship | block author/lane | Source: yes; absent target: environment owner | change | Retain platform CI. Local missing target must be not exercised, not a source failure. |
-| G28 | `tools/guard::cargo-doc` | Full workspace documentation build | Broken documentation links or documentation-only compile errors ship | block author | Yes, repair owned code/docs | keep | Retain documentation errors; do not describe this as a runtime test. |
-| G29 | `tools/guard::cargo-test` | Workspace test asserts failure or cannot run | Behavioral regressions ship; unavailable test is not proof | block author/lane | Own assertions: yes; dependency/host: no | change | Retain tests and route unavailable dependencies to owner. Existing test-binary-signal branch is G39, not absent classification. |
-| G30 | `tools/guard::suite` | Validate touched skill, hook, tool or Pi package | Shipped script behavior regresses | block author/lane | Own source: yes; missing peers: environment owner | change | Retain suites. Provision peers outside lane and classify missing peers as not exercised. |
-| G31 | `tools/guard::ui-check` | Type-check UI | Invalid API/store types break the page | block author | Yes, correct UI source | keep | Retain type errors. |
-| G32 | `ui/package.json::check:lint` | Lint UI via guard and workflow | Lint errors can expose unsupported UI behavior; format findings prevent no runtime harm | block author | Yes | change | Keep behavior rules; make formatting and style advisory. |
-| G33 | `ui/package.json::test` | Run UI regression tests | User interactions break despite a successful compile | block author | Yes, repair owned behavior | keep | Retain affected behavioral tests. |
-| G34 | `tools/guard::refuse` | Invalid argument, class, range or missing selection evidence | Validation could attest to the wrong tree or skip required checks | block lane | Caller inputs: yes; reader defect: author | change | Keep no-verdict state and whole-set fallback. Send package-reader defects upstream instead of telling a consumer to edit the render. |
-| G35 | `tools/guard::scan` | Unreadable file or grep error reaches content scan | Guard can call an unread source clean | no finding, author | Yes, guard author owns scan | change | Preserve grep failure as unjudged instead of discarding status with true. No measured failure was planted in this audit. |
-| G36 | `tools/guard::decision-ids` | Decision check cannot fetch/read authoritative base | Collision check is unmeasured | block author/lane | No for credentials/network; operator owns access | change | Keep collision check G02. Report base-read gap separately and route access repair to operator, not renumbering a valid decision. |
-| G37 | `tools/guard::whole_setting` | Capacity setting unset, invalid or unreadable | Build admission has no valid capacity bound | refuse lane | No, repository/host configuration owner | change | Separate configuration unavailable from exhausted disk; owner provisions policy before lane validation. |
-| G38 | `tools/guard::cargo-target-unreadable` | Starting free/target probe cannot answer | Capacity remains unmeasured | notice; build continues lane | Host/storage owner, no lane source repair | keep | Retain explicit starting-probe notice; do not call it measured free space. Ending failure remains G26. |
-| G39 | `tools/guard::test-binary-signal` | Test executable dies by signal before verdict | No behavioral result exists for that artifact | block author/lane; separate signal diagnostic | Own artifact: rebuild; shared target/host: operator | change | Retain existing signal classification. Route artifact/host repair distinctly from assertion failure; no shared cache deletion by lane. |
+|G01|g::bot-instructions|Full validation|Unselected review rules|b A|Y|keep|K|
+|G02|g::decision-ids|Concurrent decision merge|Duplicate IDs misdirect citations|b A|Y|keep|K; unknown base G36|
+|G03|g::shipped-decision-link|Bare decision ID in catalog prose|Consumer resolves unrelated local decision|b A|Y|keep|K|
+|G04|g::homebrew-formula|Formula named Kendex|CLI replaces intended desktop install|b A|Y|keep|K|
+|G05|g::catalog-fs-read|Raw catalog read|Host secrets or outside-root bytes copied|b A|Y|keep|K; scan not all call sites|
+|G06|g::ui-tauri-import|Direct Tauri import outside bindings|Untyped API call breaks UI|b A|Y|keep|K|
+|G07|g::ui-color-literal|Color literal|none|b A|Y|remove|Delete gate; theme review only|
+|G08|g::command_safety_policy|Bad/unreadable/changed deny policy|Dangerous command allowed or valid command denied|b A|Y|keep|K; loader/allow/refuse controls per policy|
+|G09|g::ci-correlation-copy|Second correlation reducer|Old failure counted or current failure missed|b A|Y|keep|K|
+|G10|g::raw-command-new|Raw external launch|Inherited environment alters tool; child hangs|b A|Y|keep|K|
+|G11|g::cli-raw-output|Raw terminal output outside UI|Foreign text controls terminal|b A|Y|keep|K|
+|G12|g::fixture-home|Fixture HOME without sandbox opt-out|Test uses developer sandbox|b A|Y|keep|K|
+|G13|g::binary-home|CLI test without isolated home|Test mutates real packages/registry|b A|Y|keep|K|
+|G14|T/test-roster|Test absent from module/target roster|Green suite never runs new test|b A|Y|keep|K|
+|G15|g::unrooted-fixture|Noncanonical Rust fixture root|macOS aliases cause false failures|b A|Y|keep|K|
+|G16|T/bash32-lint|Unsupported Bash syntax|Script fails on macOS Bash|b A|Y|keep|K; not complete parsing|
+|G17|T/bash32-parse|Full Bash 3.2 parse|Script cannot start on supported macOS|b A/L|source Y; runtime O|change|E; retain CI parsing, no prose block|
+|G18|g::missing-skill-instructions|Missing instruction delimiters|Agent misses project requirements|b A|Y|keep|K|
+|G19|g::require_render|Source changed without tracked render|Own checkout runs old catalog rule|b A|Y|keep|K; source/render pair, no lane lock|
+|G20|g::tauri-dependency|Core depends on Tauri|CLI needs desktop runtime|b A|Y|keep|K|
+|G21|g::crate-lints|Crate skips workspace lints|Correctness/security lints stop applying|b A|Y|keep|K|
+|G22|g::clippy|Rust compile/lint|Compile/correctness errors ship|b A/L|source Y; host O|change|E; applicable errors only, style advisory|
+|G23|g::cargo-fmt|Rust formatting|none|b A|Y|remove|Delete refusal; formatter optional|
+|G24|g::cargo-space-free|Low free-space admission|Build fills shared disk|b L|no: O|change|E: host build admission|
+|G25|g::cargo-space-start|Low free plus reusable target space|Cold build fills shared disk|b L|no: O|change|E: host build admission|
+|G26|g::cargo-space-end|Low/unreadable end space|Next writer exhausts disk; capacity unknown|b L|no: O|change|E: capacity separate from suite|
+|G27|g::cross-check|Cross-target compile|Platform compile errors ship|b A/L|source Y; targets O|change|E; retain platform CI|
+|G28|g::cargo-doc|Workspace docs build|Broken doc links/compile ship|b A|Y|keep|K; docs, not runtime proof|
+|G29|g::cargo-test|Test fails/cannot run|Regression ships or result unknown|b A/L|source Y; host O|change|E; signal classification G39 exists|
+|G30|g::suite|Skill/hook/tool/Pi suite|Script behavior regresses|b A/L|source Y; peers O|change|E: peers provisioned before lane|
+|G31|g::ui-check|UI type check|Bad API/store types break page|b A|Y|keep|K|
+|G32|ui/package.json::check:lint|UI lint|Behavior errors ship; style has no runtime harm|b A|Y|change|Behavior gate; style advisory|
+|G33|ui/package.json::test|UI tests|Compiled UI interactions fail|b A|Y|keep|K|
+|G34|g::refuse|Bad args/class/range/selection|Wrong tree checked or checks skipped|b L|input Y; reader A|change|No-verdict/full-set fallback; U reader|
+|G35|g::scan|Read/grep failure in scan|Unread source reported clean|no finding A|Y|change|Propagate scan error, not true; unrun case|
+|G36|g::decision-ids|Cannot fetch/read decision base|Collision check unknown|b A/L|no: O|change|E; not a duplicate ID|
+|G37|g::whole_setting|Bad/missing capacity setting|No valid admission bound|refuse L|no: O|change|E; config gap distinct from exhaustion|
+|G38|g::cargo-target-unreadable|Unreadable start space/target|Capacity unknown|w L; continues|no: O|keep|K; no measured space claim; end G26|
+|G39|g::test-binary-signal|Test binary dies by signal|Artifact has no test verdict|b A/L|artifact rebuild; host O|change|E; signal distinct from assertion|
+|C01|CG/todo-ban|TODO/FIXME/HACK/XXX marker|none|b A/C|own Y; render A|remove|Delete marker gate|
+|C02|CG/byte-ceiling|General byte cap/baseline|none|b A/C|own Y; vendor A|remove|Delete size gate and ratchet|
+|C03|CG/byte-ceiling|Size warning percentage|none|w A/C|own Y|remove|Delete warning with cap|
+|C04|CG/suppression-ban|Blanket lint suppression|Correctness/security checks disabled|b A/C|own Y; upstream A|change|Own suppression gate; U upstream|
+|C05|CG/suppression-ban|Dead-code/unused count ratchet|none|b A/C|own Y|remove|Delete spelling/count gate|
+|C06|CG/conflict-markers|Merge markers in index|Unresolved content ships|b A/C|own Y; render A|change|Own introduced markers gate; U render|
+|C07|ce|Bad/missing fragment placement|Release omits visible change|b A/C|Y|keep|K|
+|C08|ce|Binary/link/empty/multi-item fragment|Release record unreadable|b A/C|Y|keep|K|
+|C09|ce|Fragment character cap|none|b A/C|Y|remove|Delete cap; migration text may be long|
+|C10|ce|Collate dirty tree/no consent|Fragments deleted or pending work lost|b A release|Y|keep|K|
+|C11|ce|Ambiguous section/bad fences|Entry lands in wrong release/section|b A release|Y|keep|K|
+|C12|CG/prose|Date/issue token in loaded Markdown|none|b A/C|own Y; render A|remove|Delete history-token ban|
+|C13|CG/md-format|Wrap/spacing/CRLF format|none|b A/C|own Y; render A|remove|Delete style gate; reflow optional|
+|C14|CG/md-format|Unclosed fence/header/comment|Scan incomplete|b A/C|own Y; upstream A|change|Own malformed gate; U incomplete scan|
+|C15|CG/md-reflow|Unsafe path/text/block rewrite|Rewrite loses foreign/misparsed content|refuse A|Y|keep|K; optional rewrite tool, not gate|
+|C16|CG/md-refs|Dead own link/path/symbol/decision|Reader follows missing rule|b A/C|Y|keep|K; rendered targets included|
+|C17|CG/md-refs|Dead reference in managed render|Consumer follows missing instruction|b C|no: A|change|U: installed-layout links; KEN-2298|
+|C18|CG/md-refs|Unread carrier/target/comment grammar|Unread references reported checked|b A/C|own Y; scanner A|change|Unjudged scanner; U upstream|
+|C19|CG/py-names|Undefined Python name/bad syntax|NameError or script cannot start|b A/C|own Y|keep|K; generated paths excluded|
+|C20|CG/py-names|Missing/bad ruff/pyflakes/result|Name check unexercised|b L/C|host O|change|E: provision before gate install|
+|C21|CG/comments|Comment history tokens|none|audit nonzero A|Y|remove|Delete optional refusal, no new gate|
+|C22|CG/commit-msg|Commit header grammar/length|none|b A/C|Y|remove|Delete style gate; no release dependency|
+|C23|CG/commit-msg|Product change without note/opt-out|Users miss change disclosure|b A/C|Y|keep|K; explicit no-changelog allowed|
+|C24|CG/pre-push|Pushed ref/index differs from HEAD|Gate checks wrong bytes|b A/C|Y|keep|K; malformed refs refuse|
+|C25|CG/pre-commit|Missing/unrunnable gate lane|Promised check silently omitted|b C/L|config Y; package A|change|U: package completeness at setup|
+|C26|CG/install-git-hooks|Arm hooks in linked worktree|All branches use disposable scripts|b L|no: F|change|Main-owner setup request/unarmed notice|
+|C27|CG/install-git-hooks|Foreign/link/disabled hook or bad interpreter|User hook lost or gate cannot run|refuse C setup|Y|keep|K|
+|C28|CG/install-git-hooks|Empty/foreign hooksPath|Gate disabled or unknown|w/refuse C setup|policy O|change|Warn/owner route; no hooksPath takeover|
+|C29|CG/commit-guards|Bad selection/policy/baseline/scan|Enabled checks omitted|b A/C|config Y; package A|change|Own config refusal; U package errors|
+|C30|CORE/check_catalog.rs|Planned dropped/catalog link check|Render points at unshipped maintainer file|planned finding A|Y|keep|K planned; KEN-2184, KEN-2298 boundary|
+|P01|pf::shell-syntax|Changed unparsable shell|Script cannot start|b A/C|own Y; render A|change|Own syntax gate; U managed source|
+|P02|pf::shellcheck-errors|Changed shellcheck error|Invalid shell behavior|b A/C|own Y; render A|change|Own error gate; U managed source|
+|P03|pf::masked-returns|Declaration masks child status|Failed command read as success|b A/C|Y|keep|K; installed trees stand down|
+|P04|pf::fail-open|Unchecked temp/status/strict mode|Failure produces false pass|b A/C|Y|keep|K; not complete proof|
+|P05|pf::early-close-pipe|pipefail plus early-closing reader|SIGPIPE abort/false match|b A/C|Y|keep|K; suites included|
+|P06|pf::unwired-suite|Suite absent from known runner|Regression test never runs|b A/C|Y|change|Support real runner config; unknown != unwired|
+|P07|pf::mktemp-trap|New scratch script lacks EXIT cleanup|Repeated runs fill storage|b A/C|Y|keep|K|
+|P08|pf::hardcoded-temp-path|Fixed temporary directory creation|Concurrent overwrite/planted path|b A/C|own Y; render A|change|Own unique scratch; U render|
+|P09|pf::docs-cited-paths|Added dead path citation|Reader acts on missing path|b A/C|own Y; managed A|change|Use generated ownership; U managed prose|
+|P10|pf::applied-migration-edited|Edit/delete/rename checksum migration|Upgrade rejects recorded checksum|b A/C|Y|keep|K; checksum runners only|
+|P11|pf::data-syntax|Changed invalid JSON/TOML|Config cannot load|b A/C|own Y; render A|change|Own syntax gate; U render, preserve JSONC|
+|P12|pf::not-run|Optional checker missing|Check unexercised|w L/C|O|keep|K; skipped != checked|
+|P13|pf::env_error|Unread git/base/settings/diff|Wrong/incomplete change checked|b caller|input Y; host O|change|E; no verdict|
+|P14|OR/branch-size-check::DELTA_GRAMMAR|Report-only/zero allowance|Production growth escapes scope|b L exit 3|no: parent|change|Accept zero/report scope; KEN-2319 recurrence|
+|D01|DL/doc-limits::SHIPPED_CLASS_ROWS|Class byte cap exceeded|Loaded prose consumes context; reference cap harm unproved|b A/C|own Y; managed F|change|Load-point notice; reference budgets advisory|
+|D02|DL/doc-limits::MARGIN_PCT|Growth in margin below cap|none|b A/C|own Y|remove|Delete near-cap growth gate|
+|D03|DL/doc-limits::parse_classes|Bad class/exclusion/margin/settings|Wrong/incomplete size result|b caller|policy Y; package A|change|Own policy errors; U package/E host|
+|D04|CG/lib/generated-paths.sh|Unread/bad generated inventory|Own code skipped or consumer blocked on render|b C/L|no: F|change|Upstream/F inventory proof; warn C|
+|P15|pf::guard_tests_var|Bare assignment before status test|errexit prevents intended handler|b A|Y|keep|K; deliberate fatal assignment passes|
+|R01|rv::runtime|Engine missing/untracked/link/bad mode/parse|CI lacks runnable gate|b A/C install|own vendoring Y; source A|change|U: install readiness; own vendoring gate|
+|R02|rv::scan_settings_source|Settings untracked/link/unreadable/type|CI reads different trust policy|b O repo|Y|keep|K|
+|R03|rv::settings-unknown|Unknown key/wrong setting layer|Chosen policy ignored|b O repo|Y|keep|K|
+|R04|rv::settings-outside-env|Outside env/bad header/BOM|Defaults replace intended policy|b O repo|Y|keep|K|
+|R05|rv::settings-key-shape|REVIEW_GATE_ in valid string|none|b O repo|Y|remove|Parse assignments, delete mention ban|
+|R06|rv::settings-mode-source|Mode/writer in skipped local layer|Wrong policy runs|b O repo|Y|keep|K|
+|R07|rp::--check-config|Bad trust/mode/limit/pattern/enum|Wrong actor trusted/evidence misread|b O repo|Y|keep|K|
+|R08|rv::settings-writer|Bad writer/lock-kendex value|Writer refuses every PR|b O repo|Y|keep|K|
+|R09|rv::class-policy-undecided|Custom/off policy lacks decision file|none|b O repo|Y|remove|Delete prose-record gate; judge policy|
+|R10|rv::carry-unmatched|Carry glob matches nothing|Misspelling carries old review to risky path|b O repo|Y|change|Warn unmatched; planned != bad, no ledger|
+|R11|rv::carry-universal|Carry exclusion matches all|none|b O repo|Y|remove|Delete refusal; no carry conservative|
+|R12|rv::carry-declaration|Prophylactic declaration absent/stale|none|b O repo|Y|remove|Delete duplicate declaration gate|
+|R13|rv::workflow-no-verdict|Peer verdict missing/malformed/status mismatch|Unchecked copy reported green|b A/C|producer A|change|No verdict; U producer protocol|
+|R14|rw|Writer absent/untracked/link/byte mismatch|Token code unsafe or gate absent|b O workflow|own YAML Y; template A|change|Trust gate; harmless bytes warn; U template|
+|R15|rp::awaiting|Required review evidence absent|Unreviewed change merges|pending A/L|request Y; service O|change|Server approval; reviewer outage to O|
+|R16|rp::changes-requested|Standing reviewer objection|Known defect merges|b A|Y|keep|K; outage override cannot clear objection|
+|R17|rp::threads-open|Enforced unresolved thread|Unaddressed finding merges|pending A|Y|keep|K where platform cannot enforce resolution|
+|R18|rp::untracked-claim|Tracked claim without issue|Deferred defect lacks record|b A|Y|keep|K; ID alone proves no issue existence|
+|R19|rp::unreasoned-decline|Decline has labels/filler only|Defect dismissed without assessable reason|b A|Y|keep|K; reviewer judges reason semantics|
+|R20|rp::suppressed-findings|Bot findings lack head-bound answers|Unpublished finding disappears|b A|Y|keep|K; per-entry answer, not vocabulary|
+|R21|rp::unmeasured|Active class unmeasured|Unearned review waiver|pending C/L|classifier A/O|change|No waiver; ordinary review; U/E classifier|
+|R22|rp::class-unresolved|Class preparation/policy fails|Wrong class grants waiver|pending head; writer fails|no: A/O|change|No new waiver; ordinary review; E/U; R43|
+|R23|rp::exit 2|API/config/evidence read fails|Unknown turns green/objection erased|unchanged O|API O|keep|K; no-action/retry, not source rejection|
+|R24|RG/review-writer.sh|Stale success/head write race|Old evaluation reopens gate|defer writer|O retry|keep|K|
+|R25|ww::merge-group|Queue green without predicate|Thread opens after entry, defect merges|success queue|A answers; O checks|change|Queue-head objections/threads; KEN-2017|
+|R26|ww::DEFAULT_BRANCH|Missing default branch checkout|Write token runs PR-controlled code|b O writer|Y|keep|K|
+|R27|ww::request-converge|Dispatch/fork relay/rate-limit failure|Gate stale until schedule|w O|no for A; O|keep|K; scheduled retry, not source failure|
+|R28|ww::Escalate sustained writer failure|Incident API read/write fails|Owner misses sustained outage|w O|O|keep|K; failed lookup never duplicates incident|
+|R29|rs::standard-ruleset-source|Different ruleset source|Protection can be weakened; harmless placement also fails|audit nonzero C/O|no C; O|change|Org audit/effective authority; D003/D013|
+|R30|rs::standard-merge-queue|Queue not required|Concurrent changes merge untested|audit nonzero O|Y|keep|K; admin audit, not C commit gate|
+|R31|rs::standard-required-contexts|Required contexts differ/extra gate|Tests omitted or merges wrongly blocked|audit nonzero O|Y|change|Needed effective contexts, not exact set|
+|R32|rs::standard-required-approvals|No independent approval|Unreviewed source merges|audit nonzero O|Y|keep|K|
+|R33|rs::standard-stale-dismissal|Old approval survives new head|Unreviewed new bytes merge|audit nonzero O|Y|keep|K|
+|R34|rs::standard-conversation-resolution|Thread resolution optional|Open findings merge|audit nonzero O|Y|keep|K|
+|R35|rs::standard-copilot-review|No auto Copilot request|none|audit nonzero O|Y|remove|Delete vendor rule; independent review stays|
+|R36|rs::standard-bypass-actors|Bypass actor outside allowed scope|Approval/tests bypassed|audit nonzero O|Y|keep|K; unread actor distinct|
+|R37|rs::standard-classic-protection|Classic protection beside rulesets|none|audit nonzero O|Y|remove|Delete presence audit; D016 queue rule stays|
+|R38|rs::standard-ci-context|CI absent on PR/queue legs|Untested combined tree merges|audit nonzero O|Y|keep|K; unread API != absent job|
+|R39|rs::standard-app|App missing in any org repo|Repo cannot refresh; unrelated repo also fails|audit nonzero C/O|no C; O|change|Org inventory to O; local authority only|
+|R40|rs::standard-environment|Env absent/non-default policy|PR reads write tokens|audit nonzero O|Y|keep|K|
+|R41|rs::standard-environment-secrets|Required secret absent|Refresh cannot authenticate|audit nonzero O|Y|keep|K; no C commit block|
+|R42|rs::standard-secrets-outside|Privileged secret outside protected env|Untrusted workflow gets write authority|audit nonzero O|Y|keep|K; denied reads unexercised|
+|R43|RG/review-writer.sh::writer-class-unresolved-kept|Class fails with exact-head success|Transient failure revokes valid state|notice; no post; pass fails|A/O|keep|K; not newly measured approval|
+|R44|rw::workflow-reference-count|Multiple executable engine references|Writers overwrite state|b O workflow|own Y; parser A|change|Executable references only; U parser|
+|R45|rw::workflow-opt-in|Partial check_run opt-in|Review relay does not run|b O workflow|Y|keep|K; harmless order R14|
+|R46|rw::workflow-absent-mode|Active required writer absent|Required status never appears|b O repo|Y|keep|K; optional/off/no execution passes|
+|R47|RG/adopt-refresh.sh::refresh-warning=workflow-edited|Adopt edited refresh YAML|User workflow overwritten|w + replacement C|restore Y; loss occurred|change|Preserve edited YAML; replacement consent|
+|R48|RG/adopt-refresh.sh::workflow-symlink|Refresh destination symlink|Replacement writes foreign target|refuse C|Y|keep|K|
+|R49|RG/provision-environment.sh|Partial app selection/org enumeration|Whole-org provisioning falsely complete|refuse O org|Y|keep|K; owner-only, unrun here|
+|R50|RG/provision-environment.sh::secret|Live secret value absent|Provisioned refresh cannot authenticate|refuse O org|Y|keep|K; secret name not value proof|
+|R51|RG/provision-environment.sh::protection|Policy switch drops protection|Review/wait protection lost|refuse O org|Y|keep|K|
+|I01|hc|Missing event/refs/contract/ownership|Wrong diff gets test/review waiver|fallback/refuse caller|input Y; engine A|change|Standard/unmeasured; U/E; full route|
+|I02|hc::render|Bad render/provenance/foreign-key proof|Authored code disguised as generated|standard fallback A|review Y; record F|keep|K; exact head, no unread waiver|
+|I03|hc::trivial|Large docs delta/instruction/config path|Policy misclassified as harmless prose|wider checks A|Y|keep|K; no label override|
+|I04|hc::queue-only|Queue list absent/unreadable/sensitive path|Direct merge skips combined proof|queue A|Y|keep|K; queue route, no unknown-source repair|
+|I05|T/ci-job-set::event-parity|PR/queue selection differs|PR green omits queue tests|b O workflow|Y|keep|K|
+|I06|T/ci-job-set::PROOF_RECORD|Bad prior proof selection|Untested lane skipped|w + run O|no fix needed|keep|K; invalid proof runs lane; identity I25|
+|I07|T/ci-job-set::die|Bad class/event/docs/source read|Selector drops jobs|b A/C workflow|config Y; selector A|change|U selector; full-set fallback|
+|I08|HC/aggregate-needs|Classifier absent/failed or job not green|Failed/cancelled/unauthorized skip turns green|b A/L|source Y; host O|change|E; keep unauthorized-skip refusal|
+|I09|T/ci-aggregate|Bad/duplicate selection/missing result/helper|Malformed wrapper permits skip|b A/C workflow|wiring Y; helper A|change|U: selector/helper protocol|
+|I10|st::shard names agree with the matrix|Shard absent/unused/unread roster|Shard never runs|b O workflow|Y|keep|K|
+|I11|st::executable bits|Missing executable mode|CI/install cannot start script|b A|Y|keep|K; libraries excluded|
+|I12|st::the interpreter is Bash 3.2|macOS probe uses wrong runtime|False portability attestation|b O CI|Y|keep|K; inverse probe, no other-OS proof|
+|I13|st::crate matrix agrees|Crate matrix misses member|Crate tests never run|b O workflow|Y|keep|K|
+|I14|st::platform-gated tests|File-wide platform cfg|Platform feature untested|w A|Y|keep|K; portable counterpart when needed|
+|I15|st::the verify document|Bad built verify JSON/version|Classifier cannot prove ownership|b A|Y|keep|K; producer/consumer fixture|
+|I16|st::pi-claude-bridge bundle|Bundle differs from clean-lock build|Published bytes differ from reviewed source|b A|Y|keep|K|
+|I17|T/installer-pin::--check|Installer SHA/tag mismatch|Token workflow runs wrong script|b A|Y|keep|K|
+|I18|W/catalog-check.yml::Validate the catalog|Catalog grammar fails|Harness cannot load shipped package|b A|Y|keep|K|
+|I19|W/catalog-check.yml::strict|Strict escalates all advisory|Ignored/lost output ships; harmless metadata blocks|b A|source Y; severity A|change|Harm-specific I22-I24; other advisory warns|
+|I20|W/own-catalog.yml::real-CLI round trip|CLI absent/emitted tree rejected|Renderer green but harness loads nothing|b A/L|renderer A; runtime O|change|E; retain real-CLI proof, no zero coverage|
+|I21|st::CI|CI timeout/install/assertion failure|Regression ships or proof unavailable|b A/L|source Y; host O|change|E; retain commands/budgets; KEN-1981 cost|
+|I22|CORE/check_catalog.rs::tracked_outputs|Declared tracked output ignored|Report absent in clone/review|strict finding A|Y|keep|K; consumer strict V07|
+|I23|CORE/render/validate/skill.rs::findings|Source skill lacks description|Harness cannot select skill|advisory A|Y|keep|K; advisory not blanket breakage|
+|I24|CORE/check_catalog/settings.rs::findings|Unreadable seeded settings|Loader ignores/refuses shipped settings|strict finding A|Y|keep|K|
+|I25|ACT/change-class/proof::answer|Bad prior run/tree/event/artifact identity|Wrong/failed proof skips tests|reuse=false O|no fix needed|keep|K; no-reuse, selector I06|
+|I26|ACT/change-class/classify::lanes-from-judged-tree|Declaration checkout is judged tree|PR edits own declaration to skip tests|refuse caller|Y|keep|K|
+|I27|ACT/change-class/classify::declaration|Trusted declaration bad/absent|Unknown authorizes test skip|w; no lane verdict O|no A; O|keep|K; no PR defect inferred|
+|I28|ACT/change-class/classify::wiring-error|Protocol/helper/output/write fails|False/incomplete lane selection|b caller|wiring Y; package/host A/O|change|No selection; U/E; full-check route|
+|H01|H/block-argv-kill.sh::KILL_RE|pkill/killall in shell text|Unrelated lanes killed by name|b L|Y|change|Executable kill only; allow quotes/heredoc|
+|H02|H/block-bare-cd.sh|Bare cd in persistent Claude shell|Later call uses wrong checkout|b L|Y|keep|K; persistent-shell delivery only|
+|H03|H/block-bare-cd.sh|Bare cd in per-call Codex/Pi shell|none|b L|Y|remove|Delete per-call-shell delivery|
+|H04|H/block-repo-copy.sh::BLOCK_RE|Copy .git/target to scratch|Shared temp storage filled|b L|Y|change|Executable copy only; name proves no size|
+|H05|H/block-unsafe-rm.sh::UNSAFE_RE|rm with possibly empty variable|Unintended files deleted|b L|Y|change|Actual rm only; allow prose/git rm --cached|
+|H06|H/block-worktree-refresh.sh::verb_kind|Inherited main manifest project write|Lane mutates shared base install|b L|target Y; base F|change|Target proof; shared write to F|
+|H07|H/block-worktree-refresh.sh|Any project update-pi in worktree|Shared/duplicate package update|b L|no even own project|change|Actual target ownership/consent, not blanket ban|
+|H08|H/command-safety.sh::COMMAND_SAFETY_DENY_PATTERN|Configured regex matches shell text|User-selected danger runs|b C/L|command Y; policy O|change|Executable match or disclose lexical opt-in|
+|H09|hp::git_commit_call|Commit with unarmed checks|Unconsented repo code/checks absent|b A/C/L|setup O/F|change|Consent/main-owner setup route|
+|H10|hp::flag_read|Bypass token in command text|Checks skipped|b A/C|Y|change|Actual bypass only, not message/git data|
+|H11|hp::elsewhere_notice|Cross-repo -C/cd/env|Cwd gate cannot attest target|w A/C|target O|keep|K; no cross-repo enforcement claim|
+|H12|hd::covering_docs|Code changes without doc edit|Stale doc misdirects work|b once A/L|Y; doc may be correct|change|Advisory/confirmation, no meaningless doc edit|
+|H13|hd::tree_paths|Covers matches no path|Topic cites missing code|b once A/L|own Y; inherited A|change|Own introduced dead citation gate; U inherited|
+|H14|hd|No covering topic|none|b once A/L|Y|remove|Delete map-presence refusal|
+|H15|H/reviewer-read-only.sh|Reviewer edits/writes outside reports|Reviewer changes judged bytes|b reviewer|Y|keep|K; Edit everywhere, Write repo; shell partial|
+|H16|H/reviewer-read-only.sh::GIT_DISCARD|Reviewer git commit/push/discard text|Author work/branch changed|b reviewer|Y|change|Actual write only; allow data/stash list|
+|H17|hr::artifact|Stop lacks artifact path|Caller gets no result|b once reviewer|Y|change|Readable artifact, not transcript mention|
+|H18|hr::WORKTREE|Any dirty reviewed file|Reviewer leftovers affect later tests|b once reviewer|no for prior A edits|change|Attribute new dirty paths against start tree|
+|H19|H/task-completed-check.sh::clippy|Changed Rust full workspace lint|Compile/correctness defect reported done|b A/L|own Y; inherited/host A/O|change|Affected inputs; E; style advisory|
+|H20|H/skill-load-check.sh::judge_loaded|No skill-load transcript proof|none|b L|Y|remove|Delete read ritual, behavior checks remain|
+|H21|H/skill-load-record.sh|Load ledger fails|H20 falsely blocks loaded skill|w session|no: A/O|remove|Delete recorder with H20|
+|H22|hm::mail_check|Fresh lead stop with unread mail|Owner directive missed|b lead stop|Y|keep|K; ack after delivery, continued escape|
+|H23|hm::halt|Unread halt before tool call|Work continues after owner stop|b L|lead ack; child stop/report|keep|K; exact acknowledgement route|
+|H24|hm::question_tool_check|Harness question tool in lane|Answer goes to wrong session|b L|Y|keep|K|
+|H25|hm::idle_check|Lead ends without new status|Overseer cannot tell idle from busy|b once lead|Y; may be needless|change|Idle notice from incomplete/undelivered work|
+|H26|hm::idle-record|Mail/status recording fails|Progress/idle unknown|w L|no: O|keep|K; unknown, no repeated hold|
+|H27|hm::refuse_handoff|Measured session limit reached|Work context/access lost|b lead|Y|keep|K; existing handoff clears first|
+|H28|hm::overseer_marks|Measured overseer limit reached|Root loses lane decisions|b overseer|Y|keep|K; no forced credential edit|
+|H29|hm::handoff-unanswered|Untrusted/missing handoff state/tools|Unknown capacity read as free|w session|no: A/O|keep|K; unknown, no infinite hold|
+|H30|hm::transcript|Unknown usage triggers handoff block|Work lost without capacity proof|b session|only with writer|change|Reachable handoff or O warning|
+|H31|H/lane-mail-deliver.sh|Post-tool context/judge fails|Directive/tool result lost|post-tool refusal/report L|no: A/O|change|Keep tool result; extra notice, mail unread|
+|H32|H/lane-mail-start.sh|Start/prompt delivery fails|Owner mail missed|w session|no: A/O|keep|K; prompt wrapper included, retry unread|
+|H33|H/lane-mail-compact.sh|Compaction record fails|Later stop reads stale room|post-event w O|no session repair|keep|K; discard stale usage; event not undone|
+|H34|H/session-start-row.sh|Start/end/failure writer absent|Fleet cannot establish termination|w session|no: A/O|keep|K; shared end/failure judge|
+|H35|H/block-argv-kill.sh::missing-tools|Missing/bad payload/tools|Name kill unknown|b all shell|no: A/O|change|U/E adapter; reachable context/O route|
+|H36|H/block-bare-cd.sh::missing-tools|Missing/bad payload/tools|Persistent cwd move unknown|b shell|no: A/O|change|U/E adapter; contextual warning|
+|H37|H/block-repo-copy.sh::missing-tools|Missing/bad payload/tools|Scratch copy unknown|b shell|no: A/O|change|U/E copy adapter, as H35|
+|H38|H/block-unsafe-rm.sh::missing-tools|Missing/bad payload/tools|Deletion unknown|b shell|no: A/O|change|U/E adapter; reachable repair|
+|H39|H/block-worktree-refresh.sh::missing-library|Missing library/git/payload/cwd|Write ownership unknown|b shell|cwd Y; package A|change|Own cwd fix; U/E package prerequisites|
+|H40|H/command-safety.sh::settings|Loader/payload/unrelated setting fails|Deny policy unknown|b all shell|policy O; package A|change|Own deny refusal; remove unrelated all-shell trap|
+|H41|hp::missing-tools|Payload reader fails|Commit arming/bypass unknown|b shell|no: A/O|change|U/E adapter; no own-repair block|
+|H42|hd::refuse|Inventory/git/session/hash/marker fails|Doc comparison unknown|b fresh stop; continued passes|no: A/O/F|change|E unknown/continued escape; payload H50|
+|H43|H/reviewer-read-only.sh::missing-tools|Payload/path/git read fails|Write boundary unknown|b reviewer|no: A/O|change|Platform allowlist; U/E adapter gap|
+|H44|hr::refuse|Transcript/id/git/marker fails|Review result/cleanup unknown|b fresh stop; continued passes|no: A/O|change|E unknown/continued escape; payload H51|
+|H45|H/skill-load-check.sh::refuse|Load rule/transcript/payload unreadable|none|b session|no: A/O|remove|Delete traps with H20|
+|H46|hm::stall|Mail/fleet/marker/read trust fails|Directive/halt unknown|b fresh; w continued|no: A/O|change|Untrusted code refused; gap/safe stop, not empty|
+|H47|H/lane-mail-halt.sh|Halt judge absent|Stop authority unavailable|b all tools|no: A/O|change|U/E companion; safe session end|
+|H48|hm::missing-tools|jq/cat/payload before retry read|Owner mail unknown|b every stop/tool|no: A/O|change|U/E adapter; nonlooping unknown before hold|
+|H49|docs/plans/kendex-backlog-vision.md::KEN-1482|Planned bare git/gh owned-verb check|Wrong route bypasses protection/shared ownership|planned b L|owned route Y; repair varies|change|KEN-1482 planned; writes with harm only|
+|H50|hd::payload|Doc payload read fails|Comparison/stop escape unknown|b even continued|no: A/O|change|U/E adapter; nonlooping unknown stop|
+|H51|hr::payload|Review payload read fails|Stop/escape state unknown|b even continued|no: A/O|change|U/E adapter; nonlooping stop, no false result|
+|H52|H/task-completed-check.sh::git_paths|Git changed-set read fails|Unchecked completion claimed|b session|no: O|change|E: selection separate from lint|
+|H53|H/task-completed-check.sh::cargo|Rust changed, cargo missing|Rust check unexercised|b L|no: O|change|E: compiler before lane|
+|V01|v::check_scope|Unread manifest/record/scope|False verification agreement|nonzero C/L|manifest Y; record F|change|Keep unjudged; record to F, no unrelated gate|
+|V02|v::say_row|Missing/stale/conflicting/orphan files|Setup differs from declaration|nonzero C/L|local Y; render/record F|change|Measure local vs upstream/main separately|
+|V03|v::declaration_rows|Declaration lacks record row|Omission hides unchecked package|nonzero C/L|no lane; F|change|Keep gap; main record F, no lane apply|
+|V04|v::failed_hook_delivery_rows|Unsupported hook event|User thinks undelivered guard active|nonzero C|selection Y; source A|change|U: event proof; supported/removal choices|
+|V05|CORE/engine/instruction_shims.rs::ShimStanding|Missing/stale/obstructed shim|No shared instructions or user prose lost|nonzero/item refusal C|obstruction Y; generated F|change|No-clobber; own migration vs F shim repair|
+|V06|CLI/repo_effects.rs::say_lapsed|Armed setup lapsed/unknown|User thinks checks active|nonzero verify; w refresh C|setup O; package A|change|State notice; U script, O re-arm|
+|V07|v::tracked_output_rows|Tracked output ignored|Report absent in clone/review|w; strict nonzero C/L|ignore O|change|Default warning; strict only at repair owner|
+|V08|at::inventory|Bad/missing ownership inventory|Own code skipped/consumer wrongly blocked|nonzero C/L|no: F|change|Trust proof stays; blocker to A/F|
+|V09|at::inventory|Layout-only inventory mismatch|none|nonzero C/L|no: F|remove|Delete layout failure; schema/membership stays|
+|V10|at::record|Record not canonical serialized form|Unknown data lost; whitespace also fails|nonzero C/L|no: A/F|change|Protect dropped data before layout-only removal|
+|V11|at::differs|Record field/key/source/bundle differs|False ownership/origin attestation|nonzero C/L|no lane; F|change|Trust proof stays; main record F|
+|V12|at::history_problem|Bad/off-history/unavailable pin|Unreviewed source authorized|nonzero C/L|pin/cache Y; history A|change|No trust waiver; unavailable mirror != tamper|
+|V13|at::held_problem|Before comparison floor/base unreadable|Render waiver permits rollback|nonzero proof caller|base/fetch Y; history A|keep|K; advancing tip alone notice|
+|V14|at::adopted_workflows|Adopted workflow differs|Wrong trust/policy executes|nonzero O workflow|own YAML Y; template A|change|Trust gate; harmless bytes warn; U template|
+|V15|at::foreign_since|Foreign shared keys changed/unknown|Waiver hides own permissions/config|proof rejection caller|review Y|keep|K; foreign unknown not general failure|
+|V16|v::print_left_out|Hook excludes all chosen harnesses|Intentional skip mistaken for broken install|notice C|selection Y; support A|keep|K; omission not gap|
+|V17|H/session-drift-check.sh::notice|Drift CLI/payload/check unavailable|Session assumes current setup|w session|no: A/O|keep|K; no project record write fallback|
+|V18|H/session-drift-check.sh::report|Linked/lane shared drift|Lane refreshes shared state|w L|no: F/parent|keep|K; count/no lane refresh|
+|V19|ds::manifest_lines|Bad manifest/old hook/missing ref|Session follows incomplete setup|w C|manifest Y; source A|change|Own manifest fix; U hook/reference|
+|V20|ds::pi_shadow_scan|Pi duplicate/shadow/stale/missing|Wrong copy runs/double registration|w C|Y|keep|K; never delete foreign copy|
+|V21|ds::unrecorded_lines|Unrecorded/unowned source/files|Wrong package called managed|w C/L|local Y; record F|keep|K; main record F|
+|V22|ds::snapshot_lines|Missing fetch/snapshot/edits/removal/update|Unknown comparison called current|w C|network/edits Y; source A|keep|K; held/ignored quiet|
+|V23|CLI/check/commit_hooks.rs::fold_commit_hooks|Commit gate unarmed/stale/unknown|Session thinks protection active|w C|consent O; source A|change|Consent notice; U script/hooksPath to O|
+|V24|ds::snapshot_lines|Healed fetch retains bad snapshot note|False unresolved warning persists|w C/L|no: A|change|KEN-2140: digest-bound rederive on fetch|
+|V25|CORE/settings_seed.rs|Planned orphan settings comment|Removed setting still advised|planned w/offer C|own Y; provenance unknown|change|KEN-1729 planned; warn/preserve sans consent|
+|V26|v::check_scope|Unread manifest and empty/absent record|Unchecked setup exits clean|refusal may exit 0 C|manifest Y; exit A|change|Unread manifest always nonclean; unrun case|
+|A01|CORE/manifest/file.rs::parse_text|Bad/incompatible manifest schema|Wrong install intent|refuse C|Y|keep|K; no partial writes|
+|A02|CORE/manifest/validate.rs|Unknown keys/bad declaration shapes|Ignored setting/wrong target|refuse C|Y|keep|K; catalog manifests upstream|
+|A03|CORE/manifest/validate/items.rs|Bad name/rev/env/fork/plugin/dependency|Path escape/bad data/lost identity|refuse C|Y|keep|K|
+|A04|CORE/engine/desired_source.rs::resolve_source|Unread/pending/absent source or item|Requested package not installed|skip/w; refresh may fail C|path/network Y; source A|change|U upstream absence; preserve safe copy|
+|A05|CORE/source_read.rs::contained|Traversal/symlink/unsafe catalog entry|Host secrets copied|item refusal C|no: A; reject source|change|U: safe catalog reads|
+|A06|CORE/source_read.rs::TREE_BOUND|File/tree/depth/count bound exceeded|Memory/traversal exhaustion|item refusal C|no: A|change|U: resource bounds stay|
+|A07|CORE/engine/catalog.rs::Collisions|Distinct names collapse|Package replaces another|item refusal A/C|selection Y; names A|change|U names; own selection choices|
+|A08|CORE/engine/item_plan.rs::rebound|Source rebind without fork|Wrong origin overwrites package|item refusal C|Y|keep|K|
+|A09|CORE/engine/holds.rs::hold_rev_conflict|Incompatible dependency pins|Wrong dependency version|item refusal C|own pins Y; upstream A|change|No ambiguity; name pin owners; U clash|
+|A10|CORE/engine/holds.rs::hold_local_edit|Edited artifact/unknown old hash|Refresh erases user work|item refusal C|Y|keep|K; honest unknown, fork/discard consent|
+|A11|CORE/engine/file_plan.rs|Unowned target occupant|User content overwritten|item refusal C|Y|keep|K; deliberate adopt/preserve/remove|
+|A12|CORE/engine/tree_plan.rs|Foreign link/bad shape/unreadable tree|Outside write/unknown content lost|item refusal C|layout Y; permissions O|keep|K; no blanket unknown-content delete|
+|A13|CORE/engine/removal.rs::edit_holds|Remove edits/unreadable/required dependency|User work/judge lost|item hold C|edits Y; companion A|change|Data hold stays; U companion|
+|A14|CORE/engine/deps.rs::withhold_requirers|Hook companion unavailable|Every tool call denied by wrapper|item withheld C|no: A|change|Withhold unsafe wrapper; U delivery proof|
+|A15|CORE/engine/deps.rs::warn|Skill dependency missing/ambiguous|Skill lacks required tool/rule|w C|selection Y; source A|change|Route by declaration owner; U upstream|
+|A16|CORE/engine/desired_kinds.rs::desired_hook|Bad hook event/header/payload/exclusion|Guard cannot deliver|refuse/exclude C|custom Y; source A|change|U delivery; intentional exclusion distinct|
+|A17|CORE/engine/desired_custom_hooks.rs|Scoped custom hook becomes prose|Advisory mistaken for safety guard|w C|Y|keep|K; advisory not enforced safety|
+|A18|CORE/engine/desired_agent.rs::render_or_refuse|Pi cannot express denied tool set|Agent gets unauthorized tools|item refusal C|override Y; source A|change|Never widen; U adapter, supported choices|
+|A19|CORE/render/validate/mod.rs::segment_findings|Bad item name/loader grammar|Path escape/item not loaded|item refusal C|rename Y; source A|change|Containment stays; U names, own override|
+|A20|CORE/render/validate/mod.rs::frontmatter_map|Bad/missing frontmatter|Harness cannot load item|item refusal C|no: A|change|U: required frontmatter|
+|A21|ra::codex|Bad Codex fields/sandbox/model/effort|Agent unavailable/wrong permissions|item refusal C|override Y; adapter A|change|U: Codex contract; own override choices|
+|A22|ra::opencode|Bad OpenCode mode/permission|Access rule cannot load|item refusal C|override Y; adapter A|change|U: invalid access contract|
+|A23|ra::claude|Bad Claude agent name|Agent absent/wrong identity|item refusal C|no: A|change|U: source/render name|
+|A24|ra::gemini|Bad Gemini metadata/model/effort|Agent absent/wrong selection|item refusal C|model Y; metadata A|change|U: loader metadata; own model choices|
+|A25|ra::antigravity|Bad Antigravity metadata/tier|Agent cannot delegate|item refusal C|no: A|change|U: loader metadata/tier|
+|A26|ra::copilot|Bad Copilot description/name|Agent absent/wrong name|item refusal C|no: A|change|U: loader description/name|
+|A27|CORE/render/validate/skill.rs::findings|Missing skill/name/mismatch/long Codex description|Skill absent/wrong call name|item refusal C|rename partly; metadata A|change|U: loader naming/metadata; own rename|
+|A28|CORE/render/validate/command.rs::gemini|Bad/missing Gemini command prompt/TOML|Command cannot load/run|item refusal C|no: A|change|U: emitted Gemini command|
+|A29|CORE/render/validate/skill.rs::findings|Missing description/ignored syntax/key|Item cannot trigger or ignores behavior|w C|no: A|change|U source disclosure; advisory not strict|
+|A30|CORE/engine/desired_mcp.rs::refusal|Bad MCP transport/env/literal secret|Connection fails/secret tracked|item refusal C|own Y; catalog A|change|Secret/transport stays; U catalog|
+|A31|CORE/engine/desired_kinds.rs::desired_plugins|Unsupported plugin delivery/config|User thinks inactive plugin runs|item skip/refuse C|selection Y; adapter A|change|U adapter; supported choices|
+|A32|CORE/engine/desired_command.rs::emitted_name|Fallback command names occupied|Callable replaced|item refusal C|Y|keep|K; emitted-name notice|
+|A33|CORE/engine/settings_write.rs::settle|Settings target linked/bad shape/env|Foreign settings lost/keys ignored|item refuse/w C|Y|keep|K; preserve user values|
+|A34|CORE/engine/settings_write.rs::declarations|Seed sensitivity conflicts|Secret enters public layer|refuse C|no: A|change|No secret write; U metadata|
+|A35|CORE/engine/copilot.rs::agent_notices|Copilot disable/model/MCP policy|Installed item inactive|w C|personal Y; org O|keep|K; org policy to O|
+|A36|CORE/engine/gemini.rs::overridden|Gemini system/enableAgents/server policy|Project item ineffective|w C|local Y; machine O|keep|K; project cannot override machine policy|
+|A37|CORE/engine/antigravity.rs::hook|Matcher translation fails|Hook matches nothing|w C|no: A|change|U adapter; Gemini/Copilot too|
+|A38|CORE/engine/scoring.rs::run|Safety scoring flags package|Risky/broad behavior undisclosed|w C|choice Y; source A|keep|K; score not enforced safety|
+|A39|CLI/mod.rs::resolve_scopes_at|Ambiguous target/home-as-project/bad root|Install wrong scope|refuse caller|Y|keep|K; no silent scope fallback|
+|A40|CLI/project.rs::registrable|Register temporary project|Fixture remains in real registry|refuse caller|Y|keep|K; own-catalog already isolated|
+|A41|CLI/engine_common.rs::ask_before_writing|No write/noninteractive consent|Unapproved file change|refuse C/L|Y|keep|K|
+|A42|rf::prepare_scopes|Refresh changes installed set|Unapproved additions/removals|refuse C|Y|keep|K|
+|A43|CORE/apply/mod.rs::lock_scope|Concurrent scope writer|Interleaved corrupt install|refuse caller|wait/replan|keep|K; wait/replan, no manual shared lock clear|
+|A44|CORE/apply/pre.rs::check|Inputs/targets/root changed|Concurrent work erased|refuse caller|Y|keep|K; replan after concurrent change|
+|A45|CORE/apply/landing.rs::landed_within|Target outside canonical scope|Foreign files written|refuse caller|filesystem Y; path A|change|Containment stays; U generated path|
+|A46|CORE/apply/transaction.rs::run_journaled|Write/rollback/recovery fails|Partial install/concurrent work loss|partial refusal C|disk O; engine A|change|Exact partial paths; E/U engine/admin|
+|A47|CORE/engine/recovery.rs::plan_record_existing|Recovery cannot prove existing installs|False current ownership|refuse caller|local Y; main F|change|Exact equality; tracked recovery F|
+|A48|CLI/repo_effects.rs::confirm|Effects lack separate consent|Repo code changes gates/settings unapproved|skip effects C|Y|keep|K|
+|A49|CORE/bot_instructions.rs::protocol_error|Renderer fails/bad output paths|Ownership/commit offer includes foreign files|post-write nonzero C|no: A|change|No foreign path; U protocol; post-write stated|
+|A50|rf::record_snapshots|Snapshot/trash pass fails|Future comparison absent/old trash left|w C|disk O; derivation A|keep|K; bookkeeping not rollback|
+|A51|rf::run|Sync/source/Pi proof failure aggregate|Partial refresh called complete|nonzero C|network Y; upstream A|change|Exact partial state; U safe upstream skips|
+|A52|CLI/commit_offer.rs::hold|Unarmed/stale/unvouched commit package|Commit skips checks/uses old policy|selected refusal C|setup O; source A|change|Consent/action gap; U package; reviewed route|
+|A53|CORE/commit_offer/mod.rs::Unavailable|Remote/gh/PR route unavailable|Push wrong repo/bypass rules|choice unavailable C|route Y; auth O|keep|K; local install/leave available|
+|A54|CLI/commit_offer.rs::refused|Chosen commit/push/PR fails/times out|Requested action incomplete|nonzero C|message/route Y; gate O/A|change|Partial install/action gap; E/U gate outage|
+|A55|CLI/project.rs::register_target|Registry fails after install|Installed project absent from app|post-write error C|registry Y; core A|change|Partial registry outcome; U core|
+|A56|CLI/updates_cmd.rs::run_with|Apply with mute/unmute/bad selection|Wrong scope/action|refuse C|Y|keep|K|
+|A57|CLI/update_pi.rs::install_rows|Duplicate package/origin across scopes|Double registration/wrong origin|update refusal C|Y|keep|K; no foreign shadow deletion|
+|A58|CORE/pi_ext/mod.rs|Bad Pi metadata/path/bin/source|Wrong code/path escape|refuse C|local Y; catalog A|change|Containment stays; U catalog|
+|A59|CORE/pi_ext/mod.rs::npm_install|npm/settings/foreign bin failure|Incomplete extension/user files lost|post-copy refusal C|local Y; shipped build A|change|No foreign overwrite; E/U build|
+|A60|CORE/pi_ext/mod.rs::link_bins|Declared executable not shipped|Installed command unavailable|w C|no: A publisher|change|U publisher; no consumer build demand|
+|A61|up::run_on_with_source|Managed/sidecar/unknown updater owner|Other manager's install overwritten|notice/refuse C|own updater; unknown O|keep|K; no privileged overwrite advice|
+|A62|CORE/update_feed.rs::validate|Bad/large/untrusted update feed|Wrong/untrusted release installed|refuse C|no: A publisher|change|No unverified update; U feed|
+|A63|up::VersionRelation|Downgrade without supported force|Rollback loses behavior/compatibility|refuse C|Y|keep|K|
+|A64|up::install_main_fallback|No target artifact/signed main identity|False release/build identity|notice/refuse C|build O; asset A|change|Auth stays; E/U asset, no assumed local build|
+|A65|CORE/release_digests.rs::verify_command|Signature/identity/digest mismatch|Tampered/wrong app installed|refuse C|no: A publisher|change|Trust stays; U publisher incident, no bypass|
+|A66|up::command_failure|App/CLI replacement fails|Halves disagree/update incomplete|refuse C|own writable Y; foreign O|change|Partial state/retry; install-owner permissions|
+|A67|up::record_command_on|Cannot record command path|Desktop cannot later update CLI|w C|path/permission Y; core A|keep|K; current update continues|
+|A68|rf::run|Planned marked-lane mutation refusal|Shared install enters item branch|planned b L|authorized route; base F|change|KEN-2299 planned: shared writes/authority only|
+|A69|T/harness-smoke::BUILD_INPUTS|Installed commit lacks renderer proof|Live smoke blames another build|refuse proof O|rebuild Y; lane authority varies|keep|K; KEN-2127 ancestry/build inputs, allow-stale|
+|A70|T/harness-smoke::refuse|Smoke runtime/repo/fixture/coverage absent|Proof with nothing exercised|unexercised/refuse O|host O; coverage A|keep|K; failed != unanswered, no lane mutation|
+|A71|ce|Planned major bump lacks Breaking note|Incompatible release lacks migration|planned b A release|Y|keep|K planned; KEN-2309, consent not extra gate|
+|A72|CORE/engine/takeover.rs::refuse_unsettled_takeover|Takeover matches nothing/unsettled position|Old/foreign copy wins after claimed takeover|refuse C|Y|keep|K|
+|A73|CORE/apply/op.rs::refuse_unless_ignored|Credential path not ignored|Secret committed|refuse C|Y|keep|K|
+|A74|CORE/apply/op.rs::refuse_unless_ignored|Git ignore query unreadable|Unverified secret exposure|refuse C/L|no: O|change|No private write; E query != unignored path|
+|A75|CORE/lock/file.rs::parse_versioned|Corrupt/old/too-new install record|Mutation ownership unknown|refuse C/L write|local recovery; main F|change|No unsafe write; compatible recovery at owner|
+|A76|CORE/lock/roots.rs::read_against|Absolute/empty/traversing record path|Other checkout overwritten/deleted|refuse C/L write|no: A/F|change|Containment stays; U producer/F recovery|
+|A77|CORE/lock/file.rs::machine_state|Incompatible/corrupt machine cache|Optional cache wrongly blocks install|cache absent C|no fix needed|keep|K; durable refusal A75|
+|A78|CORE/lock/file.rs::machine_state|Machine cache read fails|Delivery/cache unknown|read error refuses C/L|no: O|change|E cache; retain record, no unread overwrite|
+|A79|CORE/engine/posture.rs::ignores_committed|gitignore hides setup/record|Teammate clone misses setup|w C|repo O|keep|K; preserve foreign ignores sans consent|
+|A80|CORE/engine/posture.rs::plan_posture|info/exclude hides render|Changed render never committed|w clone O|Y|keep|K; local remedy, pull cannot fix|
+|A81|CORE/engine/posture.rs::managed_block|Bad managed ignore delimiters|Ambiguous user ignore content overwritten|refuse C|Y|keep|K|
+|A82|CLI/update_pi.rs::settleable; CORE/pi_ext/record.rs::record_matching; CLI/engine_common.rs::refresh_failures|npm-dependent stale Pi package in global refresh|Fetched lifecycle code must not execute on refresh consent|nonzero C/timer|update-pi Y; refresh cannot settle|change|KEN-2330: notice/update-pi; refresh no npm. Other failures stay|
+|X01|OR/dev-validate-run::DEV_VALIDATE_CMD|Bad/absent validation command/dependency|Completion falsely claims checks|refuse L|input Y; config O|change|No pass; E config, no substitute command|
+|X02|OR/dev-validate-run::state=lost|Runner killed/lost/timeout/bad receipt|Incomplete validation called complete|hold L|no: O|change|No pass; E/no-verdict; KEN-1981 cost/bound|
+|X03|T/catalog-release-check|Release strict catalog escalation|Unusable package ships|b A release|Y|change|I18/I22/I24 breakage; advisory escalation I19|
+|X04|T/release-installer-check::missing|Missing/ambiguous installer/command|App-only/wrong build installed|b A release|Y|keep|K|
+|X05|T/release-installer-check::signature|Bad/absent signed macOS sidecar signature|Notarized app cannot run command|b O release|Y|keep|K; unsigned notice not signed proof|
+|X06|T/release-installer-check.ps1|Windows install/uninstall/PATH test fails|CLI unusable/unwanted PATH left|b O release|Y|keep|K; Linux unexercised|
+|X07|T/release-installer-check::tool|Missing installer proof tooling|Behavior unknown|b L release|no: O|change|No release attestation; E native tools|
+|X08|T/release-channel-point::pointer-version|Bad feed/version/build/signature|Channel mixes wrong/untrusted release|b A publisher|Y|keep|K|
+|X09|T/release-channel-point::hold|Candidate not newer|Channel downgrades|notice/no write A|Y|keep|K|
+|X10|T/release-channel-point::releases|Release read/pointer upload fails|Channel partial/unknown|b O publisher|Y|keep|K; partial/no-write, not source failure|
+|X11|T/check-aur-sync::require_fields|Recipe/source-info/parser mismatch|Arch wrong version/deps/missing patch|b A packaging|Y|keep|K|
+|X12|T/check-aur-sync::AUR_REMOTE|Remote AUR mismatch/unreadable|Users get unreviewed recipe|b O publisher|publish O; network O|keep|K; local run not published proof|
+|X13|lr|Main refresh verify/record landing fails|False committed attestation|b F|Y|keep|K; D007, lane mutations unrun|
+|X14|lr::dirty|Dirty default checkout|Refresh loses pending work/records wrong tree|refuse F|Y|keep|K|
+|X15|W/lock-record.yml::The app credentials are set|Record job lacks app secrets|Green job leaves main stale|b F job/L|no: O|change|E credentials; no fake pass|
+|X16|lr::arm|Pushed head not visible|Older head armed|w; exit 0 unarmed F|later F/O retry|keep|K; already pushed/unarmed, not rollback|
+|X17|lr::head-read|PR head unreadable|Unknown head armed|nonzero F/O|retry/auth O|keep|K; no arm, already pushed|
+|X18|pn::guard off-main|Bad/missing/off-main tag|Wrong/unreviewed release published|refuse A release|Y|keep|K|
+|X19|pn::guard name|Tag/package/name/version mismatch|Wrong package/version downloaded|refuse A release|Y|keep|K|
+|X20|pn::guard moved|Tagged tree differs from publish tree|Provenance names wrong bytes|refuse A release|Y|keep|K; tree not version alone|
+|X21|pn::guard npm|Old npm/scratch unavailable|Authentication/proof unexercised|refuse L publish|no: O|change|No publish; E runtime/scratch|
+|X22|pn::guard first-release|First package publish required|Trusted publisher cannot initialize|refuse A/L release|no: npm O|change|npm admin initialization, not version fix|
+|X23|pn::guard lookup|Registry error other than E404|Unknown treated absent/duplicate publish|refuse O|Y|keep|K|
+|X24|pn::guard served|Exact version already served|Immutable duplicate publish|notice; exit 0 A|no fix needed|keep|K|
+|X25|pn::unconfirmed|Publish succeeds, serving unconfirmed|Availability falsely claimed/retry duplicates|post-publish nonzero O|confirmation O|keep|K; possible-write, no rollback/no-write claim|
+|X26|pn::publish|Extract/build/prepack/publish fails|Wrong/incomplete package or unavailable publish|nonzero A/L|build A; host/service O|change|Partial npm; E vs source build|
+|X27|T/publish-homebrew::placeholder guard|Homebrew zero pin|Invalid download offered|w; defer recipe A|Y|keep|K; all-deferred no clone|
+|X28|W/publish-homebrew.yml::The tap credentials are set|Tap app/PUBLISH_TOKEN absent|Stale tap under green publish|refuse L job|no: O|change|E credentials, not recipe|
+|X29|T/publish-homebrew::clone|Tap clone/commit/push fails|Recipe not delivered|nonzero O publisher|auth/service O|change|E service, no source-edit advice|
+|X30|W/publish-aur.yml::AUR_SSH_KNOWN_HOSTS|Missing SSH secret/host trust|Untrusted host/no authentication|refuse L job|no: O|change|No guessed trust; E credentials|
+|X31|pa::check_key|Bad/unregistered key/account/login unknown|Wrong/unknown identity publishes|refuse O publisher|Y|keep|K; unknown != rejected login|
+|X32|pa::sources_current|AUR placeholder/absent asset/bad checksum|Recipe download invalid|w; defer package A|Y|keep|K; defer != published, others proceed|
+|X33|pa::unreachable|Request/read/checksum tool unknown|Network treated pending, publication stale|nonzero O publisher|no source fix; O|change|Unknown/no readiness; E host/service|
+|X34|pa::publish_one|Partial AUR clone/push/compare failure|Some recipes stale/wrong published bytes|partial nonzero O|service O; recipe A|change|Partial subset/continue/verify; E vs recipe|
+|X35|rel::Stage macOS signing environment|Partial Apple secrets|Signed unnotarized app cannot run|refuse L release|no: O|change|O signing admission; all absent unsigned|
+|X36|rel::Stage the command for the bundle|Unsupported command overlay runner|CLI absent/wrong sidecar|refuse A release|Y|keep|K|
+|X37|rel::Classify the tag|Built version/tag/run/commit mismatch|Release misidentifies source|refuse A/O release|Y|keep|K|
+|X38|rel::Write the signed update manifest|Required signed platform asset absent|Feed offers nonexistent download|refuse A/O release|Y|keep|K|
+|X39|RG/dispatch-refresh.sh::installation-read|Installation enumeration fails/empty|Dispatch falsely complete|nonzero L/job|no: O|change|E enumeration; failed read != empty|
+|X40|RG/dispatch-refresh.sh::refresh-error=dispatch|Some repository dispatches fail|Some consumers miss refresh|partial nonzero O|no C; O|change|Partial repo retry; D007 exclusion stays|
+|X41|skills/linear/scripts/lib/common.sh::linear_require_team_target/::linear_guard_write_action/::graphql_query; skills/linear/scripts/commands/comments.sh|Existing-issue write, e.g. comments create, with no LINEAR_TEAM|none|refuse C/L before API|team config possible but unnecessary|remove|Delete issue-addressed team refusal in dispatcher/wire only|
+|X42|skills/linear/scripts/lib/common.sh::linear_require_team_target; skills/linear/scripts/commands/issues.sh, projects.sh, cycles.sh, labels.sh create|Named team-scoped issues/projects/cycles/labels create without target|Guessed team sends new object to wrong project tracker|refuse C/L|Y: own LINEAR_TEAM or --team|keep|K; explicit team on named creates, not X41|
 
-## Commit guard lanes
+## Owner evidence
 
-| ID | Actual check and owner | Reached by | Prevented harm | Effect and actor | Can that actor fix it? | Verdict | Action and boundary |
-|---|---|---|---|---|---|---|---|
-| C01 | `skills/commit-guards/scripts/todo-ban` | Commit or sweep marker-shaped TODO/FIXME/HACK/XXX | none | block author/consumer | Own source: yes; catalog render: no | remove | Delete marker-word refusal. A marker does not establish unfinished behavior. |
-| C02 | `skills/commit-guards/scripts/byte-ceiling` | Add or grow a file past general byte limit | none | block author/consumer | Own file: yes; vendor file: no | remove | Delete general file-size refusal and tighten-only size baseline. Size alone does not establish user harm. |
-| C03 | `skills/commit-guards/scripts/byte-ceiling` | File reaches warning percentage | none | warning author/consumer | Own file: yes | remove | Delete general size warning with its obsolete limit. |
-| C04 | `skills/commit-guards/scripts/suppression-ban` | Blanket lint suppression | Correctness/security checks silently stop checking source | block author/consumer | Own source: yes; adopted upstream: no | change | Keep own-source suppression checks; route adopted-source findings to author and warn consumer. |
-| C05 | `skills/commit-guards/scripts/suppression-ban` | Bare dead-code/unused allow grows or baseline is loose | none | block author/consumer | Own source: yes | remove | Delete count ratchet. Unused-code spelling is not proof of a user defect. |
-| C06 | `skills/commit-guards/scripts/conflict-markers` | Index contains unresolved open/base/close merge markers | Unresolved source or prose reaches release | block author/consumer | Own merge: yes; unchanged render: no | change | Block markers introduced by committer in owned source. Report upstream rendered markers to catalog author without blocking consumer commits. |
-| C07 | `skills/commit-guards/scripts/changelog-entries` | Fragment missing section or excluded from collation glob | Release omits a consumer-facing change | block author/consumer | Yes, their fragment | keep | Retain placement and stray-fragment checks. |
-| C08 | `skills/commit-guards/scripts/changelog-entries` | Fragment is binary/link or not one nonempty list item | Collation cannot produce a readable release record | block author/consumer | Yes, owned fragment | keep | Retain readable-entry grammar. |
-| C09 | `skills/commit-guards/scripts/changelog-entries` | Fragment exceeds character cap | none | block author/consumer | Yes | remove | Delete cap refusal. A necessary migration note can be longer without harming the user. |
-| C10 | `skills/commit-guards/scripts/changelog-entries` | Collate without explicit authorization or with dirty tree | Release collation deletes fragments or overwrites uncommitted work | block release author | Yes, commit work and authorize | keep | Retain consent and clean-tree preconditions. |
-| C11 | `skills/commit-guards/scripts/changelog-entries` | Collation record lacks unique pending section, valid sections or closed fences | Entries land in the wrong release or section | block release author | Yes, repair owned record | keep | Retain destination grammar before replacement. |
-| C12 | `skills/commit-guards/scripts/prose` | Date or numeric issue reference in loaded Markdown | none | block author/consumer | Own prose: yes; kendex render: no | remove | Delete history-token ban. A valid dated decision or issue citation does not establish stale instructions. |
-| C13 | `skills/commit-guards/scripts/md-format` | Paragraph wrap, blank-line shape, CRLF or trailing spaces | none | block author/consumer | Own prose: yes; kendex render: no | remove | Delete format-only refusal. Keep optional reflow tooling, not a commit gate. |
-| C14 | `skills/commit-guards/scripts/md-format` | Unclosed fence/frontmatter/comment prevents scan | Content cannot be fully checked | block author/consumer | Own prose: yes; upstream render: no | change | Report incomplete scan distinctly; block author-owned malformed content at source, warn consumer about upstream bytes. |
-| C15 | `skills/commit-guards/scripts/md-reflow` | Rewrite cannot safely read path, text or block boundaries | Author tool could replace unowned or incorrectly parsed content | block requesting author | Yes, choose readable regular file | keep | Retain refusal to rewrite unsafe input; this is not a required gate. |
-| C16 | `skills/commit-guards/scripts/md-refs` | Consumer-owned link, section, content citation or decision ID is dead | Reader follows a nonexistent rule, file or function | block committer | Yes, owns citing file | keep | Retain source-owned references, including links into a rendered target. |
-| C17 | `skills/commit-guards/scripts/md-refs` | Dead reference originates in kendex render | Same dead instruction reaches consumer | block consumer | No, catalog owns citing source | change | KEN-2298 binding: warn with report route; check installed-layout fixture upstream. Do not create a duplicate issue. |
-| C18 | `skills/commit-guards/scripts/md-refs` | Reference scan cannot read carrier, binary target or comment grammar | Tool could claim checked references it never read | block author/consumer | Own carrier: yes; scanner/upstream: no | change | Keep explicit unjudged result. Warn consumer for upstream/scanner defects and route them to package author. |
-| C19 | `skills/commit-guards/scripts/py-names` | Undefined Python name or invalid syntax | Runtime raises NameError or cannot start | block author/consumer | Yes, owned Python; generated paths excluded | keep | Retain F821 and parse checks. |
-| C20 | `skills/commit-guards/scripts/py-names` | Required ruff/pyflakes absent, incompatible or unreadable result | Name check was not exercised | block lane/consumer | Not always, host owner installs tool | change | Provision checker before installing gate; separate not-exercised from source defects. |
-| C21 | `skills/commit-guards/scripts/comments` | Audit rejects issue IDs/numbers/dates in source comments | none | audit nonzero author | Yes, source comment | remove | Delete comment-history refusal; it is optional today and must not become a gate. |
-| C22 | `skills/commit-guards/scripts/commit-msg` | Header type/scope shape or maximum subject length | none | block committer | Yes, message | remove | Delete message-style refusal. This checkout supplies no release behavior dependent on those limits. |
-| C23 | `skills/commit-guards/scripts/commit-msg` | Consumer-visible product change has no new fragment or explicit opt-out | Users receive changed behavior with no release note | block committer | Yes, write owned fragment | keep | Retain change disclosure with deliberate no-changelog escape. |
-| C24 | `skills/commit-guards/scripts/pre-push` | Push ref does not equal checked-out HEAD or index differs | Gate checks different bytes from the pushed branch | block consumer/author | Yes, select clean target checkout | keep | Retain exact-subject preconditions and malformed ref refusal. |
-| C25 | `skills/commit-guards/scripts/pre-commit` | Installed sibling/local lane missing or cannot execute | Gate could silently omit a promised check | block consumer/lane | Local config: yes; missing kendex runtime: no | change | Validate package completeness upstream and during setup. Surface unavailable consumer gate to install owner; do not present it as bad staged source. |
-| C26 | `skills/commit-guards/scripts/install-git-hooks` | Install from linked worktree | Shared hooks point every branch at a disposable lane's scripts | block lane | No, main checkout owner arms shared hooks | change | Route arming request to main owner and report unarmed state; do not require a lane to modify main. |
-| C27 | `skills/commit-guards/scripts/install-git-hooks` | Foreign helper, nonregular/link/disabled hook or untrusted interpreter | Setup overwrites user hook or claims a hook git will not execute | refuse setup consumer | Yes, owner can preserve/migrate own hook | keep | Retain no-clobber and actual-interpreter checks. |
-| C28 | `skills/commit-guards/scripts/install-git-hooks` | Configured hooksPath is empty or points elsewhere | Commit protections are disabled or unmeasured | warning/setup refusal consumer | Policy owner may be outside session | change | Keep report and do not overwrite foreign hooksPath. Give policy-owner route; no blanket consumer commit block. |
-| C29 | `skills/commit-guards/scripts/commit-guards` | Unknown/empty check selection, corrupt policy/baseline or incomplete scan | Enabled checks can be silently omitted | block author/consumer | Own configuration: yes; package data: no | change | Retain invalid owned-config refusal. Report package failures as upstream unavailable; never count unmeasured as checked. |
-| C30 | `crates/core/src/check_catalog.rs` | Planned dropped-entry or catalog-URL link check | Rendered instruction points at unshipped maintainer file | planned source finding author | Yes, source/catalog author owns link | keep | KEN-2184 binding: check source/render link target upstream. Preserve KEN-2298 consumer-warning boundary; proposed check absent here. |
+- X41: owner note 1790807555 reports issue-addressed `linear.sh comments create` refusing `No Linear team configured` without LINEAR_TEAM. Directive 1790807880-3255129-1763 removes only this refusal. X42 preserves named team-scoped creates. Dispatcher/wire repeat the gate.
+- A82/KEN-2330: owner note 1790809446 reports kendex 1.3.0 `refresh --global --yes` exit 1 for pi-claude-bridge, pi-codex-minimal-tools and pi-web-tools. The timer never reaches update-pi. Directive 1790809600-3921083-27997 requires notice/update-pi, not npm install in refresh. This is owner evidence, not lane measurement. settleable excludes dependencies to avoid fetched lifecycle scripts; record_matching emits Stale/update-pi detail; refresh_failures counts nonorphan Pi drift. This change verdict excludes unreadable, duplicate/origin/edit/trust and other install failures.
 
-## Preflight and document limits
+## Lane size-gate evidence
 
-| ID | Actual check and owner | Reached by | Prevented harm | Effect and actor | Can that actor fix it? | Verdict | Action and boundary |
-|---|---|---|---|---|---|---|---|
-| P01 | `skills/preflight/scripts/preflight::shell-syntax` | Change shell file that bash cannot parse | Script cannot start | block committer | Owned source: yes; rendered source: no | change | Keep source-side syntax check; warn consumer about kendex-managed syntax defects. |
-| P02 | `skills/preflight/scripts/preflight::shellcheck-errors` | Change shell with error-severity shellcheck result | Script executes invalid shell behavior | block committer | Own source: yes; render: no | change | Move rendered-source errors to catalog author; preserve owned-source gate. |
-| P03 | `skills/preflight/scripts/preflight::masked-returns` | Add declaration masking child status | Script treats a failed command as success | block author/consumer | Yes, owns changed source; installed trees stand down | keep | Retain status-loss check. |
-| P04 | `skills/preflight/scripts/preflight::fail-open` | Add unchecked mktemp, strict-mode omission or swallowed status | Failed lookup/write reaches a false passing result | block author/consumer | Yes, owns source | keep | Retain observable status-loss shapes, not a completeness claim. |
-| P05 | `skills/preflight/scripts/preflight::early-close-pipe` | Add pipefail writer feeding an early-closing reader | SIGPIPE aborts command or changes match to false | block author/consumer | Yes, rewrite owned pipeline | keep | Retain check, including suites. |
-| P06 | `skills/preflight/scripts/preflight::unwired-suite` | Add suite not recognized in a runner | New regression test never runs | block author/consumer | Yes, owns runner | change | Retain proven unwired result. Support real detached flag values/configured includes or report unmeasured wiring instead of false unwired findings. |
-| P07 | `skills/preflight/scripts/preflight::mktemp-trap` | Add scratch-creating script with no EXIT cleanup | Repeated runs leave scratch data and exhaust storage | block author/consumer | Yes, own script | keep | Retain new-script cleanup check. |
-| P08 | `skills/preflight/scripts/preflight::hardcoded-temp-path` | Add directory creation at a fixed temporary path | Concurrent runs overwrite each other's scratch or follow planted path | block author/consumer | Own source: yes; render: no | change | Keep unique-scratch requirement in authored source. Send generated-source defects upstream as consumer warnings. |
-| P09 | `skills/preflight/scripts/preflight::docs-cited-paths` | Add an in-scope path citation that resolves nowhere | Reader acts on a nonexistent path | block author/consumer | Own document: yes; managed Markdown: no | change | Use generated ownership for Markdown direction too; report upstream citations without blocking consumer. |
-| P10 | `skills/preflight/scripts/preflight::applied-migration-edited` | Edit/delete/rename a base migration with recorded checksum | Existing database rejects migration checksum on upgrade | block committer | Yes, add corrective migration | keep | Retain only declared checksum-bearing runners; no freeze of unrelated migration formats. |
-| P11 | `skills/preflight/scripts/preflight::data-syntax` | Change strict JSON/TOML parser rejects | Consumer configuration cannot load | block committer | Own config: yes; render: no | change | Keep owned-file syntax; upstream render failure warns and routes to author. Preserve JSONC distinction. |
-| P12 | `skills/preflight/scripts/preflight::not-run` | Needed optional checker absent | Check is not exercised | warning lane/consumer | Environment owner installs tool | keep | Retain explicit not-run list; exit zero is not proof of skipped lanes. |
-| P13 | `skills/preflight/scripts/preflight::env_error` | Git/base/settings/diff cannot be read | Check could judge wrong or incomplete change | block caller | Own input: yes; environment: not always | change | Retain no verdict; separate environment admission from source validation and identify repair owner. |
-| P14 | `skills/orch/scripts/branch-size-check::DELTA_GRAMMAR` | Report-only issue states zero production lines | Unintended production growth can escape a scope allowance | block lane, exit 3 | No, parent owns authorized issue allowance | change | Accept zero and explicit report-only scope. Preserve actual zero contract. Lane evidence below; same recurrence reported for KEN-2319. |
-| D01 | `skills/doc-limits/scripts/doc-limits::SHIPPED_CLASS_ROWS` | Document exceeds class byte cap | Agent-loaded text consumes finite context; ordinary reference prose has no demonstrated failure at its cap | block author/consumer | Own source: yes; generated inventory excludes managed copies | change | Keep load-size notices at actual load points. Make non-runtime document budgets advisory rather than refusing research/reference prose. |
-| D02 | `skills/doc-limits/scripts/doc-limits::MARGIN_PCT` | Document grows into unused margin below cap | none | block author/consumer | Yes, owned document | remove | Delete near-limit growth refusal; a file still below a configured cap establishes no new harm. |
-| D03 | `skills/doc-limits/scripts/doc-limits::parse_classes` | Malformed class, exclusion, margin, reference or settings | Tool can measure wrong documents or claim an unchecked pass | block caller | Own policy: yes; shipped class: no | change | Keep owned-config errors, separate package-policy defect and unreadable environment from document findings. |
-| D04 | `skills/commit-guards/scripts/lib/generated-paths.sh` | Generated inventory cannot parse or be read | Generated source is misclassified as authored, or authored source escapes a check | block consumer/lane | No, kendex/refresh owner writes inventory | change | Validate inventory upstream/at refresh; consumers receive an unavailable-ownership warning and author route, not instructions to edit generated files. |
-| P15 | `skills/preflight/scripts/preflight::guard_tests_var` | Bare substitution under errexit precedes a test of its result | Intended error handler never runs because assignment aborts first | block source author | Yes, test status at assignment | keep | Retain this early-abort branch separately from P04 false-success checks; intended fatal assignment without later guard passes. |
+P14: exit 3 for report-only `0 production lines; one audit report, then change and remove items` and authorized `0 lines`. DELTA_GRAMMAR rejects zero. Parent removes optional Expected delta; allowance_missing passes. No inflated allowance; zero production contract stays. KEN-2319 recurrence reported by parent. Evidence: `tmp/KEN-2320-preflight-ask.md`, `tmp/KEN-2320-zero-delta-ask.md`.
 
-## Review gate
+## Own-check evidence
 
-Evidence/thread rows apply only when class policy reaches those terms. A class-policy none path returns approved before reading evidence or threads. Thread mode off skips thread/disposition terms. Native server protections are separate.
+No audit reruns. Log keys expand to `tmp/KEN-2320-<key>.log`; logs retain UTC date/revision/command, manifests exit/cwd/environment. Green does not prove omitted coverage. G35/V26 are unplanted source-read cases.
 
-| ID | Actual check and owner | Reached by | Prevented harm | Effect and actor | Can that actor fix it? | Verdict | Action and boundary |
-|---|---|---|---|---|---|---|---|
-| R01 | `skills/review-gate/scripts/validate.sh::runtime` | Engine file absent, untracked, linked, nonexecutable or unparsable | CI has no runnable review gate despite local file presence | block installation author/consumer | Own vendoring: yes; broken shipped source: no | change | Keep install-owner readiness check. Validate source package upstream; warn consumer and request refresh-owner repair for managed bytes. |
-| R02 | `skills/review-gate/scripts/validate.sh::scan_settings_source` | Settings file untracked, linked, unreadable or wrong type | CI reads different trust settings from those locally checked | block repository owner | Yes, owns settings | keep | Retain committed-readable policy checks. |
-| R03 | `skills/review-gate/scripts/validate.sh::settings-unknown` | Unknown key or env seam/repository variable stored in TOML | Intended gate policy is ignored | block repository owner | Yes, correct owned setting/location | keep | Retain actual unread-setting checks. |
-| R04 | `skills/review-gate/scripts/validate.sh::settings-outside-env` | Policy outside readable env table, bad header or BOM | Gate silently reads defaults instead of chosen policy | block repository owner | Yes, owns file | keep | Retain loader-compatible source checks. |
-| R05 | `skills/review-gate/scripts/validate.sh::settings-key-shape` | REVIEW_GATE_ mentioned inside a legitimate string | none | block repository owner | Yes, reword unrelated value | remove | Delete token-mention refusal. Parse assignments by the loader's accepted form instead. |
-| R06 | `skills/review-gate/scripts/validate.sh::settings-mode-source` | MODE/WRITER placed in machine-local file engine skips | Gate executes a policy other than intended | block repository owner | Yes, move owned assignment | keep | Retain unread-location finding. |
-| R07 | `skills/review-gate/scripts/review-predicate.sh::--check-config` | Illegal trust list, mode, limits, patterns or enum value | Gate can trust wrong actor or misread review evidence | block repository owner | Yes, owns policy | keep | Retain engine-owned configuration grammar. |
-| R08 | `skills/review-gate/scripts/validate.sh::settings-writer` | Illegal writer or lock-kendex value | Writer installation or execution refuses on every PR | block repository owner | Yes, correct owned value | keep | Retain engine-owned writer/lock settings check. |
-| R09 | `skills/review-gate/scripts/validate.sh::class-policy-undecided` | Custom/off policy without tracked decision file | none | block repository owner | Yes, create ceremonial record | remove | Delete record-presence requirement. Validate actual policy, not existence of prose that might justify it. |
-| R10 | `skills/review-gate/scripts/validate.sh::carry-unmatched` | Exclusion glob matches no current path | Future high-risk path may wrongly retain earlier review if exclusion is misspelled | block repository owner | Yes, own policy | change | Warn for unmatched exclusions; distinguish planned paths from proven misconfiguration without requiring a second declaration ledger. |
-| R11 | `skills/review-gate/scripts/validate.sh::carry-universal` | Exclusion matches every tracked path | none | block repository owner | Yes, own policy | remove | Delete refusal: disabling carry is conservative and does not authorize unsafe code. |
-| R12 | `skills/review-gate/scripts/validate.sh::carry-declaration` | Prophylactic declaration missing or now matches a path | none | block repository owner | Yes, edit duplicate policy record | remove | Delete declaration-reconciliation gate with unmatched-glob ceremony. |
-| R13 | `skills/review-gate/scripts/validate.sh::workflow-no-verdict` | Peer prints no/malformed verdict or status disagrees with records | An unchecked writer copy can report green | block author/consumer | Producer defect: no for consumer | change | Retain no-verdict distinction; validate producer protocol upstream and route managed peer defects to package author. |
-| R14 | `skills/review-gate/scripts/validate-workflow.sh` | Adopted writer absent/untracked/linked or differs from template | Token-bearing workflow can execute PR-controlled code or fail to report review | block repository workflow owner | Yes, owns adopted YAML; template defect: no | change | Keep trust-relevant workflow checks. Warn on harmless byte-only differences; source template defects go upstream. |
-| R15 | `skills/review-gate/scripts/review-predicate.sh::awaiting` | Evidence-requiring class head lacks accepted review | Unreviewed changes merge | pending author/lane | Can request review; cannot supply reviewer itself | change | Keep server approval requirement. Expose reviewer outage/operator route instead of treating missing service evidence as author-fixable source. |
-| R16 | `skills/review-gate/scripts/review-predicate.sh::changes-requested` | Reached evidence path has standing reviewer objection | Known defect merges despite objection | block author | Yes, repair or obtain reasoned reviewer disposition | keep | Retain standing objection; no outage override clears it. |
-| R17 | `skills/review-gate/scripts/review-predicate.sh::threads-open` | Evidence path with thread enforcement has unresolved thread | Unaddressed finding merges | pending author | Yes, answer/resolve through review owner | keep | Retain where server cannot enforce equivalent rule; prefer platform thread-resolution rule when it can. |
-| R18 | `skills/review-gate/scripts/review-predicate.sh::untracked-claim` | Enforced thread disposition says tracked without issue | Deferred defect has no actionable record | block author | Yes, cite real tracked issue | keep | Retain missing-tracking detection; do not equate any ID token with proof the issue exists. |
-| R19 | `skills/review-gate/scripts/review-predicate.sh::unreasoned-decline` | Enforced thread decline contains only labels/filler | Defect is dismissed with no cause to assess | block author | Yes, provide actual reason | keep | Retain empty-reason detection; semantic correctness remains reviewer work. |
-| R20 | `skills/review-gate/scripts/review-predicate.sh::suppressed-findings` | Accepted bot body carries unpublished findings without head-bound dispositions | Known findings disappear because bot created no thread | block author | Yes, head-bound answer per entry | keep | Retain disposition coverage; answer mechanism, not just vocabulary. |
-| R21 | `skills/review-gate/scripts/review-predicate.sh::unmeasured` | Active class cannot be measured | Gate might waive review without establishing class | pending consumer/lane | Classifier/source outage: no | change | Preserve no waiver. Fall back to available ordinary review evidence; send classifier outage to package/operator, not consumer source edits. |
-| R22 | `skills/review-gate/scripts/review-predicate.sh::class-unresolved` | Preparation/policy fails on head with no existing success | Wrong class could grant unearned review waiver | pending head; writer pass fails | Runner/package failure: no author repair | change | Retain no new waiver. Owner fixes preparation; ordinary review must remain reachable. Existing exact-head success is separate R43. |
-| R23 | `skills/review-gate/scripts/review-predicate.sh::exit 2` | API/config/evidence read cannot complete | Read failure erases objection or turns unknown review green | status unchanged operator | API outage: no author fix | keep | Retain take-no-action and retry; this is not a new source rejection. |
-| R24 | `skills/review-gate/scripts/review-writer.sh` | Stale success post loses race to newer non-success/head | Old evaluation reopens a gate after evidence withdrawal | defer writer | Writer/operator owns retry | keep | Retain evaluated-time/head write ordering. |
-| R25 | `.github/workflows/review-gate-writer.yml::merge-group` | Queue event posts green without predicate | Review thread can open after queue entry and before merge | success queue | Author can respond; queue writer owns check | change | Read live objections/threads for queue head before success. Existing KEN-2017 boundary in KEN-1981 context; this is a harm verdict, not a rewrite here. |
-| R26 | `.github/workflows/review-gate-writer.yml::DEFAULT_BRANCH` | Default branch missing before checkout | Write token executes unpinned/PR-controlled engine | block writer operator | Yes, event/wiring owner | keep | Retain pinned default-branch checkout refusal. |
-| R27 | `.github/workflows/review-gate-writer.yml::request-converge` | Dispatch fails, fork read-only relay or rate limit | Gate state remains stale until scheduled pass | warning operator | Author cannot fix service/token | keep | Retain warning and scheduled retry; no source failure claim. |
-| R28 | `.github/workflows/review-gate-writer.yml::Escalate sustained writer failure` | Incident read/write fails | Owner cannot see persistent gate outage | warning operator | Operator owns token/service | keep | Retain incident notice; do not create duplicates on failed lookup. |
-| R29 | `skills/review-gate/scripts/validate-standard.sh::standard-ruleset-source` | Protection comes from a different ruleset source | Repository-level safety policy can be weakened independently; harmless source differences also fail | audit nonzero repository consumer/admin | Organization placement: no consumer authority | change | Retain organization-owned safety protection under D003/D013. Move governance audit to organization owner; judge effective authority rather than treating every location difference as a local defect. |
-| R30 | `skills/review-gate/scripts/validate-standard.sh::standard-merge-queue` | Effective branch lacks required queue | Concurrent changes can merge without combined-tree tests | audit nonzero admin | Yes, branch administrator | keep | Retain owner audit; do not run as ordinary consumer commit gate. |
-| R31 | `skills/review-gate/scripts/validate-standard.sh::standard-required-contexts` | Required contexts differ from declared set or gate is required | Unintended/missing contexts can block merges or omit tests | audit nonzero admin | Yes, repository administrator | change | Check needed effective contexts; do not reject an additional valid review context solely for exact-set conformity. |
-| R32 | `skills/review-gate/scripts/validate-standard.sh::standard-required-approvals` | No independent approval | Unreviewed source merges | audit nonzero admin | Yes, ruleset administrator | keep | Retain platform approval audit. |
-| R33 | `skills/review-gate/scripts/validate-standard.sh::standard-stale-dismissal` | Approval survives changed head | Unreviewed new source merges on an older approval | audit nonzero admin | Yes, ruleset administrator | keep | Retain exact-head approval protection. |
-| R34 | `skills/review-gate/scripts/validate-standard.sh::standard-conversation-resolution` | Threads need not be resolved | Unaddressed review findings merge | audit nonzero admin | Yes, ruleset administrator | keep | Retain platform thread rule audit. |
-| R35 | `skills/review-gate/scripts/validate-standard.sh::standard-copilot-review` | Automatic Copilot request rule absent | none | audit nonzero admin | Yes, administrator | remove | Delete vendor-specific requirement when independent review already gates merge. |
-| R36 | `skills/review-gate/scripts/validate-standard.sh::standard-bypass-actors` | Bypass actor outside allowed scope | Actor can evade approval/test protections | audit nonzero admin | Yes, organization/repo administrator | keep | Retain effective bypass audit and report unreadable actor data separately. |
-| R37 | `skills/review-gate/scripts/validate-standard.sh::standard-classic-protection` | Classic protection exists beside rulesets | none | audit nonzero admin | Yes, administrator | remove | Delete presence-only compliance refusal. D016's actual merge route still requires classic protection off before admin merge; otherwise it uses the queue. |
-| R38 | `skills/review-gate/scripts/validate-standard.sh::standard-ci-context` | No CI context on PR/queue legs | Untested combined tree can merge | audit nonzero admin | Yes, workflow owner | keep | Retain observed CI coverage check; unreadable API is not absent job proof. |
-| R39 | `skills/review-gate/scripts/validate-standard.sh::standard-app` | Standard app absent from any organization repository | That repository cannot refresh; unrelated repository verdict also fails | audit nonzero repository consumer/org admin | No for consumer; organization owner can install app | change | Keep organization inventory at its owner under D003. This repository checks its own refresh authority; report other repositories separately without blocking local work. |
-| R40 | `skills/review-gate/scripts/validate-standard.sh::standard-environment` | Environment absent or permits non-default branch | PR code can read token-bearing environment | audit nonzero admin | Yes, environment owner | keep | Retain default-branch-only token boundary. |
-| R41 | `skills/review-gate/scripts/validate-standard.sh::standard-environment-secrets` | Required secret absent | Authorized refresh cannot run | audit nonzero admin | Yes, secret owner | keep | Retain owner readiness audit; no consumer commit block. |
-| R42 | `skills/review-gate/scripts/validate-standard.sh::standard-secrets-outside` | Privileged standard secret copied outside protected environment | Untrusted workflow can gain write authority | audit nonzero admin | Yes, secret owner | keep | Retain scope audit; permission-denied reads mean not exercised, not source defect. |
-| R43 | `skills/review-gate/scripts/review-writer.sh::writer-class-unresolved-kept` | Class resolution fails while exact head already has success | Transient unmeasured pass could falsely revoke existing valid state | notice; no status post; writer pass nonzero | Operator/package owner repairs cause | keep | Retain exact-head success preservation and explicit failed writer pass; this is not newly measured approval. |
-| R44 | `skills/review-gate/scripts/validate-workflow.sh::workflow-reference-count` | Multiple writers or another executable engine reference | Competing writers can overwrite review state | block workflow owner | Yes for own workflows; managed parser defect: author | change | Retain competing-execution check; avoid refusing display-only mentions merely because they name the engine. |
-| R45 | `skills/review-gate/scripts/validate-workflow.sh::workflow-opt-in` | Partial check_run opt-in trigger/type pair | Review-event relay never runs as intended | block workflow owner | Yes, owns adopted YAML/event choice | keep | Retain complete event pair; harmless byte/order differences remain R14, not new safety terms. |
-| R46 | `skills/review-gate/scripts/validate-workflow.sh::workflow-absent-mode` | No writer while settings require/enforce it | Required gate status never appears | block repository owner | Yes, own writer/mode policy | keep | Retain missing active writer check. Optional writer plus mode off and no executable reference passes explicitly. |
-| R47 | `skills/review-gate/scripts/adopt-refresh.sh::refresh-warning=workflow-edited` | Refresh adoption copy equals no shipped template | Hand-edited workflow is overwritten and local intent lost | warning plus replacement consumer | Can restore own file, but loss already occurred | change | Preserve edited YAML and request explicit replacement consent/owned refresh route. Report current overwrite, not a writer-adoption refusal. |
-| R48 | `skills/review-gate/scripts/adopt-refresh.sh::workflow-symlink` | Adopted refresh destination is a symlink | Replacement writes foreign target | refuse consumer | Yes, owns destination layout | keep | Retain no linked workflow takeover. |
-| R49 | `skills/review-gate/scripts/provision-environment.sh` | Selected-only installation or incomplete org repository enumeration | Secret rotation/provisioning falsely reports whole-org completion | refuse organization operator | Yes, correct own app selection/credential visibility | keep | Retain complete-enumeration admission; no lane runs this owner-only mutation tool. |
-| R50 | `skills/review-gate/scripts/provision-environment.sh::secret` | Required live secret value absent | Provisioned environment cannot authenticate refresh | refuse organization operator | Yes, supplies owned secret values | keep | Retain missing-value refusal; secret-name existence is not current-value proof. |
-| R51 | `skills/review-gate/scripts/provision-environment.sh::protection` | Branch-policy switch would drop other protection rule | Required reviewers/wait protection disappears | refuse organization operator | Yes, manual protected migration by owner | keep | Retain protection-preserving admission. |
+|Command|Exit|Result; log key; verdict|
+|---|---|---|
+|`tools/guard --full`|0|Workspace/UI/cross-target pass; Bash 3.2 container, not native macOS/Windows. guard-full; G01-G34.|
+|`kendex verify --strict`|1|222 checked, 174 OK, 48 stale/sourceHash mismatches; engineer gap. No ignored-output failure. verify-strict; V02/V03/V11 change, F repair under D007. PATH version `1.2.0+main.498.56b28ff4d377dc4b2295710d74a06dad125d7017`: binary-version.|
+|`cargo build --release --locked -p kendex-cli`|0|Catalog build. catalog-build; I18.|
+|`target/release/kendex check --catalog . --strict`|0|63 packages; breakage/advisory/safety all 0. No live/installed-layout link proof. catalog-strict; I18/I19/C17/C30.|
+|`cargo test -p kendex-cli --test cli_smoke -- --nocapture`, KENDEX_CLI_SMOKE=1|0|Isolated Codex/Copilot proof/inverse controls. 5 uncovered: OpenCode/Gemini absent, Claude/Pi/Cursor no offline reader. cli-smoke; I20 change.|
+|`skills/doc-limits/scripts/doc-limits --staged`, original report|1|96641 bytes vs 65536, no content defect. audit-report-cap; D01 change. Prior exclusion unauthorized, now removed; single report compressed.|
 
-## CI and workflows
+verify-strict names each stale package/harness. D007 assigns record repair to F. Unmanaged notices are not failures. Catalog/smoke use checkout-built CLI.
 
-| ID | Actual check and owner | Reached by | Prevented harm | Effect and actor | Can that actor fix it? | Verdict | Action and boundary |
-|---|---|---|---|---|---|---|---|
-| I01 | `skills/harness-ci/scripts/change-class` | Missing event/endpoints/orch contract/ownership evidence | Wrong diff earns narrow checks or review waiver | standard fallback or usage refusal caller | Own invocation: yes; managed engine: no | change | Keep conservative class with measured=false. Send upstream engine outages to package owner and permit ordinary full-check route. |
-| I02 | `skills/harness-ci/scripts/change-class::render` | Generated diff fails recorded render/provenance/foreign-key proof | Author can label arbitrary changed code as generated and skip review/tests | standard fallback author | Yes, ordinary review route; refresh owner fixes shared record | keep | Retain exact-head ownership proof and no narrow waiver on unreadable evidence. |
-| I03 | `skills/harness-ci/scripts/change-class::trivial` | Docs/plan delta exceeds narrow rule or changes instruction/config paths | Executable policy is treated as harmless prose | wider checks author | Yes, accept applicable review/checks | keep | Retain actual-path classification; no label can override it. |
-| I04 | `skills/harness-ci/scripts/change-class::queue-only` | Queue-list missing/unreadable or changed queue-sensitive path | Direct merge omits combined-tree proof | queue route author | Yes, normal queue route | keep | Retain conservative queue route, not an instruction to repair unknown source. |
-| I05 | `tools/ci-job-set::event-parity` | PR selection differs from queue selection | Green PR has not proved jobs the queue needs | block workflow author | Yes, owns selector/workflow | keep | Retain event parity. |
-| I06 | `tools/ci-job-set::PROOF_RECORD` | Supplied proof record cannot yield valid prior lane/runner selection | Untested lane is skipped | warning plus run lane operator | No repair needed; conservative run available | keep | Retain invalid-selection rejection and run lanes. Successful-run/tree identity comes from action proof, I25. |
-| I07 | `tools/ci-job-set::die` | Unknown class/event/docs verdict or unreadable source discovery | Selector silently drops jobs | block workflow author/consumer | Own config: yes; shipped selector: no | change | Validate selector upstream. Consumer can take conservative whole set; upstream protocol failure must not demand render edits. |
-| I08 | `skills/harness-ci/scripts/aggregate-needs` | Classifier failed/absent or selected job not successful | Skipped/cancelled/failed required test becomes green CI | block author/lane | Own failing test: yes; hosted failure: no | change | Keep unauthorized-skip refusal. Distinguish hosted cancellation/outage from source failure and give owner retry route. |
-| I09 | `tools/ci-aggregate` | Invalid selection, duplicate lane or absent helper/results | Malformed wrapper can authorize a skip | block workflow author/consumer | Own wiring: yes; shipped helper: no | change | Retain protocol error upstream; consumer diagnostics name package owner, never edit managed helper. |
-| I10 | `.github/workflows/skill-tests.yml::shard names agree with the matrix` | Shard name absent, unused or no roster read | A declared test shard never executes | block workflow author | Yes, matrix and steps | keep | Retain roster membership check. |
-| I11 | `.github/workflows/skill-tests.yml::executable bits` | Script tracked without executable mode | CI or installed package cannot start script | block package author | Yes, set source mode | keep | Retain executable roster; library files are not executables. |
-| I12 | `.github/workflows/skill-tests.yml::the interpreter is Bash 3.2` | macOS shell/userland probe disagrees with claimed runtime | Portability CI attests to a runtime it never used | block CI operator | Yes, runner setup owner | keep | Retain shell/userland and must-fail probe; local other-OS result is not this leg. |
-| I13 | `.github/workflows/skill-tests.yml::crate matrix agrees` | Crate matrix misses actual workspace member | New crate's tests never run in CI | block workflow author | Yes, matrix owner | keep | Retain workspace roster agreement. |
-| I14 | `.github/workflows/skill-tests.yml::platform-gated tests` | File-wide cfg prevents test on macOS/Windows | Platform feature can remain untested | warning author | Yes, portable test counterpart when needed | keep | Retain coverage notice; not every Unix-only test needs Windows execution. |
-| I15 | `.github/workflows/skill-tests.yml::the verify document` | Built CLI lacks expected verify JSON/version | Classifier cannot prove generated ownership | block package author | Yes, update producer/consumer together | keep | Retain actual document compatibility proof in existing fixture. |
-| I16 | `.github/workflows/skill-tests.yml::pi-claude-bridge bundle` | Committed bundle differs from clean lockfile build | Published extension executes bytes other than reviewed source | block package author | Yes, rebuild and land bundle | keep | Retain source-to-published-artifact equality. |
-| I17 | `tools/installer-pin::--check` | Installer SHA differs from release tag identity | Token-bearing workflow installs unreviewed script | block package author | Yes, pin source and version together | keep | Retain trusted installer identity check. |
-| I18 | `.github/workflows/catalog-check.yml::Validate the catalog` | Catalog name/frontmatter/tree fails install grammar | Users receive packages their harness cannot load | block catalog author | Yes, owns catalog | keep | Retain actual breakage check at catalog source. |
-| I19 | `.github/workflows/catalog-check.yml::strict` | Strict upgrades every non-safety advisory | Ignored settings or lost output can ship; harmless metadata also blocks | block catalog author | Yes, owned source; blanket severity is checker policy | change | Replace blanket advisory escalation with harm-specific author findings in I22/I23/I24. Keep harmless metadata as warning; safety stays disclosed. |
-| I20 | `.github/workflows/own-catalog.yml::real-CLI round trip` | CLI unavailable or emitted tree rejected | Renderer can pass unit tests but real harness loads nothing | block package author/lane | Renderer: author; missing CLI: host owner | change | Retain isolated emitted-tree proof. Report absent harness/runtime separately from render rejection; no bypass when coverage is zero. |
-| I21 | `.github/workflows/skill-tests.yml::CI` | Job timeout, tool/install failure or test assertion | Assertion: shipped regression; environment: measurement unavailable | block lane/author | Source: yes; hosted tool/service: no | change | Use distinct source/environment results with operator retry. Keep existing suite commands and budgets; KEN-1981 owns selection, cost and restructuring. |
-| I22 | `crates/core/src/check_catalog.rs::tracked_outputs` | Agent declares committed output the catalog repo ignores | Required report disappears from other clones/review | strict source finding author | Yes, own output/ignore contract | keep | Retain author-level required-output check; consumer strict placement remains V07. |
-| I23 | `crates/core/src/render/validate/skill.rs::findings` | Source skill description absent | Harness cannot choose when to load skill | advisory author | Yes, owns source description | keep | Retain source warning; do not turn every loaded-item advisory into breakage. |
-| I24 | `crates/core/src/check_catalog/settings.rs::findings` | Shipped settings template cannot be read as seeded | Consumers receive ignored settings or loader refusal | strict source finding author | Yes, owns template | keep | Retain upstream settings-loader compatibility check. |
-| I25 | `.github/actions/change-class/proof::answer` | Prior run/event/tree/workflow/artifact identity cannot prove reuse | Wrong or unsuccessful run authorizes skipped testing | reuse=false, normally exit zero operator | No repair needed; full lane remains available | keep | Retain producer identity proof and conservative no-reuse; selector coverage rejection remains I06. |
-| I26 | `.github/actions/change-class/classify::lanes-from-judged-tree` | Lane declaration checkout equals judged tree | PR author edits its own declaration to skip tests | refuse workflow caller | Yes, choose trusted default checkout | keep | Retain declaration trust separation. |
-| I27 | `.github/actions/change-class/classify::declaration` | Trusted declaration absent/malformed | Missing evidence must not authorize skip | warning, no per-lane verdict operator | Trusted config owner repairs; PR author cannot | keep | Retain warning/no authorization. Aggregate needs a real skip verdict; no source failure is inferred for PR. |
-| I28 | `.github/actions/change-class/classify::wiring-error` | Producer protocol/helper/output or record write fails | Classifier publishes incomplete false lane selection | block workflow caller | Own output wiring: yes; managed helper/host: no | change | Retain no successful selection; route package/host failures upstream and preserve conservative full-check route. |
+### Workflow commands
 
-## Hooks
+- `tmp/KEN-2320-workflow-results.json`: 339 commands, all exit 0. `tmp/KEN-2320-platform-results.json`: 29, 22 exit 0, 7 nonzero/incomplete. `tmp/KEN-2320-inline-results.json`: 3, all exit 0.
+- Loops/shard filters/inline checks stay unchanged; cargo keeps locked/no-fail-fast/conditions. Passing commands remain in manifests; ceremony passing does not justify keep.
 
-| ID | Actual check and owner | Reached by | Prevented harm | Effect and actor | Can that actor fix it? | Verdict | Action and boundary |
-|---|---|---|---|---|---|---|---|
-| H01 | `hooks/block-argv-kill.sh::KILL_RE` | Shell text contains pkill/killall | Name-based kill terminates unrelated agent lanes | block lane | Yes, use PID it owns | change | Keep executable name-kill refusal; stop rejecting quoted explanations and heredoc data. |
-| H02 | `hooks/block-bare-cd.sh` | Bare cd in persistent Claude shell | Later commands and hooks run in unintended checkout | block lane | Yes, scoped subshell or worktree tool | keep | Retain only on persistent-shell delivery. |
-| H03 | `hooks/block-bare-cd.sh` | Bare cd on fresh-per-call Codex/Pi shell | none | block lane | Yes, unnecessary rewrite | remove | Remove delivery to per-call shells; directory cannot persist there. |
-| H04 | `hooks/block-repo-copy.sh::BLOCK_RE` | Copy named .git/target into temporary storage | Copy exhausts temporary filesystem and other writers fail | block lane | Yes, minimal fixture/read in place | change | Keep executable copy protection; remove quoted/comment matches and do not claim tree size from name alone. |
-| H05 | `hooks/block-unsafe-rm.sh::UNSAFE_RE` | rm operand starts with possibly empty variable | Expansion removes unintended files | block lane | Yes, guarded variable or literal path | change | Keep dangerous rm check; exclude git rm --cached and quoted prose with no deletion. |
-| H06 | `hooks/block-worktree-refresh.sh::verb_kind` | Project writer uses main's inherited manifest from linked tree | Command writes another checkout's shared install | block lane | Can name target; cannot mutate base without authority | change | Keep target proof but route shared-scope writes to refresh owner. Add no lane workaround to this audit. |
-| H07 | `hooks/block-worktree-refresh.sh` | Project update-pi in any linked worktree | Duplicate/shared package update can affect other scope | block lane | Cannot update project even when independently owned | change | Replace blanket worktree ban with actual target ownership/authorization; named independent project needs a reachable route. |
-| H08 | `hooks/command-safety.sh::COMMAND_SAFETY_DENY_PATTERN` | User's deny regex matches command | User-selected dangerous action executes | block consumer/lane | Yes, choose permitted command; policy owner changes policy | change | Retain selected deny rule. Limit executable-command matching or disclose lexical matching before opt-in; harmless quoted text must not be a danger finding. |
-| H09 | `hooks/pre-commit-check.sh::git_commit_call` | Commit in repository with unarmed checks | Repository code can execute without local consent or promised guards do not run | block committer | Local arming: owner; lane cannot arm main | change | Preserve consent boundary. Offer main-owner arming/report route without telling lane to run forbidden shared setup. |
-| H10 | `hooks/pre-commit-check.sh::flag_read` | Commit text contains no-verify/hooksPath/config bypass | Commit skips user-authorized safety checks | block committer | Yes, ordinary commit path | change | Keep actual bypass detection; remove matches in message data or unrelated git calls. |
-| H11 | `hooks/pre-commit-check.sh::elsewhere_notice` | Command moves repository through -C/cd/env | Cwd check cannot attest to target's hooks | warning committer | Target repository owner arms its gate | keep | Retain limited-coverage notice; never claim cross-repository enforcement. |
-| H12 | `hooks/doc-drift-check.sh::covering_docs` | Code changed but covering doc unchanged | Stale instructions can misdirect later work | block once author/lane | Yes, review doc; change may not be needed | change | Make presence-only staleness advisory or explicit confirmation. Unchanged correct docs must not require a meaningless edit. |
-| H13 | `hooks/doc-drift-check.sh::tree_paths` | Covers entry matches no path | Reader cannot find code a topic claims to cover | block once author/lane | Own doc: yes; inherited topic: no | change | Warn for inherited dangling coverage; block only author-introduced proven broken citation at source. |
-| H14 | `hooks/doc-drift-check.sh` | Changed code has no declared covering topic | none | block once author/lane | Yes, add ceremonial map | remove | Delete uncovered-path refusal. Absence of a map does not establish incorrect behavior or missing required information. |
-| H15 | `hooks/reviewer-read-only.sh` | Reviewer edits, or Writes repository content outside report paths | Reviewer changes bytes it claims to review | block reviewer | Yes, report without repository edits | keep | Retain repository boundary. Write outside any git repository passes; Edit tools still refuse everywhere. Shell writes are not fully intercepted. |
-| H16 | `hooks/reviewer-read-only.sh::GIT_DISCARD` | Reviewer shell text matches git commit/push/discard | Reviewer deletes author's work or changes review branch | block reviewer | Yes, read-only commands | change | Keep actual write/discard refusal; allow quoted text and read-only variants such as stash list. |
-| H17 | `hooks/reviewer-stop-check.sh::artifact` | Reviewer stops with no artifact path | Caller receives no review result | block once reviewer | Yes, write artifact | change | Verify actual readable artifact, not only a transcript path mention; retain reachable missing-result repair. |
-| H18 | `hooks/reviewer-stop-check.sh::WORKTREE` | Reviewed worktree has any dirty file | Reviewer leftovers contaminate later tests | block once reviewer | No, may belong to implementer | change | Compare against starting tree and attribute new edits. Never require reviewer to delete earlier author's files. |
-| H19 | `hooks/task-completed-check.sh::clippy` | Changed Rust triggers full workspace lint | Compiler/correctness failures reach reported completion | block author/lane | Own defect: yes; earlier workspace/host: no | change | Scope to affected owned inputs; separate missing compiler and inherited foreign failures. Formatting warning is not a completion defect. |
-| H20 | `hooks/skill-load-check.sh::judge_loaded` | Edit/Linear call without transcript proof of skill load | none | block lane | Yes, load ritual; no proof of compliance | remove | Delete read-presence gate. Enforce concrete harmful behavior through actual checks and review. |
-| H21 | `hooks/skill-load-record.sh` | Load recording/pruning fails | Later load-presence gate falsely blocks an already loaded skill | warning after call | No, install/transcript owner | remove | Remove recorder with H20. No independent consumer behavior needs load ledger. |
-| H22 | `hooks/lane-mail-check.sh::mail_check` | Fresh lead turn ends with unread directive | Lane stops before receiving owner's instruction | block lead stop | Yes, act on delivered mail | keep | Retain delivery and acknowledgement only after context was produced; continued-stop escape stays. |
-| H23 | `hooks/lane-mail-check.sh::halt` | Lead/subagent tool call while halt unread | Lane continues action after overseer stopped it | block lane | Lead can read/ack; subagent can stop and report lead | keep | Retain overseer halt and exact acknowledgement route. |
-| H24 | `hooks/lane-mail-check.sh::question_tool_check` | Lane uses harness question tool | Owner answer goes to wrong session instead of overseer mailbox | block lane | Yes, mailbox ask | keep | Retain lane-specific question route. |
-| H25 | `hooks/lane-mail-check.sh::idle_check` | Lead ends turn with no new message, halt or handoff | Overseer cannot distinguish idle lane from ongoing work | block once lead | Yes, send status; unnecessary if result already delivered | change | Derive idle notice from actual incomplete work/delivery; do not require a message solely to end a correct turn. |
-| H26 | `hooks/lane-mail-check.sh::idle-record` | Send-count/event/notice recording fails | Overseer lacks reliable idle/progress state | warning lane | No, mailbox/host owner | keep | Retain unknown and no repeated hold on failed recording. |
-| H27 | `hooks/lane-mail-check.sh::refuse_handoff` | Measured context/account/automatic-compaction mark reached | Unfinished work loses context or account access before handoff | block lead | Yes, safe-point handoff record | keep | Retain reachable session-owned handoff; existing handoff clears checks first. |
-| H28 | `hooks/lane-mail-check.sh::overseer_marks` | Measured overseer succession mark reached | Root loses pending lane decisions at capacity limit | block overseer | Yes, succeed or record manual handoff | keep | Retain root-owned safe-point succession, not a forced credential edit. |
-| H29 | `hooks/lane-mail-check.sh::handoff-unanswered` | Missing/untrusted scripts, unknown window/account, unreadable handoff state | Unmeasured capacity can be mistaken for available room | warning session | No, package/fleet owner | keep | Retain explicit unjudged notice and no infinite end-turn hold. |
-| H30 | `hooks/lane-mail-check.sh::transcript` | Unmeasured transcript/setting still triggers handoff refusal | Session can lose unfinished work when usage cannot be measured | block session | Handoff possible only if writer is available | change | Use handoff fallback only when it can clear refusal. Otherwise contextual warning to fleet owner; never require repair of foreign transcript/settings. |
-| H31 | `hooks/lane-mail-deliver.sh` | Post-tool mail/context wrapper lacks judge or context output fails | Directive is lost; completed tool output may be replaced by error | post-tool report/refusal lane | No, install owner | change | Preserve completed tool result, emit additional context warning, leave mail unread for later delivery. |
-| H32 | `hooks/lane-mail-start.sh` | Missing judge or start/prompt cannot record lead/deliver context | Lead does not receive owner mail at start | warning session | No, install/fleet owner | keep | Retain start/prompt notices and unread-mail retry; applies to lane-mail-prompt wrapper too. |
-| H33 | `hooks/lane-mail-compact.sh` | Compaction/usage context record cannot be written | Later stop reads stale remaining room | post-event warning operator | No, extension/install owner | keep | Retain explicit gap and discard stale measurement; event itself cannot be undone. |
-| H34 | `hooks/session-start-row.sh` | Start/end/failure row writer unavailable | Fleet cannot distinguish genuine termination from missing evidence | warning session | No, fleet/install owner | keep | Retain nonblocking event record gaps; same judge serves session-end-row and stop-failure-row. |
-| H35 | `hooks/block-argv-kill.sh::missing-tools` | Payload reader absent/malformed before command can be read | Dangerous name-kill is unjudged | block every shell call | No, caller cannot fix harness payload through blocked tool | change | Check dependencies/delivery upstream and at install. Give contextual unknown plus operator repair route; retain actual unsafe-command refusal. |
-| H36 | `hooks/block-bare-cd.sh::missing-tools` | Payload/tools cannot be read | Persistent cwd move is unjudged | block shell call | No, installation/harness owner | change | Move prerequisite failure to installer/operator warning; no trapped repair command. |
-| H37 | `hooks/block-repo-copy.sh::missing-tools` | Payload/tools cannot be read | Dangerous scratch copy is unjudged | block shell call | No, installation/harness owner | change | Same owner routing as H35, applied to this hook's dependency contract. |
-| H38 | `hooks/block-unsafe-rm.sh::missing-tools` | Payload/tools cannot be read | Dangerous deletion is unjudged | block shell call | No, installation/harness owner | change | Validate delivery at source/install and provide owner repair outside denied session. |
-| H39 | `hooks/block-worktree-refresh.sh::missing-library` | Library/git/payload/cwd cannot settle ownership | Write target is unjudged | block shell call | No for missing managed library; own cwd can be corrected | change | Separate correctable invocation from broken installed package. Report package prerequisite to owner, not lane source edit. |
-| H40 | `hooks/command-safety.sh::settings` | Missing loader, malformed unrelated setting or bad payload | Configured policy is unjudged | block all shell calls | Policy: owner; package/payload: no lane repair | change | Keep invalid owned deny-policy refusal; move package/unrelated-settings failures out of all-shell trap. |
-| H41 | `hooks/pre-commit-check.sh::missing-tools` | Payload reader missing/invalid | Commit arming/bypass is unjudged | block shell call | No, install/harness owner | change | Validate delivery at install and report unknown as context; no gate on its own repair command. |
-| H42 | `hooks/doc-drift-check.sh::refuse` | After payload read, inventory/git/session/hash/marker fails | Doc comparison is unmeasured | block fresh stop; readable continued stop passes | No, managed inventory/harness/common-dir owner | change | Report not exercised at rightful owner and preserve continued-stop escape. Payload failures are H50. |
-| H43 | `hooks/reviewer-read-only.sh::missing-tools` | Payload/path/git reader fails | Write boundary is unjudged | block reviewer call | No, install/harness owner | change | Retain write protection at platform tool allowlist; report adapter gap to owner without prescribing deletion or render edits. |
-| H44 | `hooks/reviewer-stop-check.sh::refuse` | After payload read, transcript/id/git/marker fails | Review cleanup/result is unmeasured | block fresh stop; readable continued stop passes | No, harness/install owner | change | Emit contextual unknown at owner and preserve continued-stop escape. Payload failures are H51. |
-| H45 | `hooks/skill-load-check.sh::refuse` | Transcript/carrier/rule/payload unreadable | none | block session | No, managed adapter/harness owner | remove | Remove prerequisite traps with H20; no load-presence proof remains to justify them. |
-| H46 | `hooks/lane-mail-check.sh::stall` | Unreadable marker/mailbox/untrusted reader/fleet state/inbox | Owner directive or halt is unmeasured | block fresh stop/tool, warn continued | No, fleet/install owner | change | Retain untrusted-code refusal but deliver contextual gap and allow safe stop. Owner restores channel; never call unknown mailbox empty. |
-| H47 | `hooks/lane-mail-halt.sh` | Halt wrapper judge absent | Overseer stop authority is unavailable | block all tools | No, install owner | change | Move companion validation to author/install owner; session receives contextual warning and ends safely. |
-| H48 | `hooks/lane-mail-check.sh::missing-tools` | jq/cat/payload failure before retry flag read | Owner mail is unjudged | block every stop/tool | No, harness/install owner | change | Provide nonlooping contextual unknown route before repeated hold; install owner validates adapter. |
-| H49 | `docs/plans/kendex-backlog-vision.md::KEN-1482` | Proposed owned-verb-check refuses bare git/gh owned verbs | Wrong merge/worktree route can bypass branch protection or disturb shared checkout | planned block lane | Lane can use owned route; repair owner varies | change | Not implemented here. Limit proposal to writes with named shared-state harm; do not ban read-only verbs or harmless text. Preserve KEN-1482 boundary. |
-| H50 | `hooks/doc-drift-check.sh::payload` | Payload reader missing or payload unreadable/invalid | Comparison and continued-stop escape are unmeasured | block even continued stop | No, harness/install owner | change | Supply contextual unknown/nonlooping end route; installed reader/payload producer belongs to owner. |
-| H51 | `hooks/reviewer-stop-check.sh::payload` | Payload reader missing or payload unreadable/invalid | Review stop/escape state cannot be read | block even continued stop | No, harness/install owner | change | Preserve no false review result, but give nonlooping owner-repair route. |
-| H52 | `hooks/task-completed-check.sh::git_paths` | Git changed-set read fails before Rust selection | Completion falsely claims changed files were checked | block completion session | No for host/repository corruption; owner repairs | change | Separate unmeasured selection from Rust lint; contextual owner route instead of source-edit instruction. |
-| H53 | `hooks/task-completed-check.sh::cargo` | Changed Rust but compiler unavailable | Rust check was never exercised | block completion lane | No, host/toolchain owner | change | Provision compiler before lane admission; report not exercised, not a Rust source defect. |
+Every nonzero workflow result maps to G30/I21 change:
 
-## Verify and drift
+|Command; cwd under pi-extensions/|Exit|Diagnostic; log key|
+|---|---|---|
+|`npm test`; pi-caveman|1|tsx absent; platform-13.|
+|`npm run typecheck`; pi-codex-minimal-tools|127|tsc absent; platform-14.|
+|`npm test`; pi-codex-minimal-tools|127|tsx absent; platform-15.|
+|`npm test`; pi-extension-manager|1|Mock child 143 after own timeout. Bun 1.4.2 vs workflow 1.3.14; platform-16.|
+|`npm test`; pi-skills-manager|1|Pi SDK peers absent; platform-24.|
+|`npm test`; pi-tool-renderer|1|Pi SDK peers absent; platform-26.|
+|`npm test`; pi-web-tools|127|tsx absent; platform-27.|
 
-| ID | Actual check and owner | Reached by | Prevented harm | Effect and actor | Can that actor fix it? | Verdict | Action and boundary |
-|---|---|---|---|---|---|---|---|
-| V01 | `crates/cli/src/commands/verify.rs::check_scope` | Manifest/record unavailable and scope cannot be measured | Verification claims agreement it cannot establish | nonzero consumer/lane | Own manifest: yes; managed record: refresh owner | change | Keep failed/unmeasured attestation. Do not gate unrelated lane work on main-owned record; route record repair to refresh owner. |
-| V02 | `crates/cli/src/commands/verify.rs::say_row` | Installed files missing, stale, conflicting or orphaned | Reported installed setup does not match declared behavior | nonzero consumer/lane | Local consumer files: yes; author-managed render/record: no | change | Keep measurement, split local installation defect from upstream/main drift; default-branch refresh owner repairs latter. |
-| V03 | `crates/cli/src/commands/verify.rs::declaration_rows` | Declaration has no matching record row | Record edit or omission hides unverified installed package | nonzero consumer/lane | No for committed record in item lane | change | Keep coverage gap; remove lane-facing apply remedy for main-owned records. Actual gap measured below. |
-| V04 | `crates/cli/src/commands/verify.rs::failed_hook_delivery_rows` | Unsupported hook event has no deliverable row | User believes guard is active when harness never runs it | nonzero consumer | Own selection: yes; hook source: no | change | Validate event contract upstream. Consumer sees unsupported-install warning and supported-harness/removal choices, not source-edit demand. |
-| V05 | `crates/core/src/engine/instruction_shims.rs::ShimStanding` | Instruction shim missing/stale or obstructed by foreign content | Harness loads no shared instructions; takeover erases user prose | nonzero verify/item refusal consumer | Own obstruction: yes; generated source: no | change | Keep no-clobber; separate consumer-owned migration from generated shim repair by refresh owner. |
-| V06 | `crates/cli/src/commands/repo_effects.rs::say_lapsed` | Previously armed setup no longer holds or cannot be checked | Installed guards are inactive despite recorded consent | nonzero verify, warning refresh consumer | Own setup: yes; package script: no | change | Keep status report; route package failure upstream. Consumer can ask setup owner to re-arm, not edit package. |
-| V07 | `crates/cli/src/commands/verify.rs::tracked_output_rows` | Declared tracked output ignored by git | Report/plan cannot reach another clone or review | warning; strict nonzero lane/consumer | Repo ignore owner may not be lane | change | Keep default warning. Strict checks run only where output/ignore owner can repair; inherited policy goes to repository owner. |
-| V08 | `crates/core/src/attest.rs::inventory` | Inventory invalid, missing, de-lists render or lists authored path | Ownership-based checks can skip real code or block consumer on foreign source | nonzero consumer/lane | No, refresh owner generates it | change | Retain semantic proof for render waiver; move ordinary commit blocker upstream/to refresh owner. |
-| V09 | `crates/core/src/attest.rs::inventory` | Semantically correct inventory differs only in serialized layout | none | nonzero consumer/lane | No, generated file | remove | Delete layout-only failed standing. Keep membership and schema checks. |
-| V10 | `crates/core/src/attest.rs::record` | Original record differs from parsed canonical serialization | Unknown fields can be dropped; whitespace-only changes also fail | nonzero consumer/lane | No, generated record/serializer owner | change | Separate dropped-data protection from pure layout. Unknown-field rejection is not independent today. Preserve that protection before removing whitespace-only failure; refresh owner repairs records. |
-| V11 | `crates/core/src/attest.rs::differs` | Entry key, field, source or bundle provenance disagrees with plan | Record falsely attests to ownership/origin | nonzero consumer/lane | No for main-owned record | change | Keep semantic attestation for trust decisions. Main/refresh owner repairs; no lane lock edit. Actual sourceHash failure measured below. |
-| V12 | `crates/core/src/attest.rs::history_problem` | Commit pin invalid, off declared history or unavailable in mirror | Edited record can authorize unreviewed/unknown package source | nonzero consumer/lane | Own pin/cache: yes; remote history: author | change | Retain no render waiver and trust refusal. Distinguish unavailable mirror from tampered pin; upstream history failures go to source owner. |
-| V13 | `crates/core/src/attest.rs::held_problem` | Recorded comparison falls before base floor or base unreadable | Render proof accepts rollback past previously installed revision | nonzero proof caller | Yes, correct base/fetch; source history author | keep | Retain anti-rollback floor; source tip advancing alone is a notice. |
-| V14 | `crates/core/src/attest.rs::adopted_workflows` | Owned workflow differs from source template | Adopted gate runs unintended policy or token-bearing code | nonzero repository workflow owner | Own YAML: yes; template defect: no | change | Keep behavior/trust check at rightful owner. Harmless byte-only differences warn; template defects upstream. |
-| V15 | `crates/core/src/attest.rs::foreign_since` | Shared-file foreign keys changed or unknown | Render waiver could hide user-edited permissions/configuration | report/proof rejection caller | Yes, ordinary review route | keep | Retain ownership evidence; foreign unknown is not itself a general verify failure. |
-| V16 | `crates/cli/src/commands/verify.rs::print_left_out` | Hook explicitly excludes every selected harness | Mistaking intentional omission for broken install produces false repair work | notice consumer | Consumer owns selection; author owns support | keep | Retain pass-over, not gap or failed delivery. |
-| V17 | `hooks/session-drift-check.sh::notice` | CLI missing, old, payload/cwd/check cannot answer | Session assumes managed setup is current without evidence | warning session | No, install/harness owner | keep | Retain report-only unknown notice; no fallback that writes project record. |
-| V18 | `hooks/session-drift-check.sh::report` | Lane/linked tree reports shared drift | Lane might refresh shared state into item branch | warning lane | No, parent/refresh owner | keep | Retain lane count and do-not-refresh route; no consumer hand edit to rendered package. |
-| V19 | `crates/core/src/drift/report/scope.rs::manifest_lines` | Unreadable manifest, embedded old drift hook or missing declared reference | Session follows incomplete/old setup instruction | warning consumer | Own manifest: yes; upstream reference/hook: no | change | Keep notice, distinguish ownership and send upstream hook/reference repair to author. |
-| V20 | `crates/core/src/drift/report/scope.rs::pi_shadow_scan` | Pi missing/stale/duplicate/shadowed extension | Wrong copy executes or extension registers twice | warning consumer | Yes, chosen local scopes/copies | keep | Retain duplicate/shadow report without deleting foreign copy. |
-| V21 | `crates/core/src/drift/report/scope.rs::unrecorded_lines` | Missing source/link or unowned/unrecorded equal/different files | Session believes unproved or wrong package is managed | warning consumer/lane | Own local files: yes; record: refresh owner | keep | Retain unknown/equal/distinct states and main-owned record route. |
-| V22 | `crates/core/src/drift/report/scope.rs::snapshot_lines` | Snapshot/fetch/comparison missing, edits, removed member or available update | Session mistakes unavailable comparison for current package | warning consumer | Local network/edits: yes; source removal: author | keep | Retain qualified report and source-owner repair; held/ignored choices remain quiet. |
-| V23 | `crates/cli/src/commands/check/commit_hooks.rs::fold_commit_hooks` | Armed package says unarmed/stale or cannot answer | Session believes commit checks protect this checkout | warning consumer | Local consent: owner; script defect: upstream | change | Keep report-only local authorization. Route managed-script failure upstream and foreign hooksPath to its policy owner. |
-| V24 | `crates/core/src/drift/report/scope.rs::snapshot_lines` | Mirror fetch heals missing commit but stored unreadable note persists | Session receives false unresolved failure and cannot clear it from normal work | warning consumer/lane | No, snapshot/refresh author owns invalidation | change | KEN-2140 binding: bind unreadable notes to mirror digest and rederive after any fetch. No consumer apply workaround. |
-| V25 | `crates/core/src/settings_seed.rs` | Planned orphan settings-comment report/removal offer | Stale explanation tells consumer to use a removed setting | planned verify finding/refresh offer consumer | Own comment: yes; generated provenance not distinguishable | change | KEN-1729 binding: warn, not strict failure, for unproved orphan comments; preserve user comments unless explicit informed removal consent. Not implemented here. |
-| V26 | `crates/cli/src/commands/verify.rs::check_scope` | Unreadable manifest with absent/empty readable record | Caller receives success although declared setup was not checked | prints refusal; can exit zero consumer | Own manifest: yes; exit contract: CLI author | change | Make unreadable manifest explicitly unmeasured/nonclean even with no entries. Source branch is visible; this audit did not plant or run that case. |
+Missing dependencies are unexercised environment. Bootstrap fails locally, cause unresolved; runtime owner judges before filing. No rerun/timer change.
 
-## Apply, refresh and update
+### Unexercised and validation
 
-| ID | Actual check and owner | Reached by | Prevented harm | Effect and actor | Can that actor fix it? | Verdict | Action and boundary |
-|---|---|---|---|---|---|---|---|
-| A01 | `crates/core/src/manifest/file.rs::parse_text` | Malformed or incompatible manifest schema | Planner interprets wrong install intent | refuse consumer | Yes, owns manifest or selects compatible release | keep | Retain typed schema/parse validation without partial writes. |
-| A02 | `crates/core/src/manifest/validate.rs` | Unknown source/install/custom-hook/frontmatter keys or invalid shapes | Setting is ignored or package writes wrong source/target | refuse consumer | Yes, consumer-owned declaration | keep | Retain declaration grammar; author-owned catalog manifests are judged upstream. |
-| A03 | `crates/core/src/manifest/validate/items.rs` | Invalid name/revision/environment/fork/plugin/dependency choice | Package escapes path, exports invalid data or loses source identity | refuse consumer | Yes, own declaration | keep | Retain typed source/name/choice validation. |
-| A04 | `crates/core/src/engine/desired_source.rs::resolve_source` | Source missing/pending/unreadable or item absent | Requested package is not installed | skip/warn; refresh can fail consumer | Local path/network: yes; upstream absence: no | change | Separate local source setup from upstream unavailable package. Warn and preserve safe existing copy; author repairs source. |
-| A05 | `crates/core/src/source_read.rs::contained` | Catalog traversal, symlink or unsafe entry | Catalog copies host secrets/outside-root bytes | item refusal consumer | No upstream edit; can reject source | change | Keep no unsafe read. Validate catalog upstream and report safe skipped item plus author route, not a consumer source-repair block. |
-| A06 | `crates/core/src/source_read.rs::TREE_BOUND` | Catalog file/tree/depth/count exceeds read bound | Host memory or traversal is exhausted | item refusal consumer | No, catalog author owns tree | change | Keep resource bounds. Author fixes catalog; consumer gets explicit not-installed warning and report route. |
-| A07 | `crates/core/src/engine/catalog.rs::Collisions` | Distinct items collapse to same harness name | One package replaces another | item refusal consumer/author | Own selection: yes; catalog names: author | change | Retain no replacement. Source author checks name collisions upstream; consumer gets safe skip and selection choices. |
-| A08 | `crates/core/src/engine/item_plan.rs::rebound` | Recorded package silently changes source without fork | False origin or different package overwrites installed item | item refusal consumer | Yes, own declaration/fork decision | keep | Retain provenance boundary. |
-| A09 | `crates/core/src/engine/holds.rs::hold_rev_conflict` | Dependencies request incompatible revisions | One dependency gets wrong code | item refusal consumer | Own pins: yes; catalog dependency clash: no | change | Keep no ambiguous install. Diagnose which owner declared each pin; upstream clashes warn consumer and fail catalog-author check. |
-| A10 | `crates/core/src/engine/holds.rs::hold_local_edit` | Installed own/shared/disabled artifact edited or old hash cannot classify edit | Refresh erases user's work | item refusal consumer | Yes, preserve fork or explicitly discard edits | keep | Retain edit hold and honest unknown classification. |
-| A11 | `crates/core/src/engine/file_plan.rs` | Unowned file or directory occupies install target | Install overwrites user content | item refusal consumer | Yes, adopt/preserve/remove own occupant | keep | Retain no-clobber check and explicit takeover consent. |
-| A12 | `crates/core/src/engine/tree_plan.rs` | Foreign link/wrong shape/unreadable tree occupies target | Install mutates outside ownership or discards unknown content | item refusal consumer | Yes, owns target; administrator may own permissions | keep | Retain safe target refusal; never suggest blanket deletion of unknown content. |
-| A13 | `crates/core/src/engine/removal.rs::edit_holds` | Removal would take edited/unreadable content or required dependency | User edits vanish or installed wrapper loses judge | item hold consumer | Yes, settle own edits; author owns missing judge | change | Keep data protection; move missing upstream-companion repair to catalog author and warn consumer. |
-| A14 | `crates/core/src/engine/deps.rs::withhold_requirers` | Required hook companion cannot run beside caller | Wrapper refuses every tool call with no judge | item withheld consumer | No, author owns companion contract | change | Retain withholding/removal of unsafe wrapper. Fail author delivery tests; consumer gets warning and upstream report, not header-edit instructions. |
-| A15 | `crates/core/src/engine/deps.rs::warn` | Skill optional/required dependency missing or ambiguous | Skill lacks the tool/rule it needs | warning consumer | Own choice: yes; catalog dependency: author | change | Route remediation by declaration ownership; never ask consumer to edit upstream dependencies. |
-| A16 | `crates/core/src/engine/desired_kinds.rs::desired_hook` | Bad header, unsupported event/payload or intentional exclusion | Hook cannot enforce promised behavior | refusal/exclusion consumer | Custom hook: yes; catalog hook: author | change | Fail author delivery contract. Consumer gets explicit unsupported/skipped report; keep exclusion distinct from breakage. |
-| A17 | `crates/core/src/engine/desired_custom_hooks.rs` | Scoped hook becomes advisory prose | User believes advisory copy enforces safety | warning consumer | Yes, custom spec/harness selection | keep | Retain downgrade notice; no enforced-safety claim. |
-| A18 | `crates/core/src/engine/desired_agent.rs::render_or_refuse` | Pi cannot express allowlist without widening tool access | Agent receives tools author denied | item refusal consumer | Own override: yes; upstream intent: author | change | Never install widened permissions. Upstream author proves adapter compatibility; consumer sees safe skip and supported-harness choices. |
-| A19 | `crates/core/src/render/validate/mod.rs::segment_findings` | Name escapes directory or violates required loader grammar | Item writes outside target or cannot load | item refusal consumer | Own rename: yes; source name: author | change | Retain containment. Check source names upstream and present consumer override/removal path without source-edit demand. |
-| A20 | `crates/core/src/render/validate/mod.rs::frontmatter_map` | Required agent/skill frontmatter absent or invalid | Harness cannot read installed item | item refusal consumer | No, source author | change | Fail catalog author check; consumer safe-skips and reports upstream. |
-| A21 | `crates/core/src/render/validate/agent.rs::codex` | Codex TOML lacks required fields or supported sandbox/model/effort | Agent cannot load or has different permissions | item refusal consumer | Own override: yes; source adapter: author | change | Validate emitted Codex contract upstream; consumer warning/report route, never generated-file repair. |
-| A22 | `crates/core/src/render/validate/agent.rs::opencode` | Invalid mode or permission object/value | Access rule does not load | item refusal consumer | Own override: yes; source adapter: author | change | Retain no invalid access install, move source repair upstream. |
-| A23 | `crates/core/src/render/validate/agent.rs::claude` | Claude agent name missing/mismatched | Agent unavailable or answers wrong name | item refusal consumer | No, source author | change | Validate source/render name upstream; consumer safe-skip report. |
-| A24 | `crates/core/src/render/validate/agent.rs::gemini` | Gemini name/description/model/effort invalid | Agent cannot load or selection is wrong | item refusal consumer | Own model override: yes; metadata: author | change | Author owns loader compatibility; consumer gets supported choices and report route. |
-| A25 | `crates/core/src/render/validate/agent.rs::antigravity` | Antigravity name/description/tier invalid | Agent cannot be delegated | item refusal consumer | No, source/adapter author | change | Move source fix upstream while preserving safe skip. |
-| A26 | `crates/core/src/render/validate/agent.rs::copilot` | Copilot description absent or name mismatch | Agent not loaded/listed under intended name | item refusal consumer | No, catalog author | change | Validate source upstream; no consumer rendered-file edit. |
-| A27 | `crates/core/src/render/validate/skill.rs::findings` | SKILL.md/name missing, directory mismatch or Codex description too long | Skill not loaded or called by wrong name | item refusal consumer | Own rename partly; metadata author | change | Move loader defect to source author; consumer safe skip/report supported name choices. |
-| A28 | `crates/core/src/render/validate/command.rs::gemini` | Command TOML/prompt invalid or absent | Command does nothing or cannot load | item refusal consumer | No, source author | change | Fail upstream emitted-command proof; warn consumer not installed. |
-| A29 | `crates/core/src/render/validate/skill.rs::findings` | Skill/command description missing; ignored model/shell syntax/rule key | Loaded item cannot trigger as intended or ignores behavior | warning consumer | No, source/adapter author | change | Keep disclosure, route source repair upstream. Includes agent/command advisory findings, not strict failure. |
-| A30 | `crates/core/src/engine/desired_mcp.rs::refusal` | Unsupported transport/env mapping or literal secret instead of reference | Server cannot connect or secret enters tracked config | item refusal consumer | Own MCP declaration: yes; catalog source: author | change | Keep secret/transport safety; source-author check and consumer safe warning/report route. |
-| A31 | `crates/core/src/engine/desired_kinds.rs::desired_plugins` | Plugin delivery/configuration unsupported | User believes plugin active but adapter cannot register it | item skip/refusal consumer | Own selection: yes; adapter: author | change | Report safe omission with supported harness choices; upstream adapter owner fixes source. |
-| A32 | `crates/core/src/engine/desired_command.rs::emitted_name` | All fallback skill-command names occupied | Command replaces another callable item | item refusal consumer | Yes, own name/selection | keep | Retain name-collision refusal and emitted-name notice. |
-| A33 | `crates/core/src/engine/settings_write.rs::settle` | Seed target linked/nonregular or env section not seedable | Install overwrites foreign settings or writes keys no loader reads | item refusal/warning consumer | Yes, owns settings destination | keep | Retain no-clobber and existing-user-value preservation. |
-| A34 | `crates/core/src/engine/settings_write.rs::declarations` | Seed metadata conflicts about sensitivity | Secret written into committed/public layer | refusal consumer | No, package metadata author | change | Keep no secret write. Validate sensitivity upstream; consumer gets skipped seed and source-owner report. |
-| A35 | `crates/core/src/engine/copilot.rs::agent_notices` | disableAllHooks/disabledSkills/MCP or allowed-model policy disables installed item | Installed package remains inactive | warning consumer | Personal key: yes; organization policy: admin | keep | Retain explicit inactive notice and policy-owner remedy. |
-| A36 | `crates/core/src/engine/gemini.rs::overridden` | System precedence, enableAgents=false or server policy disables item | Project install has no effective behavior | warning consumer | Local key: yes; machine policy: administrator | keep | Retain effective-state warning; project cannot override machine policy. |
-| A37 | `crates/core/src/engine/antigravity.rs::hook` | Matcher cannot translate into harness tool names | Hook may match no action | warning consumer | No, hook/adapter author | change | Route repair upstream. Same notice exists for Gemini/Copilot; no consumer edit to generated script. |
-| A38 | `crates/core/src/engine/scoring.rs::run` | Safety scoring flags package behavior | Consumer unknowingly installs broad/risky instructions | warning consumer | Choice: consumer; source defect: author | keep | Retain advisory disclosure; score never constitutes enforced safety. |
-| A39 | `crates/cli/src/commands/mod.rs::resolve_scopes_at` | Ambiguous scope/target, home-as-project or invalid root | Command installs into wrong project/home | refuse caller | Yes, choose correct target/scope | keep | Retain no silent target fallback. |
-| A40 | `crates/cli/src/commands/project.rs::registrable` | Temporary project registered without explicit throwaway choice | Disposable fixture remains in user's project registry | refuse caller | Yes, throwaway flag or isolated registry | keep | Retain explicit registration intent; own-catalog fixture already isolates home. |
-| A41 | `crates/cli/src/commands/engine_common.rs::ask_before_writing` | Apply requires consent or noninteractive yes missing | Files change without user's agreement | refuse consumer/lane | Yes, inspect plan and consent | keep | Retain first-write consent. |
-| A42 | `crates/cli/src/commands/refresh.rs::prepare_scopes` | Refresh changes installed set without consent | Dependencies/packages added or removed without agreement | refuse consumer | Yes, approve shown set | keep | Retain preplanned scope/set-change consent. |
-| A43 | `crates/core/src/apply/mod.rs::lock_scope` | Concurrent writer holds scope | Writes interleave and corrupt install | refuse caller | Yes, wait/replan; never clear shared lock manually | keep | Retain single-writer lock. |
-| A44 | `crates/core/src/apply/pre.rs::check` | Plan inputs/targets changed or root vanished | Write erases concurrent edits | refuse caller | Yes, replan after change | keep | Retain per-operation stale-plan proof. |
-| A45 | `crates/core/src/apply/landing.rs::landed_within` | Write target escapes canonical scope | Install writes unrelated/foreign files | refuse caller | Own filesystem: yes; artifact path: author | change | Keep containment refusal. Route invalid generated target upstream, not consumer render edit. |
-| A46 | `crates/core/src/apply/transaction.rs::run_journaled` | Write fails; rollback/recovery may fail separately | Partial install remains or recovery erases concurrent edit | refuse with partial outcome consumer | Local disk: owner; engine bug/foreign permissions: no | change | Keep transaction refusal and exact partial paths. Route engine/administrator failures to rightful owner instead of treating all failures as consumer-repairable. |
-| A47 | `crates/core/src/engine/recovery.rs::plan_record_existing` | Record exists, manifest absent or current installs cannot be proved equal | Recovery falsely claims ownership/current source | refuse caller | Local owner: yes; committed record lane: no | change | Retain exact proof; direct tracked recovery to refresh owner. Never remove or edit lock in this lane. |
-| A48 | `crates/cli/src/commands/repo_effects.rs::confirm` | Repository effects not separately consented | Tracked package code modifies git gates/settings without local consent | skip effects consumer | Yes, local owner can consent | keep | Retain install/effect consent separation. |
-| A49 | `crates/core/src/bot_instructions.rs::protocol_error` | Authorized renderer fails or reports invalid/outside owned paths | Generated ownership/commit offer includes foreign files | post-write nonzero consumer | No, package renderer author | change | Keep no unsafe path acceptance. Check protocol upstream and report installed files already changed; repair managed renderer upstream. |
-| A50 | `crates/cli/src/commands/refresh.rs::record_snapshots` | Snapshot/trash pass cannot finish | Later drift comparison unavailable or old trash remains | warning consumer | Disk owner or derivation author | keep | Retain partial/bookkeeping notice without claiming install rollback. |
-| A51 | `crates/cli/src/commands/refresh.rs::run` | Source sync/unavailable package/Pi proof aggregates failure | Refresh can be partially applied but not complete | nonzero consumer | Local network: yes; missing upstream member: no | change | Keep exact partial outcome; safe skipped upstream package warns and reports to author rather than unrelated commit block. |
-| A52 | `crates/cli/src/commands/commit_offer.rs::hold` | Unarmed/stale/unvouched package prevents selected commit offer | Commit can omit checks or use stale policy | selected action refused consumer | Local setup: owner; package defect: no | change | Retain local consent and accurate unavailable action; source package defect goes upstream. Leave installed files available for normal reviewed route. |
-| A53 | `crates/core/src/commit_offer/mod.rs::Unavailable` | No remote/ambiguous remote/missing gh or PR-only rules | Push/PR targets wrong repo or bypasses required route | choice unavailable consumer | Yes, choose supported route; auth owner if missing | keep | Retain scope-specific options; do not block local install or leave choice. |
-| A54 | `crates/cli/src/commands/commit_offer.rs::refused` | Chosen commit/push/PR times out or actual hook/server refuses | Selected action did not complete | nonzero consumer | Own message/route: yes; upstream gate/host: no | change | Preserve failure and installed-file partial state; distinguish caller-repair from gate-owner outage. |
-| A55 | `crates/cli/src/commands/project.rs::register_target` | Registry fails after files written | Installed project does not appear in app | post-write error consumer | Own registry: yes; core defect: no | change | Keep explicit partial outcome. Route core failures to author; never claim files rolled back or demand consumer edits to core. |
-| A56 | `crates/cli/src/commands/updates_cmd.rs::run_with` | Apply combined with mute/unmute or unsupported selection | Command acts on scope other than requested | refuse consumer | Yes, correct flags/selection | keep | Retain unambiguous command grammar. |
-| A57 | `crates/cli/src/commands/update_pi.rs::install_rows` | Same package declared/installed in another scope or origin conflicts | Extension registers twice or wrong origin replaces package | refuse package update consumer | Yes, settle own duplicate/origin | keep | Retain duplicate/origin proof; shadows are reported without deleting foreign copies. |
-| A58 | `crates/core/src/pi_ext/mod.rs` | Invalid metadata/path/bin, duplicate package directory or unproved source | Wrong extension executes or files escape package root | refuse consumer | Own local package: yes; catalog package: author | change | Retain containment. Validate shipped package upstream; consumer receives safe skip and author route. |
-| A59 | `crates/core/src/pi_ext/mod.rs::npm_install` | Dependency install, Pi settings read or foreign bin replacement fails | Extension incomplete or user bin/settings overwritten | post-copy refusal consumer | Own network/settings/bin: yes; missing shipped build: no | change | Retain no foreign overwrite; distinguish local setup from upstream missing dependency/build output. |
-| A60 | `crates/core/src/pi_ext/mod.rs::link_bins` | Declared executable build target not shipped | Package installs but command is unavailable | warning consumer | No, publisher must ship build | change | Keep warning and report publisher defect; do not require consumer to build/edit managed package. |
-| A61 | `crates/cli/src/commands/update.rs::run_on_with_source` | Package-managed/app-sidecar/unknown install owner | Self-update overwrites another manager's installation | route notice or replacement refusal consumer | Yes, use owning updater; unknown needs install owner | keep | Retain update ownership route, not privileged overwrite advice. |
-| A62 | `crates/core/src/update_feed.rs::validate` | Feed malformed/oversized/incompatible or asset URL unsupported | Updater selects untrusted/wrong release | refuse consumer | No, publisher/feed owner | change | Never install unverified feed. Fail publisher checks and warn consumer update unavailable with publisher route, not source-edit repair. |
-| A63 | `crates/cli/src/commands/update.rs::VersionRelation` | Main downgrade or release downgrade without force | Accidental rollback loses behavior/data compatibility | refuse consumer | Yes, explicit supported release force | keep | Retain deliberate downgrade policy. |
-| A64 | `crates/cli/src/commands/update.rs::install_main_fallback` | No target artifact or signed main source identity | Update falsely claims a released target/build | notice/refusal consumer | Build environment: owner; absent asset: publisher | change | Keep authenticated identity. Offer unavailable-update warning and publisher route; do not assume consumer can build source. |
-| A65 | `crates/core/src/release_digests.rs::verify_command` | Artifact signature, release/target identity or digest differs | Wrong/tampered download replaces app/CLI | refuse consumer | No, publisher must repair; consumer must not bypass | change | Keep trust boundary. Move failing artifact check upstream, show safe no-update warning plus publisher incident route. |
-| A66 | `crates/cli/src/commands/update.rs::command_failure` | App directory or executable replacement cannot complete | App/CLI halves disagree or update remains incomplete | refuse consumer | Own writable install: yes; foreign owner: no | change | Preserve exact partial state and retry. Route foreign permissions to install owner, never generic privileged update. |
-| A67 | `crates/cli/src/commands/update.rs::record_command_on` | Running command path cannot be recorded | Desktop cannot update this executable later | warning consumer | Yes, owned path/record permission; core bug author | keep | Retain notice; current update can continue. |
-| A68 | `crates/cli/src/commands/refresh.rs::run` | Planned marked-lane project refresh/apply/update refusal | Shared install/record changes enter unrelated item branch | planned block lane | No base write; can request authorized refresh lane/override | change | Proposal, absent from audited code. Keep narrow shared-project mutation protection and explicit authorized flag. Exclude executable-only update and independently owned scope without shared-write harm. Preserve KEN-2299 binding. |
-| A69 | `tools/harness-smoke::BUILD_INPUTS` | Installed kendex commit does not prove checkout renderer | Live smoke reports false failures against another build | refuse author proof operator | Yes, operator with checkout can rebuild/copy; lane authority may differ | keep | KEN-2127 implemented. Keep ancestry/build-input proof and disclosed allow-stale override; no consumer runtime version-equality gate. |
-| A70 | `tools/harness-smoke::refuse` | Missing runtime/repo/coverage/fixture prerequisite | Proof claims behavior with nothing exercised | not exercised/refuse proof operator | Host setup: owner; coverage source: author | keep | Retain no-proof classification; live failing row and unanswered row differ. No forbidden worktree mutation to obtain proof. |
-| A71 | `skills/commit-guards/scripts/changelog-entries` | Planned major bump with no named Breaking call-out | Users get incompatible release without migration information | planned block release author | Yes, name break/migration or choose nonmajor version | keep | Not implemented in this checkout. Preserve KEN-2309 scope and author-level placement; owner-major consent is policy, not an extra code gate. |
-| A72 | `crates/core/src/engine/takeover.rs::refuse_unsettled_takeover` | Explicit takeover matches nothing or leaves another position unsettled | Consumer believes replacement completed while old/foreign copy still wins | refuse consumer | Yes, correct own target/selection and settle occupants | keep | Retain exact-intent and all-or-none scope sweep checks. |
-| A73 | `crates/core/src/apply/op.rs::refuse_unless_ignored` | Project credential target is not ignored | Credential becomes a committed secret | refuse consumer | Yes, own repository ignore policy | keep | Retain no private write until ignore proof. |
-| A74 | `crates/core/src/apply/op.rs::refuse_unless_ignored` | Git cannot settle whether credential target is ignored | Unverified private path may expose secret | refuse consumer/lane | No for missing/broken host git; operator repairs it | change | Keep no credential write. Classify query as not exercised and route host repair to operator, distinct from an unignored consumer path. |
-| A75 | `crates/core/src/lock/file.rs::parse_versioned` | Ordinary apply/refresh reads corrupt/legacy/too-new record | Planner cannot establish current mutation ownership | refuse write consumer/lane | Local install owner may recover; main record: no lane repair | change | Retain no unsafe write. Route compatible build/recovery to local install or default-branch refresh owner; do not hand-edit generated record. |
-| A76 | `crates/core/src/lock/roots.rs::read_against` | Record claims absolute/empty/traversing project positions | Planner deletes or writes another checkout's files | refuse write consumer/lane | No, generated record/producer owner | change | Retain containment; fail producer proof upstream and direct consumer to safe recovery owner. |
-| A77 | `crates/core/src/lock/file.rs::machine_state` | Machine cache corrupt or from other record version | Cache-only incompatibility could wrongly block otherwise valid install | cache treated absent, not record refusal consumer | No repair required; next owned save can rebuild cache | keep | Retain optional-cache fallback; committed record refusal is separate A75. |
-| A78 | `crates/core/src/lock/file.rs::machine_state` | Machine cache file read itself fails | Optional delivery/cache state unmeasured | read error can refuse consumer/lane | No for shared cache/host permissions | change | Report cache unavailable and retain safe committed evidence; do not overwrite unreadable shared cache. Operator repairs access. |
-| A79 | `crates/core/src/engine/posture.rs::ignores_committed` | Repository gitignore hides committed skills/record | Teammate clone lacks setup or ownership record | warning consumer | Yes, repository policy owner | keep | Retain clone-impact notice; preserve foreign ignore rules unless owner changes them. |
-| A80 | `crates/core/src/engine/posture.rs::plan_posture` | Shared clone info/exclude hides committed setup | Local status omits render changes so no commit carries them | warning clone owner | Yes, clone owner; pull cannot fix it | keep | Retain local-git-dir remedy distinct from repository ignore policy. |
-| A81 | `crates/core/src/engine/posture.rs::managed_block` | Local-state ignore delimiters duplicate/reverse/unclosed | Planner overwrites ambiguous part of user's ignore rules | refuse consumer | Yes, owns ignore file/boundaries | keep | Retain refusal before managed replacement. |
-
-## Other shipping and validation checks
-
-| ID | Actual check and owner | Reached by | Prevented harm | Effect and actor | Can that actor fix it? | Verdict | Action and boundary |
-|---|---|---|---|---|---|---|---|
-| X01 | `skills/orch/scripts/dev-validate-run::DEV_VALIDATE_CMD` | Required validation command absent/invalid or runner dependency missing | Completion can claim checks that never ran | refuse lane | Own invocation: yes; repo/host config: owner | change | Keep no passing receipt. Route repository/host setup failures to owner; do not substitute a narrower hand-picked command. |
-| X02 | `skills/orch/scripts/dev-validate-run::state=lost` | Runner lost/killed, bound expires or receipt incomplete | Round can claim completed validation without a result | hold completion lane | No, host owner controls kill/cap/config | change | Keep no-pass state. Separate unavailable/no-verdict from source failure and expose host-owner retry route. KEN-1981 owns cost/bound design. |
-| X03 | `tools/catalog-release-check` | Release invokes strict catalog check | Release ships packages that do not load | block release author | Yes, owns catalog/release | change | Keep source breakage and harm-specific checks I18/I22/I24. Remove blanket advisory escalation as I19 prescribes. |
-| X04 | `tools/release-installer-check::missing` | Installer absent/ambiguous or missing built command | Download installs app alone or wrong build | block release author | Yes, owns bundle build | keep | Retain required-artifact roster, command presence/run and version equality. |
-| X05 | `tools/release-installer-check::signature` | Signed macOS installer has absent/invalid sidecar signature | Notarized app refuses to run installed command | block release operator | Yes, owns signing/build | keep | Retain signed-lane proof; explicitly unsigned lane is a notice, not forged success. |
-| X06 | `tools/release-installer-check.ps1` | Windows setup/install/uninstall/PATH proof fails | Installer leaves unusable CLI or unwanted PATH state | block release operator | Yes, owns Windows build/test host | keep | Retain real install/uninstall proof; Linux did not exercise this leg. |
-| X07 | `tools/release-installer-check::tool` | Missing extraction/runtime/version-read prerequisite | Installer behavior is unmeasured | block release lane | No, host owner provisions native tooling | change | Keep no release attestation; classify prerequisite as environment unavailable with release-operator repair. |
-| X08 | `tools/release-channel-point::pointer-version` | Feed incomplete, version/build identity wrong or unsigned | Rolling channel combines wrong/unauthenticated release | block release publisher | Yes, owns feed/artifacts | keep | Retain pointer identity and single-feed publication checks. |
-| X09 | `tools/release-channel-point::hold` | Candidate not newer than authenticated current build | Rolling channel accidentally downgrades | notice/no write publisher | Yes, choose newer candidate | keep | Retain monotonic publication and explicit held notice. |
-| X10 | `tools/release-channel-point::releases` | Release/asset read or pointer upload fails | Channel update is partial or unmeasured | block publisher/operator | Yes, publication operator owns service route | keep | Retain exact no-write/partial publication outcome; outage is not package source failure. |
-| X11 | `tools/check-aur-sync::require_fields` | Recipe/source-info differ, missing source file or parser cannot judge field | Arch installs wrong version, dependencies or missing patch | block packaging author | Yes, owns recipe/source-info | keep | Retain closed recipe agreement and local file checks. |
-| X12 | `tools/check-aur-sync::AUR_REMOTE` | Published recipe differs or remote clone unavailable | AUR users receive recipe different from reviewed source | block publisher; unavailable environment separate | Yes, publisher owns publication; network operator | keep | Retain remote difference and unavailable-read distinction; local-only run does not prove publication. |
-| X13 | `tools/lock-record` | Main's record cannot verify after refresh or rolling record cannot safely land | Committed record falsely attests to installed source | block refresh owner | Yes, owns main refresh/rolling PR | keep | Retain D007 owner-level verify and safe publication route. This lane did not exercise mutations. |
-| X14 | `tools/lock-record::dirty` | Default checkout has uncommitted paths before recording | Refresh overwrites owner's pending work or records wrong tree | refuse refresh owner | Yes, owns checkout and pending work | keep | Retain clean-subject admission before mutation. |
-| X15 | `.github/workflows/lock-record.yml::The app credentials are set` | Required app secrets missing | Record job can report green while main remains stale | block refresh job/lane | No, environment secret owner | change | Provision credentials at owner admission and classify not exercised; no lane secret edit or fake record pass. |
-| X16 | `tools/lock-record::arm` | Pushed head not yet visible after bounded reads | Arming an older visible head merges wrong record | warning, return zero, leave unarmed | Refresh/operator owns later retry | keep | Retain exact-head arming and explicit green-but-unarmed notice. Record is already pushed; not rollback or source failure. |
-| X17 | `tools/lock-record::head-read` | PR head read fails before arming | Unknown head could be armed | nonzero refresh operator | Operator can retry/authenticate; no item-lane repair | keep | Retain no arm on unread head and accurate already-pushed state. |
-| X18 | `tools/publish-npm::guard off-main` | Tag absent, invalid or not held by default branch | Unreviewed/wrong source is published as release | refuse release author | Yes, correct own tag/reviewed source | keep | Retain tag grammar/existence/default-branch admission. |
-| X19 | `tools/publish-npm::guard name` | Tag/package object, name or version disagree | Users download wrong package/version | refuse release author | Yes, owns tagged metadata | keep | Retain package/name/version identity checks. |
-| X20 | `tools/publish-npm::guard moved` | Package tree at tag differs from publishing checkout | Signed npm provenance names bytes not actually published | refuse release author | Yes, bump/tag reviewed current package tree | keep | Retain package-tree equality, not mere version equality. |
-| X21 | `tools/publish-npm::guard npm` | npm lacks trusted-publishing floor or scratch cannot be made | Publish authentication/proof never runs | refuse publishing lane | No, host/publishing operator | change | Keep no publication; provision runtime/scratch at operator and report unavailable environment. |
-| X22 | `tools/publish-npm::guard first-release` | Package never published so trusted publishing cannot initialize it | Run cannot establish authorized first publication | refuse release author/lane | No, npm organization admin owns initialization | change | Route first publish/trusted-publisher setup to npm admin; do not present it as a source-version fix. |
-| X23 | `tools/publish-npm::guard lookup` | Registry lookup fails other than established absence | Unknown version can be treated as absent and republished incorrectly | refuse publication operator | Operator can repair auth/retry service | keep | Retain unknown-versus-E404 distinction and no duplicate publish claim. |
-| X24 | `tools/publish-npm::guard served` | Registry already serves exact version | Retry attempts immutable duplicate publication | notice, no publish, exit zero author | No repair required | keep | Retain idempotent already-served result. |
-| X25 | `tools/publish-npm::unconfirmed` | Publish succeeded but registry does not confirm serving it | Caller retries or claims availability without knowing publication state | nonzero post-publication operator | Operator checks registry/retries confirmation | keep | Retain possible-write uncertainty; never say nothing published or rollback. |
-| X26 | `tools/publish-npm::publish` | Archive extraction, dependency/prepack or publish fails | Wrong/incomplete package may be built or publication unavailable | nonzero release author/lane | Source/build: author; tool/service: operator | change | Keep no false publication claim; separate author build defects from unavailable environment and preserve partial npm outcome. |
-| X27 | `tools/publish-homebrew::placeholder guard` | Recipe pins all-zero target placeholder | Brew offers nonexistent/checksum-invalid download | warning, recipe deferred; others can publish | Yes, recipe author fills real release pin | keep | Retain per-recipe deferral and all-deferred no-clone result. |
-| X28 | `.github/workflows/publish-homebrew.yml::The tap credentials are set` | App secrets or script PUBLISH_TOKEN absent | Tap remains stale under misleading green publish | refuse publishing job/lane | No, token/environment operator | change | Operator provisions credentials before publication; classify unavailable, not bad recipe source. |
-| X29 | `tools/publish-homebrew::clone` | Tap clone, commit or push fails | Recipe update not delivered to consumer | nonzero publisher | Local auth: operator; upstream service: not source author | change | Retain accurate publication failure and operator route; no source-edit advice for service outage. |
-| X30 | `.github/workflows/publish-aur.yml::AUR_SSH_KNOWN_HOSTS` | SSH secret or verified host identity absent | Publishing connects to untrusted host or never authenticates | refuse publishing job/lane | No, key/host-trust operator | change | Keep no guessed host/key trust. Move credential admission and repair to operator; no lane override. |
-| X31 | `tools/publish-aur::check_key` | Private key unreadable/unregistered, wrong account or login unmeasured | Wrong identity cannot maintain packages; unknown login is not authorization | refuse publication operator | Yes, operator owns key/account; service retry | keep | Retain fingerprint/account proof and unknown-versus-rejected login distinction. |
-| X32 | `tools/publish-aur::sources_current` | Placeholder, absent download or actual checksum mismatch | Recipe fails download/validity for users | warning, package deferred; other packages proceed | Yes, recipe/release author fixes pin or publishes target | keep | Retain distinct green deferral, not successful publication. |
-| X33 | `tools/publish-aur::unreachable` | Request/read/checksum prerequisite cannot establish download state | Unavailable network is misread as pending release and tap stays stale | nonzero publication operator | Operator/service owner, no recipe defect proof | change | Keep unknown state and no false readiness. Route host/service failure separately from recipe mismatch. |
-| X34 | `tools/publish-aur::publish_one` | Clone/push fails for one package; post-publication comparison may fail | Some recipes remain stale or published bytes differ | nonzero partial publication operator | Operator repairs auth/service; author owns differing recipe | change | Preserve which packages actually published and continue others; verify published subset, not a blanket no-write claim. |
-| X35 | `.github/workflows/release.yml::Stage macOS signing environment` | Apple secrets partially configured | Signed-but-unnotarized app refuses to run | refuse release lane | No, signing operator owns secrets | change | Keep signed-release admission at signing owner. All secrets absent remains explicitly unsigned, not a claimed signed pass. |
-| X36 | `.github/workflows/release.yml::Stage the command for the bundle` | Runner has no supported command-overlay mapping | Installer omits CLI or places wrong sidecar | refuse release author | Yes, owns build/runner mapping | keep | Retain explicit unsupported-runner refusal. |
-| X37 | `.github/workflows/release.yml::Classify the tag` | Built version unreadable or differs from tag/run/commit identity | Release or rolling build falsely identifies its source | refuse release author/operator | Yes, owns version/tag/build identity | keep | Retain built-command identity, exact tag version and main run/commit checks. |
-| X38 | `.github/workflows/release.yml::Write the signed update manifest` | Required platform signed artifact absent | Updater offers target whose signed download does not exist | refuse release author/operator | Yes, owns artifact build/signing | keep | Retain required-platform artifact admission before feed publication. |
-| X39 | `skills/review-gate/scripts/dispatch-refresh.sh::installation-read` | Installation enumeration fails or nonarchived list empty | No consumer notified while dispatch appears complete | nonzero dispatch job/lane | No, app-installation/operator authority | change | Classify no dispatch evidence and route operator repair; never infer empty installation from failed read. |
-| X40 | `skills/review-gate/scripts/dispatch-refresh.sh::refresh-error=dispatch` | Some repository dispatches fail while others succeed | Some consumers miss refresh request | nonzero partial notification operator | Operator fixes token/service; consumers cannot fix catalog dispatch | change | Retain per-repository partial outcome and operator retry. D007 source-catalog exclusion stays. |
-
-## Lane size-gate experience
-
-- Before delegation, branch-size-check rejected `0 production lines; one audit report, then change and remove items` with exit 3.
-- The parent authorized `0 lines`. The gate rejected that value too, with exit 3. Its DELTA_GRAMMAR permits singular 1 or plural counts starting at 2, not zero.
-- The parent directed removal of the optional Expected delta line. That change succeeded. The gate passed with `allowance_missing`. No false positive allowance was entered. The contract remains zero production changes.
-- Evidence: `tmp/KEN-2320-preflight-ask.md` and `tmp/KEN-2320-zero-delta-ask.md`. The parent reports the same finding in KEN-2319. P14 owns a parser/scope correction, not an inflated allowance workaround.
-
-## Own checks
-
-### Scope of results
-
-- Measurements use source revision `8d95c78d7bcf144dfab70a2958ea5e5dc6646268`. Each log opens with its UTC date, revision and exact command. The manifests retain every normalized command, exit status, working directory and supplied environment condition.
-- `kendex verify --strict` uses the installed PATH command. Its version is `1.2.0+main.498.56b28ff4d377dc4b2295710d74a06dad125d7017`, recorded in `tmp/KEN-2320-binary-version.log`. Catalog check and real-CLI staging use the checkout-built command.
-- No synthetic GitHub event, successful needs object, live writer status or native operating-system result is substituted. Suite exits do not prove every optional case ran. Internal skip notices remain in the logs.
-- Tests use their existing fixtures. No validation TMPDIR is set inside this worktree. The own-catalog fixture's global install points at its isolated home, not the machine's real home.
-
-### Required and source checks
-
-| Command | Exit | Result and coverage | Evidence | Verdict rows |
-|---|---|---|---|---|
-| `tools/guard --full` | 0 | Passed: workspace tests/lints, UI checks and both cross-target compiles ran. Bash 3.2 parsed through existing container route. This is not native macOS or Windows test execution. | `tmp/KEN-2320-guard-full.log` | G01-G34 |
-| `kendex verify --strict` | 1 | Failed attestation: 222 checked, 174 OK, 48 stale entries; record sourceHash mismatch; declared engineer has no recorded installation. These are refresh-owner failures, not this report's source edits. No ignored-output warning caused this exit. | `tmp/KEN-2320-verify-strict.log` | V02/V03/V11, all change |
-| `cargo build --release --locked -p kendex-cli` | 0 | Passed catalog workflow build. | `tmp/KEN-2320-catalog-build.log` | I18 |
-| `target/release/kendex check --catalog . --strict` | 0 | Passed: 63 packages, 0 breakage, 0 advisory, 0 safety findings. This does not prove live harness delivery or installed-layout links. | `tmp/KEN-2320-catalog-strict.log` | I18/I19/C17/C30 |
-| `cargo test -p kendex-cli --test cli_smoke -- --nocapture` with workflow condition `KENDEX_CLI_SMOKE=1` | 0 | Passed isolated staging and inverse controls for Codex and Copilot. 2 validated, 5 uncovered: OpenCode/Gemini absent; Claude/Pi/Cursor have no supported offline tree reader in this suite. | `tmp/KEN-2320-cli-smoke.log` | I20, change |
-| `skills/doc-limits/scripts/doc-limits --staged` before exception | 1 | Source-policy rejection: required single report was 96641 bytes against 65536. No content defect was named. Existing exception policy permits a must-stay-whole document. Exact-path exception is the only mechanical landing enabler; checker code and global caps stay unchanged. | `tmp/KEN-2320-audit-report-cap.log` | D01, change |
-
-The 48 stale entries are generalist on Claude/Codex/Copilot/Pi; lane-mail-check and lane-mail-deliver on Claude/Codex/Pi; session-drift-check on Claude/Codex; and commit-guards, dev, harness-ci, linear, orch, preflight, review-gate, second-opinion and slack on Claude/Codex/Copilot/Pi. The record row reports those same sourceHash disagreements. D007 assigns their repair to the default-branch refresh owner. The engineer declaration gap has the same owner. The log's unmanaged packages are notices, not failed rows.
-
-### Named workflow command records
-
-- `tmp/KEN-2320-workflow-results.json`: 339 command records; 339 exit 0; 0 nonzero or incomplete.
-- `tmp/KEN-2320-platform-results.json`: 29 command records; 22 exit 0; 7 nonzero or incomplete.
-- `tmp/KEN-2320-inline-results.json`: 3 command records; 3 exit 0; 0 nonzero or incomplete.
-- Workflow shell loops are normalized to their unchanged per-suite commands. The orch commands use the workflow's actual shard filters. Inline roster checks are extracted unchanged from skill-tests.yml. Linux cargo commands include the workflow's locked/no-fail-fast flags and environment conditions.
-- Passing standalone checks include bot-instructions check, review-gate validate and both predicate selftests, todo-ban, preflight, md-format, md-refs, installer-pin, test-roster, bash32-lint and bash32-parse. Corresponding verdicts stay source-based; passing a ceremony check does not establish a reason to keep it.
-
-### Every nonzero workflow command
-
-| Exact command and cwd | Exit | Diagnostic and classification | Evidence | Verdict |
-|---|---|---|---|---|
-| `npm test; cwd=pi-extensions/pi-caveman` | 1 | Unavailable environment: tsx package is absent. Unit modules could not load. | `tmp/KEN-2320-platform-13.log` | G30/I21: change |
-| `npm run typecheck; cwd=pi-extensions/pi-codex-minimal-tools` | 127 | Unavailable environment: tsc is absent. Type check not exercised. | `tmp/KEN-2320-platform-14.log` | G30/I21: change |
-| `npm test; cwd=pi-extensions/pi-codex-minimal-tools` | 127 | Unavailable environment: tsx is absent. Test assertions not exercised. | `tmp/KEN-2320-platform-15.log` | G30/I21: change |
-| `npm test; cwd=pi-extensions/pi-extension-manager` | 1 | Failed runtime proof: mocked bootstrap child returned 143 after its own timeout. Source cause is not established. Local Bun is 1.4.2, not the workflow pin 1.3.14. No rerun or timer change. | `tmp/KEN-2320-platform-16.log` | G30/I21: change |
-| `npm test; cwd=pi-extensions/pi-skills-manager` | 1 | Unavailable environment: required Pi SDK peers are absent. Loaded cases can pass, but the full suite is not exercised. | `tmp/KEN-2320-platform-24.log` | G30/I21: change |
-| `npm test; cwd=pi-extensions/pi-tool-renderer` | 1 | Unavailable environment: required Pi SDK peers are absent. Loaded cases can pass, but the full suite is not exercised. | `tmp/KEN-2320-platform-26.log` | G30/I21: change |
-| `npm test; cwd=pi-extensions/pi-web-tools` | 127 | Unavailable environment: tsx is absent. Test assertions not exercised. | `tmp/KEN-2320-platform-27.log` | G30/I21: change |
-
-These are actual nonzero command results, not passing checks. Missing dependencies are not source defects. The bootstrap result is a failing local runtime proof with an unresolved cause, not a demonstrated source regression. The package/runtime owner must judge it before a source issue is filed. The source audit found V26 and G35 by reading; it did not plant or measure those failure cases.
-
-### Not exercised and prohibited mutations
-
-- `tmp/KEN-2320-not-exercised.json` records each omitted command with date, revision, exit null, category, diagnostic and matching verdict rows. A missing prerequisite is not a passing source check.
-- Native macOS and Windows suites cannot run on this Linux host. Apple/Windows cross-target compilation is separate evidence. No platform pass is inferred from Linux results.
-- Global harness installation, judged-checkout refresh/source preparation, live review-writer dispatch/status/incident writes and lock-record publication are not authorized. Their named workflows provide no isolated fixture for those live mutations. This lane records the refusal instead of disabling the rule or inventing a successful event.
-- UI dependency reinstallation would change the shared base dependency tree. Existing UI tests/type/lint run without reinstalling it. Pi peer-install/build prerequisites omitted from this lane remain unavailable, not bad package source.
-- The pi-claude-bridge bundle comparison returned zero, but no clean-lock rebuild ran. I16 is not reported as a passed build-to-bundle proof. The pi-hooks test command installs dependencies before its tests and is not exercised as a read-only command.
-- Source refresh, apply and update do not run against this worktree or sandbox base. `.kendex-lock.json` stays unchanged. The existing CLI smoke fixture is the allowed exception for isolated installation, not permission to refresh the item branch.
-
-
-## Report-only validation
-
-- This change contains the audit report plus the exact-path document-size exception required to land that report. It contains no runtime check change, no lock change and no test-only replacement of an existing guard.
-- Validation follows the installed preflight and doc-limits commands, then DEV_VALIDATE_CMD through dev-validate-run. The final round artifact records that run's actual result and directory. No manual class or narrower command replaces it.
-- The audit measurements above remain evidence, including every nonzero result. They are not relabeled as report validation. A failing report validation is returned as failing; measured upstream drift and unavailable audit environments stay separate.
-- The source/path/anchor ledger and row counts are checked by `tmp/KEN-2320-coverage.md` and `tmp/KEN-2320-counts.json`. No behavior test or must-fail runtime control is added for report prose. The unchanged document cap rejection precedes its authorized whole-document exception.
-
-
-## Follow-up ownership
-
-- The parent creates each unbound change/remove issue from its row's reached-by behavior and action. KEN-1981 receives CI/guard harm decisions, not a new performance report.
-- Consumers report source defects through kendex report. They do not edit rendered files. Local source forks and local settings remain consumer-owned and their correctable checks stay at that owner.
-- No refresh, apply or update runs against this worktree or the sandbox base. No install record is staged. The existing own-catalog smoke test creates its own isolated home; it is the allowed fixture, not a bypass of lane restrictions.
+- `tmp/KEN-2320-not-exercised.json` retains command/date/revision/null exit/category/diagnostic/rows. Native platforms unavailable; live harness/writer/incidents/preparation/record writes unauthorized, no provided fixture. No fabricated CI result.
+- No shared UI reinstall or Pi peer/build install. Bridge bundle comparison exits 0 without clean-lock rebuild, so I16 is not proved. pi-hooks dependency-installing test is not read-only exercised.
+- No worktree/base refresh/apply/update, lock change or worktree TMPDIR. Existing smoke uses authorized isolated home, not lane bypass.
+- Report-only branch restores pre-audit exclusions. Installed preflight/doc-limits and dev-validate-run validate this fix; artifact records result/bytes and corrects prior exception claim. Historical evidence stays.
+- Parent files unbound scopes; C reports upstream via kendex report, not render edits. KEN-1981 receives harm, not another cost audit.
