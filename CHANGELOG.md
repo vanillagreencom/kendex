@@ -12,6 +12,10 @@ change came from an outside contributor.
 
 ### Added
 
+- Set `ORCH_LANE_PREFERENCE` for model-free launches. Preserve task permissions and record the first eligible entry with room. Repeat the choice for tmux batch items and slot waits.
+- Overseer progress notices pause from midnight to 7 am in the owner's time zone. The morning brief includes overnight merges. Quiet hours and the owner's zone are configurable.
+- Add the `swift` agent for SwiftUI and UIKit views, Swift app code, and Xcode and Swift Package Manager builds and tests across all supported agent harnesses.
+
 - Linear accepts a pre-minted application token through `LINEAR_APP_TOKEN`. Use `auth-mint` on the credential host to print token and expiry JSON without writing files.
 - Project-scope `refresh`, `apply` without `--plan`, and `updates --apply` refuse writes in marked lane worktrees, including Windows worktrees. Refresh lanes can pass `--lane-refresh` to proceed.
 - Major release checks require a named Breaking entry for the app and Pi packages; all release channels use one version and migration standard.
@@ -33,6 +37,10 @@ change came from an outside contributor.
 
 ### Fixed
 
+- Old consumer refresh scripts can open their update pull request. Automatic refresh keeps the retired writer until explicit trusted removal. Its retained template findings are accepted.
+- Hooks install required skills and companions together. Invalid harness IDs withhold callers. Skill removals stay removed. Hand-installed skill checks report dependency gaps without blocking.
+- Commit guard checks report an outdated hook helper after a pulled render and name the installer to run from the main checkout.
+- Pi agents share a child limit, cancel pane preparation, and drain stalled commands on shutdown. Inbox failures restore tasks.
 - Pi background tasks cache bounded log tails and command layouts, limit concurrent log reads, and stop notification regexes at their deadline instead of freezing Pi.
 - Regex session-search snippets keep the matched text in prompts with repeated spaces or newlines.
 - Pi QOL Copy and Fork load complete prompts before closing search. Copy and image refusals preserve newer editor drafts. Headless image refusals report errors.

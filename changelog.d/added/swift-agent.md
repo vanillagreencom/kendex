@@ -1,1 +1,0 @@
-- Add the `swift` agent for SwiftUI and UIKit views, Swift app code, and Xcode and Swift Package Manager builds and tests across all supported agent harnesses.

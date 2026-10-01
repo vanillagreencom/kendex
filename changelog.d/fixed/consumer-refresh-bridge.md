@@ -1,1 +1,0 @@
-- Old consumer refresh scripts can open their update pull request. Automatic refresh keeps the retired writer until explicit trusted removal. Its retained template findings are accepted.
