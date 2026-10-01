@@ -153,7 +153,7 @@ while IFS=$'\t' read -r expectation path old replacement; do
     control_replace "$path" 1 "$old" "$replacement"
 done <<'MINT_CONTROLS'
 mint-host: mint succeeds	scripts/commands/auth-mint.sh	export LINEAR_SKIP_API_KEY_RESOLUTION=1	export LINEAR_SKIP_API_KEY_RESOLUTION=0
-mint-host-reference: mint succeeds	scripts/lib/auth.sh	    local LINEAR_AUTH_KIND="app"	    local LINEAR_AUTH_KIND="app"; if [[ "${LINEAR_SKIP_API_KEY_RESOLUTION:-}" == 1 && "${LINEAR_CLIENT_ID:-}" == op://* ]]; then LINEAR_AUTH_KIND="unset"; fi
+mint-host-reference: only pair resolves	scripts/lib/auth.sh	    local LINEAR_AUTH_KIND="app"	    local LINEAR_AUTH_KIND="app"; if [[ "${LINEAR_SKIP_API_KEY_RESOLUTION:-}" == 1 && "${LINEAR_CLIENT_ID:-}" == op://* ]]; then LINEAR_AUTH_KIND="unset"; fi
 mint-missing: refuses	scripts/lib/auth.sh	    if [[ -z "${LINEAR_CLIENT_ID:-}" || -z "${LINEAR_CLIENT_SECRET:-}" ]]; then	    if [[ -z "${LINEAR_CLIENT_ID:-}" && -n "${LINEAR_CLIENT_ID:-}" ]]; then
 mint-host: token JSON	scripts/commands/auth-mint.sh	linear_mint_token	linear_mint_token | jq '.access_token'
 mint-host: cache directory absent	scripts/commands/auth-mint.sh	linear_mint_token	linear_mint_token; mkdir -p -- "$PROJECT_ROOT/.cache/linear/oauth"
