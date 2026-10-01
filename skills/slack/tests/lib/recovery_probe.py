@@ -15,7 +15,7 @@ sys.path.insert(0, sys.argv[1])
 from api import Slack
 from refusals import Refusal
 from relay import RootRelay
-from settings import load
+from settings import load, load_presence
 from store import Journal
 
 mode, root = sys.argv[2], Path(sys.argv[3])
@@ -43,7 +43,7 @@ class FullJournal(Journal):
 
 client = StopAfterPost if mode == "kill" else Slack
 api = client(settings.token, settings.api_url)
-relay = RootRelay(root, settings, api, time.time)
+relay = RootRelay(root, settings, load_presence(root), api, time.time)
 if mode == "append-fail":
     relay.journal = FullJournal(root, relay.state)
 error = ""
