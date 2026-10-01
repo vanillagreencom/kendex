@@ -1812,7 +1812,7 @@ case "$VERB" in
       refuse file-unreadable "$TO_LANE"
     CLOSED="$(cat -- "$WORK_DIR/closed")" || refuse file-unreadable "$WORK_DIR/closed"
     lm_objects "$WORK_DIR/new" | jq -c --arg answered "$ANSWERED" --arg closed "$CLOSED" --arg verb "$VERB" \
-      --arg to "$TO" --argjson due "$DUE" --argjson now "$NOW_EPOCH" "$LM_JQ_DEFS"'
+      --arg to "$TO" --argjson due "$DUE" --argjson now "$NOW_EPOCH" "$MAILBOX_TIME_JQ"'
       ($answered | split("\n")) as $done
       | ($closed | split("\n")) as $closed
       | . as $envelope
