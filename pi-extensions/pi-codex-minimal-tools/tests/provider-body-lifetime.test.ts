@@ -50,13 +50,15 @@ test("SSE body idle deadline resets on each chunk and zero disables it", async (
 	let source: ReadableStreamDefaultController<Uint8Array>;
 	t.mock.method(globalThis, "fetch", async () => new Response(new ReadableStream<Uint8Array>({ start(controller) { source = controller; } })));
 	const response = await fetchWithResponseHeaderTimeout("https://example.test", {}, undefined, 100, 50);
-	const pending = response.text();
+	let settled = false;
+	const pending = response.text().finally(() => { settled = true; });
 	const rejection = assert.rejects(pending, /http_idle_timeout_ms=50/);
 	t.mock.timers.tick(49);
 	source!.enqueue(new TextEncoder().encode("data: {}\n\n"));
 	await setImmediate();
 	t.mock.timers.tick(49);
 	await setImmediate();
+	assert.equal(settled, false, "SSE body read must stay pending until the reset idle deadline");
 	t.mock.timers.tick(1);
 	await rejection;
 	const controller = new AbortController();
