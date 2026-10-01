@@ -30,14 +30,14 @@ them.
 
 Each poll, every SLACK_POLL_SECONDS, per root: re-resolve the owners when
 the setting moved, run the catch-up when one is due, mark every delivered
-directive the journal holds no mark for, swap the receipt mark of every
+owner message the journal holds no mark for, swap the receipt mark of every
 directive the overseer has read since, then read the mailbox's events and
 post every owner-bound envelope not yet carried.
 
-A directive's Slack message carries a receipt mark, a reaction and never a
+An owner message carries a delivery mark; a directive also carries a receipt mark, a reaction and never a
 message: SEEN once it lands in the mailbox, READ once the overseer's
 to-lane.cursor passes it. Each mark is judged from the journal on every
-poll, never from the step that delivered the directive, so a stop between
+poll, never from the step that delivered the message, so a stop between
 the delivery and its mark leaves the mark to the next poll.
 
 A start whose journal holds no `start` line seeds both positions before it
@@ -109,8 +109,7 @@ RETRY_MAX_SECONDS = 60
 RECONNECT_BOUND_SECONDS = 2 * RETRY_MAX_SECONDS
 NOT_OWNER = "Only the channel's owners steer this session; this message is not routed."
 NO_TEXT = "Only text and files are routed; this message has neither."
-RECORDED = "Recorded as your answer."
-ALREADY = "This question was already answered; delivered as a directive instead."
+
 # Slack's answer when the reaction is already as the call would leave it, or
 # its message is gone: nothing is left to mark.
 MARK_SETTLED = {"already_reacted", "no_reaction", "message_not_found"}
@@ -369,13 +368,10 @@ class RootRelay:
         # The mailbox judges whether an ask is still open; the journal's own
         # flag only decides how often the thread is read.
         if thread is not None and thread.kind == "ask":
-            outcome, answer_id = self.mail.resolve(thread.envelope, text, delivery)
-            if outcome == "resolved":
+            outcome, answer_id = self.mail.answer(thread.envelope, text, delivery)
+            if outcome == "answered":
                 self.journal.append(t="in", channel=self.channel, ts=ts, kind="answer", id=answer_id, thread=thread_ts)
-                self.journal.append(t="resolved", id=thread.envelope)
-                self.api.post("chat.postMessage", channel=self.channel, thread_ts=thread_ts, text=RECORDED)
                 return
-            self.api.post("chat.postMessage", channel=self.channel, thread_ts=thread_ts, text=ALREADY)
         parent = self.parent_context(thread_ts) if thread_ts != ts else None
         envelope = self.mail.send_directive(text, delivery, parent)
         self.journal.append(t="in", channel=self.channel, ts=ts, kind="directive", id=envelope, thread=thread_ts)
@@ -396,11 +392,11 @@ class RootRelay:
         return True
 
     def mark_seen(self) -> None:
-        """Mark SEEN every delivered directive no mark line names: one this
+        """Mark SEEN every delivered owner message no mark line names: one this
         poll delivered, one whose mark Slack refused, and one a stop left
         unmarked. A stop after Slack took the reaction and before its line
         is answered already_reacted, which settles it."""
-        for ts in sorted(self.state.directives.difference(self.state.marks), key=float):
+        for ts in sorted(self.state.delivered.keys() - self.state.marks.keys(), key=float):
             if self.react("reactions.add", ts, SEEN):
                 self.journal.append(t="mark", ts=ts, name=SEEN)
 
@@ -519,9 +515,9 @@ class RootRelay:
 
     def routes(self, events: List[Dict], seen: int = 0) -> List[Tuple[Dict, str]]:
         """Each envelope not yet carried and what it takes: `ask`, `notice`,
-        `answer`, `seen` for a notice the master read on resume, or `skip`
+        `answer`, `resolution`, `seen` for a notice the master read on resume, or `skip`
         for another that never posts."""
-        answered = {e.get("re") for e in events if e.get("kind") == "answer"}
+        closed = {e.get("re") for e in events if e.get("kind") == "resolution"}
         horizon = self.settings.horizon(self.clock())
         state = self.state
 
@@ -541,7 +537,9 @@ class RootRelay:
             elif at < horizon:
                 route = "skip"
             elif owner and kind == "ask":
-                route = "skip" if env_id in answered else "ask"
+                route = "skip" if env_id in closed else "ask"
+            elif box == "to-lane" and kind == "resolution":
+                route = "resolution"
             elif before(state.start_at, state.start_ids, at, env_id):
                 route = "skip"
             elif owner and kind == "notice":
@@ -566,6 +564,9 @@ class RootRelay:
                 self.post_notice(envelope)
             elif route == "answer":
                 self.post_answer(envelope)
+            elif route == "resolution":
+                self.journal.append(t="resolved", id=str(envelope["re"]))
+                self.skipped.add(str(envelope["id"]))
             elif route in ("skip", "seen"):
                 self.skipped.add(str(envelope["id"]))
             else:
@@ -664,7 +665,7 @@ class RootRelay:
             text = f"Answered in the chat: {envelope.get('text', '')}"
         if self._send(envelope, "answer", text, thread_ts) is not None:
             self._out(envelope, "answer", "resolved", thread=thread_ts)
-            self.journal.append(t="resolved", id=ask_id)
+
 
     # -- the record --status reads --------------------------------------------
 

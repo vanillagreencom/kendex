@@ -27,10 +27,10 @@ Two passes run on one clock. The mail pass starts every
 ORCH_WATCH_MAIL_INTERVAL seconds, reads every lane mailbox, the overseer
 mailbox and the lane records one after another, and prints what it finds as
 it finds it: lane-question, lane-notice, directive-read, directive-unread,
-peer-note, owner-note and owner-ask-resolved. Before the overseer mailbox is
-read, every owner ask past its deadline is resolved to its recommendation
-through `lane-mail resolve --default`, so the pass reports the ruling it
-made. A read that waits on a lock or a slow host delays
+peer-note, owner-note, owner-ask-resolved and owner-ask-closed. Before the
+overseer mailbox is read, `lane-mail resolve --default` closes due owner asks.
+Only an unanswered ask receives a recommendation answer. A read that waits
+on a lock or a slow host delays
 the mailboxes after it past that interval, as do the overseer pane below and,
 run in this loop, a run's one GitHub auth check before its first long pass
 and the heartbeat's open-PR listing. The long pass reads everything else
@@ -456,13 +456,14 @@ mailbox last:
   EVENT owner-note <id>      a note in the overseer's own mailbox, sent with
                              `lane-mail send --item overseer --directive`;
                              its text follows. Read with or without --item.
-  EVENT owner-ask-resolved <ask id> by=<text|default>
-                             an owner ask of this overseer's is closed: by
-                             the owner's own words, which `lane-mail resolve
-                             --text` wrote, or by its recommendation, which
-                             this watch wrote at the deadline; the ruling's
-                             text follows. Reported once per ask, since an
-                             ask resolves once.
+  EVENT owner-ask-resolved <ask id> by=<text|default> id=<answer id>
+                             an answer to an owner ask; its text follows.
+                             Each answer has its own id and leaves the ask
+                             open until resolve closes it. A default answer
+                             supplies the recommendation only if unanswered.
+  EVENT owner-ask-closed <ask id> by=<explicit|text|default>
+                             the separate close record. The owner's words
+                             stand when an answered ask reaches its deadline.
                              Every text and `options:` line of these kinds
                              is indented two spaces, so a message line never
                              begins with EVENT

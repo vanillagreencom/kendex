@@ -88,14 +88,14 @@ mailbox_append_locked() { # FILE WAIT_SECONDS [GUARD] — bytes on stdin
 # The class of an envelope in the overseer's own to-lane.jsonl, as a jq
 # definition a caller puts ahead of its filter, so the writer that checks a
 # reply's --ref and the watch that reports the line judge one rule: a
-# `resolution` is the answer `lane-mail resolve` wrote, carrying `by`; a `peer`
-# line is another repository's overseer's, `from` naming it; an `owner-note` is
-# what the owner wrote, `from` owner or absent; and a `stray` is an answer from
-# the owner with no `by`, which nothing here writes, since the owner answers
-# nothing and a send with --re into this mailbox is refused.
+# `close` is the separate resolution record; `resolution` is an owner answer
+# carrying `by`; a `peer` line names another repository's overseer in `from`;
+# an `owner-note` names owner or no sender; and a `stray` is an owner answer
+# missing the `by` field every owner-answer writer supplies.
 # shellcheck disable=SC2034  # read by the scripts that source this.
 MAILBOX_CLASS_JQ='def overseer_mail_class:
-  if .kind == "answer" and (.by | type) == "string" then "resolution"
+  if .kind == "resolution" then "close"
+  elif .kind == "answer" and (.by | type) == "string" then "resolution"
   elif ((.from // "") | . != "" and . != "owner") then "peer"
   elif .kind == "answer" then "stray"
   else "owner-note" end;'

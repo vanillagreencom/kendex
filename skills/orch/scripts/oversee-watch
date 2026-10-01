@@ -1855,7 +1855,7 @@ check_mail() {
       case "$item:$kind" in
         # The overseer's own mailbox, each line reported under the class
         # lib/mailbox-append.sh defines, which lane-mail judges a reply's --ref
-        # by too. A resolution names the ask it closes, the one the overseer
+        # by too. An answer or close names its ask, the one the overseer
         # is waiting on. A peer line carries its kind, because only an ask is
         # owed a reply and an answer to a directive would name an id in no
         # outbox; `re=` rides an answer, without which two replies from one
@@ -1863,7 +1863,8 @@ check_mail() {
         # nobody's, so it is skipped rather than read back as a note.
         overseer:*)
           case "$class" in
-            resolution) echo "EVENT owner-ask-resolved $re by=$by" ;;
+            resolution) echo "EVENT owner-ask-resolved $re by=$by id=$id" ;;
+            close) echo "EVENT owner-ask-closed $re by=$by" ;;
             owner-note) echo "EVENT owner-note $id" ;;
             peer) echo "EVENT peer-note ${from#overseer:} $id kind=$kind${re:+ re=$re}" ;;
             stray) continue ;;

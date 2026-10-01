@@ -145,12 +145,12 @@ notice --item overseer --to owner --ref $PEER_ASK --file $F|2=lane-mail: ref-unk
 notice --item overseer --to owner --ref $INBOUND_PEER --file $F|2=lane-mail: ref-unknown=$INBOUND_PEER
 notice --item overseer --to owner --ref $RESOLUTION --file $F|2=lane-mail: ref-unknown=$RESOLUTION
 notice --item KEN-1 --attach x --file $F|2=lane-mail: option-unknown=--attach
-send --item overseer --re $OWNER_NOTE --file $F|2=lane-mail: resolve-required=$OWNER_NOTE
+send --item overseer --re $OWNER_NOTE --file $F|2=lane-mail: ask-unknown=$OWNER_NOTE
 send --item overseer --directive --host --root $LANE --delivery-id k --file $F|2=lane-mail: option-conflict=--host,--delivery-id
 send --item overseer --directive --default --file $F|2=lane-mail: option-unknown=--default
 resolve --item KEN-1 --id x --default|2=lane-mail: overseer-only=KEN-1
 resolve --item overseer --default|2=lane-mail: option-required=--id
-resolve --item overseer --id x|2=lane-mail: option-required=--text
+resolve --item overseer --id x|2=lane-mail: ask-unknown=x
 resolve --item overseer --id x --default --text $F|2=lane-mail: option-conflict=--text,--default
 resolve --item overseer --id 1790000000-1-1 --default|2=lane-mail: ask-unknown=1790000000-1-1
 resolve --item overseer --id $PEER_ASK --text $F|2=lane-mail: ask-unknown=$PEER_ASK
@@ -255,15 +255,15 @@ rm -f -- "${BOX:?}/to-lane.cursor.lock"
 new_repo resolve
 owner_ask 'Cut the scanner?' cut,keep cut 0
 lm resolve --item overseer --id "$ASK" --default
-ANSWER="$(field "$BOX/to-lane.jsonl" '.id')"
+ANSWER="$(field "$BOX/to-lane.jsonl" 'select(.kind == "resolution") | .id')"
 assert_eq "$RC=$OUT" "0=lane-mail: resolved id=$ASK by=default answer=$ANSWER" "resolve --default prints the resolution"
-assert_eq "$(field "$BOX/to-lane.jsonl" '[.kind, .re, .by, .text, .from] | join(" ")')" \
+assert_eq "$(field "$BOX/to-lane.jsonl" 'select(.kind == "answer") | [.kind, .re, .by, .text, .from] | join(" ")')" \
   "answer $ASK default cut overseer:resolve" \
   "the default answer carries the recommendation and comes from the overseer"
 lm pending --item overseer --to owner
 assert_eq "$RC=$OUT" "0=" "a resolved ask is no longer pending"
 lm resolve --item overseer --id "$ASK" --default
-assert_eq "$RC=$ERR=$(wc -l < "$BOX/to-lane.jsonl" | tr -d ' ')" "2=lane-mail: resolved-already=$ASK id=$ANSWER=1" \
+assert_eq "$RC=$ERR=$(wc -l < "$BOX/to-lane.jsonl" | tr -d ' ')" "2=lane-mail: resolved-already=$ASK id=$ANSWER=2" \
   "a second resolution is refused, naming the answer, and appends nothing"
 lm resolve --item overseer --id "$ASK" --text "$(text a 'keep it')"
 assert_eq "$RC=$ERR" "2=lane-mail: resolved-already=$ASK id=$ANSWER" "later text for a resolved ask is refused too"
@@ -271,17 +271,36 @@ assert_eq "$RC=$ERR" "2=lane-mail: resolved-already=$ASK id=$ANSWER" "later text
 new_repo resolve_text
 owner_ask 'Cut the scanner?' cut,keep cut 120
 lm resolve --item overseer --id "$ASK" --text "$(text a 'keep it')" --delivery-id slack:C1:1.1
-ANSWER="$(field "$BOX/to-lane.jsonl" '.id')"
+ANSWER="$(field "$BOX/to-lane.jsonl" 'select(.kind == "resolution") | .id')"
 assert_eq "$RC=$OUT" "0=lane-mail: resolved id=$ASK by=text answer=$ANSWER" "resolve --text prints the resolution"
-assert_eq "$(field "$BOX/to-lane.jsonl" '[.by, .text, .from, .delivery_id] | join(" ")')" \
+assert_eq "$(field "$BOX/to-lane.jsonl" 'select(.kind == "answer") | [.by, .text, .from, .delivery_id] | join(" ")')" \
   "text keep it owner slack:C1:1.1" "the owner's answer is the owner's, carrying the delivery it came by"
 lm resolve --item overseer --id "$ASK" --text "$(text a 'keep it')" --delivery-id slack:C1:1.1
-assert_eq "$RC=$OUT=$(wc -l < "$BOX/to-lane.jsonl" | tr -d ' ')" "0=lane-mail: resolved id=$ASK by=text answer=$ANSWER=1" \
+assert_eq "$RC=$OUT=$(wc -l < "$BOX/to-lane.jsonl" | tr -d ' ')" "0=lane-mail: resolved id=$ASK by=text answer=$ANSWER=2" \
   "the same delivery resolving again gets the same line and appends nothing"
 lm resolve --item overseer --id "$ASK" --text "$(text a 'cut it')" --delivery-id slack:C1:2.2
 assert_eq "$RC=$ERR" "2=lane-mail: resolved-already=$ASK id=$ANSWER" "another delivery is refused as resolved already"
 lm resolve --item overseer --id "$ASK" --default
 assert_eq "$RC=$ERR" "2=lane-mail: resolved-already=$ASK id=$ANSWER" "the deadline's default cannot override the owner's answer"
+
+# Slack sends distinct answers, and the deadline closes without replacing them.
+new_repo answered_deadline
+owner_ask 'Cut the scanner?' cut,keep cut 0
+for key in slack:1 slack:2; do
+  lm send --item overseer --re "$ASK" --delivery-id "$key" --file "$(text a 'keep it')"
+  assert_eq "$RC" "0" "an answer lands under $key"
+done
+lm pending --item overseer --to owner --due
+assert_eq "$(jq -r '.id' <<<"$OUT")" "$ASK" "the answered ask stays due and pending"
+lm resolve --item overseer --id "$ASK" --default
+assert_eq "$RC=$(jq -rs '[.[] | select(.kind == "answer")] | length' "$BOX/to-lane.jsonl")=$(jq -rs '[.[] | select(.kind == "answer" and .by == "default")] | length' "$BOX/to-lane.jsonl")" \
+  "0=2=0" "the answered deadline closes without a recommendation answer"
+lm pending --item overseer --to owner
+assert_eq "$RC=$OUT" "0=" "the deadline drops the answered ask"
+lm send --item overseer --re "$ASK" --delivery-id slack:1 --file "$(text a 'keep it')"
+assert_eq "${ERR%% id=*}" "lane-mail: delivery-repeated=slack:1" "a replay after close still names the answer"
+lm send --item overseer --re "$ASK" --delivery-id slack:3 --file "$(text a 'more words')"
+assert_eq "${ERR%% id=*}" "lane-mail: resolved-already=$ASK" "new answer delivery after close is refused"
 
 # --- the delivery id under the lock -------------------------------------------
 new_repo delivery
@@ -330,11 +349,11 @@ lm resolve --item overseer --id "$ASK" --default
 lm send --item overseer --directive --file "$(text d 'Owner wrote.')"
 lm events --item overseer
 assert_eq "$RC=$(jq -r '[.box, (.line | tostring), .kind] | join(":")' <<<"$OUT" | paste -sd, -)" \
-  "0=to-overseer:1:ask,to-lane:1:answer,to-lane:2:directive" \
+  "0=to-overseer:1:ask,to-lane:1:answer,to-lane:2:resolution,to-lane:3:directive" \
   "events prints both files, the resolved ask and its answer included, each naming its box"
 lm events --item overseer
 assert_eq "$(jq -r '.kind' <<<"$OUT" | paste -sd, -)=$([[ -e "$BOX/to-lane.cursor" ]] && echo cursor || echo no-cursor)" \
-  "ask,answer,directive=no-cursor" "events consumes nothing: a second read prints the same and moves no cursor"
+  "ask,answer,resolution,directive=no-cursor" "events consumes nothing: a second read prints the same and moves no cursor"
 printf 'interrupted\n\n' >> "$BOX/to-overseer.jsonl"
 lm notice --item overseer --to owner --file "$(text after-gap 'After the interrupted lines.')"
 printf 'interrupted\n' >> "$BOX/to-overseer.jsonl"
@@ -376,10 +395,18 @@ LANE_MAIL_BIN="$LANE_MAIL"
 new_repo control_resolve
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Cut?' cut,keep cut 0
 LANE_MAIL_BIN="$LANE_MAIL" lm resolve --item overseer --id "$ASK" --default
-mutant resolve-twice 'lm_append_local "$TO_LANE" "$LINE" lm_guard_resolve' 'lm_append_local "$TO_LANE" "$LINE"'
+mutant resolve-twice 'lm_append_local "$TO_LANE" "$LINE" lm_guard_close' 'lm_append_local "$TO_LANE" "$LINE"'
 lm resolve --item overseer --id "$ASK" --default
-assert_eq "$RC=$(wc -l < "$BOX/to-lane.jsonl" | tr -d ' ')" "0=2" \
+assert_eq "$RC=$(wc -l < "$BOX/to-lane.jsonl" | tr -d ' ')" "0=3" \
   "control: without the resolve guard a second resolution lands"
+
+new_repo control_answered_deadline
+LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Cut?' cut,keep cut 0
+LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --re "$ASK" --delivery-id slack:1 --file "$(text a 'keep')"
+mutant default-overrides '[ ! -s "$WORK_DIR/owner.answers" ] || return 0' ': "$WORK_DIR/owner.answers"'
+lm resolve --item overseer --id "$ASK" --default
+assert_eq "$(field "$BOX/to-lane.jsonl" 'select(.kind == "answer" and .by == "default") | .text')" "cut" \
+  "control: bypassing the answered default guard adds a recommendation answer"
 
 new_repo control_delivery
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 'Once.')" --delivery-id k1
@@ -387,6 +414,36 @@ mutant delivery-twice 'lm_append_local "$TO_LANE" "$LINE" lm_guard_delivery' 'lm
 lm send --item overseer --directive --file "$(text d 'Once.')" --delivery-id k1
 assert_eq "$RC=$(wc -l < "$BOX/to-lane.jsonl" | tr -d ' ')" "0=2" \
   "control: without the delivery guard the retry lands a second time"
+
+new_repo control_answer_closed
+LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Which?' a,b a
+LANE_MAIL_BIN="$LANE_MAIL" lm resolve --item overseer --id "$ASK"
+mutant answer-after-close $'  lm_guard_resolve "$1"\n}' $'  : "$1"\n}'
+lm send --item overseer --re "$ASK" --delivery-id new:reply --file "$(text a 'b')"
+assert_eq "$RC" "0" "control: bypassing the answer close guard admits a reply after close"
+
+new_repo control_answer_pending
+LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Which?' a,b a
+LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --re "$ASK" --delivery-id first:reply --file "$(text a 'b')"
+mutant answer-closes-pending 'if $envelope.to == "owner" then $closed else $done end' 'if $envelope.to == "owner" then $done else $done end'
+lm pending --item overseer --to owner
+assert_eq "$RC=$OUT" "0=" "control: pending drops an answered ask when it judges answers as closes"
+
+new_repo control_answer_unknown
+mutant answer-without-ask $'      lm_owner_ask "$MSGID"\n      BY=text' $'      : "$MSGID"\n      BY=text'
+lm send --item overseer --re unknown --delivery-id new:reply --file "$(text a 'b')"
+assert_eq "$RC" "0" "control: bypassing the owner ask lookup admits an answer with no ask"
+
+new_repo control_close_class
+CLASS_DIR="$(mutant_scripts mutants/close-class lib/mailbox-append.sh)" || exit 1
+rm -- "$CLASS_DIR/lane-mail"
+cp -p -- "$LANE_MAIL" "$CLASS_DIR/lane-mail"
+mutate_file "$CLASS_DIR/lib/mailbox-append.sh" 'if .kind == "resolution" then "close"' 'if .kind == "resolution" then "stray"'
+LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Which?' a,b a
+LANE_MAIL_BIN="$LANE_MAIL" lm resolve --item overseer --id "$ASK"
+LANE_MAIL_BIN="$CLASS_DIR/lane-mail" lm resolve --item overseer --id "$ASK"
+assert_eq "$RC=$(field "$BOX/to-lane.jsonl" '.kind' | wc -l | tr -d ' ')" "0=2" \
+  "control: losing the close class permits a second close"
 
 new_repo control_ref
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Which?' a,b a

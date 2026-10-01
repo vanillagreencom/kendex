@@ -1,0 +1,1 @@
+- Slack delivers every reply to an open question as an answer with eyes reactions. Questions stay open until the overseer closes them or their deadline passes.

@@ -22,7 +22,7 @@ from refusals import Refusal, keyed
 from store import parse_at
 
 LANE_MAIL = Path(".agents/skills/orch/scripts/lane-mail")
-FIELD_CHOICES = {"box": ("to-overseer", "to-lane"), "kind": ("ask", "notice", "answer", "directive")}
+FIELD_CHOICES = {"box": ("to-overseer", "to-lane"), "kind": ("ask", "notice", "answer", "directive", "resolution")}
 
 
 class LaneMail:
@@ -152,19 +152,21 @@ class LaneMail:
                 read.add(env_id)
         return read
 
-    def resolve(self, ask_id: str, text: str, delivery_id: str) -> Tuple[str, str]:
-        """Close an owner ask; returns ("resolved", answer id) or
-        ("resolved-already", the answer that already stands)."""
+    def answer(self, ask_id: str, text: str, delivery_id: str) -> Tuple[str, str]:
+        """Deliver an answer without closing; the mailbox judges repeats
+        before closure, so a replay never becomes a directive."""
         path = self._text_file(text)
         try:
             code, out, err = self._run(
-                "resolve", "--item", "overseer", "--id", ask_id, "--text", path, "--delivery-id", delivery_id
+                "send", "--item", "overseer", "--re", ask_id, "--file", path, "--delivery-id", delivery_id
             )
         finally:
             os.unlink(path)
         if code == 0:
-            return "resolved", _field(out, "answer=")
+            return "answered", _field(out, "id=")
         first = _first(err)
+        if first.startswith(f"lane-mail: delivery-repeated={delivery_id} id="):
+            return "answered", first.rsplit("id=", 1)[1].strip()
         if first.startswith(f"lane-mail: resolved-already={ask_id} id="):
             return "resolved-already", first.rsplit("id=", 1)[1].strip()
         raise Refusal("lane-mail-failed", first)

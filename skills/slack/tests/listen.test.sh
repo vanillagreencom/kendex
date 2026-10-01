@@ -2,7 +2,7 @@
 # `slack listen`: owner text to the mailbox and the mailbox to Slack, through
 # the real lane-mail and a fake Slack API paged two messages at a time. The
 # rows: a directive with its delivery id, an ask posted with the mention and
-# answered once in its thread, the second reply as a directive, a chat answer
+# answered repeatedly in its thread until the asker closes, a chat answer
 # and a deadline default shown in the thread, a notice threaded on its ref, a
 # notice on an owner's reply threaded under that reply's parent, a report
 # uploaded and its thread bound from the share, a non-owner and an empty
@@ -82,7 +82,7 @@ assert_eq "$(jq -r 'select(.t == "in") | [.kind, .ts, .thread] | join(" ")' "$(s
 sk_poll "$ROOT"
 assert_eq "$(directives "$ROOT" | wc -l | tr -d ' ')" "1" "a second poll delivers nothing twice"
 
-# --- an ask: posted with the mention, answered once, then a directive ---------
+# --- an ask: every reply answers, until the asker closes ---------------------
 sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text q 'Cut the scanner?')" --options cut,keep --recommend cut --wait 30 >"$SK_TMP/ask.out"
 ASK="$(sed 's/^id=//' "$SK_TMP/ask.out")"
 sk_poll "$ROOT"
@@ -103,14 +103,19 @@ sk_poll "$ROOT"
 assert_eq "$(sk_state '[.messages.C001[] | select(.text | startswith("<@U001>"))] | length')" "1" "the ask is posted once"
 R1="$(sk_inject C001 U002 'keep' "$ASK_TS")"
 sk_poll "$ROOT"
-assert_eq "$(answers "$ROOT")" "$ASK text C001:$R1 keep" "the first reply in the thread resolves the ask with the delivery id"
-assert_has "$(posts C001)" "$ASK_TS | Recorded as your answer." "the relay confirms the answer in the thread"
+assert_eq "$(answers "$ROOT")" "$ASK text C001:$R1 keep" "the first reply lands as an answer with its delivery id"
 R2="$(sk_inject C001 U001 'and keep the tests' "$ASK_TS")"
 sk_poll "$ROOT"
-assert_has "$(directives "$ROOT")" "C001:$R2 and keep the tests" "a second reply is delivered as a directive on the next poll's history read"
-assert_has "$(posts C001)" "$ASK_TS | This question was already answered; delivered as a directive instead." \
-  "the second reply is told the question was answered"
-assert_eq "$(answers "$ROOT" | wc -l | tr -d ' ')" "1" "one answer stands"
+assert_eq "$(answers "$ROOT")" "$ASK text C001:$R1 keep
+$ASK text C001:$R2 and keep the tests" "both replies land once as answers to the ask"
+assert_eq "$(sk_reactions C001 "$R1") $(sk_reactions C001 "$R2")" "eyes eyes" "both answers get eyes"
+assert_eq "$(sk_lm "$ROOT" pending --item overseer --to owner | jq -r '.id')" "$ASK" "an answered ask stays pending"
+assert_eq "$(sk_state "[.messages.C001[] | select(.user == \"UBOT\" and .thread_ts == \"$ASK_TS\")] | length")" "0" "the relay posts no text in the ask's thread"
+sk_poll "$ROOT"
+assert_eq "$(answers "$ROOT" | wc -l | tr -d ' ')" "2" "a replay lands no extra answer"
+sk_lm "$ROOT" resolve --item overseer --id "$ASK" >/dev/null
+assert_eq "$(sk_lm "$ROOT" pending --item overseer --to owner)" "" "explicit resolve drops the answered ask"
+sk_poll "$ROOT"
 
 # --- a chat answer and a deadline default appear in the thread ------------------
 sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text q2 'Merge now?')" --options yes,no --recommend no >"$SK_TMP/ask2.out"
@@ -669,7 +674,7 @@ crash_gap "$DELTA"
 assert_eq "$GAP_COUNT" "3" "control: the delivery id dropped, the replayed note lands twice"
 sk_bin_reset
 
-sk_mutant resolve relay.py 'thread\.kind == "ask":' 'thread.kind == "never":'
+sk_mutant resolve relay.py 'outcome, answer_id = self.mail.answer\(thread.envelope, text, delivery\)' 'outcome, answer_id = self.mail.answer(thread.envelope, text, delivery)\n            self.mail._run("resolve", "--item", "overseer", "--id", thread.envelope)'
 EPS="$(sk_new_root eps)"
 sk_bind "$EPS"
 sk_lm "$EPS" ask --item overseer --to owner --file "$(sk_text q4 'Which?')" --options a,b --recommend a >/dev/null
@@ -678,8 +683,15 @@ EPS_CH="$(sk_channel "$EPS")"
 ASK4_TS="$(sk_state ".messages.${EPS_CH}[] | select(.text | contains(\"Which?\")) | .ts")"
 sk_inject "$EPS_CH" U001 'b' "$ASK4_TS" >/dev/null
 sk_poll "$EPS"
-assert_eq "$(answers "$EPS" | wc -l | tr -d ' ')=$(directives "$EPS" | wc -l | tr -d ' ')" "0=1" \
-  "control: the ask thread no longer resolved, the reply lands as a directive"
+sk_inject "$EPS_CH" U001 'and another answer' "$ASK4_TS" >/dev/null
+sk_poll "$EPS"
+CONTROL_FAIL="$SK_FAIL"
+CONTROL_RC=0
+CONTROL_OUT="$(
+  assert_eq "$(answers "$EPS" | wc -l | tr -d ' ')" "2" "control probe: both replies remain answers"
+  [ "$SK_FAIL" = "$CONTROL_FAIL" ]
+)" || CONTROL_RC=$?
+assert_eq "$CONTROL_RC" "1" "control: restoring close on the first reply turns the two-answer assertion red"
 sk_bin_reset
 
 sk_mutant lock store.py 'fcntl\.LOCK_EX \| fcntl\.LOCK_NB' 'fcntl.LOCK_SH | fcntl.LOCK_NB'

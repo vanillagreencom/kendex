@@ -79,12 +79,12 @@ An overseer's question to the owner is one owner ask: the template above for the
 .agents/skills/orch/scripts/lane-mail ask --item overseer --to owner --options [OPTION_A],[OPTION_B] --recommend [RECOMMENDED_OPTION] --file [PATH]
 ```
 
-The ask closes exactly once, through `lane-mail resolve` and nothing else, and the § 4 watch in [oversee.md](../workflows/oversee.md) reports the closing as `owner-ask-resolved`:
+The owner can answer more than once. Each answer lands through `send --item overseer --re [ASK_ID] --file [PATH]`, with its own delivery id. Answers leave the ask open in `pending --item overseer --to owner`. The § 4 watch in [oversee.md](../workflows/oversee.md) reports each answer as `owner-ask-resolved`, with its answer id.
 
-- An answer that arrives through a relay, Slack among them, is that relay's own `resolve --text`.
-- **The chat-answer rule.** An answer typed into the overseer's chat reaches the record only through the overseer: before it acts on the answer, it runs `resolve --text` with the words as typed, so the relay, the report and the chat show one ruling.
-- At the deadline the watch runs `resolve --default`; the overseer tells the owner what stood, with `--ref` naming the ask.
-- Any later, distinct text for a resolved ask is refused `resolved-already` and delivered as a directive.
+- The overseer closes the ask when it has its ruling: `resolve --item overseer --id [ASK_ID]`. The close is a separate record, reported as `owner-ask-closed`.
+- **The chat-answer rule.** Record each chat answer with `send --re` before acting. `resolve --text` records a chat answer and closes together only when the overseer already has its ruling.
+- At the deadline the watch runs `resolve --default`. An answered ask closes without a recommendation answer; an unanswered ask takes its recommendation.
+- After closing, later text arrives as a directive. A repeated delivery still names its original answer.
 
 The overseer records the ruling per § Recording and sends `lane-mail notice --item overseer --to owner --ref [ASK_ID]` naming it, so a relay posts the ruling where the question was asked.
 
@@ -102,7 +102,7 @@ A session that starts with no item to work, no handoff file, no owner note and n
 What do you want to work on? Reply with issue ids or describe it, or answer tracker to take work from the tracker. With no answer by the deadline I wait for your reply.
 ```
 
-`idle`, which stands at the deadline, launches nothing: the overseer keeps its watch running until the owner writes, and that empty queue is not [oversee.md § 5](../workflows/oversee.md#5-stop)'s Stop. `tracker` has it take work as [oversee.md § 2](../workflows/oversee.md#2-select-work) selects it. A reply naming issue ids or describing the work closes the ask through `resolve --text`; one written after the deadline arrives as an owner note.
+`idle`, which stands at the deadline, launches nothing: the overseer keeps its watch running until the owner writes, and that empty queue is not [oversee.md § 5](../workflows/oversee.md#5-stop)'s Stop. `tracker` has it take work as [oversee.md § 2](../workflows/oversee.md#2-select-work) selects it. A reply naming issue ids or describing the work is an answer. The overseer closes with `resolve` when it has its ruling; a reply after the deadline arrives as an owner note.
 
 ## Status report
 

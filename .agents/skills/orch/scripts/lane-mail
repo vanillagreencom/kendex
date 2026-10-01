@@ -29,7 +29,7 @@ usage() {
   cat <<'USAGE'
 Usage: lane-mail ask|notice|wait|inbox|watch --item ITEM [options]
        lane-mail send|drain|pending|events --item ITEM [--root ROOT] [--host] [options]
-       lane-mail resolve --item overseer --id MSGID (--text PATH | --default) [options]
+       lane-mail resolve --item overseer --id MSGID [--text PATH | --default] [options]
        lane-mail peer ask|send --repo REPO [--host] [options]
 
 The lane-to-overseer channel. Harness-agnostic, tmux-free, and reachable
@@ -107,10 +107,10 @@ Overseer side:
               has read. A directive whose id is outside the item alphabet is
               not listed
   pending --item ITEM [--to owner|peer] [--due]
-              print every to-overseer.jsonl ask with no answer: for a lane
+              print every open to-overseer.jsonl ask: for a lane
               item, what a restarted overseer owes a reply; for `--item
               overseer`, the asks this overseer SENT the owner or a peer that
-              nobody has answered. Then every to-lane.jsonl directive past
+              nobody has closed (owner) or answered (peer). Then every to-lane.jsonl directive past
               to-lane.cursor: sent and not yet read. A peer's inbound ask
               lands in to-lane.jsonl and is read by `inbox`, so `pending`
               never lists it. A cursor read `drain --receipts` would report
@@ -141,7 +141,7 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               (default 120) when --wait is not given. An ask with no
               --recommend is refused `recommend-required`, since nothing
               but the owner would ever close it. The owner may still answer
-              outside the options, through resolve --text
+              outside the options, through send --re
   notice --item overseer --to owner --file PATH [--ref MSGID] [--attach PATH]
               a note for the owner. --ref names the envelope it answers,
               an owner note in to-lane.jsonl, one the owner wrote and not a
@@ -156,17 +156,16 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               physically to the progress-report directory workflow-state
               names, recorded at that physical path; refused
               `attach-outside` otherwise
-  resolve --item overseer --id MSGID (--text PATH | --default) [--delivery-id KEY]
-              the one operation that closes an owner ask: under the mailbox
-              lock it appends to to-lane.jsonl the `answer` envelope whose
-              `re` is MSGID, --text carrying the owner's words and `by=text`,
-              --default the ask's own recommendation and `by=default`.
-              Prints `lane-mail: resolved id=<MSGID> by=<by> answer=<id>`.
-              A second resolution is refused `resolved-already` naming the
-              answer already there, unless it carries the --delivery-id that
-              answer landed under: then the same line prints again and
-              nothing is appended, so a relay that crashed between resolving
-              and its own mark repeats the call and lands nothing twice.
+  resolve --item overseer --id MSGID [--text PATH | --default] [--delivery-id KEY]
+              closes an owner ask with a separate `resolution` envelope,
+              `re=MSGID`, and `by=explicit` when neither option is given.
+              --text also records the owner's answer with `by=text`.
+              --default supplies the recommendation with `by=default` only
+              when no answer stands; otherwise it closes without an answer.
+              The check and both appends share the mailbox lock.
+              Prints `lane-mail: resolved id=<MSGID> by=<by> answer=<id>`,
+              where answer names the close record. A second close is refused
+              `resolved-already`, unless its delivery-id repeats that close.
               An id naming no owner ask is `ask-unknown`; --default on an ask
               line carrying no recommendation, which `ask` never writes, is
               `recommend-missing`
@@ -177,6 +176,11 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               collapsed), and envelope only for a relay-posted parent.
               inbox prints both fields as part of the envelope. A top-level
               directive and an ask's answer carry neither
+  send --item overseer --re MSGID --file PATH [--delivery-id KEY]
+              every answer to an open owner ask lands separately with by=text.
+              An answer leaves the ask pending until resolve closes it.
+              The lock judges repeats before closure, so a replay after close
+              still names its original answer. New answers after close refuse.
   send --item ITEM ... --delivery-id KEY
               a send whose envelope carries KEY, the sender's own name for
               this delivery. Under the mailbox lock a KEY the file already
@@ -254,7 +258,7 @@ Options:
   --wait N      ask --to owner only: minutes until that default stands
   --due         pending only: asks whose deadline has passed
   --text PATH   resolve only: the owner's answer, read as --file is
-  --default     resolve only: the ask's recommendation is the answer
+  --default     resolve only: close at deadline; recommend only if unanswered
   --delivery-id KEY
                 send and resolve only: the sender's name for this delivery
   --thread-ts TS --parent PATH
@@ -268,13 +272,15 @@ first=<id>`, the id carried by the file's first line, empty when that line is
 no envelope or its id is outside the item alphabet. A reader keeps both: a
 file opening with another id is a replacement mailbox, not the one counted.
 
-Envelope, one JSON object per line: id, kind, at, from, re (answers only),
+Envelope, one JSON object per line: id, kind, at, from, re (answers and closes),
 halt (true on a directive sent with --halt), text and options (asks with
 choices), and the owner-channel fields each verb above writes: to, ref,
 attach, recommend, wait, deadline (UTC, at plus wait minutes), delivery_id,
 re_delivery_id (notice's copy of its --ref envelope's delivery_id), thread_ts
-and parent (threaded owner directives only), and by (`text` or `default`, on an answer `resolve` wrote). kind is ask,
-notice, answer or directive; at is UTC; id is <epoch>-<pid>-<random>. from
+and parent (threaded owner directives only),
+and by (`text` or `default` on an owner answer; `explicit`, `text` or
+`default` on a close). kind is ask, notice, answer, resolution or directive;
+at is UTC; id is <epoch>-<pid>-<random>. from
 is the sender, read from its own checkout and never from an option: a lane
 verb writes the item, a send into the overseer's own mailbox and a `resolve
 --text` write `owner`, and everything else an overseer sends, a `resolve
@@ -332,7 +338,7 @@ keys, first line `lane-mail: <key>=<value>`: verb-invalid, option-unknown,
 option-conflict, missing-value, option-required, item-invalid, after-invalid,
 seconds-invalid, minutes-invalid, to-invalid, ref-invalid, ref-unknown,
 recommend-invalid, recommend-missing, recommend-required, attach-outside,
-ask-unknown, resolve-required, resolved-already, delivery-repeated,
+ask-unknown, resolved-already, delivery-repeated,
 overseer-only, events-no-cursor,
 command-missing, file-unreadable, root-unresolved, repo-unresolved, repo-self,
 lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
@@ -423,13 +429,12 @@ fix=run `oversee register` from the orch skill in the session that should read t
     ref-invalid) text='--ref takes the id of an envelope: ASCII letters, digits, dot, underscore and hyphen.' ;;
     ref-unknown) text='No owner note in to-lane.jsonl and no owner ask in to-overseer.jsonl carries that id, so nothing here can be answered by it; a line a peer overseer sent and a resolution there are neither. Read the note or the ask again and pass the id it carries.' ;;
     recommend-invalid) text='--recommend names one of the choices --options lists, and an ask with no choices has nothing to recommend.' ;;
-    recommend-missing) text='The ask carries no recommendation, so no default can stand for it: answer it with --text.' ;;
-    recommend-required) text='An owner ask names its choices with --options and the one that stands at its deadline with --recommend, so it never waits on the owner forever. The owner can still answer outside the choices, through resolve --text.' ;;
+    recommend-missing) text='The ask carries no recommendation, so no default can stand for it: close it without --default.' ;;
+    recommend-required) text='An owner ask names its choices with --options and the one that stands at its deadline with --recommend, so it never waits on the owner forever. The owner can still answer outside the choices, through send --re.' ;;
     events-no-cursor) text='events takes no cursor: every read prints every envelope of both files, and a relay keys what it carried by each envelope id, never by a line count. Drop --after.' ;;
     attach-outside) text='An attachment is a regular file, not itself a symlink, whose directory resolves physically to the progress-report directory, and it is recorded at that physical path. The report writer alone sets it; a path anywhere else is refused so nothing outside that directory can be carried to the owner.' ;;
-    ask-unknown) text='No unanswered-or-answered owner ask in the overseer mailbox carries that id. resolve closes asks sent with --to owner and nothing else.' ;;
-    resolve-required) text='An ask in the overseer mailbox is closed by `lane-mail resolve` alone, exactly once, so nothing is sent into it with --re. Run resolve --item overseer --id MSGID --text PATH; a reply owed to an owner note is `notice --item overseer --to owner --ref MSGID`.' ;;
-    resolved-already) text='This ask is already resolved by the answer named above, and an ask resolves exactly once. Deliver later text for it as a directive with `send --item overseer --directive`.' ;;
+    ask-unknown) text='No owner ask in the overseer mailbox carries that id. send --re answers owner asks and resolve closes them.' ;;
+    resolved-already) text='This ask is already closed by the record named above. Deliver later text as a directive with `send --item overseer --directive`.' ;;
     delivery-repeated) text='An envelope carrying this delivery id already stands in the mailbox, named by id= above: this send is a retry of a delivery that landed, so nothing is appended. Record that id against the delivery and go on.' ;;
     overseer-only) text='resolve closes an owner ask in the overseer mailbox alone. A lane ask is answered with `send --item ITEM --re MSGID`.' ;;
     cursor-lowered) text='to-lane.cursor stood past the complete lines the mailbox holds, a count an --ack wrote before it was clamped, so it moved down to the count above. Every line up to that count stays read, and every line after it, the next line written included, is handed over.' ;;
@@ -699,13 +704,13 @@ lm_repository() {
 }
 
 # Who sent it, never typed: a lane writes its own item, a note into the
-# overseer's own mailbox is the owner's, an answer there is the overseer's own
-# reply to one, since the owner answers nothing, and every other overseer write
+# overseer's own mailbox is the owner's, and every other overseer write
 # carries the repository it was sent from.
 FROM=""
 case "$VERB:$ITEM:$DEFAULT" in
   ask:* | notice:*) FROM="$ITEM" ;;
-  send:overseer:* | resolve:*:0) FROM=owner ;;
+  send:overseer:*) FROM=owner ;;
+  resolve:*:0) FROM=owner; [ -n "$FILE" ] || FROM="overseer:$(lm_repository)" ;;
   send:* | peer:* | resolve:*) FROM="overseer:$(lm_repository)" ;;
 esac
 
@@ -1204,13 +1209,33 @@ lm_guard_delivery() { # FILE
   [ ! -s "$WORK_DIR/delivery.earlier" ]
 }
 
-# The answer already resolving this ask, into WORK_DIR/resolved.earlier as
+# The record already closing this ask, into WORK_DIR/resolved.earlier as
 # `<id> <by> <delivery_id>`; refuses where one stands.
 lm_guard_resolve() { # FILE
   jq -r -R --arg re "$MSGID" "$MAILBOX_CLASS_JQ"' (fromjson? // empty) | objects
-    | select(overseer_mail_class == "resolution" and .re == $re)
+    | select(overseer_mail_class == "close" and .re == $re)
     | "\(.id) \(.by) \(.delivery_id // "")"' <"$1" >"$WORK_DIR/resolved.earlier" || return 2
   [ ! -s "$WORK_DIR/resolved.earlier" ]
+}
+
+# Slack answers and closes share this file's lock. A retry is judged before
+# the close, so a delivery that landed before closing still names its answer.
+lm_guard_owner_answer() { # FILE
+  [ -z "$DELIVERY_ID" ] || lm_guard_delivery "$1" || return 1
+  lm_guard_resolve "$1"
+}
+
+# A default supplies words only where the owner supplied none. Test and
+# append under the close's lock so a reply racing its deadline wins if it
+# landed first. The close record follows these optional answer bytes.
+lm_guard_close() { # FILE
+  lm_guard_resolve "$1" || return 1
+  if [ "$BY" = default ]; then
+    jq -r -R --arg re "$MSGID" '(fromjson? // empty) | objects
+      | select(.kind == "answer" and .re == $re) | .id' <"$1" >"$WORK_DIR/owner.answers" || return 2
+    [ ! -s "$WORK_DIR/owner.answers" ] || return 0
+  fi
+  [ -z "$ANSWER_LINE" ] || printf '%s\n' "$ANSWER_LINE" >&9 || return 2
 }
 
 # The owner ask in to-overseer.jsonl with that id, into ASK_JSON, read through
@@ -1445,9 +1470,10 @@ case "$VERB" in
       refuse option-required --re
     fi
     [ "$HALT" -eq 0 ] || [ "$ITEM" != overseer ] || refuse option-conflict '--item=overseer,--halt'
-    # An owner ask closes through resolve alone, so the overseer mailbox takes
-    # no answer by --re: two routes would be two resolutions.
-    [ -z "$MSGID" ] || [ "$ITEM" != overseer ] || refuse resolve-required "$MSGID"
+    if [ -n "$MSGID" ] && [ "$ITEM" = overseer ]; then
+      lm_owner_ask "$MSGID"
+      BY=text
+    fi
     # The delivery-id check runs under the lock on the disk that holds the
     # file; a provider's append takes no guard, so a hosted send carries none.
     [ -z "$DELIVERY_ID" ] || [ "$HOST" -eq 0 ] || refuse option-conflict '--host,--delivery-id'
@@ -1465,6 +1491,16 @@ case "$VERB" in
     lm_receipt_fields "$LINE"
     if [ "$HOST" -eq 1 ]; then
       lm_append_host "$TO_LANE" "$LINE"
+    elif [ -n "$MSGID" ] && [ "$ITEM" = overseer ]; then
+      if ! lm_append_local "$TO_LANE" "$LINE" lm_guard_owner_answer; then
+        if [ -s "$WORK_DIR/delivery.earlier" ]; then
+          REFUSE_EXTRA="id=$(cat -- "$WORK_DIR/delivery.earlier")"
+          refuse delivery-repeated "$DELIVERY_ID"
+        fi
+        REFUSE_EXTRA="id=$(awk '{ print $1 }' <"$WORK_DIR/resolved.earlier")" ||
+          refuse file-unreadable "$WORK_DIR/resolved.earlier"
+        refuse resolved-already "$MSGID"
+      fi
     elif [ -n "$DELIVERY_ID" ]; then
       lm_append_local "$TO_LANE" "$LINE" lm_guard_delivery || {
         REFUSE_EXTRA="id=$(cat -- "$WORK_DIR/delivery.earlier")"
@@ -1482,8 +1518,7 @@ case "$VERB" in
     [ -n "$MSGID" ] || refuse option-required --id
     if [ "$DEFAULT" -eq 1 ]; then
       [ -z "$FILE" ] || refuse option-conflict '--text,--default'
-    else
-      [ -n "$FILE" ] || refuse option-required --text
+    elif [ -n "$FILE" ]; then
       lm_read_file
     fi
     lm_owner_ask "$MSGID"
@@ -1495,16 +1530,23 @@ case "$VERB" in
         refuse file-unreadable "$TO_OVERSEER"
       [ -s "$WORK_DIR/default.txt" ] || refuse recommend-missing "$MSGID"
       FILE="$WORK_DIR/default.txt"
-    else
+    elif [ -n "$FILE" ]; then
       BY=text
+    else
+      BY=explicit
     fi
-    LINE="$(lm_envelope answer "$MSGID")"
-    if lm_append_local "$TO_LANE" "$LINE" lm_guard_resolve; then
-      lm_resolved "$MSGID" "$BY" "$(cat -- "$WORK_DIR/id")"
+    ANSWER_LINE=""
+    [ "$BY" = explicit ] || ANSWER_LINE="$(lm_envelope answer "$MSGID")"
+    : >"$WORK_DIR/close.txt" || refuse write-failed "$BOX"
+    FILE="$WORK_DIR/close.txt"
+    LINE="$(lm_envelope resolution "$MSGID")"
+    CLOSE_ID="$(cat -- "$WORK_DIR/id")" || refuse file-unreadable "$WORK_DIR/id"
+    if lm_append_local "$TO_LANE" "$LINE" lm_guard_close; then
+      lm_resolved "$MSGID" "$BY" "$CLOSE_ID"
     else
       read -r EARLIER_ID EARLIER_BY EARLIER_KEY <"$WORK_DIR/resolved.earlier" ||
         refuse file-unreadable "$WORK_DIR/resolved.earlier"
-      # The same delivery asking again gets the same answer and no second
+      # The same delivery asking again gets the same close and no second
       # envelope: a relay that resolved and crashed before its mark cannot
       # turn the reply it holds into a directive.
       if [ -n "$DELIVERY_ID" ] && [ "$DELIVERY_ID" = "$EARLIER_KEY" ]; then
@@ -1792,12 +1834,17 @@ case "$VERB" in
     # deadline by this clock, the one deadline judge the watch resolves its
     # owner asks by.
     NOW_EPOCH="$(date -u +%s)" || refuse write-failed "$BOX"
-    lm_objects "$WORK_DIR/new" | jq -c --arg answered "$ANSWERED" --arg verb "$VERB" \
+    lm_objects "$WORK_DIR/lane.jsonl" | jq -r 'select(.kind == "resolution") | .re' >"$WORK_DIR/closed" ||
+      refuse file-unreadable "$TO_LANE"
+    CLOSED="$(cat -- "$WORK_DIR/closed")" || refuse file-unreadable "$WORK_DIR/closed"
+    lm_objects "$WORK_DIR/new" | jq -c --arg answered "$ANSWERED" --arg closed "$CLOSED" --arg verb "$VERB" \
       --arg to "$TO" --argjson due "$DUE" --argjson now "$NOW_EPOCH" "$LM_JQ_DEFS"'
       ($answered | split("\n")) as $done
+      | ($closed | split("\n")) as $closed
       | . as $envelope
       | select($verb == "drain" or $envelope.kind == "ask")
-      | select($envelope.kind != "ask" or ($done | index($envelope.id) | not))
+      | select($envelope.kind != "ask" or
+          ((if $envelope.to == "owner" then $closed else $done end) | index($envelope.id) | not))
       | select($to == "" or $envelope.to == $to)
       | select($due == 0 or (($envelope.deadline // "" | at_epoch) as $d | $d != null and $d <= $now))'
     if [ "$VERB" = pending ] && [ "$LISTS_DIRECTIVES" -eq 1 ]; then

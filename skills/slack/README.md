@@ -13,7 +13,7 @@ Requires Python 3.8+ and the orch skill, which the install adds.
 ## Features
 
 - Create or adopt one private channel per checkout and invite its owners by email.
-- Post an overseer's question to the channel with an @mention, and record the first reply in its thread as the answer.
+- Post an overseer's question to the channel with an @mention, and record every reply in its open thread as an answer.
 - Deliver any other owner message to the overseer as a directive, including a live reply in any thread at any age, with small parent context.
 - Read a requested thread as plain text with `slack thread`, without loading channel history.
 - Send a text reply only to its thread with `slack post --thread TS`.
@@ -31,7 +31,7 @@ Requires Python 3.8+ and the orch skill, which the install adds.
 - An owner's message reaches the overseer through the checkout's `lane-mail`, keyed by the Slack message id, so the relay never carries a message twice.
 - An owner's text reaches the overseer as typed: Slack's escapes, links, mentions, channel names and dates read back as plain text, and emoji stay `:name:`.
 - Each file on an owner's message is downloaded with the bot token to `tmp/slack/files/<file id>-<name>` in the checkout, directory mode 700, file mode 600. The message reaches the overseer with one line per file after its text: the saved path, or `file <id> not fetched: <why>`, such as `HTTP 403` or a download cut short. A failed download never holds the message back.
-- A directive's message gets an :eyes: reaction as it is delivered. Once the overseer's mailbox read passes that directive, the relay swaps it for :white_check_mark:. Neither mark posts a message. A mark Slack refuses is made again on the next poll.
+- Each delivered owner message gets an :eyes: reaction. Once the overseer's mailbox read passes a directive, the relay swaps its mark for :white_check_mark:. Neither mark posts a message. A mark Slack refuses is made again on the next poll.
 - The relay posts new owner-bound mailbox envelopes: questions with choices, recommendations and deadlines, threaded notices, and uploaded reports. It skips envelopes older than `SLACK_THREAD_DAYS`.
 - The relay's first run reads Slack from the moment of the binding and the mailbox from its newest envelope, so neither side's past is replayed. Open questions are posted whatever their age inside `SLACK_THREAD_DAYS`.
 - While `SLACK_MASTER_FILE` is younger than `SLACK_MASTER_MAX_AGE`, a master session answers the overseer and the relay posts no questions, notices, reports or answers from the mailbox; owner messages in the channel still reach the overseer, the relay's replies to them still post, and `slack listen --status` shows `held-by=master`. When the file goes stale or is gone, the relay resumes. [The master hold](#the-master-hold) defines which envelopes post.
@@ -105,8 +105,7 @@ The master's watch writes its read line count to `<root>/tmp/lane-mail/overseer/
 | Where you write | What happens |
 |-----------------|--------------|
 | Top-level | The overseer receives it as a directive; :eyes: marks it delivered, :white_check_mark: read |
-| In a question's thread, first reply | Your words are the answer; the relay replies "Recorded as your answer" |
-| In a question's thread, later reply | The overseer receives it as a directive; the relay says the question was already answered |
+| In an open question's thread, any reply | The overseer receives your words as an answer to that question, with eyes when they land. The question stays open until the overseer closes it or its deadline passes |
 | In any thread, at any age, including "Also send to channel" | The overseer receives it as a directive with small parent context, unless it answers an open question |
 | A file, with or without text | The overseer receives the text, then the saved path of each file |
 | A message with no text and no file | Not routed; the relay replies once, and once more after its journal is moved aside |

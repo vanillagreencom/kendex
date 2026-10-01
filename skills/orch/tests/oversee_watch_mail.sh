@@ -271,8 +271,7 @@ assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=2026
   "a watch for another fleet's --since does not report the note again" "$err"
 
 # An answer in the overseer's own mailbox carrying `owner` and no `by` is
-# nobody's: the owner answers nothing, and lane-mail refuses a send with --re
-# into this mailbox as resolve-required. The watch acknowledges it and reports
+# nobody's: the owner-answer writers always supply by=text. The watch acknowledges it and reports
 # nothing, and still reports the owner note behind it in the same pass.
 new_case mail_overseer_reply
 printf 'Hold KEN-8 too.\n' > "$TMP_ROOT/after-reply.txt"
@@ -310,21 +309,28 @@ owner_ask() {
 }
 owner_pending() { (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" pending --item overseer --to owner | jq -r '.id'); }
 
-# The owner's answer, resolved by a relay, reaches the overseer as the ask's
-# closing, named by the ask and not by the answer's own id.
+# Every owner answer reaches the overseer while its ask remains open.
 new_case mail_owner_ask_text
 mail_reset overseer
 owner_ask 'Cut the scanner?' cut 120
 printf 'keep it\n' > "$TMP_ROOT/answer.txt"
-(cd "$CASE_REPO_ROOT" && "$LANE_MAIL" resolve --item overseer --id "$ASK" --text "$TMP_ROOT/answer.txt" >/dev/null)
+for delivery in slack:1 slack:2; do
+  (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" send --item overseer --re "$ASK" --delivery-id "$delivery" --file "$TMP_ROOT/answer.txt" >/dev/null)
+done
 err="$TMP_ROOT/ask-text-a"
 out="$(run_watch -- --max-loops 1 2>"$err")"
-assert_eq "$(head -1 <<<"$out")" "EVENT owner-ask-resolved $ASK by=text" \
+ANSWER_ID="$(jq -r 'select(.kind == "answer") | .id' "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl" | sed -n '1p')"
+assert_eq "$(head -1 <<<"$out")" "EVENT owner-ask-resolved $ASK by=text id=$ANSWER_ID" \
   "an owner's answer emits owner-ask-resolved naming the ask, by text" "$err"
 assert_contains "$out" "  keep it" "the ruling's text follows its event line" "$err"
+assert_eq "$(grep -c "^EVENT owner-ask-resolved $ASK by=text id=" <<<"$out")" "2" "the watch reports each answer" "$err"
+assert_eq "$(owner_pending)" "$ASK" "reading both answers leaves the ask open" "$err"
 err="$TMP_ROOT/ask-text-b"
 out="$(run_watch -- --max-loops 1 2>"$err")"
 assert_eq "$(head -1 <<<"$out")" "$HEARTBEAT" "the resolution is not reported twice" "$err"
+(cd "$CASE_REPO_ROOT" && "$LANE_MAIL" resolve --item overseer --id "$ASK" >/dev/null)
+out="$(run_watch -- --max-loops 1 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "EVENT owner-ask-closed $ASK by=explicit" "the separate close reaches the watch" "$err"
 
 # At the deadline the watch itself resolves the ask to its recommendation,
 # before it reads the mailbox, so the same pass reports the ruling it made.
@@ -336,7 +342,8 @@ owner_ask 'And the lexer?' keep 120
 LATER="$ASK"
 err="$TMP_ROOT/ask-due-a"
 out="$(run_watch -- --max-loops 1 2>"$err")"
-assert_eq "$(head -1 <<<"$out")" "EVENT owner-ask-resolved $DUE by=default" \
+ANSWER_ID="$(jq -r 'select(.kind == "answer") | .id' "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl")"
+assert_eq "$(head -1 <<<"$out")" "EVENT owner-ask-resolved $DUE by=default id=$ANSWER_ID" \
   "an ask past its deadline is resolved by the watch and reported by default" "$err"
 assert_contains "$out" "  cut" "the recommendation is the ruling's text" "$err"
 assert_eq "$(owner_pending | paste -sd, -)" "$LATER" \
@@ -344,6 +351,15 @@ assert_eq "$(owner_pending | paste -sd, -)" "$LATER" \
 err="$TMP_ROOT/ask-due-b"
 out="$(run_watch -- --max-loops 1 2>"$err")"
 assert_eq "$(head -1 <<<"$out")" "$HEARTBEAT" "a resolved deadline is not reported again" "$err"
+
+new_case mail_owner_answered_deadline
+mail_reset overseer
+owner_ask 'Cut the scanner?' cut 0
+printf 'keep it\n' > "$TMP_ROOT/answer.txt"
+(cd "$CASE_REPO_ROOT" && "$LANE_MAIL" send --item overseer --re "$ASK" --delivery-id slack:due --file "$TMP_ROOT/answer.txt" >/dev/null)
+out="$(run_watch -- --max-loops 1 2>"$err")"
+assert_contains "$out" "EVENT owner-ask-closed $ASK by=default" "the watch closes the answered deadline" "$err"
+assert_eq "$(jq -rs '[.[] | select(.kind == "answer" and .by == "default")] | length' "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl")" "0" "the watch adds no recommendation answer" "$err"
 
 # The deadline step's three refusal arms, driven through a lane-mail wrapper
 # that answers one call by the arm STUB_DIR/ask-arm names and hands every
