@@ -10,6 +10,14 @@ use super::{ensure_object, names, one, written};
 /// The schema version Copilot's hook loader expects a file to declare.
 const COPILOT_HOOK_VERSION: u64 = 1;
 
+// The project command binds its owned script before the walker and wrapper.
+fn hook_key(command: &str) -> &str {
+    command
+        .split_once("';")
+        .filter(|(path, _)| path.starts_with("p='.github/hooks/"))
+        .map_or(command, |(path, _)| path)
+}
+
 /// Copilot's own hook shape: a flat list of entries per event, each with its
 /// command, its matcher and its timeout in seconds.
 pub(super) fn upsert_copilot_hook(
@@ -35,9 +43,9 @@ pub(super) fn upsert_copilot_hook(
     }
     // Refreshed where it already stands, so a re-apply moves nothing —
     // and only where this registration stands: an entry running the same
-    // command under a matcher somebody else chose is theirs.
+    // script under a matcher somebody else chose is theirs.
     let ours = |candidate: &Value| {
-        candidate.get("bash").and_then(Value::as_str) == Some(command)
+        candidate.get("bash").and_then(Value::as_str).map(hook_key) == Some(hook_key(command))
             && names(candidate, one(matcher))
     };
     let first = entries.iter().position(ours);
@@ -72,7 +80,9 @@ pub(super) fn remove_copilot_hook(
     for name in names {
         if let Some(entries) = events.get_mut(&name).and_then(Value::as_array_mut) {
             entries.retain(|entry| {
-                !named(entry) || entry.get("bash").and_then(Value::as_str) != Some(command)
+                !named(entry)
+                    || entry.get("bash").and_then(Value::as_str).map(hook_key)
+                        != Some(hook_key(command))
             });
             if entries.is_empty() {
                 events.shift_remove(&name);

@@ -1,4 +1,60 @@
 use super::*;
+
+#[test]
+fn copilot_hook_commands_are_reconciled_by_script_path() {
+    use crate::engine::targets::{HookTarget, hook_target};
+    use crate::env::{Env, FakeOs};
+    use crate::model::{HarnessId, Scope};
+    let env = Env::fake("/h", FakeOs::Linux);
+    let scope = Scope::Project { root: "/p".into() };
+    let Some(HookTarget::Script { command, .. }) =
+        hook_target(&env, &scope, HarnessId::Copilot, "guard", None)
+    else {
+        panic!("copilot hooks are script targets");
+    };
+    let old = "p='.github/hooks/guard.sh'; r=$(cd -P . && pwd); bash \"$r/$p\"";
+    let stale = json!({"type": "command", "bash": old, "matcher": "shell"});
+    let current = json!({"type": "command", "bash": command, "matcher": "shell", "timeoutSec": 10});
+    let foreign = json!({"type": "command", "bash": "p='.github/hooks/mine.sh'; bash \"$r/$p\"", "matcher": "shell"});
+    let other_matcher = json!({"type": "command", "bash": old, "matcher": "read"});
+    for entries in [json!([stale]), json!([stale, current])] {
+        let start = json!({"version": 1, "hooks": {
+            "preToolUse": entries,
+            "postToolUse": [stale]
+        }});
+        let start = start.to_string();
+        let edit = ConfigEdit::UpsertCopilotHook {
+            event: "preToolUse".into(),
+            matcher: Some("shell".into()),
+            command: command.clone(),
+            timeout: Some(10),
+        };
+        let once = edit.apply(&start).unwrap();
+        let value: Value = serde_json::from_str(&once).unwrap();
+        assert_eq!(value["hooks"]["preToolUse"], json!([current]));
+        assert_eq!(value["hooks"]["postToolUse"], json!([stale]));
+        assert_eq!(edit.apply(&once).unwrap(), once);
+        let control = json!({"hooks": {"preToolUse": [stale, foreign, other_matcher]}});
+        let upserted: Value =
+            serde_json::from_str(&edit.apply(&control.to_string()).unwrap()).unwrap();
+        assert_eq!(
+            upserted["hooks"]["preToolUse"],
+            json!([current, foreign, other_matcher])
+        );
+        let removed = ConfigEdit::RemoveCopilotHook {
+            event: Some("preToolUse".into()),
+            matcher: Some("shell".into()),
+            command: command.clone(),
+        };
+        let value: Value =
+            serde_json::from_str(&removed.apply(&control.to_string()).unwrap()).unwrap();
+        assert_eq!(
+            value["hooks"]["preToolUse"],
+            json!([foreign, other_matcher])
+        );
+    }
+}
+
 #[test]
 fn owned_hook_templates_are_reconciled_by_script_path() {
     use crate::engine::targets::{HookTarget, hook_target};
