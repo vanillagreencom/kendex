@@ -141,9 +141,10 @@
 #         bound: `lanes list --json` shows its `claims` and
 #         `projected_headroom_pct`, and it comes back as those lanes end, not
 #         at a reset. And `seats=N` counts the overseer seats omitted before
-#         any judgement, each named on a `lanes: pick-seat-omitted` line: a
-#         fleet whose every account is a seat has none a lane may launch on,
-#         and the remedy is a lane on another account. Under --json that exit
+#         window-account judgement, each named on a `lanes: pick-seat-omitted`
+#         line. Copilot and Pi pool picks keep seats and charge their claims
+#         at the monthly burn; they read no fleet state for seats. A window
+#         fleet with only seats needs another account. Under --json that exit
 #         also prints `{"walled":N,"unmeasured":N,"seats":N}` on stdout, the
 #         same counts, so a caller walking several picks can report what each
 #         sweep found instead of parsing the message written for a person.
@@ -190,7 +191,7 @@
 #         close, an overseer's own mark. --projected judges the projected wall
 #         the chooser judges instead, for a launcher about to add a lane, so a
 #         lane a person names is refused on the rule the chooser drops it on.
-#         It omits no overseer seat: the account named is the one judged.
+#         It omits no overseer seat for any harness: the account named is judged.
 #         Exit 0 has room and prints the env prefix, or the lane's record under
 #         --json; 3 is a wall at or above --max-pct; 5 is a lane nothing
 #         measured for this launch, whether no window names --model or the
@@ -2883,18 +2884,20 @@ pick_host_rows() { # HARNESS
 	host_lane_rows "$1" readings
 }
 
-# The fix= line for each unmeasured Pi record in RECORDS, a JSON array: a
+# The fix= line for each unmeasured pool record in RECORDS, a JSON array: a
 # provider row that stands names its own status and detail, and any other the
 # accounts read HOSTED_READ names.
 copilot_pool_records_fix() { # RECORDS
-	local through dir status detail
-	while IFS=$'\x1f' read -r through dir status detail; do
-		if [[ "$through" == host ]]; then
+	local harness through dir status detail
+	while IFS=$'\x1f' read -r harness through dir status detail; do
+		if [[ "$harness" == copilot ]]; then
+			lane_copilot_pool_fix "${ORCH_LANE_HOST:-local}" cli "$dir" "$status" "$detail"
+		elif [[ "$through" == host ]]; then
 			lane_copilot_pool_fix "$ORCH_LANE_HOST" row "$dir" "$status" "$detail"
 		else
 			lane_copilot_pool_fix "${ORCH_LANE_HOST:-local}" "$HOSTED_READ" "$dir"
 		fi || return 1
-	done < <(jq -r '.[] | [.measured_through, .config_dir, .status, .detail // ""] | join("\u001f")' <<<"$1")
+	done < <(jq -r '.[] | [.harness, .measured_through, .config_dir, .status, .detail // ""] | join("\u001f")' <<<"$1")
 }
 
 cmd_pick_lane() {
@@ -3005,7 +3008,7 @@ cmd_pick_lane() {
 				return 1
 			fi
 			message pick-lane-unmeasured "$dir" "${model:-none}" >&2
-			[[ "$harness" != pi ]] || copilot_pool_records_fix "[$record]" >&2 || return 1
+			[[ "$harness" != pi && "$harness" != copilot ]] || copilot_pool_records_fix "[$record]" >&2 || return 1
 			# Under --json only, as on 0 and 3. The record's `status` is the
 			# whole of what a launcher needs here: `expired` names a credential
 			# this machine could not renew, which is an owner's login to fix
@@ -3090,7 +3093,7 @@ cmd_pick() {
 	# onto an account already running one.
 	[[ "$LANE_CLAIMS_RC" -eq 0 ]] || die pick-claims "$@"
 	SEATS=""
-	if [[ "$for_overseer" != true ]]; then
+	if [[ "$for_overseer" != true && "$harness" != copilot && "$harness" != pi ]]; then
 		overseer_seats || die pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE"
 	fi
 	# After the claim load: emit_lane counts claims on every host row it writes.

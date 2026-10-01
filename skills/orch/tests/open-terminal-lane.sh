@@ -289,6 +289,7 @@ counted() {
 #   walled        lane, model, pct, bucket and projected-headroom of the
 #                 lane-model-walled line, or none
 #   unreadable    lane, model and step of the lane-model-unreadable line, or none
+#   unread_status  its status field after step; unread_reason its login reason
 #   poolfix       every Copilot pool fix= line as READ:ROOT, READ `local`,
 #                 `absent`, `host` or `row` by the read it names and ROOT the
 #                 root it names with `_` for a space, comma-joined, or none
@@ -384,6 +385,14 @@ observe() {
         ;;
       unreadable)
         value="$(awk '$1 == "open-terminal:" && $2 == "lane-model-unreadable" { print $3, $4, $5; exit }' <<<"$OUT" | tr ' ' ',')"
+        value="${value:-none}"
+        ;;
+      unread_status)
+        value="$(awk '$1 == "open-terminal:" && $2 == "lane-model-unreadable" { print $6; exit }' <<<"$OUT")"
+        value="${value:-none}"
+        ;;
+      unread_reason)
+        value="$(sed -nE 's/^open-terminal: lane-model-unreadable .* detail=copilot login unread: ([a-z-]*).*/\1/p' <<<"$OUT")"
         value="${value:-none}"
         ;;
       poolfix)
@@ -628,6 +637,22 @@ run_ot "" --harness pi --lane "$H/.claude" --cmd "pi --model pi-claude/sonnet:hi
 assert_eq "$(observe "rc=0 launched=1 modelmissing=none effortmissing=none")" \
   "rc=0 launched=1 modelmissing=none effortmissing=none" \
   "pi's level named on the model value inside the --cmd template names the effort too"
+
+echo "=== a named Copilot CLI lane uses its pool reading ==="
+mkdir -p "$H/.namedcopilot/session-state"
+CP_CMD='cmd=true --model claude-opus-5.5 --reasoning-effort high'
+table \
+  "a measured Copilot pool launches without a model window|ORCH_LANE_COPILOT_POOL=$H/.namedcopilot=10/100;$CP_CMD|--harness copilot --lane $H/.namedcopilot CC-1690|rc=0 launched=1 copilot_home=namedcopilot unreadable=none" \
+  "an unread Copilot pool names status and login cause after the existing fields|$CP_CMD|--harness copilot --lane $H/.namedcopilot CC-1691|rc=1 launched=nolog creates=nolog unreadable=lane=$H/.namedcopilot,model=claude-opus-5.5,step=windows unread_status=status=no_credentials unread_reason=config-missing"
+CTRL_CP="$(mutant_scripts ctl-copilot-unread open-terminal)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$CTRL_CP/open-terminal" '"status=${lane_status:-none}" "detail=${lane_detail:-none}"' '"status=none" "detail=none"'
+LIVE_OT="$OPEN_TERMINAL"
+OPEN_TERMINAL="$CTRL_CP/open-terminal" run_ot "$CP_CMD" --harness copilot --lane "$H/.namedcopilot" CC-1691
+assert_eq "$(observe 'rc=1 unread_status=status=none unread_reason=none')" 'rc=1 unread_status=status=none unread_reason=none' \
+  "control: omitting the record fields loses the unread Copilot account's cause"
+OPEN_TERMINAL="$LIVE_OT"
+rm -rf -- "${H:?}/.namedcopilot"
 
 echo "=== a Pi launch on a Copilot model qualifies on the stated Copilot pool ==="
 # Such a launch spends Copilot credits and no Claude window, so a bound that

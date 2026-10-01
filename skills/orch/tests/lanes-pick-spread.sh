@@ -3,7 +3,7 @@
 # charges each live claim on an account its expected burn, so an account whose
 # room the lanes already on it will spend is dropped as a walled one is, by the
 # chooser and by the named form alike; selection charges that projected room;
-# and the bare chooser never returns an overseer seat, an
+# and a window-account chooser never returns an overseer seat, an
 # account a fleet state records as its overseer's. The network layer is the
 # fetch stub lib/lanes-fixture.sh writes, so every row runs offline.
 #
@@ -82,8 +82,8 @@ stage() {
     case "$item" in
       own:broken) printf 'not json\n' > "$FLEET/workflow-state-oversee.json" ;;
       store:file) rmdir -- "${STORE:?}/claims" && : > "$STORE/claims" ;;
-      own:*) jq -n --arg a "$H/.${item#own:}claude" '{overseer: {account: $a}}' > "$FLEET/workflow-state-oversee.json" ;;
-      peer:*) jq -n --arg a "$H/.${item#peer:}claude" '{overseer: {account: $a}}' > "$RUN/peer/workflow-state-oversee.json" ;;
+      own:*) jq -n --arg a "$H/.${item#own:}${ACCOUNT_HARNESS:-claude}" '{overseer: {account: $a}}' > "$FLEET/workflow-state-oversee.json" ;;
+      peer:*) jq -n --arg a "$H/.${item#peer:}${ACCOUNT_HARNESS:-claude}" '{overseer: {account: $a}}' > "$RUN/peer/workflow-state-oversee.json" ;;
       claim:*)
         IFS=':' read -r _ lane n fleet <<<"$item"
         case "${fleet:-none}" in
@@ -97,7 +97,7 @@ stage() {
           PANE_SEQ=$((PANE_SEQ + 1))
           printf '%s %%%s\n' "$$" "$PANE_SEQ" >> "$RUN/panes"
           printf '%s\t%%%s\t%s\tken-%s\t2026-09-28T00:00:00Z\t%s\n' \
-            "$$" "$PANE_SEQ" "$H/.${lane}claude" "$PANE_SEQ" "$fleet" > "$STORE/claims/$PANE_SEQ.claim"
+            "$$" "$PANE_SEQ" "$H/.${lane}${ACCOUNT_HARNESS:-claude}" "$PANE_SEQ" "$fleet" > "$STORE/claims/$PANE_SEQ.claim"
         done
         ;;
       *) echo "stage: unknown token in $item" >&2; exit 1 ;;
@@ -269,7 +269,7 @@ mutate_file "$CTRL/lib/lane-model.sh" 'sort_by([(0 - .selection_score), .claims,
 LANES_UNDER_TEST="$CTRL/lanes" table \
   "control: ranked on the reading, the tie goes to the seat burning fastest|ORCH_LANE_DIRS=$H/.aclaude:$H/.bclaude|claim:a:1;claim:b:1|a:20:15|$PICK|rc=0 config_dir=$H/.aclaude projected_headroom_pct=50"
 
-echo "=== the chooser never returns an overseer seat ==="
+echo "=== a window-account chooser never returns an overseer seat ==="
 # a has the most room and no claim, so only the seat rule keeps it out.
 table \
   "the seat this checkout's fleet records for its overseer is never returned|$ALL_DIRS|own:a||$PICK|rc=0 config_dir=$H/.bclaude" \
@@ -289,6 +289,24 @@ mutate_file "$CTRL/lanes" '"$exclude"$'"'"'\n'"'"'"$SEATS"' '"$exclude"'
 LANES_UNDER_TEST="$CTRL/lanes" table \
   "control: with no seat omitted, the overseer's account is returned|$ALL_DIRS|own:a||$PICK|rc=0 config_dir=$H/.aclaude" \
   "control: with no seat omitted, the peer overseer's account is returned|$ALL_DIRS|peer:a;claim:b:1:peer||$PICK|rc=0 config_dir=$H/.aclaude"
+
+echo "=== pool picks keep overseer seats and charge monthly claims ==="
+mkdir -p "$H/.acopilot/session-state" "$H/.api"
+CP_ENV="ORCH_LANE_DIRS=$H/.acopilot;ORCH_LANE_COPILOT_POOL=$H/.acopilot"
+ACCOUNT_HARNESS=copilot table \
+  "the only Copilot account is the overseer seat and remains pickable|$CP_ENV=10/100|own:a||pick --harness copilot|rc=0 out=COPILOT_HOME=$H/.acopilot" \
+  "a pool seat carries the monthly wall and burns its live claim|$CP_ENV=10/100|own:a;claim:a:1||pick --harness copilot --json|rc=0 wall=10 binding_bucket=monthly claims=1 burn_pct_per_lane_hour=0.034722222222222224" \
+  "a pool at the threshold is walled, not omitted|$CP_ENV=95/100|own:a||pick --harness copilot --json|rc=3 walled=1 seats=0 keyed.pick-seat-omitted=none" \
+  "a pool past the threshold is walled, not omitted|$CP_ENV=96/100|own:a||pick --harness copilot --json|rc=3 walled=1 seats=0" \
+  "a pool pick reads no fleet seat state|$CP_ENV=10/100|own:broken||pick --harness copilot --json|rc=0 wall=10"
+ACCOUNT_HARNESS=pi table \
+  "a Pi pool pick keeps its overseer seat|ORCH_LANE_COPILOT_POOL=$H/.api=10/100|own:a||pick --harness pi --model github-copilot/gpt-5 --json|rc=0 config_dir=$H/.api wall=10" \
+  "a Pi pool pick reads no fleet seat state|ORCH_LANE_COPILOT_POOL=$H/.api=10/100|own:broken||pick --harness pi --model github-copilot/gpt-5 --json|rc=0 wall=10"
+CTRL="$(mutant_scripts mutant-pool-seats lanes)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$CTRL/lanes" '"$for_overseer" != true && "$harness" != copilot && "$harness" != pi' '"$for_overseer" != true && "$harness" != pi'
+LANES_UNDER_TEST="$CTRL/lanes" ACCOUNT_HARNESS=copilot table \
+  "control: restoring Copilot seat omission drops the only pool account|$CP_ENV=10/100|own:a||pick --harness copilot --json|rc=3 walled=0 seats=1 keyed.pick-seat-omitted=pick-seat-omitted,lane=$H/.acopilot"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

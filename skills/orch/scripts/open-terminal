@@ -962,7 +962,7 @@ host_account_read() { # CONFIG_DIR HARNESS
 # the expected burn of the lanes already on it. Returns 1 with its refusal
 # printed. The block that calls it below says why each answer is what it is.
 named_lane_judge() {
-  local lane_rc=0 lane_record lane_wall lane_bucket lane_projected lane_status
+  local lane_rc=0 lane_record lane_wall lane_bucket lane_projected lane_status lane_detail
   # `held`, `missing` or `unanswered`, and empty until something asks. Only the
   # unmeasured arm below reads it, so that arm is the one place that asks.
   HOST_ACCOUNT=""
@@ -1032,6 +1032,7 @@ named_lane_judge() {
       # A record this script cannot read names no status, which reads as the
       # unmeasured window it is rather than as any of the answers below.
       lane_status="$(jq -r '.status // empty' <<<"$lane_record")" || lane_status=""
+      lane_detail="$(jq -r '.detail // empty' <<<"$lane_record")" || lane_detail=""
       # Whether the provider holds the account is asked here and nowhere else,
       # of host_account_read's uncached read, whatever the judge above read.
       # The judge reads the provider's windows through the usage cache, as it
@@ -1054,7 +1055,7 @@ named_lane_judge() {
         ot_message host-credential-dead "lane=${LANE_ENV#*=}" "host=$LANE_HOST" >&2
         return 1
       else
-        ot_message lane-model-unreadable "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "step=windows" >&2
+        ot_message lane-model-unreadable "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "step=windows" "status=${lane_status:-none}" "detail=${lane_detail:-none}" >&2
         return 1
       fi
       ;;

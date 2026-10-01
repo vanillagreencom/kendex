@@ -167,6 +167,13 @@ while IFS='|' read -r label config want_status want_reason; do
   run_lanes list --harness copilot --local --json
   reason="$(record 1copilot .detail | grep -o 'login unread: [a-z-]*' || echo none)"
   assert_eq "$(record 1copilot .status)|$reason" "\"$want_status\"|$want_reason" "$label"
+  if [[ "$want_status" == no_credentials ]]; then
+    run_lanes pick --lane "$H/.1copilot" --harness copilot --json
+    assert_eq "rc=$RC status=$(grep -o 'status=[^ ]*' <<<"$ERR") reason=$(grep -o 'login unread: [a-z-]*' <<<"$ERR" | sort -u)" \
+      "rc=5 status=no_credentials reason=$want_reason" "the named refusal carries the login record's status and detail"
+    assert_eq "$(grep -c '^fix=.*ORCH_LANE_COPILOT_POOL=<dir>=<used>/<granted>.*harness=copilot.*monthly-pct' <<<"$ERR")" 1 \
+      "the Copilot CLI refusal names both pool-reading repairs"
+  fi
 done <<'ROWS'
 a login as a bare string reads|{"copilot_tokens":"gho_bare"}|ok|none
 the login under the key Copilot CLI 1.0.90 writes reads|{"copilotTokens":{"https://github.com:user":"gho_cur"}}|ok|none
@@ -514,11 +521,11 @@ an absent verb beside an override naming only a Copilot CLI home is unstated|roo
 a stated Pi root the exclusion drops is a pick with no candidate, never unstated|-|10/100|ORCH_LANE_EXCLUDE=pi1|auto|rc=3 key=no-candidate fix=none
 ROWS
 PI_STUB=""
-# A named account on another harness that reads nothing is sent to no Copilot
-# pool repair.
+# A Copilot CLI account gets its own pool repair, not the Pi root repair.
 copilot_account nopoolcopilot '{"quota_snapshots":{}}'
 run_lanes pick --lane "$H/.nopoolcopilot" --harness copilot
-assert_eq "$(pi_verdict)" "rc=5 key=pick-lane-unmeasured fix=none" "an unmeasured Copilot CLI account prints no Pi pool fix"
+assert_eq "$(pi_verdict) status=$(grep -o 'status=[^ ]*' <<<"$ERR")" "rc=5 key=pick-lane-unmeasured fix=none status=no_usage_data" \
+  "an unread Copilot endpoint prints the CLI account's current status"
 pi_run room - list --json
 assert_eq "$(pi_fields '[.[] | select(.harness == "pi")] | length')" 0 "list shows no Pi row"
 pi_run room - host-accounts --json
@@ -555,16 +562,17 @@ lanes_control ctl-pi-unread-rows lanes 'if [[ "$harness" == pi && "${walled:-0}"
 pi_run refused - pick "${PI_MODEL[@]}"
 assert_eq "$(pi_verdict)" "rc=3 key=no-candidate-unmeasured fix=none" \
   "control: without the unread-rows arm a refused row is a pick with no candidate and no repair"
-lanes_control ctl-pi-row-fix lanes 'if [[ "$through" == host ]]; then' 'if false; then'
+lanes_control ctl-pi-row-fix lanes 'elif [[ "$through" == host ]]; then' 'elif false; then'
 pi_run refused - pick --lane "$H/.pi1" "${PI_MODEL[@]}"
 assert_eq "$(pi_verdict)" "rc=5 key=pick-lane-unmeasured fix=answered" \
   "control: without the row arm a refused row is reported as no row at all"
-lanes_control ctl-pi-named-fix lanes '[[ "$harness" != pi ]] || copilot_pool_records_fix "[$record]" >&2 || return 1' ':'
+lanes_control ctl-pi-named-fix lanes '[[ "$harness" != pi && "$harness" != copilot ]] || copilot_pool_records_fix "[$record]" >&2 || return 1' ':'
 pi_run none - pick --lane "$H/.pi1" "${PI_MODEL[@]}"
 assert_eq "$(pi_verdict)" "rc=5 key=pick-lane-unmeasured fix=none" "control: without the named fix call a named root names no repair"
-lanes_control ctl-pi-named-gate lanes '[[ "$harness" != pi ]] || copilot_pool_records_fix "[$record]" >&2 || return 1' 'copilot_pool_records_fix "[$record]" >&2 || return 1'
+lanes_control ctl-cli-fix lib/lane-launch.sh '"$root" "${4:-none}" "${5:-none}" ;;' '"$root" none none ;;'
 run_lanes pick --lane "$H/.nopoolcopilot" --harness copilot
-assert_eq "$(pi_verdict)" "rc=5 key=pick-lane-unmeasured fix=local" "control: without the Pi test a Copilot CLI account is sent to the Pi pool repair"
+assert_eq "rc=$RC status=$(grep -o 'status=[^ ]*' <<<"$ERR")" "rc=5 status=none" \
+  "control: dropping the record fields loses the Copilot CLI refusal's status"
 lanes_control ctl-pi-unread lanes 'if [[ "$harness" == pi && -z "$pool_roots" && "$HOSTED_READ" == failed ]]; then' 'if false; then'
 PI_STUB=LANE_HOST_STUB_ACCOUNTS_STATUS=69 pi_run room - pick "${PI_MODEL[@]}"
 assert_eq "rc=$RC" "rc=5" "control: without the failed-read arm a busy host is refused as unstated"

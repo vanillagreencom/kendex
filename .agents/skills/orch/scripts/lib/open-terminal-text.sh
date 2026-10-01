@@ -380,6 +380,9 @@ Options:
                         names in its detail the codex command that renews it;
                       anything else is refused as lane-model-unreadable, an
                         unread window being neither a full one nor an empty one.
+                        This includes a Copilot CLI account with no pool reading.
+                        status= and detail= follow step=windows; the fix= line
+                        names the pool override or provider accounts row repair.
   --lane-max-pct N  Usage threshold, applied both when --lane auto chooses an
                     account and when a named lane is judged. The window judged
                     is the one walling the model the launch runs, named in the
