@@ -20,15 +20,19 @@ A debug build keeps its own home at `<data>/kendex-dev` under the platform data 
 
 The boundary is the home, not the machine: a repository you point a debug build at is the real one, so `--scope project` reads and writes it, and programs kendex runs for you, `npm` among them, see your real home.
 
-`KENDEX_REAL_HOME=1` opts a debug build onto the real home for deliberate dogfooding, and only that exact value does; the rule and its tests are `crates/core/src/env/sandbox.rs`.
+The [home override](#home-override) controls deliberate dogfooding and portable roots.
 
 ```sh
 KENDEX_REAL_HOME=1 cargo run -p kendex-cli --bin kendex -- list
 ```
 
+## Home override
+
+`KENDEX_REAL_HOME` is the portable-install and test hook on every platform. It is unset by default. An absolute path selects that home before any operating-system directory lookup and disables the debug sandbox. Kendex puts its config, cache and data directories under that home using the host platform's layout. Explicit harness-root variables still select their own harness directories. The value `1` uses the system directories and disables the debug sandbox for deliberate dogfooding. Unset, empty and other non-absolute values keep normal platform discovery and the debug sandbox's default. Release builds have no debug sandbox. The rule is in `crates/core/src/env/sandbox.rs`; `crates/core/tests/env_detect.rs` checks directory selection through a real child process.
+
 ## The `kendex://` scheme
 
-The app registers the `kendex://` scheme for the binary it runs as on launch on Linux and Windows; macOS registration is the bundle's `Info.plist`, which the bundler writes from `tauri.conf.json`. A sandboxed debug build registers nothing, since the handler file and the mime default belong to the real machine and would point every link at a `target/` binary; `KENDEX_REAL_HOME=1` is the opt-in, and then the last build launched owns the scheme. On Linux the registration is `~/.local/share/applications/kendex-url-handler.desktop`, written by `crates/app/src/deep_link/linux.rs` with a bare `Exec=` path where the path allows one, because `xdg-open` cannot run the quoted one the deep-link plugin writes, plus an `xdg-mime` default; it needs `xdg-mime` and `update-desktop-database` on the path. Windows registration is the plugin's, under the current user's registry key.
+The app registers the `kendex://` scheme for the binary it runs as on launch on Linux and Windows; macOS registration is the bundle's `Info.plist`, which the bundler writes from `tauri.conf.json`. A sandboxed debug build registers nothing, since the handler file and the mime default belong to the real machine and would point every link at a `target/` binary. With a [home override](#home-override), the last build launched owns the scheme. On Linux the registration is `~/.local/share/applications/kendex-url-handler.desktop`, written by `crates/app/src/deep_link/linux.rs` with a bare `Exec=` path where the path allows one, because `xdg-open` cannot run the quoted one the deep-link plugin writes, plus an `xdg-mime` default; it needs `xdg-mime` and `update-desktop-database` on the path. Windows registration is the plugin's, under the current user's registry key.
 
 ```sh
 xdg-open 'kendex://m/vanillagreencom/kendex/agent/maintainer'   # Linux: reaches the running app, or launches it
@@ -38,7 +42,7 @@ On Linux a debug build and the installed app are two apps to the single-instance
 
 ## Process fixtures
 
-CLI and installer tests use `fixture_env` from `crates/test_util.rs` to set HOME and the XDG config, cache, and data directories from one fixture root. The helper disables the debug sandbox. Set an explicit test override after these defaults. HOME alone does not replace an inherited XDG directory. Production builds retain the platform's HOME and XDG behavior.
+CLI and installer tests use `fixture_env` from `crates/test_util.rs` to set HOME and the XDG config, cache, and data directories from one canonical fixture root, with the debug sandbox disabled. Set an explicit test override after these defaults. Tests that need portable root selection use the [home override](#home-override), as `crates/cli/tests/toggle.rs` does. HOME alone does not replace an inherited XDG directory or a Windows known folder.
 
 ## The commit chain
 

@@ -8,7 +8,7 @@ use crate::model::Scope;
 mod sandbox;
 
 pub use sandbox::sandboxed;
-use sandbox::{dev_home, real_home_opt_in, sandbox_vars};
+use sandbox::{RealHome, dev_home, real_home_opt_in, sandbox_vars};
 
 /// The one spelling of the app's directory segment under config/cache/data.
 const APP_DIR: &str = "kendex";
@@ -92,6 +92,19 @@ pub struct Held {
 
 impl Env {
     pub fn detect() -> Result<Self> {
+        let real_home = real_home_opt_in();
+        let vars = HARNESS_VARS
+            .iter()
+            .filter_map(|k| std::env::var(k).ok().map(|v| ((*k).to_owned(), v)))
+            .collect();
+        // An explicit portable root must not depend on OS home discovery,
+        // including Windows known folders, which ignore fixture HOME values.
+        if let Some(RealHome::Root(home)) = &real_home {
+            let mut env = Self::host_rooted(home);
+            env.cwd = std::env::current_dir().ok();
+            env.vars = vars;
+            return Ok(env);
+        }
         let data_dir = dirs::data_dir().ok_or(CoreError::NoHomeDir)?;
         let home = dirs::home_dir().ok_or(CoreError::NoHomeDir)?;
         let machine = Env {
@@ -107,22 +120,12 @@ impl Env {
             source_cache_wait: SourceCacheWait::Foreground,
             held: Arc::default(),
         };
-        let vars = HARNESS_VARS
-            .iter()
-            .filter_map(|k| std::env::var(k).ok().map(|v| ((*k).to_owned(), v)))
-            .collect();
-        let dev = dev_home(
-            cfg!(debug_assertions),
-            real_home_opt_in().as_deref(),
-            &data_dir,
-        );
+        let dev = dev_home(cfg!(debug_assertions), real_home.as_ref(), &data_dir);
         Ok(Self::resolve(dev, machine, vars))
     }
 
-    /// The whole decision with the process read out of it: given the
-    /// machine's own roots, the vars this build was launched with, and the
-    /// home a sandbox would give it, the environment it runs in. `detect`
-    /// keeps only the reading, so there is nothing in it left to get wrong.
+    /// Applies the debug sandbox to system roots. Explicit portable roots
+    /// bypass system discovery in `detect`.
     fn resolve(dev_home: Option<PathBuf>, machine: Env, vars: BTreeMap<String, String>) -> Self {
         let Some(home) = dev_home else {
             return Env { vars, ..machine };

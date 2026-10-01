@@ -18,6 +18,7 @@ fn kendex(home: &Path, args: &[&str]) -> Output {
         .current_dir(home)
         .env_clear()
         .envs(fixture_env(home))
+        .env("KENDEX_REAL_HOME", home)
         .env("KENDEX_BACKGROUND_REFRESH", "off")
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .output()
@@ -25,7 +26,6 @@ fn kendex(home: &Path, args: &[&str]) -> Output {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn cli_builtin_disable_enable_verify_and_remove() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
@@ -124,7 +124,6 @@ fn cli_builtin_disable_enable_verify_and_remove() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn cli_builtin_legacy_settings_refuse_verify_and_toggle() {
     use kendex_core::{lock, manifest};
     let tmp = tempfile::tempdir().unwrap();
@@ -164,7 +163,6 @@ fn cli_builtin_legacy_settings_refuse_verify_and_toggle() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn cli_builtin_legacy_catalog_refuses_verify_toggle_and_remove() {
     use kendex_core::{apply, engine::ops, lock, manifest};
     for project in [false, true] {
@@ -269,7 +267,6 @@ fn cli_builtin_legacy_catalog_refuses_verify_toggle_and_remove() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn cli_pi_extension_toggles_native_filters_and_verify_reads_them_back() {
     use kendex_core::{lock, manifest, pi_ext};
     for scope_arg in ["global", "project"] {
@@ -376,7 +373,6 @@ fn cli_pi_extension_toggles_native_filters_and_verify_reads_them_back() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn cli_saved_pi_config_selection_survives_enable_update_and_refused_disable() {
     use kendex_core::{lock, manifest, pi_ext};
     let name = "@vanillagreen/pi-hooks";
@@ -464,7 +460,6 @@ fn cli_saved_pi_config_selection_survives_enable_update_and_refused_disable() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn cli_toggle_installed_server_skill_and_hook() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);

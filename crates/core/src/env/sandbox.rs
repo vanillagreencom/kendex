@@ -6,19 +6,37 @@
 //! credential separation [`crate::registry::credentials`] draws from it.
 
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 /// The home a debug build gets instead of the real one, under the platform
 /// data dir.
 const DEV_HOME_DIR: &str = "kendex-dev";
 
-/// Opts a debug build back onto the real home, for deliberate dogfooding.
+/// Selects the system home or an explicit root (docs/DEVELOPMENT.md).
 const REAL_HOME_VAR: &str = "KENDEX_REAL_HOME";
 
-/// The one value that opts out. Anything else — `0`, `false`, a typo —
-/// leaves the sandbox on: this hatch permits writes to a real machine, so
-/// a value nobody can read as consent must not spend it.
+/// The value that selects the system home rather than an explicit root.
 const REAL_HOME_OPT_IN: &str = "1";
+
+/// The two deliberate ways to bypass the debug sandbox.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum RealHome {
+    System,
+    Root(PathBuf),
+}
+
+impl RealHome {
+    fn from_value(value: &OsStr) -> Option<Self> {
+        if value == REAL_HOME_OPT_IN {
+            Some(Self::System)
+        } else if Path::new(value).is_absolute() {
+            Some(Self::Root(PathBuf::from(value)))
+        } else {
+            None
+        }
+    }
+}
 
 /// The subset of [`super::HARNESS_VARS`] naming a harness root a build would write
 /// into. A sandboxed build drops these and keeps the rest: an inherited
@@ -38,14 +56,16 @@ const HOME_RELOCATING_VARS: [&str; 5] = [
 ];
 
 /// The value of the opt-out as this process was launched with it.
-pub(super) fn real_home_opt_in() -> Option<String> {
-    std::env::var(REAL_HOME_VAR).ok()
+pub(super) fn real_home_opt_in() -> Option<RealHome> {
+    std::env::var_os(REAL_HOME_VAR)
+        .as_deref()
+        .and_then(RealHome::from_value)
 }
 
 /// The home a build gets when it must not touch the real machine.
 pub(super) fn dev_home(
     debug_build: bool,
-    real_home_opt_in: Option<&str>,
+    real_home_opt_in: Option<&RealHome>,
     data_dir: &Path,
 ) -> Option<PathBuf> {
     match is_sandboxed(debug_build, real_home_opt_in) {
@@ -54,8 +74,8 @@ pub(super) fn dev_home(
     }
 }
 
-fn is_sandboxed(debug_build: bool, real_home_opt_in: Option<&str>) -> bool {
-    debug_build && real_home_opt_in != Some(REAL_HOME_OPT_IN)
+fn is_sandboxed(debug_build: bool, real_home_opt_in: Option<&RealHome>) -> bool {
+    debug_build && real_home_opt_in.is_none()
 }
 
 /// Whether this build is the one kept away from the real machine. The
@@ -63,7 +83,7 @@ fn is_sandboxed(debug_build: bool, real_home_opt_in: Option<&str>) -> bool {
 /// keyed by name rather than by path, so it cannot be relocated by pointing
 /// at another home and asks here instead.
 pub fn sandboxed() -> bool {
-    is_sandboxed(cfg!(debug_assertions), real_home_opt_in().as_deref())
+    is_sandboxed(cfg!(debug_assertions), real_home_opt_in().as_ref())
 }
 
 /// What a sandboxed build carries over from the process it was launched in.
@@ -95,20 +115,45 @@ mod tests {
 
     #[test]
     fn a_debug_build_asked_for_the_real_home_gets_it() {
-        assert_eq!(dev_home(true, Some("1"), Path::new(DATA)), None);
+        let choice = RealHome::from_value(OsStr::new("1"));
+        assert_eq!(choice, Some(RealHome::System));
+        assert_eq!(dev_home(true, choice.as_ref(), Path::new(DATA)), None);
     }
 
     /// The hatch permits writes to a real machine, so only the documented
     /// value spends it — a `0` or a typo reads as nobody's consent.
     #[test]
     fn only_the_documented_value_opts_out() {
-        for value in ["", "0", "false", "no", "2", "1 ", "true", "TRUE", "yes"] {
+        for value in [
+            "",
+            "0",
+            "false",
+            "no",
+            "2",
+            "1 ",
+            "true",
+            "TRUE",
+            "yes",
+            "relative/home",
+            "../home",
+        ] {
+            let choice = RealHome::from_value(OsStr::new(value));
             assert_eq!(
-                dev_home(true, Some(value), Path::new(DATA)),
+                dev_home(true, choice.as_ref(), Path::new(DATA)),
                 Some(PathBuf::from("/data/kendex-dev")),
                 "{value:?} opted out of the sandbox"
             );
-            assert_eq!(dev_home(false, Some(value), Path::new(DATA)), None);
+            assert_eq!(dev_home(false, choice.as_ref(), Path::new(DATA)), None);
+        }
+    }
+
+    #[test]
+    fn an_absolute_root_bypasses_the_sandbox_in_both_builds() {
+        let root = std::env::temp_dir().join("portable home");
+        let choice = RealHome::from_value(root.as_os_str());
+        assert_eq!(choice, Some(RealHome::Root(root)));
+        for debug in [true, false] {
+            assert_eq!(dev_home(debug, choice.as_ref(), Path::new(DATA)), None);
         }
     }
 

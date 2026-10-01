@@ -1,0 +1,1 @@
+- Set KENDEX_REAL_HOME to an absolute path for a portable home on Linux, macOS and Windows, including global toggle and verify operations.
