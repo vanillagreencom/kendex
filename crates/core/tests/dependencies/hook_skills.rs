@@ -281,3 +281,118 @@ fn removed_or_disabled_requirements_withhold_only_tools_that_need_them() {
         }
     }
 }
+
+fn same_named_hook_and_skill() -> std::io::Result<Fixture> {
+    let f = super::hooks::hook_fixture(
+        "[hooks.shared]\nsource = \"cat\"\n\n[skills.shared]\nsource = \"cat\"\n",
+    );
+    skill(&f.source, "shared", "");
+    fs::write(
+        f.source.join("hooks/shared.sh"),
+        "#!/usr/bin/env bash\n# ---\n# name: shared\n# event: PreToolUse\n# requires-skills: [shared]\n# ---\nexit 0\n",
+    )?;
+    Ok(f)
+}
+
+/// The app removes a skill by kind even when its requiring hook shares the
+/// name. Both the saved dependency edge and a live catalog must preserve
+/// that distinction. A bare CLI name still removes both declarations.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_same_named_hook_does_not_undo_a_skill_removal_when_its_catalog_returns() {
+    for (kind, offline) in [
+        (Some(ItemKind::Skill), true),
+        (Some(ItemKind::Skill), false),
+        (None, true),
+        (None, false),
+    ] {
+        let f = same_named_hook_and_skill().unwrap();
+        apply_now(&f);
+        let lock = lock_of(&f);
+        for tool in [HarnessId::Claude, HarnessId::Codex] {
+            assert_eq!(
+                lock.entries[&format!("skill:shared:{}", tool.name())].reasons,
+                BTreeSet::from([Reason::Requested, by(ItemKind::Hook, "shared", tool)])
+            );
+            assert!(
+                lock.entries
+                    .contains_key(&format!("hook:shared:{}", tool.name()))
+            );
+        }
+
+        let hidden = f.source.with_extension("offline");
+        if offline {
+            fs::rename(&f.source, &hidden).unwrap();
+        }
+        let removal = ops::remove(&f.env, &f.scope, &["shared".to_owned()], kind, false).unwrap();
+        apply::execute(&f.env, &removal.plan).unwrap();
+        let manifest = manifest_of(&f);
+        assert!(!manifest.skills.contains_key("shared"));
+        assert_eq!(manifest.hooks.contains_key("shared"), kind.is_some());
+        assert_eq!(
+            manifest.is_suppressed(ItemKind::Skill, "shared"),
+            kind.is_some()
+        );
+        assert!(!manifest.is_suppressed(ItemKind::Hook, "shared"));
+        let lock = lock_of(&f);
+        for (tool, dir) in [(HarnessId::Claude, ".claude"), (HarnessId::Codex, ".codex")] {
+            assert!(
+                !lock
+                    .entries
+                    .contains_key(&format!("skill:shared:{}", tool.name()))
+            );
+            assert!(!f.project.join(dir).join("skills/shared/SKILL.md").exists());
+            if offline {
+                assert_eq!(
+                    lock.entries
+                        .contains_key(&format!("hook:shared:{}", tool.name())),
+                    kind.is_some()
+                );
+            }
+        }
+        if offline {
+            assert!(!removal.notes.is_empty());
+            fs::rename(&hidden, &f.source).unwrap();
+        }
+
+        let returned = plan_apply(
+            &f.env,
+            &f.scope,
+            &PlanOptions {
+                sweep_unneeded: true,
+                ..PlanOptions::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            returned.warnings.iter().any(|w| {
+                w.kind == ItemKind::Hook
+                    && w.name == "shared"
+                    && w.message
+                        == "missing required dependency: shared requires shared, which is kept removed"
+            }),
+            kind.is_some(),
+            "{kind:?} offline={offline}: {:?}",
+            returned.warnings
+        );
+        apply::execute(&f.env, &returned.plan).unwrap();
+        let manifest = manifest_of(&f);
+        assert_eq!(manifest.hooks.contains_key("shared"), kind.is_some());
+        assert!(!manifest.is_suppressed(ItemKind::Hook, "shared"));
+        let lock = lock_of(&f);
+        for (tool, dir) in [(HarnessId::Claude, ".claude"), (HarnessId::Codex, ".codex")] {
+            assert!(
+                !lock
+                    .entries
+                    .contains_key(&format!("skill:shared:{}", tool.name()))
+            );
+            assert!(
+                !lock
+                    .entries
+                    .contains_key(&format!("hook:shared:{}", tool.name()))
+            );
+            assert!(!f.project.join(dir).join("skills/shared/SKILL.md").exists());
+            assert!(!f.project.join(dir).join("hooks/shared.sh").exists());
+        }
+    }
+}

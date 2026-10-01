@@ -146,8 +146,21 @@ fn removal(
         .filter(|name| kind.is_none() && manifest.bundles.contains_key(*name))
         .cloned()
         .collect();
-    let mut removing = names.to_vec();
-    removing.extend(super::bundles::recorded_members(&lock, &bundles));
+    let mut removing: Vec<super::report_types::RemovalName> =
+        names.iter().map(|name| (kind, name.clone())).collect();
+    removing.extend(
+        super::bundles::recorded_members(&lock, &bundles)
+            .into_iter()
+            .map(|name| (None, name)),
+    );
+    let options = PlanOptions {
+        remove_orphans: true,
+        removal_filter: Some(removing),
+        sweep_unneeded: sweep,
+        uninstalled_bundles: bundles,
+        hold_upstream_skills: !disown,
+        ..PlanOptions::default()
+    };
     for name in names {
         // Plugin has no declared-items table — it lives in `plugins` and
         // is removed there, never through `declared_mut` (which panics on
@@ -192,27 +205,14 @@ fn removal(
         }
     }
     manifest.optional_dependencies.retain(|_, t| !t.is_empty());
-    for (kind, name) in kept_removed(env, scope, &manifest, &lock, names, &removing, &bundles) {
+    for (kind, name) in kept_removed(env, scope, &manifest, &lock, names, &options) {
         manifest.suppress(kind, &name);
     }
-    let mut report = plan_scope(
-        env,
-        scope,
-        &manifest,
-        &lock,
-        &PlanOptions {
-            remove_orphans: true,
-            removal_filter: Some(removing.iter().map(|name| (None, name.clone())).collect()),
-            sweep_unneeded: sweep,
-            uninstalled_bundles: bundles,
-            hold_upstream_skills: !disown,
-            ..PlanOptions::default()
-        },
-    )?;
+    let mut report = plan_scope(env, scope, &manifest, &lock, &options)?;
     if disown {
-        report
-            .notes
-            .extend(unreadable_origins(env, scope, &manifest, &lock, names));
+        report.notes.extend(unreadable_origins(
+            env, scope, &manifest, &lock, names, &options,
+        ));
         ensure_manifest_persisted(env, scope, &manifest, &mut report)?;
     }
     Ok(report)
@@ -228,18 +228,16 @@ fn removal(
 /// they cannot be read. So both are asked and anything either one names is
 /// written down — over-recording a removal costs a line the next `add`
 /// clears, while missing one puts back something the user took away.
-#[allow(clippy::too_many_arguments)]
 fn kept_removed(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
     lock: &Lock,
     names: &[String],
-    removing: &[String],
-    bundles: &[String],
+    options: &PlanOptions,
 ) -> BTreeSet<(ItemKind, String)> {
-    let mut kept = recorded_edges(lock, names, removing, bundles);
-    kept.extend(still_derived(env, scope, manifest, names));
+    let mut kept = recorded_edges(lock, names, options);
+    kept.extend(still_derived(env, scope, manifest, names, options));
     kept
 }
 
@@ -251,17 +249,18 @@ fn kept_removed(
 fn recorded_edges(
     lock: &Lock,
     names: &[String],
-    removing: &[String],
-    bundles: &[String],
+    options: &PlanOptions,
 ) -> BTreeSet<(ItemKind, String)> {
     lock.entries
         .values()
-        .filter(|entry| names.contains(&entry.name))
+        .filter(|entry| {
+            names.contains(&entry.name) && options.named_for_removal(entry.kind, &entry.name)
+        })
         .filter(|entry| {
             entry.reasons.iter().any(|reason| match reason {
                 Reason::Requested => false,
-                Reason::RequiredBy { by } => !removing.contains(&by.name),
-                Reason::MemberOf { bundle } => !bundles.contains(&bundle.name),
+                Reason::RequiredBy { by } => !options.named_for_removal(by.kind, &by.name),
+                Reason::MemberOf { bundle } => !options.uninstalled_bundles.contains(&bundle.name),
             })
         })
         .map(|entry| (entry.kind, entry.name.clone()))
@@ -277,13 +276,14 @@ fn still_derived(
     scope: &Scope,
     manifest: &Manifest,
     names: &[String],
+    options: &PlanOptions,
 ) -> BTreeSet<(ItemKind, String)> {
     let mut state = crate::engine::desired::DesiredState::default();
     let expansion = super::expansion::expand(env, scope, manifest, None, &mut state);
     let mut derived = BTreeSet::new();
     for name in names {
         for kind in super::expansion::PLANNED_KINDS {
-            if expansion.contains(kind, name) {
+            if options.named_for_removal(kind, name) && expansion.contains(kind, name) {
                 derived.insert((kind, name.clone()));
             }
         }
@@ -302,11 +302,14 @@ fn unreadable_origins(
     manifest: &Manifest,
     lock: &Lock,
     names: &[String],
+    options: &PlanOptions,
 ) -> Vec<String> {
     let mut sources: Vec<String> = lock
         .entries
         .values()
-        .filter(|entry| names.contains(&entry.name))
+        .filter(|entry| {
+            names.contains(&entry.name) && options.named_for_removal(entry.kind, &entry.name)
+        })
         .map(|entry| entry.source.clone())
         .collect();
     sources.sort();

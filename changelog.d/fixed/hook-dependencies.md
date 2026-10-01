@@ -1,1 +1,1 @@
-- Hooks install required skills and tool-specific companions together, or withhold an incomplete install. Hand-installed skill checks report missing dependencies without blocking the session.
+- Hooks install required skills and companions together. Skill removals stay removed when catalogs return. Hand-installed skill checks report missing dependencies without blocking the session.
