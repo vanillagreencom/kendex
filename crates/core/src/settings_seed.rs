@@ -6,7 +6,7 @@
 //! keys it marks `# required`; a save writes the keys it names. Nothing
 //! else here reaches a consumer's file. Seeding on refresh leaves it
 //! byte-identical and keeps deleted keys absent; the compatibility pass in
-//! [`crate::engine::settings_write`] can still update legacy agent labels.
+//! `crate::engine::settings_write` can still update legacy agent labels.
 //! A key nobody
 //! answers is named by [`notes`] rather than written.
 //!

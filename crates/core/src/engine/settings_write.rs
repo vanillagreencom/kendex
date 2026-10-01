@@ -9,7 +9,7 @@
 //! Arrival rides in on the plan's options, because the
 //! only thing that arrives a skill is the `add` that declares it. What the
 //! seeding rule lives in [`crate::settings_seed`]; compatibility lives in
-//! [`crate::source::config::agent_names`].
+//! `crate::source::config::agent_names`.
 
 use crate::apply::{Op, PlannedOp, Pre};
 use crate::error::Result;
