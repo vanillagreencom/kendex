@@ -784,6 +784,27 @@ table \
   "--lane auto takes the account with the most room for the model being passed|$CHOICE_CMD|--harness claude --lane auto CC-64|rc=0 cmd_lane=claude walled=none" \
   "--lane auto moves off the account whose window for that model is walled|cmd=true --model=fable --effort=high|--harness claude --lane auto CC-65|rc=0 cmd_lane=eclaude walled=none"
 
+# Both managed launch forms judge the substituted Sonnet request. Restrict
+# discovery so the automatic pick cannot take an unrelated account with room.
+claude_usage 20 20 97 Sonnet > "$FIXTURE_DIR/.claude.json"
+HAIKU_ENV="flags=--model haiku --effort high;ORCH_LANE_DIRS=$H/.claude"
+table \
+  "a named haiku request refuses the Sonnet allowance before launch|$HAIKU_ENV|--harness claude --lane $H/.claude CC-24681|rc=1 launched=nolog creates=nolog walled=lane=$H/.claude,model=claude-sonnet-5,pct=97,bucket=model,projected-headroom=3" \
+  "an automatic haiku request refuses the same allowance before launch|$HAIKU_ENV|--harness claude --lane auto CC-24682|rc=1 launched=nolog creates=nolog pickrefusal=lane-unavailable,harness=claude"
+pi_control ctl-haiku-request open-terminal \
+  '  LAUNCH_MODEL="$(launch_choice_model_id "$LAUNCH_HARNESS" "$LAUNCH_MODEL" --request)" || return 1' \
+  '  # LAUNCH_MODEL="$(launch_choice_model_id "$LAUNCH_HARNESS" "$LAUNCH_MODEL" --request)" || return 1
+  :' \
+  "$HAIKU_ENV" --harness claude --lane "$H/.claude" CC-24683
+assert_contains "$OUT" "model=haiku" 'control: the launch checks an unresolved request instead of its assembled model'
+claude_usage 20 20 10 Sonnet > "$FIXTURE_DIR/.claude.json"
+for lane in "$H/.claude" auto; do
+  run_ot "$HAIKU_ENV" --harness claude --lane "$lane" "CC-2468$RUN_SEQ"
+  assert_eq "$RC|$(grep -c '^lane-model: requested=haiku resolved=sonnet;' <<<"$OUT")" '0|1' \
+    "haiku $lane launch warns once across parent, pick and assembly"
+  assert_contains "$(cat "$RUN/tmux.log")" "'claude-sonnet-5'" "haiku $lane launches the checked Sonnet model"
+done
+
 # The named lane is judged on the projection `lanes pick` drops a lane on: its
 # 5-hour window at 60 with room, but the one lane already live on it charged
 # 50 an hour, which projects 110. The second row is the inverse, the same lane

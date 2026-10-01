@@ -929,7 +929,7 @@ if [[ "$MODE" != dead ]]; then
   # provider spends a claude account, on a github-copilot model the Copilot
   # pool, on another provider `none`, and on a model naming no provider one
   # that is `unknown`.
-  ol_account "$CALLER_HARNESS" "$CALLER_MODEL"
+  ol_account "$CALLER_HARNESS" "$CALLER_MODEL" || die launch-choice-failed "harness=$CALLER_HARNESS" step=model-resolve
   CALLER_ACCOUNT_HARNESS="$OL_ACCOUNT_HARNESS" CALLER_ACCOUNT_MODEL="$OL_ACCOUNT_MODEL"
 fi
 

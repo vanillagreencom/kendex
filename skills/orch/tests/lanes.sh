@@ -1759,6 +1759,45 @@ model_usage() { # FABLE OPUS
              {kind: "weekly_scoped", percent: $o, resets_at: "2026-08-01T06:00:00Z",
               scope: {model: {display_name: "Opus"}}}]}'
 }
+
+# Consumer --model haiku requests spend Sonnet, even though shared windows
+# have room. Both pick forms and a mixed fleet must consult that same window.
+new_home haiku-wall
+make_lane "$H" claude 3600
+claude_usage 20 20 97 Sonnet > "$FIXTURE_DIR/.claude.json"
+table \
+  "haiku fleet selection refuses the Sonnet wall||pick --harness claude --model haiku --json|rc=3 walled=1" \
+  "haiku named selection refuses the Sonnet wall||pick --lane $H/.claude --harness claude --model haiku --json|rc=3 wall=97 binding_bucket=model" \
+  "haiku mixed selection refuses the Claude Sonnet wall||pick --model haiku --json|rc=3 walled=1"
+pool_control haiku-selection lib/lane-model.sh \
+  'if \.harness == "claude" then \$claude_model else \$model end' '\$model' \
+  'control: a chooser without its resolved Claude model admits the spent window||pick --model haiku --json|rc=0'
+for form in fleet named; do
+  MUTANT="$(mutant_scripts "haiku-$form" lanes)" || exit 1
+  if [[ "$form" == fleet ]]; then
+    old='claude_model="$(launch_choice_model_id claude "$model" --request)" || return 1'
+    new='claude_model="$model"'
+    args='pick --harness claude --model haiku --json'
+  else
+    old='check_model="$(launch_choice_model_id "$harness" "$model" --request)" || return 1'
+    new='check_model="$model"'
+    args="pick --lane $H/.claude --harness claude --model haiku --json"
+  fi
+  mutate_file "$MUTANT/lanes" "$old" "# $old
+$new"
+  REAL_LANES="$LANES"; LANES="$MUTANT/lanes"
+  run_lanes '' $args
+  LANES="$REAL_LANES"
+  assert_eq "$RC" 0 "control: unresolved $form haiku incorrectly admits the spent Sonnet window"
+done
+make_codex_lane "$H/.codex"
+jq -n '{rate_limit: {primary_window: {used_percent: 20, reset_at: 1785000000,
+                                     limit_window_seconds: 18000}}}' > "$FIXTURE_DIR/.codex.json"
+table "a mixed haiku pick keeps the non-Claude candidate eligible||pick --model haiku --json|rc=0 harness=codex qualifying_count=1"
+
+# Resume the model-rate fixture used by the cases below.
+new_home model-rate
+make_lane "$H" claude 3600
 stage_model_rate() { # CURRENT_FABLE CURRENT_OPUS PRIOR_FABLE PRIOR_OPUS
   local f now
   CACHE_STATE="$TMP_ROOT/model-rate-$1-$2-$3-$4"

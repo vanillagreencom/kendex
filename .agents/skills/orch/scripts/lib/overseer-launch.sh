@@ -172,6 +172,7 @@ ol_preference_entries() { # VALUE
 OL_ACCOUNT_HARNESS="" OL_ACCOUNT_MODEL=""
 ol_account() { # HARNESS MODEL
   local model="${2:-}"
+  model="$(launch_choice_model_id "${1:-}" "$model" --request)" || return 1
   [[ "${1:-}" != pi ]] || model="${model%%:*}"
   OL_ACCOUNT_HARNESS="$(lane_pick_harness "${1:-}" "$model")" OL_ACCOUNT_MODEL="$model"
   [[ "${1:-}" == pi ]] || return 0
@@ -214,6 +215,7 @@ OL_PREFERENCE_CALLER_MODEL=""
 ol_entry_model() { # ENTRY
   IFS=: read -r OL_ENTRY_HARNESS OL_ENTRY_MODEL OL_ENTRY_EFFORT <<<"$1"
   [[ -n "$OL_ENTRY_MODEL" ]] || OL_ENTRY_MODEL="${OL_WALK_CALLER_MODEL:-$OL_PREFERENCE_CALLER_MODEL}"
+  OL_ENTRY_MODEL="$(launch_choice_model_id "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" --request)" || return 1
 }
 
 # ol_lanes ARGS... — `lanes` as every overseer read of an account asks it,
@@ -241,11 +243,14 @@ OL_PICK_RECORD=""
 ol_pick_record() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
   local floor=() exclude=() rc=0 harness model LC_ALL=C
   OL_PICK_RECORD=""
-  ol_account "$1" "$2"
+  ol_account "$1" "$2" || return 1
   harness="$OL_ACCOUNT_HARNESS" model="$OL_ACCOUNT_MODEL"
   ol_account_measured "$harness" || return 4
   [[ -n "$(lane_context_mark_model "$harness" "$model")" ]] || floor=(--binding-floor)
   [[ -z "${4:-}" ]] || exclude=(--exclude-lane "$4")
+  # Keep Pi's provider on the request: lanes maps its account without applying
+  # a Claude launch-alias substitution to a Pi model with the same tier word.
+  if [[ "$1" == pi ]]; then harness=pi model="${2%%:*}"; fi
   OL_PICK_RECORD="$(ol_lanes pick --harness "$harness" --min-headroom-pct "$3" --for-overseer \
     ${floor[@]+"${floor[@]}"} ${exclude[@]+"${exclude[@]}"} ${model:+--model "$model"} --json 2>"$DEP_ERR")" || rc=$?
   return "$rc"
@@ -278,7 +283,7 @@ OL_WALKED_UNMEASURED=0
 ol_pick_lane() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
   local record rc=0 walled unmeasured LC_ALL=C
   OL_PICKED_DIR=""
-  ol_account "$1" "$2"
+  ol_account "$1" "$2" || return 1
   [[ "$OL_ACCOUNT_HARNESS" != none ]] || return 0
   ol_pick_record "$@" || rc=$?
   record="$OL_PICK_RECORD"
@@ -358,7 +363,9 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
     if [[ "$entry" == caller ]]; then
       OL_HARNESS="$OL_WALK_CALLER_HARNESS" OL_MODEL="$OL_WALK_CALLER_MODEL" OL_EFFORT="$OL_WALK_CALLER_EFFORT"
       OL_PICK_MODEL="$OL_WALK_CALLER_PICK_MODEL" OL_FALLBACK_WALKED="${OL_WALK_CALLER_HARNESS:-none}"
-      ol_account "$OL_HARNESS" "$OL_PICK_MODEL"
+      OL_MODEL="$(launch_choice_model_id "$OL_HARNESS" "$OL_MODEL" --request)" || return 1
+      OL_PICK_MODEL="$(launch_choice_model_id "$OL_HARNESS" "$OL_PICK_MODEL" --request)" || return 1
+      ol_account "$OL_HARNESS" "$OL_PICK_MODEL" || return 1
       if [[ "$OL_ACCOUNT_HARNESS" == unknown ]]; then
         OL_REASON=pi-account-unknown OL_FIELDS=("model=${OL_PICK_MODEL:-none}")
         return 1
@@ -373,7 +380,7 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
         return 0
       fi
     else
-      ol_entry_model "$entry"
+      ol_entry_model "$entry" || return 1
       OL_HARNESS="$OL_ENTRY_HARNESS" OL_MODEL="$OL_ENTRY_MODEL" OL_EFFORT="$OL_ENTRY_EFFORT"
       OL_PICK_MODEL="$OL_ENTRY_MODEL"
       ol_entry_permitted "$entry" || continue

@@ -50,16 +50,18 @@ if [ "${LANE_ADAPTER_CLAUDE_WARNING_OWNER:-}" != "$$" ]; then
 fi
 
 # lane_adapter_claude_model_id MODEL: the model id a launch writes for MODEL.
-# Both light-tier aliases use sonnet; every other spelling passes through.
-lane_adapter_claude_model_id() { # MODEL
-  local model warning
+# --request applies the substitution without expanding other launch aliases,
+# so allowance checks keep every other requested tier unchanged.
+lane_adapter_claude_model_id() { # MODEL [--request]
+  local model warning aliases="${2:-}"
   model=$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]') || return 1
   if [ "$model" = haiku ]; then
     if IFS= read -r warning <&19; then
       printf '%s\n' "$warning" >&2 || return 1
     fi
-    model=sonnet
+    model=sonnet aliases=""
   fi
+  if [[ "$aliases" == --request ]]; then printf '%s\n' "${1:-}"; return; fi
   case "$model" in
     sonnet) printf '%s\n' claude-sonnet-5 ;;
     *) printf '%s\n' "${1:-}" ;;

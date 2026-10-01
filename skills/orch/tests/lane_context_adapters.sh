@@ -157,6 +157,7 @@ while IFS= read -r mode; do
           IFS= read -r model < "$3" ;;
         substitution) model=$(lane_adapter_claude_model_id "$spelling") || exit 1 ;;
         launch) model=$(launch_choice_model_id claude "$spelling") || exit 1 ;;
+        request) model=$(launch_choice_model_id claude "$spelling" --request) || exit 1 ;;
       esac
       window=$(lane_adapter_claude_window "$model") || exit 1
       printf "%s|%s\n" "$model" "$window"
@@ -177,6 +178,26 @@ done <<'ROWS'
 direct
 substitution
 launch
+request
+ROWS
+
+while IFS='|' read -r harness model want; do
+  answer=$(env -i PATH="$PATH" HOME="$TMP_ROOT" bash -c '
+    set -euo pipefail; source "$1"
+    launch_choice_model_id "$2" "$3" --request
+  ' _ "${LIB%/*}/lane-launch.sh" "$harness" "$model" 2>"$TMP_ROOT/request-warning") || exit 1
+  assert_eq "$answer|$(wc -l <"$TMP_ROOT/request-warning" | tr -d " ")" "$want|0" \
+    "$harness allowance request preserves $model without warning"
+done <<'ROWS'
+claude|sonnet|sonnet
+claude|Sonnet|Sonnet
+claude|fable|fable
+claude|opus|opus
+claude|claude-haiku-4-5|claude-haiku-4-5
+codex|haiku|haiku
+opencode|haiku|haiku
+pi|haiku|haiku
+copilot|haiku|haiku
 ROWS
 
 echo "=== effective compaction settings preserve unresolved token use ==="
