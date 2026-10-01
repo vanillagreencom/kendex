@@ -102,6 +102,12 @@ fn ignored_catalog_keeps_its_own_ignore_rules(
     // Model that layout without changing this checkout or its ignore rules.
     let ignored = root.join("ignored");
     let catalog = ignored.join("catalog");
+    // RUNNER_TEMP can belong to a different checkout than the catalog.
+    // Its ignored scratch must not share the catalog discovery boundary.
+    let render_checkout = root.join("render-checkout");
+    let scratch = render_checkout.join("scratch");
+    fs::create_dir_all(&scratch).unwrap();
+    fs::write(render_checkout.join(".gitignore"), "scratch/\n").unwrap();
     fs::create_dir_all(catalog.join("agents")).unwrap();
     fs::write(root.join(".gitignore"), "ignored/\n").unwrap();
     fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
@@ -110,11 +116,8 @@ fn ignored_catalog_keeps_its_own_ignore_rules(
         "---\nname: planner\ndescription: Write a plan\ntracked-outputs: [docs/plans/<slug>.md]\n---\nWrite a plan.\n",
     )
     .unwrap();
-    for directory in [root, catalog.as_path()] {
-        if directory == catalog.as_path() {
-            fs::write(catalog.join(".gitignore"), "docs/plans/\n").unwrap();
-        }
-        let init = Command::new("git")
+    let init = |directory: &Path| {
+        let output = Command::new("git")
             .args(["init", "--quiet"])
             .current_dir(directory)
             .env_clear()
@@ -123,22 +126,41 @@ fn ignored_catalog_keeps_its_own_ignore_rules(
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .output()
             .unwrap();
-        assert!(init.status.success(), "{init:?}");
-        let output = check(binary, script, &catalog, &ignored);
+        assert!(output.status.success(), "{output:?}");
+    };
+    init(&render_checkout);
+    for directory in [root, catalog.as_path()] {
+        if directory == catalog.as_path() {
+            fs::write(catalog.join(".gitignore"), "docs/plans/\n").unwrap();
+        }
+        init(directory);
+        let output = check(binary, script, &catalog, &scratch);
         if directory == root {
             assert!(output.status.success(), "ignored snapshot: {output:?}");
             let target = "            \"GIT_CEILING_DIRECTORIES\": os.pathsep.join((str(Path(catalog).parent), str(root))),\n";
             assert_eq!(text.matches(target).count(), 1);
-            let mutated = text.replace(target, "            \"GIT_CEILING_DIRECTORIES\": \"\",\n");
-            assert_ne!(text, mutated);
-            let mutant = root.join("unbounded-git.py");
-            fs::write(&mutant, mutated).unwrap();
-            let output = check(binary, &mutant, &catalog, &ignored);
-            assert_eq!(output.status.code(), Some(1), "{output:?}");
-            assert!(
-                String::from_utf8_lossy(&output.stdout).contains("tracked-output"),
-                "{output:?}"
-            );
+            for (name, ceiling, diagnostic) in [
+                ("unbounded-git", "\"\"", "tracked-output"),
+                (
+                    "unbounded-render",
+                    "str(Path(catalog).parent)",
+                    ".gitignore:1:scratch/",
+                ),
+            ] {
+                let mutated = text.replace(
+                    target,
+                    &format!("            \"GIT_CEILING_DIRECTORIES\": {ceiling},\n"),
+                );
+                assert_ne!(text, mutated);
+                let mutant = root.join(format!("{name}.py"));
+                fs::write(&mutant, mutated).unwrap();
+                let output = check(binary, &mutant, &catalog, &scratch);
+                assert_eq!(output.status.code(), Some(1), "{name}: {output:?}");
+                assert!(
+                    String::from_utf8_lossy(&output.stdout).contains(diagnostic),
+                    "{name}: {output:?}"
+                );
+            }
         } else {
             // The catalog's own ignore policy is real authoring input.
             assert_eq!(output.status.code(), Some(1), "{output:?}");
