@@ -166,6 +166,35 @@ CONTROL_OUT="$(
 )" || CONTROL_RC=$?
 assert_eq "$RC=$CONTROL_RC=$(wc -l < "$BOX/to-overseer.jsonl" | tr -d ' ')" "0=1=2" \
   "control: the advancing-clock retry assertion fails without deadline normalization"
+# Chat answers use send --re without a delivery key while the ask stays open.
+# Both controls keep the semantic guard and remove one append-owner rule.
+while IFS='~' read -r name old replacement want; do
+  new_repo "answer_repeat_$name"
+  owner_ask 'Which?' a,b a
+  lm send --item overseer --re "$ASK" --file "$(text a b)"
+  FIRST="$(field "$BOX/to-lane.jsonl" '.id')"
+  bin="$LANE_MAIL"
+  if [[ -n "$old" ]]; then
+    dir="$(mutant_scripts "mutants/answer-repeat-$name" lane-mail)" || exit 1
+    mutate_file "$dir/lane-mail" "$old" "$replacement"; bin="$dir/lane-mail"
+  fi
+  LANE_MAIL_BIN="$bin" lm send --item overseer --re "$ASK" --file "$(text a b)"
+  control_rc=0
+  (FAIL=0; assert_eq "$RC=$ERR=$(field "$BOX/to-lane.jsonl" '.id')" \
+    "2=lane-mail: duplicate id=$FIRST=$FIRST" "unkeyed owner answer retry refuses without appending"; [[ "$FAIL" -eq 0 ]]) \
+    >"$TMP_ROOT/answer-repeat-assertion" || control_rc=$?
+  assert_eq "$control_rc" "$want" "$name: the owner answer retry assertion detects either missing rule" "$TMP_ROOT/answer-repeat-assertion"
+  if [[ "$name" == live ]]; then
+    lm resolve --item overseer --id "$ASK"
+    CLOSE="$(field "$BOX/to-lane.jsonl" 'select(.kind == "resolution") | .id')"
+    lm send --item overseer --re "$ASK" --file "$(text a c)"
+    assert_eq "$RC=$ERR" "2=lane-mail: resolved-already=$ASK id=$CLOSE" "unkeyed new answer after close retains its semantic refusal"
+  fi
+done <<'ROWS'
+live~~~0
+eligibility~[ "$VERB" != resolve ] && [ -z "$DELIVERY_ID" ] && [ "${3:-}" != : ]~false && [ "$VERB" != resolve ] && [ -z "$DELIVERY_ID" ] && [ "${3:-}" != : ]~1
+refusal~[ "${report#duplicate id=}" != "$report" ] || return 4~[ "${report#duplicate id=}" != "$report" ] && return 4~1
+ROWS
 PATH="$SAVED_PATH"
 
 FIXTURE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
