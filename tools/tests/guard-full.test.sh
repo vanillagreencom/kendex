@@ -152,12 +152,11 @@ run_guard DOC_LIMITS_SETTINGS_FILE=/dev/null DOC_LIMITS_CLASSES=docs/growth.md=1
   || bad "the unchanged document inside the margin passes completion" "rc=$RC out=$OUT"
 printf '%1006s' '' >"$R/docs/growth.md"
 git -C "$R" add docs/growth.md
-git -C "$R" commit -q -m "chore: lane grows the document"
 run_guard DOC_LIMITS_SETTINGS_FILE=/dev/null DOC_LIMITS_CLASSES=docs/growth.md=1k
 [ "$RC" -eq 1 ] && [[ "$OUT" == *"notice=document-near-limit path=docs/growth.md"* ]] \
   && [[ "$OUT" == *"guard: doc-limits=1"* ]] \
-  && ok "completion rejects growth inside the margin against the branch point, not HEAD or the base tip" \
-  || bad "completion rejects growth inside the margin against the branch point, not HEAD or the base tip" "rc=$RC out=$OUT"
+  && ok "completion rejects staged, uncommitted growth inside the margin against the branch point, not the base tip" \
+  || bad "completion rejects staged, uncommitted growth inside the margin against the branch point, not the base tip" "rc=$RC out=$OUT"
 growth_matches="$(grep -cFx '    doc_limits_args=(--against "$suites_base")' "$GUARD")" \
   || { echo 'growth control: argument match failed' >&2; exit 1; }
 [ "$growth_matches" -eq 1 ] \
