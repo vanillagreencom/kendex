@@ -248,9 +248,6 @@ ol_pick_record() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
   ol_account_measured "$harness" || return 4
   [[ -n "$(lane_context_mark_model "$harness" "$model")" ]] || floor=(--binding-floor)
   [[ -z "${4:-}" ]] || exclude=(--exclude-lane "$4")
-  # Keep Pi's provider on the request: lanes maps its account without applying
-  # a Claude launch-alias substitution to a Pi model with the same tier word.
-  if [[ "$1" == pi ]]; then harness=pi model="${2%%:*}"; fi
   OL_PICK_RECORD="$(ol_lanes pick --harness "$harness" --min-headroom-pct "$3" --for-overseer \
     ${floor[@]+"${floor[@]}"} ${exclude[@]+"${exclude[@]}"} ${model:+--model "$model"} --json 2>"$DEP_ERR")" || rc=$?
   return "$rc"

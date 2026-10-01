@@ -98,6 +98,9 @@ fn remove_scope(
     // until the refresh the closing line names; the warning carries no
     // type to tell it from the rest, so it prints with them.
     for warning in &report.warnings {
+        if ui::report::is_run_model_warning(&warning.message) {
+            continue;
+        }
         warn(&format!("warning: {}: {}", warning.name, warning.message));
     }
     if !takes_anything(&report) {

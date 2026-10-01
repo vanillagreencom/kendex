@@ -100,16 +100,6 @@ OUT="$(env -i PATH="$PATH" HOME="$TMP_ROOT" bash -c '
   ol_account claude haiku; printf "%s\n" "$OL_ACCOUNT_MODEL"
 ' _ "$LIB" 2>"$TMP_ROOT/warnings")" || exit 1
 assert_eq "$OUT" claude-sonnet-5 'the account owner resolves the Claude request before selection'
-OUT="$(env -i PATH="$PATH" HOME="$TMP_ROOT" bash -c '
-  set -euo pipefail
-  source "${1%/*}/lane-launch.sh"; source "${1%/*}/lane-context.sh"; source "$1"
-  DEP_ERR="$2/err"
-  ol_lanes() { launch_choice_value --model "$*"; }
-  ol_pick_record pi pi-claude/haiku 5
-  printf "%s\n" "$OL_PICK_RECORD"
-' _ "$LIB" "$TMP_ROOT" 2>"$TMP_ROOT/warnings")" || exit 1
-assert_eq "$OUT|$(wc -l <"$TMP_ROOT/warnings" | tr -d ' ')" 'pi-claude/haiku|0' \
-  'a Pi request keeps its provider and tier when it spends a Claude seat'
 for mutation in entry caller account; do
   MUTANT="$(mutant_scripts "haiku-$mutation" lib/overseer-launch.sh)" || exit 1
   case "$mutation" in

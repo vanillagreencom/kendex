@@ -799,7 +799,9 @@ pi_control ctl-haiku-request open-terminal \
 assert_contains "$OUT" "model=haiku" 'control: the launch checks an unresolved request instead of its assembled model'
 claude_usage 20 20 10 Sonnet > "$FIXTURE_DIR/.claude.json"
 for lane in "$H/.claude" auto; do
-  run_ot "$HAIKU_ENV" --harness claude --lane "$lane" "CC-2468$RUN_SEQ"
+  # The managed Claude path verifies the submitted brief after account checks.
+  item="CC-2468$RUN_SEQ"
+  run_ot "$HAIKU_ENV;OT_PANE_TEXT=/orch start $item" --harness claude --lane "$lane" "$item"
   assert_eq "$RC|$(grep -c '^lane-model: requested=haiku resolved=sonnet;' <<<"$OUT")" '0|1' \
     "haiku $lane launch warns once across parent, pick and assembly"
   assert_contains "$(cat "$RUN/tmux.log")" "'claude-sonnet-5'" "haiku $lane launches the checked Sonnet model"

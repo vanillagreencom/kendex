@@ -34,7 +34,11 @@ pub fn run(args: TierModelArgs) -> CliResult {
                 TIERS.len()
             )
         })?;
-    let model = resolve_model(harness, tier).id.ok_or_else(|| {
+    let resolved = resolve_model(harness, tier);
+    if let Some(warning) = &resolved.warning {
+        crate::ui::report::run_model_warning(warning);
+    }
+    let model = resolved.id.ok_or_else(|| {
         format!(
             "tier '{tier}' names no model on {}; it inherits the session's",
             harness.name()
