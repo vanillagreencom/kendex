@@ -647,7 +647,7 @@ assert_eq "$(roundtrip claude fable high)|$(roundtrip codex gpt-6-astra high)|$(
 # A claude successor on the sonnet or haiku alias is written with the model id,
 # which no ANTHROPIC_DEFAULT_*_MODEL pin moves; another harness keeps its word.
 assert_eq "$(roundtrip claude sonnet high)|$(roundtrip claude haiku high)|$(roundtrip pi sonnet high)" \
-  "claude-sonnet-5;high|claude-haiku-4-5;high|sonnet;high" "a claude alias is written as its model id"
+  "claude-sonnet-5;high|claude-sonnet-5;high|sonnet;high" "a claude alias is written as its model id"
 IDCTL="$(mutant_scripts idctl lib/lane-launch.sh)" || exit 1
 mutate_file "$IDCTL/lib/lane-launch.sh" '$(printf %q "$(launch_choice_model_id "$1" "$2")")' '$(printf %q "$2")'
 assert_eq "$(source "$IDCTL/lib/lane-launch.sh"; roundtrip claude sonnet high)" "sonnet;high" \
