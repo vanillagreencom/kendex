@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { YAML } from "bun";
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { host, selectHost, type OmpRuntime } from "../extensions/manager/host.ts";
-import { buildInventory, npmCandidatesFromInventory } from "../extensions/manager/inventory.ts";
+import { buildInventory, closeInventorySession, inventorySession, refreshInventory, npmCandidatesFromInventory } from "../extensions/manager/inventory.ts";
 import { planUninstall, planUpdate, runUninstall, runUpdate, toggleItem } from "../extensions/manager/actions.ts";
 import { setConfigValue, resetConfigKeys, updateManagerState, getConfigValue, mergedManagerState, defaultWriteScope } from "../extensions/manager/settings.ts";
 import { glyphStyle } from "../extensions/manager/glyphs.ts";
@@ -18,7 +18,9 @@ mock.module("@earendil-works/pi-tui", () => ({
 	wrapTextWithAnsi: (text: string) => [text],
 }));
 const { openManager } = await import("../extensions/manager/manager-ui.ts");
-const { openQuickSettings } = await import("../extensions/manager/quick-settings-ui.ts");
+const { openQuickSettings, quickSettingsCompletions } = await import("../extensions/manager/quick-settings-ui.ts");
+import { testPi } from "./fixtures/exec.ts";
+import { pendingRequest } from "./fixtures/http.ts";
 
 const root = join(process.cwd(), "tmp", "manager-host-tests");
 const agent = join(root, "home", ".omp", "agent");
@@ -71,20 +73,20 @@ afterEach(async () => {
 	clearPackageConfigCache();
 });
 
-test("native disabled package without settings.json or YAML packages is inventoried and enabled in its lock", () => {
+test("native disabled package without settings.json or YAML packages is inventoried and enabled in its lock", async () => {
 	nativePackage(plugins, name, false);
 	write(join(agent, "config.yml"), "compaction:\n  enabled: false\nunknown:\n  nested: preserved\n");
-	const inv = inventory();
+	const inv = await inventory();
 	const item = inv.packages.find((pkg) => pkg.packageName === name);
 	expect(item?.state).toBe("disabled");
 	const before = readFileSync(join(agent, "config.yml"), "utf8");
 	const notices: string[] = [];
-	toggleItem({} as never, { ...ctx, ui: { notify: (message: string) => notices.push(message) } } as never, inv, item!);
+	await toggleItem({} as never, { ...ctx, ui: { notify: (message: string) => notices.push(message) } } as never, inv, item!);
 	const lock = JSON.parse(readFileSync(lockPath, "utf8"));
 	expect(lock.plugins[name]).toEqual({ version: "1.2.3", enabled: true, enabledFeatures: null, custom: "keep" });
 	expect(lock.settings[name]).toEqual({ color: "blue" });
 	expect(lock.unknown).toBe(17);
-	expect(inventory().packages[0]?.state).toBe("active");
+	expect((await inventory()).packages[0]?.state).toBe("active");
 	expect(readFileSync(join(agent, "config.yml"), "utf8")).toBe(before);
 	for (const path of [join(agent, "settings.json"), join(cwd, ".omp", "settings.json"), join(cwd, ".pi", "settings.json"), join(root, "home", ".pi", "agent", "settings.json"), join(agent, "APPEND_SYSTEM.md")]) expect(existsSync(path)).toBe(false);
 	expect(YAML.parse(before)).not.toHaveProperty("packages");
@@ -100,7 +102,7 @@ test("runtime capabilities select the host with coexisting directories and use i
 	expect(host.commands.recover).toBe("kendex:extensions:enable");
 	expect(host.settings(ctx).find((f) => f.scope === "project")?.baseDir).toBe(join(cwd, ".omp"));
 	nativePackage(projectRoot);
-	expect(inventory().packages[0]?.scope).toBe("project");
+	expect((await inventory()).packages[0]?.scope).toBe("project");
 	const piAgent = join(root, "home", ".pi", "agent");
 	await selectHost({ getAgentDir: () => piAgent, SettingsManager: class {} }, async () => { throw new Error("must not resolve OMP from disk"); });
 	expect(host.agentDir()).toBe(piAgent);
@@ -110,21 +112,21 @@ test("runtime capabilities select the host with coexisting directories and use i
 	await expect(selectHost({}, async () => runtime)).rejects.toThrow("pi-extension-manager: host-api-missing=getAgentDir");
 });
 
-test("config.yaml manager edits preserve nested and unknown data and feed glyph settings", () => {
+test("config.yaml manager edits preserve nested and unknown data and feed glyph settings", async () => {
 	nativePackage(plugins, MANAGER_ID);
 	const path = join(agent, "config.yaml");
 	write(path, "compaction:\n  enabled: false\nunknown:\n  nested: preserved\nkendex:\n  custom: 12\n");
-	const inv = inventory();
+	const inv = await inventory();
 	setConfigValue(inv, inv.packages[0]!, { key: "glyphStyle", type: "enum" } as never, "ascii");
 	const parsed = YAML.parse(readFileSync(path, "utf8"));
 	expect(parsed).toMatchObject({ compaction: { enabled: false }, unknown: { nested: "preserved" }, kendex: { custom: 12 } });
 	expect(glyphStyle(cwd)).toBe("ascii");
 	for (const file of ["config.yml", "settings.json"]) expect(existsSync(join(agent, file))).toBe(false);
-	expect(resetConfigKeys(inventory(), MANAGER_ID, ["glyphStyle"])).toBe(1);
+	expect(resetConfigKeys((await inventory()), MANAGER_ID, ["glyphStyle"])).toBe(1);
 	expect(glyphStyle(cwd)).toBe("unicode");
 });
 
-test("malformed YAML, JSON and native records refuse without overwriting", () => {
+test("malformed YAML, JSON and native records refuse without overwriting", async () => {
 	nativePackage();
 	const cases = [
 		{ path: join(agent, "config.yml"), text: "compaction: [broken", firstLine: `pi-extension-manager: config-parse=${join(agent, "config.yml")}` },
@@ -136,7 +138,7 @@ test("malformed YAML, JSON and native records refuse without overwriting", () =>
 	for (const { path, text, firstLine } of cases) {
 		const original = existsSync(path) ? readFileSync(path, "utf8") : undefined;
 		write(path, text);
-		expect(thrownFirstLine(() => inventory())).toBe(firstLine);
+		await expect(inventory()).rejects.toThrow(firstLine);
 		expect(readFileSync(path, "utf8")).toBe(text);
 		if (original === undefined) rmSync(path); else write(path, original);
 	}
@@ -146,14 +148,14 @@ test("malformed YAML, JSON and native records refuse without overwriting", () =>
 	expect(readFileSync(file.path, "utf8")).toBe("kendex: [broken");
 });
 
-test("native capabilities refuse Pi update, uninstall, module toggles and other-extension settings", () => {
+test("native capabilities refuse Pi update, uninstall, module toggles and other-extension settings", async () => {
 	nativePackage();
-	const inv = inventory();
+	const inv = await inventory();
 	const item = inv.packages[0]!;
 	expect(planUninstall(item, inv, ctx as never)).toBeUndefined();
 	expect(planUpdate({ ...item, updateAvailable: true, updateSource: "npm", npmName: name }, inv, ctx as never)).toBeUndefined();
-	const update = runUpdate({ item } as never);
-	const uninstall = runUninstall({ item } as never, inv);
+	const update = await runUpdate({} as never, { item } as never);
+	const uninstall = await runUninstall({} as never, { item } as never, inv);
 	expect([update.ok, update.message.split("\n")[0]]).toEqual([false, `pi-extension-manager: update-unsupported=${item.id}`]);
 	expect([uninstall.ok, uninstall.message.split("\n")[0]]).toEqual([false, `pi-extension-manager: uninstall-unsupported=${item.id}`]);
 	expect(npmCandidatesFromInventory(inv)).toEqual([]);
@@ -167,7 +169,7 @@ test("native capabilities refuse Pi update, uninstall, module toggles and other-
 	expect(existsSync(join(agent, "settings.json"))).toBe(false);
 });
 
-test("native inventory retains links and disabled project records without shadowing enabled user plugins", () => {
+test("native inventory retains links and disabled project records without shadowing enabled user plugins", async () => {
 	nativePackage();
 	nativePackage(projectRoot, name, false);
 	const linked = join(root, "linked");
@@ -175,34 +177,34 @@ test("native inventory retains links and disabled project records without shadow
 	symlinkSync(linked, join(plugins, "node_modules", "linked"), "dir");
 	json(lockPath, { plugins: { linked: { version: "2.0.0", enabled: false, enabledFeatures: null }, stale: { enabled: true } } });
 	json(join(plugins, "node_modules", "stale", "package.json"), { pi: { extensions: ["index.ts"] } });
-	const inv = inventory();
+	const inv = await inventory();
 	expect(inv.packages.find((i) => i.packageName === name && i.scope === "user")?.state).toBe("active");
 	expect(inv.packages.find((i) => i.packageName === name && i.scope === "project")?.state).toBe("disabled");
 	expect(inv.packages.find((i) => i.packageName === "linked")?.state).toBe("disabled");
 	expect(inv.packages.find((i) => i.packageName === "stale")).toBeUndefined();
 	expect(inv.items.find((i) => i.packageName === "linked" && i.kind === "extension module")?.entrypoint).toBe("index.ts");
 	host.toggle(inv.packages.find((i) => i.packageName === name && i.scope === "project")!);
-	expect(inventory().packages.find((i) => i.packageName === name && i.scope === "user")?.state).toBe("shadowed");
-	expect(inventory().packages.find((i) => i.packageName === name && i.scope === "project")?.state).toBe("active");
+	expect((await inventory()).packages.find((i) => i.packageName === name && i.scope === "user")?.state).toBe("shadowed");
+	expect((await inventory()).packages.find((i) => i.packageName === name && i.scope === "project")?.state).toBe("active");
 });
 
-test("project JSON and YAML layers retain raw ownership and YAML manager overrides win", () => {
+test("project JSON and YAML layers retain raw ownership and YAML manager overrides win", async () => {
 	nativePackage(projectRoot, MANAGER_ID);
 	const jsonPath = join(cwd, ".omp", "settings.json");
 	const yamlPath = join(cwd, ".omp", "config.yml");
 	json(jsonPath, { unknown: "json", kendex: { extensionManager: { config: { [MANAGER_ID]: { glyphStyle: "unicode", defaultSaveScope: "user" } } } } });
 	write(yamlPath, `unknown: yaml\nkendex:\n  extensionManager:\n    config:\n      '${MANAGER_ID}':\n        glyphStyle: ascii\n`);
-	const inv = inventory();
+	const inv = await inventory();
 	expect(getConfigValue(inv, MANAGER_ID, { key: "glyphStyle" } as never).value).toBe("ascii");
 	expect(getConfigValue(inv, MANAGER_ID, { key: "defaultSaveScope" } as never).value).toBe("user");
 	const before = readFileSync(jsonPath, "utf8");
 	setConfigValue(inv, inv.packages[0]!, { key: "glyphStyle" } as never, "unicode");
 	expect(readFileSync(jsonPath, "utf8")).toBe(before);
 	expect(YAML.parse(readFileSync(yamlPath, "utf8"))).toMatchObject({ unknown: "yaml" });
-	expect(getConfigValue(inventory(), MANAGER_ID, { key: "glyphStyle" } as never).value).toBe("unicode");
+	expect(getConfigValue((await inventory()), MANAGER_ID, { key: "glyphStyle" } as never).value).toBe("unicode");
 });
 
-test("project-native manager enabled uses global display, save and reset ownership", () => {
+test("project-native manager enabled uses global display, save and reset ownership", async () => {
 	nativePackage(projectRoot, MANAGER_ID);
 	const manifest = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8"));
 	json(join(projectRoot, "node_modules", MANAGER_ID, "package.json"), manifest);
@@ -212,25 +214,25 @@ test("project-native manager enabled uses global display, save and reset ownersh
 	write(userPath, YAML.stringify(config({ enabled: true })));
 	write(projectPath, YAML.stringify(config({ glyphStyle: "ascii" })));
 	const projectBefore = readFileSync(projectPath, "utf8");
-	const item = inventory().packages.find((pkg) => pkg.packageName === MANAGER_ID)!;
+	const item = (await inventory()).packages.find((pkg) => pkg.packageName === MANAGER_ID)!;
 	expect(item.scope).toBe("project");
 	const schema = item.settingsSchema!.find((setting) => setting.key === "enabled")!;
 	const bootstrapEnabled = () => mergedManagerState(host.settings({ cwd })).config[MANAGER_ID]?.enabled !== false;
 	for (const enabled of [false, true]) {
-		setConfigValue(inventory(), item, schema, enabled);
+		setConfigValue((await inventory()), item, schema, enabled);
 		expect(host.read(userPath)).toMatchObject(config({ enabled }));
-		expect(getConfigValue(inventory(), MANAGER_ID, schema)).toMatchObject({ scope: "user", value: enabled });
+		expect(getConfigValue((await inventory()), MANAGER_ID, schema)).toMatchObject({ scope: "user", value: enabled });
 		expect(bootstrapEnabled()).toBe(enabled);
 		expect(readFileSync(projectPath, "utf8")).toBe(projectBefore);
 	}
 	write(projectPath, YAML.stringify(config({ enabled: false, glyphStyle: "ascii" })));
-	expect(getConfigValue(inventory(), MANAGER_ID, schema).value).toBe(true);
-	expect(inventory().managerState.config[MANAGER_ID]?.enabled).toBe(true);
-	expect(resetConfigKeys(inventory(), MANAGER_ID, ["enabled", "glyphStyle"])).toBe(2);
+	expect(getConfigValue((await inventory()), MANAGER_ID, schema).value).toBe(true);
+	expect((await inventory()).managerState.config[MANAGER_ID]?.enabled).toBe(true);
+	expect(resetConfigKeys((await inventory()), MANAGER_ID, ["enabled", "glyphStyle"])).toBe(2);
 	expect(host.read(projectPath)).toMatchObject(config({ enabled: false }));
-	expect(inventory().managerState.config[MANAGER_ID]?.glyphStyle).toBeUndefined();
-	expect(getConfigValue(inventory(), MANAGER_ID, schema)).toMatchObject({ scope: "default", value: true });
-	expect(inventory().managerState.config[MANAGER_ID]?.enabled).toBeUndefined();
+	expect((await inventory()).managerState.config[MANAGER_ID]?.glyphStyle).toBeUndefined();
+	expect(getConfigValue((await inventory()), MANAGER_ID, schema)).toMatchObject({ scope: "default", value: true });
+	expect((await inventory()).managerState.config[MANAGER_ID]?.enabled).toBeUndefined();
 	expect(bootstrapEnabled()).toBe(true);
 });
 
@@ -264,7 +266,7 @@ test("manager and quick-settings notices expose stable keys and values", async (
 	expect(emptyNotices).toEqual(["pi-extension-manager: settings-packages=0"]);
 
 	nativePackage(plugins, MANAGER_ID);
-	const item = inventory().packages[0]!;
+	const item = (await inventory()).packages[0]!;
 	for (const row of [
 		{ action: { type: "update-package", itemId: item.id }, firstLine: `pi-extension-manager: update-unsupported=${item.id}` },
 		{ action: { type: "uninstall-package", itemId: item.id }, firstLine: `pi-extension-manager: self-uninstall=${MANAGER_ID}` },
@@ -290,9 +292,11 @@ for (const row of installations) {
 	test(`native installation grouping user=${row.user} project=${row.project}`, async () => {
 		nativePackage(plugins, MANAGER_ID, row.user, "./useronly.ts");
 		nativePackage(projectRoot, MANAGER_ID, row.project, "./projectonly.ts");
-		const inv = inventory();
+		const inv = await inventory();
 		const ui = { search: "", scopeFilter: "all", stateFilter: "active" } as ManagerUiState;
-		expect(filteredItems(inv.items, ui).map((item) => item.scope)).toEqual([row.active]);
+		const visible = filteredItems(inv.items, ui);
+		expect(visible.map((item) => item.scope)).toEqual([row.active]);
+		expect(filteredItems(inv.items, { ...ui, selected: 1 })).toBe(visible);
 		for (const scope of ["user", "project"] as const) {
 			expect(filteredItems(inv.items, { ...ui, scopeFilter: scope }).map((item) => item.scope)).toEqual(scope === row.active ? [scope] : []);
 			expect(filteredItems(inv.items, { ...ui, stateFilter: "all", search: `${scope}only` }).map((item) => item.scope)).toEqual([scope]);
@@ -306,16 +310,16 @@ for (const row of installations) {
 		nativePackage(plugins, MANAGER_ID, row.user);
 		nativePackage(projectRoot, MANAGER_ID, row.project);
 		expect((await popup(openQuickSettings)).match(/glyphStyle/g)).toHaveLength(1);
-		expect(inventory().packages.filter((item) => item.settingsSchema?.length).map((item) => item.scope)).toEqual([row.active]);
+		expect((await inventory()).packages.filter((item) => item.settingsSchema?.length).map((item) => item.scope)).toEqual([row.active]);
 	});
 }
 
-test("trusted native project settings are creatable without redirecting global-only enable", () => {
+test("trusted native project settings are creatable without redirecting global-only enable", async () => {
 	nativePackage(projectRoot, MANAGER_ID);
 	const userPath = join(agent, "config.yml");
 	write(userPath, "unknown: keep\n");
 	const before = readFileSync(userPath, "utf8");
-	const inv = inventory();
+	const inv = await inventory();
 	const file = inv.settingsFiles.find((candidate) => candidate.scope === "project")!;
 	expect(file.exists).toBe(false);
 	const item = inv.packages[0]!;
@@ -324,9 +328,9 @@ test("trusted native project settings are creatable without redirecting global-o
 	expect(file.path).toBe(join(cwd, ".omp", "config.yml"));
 	expect(host.read(file.path)).toMatchObject({ kendex: { extensionManager: { config: { [MANAGER_ID]: { glyphStyle: "ascii" } } } } });
 	const projectBefore = readFileSync(file.path, "utf8");
-	setConfigValue(inventory(), item, { key: "enabled", type: "boolean", default: true }, false);
+	setConfigValue((await inventory()), item, { key: "enabled", type: "boolean", default: true }, false);
 	expect(readFileSync(file.path, "utf8")).toBe(projectBefore);
-	expect(getConfigValue(inventory(), MANAGER_ID, { key: "enabled", type: "boolean" })).toMatchObject({ scope: "user", value: false });
+	expect(getConfigValue((await inventory()), MANAGER_ID, { key: "enabled", type: "boolean" })).toMatchObject({ scope: "user", value: false });
 });
 
 for (const row of [
@@ -345,11 +349,11 @@ for (const row of [
 	});
 }
 
-test("native module suppression shows basename collisions without offering package-specific toggles", () => {
+test("native module suppression shows basename collisions without offering package-specific toggles", async () => {
 	nativePackage();
 	nativePackage(projectRoot, "@example/other");
 	write(join(agent, "config.yml"), "disabledExtensions:\n  - extension-module:extensions\n");
-	const modules = inventory().items.filter((item) => item.kind === "extension module");
+	const modules = (await inventory()).items.filter((item) => item.kind === "extension module");
 	expect(modules).toHaveLength(2);
 	for (const item of modules) {
 		expect(item.state).toBe("disabled");
@@ -357,10 +361,10 @@ test("native module suppression shows basename collisions without offering packa
 	}
 });
 
-test("configured native extensions use cwd and project arrays replace user arrays", () => {
+test("configured native extensions use cwd and project arrays replace user arrays", async () => {
 	write(join(agent, "config.yml"), "extensions:\n  - ./user.ts\n");
 	write(join(cwd, ".omp", "config.yml"), "extensions:\n  - ./project.ts\n");
-	const configured = inventory().items.filter((item) => item.kind === "extension setting");
+	const configured = (await inventory()).items.filter((item) => item.kind === "extension setting");
 	expect(configured.map((item) => item.sourcePath)).toEqual([join(cwd, "project.ts")]);
 });
 
@@ -377,13 +381,95 @@ test("Pi retains root-anchored override policy when the runtime returns a relati
 	}
 });
 
-test("native project suppression is visible and refuses a misleading global enable", () => {
+test("native project suppression is visible and refuses a misleading global enable", async () => {
 	nativePackage();
 	const path = runtime.getProjectPluginOverridesPath(cwd);
 	json(path, { disabled: [name], settings: { [name]: { color: "red" } } });
-	const item = inventory().packages[0]!;
+	const item = (await inventory()).packages[0]!;
 	expect(item.state).toBe("disabled");
 	const before = readFileSync(path, "utf8");
 	expect(thrownFirstLine(() => host.toggle(item))).toBe(`pi-extension-manager: plugin-override=${path}`);
 	expect(readFileSync(path, "utf8")).toBe(before);
+});
+
+test("Pi popup actions address the selected user install when both scopes are visible", async () => {
+	await selectHost({ getAgentDir: () => agent, SettingsManager: class {} }, async () => { throw new Error("not OMP"); });
+	const projectPi = join(cwd, ".pi");
+	const source = "npm:@example/duplicate";
+	for (const base of [agent, projectPi]) {
+		json(join(base, "settings.json"), { packages: [source] });
+		json(join(base, "npm", "node_modules", "@example", "duplicate", "package.json"), { name: "@example/duplicate", version: "1.0.0", pi: { extensions: ["index.ts"] } });
+	}
+	const calls: Array<{ command: string; args: string[]; cwd?: string }> = [];
+	const pi = testPi(async (command, args, options) => {
+		calls.push({ command, args, cwd: options?.cwd });
+		return { code: 0, killed: false, stdout: "", stderr: "" };
+	});
+	const inv = await refreshInventory(pi, ctx as never);
+	const user = inv.packages.find((item) => item.scope === "user")!;
+	const project = inv.packages.find((item) => item.scope === "project")!;
+	expect(user.id).not.toBe(project.id);
+	expect(user.id).toContain(user.packageDir!);
+	for (const type of ["toggle-item", "update-package", "uninstall-package"] as const) {
+		let selected = false;
+		await openManager(pi, { ...ctx, ui: {
+			custom: async () => {
+				if (selected) return { type: "close" };
+				selected = true;
+				const current = inventorySession(pi).inventory!;
+				const target = current.packages.find((item) => item.scope === "user")!;
+				if (type === "update-package") Object.assign(target, { updateAvailable: true, updateSource: "npm", npmName: "@example/duplicate" });
+				return { type, itemId: target.id };
+			},
+			confirm: async () => true,
+			notify: (message: string, kind: string) => { if (kind === "error") throw new Error(message); },
+		} } as never);
+		const projectSettings = JSON.parse(readFileSync(join(projectPi, "settings.json"), "utf8"));
+		expect(projectSettings.packages).toEqual([source]);
+	}
+	expect(calls).toEqual([
+		{ command: "npm", args: ["install", "@example/duplicate@latest"], cwd: join(agent, "npm") },
+		{ command: "npm", args: ["uninstall", "@example/duplicate"], cwd: join(agent, "npm") },
+	]);
+	expect(JSON.parse(readFileSync(join(agent, "settings.json"), "utf8")).packages).toBeUndefined();
+	closeInventorySession(pi);
+});
+
+test("completion labels reuse the session inventory until a refresh boundary", async () => {
+	nativePackage(plugins, MANAGER_ID);
+	const pi = testPi();
+	await refreshInventory(pi, ctx as never);
+	const first = quickSettingsCompletions(pi, "");
+	expect(first?.map((item) => item.value)).toEqual([MANAGER_ID]);
+	rmSync(join(plugins, "node_modules", MANAGER_ID, "package.json"));
+	for (let i = 0; i < 20; i++) expect(quickSettingsCompletions(pi, "")).toBe(first);
+	await refreshInventory(pi, ctx as never);
+	expect(quickSettingsCompletions(pi, "")).toBeNull();
+	closeInventorySession(pi);
+	expect(quickSettingsCompletions(pi, "")).toBeNull();
+});
+
+test("closing the package popup cancels its pending npm response", async () => {
+	const copy = join(root, "popup-runtime");
+	cpSync(join(import.meta.dir, "../extensions/manager"), copy, { recursive: true });
+	const versionPath = join(copy, "versions.ts");
+	const versionSource = readFileSync(versionPath, "utf8");
+	const before = 'from "node:https"';
+	expect(versionSource.split(before).length - 1).toBe(1);
+	writeFileSync(versionPath, versionSource.replace(before, `from ${JSON.stringify(join(import.meta.dir, "fixtures/http.ts"))}`));
+	const copiedHost = await import(join(copy, "host.ts"));
+	await copiedHost.selectHost({ getAgentDir: () => agent, SettingsManager: class {} }, async () => { throw new Error("not OMP"); });
+	json(join(agent, "settings.json"), { packages: ["npm:@example/popup-cancel"] });
+	json(join(agent, "npm/node_modules/@example/popup-cancel/package.json"), { name: "@example/popup-cancel", version: "1.0.0" });
+	const { openManager: open } = await import(join(copy, "manager-ui.ts"));
+	const theme = { fg: (_color: string, text: string) => text, bg: (_color: string, text: string) => text, bold: (text: string) => text, inverse: (text: string) => text };
+	await open(testPi(), { ...ctx, ui: {
+		custom: async (factory: (...args: unknown[]) => PopupComponent) => {
+			factory({ terminal: { rows: 60 }, requestRender() { throw new Error("Closed popup must not redraw"); } }, theme, {}, () => {});
+			expect(pendingRequest().destroyedCount).toBe(0);
+			return { type: "close" };
+		},
+		notify(message: string) { throw new Error(message); },
+	} } as never);
+	expect(pendingRequest().destroyedCount).toBe(1);
 });

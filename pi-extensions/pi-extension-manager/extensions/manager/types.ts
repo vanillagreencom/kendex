@@ -210,7 +210,7 @@ export interface InlineEditChar {
 }
 
 export type UninstallMethod =
-	| { kind: "kendex"; packageName: string; scope: Scope }
+	| { kind: "kendex"; packageName: string; scope: Scope; cwd: string }
 	| { kind: "npm"; npmName: string; scope: Scope; cwd: string; command: string; argsPrefix: string[] }
 	| { kind: "orphan"; packageName: string; scope: Scope };
 
@@ -222,7 +222,7 @@ export interface UninstallPlan {
 }
 
 export type UpdateMethod =
-	| { kind: "kendex"; packageName: string; sourceRepo: string; scope: Scope }
+	| { kind: "kendex"; packageName: string; sourceRepo: string; scope: Scope; cwd: string }
 	| { kind: "npm"; npmName: string; scope: Scope; cwd: string; command: string; argsPrefix: string[] };
 
 export interface UpdatePlan {

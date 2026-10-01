@@ -9,7 +9,7 @@
 
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { host, initializeHost } from "./manager/host.js";
-import { buildInventory, npmCandidatesFromInventory } from "./manager/inventory.js";
+import { closeInventorySession, startInventorySession, inventorySession, refreshInventory, npmCandidatesFromInventory } from "./manager/inventory.js";
 export { npmCandidatesFromInventory };
 import { recordProjectTrust } from "./manager/glyphs.js";
 import { installSettingsCacheRefresh } from "./manager/package-config.js";
@@ -76,10 +76,9 @@ export default async function extensionManager(pi: ExtensionAPI): Promise<void> 
 		},
 	});
 
-	let activeCtx: ExtensionContext | undefined;
 	pi.registerCommand(host.commands.settings, {
 		description: "Open the quick extension settings editor (optional package name jumps to that tab)",
-		getArgumentCompletions: (prefix: string) => activeCtx ? quickSettingsCompletions(pi, activeCtx, prefix) : null,
+		getArgumentCompletions: (prefix: string) => quickSettingsCompletions(pi, prefix),
 		handler: async (args, ctx) => openQuickSettings(pi, ctx, args),
 	});
 
@@ -113,20 +112,21 @@ export default async function extensionManager(pi: ExtensionAPI): Promise<void> 
 	});
 
 	installSettingsCacheRefresh(pi);
+	pi.on("session_shutdown", async () => closeInventorySession(pi));
 	pi.on("session_start", async (_event, ctx) => {
-		await host.prepare(ctx.cwd);
+		startInventorySession(pi);
 		recordProjectTrust(ctx);
-		activeCtx = ctx;
-		const inventory = buildInventory(pi, ctx);
+		if (!ctx.hasUI) return;
+		const inventory = await refreshInventory(pi, ctx);
 
-		const hasUI = (ctx as { hasUI?: boolean }).hasUI;
+		const hasUI = ctx.hasUI;
 		const configEnabled = inventory.managerState.config[MANAGER_ID]?.notifyOnUpdates;
 		const notifyEnabled = configEnabled !== false;
 		const pkgs = inventory.items.filter((item) => item.kind === "package" && item.state !== "shadowed");
 
 		const npmCandidates = npmCandidatesFromInventory(inventory);
 		if (npmCandidates.length > 0) {
-			kickNpmUpdateCheck(npmCandidates, () => {});
+			void kickNpmUpdateCheck(npmCandidates, inventorySession(pi).controller.signal, () => {});
 		}
 
 		if (hasUI && notifyEnabled) {

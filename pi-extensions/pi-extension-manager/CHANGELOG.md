@@ -2,6 +2,12 @@
 
 ## Consumer-impacting changes
 
+### 3.0.4
+
+- Package actions run without blocking the terminal and stop waiting after a deadline. Closing the package popup cancels its npm version requests. Session shutdown cancels pending commands and checks.
+- Pi package actions and extension lists keep user and project installations separate. Stored toggles from earlier versions remain readable with a migration warning through 3.0.x.
+- Command completion reuses installed package labels. Popup searches reuse package children and scoped settings instead of rebuilding them on each redraw.
+
 ### 3.0.3
 
 - Built-in extension selectors (`builtin:<name>` and `-builtin:<name>`) no longer appear as extension-setting rows. Manage built-ins through `pi config`; configured extension paths remain listed.

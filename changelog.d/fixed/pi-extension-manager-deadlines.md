@@ -1,0 +1,1 @@
+- The Pi extension manager bounds and cancels package commands, targets the selected user or project install, and reuses cached package and settings data during search and completion.

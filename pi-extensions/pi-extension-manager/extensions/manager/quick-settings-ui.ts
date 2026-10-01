@@ -16,8 +16,7 @@ import {
 	stringifySettingValue,
 } from "./format.js";
 import { handleInlineEditInput, renderInlineEditValue } from "./inline-edit.js";
-import { buildInventory } from "./inventory.js";
-import { host } from "./host.js";
+import { inventorySession, refreshInventory } from "./inventory.js";
 import { selectedPackageForSetting } from "./filters.js";
 import {
 	divider,
@@ -398,30 +397,25 @@ function resolveQuickSettingsTab(tabs: ManagerTab[], hint: string): TopTab | und
 	return undefined;
 }
 
-export function quickSettingsCompletions(pi: ExtensionAPI, ctx: ExtensionCommandContext | ExtensionContext, prefix: string): AutocompleteItem[] | null {
-	try {
-		const inventory = buildInventory(pi, ctx as ExtensionContext);
-		const tabs = quickSettingsTabs(quickSettingRows(inventory));
-		const query = prefix.trim().toLowerCase();
-		const items: AutocompleteItem[] = tabs
+const completionCache = new WeakMap<Inventory, AutocompleteItem[]>();
+
+export function quickSettingsCompletions(pi: ExtensionAPI, prefix: string): AutocompleteItem[] | null {
+	const inventory = inventorySession(pi).inventory;
+	if (!inventory) return null;
+	let items = completionCache.get(inventory);
+	if (!items) {
+		items = quickSettingsTabs(quickSettingRows(inventory))
 			.filter((tab) => tab.id !== TAB_ALL && tab.packageName)
-			.map((tab) => ({
-				value: tab.packageName!,
-				label: tab.label,
-				description: `Open ${tab.label} settings`,
-			}));
-		const filtered = query
-			? items.filter((item) => item.value.toLowerCase().includes(query) || (item.label ?? item.value).toLowerCase().includes(query))
-			: items;
-		return filtered.length > 0 ? filtered : null;
-	} catch {
-		return null;
+			.map((tab) => ({ value: tab.packageName!, label: tab.label, description: `Open ${tab.label} settings` }));
+		completionCache.set(inventory, items);
 	}
+	const query = prefix.trim().toLowerCase();
+	const filtered = query ? items.filter((item) => item.value.toLowerCase().includes(query) || (item.label ?? item.value).toLowerCase().includes(query)) : items;
+	return filtered.length > 0 ? filtered : null;
 }
 
 export async function openQuickSettings(pi: ExtensionAPI, ctx: ExtensionCommandContext | ExtensionContext, initialTabHint?: string): Promise<void> {
-	await host.prepare(ctx.cwd);
-	const inventory = buildInventory(pi, ctx as ExtensionContext);
+	const inventory = await refreshInventory(pi, ctx as ExtensionContext);
 	if (settingPackages(inventory).length === 0) {
 		ctx.ui.notify(managerNotice("settings-packages", 0, "No kendex extension settings are declared by installed packages."), "info");
 		return;

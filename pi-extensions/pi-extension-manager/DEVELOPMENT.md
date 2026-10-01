@@ -6,7 +6,7 @@ User-facing commands and settings are in [README.md](README.md).
 
 `extensions/manager/host.ts::HostAdapter` owns host selection, paths, settings codecs, native inventory, toggle state and action capabilities. The factory selects it from the running coding-agent module's exports. OMP resolves legacy Pi imports through its compatibility shim; the presence of an OMP installation or directory is not host identity. OMP's utils and discovery exports resolve user configuration, plugin storage and the asynchronous project plugin anchor. `prepare(cwd)` refreshes that anchor before an inventory opens; rendering consumes normalized items without host-name branches.
 
-OMP's plugin roots are separate from its settings directories. Native inventory reads dependency names plus lock records, retaining disabled plugins and linked packages. Enabled project plugins shadow enabled user plugins; disabled project records do not hide a usable user installation. Native package/module association uses `InventoryItem.installationId`, not package name, across search, filters and inspectors. Only the active native manager installation exposes settings; Pi retains its name-based associations. Native enable writes the owning lock record, not a synthetic settings `packages` array or manager `disabledItems` entry. Project plugin suppression is visible but refuses an enable that would remain ineffective. Module-level writes are unsupported because host basename IDs can address modules in several packages. These contracts are exercised by `test/host.test.ts`.
+OMP's plugin roots are separate from its settings directories. Native inventory reads dependency names plus lock records, retaining disabled plugins and linked packages. Enabled project plugins shadow enabled user plugins; disabled project records do not hide a usable user installation. Native package/module association uses `InventoryItem.installationId`, not package name, across search, filters and inspectors. Only the active native manager installation exposes settings. Pi package and module ids also include scope and installation path. Native enable writes the owning lock record, not a synthetic settings `packages` array or manager `disabledItems` entry. Project plugin suppression is visible but refuses an enable that would remain ineffective. Module-level writes are unsupported because host basename IDs can address modules in several packages. These contracts are exercised by `test/host.test.ts`.
 
 The OMP inventory covers native npm/link installations and persisted configured extension paths. It is not a snapshot of foreign-provider, CLI or runtime overlays, marketplace inventory, or optional plugin feature selection. It shows declared base entrypoints, not a proof that each module has executed. Package enable controls all native plugin contributions; restarting applies the change without relying on discovery caches being invalidated by an external writer.
 
@@ -16,7 +16,7 @@ OMP global settings prefer `config.yml`, then `config.yaml`. Native project sett
 
 ## Settings-changed event
 
-A quick-settings write emits `kendex:extension-settings-changed` on `pi.events` with `{ extensionId, key, value }` (`extensions/manager/quick-settings-ui.ts`). The other kendex packages memoize their settings reads through their vendored `package-config.ts` and drop them on this event, so a setting written here applies on their next read. This package memoizes only its glyph lookup (`settingsMemo` in `extensions/manager/glyphs.ts`); `HostAdapter.settings` reads and parses each readable file on every call. A write through `HostAdapter.write` also clears the glyph memo.
+A quick-settings write emits `kendex:extension-settings-changed` on `pi.events` with `{ extensionId, key, value }` (`extensions/manager/quick-settings-ui.ts`). The other kendex packages memoize their settings reads through their vendored `package-config.ts` and drop them on this event, so a setting written here applies on their next read. `HostAdapter.settings` reads and parses each readable file at inventory refresh boundaries. The session owns one inventory and its completion labels. Popup searches index package children and memoize scoped config for that inventory. Saves and resets invalidate scoped config. External config resolvers run once per popup inventory. A write through `HostAdapter.write` also clears the glyph memo.
 
 ## External config resolvers
 
@@ -38,8 +38,8 @@ type ExternalConfigResolver = (key: string, cwd: string) => { explicit: boolean;
 
 - Project settings and package declarations are read only when the host reports the workspace trusted (`test/inventory.test.ts`).
 - npm actions use the scope-local npm directory. Git entries are inspected only under Pi's managed clone root; unsafe host or path components produce broken inventory items.
-- The manager delegates append-system changes to the package's vendored `scripts/append-system.mjs`, with a bounded timeout and `SIGKILL`. Uninstall removes the block before npm deletes that script (`test/actions.test.ts`).
-- Inventory spawns npm only when cheap package roots miss and memoizes the root across packages. `test/popup-perf.test.ts` enforces the existing popup budget.
+- The manager delegates append-system changes to the package's vendored `scripts/append-system.mjs` through the host's `pi.exec` API. Cancellation and a deadline bound delivery; script failures stop the action. Uninstall removes the block before npm deletes that script (`test/actions.test.ts`).
+- Inventory awaits `pi.exec` only when cheap package roots miss and memoizes npm roots for the session. Shutdown cancels lookups and clears the root cache. `test/popup-perf.test.ts` enforces the existing popup budget.
 - `HostAdapter.configScope` owns the manager's global-only `enabled` key. Value resolution, merged manager state, saves, resets and recovery honor that owner regardless of package scope; bootstrap never consumes project enable flags. Other keys retain project layering (`test/host.test.ts`, `test/bootstrap.test.ts`).
 
 ## Tests
@@ -50,8 +50,10 @@ bun test ./test
 
 From the repository root, also run `node --test pi-extensions/package-policy.test.mjs`.
 
+`test/component-benchmark.test.ts` measures inventory construction and the completion/filter path in disposable source copies. It counts inventory builds, child comparisons, scoped config builds and label construction without adding runtime instrumentation. Set `COMPONENT_BENCHMARK_BASE` to an immutable main commit when running the suite to report both timings and verify that main fails the hot-work bounds. Timings are evidence, not a machine-dependent test threshold.
+
 The native disabled-package regression in `test/host.test.ts` has no settings JSON and no YAML package list. Replacing native inventory with Pi's package-settings loop must fail that fixture even if the OMP directory and YAML codec remain correct.
 
-A test that invokes package scripts uses `test/actions.test.ts::useSandboxedSpawn`, which pins child `HOME` and `PI_CODING_AGENT_DIR`. A spawned child otherwise inherits the process's original environment rather than later test mutations.
+A test that invokes package scripts uses `test/fixtures/exec.ts::sandboxExec`, which receives explicit child `HOME` and `PI_CODING_AGENT_DIR`. A spawned child otherwise inherits the process's original environment rather than later test mutations.
 
 OMP's compiled 18.1.11 host supports the imported utils/discovery exports and the existing custom-overlay UI. An isolated-home PTY smoke can open the manager, toggle a disabled native plugin and open settings without sending an agent prompt. Keep credentials out of that environment and disable startup setup/update checks. Recheck these runtime exports and plugin persistence contracts when raising the tested OMP baseline.

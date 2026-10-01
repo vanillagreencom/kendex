@@ -1,23 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { npmCachePath } from "./paths.js";
-import { runCommand } from "./process.js";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { NPM_ROOT_TIMEOUT_MS, runCommand } from "./process.js";
+import { request } from "node:https";
 import { NPM_CACHE_TTL_MS, type NpmCache, type Scope, type SettingsFile, type SourceIndex, type SourceIndexEntry } from "./types.js";
 
-let npmCheckInFlight = false;
-
-// `npm root [args]` is slow (Node + npm config bootstrap, typically 40-500ms each). The
-// answer is invariant for the process lifetime, so memoize. Without this, opening the
-// extension manager popup spawned 2-5 `npm root` invocations per npm-sourced package
-const npmRootMemo = new Map<string, string | undefined>();
-
-function npmRootCacheKey(args: string[], cwd?: string): string {
-	return `${args.join("\x00")}\x01${cwd ?? ""}`;
-}
-
-export function __resetNpmRootCacheForTests(): void {
-	npmRootMemo.clear();
-}
+const npmRootCaches = new WeakMap<AbortSignal, Map<string, string | undefined>>();
 
 export function loadSourceIndex(settingsFiles: SettingsFile[]): SourceIndex {
 	const merged: SourceIndex = {};
@@ -97,12 +86,20 @@ export function readSourceRepoVersion(repoRoot: string, packageName: string, sou
 	return readPackageVersionFromDir(sourcePath) ?? readPackageVersionFromDir(join(repoRoot, "pi-extensions", localPackageDirName(packageName)));
 }
 
-function npmRoot(args: string[], cwd?: string): string | undefined {
-	const key = npmRootCacheKey(args, cwd);
-	if (npmRootMemo.has(key)) return npmRootMemo.get(key);
-	const result = runCommand("npm", ["root", ...args], { cwd });
-	const value = result.error || (result.status ?? 1) !== 0 ? undefined : ((result.stdout ?? "").trim() || undefined);
-	npmRootMemo.set(key, value);
+async function npmRoot(pi: ExtensionAPI, signal: AbortSignal, args: string[], cwd?: string): Promise<string | undefined> {
+	let memo = npmRootCaches.get(signal);
+	if (!memo) {
+		memo = new Map();
+		npmRootCaches.set(signal, memo);
+		const cache = memo;
+		signal.addEventListener("abort", () => cache.clear(), { once: true });
+	}
+	const key = JSON.stringify([args, cwd]);
+	if (memo.has(key)) return memo.get(key);
+	const result = await runCommand(pi, "npm", ["root", ...args], { cwd, signal, timeout: NPM_ROOT_TIMEOUT_MS });
+	if (!result.ok) throw new Error(`npm root ${result.cause}: ${result.detail}`);
+	const value = result.stdout.trim() || undefined;
+	memo.set(key, value);
 	return value;
 }
 
@@ -130,26 +127,26 @@ function cheapNpmRoots(scope: Scope, baseDir: string): string[] {
 	return roots;
 }
 
-function expensiveNpmRoots(scope: Scope, baseDir: string, cwd: string): string[] {
+async function expensiveNpmRoots(pi: ExtensionAPI, signal: AbortSignal, scope: Scope, baseDir: string, cwd: string): Promise<string[]> {
 	const roots: string[] = [];
 	if (scope === "project") {
-		const projectRoot = npmRoot(["--prefix", join(baseDir, "npm")], cwd);
+		const projectRoot = await npmRoot(pi, signal, ["--prefix", join(baseDir, "npm")], cwd);
 		if (projectRoot) roots.push(projectRoot);
-		const cwdRoot = npmRoot([], cwd);
+		const cwdRoot = await npmRoot(pi, signal, [], cwd);
 		if (cwdRoot) roots.push(cwdRoot);
 	} else if (scope === "user") {
-		const globalRoot = npmRoot(["-g"], cwd);
+		const globalRoot = await npmRoot(pi, signal, ["-g"], cwd);
 		if (globalRoot) roots.push(globalRoot);
 	} else {
-		const localRoot = npmRoot([], cwd);
+		const localRoot = await npmRoot(pi, signal, [], cwd);
 		if (localRoot) roots.push(localRoot);
-		const globalRoot = npmRoot(["-g"], cwd);
+		const globalRoot = await npmRoot(pi, signal, ["-g"], cwd);
 		if (globalRoot) roots.push(globalRoot);
 	}
 	return roots;
 }
 
-export function resolveNpmPackageDir(npmName: string, scope: Scope, baseDir: string, cwd: string): string | undefined {
+export async function resolveNpmPackageDir(pi: ExtensionAPI, signal: AbortSignal, npmName: string, scope: Scope, baseDir: string, cwd: string): Promise<string | undefined> {
 	const seen = new Set<string>();
 	const tryRoot = (root: string): string | undefined => {
 		const dir = npmPackageDir(root, npmName);
@@ -161,7 +158,7 @@ export function resolveNpmPackageDir(npmName: string, scope: Scope, baseDir: str
 		const hit = tryRoot(root);
 		if (hit) return hit;
 	}
-	for (const root of expensiveNpmRoots(scope, baseDir, cwd)) {
+	for (const root of await expensiveNpmRoots(pi, signal, scope, baseDir, cwd)) {
 		const hit = tryRoot(root);
 		if (hit) return hit;
 	}
@@ -221,15 +218,6 @@ export function gitPackageDirCandidates(source: string, scope: Scope, baseDir: s
 	return dir ? [dir] : [];
 }
 
-export function npmInstalledVersion(npmName: string, cwd: string): string | undefined {
-	const roots = [npmRoot(["-g"]), npmRoot([], cwd)].filter((root): root is string => Boolean(root));
-	for (const root of roots) {
-		const version = readPackageVersionFromDir(npmPackageDir(root, npmName));
-		if (version) return version;
-	}
-	return undefined;
-}
-
 export function npmPackageNameFromSource(source: string): string | undefined {
 	if (!source.startsWith("npm:")) return undefined;
 	const rest = source.slice("npm:".length);
@@ -240,67 +228,76 @@ export function npmPackageNameFromSource(source: string): string | undefined {
 	return withoutTag || undefined;
 }
 
-function fetchNpmLatest(name: string): Promise<string | undefined> {
-	return new Promise((resolve) => {
-		try {
-			const https = require("node:https") as typeof import("node:https");
-			const encoded = encodeURIComponent(name).replace(/%40/g, "@").replace(/%2F/g, "/");
-			const req = https.request(
-				{
-					host: "registry.npmjs.org",
-					path: `/${encoded}/latest`,
-					headers: { accept: "application/json", "user-agent": "kendex-extension-manager" },
-					timeout: 4000,
-				},
-				(res) => {
-					if ((res.statusCode ?? 0) >= 400) {
-						res.resume();
-						resolve(undefined);
-						return;
-					}
-					let body = "";
-					res.setEncoding("utf8");
-					res.on("data", (chunk) => { body += chunk; });
-					res.on("end", () => {
-						try {
-							const parsed = JSON.parse(body);
-							resolve(typeof parsed?.version === "string" ? parsed.version : undefined);
-						} catch {
-							resolve(undefined);
-						}
-					});
-				},
-			);
-			req.on("error", () => resolve(undefined));
-			req.on("timeout", () => { req.destroy(); resolve(undefined); });
-			req.end();
-		} catch {
-			resolve(undefined);
-		}
+export const NPM_CHECK_TIMEOUT_MS = 4_000;
+export const NPM_RESPONSE_MAX_BYTES = 256 * 1024;
+
+/** Bound the whole response, including a peer that keeps its socket active. */
+export function fetchNpmLatest(name: string, signal: AbortSignal): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const encoded = encodeURIComponent(name).replace(/%40/g, "@").replace(/%2F/g, "/");
+		let response: import("node:http").IncomingMessage | undefined;
+		let settled = false;
+		const finish = (error?: Error, version?: string) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			signal.removeEventListener("abort", abort);
+			if (error) {
+				response?.destroy();
+				req.destroy();
+				reject(error);
+			} else resolve(version!);
+		};
+		const abort = () => finish(new Error("npm check cancelled"));
+		const req = request({ host: "registry.npmjs.org", path: `/${encoded}/latest`, headers: { accept: "application/json", "user-agent": "kendex-extension-manager" } }, (res) => {
+			response = res;
+			res.on("error", (error) => finish(error));
+			res.on("aborted", () => finish(new Error("npm response interrupted")));
+			if (res.statusCode !== 200) return finish(new Error(`npm registry status ${res.statusCode}`));
+			let bytes = 0;
+			const chunks: Buffer[] = [];
+			res.on("data", (chunk: Buffer) => {
+				bytes += chunk.length;
+				if (bytes > NPM_RESPONSE_MAX_BYTES) return finish(new Error("npm response byte limit exceeded"));
+				chunks.push(chunk);
+			});
+			res.on("end", () => {
+				if (settled) return;
+				try {
+					const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+					if (typeof parsed?.version !== "string") throw new Error("npm response has no version");
+					finish(undefined, parsed.version);
+				} catch (error) { finish(error instanceof Error ? error : new Error(String(error))); }
+			});
+		});
+		const timer = setTimeout(() => finish(new Error("npm check deadline exceeded")), NPM_CHECK_TIMEOUT_MS);
+		req.on("error", (error) => finish(error));
+		signal.addEventListener("abort", abort, { once: true });
+		if (signal.aborted) abort();
+		else req.end();
 	});
 }
 
-export function kickNpmUpdateCheck(packages: { name: string; npmName: string }[], onUpdate: () => void): void {
-	if (npmCheckInFlight || packages.length === 0) return;
+/** Refresh stale versions for this interaction. Its owner cancels the signal on teardown. */
+export async function kickNpmUpdateCheck(packages: { name: string; npmName: string }[], signal: AbortSignal, onUpdate: () => void): Promise<void> {
 	const cache = loadNpmCache();
 	const now = Date.now();
-	const stale = packages.filter((p) => {
-		const entry = cache[p.npmName];
-		return !entry || now - entry.checkedAt > NPM_CACHE_TTL_MS;
-	});
-	if (stale.length === 0) return;
-	npmCheckInFlight = true;
-	void (async () => {
-		let changed = false;
-		for (const p of stale) {
-			const latest = await fetchNpmLatest(p.npmName);
-			if (latest) {
-				cache[p.npmName] = { version: latest, checkedAt: Date.now() };
-				changed = true;
-			}
+	const stale = [...new Set(packages.map((p) => p.npmName))].filter((name) => !cache[name] || now - cache[name].checkedAt > NPM_CACHE_TTL_MS);
+	let changed = false;
+	for (const name of stale) {
+		if (signal.aborted) return;
+		try {
+			const version = await fetchNpmLatest(name, signal);
+			if (signal.aborted) return;
+			cache[name] = { version, checkedAt: Date.now() };
+			changed = true;
+		} catch (error) {
+			if (signal.aborted) return;
+			console.warn(`npm check ${name}: ${String(error)}`);
 		}
-		if (changed) saveNpmCache(cache);
-		npmCheckInFlight = false;
-		try { onUpdate(); } catch {}
-	})();
+	}
+	if (changed && !signal.aborted) {
+		saveNpmCache(cache);
+		onUpdate();
+	}
 }

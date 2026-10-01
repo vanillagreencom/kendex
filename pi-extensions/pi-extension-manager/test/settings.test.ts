@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { clearPackageConfigCache } from "../extensions/manager/package-config.ts";
 import { buildInventory } from "../extensions/manager/inventory.ts";
 import { applyMessage, managerFailure, managerNotice, parseSettingInput } from "../extensions/manager/format.ts";
-import { getConfigValue, getOrCreateRecord } from "../extensions/manager/settings.ts";
+import { getConfigValue, getOrCreateRecord, resetConfigKeys, setConfigValue } from "../extensions/manager/settings.ts";
 import { EXTERNAL_CONFIG_RESOLVER_SYMBOL, type ExternalConfigResolver, type SettingsSchema } from "../extensions/manager/types.ts";
 
 const rootTmp = join(process.cwd(), "tmp", "pi-extension-manager-settings-tests");
@@ -80,7 +80,7 @@ afterEach(() => {
 	rmSync(rootTmp, { force: true, recursive: true });
 });
 
-test("a registered resolver supplies the value when no manager scope holds the key", () => {
+test("a registered resolver supplies the value when no manager scope holds the key", async () => {
 	const project = setupProject();
 	const seen: Array<[string, string]> = [];
 	registerResolver((key, cwd) => {
@@ -88,37 +88,37 @@ test("a registered resolver supplies the value when no manager scope holds the k
 		return { explicit: true, source: "~/.pi/agent/external.json", value: false };
 	});
 
-	const config = getConfigValue(inventory(project), PACKAGE_ID, SCHEMA);
+	const config = getConfigValue(await inventory(project), PACKAGE_ID, SCHEMA);
 	expect(config).toEqual({ explicit: true, scope: "external", source: "~/.pi/agent/external.json", value: false });
 	expect(seen).toEqual([["enabled", project]]);
 });
 
-test("manager scopes outrank a registered resolver", () => {
+test("manager scopes outrank a registered resolver", async () => {
 	for (const scope of ["project", "user"] as const) {
 		const project = setupProject({ scope, value: true });
 		registerResolver(() => ({ explicit: true, source: "~/.pi/agent/external.json", value: false }));
-		expect(getConfigValue(inventory(project), PACKAGE_ID, SCHEMA)).toEqual({ explicit: true, scope, value: true });
+		expect(getConfigValue(await inventory(project), PACKAGE_ID, SCHEMA)).toEqual({ explicit: true, scope, value: true });
 	}
 });
 
-test("a resolver without an explicit value falls back to the schema default", () => {
+test("a resolver without an explicit value falls back to the schema default", async () => {
 	const project = setupProject();
 	for (const resolution of [undefined, { explicit: false, value: false }]) {
 		registerResolver(() => resolution);
-		expect(getConfigValue(inventory(project), PACKAGE_ID, SCHEMA)).toEqual({ explicit: false, scope: "default", value: true });
+		expect(getConfigValue(await inventory(project), PACKAGE_ID, SCHEMA)).toEqual({ explicit: false, scope: "default", value: true });
 	}
 });
 
-test("a throwing resolver falls back to the schema default instead of breaking the modal", () => {
+test("a throwing resolver falls back to the schema default instead of breaking the modal", async () => {
 	const project = setupProject();
 	registerResolver(() => {
 		throw new Error("resolver exploded");
 	});
 
-	expect(getConfigValue(inventory(project), PACKAGE_ID, SCHEMA)).toEqual({ explicit: false, scope: "default", value: true });
+	expect(getConfigValue(await inventory(project), PACKAGE_ID, SCHEMA)).toEqual({ explicit: false, scope: "default", value: true });
 });
 
-test("a resolver registered for another extension is not consulted", () => {
+test("a resolver registered for another extension is not consulted", async () => {
 	const project = setupProject();
 	let calls = 0;
 	registerResolver(() => {
@@ -126,11 +126,11 @@ test("a resolver registered for another extension is not consulted", () => {
 		return { explicit: true, value: false };
 	}, "@scope/other");
 
-	expect(getConfigValue(inventory(project), PACKAGE_ID, SCHEMA)).toEqual({ explicit: false, scope: "default", value: true });
+	expect(getConfigValue(await inventory(project), PACKAGE_ID, SCHEMA)).toEqual({ explicit: false, scope: "default", value: true });
 	expect(calls).toBe(0);
 });
 
-test("resolver results are reused across reads of one inventory", () => {
+test("resolver results are reused across reads of one inventory", async () => {
 	const project = setupProject();
 	let calls = 0;
 	registerResolver(() => {
@@ -138,15 +138,15 @@ test("resolver results are reused across reads of one inventory", () => {
 		return { explicit: true, source: "~/.pi/agent/external.json", value: false };
 	});
 
-	const inv = inventory(project);
+	const inv = await inventory(project);
 	for (let i = 0; i < 5; i += 1) expect(getConfigValue(inv, PACKAGE_ID, SCHEMA).value).toBe(false);
 	expect(calls).toBe(1);
 
-	expect(getConfigValue(inventory(project), PACKAGE_ID, SCHEMA).value).toBe(false);
+	expect(getConfigValue(await inventory(project), PACKAGE_ID, SCHEMA).value).toBe(false);
 	expect(calls).toBe(2);
 });
 
-test("setting schema refusals and save notices expose stable keys and values", () => {
+test("setting schema refusals and save notices expose stable keys and values", async () => {
 	const refusals = [
 		{ schema: { key: "flag", type: "boolean" }, input: "maybe", firstLine: "pi-extension-manager: setting-boolean=flag" },
 		{ schema: { key: "limit", type: "number" }, input: "many", firstLine: "pi-extension-manager: setting-number=limit" },
@@ -165,4 +165,18 @@ test("setting schema refusals and save notices expose stable keys and values", (
 	expect(managerNotice("sample", "line\nbreak", "details").split("\n")[0]).toBe("pi-extension-manager: sample=line?break");
 	expect(managerFailure("setting-save-failed", "style", new Error(managerNotice("setting-enum", "style", "details"))).split("\n")[0]).toBe("pi-extension-manager: setting-enum=style");
 	expect(managerFailure("setting-save-failed", "style", new Error("disk full")).split("\n")[0]).toBe("pi-extension-manager: setting-save-failed=style");
+});
+
+test("scoped config is cached for the popup and invalidated by saves and resets", async () => {
+	const project = setupProject({ scope: "user", value: false });
+	const inv = await inventory(project);
+	const item = inv.packages[0]!;
+	expect(getConfigValue(inv, PACKAGE_ID, SCHEMA).value).toBe(false);
+	const user = inv.settingsFiles.find((file) => file.scope === "user")!;
+	(user.json.kendex as { extensionManager: { config: Record<string, { enabled: boolean }> } }).extensionManager.config[PACKAGE_ID]!.enabled = true;
+	expect(getConfigValue(inv, PACKAGE_ID, SCHEMA).value).toBe(false);
+	setConfigValue(inv, item, SCHEMA, true);
+	expect(getConfigValue(inv, PACKAGE_ID, SCHEMA)).toEqual({ explicit: true, scope: "user", value: true });
+	resetConfigKeys(inv, PACKAGE_ID, ["enabled"]);
+	expect(getConfigValue(inv, PACKAGE_ID, SCHEMA)).toEqual({ explicit: false, scope: "default", value: true });
 });

@@ -1,3 +1,4 @@
+import { testPi } from "./fixtures/exec.ts";
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -13,7 +14,8 @@ const originalEnv = {
 	PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
 };
 
-const spawnSyncMock = mock(() => ({ status: 0, stdout: "", stderr: "", error: undefined, signal: null, output: [], pid: 0 }));
+const spawnSyncMock = mock((_command: string, _args: string[], _options?: unknown) => ({ code: 0, killed: false, stdout: "", stderr: "" }));
+let pi = testPi(spawnSyncMock);
 
 function resetTmp(): void {
 	rmSync(rootTmp, { force: true, recursive: true });
@@ -55,8 +57,6 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-	const processModule = await import("../extensions/manager/process.ts");
-	processModule.__setSpawnSyncForTests(undefined);
 	if (originalEnv.HOME === undefined) delete process.env.HOME;
 	else process.env.HOME = originalEnv.HOME;
 	if (originalEnv.NPM_CONFIG_PREFIX === undefined) delete process.env.NPM_CONFIG_PREFIX;
@@ -70,12 +70,8 @@ afterEach(async () => {
 });
 
 async function loadFreshModules() {
-	const processModule = await import("../extensions/manager/process.ts");
-	processModule.__setSpawnSyncForTests(spawnSyncMock as never);
-	const inventory = await import("../extensions/manager/inventory.ts");
-	const versions = await import("../extensions/manager/versions.ts");
-	(versions as { __resetNpmRootCacheForTests: () => void }).__resetNpmRootCacheForTests();
-	return inventory;
+	pi = testPi(spawnSyncMock);
+	return import("../extensions/manager/inventory.ts");
 }
 
 test("buildInventory does not spawn npm when packages resolve via Pi user npm dir", async () => {
@@ -89,7 +85,7 @@ test("buildInventory does not spawn npm when packages resolve via Pi user npm di
 	writeJson(join(userPi, "settings.json"), { packages: names.map((n) => `npm:${n}`) });
 	for (const name of names) writeNpmPackage(npmRoot, name, "1.0.0");
 
-	const inv = buildInventory({} as never, { cwd: project } as never);
+	const inv = await buildInventory(pi, { cwd: project } as never);
 	expect(inv.packages.length).toBe(20);
 	for (const pkg of inv.packages) {
 		expect(pkg.state).toBe("active");
@@ -116,17 +112,14 @@ test("buildInventory memoizes npm root spawns across many packages when cheap pa
 		const subArgs = args.slice(1);
 		const minusG = subArgs.includes("-g");
 		return {
-			status: 0,
+			code: 0,
 			stdout: minusG ? `${fakeNpmRoot}\n` : "",
 			stderr: "",
-			error: undefined,
-			signal: null,
-			output: [],
-			pid: 0,
+			killed: false,
 		};
 	});
 
-	const inv = buildInventory({} as never, { cwd: project } as never);
+	const inv = await buildInventory(pi, { cwd: project } as never);
 	expect(inv.packages.length).toBe(10);
 	for (const pkg of inv.packages) expect(pkg.state).toBe("active");
 
@@ -147,10 +140,10 @@ test("buildInventory wall-clock stays under 100ms for a realistic npm-heavy inve
 	for (const name of names) writeNpmPackage(npmRoot, name, "1.0.0");
 
 	// Warm filesystem caches once so the timed pass measures steady-state cost.
-	buildInventory({} as never, { cwd: project } as never);
+	await buildInventory(pi, { cwd: project } as never);
 
 	const start = performance.now();
-	const inv = buildInventory({} as never, { cwd: project } as never);
+	const inv = await buildInventory(pi, { cwd: project } as never);
 	const elapsed = performance.now() - start;
 	expect(inv.packages.length).toBe(25);
 	expect(elapsed).toBeLessThan(100);

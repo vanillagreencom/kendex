@@ -162,9 +162,15 @@ function cachedExternalConfigValue(inventory: Inventory, extensionId: string, ke
 	return resolved;
 }
 
+const scopedConfigCache = new WeakMap<Inventory, { project: ManagerState; user: ManagerState }>();
+
 export function getConfigValue(inventory: Inventory, extensionId: string, schema: SettingsSchema): ConfigValue {
-	const project = scopedManagerState(inventory.settingsFiles, "project");
-	const user = scopedManagerState(inventory.settingsFiles, "user");
+	let scoped = scopedConfigCache.get(inventory);
+	if (!scoped) {
+		scoped = { project: scopedManagerState(inventory.settingsFiles, "project"), user: scopedManagerState(inventory.settingsFiles, "user") };
+		scopedConfigCache.set(inventory, scoped);
+	}
+	const { project, user } = scoped;
 	if (Object.prototype.hasOwnProperty.call(project.config[extensionId] ?? {}, schema.key)) {
 		return { explicit: true, scope: "project", value: project.config[extensionId]![schema.key] };
 	}
@@ -186,6 +192,8 @@ export function setConfigValue(inventory: Inventory, item: InventoryItem, schema
 	updateManagerState(file, (state) => {
 		state.config[extensionId] = { ...(state.config[extensionId] ?? {}), [schema.key]: value };
 	});
+	scopedConfigCache.delete(inventory);
+	inventory.managerState = mergedManagerState(inventory.settingsFiles);
 }
 
 function deleteConfigKeysFromFile(file: SettingsFile, extensionId: string, keys: Set<string>): number {
@@ -219,6 +227,8 @@ export function resetConfigKeys(inventory: Inventory, extensionId: string, keys:
 		}));
 		deleted += deleteConfigKeysFromFile(file, extensionId, ownedKeys);
 	}
+	scopedConfigCache.delete(inventory);
+	inventory.managerState = mergedManagerState(inventory.settingsFiles);
 	return deleted;
 }
 
