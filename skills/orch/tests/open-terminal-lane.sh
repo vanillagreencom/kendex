@@ -1046,7 +1046,7 @@ run_ot "$HARNESS_UP;$CHOICE" --host "$HOST_STUB" --harness claude --lane auto --
 assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "$(hosted_resume CC-41 CC-41 '/orch start CC-41')")" \
   "rc=0 creates=nolog launched=1 calls=accounts;create,--item,CC-41,--repo,o/r,--harness,claude,--account,claude,--relaunch;cat,--item,CC-41,/srv/lane/.git;put,--item,CC-41,/srv/clone/.git/lane-mail/cc-41;cat,--item,CC-41,/srv/clone/.git/lane-mail/cc-41;put,--item,CC-41,/srv/lane/tmp/lane-mail/CC-41/context.json remote=1" \
   "a hosted claude relaunch passes the picked account and --relaunch, and continues natively with the continuation line, the start brief behind it"
-HOSTED_LINE="$(hosted_line CC-48)"
+HOSTED_LINE='Resume the orch workflow for CC-48 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item CC-48 first and act on every directive it prints.'
 PI_RELAUNCH="$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;flags=--model github-copilot/opus --thinking high"
 run_ot "$PI_RELAUNCH" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-48
 PI_REMOTE="$(ot_hosted_relaunch_text "$RUN/tmux.log")" || exit 1

@@ -1,0 +1,1 @@
+- Pi lanes use only the pi-hooks mail wake. Fleet launches refuse installs without lane mail wake. Run `kendex update-pi` on the lane's machine to update pi-hooks.

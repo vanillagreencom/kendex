@@ -41,8 +41,8 @@ printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/gh"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/worktree-stub"
 # A lane host that answers nothing: the gate is judged before it is asked.
 printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/provider"
-# The worktree CLI of a launch that goes on to open its window, for the rows
-# that read the command the terminal runs: a fresh repository per item.
+# The stale-install row could open a terminal if its refusal were skipped:
+# this worktree CLI makes a fresh repository per item.
 cat > "$BIN/worktree-make" <<STUB
 #!/usr/bin/env bash
 d="$TMP_ROOT/wt/\${2:-unknown}"
@@ -98,7 +98,7 @@ pi_carrier() { # sends|old|nowake|none
 
 # The launch-choice refusals that run ahead of the gate are read too, so a row
 # refused before the gate cannot read as one the gate passed.
-GATE_KEYS='unsupported-for-oversee|compaction-on|launch-window-unknown|launch-compaction-missing|pi-settings-unreadable|launch-question-tool-missing|launch-model-missing|launch-effort-missing|launch-unattended-missing'
+GATE_KEYS='unsupported-for-oversee|compaction-on|launch-window-unknown|launch-compaction-missing|pi-settings-unreadable|launch-question-tool-missing|launch-model-missing|launch-effort-missing|launch-unattended-missing|pi-mail-wake-missing'
 # launch NAME ARGS... — the gate's line open-terminal wrote, or `passed` where it
 # wrote none, for a GUI launch of CC-1 under ARGS; OT names another copy, and
 # WT_CLI a worktree CLI other than the one that stops the launch before its
@@ -111,6 +111,7 @@ launch() { # NAME ARGS...
     OT_TERM_LOG="$TMP_ROOT/$name.term" TERMINAL=term TMUX= PI_CODING_AGENT_DIR="$PI_AGENT" COPILOT_HOME="$CP_HOME" \
     HOME="$USER_HOME" "${OT:-$REPO/scripts/open-terminal}" --ghostty "$@" CC-1 ) \
     >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err" || rc=$?
+  printf '%s\n' "$rc" > "$TMP_ROOT/$name.status"
   line="$(grep -E "^open-terminal: ($GATE_KEYS) " "$TMP_ROOT/$name.err" || true)"
   printf '%s' "${line:-passed}"
 }
@@ -275,7 +276,7 @@ compaction off with a carrier that sends the window passes|sends|{"compaction":{
 a project turning compaction back on is refused, naming the project file|sends|{"compaction":{"enabled":false}}|{"compaction":{"enabled":true}}|${FLEET[*]} --harness pi|open-terminal: compaction-on harness=pi file=$REPO/.pi/settings.json
 a carrier that sends no window is refused|old|{"compaction":{"enabled":false}}|-|${FLEET[*]} --harness pi|open-terminal: unsupported-for-oversee harness=pi reason=no-window-read
 no carrier installed is refused|none|{"compaction":{"enabled":false}}|-|${FLEET[*]} --harness pi|open-terminal: unsupported-for-oversee harness=pi reason=no-window-read
-a carrier that lists no lane mail wake passes|nowake|{"compaction":{"enabled":false}}|-|${FLEET[*]} --harness pi|passed
+a stale carrier that lists no lane mail wake is refused|nowake|{"compaction":{"enabled":false}}|-|${FLEET[*]} --harness pi|open-terminal: pi-mail-wake-missing harness=pi version=0.12.0
 a settings file jq cannot read is named|sends|not json|-|${FLEET[*]} --harness pi|open-terminal: pi-settings-unreadable @FILE@
 a hosted Pi fleet lane is not judged on this machine's settings or carrier, which are its host's to hold|none|{"compaction":{"enabled":true}}|-|${FLEET[*]} --harness pi --host $BIN/provider|passed
 no fleet passes whatever its settings|none|-|-|--harness pi|passed
@@ -284,23 +285,13 @@ rm -f -- "$PI_AGENT/settings.json" "$REPO/.pi/settings.json"
 assert_eq "$(grep -c 'jq: error\|parse error' "$TMP_ROOT/pi.err" || true)" "0" \
   "the last row's run carries no jq words; the unreadable row's did, under its key"
 
-echo "=== a local Pi fleet lane's carrier decides its brief's arm line, never the launch ==="
-# With the lane mail wake the brief the terminal runs carries no arm line; a
-# carrier without it launches all the same, its brief carrying the
-# watch-delivery.md arm line and the launch naming the carrier's version.
+echo "=== a stale local Pi install stops before a terminal opens ==="
 printf '{"compaction":{"enabled":false}}\n' > "$PI_AGENT/settings.json"
-# The brief carries the unattended words read above, so the launch reaches the
-# carrier.
-printf 'Work the item.\n%s\n' "$UNATTENDED_TEXT" > "$TMP_ROOT/pi-brief.txt"
-PI_BRIEF_CMD='pi --exclude-tools question --model m --thinking high {brief}'
-for row in "sends|0|0" "nowake|1|1"; do
-  IFS='|' read -r carrier want_arm want_notice <<<"$row"
-  pi_carrier "$carrier"
-  answer="$(WT_CLI="$BIN/worktree-make" launch "brief-$carrier" "${FLEET[@]}" --harness pi --cmd "$PI_BRIEF_CMD" --brief-file "$TMP_ROOT/pi-brief.txt")"
-  assert_eq "$answer arm=$(grep -cF 'arm the mailbox monitor `lane-mail watch --item CC-1`' "$TMP_ROOT/brief-$carrier.term" || true) notice=$(grep -c '^open-terminal: pi-mail-wake-missing harness=pi version=0.12.0$' "$TMP_ROOT/brief-$carrier.out" || true)" \
-    "passed arm=$want_arm notice=$want_notice" \
-    "a Pi fleet lane on a $carrier carrier launches, its brief carrying the arm line only where the carrier lists no mail wake"
-done
+pi_carrier nowake
+answer="$(WT_CLI="$BIN/worktree-make" launch pi-stale "${FLEET[@]}" --harness pi)"
+assert_eq "$answer rc=$(cat "$TMP_ROOT/pi-stale.status") terminal=$([[ -e "$TMP_ROOT/pi-stale.term" ]] && echo opened || echo none)" \
+  "open-terminal: pi-mail-wake-missing harness=pi version=0.12.0 rc=1 terminal=none" \
+  "a stale local Pi carrier refuses the launch before any terminal opens"
 rm -f -- "$PI_AGENT/settings.json"
 
 echo "=== a local Pi fleet launch on a Copilot model is judged on the Pi root its lane leaves ==="
@@ -386,9 +377,9 @@ control window-read-ctrl '"$CLAIM_ROOT" || { ot_message unsupported-for-oversee 
 assert_eq "$(OT="$CTRL_OT" launch window-read-ctrl "${FLEET[@]}" --harness pi)" passed \
   "control: without its refusal a Pi fleet lane whose carrier sends no window passes"
 pi_carrier nowake
-control mail-wake-ctrl '  pi_mail_wake_read "$wakes" "$LANE_ADAPTER_PI_CARRIER_VERSION"' '  ot_message unsupported-for-oversee "harness=pi" "reason=no-mail-wake" >&2; return 1'
-assert_eq "$(OT="$CTRL_OT" launch mail-wake-ctrl "${FLEET[@]}" --harness pi)" "open-terminal: unsupported-for-oversee harness=pi reason=no-mail-wake" \
-  "control: a refusal planted on the absent wake stops the launch the rows above pass"
+control mail-wake-ctrl '  if [[ "$1" -ne 0 ]]; then' '  if [[ "$1" -ne 0 ]] && false; then'
+assert_eq "$(OT="$CTRL_OT" launch mail-wake-ctrl "${FLEET[@]}" --harness pi)" passed \
+  "control: without the mail wake refusal a stale local Pi carrier passes the gate"
 rm -f -- "$PI_AGENT/settings.json"
 pi_carrier sends
 printf '{"compaction":{"enabled":true}}\n' > "$PI_AGENT/settings.json"

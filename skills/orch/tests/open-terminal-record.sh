@@ -1031,9 +1031,9 @@ hosted_pi() {
   esac
   line=$'ssh-target=lane.example\tpath=/srv/lane\tremote-prefix=exec bash -lc'
   [[ "$root" == - ]] || line+=$'\tpi-root='"$root"
-  HAND_OFF_HARNESS=pi HAND_OFF_CMD="${PI_HAND_OFF_CMD:-true --model sonnet:high}" hand_off "CC-$PI_ITEM" \
+  HAND_OFF_HARNESS=pi HAND_OFF_CMD="true --model sonnet:high" hand_off "CC-$PI_ITEM" \
     PI_CODING_AGENT_DIR="$PI_LOCAL" LANE_HOST_STUB_CREATE_LINE="$line" "$@"
-  line="$(grep -E '^open-terminal: (compaction-on|pi-settings-unreadable|pi-carrier-unreadable|unsupported-for-oversee) ' <<<"$ERR" || true)"
+  line="$(grep -E '^open-terminal: (compaction-on|pi-settings-unreadable|pi-carrier-unreadable|unsupported-for-oversee|pi-mail-wake-missing) ' <<<"$ERR" || true)"
   PI_OUTCOME="rc=$RC ${line:-launched} windows=$(grep -c '^new-window ' "$TMUX_LOG" || true) marker=$(marker_at "cc-$PI_ITEM")"
 }
 VOCAB=/pi/packages/@vanillagreen/pi-hooks/extensions/vocab.ts
@@ -1054,7 +1054,7 @@ a settings read the host fails is unreadable|/pi|sends|$OFF|-|LANE_HOST_STUB_CAT
 a host carrier that sends no window is refused though this machine's sends one|/pi|old|$OFF|-|-|open-terminal: unsupported-for-oversee harness=pi reason=no-window-read
 a host with no carrier installed is refused|/pi|none|$OFF|-|-|open-terminal: unsupported-for-oversee harness=pi reason=no-window-read
 a tree carrier from before the field decides over the root's that sends|/pi|shadowed|$OFF|-|-|open-terminal: unsupported-for-oversee harness=pi reason=no-window-read
-a host carrier that lists no lane mail wake launches all the same|/pi|nowake|$OFF|-|-|launched
+a stale host carrier that lists no lane mail wake is refused|/pi|nowake|$OFF|-|-|open-terminal: pi-mail-wake-missing harness=pi version=0.12.0
 a carrier read the host fails is unreadable|/pi|sends|$OFF|-|LANE_HOST_STUB_CAT_STATUS=1 LANE_HOST_STUB_CAT_PATH=$VOCAB|open-terminal: pi-carrier-unreadable file=$VOCAB
 ROWS
 # Each refusal replaced by a pass, in a copy of the launcher.
@@ -1070,39 +1070,10 @@ busy_mutant pi-window '    || { ot_message unsupported-for-oversee "harness=pi" 
 hosted_pi /pi old "$OFF" - -- SCRIPT="$BUSY_MUTANT_OT"
 assert_eq "$PI_OUTCOME" "rc=0 launched windows=1 marker=root" \
   "control: without its refusal a hosted Pi lane whose host carrier sends no window launches"
-# The carrier's mail wake decides the lane's arm line and nothing else: with
-# the wake the brief and the relaunch line typed into the pane carry none, and
-# without it they carry the watch-delivery.md arm line and the launch names the
-# carrier's version. A relaunch passes no --cmd, as lane-directive.md
-# § Recovery relaunch launches one. The control plants a refusal on the absent
-# wake, which these rows would read as refused.
-printf 'Work the item.\n' > "$TMP_ROOT/pi-brief.txt"
-PI_TYPED="$TMP_ROOT/pi-typed"
-# pi_wake_outcome — PI_OUTCOME, the arm and re-arm lines typed, and the notice.
-pi_wake_outcome() {
-  printf '%s arm=%s rearm=%s notice=%s\n' "$PI_OUTCOME" \
-    "$(grep -cF -- 'arm the mailbox monitor `lane-mail watch --item' "$PI_TYPED" || true)" \
-    "$(grep -cF -- 'then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item' "$PI_TYPED" || true)" \
-    "$(grep -c '^open-terminal: pi-mail-wake-missing harness=pi version=0.12.0$' <<<"$OUT" || true)"
-}
-for pi_wake_row in "sends|0|0" "nowake|1|1"; do
-  IFS='|' read -r pi_wake_carrier want_arm want_notice <<<"$pi_wake_row"
-  : > "$PI_TYPED"
-  PI_HAND_OFF_CMD="true --model sonnet:high {brief}" hosted_pi /pi "$pi_wake_carrier" "$OFF" - STUB_BUFFER_LOG="$PI_TYPED" \
-    -- --brief-file "$TMP_ROOT/pi-brief.txt"
-  assert_eq "$(pi_wake_outcome)" "rc=0 launched windows=1 marker=root arm=$want_arm rearm=0 notice=$want_notice" \
-    "a hosted Pi lane on a $pi_wake_carrier carrier launches, its brief carrying the arm line only where the carrier lists no mail wake"
-  : > "$PI_TYPED"
-  PI_HAND_OFF_CMD=- hosted_pi /pi "$pi_wake_carrier" "$OFF" - STUB_BUFFER_LOG="$PI_TYPED" \
-    STUB_HARNESS_TEXT='Working (esc to interrupt)' \
-    -- --relaunch --launch-flags "--model github-copilot/opus --thinking high"
-  assert_eq "$(pi_wake_outcome)" "rc=0 launched windows=1 marker=root arm=0 rearm=$want_arm notice=$want_notice" \
-    "a hosted Pi relaunch on a $pi_wake_carrier carrier launches, its line re-arming the watch only where the carrier lists no mail wake"
-done
-busy_mutant pi-wake '      pi_mail_wake_read 1 "${pi_wake#absent }"' '      return 1'
+busy_mutant pi-wake '  if [[ "$1" -ne 0 ]]; then' '  if [[ "$1" -ne 0 ]] && false; then'
 hosted_pi /pi nowake "$OFF" - -- SCRIPT="$BUSY_MUTANT_OT"
-assert_eq "${PI_OUTCOME%% *}" "rc=1" \
-  "control: a refusal planted on the absent wake stops the launch the rows above launch"
+assert_eq "$PI_OUTCOME" "rc=0 launched windows=1 marker=root" \
+  "control: without the mail wake refusal a stale hosted Pi carrier launches"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

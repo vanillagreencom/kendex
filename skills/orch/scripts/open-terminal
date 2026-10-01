@@ -563,19 +563,12 @@ fi
 # its gate is deferred, PI_GATE_DEFERRED says so, and pi_lane_root_apply runs
 # it once per lane it is given, whichever root that lane leaves in place.
 PI_GATE_DEFERRED=false
-# Whether the lane's pi-hooks carrier starts its turn when mail lands, as the
-# fleet gate read it: `present`, whose lane arms no mailbox monitor; `absent`,
-# a carrier without the mail wake, whose brief and relaunch line carry the
-# lane-mail watch arm line; `unread`, a launch the gate does not judge, whose
-# relaunch line re-arms the watch and whose brief is left as written. Nothing
-# refuses on it.
-PI_MAIL_WAKE=unread
-pi_mail_wake_read() { # 0 WAKES, VERSION — sets PI_MAIL_WAKE, printing the notice for an absent wake
-  if [[ "$1" -eq 0 ]]; then
-    PI_MAIL_WAKE=present
-  else
-    PI_MAIL_WAKE=absent
-    ot_message pi-mail-wake-missing "harness=pi" "version=$2"
+# Pi loads the extensions listed by pi-hooks. A carrier without the mail wake
+# cannot start an idle lane's turn when mail lands.
+pi_mail_wake_gate() { # WAKES VERSION — refuse a carrier that lists no mail wake
+  if [[ "$1" -ne 0 ]]; then
+    ot_message pi-mail-wake-missing "harness=pi" "version=$2" >&2
+    return 1
   fi
 }
 pi_local_gate() {
@@ -590,7 +583,7 @@ pi_local_gate() {
   lane_adapter_pi_window_read "$CLAIM_ROOT" || { ot_message unsupported-for-oversee "harness=pi" "reason=no-window-read" >&2; return 1; }
   local wakes=0
   lane_adapter_pi_mail_wake "$CLAIM_ROOT" || wakes=$?
-  pi_mail_wake_read "$wakes" "$LANE_ADAPTER_PI_CARRIER_VERSION"
+  pi_mail_wake_gate "$wakes" "$LANE_ADAPTER_PI_CARRIER_VERSION"
 }
 if [[ "$FLEET" == true && "$WAKE" != true ]]; then
   case "$LAUNCH_HARNESS" in
@@ -1420,13 +1413,8 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
     # naming a placeholder reaches the harness as written. Spliced rather than
     # substituted: bash 5.2 reads `&` in a ${var//pat/rep} replacement as the
     # matched text.
-    # A Pi lane on a carrier without the mail wake arms the lane-mail watch,
-    # and its brief says so: ../references/watch-delivery.md § Lane mailbox monitor.
-    # The overseer's own Pi brief leaves that line out.
+
     local text rendered="" quoted brief="$BRIEF_TEXT"
-    if [[ "$HARNESS" == pi && "$PI_MAIL_WAKE" == absent && -n "$brief" ]]; then
-      brief+=$'\n\n'"As your first step, arm the mailbox monitor \`lane-mail watch --item $mail_id\` per watch-delivery.md § Lane mailbox monitor, re-arm it at each expiry, and run the \`lane-mail inbox\` command each of its announcements prints."
-    fi
     if ! text="$(cmd_template_text "$item" "$repo")" || ! quoted="$(lane_single_quote "$brief")"; then
       return 1
     fi
@@ -1482,11 +1470,10 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
     print=" -p"
   elif [[ "$RELAUNCH" == true ]]; then
     # The harnesses whose row in ../references/watch-delivery.md § Lane mailbox monitor
-    # names an Arm; that table is the rule, and a Pi lane has one only
-    # on a carrier without the mail wake.
+    # names an Arm; that table is the rule.
     local rearm=""
     case "$HARNESS" in
-      claude | pi) [[ "$HARNESS:$PI_MAIL_WAKE" == pi:present ]] || rearm=", then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item $mail_id through your harness background wake" ;;
+      claude) rearm=", then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item $mail_id through your harness background wake" ;;
       copilot) rearm=", then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --once --item $mail_id as a background command" ;;
       *) rearm="" ;;
     esac
@@ -2443,8 +2430,7 @@ open_wake() { # DIR TITLE CMD
 # installed. Of the carrier only package.json, whose extensions list names the
 # lane mail wake, and extensions/vocab.ts, the file that puts context_window on
 # the hook payloads, are read. A file the host does not hold is one Pi does not
-# read. Returns 1 with its keyed line printed; otherwise prints `present`, or
-# `absent VERSION` for a carrier without the mail wake, on stdout.
+# read. Returns 1 with its keyed line printed on any refusal.
 host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
   local pi_item="$1" pi_wt="$2" dir i rc root="${3:-.pi/agent}" carrier=@vanillagreen/pi-hooks
   local -a remote=("$root/settings.json" "$4/.pi/settings.json") packages=("$4/.pi/packages" "$root/packages")
@@ -2495,11 +2481,9 @@ host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
   done
   lane_adapter_pi_carrier_sends "$dir/packages0" "$dir/packages1" \
     || { ot_message unsupported-for-oversee "harness=pi" "reason=no-window-read" >&2; return 1; }
-  if lane_adapter_pi_carrier_wakes "$dir/packages0" "$dir/packages1"; then
-    printf 'present\n'
-  else
-    printf 'absent %s\n' "$LANE_ADAPTER_PI_CARRIER_VERSION"
-  fi
+  local wakes=0
+  lane_adapter_pi_carrier_wakes "$dir/packages0" "$dir/packages1" || wakes=$?
+  pi_mail_wake_gate "$wakes" "$LANE_ADAPTER_PI_CARRIER_VERSION"
 )
 
 # How a relaunch starts its harness, one verdict in RELAUNCH_ROUTE, read by
@@ -2573,13 +2557,7 @@ launch_finish() {
     fi
   fi
   if [[ "$LANE_HOST" != local && "$FLEET" == true && "$WAKE" != true && "$HARNESS" == pi ]]; then
-    local pi_wake
-    pi_wake="$(host_pi_gate "$item" "$wt_id" "$pi_root" "$remote_path")" || return 1
-    if [[ "$pi_wake" == present ]]; then
-      pi_mail_wake_read 0 -
-    else
-      pi_mail_wake_read 1 "${pi_wake#absent }"
-    fi
+    host_pi_gate "$item" "$wt_id" "$pi_root" "$remote_path" || return 1
   fi
   session_file=""
   wake_args=()

@@ -125,8 +125,8 @@ lane_adapter_pi_carrier_sends() { # ROOT...
 # turn in an idle lane when its overseer's mail lands: 0 where the installed
 # carrier, the project's or else the user's, lists the lane mail wake among
 # the extensions its package.json gives Pi to load, 1 where none installed
-# does or its package.json does not read. A lane on a carrier with the wake
-# arms no mailbox monitor; one without it arms the lane-mail watch.
+# does or its package.json does not read. open-terminal refuses a fleet launch
+# without the wake; Pi lanes arm no mailbox monitor.
 lane_adapter_pi_mail_wake() { # DIR
   lane_adapter_pi_carrier_wakes "$1/.pi/packages" "$(lane_adapter_pi_agent_dir)/packages"
 }
