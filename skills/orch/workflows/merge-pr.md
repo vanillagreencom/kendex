@@ -115,7 +115,7 @@ Three conditions are merge gates, not advice:
 - **`not_approved`** — resolve the gate mode the pull request's base sets ([references/gates.md](../references/gates.md)). A non-zero exit is no mode: report it and stop.
 
   ```bash
-  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode
+  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]
   ```
 
   Route on the printed `GATE_MODE`:
@@ -225,10 +225,10 @@ Use the output as `MAIN_REPO_ROOT`.
    .agents/skills/orch/scripts/item-tier --base [PREPARED_BASE] --head [PREPARED_HEAD] --repo [WORKTREE_PATH]
    ```
 
-   It also resolves the gate mode the prepared base sets:
+   Bind `[REVIEW_BASE_CHECKOUT]` to that consumer base, per [Gate-mode routing](../references/gates.md#gate-mode-routing), and resolve its mode:
 
    ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode
+   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]
    ```
 
    A `[MICRO_ENTRY]` run continues only where the `item-tier` answer is `tier=micro`, the gate mode is `approval`, AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`: a retarget can change the class or the base's approval rule without moving the head, so the fresh answers carry the micro tier and the head says it is the same run. Any other answer arms nothing and escapes by micro.md condition 9. Read workflow state `pr.size_check` for `[STATE_KEY]`, and use it only when its `head_sha` equals `[PREPARED_HEAD]`, per [workflow-state.md § Field Definitions](../schemas/workflow-state.md#field-definitions). Its verdict and counts inform the reviewer's or orchestrator's cut decision under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). A missing or stale report supplies no current counts. The report does not gate merge.

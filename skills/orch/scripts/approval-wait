@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Wait for the reviewer-gate verdict on a PR, or print with --resolve-mode the
-# gate mode read from consumer policy and the native approval requirement. The authoritative contract — modes,
-# mode resolution, settings, JSON output, auth, exit codes — is print_usage
-# below: run with --help.
+# gate mode read from consumer policy and the native approval requirement.
+# print_usage owns the contract: run with --help.
 # --resolve-mode stdout is the approval|off enum consumed by submit-pr,
 # merge-pr and ci-fix. --request-review prints the same enum after skipping
 # an off gate or requesting Copilot. --json stdout is consumed by their
@@ -81,7 +80,7 @@ approval_message() {
       ;;
     action-options)
       printf 'approval-wait: action-options action=request-review-or-base-resolution\n'
-      printf '%s\n' 'A request requires --base-checkout. Base resolution accepts only a PR number and one of --resolve-mode or --request-review.'
+      printf '%s\n' 'Resolution and requests accept only a PR number and one action flag.'
       ;;
     policy-reader-missing)
       printf 'approval-wait: policy-reader-missing path=%q\n' "$settings_lib"
@@ -105,7 +104,7 @@ approval_message() {
       ;;
     gate-off)
       printf 'approval-wait: gate-off mode=%s branch=%q\n' "$MODE" "$RULES_BRANCH"
-      printf '%s\n' "approval-wait: neither the rulesets on branch '$RULES_BRANCH' nor the PR's review decision require an approval, so no verdict is available to wait for"
+      printf '%s\n' 'The consumer gate mode is off, so no local verdict is available to wait for.'
       ;;
     timeout-fallback)
       printf 'approval-wait: timeout-fallback value=%q fallback=%s\n' "$ON_TIMEOUT" "block"
@@ -150,9 +149,9 @@ print_usage() {
   printf 'approval-wait: usage command=%s\n' 'approval-wait'
   cat <<'USAGE'
 Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json]
-                     [--mode approval] [--on-timeout block|proceed]
+                     --mode approval [--on-timeout block|proceed]
                      [--item ID]
-       approval-wait <PR#> --resolve-mode [--base-checkout PATH]
+       approval-wait <PR#> --resolve-mode --base-checkout PATH
        approval-wait <PR#> --request-review --base-checkout PATH
 
 Wait for the reviewer-gate verdict on a PR. Every exit path but 5 emits a final
@@ -167,7 +166,7 @@ vs proceeded deterministically (kendex#538, kendex#642).
                  below; default 900) — the per-repo review quiet-period
                  knob; an explicit positional always wins
   --json         emit the machine-readable result object on stdout
-  --mode         approval; skips the mode resolution below
+  --mode         approval; use the resolved mode for a wait
   --on-timeout   block | proceed — overrides the PR_REVIEW_ON_TIMEOUT
                  setting
   --item ID      the lane whose new mail exits 5; no mail check without it
@@ -202,15 +201,14 @@ Approval mode reads GitHub-native review state ONLY, on either signal:
   resolution, so the caller triages it first. A CHANGES_REQUESTED without an
   approval reports "changes_requested" ahead of the thread count.
 
-Mode resolution: with --base-checkout, committed REVIEW_GATE_MODE=off
-prints off without querying GitHub's approval requirement, even when GitHub
-requires approval. enforce (the default) uses the native resolution below.
-A missing trusted review-gate settings reader, unreadable settings, or any
-other policy value is no mode: exit 2. The reader ignores machine-local
-settings and private env files for this key, as the CI gate does.
+Mode resolution requires --base-checkout. Waits take --mode approval after
+resolution; an implicit wait has no consumer context and returns no mode.
+Committed REVIEW_GATE_MODE=off prints off before any native approval read.
+enforce (the default) uses native resolution. Missing consumer context, a
+missing trusted reader, unreadable settings or an invalid policy is no mode:
+exit 2. The reader ignores machine-local settings and private env files.
 
-Native resolution: GitHub's approval requirement decides, read two ways.
---resolve-mode, and a wait without --mode, read the PR's base branch and
+Native resolution: under enforce, read the PR's base branch and
 reviewDecision in one call (gh pr view --json baseRefName,reviewDecision),
 then every ruleset rule GitHub applies to that branch, organization rulesets
 included (repos/<repo>/rules/branches/<base>, every page). That rules read
@@ -222,8 +220,8 @@ non-empty; "off" prints only when both say no approval is required (no
 pull_request rule or one requiring 0, and an empty reviewDecision). A failed
 read of the base, the reviewDecision or the rules, or a rule whose
 required_approving_review_count is not a whole number, is no mode: exit 2
-with a diagnostic and nothing on stdout. A default wait whose base resolves
-off exits 2 as well (gate-off): there is no verdict to wait for.
+with a diagnostic and nothing on stdout. A default wait whose gate resolves
+off exits 2 as well (gate-off): there is no local verdict to wait for.
 Callers read the mode only through this resolution, and never auto-detect it
 from the requested-reviewer list.
 
@@ -418,13 +416,15 @@ if [[ "${#POSITIONAL[@]}" -lt 1 ]]; then
   exit 2
 fi
 PR_NUM="${POSITIONAL[0]}"
-if $REQUEST_REVIEW || [[ -n "$BASE_CHECKOUT" ]]; then
-  if [[ -z "$BASE_CHECKOUT" || ${#POSITIONAL[@]} -ne 1 || -n "$MODE$ON_TIMEOUT_FLAG$ITEM" ]] \
+if $REQUEST_REVIEW || $RESOLVE_MODE || [[ -n "$BASE_CHECKOUT" ]]; then
+  if [[ ${#POSITIONAL[@]} -ne 1 || -n "$MODE$ON_TIMEOUT_FLAG$ITEM" ]] \
     || $JSON_OUTPUT || { $REQUEST_REVIEW && $RESOLVE_MODE; } \
     || { ! $REQUEST_REVIEW && ! $RESOLVE_MODE; }; then
     approval_message action-options >&2
     exit 2
   fi
+fi
+if [[ -n "$BASE_CHECKOUT" ]]; then
   if ! base_root=$(cd -- "$BASE_CHECKOUT" && pwd -P); then
     approval_message base-checkout-invalid >&2
     exit 2
@@ -717,28 +717,25 @@ read_required_approvals() { # BRANCH
     else error("the rules answer is not a set of pages") end' <<<"$raw" 2>/dev/null
 }
 
-# Set GATE_MODE from consumer policy, then GitHub's native requirement.
-# A stacked base can contain unapproved code: only its settings are data.
-# The review-gate dependency is optional for native waits, required on the
-# consumer-base path. Source the caller's trusted reader, never the base's.
+# Consumer context and policy precede every native approval read.
+# Source the caller's trusted reader, never an unapproved stacked base's code.
 GATE_MODE=""
 resolve_gate_mode() {
   local required base_json decision policy settings_lib
-  if [[ -n "$BASE_CHECKOUT" ]]; then
-    settings_lib="$SCRIPT_DIR/../../review-gate/scripts/lib/settings.sh"
-    if [[ ! -r "$settings_lib" ]]; then
-      approval_message policy-reader-missing >&2
-      return 1
-    fi
-    # shellcheck source=../../review-gate/scripts/lib/settings.sh
-    source "$settings_lib" || return $?
-    policy=$(rg_setting REVIEW_GATE_MODE enforce) || return $?
-    case "$policy" in
-      off) GATE_MODE=off; return 0 ;;
-      enforce) ;;
-      *) approval_message policy-mode-invalid >&2; return 1 ;;
-    esac
+  [[ -n "$BASE_CHECKOUT" ]] || { approval_message base-checkout-invalid >&2; return 1; }
+  settings_lib="$SCRIPT_DIR/../../review-gate/scripts/lib/settings.sh"
+  if [[ ! -r "$settings_lib" ]]; then
+    approval_message policy-reader-missing >&2
+    return 1
   fi
+  # shellcheck source=../../review-gate/scripts/lib/settings.sh
+  source "$settings_lib" || return $?
+  policy=$(rg_setting REVIEW_GATE_MODE enforce) || return $?
+  case "$policy" in
+    off) GATE_MODE=off; return 0 ;;
+    enforce) ;;
+    *) approval_message policy-mode-invalid >&2; return 1 ;;
+  esac
   if ! base_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json baseRefName,reviewDecision 2>"$GH_ERR_FILE") \
     || ! RULES_BRANCH=$(jq -er '.baseRefName | strings | select(length > 0)' <<<"$base_json" 2>/dev/null) \
     || ! decision=$(jq -er '.reviewDecision // "" | strings' <<<"$base_json" 2>/dev/null); then

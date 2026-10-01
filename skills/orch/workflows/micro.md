@@ -162,10 +162,10 @@ Classify that range through `item-tier`, which reads the shared harness-ci class
 
 The accepted answer is `tier=micro`: the classifier measured `render`, `trivial` or `micro`. Any such answer continues. Every other answer escapes (§ Escape condition 7): a command failure, a class above this tier (`small`, `standard`), or a class the classifier did not measure.
 
-Resolve the gate mode the pull request's base sets ([references/gates.md](../references/gates.md)):
+Bind `[REVIEW_BASE_CHECKOUT]` to the consumer base and resolve its mode, per [Gate-mode routing](../references/gates.md#gate-mode-routing):
 
 ```bash
-env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode
+env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]
 ```
 
 Continue only on `approval`. This tier runs no internal review, so a GitHub approval is the one review the pull request gets: § 5 step 1's arm leaves it to GitHub, which holds the merge until the approval lands. `off` or a non-zero exit escapes (§ Escape condition 7): on such a base the pull request would merge with no reviewer at all.

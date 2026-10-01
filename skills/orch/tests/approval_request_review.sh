@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Exercise the shipped request owner and settings reader against a recording
-# GitHub endpoint. Consumer-base code is an execution tripwire, not a resolver
-# fixture. Private mutants must break these same behavioral expectations.
+# Exercise the trusted request owner. Consumer code is an execution tripwire.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -16,8 +14,6 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/home" "$TMP_ROOT/catalog" "$TMP_ROOT/consumer base/.agents/skills/orch/scripts"
 BASE="$TMP_ROOT/consumer base"
 printf '[env]\nREVIEW_GATE_MODE = "enforce"\n' > "$TMP_ROOT/catalog/kendex.settings.toml"
-# A stacked base's installed resolver and private env file must not execute
-# with the lane's token. The trusted owner reads only committed policy data.
 cat > "$BASE/.agents/skills/orch/scripts/approval-wait" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -57,8 +53,6 @@ REQUEST_LOG="$TMP_ROOT/requests"
 QUERY_LOG="$TMP_ROOT/queries"
 EXECUTION_LOG="$TMP_ROOT/executions"
 
-# Child environment is explicit. Inherited catalog policy and a settings-file
-# override must not defeat committed consumer policy.
 run_action() { # SCRIPT NATIVE_REPLY REQUEST_EXIT ARGS...
   local script="$1" reply="$2" request_exit="$3"
   shift 3
@@ -77,8 +71,7 @@ run_action() { # SCRIPT NATIVE_REPLY REQUEST_EXIT ARGS...
 }
 
 for row in \
-  'first request|off|ok|1|REVIEW_REQUIRED|0|0|off|0' \
-  'repeated request|off|ok|1|REVIEW_REQUIRED|0|0|off|0' \
+  'disabled request|off|ok|1|REVIEW_REQUIRED|0|0|off|0' \
   'enabled request|enforce|ok|1|REVIEW_REQUIRED|0|0|approval|1' \
   'native gate absent|enforce|ok|0||0|0|off|0' \
   'failed base query|enforce|base-failed|1|REVIEW_REQUIRED|0|2||0' \
@@ -101,22 +94,24 @@ printf '[env]\nREVIEW_GATE_MODE = "off"\n' > "$BASE/kendex.settings.toml"
 run_action "$RUN" ok 0 --resolve-mode --base-checkout "$BASE"
 assert_eq "$RC|$(cat "$OUT")|$REQUESTS" '0|off|0' 'base mode resolution honors disabled policy beside required approval' "$ERR"
 assert_eq "$(cat "$QUERY_LOG")|$(cat "$EXECUTION_LOG")" '|' 'off reads no native gate and executes no base code' "$ERR"
-run_action "$RUN" ok 0 --request-review
-assert_eq "$RC|$REQUESTS" '2|0' 'a request with no consumer base is refused' "$ERR"
-run_action "$RUN" ok 0 --request-review --base-checkout "$TMP_ROOT/missing"
-assert_eq "$RC|$REQUESTS" '2|0' 'an unavailable consumer base is refused' "$ERR"
+for action in --request-review --resolve-mode; do
+  for context in '' "$TMP_ROOT/missing"; do
+    base_args=()
+    [[ -z "$context" ]] || base_args=(--base-checkout "$context")
+    run_action "$RUN" ok 0 "$action" ${base_args[@]+"${base_args[@]}"}
+    assert_eq "$RC|$(cat "$OUT")|$REQUESTS|$(cat "$QUERY_LOG")|$(cat "$EXECUTION_LOG")" '2||0||' "$action refuses unavailable context [$context] before native reads" "$ERR"
+  done
+done
 printf '[env]\nREVIEW_GATE_MODE = ["off"]\n' > "$BASE/kendex.settings.toml"
 run_action "$RUN" ok 0 --request-review --base-checkout "$BASE"
 assert_eq "$RC|$(cat "$OUT")|$REQUESTS" '2||0' 'a settings-reader failure authorizes no request' "$ERR"
 
-# Each control keeps the guard text and removes its behavior. The actual
-# owner's enum, request count and execution tripwire must detect the defect.
 for row in \
   'off-gate~off~if $REQUEST_REVIEW && [[ "$GATE_MODE" == approval ]]; then~if $REQUEST_REVIEW && [[ "$GATE_MODE" == approval || "$GATE_MODE" == off ]]; then~0~off~0' \
   'settings-failure~malformed~policy=$(rg_setting REVIEW_GATE_MODE enforce) || return $?~policy=$(rg_setting REVIEW_GATE_MODE enforce) || policy=enforce~2~~0' \
   'unknown-policy~junk~*) approval_message policy-mode-invalid >&2; return 1 ;;~*) approval_message policy-mode-invalid >&2; return 0 ;;~2~~0' \
   'base-directory~off~  cd -- "$BASE_CHECKOUT"~  : # cd -- "$BASE_CHECKOUT"~0~off~0' \
-  'stacked-base-execution~enforce~    policy=$(rg_setting REVIEW_GATE_MODE enforce)~    "$BASE_CHECKOUT/.agents/skills/orch/scripts/approval-wait" "$PR_NUM" --resolve-mode >&2; policy=$(rg_setting REVIEW_GATE_MODE enforce)~0~approval~1' \
+  'stacked-base-execution~enforce~  policy=$(rg_setting REVIEW_GATE_MODE enforce)~  "$BASE_CHECKOUT/.agents/skills/orch/scripts/approval-wait" "$PR_NUM" --resolve-mode >&2; policy=$(rg_setting REVIEW_GATE_MODE enforce)~0~approval~1' \
   'stdout-isolation~enforce~gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot >&2~gh pr edit "$PR_NUM" --repo "$REPO" --add-reviewer @copilot~0~approval~1'; do
   IFS='~' read -r label setting old new want_rc want_out want_requests <<< "$row"
   if [[ "$setting" == malformed ]]; then

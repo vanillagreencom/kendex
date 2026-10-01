@@ -23,6 +23,7 @@ source "$TEST_DIR/lib/assertions.sh"
 
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/runs"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
+ln -s "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/repo/.agents/skills/review-gate"
 git -C "$TMP_ROOT/repo" init -q
 git -C "$TMP_ROOT/repo" config user.email test@example.com
 git -C "$TMP_ROOT/repo" config user.name Test
@@ -481,7 +482,7 @@ table() {
 # Every row outside the two resolution cases passes --mode approval, so the
 # wait reads no rules and a row's answer is its own verdict alone.
 APPROVAL='1 1 3 --json --mode approval'
-RESOLVE='1 --resolve-mode'
+RESOLVE='1 --resolve-mode --base-checkout .'
 
 echo "=== --resolve-mode: the base's rulesets and the PR's reviewDecision decide ==="
 # At least one approval the base's rulesets require is approval, and the
@@ -512,14 +513,9 @@ table "$RESOLVE" \
   'a reviewDecision that is no string is a failed read||STUB_BASE_MODE=not_string|rc=2 stdout=empty rules_reads=0 stderr_line=approval-wait:+base-unreadable+pr=1+repo=owner/repo' \
   'an auth failure is no mode and prints nothing on stdout||GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1|rc=3 stdout=empty'
 
-echo "=== a wait without --mode resolves the mode the same way ==="
-# A base that requires an approval waits for one; a base that requires none
-# has no verdict to wait for and exits 2 before the first poll; a rules read
-# that fails is no mode. An explicit --mode approval skips the read.
+echo "=== waits require a resolved mode ==="
 table '1 1 3 --json' \
-  'a base requiring an approval waits and approves||STUB_APPROVAL_MODE=approved_decision|rc=0 status=approved rules_reads=1' \
-  'a base requiring none has no verdict to wait for||STUB_REQUIRED_APPROVALS=0,STUB_APPROVAL_MODE=approved_decision|rc=2 stdout=empty approval_polls=0 stderr_line=approval-wait:+gate-off+mode=off+branch=main' \
-  'a failed rules read is no mode and no wait||STUB_RULES_MODE=fail,STUB_APPROVAL_MODE=approved_decision|rc=2 stdout=empty approval_polls=0' \
+  'an implicit wait has no consumer context||STUB_APPROVAL_MODE=approved_decision|rc=2 stdout=empty rules_reads=0 approval_polls=0' \
   '--mode approval reads no rules|1 1 3 --json --mode approval|STUB_RULES_MODE=fail,STUB_APPROVAL_MODE=approved_decision|rc=0 status=approved rules_reads=0'
 
 echo "=== approval mode: the verdict rule over the pr view payload and the thread count ==="
@@ -698,6 +694,7 @@ MUTANT_REPO="$TMP_ROOT/mutant"
 mkdir -p "$MUTANT_REPO/.agents/skills/orch"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_REPO/.agents/skills/orch/scripts"
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_REPO/.agents/skills/github"
+ln -s "$REPO_ROOT/skills/review-gate" "$MUTANT_REPO/.agents/skills/review-gate"
 git -C "$MUTANT_REPO" init -q
 MUTANT_SCRIPT="$MUTANT_REPO/.agents/skills/orch/scripts/approval-wait"
 PRISTINE="$TMP_ROOT/approval-wait.pristine"
@@ -746,6 +743,9 @@ control decision-ignored '  if [ "$required" -ge 1 ] || [ -n "$decision" ]; then
 control fail-open '  if ! required=$(read_required_approvals "$RULES_BRANCH"); then' \
   '  if ! required=$(read_required_approvals "$RULES_BRANCH" || echo 0); then' \
   "$RESOLVE" 'STUB_RULES_MODE=fail' 'rc=2 stdout=empty'
+control consumer-context '  [[ -n "$BASE_CHECKOUT" ]] || { approval_message base-checkout-invalid >&2; return 1; }' \
+  '  : # [[ -n "$BASE_CHECKOUT" ]] || { approval_message base-checkout-invalid >&2; return 1; }' \
+  '1 --resolve-mode' 'STUB_REQUIRED_APPROVALS=1' 'rc=2 stdout=empty rules_reads=0'
 # shellcheck disable=SC2016 # the lines are matched literally, unexpanded
 control approved-first '  if [ "$approved" = true ] && [ "$last_unresolved" -eq 0 ]; then' \
   '  if [ "$approved" = true ]; then' \

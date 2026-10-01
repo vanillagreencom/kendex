@@ -322,7 +322,7 @@ done
 # the pull request whose base it reads.
 for wf in submit-pr merge-pr ci-fix; do
   doc="$SKILL_DIR/workflows/$wf.md"
-  assert_file_contains "$doc" 'approval-wait [PR_NUMBER] --resolve-mode' "$wf resolves the gate mode through approval-wait"
+  assert_file_contains "$doc" 'approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]' "$wf resolves the consumer base mode through approval-wait"
 done
 
 # approval-wait takes its repository from GH_REPO first (scripts/lib/gh-repo.sh).
@@ -336,6 +336,7 @@ approval_wait_clears_gh_repo() { # DOC...
       line = $0; runs = gsub(/[^ `(]*approval-wait \[PR_NUMBER\]/, "", line)
       line = $0; cleared = gsub(/env -u GH_REPO -u GITHUB_REPOSITORY [^ `(]*approval-wait \[PR_NUMBER\]/, "", line)
       if (runs > cleared) { print FILENAME ":" FNR ": " $0 > "/dev/stderr"; bad = 1 }
+      if (runs && index($0, "--resolve-mode") && !index($0, "--resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]")) { bad = 1 }
     }
     END { exit bad }' "$@"
 }
@@ -348,6 +349,10 @@ assert_doc_mutant_fails approval_wait_clears_gh_repo "$ci_fix_workflow" \
   'env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode' \
   '.agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode' \
   "a gate mode read through an inherited GH_REPO"
+assert_doc_mutant_fails approval_wait_clears_gh_repo "$ci_fix_workflow" \
+  'approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]' \
+  'approval-wait [PR_NUMBER] --resolve-mode' \
+  "a gate mode read without consumer context"
 assert_doc_mutant_fails approval_wait_clears_gh_repo "$merge_workflow" \
   '`env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode approval' \
   '`approval-wait [PR_NUMBER] 30 --json --mode approval' \
@@ -376,7 +381,7 @@ micro_head_is_pinned() { # merge-doc
   continue_at="$(grep -m1 -n -F -- "$micro_continue" "$1" | cut -d: -f1 || true)"
   [[ -n "$classify_at" && -n "$continue_at" ]] &&
     awk -v from="$classify_at" -v to="$continue_at" \
-      'NR > from && NR < to && index($0, ".agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode") { found = 1 }
+      'NR > from && NR < to && index($0, ".agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]") { found = 1 }
        END { exit !found }' "$1" &&
     grep -Fq 'Any other answer arms nothing and escapes by micro.md condition 9' "$1"
 }
@@ -392,9 +397,9 @@ assert_doc_mutant_fails micro_head_is_pinned "$merge_workflow" \
   'A `[MICRO_ENTRY]` run continues' \
   "a micro entry continued on a stale answer"
 assert_doc_mutant_fails micro_head_is_pinned "$merge_workflow" \
+  '   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]' \
   '   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode' \
-  '   .agents/skills/orch/scripts/item-tier --help' \
-  "a micro entry continued with no fresh gate mode"
+  "a micro entry continued without consumer context"
 
 micro_workflow="$SKILL_DIR/workflows/micro.md"
 micro_class_is_closed() { # micro-doc
@@ -402,7 +407,7 @@ micro_class_is_closed() { # micro-doc
     grep -Fq 'orch/scripts/item-tier --base [BASE_SHA] --head [HEAD_SHA] --repo [WT_PATH]' "$1" &&
     grep -Fq 'The accepted answer is `tier=micro`' "$1" &&
     grep -Fq 'Every other answer escapes (§ Escape condition 7): a command failure, a class above this tier (`small`, `standard`), or a class the classifier did not measure.' "$1" &&
-    grep -Fq '[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode' "$1" &&
+    grep -Fq '[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]' "$1" &&
     grep -Fq 'Continue only on `approval`.' "$1" &&
     grep -Fq '`off` or a non-zero exit escapes (§ Escape condition 7)' "$1" &&
     grep -Fq '7. § 4 cannot prove all three parts of its precheck. Either the `item-tier` answer is not `tier=micro`, or `approval-wait --resolve-mode` does not print `approval`, or' "$1" &&
