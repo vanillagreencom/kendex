@@ -735,6 +735,7 @@
   ".agents/skills/review-gate/scripts/validate-standard.sh",
   ".agents/skills/review-gate/standard.json",
   ".agents/skills/review-gate/templates/kendex-refresh.yml",
+  ".agents/skills/review-gate/templates/review-gate-writer.yml",
   ".agents/skills/review-gate/templates/vendored-paths.instructions.md",
   ".agents/skills/reviewer/README.md",
   ".agents/skills/reviewer/SKILL.md",

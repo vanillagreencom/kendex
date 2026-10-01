@@ -243,10 +243,24 @@ while IFS='|' read -r kind expected; do
   run_refresh_command "$DIR" "$DIR/$ADOPT"
   if [ "$expected" = pass ]; then
     if [ "$RC" -eq 0 ] && [ ! -e "$writer" ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then ok "$kind"; else bad "$kind (rc=$RC)" "$OUT"; fi
+    if [ "$kind" = retired ]; then
+      if grep -qxF "refresh-warning=legacy-writer value=$OWNER" <<<"$OUT"; then
+        ok 'legacy writer adoption emits its warning'
+      else bad 'legacy writer warning' "$OUT"; fi
+      cp "$TMP/before" "$DIR/.kendex-generated.json"
+      printf 'retired workflow\n' >"$writer"
+      file_edit "$DIR" "$ADOPT" 1 '^    print\("refresh-warning=legacy-writer' 's/^    print/    # print/'
+      run_refresh_command "$DIR" "$DIR/$ADOPT"
+      if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE" &&
+          ! grep -qxF "refresh-warning=legacy-writer value=$OWNER" <<<"$OUT"; then
+        ok 'control: silencing legacy detection breaks the warning assertion'
+      else bad 'legacy writer warning control' "$OUT"; fi
+    fi
     if [ "$kind" = repeat ]; then
       cp "$DIR/.kendex-generated.json" "$TMP/repeated"
       run_refresh_command "$DIR" "$DIR/$ADOPT"
-      if [ "$RC" -eq 0 ] && cmp -s "$TMP/repeated" "$DIR/.kendex-generated.json"; then ok 'repeat unchanged'; else bad 'repeat unchanged' "$OUT"; fi
+      if [ "$RC" -eq 0 ] && cmp -s "$TMP/repeated" "$DIR/.kendex-generated.json" &&
+          ! grep -q '^refresh-warning=legacy-writer ' <<<"$OUT"; then ok 'repeat unchanged without a legacy warning'; else bad 'repeat unchanged' "$OUT"; fi
     fi
   elif [ "$expected" = excluded ]; then
     if [ "$RC" -eq 0 ] && cmp -s "$TMP/before" "$DIR/.kendex-generated.json" && [ ! -e "$DIR/$REFRESH" ]; then ok "$kind"; else bad "$kind" "$OUT"; fi

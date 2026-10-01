@@ -1,0 +1,1 @@
+- Restored the retained review-gate template so consumers with old refresh scripts can open the pull request that updates them.

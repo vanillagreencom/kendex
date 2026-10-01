@@ -1,0 +1,522 @@
+#!/usr/bin/env bash
+# Review-gate validate — the adopted-workflow half. Shipped by the kendex
+# review-gate skill, vendored at .agents/skills/review-gate/scripts/.
+# `validate.sh` runs this as its last group and folds the result into its
+# own; it also stands alone for anyone changing only the workflow copy.
+#
+# EQUALITY, not re-derivation. The template carries no per-repo values, so
+# the adopted copy is a copy: the check is whether it still is one. Deriving
+# the contract instead — this job's permissions, that expression's terms,
+# these activity types — means writing a YAML-and-expressions parser in bash
+# to chase an asymptote, where every round finds another spelling that
+# satisfies the terms and breaks the meaning. Equality has no such gap: a
+# changed `&&`, an appended `|| true`, a `repository:` input, an inline flow
+# mapping and every spelling nobody has thought of yet are all one thing —
+# the copy stopped being a copy.
+#
+# Report protocol: ok/FAIL/note check=KEY value=VALUE, then indented
+# explanation. validate.sh consumes each entire verdict line and its status.
+# Human explanation is not parsed. Full contract: print_usage or --help.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || {
+  printf 'review-gate-error=script-directory value=%q\n' "${BASH_SOURCE[0]}" >&2
+  exit 2
+}
+if [ ! -r "$SCRIPT_DIR/lib/diagnostics.sh" ]; then
+  printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$SCRIPT_DIR/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
+  exit 2
+fi
+. "$SCRIPT_DIR/lib/diagnostics.sh" 2>/dev/null || {
+  printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$SCRIPT_DIR/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
+  exit 2
+}
+if [ ! -r "$SCRIPT_DIR/lib/settings.sh" ]; then
+  rg_message error settings-load "$SCRIPT_DIR/lib/settings.sh" 'Could not load the settings library.' >&2
+  exit 2
+fi
+. "$SCRIPT_DIR/lib/settings.sh" || exit 2
+
+print_usage() {
+  cat <<'USAGE'
+Usage: validate-workflow.sh [--adopt] [--templates-dir DIR] [--adopted-path-file FILE] | --help
+
+Checks that THIS repository's adopted review-gate writer workflow is still
+the shipped template.
+
+A repository with no writer passes only when it posts no gate status:
+REVIEW_GATE_WRITER=optional together with REVIEW_GATE_MODE=off, both read
+from the environment and the committed kendex.settings.toml only, prints one
+`ok check=workflow-absent` line. A tracked workflow that names the engine
+outside a comment is still a writer there, and fails as
+`workflow-reference-count`. REVIEW_GATE_WRITER=optional under an enforced
+mode is one `FAIL check=workflow-absent-mode` line, and the default
+REVIEW_GATE_WRITER=required keeps `FAIL check=workflow-count`. A writer that
+is executed is checked in full whatever REVIEW_GATE_WRITER says.
+
+--adopt re-installs the template over an adopted copy that still equals a
+version of the template this repository's history shipped, so a refresh that
+brought a new template lands with a matching copy. The re-install writes the
+template's bytes: the copy keeps its script path and its `check_run` opt-in,
+the two deltas below, and loses any comment-only edit. A copy whose code lines
+equal no shipped version is a copy a person edited: it is left untouched and
+named on one `FAIL check=workflow-edited` line.
+
+The template is copied VERBATIM — it carries no per-repo values — so the
+check is equality, line by line. A YAML comment-only line is dropped, and
+only outside a block scalar: inside a `run: |` the lines are shell payload,
+where a comment, a blank and trailing whitespace all change what runs. Two
+deltas are legitimate and allowed:
+
+  * the two `check_run` opt-in lines uncommented WHERE THE TEMPLATE CARRIES
+    them — both, adjacent, or neither, since a trigger without its `types:`
+    child fires on every activity type, the child alone lands under whatever
+    precedes it, and the pair anywhere else is not a trigger at all; and
+  * the script path each repo kind actually runs: `skills/` in the catalog,
+    the vendored `.agents/skills/` in a consumer. Each rejects the other's.
+
+Anything else is one failure naming the first divergent line, the shipped
+template's git blob id on a `note check=workflow-template` line, and the
+remedy: `--adopt`, or a hand re-copy where the copy was edited. Nothing here
+re-derives what the workflow means, so no spelling of a change can satisfy
+the check while breaking the contract.
+
+The single-writer contract gets one check of its own, over-approximating on
+purpose: no other tracked workflow may name the engine outside a comment.
+An invocation has no closed set of spellings, so this counts a reference and
+says only that — a second workflow naming it is something to read.
+
+One prerequisite is REPORTED and not checked. With the `check_run` opt-in
+enabled, the reviewer's check name lives in a GitHub repository variable
+rather than in any file, so nothing here can read it: the note says the
+variable has to be set and cannot say whether it is. A run that is otherwise
+clean exits 0 with that prerequisite unverified.
+
+--templates-dir reads refreshed template data from DIR while validators and
+libraries stay with this script. Default: the templates beside this script.
+
+--adopted-path-file writes the selected repository-relative writer path to FILE
+only after all checks pass. The path has no added newline, and a writer absent
+by setting writes an empty FILE. Adoption consumes this file so workflow
+discovery has one owner.
+
+Output: one verdict line per check: STATUS check=KEY value=VALUE.
+STATUS is ok, FAIL or note. VALUE uses Bash printf %q escaping.
+Indented explanation follows each verdict; consumers do not parse it.
+
+Exit codes:
+  0  every check held (with --adopt, after any re-install it made, which an
+     `ok check=workflow-readopted` line names)
+  1  at least one FAIL line
+  2  the check could not run at all (bad arguments, not a git repository, no
+     shipped template to compare against, a history or write failure). With
+     no writer found, an unreadable or invalid REVIEW_GATE_WRITER exits 2,
+     and so does REVIEW_GATE_MODE, which is read only when
+     REVIEW_GATE_WRITER=optional
+USAGE
+}
+
+if [ "$#" -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
+  print_usage
+  exit 0
+fi
+ADOPT=0
+if [ "$#" -ge 1 ] && [ "$1" = "--adopt" ]; then
+  ADOPT=1
+  shift
+fi
+TEMPLATES_DIR=""
+if [ "$#" -ge 2 ] && [ "$1" = --templates-dir ]; then
+  TEMPLATES_DIR="$2"
+  shift 2
+fi
+ADOPTED_PATH_FILE=""
+if [ "$#" -eq 2 ] && [ "$1" = --adopted-path-file ]; then
+  ADOPTED_PATH_FILE="$2"
+  shift 2
+fi
+if [ "$#" -gt 0 ]; then
+  rg_message error unknown-arguments "$#" "validate-workflow.sh: unknown argument list ($# argument(s), first: '${1}') — no positional arguments (run --help)" >&2
+  exit 2
+fi
+
+die() { # CODE VALUE MESSAGE
+  rg_message error "$@" >&2
+  exit 2
+}
+
+SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)" || die skill-directory "$SCRIPT_DIR" "could not resolve the skill directory"
+TEMPLATES_DIR="${TEMPLATES_DIR:-$SKILL_DIR/templates}"
+TEMPLATE="$TEMPLATES_DIR/review-gate-writer.yml"
+[ -f "$TEMPLATE" ] ||
+  die template-missing "$TEMPLATE" "$TEMPLATE is missing — it is the thing the adopted copy is compared against; re-run \`kendex refresh\` and commit the result"
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" ||
+  die repository "$PWD" "not inside a git repository — there is no tracked workflow set to read"
+[ -n "$REPO_ROOT" ] || die repository-empty "$PWD" "git named no repository root"
+cd "$REPO_ROOT" || die repository-enter "$REPO_ROOT" "could not enter the repository root $REPO_ROOT"
+
+PASS=0
+FAILED=0
+ok() { PASS=$((PASS + 1)); rg_report ok "$@"; }
+bad() { FAILED=$((FAILED + 1)); rg_report FAIL "$@"; }
+
+TMP="$(mktemp -d)" || die scratch "${TMPDIR:-/tmp}" "could not create a scratch directory"
+trap 'rm -rf "$TMP"' EXIT
+
+# The catalog runs the tracked scripts; a consumer runs the vendored ones.
+# That one spelling is the only path delta equality forgives, and only here.
+IS_CATALOG=0
+case "$SKILL_DIR" in
+  */.agents/*) ;;
+  */skills/review-gate) IS_CATALOG=1 ;;
+esac
+
+# The writer is EXECUTED, at a command position, on its own line — the name
+# also appears in the workflow's comments, its missing-file guard and that
+# guard's error string.
+EXEC_WRITER_RE='^[[:space:]]*exec[[:space:]]+[^[:space:]]*review-writer\.sh[[:space:]]*$'
+
+# COMMENT-ONLY lines are dropped OUTSIDE a block scalar, and nothing else is
+# dropped anywhere. YAML prose is reworded legitimately — the catalog's own
+# copy says so in its header — and a YAML comment gates nothing.
+#
+# INSIDE a `run: |` scalar none of that holds: those lines are shell payload.
+# A `#` line there is a shell comment that can comment out a joined command,
+# trailing whitespace after a backslash cancels the continuation, a blank is
+# script content, and a CRLF ending is a CRLF ending. So inside a scalar
+# NOTHING is normalized — the bytes are compared as they are, which is what
+# keeps a shell-significant byte from being erased by a rule written for
+# YAML. Blank lines are compared everywhere for the same reason.
+code_lines() { # FILE — YAML comment-only lines dropped outside block scalars
+  awk '
+    {
+      raw = $0
+      line = raw
+      sub(/\r$/, "", line)
+      match(line, /^[[:space:]]*/)
+      ind = RLENGTH
+      body = substr(line, ind + 1)
+    }
+    inblock {
+      # RAW, not the CR-stripped copy: a payload line ending CRLF is a shell
+      # script line ending CRLF, which behaves differently. Inside a scalar
+      # NOTHING is normalized, so no shell-significant byte can be erased.
+      if (body == "" || ind > blockind) { print raw; next }
+      inblock = 0
+    }
+    body ~ /^#/ { next }
+    {
+      out = line
+      sub(/[[:space:]]+$/, "", out)
+      print out
+      if (body ~ /:[[:space:]]*[|>][-+0-9]*[[:space:]]*$/) {
+        inblock = 1
+        blockind = ind
+      }
+    }
+  ' "$1"
+}
+
+# Ends every run that reached a verdict. The selected path is empty when the
+# writer is absent by setting.
+adopted=""
+finish() {
+  printf '\n'
+  if [ "$FAILED" -gt 0 ]; then
+    exit 1
+  fi
+  if [ -n "$ADOPTED_PATH_FILE" ]; then
+    printf '%s' "$adopted" >"$ADOPTED_PATH_FILE" || die adopted-path-write "$ADOPTED_PATH_FILE" "could not write the selected workflow path"
+  fi
+  exit 0
+}
+
+# ========================= find the adopted copy ===========================
+
+# TRACKED files only: Actions runs what is committed, so an untracked
+# workflow on someone's disk is not this repo's writer.
+#
+# NUL-delimited, and the listing's own failure is fatal. In text mode
+# `git ls-files` C-QUOTES a path that is non-ASCII or carries a special
+# character, so `-f` would then see the quoted spelling, skip the file
+# silently, and let a second writer hide behind its own name; a pathname may
+# also contain a newline, which a line-based read splits in two.
+git ls-files -z -- '.github/workflows/*.yml' '.github/workflows/*.yaml' >"$TMP/listing" ||
+  die workflow-list "$REPO_ROOT" "could not list this repository's tracked workflows"
+
+# DIRECT CHILDREN only. A git pathspec '*' crosses '/', so the listing above
+# also carries nested paths like .github/workflows/archive/writer.yml — and
+# GitHub runs no such file. Counting one as the adopted writer is the worst
+# shape this tool has: a repo whose only copy is filed away reads as wired.
+: >"$TMP/workflows"
+nested_engine=""
+while IFS= read -r -d '' wf; do
+  [ -n "$wf" ] || continue
+  case "${wf#.github/workflows/}" in
+    */*)
+      # Named separately below rather than dropped in silence: a nested copy
+      # that runs the engine is the likely reason a repo has no writer.
+      if [ -f "$wf" ] && grep -qE -- "$EXEC_WRITER_RE" "$wf" 2>/dev/null; then
+        nested_engine="${nested_engine:+$nested_engine, }$wf"
+      fi
+      continue
+      ;;
+  esac
+  printf '%s\0' "$wf" >>"$TMP/workflows"
+done <"$TMP/listing"
+
+adopted_count=0
+while IFS= read -r -d '' wf; do
+  [ -n "$wf" ] || continue
+  # A tracked SYMLINK is not tracked content: everything here would read the
+  # target's bytes while CI checks out the link. It is refused rather than
+  # skipped, since skipping is how a repo ends up with no writer found and a
+  # clean verdict.
+  if [ -L "$wf" ]; then
+    bad workflow-symlink "$wf" "$wf is a SYMLINK — its target's bytes are what this check would compare, while CI checks out the link itself. Commit the workflow as a real file"
+    continue
+  fi
+  [ -f "$wf" ] || continue
+  # grep 0/1 are the measurement; anything higher is an unreadable workflow,
+  # and skipping one silently is how a repo ends up with no writer and a
+  # clean verdict.
+  wf_rc=0
+  grep -qE -- "$EXEC_WRITER_RE" "$wf" || wf_rc=$?
+  [ "$wf_rc" -le 1 ] || die workflow-read "$wf" "$wf: unreadable while looking for the engine (grep exit $wf_rc)"
+  [ "$wf_rc" -eq 0 ] || continue
+  adopted_count=$((adopted_count + 1))
+  adopted="$wf"
+done <"$TMP/workflows"
+
+# The single-writer contract is about how many workflows can post the gate
+# status, and an INVOCATION has no closed set of spellings — `exec X`,
+# `bash X`, `sh -c`, a variable holding the path. Rather than keep a list
+# nobody can finish, this counts tracked workflows whose CODE mentions the
+# engine at all. It over-approximates on purpose and says only what it
+# proves: a second workflow naming the engine outside a comment is something
+# a person has to look at, whether or not it turns out to run it.
+engine_refs=0
+engine_ref_files=""
+while IFS= read -r -d '' wf; do
+  [ -n "$wf" ] && [ -f "$wf" ] && [ ! -L "$wf" ] || continue
+  code_lines "$wf" >"$TMP/wf.code"
+  ref_rc=0
+  grep -qF -- 'review-writer.sh' "$TMP/wf.code" || ref_rc=$?
+  [ "$ref_rc" -le 1 ] || die workflow-reference-read "$wf" "$wf: unreadable while counting engine references (grep exit $ref_rc)"
+  [ "$ref_rc" -eq 0 ] || continue
+  engine_refs=$((engine_refs + 1))
+  engine_ref_files="${engine_ref_files:+$engine_ref_files, }$wf"
+done <"$TMP/workflows"
+
+if [ "$adopted_count" -eq 0 ]; then
+  # A missing writer passes only where the engine's own switch is off: under
+  # an enforced mode every consumer of the gate status would wait on a status
+  # nothing posts. lib/settings.sh judges both keys for every reader. A
+  # workflow naming the engine by another spelling is still a writer, so the
+  # reference count above has to be zero. Settings resolve against the
+  # repository root, where CI runs.
+  writer_state="$(rg_writer_state)" || exit 2
+  case "$writer_state" in
+    none)
+      if [ "$engine_refs" -gt 0 ]; then
+        bad workflow-reference-count "$engine_refs" "no tracked workflow executes review-writer.sh, yet $engine_refs name it outside a comment ($engine_ref_files) — a workflow reaching the engine by another spelling is a writer this check cannot compare. Read it, and delete the reference or adopt the template"
+      else
+        ok workflow-absent optional "no tracked workflow executes review-writer.sh, and REVIEW_GATE_WRITER=optional with REVIEW_GATE_MODE=off says this repository posts no gate status"
+      fi
+      ;;
+    enforced) bad workflow-absent-mode enforce "no tracked workflow executes review-writer.sh, and REVIEW_GATE_WRITER=optional permits that only while REVIEW_GATE_MODE=off — with the gate enforced, every pull request waits on a gate status nothing posts. Set REVIEW_GATE_MODE = \"off\" in kendex.settings.toml, or copy templates/review-gate-writer.yml in (references/adoption.md)" ;;
+    required) bad workflow-count "$adopted_count" "no tracked workflow under .github/workflows/ EXECUTES review-writer.sh — nothing writes this repo's gate status; copy templates/review-gate-writer.yml in (references/adoption.md), or, for a repository that posts no gate status, set REVIEW_GATE_WRITER = \"optional\" and REVIEW_GATE_MODE = \"off\" in kendex.settings.toml" ;;
+    *) die writer-state "$writer_state" "lib/settings.sh rg_writer_state printed a state it does not define" ;;
+  esac
+  if [ -n "$nested_engine" ]; then
+    rg_report note workflow-nested "$nested_engine" "a NESTED file does execute the engine ($nested_engine), and GitHub runs only direct children of .github/workflows/ — move it up one level"
+  fi
+  finish
+fi
+if [ "$adopted_count" -gt 1 ]; then
+  bad workflow-count "$adopted_count" "$adopted_count tracked workflows execute review-writer.sh — the gate has exactly one writer by design; delete the copies that are not the adopted one"
+  printf '\n'
+  exit 1
+fi
+ok workflow-adopted "$adopted" "one adopted writer workflow: $adopted"
+
+# The path the workflow NAMES has to exist in a checkout, which is a
+# different question from whether this machine has the engine: the exec line
+# is what Actions runs, and an untracked target is a red writer on every leg.
+exec_target="$(sed -n 's/^[[:space:]]*exec[[:space:]]\{1,\}\([^[:space:]]*review-writer\.sh\)[[:space:]]*$/\1/p' "$adopted" | head -n 1)"
+if [ -z "$exec_target" ]; then
+  bad workflow-target-missing "$adopted" "$adopted names no exec target — the discovery above matched, so this is a parse gap in this tool rather than a repo fault; report it to the package owner"
+elif [ -L "$exec_target" ]; then
+  bad workflow-target-symlink "$exec_target" "$adopted execs $exec_target, which is a SYMLINK — CI checks out the link and runs whatever sits at the other end, which is nothing when the target is untracked or outside the repository. Commit the engine at that path"
+elif git ls-files --error-unmatch -- "$exec_target" >/dev/null 2>&1; then
+  ok workflow-target "$exec_target" "the engine the workflow execs is tracked ($exec_target)"
+else
+  bad workflow-target-untracked "$exec_target" "$adopted execs $exec_target, which is NOT tracked — Actions checks out tracked files only, so that path is absent in CI and the writer fails to execute on every leg (\`git add $exec_target\`)"
+fi
+
+if [ "$engine_refs" -gt 1 ]; then
+  bad workflow-reference-count "$engine_refs" "$engine_refs tracked workflows name review-writer.sh outside a comment ($engine_ref_files) — the gate has exactly one writer by design, and a second workflow reaching the engine by any spelling can post gate statuses outside the single-writer group. Read it and delete the reference, or the workflow"
+else
+  ok workflow-reference-count "$engine_refs" "no other tracked workflow names the engine outside a comment"
+fi
+
+# ============================== equality ===================================
+
+code_lines "$adopted" >"$TMP/adopted.code"
+
+# The EXPECTED side only. Rewriting both sides makes the two spellings
+# interchangeable, which is the opposite of the contract: each repo kind has
+# one correct spelling and the other one is wrong there. The catalog runs the
+# tracked originals, so its template is rewritten to `skills/` and an adopted
+# copy still on `.agents/` diverges; a consumer's expected spelling is the
+# vendored path the template already ships, so nothing is rewritten and a
+# copy on `skills/` diverges.
+
+# The opt-in is the one ADDITION a copy may carry, and it is ONE addition in
+# ONE place. Rather than deleting the pair from the adopted side — which
+# accepts it anywhere, including under `jobs:`, where it is not a trigger at
+# all — the EXPECTED side is built with the template's own two commented
+# lines uncommented IN PLACE. Position then costs nothing to enforce: the
+# comparison stays a plain equality, and a pair anywhere else is a
+# divergence like any other edit.
+TEMPLATE_OPT_TRIGGER='  #   check_run:'
+TEMPLATE_OPT_TYPES='  #     types: [created, completed]'
+
+first_match_line() { # FILE LITERAL — line number of the first exact match, or empty
+  local out rc=0
+  out="$(grep -nxF -- "$2" "$1")" || rc=$?
+  [ "$rc" -le 1 ] || die template-read "$1" "could not read $1 while looking for the opt-in (grep exit $rc)"
+  [ "$rc" -eq 0 ] || return 0
+  out="${out%%$'\n'*}"
+  printf '%s' "${out%%:*}"
+}
+
+# The allowance is DERIVED from the template, never hardcoded beside it: if
+# the shipped file stops carrying the commented pair, this tool must stop
+# claiming to know what uncommenting it looks like.
+[ -n "$(first_match_line "$TEMPLATE" "$TEMPLATE_OPT_TRIGGER")" ] &&
+  [ -n "$(first_match_line "$TEMPLATE" "$TEMPLATE_OPT_TYPES")" ] ||
+  die template-opt-in "$TEMPLATE" "$TEMPLATE no longer carries the commented check_run opt-in this tool derives its one allowance from"
+
+CHECK_RUN_ENABLED=0
+cr_n="$(first_match_line "$TMP/adopted.code" '  check_run:')"
+ty_n="$(first_match_line "$TMP/adopted.code" '    types: [created, completed]')"
+if [ -n "$cr_n" ] && [ -n "$ty_n" ] && [ "$ty_n" = "$((cr_n + 1))" ]; then
+  CHECK_RUN_ENABLED=1
+elif [ -n "$cr_n" ] || [ -n "$ty_n" ]; then
+  bad workflow-opt-in "$adopted" "$adopted carries a PARTIAL check_run opt-in — the trigger line and its \`types: [created, completed]\` child opt in together or not at all: a trigger without the child fires on every activity type or is refused outright, and the child without its trigger lands under whatever precedes it. Uncomment both template lines, adjacent, or neither"
+fi
+
+# The expected copy of ONE template file in this repo: the opt-in pair
+# uncommented in place when the adopted copy carries it, and the catalog's
+# script path. Every template version is judged through this one rewrite, so
+# a version from history and the current one are held to the same deltas.
+EXPECT_SED=()
+if [ "$CHECK_RUN_ENABLED" -eq 1 ]; then
+  EXPECT_SED+=(-e "s|^${TEMPLATE_OPT_TRIGGER}\$|  check_run:|"
+    -e "s|^  #     types: \\[created, completed\\]\$|    types: [created, completed]|")
+fi
+if [ "$IS_CATALOG" -eq 1 ]; then
+  EXPECT_SED+=(-e 's#\.agents/skills/review-gate/#skills/review-gate/#g')
+fi
+expected_raw() { # TEMPLATE_FILE — raw bytes on stdout
+  if [ "${#EXPECT_SED[@]}" -eq 0 ]; then
+    cat "$1"
+  else
+    sed "${EXPECT_SED[@]}" "$1"
+  fi
+}
+
+expected_raw "$TEMPLATE" >"$TMP/template.raw" ||
+  die template-read "$TEMPLATE" "could not read $TEMPLATE"
+code_lines "$TMP/template.raw" >"$TMP/template.code"
+
+# Paths from the repository root: the pathspec the template's history is
+# read through, and the command a person runs from there.
+TEMPLATE_REL="$(cd "$TEMPLATES_DIR" && git rev-parse --show-prefix)review-gate-writer.yml" ||
+  die template-path "$TEMPLATE" "could not place $TEMPLATE inside the repository"
+ADOPT_CMD="$(cd "$SCRIPT_DIR" && git rev-parse --show-prefix)validate-workflow.sh --adopt" ||
+  die script-path "$SCRIPT_DIR" "could not place $SCRIPT_DIR inside the repository"
+
+# The shipped version the copy was compared against, as a git blob id a
+# reader finds with `git log --find-object`: the template names no version.
+template_note() {
+  local blob
+  blob="$(git hash-object -- "$TEMPLATE")" || die template-hash "$TEMPLATE" "could not hash $TEMPLATE"
+  rg_report note workflow-template "$blob" "the shipped template compared against: $TEMPLATE_REL at blob $blob"
+}
+
+# Every version of the template this repository's history committed, each
+# through the same rewrite, until one equals the adopted copy. Sets SHIPPED to
+# that version's blob id, or leaves it empty: a copy no shipped version equals
+# is a copy a person edited. A commit that deleted the template holds no
+# version. Called in the main shell, so every die here ends the run.
+SHIPPED=""
+shipped_match() {
+  local commit blob cmp_rc seen=" "
+  git log --format=%H -- "$TEMPLATE_REL" >"$TMP/history" ||
+    die template-history "$TEMPLATE_REL" "could not read the history of $TEMPLATE_REL"
+  while IFS= read -r commit; do
+    blob="$(git rev-parse --verify --quiet "$commit:$TEMPLATE_REL")" || continue
+    case "$seen" in *" $blob "*) continue ;; esac
+    seen="$seen$blob "
+    git cat-file blob "$blob" >"$TMP/shipped.yml" ||
+      die template-history "$blob" "could not read $TEMPLATE_REL at blob $blob"
+    expected_raw "$TMP/shipped.yml" >"$TMP/shipped.raw" ||
+      die template-history "$blob" "could not rewrite $TEMPLATE_REL at blob $blob"
+    code_lines "$TMP/shipped.raw" >"$TMP/shipped.code" ||
+      die template-history "$blob" "could not read the code lines of $TEMPLATE_REL at blob $blob"
+    cmp_rc=0
+    cmp -s "$TMP/shipped.code" "$TMP/adopted.code" || cmp_rc=$?
+    [ "$cmp_rc" -le 1 ] || die workflow-compare "$cmp_rc" "could not compare $adopted against $TEMPLATE_REL at blob $blob (cmp exit $cmp_rc)"
+    if [ "$cmp_rc" -eq 0 ]; then
+      SHIPPED="$blob"
+      return 0
+    fi
+  done <"$TMP/history"
+  return 0
+}
+
+# diff exits 0 same, 1 differing, and anything higher is trouble reading the
+# files — which must not be laundered into "they differ".
+diff_rc=0
+diff "$TMP/template.code" "$TMP/adopted.code" >"$TMP/diff.out" || diff_rc=$?
+if [ "$diff_rc" -gt 1 ]; then
+  die workflow-compare "$diff_rc" "could not compare $adopted against $TEMPLATE (diff exit $diff_rc)"
+fi
+# ONE row, naming the first divergence. Listing every differing line is a
+# diff, and the remedy does not vary per line.
+first_divergence="$(head -n 4 "$TMP/diff.out" | sed 's/^/          /')"
+if [ "$diff_rc" -eq 0 ]; then
+  ok workflow-equality "$adopted" "the adopted workflow is the shipped template, line for line"
+elif [ "$ADOPT" -eq 0 ]; then
+  bad workflow-equality "$adopted" "$adopted has diverged from the shipped template ($TEMPLATE). Run \`$ADOPT_CMD\` and commit the result: it re-installs the template over a copy that equals a version this repository shipped. Where it reports workflow-edited, a person changed the copy; re-copy the template by hand. First divergence:
+$first_divergence"
+  template_note
+else
+  shipped_match
+  if [ -n "$SHIPPED" ]; then
+    # The EXPECTED bytes, not the template's: the copy keeps this repo's
+    # script path and the opt-in it had, so it is equal the moment it lands.
+    cat "$TMP/template.raw" >"$adopted" || die workflow-write "$adopted" "could not write $adopted"
+    ok workflow-readopted "$adopted" "$adopted equalled the shipped template at blob $SHIPPED; re-installed $TEMPLATE_REL over it"
+  else
+    bad workflow-edited "$adopted" "$adopted equals no version of $TEMPLATE_REL this repository's history shipped, so a person edited it; it was left untouched. Re-copy the template by hand. First divergence:
+$first_divergence"
+    template_note
+  fi
+fi
+
+# ==================== what equality cannot express =========================
+
+if [ "$CHECK_RUN_ENABLED" -eq 1 ]; then
+  # REPORTED, not checked, and the note says so. The reviewer's check NAME
+  # is a GitHub repository variable read by the relay's if: before any
+  # checkout exists; a local report-only tool cannot see it, and reaching for
+  # the API to find out would be a network dependency this tool does not
+  # have. So the prerequisite is named and left to a person.
+  rg_report note workflow-check-name "REVIEW_GATE_CHECK_RUN_NAME" "the check_run opt-in is enabled, so the repository variable REVIEW_GATE_CHECK_RUN_NAME must carry the reviewer's check name (Settings → Secrets and variables → Actions), or the trigger relays nothing. NOT CHECKED HERE — this tool reads files, and that value is not in one; confirm it yourself"
+fi
+
+finish

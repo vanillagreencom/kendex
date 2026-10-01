@@ -5,6 +5,7 @@
 # --workflow-edit-report file holds a Markdown section for refresh-consumer.sh,
 # naming PATH:LINE and both first-divergent lines; it is empty without an edit.
 # The committed adoption hash proves ownership of a retired writer copy.
+# Retired adoption records emit refresh-warning=legacy-writer value=TEMPLATE.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "${1:-}" = --help ] && [ "$#" -eq 1 ]; then
@@ -69,6 +70,7 @@ retired = [e for e in entries if isinstance(e, dict) and e["template"] == retire
 # A renamed copy keeps that owner, so its record selects the retirement path.
 prior = {}
 if retired:
+    print("refresh-warning=legacy-writer value=" + retired_owner, file=sys.stderr)
     previous = subprocess.run(["git", "show", "HEAD:.kendex-generated.json"], cwd=root, capture_output=True, text=True)
     if previous.returncode != 0:
         raise SystemExit("refresh-error=prior-inventory value=HEAD:.kendex-generated.json")
