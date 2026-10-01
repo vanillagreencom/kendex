@@ -8,7 +8,7 @@ The overseer applies these rules to the three Copilot head notices [review-pr-co
 
 ## Fallback approval
 
-An `awaiting-stale` line means no approval reached the head within the quiet period. When the owning lane's own review of that head passed with no open blocker, approve the head as the overseer's GitHub App, whose approval the base's rules count like Copilot's, and send one notice naming the pull request and the head, to the master while one runs. No ruleset or setting changes. Otherwise, request a Copilot re-review (`gh pr edit [N] --add-reviewer @copilot`) and wake the lane with what its review left open. A head that a `copilot-declined-unchanged` notice names takes that notice's rule instead.
+An `awaiting-stale` line means no approval reached the head within the quiet period. When the owning lane's own review of that head passed with no open blocker, approve the head as the overseer's GitHub App, whose approval the base's rules count like Copilot's, and send one notice naming the pull request and the head, to the master while one runs. No ruleset or setting changes. Otherwise, use the [Copilot request owner](gates.md#copilot-requests), with `[PR_NUMBER]` set to `[N]` and `[REVIEW_BASE_CHECKOUT]` bound per that reference. Route its answer before any review wait. Wake the lane with what its review left open. A head that a `copilot-declined-unchanged` notice names takes that notice's rule instead.
 
 ## Use 1 rows
 

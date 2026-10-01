@@ -387,10 +387,10 @@ Auto-resolve every thread where a reply was posted; keep open only threads await
 
 ### 7.2 Copilot Head Route
 
-**Skip if** no thread this triage answered is Copilot's. Copilot's review overview opens with one of three labels. It submits `Approved` as an `APPROVED` review. It submits `Changes recommended` and `Needs a closer look` as `COMMENTED`. It re-reads a head only on a review request, so a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs. Resolve the gate mode the base sets:
+**Skip if** no thread this triage answered is Copilot's. Copilot's review overview opens with one of three labels. It submits `Approved` as an `APPROVED` review. It submits `Changes recommended` and `Needs a closer look` as `COMMENTED`. It re-reads a head only on a review request, so a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Resolve through that consumer base:
 
 ```bash
-env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode
+env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]
 ```
 
 `off`, or a non-zero exit, which is reported, ends this step: no rule holds the pull request for an approval, or no mode was read. On `approval`, bind the head:
@@ -411,8 +411,10 @@ A line whose `commit_id` is `[HEAD_SHA]` and whose `state` is `APPROVED` ends th
 - **Head moved**, by a push for any reviewer's thread. Unless the head already equals `pr_approval.copilot_rerequest_head`, request one Copilot re-review, record that head, then wait on it through [Waiter launch](../references/waiter-launch.md). A head already recorded gets no second request, no wait and no notice: the overseer's `awaiting-stale` rule decides it.
 
   ```bash
-  env -u GH_REPO -u GITHUB_REPOSITORY gh pr edit [PR_NUMBER] --add-reviewer @copilot
+  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --base-checkout [REVIEW_BASE_CHECKOUT]
   ```
+
+  Route the answer per [Copilot requests](../references/gates.md#copilot-requests) before recording the head or starting the wait.
 
   ```bash
   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.pr_approval.copilot_rerequest_head = "[HEAD_SHA]"'
