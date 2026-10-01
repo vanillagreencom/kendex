@@ -25,7 +25,7 @@ An overseer running the § 4 watch reads a peer's reply there, as the `kind=answ
 
 ## Who reads a note
 
-A local send requires the target checkout's `overseer` record here, and `peer ask` also requires the caller's record before either append; a missing record refuses without appending, with one keyed line that directs remote delivery to the owner's `owner-note` tool.
+A local send requires the target checkout's `overseer` record here, and `peer ask` requires the caller's record through the reply's data-only lookup before either append; a missing record refuses without appending, with one keyed line that directs remote delivery to the owner's `owner-note` tool.
 
 A note or an ask lands in the target repository's overseer mailbox, which has one reader: the session the checkout's oversee workflow state names under `.overseer` by tmux server and pane. The writers of that pair are the ones the [`overseer` row](../schemas/workflow-state.md#oversee-state) names. Among them `oversee register` names a session opened by hand, which is how a checkout that runs no fleet, the owner's dotfiles among them, names the agent that reads its mail. Registering makes that session the checkout's overseer in every respect the hooks judge, not only its mail reader: its turn end is held at the context marks and it is told to run `oversee-succeed` or write the handoff, as a fleet overseer is. Every other session in the checkout, one the owner opened there for other work included, is handed nothing from the mailbox, and a record naming a pane that no longer runs names no reader.
 

@@ -197,7 +197,7 @@ Peer side, one other repository's overseer mailbox per call:
               to-overseer.jsonl and to REPO's overseer to-lane.jsonl; print
               `id=<id>`. `pending --item overseer` lists it until REPO answers
               and `wait --item overseer --id <id>` blocks for that answer.
-              Both checkouts' records are required before either append;
+              Both records use the reply's data-only lookup before either append;
               REPO's pane is judged as `peer send` judges it after the `id=` line
   peer send --repo REPO --file PATH [--re MSGID]
               append to REPO's overseer to-lane.jsonl the answer to MSGID, or
@@ -1093,13 +1093,12 @@ lm_peer_reader() {
   return 0
 }
 
-# The caller's own record uses the writers' full environment resolution.
-# A peer's settings are data only: no peer file runs here, and the caller's
-# ORCH_STATE_DIR names no directory of the peer's.
-lm_overseer_state() { # own|peer ROOT ARGS...
+# Owner sends use full resolution; peer asks and replies share data-only
+# resolution, so the caller cannot accept a record its replying peer misses.
+lm_overseer_state() { # full|data ROOT ARGS...
   local scope="$1" root="$2"
   shift 2
-  if [ "$scope" = peer ]; then
+  if [ "$scope" = data ]; then
     (cd -- "$root" && env -u ORCH_STATE_DIR "$SCRIPT_DIR/workflow-state" --no-private-env "$@") 2>"$WORK_DIR/reader.err"
   else
     (cd -- "$root" && "$SCRIPT_DIR/workflow-state" "$@") 2>"$WORK_DIR/reader.err"
@@ -1111,9 +1110,8 @@ lm_overseer_state() { # own|peer ROOT ARGS...
 # that delivery. Hosted mail already addresses its destination through the
 # provider; this shell cannot read that host's fleet state.
 LM_OVERSEER_RECORD=""
-lm_require_overseer() { # own|peer ROOT
+lm_require_overseer() { # full|data ROOT
   local scope="$1" root="$2" path
-  [ "$scope" != peer ] || [ "$HOST" -eq 0 ] || return 0
   if ! path="$(lm_overseer_state "$scope" "$root" path oversee)"; then
     refuse overseer-unreadable "$root" "$(cat -- "$WORK_DIR/reader.err")"
   fi
@@ -1505,7 +1503,7 @@ case "$VERB" in
       lm_owner_ask "$MSGID"
       BY=text
     fi
-    [ "$ITEM" != overseer ] || [ "$HOST" -eq 1 ] || lm_require_overseer own "$ROOT"
+    [ "$ITEM" != overseer ] || [ "$HOST" -eq 1 ] || lm_require_overseer full "$ROOT"
     # The delivery-id check runs under the lock on the disk that holds the
     # file; a provider's append takes no guard, so a hosted send carries none.
     [ -z "$DELIVERY_ID" ] || [ "$HOST" -eq 0 ] || refuse option-conflict '--host,--delivery-id'
@@ -1603,8 +1601,8 @@ case "$VERB" in
     lm_read_file
     # A peer's reply needs the caller's record too. Refuse the ask before
     # either append rather than delivering a question nobody can answer.
-    [ "$PEER_VERB" != ask ] || lm_require_overseer own "$OWN_ROOT"
-    lm_require_overseer peer "$ROOT"
+    [ "$PEER_VERB" != ask ] || lm_require_overseer data "$OWN_ROOT"
+    [ "$HOST" -eq 1 ] || lm_require_overseer data "$ROOT"
     if [ "$PEER_VERB" = ask ]; then
       LINE="$(lm_envelope ask)"
     elif [ -n "$MSGID" ]; then

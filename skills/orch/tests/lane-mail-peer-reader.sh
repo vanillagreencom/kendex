@@ -176,17 +176,39 @@ owner|
 EOF
 
 # A caller without a record cannot receive the reply peer send would refuse.
-live_record
-(cd "$TMP_ROOT/sender" && "$WORKFLOW_STATE" init oversee >/dev/null)
-peer_call ask 'No return reader.'
-own_lines=0
-if [ -f "$TMP_ROOT/sender/tmp/lane-mail/overseer/to-overseer.jsonl" ]; then
-  own_lines="$(wc -l < "$TMP_ROOT/sender/tmp/lane-mail/overseer/to-overseer.jsonl" | tr -d ' ')"
-fi
-error="$(first_err)"
-assert_eq "$RC $OUT ${error%% no overseer*} lines=$(err_lines) peer=$LINES own=$own_lines" \
-  "2  lane-mail: overseer-absent=$TMP_ROOT/sender lines=1 peer=0 own=0" \
-  "an unrecorded caller's ask refuses before either append" "$TMP_ROOT/err"
+caller_ask() { # default|process|private
+  local mode="$1" state="$TMP_ROOT/caller-$1-state"
+  live_record
+  rm -rf -- "$state" "$TMP_ROOT/sender/tmp/lane-mail/overseer"
+  (cd "$TMP_ROOT/sender" && "$WORKFLOW_STATE" --no-private-env init oversee >/dev/null)
+  SEND_ENV=()
+  case "$mode" in
+    default) ;;
+    process) SEND_ENV=("ORCH_STATE_DIR=$state") ;;
+    private) printf 'export ORCH_STATE_DIR=%q\n' "$state" > "$TMP_ROOT/sender/.env.local" ;;
+  esac
+  if [ "$mode" != default ]; then
+    # register and launch use the full loader, unlike the replying peer.
+    (cd "$TMP_ROOT/sender" && env -u ORCH_STATE_DIR ${SEND_ENV[@]+"${SEND_ENV[@]}"} \
+      "$WORKFLOW_STATE" init oversee >/dev/null &&
+      env -u ORCH_STATE_DIR ${SEND_ENV[@]+"${SEND_ENV[@]}"} \
+      "$WORKFLOW_STATE" set oversee overseer '{"window":"@1"}' >/dev/null)
+  fi
+  peer_call ask 'No return reader.'
+  OWN_LINES=0
+  if [ -f "$TMP_ROOT/sender/tmp/lane-mail/overseer/to-overseer.jsonl" ]; then
+    OWN_LINES="$(wc -l < "$TMP_ROOT/sender/tmp/lane-mail/overseer/to-overseer.jsonl" | tr -d ' ')"
+  fi
+  rm -f -- "$TMP_ROOT/sender/.env.local"
+  SEND_ENV=()
+}
+for mode in default process private; do
+  caller_ask "$mode"
+  error="$(first_err)"
+  assert_eq "$RC $OUT ${error%% no overseer*} lines=$(err_lines) peer=$LINES own=$OWN_LINES" \
+    "2  lane-mail: overseer-absent=$TMP_ROOT/sender lines=1 peer=0 own=0" \
+    "a caller without a reply-visible record refuses before either append: $mode" "$TMP_ROOT/err"
+done
 (cd "$TMP_ROOT/sender" && "$WORKFLOW_STATE" set oversee overseer '{"window":"@1"}' >/dev/null)
 
 # Own record reads use the same environment as register and launch writers.
@@ -324,12 +346,16 @@ SEND_ENV=()
 assert_eq "$RC lines=$LINES" "2 lines=0" \
   "control: a sender's ORCH_STATE_DIR reaching the reader misplaces the peer's record"
 
-mutant caller-allowed '    [ "$PEER_VERB" != ask ] || lm_require_overseer own "$OWN_ROOT"' '    [ "$PEER_VERB" != ask ] || :'
-live_record
-(cd "$TMP_ROOT/sender" && "$WORKFLOW_STATE" init oversee >/dev/null)
-peer_call ask 'Control: no return reader.'
-assert_eq "$RC ${OUT%%=*} peer=$LINES" "0 id peer=1" \
+mutant caller-allowed '    [ "$PEER_VERB" != ask ] || lm_require_overseer data "$OWN_ROOT"' '    [ "$PEER_VERB" != ask ] || :'
+caller_ask default
+assert_eq "$RC ${OUT%%=*} peer=$LINES own=$OWN_LINES" "0 id peer=1 own=1" \
   "control: disabling the caller check delivers an ask whose reply would refuse" "$TMP_ROOT/err"
+mutant caller-full '    [ "$PEER_VERB" != ask ] || lm_require_overseer data "$OWN_ROOT"' '    [ "$PEER_VERB" != ask ] || lm_require_overseer full "$OWN_ROOT"'
+for mode in process private; do
+  caller_ask "$mode"
+  assert_eq "$RC ${OUT%%=*} peer=$LINES own=$OWN_LINES" "0 id peer=1 own=1" \
+    "control: full caller resolution accepts a record the reply cannot find: $mode" "$TMP_ROOT/err"
+done
 (cd "$TMP_ROOT/sender" && "$WORKFLOW_STATE" set oversee overseer '{"window":"@1"}' >/dev/null)
 
 mutant own-state-cleared '(cd -- "$root" && "$SCRIPT_DIR/workflow-state" "$@")' '(cd -- "$root" && env -u ORCH_STATE_DIR "$SCRIPT_DIR/workflow-state" "$@")'
