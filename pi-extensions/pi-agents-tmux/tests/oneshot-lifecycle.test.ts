@@ -563,12 +563,11 @@ test("bg one-shot abort during settled grace clears the pending settled SIGTERM"
 	try {
 		// The abort at 25ms lands inside the settled grace window (armed at
 		// 5ms, SIGTERM due at 65ms). Abort must take over the lifecycle: the
-		// run rejects as aborted — never a settled semantic completion — and
+		// run returns stopped, never a settled semantic completion, and
 		// exactly one SIGTERM is delivered by the abort path; a surviving
 		// settled grace timer would deliver a second one at 65ms before the
 		// 100ms close.
-		await assert.rejects(
-			runSingleAgent(
+		const result = await runSingleAgent(
 				cwd,
 				tempRuntime(),
 				[testAgent()],
@@ -582,9 +581,8 @@ test("bg one-shot abort during settled grace clears the pending settled SIGTERM"
 				controller.signal,
 				undefined,
 				makeDetails,
-			),
-			/Agent was aborted/,
 		);
+		assert.equal(result.status, "stopped");
 		assert.deepEqual(calls[0]?.kills, ["SIGTERM"]);
 	} finally {
 		setBgSettledShutdownGraceMsForTests();

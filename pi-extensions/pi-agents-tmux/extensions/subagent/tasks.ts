@@ -134,13 +134,15 @@ export async function upsertTaskRecord(runtimeRoot: string, record: PaneTaskReco
 }
 
 export function normalizePaneTaskStatus(status: unknown): PaneTaskStatus {
-	return status === "queued" || status === "running" || status === "completed" || status === "blocked" || status === "failed" || status === "needs_completion"
+	// Pi names parent cancellation aborted.
+	if (status === "aborted") return "stopped";
+	return status === "queued" || status === "running" || status === "completed" || status === "blocked" || status === "failed" || status === "stopped" || status === "refused" || status === "needs_completion"
 		? status
 		: "unknown";
 }
 
 export function isTerminalTaskStatus(status: PaneTaskStatus | undefined): boolean {
-	return status === "completed" || status === "blocked" || status === "failed";
+	return status === "completed" || status === "blocked" || status === "failed" || status === "stopped" || status === "refused";
 }
 
 export function inferTaskRecordKind(runtimeRoot: string, record: PaneTaskRecord): DashboardKind {

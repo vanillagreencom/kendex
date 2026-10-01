@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-agents-tmux",
-  "version": "3.2.3",
+  "version": "4.0.0",
   "description": "Pi extension for delegating work to project or user agents, including persistent tmux agent panes.",
   "license": "MIT",
   "keywords": [
@@ -84,23 +84,9 @@
         {
           "key": "reusedSessionBudgetThreshold",
           "label": "Reused session budget threshold",
-          "description": "Refuse or warn before launching an explicit bg sessionKey when the saved session estimate exceeds this fraction of model context.",
+          "description": "Start fresh when a bg sessionKey exceeds this fraction of model context. sameSession refuses instead. The status reader reports this same threshold.",
           "type": "number",
           "default": 0.8,
-          "category": "Execution",
-          "apply": "live"
-        },
-        {
-          "key": "reusedSessionBudgetPolicy",
-          "label": "Reused session budget policy",
-          "description": "Behavior when an explicit bg sessionKey is near context limit. refuse-and-warn blocks launch with a warning; warn allows launch with a warning; compact-then-resume archives/truncates the lane before launch.",
-          "type": "enum",
-          "enumValues": [
-            "refuse-and-warn",
-            "warn",
-            "compact-then-resume"
-          ],
-          "default": "refuse-and-warn",
           "category": "Execution",
           "apply": "live"
         },

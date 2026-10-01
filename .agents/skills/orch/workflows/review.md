@@ -50,6 +50,8 @@ A failed check omits the path and carries `- decision index lookup failed for [D
 
 ## 2. Launch Reviewers
 
+Apply [Delegation](../references/skill-rules.md#delegation) before selecting any stored reviewer session.
+
 `[AGENTS]` is every `reviewer-*` agent this harness exposes. Resolve the reviewer mode per [references/skill-rules.md § Agent Lifecycle](../references/skill-rules.md#agent-lifecycle):
 
 ```bash

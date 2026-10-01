@@ -4,7 +4,7 @@ import { expect } from "bun:test";
 import assert from "node:assert/strict";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearPackageConfigCache } from "../extensions/subagent/package-config.js";
@@ -15,6 +15,8 @@ import { taskRegistryPath } from "../extensions/subagent/paths.js";
 import { sessionRuntimeDir } from "../extensions/subagent/settings.js";
 import { taskRegistryReader } from "../extensions/subagent/task-records.js";
 import { writeTaskRegistry } from "../extensions/subagent/tasks.js";
+import { resolveBgSession } from "../extensions/subagent/sessions.js";
+import { removeSettled } from "./remove-settled.js";
 import { taskRegistryReads, writeSettings } from "./browser-fixture.js";
 
 type ExtensionFactory = (pi: ExtensionAPI) => void;
@@ -79,6 +81,7 @@ export async function installExtension(harness: Harness, options: {
 	extension?: ExtensionFactory;
 	handlers?: Map<string, SessionHandler[]>;
 	appendEntry?: (customType: string, data: unknown) => void;
+	registerTool?: (tool: any) => void;
 } = {}): Promise<(event: unknown, ctx: ExtensionContext) => Promise<void>> {
 	const handlers = options.handlers ?? new Map<string, SessionHandler[]>();
 	const bus = new EventEmitter();
@@ -93,7 +96,7 @@ export async function installExtension(harness: Harness, options: {
 		registerCommand: () => undefined,
 		registerMessageRenderer: () => undefined,
 		registerShortcut: () => undefined,
-		registerTool: () => undefined,
+		registerTool: options.registerTool ?? (() => undefined),
 		sendMessage: () => undefined,
 		sendUserMessage: async () => undefined,
 	} as any;
@@ -113,6 +116,7 @@ export function fakeCtx(harness: Harness): any {
 		cwd: harness.cwd,
 		hasUI: false,
 		isIdle: () => true,
+		isProjectTrusted: () => true,
 		model: undefined,
 		sessionManager: {
 			getSessionFile: () => undefined,
@@ -126,6 +130,53 @@ export function fakeCtx(harness: Harness): any {
 			setWidget: () => undefined,
 		},
 	};
+}
+
+/** Run registered tools against an isolated parent with drained shutdown. */
+export async function withExtensionTools(run: (tools: Map<string, any>, ctx: any, harness: Harness) => Promise<void>, extension?: ExtensionFactory) {
+	const harness = createHarness({});
+	const ctx = fakeCtx(harness);
+	const handlers = new Map<string, SessionHandler[]>();
+	const tools = new Map<string, any>();
+	try {
+		await withoutRealIntervals(async () => {
+			const start = await installExtension(harness, { extension, handlers, registerTool: (tool) => tools.set(tool.name, tool) });
+			await start({}, ctx);
+			await run(tools, ctx, harness);
+		});
+	} finally {
+		for (const handler of handlers.get("session_shutdown") ?? []) await handler({ reason: "quit" }, ctx);
+		teardown(harness);
+		await removeSettled(harness.cwd);
+	}
+}
+
+/** A cancellation event persists stopped and is read back through the real tool. */
+export async function assertStoppedEvent(extension?: ExtensionFactory) {
+	const factory = extension ?? (await import("../extensions/subagent/index.js")).default;
+	let emit: ExtensionAPI["events"]["emit"];
+	await withExtensionTools(async (tools, ctx) => {
+		const root = sessionRuntimeDir(ctx.sessionManager.getSessionId());
+		emit("subagents:failed", { agent: "scout", taskId: "canceled-task", mode: "oneshot", runtimeRoot: root, status: "aborted", error: "Agent was aborted", task: "map" });
+		// Registry persistence runs after the bus callback; the real status tool waits for it.
+		const result = await tools.get("get_subagent_result").execute("test", { taskId: "canceled-task", wait: true, timeoutMs: 1000 }, undefined, undefined, ctx);
+		assert.equal(result.details.status, "stopped");
+	}, (pi) => { emit = pi.events.emit.bind(pi.events); factory(pi); });
+}
+
+/** A parent reads the child guard's exact estimate before choosing reuse. */
+export async function assertAgentContextBudget(extension?: ExtensionFactory) {
+	await withExtensionTools(async (tools, ctx, harness) => {
+		writeSettings(harness.cwd, { reusedSessionContextLimitTokens: 100, reusedSessionBudgetThreshold: 0.8 });
+		const root = sessionRuntimeDir(ctx.sessionManager.getSessionId());
+		const session = resolveBgSession(root, "scout", "reuse");
+		mkdirSync(join(root, "sessions"), { recursive: true });
+		writeFileSync(session.path, `${JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "prior result" }] } })}\n`.padEnd(432, " "));
+		const result = await tools.get("get_subagent_result").execute("test", { agent: "scout", sessionKey: "reuse" }, undefined, undefined, ctx);
+		const budget = result.details.contextBudget;
+		assert.deepEqual([result.isError ?? false, budget?.ok, budget?.estimate.tokens, budget?.estimate.contextLimitTokens, budget?.estimate.ratio, budget?.estimate.threshold, result.details.summary], [false, false, 108, 100, 1.08, 0.8, "prior result"]);
+		assert.deepEqual(JSON.parse(result.content[0].text).contextBudget, budget);
+	}, extension);
 }
 
 /** Run `fn` with setInterval stubbed out; each interval it starts is pushed

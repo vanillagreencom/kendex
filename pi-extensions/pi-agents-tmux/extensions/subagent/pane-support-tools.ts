@@ -8,6 +8,8 @@ import {
 	wrappedText,
 } from "./format.js";
 import { sanitizeCwdSnapshot } from "./cwd-snapshot.js";
+import { readLastAssistantTextFromTranscript } from "./format.js";
+import { bgSessionPath, guardReusedSessionBudget } from "./sessions.js";
 import {
 	GetSubagentResultParams,
 	SteerSubagentParams,
@@ -101,6 +103,16 @@ export function registerPaneSupportTools(deps: PaneSupportToolDeps): void {
 					isError: waited.isError,
 				};
 			}
+			if (params.sessionKey) {
+				if (!params.agent) return { content: [{ type: "text", text: "Provide agent with sessionKey." }], details: {}, isError: true };
+				const sessionPath = bgSessionPath(runtimeRoot, params.agent, params.sessionKey);
+				const contextBudget = await guardReusedSessionBudget(sessionPath, params.agent, undefined, ctx.cwd);
+				const summary = contextBudget.estimate.exists ? await readLastAssistantTextFromTranscript(sessionPath) : undefined;
+				return {
+					content: [{ type: "text", text: JSON.stringify({ agent: params.agent, sessionKey: params.sessionKey, contextBudget, summary }) }],
+					details: { agent: params.agent, sessionKey: params.sessionKey, contextBudget, summary } satisfies GetSubagentResultDetails,
+				};
+			}
 			const deadline = Date.now() + Math.max(0, Math.floor(params.timeoutMs ?? 30000));
 			let record: PaneTaskRecord | undefined;
 			let diagnostics: string[] = [];
@@ -128,12 +140,13 @@ export function registerPaneSupportTools(deps: PaneSupportToolDeps): void {
 				record = backfilled.record;
 			}
 			const finalRecord = record as PaneTaskRecord;
+			const contextBudget = finalRecord.transcriptPath ? await guardReusedSessionBudget(finalRecord.transcriptPath, finalRecord.agent, finalRecord.model, ctx.cwd) : undefined;
 			updateDashboardFromTaskRecord({ ...finalRecord, updatedAt: new Date().toISOString() }, runtimeRoot);
 			await persistRuntimeSnapshot(ctx, runtimeRoot);
 			const diagnosticBlock = params.verbose && diagnostics.length > 0 ? `\n\n### Artifact diagnostics\n${diagnostics.map((line) => `- ${line}`).join("\n")}` : "";
 			return {
-				content: [{ type: "text", text: `${formatTaskRecordResult(finalRecord, params.verbose ?? false)}${diagnosticBlock}` }],
-				details: { agent: finalRecord.agent, paneId: finalRecord.paneId, summary: finalRecord.summary, status: finalRecord.status, taskId: finalRecord.taskId, notes: finalRecord.notes, cwdSnapshot: sanitizeCwdSnapshot(finalRecord.cwdSnapshot), diagnostics: finalRecord.diagnostics, completionMessageEmitted } satisfies GetSubagentResultDetails,
+				content: [{ type: "text", text: `${formatTaskRecordResult(finalRecord, params.verbose ?? false)}${diagnosticBlock}${contextBudget ? `\nContext budget: ${JSON.stringify(contextBudget)}` : ""}` }],
+				details: { agent: finalRecord.agent, paneId: finalRecord.paneId, summary: finalRecord.summary, status: finalRecord.status, taskId: finalRecord.taskId, notes: finalRecord.notes, cwdSnapshot: sanitizeCwdSnapshot(finalRecord.cwdSnapshot), diagnostics: finalRecord.diagnostics, completionMessageEmitted, contextBudget } satisfies GetSubagentResultDetails,
 			};
 		},
 		renderCall(_args, _theme, _context) {

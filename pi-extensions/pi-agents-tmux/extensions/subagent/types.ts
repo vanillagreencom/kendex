@@ -1,6 +1,7 @@
 import type { Message } from "@earendil-works/pi-ai";
 import type { TruncationResult } from "@earendil-works/pi-coding-agent";
 import type { AgentScope } from "./agents.js";
+import type { SessionBudgetGuard } from "./sessions.js";
 
 export const PACKAGE_ID = "pi-agents-tmux";
 export const CONFIG_ID = "@vanillagreen/pi-agents-tmux";
@@ -187,6 +188,8 @@ export interface SingleResult {
 	task: string;
 	sessionMode?: SessionMode;
 	status?: PaneTaskStatus;
+	/** Dispatch notice consumed by the panel and tool result. */
+	reuseNotice?: string;
 	needsCompletionReason?: string;
 	cwdSnapshot?: CwdSnapshot;
 	diagnostics?: string[];
@@ -271,7 +274,7 @@ export interface PaneRegistryEntry {
 	bridgeSocket?: string;
 }
 
-export type PaneTaskStatus = "queued" | "running" | "completed" | "blocked" | "failed" | "needs_completion" | "unknown";
+export type PaneTaskStatus = "queued" | "running" | "completed" | "blocked" | "failed" | "stopped" | "refused" | "needs_completion" | "unknown";
 export type SessionMode = "fresh" | "resumed" | "new";
 
 export interface PaneCompletion {
@@ -320,6 +323,7 @@ export interface AgentsCommandMessageDetails {
 }
 
 export interface PaneTaskRecord {
+	reuseNotice?: string;
 	taskId: string;
 	agent: string;
 	task: string;
@@ -360,6 +364,7 @@ export type CompletionMessageProvenance = "persisted" | "task-echo-fallback" | "
 export type SubagentDashboardStatus = PaneTaskStatus | "running" | "waiting";
 
 export interface SubagentDashboardItem {
+	reuseNotice?: string;
 	agent: string;
 	artifacts?: boolean;
 	bridge?: boolean;
@@ -429,6 +434,8 @@ export interface TaskArtifactPaths {
 }
 
 export interface GetSubagentResultDetails {
+	contextBudget?: SessionBudgetGuard;
+	sessionKey?: string;
 	agent?: string;
 	paneId?: string;
 	summary?: string;

@@ -80,7 +80,7 @@ Map each comment to a domain from its source type and file path. Domain-to-agent
 
 ## 3. Analyze
 
-Delegate to the mapped domain agents in parallel.
+Apply [Delegation](../references/skill-rules.md#delegation) before selecting domain, architecture, or fix agents on every pass. Delegate to the mapped domain agents in parallel.
 
 <delegation_format>
 Analyze these PR review comments for your domain.

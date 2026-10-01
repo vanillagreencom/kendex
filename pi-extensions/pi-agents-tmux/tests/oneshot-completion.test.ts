@@ -8,7 +8,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import test, { after } from "node:test";
 import { runSingleAgent, setGitExecFileForTests, setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
-import { isContextLengthExceededEnvelope, isContextLengthExceededText, resolveBgSession, setSessionCompactorForTests } from "../extensions/subagent/sessions.js";
+import { isContextLengthExceededEnvelope, isContextLengthExceededText, resolveBgSession } from "../extensions/subagent/sessions.js";
 import type { SingleResult } from "../extensions/subagent/types.js";
 import { bridgeEvent, bridgeStdout, cleanupTempRuntimes, installMockSpawn, makeDetails, mockPiEvents, shapedStreamEvent, tempGitRepo, tempRuntime, testAgent, transcriptEventName, writeSettings } from "./single-agent-fixture.js";
 import { clearPackageConfigCache } from "../extensions/subagent/package-config.js";
@@ -17,8 +17,8 @@ after(cleanupTempRuntimes);
 
 type Emitted = Array<{ name: string; payload: any }>;
 
-function runOneShot(options: { cwd: string; pi: any; runtimeRoot?: string; sessionKey?: string; signal?: AbortSignal }): Promise<SingleResult> {
-	return runSingleAgent(options.cwd, options.runtimeRoot ?? tempRuntime(), [testAgent()], "reviewer-test", "review code", undefined, undefined, undefined, undefined, options.pi, options.signal, undefined, makeDetails, options.sessionKey);
+function runOneShot(options: { cwd: string; pi: any; runtimeRoot?: string; sessionKey?: string; sameSession?: boolean; signal?: AbortSignal }): Promise<SingleResult> {
+	return runSingleAgent(options.cwd, options.runtimeRoot ?? tempRuntime(), [testAgent()], "reviewer-test", "review code", undefined, undefined, undefined, undefined, options.pi, options.signal, undefined, makeDetails, options.sessionKey, "bg-task-timeout", options.sameSession);
 }
 
 // The pi bus as one line, in emit order. A `needs_completion` event must carry
@@ -161,7 +161,7 @@ test("the end of a one-shot run", async () => {
 	}
 });
 
-test("an aborted run fails with the partial answer flushed to its transcript", async () => {
+test("an aborted run stops with the partial answer flushed to its transcript", async () => {
 	const emitted: Emitted = [];
 	const cwd = tempRuntime();
 	const calls = installMockSpawn([{ code: 0, stdout: bridgeStdout([
@@ -170,13 +170,14 @@ test("an aborted run fails with the partial answer flushed to its transcript", a
 	const controller = new AbortController();
 	controller.abort();
 	try {
-		await assert.rejects(runOneShot({ cwd, pi: mockPiEvents(emitted), signal: controller.signal }), /Agent was aborted/);
+		const result = await runOneShot({ cwd, pi: mockPiEvents(emitted), signal: controller.signal });
+		assert.equal(result.status, "stopped");
 		const failed = emitted.find((event) => event.name === "subagents:failed");
 		const records = readFileSync(failed?.payload.transcriptPath, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
 		const updates = records.filter((record) => record.event && transcriptEventName(record.event) === "message_update");
 		assert.equal(
 			`spawns=${calls.length} bus=${emitted.map((event) => event.name.replace(/^subagents:/, "")).join(",")} status=${failed?.payload.status} updates=${updates.length} buffered=${updates.every((record) => record.buffered === true)} partial=${updates.some((record) => JSON.stringify(record.event).includes("aborted partial"))}`,
-			"spawns=1 bus=started,failed status=aborted updates=1 buffered=true partial=true",
+			"spawns=1 bus=started,failed status=stopped updates=1 buffered=true partial=true",
 		);
 	} finally {
 		setSingleAgentSpawnForTests();
@@ -214,18 +215,18 @@ test("the context-overflow detector", () => {
 
 const OK_STDOUT = bridgeStdout([textEnd("ok")]);
 
-type BudgetWorld = { compactor?: "fails" | "truncates"; key?: string; session?: "absent" | number; settings?: Record<string, unknown> };
+type BudgetWorld = { key?: string; session?: "absent" | number; settings?: Record<string, unknown> };
 
-// The guard's outcome as one line: spawns, compactor calls, the exit and stop
+// The guard's outcome as one line: spawns, the exit and stop
 // reason, the session mode, whether the result names the requested key, and
 // whether stderr carries the guard's line.
-function budgetLine(result: SingleResult, spawns: number, compactions: number, key: string): string {
-	return `spawns=${spawns} compactions=${compactions} exit=${result.exitCode} refused=${result.refused ?? false} stop=${result.stopReason ?? "-"} mode=${result.sessionMode ?? "-"} key=${result.sessionKey === key ? "key" : result.sessionKey ?? "-"} stderr=${result.stderr ? "guard-line" : "-"}`;
+function budgetLine(result: SingleResult, spawns: number, key: string): string {
+	return `spawns=${spawns} exit=${result.exitCode} refused=${result.refused ?? false} stop=${result.stopReason ?? "-"} mode=${result.sessionMode ?? "-"} key=${result.sessionKey === key ? "key" : result.sessionKey ?? "-"} stderr=${result.stderr ? "guard-line" : "-"}`;
 }
 
 const TIGHT = { reusedSessionBudgetThreshold: 0.5, reusedSessionContextLimitTokens: 100 };
-const REFUSED = "spawns=0 compactions=0 exit=1 refused=true stop=session_budget_exceeded mode=resumed key=key stderr=guard-line";
-const SPAWNED = "spawns=1 compactions=0 exit=0 refused=false stop=- mode=resumed key=key stderr=-";
+const REFUSED = "spawns=0 exit=1 refused=true stop=session_budget_exceeded mode=resumed key=key stderr=guard-line";
+const SPAWNED = "spawns=1 exit=0 refused=false stop=- mode=resumed key=key stderr=-";
 
 // A session estimates at one token per four bytes, rounded up, against the
 // limit; the default limit is 272k tokens and the default threshold 80%, so
@@ -242,10 +243,7 @@ const budgetRows: Array<[string, BudgetWorld, string]> = [
 	["a zero threshold falls back to the default: over the 80% line is refused", { session: 324, settings: { reusedSessionContextLimitTokens: 100, reusedSessionBudgetThreshold: 0 } }, REFUSED],
 	["under a configured threshold spawns", { session: 100, settings: TIGHT }, SPAWNED],
 	["an explicit key with no session file yet spawns", { session: "absent", settings: TIGHT }, SPAWNED],
-	["a one-shot session key is never guarded", { key: "oneshot-fixed", session: 1_000, settings: TIGHT }, "spawns=1 compactions=0 exit=0 refused=false stop=- mode=fresh key=key stderr=-"],
-	["the warn policy spawns with the guard's line on stderr", { session: 1_000, settings: { ...TIGHT, reusedSessionBudgetPolicy: "warn" } }, "spawns=1 compactions=0 exit=0 refused=false stop=- mode=resumed key=key stderr=guard-line"],
-	["compact-then-resume compacts once, then spawns", { compactor: "truncates", session: 1_000, settings: { ...TIGHT, reusedSessionBudgetPolicy: "compact-then-resume" } }, "spawns=1 compactions=1 exit=0 refused=false stop=- mode=resumed key=key stderr=guard-line"],
-	["a failed compaction refuses", { compactor: "fails", session: 1_000, settings: { ...TIGHT, reusedSessionBudgetPolicy: "compact-then-resume" } }, "spawns=0 compactions=1 exit=1 refused=true stop=session_budget_exceeded mode=resumed key=key stderr=guard-line"],
+	["a one-shot session key is never guarded", { key: "oneshot-fixed", session: 1_000, settings: TIGHT }, "spawns=1 exit=0 refused=false stop=- mode=fresh key=key stderr=-"],
 ];
 
 test("the reused-session budget guard", async () => {
@@ -274,19 +272,11 @@ async function runBudgetRows(): Promise<void> {
 			mkdirSync(dirname(session.path), { recursive: true });
 			writeFileSync(session.path, "x".repeat(world.session ?? 0), "utf8");
 		}
-		let compactions = 0;
-		setSessionCompactorForTests(async (request) => {
-			compactions += 1;
-			if (world.compactor === "fails") throw new Error("archive disk full");
-			writeFileSync(request.sessionPath, "", "utf8");
-			return { archivePath: `${request.sessionPath}.archive` };
-		});
 		const calls = installMockSpawn([{ code: 0, stdout: OK_STDOUT }]);
 		try {
-			const result = await runOneShot({ cwd, pi: mockPiEvents([]), runtimeRoot, sessionKey: key });
-			assert.equal(budgetLine(result, calls.length, compactions, key), expect, label);
+			const result = await runOneShot({ cwd, pi: mockPiEvents([]), runtimeRoot, sessionKey: key, sameSession: true });
+			assert.equal(budgetLine(result, calls.length, key), expect, label);
 		} finally {
-			setSessionCompactorForTests();
 			setSingleAgentSpawnForTests();
 		}
 	}

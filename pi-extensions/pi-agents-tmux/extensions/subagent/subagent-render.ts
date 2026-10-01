@@ -2,6 +2,7 @@ import { getMarkdownTheme, type AgentToolResult, type ToolRenderContext } from "
 import { Container, Markdown, Spacer, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { cachedAgentDiscovery, type AgentScope } from "./agents.js";
 import { dashboardKindLabel } from "./dashboard.js";
+import { singleResultIsError, singleResultStatus } from "./outcomes.js";
 import {
 	addArtifactPathSection,
 	addSectionHeading,
@@ -201,9 +202,10 @@ export const subagentToolRenderers = {
 			// runSingleAgent uses exitCode -1 as the still-running sentinel while
 			// emitting streaming partials; only a positive exitCode (or a terminal
 			// stopReason) is a real failure.
-			const isRunning = r.exitCode === -1;
+			const status = singleResultStatus(r);
+			const isRunning = status === "running";
 			const needsCompletion = r.status === "needs_completion";
-			const isError = !needsCompletion && !isRunning && (r.exitCode > 0 || r.stopReason === "error" || r.stopReason === "aborted");
+			const isError = singleResultIsError(r);
 			// A refused dispatch never started an agent: no queued task, no process,
 			// no usage. It is reported as its own state so the row does not read as a
 			// run that blew up.
@@ -218,7 +220,7 @@ export const subagentToolRenderers = {
 			if (expanded) {
 				if (isQueued) return expandedQueuedTaskComponent(r);
 				const container = new Container();
-				const statusLabel = isQueued ? "Queued task" : isRunning ? "working" : needsCompletion ? "needs completion" : isRefused ? "refused" : isError ? "failed" : "completed";
+				const statusLabel = isQueued ? "Queued task" : isRunning ? "working" : needsCompletion ? "needs completion" : status;
 				const statusTone = isQueued || isRunning || needsCompletion || isRefused ? "warning" : isError ? "error" : "success";
 				let header = agentStatusLine(theme, r.agent, statusLabel, statusTone, `${laneBadge(r)}${resultSessionChip(r)}`);
 				if (isRefused && r.stopReason) header += ` ${theme.fg("warning", `[${r.stopReason}]`)}`;
@@ -226,6 +228,7 @@ export const subagentToolRenderers = {
 				if (needsCompletion && r.needsCompletionReason) header += ` ${theme.fg("warning", `[${r.needsCompletionReason}]`)}`;
 				header += truncationBadge(r);
 				container.addChild(wrappedText(header));
+				if (r.reuseNotice) container.addChild(wrappedText(theme.fg("warning", r.reuseNotice)));
 				// The refusal message already names the guard and the recovery step;
 				// an "Error:" prefix would reassert the failed-run framing.
 				if (isRefused && refusalReason) container.addChild(wrappedText(theme.fg("warning", refusalReason)));
@@ -288,6 +291,7 @@ export const subagentToolRenderers = {
 				// came back).
 				const previewIsTask = !(finalOutput && !finalOutputLooksLikeToolEcho(finalOutput, toolCalls));
 				let text = `${agentStatusLine(theme, r.agent, "completed", "success", `${laneBadge(r)}${resultSessionChip(r)}${theme.fg("dim", " · ctrl+o to expand")}`)}${truncationBadge(r)}`;
+				if (r.reuseNotice) text += `\n${theme.fg("warning", r.reuseNotice)}`;
 				if (preview) {
 					const body = previewIsTask
 						? `${theme.fg("dim", "Task: ")}${theme.fg("toolOutput", preview)}`
@@ -299,13 +303,14 @@ export const subagentToolRenderers = {
 				return wrappedText(text);
 			}
 
-			const compactStatusLabel = isRunning ? "working" : needsCompletion ? "needs completion" : isRefused ? "refused" : isError ? "failed" : "completed";
+			const compactStatusLabel = isRunning ? "working" : needsCompletion ? "needs completion" : status;
 			const compactStatusTone = isRunning || needsCompletion || isRefused ? "warning" : isError ? "error" : "success";
 			let text = queued || agentStatusLine(theme, r.agent, compactStatusLabel, compactStatusTone, `${laneBadge(r)}${resultSessionChip(r)}${theme.fg("dim", " · ctrl+o to expand")}`);
 			if (isRefused && r.stopReason) text += ` ${theme.fg("warning", `[${r.stopReason}]`)}`;
 			else if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 			if (needsCompletion && r.needsCompletionReason) text += ` ${theme.fg("warning", `[${r.needsCompletionReason}]`)}`;
 			text += truncationBadge(r);
+			if (r.reuseNotice) text += `\n${theme.fg("warning", r.reuseNotice)}`;
 			if (queued) text += `\n${subagentBranch(theme, "└", cwd)}${theme.fg("dim", r.task ? `Task: ${oneLinePreview(r.task, 120)}` : "queued task")}`;
 			else if (isRefused && refusalReason) text += `\n${theme.fg("warning", refusalReason)}`;
 			else if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
@@ -339,17 +344,21 @@ export const subagentToolRenderers = {
 		};
 
 		if (details.mode === "chain") {
-			const successCount = details.results.filter((r) => r.exitCode === 0 && r.status !== "needs_completion").length;
+			const successCount = details.results.filter((r) => singleResultStatus(r) === "completed").length;
 			const runningCount = details.results.filter((r) => r.exitCode === -1).length;
 			const needsCompletionCount = details.results.filter((r) => r.status === "needs_completion").length;
-			const chainStepIcon = (r: SingleResult) =>
-				r.status === "needs_completion"
-					? theme.fg("warning", ICONS.warning)
-					: r.exitCode === -1
-					? theme.fg("warning", ICONS.cog)
-					: r.exitCode === 0
-						? theme.fg("success", ICONS.check)
-						: theme.fg("error", ICONS.times);
+			const chainStepIcon = (r: SingleResult) => {
+				const status = singleResultStatus(r);
+				switch (status) {
+					case "needs_completion":
+					case "refused":
+					case "stopped": return theme.fg("warning", ICONS.warning);
+					case "running": return theme.fg("warning", ICONS.cog);
+					case "completed": return theme.fg("success", ICONS.check);
+					case "failed": return theme.fg("error", ICONS.times);
+					default: { const unreachable: never = status; throw new Error(`Unknown result status: ${unreachable}`); }
+				}
+			};
 			const icon = runningCount > 0
 				? theme.fg("warning", ICONS.cog)
 				: needsCompletionCount > 0
@@ -380,6 +389,8 @@ export const subagentToolRenderers = {
 							`${theme.fg("muted", `─── Step ${r.step}: `) + theme.fg("accent", r.agent)} ${rIcon}${laneBadge(r)}${resultSessionChip(r)}${truncationBadge(r)}`,
 						),
 					);
+					container.addChild(wrappedText(`${singleResultStatus(r)}${r.reuseNotice ? ` · ${r.reuseNotice}` : ""}`));
+					if (singleResultIsError(r)) container.addChild(wrappedText(r.errorMessage || r.stderr));
 					container.addChild(wrappedText(theme.fg("muted", "Task: ") + theme.fg("dim", r.task)));
 					const toolCalls = displayItems.filter((item) => item.type === "toolCall");
 					container.addChild(wrappedText(theme.fg("muted", "Tools used:")));
@@ -420,6 +431,8 @@ export const subagentToolRenderers = {
 				const rIcon = chainStepIcon(r);
 				const displayItems = getDisplayItems(r.messages);
 				text += `\n\n${theme.fg("muted", `─── Step ${r.step}: `)}${theme.fg("accent", r.agent)} ${rIcon}${laneBadge(r)}${resultSessionChip(r)}${truncationBadge(r)}`;
+				text += `\n${singleResultStatus(r)}${r.reuseNotice ? ` · ${r.reuseNotice}` : ""}`;
+				if (singleResultIsError(r)) text += `\n${r.errorMessage || r.stderr}`;
 				if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
 				else text += `\n${renderDisplayItems(displayItems, 5)}`;
 				const outputPath = fullOutputLine(r);
@@ -436,9 +449,9 @@ export const subagentToolRenderers = {
 		if (details.mode === "parallel") {
 			const running = details.results.filter((r) => r.exitCode === -1).length;
 			const needsCompletionCount = details.results.filter((r) => r.status === "needs_completion").length;
-			const successCount = details.results.filter((r) => r.exitCode === 0 && r.status !== "needs_completion").length;
-			const failCount = details.results.filter((r) => r.exitCode > 0).length;
-			const queuedPaneCount = details.results.filter((r) => r.exitCode === 0 && r.taskId && r.paneId).length;
+			const successCount = details.results.filter((r) => singleResultStatus(r) === "completed").length;
+			const failCount = details.results.filter(singleResultIsError).length;
+			const queuedPaneCount = details.results.filter((r) => singleResultStatus(r) === "completed" && r.taskId && r.paneId).length;
 			const oneshotCompletedCount = successCount - queuedPaneCount;
 			const isRunning = running > 0;
 			const total = details.results.length;
@@ -474,7 +487,9 @@ export const subagentToolRenderers = {
 				.map((r, index) => {
 					const prefix = index === details.results.length - 1 ? "└" : "├";
 					const name = ((text: string, width: number) => `${text}${" ".repeat(Math.max(0, width - visibleWidth(text)))}`)(ansiMagenta(theme.bold(r.agent)), nameWidth);
-					return `${subagentBranch(theme, prefix, cwd)}${name}${laneBadge(r)}${resultSessionChip(r)}${rowTaskPreview(r, 100)}${truncationBadge(r)}`;
+					const status = singleResultStatus(r);
+					const diagnostic = singleResultIsError(r) ? r.errorMessage || r.stderr : r.reuseNotice;
+					return `${subagentBranch(theme, prefix, cwd)}${name} · ${status}${laneBadge(r)}${resultSessionChip(r)}${diagnostic ? `\n  ${oneLinePreview(diagnostic, 512)}` : rowTaskPreview(r, 100)}${truncationBadge(r)}`;
 				})
 				.join("\n");
 

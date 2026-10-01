@@ -1,5 +1,7 @@
 # Code Review Lifecycle
 
+The caller applies [orch § Delegation](../../orch/references/skill-rules.md#delegation) before selecting an agent for each round.
+
 Review agents run in parallel, each reviewing the same changes from their own domain. You review and return a verdict; the orchestrator owns tracker state, fix routing, and presentation.
 
 ## 1. Diff

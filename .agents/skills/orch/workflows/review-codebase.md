@@ -19,6 +19,8 @@ Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the
 
 ## 2. Delegate
 
+Apply [Delegation](../references/skill-rules.md#delegation) before selecting any stored reviewer session.
+
 `[AGENTS]` is every `reviewer-*` agent this harness exposes; use the full list and do not path-filter. None available → report `No reviewer agents installed; cannot run codebase review` and **END**.
 
 Resolve the reviewer mode per [references/skill-rules.md § Agent Lifecycle](../references/skill-rules.md#agent-lifecycle):

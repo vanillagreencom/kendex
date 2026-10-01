@@ -2,6 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 
 const TaskItem = Type.Object({
+	sameSession: Type.Optional(Type.Boolean({ description: "With a background sessionKey, require that exact session. Refuse above the context guard threshold instead of handing the new task and prior final result to a fresh agent." })),
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task to delegate to the agent" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
@@ -9,6 +10,7 @@ const TaskItem = Type.Object({
 });
 
 const ChainItem = Type.Object({
+	sameSession: Type.Optional(Type.Boolean({ description: "With a background sessionKey, require that exact session. Refuse above the context guard threshold instead of handing the new task and prior final result to a fresh agent." })),
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task with optional {previous} placeholder for prior output" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
@@ -21,6 +23,7 @@ const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
 });
 
 export const SubagentParams = Type.Object({
+	sameSession: Type.Optional(Type.Boolean({ description: "With a background sessionKey, require that exact session. Refuse above the context guard threshold instead of handing the new task and prior final result to a fresh agent." })),
 	agent: Type.Optional(Type.String({ description: "Name of the agent to invoke (for single mode)" })),
 	task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
 	tasks: Type.Optional(Type.Array(TaskItem, { description: "Array of {agent, task} for parallel execution. Dispatch uses a flat worker pool capped at maxConcurrency; caller does not need to split." })),
@@ -59,6 +62,7 @@ export const SubagentParams = Type.Object({
 });
 
 export const GetSubagentResultParams = Type.Object({
+	sessionKey: Type.Optional(Type.String({ description: "With agent, read a background lane's own context estimate and guard threshold before reuse. Returns its prior final result." })),
 	taskId: Type.Optional(Type.String({ description: "Persistent pane task ID to retrieve" })),
 	agent: Type.Optional(Type.String({ description: "Persistent pane agent name; selects that agent's latest task when taskId is omitted" })),
 	wait: Type.Optional(Type.Boolean({ description: "Poll for completion until timeout before returning", default: false })),

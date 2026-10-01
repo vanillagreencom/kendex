@@ -1,5 +1,7 @@
 # Codebase Review Lifecycle
 
+The caller applies [orch § Delegation](../../orch/references/skill-rules.md#delegation) before selecting an agent for each round.
+
 Whole-codebase review for ad-hoc early-stage audits: no PR, no issue, no diff. You review and return a verdict; the orchestrator owns fanout, collection, and presentation.
 
 ## 1. Scope

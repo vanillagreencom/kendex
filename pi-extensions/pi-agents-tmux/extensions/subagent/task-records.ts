@@ -26,7 +26,7 @@ export function monitorStatusIsActive(status: PaneTaskStatus | string | undefine
 }
 
 export function monitorStatusIsTerminal(status: PaneTaskStatus | string | undefined): boolean {
-	return status === "completed" || status === "failed" || status === "blocked" || status === "needs_completion" || status === "cancelled";
+	return status === "completed" || status === "failed" || status === "stopped" || status === "refused" || status === "blocked" || status === "needs_completion" || status === "cancelled";
 }
 
 export function monitorSessionKey(record: PaneTaskRecord): { id: string; type: MonitorSessionType } {

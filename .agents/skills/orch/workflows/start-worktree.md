@@ -89,8 +89,8 @@ The full session from inside a worktree: implement → review → submit → fin
 
 1. **Run Workflow**: `⤵ workflows/dev-start.md § 1-4 → § 2 step 2` with context `worktree`, `lifecycle: "managed"`, `issue_id`.
 2. Parse the return: Branch, Commit, QA, Validate, Summary (the field names dev-implement emits).
-3. § 3 requires committed clean work: `HEAD` advanced from the pre-dev SHA, the returned commit in `HEAD` history, and `git status --porcelain` empty. Any failure re-delegates to the same dev agent with the exact missing step. Never review or submit a dirty worktree.
-4. **Do not shut the dev agent down** — it persists for § 3 fix cycles. Only § 5.4 retires it.
+3. § 3 requires committed clean work: `HEAD` advanced from the pre-dev SHA, the returned commit in `HEAD` history, and `git status --porcelain` empty. Any failure re-delegates the exact missing step under [Delegation](../references/skill-rules.md#delegation). Never review or submit a dirty worktree.
+4. Dev persistence for § 3 fix cycles follows [Agent Lifecycle](../references/skill-rules.md#agent-lifecycle). § 5.4 retires the remaining agent.
 
 ## 3. Review
 

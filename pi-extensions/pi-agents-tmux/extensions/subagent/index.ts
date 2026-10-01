@@ -181,6 +181,7 @@ import {
 	isTerminalTaskStatus,
 	latestTaskRecord,
 	markTaskNeedsCompletion,
+	normalizePaneTaskStatus,
 	normalizeUsageStats,
 	paneSessionBelongsToRuntime,
 	pollPaneCompletions,
@@ -257,9 +258,9 @@ function launchInventory(cwd: string, scope: AgentScope, allowed: AgentConfig[])
 
 function collectRequestedAgentNames(params: Record<string, any>): Set<string> {
 	const requested = new Set<string>();
-	if (Array.isArray(params.chain)) for (const step of params.chain) if (typeof step?.agent === "string") requested.add(step.agent);
-	if (Array.isArray(params.tasks)) for (const task of params.tasks) if (typeof task?.agent === "string") requested.add(task.agent);
-	if (typeof params.agent === "string") requested.add(params.agent);
+	if (Array.isArray(params.chain)) for (const step of params.chain) if (step?.agent && step?.task) requested.add(step.agent);
+	if (Array.isArray(params.tasks)) for (const task of params.tasks) if (task?.agent && task?.task) requested.add(task.agent);
+	if (params.agent && params.task) requested.add(params.agent);
 	return requested;
 }
 
@@ -811,6 +812,7 @@ export default function (pi: ExtensionAPI) {
 			const deliverAs = typeof event.deliverAs === "string" ? event.deliverAs : existing?.deliverAs;
 			records[taskId] = {
 				...existing,
+				reuseNotice: typeof event.reuseNotice === "string" ? event.reuseNotice : existing?.reuseNotice,
 				taskId,
 				agent,
 				task: typeof event.task === "string" ? event.task : existing?.task ?? "",
@@ -927,6 +929,7 @@ export default function (pi: ExtensionAPI) {
 		// without which appendBgChatMessages cannot emit a delegation row.
 		dashboardState.items[key] = {
 			...item,
+			reuseNotice: item.reuseNotice ?? existing?.reuseNotice,
 			startedAt: item.startedAt ?? existing?.startedAt,
 			completedAt: item.completedAt ?? existing?.completedAt,
 			sessionMode: item.sessionMode ?? existing?.sessionMode,
@@ -1028,6 +1031,7 @@ export default function (pi: ExtensionAPI) {
 		}
 		updateDashboard({
 			agent: record.agent,
+			reuseNotice: record.reuseNotice ?? existing?.reuseNotice,
 			artifacts: kind === "pane" ? Boolean(record.completionArchivePath || record.outboxFile || record.transcriptPath || record.processingFile || record.doneFile) : Boolean(record.transcriptPath),
 			bridge: existing?.bridge,
 			completedAt: record.completedAt,
@@ -1241,12 +1245,9 @@ export default function (pi: ExtensionAPI) {
 		const eventEffort = normalizeReasoningEffort(event.effort) ?? existing?.effort;
 		const sessionMode = normalizeEventSessionMode(event.sessionMode) ?? existing?.sessionMode;
 		const sessionKey = normalizeEventSessionKey(event.sessionKey) ?? existing?.sessionKey;
-		const eventSummary = normalizeSummaryText(typeof event.summary === "string" ? event.summary : typeof event.finalOutput === "string" ? event.finalOutput : typeof event.error === "string" ? event.error : undefined);
+		const eventSummary = normalizeSummaryText(typeof event.error === "string" ? event.error : typeof event.summary === "string" ? event.summary : typeof event.finalOutput === "string" ? event.finalOutput : undefined);
 		const kind = event.mode === "oneshot" ? "oneshot" : event.mode === "pane" ? "pane" : existing?.kind ?? "pane";
-		const payloadStatus = ((): PaneTaskStatus => {
-			const raw = event.status;
-			return raw === "queued" || raw === "running" || raw === "completed" || raw === "blocked" || raw === "failed" || raw === "needs_completion" ? raw : "unknown";
-		})();
+		const payloadStatus = normalizePaneTaskStatus(event.status);
 		const eventStatus = payloadStatus === "unknown" ? status : payloadStatus;
 		const effectiveStatus = dashboardStatusFor(eventStatus, kind);
 		persistTaskEvent(event, eventStatus);
@@ -2092,6 +2093,7 @@ export default function (pi: ExtensionAPI) {
 			const parentSessionId = runtimeSessionId(ctx);
 			const runtimeRoot = sessionRuntimeDir(parentSessionId);
 
+			params = { ...params, chain: params.chain?.filter((item) => item.agent && item.task), tasks: params.tasks?.filter((item) => item.agent && item.task) };
 			const hasChain = (params.chain?.length ?? 0) > 0;
 			const hasTasks = (params.tasks?.length ?? 0) > 0;
 			const hasSingle = Boolean(params.agent && params.task);
@@ -2148,7 +2150,8 @@ export default function (pi: ExtensionAPI) {
 			if (params.chain && params.chain.length > 0) {
 				return runChainDispatch({
 					agents,
-					chain: params.chain as Array<{ agent: string; task: string; cwd?: string; sessionKey?: string }>,
+					chain: params.chain,
+					sameSession: params.sameSession,
 					cwd: ctx.cwd,
 					forceSpawn: params.forceSpawn ?? false,
 					makeDetails,
@@ -2182,7 +2185,8 @@ export default function (pi: ExtensionAPI) {
 					resumeSession: params.resumeSession,
 					runtimeRoot,
 					signal,
-					tasks: params.tasks as Array<{ agent: string; task: string; cwd?: string; sessionKey?: string }>,
+					tasks: params.tasks,
+					sameSession: params.sameSession,
 					updateDashboard,
 				});
 			}
@@ -2205,6 +2209,7 @@ export default function (pi: ExtensionAPI) {
 					resumeSession: params.resumeSession,
 					runtimeRoot,
 					sessionKey: params.sessionKey,
+					sameSession: params.sameSession,
 					signal,
 					task: params.task,
 					updateDashboard,

@@ -12,7 +12,7 @@ Rules the orch workflows execute. [../SKILL.md](../SKILL.md) § Skill Rules rout
 
 When the caller requests a technical implementation plan, delegate to the installed `planner`. Report a missing planner instead of planning in the primary session. Pass any TPM handoff through the caller. `roadmap-plan` consumes a finished plan; it does not launch planner.
 
-**No duplicate spawns.** Never spawn a fresh agent while the same role is alive. Reuse by stored ID; respawn only after one recovery attempt or a confirmed stuck/closed status.
+**Stored-ID reuse.** Before every re-delegation, read that agent's own context figure and the reuse guard's threshold through the harness status API. Never substitute the parent's context or cumulative usage. Reuse the stored ID only when the guard permits it, including equality at the threshold. Above the threshold, retire the prior idle session and start a fresh agent of the same type. Send the new task with the prior agent's final result attached, then replace the stored ID. If the context figure is unavailable, choose fresh instead of guessing. An explicit same-session request keeps the guard's refusal text and fresh-agent remedy. Never duplicate a role's running task; stall recovery follows § Round Closure. Pi status calls and automatic background handoff are [pi-runtime.md § Context before reuse](pi-runtime.md#context-before-reuse).
 
 ### Format Tags Are Literal
 
@@ -30,9 +30,9 @@ An agent sends exactly one completion message. A second return is a violation: d
 
 `SPAWN → DELEGATE → WORK → RETURN (single message) → IDLE / RE-DELEGATE`.
 
-**Dev agents persist** for the whole session, re-delegated for every fix round. Shut down only on explicit user request or a confirmed stall.
+**Dev agents persist** across fix rounds while [§ Delegation](#delegation) permits reuse. Shut down on explicit user request, a confirmed stall, or a context handoff.
 
-**Reviewer persistence is budget-conditional.** Reviewer slots = `orch-env REVIEWER_SLOT_BUDGET 0` minus the primary session minus live `child_sessions` entries whose `status` is `active` (no `status` counts as active), minimum 1, recomputed at every review-cycle start; `0` means unlimited. Within budget, reuse reviewers by exact name and spawn only the missing subset. Over budget, or on a thread-limit spawn error, run waves and persist the wave size as `reviewer_slots_observed`. Review state lives on disk, never in reviewer session memory.
+**Reviewer persistence is budget-conditional.** Reviewer slots = `orch-env REVIEWER_SLOT_BUDGET 0` minus the primary session minus live `child_sessions` entries whose `status` is `active` (no `status` counts as active), minimum 1, recomputed at every review-cycle start; `0` means unlimited. Within the slot budget, apply [§ Delegation](#delegation) before reusing reviewers by exact name and spawn only the missing or context-exhausted subset. Over budget, or on a thread-limit spawn error, run waves and persist the wave size as `reviewer_slots_observed`. Review state lives on disk, never in reviewer session memory.
 
 QA agents spawn and shut down per agent.
 

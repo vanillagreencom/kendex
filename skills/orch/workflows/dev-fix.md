@@ -52,6 +52,8 @@ Cancel ends the workflow; a selection goes to § 2.
 
 ## 2. Delegate
 
+Apply [Delegation](../references/skill-rules.md#delegation) to the selected dev agent before every fix round, including a caller-supplied `dev_agent`.
+
 1. **Determine the agent.** `dev_agent` wins. Otherwise read state, falling back to the issue's `agent:*` label or the component paths:
 
    ```bash

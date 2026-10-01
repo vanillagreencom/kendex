@@ -43,6 +43,7 @@ import {
 } from "./settings.js";
 import {
 	guardReusedSessionBudget,
+	prepareContextHandoff,
 	isContextLengthExceededEnvelope,
 	resolveBgSession,
 	resultHasContextLengthExceeded,
@@ -515,6 +516,7 @@ export async function runSingleAgent(
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
 	sessionKey?: string,
 	deadline: BgDeadline = "bg-task-timeout",
+	sameSession = false,
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
 
@@ -536,14 +538,21 @@ export async function runSingleAgent(
 	const selectedModel = selectedModelForAgent(agent, parentModel, defaultCwd);
 	const selectedThinking = selectedThinkingLevelForAgent(parentThinkingLevel, defaultCwd);
 	const selectedEffort = selectedEffortForAgent(agent, selectedModel, selectedThinking);
-	const firstSession = resolveBgSession(runtimeRoot, agent.name, sessionKey);
+	let firstSession = resolveBgSession(runtimeRoot, agent.name, sessionKey);
 	await fs.promises.mkdir(path.dirname(firstSession.path), { recursive: true, mode: 0o700 }).catch(() => undefined);
 
 	const budgetGuard = firstSession.explicit
 		? await guardReusedSessionBudget(firstSession.path, agent.name, selectedModel, cwd ?? defaultCwd)
 		: undefined;
-	if (budgetGuard && !budgetGuard.ok) {
-		const errorMessage = budgetGuard.warning ?? `Refusing reused session for ${agent.name}: estimated context budget exceeded.`;
+	let reuseNotice: string | undefined;
+	if (budgetGuard && !budgetGuard.ok && !sameSession) {
+		const handoff = await prepareContextHandoff(task, budgetGuard.estimate);
+		task = handoff.task;
+		reuseNotice = handoff.notice;
+		firstSession = { ...resolveBgSession(runtimeRoot, agent.name, `handoff-${Date.now().toString(36)}-${randomHex(4)}`), mode: "fresh" };
+	}
+	if (budgetGuard && !budgetGuard.ok && sameSession) {
+		const errorMessage = [budgetGuard.warning ?? `Refusing reused session for ${agent.name}: estimated context budget exceeded.`, budgetGuard.migrationWarning].filter(Boolean).join("\n");
 		return {
 			agent: agentName,
 			agentSource: agent.source,
@@ -585,10 +594,10 @@ export async function runSingleAgent(
 		firstSession,
 		1,
 		deadline,
+		[reuseNotice, budgetGuard?.migrationWarning].filter(Boolean).join("\n") || undefined,
 	);
-	if (budgetGuard?.warning) first.stderr = [budgetGuard.warning, first.stderr].filter(Boolean).join("\n");
 
-	if (!resultHasContextLengthExceeded(first)) return first;
+	if (first.stopReason === "aborted" || !resultHasContextLengthExceeded(first)) return first;
 
 	const retrySession = resolveBgSession(runtimeRoot, agent.name);
 	const warning = `Context length exceeded for ${agent.name} session ${firstSession.key}; retrying once with fresh session ${retrySession.key}.`;
@@ -626,6 +635,7 @@ export async function runSingleAgent(
 		retrySession,
 		2,
 		deadline,
+		first.reuseNotice,
 	);
 	const attempts = [summarizeAttempt(first), summarizeAttempt(retry)];
 	retry.attempts = attempts;
@@ -668,6 +678,7 @@ async function runSingleAgentAttempt(
 	session: BgSessionSelection,
 	attempt: number,
 	deadline: BgDeadline,
+	reuseNotice?: string,
 ): Promise<SingleResult> {
 	const args: string[] = ["--mode", "json", "-p", "--name", agent.name, "--session", session.path];
 	if (selectedModel) args.push("--model", selectedModel);
@@ -706,11 +717,12 @@ async function runSingleAgentAttempt(
 	};
 
 	const currentResult: SingleResult = {
+		reuseNotice,
 		agent: agentName,
 		agentSource: agent.source,
 		task,
 		kind: "oneshot",
-		sessionMode: session.explicit ? "resumed" : "fresh",
+		sessionMode: session.mode,
 		// -1 = still running. Real exit code is set after proc.close; streaming
 		// partials must not look completed to callers that key on exitCode.
 		exitCode: -1,
@@ -769,6 +781,7 @@ async function runSingleAgentAttempt(
 		const invocation = getPiInvocation(args);
 
 		emitSubagentEvent(pi, "subagents:started", {
+			reuseNotice,
 			mode: "oneshot",
 			agent: agent.name,
 			taskId: oneShotTaskId,
@@ -1321,6 +1334,7 @@ async function runSingleAgentAttempt(
 
 		currentResult.exitCode = exitCode;
 		if (wasAborted) {
+			currentResult.status = "stopped";
 			currentResult.stopReason = "aborted";
 			currentResult.errorMessage = "Agent was aborted";
 			const summary = "Agent was aborted before completion.";
@@ -1329,7 +1343,7 @@ async function runSingleAgentAttempt(
 				agent: agent.name,
 				taskId: oneShotTaskId,
 				task,
-				status: "aborted",
+				status: "stopped",
 				summary,
 				runtimeRoot,
 				transcriptPath,
@@ -1343,7 +1357,7 @@ async function runSingleAgentAttempt(
 				ephemeralSession: session.ephemeral,
 				attempt,
 			});
-			throw new Error("Agent was aborted");
+			return currentResult;
 		}
 		if (
 			currentResult.needsCompletionReason === "compact-then-empty" &&
@@ -1387,12 +1401,13 @@ async function runSingleAgentAttempt(
 		const failed = exitCode !== 0 || currentResult.stopReason === "error" || currentResult.stopReason === "aborted";
 		const finalOutput = getFinalOutput(currentResult.messages);
 		emitSubagentEvent(pi, failed ? "subagents:failed" : "subagents:completed", {
+			reuseNotice,
 			mode: "oneshot",
 			agent: agent.name,
 			taskId: oneShotTaskId,
 			task,
 			status: failed ? "failed" : "completed",
-			...(finalOutput ? { summary: finalOutput, finalOutput } : {}),
+			...(failed ? { summary: currentResult.errorMessage || currentResult.stderr || finalOutput } : finalOutput ? { summary: finalOutput, finalOutput } : {}),
 			runtimeRoot,
 			transcriptPath,
 			model: currentResult.model,

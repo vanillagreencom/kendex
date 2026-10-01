@@ -9,7 +9,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentConfig } from "../extensions/subagent/agents.js";
 import { setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
+import { guardReusedSessionBudget, resolveBgSession } from "../extensions/subagent/sessions.js";
 import { clearPackageConfigCache, recordProjectTrust } from "../extensions/subagent/package-config.js";
+import { runSingleDispatch } from "../extensions/subagent/dispatch.js";
+import type { SubagentDashboardItem } from "../extensions/subagent/types.js";
 import type { SingleResult, SubagentDetails } from "../extensions/subagent/types.js";
 
 const tempRuntimeDirs = new Set<string>();
@@ -51,9 +54,38 @@ export function testAgent(): AgentConfig {
 	};
 }
 
-export function installMockSpawn(scenarios: Array<{ code?: number | null; delayMs?: number; error?: Error | string; signal?: string; stderr?: string; stdout?: string }>) {
+/** Drive the real dispatcher and capture its final panel update. */
+export async function dispatchOutcome(options: {
+	cwd?: string;
+	runtimeRoot?: string;
+	sessionKey?: string;
+	sameSession?: boolean;
+	signal?: AbortSignal;
+	run?: typeof runSingleDispatch;
+} = {}) {
+	const cwd = options.cwd ?? tempRuntime();
+	const rows: SubagentDashboardItem[] = [];
+	const result = await (options.run ?? runSingleDispatch)({
+		agents: [testAgent()], cwd, runtimeRoot: options.runtimeRoot ?? tempRuntime(),
+		parentSessionId: "test", pi: mockPiEvents([]),
+		agent: "reviewer-test", task: "new task", sessionKey: options.sessionKey,
+		sameSession: options.sameSession, signal: options.signal,
+		makeDetails: (mode) => (results) => ({ mode, agentScope: "project", projectAgentsDir: null, results }),
+		removeDashboardAgent: () => undefined, updateDashboard: (item) => { rows.push(item); },
+	});
+	return { result, row: rows.at(-1)! };
+}
+
+/** Assert the outcome independently in model-facing data and the panel. */
+export async function assertDispatchOutcome(status: "refused" | "stopped" | "failed", options: Parameters<typeof dispatchOutcome>[0], diagnostic: string) {
+	const { result, row } = await dispatchOutcome(options);
+	assert.deepEqual([row.status, result.isError, row.message?.includes(diagnostic), result.content[0]?.text.includes(diagnostic)], [status, true, true, true]);
+	return { result, row };
+}
+
+export function installMockSpawn(scenarios: Array<{ code?: number | null; delayMs?: number; error?: Error | string; signal?: string; stderr?: string; stdout?: string }>, install = setSingleAgentSpawnForTests) {
 	const calls: Array<{ args: string[]; kills: string[]; flow: { stdout: string[]; stderr: string[] } }> = [];
-	setSingleAgentSpawnForTests(((command: string, args: string[]) => {
+	install(((command: string, args: string[]) => {
 		void command;
 		const call = { args, kills: [] as string[], flow: { stdout: [] as string[], stderr: [] as string[] } };
 		calls.push(call);
@@ -196,6 +228,42 @@ export function withPollutedEnv(fn: () => void) {
 		else process.env.PI_CODING_AGENT_DIR = previousDir;
 		clearPackageConfigCache();
 	}
+}
+
+/** Reuse above the configured guard must launch once with task plus prior result. */
+export async function assertFreshHandoff(runtime: Pick<typeof import("../extensions/subagent/runner.js"), "runSingleAgent" | "setSingleAgentSpawnForTests">) {
+	const cwd = tempRuntime();
+	const root = tempRuntime();
+	writeSettings(cwd, { reusedSessionContextLimitTokens: 100, reusedSessionBudgetThreshold: 0.8 });
+	const session = resolveBgSession(root, "reviewer-test", "reuse");
+	mkdirSync(join(root, "sessions"), { recursive: true });
+	const prior = `${JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "prior final result" }] } })}\n`.padEnd(432, " ");
+	writeFileSync(session.path, prior);
+	const calls = installMockSpawn([{ stdout: bridgeStdout([bridgeEvent("message_end", { message: { role: "assistant", content: [{ type: "text", text: "fresh answer" }] } })]) }], runtime.setSingleAgentSpawnForTests);
+	try {
+		const result = await runtime.runSingleAgent(cwd, root, [testAgent()], "reviewer-test", "new task", undefined, undefined, undefined, undefined, mockPiEvents([]), undefined, undefined, makeDetails, "reuse");
+		assert.deepEqual([calls.length, result.exitCode, result.refused ?? false, result.sessionMode, result.reuseNotice, result.sessionKey !== "reuse" && result.sessionKeyExplicit === true, calls[0]?.args.at(-1)?.startsWith("Task: new task"), calls[0]?.args.at(-1)?.includes("prior final result"), readFileSync(session.path, "utf8") === prior], [1, 0, false, "fresh", "reused as fresh (context 108%)", true, true, true, true]);
+	} finally { runtime.setSingleAgentSpawnForTests(); }
+}
+
+/** Parent cancellation owns the end even if the stream carried an overflow. */
+export async function assertAbortNoRetry(runtime: Pick<typeof import("../extensions/subagent/runner.js"), "runSingleAgent" | "setSingleAgentSpawnForTests">) {
+	const controller = new AbortController();
+	controller.abort();
+	const cwd = tempRuntime();
+	const calls = installMockSpawn([{ stdout: bridgeStdout([{ error: { code: "context_length_exceeded" } }]) }, {}], runtime.setSingleAgentSpawnForTests);
+	try {
+		const result = await runtime.runSingleAgent(cwd, tempRuntime(), [testAgent()], "reviewer-test", "task", undefined, undefined, undefined, undefined, mockPiEvents([]), controller.signal, undefined, makeDetails);
+		assert.deepEqual([calls.length, result.status, result.stopReason], [1, "stopped", "aborted"]);
+	} finally { runtime.setSingleAgentSpawnForTests(); }
+}
+
+/** Old setting values remain readable and produce a migration warning. */
+export async function assertBudgetMigration(guard: typeof guardReusedSessionBudget, policy: string) {
+	const cwd = tempRuntime();
+	writeSettings(cwd, { reusedSessionBudgetPolicy: policy });
+	const result = await guard(join(cwd, "absent.jsonl"), "scout", undefined, cwd);
+	assert.deepEqual([result.ok, result.migrationWarning?.includes(`reusedSessionBudgetPolicy=${policy}`)], [true, true]);
 }
 
 export function cleanupTempRuntimes() {

@@ -1,5 +1,7 @@
 # Fix Lifecycle
 
+The caller applies [orch § Delegation](../../orch/references/skill-rules.md#delegation) before selecting an agent for each round.
+
 Read [code-quality](../../code-quality/SKILL.md) before writing or modifying code, including for ad-hoc requests.
 
 The workflow for a dev agent receiving a review-fix delegation. Every path is worktree-scoped.

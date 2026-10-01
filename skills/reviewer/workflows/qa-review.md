@@ -1,5 +1,7 @@
 # QA Review Lifecycle
 
+The caller applies [orch § Delegation](../../orch/references/skill-rules.md#delegation) before selecting an agent for each round.
+
 QA agents review ONE PR, triggered by a `needs-*` label. Review-only: never an issue owner. You review and return a verdict; the orchestrator owns tracker state, fix routing, and presentation.
 
 ## 1. Set Up

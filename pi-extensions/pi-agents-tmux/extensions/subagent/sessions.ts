@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { safeFileName } from "./names.js";
 import { randomHex } from "./random.js";
 import { settingNumber, settingString } from "./settings.js";
+import { readLastAssistantTextFromTranscript } from "./format.js";
 import type { AttemptSummary, SingleResult } from "./types.js";
 
 export const ONESHOT_SESSION_PREFIX = "oneshot-";
@@ -17,13 +18,12 @@ const CONTEXT_OVERFLOW_PATTERNS = [
 	/exceeds (?:the )?(?:model'?s )?maximum context length(?: of [\d,]+ tokens?|\s*\([\d,]+\))/i,
 ] as const;
 
-type ReusedSessionBudgetPolicy = "compact-then-resume" | "refuse-and-warn" | "warn";
-
 export interface BgSessionSelection {
 	ephemeral: boolean;
 	explicit: boolean;
 	key: string;
 	path: string;
+	mode: "fresh" | "resumed";
 }
 
 export interface SessionBudgetEstimate {
@@ -37,44 +37,20 @@ export interface SessionBudgetEstimate {
 }
 
 export interface SessionBudgetGuard {
-	compacted?: boolean;
-	compactionPath?: string;
 	estimate: SessionBudgetEstimate;
 	ok: boolean;
-	policy: ReusedSessionBudgetPolicy;
 	warning?: string;
+	/** Warn callers that still send the former setting during migration. */
+	migrationWarning?: string;
 }
 
-export interface SessionCompactionRequest {
-	agentName: string;
-	estimate: SessionBudgetEstimate;
-	model?: string;
-	sessionPath: string;
-}
-
-export interface SessionCompactionResult {
-	archivePath?: string;
-}
-
-type SessionCompactor = (request: SessionCompactionRequest) => Promise<SessionCompactionResult>;
-
-const defaultSessionCompactor: SessionCompactor = async (request) => {
-	let archivePath: string | undefined;
-	try {
-		const dir = path.dirname(request.sessionPath);
-		archivePath = path.join(dir, `${path.basename(request.sessionPath)}.precompact-${Date.now()}`);
-		await fs.promises.copyFile(request.sessionPath, archivePath);
-		await fs.promises.truncate(request.sessionPath, 0);
-	} catch (error) {
-		throw new Error(`Failed to compact reused session ${request.sessionPath}: ${error instanceof Error ? error.message : String(error)}`);
-	}
-	return { archivePath };
-};
-
-let sessionCompactor: SessionCompactor = defaultSessionCompactor;
-
-export function setSessionCompactorForTests(compactor?: SessionCompactor): void {
-	sessionCompactor = compactor ?? defaultSessionCompactor;
+/** Carry the new task and the prior final result, not the prior conversation. */
+export async function prepareContextHandoff(task: string, estimate: SessionBudgetEstimate): Promise<{ task: string; notice: string }> {
+	const priorResult = await readLastAssistantTextFromTranscript(estimate.path);
+	return {
+		task: `${task}\n\nPrior agent final result (${estimate.path}):\n${priorResult ?? "No prior final result available."}`,
+		notice: `reused as fresh (context ${Math.round(estimate.ratio * 100)}%)`,
+	};
 }
 
 export function createOneShotSessionKey(): string {
@@ -94,6 +70,7 @@ export function resolveBgSession(runtimeRoot: string, agentName: string, session
 		explicit,
 		key,
 		path: bgSessionPath(runtimeRoot, agentName, key),
+		mode: explicit ? "resumed" : "fresh",
 	};
 }
 
@@ -105,12 +82,6 @@ export function normalizeBudgetThreshold(value: number): number {
 
 export function reusedSessionBudgetThreshold(cwd?: string): number {
 	return normalizeBudgetThreshold(settingNumber("reusedSessionBudgetThreshold", DEFAULT_REUSED_SESSION_BUDGET_THRESHOLD, cwd));
-}
-
-export function reusedSessionBudgetPolicy(cwd?: string): ReusedSessionBudgetPolicy {
-	const value = settingString("reusedSessionBudgetPolicy", "refuse-and-warn", cwd);
-	if (value === "warn" || value === "compact-then-resume") return value;
-	return "refuse-and-warn";
 }
 
 export function modelContextLimitTokens(model: string | undefined, cwd?: string): number {
@@ -131,8 +102,8 @@ export async function estimateSessionBudget(sessionPath: string, model: string |
 		const stat = await fs.promises.stat(sessionPath);
 		bytes = stat.isFile() ? stat.size : 0;
 		exists = stat.isFile();
-	} catch {
-		// Missing session files are empty reused lanes.
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 	}
 	const contextLimitTokens = modelContextLimitTokens(model, cwd);
 	const tokens = estimateTokensFromBytes(bytes);
@@ -148,36 +119,16 @@ export async function estimateSessionBudget(sessionPath: string, model: string |
 	};
 }
 
+/** Judge reuse once; callers refuse an exact-session request or hand off. */
 export async function guardReusedSessionBudget(sessionPath: string, agentName: string, model: string | undefined, cwd?: string): Promise<SessionBudgetGuard> {
 	const estimate = await estimateSessionBudget(sessionPath, model, cwd);
-	const policy = reusedSessionBudgetPolicy(cwd);
-	if (!estimate.exists || estimate.ratio <= estimate.threshold) return { estimate, ok: true, policy };
+	const legacyPolicy = settingString("reusedSessionBudgetPolicy", "", cwd);
+	const migrationWarning = legacyPolicy ? `reusedSessionBudgetPolicy=${legacyPolicy} is retired. Remove it; ordinary reuse hands off above the threshold, and sameSession requires refusal.` : undefined;
+	if (!estimate.exists || estimate.ratio <= estimate.threshold) return { estimate, ok: true, ...(migrationWarning ? { migrationWarning } : {}) };
 	const pct = Math.round(estimate.ratio * 100);
 	const thresholdPct = Math.round(estimate.threshold * 100);
-	const base = `reused session for ${agentName}: estimated context ${estimate.tokens}/${estimate.contextLimitTokens} tokens (${pct}%) exceeds ${thresholdPct}% guard threshold. Use a fresh call without sessionKey, a smaller task, or raise reusedSessionBudgetThreshold/reusedSessionContextLimitTokens if intentional.`;
-	if (policy === "compact-then-resume") {
-		let compacted: SessionCompactionResult;
-		try {
-			compacted = await sessionCompactor({ agentName, estimate, model, sessionPath });
-		} catch (error) {
-			return {
-				estimate,
-				ok: false,
-				policy,
-				warning: `Compaction failed for ${base} ${error instanceof Error ? error.message : String(error)}`,
-			};
-		}
-		return {
-			compacted: true,
-			compactionPath: compacted.archivePath,
-			estimate,
-			ok: true,
-			policy,
-			warning: `Compacted ${base}${compacted.archivePath ? ` Archived previous session at ${compacted.archivePath}.` : ""}`,
-		};
-	}
-	const warning = policy === "warn" ? `Warning for ${base}` : `Refusing ${base}`;
-	return { estimate, ok: policy === "warn", policy, warning };
+	const warning = `Refusing reused session for ${agentName}: estimated context ${estimate.tokens}/${estimate.contextLimitTokens} tokens (${pct}%) exceeds ${thresholdPct}% guard threshold. Start a fresh agent without sessionKey or sameSession.`;
+	return { estimate, ok: false, warning, ...(migrationWarning ? { migrationWarning } : {}) };
 }
 
 function contextLengthExceededField(value: unknown): boolean {

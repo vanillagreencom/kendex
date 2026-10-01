@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import { type Theme } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import {
 	ansiGreen,
 	ansiMagenta,
@@ -54,7 +54,7 @@ export function isDashboardAnimatingStatus(status: SubagentDashboardItem["status
 }
 
 export function isDashboardAttentionStatus(status: SubagentDashboardItem["status"]): boolean {
-	return status === "failed" || status === "blocked" || status === "needs_completion" || status === "unknown";
+	return status === "failed" || status === "refused" || status === "blocked" || status === "needs_completion" || status === "unknown";
 }
 
 function dashboardStatusRank(status: SubagentDashboardItem["status"]): number {
@@ -120,6 +120,7 @@ export function dashboardStatusIcon(status: SubagentDashboardItem["status"], the
 	const ascii = glyphStyle() === "ascii";
 	if (status === "completed") return theme.fg("success", ascii ? glyphs().ok : ICONS.check);
 	if (status === "failed") return theme.fg("error", ascii ? glyphs().fail : ICONS.times);
+	if (status === "refused" || status === "stopped") return theme.fg("warning", ascii ? glyphs().warn : ICONS.warning);
 	if (status === "blocked") return theme.fg("error", ascii ? glyphs().fail : ICONS.times);
 	if (status === "needs_completion") return theme.fg("warning", ascii ? glyphs().warn : ICONS.warning);
 	if (status === "running") return theme.fg("warning", animateSpinners ? workingSpinnerFrame() : ICONS.cog);
@@ -132,6 +133,7 @@ export function dashboardStatusIcon(status: SubagentDashboardItem["status"], the
 export function dashboardStatusText(item: SubagentDashboardItem, theme: Theme): string {
 	if (item.status === "completed") return theme.fg("success", "completed");
 	if (item.status === "failed") return theme.fg("error", "failed");
+	if (item.status === "refused" || item.status === "stopped") return theme.fg("warning", item.status);
 	if (item.status === "blocked") return theme.fg("warning", "blocked");
 	if (item.status === "needs_completion") return theme.fg("warning", "needs completion");
 	if (item.status === "running") return theme.fg("warning", "working");
@@ -306,7 +308,7 @@ export function renderDashboardWidgetLines(state: SubagentDashboardState, theme:
 		return any ? total : undefined;
 	};
 	const dotSep = theme.fg("dim", " · ");
-	if (working === 0 && state.mode === "compact") {
+	if (items.every((item) => item.status === "completed" && !item.reuseNotice) && state.mode === "compact") {
 		const aggregated = aggregateDashboardUsage(items);
 		const usageParts = aggregated ? formatUsageStatsForDashboard(aggregated) : [];
 		const body = usageParts.length > 0
@@ -339,6 +341,13 @@ export function renderDashboardWidgetLines(state: SubagentDashboardState, theme:
 			}
 		}
 		lines.push(`${branch}${dashboardStatusIcon(item.status, theme, { animateSpinners })} ${name}${dotSep}${rowParts.join(dotSep)}`);
+		if (item.status === "failed" || item.status === "refused" || item.status === "stopped" || item.reuseNotice) {
+			const message = outgoingDashboardMessage(item);
+			if (message || item.reuseNotice) {
+				const preview = oneLinePreview(item.reuseNotice && !message?.includes(item.reuseNotice) ? [item.reuseNotice, message].filter(Boolean).join("\n") : message ?? item.reuseNotice!, 512);
+				lines.push(...wrapTextWithAnsi(theme.fg("toolOutput", preview), Math.max(1, width - 8)).map((line) => `    ${line}`));
+			}
+		}
 		if (state.mode === "expanded" && !state.collapsed) {
 			lines.push(...expandedDashboardMessageLines(item, subagentStem(theme, index === shown.length - 1 && items.length <= shown.length, cwd), theme, width, cwd));
 		}

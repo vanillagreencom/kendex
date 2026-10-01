@@ -1,0 +1,62 @@
+import assert from "node:assert/strict";
+import test, { after } from "node:test";
+import * as runner from "../extensions/subagent/runner.js";
+import { assertAbortNoRetry, assertFreshHandoff, bridgeEvent, bridgeStdout, cleanupTempRuntimes, dispatchOutcome, installMockSpawn, tempRuntime, writeSettings } from "./single-agent-fixture.js";
+import { importRuntimeCopy, stripAnsi, theme } from "./browser-fixture.js";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { resolveBgSession } from "../extensions/subagent/sessions.js";
+import { renderDashboardWidgetLines } from "../extensions/subagent/dashboard.js";
+
+after(cleanupTempRuntimes);
+
+test("context threshold hands the new task and prior final result to a fresh agent", () => assertFreshHandoff(runner));
+
+test("fresh handoff reaches the tool result and compact panel", async () => {
+	const root = tempRuntime();
+	const cwd = tempRuntime();
+	writeSettings(cwd, { reusedSessionContextLimitTokens: 100, reusedSessionBudgetThreshold: 0.8 });
+	const session = resolveBgSession(root, "reviewer-test", "reuse");
+	mkdirSync(join(root, "sessions"), { recursive: true });
+	writeFileSync(session.path, `${JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "prior result" }] } })}\n`.padEnd(432, " "));
+	installMockSpawn([{ stdout: bridgeStdout([bridgeEvent("message_end", { message: { role: "assistant", content: [{ type: "text", text: "fresh answer" }] } })]) }]);
+	try {
+		const { result, row } = await dispatchOutcome({ cwd, runtimeRoot: root, sessionKey: "reuse" });
+		const notice = "reused as fresh (context 108%)";
+		const state = { items: { task: row }, visible: true, collapsed: false, mode: "compact" as const };
+		assert.deepEqual([result.content[0]?.text.includes(notice), row.reuseNotice, stripAnsi(renderDashboardWidgetLines(state, theme, cwd, 180).join("\n")).includes(notice)], [true, notice, true]);
+		const mutant = await importRuntimeCopy("dashboard.ts", 'item.status === "completed" && !item.reuseNotice', 'item.status === "completed"') as typeof import("../extensions/subagent/dashboard.js");
+		assert.throws(() => assert.ok(stripAnsi(mutant.renderDashboardWidgetLines(state, theme, cwd, 180).join("\n")).includes(notice)), assert.AssertionError);
+	} finally { runner.setSingleAgentSpawnForTests(); }
+});
+
+test("parent cancellation does not retry a recorded overflow", () => assertAbortNoRetry(runner));
+
+test("control: checking only overflow retries after parent cancellation", async () => {
+	const mutant = await importRuntimeCopy("runner.ts", 'first.stopReason === "aborted" || !resultHasContextLengthExceeded(first)', 'false && first.stopReason === "aborted" || !resultHasContextLengthExceeded(first)') as typeof runner;
+	await assert.rejects(() => assertAbortNoRetry(mutant), assert.AssertionError);
+});
+
+test("control: refusing ordinary over-threshold reuse prevents the fresh-agent handoff", async () => {
+	const mutant = await importRuntimeCopy("runner.ts",
+		"if (budgetGuard && !budgetGuard.ok && !sameSession) {", "if (false && budgetGuard && !budgetGuard.ok && !sameSession) {",
+		[{ before: "if (budgetGuard && !budgetGuard.ok && sameSession) {", after: "if (budgetGuard && !budgetGuard.ok) {" }],
+	) as typeof runner;
+	await assert.rejects(() => assertFreshHandoff(mutant), assert.AssertionError);
+});
+
+test("control: carrying only the prior answer drops the caller's new task", async () => {
+	const mutant = await importRuntimeCopy("sessions.ts",
+		'task: `${task}\\n\\nPrior agent final result (${estimate.path}):\\n${priorResult ?? "No prior final result available."}`',
+		'task: `Prior agent final result (${estimate.path}):\\n${priorResult ?? "No prior final result available."}`',
+	) as typeof import("../extensions/subagent/sessions.js");
+	const key = Symbol.for("test.context-handoff");
+	const globals = globalThis as unknown as Record<symbol, unknown>;
+	globals[key] = mutant.prepareContextHandoff;
+	// Inject only the real handoff owner; spawning and the guard stay real.
+	const copy = await importRuntimeCopy("runner.ts", '\tprepareContextHandoff,', '', [
+		{ before: 'import { createTaskId, emitSubagentEvent, tryEmitSubagentEvent }', after: `const prepareContextHandoff = globalThis[Symbol.for("test.context-handoff")];\nimport { createTaskId, emitSubagentEvent, tryEmitSubagentEvent }` },
+	]) as typeof runner;
+	try { await assert.rejects(() => assertFreshHandoff(copy), assert.AssertionError); }
+	finally { delete globals[key]; }
+});
