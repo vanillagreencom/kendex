@@ -228,7 +228,7 @@ Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gat
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]
 ```
 
-The printed value is `GATE_MODE`, `approval` or `off`: GitHub's approval requirement on the base decides it, read from the base's rulesets through `rules/branches` and from the pull request's `reviewDecision`, which also reflects classic branch protection (full semantics: [references/gates.md](../references/gates.md)); never re-derive it here. A non-zero exit is no mode: report it and do not guess one. This gate reads only GitHub-native review state, from any reviewer, human or bot; bot-specific signals are never parsed.
+The printed value is `GATE_MODE`, `approval` or `off`, resolved by the trusted owner per [Gate-mode routing](../references/gates.md#gate-mode-routing); never re-derive it here. A non-zero exit is no mode: report it and do not guess one. This gate reads only GitHub-native review state, from any reviewer, human or bot; bot-specific signals are never parsed.
 
 Record the resolved mode as a bare word (never pre-quoted):
 

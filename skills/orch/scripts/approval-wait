@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Wait for the reviewer-gate verdict on a PR, or print with --resolve-mode the
-# gate mode read from its base branch's rulesets (rules/branches) and the PR's
-# own reviewDecision. The authoritative contract — modes,
+# gate mode read from consumer policy and the native approval requirement. The authoritative contract — modes,
 # mode resolution, settings, JSON output, auth, exit codes — is print_usage
 # below: run with --help.
 # --resolve-mode stdout is the approval|off enum consumed by submit-pr,
@@ -78,15 +77,19 @@ approval_message() {
       ;;
     base-checkout-invalid)
       printf 'approval-wait: base-checkout-invalid path=%q\n' "$BASE_CHECKOUT"
-      printf '%s\n' 'Use a consumer base checkout with an executable installed approval-wait resolver.'
+      printf '%s\n' 'Use an available consumer base checkout.'
       ;;
     action-options)
       printf 'approval-wait: action-options action=request-review-or-base-resolution\n'
       printf '%s\n' 'A request requires --base-checkout. Base resolution accepts only a PR number and one of --resolve-mode or --request-review.'
       ;;
-    base-mode-invalid)
-      printf 'approval-wait: base-mode-invalid value=%q\n' "$GATE_MODE"
-      printf '%s\n' 'The consumer base resolver did not print approval or off.'
+    policy-reader-missing)
+      printf 'approval-wait: policy-reader-missing path=%q\n' "$settings_lib"
+      printf '%s\n' 'Consumer-base resolution requires the trusted review-gate settings reader beside orch.'
+      ;;
+    policy-mode-invalid)
+      printf 'approval-wait: policy-mode-invalid value=%q\n' "$policy"
+      printf '%s\n' 'REVIEW_GATE_MODE must be enforce or off.'
       ;;
     missing-item)
       printf 'approval-wait: missing-item option=%s\n' "--item"
@@ -120,6 +123,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export SCRIPT_DIR
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 export PROJECT_ROOT
+# Authentication belongs to the caller, not an unapproved stacked base.
+AUTH_PROJECT_ROOT="$PROJECT_ROOT"
 
 # shellcheck source=lib/gh-auth.sh
 source "$SCRIPT_DIR/lib/gh-auth.sh"
@@ -170,9 +175,11 @@ vs proceeded deterministically (kendex#538, kendex#642).
                  its rulesets and the PR's reviewDecision (approval |
                  off), and exit: see Mode resolution
   --base-checkout PATH
-                 resolve through PATH's installed approval-wait, from that
-                 consumer base checkout, not the PR's updated skill copy.
+                 run this trusted mode owner from the consumer base checkout.
+                 Read committed REVIEW_GATE_MODE as data through the trusted
+                 review-gate settings reader. Never execute PATH's resolver.
                  Clears inherited repository and review-setting overrides.
+                 Authentication stays with the caller's project.
   --request-review
                  resolve through --base-checkout on every request, first or
                  repeated. off requests nothing; approval requests Copilot.
@@ -195,7 +202,14 @@ Approval mode reads GitHub-native review state ONLY, on either signal:
   resolution, so the caller triages it first. A CHANGES_REQUESTED without an
   approval reports "changes_requested" ahead of the thread count.
 
-Mode resolution: GitHub's approval requirement decides, read two ways.
+Mode resolution: with --base-checkout, committed REVIEW_GATE_MODE=off
+prints off without querying GitHub's approval requirement, even when GitHub
+requires approval. enforce (the default) uses the native resolution below.
+A missing trusted review-gate settings reader, unreadable settings, or any
+other policy value is no mode: exit 2. The reader ignores machine-local
+settings and private env files for this key, as the CI gate does.
+
+Native resolution: GitHub's approval requirement decides, read two ways.
 --resolve-mode, and a wait without --mode, read the PR's base branch and
 reviewDecision in one call (gh pr view --json baseRefName,reviewDecision),
 then every ruleset rule GitHub applies to that branch, organization rulesets
@@ -411,8 +425,7 @@ if $REQUEST_REVIEW || [[ -n "$BASE_CHECKOUT" ]]; then
     approval_message action-options >&2
     exit 2
   fi
-  if ! base_root=$(cd -- "$BASE_CHECKOUT" && pwd -P) \
-    || [[ ! -x "$base_root/.agents/skills/orch/scripts/approval-wait" ]]; then
+  if ! base_root=$(cd -- "$BASE_CHECKOUT" && pwd -P); then
     approval_message base-checkout-invalid >&2
     exit 2
   fi
@@ -420,9 +433,8 @@ if $REQUEST_REVIEW || [[ -n "$BASE_CHECKOUT" ]]; then
   cd -- "$BASE_CHECKOUT"
   PROJECT_ROOT="$BASE_CHECKOUT"
   export PROJECT_ROOT
-  # Fleet callers inherit catalog settings. The consumer resolver owns the
-  # policy. Its resolver must read the consumer's review settings.
-  unset GH_REPO GITHUB_REPOSITORY PR_REVIEW_GATE REVIEW_GATE_MODE
+  # Fleet callers inherit catalog settings. Read only the consumer's policy.
+  unset GH_REPO GITHUB_REPOSITORY PR_REVIEW_GATE REVIEW_GATE_MODE REVIEW_GATE_SETTINGS_FILE
   unset PR_REVIEW_ON_TIMEOUT PR_REVIEW_WAIT_SECS
 fi
 POLL_INTERVAL="${POSITIONAL[1]:-15}"
@@ -432,7 +444,10 @@ lane_mail_resolve approval-wait "$ITEM"
 # orch-env's numeric-default guard keeps
 # a non-numeric setting from breaking the deadline arithmetic. An explicit
 # positional arg always wins (callers that pass one keep exact behavior).
-MAX_WAIT="${POSITIONAL[2]:-$("$SCRIPT_DIR/orch-env" PR_REVIEW_WAIT_SECS 900)}"
+MAX_WAIT=900
+if ! $RESOLVE_MODE && ! $REQUEST_REVIEW; then
+  MAX_WAIT="${POSITIONAL[2]:-$("$SCRIPT_DIR/orch-env" PR_REVIEW_WAIT_SECS 900)}"
+fi
 START_TIME="$(date +%s)"
 elapsed=0
 
@@ -445,7 +460,10 @@ elapsed=0
 # unresolved thread exits the poll loop as "comments" first, so a real comment
 # is never bypassed. The --on-timeout flag overrides the setting for explicit
 # callers and tests; same orch-env settings ladder as MAX_WAIT above.
-ON_TIMEOUT="${ON_TIMEOUT_FLAG:-$("$SCRIPT_DIR/orch-env" PR_REVIEW_ON_TIMEOUT proceed)}"
+ON_TIMEOUT=proceed
+if ! $RESOLVE_MODE && ! $REQUEST_REVIEW; then
+  ON_TIMEOUT="${ON_TIMEOUT_FLAG:-$("$SCRIPT_DIR/orch-env" PR_REVIEW_ON_TIMEOUT proceed)}"
+fi
 case "$ON_TIMEOUT" in
   block|proceed) ;;
   *)
@@ -633,7 +651,7 @@ if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
 fi
 
 if [[ "$AUTH_READY" != "true" && -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
-  orch_load_env_bot_token "$PROJECT_ROOT" || true
+  orch_load_env_bot_token "$AUTH_PROJECT_ROOT" || true
 fi
 
 if [[ "$AUTH_READY" != "true" ]]; then
@@ -674,10 +692,8 @@ fi
 OWNER="${REPO%%/*}"
 REPO_NAME="${REPO#*/}"
 
-# --- gate mode: GitHub's approval requirement on the PR's base branch ---
-# The mode is what GitHub requires of the base, so the wait and GitHub's merge
-# refusal cannot disagree about whether an approval is needed. rules/branches
-# answers every active ruleset rule that applies to the branch, organization
+# --- native approval requirement on the PR's base branch ---
+# rules/branches answers every active ruleset rule that applies to the branch, organization
 # rulesets included, which a repository ruleset listing does not show; it does
 # not answer classic branch protection. The PR's reviewDecision covers that
 # case: GitHub sets it only where the base requires a review, classic
@@ -701,20 +717,26 @@ read_required_approvals() { # BRANCH
     else error("the rules answer is not a set of pages") end' <<<"$raw" 2>/dev/null
 }
 
-# Set GATE_MODE to approval or off for this PR's base: approval when either
-# the rules or the reviewDecision says an approval is required, off only when
-# both say none is. Returns 1, the diagnostic already on stderr, when the base,
-# the reviewDecision or the rules cannot be read.
+# Set GATE_MODE from consumer policy, then GitHub's native requirement.
+# A stacked base can contain unapproved code: only its settings are data.
+# The review-gate dependency is optional for native waits, required on the
+# consumer-base path. Source the caller's trusted reader, never the base's.
 GATE_MODE=""
 resolve_gate_mode() {
-  local required base_json decision
+  local required base_json decision policy settings_lib
   if [[ -n "$BASE_CHECKOUT" ]]; then
-    GATE_MODE=$(env -u GH_REPO -u GITHUB_REPOSITORY -u PR_REVIEW_GATE -u REVIEW_GATE_MODE \
-      -u PR_REVIEW_ON_TIMEOUT -u PR_REVIEW_WAIT_SECS \
-      "$BASE_CHECKOUT/.agents/skills/orch/scripts/approval-wait" "$PR_NUM" --resolve-mode) || return $?
-    case "$GATE_MODE" in
-      approval|off) return 0 ;;
-      *) approval_message base-mode-invalid >&2; return 1 ;;
+    settings_lib="$SCRIPT_DIR/../../review-gate/scripts/lib/settings.sh"
+    if [[ ! -r "$settings_lib" ]]; then
+      approval_message policy-reader-missing >&2
+      return 1
+    fi
+    # shellcheck source=../../review-gate/scripts/lib/settings.sh
+    source "$settings_lib" || return $?
+    policy=$(rg_setting REVIEW_GATE_MODE enforce) || return $?
+    case "$policy" in
+      off) GATE_MODE=off; return 0 ;;
+      enforce) ;;
+      *) approval_message policy-mode-invalid >&2; return 1 ;;
     esac
   fi
   if ! base_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json baseRefName,reviewDecision 2>"$GH_ERR_FILE") \

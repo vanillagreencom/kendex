@@ -1,1 +1,1 @@
-- Fleet lanes and overseers use the consumer base's review gate before each Copilot request. A disabled gate skips first and repeated requests.
+- Fleet lanes and overseers honor committed consumer REVIEW_GATE_MODE before Copilot requests. Disabled gates skip first and repeated requests without executing consumer-base scripts.
