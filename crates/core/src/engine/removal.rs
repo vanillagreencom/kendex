@@ -24,6 +24,13 @@ use super::origin::Origins;
 /// (`Withholding::Requires`) are not gated here: the trash keeps what they
 /// take.
 pub fn edit_holds(env: &Env, scope: &Scope, entry: &LockEntry) -> bool {
+    if entry
+        .output_style
+        .as_ref()
+        .is_some_and(|style| super::output_style::changed(style).unwrap_or(true))
+    {
+        return true;
+    }
     // A hook with no anchor is not the common stock of older installs
     // that holding would exempt from cleanup for good: a lock this build
     // did not write is refused by the version floor before any of this
@@ -33,7 +40,11 @@ pub fn edit_holds(env: &Env, scope: &Scope, entry: &LockEntry) -> bool {
     // not take them. The rule is the anchor, not the harness.
     let holdable = matches!(
         entry.kind,
-        ItemKind::Skill | ItemKind::Agent | ItemKind::Command | ItemKind::Hook
+        ItemKind::Skill
+            | ItemKind::Agent
+            | ItemKind::Command
+            | ItemKind::Hook
+            | ItemKind::OutputStyle
     );
     if !holdable {
         return false;

@@ -801,6 +801,7 @@ fn install_group(
                 "a plugin declares in [bundles.<name>]: MemberKind::namespace routes it to the group's sets, never its items"
             ),
             ItemKind::PiExtension => request.pi_extensions.push(item.name.clone()),
+            ItemKind::OutputStyle => request.output_styles.push(item.name.clone()),
         }
     }
     // A whole set carries its own members; expanding agents' skills on

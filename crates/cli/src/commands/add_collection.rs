@@ -289,6 +289,7 @@ fn install_step(
         hooks: step.hooks.clone(),
         commands: step.commands.clone(),
         mcp_servers: step.mcp_servers.clone(),
+        output_styles: step.output_styles.clone(),
         ..AddRequest::default()
     };
     // The fetch landed in the prevalidation for a fresh subscription, at
@@ -384,6 +385,7 @@ mod tests {
             hooks: Vec::new(),
             commands: Vec::new(),
             mcp_servers: Vec::new(),
+            output_styles: Vec::new(),
         }
     }
 

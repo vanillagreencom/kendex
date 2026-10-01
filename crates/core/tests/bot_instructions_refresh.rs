@@ -126,6 +126,7 @@ fn record_install(env: &Env, root: &Path, harness: HarnessId, package: PathBuf) 
                 paths: vec![package],
             }),
             registration: None,
+            output_style: None,
             reasons: BTreeSet::from([Reason::Requested]),
         },
     );

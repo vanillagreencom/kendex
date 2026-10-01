@@ -40,3 +40,10 @@ The hook surface reads only files whose name starts `kendex-hook-` (`HOOK_INSTRU
 ## Hooks
 
 Advisory: a hook installs as an instruction file stating the constraint plus a reference in the config's `instructions[]` array, and a `PreToolUse` hook matching `Bash` additionally sets `permission.bash = {"*": "ask"}`. The plan preview, the report and the tool's card carry the advisory notice (`advisory_notice`, `crates/core/src/engine/targets.rs`). Disabling renames the instruction file to `.disabled` and removes the config reference. A refresh cuts marker-named rows nothing renders anymore and touches no other row, a person's own file in the instructions directory included (`stale_instruction_rows`, `crates/core/src/engine/stale.rs`).
+
+## Output styles
+
+| Scope | Route | Drift and lock |
+|---|---|---|
+| Global | Unsupported; reported, no style file or block | No installation row |
+| Project | Unsupported; reported, no style file or block | No installation row |

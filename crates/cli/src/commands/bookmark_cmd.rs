@@ -285,6 +285,7 @@ fn request(
         // the same reading every other install path gives it.
         Some(ItemKind::Plugin) => args.bundle = name,
         Some(ItemKind::PiExtension) => args.pi_extension = name,
+        Some(ItemKind::OutputStyle) => args.output_style = name,
     }
     args
 }

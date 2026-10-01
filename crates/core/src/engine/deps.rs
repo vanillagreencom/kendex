@@ -63,7 +63,8 @@ pub(crate) fn declared_dependencies(
         | ItemKind::Command
         | ItemKind::McpServer
         | ItemKind::Plugin
-        | ItemKind::PiExtension => None,
+        | ItemKind::PiExtension
+        | ItemKind::OutputStyle => None,
     };
     Ok(declared.unwrap_or_default())
 }
@@ -710,7 +711,8 @@ fn chosen_extras(
         | ItemKind::Command
         | ItemKind::McpServer
         | ItemKind::Plugin
-        | ItemKind::PiExtension => Vec::new(),
+        | ItemKind::PiExtension
+        | ItemKind::OutputStyle => Vec::new(),
     };
     for name in chosen.iter().filter(|c| !declared.optional.contains(c)) {
         found.push(warn(
@@ -1088,7 +1090,8 @@ fn resolve(
         | ItemKind::Command
         | ItemKind::McpServer
         | ItemKind::Plugin
-        | ItemKind::PiExtension => find_item(sealed, config, dep_kind, name)
+        | ItemKind::PiExtension
+        | ItemKind::OutputStyle => find_item(sealed, config, dep_kind, name)
             .map(|_| name.to_owned())
             .ok_or_else(Vec::new),
     };

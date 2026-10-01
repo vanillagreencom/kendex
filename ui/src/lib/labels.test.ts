@@ -4,6 +4,7 @@ import {
   breadcrumbLabel,
   harnessName,
   hookDisplayName,
+  KINDS,
   kindLabel,
   packageDisplayName,
   scopeName,
@@ -15,6 +16,9 @@ describe("labels", () => {
     expect(kindLabel("skill")).toBe("Skill");
     expect(kindLabel("skill", 3)).toBe("Skills");
     expect(kindLabel("mcp-server", 0)).toBe("MCP servers");
+    expect(kindLabel("output-style")).toBe("Output style");
+    expect(kindLabel("output-style", 2)).toBe("Output styles");
+    expect(KINDS).toContain("output-style");
   });
 
   it("names scopes by folder, global by name", () => {
@@ -83,6 +87,7 @@ describe("actionLabel", () => {
       { kind: "agent", expected: undefined },
       { kind: "command", expected: undefined },
       { kind: "plugin", expected: undefined },
+      { kind: "output-style", expected: undefined },
     ] as const;
     expect(rows.length, "action label table is empty").toBeGreaterThan(0);
     for (const row of rows)

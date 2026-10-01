@@ -23,6 +23,7 @@ pub struct AddRequest {
     pub source: Option<String>,
     pub agents: Vec<String>,
     pub skills: Vec<String>,
+    pub output_styles: Vec<String>,
     pub hooks: Vec<String>,
     pub commands: Vec<String>,
     pub mcp_servers: Vec<String>,
@@ -231,24 +232,23 @@ fn add_from(
     let sealed = crate::source_read::SealedSource::open(&ready.root)?;
     let config = source_config_for(&sealed, &ready.provenance)?;
 
-    let mut agents = wanted.agents.clone();
-    let mut skills = wanted.skills.clone();
-    let mut hooks = wanted.hooks.clone();
-    let mut commands = wanted.commands.clone();
-    let mut mcp_servers = wanted.mcp_servers.clone();
-    if take_all {
-        agents = list_items(&sealed, &config, ItemKind::Agent);
-        skills = list_items(&sealed, &config, ItemKind::Skill);
-        hooks = list_items(&sealed, &config, ItemKind::Hook);
-        commands = list_items(&sealed, &config, ItemKind::Command);
-        mcp_servers = list_items(&sealed, &config, ItemKind::McpServer);
-    }
+    let selected = |kind, names: &Vec<String>| match take_all {
+        true => list_items(&sealed, &config, kind),
+        false => names.clone(),
+    };
+    let agents = selected(ItemKind::Agent, &wanted.agents);
+    let mut skills = selected(ItemKind::Skill, &wanted.skills);
+    let hooks = selected(ItemKind::Hook, &wanted.hooks);
+    let commands = selected(ItemKind::Command, &wanted.commands);
+    let mcp_servers = selected(ItemKind::McpServer, &wanted.mcp_servers);
+    let output_styles = selected(ItemKind::OutputStyle, &wanted.output_styles);
     for (kind, names) in [
         (ItemKind::Agent, &agents),
         (ItemKind::Skill, &skills),
         (ItemKind::Hook, &hooks),
         (ItemKind::Command, &commands),
         (ItemKind::McpServer, &mcp_servers),
+        (ItemKind::OutputStyle, &output_styles),
     ] {
         for name in names {
             if find_item(&sealed, &config, kind, name).is_none() {
@@ -314,6 +314,7 @@ fn add_from(
         (ItemKind::Hook, hooks),
         (ItemKind::Command, commands),
         (ItemKind::McpServer, mcp_servers),
+        (ItemKind::OutputStyle, output_styles),
     ] {
         for name in names {
             declare(

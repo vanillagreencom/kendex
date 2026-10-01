@@ -267,6 +267,7 @@ fn rendered_repository(kind: ItemKind, path: &std::path::Path) -> Option<String>
         | ItemKind::Hook
         | ItemKind::Command
         | ItemKind::McpServer
+        | ItemKind::OutputStyle
         | ItemKind::Plugin => None,
     }
 }

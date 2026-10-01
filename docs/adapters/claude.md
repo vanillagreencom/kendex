@@ -23,7 +23,7 @@ Project markers: a `.claude/` directory, or a `.mcp.json` file at the repo root.
 | plugin | `~/.claude/plugins/installed_plugins.json` joined with settings `enabledPlugins` | `.claude/settings.json` and `.claude/settings.local.json` `enabledPlugins` | observe and toggle, both |
 | pi-extension | — | — | unsupported |
 
-MCP servers are written to `~/.claude.json` at global scope and to the repository's `.mcp.json` at project scope (`mcp_registry`, `crates/core/src/engine/targets.rs`). `settings.local.json` is observed and never written. Only the plugin enable flip is written.
+MCP servers are written to `~/.claude.json` at global scope and to the repository's `.mcp.json` at project scope (`mcp_registry`, `crates/core/src/engine/targets.rs`). `settings.local.json` is observed and never written. The plugin enable flip and output-style selection are settings writes.
 
 Claude Code reads no shared skills tree at either scope, so its own directory holds a link onto one. A project skill lives in the shared `.agents/skills/<name>` tree, and `.claude/skills/<name>` is a relative link onto it (`../../.agents/skills/<name>`) when the bytes match, committed once and resolving in every clone; an absolute link from an older install is drift and is rewritten on the next apply. A global skill lives in `~/.agents/skills/<name>` and `~/.claude/skills/<name>` is an absolute link onto it (`global_skills_dir`, `crates/core/src/env.rs`).
 
@@ -50,4 +50,13 @@ Copilot CLI runs each command in those `hooks` beside its own hooks, so a hook i
 
 ## Instruction shim
 
-Claude reads `CLAUDE.md` only, at the root and lazily in subdirectories, so kendex writes a `CLAUDE.md` holding `@AGENTS.md` beside every tracked `AGENTS.md` (`crates/core/src/engine/instruction_shims.rs`).
+kendex writes a `CLAUDE.md` holding `@AGENTS.md` beside every tracked `AGENTS.md` (`crates/core/src/engine/instruction_shims.rs`). Claude Code also reads `AGENTS.md` natively from v2.1.277 where no `CLAUDE.md` exists. The output-style route writes neither instruction file.
+
+## Output styles
+
+| Scope | Route | Drift and lock |
+|---|---|---|
+| Global | `~/.claude/output-styles/<name>.md` plus absent-only `outputStyle` in `~/.claude/settings.json` | Whole style file and owned selection recorded separately |
+| Project | `.claude/output-styles/<name>.md` plus absent-only `outputStyle` in `.claude/settings.json`; no repository `AGENTS.md` block | Whole style file and owned selection recorded separately |
+
+`settings.local.json` is read, never written. A selection there prevents seeding `settings.json`. A pre-existing selection stays user-owned. A removed or changed selection kendex inserted is drift, not permission to restore it. Linked settings files are refused. The style keeps the built-in coding instructions through `keep-coding-instructions: true` ([native reference](https://code.claude.com/docs/en/output-styles)). `crates/core/tests/output_styles.rs` holds both scopes, reapply and hand edits.

@@ -61,7 +61,7 @@ fn surfaces(kind: ItemKind, root: &Path, shared: Option<&Path>) -> Vec<Surface> 
             reader: Reader::AntigravityHooks,
         }],
         // Skills are the slash commands.
-        ItemKind::Command | ItemKind::PiExtension => vec![],
+        ItemKind::Command | ItemKind::PiExtension | ItemKind::OutputStyle => vec![],
     }
 }
 

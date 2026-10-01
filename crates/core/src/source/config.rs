@@ -391,13 +391,13 @@ pub fn find_item(
         // repo — one the About report says offers no hooks — would still hand
         // over and run `hooks/<name>.sh` when asked for it by name, the exact
         // "executable content is never guessed into existence" rule §5.6 sets.
-        ItemKind::Hook | ItemKind::Command | ItemKind::McpServer
+        ItemKind::Hook | ItemKind::Command | ItemKind::McpServer | ItemKind::OutputStyle
             if config.mode == CatalogMode::Explicit =>
         {
             let (dir, ext) = super::layout::fixed_kind_dir(kind);
             catalog_file(sealed, dir, &format!("{name}.{ext}"))
         }
-        ItemKind::Hook | ItemKind::Command | ItemKind::McpServer => None,
+        ItemKind::Hook | ItemKind::Command | ItemKind::McpServer | ItemKind::OutputStyle => None,
         // A declared Pi package resolves like update-pi resolves it: the
         // literal directory, else whichever directory's package.json
         // registers the name — kendex's own catalog shelves scoped names
@@ -453,7 +453,7 @@ pub fn list_items(sealed: &SealedSource, config: &SourceConfig, kind: ItemKind) 
         // Executable kinds are offered only where the catalog declared
         // kendex's layout — a `hooks/` folder in a repo that never declared
         // anything is repository tooling, not installable content.
-        ItemKind::Hook | ItemKind::Command | ItemKind::McpServer
+        ItemKind::Hook | ItemKind::Command | ItemKind::McpServer | ItemKind::OutputStyle
             if config.mode == CatalogMode::Explicit =>
         {
             let (dir, ext) = super::layout::fixed_kind_dir(kind);

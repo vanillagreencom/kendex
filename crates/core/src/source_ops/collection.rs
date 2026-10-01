@@ -28,6 +28,7 @@ pub struct CollectionStep {
     pub hooks: Vec<String>,
     pub commands: Vec<String>,
     pub mcp_servers: Vec<String>,
+    pub output_styles: Vec<String>,
 }
 
 impl CollectionStep {
@@ -41,6 +42,7 @@ impl CollectionStep {
             (ItemKind::Hook, &self.hooks),
             (ItemKind::Command, &self.commands),
             (ItemKind::McpServer, &self.mcp_servers),
+            (ItemKind::OutputStyle, &self.output_styles),
         ]
         .into_iter()
         .flat_map(|(kind, names)| names.iter().map(move |name| (kind, name)))
@@ -87,6 +89,7 @@ pub fn collection_steps(
             hooks: Vec::new(),
             commands: Vec::new(),
             mcp_servers: Vec::new(),
+            output_styles: Vec::new(),
         });
         // Two members of one repository pinned to different commits is
         // not a snapshot anybody can install.
@@ -104,6 +107,7 @@ pub fn collection_steps(
             ItemKind::Hook => step.hooks.push(member.name.clone()),
             ItemKind::Command => step.commands.push(member.name.clone()),
             ItemKind::McpServer => step.mcp_servers.push(member.name.clone()),
+            ItemKind::OutputStyle => step.output_styles.push(member.name.clone()),
             ItemKind::Plugin | ItemKind::PiExtension => {
                 return Err(CoreError::Authoring {
                     message: format!(

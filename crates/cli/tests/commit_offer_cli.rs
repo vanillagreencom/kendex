@@ -375,6 +375,7 @@ fn region_project(tmp: &tempfile::TempDir, committed: &str, working: &str) -> Pa
                 paths: vec![project.join(".agents/skills/bot-instructions")],
             }),
             registration: None,
+            output_style: None,
             reasons: std::collections::BTreeSet::from([kendex_core::lock::Reason::Requested]),
         },
     );
@@ -475,6 +476,7 @@ fn an_unarmed_cli_apply_succeeds_names_setup_and_runs_no_package_code() {
                 paths: vec![package],
             }),
             registration: None,
+            output_style: None,
             reasons: std::collections::BTreeSet::from([kendex_core::lock::Reason::Requested]),
         },
     );

@@ -47,6 +47,19 @@ fn registration(
         .or_else(|| edits.first().map(|(path, _)| crate::paths::slashed(path)))
         .unwrap_or_else(|| item.name.clone());
     let content = match item.kind {
+        ItemKind::OutputStyle => Content::Document {
+            text: script
+                .map(|(_, bytes)| String::from_utf8_lossy(bytes).into_owned())
+                .unwrap_or_else(|| {
+                    edits
+                        .iter()
+                        .find_map(|(_, edit)| match edit {
+                            ConfigEdit::UpsertMarkerBlock { block, .. } => Some(block.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_default()
+                }),
+        },
         ItemKind::McpServer => match mcp_entry(edits) {
             Some(entry) => Content::Mcp(entry),
             // A disabled server is planned as a removal on every harness but

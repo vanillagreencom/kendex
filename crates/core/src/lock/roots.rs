@@ -36,6 +36,10 @@ pub(super) fn read_against(path: &Path, lock: &mut Lock) -> Result<()> {
         return Ok(());
     };
     for (key, entry) in &mut lock.entries {
+        if let Some(style) = &mut entry.output_style {
+            let position = style.path_mut();
+            *position = rejoined(path, key, &root, position)?;
+        }
         let Some(emitted) = entry.emitted.as_mut() else {
             continue;
         };
@@ -56,6 +60,10 @@ pub(super) fn write_under(path: &Path, lock: &mut Lock) -> Result<Option<PathBuf
         return Ok(None);
     };
     for (key, entry) in &mut lock.entries {
+        if let Some(style) = &mut entry.output_style {
+            let position = style.path_mut();
+            *position = remainder(path, key, &root, position)?;
+        }
         let Some(emitted) = entry.emitted.as_mut() else {
             continue;
         };

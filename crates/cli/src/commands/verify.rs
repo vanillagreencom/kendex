@@ -940,6 +940,7 @@ fn print_gaps(style: &Style, scopes: &[(Scope, Vec<(ItemKind, String)>)]) {
                     ItemKind::Agent
                     | ItemKind::Skill
                     | ItemKind::Hook
+                    | ItemKind::OutputStyle
                     | ItemKind::Command
                     | ItemKind::McpServer
                     | ItemKind::Plugin => "kendex apply records it",

@@ -27,6 +27,7 @@ pub(crate) fn local_slot(root: &Path, kind: ItemKind, name: &str) -> PathBuf {
         ItemKind::Agent => root.join("agents").join(format!("{name}.md")),
         ItemKind::Hook => root.join("hooks").join(format!("{name}.sh")),
         ItemKind::Command => root.join("commands").join(format!("{name}.md")),
+        ItemKind::OutputStyle => root.join("output-styles").join(format!("{name}.md")),
         ItemKind::McpServer => root.join("mcp").join(format!("{name}.toml")),
         // A plugin and a Pi extension are trees of their own, stored under
         // the name itself.

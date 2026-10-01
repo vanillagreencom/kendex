@@ -48,6 +48,7 @@ pub(crate) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
         // nothing owns nothing: deriving today's place for it would claim
         // a position this install may never have written.
         ItemKind::Skill => {}
+        ItemKind::OutputStyle => edits.extend(super::output_style::removal(entry)),
         ItemKind::Command => {
             if let Some(dir) = native_dir(env, scope, entry.harness, ItemKind::Command) {
                 files.push(dir.join(super::desired_command::command_file(

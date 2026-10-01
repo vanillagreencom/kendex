@@ -24,6 +24,7 @@ const KIND_LABELS: Record<ItemKind, { one: string; many: string }> = {
   "mcp-server": { one: "MCP server", many: "MCP servers" },
   plugin: { one: "Plugin", many: "Plugins" },
   "pi-extension": { one: "Pi extension", many: "Pi extensions" },
+  "output-style": { one: "Output style", many: "Output styles" },
 };
 
 export const kindLabel = (kind: ItemKind, count = 1): string =>

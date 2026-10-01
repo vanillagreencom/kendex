@@ -32,7 +32,8 @@ pub(super) fn build(
         ItemKind::Hook => desired_kinds::desired_hook(ctx, state),
         ItemKind::Command => super::desired_command::desired_command(ctx, state),
         ItemKind::McpServer => super::desired_mcp::desired_mcp(ctx, state),
-        _ => Ok(()),
+        ItemKind::OutputStyle => super::output_style::desired(ctx, state),
+        ItemKind::Plugin | ItemKind::PiExtension => Ok(()),
     };
     match outcome {
         Ok(()) => Ok(()),

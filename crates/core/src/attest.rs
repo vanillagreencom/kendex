@@ -449,6 +449,7 @@ fn differs(recorded: &LockEntry, would_record: &LockEntry) -> Option<&'static st
         upstream_skills,
         emitted,
         registration,
+        output_style,
         reasons,
         machine: _,
     } = recorded;
@@ -477,6 +478,7 @@ fn differs(recorded: &LockEntry, would_record: &LockEntry) -> Option<&'static st
                     )),
         ),
         ("registration", *registration != would_record.registration),
+        ("outputStyle", *output_style != would_record.output_style),
         ("reasons", *reasons != would_record.reasons),
     ]
     .into_iter()

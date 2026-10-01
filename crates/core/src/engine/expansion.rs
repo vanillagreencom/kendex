@@ -20,12 +20,13 @@ use crate::source_read::SealedSource;
 use super::desired::{DesiredState, target_harnesses};
 
 /// The kinds a plan installs, in the order it plans them.
-pub(super) const PLANNED_KINDS: [ItemKind; 5] = [
+pub(super) const PLANNED_KINDS: [ItemKind; 6] = [
     ItemKind::Skill,
     ItemKind::Agent,
     ItemKind::Hook,
     ItemKind::Command,
     ItemKind::McpServer,
+    ItemKind::OutputStyle,
 ];
 
 /// Whether a scope plan derives and writes this kind, and so whether one
@@ -473,7 +474,8 @@ mod tests {
                 | ItemKind::Agent
                 | ItemKind::Hook
                 | ItemKind::Command
-                | ItemKind::McpServer => false,
+                | ItemKind::McpServer
+                | ItemKind::OutputStyle => false,
             };
             assert_eq!(plans_per_package(kind), !refused, "{kind:?}");
         }

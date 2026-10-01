@@ -250,6 +250,7 @@ mod tests {
                 .map(|list| list.iter().map(|s| (*s).to_owned()).collect()),
             emitted: None,
             registration: None,
+            output_style: None,
             reasons: std::collections::BTreeSet::from([kendex_core::lock::Reason::Requested]),
         }
     }

@@ -71,3 +71,14 @@ Legacy `~/.copilot/config.json` is read and never written; a global scope holdin
 ## Cross-reads
 
 Copilot CLI discovers skills from `.claude/skills` and `.agents/skills`; the second is where kendex installs a project skill for it, so that one is claimed. It also reads top-level `.claude/commands/*.md` as single-file skills, so a command kendex installs for Claude Code at project scope is offered by Copilot too. VS Code discovers agents from `.claude/agents`, and the CLI reads the `.claude/settings*.json` subset listed above. The adapter claims none of those, and a repo-root `.mcp.json` stays off its surface list as Claude Code's file; the reach is a note on the plan for skills and the layer stack above for hooks. The commands kendex registers in `.claude/settings.json` for the hook scripts it installs there exit before their script in a Copilot hook process, so a Copilot session runs only its own copy of those hooks; a custom hook declared as a command is registered as written, and Copilot runs it ([claude.md § Cross-reads](claude.md#cross-reads)).
+
+## Output styles
+
+| Scope | Route | Drift and lock |
+|---|---|---|
+| Global | Unsupported; reported, no style file or block | No installation row |
+| Project | Unsupported; reported, no style file or block | No installation row |
+
+A project declaring Claude Code receives its native style only. kendex writes no style block into repository `AGENTS.md`. This prevents the Claude instruction shim from loading the same style twice. The no-block case is in `crates/core/tests/output_styles.rs`.
+
+`.github/copilot-instructions.md` remains the bot-instructions package's file.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MANIFEST_SCHEMA } from "@/bindings";
+import { type ItemDecl_Serialize, MANIFEST_SCHEMA } from "@/bindings";
 import {
   addCustomHook,
   type Draft,
@@ -38,6 +38,7 @@ describe("toDraft", () => {
       install: {},
       sources: { kendex: { repo: "owner/repo", enabled: true } },
       agents: { orch: { source: "kendex", enabled: true } },
+      "output-styles": { STE: { source: "kendex", enabled: true } },
       "agent-frontmatter": { claude: { orch: { model: "opus" } } },
       "custom-hooks": [
         { event: "PreToolUse", command: "./g.sh", agents: "all" },
@@ -51,6 +52,14 @@ describe("toDraft", () => {
       enabled: true,
     });
     expect(widened.agents?.orch.harnesses).toBeNull();
+    expect(widened["output-styles"]).toEqual({
+      STE: {
+        source: "kendex",
+        enabled: true,
+        harnesses: null,
+        method: null,
+      },
+    });
     expect(widened["agent-frontmatter"]?.claude.orch).toMatchObject({
       model: "opus",
       color: null,
@@ -60,6 +69,30 @@ describe("toDraft", () => {
       matcher: null,
       description: null,
     });
+  });
+
+  it("keeps output-style choices and does not invent a declaration", () => {
+    const configured: ItemDecl_Serialize = {
+      source: "kendex",
+      enabled: true,
+      harnesses: ["claude", "pi"],
+      method: "copy",
+    };
+    const rows: {
+      styles: Record<string, ItemDecl_Serialize> | undefined;
+      expected: Record<string, ItemDecl_Serialize> | undefined;
+    }[] = [
+      { styles: undefined, expected: undefined },
+      { styles: {}, expected: {} },
+      { styles: { STE: configured }, expected: { STE: configured } },
+    ];
+    for (const row of rows) {
+      expect(
+        toDraft({ schema: MANIFEST_SCHEMA, "output-styles": row.styles })[
+          "output-styles"
+        ],
+      ).toEqual(row.expected);
+    }
   });
 });
 

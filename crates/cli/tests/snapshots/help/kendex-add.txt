@@ -31,6 +31,9 @@ Options:
       --hook <HOOK>
           Install specific hooks (comma-separated)
 
+      --output-style <OUTPUT_STYLE>
+          Install one response style
+
       --command <COMMAND>
           Install specific commands (comma-separated)
 

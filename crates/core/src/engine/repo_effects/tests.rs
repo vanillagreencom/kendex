@@ -101,6 +101,7 @@ fn entry(name: &str, harness: crate::model::HarnessId) -> crate::lock::LockEntry
         upstream_skills: None,
         emitted: None,
         registration: None,
+        output_style: None,
         reasons: Default::default(),
     }
 }

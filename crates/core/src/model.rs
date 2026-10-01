@@ -96,6 +96,8 @@ pub enum ItemKind {
     McpServer,
     Plugin,
     PiExtension,
+    /// Instructions that set the writing style for every response.
+    OutputStyle,
 }
 
 impl ItemKind {
@@ -103,7 +105,7 @@ impl ItemKind {
     /// kind missing from here is one every one of those sweeps skips
     /// silently. Rust offers no variant count without a derive macro or an
     /// unstable intrinsic, so adding a kind means adding it here.
-    pub const ALL: [ItemKind; 7] = [
+    pub const ALL: [ItemKind; 8] = [
         ItemKind::Agent,
         ItemKind::Skill,
         ItemKind::Hook,
@@ -111,6 +113,7 @@ impl ItemKind {
         ItemKind::McpServer,
         ItemKind::Plugin,
         ItemKind::PiExtension,
+        ItemKind::OutputStyle,
     ];
 
     pub fn name(self) -> &'static str {
@@ -122,6 +125,7 @@ impl ItemKind {
             ItemKind::McpServer => "mcp-server",
             ItemKind::Plugin => "plugin",
             ItemKind::PiExtension => "pi-extension",
+            ItemKind::OutputStyle => "output-style",
         }
     }
 }

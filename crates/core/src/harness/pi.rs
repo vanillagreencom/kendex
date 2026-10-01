@@ -140,6 +140,10 @@ impl HarnessAdapter for Pi {
     fn global_surfaces(&self, kind: ItemKind, root: &Path, env: &Env) -> Vec<Surface> {
         match kind {
             ItemKind::Agent => vec![Surface::files(root.join("agents"), &["md"])],
+            ItemKind::OutputStyle => vec![Surface::Structured {
+                path: root.join("APPEND_SYSTEM.md"),
+                reader: Reader::OutputStyleBlocks,
+            }],
             // Pi loads `~/.agents/skills` as well as its own global tree, so
             // the shared one leads here as it does in a project.
             ItemKind::Skill => {
@@ -168,6 +172,10 @@ impl HarnessAdapter for Pi {
         let dot = project.join(".pi");
         match kind {
             ItemKind::Agent => vec![Surface::files(dot.join("agents"), &["md"])],
+            ItemKind::OutputStyle => vec![Surface::Structured {
+                path: dot.join("APPEND_SYSTEM.md"),
+                reader: Reader::OutputStyleBlocks,
+            }],
             // Shared physical target with codex — scan dedupe couples them.
             ItemKind::Skill => vec![Surface::SubdirPerItem {
                 dir: project.join(".agents/skills"),

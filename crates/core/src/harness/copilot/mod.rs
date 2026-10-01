@@ -146,7 +146,7 @@ impl HarnessAdapter for Copilot {
             }],
             // Copilot has no file-backed slash-command surface in any of its
             // products: prompt files are IDE-only (matrix §D8).
-            ItemKind::Command | ItemKind::PiExtension => vec![],
+            ItemKind::Command | ItemKind::PiExtension | ItemKind::OutputStyle => vec![],
         }
     }
 

@@ -125,7 +125,8 @@ fn injected_here(manifest: &crate::manifest::Manifest, kind: ItemKind, name: &st
         | ItemKind::Hook
         | ItemKind::McpServer
         | ItemKind::Plugin
-        | ItemKind::PiExtension => false,
+        | ItemKind::PiExtension
+        | ItemKind::OutputStyle => false,
     }
 }
 

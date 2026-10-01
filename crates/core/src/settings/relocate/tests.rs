@@ -47,6 +47,7 @@ fn record_at(root: &Path, recorded: &Path) {
         entry_key(ItemKind::Skill, "gh", HarnessId::Claude),
         LockEntry {
             registration: None,
+            output_style: None,
             name: "gh".into(),
             kind: ItemKind::Skill,
             harness: HarnessId::Claude,

@@ -31,6 +31,7 @@ fn entry(kind: ItemKind, name: &str, source: &str, repo: &str) -> LockEntry {
         upstream_skills: None,
         emitted: None,
         registration: None,
+        output_style: None,
         reasons: BTreeSet::from([crate::lock::Reason::Requested]),
     }
 }

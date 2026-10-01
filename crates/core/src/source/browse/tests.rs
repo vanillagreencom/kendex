@@ -54,6 +54,7 @@ fn lock_entry(kind: ItemKind, name: &str, source: &str) -> LockEntry {
         upstream_skills: None,
         emitted: None,
         registration: None,
+        output_style: None,
         reasons: std::collections::BTreeSet::from([crate::lock::Reason::Requested]),
     }
 }

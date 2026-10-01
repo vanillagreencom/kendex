@@ -399,6 +399,7 @@ fn a_snapshot_a_lock_names_is_never_removed() {
         upstream_skills: None,
         emitted: None,
         registration: None,
+        output_style: None,
         reasons: BTreeSet::from([lock::Reason::Requested]),
         machine: None,
     };

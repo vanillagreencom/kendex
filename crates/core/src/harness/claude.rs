@@ -29,6 +29,7 @@ impl HarnessAdapter for Claude {
     fn global_surfaces(&self, kind: ItemKind, root: &Path, env: &Env) -> Vec<Surface> {
         match kind {
             ItemKind::Agent => vec![Surface::files(root.join("agents"), &["md"])],
+            ItemKind::OutputStyle => vec![Surface::files(root.join("output-styles"), &["md"])],
             ItemKind::Skill => vec![Surface::SubdirPerItem {
                 dir: root.join("skills"),
                 marker: "SKILL.md",
@@ -54,6 +55,7 @@ impl HarnessAdapter for Claude {
         let dot = project.join(".claude");
         match kind {
             ItemKind::Agent => vec![Surface::files(dot.join("agents"), &["md"])],
+            ItemKind::OutputStyle => vec![Surface::files(dot.join("output-styles"), &["md"])],
             ItemKind::Skill => vec![Surface::SubdirPerItem {
                 dir: dot.join("skills"),
                 marker: "SKILL.md",

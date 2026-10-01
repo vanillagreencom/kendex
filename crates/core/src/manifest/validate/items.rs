@@ -13,6 +13,7 @@ use super::Finding;
 const ITEM_TABLES: &[&str] = &[
     "agents",
     "skills",
+    "output-styles",
     "hooks",
     "commands",
     "mcp-servers",
@@ -40,6 +41,12 @@ fn plugin_harnesses() -> Vec<&'static str> {
 }
 
 pub(super) fn validate_items(table: &Table, findings: &mut Vec<Finding>) {
+    findings.extend(super::output_style_count(
+        table
+            .get("output-styles")
+            .and_then(Value::as_table)
+            .map_or(0, Table::len),
+    ));
     let source_names: Vec<String> = table
         .get("sources")
         .and_then(Value::as_table)

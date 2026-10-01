@@ -66,6 +66,7 @@ fn entry(name: &str, commit: Option<&str>, reasons: &[Reason]) -> LockEntry {
         upstream_skills: None,
         emitted: None,
         registration: None,
+        output_style: None,
         reasons: reasons.iter().cloned().collect(),
     }
 }

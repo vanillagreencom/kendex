@@ -105,6 +105,7 @@ export function toDraft(manifest: Manifest_Serialize): Draft {
     sources: optional(manifest.sources, sourceDecl),
     agents: optional(manifest.agents, itemDecl),
     skills: optional(manifest.skills, itemDecl),
+    "output-styles": optional(manifest["output-styles"], itemDecl),
     hooks: optional(manifest.hooks, itemDecl),
     commands: optional(manifest.commands, itemDecl),
     "mcp-servers": optional(manifest["mcp-servers"], itemDecl),

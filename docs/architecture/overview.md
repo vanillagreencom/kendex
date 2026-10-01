@@ -10,7 +10,7 @@ The desktop app and CLI project one Rust model: scan, declare, diff and apply. T
 
 - Scope: `global` or `project { root }`; the unit a manifest, a lock, an apply and its OS-level lock belong to.
 - Harness: a coding tool kendex writes to, in code (`HarnessId`) and on screen; never "tool" on screen.
-- Item: a logical kind plus name from a source. Installation: item × harness × scope, what locks, drift rows and applies track.
+- Item: one of eight kinds (agent, skill, hook, command, mcp-server, plugin, pi-extension, output-style) plus a name from a source. Installation: item × harness × scope, what locks, drift rows and applies track.
 - Source: `path` or `git`; a subscription is a source a scope declares. Bundle: a curated set a catalog offers under one name, installed as one declaration.
 - Manifest: declared intent. Lock: provenance plus rendered hash per installation. Observation: scanner truth. Drift: declared against observed.
 - Surface: where one kind lives for one harness at one scope, one of four shapes (`Surface` in `crates/core/src/harness/mod.rs`); harnesses reading one physical directory form a surface group.
@@ -23,7 +23,7 @@ The desktop app and CLI project one Rust model: scan, declare, diff and apply. T
 - `crates/app`: Tauri commands, one module per page domain, over core. The command surface and the UI's constants are declared in `specta_builder` and byte-checked against `ui/src/bindings.ts` by `crates/app/tests/bindings.rs`.
 - `crates/cli`: thin verbs over core, one presentation layer in `crates/cli/src/ui.rs`.
 - `ui/`: renders state and invokes commands over the generated bindings; domain logic and types live in Rust. `@tauri-apps` is imported only by the generated bindings and no UI file carries a raw colour (`tools/guard` lanes).
-- Adapters under `crates/core/src/harness/` own paths and rendering only; what each harness supports is one capability table, `crates/core/src/harness/caps.rs`, read by core and UI. Enforced by `crates/core/src/harness/mod.rs::observe_capabilities_match_declared_surfaces`.
+- Adapters own paths and rendering; `crates/core/src/harness/caps.rs` owns support, read by core and UI. Enforced by `crates/core/src/harness/mod.rs::observe_capabilities_match_declared_surfaces`.
 
 ## Invariants
 
@@ -51,7 +51,7 @@ The desktop app and CLI project one Rust model: scan, declare, diff and apply. T
 - No database: manifests, locks and native directories are the state; scans are in-memory views; preferences, saved selections and bookmarks are three files.
 - No migration machinery: manifest and lock carry a format version, this build reads exactly the one it writes, and a file from another version is refused and left byte-for-byte.
 - One spelling per artifact: `kendex.toml`, `.kendex-lock.json`, `.kendex-local/`, `kendex.settings.toml`, `KENDEX_*` variables; no older product name is read anywhere.
-- App and CLI are equal thin shells over core; the only app-only operations are install-beside (`fork_beside`) and per-package update (`package::update_one`).
+- App and CLI are thin shells over core; app-only operations are install-beside (`fork_beside`) and per-package update (`package::update_one`).
 - A capability the harness lacks natively is marked unsupported, never shimmed; where a vendor stores one surface as another the table names the stored kind and the lock records what was written.
 - Catalogs are adversarial input: reads are sealed and budgeted, frontmatter is real YAML with aliases and duplicate keys refused, and every interpolated value in a generated file is quoted.
 - Two scores, safety and quality, are never averaged and are advisory everywhere: install, update and apply proceed regardless.
@@ -60,7 +60,7 @@ The desktop app and CLI project one Rust model: scan, declare, diff and apply. T
 - Commits walk through the commit-guards package's committed scripts whatever tool makes them; kendex implements no check of its own and `kendex check` relays the package's verdict.
 - A package's declared check runs only under a licence: kendex's arming record, in a git directory git clones for nobody, or a person pressing the control that asks.
 - kendex never emits a pasteable command line: errors, hints and recovery instructions present the verb and its parameters as data. The one exception is the session-start drift report, whose remedies come from a fixed template set with validated identifiers.
-- The default catalog is `vanillagreencom/kendex`; subscriptions are matched by what a declaration names, never by literal spelling.
+- The default catalog is `vanillagreencom/kendex`; subscriptions match declarations, not literal spellings.
 - The app decides its launch environment once, before its first spawn, by relaunching (`crates/app/src/launch_env.rs`): the Linux display, the macOS `PATH`. Setting it in place needs `unsafe`, which is banned.
 - A `kendex://` link opens a marketplace or package as the Community tab opens a repository, a read writing no manifest: it comes from a web page (`crates/app/src/deep_link.rs`).
 

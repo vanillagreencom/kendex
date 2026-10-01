@@ -328,6 +328,8 @@ pub(crate) fn shared_first(shared: Option<&Path>, own: PathBuf) -> Vec<Surface> 
 /// the scanner owns the parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reader {
+    /// Managed response-style blocks in Pi's APPEND_SYSTEM.md.
+    OutputStyleBlocks,
     /// `{"mcpServers": {...}}` — claude `.mcp.json`, cursor `mcp.json`
     McpServersJson,
     /// `~/.claude.json` top-level `mcpServers`

@@ -129,6 +129,7 @@ mod tests {
             entry_key(ItemKind::Skill, "gh", harness),
             LockEntry {
                 registration: None,
+                output_style: None,
                 name: "gh".into(),
                 kind: ItemKind::Skill,
                 harness,

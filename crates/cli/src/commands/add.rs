@@ -19,6 +19,7 @@ pub struct AddArgs {
     pub all_harnesses: bool,
     pub agent: Vec<String>,
     pub skill: Vec<String>,
+    pub output_style: Vec<String>,
     pub bundle: Vec<String>,
     pub optional: Vec<String>,
     pub hook: Vec<String>,
@@ -129,6 +130,7 @@ pub fn run_into(env: &Env, scope: &Scope, mut args: AddArgs) -> CliResult {
     let hooks = split(&args.hook);
     let commands = split(&args.command);
     let mcp_servers = split(&args.mcp_server);
+    let output_styles = split(&args.output_style);
     let bundles = split(&args.bundle);
     let pi_extensions = split(&args.pi_extension);
     if args.global
@@ -139,6 +141,7 @@ pub fn run_into(env: &Env, scope: &Scope, mut args: AddArgs) -> CliResult {
             &hooks,
             &commands,
             &mcp_servers,
+            &output_styles,
             &bundles,
             &pi_extensions,
         ]
@@ -166,6 +169,7 @@ pub fn run_into(env: &Env, scope: &Scope, mut args: AddArgs) -> CliResult {
         hooks,
         commands,
         mcp_servers,
+        output_styles,
         pi_extensions,
         all: args.all,
         harnesses: None,

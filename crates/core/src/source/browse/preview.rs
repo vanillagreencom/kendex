@@ -131,7 +131,7 @@ pub fn package_preview(
 /// kinds, the whole file for a script or config.
 fn body_of(kind: ItemKind, text: String) -> String {
     match kind {
-        ItemKind::Skill | ItemKind::Agent | ItemKind::Command => {
+        ItemKind::Skill | ItemKind::Agent | ItemKind::Command | ItemKind::OutputStyle => {
             match crate::frontmatter::split(&text) {
                 Ok((_, body)) => body.to_owned(),
                 Err(_) => text,

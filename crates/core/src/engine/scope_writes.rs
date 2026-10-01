@@ -77,7 +77,17 @@ pub(super) fn plan_config_edits(
         // Config edits bind to the bytes reachable at planning. A link
         // already there is kept and its target updated; a same-byte link
         // arriving later also satisfies this precondition.
-        let pre = crate::apply::Pre::observed(&path)?;
+        let regular = edits
+            .iter()
+            .any(crate::configedit::ConfigEdit::requires_regular_file);
+        if regular && let Some(message) = super::output_style::file_problem(&path) {
+            return Err(crate::error::CoreError::ConfigEdit { path, message });
+        }
+        let pre = if regular && path.exists() {
+            crate::apply::Pre::tree_as_is(&path)?
+        } else {
+            crate::apply::Pre::observed(&path)?
+        };
         let current = crate::fs::read_if_exists(&path)?.unwrap_or_default();
         let remove_empty = crate::configedit::ConfigEdit::removes_empty_document(&edits, &current)
             .map_err(|message| crate::error::CoreError::ConfigEdit {

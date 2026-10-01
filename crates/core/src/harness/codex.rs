@@ -56,7 +56,7 @@ impl HarnessAdapter for Codex {
                 path: root.join("plugins"),
                 reader: Reader::CodexPluginCache,
             }],
-            ItemKind::PiExtension => vec![],
+            ItemKind::PiExtension | ItemKind::OutputStyle => vec![],
         }
     }
 
@@ -77,7 +77,10 @@ impl HarnessAdapter for Codex {
                 path: dot.join("config.toml"),
                 reader: Reader::McpServersToml,
             }],
-            ItemKind::Command | ItemKind::Plugin | ItemKind::PiExtension => vec![],
+            ItemKind::Command
+            | ItemKind::Plugin
+            | ItemKind::PiExtension
+            | ItemKind::OutputStyle => vec![],
         }
     }
 }

@@ -15,13 +15,14 @@ pub use add::{AddRequest, add, add_seeded, requested_kinds, targets_for};
 
 /// Every kind a manifest declares by name. Plugins are excluded: they carry
 /// only an enabled flag, in their own table.
-const DECLARED_KINDS: [ItemKind; 6] = [
+const DECLARED_KINDS: [ItemKind; 7] = [
     ItemKind::Agent,
     ItemKind::Skill,
     ItemKind::Hook,
     ItemKind::Command,
     ItemKind::McpServer,
     ItemKind::PiExtension,
+    ItemKind::OutputStyle,
 ];
 
 /// The tools on this machine a fresh manifest should install to — a tool

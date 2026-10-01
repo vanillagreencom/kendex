@@ -62,6 +62,7 @@ pub enum MemberKind {
     McpServer,
     Plugin,
     PiExtension,
+    OutputStyle,
     Bundle,
 }
 
@@ -76,6 +77,7 @@ impl MemberKind {
             MemberKind::McpServer => Some(ItemKind::McpServer),
             MemberKind::Plugin => Some(ItemKind::Plugin),
             MemberKind::PiExtension => Some(ItemKind::PiExtension),
+            MemberKind::OutputStyle => Some(ItemKind::OutputStyle),
             MemberKind::Bundle => None,
         }
     }
@@ -96,6 +98,7 @@ impl MemberKind {
             MemberKind::Command => Namespace::Item(ItemKind::Command),
             MemberKind::McpServer => Namespace::Item(ItemKind::McpServer),
             MemberKind::PiExtension => Namespace::Item(ItemKind::PiExtension),
+            MemberKind::OutputStyle => Namespace::Item(ItemKind::OutputStyle),
         }
     }
 
@@ -108,6 +111,7 @@ impl MemberKind {
             ItemKind::McpServer => MemberKind::McpServer,
             ItemKind::Plugin => MemberKind::Plugin,
             ItemKind::PiExtension => MemberKind::PiExtension,
+            ItemKind::OutputStyle => MemberKind::OutputStyle,
         }
     }
 

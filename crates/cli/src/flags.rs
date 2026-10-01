@@ -35,6 +35,9 @@ pub struct AddFlags {
     /// Install specific hooks (comma-separated)
     #[arg(long)]
     hook: Vec<String>,
+    /// Install one response style
+    #[arg(long)]
+    output_style: Vec<String>,
     /// Install specific commands (comma-separated)
     #[arg(long)]
     command: Vec<String>,
@@ -84,6 +87,7 @@ impl AddFlags {
             optional: self.optional,
             hook: self.hook,
             command: self.command,
+            output_style: self.output_style,
             mcp_server: self.mcp_server,
             pi_extension: self.pi_extension,
             all_harnesses: self.all_harnesses,

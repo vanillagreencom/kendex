@@ -3,6 +3,7 @@ import {
   BookOpen,
   Bot,
   type LucideIcon,
+  PenLine,
   Puzzle,
   Server,
   SquareTerminal,
@@ -21,6 +22,7 @@ const KIND_ICONS: Record<ItemKind, LucideIcon> = {
   "mcp-server": Server,
   plugin: Puzzle,
   "pi-extension": Blocks,
+  "output-style": PenLine,
 };
 
 export function kindIcon(kind: ItemKind): LucideIcon {

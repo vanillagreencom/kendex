@@ -221,6 +221,9 @@ pub struct LockEntry {
     /// script.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registration: Option<HookRegistration>,
+    /// Owned response-style block or selection, separate from whole files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_style: Option<OutputStyleRecord>,
     /// Every reason this installation exists. Never empty once written: an
     /// installation nothing can account for would be swept the moment
     /// anything looked at it.
@@ -234,6 +237,31 @@ pub struct LockEntry {
     /// agent fork refuses when it needs the recorded delivery.
     #[serde(skip)]
     pub machine: Option<MachineRecord>,
+}
+
+/// The shared position one output-style installation owns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "route", rename_all = "kebab-case")]
+pub enum OutputStyleRecord {
+    /// Only the named marker block is owned, never the surrounding text.
+    Block {
+        path: PathBuf,
+        marker: String,
+        hash: String,
+    },
+    /// A pre-existing selection remains unowned; an inserted selection is tracked.
+    Claude {
+        path: PathBuf,
+        selection: Option<String>,
+    },
+}
+
+impl OutputStyleRecord {
+    pub(crate) fn path_mut(&mut self) -> &mut PathBuf {
+        match self {
+            Self::Block { path, .. } | Self::Claude { path, .. } => path,
+        }
+    }
 }
 
 /// The per-machine half of one installation: facts about this apply on

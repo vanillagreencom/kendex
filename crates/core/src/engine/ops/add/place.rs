@@ -29,6 +29,7 @@ const QUALIFIER: &str = "::";
 pub(super) struct Wanted {
     pub agents: Vec<String>,
     pub skills: Vec<String>,
+    pub output_styles: Vec<String>,
     pub hooks: Vec<String>,
     pub commands: Vec<String>,
     pub mcp_servers: Vec<String>,
@@ -40,6 +41,7 @@ impl Wanted {
         match kind {
             ItemKind::Agent => &mut self.agents,
             ItemKind::Skill => &mut self.skills,
+            ItemKind::OutputStyle => &mut self.output_styles,
             ItemKind::Hook => &mut self.hooks,
             ItemKind::Command => &mut self.commands,
             ItemKind::McpServer => &mut self.mcp_servers,
@@ -69,6 +71,7 @@ pub(super) fn place(
         (ItemKind::Hook, &request.hooks),
         (ItemKind::Command, &request.commands),
         (ItemKind::McpServer, &request.mcp_servers),
+        (ItemKind::OutputStyle, &request.output_styles),
     ];
     for (kind, names) in lists {
         for name in names {

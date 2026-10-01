@@ -184,7 +184,7 @@ pub(super) fn plan_item(
         .map_or_else(timestamp, |machine| machine.installed_at.clone());
     new_lock
         .entries
-        .insert(item.key.clone(), record(item, installed_at));
+        .insert(item.key.clone(), record(item, installed_at, existing)?);
     Ok(())
 }
 
@@ -208,13 +208,13 @@ pub(super) fn rebound(entry: &LockEntry, provenance: &str, recorded_fork: bool) 
 }
 
 /// What this pass records about the installation it just planned.
-fn record(item: &Desired, installed_at: String) -> LockEntry {
+fn record(item: &Desired, installed_at: String, existing: Option<&LockEntry>) -> Result<LockEntry> {
     // The artifact's own hash every pass, never the record's copy of it:
     // an entry in sync renders to the bytes on disk, so the value written
     // last time is this one already, and a recorded value that is not it
     // is the record's to answer for in `attest::record`.
     let rendered_hash = rendered_hash(item);
-    LockEntry {
+    Ok(LockEntry {
         name: item.name.clone(),
         kind: item.kind,
         harness: item.harness,
@@ -231,8 +231,9 @@ fn record(item: &Desired, installed_at: String) -> LockEntry {
         upstream_skills: item.upstream_skills.clone(),
         emitted: item.emitted.clone(),
         registration: registration(item),
+        output_style: super::output_style::record(item, existing)?,
         reasons: item.reasons.clone(),
-    }
+    })
 }
 
 /// What this artifact leaves on disk, for edit detection later. Only file
@@ -345,6 +346,9 @@ fn plan_registration(
         return Ok(Planned::Clean);
     };
     let locked = existing.is_some();
+    if let Some(reason) = super::output_style::conflict(item, existing)? {
+        return Ok(Planned::Conflict(reason));
+    }
     // What the record says this installation registered, where that is no
     // longer what it registers: a changed event or matcher is a move, and
     // a move takes the old entry out before it puts the current one in,

@@ -77,7 +77,7 @@ fn fixture(kind: ItemKind, harness: HarnessId, enabled: bool) -> Fixture {
         ItemKind::Command => "commands",
         ItemKind::Hook => "hooks",
         ItemKind::McpServer => "mcp-servers",
-        ItemKind::Skill | ItemKind::Plugin | ItemKind::PiExtension => {
+        ItemKind::Skill | ItemKind::Plugin | ItemKind::PiExtension | ItemKind::OutputStyle => {
             panic!("fixture requires an agent, command, hook or server")
         }
     };
@@ -331,7 +331,11 @@ fn registration_only(kind: ItemKind, harness: HarnessId) {
             )
             .unwrap();
         }
-        ItemKind::Agent | ItemKind::Command | ItemKind::Skill | ItemKind::PiExtension => {
+        ItemKind::Agent
+        | ItemKind::Command
+        | ItemKind::Skill
+        | ItemKind::PiExtension
+        | ItemKind::OutputStyle => {
             panic!("registration-only fixture requires a hook, server or plugin")
         }
     }

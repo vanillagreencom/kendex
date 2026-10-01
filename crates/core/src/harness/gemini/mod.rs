@@ -78,7 +78,7 @@ fn surfaces(kind: ItemKind, root: &Path, shared: Option<&Path>) -> Vec<Surface> 
         }],
         // Extensions are global-only, so the project list stays empty; the
         // caller decides which root reaches here (matrix §1, §R1).
-        ItemKind::Plugin | ItemKind::PiExtension => vec![],
+        ItemKind::Plugin | ItemKind::PiExtension | ItemKind::OutputStyle => vec![],
     }
 }
 

@@ -170,6 +170,7 @@ pub fn install(
             ItemKind::Hook => request.hooks.push(item.name),
             ItemKind::Command => request.commands.push(item.name),
             ItemKind::McpServer => request.mcp_servers.push(item.name),
+            ItemKind::OutputStyle => request.output_styles.push(item.name),
             // A plugin is its registry's curated set, so it installs as one.
             ItemKind::Plugin => request.bundles.push(item.name),
             // Passed through so the engine's uniform refusal answers it.

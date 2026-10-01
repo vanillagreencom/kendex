@@ -447,6 +447,7 @@ fn recorded_lock(stamp: &str) -> crate::lock::Lock {
             upstream_skills: None,
             emitted: None,
             registration: None,
+            output_style: None,
             reasons: BTreeSet::from([Reason::Requested]),
             machine: Some(MachineRecord {
                 method: Method::Symlink,

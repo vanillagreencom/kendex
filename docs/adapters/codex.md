@@ -48,3 +48,12 @@ Agent scoping: none. Only `agents = "all"` custom hooks are enforced; scoped one
 ## Commands stored as skills
 
 A declared command becomes a one-file skill tree: a generated `SKILL.md` carrying the command's prose, the loader frontmatter and the generated-file banner, recorded in the lock as an emitted skill artifact (`crates/core/src/engine/desired_command.rs`, `crates/core/src/render/command.rs`). Names resolve in one pass over every declared command in name order: a real skill keeps its name, a clashing command takes `<name>__command`, then `<name>__cmd`, each with a warning naming what to type, and when all three are taken nothing is written. At project scope the tree lands in `.agents/skills`, which Pi reads too; that the command appears in Pi's skill list is emitted as a warning.
+
+## Output styles
+
+| Scope | Route | Drift and lock |
+|---|---|---|
+| Global | Unsupported; reported, no style file or block | No installation row |
+| Project | Unsupported; reported, no style file or block | No installation row |
+
+A project declaring Claude Code receives its native style only. kendex writes no style block into repository `AGENTS.md`. This prevents the Claude instruction shim from loading the same style twice. The no-block case is in `crates/core/tests/output_styles.rs`.

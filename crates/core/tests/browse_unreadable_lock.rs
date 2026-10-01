@@ -311,6 +311,7 @@ impl Redirect {
                 upstream_skills: None,
                 emitted: None,
                 registration: None,
+                output_style: None,
                 reasons: std::collections::BTreeSet::from([kendex_core::lock::Reason::Requested]),
             },
         );

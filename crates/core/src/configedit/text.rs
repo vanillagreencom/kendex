@@ -54,6 +54,29 @@ fn marker_bounds(name: &str) -> (String, String) {
     )
 }
 
+/// The owned block, using the editor's fence-aware marker boundaries.
+pub fn marker_block<'a>(current: &'a str, name: &str) -> Option<&'a str> {
+    let (begin, end) = marker_bounds(name);
+    let (start, stop) = marker_block_span(current, &begin, &end)?;
+    Some(&current[start..stop])
+}
+
+/// Names of complete style blocks outside fenced examples.
+pub fn style_blocks(current: &str) -> Vec<String> {
+    current
+        .lines()
+        .filter_map(|line| {
+            let name = line
+                .trim()
+                .strip_prefix("<!-- kendex:append-system output-style-")?
+                .strip_suffix(" begin -->")?;
+            marker_block(current, &format!("output-style-{name}")).map(|_| name.to_owned())
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 /// The block and the blank line before it take the file's own terminator,
 /// so a file that already holds this block comes back byte-identical.
 pub fn upsert_marker_block(current: &str, name: &str, block: &str) -> String {

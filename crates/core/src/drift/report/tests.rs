@@ -536,6 +536,7 @@ fn recorded_entry(
         upstream_skills: None,
         emitted: None,
         registration: None,
+        output_style: None,
         reasons,
     }
 }

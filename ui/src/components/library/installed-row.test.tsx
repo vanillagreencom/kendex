@@ -52,6 +52,48 @@ const group = groupItems([item(VG), item(HYPR)] as never, () => ({
 }))[0];
 
 describe("opening a package from its Library row", () => {
+  it("draws and opens an output-style package", async () => {
+    const onOpen = vi.fn();
+    const style = groupItems(
+      [
+        {
+          ...group.installations[0],
+          kind: "output-style",
+          name: "STE",
+          path: "/work/vg/.claude/output-styles/STE.md",
+          enabled: null,
+        },
+      ],
+      () => ({ kind: "output-style", name: "STE" }),
+    )[0];
+    const host = mountTree(
+      <tbody>
+        <InstalledRow
+          columns={EVERY_COLUMN}
+          group={style}
+          origin={null}
+          forkedIn={[]}
+          outOfDate={false}
+          missingIn={[]}
+          onOpen={onOpen}
+          onOpenHarness={() => {}}
+          onOpenPlace={() => {}}
+        />
+      </tbody>,
+      { host: "table" },
+    );
+    expect(host.querySelectorAll("td")[1].textContent).toBe("Output style");
+    expect(host.querySelector("svg.lucide-pen-line")).not.toBeNull();
+    const name = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === "STE",
+    );
+    if (!name) throw new Error("the output-style name is not a button");
+    name.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(onOpen).toHaveBeenCalledOnce();
+    expect(onOpen).toHaveBeenCalledWith();
+  });
+
   it("opens the intended target once and preserves a selected row drag", async () => {
     const rows = [
       {

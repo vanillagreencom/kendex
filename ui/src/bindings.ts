@@ -206,7 +206,9 @@ export const commands = {
 	 *  Where a problem report about this item belongs: the kendex upstream
 	 *  (with a prefilled issue link) or the user's own repo.
 	 */
-	reportRoute: (scope: Scope, name: string, kind: "agent" | "skill" | "hook" | "command" | "mcp-server" | "plugin" | "pi-extension" | null) => typedError<ReportRouteView, string>(__TAURI_INVOKE("report_route", { scope, name, kind })),
+	reportRoute: (scope: Scope, name: string, kind: "agent" | "skill" | "hook" | "command" | "mcp-server" | "plugin" | "pi-extension" | 
+/**  Instructions that set the writing style for every response. */
+"output-style" | null) => typedError<ReportRouteView, string>(__TAURI_INVOKE("report_route", { scope, name, kind })),
 	auditAll: () => typedError<AuditView_Serialize[], string>(__TAURI_INVOKE("audit_all")),
 	applyPlan: (scope: Scope, removeOrphans: boolean) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("apply_plan", { scope, removeOrphans })),
 	adoptItem: (scope: Scope, kind: ItemKind, name: string, harnesses: HarnessId[]) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("adopt_item", { scope, kind, name, harnesses })),
@@ -2776,7 +2778,9 @@ export type ItemDecl_Serialize = {
 	env?: { [key in string]: string } | null,
 };
 
-export type ItemKind = "agent" | "skill" | "hook" | "command" | "mcp-server" | "plugin" | "pi-extension";
+export type ItemKind = "agent" | "skill" | "hook" | "command" | "mcp-server" | "plugin" | "pi-extension" | 
+/**  Instructions that set the writing style for every response. */
+"output-style";
 
 /**
  *  One reported advisory payload and every rendering it describes. Safety and
@@ -2991,6 +2995,8 @@ export type Manifest_Deserialize = {
 	install?: InstallDefaults_Deserialize,
 	agents?: { [key in string]: ItemDecl_Deserialize },
 	skills?: { [key in string]: ItemDecl_Deserialize },
+	/**  The one response style selected for this scope. */
+	"output-styles"?: { [key in string]: ItemDecl_Deserialize },
 	hooks?: { [key in string]: ItemDecl_Deserialize },
 	commands?: { [key in string]: ItemDecl_Deserialize },
 	"mcp-servers"?: { [key in string]: ItemDecl_Deserialize },
@@ -3046,6 +3052,8 @@ export type Manifest_Serialize = {
 	install?: InstallDefaults_Serialize,
 	agents?: { [key in string]: ItemDecl_Serialize },
 	skills?: { [key in string]: ItemDecl_Serialize },
+	/**  The one response style selected for this scope. */
+	"output-styles"?: { [key in string]: ItemDecl_Serialize },
 	hooks?: { [key in string]: ItemDecl_Serialize },
 	commands?: { [key in string]: ItemDecl_Serialize },
 	"mcp-servers"?: { [key in string]: ItemDecl_Serialize },
@@ -3195,7 +3203,7 @@ export type Member = Member_Serialize | Member_Deserialize;
  *  the catalog offers it under one name and installs it whole — so it
  *  stands beside the kinds rather than inside them.
  */
-export type MemberKind = "agent" | "skill" | "hook" | "command" | "mcp-server" | "plugin" | "pi-extension" | "bundle";
+export type MemberKind = "agent" | "skill" | "hook" | "command" | "mcp-server" | "plugin" | "pi-extension" | "output-style" | "bundle";
 
 /**  One member, named the way a caller outside core addresses it. */
 export type MemberRef = {

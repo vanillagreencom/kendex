@@ -21,6 +21,7 @@ pub(super) fn fixed_kind_dir(kind: ItemKind) -> (&'static str, &'static str) {
     match kind {
         ItemKind::Hook => ("hooks", "sh"),
         ItemKind::Command => ("commands", "md"),
+        ItemKind::OutputStyle => ("output-styles", "md"),
         ItemKind::McpServer => ("mcp", "toml"),
         _ => unreachable!("only file-per-item kinds live in a fixed dir"),
     }

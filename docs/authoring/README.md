@@ -1,6 +1,6 @@
 # Authoring a marketplace
 
-A kendex marketplace is a git repository of skills, agents, hooks, commands, MCP servers and Pi extensions. There is no registration step: any repository that holds skills already works, and `kendex marketplace subscribe owner/repo` finds them where they are (`skills/`, `.claude/skills`, a single root `SKILL.md`, or a Claude plugin registry). Everything below is the optional structure that makes a repository easier to browse, check and publish.
+A kendex marketplace is a git repository of harness packages. `kendex marketplace subscribe owner/repo` discovers existing skills. The structure below adds catalog metadata and other package kinds.
 
 ## Start
 
@@ -19,6 +19,7 @@ my-marketplace/
   skills/<name>/SKILL.md                       one folder per skill; the folder name is its name
   skills/<name>/kendex.settings.toml.example   the settings that skill declares
   hooks/<name>.sh   commands/<name>.md   mcp/<name>.toml   pi-extensions/<name>/
+  output-styles/<name>.md                      one response style per file
   README.md                                    how to subscribe
   LICENSE
   .github/workflows/kendex-check.yml           the check, on every push
@@ -60,6 +61,7 @@ Without a `[marketplace]` table the directory listing falls back to what GitHub 
 - Hook: `hooks/<name>.sh` with a comment header naming `event`, an optional `matcher`, and a `description`.
 - Command: `commands/<name>.md` with frontmatter `description`.
 - MCP server: `mcp/<name>.toml` describing the invocation.
+- Output style: `output-styles/<name>.md`; [frontmatter and declarations](output-styles.md).
 
 A description is never guessed: an empty one stays empty and is a check finding. Tags come from `tags = [...]` in `[marketplace]` or per item in frontmatter, never inferred from names. A marketplace page renders the package's own body, the `SKILL.md` for a skill and the one file for every other kind; a `README.md` beside a skill ships with it and is listed, not rendered.
 
@@ -74,6 +76,7 @@ Write the summary where the kind already keeps its metadata; kendex reads no sec
 | Skill | `summary:` in `SKILL.md` frontmatter |
 | Agent | `summary:` in the agent file's frontmatter |
 | Command | `summary:` in the command file's frontmatter |
+| Output style | `summary:` in the style file's frontmatter |
 | Hook | `# summary:` in the `# ---` comment header |
 | MCP server | `summary = "…"` in `mcp/<name>.toml` |
 | Pi extension | `description` in its `package.json` |

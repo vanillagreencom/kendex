@@ -324,7 +324,8 @@ impl SealedSource {
             | ItemKind::Command
             | ItemKind::McpServer
             | ItemKind::Plugin
-            | ItemKind::PiExtension => self.collect_tree(path, &[])?,
+            | ItemKind::PiExtension
+            | ItemKind::OutputStyle => self.collect_tree(path, &[])?,
         };
         Ok(ItemBytes::Tree(files))
     }

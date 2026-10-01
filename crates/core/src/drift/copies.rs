@@ -730,6 +730,7 @@ mod tests {
             upstream_skills: None,
             emitted: None,
             registration: None,
+            output_style: None,
             reasons: BTreeSet::from([Reason::Requested]),
             machine: None,
         };

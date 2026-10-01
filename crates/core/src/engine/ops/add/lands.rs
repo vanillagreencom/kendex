@@ -103,6 +103,7 @@ pub fn requested_kinds(request: &AddRequest) -> Vec<ItemKind> {
         (ItemKind::Hook, &request.hooks),
         (ItemKind::Command, &request.commands),
         (ItemKind::McpServer, &request.mcp_servers),
+        (ItemKind::OutputStyle, &request.output_styles),
     ];
     let asked: Vec<ItemKind> = named
         .into_iter()

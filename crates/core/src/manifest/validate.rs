@@ -40,12 +40,22 @@ pub fn joined(findings: &[Finding]) -> String {
         .join("\n")
 }
 
+/// Claude Code's outputStyle setting selects one name per scope.
+pub fn output_style_count(count: usize) -> Option<Finding> {
+    (count > 1).then(|| Finding {
+        location: "output-styles".into(),
+        problem: "only one output style may be declared per scope".into(),
+        fix: "keep one [output-styles.<name>] declaration".into(),
+    })
+}
+
 const TOP_LEVEL: &[&str] = &[
     "schema",
     "sources",
     "install",
     "agents",
     "skills",
+    "output-styles",
     "hooks",
     "commands",
     "mcp-servers",

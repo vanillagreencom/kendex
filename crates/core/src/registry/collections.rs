@@ -118,6 +118,7 @@ fn validated(member: WireMember) -> Result<CollectionMember> {
         "hook" => ItemKind::Hook,
         "command" => ItemKind::Command,
         "mcp-server" => ItemKind::McpServer,
+        "output-style" => ItemKind::OutputStyle,
         other => {
             return Err(refuse(format!(
                 "'{}' is not an installable kind",

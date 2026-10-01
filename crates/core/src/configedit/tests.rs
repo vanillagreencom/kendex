@@ -438,3 +438,42 @@ fn gemini_context_file_keeps_unrelated_keys_and_refuses_another_shape() {
     let readers = serde_json::from_str::<serde_json::Value>("{ not json").unwrap_err();
     assert_eq!(unparseable, readers.to_string());
 }
+
+#[test]
+fn output_style_selection_is_absent_only_and_removal_is_owned() {
+    let insert = ConfigEdit::ClaudeOutputStyle { name: "STE".into() };
+    let remove = ConfigEdit::RemoveClaudeOutputStyle { name: "STE".into() };
+    for current in [
+        "{\"outputStyle\":\"Learning\"}\n",
+        "{\"outputStyle\":null}\n",
+        "{\"outputStyle\":\"\"}\n",
+    ] {
+        assert_eq!(insert.apply(current).unwrap(), current);
+        assert_eq!(remove.apply(current).unwrap(), current);
+    }
+    let created = insert.apply("{\"model\":\"opus\"}\n").unwrap();
+    let value: Value = serde_json::from_str(&created).unwrap();
+    assert_eq!(value["outputStyle"], "STE");
+    assert_eq!(value["model"], "opus");
+    assert_eq!(insert.apply(&created).unwrap(), created);
+    let removed: Value = serde_json::from_str(&remove.apply(&created).unwrap()).unwrap();
+    assert!(removed.get("outputStyle").is_none());
+    assert_eq!(removed["model"], "opus");
+    assert!(insert.apply("[]").is_err());
+}
+
+#[test]
+fn style_block_observation_uses_the_editors_fence_boundaries() {
+    let marker = "output-style-STE";
+    let example = "```md\n<!-- kendex:append-system output-style-STE begin -->\nExample.\n<!-- kendex:append-system output-style-STE end -->\n```\n";
+    assert!(style_blocks(example).is_empty());
+    let actual = upsert_marker_block(example, marker, "Real instructions.");
+    assert_eq!(style_blocks(&actual), vec!["STE"]);
+    assert_eq!(
+        marker_block(&actual, marker),
+        Some(
+            "<!-- kendex:append-system output-style-STE begin -->\nReal instructions.\n<!-- kendex:append-system output-style-STE end -->\n"
+        )
+    );
+    assert_eq!(remove_marker_block(&actual, marker), example);
+}

@@ -41,3 +41,10 @@ Advisory, and the artifact is a rule, not a registration: a Cursor hook is `.cur
 ## Not supported
 
 Writing commands: Cursor has deprecated slash commands in favour of skills (every commands page redirects to the skills migration, and `/migrate-to-skills` converts them), so `.cursor/commands` is read and never written, and a skill with `disable-model-invocation: true` is the successor.
+
+## Output styles
+
+| Scope | Route | Drift and lock |
+|---|---|---|
+| Global | Unsupported; reported, no style file or block | No installation row |
+| Project | Unsupported; reported, no style file or block | No installation row |

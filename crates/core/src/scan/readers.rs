@@ -35,6 +35,16 @@ pub fn read_structured(
         Reader::CodexPluginCache => plugins::codex_cache(path),
         Reader::CursorPluginDirs => Ok(plugins::cursor_dirs(path)),
         Reader::PiPackages => super::pi_packages::pi_packages(path),
+        Reader::OutputStyleBlocks => Ok(crate::configedit::style_blocks(&read_text(path)?)
+            .into_iter()
+            .map(|name| RawEntry {
+                name,
+                enabled: Some(true),
+                summary: None,
+                action: None,
+                source_path: None,
+            })
+            .collect()),
     }
 }
 

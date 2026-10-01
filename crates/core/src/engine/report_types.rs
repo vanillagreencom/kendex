@@ -433,7 +433,8 @@ impl EngineReport {
             | ItemKind::Command
             | ItemKind::McpServer
             | ItemKind::PiExtension
-            | ItemKind::Plugin => false,
+            | ItemKind::Plugin
+            | ItemKind::OutputStyle => false,
         };
         hook && !harnesses.is_empty()
             && harnesses.iter().all(|harness| {

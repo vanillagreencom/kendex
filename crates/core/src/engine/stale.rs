@@ -196,6 +196,7 @@ mod tests {
                 paths: vec![path],
             }),
             registration: None,
+            output_style: None,
             reasons: BTreeSet::from([Reason::Requested]),
             machine: Some(MachineRecord {
                 method: Method::Copy,

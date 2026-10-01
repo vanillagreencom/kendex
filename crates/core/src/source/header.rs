@@ -24,9 +24,11 @@ pub(crate) fn header_file(kind: ItemKind, path: &Path) -> Option<PathBuf> {
         // npm's own manifest is the declaration home a Pi extension's
         // format already gives its author.
         ItemKind::PiExtension => Some(path.join("package.json")),
-        ItemKind::Agent | ItemKind::Command | ItemKind::McpServer | ItemKind::Hook => {
-            Some(path.to_path_buf())
-        }
+        ItemKind::Agent
+        | ItemKind::Command
+        | ItemKind::McpServer
+        | ItemKind::Hook
+        | ItemKind::OutputStyle => Some(path.to_path_buf()),
         ItemKind::Plugin => None,
     }
 }
@@ -35,7 +37,9 @@ pub(crate) fn header_file(kind: ItemKind, path: &Path) -> Option<PathBuf> {
 /// will not parse describes itself with nothing rather than with a guess.
 pub(crate) fn header_of(kind: ItemKind, text: &str) -> Metadata {
     match kind {
-        ItemKind::Skill | ItemKind::Agent | ItemKind::Command => metadata::from_markdown(text),
+        ItemKind::Skill | ItemKind::Agent | ItemKind::Command | ItemKind::OutputStyle => {
+            metadata::from_markdown(text)
+        }
         ItemKind::McpServer => metadata::from_toml(text),
         ItemKind::Hook => metadata::from_hook_script(text),
         ItemKind::PiExtension => metadata::from_package_json(text),

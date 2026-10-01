@@ -71,3 +71,12 @@ Gemini reads `.agents/skills`, so at project scope that shared tree is where its
 ## Instruction shim
 
 Gemini loads whichever files `context.fileName` names, so kendex names `AGENTS.md` there in the project's `.gemini/settings.json` beside Gemini's own default (`crates/core/src/engine/instruction_shims.rs`).
+
+## Output styles
+
+| Scope | Route | Drift and lock |
+|---|---|---|
+| Global | Unsupported; reported, no style file or block | No installation row |
+| Project | Unsupported; reported, no style file or block | No installation row |
+
+A project declaring Claude Code receives its native style only. kendex writes no style block into repository `AGENTS.md`. This prevents the Claude instruction shim from loading the same style twice. The no-block case is in `crates/core/tests/output_styles.rs`.

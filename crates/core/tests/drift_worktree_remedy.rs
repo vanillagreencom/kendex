@@ -111,6 +111,7 @@ fn record_a_missing_agent(env: &Env, scope: &Scope) {
         upstream_skills: None,
         emitted: None,
         registration: None,
+        output_style: None,
         reasons: std::collections::BTreeSet::new(),
         machine: None,
     };

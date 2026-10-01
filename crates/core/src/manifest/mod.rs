@@ -16,7 +16,7 @@ pub use file::{
 // its precondition first. Anywhere else, a direct save is a whole-file
 // write with no base check, the exact door `read_for_mutation` closes.
 pub(crate) use file::save;
-pub use validate::{Finding, joined, validate};
+pub use validate::{Finding, joined, output_style_count, validate};
 
 /// Current manifest schema, and the only one that loads. Nothing converts
 /// an older file: each schema changed what a table means, so reading one
@@ -276,6 +276,9 @@ pub struct Manifest {
     pub agents: BTreeMap<String, ItemDecl>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub skills: BTreeMap<String, ItemDecl>,
+    /// The one response style selected for this scope.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub output_styles: BTreeMap<String, ItemDecl>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub hooks: BTreeMap<String, ItemDecl>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -354,6 +357,7 @@ impl Manifest {
         match kind {
             crate::model::ItemKind::Agent => &self.agents,
             crate::model::ItemKind::Skill => &self.skills,
+            crate::model::ItemKind::OutputStyle => &self.output_styles,
             crate::model::ItemKind::Hook => &self.hooks,
             crate::model::ItemKind::Command => &self.commands,
             crate::model::ItemKind::McpServer => &self.mcp_servers,
@@ -404,6 +408,7 @@ impl Manifest {
         match kind {
             crate::model::ItemKind::Agent => &mut self.agents,
             crate::model::ItemKind::Skill => &mut self.skills,
+            crate::model::ItemKind::OutputStyle => &mut self.output_styles,
             crate::model::ItemKind::Hook => &mut self.hooks,
             crate::model::ItemKind::Command => &mut self.commands,
             crate::model::ItemKind::McpServer => &mut self.mcp_servers,

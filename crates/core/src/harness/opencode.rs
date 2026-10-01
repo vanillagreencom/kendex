@@ -139,7 +139,7 @@ fn surfaces(kind: ItemKind, base: &Path, config: PathBuf, shared: Option<&Path>)
                 reader: Reader::OpencodePluginRefs,
             },
         ],
-        ItemKind::PiExtension => vec![],
+        ItemKind::PiExtension | ItemKind::OutputStyle => vec![],
     }
 }
 

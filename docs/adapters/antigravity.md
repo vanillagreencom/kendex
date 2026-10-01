@@ -54,3 +54,10 @@ Agent scoping: none; only `agents = "all"` custom hooks are enforced.
 ## Not supported
 
 Agents at project scope (the global root is the whole agent surface), commands (a skill is the slash command; workflows under `.agents/workflows/` still run but retire on 2026-11-01), Pi extensions, writing plugins, and the `skills:` frontmatter list.
+
+## Output styles
+
+| Scope | Route | Drift and lock |
+|---|---|---|
+| Global | Unsupported; reported, no style file or block | No installation row |
+| Project | Unsupported; reported, no style file or block | No installation row |

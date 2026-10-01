@@ -264,6 +264,9 @@ fn installation_paths(
         ItemKind::Agent => native(kind)
             .map(|dir| both(dir.join(crate::render::agent::file_name(harness, name))))
             .unwrap_or_default(),
+        ItemKind::OutputStyle => native(kind)
+            .map(|dir| both(dir.join(format!("{name}.md"))))
+            .unwrap_or_default(),
         // Copy keeps every tool's own directory; only the shared method
         // puts a tree where several tools read one copy, and the plan binds
         // to both that tree and the position pointing at it. The two methods

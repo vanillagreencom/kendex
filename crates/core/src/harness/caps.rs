@@ -282,6 +282,12 @@ pub fn capabilities(harness: HarnessId, kind: ItemKind) -> KindCaps {
     use HarnessId::*;
     use ItemKind::*;
     match (harness, kind) {
+        (Claude | Pi, OutputStyle) => KindCaps {
+            adopt: NONE,
+            toggle: NONE,
+            ..managed(BOTH)
+        },
+        (Codex | Cursor | Gemini | Copilot | Opencode | Antigravity, OutputStyle) => unsupported(),
         (Claude, Agent | Skill | Command) => managed(BOTH),
         // Claude runs the registered command and gates the tool call on its
         // exit status.

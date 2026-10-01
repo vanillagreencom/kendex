@@ -56,12 +56,13 @@ pub const CATALOG_PASS: &str = "catalog";
 pub const TRACKED_OUTPUT_PASS: &str = "tracked-output";
 
 /// Every kind a catalog can offer, in report order.
-const CHECKED_KINDS: [ItemKind; 5] = [
+const CHECKED_KINDS: [ItemKind; 6] = [
     ItemKind::Agent,
     ItemKind::Skill,
     ItemKind::Hook,
     ItemKind::Command,
     ItemKind::McpServer,
+    ItemKind::OutputStyle,
 ];
 
 /// One problem either pass found, carrying everything a machine consumer
@@ -451,6 +452,23 @@ fn content(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Result<Content
 fn structural(kind: ItemKind, name: &str, file: &str, content: &Content) -> Vec<CheckFinding> {
     let leaf = crate::names::leaf(name);
     let mut out = Vec::new();
+    if let (ItemKind::OutputStyle, Content::Document { text }) = (kind, content)
+        && let Err(message) = crate::engine::output_style::body(text, name)
+    {
+        out.push(CheckFinding {
+            file: file.to_owned(),
+            line: None,
+            kind: kind.name(),
+            name: name.to_owned(),
+            pass: "output-style".into(),
+            severity: "error",
+            rule: None,
+            message,
+            fix:
+                "set name, description and keep-coding-instructions: true in the style frontmatter"
+                    .into(),
+        });
+    }
     if let (ItemKind::Hook, Content::Document { text }) = (kind, content)
         && let Ok(hook) = crate::hook::parse_hook(text)
         && hook.harnesses.is_some()

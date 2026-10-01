@@ -77,6 +77,7 @@ mod migration;
 mod not_offered_note;
 mod opencode_commands;
 mod opencode_mcp;
+mod output_styles;
 mod package_checks_plan;
 mod package_detail;
 mod package_diff;

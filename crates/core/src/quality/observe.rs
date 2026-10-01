@@ -89,6 +89,22 @@ pub fn input_for(item: &ObservedItem, publisher: Publisher) -> AuditInput {
     let content = match item.kind {
         ItemKind::Skill => read_tree(&item.path),
         ItemKind::Agent | ItemKind::Command | ItemKind::PiExtension => read_document(&item.path),
+        ItemKind::OutputStyle => match read_document(&item.path) {
+            Content::Document { text }
+                if item.file_state == crate::model::FileState::ConfigEntry =>
+            {
+                match crate::configedit::marker_block(&text, &format!("output-style-{}", item.name))
+                {
+                    Some(block) => Content::Document {
+                        text: block.to_owned(),
+                    },
+                    None => Content::Unread {
+                        why: "the observed style block is missing",
+                    },
+                }
+            }
+            content => content,
+        },
         ItemKind::Hook => read_hook(item),
         ItemKind::McpServer => read_mcp(&item.path, &item.name),
         ItemKind::Plugin => read_plugin(&item.path),

@@ -6,6 +6,7 @@ use crate::error::CoreError;
 fn entry(emitted: Option<EmittedArtifact>) -> LockEntry {
     LockEntry {
         registration: None,
+        output_style: None,
         name: "gh".into(),
         kind: ItemKind::Skill,
         harness: HarnessId::Claude,

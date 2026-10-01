@@ -61,7 +61,8 @@ fn site_kind(kind: ItemKind) -> &'static str {
         | ItemKind::Hook
         | ItemKind::Command
         | ItemKind::Plugin
-        | ItemKind::PiExtension => kind.name(),
+        | ItemKind::PiExtension
+        | ItemKind::OutputStyle => kind.name(),
     }
 }
 
