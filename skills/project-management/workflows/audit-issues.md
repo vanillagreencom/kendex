@@ -4,6 +4,8 @@ Audit tracked issues and projects, apply mechanical corrections, and authorize c
 
 **Primary-session wrapper: never delegate this workflow itself.** § 6 authorizes § 7 mutations. Delegate TPM analysis in § 2.1 / § 4.1 (`tpm-audit.md`); fleet ownership follows [skill-rules.md § Coordination](../../orch/references/skill-rules.md#coordination).
 
+Overseer heartbeat audits use [oversee-events.md § Heartbeat audit](../../orch/references/oversee-events.md#heartbeat-audit) for the shared § 4.1 TPM delegation, Triage eligibility and § 6 authorization instead of blanket auto approval or interactive-only asks.
+
 ## Inputs
 
 | Invocation | MODE | TARGET |
