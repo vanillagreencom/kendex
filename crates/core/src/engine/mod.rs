@@ -174,7 +174,7 @@ pub fn plan_scope(
     // manifest any write this plan carries is built from. A single-package
     // update reads from a copy with every other follower pinned at its
     // installed commit — the pins steer this pass and never reach the file.
-    let (manifest, state, held) = desired_pass(env, scope, declared, lock, options)?;
+    let (manifest, mut state, held) = desired_pass(env, scope, declared, lock, options)?;
     // Advisory scoring over what this plan would write, before the ops are
     // planned: the rows ride out on the report beside the plan.
     let safety = scoring::run(scope, &state);
@@ -212,7 +212,7 @@ pub fn plan_scope(
         env,
         scope,
         &manifest,
-        &state,
+        &mut state,
         options,
         &mut drift,
         &mut ops,
@@ -246,6 +246,7 @@ pub fn plan_scope(
     plan_lock_write(env, scope, declared, lock, &new_lock, &mut ops)?;
     let generated = generated_paths::plan(scope, &state, &instruction_shims, &drift, &mut ops)?;
 
+    state.warnings.extend(state.agent_names.warnings());
     let mut report = EngineReport {
         declaration_status: DeclarationStatus::of(&state),
         // Ahead of the moves out of `state` below, and read before `drift`
@@ -343,7 +344,7 @@ fn plan_scope_files(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
-    state: &desired::DesiredState,
+    state: &mut desired::DesiredState,
     options: &PlanOptions,
     drift: &mut Vec<DriftRow>,
     ops: &mut Vec<PlannedOp>,
@@ -487,7 +488,11 @@ fn desired_pass<'a>(
     desired::DesiredState,
     Vec<HeldPin>,
 )> {
-    let (planning, held_pins) = desired::hold::planning_manifest(declared, lock, options);
+    let mut normalized = declared.clone();
+    let mut agent_names = crate::source::agent_names::Uses::default();
+    agent_names.manifest(&mut normalized)?;
+    let renamed = normalized != *declared;
+    let (planning, held_pins) = desired::hold::planning_manifest(&normalized, lock, options);
     let mut state = desired_state(
         env,
         scope,
@@ -496,13 +501,17 @@ fn desired_pass<'a>(
         options.hold_upstream_skills,
         held_pins.as_ref(),
     )?;
+    state.agent_names.extend(agent_names);
+    if renamed && state.manifest_update.is_none() {
+        state.manifest_update = Some(normalized.clone());
+    }
     if let (Some(pins), Some(update)) = (&held_pins, state.manifest_update.as_mut()) {
         pins.unpin(update);
     }
     let held = held_pins
         .map(|pins| pins.pins().to_vec())
         .unwrap_or_default();
-    Ok((planning, state, held))
+    Ok((std::borrow::Cow::Owned(planning.into_owned()), state, held))
 }
 
 /// The record this pass will write, before any of it is filled in: the

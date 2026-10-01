@@ -414,6 +414,7 @@ fn require_resolved(state: SourceState) -> Result<ResolvedSource> {
 }
 
 mod config;
+pub(crate) use config::agent_names;
 pub use config::{SourceConfig, find_item, list_items, source_config, source_config_for};
 
 #[cfg(test)]

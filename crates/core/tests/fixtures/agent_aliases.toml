@@ -1,0 +1,33 @@
+schema = 6
+
+[install]
+harnesses = ["claude", "pi"]
+method = "copy"
+
+[agents.generalist]
+source = "cat"
+
+[agents.engineer]
+source = "cat"
+
+[skills.review]
+source = "cat"
+
+[agent-skills]
+generalist = ["review"]
+engineer = ["review"]
+
+[agent-additional-instructions]
+generalist = "Consumer maintainer instructions."
+engineer = "Consumer runtime instructions."
+
+[agent-launch-instructions]
+generalist = "Launch agent:engineer."
+engineer = "Launch agent:generalist."
+
+[agent-frontmatter.pi]
+generalist = { allowed-subagents = ["engineer"] }
+engineer = { allowed-subagents = ["generalist"] }
+
+[skill-instructions]
+review = "Use agent:generalist and agent:engineer. Keep agent:engineer-extra."

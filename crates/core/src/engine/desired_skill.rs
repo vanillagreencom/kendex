@@ -370,6 +370,10 @@ fn seed_settings_env(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()> {
         .read_if_exists(&ctx.item_path.join(crate::settings_seed::SETTINGS_TEMPLATE))?;
     let source = match current {
         Some(text) => {
+            let text = state.agent_names.labels(
+                &text,
+                &format!("{}: {}", ctx.name, crate::settings_seed::SETTINGS_TEMPLATE),
+            );
             for entry in crate::settings_seed::extract_env_entries(&text) {
                 state.settings_env.push(crate::settings_seed::SeededEnv {
                     entry,
@@ -393,6 +397,21 @@ fn render_variant(
     enabled: bool,
 ) -> Result<Variant> {
     let (mut rendered, read_as) = render_skill(ctx.sealed, ctx.item_path, ctx.manifest, ctx.name)?;
+    let files = rendered
+        .into_files()
+        .into_iter()
+        .map(|(path, bytes)| {
+            let bytes = match std::str::from_utf8(&bytes) {
+                Ok(text) => state
+                    .agent_names
+                    .labels(text, &format!("{}: {}", ctx.name, path.display()))
+                    .into_bytes(),
+                Err(_) => bytes,
+            };
+            (path, bytes)
+        })
+        .collect();
+    rendered = crate::render::skill::Rendered::new(files);
     // `SKILL.md.disabled` is the name kendex keeps a switched-off
     // installation's content under, so a catalog shipping one of its own
     // has written down a tree that cannot be installed both ways: turning

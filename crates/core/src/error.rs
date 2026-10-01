@@ -316,6 +316,15 @@ pub enum CoreError {
     #[error("'{name}' not found in source '{source_name}'")]
     ItemNotInSource { name: String, source_name: String },
 
+    /// Two consumer keys resolve to the same agent, so neither may silently
+    /// replace the other's declaration or customization.
+    #[error("{setting}: both '{old}' and '{new}' name '{new}'; keep one setting")]
+    AgentAliasCollision {
+        old: String,
+        new: String,
+        setting: String,
+    },
+
     /// A forked agent is assigned a skill nothing in reach offers. The fork
     /// stopped reading the catalog that assigned it, so the rendering would
     /// name instructions that cannot be loaded, and leaving the skill out

@@ -19,6 +19,8 @@ use super::discover::{self, CatalogMode, Discovery};
 use super::meta::MarketplaceMeta;
 use super::plugin_registry::{self, CatalogFinding, Registry};
 
+pub(crate) mod agent_names;
+
 /// Source-side layout + mapping tables, read leniently — source catalogs are
 /// v1-format repos (no schema key) and stay valid forever. What is not
 /// lenient is the control file itself: see the module note.
@@ -342,6 +344,11 @@ pub fn find_item(
     kind: ItemKind,
     name: &str,
 ) -> Option<PathBuf> {
+    let name = if kind == ItemKind::Agent {
+        agent_names::resolve(name)
+    } else {
+        name
+    };
     // A name that cannot be a file is not on offer, whoever asks — a bundle
     // member or a dependency is not checked anywhere else.
     if crate::names::item_problem(name).is_some() {

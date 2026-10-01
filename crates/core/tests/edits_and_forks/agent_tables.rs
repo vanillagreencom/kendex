@@ -315,13 +315,13 @@ fn renaming_an_agent_named_for_a_role_leaves_the_roles_hook_alone() {
     let agents = w.upstream.join("agents");
     fs::create_dir_all(&agents).unwrap();
     fs::write(
-        agents.join("engineer.md"),
-        "---\nname: engineer\ndescription: agent engineer\n---\nUpstream body.\n",
+        agents.join("reviewer.md"),
+        "---\nname: reviewer\ndescription: agent reviewer\n---\nUpstream body.\n",
     )
     .unwrap();
     fs::write(
         agents.join("rev.md"),
-        "---\nname: rev\ndescription: agent rev\nrole: engineer\n---\nOther body.\n",
+        "---\nname: rev\ndescription: agent rev\nrole: reviewer\n---\nOther body.\n",
     )
     .unwrap();
     commit(&w.upstream, "one");
@@ -330,7 +330,7 @@ fn renaming_an_agent_named_for_a_role_leaves_the_roles_hook_alone() {
     fs::write(
         &path,
         format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[agents.engineer]\nsource = \"cat\"\n\n[agents.rev]\nsource = \"cat\"\n\n[[custom-hooks]]\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\nagents = \"engineer\"\n"
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[agents.reviewer]\nsource = \"cat\"\n\n[agents.rev]\nsource = \"cat\"\n\n[[custom-hooks]]\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\nagents = \"reviewer\"\n"
         ),
     )
     .unwrap();
@@ -340,30 +340,30 @@ fn renaming_an_agent_named_for_a_role_leaves_the_roles_hook_alone() {
             .unwrap()
             .contains("./guard.sh")
     };
-    assert!(guarded("rev"), "the role's hook reaches an engineer");
+    assert!(guarded("rev"), "the role's hook reaches a reviewer");
 
-    edit_body(&rendered(&w, HarnessId::Claude, "engineer"));
+    edit_body(&rendered(&w, HarnessId::Claude, "reviewer"));
     let plan = fork::fork(
         &w.env,
         &w.scope,
         ItemKind::Agent,
-        "engineer",
+        "reviewer",
         HarnessId::Claude,
     )
     .unwrap();
     apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
-    let plan = fork::rename_fork(&w.env, &w.scope, ItemKind::Agent, "engineer", "my-eng").unwrap();
+    let plan = fork::rename_fork(&w.env, &w.scope, ItemKind::Agent, "reviewer", "my-rev").unwrap();
     apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     assert!(
         guarded("rev"),
-        "renaming one agent took the gate off every other engineer: {}",
+        "renaming one agent took the gate off every other reviewer: {}",
         manifest_text(&w)
     );
     assert!(
-        manifest_text(&w).contains("agents = \"engineer\""),
+        manifest_text(&w).contains("agents = \"reviewer\""),
         "the role selector is untouched: {}",
         manifest_text(&w)
     );
@@ -651,11 +651,11 @@ fn a_population_name_is_free_where_no_hook_gates_the_agent() {
     apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
-    let plan = fork::rename_fork(&w.env, &w.scope, ItemKind::Agent, "rev", "engineer").unwrap();
+    let plan = fork::rename_fork(&w.env, &w.scope, ItemKind::Agent, "rev", "reviewer").unwrap();
     apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
     assert!(
-        rendered(&w, HarnessId::Claude, "engineer").exists(),
+        rendered(&w, HarnessId::Claude, "reviewer").exists(),
         "{}",
         manifest_text(&w)
     );

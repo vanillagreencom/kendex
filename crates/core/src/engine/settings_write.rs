@@ -4,8 +4,8 @@
 //! is decided by a different question. The manifest and the lock are
 //! kendex's own records and every pass rewrites them; this one is the
 //! consumer's, tracked in their repository, and a pass may put a line in
-//! it only when the skill the template comes from is arriving here or a
-//! save names the key. Arrival rides in on the plan's options, because the
+//! it only when the skill the template comes from is arriving here, a
+//! save names the key, or the shared agent resolver replaces legacy labels. Arrival rides in on the plan's options, because the
 //! only thing that arrives a skill is the `add` that declares it. What the
 //! rule IS lives in [`crate::settings_seed`]; this is where a scope asks
 //! it.
@@ -42,7 +42,7 @@ fn cannot_write(scope: &Scope, file: String, detail: String) -> DriftRow {
 /// arriving here writes the keys its template marks `# required`, and a
 /// save writes the keys it names; a key the file already assigns anywhere
 /// is never touched, and a pass that arrives no skill and carries no save
-/// writes nothing at all.
+/// writes nothing except legacy agent-label replacements.
 ///
 /// A person's own edits are the other thing that reaches this file, and
 /// they compose here rather than following as a second write: the keys a
@@ -55,7 +55,7 @@ fn cannot_write(scope: &Scope, file: String, detail: String) -> DriftRow {
 /// saying whether or not this pass has a write to plan.
 pub(super) fn plan_settings_seed(
     scope: &Scope,
-    state: &DesiredState,
+    state: &mut DesiredState,
     options: &crate::engine::PlanOptions,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<(Vec<String>, Vec<DriftRow>)> {
@@ -76,9 +76,7 @@ pub(super) fn plan_settings_seed(
     };
     let (declared, edits, mut notes) = declarations(state, options, edits)?;
     let edits = edits.as_slice();
-    if declared.is_empty() && edits.is_empty() {
-        return Ok((notes, Vec::new()));
-    }
+
     // What this pass may put in the file: a template's required keys where
     // its skill is arriving, plus the keys a save names — a value has to
     // have an assignment to land on, and most keys never get one from an
@@ -107,6 +105,9 @@ pub(super) fn plan_settings_seed(
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| crate::settings_seed::SETTINGS_FILE.to_owned());
     if path.is_symlink() || (path.exists() && !path.is_file()) {
+        if declared.is_empty() && edits.is_empty() {
+            return Ok((notes, Vec::new()));
+        }
         // Seeding reports this and carries on with the rest of the scope.
         // An edit cannot: the person asked for exactly this file.
         if !edits.is_empty() {
@@ -123,6 +124,13 @@ pub(super) fn plan_settings_seed(
         return Ok((notes, vec![row]));
     }
     let current = crate::fs::read_if_exists(&path)?;
+    let compatible = current
+        .as_deref()
+        .map(|text| state.agent_names.settings(text, &path))
+        .transpose()?;
+    if declared.is_empty() && edits.is_empty() && compatible == current {
+        return Ok((notes, Vec::new()));
+    }
     // Where every declared key stands in the file the notes speak about.
     // Both views at once, because the two questions the notes ask take
     // different ones: whether a write can land on the name, and whether
@@ -153,7 +161,7 @@ pub(super) fn plan_settings_seed(
     notes.extend(crate::settings_seed::seed_notes(
         &declared, &answered, &seeding,
     ));
-    let settled = settle(current.as_deref(), &declared, &seeding, edits, &path)?;
+    let settled = settle(compatible.as_deref(), &declared, &seeding, edits, &path)?;
     // Nothing to write when the finished text is what the file already
     // holds — and, where there was no file, when there is nothing to make.
     match &current {
@@ -161,12 +169,28 @@ pub(super) fn plan_settings_seed(
         None if settled.text.is_empty() => return Ok((notes, Vec::new())),
         _ => {}
     }
+    plan_settings_write(path, file, draft, settled, compatible != current, ops)?;
+    Ok((notes, Vec::new()))
+}
+
+/// Bind the combined seed, edit and label rename to the original file bytes.
+fn plan_settings_write(
+    path: std::path::PathBuf,
+    file: String,
+    draft: Option<&crate::settings_file::SettingsDraft>,
+    settled: Settled,
+    renamed: bool,
+    ops: &mut Vec<PlannedOp>,
+) -> Result<()> {
     let Settled {
         text,
         added,
         edited,
     } = settled;
     let mut said = Vec::new();
+    if renamed {
+        said.push("rename legacy agent labels".to_owned());
+    }
     if !added.is_empty() {
         said.push(format!("seed {}", added.join(", ")));
     }
@@ -187,7 +211,7 @@ pub(super) fn plan_settings_seed(
             bytes: text.into_bytes(),
         },
     });
-    Ok((notes, Vec::new()))
+    Ok(())
 }
 
 /// What the file becomes, and what moved to get there.
@@ -205,10 +229,8 @@ struct Settled {
 /// file as it was: a key this pass just inserted is one the same pass can
 /// then set, and the two are one write.
 ///
-/// Two things reach the file and no third one does. A block already there
-/// is never revisited, whichever pass wrote it: following a template
-/// revision into it would be a write on a pass nobody asked to write, and
-/// there is no such pass.
+/// Template revisions never revisit an existing block. Agent-label
+/// compatibility is applied to the input before this seed-and-edit pass.
 fn settle(
     current: Option<&str>,
     declared: &[crate::settings_seed::SeededEnv],
@@ -302,7 +324,7 @@ fn declarations(
 /// resolved once, at the top, because all three steps read it.
 pub(super) fn plan_project_files(
     scope: &Scope,
-    state: &DesiredState,
+    state: &mut DesiredState,
     options: &crate::engine::PlanOptions,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<(Vec<String>, Vec<DriftRow>)> {

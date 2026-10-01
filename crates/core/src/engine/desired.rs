@@ -278,6 +278,7 @@ pub enum RefusalKind {
 
 #[derive(Debug, Default)]
 pub struct DesiredState {
+    pub(super) agent_names: crate::source::agent_names::Uses,
     pub declaration_status: super::DeclarationStatus,
     pub items: Vec<Desired>,
     /// Sources that could not be read (pending remotes, missing paths) and
