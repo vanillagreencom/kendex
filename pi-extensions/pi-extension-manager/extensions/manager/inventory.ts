@@ -4,7 +4,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { stringifyError } from "./format.js";
 import { host } from "./host.js";
 import { expandHome } from "./package-config.js";
-import { asRecord, loadSettingsFiles, managerStateFrom, mergedManagerState } from "./settings.js";
+import { asRecord, getOrCreateRecord, loadSettingsFiles, managerStateFrom, mergedManagerState } from "./settings.js";
 import {
 	gitPackageDirCandidates,
 	isNewer,
@@ -268,7 +268,6 @@ export function applyUpdateMetadata(items: InventoryItem[], settingsFiles: Setti
 export async function buildInventory(pi: ExtensionAPI, ctx: ExtensionContext): Promise<Inventory> {
 	const signal = inventorySession(pi).controller.signal;
 	const settingsFiles = loadSettingsFiles(ctx);
-	const managerState = mergedManagerState(settingsFiles);
 	const items: InventoryItem[] = [];
 	const auditLines: string[] = [];
 	const seenPackages = new Map<string, InventoryItem>();
@@ -382,23 +381,29 @@ export async function buildInventory(pi: ExtensionAPI, ctx: ExtensionContext): P
 
 	if (installed === undefined) {
 		// Read the pre-3.0.4 stored ids through 3.0.x; 3.1.0 can remove this migration.
-		const migrated = new Set(managerState.disabledItems);
 		let legacyFound = false;
 		for (const file of settingsFiles) {
 			const disabled = new Set(managerStateFrom(file.json).disabledItems);
+			const migrated = new Set(disabled);
+			let fileLegacyFound = false;
 			for (const item of items) {
 				if (item.scope !== file.scope || !item.packageName) continue;
 				const oldId = item.kind === "package" ? `package:${item.packageName}` : item.entrypoint ? `extension:${item.packageName}:${item.entrypoint}` : undefined;
 				if (!oldId || !disabled.has(oldId)) continue;
 				migrated.delete(oldId);
 				migrated.add(item.id);
+				fileLegacyFound = true;
+			}
+			if (fileLegacyFound) {
+				const manager = getOrCreateRecord(getOrCreateRecord(file.json, "kendex"), "extensionManager");
+				manager.disabledItems = [...migrated];
 				legacyFound = true;
 			}
 		}
-		managerState.disabledItems = [...migrated];
 		if (legacyFound) console.warn("pi-extension-manager: legacy-disabled-ids=3.0.x\nStored toggles use old ids. Saving a toggle writes scoped ids.");
-		applyDisableState(items, managerState);
 	}
+	const managerState = mergedManagerState(settingsFiles);
+	if (installed === undefined) applyDisableState(items, managerState);
 	host.decorateItems(items, settingsFiles);
 	if (items.length > MAX_INVENTORY_ITEMS) throw new Error(`inventory-limit: items=${items.length} limit=${MAX_INVENTORY_ITEMS}`);
 	items.sort(compareInventoryItems);

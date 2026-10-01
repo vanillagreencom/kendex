@@ -329,21 +329,69 @@ test("relocated local installations retain module ids and first enable removes t
 	expect(saved.kendex.extensionManager.disabledItems).toEqual([]);
 });
 
+test("toggle writes stay in the selected scope through disable, other-scope toggle and re-enable", async () => {
+	const project = join(rootTmp, "project");
+	const roots = [{ scope: "project", base: join(project, ".pi") }, { scope: "user", base: process.env.PI_CODING_AGENT_DIR! }];
+	for (const row of roots) {
+		writePackage(join(row.base, "packages", row.scope), `@scope/${row.scope}-toggle`, row.scope, "enabled");
+		writeJson(join(row.base, "settings.json"), {
+			packages: [`./packages/${row.scope}`], customSetting: row.scope,
+			kendex: { extensionManager: { disabledItems: [`unrelated:${row.scope}`], config: { owned: { scope: row.scope } } } },
+		});
+	}
+	const ctx = { cwd: project, isProjectTrusted: () => true, ui: { notify() {} } } as never;
+	const first = await buildInventory({} as never, ctx);
+	const projectPackage = first.packages.find((pkg) => pkg.scope === "project")!;
+	const userModule = packageExtensions(first.items, first.packages.find((pkg) => pkg.scope === "user")!)[0]!;
+	const steps = [projectPackage.id, userModule.id, projectPackage.id];
+	for (const [step, id] of steps.entries()) {
+		const inv = await buildInventory({} as never, ctx);
+		toggleItem({} as never, ctx, inv, inv.items.find((item) => item.id === id)!);
+		for (const row of roots) {
+			const saved = JSON.parse(readFileSync(join(row.base, "settings.json"), "utf8"));
+			const selected = row.scope === "project" ? (step < 2 ? [projectPackage.id] : []) : (step > 0 ? [userModule.id] : []);
+			expect(saved.kendex.extensionManager.disabledItems).toEqual([...selected, `unrelated:${row.scope}`].sort());
+			expect(saved.kendex.extensionManager.config).toEqual({ owned: { scope: row.scope } });
+			expect(saved.customSetting).toBe(row.scope);
+		}
+	}
+	const final = await buildInventory({} as never, ctx);
+	expect(final.items.find((item) => item.id === projectPackage.id)?.state).toBe("active");
+	expect(final.items.find((item) => item.id === userModule.id)?.state).toBe("disabled");
+	expect(JSON.parse(readFileSync(join(project, ".pi", "settings.json"), "utf8")).packages).toEqual(["./packages/project"]);
+	expect(JSON.parse(readFileSync(join(process.env.PI_CODING_AGENT_DIR!, "settings.json"), "utf8")).packages).toEqual([{ source: "./packages/user", extensions: ["-./extensions/index.ts"] }]);
+});
+
 test("legacy toggle ids migrate to the owning installation with a warning", async () => {
 	const project = join(rootTmp, "project");
 	const userPi = process.env.PI_CODING_AGENT_DIR!;
 	const name = "@scope/legacy-toggle";
-	const packageDir = join(userPi, "npm", "node_modules", ...name.split("/"));
-	writePackage(packageDir, name, "Legacy", "enabled");
-	writeJson(join(userPi, "settings.json"), { packages: [`npm:${name}`], kendex: { extensionManager: { disabledItems: [`package:${name}`] } } });
+	const roots = [{ scope: "project", base: join(project, ".pi") }, { scope: "user", base: userPi }];
+	for (const row of roots) {
+		writePackage(join(row.base, "npm", "node_modules", ...name.split("/")), name, "Legacy", "enabled");
+		writeJson(join(row.base, "settings.json"), { packages: [`npm:${name}`], kendex: { extensionManager: {
+			disabledItems: [`package:${name}`, `extension:${name}:./extensions/index.ts`, `unrelated:${row.scope}`], config: { owned: { scope: row.scope } },
+		} } });
+	}
 	const warning = spyOn(console, "warn").mockImplementation(() => {});
 	try {
-		const inv = await inventory(project);
-		expect(inv.packages[0]!.state).toBe("disabled");
-		expect(inv.managerState.disabledItems).toEqual([inv.packages[0]!.id]);
+		const inv = await inventoryWithTrust(project, true);
+		expect(inv.packages.find((pkg) => pkg.scope === "project")!.state).toBe("disabled");
+		expect(inv.managerState.disabledItems.sort()).toEqual([...inv.items.map((item) => item.id), "unrelated:project", "unrelated:user"].sort());
 		expect(warning).toHaveBeenCalledTimes(1);
-		await toggleItem({} as never, { cwd: project, ui: { notify() {} } } as never, inv, inv.packages[0]!);
-		expect(JSON.parse(readFileSync(join(userPi, "settings.json"), "utf8")).kendex.extensionManager.disabledItems).toEqual([]);
+		for (const row of roots) {
+			const current = await inventoryWithTrust(project, true);
+			const pkg = current.packages.find((pkg) => pkg.scope === row.scope)!;
+			const module = packageExtensions(current.items, pkg)[0]!;
+			toggleItem({} as never, { cwd: project, ui: { notify() {} } } as never, current, pkg);
+			const saved = JSON.parse(readFileSync(join(row.base, "settings.json"), "utf8"));
+			expect(saved.kendex.extensionManager.disabledItems).toEqual([module.id, `unrelated:${row.scope}`].sort());
+			expect(saved.kendex.extensionManager.config).toEqual({ owned: { scope: row.scope } });
+			const enabled = await inventoryWithTrust(project, true);
+			expect(enabled.managerState.disabledItems).not.toContain(pkg.id);
+			toggleItem({} as never, { cwd: project, ui: { notify() {} } } as never, enabled, enabled.items.find((item) => item.id === module.id)!);
+			expect(JSON.parse(readFileSync(join(row.base, "settings.json"), "utf8")).kendex.extensionManager.disabledItems).toEqual([`unrelated:${row.scope}`]);
+		}
 	} finally { warning.mockRestore(); }
 });
 

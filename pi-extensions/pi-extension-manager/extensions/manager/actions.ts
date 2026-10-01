@@ -283,13 +283,13 @@ export function toggleItem(_pi: ExtensionAPI, ctx: ExtensionCommandContext | Ext
 	}
 	const scope = defaultWriteScope(item, inventory.settingsFiles, inventory.managerState);
 	const file = findSettingsFile(inventory.settingsFiles, scope);
-	const disabled = new Set(inventory.managerState.disabledItems);
-	const currentlyDisabled = item.state === "disabled" || disabled.has(item.id);
+	const currentlyDisabled = item.state === "disabled" || inventory.managerState.disabledItems.includes(item.id);
 	const willDisable = !currentlyDisabled;
 	if (item.kind === "package" && item.packageName) syncAppendSystemForPackage(item, willDisable);
-	if (willDisable) disabled.add(item.id);
-	else disabled.delete(item.id);
 	updateManagerState(file, (state) => {
+		const disabled = new Set(state.disabledItems);
+		if (willDisable) disabled.add(item.id);
+		else disabled.delete(item.id);
 		state.disabledItems = [...disabled].sort();
 	});
 
