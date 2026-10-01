@@ -53,6 +53,8 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `ORCH_POST_MERGE_CMD` | Bash command that `scripts/post-merge` runs in the base checkout after synchronization. `ORCH_POST_MERGE_BEFORE` is the base before the oldest unprocessed synchronization; `ORCH_POST_MERGE_AFTER` is the current synchronized head. `sync-base` saves the first in `refs/kendex/post-merge-base`; only a successful or empty command advances it. A failed command stops before project refresh and verification and keeps the range for retry | empty |
 | `PR_REVIEW_ON_TIMEOUT` | `proceed` advances only when no reviewer engaged and no thread is open; `block` reports the timeout | `proceed` |
 | `ORCH_OVERSEER_LANES` | Fleet lane cap: `open-terminal --help` | `3` |
+| `ORCH_WAKE_PROCESS` | `pgrep -f` wake pattern for `lane-mail-check`. Empty disables the check with no watch record | empty |
+| `ORCH_WAKE_START` | Wake start command printed by the turn-end refusal. Empty disables the check with no watch record | empty |
 | `ORCH_LANE_OUTPUT` | Lane pane output: [skill-rules.md](references/skill-rules.md) § Lane Output | `quiet` |
 | `ORCH_ROUND_PRUNE_DISK_PCT` | Disk use percent at or past which `round-prune` clears the item worktree's Cargo output before a dev round: [skill-rules.md](references/skill-rules.md) § Round Closure | `75` |
 | `ORCH_HANDOFF_CONTEXT_PCT` | Earlier handoff percentage (1 to 100, capped at 90); strict comparison and independent token limit: [context rule](references/oversee-events.md#judgement-rules) | `90` |

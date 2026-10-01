@@ -120,6 +120,12 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # fleet launch past it.
 ORCH_OVERSEER_LANES = "20"
 
+# The turn-end hook uses this pgrep -f pattern to find the session's wake process.
+ORCH_WAKE_PROCESS = ""
+
+# The turn-end hook prints this command to start the session's missing wake process.
+ORCH_WAKE_START = ""
+
 # `lanes pick` refuses an account at or above 95 percent used on the window it
 # judges, the binding bucket or with --model that model's window.
 ORCH_LANE_MAX_PCT = "95"
