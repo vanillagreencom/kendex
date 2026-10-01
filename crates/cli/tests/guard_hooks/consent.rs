@@ -22,17 +22,12 @@ use super::{git_ok, install_package, install_package_undeclared, repo, run, said
 #[allow(clippy::unwrap_used)]
 fn arm_by_hand(root: &std::path::Path) {
     let installer = root.join(".agents/skills/commit-guards/scripts/install-git-hooks");
-    let out = std::process::Command::new(&installer)
-        .args(["--repo", &root.to_string_lossy()])
-        // Run from the fixture: git's own environment reaches this child,
-        // and a test binary invoked from another checkout would otherwise
-        // hand it that repository.
-        .current_dir(root)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .output()
-        .unwrap();
+    let out = run(
+        root.parent().unwrap(),
+        root,
+        installer.to_str().unwrap(),
+        &["--repo", root.to_str().unwrap()],
+    );
     assert!(
         out.status.success(),
         "install-git-hooks: {}{}",

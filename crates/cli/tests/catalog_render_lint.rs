@@ -46,8 +46,7 @@ fn scoped_command(
         .args(args)
         .current_dir(project)
         .env_clear()
-        .env("HOME", home)
-        .env("KENDEX_REAL_HOME", "1")
+        .envs(test_util::fixture_env(home))
         .env("PATH", std::env::var("PATH").unwrap())
         // Include extensionless scripts and hooks. The shipped extractor
         // decides which installed files have a comment grammar.

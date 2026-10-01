@@ -147,14 +147,24 @@ pub fn checkout_root() -> PathBuf {
 }
 
 /// Child-process roots from one fixture home, with the debug sandbox disabled.
+/// Git discovery stops before the home parent or temporary allocation root,
+/// so fixtures cannot discover a checkout containing TMPDIR. Repositories
+/// created inside the fixture remain discoverable.
 /// Apply explicit test overrides after these defaults.
 #[allow(
     dead_code,
     clippy::expect_used,
     reason = "test binaries share this module; Env app paths have both app and base directory parents"
 )]
-pub fn fixture_env(home: &Path) -> [(&'static str, OsString); 5] {
+pub fn fixture_env(home: &Path) -> [(&'static str, OsString); 6] {
     let env = kendex_core::env::Env::host_rooted(home);
+    let temporary = kendex_core::paths::canonical(&std::env::temp_dir())
+        .expect("temporary allocation root canonicalizes");
+    let home_parent =
+        kendex_core::paths::canonical(home.parent().expect("fixture home has a parent"))
+            .expect("fixture home parent canonicalizes");
+    let ceiling = std::env::join_paths([home_parent, temporary])
+        .expect("fixture boundaries encode as a Git path list");
     let base = |path: PathBuf| {
         path.parent()
             .and_then(Path::parent)
@@ -168,6 +178,7 @@ pub fn fixture_env(home: &Path) -> [(&'static str, OsString); 5] {
         ("XDG_CONFIG_HOME", base(env.settings_file())),
         ("XDG_CACHE_HOME", base(env.app_update_cache_file())),
         ("XDG_DATA_HOME", base(env.installed_command_file())),
+        ("GIT_CEILING_DIRECTORIES", ceiling),
     ]
 }
 

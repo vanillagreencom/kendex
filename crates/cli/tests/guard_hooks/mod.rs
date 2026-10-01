@@ -16,6 +16,7 @@ use test_util::source_path;
 mod arming;
 mod consent;
 mod gating;
+mod isolation;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};

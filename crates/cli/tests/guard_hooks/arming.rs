@@ -615,11 +615,12 @@ fn an_installer_that_exits_zero_with_no_verdict_is_not_all_clear() {
         .split_once("\nGG_BOOT=")
         .expect("the installer declares its script-directory bootstrap");
     std::fs::write(&installer, format!("{cut}\n")).unwrap();
-    let direct = std::process::Command::new(&installer)
-        .args(["--repo", &root.to_string_lossy()])
-        .current_dir(&root)
-        .output()
-        .unwrap();
+    let direct = run(
+        home,
+        &root,
+        installer.to_str().unwrap(),
+        &["--repo", root.to_str().unwrap()],
+    );
     assert_eq!(
         (direct.status.code(), direct.stdout.len()),
         (Some(0), 0),

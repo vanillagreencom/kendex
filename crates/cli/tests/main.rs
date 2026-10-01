@@ -32,6 +32,7 @@ mod commit_offer_terminal;
 mod compat;
 mod deps_cli;
 mod dev_sandbox;
+mod fixture_git;
 mod fixture_global_root;
 mod guard_hooks;
 mod in_place_verbs;
