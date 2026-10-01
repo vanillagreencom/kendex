@@ -1,0 +1,1 @@
+- Pi QOL Copy and Fork keep the complete selected prompt. Image refusals report errors to headless callers and preserve a newer editor draft.

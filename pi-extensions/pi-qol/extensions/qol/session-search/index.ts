@@ -9,6 +9,7 @@ import {
 	queueSessionSearchPendingAction,
 	refreshQolSessionSearchCache,
 	sessionDisplayName,
+	sessionUserMessageForAction,
 	setPendingSessionSearchMessage,
 } from "./cache.js";
 import { QolSessionSearchComponent } from "./component.js";
@@ -42,12 +43,12 @@ export async function runSessionSearchResumeOrFork(pi: ExtensionAPI, ctx: Extens
 	const commandCtx = asCommandContext(ctx);
 	if (typeof commandCtx.switchSession !== "function") return false;
 	const targetTitle = sessionDisplayName(action.result);
-	const selectedMessage = action.type === "fork" ? action.message : undefined;
 	const currentModel = action.keepCurrentModel ? ctx.model : undefined;
 	const currentThinking = action.keepCurrentModel && typeof pi.getThinkingLevel === "function" ? pi.getThinkingLevel() : undefined;
-	if (currentModel) pinSessionModel(action.result.path, currentModel, currentThinking);
 	let replacementStarted = false;
 	try {
+		const selectedMessage = action.type === "fork" ? await sessionUserMessageForAction(action.result, action.message, ctx.signal) : undefined;
+		if (currentModel) pinSessionModel(action.result.path, currentModel, currentThinking);
 		const result = await commandCtx.switchSession(action.result.path, {
 			withSession: async (replacementCtx: any) => {
 				replacementStarted = true;
@@ -68,7 +69,7 @@ export async function runSessionSearchResumeOrFork(pi: ExtensionAPI, ctx: Extens
 		});
 		if (result.cancelled) ctx.ui.notify(selectedMessage ? "Fork cancelled" : "Resume cancelled", "info");
 	} catch (error) {
-		if (!replacementStarted) ctx.ui.notify(`${selectedMessage ? "Fork" : "Resume"} failed: ${stringifyError(error)}`, "error");
+		if (!replacementStarted) ctx.ui.notify(`${action.type === "fork" ? "Fork" : "Resume"} failed: ${stringifyError(error)}`, "error");
 	}
 	return true;
 }
@@ -154,9 +155,13 @@ export async function openQolSessionSearch(pi: ExtensionAPI, ctx: ExtensionConte
 		return;
 	}
 	if (action.type === "copy") {
-		const text = action.message?.text || action.result.firstMessage;
-		ctx.ui.setEditorText(text);
-		ctx.ui.notify("Copied selected prompt into the editor", "info");
+		try {
+			const message = await sessionUserMessageForAction(action.result, action.message, ctx.signal);
+			ctx.ui.setEditorText(message.text);
+			ctx.ui.notify("Copied selected prompt into the editor", "info");
+		} catch (error) {
+			ctx.ui.notify(`Copy failed: ${stringifyError(error)}`, "error");
+		}
 		return;
 	}
 	if (action.type === "summarize") {

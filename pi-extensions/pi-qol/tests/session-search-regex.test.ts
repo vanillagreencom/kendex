@@ -1,5 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 import { Worker } from "node:worker_threads";
+import { join } from "node:path";
+import * as regexRuntime from "../extensions/qol/session-search/regex.ts";
 import { searchQolSessionHits } from "../extensions/qol/session-search/search.ts";
 import { runtimeCopy, session } from "./search-fixture.ts";
 
@@ -35,9 +37,21 @@ test("a pathological user regex over 1 MiB returns a deadline error without bloc
 });
 
 test("regex hit snippets use worker match positions and cancelled workers return no hits", async () => {
-	const value = { ...session("/missing"), userMessages: [{ index: 1, text: "before NEEDLE after" }] };
-	const hits = await searchQolSessionHits([value], "re:needle", "/missing", new AbortController().signal);
-	expect(hits.map((hit) => hit.snippet)).toEqual(["before NEEDLE after"]);
+	const text = `${"x".repeat(300)} before NEEDLE after ${"y".repeat(300)}`;
+	const value = { ...session("/missing"), userMessages: [{ index: 1, text }] };
+	const check = async (search: typeof searchQolSessionHits, matcher: typeof regexRuntime) => {
+		// Stage a benign worker result: this assertion holds offset forwarding,
+		// not the host's ability to schedule a worker within its deadline.
+		const matches = spyOn(matcher, "sessionRegexMatches").mockImplementation(async (_source, texts) => texts.map((candidate) => candidate === text ? { index: 308, length: 6 } : null));
+		try {
+			const hits = await search([value], "re:needle", "/missing", new AbortController().signal);
+			expect(hits.map((hit) => hit.snippet)).toEqual([`…${"x".repeat(16)} before NEEDLE after ${"y".repeat(123)}…`]);
+		} finally { matches.mockRestore(); }
+	};
+	await check(searchQolSessionHits, regexRuntime);
+	await runtimeCopy<{ searchQolSessionHits: typeof searchQolSessionHits }>("qol/session-search/search.ts", [{ file: "qol/session-search/search.ts", from: "buildPromptSnippet(message, parsed, regexMatches.get(message.text))", to: "buildPromptSnippet(message, parsed)" }], async (mutant, root) => {
+		await expect(check(mutant.searchQolSessionHits, await import(join(root, "extensions/qol/session-search/regex.ts")))).rejects.toThrow();
+	});
 	const controller = new AbortController();
 	const pending = searchQolSessionHits([value], "re:needle", "/missing", controller.signal);
 	controller.abort();

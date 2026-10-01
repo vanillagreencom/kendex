@@ -32,25 +32,52 @@ test("async index streams prompts and resolves a shared project once without syn
 
 test("shutdown cancels a load and a late result cannot replace the next load", async () => {
 	const root = scratch();
-	const manager = SessionManager as unknown as { listAll?: (progress?: unknown, signal?: AbortSignal) => Promise<unknown[]> };
-	const original = manager.listAll;
+	const manager = SessionManager as unknown as {
+		list: (cwd: string, directory: string, progress?: unknown, signal?: AbortSignal) => Promise<unknown[]>;
+		listAll: (progress?: unknown, signal?: AbortSignal) => Promise<unknown[]>;
+	};
+	const original = { list: manager.list, listAll: manager.listAll, directory: process.env.PI_CODING_AGENT_SESSION_DIR };
 	try {
 		const check = async (runtime: typeof cache) => {
-			let finish!: (values: unknown[]) => void;
-			let calls = 0;
-			manager.listAll = () => { calls++; return calls === 1 ? new Promise((resolve) => { finish = resolve; }) : Promise.resolve([]); };
-			const ctx = makeCtx({ cwd: root });
-			const pending = runtime.refreshQolSessionSearchCache(ctx as never);
-			const outcome = pending.then(() => "published", () => "cancelled");
-			runtime.releaseQolSessionSearchCache();
-			await runtime.refreshQolSessionSearchCache(ctx as never);
-			finish([session(root)]);
-			expect(await outcome).toBe("cancelled");
-			runtime.releaseQolSessionSearchCache();
+			for (const directory of [root, undefined]) {
+				if (directory) process.env.PI_CODING_AGENT_SESSION_DIR = directory;
+				else delete process.env.PI_CODING_AGENT_SESSION_DIR;
+				let finish!: (values: unknown[]) => void;
+				let calls = 0;
+				let discoveryAborted = false;
+				const discover = (signal?: AbortSignal) => {
+					calls++;
+					if (calls !== 1) return Promise.resolve([]);
+					signal?.addEventListener("abort", () => { discoveryAborted = true; }, { once: true });
+					return new Promise<unknown[]>((resolve) => { finish = resolve; });
+				};
+				manager.list = (_cwd, _directory, _progress, signal) => discover(signal);
+				manager.listAll = (_progress, signal) => discover(signal);
+				const ctx = makeCtx({ cwd: root });
+				const pending = runtime.refreshQolSessionSearchCache(ctx as never);
+				const outcome = pending.then(() => "published", () => "cancelled");
+				try {
+					runtime.releaseQolSessionSearchCache();
+					expect(discoveryAborted).toBe(true);
+					await runtime.refreshQolSessionSearchCache(ctx as never);
+					finish([session(root)]);
+					expect(await outcome).toBe("cancelled");
+					expect(await runtime.refreshQolSessionSearchCache(ctx as never)).toEqual([]);
+				} finally { finish([]); await outcome; runtime.releaseQolSessionSearchCache(); }
+			}
 		};
 		await check(cache);
 		await runtimeCopy<typeof cache>("qol/session-search/cache.ts", [{ file: "qol/session-search/cache.ts", from: "qolSessionSearchLoadController?.abort();", to: "void qolSessionSearchLoadController;" }], async (mutant) => { await expect(check(mutant)).rejects.toThrow(); mutant.releaseQolSessionSearchCache(); });
-	} finally { manager.listAll = original; cache.releaseQolSessionSearchCache(); rmSync(root, { recursive: true, force: true }); }
+		await runtimeCopy<typeof cache>("qol/session-search/cache.ts", [
+			{ file: "qol/session-search/cache.ts", from: "SessionManager.list(ctx.cwd, customSessionDir, onProgress, signal)", to: "SessionManager.list(ctx.cwd, customSessionDir, onProgress)" },
+			{ file: "qol/session-search/cache.ts", from: "SessionManager.listAll(onProgress, signal)", to: "SessionManager.listAll(onProgress)" },
+		], async (mutant) => { await expect(check(mutant)).rejects.toThrow(); });
+	} finally {
+		manager.list = original.list; manager.listAll = original.listAll;
+		if (original.directory === undefined) delete process.env.PI_CODING_AGENT_SESSION_DIR;
+		else process.env.PI_CODING_AGENT_SESSION_DIR = original.directory;
+		cache.releaseQolSessionSearchCache(); rmSync(root, { recursive: true, force: true });
+	}
 });
 
 test("scope uses prepared canonical paths, including symlinked projects", async () => {

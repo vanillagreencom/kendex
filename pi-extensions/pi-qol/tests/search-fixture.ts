@@ -31,7 +31,7 @@ export async function settled(component: QolSessionSearchComponent): Promise<voi
 	if (componentState(component).searchStatus?.status === "failed") throw new Error(componentState(component).searchStatus?.error);
 }
 
-export async function runtimeCopy<T>(relative: string, patches: Array<{ file: string; from: string; to: string; count?: number }>, use: (runtime: T) => Promise<void>): Promise<void> {
+export async function runtimeCopy<T>(relative: string, patches: Array<{ file: string; from: string; to: string; count?: number }>, use: (runtime: T, root: string) => Promise<void>): Promise<void> {
 	const root = scratch();
 	try {
 		cpSync(resolve(import.meta.dir, "../extensions"), join(root, "extensions"), { recursive: true });
@@ -44,16 +44,17 @@ export async function runtimeCopy<T>(relative: string, patches: Array<{ file: st
 			expect(after).not.toBe(before);
 			writeFileSync(path, after);
 		}
-		await use(await import(join(root, "extensions", relative)) as T);
+		await use(await import(join(root, "extensions", relative)) as T, root);
 	} finally { rmSync(root, { recursive: true, force: true }); }
 }
 
-export function imageReadSpies(beforeRead?: () => void) {
+export function imageReadSpies(beforeRead?: () => void, beforeOpen?: () => Promise<void>) {
 	const originalOpen = fsp.open;
 	const reads: ReturnType<typeof spyOn>[] = [];
 	const closes: ReturnType<typeof spyOn>[] = [];
 	const sync = spyOn(fs, "readFileSync");
 	const opened = spyOn(fsp, "open").mockImplementation(async (...args: Parameters<typeof fsp.open>) => {
+		await beforeOpen?.();
 		const handle = await originalOpen(...args);
 		const originalRead = handle.read.bind(handle);
 		reads.push(spyOn(handle, "read").mockImplementation((...readArgs: unknown[]) => {

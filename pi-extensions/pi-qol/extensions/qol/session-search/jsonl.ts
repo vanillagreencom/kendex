@@ -1,12 +1,12 @@
 import { closeSync, createReadStream, openSync, readSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 
-/** Stream the search index off the input path. Oversized JSONL records are
- * skipped because tool output can put an entire artifact on one line. */
-export async function forEachSessionJsonlLineAsync(sessionPath: string, onLine: (line: string) => void, signal: AbortSignal): Promise<void> {
+/** Stream records off the input path. Index reads skip oversized records;
+ * an action can read a complete prompt and stop at its selected entry. */
+export async function forEachSessionJsonlLineAsync(sessionPath: string, onLine: (line: string) => unknown, signal: AbortSignal, options?: { maxLineChars: number }): Promise<void> {
 	const stream = createReadStream(sessionPath, { signal, highWaterMark: 64 * 1024 });
 	const decoder = new StringDecoder("utf8");
-	const maxLineChars = 2 * 1024 * 1024;
+	const maxLineChars = options?.maxLineChars ?? 2 * 1024 * 1024;
 	let pending = "";
 	let skipping = false;
 	try {
@@ -20,7 +20,7 @@ export async function forEachSessionJsonlLineAsync(sessionPath: string, onLine: 
 				if (!skipping && pending.length + part.length <= maxLineChars) pending += part;
 				else { pending = ""; skipping = true; }
 				if (end < 0) break;
-				if (!skipping) onLine(pending.endsWith("\r") ? pending.slice(0, -1) : pending);
+				if (!skipping && onLine(pending.endsWith("\r") ? pending.slice(0, -1) : pending) === false) return;
 				pending = "";
 				skipping = false;
 				start = end + 1;

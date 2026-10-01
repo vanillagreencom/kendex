@@ -262,12 +262,13 @@ function sessionMessageTimestamp(entry: any, message: any): number | undefined {
 	return undefined;
 }
 
-function userMessageFromLine(line: string, index: number): QolSessionUserMessage | undefined {
+function userMessageFromLine(line: string, index: number, fullText = false): QolSessionUserMessage | undefined {
 	let entry: { type?: string; id?: unknown; parentId?: unknown; timestamp?: unknown; message?: { role?: string; content?: unknown; timestamp?: unknown } };
 	try { entry = JSON.parse(line); } catch { return undefined; }
 	const message = entry?.type === "message" ? entry.message : undefined;
 	if (message?.role !== "user") return undefined;
-	const text = oneLine(messageContentText(message.content));
+	const content = messageContentText(message.content);
+	const text = fullText ? content : oneLine(content);
 	if (!text) return undefined;
 	return {
 		entryId: typeof entry.id === "string" ? entry.id : undefined,
@@ -302,6 +303,26 @@ export function userMessagesForResult(result: QolSessionSearchResult): QolSessio
 	const messages = result.userMessages ?? sessionUserMessages(result.path);
 	if (messages.length > 0) return messages;
 	return [{ index: 1, text: oneLine(result.firstMessage || "No user messages") }];
+}
+
+/** Load the original Copy/Fork payload without retaining it in the index.
+ * SessionManager.open reads synchronously, so use Pi's documented JSONL
+ * format to stream to the selected entry instead. */
+export async function sessionUserMessageForAction(result: QolSessionSearchResult, selected?: QolSessionUserMessage, signal = new AbortController().signal): Promise<QolSessionUserMessage> {
+	let found: QolSessionUserMessage | undefined;
+	let index = 0;
+	await forEachSessionJsonlLineAsync(result.path, (line) => {
+		const message = userMessageFromLine(line, index + 1, true);
+		if (!message) return;
+		index++;
+		if (selected?.entryId ? message.entryId === selected.entryId : message.index === (selected?.index ?? 1)) {
+			found = message;
+			return false;
+		}
+	}, signal, { maxLineChars: Infinity });
+	signal.throwIfAborted();
+	if (!found) throw new Error(`Session prompt not found: ${selected?.entryId ?? selected?.index ?? 1}`);
+	return found;
 }
 
 export function sessionUserPromptCount(session: QolSessionSearchSession): number {

@@ -857,8 +857,12 @@ export default function qol(pi: ExtensionAPI): void {
 			const images = await imageContentsForPaths(paths, event.images ?? []);
 			return { action: "transform", images: [...(event.images ?? []), ...images], text: event.text };
 		} catch (error) {
-			ctx.ui.notify(`Image submission refused: ${stringifyError(error)}`, "error");
-			if (ctx.hasUI) ctx.ui.setEditorText(text);
+			const message = `Image submission refused: ${stringifyError(error)}`;
+			ctx.ui.notify(message, "error");
+			// Print and JSON modes reserve stderr for diagnostics; input exceptions
+			// would let Pi continue submission instead of refusing the image.
+			if (!ctx.hasUI) console.error(message);
+			if (ctx.hasUI && ctx.ui.getEditorText() === "") ctx.ui.setEditorText(text);
 			return { action: "handled" };
 		}
 	});

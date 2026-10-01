@@ -14,10 +14,14 @@ test("async JSONL keeps split UTF-8 records, skips oversized lines and closes on
 			const lines: string[] = [];
 			await read(path, (line) => lines.push(line), new AbortController().signal);
 			expect(lines).toEqual([first, "last"]);
+			const selected: string[] = [];
+			await read(path, (line) => { selected.push(line); return false; }, new AbortController().signal);
+			expect(selected).toEqual([first]);
 			const cancelled = new AbortController(); cancelled.abort();
 			await expect(read(path, () => {}, cancelled.signal)).rejects.toThrow();
 		};
 		await check(forEachSessionJsonlLineAsync);
-		await runtimeCopy<{ forEachSessionJsonlLineAsync: typeof forEachSessionJsonlLineAsync }>("qol/session-search/jsonl.ts", [{ file: "qol/session-search/jsonl.ts", from: "const maxLineChars = 2 * 1024 * 1024;", to: "const maxLineChars = 4 * 1024 * 1024;" }], async (mutant) => { await expect(check(mutant.forEachSessionJsonlLineAsync)).rejects.toThrow(); });
+		await runtimeCopy<{ forEachSessionJsonlLineAsync: typeof forEachSessionJsonlLineAsync }>("qol/session-search/jsonl.ts", [{ file: "qol/session-search/jsonl.ts", from: "const maxLineChars = options?.maxLineChars ?? 2 * 1024 * 1024;", to: "const maxLineChars = options?.maxLineChars ?? 4 * 1024 * 1024;" }], async (mutant) => { await expect(check(mutant.forEachSessionJsonlLineAsync)).rejects.toThrow(); });
+		await runtimeCopy<{ forEachSessionJsonlLineAsync: typeof forEachSessionJsonlLineAsync }>("qol/session-search/jsonl.ts", [{ file: "qol/session-search/jsonl.ts", from: 'if (!skipping && onLine(pending.endsWith("\\r") ? pending.slice(0, -1) : pending) === false) return;', to: 'if (!skipping && onLine(pending.endsWith("\\r") ? pending.slice(0, -1) : pending) === false) void 0;' }], async (mutant) => { await expect(check(mutant.forEachSessionJsonlLineAsync)).rejects.toThrow(); });
 	} finally { rmSync(root, { recursive: true, force: true }); }
 });
