@@ -1,12 +1,6 @@
 # PR Review Workflow
 
-Pre-submission review: reviewer fan-out, bounded fix rounds, QA checks, and the issue audit.
-
-| Command | Behavior |
-|---------|----------|
-| `review-pr` | Full cycle: review, fix, QA, summary |
-| `review-pr [PR#]` | Resolve the PR's worktree, then the full cycle |
-| (from start-worktree) | Managed lifecycle with caller context |
+Pre-submission review, bounded fixes, QA, and issue audit. `review-pr [PR#]` resolves that PR's worktree; `start-worktree` supplies managed caller context.
 
 **Caller context** (via `⤵`): `worktree`; `agents` — an explicit reviewer panel, default the first-cycle panel § 2 selects from the diff; `lifecycle` — `"managed"` (return at § 9) or `"self"` (default); `dev_agent` — a live dev agent for fix delegation; `issue_id` — the workflow-state key, the normalized issue ID, never the bare GitHub issue number.
 
@@ -219,9 +213,9 @@ Still `ok == false` after that, or the § 3.2 deadline reached → mark the agen
 
 ### 3.2 Watchdog
 
-**No wait here is unclocked: while any agent this workflow delegated has not completed (§ 3.1), a wake source for it is armed.** An agent's wake source is one backgrounded `review-artifact-check [WORKTREE_PATH] [AGENT] [REVIEW_DELEGATED_AT] --wait [SECS] --issue [ISSUE_ID]` whose `[SECS]` expires at the earliest row of the table below still pending for it, which is that agent's deadline once no row above it remains; the external lane's is the `wait:` command § 2.2 prints. Arm them with the delegation batch, and re-arm after every action below, a status ping included — a reply promising completion extends nothing without a re-armed clock. A re-arm that follows a rejected artifact (§ 3.1) waits for one newer than that rejection: its `[REVIEW_DELEGATED_AT]` is strictly greater than the rejected artifact's mtime.
+**Keep a wake source armed for every incomplete agent (§ 3.1).** Background one `review-artifact-check [WORKTREE_PATH] [AGENT] [REVIEW_DELEGATED_AT] --wait [SECS] --issue [ISSUE_ID]` per agent. `[SECS]` ends at its earliest pending table row, or its deadline when no earlier row remains. The external lane uses § 2.2's `wait:` command. Arm with the delegation batch and re-arm after every action, including a ping. A promised completion extends nothing without re-arming. After artifact rejection (§ 3.1), set `[REVIEW_DELEGATED_AT]` strictly above the rejected artifact's mtime.
 
-**A wake source that ends without a verdict is replaced once, and only once.** `review-artifact-check` answers with a result on stdout at exit 0 or 1; a keyed refusal at exit 2, or any other status, means it stopped clocking that agent before the agent finished, so the deadline rows below are no longer armed for it and a replacement goes up immediately. That replacement is the last one: the probe failures behind this state persist — a `stat` that cannot answer, a machine out of processes — so a second wake source ending the same way is an environment failure, not a reviewer to keep waiting on. Stop and report it, naming the status and the keyed line if one arrived, rather than arming a third or marking the agent `unresponsive`, which would blame the reviewer for a broken probe.
+**Replace a wake source without a verdict once, immediately.** `review-artifact-check` returns a result on stdout at exit 0 or 1. A keyed refusal at exit 2, or any other status, leaves the agent's deadlines unarmed. If the replacement also ends without a verdict, stop and report an environment failure with its status and any keyed line. Never arm a third source or mark the reviewer `unresponsive` for this failure.
 
 Sweep the filesystem on every wake. Per-agent deadline from `review_delegated_at`: 25 minutes for an agent whose name contains `perf`, 15 minutes for every other agent. The external lane's printed deadline is absolute Unix epoch seconds; compare it with `date +%s`. If no deadline metadata prints, use 2 × `SECOND_OPINION_TIMEOUT` plus 3 minutes, with 1080 seconds as the timeout default. It is not a messageable agent, so the ping row and its early end never apply to it.
 
@@ -337,7 +331,7 @@ Re-review is scoped to what the fix round actually changed. Read the round's dif
 | No files changed | → § 5 |
 | Anything else | → § 2 with caller context `agents` = the scoped panel below |
 
-The scoped panel is the union of the reviewers whose domains the round's diff touched, the reviewers who found the blockers it cleared, and external review when available. A diff touches a domain when it gives that domain's reviewer something to read, judged generously from the changed paths and what they change: a reviewer the diff plausibly concerns runs. A reviewer with nothing to read does not, such as the performance reviewer on a diff with no runtime path or the safety reviewer on a documentation-only diff. Record the scoping:
+The scoped panel is the union of the reviewers whose domains the round's diff touched, the reviewers who found the blockers it cleared, and external review when available. Select domains generously from the changed paths and their changes. Run every reviewer the diff plausibly concerns; omit reviewers with nothing to read. Record the scoping:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] rereview_panel '{"agents": [PANEL_AGENTS_JSON], "reason": "[DOMAINS_TOUCHED] + blocker finders + external"}'
@@ -382,7 +376,7 @@ Drop a signal when the triggering code is trivial or test-only; never drop one f
 
 Map each signal to its agent — `needs-safety-audit` → `reviewer-safety`, `needs-perf-test` → `reviewer-perf`, `needs-review` → `reviewer-correctness`; a project may override the mapping in its instructions. For each, delegate and wait.
 
-Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the checkout the top of this workflow resolves `WT_PATH` from.
+Fill `Worktree:` by the rule at the top of this workflow.
 
 <delegation_format>
 Follow workflow: .agents/skills/reviewer/workflows/qa-review.md
