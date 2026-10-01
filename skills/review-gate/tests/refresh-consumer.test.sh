@@ -881,8 +881,12 @@ RECORD_CONTROL
     fi
     run_real_refresh
     if [ "$row" = count-control ] || [ "$row" = record-control ]; then
-      if ! real_refresh_stopped "$expected_error" &&
-          grep -qE '^refresh-error=render-edited value=[0-9]+$' <<<"$OUT"; then
+      # Mutants retain the conflict diagnostic, so assert the later refusal
+      # rather than treating that diagnostic as proof of an early exit.
+      items=0
+      [ "$row" != record-control ] || items=2
+      if real_refresh_stopped "refresh-error=render-edited value=$items" &&
+          grep -qxF "refresh-error=render-edited value=$items" <<<"$OUT"; then
         ok "control: $row bypass misclassifies a conflict as an edit hold"
       else bad 'conflict count control' "$OUT"; fi
     elif real_refresh_stopped "$expected_error"; then
