@@ -230,16 +230,51 @@ These are technical handoffs to existing owners. They are not new tracker issues
 
 ## After observation
 
-- Requirement 4 transfers after merge through Proposal to an owner-observed successor. KEN-2416 completes at this PR merge. The after-rate is not a pre-merge requirement and is not fixture proof.
-- An after-rate cannot be measured before this change is merged, released where needed, and adopted by consumers. This worktree runs no refresh, apply or release.
-- The overseer refreshes its base after merge. That is a base-maintenance dependency, not a consumer after sample.
-- The release owner supplies a stable release carrying the selected runtime changes. Consumer adoption supplies the template changes. The owner then checks the consumers through their scheduled or dispatched runs.
-- The supplied authoritative before inventory is complete. At the successor's after observation, confirm the dispatch owner's current non-archived inventory with the owner's authorized read credential. Keep kendex excluded and distinguish historical attempts from current consumers. Re-run `gh run list --workflow kendex-refresh.yml --all` per consumer, with an end fixed before data reduction. Raise a saturated listing limit or split the time interval; never treat a capped list as complete.
-- For a comparable rate, observe the same seven-day duration after deployment. Also report the first deployed run for immediate diagnosis, but do not call that single run the seven-day after-rate.
-- Retrieve `gh run view --log-failed` for every failed or cancelled completed run. Keep unavailable logs unclassified. Record run IDs once, all conclusions, both denominators, per-consumer causes and totals as in the raw report.
-- Record which workflow/runtime commit each consumer actually uses. Separate unconverted consumers from deployed consumers in the after table. A new latest release alone does not prove an old workflow runs it.
-- The overseer confirms no local refresh runs outside Actions. Keep the observation on Actions unless the owner reports a changed execution scope. Do not keep a local-record task open for this before sample.
-- Fixture pass counts, a clean source checkout, a main-built verify result and a merged issue are not the consumer after-rate.
+KEN-2478 records an interim observation under the owner's launch ruling. The overseer re-reads the consumers for the final sample. The listed and completed after-rates remain pending. KEN-2416 fixture proof is not a consumer after-rate.
+
+### Method and delivery boundary
+
+- The cutoff is fixed before reduction: `2026-10-01T21:49:05Z`. The diagnostic listing covers created-at times from `2026-10-01T20:31:00Z` through that cutoff, inclusive UTC. It starts at the owner-reported KEN-2416 merge minute, not at sample eligibility.
+- The owner reports kendex 1.4.0 published at `2026-10-01T21:23:00Z`, carrying KEN-2460. Publication alone starts no consumer sample.
+- Each consumer's sample starts at its first scheduled `kendex-refresh.yml` run after its rolling refresh installs both the deployed workflow and engine. Record that run's creation time as the start. Keep the first deployed run as a separate diagnostic record; do not substitute it for a seven-day sample. Count each run ID once, including scheduled and dispatched runs in the sample interval.
+- The overseer is the delivery confirmer. The release and pin facts below come from the owner's launch ruling. Actual workflow adoption, engine source commits and installation times need run evidence. A consumer run's `headSha` is not an engine commit. An installer commit is not an engine commit either.
+- This lane uses only `gh run list` and `gh run view` with its supplied credential. It cannot confirm the dispatch owner's current repository inventory. The existing authoritative before inventory supplies the consumer set. The overseer must confirm the current non-archived inventory before the final comparison. Kendex stays excluded. Gentoo-overlay, homebrew-kendex, vgs and vgs-themes remain historical attempts, not current consumers.
+- Listings use `--workflow kendex-refresh.yml --all --limit 1000` with the fixed created-at interval and no event, branch, status or conclusion filter. Vsys returns eight rows, below the limit. The other listings return lane-credential HTTP 404, not empty histories. Raise any saturated limit or split its interval before counting it.
+- Retrieve `gh run view --log-failed` for every failed or cancelled completed run. Preserve unavailable logs as unclassified. The current raw rows, commands, log results and denominators are in [Counts and denominators](ken-2416-refresh-runs.md#counts-and-denominators).
+- At the final observation, use the same seven-day duration as the before sample. Fix the final cutoff before reduction. Preserve all conclusions and report both rates using the definitions in [Counts and denominators](ken-2416-refresh-runs.md#counts-and-denominators). No partial-sample after-rate is reported.
+- The overseer confirms no local refresh runs outside Actions. A base refresh, source merge or main-built verification does not enter the consumer denominator. KEN-2297, KEN-2438, KEN-2449 and KEN-2437 keep their implementation scope.
+
+### Consumer delivery and sample starts
+
+All times below are UTC. Pending means this lane cannot verify the fact. The overseer owns delivery confirmation and the inaccessible rows.
+
+| Consumer under vanillagreencom | Owner-reported engine selection | Actual workflow and engine evidence | Installation time and sample start at cutoff |
+| --- | --- | --- | --- |
+| talk | Latest stable release at run time | Lane-credential 404; workflow and engine commits pending | Both pending; latest-release selection does not prove installation of 1.4.0 |
+| vg | Latest stable release at run time | Lane-credential 404; workflow and engine commits pending | Both pending; latest-release selection does not prove installation of 1.4.0 |
+| fleet | Pinned v1.3.0 | Lane-credential 404; workflow and engine commits pending | Both pending; reported pin predates 1.4.0 |
+| vsys | Pinned v1.3.0 | Scheduled run [36929699090](https://github.com/vanillagreencom/vsys/actions/runs/36929699090) has run head and checkout `7d7e614bc8b7a65ae141940b4fb6c20d19a6cb21`; it executes the runner from that detached checkout. Its install log prints `kendex 1.3.0`. Deployed-workflow adoption and engine source commit remain pending. | Old engine reports installed at `2026-10-01T21:35:47.3972837Z`; version output is at `2026-10-01T21:35:49.8954682Z`. No eligible start is verified: this post-release schedule still uses 1.3.0. Installation time for the deployed pair is pending. |
+| hyprtrade | Pinned v1.2.0 | Lane-credential 404; workflow and engine commits pending | Both pending; reported pin predates 1.4.0 |
+| kendex-web | Pinned v1.2.0 | Lane-credential 404; workflow and engine commits pending | Both pending; reported pin predates 1.4.0 |
+| hyprtrade-io | Pinned v1.2.0 | Lane-credential 404; workflow and engine commits pending | Both pending; reported pin predates 1.4.0 |
+| drovr | Pinned v1.2.0 | Lane-credential 404; workflow and engine commits pending | Both pending; reported pin predates 1.4.0 |
+
+Vsys's verified workflow execution still installs a pinned engine and executes a consumer-local runner. Its installer SHA is `f6ad9491a810a9256f04f66f8d083eb9db709602`, not the engine source commit. Evidence is `tmp/waiter.UOARog/vsys-36929699090-full.log`. The run head and checkout identify the consumer revision; they do not prove adoption of the KEN-2416 workflow. No consumer has a verified eligible start in this lane's evidence. The inaccessible consumers remain unknown, not confirmed undeployed.
+
+### First deployed runs, separate from the sample
+
+| Consumer | First verified deployed run and time | Status |
+| --- | --- | --- |
+| talk | Pending | Overseer must read the lane-credential 404 row |
+| vg | Pending | Overseer must read the lane-credential 404 row |
+| fleet | Pending | Overseer must confirm delivery beyond the reported v1.3.0 pin |
+| vsys | Pending | Post-release schedule 36929699090 still installs 1.3.0; dispatch 36929876600 is not an eligible scheduled start |
+| hyprtrade | Pending | Overseer must confirm delivery beyond the reported v1.2.0 pin |
+| kendex-web | Pending | Overseer must confirm delivery beyond the reported v1.2.0 pin |
+| hyprtrade-io | Pending | Overseer must confirm delivery beyond the reported v1.2.0 pin |
+| drovr | Pending | Overseer must confirm delivery beyond the reported v1.2.0 pin |
+
+These pending entries are not zero-run findings. [Interim raw observation](ken-2416-refresh-runs.md#interim-raw-observation) keeps all listed diagnostic runs apart from an eligible after sample. The owner must observe the complete seven-day interval after each confirmed start before supplying the final listed and completed rates.
 
 ## TPM handoff prompt
 

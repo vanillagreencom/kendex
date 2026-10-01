@@ -72,6 +72,60 @@ The earlier HTTP 404 listing results remain in source scratch evidence. They are
 | Combined fleet total | 2853 | 2852 | 1990 | 816 | 46 | 1 | 69.75% | 69.78% |
 | Current-consumer subtotal | 2849 | 2849 | 1987 | 816 | 46 | 0 | 69.74% | 69.74% |
 
+### Interim after comparison
+
+The before sample remains unchanged. KEN-2478's interim observation has no verified eligible consumer start. The owner accepts this interim record and leaves the final rates to the overseer's seven-day observation. [After observation](ken-2416-consumer-refresh.md#after-observation) owns delivery, per-consumer starts and first deployed runs.
+
+| Sample | Interval | Listed | Completed | Failure | Listed failure rate | Completed failure rate |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| Combined fleet before | Seven days ending `2026-10-01T14:14:50Z` | 2853 | 2852 | 1990 | 69.75% | 69.78% |
+| Final deployed-consumer after | Seven days from each verified consumer start; start and end times pending | Pending | Pending | Pending | Pending until the seven-day sample completes | Pending until the seven-day sample completes |
+
+The four historical public attempts remain in the recorded before denominator. They do not enter a current-consumer after sample. Kendex remains excluded. Vsys's diagnostic failures below do not establish an after-rate. Lane-credential HTTP 404 supplies no denominator for the inaccessible consumers.
+
+### Interim raw observation
+
+- Fixed cutoff before reduction: `2026-10-01T21:49:05Z`. Diagnostic created-at interval, inclusive UTC: `2026-10-01T20:31:00Z` through that cutoff. The start is the owner-reported KEN-2416 merge minute, not a deployed-consumer sample start.
+- Query each current consumer with the command below. All eight requests use the same credential and interval. Only vsys returns rows. Its eight rows are below the 1000-row limit. No listing is saturated. The seven HTTP 404 results are access gaps, not complete empty listings.
+- Each row records the latest attempt returned during collection. All vsys rows are attempt 1, on `main`, with `headSha` `7d7e614bc8b7a65ae141940b4fb6c20d19a6cb21`. Their `startedAt` equals `createdAt`. This consumer revision is not an engine commit.
+- Observation conclusions come from collection after the cutoff; they are not reconstructed at the cutoff. Every returned row's update time is before the cutoff.
+- The owner's release boundary is `2026-10-01T21:23:00Z`. Six listed rows precede it; two follow it. These are diagnostic divisions, not after-sample denominators. No row has verified delivery of both the deployed workflow and engine.
+- All eight rows are completed failures. Each failed-log request exits 0 and has nonempty output. There are no listed success, cancelled or pending rows. The logs show obsolete `generalist` records and an unrecorded `skill-load-check` hook at verification. Record both observed refusals; do not infer one root cause or add them as separate failed runs. Existing KEN-2438 and KEN-2449 owners audit their respective implementation classes.
+
+```bash
+gh run list --repo vanillagreencom/CONSUMER --workflow kendex-refresh.yml --all --limit 1000 --created '2026-10-01T20:31:00Z..2026-10-01T21:49:05Z' --json databaseId,attempt,createdAt,startedAt,updatedAt,status,conclusion,event,headBranch,headSha,url
+gh run view RUN_ID --repo vanillagreencom/vsys --log-failed
+gh run view 36929699090 --repo vanillagreencom/vsys --log
+```
+
+Scratch evidence is under this worktree's `tmp/waiter.UOARog/`. `CONSUMER-list.log` preserves the listing or HTTP 404 error after its runner line. `CONSUMER-list.exit` preserves its exit code. `vsys-RUN_ID-failed.log` and `.exit` preserve each failed-log request. `vsys-36929699090-full.log` and `.exit` preserve the scheduled run's installation evidence. All requests run through the existing orch job runner with `TMPDIR` and `ORCH_STATE_DIR` unset. No consumer mutation or credential substitution occurs.
+
+| Consumer | Listing result | Listed / completed / failure | Sample status | Raw evidence basename under `tmp/waiter.UOARog/` |
+| --- | --- | --- | --- | --- |
+| talk | Lane-credential HTTP 404, exit 1 | Unknown / unknown / unknown | Start and first deployed run pending; overseer row | `talk-list.log` |
+| vg | Lane-credential HTTP 404, exit 1 | Unknown / unknown / unknown | Start and first deployed run pending; overseer row | `vg-list.log` |
+| fleet | Lane-credential HTTP 404, exit 1 | Unknown / unknown / unknown | Reported v1.3.0 pin; delivery unverified; overseer row | `fleet-list.log` |
+| vsys | Eight rows, exit 0 | 8 / 8 / 8 diagnostic only | Post-release schedule still uses 1.3.0; eligible start unverified | `vsys-list.log` |
+| hyprtrade | Lane-credential HTTP 404, exit 1 | Unknown / unknown / unknown | Reported v1.2.0 pin; delivery unverified; overseer row | `hyprtrade-list.log` |
+| kendex-web | Lane-credential HTTP 404, exit 1 | Unknown / unknown / unknown | Reported v1.2.0 pin; delivery unverified; overseer row | `kendex-web-list.log` |
+| hyprtrade-io | Lane-credential HTTP 404, exit 1 | Unknown / unknown / unknown | Reported v1.2.0 pin; delivery unverified; overseer row | `hyprtrade-io-list.log` |
+| drovr | Lane-credential HTTP 404, exit 1 | Unknown / unknown / unknown | Reported v1.2.0 pin; delivery unverified; overseer row | `drovr-list.log` |
+
+Each raw row below belongs to vsys. Failed-log evidence is the exact basename `vsys-RUN_ID-failed.log` defined above. Event names and observed status/conclusion are retained without filtering.
+
+| Run URL | Created at UTC | Updated at UTC | Event | Observed status / conclusion | Release boundary and eligibility |
+| --- | --- | --- | --- | --- | --- |
+| [36922218168](https://github.com/vanillagreencom/vsys/actions/runs/36922218168) | 2026-10-01T20:31:37Z | 2026-10-01T20:32:21Z | repository_dispatch | completed / failure | Before release; excluded diagnostic |
+| [36922625504](https://github.com/vanillagreencom/vsys/actions/runs/36922625504) | 2026-10-01T20:34:58Z | 2026-10-01T20:35:46Z | repository_dispatch | completed / failure | Before release; excluded diagnostic |
+| [36922959420](https://github.com/vanillagreencom/vsys/actions/runs/36922959420) | 2026-10-01T20:37:40Z | 2026-10-01T20:38:19Z | schedule | completed / failure | Before release; excluded diagnostic |
+| [36923446010](https://github.com/vanillagreencom/vsys/actions/runs/36923446010) | 2026-10-01T20:41:39Z | 2026-10-01T20:42:20Z | repository_dispatch | completed / failure | Before release; excluded diagnostic |
+| [36926018396](https://github.com/vanillagreencom/vsys/actions/runs/36926018396) | 2026-10-01T21:03:13Z | 2026-10-01T21:03:54Z | schedule | completed / failure | Before release; excluded diagnostic |
+| [36927699871](https://github.com/vanillagreencom/vsys/actions/runs/36927699871) | 2026-10-01T21:17:46Z | 2026-10-01T21:18:29Z | repository_dispatch | completed / failure | Before release; excluded diagnostic |
+| [36929699090](https://github.com/vanillagreencom/vsys/actions/runs/36929699090) | 2026-10-01T21:35:34Z | 2026-10-01T21:36:22Z | schedule | completed / failure | After release; installs 1.3.0; not an eligible start |
+| [36929876600](https://github.com/vanillagreencom/vsys/actions/runs/36929876600) | 2026-10-01T21:37:13Z | 2026-10-01T21:38:00Z | repository_dispatch | completed / failure | After release; no verified deployed pair or eligible scheduled start |
+
+The full log for scheduled run 36929699090 exits 0. It explicitly installs v1.3.0 and prints `kendex 1.3.0`. The actual engine source commit remains pending. The before evidence and its classifications below remain separate from this interim observation.
+
 ## Failure classes
 
 Each failed run gets one stopping class. Warnings that do not stop the run get no failure count. The original six classes keep their meaning. Eleven additional classes are measured in the supplied private logs. [Consumer refresh design](ken-2416-consumer-refresh.md) owns each class's defect or correct-refusal decision, existing owner, must-fail control and disposition.
