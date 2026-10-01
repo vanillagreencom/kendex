@@ -277,7 +277,7 @@ from pathlib import Path
 import sys
 p = Path(sys.argv[1])
 s = p.read_text()
-needle = 'val="$(rg_dotenv_layer ".env.local" "$name")" || status=$?'
+needle = 'val="$(rg_dotenv_layer "$private_file" "$name")" || status=$?'
 assert s.count(needle) == 1
 changed = s.replace(needle, 'val="" # ' + needle)
 assert changed != s

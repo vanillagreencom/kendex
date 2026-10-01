@@ -210,7 +210,6 @@ run_refresh stale pass render
 if [ "$RC" -eq 0 ] && ! grep -qxF '## Settings' "$TMP/state/body"; then ok 'control: dropped Settings append turns the deprecated-entry assertion red'; else bad 'Settings append control' "$OUT"; fi
 reset_default
 cp "$TMP/settings-runner" "$runner"
-printf '[env]\nREVIEW_GATE_CONTEXT = "Review gate"\n' >"$repo/kendex.settings.toml"
 commit "$repo"
 git -C "$repo" push -q origin main
 # The setting-fixture commits changed the rolling head used by later rows.
