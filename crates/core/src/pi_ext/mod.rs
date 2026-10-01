@@ -204,8 +204,9 @@ pub struct InstallOutcome {
 }
 
 /// Replace a package and register it without changing Pi's package order.
-/// A disabled declaration loads no extensions. An enabled declaration keeps
-/// any existing native filter, including a disable the user already set.
+/// A disabled declaration loads no extensions, but refuses to erase a saved
+/// nonempty selection. An enabled declaration keeps any existing native filter,
+/// including a disable the user already set.
 pub fn install(
     env: &Env,
     scope_root: &Path,

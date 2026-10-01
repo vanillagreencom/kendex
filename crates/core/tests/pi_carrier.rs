@@ -393,6 +393,82 @@ fn native_package_toggles_keep_files_settings_and_records_at_both_scopes() {
 
 #[test]
 #[allow(clippy::unwrap_used)]
+fn saved_pi_config_selection_refuses_native_disable_and_disabled_update() {
+    use kendex_core::{apply, engine, error::CoreError, lock, manifest, pi_ext};
+    use serde_json::json;
+    let w = world();
+    let name = "@vanillagreen/pi-hooks";
+    let catalog = w.home.join("cat");
+    let source = catalog.join("pi-extensions/pi-hooks");
+    fs::create_dir_all(source.join("extensions")).unwrap();
+    fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    fs::write(source.join("package.json"), json!({
+        "name":name, "pi":{"extensions":["./extensions/hooks.ts", "./extensions/lane-mail-wake.ts"]}
+    }).to_string()).unwrap();
+    for file in ["hooks.ts", "lane-mail-wake.ts"] {
+        fs::write(
+            source.join("extensions").join(file),
+            "export default function hooks(pi) {}\n",
+        )
+        .unwrap();
+    }
+    for scope in [Scope::Global, scope(&w)] {
+        let path = manifest::manifest_path(&w.env, &scope);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, format!(
+            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.\"{name}\"]\nsource = \"cat\"\n", source_path(&catalog)
+        )).unwrap();
+        let root = pi_ext::scope_root(&w.env, &scope).unwrap();
+        pi_ext::install(&w.env, &root, &source, true).unwrap();
+        // Pi config's togglePackageResource excludes exactly one shipped file.
+        let native = json!({"theme":"dark", "packages":["npm:first", {
+            "source":"./packages/@vanillagreen/pi-hooks",
+            "extensions":["-extensions/lane-mail-wake.ts"], "skills":[],
+            "prompts":["+prompts/review.md"], "themes":[]
+        }, "npm:last"]});
+        let settings_path = pi_ext::settings_path(&root);
+        fs::write(&settings_path, format!("{native}\r\n")).unwrap();
+        let declared = engine::ops::manifest_for_reading(&w.env, &scope).unwrap();
+        let mut record = lock::Lock::default();
+        assert!(
+            pi_ext::record_matching_manifest(
+                &w.env,
+                &scope,
+                &declared,
+                &mut record,
+                pi_ext::RecordBasis::MatchedBytes,
+                None
+            )
+            .unwrap()
+            .is_empty()
+        );
+        let lock_path = lock::lock_path(&w.env, &scope);
+        lock::save(&lock_path, &record).unwrap();
+        let report =
+            engine::ops::toggle(&w.env, &scope, &[name.to_owned()], None, true, None).unwrap();
+        apply::execute(&w.env, &report.plan).unwrap();
+        pi_ext::install(&w.env, &root, &source, true).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&fs::read(&settings_path).unwrap()).unwrap(),
+            native
+        );
+        let settings_before = fs::read(&settings_path).unwrap();
+        let manifest_before = fs::read(&path).unwrap();
+        let lock_before = fs::read(&lock_path).unwrap();
+        assert!(matches!(engine::ops::toggle(
+            &w.env, &scope, &[name.to_owned()], None, false, None
+        ), Err(CoreError::PiPackage { name: refused, .. }) if refused == name));
+        assert_eq!(fs::read(&settings_path).unwrap(), settings_before);
+        assert_eq!(fs::read(&path).unwrap(), manifest_before);
+        assert_eq!(fs::read(&lock_path).unwrap(), lock_before);
+        assert!(matches!(pi_ext::install(&w.env, &root, &source, false),
+            Err(CoreError::PiPackage { name: refused, .. }) if refused == name));
+        assert_eq!(fs::read(&settings_path).unwrap(), settings_before);
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
 fn a_mappable_event_renders_the_registry_in_pi_listener_names() {
     let w = world();
     register_carrier(&w.project.join(".pi"));

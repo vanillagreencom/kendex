@@ -1,0 +1,1 @@
+- Pi package disable and disabled-package updates refuse to erase a saved extension selection. Enable and ordinary updates keep the selected extensions.

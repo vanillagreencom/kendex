@@ -85,8 +85,11 @@ pub(super) fn upsert_package(path: &Path, name: &str, enabled: bool) -> Result<(
     let mut kept: Vec<Value> = Vec::with_capacity(packages.len() + 1);
     let mut slot = None;
     let mut filtered = None;
-    for existing in packages.drain(..) {
+    for mut existing in packages.drain(..) {
         if refers_to(&existing, name) {
+            if !enabled {
+                set_enabled(&mut existing, name, false)?;
+            }
             if slot.is_none() {
                 slot = Some(kept.len());
             }
@@ -108,7 +111,7 @@ pub(super) fn upsert_package(path: &Path, name: &str, enabled: bool) -> Result<(
         None => Value::String(entry_for(name)),
     };
     if !enabled {
-        set_enabled(&mut entry, false);
+        set_enabled(&mut entry, name, false)?;
     }
     match slot {
         Some(index) => kept.insert(index, entry),
@@ -127,9 +130,21 @@ pub(crate) fn extensions_enabled(entry: &Value) -> bool {
         .is_some_and(Vec::is_empty)
 }
 
-fn set_enabled(entry: &mut Value, enabled: bool) {
+fn set_enabled(entry: &mut Value, name: &str, enabled: bool) -> Result<()> {
     if extensions_enabled(entry) == enabled {
-        return;
+        return Ok(());
+    }
+    // Pi config writes exact resource selections. The native empty filter
+    // cannot retain that selection for a later enable, so refuse to erase it.
+    if entry
+        .get("extensions")
+        .and_then(Value::as_array)
+        .is_some_and(|selection| !selection.is_empty())
+    {
+        return Err(CoreError::PiPackage {
+            name: name.to_owned(),
+            message: "cannot disable a package without erasing its saved extensions selection; use pi config to disable individual extensions".to_owned(),
+        });
     }
     if let Value::String(source) = entry {
         *entry = json!({"source": source});
@@ -142,6 +157,7 @@ fn set_enabled(entry: &mut Value, enabled: bool) {
     } else {
         object.insert("extensions".to_owned(), json!([]));
     }
+    Ok(())
 }
 
 /// Observe the native switch without treating an absent registration as on.
@@ -179,7 +195,7 @@ pub(super) fn toggled_packages<'a>(
             });
         }
         for entry in matching {
-            set_enabled(entry, enabled);
+            set_enabled(entry, name, enabled)?;
         }
     }
     serialized(path, &settings, newline)
@@ -255,7 +271,8 @@ mod tests {
 
     fn settings_with(packages: &str) -> (tempfile::TempDir, std::path::PathBuf) {
         let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("settings.json");
+        let root = tmp.path().canonicalize().unwrap();
+        let path = root.join("settings.json");
         std::fs::write(
             &path,
             format!("{{\"theme\": \"dark\", \"packages\": {packages}}}"),
@@ -336,6 +353,43 @@ mod tests {
             matches!(toggled_packages(&path, [("gone", true)].into_iter()), Err(CoreError::PiPackage { name, .. }) if name == "gone")
         );
         assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn saved_extensions_selections_refuse_disable_and_survive_enable_and_upsert() {
+        // Pi config emits -path on disable and +path on enable. The shipped
+        // pi-hooks package lets hooks.ts run without lane-mail-wake.ts.
+        let name = "@vanillagreen/pi-hooks";
+        for selection in [
+            json!(["-extensions/lane-mail-wake.ts"]),
+            json!(["+extensions/hooks.ts", "-extensions/lane-mail-wake.ts"]),
+        ] {
+            let expected = json!([
+                "npm:first",
+                {"source":"./packages/@vanillagreen/pi-hooks", "extensions":selection,
+                 "skills":[], "prompts":["+prompts/review.md"], "themes":[]},
+                {"source":"npm:last", "extensions":["-extensions/other.ts"]}
+            ]);
+            let (_tmp, path) = settings_with(&expected.to_string());
+            let before = std::fs::read(&path).unwrap();
+            let enabled = toggled_packages(&path, [(name, true)].into_iter()).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&enabled).unwrap()["packages"],
+                expected
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+            for result in [
+                toggled_packages(&path, [(name, false)].into_iter()).map(|_| ()),
+                upsert_package(&path, name, false),
+            ] {
+                assert!(
+                    matches!(result, Err(CoreError::PiPackage { name: refused, .. }) if refused == name)
+                );
+                assert_eq!(std::fs::read(&path).unwrap(), before);
+            }
+            upsert_package(&path, name, true).unwrap();
+            assert_eq!(packages(&path), expected.as_array().unwrap().clone());
+        }
     }
 
     #[test]

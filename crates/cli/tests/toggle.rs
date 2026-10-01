@@ -259,6 +259,93 @@ fn cli_pi_extension_toggles_native_filters_and_verify_reads_them_back() {
 }
 
 #[test]
+fn cli_saved_pi_config_selection_survives_enable_update_and_refused_disable() {
+    use kendex_core::{lock, manifest, pi_ext};
+    let name = "@vanillagreen/pi-hooks";
+    for scope_arg in ["global", "project"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let scope = if scope_arg == "global" {
+            Scope::Global
+        } else {
+            Scope::Project { root: home.clone() }
+        };
+        let env = Env::host_rooted(&home);
+        let catalog = home.join("catalog");
+        let source = catalog.join("pi-extensions/pi-hooks");
+        fs::create_dir_all(source.join("extensions")).unwrap();
+        fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+        fs::write(source.join("package.json"), json!({
+            "name":name, "pi":{"extensions":["./extensions/hooks.ts", "./extensions/lane-mail-wake.ts"]}
+        }).to_string()).unwrap();
+        for file in ["hooks.ts", "lane-mail-wake.ts"] {
+            fs::write(
+                source.join("extensions").join(file),
+                "export default function hooks(pi) {}\n",
+            )
+            .unwrap();
+        }
+        let path = manifest::manifest_path(&env, &scope);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, format!(
+            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"pi\"]\n[pi-extensions.\"{name}\"]\nsource = \"cat\"\n", source_path(&catalog)
+        )).unwrap();
+        let lock_path = lock::lock_path(&env, &scope);
+        if matches!(&scope, Scope::Project { .. }) {
+            lock::save(&lock_path, &lock::Lock::default()).unwrap();
+        }
+        let installed = kendex(&home, &["update-pi", "--scope", scope_arg]);
+        assert!(installed.status.success(), "{installed:?}");
+        let settings_path = pi_ext::settings_path(&pi_ext::scope_root(&env, &scope).unwrap());
+        // The shipped pi config selector writes this exact exclusion.
+        let native = json!({"theme":"dark", "packages":["./unmanaged", {
+            "source":"./packages/@vanillagreen/pi-hooks",
+            "extensions":["-extensions/lane-mail-wake.ts"], "skills":[], "themes":[],
+            "prompts":["+prompts/review.md"]
+        }, {"source":"./other", "extensions":["-extensions/other.ts"]}]});
+        fs::write(&settings_path, format!("{native}\r\n")).unwrap();
+        for args in [
+            vec!["enable", name, "--scope", scope_arg, "--yes"],
+            vec!["update-pi", "--scope", scope_arg],
+        ] {
+            if args[0] == "update-pi" {
+                fs::write(
+                    source.join("extensions/hooks.ts"),
+                    "export default function updated(pi) {}\n",
+                )
+                .unwrap();
+            }
+            let result = kendex(&home, &args);
+            assert!(result.status.success(), "{result:?}");
+            assert_eq!(
+                serde_json::from_slice::<Value>(&fs::read(&settings_path).unwrap()).unwrap(),
+                native
+            );
+        }
+        let settings_before = fs::read(&settings_path).unwrap();
+        let manifest_before = fs::read(&path).unwrap();
+        let lock_before = fs::read(&lock_path).unwrap();
+        let result = kendex(&home, &["disable", name, "--scope", scope_arg, "--yes"]);
+        assert_eq!(result.status.code(), Some(1), "{result:?}");
+        assert_eq!(fs::read(&settings_path).unwrap(), settings_before);
+        assert_eq!(fs::read(&path).unwrap(), manifest_before);
+        assert_eq!(fs::read(&lock_path).unwrap(), lock_before);
+        let disabled = fs::read_to_string(&path)
+            .unwrap()
+            .replace("source = \"cat\"", "source = \"cat\"\nenabled = false");
+        fs::write(&path, disabled).unwrap();
+        fs::write(
+            source.join("extensions/hooks.ts"),
+            "export default function disabledUpdate(pi) {}\n",
+        )
+        .unwrap();
+        let result = kendex(&home, &["update-pi", "--scope", scope_arg]);
+        assert_eq!(result.status.code(), Some(1), "{result:?}");
+        assert_eq!(fs::read(&settings_path).unwrap(), settings_before);
+    }
+}
+
+#[test]
 fn cli_toggle_installed_server_skill_and_hook() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
