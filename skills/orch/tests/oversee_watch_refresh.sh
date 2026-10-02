@@ -285,6 +285,13 @@ refresh_rule_passes() {
         printf '[{"databaseId":203,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T09:00:00Z"},{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
         refresh_watch
       fi ;;
+    unfiltered-older-head)
+      printf 'refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.201.txt"
+      printf '[{"databaseId":201,"attempt":1,"status":"completed","createdAt":"2026-09-30T07:00:00Z"},{"databaseId":200,"attempt":1,"status":"completed","createdAt":"2026-09-30T06:00:00Z"}]\n' > "$STUB_DIR/refresh-all.owner_repo.json"
+      printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
+      refresh_watch
+      printf '[{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"},{"databaseId":200,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T06:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
+      refresh_watch ;;
     unrecorded-row)
       printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
       mkdir -p "$STATE_DIR"
@@ -306,6 +313,7 @@ for row in \
   'unrecorded-stale|!= same ]]; then|!= same && -z never ]]; then|rc=0 events= stale=repo=owner/repo newest=204 read=202' \
   'unfiltered-record|lane_row_set refresh-failing "$rows" "$repo" "${recent#|lane_row_set refresh-failing "$rows" "$repo/never" "${recent#|rc=0 events= stale=repo=owner/repo newest=203 read=202' \
   "unjudged-record|order=unjudged|order=same|rc=0 events=${EVENT/last=202 since=2026-09-30T07/last=203 since=2026-09-30T08} stale=" \
+  'unfiltered-older-head|[run, $run]|[run, run]|rc=0 events= stale=repo=owner/repo newest=202 read=201' \
   'unrecorded-row|      standing="$prior"|      standing=""|rc=0 events= stale='; do
   IFS='|' read -r name old replacement oracle <<<"$row"
   refresh_rule_passes "$name"
