@@ -266,28 +266,37 @@ class SkillsManagerDialog implements Focusable {
 		const skill = this.getDeleteSkill();
 		if (!skill) { this.exitToBrowse(); return; }
 		this.mode = "deleting"; this.syncFocus(); this.requestRender();
-		let phase: "removing" | "reloading" = "removing";
+		let removal: "removed" | "failed";
 		try {
-			if (!(await this.options.onDelete(skill))) return;
-			phase = "reloading";
-			this.deleteSkillPath = undefined; this.previewSkillPath = undefined; this.preview = undefined;
-			await this.refreshRegistry();
+			removal = (await this.options.onDelete(skill)) ? "removed" : "failed";
 		} catch (error) {
-			const reason = error instanceof Error ? error.message : String(error);
-			switch (phase) {
-				case "removing": this.ctx.ui.notify(`Cannot delete skill ${skill.name}: ${reason}`, "error"); break;
-				case "reloading": this.ctx.ui.notify(`Deleted skill ${skill.name}, but the skills list did not reload: ${reason}`, "error"); break;
-				default: { const unknown: never = phase; throw new Error(`confirmDelete: unknown phase ${String(unknown)}`); }
-			}
-		} finally {
-			// A skill still on disk returns to where the delete began; a removed
-			// one leaves its preview, which no longer has a skill to show.
-			switch (phase) {
-				case "removing": this.leaveDeleteConfirm(); break;
-				case "reloading": this.exitToBrowse(); break;
-				default: { const unknown: never = phase; throw new Error(`confirmDelete: unknown phase ${String(unknown)}`); }
-			}
+			this.ctx.ui.notify(`Cannot delete skill ${skill.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
+			removal = "failed";
 		}
+		let keepSelected: string | undefined;
+		switch (removal) {
+			case "removed": this.deleteSkillPath = undefined; this.previewSkillPath = undefined; this.preview = undefined; break;
+			// A failed recursive removal can stop part-way, so the skill keeps its
+			// paths and the reload decides whether it is still there: a preview
+			// whose file is gone leaves for the list, one still there re-reads it.
+			case "failed": keepSelected = skill.path; break;
+			default: { const unknown: never = removal; throw new Error(`confirmDelete: unknown removal ${String(unknown)}`); }
+		}
+		try {
+			await this.refreshRegistry(keepSelected);
+		} catch (error) {
+			switch (removal) {
+				case "removed": this.ctx.ui.notify(`Deleted skill ${skill.name}, but the skills list did not reload: ${error instanceof Error ? error.message : String(error)}`, "error"); break;
+				case "failed": this.ctx.ui.notify(`Cannot reload the skills list after deleting ${skill.name} failed: ${error instanceof Error ? error.message : String(error)}`, "error"); break;
+				default: { const unknown: never = removal; throw new Error(`confirmDelete: unknown removal ${String(unknown)}`); }
+			}
+			// Without a reload nothing shows whether the skill is still on disk.
+			this.exitToBrowse(); return;
+		}
+		// Only a skill the reloaded registry still lists returns to where the
+		// delete began; anything else leaves for the reloaded list.
+		if (this.getDeleteSkill()) this.leaveDeleteConfirm();
+		else this.exitToBrowse();
 	}
 	private async submitRename(value: string): Promise<void> {
 		const skill = this.getCurrentSkill();

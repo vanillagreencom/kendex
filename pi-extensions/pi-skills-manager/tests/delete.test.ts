@@ -55,25 +55,28 @@ test("a removal that fails is reported as an error and resolves false", async ()
 	expect(notices[0]!.message).toStartWith("Cannot delete skill pinned: ");
 });
 
-// Each way a removal can end, from each place a delete can start. A skill
-// still on disk returns to where the delete began; a removed one, its reload
-// failed or not, returns to the list. Escape then tells the two apart: the
-// list closes the manager with nothing, a preview goes back to the list. Only
-// a removal whose reload succeeded shows the reloaded, empty registry.
-const OUTCOMES = ["removed", "kept", "delete-rejected", "reload-rejected"] as const;
-type Outcome = (typeof OUTCOMES)[number];
-type Origin = "browse" | "preview";
-const ROWS = OUTCOMES.flatMap((outcome) => (["browse", "preview"] as const).map((from) => ({ outcome, from })));
+// Each way a removal can end, crossed with what the reload after it finds,
+// from each place a delete can start. Every removal reloads the list, a failed
+// one included, since a recursive removal can fail part-way. A skill the
+// reload still lists returns to where the delete began, showing the re-read
+// entry; a skill the reload no longer lists, or a reload that failed, returns
+// to the list. Escape then tells the two apart: the list closes the manager
+// with nothing, a preview goes back to the list.
+type Removal = "resolves-true" | "resolves-false" | "rejects";
+type Reload = "without-skill" | "with-skill" | "rejects";
+type Settles = "list" | "origin";
+const OUTCOMES: Array<{ removal: Removal; reload: Reload; settles: Settles; errors: number }> = [
+	{ removal: "resolves-true", reload: "without-skill", settles: "list", errors: 0 },
+	{ removal: "resolves-true", reload: "rejects", settles: "list", errors: 1 },
+	{ removal: "resolves-false", reload: "with-skill", settles: "origin", errors: 0 },
+	{ removal: "resolves-false", reload: "without-skill", settles: "list", errors: 0 },
+	{ removal: "resolves-false", reload: "rejects", settles: "list", errors: 1 },
+	{ removal: "rejects", reload: "with-skill", settles: "origin", errors: 1 },
+];
+const ROWS = OUTCOMES.flatMap((outcome) => (["browse", "preview"] as const).map((from) => ({ ...outcome, from })));
+const RELOADED_DESCRIPTION = "Re-read after the removal.";
 
-function settledMode(outcome: Outcome, from: Origin): Origin {
-	switch (outcome) {
-		case "removed": case "reload-rejected": return "browse";
-		case "kept": case "delete-rejected": return from;
-		default: { const unknown: never = outcome; throw new Error(`unknown outcome ${String(unknown)}`); }
-	}
-}
-
-test.each(ROWS)("a removal that ends $outcome from $from takes no input until it ends, then leaves the deleting mode", async ({ outcome, from }) => {
+test.each(ROWS)("a removal that $removal, reloading $reload, from $from takes no input until it ends, then settles in the $settles", async ({ removal, reload, settles, errors, from }) => {
 	const skill = projectSkill(project.cwd, "doomed");
 	let finishRemoval: () => void = () => { throw new Error("onDelete was never called"); };
 	let deleteCalls = 0;
@@ -81,10 +84,24 @@ test.each(ROWS)("a removal that ends $outcome from $from takes no input until it
 		onDelete: () => {
 			deleteCalls += 1;
 			return new Promise<boolean>((resolve, reject) => {
-				finishRemoval = () => (outcome === "delete-rejected" ? reject(new Error("removal threw")) : resolve(outcome !== "kept"));
+				finishRemoval = () => {
+					switch (removal) {
+						case "resolves-true": resolve(true); break;
+						case "resolves-false": resolve(false); break;
+						case "rejects": reject(new Error("removal threw")); break;
+						default: { const unknown: never = removal; throw new Error(`unknown removal ${String(unknown)}`); }
+					}
+				};
 			});
 		},
-		onRefresh: async () => { if (outcome === "reload-rejected") throw new Error("settings unreadable"); return registryOf([]); },
+		onRefresh: async () => {
+			switch (reload) {
+				case "without-skill": return registryOf([]);
+				case "with-skill": return registryOf([projectSkill(project.cwd, "doomed", RELOADED_DESCRIPTION)]);
+				case "rejects": throw new Error("settings unreadable");
+				default: { const unknown: never = reload; throw new Error(`unknown reload ${String(unknown)}`); }
+			}
+		},
 	});
 	manager.component.handleInput(KEYS.down);
 	if (from === "preview") manager.component.handleInput(KEYS.tab);
@@ -103,11 +120,11 @@ test.each(ROWS)("a removal that ends $outcome from $from takes no input until it
 	manager.close();
 	await manager.shown;
 
-	const reportsError = outcome === "delete-rejected" || outcome === "reload-rejected";
-	expect({ busy: after.includes("Deleting skill"), empty: after.includes("0/0 enabled"), closedByEscape, levels: manager.notices.map((notice) => notice.level) }).toEqual({
+	expect({ busy: after.includes("Deleting skill"), empty: after.includes("0/0 enabled"), reread: after.includes(RELOADED_DESCRIPTION), closedByEscape, levels: manager.notices.map((notice) => notice.level) }).toEqual({
 		busy: false,
-		empty: outcome === "removed",
-		closedByEscape: settledMode(outcome, from) === "browse" ? [null] : [],
-		levels: reportsError ? ["error"] : [],
+		empty: reload === "without-skill",
+		reread: reload === "with-skill",
+		closedByEscape: settles === "list" || from === "browse" ? [null] : [],
+		levels: Array(errors).fill("error"),
 	});
 });
