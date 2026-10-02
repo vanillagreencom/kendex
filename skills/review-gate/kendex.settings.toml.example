@@ -29,8 +29,9 @@ REVIEW_GATE_STANDARD_SECRETS = ""
 # The organization owner's check of the repository compares the branch's
 # required checks to this list. Never list "Review gate": the approval rule
 # replaces it. The package ships no value; until 2.0 the check reports its
-# row advisory while this key is absent or empty, and from 2.0 the row
-# fails.
+# row advisory while this key is absent or empty, unless the branch still
+# requires "Review gate", which fails the row whatever this key holds; from
+# 2.0 an absent or empty key fails the row.
 REVIEW_GATE_STANDARD_CONTEXTS = ""
 
 # The bypass actors the organization standard admits on a ruleset that holds
