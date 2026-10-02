@@ -15,7 +15,7 @@ from typing import List, Optional
 from api import Slack, markdown_checked
 from markup import outbound, plain
 from refusals import Refusal, keyed, notice
-from relay import RECONNECT_BOUND_SECONDS, mention, resolve_owner_ids
+from relay import LAUNCHER, RECONNECT_BOUND_SECONDS, mention, resolve_owner_ids
 from secret import check as secret_check
 from secret import checked_file
 from settings import Settings, load
@@ -26,7 +26,6 @@ UNIT = "slack-listen.service"
 # enough for a relay refusing its settings or its binding to have exited.
 START_WAIT_SECONDS = 2
 UNIT_TEMPLATE = Path(__file__).resolve().parents[2] / "systemd" / UNIT
-LAUNCHER = Path(__file__).resolve().parents[1] / "slack"
 CHANNEL_NAME = re.compile(r"[^a-z0-9_-]+")
 TOLERATED_INVITE = {"already_in_channel", "cant_invite_self"}
 
@@ -254,7 +253,7 @@ def status(roots: List[Path], now: float) -> int:
         print(
             keyed(
                 "slack-relay",
-                f"{root} state={state} channel={record['channel']} last_poll_age={int(age)}s"
+                f"{root} state={state} channel={record['channel']} code={record.get('code') or '-'} last_poll_age={int(age)}s"
                 f" connection={connection} connection_since={since}"
                 f" last_delivered_ts={record.get('last_delivered_ts') or '-'}"
                 f" open_asks={len(record.get('open_asks') or [])} oldest_unknown={unknown[0] if unknown else '-'}"

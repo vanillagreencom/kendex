@@ -166,6 +166,17 @@ EXPLAIN = {
         " next poll; after a refused receipts read each :eyes: mark waits for"
         " the next poll, and the poll goes on."
     ),
+    "code-unreadable": (
+        "A file of the package's own code could not be read, so the relay"
+        " cannot tell whether an update replaced it; the value names the"
+        " file and the error. The relay keeps running the code it started"
+        " with, and --status reads failing until the file can be read."
+    ),
+    "reexec-failed": (
+        "The relay found an update of its code and could not start the"
+        " launcher on it; the value names the launcher and the error. The"
+        " relay exits, and the unit `install` wrote starts it again."
+    ),
     "unit-unwritable": "The systemd unit file could not be written at the path named.",
     "systemctl-missing": (
         "systemctl is not on PATH, so the unit was written and not enabled;"

@@ -75,7 +75,8 @@ A root `out` line carries `parent` for a relay-posted ask or notice. A `bound` l
 
 | Field | Value |
 |-------|-------|
-| `pid` | The relay's process id |
+| `pid` | The relay's process id, which a re-execution onto updated code keeps |
+| `code` | The fingerprint of the code the relay runs: 12 hex characters of one sha256 over `scripts/slack` and every `scripts/lib/*.py`, files in sorted order |
 | `channel` | The bound channel id |
 | `poll_seconds` | The `SLACK_POLL_SECONDS` the relay runs with |
 | `compacted_day` | The UTC day the journal was last compacted, or first seen |
@@ -89,4 +90,4 @@ A root `out` line carries `parent` for a relay-posted ask or notice. A `bound` l
 | `held_by` | `master` while a hold stands, empty otherwise |
 
 
-`listen --status` prints per root: `state` (`ok` inside two poll intervals plus five seconds of a successful poll, `failing` inside that of a refused one, or of one with a `connection_error` after 120 seconds `reconnecting`, `stale` past it, `never` with no record), `channel`, `last_poll_age`, `connection` and `connection_since` (for a `stale` record `disconnected` since its `last_poll`, since its relay is gone), `last_delivered_ts`, `open_asks`, `oldest_unknown`, `refused`, `calls_last_minute`, `held-by=master` while a hold stands, and `fix=` when the state is not `ok`: `last_error` for a refused poll, else `connection_error` for `failing`, a restart for `stale`, the start command for `never`. A `never` line carries `fix=` alone, with no other field.
+`listen --status` prints per root: `state` (`ok` inside two poll intervals plus five seconds of a successful poll, `failing` inside that of a refused one, or of one with a `connection_error` after 120 seconds `reconnecting`, `stale` past it, `never` with no record), `channel`, `code` (`-` for a record without one), `last_poll_age`, `connection` and `connection_since` (for a `stale` record `disconnected` since its `last_poll`, since its relay is gone), `last_delivered_ts`, `open_asks`, `oldest_unknown`, `refused`, `calls_last_minute`, `held-by=master` while a hold stands, and `fix=` when the state is not `ok`: `last_error` for a refused poll, else `connection_error` for `failing`, a restart for `stale`, the start command for `never`. A `never` line carries `fix=` alone, with no other field.

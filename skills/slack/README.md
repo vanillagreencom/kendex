@@ -38,6 +38,7 @@ Requires Python 3.8+ and the orch skill, which the install adds.
 - The relay's first run reads Slack from the moment of the binding and the mailbox from its newest envelope, so neither side's past is replayed. Open questions are posted whatever their age inside `SLACK_THREAD_DAYS`.
 - A master session can hold a root's mailbox posts. Owner messages and relay replies still pass. [The master hold](#the-master-hold) defines the hold and resume.
 - The relay compacts its journal daily. Run `slack compact` only while the relay is stopped.
+- A package update restarts the relay in place once its files hold for two polls. A changed setting still needs `slack setup`.
 
 ## Slack app
 
@@ -85,7 +86,7 @@ settings:
 
 For an existing app, add missing OAuth scopes, enable Socket Mode, subscribe to `message.groups` under Event Subscriptions, then reinstall it to the workspace.
 
-The app must be a member of every channel it posts to. `setup` creates the channel with the app in it, or invites the owners to one the app already belongs to; for an alert channel, invite the app in Slack.
+The app must be a member of every channel it posts to. `setup` creates or adopts a channel the app is in; for an alert channel, invite the app in Slack.
 
 ## Setup
 
@@ -115,7 +116,7 @@ The master's watch writes a bare read line count to `<root>/tmp/lane-mail/overse
 | From anyone not in `SLACK_OWNERS` | Not routed; the relay replies once, then ignores that message until its journal is moved aside, which answers it once more |
 | An edit or a deletion | Ignored |
 
-A question answered in the overseer's chat shows in its Slack thread as "Answered in the chat"; one nobody answered by its deadline shows as "No answer by the deadline", with the option that stood. After changing `SLACK_OWNERS`, run `slack setup` for each bound checkout: it invites an added owner to the channel and restarts the unit `install` wrote. A plain restart drops a removed owner but never invites an added one, who could then steer a channel they cannot see.
+A question answered in the overseer's chat shows in its Slack thread as "Answered in the chat"; one nobody answered by its deadline shows as "No answer by the deadline", with the option that stood. After changing `SLACK_OWNERS`, run `slack setup` for each bound checkout: a plain restart never invites an added owner, who could then steer a channel they cannot see.
 
 ## Credential boundary
 

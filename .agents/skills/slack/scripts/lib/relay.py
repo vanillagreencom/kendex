@@ -58,19 +58,29 @@ skips notices on lines at or below that count and journals their ids; later
 notices post. A missing or unreadable seen file skips nothing. The count is
 clamped to the lines listed. Open asks post whatever their line. Held answers
 still post; closure records update thread state independently of post age.
+
+A relay imports its modules once, so a package update reaches a running relay
+only through a new image. The relay fingerprints its code at start and again
+on every poll. A reading that differs from the start one and matches the poll
+before it is an update whose writer has finished: the poll completes, the
+connection closes, and the relay re-executes its launcher in the same process,
+which reads the settings again as a fresh start does. A half-written update
+changes between two polls and is never loaded.
 """
 
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import os
 import queue
 import re
+import sys
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
+from typing import Callable, Dict, Iterable, List, NoReturn, Optional, Set, Tuple, Union
 
 from api import Slack
 from mailbox import LaneMail
@@ -78,7 +88,7 @@ from markup import Verbatim, outbound, plain
 from refusals import Refusal, keyed, notice, print_refusal
 from secret import check as secret_check
 from secret import checked_file
-from settings import MASTER, Presence, Settings, load_presence
+from settings import CALLER_ENV, MASTER, Presence, Settings, load_presence
 from store import (
     READ,
     SEEN,
@@ -101,6 +111,9 @@ from store import (
 from websocket import Closed, WebSocket
 
 ROUTED_SUBTYPES = {None, "file_share", "thread_broadcast"}
+# The package's code: the launcher and the modules it loads.
+SCRIPTS = Path(__file__).resolve().parents[1]
+LAUNCHER = SCRIPTS / "slack"
 # Seconds the relay waits for Slack's `hello` on a new connection.
 HELLO_SECONDS = 10
 # Seconds of silence on the connection before it pings, and as many again
@@ -170,6 +183,19 @@ def local_time(at: str) -> str:
     shows in that reader's own time zone and clock format; the stamp is the
     fallback a client that cannot render the token shows."""
     return f"<!date^{int(at_epoch(at))}^{{date_short_pretty}} at {{time}}|{at}>"
+
+
+def fingerprint() -> str:
+    """Which code a relay runs: 12 hex characters of one sha256 over the
+    launcher and every lib/*.py, files in sorted order."""
+    digest = hashlib.sha256()
+    path = SCRIPTS / "lib"
+    try:
+        for path in [LAUNCHER, *sorted(p for p in (SCRIPTS / "lib").iterdir() if p.suffix == ".py")]:
+            digest.update(path.read_bytes())
+    except OSError as err:
+        raise Refusal("code-unreadable", f"{path} ({err.strerror})") from err
+    return digest.hexdigest()[:12]
 
 
 def mention(binding: Binding) -> str:
@@ -760,12 +786,13 @@ class RootRelay:
             self.journal = Journal(self.path, self.state)
         self.compacted_day = today
 
-    def record_status(self, ok: bool, error: str, connection: str, since: str, connection_error: str) -> None:
+    def record_status(self, ok: bool, error: str, code: str, connection: str, since: str, connection_error: str) -> None:
         delivered = max(self.state.delivered, key=float, default="")
         write_status(
             self.path,
             {
                 "pid": os.getpid(),
+                "code": code,
                 "compacted_day": self.compacted_day,
                 "channel": self.channel,
                 "poll_seconds": self.settings.poll_seconds,
@@ -796,6 +823,12 @@ class Relay:
         clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        # The code this image runs, read before anything else so that the
+        # window between the imports and the reading stays short; `reading`
+        # is the last poll's reading of the code on disk.
+        self.code = fingerprint()
+        self.reading = self.code
+        self.settled = False
         self.settings = settings
         self.api = api
         self.clock = clock
@@ -829,18 +862,34 @@ class Relay:
         self.reader: Optional[threading.Thread] = None
 
     def poll_once(self) -> bool:
-        """One poll of every root; False when any root's poll was refused."""
-        clean = True
+        """One poll of every root; False when any root's poll was refused
+        or the code on disk could not be read."""
+        code_error = self.read_code()
+        clean = code_error == ""
         today = datetime.datetime.fromtimestamp(self.clock(), datetime.timezone.utc).date().isoformat()
         for root in self.roots:
             try:
                 root.compact_daily(today)
                 root.poll(self.bot_user)
-                root.record_status(True, "", self.connection, self.since, self.connection_error)
+                root.record_status(code_error == "", code_error, self.code, self.connection, self.since, self.connection_error)
             except Exception as err:
                 self.root_failed(root, err)
                 clean = False
         return clean
+
+    def read_code(self) -> str:
+        """One reading of the code on disk; `settled` once it differs from
+        the running code and matches the last poll's reading. An unreadable
+        file keeps the running code and returns its keyed refusal for the
+        status record."""
+        try:
+            reading = fingerprint()
+        except Refusal as err:
+            print_refusal(err)
+            return f"{err.key}={err.value}"
+        self.settled = reading != self.code and reading == self.reading
+        self.reading = reading
+        return ""
 
     def root_failed(self, root: RootRelay, err: Exception) -> None:
         """Record one root's failure without letting its status write stop
@@ -850,7 +899,7 @@ class Relay:
         error = f"{err.key}={err.value}" if isinstance(err, Refusal) else f"{type(err).__name__}: {err}"
         status_error = ""
         try:
-            root.record_status(False, error, self.connection, self.since, self.connection_error)
+            root.record_status(False, error, self.code, self.connection, self.since, self.connection_error)
         except Exception as status_err:
             # A broken root can also refuse its status write. Keep the
             # primary diagnostic and continue serving the other roots.
@@ -863,7 +912,7 @@ class Relay:
     def run(self, once: bool) -> int:
         """`--once` is one poll of every root with no connection, its
         catch-up included; otherwise the connection loop, which a dead token
-        alone ends."""
+        or a settled code update alone ends."""
         print(keyed("listening", f"{len(self.roots)} poll_seconds={self.settings.poll_seconds}"), flush=True)
         if once:
             return 0 if self.poll_once() else 1
@@ -876,9 +925,24 @@ class Relay:
             self.stop_reader.set()
             if self.reader is not None:
                 self.reader.join()
+        self.reexec()
+
+    def reexec(self) -> NoReturn:
+        """This image replaced by the launcher on the code on disk: the same
+        process id and arguments, and the caller's own environment, so the
+        launcher reads the settings again from the layers a fresh start
+        reads. The lock file closes with this image and the new one takes
+        it again; its connect runs the catch-up for the gap."""
+        notice("reloading", f"{self.reading} running={self.code}")
+        sys.stderr.flush()
+        try:
+            os.execve(str(LAUNCHER), [str(LAUNCHER), *sys.argv[1:]], CALLER_ENV)
+        except OSError as err:
+            raise Refusal("reexec-failed", f"{LAUNCHER} ({err.strerror})") from err
 
     def run_connected(self, app_api: Slack, next_poll: float, retry_at: float, delay: float) -> None:
-        """Worker loop; all persistent state and API calls stay here."""
+        """Worker loop; all persistent state and API calls stay here. It
+        returns after the poll that finds a settled code update."""
         while True:
             if self.socket is None and self.clock() >= retry_at:
                 if self.open(app_api):
@@ -889,6 +953,8 @@ class Relay:
                     delay = min(2 * delay, RETRY_MAX_SECONDS)
             if self.clock() >= next_poll:
                 self.poll_once()
+                if self.settled:
+                    return
                 next_poll = self.clock() + self.settings.poll_seconds
             if self.socket is None:
                 self.sleep(max(0.0, min(next_poll, retry_at) - self.clock()))

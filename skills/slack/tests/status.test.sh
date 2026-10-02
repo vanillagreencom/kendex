@@ -19,7 +19,6 @@ sk_bind "$ROOT"
 STATUS="$ROOT/tmp/slack/status.json"
 # row — one status read; LINE is the root's row and OUT the whole print.
 row() { sk_run -- listen --status --root "$ROOT"; LINE="$(printf '%s' "$OUT" | sed -n '1p')"; }
-field() { printf '%s\n' "$1" | tr ' ' '\n' | sed -n "s/^$2=//p"; } # LINE KEY
 
 sk_run -- listen --status --root "$ROOT"
 assert_eq "$RC=$OUT" "0=slack: slack-relay=$ROOT state=never fix=start the relay with \`slack listen --root $ROOT\`" \

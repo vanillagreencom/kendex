@@ -54,9 +54,12 @@ listen    the relay: one Socket Mode connection opened with SLACK_APP_TOKEN
           by an OS lock; two roots bound to one channel are refused; --once
           opens no connection, polls each root once, history read included,
           and exits 0 when every poll succeeded, 1 for a retryable poll
-          failure. A fatal refusal, such as a dead token, exits 2
+          failure. A fatal refusal, such as a dead token, exits 2. A
+          change to the package's code that holds for two polls re-executes
+          the relay in place, which reads its settings again
   --status  one `slack-relay=ROOT state=ok|failing|stale|never` line per
-          root from the relay's status record, with the connection state;
+          root from the relay's status record, with the connection state
+          and the fingerprint of the running code as code=;
           failing too while the relay has been reconnecting past twice its
           longest wait
 post      one message to the bound channel, or --channel for another, its
@@ -97,7 +100,7 @@ Non-fatal diagnostics on stderr:
 """ + textwrap.fill(
     "Keyed lines, `slack: <key>=<value>` first: bound, posted, uploaded, updated,"
     " compacted, installed, enabled, active, restarted, listening, connected,"
-    " reconnected, slack-relay on stdout; tracker-links-unavailable is a non-fatal"
+    " reconnected, reloading, slack-relay on stdout; tracker-links-unavailable is a non-fatal"
     " notice on stdout; refusals on stderr with exit 2: python3 and"
     " settings-unreadable from the launcher before Python starts, then "
     + ", ".join(EXPLAIN) + ".",

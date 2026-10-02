@@ -68,7 +68,6 @@ envelope() {
     '[.sent[] | select(.channel == $c and .ts == $t) | .envelope_id] as $ids
      | "sent=\($ids | length) unacked=\($ids - .acks | length)"'
 }
-field() { printf '%s\n' "$1" | tr ' ' '\n' | sed -n "s/^$2=//p"; } # LINE KEY
 connection() { sk_run -- listen --status --root "$1"; field "$OUT" connection; } # ROOT
 state_link() { sk_run -- listen --status --root "$1"; printf '%s %s' "$(field "$OUT" state)" "$(field "$OUT" connection)"; } # ROOT
 texts() { jq -r .text "$(sk_box "$1")/to-lane.jsonl" | tr '\n' ' '; } # ROOT — every text in its to-lane box

@@ -245,7 +245,7 @@ sk_poll "$SK_TMP/field-unknown-kind"
 assert_eq "$ERR" "" "control: unknown field choices no longer get a keyed diagnostic"
 sk_bin_reset
 
-sk_mutant root-isolation relay.py '(root.record_status\(True, "", self.connection, self.since, self.connection_error\)\n            )except Exception as err:' '\1except Refusal as err:'
+sk_mutant root-isolation relay.py '(root.record_status\(code_error == "", code_error, self.code, self.connection, self.since, self.connection_error\)\n            )except Exception as err:' '\1except Refusal as err:'
 sk_lm "$HEALTHY" notice --item overseer --to owner --file "$(sk_text root-control 'Root control.')" >/dev/null
 sk_run -- listen --once --root "$BROKEN" --root "$HEALTHY"
 assert_eq "$RC=$(asks "$(sk_channel "$HEALTHY")" 'Root control.')" "1=0" "control: the root error escapes and prevents the healthy root from posting"

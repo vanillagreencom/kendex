@@ -60,6 +60,8 @@ assert_has() { # HAYSTACK NEEDLE NAME
 assert_lacks() { # HAYSTACK NEEDLE NAME
   case "$1" in *"$2"*) bad "$3" "present: $2 | in: $1" ;; *) ok "$3" ;; esac
 }
+# field LINE KEY — the value of one KEY=VALUE word of a keyed line
+field() { printf '%s\n' "$1" | tr ' ' '\n' | sed -n "s/^$2=//p"; }
 sk_summary() {
   printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$SK_PASS" "$SK_FAIL"
   if [ "$((SK_PASS + SK_FAIL))" -eq 0 ]; then
@@ -225,20 +227,23 @@ sk_help_field() {
   case "$OUT" in *"envelope-field=ROOT id=ID field=FIELD"*) return 0 ;; *) return 1 ;; esac
 }
 # sk_relay_start ROOT [--root ROOT]... [VAR=VALUE]... — a relay on its Socket
-# Mode connection over every ROOT in the background, polling every second
-# unless a VAR says otherwise, its pid in SK_BG_PIDS, its stdout and stderr in
-# SK_TMP/relay.out and relay.err; returns once the first ROOT's first status
-# record is written. The exec chain makes $! the relay itself, so a kill
+# Mode connection over every ROOT in the background, launched from
+# SK_RUN_FROM as sk_run is, polling every second unless a VAR says otherwise,
+# its pid in SK_BG_PIDS, its stdout and stderr in SK_TMP/relay.out and
+# relay.err; returns once the first ROOT's first status record is written.
+# SK_RELAY_POLL=none exports no SLACK_POLL_SECONDS, so the launch checkout's
+# own files set it. The exec chain makes $! the relay itself, so a kill
 # reaches it and not a wrapper.
 sk_relay_start() {
-  local tries=0 root="${1:?}" roots=()
+  local tries=0 root="${1:?}" roots=() poll=(SLACK_POLL_SECONDS=1)
   shift
   roots=(--root "$root")
   while [ $# -gt 1 ] && [ "$1" = --root ]; do roots+=(--root "$2"); shift 2; done
+  [ "${SK_RELAY_POLL:-}" != none ] || poll=()
   rm -f -- "${root:?}/tmp/slack/status.json"
-  ( cd "$SK_TMP/home" && exec env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C \
+  ( cd "${SK_RUN_FROM:-$SK_TMP/home}" && exec env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C \
     SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_APP_TOKEN="$SK_APP_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
-    SLACK_POLL_SECONDS=1 ${1+"$@"} "$SK_BIN" listen "${roots[@]}" >"$SK_TMP/relay.out" 2>"$SK_TMP/relay.err" ) &
+    ${poll[@]+"${poll[@]}"} ${1+"$@"} "$SK_BIN" listen "${roots[@]}" >"$SK_TMP/relay.out" 2>"$SK_TMP/relay.err" ) &
   SK_BG_PIDS="$!"
   while [ ! -f "$root/tmp/slack/status.json" ] && [ "$tries" -lt 100 ]; do tries=$((tries + 1)); sleep 0.1; done
   [ -f "$root/tmp/slack/status.json" ] || { printf 'background relay wrote no status\n' >&2; exit 1; }
@@ -308,9 +313,9 @@ for name in ("to-overseer.jsonl", "to-lane.jsonl"):
 PY
 }
 
-# sk_mutant NAME FILE PATTERN REPLACEMENT — SK_BIN becomes a copy of scripts/
-# with exactly one occurrence of PATTERN (a Python regex) replaced.
-sk_mutant() {
+# sk_copy NAME — SK_BIN becomes a copy of scripts/ under SK_TMP/mut-NAME,
+# which a row may edit as an update of the package does.
+sk_copy() {
   local dir="$SK_TMP/mut-$1"
   rm -rf -- "${SK_TMP:?}/mut-$1"
   mkdir -p "$dir/skills/slack"
@@ -320,7 +325,14 @@ sk_mutant() {
   if [ -n "${SK_LINEAR_STUB:-}" ]; then
     ln -sfn "$SK_LINEAR_STUB" "$dir/skills/linear"
   fi
-  if ! python3 - "$dir/skills/slack/scripts/lib/$2" "$3" "$4" <<'PY'
+  SK_BIN="$dir/skills/slack/scripts/slack"
+}
+
+# sk_mutant NAME FILE PATTERN REPLACEMENT — SK_BIN becomes a copy of scripts/
+# with exactly one occurrence of PATTERN (a Python regex) replaced.
+sk_mutant() {
+  sk_copy "$1"
+  if ! python3 - "${SK_BIN%/*}/lib/$2" "$3" "$4" <<'PY'
 import re, sys
 path, pattern, repl = sys.argv[1:4]
 text = open(path).read()
@@ -333,7 +345,6 @@ PY
     printf 'mutant %s: pattern did not match exactly once\n' "$1" >&2
     exit 1
   fi
-  SK_BIN="$dir/skills/slack/scripts/slack"
 }
 sk_bin_reset() { SK_BIN="$SK_SLACK"; }
 
