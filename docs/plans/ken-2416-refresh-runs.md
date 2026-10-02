@@ -231,7 +231,7 @@ gh run view RUN_ID --repo vanillagreencom/CONSUMER --log-failed
 
 KEN-2594 retired the `Consumer refresh` gate that KEN-2462 added. The gate replayed each consumer's committed refresh inputs against the base and proposed catalogs on every pull request and merge group, without secrets. A scheduled collector on main copied those inputs into a snapshot committed in kendex. kendex is a public repository, so the snapshot published private consumers' committed files and platform settings. A check without secrets can read only what kendex commits, so the gate could not stay without that copy.
 
-The gate also treated the symptom: it caught a catalog change that broke a consumer refresh, but did not remove the cause of refresh breaks. The source fix for consumer refresh breaks is a separate design item. The gate's workflows, the collector `tools/consumer-refresh`, the `tools/lock-record --snapshot` mode, their suites and the snapshot file are removed. The repository owner removes `Consumer refresh` from main's required checks, which leaves `CI`.
+The gate also treated the symptom: it caught a catalog change that broke a consumer refresh, but did not remove the cause of refresh breaks. The source fix for consumer refresh breaks is a separate design item. The gate's workflows, the collector and replay tool `tools/consumer-refresh`, the `tools/lock-record --snapshot` mode, their suites, the consumer inventory `.github/consumer-refresh-repos.txt` and the snapshot file are removed. The repository owner removes `Consumer refresh` from main's required checks, which leaves `CI`.
 
 ## Completion and gaps
 
