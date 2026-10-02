@@ -7,6 +7,92 @@ use super::*;
 const CHECK: &str = "#!/usr/bin/env bash\n# ---\n# name: skill-load-check\n# event: PreToolUse\n# matcher: Bash\n# harnesses: [claude, codex, opencode, cursor, pi, gemini, copilot, antigravity]\n# requires: [skill-load-record]\n# requires-skills: [commit-guards]\n# ---\nexit 0\n";
 const RECORDER: &str = "#!/usr/bin/env bash\n# ---\n# name: skill-load-record\n# event: PostToolUse\n# harnesses: [copilot]\n# requires: [skill-load-check]\n# ---\nexit 0\n";
 const DECLARED: &str = "[hooks.skill-load-check]\nsource = \"cat\"\n";
+const ALL: &str = "\"claude\", \"codex\", \"opencode\", \"cursor\", \"pi\", \"gemini\", \"copilot\", \"antigravity\"";
+
+/// The catalog recorder runs on all four harnesses, while the check needs
+/// it only on Copilot. Local opt-outs still remove the check on Copilot.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn requiring_hook_scopes_companions_without_scoping_required_skills() {
+    use kendex_core::engine::DeclarationStatus::{Complete, Incomplete};
+    const FOUR: &str = "\"claude\", \"codex\", \"pi\", \"copilot\"";
+    for (tools, recorder, missing) in [
+        (FOUR, "harnesses = [\"copilot\"]", false),
+        (FOUR, "enabled = false", true),
+        (FOUR, "harnesses = [\"claude\"]", true),
+        ("\"claude\"", "enabled = false", false),
+        ("\"codex\"", "enabled = false", false),
+        ("\"pi\"", "harnesses = [\"pi\"]", false),
+    ] {
+        let f = world();
+        let check = CHECK.replace("# requires:", "# requires-on: [copilot]\n# requires:");
+        fs::write(f.source.join("hooks/skill-load-check.sh"), check).unwrap();
+        fs::write(
+            f.source.join("hooks/skill-load-record.sh"),
+            RECORDER.replace(
+                "# harnesses: [copilot]",
+                "# harnesses: [claude, codex, pi, copilot]",
+            ),
+        )
+        .unwrap();
+        declare(
+            &f,
+            tools,
+            &format!(
+                "harnesses = [{tools}]\n\n[hooks.skill-load-record]\nsource = \"cat\"\n{recorder}\n"
+            ),
+        );
+        let report = audit(&f.env, &f.scope).unwrap();
+        assert_eq!(
+            report.declaration_status,
+            if missing { Incomplete } else { Complete },
+            "{tools} {recorder}"
+        );
+        let findings = findings_on(&report, "skill-load-check");
+        let dependencies: Vec<_> = findings
+            .iter()
+            .filter(|w| w.message.starts_with("missing required dependency:"))
+            .collect();
+        assert_eq!(
+            dependencies.len(),
+            usize::from(missing),
+            "{:?}",
+            messages(&report)
+        );
+        if missing {
+            assert_eq!(
+                dependencies[0].message,
+                if recorder == "enabled = false" {
+                    "missing required dependency: skill-load-check requires skill-load-record, which is switched off"
+                } else {
+                    "missing required dependency: GitHub Copilot runs skill-load-check without skill-load-record, which it requires"
+                }
+            );
+        }
+        apply::execute(&f.env, &report.plan).unwrap();
+        let lock = lock_of(&f);
+        for (tool, file) in TOOLS {
+            let check = format!("hook:skill-load-check:{}", tool.name());
+            let guard = format!("skill:commit-guards:{}", tool.name());
+            let record = format!("hook:skill-load-record:{}", tool.name());
+            let selected = tools.contains(&format!("\"{}\"", tool.name()));
+            let stays = selected && !(missing && tool == HarnessId::Copilot);
+            assert_eq!(
+                lock.entries.contains_key(&check),
+                stays,
+                "{tools} {recorder} {tool:?}"
+            );
+            assert_eq!(f.project.join(file).is_file(), stays);
+            assert_eq!(lock.entries.contains_key(&guard), selected);
+            if !missing && tools.contains("copilot") {
+                assert_eq!(
+                    lock.entries.contains_key(&record),
+                    tool == HarnessId::Copilot
+                );
+            }
+        }
+    }
+}
 
 /// Script or advisory file written for each tool. This fixture permits all
 /// tools, including the two the catalog's skill-load-check excludes.
@@ -28,11 +114,11 @@ const TOOLS: [(HarnessId, &str); 8] = [
 ];
 
 #[allow(clippy::unwrap_used)]
-fn declare(f: &Fixture, extra: &str) {
+fn declare(f: &Fixture, tools: &str, extra: &str) {
     fs::write(
         f.project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\", \"opencode\", \"cursor\", \"pi\", \"gemini\", \"copilot\", \"antigravity\"]\nmethod = \"copy\"\n\n{DECLARED}\n{extra}",
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [{tools}]\nmethod = \"copy\"\n\n{DECLARED}\n{extra}",
             source_path(&f.source)
         ),
     )
@@ -55,7 +141,7 @@ fn world() -> Fixture {
     let library = f.source.join("skills/commit-guards/scripts/lib");
     fs::create_dir_all(&library).unwrap();
     fs::write(library.join("command-position.sh"), "fixture-library\n").unwrap();
-    declare(&f, "");
+    declare(&f, ALL, "");
     f
 }
 
@@ -301,7 +387,7 @@ fn removed_or_disabled_requirements_withhold_only_tools_that_need_them() {
             if refresh {
                 apply_now(&f);
             }
-            declare(&f, extra);
+            declare(&f, ALL, extra);
             let report = plan_apply(
                 &f.env,
                 &f.scope,

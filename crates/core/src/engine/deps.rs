@@ -24,6 +24,7 @@ pub(crate) struct Dependencies {
     pub(crate) required: Vec<String>,
     pub(crate) optional: Vec<String>,
     pub(crate) required_skills: Vec<String>,
+    pub(crate) requires_on: Option<Vec<String>>,
 }
 
 /// Each supported edge: the declaring kind and its dependency kind.
@@ -55,6 +56,7 @@ pub(crate) fn declared_dependencies(
                     required: hook.requires,
                     optional: Vec::new(),
                     required_skills: hook.requires_skills,
+                    requires_on: hook.requires_on,
                 })
                 .unwrap_or_default()
         }),
@@ -87,6 +89,7 @@ pub(crate) fn declared_in(text: &str) -> Dependencies {
         required: map.string_list("required").unwrap_or_default(),
         optional: map.string_list("optional").unwrap_or_default(),
         required_skills: Vec::new(),
+        requires_on: None,
     }
 }
 
@@ -644,13 +647,17 @@ fn wanted_by(
     let chosen = chosen_extras(kind, parent, manifest, &declared, found);
     // Each name taken to the companion it names, and that companion to
     // the catalog the plan writes it from. A name that resolves to nothing
-    // derives nothing, which withholds an armed hook everywhere.
+    // derives nothing, which withholds an armed hook where it is required.
     let mut companions: Vec<(ItemKind, String, CatalogKey)> = Vec::new();
-    let mut unresolved = false;
+    let mut unresolved = Vec::new();
     for (_, dep_kind) in DEPENDENT_KINDS
         .iter()
         .filter(|(parent_kind, _)| *parent_kind == kind)
     {
+        let on = dependency_harnesses(*dep_kind, &harnesses, declared.requires_on.as_deref());
+        if on.is_empty() {
+            continue;
+        }
         let (required, optional) = if *dep_kind == kind {
             (declared.required.as_slice(), declared.optional.as_slice())
         } else {
@@ -660,26 +667,26 @@ fn wanted_by(
             .iter()
             .chain(optional.iter().filter(|o| chosen.contains(o)))
         {
-            match resolve(
+            let Some(dep) = resolve(
                 kind, *dep_kind, name, parent, sealed, config, offered, &own.0, found,
-            ) {
-                Some(dep) => {
-                    let planned = expansion
-                        .decl_of(*dep_kind, &dep)
-                        .unwrap_or_else(|| derived_decl(parent_decl));
-                    companions.push((*dep_kind, dep, (planned.source, planned.rev)));
-                }
-                None => unresolved = true,
-            }
+            ) else {
+                unresolved.extend(on.iter().copied());
+                continue;
+            };
+            let planned = expansion
+                .decl_of(*dep_kind, &dep)
+                .unwrap_or_else(|| derived_decl(parent_decl));
+            companions.push((*dep_kind, dep, (planned.source, planned.rev)));
         }
     }
-    if unresolved && kind == ItemKind::Hook && wanted.armed {
-        wanted.withhold(harnesses.iter().copied(), Withholding::Requires);
+    if kind == ItemKind::Hook && wanted.armed {
+        wanted.withhold(unresolved, Withholding::Requires);
     }
     derive(
         kind,
         parent,
         &harnesses,
+        declared.requires_on.as_deref(),
         companions,
         manifest,
         catalogs,
@@ -687,6 +694,26 @@ fn wanted_by(
         &mut wanted,
     );
     Some(wanted)
+}
+
+/// Hook companions use the requirement's harnesses; skill edges use all of them.
+fn dependency_harnesses(
+    kind: ItemKind,
+    harnesses: &[HarnessId],
+    requires_on: Option<&[String]>,
+) -> Vec<HarnessId> {
+    harnesses
+        .iter()
+        .copied()
+        .filter(|harness| {
+            kind != ItemKind::Hook
+                || requires_on.is_none_or(|names| {
+                    names
+                        .iter()
+                        .any(|name| HarnessId::parse(name) == Some(*harness))
+                })
+        })
+        .collect()
 }
 
 /// The optional dependencies the manifest chose for this parent, each
@@ -735,6 +762,7 @@ fn derive(
     kind: ItemKind,
     parent: &str,
     harnesses: &[HarnessId],
+    requires_on: Option<&[String]>,
     companions: Vec<(ItemKind, String, CatalogKey)>,
     manifest: &Manifest,
     catalogs: &mut Catalogs,
@@ -749,6 +777,7 @@ fn derive(
         catalogs.get(&key.0, key.1.as_deref(), state);
     }
     for (dep_kind, dep, key) in companions {
+        let harnesses = dependency_harnesses(dep_kind, harnesses, requires_on);
         let source = key.0.as_str();
         let found = &mut wanted.findings;
         let because = match catalogs.offer(&key, dep_kind, &dep) {
@@ -760,7 +789,7 @@ fn derive(
                     dep_kind,
                     dep,
                     parent,
-                    harnesses,
+                    &harnesses,
                     wanted.armed,
                     manifest,
                     state,
@@ -790,7 +819,7 @@ fn derive(
                 dep_kind,
                 &dep,
                 parent,
-                harnesses,
+                &harnesses,
                 wanted.armed,
                 manifest,
                 source,
@@ -851,8 +880,9 @@ fn silent(
 
 /// One resolved companion, offered at `path` by `catalog`, the one the
 /// plan writes it from, taken to the tools it runs on beside its parent.
-/// A companion's own harness exclusions define where it is needed, even
-/// when the manifest removes or disables it. Every other refusal is a
+/// These tools already respect the requiring hook's `requires-on` line.
+/// A companion's own harness exclusions also limit where it is needed.
+/// Every other refusal is a
 /// finding and withholds an armed requiring hook on the affected tools.
 #[allow(clippy::too_many_arguments)]
 fn companion(
@@ -875,8 +905,8 @@ fn companion(
     let mut on = Vec::new();
     let mut refused: BTreeMap<NotWritten, Vec<HarnessId>> = BTreeMap::new();
     for harness in harnesses {
-        // A Copilot-only recorder has no job beside the parent elsewhere.
-        // Its own header, not a user opt-out, defines that requirement.
+        // A companion excluded by its own header has no job here.
+        // User opt-outs still reach the planner's refusal below.
         if header
             .as_ref()
             .ok()

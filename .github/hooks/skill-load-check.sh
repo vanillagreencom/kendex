@@ -10,6 +10,7 @@
 # harnesses: [claude, codex, pi, copilot, opencode, cursor]
 # requires-skills: [commit-guards]
 # requires: [skill-load-record]
+# requires-on: [copilot]
 # ---
 
 set -euo pipefail

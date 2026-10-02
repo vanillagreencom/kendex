@@ -26,10 +26,12 @@ pub struct HookSource {
     pub timeout: Option<u32>,
     /// Harness allowlist; `None` = every harness.
     pub harnesses: Option<Vec<String>>,
-    /// Companion hooks from the same catalog. A companion is required only
-    /// on harnesses its own header allows. A removed or disabled companion
-    /// withholds this hook where that companion is required.
+    /// Companion hooks from the same catalog, required on `requires_on`
+    /// or every harness this hook runs on when absent. A companion's own
+    /// header can exclude harnesses. User opt-outs withhold this hook there.
     pub requires: Vec<String>,
+    /// Harnesses where companion hooks are required; absent means every harness.
+    pub requires_on: Option<Vec<String>>,
     /// Skills required on every harness this hook uses, from the same
     /// catalog. The dependency walk installs their own dependencies too.
     pub requires_skills: Vec<String>,
@@ -49,6 +51,7 @@ pub fn parse_hook(text: &str) -> Result<HookSource, String> {
         timeout: None,
         harnesses: None,
         requires: Vec::new(),
+        requires_on: None,
         requires_skills: Vec::new(),
         script: text.to_owned(),
     };
@@ -80,13 +83,17 @@ pub fn parse_hook(text: &str) -> Result<HookSource, String> {
             "summary" => hook.summary = prose(value),
             "safety" => hook.safety = Some(value.to_owned()),
             "timeout" => hook.timeout = value.parse().ok(),
-            "harnesses" => {
+            "harnesses" | "requires-on" => {
                 let list = names(value);
                 if let Some(unknown) = list.iter().find(|name| HarnessId::parse(name).is_none()) {
                     return Err(format!("unknown hook harness: {unknown}"));
                 }
                 if !list.is_empty() {
-                    hook.harnesses = Some(list);
+                    if key.trim() == "requires-on" {
+                        hook.requires_on = Some(list);
+                    } else {
+                        hook.harnesses = Some(list);
+                    }
                 }
             }
             "requires" => hook.requires = names(value),
@@ -358,6 +365,25 @@ mod tests {
             let expected = expected
                 .map(|list| list.map(|names| names.into_iter().map(str::to_owned).collect()));
             assert_eq!(actual, expected, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn requires_on_accepts_aliases_and_rejects_unknown_harnesses() {
+        for (line, expected) in [
+            ("", Ok(None)),
+            ("# requires-on: []\n", Ok(None)),
+            (
+                "# requires-on: [github-copilot]\n",
+                Ok(Some(vec!["github-copilot".to_owned()])),
+            ),
+            (
+                "# requires-on: [copliot]\n",
+                Err("unknown hook harness: copliot".to_owned()),
+            ),
+        ] {
+            let header = format!("# ---\n# name: x\n# event: Stop\n{line}# ---\n");
+            assert_eq!(parse_hook(&header).map(|hook| hook.requires_on), expected);
         }
     }
 
