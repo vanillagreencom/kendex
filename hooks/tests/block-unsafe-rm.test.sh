@@ -74,6 +74,15 @@ bare HOME|command|2|block-unsafe-rm: refused=shared-root|rm -rf $HOME
 operator AGENT_TMPDIR|command|2|block-unsafe-rm: refused=shared-root|rm -rf "${AGENT_TMPDIR:?empty}"
 direct bracket glob|command|2|block-unsafe-rm: refused=shared-root|rm -rf "${TMPDIR:?}"/tmp.[ab]
 direct question glob|command|2|block-unsafe-rm: refused=shared-root|rm -rf "$TMPDIR"/tmp.?
+guarded dot segment glob|command|2|block-unsafe-rm: refused=shared-root|rm -rf "${TMPDIR:?}/./"*
+guarded parent segment glob|command|2|block-unsafe-rm: refused=shared-root|rm -rf "${TMPDIR:?}/x/../"*
+bare dot segment glob|command|2|block-unsafe-rm: refused=shared-root|rm -rf "$TMPDIR"/./*
+bare parent segment glob|command|2|block-unsafe-rm: refused=shared-root|rm -rf "$TMPDIR"/x/../*
+literal dot segment glob|command|2|block-unsafe-rm: refused=shared-root|rm -rf /shared/home/./*
+literal parent segment glob|command|2|block-unsafe-rm: refused=shared-root|rm -rf /shared/home/x/../*
+quoted literal parent segment|command|2|block-unsafe-rm: refused=shared-root|rm -rf "/shared/home/x/../tmp.AbC123"
+dot segment at operand end|command|2|block-unsafe-rm: refused=shared-root|rm -rf /shared/home/private/.
+parent segment at operand end|command|2|block-unsafe-rm: refused=shared-root|rm -rf "${HOME:?}/private/.."
 literal root|command|2|block-unsafe-rm: refused=shared-root|rm -rf /shared/home
 literal hidden glob|command|2|block-unsafe-rm: refused=shared-root|rm -rf /shared/home/.*
 literal glob trailing slash|command|2|block-unsafe-rm: refused=shared-root|rm -rf /shared/home/tmp.*/
@@ -89,6 +98,8 @@ different HOME name|command|0|-|rm -rf "${MY_HOME:?}/x"
 guarded named child|command|0|-|rm -rf "${TMPDIR:?}/tmp.AbC123"
 literal named child|command|0|-|rm -rf /home/method/dev/.scratch/agents/tmp.AbC123
 literal nested glob|command|0|-|rm -rf /shared/home/private/*
+literal dotted child|command|0|-|rm -rf /shared/home/private./tmp.AbC123
+literal hidden child|command|0|-|rm -rf /shared/home/.private/tmp.AbC123
 guarded nested glob|command|0|-|rm -rf "${TMPDIR:?}/private"/*
 literal sibling prefix|command|0|-|rm -rf /shared/home-other/*
 literal regex mismatch|command|0|-|rm -rf /shared/tempX/tmp.*
@@ -101,6 +112,9 @@ skill_load_control shared-variable "$HOOK" 'SHARED_RE="${RM_EDGE}rm${SKIP}${GAP}
   "SHARED_RE='a^'" HOOK shared_rows 'incident guarded TMPDIR root'
 skill_load_control shared-literal "$HOOK" '${literal_root}${literal_end}"' \
   "SHARED_RE='a^'" HOOK shared_rows 'incident literal glob'
+skill_load_control shared-dot-segments "$HOOK" '${CROSSABLE}*)?"' \
+  "SHARED_DOT='a^'" HOOK shared_rows 'guarded dot segment glob' \
+  'guarded parent segment glob' 'literal dot segment glob' 'literal parent segment glob'
 first_table 'unset and empty roots match no literal|payload|0|-|{"command":"rm -rf /home/method/dev/.scratch/agents /shared/tmp /shared/te(mp).+ /shared/agent /shared/home"}'
 PAYLOAD_HOME=/
 first_table 'filesystem root direct glob|payload|2|block-unsafe-rm: refused=shared-root|{"command":"rm -rf /tmp.*"}

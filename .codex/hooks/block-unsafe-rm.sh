@@ -3,9 +3,9 @@
 # name: block-unsafe-rm
 # event: PreToolUse
 # matcher: Bash
-# description: Block rm on shared directory roots or globs directly under them, and paths that start with a variable that may expand empty. Keep a private mktemp directory and remove it in the same shell call.
-# summary: Stops deletes of shared directory roots, globs directly under them, and paths that start with a variable that may be empty. The refusal gives a safe cleanup pattern.
-# safety: The raw command scan refuses any rm on TMPDIR, TMP, TEMP, AGENT_TMPDIR or HOME roots and globs directly under them, regardless of flags, including `${NAME:?…}`. Literal operands are compared as text against nonempty hook environment values, with trailing slashes ignored; no filesystem reads or glob expansion occur. Named child paths pass this check. The existing empty-variable check refuses `$NAME`, `${NAME}` and `${NAME:-…}` roots; `${NAME:?…}` passes it. A redirection target is not an operand. Harmless text with the same shape can be refused. The scan does not parse shell: aliases such as `D=$TMPDIR`, `${!NAME}`, cd followed by relative rm, command substitutions, split command names and line continuations can escape it. Every refusal opens with `block-unsafe-rm: <key>=<value>`; captured command output follows that line.
+# description: Block rm on shared directory roots, globs directly under them, child paths with . or .. segments, and paths that start with a variable that may expand empty. Keep a private mktemp directory and remove it in the same shell call.
+# summary: Stops deletes of shared directory roots, their direct globs or child paths with . or .. segments, and paths that start with a variable that may be empty. The refusal gives a safe cleanup pattern.
+# safety: The raw command scan refuses any rm on TMPDIR, TMP, TEMP, AGENT_TMPDIR or HOME roots, globs directly under them, and child paths containing . or .. segments, regardless of flags, including `${NAME:?…}`. Literal operands are compared as text against nonempty hook environment values, with trailing slashes ignored; no filesystem reads or glob expansion occur. Named child paths without . or .. segments pass this check. The existing empty-variable check refuses `$NAME`, `${NAME}` and `${NAME:-…}` roots; `${NAME:?…}` passes it. A redirection target is not an operand. Harmless text with the same shape can be refused. The scan does not parse shell: aliases such as `D=$TMPDIR`, `${!NAME}`, cd followed by relative rm, command substitutions, split command names and line continuations can escape it. Every refusal opens with `block-unsafe-rm: <key>=<value>`; captured command output follows that line.
 # ---
 
 set -euo pipefail
@@ -31,7 +31,7 @@ refuse() { # KEY VALUE [CAUSE]
       echo "the hook payload is not valid JSON, or names a command that is not a string; refusing rather than skipping the guard" >&2
       ;;
     refused=shared-root)
-      echo "This rm targets a directory other sessions share, or a glob directly under it:" >&2
+      echo "This rm targets a shared root, its direct glob, or a child path with . or .. segments:" >&2
       echo "  $COMMAND" >&2
       echo 'The :? guard proves only that the variable is not empty.' >&2
       echo 'Keep d=$(mktemp -d) and remove "${d:?}" in the same shell call.' >&2
@@ -144,7 +144,8 @@ UNSAFE_RE="${RM_EDGE}rm${SKIP}${GAP}+${ROOT}"
 # The harness has no shared-root ownership check.
 SHARED_NAMES='(TMPDIR|TMP|TEMP|AGENT_TMPDIR|HOME)'
 SHARED_CHILD="[^/${ENDERS}<>${SPACE_ANY}]*"
-SHARED_SLASH="/+[\"']*(${SHARED_CHILD}[*?[]${SHARED_CHILD}/*)?"
+SHARED_DOT="(${SHARED_CHILD}/+)*[\"']*\\.\\.?[\"']*(/+${CROSSABLE}*)?"
+SHARED_SLASH="/+[\"']*(${SHARED_CHILD}[*?[]${SHARED_CHILD}/*|${SHARED_DOT})?"
 SHARED_BOUNDARY="[\"']*($|[${ENDERS}<>${SPACE_ANY}])"
 SHARED_END="[\"']*(${SHARED_SLASH})?${SHARED_BOUNDARY}"
 SHARED_ROOT="\"*\\\$(${SHARED_NAMES}|\\{${SHARED_NAMES}([^[:alnum:]_}][^}]*|)\\})${SHARED_END}"
