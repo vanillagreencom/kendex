@@ -10,7 +10,7 @@ EVENT='EVENT refresh-failing owner/repo runs=2 last=202 since=2026-09-30T07:00:0
 REPEAT="${EVENT/report=initial/report=repeat}"
 
 new_case refresh_timeline
-for run in 200 201 202 203 204 205 206 207 208 209 210; do
+for run in 200 201 202 203 204 205 206 207 208 209 210 211; do
   printf 'Refresh\tRefresh consumer\t2026-09-30T08:00:00Z refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.$run.txt"
 done
 # NAME|NEWER RUN|OLDER RUN|PASS CAP|HEARTBEATS|REPORT|STALE NOTICE|UNFILTERED
@@ -20,7 +20,9 @@ done
 # stale, as is an empty page once a run has been read. A re-run keeps its id
 # and takes an attempt. A pair that would open an incident is checked against
 # the unfiltered list, whose newest completed run is the page's own (page) or a
-# later run's id; a blank head means that list is not read.
+# later run's id; a blank head means that list is not read. A later head is
+# recorded as read and unjudged: an older page is stale, and one reaching it
+# is judged.
 for row in \
   'no-runs|absent|absent|1|1|||' \
   'one-failure|201:failure|absent|1|1|||' \
@@ -38,7 +40,8 @@ for row in \
   'rerun-success|208:success:2|207:failure|1|1|||' \
   'pre-rerun-page|208:failure|207:failure|1|1||repo=owner/repo newest=208 read=208|' \
   'stale-pair-after-success|210:failure|209:failure|1|1||repo=owner/repo newest=211 read=210|211' \
-  'pair-after-rerun|210:failure|209:failure|1|0|initial||page'; do
+  'pair-after-rerun|210:failure|209:failure|1|1||repo=owner/repo newest=211 read=210|' \
+  'pair-reaches-unjudged|211:failure|210:failure|1|0|initial||page'; do
   IFS='|' read -r name newer older loops heartbeats report stale head <<<"$row"
   jq -cn --arg newer "$newer" --arg older "$older" '
     [$newer, $older] | map(select(. != "absent") | split(":")
@@ -58,9 +61,9 @@ done
 
 # Keep the pair from the fixture above, but change its last diagnostic. Tabs
 # in gh's prefix are removed, and the last matching diagnostic wins.
-printf 'Refresh\tRefresh consumer\t2026-09-30T20:00:00Z refresh-error=old\nRefresh\tRefresh consumer\t2026-09-30T20:00:01Z kendex-hook-commit-guards: failed | check=changelog\nother output\n' > "$STUB_DIR/refresh-log.210.txt"
+printf 'Refresh\tRefresh consumer\t2026-09-30T20:00:00Z refresh-error=old\nRefresh\tRefresh consumer\t2026-09-30T20:00:01Z kendex-hook-commit-guards: failed | check=changelog\nother output\n' > "$STUB_DIR/refresh-log.211.txt"
 refresh_watch
-CHANGED='EVENT refresh-failing owner/repo runs=2 last=210 since=2026-09-30T19:00:00Z report=repeat cause=kendex-hook-commit-guards: failed | check=changelog'
+CHANGED='EVENT refresh-failing owner/repo runs=2 last=211 since=2026-09-30T20:00:00Z report=repeat cause=kendex-hook-commit-guards: failed | check=changelog'
 assert_eq "rc=$REFRESH_RC events=$REFRESH_EVENTS" "rc=0 events=$CHANGED" "a changed cause is news before the repeat interval" "$STUB_DIR/err"
 refresh_watch
 assert_eq "rc=$REFRESH_RC events=$REFRESH_EVENTS" 'rc=0 events=' "a cause containing a pipe remains quiet on the next pass" "$STUB_DIR/err"
@@ -271,6 +274,17 @@ refresh_rule_passes() {
       printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
       printf '[{"databaseId":204,"attempt":1,"status":"completed","createdAt":"2026-09-30T10:00:00Z"},{"databaseId":202,"attempt":1,"status":"completed","createdAt":"2026-09-30T08:00:00Z"}]\n' > "$STUB_DIR/refresh-all.owner_repo.json"
       refresh_watch ;;
+    unfiltered-record | unjudged-record)
+      printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
+      printf '[{"databaseId":203,"attempt":1,"status":"completed","createdAt":"2026-09-30T09:00:00Z"},{"databaseId":202,"attempt":1,"status":"completed","createdAt":"2026-09-30T08:00:00Z"}]\n' > "$STUB_DIR/refresh-all.owner_repo.json"
+      refresh_watch
+      rm -- "${STUB_DIR:?}/refresh-all.owner_repo.json"
+      refresh_watch
+      if [[ "$1" == unjudged-record ]]; then
+        printf 'refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.203.txt"
+        printf '[{"databaseId":203,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T09:00:00Z"},{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
+        refresh_watch
+      fi ;;
     unrecorded-row)
       printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
       mkdir -p "$STATE_DIR"
@@ -287,9 +301,11 @@ refresh_rule_passes() {
 for row in \
   'record-stale|else "older" end) as $order|else "newer" end) as $order|rc=0 events= stale=repo=owner/repo newest=203 read=202' \
   "rerun-attempt|def run: [.createdAt, .databaseId, .attempt];|def run: [.createdAt, .databaseId, .attempt * 0];|rc=0 events=$EVENT stale=" \
-  'rerun-page|[[ "$order" != same|[[ "$order" != never|rc=0 events= stale=' \
+  'rerun-page|-n "$standing" ]]|-n never ]]|rc=0 events= stale=' \
   'recorded-pair-stale| -z "$standing" ]]; then| -z "$standing" && -z never ]]; then|rc=0 events= stale=repo=owner/repo newest=206 read=205' \
-  'unrecorded-stale|if [[ "$recent" != same ]]; then|if false && [[ "$recent" != same ]]; then|rc=0 events= stale=repo=owner/repo newest=204 read=202' \
+  'unrecorded-stale|!= same ]]; then|!= same && -z never ]]; then|rc=0 events= stale=repo=owner/repo newest=204 read=202' \
+  'unfiltered-record|lane_row_set refresh-failing "$rows" "$repo" "${recent#|lane_row_set refresh-failing "$rows" "$repo/never" "${recent#|rc=0 events= stale=repo=owner/repo newest=203 read=202' \
+  "unjudged-record|order=unjudged|order=same|rc=0 events=${EVENT/last=202 since=2026-09-30T07/last=203 since=2026-09-30T08} stale=" \
   'unrecorded-row|      standing="$prior"|      standing=""|rc=0 events= stale='; do
   IFS='|' read -r name old replacement oracle <<<"$row"
   refresh_rule_passes "$name"

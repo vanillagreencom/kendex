@@ -267,7 +267,7 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   lane-failed<TAB><item><TAB><the last lane-local failure the long pass reported>
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
 #   outside-contribution<TAB><repo>#<number><TAB><pr HEAD_SHA|issue>
-#   refresh-failing<TAB><repo><TAB><newest run's REFRESH_RUN as JSON>|[<passes since reported>|<cause>]
+#   refresh-failing<TAB><repo><TAB><newest run's REFRESH_RUN as JSON>|[<passes since reported>|<cause>|unjudged]
 #   security-alert, bot-fix and security-alerts-unread rows, which
 #   lib/security-alerts.sh sets out above check_security_alerts
 #   account<TAB><harness>|<through>|<config dir><TAB><status>|<verdict>|<binding_resets_at or ->
@@ -284,24 +284,17 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   overseer-dead<TAB><server> <pane><TAB><count>|pending:<N>|reported
 #   overseer-walled<TAB><server> <pane><TAB><count>|pending:<N>|reported
 #   overseer-context-gap<TAB><server> <pane><TAB><gap>|told|alerted
-# overseer-dead and overseer-walled are one machinery under two names, one
-# per case the overseer's own pane can be recovered from: `exited` is the
-# harness gone and `walled` is the account spent under a harness still
-# running. Separate rows rather than
-# one carrying its case, so a pane that flips between the two starts its count
-# over instead of counting a wall's passes towards a death's threshold.
-# The usage-limit value is split apart where the event is emitted, some 200
-# lines below where it is written; the reset key's own layout is
-# usage_reset_key's, and it comes LAST because it carries `|` of its own.
-# The reported columns are what keeps a re-run from delivering a line again:
-# a lane parked on its wall, sitting idle, left at a bare shell, or an item
-# merged and still in --item read the same on every pass of every run, and the
-# overseer re-runs the watch after every event.
+# overseer-dead (harness gone) and overseer-walled (account spent, harness
+# running) are one machinery in two rows, so a pane flipping between the two
+# starts its count over rather than counting a wall towards a death.
+# The usage-limit reset key, laid out by usage_reset_key, comes LAST because
+# it carries `|` of its own.
+# The reported columns keep a re-run, which follows every event, from
+# delivering a line again for a walled, idle or exited lane or a merged --item.
 # Each helper takes the whole baseline blob and returns the answer or the
 # rewritten blob, so a pass mutates a local and commits once. `lane-exited` and
-# `lane-idle` hold the first of the two consecutive passes those kinds need.
-# Rows, not process globals: a pass that found any event exits the process, so
-# a debounce kept in memory never reaches its second pass.
+# `lane-idle` hold the first of the two passes they need in a row, not a
+# global: a pass that found any event exits the process.
 lane_row_get() {
   awk -F'\t' -v kind="$1" -v lane="$3" '$1 == kind && NF == 3 && $2 == lane { print $3 }' <<<"$2"
 }
@@ -1508,12 +1501,15 @@ check_prepare() {
 # answer with a stale page. The row records the newest completed run read; a
 # page older than it judges nothing, and a pair with no record or one that
 # would open an incident counts only when its newer run is the newest
-# completed run in the unfiltered list. A run's identity, which orders and matches runs, is
-# REFRESH_RUN alone: a re-run keeps its id and createdAt and takes the next
-# attempt. A row in the earlier layout, <passes>|<cause>, reads as a
-# standing incident with no record.
-REFRESH_RUN='def run: [.createdAt, .databaseId, .attempt];'
-REFRESH_ROW='^(\["[0-9TZ:-]{20}",([0-9]+),[0-9]+\])\|([0-9]+\|.+)?$'
+# completed run in the unfiltered list. When it is not, the row records the
+# newer of that list's newest run and the pair's, unjudged, so a page reaching
+# it is still judged. REFRESH_RUN alone orders and matches runs: a re-run keeps
+# its id and createdAt and takes the next attempt. A row in the earlier
+# layout, <passes>|<cause>, reads as a standing incident with no record.
+REFRESH_RUN='def run: [.createdAt, .databaseId, .attempt];
+  def valid: (.databaseId | type) == "number" and (.attempt | type) == "number" and
+    (.createdAt | type) == "string" and (.createdAt | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"));'
+REFRESH_ROW='^(\["[0-9TZ:-]{20}",([0-9]+),[0-9]+\])\|(unjudged|[0-9]+\|.+)?$'
 REFRESH_ROW_UNRECORDED='^[0-9]+\|.+$'
 check_refresh() {
   local repo runs order newest run since recent log cause prior rec rec_id standing passes rc workflows report
@@ -1549,15 +1545,11 @@ check_refresh() {
       die state-read-failed "" "repo=$repo" "row=refresh-failing" "layout=unknown"
     fi
     # order is the page's newest run against the record: newer, same, older
-    # (an empty page included), or unrecorded. since is the older run's
-    # createdAt when both runs failed.
+    # (an empty page included), or unrecorded; unjudged is same on an unjudged
+    # record. since is the older run's createdAt when both runs failed.
     rc=0
     runs="$(jq -er --argjson rec "$rec" "$REFRESH_RUN"'
-      if type == "array" and length <= 2 and all(.[];
-        (.databaseId | type) == "number" and (.attempt | type) == "number" and
-        (.conclusion | type) == "string" and
-        (.createdAt | type) == "string" and
-        (.createdAt | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))) then
+      if type == "array" and length <= 2 and all(.[]; valid and (.conclusion | type) == "string") then
         (if $rec == null then "unrecorded"
          elif length == 0 then "older"
          elif (.[0] | run) > $rec then "newer"
@@ -1572,6 +1564,10 @@ check_refresh() {
       continue
     fi
     IFS='|' read -r order newest run since <<<"$runs"
+    if [[ "$standing" == unjudged ]]; then
+      standing=''
+      [[ "$order" != same ]] || order=unjudged
+    fi
     case "$order" in
       older)
         ow_message refresh-stale "repo=$repo" "newest=$rec_id" "read=${newest:-none}" >&2
@@ -1582,7 +1578,7 @@ check_refresh() {
             || die state-read-failed "" "repo=$repo" "row=refresh-failing"
           continue
         fi ;;
-      newer | same) ;;
+      newer | same | unjudged) ;;
       *) die refresh-order-unknown "" "repo=$repo" "order=$order" ;;
     esac
     if [[ -z "$since" ]]; then
@@ -1590,7 +1586,7 @@ check_refresh() {
         || die state-read-failed "" "repo=$repo" "row=refresh-failing"
       continue
     fi
-    # A pair whose newer run is the one already read and judged is no news.
+    # A pair whose newer run is the one already judged is no news.
     [[ "$order" != same || -n "$standing" ]] || continue
     if [[ "$order" == unrecorded || -z "$standing" ]]; then
       # gh's default page leaves room for queued and running runs above it.
@@ -1599,18 +1595,20 @@ check_refresh() {
         --json databaseId,attempt,createdAt,status 2>"$errf")" || rc=$?
       if (( rc == 0 )); then
         recent="$(jq -er --argjson run "$run" "$REFRESH_RUN"'
-          if type == "array" and all(.[];
-            (.databaseId | type) == "number" and (.status | type) == "string") then
+          if type == "array" and all(.[]; valid and (.status | type) == "string") then
             map(select(.status == "completed"))[0]
-            | if . == null then "none" elif run == $run then "same" else .databaseId end
+            | if . == null then "none|\($run | tojson)" elif run == $run then "same|"
+              else "\(.databaseId)|\([run, $run] | max | tojson)" end
           else error("invalid refresh runs") end' <<<"$recent" 2>"$errf")" || rc=$?
       fi
       if (( rc != 0 )); then
         ow_message refresh-unread "repo=$repo" "read=all-runs" "exit=$rc" >&2
         continue
       fi
-      if [[ "$recent" != same ]]; then
-        ow_message refresh-stale "repo=$repo" "newest=$recent" "read=$newest" >&2
+      if [[ "${recent%%|*}" != same ]]; then
+        ow_message refresh-stale "repo=$repo" "newest=${recent%%|*}" "read=$newest" >&2
+        rows="$(lane_row_set refresh-failing "$rows" "$repo" "${recent#*|}|${standing:-unjudged}")" \
+          || die state-read-failed "" "repo=$repo" "row=refresh-failing"
         continue
       fi
     fi
