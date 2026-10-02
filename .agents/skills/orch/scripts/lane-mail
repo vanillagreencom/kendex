@@ -11,9 +11,10 @@
 # file. A halt is acknowledged by a plain `inbox` read alone: `--ack` stops
 # short of an unread one, so a hook that hands mail over never consumes it.
 # A send or notice prints its receipt; oversee-report reads the notice id.
-# Silence is a send or notice that did not land; a repeat
+# Silence is a send or notice that did not land. With the repeat guard, a repeat
 # of one envelope to one item inside a minute is refused before the append
-# rather than delivered a second time. The Receipt section of usage() owns
+# rather than delivered a second time. Older host libraries can deliver it again.
+# The Receipt section of usage() owns
 # what counts as a repeat, and nothing here restates it.
 # An owner ask in the overseer mailbox is closed by `resolve` alone, exactly
 # once, under the same lock the append takes, and a send carrying a delivery
@@ -317,6 +318,10 @@ ref is empty when no --ref was given, and a lane notice has an empty to field.
 `oversee-report write` reads the notice receipt's id for its report-written line.
 Silence is not a success: a send or notice that printed no receipt appended nothing.
 
+Hosts with older append libraries skip the minute repeat check and can deliver
+the same envelope again. The repeat rules below apply locally and on hosts
+whose append library has the repeat guard.
+
 A send, ask or notice repeating an envelope the mailbox already holds is a retry of a delivery
 that landed, not a second message. A send carrying --delivery-id is judged by
 that key alone, under the lock, and never by this window. What is compared is the envelope whole,
@@ -331,7 +336,7 @@ silence each other. A repeat is refused before the append as
 more than a minute later, appends as any send does.
 
 The repeat check and append hold the destination mailbox's same lock through
-`lib/mailbox-append.sh`, locally and on a provider's host. Two identical sends
+`lib/mailbox-append.sh`, locally and on a host with the repeat guard. Two identical sends
 cannot both append: the second checks the first row while it holds that lock
 and refuses with its id. A mailbox read failure refuses the write as
 `write-failed` locally or `host-append` on a provider, never as an empty mailbox.
@@ -1481,7 +1486,8 @@ case "$VERB" in
       LINE="$(lm_envelope answer "$MSGID")"
     fi
     # A send naming its delivery uses that key's guard under the append lock.
-    # Other sends use the shared whole-envelope minute guard there.
+    # Other local sends and hosts with the repeat guard use the shared minute
+    # check there. Older host libraries can append the same envelope again.
     lm_receipt_fields "$LINE"
     if [ "$HOST" -eq 1 ]; then
       lm_append_host "$TO_LANE" "$LINE"
