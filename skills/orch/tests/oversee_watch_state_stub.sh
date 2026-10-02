@@ -15,15 +15,14 @@ echo "=== oversee-watch harness: the workflow-state stub's fleet-state copy ==="
 
 # A workflow-state that runs the real CLI and, under HOLD, keeps its caller
 # between that run and the stub's copy back until the case writes `release`:
-# the window the lock must keep a second call out of. The stub finds its lock
-# library beside the CLI it is handed, so the library is linked in beside it.
+# the window the lock must keep a second call out of. The real CLI reads no
+# private env file: this suite runs in the checkout, not a fixture repository.
 HOLD_CLI_DIR="$TMP_ROOT/hold-cli"
 mkdir -p "$HOLD_CLI_DIR"
-ln -s "$REPO_ROOT/skills/orch/scripts/lib" "$HOLD_CLI_DIR/lib"
 cat > "$HOLD_CLI_DIR/workflow-state" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
-"$HELD_REAL_CLI" "$@" || exit
+"$HELD_REAL_CLI" --no-private-env "$@" || exit
 [[ -n "${HOLD:-}" ]] || exit 0
 : > "$STUB_DIR/held"
 for _ in $(seq 1 300); do
