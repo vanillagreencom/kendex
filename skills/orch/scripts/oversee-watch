@@ -1504,10 +1504,11 @@ check_prepare() {
 }
 
 # One completed-run list per repository proves the failure pair. A failed
-# read cannot clear a standing pair or end the other fleet checks. The row
-# records the newest completed run the check has read: GitHub can answer the
-# list with a stale page, and a page whose newest run is older than that
-# record judges nothing. A run's identity, which orders and matches runs, is
+# read cannot clear a standing pair or end the other fleet checks. GitHub can
+# answer with a stale page. The row records the newest completed run read; a
+# page older than it judges nothing, and a pair with no record or one that
+# would open an incident counts only when its newer run is the newest
+# completed run in the unfiltered list. A run's identity, which orders and matches runs, is
 # REFRESH_RUN alone: a re-run keeps its id and createdAt and takes the next
 # attempt. A row in the earlier layout, <passes>|<cause>, reads as a
 # standing incident with no record.
@@ -1591,10 +1592,8 @@ check_refresh() {
     fi
     # A pair whose newer run is the one already read and judged is no news.
     [[ "$order" != same || -n "$standing" ]] || continue
-    if [[ "$order" == unrecorded ]]; then
-      # With no record, the pair counts only when its newer run is the newest
-      # completed run in the unfiltered list. gh's default page leaves room
-      # for queued and running runs above it.
+    if [[ "$order" == unrecorded || -z "$standing" ]]; then
+      # gh's default page leaves room for queued and running runs above it.
       rc=0
       recent="$(gh run list --repo "$repo" --workflow kendex-refresh.yml --limit 20 \
         --json databaseId,attempt,createdAt,status 2>"$errf")" || rc=$?

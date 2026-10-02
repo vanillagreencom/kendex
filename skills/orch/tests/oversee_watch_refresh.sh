@@ -13,39 +13,47 @@ new_case refresh_timeline
 for run in 200 201 202 203 204 205 206 207 208 209 210; do
   printf 'Refresh\tRefresh consumer\t2026-09-30T08:00:00Z refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.$run.txt"
 done
-# NAME|NEWER RUN|OLDER RUN|PASS CAP|HEARTBEATS|REPORT|STALE NOTICE. A run is
-# ID:CONCLUSION[:ATTEMPT], created at hour ID-190, attempt 1 unless named.
-# GitHub lists the newest completed run first; an absent run models fewer than
-# two. A page older than the newest run already read is stale, as is an empty
-# page once a run has been read. A re-run keeps its id and takes an attempt.
+# NAME|NEWER RUN|OLDER RUN|PASS CAP|HEARTBEATS|REPORT|STALE NOTICE|UNFILTERED
+# HEAD. A run is ID:CONCLUSION[:ATTEMPT], created at hour ID-190, attempt 1
+# unless named. GitHub lists the newest completed run first; an absent run
+# models fewer than two. A page older than the newest run already read is
+# stale, as is an empty page once a run has been read. A re-run keeps its id
+# and takes an attempt. A pair that would open an incident is checked against
+# the unfiltered list, whose newest completed run is the page's own (page) or a
+# later run's id; a blank head means that list is not read.
 for row in \
-  'no-runs|absent|absent|1|1||' \
-  'one-failure|201:failure|absent|1|1||' \
-  'two-failures|202:failure|201:failure|2|0|initial|' \
-  'unchanged-pair|202:failure|201:failure|1|1||' \
-  'stale-page|201:failure|200:failure|1|1||repo=owner/repo newest=202 read=201' \
-  'empty-page|absent|absent|1|1||repo=owner/repo newest=202 read=none' \
-  'mark-repeat|202:failure|201:failure|1|0|repeat|' \
-  'newest-success|203:success|202:failure|1|1||' \
-  'stale-after-success|202:failure|201:failure|1|1||repo=owner/repo newest=203 read=202' \
-  'one-failure-after-success|204:failure|203:success|1|1||' \
-  'new-pair-after-success|205:failure|204:failure|1|0|initial|' \
-  'cancelled-run|206:cancelled|205:failure|1|1||' \
-  'new-pair-after-cancel|208:failure|207:failure|1|0|initial|' \
-  'rerun-success|208:success:2|207:failure|1|1||' \
-  'pre-rerun-page|208:failure|207:failure|1|1||repo=owner/repo newest=208 read=208' \
-  'pair-after-rerun|210:failure|209:failure|1|0|initial|'; do
-  IFS='|' read -r name newer older loops heartbeats report stale <<<"$row"
+  'no-runs|absent|absent|1|1|||' \
+  'one-failure|201:failure|absent|1|1|||' \
+  'two-failures|202:failure|201:failure|2|0|initial||page' \
+  'unchanged-pair|202:failure|201:failure|1|1|||' \
+  'stale-page|201:failure|200:failure|1|1||repo=owner/repo newest=202 read=201|' \
+  'empty-page|absent|absent|1|1||repo=owner/repo newest=202 read=none|' \
+  'mark-repeat|202:failure|201:failure|1|0|repeat||' \
+  'newest-success|203:success|202:failure|1|1|||' \
+  'stale-after-success|202:failure|201:failure|1|1||repo=owner/repo newest=203 read=202|' \
+  'one-failure-after-success|204:failure|203:success|1|1|||' \
+  'new-pair-after-success|205:failure|204:failure|1|0|initial||page' \
+  'cancelled-run|206:cancelled|205:failure|1|1|||' \
+  'new-pair-after-cancel|208:failure|207:failure|1|0|initial||page' \
+  'rerun-success|208:success:2|207:failure|1|1|||' \
+  'pre-rerun-page|208:failure|207:failure|1|1||repo=owner/repo newest=208 read=208|' \
+  'stale-pair-after-success|210:failure|209:failure|1|1||repo=owner/repo newest=211 read=210|211' \
+  'pair-after-rerun|210:failure|209:failure|1|0|initial||page'; do
+  IFS='|' read -r name newer older loops heartbeats report stale head <<<"$row"
   jq -cn --arg newer "$newer" --arg older "$older" '
     [$newer, $older] | map(select(. != "absent") | split(":")
       | {databaseId: (.[0] | tonumber), attempt: (.[2] // "1" | tonumber), conclusion: .[1]}
       | . + {createdAt: "2026-09-30T\(.databaseId - 190):00:00Z"})' > "$STUB_DIR/refresh.owner_repo.json"
+  rm -f -- "${STUB_DIR:?}/refresh-all.owner_repo.json"
+  [[ "$head" == page || -z "$head" ]] \
+    || jq -c --argjson id "$head" '[{databaseId: $id, attempt: 1, status: "completed", createdAt: "2026-09-30T\($id - 190):00:00Z"}] + map(. + {status: "completed"})' \
+      "$STUB_DIR/refresh.owner_repo.json" > "$STUB_DIR/refresh-all.owner_repo.json"
   want=''
   [[ -z "$report" ]] \
     || want="EVENT refresh-failing owner/repo runs=2 last=${newer%%:*} since=2026-09-30T$(( ${older%%:*} - 190 )):00:00Z report=$report cause=refresh-error=read value=class"
   refresh_watch --max-loops "$loops"
   LISTS="$(grep -c '^run list --repo owner/repo --workflow kendex-refresh.yml --status completed --limit 2 --json databaseId,attempt,conclusion,createdAt$' "$STUB_DIR/gh.calls" || true)"
-  assert_eq "rc=$REFRESH_RC lists=$LISTS all=$REFRESH_ALL_LISTS heartbeats=$REFRESH_HEARTBEATS events=$REFRESH_EVENTS stale=$REFRESH_STALE" "rc=0 lists=1 all=0 heartbeats=$heartbeats events=$want stale=$stale" "$name" "$STUB_DIR/err"
+  assert_eq "rc=$REFRESH_RC lists=$LISTS all=$REFRESH_ALL_LISTS heartbeats=$REFRESH_HEARTBEATS events=$REFRESH_EVENTS stale=$REFRESH_STALE" "rc=0 lists=1 all=$(( ${#head} > 0 )) heartbeats=$heartbeats events=$want stale=$stale" "$name" "$STUB_DIR/err"
 done
 
 # Keep the pair from the fixture above, but change its last diagnostic. Tabs
@@ -253,6 +261,12 @@ refresh_rule_passes() {
         printf '[{"databaseId":202,"attempt":1,"conclusion":"%s","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' "$newer" > "$STUB_DIR/refresh.owner_repo.json"
         refresh_watch
       done ;;
+    recorded-pair-stale)
+      printf '[{"databaseId":203,"attempt":1,"conclusion":"success","createdAt":"2026-09-30T09:00:00Z"},{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
+      refresh_watch
+      printf '[{"databaseId":205,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T11:00:00Z"},{"databaseId":204,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T10:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
+      printf '[{"databaseId":206,"attempt":1,"status":"completed","createdAt":"2026-09-30T12:00:00Z"},{"databaseId":205,"attempt":1,"status":"completed","createdAt":"2026-09-30T11:00:00Z"}]\n' > "$STUB_DIR/refresh-all.owner_repo.json"
+      refresh_watch ;;
     unrecorded-stale)
       printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
       printf '[{"databaseId":204,"attempt":1,"status":"completed","createdAt":"2026-09-30T10:00:00Z"},{"databaseId":202,"attempt":1,"status":"completed","createdAt":"2026-09-30T08:00:00Z"}]\n' > "$STUB_DIR/refresh-all.owner_repo.json"
@@ -274,6 +288,7 @@ for row in \
   'record-stale|else "older" end) as $order|else "newer" end) as $order|rc=0 events= stale=repo=owner/repo newest=203 read=202' \
   "rerun-attempt|def run: [.createdAt, .databaseId, .attempt];|def run: [.createdAt, .databaseId, .attempt * 0];|rc=0 events=$EVENT stale=" \
   'rerun-page|[[ "$order" != same|[[ "$order" != never|rc=0 events= stale=' \
+  'recorded-pair-stale| -z "$standing" ]]; then| -z "$standing" && -z never ]]; then|rc=0 events= stale=repo=owner/repo newest=206 read=205' \
   'unrecorded-stale|if [[ "$recent" != same ]]; then|if false && [[ "$recent" != same ]]; then|rc=0 events= stale=repo=owner/repo newest=204 read=202' \
   'unrecorded-row|      standing="$prior"|      standing=""|rc=0 events= stale='; do
   IFS='|' read -r name old replacement oracle <<<"$row"
