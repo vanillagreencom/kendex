@@ -657,26 +657,53 @@ if proc_table_readable; then
       'rc=0 lane=gone typed=0 host=0 status=done' "a local $harness lane is stopped by SIGTERM to its recorded process"
   done
 
-  # The lane's own close-out removed its worktree and a later one made a tree
-  # at the same path: the recorded harness, whose directory is the removed
-  # tree, is still the one stopped. A stop that found the harness by the
-  # directory would find none there.
-  recreated_row() { # SCRIPT
+  # The lane's own close-out (../workflows/merge-pr.md § 5 step 6) removed its
+  # worktree, the record's mail_root, and either left it gone or a later one
+  # made a tree at the same path: the recorded harness, whose directory is the
+  # removed tree, is still the one stopped. A stop that found the harness by
+  # the directory cannot resolve a removed one and would find none in a
+  # recreated one. The lane-mail stub answers no ask for any root, as the real
+  # `lane-mail pending` does for a root that does not exist.
+  worktree_gone_row() { # MODE SCRIPT; MODE is removed or recreated
+    mkdir -p -- "$LANE_ROOT"
     MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
     start_local_harness claude
-    rm -rf -- "${LANE_ROOT:?}"; mkdir -p -- "$LANE_ROOT"
-    PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$1"
+    rm -rf -- "${LANE_ROOT:?}"
+    case "$1" in
+      removed) ;;
+      recreated) mkdir -p -- "$LANE_ROOT" ;;
+      *) printf 'lane-close-test: worktree-mode-unknown mode=%s\n' "$1" >&2; exit 1 ;;
+    esac
+    PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$2"
   }
-  recreated_row "$SCRIPT"
-  assert_eq "rc=$RC lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
-    'rc=0 lane=gone status=done' 'a worktree removed and recreated at the same path still stops the recorded harness'
+  # MODE|label
+  WORKTREE_GONE_ROWS=(
+    "removed|a worktree its close-out removed still stops the recorded harness and closes"
+    "recreated|a worktree removed and recreated at the same path still stops the recorded harness"
+  )
+  for row in "${WORKTREE_GONE_ROWS[@]}"; do
+    IFS='|' read -r mode label <<<"$row"
+    worktree_gone_row "$mode" "$SCRIPT"
+    assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed ' <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
+      'rc=0 failed=0 lane=gone status=done' "$label"
+  done
   # Control: a close that drops the recorded identity reads the pane, whose
   # process holds no harness here, and stops nothing.
   MUTANT="$(mutant lane-close-record-identity '    record_identity launch' '    RECORD_PID="" RECORD_START=""')"
-  recreated_row "$MUTANT"
+  worktree_gone_row recreated "$MUTANT"
   assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=identity-unread$' <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
     'rc=1 failed=1 lane=alive status=running' 'control: without the recorded identity the recreated tree stops nothing'
   kill "$LANE_PID" 2>/dev/null || true
+  # Control: a close whose local stop finds the harness by the worktree
+  # directory cannot resolve the removed one and refuses with it still alive.
+  MUTANT="$(mutant lane-close-directory-stop \
+    '    if ! lane_stop_local "$pane_pid" "$RECORD_PID" "$RECORD_START" "$wake_pid" "$wake_start" "$harness"; then' \
+    '    if ! lane_stop_owned "$mail_root" "$harness"; then')"
+  worktree_gone_row removed "$MUTANT"
+  assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=worktree-read-failed$' <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=1 failed=1 lane=alive status=running' 'control: a directory stop refuses the removed worktree and stops nothing'
+  kill "$LANE_PID" 2>/dev/null || true
+  mkdir -p -- "$LANE_ROOT"
 
   # A record naming no identity reads it off the pane: the harness under the
   # pane's own process.
