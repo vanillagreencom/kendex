@@ -157,12 +157,19 @@ fn request_kinds_and_override_rule() {
         ModelRequest::parse("provider/custom").unwrap(),
         ModelRequest::Exact { .. }
     ));
-    for value in ["", "a b", "a/", "/b", "a/b/c"] {
+    assert_eq!(
+        ModelRequest::parse("openrouter/anthropic/claude-sonnet-4").unwrap(),
+        ModelRequest::Exact {
+            selector: "openrouter/anthropic/claude-sonnet-4".into()
+        }
+    );
+    for value in ["", "a b", "a/", "/b", "a/b\u{0007}", "a/b c"] {
         assert!(ModelRequest::parse(value).is_err(), "{value}");
     }
     for (key, value, valid) in [
         ("fast", "provider/custom", true),
         ("light", "anthropic/sonnet", true),
+        ("light", "openrouter/anthropic/claude-sonnet-4", true),
         ("top", "standard", false),
         ("fast", "inherit", false),
         ("other", "provider/custom", false),
@@ -234,7 +241,7 @@ fn newest_family_numeric_snapshot_and_suffix_rules() {
             Some(expected)
         );
     }
-    let context = context(
+    let opus_context = context(
         "anthropic",
         &[
             "claude-opus-5-5-20260101",
@@ -243,11 +250,57 @@ fn newest_family_numeric_snapshot_and_suffix_rules() {
         ],
     );
     assert_eq!(
-        selected(resolve("standard", &context))
+        selected(resolve("standard", &opus_context))
             .concrete_id
             .as_deref(),
         Some("claude-opus-5.6")
     );
+    for (ids, expected) in [
+        (
+            vec![
+                "claude-sonnet-5-9",
+                "claude-sonnet-5-10",
+                "claude-sonnet-99-preview",
+                "claude-opus-9",
+            ],
+            "claude-sonnet-5-10",
+        ),
+        (
+            vec![
+                "claude-sonnet-5-20260101",
+                "claude-sonnet-5",
+                "claude-sonnet-5-20260201",
+            ],
+            "claude-sonnet-5",
+        ),
+        (
+            vec![
+                "claude-sonnet-5-20260101",
+                "claude-sonnet-5-20260201",
+                "claude-sonnet-5-20260230",
+            ],
+            "claude-sonnet-5-20260201",
+        ),
+    ] {
+        let mut context = context("anthropic", &ids);
+        if let ModelListEvidence::Complete { models, .. } = &mut context.models {
+            for model in models {
+                model.native_selector = Some(format!("anthropic/{}", model.id));
+            }
+        }
+        assert_eq!(
+            selected(resolve("anthropic/sonnet", &context))
+                .concrete_id
+                .as_deref(),
+            Some(expected)
+        );
+        let policy = BTreeMap::from([("light".into(), "anthropic/sonnet".into())]);
+        let request = ModelRequest::parse("light").unwrap();
+        let result = resolve_model(&request, ResolutionContext::Runtime(&context), &policy);
+        let selection = selected(result);
+        assert_eq!(selection.concrete_id.as_deref(), Some(expected));
+        assert_eq!(selection.effective_class, Some(ModelClass::Light));
+    }
 }
 #[test]
 fn unknown_access_and_empty_inventory_keep_native_default_without_invention() {
@@ -401,16 +454,84 @@ fn exact_haiku_compatibility_substitution_stops_at_four_point_five() {
 
 #[test]
 fn overrides_replace_members_but_do_not_create_access() {
-    let context = context("custom", &["old", "new"]);
+    let custom_context = context("custom", &["old", "new"]);
     let personal = BTreeMap::from([("fast".into(), "custom/old".into())]);
     let project = BTreeMap::from([("fast".into(), "custom/new".into())]);
     let policy = effective_overrides(&personal, &project);
     let request = ModelRequest::parse("fast").unwrap();
-    let result = resolve_model(&request, ResolutionContext::Runtime(&context), &policy);
+    let result = resolve_model(
+        &request,
+        ResolutionContext::Runtime(&custom_context),
+        &policy,
+    );
     assert_eq!(selected(result).concrete_id.as_deref(), Some("new"));
     let missing = BTreeMap::from([("fast".into(), "custom/unavailable".into())]);
-    let result = resolve_model(&request, ResolutionContext::Runtime(&context), &missing);
+    let result = resolve_model(
+        &request,
+        ResolutionContext::Runtime(&custom_context),
+        &missing,
+    );
     assert_ne!(selected(result).concrete_id.as_deref(), Some("unavailable"));
+    let context = context("openai", &["gpt-6.1-luna"]);
+    let policy = BTreeMap::from([("standard".into(), "openai/gpt-6.1-sol".into())]);
+    let rendered = render_model(HarnessId::Pi, "standard", &policy);
+    let request = ModelRequest::parse(rendered.id.as_deref().unwrap()).unwrap();
+    assert_eq!(request.class(), Some(ModelClass::Standard));
+    let result = resolve_model(&request, ResolutionContext::Runtime(&context), &policy);
+    assert!(result.diagnostics().iter().any(|d| d.code == "fallback"));
+    let selection = selected(result);
+    assert_eq!(selection.effective_class, Some(ModelClass::Light));
+    assert_eq!(selection.native_selector, "openai/gpt-6.1-luna");
+}
+
+#[test]
+fn nested_provider_ids_validate_for_inventory_parent_and_exact_requests() {
+    let id = "anthropic/claude-sonnet-4";
+    let selector = format!("openrouter/{id}");
+    let mut context = context("openrouter", &[id]);
+    context.default = HarnessModelPath::ObservedSessionOrDefault {
+        selector: selector.clone(),
+        provider: Some("openrouter".into()),
+        id: Some(id.into()),
+        account: context.account.clone(),
+        host: context.host.clone(),
+        source: "fixture:parent".into(),
+    };
+    assert!(context.validate(HarnessId::Pi).is_ok());
+    assert_eq!(resolve("inherit", &context), ModelResolution::Inherit);
+    assert_eq!(
+        selected(resolve(&selector, &context)).native_selector,
+        selector
+    );
+}
+
+#[test]
+fn combined_warning_keeps_failed_source_cause_on_one_line() {
+    let mut context = context("openai", &[]);
+    context.models = ModelListEvidence::Failed {
+        source: "codex:model/list".into(),
+        cause: "app-server exited with code 7\nRPC failed".into(),
+    };
+    let request = ModelRequest::parse("standard").unwrap();
+    let result = resolve_model(
+        &request,
+        ResolutionContext::Runtime(&context),
+        &BTreeMap::new(),
+    );
+    let warning = result.warning(&request).unwrap();
+    assert_eq!(warning.lines().count(), 1);
+    assert!(warning.contains("codex:model/list"));
+    assert!(warning.contains("app-server exited with code 7 RPC failed"));
+    let refusal = ModelResolution::Refused {
+        code: "model-unavailable".into(),
+        diagnostics: result.diagnostics().to_vec(),
+    };
+    assert!(
+        refusal
+            .warning(&request)
+            .unwrap()
+            .contains("app-server exited with code 7 RPC failed")
+    );
 }
 #[test]
 fn evidence_binding_policy_and_rejected_candidates() {

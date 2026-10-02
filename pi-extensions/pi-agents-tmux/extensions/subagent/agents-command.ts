@@ -64,7 +64,7 @@ export function registerAgentsCommands(deps: AgentsCommandDeps): void {
 					removeDashboardAgent(agent.name);
 					await restoreArchivedPaneSession(runtimeRoot, agent.name, parts[2] ?? "latest");
 				}
-				const pane = await ensurePersistentPane(runtimeRoot, parentSessionId, ctx.cwd, agent, parentModel, parentThinkingLevel, pi.getActiveTools());
+				const pane = await ensurePersistentPane(runtimeRoot, parentSessionId, ctx.cwd, agent, parentModel, parentThinkingLevel, pi.getActiveTools(), ctx.modelRegistry);
 				if (!hadLivePane || command === "new") {
 					emitSubagentEvent(pi, "subagents:created", {
 						mode: "pane",
@@ -84,7 +84,7 @@ export function registerAgentsCommands(deps: AgentsCommandDeps): void {
 				if (!agent.pane) throw new Error(`Agent ${agent.name} is not configured for persistent panes. Add \`pane: true\` to its frontmatter to enable.`);
 				const task = parts.slice(2).join(" ").trim();
 				if (!task) throw new Error("Usage: /agents:send <name> <task>");
-				const queued = await queuePersistentPaneTask(runtimeRoot, parentSessionId, ctx.cwd, agent, task, undefined, parentModel, parentThinkingLevel, pi, pi.getActiveTools());
+				const queued = await queuePersistentPaneTask(runtimeRoot, parentSessionId, ctx.cwd, agent, task, undefined, parentModel, parentThinkingLevel, pi, pi.getActiveTools(), ctx.modelRegistry);
 				const sessionText = queued.sessionMode === "live" ? "reused live pane" : queued.sessionMode === "resumed" ? "resumed saved pane session" : "started new pane session";
 				content = `Queued task for ${agent.name} (${sessionText}).\nArtifacts: inbox=${compactPath(queued.taskFile)} completion=${compactPath(queued.outboxFile)} transcript=${compactPath(queued.pane.sessionFile)}`;
 				messageDetails = { action: "send", agent: agent.name, inboxFile: queued.taskFile, outboxFile: queued.outboxFile, taskId: queued.taskId, transcriptPath: queued.pane.sessionFile, status: sessionText };

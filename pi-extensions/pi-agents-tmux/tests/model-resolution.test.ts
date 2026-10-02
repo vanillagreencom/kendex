@@ -81,7 +81,7 @@ test("child model and effort use effective directory settings and preserve raw s
   const child = tempRuntime();
   writeSettings(root, { subagentModelSource: "frontmatter", subagentThinkingSource: "frontmatter" });
   writeSettings(child, { subagentModelSource: "parent", subagentThinkingSource: "parent" });
-  for (const [cwd, expected, effort] of [[root, "standard", "high"], [child, "custom/chat", "low"]]) {
+  for (const [cwd, expected, effort] of [[root, "standard", "high"], [child, "inherit", "low"]]) {
     const config = { ...agent, model: "standard:high", effort: "medium" };
     const raw = settings.selectedModelForAgent(config, "custom/chat", cwd);
     expect(settings.selectedEffortForAgent(config, raw, settings.selectedThinkingLevelForAgent("low", cwd))).toBe(effort);
@@ -94,6 +94,67 @@ test("child model and effort use effective directory settings and preserve raw s
   expect(settings.selectedEffortForAgent({ ...agent, effort: "medium" }, "standard:high", "low")).toBe("low");
   expect(settings.selectedEffortForAgent({ ...agent, effort: "medium" }, "standard:high", undefined)).toBe("high");
   expect(settings.selectedEffortForAgent({ ...agent, effort: "medium" }, "standard", undefined)).toBe("medium");
+});
+
+async function inheritContract(runtime: typeof settings): Promise<void> {
+  const warnings = spyOn(console, "warn").mockImplementation(() => undefined);
+  const openrouter = "openrouter/anthropic/claude-sonnet-4";
+  // Native Pi sessions can use models absent from the child registry.
+  const rows = [
+    { model: undefined, source: "frontmatter", parent: "custom/unlisted" },
+    { model: undefined, source: "frontmatter", parent: openrouter },
+    { model: "standard:high", source: "parent", parent: "custom/unlisted" },
+    { model: "standard:high", source: "parent", parent: openrouter },
+    { model: "standard:high", source: "parent", parent: undefined },
+  ];
+  try {
+    for (const row of rows) {
+      const cwd = tempRuntime();
+      writeSettings(cwd, { subagentModelSource: row.source });
+      const resolved = await runtime.resolveAgentModel({ ...agent, model: row.model }, row.parent, cwd, registry, async (_command, args) => {
+        try { expect(args[3]).toBe("inherit"); }
+        catch (cause) { throw new Error("Pi inherited request assertion failed", { cause }); }
+        const context = JSON.parse(args[5]);
+        expect(context.default).toEqual(row.parent === undefined ? { tag: "native-default" } : {
+          tag: "observed-session-or-default", selector: row.parent, provider: null,
+          id: null, account: "pi-session", host: "pi-process", source: "pi:parent-model",
+        });
+        return { code: 0, stdout: JSON.stringify({ ...selected, resolution: { tag: "inherit", diagnostics: [] } }), stderr: "" };
+      });
+      expect(runtime.modelWithoutEffortSuffix(resolved)).toBe(row.parent);
+    }
+    expect(warnings.mock.calls).toHaveLength(0);
+  } finally { warnings.mockRestore(); }
+}
+
+test("absent child models and parent settings preserve inheritance without a pin warning", async () => inheritContract(settings));
+
+for (const control of [
+  { name: "absent agent model", after: 'false || subagentModelSource(cwd) === "parent"' },
+  { name: "parent model source", after: 'agent.model === undefined || false' },
+]) {
+  test(`${control.name} pin control fails the inherited request fixture`, async () => {
+    const before = 'agent.model === undefined || subagentModelSource(cwd) === "parent"';
+    const mutant = await importRuntimeCopy("settings.ts", before, control.after) as typeof settings;
+    await expect(inheritContract(mutant)).rejects.toThrow("Pi inherited request assertion failed");
+  });
+}
+
+test("OpenRouter registry, parent and exact pin retain the full provider model selector", async () => {
+  const model = { provider: "openrouter", id: "anthropic/claude-sonnet-4", contextWindow: 123456 } as Model<Api>;
+  const selector = `${model.provider}/${model.id}`;
+  const live = modelRegistryFixture(() => [model]);
+  for (const request of ["standard", "inherit", selector]) {
+    const resolved = await resolveAgentModel({ ...agent, model: request }, selector, process.cwd(), live, async (_command, args) => {
+      expect(args[3]).toBe(request);
+      const context = JSON.parse(args[5]);
+      expect(context.models.models).toEqual([{ provider: "openrouter", id: "anthropic/claude-sonnet-4", nativeSelector: selector, allowed: true, chat: true, isDefault: false }]);
+      expect(context.default).toEqual({ tag: "observed-session-or-default", selector, provider: "openrouter", id: model.id, account: "pi-session", host: "pi-process", source: "pi:parent-model" });
+      expect(context.capacity[0].selector).toBe(selector);
+      return { code: 0, stdout: JSON.stringify({ ...selected, resolution: { tag: "selected", selection: { nativeSelector: selector }, diagnostics: [] } }), stderr: "" };
+    });
+    expect(resolved).toBe(selector);
+  }
 });
 
 async function warningLifetime(runtime: typeof settings): Promise<void> {

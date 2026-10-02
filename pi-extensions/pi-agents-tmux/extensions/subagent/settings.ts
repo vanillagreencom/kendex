@@ -111,7 +111,8 @@ export async function resolveAgentModel(
 	registry: AgentModelRegistry | undefined, capture: ModelCapture,
 ): Promise<string | undefined> {
 	const raw = selectedModelForAgent(agent, parentModel, cwd);
-	const request = raw === undefined ? "inherit" : modelWithoutEffortSuffix(raw) ?? raw;
+	const request = agent.model === undefined || subagentModelSource(cwd) === "parent"
+		? "inherit" : modelWithoutEffortSuffix(raw) ?? raw ?? "inherit";
 	const account = "pi-session";
 	const host = "pi-process";
 	let available: ReturnType<AgentModelRegistry["getAvailable"]> = [];

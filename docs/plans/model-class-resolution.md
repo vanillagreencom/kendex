@@ -296,7 +296,7 @@ Run future checks only through `dev-validate-run` or the orch job runner. Unset 
 - `skills/orch/scripts/claude-model-classes/tests/agent-spawn.test.ts` and `turn-step.test.ts`, run by the native mod test kit. Tests under a skill's `scripts/` tree render with it, so their matching tracked copies ship too. Add the native-kit suite to the existing authorized test entry point, not a second runner.
 - `skills/orch/tests/claude-model-classes.sh` for managed launch loading and protocol transport, using the existing shell assertion library.
 - Pi class-resolution tests under `pi-extensions/pi-agents-tmux/tests/`.
-- `changelog.d/added/model-classes.md` and `changelog.d/fixed/skill-plans-model-policy.md`.
+- `changelog.d/added/model-classes.md`.
 
 Execution depends on `models.rs`, `commands/tier_model.rs`, `scripts/lanes`, `lib/overseer-launch.sh` and `scripts/open-terminal`. Add no Pi package, provider client, daemon, model cache, account probe or `.kendex-lock.json`.
 

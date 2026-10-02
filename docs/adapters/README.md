@@ -26,22 +26,22 @@ What kendex may do on a harness is one table, `crates/core/src/harness/caps.rs`,
 
 ## Model and effort
 
-An agent's `model` and `effort` reach each harness under that harness's own key and vocabulary. The alias table and the two shape tables are `crates/core/src/harness/models.rs`; render validation (`crates/core/src/render/validate/agent.rs`) refuses a value the loader cannot use, and manifest validation (`crates/core/src/manifest/validate.rs`) refuses an `[agent-frontmatter.<harness>.<agent>]` key the harness never renders.
+An agent's `model` and `effort` reach each harness under that harness's own key and vocabulary. `crates/core/src/harness/models.rs` owns classes, aliases and native shapes under [D019](../decisions/D019-runtime-model-classes.md). Render validation (`crates/core/src/render/validate/agent.rs`) refuses a value the loader cannot use. Manifest validation (`crates/core/src/manifest/validate.rs`) refuses an `[agent-frontmatter.<harness>.<agent>]` key the harness never renders.
 
 | Harness | Model shape | Effort key | Effort levels | Absent effort |
 |---|---|---|---|---|
-| Claude Code | bare: a tier alias as written, a `claude-*` id, or `inherit` | `effort` | `low`, `medium`, `high`, `xhigh`, `max` | the session's level |
-| Codex | bare id; an omitted key inherits | `model_reasoning_effort` | `minimal`, `low`, `medium`, `high`, `xhigh` | the model's default |
-| OpenCode | `provider/model`; an omitted key inherits | `options.reasoningEffort` | `minimal`, `low`, `medium`, `high`, `xhigh` | the provider's default |
-| Pi | `provider/model`, optionally `:level`; an omitted key inherits | `effort` | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | Pi's `defaultThinkingLevel` |
-| Gemini CLI | bare `gemini-*` id or `inherit`; tiers map to the 3.x previews | none | — | — |
-| GitHub Copilot | bare id from Copilot's own list; every tier and `inherit` omit the key, which the agent file's model would otherwise outrank the launch's with ([D008](../decisions/D008-copilot-agent-model.md)) | `reasoningEffort`, never written | — | not yet measured |
-| Cursor | none | none | — | — |
-| Antigravity | its own tiers: `inherit`, `flash`, `pro`; opus and fable are `pro`, sonnet and haiku `flash` | none | — | — |
+| Claude Code | classes project to native family aliases; bare `claude-*` id or literal `inherit` | `effort` | `low`, `medium`, `high`, `xhigh`, `max` | the session's level |
+| Codex | bare id; classes and `inherit` omit the key for managed-session inheritance | `model_reasoning_effort` | `minimal`, `low`, `medium`, `high`, `xhigh` | the model's default |
+| OpenCode | `provider/model`; classes and `inherit` omit the key | `options.reasoningEffort` | `minimal`, `low`, `medium`, `high`, `xhigh` | the provider's default |
+| Pi | canonical class, `provider/model` or `provider/family`, optionally `:level`; `inherit` omits the key | `effort` | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | Pi's `defaultThinkingLevel` |
+| Gemini CLI | bare `gemini-*` id; classes and `inherit` omit the key | none | none | none |
+| GitHub Copilot | bare id from Copilot's own list; classes and `inherit` omit the key under [D008](../decisions/D008-copilot-agent-model.md) | `reasoningEffort`, never written | none | not yet measured |
+| Cursor | none | none | none | none |
+| Antigravity | native `flash` or `pro`; classes and `inherit` omit the key | none | none | none |
 
-Until KEN-2466 lands, Claude Code agents render the `haiku` tier as `sonnet`.
+Class overrides do not turn a class render into an exact pin. Static native files do not resolve account availability. Pi retains the class for its child dispatcher. Codex and Copilot class files inherit the managed session. The other class field omissions and unsupported runtime paths follow [D019 § Runtime boundary](../decisions/D019-runtime-model-classes.md#runtime-boundary). Claude callbacks and lane/launcher integration remain pending there.
 
-A tier alias is a pin, never a synonym for `inherit`; `inherit` is the default that follows the session on every harness. A `provider/model` id is refused on a harness bound to one vendor, and a bare id is refused where the loader needs the provider named (both halves non-empty, and on Pi an optional `:level` from Pi's own set); kendex names no fallback provider because a subagent cannot run on a provider the session is not signed in to.
+An input class alias requests a class, not an exact pin. `inherit` follows the session. Readback refuses a provider-qualified native field where the loader needs a bare selector. Pi and OpenCode require a provider on native model selectors. Both provider and model must be nonempty. The model part can contain `/`, as in `openrouter/anthropic/claude-sonnet-4`. Pi also accepts a `:level` from its effort vocabulary.
 
 ## Surface shapes
 

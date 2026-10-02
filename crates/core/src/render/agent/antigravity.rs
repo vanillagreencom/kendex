@@ -6,9 +6,9 @@ use crate::render::vocab::{antigravity_tool_name, rewrite_prose};
 use crate::render::{RenderWarning, yaml_quoted, yaml_scalar};
 
 /// Antigravity custom agent: YAML frontmatter + markdown body, saved as
-/// `<name>.md`. `name` and `description` are required; `model` is a tier
-/// of the loader's own (`inherit`, `flash`, `pro`) and is written only
-/// when a tier was asked for; `subagent: true` lets the primary agent
+/// `<name>.md`. `name` and `description` are required; explicit native
+/// `flash` and `pro` selectors write `model`, while classes and inherit
+/// omit it; `subagent: true` lets the primary agent
 /// delegate to it; `tools` is an allowlist of Antigravity's own tool names,
 /// and a name it has no word for is left out rather than written, since
 /// the loader documents that an unknown name there can hang the subagent

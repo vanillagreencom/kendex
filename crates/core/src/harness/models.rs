@@ -142,7 +142,7 @@ impl ModelRequest {
             return Ok(Self::Class { class });
         }
         if let Some((provider, id)) = value.split_once('/') {
-            if provider.is_empty() || id.is_empty() || id.contains('/') {
+            if provider.is_empty() || id.is_empty() {
                 return Err(format!("invalid provider/model selector '{value}'"));
             }
             if provider == "anthropic" && TIERS.iter().any(|row| row.claude == Some(id)) {
@@ -327,8 +327,15 @@ impl ModelResolution {
             .filter_map(|d| d.source.as_deref())
             .collect::<Vec<_>>()
             .join(",");
+        let failures = self
+            .diagnostics()
+            .iter()
+            .filter_map(|d| d.cause.as_deref())
+            .map(|cause| cause.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect::<Vec<_>>()
+            .join(",");
         Some(format!(
-            "{MODEL_WARNING_PREFIX} requested={} selected={selected} causes={causes} source={sources}",
+            "{MODEL_WARNING_PREFIX} requested={} selected={selected} causes={causes} source={sources} detail={failures}",
             request.selector()
         ))
     }
@@ -412,7 +419,7 @@ pub fn resolve_model(
         }
     };
     match context {
-        ResolutionContext::Render(harness) => render(&request, harness, overrides, diagnostics),
+        ResolutionContext::Render(harness) => render(&request, harness, diagnostics),
         ResolutionContext::SelectorHint(harness) => {
             diagnostics.push(diagnostic("render-only"));
             if let ModelRequest::Class { class } = &request
@@ -434,7 +441,7 @@ pub fn resolve_model(
                     diagnostics,
                 }
             } else {
-                render(&request, harness, overrides, diagnostics)
+                render(&request, harness, diagnostics)
             }
         }
         ResolutionContext::Runtime(context) => {
@@ -445,28 +452,11 @@ pub fn resolve_model(
 fn render(
     request: &ModelRequest,
     harness: HarnessId,
-    overrides: &BTreeMap<String, String>,
     mut diagnostics: Vec<Diagnostic>,
 ) -> ModelResolution {
     match request {
         ModelRequest::Inherit => ModelResolution::Inherit,
         ModelRequest::Class { class } => {
-            if let Some(selector) = overrides.get(class.row().name) {
-                let request = match ModelRequest::parse(selector) {
-                    Ok(request) => request,
-                    Err(cause) => {
-                        return ModelResolution::Refused {
-                            code: "invalid-override".into(),
-                            diagnostics: vec![Diagnostic {
-                                code: "invalid-override".into(),
-                                source: Some(selector.clone()),
-                                cause: Some(cause),
-                            }],
-                        };
-                    }
-                };
-                return render(&request, harness, &BTreeMap::new(), diagnostics);
-            }
             // REVISIT(D019): static Codex/Copilot files inherit the managed root; Pi dispatch retains intent.
             let selector = match harness {
                 HarnessId::Claude => {

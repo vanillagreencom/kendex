@@ -5,6 +5,7 @@
 ### 3.4.0
 
 - Both child launch forms resolve model classes through kendex with the active Pi model registry. Unknown model facts preserve the native parent or default model.
+- Agents with no model and parent-model settings retain inheritance. The start and send commands use the active registry. OpenRouter model IDs retain their vendor path.
 
 ### 3.3.3
 

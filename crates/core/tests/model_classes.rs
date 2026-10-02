@@ -82,7 +82,16 @@ fn every_native_renderer_keeps_valid_class_representation() {
     use kendex_core::render::agent::{EffectiveAgent, generate, parse_source_agent};
     let scope = Scope::Global;
     for harness in HarnessId::ALL {
-        for class in ["top", "standard", "light", "fast"] {
+        for (class, policy) in ["top", "standard", "light", "fast"]
+            .into_iter()
+            .flat_map(|class| {
+                [
+                    BTreeMap::new(),
+                    BTreeMap::from([(class.into(), "openai/gpt-6.1-sol".into())]),
+                ]
+                .map(|policy| (class, policy))
+            })
+        {
             let source = parse_source_agent(&format!(
                 "---\nname: worker\ndescription: Work\nmodel: {class}\n---\nBody.\n"
             ))
@@ -93,7 +102,7 @@ fn every_native_renderer_keeps_valid_class_representation() {
                 scope: &scope,
                 skills: vec![],
                 overrides: Default::default(),
-                model_classes: Default::default(),
+                model_classes: policy,
                 permissions: EffectiveAgent::intent(&source, &Default::default()),
                 launch_instructions: None,
                 additional_instructions: None,
@@ -160,7 +169,7 @@ fn native_model_readback_rejects_malformed_selectors_after_shape_checks() {
     for (harness, model) in [
         (HarnessId::Claude, "bad value"),
         (HarnessId::Codex, "bad value"),
-        (HarnessId::Pi, "provider/bad/id"),
+        (HarnessId::Pi, "provider/bad value"),
         (HarnessId::Opencode, "provider/bad value"),
     ] {
         let text = match harness {
@@ -176,6 +185,14 @@ fn native_model_readback_rejects_malformed_selectors_after_shape_checks() {
                     .message
                     .starts_with("kendex-model-selector-invalid:")),
             "{harness:?}/{model}"
+        );
+    }
+    for harness in [HarnessId::Pi, HarnessId::Opencode] {
+        let text = "---\nname: worker\ndescription: Work\nmodel: openrouter/anthropic/claude-sonnet-4\n---\nBody.\n";
+        let findings = kendex_core::render::validate::validate_agent(harness, "worker", text);
+        assert!(
+            findings.iter().all(|finding| !finding.is_breakage()),
+            "{harness:?}: {findings:?}"
         );
     }
 }
@@ -245,6 +262,108 @@ fn declared_intent_uses_source_and_overrides_not_projected_alias() {
     );
     fs::write(project.join("kendex.toml"), "unreadable").unwrap();
     assert!(agent_model_request(&env, &project, HarnessId::Claude, "other").is_err());
+}
+
+#[test]
+fn declared_intent_keeps_installed_git_source_and_bundle_revision() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let key = kendex_core::lock::entry_key(ItemKind::Agent, "worker", HarnessId::Claude);
+    // A refreshed Git catalog can coexist with agents installed from an earlier revision.
+    let upstream = home.join("git/owner/catalog");
+    let git_project = home.join("git-project");
+    fs::create_dir_all(upstream.join("agents")).unwrap();
+    fs::create_dir_all(git_project.join(".claude")).unwrap();
+    crate::test_util::git(&upstream, &["init", "--quiet", "-b", "main"]);
+    for name in ["worker", "bundled", "updated"] {
+        fs::write(
+            upstream.join(format!("agents/{name}.md")),
+            format!("---\nname: {name}\ndescription: Work\nmodel: light\n---\nInstalled body.\n"),
+        )
+        .unwrap();
+    }
+    fs::write(upstream.join("kendex.toml"), "is_source_catalog = true\n[agent-frontmatter.claude.worker]\nmodel = \"fast\"\n[bundles.kit]\ndescription = \"Workers\"\nagents = [\"bundled\"]\n").unwrap();
+    crate::test_util::git(&upstream, &["add", "-A"]);
+    crate::test_util::git(&upstream, &["commit", "--quiet", "-m", "installed"]);
+    let first = crate::test_util::git(&upstream, &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
+    let git_env = Env::fake(&home, FakeOs::Linux).with_var(
+        "KENDEX_GIT_BASE",
+        &format!("file://{}", home.join("git").display()),
+    );
+    let git_scope = Scope::Project {
+        root: git_project.clone(),
+    };
+    let manifest_path = git_project.join("kendex.toml");
+    fs::write(&manifest_path, "schema = 6\n[sources.cat]\nrepo = \"owner/catalog\"\n[install]\nharnesses = [\"claude\"]\n[agents.worker]\nsource = \"cat\"\n[agents.updated]\nsource = \"cat\"\n[bundles.kit]\nsource = \"cat\"\n").unwrap();
+    let declared = manifest::load_current(&manifest_path).unwrap().unwrap();
+    kendex_core::remote::sync_sources(&git_env, &declared).unwrap();
+    let report = kendex_core::engine::audit(&git_env, &git_scope).unwrap();
+    kendex_core::apply::execute(&git_env, &report.plan).unwrap();
+    for name in ["worker", "bundled", "updated"] {
+        fs::write(
+            upstream.join(format!("agents/{name}.md")),
+            format!(
+                "---\nname: {name}\ndescription: Work\nmodel: standard\n---\nRefreshed body.\n"
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(upstream.join("kendex.toml"), "is_source_catalog = true\n[agent-frontmatter.claude.worker]\nmodel = \"top\"\n[bundles.kit]\ndescription = \"Workers\"\nagents = [\"updated\"]\n").unwrap();
+    crate::test_util::git(&upstream, &["add", "-A"]);
+    crate::test_util::git(&upstream, &["commit", "--quiet", "-m", "refreshed"]);
+    let second = crate::test_util::git(&upstream, &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
+    assert_ne!(first, second);
+    kendex_core::remote::sync_sources(&git_env, &declared).unwrap();
+    let report =
+        kendex_core::package::update_one(&git_env, &git_scope, ItemKind::Agent, "updated").unwrap();
+    kendex_core::apply::execute(&git_env, &report.plan).unwrap();
+    let lock_path = kendex_core::lock::lock_path(&git_env, &git_scope);
+    let lock = kendex_core::lock::load(&lock_path).unwrap();
+    assert_eq!(
+        lock.entries[&key].source_commit.as_deref(),
+        Some(first.as_str())
+    );
+    assert_eq!(lock.sources["cat"].commit, second);
+    assert_eq!(lock.bundles["kit"].commit, first);
+    let cache_key = kendex_core::remote::cache_key(&git_env, "owner/catalog");
+    let installed = kendex_core::remote::store::published(&git_env, &cache_key, &first).unwrap();
+    let refreshed = kendex_core::remote::store::published(&git_env, &cache_key, &second).unwrap();
+    let paths: Vec<_> = [upstream, installed, refreshed]
+        .into_iter()
+        .flat_map(|root| {
+            [
+                root.join("kendex.toml"),
+                root.join("agents/worker.md"),
+                root.join("agents/bundled.md"),
+            ]
+        })
+        .chain([
+            manifest_path,
+            lock_path,
+            git_project.join(".claude/agents/worker.md"),
+            git_project.join(".claude/agents/bundled.md"),
+        ])
+        .collect();
+    let before: Vec<_> = paths.iter().map(|path| fs::read(path).unwrap()).collect();
+    for (name, expected) in [("worker", ModelClass::Fast), ("bundled", ModelClass::Light)] {
+        match agent_model_request(&git_env, &git_project, HarnessId::Claude, name).unwrap() {
+            AgentModelRequest::Managed { request, .. } => assert_eq!(
+                request,
+                ModelRequest::Class { class: expected },
+                "{name}: installed revision intent"
+            ),
+            AgentModelRequest::Unmanaged => panic!("installed Git agent became unmanaged"),
+        }
+    }
+    let after: Vec<_> = paths.iter().map(|path| fs::read(path).unwrap()).collect();
+    assert_eq!(
+        before, after,
+        "lookup preserves sources, manifests, lock and native bytes"
+    );
 }
 
 #[test]

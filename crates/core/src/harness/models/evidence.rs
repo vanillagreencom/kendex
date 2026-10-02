@@ -361,18 +361,25 @@ fn usable(context: &RuntimeContext, model: &AvailableModel) -> bool {
             .rejected
             .contains(&format!("{}/{}", model.provider, model.id))
 }
-fn pin_matches(request: &ModelRequest, model: &AvailableModel) -> bool {
+fn requested_member(
+    request: &ModelRequest,
+    model: &AvailableModel,
+) -> Option<Option<family::Release>> {
     match request {
-        ModelRequest::Exact { selector } => {
-            selector == &model.id
-                || selector == &format!("{}/{}", model.provider, model.id)
-                || model.native_selector.as_ref() == Some(selector)
-        }
+        ModelRequest::Exact { selector } => (selector == &model.id
+            || selector == &format!("{}/{}", model.provider, model.id)
+            || model.native_selector.as_ref() == Some(selector))
+        .then_some(None),
         ModelRequest::NativeFamily { provider, family } => {
-            &model.provider == provider
-                && (model.id == *family || model.native_selector.as_ref() == Some(family))
+            if &model.provider != provider {
+                return None;
+            }
+            let row = super::TIERS
+                .iter()
+                .find(|row| row.claude == Some(family.as_str()))?;
+            family::matches(provider, &model.id, row).map(Some)
         }
-        ModelRequest::Class { .. } | ModelRequest::Inherit => false,
+        ModelRequest::Class { .. } | ModelRequest::Inherit => None,
     }
 }
 fn select(
@@ -405,6 +412,30 @@ fn select(
             },
             diagnostics,
         },
+    }
+}
+fn resolve_explicit(
+    request: &ModelRequest,
+    context: &RuntimeContext,
+    source: &str,
+    candidates: &[&AvailableModel],
+    diagnostics: Vec<Diagnostic>,
+) -> ModelResolution {
+    let mut members: Vec<_> = candidates
+        .iter()
+        .filter_map(|model| requested_member(request, model).map(|release| (*model, release)))
+        .collect();
+    members.sort_by(|(a, ar), (b, br)| {
+        br.cmp(ar)
+            .then_with(|| a.provider.cmp(&b.provider))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    if let Some((model, _)) = members.first() {
+        return select(request, context, model, None, source, diagnostics);
+    }
+    ModelResolution::Refused {
+        code: "model-unavailable".into(),
+        diagnostics,
     }
 }
 pub(super) fn resolve(
@@ -462,13 +493,7 @@ pub(super) fn resolve(
         .collect();
     match request {
         ModelRequest::Exact { .. } | ModelRequest::NativeFamily { .. } => {
-            if let Some(model) = candidates.iter().find(|model| pin_matches(request, model)) {
-                return select(request, context, model, None, source, diagnostics);
-            }
-            return ModelResolution::Refused {
-                code: "model-unavailable".into(),
-                diagnostics,
-            };
+            return resolve_explicit(request, context, source, &candidates, diagnostics);
         }
         ModelRequest::Inherit => unreachable!("inherit already returned"),
         ModelRequest::Class { .. } => {
@@ -542,7 +567,7 @@ fn resolve_class(
         let mut members: Vec<_> = candidates
             .iter()
             .filter_map(|model| match &override_request {
-                Some(request) => pin_matches(request, model).then_some((*model, None)),
+                Some(request) => requested_member(request, model).map(|release| (*model, release)),
                 None => family::matches(&model.provider, &model.id, row)
                     .map(|release| (*model, Some(release))),
             })

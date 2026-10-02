@@ -337,6 +337,7 @@ fn unknown_pin_warns_once_with_original_request_and_failed_source() {
         "model-availability-unknown",
         "model-list-failed",
         "source=fixture:reader",
+        "detail=read failed",
     ] {
         assert!(warning.contains(key), "{warning}");
     }

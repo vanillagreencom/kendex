@@ -1,1 +1,0 @@
-- Project skill removal and verification work when an unrelated personal model-policy manifest is malformed.
