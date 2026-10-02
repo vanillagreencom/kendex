@@ -407,9 +407,13 @@ echo "=== an account on its Codex credits is not marked for handoff ==="
 # reading, and the original is fetched back after.
 CODEX_PLAN="$(cat "$FIXTURE_DIR/.codex.json")"
 jq -n '{rate_limit: {primary_window: {used_percent: 100, reset_at: 1785000000, limit_window_seconds: 604800}, secondary_window: null},
-  credits: {has_credits: true, unlimited: false, overage_limit_reached: false, balance: "62300"}}' > "$FIXTURE_DIR/.codex.json"
+  credits: {has_credits: true, unlimited: false, overage_limit_reached: false, balance: "62300"},
+  spend_control: {reached: false, individual_limit: null}}' > "$FIXTURE_DIR/.codex.json"
 lanes_table "$(ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
   "a lane on a spent account with credits above the floor names the credits bucket and is not marked|ken-102|headroom_pct=0 binding_bucket=credits handoff_required=false"
+CREDIT_ROW="$(ORCH_LANES_USAGE_TTL=0 run_ctx | awk '$1 == "ken-102"')"
+assert_eq "$(grep -oE '[0-9.]+k cr +- ' <<<"$CREDIT_ROW" | tr -s ' ')" "62.3k cr - " \
+  "the table shows the credits row's balance as its HEADROOM and leaves it unmarked"
 CREDIT_CTRL="$(mutant_scripts mutant-context-credits lanes)" || exit 1
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
 mutate_file "$CREDIT_CTRL/lanes" 'map(with_lane_verdict(.wall; $max; $credit_floor))) as $u' 'map(with_lane_verdict(.wall; $max; 1e18))) as $u'

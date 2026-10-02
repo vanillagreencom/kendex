@@ -110,7 +110,8 @@
 #         projected room. A Codex account at or above --max-pct is `room` on
 #         its credits (`list` too: binding_bucket `credits`, HEADROOM its
 #         balance) while `credits.balance` exceeds the credit floor below,
-#         `has_credits` is true and `overage_limit_reached` false. It ranks
+#         `has_credits` is true, and `overage_limit_reached` and
+#         `spend_control_reached` are false. It ranks
 #         after every account with plan room, since credits do not reset;
 #         the larger balance first. A lane is
 #         judged on its PROJECTED wall: the reading plus, for each live claim
@@ -136,8 +137,9 @@
 #         or a Pi launch on the Copilot pool the monthly pool (see --harness). Exit 3 when no lane
 #         qualifies, so a caller can fail closed rather than launch into a
 #         wall; its keyed line on stderr says how many candidates were WALLED
-#         at or above --max-pct and how many measured nothing for the launch,
-#         and `no-candidate-unmeasured` is every candidate unmeasured, which is
+#         at or above --max-pct with no credit room and how many measured
+#         nothing for the launch, and `no-candidate-unmeasured` is every
+#         candidate unmeasured, which is
 #         a read to fix rather than an allowance to wait out. The table under
 #         that line is `list`'s, DETAIL included, so each candidate's refusal
 #         (a 429, a 403, an expired login) reads there. Two more causes
@@ -201,7 +203,7 @@
 #         lane a person names is refused on the rule the chooser drops it on.
 #         It omits no overseer seat for any harness: the account named is judged.
 #         Exit 0 has room and prints the env prefix, or the lane's record under
-#         --json; 3 is a wall at or above --max-pct; 5 is a lane nothing
+#         --json; 3 is a wall at or above --max-pct no credit room lifts; 5 is a lane nothing
 #         measured for this launch, whether no window names --model or the
 #         account's usage could not be read at all, and under --json its record
 #         is printed too, whose `status` says which, or a Pi model whose
@@ -245,11 +247,12 @@
 #         a claimed window no running lane record places, is `unreadable`. HANDOFF is
 #         `required` when lib/lane-context.sh's shared context rule requires
 #         handoff, the judge the hook uses, or at a HEADROOM at or
-#         below ORCH_HANDOFF_HEADROOM_PCT (default 3).
-#         --json carries `binding_resets_at` beside it, the time the account's
-#         binding bucket frees up, as whole-second UTC with a Z for either
-#         harness, so a caller refusing on headroom can say when the account
-#         comes back. It also carries `server`, the tmux server the row's
+#         below ORCH_HANDOFF_HEADROOM_PCT (default 3), never on an account
+#         room on its credits (see pick), whose HEADROOM is its balance.
+#         --json carries `binding_bucket`, `credits` and `binding_resets_at`,
+#         the time the account's binding bucket frees up, as whole-second
+#         UTC with a Z for either harness, so a caller refusing on headroom
+#         can say when the account comes back. It also carries `server`, the tmux server the row's
 #         `pane` belongs to, since pane ids restart at %0 on every server.
 #         The caller's OWN pane is reported too, claim or no claim, so an
 #         overseer started by hand sees its own figure rather than an empty
@@ -326,14 +329,16 @@
 #                    `pick-provider-unmeasured` in both forms, before any lane
 #                    is read: nothing measures what it spends.
 #   --max-pct N      pick: refuse a lane whose binding bucket is at or above N
-#                    percent used (default: 95, or $ORCH_LANE_MAX_PCT). The
+#                    percent used, Codex credit room excepted (see pick)
+#                    (default: 95, or $ORCH_LANE_MAX_PCT). The
 #                    setting is read through the kendex settings ladder below,
 #                    so the launch gate and a pick typed by hand hold one
 #                    threshold; the flag still overrides it.
 #   --min-headroom-pct N  pick: the same bound in the record's own unit, the
 #                    `headroom_pct` every row carries: keep only a lane with
 #                    MORE than N percent headroom, so one sitting exactly at N
-#                    is refused. It is converted to --max-pct once, so both
+#                    is refused, credit room excepted as for --max-pct. It
+#                    is converted to --max-pct once, so both
 #                    spellings reach the one comparison and the last one passed
 #                    wins.
 #   --lane DIR       pick: judge that one config dir instead of choosing among
@@ -518,7 +523,8 @@
 # still read every run: an expired token is renewed or reports its refusal,
 # whatever the cache holds. A fresh write keeps the displaced figure as
 # `prior`; lane records expose the binding bucket's rate and projected wall
-# after samples at least a minute apart.
+# after samples at least a minute apart, and none on credits
+# (usage_rate_state `credits`).
 #
 # The refresh itself is HOST-WIDE SERIALIZED: a lane its record cannot answer
 # takes one lock, `.usage-refresh.lock` in that same directory, over its
@@ -2150,7 +2156,8 @@ refresh_codex_token() { # DIR AUTH_JSON
 # wall lasts longest.
 #
 # A Copilot record also carries `credits` and `unlimited`, information beside
-# its `monthly` bucket (schemas/copilot-credits.md).
+# its `monthly` bucket (schemas/copilot-credits.md); a Codex record carries
+# the `credits` lib/lane-usage.sh parse_codex_usage reads.
 emit_lane() {
 	# refreshable is true only for a lane this run found expired and made live,
 	# by its own renewal or by taking one a peer wrote under the lock: a lane
@@ -2696,17 +2703,14 @@ state_rows_read() { # WINDOW
 }
 
 render_table() {
-	jq -r '
+	jq -r "$LANE_HEADROOM_CELL_JQ"'
 		def col($s; $n): ($s | tostring) as $t
 		  | if ($t | length) >= $n then $t else $t + (" " * ($n - ($t | length))) end;
 		def num($v): if $v == null then "-" else ($v | tostring) + "%" end;
 		(["LANE","HARNESS","THROUGH","STATUS","PLAN","5H","WEEK","MODEL","MONTH","HEADROOM","CLAIMS","AGE","DETAIL"] | @tsv),
 		(.[] | [ .alias, .harness, (.measured_through // "local"), .status, (.plan // "-"),
 		         num(.session_5h_pct), num(.weekly_pct), num(.model_pct), num(.monthly_pct),
-		         (if .binding_bucket == "credits"
-		          then (.credits.balance | if . >= 1000 then (((. / 100) | floor) / 10 | tostring) + "k cr"
-		                                   else (floor | tostring) + " cr" end)
-		          elif .headroom_pct == null then "-" else (.headroom_pct | tostring) + "%" end),
+		         headroom_cell,
 		         (if .claims == null then "?" else .claims end),
 		         (if .usage_age_s == null then "-" else (.usage_age_s | tostring) + "s" end),
 		         (.detail // "-")
@@ -3607,7 +3611,7 @@ case "$SUB" in
 		done
 		# The handoff mark is the verdict a lane's own hook asks `pick --lane` for.
 		out="$(jq -nc --argjson c "$out" --argjson u "$usage" --argjson max "$((100 - 10#$HANDOFF_HEADROOM_PCT))" \
-			--argjson credit_floor "$CREDIT_FLOOR" "$LANE_MODEL_JQ"'($u|map(with_lane_verdict(.wall; $max; $credit_floor))) as $u|$c|map(. as $x|((($u|map(select(.config_dir==$x.config_dir))|first)//{}) as $l|.+{headroom_pct:($l.headroom_pct//null),binding_bucket:($l.binding_bucket//null),binding_resets_at:($l.binding_resets_at//null),handoff_required:($l.verdict=="walled" or $x.context_handoff_due==true)}))')"
+			--argjson credit_floor "$CREDIT_FLOOR" "$LANE_MODEL_JQ"'($u|map(with_lane_verdict(.wall; $max; $credit_floor))) as $u|$c|map(. as $x|((($u|map(select(.config_dir==$x.config_dir))|first)//{}) as $l|.+{headroom_pct:($l.headroom_pct//null),binding_bucket:($l.binding_bucket//null),binding_resets_at:($l.binding_resets_at//null),credits:($l.credits//null),handoff_required:($l.verdict=="walled" or $x.context_handoff_due==true)}))')"
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else lane_context_render <<<"$out"; fi
 		;;
 	*) die unknown-subcommand "$@" ;;

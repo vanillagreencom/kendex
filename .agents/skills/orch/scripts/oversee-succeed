@@ -74,7 +74,8 @@
 #     2. Judge the context mark and the account triggers. Any one fires the succession.
 #        The ACCOUNT mark is this overseer's own account, judged by `lanes
 #        pick --lane` at ORCH_OVERSEER_HEADROOM_PCT, which is also the floor
-#        the successor's own account must clear. One number for both jobs buys
+#        the successor's own account must clear; a Codex account room on its
+#        credits clears it, by the rule `lanes --help` states under pick. One number for both jobs buys
 #        a wider successor pool at the price of the warning this mark gives: at
 #        the default it fires close to the wall, and the rate trigger beside it
 #        restores the warning. The account is the one
@@ -97,7 +98,7 @@
 #        The QUALIFYING mark (ORCH_OVERSEER_SUCCESSOR_ACCOUNTS, 0 turns it
 #        off) counts the accounts of this overseer's harness above
 #        ORCH_OVERSEER_HEADROOM_PCT, by the `lanes pick` judgement a successor
-#        pick takes, this overseer's own among them where its headroom was
+#        pick takes, credit room included, this overseer's own among them where its headroom was
 #        measured above that trigger. Counted whole, the figure reads the same
 #        from every account it covers; a count without this account would read
 #        one from either of two accounts, and the overseer would move back and

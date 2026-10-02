@@ -196,7 +196,8 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 
 # The usage share at which a lane stops being offered for new work. It is
 # read against the account's own allowance, or against the chosen model's
-# window where one is named.
+# window where one is named. A Codex account past it stays offered on its
+# credits, as ORCH_LANE_CODEX_CREDIT_FLOOR below says.
 # ORCH_LANE_MAX_PCT = "95"
 
 # How much of an account's 5-hour allowance one running lane is expected to
@@ -218,7 +219,7 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 
 # The allowance left on an account at which a running lane is marked for
 # handover. The overseer asks a marked lane to hand over at its next safe
-# point.
+# point. A Codex account running on its credits is never marked.
 # ORCH_HANDOFF_HEADROOM_PCT = "3"
 
 # Earlier context handoff percentage. Shared rule and boundary behavior:
@@ -302,7 +303,8 @@ ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 # ORCH_OVERSEER_DEAD_PASSES = "2"
 
 # The allowance left on an account at which the overseer hands over. No
-# replacement is started on an account at or below it.
+# replacement is started on an account at or below it. A Codex account
+# running on its credits is not at it.
 # ORCH_OVERSEER_HEADROOM_PCT = "5"
 
 # How many checks pass before a warning nobody has acted on is reported

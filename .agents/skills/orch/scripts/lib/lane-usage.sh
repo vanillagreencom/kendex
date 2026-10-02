@@ -74,8 +74,19 @@ parse_claude_usage() {
 # reports its 7-day limit as the *primary* window with a null secondary, and
 # routing by position then labels a 7-day window "5h" and invents a 0% weekly.
 # Route each window by its own limit_window_seconds instead.
-# `credits` is the balance spent past the plan windows; a balance or flag
-# that does not parse is null, which credit_room never reads as room.
+# `credits` is the balance spent past the plan windows, with the body's
+# top-level `spend_control.reached` carried in as `spend_control_reached`; a
+# balance or flag that does not parse, or is absent, is null, which
+# credit_room never reads as room.
+#
+# This body is the ChatGPT backend's usage endpoint, which OpenAI does not
+# document. The documented read of the same figures is the Codex app server's
+# `account/rateLimits/read`, whose snapshot carries `credits` (hasCredits,
+# unlimited, balance) and `spendControlReached`. It cannot serve here: it
+# carries no `overage_limit_reached`, which credit_room requires; it needs a
+# `codex app-server` process per account per refresh, where this body is the
+# one request the plan windows read below already come from, cached host-wide
+# per account for ORCH_LANES_USAGE_TTL.
 parse_codex_usage() {
 	local session_window="$1"
 	jq -c --argjson sw "$session_window" '
@@ -98,7 +109,8 @@ parse_codex_usage() {
 			resets_at: (($w.reset_at | numbers | todate?) // null),
 			window_s: ((($w.limit_window_seconds | numbers) // 0) | floor)
 		};
-		(.credits | credits) as $credits
+		(.spend_control | if type == "object" then (.reached | flag) else null end) as $spent
+		| (.credits | credits | if . == null then null else . + {spend_control_reached: $spent} end) as $credits
 		| [ (.rate_limit.primary_window   // null),
 		    (.rate_limit.secondary_window // null) ]
 		| map(select(. != null) | win(.))

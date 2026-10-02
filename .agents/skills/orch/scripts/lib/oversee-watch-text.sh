@@ -362,7 +362,9 @@ The long pass's events, checked and reported in this order:
                              the last pass that read it, as `lanes list --json`
                              reads it once per pass: its status word changed,
                              its verdict against ORCH_LANE_MAX_PCT crossed in
-                             either direction, or the binding bucket reset the
+                             either direction (a Codex account on its credits
+                             reads room, binding_bucket=credits: `lanes
+                             --help`, pick), or the binding bucket reset the
                              last reading named has passed and the reading has
                              moved off it. `change=` names every one that
                              applies and `was=` the status and verdict before

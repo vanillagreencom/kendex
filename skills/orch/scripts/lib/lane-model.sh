@@ -309,10 +309,15 @@ def wall_verdict($max):
 # holds a credit balance OpenAI spends once the included plan windows are
 # reached, so a window wall does not stop its launch. The balance must sit
 # strictly above the floor, with has_credits true and overage_limit_reached
-# false; any of the three missing or unparsed is no credit room, never room.
+# and spend_control_reached false; any of the four missing or unparsed is no
+# credit room, never room. The usage body fields rate_limit.allowed,
+# rate_limit.limit_reached and model_usage.*.credits_would_enable are not
+# read: they read false on accounts at their plan limit that complete turns
+# on credits, so gating on them would wall every account running on credits.
 def credit_room($credit_floor):
   .harness == "codex"
   and .credits.has_credits == true and .credits.overage_limit_reached == false
+  and .credits.spend_control_reached == false
   and (.credits.balance | type) == "number" and .credits.balance > $credit_floor;
 
 # with_lane_verdict($wall; $max; $credit_floor) over one record: the record
@@ -320,12 +325,16 @@ def credit_room($credit_floor):
 # reads, so the chooser, `pick --lane` and the listing know one rule. A walled
 # Codex account with credit_room is `room` on its credits, and its
 # binding_bucket becomes `credits`, which is how the chooser ranks it after
-# every account with plan room and how each display names it. Applied after
-# with_lane_projection, which charges burn by the window bucket.
+# every account with plan room and how each display names it. The
+# forecast of its spent window no longer binds it, so the record drops it: no rate, no
+# projected_wall_minutes, and usage_rate_state `credits`, which no reader of a
+# measured rate takes for one. Applied after with_lane_projection, which
+# charges burn by the window bucket.
 def with_lane_verdict($wall; $max; $credit_floor):
   ($wall | wall_verdict($max)) as $v
   | if $v == "walled" and credit_room($credit_floor)
-    then . + {verdict: "room", binding_bucket: "credits"}
+    then . + {verdict: "room", binding_bucket: "credits", usage_rate_state: "credits",
+              usage_rate_pct_per_min: null, projected_wall_minutes: null}
     else . + {verdict: $v} end;
 
 # Partition on the same verdict the named pick reads. Score only orders room
