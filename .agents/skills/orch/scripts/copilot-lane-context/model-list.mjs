@@ -19,7 +19,7 @@ try {
         || ['start', 'listModels', 'stop', 'forceStop'].some(method => typeof CopilotClient.prototype[method] !== 'function')) {
       evidence = { providers: [], models: { tag: 'unsupported', source }, capacity: [] };
     } else {
-      client = new CopilotClient({ connection: RuntimeConnection.forStdio({ path: 'copilot', env: { ...process.env } }) });
+      client = new CopilotClient({ connection: RuntimeConnection.forStdio({ env: { ...process.env } }) });
       const list = await Promise.race([
         (async () => { await client.start(); return client.listModels(); })(),
         new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('model-list deadline exceeded')), 30000); }),

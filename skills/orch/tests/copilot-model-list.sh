@@ -19,7 +19,16 @@ const log = value => appendFileSync(process.env.FAKE_LOG, `${value}\n`);
 export const RuntimeConnection = { forStdio(options) { log(`connection:${options.path}:${options.env.COPILOT_HOME}`); return options; } };
 export class CopilotClient {
   constructor() { log('construct'); }
-  async start() { log('start'); if (process.env.MODE === 'start-failed') throw new Error('startup failed'); }
+  async start() {
+    log('start');
+    if (process.env.MODE === 'start-failed') throw new Error('startup failed');
+    if (process.env.MODE === 'start-hang') {
+      // Reach the injected deadline before releasing startup. The release lets a
+      // timeout-bypass control finish and fail the evidence assertion normally.
+      globalThis.setTimeout = callback => { queueMicrotask(callback); return undefined; };
+      await new Promise(resolve => setImmediate(resolve));
+    }
+  }
   async listModels() {
     log('list');
     if (process.env.MODE === 'list-failed') throw new Error('list failed');
@@ -55,8 +64,8 @@ observe complete
 assert_eq "$(jq -c '.models | [.tag,.account,.host]' <<<"$OUTPUT")" '["complete","fixture-account","fixture-host"]' 'complete list binds its account and host'
 assert_eq "$(jq -c '[.models.models[] | [.id,.allowed,.chat]]' <<<"$OUTPUT")" '[["chat",true,true],["denied",false,true],["embedding",true,false]]' 'policy denial and non-chat capabilities remain distinct'
 assert_eq "$(jq -c '.capacity' <<<"$OUTPUT")" '[{"tag":"known","selector":"chat","account":"fixture-account","host":"fixture-host","source":"copilot:sdk.listModels","context_window":123456}]' 'capacity binds to the listed model and account host'
-assert_eq "$(paste -sd, - < "$TMP_ROOT/sdk.log")" 'connection:copilot:fixture-account,construct,start,list,stop' 'SDK owns listing and shutdown without a conversation'
-for mode in empty bad start-failed list-failed stop-failed stop-hang unsupported; do
+assert_eq "$(paste -sd, - < "$TMP_ROOT/sdk.log")" 'connection:undefined:fixture-account,construct,start,list,stop' 'SDK owns executable selection, listing and shutdown without a conversation'
+for mode in empty bad start-failed start-hang list-failed stop-failed stop-hang unsupported; do
   observe "$mode"
   case "$mode" in
     empty) assert_eq "$(jq -c '[.models.tag,.models.models]' <<<"$OUTPUT")" '["complete",[]]' 'complete empty list stays complete' ;;
@@ -69,17 +78,26 @@ for mode in empty bad start-failed list-failed stop-failed stop-hang unsupported
     *) assert_file_contains "$TMP_ROOT/sdk.log" stop "$mode closes the owned runtime" ;;
   esac
 done
+observe start-hang
+assert_eq "$(jq -c '[.models.tag,.models.cause]' <<<"$OUTPUT")" '["failed","Error: model-list deadline exceeded"]' 'discovery deadline reports its own failed evidence'
+assert_file_contains "$TMP_ROOT/sdk.log" stop 'discovery deadline closes the owned runtime'
 observe stop-hang
 assert_contains "$(jq -r '.models.cause' <<<"$OUTPUT")" 'shutdown deadline exceeded' 'shutdown uses its bounded deadline'
 if [[ "${COPILOT_MODEL_CONTROL:-}" != 1 ]]; then
-  MUTANT="$TMP_ROOT/mutant.mjs"
-  cp -- "$HELPER" "$MUTANT"
-  mutate_file "$MUTANT" "allowed: state === undefined || state === 'enabled', chat" "allowed: true, chat"
-  rc=0
-  env COPILOT_MODEL_CONTROL=1 COPILOT_MODEL_HELPER="$MUTANT" bash "$ROOT/skills/orch/tests/copilot-model-list.sh" > "$TMP_ROOT/control.log" 2>&1 || rc=$?
-  if [[ "$rc" -ne 0 ]] && grep -Fq '  FAIL  policy denial and non-chat capabilities remain distinct' "$TMP_ROOT/control.log"; then
-    pass 'control: policy bypass fails the listing assertion'
-  else fail 'control: policy bypass did not fail the listing assertion'; dump_stderr "$TMP_ROOT/control.log"; fi
+  while IFS=$'\t' read -r name before after assertion; do
+    MUTANT="$TMP_ROOT/$name.mjs"
+    cp -- "$HELPER" "$MUTANT"
+    mutate_file "$MUTANT" "$before" "$after"
+    node --check "$MUTANT"
+    rc=0
+    env COPILOT_MODEL_CONTROL=1 COPILOT_MODEL_HELPER="$MUTANT" bash "$ROOT/skills/orch/tests/copilot-model-list.sh" > "$TMP_ROOT/$name.log" 2>&1 || rc=$?
+    if [[ "$rc" -ne 0 ]] && grep -Fq "  FAIL  $assertion" "$TMP_ROOT/$name.log"; then
+      pass "control: $name fails its intended assertion"
+    else fail "control: $name did not fail its intended assertion"; dump_stderr "$TMP_ROOT/$name.log"; fi
+  done <<'CONTROLS'
+policy	allowed: state === undefined || state === 'enabled', chat	allowed: true, chat	policy denial and non-chat capabilities remain distinct
+deadline	reject(new Error('model-list deadline exceeded'))	void new Error('model-list deadline exceeded')	discovery deadline reports its own failed evidence
+CONTROLS
 fi
 printf 'pass: %s fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
