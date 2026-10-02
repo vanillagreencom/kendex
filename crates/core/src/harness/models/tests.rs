@@ -503,6 +503,31 @@ fn nested_provider_ids_validate_for_inventory_parent_and_exact_requests() {
         selected(resolve(&selector, &context)).native_selector,
         selector
     );
+    assert!(matches!(
+        resolve(id, &context),
+        ModelResolution::Refused { code, .. } if code == "model-unavailable"
+    ));
+    let request = ModelRequest::parse("light").unwrap();
+    for (replacement, expected) in [(id, None), (selector.as_str(), Some(ModelClass::Light))] {
+        let policy = BTreeMap::from([("light".into(), replacement.into())]);
+        let result = resolve_model(&request, ResolutionContext::Runtime(&context), &policy);
+        assert_eq!(selected(result).effective_class, expected);
+    }
+    let bare = self::context("custom", &["listed-model"]);
+    assert_eq!(
+        selected(resolve("listed-model", &bare)).native_selector,
+        "custom/listed-model"
+    );
+    if let ModelListEvidence::Complete { models, .. } = &mut context.models {
+        models[0].native_selector = Some("gateway/native-selector".into());
+    }
+    if let ModelCapacityEvidence::Known { selector, .. } = &mut context.capacity[0] {
+        *selector = "gateway/native-selector".into();
+    }
+    assert_eq!(
+        selected(resolve("gateway/native-selector", &context)).native_selector,
+        "gateway/native-selector"
+    );
 }
 
 #[test]

@@ -366,7 +366,7 @@ fn requested_member(
     model: &AvailableModel,
 ) -> Option<Option<family::Release>> {
     match request {
-        ModelRequest::Exact { selector } => (selector == &model.id
+        ModelRequest::Exact { selector } => ((!selector.contains('/') && selector == &model.id)
             || selector == &format!("{}/{}", model.provider, model.id)
             || model.native_selector.as_ref() == Some(selector))
         .then_some(None),

@@ -61,13 +61,34 @@ test("failed registry refresh is passed to core without stale model evidence", a
   }
 });
 
-test("missing core permits native inherit and authenticated exact models only", async () => {
+async function missingCoreExactContract(runtime: typeof settings): Promise<void> {
   const error = Object.assign(new Error("spawn kendex ENOENT"), { code: "ENOENT" });
   const missing = async () => ({ code: 1, stdout: "", stderr: "missing", error });
-  expect(await resolveAgentModel({ ...agent, model: "inherit" }, "custom/chat", process.cwd(), registry, missing)).toBe("custom/chat");
-  expect(await resolveAgentModel({ ...agent, model: "custom/chat" }, undefined, process.cwd(), registry, missing)).toBe("custom/chat");
-  await expect(resolveAgentModel(agent, undefined, process.cwd(), registry, missing)).rejects.toThrow("resolver-missing: command=kendex");
-  await expect(resolveAgentModel({ ...agent, model: "custom/unlisted" }, undefined, process.cwd(), registry, missing)).rejects.toThrow("resolver-missing: command=kendex");
+  expect(await runtime.resolveAgentModel({ ...agent, model: "inherit" }, "custom/chat", process.cwd(), registry, missing)).toBe("custom/chat");
+  expect(await runtime.resolveAgentModel({ ...agent, model: "custom/chat" }, undefined, process.cwd(), registry, missing)).toBe("custom/chat");
+  await expect(runtime.resolveAgentModel(agent, undefined, process.cwd(), registry, missing)).rejects.toThrow("resolver-missing: command=kendex");
+  await expect(runtime.resolveAgentModel({ ...agent, model: "custom/unlisted" }, undefined, process.cwd(), registry, missing)).rejects.toThrow("resolver-missing: command=kendex");
+  const openrouter = modelRegistryFixture(() => [{ ...nativeModel, provider: "openrouter", id: "anthropic/claude-sonnet-4" }]);
+  const rows = [
+    { request: "chat", registry, selector: "custom/chat" },
+    { request: "openrouter/anthropic/claude-sonnet-4", registry: openrouter, selector: "openrouter/anthropic/claude-sonnet-4" },
+    { request: "anthropic/claude-sonnet-4", registry: openrouter, selector: undefined },
+  ];
+  for (const row of rows) {
+    const resolved = runtime.resolveAgentModel({ ...agent, model: row.request }, undefined, process.cwd(), row.registry, missing);
+    if (row.selector === undefined) {
+      try { await expect(resolved).rejects.toThrow("resolver-missing: command=kendex"); }
+      catch (cause) { throw new Error("Pi qualified exact identity assertion failed", { cause }); }
+    } else {
+      expect(await resolved).toBe(row.selector);
+    }
+  }
+}
+
+test("missing core permits native inherit and authenticated exact models only", async () => {
+  await missingCoreExactContract(settings);
+  const mutant = await importRuntimeCopy("settings.ts", '!request.includes("/") && model.id === request', 'true && model.id === request') as typeof settings;
+  await expect(missingCoreExactContract(mutant)).rejects.toThrow("Pi qualified exact identity assertion failed");
 });
 
 for (const response of [{ ...selected, protocol: "other" }, { ...selected, resolution: { tag: "deferred-class" } }]) {

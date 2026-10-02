@@ -334,8 +334,13 @@ impl ModelResolution {
             .map(|cause| cause.split_whitespace().collect::<Vec<_>>().join(" "))
             .collect::<Vec<_>>()
             .join(",");
+        let detail = if self.diagnostics().iter().any(|d| d.cause.is_some()) {
+            " detail="
+        } else {
+            ""
+        };
         Some(format!(
-            "{MODEL_WARNING_PREFIX} requested={} selected={selected} causes={causes} source={sources} detail={failures}",
+            "{MODEL_WARNING_PREFIX} requested={} selected={selected} causes={causes} source={sources}{detail}{failures}",
             request.selector()
         ))
     }

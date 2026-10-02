@@ -146,7 +146,7 @@ export async function resolveAgentModel(
 	if (result.error instanceof Error && "code" in result.error && result.error.code === "ENOENT") {
 		if (!(await stat(cwd)).isDirectory()) throw new Error("model-resolution: invalid=child-directory");
 		if (request === "inherit") return parentModel;
-		const exact = available.filter(model => `${model.provider}/${model.id}` === request || model.id === request);
+		const exact = available.filter(model => `${model.provider}/${model.id}` === request || (!request.includes("/") && model.id === request));
 		if (exact.length === 1) return `${exact[0].provider}/${exact[0].id}`;
 		throw new Error("resolver-missing: command=kendex\nInstall kendex to resolve this model request.");
 	}
