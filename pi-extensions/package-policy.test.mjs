@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -277,6 +278,49 @@ test("a missing or diverged package-config.ts is reported", () => {
 	const refusals = vendoredReaderRefusals(diverged);
 	assert.equal(refusals.length, 1, JSON.stringify(refusals));
 	assert.ok(refusals[0].startsWith("package-config.ts copies differ:"), refusals[0]);
+});
+
+// A Pi dev round runs as a pi-agents-tmux background child under the
+// `bgTaskTimeoutMs` deadline, and that child starts the full validation run
+// `dev-validate-run` bounds with DEV_VALIDATE_TIMEOUT_SECS. A default deadline
+// at or under that bound kills the child while its own run goes on. The bound
+// is read through kendex-env.sh, the one reader of the settings contract, with
+// only PATH passed so neither a session export nor the private env file can
+// stand in for the committed value.
+const settingsPath = join(root, "..", "kendex.settings.toml");
+const settingsReader = join(root, "..", "skills", "orch", "scripts", "lib", "kendex-env.sh");
+
+function validationBoundSecs() {
+	const script = 'set -euo pipefail; source "$1"; kendex_load_settings_file "$2"; printf "%s" "${DEV_VALIDATE_TIMEOUT_SECS-}"';
+	const read = spawnSync("bash", ["-c", script, "validation-bound", settingsReader, settingsPath], { encoding: "utf8", env: { PATH: process.env.PATH } });
+	assert.equal(read.status, 0, `reading DEV_VALIDATE_TIMEOUT_SECS from ${settingsPath} failed: ${read.stderr || read.error}`);
+	assert.match(read.stdout, /^[1-9][0-9]*$/, `DEV_VALIDATE_TIMEOUT_SECS in ${settingsPath} is not a positive whole number of seconds: [${read.stdout}]`);
+	return Number(read.stdout);
+}
+
+function bgTaskTimeoutDefaultMs() {
+	const pkg = packages().find(({ dir }) => dir === "pi-agents-tmux")?.pkg;
+	const value = pkg?.kendex?.extensionManager?.settings?.find((item) => item.key === "bgTaskTimeoutMs")?.default;
+	assert.ok(Number.isInteger(value), `pi-agents-tmux/package.json declares no whole-number bgTaskTimeoutMs default: [${value}] — the manifest reader is broken`);
+	return value;
+}
+
+function deadlineRefusals(defaultMs, boundSecs) {
+	if (defaultMs > boundSecs * 1000) return [];
+	return [`pi-agents-tmux: bgTaskTimeoutMs default ${defaultMs} ms does not exceed DEV_VALIDATE_TIMEOUT_SECS ${boundSecs} s`];
+}
+
+test("the background child deadline default exceeds the validation bound", () => {
+	assert.deepEqual(deadlineRefusals(bgTaskTimeoutDefaultMs(), validationBoundSecs()), []);
+});
+
+// Must-fail control for the comparison above: a comparison that stopped
+// comparing would return the same empty list for the real default.
+test("a background child deadline default at or under the validation bound is reported", () => {
+	const bound = validationBoundSecs();
+	for (const planted of [1_800_000, bound * 1000]) {
+		assert.deepEqual(deadlineRefusals(planted, bound), [`pi-agents-tmux: bgTaskTimeoutMs default ${planted} ms does not exceed DEV_VALIDATE_TIMEOUT_SECS ${bound} s`]);
+	}
 });
 
 test("Pi extension TypeScript stays compatible with Node strip-only parsing", () => {

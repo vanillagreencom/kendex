@@ -51,7 +51,7 @@ Open `/extensions:settings`; settings appear under the **Agents (tmux)** tab. Pr
 
 - `enabled`: package toggle.
 - `maxConcurrency`, `bgTaskTimeoutMs`, `subagentModelSource`, `subagentThinkingSource`: how background children run and which model and thinking level they take.
-- `bgTaskTimeoutMs` also applies to headless pane agents. Nonpositive values use the default deadline instead of disabling it.
+- `bgTaskTimeoutMs` defaults to 7200000 (2 hours) and also applies to headless pane agents. Nonpositive values use the default deadline instead of disabling it.
 - `reusedSessionBudgetThreshold`, `reusedSessionContextLimitTokens`: the context estimate that starts a fresh background agent instead of reusing a saved session. These budget settings use the child working directory. The former `reusedSessionBudgetPolicy` setting is read with a migration warning; remove it.
 - `dashboard`, `quietInlineWhenDashboard`, `dashboardMaxItems`, `dashboardCollapsed`, `animateSpinners`, `collapsedItemCount`, `glyphStyle`, `treeStyle`: the dashboard card and inline rendering.
 - `truncateResults`, `resultMaxBytes`, `resultMaxLines`, `preserveFullOutput`: how much agent output returns inline and whether the full output is kept as an artifact.

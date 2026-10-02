@@ -78,7 +78,7 @@
           "label": "Background task timeout (ms)",
           "description": "Maximum runtime for one-shot/background child processes, including headless pane agents, before termination. Nonpositive values use the default deadline.",
           "type": "number",
-          "default": 1800000,
+          "default": 7200000,
           "category": "Execution",
           "apply": "live"
         },

@@ -13,7 +13,7 @@ import {
 import { glyphStyle } from "./glyphs.js";
 import { piUserDir, readPackageConfig } from "./package-config.js";
 
-export const DEFAULT_BG_TASK_TIMEOUT_MS = 30 * 60 * 1000;
+export const DEFAULT_BG_TASK_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 
 export function sessionIdForContext(ctx: ExtensionContext): string {
 	const id = ctx.sessionManager.getSessionId();
