@@ -187,5 +187,133 @@
    "createdAt": "2026-10-02T20:38Z (1:38 pm Pacific)",
    "source": "overseer report in owner direction 1790974850; log unreadable with the lanes credential (HTTP 404)"
   }
+ },
+ "remainingSplit": {
+  "removedDeliveryClasses": {
+   "classes": [
+    "adopter-missing-record-after-fix-release",
+    "orphan-agent-pinned-engine-after-fix-release",
+    "old-runner-reads-removed-template"
+   ],
+   "runs": 77
+  },
+  "shippedDefects": {
+   "classes": [
+    "adopter-missing-record-before-fix-release",
+    "runner-refuses-standard-class",
+    "orphan-agent-before-fix-release",
+    "classifier-render-retirement-unproved",
+    "disable-auto-after-queue"
+   ],
+   "runs": 343,
+   "rateOf558": "61.47%"
+  },
+  "githubRefusalsAndCorrectHolds": {
+   "classes": [
+    "rolling-branch-push-refused",
+    "review-thread-held",
+    "default-branch-moved"
+   ],
+   "runs": 5
+  },
+  "notRemovedTotal": {
+   "runs": 348,
+   "rateOf558": "62.37%"
+  }
+ },
+ "handPullRequests": {
+  "command": "gh pr view N --repo vanillagreencom/vsys --json number,mergedAt; gh api repos/vanillagreencom/vsys/actions/runs/RUN_ID --jq created_at,updated_at",
+  "runEnd": "updated_at",
+  "vsys#126": {
+   "mergedAt": "2026-10-01T05:49:18Z",
+   "lastFailedRun": 36821500115,
+   "runCreatedAt": "2026-10-01T05:47:44Z",
+   "runUpdatedAt": "2026-10-01T05:48:32Z",
+   "createdBeforeMergeSeconds": 94,
+   "endedBeforeMergeSeconds": 46
+  },
+  "vsys#148": {
+   "mergedAt": "2026-10-02T02:10:21Z",
+   "lastFailedRun": 36954117589,
+   "runCreatedAt": "2026-10-02T02:06:55Z",
+   "runUpdatedAt": "2026-10-02T02:07:39Z",
+   "createdBeforeMergeSeconds": 206,
+   "endedBeforeMergeSeconds": 162
+  }
+ },
+ "stableReleases": {
+  "command": "gh api --paginate 'repos/vanillagreencom/kendex/releases?per_page=100' --jq '.[]|select(.prerelease==false and .draft==false)|\"\\(.tag_name) \\(.published_at)\"'",
+  "v1Line": {
+   "v1.0.0": "2026-09-23T00:00:47Z",
+   "v1.0.1": "2026-09-26T05:34:19Z",
+   "v1.1.0": "2026-09-28T00:47:46Z",
+   "v1.2.0": "2026-09-28T19:55:15Z",
+   "v1.3.0": "2026-09-30T22:24:28Z",
+   "v1.4.0": "2026-10-01T21:23:38Z",
+   "v1.5.0": "2026-10-02T10:53:38Z",
+   "v1.5.1": "2026-10-02T13:37:07Z"
+  },
+  "inSample": "7, v1.0.1 to v1.5.1; v1.0.0 predates 2026-09-25T20:59:16Z",
+  "outsideV1Line": {
+   "v5.0.1": "2026-08-20T02:38:45Z, author github-actions[bot], target_commitish main"
+  },
+  "releasesLatest": "v1.5.1"
+ },
+ "majorTagRefs": {
+  "commands": [
+   "gh api repos/vanillagreencom/kendex/git/matching-refs/tags/v --jq '.[].ref'",
+   "gh api repos/vanillagreencom/kendex/git/matching-refs/heads/v --jq '.[].ref'"
+  ],
+  "majorTags": "none: no refs/tags/vN exists",
+  "vPrefixedBranches": [
+   "refs/heads/vstack-v1"
+  ],
+  "releaseTrigger": ".github/workflows/release.yml on.push.tags: [\"v*\"], which also matches v1"
+ },
+ "githubDocs": {
+  "source": "github/docs at commit 2bd66de8cea336061c9ea060c9b37385136e6ab3, read with gh api repos/github/docs/contents/PATH?ref=SHA; both research providers (Exa, Context7) refused their keys",
+  "excerpts": [
+   {
+    "url": "https://github.com/github/docs/blob/2bd66de8cea336061c9ea060c9b37385136e6ab3/content/actions/reference/workflows-and-actions/reusing-workflow-configurations.md",
+    "section": "github context",
+    "text": "When a reusable workflow is triggered by a caller workflow, the `github` context is always associated with the caller workflow. The called workflow is automatically granted access to `github.token` and `secrets.GITHUB_TOKEN`."
+   },
+   {
+    "url": "https://github.com/github/docs/blob/2bd66de8cea336061c9ea060c9b37385136e6ab3/content/actions/reference/workflows-and-actions/reusing-workflow-configurations.md",
+    "section": "Supported keywords for jobs that call a reusable workflow",
+    "text": "When you call a reusable workflow, you can only use the following keywords in the job containing the call: name, uses, with, with.<input_id>, secrets, secrets.<secret_id>, secrets.inherit, strategy, needs, if, concurrency, permissions, cache-mode."
+   },
+   {
+    "url": "https://github.com/github/docs/blob/2bd66de8cea336061c9ea060c9b37385136e6ab3/content/actions/reference/workflows-and-actions/reusing-workflow-configurations.md",
+    "section": "Supported keywords, note",
+    "text": "If `jobs.<job_id>.permissions` is not specified in the calling job, the called workflow will have the default permissions for the `GITHUB_TOKEN`. The `GITHUB_TOKEN` permissions passed from the caller workflow can be only downgraded (not elevated) by the called workflow. A called workflow uses the name of its caller workflow in github.workflow."
+   },
+   {
+    "url": "https://github.com/github/docs/blob/2bd66de8cea336061c9ea060c9b37385136e6ab3/content/actions/reference/workflows-and-actions/reusing-workflow-configurations.md",
+    "section": "How reusable workflows use runners",
+    "text": "The assignment of GitHub-hosted runners is always evaluated using only the caller's context. Billing for GitHub-hosted runners is always associated with the caller."
+   },
+   {
+    "url": "https://github.com/github/docs/blob/2bd66de8cea336061c9ea060c9b37385136e6ab3/content/actions/how-tos/reuse-automations/reuse-workflows.md",
+    "section": "Using inputs and secrets in a reusable workflow, warning",
+    "text": "Environment secrets cannot be passed from the caller workflow as `on.workflow_call` does not support the `environment` keyword. If you include `environment` in the reusable workflow at the job level, the environment secret will be used, and not the secret passed from the caller workflow."
+   },
+   {
+    "url": "https://github.com/github/docs/blob/2bd66de8cea336061c9ea060c9b37385136e6ab3/data/reusables/actions/reusable-workflow-calling-syntax.md",
+    "section": "calling syntax",
+    "text": "When you reference a reusable workflow with `{owner}/{repo}` and `@{ref}`, the `{ref}` can be a SHA, a release tag, or a branch name. If a release tag and a branch have the same name, the release tag takes precedence over the branch name. ... You cannot use contexts or expressions in this keyword."
+   },
+   {
+    "url": "https://github.com/github/docs/blob/2bd66de8cea336061c9ea060c9b37385136e6ab3/content/actions/reference/workflows-and-actions/workflow-syntax.md",
+    "section": "jobs.<job_id>.secrets.inherit",
+    "text": "Use the `inherit` keyword to pass all the calling workflow's secrets to the called workflow. This includes all secrets the calling workflow has access to, namely organization, repository, and environment secrets."
+   },
+   {
+    "url": "https://github.com/github/docs/blob/2bd66de8cea336061c9ea060c9b37385136e6ab3/data/reusables/actions/actions-do-not-trigger-workflows.md",
+    "section": "GITHUB_TOKEN events",
+    "text": "When you use the repository's `GITHUB_TOKEN` to perform tasks, events triggered by the `GITHUB_TOKEN` will not create a new workflow run, with the following exceptions: workflow_dispatch and repository_dispatch events always create workflow runs; pull_request opened, synchronize or reopened create approval-required runs."
+   }
+  ],
+  "uncited": "Which repository's environment a called job's `environment:` reads. The excerpts say the environment secret is used; none names the repository."
  }
 }
