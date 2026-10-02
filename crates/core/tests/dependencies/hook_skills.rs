@@ -16,13 +16,32 @@ const ALL: &str = "\"claude\", \"codex\", \"opencode\", \"cursor\", \"pi\", \"ge
 fn requiring_hook_scopes_companions_without_scoping_required_skills() {
     use kendex_core::engine::DeclarationStatus::{Complete, Incomplete};
     const FOUR: &str = "\"claude\", \"codex\", \"pi\", \"copilot\"";
-    for (tools, recorder, missing) in [
-        (FOUR, "harnesses = [\"copilot\"]", false),
-        (FOUR, "enabled = false", true),
-        (FOUR, "harnesses = [\"claude\"]", true),
-        ("\"claude\"", "enabled = false", false),
-        ("\"codex\"", "enabled = false", false),
-        ("\"pi\"", "harnesses = [\"pi\"]", false),
+    for (tools, recorder, warning) in [
+        (FOUR, Some("harnesses = [\"copilot\"]"), None),
+        (
+            FOUR,
+            Some("enabled = false"),
+            Some(
+                "missing required dependency: skill-load-check requires skill-load-record, which is switched off",
+            ),
+        ),
+        (
+            FOUR,
+            Some("harnesses = [\"claude\"]"),
+            Some(
+                "missing required dependency: GitHub Copilot runs skill-load-check without skill-load-record, which it requires",
+            ),
+        ),
+        ("\"claude\"", Some("enabled = false"), None),
+        ("\"codex\"", Some("enabled = false"), None),
+        ("\"pi\"", Some("harnesses = [\"pi\"]"), None),
+        (
+            FOUR,
+            None,
+            Some(
+                "skill-load-check requires skill-load-record, which the catalog 'cat' does not offer",
+            ),
+        ),
     ] {
         let f = world();
         let check = CHECK.replace("# requires:", "# requires-on: [copilot]\n# requires:");
@@ -35,40 +54,42 @@ fn requiring_hook_scopes_companions_without_scoping_required_skills() {
             ),
         )
         .unwrap();
+        let recorder_decl = match recorder {
+            Some(settings) => {
+                format!("\n[hooks.skill-load-record]\nsource = \"cat\"\n{settings}\n")
+            }
+            None => {
+                fs::remove_file(f.source.join("hooks/skill-load-record.sh")).unwrap();
+                String::new()
+            }
+        };
         declare(
             &f,
             tools,
-            &format!(
-                "harnesses = [{tools}]\n\n[hooks.skill-load-record]\nsource = \"cat\"\n{recorder}\n"
-            ),
+            &format!("harnesses = [{tools}]\n{recorder_decl}"),
         );
         let report = audit(&f.env, &f.scope).unwrap();
+        let missing = warning.is_some();
         assert_eq!(
             report.declaration_status,
             if missing { Incomplete } else { Complete },
-            "{tools} {recorder}"
+            "{tools} {recorder:?}"
         );
         let findings = findings_on(&report, "skill-load-check");
-        let dependencies: Vec<_> = findings
-            .iter()
-            .filter(|w| w.message.starts_with("missing required dependency:"))
-            .collect();
         assert_eq!(
-            dependencies.len(),
-            usize::from(missing),
+            findings
+                .iter()
+                .filter(|w| {
+                    w.message.starts_with("missing required dependency:")
+                        || w.message
+                            == "skill-load-check requires skill-load-record, which the catalog 'cat' does not offer"
+                })
+                .map(|w| w.message.as_str())
+                .collect::<Vec<_>>(),
+            warning.into_iter().collect::<Vec<_>>(),
             "{:?}",
             messages(&report)
         );
-        if missing {
-            assert_eq!(
-                dependencies[0].message,
-                if recorder == "enabled = false" {
-                    "missing required dependency: skill-load-check requires skill-load-record, which is switched off"
-                } else {
-                    "missing required dependency: GitHub Copilot runs skill-load-check without skill-load-record, which it requires"
-                }
-            );
-        }
         apply::execute(&f.env, &report.plan).unwrap();
         let lock = lock_of(&f);
         for (tool, file) in TOOLS {
@@ -80,7 +101,7 @@ fn requiring_hook_scopes_companions_without_scoping_required_skills() {
             assert_eq!(
                 lock.entries.contains_key(&check),
                 stays,
-                "{tools} {recorder} {tool:?}"
+                "{tools} {recorder:?} {tool:?}"
             );
             assert_eq!(f.project.join(file).is_file(), stays);
             assert_eq!(lock.entries.contains_key(&guard), selected);
@@ -313,7 +334,12 @@ fn local_skill_load_declarations_retain_all_four_judges() {
     let report = audit(&f.env, &f.scope).unwrap();
     assert_eq!(
         report.declaration_status,
-        kendex_core::engine::DeclarationStatus::Incomplete
+        kendex_core::engine::DeclarationStatus::Complete
+    );
+    assert!(
+        findings_on(&report, "skill-load-check").is_empty(),
+        "{:?}",
+        messages(&report)
     );
     apply::execute(&f.env, &report.plan).unwrap();
     let lock = lock_of(&f);
@@ -328,7 +354,7 @@ fn local_skill_load_declarations_retain_all_four_judges() {
             );
             assert_eq!(
                 report.installations.contains_key(&key),
-                tool == HarnessId::Copilot,
+                name == "skill-load-check" || tool == HarnessId::Copilot,
                 "control local-restriction: {tool:?}: {name}"
             );
         }
