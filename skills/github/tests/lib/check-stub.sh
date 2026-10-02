@@ -206,6 +206,14 @@ case "${1:-}" in
                 ;;
         esac
         if [[ "${2:-}" == "graphql" ]]; then
+            if [[ "$*" == *"mergeQueue(branch:"* ]]; then
+                [[ " $* " == *" -f branch=${STUB_BASE:-main} "* ]] || exit 2
+                [[ "${STUB_REQUIRE_TOKEN:-false}" != true || "${GH_TOKEN:-}" == ghp_test_token ]] || exit 2
+                [[ "${STUB_QUEUE_ENTRIES:-0}" != fail ]] || exit 1
+                jq -cn --argjson count "${STUB_QUEUE_ENTRIES:-0}" \
+                    '{data:{repository:{mergeQueue:{entries:{totalCount:$count}}}}}' | jq -r "${jq_filter:-.}"
+                exit 0
+            fi
             if [[ "$*" == *"mergeQueueEntry"* ]]; then
                 if [[ "${STUB_POST_GRAPHQL_FAIL:-false}" == "true" ]]; then
                     echo '{"errors":[{"message":"queue fields unavailable"}]}'

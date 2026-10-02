@@ -57,6 +57,7 @@
 #     20569266 answering <b>, beside the checks ruleset answering never
 #     queue-rule-method:<METHOD> after a queue-rule word, the queue's
 #     merge_method in place of SQUASH
+#     queue-entries:<count|fail> the base queue's entry count or a failed read
 #     env:NAME=value  the caller's environment
 #   argv   check | auto | immediate | with:<flag+flag> (the flags alone,
 #          `+` a space, no --keep-branch) | mutant:<name>:<flag+flag> (the
@@ -232,6 +233,7 @@ word() {
     head-moved:*) W_ENV+=("STUB_RANGE_HEAD=$RANGE_HEAD" "STUB_HEAD=$v") ;;
     route:false) W_ENV+=("STUB_CLASS=standard" "STUB_QUEUE_LINE=$QUEUE_FALSE" "STUB_BASE_OID=$RANGE_BASE" "STUB_HEAD=$RANGE_HEAD" "STUB_EXPECT_BASE=$RANGE_BASE" "STUB_EXPECT_HEAD=$RANGE_HEAD") ;;
     # The base's merge_queue rule and the answer its ruleset read gives.
+    queue-entries:*) W_ENV+=("STUB_QUEUE_ENTRIES=$v") ;;
     queue-rule:fail) W_ENV+=("STUB_GATE_RULES=$QUEUE_RULES" "STUB_RULESET_EXIT=1") ;;
     queue-rule:absent) W_ENV+=("STUB_GATE_RULES=$QUEUE_RULES" 'STUB_RULESET_JSON_20569265={"id":20569265}' "$CHECKS_NEVER") ;;
     queue-rule:*) W_ENV+=("STUB_GATE_RULES=$QUEUE_RULES" "$(ruleset_answer 20569265 "$v")" "$CHECKS_NEVER") ;;
@@ -321,6 +323,7 @@ calls() {
         [[ " $line " != *" --admin "* ]] || kind="$kind:admin"
         out="$out,$kind"
         ;;
+      "api graphql"*"mergeQueue(branch:"*) out="$out,graphql:entries" ;;
       "api graphql"*mergeQueueEntry*) out="$out,graphql:queue" ;;
       "api user"*) out="$out,user" ;;
       "api -X DELETE repos/{owner}/{repo}/git/refs/heads/"*) out="$out,delete:${line##*/heads/}" ;;
@@ -425,6 +428,8 @@ err_macro() {
     route-why:direct-method) printf "A merge past the queue takes the repository's methods and the base's pull_request rules, which allow none of the accepted methods." ;;
     route-why:direct-unread) printf 'The methods a merge past the queue may take could not be read.' ;;
     route-why:queue-only) printf 'A queue-only change runs in a merge group before it lands.' ;;
+    route-why:occupied) printf 'The base queue holds entries, so a direct merge would repeat their CI.' ;;
+    route-why:queue-unreadable) printf "The base queue's entry count could not be read as a whole number." ;;
     auto-remedy) printf 'Nothing mutated. Enable auto-merge on the repository.' ;;
     approval-remedy) printf "Nothing mutated. No ruleset on the base branch requires an approval, so GitHub would merge the armed PR before review\\; require at least 1 approval, thread resolution and stale-approval dismissal in its pull_request rule." ;;
     thread-remedy) printf "Nothing mutated. No ruleset on the base branch requires thread resolution, so GitHub would merge the armed PR on its first approval past open review threads\\; require review threads resolved in its pull_request rule." ;;

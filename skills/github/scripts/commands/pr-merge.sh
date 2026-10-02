@@ -139,7 +139,8 @@ Merge route:
         answers always, pull_requests_only or exempt; every other ruleset on
         the base answers never; the base has no classic protection; the base
         allows a direct merge with one of the accepted methods (see Merge
-        method); and the PR is not queue-only. The merge call adds --admin, bound to the
+        method); the base's merge queue is empty; and the PR is not
+        queue-only. The merge call adds --admin, bound to the
         verified head by --match-head-commit, and exits 0 once merged. So the
         queue is all --admin skips: GitHub still refuses the merge unless
         every other ruleset, the required checks, thread resolution and
@@ -162,7 +163,9 @@ Merge route:
         allowed=), direct-method-unreadable (the methods a direct merge
         allows could not be read, read= naming the read as the
         merge-method-unreadable cause does), explicit-queue (--auto --queue
-        intentionally arms a PR eligible for the admin route) or queue-only (the next lines
+        intentionally arms a PR eligible for the admin route), queue-occupied
+        (the base's queue holds entries), queue-unreadable (its entry count
+        could not be read as a whole number) or queue-only (the next lines
         are the classifier's queue-only line or the cause it was not read,
         and its diagnostics).
 
@@ -837,7 +840,7 @@ route_queue() { # FIELDS WHY
     echo "  $2 The merge call passes --auto and no --admin." >&2
 }
 merge_route() { # PR TOKEN HEAD QUEUE ACCEPTED...
-    local pr_num="$1" token="$2" head="$3" queue="$4" branch base rules queue_ids ids id bypass bypasses="" rulesets="" mixed enabled direct rc=0
+    local pr_num="$1" token="$2" head="$3" queue="$4" branch base rules queue_ids ids id bypass bypasses="" rulesets="" mixed enabled direct queue_count rc=0
     shift 4
     MERGE_ROUTE=queue
     MERGE_ROUTE_METHOD=""
@@ -910,6 +913,21 @@ merge_route() { # PR TOKEN HEAD QUEUE ACCEPTED...
         return 0
         ;;
     esac
+    # A direct merge invalidates every queued merge group and repeats its CI.
+    if ! queue_count=$(with_token "$token" gh api graphql \
+        -f query='query($owner: String!, $repo: String!, $branch: String!) { repository(owner: $owner, name: $repo) { mergeQueue(branch: $branch) { entries { totalCount } } } }' \
+        -F owner='{owner}' -F repo='{repo}' -f branch="$branch" \
+        --jq '.data.repository.mergeQueue.entries.totalCount' 2>/dev/null); then
+        queue_count=unreadable
+    fi
+    if ! [[ "$queue_count" =~ ^[0-9]+$ ]]; then
+        route_queue "cause=queue-unreadable" "The base queue's entry count could not be read as a whole number."
+        return 0
+    fi
+    if [[ "$queue_count" =~ [1-9] ]]; then
+        route_queue "cause=queue-occupied" "The base queue holds entries, so a direct merge would repeat their CI."
+        return 0
+    fi
     read_queue_only "$pr_num" "$head"
     if [ "$QUEUE_ONLY" = true ]; then
         route_queue "cause=queue-only" "A queue-only change runs in a merge group before it lands."
