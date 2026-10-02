@@ -35,6 +35,20 @@ expected_delta_read() { # BODY
 #
 # 2: branch_size_classified sets BRANCH_SIZE_TEST_FILES.
 BRANCH_GROWTH_CONTRACT=2
+# The ref a branch is compared against: the resolver's base branch on origin,
+# else its local branch.
+branch_growth_base_ref() {
+  local worktree="$1" base_resolver="$2" out_name="$3" base_branch
+  base_branch="$("$base_resolver" "$worktree")" \
+    || branch_growth_fail "could not resolve the base branch for '$worktree'" || return 1
+  if git -C "$worktree" show-ref --verify --quiet "refs/remotes/origin/$base_branch"; then
+    printf -v "$out_name" '%s' "refs/remotes/origin/$base_branch"
+  elif git -C "$worktree" show-ref --verify --quiet "refs/heads/$base_branch"; then
+    printf -v "$out_name" '%s' "refs/heads/$base_branch"
+  else
+    branch_growth_fail "base branch '$base_branch' has no local or origin ref in '$worktree'"
+  fi
+}
 # The one git invocation every branch measurement reads, so callers score
 # the same diffstat under the same rules. --find-renames is passed rather than
 # left to the runner's diff.renames, which decides whether a move a size
@@ -53,18 +67,9 @@ BRANCH_GROWTH_CONTRACT=2
 # caller reaches no resolver and passes none, so $2 is empty there.
 branch_size_numstat() {
   local worktree="$1" base_resolver="$2" commit="$3" out_name="$4" base_override="${5:-}"
-  local base_branch base_ref measured_numstat
+  local base_ref measured_numstat
   if [[ -z "$base_override" ]]; then
-    base_branch="$("$base_resolver" "$worktree")" \
-      || branch_growth_fail "could not resolve the base branch for '$worktree'" || return 1
-    if git -C "$worktree" show-ref --verify --quiet "refs/remotes/origin/$base_branch"; then
-      base_ref="refs/remotes/origin/$base_branch"
-    elif git -C "$worktree" show-ref --verify --quiet "refs/heads/$base_branch"; then
-      base_ref="refs/heads/$base_branch"
-    else
-      branch_growth_fail "base branch '$base_branch' has no local or origin ref in '$worktree'"
-      return 1
-    fi
+    branch_growth_base_ref "$worktree" "$base_resolver" base_ref || return 1
   elif git -C "$worktree" cat-file -e "${base_override}^{commit}" 2>/dev/null; then
     base_ref="$base_override"
   else

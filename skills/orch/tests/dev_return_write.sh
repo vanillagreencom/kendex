@@ -212,6 +212,118 @@ WRITE="$LANE_WRITE"
 table "control: dropping lanes reds the receipt assertion|$LANE_ARGS|rc=0 has:validate_lanes=false .validate_selection=subset"
 WRITE="$WRITE_SHIPPED"
 
+echo "=== the Apple gate: a triggered pass carries the mac run test line ==="
+# AW holds the mac-run workflow and a Package.swift naming neither platform on
+# main. Each trigger is one commit off main: apple_commit PATH [CONTENT] writes
+# PATH, or deletes it with no CONTENT, and prints the commit.
+AW="$(new_repo apple-wt)"
+mkdir -p "$AW/.github/workflows"
+printf 'name: mac-run\n' > "$AW/.github/workflows/mac-run.yml"
+printf 'let package = Package(platforms: [.tvOS(.v17)])\n' > "$AW/Package.swift"
+git -C "$AW" add .github Package.swift
+git -C "$AW" commit -q -m workflow
+apple_commit() {
+  git -C "$AW" checkout -q --detach main &&
+    if [[ $# -eq 2 ]]; then
+      mkdir -p "$AW/$(dirname "$1")" && printf '%s\n' "$2" > "$AW/$1" && git -C "$AW" add -- "$1"
+    else
+      git -C "$AW" rm -q -- "$1"
+    fi &&
+    git -C "$AW" commit -q -m "$1" &&
+    git -C "$AW" rev-parse HEAD
+}
+A_PLAIN="$(apple_commit notes.txt plain)" || exit 1
+A_XCODEPROJ="$(apple_commit App.xcodeproj/project.pbxproj objects)" || exit 1
+A_XCWORKSPACE="$(apple_commit App.xcworkspace/contents.xcworkspacedata workspace)" || exit 1
+A_IOS="$(apple_commit ios/App.swift app)" || exit 1
+A_MACOS="$(apple_commit apps/macos/App.swift app)" || exit 1
+A_PKG_IOS="$(apple_commit Package.swift 'let package = Package(platforms: [.iOS(.v17)])')" || exit 1
+A_PKG_MACOS="$(apple_commit pkg/Package.swift 'let package = Package(platforms: [.macOS(.v14)])')" || exit 1
+A_PKG_NEITHER="$(apple_commit pkg/Package.swift 'let package = Package(platforms: [.watchOS(.v10)])')" || exit 1
+A_PKG_DELETED="$(apple_commit Package.swift)" || exit 1
+git -C "$AW" checkout -q main
+AW_ARGS="--worktree $AW --kind implement --issue issue-apple --round-id 30-30 --branch b"
+AP="$AW_ARGS --validate pass --validate-run-dir $VRUN"
+MAC_NOTE="mac+run+test:+pass+run=4242"
+APPLE_ROWS=(
+  "the ios label|$AP --commit $A_PLAIN --label ios|rc=2 written=no stderr~dev-return-write:+mac-run-missing+label=ios+validate=pass=true"
+  "the macos label among others|$AP --commit $A_PLAIN --label skills --label macos|rc=2 written=no stderr~dev-return-write:+mac-run-missing+label=macos+validate=pass=true"
+  "an .xcodeproj path|$AP --commit $A_XCODEPROJ|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=App.xcodeproj/project.pbxproj=true"
+  "an .xcworkspace path|$AP --commit $A_XCWORKSPACE|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=App.xcworkspace/contents.xcworkspacedata=true"
+  "an ios/ path|$AP --commit $A_IOS|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=ios/App.swift=true"
+  "a nested macos/ path|$AP --commit $A_MACOS|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=apps/macos/App.swift=true"
+  "a Package.swift naming .iOS|$AP --commit $A_PKG_IOS|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=Package.swift=true"
+  "a nested Package.swift naming .macOS|$AP --commit $A_PKG_MACOS|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=pkg/Package.swift=true"
+  "a no-verdict is held as a pass is|$AW_ARGS --commit $A_PLAIN --label ios --validate no-verdict --validate-run-dir $VRUN_CUT --validate-note scoped+suites+green|rc=2 written=no stderr~dev-return-write:+mac-run-missing+label=ios+validate=no-verdict=true"
+  "a pass line without its run id is no record|$AP --commit $A_IOS --validate-note mac+run+test:+pass|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=ios/App.swift=true"
+  "a Package.swift naming neither platform|$AP --commit $A_PKG_NEITHER|rc=0 written=yes .validate_note=null"
+  "a deleted Package.swift names no platform|$AP --commit $A_PKG_DELETED|rc=0 written=yes .validate_note=null"
+  "the recorded pass line is accepted and round-trips|$AP --commit $A_IOS --validate-note $MAC_NOTE|rc=0 .validate_note|sub(\"=\";\":\")=${MAC_NOTE/=/:} roundtrip=valid"
+  "a FAILING mac run test needs no pass line|$AW_ARGS --commit $A_IOS --validate FAILING:+mac+run+test|rc=0 .validate=FAILING:+mac+run+test roundtrip=valid"
+)
+table "${APPLE_ROWS[@]}"
+# A no-verdict note names its scoped suites and the pass line, one per line.
+run --worktree "$AW" --kind implement --issue issue-apple --round-id 30-30 --branch b --commit "$A_IOS" \
+  --validate no-verdict --validate-run-dir "$VRUN_CUT" --validate-note $'scoped suites green: x.sh\nmac run test: pass run=4242'
+assert_eq "$(observe "rc=0 roundtrip=valid")" "rc=0 roundtrip=valid" "a pass line below the scoped suites is found" "$ERR"
+# A git failure inside the gate refuses on its own key. A fix receipt's
+# commit is never measured, so an unresolvable one reaches the gate here.
+mkdir -p "$FW/.github/workflows"
+printf 'name: mac-run\n' > "$FW/.github/workflows/mac-run.yml"
+table "a commit git cannot diff|--worktree %FW --kind fix --issue issue-776 --round-id 9-9 --branch b --commit c --validate pass --validate-run-dir $VRUN_FIX_9 --item 3 Blocked x|rc=2 written=no stderr~dev-return-write:+apple-diff-unreadable+path=$FW+commit=c=true"
+rm -rf -- "${FW:?}/.github"
+
+# Non-Apple items: the receipt is byte-equal to the one a writer without the
+# gate writes, for an item with no trigger in AW and for a triggered item in
+# a repository without the workflow.
+GATELESS="$(mutant_scripts gateless-mutant dev-return-write)/dev-return-write" || exit 1
+mutate_file "$GATELESS" 'if [[ "$validate" != FAILING:* && -f "$worktree/$APPLE_WORKFLOW" ]]; then' 'if false; then'
+NW="$(new_repo apple-unarmed)"
+git -C "$NW" switch -q -c work
+mkdir -p "$NW/ios"
+printf 'app\n' > "$NW/ios/App.swift"
+git -C "$NW" add ios
+git -C "$NW" commit -q -m ios
+NW_HEAD="$(git -C "$NW" rev-parse HEAD)"
+byte_equal_rows() {
+  local row label args shipped
+  for row in \
+    "an item with no trigger beside the workflow|$AP --commit $A_PLAIN --label skills" \
+    "a triggered item without the workflow|--worktree $NW --kind implement --issue issue-apple --round-id 30-30 --branch b --validate pass --validate-run-dir $VRUN --commit $NW_HEAD --label macos"; do
+    IFS='|' read -r label args <<<"$row"
+    # shellcheck disable=SC2086
+    run $args
+    shipped="$(cat -- "$OUT" 2>/dev/null)" || shipped="rc=$RC"
+    WRITE="$GATELESS"
+    # shellcheck disable=SC2086
+    run $args
+    WRITE="$WRITE_SHIPPED"
+    assert_eq "$shipped" "$(cat -- "$OUT")" "$label: the receipt is byte-equal to a gateless writer's" "$ERR"
+  done
+}
+WRITE_SHIPPED="$WRITE"
+byte_equal_rows
+
+# One control per rule: each mutant disables one rule of the gate.
+APPLE_CONTROLS=(
+  "labels|if [[ \"\$label\" == \"\$apple\" ]]; then|if false; then|$AP --commit $A_PLAIN --label ios|rc=0"
+  "directory globs|if [[ \"\$segment\" == \$glob ]]; then|if false; then|$AP --commit $A_IOS|rc=0"
+  "manifest platforms|if LC_ALL=C grep -Eq -- \"\$APPLE_MANIFEST_PLATFORMS\" <<<\"\$manifest\"; then|if false; then|$AP --commit $A_PKG_IOS|rc=0"
+  "deleted manifest|[[ -n \"\$listed\" ]] \|\| continue|[[ -n \"\$listed\" ]] \|\| true|$AP --commit $A_PKG_DELETED|rc=2"
+  "pass record|then mac_run_recorded=true; fi|then mac_run_recorded=false; fi|$AP --commit $A_IOS --validate-note $MAC_NOTE|rc=2"
+  "FAILING exemption|[[ \"\$validate\" != FAILING:* && -f|[[ -f|$AW_ARGS --commit $A_IOS --validate FAILING:+mac+run+test|rc=2"
+  "workflow precondition|-f \"\$worktree/\$APPLE_WORKFLOW\"|-n \"\$APPLE_WORKFLOW\"|--worktree $NW --kind implement --issue issue-apple --round-id 30-30 --branch b --validate pass --validate-run-dir $VRUN --commit $NW_HEAD --label macos|rc=2"
+)
+for control in "${APPLE_CONTROLS[@]}"; do
+  IFS='|' read -r name old new args expect <<<"${control//\\|/$'\x1f'}"
+  old="${old//$'\x1f'/|}"; new="${new//$'\x1f'/|}"
+  CONTROL_WRITE="$(mutant_scripts "apple-${name// /-}-mutant" dev-return-write)/dev-return-write" || exit 1
+  mutate_file "$CONTROL_WRITE" "$old" "$new"
+  WRITE="$CONTROL_WRITE"
+  table "control: without the $name rule the row's outcome flips|$args|$expect"
+  WRITE="$WRITE_SHIPPED"
+done
+
 echo "=== --near-ceiling-base runs the installed lane and records what it could answer ==="
 # probe_wt NAME SIZE... — a worktree on branch `work` over `main` that adds one
 # file per SIZE in bytes, with the real byte-ceiling lane installed where a

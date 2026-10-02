@@ -20,7 +20,7 @@
 #   dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \
 #     --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
 #     [--validate-run-dir RUN_DIR] [--qa-label LABEL]... [--near-ceiling-base REF] \
-#     [--bundled] [--no-summary] \
+#     [--label LABEL]... [--bundled] [--no-summary] \
 #     [--summary TEXT | --summary-file PATH | --recovered-text PATH] \
 #     [--item N DECISION REASONING]...
 #
@@ -77,6 +77,15 @@
 # that run started before the next round was delegated. Accepting either would
 # record a pass for a commit it never judged, and submit would reuse a full one
 # as the whole battery. An implement round has no round record and no binding.
+#
+# The Apple gate. In a worktree holding the mac-run workflow, a round whose
+# item carries an Apple label (--label, the delegation's Labels: entries) or
+# whose branch changes an Apple path is a pass or no-verdict only beside the
+# passing `mac run test` its validation ran, recorded as one --validate-note
+# line. The trigger is stated here once, in the APPLE_* values below, and
+# --help prints it; dev-implement.md section 5 and schemas/dev-return.md link
+# here. A FAILING round needs no such line: it is never accepted. Elsewhere
+# the receipt is what it would be without the gate.
 #
 # Writes PATH/tmp/dev-return-ID-RID.json and prints its absolute path (one line).
 #
@@ -135,6 +144,17 @@ source "$SCRIPT_DIR/lib/branch-growth.sh"
 # shellcheck source=lib/rebase-map.sh
 source "$SCRIPT_DIR/lib/rebase-map.sh"
 
+# The Apple gate's trigger and its record. A changed path is Apple when one of
+# its directory segments matches an APPLE_DIR_GLOBS glob, the way .gitignore
+# matches a pattern with no slash, or when it is an APPLE_MANIFEST whose content
+# at the commit matches APPLE_MANIFEST_PLATFORMS.
+APPLE_WORKFLOW=".github/workflows/mac-run.yml"
+APPLE_LABELS=(ios macos)
+APPLE_DIR_GLOBS=('*.xcodeproj' '*.xcworkspace' ios macos)
+APPLE_MANIFEST="Package.swift"
+APPLE_MANIFEST_PLATFORMS='\.(iOS|macOS)([^[:alnum:]_]|$)'
+MAC_RUN_PASS='^mac run test: pass run=[^[:space:]]+$'
+
 # Path-safe token grammar for --issue / --round-id: no '/', no '..', no
 # whitespace, so a value can never escape the tmp/ directory.
 ID_GRAMMAR='^[A-Za-z0-9._-]+$'
@@ -175,6 +195,9 @@ die() {
       missing-file) printf 'The summary or recovered-text file does not exist.\n' ;;
       missing-items) printf 'A fix or bundled receipt must contain an item.\n' ;;
       baseline-read) printf '%s\n' "$BRANCH_GROWTH_ERROR" ;;
+      scratch-failed) printf 'mktemp could not create the file the Apple gate lists changed paths in.\n' ;;
+      apple-diff-unreadable) printf 'The Apple gate could not list the paths the branch changes: %s\n' "${BRANCH_GROWTH_ERROR:-git failed}" ;;
+      mac-run-missing) printf 'The item meets the Apple gate trigger, so a pass or no-verdict needs a --validate-note line "mac run test: pass run=ID".\n' ;;
     esac
   } >&2
   exit 2
@@ -186,7 +209,7 @@ Usage:
   dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \
     --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
     [--validate-run-dir RUN_DIR] [--qa-label LABEL]... [--near-ceiling-base REF] \
-    [--bundled] [--no-summary] \
+    [--label LABEL]... [--bundled] [--no-summary] \
     [--summary TEXT | --summary-file PATH | --recovered-text PATH] \
     [--item N DECISION REASONING]...
 
@@ -224,12 +247,23 @@ that path records []. An omitted --near-ceiling-base, a broken link on the way
 to the lane, a lane that is not executable, or a lane that exits otherwise
 records near_ceiling null and the cause in near_ceiling_error, so the
 orchestrator keeps the list it carries.
+--label LABEL is one entry of the delegation's Labels: line, read only by the
+Apple gate below and never recorded.
 Every single-valued flag may be supplied at most once
-(no silent last-wins); only --qa-label and --item repeat.
+(no silent last-wins); only --qa-label, --label and --item repeat.
 --issue / --round-id must match ^[A-Za-z0-9._-]+$. Canonical schema:
 skills/orch/schemas/dev-return.md. Validated by dev-artifact-check.
 Exit 0 on success; every usage/validation error exits 2.
+
+Apple gate: where the worktree holds the workflow below, a pass or no-verdict
+for an item the trigger names needs a --validate-note line matching the
+record. A FAILING result needs none. Elsewhere the receipt is unchanged.
 EOF
+  printf '  workflow:  %s\n' "$APPLE_WORKFLOW"
+  printf '  labels:    %s\n' "${APPLE_LABELS[*]}"
+  printf '  paths:     a changed path with a directory segment matching %s\n' "${APPLE_DIR_GLOBS[*]}"
+  printf '  manifest:  a changed %s matching %s at the commit\n' "$APPLE_MANIFEST" "$APPLE_MANIFEST_PLATFORMS"
+  printf '  record:    %s\n' "$MAC_RUN_PASS"
 }
 
 # This script's own flag vocabulary. would distinguish a forgotten value
@@ -241,7 +275,7 @@ is_own_flag() {
   case "$1" in
     --worktree|--kind|--issue|--round-id|--branch|--commit|--validate|\
     --validate-note|--validate-run-dir|--summary|--summary-file|--recovered-text|--qa-label|\
-    --near-ceiling-base|--bundled|\
+    --near-ceiling-base|--label|--bundled|\
     --no-summary|--item|-h|--help) return 0 ;;
     *) return 1 ;;
   esac
@@ -302,6 +336,7 @@ recovered_given=false
 bundled=false
 summary_posted=true
 qa_labels=()
+labels=()
 near_ceiling=()
 item_n=()
 item_decision=()
@@ -335,6 +370,7 @@ while (( $# > 0 )); do
     --summary-file) need "$1" $# "${2:-}"; no_dup "$1" "$summary_file_given"; summary_file_given=true; summary_file="$2"; shift 2 ;;
     --recovered-text) need "$1" $# "${2:-}"; no_dup "$1" "$recovered_given"; recovered_given=true; recovered_text="$2"; shift 2 ;;
     --qa-label)     need "$1" $# "${2:-}"; qa_labels+=("$2"); shift 2 ;;
+    --label)        need "$1" $# "${2:-}"; labels+=("$2"); shift 2 ;;
     --near-ceiling-base) need "$1" $# "${2:-}"; no_dup "$1" "$near_ceiling_base_given"; near_ceiling_base_given=true; near_ceiling_base="$2"; shift 2 ;;
     --bundled)      bundled=true; shift ;;
     --no-summary)   summary_posted=false; shift ;;
@@ -520,6 +556,64 @@ fi
 if [[ "$kind" == "implement" ]]; then
   branch_baseline_lines "$worktree" "$SCRIPT_DIR/resolve-base-branch" "$commit" baseline_lines \
     || die baseline-read "path=$worktree" "commit=$commit"
+fi
+
+# apple_trigger PATHS_FILE — sets APPLE_CAUSE to the first label or changed
+# path the trigger names, or to "" when none; returns 1 when git cannot
+# answer. The changed paths travel NUL-separated through PATHS_FILE, since a
+# shell variable cannot hold a NUL.
+apple_trigger() {
+  local paths_file="$1" label apple base_ref path rest segment glob listed manifest
+  APPLE_CAUSE=""
+  for label in ${labels[@]+"${labels[@]}"}; do
+    for apple in "${APPLE_LABELS[@]}"; do
+      if [[ "$label" == "$apple" ]]; then
+        APPLE_CAUSE="label=$label"
+        return 0
+      fi
+    done
+  done
+  branch_growth_base_ref "$worktree" "$SCRIPT_DIR/resolve-base-branch" base_ref || return 1
+  git -C "$worktree" diff --name-only --no-renames -z "$base_ref...$commit" -- >"$paths_file" || return 1
+  while IFS= read -r -d '' path; do
+    rest="$path"
+    while [[ "$rest" == */* ]]; do
+      segment="${rest%%/*}"
+      rest="${rest#*/}"
+      for glob in "${APPLE_DIR_GLOBS[@]}"; do
+        # shellcheck disable=SC2053 # the glob is the pattern
+        if [[ "$segment" == $glob ]]; then
+          APPLE_CAUSE="path=$path"
+          return 0
+        fi
+      done
+    done
+    [[ "$rest" == "$APPLE_MANIFEST" ]] || continue
+    # A manifest the commit deletes names no platform.
+    listed="$(git -C "$worktree" ls-tree --full-tree --name-only "$commit" -- "$path")" || return 1
+    [[ -n "$listed" ]] || continue
+    manifest="$(git -C "$worktree" cat-file blob "$commit:$path")" || return 1
+    if LC_ALL=C grep -Eq -- "$APPLE_MANIFEST_PLATFORMS" <<<"$manifest"; then
+      APPLE_CAUSE="path=$path"
+      return 0
+    fi
+  done <"$paths_file"
+}
+
+if [[ "$validate" != FAILING:* && -f "$worktree/$APPLE_WORKFLOW" ]]; then
+  BRANCH_GROWTH_ERROR=""
+  apple_paths="$(mktemp)" || die scratch-failed "tmpdir=${TMPDIR:-/tmp}"
+  trap 'rm -f -- "${apple_paths:?}"' EXIT
+  apple_trigger "$apple_paths" || die apple-diff-unreadable "path=$worktree" "commit=$commit"
+  rm -f -- "${apple_paths:?}"
+  trap - EXIT
+  if [[ -n "$APPLE_CAUSE" ]]; then
+    mac_run_recorded=false
+    while IFS= read -r line; do
+      if [[ "$line" =~ $MAC_RUN_PASS ]]; then mac_run_recorded=true; fi
+    done <<<"$validate_note"
+    [[ "$mac_run_recorded" == true ]] || die mac-run-missing "$APPLE_CAUSE" "validate=$validate"
+  fi
 fi
 
 # --- Build the variable-length arrays deterministically with jq ---
