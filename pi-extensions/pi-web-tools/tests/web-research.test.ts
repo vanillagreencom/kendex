@@ -3,8 +3,9 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { applyResearchMode, buildRawSidecar, createWebResearchToolDefinition, defaultRawOutputPath, displayWebResearchPath, expandSimpleGlob, prepareResearchInput, renderFindingsReport, renderWebResearchSourceTree, resolveOutputPath, runExaResearch } from "../src/tools/web-research.js";
+import { ExaClient } from "../src/providers/exa.js";
 import { DEFAULT_SETTINGS } from "../src/settings.js";
-import { detailsHold, tempDir } from "./fixtures.js";
+import { answeringServer, detailsHold, tempDir } from "./fixtures.js";
 
 for (const { name, params, settings, expected } of [
 	{ name: "lite", params: { researchMode: "lite" }, settings: undefined, expected: { researchMode: "lite", type: "deep-lite", numResults: 15, textMaxCharacters: 10000, timeoutSeconds: 300, highlightsMaxCharacters: 600, highlightsPerUrl: 1 } },
@@ -31,6 +32,30 @@ test("full research executes additional queries and deduplicates URLs", async ()
 	};
 	const response = await runExaResearch(client, { query: "main", researchMode: "full", additionalQueries: ["second"] });
 	assert.deepEqual({ calls: calls.length, numResults: calls[0]?.numResults, textMaxCharacters: calls[0]?.textMaxCharacters, highlightsMaxCharacters: calls[0]?.highlightsMaxCharacters, highlightsPerUrl: calls[0]?.highlightsPerUrl, schema: Boolean(calls[0]?.outputSchema), additionalQueries: calls[0]?.additionalQueries, urls: response.results.map((result) => result.url), queryCount: response.metadata.queryCount, sourceCount: response.metadata.sourceCount, uniqueSourceCount: response.metadata.uniqueSourceCount }, { calls: 2, numResults: 150, textMaxCharacters: 24000, highlightsMaxCharacters: 1200, highlightsPerUrl: 3, schema: true, additionalQueries: undefined, urls: ["https://example.com/a", "https://example.com/dup", "https://example.com/b"], queryCount: 2, sourceCount: 4, uniqueSourceCount: 3 });
+});
+
+/** Settings whose `exaResearchModes` set `mode`'s timeoutSeconds. */
+function researchTimeout(mode: "lite" | "standard" | "full", timeoutSeconds: number) {
+	return { ...DEFAULT_SETTINGS, apiKeys: {}, warnings: [], exaResearchModes: { [mode]: { timeoutSeconds } } };
+}
+
+test("a full research run's queries share the mode's timeoutSeconds", { timeout: 10_000 }, async () => {
+	const timeoutSeconds = 0.3;
+	// Each query alone ends inside the deadline, after 60% of it; the second therefore ends past it.
+	const client = {
+		deepResearch: (params: Parameters<typeof runExaResearch>[1], signal?: AbortSignal) => new Promise<Awaited<ReturnType<typeof runExaResearch>>>((resolve, reject) => {
+			const timer = setTimeout(() => resolve({ results: [], raw: { query: params.query }, metadata: {} }), timeoutSeconds * 600);
+			signal?.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+		}),
+	};
+	const error = await runExaResearch(client, { query: "main", researchMode: "full", additionalQueries: ["second"] }, undefined, researchTimeout("full", timeoutSeconds)).then(() => undefined, (caught: unknown) => caught);
+	assert.deepEqual({ name: (error as Error | undefined)?.name, message: (error as Error | undefined)?.message }, { name: "TimeoutError", message: `web_research full mode exceeded its ${timeoutSeconds * 1000} ms deadline` });
+});
+
+test("a research request may run past the client's request deadline up to the mode's timeoutSeconds", { timeout: 10_000 }, async (t) => {
+	const base = await answeringServer(t, 400, { results: [{ title: "T", url: "https://example.com/t" }] });
+	const response = await runExaResearch(new ExaClient({ apiKey: "k", baseUrl: base, timeoutMs: 100 }), { query: "q", researchMode: "standard" }, undefined, researchTimeout("standard", 5));
+	assert.deepEqual(response.results.map((result) => result.url), ["https://example.com/t"]);
 });
 
 for (const row of [

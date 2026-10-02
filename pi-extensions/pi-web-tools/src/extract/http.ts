@@ -45,7 +45,7 @@ export async function fetchPdf(url: string, options: Pick<HttpFetchOptions, "fet
 	return await withDeadline(options.signal, options.timeoutMs ?? DEFAULT_DEADLINE_MS, `PDF fetch of ${url}`, async (signal) => {
 		const response = await fetchImpl(url, { signal });
 		if (!response.ok) throw new Error(`PDF fetch failed (${response.status}) for ${url}`);
-		return await readPdfWithin(response, options.reads, url);
+		return await readPdfWithin(response, options.reads, url, signal);
 	});
 }
 
@@ -71,7 +71,7 @@ async function fetchWithin(url: string, options: HttpFetchOptions & { signal: Ab
 		}
 		throw new Error(`HTTP fetch failed (${response.status}) for ${url}`);
 	}
-	const body = await readTextWithin(response, options.reads);
+	const body = await readTextWithin(response, options.reads, options.signal);
 	const raw = body.text;
 	let cut: BoundedRead["cut"] = body.cut;
 	let title: string | undefined;

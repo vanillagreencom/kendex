@@ -63,3 +63,16 @@ test("rasterizePdfPages: a hung pdftoppm is killed at the deadline and its direc
 	const input = pdftoppm.args().at(-2)!;
 	assert.deepEqual({ timedOut: error instanceof DOMException && error.name === "TimeoutError", withinBound: elapsed < 3_000, helperAlive: processAlive(pdftoppm.pid()), inputKept: existsSync(input) }, { timedOut: true, withinBound: true, helperAlive: false, inputKept: false });
 });
+
+test("rasterizePdfPages: a pdftoppm killed by a signal after writing one page rejects naming its exit", { timeout: 10_000 }, async (t) => {
+	const root = tempDir(t);
+	const pdfinfo = join(root, "pdfinfo");
+	const pdftoppm = join(root, "pdftoppm");
+	writeFileSync(pdfinfo, "#!/bin/sh\nprintf 'Pages: 2\\n'\n");
+	// SIGKILL, as an OOM kill at a high DPI sends; it writes no core file.
+	writeFileSync(pdftoppm, `#!/bin/sh\nfor last; do :; done\nprintf png > "$last-1.png"\nkill -KILL $$\n`);
+	chmodSync(pdfinfo, 0o755);
+	chmodSync(pdftoppm, 0o755);
+	const error = await rasterizePdfPages(new Uint8Array([37, 80, 68, 70]), { pi: piExec, maxPages: 2, pdfinfoCommand: pdfinfo, pdftoppmCommand: pdftoppm }).then(() => undefined, (caught: unknown) => caught);
+	assert.equal(error instanceof Error && error.message.startsWith(`${pdftoppm} exited 137`), true);
+});

@@ -44,7 +44,7 @@ for (const { name, url, clone, budget, expected } of [
 			extraction: result?.metadata.extraction,
 			...(expected.cut === undefined ? {} : { cut: (result?.metadata as Record<string, unknown> | undefined)?.bodyTruncatedAtBytes }),
 			content: Boolean(result?.content.includes("b".repeat(12)) && !result.content.includes("b".repeat(13))),
-			left: await readTextWithin(new Response("0123456789"), reads).then((read) => read.text, (error: Error) => error.name),
+			left: await readTextWithin(new Response("0123456789"), reads, undefined).then((read) => read.text, (error: Error) => error.name),
 		}), (error: Error) => ({ error: error.name, requests }));
 		assert.deepEqual(outcome, expected);
 	});

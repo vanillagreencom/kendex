@@ -115,8 +115,8 @@ export class ByteBudget {
 		if (this.#remaining <= 0) throw new ByteBudgetExhausted("call", this.total);
 	}
 
-	/** The reads of one URL. They hold their bytes in the process-wide in-flight budget until `release`, which the caller
-	 * runs when the URL's processing ends. */
+	/** The reads of one URL, under the tool call's `signal`. They hold their bytes in the process-wide in-flight budget until
+	 * `release`, which the caller runs when the URL's processing ends. */
 	openUrl(signal?: AbortSignal): UrlReads {
 		return new UrlReads(this, signal);
 	}
@@ -157,10 +157,11 @@ export class UrlReads {
 	}
 
 	/** Streams a response body within the ceiling, or within its declared length when that is smaller, then cancels the stream.
-	 * A body that sends nothing for BODY_IDLE_TIMEOUT_MS fails the read. */
-	async readBody(response: Response, perRead: number): Promise<BoundedRead> {
+	 * `request` is the signal the response's fetch was given, which carries the request's deadline: a wait for in-flight room
+	 * ends when it or the URL's signal aborts. A body that sends nothing for BODY_IDLE_TIMEOUT_MS fails the read. */
+	async readBody(response: Response, perRead: number, request: AbortSignal | undefined): Promise<BoundedRead> {
 		const declared = declaredLength(response);
-		const ceiling = await this.#reserve(perRead, declared).catch(async (error: unknown) => {
+		const ceiling = await this.#reserve(perRead, declared, request).catch(async (error: unknown) => {
 			await response.body?.cancel().catch(() => undefined);
 			throw error;
 		});
@@ -175,7 +176,7 @@ export class UrlReads {
 		const handle = await open(path, "r");
 		try {
 			const { size } = await handle.stat();
-			const ceiling = await this.#reserve(perRead, size);
+			const ceiling = await this.#reserve(perRead, size, undefined);
 			const read = await this.#charged(ceiling.reserved, async () => {
 				const buffer = Buffer.alloc(ceiling.reserved);
 				const { bytesRead } = await handle.read(buffer, 0, ceiling.reserved, 0);
@@ -193,12 +194,14 @@ export class UrlReads {
 		this.#held = 0;
 	}
 
-	/** Takes the read's ceiling and reserves the bytes it may hold (`size` when the source's size is known and smaller). */
-	async #reserve(perRead: number, size: number | undefined): Promise<{ limit: number; by: ReadCeiling; reserved: number }> {
+	/** Takes the read's ceiling and reserves the bytes it may hold (`size` when the source's size is known and smaller), waiting
+	 * under the URL's signal and the read's own `request` signal when it has one. */
+	async #reserve(perRead: number, size: number | undefined, request: AbortSignal | undefined): Promise<{ limit: number; by: ReadCeiling; reserved: number }> {
 		const ceiling = this.#call.ceiling(perRead);
 		const reserved = size === undefined ? ceiling.limit : Math.min(size, ceiling.limit);
 		this.release();
-		await inFlight.reserve(reserved, this.#signal);
+		const signals = [this.#signal, request].filter((signal): signal is AbortSignal => signal !== undefined);
+		await inFlight.reserve(reserved, signals.length > 1 ? AbortSignal.any(signals) : signals[0]);
 		this.#held = reserved;
 		return { ...ceiling, reserved };
 	}
@@ -298,22 +301,24 @@ export interface BoundedText {
 	cut?: BoundedRead["cut"];
 }
 
-/** Reads a text body within the per-read text limit and the call's remaining budget, decoding it as UTF-8 like `Response.text()`. */
-export async function readTextWithin(response: Response, reads: UrlReads): Promise<BoundedText> {
-	const read = await reads.readBody(response, TEXT_READ_BYTE_LIMIT);
+/** Reads a text body within the per-read text limit and the call's remaining budget, decoding it as UTF-8 like `Response.text()`.
+ * `request` is the signal the response's fetch was given (`UrlReads.readBody`). */
+export async function readTextWithin(response: Response, reads: UrlReads, request: AbortSignal | undefined): Promise<BoundedText> {
+	const read = await reads.readBody(response, TEXT_READ_BYTE_LIMIT, request);
 	return { text: new TextDecoder().decode(read.bytes), ...(read.cut ? { cut: read.cut } : {}) };
 }
 
 /** Reads a PDF body whole within the per-read PDF limit and the call's remaining budget, refusing one that holds more, before
- * any byte is read when its declared length already exceeds the ceiling. */
-export async function readPdfWithin(response: Response, reads: UrlReads, url: string): Promise<Buffer> {
+ * any byte is read when its declared length already exceeds the ceiling. `request` is the signal the response's fetch was
+ * given (`UrlReads.readBody`). */
+export async function readPdfWithin(response: Response, reads: UrlReads, url: string, request: AbortSignal | undefined): Promise<Buffer> {
 	const { limit } = reads.ceiling(PDF_READ_BYTE_LIMIT);
 	const declared = declaredLength(response);
 	if (declared !== undefined && declared > limit) {
 		await response.body?.cancel();
 		throw pdfTooLarge(url, `${declared} bytes`, limit);
 	}
-	const read = await reads.readBody(response, PDF_READ_BYTE_LIMIT);
+	const read = await reads.readBody(response, PDF_READ_BYTE_LIMIT, request);
 	if (read.cut) throw pdfTooLarge(url, `over ${read.cut.atBytes} bytes`, read.cut.atBytes);
 	return read.bytes;
 }

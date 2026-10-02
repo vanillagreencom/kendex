@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
 import type { ExecOptions, ExecResult } from "@earendil-works/pi-coding-agent";
-import { ByteBudget, type UrlReads } from "../src/extract/byte-budget.js";
+import { ByteBudget, TEXT_READ_BYTE_LIMIT, type UrlReads } from "../src/extract/byte-budget.js";
 import type { PiExec } from "../src/utils/deadline.js";
 import { getWebContent, type WebContentLookup } from "../src/storage.js";
 import type { ResultRef } from "../src/utils/format.js";
@@ -24,6 +24,19 @@ export function urlReads(t: TestContext, total?: number): UrlReads {
 	const reads = new ByteBudget(total).openUrl();
 	t.after(() => reads.release());
 	return reads;
+}
+
+/** Reads of other web_fetch calls that have each read TEXT_READ_BYTE_LIMIT bytes and hold them while their URLs are processed.
+ * They await no chunk, so no BODY_IDLE_TIMEOUT_MS deadline returns their in-flight room; the test's end releases it. */
+export async function heldReads(t: TestContext, count: number): Promise<UrlReads[]> {
+	const chunk = new Uint8Array(TEXT_READ_BYTE_LIMIT);
+	const held = await Promise.all(Array.from({ length: count }, async () => {
+		const reads = new ByteBudget().openUrl();
+		await reads.readBody(new Response(new ReadableStream<Uint8Array>({ pull: (controller) => controller.enqueue(chunk) })), TEXT_READ_BYTE_LIMIT, undefined);
+		return reads;
+	}));
+	t.after(() => { for (const reads of held) reads.release(); });
+	return held;
 }
 
 /** A body of `chunks` chunks of `chunkBytes` bytes, pulled one at a time, that counts the chunks pulled and records a cancel.
@@ -117,6 +130,27 @@ export async function stallingServer(t: TestContext, mode: "silent" | "stall"): 
 	});
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	t.after(() => {
+		server.closeAllConnections();
+		server.close();
+	});
+	return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+}
+
+/** The URL of a local server that answers each request with 200 and the JSON `body`, `delayMs` after it arrives, as a slow
+ * provider that does answer. */
+export async function answeringServer(t: TestContext, delayMs: number, body: unknown): Promise<string> {
+	const timers = new Set<ReturnType<typeof setTimeout>>();
+	const server = createServer((_request, response) => {
+		const timer = setTimeout(() => {
+			timers.delete(timer);
+			response.writeHead(200, { "content-type": "application/json" });
+			response.end(JSON.stringify(body));
+		}, delayMs);
+		timers.add(timer);
+	});
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	t.after(() => {
+		for (const timer of timers) clearTimeout(timer);
 		server.closeAllConnections();
 		server.close();
 	});

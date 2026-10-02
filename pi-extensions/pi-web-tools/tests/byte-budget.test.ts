@@ -3,11 +3,11 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { BODY_IDLE_TIMEOUT_MS, ByteBudget, ByteBudgetExhausted, IN_FLIGHT_BYTE_BUDGET, IN_FLIGHT_WAIT_TIMEOUT_MS, PDF_READ_BYTE_LIMIT, readLocalPdfWithin, readPdfWithin, readTextWithin, TEXT_READ_BYTE_LIMIT, type UrlReads } from "../src/extract/byte-budget.js";
-import { streamedBody, tempDir, urlReads } from "./fixtures.js";
+import { heldReads, streamedBody, tempDir, urlReads } from "./fixtures.js";
 
 /** What a text read of a 10-byte body returns after the reads under test: how much of the call budget they left. */
 async function leftAfter(reads: UrlReads): Promise<string> {
-	return readTextWithin(new Response("0123456789"), reads).then((read) => read.text, (error: Error) => error.name);
+	return readTextWithin(new Response("0123456789"), reads, undefined).then((read) => read.text, (error: Error) => error.name);
 }
 
 /** Runs every promise continuation queued so far: a read granted in-flight room reaches its body's first pull within them. */
@@ -26,7 +26,7 @@ for (const row of [
 ] as const) {
 	test(`UrlReads.readBody: ${row.name}`, async (t) => {
 		const { body, probe } = streamedBody(row.chunks, 4, row.end);
-		const pending = urlReads(t).readBody(new Response(body, { headers: row.headers }), row.limit);
+		const pending = urlReads(t).readBody(new Response(body, { headers: row.headers }), row.limit, undefined);
 		const read = await Promise.race([pending, settle().then(() => undefined)]);
 		assert.ok(read, "the read did not settle: it is waiting for a chunk the body never sends");
 		assert.deepEqual({ length: read.bytes.byteLength, cut: read.cut, pulled: probe.pulled, cancelled: probe.cancelled }, row.expected);
@@ -35,10 +35,10 @@ for (const row of [
 
 test("ByteBudget lowers each read to what the call has left, names that ceiling, then refuses", async (t) => {
 	const reads = urlReads(t, TEXT_READ_BYTE_LIMIT + 5);
-	const first = await readTextWithin(new Response(streamedBody(TEXT_READ_BYTE_LIMIT / 1024 + 1, 1024).body), reads);
-	const second = await readTextWithin(new Response("0123456789"), reads);
+	const first = await readTextWithin(new Response(streamedBody(TEXT_READ_BYTE_LIMIT / 1024 + 1, 1024).body), reads, undefined);
+	const second = await readTextWithin(new Response("0123456789"), reads, undefined);
 	const refused = streamedBody(1, 1);
-	const third = await readTextWithin(new Response(refused.body), reads).then(() => "read", (error: Error) => error.name);
+	const third = await readTextWithin(new Response(refused.body), reads, undefined).then(() => "read", (error: Error) => error.name);
 	assert.deepEqual({ first: first.cut, second, third, refusedBodyCancelled: refused.probe.cancelled }, {
 		first: { atBytes: TEXT_READ_BYTE_LIMIT, by: "read-limit" },
 		second: { text: "01234", cut: { atBytes: 5, by: "call-budget" } },
@@ -56,7 +56,7 @@ for (const row of [
 		const { body, probe } = streamedBody(row.chunks, 4);
 		const headers = row.declared ? { "content-length": String(row.chunks * 4) } : undefined;
 		const reads = urlReads(t, 10);
-		const outcome = await readPdfWithin(new Response(body, { headers }), reads, "https://example.com/a.pdf").then((bytes) => `${bytes.byteLength} bytes`, (error: Error) => error.message.split(":")[0]);
+		const outcome = await readPdfWithin(new Response(body, { headers }), reads, "https://example.com/a.pdf", undefined).then((bytes) => `${bytes.byteLength} bytes`, (error: Error) => error.message.split(":")[0]);
 		assert.deepEqual({ outcome, pulled: probe.pulled, left: await leftAfter(reads) }, row.expected);
 	});
 }
@@ -109,7 +109,7 @@ function gatedBody() {
 function concurrentCallRead(signal?: AbortSignal, perRead = TEXT_READ_BYTE_LIMIT, headers = new Headers()) {
 	const reads = new ByteBudget().openUrl(signal);
 	const body = gatedBody();
-	const read = reads.readBody(new Response(body.body, { headers }), perRead).then(() => "read", (error: Error) => error instanceof ByteBudgetExhausted ? `${error.name}:${error.budget}` : error.name);
+	const read = reads.readBody(new Response(body.body, { headers }), perRead, undefined).then(() => "read", (error: Error) => error instanceof ByteBudgetExhausted ? `${error.name}:${error.budget}` : error.name);
 	return { reads, body, read };
 }
 
@@ -174,9 +174,9 @@ test("a read aborted while it waits for in-flight room rejects, cancels its body
 test("a URL's next read waits only for room its own earlier read does not already hold", { timeout: 10_000 }, async (t) => {
 	const holders = Array.from({ length: SLOTS - 1 }, () => concurrentCallRead());
 	const reads = urlReads(t);
-	await reads.readBody(new Response("x"), TEXT_READ_BYTE_LIMIT);
+	await reads.readBody(new Response("x"), TEXT_READ_BYTE_LIMIT, undefined);
 	const next = gatedBody();
-	const nextRead = reads.readBody(new Response(next.body), TEXT_READ_BYTE_LIMIT);
+	const nextRead = reads.readBody(new Response(next.body), TEXT_READ_BYTE_LIMIT, undefined);
 	await settle();
 	const nextPulled = next.probe.pulled;
 	for (const call of holders) call.body.finish(0);
@@ -216,19 +216,6 @@ for (const row of [
 		await finishAll([...holders, pdf]);
 		assert.equal(pulled, row.expected);
 	});
-}
-
-/** Reads of other web_fetch calls that have each read TEXT_READ_BYTE_LIMIT bytes and hold them while their URLs are processed.
- * They await no chunk, so no BODY_IDLE_TIMEOUT_MS deadline returns their in-flight room; the test's end releases it. */
-async function heldReads(t: TestContext, count: number): Promise<UrlReads[]> {
-	const chunk = new Uint8Array(TEXT_READ_BYTE_LIMIT);
-	const held = await Promise.all(Array.from({ length: count }, async () => {
-		const reads = new ByteBudget().openUrl();
-		await reads.readBody(new Response(new ReadableStream<Uint8Array>({ pull: (controller) => controller.enqueue(chunk) })), TEXT_READ_BYTE_LIMIT);
-		return reads;
-	}));
-	t.after(() => { for (const reads of held) reads.release(); });
-	return held;
 }
 
 test("a read that waits IN_FLIGHT_WAIT_TIMEOUT_MS for in-flight room fails naming that budget, cancels its body and holds nothing", { timeout: 10_000 }, async (t) => {
@@ -279,7 +266,7 @@ test("a read whose body sends nothing for BODY_IDLE_TIMEOUT_MS fails naming the 
 	const stalledReads = new ByteBudget().openUrl();
 	t.after(() => stalledReads.release());
 	const stalledBody = streamedBody(1, 4, "stall");
-	const stalled = stalledReads.readBody(new Response(stalledBody.body), TEXT_READ_BYTE_LIMIT).then(() => "read", (error: Error) => error.message.split(":")[0]);
+	const stalled = stalledReads.readBody(new Response(stalledBody.body), TEXT_READ_BYTE_LIMIT, undefined).then(() => "read", (error: Error) => error.message.split(":")[0]);
 	const waiting = concurrentCallRead();
 	await settle();
 	t.mock.timers.tick(BODY_IDLE_TIMEOUT_MS - 1);

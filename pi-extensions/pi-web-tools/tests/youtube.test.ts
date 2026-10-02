@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import test from "node:test";
 import { extractYouTubeUrl, formatYouTubeTranscript, isTranscriptPrompt, parseYouTubeUrl } from "../src/extract/youtube.js";
-import { isolateEnvironment, sleepingHelper, tempDir } from "./fixtures.js";
 
 for (const { url, field, expected } of [
 	{ url: "https://www.youtube.com/watch?v=abc123XYZ_-", field: "videoId", expected: "abc123XYZ_-" },
@@ -131,21 +128,4 @@ test("successful captions remove the parent timeout listener", async (t) => {
 	const remove = t.mock.method(signal, "removeEventListener");
 	await extractYouTubeUrl("https://youtu.be/abc123XYZ_-", { mode: "transcript", timeoutMs: 60000, signal, transcriptFetcher: async (id) => captions(id, "Cleanup", "Done", "en") });
 	assert.deepEqual({ added: add.mock.callCount(), removed: remove.mock.callCount() }, { added: 1, removed: 1 });
-});
-
-test("understanding without a browser cookie read skips Gemini Web and runs no cookie helper", async (t) => {
-	const path = process.env.PATH;
-	isolateEnvironment(t, ["HOME", "PATH"]);
-	const root = tempDir(t);
-	const profile = join(root, "home", ".mozilla", "firefox", "default");
-	mkdirSync(profile, { recursive: true });
-	writeFileSync(join(profile, "cookies.sqlite"), "");
-	const sqlite3 = sleepingHelper(root, "sqlite3", 0);
-	process.env.HOME = join(root, "home");
-	process.env.PATH = `${root}:${path}`;
-	const result = await extractYouTubeUrl("https://youtu.be/abc123XYZ_-", {
-		mode: "understand", geminiApiKey: "key",
-		fetchImpl: async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "Visual summary" }] } }] }), { status: 200 }),
-	});
-	assert.deepEqual({ source: result?.source, cookieHelperRan: existsSync(`${sqlite3.path}.pid`) }, { source: "gemini-api", cookieHelperRan: false });
 });

@@ -1,3 +1,4 @@
+import { DEFAULT_DEADLINE_MS, withDeadline } from "../utils/deadline.js";
 import { ByteBudgetExhausted, readTextWithin, truncationMetadata, type UrlReads } from "./byte-budget.js";
 import { cloneOrUpdateRepo, defaultCacheDir, isGitInstalled, readBlobFromCache, readReadmeFromCache, readTreeFromCache, summarizeTreeEntries } from "./github-clone.js";
 
@@ -22,6 +23,8 @@ export interface GitHubExtractOptions {
 	cloneTimeoutSeconds?: number;
 	cacheDir?: string;
 	maxAgeHours?: number;
+	/** Deadline of each GitHub API, raw-file or README request, through its body; DEFAULT_DEADLINE_MS when absent. */
+	timeoutMs?: number;
 	/** This URL's reads under the calling web_fetch call's budget; the caller releases them when the URL's processing ends. */
 	reads: UrlReads;
 }
@@ -51,10 +54,16 @@ export function parseGitHubUrl(input: string): ParsedGitHubUrl | undefined {
 	return { kind: "repo", owner, repo, apiUrl: base };
 }
 
-async function jsonFetch(fetchImpl: typeof fetch, url: string, signal?: AbortSignal): Promise<any> {
-	const response = await fetchImpl(url, { headers: { accept: "application/vnd.github+json" }, signal });
-	if (!response.ok) throw new Error(`GitHub fetch failed (${response.status}) for ${url}`);
-	return response.json();
+/** Every GitHub request: `read` takes the response under the request's deadline signal, which also ends its body read. */
+async function githubRequest<T>(fetchImpl: typeof fetch, url: string, options: GitHubExtractOptions, init: RequestInit, read: (response: Response, signal: AbortSignal) => Promise<T>): Promise<T> {
+	return await withDeadline(options.signal, options.timeoutMs ?? DEFAULT_DEADLINE_MS, `GitHub fetch of ${url}`, async (signal) => await read(await fetchImpl(url, { ...init, signal }), signal));
+}
+
+async function jsonFetch(fetchImpl: typeof fetch, url: string, options: GitHubExtractOptions): Promise<any> {
+	return await githubRequest(fetchImpl, url, options, { headers: { accept: "application/vnd.github+json" } }, async (response) => {
+		if (!response.ok) throw new Error(`GitHub fetch failed (${response.status}) for ${url}`);
+		return await response.json();
+	});
 }
 
 async function shouldUseClone(parsed: ParsedGitHubUrl, options: GitHubExtractOptions, fetchImpl: typeof fetch): Promise<{ useClone: boolean; sizeKB?: number; defaultBranch?: string }> {
@@ -62,7 +71,7 @@ async function shouldUseClone(parsed: ParsedGitHubUrl, options: GitHubExtractOpt
 	if (parsed.kind === "commit") return { useClone: false };
 	if (!isGitInstalled()) return { useClone: false };
 	try {
-		const meta = await jsonFetch(fetchImpl, `https://api.github.com/repos/${parsed.owner}/${parsed.repo}`, options.signal);
+		const meta = await jsonFetch(fetchImpl, `https://api.github.com/repos/${parsed.owner}/${parsed.repo}`, options);
 		const maxKB = (options.maxRepoSizeMB ?? 350) * 1024;
 		const size = typeof meta?.size === "number" ? meta.size : 0;
 		if (size > maxKB) return { useClone: false, sizeKB: size, defaultBranch: meta?.default_branch };
@@ -111,15 +120,19 @@ export async function extractGitHubUrl(input: string, options: GitHubExtractOpti
 		}
 	}
 	if (parsed.kind === "blob" && parsed.rawUrl) {
-		const response = await fetchImpl(parsed.rawUrl, { signal: options.signal });
-		if (!response.ok) throw new Error(`GitHub raw fetch failed (${response.status}) for ${parsed.rawUrl}`);
-		const body = await readTextWithin(response, options.reads);
+		const rawUrl = parsed.rawUrl;
+		const body = await githubRequest(fetchImpl, rawUrl, options, {}, async (response, signal) => {
+			if (!response.ok) throw new Error(`GitHub raw fetch failed (${response.status}) for ${rawUrl}`);
+			return await readTextWithin(response, options.reads, signal);
+		});
 		return { title: `${parsed.owner}/${parsed.repo}/${parsed.path ?? ""}`, content: body.text, metadata: { provider: "github", ...parsed, extraction: "raw", ...truncationMetadata(body.cut) } };
 	}
-	const data = await jsonFetch(fetchImpl, parsed.apiUrl, options.signal);
+	const data = await jsonFetch(fetchImpl, parsed.apiUrl, options);
 	if (parsed.kind === "repo") {
-		const readme = await fetchImpl(`https://raw.githubusercontent.com/${parsed.owner}/${parsed.repo}/HEAD/README.md`, { signal: options.signal }).then((r) => r.ok ? readTextWithin(r, options.reads) : undefined).catch((error: unknown) => {
-			// A repo without a readable README still returns its description; a byte-budget refusal or an abort ends the URL instead.
+		const readmeUrl = `https://raw.githubusercontent.com/${parsed.owner}/${parsed.repo}/HEAD/README.md`;
+		const readme = await githubRequest(fetchImpl, readmeUrl, options, {}, async (response, signal) => response.ok ? await readTextWithin(response, options.reads, signal) : undefined).catch((error: unknown) => {
+			// A repo without a readable README, its deadline passed included, still returns its description; a byte-budget refusal
+			// or an abort ends the URL instead.
 			if (error instanceof ByteBudgetExhausted || options.signal?.aborted) throw error;
 			return undefined;
 		});

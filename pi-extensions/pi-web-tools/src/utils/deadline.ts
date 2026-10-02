@@ -29,16 +29,35 @@ export async function withDeadline<T>(parent: AbortSignal | undefined, timeoutMs
 	}
 }
 
+/** The sh script a POSIX helper runs under. Pi's exec reports a helper killed by a signal it did not send (a crash, an OOM
+ * kill) as exit code 0; run as the script's child, that death becomes the script's exit code 128+N. The script passes Pi's
+ * SIGTERM on to the helper and waits for it, so a deadline or a cancellation still kills the helper. */
+const SIGNAL_EXIT_SCRIPT = `child=
+stop=
+trap 'stop=1; [ -n "$child" ] && kill -TERM "$child" 2>/dev/null' TERM
+"$0" "$@" &
+child=$!
+[ -n "$stop" ] && kill -TERM "$child" 2>/dev/null
+while :; do
+	wait "$child"
+	status=$?
+	kill -0 "$child" 2>/dev/null || break
+done
+exit "$status"`;
+
 /** The stdout of `command` run through Pi's exec under `signal`. A helper killed because the signal aborted rejects with the
  * signal's reason: the caller's cancellation, or the `withDeadline` TimeoutError. A nonzero exit rejects naming the helper,
- * its exit code and its stderr; Pi's exec reports a helper that failed to start as exit code 1 with no stderr. */
+ * its exit code and its stderr; on POSIX a helper that died by a signal exits 128+N, and one that is not installed exits 127.
+ * Windows has no signal deaths, so the helper runs there without the script. */
 export async function runHelper(pi: PiExec, command: string, args: string[], signal: AbortSignal): Promise<string> {
 	signal.throwIfAborted();
-	const result = await pi.exec(command, args, { signal });
+	const result = process.platform === "win32"
+		? await pi.exec(command, args, { signal })
+		: await pi.exec("sh", ["-c", SIGNAL_EXIT_SCRIPT, command, ...args], { signal });
 	if (result.killed) {
 		signal.throwIfAborted();
 		throw new Error(`helper-killed: ${command}\nPi killed the helper although its signal never aborted.`);
 	}
-	if (result.code !== 0) throw new Error(`${command} exited ${result.code}: ${result.stderr.trim() || "no stderr (not installed, or failed before writing)"}`);
+	if (result.code !== 0) throw new Error(`${command} exited ${result.code}: ${result.stderr.trim() || "no stderr (failed before writing)"}`);
 	return result.stdout;
 }

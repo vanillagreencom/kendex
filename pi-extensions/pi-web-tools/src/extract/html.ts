@@ -337,7 +337,7 @@ export async function fetchViaJina(targetUrl: string, options: JinaFetchOptions)
 	if (options.apiKey) headers.authorization = `Bearer ${options.apiKey}`;
 	const response = await fetchImpl(`https://r.jina.ai/${targetUrl}`, { headers, signal: options.signal });
 	if (!response.ok) throw new Error(`Jina Reader fetch failed (${response.status}) for ${targetUrl}`);
-	const body = await readTextWithin(response, options.reads);
+	const body = await readTextWithin(response, options.reads, options.signal);
 	const text = body.text;
 	const titleMatch = text.match(/^Title:\s*(.+)$/m);
 	const bodyStart = text.indexOf("Markdown Content:");
