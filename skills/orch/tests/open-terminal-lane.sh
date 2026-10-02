@@ -1103,8 +1103,16 @@ said() { grep -cxF -- "$1" <<<"$OUT" || true; }
 
 run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_ALIASES=eclaude=work;$CHOICE_CMD" --harness claude --lane work --repo o/r KEN-40
 assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") calls=$(host_call) ssh=$(typed "clear; ssh 'lane.example'") remote=$(typed "exec bash -lc 'cd /srv/lane && exec true --model opus --effort high $QUESTION_OFF_ALL'") env=$(typed CLAUDE_CONFIG_DIR=) opened=$(said "open-terminal: tmux-opened item=KEN-40 host=$HOST_STUB path=/srv/lane")" \
-  "rc=0 creates=nolog launched=1 claim_lanes=eclaude calls=accounts;create,--item,KEN-40,--repo,o/r,--harness,claude,--account,eclaude;cat,--item,KEN-40,/srv/lane/.git;put,--item,KEN-40,/srv/clone/.git/lane-mail/ken-40;cat,--item,KEN-40,/srv/clone/.git/lane-mail/ken-40;put,--item,KEN-40,/srv/lane/tmp/lane-mail/KEN-40/context.json ssh=1 remote=1 env=0 opened=1" \
+  "rc=0 creates=nolog launched=1 claim_lanes=eclaude calls=accounts;create,--item,KEN-40,--repo,o/r,--harness,claude,--account,eclaude;cat,--item,KEN-40,/srv/lane/.git;put,--item,KEN-40,/srv/clone/.git/lane-mail/ken-40;cat,--item,KEN-40,/srv/clone/.git/lane-mail/ken-40;put,--item,KEN-40,/srv/clone/.git/worktrees/lane/lane-refresh;put,--item,KEN-40,/srv/lane/tmp/lane-mail/KEN-40/context.json ssh=1 remote=1 env=0 opened=1" \
   "a hosted launch creates through lane-host, types ssh then the remote line, and renders no lane env prefix"
+# The refresh record a hosted launch puts where the lane's .git names its
+# worktree git directory: the lane's root for --lane-refresh, else empty, which
+# the drift hook reads as no refresh lane, since the host has no verb that
+# deletes it.
+hosted_refresh() { local f="$RUN/remote/srv/clone/.git/worktrees/lane/lane-refresh"; [[ -f "$f" ]] && printf '[%s]' "$(cat "$f")" || printf none; }
+assert_eq "refresh=$(hosted_refresh)" "refresh=[]" "a hosted launch without --lane-refresh empties the refresh record"
+run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_ALIASES=eclaude=work;$CHOICE_CMD" --harness claude --lane work --repo o/r --lane-refresh KEN-40
+assert_eq "rc=$RC refresh=$(hosted_refresh)" "rc=0 refresh=[/srv/lane]" "a hosted --lane-refresh launch puts the lane's root in the refresh record"
 # Q is how single_quote renders one quote of the continuation line inside the
 # remote command. A hosted relaunch selects a resume or the start brief and
 # counts only once its pane draws a harness screen, which HARNESS_UP shows once the remote command is typed;
@@ -1133,7 +1141,7 @@ hosted_line() { printf 'Resume the orch workflow for %s from where this session 
 HOSTED_LINE="$(hosted_line KEN-41)"
 run_ot "$HARNESS_UP;$CHOICE" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --relaunch KEN-41
 assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "$(hosted_resume KEN-41 KEN-41 '/orch start KEN-41')")" \
-  "rc=0 creates=nolog launched=1 calls=accounts;create,--item,KEN-41,--repo,o/r,--harness,claude,--account,claude,--relaunch;cat,--item,KEN-41,/srv/lane/.git;put,--item,KEN-41,/srv/clone/.git/lane-mail/ken-41;cat,--item,KEN-41,/srv/clone/.git/lane-mail/ken-41;put,--item,KEN-41,/srv/lane/tmp/lane-mail/KEN-41/context.json remote=1" \
+  "rc=0 creates=nolog launched=1 calls=accounts;create,--item,KEN-41,--repo,o/r,--harness,claude,--account,claude,--relaunch;cat,--item,KEN-41,/srv/lane/.git;put,--item,KEN-41,/srv/clone/.git/lane-mail/ken-41;cat,--item,KEN-41,/srv/clone/.git/lane-mail/ken-41;put,--item,KEN-41,/srv/clone/.git/worktrees/lane/lane-refresh;put,--item,KEN-41,/srv/lane/tmp/lane-mail/KEN-41/context.json remote=1" \
   "a hosted claude relaunch passes the picked account and --relaunch, and continues natively with the continuation line, the start brief behind it"
 HOSTED_LINE='Resume the orch workflow for KEN-48 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item KEN-48 first and act on every directive it prints.'
 PI_RELAUNCH="$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_COPILOT_POOL=$H/.eclaude=1/10;flags=--model github-copilot/opus --thinking high"
@@ -1311,7 +1319,7 @@ OPEN_TERMINAL="$CODEX_OT_SHIPPED"
 HOSTED_LINE="$(hosted_line issue-2708)"
 run_ot "$HARNESS_UP;ORCH_LANE_ALIASES=eclaude=work;$CHOICE" --host "$HOST_STUB" --tracker github --harness claude --lane work --repo o/r --relaunch 2708
 assert_eq "$(observe "rc=0 creates=nolog launched=1") calls=$(host_call) remote=$(typed "$(hosted_resume issue-2708 github-2708 '/orch start github o/r#2708')")" \
-  "rc=0 creates=nolog launched=1 calls=accounts;create,--item,issue-2708,--repo,o/r,--harness,claude,--account,eclaude,--relaunch;cat,--item,issue-2708,/srv/lane/.git;put,--item,issue-2708,/srv/clone/.git/lane-mail/issue-2708;cat,--item,issue-2708,/srv/clone/.git/lane-mail/issue-2708;put,--item,issue-2708,/srv/lane/tmp/lane-mail/issue-2708/context.json remote=1" \
+  "rc=0 creates=nolog launched=1 calls=accounts;create,--item,issue-2708,--repo,o/r,--harness,claude,--account,eclaude,--relaunch;cat,--item,issue-2708,/srv/lane/.git;put,--item,issue-2708,/srv/clone/.git/lane-mail/issue-2708;cat,--item,issue-2708,/srv/clone/.git/lane-mail/issue-2708;put,--item,issue-2708,/srv/clone/.git/worktrees/lane/lane-refresh;put,--item,issue-2708,/srv/lane/tmp/lane-mail/issue-2708/context.json remote=1" \
   "a GitHub relaunch names the worktree id its mailbox is bound under, never the bare issue number, and asks the provider nothing beyond the judge's one accounts read on an account that measured"
 
 # WHICH CREDENTIAL A HOSTED LAUNCH RUNS ON. The host runs the copy the provider
@@ -1810,14 +1818,17 @@ exit 0
 STUBEOF
 chmod +x "$NOGIT_STUB"
 
-# marked SCRIPT NAME WORKTREE_CLI — one launch of KEN-40 from a caller checkout
-# of its own. Prints `rc=<rc> marker=<root|none|other> box=<made|none>
-# refused=<marker-failed lines>`. `box` is the lane's own mailbox directory,
-# which the launch makes in the item's own spelling: lane-mail-check resolves
-# the item by it, so a lane nobody has messaged is still judged on its handoff
-# marks.
+# marked SCRIPT NAME WORKTREE_CLI [OPTION] — one launch of KEN-40 from a caller
+# checkout of its own. Prints `rc=<rc> marker=<root|none|other> box=<made|none>
+# refresh=<root|none|other> refused=<marker-failed lines>`. `box` is the lane's
+# own mailbox directory, which the launch makes in the item's own spelling:
+# lane-mail-check resolves the item by it, so a lane nobody has messaged is
+# still judged on its handoff marks. `refresh` is the refresh record
+# --lane-refresh asks lane-marker for.
 marked() {
-  local script="$1" name="$2" runs="$TMP_ROOT/$2-runs" caller="$TMP_ROOT/$2-caller" out rc=0 wt marker=none box=none
+  local script="$1" name="$2" runs="$TMP_ROOT/$2-runs" caller="$TMP_ROOT/$2-caller" out rc=0 wt marker=none box=none refresh=none
+  local option=()
+  [[ -z "${4:-}" ]] || option=("$4")
   mkdir -p "$runs" "$caller"
   git -C "$caller" init -q
   git -C "$caller" config gc.auto 0
@@ -1825,7 +1836,7 @@ marked() {
   out="$( cd "$caller" && env "${LANE_ENV_DEFAULTS[@]}" GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" \
     OT_TMUX_PANES="$runs/panes" OT_WT_LOG="$runs/worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$3" \
-    "$script" --harness claude --cmd "true $QUESTION_OFF_ALL" KEN-40 2>&1 )" || rc=$?
+    "$script" --harness claude --cmd "true $QUESTION_OFF_ALL" ${option[@]+"${option[@]}"} KEN-40 2>&1 )" || rc=$?
   wt="$(find "$runs" -maxdepth 1 -type d -name 'wt.*')"
   if [[ -f "$wt/.git/lane-mail/ken-40" ]]; then
     marker=other
@@ -1833,13 +1844,26 @@ marked() {
   fi
   # A plain directory, never a link a row planted: -d alone follows one.
   { [[ -L "$wt/tmp/lane-mail/KEN-40" ]] || [[ ! -d "$wt/tmp/lane-mail/KEN-40" ]]; } || box=made
-  printf 'rc=%s marker=%s box=%s refused=%s' "$rc" "$marker" "$box" "$(grep -c '^open-terminal: marker-failed item=KEN-40 ' <<<"$out" || true)"
+  if [[ -f "$wt/.git/lane-refresh" ]]; then
+    refresh=other
+    [[ "$(cat "$wt/.git/lane-refresh")" != "$wt" ]] || refresh=root
+  fi
+  printf 'rc=%s marker=%s box=%s refresh=%s refused=%s' "$rc" "$marker" "$box" "$refresh" "$(grep -c '^open-terminal: marker-failed item=KEN-40 ' <<<"$out" || true)"
 }
 
-assert_eq "$(marked "$OPEN_TERMINAL" marked "$OT_STUB_BIN/worktree")" "rc=0 marker=root box=made refused=0" \
+assert_eq "$(marked "$OPEN_TERMINAL" marked "$OT_STUB_BIN/worktree")" "rc=0 marker=root box=made refresh=none refused=0" \
   "a launch binds its lowercased item to the root of the tree it made and opens the lane's mailbox there"
-assert_eq "$(marked "$OPEN_TERMINAL" unmarkable "$NOGIT_STUB")" "rc=1 marker=none box=none refused=1" \
+assert_eq "$(marked "$OPEN_TERMINAL" refresh "$OT_STUB_BIN/worktree" --lane-refresh)" "rc=0 marker=root box=made refresh=root refused=0" \
+  "a --lane-refresh launch also writes the refresh record holding the lane's root"
+assert_eq "$(marked "$OPEN_TERMINAL" unmarkable "$NOGIT_STUB")" "rc=1 marker=none box=none refresh=none refused=1" \
   "a tree git cannot mark fails the item instead of launching it"
+
+# The must-fail control for the option: a copy that reads --lane-refresh and
+# hands lane-marker nothing for it, so the refresh row above turns red.
+REFRESH_DROPPED="$(mutant_scripts ctl-refresh-dropped open-terminal)/open-terminal" || exit 1
+mutate_file "$REFRESH_DROPPED" '|| refresh=(--lane-refresh)' '|| refresh=()'
+assert_eq "$(marked "$REFRESH_DROPPED" refresh-dropped "$OT_STUB_BIN/worktree" --lane-refresh)" "rc=0 marker=root box=made refresh=none refused=0" \
+  "control: an option handed to no lane-marker call leaves no refresh record"
 
 # A worktree whose tmp is a symlink, which skills/worktree's WORKTREE_SYMLINKS
 # makes: the launch marks it and opens its mailbox through the link, because
@@ -1857,7 +1881,7 @@ ln -s "$scratch" "$d/tmp"
 printf '%s\n' "$d"
 STUBEOF
 chmod +x "$TMPLINK_STUB"
-assert_eq "$(marked "$OPEN_TERMINAL" tmplink "$TMPLINK_STUB")" "rc=0 marker=root box=made refused=0" \
+assert_eq "$(marked "$OPEN_TERMINAL" tmplink "$TMPLINK_STUB")" "rc=0 marker=root box=made refresh=none refused=0" \
   "a launch into a worktree whose tmp is a symlink writes the marker and the mailbox"
 
 # A symlink already at the marker path fails the item and writes through nothing.
@@ -1876,7 +1900,7 @@ STUBEOF
 chmod +x "$LINKED_STUB"
 LINKED="$(marked "$OPEN_TERMINAL" linked "$LINKED_STUB")"
 assert_eq "$LINKED target=$([[ -e "$TMP_ROOT/linked-runs/marker-target" ]] && echo written || echo untouched)" \
-  "rc=1 marker=none box=none refused=1 target=untouched" "a symlink at the marker path fails the item and writes through nothing"
+  "rc=1 marker=none box=none refresh=none refused=1 target=untouched" "a symlink at the marker path fails the item and writes through nothing"
 
 echo "=== a lane launches through its own launcher ==="
 # A command named for the lane's config directory selects the account itself,

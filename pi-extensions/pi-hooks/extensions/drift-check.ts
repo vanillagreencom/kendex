@@ -1,12 +1,12 @@
 /**
  * kendex check --quiet --report-only output protocol: exit 1 report bytes are
- * relayed outside lanes. Lanes withhold reports with any fix: kendex advice
- * or a direct refresh or remove suggestion.
+ * relayed outside lanes and in refresh lanes. Other lanes withhold reports
+ * with any fix: kendex advice or a direct refresh or remove suggestion.
  * At exit 2, leading Error: or error: denotes a precheck failure; all other
  * nonempty reports are incomplete checks. tests/drift-check.test.ts pins the
  * complete result and report for each producer form.
  */
-import { accessSync, constants, readdirSync, readFileSync, statSync } from "node:fs";
+import { accessSync, constants, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { runCommandAsync } from "./process.js";
@@ -38,9 +38,12 @@ type CheckResult =
 	| { kind: "unavailable" }
 	| { kind: "unusable-cwd"; cwd: string };
 
-/** A lane wraps the check so even a clean install carries the worktree rule. */
+/**
+ * A lane wraps the check so even a clean install carries the worktree rule.
+ * `refresh` is a lane whose launch wrote orch lane-marker's refresh record.
+ */
 export type DriftCheckResult = CheckResult
-	| { kind: "lane"; check: CheckResult }
+	| { kind: "lane"; refresh: boolean; check: CheckResult }
 	| { kind: "lane-unknown"; report: string };
 
 export interface DriftCheckOptions {
@@ -66,6 +69,7 @@ export async function runDriftCheck(cwd: string, options: DriftCheckOptions): Pr
 	}
 	const git = await runCommandAsync("git", ["rev-parse", "--show-toplevel", "--absolute-git-dir", "--path-format=absolute", "--git-common-dir"], cwd, options.timeoutMs);
 	let lane = false;
+	let refresh = false;
 	if (git.stoppedBy !== null) return { kind: "lane-unknown", report: `git probe stopped by ${git.stoppedBy}.` };
 	if (git.exitCode !== 0) {
 		if (!git.stderr.includes("not a git repository")) return { kind: "lane-unknown", report: git.stderr };
@@ -90,6 +94,20 @@ export async function runDriftCheck(cwd: string, options: DriftCheckOptions): Pr
 				}
 			}
 		}
+		if (lane) {
+			// lane-marker --lane-refresh writes the root into this record; a
+			// launch without it removes the record and a hosted launcher
+			// empties it.
+			const record = join(gitDir, "lane-refresh");
+			try {
+				if (!lstatSync(record).isFile()) throw new Error(`The lane refresh record is not a plain file: ${record}`);
+				refresh = readFileSync(record, "utf8").replace(/\n$/, "") === root;
+			} catch (error) {
+				if (!(error instanceof Error && "code" in error && error.code === "ENOENT" && "path" in error && error.path === record)) {
+					return { kind: "lane-unknown", report: String(error) };
+				}
+			}
+		}
 	}
 	const result = await runCommandAsync(binary, ["check", "--quiet", "--report-only"], cwd, options.timeoutMs);
 	// The report is on stdout; stderr carries only Error: lines and the
@@ -104,7 +122,7 @@ export async function runDriftCheck(cwd: string, options: DriftCheckOptions): Pr
 	// missing binary is almost always a PATH gap worth one line.
 	else if (result.exitCode === -1 && /ENOENT/.test(result.stderr)) check = { kind: "unavailable" };
 	else check = { kind: "failed", exitCode: result.exitCode, report };
-	return lane ? { kind: "lane", check } : check;
+	return lane ? { kind: "lane", refresh, check } : check;
 }
 
 /** Text handed to the agent; `undefined` means a clean install outside a lane. */
@@ -113,9 +131,11 @@ export function driftMessage(result: DriftCheckResult): string | undefined {
 		case "lane-unknown":
 			return `session-drift-check: lane=unknown\nThe lane status could not be read. Drift details are withheld.\n${result.report}`;
 		case "lane": {
-			const rule = "session-drift-check: lane=1\nThis worktree changes nothing about the install. The overseer refreshes the base checkout after merge. kendex refresh and kendex apply are never run here.";
+			const rule = result.refresh
+				? "session-drift-check: lane=1\nsession-drift-check: lane-refresh=1\nThis worktree is a refresh lane. kendex refresh and kendex apply run here only with --lane-refresh, and the brief says which."
+				: "session-drift-check: lane=1\nThis worktree changes nothing about the install. The overseer refreshes the base checkout after merge. kendex refresh and kendex apply are never run here.";
 			let check = result.check;
-			if ("report" in check && /fix:\s+kendex([\s\p{P}]|$)|kendex\s+(refresh|remove)([\s\p{P}]|$)/u.test(check.report)) {
+			if (!result.refresh && "report" in check && /fix:\s+kendex([\s\p{P}]|$)|kendex\s+(refresh|remove)([\s\p{P}]|$)/u.test(check.report)) {
 				// render_plain emits two-space items and a section overflow
 				// count. Whole-report truncation yields only a lower bound.
 				let count = 0;

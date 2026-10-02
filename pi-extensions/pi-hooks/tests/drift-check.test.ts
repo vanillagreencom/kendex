@@ -1,12 +1,13 @@
 import { expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 
 import type { DriftCheckResult } from "../extensions/drift-check.ts";
 // Controls rerun these assertions against a planted copy, never the live file.
 const { driftMessage, runDriftCheck } = await import(process.env.DRIFT_UNDER_TEST ?? "../extensions/drift-check.ts") as typeof import("../extensions/drift-check.ts");
 import { withFake } from "./drift-fixture.ts";
-import { runGit, useIsolatedGitEnv } from "./harness.ts";
+import { mutatedCarrier, runGit, useIsolatedGitEnv } from "./harness.ts";
 
 useIsolatedGitEnv();
 
@@ -123,3 +124,62 @@ for (const fault of ["gitfile", "marker-directory"] as const) {
 		});
 	});
 }
+
+// lane-marker --lane-refresh writes the lane's root into lane-refresh in the
+// lane's own git directory; a hosted launcher empties it for any other launch.
+// `notice` is the leading keyed lines and whether the ordinary notice's
+// prohibition stands; `report` is what follows the notice sentence.
+async function refreshRow(mode: "linked" | "marker", content: "root" | "empty" | "other" | "directory", under: typeof runDriftCheck = runDriftCheck) {
+	return withFake("1", laneReports[3].report, async ({ binary, root }) => {
+		runGit(["init", "-q", root], root);
+		runGit(["config", "gc.auto", "0"], root);
+		runGit(["config", "maintenance.auto", "false"], root);
+		runGit(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"], root);
+		let cwd = root;
+		let gitDir = join(root, ".git");
+		if (mode === "linked") {
+			cwd = join(root, "linked");
+			runGit(["worktree", "add", "-q", "-b", "lane", cwd], root);
+			gitDir = join(root, ".git", "worktrees", "linked");
+		} else {
+			mkdirSync(join(root, ".git", "lane-mail"));
+			writeFileSync(join(root, ".git", "lane-mail", "item"), `${cwd}\n`);
+		}
+		const record = join(gitDir, "lane-refresh");
+		if (content === "directory") mkdirSync(record);
+		else writeFileSync(record, content === "root" ? `${cwd}\n` : content === "other" ? `${join(root, "other")}\n` : "");
+		const lines = driftMessage(await under(cwd, { timeoutMs: 5000, binary }))?.split("\n") ?? [];
+		const keyed = lines.filter((line, index) => line.startsWith("session-drift-check: ") && lines.slice(0, index).every((before) => before.startsWith("session-drift-check: ")));
+		return {
+			notice: [...keyed, lines.some((line) => line.includes("never run here")) ? "prohibition" : "no prohibition"],
+			report: lines.slice(keyed.length + 1).join("\n"),
+		};
+	});
+}
+
+for (const mode of ["linked", "marker"] as const) {
+	for (const row of [
+		{ content: "root", notice: ["session-drift-check: lane=1", "session-drift-check: lane-refresh=1", "no prohibition"], report: laneReports[3].report },
+		{ content: "empty", notice: ["session-drift-check: lane=1", "prohibition"], report: "session-drift-check: drift-items=1" },
+		{ content: "other", notice: ["session-drift-check: lane=1", "prohibition"], report: "session-drift-check: drift-items=1" },
+		{ content: "directory", notice: ["session-drift-check: lane=unknown", "no prohibition"], report: "" },
+	] as const) {
+		test(`${mode} refresh record: ${row.content}`, async () => {
+			const seen = await refreshRow(mode, row.content);
+			expect(seen.notice).toEqual([...row.notice]);
+			if (row.content !== "directory") expect(seen.report).toBe(row.report);
+		});
+	}
+}
+
+test("control: a copy that ignores the refresh record turns the root row red", async () => {
+	const world = realpathSync(mkdtempSync(join(tmpdir(), "pi-hooks-drift-control-")));
+	try {
+		const carrier = mutatedCarrier(world, "ignores-refresh", "drift-check.ts", 'refresh = readFileSync(record, "utf8").replace(/\\n$/, "") === root;', 'readFileSync(record, "utf8").replace(/\\n$/, "") === root;');
+		const mutant = await import(join(dirname(carrier), "drift-check.ts")) as typeof import("../extensions/drift-check.ts");
+		const seen = await refreshRow("linked", "root", mutant.runDriftCheck);
+		expect(seen.notice).not.toEqual(["session-drift-check: lane=1", "session-drift-check: lane-refresh=1", "no prohibition"]);
+	} finally {
+		rmSync(world, { recursive: true, force: true });
+	}
+});

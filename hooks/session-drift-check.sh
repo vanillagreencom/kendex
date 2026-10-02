@@ -2,9 +2,9 @@
 # ---
 # name: session-drift-check
 # event: SessionStart
-# description: On a fresh session start (not resume or compact), runs `kendex check --quiet --report-only` and surfaces kendex drift to the agent — outdated items (`kendex refresh`), items removed upstream (`kendex remove <name>`, `-g` in a global section), unreachable sources, and packages not yet evaluated against their sources (a background refresh settles them). Outside a lane, prints nothing when the install is current. The lane notice precedes drift details in linked worktrees and roots named by orch lane markers. When the kendex command is absent it says so with what that costs: which manifest file this project's declarations live in and what became of reading it, how many packages and bundles it declares, how the command is installed on this platform, that the user decides whether to install it before any workflow runs here, and that the files kendex renders whole are never hand-edited — the notice names the trees they are under, and every other tree kendex renders into is covered with them — while a harness's own settings file it writes one key in keeps every key it did not write. KENDEX_DRIFT_HOOK=off disables it. Not run on pi: the pi-hooks carrier runs its own drift report at session start. Not run on antigravity: it has no SessionStart event.
-# summary: Tells a coding agent at the start of a session which installed packages no longer match their source, and what to run about it. A lane gets the install rule instead of kendex fix advice.
-# safety: Installs nothing and removes nothing, never touches the project's git state, and writes no tracked file on any branch, the default branch included: it runs `kendex check --quiet --report-only`. Where a declaration in kendex.toml sits on files no install record accounts for, the check plans the scope inside the budget this hook allows and reports each copy that is its source's render byte for byte under `not in the install record`, with its path and its recorded and rendered hashes (a registration that wrote no file, with the settings file it sits in), leaving `.kendex-lock.json` as the checkout holds it; the default branch records it after the merge. A copy that differs is reported, never replaced. The one install record it may write is the global scope's, under kendex's own directory, which no repository tracks. The plan is paid for once per state and memoized under kendex's own cache directory; a plan past the budget is reported as not checked and finished by the detached background process. The check never waits on the network; the rest of what it may write is kendex's own cache bookkeeping under ~/.kendex/cache (fetch stamps, snapshots, that memo), and when a source cache there is older than its TTL, a detached background process refreshes it (git fetch + reset, confined to that cache) and this hook does not wait for it. Every suggestion requires user approval before acting. Every notice opens with `session-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key. `kendex check`'s own report is relayed on stdout under those lines, preserved exactly outside lanes and in lanes when it carries no `fix: kendex` advice or direct refresh or remove suggestion; otherwise a drift-item count replaces the report; which arm its exit code chose is a value on them, not a sentence in it.
+# description: On a fresh session start (not resume or compact), runs `kendex check --quiet --report-only` and surfaces kendex drift to the agent — outdated items (`kendex refresh`), items removed upstream (`kendex remove <name>`, `-g` in a global section), unreachable sources, and packages not yet evaluated against their sources (a background refresh settles them). Outside a lane, prints nothing when the install is current. The lane notice precedes drift details in linked worktrees and roots named by orch lane markers; a lane whose launch wrote orch lane-marker's refresh record into its git directory is told it is a refresh lane, where `kendex refresh` and `kendex apply` run only with `--lane-refresh`, in place of being told they never run there. When the kendex command is absent it says so with what that costs: which manifest file this project's declarations live in and what became of reading it, how many packages and bundles it declares, how the command is installed on this platform, that the user decides whether to install it before any workflow runs here, and that the files kendex renders whole are never hand-edited — the notice names the trees they are under, and every other tree kendex renders into is covered with them — while a harness's own settings file it writes one key in keeps every key it did not write. KENDEX_DRIFT_HOOK=off disables it. Not run on pi: the pi-hooks carrier runs its own drift report at session start. Not run on antigravity: it has no SessionStart event.
+# summary: Tells a coding agent at the start of a session which installed packages no longer match their source, and what to run about it. A lane gets the install rule instead of kendex fix advice, and a lane launched to refresh gets the whole report.
+# safety: Installs nothing and removes nothing, never touches the project's git state, and writes no tracked file on any branch, the default branch included: it runs `kendex check --quiet --report-only`. Where a declaration in kendex.toml sits on files no install record accounts for, the check plans the scope inside the budget this hook allows and reports each copy that is its source's render byte for byte under `not in the install record`, with its path and its recorded and rendered hashes (a registration that wrote no file, with the settings file it sits in), leaving `.kendex-lock.json` as the checkout holds it; the default branch records it after the merge. A copy that differs is reported, never replaced. The one install record it may write is the global scope's, under kendex's own directory, which no repository tracks. The plan is paid for once per state and memoized under kendex's own cache directory; a plan past the budget is reported as not checked and finished by the detached background process. The check never waits on the network; the rest of what it may write is kendex's own cache bookkeeping under ~/.kendex/cache (fetch stamps, snapshots, that memo), and when a source cache there is older than its TTL, a detached background process refreshes it (git fetch + reset, confined to that cache) and this hook does not wait for it. Every suggestion requires user approval before acting. Every notice opens with `session-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key. `kendex check`'s own report is relayed on stdout under those lines, preserved exactly outside lanes, in refresh lanes, and in other lanes when it carries no `fix: kendex` advice or direct refresh or remove suggestion; otherwise a drift-item count replaces the report; which arm its exit code chose is a value on them, not a sentence in it.
 # timeout: 30
 # harnesses: [claude, codex, gemini, copilot, opencode, cursor]
 # ---
@@ -22,6 +22,8 @@ RC=0
 FAILED_LINE=""
 PAYLOAD_ERR=""
 PATH_ERR=""
+# 0 outside a lane, 1 in a lane, refresh in a lane whose launch recorded a
+# refresh lane.
 LANE=0
 LANE_ERR=""
 # What the missing-kendex notice names: the manifest file this project's
@@ -200,7 +202,18 @@ notice() { # KEY VALUE
       printf '%s\n' "$PATH_ERR"
       ;;
     lane=1)
-      echo 'This worktree changes nothing about the install. The overseer refreshes the base checkout after merge. kendex refresh and kendex apply are never run here.'
+      # The CLI refuses a lane's project-scope refresh without its own
+      # --lane-refresh, so a refresh lane's notice carries no authorization:
+      # it only stops forbidding what that flag allows.
+      case "$LANE" in
+        refresh)
+          printf 'session-drift-check: lane-refresh=1\n'
+          echo 'This worktree is a refresh lane. kendex refresh and kendex apply run here only with --lane-refresh, and the brief says which.'
+          ;;
+        *)
+          echo 'This worktree changes nothing about the install. The overseer refreshes the base checkout after merge. kendex refresh and kendex apply are never run here.'
+          ;;
+      esac
       ;;
     lane=unknown)
       printf 'The lane status could not be read. Drift details are withheld.\n%s\n' "$LANE_ERR"
@@ -267,7 +280,7 @@ notice() { # KEY VALUE
 # same rule even when it has no LANE_MAIL_ITEM. Other roots' markers do not
 # make the base checkout a lane.
 read_lane() {
-  local dirs root git_dir common marker bound rc=0
+  local dirs root git_dir common marker bound rc=0 record
   dirs=$(git rev-parse --show-toplevel --absolute-git-dir --path-format=absolute --git-common-dir 2>&1) || rc=$?
   if [ "$rc" -ne 0 ]; then
     case "$dirs" in
@@ -281,7 +294,6 @@ read_lane() {
   common=${dirs#*$'\n'}
   if [ "$git_dir" != "$common" ]; then
     LANE=1
-    return 0
   fi
   if { [ -e "$common/lane-mail" ] || [ -L "$common/lane-mail" ]; } &&
     { [ ! -d "$common/lane-mail" ] || [ ! -r "$common/lane-mail" ] || [ ! -x "$common/lane-mail" ]; }; then
@@ -289,16 +301,31 @@ read_lane() {
     notice lane unknown
     return 1
   fi
-  for marker in "$common"/lane-mail/*; do
-    [ -e "$marker" ] || [ -L "$marker" ] || continue
-    if [ ! -f "$marker" ] || [ -L "$marker" ]; then
-      LANE_ERR="The lane marker is not a plain file: $marker"
-      notice lane unknown
-      return 1
-    fi
-    bound=$(cat -- "$marker" 2>&1) || { LANE_ERR="$bound"; notice lane unknown; return 1; }
-    [ "$bound" != "$root" ] || { LANE=1; return 0; }
-  done
+  if [ "$LANE" = 0 ]; then
+    for marker in "$common"/lane-mail/*; do
+      [ -e "$marker" ] || [ -L "$marker" ] || continue
+      if [ ! -f "$marker" ] || [ -L "$marker" ]; then
+        LANE_ERR="The lane marker is not a plain file: $marker"
+        notice lane unknown
+        return 1
+      fi
+      bound=$(cat -- "$marker" 2>&1) || { LANE_ERR="$bound"; notice lane unknown; return 1; }
+      [ "$bound" != "$root" ] || { LANE=1; break; }
+    done
+  fi
+  [ "$LANE" = 1 ] || return 0
+  # lane-marker --lane-refresh writes the refresh record in the lane's own git
+  # directory, holding the root; a launch without it removes the record, and a
+  # hosted launcher empties it.
+  record="$git_dir/lane-refresh"
+  { [ -e "$record" ] || [ -L "$record" ]; } || return 0
+  if [ ! -f "$record" ] || [ -L "$record" ]; then
+    LANE_ERR="The lane refresh record is not a plain file: $record"
+    notice lane unknown
+    return 1
+  fi
+  bound=$(cat -- "$record" 2>&1) || { LANE_ERR="$bound"; notice lane unknown; return 1; }
+  [ "$bound" != "$root" ] || LANE=refresh
 }
 
 # crates/core/src/drift/report/render.rs::render_plain emits two-space item
@@ -387,7 +414,7 @@ if ! command -v kendex >/dev/null 2>&1; then
 fi
 
 read_lane || exit 0
-[ "$LANE" != 1 ] || notice lane 1
+[ "$LANE" = 0 ] || notice lane 1
 
 # kendex's exit code IS the classification; under errexit a bare failing
 # assignment would abort before `RC=$?` could run.

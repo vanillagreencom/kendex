@@ -398,6 +398,67 @@ capture FAKE_RC=2 FAKE_OUT="$LANE_REFRESH" CLAUDE_PROJECT_DIR="$WT_LINKED"
 assert_eq "$(sed '1,2d' "$TMP_ROOT/stdout" | sed '/^kendex check incomplete /d')" \
   $'session-drift-check: check=incomplete\nsession-drift-check: exit=2\nsession-drift-check: drift-items=1' "incomplete lane check withholds advice too"
 
+echo "session-drift-check: refresh lanes"
+# lane-marker --lane-refresh writes the lane's root into lane-refresh in the
+# lane's own git directory. A row is `record|keyed|report|prohibition`: the
+# record's content, `root` for the lane's root, `empty` for the empty file a
+# hosted launcher leaves, `other` for another root; the leading keyed lines;
+# the report under the notice sentence, `whole` for the report relayed as it
+# came or `count` for the advice replaced by its item count; and how many lines
+# carry the ordinary notice's prohibition.
+refresh_observed() { # PROJECT
+  capture FAKE_RC=1 FAKE_OUT="$LANE_APPLY" CLAUDE_PROJECT_DIR="$1"
+  printf 'keyed=%s report=%s prohibition=%s' "$(keyed_of)" \
+    "$(awk 'lead && !/^session-drift-check: / { lead = 0; next } !lead' lead=1 "$TMP_ROOT/stdout")" \
+    "$(grep -c 'never run here' "$TMP_ROOT/stdout" || :)"
+}
+REFRESH_WHOLE="session-drift-check: drift=found
+$LANE_APPLY"
+REFRESH_COUNT="session-drift-check: drift=found
+session-drift-check: drift-items=1"
+for project in "$WT_LINKED" "$WT_MARKER"; do
+  record="$(fixture_git -C "$project" rev-parse --absolute-git-dir)/lane-refresh"
+  while IFS='|' read -r content keyed report prohibition; do
+    case "$content" in
+      root) printf '%s\n' "$project" >"$record" ;;
+      empty) : >"$record" ;;
+      other) printf '%s\n' "$TMP_ROOT/other" >"$record" ;;
+    esac
+    [ "$report" = whole ] && report="$REFRESH_WHOLE" || report="$REFRESH_COUNT"
+    assert_eq "$(refresh_observed "$project")" "keyed=$keyed report=$report prohibition=$prohibition" \
+      "$project $content record: the notice and the report"
+  done <<'ROWS'
+root|lane=1;lane-refresh=1|whole|0
+empty|lane=1|count|1
+other|lane=1|count|1
+ROWS
+  printf '%s\n' "$project" >"$record"
+  capture FAKE_RC=0 CLAUDE_PROJECT_DIR="$project"
+  assert_eq "keyed=$(keyed_of)" "keyed=lane=1;lane-refresh=1" "$project clean: the refresh notice still applies"
+  rm -f -- "${record:?}"
+  mkdir -- "$record"
+  capture FAKE_RC=1 FAKE_OUT="$LANE_APPLY" CLAUDE_PROJECT_DIR="$project"
+  assert_eq "first=$(first_line "$TMP_ROOT/stdout") calls=$(calls)" "first=session-drift-check: lane=unknown calls=-" \
+    "$project: an unreadable refresh record leaves the lane status unknown"
+  rmdir -- "$record"
+done
+# The must-fail control: a copy of the hook that reads the record and drops
+# what it says, so a refresh lane gets the ordinary notice and the root row
+# above turns red.
+IGNORES_RECORD="$TMP_ROOT/ignores-record.sh"
+sed -e 's/^  \[ "\$bound" != "\$root" \] || LANE=refresh$/  [ "$bound" != "$root" ] || :/' "$HOOK" >"$IGNORES_RECORD"
+assert_eq "$(grep -c '|| LANE=refresh$' "$HOOK") $(cmp -s "$HOOK" "$IGNORES_RECORD" && echo same || echo differs)" "1 differs" \
+  "control: the copy drops the one refresh reading"
+record="$(fixture_git -C "$WT_LINKED" rev-parse --absolute-git-dir)/lane-refresh"
+printf '%s\n' "$WT_LINKED" >"$record"
+REAL_HOOK="$HOOK"
+HOOK="$IGNORES_RECORD"
+observed="$(refresh_observed "$WT_LINKED")"
+HOOK="$REAL_HOOK"
+rm -f -- "${record:?}"
+assert_eq "$([ "$observed" = "keyed=lane=1;lane-refresh=1 report=$REFRESH_WHOLE prohibition=0" ] && echo green || echo red)" red \
+  "control: a hook that ignores the refresh record turns the root row red"
+
 echo "session-drift-check: lane discovery failures"
 # git produces this failure for a broken gitfile. Filesystem read failures
 # on lane-marker's directory are also unknown, never an ordinary checkout.

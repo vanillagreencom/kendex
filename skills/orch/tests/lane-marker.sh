@@ -222,6 +222,55 @@ PATH_OUT="$("$LANE_MARKER" --marker-path /srv/clone/.git 2>&1)" || PATH_RC=$?
 assert_eq "rc=$PATH_RC first=${PATH_OUT%%$'\n'*}" "rc=2 first=lane-marker: args=2" \
   "--marker-path without an item is refused"
 
+# The refresh record: what each launch leaves in the worktree's own git
+# directory, `root` holding the lane's root, `absent` none. Each row runs on the
+# record the row above it left, so a launch without --lane-refresh is seen to
+# remove one, and the linked row puts it in that worktree's git directory,
+# where the path --refresh-path prints for it agrees.
+refresh_state() { # SCRIPT ARGS...
+  local script="$1" git_dir record state=absent
+  shift
+  RC=0
+  ERR="$("$script" "$@" 2>&1)" || RC=$?
+  git_dir="$(git -C "$WT" rev-parse --absolute-git-dir)"
+  record="$("$LANE_MARKER" --refresh-path "$git_dir")"
+  if [[ -f "$record" ]]; then
+    state=other
+    [[ "$(cat "$record")" != "$(git -C "$WT" rev-parse --show-toplevel)" ]] || state=root
+  fi
+  printf 'rc=%s error=%s record=%s' "$RC" "$ERR" "$state"
+}
+new_tree refresh
+git -C "$WT" worktree add -q "$TMP_ROOT/refresh-linked" -b linked
+while IFS='|' read -r tree args expected; do
+  [[ "$tree" == main ]] && WT="$TMP_ROOT/refresh" || WT="$TMP_ROOT/refresh-linked"
+  read -r -a ARGS <<<"$args"
+  assert_eq "$(refresh_state "$LANE_MARKER" "${ARGS[@]/WT/$WT}")" "rc=0 error= record=$expected" \
+    "$tree [$args]: the launch leaves the refresh record $expected"
+done <<'ROWS'
+main|--lane-refresh WT KEN-30|root
+main|WT KEN-30|absent
+main|--lane-refresh WT KEN-30 codex selected|root
+main|WT KEN-30 codex selected|absent
+linked|--lane-refresh WT KEN-31|root
+ROWS
+assert_eq "$([[ -e "$TMP_ROOT/refresh/.git/lane-refresh" ]] && echo present || echo absent)" "absent" \
+  "a linked worktree's refresh record stays out of the common git directory"
+
+new_tree link-refresh
+ln -s -f -n "$TMP_ROOT/refresh-target" "$WT/.git/lane-refresh"
+assert_eq "$(mark KEN-32) target=$([[ -e "$TMP_ROOT/refresh-target" ]] && echo written || echo untouched)" \
+  "rc=2 first=lane-marker: unsafe=$WT/.git/lane-refresh marker=none box=none target=untouched" \
+  "a symlink at the refresh record is refused and its target is never written"
+
+# The must-fail control for the refresh record: the option read and dropped, so
+# a refresh launch leaves no record and the first row above turns red.
+REFRESH_CONTROL="$(mutant_scripts refresh-control lane-marker)" || exit 1
+mutate_file "$REFRESH_CONTROL/lane-marker" '  REFRESH=true' '  REFRESH=false'
+new_tree refresh-control
+assert_eq "$(refresh_state "$REFRESH_CONTROL/lane-marker" --lane-refresh "$WT" KEN-30)" "rc=0 error= record=absent" \
+  "control: an option read and dropped leaves no refresh record"
+
 # The must-fail control: the containment loop gone and nothing else, so the
 # planted link is written through. A control that deleted the write instead
 # would prove the assertion runs rather than that the rule holds.

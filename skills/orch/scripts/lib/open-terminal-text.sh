@@ -476,6 +476,16 @@ Options:
                     in its brief file or in one argument of its command, or
                     is refused as launch-unattended-missing, printing the
                     text.
+  --lane-refresh    Launch each item as a refresh lane: one whose brief runs
+                    kendex refresh or kendex apply with the CLI's own
+                    --lane-refresh. lane-marker writes its refresh record
+                    beside the launch record, and session-drift-check then
+                    tells the lane those commands run there only with that
+                    flag instead of telling it they never run there. A
+                    launch or relaunch without this option removes the
+                    record, or for a hosted lane empties it, so a refresh
+                    lane's relaunch passes it again. A --wake writes no
+                    launch record and keeps the one the launch wrote.
   --relaunch        Replace a dead session on items that may already have a
                     worktree: an existing tree is reused instead of being read
                     as another session's claim. The newest matching Claude,

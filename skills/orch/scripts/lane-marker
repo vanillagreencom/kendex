@@ -21,7 +21,7 @@ message() { # KEY VALUE [CAUSE]
     printf 'lane-marker: %s=%s\n' "$1" "$2"
     case "$1" in
       args)
-        echo "lane-marker takes WORKTREE ITEM with an optional resumed HARNESS SESSION pair, or --marker-path COMMON_GIT_DIR ITEM"
+        echo "lane-marker takes WORKTREE ITEM with an optional resumed HARNESS SESSION pair, either form after an optional --lane-refresh, or --marker-path COMMON_GIT_DIR ITEM, or --refresh-path GIT_DIR"
         ;;
       item)
         echo "the item is not spelled in the alphabet a work item is spelled in, ASCII letters, digits, dot, underscore and hyphen, and is never . or ..; refusing rather than composing a path it does not name"
@@ -52,12 +52,27 @@ usage() {
   cat << 'EOF'
 Usage: lane-marker WORKTREE ITEM
        lane-marker WORKTREE ITEM HARNESS SESSION
+       lane-marker --lane-refresh WORKTREE ITEM [HARNESS SESSION]
        lane-marker --marker-path COMMON_GIT_DIR ITEM
+       lane-marker --refresh-path GIT_DIR
 
 Write a lane's launch record, both halves of it:
 
   <common git dir>/lane-mail/<item in lower case>   holds the lane's root
   <WORKTREE root>/tmp/lane-mail/<ITEM>              the lane's own mailbox
+
+and the refresh record beside them:
+
+  <WORKTREE git dir>/lane-refresh                   holds the lane's root
+
+`--lane-refresh` writes the refresh record, which says the launch asked for a
+refresh lane, one whose brief runs `kendex refresh` or `kendex apply` with the
+CLI's own `--lane-refresh`. Every launch without it removes the record, so a
+relaunch states it again. `session-drift-check` alone reads it: a lane whose
+record holds its root is told it is a refresh lane instead of being told that
+those commands never run there. The record is a file of its own in the
+worktree's own git directory, so no reader of the marker meets it, and it goes
+with the worktree when the worktree is removed.
 
 `lane-mail-check` reads the first to know a session is a launched lane and
 resolves the item by the second, so a launch writes both or the lane is never
@@ -75,10 +90,14 @@ nothing, so a launcher using it empties that record over its own transport.
 it is given and writes nothing. A launcher whose lane is on another machine
 cannot run this script where the record belongs, and a path it composed for
 itself would be a second spelling of the one this script writes.
+`--refresh-path` does the same for the refresh record under the worktree git
+directory it is given; that launcher writes the root there for a refresh lane
+and empties the file otherwise, an empty record reading as no refresh lane.
 
 Containment: four components must be plain, never a symlink and never another
 kind of file. Under the common git directory, `lane-mail` and the marker in it;
-under the worktree, `tmp/lane-mail` and the item's own directory in it. `tmp`
+under the worktree, `tmp/lane-mail` and the item's own directory in it; the
+refresh record in the worktree git directory. `tmp`
 itself is left alone, because a worktree setup may link it. A component outside
 that rule would put the marker or the mailbox somewhere the lane never reads,
 and the refusal names the one that broke it.
@@ -111,6 +130,13 @@ marker_path() { # COMMON_GIT_DIR ITEM
   printf '%s/lane-mail/%s\n' "$1" "$lower"
 }
 
+# Where the refresh record belongs, by the same rule as the marker's path.
+# hooks/session-drift-check.sh reads this name in the git directory of the
+# checkout it runs in.
+refresh_path() { # GIT_DIR
+  printf '%s/lane-refresh\n' "$1"
+}
+
 [ "${1:-}" != --help ] || { usage; exit 0; }
 
 if [ "${1:-}" = --marker-path ]; then
@@ -120,6 +146,17 @@ if [ "${1:-}" = --marker-path ]; then
   exit 0
 fi
 
+if [ "${1:-}" = --refresh-path ]; then
+  [ "$#" -eq 2 ] || refuse args "$#"
+  refresh_path "$2"
+  exit 0
+fi
+
+REFRESH=false
+if [ "${1:-}" = --lane-refresh ]; then
+  REFRESH=true
+  shift
+fi
 { [ "$#" -eq 2 ] || [ "$#" -eq 4 ]; } || refuse args "$#"
 WT="$1"
 ITEM="$2"
@@ -133,14 +170,20 @@ COMMON=$(git -C "$WT" rev-parse --path-format=absolute --git-common-dir 2>&1) ||
 ROOT_RC=0
 ROOT=$(git -C "$WT" rev-parse --show-toplevel 2>&1) || ROOT_RC=$?
 [ "$ROOT_RC" -eq 0 ] || refuse git 'rev-parse --show-toplevel' "$ROOT"
+GIT_DIR_RC=0
+GIT_DIR=$(git -C "$WT" rev-parse --absolute-git-dir 2>&1) || GIT_DIR_RC=$?
+[ "$GIT_DIR_RC" -eq 0 ] || refuse git 'rev-parse --absolute-git-dir' "$GIT_DIR"
 MARKER=$(marker_path "$COMMON" "$ITEM")
+REFRESH_RECORD=$(refresh_path "$GIT_DIR")
 BOX="$ROOT/tmp/lane-mail/$ITEM"
 
 # Judged before anything is created, so a refusal leaves the tree as it was.
 for path in "$COMMON/lane-mail" "$ROOT/tmp/lane-mail" "$BOX"; do
   { [ ! -L "$path" ] && { [ ! -e "$path" ] || [ -d "$path" ]; }; } || refuse unsafe "$path"
 done
-{ [ ! -L "$MARKER" ] && { [ ! -e "$MARKER" ] || [ -f "$MARKER" ]; }; } || refuse unsafe "$MARKER"
+for path in "$MARKER" "$REFRESH_RECORD"; do
+  { [ ! -L "$path" ] && { [ ! -e "$path" ] || [ -f "$path" ]; }; } || refuse unsafe "$path"
+done
 
 MADE=$(mkdir -p -- "$COMMON/lane-mail" "$BOX" 2>&1) || refuse write "$BOX" "$MADE"
 
@@ -165,12 +208,23 @@ if [ "$KEEP_CONTEXT" != true ]; then
   CLEARED=$(rm -f -- "${BOX:?}/$LANE_CONTEXT_RECORD" 2>&1) || refuse write "$BOX/$LANE_CONTEXT_RECORD" "$CLEARED"
 fi
 
-# The root lands through a temporary file renamed over the marker, so the write
+# The root lands through a temporary file renamed over the record, so the write
 # never follows a link a peer put there between the check above and here.
-STAGED=$(mktemp "${MARKER%/*}/.${MARKER##*/}.XXXXXX" 2>&1) || refuse write "$MARKER" "$STAGED"
 # A launch reaped between the write and the rename would leave that file beside
-# the marker for ever, where the next launcher's mktemp has to step around it.
+# the record for ever, where the next launcher's mktemp has to step around it.
 # The rename consumes it, so this removes nothing on the path that worked.
-trap 'rm -f -- "${STAGED:?}"' EXIT
-WROTE=$({ printf '%s\n' "$ROOT" > "$STAGED" && mv -f -- "$STAGED" "$MARKER"; } 2>&1) ||
-  refuse write "$MARKER" "$WROTE"
+STAGED=""
+trap '[ -z "$STAGED" ] || rm -f -- "${STAGED:?}"' EXIT
+write_root() { # RECORD
+  local staged wrote
+  staged=$(mktemp "${1%/*}/.${1##*/}.XXXXXX" 2>&1) || refuse write "$1" "$staged"
+  STAGED=$staged
+  wrote=$({ printf '%s\n' "$ROOT" > "$STAGED" && mv -f -- "$STAGED" "$1"; } 2>&1) ||
+    refuse write "$1" "$wrote"
+}
+write_root "$MARKER"
+if [ "$REFRESH" = true ]; then
+  write_root "$REFRESH_RECORD"
+else
+  CLEARED=$(rm -f -- "${REFRESH_RECORD:?}" 2>&1) || refuse write "$REFRESH_RECORD" "$CLEARED"
+fi

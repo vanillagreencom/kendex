@@ -3,22 +3,28 @@
 # `gitdir: <clone>/.git/worktrees/<name>` there, and a caller holding that
 # file's bytes composes paths on the directory it names: the hosted mail read
 # resolves the clone from it, and a hosted launch writes its lane marker under
-# the common git directory it names. Both would otherwise spell the same
+# the common git directory it names and its refresh record in the worktree git
+# directory it names. Both would otherwise spell the same
 # shape, and a lane whose marker lands anywhere else is handed no mail at all.
 
 source "$(dirname -- "${BASH_SOURCE[0]}")/lane-host-slots.sh"
 
-# Print the absolute common git directory a worktree's `.git` file names.
+# Print the absolute worktree git directory a worktree's `.git` file names.
 # Returns 1 on any other content, including a `.git` directory's own bytes and
 # a relative gitdir, neither of which names a path a remote caller can use.
-lane_gitfile_common_dir() { # GITFILE_CONTENT
-  local line="$1"
-  case "$line" in
+lane_gitfile_git_dir() { # GITFILE_CONTENT
+  case "$1" in
     "gitdir: /"*/.git/worktrees/*) ;;
     *) return 1 ;;
   esac
-  line="${line#gitdir: }"
-  printf '%s\n' "${line%/worktrees/*}"
+  printf '%s\n' "${1#gitdir: }"
+}
+
+# Print the absolute common git directory that file names, under the same rule.
+lane_gitfile_common_dir() { # GITFILE_CONTENT
+  local dir
+  dir="$(lane_gitfile_git_dir "$1")" || return 1
+  printf '%s\n' "${dir%/worktrees/*}"
 }
 
 # ---------------------------------------------------------------------------

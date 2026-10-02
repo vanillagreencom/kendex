@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-hooks",
-  "version": "0.17.2",
+  "version": "0.17.3",
   "description": "The carrier that runs kendex's hooks under Pi: it dispatches the rendered kendex/hooks.json registry on every listener kendex maps a hook event onto, so a PreToolUse, PostToolUse, Stop, TaskCompleted or SessionStart hook fires, the bash guards kendex renders and a custom hook of your own alike, and it adds end-of-turn lint, a session-start kendex drift report, and a turn for an idle session when mail the lane-mail hooks hand it lands, an orch lane's included. Per-hook toggles via pi-extension-manager.",
   "license": "MIT",
   "keywords": [
@@ -78,7 +78,7 @@
         {
           "key": "sessionDriftCheck",
           "label": "Session-start drift report",
-          "description": "On a fresh lead session start (startup, new or fork, not resume or reload), run `kendex check --quiet --report-only` in the background and send its result as a `kendex-drift` message. Delegated children skip the native check. Outside lanes, a current install is silent. In a lane, send a worktree notice even for a current install and replace reports containing installation-repair suggestions with item counts. The overseer refreshes the base checkout after merge. If lane detection fails, withhold drift details and report the unknown status. Registered `SessionStart` hook output (`kendex-hook`) remains unchanged. Report a missing kendex binary or a failed check. Never blocks startup, installs or removes anything, or writes tracked files.",
+          "description": "On a fresh lead session start (startup, new or fork, not resume or reload), run `kendex check --quiet --report-only` in the background and send its result as a `kendex-drift` message. Delegated children skip the native check. Outside lanes, a current install is silent. In a lane, send a worktree notice even for a current install and replace reports containing installation-repair suggestions with item counts. The overseer refreshes the base checkout after merge. A refresh lane, one whose launch wrote orch's refresh record, is told that `kendex refresh` and `kendex apply` run there only with `--lane-refresh`, and gets its report whole. If lane detection fails, withhold drift details and report the unknown status. Registered `SessionStart` hook output (`kendex-hook`) remains unchanged. Report a missing kendex binary or a failed check. Never blocks startup, installs or removes anything, or writes tracked files.",
           "type": "boolean",
           "default": true,
           "category": "Session",

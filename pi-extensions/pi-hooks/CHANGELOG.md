@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 0.17.3
+
+- In a lane launched with orch's `open-terminal --lane-refresh`, the native drift check says the lane is a refresh lane, where `kendex refresh` and `kendex apply` run only with `--lane-refresh`, in place of saying they never run there, and sends the drift report whole. Other lanes get the same notice as before.
+
 ### 0.17.2
 
 - Successful PreToolUse hooks give their additionalContext to the agent in interactive and headless sessions. Install-gap notices reach the model without blocking the call or bypassing later guards.

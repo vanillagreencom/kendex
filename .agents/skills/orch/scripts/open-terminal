@@ -50,6 +50,7 @@ parse_argv() {
   LANE_ENV=""
   STATE_DIR=""
   RELAUNCH=false
+  LANE_REFRESH=false
   WAKE=false
   WAIT_SLOT=false
   OVER_CAP=false
@@ -80,6 +81,7 @@ parse_argv() {
       --state-dir) need_val "$@"; STATE_DIR="$2"; shift 2 ;;
       --state-dir=*) STATE_DIR="${1#--state-dir=}"; need_val --state-dir "$STATE_DIR"; shift ;;
       --relaunch) RELAUNCH=true; shift ;;
+      --lane-refresh) LANE_REFRESH=true; shift ;;
       --wake) WAKE=true; shift ;;
       --wait-slot) WAIT_SLOT=true; shift ;;
       --over-cap) OVER_CAP=true; shift ;;
@@ -1992,7 +1994,7 @@ host_marker_busy() { # STATUS
 # first `lane-mail append` that reaches it creates it under the lock that host
 # holds; nothing here can take that lock.
 host_lane_marker() { # ITEM ROOT
-  local gitfile common marker read_back
+  local gitfile common marker read_back git_dir refresh
   LANE_MARKER_REASON=host-gitfile-unread
   LANE_MARKER_FIELDS=("path=$2/.git")
   gitfile="$(host_transport cat --item "$1" "$2/.git")" || { host_marker_busy $?; return 1; }
@@ -2006,6 +2008,18 @@ host_lane_marker() { # ITEM ROOT
   printf '%s\n' "$2" | host_transport put --item "$1" "$marker" || { host_marker_busy $?; return 1; }
   read_back="$(host_transport cat --item "$1" "$marker")" || { host_marker_busy $?; return 1; }
   [[ "$read_back" == "$2" ]] || return 1
+  # The refresh record, which the host has no verb to delete: a launch that is
+  # no refresh lane empties it, and the hook reads an empty record as none.
+  LANE_MARKER_REASON=marker-failed
+  LANE_MARKER_FIELDS=("path=$2/.git")
+  git_dir="$(lane_gitfile_git_dir "$gitfile")" || return 1
+  refresh="$("$SCRIPT_DIR/lane-marker" --refresh-path "$git_dir")" || return 1
+  LANE_MARKER_FIELDS=("path=$refresh")
+  if [[ "$LANE_REFRESH" == true ]]; then
+    printf '%s\n' "$2" | host_transport put --item "$1" "$refresh" || { host_marker_busy $?; return 1; }
+  else
+    host_transport put --item "$1" "$refresh" </dev/null || { host_marker_busy $?; return 1; }
+  fi
   # The context reading a session before this launch recorded in the mailbox,
   # emptied as lane-marker removes it locally: `lanes context` reads an empty
   # record as none, and the host has no verb that deletes.
@@ -2015,8 +2029,9 @@ host_lane_marker() { # ITEM ROOT
 
 # The launch record lane-mail-check reads: the marker under the common git
 # directory and the lane's own mailbox beside it. `lane-marker` owns both and
-# the containment over them, which is lane-mail's own. The selected resumed
-# identity lets it retain that session's context reading. Its keyed line goes to the stderr
+# the containment over them, which is lane-mail's own, and the refresh record
+# --lane-refresh asks for. The selected resumed identity lets it retain that
+# session's context reading. Its keyed line goes to the stderr
 # this inherits and does not redirect; the call site adds the line the reason
 # set here names, which carries none of that script's text. A hosted lane's
 # record is on its provider's disk and out of that script's reach, so the
@@ -2026,7 +2041,9 @@ write_lane_marker() { # WT ITEM REMOTE_ROOT HARNESS SESSION
   LANE_MARKER_REASON=marker-failed
   LANE_MARKER_FIELDS=("path=$1")
   [[ -z "${3:-}" ]] || { host_lane_marker "$2" "$3"; return; }
-  "$SCRIPT_DIR/lane-marker" "$1" "$2" "$4" "$5"
+  local refresh=()
+  [[ "$LANE_REFRESH" != true ]] || refresh=(--lane-refresh)
+  "$SCRIPT_DIR/lane-marker" ${refresh[@]+"${refresh[@]}"} "$1" "$2" "$4" "$5"
 }
 
 # The tmux session every lane window of this invocation opens in, resolved on
