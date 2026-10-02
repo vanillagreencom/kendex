@@ -68,16 +68,20 @@ chmod +x "$TMP/wrapper.sh"
 # bash 3.2 build that holds it open 50ms per poll lost 4 of 20 INTs sent at
 # random points.
 #
-# So the INT row resends, as a person pressing ^C again would, but only once
-# the worker's group has outlived DROP_PROOF seconds since the last INT. A
-# delivered INT has the runner signal that group on its first stop pass, ahead
-# of the runner's one-second grace, so no resend lands inside a forward already
-# under way. Each resend waits a random part of the runner's 0.1s poll first:
-# a fixed DROP_PROOF can fall on the same point of that poll as the INT it
-# replaces, and the widened build then lost the resend too in six drops of
-# seven. A runner that never forwards INT still runs to its bound across
-# every resend, and one that exits without stopping the group still leaves it
-# for the cleanup row below.
+# So where the bash that runs wrapper.sh, found on PATH as its shebang finds
+# it, is older than 4, the INT row resends, as a person pressing ^C again
+# would; on any newer bash it sends one INT, and a runner that does not honour
+# that first INT fails the row. A resend waits until the worker's group has
+# outlived DROP_PROOF seconds since the last INT. A delivered INT has the
+# runner signal that group on its first stop pass, ahead of the runner's
+# one-second grace, so no resend lands inside a forward already under way.
+# Each resend waits a random part of the runner's 0.1s poll first: a fixed
+# DROP_PROOF can fall on the same point of that poll as the INT it replaces,
+# and the widened build then lost the resend too in six drops of seven. A
+# runner that never forwards INT still runs to its bound across every resend.
+# One that exits without stopping the group gets no resend, since a dropped INT
+# always leaves the wrapper running, and the cleanup row below finds the group
+# it left.
 check_signal() { # SIGNAL EXPECTED [RESENDS]
   local signal="$1" expected="$2" resends="${3:-0}" rc child_pid="" tries=0
   local pid_file="$TMP/$signal.pid" resent_file="$TMP/$signal.resent" resent=""
@@ -105,6 +109,7 @@ check_signal() { # SIGNAL EXPECTED [RESENDS]
             sleep 0.05
             tries=$((tries + 1))
           done
+          kill -0 "$wrapper" 2>/dev/null || break
           kill -0 -- "-$worker" 2>/dev/null || break
           sleep "0.0$((RANDOM % 10))"
           kill -s "$SIGNAL" "$wrapper"
@@ -145,9 +150,18 @@ check_signal() { # SIGNAL EXPECTED [RESENDS]
   fi
 }
 
+WRAPPER_BASH_MAJOR="$(bash -c 'printf "%s" "${BASH_VERSINFO[0]}"')" \
+  || { echo "bounded-signal: wrapper-bash=unreadable" >&2; exit 1; }
+[[ "$WRAPPER_BASH_MAJOR" =~ ^[0-9]+$ ]] \
+  || { echo "bounded-signal: wrapper-bash=[$WRAPPER_BASH_MAJOR] is not a major version" >&2; exit 1; }
+INT_RESENDS=0
+if [[ "$WRAPPER_BASH_MAJOR" -lt 4 ]]; then
+  INT_RESENDS=2
+fi
+
 echo "=== bounded runner signal cleanup ==="
 check_signal HUP 129
-check_signal INT 130 2
+check_signal INT 130 "$INT_RESENDS"
 check_signal TERM 143
 
 # The bound is enforced on a 0.1s tick, so a caller may ask for tenths. Junk
