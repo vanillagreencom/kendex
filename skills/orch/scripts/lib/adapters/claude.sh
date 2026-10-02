@@ -41,29 +41,13 @@ lane_adapter_claude_window() { # MODEL
   done
 }
 
-# Command substitutions discard variable changes, but share this descriptor's
-# read position. Reserve 19 for the one warning per shell run, including when
-# lane-context.sh and lane-launch.sh both source this adapter.
-if [ "${LANE_ADAPTER_CLAUDE_WARNING_OWNER:-}" != "$$" ]; then
-  exec 19<<<'lane-model: requested=haiku resolved=sonnet; KEN-2466 removes this substitution' || return 1
-  LANE_ADAPTER_CLAUDE_WARNING_OWNER=$$
-fi
-
-# lane_adapter_claude_model_id MODEL: the model id a launch writes for MODEL.
-# --request applies the substitution without expanding other launch aliases,
-# so allowance checks keep every other requested tier unchanged.
-lane_adapter_claude_model_id() { # MODEL [--request]
-  local model warning aliases="${2:-}"
-  model=$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]') || return 1
-  if [ "$model" = haiku ]; then
-    if IFS= read -r warning <&19; then
-      printf '%s\n' "$warning" >&2 || return 1
-    fi
-    model=sonnet aliases=""
-  fi
-  if [[ "$aliases" == --request ]]; then printf '%s\n' "${1:-}"; return; fi
-  case "$model" in
+# lane_adapter_claude_model_id MODEL — the model id a launch writes for MODEL:
+# the one the `sonnet` or `haiku` alias resolves to on the first-party API, and
+# MODEL itself for any other spelling.
+lane_adapter_claude_model_id() { # MODEL
+  case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
     sonnet) printf '%s\n' claude-sonnet-5 ;;
+    haiku) printf '%s\n' claude-haiku-4-5 ;;
     *) printf '%s\n' "${1:-}" ;;
   esac
 }

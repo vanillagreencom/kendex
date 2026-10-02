@@ -129,7 +129,7 @@ claude-opus-5-5|1000000
 sonnet||claude-sonnet-5
 Sonnet||claude-sonnet-5
 claude-sonnet-5|1000000
-haiku||claude-sonnet-5
+haiku||claude-haiku-4-5
 claude-haiku-4-5|200000
 claude-haiku-4-5-20251001|200000
 claude-sonnet-4-6|
@@ -138,66 +138,6 @@ claude-sonnet-5-5|
 sonnet[1m]|
 haiku[1m]|
 |
-ROWS
-
-echo "=== haiku launches use the sonnet window with one warning per run ==="
-# lane-launch.sh callers capture the id in command substitutions, including
-# nested ones in launch_choice_flags; a variable-only warning latch is lost.
-while IFS= read -r mode; do
-  rc=0
-  answer=$(env -i PATH="$PATH" HOME="$TMP_ROOT" TMPDIR="$TMP_ROOT" bash -c '
-    set -euo pipefail
-    source "$1"
-    source "${1%/*}/lane-launch.sh"
-    lane_adapter_claude_model_id sonnet > /dev/null
-    for spelling in haiku HaIkU; do
-      case "$2" in
-        direct)
-          lane_adapter_claude_model_id "$spelling" > "$3"
-          IFS= read -r model < "$3" ;;
-        substitution) model=$(lane_adapter_claude_model_id "$spelling") || exit 1 ;;
-        launch) model=$(launch_choice_model_id claude "$spelling") || exit 1 ;;
-        request) model=$(launch_choice_model_id claude "$spelling" --request) || exit 1 ;;
-      esac
-      window=$(lane_adapter_claude_window "$model") || exit 1
-      printf "%s|%s\n" "$model" "$window"
-      source "$1"
-    done
-    lane_adapter_claude_model_id sonnet > /dev/null
-  ' _ "$LIB" "$mode" "$TMP_ROOT/model-$mode" 2>"$TMP_ROOT/warning-$mode") || rc=$?
-  assert_eq "$rc" 0 "$mode resolution succeeds" "$TMP_ROOT/warning-$mode"
-  assert_eq "$answer" $'claude-sonnet-5|1000000\nclaude-sonnet-5|1000000' \
-    "$mode haiku resolutions use the sonnet id and window"
-  warning=$(cat -- "$TMP_ROOT/warning-$mode") || exit 1
-  lines=$(wc -l < "$TMP_ROOT/warning-$mode") || exit 1
-  assert_eq "${lines//[[:space:]]/}" 1 "$mode warns once across repeated resolution and sourcing"
-  for word in haiku sonnet KEN-2466; do
-    assert_contains "$warning" "$word" "$mode warning names $word"
-  done
-done <<'ROWS'
-direct
-substitution
-launch
-request
-ROWS
-
-while IFS='|' read -r harness model want; do
-  answer=$(env -i PATH="$PATH" HOME="$TMP_ROOT" bash -c '
-    set -euo pipefail; source "$1"
-    launch_choice_model_id "$2" "$3" --request
-  ' _ "${LIB%/*}/lane-launch.sh" "$harness" "$model" 2>"$TMP_ROOT/request-warning") || exit 1
-  assert_eq "$answer|$(wc -l <"$TMP_ROOT/request-warning" | tr -d " ")" "$want|0" \
-    "$harness allowance request preserves $model without warning"
-done <<'ROWS'
-claude|sonnet|sonnet
-claude|Sonnet|Sonnet
-claude|fable|fable
-claude|opus|opus
-claude|claude-haiku-4-5|claude-haiku-4-5
-codex|haiku|haiku
-opencode|haiku|haiku
-pi|haiku|haiku
-copilot|haiku|haiku
 ROWS
 
 echo "=== effective compaction settings preserve unresolved token use ==="
@@ -539,13 +479,6 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'codex configuration  gives point unresolved'
   control claude-model-id adapters/claude.sh '    sonnet) printf' '    sonnetx) printf' \
     'claude window of sonnet: none, written as claude-sonnet-5'
-  control claude-haiku-substitution adapters/claude.sh '    model=sonnet' '    model=haiku' \
-    'launch haiku resolutions use the sonnet id and window'
-  control claude-haiku-warning adapters/claude.sh '      printf '\''%s\n'\'' "$warning" >&2 || return 1' ':' \
-    'launch warns once across repeated resolution and sourcing'
-  control claude-haiku-warning-once adapters/claude.sh 'if [ "${LANE_ADAPTER_CLAUDE_WARNING_OWNER:-}" != "$$" ]; then' \
-    'if [ "${LANE_ADAPTER_CLAUDE_WARNING_OWNER:-}" != "$$" ] || true; then' \
-    'launch warns once across repeated resolution and sourcing'
   control claude-window-substring adapters/claude.sh '      ${pair%=*}) printf' '      *${pair%=*}*) printf' \
     'claude window of claude-sonnet-5-5: none'
   control claude-evidence adapters/claude.sh '[ "${DISABLE_AUTO_COMPACT:-}" = 1 ]' '[ "${DISABLE_AUTO_COMPACT:-}" = 0 ]' \

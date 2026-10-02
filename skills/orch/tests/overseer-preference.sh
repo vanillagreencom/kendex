@@ -12,7 +12,6 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 LIB="$TEST_DIR/../scripts/lib/overseer-launch.sh"
 cat >"$TMP_ROOT/read" <<'SH'
 set -euo pipefail
-source "${1%/*}/lane-launch.sh"
 source "$1"
 OL_WALK_CALLER_MODEL="$3"
 rc=0
@@ -47,85 +46,6 @@ for row in \
   assert_eq "$OUT|$warning_count" "$rc|$named|$models|$deprecated|$refused|$first|$warnings" "parse $preference on caller $caller"
   if [[ "$warnings" == 1 ]]; then
     assert_eq "$(cat "$TMP_ROOT/err")" "preference-deprecated entry=${deprecated%% *} form=harness:model:effort" "warning names the original entry and replacement form"
-  fi
-done
-
-# The owner supplies the same resolved model to its account pick and launch
-# flags. The lanes stand-in returns its real exit-3/counts contract on Sonnet.
-cat >"$TMP_ROOT/walk" <<'SH'
-set -euo pipefail
-source "${1%/*}/lane-launch.sh"
-source "${1%/*}/lane-context.sh"
-source "$1"
-DEP_ERR="$2/err"
-SCRIPT_DIR="${1%/lib/*}"
-# Do not stub any model owner: only the lanes command's external result.
-ol_lanes() {
-  local model
-  model=$(launch_choice_value --model "$*") || return 1
-  printf '%s\n' "$model" >> "$PICKS"
-  if [[ "$model" == claude-sonnet-5 && "$WALL" == 1 ]]; then
-    printf '%s\n' '{"walled":1,"unmeasured":0}'
-    return 3
-  fi
-  printf '%s\n' '{"config_dir":"/fixture/account"}'
-}
-OL_WALK_CALLER_HARNESS=claude OL_WALK_CALLER_MODEL=haiku
-OL_WALK_CALLER_PICK_MODEL=haiku OL_WALK_CALLER_EFFORT=high
-OL_WALK_SOURCE_HARNESS=claude OL_WALK_SOURCE_FLAGS=--dangerously-skip-permissions
-if [[ "$MODE" == caller ]]; then entry=caller; else entry=claude:haiku:high; fi
-ol_walk 5 '' "$entry" codex:gpt-6-astra:high
-ol_launch_flags "$OL_HARNESS" "$OL_MODEL" "$OL_EFFORT" "$OL_PICK_MODEL" claude --dangerously-skip-permissions
-model=$(launch_choice_launch_model "$OL_HARNESS" "${OL_FLAGS[*]}") || exit 1
-printf '%s|%s|%s|%s\n' "$OL_HARNESS" "$OL_MODEL" "$OL_PICK_MODEL" "$model"
-SH
-for mode in named caller; do
-  for wall in 0 1; do
-    : >"$TMP_ROOT/picks"
-    OUT="$(env -i PATH="$PATH" HOME="$TMP_ROOT" MODE="$mode" WALL="$wall" PICKS="$TMP_ROOT/picks" \
-      bash "$TMP_ROOT/walk" "$LIB" "$TMP_ROOT" 2>"$TMP_ROOT/warnings")" || exit 1
-    if [[ "$wall" == 1 ]]; then
-      want='codex|gpt-6-astra|gpt-6-astra|gpt-6-astra'
-      picks=$'claude-sonnet-5\ngpt-6-astra'
-    else
-      want='claude|claude-sonnet-5|claude-sonnet-5|claude-sonnet-5'
-      picks=claude-sonnet-5
-    fi
-    assert_eq "$OUT|$(cat "$TMP_ROOT/picks")|$(wc -l <"$TMP_ROOT/warnings" | tr -d ' ')" \
-      "$want|$picks|1" "$mode walk judges and launches the resolved model at wall=$wall"
-  done
-done
-OUT="$(env -i PATH="$PATH" HOME="$TMP_ROOT" bash -c '
-  set -euo pipefail; source "${1%/*}/lane-launch.sh"; source "$1"
-  ol_account claude haiku; printf "%s\n" "$OL_ACCOUNT_MODEL"
-' _ "$LIB" 2>"$TMP_ROOT/warnings")" || exit 1
-assert_eq "$OUT" claude-sonnet-5 'the account owner resolves the Claude request before selection'
-for mutation in entry caller account; do
-  MUTANT="$(mutant_scripts "haiku-$mutation" lib/overseer-launch.sh)" || exit 1
-  case "$mutation" in
-    entry)
-      old='  OL_ENTRY_MODEL="$(launch_choice_model_id "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" --request)" || return 1'
-      new='  :'; mode=named ;;
-    caller)
-      old='      OL_PICK_MODEL="$(launch_choice_model_id "$OL_HARNESS" "$OL_PICK_MODEL" --request)" || return 1'
-      new='      :'; mode=caller ;;
-    account)
-      old='  model="$(launch_choice_model_id "${1:-}" "$model" --request)" || return 1'
-      new='  :'; mode=named ;;
-  esac
-  mutate_file "$MUTANT/lib/overseer-launch.sh" "$old" "# $old
-$new"
-  if [[ "$mutation" == account ]]; then
-    OUT="$(env -i PATH="$PATH" HOME="$TMP_ROOT" bash -c '
-      set -euo pipefail; source "${1%/*}/lane-launch.sh"; source "$1"
-      ol_account claude haiku; printf "%s\n" "$OL_ACCOUNT_MODEL"
-    ' _ "$MUTANT/lib/overseer-launch.sh" 2>"$TMP_ROOT/warnings")" || exit 1
-    assert_eq "$OUT" haiku 'control: the unresolved account request misses Sonnet'
-  else
-    : >"$TMP_ROOT/picks"
-    OUT="$(env -i PATH="$PATH" HOME="$TMP_ROOT" MODE="$mode" WALL=0 PICKS="$TMP_ROOT/picks" \
-      bash "$TMP_ROOT/walk" "$MUTANT/lib/overseer-launch.sh" "$TMP_ROOT" 2>"$TMP_ROOT/warnings")" || exit 1
-    assert_contains "$OUT" '|haiku|' "control: the unresolved $mutation request disagrees with its launch model"
   fi
 done
 for mutation in refusal model warning; do

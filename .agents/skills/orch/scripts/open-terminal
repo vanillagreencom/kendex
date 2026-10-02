@@ -385,7 +385,7 @@ preference_select() {
   local preference_entry preference_rc preference_word
   PREFERENCE_ENTRY="" PREFERENCE_LANE_ENV=""
   for preference_entry in "${OL_ENTRIES[@]}"; do
-    ol_entry_model "$preference_entry" || return 1
+    ol_entry_model "$preference_entry"
     OL_HARNESS="$OL_ENTRY_HARNESS" OL_WALK_SKIPS=()
     if ! ol_entry_permitted "$preference_entry"; then
       ot_message entry-permission-untransferable "entry=$preference_entry" \
@@ -605,11 +605,6 @@ LAUNCH_EFFORT=""
 if LAUNCH_MODEL_SPELLINGS="$(launch_choice_model_spellings "$LAUNCH_HARNESS")" &&
   [[ -n "$LAUNCH_MODEL_SPELLINGS" ]]; then
   LAUNCH_MODEL="$(launch_choice_launch_model "$LAUNCH_HARNESS" "$LAUNCH_TEXT")"
-fi
-# Managed argv uses the same resolved request for account checks and assembly.
-# A --cmd template owns its argv and is not rewritten by the managed builder.
-if [[ -z "$CMD_TEMPLATE" ]]; then
-  LAUNCH_MODEL="$(launch_choice_model_id "$LAUNCH_HARNESS" "$LAUNCH_MODEL" --request)" || return 1
 fi
 # Every way this harness spells its effort is the library's, the colon form pi
 # puts on the model value included. What stays here is the refusal below.

@@ -513,10 +513,8 @@ launch_choice_effort() { # HARNESS TEXT [TEXT]
 # The model a launch of HARNESS writes for MODEL: a claude alias the adapter
 # maps is written as its id, so no ANTHROPIC_DEFAULT_*_MODEL pin moves the
 # model its window was judged on; every other model as named.
-# --request resolves the substitution before selection, without changing other
-# tiers. Callers carry that result into the account check and launch builder.
-launch_choice_model_id() { # HARNESS MODEL [--request]
-  if [[ "$1" == claude ]]; then lane_adapter_claude_model_id "${2:-}" "${3:-}"; else printf '%s\n' "${2:-}"; fi
+launch_choice_model_id() { # HARNESS MODEL
+  if [[ "$1" == claude ]]; then lane_adapter_claude_model_id "${2:-}"; else printf '%s\n' "${2:-}"; fi
 }
 
 launch_choice_write() { # HARNESS MODEL EFFORT

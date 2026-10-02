@@ -1,1 +1,1 @@
-- Claude Code haiku-tier requests use sonnet with one warning per run, including installs, removals and tier queries, until KEN-2466 replaces the rule. Other tiers and harnesses stay unchanged.
+- Claude Code agent rendering replaces the haiku tier with sonnet and reports one warning per run. KEN-2466 removes this substitution.

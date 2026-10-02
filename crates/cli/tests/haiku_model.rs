@@ -1,4 +1,4 @@
-//! Consumer writes, previews, verify and tier queries deliver one model notice.
+//! Consumer writes and verify deliver one renderer model notice.
 
 use std::fs;
 use std::process::Command;
@@ -56,7 +56,6 @@ fn haiku_renders_sonnet_and_reports_one_warning_per_process() {
             "project",
             "--leave",
         ],
-        vec!["tier-model", "claude", "4"],
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_kendex"))
             .args(&args)
@@ -69,9 +68,6 @@ fn haiku_renders_sonnet_and_reports_one_warning_per_process() {
             .output()
             .unwrap();
         assert!(output.status.success(), "{args:?}: {output:?}");
-        if args[0] == "tier-model" {
-            assert_eq!(output.stdout, b"sonnet\n", "{args:?}");
-        }
         let stderr = String::from_utf8(output.stderr).unwrap();
         let warnings: Vec<_> = stderr
             .lines()

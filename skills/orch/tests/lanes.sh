@@ -1759,45 +1759,6 @@ model_usage() { # FABLE OPUS
              {kind: "weekly_scoped", percent: $o, resets_at: "2026-08-01T06:00:00Z",
               scope: {model: {display_name: "Opus"}}}]}'
 }
-
-# Consumer --model haiku requests spend Sonnet, even though shared windows
-# have room. Claude's fleet and named picks must consult that same window.
-new_home haiku-wall
-make_lane "$H" claude 3600
-claude_usage 20 20 97 Sonnet > "$FIXTURE_DIR/.claude.json"
-table \
-  "haiku fleet selection refuses the Sonnet wall||pick --harness claude --model haiku --json|rc=3 walled=1" \
-  "haiku named selection refuses the Sonnet wall||pick --lane $H/.claude --harness claude --model haiku --json|rc=3 wall=97 binding_bucket=model" \
-  "haiku Claude selection refuses the Sonnet wall||pick --harness claude --model haiku --json|rc=3 walled=1"
-pool_control haiku-selection lib/lane-model.sh \
-  'if \.harness == "claude" then \$claude_model else \$model end' '\$model' \
-  'control: a chooser without its resolved Claude model admits the spent window||pick --harness claude --model haiku --json|rc=0'
-for form in fleet named; do
-  MUTANT="$(mutant_scripts "haiku-$form" lanes)" || exit 1
-  if [[ "$form" == fleet ]]; then
-    old='claude_model="$(launch_choice_model_id claude "$model" --request)" || return 1'
-    new='claude_model="$model"'
-    args='pick --harness claude --model haiku --json'
-  else
-    old='check_model="$(launch_choice_model_id "$harness" "$model" --request)" || return 1'
-    new='check_model="$model"'
-    args="pick --lane $H/.claude --harness claude --model haiku --json"
-  fi
-  mutate_file "$MUTANT/lanes" "$old" "# $old
-$new"
-  REAL_LANES="$LANES"; LANES="$MUTANT/lanes"
-  run_lanes '' $args
-  LANES="$REAL_LANES"
-  assert_eq "$RC" 0 "control: unresolved $form haiku incorrectly admits the spent Sonnet window"
-done
-make_codex_lane "$H/.codex"
-jq -n '{rate_limit: {primary_window: {used_percent: 20, reset_at: 1785000000,
-                                     limit_window_seconds: 18000}}}' > "$FIXTURE_DIR/.codex.json"
-table "a Codex haiku pick keeps the non-Claude candidate eligible||pick --harness codex --model haiku --json|rc=0 harness=codex qualifying_count=1"
-
-# Resume the model-rate fixture used by the cases below.
-new_home model-rate
-make_lane "$H" claude 3600
 stage_model_rate() { # CURRENT_FABLE CURRENT_OPUS PRIOR_FABLE PRIOR_OPUS
   local f now
   CACHE_STATE="$TMP_ROOT/model-rate-$1-$2-$3-$4"
@@ -2311,7 +2272,7 @@ table \
   "a host row with no reading of its own leaves this machine's reading of the account in place|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token-bare.tsv|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.tclaude=local"
 # Control: a pick that never asks for the host rows reads the token-only folder
 # as this machine's no_credentials, and nothing is picked.
-lanes_mutant mutant-pick-local-only lanes '"\$SEATS" "\$hosted" "\$model" "\$claude_model")"' '"$SEATS" "[]" "$model" "$claude_model")"'
+lanes_mutant mutant-pick-local-only lanes '"\$SEATS" "\$hosted" "\$model")"' '"$SEATS" "[]" "$model")"'
 LANES_PATCHED="$LANES"
 LANES="$TMP_ROOT/mutant-pick-local-only/scripts/lanes"
 table \

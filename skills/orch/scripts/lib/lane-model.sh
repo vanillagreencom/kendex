@@ -307,8 +307,8 @@ def wall_verdict($max):
 # Partition on the same verdict the named pick reads. Score only orders room
 # lanes; it cannot buy a launch past the projected wall. The counts preserve
 # the distinction between an allowance spent and one never measured.
-def lane_selection($model; $claude_model; $floor; $burn; $now; $max):
-  [ .[] | with_lane_binding((if .harness == "claude" then $claude_model else $model end); $floor) | with_lane_projection($burn)
+def lane_selection($model; $floor; $burn; $now; $max):
+  [ .[] | with_lane_binding($model; $floor) | with_lane_projection($burn)
     | with_lane_selection_score($now)
     | . + {verdict: (judged_wall | wall_verdict($max))} ]
   | { chosen: ([ .[] | select(.verdict == "room") ]
@@ -323,12 +323,12 @@ def lane_selection($model; $claude_model; $floor; $burn; $now; $max):
 '
 
 # Read lane records on stdin and judge all their reset bonuses at one instant.
-lane_select() { # MODEL BINDING_FLOOR BURN MAX_PCT [CLAUDE_MODEL]
+lane_select() { # MODEL BINDING_FLOOR BURN MAX_PCT
   local now
   now="$(date +%s)" || return 1
-  jq -c --arg model "$1" --arg claude_model "${5:-$1}" --argjson floor "$2" --argjson burn "$3" \
+  jq -c --arg model "$1" --argjson floor "$2" --argjson burn "$3" \
     --argjson max "$4" --argjson now "$now" "$LANE_MODEL_JQ"'
-    lane_selection($model; $claude_model; $floor; $burn; $now; $max)'
+    lane_selection($model; $floor; $burn; $now; $max)'
 }
 
 # Consult DIR for an unreachable host or a measured Claude row missing MODEL.

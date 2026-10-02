@@ -2322,7 +2322,7 @@ load_lane_claims() {
 # local loop, in the local dir's place, and the tail carries only the rows
 # naming a dir discovery does not reach.
 collect_lanes() {
-	local harness_filter="$1" exclude="${2:-}" hosted="${3:-[]}" model="${4:-}" claude_model="${5:-${4:-}}" excluded="" held="" reached="" id d h row x check_model
+	local harness_filter="$1" exclude="${2:-}" hosted="${3:-[]}" model="${4:-}" excluded="" held="" reached="" id d h row x
 	while IFS= read -r x; do
 		[[ -z "$x" ]] || excluded+="$(lane_claims_canon "$x")"$'\n'
 	done <<<"$exclude"
@@ -2333,8 +2333,6 @@ collect_lanes() {
 		# asked for by name alone.
 		for h in claude codex copilot pi; do
 			[[ "$harness_filter" == "$h" || ( "$harness_filter" == "all" && "$h" != pi ) ]] || continue
-			check_model="$model"
-			[[ "$h" != claude ]] || check_model="$claude_model"
 			while IFS= read -r d; do
 				[[ -n "$d" ]] || continue
 				if [[ -n "$excluded" || -n "$held" ]]; then
@@ -2349,7 +2347,7 @@ collect_lanes() {
 							# when the requested model was never measured. This
 							# pipeline reports it as an unread candidate.
 							row="$(jq -c --arg id "$id" 'map(select(._id == $id)) | first' <<<"$hosted")" \
-								&& host_row_or_local "$h" "$d" "$row" "$check_model" \
+								&& host_row_or_local "$h" "$d" "$row" "$model" \
 								|| { message pick-lane-failed "$d" local-reading >&2;
 									jq -c '. + {status: "error", headroom_pct: null, detail: "local-reading failed"}' <<<"$row" || return 1; }
 							continue
@@ -2901,8 +2899,7 @@ copilot_pool_records_fix() { # RECORDS
 
 cmd_pick_lane() {
 	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5" binding_floor="$6" burn="$7" projected_verdict="$8"
-	local target found="" d record="" wall bucket verdict hosted projected check_model
-	check_model="$(launch_choice_model_id "$harness" "$model" --request)" || return 1
+	local target found="" d record="" wall bucket verdict hosted projected
 	# A malformed override refuses this form as it refuses the chooser, before a
 	# provider row could stand in for an entry nobody can parse.
 	if [[ "$harness" == pi ]]; then copilot_pool_entries >/dev/null || return 1; fi
@@ -2946,7 +2943,7 @@ cmd_pick_lane() {
 	if [[ -n "$record" && -z "$found" ]]; then
 		found="$(jq -r '.config_dir' <<<"$record")" || { message pick-lane-failed "$dir" host >&2; return 1; }
 	elif [[ -n "$record" ]]; then
-		record="$(host_row_or_local "$harness" "$found" "$record" "$check_model")" || { message pick-lane-failed "$dir" local-reading >&2; return 1; }
+		record="$(host_row_or_local "$harness" "$found" "$record" "$model")" || { message pick-lane-failed "$dir" local-reading >&2; return 1; }
 	fi
 	# Every directory is a Pi account the Copilot pool reading can be asked
 	# about: one the setting states nothing for is unmeasured, never unlisted,
@@ -2957,7 +2954,7 @@ cmd_pick_lane() {
 		return 4
 	fi
 	[[ -n "$record" ]] || record="$(measure_lane "$harness" "$found")" || { message pick-lane-failed "$dir" measure >&2; return 1; }
-	record="$(jq -c --arg model "$check_model" --argjson floor "$binding_floor" --argjson burn "$burn" "$LANE_MODEL_JQ"'
+	record="$(jq -c --arg model "$model" --argjson floor "$binding_floor" --argjson burn "$burn" "$LANE_MODEL_JQ"'
 		with_lane_binding($model; $floor) | with_lane_projection($burn)
 	' <<<"$record")" || { message pick-lane-failed "$dir" wall >&2; return 1; }
 	# The classifier is lib/lane-model.sh's, shared with the fleet chooser: one
@@ -3077,11 +3074,7 @@ omitted_seats() { # HARNESS HOSTED
 
 cmd_pick() {
 	local harness="$1" max_pct="$2" as_json="$3" model="$4" binding_floor="$5" exclude="$6" for_overseer="$7" burn="$8"
-	local lanes hosted judged chosen walled unmeasured omitted="" seats=0 seat claude_model="$model"
-	# A mixed chooser resolves only its Claude rows; other harnesses keep MODEL.
-	if [[ "$harness" == claude || "$harness" == all ]]; then
-		claude_model="$(launch_choice_model_id claude "$model" --request)" || return 1
-	fi
+	local lanes hosted judged chosen walled unmeasured omitted="" seats=0 seat
 	# A Pi account on the Copilot pool is a Pi root the provider reports a
 	# harness=pi row for or the override names. The override is refused here
 	# when nobody can parse it, before anything is read; its Copilot CLI
@@ -3115,8 +3108,8 @@ cmd_pick() {
 		{ message copilot-pool-unstated "${model:-none}" "$HOSTED_READ"; lane_copilot_pool_fix "${ORCH_LANE_HOST:-local}" "$HOSTED_READ"; } >&2
 		return 5
 	fi
-	lanes="$(collect_lanes "$harness" "$exclude"$'\n'"$SEATS" "$hosted" "$model" "$claude_model")" || return 1
-	judged="$(lane_select "$model" "$binding_floor" "$burn" "$max_pct" "$claude_model" <<<"$lanes")" || return 1
+	lanes="$(collect_lanes "$harness" "$exclude"$'\n'"$SEATS" "$hosted" "$model")"
+	judged="$(lane_select "$model" "$binding_floor" "$burn" "$max_pct" <<<"$lanes")" || return 1
 	chosen="$(jq -c '.chosen' <<<"$judged" 2>/dev/null || true)"
 	if [[ -z "$chosen" || "$chosen" == "null" ]]; then
 		walled="$(jq -r '.walled // 0' <<<"$judged" 2>/dev/null || true)"
