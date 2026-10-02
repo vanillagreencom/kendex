@@ -81,7 +81,7 @@ github.sh resolve-thread PRRT_kwDO...    # resolve by thread id
 
 ### Waiting for merge state
 
-**Never gate termination on `gh pr view --json mergeable`.** That field stays `UNKNOWN` permanently after a merge: read `state`, which `pr-merge --check` carries. A PR whose merge state GitHub is still computing needs no wait of its own: `pr-merge --auto` arms it, and GitHub merges it once the state resolves. To watch MANY PRs, do not hand-roll a poll loop keyed on state transitions. Use the review-gate skill's reducer when installed (`.agents/skills/review-gate/scripts/pr-watch.sh`).
+**Never gate termination on `gh pr view --json mergeable`.** That field stays `UNKNOWN` permanently after a merge: read `state`, which `pr-merge --check` carries. For a PR whose merge state GitHub is still computing, follow the orch skill's `merge-pr.md` § 5 step 1 explicit arm path. The route contract is `pr-merge --help` § Merge route. To watch MANY PRs, do not hand-roll a poll loop keyed on state transitions. Use the review-gate skill's reducer when installed (`.agents/skills/review-gate/scripts/pr-watch.sh`).
 
 ## Output Formats
 

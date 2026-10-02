@@ -78,7 +78,7 @@ Reruns re-execute the workflow definition and verifier state pinned at the origi
 
 ## Merge route
 
-A lane merges its own pull request: `merge-pr.md` § 5 step 1 runs `pr-merge` on the exact head, under the lanes app's installation token in a lane sandbox. `pr-merge` merges past the queue with `--admin` where the queue is all that token would bypass on the base and the change is not queue-only, per kendex decision D016; otherwise GitHub queues the PR (exit `75`) and the lane waits in `queue-wait` to a terminal verdict, where a finding that lands while the PR is queued takes it back out through `queue-wait`'s late-findings guard. The route and its causes: `pr-merge --help` § Merge route. A `pr_approval.forced` item arms `--auto`, which never passes `--admin`, and the arm at creation in `submit-pr.md` § 2 step 5 arms only a PR that route takes through the queue.
+A lane merges its own pull request: `merge-pr.md` § 5 step 1 runs `pr-merge` on the exact head, under the lanes app's installation token in a lane sandbox. `pr-merge` merges past the queue with `--admin` where the queue is all that token would bypass on the base and the change is not queue-only, per kendex decision D016; otherwise GitHub queues the PR (exit `75`) and the lane waits in `queue-wait` to a terminal verdict, where a finding that lands while the PR is queued takes it back out through `queue-wait`'s late-findings guard. The route and its causes: `pr-merge --help` § Merge route. `merge-pr.md` § 5 step 1 owns the explicit arms for `pr_approval.forced` and unresolved merge state. `submit-pr.md` § 2 step 5 owns ordinary creation arms.
 
 The overseer's owner-credential merge, the `--force` override and the `ORCH_MERGE_BYPASS` fast path are retired; their settings are read by nothing.
 

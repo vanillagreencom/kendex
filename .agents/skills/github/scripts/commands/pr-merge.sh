@@ -262,7 +262,7 @@ Terminal and mutation rules:
 Examples:
   github.sh pr-merge 42 --check          # Check only, JSON output
   github.sh pr-merge 42                  # Check + merge if pass
-  github.sh pr-merge 42 --auto           # Merge now or queue auto-merge
+  github.sh pr-merge 42 --auto           # Route-aware arm; see Merge route
 EOF
 }
 
