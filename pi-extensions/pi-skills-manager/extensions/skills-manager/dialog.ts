@@ -64,7 +64,12 @@ class SkillsManagerDialog implements Focusable {
 	private readonly requestRender: () => void;
 	private mode: Mode = "browse";
 	private _focused = false;
-	private registry: SkillRegistry;
+	private registry!: SkillRegistry;
+	// Built once per catalog load, so a keystroke matches these strings and a
+	// frame reads this count instead of walking every skill entry.
+	private searchIndex: Array<{ skill: SkillEntry; text: string }> = [];
+	private enabledCount = 0;
+	private browseGroups: { own: SkillEntry[]; library: SkillEntry[] } = { own: [], library: [] };
 	private filteredSkills: SkillEntry[] = [];
 	private selectedIndex: number;
 	private browseQuery: string;
@@ -104,7 +109,7 @@ class SkillsManagerDialog implements Focusable {
 		this.done = done;
 		this.options = options;
 		this.requestRender = requestRender;
-		this.registry = registry;
+		this.setRegistry(registry);
 		this.selectedIndex = Math.max(0, initialSelectedIndex);
 		this.browseQuery = initialQuery;
 		this.browseInput.setValue(initialQuery);
@@ -128,26 +133,27 @@ class SkillsManagerDialog implements Focusable {
 		if (this.editorView) this.editorView.focused = this._focused && this.mode === "edit";
 	}
 
-	private searchableText(skill: SkillEntry): string {
-		return [skill.name, skill.description, scopeLabel(skill), skill.origin, skill.source, skill.path, skill.baseDir ?? ""].join(" ").toLowerCase();
+	private setRegistry(registry: SkillRegistry): void {
+		this.registry = registry;
+		this.searchIndex = registry.allSkills.map((skill) => ({
+			skill,
+			text: [skill.name, skill.description, scopeLabel(skill), skill.origin, skill.source, skill.path, skill.baseDir ?? ""].join(" ").toLowerCase(),
+		}));
+		this.enabledCount = registry.allSkills.filter((skill) => skill.enabled).length;
 	}
 
 	private filterSkills(query: string): SkillEntry[] {
 		const trimmed = query.trim().toLowerCase();
 		if (!trimmed) return this.registry.allSkills;
 		const tokens = trimmed.split(/\s+/).filter(Boolean);
-		return this.registry.allSkills.filter((skill) => tokens.every((token) => this.searchableText(skill).includes(token)));
-	}
-
-	private orderBrowseSkills(skills: SkillEntry[]): SkillEntry[] {
-		const own = skills.filter((skill) => isDeletableSkill(skill));
-		const library = skills.filter((skill) => !isDeletableSkill(skill));
-		return [...own, ...library];
+		return this.searchIndex.filter(({ text }) => tokens.every((token) => text.includes(token))).map(({ skill }) => skill);
 	}
 
 	private refreshBrowseList(preferredPath?: string): void {
 		const currentPath = preferredPath ?? this.getSelectedSkill()?.path;
-		this.filteredSkills = this.orderBrowseSkills(this.filterSkills(this.browseQuery));
+		const matches = this.filterSkills(this.browseQuery);
+		this.browseGroups = { own: matches.filter((skill) => isDeletableSkill(skill)), library: matches.filter((skill) => !isDeletableSkill(skill)) };
+		this.filteredSkills = [...this.browseGroups.own, ...this.browseGroups.library];
 		if (currentPath) {
 			const nextIndex = this.filteredSkills.findIndex((skill) => skill.path === currentPath);
 			if (nextIndex >= 0) { this.selectedIndex = nextIndex + 1; return; }
@@ -156,6 +162,7 @@ class SkillsManagerDialog implements Focusable {
 	}
 
 	private getSelectedSkill(): SkillEntry | undefined { return this.selectedIndex === 0 ? undefined : this.filteredSkills[this.selectedIndex - 1]; }
+	private getDeleteSkill(): SkillEntry | undefined { return this.deleteSkillPath ? this.registry.allSkills.find((skill) => skill.path === this.deleteSkillPath) : undefined; }
 	private getCurrentSkill(): SkillEntry | undefined { return this.previewSkillPath ? this.registry.allSkills.find((skill) => skill.path === this.previewSkillPath) : undefined; }
 	private get currentCreateStep(): CreateStep { return CREATE_STEPS[this.createStepIndex]!; }
 
@@ -233,7 +240,7 @@ class SkillsManagerDialog implements Focusable {
 		this.openPreview(this.registry.allSkills.find((skill) => skill.path === created.path) ?? created);
 	}
 	private async refreshRegistry(preferredPath?: string): Promise<void> {
-		this.registry = await this.options.onRefresh();
+		this.setRegistry(await this.options.onRefresh());
 		this.refreshBrowseList(preferredPath);
 		if (this.previewSkillPath) {
 			const current = this.registry.allSkills.find((skill) => skill.path === this.previewSkillPath);
@@ -253,8 +260,9 @@ class SkillsManagerDialog implements Focusable {
 		this.requestRender();
 	}
 	private async confirmDelete(): Promise<void> {
-		const skill = this.deleteSkillPath ? this.registry.allSkills.find((entry) => entry.path === this.deleteSkillPath) : undefined;
+		const skill = this.getDeleteSkill();
 		if (!skill) { this.exitToBrowse(); return; }
+		this.mode = "deleting"; this.syncFocus(); this.requestRender();
 		const deleted = await this.options.onDelete(skill);
 		if (!deleted) { this.mode = this.deleteReturnMode === "preview" ? "preview" : "browse"; this.syncFocus(); this.requestRender(); return; }
 		this.deleteSkillPath = undefined; this.previewSkillPath = undefined; this.preview = undefined;
@@ -296,6 +304,7 @@ class SkillsManagerDialog implements Focusable {
 		if (this.mode === "edit") return this.editorView?.render(width) ?? [];
 		if (this.mode === "rename") return this.renderRenameDialog(width);
 		if (this.mode === "delete-confirm") return this.renderDeleteDialog(width);
+		if (this.mode === "deleting") return this.renderDeletingDialog(width);
 		if (this.mode === "generating") return this.renderGeneratingDialog(width);
 		return this.mode === "create" ? this.renderCreate(width) : this.renderBrowse(width);
 	}
@@ -303,14 +312,12 @@ class SkillsManagerDialog implements Focusable {
 	private renderBrowse(width: number): string[] {
 		const innerWidth = Math.max(1, width - 4);
 		const root = new Container();
-		const enabledCount = this.registry.allSkills.filter((skill) => skill.enabled).length;
 		const totalCount = this.registry.allSkills.length;
 		root.addChild(new SearchInputLine(this.browseInput, this.theme));
 		root.addChild(new Spacer(1));
 		const list = new Container();
 		const entries: Array<{ kind: "create" } | { kind: "header"; label: string } | { kind: "skill"; skill: SkillEntry }> = [{ kind: "create" }];
-		const own = this.filteredSkills.filter((skill) => isDeletableSkill(skill));
-		const library = this.filteredSkills.filter((skill) => !isDeletableSkill(skill));
+		const { own, library } = this.browseGroups;
 		if (own.length > 0) entries.push({ kind: "header", label: "Your Skills" }, ...own.map((skill) => ({ kind: "skill" as const, skill })));
 		if (library.length > 0) entries.push({ kind: "header", label: "Library Skills" }, ...library.map((skill) => ({ kind: "skill" as const, skill })));
 		let selectedDisplayIndex = 0;
@@ -357,7 +364,7 @@ class SkillsManagerDialog implements Focusable {
 		const actions: Array<[string, string]> = [["-/=", "page"]];
 		if (selected) { actions.push(["tab", "preview"], ["ctrl+x", "enable/disable"]); if (!this.browseQuery && isDeletableSkill(selected)) actions.push(["backspace", "delete"]); }
 		root.addChild(new Text(skillKeyHints(this.theme, actions), 1, 0));
-		return renderFrame(this.theme, width, root.render(innerWidth), undefined, "Skills Manager", `${enabledCount}/${totalCount} enabled`);
+		return renderFrame(this.theme, width, root.render(innerWidth), undefined, "Skills Manager", `${this.enabledCount}/${totalCount} enabled`);
 	}
 
 	private renderCreate(width: number): string[] {
@@ -391,10 +398,13 @@ class SkillsManagerDialog implements Focusable {
 		return renderCenteredDialog(this.theme, width, lines);
 	}
 	private renderDeleteDialog(width: number): string[] {
-		const skill = this.deleteSkillPath ? this.registry.allSkills.find((entry) => entry.path === this.deleteSkillPath) : undefined;
+		const skill = this.getDeleteSkill();
 		const innerWidth = Math.max(1, Math.min(width - 4, 64));
 		const message = skill ? `Delete ${skill.name}? This removes ${skillStorageTarget(skill)} and cannot be undone.` : "Delete this skill?";
 		return renderCenteredDialog(this.theme, width, [skillEntityTitle(this.theme, "Delete skill"), "", ...wrapTextWithAnsi(message, innerWidth), ""]);
+	}
+	private renderDeletingDialog(width: number): string[] {
+		return renderCenteredDialog(this.theme, width, [skillEntityTitle(this.theme, "Deleting skill"), "", this.theme.fg("dim", "The manager continues when the removal finishes.")]);
 	}
 	private renderGeneratingDialog(width: number): string[] {
 		const modelLabel = this.ctx.model?.id ?? "fallback template";
@@ -404,6 +414,8 @@ class SkillsManagerDialog implements Focusable {
 	handleInput(data: string): void {
 		if (this.mode === "generating") { if (matchesKey(data, Key.escape)) { this.generationAbortController?.abort(); this.generationAbortController = undefined; this.generationRunId += 1; this.mode = "create"; this.syncFocus(); this.requestRender(); } return; }
 		if (this.mode === "rename") { if (matchesKey(data, Key.escape)) { this.closeRenameDialog(); return; } if (this.renameError) this.renameError = undefined; this.renameInput.handleInput(data); return; }
+		// A removal in flight takes no input: a second confirm would delete again.
+		if (this.mode === "deleting") return;
 		if (this.mode === "delete-confirm") { if (matchesKey(data, Key.escape)) { this.mode = this.deleteReturnMode === "preview" ? "preview" : "browse"; this.syncFocus(); return; } if (matchesKey(data, Key.enter)) void this.confirmDelete(); return; }
 		if (this.mode === "edit") { this.editorView?.handleInput(data); return; }
 		if (this.mode === "preview") {

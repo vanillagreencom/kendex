@@ -1,0 +1,1 @@
+- pi-skills-manager: deleting a skill no longer blocks Pi while its files are removed, and scrolling a long skill preview or typing a search stays responsive with a large catalog.

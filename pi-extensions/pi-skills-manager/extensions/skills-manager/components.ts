@@ -96,7 +96,9 @@ export class SearchInputLine implements Component {
 export class ScrollableSkillPreview implements Component {
 	private scrollOffset = 0;
 	private lastInnerWidth = 1;
-	private lastContentLines: string[] = [];
+	// The laid-out preview for one inner width. Pi calls invalidate() when the
+	// theme changes and setSkill() replaces the content, and both drop it.
+	private layout: { innerWidth: number; lines: string[] } | undefined;
 	private skill: SkillEntry;
 	private readonly theme: Theme;
 	private readonly getTerminalRows: () => number;
@@ -107,9 +109,14 @@ export class ScrollableSkillPreview implements Component {
 		this.theme = theme;
 		this.getTerminalRows = getTerminalRows;
 	}
-	setSkill(skill: SkillEntry): void { this.skill = skill; this.body = readSkillBody(skill); this.scrollOffset = 0; this.lastContentLines = []; }
-	invalidate(): void { this.lastContentLines = []; }
+	setSkill(skill: SkillEntry): void { this.skill = skill; this.body = readSkillBody(skill); this.scrollOffset = 0; this.layout = undefined; }
+	invalidate(): void { this.layout = undefined; }
 	private maxHeight(): number { return Math.max(10, Math.floor(this.getTerminalRows() * 0.78)); }
+	private contentLines(innerWidth: number): string[] {
+		this.lastInnerWidth = innerWidth;
+		if (this.layout?.innerWidth !== innerWidth) this.layout = { innerWidth, lines: this.buildContentLines(innerWidth) };
+		return this.layout.lines;
+	}
 	private buildContentLines(innerWidth: number): string[] {
 		const content = new Container();
 		const status = this.skill.enabled ? this.theme.fg("success", "enabled") : this.theme.fg("warning", "disabled");
@@ -126,10 +133,7 @@ export class ScrollableSkillPreview implements Component {
 		content.addChild(new Text(this.theme.fg("muted", this.theme.bold("Content")), 0, 0));
 		content.addChild(new Spacer(1));
 		content.addChild(this.renderBody());
-		const lines = content.render(innerWidth);
-		this.lastInnerWidth = innerWidth;
-		this.lastContentLines = lines;
-		return lines;
+		return content.render(innerWidth);
 	}
 	private renderBody(): Component {
 		switch (this.body.kind) {
@@ -150,7 +154,7 @@ export class ScrollableSkillPreview implements Component {
 		if (width < 8) return [];
 		const innerWidth = Math.max(1, width - 4);
 		const visibleHeight = Math.max(1, this.maxHeight() - 3);
-		const contentLines = this.buildContentLines(innerWidth);
+		const contentLines = this.contentLines(innerWidth);
 		const maxScroll = Math.max(0, contentLines.length - visibleHeight);
 		this.scrollOffset = Math.max(0, Math.min(this.scrollOffset, maxScroll));
 		const visible = contentLines.slice(this.scrollOffset, this.scrollOffset + visibleHeight);
@@ -158,7 +162,7 @@ export class ScrollableSkillPreview implements Component {
 	}
 	handleInput(data: string): void {
 		const visibleHeight = Math.max(1, this.maxHeight() - 3);
-		const total = this.lastContentLines.length || this.buildContentLines(this.lastInnerWidth).length;
+		const total = this.contentLines(this.lastInnerWidth).length;
 		const maxScroll = Math.max(0, total - visibleHeight);
 		if (matchesKey(data, Key.up)) this.scrollOffset = Math.max(0, this.scrollOffset - 1);
 		else if (matchesKey(data, Key.down)) this.scrollOffset = Math.min(maxScroll, this.scrollOffset + 1);

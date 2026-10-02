@@ -32,6 +32,7 @@ The manager reads the skills Pi has discovered. You select a skill to preview it
 
 - The skill list is loaded when `/skill` opens the manager and released when it closes. A session that never opens it, with or without a UI, loads nothing.
 - The list holds each skill's name, description and metadata. To get them, opening the list reads each skill's file, and the list keeps no skill's body. The manager reads a skill's body from its file again when it shows that skill.
+- While it is open, the manager also keeps one search string per listed skill, rebuilt when the list reloads, and the laid-out lines of the skill it previews at one width. Both go when it closes.
 
 ## Settings
 

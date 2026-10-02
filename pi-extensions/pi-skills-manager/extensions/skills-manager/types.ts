@@ -6,7 +6,7 @@ export type SkillScope = "user" | "project" | "temporary";
 export type SkillOrigin = "package" | "top-level";
 export type SkillLocation = "project" | "global";
 export type MessageTone = "dim" | "success" | "error";
-export type Mode = "browse" | "create" | "preview" | "edit" | "rename" | "delete-confirm" | "generating";
+export type Mode = "browse" | "create" | "preview" | "edit" | "rename" | "delete-confirm" | "deleting" | "generating";
 
 export interface kendexModalLock {
 	depth: number;

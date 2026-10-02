@@ -10,6 +10,7 @@ For maintainers. What it does for a consumer is [README.md](README.md).
 - Overlay geometry is computed in `extensions/skills-manager/layout.ts` and always yields a finite row count of at least one, however small the terminal; `tests/layout.test.ts` holds each bound.
 - With the feature disabled, only the recovery commands `/skill` and `/skill:enable` are registered, so the person can turn it back on without editing settings by hand; `extensions/skills-manager.ts`.
 - The overlay takes the shared modal lock, `Symbol.for("kendex.pi.modal-lock")`.
+- Deleting a skill awaits `rm` from `node:fs/promises`, so a large directory never blocks the event loop; the dialog's `deleting` mode takes no input until the removal settles, and a failed removal is reported as an error. `extensions/skills-manager/registry.ts::deleteSkill`, `tests/delete.test.ts`.
 
 ## Tests
 

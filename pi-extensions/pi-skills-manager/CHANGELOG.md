@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.0.4
+
+- Deleting a skill removes its files without blocking Pi. The manager shows that the deletion is running and takes no input until it ends, then reports the deletion; a deletion that fails is reported as an error. The skill preview lays out its content once per width instead of on every frame, and search matches against text built once when the list loads, so scrolling a long skill and typing a search stay responsive with a large catalog.
+
 ### 2.0.3
 
 - The skill list is no longer loaded when a session starts, with or without a UI. `/skill` loads it when it opens and releases it when it closes. The list no longer keeps skill bodies in memory: it reads each skill's file for its metadata only, and the manager reads a skill's body from its file when it shows that skill. A listed skill whose file can no longer be read shows the read error in its preview and does not open in the editor, where before the editor opened on the body cached at load.

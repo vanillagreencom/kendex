@@ -5,14 +5,11 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { showSkillsManager } from "../extensions/skills-manager/dialog.ts";
 import { clearPackageConfigCache, recordProjectTrust } from "../extensions/skills-manager/package-config.ts";
 import { loadSkillRegistry } from "../extensions/skills-manager/registry.ts";
+import { KEYS, openManager } from "./harness.ts";
 
 const SKILL_TEXT = "---\nname: sample\ndescription: A sample skill.\n---\n\nThe sample body.\n";
-// Type the name to filter the list to the one skill, select it, open its
-// preview, then press edit and save.
-const KEYS = { down: "\x1b[B", tab: "\t", edit: "\x05", save: "\x13" };
 
 let root = "";
 let cwd = "";
@@ -50,22 +47,9 @@ const ROWS = [
 
 test.each(ROWS)("a skill file that cannot be read opens no editor, so Save cannot write over it ($when)", async (row) => {
 	const registry = await loadSkillRegistry(cwd);
-	const notices: Array<{ level: string }> = [];
-	let component: any;
-	let close: (() => void) | undefined;
-	const theme = { fg: (_color: string, text: string) => text, bg: (_color: string, text: string) => text, bold: (text: string) => text };
-	const tui = { requestRender() {}, terminal: { rows: 40, columns: 100 } };
-	const ctx = {
-		cwd,
-		ui: {
-			notify: (_message: string, level: string) => { notices.push({ level }); },
-			custom: (factory: any) => new Promise((resolve) => {
-				component = factory(tui, theme, {}, resolve);
-				close = () => resolve(null);
-			}),
-		},
-	} as any;
-	const shown = showSkillsManager(ctx, registry, {} as any);
+	const { component, notices, shown, close } = openManager(cwd, registry);
+	// Type the name to filter the list to the one skill, select it, open its
+	// preview, then press edit and save.
 	for (const key of "sample") component.handleInput(key);
 	component.handleInput(KEYS.down);
 	// Write-only: the read fails where a write would still succeed.
@@ -78,8 +62,8 @@ test.each(ROWS)("a skill file that cannot be read opens no editor, so Save canno
 	component.handleInput(KEYS.save);
 	await new Promise((resolve) => setImmediate(resolve));
 	chmodSync(skillPath, 0o644);
-	close!();
+	close();
 	await shown;
 	expect(preview).toContain(row.preview());
-	expect({ notices, file: readFileSync(skillPath, "utf8") }).toEqual({ notices: [{ level: "error" }], file: SKILL_TEXT });
+	expect({ levels: notices.map((notice) => notice.level), file: readFileSync(skillPath, "utf8") }).toEqual({ levels: ["error"], file: SKILL_TEXT });
 });
