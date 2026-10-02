@@ -79,6 +79,8 @@
 #            root removed first so a source and the render mirroring it agree.
 #            A path the measurement counts as a test or fixture, by its
 #            built-in rule or ORCH_SIZE_TEST_PATHS, belongs to no subsystem.
+#            A path in harness-only's docs set also belongs to no subsystem;
+#            its lines still count toward the production ceiling.
 #            An agent instruction file, an `instruction` line of orch's
 #            narrow-change.conf (AGENTS.md, SKILL.md), that earns trivial or
 #            micro answers small instead, cause=instruction-file: it changes
@@ -844,6 +846,17 @@ measure() {
 }
 measure || answer standard "$MEASURE_CAUSE"
 
+# harness-only owns the docs set. Use its non-doc paths for the subsystem
+# rule as well as its verdict for trivial, without changing the measured size
+# or the paths the refusal lists read.
+docs_outside="$work/docs-outside"
+docs_verdict="$("$HARNESS_ONLY" --mode docs "${harness_args[@]}" \
+  --outside-output "$docs_outside" --output /dev/null 2>/dev/null)" || docs_verdict=unreadable
+case "$docs_verdict" in
+  docs_only=true | docs_only=false) ;;
+  *) docs_verdict=unreadable ;;
+esac
+
 # An agent instruction file, an `instruction` line of orch's list, changes
 # how every agent behaves, so it never answers below small, the lowest class
 # the default review policy gives a bot round; CLAUDE.md is refused above by
@@ -873,9 +886,7 @@ if [ -n "${HARNESS_CI_TRIVIAL_PATHS:-}" ]; then
   fi
 else
   # The shipped allowlist is that mode's own path set, read from its verdict.
-  if docs_verdict="$("$HARNESS_ONLY" --mode docs "${harness_args[@]}" \
-    --output /dev/null 2>/dev/null)" &&
-    [ "$docs_verdict" = "docs_only=true" ]; then
+  if [ "$docs_verdict" = "docs_only=true" ]; then
     [ "$total" -gt "$trivial_max" ] ||
       answer_narrow trivial "cause=documentation-paths lines=$total"
     set_globs 'docs/plans/*'
@@ -896,10 +907,24 @@ fi
 [ "$production" -gt "$micro_max" ] ||
   answer_narrow micro "cause=production-within-micro production=$production"
 
+# Micro needs only the independent size proof above, not docs membership.
+# Small needs completed docs discovery. harness-only emits false with an
+# empty outside list on a read failure, not only on a valid path judgement.
+case "$docs_verdict" in
+  docs_only=true | docs_only=false) ;;
+  *) answer standard "cause=documentation-paths-unreadable" ;;
+esac
+non_docs="$(cat -- "$docs_outside")" || answer standard "cause=documentation-paths-unreadable"
+if [ "$docs_verdict" = docs_only=false ] && [ -z "$non_docs" ]; then
+  answer standard "cause=documentation-paths-unreadable"
+fi
+non_docs=$'\n'"$non_docs"$'\n'
+
 # The render roots are the measurement's own list, so a source and the render
 # mirroring it reduce to one subsystem. A path the measurement counted as a
 # test is left out, read off its list rather than judged again here: a script
 # and the fixture it needs are one change wherever the fixture lives.
+# Documentation is left out using harness-only's set, not another path rule.
 set_globs "$BRANCH_GROWTH_RENDER_ROOTS"
 render_roots=("${GLOB_LIST[@]}")
 subsystem=""
@@ -907,6 +932,7 @@ one_subsystem=true
 test_files=$'\n'"$BRANCH_SIZE_TEST_FILES"$'\n'
 while IFS= read -r path; do
   [ -n "$path" ] || continue
+  case "$non_docs" in *$'\n'"$path"$'\n'*) ;; *) continue ;; esac
   case "$test_files" in *$'\n'"$path"$'\n'*) continue ;; esac
   for root in ${render_roots[@]+"${render_roots[@]}"}; do
     case "$path" in "$root"/*) path="${path#"$root"/}"; break ;; esac

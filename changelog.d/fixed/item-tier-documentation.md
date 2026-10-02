@@ -1,0 +1,1 @@
+- Small items with their documentation or changelog stay small when the change fits the size limit. Launch and branch checks use the same classifier.
