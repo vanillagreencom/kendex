@@ -143,7 +143,7 @@ state() { jq -c "$1" "$CASE/state/workflow-state-oversee.json"; }
 # Both delivery forms use the same reader and writer. The direct-push case
 # has no timeline fixture: calling pr-timeline would fail the record.
 echo "=== direct push and the mutually exclusive delivery flags ==="
-while IFS='|' read -r name form want; do
+while IFS='|' read -r name form want_out want_err; do
   new_case "delivery-$name"
   printf small > "$CASE/class"
   edit_json "$CASE/state/workflow-state-oversee.json" '.lanes[0].tier = "micro"'
@@ -155,7 +155,7 @@ while IFS='|' read -r name form want; do
   esac
   got="$(record KEN-1 '')"
   assert_eq "$(sed -E 's/ phase=.*//' <<<"$got")|$(sed -n '/^oversee-cycle: usage=/p' "$CASE/err")" \
-    "${want//SHA/$MERGE}" "delivery flags: $name"
+    "${want_out//SHA/$MERGE}|$want_err" "delivery flags: $name"
 done <<'ROWS'
 PR|pr|rc=0 cycle item=KEN-1 pr=7 class=small tier=micro target=1800 merge_group=- actual=900 open=780 verdict=met|
 direct push|commit|rc=0 cycle item=KEN-1 commit=SHA class=small tier=micro target=1800 merge_group=- actual=900 open=- verdict=unmeasured|

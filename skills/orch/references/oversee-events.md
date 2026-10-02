@@ -48,9 +48,19 @@ The overseer owns fleet judgement, not just liveness; every `oversee.md` § 4 ev
 - **Keep the report's inputs current.** After each `oversee.md` § 2 selection, `workflow-state set oversee launch_queue '["[ITEM]",...]'` with the items not yet launched, in launch order. The queue is the order and the tracker the membership: the `heartbeat` handling below adds what the tracker says the fleet owes. A question sent to the owner is an owner ask ([communication-modes.md § Owner asks](communication-modes.md#owner-asks)), and the report's Waiting on you row reads the unresolved ones from the mailbox itself; nothing is recorded in the state for it.
 - **Decide without the user.** The ask set is [communication-modes.md](communication-modes.md) § Ask set, which nothing here narrows or widens. Any other call takes the option that costs nothing and is recorded in the fleet log as that file's § Recording requires.
 
+## Direct-push cycle records
+
+When a lane reports a successful direct push to the base branch, record its cycle before closing it or removing its workflow state. Run from a checkout of that repository. A direct push raises no PR `merged` event. Refuse to record a push with several commits and report it in the fleet log; `oversee-cycle --help` defines the single-commit contract.
+
+```bash
+.agents/skills/orch/scripts/oversee-cycle --state-dir [OVERSEE_STATE_DIR] record --commit [PUSHED_SHA] [ITEM_KEY]
+```
+
+Use `--tier [TIER]` only for an old lane record without a launch tier. Add `--repo [OWNER/REPO]` when the lane record names no repository. Unknown fields print `-`; the verdict is `unmeasured` when classified. Report a refusal without blocking lane close.
+
 ## Event kinds
 
-A lane's successful direct-push completion takes [oversee.md § Direct-push cycle records](../workflows/oversee.md#direct-push-cycle-records) before lane close. It raises no PR `merged` event.
+A lane's successful direct-push completion takes [§ Direct-push cycle records](#direct-push-cycle-records) before lane close.
 
 To wake a lane below is to send it the directive and wake it per `oversee-lanes.md` § Talking to a lane, which wakes only a Claude Code or Codex lane whose send receipt reads `monitor=none`.
 

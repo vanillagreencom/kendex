@@ -166,15 +166,7 @@ Write owner summaries with [communication-modes.md § Owner messages](../referen
 - Judgement rules for every event: [oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules).
 - Handling per event kind: [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds).
 
-### Direct-push cycle records
-
-When a lane reports a successful direct push to the base branch, record its cycle before closing it or removing its workflow state. Run from a checkout of that repository. A direct push raises no PR `merged` event. Refuse to record a push with several commits and report it in the fleet log; `oversee-cycle --help` defines the single-commit contract.
-
-```bash
-.agents/skills/orch/scripts/oversee-cycle --state-dir [OVERSEE_STATE_DIR] record --commit [PUSHED_SHA] [ITEM_KEY]
-```
-
-Use `--tier [TIER]` only for an old lane record without a launch tier. Add `--repo [OWNER/REPO]` when the lane record names no repository. The direct form has no PR-opened, gate-green, CI-green or armed stamp. Its unknown fields print `-`; its verdict is `unmeasured` when classified. Report a refusal without blocking lane close.
+- Direct push: `oversee-cycle record --commit SHA ITEM` has no PR-opened, gate-green, CI-green or armed stamp. Record it before lane close per [oversee-events.md § Direct-push cycle records](../references/oversee-events.md#direct-push-cycle-records).
 
 ### Outside contributions
 
