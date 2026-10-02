@@ -1,4 +1,4 @@
-// Deleting a skill removes its directory off the event loop, reports the
+// Deleting a skill awaits the removal of its directory, reports the
 // outcome when the removal settles, and holds the manager busy meanwhile.
 import { expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -58,7 +58,8 @@ test("a removal that fails is reported as an error and resolves false", async ()
 // Each way a removal can end, from each place a delete can start. A skill
 // still on disk returns to where the delete began; a removed one, its reload
 // failed or not, returns to the list. Escape then tells the two apart: the
-// list closes the manager with nothing, a preview goes back to the list.
+// list closes the manager with nothing, a preview goes back to the list. Only
+// a removal whose reload succeeded shows the reloaded, empty registry.
 const OUTCOMES = ["removed", "kept", "delete-rejected", "reload-rejected"] as const;
 type Outcome = (typeof OUTCOMES)[number];
 type Origin = "browse" | "preview";
@@ -103,8 +104,9 @@ test.each(ROWS)("a removal that ends $outcome from $from takes no input until it
 	await manager.shown;
 
 	const reportsError = outcome === "delete-rejected" || outcome === "reload-rejected";
-	expect({ busy: after.includes("Deleting skill"), closedByEscape, levels: manager.notices.map((notice) => notice.level) }).toEqual({
+	expect({ busy: after.includes("Deleting skill"), empty: after.includes("0/0 enabled"), closedByEscape, levels: manager.notices.map((notice) => notice.level) }).toEqual({
 		busy: false,
+		empty: outcome === "removed",
 		closedByEscape: settledMode(outcome, from) === "browse" ? [null] : [],
 		levels: reportsError ? ["error"] : [],
 	});

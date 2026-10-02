@@ -87,10 +87,12 @@ export function skillStorageTarget(skill: SkillEntry): string {
 }
 
 /**
- * Removes a skill's directory, or its file when it is not a SKILL.md, off the
- * event loop so a large directory does not freeze the UI. Resolves true once
- * the removal finished and was reported; a failed removal is reported and
- * resolves false.
+ * Removes a skill's directory, or its file when it is not a SKILL.md, through
+ * an awaited `rm`, so the dialog can show its deleting state and Pi keeps
+ * rendering between filesystem batches. On Node, `rm` settles unlinks in
+ * bursts, so a directory of thousands of files can still pause Pi briefly.
+ * Resolves true once the removal finished and was reported; a failed removal
+ * is reported and resolves false.
  */
 export async function deleteSkill(ctx: ExtensionContext, skill: SkillEntry): Promise<boolean> {
 	if (!isDeletableSkill(skill)) {
