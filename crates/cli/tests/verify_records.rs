@@ -1771,12 +1771,15 @@ fn a_moved_hook_is_replayed_with_its_retirement_first() {
 /// entries beside it. Judged against the revision that held the dropped
 /// entry, the replay takes it out the same way, read off that revision's
 /// record, so a hook, server or plugin retired since is no foreign change,
-/// while a key the person added beside the retirement still is. Each row
-/// is a project installed under `before` and tagged, then applied and
-/// committed under `after`, with the person's edit after that, and the
-/// keys positions the pass prints. Without the removal in the replay, the
-/// retired entry is still in the replayed copy and every `Unchanged` here
-/// reads `Changed`.
+/// while a key the person added beside the retirement still is. An entry
+/// the pass keeps, a dropped hook whose script the person edited, is not
+/// retired: its registration stays in the file and the replay keeps it
+/// too. Each row is a project installed under `before` and tagged, then
+/// edited by the person, applied and committed under `after`, with the
+/// rows the pass fails and the keys positions it prints. Without the
+/// removal in the replay, the retired entry is still in the replayed copy
+/// and every `Unchanged` here reads `Changed`; replaying the kept one's
+/// removal reads its row's `Unchanged` as `Changed` too.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_dropped_registration_is_replayed_with_its_removal() {
@@ -1797,11 +1800,20 @@ fn a_dropped_registration_is_replayed_with_its_removal() {
     let plugin = "[plugins.\"fmt@market\"]\nenabled = true\nharness = \"claude\"\n";
     let server = |name: &str| format!("[mcp-servers.{name}]\nsource = \"servers\"\n");
     let source = format!("[sources.servers]\n{}\n", source_path(&servers));
+    let cat = format!("[sources.cat]\n{}\n", source_path(&world.catalog));
+    let guard = format!("{cat}[hooks.guard]\nsource = \"cat\"\n");
     let mine = |project: &Path| {
         edit_json(&project.join(".claude/settings.json"), |value| {
             value["hooks"]["Stop"] =
                 serde_json::json!([{"hooks": [{"type": "command", "command": "echo mine"}]}]);
         });
+    };
+    let held = |project: &Path| {
+        let script = project.join(".claude/hooks/guard.sh");
+        write(
+            &script,
+            &format!("{}# mine\n", fs::read_to_string(&script).unwrap()),
+        );
     };
     let settings = |kind, name, foreign| vec![(kind, name, ".claude/settings.json", Some(foreign))];
     type Row = (
@@ -1809,6 +1821,7 @@ fn a_dropped_registration_is_replayed_with_its_removal() {
         String,
         String,
         Option<Box<dyn Fn(&Path)>>,
+        &'static [&'static str],
         Vec<(&'static str, &'static str, &'static str, Option<Foreign>)>,
     );
     let rows: Vec<Row> = vec![
@@ -1817,6 +1830,7 @@ fn a_dropped_registration_is_replayed_with_its_removal() {
             format!("{}{}", hook("zebra"), hook("yak")),
             hook("zebra"),
             None,
+            &[],
             settings("hook", "zebra", Foreign::Unchanged),
         ),
         (
@@ -1824,13 +1838,23 @@ fn a_dropped_registration_is_replayed_with_its_removal() {
             format!("{}{}", hook("zebra"), hook("yak")),
             hook("zebra"),
             Some(Box::new(mine)),
+            &[],
             settings("hook", "zebra", Foreign::Changed),
+        ),
+        (
+            "hook-held",
+            format!("{guard}{}", hook("zebra")),
+            format!("{cat}{}", hook("zebra")),
+            Some(Box::new(held)),
+            &["guard"],
+            settings("hook", "zebra", Foreign::Unchanged),
         ),
         (
             "plugin",
             format!("{plugin}{}", hook("zebra")),
             hook("zebra"),
             None,
+            &[],
             settings("hook", "zebra", Foreign::Unchanged),
         ),
         (
@@ -1838,30 +1862,51 @@ fn a_dropped_registration_is_replayed_with_its_removal() {
             format!("{source}{}{}", server("alpha"), server("beta")),
             format!("{source}{}", server("alpha")),
             None,
+            &[],
             vec![("mcp-server", "alpha", ".mcp.json", Some(Foreign::Unchanged))],
         ),
     ];
-    for (name, before, after, edit, expected) in rows {
-        let project = second_project(&world, name, &before);
-        let installed = kendex(&world.home, &project, &["apply", "-y", "--leave"]);
-        assert!(installed.status.success(), "{name}: {}", said(&installed));
-        commit(&project, "installed");
-        git(&project, &["tag", "with-both"]);
-        write(
-            &project.join("kendex.toml"),
-            &fs::read_to_string(project.join("kendex.toml"))
-                .unwrap()
-                .replace(&before, &after),
-        );
-        let dropped = kendex(&world.home, &project, &["apply", "-y", "--leave"]);
-        assert!(dropped.status.success(), "{name}: {}", said(&dropped));
-        if let Some(edit) = edit {
-            edit(&project);
-        }
-        commit(&project, "dropped");
-
-        let (output, document) = verify_from(&world.home, &project, "project", Some("with-both"));
-        assert!(output.status.success(), "{name}: {}", said(&output));
+    for (name, before, after, edit, failing, expected) in rows {
+        let (output, document) = retired(&world, name, &before, &after, edit.as_deref());
+        let failed: Vec<&str> = document
+            .rows
+            .iter()
+            .filter(|row| row.state == State::Failed)
+            .map(|row| row.name.as_str())
+            .collect();
+        assert_eq!(failed, failing, "{name}: {}", said(&output));
+        assert_eq!(output.status.success(), failing.is_empty(), "{name}");
         assert_eq!(keys_positions(&document), expected, "{name}: {document:?}");
     }
+}
+
+/// A project installed under `before` and tagged `with-both`, then edited
+/// by `edit`, applied and committed under `after`, and verified against
+/// the tag.
+#[allow(clippy::unwrap_used)]
+fn retired(
+    world: &World,
+    name: &str,
+    before: &str,
+    after: &str,
+    edit: Option<&dyn Fn(&Path)>,
+) -> (Output, Document) {
+    let project = second_project(world, name, before);
+    let installed = kendex(&world.home, &project, &["apply", "-y", "--leave"]);
+    assert!(installed.status.success(), "{name}: {}", said(&installed));
+    commit(&project, "installed");
+    git(&project, &["tag", "with-both"]);
+    write(
+        &project.join("kendex.toml"),
+        &fs::read_to_string(project.join("kendex.toml"))
+            .unwrap()
+            .replace(before, after),
+    );
+    if let Some(edit) = edit {
+        edit(&project);
+    }
+    let dropped = kendex(&world.home, &project, &["apply", "-y", "--leave"]);
+    assert!(dropped.status.success(), "{name}: {}", said(&dropped));
+    commit(&project, "dropped");
+    verify_from(&world.home, &project, "project", Some("with-both"))
 }
