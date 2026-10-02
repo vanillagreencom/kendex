@@ -540,6 +540,17 @@ for medium in slack-thread email; do
   assert_eq "$RC=$(jq -rs 'last.draft.medium' < "$BOX/to-overseer.jsonl")" "0=$medium" "a $medium draft lands"
 done
 
+# A draft past what one exec can carry (128 KiB per argument on Linux, 1 MiB
+# for the whole argv on macOS) lands whole: its record reaches the envelope
+# through a file, never jq's argv.
+LARGE_BYTES="$TMP_ROOT/draft.large"
+head -c 1179648 /dev/zero | tr '\0' 'x' > "$LARGE_BYTES" || exit 1
+jq -n --rawfile text "$LARGE_BYTES" '{recipient: "r", medium: "email", text: $text}' > "$TMP_ROOT/large.json" || exit 1
+new_repo draft_large
+draft_ask "$TMP_ROOT/large.json"
+assert_eq "$RC=${OUT%%=*}" "0=id" "a draft past one exec's argument cap lands"
+assert_draft_text "$LARGE_BYTES"
+
 # One changed character is a new message: a new ask with its own hash.
 new_repo draft_edit
 draft_ask "$(draft_file d "$DRAFT_JSON")"
@@ -1007,6 +1018,11 @@ new_repo control_draft_field
 mutant draft-field-any 'if $bad != [] then' 'if false and $bad != [] then'
 draft_ask "$(draft_file blank '{"recipient":"","medium":"email","text":"x"}')"
 assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.draft.recipient')" "0=" "control: without the field rule an empty recipient lands"
+
+new_repo control_draft_argv
+mutant draft-argv '--slurpfile draft "$DRAFT_RECORD"' '--argjson draft "[$(cat -- "$DRAFT_RECORD")]"'
+draft_ask "$TMP_ROOT/large.json"
+assert_eq "$RC=${ERR%%=*}" "2=lane-mail: file-unreadable" "control: a draft record carried on jq's argv refuses the large draft"
 
 new_repo control_draft_hash
 mutant draft-hash-trimmed 'jq -j .text -- "$DRAFT"' 'jq -j '"'"'.text | sub("\n$"; "")'"'"' -- "$DRAFT"'

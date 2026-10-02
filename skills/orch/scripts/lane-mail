@@ -561,7 +561,7 @@ DUE=0
 DEFAULT=0
 DELIVERY_ID=""
 DRAFT=""
-DRAFT_JSON=null
+DRAFT_RECORD=/dev/null
 THREAD_TS=""
 PARENT=""
 PARENT_JSON=null
@@ -1257,8 +1257,9 @@ lm_answered() { # DEST
 # at the site and replayed under the key, never ahead of it.
 # One clock read stamps the id, `at` and the deadline, so the three cannot
 # straddle a second; jq's todate spells the same UTC form `date` did. Every
-# owner-channel field rides the variable its option set and is written only
-# where set, so an envelope with none is byte-for-byte what it was before.
+# owner-channel field rides the variable its option set, the draft the file
+# lm_draft wrote, and is written only where set, so an envelope with none is
+# byte-for-byte what it was before.
 lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
   local id now line
   now="$(date -u +%s)" || refuse write-failed "$BOX"
@@ -1268,8 +1269,8 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
     --arg from "$FROM" --arg halt "$HALT" --arg options "$OPTIONS" \
     --arg to "$TO" --arg ref "$REF" --arg attach "$ATTACH" --arg recommend "$RECOMMEND" \
     --arg wait "$WAIT" --arg delivery "$DELIVERY_ID" --arg re_delivery "$RE_DELIVERY_ID" --arg by "$BY" \
-    --arg thread "$THREAD_TS" --argjson parent "$PARENT_JSON" --argjson draft "$DRAFT_JSON" \
-    --rawfile text "$FILE" '
+    --arg thread "$THREAD_TS" --argjson parent "$PARENT_JSON" \
+    --slurpfile draft "$DRAFT_RECORD" --rawfile text "$FILE" '
       {id: $id, kind: $kind, at: ($now | todate), from: $from}
       + (if $re == "" then {} else {re: $re} end)
       + (if $halt == "1" then {halt: true} else {} end)
@@ -1283,7 +1284,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
       + (if $re_delivery == "" then {} else {re_delivery_id: $re_delivery} end)
       + (if $by == "" then {} else {by: $by} end)
       + (if $kind == "answer" and $by != "" then {closes: false} else {} end)
-      + (if $draft == null then {} else {draft: $draft} end)
+      + (if $draft == [] then {} else {draft: $draft[0]} end)
       + {text: ($text | sub("\n$"; ""))}
       + (if $options == "" then {} else {options: ($options | split(","))} end)' \
     2>"$WORK_DIR/jq.err")" || refuse file-unreadable "$FILE" "$(cat -- "$WORK_DIR/jq.err")"
@@ -1471,7 +1472,8 @@ lm_wait_minutes() {
 # non-blank character, the medium one the relay delivers. text_hash is taken
 # here over the decoded text the record carries, never read from the file, so
 # `jq -j .draft.text | sha256sum` on the record reproduces it and an approval
-# binds those exact bytes.
+# binds those exact bytes. The record reaches the envelope through
+# WORK_DIR/draft.json, never argv.
 lm_draft() {
   local verdict key value hasher hash
   { [ -f "$DRAFT" ] && [ -r "$DRAFT" ]; } || refuse file-unreadable "$DRAFT"
@@ -1498,8 +1500,9 @@ lm_draft() {
   # shellcheck disable=SC2086  # hasher is a command and its own arguments.
   hash="$($hasher <"$WORK_DIR/draft.text" 2>"$WORK_DIR/hash.err")" ||
     refuse file-unreadable "$WORK_DIR/draft.text" "$(cat -- "$WORK_DIR/hash.err")"
-  DRAFT_JSON="$(jq -c --arg hash "${hash%% *}" '{recipient, medium, text, text_hash: $hash}' -- "$DRAFT" 2>"$WORK_DIR/jq.err")" ||
-    refuse file-unreadable "$DRAFT" "$(cat -- "$WORK_DIR/jq.err")"
+  DRAFT_RECORD="$WORK_DIR/draft.json"
+  jq -c --arg hash "${hash%% *}" '{recipient, medium, text, text_hash: $hash}' -- "$DRAFT" \
+    >"$DRAFT_RECORD" 2>"$WORK_DIR/jq.err" || refuse file-unreadable "$DRAFT" "$(cat -- "$WORK_DIR/jq.err")"
 }
 
 # The attachment, judged where it stands: a regular file, not itself a
