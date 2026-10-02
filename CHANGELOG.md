@@ -8,6 +8,13 @@ change came from an outside contributor.
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-10-02
+
+### Fixed
+
+- Slack acknowledges messages during API and mailbox waits, resumes reconnect history from saved positions, and logs deliveries and refused eyes reactions.
+- Verify now names `kendex source refresh` when a source mirror lacks a recorded commit, including stale render rows.
+
 ## [1.5.0] - 2026-10-02
 
 ### Upgrading
@@ -1320,7 +1327,8 @@ change came from an outside contributor.
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.5.1
 [1.5.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.5.0
 [1.4.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.4.0
 [1.3.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.3.0
