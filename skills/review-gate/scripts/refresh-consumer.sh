@@ -130,8 +130,9 @@ preference="$(rg_setting ORCH_OVERSEER_PREFERENCE "$OL_DEFAULT_PREFERENCE" "$pri
 parse_status=0
 ol_preference_entries "$preference" || parse_status=$?
 [ "$parse_status" -le 1 ] || exit "$parse_status"
-# No committed setting may pin Fable or Astra. A comment, another table and
-# a private override are not committed [env] values.
+# List committed [env] values that pin Fable or Astra; the report warns and
+# changes no exit. A comment, another table and a private override are not
+# committed [env] values.
 deprecated_models=()
 if [ -f kendex.settings.toml ]; then
   table="$(rg_env_table kendex.settings.toml)"
@@ -197,6 +198,9 @@ if git diff --cached --quiet; then
   fi
   printf 'refresh-state=current pr=none class=none\n'
   printf '%s\n' "$version_report" >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
+  # A run with no render change opens no pull request; its settings report
+  # still reaches the run summary.
+  [ -z "$settings_report" ] || printf '\n%s\n' "$settings_report" >>"$GITHUB_STEP_SUMMARY"
   exit 0
 fi
 if ! tree="$(git write-tree)"; then

@@ -358,6 +358,61 @@ done
 cp "$TMP/models-settings" "$repo/kendex.settings.toml"
 commit "$repo"
 git -C "$repo" push -q origin main
+# A consumer without committed settings keeps the clean body. A run with no
+# render change opens no pull request, so its run summary carries the warning.
+cp "$runner" "$TMP/summary-runner"
+for mode in absent absent-control current current-control; do
+  reset_default
+  cp "$TMP/summary-runner" "$runner"
+  case "$mode" in
+    absent*) rm -f -- "$repo/kendex.settings.toml" ;;
+    current*) printf '[env]\nSECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra"\n' >"$repo/kendex.settings.toml" ;;
+  esac
+  case "$mode" in
+    absent-control)
+      file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+        '^if \[ -f kendex\.settings\.toml \]; then$' 's/^if \[ -f kendex\.settings\.toml \]; then$/if true; then # &/' ;;
+    current-control)
+      file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+        '^  \[ -z "\$settings_report" \] \|\| ' 's/^  \[ -z "\$settings_report" \] || /  : # &/' ;;
+  esac
+  commit "$repo"
+  git -C "$repo" push -q origin main
+  rm -f -- "$repo/.env.local"
+  before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+  : >"$TMP/state/calls"
+  case "$mode" in
+    absent*) run_refresh stale pass render ;;
+    current*) run_refresh current pass render ;;
+  esac
+  case "$mode" in
+    absent)
+      if [ "$RC" -eq 0 ] && cmp -s "$TMP/clean-body" "$TMP/state/body"; then
+        ok 'absent committed settings leave the whole body unchanged'
+      else bad 'absent committed settings body' "$OUT"; fi ;;
+    absent-control)
+      if refresh_stopped_at_settings "$before" "refresh-error=settings-extraction value=$repo/.agents/skills/orch"; then
+        ok 'control: an unguarded scan of absent settings turns the clean-body assertion red'
+      else bad 'absent settings guard control' "$OUT"; fi ;;
+    current)
+      if [ "$RC" -eq 0 ] && grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT" &&
+          grep -qxF 'Engine version: `kendex 7.8.9 (release-build)`.' "$TMP/state/summary" &&
+          grep -qxF '## Deprecated models' "$TMP/state/summary" &&
+          grep -qxF -- '- <code>SECOND_OPINION_CODEX_CMD = &quot;codex exec -m gpt-6-astra&quot;</code>' "$TMP/state/summary"; then
+        ok 'a run with no render change reports the Astra pin in its run summary'
+      else bad 'no-change deprecated model summary' "$OUT"; fi ;;
+    current-control)
+      if [ "$RC" -eq 0 ] && grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT" &&
+          ! grep -qxF '## Deprecated models' "$TMP/state/summary"; then
+        ok 'control: a dropped summary append turns the no-change warning assertion red'
+      else bad 'no-change summary append control' "$OUT"; fi ;;
+  esac
+done
+reset_default
+cp "$TMP/summary-runner" "$runner"
+cp "$TMP/models-settings" "$repo/kendex.settings.toml"
+commit "$repo"
+git -C "$repo" push -q origin main
 # The setting-fixture commits changed the rolling head used by later rows.
 first="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
 reset_default
