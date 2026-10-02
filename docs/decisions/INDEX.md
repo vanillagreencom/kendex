@@ -20,6 +20,7 @@
 | 2026-09-29 | D016 | — | pr-merge reads the queue ruleset's bypass and the queue-only class, and takes --admin itself; a repository names its own queue paths; validate-standard judges bypass per ruleset | GitHub answers bypass per caller; a failed read costs a queue wait, never a merge past a gate | The PR run runs every merge-group job for the touched paths, or the rules endpoint reports bypass | Active | [Full](D016-merge-route-reads-bypass.md) |
 | 2026-10-01 | D017 | — | Retain bounded parent context and deliver live replies at any age | Owners continue conversations under retained roots without losing context | Slack changes event delivery or journal retention needs change | Active | [Full](D017-slack-thread-context.md) |
 | 2026-09-30 | D018 | KEN-2067 | GitHub enforces review requirements; the package keeps review operations | Platform approvals replace a separately published review status | A served repository lacks Copilot approvals or GitHub rulesets | Active | [Full](D018-platform-review-requirements.md) |
+| 2026-10-01 | D019 | [KEN-2466](../plans/model-class-resolution.md) | Default to standard; justify top per item; resolve classes in core | Shared policy prevents size promotion; unknown facts keep native default | Remaining loaders gain callbacks, Claude changes mods or owner changes policy | Active | [Full](D019-runtime-model-classes.md) |
 
 ---
 

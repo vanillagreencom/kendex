@@ -470,6 +470,7 @@ fn compute(
         ..DesiredState::default()
     };
     let mut updated_manifest = manifest.clone();
+    let model_classes = crate::manifest::model_class_overrides(env, scope, manifest)?;
     let mut manifest_changed = false;
     // Everything is planned from the closure — what was declared, what the
     // installed bundles carry, and what those skills require — while the
@@ -518,6 +519,7 @@ fn compute(
             harnesses.retain(|harness| collisions.allows(kind, name, *harness));
             let reasons = reasons_for(kind, name, &harnesses, &expansion);
             let ctx = ItemCtx {
+                model_classes: &model_classes,
                 env,
                 scope,
                 manifest,
@@ -567,6 +569,7 @@ fn reasons_for(
 }
 
 pub(super) struct ItemCtx<'a> {
+    pub(super) model_classes: &'a BTreeMap<String, String>,
     pub(super) env: &'a Env,
     pub(super) scope: &'a Scope,
     pub(super) manifest: &'a Manifest,

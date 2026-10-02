@@ -32,7 +32,7 @@ Claude Code reads no shared skills tree at either scope, so its own directory ho
 - Name rule `Any`; namespace separator `__`.
 - MCP transports: stdio, streamable HTTP, SSE.
 - Agent file: YAML frontmatter and a markdown body, `<name>.md`. Fields written: `name`, `description`, `model`, `effort`, `background`, `isolation`, `memory`, `tools` (allowlist, comma-joined), `disallowedTools` always, `color`, `skills`, and a nested `hooks:` block for per-agent custom hooks (`crates/core/src/render/agent/claude.rs`).
-- Model dialect: every tier pins its own alias (`fable`, `opus`, `sonnet`, `haiku`); `inherit` is the literal `inherit`; explicit vendor ids pass through (`crates/core/src/harness/models.rs`). `effort` is written as given: `low`, `medium`, `high`, `xhigh` or `max`, and an absent key inherits the session's level.
+- Model dialect: classes project to native family aliases through `crates/core/src/harness/models.rs`. Native fast projection uses the confirmed-fallback policy in [D019](../decisions/D019-runtime-model-classes.md), while the runtime reader retains the source request. `inherit` remains literal. Exact ids pass through with one compatibility warning. Effort uses the native vocabulary in `models::effort_levels`.
 - Tool vocabulary: Claude's PascalCase names are the fleet's authoring vocabulary; bodies pass through unrewritten, and manifest tool names are case-normalized by `claude_tool_name` (`crates/core/src/render/vocab/mod.rs`).
 - Rendered agents are refused before the plan is shown when the frontmatter is missing or names another agent (`crates/core/src/render/validate/agent.rs`).
 

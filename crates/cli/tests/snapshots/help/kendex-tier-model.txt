@@ -1,14 +1,35 @@
 Find the AI model for a harness and performance tier
 
-Usage: kendex tier-model <HARNESS> <RANK>
+Usage: kendex tier-model [OPTIONS] <HARNESS> [RANK]
 
 Arguments:
   <HARNESS>
-          The harness the model is named for
+          Native receiving harness
 
-  <RANK>
-          The position on the tier ladder, 1 for the top tier
+  [RANK]
+          Legacy class rank, top first; selector-only output is not access
+          evidence
 
 Options:
+      --model <MODEL>
+          Model class, native family, exact pin or inherit
+
+      --agent <AGENT>
+          Native declared Claude agent identity at the child working directory
+
+      --runtime-context-stdin
+          Read model-resolution-v1 runtime context from stdin
+
+      --runtime-context-json <RUNTIME_CONTEXT_JSON>
+          Argument-array alternative for native process APIs
+
+      --discover-codex-models
+          Replace supplied list evidence with local Codex model/list under this
+          account
+
+      --json
+          Tagged model-resolution-v1 response; diagnostics belong to the
+          caller's latch
+
   -h, --help
           Print help

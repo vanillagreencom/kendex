@@ -134,7 +134,7 @@ fn a_rendering_a_harness_would_refuse_is_named_with_what_it_got_wrong() {
             harness: HarnessId::Opencode,
             name: "rust",
             text: OPENCODE_AGENT.replace("anthropic/claude", "opus"),
-            breakage: &["kendex-model-shape: harness=opencode model=opus expected=provider/model"],
+            breakage: &["kendex-model-class-unresolved: harness=opencode model=opus"],
             advice: &[],
         },
         Row {

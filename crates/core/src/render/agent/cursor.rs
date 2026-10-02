@@ -69,6 +69,7 @@ mod tests {
         hooks: Vec<&'a CustomHook>,
     ) -> EffectiveAgent<'a> {
         EffectiveAgent {
+            model_classes: Default::default(),
             source,
             harness: HarnessId::Cursor,
             scope,

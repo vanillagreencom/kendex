@@ -74,16 +74,15 @@ fn effort<'b>(agent: &'b EffectiveAgent<'_>) -> Option<&'b str> {
         .filter(|effort| !is_none_value(effort))
 }
 
-/// Heavy tiers omit `model` so the child inherits the parent session;
-/// everything else resolves through the shared alias table and also
-/// carries the `:effort` suffix Pi reads on a model id.
+/// Preserve class intent for the child dispatcher. The effort suffix uses
+/// the same native field as exact ids, without selecting a version here.
 fn model(agent: &EffectiveAgent, effort: Option<&str>) -> (Option<String>, Option<String>) {
-    let model = agent
-        .overrides
-        .model
-        .as_deref()
-        .unwrap_or(&agent.source.model);
-    let resolved = crate::harness::models::resolve_model(crate::model::HarnessId::Pi, model);
+    let model = agent.model_request();
+    let resolved = crate::harness::models::render_model(
+        crate::model::HarnessId::Pi,
+        model,
+        &agent.model_classes,
+    );
     let suffix = effort.map(|e| format!(":{e}")).unwrap_or_default();
     (
         resolved.id.map(|id| format!("{id}{suffix}")),
@@ -212,6 +211,7 @@ mod tests {
 
     fn effective<'a>(source: &'a SourceAgent, scope: &'a Scope) -> EffectiveAgent<'a> {
         EffectiveAgent {
+            model_classes: Default::default(),
             source,
             harness: HarnessId::Pi,
             scope,
@@ -232,7 +232,7 @@ mod tests {
     }
 
     #[test]
-    fn engineer_keeps_scout_delegation_and_inherits_the_opus_model() {
+    fn engineer_keeps_scout_delegation_and_standard_class_intent() {
         let mut source = source("rust", "engineer", "opus");
         source.effort = Some("high".into());
         let scope = Scope::Global;
@@ -240,9 +240,7 @@ mod tests {
         assert!(text.contains("allowed-subagents: scout\n"));
         assert!(text.contains("pane: true\n"));
         assert!(text.contains("color: green\n"));
-        assert!(!text.lines().any(|line| line.starts_with("model:")));
-        // An inherited model has no id to carry a suffix, so the effort
-        // stands on its own key or it reaches nothing.
+        assert!(text.contains("model: standard:high\n"));
         assert!(text.contains("effort: high\n"));
         assert_eq!(
             deny_line(&text),
@@ -251,12 +249,12 @@ mod tests {
     }
 
     #[test]
-    fn reviewer_loses_delegation_and_task_writes_and_pins_the_codex_model() {
+    fn reviewer_loses_delegation_and_task_writes_and_keeps_light_intent() {
         let mut source = source("reviewer-arch", "reviewer", "sonnet");
         source.effort = Some("high".into());
         let scope = Scope::Global;
         let text = generate(&effective(&source, &scope)).unwrap().text;
-        assert!(text.contains("model: openai-codex/gpt-5.6-terra:high\n"));
+        assert!(text.contains("model: light:high\n"));
         assert!(text.contains("effort: high\n"));
         assert!(!text.contains("allowed-subagents:"));
         assert!(!text.contains("pane: true"));

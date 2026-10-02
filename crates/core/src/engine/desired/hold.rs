@@ -329,6 +329,29 @@ fn exempted_by(manifest: &Manifest, lock: &Lock, target: &(ItemKind, String)) ->
     exempt
 }
 
+/// Native callbacks read declarations at the agreed installed commit, including
+/// explicit tracking revisions. This is an in-memory reading copy, never a write.
+pub(crate) fn installed_manifest(manifest: &Manifest, lock: &Lock) -> Manifest {
+    let mut installed = manifest.clone();
+    for kind in PLANNED_KINDS {
+        for (name, decl) in installed.declared_mut(kind) {
+            if let Some(repo) = source_repo(manifest, &decl.source)
+                && let Some(commit) = held_at(lock, kind, name, &decl.source, repo)
+            {
+                decl.rev = Some(commit);
+            }
+        }
+    }
+    for (name, decl) in &mut installed.bundles {
+        if let Some(repo) = source_repo(manifest, &decl.source)
+            && let Some(commit) = held_commit(lock, name, &decl.source, repo)
+        {
+            decl.rev = Some(commit);
+        }
+    }
+    installed
+}
+
 /// The repository a declared source reads from, or `None` when it has
 /// none: only a repo source has revisions, and pinning a path or local
 /// source would turn the whole plan into a typed refusal instead of

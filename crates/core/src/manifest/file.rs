@@ -86,6 +86,24 @@ pub fn load_current(path: &Path) -> Result<Option<Manifest>> {
     }
 }
 
+/// Read consumer policy once per operation. A catalog's definition is not policy.
+pub fn model_class_overrides(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+) -> Result<std::collections::BTreeMap<String, String>> {
+    match scope {
+        Scope::Global => Ok(manifest.model_classes.clone()),
+        Scope::Project { .. } => {
+            let personal = load_current(&manifest_path(env, &Scope::Global))?.unwrap_or_default();
+            Ok(crate::harness::models::effective_overrides(
+                &personal.model_classes,
+                &manifest.model_classes,
+            ))
+        }
+    }
+}
+
 /// [`load`] for text the caller already read — the importer classifies the
 /// exact bytes its preconditions bind to.
 pub fn parse_text(path: &Path, text: &str) -> Result<ManifestFile> {

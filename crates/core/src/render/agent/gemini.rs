@@ -1,5 +1,5 @@
 use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, hooks_prose, skills_prose};
-use crate::harness::models::resolve_model;
+use crate::harness::models::render_model;
 use crate::model::HarnessId;
 use crate::render::permission::PermissionIntent;
 use crate::render::vocab::{gemini_tool_name, rewrite_prose};
@@ -28,15 +28,13 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
         push(format!("tags: {}", yaml_scalar(&source.tags.join(", "))));
     }
     push("kind: local".to_owned());
-    let model = agent.overrides.model.as_deref().unwrap_or(&source.model);
-    let resolved = resolve_model(HarnessId::Gemini, model);
+    let model = agent.model_request();
+    let resolved = render_model(HarnessId::Gemini, model, &agent.model_classes);
     warnings.extend(resolved.warning.map(RenderWarning::new));
-    // Gemini spells inherit-the-session-model literally, in agent
-    // frontmatter only (matrix §4).
-    push(format!(
-        "model: {}",
-        yaml_scalar(resolved.id.as_deref().unwrap_or("inherit"))
-    ));
+    // Omission keeps the session model without introducing a native selector.
+    if let Some(id) = &resolved.id {
+        push(format!("model: {}", yaml_scalar(id)));
+    }
     if let Some(allow) = allowed(agent) {
         match allow.is_empty() {
             true => push("tools: []".to_owned()),
@@ -116,6 +114,7 @@ mod tests {
         hooks: Vec<&'a CustomHook>,
     ) -> EffectiveAgent<'a> {
         EffectiveAgent {
+            model_classes: Default::default(),
             source,
             harness: HarnessId::Gemini,
             scope,
@@ -133,12 +132,12 @@ mod tests {
     }
 
     #[test]
-    fn frontmatter_names_the_agent_and_pins_the_gemini_tier() {
+    fn frontmatter_names_the_agent_and_defers_the_class_to_the_session() {
         let source = engineer();
         let scope = Scope::Project { root: "/p".into() };
         let rendered = generate(&effective(&source, &scope, vec![]));
         assert!(rendered.text.starts_with(
-            "---\nname: rust\ndescription: \"Rust \\\"systems\\\" engineer\"\nkind: local\nmodel: gemini-3-pro-preview\n---\n"
+            "---\nname: rust\ndescription: \"Rust \\\"systems\\\" engineer\"\nkind: local\n---\n"
         ));
         assert!(rendered.text.contains("Use the grep_search tool."));
         assert!(rendered.text.contains("- dev: .agents/skills/dev/SKILL.md"));
@@ -183,6 +182,7 @@ mod tests {
     #[test]
     fn custom_hooks_travel_as_prose_and_a_name_cannot_mint_frontmatter() {
         let mut source = engineer();
+        source.model = "gemini-2.5-pro".into();
         source.description = "line one\nmodel: opus".into();
         let scope = Scope::Global;
         let hook = CustomHook {

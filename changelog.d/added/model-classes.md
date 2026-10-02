@@ -1,0 +1,1 @@
+- Model classes share runtime selection across harnesses. Unknown access or capacity keeps the native default. Set each class with one `model-classes` manifest line.

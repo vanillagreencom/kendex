@@ -1,5 +1,5 @@
 use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, Role, hooks_prose, skills_prose};
-use crate::harness::models::resolve_model;
+use crate::harness::models::render_model;
 use crate::model::HarnessId;
 use crate::render::permission::PermissionIntent;
 use crate::render::vocab::rewrite_prose;
@@ -27,8 +27,8 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
         "description = \"{}\"\n",
         escape(&source.description)
     ));
-    let model = o.model.as_deref().unwrap_or(&source.model);
-    let resolved = resolve_model(HarnessId::Codex, model);
+    let model = agent.model_request();
+    let resolved = render_model(HarnessId::Codex, model, &agent.model_classes);
     warnings.extend(resolved.warning.map(crate::render::RenderWarning::new));
     // No model key means Codex's own default — its dialect for inherit.
     if let Some(id) = &resolved.id {
@@ -224,6 +224,7 @@ mod tests {
 
     fn effective<'a>(source: &'a SourceAgent, scope: &'a Scope) -> EffectiveAgent<'a> {
         EffectiveAgent {
+            model_classes: Default::default(),
             source,
             harness: HarnessId::Codex,
             scope,
@@ -251,7 +252,7 @@ mod tests {
         let manager = generate(&effective(&manager, &scope)).text;
         assert!(engineer.contains("sandbox_mode = \"danger-full-access\""));
         assert!(manager.contains("sandbox_mode = \"workspace-write\""));
-        assert!(engineer.contains("model = \"gpt-5.6-terra\""));
+        assert!(!engineer.contains("model ="));
         assert!(!engineer.contains("model_reasoning_effort"));
         assert!(engineer.contains("- dev: .agents/skills/dev/SKILL.md"));
     }
