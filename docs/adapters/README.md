@@ -39,6 +39,8 @@ An agent's `model` and `effort` reach each harness under that harness's own key 
 | Cursor | none | none | — | — |
 | Antigravity | its own tiers: `inherit`, `flash`, `pro`; opus and fable are `pro`, sonnet and haiku `flash` | none | — | — |
 
+Until KEN-2466 lands, Claude Code agents render the `haiku` tier as `sonnet`.
+
 A tier alias is a pin, never a synonym for `inherit`; `inherit` is the default that follows the session on every harness. A `provider/model` id is refused on a harness bound to one vendor, and a bare id is refused where the loader needs the provider named (both halves non-empty, and on Pi an optional `:level` from Pi's own set); kendex names no fallback provider because a subagent cannot run on a provider the session is not signed in to.
 
 ## Surface shapes
