@@ -144,9 +144,9 @@ mutate_file "$CTRL/lib/lane-model.sh" '.credits.overage_limit_reached == false' 
 LANES_UNDER_TEST="$CTRL/lanes" table "control: unread overage_limit_reached admits the account|$(dirs 6codex)|$PICK|rc=0 binding_bucket=credits"
 
 # The record's credits come from parse_codex_usage alone.
-CTRL="$(mutant_scripts mutant-credit-parse lanes)" || exit 1
+CTRL="$(mutant_scripts mutant-credit-parse lib/lane-usage.sh)" || exit 1
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
-mutate_file "$CTRL/lanes" 'credits:        $credits,' 'credits:        null,'
+mutate_file "$CTRL/lib/lane-usage.sh" 'credits:        $credits,' 'credits:        null,'
 LANES_UNDER_TEST="$CTRL/lanes" table "control: a reading carrying no credits walls the lone account|$(dirs codex)|$PICK|rc=3 walled=1"
 
 # The setting is read, not a constant.
