@@ -223,41 +223,44 @@ test("shutdown drains nested capture and its escalation", async () => {
 	await assert.rejects(nestedShutdown(mutant.execCapture), /shutdown must cancel nested capture/);
 });
 
-async function parentExit(budgetFile: string, paneFile: string): Promise<void> {
-	const { spawn } = await import("node:child_process");
-	const { join } = await import("node:path");
-	const { existsSync, readFileSync } = await import("node:fs");
-	const root = tempRuntime();
-	const pidFile = join(root, "pid");
-	// The new process does not inherit the suite's optional Pi peer mocks.
-	// Only those dependencies are neutral; budget and capture remain production.
-	// The faux bridge outlives the deadline, so only a kill can end it in time.
-	const script = `import { mock } from "bun:test";
+// The new process does not inherit the suite's optional Pi peer mocks.
+// Only those dependencies are neutral; budget and capture remain production.
+// Every path arrives as argv: root, pid file, budget module, capture module.
+// The faux bridge outlives the deadline, so only a kill can end it in time.
+const PARENT_EXIT = `import { mock } from "bun:test";
+import { existsSync } from "node:fs";
+const [root, pidFile, budgetFile, paneFile] = process.argv.slice(1);
 mock.module("@earendil-works/pi-coding-agent", () => ({
-getAgentDir: () => ${JSON.stringify(root)}, parseFrontmatter: () => { throw new Error("unused discovery"); },
+getAgentDir: () => root, parseFrontmatter: () => { throw new Error("unused discovery"); },
 withFileMutationQueue: (_path, action) => action()
 }));
 mock.module("@earendil-works/pi-tui", () => ({
 Container: class {}, Spacer: class {}, truncateToWidth: text => text,
 visibleWidth: text => text.length, wrapTextWithAnsi: text => [text]
 }));
-const { withChildBudget } = await import(${JSON.stringify(budgetFile)});
-const { execCapture } = await import(${JSON.stringify(paneFile)});
-import { existsSync } from "node:fs";
+const { withChildBudget } = await import(budgetFile);
+const { execCapture } = await import(paneFile);
 let shutdown;
 const pi = { on(_event, handler) { shutdown = handler; return () => {}; } };
 // Pi owns the tool call's outcome; this parent awaits only its shutdown handlers.
-withChildBudget(pi, ${JSON.stringify(root)}, undefined, () => execCapture(${JSON.stringify(process.execPath)}, ["-e", ${JSON.stringify(`process.on("SIGTERM", () => {}); require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => {}, 10_000)`)}], { env: { PATH: "/usr/bin:/bin", HOME: ${JSON.stringify(root)}, TMPDIR: ${JSON.stringify(root)} } })).catch(() => {});
+withChildBudget(pi, root, undefined, () => execCapture(process.execPath, ["-e", 'process.on("SIGTERM", () => {}); require("node:fs").writeFileSync(process.argv[1], String(process.pid)); setTimeout(() => {}, 10_000)', "--", pidFile], { env: { PATH: "/usr/bin:/bin", HOME: root, TMPDIR: root } })).catch(() => {});
 try {
-for (let i = 0; i < 100 && !existsSync(${JSON.stringify(pidFile)}); i++) await new Promise(resolve => setTimeout(resolve, 10));
-if (!existsSync(${JSON.stringify(pidFile)})) throw new Error("faux bridge did not start");
+for (let i = 0; i < 100 && !existsSync(pidFile); i++) await new Promise(resolve => setTimeout(resolve, 10));
+if (!existsSync(pidFile)) throw new Error("faux bridge did not start");
 } finally { await shutdown(); }
 process.exit(0);`;
+
+async function parentExit(budgetFile: string, paneFile: string): Promise<void> {
+	const { spawn } = await import("node:child_process");
+	const { join } = await import("node:path");
+	const { existsSync, readFileSync } = await import("node:fs");
+	const root = tempRuntime();
+	const pidFile = join(root, "pid");
 	// The parent exits as Pi does after awaited shutdown handlers. It cannot own
 	// a surviving child's escalation timer after that exit. Its fresh HOME holds
 	// no package cache, so Bun would fetch the unmocked Pi peers from the network
 	// before the mocks apply; --no-install makes a missing mock fail on stderr.
-	const parent = spawn(process.execPath, ["--no-install", "-e", script], { env: { PATH: "/usr/bin:/bin", HOME: root, TMPDIR: root }, stdio: ["ignore", "ignore", "pipe"] });
+	const parent = spawn(process.execPath, ["--no-install", "-e", PARENT_EXIT, "--", root, pidFile, budgetFile, paneFile], { env: { PATH: "/usr/bin:/bin", HOME: root, TMPDIR: root }, stdio: ["ignore", "ignore", "pipe"] });
 	let stderr = "";
 	parent.stderr.on("data", (data) => { stderr += String(data); });
 	const closed = new Promise<number | null>((resolve, reject) => { parent.once("close", resolve); parent.once("error", reject); });
