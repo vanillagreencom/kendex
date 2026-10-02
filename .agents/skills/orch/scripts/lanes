@@ -403,14 +403,14 @@
 # carrying `/` or `~` is a path, names no lane, and is refused.
 #
 # COPILOT: the account's monthly AI credit pool, read from GitHub's usage
-# endpoint with the login Copilot CLI stores in `<dir>/config.json` or the
-# system keyring, through lib/copilot-credits.sh, which owns the endpoint, the
-# login layout it assumes and the rules for zero, overage and unlimited; the
-# record is
-# schemas/copilot-credits.md. The pool is a MONTHLY bucket, `monthly_pct`,
-# with the counts beside it as `credits`. An account whose login does not read
-# takes its ORCH_LANE_COPILOT_POOL reading where the setting states one, and
-# reads `no_credentials` under the login's keyed reason where it does not.
+# endpoint with the login Copilot CLI keeps in `<dir>/config.json` or the
+# Linux Secret Service, through lib/copilot-credits.sh, which owns the
+# endpoint, the login layout it assumes and the rules for zero, overage and
+# unlimited; the record is schemas/copilot-credits.md. The pool is a MONTHLY
+# bucket, `monthly_pct`, with the counts beside it as `credits`. An account
+# whose login does not read takes its ORCH_LANE_COPILOT_POOL reading where the
+# setting states one, and reads `no_credentials` under the login's keyed
+# reason otherwise.
 #   ORCH_LANE_ALIASES  Comma-separated `<config-dir-name>=<alias>` pairs giving
 #                      lanes meaningful names (`eclaude=work,mclaude=overflow`).
 #                      A directory with no mapping keeps its discovered name.

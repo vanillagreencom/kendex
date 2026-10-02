@@ -257,19 +257,23 @@ assert_eq "$(curl_seen e2e)|$(record 1copilot .monthly_pct)" \
   'header = "Authorization: token gho_1copilot"|1|0|10' \
   "the endpoint is asked with the stored login in curl's config, never in argv, and its answer is the pool"
 
-echo "=== a login config.json names and the keyring holds is read as Copilot CLI reads it ==="
+echo "=== a login config.json names and the Secret Service holds is read as Copilot CLI reads it ==="
 # Copilot CLI 1.0.91 keeps a keyring login's token in the Secret Service item
 # service=copilot-cli username=<host>:<login>:github, or the older
 # <host>:<login>, and config.json then names the login in lastLoggedInUser.
 # The stub secret-tool answers `search` in the layout libsecret's
-# tool/secret-tool.c prints, per KR_MODE, and records its argv; the token
-# rides through the curl shim to the endpoint.
-KR_BIN="$TMP_ROOT/keyring-bin"
-mkdir -p "$KR_BIN"
+# tool/secret-tool.c prints, per KR_MODE, with the error lines it and
+# gnome-keyring print, and records its argv and any line it could read on
+# stdin; the token rides through the curl shim to the endpoint. The timeout
+# wrapper records the bound it was handed, then runs the real timeout.
+KR_BIN="$TMP_ROOT/keyring-bin" KR_TBIN="$TMP_ROOT/keyring-timeout"
+REAL_TIMEOUT="$(command -v timeout)" || { echo "lanes-copilot: timeout=not-on-path" >&2; exit 1; }
+mkdir -p "$KR_BIN" "$KR_TBIN"
 cat > "$KR_BIN/secret-tool" <<'KREOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$KR_LOG"
-item() { # USER [SECRET] — one search match; no SECRET is a locked item
+if IFS= read -r line; then printf 'stdin=%s\n' "$line" >> "$KR_LOG"; fi
+item() { # USER [SECRET] — one search match; no SECRET is a withheld secret
   printf '[/org/freedesktop/secrets/collection/login/7]\nlabel = keyring:%s@copilot-cli\n' "$1"
   [[ $# -lt 2 ]] || printf 'secret = %s\n' "$2"
   printf 'created = 2026-10-01 00:00:00\nmodified = 2026-10-01 00:00:00\nschema = org.freedesktop.Secret.Generic\n'
@@ -277,68 +281,84 @@ item() { # USER [SECRET] — one search match; no SECRET is a locked item
 }
 case "$KR_MODE:$5" in
   github:*:github | legacy:https://github.com:probe) item "$5" "$KR_TOKEN" ;;
-  locked:*:github) item "$5"; printf 'secret-tool: Cannot get secret of a locked object\n' >&2 ;;
+  locked:*:github) printf 'secret-tool: Cannot get secret of a locked object\n' >&2; item "$5" ;;
+  refused:*:github) printf "secret-tool: Couldn't get item secret\n" >&2; item "$5" ;;
   blank:*:github) item "$5" "" ;;
   unreachable:*) printf 'secret-tool: Cannot autolaunch D-Bus without X11 $DISPLAY\n' >&2; exit 1 ;;
+  hang:*) exec sleep 30 ;;
 esac
 exit 0
 KREOF
-chmod +x "$KR_BIN/secret-tool"
-# PATH less every secret-tool on it: a directory holding one is replaced by a
-# directory of links to its other entries.
-NOKR_PATH="" shadows=0
-IFS=: read -r -a path_dirs <<<"$PATH"
-for d in "${path_dirs[@]}"; do
-  if [[ -n "$d" && -e "$d/secret-tool" ]]; then
-    shadow="$TMP_ROOT/nokr/$((++shadows))"
-    { mkdir -p "$shadow" && ln -s "$d"/* "$shadow"/ && rm -f -- "${shadow:?}/secret-tool"; } \
-      || { echo "lanes-copilot: shadow=failed dir=$d" >&2; exit 1; }
-    d="$shadow"
-  fi
-  NOKR_PATH="${NOKR_PATH:+$NOKR_PATH:}$d"
-done
-assert_eq "$(env PATH="$NOKR_PATH" bash -c 'command -v secret-tool || echo none')" none \
-  "the keyring-absent PATH resolves no secret-tool"
+cat > "$KR_TBIN/timeout" <<'KREOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$KR_LOG.bound"
+# The hang row waits out a 1 second bound in place of the one lanes passes.
+bound="$1"
+[[ $KR_MODE != hang ]] || bound=1
+exec "$REAL_TIMEOUT" "$bound" "${@:2}"
+KREOF
+chmod +x "$KR_BIN/secret-tool" "$KR_TBIN/timeout"
+NOKR="$TMP_ROOT/no-secret-tool" NOTIMEOUT="$TMP_ROOT/no-timeout"
+path_without "$NOKR" secret-tool
+path_without "$NOTIMEOUT" timeout
+assert_eq "$(env PATH="$NOKR" bash -c 'command -v secret-tool || echo none')|$(env PATH="$NOTIMEOUT" bash -c 'command -v timeout || echo none')" \
+  "none|none" "the keyring-absent PATHs resolve no secret-tool and no timeout"
+KR_PATH="$KR_BIN:$KR_TBIN:$SHIM:$PATH"
 KR_TOKEN=gho_keyring_secret
 KR_CONFIG='{"lastLoggedInUser":{"host":"https://github.com","login":"probe"},"loggedInUsers":[{"host":"https://github.com","login":"probe"}]}'
-KR_ASKED_GITHUB='search service copilot-cli username https://github.com:probe:github'
+KR_USER=https://github.com:probe:github
+KR_ASKED_GITHUB="search service copilot-cli username $KR_USER"
 KR_ASKED_BOTH="$KR_ASKED_GITHUB,search service copilot-cli username https://github.com:probe"
+KR_UNREAD="copilot login unread:"
 # keyring_row NAME MODE CONFIG PATH [LANES] — `lanes list` on 1copilot with
-# CONFIG as its config.json and the stub answering MODE; OUT, ERR, RC.
+# CONFIG as its config.json and the stub answering MODE; OUT, ERR, RC. The
+# lane list collect_lanes reads is the stdin a search would inherit, so the
+# 2copilot account after 1copilot is the line a search not reading /dev/null
+# would take.
 keyring_row() {
   new_home "kr-$1"
-  mkdir -p "$H/.1copilot/session-state"
+  mkdir -p "$H/.1copilot/session-state" "$H/.2copilot/session-state"
   printf '%s\n' "$3" > "$H/.1copilot/config.json"
   : > "$TMP_ROOT/kr-$1.log"
   ROW_ENV=(ORCH_LANES_FETCH_CMD= PATH="$4" KR_MODE="$2" KR_TOKEN="$KR_TOKEN" KR_LOG="$TMP_ROOT/kr-$1.log"
-    CURL_ARGV="$TMP_ROOT/kr-$1.argv" CURL_STDIN="$TMP_ROOT/kr-$1.stdin" CURL_BODY="$(pool 1000 900)")
+    REAL_TIMEOUT="$REAL_TIMEOUT" CURL_ARGV="$TMP_ROOT/kr-$1.argv" CURL_STDIN="$TMP_ROOT/kr-$1.stdin"
+    CURL_BODY="$(pool 1000 900)")
   LANES_BIN="${5:-}" run_lanes list --harness copilot --local --json
   ROW_ENV=()
 }
-# `label|name|mode|config|PATH|want [status, pct]|want reason|want secret-tool argv|want curl stdin`
-while IFS='|' read -r label name mode config path want reason asked header; do
+# `label|name|mode|config|PATH|want [status, pct]|want detail|want secret-tool argv|want curl stdin`;
+# each search is wanted under the 5 second bound.
+while IFS='|' read -r label name mode config path want detail asked header; do
   keyring_row "$name" "$mode" "$config" "$path"
-  got_reason="$(record 1copilot .detail | grep -o 'login unread: [a-z-]*' || echo none)"
+  # The login's detail, less the clause measure_copilot_pool adds for no stated pool.
+  got_detail="$(jq -r '.[] | select(.alias == "1copilot") | .detail // "none"' <<<"$OUT" 2>/dev/null || echo unparseable)"
+  got_detail="${got_detail%%, and ORCH_LANE_COPILOT_POOL *}"
   got_asked="$(paste -sd, "$TMP_ROOT/kr-$name.log")"
-  assert_eq "$(record 1copilot '[.status, .monthly_pct]')|$got_reason|${got_asked:-none}|$(cat "$TMP_ROOT/kr-$name.stdin" 2>/dev/null || echo none)" \
-    "$want|$reason|$asked|$header" "$label"
-  seen="$(cat "$TMP_ROOT/kr-$name.log" "$TMP_ROOT/kr-$name.argv" 2>/dev/null; printf '%s\n%s\n' "$OUT" "$ERR")"
+  got_bound="$(paste -sd, "$TMP_ROOT/kr-$name.log.bound" 2>/dev/null)"
+  want_bound=none
+  [[ $asked == none ]] || want_bound="5 secret-tool ${asked//,/,5 secret-tool }"
+  assert_eq "$(record 1copilot '[.status, .monthly_pct]')|${got_detail//"$H"/HOME}|${got_asked:-none}|${got_bound:-none}|$(cat "$TMP_ROOT/kr-$name.stdin" 2>/dev/null || echo none)" \
+    "$want|$detail|$asked|$want_bound|$header" "$label"
+  seen="$(cat "$TMP_ROOT/kr-$name.log" "$TMP_ROOT/kr-$name.log.bound" "$TMP_ROOT/kr-$name.argv" 2>/dev/null; printf '%s\n%s\n' "$OUT" "$ERR")"
   assert_eq "$(grep -c -F -- "$KR_TOKEN" <<<"$seen" || true)" 0 "$label: the keyring token reaches no argv and no lanes output"
 done <<ROWS
-the token under the :github username is the login|github|github|$KR_CONFIG|$KR_BIN:$SHIM:$PATH|["ok",10]|none|$KR_ASKED_GITHUB|header = "Authorization: token $KR_TOKEN"
-the older username is read where the :github one holds nothing|legacy|legacy|$KR_CONFIG|$KR_BIN:$SHIM:$PATH|["ok",10]|none|$KR_ASKED_BOTH|header = "Authorization: token $KR_TOKEN"
-no secret-tool on PATH is an absent keyring|absent|github|$KR_CONFIG|$NOKR_PATH|["no_credentials",null]|login unread: keyring-absent|none|none
-a Secret Service secret-tool cannot reach is an absent keyring|unreachable|unreachable|$KR_CONFIG|$KR_BIN:$SHIM:$PATH|["no_credentials",null]|login unread: keyring-absent|$KR_ASKED_GITHUB|none
-a locked item is refused, never unlocked|locked|locked|$KR_CONFIG|$KR_BIN:$SHIM:$PATH|["no_credentials",null]|login unread: keyring-locked|$KR_ASKED_GITHUB|none
-no item under either username is an empty keyring|empty|none|$KR_CONFIG|$KR_BIN:$SHIM:$PATH|["no_credentials",null]|login unread: keyring-empty|$KR_ASKED_BOTH|none
-an item with an empty secret is no login|blank|blank|$KR_CONFIG|$KR_BIN:$SHIM:$PATH|["no_credentials",null]|login unread: keyring-empty|$KR_ASKED_BOTH|none
-a token in config.json is read and the keyring is not asked|config|github|{"copilotTokens":{"https://github.com:probe":"gho_cfg"},"lastLoggedInUser":{"host":"https://github.com","login":"probe"}}|$KR_BIN:$SHIM:$PATH|["ok",10]|none|none|header = "Authorization: token gho_cfg"
-a last login another host issued is never looked up for GitHub.com|tenant|github|{"lastLoggedInUser":{"host":"https://acme.ghe.com","login":"probe"}}|$KR_BIN:$SHIM:$PATH|["no_credentials",null]|login unread: token-missing|none|none
+the token under the :github username is the login|github|github|$KR_CONFIG|$KR_PATH|["ok",10]|none|$KR_ASKED_GITHUB|header = "Authorization: token $KR_TOKEN"
+the older username is read where the :github one holds nothing|legacy|legacy|$KR_CONFIG|$KR_PATH|["ok",10]|none|$KR_ASKED_BOTH|header = "Authorization: token $KR_TOKEN"
+no secret-tool on PATH is an absent Secret Service|absent|github|$KR_CONFIG|$NOKR|["no_credentials",null]|$KR_UNREAD keyring-absent in the Secret Service: no secret-tool on PATH|none|none
+no timeout on PATH is an absent Secret Service, never an unbounded search|notimeout|github|$KR_CONFIG|$KR_BIN:$SHIM:$NOTIMEOUT|["no_credentials",null]|$KR_UNREAD keyring-absent in the Secret Service: no timeout on PATH|none|none
+a Secret Service secret-tool cannot reach is absent, under secret-tool's error|unreachable|unreachable|$KR_CONFIG|$KR_PATH|["no_credentials",null]|$KR_UNREAD keyring-absent in the Secret Service: secret-tool search exited 1 for username=$KR_USER: secret-tool: Cannot autolaunch D-Bus without X11 \$DISPLAY|$KR_ASKED_GITHUB|none
+a search that outlasts its bound names the bound|hang|hang|$KR_CONFIG|$KR_PATH|["no_credentials",null]|$KR_UNREAD keyring-absent in the Secret Service: secret-tool search outlasted 5s for username=$KR_USER|$KR_ASKED_GITHUB|none
+a locked item is refused, never unlocked|locked|locked|$KR_CONFIG|$KR_PATH|["no_credentials",null]|$KR_UNREAD keyring-locked in the Secret Service item service=copilot-cli username=$KR_USER|$KR_ASKED_GITHUB|none
+a secret withheld for another cause is refused under secret-tool's error, never locked|refused|refused|$KR_CONFIG|$KR_PATH|["no_credentials",null]|$KR_UNREAD keyring-refused in the Secret Service item service=copilot-cli username=$KR_USER: secret-tool: Couldn't get item secret|$KR_ASKED_GITHUB|none
+no item under either username is an empty keyring|empty|none|$KR_CONFIG|$KR_PATH|["no_credentials",null]|$KR_UNREAD keyring-empty in the Secret Service items service=copilot-cli username=$KR_USER and https://github.com:probe|$KR_ASKED_BOTH|none
+an item with an empty secret is no login|blank|blank|$KR_CONFIG|$KR_PATH|["no_credentials",null]|$KR_UNREAD keyring-empty in the Secret Service items service=copilot-cli username=$KR_USER and https://github.com:probe|$KR_ASKED_BOTH|none
+a token in config.json is read and the keyring is not asked|config|github|{"copilotTokens":{"https://github.com:probe":"gho_cfg"},"lastLoggedInUser":{"host":"https://github.com","login":"probe"}}|$KR_PATH|["ok",10]|none|none|header = "Authorization: token gho_cfg"
+a last login another host issued is never looked up for GitHub.com|tenant|github|{"lastLoggedInUser":{"host":"https://acme.ghe.com","login":"probe"}}|$KR_PATH|["no_credentials",null]|$KR_UNREAD token-missing in HOME/.1copilot/config.json|none|none
 ROWS
 CTL_KEYRING="$(mutant_scripts ctl-keyring lib/copilot-credits.sh)" || exit 1
 mutate_file "$CTL_KEYRING/lib/copilot-credits.sh" '    "login	"?*) copilot_credits_keyring "${answer#login	}" ;;' \
   '    "login	"?*) COPILOT_CREDITS_REASON=token-missing; return 1 ;;'
-keyring_row ctl-keyring github "$KR_CONFIG" "$KR_BIN:$SHIM:$PATH" "$CTL_KEYRING/lanes"
+keyring_row ctl-keyring github "$KR_CONFIG" "$KR_PATH" "$CTL_KEYRING/lanes"
 assert_eq "$(record 1copilot '[.status, .monthly_pct]')" '["no_credentials",null]' \
   "control: without the keyring read a keyring login is never measured"
 
