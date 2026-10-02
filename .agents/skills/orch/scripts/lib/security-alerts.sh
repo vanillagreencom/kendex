@@ -142,7 +142,8 @@ check_security_alerts() {
   local recorded="" reported repo kind out prs line key number severity subject_key subject
   local manifest scope advisory validity url pr fields row alerts source query token keys=() fix_keys=() fix_rows=""
   SECURITY_UNREAD=""
-  # The control VM renews its installation token in this file. Read once per
+  # The fleet renews the installation token in this file: the control VM for
+  # a hosted overseer, the fleet worker for a local one. Read once per
   # long pass so every alert read shares it, but unrelated gh calls never do.
   # A missing or empty token must not fall back to a lane token or the keyring.
   if ! token="$(cat -- "${ORCH_SECURITY_ALERT_TOKEN_FILE:-}" 2>"$errf")" \

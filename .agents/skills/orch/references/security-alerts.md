@@ -15,8 +15,8 @@ Load from [oversee-events.md § Event kinds](oversee-events.md#event-kinds) at a
 ## Credential
 
 - `vanillagreen-overseer` holds Dependabot alerts, code scanning alerts and secret scanning alerts, each read and write. Lanes hold none of these permissions.
-- The control VM alone holds the app key and mints and renews its installation token. It supplies that token as one non-empty line in a private file, mode 600, outside lane roots. Replace the file atomically before the token expires.
-- Set `ORCH_SECURITY_ALERT_TOKEN_FILE` to that file's absolute path on the control VM. `oversee-watch --help` defines its read and failure contract. Alert lists and the GraphQL alert-to-pull-request link use this token. Other watch reads keep their current credential.
+- The control VM alone holds the app key and mints and renews its installation token. The fleet supplies that token as one non-empty line in a private file, mode 600, outside lane roots, on the overseer's own host: the control VM writes it for a hosted overseer, and the fleet worker on the owner's machine writes it for a local overseer, from a narrowed overseer-app token it pulls from the control VM. Replace the file atomically before the token expires.
+- Set `ORCH_SECURITY_ALERT_TOKEN_FILE` to that file's absolute path on the overseer's own host. `oversee-watch --help` defines its read and failure contract. Alert lists and the GraphQL alert-to-pull-request link use this token. Other watch reads keep their current credential.
 
 ## Dependabot pull requests
 
@@ -30,6 +30,6 @@ Load from [oversee-events.md § Event kinds](oversee-events.md#event-kinds) at a
 `security-alerts-unread reads=[SOURCE]:[CAUSE]`, by cause:
 
 - `permission` means `vanillagreen-overseer` lacks one of § Credential's alert permissions, an owner step on the app or installation: tell the owner once.
-- `credential`, source `installation-token`, means the control VM has not supplied a usable token through `ORCH_SECURITY_ALERT_TOKEN_FILE`. Restore the token supply. The watch makes no alert API call and retains the prior rows.
+- `credential`, source `installation-token`, means the fleet has not supplied a usable token through `ORCH_SECURITY_ALERT_TOKEN_FILE`: the control VM for a hosted overseer, the fleet worker for a local one. Restore the token supply. The watch makes no alert API call and retains the prior rows.
 - `feature-off` is the alert feature turned off on that repository: tell the owner once, whose call turning it on is.
 - Any other cause is named in GitHub's or workflow-state's words on the stderr line beside it.
