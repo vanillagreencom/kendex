@@ -21,6 +21,7 @@
 | 2026-10-01 | D017 | — | Retain bounded parent context and deliver live replies at any age | Owners continue conversations under retained roots without losing context | Slack changes event delivery or journal retention needs change | Active | [Full](D017-slack-thread-context.md) |
 | 2026-09-30 | D018 | KEN-2067 | GitHub enforces review requirements; the package keeps review operations | Platform approvals replace a separately published review status | A served repository lacks Copilot approvals or GitHub rulesets | Active | [Full](D018-platform-review-requirements.md) |
 | 2026-10-02 | D019 | KEN-2490 | A Copilot overseer walks the stated preference, keeps its own seat at the context mark, and proves its successor's first turn from its context record | The preference is the owner's model order; a context mark is no account problem; the pane is Copilot's only first-turn reading, and `session.usage_info` is its documented per-model-call signal | The owner puts harness continuity above the ladder, or Copilot changes `session.usage_info` | Active | [Full](D019-copilot-overseer-succession.md) |
+| 2026-10-02 | D020 | KEN-2589 | Lane hosts become host kinds declaring capabilities; lanes pick spends the allowance expiring first | A managed cloud offers no SSH or file verbs; an expiring grant is lost whole | A cloud offers file access or a session stop, or an allowance both expires and refills | Active | [Full](D020-lane-host-kinds.md) |
 
 ---
 
