@@ -15,7 +15,7 @@ The record `lanes` produces for one Copilot account's monthly AI credit pool, re
 | `config_dir` | The account: the `COPILOT_HOME` directory, or the Pi root |
 | `alias` | The account's label (`ORCH_LANE_ALIASES`, else the directory name) |
 | `measured_through` | `local` for this machine's read, `host` for a provider's `accounts` row, `stated` for `ORCH_LANE_COPILOT_POOL` |
-| `status` | `ok` or `rate_limited` where measured; `no_credentials` with `detail` naming the login's reason (`config-missing`, `config-unreadable`, `token-missing`, `token-ambiguous`, `token-foreign-host`); `no_usage_data` where the answer measured nothing; `refused`, `unreachable` or `error` for a failed read |
+| `status` | `ok` or `rate_limited` where measured; `no_credentials` with `detail` naming the login's reason (`config-missing`, `config-unreadable`, `token-missing`, `token-ambiguous`, `token-foreign-host`; for a login config.json names and the keyring holds, `keyring-absent`, `keyring-locked`, `keyring-empty`); `no_usage_data` where the answer measured nothing; `refused`, `unreachable` or `error` for a failed read |
 | `monthly_pct` | Share of the grant used, whole percent rounded up; 100 at or past the grant; 0 for an unlimited seat; null where unmeasured |
 | `unlimited` | `true` only for a seat the endpoint marks `unlimited: true` |
 | `headroom_pct` | 100 minus `monthly_pct`, null where unmeasured |

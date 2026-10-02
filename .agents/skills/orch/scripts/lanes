@@ -403,9 +403,10 @@
 # carrying `/` or `~` is a path, names no lane, and is refused.
 #
 # COPILOT: the account's monthly AI credit pool, read from GitHub's usage
-# endpoint with the login stored in `<dir>/config.json` through
-# lib/copilot-credits.sh, which owns the endpoint, the login layout it assumes
-# and the rules for zero, overage and unlimited; the record is
+# endpoint with the login Copilot CLI stores in `<dir>/config.json` or the
+# system keyring, through lib/copilot-credits.sh, which owns the endpoint, the
+# login layout it assumes and the rules for zero, overage and unlimited; the
+# record is
 # schemas/copilot-credits.md. The pool is a MONTHLY bucket, `monthly_pct`,
 # with the counts beside it as `credits`. An account whose login does not read
 # takes its ORCH_LANE_COPILOT_POOL reading where the setting states one, and
@@ -1434,7 +1435,7 @@ measure_lane() {
 	fi
 	if [[ "$harness" == copilot ]]; then
 		if ! copilot_credits_token "$dir"; then
-			measure_copilot_pool "$alias" copilot "$dir" "copilot login unread: $COPILOT_CREDITS_REASON in $dir/config.json"
+			measure_copilot_pool "$alias" copilot "$dir" "copilot login unread: $COPILOT_CREDITS_REASON in $COPILOT_CREDITS_WHERE"
 			return
 		fi
 		token="$COPILOT_CREDITS_TOKEN"

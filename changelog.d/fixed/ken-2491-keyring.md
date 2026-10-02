@@ -1,0 +1,1 @@
+- `lanes` measures a Copilot CLI account whose login sits in the system keyring, and names an absent, locked or empty keyring as its `no_credentials` reason.

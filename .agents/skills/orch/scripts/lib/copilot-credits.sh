@@ -25,6 +25,32 @@
 # the value is a placeholder the host's proxy rewrites for api.github.com. The
 # token crosses to curl on stdin, never in argv.
 #
+# THE KEYRING LOGIN. Where Copilot CLI keeps the token in the system keyring,
+# config.json holds none and names the login in `lastLoggedInUser`
+# `{host, login}`; the token is the keyring item the CLI looks up for it.
+# Measured on Copilot CLI 1.0.91 by logging its Secret Service calls: it
+# searches `service` `copilot-cli` with `username` `<host>:<login>:entra`, then
+# `<host>:<login>:github`, then `<host>:<login>`, an older form 1.0.91 still
+# reads and this read drops when the CLI does. Only a `https://github.com`
+# login is looked up, for the reason above. The `:entra` item is a Microsoft
+# Entra sign-in, not the GitHub login this endpoint is asked with, so it is
+# never read.
+#
+# The read is libsecret's `secret-tool search`, whose behaviour is its source
+# (GNOME/libsecret tool/secret-tool.c and libsecret/secret-methods.c, main at
+# 0ee86df8). It exits 1 where the Secret Service cannot be reached, else 0.
+# For the first match it prints `[<id>]` and `label = `, then
+# `secret = <secret>` only where the secret was read, then `created`,
+# `modified` and `schema`; no match prints nothing. Each line is flushed as it
+# is printed (GLib's g_print), so the secret, written raw, keeps its place.
+# Attributes and errors go to stderr, discarded unread. Without `--unlock` a
+# locked item is printed with no `secret = ` line and nothing prompts;
+# `secret-tool lookup` unlocks a locked match unasked, which prompts, so it is
+# not used. The reasons: `keyring-absent` where no `secret-tool` or `timeout`
+# is on PATH, or the search fails or outlasts its bound; `keyring-locked` for
+# a match whose secret was withheld; `keyring-empty` where neither username
+# matches or the secret is empty.
+#
 # This read is the fallback for interfaces Copilot CLI documents and that
 # cannot serve here (1.0.90). Its login inputs, `copilot login` and the
 # COPILOT_GITHUB_TOKEN, GH_TOKEN and GITHUB_TOKEN variables (`copilot help
@@ -53,15 +79,21 @@ COPILOT_CREDITS_URL="https://api.github.com/copilot_internal/user"
 
 # copilot_credits_token HOME — the stored login's token for the account at
 # HOME, into COPILOT_CREDITS_TOKEN, 0 where it reads; 1 with the reason in
-# COPILOT_CREDITS_REASON. Into a variable and never onto stdout, so the token
-# never reaches a command substitution's pipe or a log.
-COPILOT_CREDITS_TOKEN="" COPILOT_CREDITS_REASON=""
+# COPILOT_CREDITS_REASON. COPILOT_CREDITS_WHERE names where the login was read
+# or sought, for a record's detail. Into a variable and never onto stdout, so
+# the token never reaches a command substitution's pipe or a log.
+COPILOT_CREDITS_TOKEN="" COPILOT_CREDITS_REASON="" COPILOT_CREDITS_WHERE=""
+# Seconds one `secret-tool search` may take before the keyring reads absent.
+COPILOT_CREDITS_KEYRING_TIMEOUT_S=5
 copilot_credits_token() { # HOME
   local config="$1/config.json" answer
-  COPILOT_CREDITS_TOKEN="" COPILOT_CREDITS_REASON=""
+  COPILOT_CREDITS_TOKEN="" COPILOT_CREDITS_REASON="" COPILOT_CREDITS_WHERE="$config"
   [ -f "$config" ] || { COPILOT_CREDITS_REASON=config-missing; return 1; }
   if ! answer="$(sed '/^[[:space:]]*\/\//d' "$config" 2>/dev/null | jq -r '
       (.copilotTokens // .copilot_tokens) as $t
+      | ((.lastLoggedInUser | objects | select(.host == "https://github.com") | .login | strings
+          | select(. != "")) // null) as $login
+      | (if $login == null then "token-missing" else "login\t" + $login end) as $missing
       | if ($t | type) == "string" then "token\t" + $t
         elif ($t | type) == "object" then
           ([$t | to_entries[] | select(.value | type == "string")]) as $all
@@ -69,16 +101,65 @@ copilot_credits_token() { # HOME
           | if ($v | length) == 1 then "token\t" + $v[0]
             elif ($v | length) > 1 then "token-ambiguous"
             elif ($all | length) > 0 then "token-foreign-host"
-            else "token-missing" end
-        else "token-missing" end' 2>/dev/null)"; then
+            else $missing end
+        else $missing end' 2>/dev/null)"; then
     COPILOT_CREDITS_REASON=config-unreadable
     return 1
   fi
   case "$answer" in
     "token	"?*) COPILOT_CREDITS_TOKEN="${answer#token	}" ;;
+    "login	"?*) copilot_credits_keyring "${answer#login	}" ;;
     token-ambiguous | token-foreign-host) COPILOT_CREDITS_REASON="$answer"; return 1 ;;
     *) COPILOT_CREDITS_REASON=token-missing; return 1 ;;
   esac
+}
+
+# copilot_credits_keyring LOGIN — the GitHub.com LOGIN's token from the
+# keyring item Copilot CLI keeps it in, as copilot_credits_token answers.
+# stdin is /dev/null and the search is bounded, so nothing waits on a prompt.
+copilot_credits_keyring() { # LOGIN
+  local cmd user out rc secret
+  for cmd in secret-tool timeout; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      COPILOT_CREDITS_REASON=keyring-absent COPILOT_CREDITS_WHERE="the keyring: no $cmd on PATH"
+      return 1
+    fi
+  done
+  for user in "https://github.com:$1:github" "https://github.com:$1"; do
+    COPILOT_CREDITS_WHERE="the keyring item service=copilot-cli username=$user"
+    rc=0
+    out="$(timeout "$COPILOT_CREDITS_KEYRING_TIMEOUT_S" secret-tool search service copilot-cli username "$user" \
+      </dev/null 2>/dev/null)" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      COPILOT_CREDITS_REASON=keyring-absent
+      COPILOT_CREDITS_WHERE="the keyring: secret-tool search exited $rc for username=$user"
+      return 1
+    fi
+    case "$out" in
+      *"
+secret = "*)
+        secret="${out#*
+secret = }"
+        secret="${secret%%
+*}"
+        if [ -n "$secret" ]; then
+          COPILOT_CREDITS_TOKEN="$secret"
+          return 0
+        fi
+        ;;
+      *"
+label = "*) COPILOT_CREDITS_REASON=keyring-locked; return 1 ;;
+      "") ;;
+      *)
+        COPILOT_CREDITS_REASON=keyring-absent
+        COPILOT_CREDITS_WHERE="the keyring: secret-tool search printed no label line for username=$user"
+        return 1
+        ;;
+    esac
+  done
+  COPILOT_CREDITS_REASON=keyring-empty
+  COPILOT_CREDITS_WHERE="the keyring items service=copilot-cli username=https://github.com:$1:github and https://github.com:$1"
+  return 1
 }
 
 # copilot_credits_request TOKEN — the endpoint's raw answer on stdout in the
