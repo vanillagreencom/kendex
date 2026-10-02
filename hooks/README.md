@@ -7,7 +7,7 @@ The catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` render
 - `block-argv-kill`: Stops a command that kills processes by name. On a machine running several agents, one name matches every lane using that tool. Names the safe form: kill a process id you started.
 - `block-bare-cd`: Stops a command whose whole line is a `cd`. Where the shell stays open between tool calls, that moves every later command with it. Names the scoped form to use instead.
 - `block-repo-copy`: Stops a copy of a repository's `.git` folder or build output into a temporary folder, which can fill the disk. Suggests reading the source where it sits instead.
-- `block-unsafe-rm`: Stops a delete whose path starts with a variable that may be empty. Refusing this shape lets the agent rewrite it before a harness prompt stalls the session.
+- `block-unsafe-rm`: Stops deletes of shared directory roots, globs directly under them, and paths that start with a variable that may be empty. The refusal gives a safe cleanup pattern.
 - `block-worktree-refresh`: Stops a kendex command that writes a project from inside a linked git worktree, where the write would land somewhere the command does not name.
 - `command-safety`: Refuses shell commands matching a project's declared deny pattern, and every command while its settings file cannot be read.
 - `doc-drift-check`: Stops an agent at the end of its turn when documents covering the code it changed did not change or an architecture topic names a path that does not exist, and hands it the list. Where some topic declares a Covers entry, changed code with no covering document is named too.
