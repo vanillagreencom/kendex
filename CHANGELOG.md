@@ -12,8 +12,8 @@ change came from an outside contributor.
 
 ### Upgrading
 
-- 1.4.0 removed the review-gate scripts `validate.sh`, `review-writer.sh` and `review-policy`: run `adopt-refresh.sh --retire-writer` and drop every CI call to those scripts.
-- A consumer still on a refresh-consumer workflow from before 1.4.0 can stop on a standard-class first render: push one `kendex/refresh` render by hand to clear it.
+- Run `kendex refresh`, then `adopt-refresh.sh --retire-writer`; drop CI calls to `validate.sh`, `review-writer.sh` and `review-policy`; remove required check `Review gate` before that PR merges.
+- A consumer still on a refresh-consumer workflow from before 1.4.0 can stop on a standard-class first render: push one `kendex/refresh` render by hand and merge its pull request.
 
 ### Added
 
@@ -34,6 +34,7 @@ change came from an outside contributor.
 ### Fixed
 
 - Overseer succession onto another harness carries only the translated permission word, a self-succession refused after launch is logged in the fleet log, and lanes reads Copilot CLI 1.0.90 logins.
+- Overseers refuse foreign repository work and route it by peer mail, default to a repository-named session, and keep the overseer window at the session's base index through succession.
 - Claude lanes use their own model's account limits at turn end. A full limit for another model no longer forces a handoff.
 - Shared CLI package commands accept output-style. Their kind help and unknown-kind choices include output-style while keeping existing aliases.
 - Codex skill reads through functions.exec count as loaded skills, so the next guarded command can run. Failed and compound reads still refuse.
