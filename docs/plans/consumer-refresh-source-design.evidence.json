@@ -142,5 +142,50 @@
    "removedByDesign": false,
    "runIds": [37036159170]
   }
+ },
+ "refreshConsumerCopies": {
+  "source": "overseer, GitHub contents API, relayed in owner direction 1790974850; vgs and vsys re-read by this lane",
+  "bytes12987": [
+   "drovr",
+   "hyprtrade-io",
+   "vgs"
+  ],
+  "bytes14192": [
+   "vg",
+   "fleet",
+   "hyprtrade",
+   "kendex-web",
+   "memsira",
+   "talk",
+   "vsys"
+  ],
+  "laneRead": {
+   "vgs": {
+    "size": 12987,
+    "blob": "32afaed541087a188be734ee7f1b8a80076b9047",
+    "equals": "v1.5.1:skills/review-gate/scripts/refresh-consumer.sh"
+   },
+   "vsys": {
+    "size": 14192,
+    "blob": "9be9fc569b5bc2a0c3dec1bc65a8b35aa6082f30",
+    "equals": "main:skills/review-gate/scripts/refresh-consumer.sh since 0d95d84f (KEN-2498), in no release"
+   }
+  },
+  "commands": [
+   "gh api repos/vanillagreencom/REPO/contents/.agents/skills/review-gate/scripts/refresh-consumer.sh --jq '\"\\(.size) \\(.sha)\"'",
+   "git rev-parse v1.5.1:skills/review-gate/scripts/refresh-consumer.sh HEAD:skills/review-gate/scripts/refresh-consumer.sh"
+  ]
+ },
+ "queueHeldPushes": {
+  "vsys": {
+   "run": 36970384017,
+   "createdAt": "2026-10-02T05:45:38Z",
+   "log": "GH006: Protected branch update failed for refs/heads/kendex/refresh",
+   "runnerPredates": "KEN-2457 0cf9e3de merged 2026-10-02T05:51:35Z"
+  },
+  "vg": {
+   "createdAt": "2026-10-02T20:38Z (1:38 pm Pacific)",
+   "source": "overseer report in owner direction 1790974850; log unreadable with the lanes credential (HTTP 404)"
+  }
  }
 }
