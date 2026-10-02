@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
 
 import { stashWorld, type StashWorld } from "./stash-fixture.ts";
 
@@ -45,4 +47,51 @@ test("concurrent stashes both land and keep text typed during the write", async 
 	expect(world.editorText).toBe("");
 	expect(world.storedItems().map((item) => item.text).sort()).toEqual(["first", "second"]);
 	expect(world.notices.map((notice) => notice.message.split("\n")[0])).toEqual(["prompt_stash_items=1", "prompt_stash_items=2"]);
+});
+
+const firstLines = () => world.notices.map((notice) => notice.message.split("\n")[0]);
+
+for (const row of [
+	{ name: "alt+d deletes the selected draft", keys: ["alt+d"], kept: ["older"] },
+	{ name: "alt+x then return deletes every draft", keys: ["alt+x", "return"], kept: [] },
+]) {
+	test(`popup ${row.name} from the store`, async () => {
+		world.writeStore([{ text: "older" }, { text: "newer" }]);
+		const closed = world.command();
+		await world.popupOpened;
+		for (const key of row.keys) world.popup!.handleInput(key);
+		await world.nextHostCall();
+		world.popup!.handleInput("escape");
+		await closed;
+		expect(world.storedItems().map((item) => item.text)).toEqual(row.kept);
+		expect(firstLines()).toEqual([]);
+	});
+}
+
+test("a popup delete keeps a draft stashed while the popup was loading", async () => {
+	world.writeStore([{ text: "older" }]);
+	const closed = world.command();
+	world.editorText = "newer";
+	await world.shortcut();
+	await world.popupOpened;
+	world.popup!.handleInput("alt+d");
+	await world.nextHostCall();
+	expect(world.storedItems().map((item) => item.text)).toEqual(["newer"]);
+	expect(world.popup!.render(92).some((line) => line.includes("newer"))).toBe(true);
+	world.popup!.handleInput("escape");
+	await closed;
+});
+
+test("a popup delete that cannot write reports prompt_stash_save_failed", async () => {
+	world.writeStore([{ text: "older" }, { text: "newer" }]);
+	const closed = world.command();
+	await world.popupOpened;
+	rmSync(world.storeFile);
+	mkdirSync(join(world.storeFile, "blocker"), { recursive: true });
+	world.popup!.handleInput("alt+d");
+	await world.nextHostCall();
+	expect(firstLines()).toEqual(["prompt_stash_save_failed"]);
+	expect(world.notices[0]!.level).toBe("error");
+	world.popup!.handleInput("escape");
+	await closed;
 });

@@ -35,7 +35,10 @@ export interface StashWorld {
 	editorText: string;
 	terminalRows: number;
 	popup?: Popup;
+	overlayOptions?: { maxHeight?: string };
 	popupOpened: Promise<void>;
+	/** Resolves at the extension's next requestRender or notify call. */
+	nextHostCall(): Promise<void>;
 	shortcut(): Promise<void>;
 	command(): Promise<void>;
 	storedItems(): Array<{ text: string }>;
@@ -44,8 +47,11 @@ export interface StashWorld {
 	dispose(): void;
 }
 
+/** Prefix the fake theme puts on the popup's selected row. */
+export const SELECTED = "[selected]";
+
 const theme = {
-	bg: (_name: string, text: string) => text,
+	bg: (name: string, text: string) => (name === "selectedBg" ? `${SELECTED}${text}` : text),
 	bold: (text: string) => text,
 	fg: (_name: string, text: string) => text,
 };
@@ -68,12 +74,19 @@ export function stashWorld(): StashWorld {
 	} as never);
 
 	let opened = () => {};
+	let hostCalled: Array<() => void> = [];
+	const hostCall = () => {
+		const waiters = hostCalled;
+		hostCalled = [];
+		for (const resolve of waiters) resolve();
+	};
 	const world: StashWorld = {
 		storeFile: join(root, "agent", "kendex", "sessions", "session-1", "prompt-stash", "prompt-stash.json"),
 		notices: [],
 		editorText: "",
 		terminalRows: 40,
 		popupOpened: new Promise<void>((resolve) => { opened = resolve; }),
+		nextHostCall: () => new Promise<void>((resolve) => { hostCalled.push(resolve); }),
 		shortcut: () => shortcut!.handler(ctx),
 		command: () => command!.handler("", ctx),
 		storedItems: () => JSON.parse(readFileSync(world.storeFile, "utf8")).items,
@@ -102,11 +115,15 @@ export function stashWorld(): StashWorld {
 		},
 		ui: {
 			getEditorText: () => world.editorText,
-			notify: (message: string, level: string) => world.notices.push({ message, level }),
+			notify: (message: string, level: string) => {
+				world.notices.push({ message, level });
+				hostCall();
+			},
 			setEditorText: (value: string) => { world.editorText = value; },
-			custom: (factory: (tui: unknown, theme: unknown, keybindings: unknown, done: (value: string | null) => void) => Popup) =>
+			custom: (factory: (tui: unknown, theme: unknown, keybindings: unknown, done: (value: string | null) => void) => Popup, options: { overlayOptions?: { maxHeight?: string } }) =>
 				new Promise<string | null>((resolve) => {
-					const tui = { requestRender() {}, terminal: { get rows() { return world.terminalRows; } } };
+					world.overlayOptions = options.overlayOptions;
+					const tui = { requestRender: hostCall, terminal: { get rows() { return world.terminalRows; } } };
 					world.popup = factory(tui, theme, {}, resolve);
 					opened();
 				}),

@@ -4,9 +4,9 @@
 
 ### 3.0.3
 
-- The stash popup no longer rescans every draft on each frame or keystroke: each draft's search text, preview and line count are computed once, and search results are reused until the query or the drafts change. The list shows no more rows than fit in the terminal, whatever `listRows` says.
+- The stash popup no longer rescans every draft on each frame or keystroke: each draft's search text, preview and line count are computed once, and search results are reused until the query or the drafts change. The list shows no more rows than fit in the popup at its `popupMaxHeight`, whatever `listRows` says, so the key hints stay visible and the selected draft stays on screen.
 - A stash holds at most 500 prompts and 8,388,608 bytes of store file. A stash past either limit is refused with a `prompt_stash_refused=item-limit` or `prompt_stash_refused=byte-limit` error and the editor text is kept. A store file already over the byte limit is not loaded; the stash and the popup report `prompt_stash_refused=store-too-large` with its path.
-- Store reads and writes no longer block Pi. They run one at a time, so two quick stashes both land. Text typed while a stash is being written stays in the editor.
+- Store reads and writes no longer block Pi. They run one at a time, so two quick stashes both land. Text typed while a stash is being written stays in the editor. A delete in the popup keeps any draft stashed while the popup was open.
 
 ### 3.0.2
 

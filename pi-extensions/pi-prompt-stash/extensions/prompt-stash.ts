@@ -203,6 +203,15 @@ function itemView(item: StashItem): ItemView {
 	return view;
 }
 
+// pi-tui slices an overlay to its resolved maxHeight but does not export the
+// resolver, so this repeats its rule: only an "N%" string resolves, as that
+// share of the terminal; any other value leaves the terminal height.
+function overlayHeight(maxHeight: string, terminalRows: number): number {
+	const percent = /^(\d+(?:\.\d+)?)%$/.exec(maxHeight);
+	const height = percent ? Math.floor((terminalRows * Number(percent[1])) / 100) : terminalRows;
+	return Math.max(1, Math.min(height, terminalRows));
+}
+
 function padAnsi(text: string, width: number): string {
 	const truncated = truncateToWidth(text, width, "");
 	return `${truncated}${" ".repeat(Math.max(0, width - visibleWidth(truncated)))}`;
@@ -277,6 +286,7 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 	if (!ctx.hasUI) return;
 
 	const configuredRows = Math.max(1, Math.floor(settingNumber("listRows", LIST_ROWS, ctx.cwd)));
+	const maxHeight = settingString("popupMaxHeight", POPUP_MAX_HEIGHT, ctx.cwd);
 	const path = storePath(ctx);
 	let items: StashItem[];
 	try {
@@ -307,10 +317,30 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 				if (filterCache?.items !== items || filterCache.query !== query) filterCache = { items, query, matches: filterItems(items, query) };
 				return filterCache.matches;
 			};
-			const visibleRows = () => Math.max(1, Math.min(configuredRows, tui.terminal.rows - POPUP_CHROME_ROWS));
-			const save = () => {
-				const snapshot = items;
-				void serialized(() => saveItems(path, snapshot)).catch((error) => ctx.ui.notify(stashMessages.saveFailed(error), "error"));
+			const visibleRows = () => Math.max(1, Math.min(configuredRows, overlayHeight(maxHeight, tui.terminal.rows) - POPUP_CHROME_ROWS));
+			// A draft stashed after the popup loaded is only in the store, so a
+			// delete applies to the store as it is when the queue reaches it, and
+			// the list takes that result once no other delete is still queued.
+			let pendingDeletes = 0;
+			const persistDelete = (drop: (item: StashItem) => boolean) => {
+				pendingDeletes += 1;
+				serialized(async () => {
+					const kept = (await loadItems(path)).filter((item) => !drop(item));
+					await saveItems(path, kept);
+					return kept;
+				}).then(
+					(kept) => {
+						pendingDeletes -= 1;
+						if (pendingDeletes > 0) return;
+						items = kept;
+						clampSelection();
+						tui.requestRender();
+					},
+					(error) => {
+						pendingDeletes -= 1;
+						ctx.ui.notify(stashMessages.saveFailed(error), "error");
+					},
+				);
 			};
 			const clampSelection = () => {
 				const listRows = visibleRows();
@@ -330,14 +360,15 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 				const item = filtered()[selected];
 				if (!item) return;
 				items = items.filter((candidate) => candidate.id !== item.id);
-				save();
+				persistDelete((candidate) => candidate.id === item.id);
 				clampSelection();
 				tui.requestRender();
 			};
 
 			const clearAll = () => {
+				const shown = new Set(items.map((candidate) => candidate.id));
 				items = [];
-				save();
+				persistDelete((candidate) => shown.has(candidate.id));
 				confirmDeleteAll = false;
 				clampSelection();
 				tui.requestRender();
@@ -479,7 +510,7 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 			overlay: true,
 			overlayOptions: {
 				anchor: "center",
-				maxHeight: settingString("popupMaxHeight", POPUP_MAX_HEIGHT, ctx.cwd),
+				maxHeight,
 				width: Math.max(40, Math.floor(settingNumber("popupWidth", POPUP_WIDTH, ctx.cwd))),
 			},
 		},

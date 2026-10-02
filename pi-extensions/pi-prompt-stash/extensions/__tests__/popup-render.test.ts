@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 
-import { stashWorld, type StashWorld } from "./stash-fixture.ts";
+import { SELECTED, stashWorld, type StashWorld } from "./stash-fixture.ts";
 
 let world: StashWorld;
 
@@ -53,12 +53,26 @@ test("frames and keystrokes after the first reuse each draft's search text, prev
 	await closed;
 });
 
-test("the list never asks for more rows than the terminal has", async () => {
+test("the list fits the overlay height and keeps the selected draft on screen", async () => {
 	world.writeSettings({ listRows: 100_000 });
-	world.terminalRows = 20;
-	world.writeStore([{ text: "only draft" }]);
+	world.terminalRows = 40;
+	world.writeStore(Array.from({ length: 60 }, (_, index) => ({ text: `draft-${String(index).padStart(2, "0")}|` })));
 	const { closed } = await openPopup();
-	expect(world.popup!.render(92)).toHaveLength(20);
+	// pi-tui cuts the overlay at its maxHeight: the default 80% of 40 rows.
+	expect(world.overlayOptions?.maxHeight).toBe("80%");
+	const overlayRows = 32;
+	const lines = world.popup!.render(92);
+	expect(lines).toHaveLength(overlayRows);
+	expect(lines.some((line) => line.includes("delete all"))).toBe(true);
+	// Drafts list newest first, so draft-59 is row 0; 24 list rows fit in 32.
+	for (const row of [
+		{ keys: Array<string>(28).fill("down"), selected: "draft-31|" },
+		{ keys: ["ctrl+u", "pagedown"], selected: "draft-35|" },
+	]) {
+		for (const key of row.keys) world.popup!.handleInput(key);
+		const shown = world.popup!.render(92).slice(0, overlayRows).find((line) => line.includes(SELECTED));
+		expect(shown).toContain(row.selected);
+	}
 	world.popup!.handleInput("escape");
 	await closed;
 });
