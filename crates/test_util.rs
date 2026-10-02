@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 #[path = "test_util/lane.rs"]
@@ -42,15 +42,15 @@ pub fn exact_test(module_path: &str, function: &str) -> String {
     dead_code,
     reason = "every test binary includes this whole module and uses the part it needs"
 )]
-pub fn reexecute_test(
+pub fn reexecute_test<K: AsRef<OsStr>, V: AsRef<OsStr>>(
     module_path: &str,
     function: &str,
-    environment: &[(&str, &str)],
+    environment: &[(K, V)],
 ) -> std::io::Result<std::process::Output> {
     std::process::Command::new(std::env::current_exe()?)
         .args(["--exact", &exact_test(module_path, function), "--nocapture"])
         .env_clear()
-        .envs(environment.iter().copied())
+        .envs(environment.iter().map(|(key, value)| (key, value)))
         .output()
 }
 

@@ -1,10 +1,10 @@
 //! Output-style installation, shared kind commands and content verification.
 
-use crate::test_util::{fixture_env, git, rooted, source_path};
+use crate::test_util::{fixture_env, git, reexecute_test, rooted, source_path};
 use kendex_core::env::Env;
 use kendex_core::model::ItemKind;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 #[allow(clippy::unwrap_used, reason = "fixture process execution")]
@@ -77,7 +77,25 @@ fn add_installs_the_style_and_verify_fails_on_a_hand_edit() {
 #[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
 fn installed_style_reaches_shared_package_commands() {
     let temp = tempfile::tempdir().unwrap();
-    let home = rooted(&temp);
+    // Re-execution gives Env::detect the same sandbox opt-out and platform
+    // roots as the CLI child, including Windows known-folder selection.
+    let home = match std::env::var_os("KENDEX_TEST_OUTPUT_STYLE_HOME") {
+        Some(home) => PathBuf::from(home),
+        None => {
+            let home = rooted(&temp);
+            let mut environment = fixture_env(&home).to_vec();
+            environment.push(("KENDEX_TEST_OUTPUT_STYLE_HOME", home.into_os_string()));
+            environment.push(("PATH", std::env::var_os("PATH").unwrap_or_default()));
+            let output = reexecute_test(
+                module_path!(),
+                "installed_style_reaches_shared_package_commands",
+                &environment,
+            )
+            .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            return;
+        }
+    };
     let project = home.join("project");
     let catalog = home.join("catalog");
     fs::create_dir_all(project.join(".claude")).unwrap();
@@ -132,28 +150,16 @@ fn installed_style_reaches_shared_package_commands() {
             "{args:?}: {printed}"
         );
     }
-    for (args, held) in [
-        (
-            vec!["pin", "output-style", "STE", commit, "--yes"],
-            Some(commit),
-        ),
-        (
-            vec!["pin", "output-style", "STE", "--follow", "--yes"],
-            None,
-        ),
-    ] {
+    for (revision, held) in [(commit, Some(commit)), ("--follow", None)] {
+        let args = ["pin", "output-style", "STE", revision, "--yes"];
         let output = kendex(&home, &project, &args);
-        assert!(
-            output.status.success(),
-            "{args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        assert!(output.status.success(), "{args:?}: {output:?}");
         let manifest = kendex_core::manifest::load_for_mutation(&project.join("kendex.toml"))
             .unwrap()
             .unwrap();
         assert_eq!(manifest.output_styles["STE"].rev.as_deref(), held);
     }
-    let env = Env::host_rooted(&home);
+    let env = Env::detect().unwrap();
     for (verb, ignored) in [("ignore", true), ("unignore", false)] {
         let output = kendex(&home, &project, &["updates", verb, "output-style", "STE"]);
         assert!(
