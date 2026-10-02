@@ -903,14 +903,20 @@ exec "$REAL_CAT" "$@"
         """A codex lane started through its create's own prefix, a process named NAME in the worktree.
 
         The prefix records the launch identity of the shell it execs into the
-        harness, so the returned process's pid is the one recorded."""
+        harness, so the returned process's pid is the one recorded. The harness
+        waits in a builtin read on a FIFO nothing writes, never forking: a
+        forked child is named for the harness until it execs, and a stop that
+        reads the process table then counts it beside the harness."""
         created = self.create(harness="codex")
         self.assertEqual(created.returncode, 0, created.stderr)
         prefix = dict(word.split("=", 1) for word in created.stdout.decode().strip().split("\t"))["remote-prefix"]
         shutil.copy2(shutil.which("bash"), self.bin / name)
         (self.bin / name).chmod(0o755)
+        idle = self.root / f"{name}-idle"
+        os.mkfifo(idle)
         command = (f"cd {shlex.quote(self.row['clone'] + '-worktree')} && exec {shlex.quote(str(self.bin / name))} -c "
-                   + shlex.quote(f"trap {shlex.quote(on_term)} TERM; printf 'ready\\n'; while :; do sleep 0.1; done"))
+                   + shlex.quote(f"exec 3<>{shlex.quote(str(idle))}; trap {shlex.quote(on_term)} TERM; printf 'ready\\n'; "
+                                 "while :; do read -r -t 0.1 -u 3 _; done"))
         lane = subprocess.Popen(["bash", "-c", prefix + " " + shlex.quote(command)],
                                 env={**self.env, "HOME": str(self.root)}, stdout=subprocess.PIPE)
         self.addCleanup(lane.wait, 2)
