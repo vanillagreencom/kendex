@@ -97,7 +97,8 @@ AND whose account has room by its SECOND_OPINION_<NAME>_ROOM_CMD where it has
 one — the model this session runs is never dispatched to, in any mode, forced
 or not.
 A nonzero exit, per-CLI timeout or recognized quota/rate-limit refusal on
-stderr advances to the next roster name. Every attempt records name, cause
+stderr advances to the next roster name. On a zero exit the stderr refusal
+counts only when stdout holds no usable review/audit answer. Every attempt records name, cause
 and seconds on stderr and in review/audit qa_metadata.attempts (or the failed
 record when exhausted). Forced targets never fall through.
 When no eligible target remains before execution the run refuses (exit 1).

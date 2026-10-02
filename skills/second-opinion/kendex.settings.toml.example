@@ -7,7 +7,8 @@
 # below. A review goes to the first name that is installed and is not the
 # model running this session. This is also the execution fallback order: a
 # nonzero exit, timeout or recognized quota/rate-limit refusal tries the next
-# name. Each attempt reports its name, cause and seconds.
+# name. A refusal on stderr counts only when stdout holds no usable review
+# answer. Each attempt reports its name, cause and seconds.
 SECOND_OPINION_MODELS = "claude codex"
 
 # The most opinions one review collects. 2 or more sends the same change to

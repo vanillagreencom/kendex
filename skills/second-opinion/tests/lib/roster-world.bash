@@ -89,6 +89,8 @@ response() {
     # two distinct blockers at the one parse location
     parse2) printf '{"agent":"external-%s","timestamp":"2026-01-01T00:00:00Z","verdict":"action_required","summary":"two distinct bugs in parse","blockers":[{"id":1,"title":"Boundary error in parse","location":"src/app.rs (`parse`)","description":"first","recommendation":"fix","priority":1,"estimate":1},{"id":2,"title":"Integer overflow in parse","location":"src/app.rs (`parse`)","description":"second","recommendation":"fix","priority":2,"estimate":1}],"suggestions":[],"questions":[],"qa_metadata":{}}\n' "$2" ;;
     junk) printf 'this is not json at all\n' ;;
+    # a verdict with no finding arrays: parseable, structurally incomplete
+    partial) printf '{"agent":"external-%s","verdict":"pass","summary":"cut"}\n' "$2" ;;
     down|empty) return 0 ;;
     *) echo "UNKNOWN-RESPONSE: $1" >&2; exit 2 ;;
   esac
