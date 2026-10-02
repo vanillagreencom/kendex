@@ -10,7 +10,7 @@ The organization's overseer app may approve a head after the managing workflow's
 
 `validate-standard.sh` reports rule sources, approval requirements, stale-approval dismissal, required contexts, merge-queue checks, app installation and secret placement. Its `standard-bypass-actors` row judges bypass actors per ruleset: a queue-only ruleset admits `REVIEW_GATE_STANDARD_QUEUE_BYPASS`, a checks-only ruleset admits `REVIEW_GATE_STANDARD_CHECKS_BYPASS`, and any other ruleset admits none. The owner holds the ruleset split. Merge routing follows the github skill’s `pr-merge --help` § Merge route.
 
-Until 2.0, the report reads the rows the 1.3.0 standard added as `advisory`, which fails nothing and keeps exit status 0: the rule sources, the 1 approval, stale-approval dismissal, and an unset or empty `REVIEW_GATE_STANDARD_CONTEXTS`. The run prints one `standard-advisory` warning naming each row's new form. Meet each row in the organization and repository rulesets and set the contexts key now; at 2.0 these rows fail.
+Until 2.0, the report reads the rows the 1.3.0 standard added as `advisory`, which fails nothing and keeps exit status 0: the rule sources, the 1 approval, stale-approval dismissal, and an unset or empty `REVIEW_GATE_STANDARD_CONTEXTS`. A branch that still requires the retired gate context fails the required-contexts row whatever that key holds. The run prints one `standard-advisory` warning naming each row's new form. Meet each row in the organization and repository rulesets and set the contexts key now; at 2.0 these rows fail.
 
 ## Settings
 

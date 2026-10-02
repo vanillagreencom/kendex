@@ -64,8 +64,9 @@ code alone, and the run prints one review-gate-warning=standard-advisory
 line to stderr, VALUE the advisory rows, naming each row's new form. The
 advisory rows are standard-ruleset-source, standard-required-approvals and
 standard-stale-dismissal on any departure, and standard-required-contexts
-where REVIEW_GATE_STANDARD_CONTEXTS is unset or empty. An unreadable row is
-FAIL, never advisory.
+where REVIEW_GATE_STANDARD_CONTEXTS is unset or empty and the default branch
+does not require the standard's gate_context. An unreadable row is FAIL,
+never advisory.
 
 Each of REVIEW_GATE_STANDARD_APP, REVIEW_GATE_STANDARD_ENVIRONMENT and
 REVIEW_GATE_STANDARD_SECRETS that no source sets reads the value
@@ -92,7 +93,8 @@ keys. A key set empty still refuses.
                                     them. VALUE is the required contexts; an
                                     advisory value is undeclared:CONTEXTS
                                     (the list is unset or empty), and a
-                                    FAIL value may be gate-required:CONTEXTS
+                                    FAIL value may be gate-required:CONTEXTS,
+                                    whatever the list holds
   standard-required-approvals       an organization ruleset's pull-request
                                     rule requires at least 1 approval. VALUE
                                     is the highest count such a rule
@@ -313,10 +315,12 @@ if read_api "repos/$FULL/rules/branches/$BRANCH_URI" '.[] | @json' --paginate &&
   contexts="$(rules '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context] | unique | join(";")')"
   gated="$(jq -r --arg gate "$WANT_GATE" 'any(.[]; .type == "required_status_checks" and any(.parameters.required_status_checks[]?; .context == $gate))' <<<"$RULES")" ||
     die rules-query gate-context "jq could not evaluate a query over the parsed rules"
-  if [ -z "$WANT_CONTEXTS" ]; then
-    advise standard-required-contexts "undeclared:$contexts" "this repository declares no REVIEW_GATE_STANDARD_CONTEXTS, so $BRANCH's required contexts have nothing to match; set it in the [env] table of kendex.settings.toml to the contexts $BRANCH should require" "REVIEW_GATE_STANDARD_CONTEXTS in the [env] table of kendex.settings.toml"
-  elif [ "$gated" = true ]; then
+  # A required gate context fails whatever the list holds, so the undeclared
+  # advisory never stands in for it.
+  if [ "$gated" = true ]; then
     bad standard-required-contexts "gate-required:$contexts" "$BRANCH requires $WANT_GATE, which the standard's approval rule replaces. While the writer runs, $WANT_GATE stays required: remove it from the required contexts in the ruleset edit that precedes disabling the writer, never before, and never list it in REVIEW_GATE_STANDARD_CONTEXTS: .agents/skills/review-gate/references/adoption.md § Repo-side wiring"
+  elif [ -z "$WANT_CONTEXTS" ]; then
+    advise standard-required-contexts "undeclared:$contexts" "this repository declares no REVIEW_GATE_STANDARD_CONTEXTS, so $BRANCH's required contexts have nothing to match; set it in the [env] table of kendex.settings.toml to the contexts $BRANCH should require" "REVIEW_GATE_STANDARD_CONTEXTS in the [env] table of kendex.settings.toml"
   elif [ "$contexts" = "$WANT_CONTEXTS" ]; then
     ok standard-required-contexts "$contexts" "$BRANCH requires exactly the contexts this repository declares"
   else
