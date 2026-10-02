@@ -35,7 +35,9 @@
 #      a lane dropped from one aggregate alone and an event-held job held to
 #      another condition. The doc-limits and todo-ban steps run on a pull
 #      request alone and the bot-instructions check beside them on both
-#      events. Arms take each scan's event condition off.
+#      events; the job checks out the whole history the secrets scan
+      judges each commit against. Arms take each scan's event condition off
+      and plant a shallow checkout.
 #   3. the aggregate: a lane the class authorized may skip; one it did not
 #      is rejected, and so is a dead classifier, a job named twice and a
 #      helper that is not there.
@@ -454,6 +456,25 @@ done <<ROWS
 doc-limits (document byte ceilings)|$DOC_LIMITS
 todo-ban (index-wide work-marker scan)|$TODO_BAN
 ROWS
+
+# The secrets scan in the content-scan job judges each pull request commit
+# against its own parents, which only the whole history (depth 0) holds.
+checkout_depth() { # WORKFLOW JOB — fetch-depth of the job's actions/checkout step, or none
+  local depth
+  depth="$(awk -v job="$2" '
+    /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == job ":"); next }
+    in_job && /^      - / { in_co = ($0 ~ /uses: actions\/checkout@/) }
+    in_job && in_co && /^          fetch-depth: / { print $2 }
+  ' "$1")"
+  printf '%s' "${depth:-none}"
+}
+SCAN_JOB="$(job_of_run "$WORKFLOW" "$DOC_LIMITS")"
+check "the content-scan job checks out the whole history, every commit's parents" "0" \
+  "$(checkout_depth "$WORKFLOW" "$SCAN_JOB")"
+
+plant "$WORKFLOW" "          fetch-depth: 0" "" "$TMP/wf-shallow.yml" "$SCAN_JOB"
+check "must-fail: a content-scan checkout without fetch-depth 0 is named" "none" \
+  "$(checkout_depth "$TMP/wf-shallow.yml" "$SCAN_JOB")"
 
 # --- 2a. The one context ---------------------------------------------------
 # `CI` is the aggregate context the organization standard has every repository

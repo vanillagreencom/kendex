@@ -85,10 +85,11 @@ printf '%s\n' "$*" >>"$NPM_LOG"
 mkdir -p ui/node_modules
 [ "${NPM_FAIL:-0}" -eq 0 ] || exit "$NPM_FAIL"
 SH
-  # A gitleaks on PATH, so the setup keeps it; the installer it would call
-  # otherwise only logs where it was asked to install.
+  # A gitleaks on PATH that runs `dir`, so the setup keeps it; the installer
+  # it would call otherwise only logs where it was asked to install.
   cat >"$R/fake-bin/gitleaks" <<'SH'
 #!/usr/bin/env bash
+[ "${1-}" != dir ] || exit 0
 printf '8.30.1\n'
 SH
   cat >"$R/tools/install-gitleaks" <<'SH'
@@ -173,7 +174,7 @@ RUSTUP_FAIL=24 run_setup ./tools/lane-setup
   && ok "a failing target add names its step and returns its status" \
   || bad "a failing target add returns its status" "rc=$RC out=$OUT"
 
-echo "=== gitleaks: kept when on PATH, installed when not ==="
+echo "=== gitleaks: kept when on PATH and usable, installed when not ==="
 fixture gitleaks-kept
 run_setup ./tools/lane-setup
 [ "$RC" -eq 0 ] && [ ! -e "$R/install-gitleaks.log" ] && case "$OUT" in *"lane-setup: gitleaks=skip path=$R/fake-bin/gitleaks"*) true ;; *) false ;; esac \
@@ -182,14 +183,34 @@ run_setup ./tools/lane-setup
 fixture gitleaks-absent
 rm -- "${R:?}/fake-bin/gitleaks"
 run_setup ./tools/lane-setup
-[ "$RC" -eq 0 ] && [ "$(cat "$R/install-gitleaks.log" 2>/dev/null)" = "$R/home/.local/bin" ] && case "$OUT" in *"lane-setup: gitleaks=install"*) true ;; *) false ;; esac \
+[ "$RC" -eq 0 ] && [ "$(cat "$R/install-gitleaks.log" 2>/dev/null)" = "$R/home/.local/bin" ] && case "$OUT" in *"lane-setup: gitleaks=install reason=missing"*) true ;; *) false ;; esac \
   && ok "a lane with no gitleaks installs the pinned release into ~/.local/bin" \
   || bad "a lane with no gitleaks installs it" "rc=$RC log=$(cat "$R/install-gitleaks.log" 2>&1) out=$OUT"
-fixture gitleaks-mutant 'if gitleaks_path="$(command -v gitleaks)"; then' 'if false; then'
+# gitleaks 8.18.4, older than the dir scan, answers `dir` with an error and exit 1.
+old_gitleaks() {
+  cat >"$R/fake-bin/gitleaks" <<'SH'
+#!/usr/bin/env bash
+echo 'Error: unknown command "dir" for "gitleaks"' >&2
+exit 1
+SH
+}
+fixture gitleaks-old
+old_gitleaks
+run_setup ./tools/lane-setup
+[ "$RC" -eq 0 ] && [ "$(cat "$R/install-gitleaks.log" 2>/dev/null)" = "$R/home/.local/bin" ] && case "$OUT" in *"lane-setup: gitleaks=install reason=unusable path=$R/fake-bin/gitleaks"*) true ;; *) false ;; esac \
+  && ok "a gitleaks that cannot run dir is replaced by the pinned release" \
+  || bad "a gitleaks that cannot run dir is replaced" "rc=$RC log=$(cat "$R/install-gitleaks.log" 2>&1) out=$OUT"
+fixture gitleaks-mutant 'if ! gitleaks_path="$(command -v gitleaks)"; then' 'if true; then'
 run_setup ./tools/lane-setup
 [ -e "$R/install-gitleaks.log" ] \
   && ok "control: without the PATH check the installer runs over a gitleaks the lane has" \
   || bad "control: without the PATH check the installer should run" "rc=$RC out=$OUT"
+fixture gitleaks-probe-mutant 'elif ! gitleaks dir --help >/dev/null 2>&1; then' 'elif false; then'
+old_gitleaks
+run_setup ./tools/lane-setup
+[ ! -e "$R/install-gitleaks.log" ] \
+  && ok "control: without the probe a gitleaks too old for the lane is kept" \
+  || bad "control: without the probe the old gitleaks should be kept" "rc=$RC out=$OUT"
 
 echo "=== must-fail control: swallowing npm failure turns the row green ==="
 fixture mutant '  npm ci --no-audit --no-fund --prefix ui' '  npm ci --no-audit --no-fund --prefix ui || true'

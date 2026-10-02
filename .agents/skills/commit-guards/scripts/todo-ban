@@ -165,7 +165,7 @@ staged_lane() { # numbered violations on stdout, counted in GG_VIOLATIONS
       gg_note_skip "$f" binary "binary content, not text"
       continue
     fi
-    gg_staged_added_lines "$f" >"$GG_TMP/added"
+    gg_added_lines "$f" >"$GG_TMP/added"
     grep_status=0
     # -a: a NUL past git's own binary sniff would otherwise make grep answer
     # with a one-line "binary file matches" summary, which this loop would

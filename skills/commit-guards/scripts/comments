@@ -271,7 +271,7 @@ staged_file() { # PATH BLOBFILE SHA
   local f="$1" blob="$2" allow rec
   family_or_skip "$f" "$blob" || return 0
   # Extract from the whole blob, but report only lines added by the diff.
-  gg_staged_added_lines "$f" >"$GG_TMP/added"
+  gg_added_lines "$f" >"$GG_TMP/added"
   allow=$'\n'
   while IFS= read -r rec; do
     allow="$allow${rec%%"$GG_TAB"*}"$'\n'

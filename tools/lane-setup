@@ -42,14 +42,18 @@ else
 fi
 
 # gitleaks, which the commit-guards secrets lane runs at every commit and
-# its suite needs: one already on PATH is kept, and a lane with none gets the
-# pinned release in ~/.local/bin.
+# its suite needs. One on PATH that answers `gitleaks dir --help`, the probe
+# the lane makes for the dir scan gitleaks 8.19 added, is kept; a lane with
+# none, or with an older one, gets the pinned release in ~/.local/bin.
 gitleaks_path=""
-if gitleaks_path="$(command -v gitleaks)"; then
-  printf 'lane-setup: gitleaks=skip path=%s\n' "$gitleaks_path"
-else
-  printf 'lane-setup: gitleaks=install\n'
+if ! gitleaks_path="$(command -v gitleaks)"; then
+  printf 'lane-setup: gitleaks=install reason=missing\n'
   tools/install-gitleaks "$HOME/.local/bin"
+elif ! gitleaks dir --help >/dev/null 2>&1; then
+  printf 'lane-setup: gitleaks=install reason=unusable path=%s\n' "$gitleaks_path"
+  tools/install-gitleaks "$HOME/.local/bin"
+else
+  printf 'lane-setup: gitleaks=skip path=%s\n' "$gitleaks_path"
 fi
 
 # The lane cargo configuration, written only on a fleet sandbox: one whose
