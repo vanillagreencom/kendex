@@ -10,12 +10,10 @@
 # rule: no line counting, so an entry that states its outcome passes however
 # it is wrapped.
 #
-# Ordinary checks judge fragments and configured JSON version bumps. A major
-# increase needs a named Breaking entry; from 1.0, a minor holds no Breaking
-# entry and a patch holds neither a Breaking nor an Added one. The record
-# supplies release evidence after a caller collates fragments or renames a
-# package's Unreleased heading. Under --against, once it holds the new
-# version's own section, that section alone is the release's entries.
+# Ordinary checks judge fragments and configured JSON version bumps. Which
+# fragments and record sections are a bump's release entries, in each mode,
+# and what each bump level refuses among them is ../CHECKS.md § Version bumps;
+# this file implements that rule rather than restating it.
 #
 # --collate is that write, and the release commit is its only caller: on a
 # clean verdict it folds the fragments this run just accepted into the
@@ -85,23 +83,15 @@ measurement joins the fragment's lines with CR stripped and whitespace runs
 collapsed to one space, counted in characters.
 
 Ordinary runs read the record only as evidence for a configured version bump.
-COMMIT_GUARDS_CHANGELOG_VERSION_PATHS selects JSON files with a string version.
-An increased major needs a '- **Breaking:**' entry with non-blank text. From
-1.0 (an old major of 1 or more), a minor refuses a Breaking entry and a patch
-refuses a Breaking entry or an Added one: an added/ fragment or an item under
-the record's '### Added', which a package record lacks. Each refusal names the
-first such entry. A suffix change alone is no increase. A
-package.json uses only its adjacent CHANGELOG.md's '### Unreleased' or
-'### <new version>' section. Other files use accepted fragments or the
-configured record's '## [Unreleased]' or '## [<new version>] - <date>' section.
-Under --against, once the record holds the new version's own section, that
-section alone is the release's entries: pending fragments and the Unreleased
-section wait for the next release, so a branch restacked past a release is
-not judged by it.
-Historical sections and fenced examples do not count.
+COMMIT_GUARDS_CHANGELOG_VERSION_PATHS selects JSON files with a string version,
+and each increased version is judged against its release's entries. Which
+fragments and record sections count as those entries in each mode, and what a
+major, minor or patch increase refuses among them, is the commit-guards
+skill's CHECKS.md, section Version bumps. A minor or patch refusal names the
+first offending entry.
 The default compares HEAD to the index; --base compares HEAD's merge base
 with REF to the index; --against compares REF itself to the index. Fragments
-always come from the index. A first version has no prior major to increase.
+always come from the index. A first version has no prior version to increase.
 
 A tracked path under a fragment root that the globs do not cover is refused
 too — it is a fragment nothing would ever fold in. A root is a pattern's
