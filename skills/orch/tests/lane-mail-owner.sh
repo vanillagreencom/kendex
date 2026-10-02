@@ -521,6 +521,8 @@ assert_draft_text() { # FILE
 DRAFT_BYTES="$TMP_ROOT/draft.bytes"
 printf 'Grüße an alle\n' > "$DRAFT_BYTES"
 DRAFT_JSON='{"recipient":"#launch","medium":"slack-channel","text":"Grüße an alle\n"}'
+# Two drafts in one file, each valid alone: one ask approves one message.
+TWO_DRAFTS='{"recipient":"r","medium":"email","text":"x"} {"recipient":"r","medium":"email","text":"y"}'
 
 new_repo draft
 draft_ask "$(draft_file d "$DRAFT_JSON")" --wait 30
@@ -577,6 +579,7 @@ ask --item overseer --to owner~{"recipient":"r","medium":"email","text":3}~2=lan
 ask --item overseer --to owner~{"recipient":"r","medium":"fax","text":"x"}~2=lane-mail: draft-medium=fax
 ask --item overseer --to owner~{"recipient":"r",~2=lane-mail: file-unreadable=$D
 ask --item overseer --to owner~["r","email","x"]~2=lane-mail: file-unreadable=$D
+ask --item overseer --to owner~$TWO_DRAFTS~2=lane-mail: file-unreadable=$D
 ask --item overseer --to owner --options approve,deny~VALID~2=lane-mail: option-conflict=--draft,--options
 ask --item overseer --to owner --recommend deny~VALID~2=lane-mail: option-conflict=--draft,--recommend
 ask --item KEN-1~VALID~2=lane-mail: option-unknown=--draft
@@ -1018,6 +1021,11 @@ new_repo control_draft_field
 mutant draft-field-any 'if $bad != [] then' 'if false and $bad != [] then'
 draft_ask "$(draft_file blank '{"recipient":"","medium":"email","text":"x"}')"
 assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.draft.recipient')" "0=" "control: without the field rule an empty recipient lands"
+
+new_repo control_draft_single
+mutant draft-many 'if length != 1 or (.[0] | type)' 'if (.[0] | type)'
+draft_ask "$(draft_file two "$TWO_DRAFTS")"
+assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.draft.text')" "0=x" "control: without the one-object rule a file of two drafts lands"
 
 new_repo control_draft_argv
 mutant draft-argv '--slurpfile draft "$DRAFT_RECORD"' '--argjson draft "[$(cat -- "$DRAFT_RECORD")]"'
