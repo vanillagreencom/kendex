@@ -248,7 +248,6 @@ Default commands:
           User/project settings and their hooks are excluded.
   codex:  codex exec -m gpt-6.1-sol -s read-only -c model_reasoning_effort=xhigh
             --disable hooks --ephemeral
-          The project's Codex hooks are disabled.
 
 Output clearing and ownership:
   No exit leaves a previous run's output behind. Every mode that writes
