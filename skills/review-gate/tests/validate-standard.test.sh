@@ -142,10 +142,11 @@ ok check=standard-environment value=custom:branch:main
 ok check=standard-environment-secrets value=APP_ID\;APP_KEY
 ok check=standard-secrets-outside value=none'
 
-# The baseline with each named row turned to FAIL at its observed value.
-# OVERRIDES is `check=value` pairs separated by `^`, values as printed.
+# The baseline with each named row turned to its status at its observed
+# value. OVERRIDES is `[STATUS:]check=value` pairs separated by `^`, values
+# as printed; STATUS is advisory or ok, and FAIL where it is left out.
 expected_listing() { # OVERRIDES
-  local line check pair out=""
+  local line check pair status out=""
   while IFS= read -r line; do
     check="${line#ok check=}"
     check="${check%% value=*}"
@@ -154,7 +155,11 @@ expected_listing() { # OVERRIDES
     while [ -n "$rest" ]; do
       pair="${rest%%^*}"
       [ "$pair" = "$rest" ] && rest="" || rest="${rest#*^}"
-      [ "${pair%%=*}" = "$check" ] && hit="FAIL check=$check value=${pair#*=}"
+      case "$pair" in
+        advisory:* | ok:*) status="${pair%%:*}"; pair="${pair#*:}" ;;
+        *) status=FAIL ;;
+      esac
+      [ "${pair%%=*}" = "$check" ] && hit="$status check=$check value=${pair#*=}"
     done
     out="${out:+$out
 }${hit:-$line}"
@@ -162,67 +167,109 @@ expected_listing() { # OVERRIDES
   printf '%s' "$out"
 }
 
-run() { # FIXTURES SHIM_FAIL [ARGS...] — sets OUT (verdict lines) and RC
+# The exit status and the advisory warning count OVERRIDES call for: 1 where
+# one row is FAIL, else 0; one standard-advisory warning where one row is
+# advisory, else none.
+want_rc_of() { # OVERRIDES
+  local pair rest="$1"
+  while [ -n "$rest" ]; do
+    pair="${rest%%^*}"
+    [ "$pair" = "$rest" ] && rest="" || rest="${rest#*^}"
+    case "$pair" in
+      advisory:* | ok:*) ;;
+      *) echo 1; return ;;
+    esac
+  done
+  echo 0
+}
+want_advisories_of() { # OVERRIDES
+  case "^$1" in
+    *^advisory:*) echo 1 ;;
+    *) echo 0 ;;
+  esac
+}
+
+run() { # FIXTURES SHIM_FAIL [ARGS...] — sets OUT (verdict lines), RC, and
+  # ADVISORIES and UNSET, the counts of the two compatibility warnings
   local fixtures="$1" shim_fail="$2"
   shift 2
   RC=0
   RAW="$(cd "$CONSUMER" && env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$fixtures" GH_SHIM_FAIL="$shim_fail" \
     "$SKILL/scripts/validate-standard.sh" "$@" 2>&1)" || RC=$?
-  OUT="$(grep -E '^(ok|FAIL) check=' <<<"$RAW" || true)"
+  OUT="$(grep -E '^(ok|advisory|FAIL) check=' <<<"$RAW" || true)"
+  ADVISORIES="$(grep -c '^review-gate-warning=standard-advisory ' <<<"$RAW" || true)"
+  UNSET="$(grep -c '^review-gate-warning=standard-setting-unset ' <<<"$RAW" || true)"
 }
 
 echo "=== each drifted element reports its own row ==="
+# One drift case against the script copy as it stands: CASE_MATCH is true
+# where the listing, the exit status and the warning counts are the ones
+# OVERRIDES calls for, and CASE_DIFF says how they differ where not.
+CASE_MATCH=false
+CASE_DIFF=""
+CASES=0
+drift_case() { # NAME SHIM_FAIL FILES EDIT OVERRIDES [CONSUMER]
+  local dir file want want_rc want_adv
+  CASES=$((CASES + 1))
+  dir="$TMP/case-$CASES"
+  cp -R "$BASE" "$dir"
+  for file in $(tr ',' ' ' <<<"$3"); do
+    if [ -f "$dir/$file" ]; then
+      jq "$4" "$dir/$file" >"$dir/$file.new"
+    else
+      jq -n "$4" >"$dir/$file.new"
+    fi
+    mv "$dir/$file.new" "$dir/$file"
+  done
+  CONSUMER="$TMP/consumer-${6:-full}"
+  run "$dir" "$2"
+  CONSUMER="$TMP/consumer-full"
+  want="$(expected_listing "$5")"
+  want_rc="$(want_rc_of "$5")"
+  want_adv="$(want_advisories_of "$5")"
+  CASE_MATCH=false
+  if [ "$RC" -eq "$want_rc" ] && [ "$OUT" = "$want" ] && [ "$ADVISORIES" -eq "$want_adv" ] && [ "$UNSET" -eq 0 ]; then
+    CASE_MATCH=true
+  fi
+  CASE_DIFF="rc=$RC want $want_rc; advisory warnings=$ADVISORIES want $want_adv; unset warnings=$UNSET want 0
+$(diff <(printf '%s\n' "$want") <(printf '%s\n' "$OUT") || true)
+$RAW"
+}
+
 # name ~ shim failure ~ fixture files (comma-separated) ~ jq edit of each
 # ~ overrides. A fixture that does not exist yet, such as a second page, is
-# written from the edit alone.
+# written from the edit alone. A row with an advisory override exits 0 with
+# exactly one advisory warning, and the matching row prints none.
 rows=0
 while IFS='~' read -r name fail files edit overrides; do
   [ -n "$name" ] || continue
   rows=$((rows + 1))
-  dir="$TMP/case-$rows"
-  cp -R "$BASE" "$dir"
-  for file in $(tr ',' ' ' <<<"$files"); do
-    if [ -f "$dir/$file" ]; then
-      jq "$edit" "$dir/$file" >"$dir/$file.new"
-    else
-      jq -n "$edit" >"$dir/$file.new"
-    fi
-    mv "$dir/$file.new" "$dir/$file"
-  done
-  run "$dir" "$fail"
-  want="$(expected_listing "$overrides")"
-  want_rc=1
-  [ -n "$overrides" ] || want_rc=0
-  if [ "$RC" -eq "$want_rc" ] && [ "$OUT" = "$want" ]; then
-    ok "$name"
-  else
-    bad "$name (rc=$RC, want $want_rc)" "$(diff <(printf '%s\n' "$want") <(printf '%s\n' "$OUT") || true)
-$RAW"
-  fi
+  drift_case "$name" "$fail" "$files" "$edit" "$overrides"
+  if [ "$CASE_MATCH" = true ]; then ok "$name"; else bad "$name" "$CASE_DIFF"; fi
 done <<'ROWS'
 a repository matching the standard~~~~
-a pull-request rule from a repository ruleset~~rules.json~.[2].ruleset_source_type = "Repository"~standard-ruleset-source=Repository:1:pull_request\,missing:pull_request^standard-required-approvals=absent^standard-stale-dismissal=absent
-no deletion rule~~rules.json~del(.[0])~standard-ruleset-source=missing:deletion
-no force-push rule~~rules.json~del(.[1])~standard-ruleset-source=missing:non_fast_forward
-required checks from an enterprise ruleset~~rules.json~.[5].ruleset_source_type = "Enterprise"~standard-ruleset-source=Enterprise:4:required_status_checks^standard-bypass-actors=unreadable:4
-required checks from an organization ruleset~~rules.json~.[5] |= (.ruleset_source_type = "Organization" | .ruleset_id = 2)~standard-ruleset-source=Organization:2:required_status_checks
-a merge queue from an organization ruleset~~rules.json~.[4] |= (.ruleset_source_type = "Organization" | .ruleset_id = 2)~standard-ruleset-source=Organization:2:merge_queue
-no ruleset at all~~rules.json~[]~standard-ruleset-source=none^standard-merge-queue=absent^standard-required-contexts=''^standard-required-approvals=absent^standard-stale-dismissal=absent^standard-conversation-resolution=false^standard-copilot-review=absent
+a pull-request rule from a repository ruleset~~rules.json~.[2].ruleset_source_type = "Repository"~advisory:standard-ruleset-source=Repository:1:pull_request\,missing:pull_request^advisory:standard-required-approvals=absent^advisory:standard-stale-dismissal=absent
+no deletion rule~~rules.json~del(.[0])~advisory:standard-ruleset-source=missing:deletion
+no force-push rule~~rules.json~del(.[1])~advisory:standard-ruleset-source=missing:non_fast_forward
+required checks from an enterprise ruleset~~rules.json~.[5].ruleset_source_type = "Enterprise"~advisory:standard-ruleset-source=Enterprise:4:required_status_checks^standard-bypass-actors=unreadable:4
+required checks from an organization ruleset~~rules.json~.[5] |= (.ruleset_source_type = "Organization" | .ruleset_id = 2)~advisory:standard-ruleset-source=Organization:2:required_status_checks
+a merge queue from an organization ruleset~~rules.json~.[4] |= (.ruleset_source_type = "Organization" | .ruleset_id = 2)~advisory:standard-ruleset-source=Organization:2:merge_queue
+no ruleset at all~~rules.json~[]~advisory:standard-ruleset-source=none^standard-merge-queue=absent^standard-required-contexts=''^advisory:standard-required-approvals=absent^advisory:standard-stale-dismissal=absent^standard-conversation-resolution=false^standard-copilot-review=absent
 no merge queue~~rules.json~del(.[4])~standard-merge-queue=absent
 an extra required context~~rules.json~.[5].parameters.required_status_checks += [{"context": "Other"}]~standard-required-contexts=CI\;Cargo\ \(workspace\ tests\)\;Other
 a missing required context~~rules.json~.[5].parameters.required_status_checks = [{"context": "CI"}]~standard-required-contexts=CI
 the gate context required~~rules.json~.[5].parameters.required_status_checks += [{"context": "Review gate"}]~standard-required-contexts=gate-required:CI\;Cargo\ \(workspace\ tests\)\;Review\ gate
-no approval required~~rules.json~.[2].parameters.required_approving_review_count = 0~standard-required-approvals=0
-stale approvals kept on push~~rules.json~.[2].parameters.dismiss_stale_reviews_on_push = false~standard-stale-dismissal=false
+no approval required~~rules.json~.[2].parameters.required_approving_review_count = 0~advisory:standard-required-approvals=0
+stale approvals kept on push~~rules.json~.[2].parameters.dismiss_stale_reviews_on_push = false~advisory:standard-stale-dismissal=false
 a laxer second organization pull-request rule~~rules.json~. += [{"type": "pull_request", "parameters": {"required_approving_review_count": 0, "dismiss_stale_reviews_on_push": false}, "ruleset_source_type": "Organization", "ruleset_id": 2}]~
 threads need no resolution~~rules.json~.[2].parameters.required_review_thread_resolution = false~standard-conversation-resolution=false
-no Copilot review~~rules.json~del(.[3])~standard-ruleset-source=missing:copilot_code_review^standard-copilot-review=absent
+no Copilot review~~rules.json~del(.[3])~advisory:standard-ruleset-source=missing:copilot_code_review^standard-copilot-review=absent
 a bypass actor on each ruleset is named on each~~org-ruleset-1.json,org-ruleset-2.json~.bypass_actors = [{"actor_type": "RepositoryRole", "actor_id": 5}]~standard-bypass-actors=1=RepositoryRole:5:always\,2=RepositoryRole:5:always
 an admitted queue actor on the ruleset holding every other rule is a departure~~org-ruleset-1.json~.bypass_actors = [{"actor_type": "Integration", "actor_id": 5115517, "bypass_mode": "pull_request"}]~standard-bypass-actors=1=Integration:5115517:pull_request
 bypass actors withheld from the token~~org-ruleset-1.json~del(.bypass_actors)~standard-bypass-actors=unreadable:1
-a repository ruleset's actors read through the repository endpoint~~rules.json~.[3].ruleset_source_type = "Repository"~standard-ruleset-source=Repository:2:copilot_code_review\,missing:copilot_code_review^standard-bypass-actors=2=RepositoryRole:9:always
-a ruleset source with no ruleset read is unreadable~~rules.json~.[3].ruleset_source_type = "Enterprise"~standard-ruleset-source=Enterprise:2:copilot_code_review\,missing:copilot_code_review^standard-bypass-actors=unreadable:2
-a repository deletion rule on the second page~~rules.page2.json~[{"type": "deletion", "ruleset_source_type": "Repository", "ruleset_id": 1}]~standard-ruleset-source=Repository:1:deletion
+a repository ruleset's actors read through the repository endpoint~~rules.json~.[3].ruleset_source_type = "Repository"~advisory:standard-ruleset-source=Repository:2:copilot_code_review\,missing:copilot_code_review^standard-bypass-actors=2=RepositoryRole:9:always
+a ruleset source with no ruleset read is unreadable~~rules.json~.[3].ruleset_source_type = "Enterprise"~advisory:standard-ruleset-source=Enterprise:2:copilot_code_review\,missing:copilot_code_review^standard-bypass-actors=unreadable:2
+a repository deletion rule on the second page~~rules.page2.json~[{"type": "deletion", "ruleset_source_type": "Repository", "ruleset_id": 1}]~advisory:standard-ruleset-source=Repository:1:deletion
 classic protection beside the rulesets~~branch.json~.protection.enabled = true~standard-classic-protection=on
 the branch unreadable~branch~~~standard-classic-protection=unreadable
 the app on selected repositories~~installations.json~.installations[1].repository_selection = "selected"~standard-app=selected
@@ -281,21 +328,10 @@ echo "=== the required contexts against the repository's declared list ==="
 # name ~ consumer ~ jq edit of rules.json ~ overrides
 while IFS='~' read -r name consumer edit overrides; do
   [ -n "$name" ] || continue
-  dir="$TMP/case-contexts-$consumer"
-  cp -R "$BASE" "$dir"
-  [ -z "$edit" ] || { jq "$edit" "$dir/rules.json" >"$dir/r" && mv "$dir/r" "$dir/rules.json"; }
-  CONSUMER="$TMP/consumer-$consumer"
-  run "$dir" ""
-  CONSUMER="$TMP/consumer-full"
-  want="$(expected_listing "$overrides")"
-  if [ "$RC" -eq 1 ] && [ "$OUT" = "$want" ]; then
-    ok "$name"
-  else
-    bad "$name (rc=$RC)" "$(diff <(printf '%s\n' "$want") <(printf '%s\n' "$OUT") || true)
-$RAW"
-  fi
+  drift_case "$name" "" "${edit:+rules.json}" "$edit" "$overrides" "$consumer"
+  if [ "$CASE_MATCH" = true ]; then ok "$name"; else bad "$name" "$CASE_DIFF"; fi
 done <<'ROWS'
-a repository that declares no context list~no-contexts~~standard-required-contexts=undeclared:CI\;Cargo\ \(workspace\ tests\)
+a repository that declares no context list~no-contexts~~advisory:standard-required-contexts=undeclared:CI\;Cargo\ \(workspace\ tests\)
 a required gate context the repository also declares~gated~.[5].parameters.required_status_checks += [{"context": "Review gate"}]~standard-required-contexts=gate-required:CI\;Cargo\ \(workspace\ tests\)\;Review\ gate
 ROWS
 
@@ -400,14 +436,11 @@ the repository unreadable~repository~~full~~review-gate-error=repository-read~
 a manifest without a gate context~~{"ci_context": "CI"}~full~~review-gate-error=standard-malformed~
 a manifest without a CI context~~{"gate_context": "Review gate"}~full~~review-gate-error=standard-malformed~
 a manifest whose two contexts are one~~{"ci_context": "CI", "gate_context": "CI"}~full~~review-gate-error=standard-malformed~
-a consumer that declares nothing~~~none~~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_APP\,REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
 a consumer holding the package's empty seed~~~seeded~~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_APP\,REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
 a secret list of separators alone~~~no-secrets~~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_SECRETS
-a consumer with no app~~~no-app~~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_APP
 a secret name outside uppercase letters, digits and underscores~~~bad-secret~~review-gate-error=standard-secret-invalid~9KEY\;APP-ID\;app_id
 a bypass entry that is not TYPE:ID:MODE~~~bad-bypass~~review-gate-error=standard-bypass-invalid~Integration:5115517:bypass\;lanes-app
-environment-only reads no app, only the environment keys~~~none~--environment-only~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
-the organization values inline in the manifest are not read~~{"ci_context": "CI", "gate_context": "Review gate", "app": "lanes-app", "environment": "kendex", "environment_secrets": ["APP_ID", "APP_KEY"]}~none~~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_APP\,REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
+environment-only refuses an environment key set empty~~~seeded~--environment-only~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
 an argument~~~full~--repo~review-gate-error=unknown-arguments~
 ROWS
 
@@ -547,11 +580,11 @@ fi
 cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
 
 # The missing-setting rule's control keeps the copy's refusal and never takes
-# it: a consumer that declares nothing is no longer refused for its settings,
-# and the run goes on to the checks after it.
+# it: a consumer that sets every key empty is no longer refused for its
+# settings, and the run goes on to the checks after it.
 file_edit "$SKILL" scripts/lib/standard.sh 1 '^  if \[ -n "\$missing" \]; then$' 's/^  if \[ -n "\$missing" \]; then$/  if [ -n "$missing" ] \&\& false; then/'
 RC=0
-RAW="$(cd "$TMP/consumer-none" && env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$BASE" \
+RAW="$(cd "$TMP/consumer-seeded" && env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$BASE" \
   "$SKILL/scripts/validate-standard.sh" 2>&1)" || RC=$?
 if ! grep -q '^review-gate-error=standard-setting-missing ' <<<"$RAW"; then
   ok 'control: a skipped missing-setting refusal lets a consumer that declares nothing through'
@@ -580,7 +613,7 @@ while IFS='~' read -r name match edit consumer rules_edit real; do
   CONSUMER="$TMP/consumer-full"
   check="${real#* check=}"
   check="${check%% value=*}"
-  if [ "$RC" -le 1 ] && grep -qE "^(ok|FAIL) check=$check " <<<"$OUT" && ! grep -qxF -- "$real" <<<"$OUT"; then
+  if [ "$RC" -le 1 ] && grep -qE "^(ok|advisory|FAIL) check=$check " <<<"$OUT" && ! grep -qxF -- "$real" <<<"$OUT"; then
     ok "control: $name"
   else
     bad "control: $name (rc=$RC)" "$RAW"
@@ -588,13 +621,13 @@ while IFS='~' read -r name match edit consumer rules_edit real; do
   cp "$TMP/standard-script.keep" "$SKILL/scripts/validate-standard.sh"
 done <<'ROWS'
 required checks and a merge queue that may not come from a repository ruleset fail the matching layout~!= "Repository" else~s/!= "Repository" else/!= "Repository" or true else/~full~~ok check=standard-ruleset-source value=Organization\,Repository
-required checks that may come from an organization ruleset pass~!= "Repository" else~s/!= "Repository" else/!= "Repository" and .ruleset_source_type != "Organization" else/~full~.[5] |= (.ruleset_source_type = "Organization" | .ruleset_id = 2)~FAIL check=standard-ruleset-source value=Organization:2:required_status_checks
-a shared-rule list without deletion passes a branch with no deletion rule~"copilot_code_review", "deletion", "non_fast_forward"\] -~s/"deletion", "non_fast_forward"\] -/"non_fast_forward"] -/~full~del(.[0])~FAIL check=standard-ruleset-source value=missing:deletion
+required checks that may come from an organization ruleset pass~!= "Repository" else~s/!= "Repository" else/!= "Repository" and .ruleset_source_type != "Organization" else/~full~.[5] |= (.ruleset_source_type = "Organization" | .ruleset_id = 2)~advisory check=standard-ruleset-source value=Organization:2:required_status_checks
+a shared-rule list without deletion passes a branch with no deletion rule~"copilot_code_review", "deletion", "non_fast_forward"\] -~s/"deletion", "non_fast_forward"\] -/"non_fast_forward"] -/~full~del(.[0])~advisory check=standard-ruleset-source value=missing:deletion
 an unchecked context list passes an extra required context~elif \[ "\$contexts" = "\$WANT_CONTEXTS" \]; then~s/elif \[ "\$contexts" = "\$WANT_CONTEXTS" \]; then/elif [ "$contexts" = "$WANT_CONTEXTS" ] || true; then/~full~.[5].parameters.required_status_checks += [{"context": "Other"}]~FAIL check=standard-required-contexts value=CI\;Cargo\ \(workspace\ tests\)\;Other
 a skipped gate exclusion passes a required gate context the repository declares~elif \[ "\$gated" = true \]; then~s/elif \[ "\$gated" = true \]; then/elif [ "$gated" = true ] \&\& false; then/~gated~.[5].parameters.required_status_checks += [{"context": "Review gate"}]~FAIL check=standard-required-contexts value=gate-required:CI\;Cargo\ \(workspace\ tests\)\;Review\ gate
-a skipped undeclared-list failure reports no undeclared list~if \[ -z "\$WANT_CONTEXTS" \]; then~s/if \[ -z "\$WANT_CONTEXTS" \]; then/if [ -z "$WANT_CONTEXTS" ] \&\& false; then/~no-contexts~~FAIL check=standard-required-contexts value=undeclared:CI\;Cargo\ \(workspace\ tests\)
-a threshold that takes 0 passes a rule requiring no approval~"" \| \*\[!0-9\]\* \| 0\)~s/ | 0)/)/~full~.[2].parameters.required_approving_review_count = 0~FAIL check=standard-required-approvals value=0
-an unchecked dismissal passes stale approvals kept on push~\[ "\$stale" = true \]; then~s/\[ "\$stale" = true \]; then/[ "$stale" = true ] || true; then/~full~.[2].parameters.dismiss_stale_reviews_on_push = false~FAIL check=standard-stale-dismissal value=false
+a skipped undeclared-list failure reports no undeclared list~if \[ -z "\$WANT_CONTEXTS" \]; then~s/if \[ -z "\$WANT_CONTEXTS" \]; then/if [ -z "$WANT_CONTEXTS" ] \&\& false; then/~no-contexts~~advisory check=standard-required-contexts value=undeclared:CI\;Cargo\ \(workspace\ tests\)
+a threshold that takes 0 passes a rule requiring no approval~"" \| \*\[!0-9\]\* \| 0\)~s/ | 0)/)/~full~.[2].parameters.required_approving_review_count = 0~advisory check=standard-required-approvals value=0
+an unchecked dismissal passes stale approvals kept on push~\[ "\$stale" = true \]; then~s/\[ "\$stale" = true \]; then/[ "$stale" = true ] || true; then/~full~.[2].parameters.dismiss_stale_reviews_on_push = false~advisory check=standard-stale-dismissal value=false
 ROWS
 [ "$controls" -gt 0 ] || bad "the rule-control table ran no row" ""
 
@@ -612,6 +645,118 @@ else
   bad "control: contexts scope (rc=$RC)" "$RAW"
 fi
 cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
+
+echo "=== an unset organization setting reads its value from before 1.3.0 ==="
+# A world holding the values standard.json carried before 1.3.0: the
+# vanillagreen-fleet-lanes app on every repository, and the kendex
+# environment holding FLEET_GH_APP_ID and FLEET_GH_APP_PRIVATE_KEY. Each
+# consumer leaves the named keys unset and sets the rest to those values, so
+# the listing matches only where each unset key read its earlier value, and
+# the one warning's value names exactly the unset keys.
+EARLIER="$TMP/earlier"
+cp -R "$BASE" "$EARLIER"
+printf '{"installations": [{"app_slug": "vanillagreen-fleet-lanes", "repository_selection": "all"}]}\n' >"$EARLIER/installations.json"
+printf '{"secrets": [{"name": "FLEET_GH_APP_ID"}, {"name": "FLEET_GH_APP_PRIVATE_KEY"}, {"name": "OTHER"}]}\n' >"$EARLIER/environment-secrets-kendex.json"
+EARLIER_APP='REVIEW_GATE_STANDARD_APP = "vanillagreen-fleet-lanes"'
+EARLIER_ENV='REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"'
+EARLIER_SECRETS='REVIEW_GATE_STANDARD_SECRETS = "FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY"'
+settings_consumer unset-app "$EARLIER_ENV" "$EARLIER_SECRETS" "$CONTEXTS"
+settings_consumer unset-environment "$EARLIER_APP" "$EARLIER_SECRETS" "$CONTEXTS"
+settings_consumer unset-secrets "$EARLIER_APP" "$EARLIER_ENV" "$CONTEXTS"
+settings_consumer unset-all "$CONTEXTS"
+EARLIER_OVERRIDES='ok:standard-environment-secrets=FLEET_GH_APP_ID\;FLEET_GH_APP_PRIVATE_KEY'
+# One fallback case against the script copy as it stands, CASE_MATCH and
+# CASE_DIFF as drift_case sets them.
+fallback_case() { # CONSUMER ARGUMENT MANIFEST UNSET_KEYS
+  local want warning
+  cp "$SKILL/standard.json" "$TMP/standard.keep"
+  [ -z "$3" ] || printf '%s\n' "$3" >"$SKILL/standard.json"
+  CONSUMER="$TMP/consumer-$1"
+  run "$EARLIER" "" ${2:+"$2"}
+  CONSUMER="$TMP/consumer-full"
+  mv "$TMP/standard.keep" "$SKILL/standard.json"
+  want="$(expected_listing "$EARLIER_OVERRIDES")"
+  [ -z "$2" ] || want="$(grep -E '^(ok|FAIL) check=standard-environment(-secrets)? ' <<<"$want")"
+  warning="$(grep '^review-gate-warning=standard-setting-unset ' <<<"$RAW" || true)"
+  CASE_MATCH=false
+  if [ "$RC" -eq 0 ] && [ "$OUT" = "$want" ] && [ "$UNSET" -eq 1 ] && [ "$ADVISORIES" -eq 0 ] &&
+    [ "${warning#* value=}" = "$4" ]; then
+    CASE_MATCH=true
+  fi
+  CASE_DIFF="rc=$RC want 0; unset warnings=$UNSET want 1 naming $4; advisory warnings=$ADVISORIES want 0
+$(diff <(printf '%s\n' "$want") <(printf '%s\n' "$OUT") || true)
+$RAW"
+}
+FALLBACK_ROWS='an unset app reads vanillagreen-fleet-lanes~unset-app~~~REVIEW_GATE_STANDARD_APP
+an unset environment reads kendex~unset-environment~~~REVIEW_GATE_STANDARD_ENVIRONMENT
+unset secrets read FLEET_GH_APP_ID and FLEET_GH_APP_PRIVATE_KEY~unset-secrets~~~REVIEW_GATE_STANDARD_SECRETS
+three unset keys warn once, naming all three~unset-all~~~REVIEW_GATE_STANDARD_APP\,REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
+environment-only reads the two environment keys alone~unset-all~--environment-only~~REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
+the organization values inline in the manifest are not read~unset-all~~{"ci_context": "CI", "gate_context": "Review gate", "app": "lanes-app", "environment": "copilot", "environment_secrets": ["APP_ID", "APP_KEY"]}~REVIEW_GATE_STANDARD_APP\,REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS'
+fallbacks=0
+while IFS='~' read -r name consumer arg manifest keys; do
+  [ -n "$name" ] || continue
+  fallbacks=$((fallbacks + 1))
+  fallback_case "$consumer" "$arg" "$manifest" "$keys"
+  if [ "$CASE_MATCH" = true ]; then ok "$name"; else bad "$name" "$CASE_DIFF"; fi
+done <<<"$FALLBACK_ROWS"
+[ "$fallbacks" -gt 0 ] || bad "the fallback table ran no row" ""
+
+# Each fallback mechanism's control runs every fallback row against a copy
+# that keeps the mechanism's text and drops its behaviour, and passes when
+# each row turns red: the refusal restored for an unset key, and the warning
+# dropped.
+# name ~ match ~ sed edit of scripts/lib/standard.sh
+while IFS='~' read -r name match edit; do
+  [ -n "$name" ] || continue
+  file_edit "$SKILL" scripts/lib/standard.sh 1 "$match" "$edit"
+  green=""
+  while IFS='~' read -r row consumer arg manifest keys; do
+    [ -n "$row" ] || continue
+    fallback_case "$consumer" "$arg" "$manifest" "$keys"
+    [ "$CASE_MATCH" = false ] || green="${green:+$green; }$row"
+  done <<<"$FALLBACK_ROWS"
+  if [ -z "$green" ]; then ok "control: $name"; else bad "control: $name" "still green: $green"; fi
+  cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
+done <<'ROWS'
+an unset key refused as an empty one reads no earlier value~ && \[ "\$3" != provision \] \|\| return 0$~s/ \&\& \[ "\$3" != provision \] || return 0$/ \&\& false || return 0/
+a dropped unset-key warning leaves the earlier read unannounced~^  if \[ -n "\$RG_STANDARD_UNSET" \]; then$~s/^  if \[ -n "\$RG_STANDARD_UNSET" \]; then$/  if false; then/
+ROWS
+
+echo "=== a departure from a 1.3.0 requirement is advisory until 2.0 ==="
+# The drift cases of the four advisory rows. Each row's control turns that
+# row's advisory back into a failure in a copy of the script, and the shared
+# warning's control drops the warning; each passes when the case turns red.
+ADVISORY_ROWS='standard-ruleset-source~full~rules.json~del(.[0])~advisory:standard-ruleset-source=missing:deletion
+standard-required-contexts~no-contexts~~~advisory:standard-required-contexts=undeclared:CI\;Cargo\ \(workspace\ tests\)
+standard-required-approvals~full~rules.json~.[2].parameters.required_approving_review_count = 0~advisory:standard-required-approvals=0
+standard-stale-dismissal~full~rules.json~.[2].parameters.dismiss_stale_reviews_on_push = false~advisory:standard-stale-dismissal=false'
+advisories=0
+while IFS='~' read -r check consumer files edit overrides; do
+  [ -n "$check" ] || continue
+  advisories=$((advisories + 1))
+  calls="$(grep -Ec -- "advise $check " "$SKILL/scripts/validate-standard.sh")" || calls=0
+  file_edit "$SKILL" scripts/validate-standard.sh "$calls" "advise $check " "s/advise $check /bad $check /"
+  chmod +x "$SKILL/scripts/validate-standard.sh"
+  drift_case "control $check" "" "$files" "$edit" "$overrides" "$consumer"
+  if [ "$calls" -gt 0 ] && [ "$CASE_MATCH" = false ]; then
+    ok "control: $check reported as a failure turns its advisory case red"
+  else
+    bad "control: $check reported as a failure turns its advisory case red" "$CASE_DIFF"
+  fi
+  cp "$TMP/standard-script.keep" "$SKILL/scripts/validate-standard.sh"
+done <<<"$ADVISORY_ROWS"
+[ "$advisories" -eq 4 ] || bad "the advisory table ran $advisories rows, not 4" ""
+file_edit "$SKILL" scripts/validate-standard.sh 1 '^if \[ -n "\$ADVISED" \]; then$' 's/^if \[ -n "\$ADVISED" \]; then$/if false; then/'
+chmod +x "$SKILL/scripts/validate-standard.sh"
+green=""
+while IFS='~' read -r check consumer files edit overrides; do
+  [ -n "$check" ] || continue
+  drift_case "control warning $check" "" "$files" "$edit" "$overrides" "$consumer"
+  [ "$CASE_MATCH" = false ] || green="${green:+$green; }$check"
+done <<<"$ADVISORY_ROWS"
+if [ -z "$green" ]; then ok "control: a dropped advisory warning turns each advisory case red"; else bad "control: a dropped advisory warning turns each advisory case red" "still green: $green"; fi
+cp "$TMP/standard-script.keep" "$SKILL/scripts/validate-standard.sh"
 
 [ "$rows" -gt 0 ] || { bad "the drift table ran no row" ""; }
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

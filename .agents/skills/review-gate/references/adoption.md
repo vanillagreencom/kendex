@@ -10,18 +10,22 @@ The organization's overseer app may approve a head after the managing workflow's
 
 `validate-standard.sh` reports rule sources, approval requirements, stale-approval dismissal, required contexts, merge-queue checks, app installation and secret placement. Its `standard-bypass-actors` row judges bypass actors per ruleset: a queue-only ruleset admits `REVIEW_GATE_STANDARD_QUEUE_BYPASS`, a checks-only ruleset admits `REVIEW_GATE_STANDARD_CHECKS_BYPASS`, and any other ruleset admits none. The owner holds the ruleset split. Merge routing follows the github skill’s `pr-merge --help` § Merge route.
 
+Until 2.0, the report reads the rows the 1.3.0 standard added as `advisory`, which fails nothing and keeps exit status 0: the rule sources, the 1 approval, stale-approval dismissal, and an unset `REVIEW_GATE_STANDARD_CONTEXTS`. The run prints one `standard-advisory` warning naming each row's new form. Meet each row in the organization and repository rulesets and set the contexts key now; at 2.0 these rows fail.
+
 ## Settings
 
 Declare values in the `[env]` table of `kendex.settings.toml`. The standard loader reads process values, `.env.local`, `.kendex/settings.toml`, then the committed file. `REVIEW_GATE_SETTINGS_FILE` selects an explicit file. `/dev/null` selects no file and keeps only process values and caller defaults.
 
 | Key | Meaning | Default |
 | --- | --- | --- |
-| `REVIEW_GATE_STANDARD_APP` | Organization app slug read by the full standard report and environment provisioning. | None; unset or empty refuses. |
-| `REVIEW_GATE_STANDARD_ENVIRONMENT` | App-secret environment read by both scripts. | None; unset or empty refuses. |
-| `REVIEW_GATE_STANDARD_SECRETS` | Secret names separated by `;`, never their values. Names use uppercase letters, digits and underscores and start with a letter or underscore. Provisioning reads each value from the environment variable of the same name and re-writes it on every run, including when the secret name is present. A rotation needs one owner run. | None; unset or empty refuses. |
-| `REVIEW_GATE_STANDARD_CONTEXTS` | Required contexts separated by `;`, compared by the full standard report. | None; an unset list fails the required-contexts row. |
+| `REVIEW_GATE_STANDARD_APP` | Organization app slug read by the full standard report and environment provisioning. | None; empty refuses, and so does unset in provisioning. Until 2.0 the report reads unset as `vanillagreen-fleet-lanes`, the value before 1.3.0, with one warning. |
+| `REVIEW_GATE_STANDARD_ENVIRONMENT` | App-secret environment read by both scripts. | None; empty refuses, and so does unset in provisioning. Until 2.0 the report reads unset as `kendex`, the value before 1.3.0, with one warning. |
+| `REVIEW_GATE_STANDARD_SECRETS` | Secret names separated by `;`, never their values. Names use uppercase letters, digits and underscores and start with a letter or underscore. Provisioning reads each value from the environment variable of the same name and re-writes it on every run, including when the secret name is present. A rotation needs one owner run. | None; empty refuses, and so does unset in provisioning. Until 2.0 the report reads unset as `FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY`, the value before 1.3.0, with one warning. |
+| `REVIEW_GATE_STANDARD_CONTEXTS` | Required contexts separated by `;`, compared by the full standard report. | None; until 2.0 an unset list reports the required-contexts row advisory, and from 2.0 it fails the row. |
 | `REVIEW_GATE_STANDARD_QUEUE_BYPASS`, `REVIEW_GATE_STANDARD_CHECKS_BYPASS` | Actors admitted by a queue-only and a checks-only ruleset, as `TYPE:ID:MODE`. Both standard scripts refuse malformed entries with `standard-bypass-invalid`. | Empty admits none. |
 | `PR_REVIEW_WAIT_SECS` | Watcher quiet period before an absent approval needs attention. | The watcher's `--help` states the default. |
+
+The report's earlier values name the vanillagreen organization's app, environment and secrets, so another organization sets all three keys. One `standard-setting-unset` warning per run names each unset key. Provisioning writes, so it never reads an earlier value: it would create that organization's environment in another's repositories.
 
 `validate-standard.sh --environment-only` reads the environment and secret keys only. Consumer adoption supplies these values from the refresh template, so it needs no consumer assignment.
 

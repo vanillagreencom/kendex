@@ -1,0 +1,1 @@
+- harness-ci: with `HARNESS_CI_QUEUE_PATHS` unset, the shipped queue list decides queue-only, with one warning to set it in `[env]`; this read ends at 2.0.

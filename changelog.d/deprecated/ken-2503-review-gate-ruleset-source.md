@@ -1,0 +1,1 @@
+- review-gate: `standard-ruleset-source` reports advisory until 2.0 with one warning; move shared rules to organization rulesets, checks and queue to repository ones.

@@ -24,6 +24,12 @@
 #                the key is
 #   full         validate-standard.sh's full mode: also WANT_CONTEXTS
 #                (REVIEW_GATE_STANDARD_CONTEXTS, sorted, `;`-joined)
+# In the environment and full scopes, the report's, a key among the app,
+# environment and secrets that no source sets reads the value standard.json
+# carried before 1.3.0 moved it to settings, and the run prints one
+# standard-setting-unset warning naming every such key; the provision scope
+# writes, so it refuses an unset key as an empty one, since that value would
+# create the earlier organization's environment in another's repositories.
 # A key a scope does not read is left empty and never resolved, so a
 # .env.local or process value of it cannot refuse that scope's run. A
 # malformed assignment to it in a settings file's [env] table still
@@ -31,12 +37,14 @@
 # whatever key it resolves. An empty WANT_CONTEXTS is no
 # refusal: the standard-required-contexts row reports it. With no jq on
 # PATH, a missing, unreadable or malformed manifest, an unreadable setting
-# the scope reads, a key the scope reads unset or empty, a secret name
+# the scope reads, a key the scope reads set empty (or unset, in the
+# provision scope), a secret name
 # that is not uppercase letters, digits and underscores starting with no
 # digit, or a bypass entry that is not TYPE:ID:MODE, it prints the refusal
 # to stderr and returns 1; the caller exits with its could-not-run status.
 rg_standard_load() { # MANIFEST SCOPE
   local secrets contexts invalid missing="" rc=0
+  RG_STANDARD_UNSET=""
   case "$2" in
     environment | provision | full) ;;
     *)
@@ -74,7 +82,8 @@ rg_standard_load() { # MANIFEST SCOPE
   WANT_QUEUE_BYPASS=""
   WANT_CHECKS_BYPASS=""
   if [ "$2" != environment ]; then
-    WANT_APP="$(rg_setting REVIEW_GATE_STANDARD_APP "")" || return 1
+    rg_standard_setting REVIEW_GATE_STANDARD_APP "$RG_STANDARD_EARLIER_APP" "$2" || return 1
+    WANT_APP="$RG_STANDARD_VALUE"
     [ -n "$WANT_APP" ] || missing=REVIEW_GATE_STANDARD_APP
     WANT_QUEUE_BYPASS="$(rg_standard_actors REVIEW_GATE_STANDARD_QUEUE_BYPASS)" || return 1
     WANT_CHECKS_BYPASS="$(rg_standard_actors REVIEW_GATE_STANDARD_CHECKS_BYPASS)" || return 1
@@ -86,9 +95,11 @@ rg_standard_load() { # MANIFEST SCOPE
       return 1
     }
   fi
-  WANT_ENV="$(rg_setting REVIEW_GATE_STANDARD_ENVIRONMENT "")" || return 1
+  rg_standard_setting REVIEW_GATE_STANDARD_ENVIRONMENT "$RG_STANDARD_EARLIER_ENVIRONMENT" "$2" || return 1
+  WANT_ENV="$RG_STANDARD_VALUE"
   [ -n "$WANT_ENV" ] || missing="${missing:+$missing,}REVIEW_GATE_STANDARD_ENVIRONMENT"
-  secrets="$(rg_setting REVIEW_GATE_STANDARD_SECRETS "")" || return 1
+  rg_standard_setting REVIEW_GATE_STANDARD_SECRETS "$RG_STANDARD_EARLIER_SECRETS" "$2" || return 1
+  secrets="$RG_STANDARD_VALUE"
   WANT_SECRETS="$(rg_pack "$secrets" ';' | LC_ALL=C sort -u)" || {
     rg_message error standard-read REVIEW_GATE_STANDARD_SECRETS "could not split the secret names" >&2
     return 1
@@ -116,6 +127,31 @@ rg_standard_load() { # MANIFEST SCOPE
       return 1
       ;;
   esac
+  if [ -n "$RG_STANDARD_UNSET" ]; then
+    rg_message warning standard-setting-unset "$RG_STANDARD_UNSET" "this repository sets none of these review-gate settings, so this report reads the values standard.json carried before 1.3.0, which name the vanillagreen organization's app, environment and secrets; set each in the [env] table of kendex.settings.toml (references/adoption.md names them). This read ends at 2.0." >&2
+  fi
+}
+
+# The values standard.json carried before 1.3.0 moved them to settings.
+# Compatibility read, floor 1.3.0, removed at 2.0: no setting turns it off.
+RG_STANDARD_EARLIER_APP=vanillagreen-fleet-lanes
+RG_STANDARD_EARLIER_ENVIRONMENT=kendex
+RG_STANDARD_EARLIER_SECRETS="FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY"
+
+# Sets RG_STANDARD_VALUE to KEY's resolved value. A KEY no source sets reads
+# empty in the provision scope, whose refusal names it, and in every other
+# scope reads EARLIER and joins RG_STANDARD_UNSET. A KEY set empty stays
+# empty: that is a declaration, not an absence. rg_setting answers an unset
+# key with the default it is handed, so a second read under another default
+# tells unset from set empty.
+rg_standard_setting() { # KEY EARLIER SCOPE
+  local probe
+  RG_STANDARD_VALUE="$(rg_setting "$1" "")" || return 1
+  [ -z "$RG_STANDARD_VALUE" ] && [ "$3" != provision ] || return 0
+  probe="$(rg_setting "$1" unset)" || return 1
+  [ "$probe" = unset ] || return 0
+  RG_STANDARD_VALUE="$2"
+  RG_STANDARD_UNSET="${RG_STANDARD_UNSET:+$RG_STANDARD_UNSET,}$1"
 }
 
 # The bypass actors the setting KEY admits, one TYPE:ID:MODE per line, the

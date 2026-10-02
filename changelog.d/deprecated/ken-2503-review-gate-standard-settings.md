@@ -1,0 +1,1 @@
+- review-gate: the standard report reads an unset `REVIEW_GATE_STANDARD_APP`, `_ENVIRONMENT` or `_SECRETS` as its pre-1.3.0 value, with one warning to set it in `[env]`; this read ends at 2.0.

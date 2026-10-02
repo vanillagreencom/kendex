@@ -1,0 +1,1 @@
+- review-gate: `standard-required-approvals` and `standard-stale-dismissal` report advisory until 2.0 with one warning; meet them in the organization ruleset.

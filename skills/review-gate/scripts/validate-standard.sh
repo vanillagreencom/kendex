@@ -16,7 +16,7 @@
 # row would be unreadable there. The permission each row's reads need is in
 # print_usage.
 #
-# Report protocol: ok/FAIL check=KEY value=VALUE, then indented
+# Report protocol: ok/advisory/FAIL check=KEY value=VALUE, then indented
 # explanation, the same records validate.sh prints. VALUE is the observed
 # state; `unreadable` in it means a read failed, which is never a match.
 # Human explanation is not parsed. Full contract: print_usage or --help.
@@ -57,7 +57,22 @@ two bypass keys nor any ruleset. Refresh
 adoption uses this mode, with the refresh template's environment and secret
 names set as process values, which outrank the settings files.
 
-One verdict line per row, VALUE being what was observed:
+One verdict line per row, ok, advisory or FAIL, VALUE being what was
+observed. An advisory row departs from a requirement the 1.3.0 standard
+added and reads as a match until 2.0: it fails nothing and leaves the exit
+code alone, and the run prints one review-gate-warning=standard-advisory
+line to stderr, VALUE the advisory rows, naming each row's new form. The
+advisory rows are standard-ruleset-source, standard-required-approvals and
+standard-stale-dismissal on any departure, and standard-required-contexts
+where the repository declares no REVIEW_GATE_STANDARD_CONTEXTS. An
+unreadable row is FAIL, never advisory.
+
+Where the repository sets none of REVIEW_GATE_STANDARD_APP,
+REVIEW_GATE_STANDARD_ENVIRONMENT or REVIEW_GATE_STANDARD_SECRETS, each such
+key reads the value standard.json carried before 1.3.0, and the run prints
+one review-gate-warning=standard-setting-unset line to stderr, VALUE the
+unset keys. A key set empty still refuses.
+
   standard-ruleset-source           pull_request, copilot_code_review,
                                     deletion and non_fast_forward each come
                                     from an organization ruleset, and every
@@ -65,8 +80,8 @@ One verdict line per row, VALUE being what was observed:
                                     one, except required_status_checks and
                                     merge_queue, which come from a repository
                                     ruleset only. VALUE is the source types the
-                                    rules come from; a FAIL value lists each
-                                    departure, SOURCE:ID:TYPE for a rule from
+                                    rules come from; an advisory value lists
+                                    each departure, SOURCE:ID:TYPE for a rule from
                                     a source its type may not use and
                                     missing:TYPE for a type no organization
                                     ruleset holds, or none for no rule
@@ -74,10 +89,10 @@ One verdict line per row, VALUE being what was observed:
   standard-required-contexts        the required contexts are exactly the
                                     REVIEW_GATE_STANDARD_CONTEXTS list, and
                                     the standard's gate_context is not among
-                                    them. VALUE is the required contexts; a
-                                    FAIL value may be undeclared:CONTEXTS
-                                    (the repository declares no list) or
-                                    gate-required:CONTEXTS
+                                    them. VALUE is the required contexts; an
+                                    advisory value is undeclared:CONTEXTS
+                                    (the repository declares no list), and a
+                                    FAIL value may be gate-required:CONTEXTS
   standard-required-approvals       an organization ruleset's pull-request
                                     rule requires at least 1 approval. VALUE
                                     is the highest count such a rule
@@ -172,10 +187,10 @@ bypass-actors, classic-protection, ci-context and app as unreadable, and the
 Dependabot scopes of secrets-outside as unreadable.
 
 Exit codes:
-  0  every row matched
+  0  every row matched or reported advisory
   1  at least one FAIL line
   2  the check could not run at all (bad arguments, jq missing, a missing
-     or malformed standard.json, a standard setting unset or empty, the
+     or malformed standard.json, a standard setting set empty, the
      repository itself could not be read)
 USAGE
 }
@@ -247,6 +262,18 @@ PASS=0
 FAILED=0
 ok() { PASS=$((PASS + 1)); rg_report ok "$@"; }
 bad() { FAILED=$((FAILED + 1)); rg_report FAIL "$@"; }
+# A row whose requirement the 1.3.0 standard added reports a departure as
+# advisory, which fails nothing; the run's one standard-advisory warning
+# names each such row's NEW_FORM. Compatibility read, floor 1.3.0, removed
+# at 2.0, when each caller goes back to bad: no setting turns it off.
+ADVISED=""
+ADVISED_FORMS=""
+advise() { # CHECK VALUE MESSAGE NEW_FORM
+  ADVISED="${ADVISED:+$ADVISED,}$1"
+  ADVISED_FORMS="${ADVISED_FORMS:+$ADVISED_FORMS
+}$1: $4"
+  rg_report advisory "$1" "$2" "$3"
+}
 
 # Adoption needs the environment checks without unrelated owner-only reads.
 if [ "$ENVIRONMENT_ONLY" -eq 0 ]; then
@@ -266,14 +293,15 @@ if read_api "repos/$FULL/rules/branches/$BRANCH_URI" '.[] | @json' --paginate &&
   # merge queue in its own rulesets and nowhere else, an organization ruleset
   # included. Any other source for a rule is a departure, and so is a shared
   # rule no organization ruleset holds.
+  SOURCE_FORM="pull_request, copilot_code_review, deletion and non_fast_forward from an organization ruleset, and required_status_checks and merge_queue from a repository ruleset"
   departures="$(rules 'if length == 0 then "none" else (
     [.[] | select(if .type == "required_status_checks" or .type == "merge_queue" then .ruleset_source_type != "Repository" else .ruleset_source_type != "Organization" end) | "\(.ruleset_source_type):\(.ruleset_id):\(.type)"]
     + (["pull_request", "copilot_code_review", "deletion", "non_fast_forward"] - [.[] | select(.ruleset_source_type == "Organization") | .type] | map("missing:\(.)"))
     | unique | join(",")) end')"
   case "$departures" in
     "") ok standard-ruleset-source "$(rules '[.[].ruleset_source_type] | unique | join(",")')" "$BRANCH takes its shared rules from an organization ruleset, and only its required checks and merge queue from a repository ruleset" ;;
-    none) bad standard-ruleset-source none "no ruleset applies to $BRANCH" ;;
-    *) bad standard-ruleset-source "$departures" "these rules on $BRANCH depart from the standard's sources: pull_request, copilot_code_review, deletion and non_fast_forward come from an organization ruleset, and required_status_checks and merge_queue from a repository ruleset only, which holds nothing else" ;;
+    none) advise standard-ruleset-source none "no ruleset applies to $BRANCH" "$SOURCE_FORM" ;;
+    *) advise standard-ruleset-source "$departures" "these rules on $BRANCH depart from the standard's sources: pull_request, copilot_code_review, deletion and non_fast_forward come from an organization ruleset, and required_status_checks and merge_queue from a repository ruleset only, which holds nothing else" "$SOURCE_FORM" ;;
   esac
 
   if [ "$(rules 'any(.[]; .type == "merge_queue")')" = true ]; then
@@ -286,7 +314,7 @@ if read_api "repos/$FULL/rules/branches/$BRANCH_URI" '.[] | @json' --paginate &&
   gated="$(jq -r --arg gate "$WANT_GATE" 'any(.[]; .type == "required_status_checks" and any(.parameters.required_status_checks[]?; .context == $gate))' <<<"$RULES")" ||
     die rules-query gate-context "jq could not evaluate a query over the parsed rules"
   if [ -z "$WANT_CONTEXTS" ]; then
-    bad standard-required-contexts "undeclared:$contexts" "this repository declares no REVIEW_GATE_STANDARD_CONTEXTS, so $BRANCH's required contexts have nothing to match; set it in the [env] table of kendex.settings.toml to the contexts $BRANCH should require"
+    advise standard-required-contexts "undeclared:$contexts" "this repository declares no REVIEW_GATE_STANDARD_CONTEXTS, so $BRANCH's required contexts have nothing to match; set it in the [env] table of kendex.settings.toml to the contexts $BRANCH should require" "REVIEW_GATE_STANDARD_CONTEXTS in the [env] table of kendex.settings.toml"
   elif [ "$gated" = true ]; then
     bad standard-required-contexts "gate-required:$contexts" "$BRANCH requires $WANT_GATE, which the standard's approval rule replaces. While the writer runs, $WANT_GATE stays required: remove it from the required contexts in the ruleset edit that precedes disabling the writer, never before, and never list it in REVIEW_GATE_STANDARD_CONTEXTS: .agents/skills/review-gate/references/adoption.md § Repo-side wiring"
   elif [ "$contexts" = "$WANT_CONTEXTS" ]; then
@@ -300,15 +328,17 @@ if read_api "repos/$FULL/rules/branches/$BRANCH_URI" '.[] | @json' --paginate &&
   # the ruleset-source row's departure and counts for nothing here.
   approvals="$(rules '[.[] | select(.type == "pull_request" and .ruleset_source_type == "Organization") | .parameters.required_approving_review_count] | if length == 0 then "absent" else (max | tostring) end')"
   case "$approvals" in
-    "" | *[!0-9]* | 0) bad standard-required-approvals "$approvals" "no organization pull-request rule on $BRANCH requires an approval; the standard requires at least 1" ;;
+    "" | *[!0-9]* | 0) advise standard-required-approvals "$approvals" "no organization pull-request rule on $BRANCH requires an approval; the standard requires at least 1" "an organization ruleset whose pull-request rule requires 1 approval" ;;
     *) ok standard-required-approvals "$approvals" "$BRANCH requires $approvals approval(s) from an organization ruleset" ;;
   esac
 
-  if stale="$(rules '[.[] | select(.type == "pull_request" and .ruleset_source_type == "Organization") | .parameters.dismiss_stale_reviews_on_push] | if length == 0 then "absent" elif any(.[]; . == true) then "true" else "false" end')" &&
-    [ "$stale" = true ]; then
+  # A failed query exits with the refusal rules printed, rather than reading
+  # as a departure, which is advisory and fails nothing.
+  stale="$(rules '[.[] | select(.type == "pull_request" and .ruleset_source_type == "Organization") | .parameters.dismiss_stale_reviews_on_push] | if length == 0 then "absent" elif any(.[]; . == true) then "true" else "false" end')" || exit 2
+  if [ "$stale" = true ]; then
     ok standard-stale-dismissal true "$BRANCH dismisses a stale approval on push"
   else
-    bad standard-stale-dismissal "$stale" "no organization pull-request rule on $BRANCH dismisses a stale approval on push, so an approval outlives the head it approved"
+    advise standard-stale-dismissal "$stale" "no organization pull-request rule on $BRANCH dismisses a stale approval on push, so an approval outlives the head it approved" "an organization ruleset whose pull-request rule dismisses stale approvals on push"
   fi
 
   if [ "$(rules 'any(.[]; .type == "pull_request" and .parameters.required_review_thread_resolution == true)')" = true ]; then
@@ -651,5 +681,9 @@ else
   bad standard-secrets-outside "$outside" "these secrets sit outside $WANT_ENV, readable by a workflow on a branch its policy excludes. Move each into $WANT_ENV and declare that environment on every job that reads it, then delete these copies"
 fi
 
+if [ -n "$ADVISED" ]; then
+  rg_message warning standard-advisory "$ADVISED" "these rows depart from requirements the 1.3.0 standard added and read as advisory until 2.0, when they fail; each row's new form:
+$ADVISED_FORMS" >&2
+fi
 [ "$FAILED" -eq 0 ] || exit 1
 exit 0

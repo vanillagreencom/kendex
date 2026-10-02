@@ -7,7 +7,7 @@ rg_message() { # KIND CODE VALUE MESSAGE
   printf 'review-gate-%s=%s value=%q\n%s\n' "$1" "$2" "$3" "$4"
 }
 
-# Validator report protocol: one ok/FAIL/note line with check and value,
+# Validator report protocol: one ok/advisory/FAIL/note line with check and value,
 # then indented explanation lines, read by the organization-standard report.
 rg_report() { # STATUS CHECK VALUE MESSAGE
   printf '%s check=%s value=%q\n' "$1" "$2" "$3"
