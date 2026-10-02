@@ -194,19 +194,32 @@ assert_eq "rc=$rc first=$(first_line)" "rc=2 first=$REFUSAL" \
 # tool on the skill's SKILL.md, the path absolute or relative, and the read's
 # outcome as a later toolResult under the same toolCallId, isError true when
 # it failed. A row's result is `ok`, `error` or `none` (never written); the
-# result's text never names the skill, as a real file body need not.
+# result's text never names the skill, as a real file body need not. A
+# `batch-ok` or `batch-error` row is the read inside a tool_batch call beside
+# a failed sibling read, so the batch's own isError is true either way and the
+# read's status in the batch result's `nestedCalls` record is the outcome.
 PI_T="$TMP_ROOT/pi-session.jsonl"
 pi_read_row() { # WANT PATH RESULT [TARGET]
   local want="$1" path="$2" result="$3" target="${4:-src/lib.rs}"
   {
-    "${JQ[@]}" --arg p "$path" \
-      '{type:"message",message:{role:"assistant",content:[{type:"toolCall",id:"call-1",name:"read",arguments:{path:$p}}]}}'
+    case "$result" in
+      ok | error | none)
+        "${JQ[@]}" --arg p "$path" \
+          '{type:"message",message:{role:"assistant",content:[{type:"toolCall",id:"call-1",name:"read",arguments:{path:$p}}]}}'
+        ;;
+    esac
     case "$result" in
       ok | error)
         "${JQ[@]}" --argjson e "$([ "$result" = error ] && echo true || echo false)" \
           '{type:"message",message:{role:"toolResult",toolCallId:"call-1",toolName:"read",isError:$e,content:[{type:"text",text:"file body"}]}}'
         ;;
       none) ;;
+      batch-ok | batch-error)
+        "${JQ[@]}" --arg p "$path" \
+          '{type:"message",message:{role:"assistant",content:[{type:"toolCall",id:"call-1",name:"tool_batch",arguments:{calls:[{tool:"read",args:{path:$p}},{tool:"read",args:{path:"missing.md"}}]}}]}}'
+        "${JQ[@]}" --arg p "$path" --arg s "${result#batch-}" \
+          '{type:"message",message:{role:"toolResult",toolCallId:"call-1",toolName:"tool_batch",isError:true,content:[{type:"text",text:"batch_succeeded=1 batch_total=2"}],nestedCalls:{calls:[{id:"call-1/1",name:"read",arguments:{path:$p},status:$s},{id:"call-1/2",name:"read",arguments:{path:"missing.md"},status:"error",error:"ENOENT"}],complete:true}}}'
+        ;;
       *) printf 'an unknown result word builds no transcript: %s\n' "$result" >&2; exit 2 ;;
     esac
   } >"$PI_T"
@@ -230,6 +243,11 @@ rc=2 first=$REFUSAL|.agents/skills/not-code-quality/SKILL.md|ok
 rc=2 first=$REFUSAL|.agents/skills/code-quality/references/rules.md|ok
 rc=0 first=-|.agents/skills/docs-writing/SKILL.md|ok|README.md
 ROWS
+pi_batch_rows() {
+  pi_read_row 'rc=0 first=-' .agents/skills/code-quality/SKILL.md batch-ok
+  pi_read_row "rc=2 first=$REFUSAL" .agents/skills/code-quality/SKILL.md batch-error
+}
+pi_batch_rows
 
 echo "skill-load-check: each default rule refuses until its skill is loaded"
 # A transcript holding every mention of a skill that is not a load, then one
@@ -624,6 +642,10 @@ skill_load_control markdown "$HOOK" 'require() { # SKILL' \
   '  [ "$1" != docs-writing ] || return 0' HOOK markdown_rows \
   'a markdown edit without docs-writing refuses, naming it' \
   'a Pi read of .agents/skills/docs-writing/SKILL.md, result none'
+skill_load_control batch-read "$HOOK" '      | select(.name == "read" and .status == "ok")' \
+  '      | empty' HOOK pi_batch_rows 'a Pi read of .agents/skills/code-quality/SKILL.md, result batch-ok'
+skill_load_control batch-status "$HOOK" '      .nestedCalls | objects | .calls | arrays | .[] | objects' \
+  '      | .status = "ok"' HOOK pi_batch_rows 'a Pi read of .agents/skills/code-quality/SKILL.md, result batch-error'
 skill_load_control nonpersistent "$HOOK" 'notice() { # KEY VALUE [CAUSE]' \
   '  [ "$1" != gap ] || refuse "$@"' HOOK pi_nonpersistent_row 'Pi nonpersistent session'
 skill_load_control missing-library "$HOOK" 'notice() { # KEY VALUE [CAUSE]' \
