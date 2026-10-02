@@ -2,9 +2,10 @@
 # Diagnostic protocol: a command refusal starts LEVEL=KEY FIELD=VALUE, LEVEL
 # naming who owns the fix: error the caller's arguments, policy or tracked
 # state, package-error a defect in this package, host-error a host that could
-# not serve a read. Settings refusals start doc-limits-error=KEY value=VALUE;
-# notices start notice=KEY FIELD=VALUE. English detail follows on the next
-# line. Each notice=document-over-limit, which fails the check, or
+# not serve a read. A settings-library refusal starts doc-limits-error=KEY
+# value=VALUE whatever its cause, so that level names no owner. Notices start
+# notice=KEY FIELD=VALUE. English detail follows on the next line. Each
+# notice=document-over-limit, which fails the check, or
 # notice=document-over-budget, which warns, is followed, after its remedy, by
 # one notice=document-rule rule=docs-writing/SKILL.md#ANCHOR for its class.
 set -euo pipefail
@@ -63,7 +64,9 @@ The inventory is required; --staged reads its tracked index copy.
 Class selection and exclusions: references/policy.md.
 Exit codes: 0 clean, or over-budget warnings only; 1 a load-point document
 over its limit; 2 the check could not judge: error= usage or policy,
-package-error= a defect in doc-limits, host-error= a failed host read.
+package-error= a defect in doc-limits, host-error= a failed host read or a
+missing jq. A settings-library refusal prints doc-limits-error= whatever its
+cause.
 EOF
 }
 diagnostic() { # LEVEL KEY FIELD VALUE TEXT
@@ -362,12 +365,20 @@ else
     || config_error inventory-read-failed path "$INVENTORY_SOURCE" 'cannot read .kendex-generated.json; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'
 fi
 # The loader's refusal names the status, the jq that read it, the cause and
-# the fix; it follows this script's stable first line.
-GG_CHECK=doc-limits generated_paths_load "$inventory" 2>"$TMP/inventory-status" || {
-  diagnostic error inventory-invalid path .kendex-generated.json 'cannot read .kendex-generated.json; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'
+# the fix; it follows this script's stable first line. The loader returns 127
+# when no jq is on PATH, which the host owns, and 2 when the inventory fails.
+inventory_status=0
+GG_CHECK=doc-limits generated_paths_load "$inventory" 2>"$TMP/inventory-status" || inventory_status=$?
+case "$inventory_status" in
+  0) ;;
+  127) diagnostic host-error jq-missing path .kendex-generated.json 'no jq on PATH to read .kendex-generated.json; install jq' ;;
+  2) diagnostic error inventory-invalid path .kendex-generated.json 'cannot read .kendex-generated.json; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders' ;;
+  *) diagnostic package-error inventory-load-status exit "$inventory_status" "the inventory loader returned $inventory_status, which is neither 127 nor 2" ;;
+esac
+if [ "$inventory_status" -ne 0 ]; then
   cat -- "$TMP/inventory-status" >&2 || :
   exit 2
-}
+fi
 is_excluded() { # PATH — inclusion rows override both exclusion sources
   generated_path_contains "$1" \
     || glob_match "$1" ${EXCLUDE_PATTERNS[@]+"${EXCLUDE_PATTERNS[@]}"} || return 1

@@ -20,11 +20,27 @@ head -c 1025 /dev/zero | tr '\0' x >"$R/.agents/skills/rendered/SKILL.md"
 printf 'owned\n' >"$R/.agents/skills/owned/SKILL.md"
 git -C "$R" add -A
 git -C "$R" commit -qm fixture
+# A PATH that holds every command this one does except jq: the host with no
+# jq that the loader reports as jq-missing.
+NO_JQ_BIN="$TMP/no-jq-bin"
+mkdir -p "$NO_JQ_BIN"
+IFS=: read -ra PATH_DIRS <<<"$PATH"
+for dir in "${PATH_DIRS[@]}"; do
+  for tool in "$dir"/*; do
+    name="${tool##*/}"
+    if [ "$name" != jq ] && [ -f "$tool" ] && [ -x "$tool" ] && [ ! -e "$NO_JQ_BIN/$name" ] && [ ! -L "$NO_JQ_BIN/$name" ]; then
+      ln -s -- "$tool" "$NO_JQ_BIN/$name"
+    fi
+  done
+done
+[ ! -e "$NO_JQ_BIN/jq" ] && [ -e "$NO_JQ_BIN/git" ] && [ -e "$NO_JQ_BIN/bash" ] \
+  || { printf 'FAIL: the no-jq PATH holds jq, or lacks git or bash\n' >&2; exit 1; }
 PASS=0
 FAIL=0
+RUN_PATH="$PATH"
 run() {
   RC=0
-  OUT="$(cd "$R" && "$SR" "$@" 2>&1)" || RC=$?
+  OUT="$(cd "$R" && PATH="$RUN_PATH" "$SR" "$@" 2>&1)" || RC=$?
 }
 expect() { # EXPECTED-EXIT LABEL: assert the preceding run's result
   if [ "$RC" -eq "$1" ]; then
@@ -125,7 +141,9 @@ fi
 
 INVENTORY_ASSERTIONS=0
 while IFS='|' read -r name mode operation expected first_line cause_line; do
+  RUN_PATH="$PATH"
   case "$operation" in
+    jq-absent) RUN_PATH="$NO_JQ_BIN" ;;
     inventory-worktree-empty) printf '[]\n' >"$R/.kendex-generated.json" ;;
     unchanged) : ;;
     stage-empty) git -C "$R" add .kendex-generated.json ;;
@@ -163,6 +181,8 @@ while IFS='|' read -r name mode operation expected first_line cause_line; do
   [ -z "$cause_line" ] || expect_line_prefix "$cause_line" "$name loader cause: $mode"
   INVENTORY_ASSERTIONS=$((INVENTORY_ASSERTIONS + 1))
 done <<'INVENTORY_CASES'
+inventory-jq-missing|worktree|jq-absent|2|host-error=jq-missing path=.kendex-generated.json|  status: jq-missing, read by no jq on PATH
+inventory-jq-missing|staged|jq-absent|2|host-error=jq-missing path=.kendex-generated.json|  status: jq-missing, read by no jq on PATH
 inventory-worktree-empty|worktree|inventory-worktree-empty|1
 inventory-unstaged-empty|staged|unchanged|0
 inventory-empty-staged|staged|stage-empty|1
@@ -217,7 +237,7 @@ SR="$SOURCE_COMMAND"
 printf '{}\n' >"$R/.kendex-generated.json"
 git -C "$R" add .kendex-generated.json
 private_command inventory-diagnostic
-[ "$(grep -Fxc "  diagnostic error inventory-invalid path .kendex-generated.json 'cannot read .kendex-generated.json; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'" "$MUTANT")" -eq 1 ]
+[ "$(grep -Fxc "  2) diagnostic error inventory-invalid path .kendex-generated.json 'cannot read .kendex-generated.json; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders' ;;" "$MUTANT")" -eq 1 ]
 sed 's/diagnostic error inventory-invalid path/diagnostic error inventory-renamed path/' "$SOURCE_COMMAND" >"$MUTANT.changed"
 if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
 mv "$MUTANT.changed" "$MUTANT"
@@ -229,8 +249,8 @@ must_fail_first_line 'error=inventory-invalid path=.kendex-generated.json' 'inve
 
 private_command inventory-parse
 [ ! -L "$MUTANT" ]
-[ "$(grep -Fxc 'GG_CHECK=doc-limits generated_paths_load "$inventory" 2>"$TMP/inventory-status" || {' "$MUTANT")" -eq 1 ]
-sed 's#^GG_CHECK=doc-limits generated_paths_load "\$inventory" 2>"\$TMP/inventory-status" || {$#GG_CHECK=doc-limits generated_paths_load "$inventory" 2>"$TMP/inventory-status" || true || {#' "$SOURCE_COMMAND" >"$MUTANT.changed"
+[ "$(grep -Fxc 'GG_CHECK=doc-limits generated_paths_load "$inventory" 2>"$TMP/inventory-status" || inventory_status=$?' "$MUTANT")" -eq 1 ]
+sed 's#^GG_CHECK=doc-limits generated_paths_load "\$inventory" 2>"\$TMP/inventory-status" || inventory_status=\$?$#GG_CHECK=doc-limits generated_paths_load "$inventory" 2>"$TMP/inventory-status" || true || inventory_status=$?#' "$SOURCE_COMMAND" >"$MUTANT.changed"
 if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
 mv "$MUTANT.changed" "$MUTANT"
 chmod +x "$MUTANT"
@@ -242,8 +262,8 @@ SR="$SOURCE_COMMAND"
 
 private_command inventory-cause
 [ ! -L "$MUTANT" ]
-[ "$(grep -Fxc 'GG_CHECK=doc-limits generated_paths_load "$inventory" 2>"$TMP/inventory-status" || {' "$MUTANT")" -eq 1 ]
-sed 's#^GG_CHECK=doc-limits generated_paths_load "\$inventory" 2>"\$TMP/inventory-status" || {$#GG_CHECK=doc-limits generated_paths_load "$inventory" 2>/dev/null || {#' "$SOURCE_COMMAND" >"$MUTANT.changed"
+[ "$(grep -Fxc 'GG_CHECK=doc-limits generated_paths_load "$inventory" 2>"$TMP/inventory-status" || inventory_status=$?' "$MUTANT")" -eq 1 ]
+sed 's#^GG_CHECK=doc-limits generated_paths_load "\$inventory" 2>"\$TMP/inventory-status" || inventory_status=\$?$#GG_CHECK=doc-limits generated_paths_load "$inventory" 2>/dev/null || inventory_status=$?#' "$SOURCE_COMMAND" >"$MUTANT.changed"
 if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
 mv "$MUTANT.changed" "$MUTANT"
 chmod +x "$MUTANT"
@@ -253,7 +273,24 @@ run --staged
 must_fail_line_prefix '  status: entry-shape, read by ' 'inventory table control: discarding the loader refusal fails inventory-invalid loader cause'
 SR="$SOURCE_COMMAND"
 
+SR="$SOURCE_COMMAND"
+
 git -C "$R" checkout HEAD -- .kendex-generated.json
+private_command inventory-host
+[ ! -L "$MUTANT" ]
+[ "$(grep -Fxc "  127) diagnostic host-error jq-missing path .kendex-generated.json 'no jq on PATH to read .kendex-generated.json; install jq' ;;" "$MUTANT")" -eq 1 ]
+sed 's/^  127) diagnostic host-error jq-missing/  -127) diagnostic host-error jq-missing/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
+mv "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+SR="$MUTANT"
+RUN_PATH="$NO_JQ_BIN"
+run --staged
+must_fail_first_line 'host-error=jq-missing path=.kendex-generated.json' 'inventory table control: an unrouted loader status fails inventory-jq-missing'
+RUN_PATH="$PATH"
+SR="$SOURCE_COMMAND"
+
 mkdir -p "$R/tools"
 printf '!.agents/skills/rendered/*\tmeasure this render explicitly\n' >"$R/tools/doc-limits-excludes"
 git -C "$R" add tools/doc-limits-excludes

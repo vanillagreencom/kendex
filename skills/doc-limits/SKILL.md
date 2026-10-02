@@ -1,7 +1,7 @@
 ---
 name: doc-limits
 description: "Load to add, tune, or debug document byte ceilings and DOC_LIMITS_* settings."
-summary: "Hard byte ceilings for tracked Markdown and documentation HTML, with path classes and reasoned exclusions."
+summary: "Byte limits for tracked Markdown and documentation HTML: an AGENTS.md or SKILL.md over its limit fails, and any other document over its limit warns. Path classes set the limits, with reasoned exclusions."
 license: MIT
 user-invocable: true
 dependencies:

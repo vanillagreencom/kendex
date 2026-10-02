@@ -116,7 +116,7 @@ assert_eq "with jq on PATH the refusal names its version and the refresh, and no
   "rc=2 status: entry-shape, read by $JQ_VERSION;fix: Run kendex refresh at the repository root, then stage .kendex-generated.json with the renders." \
   "$(refusal "$PATH")"
 assert_eq "with no jq on PATH the refusal names the missing jq and its install" \
-  "rc=2 status: jq-missing, read by no jq on PATH;fix: Install jq, then run the check again." \
+  "rc=127 status: jq-missing, read by no jq on PATH;fix: Install jq, then run the check again." \
   "$(refusal "$NO_JQ_PATH")"
 assert_eq "an inventory that is not JSON names both the refresh and jq 1.7 or newer" \
   "rc=2 status: jq-error, read by $JQ_VERSION;fix: Run kendex refresh at the repository root, then stage .kendex-generated.json with the renders; the filter also needs jq 1.7 or newer, so install it if the jq named above is older." \
@@ -131,8 +131,19 @@ cmp -s "$reader" "$TMP/generated-paths.sh" && { echo "control changed no bytes" 
 # shellcheck source=../scripts/lib/generated-paths.sh
 source "$TMP/generated-paths.sh"
 assert_eq "control: a loader naming install jq with jq present breaks the version row" \
-  "rc=2 status: jq-missing, read by no jq on PATH;fix: Install jq, then run the check again." \
+  "rc=127 status: jq-missing, read by no jq on PATH;fix: Install jq, then run the check again." \
   "$(refusal "$PATH")"
+# Control: a loader that returns the inventory status with no jq on PATH
+# turns the no-jq row red, so a caller could not report the host.
+needle='    rc=127'
+[ "$(grep -Fxc "$needle" "$reader")" -eq 1 ]
+sed 's/^    rc=127$/    rc=2/' "$reader" >"$TMP/generated-paths.sh"
+cmp -s "$reader" "$TMP/generated-paths.sh" && { echo "control changed no bytes" >&2; exit 1; }
+# shellcheck source=../scripts/lib/generated-paths.sh
+source "$TMP/generated-paths.sh"
+assert_eq "control: a loader returning 2 with no jq on PATH breaks the no-jq row" \
+  "rc=2 status: jq-missing, read by no jq on PATH;fix: Install jq, then run the check again." \
+  "$(refusal "$NO_JQ_PATH")"
 # shellcheck source=../scripts/lib/generated-paths.sh
 source "$reader"
 

@@ -10,6 +10,8 @@
 # refresh and jq 1.7 or newer: jq 1.6 finds a NUL in every string and remaps
 # halt_error statuses under -e, so it refuses every inventory with such a
 # status. With no jq on PATH the status is the shell's command-not-found status.
+# The loader returns 127 when no jq is on PATH, so a caller can report the
+# host rather than the inventory, and 2 for every other refusal.
 # not-a-path: standalone inventory reader loads the shared message emitter.
 # shellcheck source=messages.sh
 source "$(dirname -- "${BASH_SOURCE[0]}")/messages.sh"
@@ -17,7 +19,7 @@ GENERATED_PATHS=""
 GENERATED_NL='
 '
 generated_paths_load() { # JSON — load the writer's exact paths, or refuse
-  local output="" status=0 word reader explanation fix
+  local output="" status=0 word reader explanation fix rc=2
   output="$(jq -ers '
     if length == 1 then .[0] else "\(length) JSON documents, not one\n" | halt_error(20) end
     | def path_string: type == "string" and length > 0
@@ -44,6 +46,7 @@ generated_paths_load() { # JSON — load the writer's exact paths, or refuse
     reader="no jq on PATH"
     explanation="Reading .kendex-generated.json needs jq."
     fix="Install jq, then run the check again."
+    rc=127
   else
     reader="$(jq --version 2>&1)" || reader="jq, version unread (jq --version exit $?)"
     case "$status" in
@@ -66,7 +69,7 @@ generated_paths_load() { # JSON — load the writer's exact paths, or refuse
 cause: ${output:-jq printed nothing}
 $explanation
 fix: $fix" >&2
-  return 2
+  return "$rc"
 }
 
 generated_path_contains() { # PATH — literal membership, never a glob

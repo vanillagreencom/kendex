@@ -13,7 +13,7 @@
 ## Exclusion list
 
 - Generated files are excluded by exact path from the render writer's `.kendex-generated.json`. Adopted in-place source remains governed because the writer leaves it out of that inventory. Adoption needs no ownership row in the exclusions file.
-- An absent inventory is an empty one: nothing is excluded and every tracked document is measured. A project whose items are all in-place, or one installed below the Git root, writes no repository inventory and needs none. An unreadable or malformed inventory fails with exit `2`; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders. A malformed inventory's refusal then carries the shared reader's status, jq version, cause and fix.
+- An absent inventory is an empty one: nothing is excluded and every tracked document is measured. A project whose items are all in-place, or one installed below the Git root, writes no repository inventory and needs none. An unreadable or malformed inventory fails with exit `2`; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders. A malformed inventory's refusal then carries the shared reader's status, jq version, cause and fix. With no jq on PATH the inventory cannot be read, and the refusal starts `host-error=jq-missing`; install jq.
 - The default mode reads the worktree inventory, falling back to its index copy when absent. Staged mode reads the tracked index copy; an inventory staged for deletion is absent. An untracked inventory reads from the worktree.
 - `DOC_LIMITS_EXCLUDES` selects the repository-relative file. Its default is `tools/doc-limits-excludes`. `--excludes FILE` overrides it.
 - Each row is `pattern<TAB>reason`. A missing pattern or reason is a configuration error. Blank lines and lines starting with `#` are ignored.
@@ -26,7 +26,7 @@
 | --- | --- |
 | `0` | No load-point document exceeds its class limit. Each other document over its limit prints `notice=document-over-budget` with its size and limit. |
 | `1` | At least one load-point document exceeds its class limit. The output names each with `notice=document-over-limit`, its size and limit. |
-| `2` | The check could not judge. The first line's level names who owns the fix: `error=` the caller's arguments, policy or tracked state; `package-error=` a defect in doc-limits; `host-error=` a host read that failed. A settings refusal starts `doc-limits-error=`. |
+| `2` | The check could not judge. The first line's level names who owns the fix: `error=` the caller's arguments, policy or tracked state; `package-error=` a defect in doc-limits; `host-error=` a host read that failed or a missing jq. A settings-library refusal starts `doc-limits-error=` whatever its cause, so that level names no owner. |
 
 - A `notice=document-rule rule=docs-writing/SKILL.md#ANCHOR` line follows each over-limit or over-budget notice and names the docs-writing rule for its class. A class the shipped rows do not declare names `#per-file-type`.
 - `--against REF` is retired: it has no effect, prints `notice=argument-retired argument=--against`, and 2.0 removes it.
