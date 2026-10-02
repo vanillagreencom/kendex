@@ -27,7 +27,9 @@ files = {'kendex.toml': b'schema = 6\n[sources.kendex]\nrepo = "vanillagreencom/
          '.agents/skills/review-gate/scripts/refresh-consumer.sh': b'#!/bin/sh\nexit 87\n',
          'private.txt': b'not a refresh input'}
 mode = os.environ.get('CASE', 'pass')
-if mode == 'read-failed': sys.exit(9)
+if mode == 'read-failed' and endpoint.endswith('/environments'):
+    print('gh: Resource not accessible by integration (HTTP 403)', file=sys.stderr)
+    sys.exit(9)
 if mode == 'missing-input': del files['.kendex-lock.json']
 if endpoint.endswith('/commits/main'):
     result = {'sha': 'committed-sha', 'commit': {'committer': {'date': '2026-10-01T00:00:00Z'}}}
@@ -75,7 +77,7 @@ assert consumer['files']['.agents/skills/review-gate/scripts/refresh-consumer.sh
 assert consumer['platform']['repository']['full_name'] == 'vanillagreencom/fixture'
 PY
 then ok 'collector captures committed inputs and modes, not unrelated source'; else bad 'collector complete input' "$OUT"; fi
-for row in 'read-failed|' 'truncated|consumer-refresh-error=tree-truncated value=vanillagreencom/fixture' 'missing-input|consumer-refresh-error=input-missing value=vanillagreencom/fixture/.kendex-lock.json'; do
+for row in 'read-failed|gh: Resource not accessible by integration (HTTP 403)' 'truncated|consumer-refresh-error=tree-truncated value=vanillagreencom/fixture' 'missing-input|consumer-refresh-error=input-missing value=vanillagreencom/fixture/.kendex-lock.json'; do
   IFS='|' read -r mode key <<<"$row"
   collect "$mode"
   if [ "$RC" -eq 1 ] && grep -qxF 'consumer-refresh-error=collect value=vanillagreencom/fixture' <<<"$OUT" &&

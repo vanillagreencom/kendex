@@ -30,6 +30,9 @@ jobs:
           app-id: ${{ secrets.FLEET_GH_APP_ID }}
           private-key: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}
           owner: vanillagreencom
+          # Environment lists and deployment branch policies require Actions read:
+          # https://docs.github.com/en/rest/deployments/environments#list-environments
+          permission-actions: read
           permission-contents: read
           permission-metadata: read
           permission-environments: read

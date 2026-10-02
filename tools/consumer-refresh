@@ -172,7 +172,10 @@ def collect(args):
                                         "platform": platform, "files": files}
             print(f"consumer-collected={repo} commit={commit['sha']}")
         except Exception as error:
-            raise RuntimeError(f"consumer-refresh-error=collect value={repo}\n{error}") from error
+            diagnostic = str(error)
+            if isinstance(error, subprocess.CalledProcessError) and error.stderr:
+                diagnostic += "\n" + error.stderr.decode(errors="replace")
+            raise RuntimeError(f"consumer-refresh-error=collect value={repo}\n{diagnostic}") from error
     # No timestamp or gzip filename churn when all committed inputs are unchanged.
     args.output.write_bytes(gzip.compress(json.dumps(result, sort_keys=True).encode(), mtime=0))
 
