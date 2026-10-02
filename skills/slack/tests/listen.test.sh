@@ -597,13 +597,13 @@ assert_eq "$(sk_reactions "$IOTA_CH" "$M2")" "white_check_mark" "an inbox read s
 sk_ctl /_test/fault '{"method": "reactions.add", "error": "missing_scope"}' >/dev/null
 M3="$(sk_inject "$IOTA_CH" U001 'third note')"
 M3_NEXT="$(sk_inject "$IOTA_CH" U001 'after third note')"
-sk_ctl /_test/reset-calls '{}' >/dev/null
+sk_ctl /_test/calls-reset >/dev/null
 sk_poll "$IOTA"
 assert_eq "$RC=$ERR1" "0=slack: slack-api-failed=reactions.add error=missing_scope" "a mark Slack refuses is printed and fails no poll"
 assert_eq "$(text_of "$IOTA" "$IOTA_CH:$M3")|$(sk_reactions "$IOTA_CH" "$M3")|$(jq -r "select(.t == \"mark\" and .ts == \"$M3\") | .name" "$(sk_journal "$IOTA")")" \
   "third note||" "the directive lands unmarked and no mark is journaled"
 assert_eq "$(sk_reactions "$IOTA_CH" "$M3_NEXT")|$(sk_state '[.calls[] | select(. == "reactions.add")] | length')" "eyes|2" "each new delivery attempts eyes once, even after a refusal"
-sk_ctl /_test/reset-calls '{}' >/dev/null
+sk_ctl /_test/calls-reset >/dev/null
 sk_ctl /_test/fault '{"method": "reactions.add", "error": "missing_scope"}' >/dev/null
 sk_poll "$IOTA"
 assert_eq "$(sk_reactions "$IOTA_CH" "$M3")|$(sk_state '[.calls[] | select(. == "reactions.add")] | length')" "|1" "a previously refused delivery gets one retry in a later poll"
@@ -940,6 +940,8 @@ while IFS=$'\t' read -r error methods <&3; do
   sk_poll "$SR"
   assert_eq "$ERR1|$(mark_of "$SR" "$MS")" "slack: slack-api-failed=${methods%% *} error=$error|eyes" \
     "control: $error no longer settled, the swap is printed as refused and no check is journaled"
+  # A refused remove skips add, leaving its queued fault for the next fixture.
+  sk_ctl /_test/faults-reset >/dev/null
   sk_bin_reset
 done 3<<<"$(settle_rows)"
 
