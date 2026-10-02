@@ -459,6 +459,8 @@ for row in \
   "committed-against|app.json|1.9.0|2.0.0|$BREAK|||--against base|0" \
   "committed-against-patch-added|app.json|1.9.0|1.9.1|$ADD|||--against base|patch-added|added" \
   "against-past-release|app.json|1.9.0|1.9.1|$ADD|CHANGELOG.md|## [Unreleased]\n\n### Added\n\n$ADD\n\n## [1.9.1] - 2026-10-02\n\n### Fixed\n\n- Fix a typo.\n|--against base|0|added" \
+  "patch-added-own-release|app.json|1.9.0|1.9.1|$ADD|CHANGELOG.md|## [1.9.1] - 2026-10-02\n\n### Fixed\n\n- Fix a typo.\n||patch-added|added" \
+  "major-past-release|app.json|1.9.0|2.0.0|$BREAK|CHANGELOG.md|## [Unreleased]\n\n## [2.0.0] - 2026-10-02\n\n### Fixed\n\n- Fix a typo.\n|--against base|0" \
   "released-patch-added|app.json|1.9.0|1.9.1||CHANGELOG.md|## [Unreleased]\n\n## [1.9.1] - 2026-10-02\n\n### Added\n\n$ADD\n||patch-added"; do
   IFS='|' read -r label manifest prior next fragment record_path record args expected section <<<"$row"
   repo "version-$label"

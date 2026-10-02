@@ -190,11 +190,12 @@ gg_is_section() { # NAME — 0 when NAME is exactly one of the sections
 # entry_query=1 is the version check's read instead: one "KIND<TAB>line" row
 # per release entry it judges, in file order. KIND is breaking for an item
 # opening with a named call-out, and added for an item under the release's
-# `### Added` heading, a heading only a level-2 record carries. A record
-# holding the new version's own section answers with that section alone,
-# after a "released<TAB>heading" row: those are the entries the release
-# publishes, and pending ones wait for the next release. With whole_entry=1
-# the input is one fragment, whose entry_section names its directory.
+# `### Added` heading, a heading only a level-2 record carries. With
+# release_alone=1, a record holding the new version's own section answers
+# with that section alone, after a "released<TAB>heading" row: those are the
+# entries the release publishes, and pending ones wait for the next release.
+# With whole_entry=1 the input is one fragment, whose entry_section names its
+# directory.
 GG_UNRELEASED_AWK='
 BEGIN { if (!release_level) release_level = 2 }
 function named_breaking(l) { return l ~ /^- \*\*Breaking:\*\*[ \t]+[^ \t]/ }
@@ -252,8 +253,8 @@ function heading_text(l,   i, n, t) {
       part = ""
     } else if (release_level == 2 && lvl == 3) part = tolower(heading_text(line))
     if (scope == "") next
-    if (named_breaking(line)) rows[scope, ++count[scope]] = "breaking\t" line
-    if (part == "added" && line ~ /^- /) rows[scope, ++count[scope]] = "added\t" line
+    if (named_breaking(line)) { rows[++count] = "breaking\t" line; row_scope[count] = scope }
+    if (part == "added" && line ~ /^- /) { rows[++count] = "added\t" line; row_scope[count] = scope }
     next
   }
   if (lvl == 1 || lvl == 2) {
@@ -271,9 +272,9 @@ function heading_text(l,   i, n, t) {
 END {
   if (entry_query) {
     if (fence != "") exit 3
-    scope = (release_heading != "" ? "released" : "pending")
-    if (scope == "released") printf "released\t%s\n", release_heading
-    for (k = 1; k <= count[scope]; k++) print rows[scope, k]
+    alone = (release_alone && release_heading != "")
+    if (alone) printf "released\t%s\n", release_heading
+    for (k = 1; k <= count; k++) if (!alone || row_scope[k] == "released") print rows[k]
     exit
   }
   # A body that bailed lands here too, and its status is the one to keep.

@@ -14,8 +14,8 @@
 # increase needs a named Breaking entry; from 1.0, a minor holds no Breaking
 # entry and a patch holds neither a Breaking nor an Added one. The record
 # supplies release evidence after a caller collates fragments or renames a
-# package's Unreleased heading; once it holds the new version's own section,
-# that section alone is the release's entries.
+# package's Unreleased heading. Under --against, once it holds the new
+# version's own section, that section alone is the release's entries.
 #
 # --collate is that write, and the release commit is its only caller: on a
 # clean verdict it folds the fragments this run just accepted into the
@@ -94,9 +94,10 @@ first such entry. A suffix change alone is no increase. A
 package.json uses only its adjacent CHANGELOG.md's '### Unreleased' or
 '### <new version>' section. Other files use accepted fragments or the
 configured record's '## [Unreleased]' or '## [<new version>] - <date>' section.
-Once the record holds the new version's own section, that section alone is the
-release's entries: pending fragments and the Unreleased section wait for the
-next release, so a branch restacked past a release is not judged by it.
+Under --against, once the record holds the new version's own section, that
+section alone is the release's entries: pending fragments and the Unreleased
+section wait for the next release, so a branch restacked past a release is
+not judged by it.
 Historical sections and fenced examples do not count.
 The default compares HEAD to the index; --base compares HEAD's merge base
 with REF to the index; --against compares REF itself to the index. Fragments
@@ -332,8 +333,8 @@ read_version() { # SHA PATH -> version, refusing unreadable or malformed manifes
     || gg_fail_cause version-read "$(gg_shown "$2")" "$GG_TMP/dependency.err" "Expected a JSON string version in major.minor.patch form."
 }
 
-record_entries() { # PATH LEVEL VERSION — appends the release's entry rows to $GG_TMP/evidence
-  local path="$1" level="$2" version="$3" rec mode rest sha status=0
+record_entries() { # PATH LEVEL VERSION — adds the release's entry rows to $GG_TMP/evidence
+  local path="$1" level="$2" version="$3" rec mode rest sha status=0 kind
   # Reuse the completed index discovery; an absent record is no evidence,
   # whereas a record that cannot be read is a collection error.
   while IFS= read -r -d '' rec; do
@@ -341,10 +342,19 @@ record_entries() { # PATH LEVEL VERSION — appends the release's entry rows to 
     mode="${rec%% *}"; rest="${rec#* }"; sha="${rest%% *}"
     gg_mode_is_regular "$mode" || gg_fail version-record-mode "$(gg_shown "$path"):$mode" "Release evidence must be a regular text file."
     gg_changelog_blob "$sha" "$path" || gg_fail version-record-binary "$(gg_shown "$path")" "Release evidence must be text."
-    LC_ALL=C awk -v entry_query=1 -v release_level="$level" -v release_version="$version" "$GG_UNRELEASED_AWK" <"$GG_TMP/blob" \
-      >>"$GG_TMP/evidence" || status=$?
+    LC_ALL=C awk -v entry_query=1 -v release_level="$level" -v release_version="$version" -v release_alone="$RELEASE_ALONE" \
+      "$GG_UNRELEASED_AWK" <"$GG_TMP/blob" >"$GG_TMP/record-entries" || status=$?
     [ "$status" -ne 3 ] || gg_fail version-record-fence "$(gg_shown "$path")" "An unclosed code fence prevents reading the release section."
     [ "$status" -eq 0 ] || gg_fail breaking-read "$(gg_shown "$path"):$status" "The changelog grammar failed (awk exit $status)."
+    # A released row is the release's own section answering alone: the
+    # pending fragments gathered before it wait for the next release.
+    IFS="$GG_TAB" read -r kind _ <"$GG_TMP/record-entries" || kind=""
+    if [ "$kind" = released ]; then
+      mv -- "$GG_TMP/record-entries" "$GG_TMP/evidence"
+    else
+      cat -- "$GG_TMP/record-entries" >>"$GG_TMP/evidence"
+    fi \
+      || gg_fail evidence-copy "$(gg_shown "$path")" "Could not collect the record entries."
     return 0
   done <"$GG_TMP/files.z"
 }
@@ -371,6 +381,10 @@ refuse_entry() { # KIND KEY VALUE EXPLANATION REMEDY — refuses when the eviden
 if [ -n "$version_paths" ]; then
   breaking_remedy="Release the break as a major, or keep the old form working and hold the Breaking entry for a later major."
   diff_args=(--cached)
+  # --against REF can name a branch's tip from before a restack past a
+  # release, so that release's bump reaches the comparison beside the
+  # branch's pending fragments. Its own record section alone judges it there.
+  RELEASE_ALONE=0
   case "$MODE" in
     staged) : ;;
     base)
@@ -382,6 +396,7 @@ if [ -n "$version_paths" ]; then
       base="$(git rev-parse --verify --end-of-options "$BASE_REF^{commit}" 2>"$GG_TMP/dependency.err")" \
         || gg_fail_cause version-base "$(gg_shown "$BASE_REF")" "$GG_TMP/dependency.err" "The version comparison ref must name a commit."
       diff_args+=("$base")
+      RELEASE_ALONE=1
       ;;
   esac
   git diff "${diff_args[@]}" --raw --no-abbrev -z --no-renames --diff-filter=AMT -- >"$GG_TMP/versions.z" 2>"$GG_TMP/dependency.err" \
@@ -422,15 +437,10 @@ if [ -n "$version_paths" ]; then
         record_entries "$local_record" 3 "$new"
         ;;
       *)
-        : >"$GG_TMP/evidence"
-        [ -z "$RECORD" ] || record_entries "$RECORD" 2 "$new"
-        # Fragments pending beside the release's own record section wait for
-        # the next release: a branch restacked past a release carries its
-        # fragments across that release's version bump.
-        if ! first_entry released >/dev/null; then
-          cat -- "$GG_TMP/fragment-entries" "$GG_TMP/evidence" >"$GG_TMP/evidence.all" \
-            && mv -- "$GG_TMP/evidence.all" "$GG_TMP/evidence" \
-            || gg_fail evidence-copy "$(gg_shown "$f")" "Could not collect the fragment entries."
+        cp -- "$GG_TMP/fragment-entries" "$GG_TMP/evidence" \
+          || gg_fail evidence-copy "$(gg_shown "$f")" "Could not collect the fragment entries."
+        if [ -n "$RECORD" ] && { [ "$bump" != major ] || ! first_entry breaking >/dev/null; }; then
+          record_entries "$RECORD" 2 "$new"
         fi
         ;;
     esac

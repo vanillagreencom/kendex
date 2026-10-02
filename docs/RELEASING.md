@@ -4,7 +4,7 @@ The procedure is the `app-deploy` skill (`.agents/skills/app-deploy/SKILL.md`): 
 
 ## Choosing the version
 
-The bump follows [the release standard](../changelog.d/README.md#release-standard). The `changelog-entries` commit lane refuses a major with no Breaking entry and, from 1.0, a patch with an Added or Breaking entry and a minor with a Breaking entry. A major release needs the owner's approval before its version is bumped.
+The bump follows [the release standard](../changelog.d/README.md#release-standard). The `changelog-entries` commit lane refuses the bumps its [version-bump check](../skills/commit-guards/CHECKS.md#version-bumps) lists. A major release needs the owner's approval before its version is bumped.
 
 ## What a release carries
 
