@@ -45,7 +45,8 @@ if [[ -z "${LANES_UNDER_TEST:-}" ]]; then
   CTRL="$(mutant_scripts mutant-local-scope lib/lane-model.sh)"
   mutate_file "$CTRL/lib/lane-model.sh" 'elif $h == "claude" and $model != "" and ((.model_buckets // []) | length) == 0 then empty' 'elif false and $h == "claude" and $model != "" and ((.model_buckets // []) | length) == 0 then empty'
   LOCAL="$CTRL/lanes"
-  # The refusal this suite once pinned: no bucket naming the model is no reading.
+  # Restores the refusal of a reading whose buckets name no window for the
+  # model, so the shared-window rows must turn red.
   CTRL="$(mutant_scripts mutant-no-match lib/lane-model.sh)"
   mutate_file "$CTRL/lib/lane-model.sh" '((.model_buckets // []) | length) == 0 then empty' '(model_bindings($model) | length) == 0 then empty'
   NOMATCH="$CTRL/lanes"
@@ -178,31 +179,36 @@ for row in \
   fi
 done
 
-# A plan whose one scoped window is Fable's, at 5H 0 and WEEK 66. The host row
-# names Fable alone, so each row reaches the local reading. An Opus launch is
-# judged on the shared windows and a Fable launch on its own window; a reading
-# with no model window stays unmeasured. `named` is the call the open-terminal
-# launch gate makes.
-# name|local scoped window|model|form|script|expected
+# A plan whose one scoped window is Fable's, at 5H 0 and WEEK 66. The host row's
+# model label is Fable for an Opus launch and Sonnet for a Fable launch, so it
+# names no window for the launched model and every row consults the local
+# reading. An Opus launch is judged on the shared windows and a Fable launch on
+# the local Fable window; a reading with no model window stays unmeasured.
+# `through` is the credential the record names and `line` the keyed stderr line
+# that consultation printed. `named` is the call the open-terminal launch gate
+# makes.
+# name|local scoped window|host label|model|form|script|expected
+NO_MODEL="detail=no fresh local model window for claude-opus-5-5 line=pick-local-model-unmeasured"
 for row in \
-  "shared-binds-opus|Fable|claude-opus-5-5|pick|$LANES|rc=0 lane=8claude status=ok bucket=weekly room=34" \
-  "named-shared-binds-opus|Fable|claude-opus-5-5|named|$LANES|rc=0 lane=8claude status=ok bucket=weekly room=34" \
-  "fable-window-binds-fable|Fable|fable|named|$LANES|rc=3 lane=8claude status=ok bucket=model room=0" \
-  "no-model-window-unmeasured|none|claude-opus-5-5|named|$LANES|rc=5 lane=8claude status=no_usage_data bucket=null room=null" \
-  "control-shared-binds-opus|Fable|claude-opus-5-5|named|$NOMATCH|rc=0 lane=8claude status=ok bucket=weekly room=34" \
-  "control-no-model-window|none|claude-opus-5-5|named|$LOCAL|rc=5 lane=8claude status=no_usage_data bucket=null room=null"; do
-  IFS='|' read -r name scope model form script want <<<"$row"
+  "shared-binds-opus|Fable|Fable|claude-opus-5-5|pick|$LANES|rc=0 lane=8claude through=local status=ok bucket=weekly room=34 detail=null line=pick-local-model-reading" \
+  "named-shared-binds-opus|Fable|Fable|claude-opus-5-5|named|$LANES|rc=0 lane=8claude through=local status=ok bucket=weekly room=34 detail=null line=pick-local-model-reading" \
+  "fable-window-binds-fable|Fable|Sonnet|fable|named|$LANES|rc=3 lane=8claude through=local status=ok bucket=model room=0 detail=null line=pick-local-model-reading" \
+  "no-model-window-unmeasured|none|Fable|claude-opus-5-5|named|$LANES|rc=5 lane=8claude through=local status=no_usage_data bucket=null room=null $NO_MODEL" \
+  "control-shared-binds-opus|Fable|Fable|claude-opus-5-5|named|$NOMATCH|rc=0 lane=8claude through=local status=ok bucket=weekly room=34 detail=null line=pick-local-model-reading" \
+  "control-no-model-window|none|Fable|claude-opus-5-5|named|$LOCAL|rc=5 lane=8claude through=local status=no_usage_data bucket=null room=null $NO_MODEL"; do
+  IFS='|' read -r name scope host_label model form script want <<<"$row"
   new_home "$name"
   make_lane "$H" 8claude
   jq -n --arg scope "$scope" '{five_hour: {utilization: 0}, seven_day: {utilization: 66},
     limits: (if $scope == "none" then [] else [{kind: "weekly_scoped", percent: 100, scope: {model: {display_name: $scope}}}] end)}' \
     > "$FIXTURE_DIR/.8claude.json"
-  printf 'account=%s\tharness=claude\tstatus=ok\tsession-5h-pct=0\tweekly-pct=66\tmodel-pct=100\tmodel-label=Fable\n' "$H/.8claude" > "$H/accounts"
+  printf 'account=%s\tharness=claude\tstatus=ok\tsession-5h-pct=0\tweekly-pct=66\tmodel-pct=100\tmodel-label=%s\n' "$H/.8claude" "$host_label" > "$H/accounts"
   args=(pick --harness claude --model "$model" --json)
   [[ "$form" == pick ]] || args+=(--lane "$H/.8claude" --projected)
   rc=0
   out="$(pick_run "$script" "$FETCHER" "${args[@]}")" || rc=$?
-  got="rc=$rc $(jq -r '"lane=\(.config_dir // "none" | sub(".*/\\."; "")) status=\(.status) bucket=\(.binding_bucket) room=\(.projected_headroom_pct)"' <<<"$out")"
+  line="$(sed -nE 's/^lanes: (pick-local-model-(reading|unmeasured)) .*/\1/p' "$H/err")"
+  got="rc=$rc $(jq -r '"lane=\(.config_dir // "none" | sub(".*/\\."; "")) through=\(.measured_through) status=\(.status) bucket=\(.binding_bucket) room=\(.projected_headroom_pct) detail=\(.detail)"' <<<"$out") line=${line:-none}"
   if [[ "$name" == control-* && -z "${LANES_UNDER_TEST:-}" ]]; then
     [[ ( "$rc" == 0 || "$rc" == 5 ) && "$got" != "$want" ]] && pass "$name turns its assertion red" || fail "$name did not reach the behavior"
   else

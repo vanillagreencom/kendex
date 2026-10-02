@@ -174,8 +174,9 @@
 #         reading under `pick-local-model-reading`, judged on the shared
 #         windows alone where none of its model windows names the model. It
 #         keeps an account unmeasured, not empty, where the local reading
-#         reads nothing or carries no model window. An absent
-#         or failed verb leaves the local reading alone, as it does for `list`.
+#         reads nothing, carries no model window or is older than that usage
+#         window. An absent or failed verb leaves the local reading alone, as
+#         it does for `list`.
 #         `pick --lane` judges its one account by this same rule, and a dir
 #         the provider reports with a reading is judged even where discovery
 #         does not reach it. The overseer's own picks (oversee launch, the
@@ -341,8 +342,10 @@
 #                    whose windows answer nothing for NAME is never picked.
 #                    The scoped model window alone is not enough because either
 #                    shared window can wall every model on the account. A
-#                    plan with no window scoped to NAME is judged on the
-#                    shared windows alone.
+#                    reading whose model windows name none of NAME is judged
+#                    on the shared windows alone; behind a host row with no
+#                    window for NAME, a local reading with no model window, or
+#                    a stale one, stays unmeasured (see pick).
 #   --binding-floor  pick: hold the account's own binding bucket to the same
 #                    bound as well, so a lane is room only where BOTH clear it.
 #                    With --model the two can differ: an account whose binding
