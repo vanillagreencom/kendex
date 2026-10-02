@@ -4,7 +4,7 @@ import { acquirekendexModalLock, deleteSessionFile, loadSessionsForScope, rename
 import { currentModelInfo, modelLabel, sameModel, sessionModelInfo } from "./model.js";
 import { canonicalPath } from "./paths.js";
 import { buildSnippet, matchSessions, parseQuery, RegexTimeoutError, styleSearchMatches } from "./search.js";
-import { isNamed, sessionResumeTitle, sessionUserMessagesCache, userMessagesForSession } from "./session-data.js";
+import { isNamed, sessionResumeTitle, sessionUserMessagesCache } from "./session-data.js";
 import { settingNumber, settingScope, settingSort } from "./settings.js";
 import { ansiGreen, ansiRed, ansiYellow, centerAnsi, formatAge, oneLine, padAnsi, shortenPath } from "./text.js";
 import { buildSessionTree, flattenSessionTree, rowTreePrefix } from "./tree.js";
@@ -35,6 +35,8 @@ const SEARCH_DEBOUNCE_MS = 120;
 const SCAN_SLICE_MS = 12;
 /** Sessions matched per call: a regex query pays one deadline watchdog per batch. */
 const SCAN_BATCH = 8;
+/** The notice a session action gets while the list still shows an earlier query's results. */
+const SEARCH_PENDING_NOTICE = "Search still running";
 
 function flatNode(session: SessionInfo, score: number): FlatSessionNode {
 	return { session, depth: 0, isLast: true, ancestorContinues: [], score };
@@ -78,7 +80,9 @@ class SessionManagerOverlay implements Focusable {
 	private loadSeq = 0;
 	private filterSeq = 0;
 	private filterTimer: ReturnType<typeof setTimeout> | undefined;
+	/** A filter is armed or scanning: `filtered` does not yet match the search input. */
 	private searching = false;
+	private disposed = false;
 	private filterQuery: { text: string; parsed: ParsedQuery } = { text: "", parsed: parseQuery("") };
 	private readonly snippets = new Map<FlatSessionNode, string | undefined>();
 	private scope: Scope;
@@ -140,8 +144,10 @@ class SessionManagerOverlay implements Focusable {
 		return Math.max(1, this.maxPopupRows() - chromeRows);
 	}
 
+	/** A notice for the overlay, or for Pi once the browser has closed, so an outcome that lands after close stays visible. */
 	private notify(kind: "info" | "error", text: string): void {
-		this.notice = { kind, text: oneLine(text) };
+		if (this.disposed) this.ctx.ui.notify(oneLine(text), kind);
+		else this.notice = { kind, text: oneLine(text) };
 	}
 
 	private requestRender(): void {
@@ -213,6 +219,7 @@ class SessionManagerOverlay implements Focusable {
 
 	private applyFilter(resetSelection = true): void {
 		this.cancelFilter();
+		if (this.disposed) return;
 		const query = this.searchInput.getValue().trim();
 		const parsed = parseQuery(query);
 		const base = this.nameFilter === "named" ? this.sessions.filter(isNamed) : [...this.sessions];
@@ -221,7 +228,7 @@ class SessionManagerOverlay implements Focusable {
 			this.showFiltered([], query, parsed, parsed.error, resetSelection);
 		} else if (!query) {
 			const nodes = this.sortMode === "threaded"
-				? flattenSessionTree(buildSessionTree(base))
+				? flattenSessionTree(buildSessionTree(base, (path) => this.canonical(path)))
 				: base.map((session) => flatNode(session, 0)).sort((a, b) => b.session.modified.getTime() - a.session.modified.getTime());
 			this.showFiltered(nodes, query, parsed, undefined, resetSelection);
 		} else {
@@ -243,8 +250,6 @@ class SessionManagerOverlay implements Focusable {
 				do {
 					const batch = base.slice(index, index + SCAN_BATCH);
 					index += batch.length;
-					// Read the transcripts first so the regex deadline times matching alone.
-					for (const session of batch) userMessagesForSession(session);
 					matchSessions(batch, parsed).forEach((match, i) => {
 						if (match.matches) nodes.push(flatNode(batch[i]!, match.score));
 					});
@@ -277,6 +282,7 @@ class SessionManagerOverlay implements Focusable {
 		this.queryError = queryError;
 		this.snippets.clear();
 		this.searching = false;
+		if (this.notice?.text === SEARCH_PENDING_NOTICE) this.notice = undefined;
 		if (resetSelection) {
 			this.selectedIndex = 0;
 			this.scrollOffset = 0;
@@ -323,6 +329,14 @@ class SessionManagerOverlay implements Focusable {
 	private setSelection(index: number): void {
 		this.selectedIndex = Math.max(0, Math.min(index, Math.max(0, this.filtered.length - 1)));
 		this.syncSelection();
+	}
+
+	/** True, with a notice, while `filtered` still holds an earlier query's results and a session action would read them. */
+	private refuseWhileSearching(): boolean {
+		if (!this.searching) return false;
+		this.notify("info", SEARCH_PENDING_NOTICE);
+		this.requestRender();
+		return true;
 	}
 
 	private startRename(session: SessionInfo): void {
@@ -462,7 +476,13 @@ class SessionManagerOverlay implements Focusable {
 		let trashed = 0;
 		const deletedPaths = new Set<string>();
 		const failures: string[] = [];
-		for (const target of targets) {
+		let unattempted = 0;
+		for (const [index, target] of targets.entries()) {
+			// A closed browser stops the run; the deletes already made stand.
+			if (this.disposed) {
+				unattempted = targets.length - index;
+				break;
+			}
 			if (this.isCurrent(target)) continue;
 			const result = await deleteSessionFile(target.path, this.ctx.cwd, target.id);
 			if (result.ok) {
@@ -476,8 +496,11 @@ class SessionManagerOverlay implements Focusable {
 		this.sessions = this.sessions.filter((session) => !deletedPaths.has(this.canonical(session.path)));
 		this.mode = "browse";
 		this.deleteAllTargets = [];
+		const stopped = unattempted > 0 ? `; ${unattempted} not attempted after the browser closed` : "";
 		if (failures.length > 0) {
-			this.notify("error", `Deleted ${deleted}; failed ${failures.length}: ${failures[0]}`);
+			this.notify("error", `Deleted ${deleted}; failed ${failures.length}${stopped}: ${failures[0]}`);
+		} else if (stopped) {
+			this.notify("error", `Deleted ${deleted}${stopped}`);
 		} else {
 			this.notify("info", trashed > 0 ? `${deleted} sessions moved to trash` : `${deleted} sessions deleted`);
 		}
@@ -577,6 +600,7 @@ class SessionManagerOverlay implements Focusable {
 		}
 
 		if (matchesKey(data, "alt+r") || this.keybindings.matches(data, "app.session.rename")) {
+			if (this.refuseWhileSearching()) return;
 			const selected = this.selected();
 			if (selected) this.startRename(selected);
 			this.requestRender();
@@ -584,12 +608,14 @@ class SessionManagerOverlay implements Focusable {
 		}
 
 		if (matchesKey(data, "alt+d")) {
+			if (this.refuseWhileSearching()) return;
 			this.startDeleteAll();
 			this.requestRender();
 			return;
 		}
 
 		if (matchesKey(data, "delete")) {
+			if (this.refuseWhileSearching()) return;
 			const selected = this.selected();
 			if (selected) this.startDelete(selected);
 			this.requestRender();
@@ -597,6 +623,7 @@ class SessionManagerOverlay implements Focusable {
 		}
 
 		if (this.keybindings.matches(data, "tui.select.confirm")) {
+			if (this.refuseWhileSearching()) return;
 			const selected = this.selected();
 			if (selected) this.startResume(selected);
 			return;
@@ -1055,8 +1082,13 @@ class SessionManagerOverlay implements Focusable {
 		this.renameInput.invalidate();
 	}
 
-	/** Pi calls this when the browser closes: stop pending work and release the prompt text the search read. */
+	/**
+	 * Pi calls this when the browser closes: stop pending work and release the
+	 * prompt text the search read. A delete still in flight finishes its current
+	 * file, starts no new scan, and reports through Pi.
+	 */
 	dispose(): void {
+		this.disposed = true;
 		this.loadSeq += 1;
 		this.cancelFilter();
 		sessionUserMessagesCache.clear();

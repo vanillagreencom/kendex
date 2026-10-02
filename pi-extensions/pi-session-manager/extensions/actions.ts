@@ -16,15 +16,28 @@ const TRASH_TIMEOUT_MS = 5_000;
 type TrashOutcome = "trashed" | "refused" | "timed-out";
 
 // stdio is ignored and completion read from "exit": a grandchild holding an
-// inherited pipe would otherwise keep a killed `trash` pending.
+// inherited pipe would otherwise keep a killed `trash` pending. `trash` leads its
+// own process group, and the deadline kills the group: a helper it started (npm
+// trash-cli's native helper on macOS) would otherwise outlive it and could still
+// move the file after the delete reported it kept. Windows has no process groups.
 function runTrash(sessionPath: string): Promise<TrashOutcome> {
 	const args = sessionPath.startsWith("-") ? ["--", sessionPath] : [sessionPath];
+	const ownGroup = process.platform !== "win32";
 	return new Promise((resolve) => {
 		let timedOut = false;
-		const child = spawn("trash", args, { stdio: "ignore" });
+		const child = spawn("trash", args, { stdio: "ignore", detached: ownGroup });
 		const timer = setTimeout(() => {
 			timedOut = true;
-			child.kill("SIGKILL");
+			if (!ownGroup || child.pid === undefined) {
+				child.kill("SIGKILL");
+				return;
+			}
+			try {
+				process.kill(-child.pid, "SIGKILL");
+			} catch (error) {
+				// The group ended between the deadline and its exit event.
+				if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+			}
 		}, TRASH_TIMEOUT_MS);
 		child.once("error", () => {
 			clearTimeout(timer);

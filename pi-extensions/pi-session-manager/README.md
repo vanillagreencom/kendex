@@ -38,10 +38,10 @@ Open `/extensions:settings`; settings appear under the **Session Manager** tab. 
 - `shortcutKey`: the opening shortcut; `none` disables it.
 - `defaultScope`, `defaultSort`: the tab and sort the overlay opens with.
 - `visibleRows`, `overlayWidth`: overlay size.
-- `deleteUsesTrash`: try `trash` before a permanent unlink. A `trash` that runs past 5 seconds is stopped, and the delete fails with the session file kept.
+- `deleteUsesTrash`: try `trash` before a permanent unlink. A `trash` that runs past 5 seconds is stopped, with any helper it started. If the session file is still in place, the delete fails and keeps it; it never falls back to a permanent unlink.
 
 ## Memory
 
-The browser keeps the prompt text of each session it searched while it stays open, and releases it when it closes. A `re:` search stops with an error when one pass of the pattern runs past 250 ms.
+The browser keeps the prompt text of each session it searched while it stays open, and releases it when it closes. A `re:` search stops with an error when the pattern runs past 250 ms on the prompts of one session.
 
 Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).

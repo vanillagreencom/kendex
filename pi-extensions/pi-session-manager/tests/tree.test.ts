@@ -30,7 +30,7 @@ for (const row of [
 	},
 ]) {
 	test(row.name, () => {
-		const roots = buildSessionTree(row.sessions);
+		const roots = buildSessionTree(row.sessions, (path) => path);
 		const nodes = row.children ? roots[0]?.children : roots;
 		expect(nodes?.map((node) => node.session.path)).toEqual(row.expected);
 	});
