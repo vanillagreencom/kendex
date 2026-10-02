@@ -10,9 +10,10 @@ mockPiModules();
 const SESSION_ID = "restore-test";
 const BRANCH_STATE_MISSING = "persistence_failure=branch-state-missing";
 
-/** Saved in this order, so the sidecar ends holding `newer`; both large lists pass the session entry cap. */
+/** Saved in this order, so the sidecar ends holding `newer`; `mid` passes only the tool-result task cap, the other large lists the session entry cap too. */
 const SAVES = {
 	small: ["small task"],
+	mid: Array.from({ length: 150 }, (_value, index) => `mid ${index}`),
 	older: Array.from({ length: 200 }, (_value, index) => `${"o".repeat(400)} older ${index}`),
 	newer: Array.from({ length: 200 }, (_value, index) => `${"n".repeat(400)} newer ${index}`),
 };
@@ -26,6 +27,7 @@ const ROWS: Array<{ name: string; branch: BranchRecord[]; sidecar: boolean; expe
 	{ name: "a manifest naming the sidecar state restores the sidecar", branch: ["small.entry", "older.entry", "newer.entry"], sidecar: true, expected: "newer", warnings: [] },
 	{ name: "bounded details naming an older state keep the last full list and warn", branch: ["small.result", "older.result"], sidecar: true, expected: "small", warnings: [BRANCH_STATE_MISSING] },
 	{ name: "bounded details naming the sidecar state replace older full details", branch: ["small.result", "newer.result"], sidecar: true, expected: "newer", warnings: [] },
+	{ name: "bounded details naming the full entry before them keep that list without the sidecar", branch: ["small.entry", "small.result", "mid.entry", "mid.result"], sidecar: true, expected: "mid", warnings: [] },
 	{ name: "a fork without the sidecar keeps the last full list and warns", branch: ["small.entry", "newer.entry"], sidecar: false, expected: "small", warnings: [BRANCH_STATE_MISSING] },
 ];
 
@@ -51,7 +53,7 @@ for (const row of ROWS) {
 				records.set(`${save}.entry`, { type: "custom", customType: entry?.customType, data: entry?.data });
 				records.set(`${save}.result`, { type: "message", message: { role: "toolResult", toolName: "tasks_write", details: result.details } });
 			}
-			expect(pi.appended.map((entry) => entry.data.fullSnapshot)).toEqual([undefined, false, false]);
+			expect(pi.appended.map((entry) => entry.data.fullSnapshot)).toEqual([undefined, undefined, false, false]);
 			if (!row.sidecar) unlinkSync(join(base, "agent", "kendex", "sessions", SESSION_ID, "pi-task-panel", "state.json"));
 			ctx.sessionManager.getBranch = () => row.branch.map((name) => records.get(name)) as never;
 

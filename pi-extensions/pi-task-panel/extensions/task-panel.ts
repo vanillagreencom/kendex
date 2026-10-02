@@ -891,17 +891,24 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		// only where its fingerprint matches; at an older tree point or in a fork,
 		// the state that record stood for is gone and the restore says so.
 		let missingFingerprint: string | undefined;
+		// The raw full record the state came from. A list over the tool-result
+		// task cap is saved in full and then as bounded details naming it, so a
+		// record naming this state needs no sidecar. Hashed only on a sidecar miss.
+		let appliedRecord: unknown;
 		const takeSidecar = (fingerprint: string) => {
 			if (sidecar?.fingerprint === fingerprint) {
 				state = sidecar.state;
+				appliedRecord = undefined;
 				missingFingerprint = undefined;
-			} else missingFingerprint = fingerprint;
+			} else if (appliedRecord !== undefined && stableTaskPanelFingerprint(appliedRecord as TaskPanelState) === fingerprint) missingFingerprint = undefined;
+			else missingFingerprint = fingerprint;
 		};
 		for (const entry of ctx.sessionManager.getBranch()) {
 			if (entry.type === "custom" && entry.customType === STATE_TYPE) {
 				if (isTaskPanelBoundedManifest(entry.data)) takeSidecar(entry.data.fingerprint);
 				else {
 					state = normalizeState(entry.data, ctx.cwd);
+					appliedRecord = entry.data;
 					missingFingerprint = undefined;
 				}
 			}
@@ -912,6 +919,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 					const restored = normalizeState(details, ctx.cwd);
 					if (restored.tasks.length > 0 || restored.phases.length > 0) {
 						state = restored;
+						appliedRecord = details;
 						missingFingerprint = undefined;
 					}
 				}
