@@ -33,6 +33,7 @@ import {
 	clearBlink,
 	commandExit,
 	componentHasVisibleLines,
+	holdUntilFinalRender,
 	lineCount,
 	makeEmpty,
 	makeTruncatedLines,
@@ -164,8 +165,8 @@ interface WriteCallSnapshot {
 
 /** The written file as it stood before the call, read once per path into the
  *  row's renderer state off the render path; undefined until the read settles,
- *  which redraws the row. A finished row drops it, so a session's rows hold no
- *  file text. */
+ *  which redraws the row. The row drops it at its final render or when the
+ *  agent run ends without one, so a session's rows hold no file text. */
 function writeCallSnapshot(context: any, targetPath: string, cwd: string): DiffSnapshot | undefined {
 	const state = context?.state;
 	if (!state || typeof state !== "object") return undefined;
@@ -177,10 +178,14 @@ function writeCallSnapshot(context: any, targetPath: string, cwd: string): DiffS
 	const current = record.kendexWriteSnapshot as WriteCallSnapshot | undefined;
 	if (current?.path === targetPath) return current.snapshot;
 	const next: WriteCallSnapshot = { path: targetPath };
+	const release = () => {
+		if (record.kendexWriteSnapshot === next) delete record.kendexWriteSnapshot;
+	};
+	if (!holdUntilFinalRender(context, release)) return undefined;
 	record.kendexWriteSnapshot = next;
 	void readDiffSnapshot(targetPath, cwd).then((snapshot) => {
-		next.snapshot = snapshot;
 		if (record.kendexWriteSnapshot !== next) return;
+		next.snapshot = snapshot;
 		try {
 			context.invalidate?.();
 		} catch {

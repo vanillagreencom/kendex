@@ -136,76 +136,110 @@ export function readResultSummary(result: any, args: any, theme: any): string {
 	return summary;
 }
 
-interface BlinkEntry {
-	invalidate: () => void;
+/** A row Pi has drawn as pending and not yet given its final render. */
+interface PendingRow {
+	/** Redraws the row each blink period while its status animates. */
+	blink?: () => void;
+	/** Drops what the row holds until its final render. */
+	release?: () => void;
 }
 
-const blinkEntries = new Map<unknown, BlinkEntry>();
+const pendingRows = new Map<unknown, PendingRow>();
+/** Rows an agent run ended without a final render. Pi can keep such a row on
+ *  screen and redraw it as pending (ctrl+o, a theme change, a settings
+ *  refresh), so a settled row never blinks or holds anything again. Emptied at
+ *  `session_shutdown`, after which Pi draws none of these rows. */
+const settledRows = new Set<unknown>();
 let blinkTimer: ReturnType<typeof setInterval> | undefined;
 
-function blinkKey(context: any): unknown {
+function rowKey(context: any): unknown {
 	return context?.toolCallId ?? context?.id ?? context;
+}
+
+/** The pending row for `context`, or undefined once the row is settled. */
+function pendingRow(context: any): PendingRow | undefined {
+	const key = rowKey(context);
+	if (!key || settledRows.has(key)) return undefined;
+	let row = pendingRows.get(key);
+	if (!row) pendingRows.set(key, (row = {}));
+	return row;
+}
+
+function stopBlinkTimerWhenIdle(): void {
+	if (!blinkTimer) return;
+	for (const row of pendingRows.values()) if (row.blink) return;
+	clearInterval(blinkTimer);
+	blinkTimer = undefined;
 }
 
 function startBlinkTimer(): void {
 	if (blinkTimer) return;
 	blinkTimer = setInterval(() => {
-		for (const entry of blinkEntries.values()) {
+		for (const row of pendingRows.values()) {
 			try {
-				entry.invalidate();
+				row.blink?.();
 			} catch {
 				// Rendering invalidation is best-effort only.
 			}
 		}
-		if (blinkEntries.size === 0 && blinkTimer) {
-			clearInterval(blinkTimer);
-			blinkTimer = undefined;
-		}
+		stopBlinkTimerWhenIdle();
 	}, 450);
 	blinkTimer.unref?.();
 }
 
-function trackBlink(context: any): void {
-	const key = blinkKey(context);
-	if (!key || typeof context?.invalidate !== "function") return;
-	blinkEntries.set(key, { invalidate: () => context.invalidate() });
-	startBlinkTimer();
+/** Keeps `release` until the row's final render or the end of the agent run;
+ *  false for a settled row, which must hold nothing. */
+export function holdUntilFinalRender(context: any, release: () => void): boolean {
+	const row = pendingRow(context);
+	if (!row) return false;
+	row.release = release;
+	return true;
 }
 
+/** The row's final render: it stops blinking and holds nothing more. */
 export function clearBlink(context: any): void {
-	const key = blinkKey(context);
-	if (key) blinkEntries.delete(key);
-	if (blinkEntries.size === 0 && blinkTimer) {
-		clearInterval(blinkTimer);
-		blinkTimer = undefined;
-	}
+	const key = rowKey(context);
+	if (key) pendingRows.delete(key);
+	stopBlinkTimerWhenIdle();
 }
 
-function clearAllBlinks(): void {
-	blinkEntries.clear();
+function settlePendingRows(): void {
+	for (const [key, row] of pendingRows) {
+		settledRows.add(key);
+		row.release?.();
+	}
+	pendingRows.clear();
 	if (blinkTimer) clearInterval(blinkTimer);
 	blinkTimer = undefined;
 }
 
-/** Pi gives a tool row no disposal call: an interrupted run ends with
- *  `agent_end` and drops its pending rows without a final render, and a
- *  session switch drops every row after `session_shutdown`. No row is pending
- *  past either event, so each clears every blink entry and the interval. */
+/** Pi gives a tool row no disposal call. An interrupted run ends with
+ *  `agent_end` and leaves its pending rows on screen with no final render, and
+ *  a session switch drops every row after `session_shutdown`. Each event
+ *  settles every pending row: its blink stops and what it holds is released. */
 export function registerBlinkEvents(pi: ExtensionAPI): void {
-	pi.on("agent_end", clearAllBlinks);
-	pi.on("session_shutdown", clearAllBlinks);
+	pi.on("agent_end", settlePendingRows);
+	pi.on("session_shutdown", () => {
+		settlePendingRows();
+		settledRows.clear();
+	});
 }
 
-export function blinkingPrefix(theme: any, context: any, cwd?: string): string {
-	trackBlink(context);
+function blinkingPrefix(theme: any, context: any, row: PendingRow, cwd?: string): string {
+	if (typeof context?.invalidate === "function") {
+		row.blink = () => context.invalidate();
+		startBlinkTimer();
+	}
 	const on = Math.floor(Date.now() / 450) % 2 === 0;
 	const g = glyphs(context?.cwd ?? cwd);
 	return theme.fg(on ? "success" : "muted", on ? g.bullet : g.emptyBullet);
 }
 
 export function pendingStatusPrefix(theme: any, context: any, cwd?: string): string {
-	if (pendingStatusAnimation(context?.cwd ?? cwd)) return blinkingPrefix(theme, context, cwd);
-	clearBlink(context);
+	const row = pendingRow(context);
+	if (row && pendingStatusAnimation(context?.cwd ?? cwd)) return blinkingPrefix(theme, context, row, cwd);
+	if (row) row.blink = undefined;
+	stopBlinkTimerWhenIdle();
 	return theme.fg("warning", glyphs(context?.cwd ?? cwd).bullet);
 }
 
