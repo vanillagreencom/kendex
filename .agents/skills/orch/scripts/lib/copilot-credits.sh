@@ -88,8 +88,11 @@ COPILOT_CREDITS_URL="https://api.github.com/copilot_internal/user"
 # copilot_credits_token HOME — the stored login's token for the account at
 # HOME, into COPILOT_CREDITS_TOKEN, 0 where it reads; 1 with the reason in
 # COPILOT_CREDITS_REASON. COPILOT_CREDITS_WHERE names where the login was read
-# or sought, for a record's detail. Into a variable and never onto stdout, so
-# the token never reaches a command substitution's pipe or a log.
+# or sought, for a record's detail. The token goes into a variable and never
+# onto this function's stdout, so no caller captures it with a command
+# substitution, and neither COPILOT_CREDITS_REASON nor COPILOT_CREDITS_WHERE
+# carries it. Inside, it crosses this shell's own substitutions: jq's on the
+# config path, secret-tool's on the keyring path.
 COPILOT_CREDITS_TOKEN="" COPILOT_CREDITS_REASON="" COPILOT_CREDITS_WHERE=""
 # Seconds one `secret-tool search` may take before the Secret Service reads
 # absent.
