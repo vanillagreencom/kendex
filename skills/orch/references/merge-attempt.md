@@ -22,6 +22,8 @@ env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scrip
 
 ## Record the merge decision
 
+Status writes in this section apply only to a managed lane as defined by [skill-rules.md § Lane Output](skill-rules.md#lane-output). A standalone session keeps the durable attempt record in the PR body and reports failures through that section's output mode.
+
 Record the merge decision after each attempt here or in [submit-pr.md](../workflows/submit-pr.md) § 2 step 5, before routing its exit. Keep the attempt's exit, `--expected-head` value and returned `merge-route: admin|queue cause=...` line locally. Store them in the launch brief's lane status file under [oversee.md § 3 Lane directive](../workflows/oversee.md#lane-directive). On exit `1`, apply [merge-pr-restack.md § Unarm at a stop](../workflows/merge-pr-restack.md#unarm-at-a-stop) with `[STATE_KEY]` and `[STOP_DIR]=[WORKTREE_PATH]/tmp` before any remote PR-body read or update. Confirm removal of any prior arm or queue entry before continuing; an unconfirmed removal ends the run by that section. Then read the current PR body. Preserve other sections and user decisions. Put that head and line in `## Merge decision`, replacing pending text or appending the section if absent. Write the full body to `[WORKTREE_PATH]/tmp/pr-body-[STATE_KEY]-merge.md` and publish it:
 
 ```bash
