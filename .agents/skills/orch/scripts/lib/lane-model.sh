@@ -220,10 +220,11 @@ def with_lane_binding($model; $binding_floor):
 # most room fills until it walls; the projection charges each live claim its
 # expected burn before any verdict is taken.
 #
-# Each claim inherits its share of the observed account burn, divided by the
+# Each claim inherits its share of account-wide burn, divided by the
 # claims live at the latest sample, floored at one. Missing counts and host
 # rows use one. The divisor stays fixed while the sample is cached, so a new
-# claim costs the share for another lane. With no claims or no rate, use
+# claim costs the share for another lane. A model rate uses one: claims omit
+# models, so claims on other models cannot dilute it. With no claims or no rate, use
 # ORCH_LANE_BURN_PCT_PER_HOUR.
 #
 # The default is points of the 5-hour session window. A weekly window, the
@@ -238,7 +239,7 @@ def with_lane_binding($model; $binding_floor):
 # never charged as zero lanes.
 def with_lane_projection($burn_default):
   (if .usage_rate_state == "measured" and (.claims // 0) > 0
-   then (.usage_rate_pct_per_min * 60) / ([._rate_sample_claims // 1, 1] | max)
+   then (.usage_rate_pct_per_min * 60) / (if .binding_bucket == "model" then 1 else ([._rate_sample_claims // 1, 1] | max) end)
    elif .binding_bucket == "session" then $burn_default
    elif .binding_bucket == "monthly" then $burn_default * 5 / 720
    else $burn_default * 5 / 168 end) as $burn

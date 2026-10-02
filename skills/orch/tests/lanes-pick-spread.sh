@@ -65,6 +65,8 @@ for lane in a:20 b:30 c:60; do
 done
 make_lane "$H" wclaude 3600
 claude_usage 10 86 5 Opus > "$FIXTURE_DIR/.wclaude.json"
+make_lane "$H" mclaude 3600
+claude_usage 10 20 84 Opus > "$FIXTURE_DIR/.mclaude.json"
 make_codex_token_lane "$H/.1codex" 3600
 jq -n '{rate_limit: {primary_window: {used_percent: 22, reset_at: 1900000000,
   limit_window_seconds: 18000}}}' > "$FIXTURE_DIR/.1codex.json"
@@ -114,8 +116,8 @@ stage() {
   done
 }
 
-# stage_rate LANE CURRENT PRIOR [CLAIMS] [ELAPSED] [AGE]: LANE's cached figure at CURRENT
-# percent on its 5-hour window, with a prior sample ELAPSED seconds earlier at
+# stage_rate LANE CURRENT PRIOR [CLAIMS] [ELAPSED] [AGE] [BUCKET]: LANE's cached figure at CURRENT
+# percent on BUCKET (session by default), with a prior sample ELAPSED seconds earlier at
 # PRIOR. ELAPSED defaults to 600 seconds. The record is written by a listing
 # first, so its name is the one
 # `lanes` keys it on. CLAIMS is the count at sample time, one by default;
@@ -131,8 +133,9 @@ stage_rate() {
   for f in "$STORE"/usage/*.json; do
     [[ -f "$f" && "$(jq -r '.config_dir' "$f")" == "$H/.${lane}${ACCOUNT_HARNESS:-claude}" ]] || continue
     jq --argjson now "$now" --argjson current "$2" --argjson prior "$3" --arg claims "${4:-1}" \
-      --argjson elapsed "${5:-600}" --argjson age "${6:-0}" '
+      --argjson elapsed "${5:-600}" --argjson age "${6:-0}" --arg bucket "${7:-session}" '
       def pct($p): if .rate_limit then .rate_limit.primary_window.used_percent = $p
+                   elif $bucket == "model" then .limits[0].percent = $p
                    else .five_hour.utilization = $p end;
       .fetched_at = ($now - $age) | .prior = {fetched_at: ($now - $age - $elapsed), usage: (.usage | pct($prior))}
       | .usage |= pct($current)
@@ -143,7 +146,7 @@ stage_rate() {
 }
 
 # table ROW...: `label|env|stage|rate|args|expect`: env is `;`-separated
-# `env` arguments, stage a stage SPEC, rate `LANE:CURRENT:PRIOR[:CLAIMS[:ELAPSED[:AGE]]]` or empty.
+# `env` arguments, stage a stage SPEC, rate `LANE:CURRENT:PRIOR[:CLAIMS[:ELAPSED[:AGE[:BUCKET]]]]` or empty.
 # expect is `name=value` tokens: rc, seatrefusal (`named` where the first keyed
 # line is the pick-overseer-seats refusal naming the seat step and this run's
 # own fleet state, else that line), keyed.KEY (the first keyed stderr line
@@ -151,15 +154,15 @@ stage_rate() {
 # `key,field=value,...`), out (stdout whole), or a field of the JSON record.
 RUN_SEQ=0
 table() {
-  local row label env stage_spec rate args expect env_args command got token name value rate_lane rate_now rate_prior rate_claims rate_elapsed rate_age
+  local row label env stage_spec rate args expect env_args command got token name value rate_lane rate_now rate_prior rate_claims rate_elapsed rate_age rate_bucket
   for row in "$@"; do
     IFS='|' read -r label env stage_spec rate args expect <<<"$row"
     [[ -n "$expect" ]] || { printf 'table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
     RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"; mkdir -p "$RUN"
     stage "$stage_spec"
     if [[ -n "$rate" ]]; then
-      IFS=':' read -r rate_lane rate_now rate_prior rate_claims rate_elapsed rate_age <<<"$rate"
-      stage_rate "$rate_lane" "$rate_now" "$rate_prior" "${rate_claims:-1}" "${rate_elapsed:-600}" "${rate_age:-0}"
+      IFS=':' read -r rate_lane rate_now rate_prior rate_claims rate_elapsed rate_age rate_bucket <<<"$rate"
+      stage_rate "$rate_lane" "$rate_now" "$rate_prior" "${rate_claims:-1}" "${rate_elapsed:-600}" "${rate_age:-0}" "${rate_bucket:-session}"
     fi
     env_args=()
     [[ -z "$env" ]] || IFS=';' read -ra env_args <<<"$env"
@@ -252,8 +255,21 @@ table \
   "an older cache record keeps the one-claim charge|ORCH_LANE_DIRS=$H/.aclaude|claim:a:2|a:20:19:missing|$PICK|rc=0 burn_pct_per_lane_hour=6 projected_headroom_pct=68" \
   "a zero-claim sample uses one as its divisor|ORCH_LANE_DIRS=$H/.aclaude|claim:a:2|a:20:19:0|$PICK|rc=0 burn_pct_per_lane_hour=6 projected_headroom_pct=68"
 
+# Claims from open-terminal omit models. A cached Opus rate cannot share its
+# six-point hourly charge across the two sampled account claims. Three live
+# claims spend 18 points, with 16 left; shared windows remain below Opus.
+table \
+  "a model rate refuses the chooser despite unrelated sampled claims|ORCH_LANE_DIRS=$H/.mclaude|claim:m:3|m:84:78:2:3600:0:model|pick --harness claude --model opus --json|rc=3 walled=1 unmeasured=0" \
+  "a model rate refuses the named projection on the same cached samples|ORCH_LANE_DIRS=$H/.mclaude|claim:m:3|m:84:78:2:3600:0:model|pick --lane $H/.mclaude --harness claude --model opus --projected --json|rc=3 binding_bucket=model usage_rate_state=measured burn_pct_per_lane_hour=6 projected_headroom_pct=-2"
+
+CTRL="$(mutant_scripts mutant-model-rate-shared lib/lane-model.sh)" || exit 1
+mutate_file "$CTRL/lib/lane-model.sh" '(if .binding_bucket == "model" then 1 else ([._rate_sample_claims // 1, 1] | max) end)' '([._rate_sample_claims // 1, 1] | max)'
+LANES_UNDER_TEST="$CTRL/lanes" table \
+  "control: sharing the model rate admits the chooser with spent room|ORCH_LANE_DIRS=$H/.mclaude|claim:m:3|m:84:78:2:3600:0:model|pick --harness claude --model opus --json|rc=0 binding_bucket=model burn_pct_per_lane_hour=3 projected_headroom_pct=7" \
+  "control: sharing the model rate admits the named projected pick too|ORCH_LANE_DIRS=$H/.mclaude|claim:m:3|m:84:78:2:3600:0:model|pick --lane $H/.mclaude --harness claude --model opus --projected --json|rc=0 binding_bucket=model burn_pct_per_lane_hour=3 projected_headroom_pct=7"
+
 CTRL="$(mutant_scripts mutant-rate-whole lib/lane-model.sh)" || exit 1
-mutate_file "$CTRL/lib/lane-model.sh" 'then (.usage_rate_pct_per_min * 60) / ([._rate_sample_claims // 1, 1] | max)' 'then .usage_rate_pct_per_min * 60'
+mutate_file "$CTRL/lib/lane-model.sh" 'then (.usage_rate_pct_per_min * 60) / (if .binding_bucket == "model" then 1 else ([._rate_sample_claims // 1, 1] | max) end)' 'then .usage_rate_pct_per_min * 60'
 LANES_UNDER_TEST="$CTRL/lanes" ACCOUNT_HARNESS=codex table \
   "control: charging the whole account rate walls the twelve-claim account|ORCH_LANE_DIRS=$H/.1codex|claim:1:12|1:22:20:12:628|pick --harness codex --model gpt-6.1-sol --json|rc=3 walled=1"
 CTRL="$(mutant_scripts mutant-sample-count lanes)" || exit 1
@@ -267,7 +283,7 @@ LANES_UNDER_TEST="$CTRL/lanes" ACCOUNT_HARNESS=codex table \
   "control: losing the fresh count walls the account before a cache read|ORCH_LANE_DIRS=$H/.1codex|claim:1:12|1:20:19:12:628:628|pick --harness codex --model gpt-6.1-sol --json|rc=3 walled=1 sample_claims=12 fetched=.1codex"
 
 CTRL="$(mutant_scripts mutant-rate-divided lib/lane-model.sh)" || exit 1
-mutate_file "$CTRL/lib/lane-model.sh" 'then (.usage_rate_pct_per_min * 60) / ([._rate_sample_claims // 1, 1] | max)' 'then (.usage_rate_pct_per_min * 60) / .claims'
+mutate_file "$CTRL/lib/lane-model.sh" 'then (.usage_rate_pct_per_min * 60) / (if .binding_bucket == "model" then 1 else ([._rate_sample_claims // 1, 1] | max) end)' 'then (.usage_rate_pct_per_min * 60) / .claims'
 LANES_UNDER_TEST="$CTRL/lanes" table \
   "control: dividing by current claims keeps stacking launches on cached measured room|ORCH_LANE_DIRS=$H/.aclaude:$H/.bclaude|claim:a:2|a:20:19|$PICK|rc=0 config_dir=$H/.aclaude projected_headroom_pct=74" \
   "control: the divided rate also admits a named launch whose claims spend its room|ORCH_LANE_DIRS=$H/.aclaude|claim:a:13|a:20:19|pick --lane $H/.aclaude --harness claude --projected --json|rc=0 projected_headroom_pct=74"

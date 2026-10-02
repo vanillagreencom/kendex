@@ -1,1 +1,1 @@
-- Lane selection charges each claim its share of measured account usage, so busy accounts with room remain available for new launches.
+- Lane selection shares measured account usage across sampled claims, keeps busy accounts with room available, and refuses model windows whose live lanes will spend their room.
