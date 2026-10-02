@@ -19,7 +19,7 @@ The combined fleet before-rate is 69.75%: 1990 failed runs out of 2853 listed ru
 
 `tmp/ken-2416-control-evidence.tgz!ken-2416-evidence/INVENTORY.md` and `repos.json` are the authoritative inventory. All 18 repositories are non-archived. The dispatch owner, `skills/review-gate/scripts/dispatch-refresh.sh`, enumerates its app installation and excludes kendex under D007. The prior repository-scoped credential could not establish that scope. The supplied control evidence resolves that access gap.
 
-The inventory has eight current refresh consumers. Four public repositories have retained refresh attempts but no current refresh workflow. Keep those historical rows in the combined denominator. They do not become current consumers. The remaining repositories below have no refresh workflow and no supplied refresh rows.
+The inventory has eight current refresh consumers. Four public repositories have retained refresh attempts but no current refresh workflow. Keep those historical rows in the combined denominator. They do not become current consumers. Kendex, in the table below, and the five private non-consumers the sentence after the table counts have no refresh workflow and no supplied refresh rows.
 
 | Repository under vanillagreencom | Visibility | Current refresh workflow | Observation scope | Listed rows and report |
 | --- | --- | --- | --- | --- |

@@ -34,7 +34,7 @@ KEN-2462's [Consumer refresh gate](ken-2416-refresh-runs.md#consumer-refresh-gat
 
 Per-repository records were removed from this public repository (KEN-2602).
 
-The combined completed-run rate is 69.78%: 1990 failures out of 2852 completed runs. The accessible completed-run rate remains 89.80%: 361 out of 402. All 1990 failures have supplied logs and measured classes. All 46 cancellations lack failed-step bytes and remain unclassified as to cause. The queued vgs outcome stays as originally observed. The authoritative inventory separates eight current consumers from four historical public attempts. Two other repositories have no refresh workflow and are not consumers. No local refresh runs exist under the overseer's ruling.
+The combined completed-run rate is 69.78%: 1990 failures out of 2852 completed runs. The accessible completed-run rate remains 89.80%: 361 out of 402. All 1990 failures have supplied logs and measured classes. All 46 cancellations lack failed-step bytes and remain unclassified as to cause. The queued vgs outcome stays as originally observed. The authoritative inventory separates eight current consumers from four historical public attempts. Kendex and five private repositories have no refresh workflow and are not consumers. No local refresh runs exist under the overseer's ruling.
 
 ## Cause and ownership decisions
 
@@ -245,7 +245,7 @@ KEN-2478 records an interim observation under the owner's launch ruling. The ove
 
 ### Consumer delivery and sample starts
 
-All times below are UTC. Pending means this lane cannot verify the fact. The overseer owns delivery confirmation and the inaccessible rows.
+All times below are UTC. Pending means this lane cannot verify the fact. The overseer owns delivery confirmation for every consumer, including those this lane cannot read.
 
 | Consumer under vanillagreencom | Owner-reported engine selection | Actual workflow and engine evidence | Installation time and sample start at cutoff |
 | --- | --- | --- | --- |

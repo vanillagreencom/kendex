@@ -274,7 +274,7 @@ Proposed workspace implementer labels: `agent:maintainer`, `agent:runtime`, `age
 
 ### KEN-2332 values
 
-These are final proposed values for [KEN-2332](https://linear.app/vanillagreen/issue/KEN-2332), not settings changed here. Each repository item installs the matching canonical names and renders them before the audit marks the row `ok`. Re-check control-host findings at the repository commit used by that item. Shared base B is exactly `agent:maintainer, agent:researcher, agent:multi, agent:human`.
+These are final proposed values for [KEN-2332](https://linear.app/vanillagreen/issue/KEN-2332), not settings changed here. Each listed repository's item installs the canonical names in its row and renders them before the audit marks the row `ok`. Re-check control-host findings at the repository commit used by that item. Shared base B is exactly `agent:maintainer, agent:researcher, agent:multi, agent:human`.
 
 | Repository | Proposed `LINEAR_AGENT_LABELS` | Evidence and later repository action |
 | --- | --- | --- |
