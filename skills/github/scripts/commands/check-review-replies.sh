@@ -40,7 +40,7 @@ Whose words count:
   this check runs as (the token's GraphQL viewer), whatever its actor type,
   or has one of those associations. Logins compare without case and
   without the [bot] suffix REST adds to an app's login. Anyone else's
-  review or reply is read as if it were not there, with no line saying so.
+  review or reply is read as if it were not there.
 
 A thread's standing reply is its newest counted comment that is
 `Fixed in <sha>`, `Declined: ...` or carries a track word. A decline
@@ -74,9 +74,10 @@ finding one line per entry:
   suppressed-findings state=unparsed
   suppressed-findings state=mismatch declared=<n> entries=<n>
   suppressed-entry <file:line>        (one per unanswered finding)
-stderr explains each line. While a body finding stands unanswered, a
-head-bound disposition comment naming one such finding, from an author
-who does not count, adds the stderr line
+stderr explains each line. On `suppressed-findings count=<n>`, stderr
+also names, once per login, each author who does not count and wrote a
+head-bound disposition comment with a line naming any finding a review body
+lists, answered or not:
   suppressed-findings: ignored-author login=<login>
 A thread reply that does not count adds no line.
 
