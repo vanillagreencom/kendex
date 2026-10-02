@@ -1,4 +1,4 @@
-# D019: Resolve model classes through one availability-aware owner
+# D021: Resolve model classes through one availability-aware owner
 
 [← Decision Index](INDEX.md)
 

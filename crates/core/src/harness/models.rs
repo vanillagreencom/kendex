@@ -1,4 +1,4 @@
-//! Model intent, class policy and native rendering share this owner (D019).
+//! Model intent, class policy and native rendering share this owner (D021).
 //! Runtime selection uses supplied account evidence, never installation detection.
 
 use crate::model::HarnessId;
@@ -40,7 +40,7 @@ pub struct ClassRow {
     pub preferred: &'static str,
 }
 
-// REVISIT(D019): enabling Claude fast requires an owner-approved family change.
+// REVISIT(D021): enabling Claude fast requires an owner-approved family change.
 /// The sole class policy table. Rank input indexes these rows.
 pub const TIERS: [ClassRow; 4] = [
     ClassRow {
@@ -462,7 +462,7 @@ fn render(
     match request {
         ModelRequest::Inherit => ModelResolution::Inherit,
         ModelRequest::Class { class } => {
-            // REVISIT(D019): static Codex/Copilot files inherit the managed root; Pi dispatch retains intent.
+            // REVISIT(D021): static Codex/Copilot files inherit the managed root; Pi dispatch retains intent.
             let selector = match harness {
                 HarnessId::Claude => {
                     let Some(alias) = class.walk().find_map(|c| c.row().claude) else {

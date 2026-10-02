@@ -1,6 +1,6 @@
 # Model class resolution evidence
 
-This file holds the source record and design history for [the implementation plan](model-class-resolution.md). [D019](../decisions/D019-runtime-model-classes.md) owns the approved decisions.
+This file holds the source record and design history for [the implementation plan](model-class-resolution.md). [D021](../decisions/D021-runtime-model-classes.md) owns the approved decisions.
 
 ## Design history
 
@@ -54,7 +54,7 @@ Pi references were read from the installed package documentation and SDK example
 
 P3 includes the core resolver, CLI, class overrides, render/readback changes and both Pi child consumers. P4 Claude callbacks and P5 lane/launch/context integration remain pending. KEN-2496 owns ladder defaults. P3 preserves its current values.
 
-The owner confirms the exact-pin exception in D019: core substitutes exact Haiku at or below 4.5 with one warning. Confirmed newer Haiku exact requests stay exact with one compatibility warning. Fast still has no Claude class member.
+The owner confirms the exact-pin exception in D021: core substitutes exact Haiku at or below 4.5 with one warning. Confirmed newer Haiku exact requests stay exact with one compatibility warning. Fast still has no Claude class member.
 
 ## Repository evidence
 
@@ -69,4 +69,4 @@ These observations are file reads, not implementation validation. Earlier observ
 - `skills/orch/scripts/lib/adapters/claude.sh` holds the alias pin and the one capacity table.
 - The design-stage Pi normalization pinned opus and haiku. P3 `pi-extensions/pi-agents-tmux/extensions/subagent/settings.ts::resolveAgentModel` sends raw intent and registry evidence to core before either child launch path.
 - `crates/core/src/source/plugin_registry.rs::{REGISTRY,PLUGIN_MANIFEST,read}` recognizes marketplace catalogs. `crates/core/src/engine/desired_kinds.rs::desired_plugins` produces enable toggles only. The repo has no root `.claude-plugin` package. The chosen mod therefore ships inside orch and uses native directory loading; it does not silently add plugin installation capability.
-- [D008](../decisions/D008-copilot-agent-model.md) requires Copilot class inheritance. [D015](../decisions/D015-copilot-compaction-handoff.md) retains the Copilot context-event owner. D019 refines them and supersedes neither.
+- [D008](../decisions/D008-copilot-agent-model.md) requires Copilot class inheritance. [D015](../decisions/D015-copilot-compaction-handoff.md) retains the Copilot context-event owner. D021 refines them and supersedes neither.

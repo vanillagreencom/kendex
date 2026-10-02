@@ -17,12 +17,12 @@ Later-stage sections describe requirements. They do not claim that P4 or P5 has 
 
 - **Goal**: Replace version pins with one class decision for rendering, overseers and lanes, within native harness limits.
 - **Perspective and constraints**: Owner-authorized policy amendment under code-quality, docs-writing, decider and document byte/growth limits. Change only the allowed design artifacts.
-- **Decision**: [D019](../decisions/D019-runtime-model-classes.md) authorizes implementation without another owner read. [Evidence](model-class-resolution-evidence.md#design-history) records the contract and history.
+- **Decision**: [D021](../decisions/D021-runtime-model-classes.md) authorizes implementation without another owner read. [Evidence](model-class-resolution-evidence.md#design-history) records the contract and history.
 - **Assumptions**: A harness model list describes selectable models under current authentication and policy. It cannot prove that a later request will succeed. A first successful turn remains the runtime access check.
 
 ## Owner authorization and contract limits
 
-[D019](../decisions/D019-runtime-model-classes.md) binds model fallback: unknown access or capacity uses the native default/session model with one warning. Model resolution refuses only when no usable harness model exists.
+[D021](../decisions/D021-runtime-model-classes.md) binds model fallback: unknown access or capacity uses the native default/session model with one warning. Model resolution refuses only when no usable harness model exists.
 
 The accepted limits and the amended behavior are:
 
@@ -37,7 +37,7 @@ The accepted limits and the amended behavior are:
 | A provider has only a top-family model | Fallback can select top with one warning. | Availability fallback can differ from the requested standard class. This is not an item promotion. |
 | Exact Haiku pins | Substitute Haiku 4.5 or earlier through core with one warning. Confirmed newer Haiku pins stay exact with one compatibility warning. | Bare `haiku` remains fast. Fast has no Claude member. Unknown access/capacity uses native default. |
 
-[D019 § Runtime boundary](../decisions/D019-runtime-model-classes.md#runtime-boundary) owns unsupported-route limits. Require integration proof.
+[D021 § Runtime boundary](../decisions/D021-runtime-model-classes.md#runtime-boundary) owns unsupported-route limits. Require integration proof.
 
 ## Approach
 
@@ -47,11 +47,11 @@ Extend `crates/core/src/harness/models.rs` and `crates/cli/src/commands/tier_mod
 
 ### Class table
 
-`crates/core/src/harness/models.rs::TIERS` owns class membership, legacy aliases and preferred selectors. [D019](../decisions/D019-runtime-model-classes.md#decision) records the approved family policy. The table does not prove account access or the existence of an unlisted preferred version.
+`crates/core/src/harness/models.rs::TIERS` owns class membership, legacy aliases and preferred selectors. [D021](../decisions/D021-runtime-model-classes.md#decision) records the approved family policy. The table does not prove account access or the existence of an unlisted preferred version.
 
 Canonical names replace the old public class names. The old names remain accepted input aliases without a separate compatibility table. A provider-qualified `anthropic/opus` denotes that provider's native family selector, not a neutral standard request.
 
-Do not enable a Claude fast class member from a model list alone. A class member requires owner approval. Confirmed exact Haiku newer than 4.5 remains usable as an exact request under D019. Core substitutes versions at or below 4.5.
+Do not enable a Claude fast class member from a model list alone. A class member requires owner approval. Confirmed exact Haiku newer than 4.5 remains usable as an exact request under D021. Core substitutes versions at or below 4.5.
 
 Other providers do not receive guessed Fable, Opus or GPT equivalents. Their usable default or available chat model supplies the unclassified terminal fallback. Existing Gemini and Antigravity native selectors remain native selectors, not evidence that an account has a class member.
 
@@ -107,7 +107,7 @@ The family matcher belongs beside `TIERS`, not in shell, renderer or TypeScript 
 
 `HarnessAdapter::detect` and `engine::ops::detected_harnesses` supply installation targets, not authentication or model grants. `lanes::emit_lane`, `host_account_records` and `model_buckets` own account/usage facts, not model access. No family label or monthly pool proves entitlement.
 
-Resolve each account in this order. [D019 § Fallback and compatibility](../decisions/D019-runtime-model-classes.md#fallback-and-compatibility) owns the unknown-evidence and native-default rules.
+Resolve each account in this order. [D021 § Fallback and compatibility](../decisions/D021-runtime-model-classes.md#fallback-and-compatibility) owns the unknown-evidence and native-default rules.
 
 1. Bind evidence to the detected harness or admitted host-account row. Pi uses its running authenticated registry. Intersect explicit candidates with that context's available chat models. Exclude policy-denied models and Haiku versions at or below 4.5. Carry native default separately; it cannot bypass confirmed denial. Add no accountInfo/login/renewal/provider probe.
 2. Return `no-model` only on affirmative evidence that no explicit or native path is usable. Unknown/unread access returns `HarnessDefault` with `model-availability-unknown` and source causes. Use an observed usable session selector or the native default action. Discovery failure never advances to another table candidate or requires an id probe.
@@ -120,7 +120,7 @@ The finite inventory bounds retries. `HarnessDefault` ends retries on that accou
 
 ### Inherit, exact ids and warning ownership
 
-[D019 § Fallback and compatibility](../decisions/D019-runtime-model-classes.md#fallback-and-compatibility) owns pin, inherit and Haiku rules. Preserve `old-id`, `model-unavailable` and `excluded-haiku`. Keep catalog agents on inherit. Source frontmatter and manifest model overrides share parsing/precedence. Positional rank remains readable with a selector-only warning; runtime uses evidence-bearing input.
+[D021 § Fallback and compatibility](../decisions/D021-runtime-model-classes.md#fallback-and-compatibility) owns pin, inherit and Haiku rules. Preserve `old-id`, `model-unavailable` and `excluded-haiku`. Keep catalog agents on inherit. Source frontmatter and manifest model overrides share parsing/precedence. Positional rank remains readable with a selector-only warning; runtime uses evidence-bearing input.
 
 Core carries diagnostics without printing. `desired_agent` owns render warnings; `lanes` owns pick warnings; the top-level launcher relays the pick warning once. Pi dispatch and direct Claude callbacks own their child/session warnings. JSON carries causes, not printed prose. Each process emits at most one combined warning and keeps later causes structured.
 
@@ -204,7 +204,7 @@ A first Claude light launch with only alias intent and unknown capacity uses the
 
 ## Default selection
 
-[D019](../decisions/D019-runtime-model-classes.md#decision) requires standard for overseers, successors and lanes. GPT-6.1 Sol takes Astra's former default tasks. All workflow tiers use that default. `item-tier` still selects the workflow; its estimate, size and escape floor never select a model. Generic complex/high-risk categories never select top.
+[D021](../decisions/D021-runtime-model-classes.md#decision) requires standard for overseers, successors and lanes. GPT-6.1 Sol takes Astra's former default tasks. All workflow tiers use that default. `item-tier` still selects the workflow; its estimate, size and escape floor never select a model. Generic complex/high-risk categories never select top.
 
 The existing `workflows/oversee.md` Lane directive owns item selection. The overseer reads the item's existing labels and body. It requests top only when the item names why it needs top. A label must carry that reason, not merely a risk category or `top` name. The overseer writes `**Top model reason**: <item-specific reason>` into the brief it already mints, including a copied label reason. The launching orch lane reads that field. Keep the reason on recovery and successor briefs for that same item. Without it, an item cannot select top through a preference, alias or pin.
 
@@ -218,7 +218,7 @@ Use the existing `lanes --model` and `tier-model --model` inputs. Default item r
 
 The owner authorizes the standard-default and native-default amendments. The orchestrator delegates the core correction in this branch, then runtime integration. All proof below belongs to implementation. The separate item owns the actual ladder-default edit.
 
-1. **Core item policy**: Keep the rejected size/risk mapping absent as specified in § Default selection. Preserve the exact-Haiku policy in D019. Proof: rejected size/risk inputs cannot select a class; explicit standard/top still use the existing parser. Core and CLI controls below hold this correction.
+1. **Core item policy**: Keep the rejected size/risk mapping absent as specified in § Default selection. Preserve the exact-Haiku policy in D021. Proof: rejected size/risk inputs cannot select a class; explicit standard/top still use the existing parser. Core and CLI controls below hold this correction.
 2. **Complete the core owner**: Extend `models.rs::{TIERS,resolve_model,ModelResolution}` and tests for the tagged shapes, family matcher and fallback above. Keep native-format concerns separate. Proof: the core rows in § Proof cover request kinds, family/class holes, termination, evidence/default states and refusals. They reject provider leakage, repeated classes and fabricated model/capacity.
 3. **Read consumer overrides once**: Change `crates/core/src/manifest/mod.rs::Manifest`, `manifest/validate.rs::TOP_LEVEL`, validation and tests. Read through `manifest/file.rs::load_current` and `parse_text`. Thread the effective class overrides through `engine/desired_agent.rs::desired_agent`, `EffectiveAgent` and installation hashing. Proof: parse/save round trips, personal/project precedence, unknown and disallowed selectors, and hash invalidation. A mutant that ignores the project override must turn its test red.
 4. **Complete the existing CLI bridge**: Use `TierModelArgs`/`run`, CLI dispatch and the shared `engine::agent_model_request`/`EffectiveAgent::model_request` reader. Keep model/context/JSON and Claude agent forms, not size/risk inputs. Preserve positional rank with its selector-only warning. Proof: fixture-home tests cover protocol/tags, confirmed selector, default without id, refusal status, clean stdout, one warning, malformed input, source/override precedence and managed/unmanaged identity. Managed-source failures refuse; model-evidence failures default. Use the existing `crates/cli/tests/tier_model.rs` registration.
@@ -228,7 +228,7 @@ The owner authorizes the standard-default and native-default amendments. The orc
 8. **Integrate existing overseer and lane consumers**: Change `lib/overseer-launch.sh::{ol_preference_entries,ol_entry_model,ol_pick_record,ol_pick_lane,ol_launch_flags}` and `open-terminal::preference_select` plus flag assembly. Apply § Default selection through the existing brief/model inputs. Do not edit `OL_DEFAULT_PREFERENCE` or duplicate the other item's default-list work. Encode the picked tag, not an original class or table pin. Claude receives host-local mod path and intent/evidence/warning receipt. Readiness uses documented version/settings. Proof: default item argv requests standard across workflow tiers; justified top remains explicit. Selected/default launch, host-local loading and failure cases retain their tests.
 9. **Remove the Claude pin used for capacity**: Change `lib/adapters/claude.sh::lane_adapter_claude_model_id`, its caller and prelaunch window check in `lib/lane-launch.sh`, and `lib/lane-context.sh::lane_context_handoff_due`. Apply § Context window and compaction. Proof: adapter/launch tests cover aliases, overrides, newer actual ids, absent default ids and unknown-capacity launch. Controls reject stale pins, borrowed/guessed capacity and restored gating.
 10. **Resolve Pi children at dispatch**: Replace `agents.ts::normalizeModel` pins with parsing. Use `settings.ts::selectedModelForAgent` and shared runner/pane preparation to pass parent registry and child directory to core before spawn. Preserve source/effort precedence. With kendex missing, preserve native inherit and an exact model found in the authenticated Pi registry. Refuse all other requests with one resolver-missing diagnostic naming kendex as the fix. Do not copy the parser or table. With kendex present, send all intent through core. Proof: both forms cover unavailable providers, unknown-evidence defaults and new registry families.
-11. **Update docs, renders and release records**: Update the paths in the file list below. Cite D019 from architecture, without restating its rationale. Keep `agents/*.md` on inherit unless a specific source change is needed. Apply source diffs to the tracked renders by replay, not by copying files or running refresh/apply. Add a consumer changelog fragment with one item of at most 200 characters. Pi release entries use a heading naming the actual new version, not Unreleased. Proof: selected documentation, render-inventory, model tests and repository guard lanes pass through the authorized runner.
+11. **Update docs, renders and release records**: Update the paths in the file list below. Cite D021 from architecture, without restating its rationale. Keep `agents/*.md` on inherit unless a specific source change is needed. Apply source diffs to the tracked renders by replay, not by copying files or running refresh/apply. Add a consumer changelog fragment with one item of at most 200 characters. Pi release entries use a heading naming the actual new version, not Unreleased. Proof: selected documentation, render-inventory, model tests and repository guard lanes pass through the authorized runner.
 12. **Return receipts and hand off acceptance**: Report code/test coverage, real harness-list evidence, native-default fallback receipts and any refused integration path to the orchestrator. The fleet overseer schedules the trial below. The owner design/build answer is recorded. Do not mark the issue complete before implementation review, authorized validation, CI proof and the trial table.
 
 ## Proof
@@ -337,14 +337,14 @@ A TPM handoff is needed only for coordination of the separately owned ladder wor
 
 Prompt for the calling agent to pass to TPM:
 
-> Keep KEN-2466 as design/build under D019 and docs/plans/model-class-resolution.md. The owner chooses standard now and requires an item reason for top. The separate item owns the standard/no-Fable/no-Astra ladder-default edit. Coordinate its deployment and the fleet-owned vg trial if needed; do not duplicate its edit or invent its id. Preserve KEN-2468's interim history. Track implementation review, authorized validation, CI, default deployment and the trial table as acceptance dependencies.
+> Keep KEN-2466 as design/build under D021 and docs/plans/model-class-resolution.md. The owner chooses standard now and requires an item reason for top. The separate item owns the standard/no-Fable/no-Astra ladder-default edit. Coordinate its deployment and the fleet-owned vg trial if needed; do not duplicate its edit or invent its id. Preserve KEN-2468's interim history. Track implementation review, authorized validation, CI, default deployment and the trial table as acceptance dependencies.
 
 ## Handoff prompt
 
-> Implement KEN-2466 under amended D019 without another owner read. Read this plan/evidence completely. The rejected size/risk helper and its CLI inputs are already absent. Preserve explicit model requests. Use existing --model selection: standard by default, top only for an item-specific label/brief reason recorded by the overseer. Keep GPT-6.1 Sol on Astra's former default tasks, the top row, aliases, class overrides and fallback. Integrate the resolver into the existing ladder consumer, but do not edit OL_DEFAULT_PREFERENCE or default-list examples/assertions; KEN-2496 owns the actual ladder-default edit. Unknown access/capacity keeps launchable HarnessDefault without an id. Preserve account walls and integration refusals. Follow the ordered plan, proof and source/render rules. Record the ruling in the PR body. Use only authorized validation routing. No sync --reconcile, refresh/apply, base writes, lock changes or .kendex-lock.json. Return interface blockers, receipts and acceptance handoff. Do not run or invent the trial.
+> Implement KEN-2466 under amended D021 without another owner read. Read this plan/evidence completely. The rejected size/risk helper and its CLI inputs are already absent. Preserve explicit model requests. Use existing --model selection: standard by default, top only for an item-specific label/brief reason recorded by the overseer. Keep GPT-6.1 Sol on Astra's former default tasks, the top row, aliases, class overrides and fallback. Integrate the resolver into the existing ladder consumer, but do not edit OL_DEFAULT_PREFERENCE or default-list examples/assertions; KEN-2496 owns the actual ladder-default edit. Unknown access/capacity keeps launchable HarnessDefault without an id. Preserve account walls and integration refusals. Follow the ordered plan, proof and source/render rules. Record the ruling in the PR body. Use only authorized validation routing. No sync --reconcile, refresh/apply, base writes, lock changes or .kendex-lock.json. Return interface blockers, receipts and acceptance handoff. Do not run or invent the trial.
 
 ## Sources and evidence
 
 Official source citations, retrieved evidence, measurement limits and design history are in [model-class-resolution-evidence.md](model-class-resolution-evidence.md#sources-and-evidence). The requested GPT-6.1 Luna and Terra releases remain unverified owner policy. No inventory gains a manufactured id.
 
-During implementation add `REVISIT(D019)` markers at the class/fallback owner, the Claude mod version/policy boundary, the deferred native-render boundary and the alias/capacity boundary.
+During implementation add `REVISIT(D021)` markers at the class/fallback owner, the Claude mod version/policy boundary, the deferred native-render boundary and the alias/capacity boundary.
