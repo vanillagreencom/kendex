@@ -241,6 +241,10 @@ def replay(snapshot, catalog, binary, scratch):
            "XDG_CONFIG_HOME": str(home / ".config"), "XDG_CACHE_HOME": str(home / ".cache"),
            "XDG_DATA_HOME": str(home / ".local/share")}
     git = lambda *a, cwd=consumer: command("git", *a, cwd=cwd, env=env)
+    # A bare receive-pack can start maintenance after push. Keep automatic
+    # maintenance in the foreground until the scratch owner's cleanup.
+    for key in ("gc.autoDetach", "maintenance.autoDetach"):
+        git("config", "--global", key, "false")
     branch = snapshot["platform"]["repository"]["default_branch"]
     git("init", "-q", "-b", branch)
     for key, value in (("user.name", "consumer-refresh"), ("user.email", "refresh@example.invalid"),

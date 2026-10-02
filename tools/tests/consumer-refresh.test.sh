@@ -76,6 +76,84 @@ gate "$TMP/snapshot.gz" "$TMP/candidate"
 if [ "$RC" -eq 0 ] && grep -qxF 'consumer-refresh=pass repository=fixture baseline-exit=0 candidate-exit=0' <<<"$OUT"; then
   ok 'real committed consumer refresh passes through a temporary-root alias against the retained catalog'
 else bad 'real consumer baseline' "$OUT"; fi
+# Git receive-pack starts real automatic GC in the scratch bare remote. Lower
+# its pack threshold in a disposable runtime copy so this small world reaches
+# the same maintenance that a large installed consumer starts after push.
+python3 - "$ROOT/tools/consumer-refresh" "$TMP" <<'PY'
+from pathlib import Path
+import sys
+source = Path(sys.argv[1]).resolve()
+text = source.read_text()
+old = '    git("clone", "--bare", "-q", str(consumer), str(remote))\n'
+setup = '''    git("config", "--global", "trace2.eventTarget", TRACE)
+    git("--git-dir", str(remote), "config", "gc.auto", "1")
+    git("--git-dir", str(remote), "config", "gc.autoPackLimit", "1")
+    git("--git-dir", str(remote), "repack", "-ad")
+    subprocess.run(["git", "--git-dir", str(remote), "pack-objects",
+                    str(remote / "objects/pack/pack")],
+                   input=git("rev-parse", "HEAD"), cwd=consumer, env=env,
+                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+'''
+assert text.count(old) == 1
+changed = text.replace(old, old + setup)
+assert changed != text
+root = 'ROOT = Path(__file__).resolve().parent.parent'
+assert changed.count(root) == 1
+changed = changed.replace(root, 'ROOT = Path(' + repr(str(source.parent.parent)) + ')')
+setting = '        git("config", "--global", key, "false")'
+assert changed.count(setting) == 1
+for name, content in (
+    ('gc-gate', changed),
+    ('gc-mutant', changed.replace(setting, '# ' + setting.strip() + '\n'
+        '        git("config", "--global", key, "true")')),
+):
+    assert content != text
+    trace = str(Path(sys.argv[2]) / (name + '.trace'))
+    path = Path(sys.argv[2]) / name
+    path.write_text(content.replace('TRACE', repr(trace)))
+    path.chmod(0o755)
+PY
+for row in gc-gate gc-mutant; do
+  GATE="$TMP/$row" gate "$TMP/snapshot.gz" "$TMP/candidate"
+  GC_RC=0
+  # Bash 3.2 counts parentheses inside heredocs in command substitutions.
+  python3 - "$TMP/$row.trace" >"$TMP/gc-output" 2>&1 <<'PY' || GC_RC=$?
+import json
+from pathlib import Path
+import sys
+events = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
+sessions = {event['sid'] for event in events
+            if event['event'] == 'cmd_name' and event.get('name') == 'gc'}
+maintenance = {event['sid'] for event in events
+               if event['event'] == 'cmd_name' and event.get('name') == 'maintenance'}
+repacking = {event['sid'] for event in events if event['sid'] in sessions
+             and event['event'] == 'child_start' and 'repack' in event.get('argv', [])}
+# Both replays must reach the remote's GC, not only its no-op threshold check.
+assert len(repacking) == 2, 'consumer-refresh-test: gc-coverage'
+for gc_sid in repacking:
+    repack = next(event['child_id'] for event in events if event['sid'] == gc_sid
+                  and event['event'] == 'child_start' and 'repack' in event.get('argv', []))
+    completed = [index for index, event in enumerate(events) if event['sid'] == gc_sid
+                 and event['event'] == 'child_exit' and event['child_id'] == repack
+                 and event['code'] == 0]
+    # Git can detach GC or its maintenance parent. A detached parent exits
+    # before repack finishes and its child can emit a second inherited exit.
+    for sid in {gc_sid} | {sid for sid in maintenance if gc_sid.startswith(sid + '/')}:
+        exits = [index for index, event in enumerate(events)
+                 if event['sid'] == sid and event['event'] == 'exit']
+        assert len(exits) == 1 and len(completed) == 1 and completed[0] < exits[0], \
+            'consumer-refresh-test: detached-gc'
+PY
+  GC_OUT="$(cat -- "$TMP/gc-output")" || { printf 'consumer-refresh-test: gc-output=read-failed\n' >&2; exit 1; }
+  if [ "$row" = gc-gate ]; then
+    if [ "$RC" -eq 0 ] && [ "$GC_RC" -eq 0 ] &&
+      grep -qxF 'consumer-refresh=pass repository=fixture baseline-exit=0 candidate-exit=0' <<<"$OUT"; then
+      ok 'real remote automatic GC finishes before replay cleanup'
+    else bad 'remote automatic GC lifetime' "$OUT $GC_OUT"; fi
+  elif [ "$GC_RC" -eq 1 ] && grep -qxF 'AssertionError: consumer-refresh-test: detached-gc' <<<"$GC_OUT"; then
+    ok 'must-fail control: detached remote GC turns the lifetime assertion red'
+  else bad 'detached remote GC control' "$OUT $GC_OUT"; fi
+done
 # Remove the writer template in a disposable candidate catalog. This is the
 # historical production defect, not a mutation of a fixture's fake refresh.
 git clone -q --no-hardlinks "$TMP/candidate" "$TMP/removed"
