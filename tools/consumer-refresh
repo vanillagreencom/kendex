@@ -320,12 +320,10 @@ def cause(output):
             line != "refresh-error=read value=class") for line in records):
         return ()
     if "refresh-error=read value=class" in records:
-        # change-class documents one complete class record. Keep every field;
+        # change-class owns diagnostic completeness. Retain its full refusal;
         # the runner's read failure alone cannot identify the refused input.
         classes = tuple(line for line in output.splitlines() if line.startswith("class:"))
-        if len(classes) != 1 or not re.fullmatch(
-                r'class: class=standard measured=false cause=[a-z0-9-]+(?: [a-z][a-z0-9-]*=(?:"(?:\\.|[^"\\])+"|[^\s"]+))*',
-                classes[0]):
+        if len(classes) != 1 or not classes[0].startswith("class: class=standard measured=false cause="):
             return ()
         return records + classes
     return records
