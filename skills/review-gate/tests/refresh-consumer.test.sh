@@ -37,8 +37,12 @@ cat >"$TMP/bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$TEST_STATE/calls"
+query=""
 for arg in "$@"; do
-  case "$arg" in body=*) printf '%s\n' "${arg#body=}" >"$TEST_STATE/body" ;; esac
+  case "$arg" in
+    body=*) printf '%s\n' "${arg#body=}" >"$TEST_STATE/body" ;;
+    query=*) query="${arg#query=}" ;;
+  esac
 done
 case "$*" in
   'api repos/acme/test --jq .default_branch') printf 'main\n' ;;
@@ -50,6 +54,13 @@ case "$*" in
   'api graphql '*)
     [ -f "$TEST_STATE/push-refused" ] || exit 89
     [ "${TEST_PUSH_QUERY:-pass}" != fail ] || exit 87
+    # GitHub returns only requested fields. Never supply a complete fixture
+    # to a query that omits the branch or pull-request state selections.
+    for selection in \
+      'ref(qualifiedName: "refs/heads/kendex/refresh") { target { oid } }' \
+      'pullRequest(number: $number) @include(if: $hasPR) { state isInMergeQueue autoMergeRequest { enabledAt } }'; do
+      case "$query" in *"$selection"*) ;; *) exit 86 ;; esac
+    done
     cat "$TEST_STATE/push-state.json" ;;
   'auth setup-git') : >"$TEST_STATE/auth" ;;
   'pr merge '*)
@@ -476,7 +487,7 @@ for row in \
   # Copies keep the tracked script untouched and retain the matched condition.
   mutations=""
   case "$name" in
-    queued) mutations='defer ordering' ;;
+    queued) mutations='defer ordering queue-field' ;;
     merged-deleted) mutations=defer ;;
     genuine-failure) mutations=fail-open ;;
     new-branch-failure) mutations=no-old ;;
@@ -496,11 +507,16 @@ mutations = {
     'query-open': ("printf 'refresh-error=push-state value=query\\n' >&2\n      exit 1", "printf 'refresh-error=push-state value=query\\n' >&2\n      exit 0"),
     'output-open': ("printf 'refresh-error=push-state value=output\\n' >&2\n      exit 1", "printf 'refresh-error=push-state value=output\\n' >&2\n      exit 0"),
     'ordering': ('  push_status=0', "  gh api graphql -f query='query { viewer { login } }'\n  push_status=0"),
+    'queue-field': ('{ state isInMergeQueue autoMergeRequest { enabledAt } }', '{ state autoMergeRequest { enabledAt } }'),
     'no-old': ('elif .ref == null and $old != "" then "branch-gone"', 'elif .ref == null then "branch-gone"'),
 }
 old, new = mutations[sys.argv[2]]
 assert s.count(old) == 1
-changed = s.replace(old, '# ' + old.replace('\n', '\n# ') + '\n' + new)
+if sys.argv[2] == 'queue-field':
+    # Retain the selection outside the query argument, not in its payload.
+    changed = s.replace(old, new) + '\n# ' + old + '\n'
+else:
+    changed = s.replace(old, '# ' + old.replace('\n', '\n# ') + '\n' + new)
 assert changed != s
 p.write_text(changed)
 PUSH_CONTROL
