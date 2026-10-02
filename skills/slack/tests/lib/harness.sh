@@ -128,6 +128,21 @@ sk_new_root() {
   printf '%s' "$root"
 }
 sk_box() { printf '%s/tmp/lane-mail/overseer' "$1"; }     # ROOT
+# landed ROOT DELIVERY_ID [TRIES] — the text of the envelope keyed DELIVERY_ID,
+# awaited TRIES tenths of a second, 200 unless given. Empty when none landed.
+landed() {
+  local tries=0 file text
+  file="$(sk_box "$1")/to-lane.jsonl"
+  while [ "$tries" -lt "${3:-200}" ]; do
+    if [ -f "$file" ]; then
+      text="$(jq -r --arg d "$2" 'select(.delivery_id == $d) | .text' "$file")"
+      if [ -n "$text" ]; then printf '%s' "$text"; return 0; fi
+    fi
+    tries=$((tries + 1))
+    sleep 0.1
+  done
+  return 0
+}
 # sk_stall_delivery ROOT: a real lane-mail send with no flock and a one-shot
 # stalled jq delivery scan. The marker proves the shipped guard holds its lock.
 sk_stall_delivery() {

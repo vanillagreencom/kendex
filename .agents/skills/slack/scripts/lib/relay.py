@@ -63,9 +63,13 @@ A relay imports its modules once, so a package update reaches a running relay
 only through a new image. The relay fingerprints its code at start and again
 on every poll. A reading that differs from the start one and matches the poll
 before it is an update whose writer has finished: the poll completes, the
-connection closes, and the relay re-executes its launcher in the same process,
-which reads the settings again as a fresh start does. A half-written update
-changes between two polls and is never loaded.
+connection closes, the envelopes already acknowledged are delivered, and the
+relay re-executes its launcher in the same process, which reads the settings
+again as a fresh start does. A half-written update changes between two polls
+and is never loaded. The reload waits while the relay reconnects, since the
+new image's start would be refused in an outage, and while a refused live
+delivery is held, since Slack resends no acknowledged envelope and the new
+image's catch-up misses a reply under a thread past its lookback.
 """
 
 from __future__ import annotations
@@ -942,7 +946,8 @@ class Relay:
 
     def run_connected(self, app_api: Slack, next_poll: float, retry_at: float, delay: float) -> None:
         """Worker loop; all persistent state and API calls stay here. It
-        returns after the poll that finds a settled code update."""
+        returns after the poll that finds a settled code update the relay
+        can reload onto."""
         while True:
             if self.socket is None and self.clock() >= retry_at:
                 if self.open(app_api):
@@ -953,7 +958,7 @@ class Relay:
                     delay = min(2 * delay, RETRY_MAX_SECONDS)
             if self.clock() >= next_poll:
                 self.poll_once()
-                if self.settled:
+                if self.settled and self.close_for_reload():
                     return
                 next_poll = self.clock() + self.settings.poll_seconds
             if self.socket is None:
@@ -962,6 +967,34 @@ class Relay:
             self.listen_until(next_poll)
             if self.socket is None:
                 retry_at = self.clock()
+
+    def close_for_reload(self) -> bool:
+        """Whether the connection closed with nothing acknowledged left
+        undelivered, so the relay can re-execute. A relay reconnecting or
+        holding a refused live delivery keeps its connection state and
+        waits for a later poll. The reader stops before the queue is
+        delivered, so nothing is acknowledged after; a delivery refused then
+        leaves the connection closed for the loop to open again."""
+        if self.socket is None or any(root.pending_live for root in self.roots):
+            return False
+        assert self.reader is not None, "an open connection has a reader"
+        self.stop_reader.set()
+        self.reader.join()
+        closed: Optional[Closed] = None
+        while not self.incoming.empty():
+            envelope = self.incoming.get_nowait()
+            if isinstance(envelope, Closed):
+                closed = envelope
+            else:
+                self.deliver(envelope)
+        if closed is not None:
+            self.drop(str(closed))
+            return False
+        self.socket = None
+        self.set_connection("reconnecting")
+        for root in self.roots:
+            root.journal.append(t="disconnect", at=self.since, reason="reload")
+        return not any(root.pending_live for root in self.roots)
 
     def set_connection(self, connection: str) -> None:
         """The connection state as the next status record shows it; `since`

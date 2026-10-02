@@ -56,7 +56,8 @@ listen    the relay: one Socket Mode connection opened with SLACK_APP_TOKEN
           and exits 0 when every poll succeeded, 1 for a retryable poll
           failure. A fatal refusal, such as a dead token, exits 2. A
           change to the package's code that holds for two polls re-executes
-          the relay in place, which reads its settings again
+          the relay in place, which reads its settings again, once the
+          relay is connected and holds no refused live delivery
   --status  one `slack-relay=ROOT state=ok|failing|stale|never` line per
           root from the relay's status record, with the connection state
           and the fingerprint of the running code as code=;

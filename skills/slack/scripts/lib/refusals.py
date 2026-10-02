@@ -169,8 +169,9 @@ EXPLAIN = {
     "code-unreadable": (
         "A file of the package's own code could not be read, so the relay"
         " cannot tell whether an update replaced it; the value names the"
-        " file and the error. The relay keeps running the code it started"
-        " with, and --status reads failing until the file can be read."
+        " file and the error. At start the relay exits 2. A running relay"
+        " keeps the code it started with, and --status reads failing until"
+        " the file can be read."
     ),
     "reexec-failed": (
         "The relay found an update of its code and could not start the"
