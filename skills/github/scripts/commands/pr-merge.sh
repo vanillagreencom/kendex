@@ -118,20 +118,6 @@ Approvals and review threads:
   blocks on a changes-requested review, and names a missing approval as the
   not_approved warning.
 
-Review replies:
-  GitHub's approval and thread resolution prove that a reply exists, never
-  what it says, and a reply can change without a push. So every readiness
-  check runs ../check-review-replies <N>, a read-only live read of the
-  replies (check-review-replies --help states its rules). A failing rule is
-  one permanent issue joining its rule lines:
-    review_replies: <rule line>; <rule line>...
-  A reply check that reaches no verdict is permanent too, carrying its
-  first stderr line:
-    review_replies_unread: check-review-replies: <key> pr=<N>
-  --auto defers every other blocker to GitHub, but no GitHub rule holds an
-  armed PR on a reply, so either issue refuses the arm as it refuses a
-  merge: BLOCKED, exit 1, nothing armed.
-
   --auto reads every pull_request rule on the base branch
   (repos/{owner}/{repo}/rules/branches/<base>, which returns the rules of
   every active ruleset, organization and repository) and arms only where
@@ -139,6 +125,23 @@ Review replies:
   approval, thread resolution, and stale approvals dismissed on push.
   Classic branch protection's review settings are not read: a base gated
   there alone is refused as required_approval, which arms nothing.
+
+Review replies:
+  GitHub's approval and thread resolution prove that a reply exists, never
+  what it says, and a reply can change without a push. So each readiness
+  check, the one --check, the merge and the --auto arm run, runs
+  check-review-replies <N>, a read-only live read of the replies
+  (github.sh check-review-replies --help states its rules). A failing rule
+  is one permanent issue joining its rule lines:
+    review_replies: <rule line>; <rule line>...
+  A reply check that reaches no verdict is permanent too, carrying its
+  first stderr line:
+    review_replies_unread: check-review-replies: <key> pr=<N>
+  --auto defers every other blocker to GitHub, but no GitHub rule holds an
+  armed PR on a reply, so either issue refuses the arm as it refuses a
+  merge: BLOCKED, exit 1, nothing armed. The check holds at the moment
+  this command runs and no later: a PR armed before its replies exist is
+  not read again by pr-merge while it stays armed or queued.
 
 Merge route:
   The immediate merge takes one of two routes past a merge queue, and reads
@@ -597,7 +600,7 @@ run_checks() {
         can_merge=false
         issues+=("review_replies_unread: could not create a temporary file for the reply check")
     else
-        replies_out=$("$SCRIPT_DIR/../check-review-replies" "$pr_num" 2>"$replies_err") || replies_rc=$?
+        replies_out=$(bash "$SCRIPT_DIR/check-review-replies.sh" "$pr_num" 2>"$replies_err") || replies_rc=$?
         case "$replies_rc" in
         0) ;;
         1)

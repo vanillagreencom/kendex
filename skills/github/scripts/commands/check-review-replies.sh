@@ -4,9 +4,12 @@
 # exists, never what it says, and a reply can change without a push, so this
 # reads the current replies on every call. Read-only: it makes GET requests
 # and GraphQL queries through the shared readers in lib/github-api.sh and
-# writes nothing. Callers: pr-merge's readiness check and orch submit-pr.md
-# § 6.1 gate 3. The stdout lines below are the protocol pr-merge reads; the
-# contract is print_usage.
+# writes nothing. A caller runs it as `github.sh check-review-replies <N>`,
+# which loads the project env and selects the token first, as orch
+# submit-pr.md's final review gate does. pr-merge's readiness check runs this
+# file directly and inherits the environment the same router set for it. The
+# stdout lines below are the protocol pr-merge reads; the contract is
+# print_usage.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,20 +26,30 @@ Rules (each fails on its own):
   untracked-claim     A thread's standing reply claims tracking and names
                       no issue (KEN-123, #123).
   unreasoned-decline  A thread's standing decline names no mechanism.
+  thread-replies      A thread holds more comments than one read returns,
+                      so its replies cannot be judged.
   suppressed-findings A review at the head lists findings in its body under
                       `Suppressed comments (N)` or `Previously missed (N)`
-                      (a markdown heading or a <details> summary), and the
-                      PR author has not answered each one.
+                      (a markdown heading or a <details> summary), and no
+                      counted reply answers each one.
 
-A thread's standing reply is its newest comment by a person (bots are
-exempt) that is `Fixed in <sha>`, `Declined: ...` or carries a track word.
-A decline opening with the word without the colon is still a decline for
+Whose words count:
+  A finding source, a review body, counts when its author is a bot or has
+  author association OWNER, MEMBER or COLLABORATOR, and is not the PR
+  author. A reply counts when its author is the PR author, whatever its
+  actor type, or has one of those associations. Logins compare without
+  case and without the [bot] suffix REST adds to an app's login. Anyone
+  else's review or reply is read as if it were not there.
+
+A thread's standing reply is its newest counted comment that is
+`Fixed in <sha>`, `Declined: ...` or carries a track word. A decline
+opening with the word without the colon is still a decline for
 unreasoned-decline. What a decline must say is reviewer conduct:
 .agents/skills/orch/references/finding-disposition.md § Decision flow.
 
-A body finding is answered by a PR-level comment from the PR author with a
-line opening `Dispositions at <sha>`, <sha> being 7 to 40 hex characters
-the current head starts with, and a line per finding opening with its
+A body finding is answered by a counted PR-level comment with a line
+opening `Dispositions at <sha>`, <sha> being 7 to 40 hex characters the
+current head starts with, and a line per finding opening with its
 `file:line` token, bare, bold or backticked, then the reply:
 
   Dispositions at 1a2b3c4:
@@ -45,12 +58,14 @@ the current head starts with, and a line per finding opening with its
 
 The reply is read by the thread grammar, so a label-only decline or a
 tracking claim naming no issue answers nothing. A comment bound to an
-earlier head answers nothing at this one.
+earlier head answers nothing at this one. The newest line naming an entry
+decides.
 
 Output, stdout:
   review-replies: pass head=<sha>
   review-replies: fail head=<sha>
-followed on fail by one line per failing rule:
+followed on fail by one line per failing rule, and for an unanswered body
+finding one line per entry:
   untracked-claim count=<n>
   unreasoned-decline count=<n>
   thread-replies state=truncated threads=<n>
@@ -58,7 +73,9 @@ followed on fail by one line per failing rule:
   suppressed-findings state=unparsed
   suppressed-findings state=mismatch declared=<n> entries=<n>
   suppressed-entry <file:line>        (one per unanswered finding)
-stderr explains each line.
+stderr explains each line. A head-bound disposition comment from an
+author who does not count adds the stderr line
+  suppressed-findings: ignored-author login=<login>
 
 Exit codes:
   0  every rule passes
@@ -75,8 +92,8 @@ case "$#:${1:-}" in
     ;;
 esac
 
-# shellcheck source=lib/github-api.sh
-source "$SCRIPT_DIR/lib/github-api.sh"
+# shellcheck source=../lib/github-api.sh
+source "$SCRIPT_DIR/../lib/github-api.sh"
 
 # The one place each refusal's text is written. KEY is the stable first
 # token, VALUE the thing acted on.
@@ -181,20 +198,49 @@ REPLY_FORMS_DEF='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|decline
     | gsub("\\b[0-9a-f]{7,40}\\b"; " ")
     | gsub("\\b[0-9]+\\b"; " ")
     | gsub("^ +| +$"; "");
+  # The two rules over one reply, composed here for every reader: a tracking
+  # claim that is no disposition and names no issue, and a decline whose
+  # reason strips to nothing.
+  def untracked_claim: tracking and (disposition | not) and (names_issue | not);
+  def unreasoned_decline: declined and (reason_left == "");
+'
+
+# WHO COUNTS, spelled once for every reader: the thread rules, the review
+# body scan and the disposition read. On a public repository an account
+# with no standing can review and reply; read as the author's, its
+# `Fixed in` would clear a failing reply, and read as a reviewer's, its
+# review body would block the merge. GitHub's author association is the
+# repository role the platform itself reports on every comment and review.
+#
+# A finding source counts when it is a bot or a repository member, and is
+# not the PR author: a review bot such as Copilot reviews with association
+# NONE, and an installed app is the only bot that can post one. A reply
+# counts when it is the PR author's, whatever its actor type, or a
+# repository member's: a lane's PR is authored by its GitHub App, which
+# GraphQL reports as a Bot with association CONTRIBUTOR, and its replies may
+# be posted under a maintainer's own login. Logins compare without case and
+# without the [bot] suffix, which REST writes on an app's login and GraphQL
+# drops. Each surface spells the actor its own way, so each has an
+# accessor and the rules read only the normalized actor.
+AUTHOR_TRUST_DEF='def login_key: ascii_downcase | sub("\\[bot\\]$"; "");
+  def rest_actor: {login: (.user.login // ""), bot: ((.user.type // "") == "Bot"), association: (.author_association // "")};
+  def graphql_actor: {login: (.author.login // ""), bot: ((.author.__typename // "") == "Bot"), association: (.authorAssociation // "")};
+  def member: .association == "OWNER" or .association == "MEMBER" or .association == "COLLABORATOR";
+  def is_pr_author($author): .login != "" and (.login | login_key) == ($author | login_key);
+  def finding_source($author): (is_pr_author($author) | not) and (.bot or member);
+  def reply_source($author): is_pr_author($author) or member;
 '
 
 # The two thread rules, over every review thread node the reader returned:
 # `truncated untracked unreasoned`. A thread's disposition is its newest
-# comment by a person that is a Fixed in <sha>/Declined: reply or carries a
-# track-word; other comments never move it. It is an untracked claim when it
-# is not such a reply and names no issue; resolving the thread does not clear
-# it, since the claimant is also the resolver. Bot comments are exempt: they
-# quote each other. GitHub's actor type names a bot, whose login carries no
-# [bot] suffix in GraphQL. A thread holding more comments than the read
-# returned cannot be judged, so it is counted as truncated and fails.
-THREAD_RULES_JQ="$REPLY_FORMS_DEF"'
-  def automatic_author: (.__typename // "User") == "Bot";
-  def replies: [.comments.nodes[] | select((.author | automatic_author) | not) | (.body // "")];
+# counted comment that is a Fixed in <sha>/Declined: reply or carries a
+# track-word; other comments never move it. Resolving the thread does not
+# clear an untracked claim, since the claimant is also the resolver. A
+# comment that does not count is skipped: a review bot quoting a reply is
+# not one. A thread holding more comments than the read returned cannot be
+# judged, so it is counted as truncated and fails.
+THREAD_RULES_JQ="$REPLY_FORMS_DEF$AUTHOR_TRUST_DEF"'
+  def replies: [.comments.nodes[] | select(graphql_actor | reply_source($author)) | (.body // "")];
   def standing: [replies[] | select(disposition or tracking)] | last // empty;
   def standing_decline: [replies[] | select(disposition or declined or tracking)] | last // empty;
   def readable: (.comments.nodes | type) == "array"
@@ -202,12 +248,8 @@ THREAD_RULES_JQ="$REPLY_FORMS_DEF"'
     and .comments.totalCount <= (.comments.nodes | length);
   if type != "array" then error("thread nodes are not an array") else . end
   | "\([.[] | select(readable | not)] | length)"
-    + " " + ([.[] | select(readable) | standing
-        | select(disposition | not)
-        | select(names_issue | not)] | length | tostring)
-    + " " + ([.[] | select(readable) | standing_decline
-        | select(declined)
-        | select(reason_left == "")] | length | tostring)'
+    + " " + ([.[] | select(readable) | standing | select(untracked_claim)] | length | tostring)
+    + " " + ([.[] | select(readable) | standing_decline | select(unreasoned_decline)] | length | tostring)'
 
 # The suppressed-finding scan and the disposition read identify a finding by
 # EXACT STRING EQUALITY between a token the scan extracted and a token the
@@ -312,13 +354,13 @@ SUPP_SCAN_DEF='
             .entries += 1 | .list += [$entry]
           else . end);
 '
-# The scan reads every submitted review at the head by anyone but the PR
-# author: `declared entries unparsed`, then one entry token per line. A
-# dismissed review no longer stands and a pending one was never submitted.
-SUPP_ROWS_JQ="$SUPP_NORMALIZE_DEF$SUPP_ENTRY_DEF$SUPP_SCAN_DEF"'
+# The scan reads every submitted review at the head from a finding source:
+# `declared entries unparsed`, then one entry token per line. A dismissed
+# review no longer stands and a pending one was never submitted.
+SUPP_ROWS_JQ="$SUPP_NORMALIZE_DEF$SUPP_ENTRY_DEF$SUPP_SCAN_DEF$AUTHOR_TRUST_DEF"'
     [ .[]
-      | select(.commit_id == $sha and .state != "DISMISSED" and .state != "PENDING"
-               and (.user.login // "") != $author)
+      | select(.commit_id == $sha and .state != "DISMISSED" and .state != "PENDING")
+      | select(rest_actor | finding_source($author))
       | (.body // "") | suppressed_scan
     ] as $rows
     | (([$rows[] | .declared] | add) // 0) as $declared
@@ -327,15 +369,16 @@ SUPP_ROWS_JQ="$SUPP_NORMALIZE_DEF$SUPP_ENTRY_DEF$SUPP_SCAN_DEF"'
     | "\($declared) \($entries) \($unparsed)\n" + ([$rows[] | .list[]] | join("\n"))'
 
 # THE DISPOSITION READ: a body finding is answered the way a thread finding
-# is. No thread carries it, so the reply is a PR comment by the AUTHOR that
-# binds this head and opens a line with the entry's own `file:line` token,
+# is. No thread carries it, so the reply is a PR comment by an author whose
+# reply counts, that binds this head and opens a line with the entry's own `file:line` token,
 # which this output prints bare and the review body prints bold or
 # backticked, followed by the reply. EVERY SPELLING IS READ and NONE is the
 # anchor: the token's equality with a scanned entry identifies the finding.
 # The reply is judged by the SHARED reply forms: a reply that is neither a
 # disposition nor a tracking claim, a tracking claim naming no issue, and a
 # decline whose reason strips to nothing all leave the entry standing. Prints
-# the count left, then one entry per line.
+# the count left followed on its line by the logins of head-bound comments
+# naming an entry whose author does not count, then one entry per line.
 #
 # THE COMMENT BINDS THE HEAD BY SAYING SO: a line opening `Dispositions at
 # <sha>`. Nothing else in it binds. A sha-shaped run asserts no commit (the
@@ -343,11 +386,8 @@ SUPP_ROWS_JQ="$SUPP_NORMALIZE_DEF$SUPP_ENTRY_DEF$SUPP_SCAN_DEF"'
 # opens with hex), yet while any of them could bind, a comment written for an
 # earlier head bound itself to this one and carried its other replies across
 # a diff no reviewer re-read. A marker cannot be written by accident.
-SUPP_DISPOSITION_JQ="$SUPP_NORMALIZE_DEF$SUPP_ENTRY_DEF$REPLY_FORMS_DEF"'
-      def unanswered($r):
-        ((($r | disposition) or ($r | tracking)) | not)
-        or ((($r | disposition) | not) and (($r | names_issue) | not))
-        or (($r | declined) and (($r | reason_left) == ""));
+SUPP_DISPOSITION_JQ="$SUPP_NORMALIZE_DEF$SUPP_ENTRY_DEF$REPLY_FORMS_DEF$AUTHOR_TRUST_DEF"'
+      def unanswered: ((disposition or tracking) | not) or untracked_claim or unreasoned_decline;
       # The bound sha is captured BEFORE the comparison, since referring to it
       # as dot inside startswith would rebind dot to the head and accept any
       # sha. THE MARKER OPENS A LINE: a marker quoted from another pull
@@ -385,24 +425,27 @@ SUPP_DISPOSITION_JQ="$SUPP_NORMALIZE_DEF$SUPP_ENTRY_DEF$REPLY_FORMS_DEF"'
         # The separator run between the token and the reply is what the author
         # wrote there: a dash, a colon, an em dash, nothing at all.
         | .r |= sub("^[^\\p{L}\\p{N}]*"; "");
+      # The answers a comment gives: the lines naming an entry, when it binds
+      # this head.
+      def answers($by_length):
+        (.body // "" | display_strip)
+        | if head_bound($sha; $floor) then split("\n")[] | line_reply($by_length) else empty end;
       ($entries | split("\n") | map(select(length > 0))) as $wanted
       | ($wanted | sort_by(-length)) as $by_length
-      | [ .[]
-          | select((.user.login // "") == $author)
-          | (.body // "" | display_strip)
-          | select(head_bound($sha; $floor))
-          | split("\n")[]
-          | line_reply($by_length)
-        ] as $said
-      # The NEWEST line naming an entry decides, as a thread takes its newest
-      # reply: an author who answers and then writes something else about the
-      # same entry has withdrawn the answer.
+      | [ .[] | select(rest_actor | reply_source($author)) | answers($by_length) ] as $said
+      | [ .[] | select(rest_actor | reply_source($author) | not)
+          | select([answers($by_length)] | length > 0) | .user.login // "" ] as $ignored
+      # The NEWEST line naming an entry decides, whatever it says. The standing
+      # reply of a thread skips a comment that is no disposition or claim, but a
+      # line naming the entry is always an answer to it, so an author who
+      # answers and then writes something else about the same entry has
+      # withdrawn the answer.
       | [ $wanted[]
           | . as $e
           | ([ $said[] | select(.entry == $e) ] | last) as $reply
-          | select($reply == null or unanswered($reply.r))
+          | select($reply == null or ($reply.r | unanswered))
         ]
-      | "\(length)\n" + join("\n")'
+      | "\([length | tostring] + ($ignored | unique) | join(" "))\n" + join("\n")'
 
 # The shortest head prefix a `Dispositions at <sha>` line may name.
 SHA_FLOOR=7
@@ -442,9 +485,9 @@ PR_AUTHOR=$(jq -r '.user.login // "" | strings' <<<"$pr_json" 2>/dev/null) || PR
   refuse "read-malformed" "$PR_NUMBER" "the pull request read named no head commit or no author"
 
 threads=$(gh_graphql_threads "$OWNER" "$NAME" "$PR_NUMBER" '
-                          comments(first: 100) { totalCount nodes { author { login __typename } body } }' 2>"$READ_ERR") ||
+                          comments(first: 100) { totalCount nodes { author { login __typename } authorAssociation body } }' 2>"$READ_ERR") ||
   refuse "read-failed" "$PR_NUMBER" "the review thread read failed: $(reader_said)"
-thread_counts=$(jq -r "$THREAD_RULES_JQ" <<<"$threads" 2>/dev/null) ||
+thread_counts=$(jq -r --arg author "$PR_AUTHOR" "$THREAD_RULES_JQ" <<<"$threads" 2>/dev/null) ||
   refuse "read-malformed" "$PR_NUMBER" "the review thread read could not be judged"
 read -r truncated untracked unreasoned <<<"$thread_counts"
 case "$truncated:$untracked:$unreasoned" in
@@ -463,6 +506,7 @@ case "$supp_declared:$supp_entries:$supp_unparsed" in
 esac
 
 supp_state=ok
+supp_ignored=""
 if [ "$supp_unparsed" != 0 ]; then
   supp_state=unparsed
 elif [ "$supp_declared" != "$supp_entries" ]; then
@@ -472,7 +516,7 @@ elif [ "$supp_declared" != 0 ]; then
   supp_disp=$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" --arg floor "$SHA_FLOOR" \
     --arg entries "$supp_list" "$SUPP_DISPOSITION_JQ" <<<"$comments" 2>/dev/null) ||
     refuse "read-malformed" "$PR_NUMBER" "the disposition comments could not be read"
-  supp_entries="${supp_disp%%$'\n'*}"
+  read -r supp_entries supp_ignored <<<"${supp_disp%%$'\n'*}"
   case "$supp_entries" in
     '' | *[!0-9]*) refuse "read-malformed" "$PR_NUMBER" "the disposition read produced no count" ;;
   esac
@@ -508,7 +552,13 @@ case "$supp_state" in
       while IFS= read -r entry; do
         [ -z "$entry" ] || lines+=("suppressed-entry $entry")
       done <<<"$supp_list"
-      echo "suppressed-findings: $supp_entries finding(s) in a review body at $HEAD_SHA carry no thread and no head-bound answer; reply in a PR comment opening 'Dispositions at ${HEAD_SHA:0:7}'" >&2
+      echo "suppressed-findings: $supp_entries finding(s) in a review body at $HEAD_SHA carry no thread and no counted head-bound answer; reply in a PR comment opening 'Dispositions at ${HEAD_SHA:0:7}'" >&2
+      # A login is not split by glob: an app's `[bot]` suffix is a bracket
+      # expression.
+      read -r -a ignored_logins <<<"$supp_ignored"
+      for login in ${ignored_logins[@]+"${ignored_logins[@]}"}; do
+        printf 'suppressed-findings: ignored-author login=%s\n  its head-bound disposition comment does not count: the author is neither the PR author (%s) nor an OWNER, MEMBER or COLLABORATOR\n' "$login" "$PR_AUTHOR" >&2
+      done
     fi
     ;;
   *)

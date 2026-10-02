@@ -59,7 +59,7 @@ a silent failure names gh and its exit code|state-err:silent4|check|0|merge=fals
 # GitHub's approval cannot read what a review reply says, so the readiness
 # check runs check-review-replies live. Its must-fail control is a copy whose
 # call to it is cut, so the reply check never runs.
-mutant_copy no-replies '        replies_out=$("$SCRIPT_DIR/../check-review-replies" "$pr_num" 2>"$replies_err") || replies_rc=$?' '        replies_out=""' >/dev/null
+mutant_copy no-replies '        replies_out=$(bash "$SCRIPT_DIR/check-review-replies.sh" "$pr_num" 2>"$replies_err") || replies_rc=$?' '        replies_out=""' >/dev/null
 
 run_table "the merge path" "\
 a failed check without --auto is blocked with the auto hint|checks:failed|immediate|1|-|{blocked};{permanent};✗ ci_failed: Lint (FAILURE);{hint-auto}|calls=$CHECK auth=<unset>

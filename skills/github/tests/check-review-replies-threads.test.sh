@@ -3,11 +3,11 @@
 # because one jq program decides them and the fixtures that separate them are
 # the same fixtures. The program is read out of the script, not restated.
 #
-# unreasoned-decline counts a thread whose newest reply by a person is a
+# unreasoned-decline counts a thread whose newest counted reply is a
 # decline that names no mechanism: an empty reason, or nothing but
 # non-reason tokens and filler.
 #
-# untracked-claim counts a thread whose newest reply by a person THAT IS A
+# untracked-claim counts a thread whose newest counted reply THAT IS A
 # DISPOSITION OR CARRIES A TRACK-WORD claims tracking and names no issue.
 # Replies of any other kind never move it, so a thread ending in ordinary
 # conversation still counts: `a reply that is neither claim nor disposition
@@ -34,14 +34,15 @@
 # through, so the catch belongs to that piece and not to the fixture.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CHECKER="$SCRIPT_DIR/../scripts/check-review-replies"
+CHECKER="$SCRIPT_DIR/../scripts/commands/check-review-replies.sh"
 PASS=0 FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ok    $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  FAIL  $1"; echo "        got: $2"; }
 
 # The script's jq programs are plain assignments from REPLY_FORMS_DEF up to
 # SHA_FLOOR; evaluated here, they are the shipped text, THREAD_RULES_JQ
-# carrying the reply forms ahead of its reduction.
+# carrying the reply forms and the author-trust rules ahead of its
+# reduction.
 eval "$(awk '/^REPLY_FORMS_DEF=/ { f = 1 } /^SHA_FLOOR=/ { f = 0 } f' "$CHECKER")"
 prog="${THREAD_RULES_JQ:-}"
 case "$prog" in
@@ -52,8 +53,11 @@ esac
 # ONE spelling of the input: the thread nodes the reader returns. Every probe
 # below runs a variant of the program over the same shape, so the shape is
 # written here and nowhere else.
+# The PR author is `author`, the login human() writes, so its replies count;
+# bot() writes a review bot with no repository role, whose never do. Whose
+# replies count is check-review-replies.test.sh's.
 page_with() { # page_with PROGRAM THREAD_JSON… -> "truncated untracked unreasoned"
-  jq -r "$1" <<<"[$2]"
+  jq -r --arg author author "$1" <<<"[$2]"
 }
 page() { page_with "$prog" "$1"; }
 

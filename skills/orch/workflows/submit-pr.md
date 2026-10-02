@@ -385,10 +385,10 @@ Re-run the gate-3 command once. If threads remain and the external-round cap is 
 Then read what the replies say, live: an author can edit a reply without a push, and neither approval nor resolution reads its content.
 
 ```bash
-.agents/skills/github/scripts/check-review-replies [PR_NUMBER]
+env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" check-review-replies [PR_NUMBER]
 ```
 
-Exit `1` prints one line per failing rule. Rewrite each reply it counts as one of the three dispositions in [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow), answer every `suppressed-entry` in one PR comment whose first line is `Dispositions at [HEAD_SHA]` (`check-review-replies --help`), and run the command once more; a second exit `1` records `review-replies-unmet`. Exit `2` reached no verdict: report its first stderr line, and the gate is unmet.
+Exit `1` prints one line per failing rule. Rewrite each reply it counts as one of the three dispositions in [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow), answer every `suppressed-entry` in one PR comment whose first line is `Dispositions at [HEAD_SHA]` (`check-review-replies --help`), and run the command once more. A reply or that comment counts only from the PR author or an `OWNER`, `MEMBER` or `COLLABORATOR` of the repository: post it under one of those identities, and an `ignored-author` stderr line names a comment that did not count; a second exit `1` records `review-replies-unmet`. Exit `2` reached no verdict: report its first stderr line, and the gate is unmet.
 
 **Gate 4** — verify the recorded § 4 result, under the mode the resolution above printed.
 

@@ -94,6 +94,8 @@ GITHUB="$REPO_ROOT/skills/github/scripts/github.sh"
 
 # shellcheck source=lib/check-stub.sh
 source "$TEST_DIR/lib/check-stub.sh"
+# shellcheck source=lib/mutant-copy.sh
+source "$TEST_DIR/lib/mutant-copy.sh"
 # A child that resolves symlinks prints the sandbox's physical path, under
 # /private on macOS, so err_lines maps that spelling to <tmp> as well.
 TMPDIR_PHYSICAL="$(cd "$TMPDIR" && pwd -P)"
@@ -379,27 +381,13 @@ run() {
   printf 'rc=%s out=%s err=%s calls=%s auth=%s' "$rc" "$(stdout_text "$1")" "$(err_lines)" "$(calls)" "$(auth)"
 }
 
-# A must-fail control's subject: a copy of the scripts tree under
-# $TMPDIR/NAME with one whole line of FILE (a path under scripts/, default
-# commands/pr-merge.sh) replaced by TO, the rest kept. Prints the copy's
-# pr-merge.sh.
+# A must-fail control's subject: lib/mutant-copy.sh's copy under
+# $TMPDIR/NAME, one whole line of FILE (a path under scripts/, default
+# commands/pr-merge.sh) replaced by TO. Prints the copy's pr-merge.sh, the
+# command every control runs whichever file it edits.
 mutant_copy() { # NAME FROM TO [FILE]
-  local dest="$TMPDIR/$1" script
-  mkdir -p "$dest/skills/github"
-  cp -R "$REPO_ROOT/skills/github/scripts" "$dest/skills/github/scripts"
-  script="$dest/skills/github/scripts/${4:-commands/pr-merge.sh}"
-  [[ "$(grep -cxF -- "$2" "$script")" == 1 ]] || {
-    echo "FIXTURE: the $1 line was not unique in $script" >&2
-    exit 2
-  }
-  F="$2" T="$3" awk 'BEGIN { f = ENVIRON["F"]; t = ENVIRON["T"] } $0 == f { $0 = t } { print }' "$script" >"$script.edit"
-  cat -- "$script.edit" >"$script"
-  rm -f -- "${script:?}.edit"
-  ! grep -qxF -- "$2" "$script" || {
-    echo "FIXTURE: the $1 edit matched nothing in $script" >&2
-    exit 2
-  }
-  printf '%s\n' "$dest/skills/github/scripts/commands/pr-merge.sh"
+  mutant_copy_edit "$TMPDIR/$1" "$2" "$3" "${4:-commands/pr-merge.sh}" >/dev/null
+  printf '%s\n' "$TMPDIR/$1/skills/github/scripts/commands/pr-merge.sh"
 }
 
 # --- the err macros ---------------------------------------------------------------

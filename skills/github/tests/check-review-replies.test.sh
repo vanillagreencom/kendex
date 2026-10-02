@@ -3,12 +3,13 @@
 # lines and exit status, the suppressed-finding scan of review bodies at the
 # head, the head-bound disposition comments that answer it, the live read a
 # reply edit changes without a push, the read failures that reach no verdict,
-# and a copy of the github skill with no review-gate beside it. The thread
-# grammar's own cases and probes are check-review-replies-threads.test.sh's.
+# whose words count, the router's project credentials, and a copy of the
+# github skill with no review-gate beside it. The thread grammar's own cases
+# and probes are check-review-replies-threads.test.sh's.
 #
 # Each must-fail control runs a copy of the scripts tree with one whole line
-# of check-review-replies replaced, the rest kept, and the case that line's
-# rule decides flips.
+# of check-review-replies.sh replaced, the rest kept (lib/mutant-copy.sh),
+# and the case that line's rule decides flips.
 # shellcheck disable=SC2034 # the row tables read their fixtures through eval
 set -euo pipefail
 
@@ -19,7 +20,8 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
-CHECKER="$REPO_ROOT/skills/github/scripts/check-review-replies"
+CHECKER="$REPO_ROOT/skills/github/scripts/commands/check-review-replies.sh"
+GITHUB_SH="$REPO_ROOT/skills/github/scripts/github.sh"
 
 TMP_ROOT="$(mktemp -d)" || { echo "check-review-replies.test: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "check-review-replies.test: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
@@ -48,23 +50,50 @@ git -C "$TMP_ROOT/repo" config maintenance.auto false
 # shellcheck source=lib/gh-stub.sh
 . "$TEST_DIR/lib/gh-stub.sh"
 GH_STUB_DIR="$TMP_ROOT/gh-stub" gh_stub_install "$TMP_ROOT/bin"
+# shellcheck source=lib/mutant-copy.sh
+. "$TEST_DIR/lib/mutant-copy.sh"
 
 HEAD=1a2b3c4d5e6f7a8b9c0d1a2b3c4d5e6f7a8b9c0d
 OTHER=9f8e7d6c5b4a39281706f5e4d3c2b1a098765432
-AUTHOR=pr-author
 PR_PATH=api-repos/owner/repo/pulls/7
 REVIEWS_PATH='api-repos/owner/repo/pulls/7/reviews?per_page=100'
 COMMENTS_PATH='api-repos/owner/repo/issues/7/comments?per_page=100'
 
 # --- the world ---------------------------------------------------------------
-review() { # LOGIN STATE COMMIT BODY
-  jq -cn --arg l "$1" --arg s "$2" --arg c "$3" --arg b "$4" '{user: {login: $l}, state: $s, commit_id: $c, body: $b}'
+# The accounts a world holds, as `login type association` the way REST
+# spells them; the live shapes are the lanes app authoring a PR (Bot,
+# CONTRIBUTOR) and Copilot reviewing it (Bot, NONE). GraphQL writes a bot's
+# login without the [bot] suffix.
+account() { # NAME
+  case "$1" in
+    author) printf 'pr-author User NONE' ;;
+    app) printf 'lanes-app[bot] Bot CONTRIBUTOR' ;;
+    copilot) printf 'copilot-pull-request-reviewer[bot] Bot NONE' ;;
+    maintainer) printf 'maintainer User MEMBER' ;;
+    stranger) printf 'stranger User NONE' ;;
+    *) echo "UNKNOWN-ACCOUNT: $1" >&2; exit 2 ;;
+  esac
 }
-comment() { # LOGIN BODY
-  jq -cn --arg l "$1" --arg b "$2" '{user: {login: $l}, body: $b}'
+rest_actor() { # ACCOUNT -> the user and author_association fields
+  local login type assoc
+  read -r login type assoc <<<"$(account "$1")"
+  jq -cn --arg l "$login" --arg t "$type" --arg a "$assoc" '{user: {login: $l, type: $t}, author_association: $a}'
 }
-thread_node() { # LOGIN TYPENAME BODY
-  jq -cn --arg l "$1" --arg t "$2" --arg b "$3" '{comments: {totalCount: 1, nodes: [{author: {login: $l, __typename: $t}, body: $b}]}}'
+review() { # ACCOUNT STATE COMMIT BODY
+  jq -cn --argjson u "$(rest_actor "$1")" --arg s "$2" --arg c "$3" --arg b "$4" '$u + {state: $s, commit_id: $c, body: $b}'
+}
+comment() { # ACCOUNT BODY
+  jq -cn --argjson u "$(rest_actor "$1")" --arg b "$2" '$u + {body: $b}'
+}
+thread_node() { # ACCOUNT BODY [ACCOUNT BODY]... — one thread, oldest comment first
+  local nodes="" login type assoc
+  while [ "$#" -gt 0 ]; do
+    read -r login type assoc <<<"$(account "$1")"
+    nodes="$nodes${nodes:+,}$(jq -cn --arg l "${login%\[bot\]}" --arg t "$type" --arg a "$assoc" --arg b "$2" \
+      '{author: {login: $l, __typename: $t}, authorAssociation: $a, body: $b}')"
+    shift 2
+  done
+  printf '{"comments":{"totalCount":%s,"nodes":[%s]}}' "$(jq 'length' <<<"[$nodes]")" "$nodes"
 }
 threads_set() { # NODE_JSON...
   local IFS=,
@@ -73,23 +102,25 @@ threads_set() { # NODE_JSON...
 reviews_set() { local IFS=,; gh_stub_answer "$REVIEWS_PATH" "[$*]"; }
 comments_set() { local IFS=,; gh_stub_answer "$COMMENTS_PATH" "[$*]"; }
 
-# A clean pull request: head HEAD by AUTHOR, no thread, no review, no
-# comment. A case restages what it is about.
-world() {
+# A clean pull request: head HEAD by ACCOUNT (default author), no thread,
+# no review, no comment. A case restages what it is about.
+world() { # [ACCOUNT]
   gh_stub_reset
-  gh_stub_answer "$PR_PATH" "{\"user\":{\"login\":\"$AUTHOR\"},\"head\":{\"sha\":\"$HEAD\"}}"
+  gh_stub_answer "$PR_PATH" "$(jq -cn --argjson u "$(rest_actor "${1:-author}")" --arg h "$HEAD" '{user: $u.user, head: {sha: $h}}')"
   threads_set
   reviews_set
   comments_set
 }
 
-# SUBJECT is the script under test, so a control can point at a mutated copy.
-# The child's environment is explicit: no token and no GH_REPO from the
-# developer's shell decides which repository the fake answers for.
-run() { # [SUBJECT]
-  local subject="${1:-$CHECKER}" rc=0
+# SUBJECT is the command under test, so a control can point at a mutated
+# copy and a case at the router; the PR number follows it. The child's
+# environment is explicit: no token and no GH_REPO from the developer's shell
+# decides which repository the fake answers for.
+run() { # [SUBJECT...]
+  local rc=0
+  [ "$#" -gt 0 ] || set -- "$CHECKER"
   (cd "$TMP_ROOT/repo" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u GH_CONFIG_DIR -u KENDEX_ENV_FILE \
-    PATH="$TMP_ROOT/bin:$PATH" "$subject" 7 >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr") || rc=$?
+    PATH="$TMP_ROOT/bin:$PATH" "$@" 7 >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr") || rc=$?
   # `rc=<n> <stdout lines joined by ` | `>`, the head written as {head} so a
   # row pins which head the verdict was for without spelling the sha.
   printf 'rc=%s %s' "$rc" "$(sed "s/$HEAD/{head}/g" "$TMP_ROOT/stdout" | paste -s -d '|' - | sed 's/|/ | /g')"
@@ -98,27 +129,6 @@ first_err() { sed -n 1p "$TMP_ROOT/stderr"; }
 
 PASSED='rc=0 review-replies: pass head={head}'
 FAILED='rc=1 review-replies: fail head={head}'
-
-# A copy of the scripts tree under $TMP_ROOT/NAME with one whole line of
-# check-review-replies replaced by TO. Prints the copy's script.
-mutant_copy() { # NAME FROM TO
-  local dest="$TMP_ROOT/$1" script
-  mkdir -p "$dest/skills/github"
-  cp -R "$REPO_ROOT/skills/github/scripts" "$dest/skills/github/scripts"
-  script="$dest/skills/github/scripts/check-review-replies"
-  [[ "$(grep -cxF -- "$2" "$script")" == 1 ]] || {
-    echo "FIXTURE: the $1 line was not unique in $script" >&2
-    exit 2
-  }
-  F="$2" T="$3" awk 'BEGIN { f = ENVIRON["F"]; t = ENVIRON["T"] } $0 == f { $0 = t } { print }' "$script" >"$script.edit"
-  cat -- "$script.edit" >"$script"
-  rm -f -- "${script:?}.edit"
-  ! grep -qxF -- "$2" "$script" || {
-    echo "FIXTURE: the $1 edit matched nothing in $script" >&2
-    exit 2
-  }
-  printf '%s\n' "$script"
-}
 
 # --- the review bodies -----------------------------------------------------------
 # Both bodies are live Copilot shapes. supp_body is the heading-titled one,
@@ -214,27 +224,34 @@ the same section under another title passes|v2-other-title|$PASSED
 ROWS
 
 echo "=== which reviews the scan reads ==="
-# The head's submitted reviews by anyone but the author. A review of an
-# earlier head is not this head's, a dismissed one no longer stands, a
-# pending one was never submitted, and the author's own body is not a
-# reviewer's finding.
-while IFS='|' read -r label login state commit want; do
+# A row is `label|pr author|reviewer|state|commit|body|want`. The scan reads
+# the head's submitted reviews by a finding source: a bot or a repository
+# member who is not the PR author. A review of an earlier head is not this
+# head's, a dismissed one no longer stands, a pending one was never
+# submitted, the author's own body is not a reviewer's finding, and an
+# account with no standing on the repository blocks nothing.
+while IFS='|' read -r label author reviewer state commit body want; do
   [ -n "$label" ] || continue
-  world
-  reviews_set "$(review "$(eval "printf '%s' \"$login\"")" "$state" "$(eval "printf '%s' \"$commit\"")" "$(body_of heading)")"
+  world "$author"
+  reviews_set "$(review "$reviewer" "$state" "$(eval "printf '%s' \"$commit\"")" "$(body_of "$body")")"
   assert_eq "$(run)" "$(eval "printf '%s' \"$want\"")" "$label"
 done <<'ROWS'
-an APPROVED review at head carrying the block still fails|copilot|APPROVED|$HEAD|$BOTH_STANDING
-a review of an earlier head is not read|copilot|COMMENTED|$OTHER|$PASSED
-a dismissed review at head is not read|copilot|DISMISSED|$HEAD|$PASSED
-a pending review at head is not read|copilot|PENDING|$HEAD|$PASSED
-the author's own review body is not read|$AUTHOR|COMMENTED|$HEAD|$PASSED
+an APPROVED review at head carrying the block still fails|author|copilot|APPROVED|$HEAD|heading|$BOTH_STANDING
+a review of an earlier head is not read|author|copilot|COMMENTED|$OTHER|heading|$PASSED
+a dismissed review at head is not read|author|copilot|DISMISSED|$HEAD|heading|$PASSED
+a pending review at head is not read|author|copilot|PENDING|$HEAD|heading|$PASSED
+the author's own review body is not read|author|author|COMMENTED|$HEAD|heading|$PASSED
+an app author's own review body is not read|app|app|COMMENTED|$HEAD|heading|$PASSED
+a maintainer's review body is read|author|maintainer|COMMENTED|$HEAD|heading|$BOTH_STANDING
+a NONE-association reviewer's block is not read|author|stranger|COMMENTED|$HEAD|heading|$PASSED
+a NONE-association reviewer's unparsed section leaves the verdict at pass|author|stranger|COMMENTED|$HEAD|no-count-prose|$PASSED
 ROWS
 
 echo "=== the head-bound disposition comments ==="
-# A row is `label|body|login|bound|reply|want`: the review body, then one PR
-# comment by LOGIN opening `Dispositions at BOUND` over the reply lines
-# (`\n` between them).
+# A row is `label|body|pr author|commenter|bound|reply|want`: the review
+# body, then one PR comment by the commenter opening `Dispositions at BOUND`
+# over the reply lines (`\n` between them). A reply counts from the PR
+# author, an app author included, or a repository member.
 SUPP_REASON='Declined: the generator draws its name from the row set, so a collision is unreachable.'
 SUPP_SPACED='docs/release notes.md:12'
 SUPP_SHORT='src/lane.ts:1'
@@ -258,30 +275,43 @@ reply_body_of() {
 }
 H7="${HEAD:0:7}"
 O7="${OTHER:0:7}"
-while IFS='|' read -r label body login bound reply want; do
+while IFS='|' read -r label body author commenter bound reply want; do
   [ -n "$label" ] || continue
-  world
+  world "$author"
   at_head "$(reply_body_of "$body")"
-  comments_set "$(comment "$(eval "printf '%s' \"$login\"")" "$(eval "printf 'Dispositions at %s:\n%b' \"$bound\" \"$reply\"")")"
+  comments_set "$(comment "$commenter" "$(eval "printf 'Dispositions at %s:\n%b' \"$bound\" \"$reply\"")")"
   assert_eq "$(run)" "$(eval "printf '%s' \"$want\"")" "$label"
 done <<'ROWS'
-a bound reasoned decline and a tracked entry clear the block|heading|$AUTHOR|$H7|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$PASSED
-entries named bare, as this output prints them, clear the block|heading|$AUTHOR|$H7|$SUPP_FIRST - $SUPP_REASON\n$SUPP_SECOND - Tracked: KEN-1400|$PASSED
-entries backticked, as the newer body prints them, clear the block|v2|$AUTHOR|$H7|\`$SUPP_FIRST\` - $SUPP_REASON\n\`$SUPP_SECOND\` - Tracked: KEN-1400|$PASSED
-entries carrying the body's zero-width spaces clear the block|v2|$AUTHOR|$H7|\`$(supp_zwsp "$SUPP_FIRST")\` - $SUPP_REASON\n\`$(supp_zwsp "$SUPP_SECOND")\` - Tracked: KEN-1400|$PASSED
-the full head sha binds as its prefix does|heading|$AUTHOR|$HEAD|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$PASSED
-a comment naming the head still answers a Fixed-in entry|heading|$AUTHOR|$H7|**$SUPP_FIRST** - Fixed in $HEAD\n**$SUPP_SECOND** - $SUPP_REASON|$PASSED
-a comment tied to the head only by its own Fixed-in sha answers nothing|heading|$AUTHOR|$O7|**$SUPP_FIRST** - Fixed in $HEAD\n**$SUPP_SECOND** - $SUPP_REASON|$BOTH_STANDING
-a label-only decline answers nothing|heading|$AUTHOR|$H7|**$SUPP_FIRST** - Declined: out of scope\n**$SUPP_SECOND** - Declined: pre-existing|$BOTH_STANDING
-a tracking claim naming no issue answers nothing|heading|$AUTHOR|$H7|**$SUPP_FIRST** - Tracking this separately.\n**$SUPP_SECOND** - Tracking this separately.|$BOTH_STANDING
-a reply bound to another head answers nothing|heading|$AUTHOR|$O7|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$BOTH_STANDING
-a reply by another login answers nothing|heading|other-user|$H7|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$BOTH_STANDING
-an answered entry leaves the count and the unanswered one stands|heading|$AUTHOR|$H7|**$SUPP_FIRST** - $SUPP_REASON|$SECOND_STANDING
-the newest line naming an entry decides|heading|$AUTHOR|$H7|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400\n**$SUPP_FIRST** - Declined: frozen|$FIRST_STANDING
-a bare entry whose path carries a space is answered|spaced|$AUTHOR|$H7|$SUPP_SPACED - $SUPP_REASON|$PASSED
-a shorter entry does not claim a longer entry's line|short-long|$AUTHOR|$H7|$SUPP_LONGER - Tracked: KEN-1400|$FAILED | suppressed-findings count=1 | suppressed-entry $SUPP_SHORT
-a line names one entry, the longest it opens with|stem|$AUTHOR|$H7|$SUPP_EXTENDS - Tracked: KEN-1400|$FAILED | suppressed-findings count=1 | suppressed-entry $SUPP_STEM
+a bound reasoned decline and a tracked entry clear the block|heading|author|author|$H7|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$PASSED
+entries named bare, as this output prints them, clear the block|heading|author|author|$H7|$SUPP_FIRST - $SUPP_REASON\n$SUPP_SECOND - Tracked: KEN-1400|$PASSED
+entries backticked, as the newer body prints them, clear the block|v2|author|author|$H7|\`$SUPP_FIRST\` - $SUPP_REASON\n\`$SUPP_SECOND\` - Tracked: KEN-1400|$PASSED
+entries carrying the body's zero-width spaces clear the block|v2|author|author|$H7|\`$(supp_zwsp "$SUPP_FIRST")\` - $SUPP_REASON\n\`$(supp_zwsp "$SUPP_SECOND")\` - Tracked: KEN-1400|$PASSED
+the full head sha binds as its prefix does|heading|author|author|$HEAD|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$PASSED
+a comment naming the head still answers a Fixed-in entry|heading|author|author|$H7|**$SUPP_FIRST** - Fixed in $HEAD\n**$SUPP_SECOND** - $SUPP_REASON|$PASSED
+a comment tied to the head only by its own Fixed-in sha answers nothing|heading|author|author|$O7|**$SUPP_FIRST** - Fixed in $HEAD\n**$SUPP_SECOND** - $SUPP_REASON|$BOTH_STANDING
+a label-only decline answers nothing|heading|author|author|$H7|**$SUPP_FIRST** - Declined: out of scope\n**$SUPP_SECOND** - Declined: pre-existing|$BOTH_STANDING
+a tracking claim naming no issue answers nothing|heading|author|author|$H7|**$SUPP_FIRST** - Tracking this separately.\n**$SUPP_SECOND** - Tracking this separately.|$BOTH_STANDING
+a reply bound to another head answers nothing|heading|author|author|$O7|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$BOTH_STANDING
+a reply by a NONE-association login answers nothing|heading|author|stranger|$H7|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$BOTH_STANDING
+an answered entry leaves the count and the unanswered one stands|heading|author|author|$H7|**$SUPP_FIRST** - $SUPP_REASON|$SECOND_STANDING
+the newest line naming an entry decides|heading|author|author|$H7|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400\n**$SUPP_FIRST** - Declined: frozen|$FIRST_STANDING
+a bare entry whose path carries a space is answered|spaced|author|author|$H7|$SUPP_SPACED - $SUPP_REASON|$PASSED
+a shorter entry does not claim a longer entry's line|short-long|author|author|$H7|$SUPP_LONGER - Tracked: KEN-1400|$FAILED | suppressed-findings count=1 | suppressed-entry $SUPP_SHORT
+a line names one entry, the longest it opens with|stem|author|author|$H7|$SUPP_EXTENDS - Tracked: KEN-1400|$FAILED | suppressed-findings count=1 | suppressed-entry $SUPP_STEM
+a maintainer's comment answers for the author|heading|author|maintainer|$H7|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$PASSED
+an app author's own comment answers|heading|app|app|$H7|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$PASSED
 ROWS
+
+# An answer whose author does not count is named, so the author can see why
+# it answered nothing. An app login carries a bracket expression.
+world
+at_head "$(body_of heading)"
+comments_set "$(comment stranger "$(printf 'Dispositions at %s:\n**%s** - %s' "$H7" "$SUPP_FIRST" "$SUPP_REASON")")" \
+  "$(comment copilot "$(printf 'Dispositions at %s:\n**%s** - %s' "$H7" "$SUPP_SECOND" "$SUPP_REASON")")"
+run >/dev/null
+assert_eq "$(grep '^suppressed-findings: ignored-author ' "$TMP_ROOT/stderr" | paste -s -d '|' -)" \
+  'suppressed-findings: ignored-author login=copilot-pull-request-reviewer[bot]|suppressed-findings: ignored-author login=stranger' \
+  "each head-bound answer by an author who does not count is named on stderr"
 
 # The marker opens a line, and nothing else binds. Each body below carries
 # the head prefix somewhere other than a `Dispositions at` line opening.
@@ -290,7 +320,7 @@ while IFS='|' read -r label body reply want; do
   [ -n "$label" ] || continue
   world
   at_head "$(eval "$body")"
-  comments_set "$(comment "$AUTHOR" "$(eval "printf '%b' \"$reply\"")")"
+  comments_set "$(comment author "$(eval "printf '%b' \"$reply\"")")"
   assert_eq "$(run)" "$(eval "printf '%s' \"$want\"")" "$label"
 done <<'ROWS'
 a head prefix in a path with no marker binds nothing|one_entry "$SUPP_HEXPATH"|Dispositions:\n$SUPP_HEXPATH - $SUPP_REASON|$FAILED | suppressed-findings count=1 | suppressed-entry $SUPP_HEXPATH
@@ -299,22 +329,30 @@ a comment marked for an older head answers nothing at this one|body_of heading|D
 ROWS
 
 echo "=== the thread rules, wired to the verdict ==="
-while IFS='|' read -r label node want; do
+# A row is `label|pr author|thread|want`. A reply counts from the PR author,
+# whatever its actor type, or from a repository member; nobody else moves a
+# thread's standing reply.
+while IFS='|' read -r label author node want; do
   [ -n "$label" ] || continue
-  world
+  world "$author"
   threads_set "$(eval "$node")"
   assert_eq "$(run)" "$(eval "printf '%s' \"$want\"")" "$label"
 done <<'ROWS'
-a reasoned decline and a tracked reply pass|thread_node "$AUTHOR" User 'Declined: the caller rejects the empty case first.'|$PASSED
-a tracking claim naming no issue fails|thread_node "$AUTHOR" User 'Out of scope, tracked.'|$FAILED | untracked-claim count=1
-a decline naming no mechanism fails|thread_node "$AUTHOR" User 'Declined: frozen'|$FAILED | unreasoned-decline count=1
-a bot's label-only decline is exempt|thread_node copilot Bot 'Declined: frozen'|$PASSED
-a thread holding more comments than one read returns fails|jq -cn '{comments: {totalCount: 101, nodes: [{author: {login: "pr-author", __typename: "User"}, body: "Tracked: KEN-1"}]}}'|$FAILED | thread-replies state=truncated threads=1
+a reasoned decline and a tracked reply pass|author|thread_node author 'Declined: the caller rejects the empty case first.'|$PASSED
+a tracking claim naming no issue fails|author|thread_node author 'Out of scope, tracked.'|$FAILED | untracked-claim count=1
+a decline naming no mechanism fails|author|thread_node author 'Declined: frozen'|$FAILED | unreasoned-decline count=1
+a review bot's label-only decline is exempt|author|thread_node copilot 'Declined: frozen'|$PASSED
+an app author's label-only decline fails|app|thread_node app 'Declined: frozen'|$FAILED | unreasoned-decline count=1
+an app author's tracking claim naming no issue fails|app|thread_node app 'Tracked separately'|$FAILED | untracked-claim count=1
+a NONE-association Fixed in does not replace the author's untracked claim|author|thread_node author 'Out of scope, tracked.' stranger 'Fixed in 1a2b3c4'|$FAILED | untracked-claim count=1
+a NONE-association tracking claim raises nothing|author|thread_node stranger 'Tracking this separately.'|$PASSED
+a maintainer's reasoned decline replaces the author's untracked claim|author|thread_node author 'Out of scope, tracked.' maintainer 'Declined: the caller rejects the empty case first.'|$PASSED
+a thread holding more comments than one read returns fails|author|jq -cn '{comments: {totalCount: 101, nodes: [{author: {login: "pr-author", __typename: "User"}, body: "Tracked: KEN-1"}]}}'|$FAILED | thread-replies state=truncated threads=1
 ROWS
 
 # Every failing rule reports, each on its own line, in a fixed order.
 world
-threads_set "$(thread_node "$AUTHOR" User 'Out of scope, tracked.')" "$(thread_node "$AUTHOR" User 'Declined: frozen')"
+threads_set "$(thread_node author 'Out of scope, tracked.')" "$(thread_node author 'Declined: frozen')"
 at_head "$(body_of heading)"
 assert_eq "$(run)" "$FAILED | untracked-claim count=1 | unreasoned-decline count=1 | suppressed-findings count=2 | suppressed-entry $SUPP_FIRST | suppressed-entry $SUPP_SECOND" \
   "every failing rule reports, the head named on the first line"
@@ -323,13 +361,13 @@ assert_eq "$(sed -n 1p "$TMP_ROOT/stdout")" "review-replies: fail head=$HEAD" "t
 echo "=== a live read: a reply edit without a push changes the verdict ==="
 # The same head throughout; only what the replies say changes between reads.
 world
-threads_set "$(thread_node "$AUTHOR" User 'Declined: frozen')"
+threads_set "$(thread_node author 'Declined: frozen')"
 assert_eq "$(run)" "$FAILED | unreasoned-decline count=1" "the label-only decline fails at this head"
-threads_set "$(thread_node "$AUTHOR" User 'Declined: the caller rejects the empty case first.')"
+threads_set "$(thread_node author 'Declined: the caller rejects the empty case first.')"
 assert_eq "$(run)" "$PASSED" "the edited reply passes at the same head"
 at_head "$(body_of heading)"
 assert_eq "$(run)" "$BOTH_STANDING" "a review body's findings fail at the same head"
-comments_set "$(comment "$AUTHOR" "$(printf 'Dispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400' "$H7" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"
+comments_set "$(comment author "$(printf 'Dispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400' "$H7" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"
 assert_eq "$(run)" "$PASSED" "an author comment added without a push answers them"
 
 echo "=== reads that reach no verdict ==="
@@ -371,27 +409,55 @@ echo "=== without review-gate ==="
 mkdir -p "$TMP_ROOT/alone/skills"
 cp -R "$REPO_ROOT/skills/github" "$TMP_ROOT/alone/skills/github"
 world
-threads_set "$(thread_node "$AUTHOR" User 'Declined: frozen')"
-assert_eq "$(run "$TMP_ROOT/alone/skills/github/scripts/check-review-replies")" "$FAILED | unreasoned-decline count=1" \
+threads_set "$(thread_node author 'Declined: frozen')"
+assert_eq "$(run "$TMP_ROOT/alone/skills/github/scripts/commands/check-review-replies.sh")" "$FAILED | unreasoned-decline count=1" \
   "a copy of the github skill with no review-gate beside it judges the replies"
+
+echo "=== through the router, with project credentials and no saved gh login ==="
+# A caller runs github.sh check-review-replies, which loads the project env
+# and selects its token before the first read. This gh answers only the
+# project's bot token, as a host with no saved login does.
+mkdir -p "$TMP_ROOT/authbin" "$TMP_ROOT/project"
+git -C "$TMP_ROOT/project" init -q
+git -C "$TMP_ROOT/project" config gc.auto 0
+git -C "$TMP_ROOT/project" config maintenance.auto false
+printf 'GH_BOT_TOKEN=ghs_PROJECTBOT\n' >"$TMP_ROOT/project/.env.local"
+printf '#!/usr/bin/env bash\n[ "${GH_TOKEN:-}" = ghs_PROJECTBOT ] || { echo "To get started with GitHub CLI, please run:  gh auth login" >&2; exit 4; }\nexec %q "$@"\n' \
+  "$TMP_ROOT/bin/gh" >"$TMP_ROOT/authbin/gh"
+chmod +x "$TMP_ROOT/authbin/gh"
+routed() { # SUBJECT... — run in a project whose only credential is its .env.local
+  local rc=0
+  (cd "$TMP_ROOT/project" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u GH_CONFIG_DIR -u KENDEX_ENV_FILE \
+    PATH="$TMP_ROOT/authbin:$PATH" "$@" 7 >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr") || rc=$?
+  printf 'rc=%s %s' "$rc" "$(sed "s/$HEAD/{head}/g" "$TMP_ROOT/stdout" | paste -s -d '|' - | sed 's/|/ | /g')"
+}
+world
+threads_set "$(thread_node author 'Declined: frozen')"
+assert_eq "$(routed "$GITHUB_SH" check-review-replies)" "$FAILED | unreasoned-decline count=1" \
+  "the router reads with the project's bot token"
+assert_eq "$(routed "$CHECKER"; printf ' %s' "$(first_err)")" "rc=2  check-review-replies: repo-unresolved pr=7" \
+  "the command file alone, with no token selected, reaches no verdict"
+script=$(mutant_copy_edit "$TMP_ROOT/router-tokenless" '    kendex_github_apply_selected_auth_token router || true' '    true' github.sh)
+assert_eq "$(routed "$script" check-review-replies; printf ' %s' "$(first_err)")" "rc=2  check-review-replies: repo-unresolved pr=7" \
+  "must-fail: with the router's token selection cut, no read succeeds"
 
 echo "=== must-fail controls ==="
 # A row is `label|name|from line|to line|setup|want with the mutant`. The
 # setup's live verdict is pinned in a section above; with its rule's line
 # replaced, the same setup answers what the row names instead.
-mutant_row() { # LABEL NAME FROM TO SETUP WANT
+mutant_row() { # LABEL NAME FROM TO SETUP WANT [PR AUTHOR]
   local script
-  script=$(mutant_copy "$2" "$3" "$4")
-  world
+  script=$(mutant_copy_edit "$TMP_ROOT/$2" "$3" "$4" commands/check-review-replies.sh)
+  world "${7:-author}"
   eval "$5"
   assert_eq "$(run "$script")" "$6" "must-fail: $1"
 }
 mutant_row "with the untracked-claim line cut, the claim passes" untracked \
   '[ "$untracked" = 0 ] || {' '[ true ] || {' \
-  'threads_set "$(thread_node "$AUTHOR" User "Out of scope, tracked.")"' "$PASSED"
+  'threads_set "$(thread_node author "Out of scope, tracked.")"' "$PASSED"
 mutant_row "with the unreasoned-decline line cut, the label passes" unreasoned \
   '[ "$unreasoned" = 0 ] || {' '[ true ] || {' \
-  'threads_set "$(thread_node "$AUTHOR" User "Declined: frozen")"' "$PASSED"
+  'threads_set "$(thread_node author "Declined: frozen")"' "$PASSED"
 mutant_row "with the truncation line cut, a truncated thread passes" truncated \
   '[ "$truncated" = 0 ] || {' '[ true ] || {' \
   "threads_set \"\$(jq -cn '{comments: {totalCount: 101, nodes: []}}')\"" "$PASSED"
@@ -408,17 +474,29 @@ mutant_row "with the mismatch test cut, a count over unreadable entries passes" 
   'elif [ "$supp_declared" != "$supp_entries" ]; then' 'elif false; then' \
   'at_head "$(body_of count-prose)"' "$PASSED"
 mutant_row "with the head filter cut, an earlier head's review fails this one" head-review \
-  '      | select(.commit_id == $sha and .state != "DISMISSED" and .state != "PENDING"' '      | select(.state != "DISMISSED" and .state != "PENDING"' \
+  '      | select(.commit_id == $sha and .state != "DISMISSED" and .state != "PENDING")' '      | select(.state != "DISMISSED" and .state != "PENDING")' \
   'reviews_set "$(review copilot COMMENTED "$OTHER" "$(body_of heading)")"' "$BOTH_STANDING"
 mutant_row "with the head binding cut, a comment for an older head answers" head-bound \
   '          | select(($sha | ascii_downcase) | startswith($claimed)) ] | length > 0;' '          | select(true) ] | length > 0;' \
-  'at_head "$(body_of heading)"; comments_set "$(comment "$AUTHOR" "$(printf "Dispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400" "$O7" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"' "$PASSED"
+  'at_head "$(body_of heading)"; comments_set "$(comment author "$(printf "Dispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400" "$O7" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"' "$PASSED"
 mutant_row "with the comment author filter cut, another login answers" comment-author \
-  '          | select((.user.login // "") == $author)' '          | select(true)' \
-  'at_head "$(body_of heading)"; comments_set "$(comment other-user "$(printf "Dispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400" "$H7" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"' "$PASSED"
+  '      | [ .[] | select(rest_actor | reply_source($author)) | answers($by_length) ] as $said' '      | [ .[] | answers($by_length) ] as $said' \
+  'at_head "$(body_of heading)"; comments_set "$(comment stranger "$(printf "Dispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400" "$H7" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"' "$PASSED"
+mutant_row "with the [bot] suffix kept, an app author's label-only decline passes" login-key \
+  'AUTHOR_TRUST_DEF='"'"'def login_key: ascii_downcase | sub("\\[bot\\]$"; "");' 'AUTHOR_TRUST_DEF='"'"'def login_key: ascii_downcase;' \
+  'threads_set "$(thread_node app "Declined: frozen")"' "$PASSED" app
+mutant_row "with the finding-source test cut to the author, a NONE-association section fails" finding-source \
+  '  def finding_source($author): (is_pr_author($author) | not) and (.bot or member);' '  def finding_source($author): is_pr_author($author) | not;' \
+  'reviews_set "$(review stranger COMMENTED "$HEAD" "$(body_of no-count-prose)")"' "$FAILED | suppressed-findings state=unparsed"
+mutant_row "with every association a member, a NONE-association Fixed in clears the claim" member-open \
+  '  def member: .association == "OWNER" or .association == "MEMBER" or .association == "COLLABORATOR";' '  def member: true;' \
+  'threads_set "$(thread_node author "Out of scope, tracked." stranger "Fixed in 1a2b3c4")"' "$PASSED"
+mutant_row "with no association a member, a maintainer's answer answers nothing" member-closed \
+  '  def member: .association == "OWNER" or .association == "MEMBER" or .association == "COLLABORATOR";' '  def member: false;' \
+  'at_head "$(body_of heading)"; comments_set "$(comment maintainer "$(printf "Dispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400" "$H7" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"' "$BOTH_STANDING"
 mutant_row "with the reply reason test cut, a label-only decline answers" reply-reason \
-  '        or (($r | declined) and (($r | reason_left) == ""));' '        or false;' \
-  'at_head "$(body_of heading)"; comments_set "$(comment "$AUTHOR" "$(printf "Dispositions at %s:\n**%s** - Declined: out of scope\n**%s** - Declined: pre-existing" "$H7" "$SUPP_FIRST" "$SUPP_SECOND")")"' "$PASSED"
+  '      def unanswered: ((disposition or tracking) | not) or untracked_claim or unreasoned_decline;' '      def unanswered: ((disposition or tracking) | not) or untracked_claim;' \
+  'at_head "$(body_of heading)"; comments_set "$(comment author "$(printf "Dispositions at %s:\n**%s** - Declined: out of scope\n**%s** - Declined: pre-existing" "$H7" "$SUPP_FIRST" "$SUPP_SECOND")")"' "$PASSED"
 mutant_row "with the page-shape test cut, a non-array reviews page reads as no review" page-shape \
   "  pages=\$(jq -s 'if (length > 0) and all(type == \"array\") then add else error(\"pages are not arrays\") end' <<<\"\$raw\" 2>/dev/null) ||" \
   "  pages=\$(jq -s '[.[] | arrays] | add // []' <<<\"\$raw\" 2>/dev/null) ||" \

@@ -107,7 +107,7 @@ Move `orch/references/finding-disposition.md` to reviewer with inbound links. Or
 | Verification prerequisite, ordered decision flow, introduced/armed defects, exclusions, scope restraint | `reviewer/references/finding-disposition.md`: Verification prerequisite and Decision flow; moved without weakening. |
 | Round cap, recurrence/freeze, filing bar, duplicate-open-PR check, creation ownership | Same file: Decision flow, Recurrence, Filing bar, Review pipeline; moved. Orch owns counters; project-management owns creation bar. |
 | Fixed/Tracked/Declined reply contract | Same file: Decision flow/Recurrence; moved, with current GitHub reply API. |
-| `untracked-claim`: tracking must name an issue | `github/scripts/check-review-replies`, tracking check; move existing extractor and must-fail control. |
+| `untracked-claim`: tracking must name an issue | `github/scripts/commands/check-review-replies.sh`, tracking check; move existing extractor and must-fail control. |
 | `unreasoned-decline`: decline must give a real reason | Same script, decline check; move existing extractor/control; reviewer owns reason definition. |
 | `suppressed-findings`: body-only findings need head-bound dispositions | Same script, body check; move current heading/details grammar, count and head-bound matching controls. Missing/unreadable/mismatched evidence fails. |
 | Class selects review depth | `reviewer/scripts/review-depth`: merge depth intent with reviewer; no new classifier or native-approval waiver. |

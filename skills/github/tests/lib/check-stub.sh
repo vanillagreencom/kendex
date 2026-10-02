@@ -17,10 +17,11 @@
 # merge-path call without the bot token. The repository read answers
 # STUB_MERGE_METHODS, STUB_DELETE_BRANCH_ON_MERGE, STUB_DEFAULT_BRANCH and
 # STUB_REPO_PUSHLESS, or fails on STUB_REPO_EXIT; check-review-replies' reads
-# answer the pull request by STUB_HEAD, its review threads STUB_THREADS (a
-# JSON array of thread nodes, failing on STUB_THREADS_FAIL), its reviews
-# STUB_REVIEWS and its PR-level comments STUB_ISSUE_COMMENTS, each `[]` when
-# unset; the branch-rule read adds
+# answer the pull request by STUB_HEAD (default test-head), its review
+# threads STUB_THREADS (a JSON array of thread nodes, failing on
+# STUB_THREADS_FAIL), its reviews STUB_REVIEWS and its PR-level comments
+# STUB_ISSUE_COMMENTS, each of those three collections `[]` when unset; the
+# branch-rule read adds
 # STUB_QUEUE_METHOD's queue on STUB_QUEUE_BRANCH and STUB_RULE_METHODS's
 # pull_request rule; STUB_NO_REPO fails `repo view`. A merge call passing
 # neither --auto nor --admin on a base holding a merge_queue rule (in
@@ -182,8 +183,8 @@ case "${1:-}" in
                 exit 0
                 ;;
             # check-review-replies' REST reads, by the slug `repo view`
-            # answers. The reviews and comments endpoints come before the
-            # pull request's own, whose pattern they match.
+            # answers. The reviews endpoint comes before the pull request's
+            # own, whose pattern it matches.
             'repos/owner/repo/pulls/'*'/reviews'*)
                 printf '%s\n' "${STUB_REVIEWS:-[]}"
                 exit 0
