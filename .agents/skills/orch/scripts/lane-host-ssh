@@ -14,8 +14,12 @@ import tempfile
 import time
 
 # The launch identity a lane's prefix records, `PID START`, under the clone it
-# owns, beside the item marker: the one record stop signals the harness by.
+# owns, beside the item marker: the record stop signals the harness by.
 IDENTITY_FILE = "/.git/lane-host-pid"
+# The status the identity stop answers where it has no identity to stop by:
+# no file, a lane whose prefix recorded none, or a stale one. stop then finds
+# the harness by the item's worktree instead.
+STOP_BY_DIRECTORY = 76
 
 
 def notice(key, **values):
@@ -287,6 +291,17 @@ fi''', row["clone"], args.repo, args.item)
         remote(row, '''test -x "$1/.agents/skills/worktree/scripts/worktree"
 exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
         create_worktree(row, args.item, create_flags(row, args.item, args.relaunch or args.reuse))
+    # Every prefix below sources the clone's library and records the launch
+    # identity through it before the harness starts. A clone whose library
+    # predates the recorder would end that prefix at bash's 127 with only
+    # `command not found` on the pane, so it is named here, before the harness
+    # is handed a prefix that cannot run.
+    remote(row, '''lib="$1/.agents/skills/orch/scripts/lib/lane-state.sh"
+if ! test -r "$lib" || ! bash -c '. "$1" && declare -F lane_identity_record >/dev/null' lane-host "$lib"; then
+  printf 'lane-host-ssh: identity-recorder-missing path=%s\\n' "$lib" >&2
+  printf 'the host clone predates the launch identity recorder; fast-forward it (git -C CLONE pull --ff-only), or remove the clone so create clones it afresh\\n' >&2
+  exit 1
+fi''', row["clone"])
     env_file = source / ".env.local"
     put(row, row["clone"] + "/.env.local", env_file.read_bytes() if env_file.exists() else b"")
     cache = source / ".cache/linear"
@@ -304,11 +319,14 @@ exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
     # The shell the prefix starts records its own launch identity beside the
     # item marker before it execs the harness, so stop signals the lane by it
     # once the item's worktree is gone (lib/lane-state.sh lane_identity_record).
+    # A record that fails ends the prefix there, the harness unstarted, with a
+    # line naming the file on the pane.
     identity = [row["clone"] + "/.agents/skills/orch/scripts/lib/lane-state.sh", row["clone"] + IDENTITY_FILE]
+    record = '{ lane_identity_record "$F" || { printf \'lane-host-ssh: identity-record-failed path=%s\\n\' "$F" >&2; exit 1; }; }'
     if args.harness == "claude":
         put(row, remote_account + "/setup-token", (account / "setup-token").read_bytes())
         prefix = "exec " + shlex.join(["bash", "-c",
-            '. "$2" && lane_identity_record "$3" && CLAUDE_CODE_OAUTH_TOKEN=$(< "$1") && export CLAUDE_CODE_OAUTH_TOKEN && exec bash -lc "$4"',
+            '. "$2" && ' + record.replace("$F", "$3") + ' && CLAUDE_CODE_OAUTH_TOKEN=$(< "$1") && export CLAUDE_CODE_OAUTH_TOKEN && exec bash -lc "$4"',
             "lane-host", remote_account + "/setup-token", *identity])
     else:
         # A copilot lane's identity is the login its host account already
@@ -318,7 +336,7 @@ exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
             put(row, remote_account + "/auth.json", (account / "auth.json").read_bytes())
         name = {"codex": "CODEX_HOME", "copilot": "COPILOT_HOME"}.get(args.harness, "PI_CODING_AGENT_DIR")
         prefix = "exec env " + shlex.quote(name + "=" + remote_account) + " " + shlex.join(["bash", "-c",
-            '. "$1" && lane_identity_record "$2" && exec bash -lc "$3"', "lane-host", *identity])
+            '. "$1" && ' + record.replace("$F", "$2") + ' && exec bash -lc "$3"', "lane-host", *identity])
     # The caller's folder trust and hook approval land where each harness reads
     # them; Claude's relative path resolves in the SSH session's remote home.
     # A copilot lane places no file: its prefix sets COPILOT_HOME alone, and its
@@ -410,32 +428,70 @@ else printf 'exited\\n'; fi''', path, harness, row["clone"], item)
 def stop(row, item, harness):
     """Stop the named harness by the launch identity the item's prefix recorded.
 
-    No directory is read, so an item whose worktree its own close-out
-    already removed stops all the same."""
+    The identity stop reads no directory, so an item whose worktree its own
+    close-out already removed stops all the same. A lane with no identity to
+    stop by, one launched before its prefix recorded any or one whose
+    recorded harness has exited or whose pid a later process holds, is
+    stopped by the item's worktree, as every lane was before identities were
+    recorded: an item whose worktree is no longer a directory exits 4, and
+    lane-close reads that status as a stop its host close makes
+    unnecessary."""
     owned(row, item, "stop")
     result = remote(row, '''lib="$2/.agents/skills/orch/scripts/lib/lane-state.sh"
 if ! test -r "$lib"; then
   printf 'lane-host-ssh: stop-library-missing path=%s\n' "$lib" >&2
   exit 1
 fi
+if ! test -e "$2$4"; then exit "$5"; fi
 . "$lib"
-if ! declare -F lane_stop_owned >/dev/null || ! declare -F lane_identity_read >/dev/null; then
+if ! declare -F lane_stop_identity >/dev/null || ! declare -F lane_identity_read >/dev/null; then
   printf 'lane-host-ssh: stop-operation-missing path=%s\n' "$lib" >&2
   exit 1
 fi
-rc=0
-lane_identity_read "$2$4" || rc=$?
-case "$rc" in
-  0) ;;
-  1) printf 'lane-host-ssh: stop-identity-missing item=%s path=%s\n' "$3" "$2$4" >&2; exit 1 ;;
-  *) printf 'lane-host-ssh: stop-identity-invalid item=%s path=%s\n' "$3" "$2$4" >&2; exit 1 ;;
-esac
-lane_stop_owned "$LANE_IDENTITY_PID" "$LANE_IDENTITY_START" "$1" || {
-  printf 'lane-host-ssh: stop-%s item=%s%s\n' "$LANE_STOP_CAUSE" "$3" "${LANE_STOP_PID:+ pid=$LANE_STOP_PID}" >&2
+lane_identity_read "$2$4" || {
+  printf 'lane-host-ssh: stop-identity-invalid item=%s path=%s\n' "$3" "$2$4" >&2
   exit 1
 }
-printf 'stopped item=%s processes=%s\n' "$3" "$LANE_STOP_COUNT"''', harness, row["clone"], item, IDENTITY_FILE)
+rc=0
+lane_stop_identity "$LANE_IDENTITY_PID" "$LANE_IDENTITY_START" "$1" || rc=$?
+case "$rc" in
+  0) printf 'stopped item=%s processes=%s\n' "$3" "$LANE_STOP_COUNT" ;;
+  3)
+    printf 'lane-host-ssh: stop-identity-stale item=%s pid=%s\n' "$3" "$LANE_STOP_PID" >&2
+    exit "$5" ;;
+  *)
+    printf 'lane-host-ssh: stop-%s item=%s%s\n' "$LANE_STOP_CAUSE" "$3" "${LANE_STOP_PID:+ pid=$LANE_STOP_PID}" >&2
+    exit 1 ;;
+esac''', harness, row["clone"], item, IDENTITY_FILE, str(STOP_BY_DIRECTORY), accept=(STOP_BY_DIRECTORY,))
+    if result.returncode == STOP_BY_DIRECTORY:
+        result = stop_by_worktree(row, item, harness)
     sys.stdout.buffer.write(result.stdout)
+
+
+def stop_by_worktree(row, item, harness):
+    """Stop the named harness only when its process belongs to the item worktree.
+
+    It runs the clone library's lane_stop_owned, which a library from before
+    identities were recorded holds under the same name and arguments."""
+    path = owned_worktree(row, item, "stop")
+    result = remote(row, '''if ! test -d "$1"; then
+  printf 'lane-host-ssh: stop-worktree-removed item=%s\n' "$4" >&2
+  exit 4
+fi
+lib="$3/.agents/skills/orch/scripts/lib/lane-state.sh"
+. "$lib"
+if ! declare -F lane_stop_owned >/dev/null; then
+  printf 'lane-host-ssh: stop-operation-missing path=%s\n' "$lib" >&2
+  exit 1
+fi
+lane_stop_owned "$1" "$2" || {
+  printf 'lane-host-ssh: stop-%s item=%s%s\n' "$LANE_STOP_CAUSE" "$4" "${LANE_STOP_PID:+ pid=$LANE_STOP_PID}" >&2
+  exit 1
+}
+printf 'stopped item=%s processes=%s\n' "$4" "$LANE_STOP_COUNT"''', path, harness, row["clone"], item, accept=(4,))
+    if result.returncode == 4:
+        raise SystemExit(4)
+    return result
 
 
 def main():
@@ -488,18 +544,26 @@ Every create passes --hosted, so the item's worktree sits at the clone's one
 hosted lane path (worktree path --hosted), and path= names it.
 Every create's remote-prefix records the launch identity of the shell that
 execs the harness, its pid and start time, in clone/.git/lane-host-pid before
-the harness starts, through the clone's lib/lane-state.sh.
+the harness starts, through the clone's lib/lane-state.sh; a clone whose
+library predates that recorder refuses create as identity-recorder-missing,
+and a record that fails ends the prefix with identity-record-failed before the
+harness starts.
 stop --item ID --harness claude|codex|pi|copilot reads that identity after
 confirming the clone's item owner and signals only the matching harness
 processes at or below its pid, where that pid still runs and started at the
 recorded time, waits for them to exit, and prints stopped item=ID
 processes=COUNT. It reads no directory, so an item whose worktree its own
-close-out removed stops all the same. A clone holding no identity exits 1 with
-stop-identity-missing: a lane launched before its prefix recorded one is ended
-by hand. status takes the same arguments and reads the owned harness without
-signalling it: running or exited on stdout. A failed ownership or process read
-exits nonzero and reports no status. close removes the identity with the item
-marker. close preserves render-only drift as a binary patch under clone/tmp, restores
+close-out removed stops all the same. A clone holding no identity, a lane
+launched before its prefix recorded one, and an identity whose process has
+exited or whose pid a later process holds, which prints stop-identity-stale
+first, are stopped by the item's worktree instead: the matching harness
+processes whose current directory is that worktree, or exit 4 with
+stop-worktree-removed where it is no longer a directory. An identity file that
+holds no pid and start exits 1 with stop-identity-invalid: remove that file,
+which the stop then reads as a lane with no identity, and stop again. status
+takes the same arguments and reads the owned harness without signalling it:
+running or exited on stdout. A failed ownership or process read exits nonzero
+and reports no status. close removes the identity with the item marker. close preserves render-only drift as a binary patch under clone/tmp, restores
 the generated paths, refreshes the clone, and then closes. An untracked render,
 a skill symlink a post-launch kendex apply added among them, enters the patch
 through a temporary index rather than a working-tree comparison, so a link to a

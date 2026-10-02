@@ -672,7 +672,7 @@ if proc_table_readable; then
     'rc=0 lane=gone status=done' 'a worktree removed and recreated at the same path still stops the recorded harness'
   # Control: a close that drops the recorded identity reads the pane, whose
   # process holds no harness here, and stops nothing.
-  MUTANT="$(mutant lane-close-record-identity "STOP_PID=\"\$(jq -r '.launch.pid // empty' <<<\"\$record\")\"" 'STOP_PID=""')"
+  MUTANT="$(mutant lane-close-record-identity '    record_identity launch' '    RECORD_PID="" RECORD_START=""')"
   recreated_row "$MUTANT"
   assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=identity-unread$' <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
     'rc=1 failed=1 lane=alive status=running' 'control: without the recorded identity the recreated tree stops nothing'
@@ -701,8 +701,9 @@ if proc_table_readable; then
   kill "$LANE_PID" 2>/dev/null || true
 
   # The recorded pid now started at another time is a later process handed
-  # that pid: nothing is signalled, the pane outlives the close, and the record
-  # stays running.
+  # that pid: it is never signalled, and with no harness under the pane either
+  # the close refuses as a stale identity, naming the pid, rather than reading
+  # a stop of nothing and waiting the pane out.
   start_time_row() { # SCRIPT
     MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
     start_local_harness claude
@@ -710,13 +711,80 @@ if proc_table_readable; then
     PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$1"
   }
   start_time_row "$SCRIPT"
-  assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-timeout item=KEN-1 harness=claude pane=%7 processes=0$' <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
-    'rc=1 timeout=1 lane=alive status=running' 'a recorded pid that started at another time is never signalled'
+  assert_eq "rc=$RC failed=$(grep -c "^lane-close: stop-failed item=KEN-1 harness=claude pid=$LANE_PID cause=identity-stale\$" <<<"$ERR" || true) timeout=$(grep -c '^lane-close: exit-timeout ' <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID") kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=1 failed=1 timeout=0 lane=alive kill=0 status=running' 'a recorded pid that started at another time is never signalled and refuses as stale'
   kill "$LANE_PID" 2>/dev/null || true
   # Control: without the start comparison the later process is signalled.
-  MUTANT="$(lib_mutant start-check '  if [[ "$start" != "$2" ]]; then LANE_STOP_PID=""; return 0; fi' '')"
+  MUTANT="$(lib_mutant start-check '  [[ -n "$start" && "$start" == "$2" ]] || { LANE_STOP_CAUSE=identity-stale; return 3; }' \
+    '  [[ -n "$start" ]] || { LANE_STOP_CAUSE=identity-stale; return 3; }')"
   start_time_row "$MUTANT"
   assert_eq "lane=$(proc_state_after "$LANE_PID")" 'lane=gone' 'control: without the start comparison a reused pid is signalled'
+
+  # A live recorded pid whose start reads empty is no answer, never a stale
+  # identity: the close refuses on that pid and leaves it running.
+  empty_start_row() { # SCRIPT
+    MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes python; claude_screen
+    start_local_harness claude
+    PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$1"
+  }
+  MUTANT="$(lib_mutant empty-start '' '' "lane_process_start() { printf '\\n'; }")"
+  empty_start_row "$MUTANT"
+  assert_eq "rc=$RC failed=$(grep -c "^lane-close: stop-failed item=KEN-1 harness=claude pid=$LANE_PID cause=start-read-failed\$" <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=1 failed=1 lane=alive status=running' 'an empty start read on a live recorded pid refuses as start-read-failed'
+  kill "$LANE_PID" 2>/dev/null || true
+  # Control: without the second state read the empty start reads as a pid that
+  # exited, a stale identity.
+  MUTANT="$(lib_mutant empty-start-stale '      [[ -z "$state" || "$state" == Z ]] || { LANE_STOP_CAUSE=start-read-failed; return 1; }' '      :' \
+    "lane_process_start() { printf '\\n'; }")"
+  empty_start_row "$MUTANT"
+  assert_eq "rc=$RC failed=$(grep -c "^lane-close: stop-failed item=KEN-1 harness=claude pid=$LANE_PID cause=identity-stale\$" <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID")" \
+    'rc=1 failed=1 lane=alive' 'control: without the second state read an empty start reads as a stale identity'
+  kill "$LANE_PID" 2>/dev/null || true
+
+  # A harness restarted by hand in its pane: the recorded one has exited, and
+  # the one now running is the process under the pane, which the close reads
+  # and stops.
+  restarted_row() { # SCRIPT
+    local identity
+    MAIL_ROOT="$LANE_ROOT" write_state running claude ""; claude_screen
+    start_local_harness claude
+    identity="$(jq -c '.lanes[0].launch' "$STATE")"
+    kill -KILL "$LANE_PID"
+    while [[ "$(proc_state_after "$LANE_PID")" != gone ]]; do sleep 0.05; done
+    start_local_harness claude
+    jq --argjson launch "$identity" '.lanes[0].launch = $launch' "$STATE" >"$STATE.tmp" && mv -- "$STATE.tmp" "$STATE"
+    printf 'kendex\tKEN-1\t%%7\t%s\tpython\n' "$LANE_PID" >"$ROWS"
+    PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$1"
+  }
+  restarted_row "$SCRIPT"
+  assert_eq "rc=$RC lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=0 lane=gone status=done' 'a recorded harness that exited leaves the stop to the harness now under the pane'
+  # Control: a stale recorded identity that refuses at once never reads the pane.
+  MUTANT="$(lib_mutant stale-pane '      3) unread=identity-stale ;;' '      3) return 1 ;;')"
+  restarted_row "$MUTANT"
+  assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude pid=[0-9]* cause=identity-stale$' <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID")" \
+    'rc=1 failed=1 lane=alive' 'control: a stale identity that skips the pane read leaves the restarted harness running'
+  kill "$LANE_PID" 2>/dev/null || true
+
+  # A wake's turn runs detached, outside the pane's process tree, so the close
+  # of a lane whose pane already exited still finds it, by the record's wake,
+  # and ends it before the record reads done.
+  wake_row() { # SCRIPT
+    MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes bash; printf '\n' >"$SCREEN"
+    start_local_harness claude
+    jq '.lanes[0].wake = (.lanes[0].launch | {pid, start}) | del(.lanes[0].launch)' "$STATE" >"$STATE.tmp" && mv -- "$STATE.tmp" "$STATE"
+    PATH="$LOCAL_PATH" run_close "$1"
+  }
+  wake_row "$SCRIPT"
+  assert_eq "rc=$RC lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=0 lane=gone status=done' 'a close during an active wake stops the woken turn before it records done'
+  # Control: a close that never stops the wake records done with the turn
+  # still running.
+  MUTANT="$(mutant lane-close-wake '  [[ -n "$host" ]] || { stop_wake; stop_validations; }' '  [[ -n "$host" ]] || stop_validations')"
+  wake_row "$MUTANT"
+  assert_eq "rc=$RC lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=0 lane=alive status=done' 'control: without the wake stop the woken turn outlives its lane'
+  kill "$LANE_PID" 2>/dev/null || true
 
   # The record is never done while the recorded harness lives: one that
   # outlives its signal refuses the close, its window and record kept.
@@ -734,7 +802,7 @@ if proc_table_readable; then
   start_local_harness copilot MainThread
   MUTANT="$(lib_mutant copilot-name "    copilot) printf '%s\\n' '^(copilot|MainThread)\$' ;;" '')"
   PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" ORCH_LANE_CLOSE_SECS=1 run_close "$MUTANT"
-  assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-timeout item=KEN-1 harness=copilot pane=%7 processes=0$' <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
+  assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-timeout item=KEN-1 harness=copilot pane=%7 processes=0 identity=recorded$' <<<"$ERR" || true) lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
     'rc=1 timeout=1 lane=alive status=running' "control: under its harness name alone a copilot lane's MainThread is never signalled"
   kill "$LANE_PID" 2>/dev/null || true
 

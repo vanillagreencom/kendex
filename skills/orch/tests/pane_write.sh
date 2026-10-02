@@ -288,7 +288,7 @@ CONTROLS=(
   "lib/pane-write.sh@missing@if [[ \"\$LANE_PANE_COUNT\" == 0 ]]; then@if false; then@-@--window;gone;--expect;cat;--file;$HELLO@rc=1 key=pane-ambiguous received="
   "lib/pane-write.sh@ambiguous@            pane_write_refuse 1 pane-ambiguous@            : pane_write_refuse 1 pane-ambiguous@-@--window;twin;--expect;sleep;--file;$HELLO@rc=1 key=process-mismatch received="
   "lib/pane-write.sh@mismatch@  pane_write_expect \"\$expect\" || return@  : || return@-@--window;lane;--expect;claude;--file;$HELLO@rc=0 key=none received=hello,"
-  "lib/lane-state.sh@child@if (q == root) { print \"found\"; exit }@if (q == root) { print \"none\"; exit }@-@--window;nest;--expect;sleep;--key;Enter@rc=1 key=process-mismatch received="
+  "lib/lane-state.sh@child@            print \"found\"; exit@            print \"none\"; exit@-@--window;nest;--expect;sleep;--key;Enter@rc=1 key=process-mismatch received="
   "lib/pane-write.sh@default-shell@\"\$default\" ]] || return 0@\"\$default\" ]] || :@-@--window;own;--expect;shell;--key;Enter@rc=1 key=process-mismatch received="
   "lib/lane-state.sh@copilot-names@    copilot) printf '%s\\n' '^(copilot|MainThread)\$' ;;@    copilot-none) ;;@-@--window;copilot;--expect;copilot;--key;Enter@rc=1 key=process-mismatch received="
   "lib/lane-state.sh@anchor@        if (name[pid[i]] !~ re) continue@        if (name[pid[i]] !~ re) continue; else { print \"found\"; exit }@-@--window;lane;--expect;sleep;--file;$HELLO@rc=0 key=none received=hello,"

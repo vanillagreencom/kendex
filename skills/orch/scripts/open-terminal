@@ -818,6 +818,10 @@ LAUNCH_PREPARE=""
 # (lib/lane-state.sh lane_harness_identity) once its launch is confirmed.
 LAUNCH_SERVER=""
 LAUNCH_HARNESS_ID=""
+# The identity of the turn a wake started, `{pid, start}` JSON, which a wake
+# records as `wake`; empty for any other launch, and for a wake whose process
+# had already exited when its start was read.
+LAUNCH_WAKE=""
 # The pane of a launch whose open_tmux failed after its window opened, which
 # launch_finish sets on that failure alone; empty for every other outcome.
 UNTAKEN_PANE=""
@@ -1281,7 +1285,10 @@ UNPARK_JQ='def unpark($at): (if .parked.at == null then .
 # never to one a relaunch retired. Every launch and relaunch writes `launch`,
 # the lane's launch identity lane-close stops its harness by: the window's pane
 # and tmux server pid, and a local lane's harness pid and start once its launch
-# is confirmed, null off tmux; a wake keeps it.
+# is confirmed, null off tmux; a wake keeps it. A wake writes `wake`, the
+# identity of the detached turn it started, which lane-close stops before the
+# record reads done, null where none was read; every launch and relaunch keeps
+# it.
 # The park it drops is kept as one of the record's `pauses`, closed at the
 # resume, since oversee-cycle reads a lane's parked time from them.
 lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATUS]
@@ -1308,18 +1315,19 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
     --arg session_id "$session_id" --arg launched_at "$launched_at" --arg status "$status" --argjson prepare "${LAUNCH_PREPARE:-null}" \
     --arg over_cap "$CAP_PASSED" --arg running_at "$running_at" --argjson allow_all "${LAUNCH_ALLOW_ALL:-null}" \
     --argjson tier_record "$LAUNCH_TIER_RECORD" --arg pane "$LAUNCH_PANE" --arg server "$LAUNCH_SERVER" \
-    --arg harness_pid "${LAUNCH_HARNESS_ID%% *}" --arg harness_start "${LAUNCH_HARNESS_ID#* }" \
+    --arg harness_pid "${LAUNCH_HARNESS_ID%% *}" --arg harness_start "${LAUNCH_HARNESS_ID#* }" --argjson wake "${LAUNCH_WAKE:-null}" \
     '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, effort: $effort, session_id: $session_id, session_since: $launched_at, launched_at: $launched_at, running_at: $running_at, status: $status, over_cap: $over_cap}
      | map_values(if . == "" then null else . end) + {allow_all: $allow_all} + $tier_record
        + (if $preference_entry == "" then {} else {preference_entry: $preference_entry} end)
        + (if $prepare == null then {} else {prepare: $prepare} end)
        + {launch: (if $pane == "" then null else {pane: $pane, server: $server, pid: $harness_pid, start: $harness_start}
-         | map_values(if . == "" then null else . end) | (.pid, .server) |= (if . == null then null else tonumber end) end)}')" || return 1
+         | map_values(if . == "" then null else . end) | (.pid, .server) |= (if . == null then null else tonumber end) end)}
+       + (if $wake == null then {} else {wake: $wake} end)')" || return 1
   # update-report, so the refusal and the write are one locked step: a wake
   # that names no entry leaves the state as it was and reports so.
   report="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update-report oversee \
     "$UNPARK_JQ"'(.lanes // []) as $l
-     | ($rec | if $mode == "wake" then {session_id, status} elif $mode == "relaunch" then del(.launched_at, .over_cap, .tier, .tier_inputs)
+     | ($rec | if $mode == "wake" then {session_id, status, wake} elif $mode == "relaunch" then del(.launched_at, .over_cap, .tier, .tier_inputs)
        | if .status == "running" then . else del(.harness, .model, .effort, .preference_entry, .account, .session_id) end else . end) as $patch
      | if any($l[]; .item == $rec.item)
        then {state: (.lanes = ($l | map(if .item == $rec.item then (if $mode == "wake" then . else del(.prepare) | unpark($rec.launched_at)
@@ -2398,9 +2406,20 @@ run_detached() { # LOG COMMAND...
 # file the detached shell writes, because an exited child that nobody has
 # reaped still answers `kill -0`.
 open_wake() { # DIR TITLE CMD
-  local log="$1/tmp/lane-wake-$2.log" status="$1/tmp/lane-wake-$2.status" waited=0 rc=0
+  local log="$1/tmp/lane-wake-$2.log" status="$1/tmp/lane-wake-$2.status" waited=0 rc=0 pid start
   mkdir -p -- "$1/tmp" && rm -f -- "$status" || return 1
   run_detached "$log" bash -c 'cd -- "$1" && eval "$3"; echo "$?" >"$2"' wake "$1" "$status" "$3"
+  # The turn runs outside the pane's process tree, where the pane's stop never
+  # reaches it, so its own identity is recorded for lane-close to stop it by:
+  # the detached shell, whose children are the resumed harness. Read before
+  # the wait below, which a short turn outlives; no start is a turn already
+  # over, which records none.
+  pid=$!
+  if start="$(lane_process_start "$pid")"; then
+    [[ -z "$start" ]] || LAUNCH_WAKE="$(jq -cn --argjson pid "$pid" --arg start "$start" '{pid: $pid, start: $start}')" || return 1
+  else
+    ot_message launch-identity-unread "item=$2" "step=wake" >&2
+  fi
   while [[ ! -s "$status" ]] && (( waited < 10 )); do sleep 0.5; waited=$((waited + 1)); done
   [[ ! -s "$status" ]] || rc="$(cat -- "$status")" || return 1
   if [[ "$rc" != 0 ]]; then
@@ -3144,7 +3163,7 @@ for raw in "${ITEMS[@]}"; do
     fi
     wt="$CLAIM_ROOT"
   fi
-  LAUNCH_PANE="" LAUNCH_PREPARE="" UNTAKEN_PANE="" LAUNCH_SERVER="" LAUNCH_HARNESS_ID=""
+  LAUNCH_PANE="" LAUNCH_PREPARE="" UNTAKEN_PANE="" LAUNCH_SERVER="" LAUNCH_HARNESS_ID="" LAUNCH_WAKE=""
   # The launch time is read before the terminal opens. The first record's
   # launched_at is the floor the watch applies to merges and new issues, so a
   # stamp taken after the open and its verification would leave anything that

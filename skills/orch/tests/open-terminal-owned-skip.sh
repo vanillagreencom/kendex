@@ -712,17 +712,20 @@ done
 # every wake row still green.
 #
 # The row reads the four lines out of the shared library under test rather
-# than spelling them again, so a change to any moves it. Only the transforms
+# than spelling them again, so a change to any moves it: the read and the
+# transform out of lane_process_table's body, the name ERE and the matcher
+# out of lane_owned_processes', since other readers in the library spell the
+# name ERE line the same way. Only the transforms
 # are pinned, not the awk's every detail: the substr offset that trims ps's column
 # padding has no consumer, since the matcher and the parent-tree scan below it
 # both re-split on whitespace, and a row asserting it would be pinning a
 # spelling rather than a guarantee. The path strip is pinned by a wake row
 # instead, the macOS one in the table below, which asserts what the wake does
 # rather than a count.
-REAL_TABLE_READ="$(sed -n 's/^  raw="\$(\(ps -A.*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
-REAL_TABLE_TRANSFORM="$(sed -n 's/^  table="\$(\(awk .*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
-REAL_NAME_RE="$(sed -n 's/^  name_re="\$(\(lane_harness_process_re .*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
-REAL_PID_MATCH="$(sed -n 's/^  candidates="\$(\(LANE_OWNED_RE=.* awk .*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
+REAL_TABLE_READ="$(sed -n '/^lane_process_table() {$/,/^}$/ s/^  raw="\$(\(ps -A.*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
+REAL_TABLE_TRANSFORM="$(sed -n '/^lane_process_table() {$/,/^}$/ s/^  table="\$(\(awk .*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
+REAL_NAME_RE="$(sed -n '/^lane_owned_processes() {/,/^}$/ s/^  name_re="\$(\(lane_harness_process_re .*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
+REAL_PID_MATCH="$(sed -n '/^lane_owned_processes() {/,/^}$/ s/^  candidates="\$(\(LANE_OWNED_RE=.* awk .*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
 assert_eq "read=$(grep -c . <<<"$REAL_TABLE_READ") transform=$(grep -c . <<<"$REAL_TABLE_TRANSFORM") names=$(grep -c . <<<"$REAL_NAME_RE") match=$(grep -c . <<<"$REAL_PID_MATCH")" \
   "read=1 transform=1 names=1 match=1" "the real reader, transform, name ERE and matcher are each one line of the script under test"
 
