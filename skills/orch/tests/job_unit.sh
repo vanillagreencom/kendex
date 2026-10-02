@@ -221,10 +221,22 @@ mkdir -p "$FARM"
 for name in bash setsid sleep mv tr; do
   ln -sf "$(command -v "$name")" "$FARM/$name"
 done
-wait_pid() { # FILE — the pid the job wrote, once it has
-  local n=0
-  while [[ ! -s "$1" ]] && (( n < 50 )); do sleep 0.1; n=$((n + 1)); done
-  cat "$1" 2>/dev/null || true
+# The pid the job wrote, once that process has exec'd `sleep 30`: the job
+# writes its pid before its exec, and the rows match its argv against
+# `*sleep 30`. Exit 1 when the bound passes first.
+wait_job() { # FILE
+  local n=0 pid=""
+  while (( n < 50 )); do
+    pid="$(cat "$1" 2>/dev/null || true)"
+    if [[ -n "$pid" && "$(ps -ww -o args= -p "$pid" 2>/dev/null || true)" == *"sleep 30" ]]; then
+      echo "$pid"
+      return 0
+    fi
+    sleep 0.1
+    n=$((n + 1))
+  done
+  echo "$pid"
+  return 1
 }
 
 # One job launched under setsid, writing its pid where the row can read it.
@@ -232,7 +244,8 @@ JOB_PID=""
 launch_setsid_job() { # RECORD PIDFILE
   run env PATH="$FARM" "$JOB_UNIT" launch validate-id-1 "$1" --cap 60 \
     -- bash -c 'echo $$ > "$0"; exec sleep 30' "$2"
-  JOB_PID="$(wait_pid "$2")"
+  JOB_PID="$(wait_job "$2")" ||
+    fail "the setsid job runs sleep 30 within 5 s" "pid file: $2, pid: [${JOB_PID}]"
 }
 
 if command -v setsid >/dev/null 2>&1; then
@@ -264,6 +277,12 @@ if command -v setsid >/dev/null 2>&1; then
   run "$JOB_UNIT" stop-job "$record" "$JOB_PID" "*sleep 30"
   assert_eq "$RC $(proc_state_after "$JOB_PID")" "0 gone" \
     "stop-job on a setsid record kills the job's group"
+  launch_setsid_job "$record" "$TMP_ROOT/setsid-4.pid"
+  mutant no-teardown '  job_unit_teardown "$pid"' '  return 0'
+  run "$MUTANT" stop-job "$record" "$JOB_PID" "*sleep 30"
+  assert_eq "$RC $(proc_state_after "$JOB_PID")" "0 alive" \
+    "control: a stop-job that signals nothing leaves the job's group alive"
+  run "$JOB_UNIT" kill-group "$JOB_PID" "*sleep 30"
 
   # end is the job's own last call, here made for it: its group ends.
   launch_setsid_job "$record" "$TMP_ROOT/setsid-3.pid"
