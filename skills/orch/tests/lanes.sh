@@ -2313,7 +2313,7 @@ table \
   "control: a raw-spelled host row leaves the named folder on the local reading|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token-slash.tsv|$PICK_LANE $H/.tclaude|rc=5 measured_through=local"
 LANES="$LANES_PATCHED"
 # Control: a public record that keeps the match key carries it out of both forms.
-lanes_mutant mutant-public-id lib/lane-model.sh '_rate_elapsed_s, \._id)' '_rate_elapsed_s)'
+lanes_mutant mutant-public-id lib/lane-model.sh '^def lane_public: del(\(.*\), \._id);$' 'def lane_public: del(\1);'
 LANES="$TMP_ROOT/mutant-public-id/scripts/lanes"
 table \
   "control: a record keeping the match key hands it to a pick caller|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK|rc=0 hasid=true" \
