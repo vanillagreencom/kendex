@@ -1,0 +1,1 @@
+- On Codex, `reviewer-stop-check` now runs at a subagent's stop and `session-end-row` at a session's end.

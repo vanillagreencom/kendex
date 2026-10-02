@@ -95,7 +95,7 @@ const UNSUPPORTED_DELIVERIES: [(&str, &str, &[HarnessId], &[HarnessId]); 8] = {
             &[Claude],
         ),
         ("\"claude\", \"pi\"", "PermissionRequest", &[Pi], &[Claude]),
-        ("\"claude\", \"codex\"", "SubagentStop", &[Codex], &[Claude]),
+        ("\"claude\", \"codex\"", "StopFailure", &[Codex], &[Claude]),
         (
             "\"claude\", \"copilot\"",
             "TaskCompleted",

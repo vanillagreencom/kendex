@@ -221,14 +221,23 @@ mod tests {
                 command("PreToolUse", "all"),
                 NotInstallable("Cursor holds no hooks at this scope".to_owned()),
             ),
-            // An event this harness never fires: a custom hook keeps its
-            // prose, a catalog script installs nothing.
-            ("codex", &project, command("SubagentStop", "all"), Advisory),
+            // Codex fires a subagent's stop and a session's end.
             (
                 "codex",
                 &project,
-                script("SubagentStop"),
-                NotInstallable("Codex never fires SubagentStop".to_owned()),
+                command("SubagentStop", "all"),
+                Registered,
+            ),
+            ("codex", &project, script("SubagentStop"), Registered),
+            ("codex", &project, script("SessionEnd"), Registered),
+            // An event this harness never fires: a custom hook keeps its
+            // prose, a catalog script installs nothing.
+            ("codex", &project, command("StopFailure", "all"), Advisory),
+            (
+                "codex",
+                &project,
+                script("StopFailure"),
+                NotInstallable("Codex never fires StopFailure".to_owned()),
             ),
             (
                 "antigravity",

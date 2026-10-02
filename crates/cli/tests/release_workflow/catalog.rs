@@ -209,10 +209,10 @@ fn the_current_catalog_renders_and_incomplete_delivery_fails() {
             )),
         ),
         (
-            "subagent-stop",
-            "SubagentStop",
+            "stop-failure",
+            "StopFailure",
             "claude, codex",
-            "kendex-hook-unsupported: harness=codex event=SubagentStop hook=future",
+            "kendex-hook-unsupported: harness=codex event=StopFailure hook=future",
             None,
         ),
     ] {

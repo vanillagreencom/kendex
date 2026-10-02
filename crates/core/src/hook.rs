@@ -213,8 +213,10 @@ pub fn known_event(name: &str) -> bool {
 /// `None` for events that fall back to advisory prose in agent files.
 pub fn codex_event(event: &str) -> Option<&str> {
     match event {
-        "SessionStart" | "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "PreCompact"
-        | "PostCompact" | "PermissionRequest" | "Stop" => Some(event),
+        "SessionStart" | "SessionEnd" | "UserPromptSubmit" | "PreToolUse" | "PostToolUse"
+        | "PreCompact" | "PostCompact" | "PermissionRequest" | "Stop" | "SubagentStop" => {
+            Some(event)
+        }
         _ => None,
     }
 }
@@ -480,6 +482,9 @@ mod tests {
     #[test]
     fn codex_event_mapping_matches_v1() {
         assert_eq!(codex_event("PreToolUse"), Some("PreToolUse"));
+        assert_eq!(codex_event("SessionEnd"), Some("SessionEnd"));
+        assert_eq!(codex_event("SubagentStop"), Some("SubagentStop"));
         assert_eq!(codex_event("TaskCompleted"), None);
+        assert_eq!(codex_event("StopFailure"), None);
     }
 }

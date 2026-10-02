@@ -195,6 +195,15 @@ new_checkout codex_install .codex/hooks
 run session-start-row "$START"
 assert_eq "RC=$RC harness=$(last_row .harness)" "RC=0 harness=codex" \
   "a hook installed under .codex/hooks writes a codex row"
+# Codex 0.160.0's SessionEnd payload: the main thread's session_id,
+# transcript_path, cwd and permission_mode, and a reason that is always
+# `other` (Codex hooks reference).
+CODEX_END='{"session_id":"019a","transcript_path":"/r/rollout-019a.jsonl","cwd":"/work","hook_event_name":"SessionEnd","reason":"other","permission_mode":"default"}'
+new_checkout codex_end .codex/hooks
+run session-end-row "$CODEX_END"
+assert_eq "RC=$RC first=$(first_line) row=$(last_row '[.event, .harness, .session_id, .transcript_path, .cwd, .reason] | join(",")')" \
+  "RC=0 first=- row=SessionEnd,codex,019a,/r/rollout-019a.jsonl,/work,other" \
+  "a Codex SessionEnd writes a codex row"
 
 # What is reported and passed: an install whose orch scripts lack the row
 # library, a key tmux cannot answer, and a wrapper with no judge beside it.
@@ -295,6 +304,8 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   CONTROL_OUT="$(HOOK_UNDER_TEST="$HARNESS_MUTANT" bash "${BASH_SOURCE[0]}" 2>&1 || true)"
   assert_eq "$(grep -c '^  FAIL  a hook installed under .codex/hooks writes a codex row$' <<<"$CONTROL_OUT")" "1" \
     "control: a row harness fixed at claude fails the codex install row"
+  assert_eq "$(grep -c '^  FAIL  a Codex SessionEnd writes a codex row$' <<<"$CONTROL_OUT")" "1" \
+    "control: a row harness fixed at claude fails the Codex SessionEnd row"
 fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

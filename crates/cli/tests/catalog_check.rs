@@ -32,7 +32,7 @@ fn fixture() -> std::path::PathBuf {
 fn declared_hook_events_must_reach_each_named_harness() {
     for (event, harnesses, unsupported) in [
         ("PermissionRequest", "claude, gemini", Some("gemini")),
-        ("SubagentStop", "claude, codex", Some("codex")),
+        ("StopFailure", "claude, codex", Some("codex")),
         ("PermissionRequest", "claude", None),
         ("PermissionRequest", "opencode", None),
     ] {

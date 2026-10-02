@@ -39,9 +39,9 @@ Codex reads three skill roots at user level: the shared `~/.agents/skills`, `~/.
 
 ## Hooks
 
-Enforced for the events Codex understands, mapped by identity: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PreCompact`, `PostCompact`, `PermissionRequest`, `Stop` (`codex_event`, `crates/core/src/hook.rs`). Any other event renders as advisory prose inside the agent files.
+Enforced for the events Codex understands, mapped by identity: `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PreCompact`, `PostCompact`, `PermissionRequest`, `Stop`, `SubagentStop` (`codex_event`, `crates/core/src/hook.rs`). Any other event renders as advisory prose inside the agent files.
 
-The script lands at `<root>/hooks/<name>.sh`; the registration goes into `hooks.json` in the nested matcher-plus-handlers shape, timeout in seconds as authored, the command finding the project root when it runs at project scope ([Hook commands](README.md#hook-commands)). Installing a hook also merges `[features] hooks = true` into `config.toml` as a text-level edit that keeps comments and ordering.
+The script lands at `<root>/hooks/<name>.sh`; the registration goes into `hooks.json` in the nested matcher-plus-handlers shape, timeout in seconds as authored (Codex runs a `SessionEnd` hook for at most 3 seconds), the command finding the project root when it runs at project scope ([Hook commands](README.md#hook-commands)). Installing a hook also merges `[features] hooks = true` into `config.toml` as a text-level edit that keeps comments and ordering.
 
 Agent scoping: none. Only `agents = "all"` custom hooks are enforced; scoped ones render as advisory prose in the agent files.
 
