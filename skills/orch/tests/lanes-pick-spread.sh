@@ -295,13 +295,13 @@ mkdir -p "$H/.acopilot/session-state" "$H/.api"
 CP_ENV="ORCH_LANE_DIRS=$H/.acopilot;ORCH_LANE_COPILOT_POOL=$H/.acopilot"
 ACCOUNT_HARNESS=copilot table \
   "the only Copilot account is the overseer seat and remains pickable|$CP_ENV=10/100|own:a||pick --harness copilot|rc=0 out=COPILOT_HOME=$H/.acopilot" \
-  "a pool seat carries the monthly wall and burns its live claim|$CP_ENV=10/100|own:a;claim:a:1||pick --harness copilot --json|rc=0 wall=10 binding_bucket=monthly claims=1 burn_pct_per_lane_hour=0.034722222222222224" \
+  "a pool seat carries the monthly headroom and burns its live claim|$CP_ENV=10/100|own:a;claim:a:1||pick --harness copilot --json|rc=0 effective_headroom_pct=90 binding_bucket=monthly claims=1 burn_pct_per_lane_hour=0.034722222222222224" \
   "a pool at the threshold is walled, not omitted|$CP_ENV=95/100|own:a||pick --harness copilot --json|rc=3 walled=1 seats=0 keyed.pick-seat-omitted=none" \
   "a pool past the threshold is walled, not omitted|$CP_ENV=96/100|own:a||pick --harness copilot --json|rc=3 walled=1 seats=0" \
-  "a pool pick reads no fleet seat state|$CP_ENV=10/100|own:broken||pick --harness copilot --json|rc=0 wall=10"
+  "a pool pick reads no fleet seat state|$CP_ENV=10/100|own:broken||pick --harness copilot --json|rc=0 effective_headroom_pct=90"
 ACCOUNT_HARNESS=pi table \
-  "a Pi pool pick keeps its overseer seat|ORCH_LANE_COPILOT_POOL=$H/.api=10/100|own:a||pick --harness pi --model github-copilot/gpt-5 --json|rc=0 config_dir=$H/.api wall=10" \
-  "a Pi pool pick reads no fleet seat state|ORCH_LANE_COPILOT_POOL=$H/.api=10/100|own:broken||pick --harness pi --model github-copilot/gpt-5 --json|rc=0 wall=10"
+  "a Pi pool pick keeps its overseer seat|ORCH_LANE_COPILOT_POOL=$H/.api=10/100|own:a||pick --harness pi --model github-copilot/gpt-5 --json|rc=0 config_dir=$H/.api effective_headroom_pct=90" \
+  "a Pi pool pick reads no fleet seat state|ORCH_LANE_COPILOT_POOL=$H/.api=10/100|own:broken||pick --harness pi --model github-copilot/gpt-5 --json|rc=0 effective_headroom_pct=90"
 CTRL="$(mutant_scripts mutant-pool-seats lanes)" || exit 1
 # shellcheck disable=SC2016
 mutate_file "$CTRL/lanes" '"$for_overseer" != true && "$harness" != copilot && "$harness" != pi' '"$for_overseer" != true && "$harness" != pi'
