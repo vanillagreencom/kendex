@@ -219,7 +219,7 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 
 # The allowance left on an account at which a running lane is marked for
 # handover. The overseer asks a marked lane to hand over at its next safe
-# point. A Codex account running on its credits is never marked.
+# point. This setting never marks a Codex account running on its credits.
 # ORCH_HANDOFF_HEADROOM_PCT = "3"
 
 # Earlier context handoff percentage. Shared rule and boundary behavior:

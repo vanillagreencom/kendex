@@ -1166,6 +1166,27 @@ for rate_row in \
     "0|oversee-succeed: mark-unmeasured kind=rate reason=$rate_reason succession=on|0" \
     "an unmeasurable rate reports $rate_reason"
 done
+# A Codex overseer room on its credits carries usage_rate_state `credits`: no
+# plan window binds it, so the rate trigger does not apply, as at a setting of 0.
+jq -n '{rate_limit: {primary_window: {used_percent: 100, reset_at: 1785000000, limit_window_seconds: 18000}, secondary_window: null},
+  credits: {has_credits: true, unlimited: false, overage_limit_reached: false, balance: "62300"},
+  spend_control: {reached: false}}' > "$FIXTURE_DIR/.codex.json"
+new_caller "$CODEX_SCREEN" 'Context 48% left'
+NO_CONTEXT=1 CALLER_LANE="CODEX_HOME=$H/.codex" WALL_MINUTES=default run_succeed ratecredits '' --check-marks
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: account-below-mark headroom=0|0" \
+  "a Codex overseer on its credits reads below the account marks, its rate trigger not applying"
+# Control: the old arm, which read every rate state but `measured` as a failed
+# reading, holds the same overseer unmeasured.
+RATECREDITS="$(mutant_scripts ratecredits oversee-succeed)" || exit 1
+mutate_file "$RATECREDITS/oversee-succeed" ' && "$RATE_STATE" != credits ]]' ' ]]'
+new_caller "$CODEX_SCREEN" 'Context 48% left'
+NO_CONTEXT=1 CALLER_LANE="CODEX_HOME=$H/.codex" WALL_MINUTES=default SUCCEED_BIN="$RATECREDITS/oversee-succeed" \
+  run_succeed ratecreditsctl '' --check-marks
+codex_usage 20 > "$FIXTURE_DIR/.codex.json"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: mark-unmeasured kind=rate reason=credits succession=on" \
+  "control: a rate arm blind to credits reads the credit overseer as unmeasured"
 new_caller "$UNDER_MARK"
 WALL_MINUTES=bad run_succeed badwall '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \

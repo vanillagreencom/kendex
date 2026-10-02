@@ -75,7 +75,7 @@
 #        The ACCOUNT mark is this overseer's own account, judged by `lanes
 #        pick --lane` at ORCH_OVERSEER_HEADROOM_PCT, which is also the floor
 #        the successor's own account must clear; a Codex account room on its
-#        credits clears it, by the rule `lanes --help` states under pick. One number for both jobs buys
+#        credits clears it, by the rule `lanes --help` states under pick, and takes no rate trigger. One number for both jobs buys
 #        a wider successor pool at the price of the warning this mark gives: at
 #        the default it fires close to the wall, and the rate trigger beside it
 #        restores the warning. The account is the one
@@ -1252,7 +1252,7 @@ if (( JUDGES )) && [[ -z "$MARK_KIND" ]]; then
         message mark-unmeasured kind=context reason=window-unnamed "succession=$SUCCESSION"
         exit 0
       fi
-      if (( WALL_MINUTES > 0 )) && [[ "$RATE_STATE" != measured ]]; then
+      if (( WALL_MINUTES > 0 )) && [[ "$RATE_STATE" != measured && "$RATE_STATE" != credits ]]; then
         message mark-unmeasured kind=rate "reason=${RATE_STATE:-unreadable}" \
           "succession=$SUCCESSION"
         exit 0

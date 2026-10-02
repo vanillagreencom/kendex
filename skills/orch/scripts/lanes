@@ -249,10 +249,10 @@
 #         handoff, the judge the hook uses, or at a HEADROOM at or
 #         below ORCH_HANDOFF_HEADROOM_PCT (default 3), never on an account
 #         room on its credits (see pick), whose HEADROOM is its balance.
-#         --json carries `binding_bucket`, `credits` and `binding_resets_at`,
-#         the time the account's binding bucket frees up, as whole-second
-#         UTC with a Z for either harness, so a caller refusing on headroom
-#         can say when the account comes back. It also carries `server`, the tmux server the row's
+#         --json carries `binding_bucket`, `credits` and `binding_resets_at`;
+#         the last is when the binding window resets, a credits row's spent
+#         plan window, in whole-second UTC with a Z, so a headroom
+#         refusal can say when the account returns. It also carries `server`, the tmux server the row's
 #         `pane` belongs to, since pane ids restart at %0 on every server.
 #         The caller's OWN pane is reported too, claim or no claim, so an
 #         overseer started by hand sees its own figure rather than an empty

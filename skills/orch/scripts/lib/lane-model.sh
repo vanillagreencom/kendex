@@ -310,10 +310,10 @@ def wall_verdict($max):
 # reached, so a window wall does not stop its launch. The balance must sit
 # strictly above the floor, with has_credits true and overage_limit_reached
 # and spend_control_reached false; any of the four missing or unparsed is no
-# credit room, never room. The usage body fields rate_limit.allowed,
-# rate_limit.limit_reached and model_usage.*.credits_would_enable are not
-# read: they read false on accounts at their plan limit that complete turns
-# on credits, so gating on them would wall every account running on credits.
+# credit room, never room. The usage body fields rate_limit.allowed and
+# model_usage.*.credits_would_enable go unread: an account at its plan limit
+# that completes turns on credits reads both false, so gating on them would
+# wall it.
 def credit_room($credit_floor):
   .harness == "codex"
   and .credits.has_credits == true and .credits.overage_limit_reached == false
