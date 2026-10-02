@@ -284,10 +284,10 @@ fn a_companion_is_required_only_on_its_own_harnesses() {
         .event = "TaskCompleted".to_owned();
 
     // An unsupported event withholds the requirer only where the recorder
-    // applies. Its own exclusions still mean it has no job there.
+    // applies. Each true answer means withheld, not delivered.
     let rows = [
         (HarnessId::Claude, [false, false]),
-        (HarnessId::Codex, [false, false]),
+        (HarnessId::Codex, [false, true]),
         (HarnessId::Pi, [false, false]),
         (HarnessId::Gemini, [false, false]),
         (HarnessId::Copilot, [false, true]),
@@ -308,9 +308,9 @@ fn a_companion_is_required_only_on_its_own_harnesses() {
     }
 }
 
-/// One planted defect: the hook it edits, the edit, and the keyed line
-/// that refuses it.
-type PlantedRow = (&'static str, fn(&mut HookSource), &'static str);
+/// One planted defect: the hook it edits, the edit, and the keyed lines
+/// that refuse it.
+type PlantedRow = (&'static str, fn(&mut HookSource), &'static [&'static str]);
 
 /// Each rule refuses the one defect its row plants into this catalog's own
 /// hooks, and names it on its keyed line.
@@ -333,15 +333,19 @@ fn each_planted_defect_is_refused_on_its_keyed_line() {
     );
 
     let planted_rows: [PlantedRow; 3] = [
-        // Copilot never fires TaskCompleted. The recorder's own reason is
-        // present, so only its requirer's companion check needs a reason.
+        // Codex and Copilot never fire TaskCompleted. The planted Copilot
+        // recorder reason leaves its requirer and both Codex hooks without one.
         (
             "skill-load-record",
             |source| {
                 source.event = "TaskCompleted".to_owned();
                 source.description.push_str(" Not run on copilot: planted.");
             },
-            "hooks-readme: missing-reason=skill-load-check:copilot",
+            &[
+                "hooks-readme: missing-reason=skill-load-check:codex",
+                "hooks-readme: missing-reason=skill-load-check:copilot",
+                "hooks-readme: missing-reason=skill-load-record:codex",
+            ],
         ),
         (
             "reviewer-stop-check",
@@ -352,7 +356,7 @@ fn each_planted_defect_is_refused_on_its_keyed_line() {
                     1,
                 );
             },
-            "hooks-readme: missing-reason=reviewer-stop-check:copilot",
+            &["hooks-readme: missing-reason=reviewer-stop-check:copilot"],
         ),
         (
             "lane-mail-check",
@@ -363,10 +367,10 @@ fn each_planted_defect_is_refused_on_its_keyed_line() {
                     1,
                 );
             },
-            "hooks-readme: unterminated-reason=lane-mail-check:antigravity",
+            &["hooks-readme: unterminated-reason=lane-mail-check:antigravity"],
         ),
     ];
-    for (hook, plant, key) in planted_rows {
+    for (hook, plant, keys) in planted_rows {
         let mut planted_hooks = hooks.clone();
         let target = planted_hooks
             .iter_mut()
@@ -383,6 +387,6 @@ fn each_planted_defect_is_refused_on_its_keyed_line() {
             .iter()
             .filter_map(|finding| finding.lines().next())
             .collect();
-        assert_eq!(firsts, vec![key]);
+        assert_eq!(firsts, keys);
     }
 }
