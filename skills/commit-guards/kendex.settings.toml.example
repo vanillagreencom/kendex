@@ -6,7 +6,7 @@
 # set; delete a name to turn that one off. The comments check is a further
 # one a project adds by name, and commit-msg never runs in this batch. What
 # each name refuses is in the skill's CHECKS.md.
-COMMIT_GUARDS_CHECKS = "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names"
+COMMIT_GUARDS_CHECKS = "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names secrets"
 
 # Kilobytes one tracked file may reach before a commit carrying it is
 # refused. A file already over the limit may stay that size or shrink, but

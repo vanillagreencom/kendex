@@ -34,23 +34,24 @@ source "$SCRIPT_DIR/lib/settings.sh"
 # shellcheck source=lib/md-scope.sh
 source "$SCRIPT_DIR/lib/md-scope.sh"
 
-KNOWN_CHECKS="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names comments commit-msg"
-BATCH_DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names"
+KNOWN_CHECKS="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names secrets comments commit-msg"
+BATCH_DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names secrets"
 # The checks the batch hands --staged when it is asked for commit scope.
 # todo-ban and comments default to the whole index, which is a CI subject:
 # at commit each judges what the commit adds. md-format judges touched
 # documents; md-refs checks every configured document for broken incoming
 # references. The rest read the index by design.
-STAGED_SCOPED_CHECKS="todo-ban byte-ceiling md-format md-refs py-names comments"
-# byte-ceiling and py-names are the batch lanes whose bare default is the
-# commit scope, so the full batch names their scope outright: --all with no
-# flag. A batch summary that listed one clean over a scope it never read would
-# be a verdict about nothing.
-FULL_SCOPED_CHECKS="byte-ceiling py-names"
+STAGED_SCOPED_CHECKS="todo-ban byte-ceiling md-format md-refs py-names secrets comments"
+# byte-ceiling, py-names and secrets are the batch lanes whose bare default is
+# the commit scope, so the full batch names their scope outright: --all with
+# no flag. A batch summary that listed one clean over a scope it never read
+# would be a verdict about nothing.
+FULL_SCOPED_CHECKS="byte-ceiling py-names secrets"
 # The lanes a ref-range scope reaches. byte-ceiling is scoped to a range by
 # design and takes one under every setting: it is ratcheted, so a range is the
-# question it was written to answer. py-names takes one under every setting
-# too: it reads no markdown setting, and a range carries the files it judges.
+# question it was written to answer. py-names and secrets take one under
+# every setting too: neither reads a markdown setting, and a range carries the
+# files each judges.
 # changelog-entries uses the range's prior versions against the index; its
 # fragment scan stays index-wide.
 # A markdown lane takes one only where its configured scope is `touched`,
@@ -60,7 +61,7 @@ FULL_SCOPED_CHECKS="byte-ceiling py-names"
 # sweep, which is WIDER than any range, and scope_for hands it that sweep
 # instead — a range there would answer a smaller
 # question under the setting's name.
-RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries md-format md-refs py-names"
+RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries md-format md-refs py-names secrets"
 
 usage() {
   gg_message usage "$GG_CHECK" "Command usage follows."
@@ -242,8 +243,8 @@ scope_for() { # CHECK
   # step line names the scope the lane actually read and this function stays
   # an honest answer to what the run gives a check.
   #
-  # byte-ceiling and py-names are unaffected either way: neither defers to the
-  # selector, and a range is the question each was written to answer.
+  # byte-ceiling, py-names and secrets are unaffected either way: none defers
+  # to the selector, and a range is the question each was written to answer.
   if defers_to_md_selector "$1"; then
     md_bare_scope
     if [ "$MD_BARE_SCOPE" = all ]; then

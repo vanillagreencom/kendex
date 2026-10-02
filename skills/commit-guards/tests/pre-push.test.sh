@@ -597,10 +597,10 @@ mkdir -p "$(dirname "$NARROW")"
 cp -R "$SKILL_TEMPLATE" "$NARROW"
 q test ! -L "$NARROW/scripts/commit-guards"
 NARROW_BEFORE="$(cat -- "$NARROW/scripts/commit-guards")" || exit 2
-NARROW_MATCHES="$(awk '$0 == "RANGE_SCOPED_CHECKS=\"byte-ceiling changelog-entries md-format md-refs py-names\"" { matches++ } END { print matches+0 }' \
+NARROW_MATCHES="$(awk '$0 == "RANGE_SCOPED_CHECKS=\"byte-ceiling changelog-entries md-format md-refs py-names secrets\"" { matches++ } END { print matches+0 }' \
   "$NARROW/scripts/commit-guards")" || exit 2
 assert_eq "the narrowed edit matches one assignment" "1" "$NARROW_MATCHES"
-sed -i.bak 's#^RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries md-format md-refs py-names"$#RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries py-names"#' \
+sed -i.bak 's#^RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries md-format md-refs py-names secrets"$#RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries py-names secrets"#' \
   "$NARROW/scripts/commit-guards"
 rm -f -- "$NARROW/scripts/commit-guards.bak"
 NARROW_AFTER="$(cat -- "$NARROW/scripts/commit-guards")" || exit 2

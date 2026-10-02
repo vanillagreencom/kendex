@@ -1,12 +1,12 @@
 # shellcheck shell=bash
-# The lines a commit ADDS to one path, for the lanes that judge a staged
-# diff by its additions. Sourced by todo-ban and comments; needs GG_TMP
-# (gg_tmpdir) and the family contract from lib/common.sh.
+# The lines a commit, or a commit range, ADDS to one path, for the lanes that
+# judge a diff by its additions. Sourced by todo-ban, comments and secrets;
+# needs GG_TMP (gg_tmpdir) and the family contract from lib/common.sh.
 #
 # Bash 3.2-safe, like its parent.
 
 gg_staged_added_lines() { # PATH — one "line<TAB>content" record per line this commit ADDS
-  local f="$1" status=0 awk_status=0
+  local f="$1" status=0
   # Pinned diff configuration: an external differ or a textconv filter would
   # hand this lane content the commit does not carry, and colour would put
   # escape sequences in front of the leading '+'. --text is the same pin
@@ -22,6 +22,24 @@ gg_staged_added_lines() { # PATH — one "line<TAB>content" record per line this
   if [ "$status" -ne 0 ]; then
     gg_fail_cause staged-read "$f:$status" "$GG_TMP/patch.err" "could not read the staged additions in '$f' (git diff exit $status)"
   fi
+  gg_patch_added_lines "$f" staged
+}
+
+# The same records over a commit range, RANGE being gg_diff_range's answer, for
+# a caller that stages nothing. The diff pins are the staged reader's.
+gg_range_added_lines() { # PATH RANGE — one "line<TAB>content" record per line RANGE ADDS
+  local f="$1" range="$2" status=0
+  git -c core.quotePath=false diff --no-ext-diff --no-textconv --no-color --text \
+    -U0 "$range" -- ":(literal)$f" \
+    >"$GG_TMP/patch" 2>"$GG_TMP/patch.err" || status=$?
+  if [ "$status" -ne 0 ]; then
+    gg_fail_cause range-read "$f:$status" "$GG_TMP/patch.err" "could not read the additions over $range in '$f' (git diff exit $status)"
+  fi
+  gg_patch_added_lines "$f" range
+}
+
+gg_patch_added_lines() { # PATH KIND — the records in $GG_TMP/patch; KIND names a refusal
+  local f="$1" kind="$2" awk_status=0
   # Line numbers come from the hunk headers ('@@ -a,b +c,d @@'), and only
   # lines inside a hunk count — every 'diff --git' closes the hunk before
   # it, so a file header is never read as one. A type change emits TWO
@@ -51,5 +69,5 @@ gg_staged_added_lines() { # PATH — one "line<TAB>content" record per line this
     hunk && /^ / { ln++; next }
   ' "$GG_TMP/patch" 2>"$GG_TMP/patch-parse.err" || awk_status=$?
   [ "$awk_status" -eq 0 ] \
-    || gg_fail_cause staged-parse "$f:$awk_status" "$GG_TMP/patch-parse.err" "could not parse the staged additions in '$f' (awk exit $awk_status)"
+    || gg_fail_cause "$kind-parse" "$f:$awk_status" "$GG_TMP/patch-parse.err" "could not parse the $kind additions in '$f' (awk exit $awk_status)"
 }

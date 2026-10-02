@@ -335,6 +335,22 @@ jobs:
         if: always() && github.event_name == 'pull_request'
         working-directory: candidate
         run: skills/commit-guards/scripts/todo-ban
+      # The commit lane's credential scan over the lines the pull request
+      # adds to its base, HEAD^1 of the merge commit. gitleaks installs in the
+      # same step, so the scan never runs without it, and the notice records
+      # the seconds the step added, the install included.
+      - name: secrets (credential scan of the pull request diff)
+        if: always() && github.event_name == 'pull_request'
+        working-directory: candidate
+        run: |
+          start=$SECONDS
+          status=0
+          tools/install-gitleaks "$RUNNER_TEMP/gitleaks" || status=$?
+          if [ "$status" -eq 0 ]; then
+            PATH="$RUNNER_TEMP/gitleaks:$PATH" skills/commit-guards/scripts/secrets --against HEAD^1 || status=$?
+          fi
+          echo "::notice title=secrets scan::$((SECONDS - start)) seconds, gitleaks install included"
+          exit "$status"
 
   # SHARDED: the shards bound wall time at the slowest shard and give
   # suite growth per-shard headroom instead of a shared cliff. `orch` and
@@ -856,6 +872,13 @@ jobs:
         run: |
           pipx install --force ruff==0.16.2
           test "$(ruff --version)" = "ruff 0.16.2"
+
+      # secrets.test.sh runs the lane's tool, the release tools/install-gitleaks pins.
+      - name: gitleaks for the secrets suite
+        if: matrix.shard == 'guards-commit'
+        run: |
+          tools/install-gitleaks "$RUNNER_TEMP/gitleaks"
+          echo "$RUNNER_TEMP/gitleaks" >>"$GITHUB_PATH"
 
       # This shard is the fallback for the moved tail: a suite of the glob is
       # skipped only where another step RUNS it by path, and runs here

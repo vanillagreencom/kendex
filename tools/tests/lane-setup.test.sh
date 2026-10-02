@@ -85,6 +85,17 @@ printf '%s\n' "$*" >>"$NPM_LOG"
 mkdir -p ui/node_modules
 [ "${NPM_FAIL:-0}" -eq 0 ] || exit "$NPM_FAIL"
 SH
+  # A gitleaks on PATH, so the setup keeps it; the installer it would call
+  # otherwise only logs where it was asked to install.
+  cat >"$R/fake-bin/gitleaks" <<'SH'
+#!/usr/bin/env bash
+printf '8.30.1\n'
+SH
+  cat >"$R/tools/install-gitleaks" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>install-gitleaks.log
+SH
+  chmod +x "$R/tools/install-gitleaks"
   cat >"$R/fake-bin/rustc" <<'SH'
 #!/usr/bin/env bash
 printf 'rustc 1.96.1 (fixture)\n'
@@ -161,6 +172,24 @@ RUSTUP_FAIL=24 run_setup ./tools/lane-setup
 [ "$RC" -eq 24 ] && case "$OUT" in *"lane-setup: rust-targets=install"*"rustc 1.96.1 (fixture)"*) true ;; *) false ;; esac \
   && ok "a failing target add names its step and returns its status" \
   || bad "a failing target add returns its status" "rc=$RC out=$OUT"
+
+echo "=== gitleaks: kept when on PATH, installed when not ==="
+fixture gitleaks-kept
+run_setup ./tools/lane-setup
+[ "$RC" -eq 0 ] && [ ! -e "$R/install-gitleaks.log" ] && case "$OUT" in *"lane-setup: gitleaks=skip path=$R/fake-bin/gitleaks"*) true ;; *) false ;; esac \
+  && ok "a gitleaks on PATH is kept and the installer is not called" \
+  || bad "a gitleaks on PATH is kept" "rc=$RC out=$OUT"
+fixture gitleaks-absent
+rm -- "${R:?}/fake-bin/gitleaks"
+run_setup ./tools/lane-setup
+[ "$RC" -eq 0 ] && [ "$(cat "$R/install-gitleaks.log" 2>/dev/null)" = "$R/home/.local/bin" ] && case "$OUT" in *"lane-setup: gitleaks=install"*) true ;; *) false ;; esac \
+  && ok "a lane with no gitleaks installs the pinned release into ~/.local/bin" \
+  || bad "a lane with no gitleaks installs it" "rc=$RC log=$(cat "$R/install-gitleaks.log" 2>&1) out=$OUT"
+fixture gitleaks-mutant 'if gitleaks_path="$(command -v gitleaks)"; then' 'if false; then'
+run_setup ./tools/lane-setup
+[ -e "$R/install-gitleaks.log" ] \
+  && ok "control: without the PATH check the installer runs over a gitleaks the lane has" \
+  || bad "control: without the PATH check the installer should run" "rc=$RC out=$OUT"
 
 echo "=== must-fail control: swallowing npm failure turns the row green ==="
 fixture mutant '  npm ci --no-audit --no-fund --prefix ui' '  npm ci --no-audit --no-fund --prefix ui || true'

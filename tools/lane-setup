@@ -41,6 +41,17 @@ else
   rustup target add aarch64-apple-darwin x86_64-pc-windows-msvc
 fi
 
+# gitleaks, which the commit-guards secrets lane runs at every commit and
+# its suite needs: one already on PATH is kept, and a lane with none gets the
+# pinned release in ~/.local/bin.
+gitleaks_path=""
+if gitleaks_path="$(command -v gitleaks)"; then
+  printf 'lane-setup: gitleaks=skip path=%s\n' "$gitleaks_path"
+else
+  printf 'lane-setup: gitleaks=install\n'
+  tools/install-gitleaks "$HOME/.local/bin"
+fi
+
 # The lane cargo configuration, written only on a fleet sandbox: one whose
 # environment carries a non-empty DAYTONA_SANDBOX_ID, which the Daytona
 # daemon and the fleet's login profile both export and a developer machine

@@ -1,0 +1,1 @@
+- commit-guards runs a default `secrets` lane: gitleaks refuses a credential on an added line, naming file, line and rule id, never the value. Without gitleaks it prints a gap notice.

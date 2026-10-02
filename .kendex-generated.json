@@ -80,6 +80,7 @@
   ".agents/skills/commit-guards/scripts/pre-push",
   ".agents/skills/commit-guards/scripts/prose",
   ".agents/skills/commit-guards/scripts/py-names",
+  ".agents/skills/commit-guards/scripts/secrets",
   ".agents/skills/commit-guards/scripts/suppression-ban",
   ".agents/skills/commit-guards/scripts/todo-ban",
   ".agents/skills/decider/README.md",

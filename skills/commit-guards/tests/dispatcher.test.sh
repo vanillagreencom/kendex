@@ -67,17 +67,17 @@ single() { # ENVS ARGS [STDIN]
 }
 
 # Stable dispatcher records and scope values.
-DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names"
-STAGED_SCOPED="todo-ban byte-ceiling md-format md-refs py-names comments"
+DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names secrets"
+STAGED_SCOPED="todo-ban byte-ceiling md-format md-refs py-names secrets comments"
 ERR="commit-guards: "
 steps() { # MODE CHECKS [INCOMPLETE]
   local mode="$1" c flag
   for c in $2; do
     flag=""
     case "$mode" in
-      all) case "$c" in byte-ceiling | py-names) flag=" --all" ;; esac ;;
+      all) case "$c" in byte-ceiling | py-names | secrets) flag=" --all" ;; esac ;;
       staged) case " $STAGED_SCOPED " in *" $c "*) flag=" --staged" ;; esac ;;
-      base:*) case "$c" in byte-ceiling | changelog-entries | py-names) flag=" --base ${mode#base:}" ;; esac ;;
+      base:*) case "$c" in byte-ceiling | changelog-entries | py-names | secrets) flag=" --base ${mode#base:}" ;; esac ;;
     esac
     printf 'commit-guards: step=%s%s;' "$c" "$flag"
     [ "$c" != "${3-}" ] || printf 'commit-guards: incomplete=%s:2;' "$c"
@@ -180,7 +180,7 @@ assert_eq "must-fail: deciding from the library withholds the sweep the project 
 echo "=== the batch runs the enabled checks in order and aggregates fail-closed ==="
 BC=COMMIT_GUARDS_BYTE_CEILING_KB
 run_rows \
-  "a clean repository runs the nine default checks, byte-ceiling and py-names with --all, and reports them clean|clean clean-1|||rc=0 $(steps all "$DEFAULT")$(ok)" \
+  "a clean repository runs the ten default checks, byte-ceiling, py-names and secrets with --all, and reports them clean|clean clean-1|||rc=0 $(steps all "$DEFAULT")$(ok)" \
   "'all' is the same batch|clean clean-2||all|rc=0 $(steps all "$DEFAULT")$(ok)" \
   "one violating check makes the batch exit 1 after every check ran|planted planted-1|||rc=1 $(steps all "$DEFAULT")$VIOLATIONS" \
   "COMMIT_GUARDS_CHECKS narrows the batch: with byte-ceiling alone the planted marker is not judged|planted planted-2|COMMIT_GUARDS_CHECKS=byte-ceiling||rc=0 $(steps all byte-ceiling)$(ok byte-ceiling)" \
