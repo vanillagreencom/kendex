@@ -267,7 +267,7 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   lane-failed<TAB><item><TAB><the last lane-local failure the long pass reported>
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
 #   outside-contribution<TAB><repo>#<number><TAB><pr HEAD_SHA|issue>
-#   refresh-failing<TAB><repo><TAB><passes since reported>|<cause>
+#   refresh-failing<TAB><repo><TAB><newest run id>|<its createdAt>|[<passes since reported>|<cause>]
 #   security-alert, bot-fix and security-alerts-unread rows, which
 #   lib/security-alerts.sh sets out above check_security_alerts
 #   account<TAB><harness>|<through>|<config dir><TAB><status>|<verdict>|<binding_resets_at or ->
@@ -1504,9 +1504,16 @@ check_prepare() {
 }
 
 # One completed-run list per repository proves the failure pair. A failed
-# read cannot clear a standing pair or end the other fleet checks.
+# read cannot clear a standing pair or end the other fleet checks. The row
+# records the newest completed run the check has read: GitHub can answer the
+# list with a stale page, and a page whose newest run is older than that
+# record judges nothing. A row in the layout before that record,
+# <passes>|<cause>, which an earlier oversee-watch left in the fleet state
+# this one inherits, reads as a standing incident with no record.
+REFRESH_ROW='^([0-9]+)\|([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)\|([0-9]+\|.+)?$'
+REFRESH_ROW_UNRECORDED='^[0-9]+\|.+$'
 check_refresh() {
-  local repo runs pair last since log cause prior passes rc workflows report
+  local repo runs order newest newest_at since recent log cause prior rec_id rec_at standing passes rc workflows report
   local rows="${PW_SEEN[0]}" errf="$WORK_DIR/refresh.err"
   for repo in "${REPOS[@]}"; do
     rc=0
@@ -1527,30 +1534,89 @@ check_refresh() {
       ow_message refresh-unread "repo=$repo" "read=runs" "exit=$rc" >&2
       continue
     fi
+    if ! prior="$(lane_row_get refresh-failing "$rows" "$repo")"; then
+      die state-read-failed "" "repo=$repo" "row=refresh-failing"
+    fi
+    rec_id='' rec_at='' standing=''
+    if [[ "$prior" =~ $REFRESH_ROW ]]; then
+      rec_id="${BASH_REMATCH[1]}" rec_at="${BASH_REMATCH[2]}" standing="${BASH_REMATCH[3]}"
+    elif [[ "$prior" =~ $REFRESH_ROW_UNRECORDED ]]; then
+      standing="$prior"
+    elif [[ -n "$prior" ]]; then
+      die state-read-failed "" "repo=$repo" "row=refresh-failing" "layout=unknown"
+    fi
+    # order is the page's newest run against the record: newer, same, older
+    # (an empty page included), or unrecorded. since is the older run's
+    # createdAt when both runs failed.
     rc=0
-    pair="$(jq -er '
+    runs="$(jq -er --arg id "$rec_id" --arg at "$rec_at" '
       if type == "array" and length <= 2 and all(.[];
         (.databaseId | type) == "number" and (.conclusion | type) == "string" and
-        (.createdAt | type) == "string") then
-        if length == 2 and all(.[]; .conclusion == "failure") then
-          "\(.[0].databaseId)\t\(.[1].createdAt)"
-        else "" end
+        (.createdAt | type) == "string" and
+        (.createdAt | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))) then
+        (if $id == "" then "unrecorded"
+         elif length == 0 then "older"
+         elif [.[0].createdAt, .[0].databaseId] > [$at, ($id | tonumber)] then "newer"
+         elif [.[0].createdAt, .[0].databaseId] == [$at, ($id | tonumber)] then "same"
+         else "older" end) as $order
+        | [$order, (.[0].databaseId // ""), (.[0].createdAt // ""),
+           (if length == 2 and all(.[]; .conclusion == "failure") then .[1].createdAt else "" end)]
+        | map(tostring) | join("|")
       else error("invalid completed refresh runs") end' <<<"$runs" 2>"$errf")" || rc=$?
     if (( rc != 0 )); then
       ow_message refresh-unread "repo=$repo" "read=runs" "exit=$rc" >&2
       continue
     fi
-    if [[ -z "$pair" ]]; then
-      rows="$(lane_row_clear refresh-failing "$rows" "$repo")" \
+    IFS='|' read -r order newest newest_at since <<<"$runs"
+    case "$order" in
+      older)
+        ow_message refresh-stale "repo=$repo" "newest=$rec_id" "read=${newest:-none}" >&2
+        continue ;;
+      unrecorded)
+        if [[ -z "$newest" ]]; then
+          rows="$(lane_row_clear refresh-failing "$rows" "$repo")" \
+            || die state-read-failed "" "repo=$repo" "row=refresh-failing"
+          continue
+        fi ;;
+      newer | same) ;;
+      *) die refresh-order-unknown "" "repo=$repo" "order=$order" ;;
+    esac
+    if [[ -z "$since" ]]; then
+      rows="$(lane_row_set refresh-failing "$rows" "$repo" "$newest|$newest_at|")" \
         || die state-read-failed "" "repo=$repo" "row=refresh-failing"
       continue
     fi
-    IFS=$'\t' read -r last since <<<"$pair"
+    # A pair whose newer run is the one already read and judged is no news.
+    [[ "$order" != same || -n "$standing" ]] || continue
+    if [[ "$order" == unrecorded ]]; then
+      # With no record, the pair counts only when its newer run is the newest
+      # completed run in the unfiltered listing, the view the Actions tab
+      # shows. Its limit is gh's default page, which leaves room for queued
+      # and running runs above the newest completed one.
+      rc=0
+      recent="$(gh run list --repo "$repo" --workflow kendex-refresh.yml --limit 20 \
+        --json databaseId,status 2>"$errf")" || rc=$?
+      if (( rc == 0 )); then
+        recent="$(jq -er '
+          if type == "array" and all(.[];
+            (.databaseId | type) == "number" and (.status | type) == "string") then
+            (map(select(.status == "completed"))[0].databaseId // "none") | tostring
+          else error("invalid refresh runs") end' <<<"$recent" 2>"$errf")" || rc=$?
+      fi
+      if (( rc != 0 )); then
+        ow_message refresh-unread "repo=$repo" "read=all-runs" "exit=$rc" >&2
+        continue
+      fi
+      if [[ "$recent" != "$newest" ]]; then
+        ow_message refresh-stale "repo=$repo" "newest=$recent" "read=$newest" >&2
+        continue
+      fi
+    fi
     cause=unread
     rc=0
-    log="$(gh run view "$last" --repo "$repo" --log-failed 2>"$errf")" || rc=$?
+    log="$(gh run view "$newest" --repo "$repo" --log-failed 2>"$errf")" || rc=$?
     if (( rc != 0 )); then
-      ow_message refresh-unread "repo=$repo" "read=log" "run=$last" "exit=$rc" >&2
+      ow_message refresh-unread "repo=$repo" "read=log" "run=$newest" "exit=$rc" >&2
     else
       # refresh-consumer and the commit hooks emit these diagnostics. gh
       # prefixes each failed-step log line with job, step and timestamp.
@@ -1558,25 +1624,22 @@ check_refresh() {
         END { gsub("\t", " ", cause); sub(/\r$/, "", cause); print cause }' <<<"$log")" \
         || rc=$?
       if (( rc != 0 )); then
-        ow_message refresh-unread "repo=$repo" "read=log" "run=$last" "exit=$rc" >&2
+        ow_message refresh-unread "repo=$repo" "read=log" "run=$newest" "exit=$rc" >&2
       fi
       [[ -n "$cause" ]] || cause=unread
     fi
-    if ! prior="$(lane_row_get refresh-failing "$rows" "$repo")"; then
-      die state-read-failed "" "repo=$repo" "row=refresh-failing"
-    fi
     passes=0
-    if [[ -n "$prior" && "${prior#*|}" == "$cause" ]]; then
-      passes=$(( ${prior%%|*} + 1 ))
+    if [[ -n "$standing" && "${standing#*|}" == "$cause" ]]; then
+      passes=$(( ${standing%%|*} + 1 ))
       (( passes < MARK_REPEAT )) || passes=0
     fi
     if (( passes == 0 )); then
       report=initial
-      [[ -z "$prior" ]] || report=repeat
-      printf 'EVENT refresh-failing %s runs=2 last=%s since=%s report=%s cause=%s\n' "$repo" "$last" "$since" "$report" "$cause"
+      [[ -z "$standing" ]] || report=repeat
+      printf 'EVENT refresh-failing %s runs=2 last=%s since=%s report=%s cause=%s\n' "$repo" "$newest" "$since" "$report" "$cause"
       PASS_EVENT=1
     fi
-    rows="$(lane_row_set refresh-failing "$rows" "$repo" "$passes|$cause")" \
+    rows="$(lane_row_set refresh-failing "$rows" "$repo" "$newest|$newest_at|$passes|$cause")" \
       || die state-read-failed "" "repo=$repo" "row=refresh-failing"
   done
   lane_row_commit "$rows"

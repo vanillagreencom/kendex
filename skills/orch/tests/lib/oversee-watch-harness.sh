@@ -80,6 +80,8 @@ printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$CASE_REPO_ROOT/tmp/wo
 #                 pulls-fail or issues-fail present → that call fails
 #   refresh.<SLUG>.json is the completed-run list (default: []);
 #   refresh.<SLUG>.err fails that list with the file's stderr;
+#   refresh-all.<SLUG>.json is the run list without --status (default: the
+#   completed-run list, every run completed), refresh-all.<SLUG>.err fails it;
 #   refresh-log.<RUN>.txt is the failed-step log (default: empty);
 #   refresh-log.<RUN>.err fails that log with the file's stderr.
 #   workflows.<SLUG>.json is the paginated workflow list (default: empty);
@@ -129,13 +131,20 @@ case "${1:-} ${2:-}" in
     echo "owner/repo"; exit 0 ;;
   "run list" | "run view")
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
-    verb="$2"; run="${3:-}"; repo=""
+    verb="$2"; run="${3:-}"; repo=""; status=""
     while [[ $# -gt 0 ]]; do
       if [[ "$1" == --repo ]]; then repo="$2"; shift; fi
+      if [[ "$1" == --status ]]; then status="$2"; shift; fi
       shift
     done
     slug="$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')"
-    if [[ "$verb" == list ]]; then
+    if [[ "$verb" == list && -z "$status" ]]; then
+      src="$STUB_DIR/refresh-all.$slug"
+      [[ ! -f "$src.err" ]] || { cat "$src.err" >&2; exit 1; }
+      [[ ! -f "$src.json" ]] || { cat "$src.json"; exit 0; }
+      src="$STUB_DIR/refresh.$slug.json"
+      if [[ -f "$src" ]]; then jq -c 'map(. + {status: "completed"})' "$src"; else printf '[]\n'; fi
+    elif [[ "$verb" == list ]]; then
       src="$STUB_DIR/refresh.$slug"
       [[ ! -f "$src.err" ]] || { cat "$src.err" >&2; exit 1; }
       if [[ -f "$src.json" ]]; then cat "$src.json"; else printf '[]\n'; fi
@@ -797,8 +806,10 @@ refresh_watch() {
   run_watch ORCH_OVERSEER_MARK_REPEAT=2 -- --max-loops 1 "$@" \
     >"$STUB_DIR/out" 2>"$STUB_DIR/err" </dev/null || REFRESH_RC=$?
   REFRESH_EVENTS="$(awk '/^EVENT refresh-failing /' "$STUB_DIR/out")"
-  REFRESH_LISTS="$(awk '/^run list / { n++ } END { print n+0 }' "$STUB_DIR/gh.calls")"
+  REFRESH_LISTS="$(awk '/^run list .* --status completed / { n++ } END { print n+0 }' "$STUB_DIR/gh.calls")"
+  REFRESH_ALL_LISTS="$(awk '/^run list / && !/ --status / { n++ } END { print n+0 }' "$STUB_DIR/gh.calls")"
   REFRESH_LOG_REQUESTS="$(awk '/^run view /' "$STUB_DIR/gh.calls")"
   REFRESH_HEARTBEATS="$(awk '/^EVENT heartbeat / { n++ } END { print n+0 }' "$STUB_DIR/out")"
   REFRESH_NOTICES="$(awk '/^oversee-watch: refresh-unread / { n++ } END { print n+0 }' "$STUB_DIR/err")"
+  REFRESH_STALE="$(awk '/^oversee-watch: refresh-stale / { sub(/^oversee-watch: refresh-stale /, ""); print }' "$STUB_DIR/err")"
 }
