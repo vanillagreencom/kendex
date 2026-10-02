@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-questions",
-  "version": "2.0.4",
+  "version": "2.1.0",
   "description": "Pi extension for structured multi-tab inline questions and bridge-driven replies.",
   "license": "MIT",
   "keywords": [
@@ -107,6 +107,15 @@
           "description": "Maximum option rows shown before scrolling. Editor mode does not pad short lists with blank rows.",
           "type": "number",
           "default": 10,
+          "category": "UI",
+          "apply": "live"
+        },
+        {
+          "key": "dialogTimeoutMinutes",
+          "label": "Dialog timeout (minutes)",
+          "description": "Minutes a native select or input dialog (RPC hosts and the dialog fallback) waits for an answer before it is dismissed and the question is cancelled. 0 waits indefinitely.",
+          "type": "number",
+          "default": 30,
           "category": "UI",
           "apply": "live"
         },

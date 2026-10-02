@@ -1,0 +1,1 @@
+- pi-questions 2.1.0: interrupting the agent cancels its open question, native dialogs close after `dialogTimeoutMinutes`, and a queued question no longer leaks memory behind a popup.

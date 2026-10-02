@@ -1,3 +1,5 @@
+import type { ExtensionUIDialogOptions } from "@earendil-works/pi-coding-agent";
+
 import type { QuestionRequest, QuestionTab } from "./question-model.js";
 
 // RPC hosts (Paseo, pi-web, VS Code bridges) cannot render ctx.ui.custom()
@@ -15,8 +17,20 @@ const MAX_PROMPT_ATTEMPTS = 5;
 const EMPTY_CUSTOM_ANSWER = "custom-answer=empty\nCustom answer cannot be empty";
 
 export interface RpcDialogUI {
-	select(title: string, options: string[]): Promise<string | undefined>;
-	input(title: string, placeholder?: string): Promise<string | undefined>;
+	select(title: string, options: string[], opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
+	input(title: string, placeholder?: string, opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
+}
+
+/**
+ * What every native dialog of one request receives. `signal` aborts when the
+ * request settles anywhere (answer, bridge reply, rejection, tool abort,
+ * shutdown); Pi then dismisses the open dialog, which resolves as dismissed,
+ * and the walker reads the aborted signal as "settled elsewhere". `timeout`
+ * dismisses a dialog nobody answers, so a client that stops responding cancels
+ * the question instead of holding the lane.
+ */
+export interface DialogOptions extends ExtensionUIDialogOptions {
+	signal: AbortSignal;
 }
 
 export type PresentOutcome =
@@ -51,8 +65,7 @@ export interface QuestionHost {
 	dialogs: RpcDialogUI | undefined;
 	/** Opens the custom TUI questionnaire; resolves with ctx.ui.custom()'s result. */
 	openCustom?: () => Promise<unknown>;
-	/** Whether the pending question was already completed elsewhere (bridge/API reply). */
-	isSettled: () => boolean;
+	dialogOptions: DialogOptions;
 }
 
 export function isRpcMode(ctx: unknown): boolean {
@@ -85,16 +98,16 @@ export function noDialogRouteError(rpcMode: boolean): string {
 export async function presentQuestion(request: QuestionRequest, host: QuestionHost): Promise<PresentOutcome | undefined> {
 	if (host.rpcMode) {
 		if (!host.dialogs) return { error: noDialogRouteError(true), kind: "unavailable" };
-		return runRpcQuestionnaire(host.dialogs, request, host.isSettled);
+		return runRpcQuestionnaire(host.dialogs, request, host.dialogOptions);
 	}
 	if (host.hasUI && host.openCustom) {
 		const uiResult = await host.openCustom();
-		if (host.isSettled()) return { kind: "external" };
+		if (host.dialogOptions.signal.aborted) return { kind: "external" };
 		if (uiResult !== undefined) return { kind: "external" };
 		// custom() resolved undefined without completing the request: the host
 		// accepted the call but cannot render the component. Fall back.
 		if (!host.dialogs) return { error: noDialogRouteError(false), kind: "unavailable" };
-		return runRpcQuestionnaire(host.dialogs, request, host.isSettled);
+		return runRpcQuestionnaire(host.dialogs, request, host.dialogOptions);
 	}
 	return undefined;
 }
@@ -102,18 +115,18 @@ export async function presentQuestion(request: QuestionRequest, host: QuestionHo
 export async function runRpcQuestionnaire(
 	ui: RpcDialogUI,
 	request: QuestionRequest,
-	isSettled: () => boolean = () => false,
+	options: DialogOptions,
 ): Promise<WalkOutcome> {
 	const answers: string[][] = [];
 	for (const [index, tab] of request.questions.entries()) {
 		const step = tab.multiple
-			? await askMultiSelect(ui, request, tab, index, isSettled)
-			: await askSingleSelect(ui, request, tab, index, isSettled);
+			? await askMultiSelect(ui, request, tab, index, options)
+			: await askSingleSelect(ui, request, tab, index, options);
 		if (step.kind === "abandoned") return { kind: "external" };
 		if (step.kind === "cancelled") return { kind: "cancelled" };
 		answers.push(step.values);
 	}
-	return isSettled() ? { kind: "external" } : { answers, kind: "answered" };
+	return options.signal.aborted ? { kind: "external" } : { answers, kind: "answered" };
 }
 
 function truncateChars(text: string, max: number): string {
@@ -155,24 +168,24 @@ function allowsEmptySelection(request: QuestionRequest): boolean {
 	return request.questions.length > 1 || request.questions.some((question) => question.multiple);
 }
 
-async function askCustomText(ui: RpcDialogUI, tab: QuestionTab, isSettled: () => boolean): Promise<CustomTextResult> {
-	if (isSettled()) return { kind: "abandoned" };
-	const text = await ui.input(truncateChars(`${tab.header}: ${tab.customLabel}`, TITLE_MAX_CHARS), tab.customPlaceholder);
-	if (isSettled()) return { kind: "abandoned" };
+async function askCustomText(ui: RpcDialogUI, tab: QuestionTab, options: DialogOptions): Promise<CustomTextResult> {
+	if (options.signal.aborted) return { kind: "abandoned" };
+	const text = await ui.input(truncateChars(`${tab.header}: ${tab.customLabel}`, TITLE_MAX_CHARS), tab.customPlaceholder, options);
+	if (options.signal.aborted) return { kind: "abandoned" };
 	if (text === undefined) return { kind: "cancelled" };
 	const trimmed = text.trim();
 	return trimmed ? { kind: "text", value: trimmed } : { kind: "blank" };
 }
 
-async function askSingleSelect(ui: RpcDialogUI, request: QuestionRequest, tab: QuestionTab, index: number, isSettled: () => boolean): Promise<StepResult> {
+async function askSingleSelect(ui: RpcDialogUI, request: QuestionRequest, tab: QuestionTab, index: number, options: DialogOptions): Promise<StepResult> {
 	const rows = formatOptionRows(tab);
 	const skipRow = allowsEmptySelection(request) ? `${customRowNumber(tab) + 1}. Skip (no selection)` : undefined;
 	if (skipRow) rows.push(skipRow);
 	let note = "";
 	for (let attempt = 0; attempt < MAX_PROMPT_ATTEMPTS; attempt += 1) {
-		if (isSettled()) return { kind: "abandoned" };
-		const choice = await ui.select(tabTitle(request, tab, index, note), rows);
-		if (isSettled()) return { kind: "abandoned" };
+		if (options.signal.aborted) return { kind: "abandoned" };
+		const choice = await ui.select(tabTitle(request, tab, index, note), rows, options);
+		if (options.signal.aborted) return { kind: "abandoned" };
 		if (choice === undefined) return { kind: "cancelled" };
 		if (skipRow && choice === skipRow) return { kind: "answers", values: [] };
 		const rowIndex = rows.indexOf(choice);
@@ -185,7 +198,7 @@ async function askSingleSelect(ui: RpcDialogUI, request: QuestionRequest, tab: Q
 			continue;
 		}
 		if (rowIndex < tab.options.length) return { kind: "answers", values: [tab.options[rowIndex].label] };
-		const custom = await askCustomText(ui, tab, isSettled);
+		const custom = await askCustomText(ui, tab, options);
 		if (custom.kind === "abandoned" || custom.kind === "cancelled") return { kind: custom.kind };
 		if (custom.kind === "blank") {
 			note = EMPTY_CUSTOM_ANSWER;
@@ -221,13 +234,13 @@ export function parseMultiSelection(raw: string, tab: QuestionTab): { labels: st
 	return { labels, wantsCustom };
 }
 
-async function askMultiSelect(ui: RpcDialogUI, request: QuestionRequest, tab: QuestionTab, index: number, isSettled: () => boolean): Promise<StepResult> {
+async function askMultiSelect(ui: RpcDialogUI, request: QuestionRequest, tab: QuestionTab, index: number, options: DialogOptions): Promise<StepResult> {
 	const placeholder = `Comma-separated numbers (e.g. 1,3); ${customRowNumber(tab)} or free text for a custom answer; empty for no selection`;
 	let note = "";
 	for (let attempt = 0; attempt < MAX_PROMPT_ATTEMPTS; attempt += 1) {
-		if (isSettled()) return { kind: "abandoned" };
-		const raw = await ui.input(multiSelectTitle(request, tab, index, note), placeholder);
-		if (isSettled()) return { kind: "abandoned" };
+		if (options.signal.aborted) return { kind: "abandoned" };
+		const raw = await ui.input(multiSelectTitle(request, tab, index, note), placeholder, options);
+		if (options.signal.aborted) return { kind: "abandoned" };
 		if (raw === undefined) return { kind: "cancelled" };
 		const parsed = parseMultiSelection(raw, tab);
 		if ("error" in parsed) {
@@ -235,7 +248,7 @@ async function askMultiSelect(ui: RpcDialogUI, request: QuestionRequest, tab: Qu
 			continue;
 		}
 		if (!parsed.wantsCustom) return { kind: "answers", values: parsed.labels };
-		const custom = await askCustomText(ui, tab, isSettled);
+		const custom = await askCustomText(ui, tab, options);
 		if (custom.kind === "abandoned" || custom.kind === "cancelled") return { kind: custom.kind };
 		if (custom.kind === "blank") {
 			note = EMPTY_CUSTOM_ANSWER;

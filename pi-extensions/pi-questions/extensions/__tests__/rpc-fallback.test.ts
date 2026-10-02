@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { unsettledDialogOptions } from "./helpers/runtime.js";
 import { normalizeRequest } from "../question-model.js";
 import {
 	formatOptionRows,
@@ -8,6 +9,7 @@ import {
 	presentQuestion,
 	rpcDialogUI,
 	runRpcQuestionnaire,
+	type DialogOptions,
 	type PresentOutcome,
 	type RpcDialogUI,
 } from "../rpc-fallback.js";
@@ -21,23 +23,29 @@ interface DialogCall {
 
 interface FakeDialogs extends RpcDialogUI {
 	calls: DialogCall[];
+	/** The options argument of each dialog call, in call order. */
+	received?: unknown[];
 }
 
 function fakeDialogs(responses: Array<string | undefined>): FakeDialogs {
 	const queue = [...responses];
 	const calls: DialogCall[] = [];
+	const received: unknown[] = [];
 	return {
 		calls,
-		input(title, placeholder) {
+		input(title, placeholder, opts) {
 			calls.push({ method: "input", placeholder, title });
+			received.push(opts);
 			if (queue.length === 0) throw new Error("fake dialog queue exhausted");
 			return Promise.resolve(queue.shift());
 		},
-		select(title, options) {
+		select(title, options, opts) {
 			calls.push({ method: "select", options, title });
+			received.push(opts);
 			if (queue.length === 0) throw new Error("fake dialog queue exhausted");
 			return Promise.resolve(queue.shift());
 		},
+		received,
 	};
 }
 
@@ -86,7 +94,7 @@ describe("rpc questionnaire walker", () => {
 	test("single select answers with the chosen option label", async () => {
 		const request = singleRequest();
 		const dialogs = fakeDialogs(["1. A — keep going"]);
-		const outcome = await runRpcQuestionnaire(dialogs, request);
+		const outcome = await runRpcQuestionnaire(dialogs, request, unsettledDialogOptions());
 
 		expect(outcome).toEqual({ answers: [["A"]], kind: "answered" });
 		expect(dialogs.calls).toEqual([{
@@ -99,7 +107,7 @@ describe("rpc questionnaire walker", () => {
 	test("choosing the custom row prompts for free text", async () => {
 		const request = singleRequest();
 		const dialogs = fakeDialogs(["3. Something else (type your own answer)", "  Use C instead  "]);
-		const outcome = await runRpcQuestionnaire(dialogs, request);
+		const outcome = await runRpcQuestionnaire(dialogs, request, unsettledDialogOptions());
 
 		expect(outcome).toEqual({ answers: [["Use C instead"]], kind: "answered" });
 		expect(dialogs.calls[1]).toEqual({
@@ -112,7 +120,7 @@ describe("rpc questionnaire walker", () => {
 	test("walks multiple questions in order and preserves the answers shape", async () => {
 		const request = multiTabRequest();
 		const dialogs = fakeDialogs(["1. A", "1,2", "2. Slow"]);
-		const outcome = await runRpcQuestionnaire(dialogs, request);
+		const outcome = await runRpcQuestionnaire(dialogs, request, unsettledDialogOptions());
 
 		expect(outcome).toEqual({ answers: [["A"], ["Docs", "Tests"], ["Slow"]], kind: "answered" });
 		expect(dialogs.calls.map((call) => call.method)).toEqual(["select", "input", "select"]);
@@ -125,7 +133,7 @@ describe("rpc questionnaire walker", () => {
 	test("multi-select custom number triggers a follow-up text input", async () => {
 		const request = multiTabRequest();
 		const dialogs = fakeDialogs(["2. B", "1,3", "Release notes", "1. Fast"]);
-		const outcome = await runRpcQuestionnaire(dialogs, request);
+		const outcome = await runRpcQuestionnaire(dialogs, request, unsettledDialogOptions());
 
 		expect(outcome).toEqual({ answers: [["B"], ["Docs", "Release notes"], ["Fast"]], kind: "answered" });
 	});
@@ -133,7 +141,7 @@ describe("rpc questionnaire walker", () => {
 	test("dismissing a dialog cancels the questionnaire without further dialogs", async () => {
 		const request = multiTabRequest();
 		const dialogs = fakeDialogs(["1. A", undefined]);
-		const outcome = await runRpcQuestionnaire(dialogs, request);
+		const outcome = await runRpcQuestionnaire(dialogs, request, unsettledDialogOptions());
 
 		expect(outcome).toEqual({ kind: "cancelled" });
 		expect(dialogs.calls).toHaveLength(2);
@@ -142,33 +150,47 @@ describe("rpc questionnaire walker", () => {
 	test("dismissing the custom-text follow-up cancels too", async () => {
 		const request = singleRequest();
 		const dialogs = fakeDialogs(["3. Something else (type your own answer)", undefined]);
-		const outcome = await runRpcQuestionnaire(dialogs, request);
+		const outcome = await runRpcQuestionnaire(dialogs, request, unsettledDialogOptions());
 
 		expect(outcome).toEqual({ kind: "cancelled" });
 	});
 
 	test("abandons silently when the request settles externally mid-walk", async () => {
 		const request = multiTabRequest();
-		let settled = false;
+		const settle = new AbortController();
 		const base = fakeDialogs(["1. A"]);
 		const dialogs: FakeDialogs = {
 			calls: base.calls,
 			input: base.input,
-			select: async (title, options) => {
-				const choice = await base.select(title, options);
-				settled = true;
+			select: async (title, options, opts) => {
+				const choice = await base.select(title, options, opts);
+				settle.abort();
 				return choice;
 			},
 		};
-		const outcome = await runRpcQuestionnaire(dialogs, request, () => settled);
+		const outcome = await runRpcQuestionnaire(dialogs, request, { signal: settle.signal });
 
 		expect(outcome).toEqual({ kind: "external" });
 		expect(dialogs.calls).toHaveLength(1);
 	});
 
+	test("every dialog receives the request's dialog options", async () => {
+		const options: DialogOptions = { signal: new AbortController().signal, timeout: 1_800_000 };
+		const dialogs = fakeDialogs(["1. A", "1,3", "Release notes", "2. Slow"]);
+		const outcome = await runRpcQuestionnaire(dialogs, multiTabRequest(), options);
+
+		expect(outcome).toEqual({ answers: [["A"], ["Docs", "Release notes"], ["Slow"]], kind: "answered" });
+		expect(dialogs.calls.map(({ method }, index) => ({ method, received: dialogs.received?.[index] === options }))).toEqual([
+			{ method: "select", received: true },
+			{ method: "input", received: true },
+			{ method: "input", received: true },
+			{ method: "select", received: true },
+		]);
+	});
+
 	test("never opens a dialog when the request is already settled", async () => {
 		const dialogs = fakeDialogs([]);
-		const outcome = await runRpcQuestionnaire(dialogs, singleRequest(), () => true);
+		const outcome = await runRpcQuestionnaire(dialogs, singleRequest(), { signal: AbortSignal.abort() });
 
 		expect(outcome).toEqual({ kind: "external" });
 		expect(dialogs.calls).toHaveLength(0);
@@ -178,7 +200,7 @@ describe("rpc questionnaire walker", () => {
 		const request = singleRequest();
 		const customRow = "3. Something else (type your own answer)";
 		const dialogs = fakeDialogs([customRow, "   ", customRow, "Real answer"]);
-		const outcome = await runRpcQuestionnaire(dialogs, request);
+		const outcome = await runRpcQuestionnaire(dialogs, request, unsettledDialogOptions());
 
 		expect(outcome).toEqual({ answers: [["Real answer"]], kind: "answered" });
 		expect(dialogs.calls[2].title.split("\n")[0]).toBe("custom-answer=empty");
@@ -187,7 +209,7 @@ describe("rpc questionnaire walker", () => {
 
 	test("blank unlisted select text re-shows the question instead of answering blank", async () => {
 		const dialogs = fakeDialogs(["", "2. B"]);
-		const outcome = await runRpcQuestionnaire(dialogs, singleRequest());
+		const outcome = await runRpcQuestionnaire(dialogs, singleRequest(), unsettledDialogOptions());
 
 		expect(outcome).toEqual({ answers: [["B"]], kind: "answered" });
 		expect(dialogs.calls[1].title.split("\n")[0]).toBe("answer=empty");
@@ -196,7 +218,7 @@ describe("rpc questionnaire walker", () => {
 	test("persistent blank input cancels after bounded re-prompts, never a false answer", async () => {
 		const customRow = "3. Something else (type your own answer)";
 		const dialogs = fakeDialogs([customRow, "", customRow, "", customRow, "", customRow, "", customRow, ""]);
-		const outcome = await runRpcQuestionnaire(dialogs, singleRequest());
+		const outcome = await runRpcQuestionnaire(dialogs, singleRequest(), unsettledDialogOptions());
 
 		expect(outcome).toEqual({ kind: "cancelled" });
 		expect(dialogs.calls).toHaveLength(10);
@@ -205,7 +227,7 @@ describe("rpc questionnaire walker", () => {
 	test("out-of-range multi-select numbers re-prompt with an error note", async () => {
 		const request = multiTabRequest();
 		const dialogs = fakeDialogs(["1. A", "9", "1,2", "2. Slow"]);
-		const outcome = await runRpcQuestionnaire(dialogs, request);
+		const outcome = await runRpcQuestionnaire(dialogs, request, unsettledDialogOptions());
 
 		expect(outcome).toEqual({ answers: [["A"], ["Docs", "Tests"], ["Slow"]], kind: "answered" });
 		expect(dialogs.calls[2].title.split("\n")[0]).toBe("option-range=9:1:3");
@@ -224,7 +246,7 @@ describe("rpc questionnaire walker", () => {
 			}],
 		});
 		const dialogs = fakeDialogs(["1,12"]);
-		const outcome = await runRpcQuestionnaire(dialogs, request);
+		const outcome = await runRpcQuestionnaire(dialogs, request, unsettledDialogOptions());
 
 		expect(outcome).toEqual({ answers: [["Option 1", "Option 12"]], kind: "answered" });
 		const lines = dialogs.calls[0].title.split("\n");
@@ -235,12 +257,13 @@ describe("rpc questionnaire walker", () => {
 	test("control-state words typed as custom answers arrive as answers, not control states", async () => {
 		const customRow = "3. Something else (type your own answer)";
 		for (const word of ["cancelled", "abandoned", "blank", "external", "answers", "text"]) {
-			const single = await runRpcQuestionnaire(fakeDialogs([customRow, word]), singleRequest());
+			const single = await runRpcQuestionnaire(fakeDialogs([customRow, word]), singleRequest(), unsettledDialogOptions());
 			expect(single).toEqual({ answers: [[word]], kind: "answered" });
 		}
 		const multi = await runRpcQuestionnaire(
 			fakeDialogs(["1. A", "1,3", "cancelled", "2. Slow"]),
 			multiTabRequest(),
+			unsettledDialogOptions(),
 		);
 		expect(multi).toEqual({ answers: [["A"], ["Docs", "cancelled"], ["Slow"]], kind: "answered" });
 	});
@@ -248,7 +271,7 @@ describe("rpc questionnaire walker", () => {
 	test("multi-question requests offer a skip row; skipping yields an empty answer like the TUI confirm tab", async () => {
 		const request = multiTabRequest();
 		const dialogs = fakeDialogs(["4. Skip (no selection)", "", "1. Fast"]);
-		const outcome = await runRpcQuestionnaire(dialogs, request);
+		const outcome = await runRpcQuestionnaire(dialogs, request, unsettledDialogOptions());
 
 		expect(outcome).toEqual({ answers: [[], [], ["Fast"]], kind: "answered" });
 		expect(dialogs.calls[0].options).toEqual([
@@ -261,16 +284,16 @@ describe("rpc questionnaire walker", () => {
 
 	test("single-question single-select offers no skip row, matching the TUI which cannot submit empty there", async () => {
 		const dialogs = fakeDialogs(["2. B"]);
-		await runRpcQuestionnaire(dialogs, singleRequest());
+		await runRpcQuestionnaire(dialogs, singleRequest(), unsettledDialogOptions());
 
 		expect(dialogs.calls[0].options).toEqual(["1. A — keep going", "2. B", "3. Something else (type your own answer)"]);
 	});
 
 	test("repeated invocations are independent", async () => {
 		const request = singleRequest();
-		const first = await runRpcQuestionnaire(fakeDialogs([undefined]), request);
-		const second = await runRpcQuestionnaire(fakeDialogs(["2. B"]), request);
-		const third = await runRpcQuestionnaire(fakeDialogs(["1. A — keep going"]), request);
+		const first = await runRpcQuestionnaire(fakeDialogs([undefined]), request, unsettledDialogOptions());
+		const second = await runRpcQuestionnaire(fakeDialogs(["2. B"]), request, unsettledDialogOptions());
+		const third = await runRpcQuestionnaire(fakeDialogs(["1. A — keep going"]), request, unsettledDialogOptions());
 
 		expect(first).toEqual({ kind: "cancelled" });
 		expect(second).toEqual({ answers: [["B"]], kind: "answered" });
@@ -304,7 +327,7 @@ describe("presentQuestion routing", () => {
 		const outcome = await presentQuestion(request, {
 			dialogs,
 			hasUI: false,
-			isSettled: () => false,
+			dialogOptions: unsettledDialogOptions(),
 			rpcMode: true,
 		});
 
@@ -315,7 +338,7 @@ describe("presentQuestion routing", () => {
 		const outcome = await presentQuestion(singleRequest(), {
 			dialogs: undefined,
 			hasUI: false,
-			isSettled: () => false,
+			dialogOptions: unsettledDialogOptions(),
 			rpcMode: true,
 		});
 
@@ -330,7 +353,7 @@ describe("presentQuestion routing", () => {
 		const outcome = await presentQuestion(request, {
 			dialogs,
 			hasUI: true,
-			isSettled: () => false,
+			dialogOptions: unsettledDialogOptions(),
 			openCustom: () => {
 				customOpened += 1;
 				return Promise.resolve(undefined);
@@ -346,7 +369,7 @@ describe("presentQuestion routing", () => {
 		const outcome = await presentQuestion(singleRequest(), {
 			dialogs: undefined,
 			hasUI: true,
-			isSettled: () => false,
+			dialogOptions: unsettledDialogOptions(),
 			openCustom: () => Promise.resolve(undefined),
 			rpcMode: false,
 		});
@@ -360,7 +383,7 @@ describe("presentQuestion routing", () => {
 		const outcome = await presentQuestion(singleRequest(), {
 			dialogs,
 			hasUI: true,
-			isSettled: () => true,
+			dialogOptions: { signal: AbortSignal.abort() },
 			openCustom: () => Promise.resolve({ answers: [["A"]], requestId: "que_rpc_single" }),
 			rpcMode: false,
 		});
@@ -373,7 +396,7 @@ describe("presentQuestion routing", () => {
 		const outcome = await presentQuestion(singleRequest(), {
 			dialogs: fakeDialogs([]),
 			hasUI: false,
-			isSettled: () => false,
+			dialogOptions: unsettledDialogOptions(),
 			rpcMode: false,
 		});
 

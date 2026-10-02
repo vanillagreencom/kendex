@@ -42,6 +42,10 @@ const DEFAULT_RENDER_MODE = "editor";
 const PADDING_X = 2;
 const PADDING_Y = 0;
 const OPTION_ROWS = 10;
+const DIALOG_TIMEOUT_MINUTES = 30;
+// The shared modal lock is a depth counter every kendex package raises and
+// lowers with no release notification, so a queued question polls it.
+const MODAL_LOCK_POLL_MS = 100;
 const ANSI_GREEN_FG = "\x1b[32m";
 const ANSI_YELLOW_FG = "\x1b[33m";
 
@@ -101,7 +105,8 @@ interface kendexModalLock {
 }
 
 interface QuestionService {
-	ask(ctx: ExtensionContext, payload: unknown, source?: QuestionSource): Promise<QuestionResult>;
+	/** Rejects with "Operation aborted" when `signal` aborts first, after cancelling the request. */
+	ask(ctx: ExtensionContext, payload: unknown, source?: QuestionSource, signal?: AbortSignal): Promise<QuestionResult>;
 	listPending(): PendingQuestionView[];
 	reply(requestId: string, answers: unknown, source?: QuestionSource): boolean;
 	reject(requestId: string, source?: QuestionSource): boolean;
@@ -112,6 +117,8 @@ interface QuestionService {
 interface PendingQuestion extends PendingQuestionView {
 	complete(result: QuestionResult, source: QuestionSource): void;
 	promise: Promise<QuestionResult>;
+	/** Aborts once the request settles, whoever settled it. */
+	settled: AbortSignal;
 	requestRender?: () => void;
 	uiDone?: (result: QuestionResult) => void;
 }
@@ -271,8 +278,34 @@ function acquirekendexModalLock(): () => void {
 	};
 }
 
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * Resolves once no kendex popup holds the shared modal lock or `settled`
+ * aborts, whichever comes first. The poll timer and the abort listener are
+ * both removed when it resolves, so a long hold registers nothing per poll.
+ */
+function waitForModalLock(settled: AbortSignal): Promise<void> {
+	if (settled.aborted || !iskendexModalActive()) return Promise.resolve();
+	return new Promise((resolve) => {
+		const finish = () => {
+			clearInterval(timer);
+			settled.removeEventListener("abort", finish);
+			resolve();
+		};
+		const timer = setInterval(() => {
+			if (!iskendexModalActive()) finish();
+		}, MODAL_LOCK_POLL_MS);
+		settled.addEventListener("abort", finish, { once: true });
+	});
+}
+
+function operationAborted(): Error {
+	return new Error("Operation aborted");
+}
+
+/** Pi's dialog timeout in milliseconds; a setting of zero or less means none. */
+function dialogTimeoutMs(cwd?: string): number | undefined {
+	const minutes = settingNumber("dialogTimeoutMinutes", DIALOG_TIMEOUT_MINUTES, cwd);
+	return minutes > 0 ? minutes * 60_000 : undefined;
 }
 
 function popupContentWidth(width: number): number {
@@ -466,16 +499,18 @@ class QuestionServiceImpl implements QuestionService {
 	private readonly listeners = new Set<(event: QuestionEvent) => void>();
 	private readonly pending = new Map<string, PendingQuestion>();
 
-	ask(ctx: ExtensionContext, payload: unknown, source: QuestionSource = "api"): Promise<QuestionResult> {
+	ask(ctx: ExtensionContext, payload: unknown, source: QuestionSource = "api", signal?: AbortSignal): Promise<QuestionResult> {
 		attachContext(ctx, this);
 		const request = normalizeRequest(payload);
 		if (this.pending.has(request.id)) throw new Error(`Question request already pending: ${request.id}`);
+		if (signal?.aborted) return Promise.reject(operationAborted());
 
 		const openedAt = new Date().toISOString();
 		let resolvePromise: (result: QuestionResult) => void = () => undefined;
 		const promise = new Promise<QuestionResult>((resolve) => {
 			resolvePromise = resolve;
 		});
+		const settle = new AbortController();
 
 		const pending: PendingQuestion = {
 			complete: (result, completeSource) => {
@@ -484,6 +519,7 @@ class QuestionServiceImpl implements QuestionService {
 				// reused the same request id after this one settled.
 				if (this.pending.get(request.id) !== pending) return;
 				this.pending.delete(request.id);
+				settle.abort();
 				const finalResult = "answers" in result ? { requestId: request.id, answers: result.answers } : { ...result, requestId: request.id };
 				resolvePromise(finalResult);
 				pending.uiDone?.(finalResult);
@@ -501,6 +537,7 @@ class QuestionServiceImpl implements QuestionService {
 			promise,
 			request,
 			requestId: request.id,
+			settled: settle.signal,
 		};
 
 		this.pending.set(request.id, pending);
@@ -509,9 +546,9 @@ class QuestionServiceImpl implements QuestionService {
 		this.publish(openedEvent);
 
 		void presentQuestion(request, {
+			dialogOptions: { signal: pending.settled, timeout: dialogTimeoutMs(ctx.cwd) },
 			dialogs: rpcDialogUI(ctx.ui),
 			hasUI: ctx.hasUI,
-			isSettled: () => this.pending.get(request.id) !== pending,
 			openCustom: ctx.hasUI ? () => openQuestionUi(ctx, pending) : undefined,
 			rpcMode: isRpcMode(ctx),
 		}).then((outcome) => {
@@ -525,7 +562,20 @@ class QuestionServiceImpl implements QuestionService {
 			pending.complete({ cancelled: true, error: stringifyError(error), requestId: request.id }, "ui_error");
 		});
 
-		return promise;
+		if (!signal) return promise;
+		return new Promise<QuestionResult>((resolve, reject) => {
+			const onAbort = () => {
+				// Settled before the abort: the result is already on its way to resolve.
+				if (pending.settled.aborted) return;
+				pending.complete({ cancelled: true, requestId: request.id }, "tool");
+				reject(operationAborted());
+			};
+			signal.addEventListener("abort", onAbort, { once: true });
+			void promise.then((result) => {
+				signal.removeEventListener("abort", onAbort);
+				resolve(result);
+			});
+		});
 	}
 
 	listPending(): PendingQuestionView[] {
@@ -595,11 +645,9 @@ function attachContext(ctx: ExtensionContext | undefined, service: QuestionServi
 async function openQuestionUi(ctx: ExtensionContext, pending: PendingQuestion): Promise<QuestionResult | undefined> {
 	if (iskendexModalActive()) {
 		ctx.ui.notify("Question queued until the current popup closes.", "info");
-		while (iskendexModalActive()) {
-			const completed = await Promise.race([pending.promise.then(() => true), sleep(100).then(() => false)]);
-			if (completed) return pending.promise;
-		}
+		await waitForModalLock(pending.settled);
 	}
+	if (pending.settled.aborted) return pending.promise;
 	const releaseModalLock = acquirekendexModalLock();
 	let restoreHardwareCursor: (() => void) | undefined;
 	try {
@@ -984,7 +1032,7 @@ export default function questions(pi: ExtensionAPI): void {
 			"Do not add a final Confirm, Submit, Review, or Done tab; pi-questions adds its own submit tab when needed.",
 		],
 		parameters: QUESTION_TOOL_PARAMETERS as never,
-		async execute(toolCallId, params, _signal, _onUpdate, ctx): Promise<AgentToolResult<QuestionResult>> {
+		async execute(toolCallId, params, signal, _onUpdate, ctx): Promise<AgentToolResult<QuestionResult>> {
 			const runCtx = ctx ?? activeCtx;
 			if (!runCtx) {
 				const result: QuestionCancelResult = { cancelled: true, error: "No active Pi context", requestId: "que_unavailable" };
@@ -997,7 +1045,7 @@ export default function questions(pi: ExtensionAPI): void {
 			}
 			activeCtx = runCtx;
 			attachContext(runCtx, service);
-			const result = await service.ask(runCtx, params, "tool");
+			const result = await service.ask(runCtx, params, "tool", signal);
 			return makeQuestionToolResult(toolCallId, result);
 		},
 		renderCall() {

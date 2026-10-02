@@ -2,6 +2,12 @@
 
 ## Consumer-impacting changes
 
+### 2.1.0
+
+- Interrupting the agent while a question is open cancels the question: the questionnaire or native dialog closes and the tool call ends as aborted. Before, the question stayed open and the lane waited.
+- New setting `dialogTimeoutMinutes` (default 30, 0 for no limit): a native select or input dialog nobody answers closes after that many minutes and the question is cancelled.
+- A question queued behind another kendex popup no longer adds a promise reaction every 100 ms while it waits.
+
 ### 2.0.4
 
 - Question results normalize requests once and reuse layout during redraws. Answer wrapping preserves ANSI styles and wraps long words with Pi’s text wrapper.
