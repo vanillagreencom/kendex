@@ -1,1 +1,1 @@
-- A consumer refresh that retires an agent, a skill file or a whole registry now opens its pull request for review instead of stopping; a hook retirement still stops until an engine fix ships.
+- A consumer refresh that retires rendered files now opens its pull request for review instead of stopping, unless it also removes a hook, MCP server or plugin registration from a shared file.
