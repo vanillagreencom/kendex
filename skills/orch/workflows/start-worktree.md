@@ -9,7 +9,9 @@ The full session from inside a worktree: implement → review → submit → fin
 
 ## 1. Open The Session
 
-1. **Resolve identity.** Take `[ISSUE_ID]` from the argument, or from the branch:
+1. **Write the status file.** In a lane whose brief names a status file, `tmp/lane-status-[ISSUE_ID].md`, write it before this section's first command, and rewrite it at each step change, holding what the brief names.
+
+2. **Resolve identity.** Take `[ISSUE_ID]` from the argument, or from the branch:
 
    ```bash
    .agents/skills/orch/scripts/git-context issue-from-branch .
@@ -17,7 +19,7 @@ The full session from inside a worktree: implement → review → submit → fin
 
    Resolve `TRACKER` per [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution). Set `WORKTREE_PATH` to `git-context repo-root .`.
 
-2. **Refuse containers** — Linear only, before any state exists. Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) to:
+3. **Refuse containers** — Linear only, before any state exists. Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) to:
 
    ```bash
    .agents/skills/linear/scripts/linear.sh sync --reconcile
@@ -26,7 +28,7 @@ The full session from inside a worktree: implement → review → submit → fin
 
    A container, a blocked child, or a `(one PR)` promotion all STOP here without leasing or initializing anything. A promotion: point the operator at `/orch start [PARENT_ID]`. A container: list its unblocked children and say this worktree should not exist for it. A blocked child: name the live blockers.
 
-3. **Claim the worktree.** **Skip if** `WORKTREE_PATH` is the main checkout — the guard refuses it.
+4. **Claim the worktree.** **Skip if** `WORKTREE_PATH` is the main checkout — the guard refuses it.
 
    ```bash
    .agents/skills/worktree/scripts/worktree-session-guard claim [WORKTREE_PATH] --owner [ISSUE_ID]
@@ -34,7 +36,7 @@ The full session from inside a worktree: implement → review → submit → fin
 
    Do **not** pass `--repo` (`claim` and `refresh` reject it). Exit 75 means another session holds the lease — coordinate with that owner instead of proceeding. A flock-less host still serializes through the guard's mkdir mutex; exit 1 means the guard itself failed — stop and read its message, never continue unguarded.
 
-4. **Initialize state unless it exists.** `init` overwrites, and a restarted item's state file carries its round history (`cycles`, `fixed_items`, `patched_causes`), so read existence and the branch first:
+5. **Initialize state unless it exists.** `init` overwrites, and a restarted item's state file carries its round history (`cycles`, `fixed_items`, `patched_causes`), so read existence and the branch first:
 
    ```bash
    .agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
@@ -62,14 +64,14 @@ The full session from inside a worktree: implement → review → submit → fin
    .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] tier standard
    ```
 
-5. **Gate on base freshness.** Every route into a worktree lands here — fresh or reused:
+6. **Gate on base freshness.** Every route into a worktree lands here — fresh or reused:
 
    ```bash
    .agents/skills/orch/scripts/base-freshness [WORKTREE_PATH]
    ```
 
-   - Exit 0 → step 6. On a merge-queue base whose rules demand no up-to-date branch, a branch behind it that merges cleanly is fresh; the JSON's `reading` names what decided (`base-freshness --help`).
-   - Exit 4 → rebase through the supported reuse path, then re-run the gate; it must exit 0 before step 6:
+   - Exit 0 → step 7. On a merge-queue base whose rules demand no up-to-date branch, a branch behind it that merges cleanly is fresh; the JSON's `reading` names what decided (`base-freshness --help`).
+   - Exit 4 → rebase through the supported reuse path, then re-run the gate; it must exit 0 before step 7:
 
      ```bash
      .agents/skills/worktree/scripts/worktree create [ISSUE_ID] --reuse
@@ -77,7 +79,7 @@ The full session from inside a worktree: implement → review → submit → fin
 
    - Exit 1, or a reuse that cannot complete → report the divergence and stop. Never review on an unverified base.
 
-6. **Record branch size before delegation.** Run the size report on this branch:
+7. **Record branch size before delegation.** Run the size report on this branch:
 
    ```bash
    .agents/skills/orch/scripts/branch-size-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --json
