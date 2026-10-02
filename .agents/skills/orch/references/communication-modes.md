@@ -86,6 +86,8 @@ The owner can answer more than once. Each answer lands through `send --item over
 - At the deadline the watch runs `resolve --default`. An answered ask closes without a recommendation answer; an unanswered ask takes its recommendation.
 - After closing, later text arrives as a directive. A repeated delivery still names its original answer.
 
+An ask for the owner to approve a Slack message or an email sent as the owner is a draft ask: `--draft [PATH]` in place of `--options` and `--recommend`. The [lane-mail owner-channel contract](../scripts/lane-mail) states the draft's fields and its `text_hash`. Send only when the approval for that ask id names the `text_hash` that `pending --item overseer --to owner` prints. An edited draft is a new ask.
+
 The overseer records the ruling per § Recording and sends `lane-mail notice --item overseer --to owner --ref [ASK_ID]` naming it, so a relay posts the ruling where the question was asked.
 
 For a delivered owner request, `--ref` binds the reply to that request's delivery id through the [lane-mail owner-channel contract](../scripts/lane-mail). Answer it under the Reply row and Thread rule in [§ Owner messages](#owner-messages).

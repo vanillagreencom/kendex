@@ -9,9 +9,9 @@
 # id, the attachment's confinement, the audience and deadline filters, the
 # cursor rule, the reply's owner-ask read, the owner-note class a reply names,
 # the ask's deadline field, the box `events` stamps, the owner ask's required
-# recommendation, the cursor `events` refuses, the reply's delivery id and
-# the referenced mailbox's read lock. The owner notice's day-long text rule
-# keeps its controls beside its rows.
+# recommendation, the cursor `events` refuses, the reply's delivery id, the
+# referenced mailbox's read lock, and a draft's medium, fields and text hash.
+# The owner notice's day-long text rule keeps its controls beside its rows.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -496,6 +496,82 @@ lm pending --item overseer --to owner --due
 assert_eq "$RC=$(jq -r '.id' <<<"$OUT" | paste -sd, -)" "0=$DUE" "and --due lists the due one"
 rm -f -- "${BOX:?}/to-lane.cursor.lock"
 
+# --- the draft ask -------------------------------------------------------------
+draft_file() { # NAME JSON
+  printf '%s' "$2" > "$TMP_ROOT/$1.json"
+  printf '%s' "$TMP_ROOT/$1.json"
+}
+draft_ask() { # DRAFT [ARGS...] — sets ASK to the id.
+  local draft="$1"
+  shift
+  lm ask --item overseer --to owner --file "$(text q 'Send it as the owner?')" --draft "$draft" "$@"
+  ASK="${OUT#id=}"
+}
+# The expected hash comes from the bytes the test wrote, never from lane-mail.
+sha256_of() { # FILE
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum < "$1"; else shasum -a 256 < "$1"; fi | cut -d ' ' -f 1
+}
+# The one ask in BOX records exactly FILE's bytes as its draft text, and a
+# text_hash taken over those bytes.
+assert_draft_text() { # FILE
+  jq -j '.draft.text' < "$BOX/to-overseer.jsonl" > "$TMP_ROOT/draft.recorded" || exit 1
+  assert_eq "$(sha256_of "$TMP_ROOT/draft.recorded") $(field "$BOX/to-overseer.jsonl" '.draft.text_hash')" \
+    "$(sha256_of "$1") $(sha256_of "$1")" "the draft text is the file's exact string and text_hash its SHA-256"
+}
+DRAFT_BYTES="$TMP_ROOT/draft.bytes"
+printf 'Grüße an alle\n' > "$DRAFT_BYTES"
+DRAFT_JSON='{"recipient":"#launch","medium":"slack-channel","text":"Grüße an alle\n"}'
+
+new_repo draft
+draft_ask "$(draft_file d "$DRAFT_JSON")" --wait 30
+assert_eq "$RC=${OUT%%=*}" "0=id" "a draft ask prints its id"
+assert_eq "$(field "$BOX/to-overseer.jsonl" '[(.options | join(",")), .recommend, has("deadline"), (.draft | keys | join(","))] | map(tostring) | join(" ")')" \
+  "approve,deny deny true medium,recipient,text,text_hash" "a draft ask fixes approve,deny with deny standing at its deadline"
+assert_draft_text "$DRAFT_BYTES"
+lm pending --item overseer --to owner
+assert_eq "$RC=$(jq -r '.draft.text_hash' <<<"$OUT")" "0=$(sha256_of "$DRAFT_BYTES")" "pending prints the draft ask with its text_hash"
+lm send --item overseer --re "$ASK" --file "$(text a approve)"
+lm pending --item overseer --to owner
+assert_eq "$RC=$(jq -r '.id' <<<"$OUT")" "0=$ASK" "an owner answer leaves the draft ask pending"
+
+new_repo draft_media
+for medium in slack-thread email; do
+  draft_ask "$(draft_file "$medium" '{"recipient":"r","medium":"'"$medium"'","text":"Ship it."}')"
+  assert_eq "$RC=$(jq -rs 'last.draft.medium' < "$BOX/to-overseer.jsonl")" "0=$medium" "a $medium draft lands"
+done
+
+# One changed character is a new message: a new ask with its own hash.
+new_repo draft_edit
+draft_ask "$(draft_file d "$DRAFT_JSON")"
+draft_ask "$(draft_file e "${DRAFT_JSON/alle/alle!}")"
+assert_eq "$RC=$(jq -rs '[(map(.id) | unique | length), (map(.draft.text_hash) | unique | length)] | map(tostring) | join(",")' < "$BOX/to-overseer.jsonl")" \
+  "0=2,2" "an edited draft lands under a new id and a different hash"
+
+# ARGS~DRAFT~WANT: every refusal leaves the one draft ask already there alone.
+new_repo draft_refusals
+VALID="$(draft_file valid "$DRAFT_JSON")"
+draft_ask "$VALID"
+D="$TMP_ROOT/refused.json"
+while IFS='~' read -r args json want; do
+  if [[ "$json" == VALID ]]; then cp -- "$VALID" "$D"; else printf '%s' "$json" > "$D"; fi
+  # shellcheck disable=SC2086  # a row's arguments are its own words.
+  lm $args --file "$(text q 'Send it?')" --draft "$D"
+  assert_eq "$RC=$ERR=$(wc -l < "$BOX/to-overseer.jsonl" | tr -d ' ')" "$want=1" "draft refused: $args $json"
+done <<ROWS
+ask --item overseer --to owner~{"medium":"email","text":"x"}~2=lane-mail: draft-field=recipient
+ask --item overseer --to owner~{"recipient":"r","medium":"","text":"x"}~2=lane-mail: draft-field=medium
+ask --item overseer --to owner~{"recipient":"r","medium":"email","text":" \n\t"}~2=lane-mail: draft-field=text
+ask --item overseer --to owner~{"recipient":"r","medium":"email","text":"x","text_hash":"00"}~2=lane-mail: draft-field=text_hash
+ask --item overseer --to owner~{"recipient":"r","medium":"email","text":3}~2=lane-mail: draft-field=text
+ask --item overseer --to owner~{"recipient":"r","medium":"fax","text":"x"}~2=lane-mail: draft-medium=fax
+ask --item overseer --to owner~{"recipient":"r",~2=lane-mail: file-unreadable=$D
+ask --item overseer --to owner~["r","email","x"]~2=lane-mail: file-unreadable=$D
+ask --item overseer --to owner --options approve,deny~VALID~2=lane-mail: option-conflict=--draft,--options
+ask --item overseer --to owner --recommend deny~VALID~2=lane-mail: option-conflict=--draft,--recommend
+ask --item KEN-1~VALID~2=lane-mail: option-unknown=--draft
+notice --item overseer --to owner~VALID~2=lane-mail: option-unknown=--draft
+ROWS
+
 # --- resolve, exactly once ----------------------------------------------------
 new_repo resolve
 owner_ask 'Cut the scanner?' cut,keep cut 0
@@ -911,6 +987,26 @@ mutant cursor-for-asks 'if [ "$LISTS_DIRECTIVES" -eq 1 ]; then' 'if [ "$VERB" = 
 lm pending --item overseer --to owner
 assert_eq "$RC=$ERR" "2=lane-mail: mail-read-failed=overseer cursor=missed" \
   "control: with the cursor read for every pending a missed read refuses the asks --to keeps"
+
+new_repo control_draft_medium
+mutant draft-medium-any 'elif (.medium | IN(' 'elif true or (.medium | IN('
+draft_ask "$(draft_file fax '{"recipient":"r","medium":"fax","text":"x"}')"
+assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.draft.medium')" "0=fax" "control: without the medium rule a fax draft lands"
+
+new_repo control_draft_field
+mutant draft-field-any 'if $bad != [] then' 'if false and $bad != [] then'
+draft_ask "$(draft_file blank '{"recipient":"","medium":"email","text":"x"}')"
+assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.draft.recipient')" "0=" "control: without the field rule an empty recipient lands"
+
+new_repo control_draft_hash
+mutant draft-hash-trimmed 'jq -j .text -- "$DRAFT"' 'jq -j '"'"'.text | sub("\n$"; "")'"'"' -- "$DRAFT"'
+draft_ask "$(draft_file d "$DRAFT_JSON")"
+CONTROL_RC=0
+CONTROL_OUT="$(
+  assert_draft_text "$DRAFT_BYTES"
+  [[ "$FAIL" -eq 0 ]]
+)" || CONTROL_RC=$?
+assert_eq "$RC=$CONTROL_RC" "0=1" "control: a hash over the text less its trailing newline turns the draft text row red"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

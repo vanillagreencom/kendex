@@ -158,6 +158,18 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               --recommend is refused `recommend-required`, since nothing
               but the owner would ever close it. The owner may still answer
               outside the options, through send --re
+  ask --item overseer --to owner --file PATH --draft PATH [--wait MINUTES]
+              an owner ask to approve a message sent as the owner. --file
+              is the question the owner reads; --draft names a JSON object
+              of exactly recipient, medium (slack-channel, slack-thread or
+              email) and text, all strings. The ask's options are
+              approve,deny and its recommendation deny, so the deadline
+              never approves a send; --options or --recommend beside it is
+              refused `option-conflict`. The record carries `draft`:
+              those three fields, text exactly as the file holds it, and
+              text_hash, the lowercase hex SHA-256 of text's UTF-8 bytes
+              that lane-mail computes. The master sends only when the
+              approval it holds for that ask id names the same text_hash
   notice --item overseer --to owner --file PATH [--ref MSGID] [--attach PATH]
               a note for the owner. --ref names the envelope it answers,
               an owner note in to-lane.jsonl, one the owner wrote and not a
@@ -279,6 +291,7 @@ Options:
   --attach PATH notice --to owner only: the file carried beside the text
   --recommend a ask --to owner only: the option that stands by default
   --wait N      ask --to owner only: minutes until that default stands
+  --draft PATH  ask --to owner only: the message the owner approves
   --due         pending only: asks whose deadline has passed
   --text PATH   resolve only: the owner's answer, read as --file is
   --default     resolve only: close at deadline; recommend only if unanswered
@@ -303,6 +316,7 @@ attach, recommend, wait, deadline (UTC, at plus wait minutes), delivery_id,
 re_delivery_id (notice's copy of its --ref envelope's delivery_id), thread_ts
 and parent (threaded owner directives only),
 closes (false on new owner answers; absent on legacy closing answers),
+draft (a draft ask only: recipient, medium, text and text_hash),
 and by (`text` or `default` on an owner answer; `explicit`, `text` or
 `default` on a close). kind is ask, notice, answer, resolution or directive;
 at is UTC; id is <epoch>-<pid>-<random>. from
@@ -379,7 +393,8 @@ cap, passed through; 124 `wait` reached --timeout with no answer. Refusal
 keys, first line `lane-mail: <key>=<value>`: verb-invalid, option-unknown,
 option-conflict, missing-value, option-required, item-invalid, after-invalid,
 seconds-invalid, minutes-invalid, to-invalid, ref-invalid, ref-unknown,
-recommend-invalid, recommend-missing, recommend-required, attach-outside,
+recommend-invalid, recommend-missing, recommend-required, draft-field,
+draft-medium, attach-outside,
 ask-unknown, resolved-already, delivery-repeated, owner-notice-repeated,
 overseer-only, events-no-cursor,
 command-missing, file-unreadable, root-unresolved, repo-unresolved, repo-self,
@@ -476,6 +491,8 @@ fix=run `oversee register` from the orch skill in the session that should read t
     ref-unknown) text='No owner note in to-lane.jsonl and no owner ask in to-overseer.jsonl carries that id, so nothing here can be answered by it; a line a peer overseer sent and a resolution there are neither. Read the note or the ask again and pass the id it carries.' ;;
     recommend-invalid) text='--recommend names one of the choices --options lists, and an ask with no choices has nothing to recommend.' ;;
     recommend-missing) text='The ask carries no recommendation, so no default can stand for it: close it without --default.' ;;
+    draft-field) text='A draft is a JSON object of exactly recipient, medium and text, each a string holding a non-blank character. lane-mail computes text_hash itself, so a draft that names it is refused too.' ;;
+    draft-medium) text='A draft medium is slack-channel, slack-thread or email.' ;;
     recommend-required) text='An owner ask names its choices with --options and the one that stands at its deadline with --recommend, so it never waits on the owner forever. The owner can still answer outside the choices, through send --re.' ;;
     events-no-cursor) text='events takes no cursor: every read prints every envelope of both files, and a relay keys what it carried by each envelope id, never by a line count. Drop --after.' ;;
     attach-outside) text='An attachment is a regular file, not itself a symlink, whose directory resolves physically to the progress-report directory, and it is recorded at that physical path. The report writer alone sets it; a path anywhere else is refused so nothing outside that directory can be carried to the owner.' ;;
@@ -543,6 +560,8 @@ WAIT_GIVEN=0
 DUE=0
 DEFAULT=0
 DELIVERY_ID=""
+DRAFT=""
+DRAFT_JSON=null
 THREAD_TS=""
 PARENT=""
 PARENT_JSON=null
@@ -576,6 +595,7 @@ while [ "$#" -gt 0 ]; do
     --attach) need_val "$@"; ATTACH="$2"; shift 2 ;;
     --recommend) need_val "$@"; RECOMMEND="$2"; shift 2 ;;
     --wait) need_val "$@"; WAIT="$2"; WAIT_GIVEN=1; shift 2 ;;
+    --draft) need_val "$@"; DRAFT="$2"; shift 2 ;;
     --due) DUE=1; shift ;;
     --text) need_val "$@"; FILE="$2"; shift 2 ;;
     --default) DEFAULT=1; shift ;;
@@ -636,7 +656,7 @@ for given in $OPTS_GIVEN; do
         *) refuse option-unknown --to ;;
       esac ;;
     --ref | --attach) [ "$VERB:$ITEM" = notice:overseer ] || refuse option-unknown "$given" ;;
-    --recommend | --wait) [ "$VERB:$ITEM" = ask:overseer ] || refuse option-unknown "$given" ;;
+    --recommend | --wait | --draft) [ "$VERB:$ITEM" = ask:overseer ] || refuse option-unknown "$given" ;;
     --due) [ "$VERB" = pending ] || refuse option-unknown --due ;;
     --after)
       case "$VERB" in
@@ -1248,7 +1268,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
     --arg from "$FROM" --arg halt "$HALT" --arg options "$OPTIONS" \
     --arg to "$TO" --arg ref "$REF" --arg attach "$ATTACH" --arg recommend "$RECOMMEND" \
     --arg wait "$WAIT" --arg delivery "$DELIVERY_ID" --arg re_delivery "$RE_DELIVERY_ID" --arg by "$BY" \
-    --arg thread "$THREAD_TS" --argjson parent "$PARENT_JSON" \
+    --arg thread "$THREAD_TS" --argjson parent "$PARENT_JSON" --argjson draft "$DRAFT_JSON" \
     --rawfile text "$FILE" '
       {id: $id, kind: $kind, at: ($now | todate), from: $from}
       + (if $re == "" then {} else {re: $re} end)
@@ -1263,6 +1283,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
       + (if $re_delivery == "" then {} else {re_delivery_id: $re_delivery} end)
       + (if $by == "" then {} else {by: $by} end)
       + (if $kind == "answer" and $by != "" then {closes: false} else {} end)
+      + (if $draft == null then {} else {draft: $draft} end)
       + {text: ($text | sub("\n$"; ""))}
       + (if $options == "" then {} else {options: ($options | split(","))} end)' \
     2>"$WORK_DIR/jq.err")" || refuse file-unreadable "$FILE" "$(cat -- "$WORK_DIR/jq.err")"
@@ -1445,6 +1466,42 @@ lm_wait_minutes() {
   esac
 }
 
+# An owner ask's draft, the message the owner approves before it is sent as
+# the owner: exactly recipient, medium and text, each a string holding a
+# non-blank character, the medium one the relay delivers. text_hash is taken
+# here over the decoded text the record carries, never read from the file, so
+# `jq -j .draft.text | sha256sum` on the record reproduces it and an approval
+# binds those exact bytes.
+lm_draft() {
+  local verdict key value hasher hash
+  { [ -f "$DRAFT" ] && [ -r "$DRAFT" ]; } || refuse file-unreadable "$DRAFT"
+  verdict="$(jq -rs '
+    if length != 1 or (.[0] | type) != "object" then error("a draft is one JSON object") else .[0] end
+    | ((["recipient", "medium", "text"] - keys) + (keys - ["recipient", "medium", "text"])
+       + [to_entries[] | select((.value | type) != "string" or (.value | test("^\\s*$"))) | .key]) as $bad
+    | if $bad != [] then ["draft-field", $bad[0]]
+      elif (.medium | IN("slack-channel", "slack-thread", "email")) then ["ok", ""]
+      else ["draft-medium", .medium] end
+    | @tsv' -- "$DRAFT" 2>"$WORK_DIR/jq.err")" ||
+    refuse file-unreadable "$DRAFT" "$(cat -- "$WORK_DIR/jq.err")"
+  IFS=$'\t' read -r key value <<<"$verdict"
+  [ "$key" = ok ] || refuse "$key" "$value"
+  if command -v sha256sum >/dev/null 2>&1; then
+    hasher="sha256sum"
+  elif command -v shasum >/dev/null 2>&1; then
+    hasher="shasum -a 256"
+  else
+    refuse command-missing sha256sum,shasum
+  fi
+  jq -j .text -- "$DRAFT" >"$WORK_DIR/draft.text" 2>"$WORK_DIR/jq.err" ||
+    refuse file-unreadable "$DRAFT" "$(cat -- "$WORK_DIR/jq.err")"
+  # shellcheck disable=SC2086  # hasher is a command and its own arguments.
+  hash="$($hasher <"$WORK_DIR/draft.text" 2>"$WORK_DIR/hash.err")" ||
+    refuse file-unreadable "$WORK_DIR/draft.text" "$(cat -- "$WORK_DIR/hash.err")"
+  DRAFT_JSON="$(jq -c --arg hash "${hash%% *}" '{recipient, medium, text, text_hash: $hash}' -- "$DRAFT" 2>"$WORK_DIR/jq.err")" ||
+    refuse file-unreadable "$DRAFT" "$(cat -- "$WORK_DIR/jq.err")"
+}
+
 # The attachment, judged where it stands: a regular file, not itself a
 # symlink, whose directory resolves physically to the progress-report
 # directory workflow-state names, which is one rule at the one point the relay
@@ -1599,6 +1656,15 @@ case "$VERB" in
     # the owner would ever close it; `ask:overseer` is always an owner ask,
     # the audience check above having refused every other.
     if [ "$VERB:$ITEM" = ask:overseer ]; then
+      # A draft's choices are fixed so its deadline never approves a send
+      # made as the owner; the checks below then run on those values.
+      if [ -n "$DRAFT" ]; then
+        [ -z "$OPTIONS" ] || refuse option-conflict '--draft,--options'
+        [ -z "$RECOMMEND" ] || refuse option-conflict '--draft,--recommend'
+        OPTIONS=approve,deny
+        RECOMMEND=deny
+        lm_draft
+      fi
       [ -n "$RECOMMEND" ] || refuse recommend-required "$TO"
       [ -n "$OPTIONS" ] || refuse option-required --options
       # The envelope records --options split on commas, so a value holding a

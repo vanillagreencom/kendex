@@ -1,0 +1,1 @@
+- `lane-mail ask --to owner --draft` asks the owner to approve a Slack message or email sent as them, and records the recipient, medium, exact text and its SHA-256 hash.
