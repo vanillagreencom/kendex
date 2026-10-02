@@ -2,6 +2,13 @@
 
 ## Consumer-impacting changes
 
+### 2.0.3
+
+- Search runs after a 120 ms typing pause and in slices that yield to the keyboard; a new keystroke cancels the search in progress. A match preview is built only for the selected row.
+- A `re:` search stops with an error when one pass of the pattern runs past 250 ms.
+- Delete runs `trash` without blocking the browser and kills it after 5 seconds. The delete then fails and keeps the session file.
+- The prompt text the search reads is released when the browser closes.
+
 ### 2.0.2
 
 - Settings reads come from memory. A read is answered for one second without touching disk, then the settings files are read again. A change made in the extension manager, or a new session, applies at once; a hand edit to `settings.json` applies within one second. Before, every read went to disk.

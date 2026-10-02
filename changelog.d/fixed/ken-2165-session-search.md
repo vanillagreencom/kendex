@@ -1,0 +1,1 @@
+- Pi session manager: search no longer blocks typing, a runaway `re:` pattern stops after 250 ms, a hung `trash` times out, and prompt text is freed on close.

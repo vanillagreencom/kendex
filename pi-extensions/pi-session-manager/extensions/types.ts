@@ -53,7 +53,6 @@ export interface FlatSessionNode {
 	isLast: boolean;
 	ancestorContinues: boolean[];
 	score: number;
-	snippet?: string;
 }
 
 export interface SessionUserMessage {

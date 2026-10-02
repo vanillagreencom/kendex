@@ -44,7 +44,9 @@ function sessionUserMessages(sessionPath: string): SessionUserMessage[] {
 	const messages: SessionUserMessage[] = [];
 	try {
 		forEachSessionJsonlLine(sessionPath, (line) => {
-			if (!line.trim()) return;
+			// Every user message line holds the JSON string "user"; skipping the
+			// rest spares a parse of each assistant and tool record.
+			if (!line.includes('"user"')) return;
 			let entry: any;
 			try { entry = JSON.parse(line); } catch { return; }
 			const message = entry?.type === "message" ? entry.message : undefined;

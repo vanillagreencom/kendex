@@ -2,9 +2,9 @@ import type { ExtensionAPI, KeybindingsManager, Theme } from "@earendil-works/pi
 import { Input, matchesKey, truncateToWidth, visibleWidth, type Focusable } from "@earendil-works/pi-tui";
 import { acquirekendexModalLock, deleteSessionFile, loadSessionsForScope, renameSession } from "./actions.js";
 import { currentModelInfo, modelLabel, sameModel, sessionModelInfo } from "./model.js";
-import { canonicalPath, samePath } from "./paths.js";
-import { buildSnippet, matchSession, parseQuery, styleSearchMatches } from "./search.js";
-import { isNamed, sessionResumeTitle, sessionUserMessagesCache } from "./session-data.js";
+import { canonicalPath } from "./paths.js";
+import { buildSnippet, matchSessions, parseQuery, RegexTimeoutError, styleSearchMatches } from "./search.js";
+import { isNamed, sessionResumeTitle, sessionUserMessagesCache, userMessagesForSession } from "./session-data.js";
 import { settingNumber, settingScope, settingSort } from "./settings.js";
 import { ansiGreen, ansiRed, ansiYellow, centerAnsi, formatAge, oneLine, padAnsi, shortenPath } from "./text.js";
 import { buildSessionTree, flattenSessionTree, rowTreePrefix } from "./tree.js";
@@ -19,13 +19,26 @@ import {
 	ROW_META_MAX_WIDTH,
 	type FlatSessionNode,
 	type Mode,
+	type ModelInfo,
 	type NameFilter,
+	type ParsedQuery,
 	type Scope,
 	type SessionAction,
 	type SessionInfo,
 	type SessionManagerContext,
 	type SortMode,
 } from "./types.js";
+
+/** Typing pause after which a search runs; a keystroke inside it repaints the input alone. */
+const SEARCH_DEBOUNCE_MS = 120;
+/** Time a search runs before it yields to keystrokes and paint; a slice overruns it by at most one batch. */
+const SCAN_SLICE_MS = 12;
+/** Sessions matched per call: a regex query pays one deadline watchdog per batch. */
+const SCAN_BATCH = 8;
+
+function flatNode(session: SessionInfo, score: number): FlatSessionNode {
+	return { session, depth: 0, isLast: true, ancestorContinues: [], score };
+}
 
 class SessionManagerOverlay implements Focusable {
 	private readonly ctx: SessionManagerContext;
@@ -55,13 +68,19 @@ class SessionManagerOverlay implements Focusable {
 	private deleteTarget: SessionInfo | undefined;
 	private deleteAllTargets: SessionInfo[] = [];
 	private deleteConfirmSelection: 0 | 1 = 0;
-	private modelConfirmTarget: SessionInfo | undefined;
+	private modelConfirm: { session: SessionInfo; previousModel: ModelInfo } | undefined;
 	private modelConfirmSelection: 0 | 1 = 0;
 	private notice: { kind: "info" | "error"; text: string } | undefined;
 	private queryError: string | undefined;
 	private loadingProgress: { loaded: number; total: number } | undefined;
 	private readonly modelLabelCache = new Map<string, string | undefined>();
+	private readonly canonicalPaths = new Map<string, string>();
 	private loadSeq = 0;
+	private filterSeq = 0;
+	private filterTimer: ReturnType<typeof setTimeout> | undefined;
+	private searching = false;
+	private filterQuery: { text: string; parsed: ParsedQuery } = { text: "", parsed: parseQuery("") };
+	private readonly snippets = new Map<FlatSessionNode, string | undefined>();
 	private scope: Scope;
 	private sortMode: SortMode;
 	private nameFilter: NameFilter = "all";
@@ -108,7 +127,7 @@ class SessionManagerOverlay implements Focusable {
 	private detailRowCount(): number {
 		const selectedNode = this.filtered[this.selectedIndex];
 		if (!selectedNode?.session) return 1;
-		const hasMatchSnippet = Boolean(oneLine(this.searchInput.getValue()) && selectedNode.snippet);
+		const hasMatchSnippet = Boolean(this.snippetFor(selectedNode));
 		return hasMatchSnippet ? 3 : 2;
 	}
 
@@ -143,6 +162,7 @@ class SessionManagerOverlay implements Focusable {
 			if (seq !== this.loadSeq) return;
 			sessionUserMessagesCache.clear();
 			this.modelLabelCache.clear();
+			this.canonicalPaths.clear();
 			this.sessions = sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
 			this.mode = "browse";
 			this.applyFilter(false);
@@ -160,40 +180,124 @@ class SessionManagerOverlay implements Focusable {
 		return this.filtered[this.selectedIndex]?.session;
 	}
 
+	/** A path resolved once per load: a row render or a delete filter reads the map, not the disk. */
+	private canonical(path: string): string {
+		let resolved = this.canonicalPaths.get(path);
+		if (resolved === undefined) {
+			resolved = canonicalPath(path) ?? path;
+			this.canonicalPaths.set(path, resolved);
+		}
+		return resolved;
+	}
+
 	private isCurrent(session: SessionInfo): boolean {
-		return samePath(session.path, this.currentSessionPath);
+		if (!session.path || !this.currentSessionPath) return false;
+		return this.canonical(session.path) === this.canonical(this.currentSessionPath);
+	}
+
+	private cancelFilter(): void {
+		clearTimeout(this.filterTimer);
+		this.filterTimer = undefined;
+		this.filterSeq += 1;
+	}
+
+	private debounceFilter(): void {
+		this.cancelFilter();
+		this.searching = true;
+		this.filterTimer = setTimeout(() => {
+			this.filterTimer = undefined;
+			this.applyFilter();
+			this.requestRender();
+		}, SEARCH_DEBOUNCE_MS);
 	}
 
 	private applyFilter(resetSelection = true): void {
+		this.cancelFilter();
 		const query = this.searchInput.getValue().trim();
 		const parsed = parseQuery(query);
-		this.queryError = parsed.error;
 		const base = this.nameFilter === "named" ? this.sessions.filter(isNamed) : [...this.sessions];
 
 		if (parsed.error) {
-			this.filtered = [];
-		} else if (!query && this.sortMode === "threaded") {
-			this.filtered = flattenSessionTree(buildSessionTree(base));
+			this.showFiltered([], query, parsed, parsed.error, resetSelection);
+		} else if (!query) {
+			const nodes = this.sortMode === "threaded"
+				? flattenSessionTree(buildSessionTree(base))
+				: base.map((session) => flatNode(session, 0)).sort((a, b) => b.session.modified.getTime() - a.session.modified.getTime());
+			this.showFiltered(nodes, query, parsed, undefined, resetSelection);
 		} else {
-			const nodes: FlatSessionNode[] = [];
-			for (const session of base) {
-				const match = matchSession(session, parsed);
-				if (!match.matches) continue;
-				nodes.push({ session, depth: 0, isLast: true, ancestorContinues: [], score: match.score, snippet: buildSnippet(session, parsed) });
-			}
-			nodes.sort((a, b) => {
-				if (this.sortMode === "recent" || !query) return b.session.modified.getTime() - a.session.modified.getTime();
-				return a.score - b.score || b.session.modified.getTime() - a.session.modified.getTime();
-			});
-			this.filtered = nodes;
+			void this.scanSessions(this.filterSeq, base, query, parsed, resetSelection);
 		}
-		if (this.nameFilter === "named") this.filtered = this.filtered.filter((node) => isNamed(node.session));
+	}
 
+	/**
+	 * Match sessions in batches, yielding once a slice has run SCAN_SLICE_MS; a
+	 * newer filter or a closed browser bumps `filterSeq` and the scan stops at its
+	 * next yield.
+	 */
+	private async scanSessions(seq: number, base: SessionInfo[], query: string, parsed: ParsedQuery, resetSelection: boolean): Promise<void> {
+		this.searching = true;
+		const nodes: FlatSessionNode[] = [];
+		try {
+			for (let index = 0; index < base.length; ) {
+				const sliceStart = performance.now();
+				do {
+					const batch = base.slice(index, index + SCAN_BATCH);
+					index += batch.length;
+					// Read the transcripts first so the regex deadline times matching alone.
+					for (const session of batch) userMessagesForSession(session);
+					matchSessions(batch, parsed).forEach((match, i) => {
+						if (match.matches) nodes.push(flatNode(batch[i]!, match.score));
+					});
+				} while (index < base.length && performance.now() - sliceStart < SCAN_SLICE_MS);
+				await new Promise<void>((resolve) => setImmediate(resolve));
+				if (seq !== this.filterSeq) return;
+			}
+		} catch (error) {
+			if (seq !== this.filterSeq) return;
+			if (error instanceof RegexTimeoutError) {
+				this.showFiltered([], query, parsed, error.message, resetSelection);
+			} else {
+				this.showFiltered([], query, parsed, undefined, resetSelection);
+				this.notify("error", `Search failed: ${error instanceof Error ? error.message : String(error)}`);
+			}
+			this.requestRender();
+			return;
+		}
+		nodes.sort((a, b) => {
+			if (this.sortMode === "recent") return b.session.modified.getTime() - a.session.modified.getTime();
+			return a.score - b.score || b.session.modified.getTime() - a.session.modified.getTime();
+		});
+		this.showFiltered(nodes, query, parsed, undefined, resetSelection);
+		this.requestRender();
+	}
+
+	private showFiltered(nodes: FlatSessionNode[], query: string, parsed: ParsedQuery, queryError: string | undefined, resetSelection: boolean): void {
+		this.filtered = this.nameFilter === "named" ? nodes.filter((node) => isNamed(node.session)) : nodes;
+		this.filterQuery = { text: query, parsed };
+		this.queryError = queryError;
+		this.snippets.clear();
+		this.searching = false;
 		if (resetSelection) {
 			this.selectedIndex = 0;
 			this.scrollOffset = 0;
 		}
 		this.syncSelection();
+	}
+
+	/** The match preview, built only for a row the detail pane shows. */
+	private snippetFor(node: FlatSessionNode | undefined): string | undefined {
+		if (!node || !this.filterQuery.text) return undefined;
+		if (this.snippets.has(node)) return this.snippets.get(node);
+		let snippet: string | undefined;
+		try {
+			snippet = buildSnippet(node.session, this.filterQuery.parsed);
+		} catch (error) {
+			// The scan matched this session within the same deadline; a rerun
+			// that runs past it costs the preview alone.
+			if (!(error instanceof RegexTimeoutError)) throw error;
+		}
+		this.snippets.set(node, snippet);
+		return snippet;
 	}
 
 	private syncSelection(): void {
@@ -259,7 +363,7 @@ class SessionManagerOverlay implements Focusable {
 		this.deleteTarget = undefined;
 		this.deleteAllTargets = [];
 		this.deleteConfirmSelection = 0;
-		this.modelConfirmTarget = undefined;
+		this.modelConfirm = undefined;
 		this.modelConfirmSelection = 0;
 	}
 
@@ -271,7 +375,7 @@ class SessionManagerOverlay implements Focusable {
 		const previousModel = sessionModelInfo(session.path);
 		const activeModel = currentModelInfo(this.ctx);
 		if (previousModel && activeModel && !sameModel(previousModel, activeModel)) {
-			this.modelConfirmTarget = session;
+			this.modelConfirm = { session, previousModel };
 			this.modelConfirmSelection = 0;
 			this.mode = "confirm-model";
 			this.notice = undefined;
@@ -290,7 +394,7 @@ class SessionManagerOverlay implements Focusable {
 	}
 
 	private confirmModelResume(): void {
-		const target = this.modelConfirmTarget;
+		const target = this.modelConfirm?.session;
 		if (!target) return;
 		this.done(this.resumeAction(target, this.modelConfirmSelection === 1));
 	}
@@ -313,7 +417,8 @@ class SessionManagerOverlay implements Focusable {
 		this.requestRender();
 		const result = await deleteSessionFile(target.path, this.ctx.cwd, target.id);
 		if (result.ok) {
-			this.sessions = this.sessions.filter((session) => !samePath(session.path, target.path));
+			const deleted = this.canonical(target.path);
+			this.sessions = this.sessions.filter((session) => this.canonical(session.path) !== deleted);
 			this.mode = "browse";
 			this.deleteTarget = undefined;
 			this.notify("info", result.method === "trash" ? "Session moved to trash" : "Session deleted");
@@ -332,7 +437,7 @@ class SessionManagerOverlay implements Focusable {
 		for (const node of this.filtered) {
 			const session = node.session;
 			if (this.isCurrent(session)) continue;
-			const key = canonicalPath(session.path) ?? session.path;
+			const key = this.canonical(session.path);
 			if (seen.has(key)) continue;
 			seen.add(key);
 			targets.push(session);
@@ -355,6 +460,7 @@ class SessionManagerOverlay implements Focusable {
 		this.requestRender();
 		let deleted = 0;
 		let trashed = 0;
+		const deletedPaths = new Set<string>();
 		const failures: string[] = [];
 		for (const target of targets) {
 			if (this.isCurrent(target)) continue;
@@ -362,11 +468,12 @@ class SessionManagerOverlay implements Focusable {
 			if (result.ok) {
 				deleted += 1;
 				if (result.method === "trash") trashed += 1;
-				this.sessions = this.sessions.filter((session) => !samePath(session.path, target.path));
+				deletedPaths.add(this.canonical(target.path));
 			} else {
 				failures.push(`${sessionResumeTitle(target)}: ${result.error ?? "unknown error"}`);
 			}
 		}
+		this.sessions = this.sessions.filter((session) => !deletedPaths.has(this.canonical(session.path)));
 		this.mode = "browse";
 		this.deleteAllTargets = [];
 		if (failures.length > 0) {
@@ -527,7 +634,7 @@ class SessionManagerOverlay implements Focusable {
 		}
 
 		this.searchInput.handleInput(data);
-		this.applyFilter();
+		this.debounceFilter();
 		this.requestRender();
 	}
 
@@ -715,8 +822,8 @@ class SessionManagerOverlay implements Focusable {
 			warning: (s: string) => string;
 		},
 	): string[] {
-		const target = this.modelConfirmTarget;
-		const previousModel = target ? sessionModelInfo(target.path) : undefined;
+		const target = this.modelConfirm?.session;
+		const previousModel = this.modelConfirm?.previousModel;
 		const activeModel = currentModelInfo(this.ctx);
 		const previousLabel = modelLabel(previousModel);
 		const activeLabel = modelLabel(activeModel);
@@ -793,6 +900,7 @@ class SessionManagerOverlay implements Focusable {
 		if (this.notice) {
 			return this.notice.kind === "error" ? error(this.notice.text) : accent(this.notice.text);
 		}
+		if (this.searching) return dim(`Searching${glyphs().ellipsis}`);
 		if (this.queryError) return error(`Search error: ${this.queryError}`);
 		return dim("Search supports re:<pattern> regex and \"phrase\" exact matching.");
 	}
@@ -924,10 +1032,10 @@ class SessionManagerOverlay implements Focusable {
 		const state = `${shown} shown · ${scope} · ${this.sortMode} sort · ${this.nameFilter === "named" ? "named only" : "all names"}${search ? ` · query “${truncateToWidth(search, 28, "…")}”` : ""}`;
 		lines.push(ui.row(ui.dim(state)));
 
-		const snippet = oneLine(this.searchInput.getValue()) ? selectedNode?.snippet : undefined;
+		const snippet = this.snippetFor(selectedNode);
 		if (snippet) {
 			const previewPrefix = ui.dim("match   ");
-			const preview = truncateToWidth(styleSearchMatches(snippet, this.searchInput.getValue()), Math.max(10, inner - visibleWidth(previewPrefix) - 1), "…");
+			const preview = truncateToWidth(styleSearchMatches(snippet, this.filterQuery.text), Math.max(10, inner - visibleWidth(previewPrefix) - 1), "…");
 			lines.push(ui.row(previewPrefix + ui.muted(`“${preview}`)));
 		}
 		return lines;
@@ -945,6 +1053,13 @@ class SessionManagerOverlay implements Focusable {
 	invalidate(): void {
 		this.searchInput.invalidate();
 		this.renameInput.invalidate();
+	}
+
+	/** Pi calls this when the browser closes: stop pending work and release the prompt text the search read. */
+	dispose(): void {
+		this.loadSeq += 1;
+		this.cancelFilter();
+		sessionUserMessagesCache.clear();
 	}
 }
 

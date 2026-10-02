@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { appendFileSync, existsSync } from "node:fs";
 import { rm, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -9,6 +9,33 @@ import { canonicalPath } from "./paths.js";
 import { forEachSessionJsonlLine } from "./session-lines.js";
 import { configuredSessionDir, settingBoolean } from "./settings.js";
 import { KENDEX_MODAL_LOCK_SYMBOL, type Scope, type SessionInfo, type kendexModalLock } from "./types.js";
+
+/** How long `trash` may run on one session file before it is killed and the delete fails. */
+const TRASH_TIMEOUT_MS = 5_000;
+
+type TrashOutcome = "trashed" | "refused" | "timed-out";
+
+// stdio is ignored and completion read from "exit": a grandchild holding an
+// inherited pipe would otherwise keep a killed `trash` pending.
+function runTrash(sessionPath: string): Promise<TrashOutcome> {
+	const args = sessionPath.startsWith("-") ? ["--", sessionPath] : [sessionPath];
+	return new Promise((resolve) => {
+		let timedOut = false;
+		const child = spawn("trash", args, { stdio: "ignore" });
+		const timer = setTimeout(() => {
+			timedOut = true;
+			child.kill("SIGKILL");
+		}, TRASH_TIMEOUT_MS);
+		child.once("error", () => {
+			clearTimeout(timer);
+			resolve("refused");
+		});
+		child.once("exit", (code) => {
+			clearTimeout(timer);
+			resolve(timedOut ? "timed-out" : code === 0 ? "trashed" : "refused");
+		});
+	});
+}
 
 function safeFileName(value: string): string {
 	return value.replace(/[^\w.-]+/g, "_");
@@ -79,9 +106,9 @@ export async function deleteSessionFile(
 
 	let primary: { ok: boolean; method: "trash" | "unlink"; error?: string } | undefined;
 	if (settingBoolean("deleteUsesTrash", true, cwd)) {
-		const trashArgs = sessionPath.startsWith("-") ? ["--", sessionPath] : [sessionPath];
-		const trashResult = spawnSync("trash", trashArgs, { encoding: "utf8" });
-		if (trashResult.status === 0 || !existsSync(sessionPath)) primary = { ok: true, method: "trash" };
+		const outcome = await runTrash(sessionPath);
+		if (outcome === "trashed" || !existsSync(sessionPath)) primary = { ok: true, method: "trash" };
+		else if (outcome === "timed-out") return { ok: false, method: "trash", error: `trash did not finish within ${TRASH_TIMEOUT_MS / 1000} s; the session file was kept` };
 	}
 
 	if (!primary) {
