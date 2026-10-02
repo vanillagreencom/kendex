@@ -85,8 +85,13 @@
 #             no head branch named, or no push in its log for the life the
 #             PR opened in
 #   cause     the largest gate wait, the earlier of bot_wait, thread_fix and
-#             paused winning a tie, where the phase is gate_green; null on any
-#             other phase
+#             paused winning a tie, where the phase is gate_green. Where the
+#             phase is ci_green, the larger part of its gap split at
+#             pr-timeline's last_push: work, the rounds pushed before the
+#             final head, or ci, the final head's checks after its push;
+#             work wins a tie, a push before the gap opened leaves it all
+#             ci, and the cause is null where last_push is null or after
+#             ci_green. Null on any other phase
 #   escaped   a micro tier whose merged class is small or standard, or a small
 #             tier whose merged class is standard
 #   tier_inputs  the launch record's {estimate, delta, paths}, null on old records
@@ -107,7 +112,8 @@
 # records, it also prints and logs
 #   repeat-miss phase=P items=A,B,C causes=W,W,W
 # which is the bar for filing a CI or process issue in that repository;
-# causes names each item's cause in the order of items. A record that was
+# causes names each item's cause in the order of items. A ci_green miss
+# counts toward the bar only where its cause is ci. A record that was
 # already a miss on that phase does not make it again.
 #
 # rollup prints, and appends to the fleet log, one row per class with any
@@ -402,6 +408,10 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
   | ($seq // [] | map(.name) | index("gate_green")) as $gate
   | (if ($missing | length) > 0 or ($gate // 0) == 0 or $t.push_times == null then null
      else gate_waits($seq[$gate - 1].at; $seq[$gate].at) end) as $waits
+  | ($seq // [] | map(.name) | index("ci_green")) as $ci
+  | (if ($ci // 0) == 0 or $s.last_push == null then null
+     else $seq[$ci - 1].at as $from | $seq[$ci].at as $to | ($s.last_push | fromdate) as $push
+     | if $push > $to then null elif $push - $from >= $to - $push then "work" else "ci" end end) as $ci_cause
   | (if $t.commit == null then {pr: $t.pr} else {commit: $t.commit} end)
     + {class: $class, class_cause: (if $cause == "" then null else $cause end),
      class_reason: (if $class_reason == "" then null else $class_reason end),
@@ -409,8 +419,10 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
      verdict: (if $class == null then "unclassified" elif $open == null then "unmeasured"
                elif $open > $target then "miss" else "met" end),
      phase: $dominant.phase, phase_secs: $dominant.secs, gate_waits: $waits,
-     cause: (if $dominant.phase != "gate_green" or $waits == null then null
-             else $waits | to_entries | sort_by(- .value) | first.key end),
+     cause: (if $dominant.phase == "gate_green" and $waits != null
+               then $waits | to_entries | sort_by(- .value) | first.key
+             elif $dominant.phase == "ci_green" then $ci_cause
+             else null end),
      missing: $missing, rounds: $rounds,
      pr_rounds: $t.rounds,
      escaped: (if $class == null then null
@@ -452,15 +464,16 @@ fi
 
 # The bar fires on the record that makes the third miss: one that was
 # already a miss on this phase, recorded again, makes nothing new.
-# One conjunct per line: this record is a miss, on a named phase, that it was
-# not already; the fleet's records that are misses, on that phase, are
-# exactly three.
+# One conjunct per line: this record is a miss that counts, as the header
+# states, on a named phase, that it was not already; the fleet's records that
+# are misses that count, on that phase, are exactly three.
 repeat="$(jq -r --argjson cycle "$cycle" --argjson prior "$(jq -c '.cycle // null' <<<"$lane")" '
-  if $cycle.verdict != "miss"
+  def counts: .verdict == "miss" and (.phase != "ci_green" or .cause == "ci");
+  if ($cycle | counts | not)
      or $cycle.phase == null
-     or ($prior.verdict == "miss" and $prior.phase == $cycle.phase)
+     or (($prior | counts) and $prior.phase == $cycle.phase)
   then empty else
-    [.lanes[]? | select(.cycle.verdict == "miss")
+    [.lanes[]? | select(.cycle | counts)
                | select(.cycle.phase == $cycle.phase)]
     | select(length == 3)
     | "repeat-miss phase=\($cycle.phase) items=\(map(.item) | join(","))"

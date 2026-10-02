@@ -467,6 +467,31 @@ record KEN-1 standard >/dev/null
 assert_eq "$(state '.lanes[] | select(.item == "KEN-1") | .cycle | [.cause, .gate_waits]')" \
   '["thread_fix",{"bot_wait":380,"thread_fix":2100,"paused":400}]' "the lane record carries the cause and the gate waits"
 
+echo "=== the ci_green phase names the larger part of its gap as its cause ==="
+# ci_timeline PUSH: a micro miss whose ci_green gap, gate 300 to CI green at
+# 4000, is the longest; armed 4100, merged 4200. PUSH is last_push in seconds
+# past T0, `null` for none.
+ci_timeline() {
+  timeline 4200 300 110
+  edit_json "$CASE/timeline.json" ".stamps |= (.ci_green = \"$(at 4000)\" | .armed = \"$(at 4100)\"
+    | .last_push = $(if [[ "$1" == null ]]; then echo null; else echo "\"$(at "$1")\""; fi))"
+}
+#   label|last push|cause
+while IFS='|' read -r label push want; do
+  new_case "ci-${label// /-}"
+  printf micro > "$CASE/class"
+  ci_timeline "$push"
+  got="$(record KEN-1 micro)"
+  assert_eq "$(field verdict "$got") $(field phase "$got") $(field cause "$got")" "verdict=miss phase=ci_green cause=$want" "$label"
+done <<'ROWS'
+rounds pushed after the PR opened are work|3500|work
+a final push early in the gap leaves the checks the larger part|400|ci
+a final push before the gap opened leaves it all ci|110|ci
+work wins a tie|2150|work
+a push after ci_green splits nothing|4050|-
+no last push splits nothing|null|-
+ROWS
+
 echo "=== refusals ==="
 new_case refusals
 timeline 100
@@ -501,6 +526,8 @@ assert_eq "$(state '[.lanes[] | has("cycle")] | any')" "false" "and no refusal w
 #   ok  a met record at 800 s, its phase merged too
 #   g   a miss on gate_green whose longest wait is the thread fix
 #   w   the same miss with a wall over that wait
+#   cw  a miss on ci_green whose final push came late in the gap: work
+#   cc  a miss on ci_green whose final push came early in it: ci
 echo "=== the repeat-miss bar ==="
 repeat_row() { # CASE SEQUENCE — prints the bar lines the last record printed
   local step kind item got=""
@@ -518,6 +545,8 @@ repeat_row() { # CASE SEQUENCE — prints the bar lines the last record printed
       ok) timeline 800 ;;
       g) gate_timeline "100 1400" "400 1500 2000" 3200 ;;
       w) gate_timeline "100 1400" "400 1500 2000" 3200; pauses "$item" 400-2900 - ;;
+      cw) ci_timeline 3500 ;;
+      cc) ci_timeline 400 ;;
       *) echo "repeat_row: unknown step $step" >&2; exit 2 ;;
     esac
     got="$(record "$item" micro)"
@@ -533,7 +562,9 @@ post-merge|a:1 a:2 a:3|repeat-miss phase=merged items=KEN-1,KEN-2,KEN-3 causes=-
 unnamed-phase|n:1 n:2 n:3|
 recorded-again|m:1 m:2 m:3 m:3|
 fourth|m:1 m:2 m:3 m:4|
-causes|g:1 w:2 g:3|repeat-miss phase=gate_green items=KEN-1,KEN-2,KEN-3 causes=thread_fix,paused,thread_fix'
+causes|g:1 w:2 g:3|repeat-miss phase=gate_green items=KEN-1,KEN-2,KEN-3 causes=thread_fix,paused,thread_fix
+ci-work|cw:1 cw:2 cw:3|
+ci-slow|cw:1 cc:2 cc:3 cc:4|repeat-miss phase=ci_green items=KEN-2,KEN-3,KEN-4 causes=ci,ci,ci'
 while IFS='|' read -r name sequence want; do
   assert_eq "$(repeat_row "repeat-$name" "$sequence")" "$want" "repeat bar, $name: $sequence"
 done <<<"$REPEAT_ROWS"
@@ -644,8 +675,17 @@ assert_eq "$(repeat_row c-phase "p:1 p:2 p:3")" "repeat-miss phase=pr_opened ite
   "control: without the lower bound, a CI green before the PR opened charges the miss to CI green to PR opened"
 
 control m-phase-end oversee-cycle '| select(.at >= $o and .at <= $m)]' '| select(.at >= $o)]'
-assert_eq "$(repeat_row c-phase-end "a:1 a:2 a:3")" "repeat-miss phase=ci_green items=KEN-1,KEN-2,KEN-3 causes=-,-,-" \
+assert_eq "$(repeat_row c-phase-end "a:1 a:2 a:3")" "repeat-miss phase=ci_green items=KEN-1,KEN-2,KEN-3 causes=ci,ci,ci" \
   "control: without the upper bound, a CI green after the merge charges the miss to merged to CI green"
+
+control m-ci-bar oversee-cycle '(.phase != "ci_green" or .cause == "ci")' '(true)'
+assert_eq "$(repeat_row c-ci-bar "cw:1 cw:2 cw:3")" "repeat-miss phase=ci_green items=KEN-1,KEN-2,KEN-3 causes=work,work,work" \
+  "control: counting every ci_green miss, three lanes of post-open work make the bar"
+
+control m-ci-split oversee-cycle '$push - $from >= $to - $push' '$to - $push >= $push - $from'
+new_case c-ci-split; printf micro > "$CASE/class"; ci_timeline 3500
+assert_eq "$(field cause "$(record KEN-1 micro)")" "cause=ci" \
+  "control: with the parts swapped, work late in the gap reads as ci"
 
 control m-rollup oversee-cycle '| if $n == 0 then "-" else $a[(($n * $p) | ceil) - 1] end;' '| if $n == 0 then "-" else $a[(($n * $p) | floor) - 1] end;'
 new_case c-rollup
