@@ -29,14 +29,15 @@ for (const row of [
 		expected: ["/older-child.jsonl", "/newer-child.jsonl"],
 	},
 	{
-		name: "a child whose parent path names the parent through an alias nests under it",
+		name: "a child nests under its parent when the session and parent paths spell it differently",
 		sessions: [
-			session("/real/root.jsonl", "2026-01-01T00:00:00Z"),
-			session("/real/child.jsonl", "2026-02-01T00:00:00Z", "/alias/root.jsonl"),
+			session("/alias/root.jsonl", "2026-01-01T00:00:00Z"),
+			session("/alias/child.jsonl", "2026-02-01T00:00:00Z", "/real/root.jsonl"),
 		],
-		key: (path: string) => path.replace(/^\/alias\//, "/real/"),
+		// Neither spelling is the key's form, so skipping the key at the session or the parent path splits them.
+		key: (path: string) => path.replace(/^\/(alias|real)\//, "/canonical/"),
 		children: true,
-		expected: ["/real/child.jsonl"],
+		expected: ["/alias/child.jsonl"],
 	},
 ]) {
 	test(row.name, () => {

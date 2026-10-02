@@ -3,12 +3,16 @@ import type { FlatSessionNode, SessionInfo, SessionTreeNode } from "./types.js";
 /** Link sessions to their parents; `key` maps a session path to the identity two paths share. */
 export function buildSessionTree(sessions: SessionInfo[], key: (path: string) => string): SessionTreeNode[] {
 	const byPath = new Map<string, SessionTreeNode>();
-	for (const session of sessions) byPath.set(key(session.path), { session, children: [] });
+	const nodes = sessions.map((session) => {
+		const node: SessionTreeNode = { session, children: [] };
+		byPath.set(key(session.path), node);
+		return node;
+	});
 
 	const roots: SessionTreeNode[] = [];
-	for (const session of sessions) {
-		const node = byPath.get(key(session.path))!;
-		const parent = session.parentSessionPath ? key(session.parentSessionPath) : undefined;
+	for (const node of nodes) {
+		const { parentSessionPath } = node.session;
+		const parent = parentSessionPath ? key(parentSessionPath) : undefined;
 		if (parent && byPath.has(parent)) byPath.get(parent)!.children.push(node);
 		else roots.push(node);
 	}
