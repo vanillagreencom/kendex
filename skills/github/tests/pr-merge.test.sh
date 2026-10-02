@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# pr-merge: the --check readiness JSON and its stderr verdict, which read no
-# review thread, the terminal states (a merged or closed PR short-circuits
+# pr-merge: the --check readiness JSON and its stderr verdict, whose review
+# threads are read by check-review-replies alone, the terminal states (a merged or closed PR short-circuits
 # every mode, before and after a state lookup that failed once), the guarded
 # mutation and its post-call outcomes, the --auto arm's approval gate, the
 # retired override flags, the retired merge settings no mode reads, the
@@ -45,6 +45,8 @@ a changes-requested reviewDecision blocks permanently|checks:ci-required review:
 a changes-requested latest review blocks when the decision does not say so|checks:ci-required review:REVIEW_REQUIRED review-latest:CHANGES_REQUESTED|check|0|merge=false transient=false $OPEN runs=- issues=[changes_requested: Reviewer requested changes] warnings=[] $KEYS|blocked;head-run: none|calls=$CHECK auth=<unset>
 a PR with no approval is named not_approved, a warning that blocks nothing here|checks:ci-required review:REVIEW_REQUIRED|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[not_approved: Review status is 'REVIEW_REQUIRED'] $KEYS|mergeable;head-run: none|calls=$CHECK auth=<unset>
 an approving latest review clears not_approved where the decision is empty|checks:ci-required review:none review-latest:APPROVED|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[] $KEYS|mergeable;head-run: none|calls=$CHECK auth=<unset>
+a native-approved PR whose decline names no mechanism is blocked by the live reply check|checks:ci-required replies:unreasoned|check|0|merge=false transient=false $OPEN runs=- issues=[review_replies: unreasoned-decline count=1] warnings=[] $KEYS|blocked;head-run: none|calls=$CHECK auth=<unset>
+a reply check that cannot read the threads blocks, naming its refusal|checks:ci-required replies:fail|check|0|merge=false transient=false $OPEN runs=- issues=[review_replies_unread: check-review-replies: read-failed pr=123] warnings=[] $KEYS|blocked;head-run: none|calls=$CHECK auth=<unset>
 a merged PR reports its state and timestamp, no issues, no check fetched|state:MERGED merged-at|check|0|merge=false transient=false state=MERGED mergeable=UNKNOWN at=2026-08-15T09:41:12Z runs=- issues=[] warnings=[] $KEYS|merged;head-run: none|calls=view:state auth=<unset>
 a closed PR reports its state, no issues|state:CLOSED|check|0|merge=false transient=false state=CLOSED mergeable=UNKNOWN at=- runs=- issues=[] warnings=[] $KEYS|closed;head-run: none|calls=view:state auth=<unset>
 a missing PR is not_found|pr:missing|check|0|merge=false transient=false state=UNKNOWN mergeable=UNKNOWN at=- runs=- issues=[not_found: PR #123 not found] warnings=[] $KEYS|blocked;head-run: none|calls=view:state auth=<unset>
@@ -54,8 +56,15 @@ a rate limit keeps its diagnostic|state-err:ratelimit|check|0|merge=false transi
 a silent failure names gh and its exit code|state-err:silent4|check|0|merge=false transient=false state=UNKNOWN mergeable=UNKNOWN at=- runs=- issues=[gh_error: gh pr view exited 4 with no diagnostic] warnings=[] $KEYS|blocked;head-run: none|calls=view:state auth=<unset>
 "
 
+# GitHub's approval cannot read what a review reply says, so the readiness
+# check runs check-review-replies live. Its must-fail control is a copy whose
+# call to it is cut, so the reply check never runs.
+mutant_copy no-replies '        replies_out=$("$SCRIPT_DIR/../check-review-replies" "$pr_num" 2>"$replies_err") || replies_rc=$?' '        replies_out=""' >/dev/null
+
 run_table "the merge path" "\
 a failed check without --auto is blocked with the auto hint|checks:failed|immediate|1|-|{blocked};{permanent};✗ ci_failed: Lint (FAILURE);{hint-auto}|calls=$CHECK auth=<unset>
+a native-approved PR with a bad disposition is not merged, and no auto hint is given|checks:ci-required replies:unreasoned post:MERGED merge-commit:merged-oid|immediate|1|-|{blocked};{permanent};✗ review_replies: unreasoned-decline count=1|calls=$CHECK auth=<unset>
+must-fail: with the reply check's call cut, the same PR merges|checks:ci-required replies:unreasoned post:MERGED merge-commit:merged-oid|mutant:no-replies:--keep-branch|0|-|{no-token};MERGED PR #123|calls=$PRE,merge:squash,graphql:queue auth=<unset>
 a red optional check does not stop the merge, and is named on the way|checks:optional-red required:Lint post:MERGED merge-commit:merged-oid|immediate|0|-|Warnings:;⚠ ci_optional_failed: CodeQL (FAILURE);{no-token};MERGED PR #123|calls=$PRE,merge:squash,graphql:queue auth=<unset>
 the router promotes the bot token for the mutation and the snapshot|checks:ci-required require-token post:MERGED merge-commit:merged-oid env:GH_BOT_TOKEN=ghp_test_token|router:--squash|0|-|Using GH_BOT_TOKEN as stub-user;MERGED PR #123|calls=user,$PRE,user,merge:squash,graphql:queue auth=ghp_test_token
 a prepared head that drifted fails before arming|checks:ci-required head:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|expected:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|1|-|BLOCKED PR #123 — prepared head changed before merge attempt (expected=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, actual=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)|calls=$PRE auth=<unset>
@@ -80,17 +89,19 @@ a failed CLI is still a success when the exact-head snapshot is MERGED|checks:ci
 # an earlier head unless one dismisses stale approvals on push, so the arm is
 # made only where the base's pull_request rules, one or several, meet every
 # row of merge_gate_gap's rule shape. --auto defers every readiness blocker
-# to that gate. Its must-fail controls, each a copy of the scripts tree with
-# one whole line of pr-merge.sh replaced, the rest kept: each shape row cut,
-# so a base missing that row's setting arms; the value-kind check answering
-# true, so a missing count or flag is read as a setting rather than
-# unverified; and --auto's deferral cut, so a PR with a pending required
-# check is refused rather than armed.
+# to that gate but the reply check's, which no GitHub rule holds. Its
+# must-fail controls, each a copy of the scripts tree with one whole line of
+# pr-merge.sh replaced, the rest kept: each shape row cut, so a base missing
+# that row's setting arms; the value-kind check answering true, so a missing
+# count or flag is read as a setting rather than unverified; --auto's
+# deferral cut, so a PR with a pending required check is refused rather than
+# armed; and the reply refusal cut, so a bad disposition arms.
 mutant_copy no-refusal "        'required_approval required_approving_review_count count'" '' >/dev/null
 mutant_copy no-thread-refusal "        'required_thread_resolution required_review_thread_resolution flag'" '' >/dev/null
 mutant_copy no-stale-refusal "        'dismiss_stale_reviews dismiss_stale_reviews_on_push flag'" '' >/dev/null
 mutant_copy no-kind-check '        def fits($kind): if $kind == "count" then type == "number" and . >= 0 and . == floor else type == "boolean" end;' '        def fits($kind): true;' >/dev/null
 mutant_copy no-deferral '    if [ "$can_merge" != "true" ] && [ "$auto" != true ]; then' '    if [ "$can_merge" != "true" ]; then' >/dev/null
+mutant_copy no-reply-refusal '    if [ "$auto" = true ] && reply_blocked "$check_result"; then' '    if false; then' >/dev/null
 
 ARMED="{no-token};AUTO-MERGE ENABLED PR #123 — will fire when CI + branch protection clear;{volatile}|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>"
 NO_APPROVAL="arm: no-merge-gate=required_approval repo=owner/repo;{approval-remedy}|calls=$PRE auth=<unset>"
@@ -120,6 +131,8 @@ must-fail: with the kind check answering true, the missing flag beside a complet
 a ruleset read that fails refuses before an arm|checks:ci-required post-auto rules:fail|auto|1|-|pr-merge: merge-method-unreadable cause=rules|calls=$PRE auth=<unset>
 --auto arms a PR whose required check is still pending: GitHub holds it|checks:pending2 checks-exit:8 post-auto approvals:1/true/true|auto|75|-|$ARMED
 must-fail: with --auto's deferral cut, the pending PR is refused and nothing arms|checks:pending2 checks-exit:8 post-auto approvals:1/true/true|auto-mutant:no-deferral|1|-|{blocked};{transient};✗ ci_pending: Cross-Platform (PENDING), Linux Integration (IN_PROGRESS);{hint-auto}|calls=$CHECK auth=<unset>
+--auto defers no reply-check blocker, which no GitHub rule holds an armed PR on|checks:ci-required replies:unreasoned post-auto approvals:1/true/true|auto|1|-|{blocked};{permanent};✗ review_replies: unreasoned-decline count=1|calls=$CHECK auth=<unset>
+must-fail: with --auto's reply refusal cut, the same PR arms|checks:ci-required replies:unreasoned post-auto approvals:1/true/true|auto-mutant:no-reply-refusal|75|-|$ARMED
 the same pending PR on a base requiring 0 approvals refuses before any mutation|checks:pending2 checks-exit:8 post-auto approvals:0/true/true|auto|1|-|$NO_APPROVAL
 the immediate merge reads no approval rule: a base requiring 0 still merges|checks:ci-required post:MERGED merge-commit:merged-oid approvals:0/true/true|immediate|0|-|{no-token};MERGED PR #123|calls=$PRE,merge:squash,graphql:queue auth=<unset>
 "

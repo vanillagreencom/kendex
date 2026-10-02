@@ -46,8 +46,9 @@ Options:
                    (fires when CI + branch protection clear). Exits 75.
                    Arms only where the base branch's rulesets require at
                    least 1 approval and thread resolution and dismiss
-                   stale approvals on push; see Approvals and review
-                   threads below.
+                   stale approvals on push, and the review replies pass;
+                   see Approvals and review threads and Review replies
+                   below.
   --expected-head SHA
                    Bind GitHub's match-head merge guard to prepared SHA.
   --queue          With --auto only: explicitly arm through the queue even
@@ -113,9 +114,23 @@ Approvals and review threads:
   dismiss_stale_reviews_on_push. GitHub defaults both flags to false on a new
   rule, so a base can require an approval and still merge past an open
   thread, or merge a pushed head on the approval of an earlier one. This
-  command reads no review thread and resolves none. It reports
-  reviewDecision as review, blocks on a changes-requested review, and names
-  a missing approval as the not_approved warning.
+  command resolves no review thread. It reports reviewDecision as review,
+  blocks on a changes-requested review, and names a missing approval as the
+  not_approved warning.
+
+Review replies:
+  GitHub's approval and thread resolution prove that a reply exists, never
+  what it says, and a reply can change without a push. So every readiness
+  check runs ../check-review-replies <N>, a read-only live read of the
+  replies (check-review-replies --help states its rules). A failing rule is
+  one permanent issue joining its rule lines:
+    review_replies: <rule line>; <rule line>...
+  A reply check that reaches no verdict is permanent too, carrying its
+  first stderr line:
+    review_replies_unread: check-review-replies: <key> pr=<N>
+  --auto defers every other blocker to GitHub, but no GitHub rule holds an
+  armed PR on a reply, so either issue refuses the arm as it refuses a
+  merge: BLOCKED, exit 1, nothing armed.
 
   --auto reads every pull_request rule on the base branch
   (repos/{owner}/{repo}/rules/branches/<base>, which returns the rules of
@@ -245,7 +260,7 @@ Terminal and mutation rules:
 
   transient=true requires every issue prefix to be unknown:, ci_pending:,
   ci_unconfigured:, or ci_fetch_failed:. A ci_failed: issue is permanent, as
-  are conflicts and changes_requested. Running checks use ci_pending: while
+  are conflicts, changes_requested, review_replies and review_replies_unread. Running checks use ci_pending: while
   failed or cancelled checks use ci_failed:.
 
   ci_pending: and ci_failed: name only contexts the base branch requires, read
@@ -574,6 +589,29 @@ run_checks() {
         fi
     fi
 
+    # GitHub's approval and thread resolution cannot read what a reply says,
+    # and a reply can change without a push, so check-review-replies reads
+    # the replies live on every check. Its rule lines join into one issue.
+    local replies_out replies_err replies_rc=0
+    if ! replies_err=$(mktemp "${TMPDIR:-/tmp}/pr-merge-replies.XXXXXX"); then
+        can_merge=false
+        issues+=("review_replies_unread: could not create a temporary file for the reply check")
+    else
+        replies_out=$("$SCRIPT_DIR/../check-review-replies" "$pr_num" 2>"$replies_err") || replies_rc=$?
+        case "$replies_rc" in
+        0) ;;
+        1)
+            can_merge=false
+            issues+=("review_replies: $(sed 1d <<<"$replies_out" | paste -s -d ';' - | sed 's/;/; /g')")
+            ;;
+        *)
+            can_merge=false
+            issues+=("review_replies_unread: $(grep -m 1 -v '^[[:space:]]*$' "$replies_err" || echo "check-review-replies exited $replies_rc")")
+            ;;
+        esac
+        rm -f "$replies_err"
+    fi
+
     local issues_json warnings_json
     issues_json=$(printf '%s\n' "${issues[@]:-}" | jq -R -s -c 'split("\n") | map(select(. != ""))')
     warnings_json=$(printf '%s\n' "${warnings[@]:-}" | jq -R -s -c 'split("\n") | map(select(. != ""))')
@@ -601,6 +639,12 @@ run_checks() {
         '{can_merge: $can_merge, issues: $issues, warnings: $warnings, mergeable: $mergeable, review: $review, transient: $transient, state: $state, merged_at: $merged_at, head_runs: $head_runs, checks: $checks, required_contexts: $required_contexts}'
 }
 
+# True when the readiness result carries a reply-check issue, which no GitHub
+# rule holds an armed PR on, so --auto answers it no better than a merge.
+reply_blocked() {
+    jq -e 'any(.issues[]; startswith("review_replies"))' >/dev/null <<<"$1"
+}
+
 print_blocked() {
     local check_result="$1"
     local pr_num="$2"
@@ -616,7 +660,7 @@ print_blocked() {
     echo "$check_result" | jq -r '.issues[]' | sed 's/^/  ✗ /' >&2
     echo "$check_result" | jq -r '.warnings[]' | sed 's/^/  ⚠ /' >&2
     echo "" >&2
-    echo "Use --auto to queue for auto-merge." >&2
+    reply_blocked "$check_result" || echo "Use --auto to queue for auto-merge." >&2
 }
 
 # Run gh with the same effective identity used for the merge mutation. Keep the token scoped to the
@@ -1110,6 +1154,12 @@ main() {
     # GitHub holds the armed PR until its required checks, an approval of its
     # current head and thread resolution pass.
     if [ "$can_merge" != "true" ] && [ "$auto" != true ]; then
+        print_blocked "$check_result" "$pr_num"
+        exit 1
+    fi
+    # No GitHub rule reads what a review reply says, so GitHub would merge an
+    # armed PR past one: --auto defers every blocker but the reply check's.
+    if [ "$auto" = true ] && reply_blocked "$check_result"; then
         print_blocked "$check_result" "$pr_num"
         exit 1
     fi

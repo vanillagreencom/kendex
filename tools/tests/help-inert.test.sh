@@ -116,6 +116,8 @@ github	scripts/github.sh	Merge PR	pr-merge -h
 github	scripts/github.sh	View PR details	pr-view 123 --help
 github	scripts/github.sh	Merge PR	pr-merge 42 -h
 github	scripts/github.sh	Sticky	sticky-comment 23 --body --help
+github	scripts/check-review-replies	Usage: check-review-replies	--help
+github	scripts/check-review-replies	Usage: check-review-replies	-h
 linear	scripts/commands/issues.sh	Issue Operations	-
 linear	scripts/commands/issues.sh	Issue Operations	help
 linear	scripts/commands/issues.sh	Issue Operations	--help

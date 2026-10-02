@@ -136,7 +136,7 @@ The following conditions are merge gates, not advice:
 
   Stop waiting for a missing gate verdict while workflow state carries `pr_approval.forced`, which `submit-pr.md` § 4's `Force merge` sets for the item and no push clears; the prepared head then takes § 5's `--auto` arm.
 
-Bot-specific signals — emoji reactions, sticky-comment prose, checklist text — are never parsed as merge gates. Only GitHub-native review state and the thread-resolution count count.
+Bot-specific signals — emoji reactions, sticky-comment prose, checklist text — are never parsed as merge gates. Only GitHub-native review state, the thread-resolution count and the reply check `pr-merge` runs (`review_replies:`) count.
 
 ### 3.3 Thread Read
 

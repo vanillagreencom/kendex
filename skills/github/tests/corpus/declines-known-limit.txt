@@ -1,0 +1,87 @@
+# Replies the subtraction does NOT catch, pinned so the boundary is read
+# rather than rediscovered.
+#
+# Two positional strips reach names: a count takes the non-space run
+# immediately in front of it, and a slash-joined token is a path. Neither
+# reaches a name standing anywhere else in the sentence, and nothing else
+# does either — a SET of names would, and it cannot be had: a repo names its
+# files after the words it writes reasons in, so "the guard refuses this
+# path" is three file names and a stated mechanism at once. Position is the
+# only separator there is.
+#
+# Widening past this needs a rule about what prose counts as a mechanism.
+# That is ruled out of scope: do not attempt it, and do not move these lines
+# into declines-unreasoned.txt to force the issue. If one of these ever does
+# get caught, the suite says so, and the line moves with a fixture explaining
+# what reached it.
+#
+# Lines starting with # are comments. Blank lines are skipped.
+
+# The name is the subject of a pass-verb, not the run in front of the
+# count: the count belongs to "lifecycle", which strips, while "cleanup
+# controls" sits a clause away. Reaching it means deciding that the subject
+# of "pass" is a name, which is the prose rule above.
+Declined: frozen at a1fa74dca; cleanup controls pass within lifecycle 104/104 and the full tools/guard passes.
+# Control labels, not paths and not beside the count: "waiter", "arm" and
+# "launcher" name assertions inside merge_queue_watch.sh. The count's own
+# name (lifecycle) strips; these do not.
+Declined: frozen at a1fa74dca; the missing-waiter and post-arm launcher controls pass within lifecycle 104/104.
+# The count strip takes the run immediately in front of the count, and only
+# that. Punctuation between the two is normalized to whitespace first, and a
+# dot, underscore or hyphen INSIDE the name is held through the strip, so
+# "lifecycle (104/104)" and "merge-queue 12/12" are both caught. These two
+# are the shapes where the name is not what sits there: the name follows the
+# count, and the count is not spelled N/N. Widening the regex to chase either
+# is the lexical-scanner drip the owner rule closes — write the reply the
+# caught way, or leave it. A word standing between the name and the count is
+# NOT here: both word lists run ahead of the strip, so the word is gone
+# before the strip looks and the name is taken.
+Declined: frozen at a1fa74dca; 104/104 lifecycle and the full tools/guard pass at this head.
+Declined: frozen at a1fa74dca; lifecycle 104 of 104 and the full tools/guard pass at this head.
+# A path whose own segments are words the label list carries. Both word lists
+# run ahead of the strips, so "workflows" and "tests" are deleted out of the
+# middle of this path before the path strip can take it whole, and the
+# segments they leave behind are residue. "tools/guard.sh" is not here — it
+# is a must-catch, because no segment of it is a listed word.
+#
+# This is a TRADE, not an obstacle. Giving both word lists a boundary strict
+# enough to refuse a word glued to a separator reaches this line, and the
+# middle-segment class with it, without moving any pass. It is declined
+# because it costs the replies in the "a separator nothing else reaches"
+# section of declines-unreasoned.txt, which are deliberately adversarial and
+# which the term does catch today. Chasing the path at that price is the
+# lexical-scanner drip the owner rule closes.
+Declined: frozen at a1fa74dca; the checks pass and .github/workflows/skill-tests.yml is green.
+
+# A held separator does not shield a segment that is itself a listed word.
+# Both lists run ahead of the count strip, so "all" goes out of the middle of
+# this name and the strip is left taking "paths 3/3", which leaves "guard"
+# standing. The separator is not what decides it: the dot and hyphen
+# spellings of this name are out of reach for the same reason, and so is the
+# same name written with spaces. Reaching it means a name is whatever sits in
+# front of a count whether or not the vocabulary knows the words in it, which
+# is the prose rule above.
+Declined: frozen at a1fa74dca; guard_all_paths 3/3 and the full tools/guard pass at this head.
+
+# A slash written INSIDE a multi-word label entry. The punctuation pass holds
+# the slash through both word lists so the path strip can still read a path,
+# and that same slash breaks the phrase match: "out of scope" is a label,
+# "out of/scope" is a label with a slash in it and "out" survives. The head
+# word is what stands, so an entry whose first word is itself listed does not
+# reach here.
+#
+# Both ways of closing it cost a working mechanism, which is what makes this
+# a limit and not a fix. Normalize the slash to a space ahead of the lists
+# and the path strip has nothing left to read, so every reply whose verdict
+# depends on a NAME being taken — the count strip's run, the path strip's
+# token — goes from caught to clearing, "tools/guard" among them. Put a
+# slash in the multi-word entries' own separator class instead and the path
+# strip survives, but a phrase then matches ACROSS a slash, so a path whose
+# adjacent segments spell one is taken apart before the strip reaches it and
+# "docs/pre/existing is green" clears where it is caught today. That is the
+# line above, one step wider.
+Declined: out of/scope
+# The same boundary from the other side: a label written out as a sentence is
+# prose, and prose is where the vocabulary stops. "flagged separately" is
+# caught; the same promise spelled as a sentence is not.
+Declined: I will file it separately once this lands.

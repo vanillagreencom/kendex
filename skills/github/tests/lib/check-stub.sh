@@ -16,7 +16,11 @@
 # reviewDecision and latestReviews, and STUB_REQUIRE_TOKEN refuses a
 # merge-path call without the bot token. The repository read answers
 # STUB_MERGE_METHODS, STUB_DELETE_BRANCH_ON_MERGE, STUB_DEFAULT_BRANCH and
-# STUB_REPO_PUSHLESS, or fails on STUB_REPO_EXIT; the branch-rule read adds
+# STUB_REPO_PUSHLESS, or fails on STUB_REPO_EXIT; check-review-replies' reads
+# answer the pull request by STUB_HEAD, its review threads STUB_THREADS (a
+# JSON array of thread nodes, failing on STUB_THREADS_FAIL), its reviews
+# STUB_REVIEWS and its PR-level comments STUB_ISSUE_COMMENTS, each `[]` when
+# unset; the branch-rule read adds
 # STUB_QUEUE_METHOD's queue on STUB_QUEUE_BRANCH and STUB_RULE_METHODS's
 # pull_request rule; STUB_NO_REPO fails `repo view`. A merge call passing
 # neither --auto nor --admin on a base holding a merge_queue rule (in
@@ -177,6 +181,21 @@ case "${1:-}" in
                 if [[ -n "$jq_filter" ]]; then jq -r "$jq_filter" <<<"$repo_json"; else printf '%s\n' "$repo_json"; fi
                 exit 0
                 ;;
+            # check-review-replies' REST reads, by the slug `repo view`
+            # answers. The reviews and comments endpoints come before the
+            # pull request's own, whose pattern they match.
+            'repos/owner/repo/pulls/'*'/reviews'*)
+                printf '%s\n' "${STUB_REVIEWS:-[]}"
+                exit 0
+                ;;
+            'repos/owner/repo/issues/'*'/comments'*)
+                printf '%s\n' "${STUB_ISSUE_COMMENTS:-[]}"
+                exit 0
+                ;;
+            'repos/owner/repo/pulls/'*)
+                jq -cn --arg head "${STUB_HEAD:-test-head}" '{user:{login:"pr-author"},head:{sha:$head}}'
+                exit 0
+                ;;
             # A merge queue on STUB_QUEUE_BRANCH with STUB_QUEUE_METHOD, and
             # a pull_request rule allowing STUB_RULE_METHODS, join the rules.
             'repos/{owner}/{repo}/rules/branches/'*)
@@ -205,6 +224,17 @@ case "${1:-}" in
                 exit 0
                 ;;
         esac
+        if [[ "${2:-}" == "graphql" && "$*" == *"reviewThreads"* ]]; then
+            # A GraphQL error body fails the read at once, where a bare
+            # nonzero exit would be retried.
+            if [[ "${STUB_THREADS_FAIL:-false}" == "true" ]]; then
+                echo '{"errors":[{"type":"FORBIDDEN","message":"review threads unavailable"}]}'
+                exit 1
+            fi
+            jq -cn --argjson nodes "${STUB_THREADS:-[]}" \
+                '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false,endCursor:null},nodes:$nodes}}}}}'
+            exit 0
+        fi
         if [[ "${2:-}" == "graphql" ]]; then
             if [[ "$*" == *"mergeQueue(branch:"* ]]; then
                 [[ " $* " == *" -f branch=${STUB_BASE:-main} "* ]] || exit 2

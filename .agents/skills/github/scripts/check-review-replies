@@ -1,0 +1,526 @@
+#!/usr/bin/env bash
+# check-review-replies — read one pull request's review replies live and judge
+# what they say. GitHub's approval and thread resolution prove that a reply
+# exists, never what it says, and a reply can change without a push, so this
+# reads the current replies on every call. Read-only: it makes GET requests
+# and GraphQL queries through the shared readers in lib/github-api.sh and
+# writes nothing. Callers: pr-merge's readiness check and orch submit-pr.md
+# § 6.1 gate 3. The stdout lines below are the protocol pr-merge reads; the
+# contract is print_usage.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+print_usage() {
+  cat <<'EOF'
+Usage: check-review-replies <PR_NUMBER>
+
+Reads the pull request's review threads, its review bodies at the current
+head and, when a review body holds findings, its PR-level comments. The
+repository is GH_REPO, else the checkout's GitHub remote. Writes nothing.
+
+Rules (each fails on its own):
+  untracked-claim     A thread's standing reply claims tracking and names
+                      no issue (KEN-123, #123).
+  unreasoned-decline  A thread's standing decline names no mechanism.
+  suppressed-findings A review at the head lists findings in its body under
+                      `Suppressed comments (N)` or `Previously missed (N)`
+                      (a markdown heading or a <details> summary), and the
+                      PR author has not answered each one.
+
+A thread's standing reply is its newest comment by a person (bots are
+exempt) that is `Fixed in <sha>`, `Declined: ...` or carries a track word.
+A decline opening with the word without the colon is still a decline for
+unreasoned-decline. What a decline must say is reviewer conduct:
+.agents/skills/orch/references/finding-disposition.md § Decision flow.
+
+A body finding is answered by a PR-level comment from the PR author with a
+line opening `Dispositions at <sha>`, <sha> being 7 to 40 hex characters
+the current head starts with, and a line per finding opening with its
+`file:line` token, bare, bold or backticked, then the reply:
+
+  Dispositions at 1a2b3c4:
+  `src/a.ts:12` - Declined: the caller rejects the empty case first.
+  `src/b.ts:40` - Tracked: KEN-123
+
+The reply is read by the thread grammar, so a label-only decline or a
+tracking claim naming no issue answers nothing. A comment bound to an
+earlier head answers nothing at this one.
+
+Output, stdout:
+  review-replies: pass head=<sha>
+  review-replies: fail head=<sha>
+followed on fail by one line per failing rule:
+  untracked-claim count=<n>
+  unreasoned-decline count=<n>
+  thread-replies state=truncated threads=<n>
+  suppressed-findings count=<n>
+  suppressed-findings state=unparsed
+  suppressed-findings state=mismatch declared=<n> entries=<n>
+  suppressed-entry <file:line>        (one per unanswered finding)
+stderr explains each line.
+
+Exit codes:
+  0  every rule passes
+  1  a rule fails
+  2  usage error, or a read failed: no verdict. The first stderr line is
+     `check-review-replies: <key> pr=<n>`; take no action on it.
+EOF
+}
+
+case "$#:${1:-}" in
+  1:-h | 1:--help)
+    print_usage
+    exit 0
+    ;;
+esac
+
+# shellcheck source=lib/github-api.sh
+source "$SCRIPT_DIR/lib/github-api.sh"
+
+# The one place each refusal's text is written. KEY is the stable first
+# token, VALUE the thing acted on.
+refuse() { # KEY VALUE DETAIL
+  printf 'check-review-replies: %s pr=%s\n  %s\n' "$1" "$2" "$3" >&2
+  exit 2
+}
+
+# The shared readers report a failure on stderr. It is held here and replayed
+# under the refusal's key line, so the key line stays the first one printed.
+READ_ERR=""
+reader_said() {
+  local said
+  said=$(jq -r '.error // empty' "$READ_ERR" 2>/dev/null) || said=""
+  [ -n "$said" ] || said=$(grep -m 1 -v '^[[:space:]]*$' "$READ_ERR") || said="no diagnostic"
+  printf '%s' "$said"
+}
+
+# THE REPLY FORMS, spelled once above both reductions that read one: the two
+# thread rules, and the suppressed-finding disposition read further down,
+# which answers a body finding in a PR comment because no thread carries it.
+# A change to what a decline is reaches all three. They read different sets
+# on purpose.
+# `disposition` is the canonical colon form, and the untracked-claim rule is
+# the only thing it may mean: widening it there would let "Declined under the
+# cap, tracked separately" clear a tracking claim naming no issue. `declined`
+# is wider, matching any reply opening with the word, because the replies the
+# second rule exists to catch had no colon.
+#
+# A decline is a disposition only when it says what it disproves, so the
+# second reduction subtracts. `reason_left` strips the reply form, the
+# non-reason tokens and the words carrying no content alone; a reply whose
+# reason strips to nothing is counted, which is what leaves a token INSIDE a
+# real reason harmless. Widen this list from ../tests/corpus/, never alone.
+# Punctuation normalization keeps every letter and number, not only ASCII:
+# the word lists are ASCII, so a reason written in another script survives
+# whole, and surviving text is residue, which is a stated reason.
+#
+# Tracker ids go first, while each is still one token and still uppercase:
+# punctuation normalization would otherwise leave the letters behind, and
+# `Declined: KEN-881` would read as a stated reason of "ken". The shape is
+# `names_issue`'s, the one spelling of a tracker id, so no reduction can
+# disagree about what an id is.
+#
+# Two NAME strips ride after BOTH word lists, and both are positional rather
+# than a vocabulary: no set of names is read or listed anywhere. A count
+# takes the non-space run immediately in front of it, because that run is
+# what was counted: "lifecycle 104/104" is one phrase and neither half says
+# anything about the finding. A slash-joined token is a path, and a path is a
+# name: "tools/guard" goes whole.
+#
+# BOTH WORD LISTS RUN FIRST, and that is load-bearing. A strip eats a whole
+# run, so in front of a list it eats the TAIL of a phrase and strands the
+# head: "out of scope 3/3" leaves "out" and "lifecycle is green at 104/104"
+# leaves "lifecycle", and a decline this rule exists to catch passes by
+# appending a count. A word the rule deletes never shields the name behind
+# it; each list has its own section of ../tests/corpus/declines-unreasoned.txt
+# and its own must-fail probe.
+#
+# The punctuation pass therefore runs ahead of both lists, so the lists read
+# normalized text; but it HOLDS a dot, underscore or hyphen sitting between
+# two alphanumerics, so a name is still one run when the strips look and
+# "merge-queue 12/12" does not leave "merge". Every multi-word list entry
+# accepts those separators for the same reason, and what the strips leave is
+# flattened afterwards. Widening that hold to the apostrophe would break
+# "won't fix", which the lists read as "won t fix".
+#
+# Both lists are bounded on ALPHANUMERICS rather than on \b for the same
+# reason, so a held separator is a boundary for them as it is for the
+# strips: `\b` reads `_` as a word character. `word_strip` spells that
+# boundary by consuming the reason in run-aligned pieces (a separator run, a
+# listed word plus the one character ending it, or an unlisted run), so every
+# match starts where the last ended, at a run start. The space padded onto
+# the END is how a word in the last position meets that one-character
+# boundary; the closing trim takes both pads back.
+#
+# Position is the only thing that separates a suite name from prose: both
+# are ordinary English, so any SET of names is a word ban on whatever the
+# repo happens to name its files after, and "the guard refuses this path" is
+# a real reason written in three of them. What position does not reach is
+# pinned in ../tests/corpus/declines-known-limit.txt: a name standing after
+# the count, a count not spelled N/N, a path whose own segments are listed
+# words, and a slash written inside a multi-word entry.
+REPLY_FORMS_DEF='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|declined:)"; "i");
+  def declined: test("^\\s*declined\\b"; "i");
+  def tracking: test("(?i)\\btrack(ed|ing|s)?\\b");
+  def names_issue: test("([A-Z][A-Z0-9]+-[0-9]+|#[0-9]+)\\b");
+  def word_strip($list):
+    gsub("(?<s>[^\\p{L}\\p{N}]+)|(?<w>" + $list + ")(?<b>[^\\p{L}\\p{N}])|(?<r>[\\p{L}\\p{N}]+)";
+      if .w != null then " " + .b elif .s != null then .s else .r end);
+  def reason_left:
+    sub("(?i)^\\s*declined\\b"; "")
+    | gsub("[A-Z][A-Z0-9]+-[0-9]+|#[0-9]+"; " ")
+    | ascii_downcase
+    | gsub("(?<w>[\\p{L}\\p{N}]+([._-][\\p{L}\\p{N}]+)*)|(?<k>/)|[\\s\\S]"; "\(.w // .k // " ")")
+    | " " + . + " "
+    | word_strip("frozen|freezes?|freezing|cap|capped|round[ ._-][0-9]+|round|rounds|tests?|suites?|pass|passes|passed|passing|green|count|checks?|checking|ci|runs?|builds?|building|built|compiles?|compiled|pipelines?|lints?|linter|linting|workflows?|jobs?|typechecks?|validation|coverage|everything|fine|clean|out[ ._-]of[ ._-]scope|scope|pre[ ._-]existing|preexisting|existing|flagged[ ._-]separately|flagged|separately|as[ ._-]discussed|discussed|noted|won[ ._-]?t[ ._-]?fix|false[ ._-]positives?|by[ ._-]design|design|not[ ._-]applicable|n[ /._-]a|actionable|no[ ._-]change|nothing[ ._-]to[ ._-]do|later|known|intentional|deliberate|works[ ._-]as[ ._-]intended|as[ ._-]intended|intended|owners?|instruction(s|ed)?|previous|pushe[sd]?|push|last|head|disposition(ed|s)?|findings?|fix(es|ed)?|track(s|ed|ing|er)?|filed|filing|logged")
+    | word_strip("a|an|the|this|that|these|those|it|its|is|are|was|were|be|been|for|in|on|at|to|of|and|or|but|so|we|i|you|your|pr|prs|here|now|all|full|whole|entire|complete|still|already|yes|no|not|do|does|did|has|have|had|under|per|within|as|after|rather|than|see|every|set|s|t")
+    | gsub("\\S+\\s+[0-9]+\\s*/\\s*[0-9]+"; " ")
+    | gsub("[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)+"; " ")
+    | gsub("[/._-]"; " ")
+    | gsub("\\b[0-9a-f]{7,40}\\b"; " ")
+    | gsub("\\b[0-9]+\\b"; " ")
+    | gsub("^ +| +$"; "");
+'
+
+# The two thread rules, over every review thread node the reader returned:
+# `truncated untracked unreasoned`. A thread's disposition is its newest
+# comment by a person that is a Fixed in <sha>/Declined: reply or carries a
+# track-word; other comments never move it. It is an untracked claim when it
+# is not such a reply and names no issue; resolving the thread does not clear
+# it, since the claimant is also the resolver. Bot comments are exempt: they
+# quote each other. GitHub's actor type names a bot, whose login carries no
+# [bot] suffix in GraphQL. A thread holding more comments than the read
+# returned cannot be judged, so it is counted as truncated and fails.
+THREAD_RULES_JQ="$REPLY_FORMS_DEF"'
+  def automatic_author: (.__typename // "User") == "Bot";
+  def replies: [.comments.nodes[] | select((.author | automatic_author) | not) | (.body // "")];
+  def standing: [replies[] | select(disposition or tracking)] | last // empty;
+  def standing_decline: [replies[] | select(disposition or declined or tracking)] | last // empty;
+  def readable: (.comments.nodes | type) == "array"
+    and (.comments.totalCount | type) == "number"
+    and .comments.totalCount <= (.comments.nodes | length);
+  if type != "array" then error("thread nodes are not an array") else . end
+  | "\([.[] | select(readable | not)] | length)"
+    + " " + ([.[] | select(readable) | standing
+        | select(disposition | not)
+        | select(names_issue | not)] | length | tostring)
+    + " " + ([.[] | select(readable) | standing_decline
+        | select(declined)
+        | select(reason_left == "")] | length | tostring)'
+
+# The suppressed-finding scan and the disposition read identify a finding by
+# EXACT STRING EQUALITY between a token the scan extracted and a token the
+# author's comment carries. Anything either one strips or admits, the other
+# must too, so each such rule is spelled ONCE here and passed into both.
+#
+# display_strip drops what a rendered review carries and neither surface
+# means: a CR from a body written on Windows, and the zero-width space Copilot
+# writes into a path to break it across lines for display. A character
+# dropped on one side and kept on the other is an entry no reply can ever
+# answer, because the difference is invisible in both surfaces.
+SUPP_NORMALIZE_DEF='def display_strip: gsub("\r"; "") | gsub("​"; "");
+'
+# entry_marks is the decoration the review body wraps an entry token in. The
+# scan reads a line so decorated and the disposition read answers a reply so
+# decorated: a mark only one of them knew is an entry the author cannot clear.
+SUPP_ENTRY_DEF='def entry_marks: ["**", "`"];
+'
+# A reviewer that judges a finding to be in code the current diff did not
+# change writes it into the review BODY, under a `Suppressed comments (N)` or
+# `Previously missed (N)` section, and posts no review comment, so no thread
+# carries it and GitHub's thread resolution never sees it.
+#
+# The parse is line-anchored and refuses in every direction it cannot read:
+# a title whose count is not a number (`unparsed`) and a count disagreeing
+# with the entries extracted under it (`mismatch`). Known limit: a body that
+# quotes the title at the start of a line counts as a real block. That
+# direction is visible and clears with the next review; the opposite is a
+# silent merge.
+#
+# The block ends at the next heading of any level, or at the `</details>`
+# that closes the section the title opened, so the `- **Files reviewed:**`
+# trailer Copilot writes after the entries is outside it. The close is
+# DEPTH-COUNTED because the summary-titled shape wraps each entry in its own
+# `<details>`: ending at the first `</details>` would keep one entry and drop
+# the rest. Lines inside a fenced snippet are skipped: the code a reviewer
+# pastes under an entry is full of `#` comment lines, and one of those read as
+# a heading would end the block. The fence records its opening delimiter's
+# character and length and closes only on a run of the same character at that
+# length or longer with nothing after it, per CommonMark.
+#
+# THE SECTION TITLE IS THE SENTINEL, read whatever the fence state says. Both
+# title arms run before the fence arm and close any fence they find open, so
+# no run of fence-looking lines EARLIER in the body can swallow the block that
+# follows. It errs toward finding a block, never toward missing one.
+#
+# `capture` emits NOTHING on a non-match, not null, and a reduce update that
+# emits nothing sets the accumulator to null. Hence the `// null`.
+SUPP_SCAN_DEF='
+    # The sentinel text of a line, whichever surface carries it: a markdown
+    # heading, or the <summary> of a <details> section. ONE extractor feeds
+    # both title tests rather than a regex per spelling. Inner tags go on the
+    # summary arm: a section title arrives wrapped in <strong>.
+    def block_title:
+      if test("^#{1,6}[ \t]+") then sub("^#{1,6}[ \t]+"; "")
+      elif test("^<summary[^>]*>.*</summary>[ \t]*$")
+      then sub("^<summary[^>]*>"; "") | sub("</summary>[ \t]*$"; "") | gsub("<[^>]*>"; "")
+      else "" end
+      | sub("^[ \t]+"; "") | sub("[ \t]+$"; "");
+    # The entry token a whole line carries, or nothing. A line is one of the
+    # shared entry_marks, the token, the SAME mark again, and trailing blanks:
+    # `path:line`, where the line number is what makes a token and the path may
+    # hold any character but a mark. Iterating the list rather than branching
+    # per decoration keeps this in step with the disposition read, which
+    # iterates the same list.
+    def entry_token:
+      sub("[ \t]+$"; "") as $l
+      | first(
+          entry_marks[]
+          | . as $d
+          | ($d | length) as $dn
+          | select(($l | length) > (2 * $dn))
+          | select(($l | startswith($d)) and ($l | endswith($d)))
+          | $l[$dn:(($l | length) - $dn)]
+          | select(test("^[^*`]+:[0-9]+$")));
+    def suppressed_scan:
+      reduce (((. // "") | display_strip) | split("\n"))[] as $l
+        ({declared: 0, entries: 0, unparsed: 0, inblock: false, depth: 0, fchar: "", flen: 0, list: []};
+          ($l | capture("^[ \t]{0,3}(?<f>`{3,}|~{3,})(?<rest>.*)$") // null) as $fx
+          | ($l | block_title) as $title
+          | (($l | entry_token) // "") as $entry
+          | if ($title | test("^(Suppressed comments|Previously missed)[ \t]*\\([0-9]+\\)$")) then
+            .declared += ($title | capture("\\((?<n>[0-9]+)\\)") | .n | tonumber)
+            | .inblock = true | .depth = 0 | .fchar = "" | .flen = 0
+          elif ($title | test("^(Suppressed comments|Previously missed)([ \t]|$)")) then
+            .unparsed += 1 | .inblock = true | .depth = 0 | .fchar = "" | .flen = 0
+          elif .fchar != "" then
+            if ($fx != null and ($fx.f[0:1] == .fchar)
+                and (($fx.f | length) >= .flen) and ($fx.rest | test("^[ \t]*$")))
+            then .fchar = "" | .flen = 0
+            else . end
+          elif $fx != null then
+            .fchar = ($fx.f[0:1]) | .flen = ($fx.f | length)
+          elif ($l | test("^<details([ \t>]|$)")) then
+            if .inblock then .depth += 1 else . end
+          elif ($l | test("^</details>")) then
+            if .inblock and .depth > 0 then .depth -= 1
+            else .inblock = false | .depth = 0 end
+          elif ($l | test("^#{1,6}[ \t]")) then
+            .inblock = false | .depth = 0
+          elif .inblock and $entry != "" then
+            .entries += 1 | .list += [$entry]
+          else . end);
+'
+# The scan reads every submitted review at the head by anyone but the PR
+# author: `declared entries unparsed`, then one entry token per line. A
+# dismissed review no longer stands and a pending one was never submitted.
+SUPP_ROWS_JQ="$SUPP_NORMALIZE_DEF$SUPP_ENTRY_DEF$SUPP_SCAN_DEF"'
+    [ .[]
+      | select(.commit_id == $sha and .state != "DISMISSED" and .state != "PENDING"
+               and (.user.login // "") != $author)
+      | (.body // "") | suppressed_scan
+    ] as $rows
+    | (([$rows[] | .declared] | add) // 0) as $declared
+    | (([$rows[] | .entries] | add) // 0) as $entries
+    | (([$rows[] | .unparsed] | add) // 0) as $unparsed
+    | "\($declared) \($entries) \($unparsed)\n" + ([$rows[] | .list[]] | join("\n"))'
+
+# THE DISPOSITION READ: a body finding is answered the way a thread finding
+# is. No thread carries it, so the reply is a PR comment by the AUTHOR that
+# binds this head and opens a line with the entry's own `file:line` token,
+# which this output prints bare and the review body prints bold or
+# backticked, followed by the reply. EVERY SPELLING IS READ and NONE is the
+# anchor: the token's equality with a scanned entry identifies the finding.
+# The reply is judged by the SHARED reply forms: a reply that is neither a
+# disposition nor a tracking claim, a tracking claim naming no issue, and a
+# decline whose reason strips to nothing all leave the entry standing. Prints
+# the count left, then one entry per line.
+#
+# THE COMMENT BINDS THE HEAD BY SAYING SO: a line opening `Dispositions at
+# <sha>`. Nothing else in it binds. A sha-shaped run asserts no commit (the
+# one a `Fixed in <sha>` names, a tracking claim's `#1234567`, a path that
+# opens with hex), yet while any of them could bind, a comment written for an
+# earlier head bound itself to this one and carried its other replies across
+# a diff no reviewer re-read. A marker cannot be written by accident.
+SUPP_DISPOSITION_JQ="$SUPP_NORMALIZE_DEF$SUPP_ENTRY_DEF$REPLY_FORMS_DEF"'
+      def unanswered($r):
+        ((($r | disposition) or ($r | tracking)) | not)
+        or ((($r | disposition) | not) and (($r | names_issue) | not))
+        or (($r | declined) and (($r | reason_left) == ""));
+      # The bound sha is captured BEFORE the comparison, since referring to it
+      # as dot inside startswith would rebind dot to the head and accept any
+      # sha. THE MARKER OPENS A LINE: a marker quoted from another pull
+      # request, inside a fenced example or mid-sentence is not an author
+      # asserting which commit this comment answers.
+      def head_bound($sha; $floor):
+        [ split("\n")[]
+          | capture("^[ \t]*dispositions[ \t]+at[^0-9a-fA-F]*(?<c>[0-9a-fA-F]{" + $floor + ",40})"; "i")
+          | (.c | ascii_downcase) as $claimed
+          | select(($sha | ascii_downcase) | startswith($claimed)) ] | length > 0;
+      # A line names an entry by EQUALITY with one the scan extracted, never by
+      # a token pattern of its own: the scan is the one definition of what an
+      # entry token is. The decorated arm ITERATES entry_marks for the same
+      # reason the scan does.
+      #
+      # The bare arm requires the character after the entry to be no letter or
+      # digit, so `a/b.ts:1` cannot claim the line `a/b.ts:12 ...`. A path may
+      # hold a colon of its own, though, and then one entry is a prefix of
+      # another at a separator the test allows: `src/foo:1` opens the line of
+      # `src/foo:1.ts:2`. A LINE NAMES ONE ENTRY, the longest it opens with:
+      # the list arrives ordered by length and the first match wins.
+      def line_reply($by_length):
+        sub("^[ \t]*([-*+][ \t]+)?"; "") as $l
+        | first(
+            $by_length[]
+            | . as $e
+            | ($e | length) as $n
+            | ( ( entry_marks[]
+                  | . as $d
+                  | select($l | startswith($d + $e + $d))
+                  | {entry: $e, r: ($l[($n + 2 * ($d | length)):])} ),
+                ( select(($l | startswith($e))
+                         and (($l[$n:] | test("^[\\p{L}\\p{N}]")) | not))
+                  | {entry: $e, r: ($l[$n:])} ) ))
+        # The separator run between the token and the reply is what the author
+        # wrote there: a dash, a colon, an em dash, nothing at all.
+        | .r |= sub("^[^\\p{L}\\p{N}]*"; "");
+      ($entries | split("\n") | map(select(length > 0))) as $wanted
+      | ($wanted | sort_by(-length)) as $by_length
+      | [ .[]
+          | select((.user.login // "") == $author)
+          | (.body // "" | display_strip)
+          | select(head_bound($sha; $floor))
+          | split("\n")[]
+          | line_reply($by_length)
+        ] as $said
+      # The NEWEST line naming an entry decides, as a thread takes its newest
+      # reply: an author who answers and then writes something else about the
+      # same entry has withdrawn the answer.
+      | [ $wanted[]
+          | . as $e
+          | ([ $said[] | select(.entry == $e) ] | last) as $reply
+          | select($reply == null or unanswered($reply.r))
+        ]
+      | "\(length)\n" + join("\n")'
+
+# The shortest head prefix a `Dispositions at <sha>` line may name.
+SHA_FLOOR=7
+
+# One REST collection, every page merged into one array. `--paginate` emits
+# one array per page, so the pages are slurped and added. A read producing
+# zero bytes, or a page that is not an array, is a broken read and never an
+# empty collection: an empty one would erase findings.
+read_collection() { # WHAT ENDPOINT
+  local raw pages
+  if ! raw=$(gh_rest "$2" --paginate 2>"$READ_ERR"); then
+    refuse "read-failed" "$PR_NUMBER" "the $1 read failed: $(reader_said)"
+  fi
+  [ -n "$raw" ] || refuse "read-empty" "$PR_NUMBER" "the $1 read produced zero bytes"
+  pages=$(jq -s 'if (length > 0) and all(type == "array") then add else error("pages are not arrays") end' <<<"$raw" 2>/dev/null) ||
+    refuse "read-malformed" "$PR_NUMBER" "the $1 read returned pages that are not arrays"
+  printf '%s' "$pages"
+}
+
+[ "$#" -eq 1 ] && [[ "$1" =~ ^[1-9][0-9]*$ ]] ||
+  refuse "usage" "${1:-}" "check-review-replies takes one PR number; see --help"
+PR_NUMBER="$1"
+READ_ERR=$(mktemp "${TMPDIR:-/tmp}/check-review-replies.XXXXXX") ||
+  refuse "scratch-failed" "$PR_NUMBER" "could not create a temporary file for the readers' diagnostics"
+trap 'rm -f -- "${READ_ERR:?}"' EXIT
+
+repo_info=$(get_repo_info 2>"$READ_ERR") || refuse "repo-unresolved" "$PR_NUMBER" "$(reader_said)"
+OWNER=$(get_owner "$repo_info") || refuse "repo-unresolved" "$PR_NUMBER" "the resolved repository names no owner"
+NAME=$(get_repo "$repo_info") || refuse "repo-unresolved" "$PR_NUMBER" "the resolved repository names no name"
+SLUG="$OWNER/$NAME"
+
+pr_json=$(gh_rest "repos/$SLUG/pulls/$PR_NUMBER" 2>"$READ_ERR") ||
+  refuse "read-failed" "$PR_NUMBER" "the pull request read failed: $(reader_said)"
+HEAD_SHA=$(jq -r '.head.sha // "" | strings' <<<"$pr_json" 2>/dev/null) || HEAD_SHA=""
+PR_AUTHOR=$(jq -r '.user.login // "" | strings' <<<"$pr_json" 2>/dev/null) || PR_AUTHOR=""
+[ -n "$HEAD_SHA" ] && [ -n "$PR_AUTHOR" ] ||
+  refuse "read-malformed" "$PR_NUMBER" "the pull request read named no head commit or no author"
+
+threads=$(gh_graphql_threads "$OWNER" "$NAME" "$PR_NUMBER" '
+                          comments(first: 100) { totalCount nodes { author { login __typename } body } }' 2>"$READ_ERR") ||
+  refuse "read-failed" "$PR_NUMBER" "the review thread read failed: $(reader_said)"
+thread_counts=$(jq -r "$THREAD_RULES_JQ" <<<"$threads" 2>/dev/null) ||
+  refuse "read-malformed" "$PR_NUMBER" "the review thread read could not be judged"
+read -r truncated untracked unreasoned <<<"$thread_counts"
+case "$truncated:$untracked:$unreasoned" in
+  *[!0-9:]* | :* | *:: | *:) refuse "read-malformed" "$PR_NUMBER" "the review thread rules produced no counts" ;;
+esac
+
+reviews=$(read_collection reviews "repos/$SLUG/pulls/$PR_NUMBER/reviews?per_page=100") || exit 2
+supp_raw=$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" "$SUPP_ROWS_JQ" <<<"$reviews" 2>/dev/null) ||
+  refuse "read-malformed" "$PR_NUMBER" "the review bodies could not be scanned"
+supp_head="${supp_raw%%$'\n'*}"
+supp_list=""
+case "$supp_raw" in *$'\n'*) supp_list="${supp_raw#*$'\n'}" ;; esac
+read -r supp_declared supp_entries supp_unparsed <<<"$supp_head"
+case "$supp_declared:$supp_entries:$supp_unparsed" in
+  *[!0-9:]* | :* | *:: | *:) refuse "read-malformed" "$PR_NUMBER" "the review body scan produced no counts" ;;
+esac
+
+supp_state=ok
+if [ "$supp_unparsed" != 0 ]; then
+  supp_state=unparsed
+elif [ "$supp_declared" != "$supp_entries" ]; then
+  supp_state=mismatch
+elif [ "$supp_declared" != 0 ]; then
+  comments=$(read_collection "issue comments" "repos/$SLUG/issues/$PR_NUMBER/comments?per_page=100") || exit 2
+  supp_disp=$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" --arg floor "$SHA_FLOOR" \
+    --arg entries "$supp_list" "$SUPP_DISPOSITION_JQ" <<<"$comments" 2>/dev/null) ||
+    refuse "read-malformed" "$PR_NUMBER" "the disposition comments could not be read"
+  supp_entries="${supp_disp%%$'\n'*}"
+  case "$supp_entries" in
+    '' | *[!0-9]*) refuse "read-malformed" "$PR_NUMBER" "the disposition read produced no count" ;;
+  esac
+  supp_list=""
+  case "$supp_disp" in *$'\n'*) supp_list="${supp_disp#*$'\n'}" ;; esac
+fi
+
+lines=()
+[ "$untracked" = 0 ] || {
+  lines+=("untracked-claim count=$untracked")
+  echo "untracked-claim: $untracked thread reply(s) claim tracking and name no issue; reply Tracked: <issue id>, or Declined: <reason>" >&2
+}
+[ "$unreasoned" = 0 ] || {
+  lines+=("unreasoned-decline count=$unreasoned")
+  echo "unreasoned-decline: $unreasoned thread decline(s) name no mechanism; give the passing state, the false premise, or the excluded class with the fact that puts the finding there" >&2
+}
+[ "$truncated" = 0 ] || {
+  lines+=("thread-replies state=truncated threads=$truncated")
+  echo "thread-replies: $truncated thread(s) hold more comments than one read returns, so their replies cannot be judged" >&2
+}
+case "$supp_state" in
+  unparsed)
+    lines+=("suppressed-findings state=unparsed")
+    echo "suppressed-findings: a review body titles a findings section with no readable count; read it in the review" >&2
+    ;;
+  mismatch)
+    lines+=("suppressed-findings state=mismatch declared=$supp_declared entries=$supp_entries")
+    echo "suppressed-findings: a review body declares $supp_declared finding(s) but $supp_entries entry line(s) parsed; read it in the review" >&2
+    ;;
+  ok)
+    if [ "$supp_entries" != 0 ]; then
+      lines+=("suppressed-findings count=$supp_entries")
+      while IFS= read -r entry; do
+        [ -z "$entry" ] || lines+=("suppressed-entry $entry")
+      done <<<"$supp_list"
+      echo "suppressed-findings: $supp_entries finding(s) in a review body at $HEAD_SHA carry no thread and no head-bound answer; reply in a PR comment opening 'Dispositions at ${HEAD_SHA:0:7}'" >&2
+    fi
+    ;;
+  *)
+    echo "check-review-replies: unknown suppressed-findings state $supp_state" >&2
+    exit 2
+    ;;
+esac
+
+if [ "${#lines[@]}" -eq 0 ]; then
+  printf 'review-replies: pass head=%s\n' "$HEAD_SHA"
+  exit 0
+fi
+printf 'review-replies: fail head=%s\n' "$HEAD_SHA"
+printf '%s\n' "${lines[@]}"
+exit 1

@@ -14,7 +14,7 @@ Subprocess time bounds go through `scripts/lib/bounded.sh`, the one portable wal
 
 ## Tests
 
-`tests/` holds one self-contained suite per file; CI runs each as `bash <file>`.
+`tests/` holds one self-contained suite per file; CI runs each as `bash <file>`. `tests/corpus/` is the contract for the decline grammar in `scripts/check-review-replies`: a new label goes into a corpus file first, and the word list widens until `tests/check-review-replies-threads.test.sh` passes.
 
 ## Declaration-site test scoping (`git-diff-summary`)
 

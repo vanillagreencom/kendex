@@ -13,6 +13,9 @@
 #     merge-commit:<oid>, merge-fail:<already-queued|policy|transport|queue-required>
 #     graphql:fail (the queue query fails, the REST fallback answers),
 #     post-view-fail (that REST fallback fails too)
+#     replies:<unreasoned|fail> the review threads check-review-replies
+#     reads: one thread whose author declined with a label alone, or a read
+#     that fails
 #     review:<decision|none> GitHub's reviewDecision, none being empty, with
 #     no latest review; review-latest:<state> one latest review in that state
 #     require-token (the stub refuses a mutation without the bot token)
@@ -199,6 +202,8 @@ word() {
     merge-fail:*) W_ENV+=("STUB_MERGE_EXIT=1" "STUB_MERGE_STDERR=$(merge_stderr_of "$v")") ;;
     graphql:fail) W_ENV+=("STUB_POST_GRAPHQL_FAIL=true") ;;
     post-view-fail) W_ENV+=("STUB_POST_VIEW_FAIL=true") ;;
+    replies:unreasoned) W_ENV+=('STUB_THREADS=[{"comments":{"totalCount":1,"nodes":[{"author":{"login":"pr-author","__typename":"User"},"body":"Declined: frozen"}]}}]') ;;
+    replies:fail) W_ENV+=("STUB_THREADS_FAIL=true") ;;
     review:none) W_ENV+=("STUB_REVIEW_DECISION=" "STUB_REVIEW_LATEST=[]") ;;
     review:*) W_ENV+=("STUB_REVIEW_DECISION=$v" "STUB_REVIEW_LATEST=[]") ;;
     review-latest:*) W_ENV+=("STUB_REVIEW_LATEST=[{\"state\":\"$v\"}]") ;;
@@ -327,7 +332,7 @@ calls() {
       "api graphql"*mergeQueueEntry*) out="$out,graphql:queue" ;;
       "api user"*) out="$out,user" ;;
       "api -X DELETE repos/{owner}/{repo}/git/refs/heads/"*) out="$out,delete:${line##*/heads/}" ;;
-      "auth status"*|"repo view"*|"api repos/"*|"pr view 123 --json baseRefName"*) ;;
+      "auth status"*|"repo view"*|"api repos/"*|"api graphql"*reviewThreads*|"pr view 123 --json baseRefName"*) ;;
       *) out="$out,?($line)" ;;
     esac
   done < <(awk '/^(pr|api|auth|repo) / { if (call != "") print call; call = $0; next }

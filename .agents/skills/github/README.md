@@ -16,6 +16,7 @@ Requires authenticated `gh`, `jq` and `perl`; every time-bounded subprocess star
 - Post replies and resolve review threads.
 - Manage labels and inspect failed CI jobs.
 - Check merge requirements and merge eligible PRs.
+- Check, live before a merge, that review replies name an issue or a reason.
 - Compare PR branches for conflicts and dependencies.
 - Run Git over HTTPS with the caller's GitHub authentication.
 

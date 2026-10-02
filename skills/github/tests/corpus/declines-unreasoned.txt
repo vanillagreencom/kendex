@@ -1,0 +1,314 @@
+# Replies that MUST fail check-review-replies: a decline naming no mechanism.
+#
+# THIS FILE IS THE CONTRACT. The subtraction in check-review-replies is a word
+# list, and a word list maintained by review rounds is always one label
+# behind. So a label is added HERE first: write the reply the way a person
+# actually types it, watch check-review-replies-threads.test.sh go red, then
+# widen the list until it passes. Never the other way round.
+#
+# Write each label in the spellings people really use, punctuation included.
+# The subtraction normalizes punctuation to spaces BEFORE it reads the list,
+# so "won't fix" arrives as "won t fix" and an entry spelled `wont ?fix`
+# never meets it. That defect shipped once. Every apostrophized label below
+# is here to keep it from shipping twice.
+#
+# Lines starting with # are comments. Blank lines are skipped.
+
+# --- the replies that shipped KEN-884 through KEN-889 --------------------
+# Quoted from #1860. This is the reply the whole issue was filed over.
+Declined under this PR's freeze, flagged separately
+Declined under this PR's freeze.
+# #1851: a disposition and a test count.
+Declined: frozen at a1fa74dca; 104/104 pass
+# #1847: the freeze restated as procedure. Who ordered it and which push was
+# the last says nothing about whether the finding reproduces.
+Declined: frozen at 39db56854, per the owner's instruction.
+Declined: frozen at 39db56854 — the owner set the previous push as this PR's last.
+
+# --- empty reasons -------------------------------------------------------
+Declined:
+Declined:
+Declined.
+Declined
+
+# --- the freeze, in every inflection people write --------------------------
+Declined: frozen
+Declined: freeze
+Declined: freezing this PR
+Declined, frozen.
+
+# --- the round cap -------------------------------------------------------
+Declined: at the cap
+Declined: capped
+Declined: round 4
+Declined: this round
+
+# --- a test count is not a reason ----------------------------------------
+Declined: tests pass
+Declined: the tests passed
+Declined: the suite is green
+Declined — tests pass
+Declined: 104/104
+
+# --- scope and age -------------------------------------------------------
+Declined: out of scope
+Declined: out of scope for this PR
+Declined, out of scope.
+Declined: pre-existing
+Declined: preexisting
+Declined: pre existing
+
+# --- a disposition standing in for a filing -------------------------------
+Declined: flagged separately
+Declined: tracked separately
+Declined: tracking separately
+Declined: filed separately
+Declined: logged separately
+Declined: tracked
+
+# --- labels that answer without disproving --------------------------------
+Declined: by design
+Declined: as discussed
+Declined: noted
+Declined: works as intended
+Declined: as intended
+Declined: intentional
+Declined: deliberate
+Declined: known
+Declined: later
+Declined: no change
+Declined: nothing to do
+Declined: not applicable
+Declined: n/a
+# The not-actionable label, in both punctuations. It says no more about
+# whether the finding reproduces than the labels above it, and a reply table
+# that hands an agent this string on its own hands out a red gate.
+Declined: not actionable
+Declined, not actionable.
+# The apostrophized forms. Punctuation normalization runs first, so these
+# reach the list as "won t fix" — the spelling the entry has to match.
+Declined: won't fix
+Declined: won’t fix
+Declined: wont fix
+Declined: wontfix
+Declined: won't-fix
+# A verdict label, no more disproving than the rest of this section.
+Declined: false positive
+Declined: false-positive
+Declined: this is a false positive
+
+# --- a separator nothing else reaches ------------------------------------
+# The punctuation pass holds the slash so the path strip can read a path, and
+# holds a dot, underscore or hyphen inside a token so the count strip can
+# read a name. Whatever the two strips leave behind is flattened afterwards.
+# Drop that flatten and the separator itself is residue, which is a stated
+# reason: these are the replies whose verdict says the flatten is live.
+Declined: frozen/ pass
+Declined: out of scope/ pre-existing
+Declined: green/ clean
+
+# --- a bare number, once the count strip has had its turn -----------------
+# A number the count strip never reaches, because it is not spelled N/N. The
+# strip used to leave these digits for the number pass; it no longer does, so
+# without a reply carrying a LOOSE number the number pass has no fixture and
+# a deletion of it moves nothing.
+Declined: frozen at 3
+Declined: the cap, 4
+
+# --- a bare identifier is not a reason ------------------------------------
+Declined: a1fa74dca
+Declined: at this head
+Declined: fixed
+# A tracker id is an identifier too. Naming the issue you filed says nothing
+# about whether the finding reproduces, and a reply that is only the id is
+# not `Tracked: KEN-n` either.
+Declined: KEN-881
+Declined: see KEN-881
+Declined: tracked in KEN-123
+Declined: #1801
+
+# --- a passing-checks claim is a test count in other clothes --------------
+# Same content-free assertion as "tests pass" above: it says a suite ran, not
+# that the finding is wrong. The list read "tests" and "suites" and nothing
+# else, so every spelling below cleared the gate. Residue like "checks" or
+# "ci" is ordinary filler, not the suite NAME that draws the known limit.
+Declined: all checks pass
+Declined: the checks pass
+Declined: checks pass
+Declined: all checks are green
+Declined: all checks passing
+Declined: all checks pass on this head
+Declined: CI is green
+Declined: CI passes
+Declined: ci is passing
+Declined: CI is green at this head
+Declined: the build passes
+Declined: build is green
+Declined: it builds fine
+Declined: it compiles
+Declined: the pipeline is green
+Declined: the pipeline passes
+Declined: lint passes
+Declined: lint is clean
+Declined: the workflow passes
+Declined: the job is green
+Declined: typecheck passes
+Declined: validation passes
+Declined: coverage is fine
+Declined: everything passes
+
+# --- a count and the name in front of it ----------------------------------
+# From #1851. A suite name is a name, and the word list stopped at names
+# until two positional strips joined it, both riding after it: a count takes
+# the non-space run immediately in front of it, and a slash-joined token is a
+# path. "lifecycle 104/104" and "tools/guard" both go, where the words alone
+# left "lifecycle" or "merge" standing and the reply cleared the gate.
+# Nothing here is a list of names — see the reasoned file for what a count no
+# longer eats.
+Declined: frozen at a1fa74dca; lifecycle 104/104 and the tools/guard run at this head.
+Declined: frozen at a1fa74dca; pr-merge 103/103 and the full tools/guard pass at this head.
+Declined: frozen at a1fa74dca; workflow 16/16 and the full tools/guard pass at this head.
+# The same reply with the count's own verb between the name and the count.
+# The label pass runs FIRST, so `passes` is gone before the strip looks and
+# the strip still takes the name. If this ever diverges from the line above
+# it, the order of reason_left has been changed and the strip is spending
+# itself on a word the vocabulary would have deleted anyway.
+Declined: frozen at a1fa74dca; lifecycle passes 104/104 and the tools/guard run at this head.
+# Spaces around the slash. The count regex allows them; nothing else in this
+# file reaches that, so a tightening to a bare slash reds here.
+Declined: frozen at a1fa74dca; lifecycle 104 / 104 and the full tools/guard pass at this head.
+# Punctuation between the name and the count. The strip reads a run of
+# non-space, so these would leave "lifecycle" standing if punctuation were
+# normalized after the strips instead of before them. Three spellings,
+# because bracket, paren and dash attach to the word differently.
+Declined: frozen at a1fa74dca; lifecycle (104/104) and the full tools/guard pass at this head.
+Declined: frozen at a1fa74dca; lifecycle [104/104] and the full tools/guard pass at this head.
+Declined: frozen at a1fa74dca; lifecycle — 104/104 and the full tools/guard pass at this head.
+# A name spelled with a dot, a hyphen or an underscore. The punctuation pass
+# holds those three inside a token, so the strip's non-space run is the whole
+# name UNLESS a segment of that name is a word either list carries: both
+# lists run ahead of the strip, so a listed segment is deleted out of the
+# middle first and the strip is left taking only the tail. None of the names
+# here has one, which is why each is caught; "guard_all_paths 3/3" does, and
+# it is pinned in declines-known-limit.txt.
+#
+# Normalize the three separators to spaces ahead of the strip and
+# "merge-queue 12/12" leaves "merge" standing. None of these names starts
+# with a word either list carries either: "pr-merge" above reds even under
+# the broken spelling, because "pr" is filler and the residue is empty, so it
+# cannot tell the two programs apart.
+Declined: frozen at a1fa74dca; merge-queue 12/12 and the full tools/guard pass at this head.
+Declined: frozen at a1fa74dca; review-writer 42/42 and the full tools/guard pass at this head.
+Declined: frozen at a1fa74dca; merge_queue_watch 12/12 and the full tools/guard pass at this head.
+Declined: frozen at a1fa74dca; lifecycle.sh 104/104 and the full tools/guard pass at this head.
+# A path spelled with an extension, for the same reason: the path strip reads
+# the dot, so "tools/guard.sh" goes whole where it used to leave "sh".
+Declined: frozen at a1fa74dca; workflow 16/16 and the full tools/guard.sh pass at this head.
+
+# --- a path a listed phrase can reach across ------------------------------
+# The path strip runs after both word lists, so a path reaches it only while
+# the lists leave it whole. Every multi-word entry spells its own separator
+# class and none of them carries the slash, which is what keeps
+# "pre existing" from matching across one and lets the strip take
+# "docs/pre/existing" as a single token.
+#
+# This line is the guard on that. Put `/` in those separator classes — the
+# one change that closes the "out of/scope" limit without touching
+# normalization, and so the one a maintainer reaching for that pin will try
+# — and the phrase is eaten out of the middle, "docs/" stops being a path
+# and "docs" stands. Nothing else here moves under that change. The one
+# other red it raises is the "out of/scope" pin becoming caught, which the
+# suite asks the maintainer to move into this file; once moved, the suite is
+# green and the fail-open ships. This line is what still reds after it.
+Declined: frozen at a1fa74dca; docs/pre/existing is green and the full tools/guard pass
+
+# --- a filler word, then a count ------------------------------------------
+# The same shape as the label-phrase section below, with a FILLER word doing
+# the shielding. Both lists run ahead of the strips for one reason, so both
+# sections answer to one rule: a word the term deletes never shields the name
+# behind it. Move the filler pass back behind the strips and the strip spends
+# itself on "at", leaving "lifecycle" standing.
+Declined: frozen at a1fa74dca; lifecycle is green at 104/104 and tools/guard passes.
+Declined: frozen at a1fa74dca; lifecycle was at 104/104 and tools/guard passes.
+
+# --- a label phrase, then a count -----------------------------------------
+# ORDER, not vocabulary. The label pass consumes a multi-word entry whole,
+# and both positional strips run after it — so a strip can never eat the tail
+# of a phrase and leave its head standing. Move either strip back in front of
+# the label pass and every line here clears the gate: "out of scope 3/3"
+# leaves "out", "works as intended 12/12" leaves "works".
+#
+# One line per multi-word entry the misordering can strand. An entry strands
+# when its FIRST word is in neither list — nothing else deletes the head — AND
+# at least one word after the first is missing from the OTHER list, the one
+# still running ahead of the strips in that misordering, which for an entry
+# of the label list is the filler list. When that pass deletes EVERY word
+# after the head, the strip's reach walks leftward onto the head itself and
+# nothing is left standing. Spell each with spaces: a separator inside the
+# phrase makes it one non-space run, which the count strip then eats whole in
+# either order.
+#
+# Derive that set from reason_left rather than trusting this comment; if the
+# lists or the pass order change, this section is what has to grow with them.
+Declined: out of scope 3/3
+Declined: pre existing 7/7
+Declined: by design 4/4
+Declined: works as intended 12/12
+Declined: false positive 5/5
+Declined: won't fix 3/3
+# The same fault through the path strip rather than the count strip.
+Declined: out of scope 104/104 and the full tools/guard pass
+
+# --- a label phrase the derivation excludes -------------------------------
+# Must-catch, but not ordering fixtures, and here rather than above so the
+# probe does not read them as ones. Every word after the head of "nothing to
+# do" is one the filler list carries, and "pre-existing" is one non-space
+# run, so each is caught in both orders for the reasons the section above
+# states.
+Declined: nothing to do 2/2
+Declined: pre-existing 7/7
+
+# --- a label phrase written with a separator ------------------------------
+# The punctuation pass holds a dot, underscore or hyphen inside a token, so a
+# label phrase spelled with one arrives at the word list joined rather than
+# spaced. Every multi-word entry accepts all four separators for that reason.
+# Neither ordering probe covers these: with no count and no path, the strips
+# never touch them, and the label pass alone decides.
+Declined: out-of-scope
+Declined: out.of.scope
+Declined: pre_existing
+Declined: nothing-to-do
+
+# --- two unrelated labels joined by a held separator -----------------------
+# The punctuation pass holds a dot, underscore or hyphen between two
+# alphanumerics, so two single-word labels written that way arrive at the
+# word lists as ONE token rather than two. Both lists bound their entries on
+# alphanumerics, so each label is still read and what is left is the
+# separator, which the flatten takes.
+#
+# Anchor the lists on \b instead and the underscore alone defeats both
+# matches, because `\b` reads `_` as a word character where it reads `.` and
+# `-` as boundaries. Every underscore line below then clears the gate while
+# its dot and hyphen spelling reds; that asymmetry is what these hold.
+# `frozen_3` is the same fault reaching one pass further: the number pass
+# runs after the flatten, so the digit goes either way and the label is what
+# is left standing.
+Declined: clean_frozen
+Declined: clean-frozen
+Declined: clean.frozen
+Declined: ci_green
+Declined: tests_pass
+Declined: build_passes
+Declined: frozen_cap
+Declined: frozen_3
+
+# --- a label phrase the path strip reaches first --------------------------
+# The derivation EXCLUDES `n a`, for the same reason it excludes `nothing to
+# do` one section up: every word after its head — here just `a` — is one the
+# filler list carries. It
+# is here rather than there because the reply people actually write is "n/a",
+# and the label list carries a slash spelling of the entry so the filler pass
+# cannot take the `a` out of it first — which makes it a must-catch whatever
+# the pass order is, and leaves the ordering probe nothing to tell apart. Its
+# own section is how the probe skips it without a skip list.
+Declined: n/a 9/9

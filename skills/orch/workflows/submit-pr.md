@@ -349,7 +349,7 @@ A PR merges on exactly four deterministic gates. Gates 2 and 4 **verify results 
 |---|------|-------|
 | 1 | Internal review verdict recorded | Managed: `review-pr.md` completed with verdict `pass`. Standalone: `json_paths` is non-empty |
 | 2 | CI green | The § 5 result is `status=complete` with `verdict=pass`, or `verdict=none` (satisfied with a `CI: none configured` note in the summary) |
-| 3 | Zero unresolved review comments | `pr-threads` reports `unresolved_count == 0` AND every actionable PR-level bot comment has a reply (tracked in `pr_comment_review.replied`) |
+| 3 | Zero unresolved review comments | `pr-threads` reports `unresolved_count == 0` AND every actionable PR-level bot comment has a reply (tracked in `pr_comment_review.replied`) AND `check-review-replies` exits 0 |
 | 4 | Reviewer-gate verdict | `approval`: § 4 ended `approved`, or a recorded `pr_approval.forced` or `pr_approval.reviewer_down` meets it. `off`: not applicable |
 
 **Gate 4 reads the live mode, never a record.** GitHub retargets a pull request to another base without moving its head, so the mode recorded in § 4 can name a base the pull request left. Re-run § 4's command before gate 4 and record what it prints. The recorded mode gates nothing; read it for the § 7 report:
@@ -381,6 +381,14 @@ env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [P
 ```
 
 Re-run the gate-3 command once. If threads remain and the external-round cap is below, `auto-recommended` logs `Triage again` and runs one more pass; at the cap it records `review-threads-open`. Under `ask`, present `Triage again` | `Stop here`, with `Triage again` recommended.
+
+Then read what the replies say, live: an author can edit a reply without a push, and neither approval nor resolution reads its content.
+
+```bash
+.agents/skills/github/scripts/check-review-replies [PR_NUMBER]
+```
+
+Exit `1` prints one line per failing rule. Rewrite each reply it counts as one of the three dispositions in [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow), answer every `suppressed-entry` in one PR comment whose first line is `Dispositions at [HEAD_SHA]` (`check-review-replies --help`), and run the command once more; a second exit `1` records `review-replies-unmet`. Exit `2` reached no verdict: report its first stderr line, and the gate is unmet.
 
 **Gate 4** — verify the recorded § 4 result, under the mode the resolution above printed.
 
