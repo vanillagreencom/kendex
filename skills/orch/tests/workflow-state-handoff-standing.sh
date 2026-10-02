@@ -102,6 +102,8 @@ assert_eq "rc=$([ "$DEAD_RC" -ne 0 ] && echo nonzero || echo 0) verdict=$(grep -
 # and the verdict line, MAIN and WT standing for the two state files.
 MAIN_CO="$TMP_ROOT/main" WT_CO="$TMP_ROOT/wt"
 git init -q "$MAIN_CO"
+git -C "$MAIN_CO" config gc.auto 0
+git -C "$MAIN_CO" config maintenance.auto false
 git -C "$MAIN_CO" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
 git -C "$MAIN_CO" worktree add -q -b wt "$WT_CO"
 MAIN_FILE="$MAIN_CO/tmp/workflow-state-KEN-9.json" WT_FILE="$WT_CO/tmp/workflow-state-KEN-9.json"
@@ -110,17 +112,23 @@ HELD='{"handoff":{"remaining":["x"]}}' SPENT='{"handoff":{"remaining":["x"],"res
 place() { # FILE CONTENT
   if [[ "$2" == - ]]; then rm -f -- "$1"; else printf '%s\n' "$2" > "$1"; fi
 }
-# The first line WS prints run from DIR with the two files placed.
+# The first line WS prints run from DIR with the two files placed, its stderr
+# in TWO_ERR.
+TWO_ERR="$TMP_ROOT/two.err"
 two_places() { # WS DIR MAIN WT ARGS...
   local ws="$1" dir="$2" out rc=0
   place "$MAIN_FILE" "$3"
   place "$WT_FILE" "$4"
   shift 4
-  out="$(cd "$dir" && env -u ORCH_STATE_DIR "$ws" "$@" 2>/dev/null)" || rc=$?
-  out="${out%%$'\n'*}"
-  out="${out//$MAIN_FILE/MAIN}"
-  printf 'rc=%s %s' "$rc" "${out//$WT_FILE/WT}"
+  out="$(cd "$dir" && env -u ORCH_STATE_DIR "$ws" "$@" 2>"$TWO_ERR")" || rc=$?
+  printf 'rc=%s %s' "$rc" "$(two_paths "${out%%$'\n'*}")"
 }
+two_paths() { # LINE — MAIN and WT for the two state files
+  local line="${1//$MAIN_FILE/MAIN}"
+  printf '%s' "${line//$WT_FILE/WT}"
+}
+# The first keyed line of the last run's stderr; jq's own words go unkeyed.
+two_err() { two_paths "$(sed -n '/^workflow-state: /{p;q;}' "$TWO_ERR")"; }
 while IFS='|' read -r dir main wt args want label; do
   args="${args//@WT/$WT_CO}"
   # shellcheck disable=SC2086 # the argv column is a word list
@@ -147,8 +155,18 @@ assert_eq "$(two_places "$WS" "$WT_CO" "$HELD" "$HELD" handoff-resume KEN-9; pri
 SPENT_ANSWER="$(cd "$WT_CO" && env -u ORCH_STATE_DIR "$WS" handoff-standing KEN-9 2>/dev/null)"
 assert_eq "${SPENT_ANSWER%%$'\n'*}" "$VERDICT=none file=$MAIN_FILE" \
   "after the stamp no place keeps a record standing"
-assert_eq "$(two_places "$WS" "$WT_CO" - "$SPENT" handoff-resume KEN-9)" "rc=1 " \
+assert_eq "$(two_places "$WS" "$WT_CO" - "$SPENT" handoff-resume KEN-9) err=$(two_err)" \
+  "rc=1  err=workflow-state: handoff-none issue=KEN-9" \
   "handoff-resume with none standing exits 1 and stamps nothing"
+# A place it cannot read: the record standing elsewhere is stamped, and the
+# failed place is named with exit 1. RESUME is the script under test.
+resume_unread() { # RESUME
+  printf '%s err=%s main=%s' "$(two_places "$1" "$WT_CO" "$HELD" "{" handoff-resume KEN-9)" "$(two_err)" \
+    "$(jq -r '.handoff.resumed_at | type' "$MAIN_FILE")"
+}
+assert_eq "$(resume_unread "$WS")" \
+  "rc=1 workflow-state: handoff-resumed file=MAIN err=workflow-state: handoff-unread state-file=WT main=number" \
+  "handoff-resume stamps the record that stands and names the place it could not read"
 
 # Controls. The worktree place dropped: a lane's record in its worktree's tmp
 # reads as none.
@@ -162,6 +180,13 @@ mutate_file "$STAMP_MUTANT" '( STATE_DIR="${file%/*}"; cmd_set_now' '( cmd_set_n
 two_places "$STAMP_MUTANT" "$WT_CO" "{}" "$HELD" handoff-resume KEN-9 >/dev/null
 assert_eq "$(jq -c '.handoff.resumed_at' "$WT_FILE")" "null" \
   "control: a stamp written under the rule's directory leaves the worktree record standing"
+
+# The resume's unreadable place passed over: it exits 0 with that place unread.
+UNREAD_MUTANT="$(mutant_scripts unread-mutant workflow-state)/workflow-state" || exit 1
+mutate_file "$UNREAD_MUTANT" $'stamped=1 ;;\n            unreadable) [[ -n "$unread" ]] || unread="$file" ;;' $'stamped=1 ;;\n            unreadable) : ;;'
+assert_eq "$(resume_unread "$UNREAD_MUTANT")" \
+  "rc=0 workflow-state: handoff-resumed file=MAIN err= main=number" \
+  "control: a resume passing over an unreadable place exits 0 and names none"
 
 # Every verdict the verb can publish, read out of its own call sites rather
 # than from a second list here, and each one spelled in the help its callers

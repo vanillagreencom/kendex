@@ -734,9 +734,10 @@ assert_eq "$(grep -c 're=' <<<"$(head -1 <<<"$out")")" "0" \
 # clone's state before the merged item's exited window closes its sandbox;
 # keep leaves them standing; absent never has one. HOSTED_RECORD=lane writes
 # the first record in the lane root's own tmp instead, the clone's state
-# carrying none, as a lane whose launch forbids writing the clone keeps it.
+# carrying none, as a lane whose launch forbids writing the clone keeps it;
+# HOSTED_RECORD=torn leaves a killed write there.
 hosted_runs() { # CASE LANES KEEP [ENV...]
-  local lanes="$2" keep="$3" n run harness_state args=()
+  local lanes="$2" keep="$3" n run harness_state record args=()
   new_case "$1"
   shift 3
   HOSTED_DISK="$STUB_DIR/remote"
@@ -748,10 +749,12 @@ hosted_runs() { # CASE LANES KEEP [ENV...]
       mkdir -p "$HOSTED_DISK/srv/lane/issue-$n"
       printf 'gitdir: /srv/clone/.git/worktrees/issue-%s\n' "$n" > "$HOSTED_DISK/srv/lane/issue-$n/.git"
     fi
-    if [[ "${HOSTED_RECORD:-clone}" == lane ]]; then
+    if [[ "${HOSTED_RECORD:-clone}" != clone ]]; then
       mkdir -p "$HOSTED_DISK/srv/lane/issue-$n/tmp"
       printf '{}\n' > "$HOSTED_DISK/srv/clone/tmp/workflow-state-issue-$n.json"
-      printf '{"handoff":{"written_at":"t"}}\n' > "$HOSTED_DISK/srv/lane/issue-$n/tmp/workflow-state-issue-$n.json"
+      record='{"handoff":{"written_at":"t"}}'
+      [[ "$HOSTED_RECORD" != torn ]] || record='{"handoff":'
+      printf '%s\n' "$record" > "$HOSTED_DISK/srv/lane/issue-$n/tmp/workflow-state-issue-$n.json"
     else
       printf '{"handoff":{"written_at":"t"}}\n' > "$HOSTED_DISK/srv/clone/tmp/workflow-state-issue-$n.json"
     fi
@@ -828,6 +831,9 @@ done
 HOSTED_RECORD=lane hosted_runs hosted_lane_record 2 keep
 assert_eq "$(hosted_facts 2)" "issue-2: handoff=1 notice=0 closed=0 refused=0 closes=0 none=0" \
   "a hosted lane's record in its root's own tmp, none in the clone, is reported" "$STUB_DIR/run1.err"
+HOSTED_RECORD=torn hosted_runs hosted_lane_torn 2 keep
+assert_eq "$(hosted_exit 1 'oversee-watch: handoff-read-failed item=issue-2 path=/srv/lane/issue-2/tmp/workflow-state-issue-2.json')" \
+  "rc=2 note=1" "a torn state file in a hosted lane root's tmp is reported by its path on the host" "$STUB_DIR/run1.err"
 LANE_READ_WATCH="$(mutant_scripts lane-read/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/lane-read/github"
 mutate_file "$LANE_READ_WATCH" '  hosted_state_fetch "$1" "$HOSTED_ROOT" tmp "$ITEM_WORKTREE/tmp"' '  :'

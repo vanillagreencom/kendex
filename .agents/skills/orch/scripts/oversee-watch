@@ -1041,7 +1041,7 @@ hosted_clone() { # ITEM STATE
 # to the common root) and in its root's own tmp, each fetched into a scratch
 # directory the same reader then reads; a file the host does not have leaves it
 # empty, as a missing local file does, and the clone's fetch fails first. The
-# clone is the one the last mail pass learned.
+# clone is the one the last mail pass learned; ITEM_HOSTED_STATE is its file.
 item_state_dir() { # ITEM
   local clone rc=0
   ITEM_STATE_DIR="$WORKFLOW_STATE_DIR"
@@ -1062,6 +1062,7 @@ item_state_dir() { # ITEM
     return 1
   fi
   hosted_state_fetch "$1" "$clone" "$STATE_DIR_SETTING" "$ITEM_STATE_DIR" || return 1
+  ITEM_HOSTED_STATE="$LANE_HOSTED_STATE_PATH"
   hosted_state_fetch "$1" "$HOSTED_ROOT" tmp "$ITEM_WORKTREE/tmp"
 }
 # One hosted state file, ROOT's STATE_DIR copy of ITEM's, fetched into DEST.
@@ -1451,7 +1452,7 @@ check_triage() {
 # pass that finds it, and the rows are committed once, after the lines are out.
 check_handoff() {
   [[ ${#ITEMS[@]} -gt 0 ]] || return 0
-  local item rec key prior errf="$WORK_DIR/handoff.err" state="${PW_SEEN[0]}"
+  local item rec key prior file errf="$WORK_DIR/handoff.err" state="${PW_SEEN[0]}"
   for item in "${ITEMS[@]}"; do
     grep -qxF -- "$item" <<<"$PASS_FAILED_ITEMS" && continue
     if ! item_state_dir "$item"; then
@@ -1472,7 +1473,13 @@ check_handoff() {
         continue ;;
       stands) ;;
       *)
-        lane_failure_set handoff-read-failed "$(cat "$errf")" "item=$item" "path=$ITEM_STATE_DIR"
+        # The file the verdict named, a hosted scratch copy as the host's file.
+        file="${LANE_HANDOFF_FILE:-$ITEM_STATE_DIR}"
+        [[ -z "$HOSTED_ROOT" ]] || case "$file" in
+          "$ITEM_WORKTREE"/*) file="$HOSTED_ROOT${file#"$ITEM_WORKTREE"}" ;;
+          *) file="$ITEM_HOSTED_STATE" ;;
+        esac
+        lane_failure_set handoff-read-failed "$(cat "$errf")" "item=$item" "path=$file"
         lane_failure_report "$item" "$state"
         state="$LANE_FAILURE_STATE"
         lane_row_commit "$state"
