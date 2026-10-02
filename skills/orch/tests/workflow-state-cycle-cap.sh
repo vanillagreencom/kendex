@@ -194,6 +194,42 @@ err="$(cd "$NO_SETTINGS" && REVIEW_MAX_CYCLES=2 "$WS" --state-dir "$sd" set KEN-
   && pass "REVIEW_MAX_CYCLES=2 allows two entries and refuses the third" \
   || fail "REVIEW_MAX_CYCLES=2 allows two entries and refuses the third" "rc=$rc err=$err"
 
+# --- the review walk per setting and tier history ------------------
+# review-pr § 4 reads `cap --issue` before Fix Delegation; dev-fix raises
+# `cycles` once the round lands; Bounded Re-Review reads the bare cap, where
+# `0` routes to § 5, and otherwise writes rereview_panel; § 4 then reads the
+# cap again. At 0 the first read is below and every read after the fix round
+# is at-cap, so there is exactly one fix round and no re-review. That § 5
+# route and the verification pass it skips are workflow sentences no script
+# holds; the script holds the reads either side of them and the refused write.
+# `small standard` is a small item relaunched at standard by ../workflows/small.md § Escape.
+# walk [SCRIPT] SETTING TIERS — each step's output, joined with |.
+walk() {
+  local bin="$WS" sdw issue=KEN-W err rc tier
+  [[ "$1" != /* ]] || { bin="$1"; shift; }
+  local setting="$1" tiers="$2"
+  sdw="$(mktemp -d "$TMP_ROOT/state-walk.XXXXXX")" || return 1
+  wsw() { (cd "$NO_SETTINGS" && REVIEW_MAX_CYCLES="$setting" "$bin" --state-dir "$sdw" "$@"); }
+  wsw init "$issue" --worktree "$REPO_ROOT" --branch ken-w >/dev/null
+  for tier in $tiers; do wsw set "$issue" tier "$tier"; done
+  printf '%s|' "$(wsw cap REVIEW_MAX_CYCLES --issue "$issue")"
+  wsw increment "$issue" cycles >/dev/null
+  printf '%s|%s|' "$(wsw cap REVIEW_MAX_CYCLES --issue "$issue")" "$(wsw cap REVIEW_MAX_CYCLES)"
+  err="$(wsw set "$issue" rereview_panel '{"agents": ["rev-a"], "reason": "test", "external": false}' 2>&1 >/dev/null)" && rc=0 || rc=$?
+  printf '%s rc=%s|%s' "$(sed -n '1s/^workflow-state: \([a-z-]*\).*/\1/p' <<<"$err")" "$rc" "$(wsw cap REVIEW_MAX_CYCLES --issue "$issue")"
+}
+# setting|tiers|first pass|after the fix round|bare cap|rereview_panel|next pass
+WALK_ROWS=(
+  "0|standard|below 0/0|at-cap 0/0|0|cycle-cap rc=1|at-cap 0/0"
+  "0|small standard|below 0/0|at-cap 0/0|0|cycle-cap rc=1|at-cap 0/0"
+  "0|small|below 0/0|at-cap 0/0|0|cycle-cap rc=1|at-cap 0/0"
+  "1|standard|below 0/1|below 0/1|1| rc=0|at-cap 1/1"
+)
+for row in "${WALK_ROWS[@]}"; do
+  IFS='|' read -r setting tiers want <<<"$row"
+  assert_eq "$(walk "$setting" "$tiers")" "$want" "REVIEW_MAX_CYCLES=$setting, tiers $tiers: one fix round, then the re-reviews the setting allows"
+done
+
 # --- planted controls: one per instrument, proving each can fail ----------
 echo
 echo "--- planted controls ---"
@@ -210,6 +246,25 @@ for control in "$OFF_WS|a guard comparing >" "$DEFAULT_WS|a table defaulting to 
   [[ "$got" != "$SECOND_ENTRY_WANT" && "$got" == "rc=0 count=1|rc=0 "* ]] \
     && pass "the boundary assertion flags ${control#*|} admitting a second re-entry" \
     || fail "the boundary assertion MISSED ${control#*|} admitting a second re-entry" "got=$got"
+done
+
+# The zero cap's two directions, each in a copy of the script: the exception
+# gone, so the first pass at 0 is at-cap and no fix round runs, and the
+# exception blind to the fix-round tally, so a second fix round is admitted.
+# Either turns the standard row at 0 red.
+ZERO_WANT="${WALK_ROWS[0]#*|*|}"
+NOZERO_WS="$(mutant_scripts no-zero workflow-state)/workflow-state" || exit 1
+mutate_file "$NOZERO_WS" '&& (( limit == 0 )); then' '&& (( limit == -1 )); then'
+BLIND_WS="$(mutant_scripts zero-blind workflow-state)/workflow-state" || exit 1
+mutate_file "$BLIND_WS" "fixes=\$(jq -r '(.cycles // 0) | tostring'" "fixes=\$(jq -r '0 | tostring'"
+for control in \
+  "$NOZERO_WS|a zero cap that runs no fix round|at-cap 0/0|at-cap 0/0|0|cycle-cap rc=1|at-cap 0/0" \
+  "$BLIND_WS|a zero cap that admits a second fix round|below 0/0|below 0/0|0|cycle-cap rc=1|below 0/0"; do
+  IFS='|' read -r bin label mutant <<<"$control"
+  got="$(walk "$bin" 0 standard)"
+  [[ "$got" != "$ZERO_WANT" && "$got" == "$mutant" ]] \
+    && pass "the walk at 0 flags $label" \
+    || fail "the walk at 0 MISSED $label" "got=$got"
 done
 
 # § 7 changed to the shared key: the assertion must catch the counter

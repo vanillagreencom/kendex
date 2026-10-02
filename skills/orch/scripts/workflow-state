@@ -748,11 +748,14 @@ cap_limit() {
 #   cap SETTING --count N       -> "<below|at-cap> <N>/<cap>"
 #
 # `at-cap` is count >= cap: the count is entries already taken, so a count
-# equal to the cap has spent the whole budget.
+# equal to the cap has spent the whole budget. The one exception is
+# REVIEW_MAX_CYCLES=0 read with --issue: that cap allows no re-review but
+# still one blockers-only fix round (review-pr § 4 At The Cap), so it reads
+# below while the fix-round tally `cycles` and the re-review count are both 0.
 cmd_cap() {
     local setting="${1:-}"
     shift || true
-    local issue_id="" count="" have_count=0
+    local issue_id="" count="" have_count=0 fixes=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -783,10 +786,13 @@ cmd_cap() {
         state_file=$(get_state_file "$issue_id")
         ensure_state_exists "$state_file"
         count=$(jq -r "(.${field} // 0) | tostring" "$state_file") || return 1
+        if [[ "$setting" == REVIEW_MAX_CYCLES ]] && (( limit == 0 )); then
+            fixes=$(jq -r '(.cycles // 0) | tostring' "$state_file") || return 1
+        fi
     fi
     [[ "$count" =~ ^[0-9]+$ ]] || { state_message invalid-count "$@" >&2; return 2; }
 
-    if (( count >= limit )); then
+    if (( count >= limit )) && [[ "$fixes" != 0 || "$count" != 0 ]]; then
         printf 'at-cap %s/%s\n' "$count" "$limit"
     else
         printf 'below %s/%s\n' "$count" "$limit"
@@ -1479,7 +1485,10 @@ Commands:
                                 With --issue: read the state field the setting
                                 is measured against; with --count: use <n>.
                                 Either prints "<below|at-cap> <count>/<cap>",
-                                at-cap being count >= cap. Settings:
+                                at-cap being count >= cap, except that
+                                REVIEW_MAX_CYCLES=0 with --issue reads below
+                                until its one fix round raises cycles.
+                                Settings:
 EOF
     cap_table | awk -F'\t' \
         '{ printf "%34s%s (%s, %s%s)\n", "", $1, ($2 == "" ? "--count only" : $2), $3, ($4 == "" ? "" : ", tier small " $4) }'
