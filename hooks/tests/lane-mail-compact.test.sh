@@ -91,7 +91,7 @@ compact auto
 assert_eq "$(quiet) flag=$(flag)" "RC=0 stdout= stderr=- flag=s1 auto" \
   "the lead's automatic compaction is flagged, silently"
 turn_end
-printf -v HANDOFF_SET '%q set %q handoff' "$LANE/.agents/skills/orch/scripts/workflow-state" KEN-301
+printf -v HANDOFF_SET '%q --state-dir %q set %q handoff' "$LANE/.agents/skills/orch/scripts/workflow-state" "$LANE/tmp" KEN-301
 assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision) set=$(stdout_field .reason | grep -cF -- "$HANDOFF_SET")" \
   "RC=0 first=lane-mail-check: compacted=auto decision=block set=1" \
   "the lead's next turn end is held with the documented block answer, naming the command that writes the record"

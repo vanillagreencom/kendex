@@ -252,6 +252,18 @@ state_message() {
       printf 'workflow-state: archive-value option=%s\n' "--archive"
       printf '%s\n' "Error: --archive requires a path argument"
       ;;
+    handoff-arguments)
+      printf 'workflow-state: handoff-arguments args=%s\n' "$*"
+      printf '%s\n' "Error: the handoff verbs take <issue_id> [--worktree <root>]"
+      ;;
+    handoff-unread)
+      printf 'workflow-state: handoff-unread state-file=%s\n' "$unread"
+      printf '%s\n' "Error: the handoff record of $1 could not be read in $unread; nothing there was stamped"
+      ;;
+    handoff-none)
+      printf 'workflow-state: handoff-none issue=%s\n' "$1"
+      printf '%s\n' "Error: no handoff record of $1 stands, so none was stamped"
+      ;;
     exists-issue)
       printf 'workflow-state: exists-issue command=%s\n' "exists"
       printf '%s\n' "Error: exists requires an issue_id"
@@ -991,39 +1003,104 @@ cmd_exists() {
 # before the verb ran" with the same 2, and send an operator to the item's
 # state file over a fault in `.env.local`. Only a run that reached the verb
 # writes a verdict line, so the word carries what no status can:
-#   workflow-state: handoff-standing=stands      the record follows, one JSON line
-#   workflow-state: handoff-standing=none        a state file that is not there included
-#   workflow-state: handoff-standing=unreadable  jq's own words are on stderr
-# A caller reads that word and nothing else. Any non-zero status, and any first
-# line that is not one of the three, is a run that never reached this verb — an
-# install older than it answers 1 from the dispatcher's unknown-command arm —
-# and is never read as "none stands", which would tell a lane that has already
-# written its record to write it again at every turn end, with no way out.
-handoff_verdict() { # WORD — the verdict line, the one place its text lives
-    printf 'workflow-state: handoff-standing=%s\n' "$1"
+#   workflow-state: handoff-standing=stands file=F      the record follows, one JSON line
+#   workflow-state: handoff-standing=none file=F        a state file that is not there included
+#   workflow-state: handoff-standing=unreadable file=F  jq's own words are on stderr
+# F is the state file the answer came from, the one help states per verdict.
+# A caller reads that word and that file and nothing else. Any non-zero
+# status, and any first line that is not one of the three, is a run that never
+# reached this verb — an install older than it answers 1 from the dispatcher's
+# unknown-command arm — and is never read as "none stands", which would tell a
+# lane that has already written its record to write it again at every turn
+# end, with no way out.
+handoff_verdict() { # WORD FILE — the verdict line, the one place its text lives
+    printf 'workflow-state: handoff-standing=%s file=%s\n' "$1" "$2"
+}
+
+# The places an item's handoff record is read, as HANDOFF_FILES: the state
+# file the State directory rule resolves, then the item's file in <root>/tmp,
+# where root is --worktree or, with neither it nor --state-dir named, the
+# linked worktree the caller runs in. A lane whose launch forbids writing the
+# main checkout passes `--state-dir <worktree>/tmp` to every orch command, so
+# its record stands there and never in the rule's directory. Returns 1 where
+# the caller's checkout cannot be resolved; exits 2 on arguments it does not
+# take.
+handoff_places() { # ISSUE_ID [--worktree ROOT]
+    local root="" common worktree_file
+    HANDOFF_FILES=("$(get_state_file "$1")")
+    if [[ $# -eq 3 && "$2" == --worktree && -n "$3" ]]; then
+        root="$3"
+    elif [[ $# -ne 1 ]]; then
+        state_message handoff-arguments "$@" >&2
+        exit 2
+    elif [[ -z "$STATE_DIR_FLAG" ]]; then
+        common=$(project_root) || return 1
+        [[ "$common" == "$PROJECT_ROOT" ]] || root="$PROJECT_ROOT"
+    fi
+    [[ -n "$root" ]] || return 0
+    worktree_file="$root/tmp/${STATE_PREFIX}-$1.json"
+    [[ "$worktree_file" == "${HANDOFF_FILES[0]}" ]] || HANDOFF_FILES+=("$worktree_file")
+}
+
+# One place's answer, as HANDOFF_WORD (stands, none or unreadable) and, under
+# stands, HANDOFF_RECORD.
+handoff_read() { # FILE
+    HANDOFF_RECORD=""
+    HANDOFF_WORD=none
+    [[ -f "$1" ]] || return 0
+    if ! HANDOFF_RECORD=$(jq -r '.handoff | select(type == "object" and .resumed_at == null) | tojson' "$1"); then
+        HANDOFF_WORD=unreadable
+        return 0
+    fi
+    [[ -z "$HANDOFF_RECORD" ]] || HANDOFF_WORD=stands
 }
 
 cmd_handoff_standing() {
-    local issue_id="$1" state_file record
+    local file unread="" home=""
+    if ! handoff_places "$@"; then
+        handoff_verdict unreadable "${HANDOFF_FILES[0]}"
+        return 0
+    fi
+    for file in "${HANDOFF_FILES[@]}"; do
+        handoff_read "$file"
+        case "$HANDOFF_WORD" in
+            stands)
+                handoff_verdict stands "$file"
+                printf '%s\n' "$HANDOFF_RECORD"
+                return 0 ;;
+            unreadable) [[ -n "$unread" ]] || unread="$file" ;;
+            none) [[ -n "$home" || ! -f "$file" ]] || home="$file" ;;
+        esac
+    done
+    if [[ -n "$unread" ]]; then
+        handoff_verdict unreadable "$unread"
+    else
+        handoff_verdict none "${home:-${HANDOFF_FILES[0]}}"
+    fi
+}
 
-    if ! state_file=$(get_state_file "$issue_id"); then
-        handoff_verdict unreadable
-        return 0
+# The relaunched lane's stamp, `.handoff.resumed_at`, written in every place
+# handoff-standing reads where a record stands, so no place it reads keeps a
+# spent record standing. Prints one line per stamped file; exits 1 where a
+# place could not be read or none stood.
+cmd_handoff_resume() {
+    local issue_id="$1" file stamped="" unread=""
+    handoff_places "$@" || { unread="${HANDOFF_FILES[0]}"; state_message handoff-unread "$@" >&2; return 1; }
+    for file in "${HANDOFF_FILES[@]}"; do
+        handoff_read "$file"
+        case "$HANDOFF_WORD" in
+            stands)
+                ( STATE_DIR="${file%/*}"; cmd_set_now "$issue_id" handoff.resumed_at ) || return 1
+                printf 'workflow-state: handoff-resumed file=%s\n' "$file"
+                stamped=1 ;;
+            unreadable) [[ -n "$unread" ]] || unread="$file" ;;
+        esac
+    done
+    if [[ -n "$unread" ]]; then
+        state_message handoff-unread "$@" >&2
+        return 1
     fi
-    if [[ ! -f "$state_file" ]]; then
-        handoff_verdict none
-        return 0
-    fi
-    if ! record=$(jq -r '.handoff | select(type == "object" and .resumed_at == null) | tojson' "$state_file"); then
-        handoff_verdict unreadable
-        return 0
-    fi
-    if [[ -z "$record" ]]; then
-        handoff_verdict none
-        return 0
-    fi
-    handoff_verdict stands
-    printf '%s\n' "$record"
+    [[ -n "$stamped" ]] || { state_message handoff-none "$@" >&2; return 1; }
 }
 
 # The main checkout every worktree of this repository shares, or the project
@@ -1517,15 +1594,21 @@ EOF
                                 writes nothing
   path <issue_id>               Print state file path
   exists [--json] <issue_id>    Exit 0 if exists, 1 if not; --json prints status and exits 0
-  handoff-standing <issue_id>   Print one verdict line and exit 0:
-                                  workflow-state: handoff-standing=stands
-                                    a .handoff no relaunch has resumed; the
+  handoff-standing <issue_id> [--worktree <root>]
+                                Print one verdict line and exit 0, reading the
+                                item's handoff record in each place Handoff
+                                record below names:
+                                  workflow-state: handoff-standing=stands file=F
+                                    a .handoff no relaunch has resumed stands
+                                    in F, the first place holding one; the
                                     record follows on the next line
-                                  workflow-state: handoff-standing=none
-                                    none stands, a state file that is not
-                                    there included
-                                  workflow-state: handoff-standing=unreadable
-                                    the state could not be read; the reader's
+                                  workflow-state: handoff-standing=none file=F
+                                    none stands; F is the first place holding
+                                    the item's state file, or the rule's file
+                                    where no place holds one
+                                  workflow-state: handoff-standing=unreadable file=F
+                                    none stands and F, the first place that
+                                    failed, could not be read; the reader's
                                     own words are on stderr
                                 The word is the answer and the status is not.
                                 A non-zero status, or a first line that is none
@@ -1534,6 +1617,12 @@ EOF
                                 unknown command, and a settings file bash 3.2
                                 cannot parse kills the script before dispatch —
                                 and is never read as "no record stands"
+  handoff-resume <issue_id> [--worktree <root>]
+                                Stamp .handoff.resumed_at on the record in
+                                every place it stands, printing
+                                `workflow-state: handoff-resumed file=F` per
+                                file; exits 1 where none stands or a place
+                                could not be read
   remove <issue_id> [--archive PATH]...
                                 The item's close-out: delete every entry of the
                                 state directory whose name carries the key as a
@@ -1634,6 +1723,11 @@ and so the rule any caller naming no --state-dir reads; first match wins:
   3. tmp
   A relative path joins the main checkout, or the working directory outside
   Git; an absolute path stays unchanged.
+
+Handoff record: handoff-standing and handoff-resume read the item's file in
+the State directory above, then in <root>/tmp, where root is --worktree or,
+with neither it nor --state-dir named, the linked worktree the caller runs in:
+a lane whose launch forbids writing the main checkout keeps its state there.
 
 Dependencies:
   jq               JSON processing
@@ -1782,6 +1876,7 @@ case "$1" in
     path)      shift; cmd_path "$@" ;;
     exists)    shift; cmd_exists "$@" ;;
     handoff-standing) shift; cmd_handoff_standing "$@" ;;
+    handoff-resume) shift; cmd_handoff_resume "$@" ;;
     fleet-log) shift; cmd_fleet_log "$@" ;;
     progress-report-path) shift; cmd_progress_report_path "$@" ;;
     prune)     shift; cmd_prune "$@" ;;

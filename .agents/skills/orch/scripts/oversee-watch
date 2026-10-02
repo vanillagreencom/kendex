@@ -1034,28 +1034,42 @@ hosted_clone() { # ITEM STATE
   esac
 }
 
-# The directory an item's workflow state is read from, as ITEM_STATE_DIR. A
-# hosted lane's state is in its clone (workflow-state joins a relative state
-# directory to the common root), fetched into a scratch directory the same
-# reader then reads; a file the host does not have leaves it empty, as a
-# missing local file does. The clone is the one the last mail pass learned.
+# The directory an item's workflow state is read from, as ITEM_STATE_DIR, and
+# the lane root `handoff-standing --worktree` reads beside it, as ITEM_WORKTREE,
+# empty where none is known. A local lane's root is its --root entry. A hosted
+# lane's state is in its clone (workflow-state joins a relative state directory
+# to the common root) and in its root's own tmp, each fetched into a scratch
+# directory the same reader then reads; a file the host does not have leaves it
+# empty, as a missing local file does, and the clone's fetch fails first. The
+# clone is the one the last mail pass learned.
 item_state_dir() { # ITEM
   local clone rc=0
   ITEM_STATE_DIR="$WORKFLOW_STATE_DIR"
   hosted_root "$1"
-  [[ -n "$HOSTED_ROOT" ]] || return 0
+  if [[ -z "$HOSTED_ROOT" ]]; then
+    local_root "$1"
+    ITEM_WORKTREE="$LOCAL_ROOT"
+    return 0
+  fi
   if ! clone="$(lane_row_get clone-root "$MAIL_SEEN" "$1")" || [[ -z "$clone" ]]; then
     lane_failure_set handoff-read-failed "" "item=$1" "clone=unknown"
     return 1
   fi
-  lane_hosted_state_path "$clone" "$STATE_DIR_SETTING" "$1"
   ITEM_STATE_DIR="$WORK_DIR/hosted-state/$1"
-  if ! mkdir -p -- "$ITEM_STATE_DIR"; then
-    lane_failure_set handoff-read-failed "" "item=$1" "path=$ITEM_STATE_DIR"
+  ITEM_WORKTREE="$ITEM_STATE_DIR/lane"
+  if ! mkdir -p -- "$ITEM_WORKTREE/tmp"; then
+    lane_failure_set handoff-read-failed "" "item=$1" "path=$ITEM_WORKTREE/tmp"
     return 1
   fi
+  hosted_state_fetch "$1" "$clone" "$STATE_DIR_SETTING" "$ITEM_STATE_DIR" || return 1
+  hosted_state_fetch "$1" "$HOSTED_ROOT" tmp "$ITEM_WORKTREE/tmp"
+}
+# One hosted state file, ROOT's STATE_DIR copy of ITEM's, fetched into DEST.
+hosted_state_fetch() { # ITEM ROOT STATE_DIR DEST
+  local rc=0
+  lane_hosted_state_path "$2" "$3" "$1"
   lane_host_fetch "$SCRIPT_DIR/lane-host" "$1" "$LANE_HOSTED_STATE_PATH" \
-    "$ITEM_STATE_DIR/workflow-state-$1.json" "$WORK_DIR/host.err" || rc=$?
+    "$4/workflow-state-$1.json" "$WORK_DIR/host.err" || rc=$?
   [[ "$rc" -ne 4 ]] || { lane_failure_set lane-host-busy "" "item=$1"; return 1; }
   if [[ "$rc" -gt 1 ]]; then
     lane_failure_set handoff-read-failed "$(cat "$WORK_DIR/host.err")" "item=$1" "path=${LANE_HOSTED_STATE_PATH%/*}"
@@ -1425,8 +1439,9 @@ check_triage() {
 # A lane told to hand off records `.handoff` in its item's state and exits.
 # The record is the carrier, read from workflow state and never a pane, so the
 # check runs on every surface. Whether one stands is `workflow-state
-# handoff-standing`'s answer, the same one the lane's own turn-end hook asks,
-# so the watch cannot report a lane as handed off that the hook still holds.
+# handoff-standing`'s answer, read in the places it names, the lane's root
+# passed as the worktree as the lane's own turn-end hook passes it, so the
+# watch cannot report a lane as handed off that the hook still holds.
 # It is reported once per record: the row keyed by the record's checksum is
 # what stops a re-run between the event and the
 # relaunch from reporting it again, and a record the relaunched lane stamped
@@ -1448,7 +1463,8 @@ check_handoff() {
     # lib/lane-state.sh reads the verdict. A state this pass could not read,
     # an install without the verb included, is reported rather than passed
     # off as "no handoff".
-    lane_handoff_standing . "$errf" "$WORKFLOW_STATE" --state-dir "$ITEM_STATE_DIR" handoff-standing "$item"
+    lane_handoff_standing . "$errf" "$WORKFLOW_STATE" --state-dir "$ITEM_STATE_DIR" handoff-standing "$item" \
+      ${ITEM_WORKTREE:+--worktree "$ITEM_WORKTREE"}
     case "$LANE_HANDOFF_STATE" in
       none)
         state="$(lane_row_clear handoff "$state" "$item")"

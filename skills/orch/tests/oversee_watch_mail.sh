@@ -732,7 +732,9 @@ assert_eq "$(grep -c 're=' <<<"$(head -1 <<<"$out")")" "0" \
 # clone's state. KEEP gone removes the worktrees after the first run, lands a
 # closing notice in each clone's mailbox and a new handoff record in each
 # clone's state before the merged item's exited window closes its sandbox;
-# keep leaves them standing; absent never has one.
+# keep leaves them standing; absent never has one. HOSTED_RECORD=lane writes
+# the first record in the lane root's own tmp instead, the clone's state
+# carrying none, as a lane whose launch forbids writing the clone keeps it.
 hosted_runs() { # CASE LANES KEEP [ENV...]
   local lanes="$2" keep="$3" n run harness_state args=()
   new_case "$1"
@@ -746,7 +748,13 @@ hosted_runs() { # CASE LANES KEEP [ENV...]
       mkdir -p "$HOSTED_DISK/srv/lane/issue-$n"
       printf 'gitdir: /srv/clone/.git/worktrees/issue-%s\n' "$n" > "$HOSTED_DISK/srv/lane/issue-$n/.git"
     fi
-    printf '{"handoff":{"written_at":"t"}}\n' > "$HOSTED_DISK/srv/clone/tmp/workflow-state-issue-$n.json"
+    if [[ "${HOSTED_RECORD:-clone}" == lane ]]; then
+      mkdir -p "$HOSTED_DISK/srv/lane/issue-$n/tmp"
+      printf '{}\n' > "$HOSTED_DISK/srv/clone/tmp/workflow-state-issue-$n.json"
+      printf '{"handoff":{"written_at":"t"}}\n' > "$HOSTED_DISK/srv/lane/issue-$n/tmp/workflow-state-issue-$n.json"
+    else
+      printf '{"handoff":{"written_at":"t"}}\n' > "$HOSTED_DISK/srv/clone/tmp/workflow-state-issue-$n.json"
+    fi
     printf 'bash\n' > "$STUB_DIR/cmd-gh-$n.txt"
     args+=(--item "issue-$n" --hosted "issue-$n=/srv/lane/issue-$n" "gh-$n")
   done
@@ -816,6 +824,16 @@ for row in \
   assert_eq "$(hosted_facts "$lanes")" "$expect" "$label" "$STUB_DIR/run${run:-2}.err"
   [[ -z "$exit" ]] || assert_eq "$(hosted_exit "$run" "$needle" "$event")" "$exit" "$label: exit status and keyed line" "$STUB_DIR/run$run.err"
 done
+
+HOSTED_RECORD=lane hosted_runs hosted_lane_record 2 keep
+assert_eq "$(hosted_facts 2)" "issue-2: handoff=1 notice=0 closed=0 refused=0 closes=0 none=0" \
+  "a hosted lane's record in its root's own tmp, none in the clone, is reported" "$STUB_DIR/run1.err"
+LANE_READ_WATCH="$(mutant_scripts lane-read/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/lane-read/github"
+mutate_file "$LANE_READ_WATCH" '  hosted_state_fetch "$1" "$HOSTED_ROOT" tmp "$ITEM_WORKTREE/tmp"' '  :'
+WATCH_BIN="$LANE_READ_WATCH" HOSTED_RECORD=lane hosted_runs hosted_lane_record_control 2 keep
+assert_eq "$(hosted_facts 2)" "issue-2: handoff=0 notice=0 closed=0 refused=0 closes=0 none=0" \
+  "control: a watch that reads the clone alone misses a record in the lane root's tmp" "$STUB_DIR/run1.err"
 
 # --- the mail pass on its own cadence --------------------------------------
 # A lane-mail that logs each verb it is run with, stamped with the pr-watch

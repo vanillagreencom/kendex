@@ -604,7 +604,7 @@ fi
 file="$state_dir/workflow-state-$id.json"
 case "$cmd" in
   exists) [[ -f "$file" ]] ;;
-  handoff-standing) exec "$REAL_WORKFLOW_STATE" --state-dir "${state_dir:-tmp}" handoff-standing "$id" ;;
+  handoff-standing) shift; exec "$REAL_WORKFLOW_STATE" --state-dir "${state_dir:-tmp}" handoff-standing "$@" ;;
   get)
     [[ -f "$file" ]] || { echo "Error: State file not found: $file" >&2; exit 1; }
     jq -r "${expr:-.}" "$file" ;;

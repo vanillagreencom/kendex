@@ -325,7 +325,7 @@ expect 0 "$GAP" "a lane under the context mark ends its turn"
 write_transcript "$TRANSCRIPT" 500000
 stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: context=500000" "a lane at the context mark is refused with the figure it reached"
-assert_eq "$(grep -cF -- "workflow-state set KEN-50 handoff " "$ERR_FILE")" "1" \
+assert_eq "$(grep -cF -- " set KEN-50 handoff " "$ERR_FILE")" "1" \
   "the refusal names the one command that writes the record"
 assert_eq "$(template_fields)" "$HANDOFF_FIELDS" \
   "the record template it names carries every field a relaunch reads"
@@ -348,23 +348,30 @@ expect 2 "lane-mail-check: context=500000" \
 
 # A lane in a worktree whose orch commands all pass `--state-dir <worktree>/tmp`,
 # as a launch forbidding writes to the main checkout makes it, past the context
-# mark with no record yet. Its record goes to that tmp, while workflow-state's
-# own rule resolves the main clone's. HOOK, where named, is the copy it runs.
+# mark with no record yet. The hook runs from the main clone, as a hosted Pi
+# lane's does, so only the root its launch marker binds names the worktree.
+# HOOK, where named, is the copy it runs.
 worktree_handoff_lane() { # NAME ITEM [HOOK]
   new_worktree_lane "$1" "$(printf '%s' "$2" | tr 'A-Z' 'a-z')"
   [ -z "${3:-}" ] || install_hook "$3" "$LANE/.claude/hooks/lane-mail-check.sh"
   mkdir -p "$LANE/tmp/lane-mail/$2"
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" --state-dir "$LANE/tmp" init "$2" >/dev/null)
   REPORT_ITEM="$2"
+  CALL_DIR="$MAIN"
   write_transcript "$TRANSCRIPT" 500000
+}
+worktree_set_named() { # ITEM — the set line naming the worktree tmp, and any init line
+  printf 'set=%s init=%s' "$(grep -cF -- " --state-dir $LANE/tmp set $1 handoff " "$ERR_FILE")" \
+    "$(grep -cF -- " init $1" "$ERR_FILE")"
 }
 
 worktree_handoff_lane handoff_worktree_state KEN-441
-stop_at "$TRANSCRIPT" false
-expect 2 "lane-mail-check: context=500000" \
-  "a worktree lane with its record in neither its worktree nor the main clone is refused at the mark"
+stop_at "$TRANSCRIPT" false LANE_MAIL_ITEM=KEN-441
+assert_eq "RC=$RC first=$(first_line) $(worktree_set_named KEN-441)" \
+  "RC=2 first=lane-mail-check: context=500000 set=1 init=0" \
+  "a worktree lane with its record in neither place is refused, told to write it in its worktree's tmp with no init"
 record_handoff KEN-441 "" "$LANE/tmp"
-stop_at "$TRANSCRIPT" false
+stop_at "$TRANSCRIPT" false LANE_MAIL_ITEM=KEN-441
 assert_eq "RC=$RC first=$(first_line) main=$([ -e "$MAIN/tmp/workflow-state-KEN-441.json" ] && echo record || echo none)" \
   "RC=0 first=- main=none" \
   "a handoff record in the worktree's tmp, with none in the main clone, ends the turn past the mark"
@@ -372,10 +379,11 @@ assert_eq "RC=$RC first=$(first_line) main=$([ -e "$MAIN/tmp/workflow-state-KEN-
 # read as the none the main clone answers.
 worktree_handoff_lane handoff_worktree_unreadable KEN-443
 printf '{"handoff":' > "$LANE/tmp/workflow-state-KEN-443.json"
-stop_at "$TRANSCRIPT" false
+stop_at "$TRANSCRIPT" false LANE_MAIL_ITEM=KEN-443
 assert_eq "RC=$RC first=$(first_line)" \
   "RC=0 first=lane-mail-check: handoff-unreadable=$LANE/tmp/workflow-state-KEN-443.json" \
   "a worktree state file the verb could not read is reported under its own key, naming that file"
+CALL_DIR=""
 
 # The figure is the LAST usage line, so a compaction that reset the window
 # reads as the reset it is, and the window the tail read opens on can end
@@ -471,7 +479,7 @@ expect 2 "lane-mail-check: context=500000" "the package default keeps the indepe
 # in a shape no comparison can take reaches the hook and is named here.
 for VALUE in 050 101 0; do
   stop_at "$TRANSCRIPT" false "ORCH_HANDOFF_CONTEXT_PCT=$VALUE"
-  assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- "workflow-state set KEN-51 handoff " "$ERR_FILE")" \
+  assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- " set KEN-51 handoff " "$ERR_FILE")" \
     "RC=2 first=lane-mail-check: setting-range=ORCH_HANDOFF_CONTEXT_PCT=$VALUE named=1" \
     "a context mark of $VALUE, outside whole percents 1 to 100, names the value, and the record clears it"
 done
@@ -486,7 +494,7 @@ new_handoff_lane handoff_no_transcript KEN-53
 stop
 expect 0 "$GAP" "a payload naming no transcript leaves the context unread and passes"
 stop_at "$TMP_ROOT/absent.jsonl" false
-assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- "workflow-state set KEN-53 handoff " "$ERR_FILE")" \
+assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- " set KEN-53 handoff " "$ERR_FILE")" \
   "RC=2 first=lane-mail-check: transcript=unreadable named=1" \
   "a transcript the payload names and nothing can read is refused, with the record that clears it"
 
@@ -535,7 +543,7 @@ printf '#!/bin/sh\nprintf "orch-env: broken\\n" >&2\nexit 1\n' \
 chmod +x "$LANE/.claude/skills/orch/scripts/orch-env"
 write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false
-assert_eq "RC=$RC first=$(first_line) cause=$(grep -cx 'orch-env: broken' "$ERR_FILE") named=$(grep -cF -- "workflow-state set KEN-85 handoff " "$ERR_FILE")" \
+assert_eq "RC=$RC first=$(first_line) cause=$(grep -cx 'orch-env: broken' "$ERR_FILE") named=$(grep -cF -- " set KEN-85 handoff " "$ERR_FILE")" \
   "RC=2 first=lane-mail-check: setting=ORCH_HANDOFF_CONTEXT_PCT cause=1 named=1" \
   "a mark whose setting could not be read is refused with the reader's words and the record that clears it"
 
@@ -638,7 +646,7 @@ expect 0 - "a lane on an account with room ends its turn"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(account_env .nclaude)
 expect 2 "lane-mail-check: headroom=3" "a lane at its account's handoff mark is refused with the headroom left"
-assert_eq "$(grep -cF -- "workflow-state set KEN-54 handoff " "$ERR_FILE")" "1" \
+assert_eq "$(grep -cF -- " set KEN-54 handoff " "$ERR_FILE")" "1" \
   "the account refusal carries the same instruction as the context refusal"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(account_env .nclaude) ORCH_HANDOFF_HEADROOM_PCT=1
@@ -784,7 +792,7 @@ new_handoff_lane handoff_setting_range KEN-70
 write_transcript "$TRANSCRIPT" 1000
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(account_env .claude) ORCH_HANDOFF_HEADROOM_PCT=101
-assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- "workflow-state set KEN-70 handoff " "$ERR_FILE")" \
+assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- " set KEN-70 handoff " "$ERR_FILE")" \
   "RC=2 first=lane-mail-check: setting-range=ORCH_HANDOFF_HEADROOM_PCT=101 named=1" \
   "a headroom setting out of range names the setting and its value, never the account"
 
@@ -863,7 +871,7 @@ new_handoff_lane handoff_script KEN-67
 plant_install lanes
 write_transcript "$TRANSCRIPT" 1000
 stop_at "$TRANSCRIPT" false
-assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- "workflow-state set KEN-67 handoff " "$ERR_FILE")" \
+assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- " set KEN-67 handoff " "$ERR_FILE")" \
   "RC=2 first=lane-mail-check: script=$LANE/.claude/skills/orch/scripts/lanes named=1" \
   "a script the marks need and the install has not got is refused, with the record that clears it"
 
@@ -1005,12 +1013,12 @@ mkdir -p "$LANE/tmp/lane-mail/KEN-66"
 write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: context=600000" "a lane with no state file is refused at the mark"
-INIT_CMD="$(grep -F -- "workflow-state init KEN-66" "$ERR_FILE")"
+INIT_CMD="$(grep -F -- " init KEN-66" "$ERR_FILE")"
 assert_eq "$([ -n "$INIT_CMD" ] && echo named || echo absent)" "named" \
   "the refusal names the init that set needs"
 (cd "$LANE" && eval "$INIT_CMD" > /dev/null)
 stop_at "$TRANSCRIPT" false
-assert_eq "RC=$RC first=$(first_line) init=$(grep -cF -- "workflow-state init KEN-66" "$ERR_FILE")" \
+assert_eq "RC=$RC first=$(first_line) init=$(grep -cF -- " init KEN-66" "$ERR_FILE")" \
   "RC=2 first=lane-mail-check: context=600000 init=0" \
   "the init it named makes the state, and the next refusal drops that line"
 record_handoff KEN-66
@@ -1027,7 +1035,7 @@ git -C "$LANE" checkout -q --detach
 write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false LANE_MAIL_ITEM=KEN-82
 expect 2 "lane-mail-check: context=600000" "a detached lane the brief named is refused at the mark"
-INIT_CMD="$(grep -F -- "workflow-state init KEN-82" "$ERR_FILE")"
+INIT_CMD="$(grep -F -- " init KEN-82" "$ERR_FILE")"
 assert_eq "$([ -n "$INIT_CMD" ] && echo named || echo absent) branch=$(grep -cF -- '--branch' "$ERR_FILE")" \
   "named branch=0" "the refusal names an init with no branch where HEAD names none"
 (cd "$LANE" && eval "$INIT_CMD" > /dev/null)
@@ -1429,7 +1437,7 @@ overseer_transcript
 # The two commands an overseer's refusal names, counted in the stderr it wrote:
 # the succession is handed the reading this turn end took, as the judge was.
 overseer_route() { grep -cF -- "/oversee-succeed --context $OVERSEER_CONTEXT -- [THE PERMISSION" "$ERR_FILE"; }
-overseer_record_named() { grep -cF -- "workflow-state set oversee handoff " "$ERR_FILE"; }
+overseer_record_named() { grep -cF -- " set oversee handoff " "$ERR_FILE"; }
 
 new_overseer overseer_context
 judge_says "$BELOW_MARK_LINE"
@@ -3415,14 +3423,21 @@ run_payload "$(jq -nc --arg p "$PI_TURN" '{session_id:"s1",stop_hook_active:fals
   "PI_CODING_AGENT_DIR=$PI_POOL"
 assert_eq "rows=$(pi_rows)" "rows=-" "control: without the moved root a pool account's Pi install writes no row"
 
-# The worktree read pointed back at workflow-state's own rule: a lane whose
-# record stands in its worktree's tmp is refused at every turn end.
-mutant no-worktree-read -e 's@^  HANDOFF_DIR="\$ROOT/tmp"$@  HANDOFF_DIR=""@'
+# The read naming no worktree: a lane whose record stands in its worktree's tmp
+# is refused at every turn end.
+mutant no-worktree-read -e 's@^  \[ "\$ROLE" = overseer \] || \[ "\$LAUNCHED" != yes \] || set -- --worktree "\$ROOT"$@  :@'
 worktree_handoff_lane control_worktree_state KEN-442 "$MUTANT_PATH"
 record_handoff KEN-442 "" "$LANE/tmp"
-stop_at "$TRANSCRIPT" false
+stop_at "$TRANSCRIPT" false LANE_MAIL_ITEM=KEN-442
 expect 2 "lane-mail-check: context=500000" \
   "control: without the worktree read a record in the worktree's tmp leaves the refusal standing"
+# The instruction naming no directory: the set line points at the main clone.
+mutant no-state-dir -e 's@^  \[ -z "\$HANDOFF_FILE" \] || printf -v STATE_ARGS@  : || printf -v STATE_ARGS@'
+worktree_handoff_lane control_worktree_set KEN-444 "$MUTANT_PATH"
+stop_at "$TRANSCRIPT" false LANE_MAIL_ITEM=KEN-444
+assert_eq "RC=$RC $(worktree_set_named KEN-444)" "RC=2 set=0 init=0" \
+  "control: without the directory the read found, the set line does not name the worktree's tmp"
+CALL_DIR=""
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

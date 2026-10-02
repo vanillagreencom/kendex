@@ -1101,7 +1101,7 @@ fleet_case() { # NAME
   out="$(run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" ORCH_LANE_HOST="$FIXTURE_HOST" \
     LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$STUB_DIR/remote" -- --max-loops 1 \
     --repeat 0 --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
-  REPEAT_ITEMS="$(awk '$(NF-1) == "handoff-standing" { printf "%s%s", sep, $NF; sep = " " }' "$STUB_DIR/workflow-state.args")"
+  REPEAT_ITEMS="$(awk '{ for (i = 1; i < NF; i++) if ($i == "handoff-standing") { printf "%s%s", sep, $(i + 1); sep = " " } }' "$STUB_DIR/workflow-state.args")"
   REPEAT_EVENTS="$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")"
 }
 fleet_case repeat_state_fleet
@@ -1517,7 +1517,7 @@ mid_pass_case() { # NAME joins|departs
     LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$STUB_DIR/remote" PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" \
     -- --max-loops 3 --repeat 0 --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
   MID_EVENTS="$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")"
-  MID_ITEMS="$(awk '$(NF-1) == "handoff-standing" { printf "%s%s", sep, $NF; sep = " " }' "$STUB_DIR/workflow-state.args")"
+  MID_ITEMS="$(awk '{ for (i = 1; i < NF; i++) if ($i == "handoff-standing") { printf "%s%s", sep, $(i + 1); sep = " " } }' "$STUB_DIR/workflow-state.args")"
   MID_MAIL_READS="$(grep -c -- "/tmp/lane-mail/KEN-10/to-overseer.jsonl" "$STUB_DIR/host.log" || true)"
 }
 mid_pass_case repeat_state_joins_mid_pass joins

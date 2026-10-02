@@ -468,10 +468,23 @@ assert_eq "$(retired_under "$SINCE_MUTANT/open-terminal")" "rc=0 retired=1 sessi
 RETIRED_MUTANT="$TMP_ROOT/retired-mutant/scripts"
 mkdir -p "$RETIRED_MUTANT"
 cp -R "$REPO/scripts/." "$RETIRED_MUTANT/"
-mutate_file "$RETIRED_MUTANT/open-terminal" 'lane_handoff_standing "$3" "" "$WORKFLOW_STATE" handoff-standing "$2"' \
+mutate_file "$RETIRED_MUTANT/open-terminal" 'lane_handoff_standing "$3" "" "$WORKFLOW_STATE" handoff-standing "$2" --worktree "$3"' \
   'lane_handoff_standing "$3" "" "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} handoff-standing "$2"'
 assert_eq "$(retired_under "$RETIRED_MUTANT/open-terminal")" "rc=0 retired=0 session=$CLAUDE222 since=iso launched_at=$LAUNCHED_AT" \
   "control: asked under the fleet's --state-dir the relaunch misses the record and resumes the retired session"
+# The worktree's state directory setting names another directory, and the
+# record stands in the worktree's own tmp, where a lane whose launch forbids
+# writing elsewhere keeps it: the relaunch reads that place too.
+printf '[env]\nORCH_STATE_DIR = "state"\n' > "$TMP_ROOT/wt/CC-1/kendex.settings.toml"
+assert_eq "$(retired_under "$OT")" "rc=0 retired=1 session=null since=iso launched_at=$LAUNCHED_AT" \
+  "a record in the lane worktree's tmp retires its session where its state directory setting names another"
+PLACE_MUTANT="$TMP_ROOT/place-mutant/scripts"
+mkdir -p "$PLACE_MUTANT"
+cp -R "$REPO/scripts/." "$PLACE_MUTANT/"
+mutate_file "$PLACE_MUTANT/open-terminal" 'handoff-standing "$2" --worktree "$3"' 'handoff-standing "$2"'
+assert_eq "$(retired_under "$PLACE_MUTANT/open-terminal")" "rc=0 retired=0 session=$CLAUDE222 since=iso launched_at=$LAUNCHED_AT" \
+  "control: a relaunch naming no worktree misses that record and resumes the retired session"
+rm -f -- "${TMP_ROOT:?}/wt/CC-1/kendex.settings.toml"
 # Each is a relaunch renewing running_at, so the wake row below reads the
 # stamp the last of them left.
 RELAUNCH_RUNNING_AT="$(running_at CC-1)"

@@ -1,1 +1,1 @@
-- A fleet lane that keeps its workflow state in its worktree's `tmp` now ends its turn once its handoff record stands there, with no second record in the main checkout.
+- A fleet lane that keeps its workflow state in its worktree's `tmp` now hands off from there: its turn-end hook, the overseer's watch and its relaunch all read the handoff record in that `tmp`.

@@ -2466,20 +2466,20 @@ host_pi_gate() ( # ITEM WT_ID PI_ROOT REMOTE_ROOT
 # session, and only a fresh start carries the record on, since ../workflows/start.md § 0
 # reads it and a resumed session never runs that step.
 #
-# The handoff record is asked from the lane's worktree with no --state-dir,
-# which is where the lane wrote it and where the fresh start's § 0 reads it:
-# the state directory setting joined to the worktree's own common root. The
-# fleet's --state-dir can name another directory, a local lane in another
+# The handoff record is asked from the lane's worktree with no --state-dir and
+# that worktree named, the places the fresh start's § 0 reads it too: the
+# state directory setting joined to the worktree's own common root, then the
+# worktree's own tmp (`workflow-state --help` § Handoff record). The fleet's
+# --state-dir can name another directory, a local lane in another
 # repository's worktree among them. A verdict it cannot read refuses as
-# handoff-unreadable, naming the state file the item maps to, never read as no
-# record, which would resume the session the lane retired. The verb's own words
-# reach stderr.
+# handoff-unreadable, naming the state file the verdict names, or the item
+# where it named none, never read as no record, which would resume the session
+# the lane retired. The verb's own words reach stderr.
 #
 # Hosted Codex selection stays in the foreground under D002. Its result is
 # unknown until the host starts the harness; launch_finish reads that result.
 RELAUNCH_ROUTE=resume HOST_SELECTION_FILE=""
 relaunch_route() { # ITEM STATE_ID WORKTREE
-  local path
   RELAUNCH_ROUTE=resume HOST_SELECTION_FILE=""
   LANE_RECORD_VALUE=absent
   [[ "$FLEET" != true ]] || lane_record_read "$2" harness || return 1
@@ -2496,13 +2496,12 @@ relaunch_route() { # ITEM STATE_ID WORKTREE
     esac
     return 0
   fi
-  lane_handoff_standing "$3" "" "$WORKFLOW_STATE" handoff-standing "$2"
+  lane_handoff_standing "$3" "" "$WORKFLOW_STATE" handoff-standing "$2" --worktree "$3"
   case "$LANE_HANDOFF_STATE" in
     none) return 0 ;;
     stands) ot_message session-retired "item=$1" "harness=$HARNESS"; RELAUNCH_ROUTE=fresh; return 0 ;;
   esac
-  path="$(cd -- "$3" && "$WORKFLOW_STATE" path "$2" 2>/dev/null)" || path=""
-  ot_message handoff-unreadable "item=$1" "state=${path:-$2}" >&2
+  ot_message handoff-unreadable "item=$1" "state=${LANE_HANDOFF_FILE:-$2}" >&2
   return 1
 }
 

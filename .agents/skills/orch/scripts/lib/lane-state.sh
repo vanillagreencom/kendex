@@ -776,11 +776,12 @@ lane_state() {
 
 # ---------------------------------------------------------------------------
 # Whether a lane's handoff record stands, as `workflow-state handoff-standing`
-# answers it. That verb owns the test and publishes its verdict as the word on
-# its first stdout line, exiting 0 for every verdict, so the word is read here
-# and its status only says whether the run reached the verb: every orch script
-# sources the project's `.env.local` before its dispatch, and a settings file
-# that stops it exits with a status of its own and no verdict.
+# answers it. That verb owns the test, and where the record is read, and
+# publishes its verdict as the word on its first stdout line, exiting 0 for
+# every verdict, so the word is read here and its status only says whether the
+# run reached the verb: every orch script sources the project's `.env.local`
+# before its dispatch, and a settings file that stops it exits with a status of
+# its own and no verdict.
 #
 # lane_handoff_standing DIR ERR_FILE COMMAND... runs COMMAND, the verb's whole
 # argv, from DIR with its stderr in ERR_FILE, and sets LANE_HANDOFF_STATE:
@@ -790,26 +791,33 @@ lane_state() {
 #   unreadable  anything else: the verb's own `unreadable`, a run that never
 #               reached the verb, a word it does not print, and a `stands`
 #               with no record under it, which the verb never prints whole
-# ERR_FILE holds the run's own words for the last; an empty ERR_FILE leaves
-# them on the caller's own stderr, never reopened by path, since a redirect to
-# /dev/stderr truncates a stderr that is a regular file. The watch that reports a
-# record and the relaunch that retires a session both ask here; the lane-mail
-# hook keeps a reader of its own, since it installs apart from these scripts.
+# and LANE_HANDOFF_FILE to the state file the verdict names, empty where the
+# run printed none. ERR_FILE holds the run's own words for the last; an empty
+# ERR_FILE leaves them on the caller's own stderr, never reopened by path,
+# since a redirect to /dev/stderr truncates a stderr that is a regular file.
+# The watch that reports a record and the relaunch that retires a session both
+# ask here; the lane-mail hook parses the same verdict itself, since it
+# installs apart from these scripts.
 # ---------------------------------------------------------------------------
 LANE_HANDOFF_VERDICT='workflow-state: handoff-standing'
 LANE_HANDOFF_STATE=""
 LANE_HANDOFF_RECORD=""
+LANE_HANDOFF_FILE=""
 lane_handoff_standing() { # DIR ERR_FILE COMMAND...
-  local dir="$1" err="$2" answer rc=0
+  local dir="$1" err="$2" answer line rc=0
   shift 2
   LANE_HANDOFF_STATE=unreadable
   LANE_HANDOFF_RECORD=""
+  LANE_HANDOFF_FILE=""
   if [[ -n "$err" ]]; then answer="$(cd -- "$dir" && "$@" 2>"$err")" || rc=$?
   else answer="$(cd -- "$dir" && "$@")" || rc=$?; fi
   [[ "$rc" -eq 0 ]] || return 0
-  case "$answer" in
+  line="${answer%%$'\n'*}"
+  [[ "$line" != *" file="* ]] || LANE_HANDOFF_FILE="${line#* file=}"
+  case "${line%% file=*}" in
     "$LANE_HANDOFF_VERDICT=none") LANE_HANDOFF_STATE=none ;;
-    "$LANE_HANDOFF_VERDICT=stands"$'\n'?*)
+    "$LANE_HANDOFF_VERDICT=stands")
+      [[ "$answer" != "$line" && -n "${answer#*$'\n'}" ]] || return 0
       LANE_HANDOFF_STATE=stands
       LANE_HANDOFF_RECORD="${answer#*$'\n'}" ;;
   esac
