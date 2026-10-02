@@ -280,6 +280,35 @@ assert_eq "grew=$([[ "$AFTER_TWO" -gt "$AFTER_ONE" ]] && echo yes) left=$(artifa
   "grew=yes left=.cargo-lock,deps/unit-1.rlib,deps/unit-2.rlib" \
   "below the mark target/ keeps both runs' output (kib: $BEFORE, $AFTER_ONE, $AFTER_TWO)"
 
+echo "=== the state directory from a lane worktree ==="
+# Run from the lane worktree with no --state-dir, round-prune reads and records
+# into the state file workflow-state keeps when run from the main checkout,
+# under the main checkout's tmp/, and writes nothing under the worktree's tmp/.
+from_worktree() { # NAME [SCRIPTS_DIR] — prints the result, the main record and the worktree's state
+  local scripts="${2:-$ORCH_SCRIPTS}" record
+  build "$1" KEN-1
+  (cd "$MAIN" && env -u ORCH_STATE_DIR "$ORCH_SCRIPTS/workflow-state" init "$KEY" --worktree "$WT" --branch "$BRANCH" >/dev/null &&
+    env -u ORCH_STATE_DIR "$ORCH_SCRIPTS/workflow-state" new-round-id "$KEY" dev_round_id >/dev/null) ||
+    { echo "from_worktree: state=init-failed" >&2; return 1; }
+  RC=0
+  OUT="$(cd "$WT" && env -u ORCH_STATE_DIR -u CARGO_TARGET_DIR PATH="$TMP_ROOT/bin:$PATH" DF_TARGET_USED=74 ORCH_ROUND_PRUNE_DISK_PCT=75 \
+    "$scripts/round-prune" "$KEY" 2>&1)" || RC=$?
+  OUT="$(grep -m 1 '^round-prune: ' <<<"$OUT" || true)"
+  record="$(cd "$MAIN" && env -u ORCH_STATE_DIR "$ORCH_SCRIPTS/workflow-state" get "$KEY" '.round_prunes[.dev_round_id].action // "none"')" ||
+    { echo "from_worktree: state=read-failed" >&2; return 1; }
+  printf 'rc=%s %s | %s | wt-state=%s\n' "$RC" "$(line)" "$record" "$([[ -e "$WT/tmp" ]] && echo present || echo none)"
+}
+assert_eq "$(from_worktree from-wt)" \
+  "rc=0 round-prune: action=below-mark used-pct=74 mark-pct=75 bytes=0 round=<round> worktree=<wt> | below-mark | wt-state=none" \
+  "from the lane worktree with no --state-dir the round reads and records the main checkout's state"
+# Its must-fail control: a copy that anchors the state directory to the
+# checkout it runs in reads the worktree's tmp/ and misses the round id.
+OWN_TMP="$(mutant_scripts own-tmp round-prune)" || exit 1
+mutate_file "$OWN_TMP/round-prune" 'state_args=()' 'state_args=(--state-dir "$(git rev-parse --show-toplevel)/tmp")'
+assert_eq "$(from_worktree from-wt-mutant "$OWN_TMP")" \
+  "rc=2 round-prune: state-missing=dev_round_id | none | wt-state=none" \
+  "control: a state directory anchored to the worktree misses the main checkout's state"
+
 echo "=== refusals ==="
 build no-round KEN-1
 RC=0

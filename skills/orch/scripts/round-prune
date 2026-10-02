@@ -5,6 +5,10 @@
 #
 # Usage: round-prune [--state-dir DIR] STATE_KEY
 #
+# With no --state-dir it passes none to workflow-state, whose own rule then
+# names the state directory from the caller's checkout, a lane worktree's
+# included, so both read one state file per key.
+#
 # The orchestrator runs it after `workflow-state new-round-id` and before the
 # `dev_delegated_at` stamp and the delegation, so no validation run is in
 # flight in the worktree: the prune happens between rounds and a validation run
