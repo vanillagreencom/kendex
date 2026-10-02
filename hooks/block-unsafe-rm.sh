@@ -114,14 +114,12 @@ COMMAND=$(printf '%s' "$INPUT" \
 #             horizontal whitespace and nothing else, because the only
 #             whitespace character in ENDERS is the newline: a gap that crossed
 #             one would read the next command's words as this rm's operands.
-#   SKIP      the words the scan crosses to get from one part to the next: GAP
-#             then a run of CROSSABLE, repeated. CROSSABLE is any character but
-#             ENDERS, `<`, `>` and whitespace, so it is a word BODY and GAP is
-#             the one thing between two words. An ender would end this rm, and
-#             a redirection target is not an operand at all, so
-#             `rm -rf /var/tmp/x > $LOG` is not a variable-rooted rm. Crossing
-#             ordinary words reaches a later variable-rooted operand after
-#             flags or literal operands.
+#   SKIP      crosses words and complete redirections in an agent's Bash call.
+#             A redirection's operator and target form one unit, so its target
+#             never becomes an operand. Quoted and escaped parts stay inside
+#             WORD, including spaces in a target. A redirection may touch a
+#             word, but an operand still needs GAP before it. Separators in
+#             ENDERS stop the scan outside words and redirections.
 #
 # Flags do not affect the rule. Shell-assembled command names and line
 # continuations remain outside this lexical scan.
@@ -138,7 +136,12 @@ GAP="[${BLANK}]"
 RM_EDGE='(^|[^[:alnum:]_.-])'
 ROOT='"*\$([A-Za-z_]|\{[A-Za-z_][A-Za-z0-9_]*([^:A-Za-z0-9_]|:[^?]))'
 CROSSABLE="[^${ENDERS}<>${SPACE_ANY}]"
-SKIP="(${GAP}+${CROSSABLE}+)*"
+WORD_PART="[^${ENDERS}<>${SPACE_ANY}\"'\\\\]"
+QUOTED_WORD='"([^"\\]|\\.)*"|'"'[^']*'"
+ESCAPED_WORD='\\[^'$'\n'']'
+WORD="(${WORD_PART}|${QUOTED_WORD}|${ESCAPED_WORD})+"
+REDIRECT='([[:digit:]]*|\{[[:alpha:]_][[:alnum:]_]*\})(&>[>]?|[<>]&|>>|<<<|<<-|<<|<>|>\||[<>])'
+SKIP="(${GAP}+${WORD}|${GAP}*${REDIRECT}${GAP}*${WORD})*"
 UNSAFE_RE="${RM_EDGE}rm${SKIP}${GAP}+${ROOT}"
 
 # The harness has no shared-root ownership check.

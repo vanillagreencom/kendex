@@ -115,6 +115,69 @@ skill_load_control shared-literal "$HOOK" '${literal_root}${literal_end}"' \
 skill_load_control shared-dot-segments "$HOOK" '${CROSSABLE}*)?"' \
   "SHARED_DOT='a^'" HOOK shared_rows 'guarded dot segment glob' \
   'guarded parent segment glob' 'literal dot segment glob' 'literal parent segment glob'
+
+# Agents redirect cleanup output and copy descriptors in Bash tool calls.
+# Each operator crosses its whole target before the scan resumes at operands.
+redirection_rows() {
+  local name operator crossed target tail gap spacing
+  while read -r name operator crossed target tail; do
+    for spacing in adjacent spaced; do
+      gap=''; [ "$spacing" != spaced ] || gap=' '
+      first_table "\
+redirection $name $spacing variable|command|2|block-unsafe-rm: refused=shared-root|rm -rf /safe ${operator}${gap}${crossed} \"\${TMPDIR:?}\"${tail}
+redirection $name $spacing literal|command|2|block-unsafe-rm: refused=shared-root|rm -rf /safe ${operator}${gap}${crossed} /shared/home/*${tail}
+redirection $name $spacing empty variable|command|2|block-unsafe-rm: refused=recursive-rm|rm -rf /safe ${operator}${gap}${crossed} \$CACHE/file${tail}
+redirection $name $spacing named child|command|0|-|rm -rf /safe ${operator}${gap}${crossed} \"\${TMPDIR:?}/tmp.AbC123\"${tail}
+redirection $name $spacing safe target|command|0|-|rm -rf /safe ${operator}${gap}${target}${tail}
+"
+    done
+  done <<'FORMS'
+output > /dev/null /shared/home
+numbered-output 2> /dev/null /shared/home
+append >> /dev/null /shared/home
+numbered-append 2>> /dev/null /shared/home
+input < /dev/null /shared/home
+read-write <> /dev/null /shared/home
+clobber >| /dev/null /shared/home
+combined-output &> /dev/null /shared/home
+combined-append \046>> /dev/null /shared/home
+copy-output >& 1 $FD
+numbered-copy-output 2>& 1 $FD
+copy-input <& 0 $FD
+move-output 2>& 1- 1-
+close-output 2>& - -
+here-string <<< ignored "$HOME"
+here-document << EOF EOF \nEOF
+tab-here-document <<- EOF EOF \nEOF
+named-descriptor \173log\175> /dev/null /shared/home
+FORMS
+  first_table 'redirection touching operand|command|2|block-unsafe-rm: refused=shared-root|rm -rf /safe>/dev/null "${TMPDIR:?}"
+multiple redirections|command|2|block-unsafe-rm: refused=shared-root|rm -rf /safe > /dev/null 2>&1 /shared/home/*
+quoted target with space|command|0|-|rm -rf /safe > "/log $HOME"
+single quoted target with space|command|0|-|rm -rf /safe > '\''/log $HOME'\''
+escaped space in target|command|0|-|rm -rf /safe > /log\\ $HOME
+quoted target then protected operand|command|2|block-unsafe-rm: refused=shared-root|rm -rf /safe > "/log $HOME" "${TMPDIR:?}"
+redirection semicolon boundary|command|0|-|rm -rf /safe 2>/dev/null; echo $HOME
+redirection and boundary|command|0|-|rm -rf /safe 2>/dev/null && echo $HOME
+redirection or boundary|command|0|-|rm -rf /safe 2>/dev/null || echo $HOME
+redirection pipe boundary|command|0|-|rm -rf /safe 2>/dev/null | echo $HOME
+redirection newline boundary|command|0|-|rm -rf /safe 2>/dev/null\necho $HOME
+redirection later command refused|command|2|block-unsafe-rm: refused=shared-root|rm -rf /safe 2>/dev/null; rm -rf "${TMPDIR:?}"
+'
+}
+redirection_rows
+skill_load_control redirection-crossing "$HOOK" 'SKIP="(${GAP}+${WORD}|${GAP}*${REDIRECT}${GAP}*${WORD})*"' \
+  'SKIP="(${GAP}+${WORD})*"' HOOK redirection_rows \
+  'redirection numbered-output adjacent variable' 'redirection numbered-output adjacent literal'
+skill_load_control redirection-target "$HOOK" 'SKIP="(${GAP}+${WORD}|${GAP}*${REDIRECT}${GAP}*${WORD})*"' \
+  'SKIP="(${GAP}+${WORD}|${GAP}*${REDIRECT})*"' HOOK redirection_rows \
+  'redirection output spaced safe target'
+skill_load_control redirection-boundary "$HOOK" "ENDERS='&;|'" \
+  "ENDERS='' #" HOOK redirection_rows 'redirection semicolon boundary' \
+  'redirection and boundary' 'redirection or boundary' 'redirection pipe boundary'
+skill_load_control redirection-newline "$HOOK" 'GAP="[${BLANK}]"' \
+  'GAP="[${SPACE_ANY}]"' HOOK redirection_rows \
+  'redirection newline boundary'
 first_table 'unset and empty roots match no literal|payload|0|-|{"command":"rm -rf /home/method/dev/.scratch/agents /shared/tmp /shared/te(mp).+ /shared/agent /shared/home"}'
 PAYLOAD_HOME=/
 first_table 'filesystem root direct glob|payload|2|block-unsafe-rm: refused=shared-root|{"command":"rm -rf /tmp.*"}
