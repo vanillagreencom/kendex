@@ -14,7 +14,7 @@ KEN-2416 completes at this PR merge with the measured fleet report and workflow/
 
 ## Refresh gate
 
-KEN-2462's [Consumer refresh gate](ken-2416-refresh-runs.md#consumer-refresh-gate) owns pre-merge consumer replay and its deployment order. That section names the exact required context, the main-only snapshot collector and the owner ruleset step. This check is fixture proof before the first snapshot and consumer compatibility proof after it; neither is the comparable Actions after-rate below.
+No pre-merge check replays consumer refresh. [Consumer refresh gate](ken-2416-refresh-runs.md#consumer-refresh-gate) records why KEN-2462's gate was retired.
 
 ## Before measurement
 

@@ -1,8 +1,0 @@
-fleet
-vg
-talk
-hyprtrade
-vsys
-hyprtrade-io
-drovr
-kendex-web

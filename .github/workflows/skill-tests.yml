@@ -660,15 +660,6 @@ jobs:
           installed="$(PATH="$HOME/.local/bin:$PATH" kendex --version)"
           echo "installed: $installed"
 
-      # The consumer gate's tool suite uses the same released engine as a
-      # scheduled consumer. It has no binary-dependent skip on either runner.
-      - name: Released kendex for consumer replay fixtures
-        if: matrix.shard == 'guards-tools'
-        env:
-          GH_TOKEN: ""
-          GITHUB_TOKEN: ${{ github.token }}
-        run: skills/review-gate/scripts/install-latest.sh
-
       # ---- shard: review-gate — the heavyweight review-gate suites alone ----
       - name: review-gate suites
         if: matrix.shard == 'review-gate'
