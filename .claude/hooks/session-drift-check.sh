@@ -22,10 +22,14 @@ RC=0
 FAILED_LINE=""
 PAYLOAD_ERR=""
 PATH_ERR=""
-# 0 outside a lane, 1 in a lane, refresh in a lane whose launch recorded a
-# refresh lane.
 LANE=0
+# 1 in a lane whose launch wrote lane-marker's refresh record, 0 otherwise.
+LANE_REFRESH=0
 LANE_ERR=""
+# The lane's root and its own git directory, which read_lane resolves and
+# read_lane_refresh reads the record under.
+LANE_ROOT=""
+LANE_GIT_DIR=""
 # What the missing-kendex notice names: the manifest file this project's
 # declarations would be in and what became of reading it, how many packages
 # that read found, the route that installs the command on this platform, and
@@ -205,15 +209,12 @@ notice() { # KEY VALUE
       # The CLI refuses a lane's project-scope refresh without its own
       # --lane-refresh, so a refresh lane's notice carries no authorization:
       # it only stops forbidding what that flag allows.
-      case "$LANE" in
-        refresh)
-          printf 'session-drift-check: lane-refresh=1\n'
-          echo 'This worktree is a refresh lane. kendex refresh and kendex apply run here only with --lane-refresh, and the brief says which.'
-          ;;
-        *)
-          echo 'This worktree changes nothing about the install. The overseer refreshes the base checkout after merge. kendex refresh and kendex apply are never run here.'
-          ;;
-      esac
+      if [ "$LANE_REFRESH" = 1 ]; then
+        printf 'session-drift-check: lane-refresh=1\n'
+        echo 'This worktree is a refresh lane. kendex refresh and kendex apply run here only with --lane-refresh, and the brief says which.'
+      else
+        echo 'This worktree changes nothing about the install. The overseer refreshes the base checkout after merge. kendex refresh and kendex apply are never run here.'
+      fi
       ;;
     lane=unknown)
       printf 'The lane status could not be read. Drift details are withheld.\n%s\n' "$LANE_ERR"
@@ -280,7 +281,7 @@ notice() { # KEY VALUE
 # same rule even when it has no LANE_MAIL_ITEM. Other roots' markers do not
 # make the base checkout a lane.
 read_lane() {
-  local dirs root git_dir common marker bound rc=0 record
+  local dirs common marker bound rc=0
   dirs=$(git rev-parse --show-toplevel --absolute-git-dir --path-format=absolute --git-common-dir 2>&1) || rc=$?
   if [ "$rc" -ne 0 ]; then
     case "$dirs" in
@@ -288,12 +289,13 @@ read_lane() {
       *) LANE_ERR="$dirs"; notice lane unknown; return 1 ;;
     esac
   fi
-  root=${dirs%%$'\n'*}
+  LANE_ROOT=${dirs%%$'\n'*}
   dirs=${dirs#*$'\n'}
-  git_dir=${dirs%%$'\n'*}
+  LANE_GIT_DIR=${dirs%%$'\n'*}
   common=${dirs#*$'\n'}
-  if [ "$git_dir" != "$common" ]; then
+  if [ "$LANE_GIT_DIR" != "$common" ]; then
     LANE=1
+    return 0
   fi
   if { [ -e "$common/lane-mail" ] || [ -L "$common/lane-mail" ]; } &&
     { [ ! -d "$common/lane-mail" ] || [ ! -r "$common/lane-mail" ] || [ ! -x "$common/lane-mail" ]; }; then
@@ -301,23 +303,24 @@ read_lane() {
     notice lane unknown
     return 1
   fi
-  if [ "$LANE" = 0 ]; then
-    for marker in "$common"/lane-mail/*; do
-      [ -e "$marker" ] || [ -L "$marker" ] || continue
-      if [ ! -f "$marker" ] || [ -L "$marker" ]; then
-        LANE_ERR="The lane marker is not a plain file: $marker"
-        notice lane unknown
-        return 1
-      fi
-      bound=$(cat -- "$marker" 2>&1) || { LANE_ERR="$bound"; notice lane unknown; return 1; }
-      [ "$bound" != "$root" ] || { LANE=1; break; }
-    done
-  fi
-  [ "$LANE" = 1 ] || return 0
-  # lane-marker --lane-refresh writes the refresh record in the lane's own git
-  # directory, holding the root; a launch without it removes the record, and a
-  # hosted launcher empties it.
-  record="$git_dir/lane-refresh"
+  for marker in "$common"/lane-mail/*; do
+    [ -e "$marker" ] || [ -L "$marker" ] || continue
+    if [ ! -f "$marker" ] || [ -L "$marker" ]; then
+      LANE_ERR="The lane marker is not a plain file: $marker"
+      notice lane unknown
+      return 1
+    fi
+    bound=$(cat -- "$marker" 2>&1) || { LANE_ERR="$bound"; notice lane unknown; return 1; }
+    [ "$bound" != "$LANE_ROOT" ] || { LANE=1; return 0; }
+  done
+}
+
+# lane-marker --lane-refresh writes the refresh record in the lane's own git
+# directory, holding the root; a launch without it removes the record, and a
+# hosted launcher empties it. Read only in a lane.
+read_lane_refresh() {
+  local record bound
+  record="$LANE_GIT_DIR/lane-refresh"
   { [ -e "$record" ] || [ -L "$record" ]; } || return 0
   if [ ! -f "$record" ] || [ -L "$record" ]; then
     LANE_ERR="The lane refresh record is not a plain file: $record"
@@ -325,14 +328,16 @@ read_lane() {
     return 1
   fi
   bound=$(cat -- "$record" 2>&1) || { LANE_ERR="$bound"; notice lane unknown; return 1; }
-  [ "$bound" != "$root" ] || LANE=refresh
+  [ "$bound" != "$LANE_ROOT" ] || LANE_REFRESH=1
 }
 
 # crates/core/src/drift/report/render.rs::render_plain emits two-space item
 # lines and a section overflow count. A whole-report truncation hides lines,
 # not an item count, so its count is a lower bound rather than an exact total.
 report() {
-  if [ "$LANE" = 1 ] && [[ "$OUTPUT" =~ fix:[[:space:]]+kendex([[:space:][:punct:]]|$)|kendex[[:space:]]+(refresh|remove)([[:space:][:punct:]]|$) ]]; then
+  # A refresh lane may act on the advice, so only other lanes trade it for
+  # its item count.
+  if [ "$LANE" = 1 ] && [ "$LANE_REFRESH" = 0 ] && [[ "$OUTPUT" =~ fix:[[:space:]]+kendex([[:space:][:punct:]]|$)|kendex[[:space:]]+(refresh|remove)([[:space:][:punct:]]|$) ]]; then
     awk '
       /^  … [0-9]+ more/ { count += $2; next }
       /^  / { count++ }
@@ -414,7 +419,10 @@ if ! command -v kendex >/dev/null 2>&1; then
 fi
 
 read_lane || exit 0
-[ "$LANE" = 0 ] || notice lane 1
+if [ "$LANE" = 1 ]; then
+  read_lane_refresh || exit 0
+  notice lane 1
+fi
 
 # kendex's exit code IS the classification; under errexit a bare failing
 # assignment would abort before `RC=$?` could run.

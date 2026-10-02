@@ -68,9 +68,10 @@ and the refresh record beside them:
 `--lane-refresh` writes the refresh record, which says the launch asked for a
 refresh lane, one whose brief runs `kendex refresh` or `kendex apply` with the
 CLI's own `--lane-refresh`. Every launch without it removes the record, so a
-relaunch states it again. `session-drift-check` alone reads it: a lane whose
-record holds its root is told it is a refresh lane instead of being told that
-those commands never run there. The record is a file of its own in the
+relaunch states it again. Two readers read it, `session-drift-check` and the
+pi-hooks drift check (`pi-extensions/pi-hooks/extensions/drift-check.ts`): a
+lane whose record holds its root is told it is a refresh lane instead of being
+told that those commands never run there. The record is a file of its own in the
 worktree's own git directory, so no reader of the marker meets it, and it goes
 with the worktree when the worktree is removed.
 
@@ -94,16 +95,17 @@ itself would be a second spelling of the one this script writes.
 directory it is given; that launcher writes the root there for a refresh lane
 and empties the file otherwise, an empty record reading as no refresh lane.
 
-Containment: four components must be plain, never a symlink and never another
+Containment: five components must be plain, never a symlink and never another
 kind of file. Under the common git directory, `lane-mail` and the marker in it;
 under the worktree, `tmp/lane-mail` and the item's own directory in it; the
-refresh record in the worktree git directory. `tmp`
-itself is left alone, because a worktree setup may link it. A component outside
-that rule would put the marker or the mailbox somewhere the lane never reads,
+refresh record in the worktree git directory. `tmp` itself is left alone,
+because a worktree setup may link it. A component outside that rule would put
+the marker, the mailbox or the refresh record somewhere the lane never reads,
 and the refusal names the one that broke it.
 
 Exit status:
-  0  both halves stand, or `--marker-path` printed the path
+  0  both halves stand (and the refresh record, with `--lane-refresh`), or
+     `--marker-path` or `--refresh-path` printed the path
   2  a component is not what it names, the item is outside the alphabet a work
      item is spelled in, a git or context read failed, or a write failed; the cause is one
      `lane-marker: <key>=<value>` line on stderr with the English under it

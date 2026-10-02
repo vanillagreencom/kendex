@@ -446,8 +446,8 @@ done
 # what it says, so a refresh lane gets the ordinary notice and the root row
 # above turns red.
 IGNORES_RECORD="$TMP_ROOT/ignores-record.sh"
-sed -e 's/^  \[ "\$bound" != "\$root" \] || LANE=refresh$/  [ "$bound" != "$root" ] || :/' "$HOOK" >"$IGNORES_RECORD"
-assert_eq "$(grep -c '|| LANE=refresh$' "$HOOK") $(cmp -s "$HOOK" "$IGNORES_RECORD" && echo same || echo differs)" "1 differs" \
+sed -e 's/^  \[ "\$bound" != "\$LANE_ROOT" \] || LANE_REFRESH=1$/  [ "$bound" != "$LANE_ROOT" ] || :/' "$HOOK" >"$IGNORES_RECORD"
+assert_eq "$(grep -c '|| LANE_REFRESH=1$' "$HOOK") $(cmp -s "$HOOK" "$IGNORES_RECORD" && echo same || echo differs)" "1 differs" \
   "control: the copy drops the one refresh reading"
 record="$(fixture_git -C "$WT_LINKED" rev-parse --absolute-git-dir)/lane-refresh"
 printf '%s\n' "$WT_LINKED" >"$record"
