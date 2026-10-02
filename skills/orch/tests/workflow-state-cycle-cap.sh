@@ -12,6 +12,9 @@
 # `cycles` decides nothing here. It is the general fix-round tally
 # `dev-fix.md` keeps, bumped by QA fix rounds and by review/submit fix rounds
 # that run before the loop starts; those must leave the loop budget untouched.
+# At a cap of 0 that budget is review-pr § 4's one fix round, which `cap
+# --issue` reads from `fixed_items` entries with source pr-review; a QA or
+# pre-loop round records its own source, so it spends nothing there either.
 # The failing direction runs first so a green pass is evidence.
 
 set -euo pipefail
@@ -240,6 +243,19 @@ for row in "${WALK_ROWS[@]}"; do
   assert_eq "$(walk "$setting" "$tiers" "$prior")" "$want" "REVIEW_MAX_CYCLES=$setting, tiers $tiers, prior $prior: one fix round, then the re-reviews the setting allows"
 done
 
+# The exception is REVIEW_MAX_CYCLES's alone: another cap at 0 on a fresh
+# item has no fix round to allow, so it reads at-cap from the first read.
+# other_zero [SCRIPT] — REVIEW_MAX_EXTERNAL_ROUNDS=0 read with --issue on a fresh item.
+other_zero() {
+  local bin="$WS" sdo
+  [[ "${1:-}" != /* ]] || bin="$1"
+  sdo="$(mktemp -d "$TMP_ROOT/state-other.XXXXXX")" || return 1
+  (cd "$NO_SETTINGS" && export REVIEW_MAX_EXTERNAL_ROUNDS=0 \
+    && "$bin" --state-dir "$sdo" init KEN-X --worktree "$REPO_ROOT" --branch ken-x >/dev/null \
+    && "$bin" --state-dir "$sdo" cap REVIEW_MAX_EXTERNAL_ROUNDS --issue KEN-X)
+}
+assert_eq "$(other_zero)" "at-cap 0/0" "REVIEW_MAX_EXTERNAL_ROUNDS=0 on a fresh item is at-cap: the zero-cap exception is REVIEW_MAX_CYCLES's alone"
+
 # --- planted controls: one per instrument, proving each can fail ----------
 echo
 echo "--- planted controls ---"
@@ -282,6 +298,15 @@ for control in \
     && pass "the walk at 0, prior $prior, flags $label" \
     || fail "the walk at 0, prior $prior, MISSED $label" "got=$got"
 done
+
+# The exception widened past its setting: a copy whose branch matches any cap
+# reads the external cap at 0 as below, which the row above must turn red.
+SCOPE_WS="$(mutant_scripts zero-any-cap workflow-state)/workflow-state" || exit 1
+mutate_file "$SCOPE_WS" '[[ "$setting" == REVIEW_MAX_CYCLES ]] && (( limit == 0 ))' '[[ -n "$setting" ]] && (( limit == 0 ))'
+got="$(other_zero "$SCOPE_WS")"
+[[ "$got" == "below 0/0" ]] \
+  && pass "the external-cap row flags a zero-cap exception that matches any cap" \
+  || fail "the external-cap row MISSED a zero-cap exception that matches any cap" "got=$got"
 
 # § 7 changed to the shared key: the assertion must catch the counter
 # coming back into the section that must not spend it.
