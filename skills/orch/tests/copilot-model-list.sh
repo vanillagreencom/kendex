@@ -4,6 +4,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 ROOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)" || exit 1
+mkdir -p -- "$ROOT/tmp" || { echo 'copilot-model-list: scratch=parent-create-failed' >&2; exit 1; }
 TMP_ROOT="$(mktemp -d "$ROOT/tmp/copilot-model-list.XXXXXX")" || { echo 'copilot-model-list: scratch=mktemp-failed' >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "copilot-model-list: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'copilot-model-list: scratch=resolve-failed' >&2; exit 1; }
