@@ -63,7 +63,7 @@ FULL_SCOPED_CHECKS="byte-ceiling py-names secrets"
 # instead — a range there would answer a smaller
 # question under the setting's name.
 RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries md-format md-refs py-names secrets"
-# Withheld by a --skip-unscoped run, the push hook's: CHECKS.md § secrets.
+# Withheld by a --skip-unscoped run, the push hook's: ../CHECKS.md § secrets.
 PUSH_WITHHELD_CHECKS="secrets"
 
 usage() {
