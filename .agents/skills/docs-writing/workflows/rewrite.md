@@ -15,4 +15,4 @@ This workflow converts documents onto the convention or restructures them; [../S
 9. Reflow every tracked markdown file with the commit-guards `md-reflow` script, set `COMMIT_GUARDS_MD_SCOPE = "all"` in `kendex.settings.toml`, and run the `md-format`, `md-refs` and `prose` lanes over the whole tree. Put test fixtures whose bytes a suite pins and published release notes whose recorded layout must stay fixed in `tools/md-excludes` with their reason.
 10. Supersede each decision record the rewrite shows to be obsolete through the [`decider`](../../decider/SKILL.md) skill, which owns the record lifecycle. Never delete one.
 11. Remove every instruction the installed packages now enforce from the prose, and report anything portable the packages lack upstream through `kendex report`.
-12. Run the repository's own validation and the doc-limits check. Bring each document within its class limit before enabling the check.
+12. Run the repository's own validation and the doc-limits check. Before enabling the check, bring each document over its class limit under it in the order [../SKILL.md](../SKILL.md) § Format gives.

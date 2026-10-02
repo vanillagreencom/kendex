@@ -154,7 +154,7 @@ The `changelog-entries` lane owns the shape. Follow the repository's `changelog.
 - One paragraph per line, one list item per line, no hard wraps inside either. Blank lines separate paragraphs, list blocks, headings, and fences. Tables and fenced code stay as written. The commit-guards `md-format` lane enforces it and `md-reflow` converts a file once.
 - Relative links in Markdown must resolve. [commit-guards `CHECKS.md` § md-refs](../commit-guards/CHECKS.md#md-refs) owns the checked forms.
 - Agent-loaded markdown carries no history. The `prose` lane checks it.
-- Document byte limits and exceptions follow [doc-limits policy](../doc-limits/references/policy.md).
+- Document byte limits and exceptions follow [doc-limits policy](../doc-limits/references/policy.md). Bring a document over its limit under it in this order: cut restated content first; split only at a real subject boundary; never delete a rule to fit.
 - A rule a shipped kendex package states is never restated in the repo's own markdown. The repo installs the package and customises through `kendex.toml`.
 
 ## Writing

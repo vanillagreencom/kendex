@@ -6,8 +6,9 @@
 - `DOC_LIMITS_CLASSES` contains project entries. `DOC_LIMITS_DEFAULT_CLASSES` contains the shipped entries. Project entries come first. The first matching entry sets the document's byte ceiling.
 - An entry is `pattern=Nk`, where `N` is a positive integer and `k` means 1024 bytes. Semicolons separate entries. Whitespace around entries and `=` is ignored.
 - Patterns match the full repository-relative path. `*` crosses directory separators.
-- `SHIPPED_CLASS_ROWS` in [scripts/doc-limits](../scripts/doc-limits) declares the document classes, their limits, and for each class the anchor of its docs-writing rule. The anchors are kept by hand in step with docs-writing [§ Per file type](../../docs-writing/SKILL.md#per-file-type); the `*.md` catch-all names that section as a whole. A row with an empty rule refuses with exit `2`.
+- `SHIPPED_CLASS_ROWS` in [scripts/doc-limits](../scripts/doc-limits) declares the document classes, their limits, and for each class the anchor of its docs-writing rule. The anchors are kept by hand in step with docs-writing [§ Per file type](../../docs-writing/SKILL.md#per-file-type); the `*.md` catch-all names that section as a whole. A row with an empty rule refuses with `package-error=class-rule-missing` and exit `2`.
 - An empty `DOC_LIMITS_DEFAULT_CLASSES` removes the shipped list. A document with no matching class has no limit.
+- A document an agent loads at every turn, at `AGENTS.md`, `*/AGENTS.md` or `*/SKILL.md`, fails the check over its limit, whichever class set that limit. Any other document over its limit is over a budget: the check warns and passes. `LOAD_POINT_PATTERNS` in [scripts/doc-limits](../scripts/doc-limits) holds the list.
 
 ## Exclusion list
 
@@ -19,20 +20,13 @@
 - A leading `!` restores matching documents to the measured set. It takes priority over every exclusion, including inventory entries. `\!` matches a literal leading exclamation mark.
 - Exclusions are the exception path for documents that cannot fit their class. The checker has no per-file allowance.
 
-## Growth margin
-
-- `--against REF` adds one rule to the class limit. A document whose index copy is larger than its copy in REF's own tree fails when its measured size is more than its limit minus the margin.
-- Growth compares stored blob sizes, so a checkout conversion such as `eol=crlf` or `core.autocrlf` adds no growth. An unstaged edit counts as growth once it is staged.
-- `DOC_LIMITS_MARGIN_PCT` sets the margin as a percent of each limit: a decimal integer from 0 to 99 without leading zeros. Its default is `2`. The margin in bytes rounds down. `0` leaves the limit alone. Any other value refuses with exit `2`, and only a run with `--against` reads it.
-- A document REF does not hold at its path counts as grown from 0 bytes, a renamed document included.
-- A document the change leaves unchanged or shrinks is judged on its limit alone.
-- REF is the tree the change is measured from, because every difference from REF counts as the change's growth. A pull request run in CI passes the merge commit's first parent, `HEAD^1`. A local run or a head-only checkout passes `$(git merge-base HEAD <base>)`, never a base branch tip that moved after the branch point.
-- Recommended CI wiring: run the `--against` check on pull requests and keep it out of a merge group job. A byte ceiling is a context budget the pull request answers for, and a budget should not eject a group. Growth measured from REF cannot see a concurrent change to the classes or the exclusions, or another change's growth landing beside it, so under this wiring a document can land on the base branch over its limit; the next pull request's run names it.
-
 ## Check result
 
 | Exit | Meaning |
 | --- | --- |
-| `0` | Every measured document is within its class limit and, under `--against`, none grew into its margin. |
-| `1` | At least one document exceeds its class limit, or under `--against` grew into its margin. The output names each document with `notice=document-over-limit` or `notice=document-near-limit`, its size and limit. A `notice=document-rule rule=docs-writing/SKILL.md#ANCHOR` line follows each one and names the docs-writing rule for its class. A class the shipped rows do not declare names `#per-file-type`. |
-| `2` | Usage, configuration or collection failed. The check cannot report a complete size result. |
+| `0` | No load-point document exceeds its class limit. Each other document over its limit prints `notice=document-over-budget` with its size and limit. |
+| `1` | At least one load-point document exceeds its class limit. The output names each with `notice=document-over-limit`, its size and limit. |
+| `2` | The check could not judge. The first line's level names who owns the fix: `error=` the caller's arguments, policy or tracked state; `package-error=` a defect in doc-limits; `host-error=` a host read that failed. A settings refusal starts `doc-limits-error=`. |
+
+- A `notice=document-rule rule=docs-writing/SKILL.md#ANCHOR` line follows each over-limit or over-budget notice and names the docs-writing rule for its class. A class the shipped rows do not declare names `#per-file-type`.
+- `--against REF` is retired: it has no effect, prints `notice=argument-retired argument=--against`, and 2.0 removes it.

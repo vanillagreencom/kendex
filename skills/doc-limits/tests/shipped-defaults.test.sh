@@ -89,8 +89,9 @@ private_command() { # NAME: copy the command and set MUTANT
 
 # Representative paths exercise each shipped document class at both edges,
 # and the one-byte-over run names the docs-writing rule anchor for the class.
+# A load-point document one byte over fails; any other warns and passes.
 CLASS_ASSERTIONS=0
-while IFS=' ' read -r path limit anchor; do
+while IFS=' ' read -r path limit anchor over_exit over_key; do
   bytes "$path" "$limit"
   git -C "$R" add -- "$path"
   run --staged
@@ -99,34 +100,78 @@ while IFS=' ' read -r path limit anchor; do
   bytes "$path" "$((limit + 1))"
   git -C "$R" add -- "$path"
   run --staged
-  expect 1 "$path one byte over fails"
-  expect_first_line "notice=document-over-limit path=$path" "$path failure notice"
-  case "$OUT" in
-    *"notice=documents-over-limit count=1"*) PASS=$((PASS + 1)); printf '  ok: %s\n' "$path failure count" ;;
-    *) FAIL=$((FAIL + 1)); printf '  FAIL: %s\n' "$path failure count" ;;
+  expect "$over_exit" "$path one byte over exits $over_exit"
+  expect_first_line "notice=$over_key path=$path" "$path $over_key notice"
+  case "$over_exit" in
+    1) expect_line 'notice=documents-over-limit count=1' "$path failure count" ;;
+    0) expect_line 'notice=documents-checked count=1' "$path pass count" ;;
   esac
   expect_line "notice=document-rule rule=docs-writing/SKILL.md#$anchor" "$path rule anchor"
   git -C "$R" rm -qf -- "$path"
   CLASS_ASSERTIONS=$((CLASS_ASSERTIONS + 1))
 done <<'CLASSES'
-AGENTS.md 8192 agentsmd
-CLAUDE.md 24576 claudemd
-pkg/AGENTS.md 6144 agentsmd
-pkg/CLAUDE.md 24576 claudemd
-docs/architecture/overview.md 12288 docsarchitectureoverviewmd
-docs/architecture/topic.md 16384 docsarchitecturetopicmd
-skills/demo/SKILL.md 24576 skillmd-workflowsmd-agentsmd
-skills/demo/workflows/task.md 40960 skillmd-workflowsmd-agentsmd
-README.md 16384 readmemd
-pkg/README.md 12288 readmemd
-skills/demo/references/contract.md 65536 per-file-type
-docs/references/example.html 65536 documentation-html
-CHANGELOG.md 65536 per-file-type
+AGENTS.md 8192 agentsmd 1 document-over-limit
+CLAUDE.md 24576 claudemd 0 document-over-budget
+pkg/AGENTS.md 6144 agentsmd 1 document-over-limit
+pkg/CLAUDE.md 24576 claudemd 0 document-over-budget
+docs/architecture/overview.md 12288 docsarchitectureoverviewmd 0 document-over-budget
+docs/architecture/topic.md 16384 docsarchitecturetopicmd 0 document-over-budget
+skills/demo/SKILL.md 24576 skillmd-workflowsmd-agentsmd 1 document-over-limit
+skills/demo/workflows/task.md 40960 skillmd-workflowsmd-agentsmd 0 document-over-budget
+README.md 16384 readmemd 0 document-over-budget
+pkg/README.md 12288 readmemd 0 document-over-budget
+skills/demo/references/contract.md 65536 per-file-type 0 document-over-budget
+docs/references/example.html 65536 documentation-html 0 document-over-budget
+CHANGELOG.md 65536 per-file-type 0 document-over-budget
 CLASSES
 if [ "$CLASS_ASSERTIONS" -eq 0 ]; then
   printf 'FAIL: CLASSES executed no assertions\n' >&2
   exit 1
 fi
+
+# The load-point set decides which over-limit documents fail. Each control
+# edits it one way: an empty set lets an over-limit SKILL.md pass, a set that
+# takes every path fails an over-limit workflow.
+LOAD_POINT_MATCH='  glob_match "$1" "${LOAD_POINT_PATTERNS[@]}"'
+while IFS='|' read -r path limit body former mutant label; do
+  bytes "$path" "$((limit + 1))"
+  git -C "$R" add -- "$path"
+  private_command "load-point-$former"
+  [ ! -L "$MUTANT" ]
+  [ "$(grep -Fxc "$LOAD_POINT_MATCH" "$MUTANT")" -eq 1 ]
+  awk -v from="$LOAD_POINT_MATCH" -v to="$body" '$0 == from { $0 = to } { print }' "$SOURCE_COMMAND" >"$MUTANT.changed"
+  if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
+  mv "$MUTANT.changed" "$MUTANT"
+  chmod +x "$MUTANT"
+  bash -n "$MUTANT"
+  SR="$MUTANT"
+  run --staged
+  must_fail "$former" "$mutant" "$label"
+  SR="$SOURCE_COMMAND"
+  git -C "$R" rm -qf -- "$path"
+done <<'LOAD_POINT_CONTROLS'
+skills/demo/SKILL.md|24576|  return 1|1|0|load-point control: with the load-point test removed, an over-limit SKILL.md passes
+skills/demo/workflows/task.md|40960|  return 0|0|1|load-point control: a set that takes every path fails an over-limit workflow
+LOAD_POINT_CONTROLS
+
+# A caller still passing the retired --against keeps its verdict, warned.
+bytes AGENTS.md 8192
+git -C "$R" add AGENTS.md
+run --staged --against HEAD
+expect 0 'retired --against still runs'
+expect_first_line 'notice=argument-retired argument=--against' 'retired --against notice'
+private_command retired-against
+[ "$(grep -Fxc '[ "$AGAINST_RETIRED" = 0 ] \' "$MUTANT")" -eq 1 ]
+sed 's/^\[ "\$AGAINST_RETIRED" = 0 \] \\$/true \\/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
+mv "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+SR="$MUTANT"
+run --staged --against HEAD
+must_fail_first_line 'notice=argument-retired argument=--against' 'retired --against control: a silent flag fails the notice row'
+SR="$SOURCE_COMMAND"
+git -C "$R" rm -qf AGENTS.md
 
 # A project class the shipped rows do not declare names § Per file type whole.
 bytes extra/note.md 1025
@@ -134,7 +179,8 @@ git -C "$R" add extra/note.md
 DOC_LIMITS_CLASSES='extra/*.md=1k'
 export DOC_LIMITS_CLASSES
 run --staged
-expect 1 'project class over its limit fails'
+expect 0 'project class over its limit warns'
+expect_first_line 'notice=document-over-budget path=extra/note.md' 'project class budget notice'
 expect_line 'notice=document-rule rule=docs-writing/SKILL.md#per-file-type' 'project class rule anchor'
 unset DOC_LIMITS_CLASSES
 git -C "$R" rm -qf extra/note.md
@@ -158,8 +204,8 @@ git -C "$R" rm -qf README.md
 bytes docs/references/example.html 65537
 git -C "$R" add docs/references/example.html
 run --staged
-expect 1 'documentation HTML over its class limit fails'
-expect_first_line 'notice=document-over-limit path=docs/references/example.html' 'documentation HTML failure notice'
+expect 0 'documentation HTML over its class limit warns'
+expect_first_line 'notice=document-over-budget path=docs/references/example.html' 'documentation HTML budget notice'
 private_command html-selection
 [ ! -L "$MUTANT" ]
 [ "$(grep -Fxc '  case "$f" in *.md | docs/*.html) ;; *) continue ;; esac' "$MUTANT")" -eq 1 ]
@@ -170,7 +216,7 @@ chmod +x "$MUTANT"
 bash -n "$MUTANT"
 SR="$MUTANT"
 run --staged
-must_fail 1 0 'HTML selection control: skipping documentation HTML fails its over-limit row'
+must_fail_first_line 'notice=document-over-budget path=docs/references/example.html' 'HTML selection control: skipping documentation HTML fails its over-limit row'
 SR="$SOURCE_COMMAND"
 git -C "$R" rm -qf docs/references/example.html
 
@@ -206,8 +252,8 @@ run --staged
 expect 2 'document-unmerged'
 expect_first_line 'error=document-unmerged path=conflict.md' 'document-unmerged diagnostic'
 private_command document-diagnostic
-[ "$(grep -Fxc '  [ "${entry##* }" = 0 ] || collection_error document-unmerged path "$f" "tracked document is unmerged: $f"' "$MUTANT")" -eq 1 ]
-sed 's/collection_error document-unmerged path/collection_error document-unmerged-renamed path/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+[ "$(grep -Fxc '  [ "${entry##* }" = 0 ] || config_error document-unmerged path "$f" "tracked document is unmerged: $f"' "$MUTANT")" -eq 1 ]
+sed 's/config_error document-unmerged path/config_error document-unmerged-renamed path/' "$SOURCE_COMMAND" >"$MUTANT.changed"
 if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
 mv "$MUTANT.changed" "$MUTANT"
 chmod +x "$MUTANT"
@@ -224,11 +270,13 @@ git -C "$R" add src/large.rs
 export DOC_LIMITS_CLASSES='*=1k'
 run --staged
 expect 0 'source file outside ceilings'
+expect_first_line 'notice=documents-checked count=0' 'source file measures nothing'
 
 bytes site/index.html 100000
 git -C "$R" add site/index.html
 run --staged
 expect 0 'website HTML outside ceilings'
+expect_first_line 'notice=documents-checked count=0' 'website HTML measures nothing'
 
 private_command document-selection
 [ ! -L "$MUTANT" ]
@@ -240,7 +288,7 @@ chmod +x "$MUTANT"
 bash -n "$MUTANT"
 SR="$MUTANT"
 run --staged
-must_fail 0 1 'document-selection control: measuring source files fails outside-ceilings row'
+must_fail_first_line 'notice=documents-checked count=0' 'document-selection control: measuring source files fails outside-ceilings row'
 SR="$SOURCE_COMMAND"
 unset DOC_LIMITS_CLASSES
 git -C "$R" rm -qf src/large.rs site/index.html
@@ -335,13 +383,41 @@ bash -n "$MUTANT"
 SR="$MUTANT"
 run --staged
 expect 2 'class-rule-missing'
-expect_first_line 'error=class-rule-missing value=\*/README.md=12k' 'class-rule-missing diagnostic'
-[ "$(grep -c '^  \[ -n "\$rule" \] || config_error class-rule-missing ' "$MUTANT")" -eq 1 ]
-sed 's/^  \[ -n "\$rule" \] || config_error class-rule-missing .*$/  :/' "$MUTANT.changed" >"$MUTANT"
+expect_first_line 'package-error=class-rule-missing value=\*/README.md=12k' 'class-rule-missing diagnostic'
+[ "$(grep -c '^  \[ -n "\$rule" \] || package_error class-rule-missing ' "$MUTANT")" -eq 1 ]
+sed 's/^  \[ -n "\$rule" \] || package_error class-rule-missing .*$/  :/' "$MUTANT.changed" >"$MUTANT"
 if cmp -s "$MUTANT" "$MUTANT.changed"; then exit 1; fi
 bash -n "$MUTANT"
 run --staged
 must_fail 2 1 'class-rule control: dropping the row check fails the class-rule-missing row'
+
+# A malformed shipped class entry is a package defect; the same entry set
+# by the project is the project's policy error.
+private_command shipped-entry
+[ "$(grep -Fxc "README.md=16k${ROW_TAB}readmemd" "$MUTANT")" -eq 1 ]
+sed "s|^README\.md=16k$ROW_TAB|README.md=16$ROW_TAB|" "$SOURCE_COMMAND" >"$MUTANT.changed"
+if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
+cp "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+SR="$MUTANT"
+run --staged
+expect 2 'shipped-entry-invalid'
+expect_first_line 'package-error=class-threshold-invalid value=16' 'a malformed shipped entry is a package defect'
+SR="$SOURCE_COMMAND"
+export DOC_LIMITS_DEFAULT_CLASSES='README.md=16'
+run --staged
+expect 2 'project-default-entry-invalid'
+expect_first_line 'error=class-threshold-invalid value=16' 'the same entry set by the project is a policy error'
+unset DOC_LIMITS_DEFAULT_CLASSES
+[ "$(grep -Fxc '[ "$DEFAULT_CLASSES" != "$SHIPPED_CLASSES" ] || default_refusal=package_error' "$MUTANT")" -eq 1 ]
+sed 's/^\[ "\$DEFAULT_CLASSES" != "\$SHIPPED_CLASSES" \] || default_refusal=package_error$/:/' "$MUTANT.changed" >"$MUTANT"
+if cmp -s "$MUTANT" "$MUTANT.changed"; then exit 1; fi
+bash -n "$MUTANT"
+SR="$MUTANT"
+run --staged
+must_fail_first_line 'package-error=class-threshold-invalid value=16' 'refusal-owner control: a shipped entry refused as policy fails the package-defect row'
+SR="$SOURCE_COMMAND"
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

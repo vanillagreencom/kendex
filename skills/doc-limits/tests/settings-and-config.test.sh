@@ -186,8 +186,8 @@ expect_first_line 'error=class-pattern-invalid setting=DOC_LIMITS_CLASSES' 'inva
 
 private_command invalid-classes
 [ ! -L "$MUTANT" ]
-[ "$(grep -Fxc 'parse_classes() { # SETTING-NAME VALUE — appends entries' "$MUTANT")" -eq 1 ]
-sed 's/parse_classes() { # SETTING-NAME VALUE — appends entries/parse_classes() { # SETTING-NAME VALUE — appends entries\n  return 0/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+[ "$(grep -Fxc 'parse_classes() { # SETTING-NAME VALUE REFUSAL — appends entries; REFUSAL owns a bad entry' "$MUTANT")" -eq 1 ]
+sed 's/parse_classes() { # SETTING-NAME VALUE REFUSAL — appends entries; REFUSAL owns a bad entry/parse_classes() { # SETTING-NAME VALUE REFUSAL — appends entries; REFUSAL owns a bad entry\n  return 0/' "$SOURCE_COMMAND" >"$MUTANT.changed"
 if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
 mv "$MUTANT.changed" "$MUTANT"
 chmod +x "$MUTANT"
@@ -201,8 +201,8 @@ done
 SR="$SOURCE_COMMAND"
 
 private_command class-diagnostic
-[ "$(grep -Fxc '      *) config_error class-threshold-invalid value "$craw" "$name: entry '\''$pair'\'' needs a positive integer with the '\''k'\'' byte suffix" ;;' "$MUTANT")" -eq 1 ]
-sed 's/config_error class-threshold-invalid value "$craw"/config_error class-threshold-renamed value "$craw"/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+[ "$(grep -Fxc '      *) "$refuse" class-threshold-invalid value "$craw" "$name: entry '\''$pair'\'' needs a positive integer with the '\''k'\'' byte suffix" ;;' "$MUTANT")" -eq 1 ]
+sed 's/"$refuse" class-threshold-invalid value "$craw"/"$refuse" class-threshold-renamed value "$craw"/' "$SOURCE_COMMAND" >"$MUTANT.changed"
 if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
 mv "$MUTANT.changed" "$MUTANT"
 chmod +x "$MUTANT"
@@ -411,15 +411,11 @@ R="$REPO_FIXTURE"
 export TMPDIR="$TMP/missing-temp-parent"
 run
 expect 2 'temporary-directory-parent-missing'
-expect_first_line "error=temp-create-failed path=$(printf '%q' "$TMPDIR")" 'temporary-directory diagnostic'
+expect_first_line "host-error=temp-create-failed path=$(printf '%q' "$TMPDIR")" 'temporary-directory diagnostic'
 unset TMPDIR
 
-# The --against rows read REF's sizes from a commit of the index as it stands.
-git -C "$R" -c core.hooksPath=/dev/null commit -q --allow-empty -m fixture
-
 # Git is the real producer of policy lookup, document enumeration, and blob
-# sizes. The index batch is `cat-file --batch-check`; the REF batch passes a
-# format, `cat-file --batch-check=FORMAT`, and takes its own faults.
+# sizes. The index batch is `cat-file --batch-check`.
 REAL_GIT="$(command -v git)"
 export REAL_GIT
 mkdir -p "$TMP/bin"
@@ -442,12 +438,6 @@ case "${GIT_FAULT:-none}" in
   batch-empty-success)
     if [ "${1:-}" = cat-file ] && [ "${2:-}" = --batch-check ]; then cat >/dev/null; exit 0; fi
     ;;
-  against-batch-failure)
-    case "${1:-}:${2:-}" in cat-file:--batch-check=*) "$REAL_GIT" "$@"; exit 9 ;; esac
-    ;;
-  against-batch-empty-success)
-    case "${1:-}:${2:-}" in cat-file:--batch-check=*) cat >/dev/null; exit 0 ;; esac
-    ;;
 esac
 exec "$REAL_GIT" "$@"
 GIT
@@ -455,26 +445,19 @@ chmod +x "$TMP/bin/git"
 export PATH="$TMP/bin:$PATH"
 
 COLLECTION_ASSERTIONS=0
-while IFS='|' read -r name fault mode expected first_line; do
+while IFS='|' read -r name fault expected first_line; do
   export GIT_FAULT="$fault"
-  case "$mode" in
-    staged) run --staged ;;
-    against) run --staged --against HEAD ;;
-    *) printf 'harness: unknown mode %s\n' "$mode" >&2; exit 2 ;;
-  esac
+  run --staged
   expect "$expected" "$name"
   expect_first_line "$first_line" "$name diagnostic"
   COLLECTION_ASSERTIONS=$((COLLECTION_ASSERTIONS + 1))
 done <<'COLLECTION_CASES'
-git-policy-lookup-failure|policy-lookup|staged|2|doc-limits-error=settings-index-query value=9
-git-enumeration-failure|enumeration|staged|2|error=documents-enumeration-failed exit=9
-git-batch-empty-failure|batch-empty-failure|staged|2|error=blob-sizes-read-failed exit=9
-git-batch-failure|batch-complete-failure|staged|2|error=blob-sizes-read-failed exit=9
-empty-successful-batch-response|batch-empty-success|staged|2|error=blob-size-response-incomplete path=AGENTS.md
-git-against-batch-failure|against-batch-failure|against|2|error=against-sizes-read-failed exit=9
-empty-successful-against-batch-response|against-batch-empty-success|against|2|error=against-size-response-incomplete path=AGENTS.md
-collection-restored|none|staged|1|notice=document-over-limit path=AGENTS.md
-against-collection-restored|none|against|1|notice=document-over-limit path=AGENTS.md
+git-policy-lookup-failure|policy-lookup|2|doc-limits-error=settings-index-query value=9
+git-enumeration-failure|enumeration|2|host-error=documents-enumeration-failed exit=9
+git-batch-empty-failure|batch-empty-failure|2|host-error=blob-sizes-read-failed exit=9
+git-batch-failure|batch-complete-failure|2|host-error=blob-sizes-read-failed exit=9
+empty-successful-batch-response|batch-empty-success|2|host-error=blob-size-response-incomplete path=AGENTS.md
+collection-restored|none|1|notice=document-over-limit path=AGENTS.md
 COLLECTION_CASES
 if [ "$COLLECTION_ASSERTIONS" -eq 0 ]; then
   printf 'FAIL: COLLECTION_CASES executed no assertions\n' >&2
@@ -482,8 +465,8 @@ if [ "$COLLECTION_ASSERTIONS" -eq 0 ]; then
 fi
 
 private_command collection-diagnostic
-[ "$(grep -Fxc 'git ls-files -s -z >"$TMP/files.z" 2>/dev/null || collection_error documents-enumeration-failed exit "$?" "could not enumerate tracked documents"' "$MUTANT")" -eq 1 ]
-sed 's/collection_error documents-enumeration-failed exit/collection_error documents-enumeration-renamed exit/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+[ "$(grep -Fxc 'git ls-files -s -z >"$TMP/files.z" 2>/dev/null || host_error documents-enumeration-failed exit "$?" "could not enumerate tracked documents"' "$MUTANT")" -eq 1 ]
+sed 's/host_error documents-enumeration-failed exit/host_error documents-enumeration-renamed exit/' "$SOURCE_COMMAND" >"$MUTANT.changed"
 if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
 mv "$MUTANT.changed" "$MUTANT"
 chmod +x "$MUTANT"
@@ -491,13 +474,26 @@ bash -n "$MUTANT"
 SR="$MUTANT"
 export GIT_FAULT=enumeration
 run --staged
-must_fail_first_line 'error=documents-enumeration-failed exit=9' 'collection diagnostic control: changing the stable key fails enumeration'
+must_fail_first_line 'host-error=documents-enumeration-failed exit=9' 'collection diagnostic control: changing the stable key fails enumeration'
+SR="$SOURCE_COMMAND"
+
+private_command host-level
+[ "$(grep -Fxc '  diagnostic host-error "$1" "$2" "$3" "$4"' "$MUTANT")" -eq 1 ]
+sed 's/^  diagnostic host-error "\$1"/  diagnostic error "$1"/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
+mv "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+SR="$MUTANT"
+export GIT_FAULT=enumeration
+run --staged
+must_fail_first_line 'host-error=documents-enumeration-failed exit=9' 'host-level control: a host failure refused as policy fails enumeration'
 SR="$SOURCE_COMMAND"
 
 private_command enumeration-guard
 [ ! -L "$MUTANT" ]
-[ "$(grep -Fxc 'git ls-files -s -z >"$TMP/files.z" 2>/dev/null || collection_error documents-enumeration-failed exit "$?" "could not enumerate tracked documents"' "$MUTANT")" -eq 1 ]
-sed 's/^git ls-files -s -z >"\$TMP\/files.z" 2>\/dev\/null || collection_error documents-enumeration-failed exit "\$?" "could not enumerate tracked documents"$/git ls-files -s -z >"$TMP\/files.z" 2>\/dev\/null || :/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+[ "$(grep -Fxc 'git ls-files -s -z >"$TMP/files.z" 2>/dev/null || host_error documents-enumeration-failed exit "$?" "could not enumerate tracked documents"' "$MUTANT")" -eq 1 ]
+sed 's/^git ls-files -s -z >"\$TMP\/files.z" 2>\/dev\/null || host_error documents-enumeration-failed exit "\$?" "could not enumerate tracked documents"$/git ls-files -s -z >"$TMP\/files.z" 2>\/dev\/null || :/' "$SOURCE_COMMAND" >"$MUTANT.changed"
 if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
 mv "$MUTANT.changed" "$MUTANT"
 chmod +x "$MUTANT"
@@ -509,8 +505,8 @@ must_fail 2 0 'collection table control: bypassing enumeration failure fails git
 
 private_command batch-guard
 [ ! -L "$MUTANT" ]
-[ "$(grep -Fxc '  || collection_error blob-sizes-read-failed exit "$?" "could not read document blob sizes"' "$MUTANT")" -eq 1 ]
-sed 's/^  || collection_error blob-sizes-read-failed exit "\$?" "could not read document blob sizes"$/  || :/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+[ "$(grep -Fxc '  || host_error blob-sizes-read-failed exit "$?" "could not read document blob sizes"' "$MUTANT")" -eq 1 ]
+sed 's/^  || host_error blob-sizes-read-failed exit "\$?" "could not read document blob sizes"$/  || :/' "$SOURCE_COMMAND" >"$MUTANT.changed"
 if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
 mv "$MUTANT.changed" "$MUTANT"
 chmod +x "$MUTANT"
@@ -519,19 +515,6 @@ SR="$MUTANT"
 export GIT_FAULT=batch-complete-failure
 run --staged
 must_fail 2 1 'collection table control: bypassing batch status fails git-batch-failure'
-
-private_command against-batch-guard
-[ ! -L "$MUTANT" ]
-[ "$(grep -Fxc '    || collection_error against-sizes-read-failed exit "$?" "could not read document sizes in $AGAINST_REF"' "$MUTANT")" -eq 1 ]
-sed 's/^    || collection_error against-sizes-read-failed exit "\$?" "could not read document sizes in \$AGAINST_REF"$/    || :/' "$SOURCE_COMMAND" >"$MUTANT.changed"
-if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
-mv "$MUTANT.changed" "$MUTANT"
-chmod +x "$MUTANT"
-bash -n "$MUTANT"
-SR="$MUTANT"
-export GIT_FAULT=against-batch-failure
-run --staged --against HEAD
-must_fail 2 1 'collection table control: bypassing REF batch status fails git-against-batch-failure'
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -42,8 +42,8 @@ fx_clean() { armed clean; stage a.txt 'hello\n'; }
 fx_marker() { armed marker; stage_marker; }
 fx_header() { armed header; stage c.txt 'ok\n'; }
 fx_header_ok() { armed header-ok; stage c.txt 'ok\n'; }
-fx_over_limit() { armed over-limit; settings 'DOC_LIMITS_CLASSES = "*.md=1k"'; stage big.md "$(head -c 1025 /dev/zero | tr '\0' x)"; }
-fx_at_limit() { armed at-limit; settings 'DOC_LIMITS_CLASSES = "*.md=1k"'; stage big.md "$(head -c 1024 /dev/zero | tr '\0' x)"; }
+fx_over_limit() { armed over-limit; settings 'DOC_LIMITS_CLASSES = "*.md=1k"'; stage AGENTS.md "$(head -c 1025 /dev/zero | tr '\0' x)"; }
+fx_at_limit() { armed at-limit; settings 'DOC_LIMITS_CLASSES = "*.md=1k"'; stage AGENTS.md "$(head -c 1024 /dev/zero | tr '\0' x)"; }
 fx_dangling_doc_limits() { armed dangling-doc-limits; stage a.txt 'hello\n'; rm "$R/.agents/skills/doc-limits"; ln -s "$TMP/no-such-skill" "$R/.agents/skills/doc-limits"; }
 fx_absent_doc_limits() { armed absent-doc-limits; stage a.txt 'hello\n'; rm "$R/.agents/skills/doc-limits"; }
 run_rows \
@@ -76,13 +76,13 @@ fx_hidden_growth() {
   R="$(new_repo hidden-growth)"
   printf '.agents/\n' >"$R/.gitignore"
   printf '[env]\nDOC_LIMITS_CLASSES = "*.md=1k"\n' >"$R/kendex.settings.toml"
-  head -c 1024 /dev/zero | tr '\0' x >"$R/f.md"
+  head -c 1024 /dev/zero | tr '\0' x >"$R/AGENTS.md"
   git -C "$R" add -A
   "$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true
   seed
-  head -c 1025 /dev/zero | tr '\0' x >"$R/f.md"
-  git -C "$R" add f.md
-  head -c 1024 /dev/zero | tr '\0' x >"$R/f.md"
+  head -c 1025 /dev/zero | tr '\0' x >"$R/AGENTS.md"
+  git -C "$R" add AGENTS.md
+  head -c 1024 /dev/zero | tr '\0' x >"$R/AGENTS.md"
 }
 run_rows \
   "an unstaged settings edit cannot switch a check off|fx_unstaged_checks||commit|feat: add b|rc=1 $BLOCKED|" \

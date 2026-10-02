@@ -35,9 +35,7 @@
 #      a lane dropped from one aggregate alone and an event-held job held to
 #      another condition. The doc-limits and todo-ban steps run on a pull
 #      request alone and the bot-instructions check beside them on both
-#      events; doc-limits passes --against HEAD^1 from a checkout deep
-#      enough to hold HEAD^1. Arms take each scan's event condition off,
-#      and plant a shallow checkout and a dropped flag.
+#      events. Arms take each scan's event condition off.
 #   3. the aggregate: a lane the class authorized may skip; one it did not
 #      is rejected, and so is a dead classifier, a job named twice and a
 #      helper that is not there.
@@ -398,26 +396,24 @@ done
 DOC_LIMITS=skills/doc-limits/scripts/doc-limits
 TODO_BAN=skills/commit-guards/scripts/todo-ban
 BOT_CHECK=candidate/skills/bot-instructions/scripts/bot-instructions
-step_field() { # WORKFLOW COMMAND FIELD — the if (`${{ }}` stripped, or none) or the run arguments (args) of the step whose run line names COMMAND
-  COMMAND="$2" FIELD="$3" awk '
+step_if() { # WORKFLOW COMMAND — the if (`${{ }}` stripped, or none) of the step whose run line names COMMAND
+  COMMAND="$2" awk '
     function flush() {
-      if (hit) printf "%s", (ENVIRON["FIELD"] == "if" ? (cond == "" ? "none" : cond) : args)
-      hit = 0; cond = ""; args = ""
+      if (hit) printf "%s", (cond == "" ? "none" : cond)
+      hit = 0; cond = ""
     }
     /^  [A-Za-z0-9_-]+:/ || /^      - / { flush() }
     /^        if: / {
       cond = $0; sub(/^        if: */, "", cond)
       if (substr(cond, 1, 3) == "${{") { cond = substr(cond, 4); sub(/}}[ ]*$/, "", cond) }
     }
-    /^ +run: / && index($0, ENVIRON["COMMAND"]) > 0 {
-      hit = 1; args = $0; sub(/^ +run: /, "", args); args = substr(args, length(ENVIRON["COMMAND"]) + 2)
-    }
+    /^ +run: / && index($0, ENVIRON["COMMAND"]) > 0 { hit = 1 }
     END { flush() }
   ' "$1"
 }
 step_runs() { # WORKFLOW COMMAND EVENT — yes, no, or the evaluator's refusal
   local expr out
-  expr="$(step_field "$1" "$2" if)"
+  expr="$(step_if "$1" "$2")"
   [ -n "$expr" ] || { printf 'no-step'; return 0; }
   [ "$expr" != none ] || { printf 'yes'; return 0; }
   out="$(gh_eval value "$(jq -cn --arg e "$3" '{github: {event_name: $e}}')" "$expr")"
@@ -458,32 +454,6 @@ done <<ROWS
 doc-limits (document byte ceilings)|$DOC_LIMITS
 todo-ban (index-wide work-marker scan)|$TODO_BAN
 ROWS
-
-# doc-limits measures growth from HEAD^1, the merge commit's first parent,
-# which only a checkout of depth 2 or more holds. The run line is expanded as
-# the runner's shell expands it.
-checkout_depth() { # WORKFLOW JOB — fetch-depth of the job's actions/checkout step, or none
-  local depth
-  depth="$(awk -v job="$2" '
-    /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == job ":"); next }
-    in_job && /^      - / { in_co = ($0 ~ /uses: actions\/checkout@/) }
-    in_job && in_co && /^          fetch-depth: / { print $2 }
-  ' "$1")"
-  printf '%s' "${depth:-none}"
-}
-doc_limits_argv() { # WORKFLOW — the step's arguments, each as <arg>
-  ARGS="$(step_field "$1" "$DOC_LIMITS" args)" bash -c 'eval "set -- $ARGS"; [ "$#" -eq 0 ] || printf "<%s>" "$@"'
-}
-DOC_LIMITS_JOB="$(job_of_run "$WORKFLOW" "$DOC_LIMITS")"
-check "the doc-limits job checks out two commits, the merge commit and HEAD^1" "2" \
-  "$(checkout_depth "$WORKFLOW" "$DOC_LIMITS_JOB")"
-check "doc-limits runs with --against HEAD^1" "<--against><HEAD^1>" "$(doc_limits_argv "$WORKFLOW")"
-
-plant "$WORKFLOW" "          fetch-depth: 2" "" "$TMP/wf-shallow.yml" "$DOC_LIMITS_JOB"
-check "must-fail: a doc-limits checkout without fetch-depth 2 is named" "none" \
-  "$(checkout_depth "$TMP/wf-shallow.yml" "$DOC_LIMITS_JOB")"
-plant "$WORKFLOW" "$DOC_LIMITS --against HEAD^1" "$DOC_LIMITS" "$TMP/wf-no-against.yml" "$DOC_LIMITS_JOB"
-check "must-fail: a doc-limits step without --against passes no flag" "" "$(doc_limits_argv "$TMP/wf-no-against.yml")"
 
 # --- 2a. The one context ---------------------------------------------------
 # `CI` is the aggregate context the organization standard has every repository

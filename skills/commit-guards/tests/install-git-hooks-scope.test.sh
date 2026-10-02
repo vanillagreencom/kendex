@@ -137,7 +137,7 @@ fx_project_root() {
   "$R/sub/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true
   printf 'sub/\n' >"$R/.gitignore"
   settings 'DOC_LIMITS_CLASSES = "*.md=1k"'
-  stage big.md "$(head -c 1025 /dev/zero | tr '\0' x)"
+  stage AGENTS.md "$(head -c 1025 /dev/zero | tr '\0' x)"
 }
 SUB_SCRIPTS="<repo>/sub/.agents/skills/commit-guards/scripts"
 # A copy installed outside every skill root finds its siblings beside
@@ -152,7 +152,7 @@ fx_vendored() {
   "$R/vendor/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true
   printf 'vendor/\n' >"$R/.gitignore"
   settings 'DOC_LIMITS_CLASSES = "*.md=1k"'
-  stage big.md "$(head -c 1025 /dev/zero | tr '\0' x)"
+  stage AGENTS.md "$(head -c 1025 /dev/zero | tr '\0' x)"
 }
 VENDOR_SCRIPTS="<repo>/vendor/commit-guards/scripts"
 CLAUDE_SCRIPTS="<repo>/.claude/skills/commit-guards/scripts"

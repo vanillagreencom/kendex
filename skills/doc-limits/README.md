@@ -17,7 +17,7 @@ Requires Git, Bash, jq, the commit-guards skill and standard POSIX tools. Bash 3
 - Apply project limits by path pattern.
 - Exclude generated files through the render inventory and other exceptions through reasoned rows.
 - Check staged documents with staged policy.
-- Fail a document a pull request grows to within a margin of its limit.
+- Fail the check for an `AGENTS.md` or `SKILL.md` over its limit, and warn for any other document over its limit.
 
 ## How it works
 
@@ -25,7 +25,7 @@ The checker selects tracked Markdown documents and HTML files under `docs/`. It 
 
 ## Settings
 
-Set project values in `kendex.settings.toml` under `[env]`. Local overrides use `.kendex/settings.toml` or `.env.local`. Process values have priority. `DOC_LIMITS_MARGIN_PCT` sets the pull request growth margin as a percent of each limit. `doc-limits --help` lists the settings and flags.
+Set project values in `kendex.settings.toml` under `[env]`. Local overrides use `.kendex/settings.toml` or `.env.local`. Process values have priority. `doc-limits --help` lists the settings and flags.
 
 ## Path classes
 

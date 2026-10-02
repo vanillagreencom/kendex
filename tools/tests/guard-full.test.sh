@@ -127,71 +127,44 @@ fi
 rm -f "$R/tools/planted.sh"
 
 FULL_GUARD=1
-echo "=== full validation checks document growth from the branch's merge base ==="
-# A lane can start with a document already in the margin. Only its own
-# growth must fail, even when origin/main later grows the same document.
+echo "=== full validation runs the ceiling check, and no growth check ==="
+# The merge base with origin/main resolves, and a document grown from it to
+# its ceiling passes: completion judges the ceiling alone.
 # The Bash 3.2 container uses host-owned storage, outside the fixture's cleanup.
 GUARD_TEST_ENV=(-i "PATH=$PATH" "HOME=$HOME")
 git -C "$R" config gc.auto 0
 git -C "$R" config maintenance.auto false
-mkdir -p "$R/docs"
-printf '%1005s' '' >"$R/docs/growth.md"
-git -C "$R" add docs/growth.md
+mkdir -p "$R/pkg"
+printf '%1005s' '' >"$R/pkg/AGENTS.md"
+git -C "$R" add pkg/AGENTS.md
 git -C "$R" commit -q -m "chore: document at branch point"
-GROWTH_BASE="$(git -C "$R" rev-parse HEAD)"
-git -C "$R" checkout -q -b growth-main
-printf '%1007s' '' >"$R/docs/growth.md"
-git -C "$R" add docs/growth.md
-git -C "$R" commit -q -m "chore: base branch grows independently"
 git -C "$R" update-ref refs/remotes/origin/main HEAD
-git -C "$R" checkout -q -b growth-lane "$GROWTH_BASE"
-run_guard DOC_LIMITS_SETTINGS_FILE=/dev/null DOC_LIMITS_CLASSES=docs/growth.md=1k
-[ "$RC" -eq 0 ] && [[ "$OUT" != *"notice=document-near-limit"* ]] \
-  && [[ "$OUT" == *"notice=documents-checked"* ]] \
-  && ok "the unchanged document inside the margin passes completion" \
-  || bad "the unchanged document inside the margin passes completion" "rc=$RC out=$OUT"
-printf '%1006s' '' >"$R/docs/growth.md"
-git -C "$R" add docs/growth.md
-run_guard DOC_LIMITS_SETTINGS_FILE=/dev/null DOC_LIMITS_CLASSES=docs/growth.md=1k
-[ "$RC" -eq 1 ] && [[ "$OUT" == *"notice=document-near-limit path=docs/growth.md"* ]] \
+printf '%1024s' '' >"$R/pkg/AGENTS.md"
+git -C "$R" add pkg/AGENTS.md
+run_guard DOC_LIMITS_SETTINGS_FILE=/dev/null DOC_LIMITS_CLASSES=pkg/AGENTS.md=1k
+[ "$RC" -eq 0 ] && [[ "$OUT" == *"notice=documents-checked"* ]] \
+  && ok "a document grown to its ceiling from the merge base passes completion" \
+  || bad "a document grown to its ceiling from the merge base passes completion" "rc=$RC out=$OUT"
+printf '%1025s' '' >"$R/pkg/AGENTS.md"
+git -C "$R" add pkg/AGENTS.md
+run_guard DOC_LIMITS_SETTINGS_FILE=/dev/null DOC_LIMITS_CLASSES=pkg/AGENTS.md=1k
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"notice=document-over-limit path=pkg/AGENTS.md"* ]] \
   && [[ "$OUT" == *"guard: doc-limits=1"* ]] \
-  && ok "completion rejects staged, uncommitted growth inside the margin against the branch point, not the base tip" \
-  || bad "completion rejects staged, uncommitted growth inside the margin against the branch point, not the base tip" "rc=$RC out=$OUT"
-growth_matches="$(grep -cFx '    doc_limits_args=(--against "$suites_base")' "$GUARD")" \
-  || { echo 'growth control: argument match failed' >&2; exit 1; }
-[ "$growth_matches" -eq 1 ] \
-  || { echo 'growth control: argument edit has no unique match' >&2; exit 1; }
-if mutant_guard 's/doc_limits_args=(--against "\$suites_base")/doc_limits_args=() # --against "$suites_base"/'; then
-  GUARD="$MUTANT_TOOLS/guard" run_guard DOC_LIMITS_SETTINGS_FILE=/dev/null DOC_LIMITS_CLASSES=docs/growth.md=1k
-  [ "$RC" -eq 0 ] && [[ "$OUT" != *"notice=document-near-limit"* ]] \
-    && [[ "$OUT" == *"notice=documents-checked"* ]] \
-    && ok "control: without --against the growth rejection assertion turns red" \
-    || bad "control: without --against the growth rejection assertion turns red" "rc=$RC out=$OUT"
+  && ok "a load-point document over its ceiling reds completion" \
+  || bad "a load-point document over its ceiling reds completion" "rc=$RC out=$OUT"
+doc_limits_matches="$(grep -cFx '  "$TOOLS_DIR/../.agents/skills/doc-limits/scripts/doc-limits" || say doc-limits "$?"' "$GUARD")" \
+  || { echo 'ceiling control: call match failed' >&2; exit 1; }
+[ "$doc_limits_matches" -eq 1 ] \
+  || { echo 'ceiling control: call edit has no unique match' >&2; exit 1; }
+if mutant_guard 's#^  "\$TOOLS_DIR/\.\./\.agents/skills/doc-limits/scripts/doc-limits" || say doc-limits "\$?"$#  :#'; then
+  GUARD="$MUTANT_TOOLS/guard" run_guard DOC_LIMITS_SETTINGS_FILE=/dev/null DOC_LIMITS_CLASSES=pkg/AGENTS.md=1k
+  [ "$RC" -eq 0 ] && [[ "$OUT" != *"notice=document-over-limit"* ]] \
+    && ok "control: without the ceiling call the over-limit document passes completion" \
+    || bad "control: without the ceiling call the over-limit document passes completion" "rc=$RC out=$OUT"
 else
-  bad "control: the growth argument could not be removed from a guard copy"
+  bad "control: the ceiling call could not be removed from a guard copy"
 fi
-growth_tree="$(git -C "$R" rev-parse "$GROWTH_BASE^{tree}")"
-unrelated_base="$(git -C "$R" commit-tree "$growth_tree" -m "chore: unrelated base")"
-for fallback in missing unrelated; do
-  case "$fallback" in
-    missing) git -C "$R" update-ref -d refs/remotes/origin/main ;;
-    unrelated) git -C "$R" update-ref refs/remotes/origin/main "$unrelated_base" ;;
-  esac
-  run_guard DOC_LIMITS_SETTINGS_FILE=/dev/null DOC_LIMITS_CLASSES=docs/growth.md=1k
-  [ "$RC" -eq 0 ] && [[ "$OUT" == *"guard-note: doc-limits-growth=skipped"* ]] \
-    && [[ "$OUT" == *"notice=documents-checked"* ]] \
-    && ok "$fallback origin/main: completion keeps the bare ceiling check and reports skipped growth" \
-    || bad "$fallback origin/main: completion keeps the bare ceiling check and reports skipped growth" "rc=$RC out=$OUT"
-done
 git -C "$R" update-ref -d refs/remotes/origin/main
-printf '%1025s' '' >"$R/docs/growth.md"
-git -C "$R" add docs/growth.md
-run_guard DOC_LIMITS_SETTINGS_FILE=/dev/null DOC_LIMITS_CLASSES=docs/growth.md=1k
-[ "$RC" -eq 1 ] && [[ "$OUT" == *"notice=document-over-limit path=docs/growth.md"* ]] \
-  && [[ "$OUT" == *"guard: doc-limits=1"* ]] \
-  && ok "the no-base fallback still rejects a document over its ceiling" \
-  || bad "the no-base fallback still rejects a document over its ceiling" "rc=$RC out=$OUT"
-git -C "$R" checkout -q -f main
 reset_world
 unset GUARD_TEST_ENV
 

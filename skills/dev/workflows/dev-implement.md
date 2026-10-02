@@ -190,12 +190,7 @@ Run preflight when installed (`test -x .agents/skills/preflight/scripts/prefligh
 Use the same orch job runner route for doc-limits when installed (`test -x .agents/skills/doc-limits/scripts/doc-limits`):
 
 ```bash
-if doc_limits_base=$(git merge-base HEAD origin/main); then
-  .agents/skills/doc-limits/scripts/doc-limits --against "$doc_limits_base"
-else
-  printf '%s\n' 'doc-limits: growth check did not run: no merge base with origin/main'
-  .agents/skills/doc-limits/scripts/doc-limits
-fi
+.agents/skills/doc-limits/scripts/doc-limits
 ```
 
 Run the delegation's required verification commands through their route in [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation). Then run `DEV_VALIDATE_CMD` through `dev-validate-run`. Record the full validation result in the completion artifact for submit to reuse on the same contents.

@@ -118,21 +118,21 @@ scenario() { # VAR NAME [SKILLS-SOURCE] — VAR gets the repo path
     >"$dir/kendex.settings.toml"
   q "$dir/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$dir"
 
-  block body 60 >"$dir/big.md"
-  q git -C "$dir" add kendex.settings.toml .kendex-generated.json big.md
+  block body 60 >"$dir/AGENTS.md"
+  q git -C "$dir" add kendex.settings.toml .kendex-generated.json AGENTS.md
   q git -C "$dir" commit -q -m "feat: seed the shared document"
   q git -C "$dir" push -q origin main
   q git -C "$dir" branch topic
 
   q git -C "$dir" checkout -q topic
-  block tail 30 >>"$dir/big.md"
-  q git -C "$dir" add big.md
+  block tail 30 >>"$dir/AGENTS.md"
+  q git -C "$dir" add AGENTS.md
   q git -C "$dir" commit -q -m "feat: add the branch's own tail"
 
   q git -C "$dir" checkout -q main
-  { block head 30; cat -- "$dir/big.md"; } >"$dir/big.md.next"
-  mv -f -- "$dir/big.md.next" "$dir/big.md"
-  q git -C "$dir" add big.md
+  { block head 30; cat -- "$dir/AGENTS.md"; } >"$dir/AGENTS.md.next"
+  mv -f -- "$dir/AGENTS.md.next" "$dir/AGENTS.md"
+  q git -C "$dir" add AGENTS.md
   q git -C "$dir" commit -q -m "feat: add the shared preamble"
   q git -C "$dir" push -q origin main
 
@@ -152,7 +152,7 @@ printf '%s\n' "doc-limits-push-scope"
 REBASED=""
 scenario REBASED rebased
 assert_eq "a branch rebased into a document-ceiling breach is refused at push, naming the lane and the document" \
-  "rc=1 pre-push: step=doc-limits;notice=document-over-limit path=big.md;notice=document-rule rule=docs-writing/SKILL.md#per-file-type;notice=documents-over-limit count=1;pre-push: step=base:<oid>;pre-push: result=1" \
+  "rc=1 pre-push: step=doc-limits;notice=document-over-limit path=AGENTS.md;notice=document-rule rule=docs-writing/SKILL.md#per-file-type;notice=documents-over-limit count=1;pre-push: step=base:<oid>;pre-push: result=1" \
   "$(push_topic "$REBASED")"
 
 # The must-fail control: the same rebased state pushed by a copy of the chain

@@ -1,0 +1,1 @@
+- doc-limits: only an `AGENTS.md` or `SKILL.md` over its limit fails; other documents warn. The growth margin is gone: `--against` warns and does nothing until 2.0.

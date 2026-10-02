@@ -49,9 +49,7 @@ count_lines() { # TEXT — the non-empty lines in TEXT, a scan finding's value
 finding_text() { # KEY VALUE — the English for one key, and the whole of it
   case "$1" in
     doc-limits)
-      echo "the document byte-ceiling or growth check refused the working tree; its own report above names the cause." ;;
-    doc-limits-growth)
-      echo "the growth check did not run: no merge base with origin/main; the bare doc-limits check still ran." ;;
+      echo "the document byte-ceiling check refused the working tree; its own report above names the cause." ;;
     bot-instructions)
       echo "the bot instruction check refused the working tree; its own report above names each file." ;;
     decision-ids)
@@ -399,16 +397,10 @@ lane_on() { # LANE — tools/ci-job-set's name for it
 
 reported_lanes=guard-scans
 
-# Completion checks growth against the same branch point as suite selection.
-# The commit chain's staged ceiling check does not measure branch growth.
+# The commit chain's ceiling check reads the index; completion reads the
+# working tree.
 if [ "$MODE" = full ]; then
-  doc_limits_args=()
-  if [ "$base_resolved" -eq 1 ]; then
-    doc_limits_args=(--against "$suites_base")
-  else
-    note doc-limits-growth skipped
-  fi
-  "$TOOLS_DIR/../.agents/skills/doc-limits/scripts/doc-limits" ${doc_limits_args[@]+"${doc_limits_args[@]}"} || say doc-limits "$?"
+  "$TOOLS_DIR/../.agents/skills/doc-limits/scripts/doc-limits" || say doc-limits "$?"
 fi
 
 # The staged bot-instructions check is a lane of the commit-guards chain that

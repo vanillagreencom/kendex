@@ -309,13 +309,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      # Depth 2 carries the pull request merge commit's first parent, the
-      # base-branch tip doc-limits measures growth against.
       - uses: actions/checkout@v4
         with:
           path: candidate
           persist-credentials: false
-          fetch-depth: 2
       - id: bot-instructions-check
         run: candidate/skills/bot-instructions/scripts/bot-instructions check --repo candidate --spec candidate/skills/bot-instructions
       # The two whole-tree content scans live in this job because every class
@@ -328,17 +325,10 @@ jobs:
       # answers for them, and a merge group is ejected only for a defect. The
       # bot-instructions check above runs on both events, because a stale
       # render reviews every later pull request under rules nobody chose.
-      #
-      # doc-limits also fails a document the pull request grows into the
-      # margin under its ceiling (DOC_LIMITS_MARGIN_PCT). Growth measured from
-      # HEAD^1 cannot see a concurrent change to the classes or the exclusions,
-      # or another queued pull request's growth, so a document can still land
-      # on main over its ceiling; the next pull request's doc-limits step
-      # names it.
       - name: doc-limits (document byte ceilings)
         if: always() && github.event_name == 'pull_request'
         working-directory: candidate
-        run: skills/doc-limits/scripts/doc-limits --against HEAD^1
+        run: skills/doc-limits/scripts/doc-limits
       # The commit lane runs todo-ban --staged and judges what a commit adds;
       # this scan takes the rest, in every blob git reads as text.
       - name: todo-ban (index-wide work-marker scan)
