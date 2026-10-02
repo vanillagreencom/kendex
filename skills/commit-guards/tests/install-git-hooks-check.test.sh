@@ -24,6 +24,7 @@ REARM=""
 REARM_WT=""
 CND="commit-guards git hooks: unknown="
 UNVERIFIED="helper-unverified=kendex-guards"
+MOVED="helper-moved=kendex-guards"
 STUB='#!/bin/sh\n# kendex commit-guards git hooks\nexit 0\n'
 # A current version does not license a stub: its bytes must still verify.
 STAMP="$(sed -n '/^# kendex-guards-helper-version=/p' "$R/.git/hooks/kendex-guards")"
@@ -193,6 +194,78 @@ assert_eq "a worktree whose push lane is gone says pushes are blocked" \
 assert_eq "control: one whose commit lane is gone still says commits are blocked" \
   "commit" "$(verb_said pre-commit)"
 
+echo "=== one project delivered as copies: each copy reads the helper another armed ==="
+# A project delivered to several harnesses holds the package under each skill
+# root, and the copy that arms the repository need not be the copy that checks
+# it. The same project's copy of the same package version is this project's;
+# a copy of another version is not, and neither is another project's copy
+# that the baked project_rel cannot tell apart from this one.
+copied_roots() { # NAME ROOT — the package under .agents and .claude, armed from ROOT
+  R="$(new_repo "$1")"
+  mkdir -p "$R/.claude/skills"
+  cp -R "$GG_SKILL_TEMPLATE" "$R/.claude/skills/commit-guards"
+  "$R/$2/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true
+}
+fx_copied_from_claude() { copied_roots "${1:-copied-from-claude}" .claude; }
+fx_copied_from_agents() { copied_roots "${1:-copied-from-agents}" .agents; INSTALLER_ROOT=.claude/skills; }
+fx_copied_version() { copied_roots "${1:-copied-version}" .claude; edit "$R/.claude/skills/commit-guards/SKILL.md" 's|^  version: ".*"$|  version: "0.0.1"|'; }
+fx_copied_moved() { # [NAME]
+  local name="${1:-copied-moved}"
+  copied_roots "$name-from" .claude
+  mv "$R" "$TMP/$name-to"
+  R="$TMP/$name-to"
+}
+fx_copied_wt() {
+  R="$(new_repo copied-wt)"
+  mkdir -p "$R/.claude/skills"
+  cp -R "$GG_SKILL_TEMPLATE" "$R/.claude/skills/commit-guards"
+  git -C "$R" add -A
+  seed
+  "$R/.claude/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true
+  W="$TMP/copied-wt-wt"
+  git -C "$R" worktree add -q -b copied-wt "$W"
+}
+# Project B at sub/, asked by the main checkout's installer about a linked
+# worktree it does not stand in, bakes the same empty project_rel project A
+# armed with: only where B's project stands tells the two apart.
+fx_other_project_copy() { # [NAME]
+  local name="${1:-other-project-copy}"
+  armed "$name"
+  mkdir "$R/sub"
+  cp -R "$R/.agents" "$R/sub/.agents"
+  git -C "$R" add -A
+  seed
+  W="$TMP/$name-wt"
+  git -C "$R" worktree add -q -b "$name" "$W"
+  INSTALLER_DIR="$R/sub"
+}
+# Must-fail controls edit the checking copy's hook-check.sh, never the tracked
+# file: each keeps the matched line and drops the behaviour one rule holds.
+mutated() { # FIXTURE NAME SED-EXPRESSION — the fixture, then its checking copy edited
+  "$1" "$2"
+  edit "${INSTALLER_DIR:-${W:-$R}}/${INSTALLER_ROOT:-.agents/skills}/commit-guards/scripts/lib/hook-check.sh" "$3"
+}
+UNWIDENED='s#^  \[ "\$there_rel" != "\$here_rel" \] || return 0$#  [ "$there_rel" = "$here_rel" ] || return 1#'
+fx_unwidened() { mutated fx_copied_from_claude unwidened "$UNWIDENED"; }
+fx_unwidened_agents() { mutated fx_copied_from_agents unwidened-agents "$UNWIDENED"; }
+fx_unkept() { mutated fx_copied_from_claude unkept 's#^  \[ "\$rel" != "\$INSTALLED_SCRIPTS_REL" \] || return 0$#  [ "$rel" != "$INSTALLED_SCRIPTS_REL" ] || return 0; return 1#'; }
+fx_unkept_moved() { mutated fx_copied_moved unkept-moved 's#^  \[ "\$rel" != "\$INSTALLED_SCRIPTS_REL" \] || return 0$#  [ "$rel" != "$INSTALLED_SCRIPTS_REL" ] || return 0; return 1#'; }
+fx_any_place() { mutated fx_other_project_copy any-place 's#^  \[ "\$there_place" = "\$here_place" \] || return 1$#  [ "$there_place" = "$there_place" ] || return 1#'; }
+fx_any_version() { mutated fx_copied_version any-version 's#^  \[ "\$there_id" = "\$here_id" \]$#  [ "$there_id" = "$there_id" ]#'; }
+run_rows \
+  "a helper armed from the .claude copy reads armed from the .agents copy|fx_copied_from_claude||check||rc=0 $ARMED_CHECK|" \
+  "a helper armed from the .agents copy reads armed from the .claude copy|fx_copied_from_agents||check||rc=0 $ARMED_CHECK|" \
+  "a linked worktree's .agents copy reads the helper the main checkout's .claude copy armed|fx_copied_wt||check-wt||rc=0 $ARMED_CHECK|" \
+  "a copy of another package version is not this project's|fx_copied_version||check||rc=2 $CND$UNVERIFIED|" \
+  "another project's copy is not this project's, though project_rel matches|fx_other_project_copy||check-wt||rc=2 $CND$UNVERIFIED|" \
+  "a moved copy-delivery checkout is drift, not unverifiable|fx_copied_moved||check||rc=1 $NA$MOVED$REARM|" \
+  "must-fail: the same-path comparison refuses the other copy|fx_unwidened||check||rc=2 $CND$UNVERIFIED|" \
+  "must-fail: and refuses it from the .claude copy too|fx_unwidened_agents||check||rc=2 $CND$UNVERIFIED|" \
+  "must-fail: holding the recorded place to this copy reads the other copy as drift|fx_unkept||check||rc=1 $NA$MOVED$REARM|" \
+  "must-fail: and reads a moved copy-delivery checkout as unverifiable|fx_unkept_moved||check||rc=2 $CND$UNVERIFIED|" \
+  "must-fail: ignoring where the project stands reads another project's copy as consent|fx_any_place||check-wt||rc=0 $ARMED_CHECK|" \
+  "must-fail: ignoring the package version reads a copy of another version as this project's|fx_any_version||check||rc=0 $ARMED_CHECK|"
+
 echo "=== the helper's head: one per-checkout value, held to the quoter that wrote it ==="
 # The head is compared around the one value that may differ between
 # checkouts, and that value has to be one this installer's own quoter would
@@ -260,7 +333,6 @@ fx_rel_elsewhere() { armed rel-elsewhere; edit "$R/.git/hooks/kendex-guards" "s|
 fx_rel_payload() { armed rel-payload; edit "$R/.git/hooks/kendex-guards" "s|^installed_scripts_rel='.*'\$|installed_scripts_rel='x'; echo PWNED >\\&2; :'|"; }
 fx_moved_rel_elsewhere() { armed moved-rel-from; mv "$R" "$TMP/moved-rel-to"; R="$TMP/moved-rel-to"; edit "$R/.git/hooks/kendex-guards" "s|^installed_scripts_rel='.*'\$|installed_scripts_rel='elsewhere/scripts'|"; }
 fx_moved_rearmed() { fx_moved_checkout; "$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true; }
-MOVED="helper-moved=kendex-guards"
 run_rows \
   "a checkout moved away from the directory its helper names is drift|fx_moved_checkout||check||rc=1 $NA$MOVED$REARM|helper=$X:ours['<root>/moved-from/.agents/skills/commit-guards/scripts'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
   "a gone directory whose recorded place is not this project's is unverifiable|fx_moved_rel_elsewhere||check||rc=2 $CND$UNVERIFIED|" \

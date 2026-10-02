@@ -79,11 +79,11 @@ GG_PER_CHECKOUT_VAR='SCRIPT_DIR'
 GG_PER_CHECKOUT_MARK='@@commit-guards-per-checkout@@'
 
 # The scripts directory relative to the armed tree's top level. Every
-# checkout of the project bakes the same value, so it does not excuse a
-# difference the way the per-checkout value does. It is lifted out all the
-# same, because a value that no longer matches the tree that armed the
-# repository is drift for the re-arm to repair, where a head that is not
-# ours at all is unverifiable.
+# checkout of the project bakes the same value for the same copy, so it
+# does not excuse a difference the way the per-checkout value does. It is
+# lifted out all the same, because a value that names no copy this project
+# keeps is drift for the re-arm to repair, where a head that is not ours at
+# all is unverifiable.
 GG_SCRIPTS_REL_VAR='INSTALLED_SCRIPTS_REL'
 GG_SCRIPTS_REL_MARK='@@commit-guards-scripts-rel@@'
 

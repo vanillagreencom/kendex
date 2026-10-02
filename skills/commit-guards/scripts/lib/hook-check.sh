@@ -61,12 +61,34 @@ gg_checkout_place() { # COMMONVAR RELVAR DIR -> 0 when both answers are had
   eval "$__c=\$__common"
 }
 
-# Whether a baked scripts directory is THIS project's, in another checkout of
-# this repository.
+# The package a scripts directory belongs to: the `name:` line and the
+# `metadata:` block's `version:` line of the SKILL.md beside it, verbatim.
+# Nonzero when the file, its frontmatter or either line is missing, so an
+# unreadable package never compares equal to another unreadable one.
+gg_package_id() { # VAR SCRIPTS_DIR -> VAR gets the two lines
+  local __name="$1" __id=""
+  __id="$(LC_ALL=C awk '
+    NR == 1 { if ($0 != "---") { bad = 1; exit } next }
+    $0 == "---" { closed = 1; exit }
+    /^name:/ { name = $0 }
+    /^[^[:space:]]/ { meta = ($0 == "metadata:"); next }
+    meta && /^[[:space:]]+version:/ { version = $0 }
+    END { if (bad || !closed || name == "" || version == "") exit 1; print name; print version }
+  ' "$2/../SKILL.md" 2>/dev/null)" || return 1
+  eval "$__name=\$__id"
+}
+
+# Whether a baked scripts directory is THIS project's copy of this package,
+# somewhere other than this checker's own.
 #
-# That is the one difference a helper may carry: a linked worktree shares the
-# hooks directory of the checkout that armed it and holds its own render, so
-# the same project stands at the same place in a different checkout.
+# Two differences are this project's. A linked worktree shares the hooks
+# directory of the checkout that armed it and holds its own render, so the
+# same project stands at the same place in a different checkout. And a
+# project delivered to several harnesses as copies holds the package under
+# each of its skill roots, so the copy that armed the repository and the copy
+# asking may stand under different roots of the same project; that copy is
+# held to the same package name and version, since only the helper's bytes
+# are compared and its lanes are another copy's.
 #
 # Two other differences look the same at a glance and are not. A scripts
 # directory outside this repository would run another package's lanes as this
@@ -74,10 +96,11 @@ gg_checkout_place() { # COMMONVAR RELVAR DIR -> 0 when both answers are had
 # somewhere else in the same checkout: one repository has one helper, so
 # arming project A would otherwise read to project B as consent B was never
 # given, and B would run its own checkout-supplied lanes under it. Both are
-# refused by asking where the directory stands rather than only which
-# repository holds it.
+# refused by asking where the directory's project stands rather than only
+# which repository holds it.
 gg_same_project_elsewhere() { # DIR -> 0 when it is this project's, elsewhere
   local dir="$1" lane="" there_common="" there_rel="" here_common="" here_rel=""
+  local there_project="" there_place="" here_project="" here_place="" there_id="" here_id=""
   [ -d "$dir" ] || return 1
   for lane in $GG_LANES; do
     [ -x "$dir/$lane" ] || return 1
@@ -85,7 +108,31 @@ gg_same_project_elsewhere() { # DIR -> 0 when it is this project's, elsewhere
   gg_checkout_place there_common there_rel "$dir" || return 1
   gg_checkout_place here_common here_rel "$SCRIPT_DIR" || return 1
   [ "$there_common" = "$here_common" ] || return 1
-  [ "$there_rel" = "$here_rel" ]
+  [ "$there_rel" != "$here_rel" ] || return 0
+  gg_project_root there_project "$dir" || return 1
+  gg_project_root here_project "$SCRIPT_DIR" || return 1
+  gg_checkout_place there_common there_place "$there_project" || return 1
+  gg_checkout_place here_common here_place "$here_project" || return 1
+  [ "$there_common" = "$here_common" ] || return 1
+  [ "$there_place" = "$here_place" ] || return 1
+  gg_package_id there_id "$dir" || return 1
+  gg_package_id here_id "$SCRIPT_DIR" || return 1
+  [ "$there_id" = "$here_id" ]
+}
+
+# Whether a recorded place, relative to the arming tree's top level, is one
+# where this project keeps the package: this checker's own place, or another
+# of this project's copies under the same top level.
+gg_kept_at() { # REL -> 0 when this project keeps the package there
+  local rel="$1" top=""
+  [ "$rel" != "$INSTALLED_SCRIPTS_REL" ] || return 0
+  [ -n "$rel" ] && [ -n "$INSTALLED_SCRIPTS_REL" ] || return 1
+  gg_path top gg_physical "$SCRIPT_DIR" || return 1
+  case "$top" in
+    */"$INSTALLED_SCRIPTS_REL") top="${top%/"$INSTALLED_SCRIPTS_REL"}" ;;
+    *) return 1 ;;
+  esac
+  gg_same_project_elsewhere "$top/$rel"
 }
 
 # Whether the head a helper carries is one this installer would bake.
@@ -104,12 +151,13 @@ gg_same_project_elsewhere() { # DIR -> 0 when it is this project's, elsewhere
 # being blessed by a comparison assembled out of the bytes it is judging.
 #
 # Then what they name. A scripts directory that is there has to be this same
-# project's in another checkout of this repository, or the helper is not
-# ours to vouch for. The pair is drift rather than foreign where it no longer
-# agrees with the arming tree: the directory is this project's and the
-# recorded place is not where this project keeps it, or the directory is gone
-# while the recorded place is still this project's. Either way the re-arm
-# rewrites the pair.
+# project's copy of the package, in another checkout of this repository or
+# under another of its skill roots, or the helper is not ours to vouch for.
+# The pair is drift rather than foreign where it no longer agrees with the
+# arming tree: the directory is this project's and the recorded place is not
+# where this project keeps the package, or the directory is gone while the
+# recorded place is still this project's. Either way the re-arm rewrites the
+# pair.
 gg_lifted_value() { # VAR QUOTED -> VAR gets the value; 1 when the quoter would not write QUOTED
   local __name="$1" __inner="$2" __value="" __sq="'" __esc="'\\''"
   # The replacement is unquoted: Bash 3.2 keeps the quotes of a quoted one
@@ -142,10 +190,10 @@ check_helper_head() { # HEAD -> 0 ours, 1 not ours, 2 ours with a pair the armin
   gg_lifted_value rel "${rest#*"$middle"}" || return 1
   if [ -e "$value" ] || [ -L "$value" ]; then
     gg_same_project_elsewhere "$value" || return 1
-    [ "$rel" = "$INSTALLED_SCRIPTS_REL" ] || return 2
+    gg_kept_at "$rel" || return 2
     return 0
   fi
-  [ -n "$rel" ] && [ "$rel" = "$INSTALLED_SCRIPTS_REL" ] && return 2
+  [ -n "$rel" ] && gg_kept_at "$rel" && return 2
   return 1
 }
 

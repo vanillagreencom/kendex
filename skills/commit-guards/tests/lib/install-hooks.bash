@@ -160,14 +160,15 @@ KEEP='^(commit-guards git hooks: |install-git-hooks: |::error::|kendex-guards: |
 # the way git runs it, the kept lines only) or push-hook (the pre-push shim
 # run the way git runs it, with ARG as the one ref line on its stdin). A
 # fixture that keeps its render somewhere other than the checkout root names
-# that directory in INSTALLER_DIR.
+# that directory in INSTALLER_DIR, and one that runs the copy under another
+# skill root than .agents/skills names that root in INSTALLER_ROOT.
 run() { # ENVS ACTION ARG
   local envs=() rc=0 out="" installer="" filtered=1 dir="" target="$R"
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
   # An action ending in -wt runs the installer the other checkout carries
   # (a linked worktree, or a second project in the repository), against it.
   case "$2" in *-wt) target="$W" ;; esac
-  installer="${INSTALLER_DIR:-$target}/.agents/skills/commit-guards/scripts/install-git-hooks"
+  installer="${INSTALLER_DIR:-$target}/${INSTALLER_ROOT:-.agents/skills}/commit-guards/scripts/install-git-hooks"
   # A named checkout without an installer is a fixture error, never a
   # quiet run of the source tree's.
   [ -z "$INSTALLER_DIR" ] || [ -x "$installer" ] || { echo "harness: no installer under $INSTALLER_DIR" >&2; exit 2; }
@@ -372,6 +373,7 @@ run_rows() { # label | fixture | env | action | arg | expect | state
     W=""
     UNDO=""
     INSTALLER_DIR=""
+    INSTALLER_ROOT=""
     "$fx"
     # A row over a path that is not there (a usage row) aliases it as spelled.
     R_PHYS="$(cd -- "$R" 2>/dev/null && pwd -P)" || R_PHYS="$R"

@@ -217,8 +217,9 @@ gg_project_rel PROJECT_REL "$SCRIPT_DIR" "$REPO_ABS"
 # about a linked work tree bakes and checks the same place it armed. Empty
 # when the directory is in no checkout of this repository, where no checkout
 # carries it and the helper runs the baked directory. --check holds the
-# helper to this value, and a helper holding another is drift, so a place
-# that cannot be resolved is never read as empty.
+# helper to this value or to another place where this project keeps a copy
+# of the package, and a helper holding any other is drift, so a place that
+# cannot be resolved is never read as empty.
 INSTALLED_SCRIPTS_REL=""
 scripts_rel() { # -> 0 resolved, empty when outside this repository; 1 not
   local place_common="" place_rel="" inside=""
