@@ -443,6 +443,55 @@ for variant in normal horizon; do
   sk_bin_reset
 done
 
+# Shipped direct posts and ignored parents can get their first reply offline.
+while read -r kind author excerpt; do
+  for variant in normal incomplete; do
+    FIRST="$(sk_new_root "first-$kind-$variant")"
+    sk_bind "$FIRST"
+    FC="$(sk_channel "$FIRST")"
+    case "$kind" in
+      text) sk_run -- post --root "$FIRST" --text "$excerpt" ;;
+      file) sk_run -- post --root "$FIRST" --file "$(sk_text first-file 'Report bytes.')" --text "$excerpt" ;;
+      not-owner) sk_inject "$FC" U999 "$excerpt" >/dev/null ;;
+      no-text) excerpt=""; sk_inject "$FC" U001 '' >/dev/null ;;
+    esac
+    FP="$(sk_state ".messages.${FC}[-1].ts")"
+    for n in 1 2 3 4; do LAST="$(sk_inject "$FC" U001 "Later parent $n")"; done
+    jq -cn --arg c "$FC" --arg ts "$FP" \
+      '[{channel:$c,user:"U001",text:"First offline reply.",thread_ts:$ts}]' >"$SK_TMP/first-reply.json"
+    if [ "$variant" = incomplete ]; then
+      sk_mutant first-discovery relay.py 'if float\(m\["ts"\]\) >= horizon or m.get\("latest_reply"\)' 'if m.get("latest_reply")'
+    fi
+    sk_ctl /_test/calls-reset >/dev/null
+    sk_recovery "$FIRST" positions "$SK_TMP/first-reply.json"
+    PROBE="$(printf '%s\n' "$OUT" | tail -n 1)"
+    FR="$(printf '%s\n' "$PROBE" | jq -r '.injected[0]')"
+    assert_eq "$RC=$(printf '%s\n' "$PROBE" | jq -r '[.error, ([.polls[] | [.[] | select(.method == "conversations.history")] | length] | join("/")), .polls[1][0].oldest] | join("|")')" \
+      "0=|3/1|$LAST" "$kind/$variant: reconnect history uses the saved position, not discovery pages"
+    FIRST_ID="$(jq -r --arg d "$FC:$FR" 'select(.delivery_id == $d) | .id' "$(sk_box "$FIRST")/to-lane.jsonl")"
+    FIRST_CONTEXT="$(jq -s --arg d "$FC:$FR" --arg ts "$FP" --arg a "$author" --arg e "$excerpt" \
+      '[.[] | select(.delivery_id == $d) | {text,thread_ts,parent}] == [{text:"First offline reply.",thread_ts:$ts,parent:{ts:$ts,author:$a,excerpt:$e}}]' "$(sk_box "$FIRST")/to-lane.jsonl")"
+    FIRST_LOGS="$(printf '%s\n' "$ERR" | grep -Fxc "slack: delivered=ts=$FR id=$FIRST_ID path=catch-up")"
+    RESULT="$FIRST_CONTEXT|$(sk_reactions "$FC" "$FR")|$FIRST_LOGS"
+    if [ "$variant" = normal ]; then
+      assert_eq "$RESULT" 'true|eyes|1' "$kind: first offline reply lands once with parent context, eyes and its ts/mailbox notice"
+      assert_eq "$(printf '%s\n' "$PROBE" | jq -r '[.polls[] | [.[] | select(.method == "conversations.replies")] | length] | join("/")')" \
+        '0/5' "$kind: history caches reply-free parents without a parent fetch and reconnect reads each retained parent once"
+      assert_eq "$(jq -s --arg ts "$FP" '[.[] | select(.t == "parent" and .ts == $ts)] | length' "$(sk_journal "$FIRST")")" \
+        1 "$kind: the parent record persists once before narrowing history"
+    else
+      sk_assert_red "$RESULT" 'true|eyes|1' "$kind: incomplete discovery loses the first reply"
+      assert_eq "$RESULT" 'false||0' "$kind: incomplete discovery produces neither a delivery, eyes nor a notice"
+    fi
+    sk_bin_reset
+  done
+done <<'ROWS'
+text bot Direct text topic.
+file bot Direct file topic.
+not-owner owner Ignored topic.
+no-text owner empty
+ROWS
+
 # A long Retry-After holds catch-up, not the socket reader.
 RATE="$(sk_new_root rate-ack)"
 sk_bind "$RATE"

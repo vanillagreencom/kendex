@@ -48,6 +48,7 @@ if mode == "append-fail":
     relay.journal = FullJournal(root, relay.state)
 error = ""
 polls = []
+injected = []
 try:
     if mode == "journal":
         pass
@@ -59,11 +60,15 @@ try:
                 calls.append({"method": method, "oldest": params.get("oldest"), "ts": params.get("ts")})
             return original(method, **params)
         api.get = traced
-        for _ in range(2):
+        for index in range(2):
             relay.caught_up = False
             relay.poll("UBOT")
             polls.append(calls[:])
             calls.clear()
+            if index == 0 and sys.argv[4]:
+                # The fake emits the first replies with no socket consumer.
+                for message in json.loads(Path(sys.argv[4]).read_text()):
+                    injected.append(api.post("_test/message", **message)["ts"])
     elif mode == "catchup-retry":
         for _ in range(2):
             relay.poll("UBOT")
@@ -84,4 +89,4 @@ try:
 except (Refusal, OSError, http.client.HTTPException) as err:
     error = err.key if isinstance(err, Refusal) else type(err).__name__
 print(json.dumps({"error": error, "caught_up": relay.caught_up, "pending": len(relay.pending_live),
-                  "unknown": sorted(relay.state.unknown), "polls": polls}))
+                  "unknown": sorted(relay.state.unknown), "polls": polls, "injected": injected}))

@@ -273,15 +273,16 @@ class RootRelay:
         """Whether catch-up re-reads a known thread within its lookback."""
         return not thread.missing and (thread.open or max(float(thread.ts), thread.active) >= self.settings.horizon(self.clock()))
 
-    def parent_context(self, thread_ts: str) -> Dict:
+    def parent_context(self, thread_ts: str, message: Optional[Dict] = None) -> Dict:
         """Read a parent's small context once, persisting it across restarts."""
         thread = self.state.threads.get(thread_ts)
         if thread is not None and thread.parent is not None:
             return thread.parent
-        messages = self.api.get("conversations.replies", channel=self.channel, ts=thread_ts, limit=1)["messages"]
-        if not messages or str(messages[0]["ts"]) != thread_ts:
-            raise Refusal("slack-api-failed", f"conversations.replies parent={thread_ts} missing", error="thread_not_found")
-        message = messages[0]
+        if message is None:
+            messages = self.api.get("conversations.replies", channel=self.channel, ts=thread_ts, limit=1)["messages"]
+            if not messages or str(messages[0]["ts"]) != thread_ts:
+                raise Refusal("slack-api-failed", f"conversations.replies parent={thread_ts} missing", error="thread_not_found")
+            message = messages[0]
         envelope = thread.envelope if thread is not None and thread.kind in {"ask", "notice"} else ""
         parent = self.parent_of(message, "bot" if message.get("bot_id") else "owner", envelope)
         self.journal.append(t="parent", ts=thread_ts, parent=parent)
@@ -307,12 +308,14 @@ class RootRelay:
         for message in new:
             self.bind_file_share(message)
             self.handle(message, bot_user)
-        replied = {str(m["ts"]): float(m["latest_reply"]) for m in messages if m.get("latest_reply")}
+        # A first reply can arrive after history advances past its parent.
+        parents = {str(m["ts"]): m for m in messages if float(m["ts"]) >= horizon or m.get("latest_reply")}
+        replied = {str(m["ts"]): float(m.get("latest_reply") or 0) for m in messages}
         complete = True
-        for thread_ts in dict.fromkeys([*replied, *self.state.threads]):
+        for thread_ts in dict.fromkeys([*parents, *self.state.threads]):
             if thread_ts not in self.state.threads:
                 try:
-                    self.parent_context(thread_ts)
+                    self.parent_context(thread_ts, parents[thread_ts])
                 except Refusal as err:
                     complete = self.thread_refused(err, thread_ts) and complete
                     continue
