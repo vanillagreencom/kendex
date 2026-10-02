@@ -238,8 +238,8 @@ pub struct PinnedHook {
 /// What a hook's pin does on one tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pin {
-    /// Leaves out a tool the hook would be written for with no pin: one
-    /// the scope installs on and the hook runs on.
+    /// Leaves out a tool kendex would write the hook to with no pin. That
+    /// says where the hook is written, not that the tool fires it.
     LeavesOut,
     /// Names a tool the hook's own harnesses line leaves out, where the
     /// hook is written nowhere whatever the pin says.

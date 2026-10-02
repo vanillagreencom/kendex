@@ -1,1 +1,1 @@
-- `kendex verify` names each hook whose `harnesses` pin keeps it off an installed tool or names one it excludes; agent and skill adoption and the drift-check install write no pin equal to the default.
+- `kendex verify` names each hook whose `harnesses` pin keeps it off a default tool or names one it excludes; agent and skill adoption and the drift-check install write no pin equal to the default.

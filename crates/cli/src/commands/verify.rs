@@ -444,7 +444,7 @@ fn pinned_hook_rows(
         let harness = pinned.harness.name();
         let detail = match pinned.pin {
             Pin::LeavesOut => format!(
-                "its harnesses pin in kendex.toml leaves out {harness}, which this scope installs on and the hook runs on; drop the pin, or add {harness} to it"
+                "its harnesses pin in kendex.toml leaves out {harness}, where kendex would write the hook with no pin; drop the pin, or add {harness} to it"
             ),
             Pin::NamesExcluded => format!(
                 "its harnesses pin in kendex.toml names {harness}, which the hook's own harnesses line leaves out; drop the pin, or take {harness} off it"
