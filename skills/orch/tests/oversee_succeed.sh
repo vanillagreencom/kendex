@@ -1176,8 +1176,8 @@ NO_CONTEXT=1 CALLER_LANE="CODEX_HOME=$H/.codex" WALL_MINUTES=default run_succeed
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
   "0|oversee-succeed: account-below-mark headroom=0|0" \
   "a Codex overseer on its credits reads below the account marks, its rate trigger not applying"
-# Control: the old arm, which read every rate state but `measured` as a failed
-# reading, holds the same overseer unmeasured.
+# Control: a rate arm that reads every state but `measured` as a failed reading
+# holds the same overseer unmeasured.
 RATECREDITS="$(mutant_scripts ratecredits oversee-succeed)" || exit 1
 mutate_file "$RATECREDITS/oversee-succeed" ' && "$RATE_STATE" != credits ]]' ' ]]'
 new_caller "$CODEX_SCREEN" 'Context 48% left'
