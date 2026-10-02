@@ -240,8 +240,12 @@ Response handling and stamping (review and audit modes):
   with external-<target> for a lane or external-union(...) for a union.
 
 Default commands:
-  claude: claude -p --no-session-persistence --model opus --effort max
+  claude: claude -p --no-session-persistence --model claude-opus-5-5 --effort high
+            --restricted --permission-mode dontAsk --tools Bash,Read,Glob,Grep
             --allowedTools Bash(read-only:true),Read,Glob,Grep
+            --setting-sources=
+          Bash uses Claude's built-in read-only checks; dontAsk denies writes.
+          User/project settings and their hooks are excluded.
   codex:  codex exec -m gpt-6.1-sol -s read-only -c model_reasoning_effort=xhigh
             --ephemeral
 
@@ -1004,7 +1008,7 @@ target_model() {
 # SECOND_OPINION_<NAME>_CMD variable, so another local model CLI is a settings
 # entry, not code.
 
-DEFAULT_CLAUDE_CMD="claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
+DEFAULT_CLAUDE_CMD="claude -p --no-session-persistence --model claude-opus-5-5 --effort high --restricted --permission-mode dontAsk --tools Bash,Read,Glob,Grep --allowedTools Bash(read-only:true),Read,Glob,Grep --setting-sources="
 DEFAULT_CODEX_CMD="codex exec -m gpt-6.1-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 
 # Full command line for a target: its env override, else the built-in default.

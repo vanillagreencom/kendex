@@ -22,7 +22,7 @@ SECOND_OPINION_COUNT = "1"
 # SECOND_OPINION_CURRENT_MODEL = "claude"
 
 # The command that runs the claude reviewer.
-SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
+SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model claude-opus-5-5 --effort high --restricted --permission-mode dontAsk --tools Bash,Read,Glob,Grep --allowedTools Bash(read-only:true),Read,Glob,Grep --setting-sources="
 
 # The command that runs the codex reviewer.
 SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6.1-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"
