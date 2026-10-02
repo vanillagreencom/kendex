@@ -40,6 +40,9 @@
 #      that suite alone selects that shard through tools/ci-job-set, and every
 #      shard the matrix declares runs some suite. The must-fail arm sends one
 #      package to another shard.
+#   4d. the per-OS partition: every suite stays selected exactly once on each
+#      original runner, including linear's shell-version-dependent roster.
+#      The omission and duplication controls run on each runner's claims.
 #   4c. the macOS exclusions — the shards tools/ci-job-set lights no macOS
 #      leg for are exactly the ones the shell matrix's `exclude:` prunes on
 #      macOS. The must-fail arm drops one exclude row.
@@ -60,6 +63,15 @@
 # copy of the workflow and a `bash` that does nothing, so the real filter and
 # roster logic runs over the real names without running the battery.
 set -euo pipefail
+
+# --shell-only selects the workflow's shell partition and CI selection checks
+# without the independent Cargo-target partition or its metadata command.
+shell_only=false
+case "$#:${1-}" in
+  0:) ;;
+  1:--shell-only) shell_only=true ;;
+  *) printf 'orch-shard-partition: argument=%s\n' "$*" >&2; exit 2 ;;
+esac
 
 # A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
 # GIT_WORK_TREE and GIT_INDEX_FILE, which would resolve ROOT to the hook's
@@ -576,8 +588,8 @@ one_shard() { # one_shard <if text> ; the shard it names when it names exactly o
   return 0
 }
 
-suite_owners() { # suite_owners <workflow> ; `shard<tab>path`, one per shard and directory
-  local wf="$1" dir="$TMP/owner-blocks" f shard cond wd run word
+suite_owners() { # <workflow> [files [bash-major]] ; `shard<tab>path`, by directory or every file
+  local wf="$1" mode="${2-directories}" major="${3-}" dir="$TMP/owner-blocks" f shard cond wd run word
   cp "$wf" "$PART/.github/workflows/skill-tests.yml"
   split_run_blocks "$wf" "$dir"
   {
@@ -585,7 +597,10 @@ suite_owners() { # suite_owners <workflow> ; `shard<tab>path`, one per shard and
       grep -qF "$ROSTER_MARK" "$f" || continue
       shard="$(one_shard "$(cat "${f%.sh}.cond")")"
       [[ -n "$shard" ]] || continue
-      ( cd "$PART" && PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
+      # Bash's version array is readonly. This disposable runner copy injects
+      # the major version to exercise linear's actual roster branch on Linux.
+      sed 's/${BASH_VERSINFO\[0\]}/${PARTITION_BASH_MAJOR}/g' "$f" > "$dir/runner"
+      ( cd "$PART" && PARTITION_BASH_MAJOR="${major:-${BASH_VERSINFO[0]}}" PATH="$SHIM:$PATH" "$BASH" "$dir/runner" ) 2>/dev/null |
         sed -n "s%^=== %$shard	%p"
     done
     # One-line steps: the package a node step works in, or the first word of
@@ -593,6 +608,10 @@ suite_owners() { # suite_owners <workflow> ; `shard<tab>path`, one per shard and
     one_line_steps "$wf" | while IFS=$'\037' read -r _ cond wd run; do
       shard="$(one_shard "$cond")"
       [[ -n "$shard" ]] || continue
+      if [[ "$mode" == files && "$run" == "bash $runner"* ]]; then
+        union_of "${run#"bash $runner"}" | sed "s%^%$shard	$ORCH_TESTS_DIR/%; s%\$%.sh%"
+        continue
+      fi
       if [[ -n "$wd" ]]; then
         printf '%s\t%s/package.json\n' "$shard" "$wd"
         continue
@@ -604,7 +623,7 @@ suite_owners() { # suite_owners <workflow> ; `shard<tab>path`, one per shard and
         fi
       done
     done
-  } | awk -F '\t' '{ d = $2; sub(/\/[^\/]*$/, "", d) } !seen[$1 "\t" d]++'
+  } | awk -F '\t' -v mode="$mode" 'mode == "files" { print; next } { d = $2; sub(/\/[^\/]*$/, "", d) } !seen[$1 "\t" d]++'
 }
 
 unselected_owners() { # unselected_owners <ci-job-set> <owners file> ; `shard<tab>path` the selection misses
@@ -625,17 +644,17 @@ check "a suite is read for every shard the matrix declares" "$declared_shards" "
 check "ci-job-set selects the shard running each suite for a diff to that suite" \
   "" "$(unselected_owners "$JOB_SET" "$OWNERS")"
 
-# Must-fail: a table that sends worktree to `rest` leaves the worktree shard
-# standing down on a worktree diff, and that suite is named.
+# Must-fail: removing Slack's package row leaves its shard standing down on
+# a Slack diff, and the suite its selection misses is named.
 mkdir -p "$TMP/owner-tools"
 cp "$ROOT/tools/rust-reads" "$TMP/owner-tools/rust-reads"
-awk '$0 ~ /^    skills\/worktree\) want_shard worktree ;;$/ { n++; next } { print } END { exit n != 1 }' \
+awk '$0 ~ /^    skills\/slack\) want_shard slack ;;$/ { n++; next } { print } END { exit n != 1 }' \
   "$JOB_SET" > "$TMP/owner-tools/ci-job-set" ||
-  { bad "must-fail: the worktree row is no longer one line in $JOB_SET"; }
+  { bad "must-fail: the Slack row is no longer one line in $JOB_SET"; }
 chmod +x "$TMP/owner-tools/ci-job-set"
 case "$(unselected_owners "$TMP/owner-tools/ci-job-set" "$OWNERS")" in
-  worktree$'\t'skills/worktree/tests/*) ok "must-fail: a table sending worktree elsewhere names the worktree suites" ;;
-  *) bad "must-fail: a table sending worktree elsewhere named nothing, so the selection check proves nothing" ;;
+  slack$'\t'skills/slack/tests/*) ok "must-fail: a table sending Slack elsewhere names the Slack suites" ;;
+  *) bad "must-fail: a table sending Slack elsewhere named nothing, so the selection check proves nothing" ;;
 esac
 
 # --- 4c. The shards the macOS legs never run ------------------------------
@@ -680,6 +699,55 @@ if [[ "$(macos_excluded_shards "$TMP/one-exclude.yml")" != "$(linux_only_shards 
   ok "must-fail: a matrix dropping one macOS exclude disagrees with ci-job-set"
 else
   bad "must-fail: a matrix dropping one macOS exclude disagrees with ci-job-set"
+fi
+
+# --- 4d. Exactly-once suite coverage on each original shell runner --------
+# Linux runs every shell suite. macOS runs the same files except linear's
+# Bash-4-only suites, whose existing runtime-contract suite runs under Bash 3.
+# The matrix's exclusions must not remove a shell roster on either runner.
+shell_os="$(sed -n "s/^        os: .*'\[\(.*\)\]'.*$/\1/p" "$WORKFLOW" | tr -d ' \"' | tr ',' '\n')"
+check "the shell matrix retains each original OS exactly once" \
+  $'ubuntu-latest\nmacos-latest' "$shell_os"
+check "the linear roster has one injectable shell-version branch" "1" \
+  "$(grep -cF 'if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then' "$WORKFLOW")"
+
+os_claims() { # <workflow> <os> <major> ; suite files the expanded matrix runs
+  local wf="$1" os="$2" major="$3" excluded="" owners="$TMP/os-owners"
+  [[ "$os" != macos-latest ]] || excluded="$(macos_excluded_shards "$wf")"
+  suite_owners "$wf" files "$major" > "$owners"
+  awk -F '\t' -v excluded="$excluded" '
+    BEGIN { n = split(excluded, names, "\n"); for (i = 1; i <= n; i++) skip[names[i]] = 1 }
+    NR == FNR { universe[$0] = 1; next }
+    !skip[$1] && $2 in universe { print $2 }
+  ' "$TMP/os-universe" "$owners" | sort
+}
+
+for os in ubuntu-latest macos-latest; do
+  major=4
+  [[ "$os" != macos-latest ]] || major=3
+  cp "$UNIV" "$TMP/os-universe"
+  for f in "$ROOT"/skills/linear/tests/*.sh; do
+    [[ "$major" != 3 || "$f" == */bash4-runtime-contract.test.sh ]] || continue
+    printf '%s\n' "${f#"$ROOT/"}" >> "$TMP/os-universe"
+  done
+  sort -o "$TMP/os-universe" "$TMP/os-universe"
+  [[ -s "$TMP/os-universe" ]] || { bad "the suite discovery is empty for $os"; continue; }
+  os_claims "$WORKFLOW" "$os" "$major" > "$TMP/os-claims"
+  check "every original suite runs exactly once on $os" \
+    "$(cat "$TMP/os-universe")" "$(cat "$TMP/os-claims")"
+  printf 'coverage: os=%s suites=%s\n' "$os" "$(wc -l < "$TMP/os-universe" | tr -d ' ')"
+  os_claims "$wf_drop" "$os" "$major" > "$TMP/os-drop"
+  [[ -n "$(comm -23 "$TMP/os-universe" <(sort -u "$TMP/os-drop"))" ]] &&
+    ok "must-fail: an omitted roster leaves suites missing on $os" || bad "omission control named no suite on $os"
+  os_claims "$wf_twice" "$os" "$major" > "$TMP/os-twice"
+  [[ -n "$(uniq -d "$TMP/os-twice")" ]] &&
+    ok "must-fail: a duplicated roster repeats suites on $os" || bad "duplication control named no suite on $os"
+done
+
+if [[ "$shell_only" == true ]]; then
+  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+  [[ "$FAIL" -eq 0 ]]
+  exit
 fi
 
 # --- 5. The cargo legs' partition over the CLI's test targets --------------

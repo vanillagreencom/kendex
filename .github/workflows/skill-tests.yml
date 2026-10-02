@@ -346,7 +346,7 @@ jobs:
         working-directory: candidate
         run: skills/commit-guards/scripts/todo-ban
 
-  # SHARDED: sixteen shards bound wall time at the slowest shard and give
+  # SHARDED: the shards bound wall time at the slowest shard and give
   # suite growth per-shard headroom instead of a shared cliff. `orch` and
   # `rest` were one `shell` shard whose halves ran serially and bounded every
   # queue run; `pi-claude-bridge` was the node shard's hottest step; `guards`
@@ -427,7 +427,7 @@ jobs:
         # SHARDS spells it, and runs where the classifier published nothing.
         # The job stands down where the list is empty, so no empty matrix
         # expands.
-        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "orch-terminal", "orch-oversee", "orch-oversee-succeed", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-hooks", "guards-tools", "guards-tools-tail", "linear", "worktree", "rest", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
+        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "orch-terminal", "orch-oversee", "orch-oversee-succeed", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-hooks", "guards-tools", "guards-tools-tail", "linear", "worktree", "rest", "slack", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
         # The macOS leg is the SECOND run of these suites, under Bash 3.2 and
         # the BSD userland, over the same selected shards. A job-level `if:`
         # cannot reach `matrix`, so the leg is dropped from the matrix rather
@@ -467,7 +467,8 @@ jobs:
     # to the targets the file header states, eight minutes on Linux and
     # fourteen on macOS, which leave the 15- and 30-minute ceilings here a
     # margin; their figures are above their steps.
-    timeout-minutes: ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest' || matrix.shard == 'orch-terminal') && 30 || 15 }}
+    # Slack retains the budget of the rest shard it splits from on both OSes.
+    timeout-minutes: ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest' || matrix.shard == 'slack' || matrix.shard == 'orch-terminal') && 30 || 15 }}
     # harness-ci's change-class suite skips its real-kendex rows where no
     # kendex is on PATH, and this turns that skip into a failure. It is set
     # for the whole job rather than beside the install step below, so the
@@ -1039,6 +1040,27 @@ jobs:
           fi
           exit "$fail"
 
+      # Slack's process-heavy suites run separately from the other packages.
+      # A package glob places new Slack suites here without another roster.
+      - name: Slack suites
+        if: matrix.shard == 'slack'
+        run: |
+          set -u
+          fail=0
+          failed=""
+          for t in skills/slack/tests/*.sh; do
+            echo "=== $t"
+            if ! bash "$t"; then
+              echo "FAILED: $t"
+              fail=1
+              failed="$failed $t"
+            fi
+          done
+          if [ "$fail" != 0 ]; then
+            echo "FAILED SUITES:$failed"
+          fi
+          exit "$fail"
+
       # ---- shard: rest — every shell suite no other shard runs. The skip
       # list below names the packages the shards above claim, and a skip is
       # taken only where this file still RUNS that package somewhere else, so
@@ -1123,7 +1145,7 @@ jobs:
             case "$x" in
               orch) needle=skills/orch/tests/run-all.sh ;;
               review-gate) needle=skills/review-gate/tests/*.test.sh ;;
-              commit-guards | linear | bot-instructions | preflight | worktree)
+              commit-guards | linear | bot-instructions | preflight | worktree | slack)
                 needle="skills/$x/tests/*.sh" ;;
               *) needle="" ;;
             esac
