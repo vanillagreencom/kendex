@@ -223,6 +223,31 @@ for OT_TEAM_READ in failed invalid; do
     "a $OT_TEAM_READ configured team read launches nothing"
 done
 
+# Team resolution is an independent refusal from foreign comparison. The
+# failed reader leaves no key, so disable both resolution failure exits while
+# retaining their text. The foreign comparison remains unchanged.
+MUTANT_REPO="$TMP_ROOT/unresolved-team"
+MUTANT_OT="$(mutant_scripts unresolved-team open-terminal)/open-terminal" || exit 1
+git -C "$MUTANT_REPO" init -q
+orch_fixture_shared_libs "$MUTANT_REPO"
+mkdir -p "$MUTANT_REPO/.agents/skills/linear/scripts"
+cp "$REPO/.agents/skills/linear/scripts/linear.sh" "$MUTANT_REPO/.agents/skills/linear/scripts/"
+mutate_file "$MUTANT_OT" \
+  '  team_record="$("$linear_cli" teams get "$LINEAR_TEAM" --format raw)" \
+    || { ot_message item-repo-unresolved tracker=linear "team=$LINEAR_TEAM" >&2; exit 1; }' \
+  '  team_record="$("$linear_cli" teams get "$LINEAR_TEAM" --format raw)" \
+    || { if false; then ot_message item-repo-unresolved tracker=linear "team=$LINEAR_TEAM" >&2; exit 1; fi; }'
+mutate_file "$MUTANT_OT" \
+  '  checkout_repo="$(jq -er '\''.team.key | strings | select(length > 0)'\'' <<<"$team_record")" \
+    || { ot_message item-repo-unresolved tracker=linear "team=$LINEAR_TEAM" >&2; exit 1; }' \
+  '  checkout_repo="$(jq -er '\''.team.key | strings | select(length > 0)'\'' <<<"$team_record")" \
+    || { if false; then ot_message item-repo-unresolved tracker=linear "team=$LINEAR_TEAM" >&2; exit 1; fi; }'
+OT_TEAM_READ=failed
+run team-failed-control "$MUTANT_OT" valid --ghostty CC-42
+assert_eq "$RC" 0 "control: without resolution refusal the failed team read admits a launch"
+assert_contains "$TERM_LOG_TEXT" 'term -e bash -lc' \
+  "control: the failed-read refusal assertion turns red because a terminal opens"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

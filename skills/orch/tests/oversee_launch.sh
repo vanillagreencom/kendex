@@ -89,6 +89,15 @@ case "$1" in
 esac
 STUB
 chmod +x "$BIN/kendex"
+# Repository lookup belongs to the fixture. With no answer, the existing
+# directory fallback case remains independent of credentials and network.
+cat > "$BIN/gh" <<'STUB'
+#!/bin/sh
+[ "$*" = 'repo view --json nameWithOwner -q .nameWithOwner' ] || exit 2
+[ -n "${FIXTURE_REPO:-}" ] || exit 1
+printf '%s\n' "$FIXTURE_REPO"
+STUB
+chmod +x "$BIN/gh"
 # A pane whose foreground process names claude, for `register` to read the
 # harness off: a copy of sleep, since a script or a shell named for the
 # harness can reset the process name tmux reads.
@@ -281,7 +290,7 @@ FLEET_STATE="$RUN_DIR/tmp/workflow-state-oversee.json"
 run_oversee ORCH_TMUX_SESSION= -- launch --wait-secs 20
 DEFAULT_SESSION="$(recorded pane)"
 assert_eq "$RC|$(tm display-message -p -t "$DEFAULT_SESSION" '#{session_name} #{window_index} #{window_name}')" \
-  "0|fleet 0 overseer" "an unset session defaults to the repository name at the base index"
+  "0|fleet 0 overseer" "an unresolved repository falls back to the checkout directory at the base index"
 tm kill-window -t "$DEFAULT_SESSION"
 DEFAULTCTL="$(mutant_scripts defaultctl oversee)" || exit 1
 # shellcheck source=lib/shared-skill-libs.sh
@@ -292,6 +301,26 @@ OVERSEE_BIN="$DEFAULTCTL/oversee" run_oversee ORCH_TMUX_SESSION= -- launch --wai
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "1|oversee: tmux-session-missing session=wrong-repository server=$SOCKET" \
   "control: the wrong default session refuses the same launch"
+# Issue worktrees have directory names different from the repository slug.
+RUN_DIR="$TMP_ROOT/issue-worktree"
+mkdir -p "$RUN_DIR"
+git -C "$RUN_DIR" init -q
+git -C "$RUN_DIR" config gc.auto 0
+git -C "$RUN_DIR" config maintenance.auto false
+FLEET_STATE="$RUN_DIR/tmp/workflow-state-oversee.json"
+run_oversee ORCH_TMUX_SESSION= FIXTURE_REPO=owner/fleet -- launch --wait-secs 20
+DEFAULT_SESSION="$(recorded pane)"
+assert_eq "$RC|$(tm display-message -p -t "$DEFAULT_SESSION" '#{session_name} #{window_index} #{window_name}')" \
+  '0|fleet 0 overseer' "a resolved repository selects its named session rather than the issue directory"
+tm kill-window -t "$DEFAULT_SESSION"
+RESOLVEDCTL="$(mutant_scripts resolvedctl oversee)" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/resolvedctl"
+mutate_file "$RESOLVEDCTL/oversee" '0) SESSION_NAME="${repo_name#*/}" ;;' \
+  '0) if false; then SESSION_NAME="${repo_name#*/}"; else SESSION_NAME="${PROJECT_ROOT##*/}"; fi ;;'
+OVERSEE_BIN="$RESOLVEDCTL/oversee" run_oversee ORCH_TMUX_SESSION= FIXTURE_REPO=owner/fleet -- launch --wait-secs 20
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  "1|oversee: tmux-session-missing session=issue-worktree server=$SOCKET" \
+  "control: using the issue directory instead of the resolved repository refuses the launch"
 RUN_DIR=""
 FLEET_STATE="$PRIOR_FLEET_STATE"
 
@@ -828,8 +857,8 @@ pending_seen() { # [OVERSEE_BIN] — the pending line a --predecessor launch wri
   PENDING_SEEN="$seen"
 }
 pending_seen
-assert_eq "$PENDING_SEEN|$(jq -cS .overseer "$FLEET_STATE")|$(overseers)|$(listed "$PRED")" \
-  "$PRIOR_LINE|$PRIOR_RECORD|1|1" \
+assert_eq "$PENDING_SEEN|$(jq -cS .overseer "$FLEET_STATE")|$(overseers)|$(listed "$PRED")|$(tm display-message -p -t "$PRED" '#{window_index}')" \
+  "$PRIOR_LINE|$PRIOR_RECORD|1|1|0" \
   "a --predecessor launch records its successor as pending before it opens, and the abandoned launch puts the record back"
 PENDCTL="$(mutant_scripts pendctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$PENDCTL/lib/overseer-launch.sh" \

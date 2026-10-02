@@ -15,6 +15,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # Unsetting them would let the project loader restore the checkout values.
 # Each row's explicit settings follow these defaults and override them.
 LANE_ENV_DEFAULTS=(
+  LINEAR_TEAM=
   ORCH_LANE_PREFERENCE= ORCH_LANE_DIRS= ORCH_LANE_ALIASES=
   ORCH_LANE_EXCLUDE= ORCH_LANE_RETIRE= ORCH_LANE_COPILOT_POOL=
   ORCH_LANE_BURN_PCT_PER_HOUR= ORCH_LANE_MAX_PCT= ORCH_LANE_HOST=local

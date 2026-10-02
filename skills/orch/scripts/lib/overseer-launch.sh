@@ -736,18 +736,25 @@ ol_session_stop() { # SESSION [SUCCESSOR]
 # empty OL_PRIOR, a state that could not be read, is never written to. Two
 # overseers never run, so this is one function and not a copy per caller.
 # DEP_ERR is left as the caller had it, holding the detail its refusal
-# relays; the stop's and the restore's own words go nowhere. Returns 0, or 1
-# where the restore failed, with OL_REASON=restore-failed and the writer's
+# relays. The provider restores the window placement when it stops the
+# abandoned insertion. Returns 0, or 1
+# where the stop or record restore failed, with OL_REASON=restore-failed and its
 # words in OL_DETAIL, for the caller to report under its own key before its
 # refusal.
 ol_session_abandon() {
-  local detail rc=0
+  local detail rc=0 stop_detail=""
   detail="$(cat -- "$DEP_ERR" 2>/dev/null)" || detail=""
   [[ -n "$OL_SESSION" ]] || ol_session_from_out
-  [[ -z "$OL_SESSION" ]] || ol_session_stop "$OL_SESSION" || true
+  if [[ -n "$OL_SESSION" ]] && ! ol_session_stop "$OL_SESSION"; then
+    OL_REASON=restore-failed
+    stop_detail="$(cat -- "$DEP_ERR" 2>/dev/null)" || stop_detail=""
+    OL_DETAIL="$stop_detail"
+    rc=1
+  fi
   if [[ -n "$OL_PRIOR" ]] && ! ol_record_restore; then
     OL_REASON=restore-failed
     OL_DETAIL="$(cat -- "$DEP_ERR" 2>/dev/null)" || OL_DETAIL=""
+    OL_DETAIL="${stop_detail:+$stop_detail$'\n'}$OL_DETAIL"
     rc=1
   fi
   if [[ -n "$detail" ]]; then printf '%s\n' "$detail" > "$DEP_ERR"; else : > "$DEP_ERR"; fi

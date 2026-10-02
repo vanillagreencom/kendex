@@ -104,7 +104,7 @@ run_ot() {
     IFS=';' read -ra items <<<"$env_list"
     for item in "${items[@]}"; do env_args+=("$item"); done
   fi
-  OUT=$(env LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
+  OUT=$(env LINEAR_TEAM= LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
     LANE_HOST_STUB_DIR="$TMP_ROOT/provider" LANE_HOST_STUB_LOG="$RUN/host.log" \
     ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SSH_PROMPT_SECS=1 ORCH_LANE_MAX_PCT=95 \
     OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" OT_CAPTURE="$RUN/gui" \
@@ -148,7 +148,20 @@ mkdir -p "$TMP_ROOT/home"
 
 # A valid file lets the repository refusal run before the quoted-placeholder
 # gate in brief rendering. The file read itself remains ahead of both gates.
-run_ot "$OT" "TMUX=;LINEAR_TEAM=kendex" --ghostty --harness claude \
+FOREIGN_SCRIPTS="$(mutant_scripts brief-foreign)" || exit 1
+FOREIGN_ROOT="${FOREIGN_SCRIPTS%/scripts}"
+orch_fixture_shared_libs "$FOREIGN_ROOT"
+git -C "$FOREIGN_ROOT" init -q || exit 1
+git -C "$FOREIGN_ROOT" config gc.auto 0 || exit 1
+git -C "$FOREIGN_ROOT" config maintenance.auto false || exit 1
+mkdir -p "$FOREIGN_ROOT/.agents/skills/linear/scripts"
+cat > "$FOREIGN_ROOT/.agents/skills/linear/scripts/linear.sh" <<'STUB'
+#!/bin/sh
+[ "$*" = 'teams get Checkout team --format raw' ] || exit 2
+printf '{"team":{"key":"KEN"}}\n'
+STUB
+chmod +x "$FOREIGN_ROOT/.agents/skills/linear/scripts/linear.sh"
+run_ot "$FOREIGN_SCRIPTS/open-terminal" "TMUX=;LINEAR_TEAM=Checkout team" --ghostty --harness claude \
   --cmd "$HARNESS_STUB --model opus --effort high $QUESTION_OFF_ALL '{brief}'" --brief-file "$BRIEF_FILE" CC-5
 assert_eq "rc=$RC first=$(sed -n 1p <<<"$OUT") creates=$(grep -c '^create ' "$RUN/worktree.log")" \
   "rc=1 first=open-terminal: item-foreign repo=CC route=peer-mail creates=0" \

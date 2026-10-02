@@ -49,7 +49,9 @@
 #            session=%N`. A session the server no longer lists refuses.
 #   stop     closes the session's window. With --successor, the successor
 #            stays at the base index while the predecessor closes, in one
-#            client call. Prints `stopped session=%N
+#            client call. Without it, undo the window's uncommitted insertion,
+#            restoring the displaced windows before closing it.
+#            Prints `stopped session=%N
 #            window=@N`; a session the server no longer lists is already
 #            stopped and prints `window=none`.
 #
@@ -190,6 +192,17 @@ require_session() { # VALUE
   matches "$1" '^%[0-9]+$' || die_status 2 invalid-session "value=$1"
 }
 
+# Undo new-window -b's contiguous shift by passing the inserted window along
+# the displaced windows, then closing it in the formerly empty slot. Window
+# ids, not a renumber of the session, preserve unrelated windows and gaps.
+close_inserted() { # WINDOW DISPLACED_WINDOW_IDS
+  local displaced args=()
+  for displaced in $2; do
+    args+=(swap-window -d -s "$1" -t "$displaced" \;)
+  done
+  tmux ${args[@]+"${args[@]}"} kill-window -t "$1" 2>"$DEP_ERR"
+}
+
 case "$VERB" in
   create)
     [[ -n "$CWD" ]] || die_status 2 option-missing option=--cwd verb=create
@@ -215,6 +228,15 @@ case "$VERB" in
       || die create-failed step=base-index "session=$TMUX_SESSION_NAME"
     matches "$base_idx" '^[0-9]+$' || die create-failed step=base-index "session=$TMUX_SESSION_NAME"
     target="=$TMUX_SESSION_NAME:$base_idx"
+    placement="$(tmux list-windows -t "=$TMUX_SESSION_NAME" -F '#{window_index} #{window_id}' 2>"$DEP_ERR")" \
+      || die create-failed step=placement "session=$TMUX_SESSION_NAME"
+    displaced="" next_idx="$base_idx"
+    while read -r idx prior_window; do
+      (( idx < base_idx )) && continue
+      [[ "$idx" -eq "$next_idx" ]] || break
+      displaced="${displaced:+$displaced }$prior_window"
+      next_idx=$((next_idx + 1))
+    done <<<"$placement"
     # From the window opening to the answer, a group signal would leave a window
     # no caller can name: create runs to its answer through these signals, the
     # pane write included, so the caller's close-out reads the session off it. A
@@ -225,8 +247,16 @@ case "$VERB" in
       -P -F '#{pane_id} #{window_id} #{pid}' 2>"$DEP_ERR")" || die create-failed step=new-window
     read -r pane window server <<<"$spec"
     [[ -n "$window" && -n "$server" ]] || die create-failed step=new-window
+    if ! tmux set-option -w -t "$window" @orch_overseer_displaced "$displaced" 2>"$DEP_ERR"; then
+      detail="$(cat -- "$DEP_ERR")" || detail=""
+      close_inserted "$window" "$displaced" || die create-failed step=rollback "window=$window"
+      printf '%s\n' "$detail" > "$DEP_ERR"
+      die create-failed step=placement "window=$window"
+    fi
     if ! pane_write pane "$pane" shell text "$LINE" 2>"$DEP_ERR"; then
-      tmux kill-window -t "$window" 2>/dev/null || true
+      detail="$(cat -- "$DEP_ERR")" || detail=""
+      close_inserted "$window" "$displaced" || die create-failed step=rollback "window=$window"
+      printf '%s\n' "$detail" > "$DEP_ERR"
       die create-failed step=pane-write "window=$window"
     fi
     printf 'session=%s window=%s server=%s\n' "$pane" "$window" "$server"
@@ -290,10 +320,12 @@ case "$VERB" in
       succ_window="$(pane_field "$SUCCESSOR" '#{window_id}')" || die session-unreadable "session=$SUCCESSOR" field=window_id
       # create already placed the successor at the base index. Swapping
       # it into the predecessor's shifted slot would move it away again.
-      tmux kill-window -t "$window" \; select-window -t "$succ_window" \
+      tmux kill-window -t "$window" \; set-option -wu -t "$succ_window" @orch_overseer_displaced \; select-window -t "$succ_window" \
         2>"$DEP_ERR" || die stop-failed "session=$SESSION" "window=$window" "successor=$SUCCESSOR"
     else
-      tmux kill-window -t "$window" 2>"$DEP_ERR" || die stop-failed "session=$SESSION" "window=$window"
+      displaced="$(tmux show-options -wqv -t "$window" @orch_overseer_displaced 2>"$DEP_ERR")" \
+        || die stop-failed "session=$SESSION" "window=$window"
+      close_inserted "$window" "$displaced" || die stop-failed "session=$SESSION" "window=$window"
     fi
     printf 'stopped session=%s window=%s\n' "$SESSION" "$window"
     ;;

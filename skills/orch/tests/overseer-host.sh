@@ -192,8 +192,13 @@ for read in before empty after; do
 done
 # Its control: a provider that refuses every failed read as unreadable.
 RACECTL="$(mutant_scripts racectl overseer-host-tmux)" || exit 1
-mutate_file "$RACECTL/overseer-host-tmux" '  detail="$(cat -- "$DEP_ERR")" || detail=""' \
-  '  die session-unreadable "session=$SESSION" "$@"'
+mutate_file "$RACECTL/overseer-host-tmux" 'inspect_unread() { # FIELD=VALUE...
+  local detail
+  detail="$(cat -- "$DEP_ERR")" || detail=""' \
+  'inspect_unread() { # FIELD=VALUE...
+  local detail
+  detail="$(cat -- "$DEP_ERR")" || detail=""
+  die session-unreadable "session=$SESSION" "$@"'
 race_pane 12 before
 PROVIDER_BIN="$RACECTL/overseer-host-tmux" RUN_PATH="$RACE_BIN:$PATH" run_tmux inspect --session "$RACE"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
@@ -283,8 +288,8 @@ assert_eq "$(tm display-message -p -t "$SESSION" '#{window_index} #{window_name}
 # from the base index after create.
 MUTANT="$(mutant_scripts mutant overseer-host-tmux)" || exit 1
 mutate_file "$MUTANT/overseer-host-tmux" \
-  '      tmux kill-window -t "$window" \; select-window -t "$succ_window" \' \
-  '      tmux swap-window -d -s "$succ_window" -t "$window" \; kill-window -t "$window" \; select-window -t "$succ_window" \'
+  '      tmux kill-window -t "$window" \; set-option -wu -t "$succ_window" @orch_overseer_displaced \; select-window -t "$succ_window" \' \
+  '      tmux swap-window -d -s "$succ_window" -t "$window" \; kill-window -t "$window" \; set-option -wu -t "$succ_window" @orch_overseer_displaced \; select-window -t "$succ_window" \'
 tm kill-window -a -t "$KEEP_WINDOW"
 tm move-window -r -t fleet
 PRED2="$(new_pane 3 'exec sleep 100000')"
@@ -322,8 +327,14 @@ run_tmux create --cwd "$TMP_ROOT/work" --session fleetz --line "exec sleep 10000
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(layout)" \
   "1|overseer-host-tmux: tmux-session-missing session=fleetz|overseer;w5;" \
   "create into a session tmux does not hold refuses naming it"
-# A pane write that fails once the window is open closes that window again: a
-# tmux shim on PATH fails the paste, and the layout is what it was.
+# Both abandon and failed pane-write cleanup undo insertion. The retained
+# overseer occupies the base index, with an adjacent window and a later gap.
+ADJACENT="$(tm new-window -d -t fleet:3 -n adjacent -P -F '#{window_id}' 'exec sleep 100000')"
+ROLLBACK_LAYOUT="$(tm list-windows -t fleet -F '#{window_id} #{window_index}')"
+ROLLBACKCTL="$(mutant_scripts rollbackctl overseer-host-tmux)" || exit 1
+mutate_file "$ROLLBACKCTL/overseer-host-tmux" \
+  '    args+=(swap-window -d -s "$1" -t "$displaced" \;)' \
+  '    if false; then args+=(swap-window -d -s "$1" -t "$displaced" \;); fi'
 REAL_TMUX="$(command -v tmux)"
 cat > "$BIN/tmux" <<SHIM
 #!/bin/sh
@@ -331,11 +342,33 @@ cat > "$BIN/tmux" <<SHIM
 exec "$REAL_TMUX" "\$@"
 SHIM
 chmod +x "$BIN/tmux"
-PATH="$BIN:$PATH" run_tmux create --cwd "$TMP_ROOT/work" --session fleet --line "exec sleep 100000"
+for rollback in abandon pane-write; do
+  for implementation in production control; do
+    provider="$HOST"
+    [[ "$implementation" != control ]] || provider="$ROLLBACKCTL/overseer-host-tmux"
+    if [[ "$rollback" == abandon ]]; then
+      PROVIDER_BIN="$provider" run_tmux create --cwd "$TMP_ROOT/work" --after "$FIRST" --line 'exec sleep 100000'
+      ABANDONED="$(field "$OUT" session)"
+      PROVIDER_BIN="$provider" run_tmux stop --session "$ABANDONED"
+      assert_eq "$RC" 0 "$implementation: abandonment closes the inserted window"
+    else
+      PROVIDER_BIN="$provider" RUN_PATH="$BIN:$PATH" run_tmux create --cwd "$TMP_ROOT/work" --after "$FIRST" --line 'exec sleep 100000'
+      assert_eq "$RC|$(sed -n 1p <<<"$OUT" | sed 's/window=@[0-9]*/window=@N/')" \
+        '1|overseer-host-tmux: create-failed step=pane-write window=@N' \
+        "$implementation: failed pane write closes the inserted window"
+    fi
+    actual="$(tm list-windows -t fleet -F '#{window_id} #{window_index}')"
+    if [[ "$implementation" == production ]]; then
+      assert_eq "$actual" "$ROLLBACK_LAYOUT" "$rollback restores every prior window index and gap"
+    else
+      if [[ "$actual" == "$ROLLBACK_LAYOUT" ]]; then restored=yes; else restored=no; fi
+      assert_eq "$restored" no "$rollback control: disabled swaps fail the placement assertion"
+      tm move-window -s "$FIRST" -t fleet:2
+      tm move-window -s "$ADJACENT" -t fleet:3
+    fi
+  done
+done
 rm -f -- "${BIN:?}/tmux"
-assert_eq "$RC|$(sed -n 1p <<<"$OUT" | sed 's/window=@[0-9]*/window=@N/')|$(layout)" \
-  "1|overseer-host-tmux: create-failed step=pane-write window=@N|overseer;w5;" \
-  "create whose pane write fails closes the window it opened"
 # A has-session answer that is not "can't find session" is the call failing,
 # not a missing session: TMUX pointed at a socket with no server refuses
 # tmux-failed, not tmux-session-missing.
@@ -343,7 +376,7 @@ OUT="$(cd "$TMP_ROOT/work" && env -i HOME="$TMP_ROOT" PATH="$PATH" TMUX="$TMP_RO
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "1|overseer-host-tmux: tmux-failed operation=has-session session=fleet" \
   "create against a socket with no server refuses tmux-failed, not a missing session"
-tm move-window -s "$FIRST" -t fleet:2
+tm kill-window -a -t "$FIRST"
 CREATECTL="$(mutant_scripts createctl overseer-host-tmux)" || exit 1
 mutate_file "$CREATECTL/overseer-host-tmux" 'tmux new-window -d -b -t "$target"' 'tmux new-window -d -a -t "$target"'
 PROVIDER_BIN="$CREATECTL/overseer-host-tmux" run_tmux create --cwd "$TMP_ROOT/work" --session fleet --line "exec sleep 100000"

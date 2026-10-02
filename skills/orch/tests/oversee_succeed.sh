@@ -842,6 +842,8 @@ IDLE_WAIT=2
 idle_log() { jq -r '(.fleet_log // [])[] | "\(.kind) \(.item) \(.text)"' "$FLEET_STATE" | sed 's/window=@[0-9]*/window=@N/; s/waited=[0-9]*/waited=N/'; }
 new_caller "$MARK"
 fleet_state
+tm swap-window -d -s "$CALLER_WINDOW" -t "$KEEP_WINDOW"
+IDLE_LAYOUT="$(tm list-windows -t fleet -F '#{window_id} #{window_index}')"
 touch "$TMP_ROOT/idle"
 run_succeed idle 'claude:fable:high' --wait-secs "$IDLE_WAIT"
 rm -f "$TMP_ROOT/idle"
@@ -850,6 +852,8 @@ idle_budget="$(in_range spent "$idle_waited" "$IDLE_WAIT" "$((IDLE_WAIT + SCHED_
 assert_eq "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/window=@[0-9]*/window=@N/; s/waited=[0-9]*/waited=N/')|$idle_budget|$(grep -cF 'FIXTURE successor startup waiting' <<<"$OUT")|$(caller_open)|$(overseers)|$(grep -c '^oversee-succeed: watch-' <<<"$OUT")|$(idle_log)" \
   "1|oversee-succeed: successor-not-working window=@N waited=N|spent|1|yes|0|0|close overseer oversee-succeed: successor-not-working window=@N waited=N The successor never showed a running turn; the caller keeps running." \
   "never working: refused after its whole budget, caller kept, successor closed, no watch handed over, the refusal in the fleet log"
+assert_eq "$(tm list-windows -t fleet -F '#{window_id} #{window_index}')" "$IDLE_LAYOUT" \
+  "an abandoned succession restores the base-index caller and unrelated windows"
 # Its control: an abandon that writes no fleet log row leaves the session that
 # reads the log next with no word that the succession failed.
 IDLECTL="$(mutant_scripts idlectl oversee-succeed)" || exit 1
