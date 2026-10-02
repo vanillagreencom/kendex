@@ -1,1 +1,1 @@
-- Small items with their documentation or changelog stay small when the change fits the size limit. Launch and branch checks use the same classifier.
+- Branch checks no longer treat documentation or changelog files as an extra source subsystem. Their added lines still count toward the small size limit.
