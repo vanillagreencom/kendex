@@ -264,8 +264,6 @@ an empty base queue still admin-merges|checks:ci-required queue-rule:always queu
 a failed base queue read skips the classifier and takes the queue|checks:ci-required queue-rule:always queue-entries:fail route:false post-queue|immediate-classified|75|-|merge-route: queue cause=queue-unreadable;{route-queue:queue-unreadable};{no-token};$QUEUED|calls=$PRE,graphql:entries,merge:squash:auto,graphql:queue auth=<unset>
 a missing base queue count takes the queue|checks:ci-required queue-rule:always queue-entries:null route:false post-queue|immediate-classified|75|-|merge-route: queue cause=queue-unreadable;{route-queue:queue-unreadable};{no-token};$QUEUED|calls=$PRE,graphql:entries,merge:squash:auto,graphql:queue auth=<unset>
 a nonwhole base queue count takes the queue|checks:ci-required queue-rule:always queue-entries:0.5 route:false post-queue|immediate-classified|75|-|merge-route: queue cause=queue-unreadable;{route-queue:queue-unreadable};{no-token};$QUEUED|calls=$PRE,graphql:entries,merge:squash:auto,graphql:queue auth=<unset>
-must-fail: with the occupied check cut, an occupied base queue admin-merges|checks:ci-required queue-rule:always queue-entries:1 route:false post:MERGED merge-commit:merged-oid|route-mutant:route-occupied|0|-|merge-route: admin cause=queue-bypass-safe ruleset=20569265 bypass=always;$QUEUE_FALSE;{no-token};MERGED PR #123|calls=$ROUTE_PRE,merge:squash:admin,graphql:queue auth=<unset>
-must-fail: with the unreadable check cut, a failed base queue read admin-merges|checks:ci-required queue-rule:always queue-entries:fail route:false post:MERGED merge-commit:merged-oid|route-mutant:route-unreadable|0|-|merge-route: admin cause=queue-bypass-safe ruleset=20569265 bypass=always;$QUEUE_FALSE;{no-token};MERGED PR #123|calls=$ROUTE_PRE,merge:squash:admin,graphql:queue auth=<unset>
 a token that may never bypass takes the queue, naming the ruleset and its answer|checks:ci-required queue-rule:never route:false post-queue|immediate-classified|75|-|merge-route: queue cause=no-bypass ruleset=20569265 bypass=never;{route-queue:no-bypass};{no-token};QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
 a ruleset answer with no bypass field takes the queue|checks:ci-required queue-rule:absent route:false post-queue|immediate-classified|75|-|merge-route: queue cause=no-bypass ruleset=20569265 bypass=absent;{route-queue:no-bypass};{no-token};QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
 a failed ruleset read takes the queue and names the ruleset|checks:ci-required queue-rule:fail route:false post-queue|immediate-classified|75|-|merge-route: queue cause=ruleset-unreadable ruleset=20569265;{route-queue:ruleset};{no-token};QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
@@ -303,6 +301,13 @@ must-fail: with the queue route's --auto cut, GitHub refuses the merge and nothi
 --queue without --auto is refused before any call|-|with:--queue|1|-|Error: --queue gates the --auto arm and needs --auto|calls=- auth=-
 must-fail: with the needs-auto check cut, --queue alone runs the immediate merge|checks:ci-required post:MERGED merge-commit:merged-oid|mutant:route-autoless:--queue+--keep-branch|0|-|{no-token};MERGED PR #123|calls=$PRE,merge:squash,graphql:queue auth=<unset>
 "
+
+build checks:ci-required queue-rule:always queue-entries:1 route:false post-queue
+queued="rc=75 out=- err=$(err_text "merge-route: queue cause=queue-occupied;{route-queue:occupied};{no-token};$QUEUED") calls=$PRE,graphql:entries,merge:squash:auto,graphql:queue auth=<unset>"
+assert_mutant_fails "$(run route-mutant:route-occupied)" "$queued" 'an occupied base queue skips the classifier and joins behind its entries'
+build checks:ci-required queue-rule:always queue-entries:fail route:false post-queue
+queued="rc=75 out=- err=$(err_text "merge-route: queue cause=queue-unreadable;{route-queue:queue-unreadable};{no-token};$QUEUED") calls=$PRE,graphql:entries,merge:squash:auto,graphql:queue auth=<unset>"
+assert_mutant_fails "$(run route-mutant:route-unreadable)" "$queued" 'a failed base queue read skips the classifier and takes the queue'
 
 # Keep the refusal's matched condition and text, but remove its effect.
 route_mutant route-refusal '    if [ "$auto" = true ] && [ "$route" = admin ]; then' '    if [ "$auto" = true ] && [ "$route" = admin ] && false; then'
