@@ -216,11 +216,13 @@ The long pass's events, checked and reported in this order:
                              cause changes, and every ORCH_OVERSEER_MARK_REPEAT
                              long passes while it stands. A success clears it.
                              A new pair is reported only when its newer run is
-                             newer than the newest run the watch has read and
-                             is the newest completed run in the unfiltered run
-                             list. A later attempt of a re-run is newer. A page
-                             older than either prints refresh-stale on stderr
-                             and judges nothing.
+                             newer than the newest run the watch has read. A
+                             pair that would open an incident, or any pair with
+                             no run recorded, is reported only when its newer
+                             run is also the newest completed run in the
+                             unfiltered run list. A later attempt of a re-run
+                             is newer. A page older than either prints
+                             refresh-stale on stderr and judges nothing.
                              A repository without that workflow is skipped.
                              A failed read prints refresh-unread on stderr,
                              leaves the failure pair intact when the run list
@@ -887,7 +889,7 @@ ow_message() { # REASON FIELD=VALUE...
     start-stall-secs-invalid) text='ORCH_WATCH_START_STALL_SECS takes a positive whole number of seconds, with no leading zero.' ;;
     start-stall-unread) text='The lane status file could not be read through lane-host, so whether the lane started settles nothing this pass: no start-stalled goes out for it and its row stands. The exit is lane_host_fetch'"'"'s: 2 a failed read, 4 no lane-host slot.' ;;
     refresh-unread) text='The refresh run list or failed-step log could not be read. A failed run-list read leaves the baseline intact; a failed log read reports cause=unread. The watch continues.' ;;
-    refresh-stale) text='GitHub answered the refresh run list with a page older than the newest run known: newest= is that run, the one the watch last read or, for a new pair or with none read, the newest completed run in the unfiltered list, and read= the newest run the page holds. The page judges nothing, so no pair is reported and none is cleared. The watch continues.' ;;
+    refresh-stale) text='GitHub answered the refresh run list with a page older than the newest run known: newest= is that run, the one the watch last read or, for a pair opening an incident or with none read, the newest completed run in the unfiltered list, and read= the newest run the page holds. The page judges nothing, so no pair is reported and none is cleared. The watch continues.' ;;
     refresh-order-unknown) text='The refresh run-list judgement named an order other than newer, same, older or unrecorded, so the run list cannot be judged.' ;;
     lane-rows-unread) text='The Pi lane session rows could not be read, so the lane reads unjudged this pass and its pane is not read in their place. The exit is lane_host_fetch'"'"'s for a hosted lane, 2 a failed read and 4 no lane-host slot; 0 is a file this read reached and could not read, or whose last row names an event no writer writes, and 2 on a local lane is a record naming no mail_root.' ;;
     unread-secs-invalid) text='ORCH_DIRECTIVE_UNREAD_SECS takes a whole number of seconds, with no leading zero.' ;;
