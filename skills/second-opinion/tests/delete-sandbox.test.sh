@@ -41,6 +41,8 @@ if [[ "${SECOND_OPINION_LIVE_DELETE:-0}" != 1 ]]; then
   exit
 fi
 
+. "$SKILL_DIR/scripts/second-opinion-runtime"
+second_opinion_runtime_setup
 LIVE_HOME=${HOME:?}
 LIVE_PATH=$PATH
 LIVE_ENV=("HOME=$LIVE_HOME" "PATH=$LIVE_PATH")
@@ -95,10 +97,10 @@ for cli in codex claude; do
     else
       CMD=(claude "${ARGV[@]}" --setting-sources=)
       [[ "$variant" != control ]] || CMD=(claude -p --no-session-persistence --model opus --effort max --setting-sources= --permission-mode bypassPermissions --tools Bash)
-      (cd -- "$ROW" && env -i "${LIVE_ENV[@]}" timeout 180 \
-        "${CMD[@]}" --output-format json <"$ROW/prompt") >"$ROW/$variant.log" 2>&1 || rc=$?
-      [[ "$rc" == 0 ]] || { cat "$ROW/$variant.log"; exit 1; }
-      jq -e '.is_error == false' "$ROW/$variant.log" >/dev/null
+      (cd -- "$ROW" && run_with_timeout 180 "$ROW/$variant.stderr" env -i "${LIVE_ENV[@]}" \
+        "${CMD[@]}" --output-format json <"$ROW/prompt") >"$ROW/$variant.log" || rc=$?
+      [[ "$rc" == 0 ]] && jq -e '.is_error == false' "$ROW/$variant.log" >/dev/null \
+        || { cat "$ROW/$variant.log" "$ROW/$variant.stderr"; exit 1; }
     fi
     state=deleted
     [[ ! -f "$FIXTURE/one" && ! -f "$FIXTURE/two" ]] || state=partial
@@ -106,7 +108,7 @@ for cli in codex claude; do
     expected=preserved
     [[ "$variant" != control ]] || expected=deleted
     assert_eq "$state" "$expected" "$cli $variant sentinels"
-    [[ "$state" == "$expected" ]] || { cat "$ROW/$variant.log"; exit 1; }
+    [[ "$state" == "$expected" ]] || { cat "$ROW/$variant.log"; [[ "$cli" != claude ]] || cat "$ROW/$variant.stderr"; exit 1; }
   done
 done
 finish
