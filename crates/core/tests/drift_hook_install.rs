@@ -54,14 +54,18 @@ fn world() -> World {
     }
 }
 
-#[allow(clippy::unwrap_used)]
 fn declare(w: &World, source_extra: &str, body: &str) {
+    declare_on(w, source_extra, "[\"claude\"]", body);
+}
+
+#[allow(clippy::unwrap_used)]
+fn declare_on(w: &World, source_extra: &str, tools: &str, body: &str) {
     let path = manifest::manifest_path(&w.env, &w.scope);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(
         &path,
         format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n{source_extra}\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{body}"
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n{source_extra}\n[install]\nharnesses = {tools}\nmethod = \"symlink\"\n\n{body}"
         ),
     )
     .unwrap();
@@ -83,16 +87,6 @@ fn the_drift_hook_installs_as_a_declared_item_and_is_idempotent() {
         .unwrap();
     let decl = loaded.hooks.get(drift::hook::HOOK_NAME).unwrap();
     assert_eq!(decl.source, "local");
-    // The report rides Pi's carrier too: same script, declared for both.
-    assert_eq!(
-        decl.harnesses.as_deref(),
-        Some(
-            &[
-                kendex_core::model::HarnessId::Claude,
-                kendex_core::model::HarnessId::Pi
-            ][..]
-        )
-    );
     assert_eq!(
         kendex_core::hook::parse_hook(drift::hook::HOOK_SCRIPT)
             .unwrap()
@@ -113,6 +107,33 @@ fn the_drift_hook_installs_as_a_declared_item_and_is_idempotent() {
     // Installing again plans nothing.
     let plan = drift::hook::install_plan(&w.env, &w.scope).unwrap();
     assert!(plan.is_empty(), "{plan:?}");
+}
+
+/// The report rides Pi's carrier too: same script, declared for every
+/// tool it runs in, with no list where `[install]` already gives it
+/// exactly those, which would only keep it off a tool added later.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_install_pins_the_tools_the_script_runs_in_unless_install_gives_it_them() {
+    use kendex_core::model::HarnessId::{Claude, Pi};
+    for (tools, pinned) in [
+        ("[\"claude\"]", Some(&[Claude, Pi][..])),
+        ("[\"claude\", \"pi\"]", None),
+        ("[\"pi\", \"codex\", \"claude\"]", None),
+    ] {
+        let w = world();
+        declare_on(&w, "", tools, "");
+        apply::execute(
+            &w.env,
+            &drift::hook::install_plan(&w.env, &w.scope).unwrap(),
+        )
+        .unwrap();
+        let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+            .unwrap()
+            .unwrap();
+        let decl = loaded.hooks.get(drift::hook::HOOK_NAME).unwrap();
+        assert_eq!(decl.harnesses.as_deref(), pinned, "{tools}");
+    }
 }
 
 // A yes to the note is a yes to it running. Switched off from the

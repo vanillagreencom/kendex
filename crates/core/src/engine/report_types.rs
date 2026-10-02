@@ -225,6 +225,27 @@ pub struct ExcludedHook {
     pub harness: HarnessId,
 }
 
+/// A declared hook's `harnesses` pin in kendex.toml deciding one tool
+/// against what the hook would get with no pin. Either way the remedy is
+/// the pin's: drop it, or change the tool's place in it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinnedHook {
+    pub name: String,
+    pub harness: HarnessId,
+    pub pin: Pin,
+}
+
+/// What a hook's pin does on one tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pin {
+    /// Leaves out a tool the hook would be written for with no pin: one
+    /// the scope installs on and the hook runs on.
+    LeavesOut,
+    /// Names a tool the hook's own harnesses line leaves out, where the
+    /// hook is written nowhere whatever the pin says.
+    NamesExcluded,
+}
+
 #[derive(Debug)]
 pub struct EngineReport {
     pub declaration_status: DeclarationStatus,
@@ -236,8 +257,11 @@ pub struct EngineReport {
     pub warnings: Vec<ItemWarning>,
     /// Catalog hooks left off a tool by their own harnesses line alone.
     /// A declaration that names the tool gets a `kendex-hook-excluded`
-    /// note in `notes` instead.
+    /// note in `notes` and a `pinned_hooks` row instead.
     pub excluded_hooks: Vec<ExcludedHook>,
+    /// Each tool a declared hook's pin decides against the hook's own
+    /// reading; `verify` names every one.
+    pub pinned_hooks: Vec<PinnedHook>,
     /// What this plan would add to or drop from the installed set.
     pub set_changes: Vec<SetChange>,
     /// Installations this plan leaves alone that nothing needs anymore —
@@ -392,6 +416,7 @@ impl EngineReport {
             notes: Vec::new(),
             warnings: Vec::new(),
             excluded_hooks: Vec::new(),
+            pinned_hooks: Vec::new(),
             set_changes: Vec::new(),
             sweepable: Vec::new(),
             kept: Vec::new(),

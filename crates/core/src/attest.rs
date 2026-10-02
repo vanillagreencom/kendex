@@ -45,7 +45,7 @@ pub enum Foreign {
 /// this number: a change to a row's fields or to what a state means bumps
 /// it. A new [`State`] value is additive and keeps it, so a reader treats
 /// a state it does not know as not ok. `clean` does not imply every row is
-/// `ok`: a `warning` row leaves the run clean.
+/// `ok`: a `warning` or `notice` row leaves the run clean.
 pub const DOCUMENT_VERSION: u32 = 1;
 
 /// What one verify row concluded.
@@ -62,6 +62,9 @@ pub enum State {
     /// Declared by the scope and held by no record entry, so nothing was
     /// checked: the positions are where a render would land.
     Unrecorded,
+    /// A finding that never fails the run, `--strict` included; the row's
+    /// detail names the remedy.
+    Notice,
 }
 
 impl State {

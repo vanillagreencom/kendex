@@ -104,7 +104,15 @@ pub fn adopt(
         true => INPLACE_SOURCE_NAME,
         false => LOCAL_SOURCE_NAME,
     };
-    declare(&mut manifest, kind, name, wanted, already_declared, source);
+    declare(
+        &mut manifest,
+        scope,
+        kind,
+        name,
+        wanted,
+        already_declared,
+        source,
+    );
 
     let manifest_path = manifest::manifest_path(env, scope);
     ops.push(PlannedOp {
@@ -276,25 +284,22 @@ fn copies_differ(name: &str, first: HarnessId, second: HarnessId) -> CoreError {
 // the local one.
 
 /// Write the item into the manifest, bound to the tools that had it. Only
-/// when the `[install]` defaults name exactly that set may the list be left
-/// off: a wider default would install the item for tools the user never
-/// gave it to.
+/// when the tools the item reaches with no list, `[install]`'s that hold
+/// its kind here, are exactly that set may the list be left off: a wider
+/// default would install the item for tools the user never gave it to.
 fn declare(
     manifest: &mut manifest::Manifest,
+    scope: &Scope,
     kind: ItemKind,
     name: &str,
     wanted: Vec<HarnessId>,
     already_declared: bool,
     source: &str,
 ) {
-    let defaults_match = {
-        let defaults: std::collections::BTreeSet<&HarnessId> =
-            manifest.install.harnesses.iter().collect();
-        wanted
-            .iter()
-            .collect::<std::collections::BTreeSet<&HarnessId>>()
-            == defaults
-    };
+    let defaults_match = crate::engine::desired::names_the_default(
+        &wanted,
+        &crate::engine::desired::harnesses_for(None, manifest, kind, scope),
+    );
     let decl = manifest
         .declared_mut(kind)
         .entry(name.to_owned())

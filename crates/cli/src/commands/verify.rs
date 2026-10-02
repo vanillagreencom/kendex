@@ -6,7 +6,7 @@ use kendex_core::attest::{
     self, Document, Floor, Foreign, Placed, Reading, Row, Stale, Standing, State,
 };
 use kendex_core::engine::{
-    DeclarationStatus, DriftState, EngineReport, Installation, Owns, Position, ShimStanding,
+    DeclarationStatus, DriftState, EngineReport, Installation, Owns, Pin, Position, ShimStanding,
     planned_closure,
 };
 use kendex_core::env::Env;
@@ -183,7 +183,9 @@ impl Tally {
 /// entries have their own rows and closing count. An unsupported hook
 /// delivery fails even without a recorded entry, under the contract in
 /// docs/architecture/engine.md. Intentional harness exclusions and advisory
-/// copies are not failed deliveries.
+/// copies are not failed deliveries. A declared hook's `harnesses` pin
+/// deciding a tool against the hook's own reading is a notice row, which
+/// fails no run, `--strict` included.
 ///
 /// A project may keep an agent's tracked output local on purpose, so an
 /// ignored output is a warning unless `warnings` is [`Warnings::Fail`].
@@ -323,8 +325,7 @@ fn check_scope(
             return Ok(());
         }
     };
-    let lock = audited.matching;
-    let report = audited.report;
+    let (lock, report) = (audited.matching, audited.report);
     let stale = trailed(style, &scope, &lock, &report, reading);
     tally.stale.extend(stale);
     let placer = Placer::new(env, &scope, output.base.as_deref(), &report);
@@ -339,6 +340,7 @@ fn check_scope(
     );
     declaration_rows(&scope, declared, &lock, &report, &placer, &named, tally);
     failed_hook_delivery_rows(&lock, &report, &placer, &named, tally, style);
+    pinned_hook_rows(&report, &placer, &named, tally, style);
     for (key, entry) in &lock.entries {
         if !named(&entry.name) {
             continue;
@@ -419,6 +421,52 @@ fn failed_hook_delivery_rows(
                 &[],
             ));
         }
+    }
+}
+
+/// Each tool a declared hook's `harnesses` pin decides against the hook's
+/// own reading, as a notice and a `notice` row naming the hook, the tool
+/// and the remedy. The engine's report is the one judge of which those
+/// are. Nothing on disk disagrees with the record, so no run fails on
+/// one, `--strict` included.
+fn pinned_hook_rows(
+    report: &EngineReport,
+    placer: &Placer,
+    named: &dyn Fn(&str) -> bool,
+    tally: &mut Tally,
+    style: &Style,
+) {
+    for pinned in report
+        .pinned_hooks
+        .iter()
+        .filter(|pinned| named(&pinned.name))
+    {
+        let harness = pinned.harness.name();
+        let detail = match pinned.pin {
+            Pin::LeavesOut => format!(
+                "its harnesses pin in kendex.toml leaves out {harness}, which this scope installs on and the hook runs on; drop the pin, or add {harness} to it"
+            ),
+            Pin::NamesExcluded => format!(
+                "its harnesses pin in kendex.toml names {harness}, which the hook's own harnesses line leaves out; drop the pin, or take {harness} off it"
+            ),
+        };
+        ui::stderr(&style.report_row(
+            Status::Notice,
+            &[Span::Prose(&format!(
+                "{}: hook {}: {detail}",
+                scope_label(placer.scope),
+                pinned.name
+            ))],
+            "",
+        ));
+        tally.rows.push(placer.row(
+            "hook",
+            &pinned.name,
+            Some(pinned.harness),
+            State::Notice,
+            Some(detail),
+            &[],
+        ));
     }
 }
 

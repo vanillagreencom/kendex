@@ -293,12 +293,23 @@ pub fn install_plan(env: &Env, scope: &Scope) -> Result<Plan> {
 /// check that never fires, or fires in half the places it promised.
 pub(crate) fn declare(manifest: &mut Manifest, scope: &Scope) -> Option<&'static str> {
     let wanted = target_harnesses(scope);
+    // The tools the script runs in that `[install]` already gives the hook
+    // are the hook's own with no list; a pin naming just those is left off.
+    let defaults: Vec<HarnessId> =
+        crate::engine::desired::harnesses_for(None, manifest, ItemKind::Hook, scope)
+            .into_iter()
+            .filter(|harness| wanted.contains(harness))
+            .collect();
+    let wanted = match crate::engine::desired::names_the_default(&wanted, &defaults) {
+        true => None,
+        false => Some(wanted),
+    };
     let Some(decl) = manifest.hooks.get_mut(HOOK_NAME) else {
         manifest.hooks.insert(
             HOOK_NAME.to_owned(),
             ItemDecl {
                 source: LOCAL_SOURCE_NAME.to_owned(),
-                harnesses: Some(wanted),
+                harnesses: wanted,
                 method: None,
                 rev: None,
                 enabled: true,
@@ -313,9 +324,9 @@ pub(crate) fn declare(manifest: &mut Manifest, scope: &Scope) -> Option<&'static
     // cover and render fewer, so the list comes up to the set the script
     // runs in — which is what the confirmation lists a file for, tool by
     // tool, before it is pressed.
-    let widened = decl.harnesses.as_deref() != Some(wanted.as_slice());
+    let widened = decl.harnesses != wanted;
     if widened {
-        decl.harnesses = Some(wanted);
+        decl.harnesses = wanted;
     }
     let switched = !decl.enabled;
     decl.enabled = true;

@@ -288,6 +288,8 @@ pub struct DesiredState {
     /// Catalog hooks their own harnesses line keeps off a tool nothing the
     /// person wrote asks them onto; `EngineReport::excluded_hooks`.
     pub excluded_hooks: Vec<super::ExcludedHook>,
+    /// Declared hooks whose pin decides a tool; `EngineReport::pinned_hooks`.
+    pub pinned_hooks: Vec<super::PinnedHook>,
     pub refused: Vec<Refused>,
     /// Declarations whose source resolved and whose item was found and
     /// read, each with the provenance it is planned under. What these
@@ -428,7 +430,7 @@ mod artifact;
 mod places;
 pub use artifact::artifact_disk_hash;
 pub(crate) use places::{IN_PLACE_DISABLED, effective_method, in_place_source, skill_dir};
-pub(crate) use places::{harnesses_for, requested_or_default, target_harnesses};
+pub(crate) use places::{harnesses_for, names_the_default, requested_or_default, target_harnesses};
 pub use places::{native_dir, own_dir, read_dirs, skill_canonical};
 pub(super) mod hold;
 

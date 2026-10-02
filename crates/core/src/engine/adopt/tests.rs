@@ -91,51 +91,61 @@ fn an_earlier_copy_at_the_home_goes_to_the_trash_not_under_the_new_one() {
     assert!(trashed.iter().any(|e| e.path().join("notes.md").is_file()));
 }
 
-/// The [install] defaults name more tools than the one the item was
-/// adopted from: the declaration pins to what was actually observed, so
-/// the follow-up apply never installs it somewhere the user never put it.
+/// The declaration pins to what was actually observed where the [install]
+/// defaults name more tools than the one the item was adopted from, so the
+/// follow-up apply never installs it somewhere the user never put it; and
+/// writes no list where the defaults name exactly that tool, which would
+/// only keep the item off a tool added to them later.
 #[test]
 fn adoption_binds_only_the_harnesses_that_had_the_item() {
-    let tmp = tempfile::tempdir().unwrap();
-    let env = Env::fake(tmp.path(), FakeOs::Linux);
-    let project = tmp.path().join("app");
-    let scope = Scope::Project {
-        root: project.clone(),
-    };
-    fs::create_dir_all(&project).unwrap();
-    fs::write(
-        project.join("kendex.toml"),
-        "schema = 6\n\n[install]\nharnesses = [\"claude\", \"opencode\"]\nmethod = \"symlink\"\n",
-    )
-    .unwrap();
-    fs::create_dir_all(project.join(".claude/skills/handmade")).unwrap();
-    fs::write(
-        project.join(".claude/skills/handmade/SKILL.md"),
-        "---\nname: handmade\ndescription: mine\n---\nMy content.\n",
-    )
-    .unwrap();
+    for (tools, pinned) in [
+        ("[\"claude\", \"opencode\"]", true),
+        ("[\"claude\"]", false),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = Env::fake(tmp.path(), FakeOs::Linux);
+        let project = tmp.path().join("app");
+        let scope = Scope::Project {
+            root: project.clone(),
+        };
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("kendex.toml"),
+            format!("schema = 6\n\n[install]\nharnesses = {tools}\nmethod = \"symlink\"\n"),
+        )
+        .unwrap();
+        fs::create_dir_all(project.join(".claude/skills/handmade")).unwrap();
+        fs::write(
+            project.join(".claude/skills/handmade/SKILL.md"),
+            "---\nname: handmade\ndescription: mine\n---\nMy content.\n",
+        )
+        .unwrap();
 
-    let plan = adopt(
-        &env,
-        &scope,
-        ItemKind::Skill,
-        "handmade",
-        &[HarnessId::Claude],
-    )
-    .unwrap();
-    crate::apply::execute(&env, &plan).unwrap();
+        let plan = adopt(
+            &env,
+            &scope,
+            ItemKind::Skill,
+            "handmade",
+            &[HarnessId::Claude],
+        )
+        .unwrap();
+        crate::apply::execute(&env, &plan).unwrap();
 
-    let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
-    assert!(manifest.contains("[skills.handmade]"));
-    assert!(
-        manifest.contains("harnesses = [\"claude\"]"),
-        "the declaration must pin to the adopted harness alone:\n{manifest}"
-    );
+        let manifest = crate::manifest::load_for_mutation(&project.join("kendex.toml"))
+            .unwrap()
+            .unwrap();
+        let decl = manifest.skills.get("handmade").unwrap();
+        assert_eq!(
+            decl.harnesses.as_deref(),
+            pinned.then_some(&[HarnessId::Claude][..]),
+            "{tools}"
+        );
 
-    let report = audit(&env, &scope).unwrap();
-    crate::apply::execute(&env, &report.plan).unwrap();
-    assert!(project.join(".claude/skills/handmade").is_symlink());
-    assert!(!project.join(".opencode/skills/handmade").exists());
+        let report = audit(&env, &scope).unwrap();
+        crate::apply::execute(&env, &report.plan).unwrap();
+        assert!(project.join(".claude/skills/handmade").is_symlink());
+        assert!(!project.join(".opencode/skills/handmade").exists());
+    }
 }
 
 /// Proven where a test can make a symlink without a privilege.
@@ -510,4 +520,33 @@ fn an_adopt_refusal_spells_the_position_it_names_with_slashes() {
     };
     let unmarked = adopt(&env, &scope, ItemKind::Skill, "ghost", &[HarnessId::Claude]).unwrap_err();
     assert!(unmarked.to_string().contains(tail), "{unmarked}");
+}
+
+/// The defaults a list is held to are the tools `[install]` names that
+/// hold the kind at that scope: Cursor keeps skills in a project alone, so
+/// globally `[claude, cursor]` gives a skill Claude only, and a list naming
+/// Claude is left off there and written in a project.
+#[test]
+fn a_tool_that_holds_no_such_item_here_is_no_part_of_the_defaults() {
+    let project = Scope::Project {
+        root: std::path::PathBuf::from("/app"),
+    };
+    for (scope, pinned) in [(Scope::Global, false), (project, true)] {
+        let mut manifest = manifest::Manifest::default();
+        manifest.install.harnesses = vec![HarnessId::Claude, HarnessId::Cursor];
+        declare(
+            &mut manifest,
+            &scope,
+            ItemKind::Skill,
+            "handmade",
+            vec![HarnessId::Claude],
+            false,
+            LOCAL_SOURCE_NAME,
+        );
+        assert_eq!(
+            manifest.skills["handmade"].harnesses.as_deref(),
+            pinned.then_some(&[HarnessId::Claude][..]),
+            "{scope:?}"
+        );
+    }
 }

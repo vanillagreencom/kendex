@@ -1,0 +1,1 @@
+- `kendex verify` names each hook whose `harnesses` pin keeps it off an installed tool or names a tool it excludes; `adopt` and the drift check write no pin equal to the default.

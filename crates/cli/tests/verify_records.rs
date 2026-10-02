@@ -409,8 +409,31 @@ fn every_row_prints_the_positions_it_rendered() {
     assert!(output.status.success(), "{}", said(&output));
     assert!(document.clean, "{document:?}");
     assert_eq!((document.checked, document.failed), (10, 0), "{document:?}");
+    // The fixture pins `guard` to Claude: each other installed tool the hook
+    // runs on is a notice row with no position, and the run stays clean.
+    let noticed: Vec<Option<HarnessId>> = document
+        .rows
+        .iter()
+        .filter(|row| row.state == State::Notice && row.name == "guard")
+        .map(|row| row.harness)
+        .collect();
+    assert_eq!(
+        noticed,
+        [
+            HarnessId::Codex,
+            HarnessId::Opencode,
+            HarnessId::Pi,
+            HarnessId::Gemini
+        ]
+        .map(Some),
+        "{document:?}"
+    );
     let expected = expected_rows();
-    assert_eq!(document.rows.len(), expected.len(), "{document:?}");
+    assert_eq!(
+        document.rows.len(),
+        expected.len() + noticed.len(),
+        "{document:?}"
+    );
     for (kind, name, harness, positions) in expected {
         let found = row(&document, kind, name, harness)
             .unwrap_or_else(|| panic!("no row for {kind} {name} {harness:?}: {document:?}"));

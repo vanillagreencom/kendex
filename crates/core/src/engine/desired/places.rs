@@ -137,6 +137,19 @@ pub(crate) fn harnesses_for(
         .collect()
 }
 
+/// Whether a `harnesses` list names exactly the tools `defaults` already
+/// gives the item with no list. Written as a pin, such a list changes
+/// nothing today and keeps the item off every tool `[install]` gains
+/// later, so a writer leaves it off.
+pub(crate) fn names_the_default(listed: &[HarnessId], defaults: &[HarnessId]) -> bool {
+    let set = |list: &[HarnessId]| {
+        list.iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    set(listed) == set(defaults)
+}
+
 /// The tools a request or declaration aims at, before any kind can narrow
 /// them: the ones it names, or the scope's own list where it names none.
 /// Read on its own where a refusal has to say which tools it turned the
