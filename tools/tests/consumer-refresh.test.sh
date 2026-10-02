@@ -79,6 +79,7 @@ else bad 'real consumer baseline' "$OUT"; fi
 # Git receive-pack starts real automatic GC in the scratch bare remote. Lower
 # its pack threshold in a disposable runtime copy so this small world reaches
 # the same maintenance that a large installed consumer starts after push.
+# Select GC explicitly because Git can default to geometric repacking instead.
 python3 - "$ROOT/tools/consumer-refresh" "$TMP" <<'PY'
 from pathlib import Path
 import sys
@@ -86,6 +87,7 @@ source = Path(sys.argv[1]).resolve()
 text = source.read_text()
 old = '    git("clone", "--bare", "-q", str(consumer), str(remote))\n'
 setup = '''    git("config", "--global", "trace2.eventTarget", TRACE)
+    git("--git-dir", str(remote), "config", "maintenance.gc.enabled", "true")
     git("--git-dir", str(remote), "config", "gc.auto", "1")
     git("--git-dir", str(remote), "config", "gc.autoPackLimit", "1")
     git("--git-dir", str(remote), "repack", "-ad")
