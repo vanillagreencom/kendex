@@ -24,13 +24,13 @@ The rows are the wake's refusal reasons, plus the different silence `lanes state
 
 Every lane the wake refuses while its session still runs takes this route, whatever its harness: `working`, `unjudged` from a wake, and a hosted lane's `wake-invalid`. The mail waits by default, and the lane reads it at the next point the Lane mail rule in [skill-rules.md § Coordination](skill-rules.md#coordination) names, a waiter's return included; a lane idle at its prompt reads nothing until its next turn starts. Mail that cannot wait ends the session by signal, then closes and relaunches the lane, never as a second session beside a running one:
 
-1. Stop the harness. A hosted lane takes `lane-host stop --item [ITEM] --harness [HARNESS]` and needs its `stopped item=[ITEM] processes=[COUNT]` line. A local lane takes the stop `lane-close` runs, `lane_stop_owned` from `scripts/lib/lane-state.sh`, a function the command below sources and calls, run from the lane's repository checkout:
+1. Stop the harness. A hosted lane takes `lane-host stop --item [ITEM] --harness [HARNESS]` and needs its `stopped item=[ITEM] processes=[COUNT]` line. A local lane takes the stop `lane-close` runs, `lane_stop_owned` from `scripts/lib/lane-state.sh`, a function the command below sources and calls, run from the lane's repository checkout. `[PID]` and `[START]` are the lane record's `launch.pid` and `launch.start`, which `workflow-state --state-dir [OVERSEE_STATE_DIR] get oversee '.lanes[] | select(.item == "[ITEM]") | .launch'` prints:
 
    ```bash
-   bash -c '. .agents/skills/orch/scripts/lib/lane-state.sh && lane_stop_owned "$1" "$2" && echo "stopped processes=$LANE_STOP_COUNT" || { echo "stop-failed cause=$LANE_STOP_CAUSE pid=$LANE_STOP_PID" >&2; exit 1; }' _ [WORKTREE] [HARNESS]
+   bash -c '. .agents/skills/orch/scripts/lib/lane-state.sh && lane_stop_owned "$1" "$2" "$3" && echo "stopped processes=$LANE_STOP_COUNT" || { echo "stop-failed cause=$LANE_STOP_CAUSE pid=$LANE_STOP_PID" >&2; exit 1; }' _ [PID] "[START]" [HARNESS]
    ```
 
-   Status 0 prints `stopped processes=[COUNT]`: every `[HARNESS]` process whose directory is `[WORKTREE]` has exited, and 0 means none was running. Status 1 prints `stop-failed cause=[CAUSE]`, the step that failed from that library's list above `lane_stop_owned`, or an empty cause where the library did not load, and the lane may still run.
+   Status 0 prints `stopped processes=[COUNT]`: every `[HARNESS]` process at or below `[PID]` has exited, and 0 means none was running, or `[PID]` now names a process started at another time. Status 1 prints `stop-failed cause=[CAUSE]`, the step that failed from that library's list above `lane_stop_owned`, or an empty cause where the library did not load, and the lane may still run.
 
 2. Wait for the lane's `lane-exited` event.
 

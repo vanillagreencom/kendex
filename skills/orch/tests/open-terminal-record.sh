@@ -54,6 +54,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 # where set, for every name. list-panes lists the one pane new-window makes,
 # and fails with tmux's own line where STUB_LIST_PANES_FAIL is set. A
 # paste-buffer marks STUB_PASTED, which run_ot clears before each launch.
+# The pane's process is STUB_PANE_PID where a row sets it, the stub's own
+# otherwise.
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/ghostty"
@@ -94,7 +96,7 @@ case "${1:-}" in
     if [[ "$*" == *pane_current_command* ]]; then
       running=bash
       [[ ! -e "${STUB_PASTED:-}" ]] || running="${STUB_PANE_CMD:-claude}"
-      printf '%%1\t%s\t%s\n' "$$" "$running"
+      printf '%%1\t%s\t%s\n' "${STUB_PANE_PID:-$$}" "$running"
     else echo %1; fi ;;
   load-buffer) cat -- "${@: -1}" > "$STUB_PANE_BUFFER" || exit 1
     [[ -z "${STUB_BUFFER_LOG:-}" ]] || cat -- "$STUB_PANE_BUFFER" >> "$STUB_BUFFER_LOG" ;;
@@ -179,7 +181,7 @@ run_ot() {
   OUT="$(cd "$cwd" && PATH="$BIN:$PROC_BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" STUB_PASTED="$TMP_ROOT/pasted" STUB_PANE_BUFFER="$TMP_ROOT/pane-buffer" \
     WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" LANES_HOME="$SESSION_HOME" EXISTS_DIR="$EXISTS_DIR" \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX="${RUN_TMUX:-}" ORCH_TMUX_SESSION="${RUN_SESSION-stub}" TMUX_PANE="${RUN_PANE:-}" \
-    STUB_SESSION_NAME="${STUB_SESSION_NAME:-}" STUB_TMUX_LOG="${STUB_TMUX_LOG:-}" STUB_DEAD_SESSIONS="${STUB_DEAD_SESSIONS:-}" STUB_PANE_GONE="${STUB_PANE_GONE:-}" STUB_HAS_SESSION_ERR="${STUB_HAS_SESSION_ERR:-}" GH_REPO="" STUB_GH_REPO="${STUB_GH_REPO:-}" \
+    STUB_SESSION_NAME="${STUB_SESSION_NAME:-}" STUB_TMUX_LOG="${STUB_TMUX_LOG:-}" STUB_DEAD_SESSIONS="${STUB_DEAD_SESSIONS:-}" STUB_PANE_GONE="${STUB_PANE_GONE:-}" STUB_HAS_SESSION_ERR="${STUB_HAS_SESSION_ERR:-}" STUB_PANE_PID="${STUB_PANE_PID:-}" GH_REPO="" STUB_GH_REPO="${STUB_GH_REPO:-}" \
     "$script" ${state_args[@]+"${state_args[@]}"} "$@" 2>"$TMP_ROOT/err")"
   RC=$?
   set -e
@@ -189,10 +191,11 @@ run_ot() {
 # record ITEM — the item's record as `field=value` words, null spelled null.
 # running_at and session_since are left out: each is a clock read at the
 # launch, which running_at ITEM and session_since ITEM read on their own rows
-# below.
+# below. launch is left out too: launch_of ITEM reads it on its own rows.
 record() {
-  "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | to_entries | map(select(.key != "running_at" and .key != "session_since" and .key != "tier" and .key != "tier_inputs")) | map("\(.key)=\(.value // "null")") | join(" ")'
+  "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | to_entries | map(select(.key != "running_at" and .key != "session_since" and .key != "tier" and .key != "tier_inputs" and .key != "launch")) | map("\(.key)=\(.value // "null")") | join(" ")'
 }
+launch_of() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .launch | if . == null then null else [.pane, (.server | type), .pid, .start] end' | jq -c .; }
 running_at() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .running_at // "null"' | tr -d '"'; }
 session_since() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .session_since // "null"' | tr -d '"'; }
 records() { "$WS" --state-dir "$STATE" get oversee '[.lanes[] | select(.item == "'"$1"'")] | length'; }
@@ -246,6 +249,31 @@ RUN_TMUX=stub,1,0 run_ot --tmux --harness claude --lane "$LANE_DIR" --cmd "true 
 assert_eq "rc=$RC $(sed "s/ launched_at=[^ ]*//" <<<"$(record CC-2)")" \
   "rc=0 item=CC-2 tracker=linear repo=null harness=claude window=stub:CC-2 account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-2 surface=tmux model=opus effort=high session_id=null status=running over_cap=null allow_all=null" \
   "a tmux launch under a lane records its window, its account dir, the tmux surface and the model its own command names"
+assert_eq "launch=$(launch_of CC-2) unread=$(grep -c '^open-terminal: launch-identity-unread item=CC-2 pane=%1 step=harness$' <<<"$ERR" || true)" \
+  'launch=["%1","number",null,null] unread=1' \
+  "a tmux launch whose pane runs no harness records its pane and server, no harness, and says so"
+gui_launch="$(launch_of CC-1)"
+assert_eq "launch=$gui_launch" 'launch=null' "a GUI launch records no launch identity"
+
+# The launch identity lane-close stops the harness by: the pane and its tmux
+# server from the window's creation and, once the launch stands, the harness
+# process under the pane's own with its start time. This shell stands in for
+# that harness, the pane's process itself.
+launch_identity_row() { # ITEM [SCRIPT]
+  proc_table_write "$PROC_TABLE" "$$ 1 claude"
+  STUB_PANE_PID=$$ RUN_TMUX=stub,1,0 run_ot ${2:+SCRIPT="$2"} --tmux --harness claude --lane "$LANE_DIR" --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" "$1"
+  proc_table_write "$PROC_TABLE"
+}
+SHELL_START="$(bash -c '. "$1" && lane_process_start "$2"' _ "$SCRIPTS_DIR/lib/lane-state.sh" "$$")"
+[[ -n "$SHELL_START" ]] || { echo "open-terminal-record: shell-start-unread pid=$$" >&2; exit 1; }
+launch_identity_row CC-3
+assert_eq "rc=$RC launch=$(launch_of CC-3)" "rc=0 launch=$(jq -cn --argjson pid $$ --arg start "$SHELL_START" '["%1", "number", $pid, $start]')" \
+  "a confirmed local launch records its pane, server, harness pid and the harness's start"
+IDENTITY_OT="$(mutant_scripts identity-mutant open-terminal)/open-terminal" || exit 1
+mutate_file "$IDENTITY_OT" '[[ "$launch_rc" -ne 0 || -n "$target" ]] || launch_identity_read "$pane" "$title"' '[[ "$launch_rc" -ne 0 || -n "$target" ]] || true'
+launch_identity_row CC-4 "$IDENTITY_OT"
+assert_eq "rc=$RC launch=$(launch_of CC-4)" 'rc=0 launch=["%1","number",null,null]' \
+  "control: without the read at confirmation the record names no harness"
 STUB_GH_REPO=o/r RUN_TMUX=stub,1,0 run_ot --tmux --tracker github --repo o/r "${FLEET_CMD[@]}" 2709
 assert_eq "rc=$RC $(record issue-2709 | sed -E 's/ (account|host|mail_root|surface|model|effort|session_id|launched_at|over_cap|allow_all)=[^ ]*//g')" \
   "rc=0 item=issue-2709 tracker=github repo=o/r harness=claude window=stub:gh-2709 status=running" \

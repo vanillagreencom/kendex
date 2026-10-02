@@ -813,6 +813,11 @@ CLAIM_WRITE_FAILED=false
 # handed to a background job records with it; both empty for any other launch.
 LAUNCH_PANE=""
 LAUNCH_PREPARE=""
+# The launch identity lane_record_write records as `launch`: the window's tmux
+# server pid beside LAUNCH_PANE, and a local lane's harness as `PID START`
+# (lib/lane-state.sh lane_harness_identity) once its launch is confirmed.
+LAUNCH_SERVER=""
+LAUNCH_HARNESS_ID=""
 # The pane of a launch whose open_tmux failed after its window opened, which
 # launch_finish sets on that failure alone; empty for every other outcome.
 UNTAKEN_PANE=""
@@ -1273,7 +1278,10 @@ UNPARK_JQ='def unpark($at): (if .parked.at == null then .
 # session_since, its own LAUNCHED_AT, which a wake keeps: the session a fresh
 # start opens is written at or after it, so the lane readers bind a record
 # with no session_id to the earliest session in its worktree since that stamp,
-# never to one a relaunch retired.
+# never to one a relaunch retired. Every launch and relaunch writes `launch`,
+# the lane's launch identity lane-close stops its harness by: the window's pane
+# and tmux server pid, and a local lane's harness pid and start once its launch
+# is confirmed, null off tmux; a wake keeps it.
 # The park it drops is kept as one of the record's `pauses`, closed at the
 # resume, since oversee-cycle reads a lane's parked time from them.
 lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATUS]
@@ -1299,11 +1307,14 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
     --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$LAUNCH_MODEL" --arg effort "$LAUNCH_EFFORT" --arg preference_entry "$PREFERENCE_ENTRY" \
     --arg session_id "$session_id" --arg launched_at "$launched_at" --arg status "$status" --argjson prepare "${LAUNCH_PREPARE:-null}" \
     --arg over_cap "$CAP_PASSED" --arg running_at "$running_at" --argjson allow_all "${LAUNCH_ALLOW_ALL:-null}" \
-    --argjson tier_record "$LAUNCH_TIER_RECORD" \
+    --argjson tier_record "$LAUNCH_TIER_RECORD" --arg pane "$LAUNCH_PANE" --arg server "$LAUNCH_SERVER" \
+    --arg harness_pid "${LAUNCH_HARNESS_ID%% *}" --arg harness_start "${LAUNCH_HARNESS_ID#* }" \
     '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, effort: $effort, session_id: $session_id, session_since: $launched_at, launched_at: $launched_at, running_at: $running_at, status: $status, over_cap: $over_cap}
      | map_values(if . == "" then null else . end) + {allow_all: $allow_all} + $tier_record
        + (if $preference_entry == "" then {} else {preference_entry: $preference_entry} end)
-       + (if $prepare == null then {} else {prepare: $prepare} end)')" || return 1
+       + (if $prepare == null then {} else {prepare: $prepare} end)
+       + {launch: (if $pane == "" then null else {pane: $pane, server: $server, pid: $harness_pid, start: $harness_start}
+         | map_values(if . == "" then null else . end) | (.pid, .server) |= (if . == null then null else tonumber end) end)}')" || return 1
   # update-report, so the refusal and the write are one locked step: a wake
   # that names no entry leaves the state as it was and reports so.
   report="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update-report oversee \
@@ -2143,6 +2154,7 @@ tmux_window_open() { # DIR TITLE
     fi
   fi
   LAUNCH_PANE="$pane"
+  LAUNCH_SERVER="$server"
 }
 
 # Closes the item's window, which retires its lane claim. A pane a successful
@@ -2266,7 +2278,23 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
   # announcement, which is what the lane-mismatch line says; closing it also
   # retires the claim written above, live only while its pane is.
   lane_account_ok "$pane" "$title" "$premise" || { tmux_window_close "$pane" "$title" || true; return 1; }
+  [[ "$launch_rc" -ne 0 || -n "$target" ]] || launch_identity_read "$pane" "$title"
   return "$launch_rc"
+}
+
+# A local lane's launch identity, read once its launch stands: the harness
+# process under the pane's own, which lane-close signals by after the lane's
+# worktree is gone. A hosted lane's identity is its provider's to record. A
+# read that answers nothing records none and says so; the launch stands, and
+# lane-close then reads the same identity off the pane at close.
+launch_identity_read() { # PANE TITLE
+  local step=pane
+  if lane_pane_by_id "$1"; then
+    step=harness
+    LAUNCH_HARNESS_ID="$(lane_harness_identity "$LANE_PANE_PID" "$HARNESS")" && return 0
+  fi
+  LAUNCH_HARNESS_ID=""
+  ot_message launch-identity-unread "item=$2" "pane=$1" "step=$step" >&2
 }
 
 # Launch verification: a first-run dialog (theme / trust / browser integration)
@@ -3116,7 +3144,7 @@ for raw in "${ITEMS[@]}"; do
     fi
     wt="$CLAIM_ROOT"
   fi
-  LAUNCH_PANE="" LAUNCH_PREPARE="" UNTAKEN_PANE=""
+  LAUNCH_PANE="" LAUNCH_PREPARE="" UNTAKEN_PANE="" LAUNCH_SERVER="" LAUNCH_HARNESS_ID=""
   # The launch time is read before the terminal opens. The first record's
   # launched_at is the floor the watch applies to merges and new issues, so a
   # stamp taken after the open and its verification would leave anything that

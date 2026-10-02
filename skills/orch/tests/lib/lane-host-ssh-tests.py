@@ -258,7 +258,9 @@ exec git "$@"
         run = self.copilot_run(fields, PACKAGE / "scripts/lib/lane-launch.sh")
         after = sorted(p.name for p in Path(self.row["account"]).iterdir()) if Path(self.row["account"]).exists() else []
         self.assertEqual(after, before)
-        self.assertEqual(fields["remote-prefix"], "exec env " + shlex.quote("COPILOT_HOME=" + self.row["account"]) + " bash -lc")
+        self.assertEqual(fields["remote-prefix"], "exec env " + shlex.quote("COPILOT_HOME=" + self.row["account"]) + " " + shlex.join([
+            "bash", "-c", '. "$1" && lane_identity_record "$2" && exec bash -lc "$3"', "lane-host",
+            self.row["clone"] + "/.agents/skills/orch/scripts/lib/lane-state.sh", self.row["clone"] + "/.git/lane-host-pid"]))
         self.assertEqual(run.stdout.decode(), "|".join(["unset", "profile-token", "profile-actions-token", self.row["account"],
                                                         str(self.root / ".agents/skills"), "true"]), run.stderr)
 
@@ -865,144 +867,114 @@ exec "$REAL_CAT" "$@"
         self.assertEqual(closed.returncode, 0, closed.stderr)
         self.assertEqual(self.call("list").stdout, b"owner/repo/TEST-1\tavailable\t-\tlane.example\n")
 
+    def launch_lane(self, on_term="exit 0", name="codex"):
+        """A codex lane started through its create's own prefix, a process named NAME in the worktree.
+
+        The prefix records the launch identity of the shell it execs into the
+        harness, so the returned process's pid is the one recorded."""
+        created = self.create(harness="codex")
+        self.assertEqual(created.returncode, 0, created.stderr)
+        prefix = dict(word.split("=", 1) for word in created.stdout.decode().strip().split("\t"))["remote-prefix"]
+        shutil.copy2(shutil.which("bash"), self.bin / name)
+        (self.bin / name).chmod(0o755)
+        command = (f"cd {shlex.quote(self.row['clone'] + '-worktree')} && exec {shlex.quote(str(self.bin / name))} -c "
+                   + shlex.quote(f"trap {shlex.quote(on_term)} TERM; printf 'ready\\n'; while :; do sleep 0.1; done"))
+        lane = subprocess.Popen(["bash", "-c", prefix + " " + shlex.quote(command)],
+                                env={**self.env, "HOME": str(self.root)}, stdout=subprocess.PIPE)
+        self.addCleanup(lane.wait, 2)
+        self.addCleanup(lambda: lane.poll() is None and lane.kill())
+        self.addCleanup(lane.stdout.close)
+        self.assertEqual(lane.stdout.readline(), b"ready\n")
+        return lane
+
     @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
-    def test_stop_signals_only_the_named_harness_in_the_owned_worktree(self):
-        self.assertEqual(self.create().returncode, 0)
+    def test_stop_signals_the_recorded_harness(self):
+        lane = self.launch_lane()
+        identity = Path(self.row["clone"]) / ".git/lane-host-pid"
+        self.assertEqual(identity.read_text().split(" ", 1)[0], str(lane.pid))
+        outside = subprocess.Popen([str(self.bin / "codex"), "-c", "trap 'exit 0' TERM; while :; do sleep 0.1; done"],
+                                   cwd=Path(self.row["clone"] + "-worktree"), env=self.env)
+        self.addCleanup(outside.wait, 2)
+        self.addCleanup(lambda: outside.poll() is None and outside.kill())
+        other = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual((other.returncode, other.stdout, lane.poll()),
+                         (0, b"stopped item=TEST-1 processes=0\n", None), other.stderr)
+        stopped = self.call("stop", "--item", "TEST-1", "--harness", "codex")
+        self.assertEqual((stopped.returncode, stopped.stdout), (0, b"stopped item=TEST-1 processes=1\n"), stopped.stderr)
+        lane.wait(timeout=2)
+        self.assertIsNone(outside.poll())
+        gone = self.call("stop", "--item", "TEST-1", "--harness", "codex")
+        self.assertEqual((gone.returncode, gone.stdout), (0, b"stopped item=TEST-1 processes=0\n"), gone.stderr)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
+    def test_stop_signals_the_recorded_harness_after_its_worktree_is_gone(self):
+        # merge-pr removes the item's worktree before its lane goes idle, and a
+        # later create may make a tree at the same path: neither hides the
+        # recorded harness. The control is the removed-worktree guard the
+        # stop once ran, put back into a copy of the script.
+        lane = self.launch_lane()
         worktree = Path(self.row["clone"] + "-worktree")
-        clone = Path(self.row["clone"])
-        shutil.copy2(shutil.which("bash"), self.bin / "claude")
-        (self.bin / "claude").chmod(0o755)
-
-        def harness(cwd):
-            return subprocess.Popen([str(self.bin / "claude"), "-c",
-                                     "trap 'exit 0' TERM; while :; do sleep 1; done"],
-                                    cwd=cwd, env=self.env)
-
-        holder = subprocess.Popen(
-            [sys.executable, "-c",
-             "import os,sys,time; p=os.fork(); "
-             "os.execl(sys.argv[1],sys.argv[1],'-c','exit 0') if p == 0 else "
-             "(print(p,flush=True),time.sleep(30))", str(self.bin / "claude")],
-            cwd=worktree, env=self.env, stdout=subprocess.PIPE, text=True)
-        zombie = int(holder.stdout.readline())
-        holder.stdout.close()
-        for _ in range(100):
-            state = Path(f"/proc/{zombie}/stat").read_text().rsplit(")", 1)[1].split()[0]
-            if state == "Z":
-                break
-            time.sleep(0.01)
-        self.assertEqual(state, "Z")
-
-        lane = harness(worktree)
-        lane_two = harness(worktree)
-        outside = harness(clone)
-        try:
-            stopped = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-            self.assertEqual((stopped.returncode, stopped.stdout),
-                             (0, b"stopped item=TEST-1 processes=2\n"), stopped.stderr)
-            lane.wait(timeout=2)
-            lane_two.wait(timeout=2)
-            self.assertIsNone(outside.poll())
-
-            library = clone / ".agents/skills/orch/scripts/lib/lane-state.sh"
-            library_original = library.read_text()
-            library.write_text(library_original + f'\nlane_owned_processes() {{ LANE_OWNED_PROCESS_PIDS="{zombie}"; }}\n')
-            raced = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-            self.assertEqual((raced.returncode, raced.stdout),
-                             (0, b"stopped item=TEST-1 processes=0\n"), raced.stderr)
-
-            library.write_text(library_original)
-            inverse = self.call("stop", "--item", "TEST-1", "--harness", "codex")
-            self.assertEqual((inverse.returncode, inverse.stdout),
-                             (0, b"stopped item=TEST-1 processes=0\n"), inverse.stderr)
-        finally:
-            if 'library_original' in locals():
-                library.write_text(library_original)
-            for process in (lane, lane_two, outside, holder):
-                if process.poll() is None:
-                    process.terminate()
-                process.wait(timeout=2)
+        subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "worktree", "remove", "--force", str(worktree)],
+                       check=True, capture_output=True)
+        original = self.script.read_text()
+        anchor = '''owned(row, item, "stop")
+    result = remote(row, \'\'\''''
+        self.assertEqual(original.count(anchor), 1)
+        self.script.write_text(original.replace(anchor, anchor + '''if ! test -d "$2-worktree"; then
+  printf 'lane-host-ssh: stop-worktree-removed item=%s\\\\n' "$3" >&2
+  exit 4
+fi
+'''))
+        mutant = self.call("stop", "--item", "TEST-1", "--harness", "codex")
+        self.assertEqual((mutant.returncode, b"stop-worktree-removed item=TEST-1\n" in mutant.stderr, lane.poll()),
+                         (4, True, None), mutant.stderr)
+        self.script.write_text(original)
+        worktree.mkdir()
+        stopped = self.call("stop", "--item", "TEST-1", "--harness", "codex")
+        self.assertEqual((stopped.returncode, stopped.stdout), (0, b"stopped item=TEST-1 processes=1\n"), stopped.stderr)
+        lane.wait(timeout=2)
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
-    def test_stop_refuses_a_process_that_left_the_worktree(self):
-        self.assertEqual(self.create().returncode, 0)
-        clone = Path(self.row["clone"])
-        shutil.copy2(shutil.which("bash"), self.bin / "claude")
-        (self.bin / "claude").chmod(0o755)
-        # The ownership read named this pid, and by the signal its directory is
-        # the clone, not the worktree: a process that moved, or a reused pid.
-        moved = subprocess.Popen([str(self.bin / "claude"), "-c", "trap 'exit 0' TERM; while :; do sleep 1; done"],
-                                 cwd=clone, env=self.env)
-        self.addCleanup(moved.wait, 2)
-        self.addCleanup(lambda: moved.poll() is None and moved.kill())
-        library = clone / ".agents/skills/orch/scripts/lib/lane-state.sh"
-        library_original = library.read_text()
-        staged = f'\nlane_owned_processes() {{ LANE_OWNED_PROCESS_PIDS="{moved.pid}"; }}\n'
-        library.write_text(library_original + staged)
-        refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((refused.returncode, f"stop-owner-changed item=TEST-1 pid={moved.pid}\n".encode() in refused.stderr),
-                         (1, True), refused.stderr)
-        self.assertIsNone(moved.poll())
+    def test_stop_leaves_a_pid_that_started_at_another_time(self):
+        lane = self.launch_lane()
+        identity = Path(self.row["clone"]) / ".git/lane-host-pid"
+        identity.write_text(f"{lane.pid} Thu Jan 1 00:00:00 1970\n")
+        reused = self.call("stop", "--item", "TEST-1", "--harness", "codex")
+        self.assertEqual((reused.returncode, reused.stdout, lane.poll()),
+                         (0, b"stopped item=TEST-1 processes=0\n", None), reused.stderr)
 
-    def test_stop_refuses_an_unreadable_owned_process_set(self):
+    def test_stop_refuses_without_a_recorded_identity(self):
         self.assertEqual(self.create().returncode, 0)
         clone = Path(self.row["clone"])
+        identity = clone / ".git/lane-host-pid"
         library = clone / ".agents/skills/orch/scripts/lib/lane-state.sh"
         library_original = library.read_text()
         library.write_text(library_original + '\nunset -f lane_stop_owned\n')
         missing = self.call("stop", "--item", "TEST-1", "--harness", "claude")
         self.assertEqual((missing.returncode, b"stop-operation-missing" in missing.stderr), (1, True), missing.stderr)
-        library.write_text(library_original + '\nlane_owned_processes() { return 2; }\n')
-        refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((refused.returncode, b"stop-process-read-failed item=TEST-1\n" in refused.stderr),
-                         (1, True), refused.stderr)
-
-    def test_stop_answers_a_removed_worktree_with_its_own_status(self):
-        # merge-pr removes the item's worktree before its lane goes idle, and
-        # lane-close reads exit 4 as a stop to skip, so no remote-failed line
-        # may sit above its stop-skipped line. stop's control is the guard
-        # removed.
-        self.assertEqual(self.create().returncode, 0)
-        worktree = Path(self.row["clone"] + "-worktree")
-        subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "worktree", "remove", "--force", str(worktree)],
-                       check=True, capture_output=True)
-        removed = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((removed.returncode, removed.stdout, b"stop-worktree-removed item=TEST-1\n" in removed.stderr,
-                          b"remote-failed" in removed.stderr),
-                         (4, b"", True, False), removed.stderr)
-        original = self.script.read_text()
-        guard = """if ! test -d "$1"; then
-  printf 'lane-host-ssh: stop-worktree-removed item=%s\\n' "$4" >&2
-  exit 4
-fi
-"""
-        self.assertEqual(original.count(guard), 1)
-        self.script.write_text(original.replace(guard, ""))
-        mutant = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((mutant.returncode, b"stop-worktree-read-failed item=TEST-1" in mutant.stderr),
-                         (1, True), mutant.stderr)
+        library.write_text(library_original)
+        self.assertFalse(identity.exists())
+        unrecorded = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual((unrecorded.returncode, unrecorded.stdout,
+                          f"stop-identity-missing item=TEST-1 path={identity}\n".encode() in unrecorded.stderr),
+                         (1, b"", True), unrecorded.stderr)
+        identity.write_text("not-a-pid\n")
+        invalid = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual((invalid.returncode, b"stop-identity-invalid item=TEST-1" in invalid.stderr), (1, True), invalid.stderr)
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
     def test_stop_refuses_when_a_signaled_process_stays_live(self):
-        self.assertEqual(self.create().returncode, 0)
-        worktree = Path(self.row["clone"] + "-worktree")
-        shutil.copy2(shutil.which("bash"), self.bin / "claude")
-        (self.bin / "claude").chmod(0o755)
-        process = subprocess.Popen([str(self.bin / "claude"), "-c",
-                                    "trap '' TERM; while :; do sleep 1; done"],
-                                   cwd=worktree, env=self.env)
-        self.addCleanup(process.wait, 2)
-        self.addCleanup(lambda: process.poll() is None and process.kill())
+        lane = self.launch_lane(on_term="")
         library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/lane-state.sh"
         library_original = library.read_text()
-        library.write_text(library_original + f'\nlane_owned_processes() {{ LANE_OWNED_PROCESS_PIDS="{process.pid}"; }}\nkill() {{ return 1; }}\n')
-        signal_refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((signal_refused.returncode, b"stop-signal-refused" in signal_refused.stderr),
+        library.write_text(library_original + '\nkill() { return 1; }\n')
+        signal_refused = self.call("stop", "--item", "TEST-1", "--harness", "codex")
+        self.assertEqual((signal_refused.returncode, f"stop-signal-refused item=TEST-1 pid={lane.pid}".encode() in signal_refused.stderr),
                          (1, True), signal_refused.stderr)
         library.write_text(library_original)
-        refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((refused.returncode, f"stop-timeout item=TEST-1 pid={process.pid}".encode() in refused.stderr),
-                         (1, True), refused.stderr)
+        refused = self.call("stop", "--item", "TEST-1", "--harness", "codex")
+        self.assertEqual((refused.returncode, f"stop-timeout item=TEST-1 pid={lane.pid}".encode() in refused.stderr, lane.poll()),
+                         (1, True, None), refused.stderr)
 
     def test_close_preserves_and_restores_only_traced_render_drift(self):
         self.assertEqual(self.create().returncode, 0)

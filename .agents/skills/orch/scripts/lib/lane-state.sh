@@ -292,8 +292,9 @@ pane_has_remote_harness() { # LANE_HOST ITEM HARNESS
 }
 
 # The harness processes whose current directory is one worktree. This is the
-# ownership read used before a wake starts a second harness and before
-# lane_stop_owned signals one. The worktree path is canonical, and a process
+# ownership read used before a wake starts a second harness and by the hosted
+# status read; a stop signals by launch identity instead (lane_stop_owned),
+# since a worktree its lane removed names no process. The worktree path is canonical, and a process
 # that still exists but whose cwd cannot be read makes the whole answer
 # unreadable.
 #
@@ -334,6 +335,20 @@ lane_process_state() { # PID
   printf '%s\n' "${stat:0:1}"
 }
 
+# Print a process's start time, the half of a launch identity that tells a
+# process from a later one handed the same pid: `ps -o lstart=`, which Linux
+# procps and macOS both answer, in the C locale and UTC so a reader in another
+# environment prints the same line, its runs of blanks squeezed. An empty line
+# is a pid with no process; any other failure is status 2, no answer.
+lane_process_start() { # PID
+  local out rc=0
+  out="$(LC_ALL=C TZ=UTC ps -o lstart= -p "$1" 2>/dev/null)" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    [[ "$rc" -eq 1 && -z "${out//[[:space:]]/}" ]] || return 2
+  fi
+  awk '{ $1 = $1; print }' <<<"$out"
+}
+
 # Print a process's current directory. /proc answers on Linux; where there is
 # none, `lsof`, which macOS ships, answers instead. Status 1 is a directory the
 # read did not return, which a caller settles by lane_process_state: a process
@@ -368,11 +383,13 @@ lane_process_table() {
 # `found` or `none`. The walk up each parent chain is bounded by the table's
 # row count: no real chain is longer, and a table read mid-reparent that holds
 # a cycle cannot loop it. DEPTH, where given, bounds how far below ROOT the
-# match may sit: 1 is a child of ROOT, 2 a grandchild.
-lane_process_below() { # TABLE ROOT NAME_RE INCLUDE_ROOT [DEPTH]
+# match may sit: 1 is a child of ROOT, 2 a grandchild. ANSWER `pids` prints
+# every match as `HOPS PID` instead, HOPS its distance below ROOT, and nothing
+# where none matches.
+lane_process_below() { # TABLE ROOT NAME_RE INCLUDE_ROOT [DEPTH] [ANSWER]
   # The ERE crosses in the environment: awk -v would read its backslashes as
   # escape sequences and unescape the metacharacters the caller escaped.
-  LANE_BELOW_RE="$3" awk -v root="$2" -v self="$4" -v depth="${5:-}" '
+  LANE_BELOW_RE="$3" awk -v root="$2" -v self="$4" -v depth="${5:-}" -v answer="${6:-found}" '
     BEGIN { re = ENVIRON["LANE_BELOW_RE"] }
     { n = $0; sub(/^[^ ]+ [^ ]+ /, "", n); parent[$1] = $2; name[$1] = n; pid[NR] = $1 }
     END {
@@ -380,11 +397,14 @@ lane_process_below() { # TABLE ROOT NAME_RE INCLUDE_ROOT [DEPTH]
         if (name[pid[i]] !~ re) continue
         q = (self == 1) ? pid[i] : parent[pid[i]]
         for (hops = (self == 1) ? 0 : 1; q != "" && hops < NR + 1 && (depth == "" || hops <= depth + 0); hops++) {
-          if (q == root) { print "found"; exit }
+          if (q == root) {
+            if (answer == "pids") { print hops, pid[i]; break }
+            print "found"; exit
+          }
           q = parent[q]
         }
       }
-      print "none"
+      if (answer != "pids") print "none"
     }' <<<"$1"
 }
 
@@ -445,52 +465,91 @@ lane_owned_processes() { # WORKTREE HARNESS [ROOT_SOURCE: directory|launch-recor
   LANE_OWNED_PROCESS_TABLE="$table"
 }
 
-# End one worktree's harness by signal: SIGTERM to every process
-# lane_owned_processes names, each one's directory read again just before its
-# signal, then a bounded wait for every signalled process to exit. The one stop
-# the hosted provider's `stop` verb and a local `lane-close` both run, so
-# nothing ever types into a lane to end it.
+# A lane's launch identity: the harness process a launch confirmed, as `PID
+# START`, START being lane_process_start's line. The stop below signals by it,
+# never by the worktree's directory, since a lane's own close-out removes that
+# directory before its harness exits, and a tree recreated at the same path
+# then names no process.
 #
-# A process that exits or becomes a zombie before its signal or during the
-# wait counts as stopped. On status 0 LANE_STOP_COUNT is how many were
-# signalled, 0 where none was found. On status 1 LANE_STOP_CAUSE names the step
-# that failed and LANE_STOP_PID the process it failed on, empty where the step
-# reads no single process:
-#   worktree-read-failed  the worktree does not resolve
-#   process-read-failed   the ownership read answered nothing (its status 2)
-#   cwd-reader-missing    this host has neither /proc nor lsof to read a
-#                         process's directory (its status 3)
+# lane_harness_identity prints the identity of the harness-named process
+# nearest ROOT, at or below it in the process tree: a local launch reads it
+# under its pane's process once the launch is confirmed. Status 1 is no such
+# process; status 2 a table or start that could not be read.
+lane_harness_identity() { # ROOT HARNESS
+  local table name_re found pid start
+  table="$(lane_process_table)" || return 2
+  name_re="$(lane_harness_process_re "$2")" || return 2
+  found="$(lane_process_below "$table" "$1" "$name_re" 1 "" pids)" || return 2
+  pid="$(awk 'NR == 1 || $1 < hops { hops = $1; pid = $2 } END { print pid }' <<<"$found")" || return 2
+  [[ -n "$pid" ]] || return 1
+  start="$(lane_process_start "$pid")" || return 2
+  [[ -n "$start" ]] || return 1
+  printf '%s %s\n' "$pid" "$start"
+}
+
+# lane_identity_record FILE writes the calling shell's own identity into FILE.
+# A hosted launch's prefix runs it in the shell that then execs the harness, so
+# the pid is the harness's, or its parent's where the launch runs two commands
+# in turn. lane_identity_read FILE reads one back into LANE_IDENTITY_PID and
+# LANE_IDENTITY_START: status 1 is no file, status 2 one that does not hold an
+# identity.
+LANE_IDENTITY_PID=""
+LANE_IDENTITY_START=""
+lane_identity_record() { # FILE
+  local start
+  start="$(lane_process_start "$$")" || return 1
+  [[ -n "$start" ]] || return 1
+  printf '%s %s\n' "$$" "$start" >"$1"
+}
+lane_identity_read() { # FILE
+  LANE_IDENTITY_PID=""
+  LANE_IDENTITY_START=""
+  [[ -e "$1" ]] || return 1
+  read -r LANE_IDENTITY_PID LANE_IDENTITY_START <"$1" || return 2
+  [[ "$LANE_IDENTITY_PID" =~ ^[1-9][0-9]*$ && -n "$LANE_IDENTITY_START" ]] || return 2
+}
+
+# End a lane's harness by signal, by its launch identity: SIGTERM to every
+# process named for HARNESS at or below PID, where PID still runs and started
+# at START, then a bounded wait for every signalled process to exit. The one
+# stop the hosted provider's `stop` verb and a local `lane-close` both run, so
+# nothing ever types into a lane to end it, and neither reads a directory.
+#
+# A PID that has exited, is a zombie, or started at another time than START is
+# the recorded harness gone, its pid since handed to another process: nothing
+# is signalled and the stop succeeds. A process that exits or becomes a zombie
+# before its signal or during the wait counts as stopped. On status 0
+# LANE_STOP_COUNT is how many were signalled, 0 where none was found. On
+# status 1 LANE_STOP_CAUSE names the step that failed and LANE_STOP_PID the
+# process it failed on, empty where the step reads no single process:
+#   identity-invalid      PID is not a process id, or START is empty
 #   state-read-failed     a process state could not be read
-#   cwd-read-failed       a live process whose directory cannot be read
-#   owner-changed         a process left the worktree before its signal
+#   start-read-failed     the recorded process's start could not be read
+#   process-read-failed   the process table could not be read
 #   signal-refused        the signal failed on a process still live
 #   timeout               a signalled process outlived LANE_STOP_WAIT_PASSES
 LANE_STOP_COUNT=0
 LANE_STOP_CAUSE=""
 LANE_STOP_PID=""
 LANE_STOP_WAIT_PASSES=50
-lane_stop_owned() { # WORKTREE HARNESS
-  local root pid current state rc signaled="" live="" passes="$LANE_STOP_WAIT_PASSES"
+lane_stop_owned() { # PID START HARNESS
+  local pid state start table name_re found signaled="" live="" passes="$LANE_STOP_WAIT_PASSES"
   LANE_STOP_COUNT=0
   LANE_STOP_CAUSE=""
   LANE_STOP_PID=""
-  root="$(cd -- "$1" && pwd -P)" || { LANE_STOP_CAUSE=worktree-read-failed; return 1; }
-  rc=0
-  lane_owned_processes "$root" "$2" || rc=$?
-  case "$rc" in
-    0) ;;
-    3) LANE_STOP_CAUSE=cwd-reader-missing; return 1 ;;
-    *) LANE_STOP_CAUSE=process-read-failed; return 1 ;;
-  esac
-  for pid in $LANE_OWNED_PROCESS_PIDS; do
+  [[ "$1" =~ ^[1-9][0-9]*$ && -n "$2" ]] || { LANE_STOP_CAUSE=identity-invalid; return 1; }
+  LANE_STOP_PID="$1"
+  state="$(lane_process_state "$1")" || { LANE_STOP_CAUSE=state-read-failed; return 1; }
+  if [[ -z "$state" || "$state" == Z ]]; then LANE_STOP_PID=""; return 0; fi
+  start="$(lane_process_start "$1")" || { LANE_STOP_CAUSE=start-read-failed; return 1; }
+  if [[ "$start" != "$2" ]]; then LANE_STOP_PID=""; return 0; fi
+  LANE_STOP_PID=""
+  table="$(lane_process_table)" || { LANE_STOP_CAUSE=process-read-failed; return 1; }
+  name_re="$(lane_harness_process_re "$3")" || { LANE_STOP_CAUSE=process-read-failed; return 1; }
+  found="$(lane_process_below "$table" "$1" "$name_re" 1 "" pids)" || { LANE_STOP_CAUSE=process-read-failed; return 1; }
+  found="$(awk '{ print $2 }' <<<"$found")" || { LANE_STOP_CAUSE=process-read-failed; return 1; }
+  for pid in $found; do
     LANE_STOP_PID="$pid"
-    if ! current="$(lane_process_cwd "$pid")"; then
-      state="$(lane_process_state "$pid")" || { LANE_STOP_CAUSE=state-read-failed; return 1; }
-      if [[ -z "$state" || "$state" == Z ]]; then continue; fi
-      LANE_STOP_CAUSE=cwd-read-failed
-      return 1
-    fi
-    [[ "$current" == "$root" ]] || { LANE_STOP_CAUSE=owner-changed; return 1; }
     if ! kill -TERM "$pid" 2>/dev/null; then
       state="$(lane_process_state "$pid")" || { LANE_STOP_CAUSE=state-read-failed; return 1; }
       if [[ -z "$state" || "$state" == Z ]]; then continue; fi

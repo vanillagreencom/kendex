@@ -1,0 +1,1 @@
+- `lane-close` and the SSH lane host's `stop` end a lane's harness by the pid and start time recorded at launch, so a lane whose worktree was removed or recreated still stops.

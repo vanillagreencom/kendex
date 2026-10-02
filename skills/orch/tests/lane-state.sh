@@ -520,6 +520,32 @@ PY
   assert_eq "$(source "$PROCESS_NAME_MUTANT"; lane_owned_processes "$PROCESS_ROOT" copilot; printf '%s' "${LANE_OWNED_PROCESS_PIDS:-none}")" none \
     "control: read under its harness name alone, a copilot lane owns no process"
 
+  # A host without /proc, macOS among them, reads a process's directory
+  # through lsof; the stub answers as lsof does, from the directory /proc
+  # holds. A host with neither reader has no answer at all, status 3.
+  PROCESS_LSOF="$PROCESS_ROOT/lsof-bin"
+  mkdir -p "$PROCESS_LSOF"
+  cat >"$PROCESS_LSOF/lsof" <<'EOF'
+#!/usr/bin/env bash
+pid=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == -p ]]; then pid="$2"; shift; fi
+  shift
+done
+cwd="$(readlink -- "/proc/$pid/cwd" 2>/dev/null)" || exit 1
+printf 'p%s\nfcwd\nn%s\n' "$pid" "$cwd"
+EOF
+  chmod +x "$PROCESS_LSOF/lsof"
+  PROCESS_OWNED_RC=0
+  PROCESS_LSOF_PIDS="$(lane_proc_readable() { return 1; }; PATH="$PROCESS_LSOF:$PATH"
+    lane_owned_processes "$PROCESS_ROOT" 'kz)harness' && printf '%s' "$LANE_OWNED_PROCESS_PIDS")" || PROCESS_OWNED_RC=$?
+  assert_eq "$PROCESS_LSOF_PIDS rc=$PROCESS_OWNED_RC" "$PROCESS_EXPECTED rc=0" \
+    "without /proc the directory read through lsof returns both live owned harnesses"
+  PROCESS_OWNED_RC=0
+  (lane_proc_readable() { return 1; }; command() { [[ "$*" != "-v lsof" ]] && builtin command "$@"; }
+    lane_owned_processes "$PROCESS_ROOT" 'kz)harness') || PROCESS_OWNED_RC=$?
+  assert_eq "rc=$PROCESS_OWNED_RC" 'rc=3' "a host with neither /proc nor lsof answers no directory reader"
+
   PROCESS_FAIL_PS="$PROCESS_ROOT/fail-ps"
   mkdir -p "$PROCESS_FAIL_PS"
   printf '%s\n' '#!/usr/bin/env bash' 'exit 19' > "$PROCESS_FAIL_PS/ps"

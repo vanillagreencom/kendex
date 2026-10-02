@@ -16,9 +16,10 @@
 # WHAT THE PAIR COVERS, stated once and pointed at rather than restated: the
 # process table and the cwd read. A row's precondition for those two becomes a
 # table written here, true at the instant the wake reads it. A `ps -o stat=`
-# query, the state of one pid that a host without /proc reads through `ps`, is
-# not the table's to answer, since the table carries no state: the stub hands
-# it to the real `ps`.
+# query, the state of one pid that a host without /proc reads through `ps`, and
+# a `ps -o lstart=` query, the start time a launch identity carries, are not
+# the table's to answer, since the table carries neither: the stub hands them
+# to the real `ps`.
 #
 # WHAT STILL REACHES THE HOST, so a row arranges it for itself:
 #
@@ -69,7 +70,7 @@ proc_table_install() { # DIR
   mkdir -p "$1"
   {
     printf '%s\n' '#!/usr/bin/env bash' 'for a in "$@"; do'
-    printf '  [[ "$a" != stat= ]] || exec "%s" "$@"\n' "$real_ps"
+    printf '  [[ "$a" != stat= && "$a" != lstart= ]] || exec "%s" "$@"\n' "$real_ps"
     printf '%s\n' 'done' 'cat -- "${PROC_TABLE:?proc-table: PROC_TABLE names no file}"'
   } > "$1/ps"
   cat > "$1/readlink" <<'READLINK_STUB'
