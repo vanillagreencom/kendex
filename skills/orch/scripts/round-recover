@@ -48,12 +48,10 @@
 # none joins that text as a ### Proposed Rules section. Recovery never verifies
 # a tracker post, so a recovered artifact records summary_posted false.
 #
-# The delegation's own Labels: line, the item's labels, reaches the writer's
-# Apple gate as one --label per comma-separated entry, or --no-labels where it
-# reads none; a delegation without the line declares nothing. A report carries
-# no mac run test record, so where that gate refuses the receipt
-# (mac-run-missing, or labels-undeclared) the round re-delegates as
-# mac-run-unproven, and the fresh round runs the test.
+# A recovered receipt declares no labels and carries no mac run test record, so
+# where the writer's Apple gate refuses it (labels-undeclared, or
+# mac-run-missing) the round re-delegates as mac-run-unproven, and the fresh
+# round runs the test.
 #
 # No report, or a report the disk contradicts, is one re-delegation: this script
 # mints the fresh round id (workflow-state new-round-id ID dev_round_id) and
@@ -211,10 +209,8 @@ no_report() { # REASON
 # round starts at the last user turn whose text names its round id, the id
 # followed by a character outside the id grammar. Codex records a delegated
 # prompt as a user_message event, the record open-terminal's kickoff match
-# reads, beside its user response items. Prints {labels, report}, each null
-# where the delegation carries no Labels: line or the round no report, or
-# nothing where no turn delegates the round.
-if ! found="$(jq -R -n -c --arg rid "$round_id" '
+# reads, beside its user response items.
+if ! report="$(jq -R -n -r --arg rid "$round_id" '
   def said: .content
     | if type == "string" then .
       else [arrays | .[] | objects | select(.type == "text" or .type == "input_text") | .text | strings] | join("\n")
@@ -237,20 +233,9 @@ if ! found="$(jq -R -n -c --arg rid "$round_id" '
   | ([range(0; $turns | length) | select($turns[.] | asked | test($marker))] | last) as $start
   | if $start == null then empty
     else [$turns[$start + 1:][] | returned | select(.text | test("\\S"))] as $out
-      | {labels: ([$turns[$start] | asked | splits("\n") | capture("^\\s*Labels:\\s*(?<v>.*?)\\s*$") | .v] | last),
-         report: ((([$out[] | select(.sent)] | last) // ([$out[] | select(.sent | not)] | last)) | .text)}
+      | (([$out[] | select(.sent)] | last) // ([$out[] | select(.sent | not)] | last)) | .text // empty
     end' < "$transcript")"; then
   die transcript-read "path=$transcript"
-fi
-report=""
-labels_line=""
-labels_found=false
-if [[ -n "$found" ]]; then
-  if ! report="$(jq -r '.report // empty' <<<"$found")" \
-    || ! labels_line="$(jq -r '.labels // empty' <<<"$found")" \
-    || ! labels_found="$(jq -r '.labels != null' <<<"$found")"; then
-    die transcript-read "path=$transcript"
-  fi
 fi
 [[ -n "$report" ]] || no_report no-report
 
@@ -370,16 +355,6 @@ else
       args+=(--qa-label "$label")
     done
   fi
-fi
-if [[ "$labels_found" == true && "$labels_line" == none ]]; then
-  args+=(--no-labels)
-elif [[ "$labels_found" == true ]]; then
-  IFS=',' read -r -a entries <<<"$labels_line"
-  for entry in ${entries[@]+"${entries[@]}"}; do
-    entry="${entry#"${entry%%[![:space:]]*}"}"
-    entry="${entry%"${entry##*[![:space:]]}"}"
-    [[ -z "$entry" ]] || args+=(--label "$entry")
-  done
 fi
 args+=(--no-summary)
 [[ -z "$run" ]] || args+=(--validate-run-dir "$run")

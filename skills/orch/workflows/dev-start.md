@@ -129,7 +129,7 @@ Sub-Issues:
 Worktree: [WORKTREE_PATH]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
-Labels: [the parent's labels and every pending sub-issue's labels, each once, comma-separated, or none]
+Labels: [the parent's labels and every sub-issue's labels, each once, comma-separated, or none]
 [For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
 Audit Bundle: [yes — only when caller context `audit_bundle: true`; omit otherwise]
 Parent Title: [PARENT_TITLE — the `.title` from the preflight bundle read, verbatim]

@@ -143,14 +143,12 @@ report_turn() { # HARNESS TEXT
   esac
 }
 
-# A transcript for round RID: its delegation, with LINE below its Round ID:
-# line where given, a tool call, then REPORT through HARNESS's channel when
-# REPORT is not empty.
-transcript() { # FILE HARNESS RID REPORT [LINE]
+# A transcript for round RID: its delegation, a tool call, then REPORT through
+# HARNESS's channel when REPORT is not empty.
+transcript() { # FILE HARNESS RID REPORT
   {
     user_turn "$2" "Follow workflow: dev-implement.md
-Round ID: $3${5:+
-$5}"
+Round ID: $3"
     tool_turn
     [[ -z "$4" ]] || report_turn "$2" "$4"
   } > "$1"
@@ -377,11 +375,10 @@ new_round none KEN-91 7-7 0
 run --worktree "$WT" --issue KEN-91 --round-id 7-7
 assert_eq "rc=$RC ${OUT##* }" "rc=3 reason=no-transcript" "no transcript re-delegates" "$TMP_ROOT/stderr"
 
-echo "=== the Apple gate: the delegation's labels reach the writer, and its refusal re-delegates ==="
-# apple_case NAME ISSUE EXIT LABELS PATH VALIDATE — a round whose main holds the
+echo "=== the Apple gate's refusal re-delegates ==="
+# apple_case NAME ISSUE EXIT PATH VALIDATE — a round whose main holds the
 # mac-run workflow, whose branch also adds PATH unless it is "-", with a run
-# whose sentinel reads EXIT, recovered from a report of VALIDATE under a
-# delegation carrying the line LABELS, none where it is empty. Leaves RC and
+# whose sentinel reads EXIT, recovered from a report of VALIDATE. Leaves RC and
 # OUT.
 apple_case() {
   new_round "$1" "$2" 9-9 none
@@ -391,47 +388,34 @@ apple_case() {
   git -C "$WT" add .github
   git -C "$WT" commit -q -m workflow
   git -C "$WT" switch -q "$2"
-  if [[ "$5" != - ]]; then
-    mkdir -p "$WT/$(dirname "$5")"
-    printf 'app\n' > "$WT/$5"
-    git -C "$WT" add -- "$5"
+  if [[ "$4" != - ]]; then
+    mkdir -p "$WT/$(dirname "$4")"
+    printf 'app\n' > "$WT/$4"
+    git -C "$WT" add -- "$4"
     git -C "$WT" commit -q -m app
     HEAD_SHA="$(git -C "$WT" rev-parse HEAD)"
   fi
   add_run "$WT" 1 10 "$3" "$DEAD_PID"
-  transcript "$TMP_ROOT/$1.jsonl" claude-send 9-9 "$(implement_report "$HEAD_SHA" "$6" none)" "$4"
+  transcript "$TMP_ROOT/$1.jsonl" claude-send 9-9 "$(implement_report "$HEAD_SHA" "$5" none)"
   run --worktree "$WT" --issue "$2" --round-id 9-9 --transcript "$TMP_ROOT/$1.jsonl"
 }
 APPLE_CASES=(
-  "a pass for an Apple path|apple-path|KEN-60|0|Labels: none|ios/App.swift|pass|rc=3 reason=mac-run-unproven"
-  "a no-verdict for an Apple path|apple-cut|KEN-61|no-verdict|Labels: none|ios/App.swift|no-verdict: dev_validate_run.sh|rc=3 reason=mac-run-unproven"
-  "a pass for a label-only Apple item|apple-label|KEN-62|0|Labels: skills, ios|-|pass|rc=3 reason=mac-run-unproven"
-  "a delegation with no Labels: line|apple-undeclared|KEN-63|0||-|pass|rc=3 reason=mac-run-unproven"
-  "a non-Apple item's labels|apple-list|KEN-64|0|Labels: skills, agent:runtime|-|pass|rc=0 artifact=$TMP_ROOT/apple-list/tmp/dev-return-KEN-64-9-9.json"
-  "a delegation whose Labels: line reads none|apple-none|KEN-65|0|Labels: none|-|pass|rc=0 artifact=$TMP_ROOT/apple-none/tmp/dev-return-KEN-65-9-9.json"
+  "a pass for an Apple path|apple-path|KEN-60|0|ios/App.swift|pass"
+  "a no-verdict for an Apple path|apple-cut|KEN-61|no-verdict|ios/App.swift|no-verdict: dev_validate_run.sh"
+  "a pass with no Apple path|apple-armed|KEN-62|0|-|pass"
 )
 for case in "${APPLE_CASES[@]}"; do
-  IFS='|' read -r label name key exit labels path validate want <<<"$case"
-  apple_case "$name" "$key" "$exit" "$labels" "$path" "$validate"
-  assert_eq "rc=$RC ${OUT##* }" "$want" "$label" "$TMP_ROOT/stderr"
+  IFS='|' read -r label name key exit path validate <<<"$case"
+  apple_case "$name" "$key" "$exit" "$path" "$validate"
+  assert_eq "rc=$RC ${OUT##* }" "rc=3 reason=mac-run-unproven" "$label" "$TMP_ROOT/stderr"
 done
-# One control per rule: the gate's refusal re-delegates, and each form of the
-# Labels: line reaches the writer.
+# Control: without the re-delegation, the gate's refusal is a write failure.
 SHIPPED_RECOVER="$RECOVER"
-APPLE_RECOVER_CONTROLS=(
-  "re-delegation^no_report mac-run-unproven ;;^: ;;^0^rc=2 "
-  "label list^[[ -z \"\$entry\" ]] || args+=(--label \"\$entry\")^true^4^rc=3 reason=mac-run-unproven"
-  "none^  args+=(--no-labels)^  true^5^rc=3 reason=mac-run-unproven"
-)
-for control in "${APPLE_RECOVER_CONTROLS[@]}"; do
-  IFS='^' read -r name old new row flipped <<<"$control"
-  RECOVER="$(mutant_scripts "recover-${name// /-}-mutant" round-recover)/round-recover" || exit 1
-  mutate_file "$RECOVER" "$old" "$new"
-  IFS='|' read -r label _ key exit labels path validate _ <<<"${APPLE_CASES[$row]}"
-  apple_case "control-${name// /-}" "$key" "$exit" "$labels" "$path" "$validate"
-  assert_eq "rc=$RC ${OUT##* }" "$flipped" "control: without the $name rule, $label flips" "$TMP_ROOT/stderr"
-  RECOVER="$SHIPPED_RECOVER"
-done
+RECOVER="$(mutant_scripts recover-re-delegation-mutant round-recover)/round-recover" || exit 1
+mutate_file "$RECOVER" "no_report mac-run-unproven ;;" ": ;;"
+apple_case control-re-delegation KEN-60 0 ios/App.swift pass
+assert_eq "rc=$RC ${OUT##* }" "rc=2 " "control: without the re-delegation, a pass for an Apple path flips" "$TMP_ROOT/stderr"
+RECOVER="$SHIPPED_RECOVER"
 
 echo "=== dev-validate-run decides whether the round's run is still going ==="
 # Two runs since the delegation: the one started last is the round's run,
