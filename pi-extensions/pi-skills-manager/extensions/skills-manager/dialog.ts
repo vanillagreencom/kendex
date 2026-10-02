@@ -273,17 +273,16 @@ class SkillsManagerDialog implements Focusable {
 			this.ctx.ui.notify(`Cannot delete skill ${skill.name}: ${error instanceof Error ? error.message : String(error)}`, "error");
 			removal = "failed";
 		}
-		let keepSelected: string | undefined;
 		switch (removal) {
 			case "removed": this.deleteSkillPath = undefined; this.previewSkillPath = undefined; this.preview = undefined; break;
 			// A failed recursive removal can stop part-way, so the skill keeps its
 			// paths and the reload decides whether it is still there: a preview
 			// whose file is gone leaves for the list, one still there re-reads it.
-			case "failed": keepSelected = skill.path; break;
+			case "failed": break;
 			default: { const unknown: never = removal; throw new Error(`confirmDelete: unknown removal ${String(unknown)}`); }
 		}
 		try {
-			await this.refreshRegistry(keepSelected);
+			await this.refreshRegistry();
 		} catch (error) {
 			switch (removal) {
 				case "removed": this.ctx.ui.notify(`Deleted skill ${skill.name}, but the skills list did not reload: ${error instanceof Error ? error.message : String(error)}`, "error"); break;
