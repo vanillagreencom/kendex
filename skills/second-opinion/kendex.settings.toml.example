@@ -25,7 +25,7 @@ SECOND_OPINION_COUNT = "1"
 SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
 
 # The command that runs the codex reviewer.
-SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra -s read-only -c model_reasoning_effort=xhigh --ephemeral"
+SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6.1-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 
 # A copilot entry has no built-in command: Copilot CLI documents no read-only
 # headless mode, so name a command you have checked cannot write. Its model
@@ -52,7 +52,7 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra -s read-only -c model_reas
 # reviewer runs on this machine's login, which a lane-host provider's reading
 # of the account does not judge.
 # SECOND_OPINION_MODELS = "pi-copilot claude codex"
-# SECOND_OPINION_CODEX_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness codex --model gpt-6-astra --binding-floor"
+# SECOND_OPINION_CODEX_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness codex --model gpt-6.1-sol --binding-floor"
 # SECOND_OPINION_PI_COPILOT_CMD = "pi -p --no-session --no-extensions --model github-copilot/claude-opus-5.5 --thinking high --tools read,grep,find,ls"
 # SECOND_OPINION_PI_COPILOT_MODEL = "github-copilot/claude-opus-5.5"
 # SECOND_OPINION_PI_COPILOT_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness pi --model github-copilot/claude-opus-5.5"

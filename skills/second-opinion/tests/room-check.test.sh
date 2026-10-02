@@ -17,7 +17,7 @@
 
 # A Claude session whose roster names claude, codex and a Copilot entry on an
 # OpenAI model, the lanes stubbed, one opinion.
-DEFAULTS="ps:none current:claude models:claude+codex+copilot count:1 cmd:claude=claude cmd:codex=codex cmd:copilot=extra model:copilot=gpt-6-astra"
+DEFAULTS="ps:none current:claude models:claude+codex+copilot count:1 cmd:claude=claude cmd:codex=codex cmd:copilot=extra model:copilot=gpt-6.1-sol"
 
 OWN="pass/b=-/s=-/cov=null/req=1/sel=1/lanes=-/dedupe=-/head=head/union=null"
 NONE="calls=claude:0,codex:0,extra:0 art=- files=-"

@@ -40,11 +40,11 @@ COUNT=0 does not fail quick, which never reads it|count:0|quick|0|answer:externa
 a declared identity the roster does not spell refuses with no artifact|current:clade|review|1|-|unspelled:clade refused:clade:1|$NONE
 naming the session model in the roster, with no command, makes it a known identity that is excluded|current:deepseek models:deepseek+codex+claude|review|0|<out>|same:deepseek:deepseek single:codex:review:deepseek written|calls=claude:0,codex:1,extra:0 art=external-codex/$OWN files=out
 a Claude model id normalizes to claude and is excluded|current:claude-opus-5 models:claude+codex|review|0|<out>|same:claude:claude single:codex:review:claude written|calls=claude:0,codex:1,extra:0 art=external-codex/$OWN files=out
-an OpenAI model id normalizes to codex and is excluded|current:gpt-6-astra|review|0|<out>|same:codex:codex single:claude:review:codex written|calls=claude:1,codex:0,extra:0 art=external-claude/$OWN files=out
+an OpenAI model id normalizes to codex and is excluded|current:gpt-6.1-sol|review|0|<out>|same:codex:codex single:claude:review:codex written|calls=claude:1,codex:0,extra:0 art=external-claude/$OWN files=out
 a bare Claude family name normalizes to claude|current:Opus models:claude+codex|review|0|<out>|same:claude:claude single:codex:review:claude written|calls=claude:0,codex:1,extra:0 art=external-codex/$OWN files=out
 a provider-qualified Anthropic id canonicalizes on its final component|current:anthropic/claude-opus-4 models:claude+codex|review|0|<out>|same:claude:claude single:codex:review:claude written|calls=claude:0,codex:1,extra:0 art=external-codex/$OWN files=out
-a provider-qualified OpenAI id likewise|current:openai/gpt-6-astra|review|0|<out>|same:codex:codex single:claude:review:codex written|calls=claude:1,codex:0,extra:0 art=external-claude/$OWN files=out
-the openai-codex provider prefix likewise|current:openai-codex/gpt-6-astra|review|0|<out>|same:codex:codex single:claude:review:codex written|calls=claude:1,codex:0,extra:0 art=external-claude/$OWN files=out
+a provider-qualified OpenAI id likewise|current:openai/gpt-6.1-sol|review|0|<out>|same:codex:codex single:claude:review:codex written|calls=claude:1,codex:0,extra:0 art=external-claude/$OWN files=out
+the openai-codex provider prefix likewise|current:openai-codex/gpt-6.1-sol|review|0|<out>|same:codex:codex single:claude:review:codex written|calls=claude:1,codex:0,extra:0 art=external-claude/$OWN files=out
 a force does not carry a misspelled identity past the roster check|current:codxe|review --target codex|1|-|unspelled:codxe refused:codxe:1|$NONE
 detect --target refuses an unspelled identity the same way|current:deepseek|detect --target codex|1|none|unspelled:deepseek refused:deepseek:1|$NONE
 control: a spelled identity with a cross-model force dispatches to it|current:claude|review --target codex|0|<out>|single:codex:review:claude written|calls=claude:0,codex:1,extra:0 art=external-codex/$OWN files=out

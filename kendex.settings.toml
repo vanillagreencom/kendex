@@ -181,11 +181,11 @@ SECOND_OPINION_COUNT = "1"
 # Roster commands (identities claude / codex).
 SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
 
-SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra -s read-only -c model_reasoning_effort=xhigh --ephemeral"
+SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6.1-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 
 # A Codex review runs on the seat lanes pick finds room on, as a codex lane
 # would; a walled seat is skipped.
-SECOND_OPINION_CODEX_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness codex --model gpt-6-astra --binding-floor"
+SECOND_OPINION_CODEX_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness codex --model gpt-6.1-sol --binding-floor"
 
 # Claude Opus on the Copilot pool, read-only tools only, on the Pi account
 # ORCH_LANE_COPILOT_POOL states room for; unstated, it is skipped. That
