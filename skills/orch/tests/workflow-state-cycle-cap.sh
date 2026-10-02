@@ -158,6 +158,19 @@ grep -q -F "$FIRST_WRITE" <<<"$(section_2 "$REVIEW_PR_WF")" \
   && pass "§ 2 records its panel on first_panel" \
   || fail "§ 2 records no first_panel"
 
+# The zero cap's one writer: the walk sets review_fix_round itself, so only
+# these pins hold § 4 Fix Delegation to the write `cap --issue` reads, and
+# every other workflow to leaving it alone.
+section_4() { awk '$0 == "## 4. Handle Review Items" { on = 1; next } on && /^## 5[.]/ { on = 0 } on' "$1"; }
+FIX_WRITE='workflow-state set [ISSUE_ID] review_fix_round true'
+grep -q -F "$FIX_WRITE" <<<"$(section_4 "$REVIEW_PR_WF")" \
+  && pass "§ 4 records its fix round on review_fix_round" \
+  || fail "§ 4 records no review_fix_round"
+writers="$(grep -r -n -F 'set [ISSUE_ID] review_fix_round' "$REPO_ROOT/skills/orch/workflows")" || true
+[[ "$(wc -l <<<"$writers")" -eq 1 && "$writers" == "$REVIEW_PR_WF:"* ]] \
+  && pass "no other workflow writes review_fix_round" \
+  || fail "review_fix_round is not written by review-pr.md alone" "$writers"
+
 # --- § 7 states which counter governs it --------------------------
 # The doc side of the same separation. § 7 must name its own key and must not
 # read or raise the § 4 budget.
@@ -348,6 +361,17 @@ elif grep -q -F "$FIRST_WRITE" <<<"$(section_2 "$CTRL_WF")"; then
   fail "the assertion MISSED § 2 recording no first_panel"
 else
   pass "the assertion flags § 2 recording no first_panel"
+fi
+
+# § 4 without its review_fix_round write: every later § 4 read at 0 is below.
+CTRL_WF="$TMP_ROOT/review-pr-nofix.md"
+grep -v -F "$FIX_WRITE" "$REVIEW_PR_WF" > "$CTRL_WF" || true
+if cmp -s "$CTRL_WF" "$REVIEW_PR_WF"; then
+  fail "§ 4 review_fix_round control planted nothing — its filter matched no text"
+elif grep -q -F "$FIX_WRITE" <<<"$(section_4 "$CTRL_WF")"; then
+  fail "the assertion MISSED § 4 recording no review_fix_round"
+else
+  pass "the assertion flags § 4 recording no review_fix_round"
 fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

@@ -338,7 +338,7 @@ The scoped panel is the union of the reviewers whose domains the round's diff to
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] rereview_panel '{"agents": [PANEL_AGENTS_JSON], "reason": "[DOMAINS_TOUCHED] + blocker finders + external"}'
 ```
 
-**The loop ends** when two consecutive cycles surface no new blocker or the At The Cap check above ends it (the `rereview_panel` write raises `rereview_cycles` and refuses once that count reaches the cap). The cap bounds NEW cycles, never verification: a fix diff no reviewer has seen gets one focused verification pass — the `rereview_panel` rule above, scoped to exactly that diff — and this loop's last fix round has budget for it; past the budget such a pass takes `verification_panel` instead, which the cap does not gate. That pass's items re-enter § 4, where the `fix set` decides what still delegates. In wave mode the panel replaces `[AGENTS]` for the cycle and wave mechanics apply unchanged.
+**The loop ends** when two consecutive cycles surface no new blocker, at this section's cap-0 exit, or when the At The Cap check ends it (the `rereview_panel` write raises `rereview_cycles`, refusing at the cap). The cap bounds NEW cycles, never verification, apart from that exit: a fix diff no reviewer has seen gets one focused verification pass, the `rereview_panel` rule scoped to that diff, and this loop's last fix round has budget for it; past the budget such a pass takes `verification_panel` instead, which the cap does not gate. That pass's items re-enter § 4, where the `fix set` decides what still delegates. In wave mode the panel replaces `[AGENTS]` for the cycle and wave mechanics apply unchanged.
 
 ## 5. Verdict Pass
 
