@@ -33,7 +33,15 @@ The extension enables tools for the configured providers and available credentia
 - Fetched text is written to `~/.pi/agent/kendex/sessions/<session>/pi-web-tools/content/`, one file per content id. The session record and the tool details carry the id, title, URL, length and the id of the session that stored the text, not the text. A forked session reads its parent's ids from the parent's directory.
 - The tool details of `web_search`, `code_search`, `web_answer`, `web_find_similar` and `web_research` carry each result's title, URL, published date and content id, not its text or the provider's raw response. The `web_research` details also carry the research mode, Exa type and query and source counts, not the request bodies, which hold the text of every context file. The raw metadata file keeps the full metadata; `web_research` writes it when `outputPath` is given with a `reportFormat` other than `json`, or when `rawOutputPath` is given without `outputPath`.
 - At most 8,388,608 characters of fetched text are held in memory; the least recently read items are dropped and read from disk again when needed. One item larger than that bound by itself is still held until the next item is stored. Memory is cleared when a session starts or ends.
+- A browser's keyring secret, read to decrypt its cookies while `browserCookieAccess` is on, is reused for 10 minutes and then read again. At most one is kept per installed browser, shared by every session in the Pi process.
 - A session's content directory is deleted once the session's working directory is gone (a merged worktree), and any content file older than 5 days is deleted. Pi applies both rules when a session starts. A deleted id can no longer be read: `get_web_content` fails with `Stored content text gone: <id>` and names the URL to fetch again.
+
+## Time limits
+
+- Each provider request (Exa, Exa MCP, Perplexity, Gemini, Gemini Web, DuckDuckGo) and each direct page, Jina Reader or PDF fetch ends after 120 seconds, counted from sending it to reading the last byte of the answer. The request then fails with its deadline named; `web_fetch` takes the URL's Exa fallback, as for any failed read.
+- A `web_research` run ends after its mode's `timeoutSeconds`, all queries of a `full` run together.
+- `pdftotext` and PDF page rasterization each end after 120 seconds. Their helpers run through Pi's exec and are killed then, or when the tool call is cancelled, and their temporary files are removed.
+- A browser cookie read, its `sqlite3` and keyring helpers together, ends after 4 seconds. A keyring that waits to be unlocked fails that read; the next read after the unlock succeeds.
 
 ## Settings
 
@@ -45,7 +53,7 @@ Open `/extensions:settings`; settings appear under the **Web Tools** tab. Projec
 - `defaultProvider`, `enabledProviders`: which provider answers `web_search` and which are allowed at all.
 - `nativeOpenAiWebSearch`, `openAiExternalWebAccess`: the native OpenAI rewrite.
 - `exaDeepResearchEnabled`, `exaResearchModes`, `exaAdvancedEnabled`: `web_research`, its per-mode overrides, and the advanced Exa tools.
-- `htmlExtraction.jinaFallback`, `githubClone.enabled`, `githubClone.maxRepoSizeMB`, `video.enabled`, `browserCookieAccess`: the fetch paths.
+- `htmlExtraction.jinaFallback`, `githubClone.enabled`, `githubClone.maxRepoSizeMB`, `video.enabled`, `browserCookieAccess`: the fetch paths. Browser cookies are read only with `browserCookieAccess` on, for the Gemini Web provider of `web_search` and for YouTube understanding in `web_fetch`; with it off, YouTube understanding uses `GEMINI_API_KEY`.
 - `compatibilityTools`: register the older tool names such as `fetch_content` and `web_search_exa`.
 - `glyphStyle`: Unicode or ASCII symbols; `pi-tool-renderer`'s global override wins when set.
 

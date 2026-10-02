@@ -7,6 +7,7 @@ import { ExaClient, type ExaDeepType, type NormalizedExaResponse } from "../prov
 import type { WebToolsSettings } from "../settings.js";
 import { accent, emptyComponent, errorSummary, firstText, muted, providerLabel, successSummary, textComponent, tree, webCallText } from "../utils/render.js";
 import { toResultRef } from "../utils/format.js";
+import { withDeadline } from "../utils/deadline.js";
 
 const deepTypes = ["deep-reasoning", "deep-lite", "deep"] as const;
 const researchModes = ["lite", "standard", "full"] as const;
@@ -200,28 +201,33 @@ export async function runExaResearch(client: Pick<ExaClient, "deepResearch">, pa
 		? [params.query, ...(params.additionalQueries ?? [])].map((query) => query.trim()).filter(Boolean)
 		: [params.query];
 	const uniqueQueries = Array.from(new Set(queryList));
-	const responses: NormalizedExaResponse[] = [];
-	for (const query of uniqueQueries) {
-		responses.push(await client.deepResearch({
-			query,
-			type: mode.type,
-			category: mode.category,
-			systemPrompt: params.systemPrompt,
-			additionalQueries: mode.researchMode === "full" ? undefined : params.additionalQueries,
-			numResults: mode.numResults,
-			textMaxCharacters: mode.textMaxCharacters,
-			highlightsMaxCharacters: mode.highlightsMaxCharacters,
-			highlightNumSentences: mode.highlightNumSentences,
-			highlightsPerUrl: mode.highlightsPerUrl,
-			summaryQuery: mode.summaryQuery,
-			maxAgeHours: mode.maxAgeHours,
-			includeDomains: params.includeDomains,
-			excludeDomains: params.excludeDomains,
-			startPublishedDate: params.startPublishedDate,
-			endPublishedDate: params.endPublishedDate,
-			outputSchema: mode.outputSchema,
-		}, signal));
-	}
+	// The mode's timeoutSeconds bounds the whole run, every query of a full run together, and each request inside it.
+	const timeoutMs = mode.timeoutSeconds * 1000;
+	const responses = await withDeadline(signal, timeoutMs, `web_research ${mode.researchMode} mode`, async (deadline) => {
+		const responses: NormalizedExaResponse[] = [];
+		for (const query of uniqueQueries) {
+			responses.push(await client.deepResearch({
+				query,
+				type: mode.type,
+				category: mode.category,
+				systemPrompt: params.systemPrompt,
+				additionalQueries: mode.researchMode === "full" ? undefined : params.additionalQueries,
+				numResults: mode.numResults,
+				textMaxCharacters: mode.textMaxCharacters,
+				highlightsMaxCharacters: mode.highlightsMaxCharacters,
+				highlightNumSentences: mode.highlightNumSentences,
+				highlightsPerUrl: mode.highlightsPerUrl,
+				summaryQuery: mode.summaryQuery,
+				maxAgeHours: mode.maxAgeHours,
+				includeDomains: params.includeDomains,
+				excludeDomains: params.excludeDomains,
+				startPublishedDate: params.startPublishedDate,
+				endPublishedDate: params.endPublishedDate,
+				outputSchema: mode.outputSchema,
+			}, deadline, timeoutMs));
+		}
+		return responses;
+	});
 	const { unique, sourceCount } = dedupeResults(responses);
 	const raw = responses.length === 1 ? responses[0].raw : { responses: responses.map((response) => response.raw), results: unique, answer: compactAnswer(responses) };
 	return {

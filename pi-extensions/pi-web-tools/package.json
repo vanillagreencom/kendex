@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-web-tools",
-  "version": "4.0.2",
+  "version": "4.1.0",
   "description": "First-party Pi web tools: provider-toggled web search, Exa deep research, content retrieval, and OpenAI native web_search integration.",
   "type": "module",
   "keywords": [
@@ -144,7 +144,7 @@
         {
           "key": "browserCookieAccess",
           "label": "Browser cookie access",
-          "description": "Opt-in browser cookie extraction for Gemini Web fallback. Requires reload because it may trigger credential prompts.",
+          "description": "Opt-in browser cookie extraction for the Gemini Web search provider and YouTube understanding. Requires reload because it may trigger credential prompts.",
           "type": "boolean",
           "default": false,
           "category": "Content",

@@ -1,4 +1,5 @@
 import { requireApiKey } from "../utils/auth.js";
+import { DEFAULT_DEADLINE_MS, withDeadline } from "../utils/deadline.js";
 import type { NormalizedExaResponse, NormalizedExaResult } from "./exa.js";
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
@@ -16,6 +17,8 @@ export interface GeminiApiClientOptions {
 	apiKey?: string;
 	baseUrl?: string;
 	fetchImpl?: typeof fetch;
+	/** Deadline of each request, through its body; DEFAULT_DEADLINE_MS when absent. */
+	timeoutMs?: number;
 }
 
 interface GenerateContentResponse {
@@ -52,11 +55,13 @@ export class GeminiApiClient {
 	private readonly apiKey: string;
 	private readonly baseUrl: string;
 	private readonly fetchImpl: typeof fetch;
+	private readonly timeoutMs: number;
 
 	constructor(options: GeminiApiClientOptions) {
 		this.apiKey = requireApiKey(options.apiKey, "Gemini", "Set GEMINI_API_KEY or PI_WEB_TOOLS_CONFIG_FILE with geminiApiKey.");
 		this.baseUrl = options.baseUrl ?? API_BASE;
 		this.fetchImpl = options.fetchImpl ?? fetch;
+		this.timeoutMs = options.timeoutMs ?? DEFAULT_DEADLINE_MS;
 	}
 
 	buildSearchBody(params: GeminiApiSearchParams): Record<string, unknown> {
@@ -77,17 +82,19 @@ export class GeminiApiClient {
 		const model = params.model ?? DEFAULT_MODEL;
 		const body = this.buildSearchBody(params);
 		const url = `${this.baseUrl}/models/${model}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
-		const response = await this.fetchImpl(url, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify(body),
-			signal,
+		const raw = await withDeadline(signal, this.timeoutMs, `Gemini API ${model}:generateContent`, async (deadline) => {
+			const response = await this.fetchImpl(url, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(body),
+				signal: deadline,
+			});
+			if (!response.ok) {
+				const text = await response.text().catch(() => "");
+				throw new Error(`Gemini API request failed (${response.status}): ${text || response.statusText}`);
+			}
+			return await response.json() as GenerateContentResponse;
 		});
-		if (!response.ok) {
-			const text = await response.text().catch(() => "");
-			throw new Error(`Gemini API request failed (${response.status}): ${text || response.statusText}`);
-		}
-		const raw = await response.json() as GenerateContentResponse;
 		return {
 			answer: answerFrom(raw),
 			results: citationsFrom(raw),

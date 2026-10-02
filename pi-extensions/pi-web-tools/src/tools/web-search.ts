@@ -98,7 +98,7 @@ export function createWebSearchToolDefinition(pi: ExtensionAPI, getSettings: (cw
 					const client = new GeminiApiClient({ apiKey: settings.apiKeys.gemini });
 					response = await client.search({ query, includeDomains: params.includeDomains, excludeDomains: params.excludeDomains }, signal);
 				} else if (settings.browserCookieAccess) {
-					response = await geminiWebSearch({ query, numResults }, { preferredBrowser: settings.browserCookies.preferredBrowser, browserProfile: settings.browserCookies.profile, signal });
+					response = await geminiWebSearch({ query, numResults }, { browserCookies: { pi, preferredBrowser: settings.browserCookies.preferredBrowser, profile: settings.browserCookies.profile }, signal });
 					sourceLabel = "gemini-web";
 				} else {
 					throw new Error("Gemini provider requires GEMINI_API_KEY or browserCookieAccess=true with a signed-in Firefox/Zen/Chrome.");

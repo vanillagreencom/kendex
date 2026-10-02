@@ -2,9 +2,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { basename, isAbsolute, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import { ByteBudget, ByteBudgetExhausted, readLocalPdfWithin, readPdfWithin, sourceCutNote } from "../extract/byte-budget.js";
+import { ByteBudget, ByteBudgetExhausted, readLocalPdfWithin, sourceCutNote } from "../extract/byte-budget.js";
 import { extractGitHubUrl } from "../extract/github.js";
-import { fetchHttpContent, isProbablyPdf } from "../extract/http.js";
+import { fetchHttpContent, fetchPdf, isProbablyPdf } from "../extract/http.js";
 import { extractLocalVideo, isLocalVideoPath } from "../extract/video.js";
 import { extractYouTubeUrl, isTranscriptPrompt, parseYouTubeUrl } from "../extract/youtube.js";
 import { extractPdfTextBest } from "../extract/pdf.js";
@@ -39,7 +39,6 @@ export const MULTI_URL_LARGE_BATCH_PER_URL_HEAD = 512;
 export const WEB_FETCH_FAILURE_MESSAGE_MAX_CHARACTERS = 1024;
 export const WEB_FETCH_FAILURE_ROW_MAX_CHARACTERS = 1536;
 export const WEB_FETCH_FAILURE_BLOCK_MAX_CHARACTERS = 8 * 1024;
-export const DEFAULT_YOUTUBE_EXTRACTION_TIMEOUT_MS = 120_000;
 
 interface WebFetchPreviewItem {
 	id: string;
@@ -532,19 +531,21 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 					let text = "";
 					let textMeta: Record<string, unknown> = {};
 					try {
-						const result = await extractPdfTextBest(bufferLike);
+						const result = await extractPdfTextBest(bufferLike, { pi, signal });
 						text = result.text;
 						textMeta = result.metadata;
 					} catch (error) {
+						if (signal?.aborted) throw error;
 						textMeta = { extraction: "pdf-empty", textError: error instanceof Error ? error.message : String(error) };
 					}
 					let rasterized: { pageCount: number; truncated: boolean } | undefined;
 					if (settings.pdfOcr.enabled && looksLikeScannedPdf(text, bufferLike.byteLength)) {
 						try {
-							const result = await rasterizePdfPages(bufferLike, { maxPages: settings.pdfOcr.maxPages, dpi: settings.pdfOcr.dpi });
+							const result = await rasterizePdfPages(bufferLike, { pi, signal, maxPages: settings.pdfOcr.maxPages, dpi: settings.pdfOcr.dpi });
 							rasterized = { pageCount: result.pageCount, truncated: result.truncated };
 							for (const image of result.images) pageImages.push(image);
 						} catch (error) {
+							if (signal?.aborted) throw error;
 							textMeta = { ...textMeta, ocrError: error instanceof Error ? error.message : String(error) };
 						}
 					}
@@ -581,16 +582,14 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 						const youtube = settings.video.enabled ? parseYouTubeUrl(url) : undefined;
 						if (youtube) {
 							youtubeExtractionAttempted = true;
-							const yt = await youtubeExtractor(url, { prompt: params.prompt, mode: params.videoMode, transcriptLanguage: params.transcriptLanguage, geminiApiKey: settings.apiKeys.gemini, browserCookies: { preferredBrowser: settings.browserCookies.preferredBrowser, profile: settings.browserCookies.profile }, signal, timeoutMs: DEFAULT_YOUTUBE_EXTRACTION_TIMEOUT_MS });
+							const yt = await youtubeExtractor(url, { prompt: params.prompt, mode: params.videoMode, transcriptLanguage: params.transcriptLanguage, geminiApiKey: settings.apiKeys.gemini, browserCookies: settings.browserCookieAccess ? { pi, preferredBrowser: settings.browserCookies.preferredBrowser, profile: settings.browserCookies.profile } : undefined, signal });
 							if (yt) {
 								stored.push(storeWebContent(pi, { title: yt.title, url: yt.url, content: yt.content, metadata: { tool: name, ...yt.metadata } }));
 								continue;
 							}
 						}
 						if (isProbablyPdf(url)) {
-							const response = await fetch(url, { signal });
-							if (!response.ok) throw new Error(`PDF fetch failed (${response.status}) for ${url}`);
-							const buffer = await readPdfWithin(response, reads, url);
+							const buffer = await fetchPdf(url, { signal, reads });
 							await handlePdfBuffer(buffer, { provider: "http", url, title: url.split("/").pop() || url });
 							continue;
 						}

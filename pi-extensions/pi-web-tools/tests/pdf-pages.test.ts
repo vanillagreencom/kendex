@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { looksLikeScannedPdf, MAX_PAGE_PIXELS, pageScaleArgs, rasterizePdfPages } from "../src/extract/pdf-pages.js";
-import { tempDir } from "./fixtures.js";
+import { piExec, processAlive, sleepingHelper, tempDir } from "./fixtures.js";
 
 for (const { name, text, bytes, scanned } of [
 	{ name: "empty extraction", text: "", bytes: 5000, scanned: true },
@@ -44,9 +44,22 @@ for (const { name, info, expected } of [
 		writeFileSync(pdftoppm, `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsFile}'\nfor last; do :; done\nprintf png > "$last-1.png"\n`);
 		chmodSync(pdfinfo, 0o755);
 		chmodSync(pdftoppm, 0o755);
-		const result = await rasterizePdfPages(new Uint8Array([37, 80, 68, 70]), { maxPages: 2, dpi: 150, pdfinfoCommand: pdfinfo, pdftoppmCommand: pdftoppm });
+		const result = await rasterizePdfPages(new Uint8Array([37, 80, 68, 70]), { pi: piExec, maxPages: 2, dpi: 150, pdfinfoCommand: pdfinfo, pdftoppmCommand: pdftoppm });
 		const args = readFileSync(argsFile, "utf8").trim().split("\n").slice(0, -2);
 		const infoArgs = readFileSync(infoArgsFile, "utf8").trim().split("\n").slice(0, -1);
 		assert.deepEqual({ infoArgs, args, pageCount: result.pageCount, images: result.images.length }, expected);
 	});
 }
+
+test("rasterizePdfPages: a hung pdftoppm is killed at the deadline and its directory removed", { timeout: 10_000 }, async (t) => {
+	const root = tempDir(t);
+	const pdfinfo = join(root, "pdfinfo");
+	writeFileSync(pdfinfo, "#!/bin/sh\nprintf 'Pages: 1\\n'\n");
+	chmodSync(pdfinfo, 0o755);
+	const pdftoppm = sleepingHelper(root, "pdftoppm", 30);
+	const started = performance.now();
+	const error = await rasterizePdfPages(new Uint8Array([37, 80, 68, 70]), { pi: piExec, timeoutMs: 300, pdfinfoCommand: pdfinfo, pdftoppmCommand: pdftoppm.path }).then(() => undefined, (caught: unknown) => caught);
+	const elapsed = performance.now() - started;
+	const input = pdftoppm.args().at(-2)!;
+	assert.deepEqual({ timedOut: error instanceof DOMException && error.name === "TimeoutError", withinBound: elapsed < 3_000, helperAlive: processAlive(pdftoppm.pid()), inputKept: existsSync(input) }, { timedOut: true, withinBound: true, helperAlive: false, inputKept: false });
+});

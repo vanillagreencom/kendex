@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 import { extractYouTubeUrl, formatYouTubeTranscript, isTranscriptPrompt, parseYouTubeUrl } from "../src/extract/youtube.js";
+import { isolateEnvironment, sleepingHelper, tempDir } from "./fixtures.js";
 
 for (const { url, field, expected } of [
 	{ url: "https://www.youtube.com/watch?v=abc123XYZ_-", field: "videoId", expected: "abc123XYZ_-" },
@@ -56,18 +59,17 @@ for (const row of [
 	{ name: "language variant", prompt: undefined, mode: "transcript" as const, language: "EN", returned: "en-US", title: "English Track", text: "Hello", offset: 0, expectedLanguages: ["EN", "en-US"], expectedContent: "[00:00:00] Hello" },
 ]) {
 	test(`YouTube captions: ${row.name}`, async () => {
-		const controller = new AbortController();
 		const requests: unknown[] = [];
 		const result = await extractYouTubeUrl("https://www.youtube.com/watch?v=abc123XYZ_-&t=42s", {
-			prompt: row.prompt, mode: row.mode, transcriptLanguage: row.language, signal: controller.signal,
+			prompt: row.prompt, mode: row.mode, transcriptLanguage: row.language,
 			transcriptFetcher: async (videoId, config) => {
-				requests.push({ videoId, lang: config.lang, hasLanguage: Object.hasOwn(config, "lang"), videoDetails: config.videoDetails, sameSignal: config.signal === controller.signal });
+				requests.push({ videoId, lang: config.lang, hasLanguage: Object.hasOwn(config, "lang"), videoDetails: config.videoDetails });
 				if (config.lang === "EN") throw Object.assign(new Error("language"), { name: "YoutubeTranscriptNotAvailableLanguageError", availableLangs: ["fr", "en-US"] });
 				return captions(videoId, row.title, row.text, row.returned, row.offset);
 			},
 		});
 		assert.deepEqual({ requests, source: result?.source, title: result?.title, content: result?.content, kind: result?.metadata.contentKind, language: result?.metadata.language }, {
-			requests: row.expectedLanguages.map((lang) => ({ videoId: "abc123XYZ_-", lang, hasLanguage: lang !== undefined, videoDetails: true, sameSignal: true })),
+			requests: row.expectedLanguages.map((lang) => ({ videoId: "abc123XYZ_-", lang, hasLanguage: lang !== undefined, videoDetails: true })),
 			source: "youtube-captions", title: row.title, content: row.expectedContent, kind: "full-transcript", language: row.returned,
 		});
 	});
@@ -129,4 +131,21 @@ test("successful captions remove the parent timeout listener", async (t) => {
 	const remove = t.mock.method(signal, "removeEventListener");
 	await extractYouTubeUrl("https://youtu.be/abc123XYZ_-", { mode: "transcript", timeoutMs: 60000, signal, transcriptFetcher: async (id) => captions(id, "Cleanup", "Done", "en") });
 	assert.deepEqual({ added: add.mock.callCount(), removed: remove.mock.callCount() }, { added: 1, removed: 1 });
+});
+
+test("understanding without a browser cookie read skips Gemini Web and runs no cookie helper", async (t) => {
+	const path = process.env.PATH;
+	isolateEnvironment(t, ["HOME", "PATH"]);
+	const root = tempDir(t);
+	const profile = join(root, "home", ".mozilla", "firefox", "default");
+	mkdirSync(profile, { recursive: true });
+	writeFileSync(join(profile, "cookies.sqlite"), "");
+	const sqlite3 = sleepingHelper(root, "sqlite3", 0);
+	process.env.HOME = join(root, "home");
+	process.env.PATH = `${root}:${path}`;
+	const result = await extractYouTubeUrl("https://youtu.be/abc123XYZ_-", {
+		mode: "understand", geminiApiKey: "key",
+		fetchImpl: async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "Visual summary" }] } }] }), { status: 200 }),
+	});
+	assert.deepEqual({ source: result?.source, cookieHelperRan: existsSync(`${sqlite3.path}.pid`) }, { source: "gemini-api", cookieHelperRan: false });
 });

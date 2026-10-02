@@ -1,6 +1,7 @@
 import { GeminiApiClient } from "../providers/gemini-api.js";
 import { GeminiWebClient } from "../providers/gemini-web.js";
 import { readBrowserCookies, type ReadCookiesOptions } from "../utils/browser-cookies.js";
+import { DEFAULT_DEADLINE_MS, withDeadline } from "../utils/deadline.js";
 import { fetchTranscript, type TranscriptConfig, type TranscriptResult, type TranscriptSegment } from "youtube-transcript-plus";
 
 const YOUTUBE_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "music.youtube.com"]);
@@ -38,10 +39,13 @@ export interface YouTubeExtractOptions {
 	transcriptLanguage?: string;
 	geminiApiKey?: string;
 	geminiModel?: string;
+	/** The browser cookie read that signs Gemini Web in. Absent, as when browserCookieAccess is off, the Gemini Web path is
+	 * skipped and no browser cookie or keyring is read. */
 	browserCookies?: ReadCookiesOptions;
 	preferGeminiWeb?: boolean;
 	transcriptFetcher?: YouTubeTranscriptFetcher;
 	signal?: AbortSignal;
+	/** Deadline of each attempt, captions, Gemini Web or Gemini API; DEFAULT_DEADLINE_MS when absent. */
 	timeoutMs?: number;
 	fetchImpl?: typeof fetch;
 }
@@ -124,37 +128,15 @@ function availableTranscriptLanguages(error: unknown): string[] | undefined {
 	return Array.isArray(available) && available.every((lang) => typeof lang === "string") ? available : undefined;
 }
 
-function createCaptionCancellation(parent: AbortSignal | undefined, timeoutMs: number | undefined): { signal: AbortSignal | undefined; dispose: () => void } {
-	if (timeoutMs === undefined) return { signal: parent, dispose: () => {} };
-	const controller = new AbortController();
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	const onParentAbort = () => controller.abort(parent?.reason);
-	if (parent?.aborted) {
-		controller.abort(parent.reason);
-	} else {
-		parent?.addEventListener("abort", onParentAbort, { once: true });
-		timer = setTimeout(() => controller.abort(new DOMException("The operation was aborted due to timeout", "TimeoutError")), timeoutMs);
-		timer.unref?.();
-	}
-	return {
-		signal: controller.signal,
-		dispose: () => {
-			if (timer !== undefined) clearTimeout(timer);
-			parent?.removeEventListener("abort", onParentAbort);
-		},
-	};
-}
-
 async function tryYouTubeCaptions(parsed: ParsedYouTubeUrl, options: YouTubeExtractOptions): Promise<YouTubeExtractResult> {
 	const transcriptFetcher = options.transcriptFetcher ?? fetchTranscript;
-	const cancellation = createCaptionCancellation(options.signal, options.timeoutMs);
-	try {
+	return await withDeadline(options.signal, options.timeoutMs ?? DEFAULT_DEADLINE_MS, "YouTube captions", async (signal) => {
 		const fetchCaptions = (lang: string | undefined) => transcriptFetcher(parsed.videoId, {
 			...(lang !== undefined ? { lang } : {}),
 			videoDetails: true,
 			retries: 2,
 			retryDelay: 500,
-			signal: cancellation.signal,
+			signal,
 		});
 		let selectedLanguage = options.transcriptLanguage;
 		let result: TranscriptResult;
@@ -193,13 +175,12 @@ async function tryYouTubeCaptions(parsed: ParsedYouTubeUrl, options: YouTubeExtr
 				channelId: result.videoDetails.channelId,
 			},
 		};
-	} finally {
-		cancellation.dispose();
-	}
+	});
 }
 
 async function tryGeminiWeb(parsed: ParsedYouTubeUrl, options: YouTubeExtractOptions): Promise<YouTubeExtractResult | undefined> {
-	const cookies = await readBrowserCookies({ ...(options.browserCookies ?? {}), requiredCookies: ["__Secure-1PSID", "__Secure-1PSIDTS"] });
+	if (!options.browserCookies) return undefined;
+	const cookies = await readBrowserCookies({ ...options.browserCookies, requiredCookies: ["__Secure-1PSID", "__Secure-1PSIDTS"] }, options.signal);
 	if (!cookies) return undefined;
 	const client = new GeminiWebClient(cookies.cookies, options.fetchImpl ?? fetch);
 	const prompt = `${enhancePrompt(options.prompt, options.mode)}\n\nYouTube video: ${parsed.canonicalUrl}`;
@@ -223,12 +204,14 @@ async function tryGeminiApi(parsed: ParsedYouTubeUrl, options: YouTubeExtractOpt
 		contents: [{ role: "user", parts: [{ fileData: { fileUri: parsed.canonicalUrl, mimeType: "video/mp4" } }, { text: enhancePrompt(options.prompt, options.mode) }] }],
 	};
 	const fetchImpl = options.fetchImpl ?? fetch;
-	const response = await fetchImpl(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: options.signal });
-	if (!response.ok) {
-		const text = await response.text().catch(() => "");
-		throw new Error(`Gemini API video request failed (${response.status}): ${text || response.statusText}`);
-	}
-	const raw = await response.json() as any;
+	const raw = await withDeadline(options.signal, options.timeoutMs ?? DEFAULT_DEADLINE_MS, `Gemini API ${model} video request`, async (signal) => {
+		const response = await fetchImpl(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal });
+		if (!response.ok) {
+			const text = await response.text().catch(() => "");
+			throw new Error(`Gemini API video request failed (${response.status}): ${text || response.statusText}`);
+		}
+		return await response.json() as any;
+	});
 	const text = raw?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text).filter(Boolean).join("\n").trim() ?? "";
 	if (!text) throw new Error("Gemini API returned empty response for YouTube video.");
 	void client;

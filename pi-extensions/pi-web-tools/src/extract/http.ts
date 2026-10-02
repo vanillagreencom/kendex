@@ -1,4 +1,5 @@
-import { readTextWithin, truncationMetadata, type BoundedRead, type UrlReads } from "./byte-budget.js";
+import { DEFAULT_DEADLINE_MS, withDeadline } from "../utils/deadline.js";
+import { readPdfWithin, readTextWithin, truncationMetadata, type BoundedRead, type UrlReads } from "./byte-budget.js";
 import { assessExtractionQuality, fetchViaJina, htmlToMarkdown as readableHtmlToMarkdown } from "./html.js";
 
 export interface ExtractedContent {
@@ -16,6 +17,8 @@ export interface HttpFetchOptions {
 	signal?: AbortSignal;
 	jinaFallback?: boolean;
 	jinaApiKey?: string;
+	/** Deadline of the URL's fetch, its body and any Jina Reader fallback together; DEFAULT_DEADLINE_MS when absent. */
+	timeoutMs?: number;
 	/** This URL's reads under the calling web_fetch call's budget; the caller releases them when the URL's processing ends. */
 	reads: UrlReads;
 }
@@ -32,6 +35,21 @@ export function isProbablyPdf(url: string, contentType?: string): boolean {
 }
 
 export async function fetchHttpContent(url: string, options: HttpFetchOptions): Promise<ExtractedContent> {
+	return await withDeadline(options.signal, options.timeoutMs ?? DEFAULT_DEADLINE_MS, `HTTP fetch of ${url}`, (signal) => fetchWithin(url, { ...options, signal }));
+}
+
+/** The PDF at `url`, read within the URL's byte budget, under one deadline through its body; DEFAULT_DEADLINE_MS when
+ * `timeoutMs` is absent. */
+export async function fetchPdf(url: string, options: Pick<HttpFetchOptions, "fetchImpl" | "signal" | "timeoutMs" | "reads">): Promise<Buffer> {
+	const fetchImpl = options.fetchImpl ?? fetch;
+	return await withDeadline(options.signal, options.timeoutMs ?? DEFAULT_DEADLINE_MS, `PDF fetch of ${url}`, async (signal) => {
+		const response = await fetchImpl(url, { signal });
+		if (!response.ok) throw new Error(`PDF fetch failed (${response.status}) for ${url}`);
+		return await readPdfWithin(response, options.reads, url);
+	});
+}
+
+async function fetchWithin(url: string, options: HttpFetchOptions & { signal: AbortSignal }): Promise<ExtractedContent> {
 	const fetchImpl = options.fetchImpl ?? fetch;
 	const response = await fetchImpl(url, { signal: options.signal });
 	const contentType = response.headers.get("content-type") ?? undefined;

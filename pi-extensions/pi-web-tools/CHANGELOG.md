@@ -2,6 +2,15 @@
 
 ## Consumer-impacting changes
 
+### 4.1.0
+
+- Every provider request, from Exa, Exa MCP, Perplexity, Gemini, Gemini Web and DuckDuckGo, and each direct page, Jina Reader and PDF fetch ends after 120 seconds, counted from sending it to reading the last byte of the answer. A server that never answers, or that sends headers and then stops, now fails the request with `<request> exceeded its 120000 ms deadline` instead of holding the tool call. `web_fetch` then takes the URL's Exa fallback, as for any failed read. Exa MCP's limit was 60 seconds.
+- `web_research` ends after its mode's `timeoutSeconds`: 300 for `lite`, 600 for `standard`, 1800 for `full`, or the `exaResearchModes` override. The value was recorded in the result metadata and never applied. A `full` run's queries share the limit.
+- `pdftotext`, `pdfinfo` and `pdftoppm` run through Pi's exec, are killed after 120 seconds or when the tool call is cancelled, and their temporary files are removed. A killed `pdftotext` falls back to the basic parser and names the deadline in `pdftotextError`; a killed rasterization records `ocrError`.
+- Browser cookie reads run `sqlite3` and the keyring helpers through Pi's exec without blocking Pi, and end after 4 seconds together. A keyring that waits to be unlocked fails that read; a read after the unlock succeeds. A keyring secret is reused for 10 minutes.
+- YouTube understanding tries Gemini Web with browser cookies only when `browserCookieAccess` is on, as `web_search` does; otherwise it uses `GEMINI_API_KEY`. It read browser cookies and the keyring whatever the setting.
+- The unused `geminiWebFetch` export is removed, and so is `DEFAULT_YOUTUBE_EXTRACTION_TIMEOUT_MS`: YouTube extraction applies the 120-second limit itself. `extractPdfTextBest`, `rasterizePdfPages` and `readBrowserCookies` take the Pi API that runs their helpers.
+
 ### 4.0.2
 
 - DuckDuckGo result titles and snippets preserve escaped entity text such as `&lt;` instead of decoding it twice.

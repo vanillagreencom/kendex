@@ -1,4 +1,5 @@
-import { type CookieMap, buildCookieHeader, readBrowserCookies } from "../utils/browser-cookies.js";
+import { type CookieMap, buildCookieHeader, readBrowserCookies, type ReadCookiesOptions } from "../utils/browser-cookies.js";
+import { DEFAULT_DEADLINE_MS, withDeadline } from "../utils/deadline.js";
 import type { NormalizedExaResponse } from "./exa.js";
 
 const GEMINI_APP_URL = "https://gemini.google.com/app";
@@ -18,20 +19,19 @@ const REQUIRED_COOKIES = ["__Secure-1PSID", "__Secure-1PSIDTS"];
 export interface GeminiWebOptions {
 	model?: string;
 	signal?: AbortSignal;
+	/** Deadline of the query, its access-token read and its answer together; DEFAULT_DEADLINE_MS when absent. */
 	timeoutMs?: number;
-	preferredBrowser?: "auto" | "firefox" | "zen" | "chrome" | "chromium";
-	browserProfile?: string;
 	fetchImpl?: typeof fetch;
+}
+
+export interface GeminiWebSearchOptions extends GeminiWebOptions {
+	/** The browser cookie read that signs the query in. */
+	browserCookies: ReadCookiesOptions;
 }
 
 export interface GeminiWebSearchParams {
 	query: string;
 	numResults?: number;
-}
-
-function withTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
-	const timeout = AbortSignal.timeout(timeoutMs);
-	return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
 async function fetchWithRedirects(fetchImpl: typeof fetch, url: string, cookieHeader: string, signal: AbortSignal, maxRedirects = 10): Promise<string> {
@@ -122,29 +122,30 @@ export class GeminiWebClient {
 
 	async query(prompt: string, options: GeminiWebOptions = {}): Promise<string> {
 		const model = options.model && MODEL_HEADERS[options.model] ? options.model : "gemini-2.5-flash";
-		const timeoutMs = options.timeoutMs ?? 120000;
-		const signal = withTimeout(options.signal, timeoutMs);
 		const cookieHeader = buildCookieHeader(this.cookies);
-		const accessToken = await fetchAccessToken(this.fetchImpl, cookieHeader, signal);
-		const params = new URLSearchParams();
-		params.set("at", accessToken);
-		params.set("f.req", buildFReq(prompt));
-		const res = await this.fetchImpl(GEMINI_STREAM_GENERATE_URL, {
-			method: "POST",
-			headers: {
-				"content-type": "application/x-www-form-urlencoded;charset=utf-8",
-				origin: "https://gemini.google.com",
-				referer: "https://gemini.google.com/",
-				"x-same-domain": "1",
-				"user-agent": USER_AGENT,
-				cookie: cookieHeader,
-				[MODEL_HEADER_NAME]: MODEL_HEADERS[model]!,
-			},
-			body: params.toString(),
-			signal,
+		const rawText = await withDeadline(options.signal, options.timeoutMs ?? DEFAULT_DEADLINE_MS, "Gemini Web query", async (signal) => {
+			const accessToken = await fetchAccessToken(this.fetchImpl, cookieHeader, signal);
+			const params = new URLSearchParams();
+			params.set("at", accessToken);
+			params.set("f.req", buildFReq(prompt));
+			const res = await this.fetchImpl(GEMINI_STREAM_GENERATE_URL, {
+				method: "POST",
+				headers: {
+					"content-type": "application/x-www-form-urlencoded;charset=utf-8",
+					origin: "https://gemini.google.com",
+					referer: "https://gemini.google.com/",
+					"x-same-domain": "1",
+					"user-agent": USER_AGENT,
+					cookie: cookieHeader,
+					[MODEL_HEADER_NAME]: MODEL_HEADERS[model]!,
+				},
+				body: params.toString(),
+				signal,
+			});
+			const rawText = await res.text();
+			if (!res.ok) throw new Error(`Gemini Web request failed (${res.status})`);
+			return rawText;
 		});
-		const rawText = await res.text();
-		if (!res.ok) throw new Error(`Gemini Web request failed (${res.status})`);
 		const result = parseStreamGenerate(rawText);
 		if (!result.text) throw new Error(`Gemini Web returned empty response${result.errorCode ? ` (errorCode ${result.errorCode})` : ""}`);
 		return result.text;
@@ -166,8 +167,8 @@ function extractCitations(answer: string): Array<{ url: string; title?: string }
 	return list;
 }
 
-export async function geminiWebSearch(params: GeminiWebSearchParams, options: GeminiWebOptions = {}): Promise<NormalizedExaResponse> {
-	const browserResult = await readBrowserCookies({ preferredBrowser: options.preferredBrowser, profile: options.browserProfile, requiredCookies: REQUIRED_COOKIES });
+export async function geminiWebSearch(params: GeminiWebSearchParams, options: GeminiWebSearchOptions): Promise<NormalizedExaResponse> {
+	const browserResult = await readBrowserCookies({ ...options.browserCookies, requiredCookies: REQUIRED_COOKIES }, options.signal);
 	if (!browserResult) throw new Error("No browser cookies found for gemini.google.com. Sign into Gemini in Firefox/Zen/Chrome and enable browserCookieAccess.");
 	const client = new GeminiWebClient(browserResult.cookies, options.fetchImpl ?? fetch);
 	const limit = Math.max(1, Math.floor(params.numResults ?? 5));
@@ -179,13 +180,4 @@ export async function geminiWebSearch(params: GeminiWebSearchParams, options: Ge
 		raw: { answer, browser: browserResult.browser },
 		metadata: { provider: "gemini-web", browser: browserResult.browser, profile: browserResult.profile, model: options.model ?? "gemini-2.5-flash", numResults: limit },
 	};
-}
-
-export async function geminiWebFetch(params: { url: string; prompt?: string }, options: GeminiWebOptions = {}): Promise<{ url: string; title?: string; content: string; metadata: Record<string, unknown> }> {
-	const browserResult = await readBrowserCookies({ preferredBrowser: options.preferredBrowser, profile: options.browserProfile, requiredCookies: REQUIRED_COOKIES });
-	if (!browserResult) throw new Error("No browser cookies found for gemini.google.com.");
-	const client = new GeminiWebClient(browserResult.cookies, options.fetchImpl ?? fetch);
-	const prompt = `${params.prompt ?? "Extract the readable content of this URL as clean markdown."}\n\nURL: ${params.url}`;
-	const content = await client.query(prompt, options);
-	return { url: params.url, content, metadata: { provider: "gemini-web", browser: browserResult.browser, profile: browserResult.profile } };
 }

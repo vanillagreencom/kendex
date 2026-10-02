@@ -1,4 +1,5 @@
 import { requireApiKey } from "../utils/auth.js";
+import { DEFAULT_DEADLINE_MS, withDeadline } from "../utils/deadline.js";
 import type { NormalizedExaResponse, NormalizedExaResult } from "./exa.js";
 
 export interface PerplexitySearchParams {
@@ -16,6 +17,8 @@ export interface PerplexityClientOptions {
 	apiKey?: string;
 	baseUrl?: string;
 	fetchImpl?: typeof fetch;
+	/** Deadline of each request, through its body; DEFAULT_DEADLINE_MS when absent. */
+	timeoutMs?: number;
 }
 
 const DEFAULT_MODEL = "sonar";
@@ -60,11 +63,13 @@ export class PerplexityClient {
 	private readonly apiKey: string;
 	private readonly baseUrl: string;
 	private readonly fetchImpl: typeof fetch;
+	private readonly timeoutMs: number;
 
 	constructor(options: PerplexityClientOptions) {
 		this.apiKey = requireApiKey(options.apiKey, "Perplexity", "Set PERPLEXITY_API_KEY or PI_WEB_TOOLS_CONFIG_FILE with perplexityApiKey.");
 		this.baseUrl = options.baseUrl ?? "https://api.perplexity.ai";
 		this.fetchImpl = options.fetchImpl ?? fetch;
+		this.timeoutMs = options.timeoutMs ?? DEFAULT_DEADLINE_MS;
 	}
 
 	buildChatBody(params: PerplexitySearchParams): Record<string, unknown> {
@@ -84,17 +89,19 @@ export class PerplexityClient {
 
 	async search(params: PerplexitySearchParams, signal?: AbortSignal): Promise<NormalizedExaResponse> {
 		const body = this.buildChatBody(params);
-		const response = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
-			method: "POST",
-			headers: { "content-type": "application/json", authorization: `Bearer ${this.apiKey}` },
-			body: JSON.stringify(body),
-			signal,
+		const raw = await withDeadline(signal, this.timeoutMs, "Perplexity /chat/completions", async (deadline) => {
+			const response = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
+				method: "POST",
+				headers: { "content-type": "application/json", authorization: `Bearer ${this.apiKey}` },
+				body: JSON.stringify(body),
+				signal: deadline,
+			});
+			if (!response.ok) {
+				const text = await response.text().catch(() => "");
+				throw new Error(`Perplexity request failed (${response.status}): ${text || response.statusText}`);
+			}
+			return await response.json();
 		});
-		if (!response.ok) {
-			const text = await response.text().catch(() => "");
-			throw new Error(`Perplexity request failed (${response.status}): ${text || response.statusText}`);
-		}
-		const raw = await response.json();
 		const answer = answerFrom(raw);
 		const citationItems = citationsFrom(raw);
 		const seen = new Set<string>();

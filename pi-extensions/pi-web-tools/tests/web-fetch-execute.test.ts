@@ -287,12 +287,31 @@ for (const row of [
 		const observed: unknown[] = [];
 		const tool = createWebFetchToolDefinition({ appendEntry() {} } as any, () => webFetchSettings(), "web_fetch", {
 			extractYouTubeUrl: async (url, options) => {
-				observed.push({ mode: options?.mode, prompt: options?.prompt, language: options?.transcriptLanguage, signal: options?.signal === controller.signal, timeout: options?.timeoutMs });
+				observed.push({ mode: options?.mode, prompt: options?.prompt, language: options?.transcriptLanguage, signal: options?.signal === controller.signal });
 				return { videoId: "abc123XYZ_-", url, title: "Transcript", content: "[00:00:00] Hallo", source: "youtube-captions", metadata: { provider: "youtube-captions" } };
 			},
 		});
 		await tool.execute("test", { url: "https://youtu.be/abc123XYZ_-", videoMode: row.mode, prompt: row.prompt, transcriptLanguage: row.language }, controller.signal, undefined, { cwd: process.cwd() } as any);
-		assert.deepEqual(observed, [{ mode: row.mode, prompt: row.prompt, language: row.language, signal: true, timeout: 120000 }]);
+		assert.deepEqual(observed, [{ mode: row.mode, prompt: row.prompt, language: row.language, signal: true }]);
+	});
+}
+
+for (const { browserCookieAccess, expected } of [
+	{ browserCookieAccess: false, expected: undefined },
+	{ browserCookieAccess: true, expected: { samePi: true, preferredBrowser: "firefox", profile: "work" } },
+]) {
+	test(`web_fetch YouTube understanding reads browser cookies only with browserCookieAccess: ${browserCookieAccess}`, async () => {
+		const pi = { appendEntry() {} } as any;
+		let cookies: unknown = "never called";
+		const tool = createWebFetchToolDefinition(pi, () => ({ ...webFetchSettings(), browserCookieAccess, browserCookies: { preferredBrowser: "firefox", profile: "work" } }), "web_fetch", {
+			extractYouTubeUrl: async (url, options) => {
+				const read = options?.browserCookies;
+				cookies = read && { samePi: read.pi === pi, preferredBrowser: read.preferredBrowser, profile: read.profile };
+				return { videoId: "abc123XYZ_-", url, title: "Video", content: "summary", source: "gemini-api", metadata: { provider: "gemini-api" } };
+			},
+		});
+		await tool.execute("test", { url: "https://youtu.be/abc123XYZ_-", videoMode: "understand" }, undefined, undefined, { cwd: process.cwd() } as any);
+		assert.deepEqual(cookies, expected);
 	});
 }
 

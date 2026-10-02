@@ -1,3 +1,4 @@
+import { DEFAULT_DEADLINE_MS, withDeadline } from "../utils/deadline.js";
 import type { NormalizedExaResponse, NormalizedExaResult } from "./exa.js";
 
 const EXA_MCP_URL = "https://mcp.exa.ai/mcp";
@@ -16,16 +17,13 @@ export interface ExaMcpSearchParams {
 export interface ExaMcpClientOptions {
 	baseUrl?: string;
 	fetchImpl?: typeof fetch;
+	/** Deadline of each request, through its body; DEFAULT_DEADLINE_MS when absent. */
+	timeoutMs?: number;
 }
 
 interface ExaMcpRpcResponse {
 	result?: { content?: Array<{ type?: string; text?: string }>; isError?: boolean };
 	error?: { code?: number; message?: string };
-}
-
-function withTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
-	const timeout = AbortSignal.timeout(timeoutMs);
-	return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
 function parseRpcBody(body: string): ExaMcpRpcResponse | undefined {
@@ -96,10 +94,12 @@ function buildQuery(params: ExaMcpSearchParams): string {
 export class ExaMcpClient {
 	private readonly baseUrl: string;
 	private readonly fetchImpl: typeof fetch;
+	private readonly timeoutMs: number;
 
 	constructor(options: ExaMcpClientOptions = {}) {
 		this.baseUrl = options.baseUrl ?? EXA_MCP_URL;
 		this.fetchImpl = options.fetchImpl ?? fetch;
+		this.timeoutMs = options.timeoutMs ?? DEFAULT_DEADLINE_MS;
 	}
 
 	async search(params: ExaMcpSearchParams, signal?: AbortSignal): Promise<NormalizedExaResponse> {
@@ -119,14 +119,17 @@ export class ExaMcpClient {
 				},
 			},
 		};
-		const response = await this.fetchImpl(this.baseUrl, {
-			method: "POST",
-			headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
-			body: JSON.stringify(body),
-			signal: withTimeout(signal, 60000),
+		const responseBody = await withDeadline(signal, this.timeoutMs, "Exa MCP web_search_exa", async (deadline) => {
+			const response = await this.fetchImpl(this.baseUrl, {
+				method: "POST",
+				headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+				body: JSON.stringify(body),
+				signal: deadline,
+			});
+			const responseBody = await response.text();
+			if (!response.ok) throw new Error(`Exa MCP request failed (${response.status}): ${responseBody.slice(0, 500) || response.statusText}`);
+			return responseBody;
 		});
-		const responseBody = await response.text();
-		if (!response.ok) throw new Error(`Exa MCP request failed (${response.status}): ${responseBody.slice(0, 500) || response.statusText}`);
 		const parsed = parseRpcBody(responseBody);
 		if (!parsed) throw new Error("Exa MCP returned an empty response.");
 		if (parsed.error) throw new Error(`Exa MCP error${typeof parsed.error.code === "number" ? ` ${parsed.error.code}` : ""}: ${parsed.error.message || "Unknown error"}`);
