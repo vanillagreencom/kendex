@@ -16,7 +16,7 @@ The vgs overseer runs Copilot CLI on the account `1copilot`. At about 21:45Z on 
 
 ### Evidence read for this record
 
-All vgs facts come from `gh api` on vanillagreencom/vgs, read on 2026-10-02, and from the KEN-2490 and KEN-2451 comments.
+All vgs facts come from `gh api` on vanillagreencom/vgs, read on 2026-10-02, and from the KEN-2490 and KEN-2451 comments, except the last row, which the owner relayed from the vgs host.
 
 | Fact | Source |
 |---|---|
@@ -31,6 +31,7 @@ All vgs facts come from `gh api` on vanillagreencom/vgs, read on 2026-10-02, and
 | Copilot CLI 1.0.90's footer during a model turn is `Working - autopilot · <size> esc interrupt` behind a rotating spinner glyph. `WORKING_RE` reads `esc interrupt`, first measured on a `!` shell command. The agent turn record in Copilot's `events.jsonl` is one `assistant.turn_start` / `assistant.turn_end` pair per model round. | `skills/orch/scripts/lib/lane-state.sh`, comment above `WORKING_RE`; Linear comment c2b27525-5428-48b4-a205-754e70a420ad on KEN-2490, section 8 |
 | A refusal before the successor launches, such as `no-lane-qualifies`, exits through `die_status` and writes no fleet-log row. Only `abandon`, after the launch, calls `fleet_log_refusal`. | `skills/orch/scripts/oversee-succeed` |
 | On main, `--yolo` and `--allow-all` transfer from a Copilot caller to a Claude or Codex entry. A deprecated numeric entry of another harness is skipped as `entry-permission-untransferable ... model=`. | `launch_choice_permission_transferable` in `lib/lane-launch.sh`; `ol_entry_permitted` in `lib/overseer-launch.sh` |
+| At 17:41Z on 2026-10-02 vgs ran `oversee launch --predecessor %3` with `ORCH_OVERSEER_PREFERENCE=copilot:claude-opus-5.5:high,claude:claude-opus-5-5:high,codex:gpt-6.1-sol:high` in the process environment only; the committed vgs order still puts Claude first. Generation 9 opened on Copilot, `claude-opus-5.5` at high effort, on `~/.1copilot` (`form=launcher:/home/method/.local/bin/1copilot`), registered, read its mailbox and started its watch. The pool reading was set by hand, `ORCH_LANE_COPILOT_POOL=1copilot 307000/1000000`, because `lanes` in the vgs render still reads the 1copilot login as token-missing: KEN-2491's login fix aa73fad3, which reads it from the Linux Secret Service, is not in that render yet. This proves a hand-started Copilot successor launches and runs on 1copilot from a Copilot-first preference. It does not prove the automatic context-mark succession through `oversee-succeed`, which needs KEN-2565, and KEN-2568 for the first-turn proof. | vgs host `~/dev/vgs/tmp/ken-2490-takeover.log`; owner note 1790963027 |
 
 ## Answers to the owner's three questions
 
@@ -51,16 +52,16 @@ All vgs facts come from `gh api` on vanillagreencom/vgs, read on 2026-10-02, and
 
 - The preference is the owner's model order. KEN-2496 set the default to Opus, then Sol. A harness-first rule would keep a Codex overseer on Sol at its context mark where Opus has room. It would also put a model order into the scripts, which the comment on `OL_DEFAULT_PREFERENCE` rules out.
 - At the context mark the account is not the problem. Refusing a successor on an unmeasured caller account leaves the same session spending the same pool until Copilot compacts and a person hands over by hand. A `--dead-pane` relaunch already replays the recorded account with no measurement. The rule removes kendex#3371 cause 3 for any future login-format change, not only for Copilot CLI 1.0.90's `copilotTokens`.
-- The Copilot first-turn proof rests today on a footer nobody measured for a model turn. The Copilot SDK documents `session.usage_info` as fired at every model call, and kendex already installs its reader in every Copilot successor's home and records each reading keyed by pane (D015), so the proof reads none of Copilot's internal session files.
+- The pane reading is the only Copilot first-turn proof today: the model-turn footer is measured on Copilot CLI 1.0.90, but it stays a screen reading. The Copilot SDK documents `session.usage_info` as fired at every model call, and kendex already installs its reader in every Copilot successor's home and records each reading keyed by pane (D015), so the proof reads none of Copilot's internal session files.
 - A refusal that only prints to stderr reaches nobody when the overseer is unattended. The fleet log and the owner mailbox reach the owner through the Slack relay (D009, D014).
 - vgs removed its automatic refresh, and still refreshed twice within thirteen hours, with no refresh workflow. The SessionStart drift hook already tells each new overseer generation of an outdated orch skill, but it tells the agent only. The watch-start report adds the owner notice, so the owner on the machine that runs the stale render learns of it through the Slack relay.
 
 ## Answers to the 2026-10-01 cancel triage
 
-- **"The reported failure does not exist on main."** It held for the numeric entries vgs set at 21:45Z. Since vgs commit 9be103b4f, vgs names `claude:claude-opus-5-5:high` first, Copilot's `--yolo` transfers, and main walks a Copilot overseer to a Claude successor again. The idle Claude pane was never explained, so the path is live and unproved.
+- **"The reported failure does not exist on main."** It held for the numeric entries vgs set at 21:45Z. Since vgs commit 9be103b4f, vgs names `claude:claude-opus-5-5:high` first, Copilot's `--yolo` transfers, and main walks a Copilot overseer to a Claude successor again. The 21:45Z Claude pane sat idle on `model_not_found` for the Copilot spelling `claude-opus-5.5` (§ Evidence read for this record), so the cause of that failure is known and the walk to a Claude successor stays live.
 - **"vgs cannot receive the fix."** vgs refreshed at 22:28Z and again on 2026-10-02. Its succession code now matches main byte for byte. Reach was a refresh away. Item 6 makes the next gap visible on the overseer's own machine.
-- **"The evidence is not attached."** It is still not attached. § Owed evidence names each piece. This record settles the design from the code and GitHub reads, and the live acceptance waits for the vgs overseer.
-- **"Current code answers most design questions."** It answers the own seat and the pool bucket. It does not answer three points. The Copilot first-turn proof rests on an unmeasured footer. An unmeasured caller account at the context mark ends in `no-lane-qualifies`. A refusal before the launch writes no fleet-log row.
+- **"The evidence is not attached."** It is attached as Linear comment c2b27525-5428-48b4-a205-754e70a420ad on KEN-2490, and § Owed evidence lists what stays owed. This record settles the design from the code and GitHub reads. A hand-started Copilot successor on `1copilot` is proved (§ Evidence read for this record); the automatic succession is what waits for the vgs overseer.
+- **"Current code answers most design questions."** It answers the own seat and the pool bucket. It does not answer three points. The Copilot first-turn proof has the pane as its only reading. An unmeasured caller account at the context mark ends in `no-lane-qualifies`. A refusal before the launch writes no fleet-log row.
 - **"The acceptance is a host run."** Agreed. The live succession is the vgs overseer's observation and no lane's acceptance.
 
 ## Impact of items in flight
@@ -102,7 +103,7 @@ The children are filed under KEN-2571, the KEN-2490 follow-ups parent, related t
 4. **oversee-succeed: name a successor that changes harness (KEN-2569).** Scope: `skills/orch/scripts/oversee-succeed` (the `successor-working` step), `skills/orch/references/oversee-events.md` (the overseer's own case), `skills/orch/references/copilot-runtime.md` § Overseer succession, `skills/orch/tests/oversee_succeed_ladder.sh`. Acceptance: a Copilot caller whose preference reaches a Claude entry with room prints `successor-harness-changed from=copilot to=claude entry=claude:claude-opus-5-5:high` on stdout and writes one fleet-log row. A same-harness successor prints neither. One must-fail control drops the line.
 5. **oversee-watch: report a pending orch update at watch start (KEN-2567).** Scope: `skills/orch/scripts/oversee-watch` (watch start), `skills/orch/references/overseer-session-events.md`, a suite under `skills/orch/tests/`. Acceptance: a watch start meets item 6's outcome contract, with a fixture for each outcome. KEN-2567 holds the report lines each outcome matches and their fixtures. `orch-behind` lags the background mirror refresh, so a fixture states the mirror as already refreshed. One must-fail control drops the report.
 
-KEN-2490's live acceptance, one automatic succession of the vgs overseer on `1copilot` to a Copilot successor, is observed by the vgs overseer after KEN-2565 through KEN-2569 reach vgs, under the preference owed item 9 settles. It is no child.
+KEN-2490's live acceptance, one automatic succession of the vgs overseer on `1copilot` to a Copilot successor, is observed by the vgs overseer after KEN-2565 through KEN-2569 reach vgs, under the preference owed item 9 settles. A hand-started Copilot successor on `1copilot` is proved (§ Evidence read for this record); the automatic succession is what still waits. It is no child.
 
 ## Revisit when
 
