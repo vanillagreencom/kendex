@@ -28,18 +28,13 @@ KEN-2462's [Consumer refresh gate](ken-2416-refresh-runs.md#consumer-refresh-gat
 | vgs-themes | 1 | 1 | 100.00% |
 | vgs | 1 | 0 | 0.00%, queued with no conclusion |
 | Accessible total | 403 | 361 | 89.58% |
-| fleet | 394 | 87 | 22.08% |
-| vg | 399 | 276 | 69.17% |
-| talk | 143 | 32 | 22.38% |
-| hyprtrade | 324 | 246 | 75.93% |
-| hyprtrade-io | 389 | 299 | 76.86% |
-| drovr | 393 | 285 | 72.52% |
-| kendex-web | 408 | 404 | 99.02% |
 | Private supplement | 2450 | 1629 | 66.49% |
 | Combined fleet total | 2853 | 1990 | 69.75% |
 | Current-consumer subtotal | 2849 | 1987 | 69.74% |
 
-The combined completed-run rate is 69.78%: 1990 failures out of 2852 completed runs. The accessible completed-run rate remains 89.80%: 361 out of 402. All 1990 failures have supplied logs and measured classes. All 46 cancellations lack failed-step bytes and remain unclassified as to cause. The queued vgs outcome stays as originally observed. The authoritative inventory separates eight current consumers from four historical public attempts. Memsira and review-gate-sandbox have no refresh workflow and are not consumers. No local refresh runs exist under the overseer's ruling.
+Per-repository records were removed from this public repository (KEN-2602).
+
+The combined completed-run rate is 69.78%: 1990 failures out of 2852 completed runs. The accessible completed-run rate remains 89.80%: 361 out of 402. All 1990 failures have supplied logs and measured classes. All 46 cancellations lack failed-step bytes and remain unclassified as to cause. The queued vgs outcome stays as originally observed. The authoritative inventory separates eight current consumers from four historical public attempts. Two other repositories have no refresh workflow and are not consumers. No local refresh runs exist under the overseer's ruling.
 
 ## Cause and ownership decisions
 
@@ -51,9 +46,9 @@ The combined completed-run rate is 69.78%: 1990 failures out of 2852 completed r
 | `orphan-agent-record` | 91 | Refresh leaves unneeded generalist or engineer records and renders. Its following verify fails on those records. | `refresh.rs::prepare_scope` and `engine/removal.rs::orphans`. KEN-2438 owns settlement through the existing apply plan. No cleanup command or second removal pass. |
 | `retired-agent-declaration` | 54 | The consumer still declares generalist, or engineer and generalist, after the approved catalog rename. Automatic inference would change consumer intent. | Consumer manifest owner; KEN-2400 names and KEN-2332 adoption plan. Drop an automatic alias, rename inference or deletion fix here. |
 | `publication-lease` | 7 | The remote rolling head differs at push. `stale info` proves no faulty lease or permanent defect. | `refresh-consumer.sh` publication. Drop a production repair. Keep the explicit lease and the preservation control. |
-| `render-edited` | 141 | Core correctly detects vg's Copilot lane-mail-check edit against changed upstream bytes. The baseline runner's automatic discard is an edit-loss defect, not permission supplied by this finding. These logs stop in verify, not at the new runner refusal. | Core edit holds and `refresh-consumer.sh`. KEN-2416 preserves edits before adoption and publication. Extend the existing edit control to the measured Copilot case. Do not force core verify green. |
-| `install-record-gap` | 374 | Refresh ends with declared packages absent from the record, even when every checked entry passes. The 355 hook-only cases measure an unsettled hook record. KEN-2449 confirms the required-hook case through the named late kendex-web run. Nineteen skill-containing gaps do not alone establish the same cause. | `refresh.rs::write_scope`, `plan_apply` and the existing dependency closure. Bind the measured required-hook case to KEN-2449 after checking KEN-2405. Its owner audits earlier skill-containing cases through the same plan before claiming coverage. Drop blanket verifier success or a second apply command here. |
-| `requested-revision-conflict` | 17 | Fleet requests harness-ci at two revisions for one installed identity. Refusal preserves that identity. Logs do not show which declaration created the conflict or establish an engine defect. | `engine/desired.rs` revision resolution and `engine/holds.rs::hold_rev_conflict`; consumer manifest owner. Drop automatic revision selection. Authorized declaration correction stays with consumer adoption, not this PR. |
+| `render-edited` | 141 | Core correctly detects a consumer's local edit to a rendered Copilot hook against changed upstream bytes. The baseline runner's automatic discard is an edit-loss defect, not permission supplied by this finding. These logs stop in verify, not at the new runner refusal. | Core edit holds and `refresh-consumer.sh`. KEN-2416 preserves edits before adoption and publication. Extend the existing edit control to the measured Copilot case. Do not force core verify green. |
+| `install-record-gap` | 374 | Refresh ends with declared packages absent from the record, even when every checked entry passes. The 355 hook-only cases measure an unsettled hook record. KEN-2449 confirms the required-hook case through a named late consumer run. Nineteen skill-containing gaps do not alone establish the same cause. | `refresh.rs::write_scope`, `plan_apply` and the existing dependency closure. Bind the measured required-hook case to KEN-2449 after checking KEN-2405. Its owner audits earlier skill-containing cases through the same plan before claiming coverage. Drop blanket verifier success or a second apply command here. |
+| `requested-revision-conflict` | 17 | A consumer requests harness-ci at two revisions for one installed identity. Refusal preserves that identity. Logs do not show which declaration created the conflict or establish an engine defect. | `engine/desired.rs` revision resolution and `engine/holds.rs::hold_rev_conflict`; consumer manifest owner. Drop automatic revision selection. Authorized declaration correction stays with consumer adoption, not this PR. |
 | `adoption-verification` | 5 | Inventory layout and both adopted workflow equality checks fail together. The logs do not prove that any workflow bytes are a hand edit. A missing record and an equality mismatch are different findings. | `core/attest.rs`, `verify.rs`, existing `adopt-refresh.sh` and writer adoption. KEN-1963 owns authorized consumer adoption. Drop verifier bypass or unconditional inventory rewriting here. KEN-2416's shipped-byte acceptance does not absorb writer-workflow repair. |
 | `repo-effects-unreadable` | 2 | Bot-instructions' installed declaration cannot be read during removal. Treating it as no effects could leave repository hooks calling a deleted package. No supplied declaration bytes establish the underlying parse defect. | `engine/repo_effects.rs::declaration_of` and `unreadable`; the installed package and consumer adoption owners. Drop a fail-open removal change here. Preserve the package until authorized declaration repair. |
 | `publication-queue` | 15 | GitHub freezes a rolling branch while its pull request is in the merge queue. The push correctly refuses. The logs do not establish a permanent runner defect or authorize dequeuing another operation. | `refresh-consumer.sh` publication and GitHub's merge queue. Drop queue bypass, automatic dequeue or a new retry owner here. Keep the queued head intact. |
@@ -159,7 +154,7 @@ A planted defect makes its guard refuse. A production mutant that removes that b
 | Workflow identity | vsys's exact historical shipped bytes pass without an adoption record; a one-line edit fails and stays in place. A fake consumer-history copy also fails. | Current code overwrites the real edit, so the preservation assertion fails on baseline. Disable history acceptance or edit refusal separately in disposable copies. | KEN-2416; KEN-2376 R47 overlap |
 | Unreadable workflow history | Make the authoritative history/blob read fail. Refuse before any tracked write. Do not blame a hand edit. | Ignore that read failure in a copy; the no-write/read-refusal assertion turns red. | KEN-2416 |
 | Workflow link or changed precondition | Plant a symlink or change the file after its preflight. Refuse without writing the target. | Disable each refusal separately. The target-preservation assertion turns red. | KEN-2416 |
-| Render edit / `render-edited` | Edit a recorded render locally, with and without an upstream change. Include vg's Copilot lane-mail-check case. Preserve exact bytes and refuse before adoption or publication. | Baseline runs the discard pass. Restoring that pass on the fix turns the byte-preservation/no-push assertion red. A verify failure alone does not prove the runner preserves the edit. | KEN-2416 |
+| Render edit / `render-edited` | Edit a recorded render locally, with and without an upstream change. Include the measured Copilot hook case. Preserve exact bytes and refuse before adoption or publication. | Baseline runs the discard pass. Restoring that pass on the fix turns the byte-preservation/no-push assertion red. A verify failure alone does not prove the runner preserves the edit. | KEN-2416 |
 | Publication class | Plant a measured standard result. Publish an unarmed pull request. Plant an unmeasured fallback separately; publish nothing. | Restore the old render-only publication stop, or disable the unmeasured guard, separately. Each assertion turns red. The standard fix already exists in source. | KEN-2277, delivery through KEN-2297 |
 | Consumer executable dependency | Install no vendored runtime executable in the consumer fixture. A release-owned runner must execute against that consumer. | Route either runtime exec back to the missing consumer path; the run turns red. Today's workflow has that defect. | KEN-2297, initial declarations under KEN-1963 |
 | Orphan agent | Install generalist, migrate the manifest to maintainer, then refresh once. Only the owned unedited old agent renders and record leave. Verify passes. | Baseline leaves the old requested record. Restore the old orphan option on the fix; the post-refresh assertion turns red. Add an edited-orphan twin that remains held. | KEN-2438 |
@@ -204,7 +199,7 @@ These are technical handoffs to existing owners. They are not new tracker issues
 
 ### KEN-2449: required dependency settlement
 
-- The supplied evidence measures 374 install-record-gap runs: kendex-web 373 and hyprtrade-io 1. Of these, 355 name only hooks. The other 19 contain skills. Five separate adoption-verification runs also report record gaps, but count only under their failed bookkeeping checks.
+- The supplied evidence measures 374 install-record-gap runs across two consumers. Of these, 355 name only hooks. The other 19 contain skills. Five separate adoption-verification runs also report record gaps, but count only under their failed bookkeeping checks.
 - First compare KEN-2405's resulting dependency expansion with `refresh.rs::write_scope` and its apply path. Expansion already decides the required closure. Refresh must land the resulting plan, not rebuild a list from check output.
 - Audit the earlier skill-containing gaps before claiming they are required-dependency failures. Check requested packages, bundle members, required edges and harness exclusions in the existing plan. The logs alone supply no consumer manifest or catalog bytes for that root-cause decision. This is an audit handoff to the existing owner, not a new implementation in KEN-2416.
 - The success criterion is a formerly installed package gaining a required hook, followed by one refresh and a passing check with the hook recorded.
@@ -254,14 +249,9 @@ All times below are UTC. Pending means this lane cannot verify the fact. The ove
 
 | Consumer under vanillagreencom | Owner-reported engine selection | Actual workflow and engine evidence | Installation time and sample start at cutoff |
 | --- | --- | --- | --- |
-| talk | Latest stable release at run time | Lane-credential 404; workflow and engine commits pending | Both pending; latest-release selection does not prove installation of 1.4.0 |
-| vg | Latest stable release at run time | Lane-credential 404; workflow and engine commits pending | Both pending; latest-release selection does not prove installation of 1.4.0 |
-| fleet | Pinned v1.3.0 | Lane-credential 404; workflow and engine commits pending | Both pending; reported pin predates 1.4.0 |
 | vsys | Pinned v1.3.0 | Scheduled run [36929699090](https://github.com/vanillagreencom/vsys/actions/runs/36929699090) has run head and checkout `7d7e614bc8b7a65ae141940b4fb6c20d19a6cb21`; it executes the runner from that detached checkout. Its install log prints `kendex 1.3.0`. Deployed-workflow adoption and engine source commit remain pending. | Old engine reports installed at `2026-10-01T21:35:47.3972837Z`; version output is at `2026-10-01T21:35:49.8954682Z`. No eligible start is verified: this post-release schedule still uses 1.3.0. Installation time for the deployed pair is pending. |
-| hyprtrade | Pinned v1.2.0 | Lane-credential 404; workflow and engine commits pending | Both pending; reported pin predates 1.4.0 |
-| kendex-web | Pinned v1.2.0 | Lane-credential 404; workflow and engine commits pending | Both pending; reported pin predates 1.4.0 |
-| hyprtrade-io | Pinned v1.2.0 | Lane-credential 404; workflow and engine commits pending | Both pending; reported pin predates 1.4.0 |
-| drovr | Pinned v1.2.0 | Lane-credential 404; workflow and engine commits pending | Both pending; reported pin predates 1.4.0 |
+
+Per-repository records were removed from this public repository (KEN-2602).
 
 Vsys's verified workflow execution still installs a pinned engine and executes a consumer-local runner. Its installer SHA is `f6ad9491a810a9256f04f66f8d083eb9db709602`, not the engine source commit. Evidence is `tmp/waiter.UOARog/vsys-36929699090-full.log`. The run head and checkout identify the consumer revision; they do not prove adoption of the KEN-2416 workflow. No consumer has a verified eligible start in this lane's evidence. The inaccessible consumers remain unknown, not confirmed undeployed.
 
@@ -269,14 +259,9 @@ Vsys's verified workflow execution still installs a pinned engine and executes a
 
 | Consumer | First verified deployed run and time | Status |
 | --- | --- | --- |
-| talk | Pending | Overseer must read the lane-credential 404 row |
-| vg | Pending | Overseer must read the lane-credential 404 row |
-| fleet | Pending | Overseer must confirm delivery beyond the reported v1.3.0 pin |
 | vsys | Pending | Post-release schedule 36929699090 still installs 1.3.0; dispatch 36929876600 is not an eligible scheduled start |
-| hyprtrade | Pending | Overseer must confirm delivery beyond the reported v1.2.0 pin |
-| kendex-web | Pending | Overseer must confirm delivery beyond the reported v1.2.0 pin |
-| hyprtrade-io | Pending | Overseer must confirm delivery beyond the reported v1.2.0 pin |
-| drovr | Pending | Overseer must confirm delivery beyond the reported v1.2.0 pin |
+
+Per-repository records were removed from this public repository (KEN-2602).
 
 These pending entries are not zero-run findings. [Interim raw observation](ken-2416-refresh-runs.md#interim-raw-observation) keeps all listed diagnostic runs apart from an eligible after sample. The owner must observe the complete seven-day interval after each confirmed start before supplying the final listed and completed rates.
 

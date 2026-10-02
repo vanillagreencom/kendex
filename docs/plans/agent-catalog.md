@@ -30,7 +30,7 @@ This section records the inspected routes before the catalog change. Removed age
 ### Root cause
 
 - The reading-only generalist scope explains the recorded runtime refusals. The label-first source rule does not authorize skipping generalist because it matches no code type.
-- VG-13 and KEN-2189 launched generalist and then hit its scope boundary, including after an explicit scope waiver. This supports a scope-conflict cause, not an initial-selection cause.
+- KEN-2189 and a consumer item launched generalist and then hit its scope boundary, including after an explicit scope waiver. This supports a scope-conflict cause, not an initial-selection cause.
 - KEN-2309 carried the current engineer label but first launched generalist, then switched after its keyed refusal. Only a current label is available, so the record does not prove the label at that first selection.
 - The evidence confirms refusals, ad hoc workers, and caller reroutes. It does not confirm that orch **often** silently ignored a launch-time generalist label across the requested period.
 - Activation can erase the earlier label choice after a different worker is selected. Fix routing can preserve an earlier worker despite a later label. These are concrete mechanisms to constrain in Phase 2, not historical frequency measurements.
@@ -41,17 +41,16 @@ This section records the inspected routes before the catalog change. Removed age
 
 Requested trailing window: **2026-09-17T00:51:20Z to 2026-10-01T00:51:20Z**. Effective lane coverage is **2026-09-26 to 2026-10-01**. Only 6 retained lanes predate 09-26. Earlier lane records were pruned. KEN-2239 launched at 2026-10-01T00:48:01Z. Totals include this running proposal lane; historical conclusions exclude it.
 
-The following control-host paths identify the evidence, not files shipped by this PR. The tables carry the supplied results so the proposal does not depend on session scratch links.
+The tables carry the supplied results so the proposal does not depend on session scratch links. Sources were the control host's lane and fleet records, fleet-log history, per-item state archives, worker records (`child_sessions`, dev-round and dev-return files), lane mail and briefs, and the Linear caches, for kendex and the other fleet repositories. Counting rules:
 
-| Source | Control-host path | Coverage and counting rule |
-| --- | --- | --- |
-| Lane and fleet records | `~/dev/{kendex,fleet,vg,talk}/tmp/workflow-state-oversee.json`, `lanes[]`, `fleet_log[]` | 617 distinct repo/item lanes: kendex overseer 315, fleet 261, vg 28, talk 13. A relaunch overwrites `launched_at`; fleet logs retain 5 relaunch and 2 launch-failed events. These are not all historical launch attempts. |
-| Fleet-log history | Same files | Kendex begins 09-25T23:59Z; fleet 09-21T14:24Z, with 273 undated entries; vg 09-30T03:19Z; talk 09-30T07:57Z. Logs do not restore the missing earlier lane census. |
-| Per-item states | `~/.fleet/archive/<repo>/<ITEM>/tmp-*.tgz`, `oversee/close-*.tgz`, `prune-*.tgz` | 854 archives from 09-25 onward. State exists for 419 lanes. The other 198 comprise 35 running, 156 stub archives, and 7 unarchived lanes. Exclude 36 archived items without a lane record from the lane census. |
-| Worker records | Archived `child_sessions`, `dev-round-<ITEM>-<round>.json`, `dev-return-*.json` | Deduplicate calls by repo + item + `agent_id` across archived copies. `child_sessions` keeps the latest session per role key; repeat calls can disappear. One `prior_agent_id` survives for KEN-1902. Dev-round files cover 107 items and 568 rounds. Dev-return covers 127 items; 531 fix returns omit agent identity. |
-| Refusals and briefs | Archived `to-overseer.jsonl`, `to-lane.jsonl`, `lane-status-*.md`; `~/dev/*/tmp/brief-*.md`, `directive-*-brief.md`, close archives | Search text, states, and logs for scope refusals and reroutes. Briefs exist for 94 items; 7 name an implementer. Missing evidence is unknown, not no refusal. |
-| Labels | `~/dev/{kendex,fleet,vg,talk}/.cache/linear/issues.json` | Synced 2026-10-01 00:44 to 01:01Z. Labels are current, not historical. Resolve 616 lanes; KEN-1790435951 is not an issue. Only 19 filing/launch log snapshots exist; all match current labels. |
-| Transcripts | Deleted sandbox transcripts; Pi registries for FLT-411, FLT-450, FLT-451 only | Selection is reconstructed from state, artifacts, and mail. No complete transcript census exists. |
+- 617 distinct repo/item lanes, 315 of them kendex's. A relaunch overwrites `launched_at`; fleet logs retain 5 relaunch and 2 launch-failed events. These are not all historical launch attempts, and logs do not restore the missing earlier lane census.
+- 854 per-item archives from 09-25 onward. State exists for 419 lanes. The other 198 comprise 35 running, 156 stub archives, and 7 unarchived lanes. Exclude 36 archived items without a lane record from the lane census.
+- Deduplicate worker calls by repo + item + `agent_id` across archived copies. `child_sessions` keeps the latest session per role key; repeat calls can disappear. Dev-round files cover 107 items and 568 rounds. Dev-return covers 127 items; 531 fix returns omit agent identity.
+- Scope refusals and reroutes come from text, states, and logs. Briefs exist for 94 items; 7 name an implementer. Missing evidence is unknown, not no refusal.
+- Labels are current, not historical, read from caches synced 2026-10-01. 616 lanes resolve to an issue. Only 19 filing/launch log snapshots exist; all match current labels.
+- No complete transcript census exists. Selection is reconstructed from state, artifacts, and mail.
+
+Per-repository records were removed from this public repository (KEN-2602).
 
 Repo identity comes from the lane, then archive, then overseer. Outcome counting uses repo + item, not sessions or rounds. Outcome evidence combines lane status, cycle merge stamps, merge/close logs, and current tracker state.
 
@@ -68,15 +67,15 @@ Repo identity comes from the lane, then archive, then overseer. Outcome counting
 | Not an issue | 1 |
 | Total | 617 |
 
-| Logical implementer | Kendex | Fleet | VG | Talk | Retained calls |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| generalist | 175 | 91 | 21 | 11 | 298 |
-| rust | 21 | 0 | 0 | 0 | 21 |
-| engineer | 16 | 0 | 4 | 0 | 20 |
-| frontend, VG-13 lane-local | 0 | 0 | 1 | 0 | 1 |
-| ci-fix/qafix variants | 2 | 0 | 0 | 0 | 2 |
-| Non-catalog roles | 1 | 6 | 0 | 0 | 7 |
-| Total | 215 | 97 | 26 | 11 | 349 |
+| Logical implementer | Kendex | Other repositories | Retained calls |
+| --- | ---: | ---: | ---: |
+| generalist | 175 | 123 | 298 |
+| rust | 21 | 0 | 21 |
+| engineer | 16 | 4 | 20 |
+| frontend, lane-local | 0 | 1 | 1 |
+| ci-fix/qafix variants | 2 | 0 | 2 |
+| Non-catalog roles | 1 | 6 | 7 |
+| Total | 215 | 134 | 349 |
 
 - Generalist runtime identities: 290 generalist, 4 null, 2 worker, and 2 `pi -p` one-shots. Engineer identities: 18 engineer and 2 null. Non-catalog identities include dev, proof_controller, and slack-runtime.
 - There are 13 items with more than one implementer agent. There are 568 retained round records, not 568 complete agent-labelled calls. Implement-round names include generalist 113, rust 13, `dev-rust-r2` 1, engineer 1, `dev-generalist*` variants 9, other dev labels 5, worker 1, and unnamed 1.
@@ -85,7 +84,7 @@ Repo identity comes from the lane, then archive, then overseer. Outcome counting
 
 | Other role | Retained evidence | Limit |
 | --- | --- | --- |
-| Reviewers | 8 `child_sessions` calls; 13 `review_agent_ids`; deduplicated artifacts: kendex 1,020, fleet 222, vg 11, talk 7 | Artifact counts are reviews, not unique launches. Kendex artifacts classify correctness 284, test 200, doc 197, error 148, and other 191. Arch, perf, quality, safety, and security have no separate supplied count. |
+| Reviewers | 8 `child_sessions` calls; 13 `review_agent_ids`; deduplicated artifacts: kendex 1,020, other repositories 240 | Artifact counts are reviews, not unique launches. Kendex artifacts classify correctness 284, test 200, doc 197, error 148, and other 191. Arch, perf, quality, safety, and security have no separate supplied count. |
 | Planner | 2 sessions | Overwritten/missing records remain unknown. |
 | Researcher | 1 session | Not interchangeable with the 3 currently researcher-labelled lanes. |
 | Scout | 1 session | Not a census of all nested exploratory calls. |
@@ -116,26 +115,24 @@ Child-session statuses are closed 273, active 63, idle 9, done 2, retired 1, and
 
 | Item | Recorded event | Source member or log |
 | --- | --- | --- |
-| VG-13 | Current frontend label; generalist refused twice, then a lane-local frontend completed. Governing maintenance scope defeated the quoted waiver. | `vg/VG-13/tmp-20260930-065128.admin.tgz`, lane mail; vg fleet log 03:42:30Z |
-| VG-24 | Current generalist label; generalist refused twice, then a session-local engineer completed. | vg fleet log 09:52:19Z and 09:53:59Z, ruling 1790762035 |
 | KEN-2189 | Current generalist label; two maintenance-only refusals, including a waiver, then rust. | `kendex/KEN-2189/tmp-20260930-205442.admin.tgz`, lane mail |
 | KEN-2248 | Current generalist label; scope refusal, then authorized issue-local slack-runtime. | `kendex/KEN-2248/tmp-20260930-105243.admin.tgz` |
 | KEN-2309 | Current engineer label; first generalist, keyed runtime refusal, then engineer automatically. | `kendex/KEN-2309/tmp-20260930-235036.admin.tgz` |
-| VG-37, VG-39, KEN-2255 | Missing catalog frontend led to engineer choices in brief or one-item overseer ruling. | `vg/VG-37/tmp-20260930-203001.admin.tgz`; `directive-VG-39-brief.md`; kendex fleet log 15:51:45Z, ruling 1790783492 |
-| VG-18 | Current frontend label, generalist worker; label was set at activation. | `vg/VG-18`, `to-overseer` |
-| FLT-531, FLT-542 | Engineer missing after runtime refusal; overseer re-delegated generalist. | Fleet log 20:54Z and 16:49Z; FLT-542's re-delegation answer is not archived |
-| KEN-1779, FLT-353, FLT-25, FLT-355 | Generalist scope refusal followed by worker or general-purpose dev identities. | Item archives dated 09-26 to 09-28, fallback fields |
-| FLT-93, FLT-336, FLT-341, FLT-304 | Automatic fallback notes say “no dev type.” | Item `child_sessions` states |
-| FLT-527 | “engineer not installed; agent:generalist label selects generalist.” | `fleet/FLT-527/tmp-20261001-000737.admin.tgz` |
+| KEN-2255 | Missing catalog frontend led to an engineer choice in a one-item overseer ruling. | kendex fleet log 15:51:45Z, ruling 1790783492 |
+| KEN-1779 | Generalist scope refusal followed by a worker identity. | Item archive, fallback fields |
 | KEN-2191; KEN-2276, KEN-2293 | Generalist-to-engineer mismatch with no reason; rust/generalist split rounds with no reason. | Item states; splits are not proven fallbacks |
+
+Items in other repositories show the same classes: generalist refusals followed by a lane-local frontend or session-local engineer, a missing catalog frontend leading to engineer choices, an engineer missing after a runtime refusal so the overseer re-delegated generalist, automatic fallback notes that name no dev type, a missing engineer install reported while the generalist label was honoured, and a frontend label set only at activation.
+
+Per-repository records were removed from this public repository (KEN-2602).
 
 Reconciliation of the supplied totals:
 
 - The 23 anomaly items comprise 9 explicit overseer interventions, 10 automatic-handling records, and 4 with no recorded reason. No explicit owner override of implementer identity was found; recorded owner rulings concerned model or scope.
-- The supplied term “automatic overrides” is too broad. FLT-527 honours the generalist label while reporting missing engineer. The four “no dev type” items show runtime fallback, not proven override of a historical label. VG-18 records activation timing. KEN-2276 and KEN-2293 are split rounds. Keep all in the anomaly set, but do not call all silent label overrides.
-- Of 531 currently generalist-labelled lanes, 279 retain only the generalist logical key, 11 retain another agent, 73 retain state without an implementer, and 168 lack state. The proposal lane is in the last group and is excluded from historical conclusions. “Generalist only” includes KEN-1779 and FLT-353 on worker runtimes after refusal. It does not mean all executions used native generalist identity.
-- The 11 other-agent generalist-labelled items are KEN-2189, KEN-2248, KEN-2255, KEN-2191, FLT-25, FLT-93, FLT-336, FLT-341, FLT-355, VG-24, and VG-39. Some first launched generalist. This is not a count of skipped initial generalist launches.
-- A catalog gap differs from install drift. Frontend is absent from [agents/](../../agents/) despite dev's route. Engineer landed in KEN-2275; earlier refusals can predate it. Current fleet declares engineer but lacks its control-checkout Pi render. VG and talk now have engineer installed/rendered; TLK-15 addressed talk's earlier gap.
+- The supplied term “automatic overrides” is too broad. An item that honours the generalist label while reporting a missing engineer is not an override. The “no dev type” items show runtime fallback, not proven override of a historical label. A label set at activation records timing. KEN-2276 and KEN-2293 are split rounds. Keep all in the anomaly set, but do not call all silent label overrides.
+- Of 531 currently generalist-labelled lanes, 279 retain only the generalist logical key, 11 retain another agent, 73 retain state without an implementer, and 168 lack state. The proposal lane is in the last group and is excluded from historical conclusions. “Generalist only” includes items, KEN-1779 among them, that ran on worker runtimes after a refusal. It does not mean all executions used native generalist identity.
+- Four of the 11 other-agent generalist-labelled items are kendex's: KEN-2189, KEN-2248, KEN-2255 and KEN-2191. Some first launched generalist. This is not a count of skipped initial generalist launches.
+- A catalog gap differs from install drift. Frontend is absent from [agents/](../../agents/) despite dev's route. Engineer landed in KEN-2275; earlier refusals can predate it, and some consumers lacked its install or render when they refused.
 
 ## Current harness practice
 
@@ -172,7 +169,7 @@ Retain exclusive workspace role labels as the local specialist selector. Use a h
 
 ### Read-only feasibility evidence
 
-The control-session reads identify Brad Mahaffey (`cebb266f-005a-461c-a877-134ba5186008`) as the personal-key viewer and admin. API `owner=false` for every user does not confirm workspace ownership. The existing active app user is “vanillagreen agents” (`f9755405-2f06-46a6-b706-1f552ff74bef`). App-credential `auth-check` reported `credential=app`, `writes_enabled=true`. Current caches already show that app as assignee on kendex 72, fleet 38, vg 18, and talk 47 issues. Those assignments do not prove delegate/session support.
+The control-session reads identify Brad Mahaffey (`cebb266f-005a-461c-a877-134ba5186008`) as the personal-key viewer and admin. API `owner=false` for every user does not confirm workspace ownership. The existing active app user is “vanillagreen agents” (`f9755405-2f06-46a6-b706-1f552ff74bef`). App-credential `auth-check` reported `credential=app`, `writes_enabled=true`. Current caches already show that app as assignee on 72 kendex issues and on issues in other repositories. Those assignments do not prove delegate/session support.
 
 The research sidecar records `linear.sh issues --help`, source inspection, and a no-match search for `delegateId|\.delegate\b|--delegate|appUser|agentSession` across `skills/linear` and `skills/orch`. The help was also read in this worktree. Relevant exact help output:
 
@@ -208,7 +205,7 @@ The admission column applies the proposed rule below to every row. Each row supp
 | engineer → runtime; rename | Non-UI shell, Python, TypeScript, and Go runtime implementation. | [engineer § Scope](../../agents/runtime.md#scope); runtime refusal records and existing dev route. | Engineer name, labels, and references; add non-UI Go to the shared runtime scope. | `agent:runtime` launches runtime through dev-start. Exclude UI and Rust; split mixed scopes. | Existing runtime gap outside maintainer; rename needs sign-off. |
 | rust → rust; keep and align scope | Non-Iced Rust implementation, with project-defined hot-path rules where applicable. | [rust § Scope](../../agents/rust.md#scope) is performance-focused; dev already routes broader `crates/` work to it. | No agent; align description with current route. | `agent:rust` launches rust for Rust domain logic, systems work, and non-Iced implementation. Iced view work selects iced instead, even under `crates/`. | Distinct stack and existing route; approve scope alignment, not another Rust agent. |
 | iced → iced; keep | Iced widgets, rendering, layout, theming, subscriptions, and UI messages. | [iced § Scope](../../agents/iced.md#scope); Iced consumer evidence below. | Nothing. | `agent:iced` launches iced for the Iced view layer and its messages. Rust data/domain/persistence work goes to rust. | Distinct UI boundary and current dev route; retention review. |
-| Absent → frontend; add | Declarative view layers and UI messages: TypeScript/React web, mobile, and terminal UI; Quickshell QML/JavaScript. | Dev names an absent agent; VG-13 bridge/refusals and consumer UI inventory show the gap. Vgs QML/JavaScript and human-routed lanes establish the declarative UI addition. | Lane-local frontend bridges and UI overrides, not runtime or iced. | `agent:frontend` launches frontend through dev-start for declarative UI, including Next.js, React Native/Expo, React terminal UI, and Quickshell QML/JavaScript. Follow consumer Tailwind/shadcn on Base UI or Radix. Exclude Iced and non-UI runtime/data/persistence. | Distinct uncovered UI scope, failures, and existing route; addition needs sign-off. |
+| Absent → frontend; add | Declarative view layers and UI messages: TypeScript/React web, mobile, and terminal UI; Quickshell QML/JavaScript. | Dev names an absent agent; a consumer's lane-local bridge, refusals and consumer UI inventory show the gap. Vgs QML/JavaScript and human-routed lanes establish the declarative UI addition. | Lane-local frontend bridges and UI overrides, not runtime or iced. | `agent:frontend` launches frontend through dev-start for declarative UI, including Next.js, React Native/Expo, React terminal UI, and Quickshell QML/JavaScript. Follow consumer Tailwind/shadcn on Base UI or Radix. Exclude Iced and non-UI runtime/data/persistence. | Distinct uncovered UI scope, failures, and existing route; addition needs sign-off. |
 | researcher → researcher; keep | Provider-backed research and evidence-cited reports. | [researcher § Scope](../../agents/researcher.md#scope); current research-issue execution. | Nothing. | `agent:researcher` issues execute through research-issue's researcher route, not dev implementation; resume prepared assets when picked up later. Direct research requests delegate by name. | Distinct external-evidence scope and real execution route; retention review. |
 | scout → scout; keep | Read-only local discovery and compressed cited context. | [scout § Report-Only Contract](../../agents/scout.md#report-only-contract); existing restricted Pi delegation. | Nothing. | The caller requests local discovery and delegates to installed scout. Child Pi calls require its configured allowed-subagents entry. No issue-owner label. | Local discovery differs from provider research; existing consumer and route; retention review. |
 | planner → planner; keep with explicit planning route | Ordered technical implementation plans and requested plan artifacts. | [planner § Scope](../../agents/planner.md#scope); roadmap-plan consumes but does not launch it. | Nothing. | Add to orch's primary planning instructions: when the caller requests a technical implementation plan, delegate to installed planner, then pass its TPM handoff through the caller if needed. Do not invoke planner from roadmap-plan. No issue-owner label. | Distinct technical planning output; proposed route closes a current launch gap; retention review. |
@@ -229,7 +226,7 @@ The owner authorizes frontend to cover declarative UI, including Quickshell QML 
 
 ### Deferred gaps
 
-- Memsira's Swift application work routes to `agent:swift` through [swift](../../agents/swift.md). Non-UI runtime and persistence stay with their owners. Maintainer remains limited to changes settled by reading.
+- Swift application work routes to `agent:swift` through [swift](../../agents/swift.md). Non-UI runtime and persistence stay with their owners. Maintainer remains limited to changes settled by reading.
 - Do not add separate Next.js, Expo, Tailwind, Base UI, Radix, or React-terminal agents. The same view-layer boundary and frontend route cover those consumers. Consumer instructions select framework versions and test tools.
 
 ## Source structure and permissions proposal
@@ -282,18 +279,12 @@ These are final proposed values for [KEN-2332](https://linear.app/vanillagreen/i
 | Repository | Proposed `LINEAR_AGENT_LABELS` | Evidence and later repository action |
 | --- | --- | --- |
 | kendex | `agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:rust, agent:iced, agent:frontend, agent:swift` | React/Tauri UI, Rust core, runtime scripts/extensions. Keep iced and swift for maintained catalog work, not a claim that the desktop app uses Iced or Swift. Rename maintenance/runtime installs; add frontend and swift. |
-| fleet | `agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime` | 115 Python and 93 shell files. Engineer is declared now, but its control Pi render is missing. Rename and render runtime; verify the effective install. |
 | vgs | `agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:frontend` | Quickshell QML/JavaScript views go to frontend. Go product code and the 59 Python and 46 shell helpers go to runtime. Install both shared owners; replace the generalist-for-QML/Go fallback and human implementation routing. |
 | vsys | `agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:frontend` | Bun/OpenTUI React terminal UI: 96 TS, 26 TSX, no Rust in tree or history. Frontend explicitly includes this view layer. Runtime owns non-UI TS. Drop rust/iced labels and the unused rust subscription; install runtime/frontend. |
-| vg | `agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:frontend` | Next.js, non-UI TS, shadcn Base UI. Engineer now exists locally. Rename it and add frontend. Replace activation-only labelling with creation-time labelling. |
-| talk | `agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:frontend` | Expo/React Native UI. Newer measurement supersedes the earlier “no engineer install” table: talk now has engineer, and TLK-3 requested runtime work. Retain that worker as runtime; add frontend and the absent setting. |
-| hyprtrade | `agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:rust, agent:iced` | Rust/Iced in ht-app/ht-chart; 49 tools/lib shell scripts and 7 Python files. Add runtime for those scripts; keep Rust/Iced. |
-| hyprtrade-io | `agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:frontend` | React/Vite/Base UI; api serverless TS. No Rust files. Drop unused rust subscription; install runtime/frontend. |
-| drovr | `agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:rust, agent:frontend` | TS services, React dashboard/Base UI, Rust Tauri. Add runtime/frontend; replace activation-only policy. Repository work remains on hold, but its future value has no creation-time exception. |
-| kendex-web | `agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:frontend` | Next.js UI uses Radix, with non-UI TS library/database code. Install implementers and base roles, not only the current reviewer workflow bundle. Shared KEN team does not imply identical installs. |
-| memsira | `agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:rust, agent:frontend, agent:swift` | Rust/Tauri, 189 React TSX files, TS sidecar, Python/shell helpers. Add runtime/frontend/swift. Its 100 Swift files route to swift for application and view work. Non-UI runtime and persistence stay with their owners. |
 
-Evidence is the supplied read-only control-host repository census on 2026-09-30, updated by the 2026-10-01 install measurement. It reads each repository's `kendex.toml` (`kendex-local.toml` for kendex), `kendex.settings.toml`, tracked product paths, and rendered agent directories. It is not a claim that this checkout contains those other repositories. Initial provisional frontend and talk entries are resolved above.
+Per-repository records were removed from this public repository (KEN-2602).
+
+Evidence is the supplied read-only control-host repository census on 2026-09-30, updated by the 2026-10-01 install measurement. It reads each repository's `kendex.toml` (`kendex-local.toml` for kendex), `kendex.settings.toml`, tracked product paths, and rendered agent directories. It is not a claim that this checkout contains those other repositories. Initial provisional frontend entries are resolved above.
 
 KEN-2332's consistency table needs two cells per repository: label declaration and taxonomy shape. Each cell records current value, expected value, `ok`/`gap`/`waived`, and reason. Taxonomy belongs in manifest `[skill-instructions].project-management`, not the settings file. Use kendex's `### Project taxonomy` contract, a team Scope line excluding all agent labels, and the shared-label owner reference. Declare the agent set once through `LINEAR_AGENT_LABELS`; remove duplicated per-agent scope tables. A missing Phase 2 agent is a gap, not available because this proposal merged.
 
