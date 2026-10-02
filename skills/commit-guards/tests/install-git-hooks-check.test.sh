@@ -236,7 +236,7 @@ case "${1-}:${2-}" in
     # Let an early-closing comparator exit before the remaining write.
     sleep 1
     # Overflow the pipe buffer even if cmp waits for a full read block.
-    "$REAL_SED" "$@"; printf '%1048576s\n' ''; exit
+    "$REAL_SED" -e "$2" -e '/^mode=/d' "$3"; printf '%1048576s\n' ''; exit
     ;;
 esac
 exec "$REAL_SED" "$@"
