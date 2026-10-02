@@ -3,7 +3,7 @@ import { ansiRed, oneLine } from "./text.js";
 import { sessionTitleSearchText, userMessagesForSession } from "./session-data.js";
 import type { MatchResult, ParsedQuery, SearchToken, SessionInfo, SessionUserMessage } from "./types.js";
 
-/** How long one `re:` evaluation may run over one session's prompts, or over one snippet. */
+/** How long one `re:` evaluation may run: over a batch of sessions, then over each session alone when the batch runs past it, or over one snippet. */
 const REGEX_DEADLINE_MS = 250;
 
 export class RegexTimeoutError extends Error {

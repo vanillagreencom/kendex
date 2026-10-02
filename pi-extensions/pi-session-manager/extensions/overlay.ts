@@ -33,7 +33,7 @@ import {
 const SEARCH_DEBOUNCE_MS = 120;
 /** Time a search runs before it yields to keystrokes and paint; a slice overruns it by at most one batch. */
 const SCAN_SLICE_MS = 12;
-/** Sessions matched per call: a regex query pays one deadline watchdog per batch. */
+/** Sessions matched per call: a regex query pays one deadline watchdog per batch, plus one per session when the batch runs past the deadline. */
 const SCAN_BATCH = 8;
 /** The notice a session action gets while the list still shows an earlier query's results. */
 const SEARCH_PENDING_NOTICE = "Search still running";

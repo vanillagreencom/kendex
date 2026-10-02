@@ -119,7 +119,7 @@ async function openOverlay(prompts: string[]) {
 		},
 	};
 	void openManager(ctx as never, {} as never);
-	const state = () => overlay as unknown as { mode: string; searching: boolean; deleteAllTargets: { path: string }[] };
+	const state = () => overlay as unknown as { mode: string; searching: boolean; deleteAllTargets: { path: string }[]; notice: { kind: string; text: string } | undefined };
 	await until(() => state().mode === "browse" && !state().searching);
 	return { overlay: overlay!, state, notices, actions, paths };
 }
@@ -138,12 +138,20 @@ test("a session action while a typed query is pending is refused until the searc
 	const { overlay, state, actions, paths } = await openOverlay(["alpha task", "zap the bug"]);
 	for (const char of "zap") overlay.handleInput(char);
 
+	const pending = { kind: "info", text: "Search still running" };
 	for (const key of ["alt+d", "delete", "enter", "alt+r"]) {
 		overlay.handleInput(KEYS[key]!);
-		expect({ key, mode: state().mode, targets: state().deleteAllTargets.length, actions: actions.length }).toEqual({ key, mode: "browse", targets: 0, actions: 0 });
+		expect({ key, mode: state().mode, targets: state().deleteAllTargets.length, actions: actions.length, notice: state().notice }).toEqual({
+			key,
+			mode: "browse",
+			targets: 0,
+			actions: 0,
+			notice: pending,
+		});
 	}
 
 	await until(() => !state().searching);
+	expect(state().notice).toBeUndefined();
 	overlay.handleInput(KEYS["alt+d"]!);
 	expect(state().mode).toBe("confirm-delete-all");
 	expect(state().deleteAllTargets.map((session) => session.path)).toEqual([paths[1]!]);

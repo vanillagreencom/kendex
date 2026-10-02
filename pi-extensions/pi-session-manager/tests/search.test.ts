@@ -18,16 +18,17 @@ function promptSessions(root: string, count: number, prompt: string, prompts = 1
 }
 
 // Unbounded, each prompt below backtracks for seconds under V8 and up to
-// JavaScriptCore's own backtracking limit, about half a second, under bun; ten
-// of them run past the two-second bound. The batch's 250 ms deadline, then the
-// first session's own, plus the runtime's interrupt latency stays under it.
+// JavaScriptCore's own backtracking limit, about half a second, under bun; the
+// twenty of them run past ten seconds. Bun interrupts a match only when it ends,
+// so each 250 ms deadline lands near 550 ms: the batch's deadline, then the first
+// session's own, take about 1.1 s, and the 5 s bound leaves room for a loaded runner.
 test("a catastrophic re: query stops at one session's deadline with RegexTimeoutError", async () => {
 	const { matchSessions, parseQuery, RegexTimeoutError } = await import("../extensions/search.ts");
 	const sessions = promptSessions(sessionFixture(), 2, `${"a".repeat(28)}!`, 10);
 
 	const started = performance.now();
 	expect(() => matchSessions(sessions, parseQuery("re:^(a|a)+$"))).toThrow(RegexTimeoutError);
-	expect(performance.now() - started).toBeLessThan(2_000);
+	expect(performance.now() - started).toBeLessThan(5_000);
 });
 
 // `error.*timeout` over repeated "error " costs time quadratic in the prompt's

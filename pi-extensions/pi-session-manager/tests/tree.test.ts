@@ -28,9 +28,19 @@ for (const row of [
 		children: true,
 		expected: ["/older-child.jsonl", "/newer-child.jsonl"],
 	},
+	{
+		name: "a child whose parent path names the parent through an alias nests under it",
+		sessions: [
+			session("/real/root.jsonl", "2026-01-01T00:00:00Z"),
+			session("/real/child.jsonl", "2026-02-01T00:00:00Z", "/alias/root.jsonl"),
+		],
+		key: (path: string) => path.replace(/^\/alias\//, "/real/"),
+		children: true,
+		expected: ["/real/child.jsonl"],
+	},
 ]) {
 	test(row.name, () => {
-		const roots = buildSessionTree(row.sessions, (path) => path);
+		const roots = buildSessionTree(row.sessions, row.key ?? ((path) => path));
 		const nodes = row.children ? roots[0]?.children : roots;
 		expect(nodes?.map((node) => node.session.path)).toEqual(row.expected);
 	});
