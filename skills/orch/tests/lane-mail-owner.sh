@@ -993,6 +993,16 @@ mutant draft-medium-any 'elif (.medium | IN(' 'elif true or (.medium | IN('
 draft_ask "$(draft_file fax '{"recipient":"r","medium":"fax","text":"x"}')"
 assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.draft.medium')" "0=fax" "control: without the medium rule a fax draft lands"
 
+new_repo control_draft_options
+mutant draft-options-any "|| refuse option-conflict '--draft,--options'" "|| : refuse option-conflict '--draft,--options'"
+draft_ask "$(draft_file d "$DRAFT_JSON")" --options approve,deny
+assert_eq "$RC=$(wc -l < "$BOX/to-overseer.jsonl" | tr -d ' ')" "0=1" "control: without the --options conflict rule a draft ask naming --options lands"
+
+new_repo control_draft_recommend
+mutant draft-recommend-any "|| refuse option-conflict '--draft,--recommend'" "|| : refuse option-conflict '--draft,--recommend'"
+draft_ask "$(draft_file d "$DRAFT_JSON")" --recommend deny
+assert_eq "$RC=$(wc -l < "$BOX/to-overseer.jsonl" | tr -d ' ')" "0=1" "control: without the --recommend conflict rule a draft ask naming --recommend lands"
+
 new_repo control_draft_field
 mutant draft-field-any 'if $bad != [] then' 'if false and $bad != [] then'
 draft_ask "$(draft_file blank '{"recipient":"","medium":"email","text":"x"}')"
