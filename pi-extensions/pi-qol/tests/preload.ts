@@ -1,8 +1,9 @@
-// Preload that stubs @earendil-works/* peer dependencies. Pi provides these
-// at runtime; for `bun test ./tests` they would otherwise need `bun install`
-// to materialize. The stubs are intentionally minimal — just the surface
-// area touched by code under test — so behavioral assertions exercise the
-// QOL wiring, not the upstream packages.
+// Preload that stubs @earendil-works/* peer dependencies for every suite. Pi
+// provides these at runtime. The suite still needs the Pi peers installed:
+// tests/runtime-copy-peers.test.ts runs its probe outside this preload
+// (../DEVELOPMENT.md § Tests). The stubs are intentionally minimal — just
+// the surface area touched by code under test — so behavioral assertions
+// exercise the QOL wiring, not the upstream packages.
 
 import { mock } from "bun:test";
 

@@ -1188,13 +1188,16 @@ jobs:
         with:
           bun-version: 1.3.14
 
-      # Every peer installs at pi-qol's coding-agent peer floor, and the
-      # package's tests/runtime-copy-peers.test.ts refuses any other version.
+      # Every peer installs at pi-qol's coding-agent peer floor. The suite
+      # reads PI_QOL_PEER_VERSION, and tests/runtime-copy-peers.test.ts refuses
+      # a peer installed at any other version.
       - name: pi-qol regression suite
         if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-qol
+        env:
+          PI_QOL_PEER_VERSION: 0.86.0
         run: |
-          npm install --save-prod --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.86.0 @earendil-works/pi-ai@0.86.0 @earendil-works/pi-coding-agent@0.86.0 @earendil-works/pi-tui@0.86.0
+          npm install --save-prod --no-save --no-package-lock --ignore-scripts --no-audit --no-fund "@earendil-works/pi-agent-core@$PI_QOL_PEER_VERSION" "@earendil-works/pi-ai@$PI_QOL_PEER_VERSION" "@earendil-works/pi-coding-agent@$PI_QOL_PEER_VERSION" "@earendil-works/pi-tui@$PI_QOL_PEER_VERSION"
           npm test
 
       - name: pi-output-policy suite
