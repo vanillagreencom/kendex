@@ -192,6 +192,11 @@ SUPP_FENCE_FIRST="$(printf 'Review prose quoting a markdown file.\n\n````markdow
 # leaves an entry for the count rule to report.
 SUPP_UNPARSED_PROSE="$(supp_body '### Suppressed comments (several)' 'src/model/naming.ts line 106: a generated name can collide.')"
 SUPP_MISMATCH_PROSE="$(supp_body '### Suppressed comments (1)' 'src/model/naming.ts line 106: a generated name can collide.')"
+# A section declaring one finding more than it parses, and one declaring one
+# fewer: summed, the two counts agree and the unparsed finding goes unnamed.
+SUPP_THIRD='src/ui/lanes.tsx:12'
+SUPP_UNDER="$(printf '### Suppressed comments (2)\n\n**%s**\n* Blocking: a generated name can collide.\nsrc/model/lanes.ts line 9: a finding with no token.\n' "$SUPP_FIRST")"
+SUPP_OVER="$(printf '### Previously missed (1)\n\n**%s**\n* Blocking: selected can exceed the list length.\n**%s**\n* Blocking: a lane can exit twice.\n' "$SUPP_SECOND" "$SUPP_THIRD")"
 body_of() {
   case "$1" in
     heading) supp_body '### Suppressed comments (2)' "$SUPP_ENTRIES" ;;
@@ -200,6 +205,7 @@ body_of() {
     no-count-prose) printf '%s' "$SUPP_UNPARSED_PROSE" ;;
     over-count) supp_body '### Suppressed comments (3)' "$SUPP_ENTRIES" ;;
     count-prose) printf '%s' "$SUPP_MISMATCH_PROSE" ;;
+    cancel-sections) printf '%s\n\n%s' "$SUPP_UNDER" "$SUPP_OVER" ;;
     trailer) supp_body '### Suppressed comments (1)' "$SUPP_HEADING_TRAILER" ;;
     fenced) supp_body '### Suppressed comments (2)' "$SUPP_FENCED_ENTRIES" ;;
     fence-first) printf '%s' "$SUPP_FENCE_FIRST" ;;
@@ -221,8 +227,9 @@ a counted block at head fails, naming each file:line|heading|$BOTH_STANDING
 the same review with no block passes|other-title|$PASSED
 a title whose count is not a number fails as unparsed|no-count|$FAILED | suppressed-findings state=unparsed
 a title with no count fails even when no entry under it reads|no-count-prose|$FAILED | suppressed-findings state=unparsed
-a count disagreeing with the entries under it fails as a mismatch|over-count|$FAILED | suppressed-findings state=mismatch declared=3 entries=2
-a count over entries the scan cannot read fails as a mismatch|count-prose|$FAILED | suppressed-findings state=mismatch declared=1 entries=0
+a count disagreeing with the entries under it fails as a mismatch|over-count|$FAILED | suppressed-findings state=mismatch sections=1
+a count over entries the scan cannot read fails as a mismatch|count-prose|$FAILED | suppressed-findings state=mismatch sections=1
+two sections of one body whose counts cancel each fail as a mismatch|cancel-sections|$FAILED | suppressed-findings state=mismatch sections=2
 a heading after the entries ends the block|trailer|$FIRST_STANDING
 a fenced snippet between two entries hides neither of them|fenced|$BOTH_STANDING
 a fence run before the heading cannot hide the block|fence-first|$FIRST_STANDING
@@ -317,6 +324,14 @@ an app author's own comment answers|heading|app|app|$H7|**$SUPP_FIRST** - $SUPP_
 the reading identity's comment answers on a person's PR|heading|author|app|$H7|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$PASSED
 the reading identity's label-only decline answers nothing|heading|author|app|$H7|**$SUPP_FIRST** - Declined: frozen\n**$SUPP_SECOND** - Tracked separately|$BOTH_STANDING
 ROWS
+
+# Two reviews whose section counts cancel, every parsed entry answered: the
+# finding the under-counted section never parsed still fails the check.
+CANCEL_ANSWERED='reviews_set "$(review copilot COMMENTED "$HEAD" "$SUPP_UNDER")" "$(review copilot COMMENTED "$HEAD" "$SUPP_OVER")"; comments_set "$(comment author "$(printf "Dispositions at %s:\n**%s** - Tracked: KEN-1400\n**%s** - Tracked: KEN-1400\n**%s** - Tracked: KEN-1400" "$H7" "$SUPP_FIRST" "$SUPP_SECOND" "$SUPP_THIRD")")"'
+world
+eval "$CANCEL_ANSWERED"
+assert_eq "$(run)" "$FAILED | suppressed-findings state=mismatch sections=2" \
+  "two reviews whose counts cancel each fail as a mismatch, answers or not"
 
 # An answer whose author does not count is named, so the author can see why
 # it answered nothing. An app login carries a bracket expression.
@@ -492,8 +507,11 @@ mutant_row "with the unparsed test cut, a title with no count passes" unparsed \
   'if [ "$supp_unparsed" != 0 ]; then' 'if false; then' \
   'at_head "$(body_of no-count-prose)"' "$PASSED"
 mutant_row "with the mismatch test cut, a count over unreadable entries passes" mismatch \
-  'elif [ "$supp_declared" != "$supp_entries" ]; then' 'elif false; then' \
+  'elif [ "$supp_mismatched" != 0 ]; then' 'elif false; then' \
   'at_head "$(body_of count-prose)"' "$PASSED"
+mutant_row "with section counts summed, two reviews whose counts cancel pass" section-sum \
+  '      if .section != null and .section.declared != .section.parsed then .mismatched += 1 else . end' '      if .section != null then .mismatched += (.section.declared - .section.parsed) else . end' \
+  "$CANCEL_ANSWERED" "$PASSED"
 mutant_row "with the head filter cut, an earlier head's review fails this one" head-review \
   '      | select(.commit_id == $sha and .state != "DISMISSED" and .state != "PENDING")' '      | select(.state != "DISMISSED" and .state != "PENDING")' \
   'reviews_set "$(review copilot COMMENTED "$OTHER" "$(body_of heading)")"' "$BOTH_STANDING"

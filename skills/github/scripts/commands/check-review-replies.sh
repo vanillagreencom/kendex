@@ -72,8 +72,10 @@ finding one line per entry:
   thread-replies state=truncated threads=<n>
   suppressed-findings count=<n>
   suppressed-findings state=unparsed
-  suppressed-findings state=mismatch declared=<n> entries=<n>
+  suppressed-findings state=mismatch sections=<n>
   suppressed-entry <file:line>        (one per unanswered finding)
+`sections` counts the findings sections, across every review body read,
+whose own count differs from the entries parsed under that section.
 stderr explains each line. On `suppressed-findings count=<n>`, stderr
 also names, once per login, each author who does not count and wrote a
 head-bound disposition comment with a line naming any finding a review body
@@ -281,7 +283,9 @@ SUPP_ENTRY_DEF='def entry_marks: ["**", "`"];
 #
 # The parse is line-anchored and refuses in every direction it cannot read:
 # a title whose count is not a number (`unparsed`) and a count disagreeing
-# with the entries extracted under it (`mismatch`). Known limit: a body that
+# with the entries extracted under it (`mismatch`). The count is judged PER
+# SECTION: a section that under-parses and another that over-parses would
+# cancel in a sum, leaving a finding no entry names. Known limit: a body that
 # quotes the title at the start of a line counts as a real block. That
 # direction is visible and clears with the next review; the opposite is a
 # silent merge.
@@ -302,6 +306,10 @@ SUPP_ENTRY_DEF='def entry_marks: ["**", "`"];
 # no run of fence-looking lines EARLIER in the body can swallow the block that
 # follows. It errs toward finding a block, never toward missing one.
 #
+# A section closes where the block ends, at the next title, and at the end of
+# the body. A section whose title carries no count is the unparsed rule's and
+# has no count to compare.
+#
 # `capture` emits NOTHING on a non-match, not null, and a reduce update that
 # emits nothing sets the accumulator to null. Hence the `// null`.
 SUPP_SCAN_DEF='
@@ -315,6 +323,9 @@ SUPP_SCAN_DEF='
       then sub("^<summary[^>]*>"; "") | sub("</summary>[ \t]*$"; "") | gsub("<[^>]*>"; "")
       else "" end
       | sub("^[ \t]+"; "") | sub("[ \t]+$"; "");
+    def close_section:
+      if .section != null and .section.declared != .section.parsed then .mismatched += 1 else . end
+      | .section = null;
     # The entry token a whole line carries, or nothing. A line is one of the
     # shared entry_marks, the token, the SAME mark again, and trailing blanks:
     # `path:line`, where the line number is what makes a token and the path may
@@ -333,15 +344,16 @@ SUPP_SCAN_DEF='
           | select(test("^[^*`]+:[0-9]+$")));
     def suppressed_scan:
       reduce (((. // "") | display_strip) | split("\n"))[] as $l
-        ({declared: 0, entries: 0, unparsed: 0, inblock: false, depth: 0, fchar: "", flen: 0, list: []};
+        ({entries: 0, unparsed: 0, mismatched: 0, section: null, inblock: false, depth: 0, fchar: "", flen: 0, list: []};
           ($l | capture("^[ \t]{0,3}(?<f>`{3,}|~{3,})(?<rest>.*)$") // null) as $fx
           | ($l | block_title) as $title
           | (($l | entry_token) // "") as $entry
           | if ($title | test("^(Suppressed comments|Previously missed)[ \t]*\\([0-9]+\\)$")) then
-            .declared += ($title | capture("\\((?<n>[0-9]+)\\)") | .n | tonumber)
+            close_section
+            | .section = {declared: ($title | capture("\\((?<n>[0-9]+)\\)") | .n | tonumber), parsed: 0}
             | .inblock = true | .depth = 0 | .fchar = "" | .flen = 0
           elif ($title | test("^(Suppressed comments|Previously missed)([ \t]|$)")) then
-            .unparsed += 1 | .inblock = true | .depth = 0 | .fchar = "" | .flen = 0
+            close_section | .unparsed += 1 | .inblock = true | .depth = 0 | .fchar = "" | .flen = 0
           elif .fchar != "" then
             if ($fx != null and ($fx.f[0:1] == .fchar)
                 and (($fx.f | length) >= .flen) and ($fx.rest | test("^[ \t]*$")))
@@ -353,15 +365,17 @@ SUPP_SCAN_DEF='
             if .inblock then .depth += 1 else . end
           elif ($l | test("^</details>")) then
             if .inblock and .depth > 0 then .depth -= 1
-            else .inblock = false | .depth = 0 end
+            else close_section | .inblock = false | .depth = 0 end
           elif ($l | test("^#{1,6}[ \t]")) then
-            .inblock = false | .depth = 0
+            close_section | .inblock = false | .depth = 0
           elif .inblock and $entry != "" then
             .entries += 1 | .list += [$entry]
-          else . end);
+            | if .section != null then .section.parsed += 1 else . end
+          else . end)
+        | close_section;
 '
 # The scan reads every submitted review at the head from a finding source:
-# `declared entries unparsed`, then one entry token per line. A dismissed
+# `entries unparsed mismatched`, then one entry token per line. A dismissed
 # review no longer stands and a pending one was never submitted.
 SUPP_ROWS_JQ="$SUPP_NORMALIZE_DEF$SUPP_ENTRY_DEF$SUPP_SCAN_DEF$AUTHOR_TRUST_DEF"'
     [ .[]
@@ -369,10 +383,10 @@ SUPP_ROWS_JQ="$SUPP_NORMALIZE_DEF$SUPP_ENTRY_DEF$SUPP_SCAN_DEF$AUTHOR_TRUST_DEF"
       | select(rest_actor | finding_source($author))
       | (.body // "") | suppressed_scan
     ] as $rows
-    | (([$rows[] | .declared] | add) // 0) as $declared
     | (([$rows[] | .entries] | add) // 0) as $entries
     | (([$rows[] | .unparsed] | add) // 0) as $unparsed
-    | "\($declared) \($entries) \($unparsed)\n" + ([$rows[] | .list[]] | join("\n"))'
+    | (([$rows[] | .mismatched] | add) // 0) as $mismatched
+    | "\($entries) \($unparsed) \($mismatched)\n" + ([$rows[] | .list[]] | join("\n"))'
 
 # THE DISPOSITION READ: a body finding is answered the way a thread finding
 # is. No thread carries it, so the reply is a PR comment by an author whose
@@ -513,8 +527,8 @@ supp_raw=$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" "$SUPP_ROWS_JQ"
 supp_head="${supp_raw%%$'\n'*}"
 supp_list=""
 case "$supp_raw" in *$'\n'*) supp_list="${supp_raw#*$'\n'}" ;; esac
-read -r supp_declared supp_entries supp_unparsed <<<"$supp_head"
-case "$supp_declared:$supp_entries:$supp_unparsed" in
+read -r supp_entries supp_unparsed supp_mismatched <<<"$supp_head"
+case "$supp_entries:$supp_unparsed:$supp_mismatched" in
   *[!0-9:]* | :* | *:: | *:) refuse "read-malformed" "$PR_NUMBER" "the review body scan produced no counts" ;;
 esac
 
@@ -522,9 +536,9 @@ supp_state=ok
 supp_ignored=""
 if [ "$supp_unparsed" != 0 ]; then
   supp_state=unparsed
-elif [ "$supp_declared" != "$supp_entries" ]; then
+elif [ "$supp_mismatched" != 0 ]; then
   supp_state=mismatch
-elif [ "$supp_declared" != 0 ]; then
+elif [ "$supp_entries" != 0 ]; then
   comments=$(read_collection "issue comments" "repos/$SLUG/issues/$PR_NUMBER/comments?per_page=100") || exit 2
   supp_disp=$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" --arg viewer "$VIEWER" --arg floor "$SHA_FLOOR" \
     --arg entries "$supp_list" "$SUPP_DISPOSITION_JQ" <<<"$comments" 2>/dev/null) ||
@@ -556,8 +570,8 @@ case "$supp_state" in
     echo "suppressed-findings: a review body titles a findings section with no readable count; read it in the review" >&2
     ;;
   mismatch)
-    lines+=("suppressed-findings state=mismatch declared=$supp_declared entries=$supp_entries")
-    echo "suppressed-findings: a review body declares $supp_declared finding(s) but $supp_entries entry line(s) parsed; read it in the review" >&2
+    lines+=("suppressed-findings state=mismatch sections=$supp_mismatched")
+    echo "suppressed-findings: $supp_mismatched findings section(s) in a review body declare a count other than the entry lines parsed under them; read them in the review" >&2
     ;;
   ok)
     if [ "$supp_entries" != 0 ]; then
