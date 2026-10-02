@@ -11,8 +11,8 @@ use serde_json::Value;
 use super::ItemWarning;
 use super::desired::{DesiredState, ItemCtx};
 use crate::env::Env;
-use crate::harness::copilot::settings;
-use crate::hook::HookSpec;
+use crate::harness::copilot::{ERROR_CONTEXTS_BEYOND_STOP_FAILURE, settings};
+use crate::hook::{HookBody, HookSpec};
 use crate::model::{HarnessId, ItemKind, Scope};
 
 fn warning(
@@ -65,6 +65,23 @@ pub(super) fn hook(
             ),
             Some(
                 "write the matcher as plain tool names separated by `|`, or check it against the tool names Copilot's hooks match (`bash`, `view`, `create`, `edit`)"
+                    .to_owned(),
+            ),
+        ));
+    }
+    // A catalog script filters `errorContext` itself; a person's command
+    // is registered as written, so the plan says what else it will see.
+    if hook.event == "StopFailure" && matches!(hook.body, HookBody::Command(_)) {
+        let contexts = ERROR_CONTEXTS_BEYOND_STOP_FAILURE;
+        state.warnings.push(named(
+            format!(
+                "kendex-hook-event-wider: harness=copilot hook={record_name} event=StopFailure native=errorOccurred also={record_also}\nCopilot has no StopFailure event; this hook registers on errorOccurred, which also fires when the error context is {also}, not only on a failed model call",
+                record_name = crate::names::shown(name),
+                record_also = contexts.join(","),
+                also = contexts.join(", "),
+            ),
+            Some(
+                "have the command exit early unless the payload's `errorContext` is `model_call`, or drop Copilot from this hook's harnesses"
                     .to_owned(),
             ),
         ));

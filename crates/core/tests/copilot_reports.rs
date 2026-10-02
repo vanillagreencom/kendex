@@ -1,5 +1,6 @@
 //! What kendex tells the user about a Copilot setup it cannot fully act on:
-//! an event Copilot has no counterpart for, hooks switched off from another
+//! an event Copilot has no counterpart for, a StopFailure hook on an event
+//! that also fires on other errors, hooks switched off from another
 //! tool's settings file, a skill a personal setting holds down that no
 //! repository can lift, a model the repository will not run, and a machine
 //! whose settings still live in the file Copilot moved away from.
@@ -112,6 +113,45 @@ fn an_event_copilot_does_not_have_is_reported_never_faked() {
     );
     apply::execute(&f.env, &report.plan).unwrap();
     assert!(!f.project.join(".github/hooks").exists());
+}
+
+/// Copilot has no StopFailure: the hook registers on errorOccurred, which
+/// fires on every error context. A catalog script filters that itself, so
+/// only a person's own command is warned.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_custom_stop_failure_hook_is_warned_that_error_occurred_fires_wider() {
+    const RECORD: &str = "kendex-hook-event-wider: harness=copilot hook=failed event=StopFailure native=errorOccurred also=tool_execution,system,user_input";
+    for (declaration, warned) in [
+        (
+            "[[custom-hooks]]\nname = \"failed\"\nevent = \"StopFailure\"\ncommand = \"./failed.sh\"\n",
+            true,
+        ),
+        ("[hooks.failed]\nsource = \"cat\"\n", false),
+    ] {
+        let f = fixture("\"copilot\"", declaration);
+        fs::write(
+            f.env.home.join("catalog/hooks/failed.sh"),
+            "#!/usr/bin/env bash\n# ---\n# name: failed\n# event: StopFailure\n# description: record the failure\n# ---\nexit 0\n",
+        )
+        .unwrap();
+        let report = apply_now(&f);
+        assert_eq!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.message.lines().next() == Some(RECORD)),
+            warned,
+            "{declaration}: {:?}",
+            report.warnings
+        );
+        let registry = json(&f.project.join(".github/hooks/failed.json"));
+        assert_eq!(
+            registry["hooks"]["errorOccurred"].as_array().map(Vec::len),
+            Some(1),
+            "{declaration}: {registry}"
+        );
+    }
 }
 
 /// Copilot reads Claude Code's settings for a handful of keys, and this is

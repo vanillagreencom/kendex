@@ -1,0 +1,1 @@
+- A StopFailure hook now installs on Copilot under its `errorOccurred` event, and the plan warns a custom one that Copilot also fires it on tool, system and user-input errors.
