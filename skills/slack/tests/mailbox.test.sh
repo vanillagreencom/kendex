@@ -48,6 +48,10 @@ for variant in normal hard-kill; do
   [ -d "$MUTEX" ] || RELEASED=yes
   sk_poll "$LOCKED"
   DELIVERIES="$(jq -s --arg key "$LOCKED_CH:$LOCKED_TS" '[.[] | select(.delivery_id == $key)] | length' "$(sk_box "$LOCKED")/to-lane.jsonl")"
+  printf 'mailbox: mutex-recovery=%s=%s=%s variant=%s\n' "$RELEASED" "$RC" "$DELIVERIES" "$variant"
+  if [ "$RC" -ne 0 ]; then
+    printf 'mailbox: recovery-poll-failed=%s variant=%s\n%s\n' "$RC" "$variant" "$ERR" >&2
+  fi
   if [ "$variant" = normal ]; then
     assert_eq "$RELEASED=$RC=$DELIVERIES" "yes=0=1" 'timeout releases the mutex and the next poll acquires it to deliver once'
   else

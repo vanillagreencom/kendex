@@ -136,7 +136,7 @@ bin_dir = root / "tmp/no-flock-bin"
 bin_dir.mkdir()
 for name in ("bash", "sh", "cat", "tail", "mkdir", "mv", "rm", "rmdir", "date", "awk", "sed", "git",
              "tr", "head", "sleep", "cp", "ln", "wc", "sort", "grep", "dirname", "basename", "touch",
-             "chmod", "id", "uname", "mktemp", "env"):
+             "chmod", "id", "uname", "mktemp", "env", "python3"):
     command = shutil.which(name)
     if command is None:
         sys.exit("mutex fixture: command-missing=" + name)
