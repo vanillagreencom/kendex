@@ -82,7 +82,8 @@ owed() {
 # roster account belongs to, with no priority; KEN-10 stopped after a relaunch
 # that kept an earlier merge's cycle; KEN-11 stopped on the Opus model its
 # harness is walled for; KEN-12 stopped on another host, whose codex accounts
-# have room while this host's are walled. The claude roster mixes a walled
+# have room while this host's are walled; KEN-13 closed after a direct push
+# whose cycle oversee-cycle record writes without a PR. The claude roster mixes a walled
 # account with one that has room, which is pick's to weigh.
 world() {
   new_case "$1"
@@ -95,12 +96,13 @@ world() {
     "$(record KEN-9 stopped pi)" \
     "$(record KEN-10 stopped claude '{"cycle":{"pr":21}}')" \
     "$(record KEN-11 stopped claude '{"model":"claude-opus-5"}')" \
-    "$(record KEN-12 stopped codex '{"host":"provider-x"}')"
+    "$(record KEN-12 stopped codex '{"host":"provider-x"}')" \
+    "$(record KEN-13 done claude '{"cycle":{"commit":"0123456789abcdef0123456789abcdef01234567","class":"small","class_cause":null,"class_reason":"within-small-ceiling","tier":"small","tier_inputs":null,"stamps":{"launched":"2026-09-20T00:00:00Z","first_commit":"2026-09-20T00:01:00Z","pr_opened":null,"gate_green":null,"ci_green":null,"armed":null,"merged":"2026-09-20T00:02:00Z"},"target":1800,"merge_group":null,"actual":120,"open":null,"verdict":"unmeasured","phase":null,"phase_secs":null,"gate_waits":null,"cause":null,"missing":["pr_opened","gate_green","ci_green","armed"],"rounds":null,"pr_rounds":null,"escaped":false,"escape_cause":null,"refixed":null}}')"
   printf '%s\n' "$(issue KEN-1 'In Progress' 1)" "$(issue KEN-2 'In Progress' 2)" \
     "$(issue KEN-3 'In Progress' 1)" "$(issue KEN-4 'In Review' 2)" "$(issue KEN-5 'In Review' 2)" \
     "$(issue KEN-6 'In Review' 3)" "$(issue KEN-7 'In Progress' 2)" "$(issue KEN-8 Done 2)" \
     "$(issue KEN-9 'In Progress' 0)" "$(issue KEN-10 'In Progress' 2)" "$(issue KEN-11 'In Progress' 1)" \
-    "$(issue KEN-12 'In Progress' 2)" \
+    "$(issue KEN-12 'In Progress' 2)" "$(issue KEN-13 'In Review' 2)" \
     | jq -sc . > "$STUB_DIR/tracker.out"
   printf '16\tken-6\tthe review item\n' > "$STUB_DIR/open.txt"
   printf '%s\n' "$(account claude claude room 2026-10-01T00:00:00Z)" \
@@ -147,7 +149,8 @@ KEN-8|-
 KEN-9|owed KEN-9 state=in-progress priority=- lane=stopped verdict=queue
 KEN-10|owed KEN-10 state=in-progress priority=2 lane=stopped verdict=merged pr=21
 KEN-11|owed KEN-11 state=in-progress priority=1 lane=stopped verdict=dated harness=claude until=2026-10-04T00:00:00Z
-KEN-12|owed KEN-12 state=in-progress priority=2 lane=stopped verdict=queue'
+KEN-12|owed KEN-12 state=in-progress priority=2 lane=stopped verdict=queue
+KEN-13|owed KEN-13 state=in-review priority=2 lane=done verdict=merged commit=0123456789abcdef0123456789abcdef01234567'
 
 echo "=== oversee-watch owed items ==="
 
@@ -287,11 +290,18 @@ while IFS='@' read -r setup name old new item want; do
   mutate_file "$MUTANT_WATCH" "$old" "$new"
   "$setup" "owed_mutant_$name"
   WATCH_BIN="$MUTANT_WATCH" watch_pass -- --state "$STUB_DIR/state.json"
-  if [[ "$item" == notices ]]; then got="$(notices)"; else got="$(owed "$item")"; fi
+  if [[ "$item" == notices ]]; then
+    got="$(notices)"
+  elif [[ "$item" == state-invalid ]]; then
+    got="rc=$RC heartbeat=$(grep -c '^EVENT heartbeat' <<<"$OUT" || true) key=$(grep -c '^oversee-watch: state-invalid option=--state path=' "$ERR" || true)"
+  else
+    got="$(owed "$item")"
+  fi
   assert_eq "$got" "$want" "control: $name" "$ERR"
 done <<'ROWS'
 world@without the in-flight exclusion an item with a running lane is owed@($rec | in_flight | not)@true@KEN-1@owed KEN-1 state=in-progress priority=1 lane=running verdict=queue
-world@without the merged verdict a cycle record is judged for a wall@if [[ "$pr" != - ]]; then@if false; then@KEN-5@owed KEN-5 state=in-review priority=2 lane=done verdict=queue
+world@without the merged verdict a cycle record is judged for a wall@if [[ "$delivery" != - ]]; then@if false; then@KEN-5@owed KEN-5 state=in-review priority=2 lane=done verdict=queue
+world@the PR-only cycle filter aborts on a direct record@elif has("commit") and (has("pr") | not)@elif false and (has("pr") | not)@state-invalid@rc=2 heartbeat=0 key=1
 world@without the roster membership test a harness with no account is asked of pick@any(.[]; .harness == $h)@true@KEN-9@owed KEN-9 state=in-progress priority=- lane=stopped verdict=unjudged harness=pi
 world@without the record's model the pick judges the binding bucket@[[ "$model" == - ]] || args+=(--model "$model")@:@KEN-11@owed KEN-11 state=in-progress priority=1 lane=stopped verdict=queue
 world@without the record's host the pick judges the default host's accounts@env ORCH_LANE_HOST="$host" "$LANES_CLI" "${args@"$LANES_CLI" "${args@KEN-12@owed KEN-12 state=in-progress priority=2 lane=stopped verdict=dated harness=codex until=-

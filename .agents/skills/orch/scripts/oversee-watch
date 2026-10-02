@@ -3544,7 +3544,7 @@ owed_read() {
   OWED_LINES=""
   [[ -n "$STATE_FILE" ]] || return 0
   local errf="$WORK_DIR/owed.err" out items rows rc=0 n
-  local id state priority lane host harness model pr key verdict line asked answer
+  local id state priority lane host harness model delivery key verdict line asked answer
   OWED_ACCOUNTS=""
   OWED_ANSWERS=""
   if [[ -n "${LINEAR_TEAM:-}" ]]; then
@@ -3573,7 +3573,7 @@ owed_read() {
   fi
   # One row per owed item on the unit separator, since a model id is the
   # launcher's to spell: id, state, priority, lane, then the host, harness and
-  # model a wall is judged for and the merged pull request, `-` where none.
+  # model a wall is judged for and the delivery identifier, `-` where none.
   rows="$(jq -r --argjson items "$items" "$LANE_RUNNING_JQ"'
     def token($field): if type == "string" and test("^[A-Za-z0-9._-]+$") then .
       else error("lane-field field=\($field) value=\(tojson)") end;
@@ -3593,14 +3593,16 @@ owed_read() {
        ($rec.harness // null | if . == null then "-" else token("harness") end),
        ($rec.model // null | if . == null or . == "" then "-" elif type == "string" then . else error("lane-field field=model value=\(tojson)") end),
        (if $rec.cycle == null then "-"
-        else ($rec.cycle.pr | if type == "number" then tostring else error("lane-field field=cycle value=\($rec.cycle | tojson)") end) end)]
+        else ($rec.cycle | if has("pr") and (has("commit") | not) and (.pr | type) == "number" then "pr=\(.pr)"
+          elif has("commit") and (has("pr") | not) and (.commit | type) == "string" and (.commit | test("^[0-9a-f]+$")) then "commit=\(.commit)"
+          else error("lane-field field=cycle value=\($rec.cycle | tojson)") end) end)]
     | join("\u001f")' <<<"$FLEET_STATE" 2>"$errf")" \
     || die state-invalid "$(cat "$errf")" "option=--state" "path=$STATE_FILE"
-  while IFS=$'\037' read -r id state priority lane host harness model pr; do
+  while IFS=$'\037' read -r id state priority lane host harness model delivery; do
     [[ -n "$id" ]] || continue
     line="owed $id state=$state priority=$priority lane=$lane"
-    if [[ "$pr" != - ]]; then
-      verdict="verdict=merged pr=$pr"
+    if [[ "$delivery" != - ]]; then
+      verdict="verdict=merged $delivery"
     elif [[ "$harness" == - ]]; then
       verdict="verdict=queue"
     else
