@@ -14,6 +14,8 @@ change came from an outside contributor.
 
 - Slack acknowledges messages during API and mailbox waits, resumes reconnect history from saved positions, and logs deliveries and refused eyes reactions.
 - Verify now names `kendex source refresh` when a source mirror lacks a recorded commit, including stale render rows.
+- The built-in second-opinion Codex command now disables Codex hooks, so project Stop hooks no longer block the nested review. A custom `SECOND_OPINION_CODEX_CMD` needs `--disable hooks` added.
+- second-opinion keeps a review or audit answer a CLI printed on stdout with a zero exit, even when its stderr echoes quota or rate-limit text, instead of falling through.
 
 ## [1.5.0] - 2026-10-02
 
