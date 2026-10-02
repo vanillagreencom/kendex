@@ -571,7 +571,7 @@ case "$supp_state" in
     ;;
   mismatch)
     lines+=("suppressed-findings state=mismatch sections=$supp_mismatched")
-    echo "suppressed-findings: $supp_mismatched findings section(s) in a review body declare a count other than the entry lines parsed under them; read them in the review" >&2
+    echo "suppressed-findings: $supp_mismatched findings section(s) across the review bodies at this head declare a count other than the entry lines parsed under them; read them in the reviews" >&2
     ;;
   ok)
     if [ "$supp_entries" != 0 ]; then
@@ -579,7 +579,7 @@ case "$supp_state" in
       while IFS= read -r entry; do
         [ -z "$entry" ] || lines+=("suppressed-entry $entry")
       done <<<"$supp_list"
-      echo "suppressed-findings: $supp_entries finding(s) in a review body at $HEAD_SHA carry no thread and no counted head-bound answer; reply in a PR comment opening 'Dispositions at ${HEAD_SHA:0:7}'" >&2
+      echo "suppressed-findings: $supp_entries finding(s) across the review bodies at $HEAD_SHA carry no thread and no counted head-bound answer; reply in a PR comment opening 'Dispositions at ${HEAD_SHA:0:7}'" >&2
       # A login is not split by glob: an app's `[bot]` suffix is a bracket
       # expression.
       read -r -a ignored_logins <<<"$supp_ignored"
