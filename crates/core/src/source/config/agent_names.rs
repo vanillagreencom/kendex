@@ -226,7 +226,7 @@ impl Uses {
             name: old.clone(),
             harness: None,
             message: format!("agent name '{old}' is deprecated; use '{}'; legacy settings: {}", resolve(old, self.source(old)), settings.iter().cloned().collect::<Vec<_>>().join(", ")),
-            remediation: Some(format!("Rename '{old}' to '{}' in the listed settings. Compatibility remains through 1.4.x.", resolve(old, self.source(old)))),
+            remediation: Some(format!("Rename '{old}' to '{}' in the listed settings. Compatibility remains until the next major release.", resolve(old, self.source(old)))),
         }).collect()
     }
 }

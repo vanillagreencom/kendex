@@ -1,0 +1,1 @@
+- The warning for a legacy catalog agent name says compatibility remains until the next major release, no longer through 1.4.x.
