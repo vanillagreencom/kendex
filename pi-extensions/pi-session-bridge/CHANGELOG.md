@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 3.0.1
+
+- Session shutdown, reload and session replacement no longer hang on a bridge client that never closes its connection. Each client gets one second to close after the bridge ends it, then is disconnected, and the socket file is removed.
+
 ### 3.0.0
 
 - **Breaking**: raw history is saved only for events that fire while an event subscriber is attached and raw spill is enabled. Keep `pi-bridge stream` connected to retain future terminal payloads. A later `history --raw` request cannot recover events that had no subscriber.

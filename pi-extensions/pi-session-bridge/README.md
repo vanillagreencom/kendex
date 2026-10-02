@@ -36,6 +36,7 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 - Raw writes and disk compaction run in one asynchronous queue. The queue holds at most 64 events and 16 MiB of serialized data, including the current write. These queue bounds also apply when `maxRawSpillBytes` disables the disk cap. Compaction copies data through a 64 KiB buffer. Session shutdown cancels queued events, waits for the current write, and removes the raw file.
 
 - The bridge holds at most 8 MiB of unsent data for one client, plus the line it is sending. A client that still leaves more unread when the next line is due is disconnected, and a session with a UI shows a `bridge-client-stalled=<bytes>` warning. One response larger than 8 MiB still reaches a client that reads it.
+- At session end, reload or session replacement, the bridge gives each client one second to close its connection, then disconnects it, so a stopped or wedged client cannot hold the session open.
 - `pi-bridge stream` stops reading from the bridge while its own output is not yet written. When the bridge closes the stream (the session ended, or the reader was disconnected), it prints `bridge-stream-closed` and exits 1.
 - The activity list keeps at most 100 events, 1,048,576 characters of serialized events, and nothing older than one hour. One event larger than the character bound is still kept, alone. The list is shared by every session in one Pi process and is not cleared at session end; these bounds are what release it.
 

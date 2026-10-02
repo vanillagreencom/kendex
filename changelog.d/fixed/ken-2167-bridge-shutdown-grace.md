@@ -1,0 +1,1 @@
+- pi-session-bridge: session shutdown, reload and session replacement no longer hang on a client that never closes its connection; it is disconnected after one second.

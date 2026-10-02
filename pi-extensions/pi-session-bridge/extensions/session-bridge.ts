@@ -363,6 +363,7 @@ export default function sessionBridge(pi: ExtensionAPI) {
 		activityUnsubscribe?.();
 		activityUnsubscribe = undefined;
 
+		const sockets = [...clients].map((client) => client.socket);
 		for (const client of clients) {
 			send(client, { type: "bridge_stop", reason });
 			client.socket.end();
@@ -372,7 +373,13 @@ export default function sessionBridge(pi: ExtensionAPI) {
 		const closing = server;
 		server = undefined;
 		if (closing) {
+			// close() calls back only once every connection has closed; a peer that
+			// never answers the FIN would hold it forever.
+			const grace = setTimeout(() => {
+				for (const socket of sockets) socket.destroy();
+			}, CLIENT_CLOSE_GRACE_MS);
 			await new Promise<void>((resolve) => closing.close(() => resolve()));
+			clearTimeout(grace);
 		}
 
 		if (exitHandler) process.off("exit", exitHandler);
@@ -972,6 +979,11 @@ function sendResponse(client: BridgeClient, id: unknown, command: string, succes
  *  top, so a single response larger than the bound reaches a client that
  *  reads. */
 export const CLIENT_QUEUE_MAX_BYTES = 8 * 1024 * 1024;
+
+/** Milliseconds `stop()` lets each client close its connection after the
+ *  bridge ends it. A client still connected then is destroyed, so a peer that
+ *  never closes cannot hold shutdown, reload or session replacement. */
+export const CLIENT_CLOSE_GRACE_MS = 1_000;
 
 /** The first line of the error a stalled client is disconnected with. */
 export const CLIENT_STALLED_KEY = "bridge-client-stalled";
