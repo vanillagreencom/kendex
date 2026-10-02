@@ -834,7 +834,7 @@ assert_eq "rc=$RC record=$(prepared CC-73)" "rc=0 record=running none none" \
   "a relaunch whose host answers at once drops the earlier preparation from the record"
 
 # A relaunch has not taken while its host prepares or after that wait fails.
-HAND_OFF_CMD="true --model sonnet --effort low" hand_off CC-73 LANE_HOST_STUB_WAIT_GATE="$TMP_ROOT/gate-73-relaunch" LANE_HOST_STUB_WAIT_STATUS=1 -- --relaunch
+HAND_OFF_CMD="true --model claude-sonnet-5 --effort low" hand_off CC-73 LANE_HOST_STUB_WAIT_GATE="$TMP_ROOT/gate-73-relaunch" LANE_HOST_STUB_WAIT_STATUS=1 -- --relaunch
 assert_eq "rc=$RC record=$(prepared CC-73) model=$(field "$(record CC-73)" model) effort=$(field "$(record CC-73)" effort)" \
   "rc=0 record=preparing prepare none model=opus effort=high" "a preparing relaunch keeps the prior model and effort"
 touch "$TMP_ROOT/gate-73-relaunch"
@@ -1066,7 +1066,7 @@ mkdir -p "$EFFORT_MUTANT"
 cp -R "$REPO/scripts/." "$EFFORT_MUTANT/"
 mutate_file "$EFFORT_MUTANT/open-terminal" 'model: $model, effort: $effort,' 'model: $model,'
 run_ot SCRIPT="$EFFORT_MUTANT/open-terminal" --ghostty "${FLEET_CMD[@]}" CC-187
-EFFORT_CONTROL="$(assert_eq "rc=$RC effort=$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-187") | [has("effort"), .effort]' | jq -c .)" \
+EFFORT_CONTROL="$(FAIL=0; assert_eq "rc=$RC effort=$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-187") | [has("effort"), .effort]' | jq -c .)" \
   'rc=0 effort=[true,"high"]' 'launch effort' > "$TMP_ROOT/effort-control"; printf '%s' "$FAIL")"
 assert_eq "rc=$RC failures=$EFFORT_CONTROL" 'rc=0 failures=1' "control: removing effort from the record turns the launch effort assertion red"
 
