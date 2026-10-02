@@ -1,1 +1,1 @@
-- On Pi, a skill read inside a `tool_batch` call now counts as loading that skill, so skill-load-check no longer refuses the next guarded command and asks for a read already made.
+- On Pi, a skill read inside a `tool_batch` call that the batch did not cut short now counts as loading that skill, so skill-load-check no longer refuses the next guarded edit or command.

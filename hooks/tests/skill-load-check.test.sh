@@ -197,10 +197,13 @@ assert_eq "rc=$rc first=$(first_line)" "rc=2 first=$REFUSAL" \
 # result's text never names the skill, as a real file body need not. A
 # `batch-ok` or `batch-error` row is the read inside a tool_batch call beside
 # a failed sibling read, so the batch's own isError is true either way and the
-# read's status in the batch result's `nestedCalls` record is the outcome.
+# read's status in the batch result's `nestedCalls` record is the outcome. A
+# `batch-truncated` row is an ok read whose `details.items` entry the batch
+# marks truncated, and a `batch-grep` row an ok grep of the path in place of
+# the read.
 PI_T="$TMP_ROOT/pi-session.jsonl"
 pi_read_row() { # WANT PATH RESULT [TARGET]
-  local want="$1" path="$2" result="$3" target="${4:-src/lib.rs}"
+  local want="$1" path="$2" result="$3" target="${4:-src/lib.rs}" tool status cut
   {
     case "$result" in
       ok | error | none)
@@ -214,11 +217,18 @@ pi_read_row() { # WANT PATH RESULT [TARGET]
           '{type:"message",message:{role:"toolResult",toolCallId:"call-1",toolName:"read",isError:$e,content:[{type:"text",text:"file body"}]}}'
         ;;
       none) ;;
-      batch-ok | batch-error)
-        "${JQ[@]}" --arg p "$path" \
-          '{type:"message",message:{role:"assistant",content:[{type:"toolCall",id:"call-1",name:"tool_batch",arguments:{calls:[{tool:"read",args:{path:$p}},{tool:"read",args:{path:"missing.md"}}]}}]}}'
-        "${JQ[@]}" --arg p "$path" --arg s "${result#batch-}" \
-          '{type:"message",message:{role:"toolResult",toolCallId:"call-1",toolName:"tool_batch",isError:true,content:[{type:"text",text:"batch_succeeded=1 batch_total=2"}],nestedCalls:{calls:[{id:"call-1/1",name:"read",arguments:{path:$p},status:$s},{id:"call-1/2",name:"read",arguments:{path:"missing.md"},status:"error",error:"ENOENT"}],complete:true}}}'
+      batch-ok | batch-error | batch-truncated | batch-grep)
+        case "$result" in
+          batch-truncated) tool=read status=ok cut=true ;;
+          batch-grep) tool=grep status=ok cut=false ;;
+          *) tool=read status="${result#batch-}" cut=false ;;
+        esac
+        "${JQ[@]}" --arg t "$tool" --arg p "$path" \
+          '((if $t == "grep" then {pattern:"Tests"} else {} end) + {path:$p}) as $a
+          | {type:"message",message:{role:"assistant",content:[{type:"toolCall",id:"call-1",name:"tool_batch",arguments:{calls:[{tool:$t,args:$a},{tool:"read",args:{path:"missing.md"}}]}}]}}'
+        "${JQ[@]}" --arg t "$tool" --arg p "$path" --arg s "$status" --argjson c "$cut" \
+          '((if $t == "grep" then {pattern:"Tests"} else {} end) + {path:$p}) as $a
+          | {type:"message",message:{role:"toolResult",toolCallId:"call-1",toolName:"tool_batch",isError:true,content:[{type:"text",text:"batch_succeeded=1 batch_total=2"}],details:{failed:1,succeeded:1,total:2,items:[{args:$a,index:0,isError:($s == "error"),resultText:"file body",toolName:$t,truncated:$c},{args:{path:"missing.md"},index:1,isError:true,resultText:"ENOENT",toolName:"read",truncated:false}]},nestedCalls:{calls:[{id:"call-1/1",name:$t,arguments:$a,status:$s},{id:"call-1/2",name:"read",arguments:{path:"missing.md"},status:"error",error:"ENOENT"}],complete:true}}}'
         ;;
       *) printf 'an unknown result word builds no transcript: %s\n' "$result" >&2; exit 2 ;;
     esac
@@ -246,6 +256,9 @@ ROWS
 pi_batch_rows() {
   pi_read_row 'rc=0 first=-' .agents/skills/code-quality/SKILL.md batch-ok
   pi_read_row "rc=2 first=$REFUSAL" .agents/skills/code-quality/SKILL.md batch-error
+  pi_read_row "rc=2 first=$REFUSAL" .agents/skills/code-quality/SKILL.md batch-truncated
+  pi_read_row "rc=2 first=$REFUSAL" .agents/skills/code-quality/SKILL.md batch-grep
+  pi_read_row "rc=2 first=$REFUSAL" README.md batch-ok
 }
 pi_batch_rows
 
@@ -644,8 +657,14 @@ skill_load_control markdown "$HOOK" 'require() { # SKILL' \
   'a Pi read of .agents/skills/docs-writing/SKILL.md, result none'
 skill_load_control batch-read "$HOOK" '      | select(.name == "read" and .status == "ok")' \
   '      | empty' HOOK pi_batch_rows 'a Pi read of .agents/skills/code-quality/SKILL.md, result batch-ok'
-skill_load_control batch-status "$HOOK" '      .nestedCalls | objects | .calls | arrays | .[] | objects' \
+skill_load_control batch-status "$HOOK" '      | .nestedCalls | objects | .calls | arrays | .[] | objects' \
   '      | .status = "ok"' HOOK pi_batch_rows 'a Pi read of .agents/skills/code-quality/SKILL.md, result batch-error'
+skill_load_control batch-name "$HOOK" '      | .nestedCalls | objects | .calls | arrays | .[] | objects' \
+  '      | .name = "read"' HOOK pi_batch_rows 'a Pi read of .agents/skills/code-quality/SKILL.md, result batch-grep'
+skill_load_control batch-path "$HOOK" '      | select(.name == "read" and .status == "ok")' \
+  '      | .arguments.path = "code-quality/SKILL.md"' HOOK pi_batch_rows 'a Pi read of README.md, result batch-ok'
+skill_load_control batch-truncated "$HOOK" '.truncated == true) | .args | objects | .path | strings] as $cut' \
+  '      | [] as $cut' HOOK pi_batch_rows 'a Pi read of .agents/skills/code-quality/SKILL.md, result batch-truncated'
 skill_load_control nonpersistent "$HOOK" 'notice() { # KEY VALUE [CAUSE]' \
   '  [ "$1" != gap ] || refuse "$@"' HOOK pi_nonpersistent_row 'Pi nonpersistent session'
 skill_load_control missing-library "$HOOK" 'notice() { # KEY VALUE [CAUSE]' \
