@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 3.0.2
+
+- A long run of spaces after `git push` in a prompt no longer delays its submission. The check for `git push ... --force` now scans the prompt once; before, it took about a second on a prompt with 32,768 spaces.
+
 ### 3.0.1
 
 - Settings reads come from memory. A read is answered for one second without touching disk, then the settings files are read again. A change made in the extension manager, or a new session, applies at once; a hand edit to `settings.json` applies within one second. Before, every read went to disk.

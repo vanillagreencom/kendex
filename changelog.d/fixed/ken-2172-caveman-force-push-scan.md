@@ -1,0 +1,1 @@
+- pi-caveman: a prompt with a long run of spaces after `git push` no longer stalls on submit; the force-push check now scans the prompt once.

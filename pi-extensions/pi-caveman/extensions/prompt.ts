@@ -88,7 +88,35 @@ export function normalizeActiveMode(input: string | undefined): ActiveMode | und
 // escapes on routine technical turns, so they belong in
 // the model's inline judgment, not in a hard prompt swap.
 export function shouldClarityEscape(prompt: string): boolean {
-	return /(drop\s+table|rm\s+-rf|force[- ]?push|git\s+reset\s+--hard|git\s+push\s+(?:[^\n]*\s)?--force|\bdestructive\b|\birreversible\b)/i.test(prompt);
+	return /(drop\s+table|rm\s+-rf|force[- ]?push|git\s+reset\s+--hard|\bdestructive\b|\birreversible\b)/i.test(prompt) || namesGitPushForce(prompt);
+}
+
+const GIT_PUSH = /git\s+push\s+/gi;
+const SPACED_FORCE = /\s--force/gi;
+
+// True when `--force` follows a whitespace character on the line where the
+// whitespace after `git push` ends. Each `git push` reuses the next `--force`
+// and line end found for an earlier one, so the scan stays linear in the prompt
+// length: a regex with overlapping repetitions backtracks quadratically on
+// whitespace runs and repeated commands.
+function namesGitPushForce(prompt: string): boolean {
+	let force = -1;
+	let lineEnd = -1;
+	for (const push of prompt.matchAll(GIT_PUSH)) {
+		const argsStart = push.index + push[0].length;
+		if (force < argsStart - 1) {
+			SPACED_FORCE.lastIndex = argsStart - 1;
+			const next = SPACED_FORCE.exec(prompt);
+			if (!next) return false;
+			force = next.index;
+		}
+		if (lineEnd < argsStart) {
+			lineEnd = prompt.indexOf("\n", argsStart);
+			if (lineEnd === -1) lineEnd = prompt.length;
+		}
+		if (force <= lineEnd) return true;
+	}
+	return false;
 }
 
 // Each setting toggles one short label. The compact form keeps commit messages,
