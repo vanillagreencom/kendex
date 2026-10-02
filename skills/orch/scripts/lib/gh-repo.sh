@@ -17,10 +17,9 @@ fi
 source "$_ORCH_SHARED_GH_REPO"
 unset _ORCH_GH_REPO_DIR _ORCH_SHARED_GH_REPO
 
-# The resolver ci-wait, queue-wait, approval-wait, oversee-watch,
-# open-terminal and lib/escapes.sh ask which repository they are acting on. GH_REPO first, then
-# `gh repo view`, then the project root's origin remote; see the shared
-# resolver for the exit codes.
+# Which repository an orch script acts on: GH_REPO first, then `gh repo
+# view`, then the project root's origin remote; see the shared resolver for
+# the exit codes.
 orch_resolve_gh_repo() {
   kendex_github_resolve_gh_repo "$@"
 }
