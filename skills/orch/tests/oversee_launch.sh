@@ -729,6 +729,20 @@ mutate_file "$DEPTHCTL/oversee" '"$name_re" 1 2)"' '"$name_re" 1)"'
 register_on "$DEEP_PANE" "$DEPTHCTL/oversee"
 assert_eq "$RC|$(recorded harness)" "0|copilot" \
   "control: without the depth bound a Copilot run deep under a node pane reads copilot"
+# A running home whose EXTENSIONS flag is false and that sets no statusLine
+# takes no reader: register warns and still records the session.
+cp -- "$H/.1copilot/settings.json" "$TMP_ROOT/settings.before-disabled"
+printf '{"enabledFeatureFlags":{"EXTENSIONS":false}}\n' > "$H/.1copilot/settings.json"
+register_on "$COPILOT_PANE" '' --account "$H/.1copilot"
+assert_eq "$RC|$(grep -c '^oversee: context-reader=missing .*detail=disabled ' <<<"$OUT")|$(recorded pane)|$(recorded harness)|$(recorded account)" \
+  "0|1|$COPILOT_PANE|copilot|$H/.1copilot" \
+  "register on a copilot home with extensions off and no statusLine warns context-reader=missing and records the session"
+MISSINGCTL="$(mutant_scripts missingctl oversee)" || exit 1
+mutate_file "$MISSINGCTL/oversee" '      message context-reader=missing "home=$home"' '      : context-reader=missing "home=$home"'
+register_on "$COPILOT_PANE" "$MISSINGCTL/oversee" --account "$H/.1copilot"
+assert_eq "$RC|$(grep -c '^oversee: context-reader=missing ' <<<"$OUT" || true)|$(recorded harness)" "0|0|copilot" \
+  "control: register without its missing-reader message loses the warning"
+mv -- "$TMP_ROOT/settings.before-disabled" "$H/.1copilot/settings.json"
 
 # A hand-opened pane with no SessionStart hook, whose current command names
 # no harness, is register's fallback producer. Only the exact server, start
