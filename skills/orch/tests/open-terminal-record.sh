@@ -210,7 +210,7 @@ run_ot --ghostty --harness claude --cmd "true --model opus --verbose --effort hi
 REC="$(record CC-1)"
 assert_eq "rc=$RC records=$(records CC-1)" "rc=0 records=1" "a GUI launch writes one record and the state is created for it"
 assert_eq "$(sed "s/ launched_at=[^ ]*//" <<<"$REC")" \
-  "item=CC-1 tracker=linear repo=null harness=claude window=null account=null host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus session_id=null status=running over_cap=null allow_all=null" \
+  "item=CC-1 tracker=linear repo=null harness=claude window=null account=null host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus effort=high session_id=null status=running over_cap=null allow_all=null" \
   "the record carries the item, no window off tmux, the worktree as mail_root, the flags' model and status running"
 assert_eq "$(stamped "$(field "$REC" launched_at)")" "iso" "launched_at is a UTC timestamp"
 assert_eq "$(stamped "$(running_at CC-1)")" "iso" "a launch recording the lane running stamps running_at, the watch's start-stall anchor"
@@ -244,10 +244,10 @@ assert_eq "rc=$RC $("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.i
 # it, so the model recorded here is the model the harness was started with.
 RUN_TMUX=stub,1,0 run_ot --tmux --harness claude --lane "$LANE_DIR" --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-2
 assert_eq "rc=$RC $(sed "s/ launched_at=[^ ]*//" <<<"$(record CC-2)")" \
-  "rc=0 item=CC-2 tracker=linear repo=null harness=claude window=stub:CC-2 account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-2 surface=tmux model=opus session_id=null status=running over_cap=null allow_all=null" \
+  "rc=0 item=CC-2 tracker=linear repo=null harness=claude window=stub:CC-2 account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-2 surface=tmux model=opus effort=high session_id=null status=running over_cap=null allow_all=null" \
   "a tmux launch under a lane records its window, its account dir, the tmux surface and the model its own command names"
 RUN_TMUX=stub,1,0 run_ot --tmux --tracker github --repo o/r "${FLEET_CMD[@]}" 2709
-assert_eq "rc=$RC $(record issue-2709 | sed -E 's/ (account|host|mail_root|surface|model|session_id|launched_at|over_cap|allow_all)=[^ ]*//g')" \
+assert_eq "rc=$RC $(record issue-2709 | sed -E 's/ (account|host|mail_root|surface|model|effort|session_id|launched_at|over_cap|allow_all)=[^ ]*//g')" \
   "rc=0 item=issue-2709 tracker=github repo=o/r harness=claude window=stub:gh-2709 status=running" \
   "a GitHub item is recorded under its workflow-state id with the window the watch reads it through"
 
@@ -294,7 +294,7 @@ mkdir -p "$COP_RECORD_HOME/hooks"
 for name in lane-mail-check lane-mail-compact lane-mail-start; do : > "$COP_RECORD_HOME/hooks/$name.sh"; : > "$COP_RECORD_HOME/hooks/$name.json"; done
 COPILOT_HOME="$COP_RECORD_HOME" RUN_TMUX=stub,1,0 run_ot --tmux --harness copilot --launch-flags "--model claude-opus-5 --reasoning-effort high" CC-140
 assert_eq "rc=$RC $(record CC-140 | sed -E 's/ (launched_at|over_cap|allow_all)=[^ ]*//g') extensions=$(jq -r .enabledFeatureFlags.EXTENSIONS "$COP_RECORD_HOME/settings.json" 2>/dev/null)" \
-  "rc=0 item=CC-140 tracker=linear repo=null harness=copilot window=stub:CC-140 account=null host=null mail_root=$TMP_ROOT/wt/CC-140 surface=tmux model=claude-opus-5 session_id=null status=running extensions=true" \
+  "rc=0 item=CC-140 tracker=linear repo=null harness=copilot window=stub:CC-140 account=null host=null mail_root=$TMP_ROOT/wt/CC-140 surface=tmux model=claude-opus-5 effort=high session_id=null status=running extensions=true" \
   "a Copilot fleet launch opens its window and records the lane, its harness and model, its home loading the reader"
 assert_eq "$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-140") | [.tier, .tier_inputs]' | jq -e '. == ["standard", {estimate:null, delta:null, paths:null}]')" \
   'true' "a native standard launch records unknown inputs"
@@ -426,12 +426,12 @@ echo "=== a relaunch rewrites the moved fields in place and keeps launched_at ==
 touch "$EXISTS_DIR/CC-1"
 LAUNCHED_AT=2026-01-01T00:00:00Z
 "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= (.status = "done" | .launched_at = "'"$LAUNCHED_AT"'" | .running_at = "'"$LAUNCHED_AT"'")' >/dev/null
-run_ot --relaunch --ghostty --harness claude --lane "$LANE_DIR" --launch-flags "--model opus --effort high" CC-1
+run_ot --relaunch --ghostty --harness claude --lane "$LANE_DIR" --launch-flags "--model opus --effort low" CC-1
 RELAUNCH_RUNNING_AT="$(running_at CC-1)"
 assert_eq "$(stamped "$RELAUNCH_RUNNING_AT") renewed=$([[ "$RELAUNCH_RUNNING_AT" != "$LAUNCHED_AT" ]] && echo yes || echo no)" "iso renewed=yes" \
   "a relaunch renews running_at, so the watch counts a fresh start-stall window from it"
 assert_eq "rc=$RC records=$(records CC-1) $(record CC-1)" \
-  "rc=0 records=1 item=CC-1 tracker=linear repo=null harness=claude window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running over_cap=null allow_all=null" \
+  "rc=0 records=1 item=CC-1 tracker=linear repo=null harness=claude window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus effort=low session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running over_cap=null allow_all=null" \
   "a relaunch keeps one record: the resumed session id and the new account land, launched_at stands, and a done lane runs again"
 assert_eq "$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-1") | [.tier, .tier_inputs]' | jq -e '. == ["small", {estimate:12, delta:40, paths:3}]')" \
   'true' "a native relaunch retains the first file-backed launch tier and inputs"
@@ -480,7 +480,7 @@ echo "=== a wake rewrites the session it resumed and nothing else ==="
 "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= (.session_id = null | .status = "done" | .session_since = "'"$LAUNCHED_AT"'")' >/dev/null
 run_ot --wake --harness claude CC-1
 assert_eq "rc=$RC woken=$(grep -c '^open-terminal: lane-woken item=CC-1 ' <<<"$OUT" || true) $(record CC-1)" \
-  "rc=0 woken=1 item=CC-1 tracker=linear repo=null harness=claude window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running over_cap=null allow_all=null" \
+  "rc=0 woken=1 item=CC-1 tracker=linear repo=null harness=claude window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus effort=high session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running over_cap=null allow_all=null" \
   "a wake sets the resumed session id and status running and leaves the launch's fields as they were"
 assert_eq "$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-1") | [.tier, .tier_inputs]' | jq -e '. == ["small", {estimate:12, delta:40, paths:3}]')" \
   'true' "a wake retains the first file-backed launch tier and inputs"
@@ -516,7 +516,7 @@ printf 'gitdir: /srv/clone/.git/worktrees/lane\n' > "$HOSTED_DISK/srv/lane/.git"
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
   run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-60
 assert_eq "rc=$RC $(sed "s/ launched_at=[^ ]*//" <<<"$(record CC-60)")" \
-  "rc=0 item=CC-60 tracker=linear repo=o/r harness=claude window=stub:CC-60 account=$LANE_DIR host=$HOST_STUB mail_root=/srv/lane surface=tmux model=opus session_id=null status=running over_cap=null allow_all=null" \
+  "rc=0 item=CC-60 tracker=linear repo=o/r harness=claude window=stub:CC-60 account=$LANE_DIR host=$HOST_STUB mail_root=/srv/lane surface=tmux model=opus effort=high session_id=null status=running over_cap=null allow_all=null" \
   "a hosted record carries the host spec and the remote path create named, never the local tree"
 
 echo "=== a hosted launch writes its lane's marker on the host and reads it back ==="
@@ -833,6 +833,14 @@ STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/hos
 assert_eq "rc=$RC record=$(prepared CC-73)" "rc=0 record=running none none" \
   "a relaunch whose host answers at once drops the earlier preparation from the record"
 
+# A relaunch has not taken while its host prepares or after that wait fails.
+HAND_OFF_CMD="true --model sonnet --effort low" hand_off CC-73 LANE_HOST_STUB_WAIT_GATE="$TMP_ROOT/gate-73-relaunch" LANE_HOST_STUB_WAIT_STATUS=1 -- --relaunch
+assert_eq "rc=$RC record=$(prepared CC-73) model=$(field "$(record CC-73)" model) effort=$(field "$(record CC-73)" effort)" \
+  "rc=0 record=preparing prepare none model=opus effort=high" "a preparing relaunch keeps the prior model and effort"
+touch "$TMP_ROOT/gate-73-relaunch"
+assert_eq "record=$(settled CC-73) model=$(field "$(record CC-73)" model) effort=$(field "$(record CC-73)" effort)" \
+  "record=stopped prepare wait-failed model=opus effort=high" "a stopped relaunch keeps the prior model and effort"
+
 # The host's preparation fails: the job closes the window and records the lane
 # stopped with the reason, the record lane-close takes.
 hand_off CC-74 LANE_HOST_STUB_WAIT_STATUS=1
@@ -1029,6 +1037,39 @@ printf 'export const f = { context_window: 1 };\n' > "$PI_LOCAL/packages/@vanill
 PI_WAKE_MANIFEST='{"pi":{"extensions":["./extensions/hooks.ts","./extensions/lane-mail-wake.ts"]}}'
 printf '%s\n' "$PI_WAKE_MANIFEST" > "$PI_LOCAL/packages/@vanillagreen/pi-hooks/package.json"
 OFF='{"compaction":{"enabled":false}}' ON='{"compaction":{"enabled":true}}'
+printf '%s\n' "$OFF" > "$PI_LOCAL/settings.json"
+
+# Fleet's lane_records reads the resolved effort beside model. Opencode has
+# no fleet adapter: its writer fixture bypasses admission, not the recorder.
+EFFORT_SCRIPTS="$TMP_ROOT/effort-writer/scripts"
+mkdir -p "$EFFORT_SCRIPTS"
+cp -R "$REPO/scripts/." "$EFFORT_SCRIPTS/"
+mutate_file "$EFFORT_SCRIPTS/open-terminal" '    *) ot_message unsupported-for-oversee "harness=${LAUNCH_HARNESS:-none}" >&2; return 1 ;;' '    *) ;;'
+while IFS='|' read -r item harness flags want; do
+  effort_ot="$OT"
+  [[ "$harness" != opencode ]] || effort_ot="$EFFORT_SCRIPTS/open-terminal"
+  PI_CODING_AGENT_DIR="$PI_LOCAL" COPILOT_HOME="$COP_RECORD_HOME" run_ot SCRIPT="$effort_ot" CWD="$REPO" --ghostty --harness "$harness" \
+    --cmd "true $flags $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" "$item"
+  assert_eq "rc=$RC effort=$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$item"'") | [has("effort"), .effort]' | jq -c .)" \
+    "rc=0 effort=[true,$want]" "$harness launch effort: $flags" "$TMP_ROOT/err"
+done <<'ROWS'
+CC-180|claude|--model opus --effort high|"high"
+CC-181|codex|-m gpt-5 -c model_reasoning_effort=medium|"medium"
+CC-182|copilot|--model claude-opus-5 --reasoning-effort high|"high"
+CC-183|pi|--model sonnet:high|"high"
+CC-184|pi|--model sonnet --thinking medium|"medium"
+CC-185|opencode|--model example/model|null
+CC-186|claude|--model opus|null
+ROWS
+EFFORT_MUTANT="$TMP_ROOT/effort-mutant/scripts"
+mkdir -p "$EFFORT_MUTANT"
+cp -R "$REPO/scripts/." "$EFFORT_MUTANT/"
+mutate_file "$EFFORT_MUTANT/open-terminal" 'model: $model, effort: $effort,' 'model: $model,'
+run_ot SCRIPT="$EFFORT_MUTANT/open-terminal" --ghostty "${FLEET_CMD[@]}" CC-187
+EFFORT_CONTROL="$(assert_eq "rc=$RC effort=$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-187") | [has("effort"), .effort]' | jq -c .)" \
+  'rc=0 effort=[true,"high"]' 'launch effort' > "$TMP_ROOT/effort-control"; printf '%s' "$FAIL")"
+assert_eq "rc=$RC failures=$EFFORT_CONTROL" 'rc=0 failures=1' "control: removing effort from the record turns the launch effort assertion red"
+
 PI_ITEM=140
 # pi_carrier_at PACKAGES [VOCAB [MANIFEST]] — a pi-hooks carrier installed
 # under PACKAGES on the host disk, with VOCAB as its extensions/vocab.ts and

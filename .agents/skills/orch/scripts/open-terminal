@@ -1296,11 +1296,11 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
   [[ "$TRACKER" != github ]] || record_repo="$repo"
   rec="$(jq -cn --arg item "$item" --arg tracker "$TRACKER" --arg repo "$record_repo" --arg harness "$LAUNCH_HARNESS" \
     --arg window "$window" --arg account "$account" --arg host "$host" \
-    --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$LAUNCH_MODEL" --arg preference_entry "$PREFERENCE_ENTRY" \
+    --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$LAUNCH_MODEL" --arg effort "$LAUNCH_EFFORT" --arg preference_entry "$PREFERENCE_ENTRY" \
     --arg session_id "$session_id" --arg launched_at "$launched_at" --arg status "$status" --argjson prepare "${LAUNCH_PREPARE:-null}" \
     --arg over_cap "$CAP_PASSED" --arg running_at "$running_at" --argjson allow_all "${LAUNCH_ALLOW_ALL:-null}" \
     --argjson tier_record "$LAUNCH_TIER_RECORD" \
-    '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, session_id: $session_id, session_since: $launched_at, launched_at: $launched_at, running_at: $running_at, status: $status, over_cap: $over_cap}
+    '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, effort: $effort, session_id: $session_id, session_since: $launched_at, launched_at: $launched_at, running_at: $running_at, status: $status, over_cap: $over_cap}
      | map_values(if . == "" then null else . end) + {allow_all: $allow_all} + $tier_record
        + (if $preference_entry == "" then {} else {preference_entry: $preference_entry} end)
        + (if $prepare == null then {} else {prepare: $prepare} end)')" || return 1
@@ -1309,7 +1309,7 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
   report="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update-report oversee \
     "$UNPARK_JQ"'(.lanes // []) as $l
      | ($rec | if $mode == "wake" then {session_id, status} elif $mode == "relaunch" then del(.launched_at, .over_cap, .tier, .tier_inputs)
-       | if .status == "running" then . else del(.harness, .model, .preference_entry, .account, .session_id) end else . end) as $patch
+       | if .status == "running" then . else del(.harness, .model, .effort, .preference_entry, .account, .session_id) end else . end) as $patch
      | if any($l[]; .item == $rec.item)
        then {state: (.lanes = ($l | map(if .item == $rec.item then (if $mode == "wake" then . else del(.prepare) | unpark($rec.launched_at)
          | if $rec.status == "running" then del(.preference_entry) else . end end) + $patch else . end))), report: "rewritten"}
