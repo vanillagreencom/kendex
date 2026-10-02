@@ -30,7 +30,6 @@ source "$TEST_DIR/lib/lanes-fixture.sh"
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
 source "$TEST_DIR/lib/open-terminal-stubs.sh"
-# shellcheck source=lib/question-off.sh
 source "$TEST_DIR/lib/question-off.sh"
 
 FETCHER="$TMP_ROOT/fetch"
@@ -163,14 +162,13 @@ table() {
     # shellcheck disable=SC2206 # args contains suite-authored command words.
     command=("${LANES_UNDER_TEST:-$LANES}" $args)
     if [[ "$args" == launch ]]; then
-      command=("${LANES_UNDER_TEST:-$LANES}")
-      command=("${command[0]%/*}/open-terminal" --ghostty --harness codex --lane "$H/.1codex"
-        --cmd "true -m gpt-6.1-sol -c model_reasoning_effort=high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" SPREAD-1)
+      command=("${command[0]%/*}/open-terminal" --ghostty --harness codex --lane "$H/.1codex" --cmd "true -m gpt-6.1-sol -c model_reasoning_effort=high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" SPREAD-1)
     fi
-    OUT=$(cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" \
+    OUT=$(cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' LANES_CLI="${LANES_UNDER_TEST:-$LANES}" \
       ORCH_LANES_FETCH_CMD="$FETCHER" OVERSEE_WATCH_STATE_DIR="$STORE" ORCH_STATE_DIR="$FLEET" \
       TMUX_PANES_FILE="$RUN/panes" PATH="$BIN:$OT_BIN:$PATH" OT_WT_LOG="$RUN/worktree.log" \
       OT_CAPTURE="$RUN/ghostty" WORKTREE_CLI="$OT_BIN/worktree" TERMINAL=ghostty TMUX= ORCH_LANE_HOST=local ORCH_LANE_PREFERENCE= \
+      ORCH_LANE_DIRS= ORCH_LANE_ALIASES= ORCH_LANE_EXCLUDE= ORCH_LANE_RETIRE= ORCH_LANE_COPILOT_POOL= ORCH_LANE_BURN_PCT_PER_HOUR= ORCH_LANE_MAX_PCT= \
       ${env_args[@]+"${env_args[@]}"} "${command[@]}" 2>"$RUN/err")
     RC=$?
     got=""
