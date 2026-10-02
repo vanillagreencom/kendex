@@ -161,7 +161,7 @@ if [ "$MODE" = "all" ]; then
 fi
 
 # Generated whole-file by package managers: size is not a design signal.
-LOCKFILE_BASENAMES="Cargo.lock package-lock.json npm-shrinkwrap.json yarn.lock pnpm-lock.yaml bun.lock bun.lockb flake.lock poetry.lock uv.lock Pipfile.lock Gemfile.lock composer.lock go.sum gradle.lockfile packages.lock.json Package.resolved"
+LOCKFILE_BASENAMES="Cargo.lock package-lock.json npm-shrinkwrap.json yarn.lock pnpm-lock.yaml bun.lock bun.lockb flake.lock poetry.lock uv.lock Pipfile.lock Gemfile.lock composer.lock go.sum gradle.lockfile packages.lock.json Package.resolved .kendex-lock.json"
 
 is_lockfile() { # PATH
   local base="${1##*/}" l

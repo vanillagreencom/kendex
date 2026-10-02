@@ -208,7 +208,7 @@ run_rows \
 
 echo "=== lockfiles are exempt by basename; declared asset trees by an excludes row with a reason ==="
 fx_lock() { repo "$1"; put "${2:-package-lock.json}" 2; } # NAME [PATH]
-fx_lock_twin() { fx_lock lock-twin; cp "$R/package-lock.json" "$R/data.json"; git -C "$R" add -A; }
+fx_lock_twin() { fx_lock "$1" "$2"; cp "$R/$2" "$R/data.json"; git -C "$R" add -A; } # NAME LOCK
 fx_lock_suffix() { repo lock-suffix; put not-package-lock.json 2; }
 asset() { repo "$1"; put assets/demo.gif 2; } # NAME
 fx_excluded() { asset excluded; excludes 'assets/*\tdemo media\n'; }
@@ -217,7 +217,9 @@ fx_excludes_flag() { asset "$1"; mkdir -p "$R/conf"; printf 'assets/*\tdemo medi
 run_rows \
   "an oversized package-lock.json passes and is not counted: the built-in lockfile exemption|fx_lock lock|$C=1||rc=0 $(ok 0)" \
   "a nested lockfile is exempt too: the basename is what is judged|fx_lock lock-nested ui/package-lock.json|$C=1||rc=0 $(ok 0)" \
-  "control: the same bytes as data.json fail, the exemption is the basename|fx_lock_twin|$C=1||rc=1 $(over data.json 2048 2 1);$(failed 1 1)" \
+  "control: the same bytes as data.json fail, the exemption is the basename|fx_lock_twin lock-twin package-lock.json|$C=1||rc=1 $(over data.json 2048 2 1);$(failed 1 1)" \
+  "an oversized .kendex-lock.json, the install record kendex generates, passes and is not counted|fx_lock kendex-lock .kendex-lock.json|$C=1||rc=0 $(ok 0)" \
+  "control: the same bytes as data.json beside it fail while the kendex lock is still not counted|fx_lock_twin kendex-lock-twin .kendex-lock.json|$C=1||rc=1 $(over data.json 2048 2 1);$(failed 1 1)" \
   "control: a basename that only ends in a lockfile's name is not exempt|fx_lock_suffix|$C=1||rc=1 $(over not-package-lock.json 2048 2 1);$(failed 1 1)" \
   "control: an asset fails without an excludes row|asset asset-bare|$C=1||rc=1 $(over assets/demo.gif 2048 2 1);$(failed 1 1)" \
   "an excludes row exempts the declared tree; the list itself is a staged file and is counted|fx_excluded|$C=1||rc=0 $(ok 1)" \
