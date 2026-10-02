@@ -1,1 +1,1 @@
-- orch: `REVIEW_MAX_CYCLES = "0"` now runs one blockers-only fix round, accepted on its validation, and no re-review; before, it escalated all blockers but `structural-close` ones. `1` is unchanged.
+- orch: `REVIEW_MAX_CYCLES = "0"` now runs one blockers-only fix round, recorded in `review_fix_round` and accepted on its validation, with no re-review; before, it escalated nearly every blocker.

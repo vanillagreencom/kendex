@@ -751,13 +751,14 @@ cap_limit() {
 # equal to the cap has spent the whole budget. The one exception is
 # REVIEW_MAX_CYCLES=0 read with --issue: that cap allows no re-review but
 # still review-pr § 4's one blockers-only fix round (§ 4 At The Cap), so it
-# reads below while the re-review count is 0 and `fixed_items` holds no
-# `pr-review` entry, which only that round's dev-fix records write. `cycles`
-# cannot key it: every fix round raises it, QA and pre-review rounds included.
+# reads below while the re-review count is 0 and `review_fix_round` is
+# unset. Only § 4 Fix Delegation sets it, at every cap and whatever the
+# round's items come to, and nothing clears it; `cycles` and `fixed_items`
+# cannot key it, since other rounds raise them and later writes drop entries.
 cmd_cap() {
     local setting="${1:-}"
     shift || true
-    local issue_id="" count="" have_count=0 review_fixes=""
+    local issue_id="" count="" have_count=0 fix_round=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -789,12 +790,12 @@ cmd_cap() {
         ensure_state_exists "$state_file"
         count=$(jq -r "(.${field} // 0) | tostring" "$state_file") || return 1
         if [[ "$setting" == REVIEW_MAX_CYCLES ]] && (( limit == 0 )); then
-            review_fixes=$(jq -r '[(.fixed_items // [])[] | select(.source == "pr-review")] | length | tostring' "$state_file") || return 1
+            fix_round=$(jq -r '.review_fix_round // false | tostring' "$state_file") || return 1
         fi
     fi
     [[ "$count" =~ ^[0-9]+$ ]] || { state_message invalid-count "$@" >&2; return 2; }
 
-    if (( count >= limit )) && [[ "$review_fixes" != 0 || "$count" != 0 ]]; then
+    if (( count >= limit )) && [[ "$fix_round" != false || "$count" != 0 ]]; then
         printf 'at-cap %s/%s\n' "$count" "$limit"
     else
         printf 'below %s/%s\n' "$count" "$limit"
@@ -822,7 +823,7 @@ cmd_set() {
     ensure_state_exists "$state_file"
 
     # review-pr § 4 writes `rereview_panel` to re-enter § 2: that write IS the re-review cycle, so it raises `rereview_cycles` under the same lock it is gated on, and refuses once that count reaches REVIEW_MAX_CYCLES, so the setting is the number of entries allowed. The count is entries already taken, so the comparison is >=, not >.
-    # Nothing else spends that budget: `cycles` is the general fix-round tally, and § 7's QA re-check and § 2 verification pass write `qa_recheck_panel` and `verification_panel`, fields this branch never matches. At a cap of 0 this write always refuses, and `cmd_cap` reads § 4's one fix round from `fixed_items` instead.
+    # Nothing else spends that budget: `cycles` is the general fix-round tally, and § 7's QA re-check and § 2 verification pass write `qa_recheck_panel` and `verification_panel`, fields this branch never matches. At a cap of 0 this write always refuses, and `cmd_cap` reads § 4's one fix round from `review_fix_round` instead.
     if [[ "$field" == "tier" ]]; then
         case "$value" in
             micro|small|standard) ;;
@@ -1489,8 +1490,8 @@ Commands:
                                 Either prints "<below|at-cap> <count>/<cap>",
                                 at-cap being count >= cap, except that
                                 REVIEW_MAX_CYCLES=0 with --issue reads below
-                                until fixed_items holds a pr-review entry,
-                                which review-pr § 4's one fix round records.
+                                until review_fix_round is set, which
+                                review-pr § 4 Fix Delegation writes.
                                 Settings:
 EOF
     cap_table | awk -F'\t' \
