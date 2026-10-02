@@ -209,8 +209,9 @@ require_rows change-class-table "$table_rows"
 # Refresh retires whole artifacts and shared registrations. The released
 # verify interface cannot prove whole-file ownership at the base, so neither
 # inventory absence nor a surviving head tree can authorize a deletion. A
-# retirement whose every read came in is standard by rule, so measured; a
-# deletion the head inventory still names, or one verify refuses, is the
+# retirement whose every read came in, and beside which no other changed path
+# is refused, is standard by rule, so measured; a deletion the head inventory
+# still names, one verify refuses, or a refused path after a retirement is the
 # fallback.
 removed_repo=$(new_repo removed-render)
 commit_paths "$removed_repo" 'recorded renders' .codex/agents/rust.md .agents/skills/orch/app.ts
@@ -220,15 +221,19 @@ printf '{"userGuard":"keep"}\n' >"$removed_repo/.pi/settings.json"
 git -C "$removed_repo" add .pi/settings.json
 git -C "$removed_repo" commit -q -m 'a shared registry with user settings'
 removed_base=$(git -C "$removed_repo" rev-parse HEAD)
-# label | removed path | head inventory | verifier | class | measured | cause,
-# `-` where the cause is the verifier's own
+# label | paths removed and dropped from the head inventory | paths removed and
+# kept in it | paths edited | verifier | class | measured | refusal after
+# `cause=`, `-` where the cause is the verifier's own. A path list is
+# space-separated, `-` for none.
 cat >"$SANDBOX/removals" <<'REMOVALS'
-retired render with no base whole-file proof|.codex/agents/rust.md|absent|clean|standard|true|render-retirement-unproved
-retired file under a surviving skill tree has no base proof|.agents/skills/orch/app.ts|absent|clean|standard|true|render-retirement-unproved
-retired shared registry still holds user settings|.pi/settings.json|absent|retired-registry|standard|true|render-retirement-unproved
-a deletion still named in the head inventory|.codex/agents/rust.md|retained|clean|standard|false|render-path-unowned
-a deletion under a tree still named in the head inventory|.agents/skills/orch/app.ts|retained|clean|standard|false|render-path-unowned
-verify refuses an unsanctioned deletion|.codex/agents/rust.md|absent|dirty|standard|false|-
+retired render with no base whole-file proof|.codex/agents/rust.md|-|-|clean|standard|true|render-retirement-unproved path=.codex/agents/rust.md
+retired file under a surviving skill tree has no base proof|.agents/skills/orch/app.ts|-|-|clean|standard|true|render-retirement-unproved path=.agents/skills/orch/app.ts
+retired shared registry still holds user settings|.pi/settings.json|-|-|retired-registry|standard|true|render-retirement-unproved path=.pi/settings.json
+a deletion still named in the head inventory|-|.codex/agents/rust.md|-|clean|standard|false|render-path-unowned path=.codex/agents/rust.md
+a deletion under a tree still named in the head inventory|-|.agents/skills/orch/app.ts|-|clean|standard|false|render-path-unowned path=.agents/skills/orch/app.ts
+verify refuses an unsanctioned deletion|.codex/agents/rust.md|-|-|dirty|standard|false|-
+a retirement ahead of a registry edit whose rest moved|.codex/agents/rust.md|-|.pi/settings.json|foreign-changed|standard|false|render-path-partial path=.pi/settings.json foreign=changed
+a retirement ahead of a deletion still named in the head inventory|.agents/skills/orch/app.ts|.codex/agents/rust.md|-|clean|standard|false|render-path-unowned path=.codex/agents/rust.md
 REMOVALS
 
 # Every removal row run against SCRIPT, one `LABEL<TAB>WANT<TAB>GOT` line
@@ -236,15 +241,21 @@ REMOVALS
 # errexit does not reach a function run inside a substitution, so each step
 # checks its own status.
 removal_rows() { # SCRIPT
-  local label path inventory verifier class measured cause out status line want
-  while IFS='|' read -r label path inventory verifier class measured cause; do
+  local label retired kept edited verifier class measured cause path out status line want
+  while IFS='|' read -r label retired kept edited verifier class measured cause; do
     git -C "$removed_repo" checkout -q -B removal "$removed_base" || return
-    rm -- "$removed_repo/$path" || return
-    if [ "$inventory" = absent ]; then
+    for path in $retired $kept; do
+      [ "$path" = - ] || rm -- "$removed_repo/$path" || return
+    done
+    for path in $retired; do
+      [ "$path" != - ] || continue
       jq --arg path "$path" 'map(select(. != $path))' "$removed_repo/.kendex-generated.json" \
         >"$SANDBOX/removed-inventory" || return
       mv -- "$SANDBOX/removed-inventory" "$removed_repo/.kendex-generated.json" || return
-    fi
+    done
+    for path in $edited; do
+      [ "$path" = - ] || printf 'a hand edit\n' >>"$removed_repo/$path" || return
+    done
     git -C "$removed_repo" add -A || return
     git -C "$removed_repo" commit -q -m "$label" || return
     set_verifier "$verifier"
@@ -255,7 +266,7 @@ removal_rows() { # SCRIPT
       status=$?
     fi
     line=$(sed -n 's/^class: //p' "$SANDBOX/removal-err") || return
-    want="change_class=$class exit 0 class=$class measured=$measured cause=$cause path=$path"
+    want="change_class=$class exit 0 class=$class measured=$measured cause=$cause"
     if [ "$cause" = - ]; then
       want="change_class=$class exit 0 class=$class measured=$measured"
       line="${line%% cause=*}"
@@ -273,7 +284,8 @@ require_rows change-class-removals "$removed_rows"
 
 # Must-fail controls, one per rule the rows hold, each naming the rows it
 # turns red: a retirement passed as owned, with the refusal text kept; every
-# render refusal marked measured; and the retirement's measured mark dropped.
+# render refusal marked measured; the retirement's measured mark dropped; and
+# a retirement answered before the paths after it are read.
 removal_reds() { # NAME LINE REPLACEMENT -> the labels of the rows that turn red
   local planted rows
   planted=$(mutant "$1" change-class "$2" "$3") || return
@@ -283,8 +295,7 @@ removal_reds() { # NAME LINE REPLACEMENT -> the labels of the rows that turn red
 retirement_rows='retired render with no base whole-file proof
 retired file under a surviving skill tree has no base proof
 retired shared registry still holds user settings'
-control_reds=$(removal_reds removal-control '          RENDER_MEASURED=measured' \
-  '          RENDER_MEASURED=measured; continue')
+control_reds=$(removal_reds removal-control '  [ -n "$retired" ] || return 0' '  return 0')
 assert_eq "the removal control turns the retirement rows red" "$retirement_rows" "$control_reds"
 control_reds=$(removal_reds every-refusal-measured \
   '  answer standard "$RENDER_REFUSAL" "$RENDER_MEASURED"' \
@@ -292,10 +303,17 @@ control_reds=$(removal_reds every-refusal-measured \
 assert_eq "marking every render refusal measured turns the fallback rows red" \
   'a deletion still named in the head inventory
 a deletion under a tree still named in the head inventory
-verify refuses an unsanctioned deletion' "$control_reds"
-control_reds=$(removal_reds retirement-unmeasured '          RENDER_MEASURED=measured' -)
+verify refuses an unsanctioned deletion
+a retirement ahead of a registry edit whose rest moved
+a retirement ahead of a deletion still named in the head inventory' "$control_reds"
+control_reds=$(removal_reds retirement-unmeasured '  RENDER_MEASURED=measured' -)
 assert_eq "dropping the retirement's measured mark turns the retirement rows red" \
   "$retirement_rows" "$control_reds"
+control_reds=$(removal_reds retirement-answers-early '          continue ;;' \
+  '          RENDER_REFUSAL="$retired"; RENDER_MEASURED=measured; return 1 ;;')
+assert_eq "answering at the retirement turns the rows with a later refusal red" \
+  'a retirement ahead of a registry edit whose rest moved
+a retirement ahead of a deletion still named in the head inventory' "$control_reds"
 
 # `standard` is two answers in one word, and `measured=` is the only thing
 # that separates them. Both shapes, from the same fixtures the table above

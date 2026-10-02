@@ -51,12 +51,14 @@
 #            verified head inventory, and trusted base whole-file ownership.
 #            verify exposes only current positions, so unproved retirement
 #            answers standard with cause=render-retirement-unproved, including
-#            whole-file and tree removals. That answer is a rule, marked
-#            measured=true like cause=base-inventory-absent: every read behind
-#            it succeeded, and the proof it lacks is one verify does not
-#            offer. Any other changed path answers
-#            standard with cause=render-path-unowned, and a shared file whose rest the run
-#            cannot vouch for answers cause=render-path-partial. That verdict
+#            whole-file and tree removals. That answer comes after every
+#            other changed path is read, and any of them that is refused
+#            answers in its place. It is a rule, marked measured=true like
+#            cause=base-inventory-absent: every read behind it succeeded, and
+#            the proof it lacks is one verify does not offer. Any other
+#            changed path answers standard with cause=render-path-unowned,
+#            and a shared file whose rest the run cannot vouch for answers
+#            cause=render-path-partial. That verdict
 #            is that every installed file equals a fresh render of its
 #            declared source. Under `--at-record` a package that follows
 #            its source is rendered at the commit the install record names,
@@ -254,14 +256,14 @@ harness_err="$work/harness-stderr"
 # the ONE place that distinction is made. Every class but `standard` is earned
 # by a rule, so it is measured. `standard` is BOTH: a rule's verdict at the
 # handful of sites that pass `measured` (a base with no inventory, an unproved
-# render retirement, a path rule), and this script's fallback everywhere
-# something could not be read — a diff, an inventory, a render proof, the
-# branch-size measurer, the narrow-change list. A consumer cannot tell those
-# apart from the cause, and enumerating causes outside this script has failed
-# three times, so the default for `standard` is REFUSED and a site that
-# measured one says so. An `answer standard` added later is refused until its
-# author decides otherwise, which is the way round that cannot hand a waiver
-# to a diff nothing read. stdout is unchanged: one `change_class=` line.
+# render retirement, a path rule, a size rule), and this script's fallback
+# everywhere something could not be read — a diff, an inventory, a render
+# proof, the branch-size measurer, the narrow-change list. A consumer cannot
+# tell those apart from the cause, and enumerating causes outside this script
+# has failed three times, so the default for `standard` is REFUSED and a site
+# that measured one says so. An `answer standard` added later is refused until
+# its author decides otherwise, which is the way round that cannot hand a
+# waiver to a diff nothing read. stdout is unchanged: one `change_class=` line.
 answer() { # CLASS FIELDS [measured]
   measured=true
   [ "$1" != standard ] || measured=false
@@ -695,7 +697,7 @@ renders_match() {
 # foreign judgement or `-`, and the path.
 named_positions() { jq -r '.rows[] | select(.state == "ok") | .positions[] | [.owns, (.foreign // "-"), .path] | @tsv' <<<"$VERIFY_JSON"; }
 render_paths_covered() {
-  local path owns foreign position owned partial head_entry inventory_status
+  local path owns foreign position owned partial head_entry inventory_status retired=""
   if ! named_positions >"$work/render-named" 2>/dev/null; then
     RENDER_REFUSAL="cause=verify-document-unreadable version=$VERIFY_DOCUMENT_VERSION"
     return 1
@@ -722,11 +724,10 @@ render_paths_covered() {
         0)
           # verify --base exposes current positions, not the files and trees
           # the base owned whole, and a current tree cannot grant that. Refuse
-          # the render class until the engine exposes base ownership. Every
-          # read behind this answer succeeded, so it is standard by rule.
-          RENDER_REFUSAL="cause=render-retirement-unproved path=$path"
-          RENDER_MEASURED=measured
-          return 1 ;;
+          # the render class until the engine exposes base ownership, once
+          # every later path is read: a refusal among them answers instead.
+          [ -n "$retired" ] || retired="cause=render-retirement-unproved path=$path"
+          continue ;;
         1) ;;
         *) RENDER_REFUSAL="cause=unreadable-head-inventory head=$head_rev"; return 1 ;;
       esac
@@ -761,6 +762,12 @@ render_paths_covered() {
     RENDER_REFUSAL="cause=render-path-unowned path=$path"
     return 1
   done <<<"$changed"
+  [ -n "$retired" ] || return 0
+  # Every changed path read and none refused, so the retirement is standard
+  # by rule.
+  RENDER_REFUSAL="$retired"
+  RENDER_MEASURED=measured
+  return 1
 }
 
 # What the run said around a refused path, for the operator reading the
