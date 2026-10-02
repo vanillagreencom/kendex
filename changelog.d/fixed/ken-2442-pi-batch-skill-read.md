@@ -1,1 +1,1 @@
-- On Pi, a skill read inside a `tool_batch` call now loads that skill when its result shows the read reached the model whole, so skill-load-check no longer refuses the next guarded edit or command.
+- On Pi, a skill read in a `tool_batch` call now loads that skill when each batch call on that file is a read that reached the model whole, so skill-load-check passes the next guarded call.

@@ -205,9 +205,17 @@ assert_eq "rc=$rc first=$(first_line)" "rc=2 first=$REFUSAL" \
 # tool_batch's cap sets it; `batch-policy-cut`, whose entry is whole but whose
 # `details` carry the `kendexOutputPolicy` entry pi-output-policy writes when
 # it cuts the batch text; `batch-no-item`, with no entry for the read, as
-# pi-output-policy's details cap leaves the items past its budget; and
+# pi-output-policy's details cap leaves the items past its budget;
 # `batch-grep`, an ok grep of the path in place of the read, its sibling a
-# failed read of the same path.
+# failed read of the same path; and four whose sibling names the read's own
+# path, since entries join the read by path alone: `batch-beside-failed` and
+# `batch-beside-grep`, a whole read beside a failed read or a whole grep, and
+# `batch-cut-beside-failed` and `batch-cut-beside-grep`, the same with the read
+# cut. A cut-beside row fails two clauses, so no one-clause control reddens it;
+# the batch-join control, which lets each clause pass on any entry of the path,
+# does. Pi's nested status and name are those of the call and outcome tool_batch
+# writes an entry's isError and toolName from, so every row the nested clauses
+# refuse an entry clause refuses too, and no row isolates them.
 PI_T="$TMP_ROOT/pi-session.jsonl"
 pi_read_row() { # WANT PATH RESULT [TARGET]
   local want="$1" path="$2" result="$3" target="${4:-src/lib.rs}" tool status cut item policy sibling
@@ -224,27 +232,37 @@ pi_read_row() { # WANT PATH RESULT [TARGET]
           '{type:"message",message:{role:"toolResult",toolCallId:"call-1",toolName:"read",isError:$e,content:[{type:"text",text:"file body"}]}}'
         ;;
       none) ;;
-      batch-ok | batch-error | batch-truncated | batch-policy-cut | batch-no-item | batch-grep)
-        tool=read status=ok cut=false item=true policy=false sibling=missing.md
+      batch-*)
+        tool=read status=ok cut=false item=true policy=false sibling=missing.md sibling_tool=read sibling_status=error
         case "$result" in
+          batch-ok) ;;
           batch-error) status=error ;;
           batch-truncated) cut=true ;;
           batch-policy-cut) policy=true ;;
           batch-no-item) item=false ;;
           batch-grep) tool=grep sibling="$path" ;;
+          batch-beside-failed) sibling="$path" ;;
+          batch-beside-grep) sibling="$path" sibling_tool=grep sibling_status=ok ;;
+          batch-cut-beside-failed) cut=true sibling="$path" ;;
+          batch-cut-beside-grep) cut=true sibling="$path" sibling_tool=grep sibling_status=ok ;;
+          *) printf 'an unknown result word builds no transcript: %s\n' "$result" >&2; exit 2 ;;
         esac
-        "${JQ[@]}" --arg t "$tool" --arg p "$path" --arg sib "$sibling" \
-          '((if $t == "grep" then {pattern:"Tests"} else {} end) + {path:$p}) as $a
-          | {type:"message",message:{role:"assistant",content:[{type:"toolCall",id:"call-1",name:"tool_batch",arguments:{calls:[{tool:$t,args:$a},{tool:"read",args:{path:$sib}}]}}]}}'
-        "${JQ[@]}" --arg t "$tool" --arg p "$path" --arg s "$status" --arg sib "$sibling" \
-          --argjson c "$cut" --argjson i "$item" --argjson pc "$policy" \
-          '((if $t == "grep" then {pattern:"Tests"} else {} end) + {path:$p}) as $a
-          | {failed:1,succeeded:1,total:2,
-              items:([if $i then {args:$a,index:0,isError:($s == "error"),resultText:"file body",toolName:$t,truncated:$c} else empty end]
-                + [{args:{path:$sib},index:1,isError:true,resultText:"ENOENT",toolName:"read",truncated:false}]),
+        "${JQ[@]}" --arg t "$tool" --arg p "$path" --arg s "$status" --arg st "$sibling_tool" \
+          --arg sib "$sibling" --arg ss "$sibling_status" --argjson c "$cut" --argjson i "$item" --argjson pc "$policy" \
+          'def call($t; $p; $s; $c): {tool:$t,args:((if $t == "grep" then {pattern:"Tests"} else {} end) + {path:$p}),status:$s,truncated:$c};
+          [call($t; $p; $s; $c), call($st; $sib; $ss; false)] as $calls
+          | ([$calls[] | select(.status == "error")] | length) as $failed
+          | {type:"message",message:{role:"assistant",content:[{type:"toolCall",id:"call-1",name:"tool_batch",arguments:{calls:[$calls[] | {tool,args}]}}]}},
+            ({failed:$failed,succeeded:(2 - $failed),total:2,
+              items:[$calls | to_entries[] | select(.key > 0 or $i)
+                | {args:.value.args,index:.key,isError:(.value.status == "error"),
+                    resultText:(if .value.status == "error" then "ENOENT" else "file body" end),toolName:.value.tool,truncated:.value.truncated}],
               kendexOutputPolicySanitized:{policyMode:"balanced",reason:"details payload exceeded inline budget"}}
             + (if $pc then {kendexOutputPolicy:[{reason:"max-text-block",shownRange:"lines 1-197",truncated:true}]} else {} end)
-          | {type:"message",message:{role:"toolResult",toolCallId:"call-1",toolName:"tool_batch",isError:true,content:[{type:"text",text:"batch_succeeded=1 batch_total=2"}],details:.,nestedCalls:{calls:[{id:"call-1/1",name:$t,arguments:$a,status:$s},{id:"call-1/2",name:"read",arguments:{path:$sib},status:"error",error:"ENOENT"}],complete:true}}}'
+            | {type:"message",message:{role:"toolResult",toolCallId:"call-1",toolName:"tool_batch",isError:($failed > 0),
+                content:[{type:"text",text:"batch_succeeded=\(2 - $failed) batch_total=2"}],details:.,
+                nestedCalls:{calls:[$calls | to_entries[] | {id:"call-1/\(.key + 1)",name:.value.tool,arguments:.value.args,status:.value.status}
+                  + (if .value.status == "error" then {error:"ENOENT"} else {} end)],complete:true}}})'
         ;;
       *) printf 'an unknown result word builds no transcript: %s\n' "$result" >&2; exit 2 ;;
     esac
@@ -276,6 +294,10 @@ pi_batch_rows() {
   pi_read_row "rc=2 first=$REFUSAL" .agents/skills/code-quality/SKILL.md batch-policy-cut
   pi_read_row "rc=2 first=$REFUSAL" .agents/skills/code-quality/SKILL.md batch-no-item
   pi_read_row "rc=2 first=$REFUSAL" .agents/skills/code-quality/SKILL.md batch-grep
+  pi_read_row "rc=2 first=$REFUSAL" .agents/skills/code-quality/SKILL.md batch-beside-failed
+  pi_read_row "rc=2 first=$REFUSAL" .agents/skills/code-quality/SKILL.md batch-beside-grep
+  pi_read_row "rc=2 first=$REFUSAL" .agents/skills/code-quality/SKILL.md batch-cut-beside-failed
+  pi_read_row "rc=2 first=$REFUSAL" .agents/skills/code-quality/SKILL.md batch-cut-beside-grep
   pi_read_row "rc=2 first=$REFUSAL" README.md batch-ok
 }
 pi_batch_rows
@@ -675,21 +697,25 @@ skill_load_control markdown "$HOOK" 'require() { # SKILL' \
   'a Pi read of .agents/skills/docs-writing/SKILL.md, result none'
 skill_load_control batch-read "$HOOK" '      | select(.name == "read" and .status == "ok")' \
   '      | empty' HOOK pi_batch_rows 'a Pi read of .agents/skills/code-quality/SKILL.md, result batch-ok'
-skill_load_control batch-status "$HOOK" '      | .nestedCalls | objects | .calls | arrays | .[] | objects' \
-  '      | .status = "ok"' HOOK pi_batch_rows 'a Pi read of .agents/skills/code-quality/SKILL.md, result batch-error' \
-  'a Pi read of .agents/skills/code-quality/SKILL.md, result batch-grep'
-skill_load_control batch-name "$HOOK" '      | .nestedCalls | objects | .calls | arrays | .[] | objects' \
-  '      | .name = "read"' HOOK pi_batch_rows 'a Pi read of .agents/skills/code-quality/SKILL.md, result batch-grep'
-skill_load_control batch-path "$HOOK" '      | select(IN($whole[]))' \
+skill_load_control batch-path "$HOOK" '      | select(all($named[]; .toolName == "read" and .isError == false and .truncated == false))' \
   '      | "code-quality/SKILL.md"' HOOK pi_batch_rows 'a Pi read of README.md, result batch-ok'
-skill_load_control batch-truncated "$HOOK" '      | [$details.items | arrays | .[] | objects' \
+skill_load_control batch-truncated "$HOOK" '      | [$items[] | select(.args | objects | .path == $path)' \
   '        | .truncated = false' HOOK pi_batch_rows 'a Pi read of .agents/skills/code-quality/SKILL.md, result batch-truncated'
+skill_load_control batch-is-error "$HOOK" '      | [$items[] | select(.args | objects | .path == $path)' \
+  '        | .isError = false' HOOK pi_batch_rows 'a Pi read of .agents/skills/code-quality/SKILL.md, result batch-beside-failed'
+skill_load_control batch-tool "$HOOK" '      | [$items[] | select(.args | objects | .path == $path)' \
+  '        | .toolName = "read"' HOOK pi_batch_rows 'a Pi read of .agents/skills/code-quality/SKILL.md, result batch-beside-grep'
+skill_load_control batch-join "$HOOK" '      | [$items[] | select(.args | objects | .path == $path)] as $named' \
+  '      | [$named[0] | objects | {toolName:(if any($named[]; .toolName == "read") then "read" else "" end),
+          isError:all($named[]; .isError), truncated:all($named[]; .truncated)}] as $named' HOOK pi_batch_rows \
+  'a Pi read of .agents/skills/code-quality/SKILL.md, result batch-beside-failed' \
+  'a Pi read of .agents/skills/code-quality/SKILL.md, result batch-beside-grep' \
+  'a Pi read of .agents/skills/code-quality/SKILL.md, result batch-cut-beside-failed' \
+  'a Pi read of .agents/skills/code-quality/SKILL.md, result batch-cut-beside-grep'
 skill_load_control batch-policy-cut "$HOOK" '      (.details | objects' \
   '        | del(.kendexOutputPolicy)' HOOK pi_batch_rows 'a Pi read of .agents/skills/code-quality/SKILL.md, result batch-policy-cut'
-skill_load_control batch-item "$HOOK" '      | .arguments | objects | .path | strings' \
-  '      | . as $path | ($whole + [$path]) as $whole | $path' HOOK pi_batch_rows \
-  'a Pi read of .agents/skills/code-quality/SKILL.md, result batch-truncated' \
-  'a Pi read of .agents/skills/code-quality/SKILL.md, result batch-no-item'
+skill_load_control batch-item "$HOOK" '      | select($named != []' \
+  '        or true' HOOK pi_batch_rows 'a Pi read of .agents/skills/code-quality/SKILL.md, result batch-no-item'
 skill_load_control nonpersistent "$HOOK" 'notice() { # KEY VALUE [CAUSE]' \
   '  [ "$1" != gap ] || refuse "$@"' HOOK pi_nonpersistent_row 'Pi nonpersistent session'
 skill_load_control missing-library "$HOOK" 'notice() { # KEY VALUE [CAUSE]' \
