@@ -217,6 +217,9 @@ functions_exec_row() { # FIXTURE SCENARIO WANT LABEL
   rc=$?
   set -e
   assert_eq "rc=$rc first=$(first_line) stdout=$(cat -- "$OUT_FILE")" "$want stdout=" "$label"
+  if [ "$fixture" = skill-load-check-codex-0.160.0-live ] && [ "$scenario" = failed-status ]; then
+    assert_eq "$(sed -n 's/^step=//p' "$ERR_FILE")" join 'captured failed read names join'
+  fi
 }
 exec_rows() { # optional row key for a planted-copy control
   local key fixture scenario want label
@@ -225,6 +228,8 @@ exec_rows() { # optional row key for a planted-copy control
     functions_exec_row "$fixture" "$scenario" "$want" "$label"
   done <<'ROWS'
 success|skill-load-check-codex-0.160.0|original|rc=0 first=-|functions.exec successful skill read
+captured-success|skill-load-check-codex-0.160.0-live|original|rc=0 first=-|functions.exec captured direct text read
+captured-failed|skill-load-check-codex-0.160.0-live|failed-status|rc=2 first=skill-load-check: unloaded=linear|functions.exec captured failed read
 failed|skill-load-check-codex-0.160.0-failed|original|rc=2 first=skill-load-check: unloaded=missing-KEN-2484|functions.exec authentic failed read
 compound-js|skill-load-check-codex-0.160.0|compound-js|rc=2 first=skill-load-check: unloaded=linear|functions.exec compound JavaScript
 compound-shell|skill-load-check-codex-0.160.0|compound-shell|rc=2 first=skill-load-check: unloaded=linear|functions.exec compound shell
@@ -237,6 +242,7 @@ wrong-command|skill-load-check-codex-0.160.0|wrong-command|rc=2 first=skill-load
 ROWS
 }
 exec_success_row() { exec_rows success; }
+exec_captured_row() { exec_rows captured-success; }
 exec_failed_row() { exec_rows failed; }
 exec_compound_row() { exec_rows compound-js; }
 exec_shell_row() { exec_rows compound-shell; }
@@ -244,6 +250,8 @@ exec_output_row() { exec_rows failed-wrapper; }
 exec_id_row() { exec_rows other-id; }
 exec_rows
 
+skill_load_control exec-direct-text "$HOOK" '      | .input | strings' \
+  '      | select(startswith("const"))' HOOK exec_captured_row 'functions.exec captured direct text read'
 skill_load_control exec-recognition "$HOOK" '    def exec_cmd:' \
   '      empty |' HOOK exec_success_row 'functions.exec successful skill read'
 skill_load_control exec-completion "$HOOK" '| select(.type == "CommandExecution")' \

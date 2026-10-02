@@ -550,7 +550,7 @@ FIRST=${REQUIRED%%"$LF"*}
 judge_loaded() {
   while IFS= read -r skill; do
     [ -n "$skill" ] || continue
-    grep -Fx -e "$skill" <<<"$LOADED" >/dev/null || refuse unloaded "$skill"
+    grep -Fx -e "$skill" <<<"$LOADED" >/dev/null || refuse unloaded "$skill" "step=loaded"
   done <<EOF
 $REQUIRED
 EOF
@@ -652,7 +652,7 @@ GREP_RC=$?
 set -e
 case "$GREP_RC" in
   0) ;;
-  1) refuse unloaded "$FIRST" ;;
+  1) refuse unloaded "$FIRST" "step=candidates" ;;
   # A grep that could not read the transcript wrote its reason where its
   # matches would have gone, so CANDIDATES carries the cause.
   *) refuse transcript unread "$CANDIDATES" ;;
@@ -677,7 +677,7 @@ if [ "$CALL" = codex ]; then
       | "\"(?:[^\"\\\\]|\\\\.)*\"|[0-9]+" as $literal
       | ($identifier + "\\s*:\\s*(?:" + $literal + ")") as $field
       | .input | strings
-      | capture("^\\s*const\\s+(?<variable>" + $identifier + ")\\s*=\\s*await\\s+tools[.]exec_command\\(\\s*\\{\\s*(?<fields>" + $field + "(?:\\s*,\\s*" + $field + ")*)\\s*\\}\\s*\\)\\s*;\\s*text\\(\\s*\\k<variable>[.]output\\s*\\)\\s*;?\\s*$")?
+      | capture("^\\s*(?:const\\s+(?<variable>" + $identifier + ")\\s*=\\s*|(?<direct>text\\(\\s*))await\\s+tools[.]exec_command\\(\\s*\\{\\s*(?<fields>" + $field + "(?:\\s*,\\s*" + $field + ")*)\\s*\\}\\s*\\)(?(<direct>)\\s*\\)|\\s*;\\s*text\\(\\s*\\k<variable>[.]output\\s*\\))\\s*;?\\s*$")?
       | .fields
       | [match("(?<key>" + $identifier + ")\\s*:\\s*(?<value>" + $literal + ")"; "g")
         | .captures | map({key:.name, value:.string}) | from_entries
@@ -707,7 +707,7 @@ if [ "$CALL" = codex ]; then
     | select($cmd | test($read))
     | {id:$id, skill:$skill, kind:$kind}]' 2>&1) || refuse transcript unread "$READ_CALLS"
   CALL_IDS=$(printf '%s' "$READ_CALLS" | jq -r '.[].id | @json' 2>&1) || refuse transcript unread "$CALL_IDS"
-  [ -n "$CALL_IDS" ] || refuse unloaded "$FIRST"
+  [ -n "$CALL_IDS" ] || refuse unloaded "$FIRST" "step=join"
   set --
   while IFS= read -r id; do
     set -- "$@" -e "$id"
@@ -720,7 +720,7 @@ EOF
   set -e
   case "$GREP_RC" in
     0) ;;
-    1) refuse unloaded "$FIRST" ;;
+    1) refuse unloaded "$FIRST" "step=outputs" ;;
     *) refuse transcript unread "$CANDIDATES" ;;
   esac
   LOADED=$(printf '%s\n' "$CANDIDATES" | jq -R -n -r --argjson calls "$READ_CALLS" '
