@@ -63,15 +63,18 @@ snapshot = {"schema": 1, "consumers": {"fixture": {"commit": "fixture", "platfor
 target.write_bytes(gzip.compress(json.dumps(snapshot).encode(), mtime=0))
 PY
 printf 'fixture\n' >"$TMP/inventory"
+# tempfile reads TMPDIR; this alias reaches macOS's temporary-path case on Linux.
+mkdir -p "$TMP/replay-root"
+ln -s "$TMP/replay-root" "$TMP/replay-alias"
 gate() {
   RC=0
-  OUT="$(env -i PATH="$PATH" HOME="$TMP" python3 "${GATE:-$ROOT/tools/consumer-refresh}" check \
+  OUT="$(env -i PATH="$PATH" HOME="$TMP" TMPDIR="$TMP/replay-alias" python3 "${GATE:-$ROOT/tools/consumer-refresh}" check \
     --inventory "$TMP/inventory" --snapshot "$1" --baseline "${BASELINE:-$TMP/candidate}" \
     --catalog "$2" --kendex "$REAL_KENDEX" 2>&1)" || RC=$?
 }
 gate "$TMP/snapshot.gz" "$TMP/candidate"
 if [ "$RC" -eq 0 ] && grep -qxF 'consumer-refresh=pass repository=fixture baseline-exit=0 candidate-exit=0' <<<"$OUT"; then
-  ok 'real committed consumer refresh passes against the retained catalog'
+  ok 'real committed consumer refresh passes through a temporary-root alias against the retained catalog'
 else bad 'real consumer baseline' "$OUT"; fi
 # Remove the writer template in a disposable candidate catalog. This is the
 # historical production defect, not a mutation of a fixture's fake refresh.
@@ -114,7 +117,7 @@ if [ "$RC" -eq 1 ] && grep -qxF 'consumer-refresh=regression repository=fixture 
   grep -qxF 'review-gate-error=standard-setting-missing value=REVIEW_GATE_STANDARD_ENVIRONMENT' <<<"$OUT"; then
   ok 'different keyed baseline and candidate refusals are a regression'
 else bad 'different baseline failure comparison' "$OUT"; fi
-# Gate controls keep the matched condition visible and remove its behavior.
+# Gate controls keep the matched code visible and remove its behavior.
 python3 - "$ROOT/tools/consumer-refresh" "$TMP" <<'PY'
 from pathlib import Path
 import sys
@@ -128,6 +131,8 @@ for name, old, new in (
     ('snapshot-mutant', 'if os.path.lexists(args.baseline / ".github/consumer-snapshots.json.gz"):',
      '# if os.path.lexists(args.baseline / ".github/consumer-snapshots.json.gz"):\n'
      '        if False:'),
+    ('root-mutant', 'tmp = Path(temporary).resolve()',
+     '# tmp = Path(temporary).resolve()\n        tmp = Path(temporary)'),
 ):
     assert text.count(old) == 1
     changed = text.replace(old, new)
@@ -137,6 +142,10 @@ for name, old, new in (
         'ROOT = Path(' + repr(str(source.parent.parent)) + ')'))
     path.chmod(0o755)
 PY
+GATE="$TMP/root-mutant" gate "$TMP/snapshot.gz" "$TMP/candidate"
+if [ "$RC" -eq 1 ] && grep -q '^consumer-refresh-error=link-target value=' <<<"$OUT"; then
+  ok 'control: unresolved temporary-root alias turns the real replay assertion red'
+else bad 'temporary-root alias mutant' "$OUT"; fi
 GATE="$TMP/mutant" gate "$TMP/snapshot.gz" "$TMP/removed"
 if [ "$RC" -eq 0 ]; then ok 'control: disabled regression refusal turns the removal assertion red'; else bad 'regression refusal mutant' "$OUT"; fi
 GATE="$TMP/cause-mutant" BASELINE="$TMP/removed" gate "$TMP/snapshot.gz" "$TMP/no-environment"

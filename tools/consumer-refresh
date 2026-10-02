@@ -323,7 +323,7 @@ def check(args):
         inputs(data["consumers"][name]["files"])
     failed = False
     with tempfile.TemporaryDirectory(prefix="consumer-refresh-") as temporary:
-        tmp = Path(temporary)
+        tmp = Path(temporary).resolve()
         for name in names:
             results = []
             for label, catalog in (("baseline", args.baseline), ("candidate", args.catalog)):
