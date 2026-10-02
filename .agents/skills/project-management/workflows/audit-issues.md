@@ -149,7 +149,7 @@ Spawn a one-shot `[TPM]` sub-agent (not a teammate).
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the input file's `worktree` when the invocation supplied one, the current repo root otherwise.
 
-For `audit-issues issue [ISSUE_ID] ...`, write an [audit-issues-input.md](../schemas/audit-issues-input.md) file under that worktree's `tmp/`. Set `source: "oversee"`, `parent_issue` to the first supplied ID, and `tracker` and `worktree` to the resolved values. Keep every supplied ID in order as an existing-issue `items[]` entry. Bind that path as `[FILE_PATH]` and delegate `--issues [FILE_PATH]`; file invocations retain their supplied file.
+For `audit-issues issue [ISSUE_ID] ...`, write an [audit-issues-input.md](../schemas/audit-issues-input.md) file under that worktree's `tmp/`. Set `source: "oversee"`, `parent_issue: null`, and `tracker` and `worktree` to the resolved values. Keep every supplied ID in order as an existing-issue `items[]` entry. Bind that path as `[FILE_PATH]` and delegate `--issues [FILE_PATH]`; file invocations retain their supplied file.
 
 <delegation_format>
 Follow workflow: .agents/skills/project-management/workflows/tpm-audit.md
@@ -283,7 +283,7 @@ Process creates in dependency order — every issue after the issues it is block
 | expand, update | workflow-actions § Descriptions + reason comment |
 | supersede, combine | workflow-actions § State Transitions (cancel/absorb), then Superseded issues below |
 | cancel | workflow-actions § State Transitions |
-| skip, valid | No action |
+| skip, valid | No action outside the authorized Triage disposition in [Heartbeat audit](../../orch/references/heartbeat-audit.md) |
 
 A `create` whose `create_fields.review_born` is true came from a review finding, and passes `--review-born` so the creation bar holds it to a reported `Symptom:` at priority 2:
 

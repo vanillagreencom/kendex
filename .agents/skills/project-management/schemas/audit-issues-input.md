@@ -48,7 +48,7 @@ Input file for `audit-issues --issues` and `audit-issues --single`, written by t
 | Field | Required | Description |
 |-------|----------|-------------|
 | `source` | Yes | Calling workflow name, one of the values above. Which are review-born, and what that sets, is [tpm-audit](../workflows/tpm-audit.md) § 10 |
-| `parent_issue` | Yes | The issue being worked on — a hierarchy hint |
+| `parent_issue` | Yes | The issue being worked on, as a hierarchy hint; null for an existing-issue batch |
 | `tracker` | No | Execution tracker context — see § Tracker |
 | `worktree` | Yes | Worktree path for code analysis |
 | `blocked_issues` | No | Issue IDs the research unblocks |
@@ -89,7 +89,7 @@ An existing-issue entry is `{"index": 1, "identifier": "PROJ-123"}` (or `issue-N
 | `type` | Yes when the block is present | `linear` or `github` |
 | `repository` | github only | `owner/repo` |
 
-Without the block, audit-issues infers the tracker from `parent_issue`: an `issue-N` form ID means `github` (repository resolved with `gh repo view` in the worktree), otherwise `linear`. GitHub mode must not require Linear sync, session status, project inventory, or Linear mutation commands.
+An existing-issue batch must set `tracker` explicitly. It has no parent hint. Without the block for proposed items, audit-issues infers the tracker from `parent_issue`: an `issue-N` form ID means `github` (repository resolved with `gh repo view` in the worktree), otherwise `linear`. GitHub mode must not require Linear sync, session status, project inventory, or Linear mutation commands.
 
 ## Hierarchy Contract
 
