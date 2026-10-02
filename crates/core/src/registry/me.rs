@@ -70,7 +70,8 @@ impl AccountUnread {
     }
 }
 
-/// The wire shape of GET /api/v1/me, exactly as the contract fixture says.
+/// The wire shape of GET /api/v1/me, as the client's own synthetic test
+/// fixture states it.
 #[derive(Deserialize)]
 struct WireMe {
     name: String,

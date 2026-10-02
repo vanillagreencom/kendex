@@ -1,11 +1,11 @@
-//! The identity client: GET /api/v1/me against the contract fixture,
-//! every account state, all of them settled and all of them `load`'s
-//! answers, the offline cache ladder, and the cache's endpoint key. The
-//! UI holds its own "not read yet" and never gets it here. Which sign-in
-//! an answer belongs to is the cache generation. The fixture is synthetic,
-//! one status and body per answer the client tells apart: an identity with
-//! a linked GitHub account, one without, a rejected token, and a directory
-//! that cannot read its own database.
+//! The identity client: GET /api/v1/me against the client's own synthetic
+//! statement of the wire shape, every account state, all of them settled
+//! and all of them `load`'s answers, the offline cache ladder, and the
+//! cache's endpoint key. The UI holds its own "not read yet" and never gets
+//! it here. Which sign-in an answer belongs to is the cache generation. The
+//! fixture holds one status and body per answer the client tells apart: an
+//! identity with a linked GitHub account, one without, a rejected token,
+//! and a directory whose store is down.
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
@@ -271,16 +271,20 @@ fn no_credential_answers_signed_out_without_the_network() {
 }
 
 #[test]
-fn the_fixture_success_body_reads_as_signed_in() {
+fn the_fixture_with_github_body_reads_as_signed_in() {
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
-    let status = fixture_status(&["success", "status"]);
-    let fetch = Canned::new(vec![ok(status, None, &fixture_body(&["success", "body"]))]);
+    let status = fixture_status(&["with_github", "status"]);
+    let fetch = Canned::new(vec![ok(
+        status,
+        None,
+        &fixture_body(&["with_github", "body"]),
+    )]);
     let state = me::load(&env, &fetch, &MemoryStore::signed_in()).expect("load");
     match state {
         AccountState::SignedIn { identity, .. } => {
-            assert_eq!(identity.name, "Ada Lovelace");
-            assert_eq!(identity.github_login.as_deref(), Some("1234567"));
+            assert_eq!(identity.name, "Robin Example");
+            assert_eq!(identity.github_login.as_deref(), Some("robin-example"));
         }
         other => panic!("expected signed-in, got {other:?}"),
     }
@@ -291,12 +295,12 @@ fn the_fixture_success_body_reads_as_signed_in() {
 }
 
 #[test]
-fn the_fixture_unlinked_body_reads_as_no_github_login() {
+fn the_fixture_without_github_body_reads_as_no_github_login() {
     let dir = tempfile::tempdir().expect("tempdir");
     let fetch = Canned::new(vec![ok(
-        fixture_status(&["unlinked_github", "status"]),
+        fixture_status(&["without_github", "status"]),
         None,
-        &fixture_body(&["unlinked_github", "body"]),
+        &fixture_body(&["without_github", "body"]),
     )]);
     let state = me::load(&env_in(dir.path()), &fetch, &MemoryStore::signed_in()).expect("load");
     match state {
@@ -306,18 +310,18 @@ fn the_fixture_unlinked_body_reads_as_no_github_login() {
 }
 
 /// A warm cache answers for a directory that could not settle an identity,
-/// one row per answer: the network away, the fixture's database-unavailable
+/// one row per answer: the network away, the fixture's store-down
 /// status, and a body that is not the directory's at all.
 #[test]
 fn a_directory_that_cannot_answer_serves_the_cached_identity_as_offline() {
     type Answer = fn() -> Result<FetchResponse>;
     let rows: [(&str, Answer); 3] = [
         ("network away", away),
-        ("database unavailable", || {
+        ("store down", || {
             ok(
-                fixture_status(&["errors", "database_unavailable", "status"]),
+                fixture_status(&["store_down", "status"]),
                 None,
-                &fixture_body(&["errors", "database_unavailable", "body"]),
+                &fixture_body(&["store_down", "body"]),
             )
         }),
         ("a malformed answer", || ok(200, None, "<!doctype html>")),
@@ -327,13 +331,13 @@ fn a_directory_that_cannot_answer_serves_the_cached_identity_as_offline() {
         let home = rooted(&dir);
         let env = env_in(&home);
         let store = MemoryStore::signed_in();
-        let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
+        let first = Canned::new(vec![ok(200, None, &fixture_body(&["with_github", "body"]))]);
         me::load(&env, &first, &store).expect("first load");
 
         let then = Canned::new(vec![answer()]);
         match me::load(&env, &then, &store).expect("offline load") {
             AccountState::Offline { identity, .. } => {
-                assert_eq!(identity.name, "Ada Lovelace", "{what}");
+                assert_eq!(identity.name, "Robin Example", "{what}");
             }
             other => panic!("{what}: expected offline, got {other:?}"),
         }
@@ -350,7 +354,7 @@ fn a_refusing_keychain_is_not_served_as_offline() {
     let root = rooted(&dir);
     let env = env_in(&root);
     let warm = MemoryStore::signed_in();
-    let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
+    let first = Canned::new(vec![ok(200, None, &fixture_body(&["with_github", "body"]))]);
     me::load(&env, &first, &warm).expect("first load");
 
     // The second read is the one inside the authenticated call: the sign-in
@@ -423,7 +427,7 @@ fn a_local_failure_in_rotation_is_never_served_as_offline() {
         let root = rooted(&dir);
         let env = env_in(&root);
         let warm = MemoryStore::signed_in();
-        let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
+        let first = Canned::new(vec![ok(200, None, &fixture_body(&["with_github", "body"]))]);
         me::load(&env, &first, &warm).expect("first load");
 
         let store = refusing();
@@ -454,7 +458,7 @@ fn a_request_that_never_went_out_is_not_served_as_offline() {
         let root = rooted(&dir);
         let env = env_in(&root);
         let store = MemoryStore::signed_in();
-        let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
+        let first = Canned::new(vec![ok(200, None, &fixture_body(&["with_github", "body"]))]);
         me::load(&env, &first, &store).expect("first load");
 
         let unsent = Canned::new(script());
@@ -486,10 +490,10 @@ fn a_cache_that_cannot_be_written_still_answers_the_fresh_name() {
     }
     std::fs::write(&cache_dir, "not a directory").expect("plant");
 
-    let fetch = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
+    let fetch = Canned::new(vec![ok(200, None, &fixture_body(&["with_github", "body"]))]);
     let state = me::load(&env, &fetch, &MemoryStore::signed_in()).expect("the read landed");
     match state {
-        AccountState::SignedIn { identity } => assert_eq!(identity.name, "Ada Lovelace"),
+        AccountState::SignedIn { identity } => assert_eq!(identity.name, "Robin Example"),
         other => panic!("an unwritable cache lost the answer the server gave: {other:?}"),
     }
 }
@@ -534,9 +538,9 @@ fn a_dead_refresh_grant_reads_as_expired() {
     let store = MemoryStore::signed_in();
     let fetch = Canned::new(vec![
         ok(
-            fixture_status(&["errors", "unauthenticated", "status"]),
+            fixture_status(&["token_rejected", "status"]),
             None,
-            &fixture_body(&["errors", "unauthenticated", "body"]),
+            &fixture_body(&["token_rejected", "body"]),
         ),
         ok(400, None, r#"{"error":"invalid_grant"}"#),
     ]);
@@ -553,7 +557,7 @@ fn an_expired_credential_drops_the_cached_identity() {
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
     let store = MemoryStore::signed_in();
-    let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
+    let first = Canned::new(vec![ok(200, None, &fixture_body(&["with_github", "body"]))]);
     me::load(&env, &first, &store).expect("first load");
     let cache = env.registry_cache_dir().join("me.cache.json");
     assert!(cache.exists());
@@ -609,7 +613,7 @@ fn revalidation_sends_the_etag_and_304_keeps_the_identity() {
     let first = Canned::new(vec![ok(
         200,
         Some("\"v1\""),
-        &fixture_body(&["success", "body"]),
+        &fixture_body(&["with_github", "body"]),
     )]);
     me::load(&env, &first, &store).expect("first load");
 
@@ -652,7 +656,7 @@ fn sign_out_revokes_and_forgets_the_cached_identity() {
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
     let store = MemoryStore::signed_in();
-    let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
+    let first = Canned::new(vec![ok(200, None, &fixture_body(&["with_github", "body"]))]);
     me::load(&env, &first, &store).expect("first load");
     let cache = env.registry_cache_dir().join("me.cache.json");
     assert!(cache.exists(), "a successful read caches the identity");
@@ -674,7 +678,7 @@ fn a_failed_revocation_keeps_credential_and_cache_for_retry() {
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
     let store = MemoryStore::signed_in();
-    let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
+    let first = Canned::new(vec![ok(200, None, &fixture_body(&["with_github", "body"]))]);
     me::load(&env, &first, &store).expect("first load");
     let cache = env.registry_cache_dir().join("me.cache.json");
 
@@ -693,7 +697,7 @@ fn a_fresh_sign_in_never_inherits_the_previous_identity() {
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
     let store = MemoryStore::signed_in();
-    let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
+    let first = Canned::new(vec![ok(200, None, &fixture_body(&["with_github", "body"]))]);
     me::load(&env, &first, &store).expect("first load");
     let cache = env.registry_cache_dir().join("me.cache.json");
     assert!(cache.exists());
@@ -745,7 +749,7 @@ fn an_oversized_identity_cache_reads_as_no_cache() {
     // so the cap is what this test measures. A padded body keeps that
     // honest.
     let body = format!(
-        r#"{{"name":"Ada Lovelace","github_login":null,"pad":"{}"}}"#,
+        r#"{{"name":"Robin Example","github_login":null,"pad":"{}"}}"#,
         "x".repeat(41_000_000)
     );
     write_cache(&env, &body, None, Some(ADA));
