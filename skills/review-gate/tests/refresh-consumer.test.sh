@@ -46,6 +46,11 @@ case "$*" in
   api\ users/*) printf '123\n' ;;
   'api --method POST repos/acme/test/pulls '*) printf '1\n' >"$TEST_STATE/pr"; printf 'created\n' >>"$TEST_STATE/creates"; printf '1\n' ;;
   'api --method PATCH repos/acme/test/pulls/1 '*) : ;;
+  'api repos/acme/test/pulls?state=open&'*) cat "$TEST_STATE/pr" ;;
+  'api graphql '*)
+    [ -f "$TEST_STATE/push-refused" ] || exit 89
+    [ "${TEST_PUSH_QUERY:-pass}" != fail ] || exit 87
+    cat "$TEST_STATE/push-state.json" ;;
   'auth setup-git') : >"$TEST_STATE/auth" ;;
   'pr merge '*)
     case " $* " in
@@ -91,6 +96,24 @@ cat >"$TMP/bin/git" <<'SH'
 set -euo pipefail
 # A private repository's fetch fails until the app credential is installed.
 if [ "${1:-}" = fetch ] && [ ! -f "$TEST_STATE/auth" ]; then exit 88; fi
+if [ "${1:-}" = push ]; then
+  printf 'git push\n' >>"$TEST_STATE/calls"
+  case "${TEST_PUSH_MODE:-normal}" in
+    queued)
+      : >"$TEST_STATE/push-refused"
+      printf 'remote: error: GH006: Protected branch update failed for refs/heads/kendex/refresh\n' >&2
+      exit 1 ;;
+    deleted)
+      "$TEST_REAL_GIT" --git-dir="$TEST_LEASE_REMOTE" update-ref -d refs/heads/kendex/refresh ;;
+    failure)
+      : >"$TEST_STATE/push-refused"
+      printf 'fatal: unable to access remote: connection refused\n' >&2
+      exit 73 ;;
+    normal) ;;
+    *) exit 2 ;;
+  esac
+  : >"$TEST_STATE/push-refused"
+fi
 if [ "${1:-}" = push ] && [ -n "${TEST_LEASE_RACE:-}" ]; then
   old="$("$TEST_REAL_GIT" --git-dir="$TEST_LEASE_REMOTE" rev-parse refs/heads/kendex/refresh)"
   tree="$("$TEST_REAL_GIT" rev-parse 'main^{tree}')"
@@ -132,6 +155,7 @@ git -C "$repo" remote add origin "$TMP/remote"
 git -C "$repo" push -q origin main
 : >"$TMP/state/pr"
 : >"$TMP/state/creates"
+printf '{"data":{"repository":{"ref":{"target":{"oid":"abc"}},"pullRequest":{"state":"OPEN","isInMergeQueue":false,"autoMergeRequest":null}}}}\n' >"$TMP/state/push-state.json"
 runner="$repo/.agents/skills/review-gate/scripts/refresh-consumer.sh"
 
 run_refresh current pass render
@@ -408,6 +432,97 @@ LEASE_CONTROL
   commit "$repo"
   git -C "$repo" push -q origin main
 done
+# GitHub can own the rolling branch after fetch, even with serialized runs.
+# Every state fixture is consumed only after the Git push refusal.
+cp "$runner" "$TMP/push-runner"
+push_head="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+for row in \
+  'queued|queued|OPEN|true|false|present|0|queued' \
+  'armed|queued|OPEN|false|true|present|0|armed' \
+  'merged-deleted|deleted|MERGED|false|false|gone|0|merged' \
+  'closed|queued|CLOSED|false|false|present|0|closed' \
+  'branch-gone|deleted|OPEN|false|false|gone|0|branch-gone' \
+  'genuine-failure|failure|OPEN|false|false|present|1|active' \
+  'branch-gone-no-pr|deleted|OPEN|false|false|gone|0|branch-gone' \
+  'new-branch-failure|failure|OPEN|false|false|gone|1|active' \
+  'query-failure|queued|OPEN|true|false|present|1|query' \
+  'partial-response|queued|OPEN|true|false|present|1|output' \
+  'missing-field|queued|OPEN|true|false|present|1|output' \
+  'malformed-response|queued|OPEN|true|false|present|1|output'; do
+  IFS='|' read -r name PUSH_MODE pr_state queued armed branch expected reason <<<"$row"
+  reset_default
+  git --git-dir="$TMP/remote" update-ref refs/heads/kendex/refresh "$push_head"
+  printf '1\n' >"$TMP/state/pr"
+  case "$name" in
+    branch-gone-no-pr|new-branch-failure) : >"$TMP/state/pr" ;;
+  esac
+  if [ "$name" = new-branch-failure ]; then
+    git --git-dir="$TMP/remote" update-ref -d refs/heads/kendex/refresh
+  fi
+  PUSH_QUERY=pass
+  [ "$name" != query-failure ] || PUSH_QUERY=fail
+  jq -cn --arg state "$pr_state" --argjson queued "$queued" --argjson armed "$armed" --arg branch "$branch" \
+    '{data:{repository:{ref:(if $branch == "gone" then null else {target:{oid:"abc"}} end),pullRequest:{state:$state,isInMergeQueue:$queued,autoMergeRequest:(if $armed then {enabledAt:"2026-10-02T01:09:07Z"} else null end)}}}}' >"$TMP/state/push-state.json"
+  case "$name" in
+    branch-gone-no-pr|new-branch-failure) jq 'del(.data.repository.pullRequest)' "$TMP/state/push-state.json" >"$TMP/partial"; mv "$TMP/partial" "$TMP/state/push-state.json" ;;
+    partial-response) jq '. + {errors:[{message:"permission denied"}]}' "$TMP/state/push-state.json" >"$TMP/partial"; mv "$TMP/partial" "$TMP/state/push-state.json" ;;
+    missing-field) jq 'del(.data.repository.pullRequest.isInMergeQueue)' "$TMP/state/push-state.json" >"$TMP/partial"; mv "$TMP/partial" "$TMP/state/push-state.json" ;;
+    malformed-response) printf 'not-json\n' >"$TMP/state/push-state.json" ;;
+  esac
+  : >"$TMP/state/calls"
+  run_refresh "push-$name" pass render
+  if refresh_push_matches "$expected" "$reason"; then ok "$name post-refusal state"; else bad "$name post-refusal state" "$OUT"; fi
+  # Each acceptance path and the failure path has a planted behavior defect.
+  # Copies keep the tracked script untouched and retain the matched condition.
+  mutations=""
+  case "$name" in
+    queued) mutations='defer ordering' ;;
+    merged-deleted) mutations=defer ;;
+    genuine-failure) mutations=fail-open ;;
+    new-branch-failure) mutations=no-old ;;
+    query-failure) mutations=query-open ;;
+    partial-response) mutations=output-open ;;
+  esac
+  for mutation in $mutations; do
+    reset_default
+    python3 - "$runner" "$mutation" <<'PUSH_CONTROL'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve()
+s = p.read_text()
+mutations = {
+    'defer': ('if [ "$reason" != active ]; then', 'if false; then'),
+    'fail-open': ('if [ "$reason" != active ]; then', 'if true; then'),
+    'query-open': ("printf 'refresh-error=push-state value=query\\n' >&2\n      exit 1", "printf 'refresh-error=push-state value=query\\n' >&2\n      exit 0"),
+    'output-open': ("printf 'refresh-error=push-state value=output\\n' >&2\n      exit 1", "printf 'refresh-error=push-state value=output\\n' >&2\n      exit 0"),
+    'ordering': ('  push_status=0', "  gh api graphql -f query='query { viewer { login } }'\n  push_status=0"),
+    'no-old': ('elif .ref == null and $old != "" then "branch-gone"', 'elif .ref == null then "branch-gone"'),
+}
+old, new = mutations[sys.argv[2]]
+assert s.count(old) == 1
+changed = s.replace(old, '# ' + old.replace('\n', '\n# ') + '\n' + new)
+assert changed != s
+p.write_text(changed)
+PUSH_CONTROL
+    commit "$repo"
+    git -C "$repo" push -q origin main
+    git --git-dir="$TMP/remote" update-ref refs/heads/kendex/refresh "$push_head"
+    if [ "$name" = new-branch-failure ]; then
+      git --git-dir="$TMP/remote" update-ref -d refs/heads/kendex/refresh
+    fi
+    : >"$TMP/state/calls"
+    run_refresh "control-$name" pass render
+    if ! refresh_push_matches "$expected" "$reason"; then ok "control: $name $mutation assertion turns red"; else bad "$name $mutation push control" "$OUT"; fi
+    reset_default
+    cp "$TMP/push-runner" "$runner"
+    commit "$repo"
+    git -C "$repo" push -q origin main
+  done
+done
+unset PUSH_MODE PUSH_QUERY
+reset_default
+git --git-dir="$TMP/remote" update-ref refs/heads/kendex/refresh "$push_head"
+printf '{"data":{"repository":{"ref":{"target":{"oid":"abc"}},"pullRequest":{"state":"OPEN","isInMergeQueue":false,"autoMergeRequest":null}}}}\n' >"$TMP/state/push-state.json"
 # One production mutation proves the rolling-PR count assertion observes
 # the runner's create decision, rather than merely the fake API's state.
 reset_default

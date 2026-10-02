@@ -76,10 +76,34 @@ run_refresh_command() {
 # The rolling refresh runner uses real git and isolates all service inputs.
 run_refresh() { # CONTENT VERIFY CLASS
   local result=0
-  rm -f -- "${TMP:?}/state/auth"
+  rm -f -- "${TMP:?}/state/auth" "$TMP/state/push-refused"
   : >"$TMP/state/summary"
-  OUT="$(cd "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=test-token GITHUB_TOKEN=other-test-token GITHUB_STEP_SUMMARY="$TMP/state/summary" TEST_VERSION_EXIT="${VERSION_EXIT:-0}" TEST_SECRET=private-test-value GH_REPO=acme/test REFRESH_APP_SLUG=lanes TEST_STATE="$TMP/state" TEST_REAL_GIT="$REAL_GIT" TEST_CONTENT="$1" TEST_VERIFY="$2" TEST_CLASS="$3" TEST_MEASURED="${MEASURED:-true}" TEST_REASON="${CLASS_REASON:-cause=renders-match-their-sources}" TEST_CLASS_EXIT="${CLASS_EXIT:-0}" TEST_LEASE_RACE="${LEASE_RACE:-}" TEST_LEASE_REMOTE="$TMP/remote" TEST_HOSTILE="${HOSTILE:-}" TEST_FRESH_ORCH="${FRESH_ORCH:-}" TEST_ORCH_MODE="${ORCH_MODE:-keep}" TEST_REFRESH_SKILL="${REFRESH_SKILL:-}" TEST_FRESH_TEMPLATES="$TMP/fresh-templates" TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" bash "$runner" 2>&1)" || result=$?
+  OUT="$(cd "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=test-token GITHUB_TOKEN=other-test-token GITHUB_STEP_SUMMARY="$TMP/state/summary" TEST_VERSION_EXIT="${VERSION_EXIT:-0}" TEST_SECRET=private-test-value GH_REPO=acme/test REFRESH_APP_SLUG=lanes TEST_STATE="$TMP/state" TEST_REAL_GIT="$REAL_GIT" TEST_CONTENT="$1" TEST_VERIFY="$2" TEST_CLASS="$3" TEST_MEASURED="${MEASURED:-true}" TEST_REASON="${CLASS_REASON:-cause=renders-match-their-sources}" TEST_CLASS_EXIT="${CLASS_EXIT:-0}" TEST_LEASE_RACE="${LEASE_RACE:-}" TEST_PUSH_MODE="${PUSH_MODE:-normal}" TEST_PUSH_QUERY="${PUSH_QUERY:-pass}" TEST_LEASE_REMOTE="$TMP/remote" TEST_HOSTILE="${HOSTILE:-}" TEST_FRESH_ORCH="${FRESH_ORCH:-}" TEST_ORCH_MODE="${ORCH_MODE:-keep}" TEST_REFRESH_SKILL="${REFRESH_SKILL:-}" TEST_FRESH_TEMPLATES="$TMP/fresh-templates" TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" bash "$runner" 2>&1)" || result=$?
   RC="$result"
+}
+
+# The acceptance assertion also holds ordering and no publication after refusal.
+refresh_push_matches() { # EXIT REASON
+  local deferred_count
+  [ "$RC" -eq "$1" ] || return 1
+  if [ "$1" -eq 0 ]; then
+    deferred_count="$(grep -c '^refresh-state=deferred ' <<<"$OUT")" || return 1
+    [ "$deferred_count" -eq 1 ] || return 1
+    grep -qxF "refresh-state=deferred reason=$2" <<<"$OUT" || return 1
+  else
+    case "$2" in
+      active) grep -qxF 'refresh-error=push value=73' <<<"$OUT" || return 1 ;;
+      query|output) grep -qxF "refresh-error=push-state value=$2" <<<"$OUT" || return 1 ;;
+      *) return 1 ;;
+    esac
+    if grep -q '^refresh-state=deferred ' <<<"$OUT"; then return 1; fi
+  fi
+  awk '
+    /^git push$/ { pushes++; pushed = 1 }
+    /^api graphql / { queries++; if (!pushed) exit 1 }
+    END { if (pushes != 1 || queries != 1) exit 1 }
+  ' "$TMP/state/calls" || return 1
+  ! grep -qE '^api --method (POST|PATCH)|^pr merge .*--auto' "$TMP/state/calls"
 }
 
 reset_default() {

@@ -3,7 +3,8 @@
 # that checkout, never executes the remote rolling branch, and pushes only
 # after the shared classifier measures the complete diff. Only render arms.
 # Output records: refresh-state=current pr=none class=none, or
-# refresh-state=unchanged|pushed pr=NUMBER class=CLASS.
+# refresh-state=unchanged|pushed pr=NUMBER class=CLASS, or
+# refresh-state=deferred reason=queued|armed|merged|closed|branch-gone.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(git rev-parse --show-toplevel)"
@@ -225,7 +226,53 @@ if [ -n "$settings_report" ]; then
   printf -v body '%s\n%s\n' "$body" "$settings_report"
 fi
 if [ "$state" = pushed ]; then
-  git push "--force-with-lease=refs/heads/kendex/refresh:$old" origin HEAD:refs/heads/kendex/refresh
+  push_status=0
+  git push "--force-with-lease=refs/heads/kendex/refresh:$old" origin HEAD:refs/heads/kendex/refresh || push_status=$?
+  if [ "$push_status" -ne 0 ]; then
+    # GitHub owns the queue and may merge and delete this branch during
+    # rendering. Only a post-refusal API read can establish that lifecycle.
+    if [ "$pr" = "" ]; then
+      if ! pr="$(gh api "repos/$GH_REPO/pulls?state=open&head=${GH_REPO%%/*}:kendex/refresh&sort=created&direction=desc&per_page=1" --jq '.[0].number // empty')"; then
+        printf 'refresh-error=push-state value=pulls\n' >&2
+        exit 1
+      fi
+    fi
+    has_pr=false
+    if [ -n "$pr" ]; then has_pr=true; fi
+    if ! push_state="$(gh api graphql -f owner="${GH_REPO%%/*}" -f repo="${GH_REPO#*/}" \
+      -F number="${pr:-0}" -F hasPR="$has_pr" \
+      -f query='query($owner: String!, $repo: String!, $number: Int!, $hasPR: Boolean!) { repository(owner: $owner, name: $repo) { ref(qualifiedName: "refs/heads/kendex/refresh") { target { oid } } pullRequest(number: $number) @include(if: $hasPR) { state isInMergeQueue autoMergeRequest { enabledAt } } } }')"; then
+      printf 'refresh-error=push-state value=query\n' >&2
+      exit 1
+    fi
+    if ! reason="$(jq -er -s --argjson has_pr "$has_pr" --arg old "$old" '
+      if length != 1 then error("expected one response") else .[0] end |
+      if (.errors // [] | length) != 0 then error("GraphQL errors") else .data.repository end |
+      if type != "object" or (has("ref") | not) or
+        (.ref != null and (.ref.target.oid | type != "string" or length == 0)) or
+        ($has_pr and (.pullRequest | type != "object" or
+          (has("state") and has("isInMergeQueue") and has("autoMergeRequest") | not) or
+          (.state != "OPEN" and .state != "MERGED" and .state != "CLOSED") or
+          (.isInMergeQueue | type != "boolean") or
+          (.autoMergeRequest != null and (.autoMergeRequest.enabledAt | type != "string" or length == 0))))
+      then error("incomplete refresh state") else . end |
+      if .pullRequest.state == "MERGED" then "merged"
+      elif .pullRequest.state == "CLOSED" then "closed"
+      elif .pullRequest.isInMergeQueue == true then "queued"
+      elif .pullRequest.autoMergeRequest != null then "armed"
+      elif .ref == null and $old != "" then "branch-gone"
+      else "active" end
+    ' <<<"$push_state")"; then
+      printf 'refresh-error=push-state value=output\n' >&2
+      exit 1
+    fi
+    if [ "$reason" != active ]; then
+      printf 'refresh-state=deferred reason=%s\n' "$reason"
+      exit 0
+    fi
+    printf 'refresh-error=push value=%s\n' "$push_status" >&2
+    exit 1
+  fi
 fi
 if [ -z "$pr" ]; then
   pr="$(gh api --method POST "repos/$GH_REPO/pulls" -f head=kendex/refresh -f base="$default" -f title='chore: refresh kendex renders' -f body="$body" --jq .number)"
