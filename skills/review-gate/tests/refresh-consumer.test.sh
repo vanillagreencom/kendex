@@ -858,8 +858,7 @@ rm -f -- "$repo/.env.local" "$repo/private.env"
 sandbox
 repo="$DIR"
 git -C "$repo" branch -M main
-cp "$TEST_DIR/fixtures/pre-platform/"*.sh "$TEST_DIR/fixtures/pre-platform/refresh-report.py" \
-  "$repo/.agents/skills/review-gate/scripts/"
+cp "$TEST_DIR/fixtures/pre-platform/"*.sh "$repo/.agents/skills/review-gate/scripts/"
 chmod +x "$repo/.agents/skills/review-gate/scripts/"*.sh
 # The old validator checks the engine's tracked path, never its body.
 printf '#!/usr/bin/env bash\nexit 1\n' >"$repo/.agents/skills/review-gate/scripts/review-writer.sh"

@@ -29,8 +29,9 @@ Log lines go to stderr.
 --settings formats ol_preference_entries' refused and deprecated arrays from
 refresh-consumer as a pull request Settings section, and its
 deprecated_models array, committed `KEY = "value"` settings that pin Fable or
-Astra, as a Deprecated models section. A clean parse emits no text. It does
-not parse settings or preference entries itself.
+Astra, as a Deprecated models section. An absent deprecated_models array
+reads as empty. A clean parse emits no text. It does not parse settings or
+preference entries itself.
 """
 import hashlib
 import html
@@ -62,7 +63,9 @@ def settings_report():
     if rows:
         sections.append("## Settings\n\n" + "\n".join(rows) + "\n\n"
                         "A setting joins this report by exposing its existing parse the same way.")
-    models = [f"- {code(entry)}" for entry in entries["deprecated_models"]]
+    # The refreshed reporter can run under an older installed runner whose
+    # parse emits only the refused and deprecated arrays.
+    models = [f"- {code(entry)}" for entry in entries.get("deprecated_models", [])]
     if models:
         sections.append("## Deprecated models\n\n" + "\n".join(models) + "\n\n"
                         "These committed `kendex.settings.toml` settings pin Fable or Astra. "

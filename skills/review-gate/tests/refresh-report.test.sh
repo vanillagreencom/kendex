@@ -21,10 +21,11 @@ real_cli = sys.argv[3]
 reporter = skill / 'scripts/refresh-report.py'
 astra = 'SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra"'
 fable = 'ORCH_OVERSEER_PREFERENCE = "claude:Fable:high"'
+def settings_run(entries, script=reporter):
+ return subprocess.run(['python3', str(script), '--settings'], input=json.dumps(entries),
+                       text=True, capture_output=True, env={'PATH':'/usr/bin:/bin'})
 def settings(refused=(), deprecated=(), models=(), script=reporter):
- result = subprocess.run(['python3', str(script), '--settings'],
-                         input=json.dumps(dict(refused=refused, deprecated=deprecated, deprecated_models=models)),
-                         text=True, capture_output=True, env={'PATH':'/usr/bin:/bin'})
+ result = settings_run(dict(refused=refused, deprecated=deprecated, deprecated_models=models), script)
  assert result.returncode == 0, result.stderr
  return result.stdout
 def model_rows(out):
@@ -56,6 +57,16 @@ for models, rows in [
 both = settings(deprecated=['claude:1:high'], models=[astra])
 assert both.index('## Settings') < both.index('## Deprecated models') and len(model_rows(both)) == 1
 source = reporter.read_text()
+# A runner installed before deprecated_models emits two arrays to this reporter.
+two_keys = dict(refused=[], deprecated=['claude:1:high'])
+legacy = settings_run(two_keys)
+assert legacy.returncode == 0, legacy.stderr
+assert legacy.stdout.count('ORCH_OVERSEER_PREFERENCE:') == 1 and '## Deprecated models' not in legacy.stdout
+needle = 'entries.get("deprecated_models", [])'
+assert source.count(needle) == 1
+strict = root / 'strict-report.py'
+strict.write_text(source.replace(needle, 'entries["deprecated_models"]'))
+assert 'KeyError' in settings_run(two_keys, strict).stderr
 for needle, refused, deprecated, models in [
  ('    if rows:\n', [], ['claude:1:high'], []),
  ('    if models:\n', [], [], [astra]),
