@@ -425,12 +425,16 @@ chmod +x "$TMP_ROOT/bin/lane-mail-owner-fails.sh"
 # gap_seq NAME STEP... [WATCH_BIN via env] — the home-unnamed gap on the first
 # long pass, then one long pass per STEP over the record it writes: `gap` the
 # same gap, `failing` the same gap with the owner's notice failing, `reading`
-# a reading below the mark. GAP_SEQ is one word per pass: `event` for the
+# a reading below the mark, `aged` the same gap with every owner notice
+# restamped 210 seconds before its own stamp, on whatever clock the watch
+# reads: past lane-mail's minute rule and inside its 24-hour text rule, as a
+# gap reopened later in the day finds it. GAP_SEQ is
+# one word per pass: `event` for the
 # overseer-context-unmeasured event, `alerted` for the owner's alert,
 # `failed` for an owner's notice that failed, `none` for none of them; then
 # the owner's notices and the fleet log's alert rows.
 gap_seq() { # NAME STEP...
-  local name="$1" step words="" word
+  local name="$1" step words="" word mailbox
   shift
   CTX_KEY="7000 $PANE" context_case "$name" blank -60 0 home-unnamed "$START"
   for step in first "$@"; do
@@ -440,6 +444,11 @@ gap_seq() { # NAME STEP...
         gap) ctx_record "$(iso "$((ROW_AT - 60))")" home-unnamed ;;
         failing) ctx_record "$(iso "$((ROW_AT - 60))")" home-unnamed; : > "$STUB_DIR/owner-fails" ;;
         reading) ctx_record "$(iso "$((ROW_AT - 60))")" - ;;
+        aged)
+          ctx_record "$(iso "$((ROW_AT - 60))")" home-unnamed
+          mailbox="$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-overseer.jsonl"
+          jq -c 'if .to == "owner" then .at = ((.at | fromdateiso8601) - 210 | todate) else . end' "$mailbox" > "$mailbox.aged"
+          mv -- "$mailbox.aged" "$mailbox" ;;
         *) echo "gap_seq: unknown step $step" >&2; exit 1 ;;
       esac
       run TMUX_PANE="$PANE" OVERSEE_WATCH_LANE_MAIL="$TMP_ROOT/bin/lane-mail-owner-fails.sh" \
@@ -464,8 +473,22 @@ assert_eq "$GAP_SEQ" "event failed alerted none owner=1 fleet=1" \
 gap_seq context_gap_reopened gap reading gap
 assert_eq "$GAP_SEQ" "event alerted none event owner=1 fleet=1" \
   "a reading between two passes of the same gap tells the overseer again" "$ERR"
+# The reopened gap's alert repeats words the owner holds: lane-mail refuses
+# it, the alert stands as sent and the fleet log records it, never a failure
+# noted on every pass.
+GAP_HELD_WANT="event alerted none event alerted owner=1 fleet=2"
+gap_seq context_gap_held gap reading gap aged
+assert_eq "$GAP_SEQ" "$GAP_HELD_WANT" \
+  "a reopened gap's alert the owner already holds stands as sent, with its fleet-log row" "$ERR"
 
 # --- control ----------------------------------------------------------------
+# The held alert read as any failed notice: the reopened gap's row turns red.
+HELD_SCRIPTS="$(mutant_scripts mutant-held/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/mutant-held/github"
+mutate_file "$HELD_SCRIPTS/oversee-watch" '      "lane-mail: owner-notice-repeated="*) ;;' '      "lane-mail: owner-notice-repeated="*) overseer_note overseer-notice-failed "channel=owner"; return 1 ;;'
+WATCH_BIN="$HELD_SCRIPTS/oversee-watch" gap_seq context_gap_held_mutant gap reading gap aged
+assert_eq "$([[ "$GAP_SEQ" != "$GAP_HELD_WANT" ]] && echo red)" "red" \
+  "control: reading the held alert as a failure turns the reopened gap's row red" "$ERR"
 # The rows verdict ignored: the SessionEnd row then settles nothing, and the
 # death is the pane fallback's.
 MUTANT_SCRIPTS="$(mutant_scripts mutant/orch oversee-watch)" || exit 1

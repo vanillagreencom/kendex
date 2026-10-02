@@ -10,7 +10,8 @@
 # cursor rule, the reply's owner-ask read, the owner-note class a reply names,
 # the ask's deadline field, the box `events` stamps, the owner ask's required
 # recommendation, the cursor `events` refuses, the reply's delivery id and
-# the referenced mailbox's read lock.
+# the referenced mailbox's read lock. The owner notice's day-long text rule
+# keeps its controls beside its rows.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -117,6 +118,10 @@ while IFS='|' read -r audience ref words want; do
   if [[ "$want" == duplicate ]]; then
     assert_eq "$RC=$ERR=$OUT=$(field "$BOX/to-overseer.jsonl" '.id')" \
       "2=lane-mail: duplicate id=$FIRST_ID==$FIRST_ID" "notice repeat refuses before appending"
+  elif [[ "$want" == repeated ]]; then
+    assert_eq "$RC=$ERR=$OUT=$(field "$BOX/to-overseer.jsonl" '.id')" \
+      "2=lane-mail: owner-notice-repeated=overseer id=$FIRST_ID==$FIRST_ID" \
+      "an owner notice text the owner holds refuses whatever its reference"
   else
     ID="$(jq -rs 'last.id' < "$BOX/to-overseer.jsonl")" || exit 1
     assert_eq "$RC=$OUT" "0=lane-mail: sent item=overseer id=$ID bytes=6 to=$audience ref=${REFS[$ref]}" \
@@ -126,7 +131,7 @@ while IFS='|' read -r audience ref words want; do
 done <<'ROWS'
 owner|0|Reply.|first
 owner|0|Reply.|duplicate
-owner|1|Reply.|changed-ref
+owner|1|Reply.|repeated
 owner|0|Other.|changed-text
 ROWS
 owner_ask 'Retry?' yes,no yes
@@ -198,6 +203,65 @@ eligibility~[ "$VERB" != resolve ] && [ -z "$DELIVERY_ID" ] && [ "${3:-}" != : ]
 refusal~[ "${report#duplicate id=}" != "$report" ] || return 4~[ "${report#duplicate id=}" != "$report" ] && return 4~1
 ROWS
 PATH="$SAVED_PATH"
+
+# --- an owner notice's text, judged for a day ---------------------------------
+# One owner notice, `Report.` with no attachment, planted AGE seconds back in
+# BOX's to-overseer.jsonl: a report summary sent by hand before `write` sends
+# it again with its file. Planted, so no row waits on a clock. @A is a report
+# file and @F the message file holding WORDS. A row's result is the send's
+# status, its refusal line, and the lines BOX's file then holds; a send that
+# lands carries no refusal, and the notes other rules print beside it, a peer
+# ask's `no-reader` among them, are theirs.
+# NAME|AGE|BOX|WORDS|ARGS|WANT
+OWNER_REPEAT_ROWS='attach|210|overseer|Report.|notice --item overseer --to owner --attach @A --file @F|2=lane-mail: owner-notice-repeated=overseer id=planted=1
+day-old|90000|overseer|Report.|notice --item overseer --to owner --attach @A --file @F|0==2
+changed-text|210|overseer|Report two.|notice --item overseer --to owner --attach @A --file @F|0==2
+lane-notice|210|KEN-1|Report.|notice --item KEN-1 --file @F|0==2
+owner-ask|210|overseer|Report.|ask --item overseer --to owner --options yes,no --recommend yes --file @F|0==2
+peer-ask|210|overseer|Report.|peer ask --repo repeat_peer --options yes,no --file @F|0==2'
+new_repo repeat_peer
+REPEAT=""
+REPEAT_WANT=""
+owner_repeat() { # NAME
+  local row name age box words args want file at reports
+  row="$(grep -e "^$1|" <<<"$OWNER_REPEAT_ROWS")" || { echo "lane-mail-owner: row=$1" >&2; exit 1; }
+  IFS='|' read -r name age box words args want <<<"$row"
+  new_repo "repeat_$name"
+  file="$LANE/tmp/lane-mail/$box/to-overseer.jsonl"
+  mkdir -p "${file%/*}"
+  reports="$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" progress-report-path)" || exit 1
+  reports="${reports%/*}"
+  echo "a report" > "$reports/10-02-03-10.md"
+  at="$(jq -rn --argjson age "$age" '(now | floor) - $age | todate')" || exit 1
+  jq -cn --arg at "$at" '{id: "planted", kind: "notice", at: $at, from: "overseer", to: "owner", text: "Report."}' >> "$file"
+  args="${args//@A/$reports/10-02-03-10.md}"
+  args="${args//@F/$(text n "$words")}"
+  # shellcheck disable=SC2086  # a row's arguments are its own words.
+  lm $args
+  [[ "$RC" -ne 0 ]] || ERR=""
+  REPEAT="$RC=$ERR=$(wc -l < "$file" | tr -d ' ')"
+  REPEAT_WANT="$want"
+}
+while IFS='|' read -r name _; do
+  owner_repeat "$name"
+  assert_eq "$REPEAT" "$REPEAT_WANT" "owner notice repeat: $name"
+done <<<"$OWNER_REPEAT_ROWS"
+# Each control is a copy of lane-mail with one part of the rule removed, run
+# against the row that rule decides: the guard itself, the attachment left out
+# of the comparison, and the 24-hour age test.
+while IFS='~' read -r control row old new; do
+  dir="$(mutant_scripts "mutants/owner-repeat-$control" lane-mail)" || exit 1
+  mutate_file "$dir/lane-mail" "$old" "$new"
+  LANE_MAIL_BIN="$dir/lane-mail" owner_repeat "$row"
+  control_rc=0
+  (FAIL=0; assert_eq "$REPEAT" "$REPEAT_WANT" "owner notice repeat: $row"; [[ "$FAIL" -eq 0 ]]) \
+    >"$TMP_ROOT/owner-repeat-assertion" || control_rc=$?
+  assert_eq "$control_rc" 1 "control $control: the $row row turns red" "$TMP_ROOT/owner-repeat-assertion"
+done <<'ROWS'
+guard-removed~attach~if [ "$VERB:$TO" = notice:owner ]; then~if false; then
+attach-compared~attach~.text == $candidate.text)~.text == $candidate.text and .attach == $candidate.attach)
+age-dropped~day-old~($now - $at) <= 86400)~($now - $at) <= 86400 or true)
+ROWS
 
 FIXTURE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
 REMOTE_DISK="$TMP_ROOT/repeat-remote"

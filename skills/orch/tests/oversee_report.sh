@@ -627,6 +627,27 @@ for mode in live unguarded missing-id; do
 done
 REPORT_UNDER_TEST="$REPORT_BIN"
 
+echo "=== write: a summary the owner already holds ==="
+# The summary went out by hand as an owner notice 210 seconds before `write`
+# sends it again with the report file: the report is written and printed, and
+# the notice is refused with the mailbox unchanged. Lane-mail's refusal is the
+# third line, under the key and its English.
+new_case notice_text_held
+git -C "$CASE" init -q
+git -C "$CASE" config gc.auto 0
+git -C "$CASE" config maintenance.auto false
+fleet ''
+printf 'Work continues.\n%s\n' "$OWNER_ROWS" > "$CASE/summary.txt"
+MAILBOX="$CASE/tmp/lane-mail/overseer/to-overseer.jsonl"
+mkdir -p "${MAILBOX%/*}"
+jq -cn --arg at "$(at -210)" --rawfile text "$CASE/summary.txt" \
+  '{id: "by-hand", kind: "notice", at: $at, from: "overseer", to: "owner", text: ($text | sub("\n$"; ""))}' > "$MAILBOX"
+run OVERSEE_REPORT_LANE_MAIL="$TEST_DIR/../scripts/lane-mail" -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
+FILE="$CASE/progress-reports/$("$REAL_DATE" -u -d "@$NOW" +%m-%d-%H-%M 2>/dev/null || "$REAL_DATE" -u -r "$NOW" +%m-%d-%H-%M).md"
+assert_eq "$RC|$(sed -n '1p;3p' "$CASE/err" | paste -sd '|' -)|$([[ -n "$OUT" && "$OUT" == "$(cat "$FILE")" ]] && echo printed)|$(wc -l < "$MAILBOX" | tr -d ' ')" \
+  "2|oversee-report: notice=$FILE|lane-mail: owner-notice-repeated=overseer id=by-hand|printed|1" \
+  "a summary the owner holds from a hand notice prints the report and refuses its notice, appending nothing"
+
 echo "=== write: owner summary shape before any report or notice ==="
 # The real producer is the overseer's --summary-file upload comment.
 # Each mutant keeps its detector and diagnostic but disables that rule's

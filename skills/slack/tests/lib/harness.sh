@@ -351,14 +351,16 @@ PY
 }
 
 # sk_unposted ROOT MASTER — notices written while the relay is down, with a
-# standing start seed, then the first poll under fresh master presence.
+# standing start seed, then the first poll under fresh master presence. Each
+# text carries its number: lane-mail refuses an owner notice text it already
+# holds from the last 24 hours.
 sk_unposted() {
   local name
   name="$(basename "$1")"
   sk_bind "$1"
   printf '{"t":"start","at":"","ids":[]}\n' > "$(sk_journal "$1")"
   for n in 1 2 3; do
-    sk_lm "$1" notice --item overseer --to owner --file "$(sk_text "$name-$n" "Backlog in $name.")" >/dev/null
+    sk_lm "$1" notice --item overseer --to owner --file "$(sk_text "$name-$n" "Backlog in $name. Notice $n.")" >/dev/null
     sk_age_envelope "$1" "$(tail -n 1 "$(sk_box "$1")/to-overseer.jsonl" | jq -r .id)" 1200
   done
   sk_poll "$1" "SLACK_MASTER_FILE=$2"

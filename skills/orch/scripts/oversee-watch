@@ -2680,16 +2680,24 @@ overseer_context_gap() { # PANE IDENTITY GAP
 # owner through the overseer mailbox (`lane-mail notice --to owner`, which the
 # owner relay carries out), then one `close` row in the fleet log, so a
 # successor reads it too. Returns 0 once the owner's notice is sent, with the
-# stderr line saying so; 1 where it is not, noted, with no fleet-log row, so
-# the retry the caller makes writes one row and not one per failed pass. A
-# fleet-log row that fails is noted and the alert still stands as sent.
+# stderr line saying so, and also once lane-mail refuses it as
+# `owner-notice-repeated`: a gap reopened within the day writes the same
+# words, which the owner already holds. Returns 1 where it is not sent, noted,
+# with no fleet-log row, so the retry the caller makes writes one row and not
+# one per failed pass. A fleet-log row that fails is noted and the alert still
+# stands as sent.
 overseer_gap_alert() { # PANE GAP
   local notice="$WORK_DIR/overseer-context-gap.txt" record="$WORK_DIR/overseer-context-gap.json"
-  local errf="$WORK_DIR/overseer-context-gap.err"
+  local errf="$WORK_DIR/overseer-context-gap.err" refusal
   printf 'overseer-context-unmeasured: the overseer in pane %s has recorded no context reading on two consecutive watch passes, gap=%s, so nothing judges its context mark and it can run into its context window with no handoff. The remedy for this gap is under overseer-context-unmeasured in the orch skill'"'"'s references/overseer-session-events.md.\n' \
     "$1" "$2" > "$notice" || { overseer_note overseer-notice-failed "channel=file"; return 1; }
-  "$LANE_MAIL" notice --item overseer --to owner --file "$notice" >/dev/null 2>"$errf" \
-    || { overseer_note overseer-notice-failed "channel=owner"; return 1; }
+  if ! "$LANE_MAIL" notice --item overseer --to owner --file "$notice" >/dev/null 2>"$errf"; then
+    IFS= read -r refusal <"$errf" || refusal=""
+    case "$refusal" in
+      "lane-mail: owner-notice-repeated="*) ;;
+      *) overseer_note overseer-notice-failed "channel=owner"; return 1 ;;
+    esac
+  fi
   ol_fleet_log "$notice" "$record" "$errf" "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
     || overseer_note overseer-notice-failed "channel=fleet-log"
   ow_message overseer-context-alerted "pane=$1" "gap=$2" >&2

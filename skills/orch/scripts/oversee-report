@@ -134,7 +134,10 @@ write    prints the rows and writes the same bytes to the path
          notices use lane-mail directly and remain immediate at any hour.
          A path that already stands is
          refused; a notice that cannot be sent is refused as `notice`
-         after the report is printed, the file standing.
+         after the report is printed, the file standing. A `notice`
+         refusal whose lines name lane-mail's `owner-notice-repeated`
+         leaves the report file standing and the owner already holding the
+         same text, under the notice id that line names.
          Before rendering or writing, write checks the summary in its posted
          mrkdwn form. It refuses as summary-shape with the first failing
          rule: bare-id, github-link, waiting-on-you, label-spacing, line-cap.

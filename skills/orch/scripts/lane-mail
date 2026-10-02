@@ -351,6 +351,15 @@ silence each other. A repeat is refused before the append as
 `lane-mail: duplicate id=<id>`, naming the line already there; another item, or
 more than a minute later, appends as any send does.
 
+The minute rule holds for every send. An owner notice, `notice --item
+overseer --to owner`, is also judged on its text alone for 24 hours: a text
+equal to that of an owner notice already in to-overseer.jsonl, stamped within
+the 24 hours before this send, is refused as
+`lane-mail: owner-notice-repeated=overseer id=<id>`, naming the latest such
+notice, whatever its attachment, reference or any other field. The minute
+check runs first, so a retry inside the minute is still `duplicate`. The owner
+holds the text the id names; new words, not a wait, send it again.
+
 The repeat check and append hold the destination mailbox's same lock through
 `lib/mailbox-append.sh`, locally and on a host with the repeat guard. Two identical sends
 cannot both append: the second checks the first row while it holds that lock
@@ -371,16 +380,16 @@ keys, first line `lane-mail: <key>=<value>`: verb-invalid, option-unknown,
 option-conflict, missing-value, option-required, item-invalid, after-invalid,
 seconds-invalid, minutes-invalid, to-invalid, ref-invalid, ref-unknown,
 recommend-invalid, recommend-missing, recommend-required, attach-outside,
-ask-unknown, resolved-already, delivery-repeated,
+ask-unknown, resolved-already, delivery-repeated, owner-notice-repeated,
 overseer-only, events-no-cursor,
 command-missing, file-unreadable, root-unresolved, repo-unresolved, repo-self,
 lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
 write-failed, host-append, host-unreachable, mail-read-failed, lane-host-busy,
 timeout, item-case-variant, mailbox-missing, retention-invalid, archive-failed, archived. `duplicate` is the one key whose
 value follows ` id=` rather than `=`, so it names the earlier envelope through
-the same field the receipt above prints; `resolved-already` and
-`delivery-repeated` close their own value with ` id=<id>` naming the envelope
-already there.
+the same field the receipt above prints; `resolved-already`,
+`delivery-repeated` and `owner-notice-repeated` close their own value with
+` id=<id>` naming the envelope already there.
 
 One mailbox per lane, named exactly as `--item` spells it. A verb that would
 open a second directory under the same root differing from ITEM only in case is
@@ -473,6 +482,7 @@ fix=run `oversee register` from the orch skill in the session that should read t
     ask-unknown) text='No owner ask in the overseer mailbox carries that id. send --re answers owner asks and resolve closes them.' ;;
     resolved-already) text='This ask is already closed by the record named above. Deliver later text as a directive with `send --item overseer --directive`.' ;;
     delivery-repeated) text='An envelope carrying this delivery id already stands in the mailbox, named by id= above: this send is a retry of a delivery that landed, so nothing is appended. Record that id against the delivery and go on.' ;;
+    owner-notice-repeated) text='The owner already holds this notice: the owner notice named by id= above carries the same text and was sent within the last 24 hours, so nothing is appended whatever the attachment or reference. That id is the receipt of the send that landed. New words send it again; waiting does not.' ;;
     overseer-only) text='resolve closes an owner ask in the overseer mailbox alone. A lane ask is answered with `send --item ITEM --re MSGID`.' ;;
     cursor-lowered) text='to-lane.cursor stood past the complete lines the mailbox holds, a count an --ack wrote before it was clamped, so it moved down to the count above. Every line up to that count stays read, and every line after it, the next line written included, is handed over.' ;;
     ack-clamped) text='The --ack count is past the complete lines the mailbox holds, so the count acknowledged is the one above: those lines, or fewer where an unread halt stands among them. A line written later stays unread for the next read.' ;;
@@ -1307,6 +1317,24 @@ lm_guard_delivery() { # FILE
   [ ! -s "$WORK_DIR/delivery.earlier" ]
 }
 
+# The latest owner notice carrying this send's text and stamped within the 24
+# hours before it, its id into WORK_DIR/notice.earlier; refuses where one
+# stands. The text alone is judged: a report re-sent with another attachment,
+# reference or minute is words the owner already holds. The candidate is the
+# file lm_append_local wrote, since a message can exceed one argument.
+lm_guard_owner_notice() { # FILE
+  jq -n -r -R --rawfile sent "$WORK_DIR/sent.json" "$MAILBOX_TIME_JQ"'
+    ($sent | fromjson) as $candidate
+    | ($candidate.at | at_epoch) as $now
+    | [inputs | (fromjson? // empty) | objects
+      | select(.kind == "notice" and .to == "owner" and .text == $candidate.text)
+      | (.at | at_epoch) as $at
+      | select($now != null and $at != null and ($now - $at) >= 0 and ($now - $at) <= 86400)
+      | .id | strings]
+    | last // empty' <"$1" >"$WORK_DIR/notice.earlier" || return 2
+  [ ! -s "$WORK_DIR/notice.earlier" ]
+}
+
 # The record already closing this ask, into WORK_DIR/resolved.earlier as
 # `<id> <by> <delivery_id>`; refuses where one stands.
 lm_guard_resolve() { # FILE
@@ -1600,7 +1628,16 @@ case "$VERB" in
     [ -z "$ATTACH" ] || lm_attach_confined
     LINE="$(lm_envelope "$VERB")"
     [ "$VERB" != notice ] || lm_receipt_fields "$LINE"
-    lm_append_local "$TO_OVERSEER" "$LINE"
+    # An owner notice is judged on its text for a day, under the lock after
+    # the minute check, so a retry inside the minute keeps its `duplicate`.
+    if [ "$VERB:$TO" = notice:owner ]; then
+      lm_append_local "$TO_OVERSEER" "$LINE" lm_guard_owner_notice || {
+        REFUSE_EXTRA="id=$(cat -- "$WORK_DIR/notice.earlier")"
+        refuse owner-notice-repeated "$ITEM"
+      }
+    else
+      lm_append_local "$TO_OVERSEER" "$LINE"
+    fi
     if [ "$VERB" = ask ]; then
       printf 'id=%s\n' "$(cat -- "$WORK_DIR/id")"
     else
