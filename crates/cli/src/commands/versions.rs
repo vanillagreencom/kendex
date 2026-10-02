@@ -2,13 +2,13 @@ use clap::Args;
 
 use kendex_core::env::Env;
 
-use super::pin::parse_kind;
+use super::pin::{kind_choices, parse_kind};
 use super::{CliResult, resolve_scopes, say};
 use crate::scope::ScopeFilter;
 
 #[derive(Args)]
 pub struct VersionsArgs {
-    /// agent | skill | hook | command | mcp-server | pi-extension
+    #[arg(help = kind_choices())]
     kind: String,
     name: String,
     #[arg(short = 'g', long)]

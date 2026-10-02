@@ -4,7 +4,8 @@ Usage: kendex show [OPTIONS] <KIND> <NAME>
 
 Arguments:
   <KIND>
-          agent | skill | hook | command | mcp-server | pi-extension
+          agent | skill | hook | command | mcp-server | pi-extension |
+          output-style
 
   <NAME>
           

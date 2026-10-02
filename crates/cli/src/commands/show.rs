@@ -4,7 +4,7 @@ use kendex_core::env::Env;
 use kendex_core::manifest::{INPLACE_SOURCE_NAME, LOCAL_SOURCE_NAME};
 use kendex_core::package::detail;
 
-use super::pin::parse_kind;
+use super::pin::{kind_choices, parse_kind};
 use super::{CliResult, payload, resolve_scopes};
 use crate::scope::ScopeFilter;
 use crate::ui::report::PlainColumns;
@@ -12,7 +12,7 @@ use crate::ui::{self, Span, Status, Style, Target};
 
 #[derive(Args)]
 pub struct ShowArgs {
-    /// agent | skill | hook | command | mcp-server | pi-extension
+    #[arg(help = kind_choices())]
     kind: String,
     name: String,
     /// List the package's files

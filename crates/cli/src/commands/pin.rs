@@ -10,7 +10,7 @@ use crate::scope::ScopeFilter;
 
 #[derive(Args)]
 pub struct PinArgs {
-    /// agent | skill | hook | command | mcp-server | pi-extension
+    #[arg(help = kind_choices())]
     kind: String,
     name: String,
     /// The version to hold at: a tag, branch, or commit
@@ -31,19 +31,34 @@ pub struct PinArgs {
     _commit: crate::commands::commit_offer::CommitFlags,
 }
 
-/// The kinds a user can name on the command line. Plugins declare through
-/// their own table and have no source revisions to hold.
+fn canonical_kinds() -> impl Iterator<Item = ItemKind> {
+    // Plugins declare through their own table and have no source revisions.
+    ItemKind::ALL
+        .into_iter()
+        .filter(|kind| *kind != ItemKind::Plugin)
+}
+
+/// Canonical choices shared by kind help and unknown-kind errors.
+pub(super) fn kind_choices() -> String {
+    canonical_kinds()
+        .map(ItemKind::name)
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+/// The kinds a user can name on the command line, including existing aliases.
 pub fn parse_kind(value: &str) -> Result<ItemKind, String> {
+    if let Some(kind) = canonical_kinds().find(|kind| kind.name() == value) {
+        return Ok(kind);
+    }
     match value {
-        "agent" | "agents" | "a" => Ok(ItemKind::Agent),
-        "skill" | "skills" | "s" => Ok(ItemKind::Skill),
-        "hook" | "hooks" => Ok(ItemKind::Hook),
-        "command" | "commands" => Ok(ItemKind::Command),
-        "mcp-server" | "mcp" => Ok(ItemKind::McpServer),
-        "pi-extension" | "pi" => Ok(ItemKind::PiExtension),
-        other => Err(format!(
-            "unknown kind '{other}' (agent | skill | hook | command | mcp-server | pi-extension)"
-        )),
+        "agents" | "a" => Ok(ItemKind::Agent),
+        "skills" | "s" => Ok(ItemKind::Skill),
+        "hooks" => Ok(ItemKind::Hook),
+        "commands" => Ok(ItemKind::Command),
+        "mcp" => Ok(ItemKind::McpServer),
+        "pi" => Ok(ItemKind::PiExtension),
+        other => Err(format!("unknown kind '{other}' ({})", kind_choices())),
     }
 }
 

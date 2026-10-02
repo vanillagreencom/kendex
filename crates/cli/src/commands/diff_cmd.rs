@@ -3,14 +3,14 @@ use clap::Args;
 use kendex_core::env::Env;
 use kendex_core::package::diff::{FileStatus, LineKind, PackageDiff, VersionSel};
 
-use super::pin::parse_kind;
+use super::pin::{kind_choices, parse_kind};
 use super::{CliResult, resolve_scopes};
 use crate::scope::ScopeFilter;
 use crate::ui::{self, Span, Status, Style};
 
 #[derive(Args)]
 pub struct DiffArgs {
-    /// agent | skill | hook | command | mcp-server | pi-extension
+    #[arg(help = kind_choices())]
     kind: String,
     name: String,
     /// A version (tag, branch, commit) or `installed`

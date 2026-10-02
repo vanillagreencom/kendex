@@ -4,7 +4,7 @@ use kendex_core::env::Env;
 use kendex_core::model::Scope;
 use kendex_core::package::updates::UpdatesReport;
 
-use super::pin::parse_kind;
+use super::pin::{kind_choices, parse_kind};
 use super::{CliResult, resolve_scopes_at, scope_label};
 use crate::scope::ScopeFilter;
 use crate::ui::{self, Status, Style};
@@ -13,13 +13,13 @@ use crate::ui::{self, Status, Style};
 pub enum UpdatesCommand {
     /// Stop notifying about one package's updates
     Ignore {
-        /// agent | skill | hook | command | mcp-server | pi-extension
+        #[arg(help = kind_choices())]
         kind: String,
         name: String,
     },
     /// Resume notifications for an ignored package
     Unignore {
-        /// agent | skill | hook | command | mcp-server | pi-extension
+        #[arg(help = kind_choices())]
         kind: String,
         name: String,
     },

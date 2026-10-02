@@ -1,0 +1,1 @@
+- Shared CLI package commands accept output-style. Their kind help and unknown-kind choices include output-style while keeping existing aliases.

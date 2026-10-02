@@ -3,6 +3,49 @@ use std::path::PathBuf;
 
 use super::*;
 
+#[test]
+fn shared_kind_parser_keeps_canonical_names_and_existing_aliases() {
+    use crate::commands::pin::parse_kind;
+    use kendex_core::model::ItemKind;
+
+    for (value, kind) in [
+        ("agent", ItemKind::Agent),
+        ("agents", ItemKind::Agent),
+        ("a", ItemKind::Agent),
+        ("skill", ItemKind::Skill),
+        ("skills", ItemKind::Skill),
+        ("s", ItemKind::Skill),
+        ("hook", ItemKind::Hook),
+        ("hooks", ItemKind::Hook),
+        ("command", ItemKind::Command),
+        ("commands", ItemKind::Command),
+        ("mcp-server", ItemKind::McpServer),
+        ("mcp", ItemKind::McpServer),
+        ("pi-extension", ItemKind::PiExtension),
+        ("pi", ItemKind::PiExtension),
+        ("output-style", ItemKind::OutputStyle),
+    ] {
+        assert_eq!(parse_kind(value), Ok(kind), "{value}");
+    }
+    for value in [
+        "plugin",
+        "plugins",
+        "output-styles",
+        "style",
+        "h",
+        "",
+        "Output-style",
+    ] {
+        assert_eq!(
+            parse_kind(value),
+            Err(format!(
+                "unknown kind '{value}' (agent | skill | hook | command | mcp-server | pi-extension | output-style)"
+            )),
+            "{value}"
+        );
+    }
+}
+
 fn pages() -> BTreeMap<String, String> {
     fn visit(mut command: Command, path: &str, pages: &mut BTreeMap<String, String>) {
         command = command
