@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearPackageConfigCache } from "../extensions/package-config.js";
@@ -10,28 +10,38 @@ mockPiModules();
 const SESSION_ID = "restore-test";
 const BRANCH_STATE_MISSING = "persistence_failure=branch-state-missing";
 
-/** Saved in this order, so the sidecar ends holding `newer`; `mid` passes only the tool-result task cap, the other large lists the session entry cap too and get a saved-state file. */
+/** `mid` passes only the tool-result task cap, the other large lists the session entry cap too and get a saved-state file; `latest` is saved only by the `tie` step. */
 const SAVES = {
 	small: ["small task"],
 	mid: Array.from({ length: 150 }, (_value, index) => `mid ${index}`),
 	older: Array.from({ length: 200 }, (_value, index) => `${"o".repeat(400)} older ${index}`),
 	newer: Array.from({ length: 200 }, (_value, index) => `${"n".repeat(400)} newer ${index}`),
+	latest: Array.from({ length: 200 }, (_value, index) => `${"l".repeat(400)} latest ${index}`),
 };
 type Save = keyof typeof SAVES;
+/** Saved in this order before every row, so the sidecar ends holding `newer`. */
+const SAVE_ORDER: Save[] = ["small", "mid", "older", "newer"];
 /** A save's session custom entry, or its tasks_write tool result. */
 type BranchRecord = `${Save}.${"entry" | "result"}`;
 
 /** The saved-state directory's bound, `TASK_PANEL_SAVED_STATES_MAX`. */
 const SAVED_STATES_MAX = 20;
 
+/** Past the clock, so a file dated here is newer than any file a save writes; the `tie` step uses it. */
+const AHEAD_OF_CLOCK = 4_000_000_000;
+
 /**
- * What happens between the saves and the restore. `evict`: as many further
- * large lists are saved as the saved-state directory keeps, so it drops
- * `older` and `newer`. `fork`: the restore runs in another session, which has
- * neither the sidecar nor the saved-state directory. `save-at-older`: the
- * panel moves to the `older` point and saves a change there first.
+ * What happens between the saves and the restore. `evict`: `older`'s file is
+ * back-dated and enough further large lists are saved that the saved-state
+ * directory drops it and keeps `newer`. `fork`: the restore runs in another
+ * session, which has neither the sidecar nor the saved-state directory.
+ * `save-at-older`: the panel moves to the `older` point and saves a change
+ * there first. `tie`: further large lists fill the directory, every file in it
+ * and a leftover temporary file are dated past the clock, so the next file a
+ * save writes is not the newest by timestamp, as when consecutive saves share
+ * one; then `latest` is saved, and `small` after it replaces the sidecar.
  */
-type Before = "evict" | "fork" | "save-at-older";
+type Before = "evict" | "fork" | "save-at-older" | "tie";
 
 const ROWS: Array<{ name: string; branch: BranchRecord[]; before?: Before; expected: Save | "empty"; warnings: string[] }> = [
 	{ name: "a tree point before any task save ignores the newer sidecar", branch: [], expected: "empty", warnings: [] },
@@ -42,8 +52,10 @@ const ROWS: Array<{ name: string; branch: BranchRecord[]; before?: Before; expec
 	{ name: "bounded details naming the full entry before them keep that list without a saved file", branch: ["small.entry", "small.result", "mid.entry", "mid.result"], expected: "mid", warnings: [] },
 	{ name: "the newest leaf after a save at an older point restores the leaf's list", branch: ["small.entry", "older.entry", "newer.entry"], before: "save-at-older", expected: "newer", warnings: [] },
 	{ name: "a manifest naming a state the saved-state directory dropped keeps the last full list and warns", branch: ["small.entry", "older.entry"], before: "evict", expected: "small", warnings: [BRANCH_STATE_MISSING] },
+	{ name: "a manifest naming a saved state after one naming a dropped state restores it without a warning", branch: ["older.entry", "newer.entry"], before: "evict", expected: "newer", warnings: [] },
 	{ name: "a full entry after a manifest naming a dropped state clears the warning", branch: ["older.entry", "small.entry"], before: "evict", expected: "small", warnings: [] },
 	{ name: "full details after bounded details naming a dropped state clear the warning", branch: ["older.result", "small.result"], before: "evict", expected: "small", warnings: [] },
+	{ name: "a save past the directory's bound keeps the file it wrote when others share or pass its timestamp", branch: ["small.entry", "latest.entry"], before: "tie", expected: "latest", warnings: [] },
 	{ name: "a fork keeps the last full list and warns", branch: ["small.entry", "newer.entry"], before: "fork", expected: "small", warnings: [BRANCH_STATE_MISSING] },
 ];
 
@@ -65,23 +77,38 @@ for (const row of ROWS) {
 			const navigate = pi.handlers.get("session_tree");
 			if (!navigate) throw new Error("handler-missing=session_tree");
 			const records = new Map<BranchRecord, unknown>();
-			for (const save of Object.keys(SAVES) as Save[]) {
-				const result = await tasksWrite({ action: "replace", tasks: SAVES[save].map((content) => ({ content })) });
+			const save = async (name: Save) => {
+				const result = await tasksWrite({ action: "replace", tasks: SAVES[name].map((content) => ({ content })) });
 				const entry = pi.appended.at(-1);
-				records.set(`${save}.entry`, { type: "custom", customType: entry?.customType, data: entry?.data });
-				records.set(`${save}.result`, { type: "message", message: { role: "toolResult", toolName: "tasks_write", details: result.details } });
-			}
-			expect(pi.appended.map((entry) => entry.data.fullSnapshot)).toEqual([undefined, undefined, false, false]);
-			const states = join(base, "agent", "kendex", "sessions", SESSION_ID, "pi-task-panel", "states");
-			expect(readdirSync(states)).toHaveLength(2);
-			let restoreCtx = ctx;
-			if (row.before === "evict") {
-				// Back-dated, so the directory drops these two whatever the file system's timestamp granularity.
-				for (const name of readdirSync(states)) utimesSync(join(states, name), 1, 1);
-				for (let save = 0; save < SAVED_STATES_MAX; save++) {
+				records.set(`${name}.entry`, { type: "custom", customType: entry?.customType, data: entry?.data });
+				records.set(`${name}.result`, { type: "message", message: { role: "toolResult", toolName: "tasks_write", details: result.details } });
+			};
+			const saveLargeLists = async (count: number) => {
+				for (let save = 0; save < count; save++) {
 					await tasksWrite({ action: "replace", tasks: Array.from({ length: 200 }, (_value, index) => ({ content: `${"e".repeat(400)} evict ${save} ${index}` })) });
 				}
-				expect(readdirSync(states)).toHaveLength(SAVED_STATES_MAX);
+			};
+			for (const name of SAVE_ORDER) await save(name);
+			expect(pi.appended.map((entry) => entry.data.fullSnapshot)).toEqual([undefined, undefined, false, false]);
+			const states = join(base, "agent", "kendex", "sessions", SESSION_ID, "pi-task-panel", "states");
+			const savedStates = () => readdirSync(states).filter((name) => name.endsWith(".json")).sort();
+			const savedStateFile = (name: Save) => `${(records.get(`${name}.entry`) as { data: { fingerprint: string } }).data.fingerprint}.json`;
+			expect(savedStates()).toEqual([savedStateFile("older"), savedStateFile("newer")].sort());
+			let restoreCtx = ctx;
+			if (row.before === "evict") {
+				// Back-dated, so the directory drops it whatever the file system's timestamp granularity.
+				utimesSync(join(states, savedStateFile("older")), 1, 1);
+				await saveLargeLists(SAVED_STATES_MAX - 1);
+				expect(savedStates()).toHaveLength(SAVED_STATES_MAX);
+				expect(savedStates()).not.toContain(savedStateFile("older"));
+			} else if (row.before === "tie") {
+				await saveLargeLists(SAVED_STATES_MAX - 2);
+				writeFileSync(join(states, `${savedStateFile("newer")}.tmp-1`), "{}\n");
+				for (const name of readdirSync(states)) utimesSync(join(states, name), AHEAD_OF_CLOCK, AHEAD_OF_CLOCK);
+				utimesSync(join(states, `${savedStateFile("newer")}.tmp-1`), AHEAD_OF_CLOCK + 1, AHEAD_OF_CLOCK + 1);
+				await save("latest");
+				expect(savedStates()).toHaveLength(SAVED_STATES_MAX);
+				await save("small");
 			} else if (row.before === "fork") restoreCtx = fakeCtx(base, `${SESSION_ID}-fork`, notifications);
 			else if (row.before === "save-at-older") {
 				ctx.sessionManager.getBranch = () => (["small.entry", "older.entry"] as BranchRecord[]).map((name) => records.get(name)) as never;
