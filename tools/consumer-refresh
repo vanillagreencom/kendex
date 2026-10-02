@@ -72,7 +72,7 @@ def inputs(files):
             relative(entry)
             if entry not in files:
                 refuse("input-missing", entry)
-            wanted.add(".agents")
+            wanted.add(str(PurePosixPath(entry).parent))
     for entry in inventory:
         name = entry if isinstance(entry, str) else entry["path"]
         relative(name)

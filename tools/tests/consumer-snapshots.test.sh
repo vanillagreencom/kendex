@@ -25,7 +25,9 @@ files = {'kendex.toml': b'schema = 6\n[sources.kendex]\nrepo = "vanillagreencom/
          '.kendex-generated.json': b'[".agents/skills/review-gate/scripts/refresh-consumer.sh"]',
          '.github/workflows/kendex-refresh.yml': b'name: Refresh kendex\n',
          '.agents/skills/review-gate/scripts/refresh-consumer.sh': b'#!/bin/sh\nexit 87\n',
-         'private.txt': b'not a refresh input'}
+         'private.txt': b'not a refresh input',
+         '.agents/private.txt': b'not a refresh input',
+         '.agents/skills/undeclared/SKILL.md': b'not a declared skill'}
 for name in ('shadcn', 'benchmark', 'ht-ds-usage', 'iced-charts', 'visual-qa'):
     files['kendex.toml'] += f'[skills.{name}]\nsource = "in-place"\n'.encode()
     files[f'.agents/skills/{name}/SKILL.md'] = f'# {name}\n'.encode()
@@ -79,7 +81,8 @@ from pathlib import Path
 snapshot = json.loads(gzip.decompress(Path(sys.argv[1]).read_bytes()))
 consumer = snapshot['consumers']['fixture']
 assert consumer['commit'] == 'committed-sha'
-assert 'private.txt' not in consumer['files']
+for path in ('private.txt', '.agents/private.txt', '.agents/skills/undeclared/SKILL.md'):
+    assert path not in consumer['files']
 for name in ('shadcn', 'benchmark', 'ht-ds-usage', 'iced-charts', 'visual-qa'):
     import base64
     for leaf, content in (('SKILL.md', f'# {name}\n'.encode()),
@@ -129,7 +132,7 @@ python3 - "$ROOT/tools/consumer-refresh" "$TMP/capture-mutant" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
-old = '            wanted.add(".agents")'
+old = '            wanted.add(str(PurePosixPath(entry).parent))'
 assert text.count(old) == 1
 changed = text.replace(old, '# ' + old.strip())
 assert changed != text
@@ -145,5 +148,29 @@ files = json.loads(gzip.decompress(Path(sys.argv[1]).read_bytes()))['consumers']
 assert '.agents/skills/shadcn/SKILL.md' not in files
 PY
 then ok 'control: disabled in-place capture turns the source-bytes assertion red'; else bad 'in-place capture mutant' "$OUT"; fi
+python3 - "$ROOT/tools/consumer-refresh" "$TMP/selection-mutant" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '            wanted.add(str(PurePosixPath(entry).parent))'
+assert text.count(old) == 1
+changed = text.replace(old, '# ' + old.strip() + '\n            wanted.add(".agents")')
+assert changed != text
+path = Path(sys.argv[2])
+path.write_text(changed)
+path.chmod(0o755)
+PY
+COLLECTOR="$TMP/selection-mutant" collect pass
+ASSERT_RC=0
+python3 - "$TMP/pass.gz" <<'PY' || ASSERT_RC=$?
+import gzip, json, sys
+from pathlib import Path
+files = json.loads(gzip.decompress(Path(sys.argv[1]).read_bytes()))['consumers']['fixture']['files']
+for path in ('private.txt', '.agents/private.txt', '.agents/skills/undeclared/SKILL.md'):
+    assert path not in files
+PY
+if [ "$RC" -eq 0 ] && [ "$ASSERT_RC" -eq 1 ]; then
+  ok 'control: whole .agents capture turns the unrelated-source exclusion assertion red'
+else bad 'declared-directory selection mutant' "$OUT"; fi
 printf '\nconsumer-snapshots-test: pass=%s fail=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
