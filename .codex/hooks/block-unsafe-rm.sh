@@ -145,13 +145,15 @@ SKIP="(${GAP}+${WORD}|${GAP}*${REDIRECT}${GAP}*${WORD})*"
 UNSAFE_RE="${RM_EDGE}rm${SKIP}${GAP}+${ROOT}"
 
 # The harness has no shared-root ownership check.
+# With HOME=/shared/home, rm -rf /shared/home/* is a refused direct glob.
 SHARED_NAMES='(TMPDIR|TMP|TEMP|AGENT_TMPDIR|HOME)'
 SHARED_CHILD="[^/${ENDERS}<>${SPACE_ANY}]*"
 SHARED_DOT="(${SHARED_CHILD}/+)*[\"']*\\.\\.?[\"']*(/+${CROSSABLE}*)?"
 SHARED_SLASH="/+[\"']*(${SHARED_CHILD}[*?[]${SHARED_CHILD}/*|${SHARED_DOT})?"
 SHARED_BOUNDARY="[\"']*($|[${ENDERS}<>${SPACE_ANY}])"
 SHARED_END="[\"']*(${SHARED_SLASH})?${SHARED_BOUNDARY}"
-SHARED_ROOT="\"*\\\$(${SHARED_NAMES}|\\{${SHARED_NAMES}([^[:alnum:]_}][^}]*|)\\})${SHARED_END}"
+# Apple's regex rejects an empty alternative; an optional suffix accepts none.
+SHARED_ROOT="\"*\\\$(${SHARED_NAMES}|\\{${SHARED_NAMES}([^[:alnum:]_}][^}]*)?\\})${SHARED_END}"
 SHARED_RE="${RM_EDGE}rm${SKIP}${GAP}+${SHARED_ROOT}"
 [[ ! $COMMAND =~ $SHARED_RE ]] || refuse refused shared-root
 for root_name in TMPDIR TMP TEMP AGENT_TMPDIR HOME; do
