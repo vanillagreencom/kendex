@@ -295,7 +295,7 @@ At the default `REVIEW_MAX_CYCLES` of 1, a review with blockers runs one fix rou
 .agents/skills/orch/scripts/workflow-state cap REVIEW_MAX_CYCLES --issue [ISSUE_ID]
 ```
 
-It prints `below [COUNT]/[CAP]` or `at-cap [COUNT]/[CAP]`, counting `rereview_cycles`, which only the Bounded Re-Review write below raises, never `cycles`. Below the cap → Fix Delegation; at 0 it reads `below` until that round runs. At it the fix loop ends here, with no fix round beyond the `structural-close` items the `fix set` carries past it, so the items this pass reported are the latest word on the diff.
+It prints `below [COUNT]/[CAP]` or `at-cap [COUNT]/[CAP]`, counting `rereview_cycles`, never `cycles`. Below the cap → Fix Delegation; at 0 it reads `below` until `fixed_items` holds a `pr-review` entry, which only that round records. At it the fix loop ends here, with no fix round beyond the `structural-close` items the `fix set` carries past it.
 
 **Capped items are escalated, never dropped.** Record every blocker, and every suggestion § 4 made one, that this pass found still outstanding, including one already listed in `fixed_items` whose fix did not hold. Exclude only what is already in `escalated_items`, what § 4 declined, and the `fix set`'s `structural-close` items; a decline is terminal. Match on the RECORDED entry's (location, description), the § 8 key. An item `fixed_items` already lists has a superseded entry there: its fix did not hold, so the same write drops it. One write per item, before routing to § 5 — the drop and the record land in one command, so the item is never in both buckets and never in neither:
 
@@ -319,7 +319,7 @@ It prints `below [COUNT]/[CAP]` or `at-cap [COUNT]/[CAP]`, counting `rereview_cy
 
 ### Bounded Re-Review
 
-At a cap of 0 (bare `cap REVIEW_MAX_CYCLES` prints `0`) → § 5, with no `rereview_panel` or verification pass. Otherwise re-review is scoped to what the fix round actually changed. Read the round's diff to decide:
+After a § 4 fix round at a cap of 0 (bare `cap REVIEW_MAX_CYCLES` prints `0`) → § 5, with no `rereview_panel` or verification pass. Otherwise, a § 7 QA round included, re-review is scoped to what the fix round actually changed. Read the round's diff to decide:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .pre_delegate_sha
@@ -337,7 +337,7 @@ The scoped panel is the union of the reviewers whose domains the round's diff to
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] rereview_panel '{"agents": [PANEL_AGENTS_JSON], "reason": "[DOMAINS_TOUCHED] + blocker finders + external"}'
 ```
 
-**The loop ends** when two consecutive cycles surface no new blocker, or when the At The Cap check above ends it (the `rereview_panel` write raises `rereview_cycles` and refuses once that count reaches the cap). The cap bounds NEW cycles, never verification: above cap 0, a fix diff no reviewer has seen gets one focused verification pass — the `rereview_panel` rule above, scoped to exactly that diff — and this loop's last fix round has budget for it. A pass over a diff no reviewer has seen once the budget is spent takes `verification_panel` instead, which the cap does not gate. That pass's items re-enter § 4, where the `fix set` decides what still delegates. In wave mode the panel replaces `[AGENTS]` for the cycle and wave mechanics apply unchanged.
+**The loop ends** when two consecutive cycles surface no new blocker, when the At The Cap check above ends it (the `rereview_panel` write raises `rereview_cycles` and refuses once that count reaches the cap), or at cap 0 after its one fix round. The cap bounds NEW cycles, never verification: above cap 0, a fix diff no reviewer has seen gets one focused verification pass — the `rereview_panel` rule above, scoped to exactly that diff — and this loop's last fix round has budget for it; past the budget such a pass takes `verification_panel` instead, which the cap does not gate. That pass's items re-enter § 4, where the `fix set` decides what still delegates. In wave mode the panel replaces `[AGENTS]` for the cycle and wave mechanics apply unchanged.
 
 ## 5. Verdict Pass
 
