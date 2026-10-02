@@ -122,10 +122,15 @@
    "removedByDesign": false,
    "runIds": [36998153970, 36998451966, 36998887472, 36999112042, 37000239280, 37001890554]
   },
-  "rolling-branch-push-refused": {
-   "count": 2,
+  "rolling-branch-push-stale-lease": {
+   "count": 1,
    "removedByDesign": false,
-   "runIds": [36370535125, 36970384017]
+   "runIds": [36370535125]
+  },
+  "rolling-branch-push-queue-held-before-ken-2457": {
+   "count": 1,
+   "removedByDesign": false,
+   "runIds": [36970384017]
   },
   "review-thread-held": {
    "count": 2,
@@ -203,18 +208,19 @@
     "runner-refuses-standard-class",
     "orphan-agent-before-fix-release",
     "classifier-render-retirement-unproved",
+    "rolling-branch-push-queue-held-before-ken-2457",
     "disable-auto-after-queue"
    ],
-   "runs": 343,
-   "rateOf558": "61.47%"
+   "runs": 344,
+   "rateOf558": "61.65%"
   },
   "githubRefusalsAndCorrectHolds": {
    "classes": [
-    "rolling-branch-push-refused",
+    "rolling-branch-push-stale-lease",
     "review-thread-held",
     "default-branch-moved"
    ],
-   "runs": 5
+   "runs": 4
   },
   "notRemovedTotal": {
    "runs": 348,
@@ -268,10 +274,17 @@
   "vPrefixedBranches": [
    "refs/heads/vstack-v1"
   ],
-  "releaseTrigger": ".github/workflows/release.yml on.push.tags: [\"v*\"], which also matches v1"
+  "releaseTrigger": ".github/workflows/release.yml on.push.tags: [\"v*\"], which also matches v1",
+  "stableReleaseIsDraft": ".github/workflows/release.yml, softprops/action-gh-release step: draft: ${{ steps.tag.outputs.prerelease == 'false' }}; app-deploy SKILL.md step 4 publishes the draft",
+  "releaseTagPushers": {
+   "command": "git for-each-ref refs/tags/v1.5.1 refs/tags/v1.5.0 refs/tags/v1.4.0 --format='%(refname:short) %(taggername)'",
+   "v1.5.1": "vanillagreen-fleet-lanes[bot]",
+   "v1.5.0": "vanillagreen-fleet-lanes[bot]",
+   "v1.4.0": "vanillagreen-fleet-lanes[bot]"
+  }
  },
  "githubDocs": {
-  "source": "github/docs at commit 2bd66de8cea336061c9ea060c9b37385136e6ab3, read with gh api repos/github/docs/contents/PATH?ref=SHA; both research providers (Exa, Context7) refused their keys",
+  "source": "github/docs at commit 2bd66de8cea336061c9ea060c9b37385136e6ab3, read with gh api repos/github/docs/contents/PATH?ref=SHA, and the ruleset articles with curl https://raw.githubusercontent.com/github/docs/SHA/PATH after the lane token expired; actions/checkout and actions/create-github-app-token read the same way at the commits the refresh template pins; both research providers (Exa, Context7) refused their keys",
   "excerpts": [
    {
     "url": "https://github.com/github/docs/blob/2bd66de8cea336061c9ea060c9b37385136e6ab3/content/actions/reference/workflows-and-actions/reusing-workflow-configurations.md",
@@ -309,9 +322,44 @@
     "text": "Use the `inherit` keyword to pass all the calling workflow's secrets to the called workflow. This includes all secrets the calling workflow has access to, namely organization, repository, and environment secrets."
    },
    {
-    "url": "https://github.com/github/docs/blob/2bd66de8cea336061c9ea060c9b37385136e6ab3/data/reusables/actions/actions-do-not-trigger-workflows.md",
-    "section": "GITHUB_TOKEN events",
-    "text": "When you use the repository's `GITHUB_TOKEN` to perform tasks, events triggered by the `GITHUB_TOKEN` will not create a new workflow run, with the following exceptions: workflow_dispatch and repository_dispatch events always create workflow runs; pull_request opened, synchronize or reopened create approval-required runs."
+    "url": "https://github.com/github/docs/blob/2bd66de8cea336061c9ea060c9b37385136e6ab3/content/actions/reference/workflows-and-actions/contexts.md",
+    "section": "job context",
+    "text": "`job.workflow_sha`: The commit SHA of the workflow file that defines the current job. `job.workflow_repository`: The `owner/repo` of the repository containing the workflow file that defines the current job. `job.workflow_ref`: The full ref of the workflow file that defines the current job. ... For jobs defined in a reusable workflow, this refers to the reusable workflow file."
+   },
+   {
+    "url": "https://github.com/github/docs/blob/2bd66de8cea336061c9ea060c9b37385136e6ab3/content/actions/reference/workflows-and-actions/contexts.md",
+    "section": "Example usage of job context workflow identity",
+    "text": "This example reusable workflow uses `job.workflow_repository` and `job.workflow_sha` to check out its own source code, rather than the caller's repository. ... uses: actions/checkout with repository: ${{ job.workflow_repository }} and ref: ${{ job.workflow_sha }}"
+   },
+   {
+    "url": "https://github.com/github/docs/blob/2bd66de8cea336061c9ea060c9b37385136e6ab3/content/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets.md",
+    "section": "Branch and tag rulesets",
+    "text": "You can create rulesets to control how people can interact with selected branches and tags in a repository. You can control things like who can push commits to a certain branch ... or who can delete or rename a tag."
+   },
+   {
+    "url": "https://github.com/github/docs/blob/2bd66de8cea336061c9ea060c9b37385136e6ab3/content/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets.md",
+    "section": "Restrict creations, Restrict updates, Restrict deletions",
+    "text": "Restrict creations: If selected, only users with bypass permissions can create branches or tags whose name matches the pattern you specify. Restrict updates: If selected, only users with bypass permissions can push to branches or tags whose name matches the pattern you specify. Restrict deletions: If selected, only users with bypass permissions can delete branches or tags whose name matches the pattern you specify."
+   },
+   {
+    "url": "https://github.com/github/docs/blob/2bd66de8cea336061c9ea060c9b37385136e6ab3/data/reusables/repositories/rulesets-bypass-step.md",
+    "section": "bypass list",
+    "text": "The following are eligible for bypass access: Repository admins, organization owners, and enterprise owners; The maintain or write role, or custom repository roles based on the write role; Teams, excluding secret teams; GitHub Apps; Dependabot. (Deploy keys are listed for GitHub Enterprise Server only.)"
+   },
+   {
+    "url": "https://github.com/github/docs/blob/2bd66de8cea336061c9ea060c9b37385136e6ab3/data/reusables/repositories/rulesets-unsupported-fnmatch-syntax.md",
+    "section": "unsupported fnmatch syntax",
+    "text": "You can specify character sets within square brackets (`[]`), but you cannot currently complement a set with the `^` operator (e.g., `[^charset]`)."
+   },
+   {
+    "url": "https://github.com/actions/checkout/blob/3d3c42e5aac5ba805825da76410c181273ba90b1/action.yml",
+    "section": "inputs.token",
+    "text": "token: ... default: ${{ github.token }}"
+   },
+   {
+    "url": "https://github.com/actions/create-github-app-token/blob/bcd2ba49218906704ab6c1aa796996da409d3eb1/README.md",
+    "section": "inputs, owner",
+    "text": "If `owner` is set and `repositories` is empty, access will be scoped to all repositories in the provided repository owner's installation. If `owner` and `repositories` are empty, access will be scoped to only the current repository."
    }
   ],
   "uncited": "Which repository's environment a called job's `environment:` reads. The excerpts say the environment secret is used; none names the repository."
