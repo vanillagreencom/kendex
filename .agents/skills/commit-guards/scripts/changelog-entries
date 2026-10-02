@@ -11,8 +11,10 @@
 # it is wrapped.
 #
 # Ordinary checks judge fragments and configured JSON version bumps. A major
-# increase needs a named Breaking entry. The record supplies release evidence
-# after a caller collates fragments or renames a package's Unreleased heading.
+# increase needs a named Breaking entry; from 1.0, a minor holds no Breaking
+# entry and a patch holds neither a Breaking nor an Added one. The record
+# supplies release evidence after a caller collates fragments or renames a
+# package's Unreleased heading.
 #
 # --collate is that write, and the release commit is its only caller: on a
 # clean verdict it folds the fragments this run just accepted into the
@@ -81,9 +83,13 @@ submodule gitlink or a binary blob at a configured path is refused. The
 measurement joins the fragment's lines with CR stripped and whitespace runs
 collapsed to one space, counted in characters.
 
-Ordinary runs read the record only as evidence for a configured major bump.
+Ordinary runs read the record only as evidence for a configured version bump.
 COMMIT_GUARDS_CHANGELOG_VERSION_PATHS selects JSON files with a string version.
-An increased major needs a '- **Breaking:**' entry with non-blank text. A
+An increased major needs a '- **Breaking:**' entry with non-blank text. From
+1.0 (an old major of 1 or more), a minor refuses a Breaking entry and a patch
+refuses a Breaking entry or an Added one: an added/ fragment or an item under
+the record's '### Added', which a package record lacks. Each refusal names the
+first such entry. A suffix change alone is no increase. A
 package.json uses only its adjacent CHANGELOG.md's '### Unreleased' or
 '### <new version>' section. Other files use accepted fragments or the
 configured record's '## [Unreleased]' or '## [<new version>] - <date>' section.
@@ -181,7 +187,9 @@ checked=0
 violations=0
 RECORD_SHA=""
 RECORD_MODE=""
-FRAGMENT_BREAKING=0
+# The accepted fragments' release entries, "KIND<TAB>first line" rows from
+# GG_UNRELEASED_AWK's entry query, in index order.
+: >"$GG_TMP/fragment-entries"
 
 refuse() { # KEY VALUE EXPLANATION [REMEDY]
   gg_message "$1" "$2" "$3"
@@ -286,10 +294,8 @@ while IFS= read -r -d '' rec; do
   fi
   checked=$((checked + 1))
   printf '%s\t%s\0' "$sec" "$f" >>"$GG_TMP/frags.z"
-  if ! breaking="$(LC_ALL=C awk -v breaking_query=1 -v whole_entry=1 "$GG_UNRELEASED_AWK" <"$GG_TMP/blob")"; then
-    gg_fail breaking-read "$(gg_shown "$f")" "Could not read the Breaking entry."
-  fi
-  [ "$breaking" -eq 0 ] || FRAGMENT_BREAKING=1
+  LC_ALL=C awk -v entry_query=1 -v whole_entry=1 -v entry_section="$sec" "$GG_UNRELEASED_AWK" <"$GG_TMP/blob" >>"$GG_TMP/fragment-entries" \
+    || gg_fail breaking-read "$(gg_shown "$f")" "Could not read the release entry."
   status=0
   LC_ALL=C awk "$GG_ENTRY_AWK" <"$GG_TMP/blob" >"$GG_TMP/report" || status=$?
   [ "$status" -eq 0 ] || gg_fail fragment-measure "$(gg_shown "$f"):$status" "could not measure the entry in $(gg_shown "$f") (awk exit $status)"
@@ -322,26 +328,44 @@ read_version() { # SHA PATH -> version, refusing unreadable or malformed manifes
     || gg_fail_cause version-read "$(gg_shown "$2")" "$GG_TMP/dependency.err" "Expected a JSON string version in major.minor.patch form."
 }
 
-record_breaking() { # PATH LEVEL VERSION -> 0 or 1 on stdout
+record_entries() { # PATH LEVEL VERSION — appends the release's entry rows to $GG_TMP/evidence
   local path="$1" level="$2" version="$3" rec mode rest sha status=0
   # Reuse the completed index discovery; an absent record is no evidence,
   # whereas a record that cannot be read is a collection error.
   while IFS= read -r -d '' rec; do
     [ "${rec#*"$GG_TAB"}" = "$path" ] || continue
     mode="${rec%% *}"; rest="${rec#* }"; sha="${rest%% *}"
-    gg_mode_is_regular "$mode" || gg_fail version-record-mode "$(gg_shown "$path"):$mode" "Breaking evidence must be a regular text file."
-    gg_changelog_blob "$sha" "$path" || gg_fail version-record-binary "$(gg_shown "$path")" "Breaking evidence must be text."
-    LC_ALL=C awk -v breaking_query=1 -v release_level="$level" -v release_version="$version" "$GG_UNRELEASED_AWK" <"$GG_TMP/blob" \
-      >"$GG_TMP/breaking" || status=$?
+    gg_mode_is_regular "$mode" || gg_fail version-record-mode "$(gg_shown "$path"):$mode" "Release evidence must be a regular text file."
+    gg_changelog_blob "$sha" "$path" || gg_fail version-record-binary "$(gg_shown "$path")" "Release evidence must be text."
+    LC_ALL=C awk -v entry_query=1 -v release_level="$level" -v release_version="$version" "$GG_UNRELEASED_AWK" <"$GG_TMP/blob" \
+      >>"$GG_TMP/evidence" || status=$?
     [ "$status" -ne 3 ] || gg_fail version-record-fence "$(gg_shown "$path")" "An unclosed code fence prevents reading the release section."
     [ "$status" -eq 0 ] || gg_fail breaking-read "$(gg_shown "$path"):$status" "The changelog grammar failed (awk exit $status)."
-    cat -- "$GG_TMP/breaking" || gg_fail breaking-read "$(gg_shown "$path")" "Could not read the Breaking result."
     return 0
   done <"$GG_TMP/files.z"
-  printf '0\n'
+}
+
+first_entry() { # KIND — the first evidence row of KIND on stdout; 1 when none
+  local kind text
+  while IFS="$GG_TAB" read -r kind text; do
+    [ "$kind" = "$1" ] || continue
+    printf '%s' "$text"
+    return 0
+  done <"$GG_TMP/evidence"
+  return 1
+}
+
+refuse_entry() { # KIND KEY VALUE EXPLANATION REMEDY — refuses when the evidence holds a KIND entry
+  local entry
+  entry="$(first_entry "$1")" || return 0
+  gg_message "$2" "$3" "$4"
+  gg_message entry-preview "$entry" "The first such entry in this release."
+  printf '  %s\n' "$5"
+  violations=$((violations + 1))
 }
 
 if [ -n "$version_paths" ]; then
+  breaking_remedy="Release the break as a major, or keep the old form working and hold the Breaking entry for a later major."
   diff_args=(--cached)
   case "$MODE" in
     staged) : ;;
@@ -371,26 +395,51 @@ if [ -n "$version_paths" ]; then
     [ "$srcmode" != 000000 ] || continue
     gg_mode_is_regular "$srcmode" || gg_fail version-mode "$(gg_shown "$f"):$srcmode" "The prior version file must be regular JSON."
     old="$(read_version "$srcsha" "$f")" || exit 2
-    # Decimal strings avoid shell integer overflow and jq number rounding.
-    if ! increased="$(jq -nr --arg old "$old" --arg new "$new" 'def major: split(".")[0] | [length, .]; ($new | major) > ($old | major)' 2>"$GG_TMP/dependency.err")"; then
-      gg_fail_cause version-compare "$(gg_shown "$f")" "$GG_TMP/dependency.err" "Could not compare the major versions."
+    # Decimal strings avoid shell integer overflow and jq number rounding;
+    # the suffixes come off first, so a suffix change alone is no increase.
+    if ! bump="$(jq -nr --arg old "$old" --arg new "$new" '
+      def nums: sub("[-+].*$"; "") | split(".") | map([length, .]);
+      ($old | nums) as $o | ($new | nums) as $n
+      | first(range(3) | select($n[.] != $o[.]) | if $n[.] > $o[.] then ["major", "minor", "patch"][.] else "none" end) // "none"
+    ' 2>"$GG_TMP/dependency.err")"; then
+      gg_fail_cause version-compare "$(gg_shown "$f")" "$GG_TMP/dependency.err" "Could not compare the versions."
     fi
-    [ "$increased" = true ] || continue
+    case "$bump" in
+      major) ;;
+      # The release standard's compatibility rules start at 1.0.
+      minor | patch) [ "${old%%.*}" != 0 ] || continue ;;
+      none) continue ;;
+      *) gg_fail version-compare "$(gg_shown "$f"):$bump" "The version comparison returned an unknown increase." ;;
+    esac
     case "${f##*/}" in
       package.json)
         case "$f" in */*) local_record="${f%/*}/CHANGELOG.md" ;; *) local_record=CHANGELOG.md ;; esac
-        evidence="$(record_breaking "$local_record" 3 "$new")" || exit 2
+        : >"$GG_TMP/evidence"
+        record_entries "$local_record" 3 "$new"
         ;;
       *)
-        evidence="$FRAGMENT_BREAKING"
-        if [ "$evidence" -eq 0 ] && [ -n "$RECORD" ]; then
-          evidence="$(record_breaking "$RECORD" 2 "$new")" || exit 2
+        cp -- "$GG_TMP/fragment-entries" "$GG_TMP/evidence" \
+          || gg_fail evidence-copy "$(gg_shown "$f")" "Could not collect the fragment entries."
+        if [ -n "$RECORD" ] && { [ "$bump" != major ] || ! first_entry breaking >/dev/null; }; then
+          record_entries "$RECORD" 2 "$new"
         fi
         ;;
     esac
-    [ "$evidence" -eq 1 ] || refuse major-breaking "$(gg_shown "$f"):$old:$new" \
-      "A major increase needs a Breaking entry naming the break." \
-      "Write - **Breaking:** with the break and migration note in this release's changelog."
+    value="$(gg_shown "$f"):$old:$new"
+    case "$bump" in
+      major)
+        first_entry breaking >/dev/null || refuse major-breaking "$value" \
+          "A major increase needs a Breaking entry naming the break." \
+          "Write - **Breaking:** with the break and migration note in this release's changelog."
+        ;;
+      minor)
+        refuse_entry breaking minor-breaking "$value" "A minor release holds no Breaking entry." "$breaking_remedy"
+        ;;
+      patch)
+        refuse_entry added patch-added "$value" "A patch release holds fixes only, and this one adds." "Release the addition as a minor."
+        refuse_entry breaking patch-breaking "$value" "A patch release holds fixes only, and this one breaks." "$breaking_remedy"
+        ;;
+    esac
   done <"$GG_TMP/versions.z"
 fi
 

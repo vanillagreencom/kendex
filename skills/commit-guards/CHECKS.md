@@ -69,21 +69,23 @@ A pattern's root is its leading run of glob-free directories (`changelog.d/*/*.m
 
 ### The record
 
-`COMMIT_GUARDS_CHANGELOG_RECORD` names the collation destination. Ordinary checks permit edits to its wording and headings. A configured major bump reads the record only for its Breaking evidence.
+`COMMIT_GUARDS_CHANGELOG_RECORD` names the collation destination. Ordinary checks permit edits to its wording and headings. A configured version bump reads the record only for its release's entries.
 
 - `--collate` with accepted fragments requires a tracked, regular text destination with one `## [Unreleased]` section. Section headings use the Keep a Changelog names so each fragment has a destination.
 - Missing or duplicate pending sections, unclosed fences, and unknown section names refuse collation before any write.
 - `COMMIT_GUARDS_CHANGELOG_COLLATE=1` authorizes `--collate` and lets `commit-msg` count a record change as the release changelog entry. It does not change fragment validation.
 
-### Major bumps
+### Version bumps
 
 - `COMMIT_GUARDS_CHANGELOG_VERSION_PATHS` selects tracked JSON files by space-separated path globs. Empty, the default, disables version checks. A selected changed file must be regular JSON with a string `version` in `major.minor.patch` form, with optional prerelease and build suffixes. jq reads both versions. Missing jq or unreadable versions are collection errors.
-- The default and `--staged` compare HEAD to the index. `--base REF` compares HEAD's merge base with REF to the index. `--against REF` compares REF itself to the index. The batch passes its range to this lane. Fragment validation always reads the whole index. A newly added version file has no prior major to increase.
+- The default and `--staged` compare HEAD to the index. `--base REF` compares HEAD's merge base with REF to the index. `--against REF` compares REF itself to the index. The batch passes its range to this lane. Fragment validation always reads the whole index. A newly added version file has no prior version to increase.
+- jq compares the `major.minor.patch` numbers with the suffixes removed, so the bump is the first number that increased; a suffix change alone, or a decrease, is no bump.
 - An increased major fails with `major-breaking=PATH:OLD:NEW` unless its release has a list item starting `- **Breaking:**` followed by non-blank text. The check cannot judge whether the text describes the actual break or gives a sufficient migration note.
-- A `package.json` uses only its adjacent `CHANGELOG.md`: `### Unreleased` before release, or `### <new version>` as the first release section after the release renames that heading. Another package's call-out does not count.
+- From 1.0, a prior major of 1 or more, a minor increase fails with `minor-breaking=PATH:OLD:NEW` when its release holds a `- **Breaking:**` item. A patch increase fails with `patch-added=PATH:OLD:NEW` when its release holds an Added entry and with `patch-breaking=PATH:OLD:NEW` when it holds a Breaking one. An Added entry is an `added/` fragment or an item directly under the record's `### Added` heading. Each refusal's next record is `entry-preview=`, the first such entry's first line. Below 1.0 neither increase is judged.
+- A `package.json` uses only its adjacent `CHANGELOG.md`: `### Unreleased` before release, or `### <new version>` as the first release section after the release renames that heading. Another package's call-out does not count. A package record has no Added section, so a package patch takes the Breaking refusal only.
 - Other version files use an accepted fragment or the configured record's `## [Unreleased]` or the first release section, `## [<new version>] - <date>`. This permits the release commit after collation deletes fragments and the caller sets the version. Past versions and fenced examples do not count. An unreadable record fails closed.
 - The owner-approval and compatibility policies belong to the consuming repository's release standard, not this configurable catalog check.
-- [`tests/changelog-entries.test.sh`](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/tests/changelog-entries.test.sh) pins a planted major with and without a named Breaking entry.
+- [`tests/changelog-entries.test.sh`](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/tests/changelog-entries.test.sh) pins each refusal against a passing control: a major with and without a named Breaking entry, a minor with a Breaking or an Added entry, a patch with an Added, Breaking, Changed or Fixed entry, and a 0.x patch.
 
 ### Measuring one entry
 

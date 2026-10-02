@@ -111,7 +111,7 @@ change came from an outside contributor.
 ### Removed
 
 - **Breaking:** Pi fleet lanes refuse pi-hooks without mail wake. Repair the reported root and scope on the lane machine per the refusal; retry hosted launches with `--relaunch`.
-- GitHub approvals and thread resolution replace the custom review status. Breaking: remove the retired status from required checks before consumer refresh removes its workflow.
+- **Breaking:** GitHub approvals and thread resolution replace the custom review status. Remove the retired status from required checks before consumer refresh removes its workflow.
 
 ### Fixed
 
@@ -184,7 +184,7 @@ change came from an outside contributor.
 - orch: `ORCH_OVERSEER_PREFERENCE` entries name their model and are the only model order overseer succession walks; a model name is not checked before launch.
 - orch: `lanes pick --harness pi` reads a Pi root's Copilot pool from the lane host's `accounts` row, with `ORCH_LANE_COPILOT_POOL` as the override; an unread pool's refusal names the failed read.
 - Skill renders, `kendex check --catalog`, the package preview and `kendex diff` leave out top-level `tests/`, `evals/` and `DEVELOPMENT.md`; the next refresh deletes old rendered copies.
-- oversee: after upgrading, run `oversee register` in the overseer's pane; until then no session reads its mail, `oversee launch --predecessor` refuses it, and a watch start drops its launch identity.
+- **Breaking:** oversee: after upgrading, run `oversee register` in the overseer's pane; until then no session reads its mail, `oversee launch --predecessor` refuses it, and a watch start drops its launch identity.
 - lane mail: a `peer send --repo` note or `peer ask` reaches only the session the checkout's fleet record names (`oversee register` names one); the sender sees `no-reader` otherwise.
 - orch: `oversee-cycle` micro and small class targets are now 1200 and 1800 seconds, the owner's 20- and 30-minute open-to-merge figures; `oversee-cycle --help` states each target's span and class.
 - `kendex verify` warns, and exits 0, where a project ignores a path an installed agent declares as tracked output; `--strict` still fails the run on it.
@@ -192,7 +192,7 @@ change came from an outside contributor.
 - github: `pr-merge` merges past the merge queue where the queue is all its token bypasses and the change is not queue-only; `--auto --unless-admin` arms only a PR the queue takes; `--admin` is gone.
 - **Breaking:** review-gate's standard scripts refuse until `kendex.settings.toml` `[env]` sets `REVIEW_GATE_STANDARD_APP`, `REVIEW_GATE_STANDARD_ENVIRONMENT` and `REVIEW_GATE_STANDARD_SECRETS`.
 - orch: `approval-wait` takes its mode, `approval` or `off`, from the PR's review decision and its base's rulesets; an open thread holds an approved head at `comments`.
-- review-gate: `pr-watch.sh` reads GitHub's review state alone, with `disarmed` and `awaiting-stale` read from `reviewDecision`; `--heal`, `--no-evaluate` and the predicate kinds are gone.
+- **Breaking:** review-gate: `pr-watch.sh` reads GitHub's review state alone, with `disarmed` and `awaiting-stale` read from `reviewDecision`; `--heal`, `--no-evaluate` and the predicate kinds are gone.
 - **Breaking:** review-gate: `standard-required-approvals` and `standard-stale-dismissal` fail until the organization ruleset's pull-request rule requires 1 approval and dismisses stale approvals.
 - **Breaking:** review-gate: `standard-ruleset-source` fails an organization's required checks or merge queue (move both to repository rulesets) and an absent organization deletion or force-push rule.
 - **Breaking:** review-gate: `standard-required-contexts` fails until `[env]` sets `REVIEW_GATE_STANDARD_CONTEXTS` to the required checks; drop `Review gate` from the ruleset before the writer goes.
@@ -200,7 +200,7 @@ change came from an outside contributor.
 - `pre-commit-check`, with no armed git hooks, refuses only a line whose command is git commit: a note or message that mentions it mid-line passes, and so does a commit that xargs, env or sudo runs.
 - orch: a restack runs `DEV_VALIDATE_RANGE_CMD` on the rebased branch before its push, stops unarmed on a red run, and reports the run's minutes; with no range command it restacks as before.
 - **Breaking:** `skill-load-check` runs on Copilot CLI; the `workflow` bundle adds `skill-load-record`. A scope that names the check alone must add that hook, or every guarded Copilot call is refused.
-- lanes: every lane brief, on every harness, carries the unattended words, and a `--cmd` launch naming a harness is refused without them.
+- **Breaking:** lanes: every lane brief, on every harness, carries the unattended words, and a `--cmd` launch naming a harness is refused without them.
 - lanes: where kendex hooks run, a launched lane that ends a turn with no `lane-mail ask` or `notice` sent is held or reported to its overseer; the hooks never read the lane's words.
 - orch: `workflow-state prune` now keeps records for 5 days by default, not 14; set `ORCH_RECORD_RETENTION_DAYS` in `[env]` to keep another window.
 - orch: a lane asks Copilot once to re-review a head that moved since Copilot last read it, sends the overseer its answers on a head Copilot already read, and the status report counts each outcome.
@@ -214,7 +214,7 @@ change came from an outside contributor.
 
 ### Removed
 
-- orch: an `ORCH_OVERSEER_PREFERENCE` tier rank is refused; write the model the rank named, so `claude:1:high` becomes `claude:fable:high`.
+- **Breaking:** orch: an `ORCH_OVERSEER_PREFERENCE` tier rank is refused; write the model the rank named, so `claude:1:high` becomes `claude:fable:high`.
 - orch removes the custom review gate modes and their review, approval and check settings.
 
 ### Fixed

@@ -2,7 +2,7 @@
 # What a changelog IS to this family: where its two scopes live, and the
 # grammars each is judged by — what a fragment is, what an entry measures,
 # where the record's [Unreleased] section starts and stops, and which release
-# entries name a break. Kept apart
+# entries name a break or an addition. Kept apart
 # from the scans that run them, and shared, so the changelog-entries check and
 # the commit-msg lane cannot come to different answers about the same repo.
 #
@@ -186,8 +186,15 @@ gg_is_section() { # NAME — 0 when NAME is exactly one of the sections
 # The parser emits the pending heading line, section heading lines, and end
 # line for collation. A missing section, duplicate section, or unclosed fence
 # is a refusal. The collator uses these boundaries without another search.
+#
+# entry_query=1 is the version check's read instead: one "KIND<TAB>line" row
+# per release entry it judges, in file order. KIND is breaking for an item
+# opening with a named call-out, and added for an item under the release's
+# `### Added` heading, a heading only a level-2 record carries. With
+# whole_entry=1 the input is one fragment, whose entry_section names its
+# directory.
 GG_UNRELEASED_AWK='
-BEGIN { if (!release_level) release_level = 2; if (whole_entry) inside = 1 }
+BEGIN { if (!release_level) release_level = 2 }
 function named_breaking(l) { return l ~ /^- \*\*Breaking:\*\*[ \t]+[^ \t]/ }
 function lead(l,   i) { i = 0; while (i < 3 && substr(l, i + 1, 1) == " ") i++; return i }
 function heading_level(l,   i, n, c) {
@@ -206,7 +213,14 @@ function heading_text(l,   i, n, t) {
 }
 {
   line = $0; sub(/\r$/, "", line)
-  if (whole_entry) { if (named_breaking(line)) breaking = 1; next }
+  if (whole_entry) {
+    # A fragment is one list item, so its first non-blank line is the entry.
+    if (opened || line !~ /[^ \t]/) next
+    opened = 1
+    if (named_breaking(line)) printf "breaking\t%s\n", line
+    if (entry_section == "added") printf "added\t%s\n", line
+    next
+  }
   i = lead(line)
   c = substr(line, i + 1, 1)
   run = 0
@@ -220,16 +234,19 @@ function heading_text(l,   i, n, t) {
   lvl = heading_level(line)
   # The version check reads the same headings and fences as collation. Its
   # query accepts a pending section or the section a release just renamed.
-  if (breaking_query) {
-    if (!whole_entry && lvl > 0 && lvl <= release_level) {
+  if (entry_query) {
+    if (lvl > 0 && lvl <= release_level) {
       text = tolower(heading_text(line))
       pending = (release_level == 2 ? "[unreleased]" : "unreleased")
       released = (release_level == 2 ? "[" release_version "]" : release_version)
       if (lvl == release_level && text != pending) releases++
       inside = (lvl == release_level && (text == pending || (releases == 1 &&
         (text == released || (release_level == 2 && release_version != "" && index(text, released " - ") == 1)))))
-    }
-    if (inside && named_breaking(line)) breaking = 1
+      part = ""
+    } else if (release_level == 2 && lvl == 3) part = tolower(heading_text(line))
+    if (!inside) next
+    if (named_breaking(line)) printf "breaking\t%s\n", line
+    if (part == "added" && line ~ /^- /) printf "added\t%s\n", line
     next
   }
   if (lvl == 1 || lvl == 2) {
@@ -245,7 +262,7 @@ function heading_text(l,   i, n, t) {
   if (lvl == 3) printf "section\t%d\t%s\n", NR, heading_text(line)
 }
 END {
-  if (breaking_query) { if (fence != "") exit 3; print breaking + 0; exit }
+  if (entry_query) { if (fence != "") exit 3; exit }
   # A body that bailed lands here too, and its status is the one to keep.
   if (rc) exit rc
   # The duplicate count outranks a later unclosed fence, as the former

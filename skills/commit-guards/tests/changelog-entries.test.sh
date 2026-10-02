@@ -408,40 +408,56 @@ run_rows \
   "a refusal names the hostile path the same way, on its own line|fx_hostile_stray|||rc=1 $(stray "\$'changelog.d/fixed/KEN\\n1\\EX\\t'");$(summary 1 0)" \
   "a pattern carrying ESC that matches nothing is a clean pass on one line, the byte scrubbed|fx_hostile_pattern|$(printf 'COMMIT_GUARDS_CHANGELOG_PATHS=no\033match.md')||rc=0 changelog-entries: no-matches=no?match.md"
 
-echo "=== configured major bumps need named Breaking evidence for their own release ==="
+echo "=== a configured version bump matches its release's entries ==="
 # npm version and app release edits stage JSON versions. The record field is
 # the release author's pending or renamed section; each row owns its repository.
-# The unnamed-major row is the must-fail control for the new production rule.
+# The expected field is an exit status or the refusal key; a minor or patch
+# refusal's preview line is the first offending entry, and every fixture spells
+# its Added entry as ADD and its Breaking one as BREAK. The fragment section is
+# the last field, changed when empty.
 BREAK='- **Breaking:** Rename the mode setting; replace mode with profile.'
+ADD='- Add a profile setting.'
 for row in \
-  "major-unnamed|app.json|1.9.0|2.0.0|||||1" \
+  "major-unnamed|app.json|1.9.0|2.0.0|||||major-breaking" \
   "major-named|app.json|1.9.0|2.0.0|$BREAK||||0" \
-  "major-empty-callout|app.json|1.9.0|2.0.0|- **Breaking:**   ||||1" \
-  "major-inline-mention|app.json|1.9.0|2.0.0|- Read **Breaking:** in the guide.||||1" \
+  "major-empty-callout|app.json|1.9.0|2.0.0|- **Breaking:**   ||||major-breaking" \
+  "major-inline-mention|app.json|1.9.0|2.0.0|- Read **Breaking:** in the guide.||||major-breaking" \
   "patch|app.json|1.9.0|1.9.1|||||0" \
   "minor|app.json|1.9.0|1.10.0|||||0" \
+  "minor-breaking|app.json|1.9.0|1.10.0|$BREAK||||minor-breaking" \
+  "minor-added|app.json|1.9.0|1.10.0|$ADD||||0|added" \
+  "patch-added|app.json|1.9.0|1.9.1|$ADD||||patch-added|added" \
+  "patch-breaking|app.json|1.9.0|1.9.1|$BREAK||||patch-breaking" \
+  "patch-fix-only|app.json|1.9.0|1.9.1|- Fix a typo.||||0|fixed" \
+  "patch-changed|app.json|1.9.0|1.9.1|- Change the default profile.||||0" \
+  "patch-record-added|app.json|1.9.0|1.9.1||CHANGELOG.md|## [Unreleased]\n\n### Added\n\n$ADD\n\n### Fixed\n\n- Fix a typo.\n||patch-added" \
+  "patch-record-fixed|app.json|1.9.0|1.9.1||CHANGELOG.md|## [Unreleased]\n\n### Fixed\n\n- Fix a typo.\n\n## [1.9.0] - 2026-09-01\n\n### Added\n\n$ADD\n||0" \
+  "suffix-only|app.json|1.9.1-rc.1|1.9.1|$ADD||||0|added" \
+  "suffix-before-wider-patch|app.json|1.9.9-rc.1|1.9.10|$ADD||||patch-added|added" \
+  "zero-patch-added|app.json|0.9.0|0.9.1|$ADD||||0|added" \
+  "package-minor-breaking|packages/a/package.json|1.9.0|1.10.0||packages/a/CHANGELOG.md|### Unreleased\n\n$BREAK\n||minor-breaking" \
   "downgrade|app.json|2.0.0|1.9.0|||||0" \
-  "large-major|app.json|9223372036854775808.0.0|9223372036854775809.0.0|||||1" \
-  "prerelease-major|app.json|1.9.0|2.0.0-rc.1+build.2|||||1" \
+  "large-major|app.json|9223372036854775808.0.0|9223372036854775809.0.0|||||major-breaking" \
+  "prerelease-major|app.json|1.9.0|2.0.0-rc.1+build.2|||||major-breaking" \
   "initial|app.json||2.0.0|||||0" \
   "invalid-new|app.json|1.9.0|2.0.0junk|||||2" \
   "invalid-old|app.json|bad|2.0.0|||||2" \
   "collated|app.json|1.9.0|2.0.0||CHANGELOG.md|## [Unreleased]\n\n### Changed\n\n$BREAK\n||0" \
   "released|app.json|1.9.0|2.0.0||CHANGELOG.md|## [Unreleased]\n\n## [2.0.0] - 2026-09-30\n\n### Changed\n\n$BREAK\n||0" \
-  "historic|app.json|1.9.0|2.0.0||CHANGELOG.md|## [Unreleased]\n\n## [1.0.0] - 2026-01-01\n\n$BREAK\n||1" \
-  "historic-reused-number|app.json|1.9.0|2.0.0||CHANGELOG.md|## [Unreleased]\n\n## [1.9.0] - 2026-09-01\n\n## [2.0.0] - 2025-01-01\n\n$BREAK\n||1" \
-  "fenced|app.json|1.9.0|2.0.0||CHANGELOG.md|## [Unreleased]\n\n\140\140\140md\n$BREAK\n\140\140\140\n||1" \
+  "historic|app.json|1.9.0|2.0.0||CHANGELOG.md|## [Unreleased]\n\n## [1.0.0] - 2026-01-01\n\n$BREAK\n||major-breaking" \
+  "historic-reused-number|app.json|1.9.0|2.0.0||CHANGELOG.md|## [Unreleased]\n\n## [1.9.0] - 2026-09-01\n\n## [2.0.0] - 2025-01-01\n\n$BREAK\n||major-breaking" \
+  "fenced|app.json|1.9.0|2.0.0||CHANGELOG.md|## [Unreleased]\n\n\140\140\140md\n$BREAK\n\140\140\140\n||major-breaking" \
   "unclosed-fence|app.json|1.9.0|2.0.0||CHANGELOG.md|## [Unreleased]\n\n\140\140\140md\n$BREAK\n||fence" \
-  "package-unnamed|packages/a/package.json|1.9.0|2.0.0||packages/a/CHANGELOG.md|### Unreleased\n\n- Fix a typo.\n||1" \
+  "package-unnamed|packages/a/package.json|1.9.0|2.0.0||packages/a/CHANGELOG.md|### Unreleased\n\n- Fix a typo.\n||major-breaking" \
   "package-named|packages/a/package.json|1.9.0|2.0.0||packages/a/CHANGELOG.md|### Unreleased\n\n$BREAK\n||0" \
   "package-released|packages/a/package.json|1.9.0|2.0.0||packages/a/CHANGELOG.md|### 2.0.0\n\n$BREAK\n\n### 1.9.0\n||0" \
   "package-root|package.json|1.9.0|2.0.0||CHANGELOG.md|### Unreleased\n\n$BREAK\n||0" \
-  "package-historic|packages/a/package.json|1.9.0|2.0.0||packages/a/CHANGELOG.md|### Unreleased\n\n### 1.9.0\n\n$BREAK\n||1" \
-  "package-other|packages/a/package.json|1.9.0|2.0.0|$BREAK|packages/b/CHANGELOG.md|### Unreleased\n\n$BREAK\n||1" \
-  "committed-base|app.json|1.9.0|2.0.0||||--base base|1" \
-  "committed-against-unnamed|app.json|1.9.0|2.0.0||||--against base|1" \
+  "package-historic|packages/a/package.json|1.9.0|2.0.0||packages/a/CHANGELOG.md|### Unreleased\n\n### 1.9.0\n\n$BREAK\n||major-breaking" \
+  "package-other|packages/a/package.json|1.9.0|2.0.0|$BREAK|packages/b/CHANGELOG.md|### Unreleased\n\n$BREAK\n||major-breaking" \
+  "committed-base|app.json|1.9.0|2.0.0||||--base base|major-breaking" \
+  "committed-against-unnamed|app.json|1.9.0|2.0.0||||--against base|major-breaking" \
   "committed-against|app.json|1.9.0|2.0.0|$BREAK|||--against base|0"; do
-  IFS='|' read -r label manifest prior next fragment record_path record args expected <<<"$row"
+  IFS='|' read -r label manifest prior next fragment record_path record args expected section <<<"$row"
   repo "version-$label"
   if [ -n "$prior" ]; then
     put "$manifest" "{\"version\":\"$prior\"}\n"
@@ -450,7 +466,7 @@ for row in \
     git -C "$R" tag base
   fi
   put "$manifest" "{\"version\":\"$next\"}\n"
-  [ -z "$fragment" ] || put changelog.d/changed/break.md "$fragment\n"
+  [ -z "$fragment" ] || put "changelog.d/${section:-changed}/entry.md" "$fragment\n"
   [ -z "$record_path" ] || put "$record_path" "$record"
   stage
   [ -z "$args" ] || git -C "$R" commit -qm release
@@ -458,12 +474,80 @@ for row in \
   count=0
   if [ -n "$fragment" ]; then report="$(within 1)"; count=1; fi
   case "$expected" in
-    1) report="${ERR}major-breaking=$manifest:$prior:$next;$(summary 1 "$count")" ;;
+    major-breaking) expected=1; report="${ERR}major-breaking=$manifest:$prior:$next;$(summary 1 "$count")" ;;
+    *-breaking) report="${ERR}$expected=$manifest:$prior:$next;${ERR}entry-preview=$BREAK;$(summary 1 "$count")"; expected=1 ;;
+    patch-added) expected=1; report="${ERR}patch-added=$manifest:$prior:$next;${ERR}entry-preview=$ADD;$(summary 1 "$count")" ;;
     2) report="${ERR}version-read=$manifest" ;;
     fence) expected=2; report="${ERR}version-record-fence=$record_path" ;;
   esac
   assert_eq "$label" "rc=$expected $report" "$(run 'COMMIT_GUARDS_CHANGELOG_VERSION_PATHS=app.json packages/*/package.json package.json' "$args")"
 done
+
+# The released record's Breaking entries, copied from CHANGELOG.md with one
+# unmarked Added entry each: the entry query reports every marked item of the
+# first release section, 3 in 1.4.0 and 10 in 1.3.0, and no unmarked one.
+released_breaking() { # VERSION FILE — the number of breaking rows the query reports
+  (
+    # shellcheck source=../scripts/lib/common.sh
+    . "$SKILL_DIR/scripts/lib/common.sh"
+    # shellcheck source=../scripts/lib/changelog-grammar.sh
+    . "$SKILL_DIR/scripts/lib/changelog-grammar.sh"
+    LC_ALL=C awk -v entry_query=1 -v release_version="$1" "$GG_UNRELEASED_AWK" <"$2"
+  ) | LC_ALL=C awk -F '\t' '$1 == "breaking" { n++ } END { print n + 0 }'
+}
+cat >"$TMP/released-1.4.0.md" <<'EOF'
+## [Unreleased]
+
+## [1.4.0] - 2026-10-01
+
+### Added
+
+- Add the `swift` agent for SwiftUI and UIKit views, Swift app code, and Xcode and Swift Package Manager builds and tests across all supported agent harnesses.
+
+### Changed
+
+- **Breaking:** Update subscriptions and routes: generalist to maintainer; engineer to runtime. Frontend covers React/QML/JavaScript UI; runtime adds non-UI Go. Rust excludes Iced views.
+
+### Removed
+
+- **Breaking:** Pi fleet lanes refuse pi-hooks without mail wake. Repair the reported root and scope on the lane machine per the refusal; retry hosted launches with `--relaunch`.
+- **Breaking:** GitHub approvals and thread resolution replace the custom review status. Remove the retired status from required checks before consumer refresh removes its workflow.
+
+### Fixed
+
+### Security
+EOF
+cat >"$TMP/released-1.3.0.md" <<'EOF'
+## [Unreleased]
+
+## [1.3.0] - 2026-09-30
+
+### Added
+
+- orch: an `ORCH_OVERSEER_PREFERENCE` entry may name Copilot CLI as `copilot:MODEL:EFFORT`; the overseer opens on the Copilot account `lanes` picks, with that model and effort.
+
+### Changed
+
+- **Breaking:** oversee: after upgrading, run `oversee register` in the overseer's pane; until then no session reads its mail, `oversee launch --predecessor` refuses it, and a watch start drops its launch identity.
+- **Breaking:** harness-ci reads every change as queue-only until the base commit's `[env]` sets `HARNESS_CI_QUEUE_PATHS`; set it empty for none.
+- **Breaking:** review-gate's standard scripts refuse until `kendex.settings.toml` `[env]` sets `REVIEW_GATE_STANDARD_APP`, `REVIEW_GATE_STANDARD_ENVIRONMENT` and `REVIEW_GATE_STANDARD_SECRETS`.
+- **Breaking:** review-gate: `pr-watch.sh` reads GitHub's review state alone, with `disarmed` and `awaiting-stale` read from `reviewDecision`; `--heal`, `--no-evaluate` and the predicate kinds are gone.
+- **Breaking:** review-gate: `standard-required-approvals` and `standard-stale-dismissal` fail until the organization ruleset's pull-request rule requires 1 approval and dismisses stale approvals.
+- **Breaking:** review-gate: `standard-ruleset-source` fails an organization's required checks or merge queue (move both to repository rulesets) and an absent organization deletion or force-push rule.
+- **Breaking:** review-gate: `standard-required-contexts` fails until `[env]` sets `REVIEW_GATE_STANDARD_CONTEXTS` to the required checks; drop `Review gate` from the ruleset before the writer goes.
+- **Breaking:** `skill-load-check` runs on Copilot CLI; the `workflow` bundle adds `skill-load-record`. A scope that names the check alone must add that hook, or every guarded Copilot call is refused.
+- **Breaking:** lanes: every lane brief, on every harness, carries the unattended words, and a `--cmd` launch naming a harness is refused without them.
+
+### Removed
+
+- **Breaking:** orch: an `ORCH_OVERSEER_PREFERENCE` tier rank is refused; write the model the rank named, so `claude:1:high` becomes `claude:fable:high`.
+
+### Fixed
+
+### Security
+EOF
+assert_eq "the released 1.4.0 section holds 3 Breaking entries" 3 "$(released_breaking 1.4.0 "$TMP/released-1.4.0.md")"
+assert_eq "the released 1.3.0 section holds 10 Breaking entries" 10 "$(released_breaking 1.3.0 "$TMP/released-1.3.0.md")"
 
 # No version-file configuration means no version policy for a catalog consumer.
 repo version-off

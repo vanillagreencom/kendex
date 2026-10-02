@@ -2,6 +2,10 @@
 
 The procedure is the `app-deploy` skill (`.agents/skills/app-deploy/SKILL.md`): collate the changelog from a clean tree under the collate declaration, bump the versions, commit under that declaration, tag, review the draft, publish. `.github/workflows/release.yml` runs on the tag push: one native runner per target, the tag checked against the version the built CLI reports, a full release published as a draft and a pre-release outright. This page holds what neither states.
 
+## Choosing the version
+
+The bump follows [the release standard](../changelog.d/README.md#release-standard), and the `changelog-entries` commit lane refuses a version bump whose release entries break it. A major release needs the owner's approval before its version is bumped.
+
 ## What a release carries
 
 - `kendex-<target>[.exe]` and its `.sig`: the command, which `kendex update` installs only as a pair; a lane that signed nothing fails the tag.

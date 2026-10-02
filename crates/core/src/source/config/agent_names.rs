@@ -1,6 +1,6 @@
 //! Agent-name compatibility shared by catalog lookup and consumer planning.
-//! Retain the old reads through 1.4.x; removal cannot precede 1.5.0 under
-//! changelog.d/README.md's one-minor-release compatibility policy.
+//! Retain the old reads until the next major release; changelog.d/README.md's
+//! release standard holds a removal that breaks a consumer to a major.
 
 use std::collections::{BTreeMap, BTreeSet};
 

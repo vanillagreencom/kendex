@@ -1,0 +1,1 @@
+- Release checks refuse, from 1.0, a patch version bump whose release holds an Added or Breaking entry and a minor bump whose release holds a Breaking entry, naming the first such entry.
