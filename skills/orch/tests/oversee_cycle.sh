@@ -564,7 +564,9 @@ recorded-again|m:1 m:2 m:3 m:3|
 fourth|m:1 m:2 m:3 m:4|
 causes|g:1 w:2 g:3|repeat-miss phase=gate_green items=KEN-1,KEN-2,KEN-3 causes=thread_fix,paused,thread_fix
 ci-work|cw:1 cw:2 cw:3|
-ci-slow|cw:1 cc:2 cc:3 cc:4|repeat-miss phase=ci_green items=KEN-2,KEN-3,KEN-4 causes=ci,ci,ci'
+ci-slow|cw:1 cc:2 cc:3 cc:4|repeat-miss phase=ci_green items=KEN-2,KEN-3,KEN-4 causes=ci,ci,ci
+ci-work-after|cc:1 cc:2 cc:3 cw:4|
+ci-recounted|cc:1 cc:2 cw:3 cc:3|repeat-miss phase=ci_green items=KEN-1,KEN-2,KEN-3 causes=ci,ci,ci'
 while IFS='|' read -r name sequence want; do
   assert_eq "$(repeat_row "repeat-$name" "$sequence")" "$want" "repeat bar, $name: $sequence"
 done <<<"$REPEAT_ROWS"

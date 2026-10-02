@@ -114,7 +114,7 @@
 # which is the bar for filing a CI or process issue in that repository;
 # causes names each item's cause in the order of items. A ci_green miss
 # counts toward the bar only where its cause is ci. A record that was
-# already a miss on that phase does not make it again.
+# already a counting miss on that phase does not make it again.
 #
 # rollup prints, and appends to the fleet log, one row per class with any
 # recorded lane, in the order of the target table, then unclassified; with no
@@ -463,7 +463,7 @@ if [[ -n "$rounds_unread" ]]; then
 fi
 
 # The bar fires on the record that makes the third miss: one that was
-# already a miss on this phase, recorded again, makes nothing new.
+# already a counting miss on this phase, recorded again, makes nothing new.
 # One conjunct per line: this record is a miss that counts, as the header
 # states, on a named phase, that it was not already; the fleet's records that
 # are misses that count, on that phase, are exactly three.
