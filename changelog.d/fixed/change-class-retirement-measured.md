@@ -1,1 +1,1 @@
-- A consumer refresh that retires a rendered file now opens its pull request for review instead of stopping: change-class answers it as a measured `standard` class.
+- A consumer refresh that retires an agent, a skill file or a whole registry now opens its pull request for review instead of stopping; a hook retirement still stops until an engine fix ships.
