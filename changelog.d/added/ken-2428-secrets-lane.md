@@ -1,1 +1,1 @@
-- commit-guards runs a default `secrets` lane: gitleaks refuses a credential any commit adds, naming file, line and rule id, never the value. Missing gitleaks is a gap notice outside CI.
+- commit-guards runs a default `secrets` lane: gitleaks refuses a credential a commit adds, by file, line and rule id, never the value. No gitleaks is a gap notice, except on a CI range or full scan.

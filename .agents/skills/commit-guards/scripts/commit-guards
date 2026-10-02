@@ -12,7 +12,8 @@
 # --skip-unscoped withholds the checks the run's scope leaves nothing for,
 # rather than folding a clean count over content they never opened. A check is
 # that only when this run hands it no scope AND its own bare default would
-# open no file: a lane given --base or --against has a scope and runs.
+# open no file: a lane given --base or --against has a scope and runs. It
+# withholds PUSH_WITHHELD_CHECKS too.
 #
 # commit-msg reads a message, so it never runs in the batch — the commit-msg
 # hook invokes it directly. Batch aggregation fails closed: exit 2 if ANY
@@ -62,6 +63,8 @@ FULL_SCOPED_CHECKS="byte-ceiling py-names secrets"
 # instead — a range there would answer a smaller
 # question under the setting's name.
 RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries md-format md-refs py-names secrets"
+# Withheld by a --skip-unscoped run, the push hook's: CHECKS.md § secrets.
+PUSH_WITHHELD_CHECKS="secrets"
 
 usage() {
   gg_message usage "$GG_CHECK" "Command usage follows."
@@ -78,10 +81,10 @@ $FULL_SCOPED_CHECKS get --all, the rest read the index by design.
 --against REF hands them --against REF (what the change does to REF's tree).
 --staged is passed to: $STAGED_SCOPED_CHECKS.
 --skip-unscoped is for a caller whose scope stages nothing: it withholds every
-check that would then open no file, naming each one. That is a check this run
-hands no scope whose configured scope selects from the staged diff; one given
-a range, and one configured to sweep the tree, opens files and runs. It is a
-contradiction under --staged, which is the scope those checks read.
+check that would then open no file, and $PUSH_WITHHELD_CHECKS, naming each one.
+The first is a check this run hands no scope whose configured scope selects
+from the staged diff; one given a range, or configured to sweep the tree, runs.
+It is a contradiction under --staged, the scope those checks read.
 Those checks apply their own commit scope. md-refs checks all configured
 documents for broken references, including unchanged callers.
 commit-msg reads a message file/stdin and only runs by name.
@@ -258,35 +261,32 @@ scope_for() { # CHECK
   esac
 }
 
+withheld() { # CHECK — 0 for a push-withheld lane, or one handed no scope that reads the staged diff
+  case " $PUSH_WITHHELD_CHECKS " in *" $1 "*) return 0 ;; esac
+  scope_for "$1"
+  [ "${#SCOPE[@]}" -eq 0 ] && [ "$MD_BARE_SCOPE" = touched ] && defers_to_md_selector "$1"
+}
+
 if [ "$SKIP_UNSCOPED" -eq 1 ]; then
-  # Resolved up front under this flag, rather than left to first need: an
-  # invalid value is refused in the selector, and withholding a lane before it
-  # runs means its own validation never fires. Under `all` the lane sweeps the
-  # tree and needs nothing staged, so this caller reaches it perfectly well
-  # and withholding it would drop a check the project explicitly asked for.
+  # Resolved up front: an invalid value is refused in the selector, and a lane
+  # withheld before it runs never reaches its own validation. Under `all` a
+  # markdown lane sweeps the tree and needs nothing staged, so it runs.
   md_bare_scope
-fi
-if [ "$SKIP_UNSCOPED" -eq 1 ] && [ "$MD_BARE_SCOPE" = touched ]; then
   KEPT=""
   WITHHELD=""
   for c in $CHECKS; do
-    scope_for "$c"
-    if [ "${#SCOPE[@]}" -ne 0 ]; then
-      KEPT="${KEPT:+$KEPT }$c"
-      continue
-    fi
-    if defers_to_md_selector "$c"; then
+    if withheld "$c"; then
       WITHHELD="${WITHHELD:+$WITHHELD }$c"
-      gg_message unscoped "$c" "This check selects its files from the staged diff under the configured scope, and this run was told nothing is staged, so it would open no file. Withheld rather than counted clean."
-      continue
+      gg_message unscoped "$c" "This run withholds the check rather than count it clean: handed no scope it reads only the staged diff and nothing is staged, or it is a lane the push hook never runs."
+    else
+      KEPT="${KEPT:+$KEPT }$c"
     fi
-    KEPT="${KEPT:+$KEPT }$c"
   done
   CHECKS="$KEPT"
   case "$CHECKS" in
     *[!\ ]*) ;;
     *)
-      gg_message withheld-all "$WITHHELD" "Every enabled check selects its files from the staged diff under the configured scope, so this run has nothing for any of them to open."
+      gg_message withheld-all "$WITHHELD" "Every enabled check is withheld, so this run has nothing for any of them to open."
       exit 0
       ;;
   esac

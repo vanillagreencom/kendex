@@ -149,6 +149,8 @@ echo "=== a scope that stages nothing withholds the checks that read only that =
 # read off their own scripts, so this row moves if the library does.
 MD_ONLY=COMMIT_GUARDS_CHECKS=md-format
 MD_AND_MARKERS='COMMIT_GUARDS_CHECKS=todo-ban md-format'
+SECRETS_ONLY=COMMIT_GUARDS_CHECKS=secrets
+SECRETS_WITHHELD="rc=0 commit-guards: unscoped=secrets;commit-guards: withheld-all=secrets"
 run_rows \
   "must-fail: without the flag the batch reports a document it never opened as clean|fx_committed_md md-folded|$MD_ONLY||rc=0 commit-guards: step=md-format;$(ok md-format)" \
   "control: the document really is malformed, which --all over the same tree finds|fx_committed_md md-really|$MD_ONLY|md-format --all|rc=1" \
@@ -156,26 +158,24 @@ run_rows \
   "the checks the scope does reach still run, and the verdict names only those|fx_committed_md md-partial|$MD_AND_MARKERS|all --skip-unscoped|rc=0 commit-guards: unscoped=md-format;commit-guards: step=todo-ban;$(ok todo-ban)" \
   "--skip-unscoped under --staged is a contradiction, since that is the scope those checks read|fx_committed_md md-contradiction|$MD_ONLY|all --staged --skip-unscoped|rc=2 ${ERR}scope-contradiction=--staged,--skip-unscoped" \
   "a project that configured the lane to sweep the tree gets it run, since that scope stages nothing either|fx_committed_md md-scope-all|$MD_ONLY,COMMIT_GUARDS_MD_SCOPE=all|all --skip-unscoped|rc=1 commit-guards: step=md-format;$VIOLATIONS" \
-  "an unusable scope setting is the configuration error it is, not a lane quietly withheld|fx_committed_md md-scope-bogus|$MD_ONLY,COMMIT_GUARDS_MD_SCOPE=bogus|all --skip-unscoped|rc=2 ${ERR}scope=bogus"
+  "an unusable scope setting is the configuration error it is, not a lane quietly withheld|fx_committed_md md-scope-bogus|$MD_ONLY,COMMIT_GUARDS_MD_SCOPE=bogus|all --skip-unscoped|rc=2 ${ERR}scope=bogus" \
+  "secrets takes no range from a caller that stages nothing, the push hook, and is withheld|grown secrets-range|$SECRETS_ONLY|all --skip-unscoped --base base|$SECRETS_WITHHELD" \
+  "nor the whole tree|grown secrets-all|$SECRETS_ONLY|all --skip-unscoped|$SECRETS_WITHHELD"
 
 # The must-fail control for that pair: a copy of the dispatcher that withholds
 # on the lane merely deferring to the shared selector, which is what deciding
 # from the library rather than from the configured scope comes to. The project
 # asked for the sweep and the copy withholds it anyway.
-INFERRED="$TMP/.inferred"
-mkdir -p "$INFERRED"
-cp -R "$SKILL_DIR/scripts" "$INFERRED/scripts"
-INFERRED_GG="$INFERRED/scripts/commit-guards"
-INFERRED_BEFORE="$(cat -- "$INFERRED_GG")"
-sed -i.bak 's#if \[ "$SKIP_UNSCOPED" -eq 1 \] && \[ "$MD_BARE_SCOPE" = touched \]; then#if [ "$SKIP_UNSCOPED" -eq 1 ]; then#' \
-  "$INFERRED_GG"
-rm -f -- "$INFERRED_GG.bak"
-assert_eq "the inferred-derivation edit took" "rewritten" \
-  "$(if [ "$INFERRED_BEFORE" = "$(cat -- "$INFERRED_GG")" ]; then echo unchanged; else echo rewritten; fi)"
+gg_mutant INFERRED_GG commit-guards '[ "$MD_BARE_SCOPE" = touched ] && defers_to_md_selector "$1"' 'defers_to_md_selector "$1"'
 fx_committed_md md-scope-all-inferred
 assert_eq "must-fail: deciding from the library withholds the sweep the project asked for" \
   "rc=0 commit-guards: unscoped=md-format;commit-guards: withheld-all=md-format" \
   "$(GG="$INFERRED_GG" batch "$MD_ONLY,COMMIT_GUARDS_MD_SCOPE=all" "all --skip-unscoped")"
+gg_mutant PUSHED_GG commit-guards 'PUSH_WITHHELD_CHECKS="secrets"' 'PUSH_WITHHELD_CHECKS=""'
+grown secrets-pushed
+assert_eq "must-fail: a batch that withholds nothing from the push hook hands secrets the range" \
+  "rc=0 commit-guards: step=secrets --base base;$(ok secrets)" \
+  "$(GG="$PUSHED_GG" batch "$SECRETS_ONLY" "all --skip-unscoped --base base")"
 
 echo "=== the batch runs the enabled checks in order and aggregates fail-closed ==="
 BC=COMMIT_GUARDS_BYTE_CEILING_KB

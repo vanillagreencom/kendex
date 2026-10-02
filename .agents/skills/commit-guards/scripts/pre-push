@@ -42,15 +42,15 @@ judged. COMMIT_GUARDS_CHECKS decides the batch lanes, less the ones this
 scope leaves nothing for: a check this run hands no scope, whose own bare
 default selects from the staged diff, opens no file here, since nothing is
 staged by the time judging starts, so the batch withholds it and names it
-rather than counting it clean. Where a range scope can be established the
+rather than counting it clean. It withholds secrets under every scope, for
+the reason CHECKS.md § secrets gives. Where a range scope can be established the
 markdown lanes take it under their default scope and judge what the branch
 changed, so a malformed document or a broken reference a replay carried in is
 caught; where none can be, the whole tree is the scope and those lanes are
 withheld, since that sweep is absolute rather than ratcheted and choosing it
 is COMMIT_GUARDS_MD_SCOPE=all, the project's call. A project that has chosen
 it keeps the sweep under every scope, a range included. Git passes the remote
-name
-and its URL as arguments and the ref lines
+name and its URL as arguments and the ref lines
 `<local-ref> <local-oid> <remote-ref> <remote-oid>` on stdin. Wire it through
 the installed shim: `install-git-hooks --repo <root>`.
 

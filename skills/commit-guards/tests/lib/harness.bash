@@ -57,3 +57,21 @@ unset GIT_TEMPLATE_DIR GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
   GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_AUTHOR_DATE \
   GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE \
   GIT_EDITOR GIT_PAGER GIT_CEILING_DIRECTORIES 2>/dev/null || true
+
+# A must-fail control's copy of the suite's scripts: SCRIPT, under
+# $SKILL_DIR/scripts, with FROM, which must match exactly one line, replaced
+# by TO. VAR gets the edited copy's path; the tracked file is never touched.
+gg_mutants=0
+gg_mutant() { # VAR SCRIPT FROM TO
+  local dir="$TMP/mutant-$gg_mutants" matches
+  gg_mutants=$((gg_mutants + 1))
+  cp -R -- "$SKILL_DIR/scripts" "$dir"
+  matches="$(FROM="$3" awk 'index($0, ENVIRON["FROM"]) { n++ } END { print n + 0 }' "$dir/$2")" || exit 2
+  [ "$matches" -eq 1 ] || { echo "harness: control on $2 matched $matches lines: $3" >&2; exit 2; }
+  FROM="$3" TO="$4" awk '{ i = index($0, ENVIRON["FROM"]); if (i) $0 = substr($0, 1, i - 1) ENVIRON["TO"] substr($0, i + length(ENVIRON["FROM"])); print }' \
+    "$dir/$2" >"$dir/$2.new" || exit 2
+  ! cmp -s -- "$dir/$2" "$dir/$2.new" || { echo "harness: control on $2 changed nothing: $3" >&2; exit 2; }
+  mv -- "$dir/$2.new" "$dir/$2"
+  chmod +x -- "$dir/$2"
+  eval "$1=\$dir/\$2"
+}
