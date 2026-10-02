@@ -7,6 +7,7 @@ readonly ISSUE_BLOCKED_BY_NODE_FIELDS='id type issue { id identifier title state
 readonly ISSUE_BLOCKS_FIELDS="relations { nodes { $ISSUE_BLOCKS_NODE_FIELDS } }"
 readonly ISSUE_BLOCKED_BY_FIELDS="inverseRelations { nodes { ${ISSUE_BLOCKED_BY_NODE_FIELDS} } }"
 readonly ISSUE_RELATION_FIELDS="$ISSUE_BLOCKS_FIELDS $ISSUE_BLOCKED_BY_FIELDS"
+readonly ISSUE_RELATION_PAGE_FIELDS="relations { pageInfo { hasNextPage endCursor } nodes { $ISSUE_BLOCKS_NODE_FIELDS } } inverseRelations { pageInfo { hasNextPage endCursor } nodes { $ISSUE_BLOCKED_BY_NODE_FIELDS } }"
 readonly ISSUE_RELATION_JQ='
 def issue_is_open: (.state.type | IN("completed", "canceled") | not);
 def issue_blocks_relations($relations): [($relations // [])[] | select(.type == "blocks")];

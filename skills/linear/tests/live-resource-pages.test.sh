@@ -25,6 +25,7 @@ cumulative|pages|(.issues.nodes | length == 4) and ([.issues.nodes[].description
 entity|entity|(.description | length == 180000) and (.labels.nodes | length == 2)
 nested|query|(.issue.labels.nodes | length == 2) and (.issue.labels.nodes[1].name | length == 180000)
 children|query|(.issue.children.nodes | length == 2) and (.issue.children.nodes[0].labels.nodes | length == 2) and (.issue.children.nodes[1].children.nodes | length == 2) and (.issue.children.nodes[1].children.nodes[1] | has("children") | not)
+children-recursive|query|(.issue.children.nodes | length == 2) and (.issue.children.nodes[1] | has("description") | not) and (.issue.children.nodes[1].children.nodes | length == 2) and (.issue.children.nodes[1].children.nodes[1] | has("children") | not)
 root-rows|query|(.issues.nodes | length == 2) and (.issues.nodes[1].description | length == 180000)
 create|query|.issueCreate.success == true and (.issueCreate.issue.description | length == 180000) and (.issueCreate.issue.labels.nodes | length == 2)
 update|query|.issueUpdate.success == true and (.issueUpdate.issue.description | length == 180000) and (.issueUpdate.issue.labels.nodes | length == 2)

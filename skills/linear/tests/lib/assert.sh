@@ -494,11 +494,12 @@ __assert_on_exit() {
 }
 
 # Exercise pages.sh with synthetic GraphQL replies and an explicit child env.
-# The dependency selects replies by owner and cursor, not by the function's
-# output. The suite supplies independent counts and field expectations.
+# The dependency selects replies by owner and cursor. Child continuation
+# replies carry only selected fields. The suite supplies independent counts.
 pages_case() {
-	local name="$1" mode="$2" limit=0 budget line hits=0
+	local name="$1" mode="$2" limit=0 budget line hits=0 child_mode=bundle
 	[[ "$name" != bounded ]] || limit=1
+	[[ "$name" != children-recursive ]] || child_mode=recursive
 	jq -cn --arg name "$name" '
 		def conn($rows; $more; $cursor): {nodes:$rows,pageInfo:{hasNextPage:$more,endCursor:$cursor}};
 		def issue($id; $size): {id:$id,identifier:"FIX-1",title:"synthetic",description:("s" * $size),
@@ -523,7 +524,7 @@ pages_case() {
 		elif $name == "root-rows" then
 			{initial:root([issue("first";180000),issue("second";180000)];false;null),replies:[]}
 		elif $name == "absent" then {initial:{issue:{id:"owner",description:"short"},project:null},replies:[]}
-		elif $name == "children" or $name == "children-failure" then
+		elif $name == "children" or $name == "children-recursive" or $name == "children-failure" then
 			{initial:{issue:(issue("parent";180000) | .children=conn([
 				issue("child-a";180000) | .labels=conn([{name:("n"*180000)}];true;"l1")];true;"ch1"))},
 			 replies:[labelReply("child-a"),
@@ -591,15 +592,28 @@ pages_step() {
 }
 fixture_data=$(cat -- "$fixture") || exit 1
 LINEAR_CHILD_DEPTH=2
-LINEAR_ISSUE_CHILD_MODE=bundle
+LINEAR_ISSUE_CHILD_MODE="$9"
 source "$8"
 graphql_request() {
     local query="$1" variables="$2" response
     jq -c --arg query "$query" '{query:$query,variables:.}' <<<"$variables" >>"$log" || return 1
-    response=$(jq -cs '.[0] as $vars | .[1] |
+    response=$(jq -cs --arg query "$query" '
+        def child($depth):
+            with_entries(select(.key as $key | $query | test("\\b" + $key + "\\b"))) |
+            if $depth <= 1 then del(.children)
+            elif has("children") then .children.nodes |= map(child($depth - 1))
+            else . end |
+            reduce ["relations", "inverseRelations"][] as $field (. ;
+                if $query | test("\\b" + $field + "(?:\\([^)]*\\))?\\s*\\{\\s*pageInfo\\b")
+                then . else del(.[$field].pageInfo) end);
+        .[0] as $vars | .[1] |
         if ($vars.after // null) == null then .initial
         else [.replies[] | select(.id == ($vars.id // null) and .after == $vars.after) | .response][0] end |
-        select(. != null)' <<<"$variables"$'\n'"$fixture_data") || return 1
+        select(. != null) |
+        if ($query | startswith("query ContinueConnection")) and ($query | test("\\bchildren\\(")) then
+            ($query | [scan("\\bchildren\\(")] | length) as $depth |
+            .issue |= {id, children} | .issue.children.nodes |= map(child($depth))
+        else . end' <<<"$variables"$'\n'"$fixture_data") || return 1
     if [[ -z "$response" ]]; then
         printf 'fixture: later page failed\n' >&2
         return 1
@@ -618,7 +632,7 @@ SUBJECT
 	: >"$PAGE_ROOT/requests"
 	PAGE_OUT=$(env -i PATH="$PATH" HOME="$PAGE_ROOT" bash "$PAGE_ROOT/subject" \
 		"$PAGE_ROOT/pages.sh" "$PAGE_ROOT/fixture.json" "$mode" "$limit" \
-		"$PAGE_ROOT/requests" "$budget" "$PAGE_ROOT/page-count" "$SKILL_DIR/scripts/lib/formatters.sh" \
+		"$PAGE_ROOT/requests" "$budget" "$PAGE_ROOT/page-count" "$SKILL_DIR/scripts/lib/formatters.sh" "$child_mode" \
 		2>"$PAGE_ROOT/error") && PAGE_RC=0 || PAGE_RC=$?
 	assert_file_lacks "$name: page walk budget" "$PAGE_ROOT/error" 'fixture: page-budget='
 }
