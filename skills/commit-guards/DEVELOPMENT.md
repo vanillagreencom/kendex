@@ -4,7 +4,7 @@ What a maintainer must not break. What each check fails: [CHECKS.md](CHECKS.md);
 
 ## One definition each
 
-- `scripts/commit-guards` is the dispatcher; `STAGED_SCOPED_CHECKS` names the checks the commit batch hands `--staged`, and `--skip-unscoped` withholds the ones a caller that stages nothing leaves nothing for, and `secrets` — which lanes defer to the shared markdown selector read off their own scripts, what that selector resolves to asked of `lib/md-scope.sh`.
+- `scripts/commit-guards` is the dispatcher; `STAGED_SCOPED_CHECKS` names the checks the commit batch hands `--staged`, and `--skip-unscoped` withholds the ones a caller that stages nothing leaves nothing for — which lanes defer to the shared markdown selector read off their own scripts, what that selector resolves to asked of `lib/md-scope.sh`. It also withholds `PUSH_WITHHELD_CHECKS`, which is `secrets`.
 - `scripts/lib/common.sh` holds the shared scan helpers, `gg_content_carriers` and `gg_grep_lane`. `scripts/lib/messages.sh` emits a stable key and value before the English explanation and owns the collection-error exit.
 - `scripts/lib/configured-paths.sh` holds a glob-list lane's list, excludes, matcher, index walk and `gg_note_skip`.
 - `scripts/lib/staged-lines.sh` is `gg_added_lines`, the lines the staged diff or a commit range adds to one path, off one pinned `-U0` diff.

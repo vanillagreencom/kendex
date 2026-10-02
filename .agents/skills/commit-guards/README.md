@@ -22,7 +22,7 @@ Requires Git, awk, jq and standard POSIX tools, plus ruff or pyflakes in a repos
 
 ## How it works
 
-You select checks in the project settings and install the Git hooks. When you commit, the pre-commit hook runs the enabled checks on the staged files. The commit-msg hook checks the commit message. When you push, the pre-push hook runs the document byte-ceiling check over the pushed tree and then the enabled checks over what the push would change on the remote. A check that reads only staged files is skipped there where the push gives it no range to read instead, because a push stages nothing, and the hook names each one it skipped. The credential scan runs at commit and in CI, never at push. A failed check stops the commit or the push and prints the problem.
+You select checks in the project settings and install the Git hooks. When you commit, the pre-commit hook runs the enabled checks on the staged files. The commit-msg hook checks the commit message. When you push, the pre-push hook runs the document byte-ceiling check over the pushed tree and then the enabled checks over what the push would change on the remote. A check that reads only staged files is skipped there where the push gives it no range to read instead, because a push stages nothing, and the hook names each one it skipped. The credential scan runs at commit and in CI, never at push: [CHECKS.md § secrets](CHECKS.md#secrets) says why and what that leaves to CI. A failed check stops the commit or the push and prints the problem.
 
 The push check is there because Git runs no hook when it replays a commit. A rebase or a cherry-pick can leave a branch in a state no commit hook ever saw.
 
