@@ -444,7 +444,8 @@ for variant in normal horizon; do
 done
 
 # Shipped direct posts and ignored parents can get their first reply offline.
-while read -r kind author excerpt; do
+# Ignored parents also carry the bot's rejection, adding a replies page.
+while read -r kind author reply_calls excerpt; do
   for variant in normal incomplete; do
     FIRST="$(sk_new_root "first-$kind-$variant")"
     sk_bind "$FIRST"
@@ -471,12 +472,12 @@ while read -r kind author excerpt; do
     FIRST_ID="$(jq -r --arg d "$FC:$FR" 'select(.delivery_id == $d) | .id' "$(sk_box "$FIRST")/to-lane.jsonl")"
     FIRST_CONTEXT="$(jq -s --arg d "$FC:$FR" --arg ts "$FP" --arg a "$author" --arg e "$excerpt" \
       '[.[] | select(.delivery_id == $d) | {text,thread_ts,parent}] == [{text:"First offline reply.",thread_ts:$ts,parent:{ts:$ts,author:$a,excerpt:$e}}]' "$(sk_box "$FIRST")/to-lane.jsonl")"
-    FIRST_LOGS="$(printf '%s\n' "$ERR" | grep -Fxc "slack: delivered=ts=$FR id=$FIRST_ID path=catch-up")"
+    FIRST_LOGS="$(printf '%s\n' "$OUT" | grep -Fxc "slack: delivered=ts=$FR id=$FIRST_ID path=catch-up")"
     RESULT="$FIRST_CONTEXT|$(sk_reactions "$FC" "$FR")|$FIRST_LOGS"
     if [ "$variant" = normal ]; then
       assert_eq "$RESULT" 'true|eyes|1' "$kind: first offline reply lands once with parent context, eyes and its ts/mailbox notice"
       assert_eq "$(printf '%s\n' "$PROBE" | jq -r '[.polls[] | [.[] | select(.method == "conversations.replies")] | length] | join("/")')" \
-        '0/5' "$kind: history caches reply-free parents without a parent fetch and reconnect reads each retained parent once"
+        "$reply_calls" "$kind: history caches reply-free parents without a parent fetch and reconnect reads every retained parent's pages"
       assert_eq "$(jq -s --arg ts "$FP" '[.[] | select(.t == "parent" and .ts == $ts)] | length' "$(sk_journal "$FIRST")")" \
         1 "$kind: the parent record persists once before narrowing history"
     else
@@ -486,10 +487,10 @@ while read -r kind author excerpt; do
     sk_bin_reset
   done
 done <<'ROWS'
-text bot Direct text topic.
-file bot Direct file topic.
-not-owner owner Ignored topic.
-no-text owner empty
+text bot 0/5 Direct text topic.
+file bot 0/5 Direct file topic.
+not-owner owner 0/6 Ignored topic.
+no-text owner 0/6 empty
 ROWS
 
 # A long Retry-After holds catch-up, not the socket reader.
@@ -507,8 +508,10 @@ assert_eq "$(envelope "$RC_CH" "$RT")" 'sent=1 unacked=0' '429 wait does not blo
 assert_eq "$(sk_state '[.pongs[] | select(. == "during-429")] | length')" 1 '429 wait does not block pong'
 landed "$RATE" "$RC_CH:$RT" >/dev/null
 RID="$(jq -r --arg d "$RC_CH:$RT" 'select(.delivery_id == $d) | .id' "$(sk_box "$RATE")/to-lane.jsonl")"
+# lane-mail appends before returning; eyes follows the flushed delivery notice.
+# Await that completion within the row's bound, before the next 60-second poll.
+assert_eq "$(awaited sk_reactions "$RC_CH" "$RT")" eyes 'catch-up marks delivery immediately'
 assert_eq "$(grep -Fc "slack: delivered=ts=$RT id=$RID path=catch-up" "$SK_TMP/relay.out")" 1 'catch-up logs its delivery once'
-assert_eq "$(sk_reactions "$RC_CH" "$RT")" eyes 'catch-up marks delivery immediately'
 sk_relay_stop
 sk_ctl /_test/faults-reset >/dev/null
 
