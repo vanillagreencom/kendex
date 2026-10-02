@@ -218,9 +218,10 @@ The long pass's events, checked and reported in this order:
                              A new pair is reported only when its newer run is
                              newer than the newest run the watch has read; with
                              no such run recorded, only when it is the newest
-                             completed run in the unfiltered run list. A page
-                             older than that prints refresh-stale on stderr and
-                             judges nothing.
+                             completed run in the unfiltered run list. A later
+                             attempt of a re-run is newer. A page older than
+                             that prints refresh-stale on stderr and judges
+                             nothing.
                              A repository without that workflow is skipped.
                              A failed read prints refresh-unread on stderr,
                              leaves the failure pair intact when the run list

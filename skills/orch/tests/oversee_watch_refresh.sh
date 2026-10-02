@@ -14,9 +14,10 @@ for run in 200 201 202 203 204 205 206 207 208 209 210; do
   printf 'Refresh\tRefresh consumer\t2026-09-30T08:00:00Z refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.$run.txt"
 done
 # NAME|NEWER RUN|OLDER RUN|PASS CAP|HEARTBEATS|REPORT|STALE NOTICE. A run is
-# ID:CONCLUSION, created at hour ID-190. GitHub lists the newest completed run
-# first; an absent run models fewer than two. A page older than the newest run
-# already read is stale, as is an empty page once a run has been read.
+# ID:CONCLUSION[:ATTEMPT], created at hour ID-190, attempt 1 unless named.
+# GitHub lists the newest completed run first; an absent run models fewer than
+# two. A page older than the newest run already read is stale, as is an empty
+# page once a run has been read. A re-run keeps its id and takes an attempt.
 for row in \
   'no-runs|absent|absent|1|1||' \
   'one-failure|201:failure|absent|1|1||' \
@@ -31,19 +32,19 @@ for row in \
   'new-pair-after-success|205:failure|204:failure|1|0|initial|' \
   'cancelled-run|206:cancelled|205:failure|1|1||' \
   'new-pair-after-cancel|208:failure|207:failure|1|0|initial|' \
-  'rerun-success|208:success|207:failure|1|1||' \
-  'pre-rerun-page|208:failure|207:failure|1|1||' \
+  'rerun-success|208:success:2|207:failure|1|1||' \
+  'pre-rerun-page|208:failure|207:failure|1|1||repo=owner/repo newest=208 read=208' \
   'pair-after-rerun|210:failure|209:failure|1|0|initial|'; do
   IFS='|' read -r name newer older loops heartbeats report stale <<<"$row"
   jq -cn --arg newer "$newer" --arg older "$older" '
     [$newer, $older] | map(select(. != "absent") | split(":")
-      | {databaseId: (.[0] | tonumber), conclusion: .[1]}
+      | {databaseId: (.[0] | tonumber), attempt: (.[2] // "1" | tonumber), conclusion: .[1]}
       | . + {createdAt: "2026-09-30T\(.databaseId - 190):00:00Z"})' > "$STUB_DIR/refresh.owner_repo.json"
   want=''
   [[ -z "$report" ]] \
     || want="EVENT refresh-failing owner/repo runs=2 last=${newer%%:*} since=2026-09-30T$(( ${older%%:*} - 190 )):00:00Z report=$report cause=refresh-error=read value=class"
   refresh_watch --max-loops "$loops"
-  LISTS="$(grep -c '^run list --repo owner/repo --workflow kendex-refresh.yml --status completed --limit 2 --json databaseId,conclusion,createdAt$' "$STUB_DIR/gh.calls" || true)"
+  LISTS="$(grep -c '^run list --repo owner/repo --workflow kendex-refresh.yml --status completed --limit 2 --json databaseId,attempt,conclusion,createdAt$' "$STUB_DIR/gh.calls" || true)"
   assert_eq "rc=$REFRESH_RC lists=$LISTS all=$REFRESH_ALL_LISTS heartbeats=$REFRESH_HEARTBEATS events=$REFRESH_EVENTS stale=$REFRESH_STALE" "rc=0 lists=1 all=0 heartbeats=$heartbeats events=$want stale=$stale" "$name" "$STUB_DIR/err"
 done
 
@@ -68,7 +69,7 @@ for row in \
   'unrecorded-list-invalid|{}|||1'; do
   IFS='|' read -r name all report stale notices <<<"$row"
   new_case "$name"
-  printf '[{"databaseId":202,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
+  printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
   printf 'refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.202.txt"
   if [[ "$all" == unread ]]; then
     printf 'HTTP 502: bad gateway\n' > "$STUB_DIR/refresh-all.owner_repo.err"
@@ -86,13 +87,13 @@ done
 # reads as a standing incident: the next pass of the same pair is quiet, and
 # the row takes the newest run.
 new_case refresh_unrecorded_row
-printf '[{"databaseId":202,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
+printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
 printf 'refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.202.txt"
 mkdir -p "$STATE_DIR"
 printf 'refresh-failing\towner/repo\t0|refresh-error=read value=class\n' > "$STATE_DIR/owner_repo__none"
 refresh_watch
 ROW="$(awk -F'\t' '$1 == "refresh-failing" { print $3 }' "$STATE_DIR/owner_repo__none")"
-assert_eq "rc=$REFRESH_RC all=$REFRESH_ALL_LISTS events=$REFRESH_EVENTS row=$ROW" "rc=0 all=1 events= row=202|2026-09-30T08:00:00Z|1|refresh-error=read value=class" "an unrecorded standing row continues its incident" "$STUB_DIR/err"
+assert_eq "rc=$REFRESH_RC all=$REFRESH_ALL_LISTS events=$REFRESH_EVENTS row=$ROW" "rc=0 all=1 events= row=202|2026-09-30T08:00:00Z|1|1|refresh-error=read value=class" "an unrecorded standing row continues its incident" "$STUB_DIR/err"
 
 # Each row is a GitHub read outcome. A failing dependency emits one notice
 # and neither ends the watch nor invents a successful refresh.
@@ -105,7 +106,7 @@ for row in \
   'no-diagnostic|text|unrelated failed-step output|0|unread'; do
   IFS='|' read -r name kind input notices cause <<<"$row"
   new_case "$name"
-  printf '[{"databaseId":202,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
+  printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
   case "$kind" in
     runs) printf '%s\n' "$input" > "$STUB_DIR/refresh.owner_repo.err" ;;
     json) printf '%s\n' "$input" > "$STUB_DIR/refresh.owner_repo.json" ;;
@@ -129,7 +130,7 @@ for row in \
   'workflow-list-invalid|{}|1|'; do
   IFS='|' read -r name workflows notices restored <<<"$row"
   new_case "$name"
-  printf '[{"databaseId":202,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
+  printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
   printf 'refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.202.txt"
   refresh_watch
   assert_eq "$REFRESH_EVENTS" "$EVENT" "$name starts with a standing pair" "$STUB_DIR/err"
@@ -147,7 +148,7 @@ for row in \
 done
 
 new_case refresh_repositories
-printf '[{"databaseId":202,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.other_repo.json"
+printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.other_repo.json"
 printf 'refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.202.txt"
 printf 'HTTP 502: bad gateway\n' > "$STUB_DIR/refresh.owner_repo.err"
 refresh_watch --repo owner/repo --repo other/repo
@@ -173,7 +174,7 @@ for mutation in \
   ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-mutant-$name/github"
   mutate_file "$MUTANT_WATCH" "$old" "$replacement"
   new_case "refresh_control_$name"
-  printf '[{"databaseId":202,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
+  printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
   printf 'refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.202.txt"
   WATCH_BIN="$MUTANT_WATCH" refresh_watch
   CONTROL_RC=0
@@ -186,7 +187,7 @@ GUARD_WATCH="$(mutant_scripts refresh-guard/orch oversee-watch)/oversee-watch" |
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-guard/github"
 mutate_file "$GUARD_WATCH" "          --jq '.workflows[].path' 2>\"\$errf\")\"" "          --jq '.workflows[].path' 2>\"\$errf\" || true)\""
 new_case refresh_guard_control
-printf '[{"databaseId":202,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
+printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
 printf 'refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.202.txt"
 refresh_watch
 printf 'HTTP 404: workflow kendex-refresh.yml not found on the default branch (https://api.github.com/repos/owner/repo/actions/workflows/kendex-refresh.yml)\n' > "$STUB_DIR/refresh.owner_repo.err"
@@ -203,9 +204,9 @@ assert_eq "watch=$REFRESH_RC oracle=$CONTROL_RC" 'watch=0 oracle=1' "control: th
 # state intact. The two-failures oracle must reject the delayed wake.
 WAKE_WATCH="$(mutant_scripts refresh-wake/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-wake/github"
-mutate_file "$WAKE_WATCH" '    rows="$(lane_row_set refresh-failing "$rows" "$repo" "$newest|$newest_at|$passes' '    PASS_EVENT=0; rows="$(lane_row_set refresh-failing "$rows" "$repo" "$newest|$newest_at|$passes'
+mutate_file "$WAKE_WATCH" '    rows="$(lane_row_set refresh-failing "$rows" "$repo" "$newest|$newest_at|$attempt|$passes' '    PASS_EVENT=0; rows="$(lane_row_set refresh-failing "$rows" "$repo" "$newest|$newest_at|$attempt|$passes'
 new_case refresh_wake_control
-printf '[{"databaseId":202,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
+printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
 printf 'refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.202.txt"
 WATCH_BIN="$WAKE_WATCH" refresh_watch --max-loops 2
 CONTROL_RC=0
@@ -218,7 +219,7 @@ REPO_WATCH="$(mutant_scripts refresh-repo/orch oversee-watch)/oversee-watch" || 
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-repo/github"
 mutate_file "$REPO_WATCH" 'log="$(gh run view "$newest" --repo "$repo" --log-failed' 'log="$(gh run view "$newest" --log-failed'
 new_case refresh_repo_control
-printf '[{"databaseId":202,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.other_repo.json"
+printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.other_repo.json"
 printf 'refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.202.txt"
 printf 'HTTP 502: bad gateway\n' > "$STUB_DIR/refresh.owner_repo.err"
 WATCH_BIN="$REPO_WATCH" refresh_watch --repo owner/repo --repo other/repo
@@ -233,21 +234,26 @@ refresh_rule_passes() {
   printf 'refresh-error=read value=class\n' > "$STUB_DIR/refresh-log.202.txt"
   case "$1" in
     record-stale)
-      printf '[{"databaseId":203,"conclusion":"success","createdAt":"2026-09-30T09:00:00Z"},{"databaseId":202,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
+      printf '[{"databaseId":203,"attempt":1,"conclusion":"success","createdAt":"2026-09-30T09:00:00Z"},{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
       refresh_watch
-      printf '[{"databaseId":202,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
+      printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
       refresh_watch ;;
+    rerun-attempt)
+      for newer in success:1 failure:2; do
+        printf '[{"databaseId":202,"attempt":%s,"conclusion":"%s","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' "${newer#*:}" "${newer%:*}" > "$STUB_DIR/refresh.owner_repo.json"
+        refresh_watch
+      done ;;
     rerun-page)
       for newer in failure success failure; do
-        printf '[{"databaseId":202,"conclusion":"%s","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' "$newer" > "$STUB_DIR/refresh.owner_repo.json"
+        printf '[{"databaseId":202,"attempt":1,"conclusion":"%s","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' "$newer" > "$STUB_DIR/refresh.owner_repo.json"
         refresh_watch
       done ;;
     unrecorded-stale)
-      printf '[{"databaseId":202,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
+      printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
       printf '[{"databaseId":204,"status":"completed"},{"databaseId":202,"status":"completed"}]\n' > "$STUB_DIR/refresh-all.owner_repo.json"
       refresh_watch ;;
     unrecorded-row)
-      printf '[{"databaseId":202,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
+      printf '[{"databaseId":202,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T08:00:00Z"},{"databaseId":201,"attempt":1,"conclusion":"failure","createdAt":"2026-09-30T07:00:00Z"}]\n' > "$STUB_DIR/refresh.owner_repo.json"
       mkdir -p "$STATE_DIR"
       printf 'refresh-failing\towner/repo\t0|refresh-error=read value=class\n' > "$STATE_DIR/owner_repo__none"
       refresh_watch ;;
@@ -261,6 +267,7 @@ refresh_rule_passes() {
 # NAME|MATCHED TEXT|MUTANT TEXT|ORACLE
 for row in \
   'record-stale|else "older" end) as $order|else "newer" end) as $order|rc=0 events= stale=repo=owner/repo newest=203 read=202' \
+  "rerun-attempt|.createdAt, .databaseId, .attempt] > [\$at, (\$id, \$att|.createdAt, .databaseId] > [\$at, (\$id|rc=0 events=$EVENT stale=" \
   'rerun-page|[[ "$order" != same|[[ "$order" != never|rc=0 events= stale=' \
   'unrecorded-stale|if [[ "$recent" != "$newest" ]]; then|if false && [[ "$recent" != "$newest" ]]; then|rc=0 events= stale=repo=owner/repo newest=204 read=202' \
   'unrecorded-row|      standing="$prior"|      standing=""|rc=0 events= stale='; do
