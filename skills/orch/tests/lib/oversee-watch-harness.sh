@@ -593,11 +593,18 @@ while [[ $# -gt 0 && "$1" == --* ]]; do
 done
 cmd="${1:-}"; id="${2:-}"; expr="${3:-}"
 if [[ "$id" == oversee ]]; then
+  # One call at a time from copy-in to copy-back: the real CLI's own lock
+  # covers only its run, and a long pass reads the fleet state while a mail
+  # pass runs, so an unguarded copy hands one of them a half-written file.
+  # shellcheck source=../../scripts/lib/file-lock.sh
+  source "$(dirname -- "$REAL_WORKFLOW_STATE")/lib/file-lock.sh" || exit 2
+  exec 9>"$STUB_DIR/oversee-state.lock" || exit 2
+  orch_take_lock 9 "$STUB_DIR/oversee-state.lock" 30 || exit 2
   ws="$STUB_DIR/ws"
   mkdir -p "$ws" || exit 2
   cp -- "$STUB_DIR/oversee-state.json" "$ws/workflow-state-oversee.json" || exit 2
   rc=0
-  "$REAL_WORKFLOW_STATE" --state-dir "$ws" "$@" || rc=$?
+  "$REAL_WORKFLOW_STATE" --state-dir "$ws" "$@" 9>&- || rc=$?
   cp -- "$ws/workflow-state-oversee.json" "$STUB_DIR/oversee-state.json" || exit 2
   exit "$rc"
 fi
