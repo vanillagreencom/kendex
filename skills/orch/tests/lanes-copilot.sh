@@ -169,7 +169,7 @@ while IFS='|' read -r label config want_status want_reason; do
   assert_eq "$(record 1copilot .status)|$reason" "\"$want_status\"|$want_reason" "$label"
   if [[ "$want_status" == no_credentials ]]; then
     run_lanes pick --lane "$H/.1copilot" --harness copilot --json
-    assert_eq "rc=$RC status=$(grep -o 'status=[^ ]*' <<<"$ERR") reason=$(grep -o 'login unread: [a-z-]*' <<<"$ERR" | sort -u)" \
+    assert_eq "rc=$RC $(grep -o 'status=[^ ]*' <<<"$ERR") reason=$(grep -o 'login unread: [a-z-]*' <<<"$ERR" | sort -u)" \
       "rc=5 status=no_credentials reason=$want_reason" "the named refusal carries the login record's status and detail"
     assert_eq "$(grep -c '^fix=.*ORCH_LANE_COPILOT_POOL=<dir>=<used>/<granted>.*harness=copilot.*monthly-pct' <<<"$ERR")" 1 \
       "the Copilot CLI refusal names both pool-reading repairs"
@@ -524,7 +524,7 @@ PI_STUB=""
 # A Copilot CLI account gets its own pool repair, not the Pi root repair.
 copilot_account nopoolcopilot '{"quota_snapshots":{}}'
 run_lanes pick --lane "$H/.nopoolcopilot" --harness copilot
-assert_eq "$(pi_verdict) status=$(grep -o 'status=[^ ]*' <<<"$ERR")" "rc=5 key=pick-lane-unmeasured fix=none status=no_usage_data" \
+assert_eq "$(pi_verdict) $(grep -o 'status=[^ ]*' <<<"$ERR")" "rc=5 key=pick-lane-unmeasured fix=none status=no_usage_data" \
   "an unread Copilot endpoint prints the CLI account's current status"
 pi_run room - list --json
 assert_eq "$(pi_fields '[.[] | select(.harness == "pi")] | length')" 0 "list shows no Pi row"
@@ -571,7 +571,7 @@ pi_run none - pick --lane "$H/.pi1" "${PI_MODEL[@]}"
 assert_eq "$(pi_verdict)" "rc=5 key=pick-lane-unmeasured fix=none" "control: without the named fix call a named root names no repair"
 lanes_control ctl-cli-fix lib/lane-launch.sh '"$root" "${4:-none}" "${5:-none}" ;;' '"$root" none none ;;'
 run_lanes pick --lane "$H/.nopoolcopilot" --harness copilot
-assert_eq "rc=$RC status=$(grep -o 'status=[^ ]*' <<<"$ERR")" "rc=5 status=none" \
+assert_eq "rc=$RC $(grep -o 'status=[^ ]*' <<<"$ERR")" "rc=5 status=none" \
   "control: dropping the record fields loses the Copilot CLI refusal's status"
 lanes_control ctl-pi-unread lanes 'if [[ "$harness" == pi && -z "$pool_roots" && "$HOSTED_READ" == failed ]]; then' 'if false; then'
 PI_STUB=LANE_HOST_STUB_ACCOUNTS_STATUS=69 pi_run room - pick "${PI_MODEL[@]}"

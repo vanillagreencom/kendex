@@ -649,7 +649,7 @@ CTRL_CP="$(mutant_scripts ctl-copilot-unread open-terminal)" || exit 1
 mutate_file "$CTRL_CP/open-terminal" '"status=${lane_status:-none}" "detail=${lane_detail:-none}"' '"status=none" "detail=none"'
 LIVE_OT="$OPEN_TERMINAL"
 OPEN_TERMINAL="$CTRL_CP/open-terminal" run_ot "$CP_CMD" --harness copilot --lane "$H/.namedcopilot" CC-1691
-assert_eq "$(observe 'rc=1 unread_status=status=none unread_reason=none')" 'rc=1 unread_status=status=none unread_reason=none' \
+assert_eq "$(observe 'rc=1 unread_status=none unread_reason=none')" 'rc=1 unread_status=none unread_reason=none' \
   "control: omitting the record fields loses the unread Copilot account's cause"
 OPEN_TERMINAL="$LIVE_OT"
 rm -rf -- "${H:?}/.namedcopilot"
