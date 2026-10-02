@@ -61,12 +61,16 @@ gg_checkout_place() { # COMMONVAR RELVAR DIR -> 0 when both answers are had
   eval "$__c=\$__common"
 }
 
-# The package a scripts directory belongs to: the `name:` line and the
+# The package a scripts directory declares: the `name:` line and the
 # `metadata:` block's `version:` line of the SKILL.md beside it, verbatim.
-# Nonzero when the file, its frontmatter or either line is missing, so an
-# unreadable package never compares equal to another unreadable one.
+# kendex switches a skill off by renaming that file to SKILL.md.disabled and
+# leaves the hooks armed, so the switched-off name is read where the live one
+# is absent. Nonzero when the file, its frontmatter or either line is
+# missing, so an unreadable package never compares equal to another
+# unreadable one.
 gg_package_id() { # VAR SCRIPTS_DIR -> VAR gets the two lines
-  local __name="$1" __id=""
+  local __name="$1" __id="" __file="$2/../SKILL.md"
+  [ -f "$__file" ] || __file="$2/../SKILL.md.disabled"
   __id="$(LC_ALL=C awk '
     NR == 1 { if ($0 != "---") { bad = 1; exit } next }
     $0 == "---" { closed = 1; exit }
@@ -74,21 +78,21 @@ gg_package_id() { # VAR SCRIPTS_DIR -> VAR gets the two lines
     /^[^[:space:]]/ { meta = ($0 == "metadata:"); next }
     meta && /^[[:space:]]+version:/ { version = $0 }
     END { if (bad || !closed || name == "" || version == "") exit 1; print name; print version }
-  ' "$2/../SKILL.md" 2>/dev/null)" || return 1
+  ' "$__file" 2>/dev/null)" || return 1
   eval "$__name=\$__id"
 }
 
-# Whether a baked scripts directory is THIS project's copy of this package,
-# somewhere other than this checker's own.
+# Whether a baked scripts directory is THIS project's copy of this package:
+# this checker's own directory, or one of the two other places it may stand.
 #
 # Two differences are this project's. A linked worktree shares the hooks
 # directory of the checkout that armed it and holds its own render, so the
 # same project stands at the same place in a different checkout. And a
 # project delivered to several harnesses as copies holds the package under
 # each of its skill roots, so the copy that armed the repository and the copy
-# asking may stand under different roots of the same project; that copy is
-# held to the same package name and version, since only the helper's bytes
-# are compared and its lanes are another copy's.
+# asking may stand under different roots of the same project; that copy has
+# to declare the same package name and version. The declaration is all that
+# compares: it does not prove the other copy's lanes are this copy's bytes.
 #
 # Two other differences look the same at a glance and are not. A scripts
 # directory outside this repository would run another package's lanes as this

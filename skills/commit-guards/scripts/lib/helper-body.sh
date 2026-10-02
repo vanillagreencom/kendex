@@ -52,13 +52,14 @@ gg_shell_quote() { # VALUE -> the value, safe inside single quotes
   printf '%s' "${1//$sq/$sq\\$sq$sq}"
 }
 
-# The one baked value another checkout of the same project bakes
+# The one baked value another checkout of the same copy bakes
 # differently.
 #
 # A linked worktree shares one hooks directory with the checkout that armed
 # it, and `installed_scripts` is where THAT install sits — so the helper a
-# worktree would write differs here and nowhere else while running exactly
-# the same program. Comparing it would call every worktree's armed helper
+# worktree's copy at the same place would write differs here and nowhere
+# else while running exactly the same program; a copy under another skill
+# root differs in `installed_scripts_rel` too. Comparing it would call every worktree's armed helper
 # unverifiable forever, which is what this list exists to stop.
 #
 # `project_rel` is NOT on it and must not be. It names the project that
@@ -79,11 +80,11 @@ GG_PER_CHECKOUT_VAR='SCRIPT_DIR'
 GG_PER_CHECKOUT_MARK='@@commit-guards-per-checkout@@'
 
 # The scripts directory relative to the armed tree's top level. Every
-# checkout of the project bakes the same value for the same copy, so it
-# does not excuse a difference the way the per-checkout value does. It is
-# lifted out all the same, because a value that names no copy this project
-# keeps is drift for the re-arm to repair, where a head that is not ours at
-# all is unverifiable.
+# checkout of one copy bakes the same value; it differs only where it names
+# another copy this project keeps, which the check accepts (`gg_kept_at` in
+# lib/hook-check.sh). It is lifted out because a value naming no such copy
+# is drift for the re-arm to repair, where a head that is not ours at all is
+# unverifiable.
 GG_SCRIPTS_REL_VAR='INSTALLED_SCRIPTS_REL'
 GG_SCRIPTS_REL_MARK='@@commit-guards-scripts-rel@@'
 
