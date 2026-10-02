@@ -11,10 +11,11 @@
 # refresh-report.py, answered with a reply naming that issue, then resolved.
 # An outdated thread is not reported. The reporter files a live finding in
 # vanillagreencom/kendex only where kendex report routes its one package there
-# with a package label. An outdated thread or a path no single package claims
-# gets a keyed skip, a not-filed reply and resolution. Other unfiled findings,
-# including ones without Issues access, get no reply and hold the run while
-# open; the operator reports them where they belong and resolves them by hand.
+# with a package label. An outdated thread gets a keyed skip, a not-filed
+# reply and resolution. Live unfiled findings, including paths no single
+# package claims and ones without Issues access, get no reply and hold the run
+# while open. The consumer must answer an unclaimed finding through its
+# trusted removal PR or a reply, then resolve the thread by hand.
 # A filing or not-filed reply is the retry record: a thread carrying one is
 # only resolved.
 #
@@ -23,7 +24,7 @@
 #   refresh-reviews=not-render pr=N class=VALUE
 #   refresh-reviews=unclassified pr=N cause=CAUSE
 #   upstream-filed pr=N finding=ROOT issue=URL
-#   upstream-skipped pr=N finding=ROOT cause=outdated|unclaimed
+#   upstream-skipped pr=N finding=ROOT cause=outdated
 #   upstream-unfiled pr=N finding=ROOT note=NOTE
 #   upstream-unfiled-resolved pr=N finding=ROOT note=NOTE
 #   refresh-reviews=answered pr=N unfiled=COUNT
@@ -56,8 +57,9 @@ if [ "$#" -eq 1 ] && [ "$1" = --help ]; then
   printf '%s\n' 'Usage: GH_REPO=owner/repo GH_TOKEN=app-token KENDEX_ISSUES_TOKEN=issues-token refresh-reviews.sh' \
     'Files automatic review threads on open and merged kendex/refresh pull requests upstream, replies with the issue and resolves them.' \
     'The workflow also sets GitHub run/summary variables for the reporter.' \
-    'Outdated threads and paths no single package claims get a not-filed reply and resolution.' \
-    'Other findings kendex report does not route to vanillagreencom/kendex, or ones without Issues access, stay unfiled.' \
+    'Outdated threads get a not-filed reply and resolution.' \
+    'Live findings on unclaimed paths, findings routed elsewhere and ones without Issues access stay unfiled.' \
+    'The consumer must answer unclaimed findings through its trusted removal PR or a reply.' \
     'While its thread is open the run exits 1; resolving the thread by hand ends that.'
   exit 0
 fi
@@ -231,23 +233,18 @@ while IFS= read -r pr; do
         issue="$(jq -r --argjson root "$root_id" '.[] | select(.root == $root) | .issue // ""' <<<"$results")" || exit 1
         if [ -z "$issue" ]; then
           note="$(jq -r --argjson root "$root_id" '.[] | select(.root == $root) | .note' <<<"$results")" || exit 1
-          if [ "$note" = 'No single kendex package claims this path' ]; then
-            printf 'upstream-skipped pr=%s finding=%s cause=unclaimed\n' "$PR_NUMBER" "$root_id"
-            reply="$NOT_FILED_PREFIX$note."
-          else
-            # GitHub's thread-resolution rule holds only an open thread, so only
-            # an open one holds the run. Resolving by hand is the remedy.
-            if [ "$resolved" = true ]; then
-              printf 'upstream-unfiled-resolved pr=%s finding=%s note=%q\n' "$PR_NUMBER" "$root_id" "$note"
-              continue
-            fi
-            printf 'upstream-unfiled pr=%s finding=%s note=%q\n' "$PR_NUMBER" "$root_id" "$note"
-            printf '::error::upstream-unfiled pr=%s thread=%s finding=%s note=%s The thread stays open and holds the pull request.\n' \
-              "$PR_NUMBER" "$thread_id" "$root_id" "$note"
-            unfiled=$((unfiled + 1))
-            held=$((held + 1))
+          # GitHub's thread-resolution rule holds only an open thread, so only
+          # an open one holds the run. The consumer answers and resolves it.
+          if [ "$resolved" = true ]; then
+            printf 'upstream-unfiled-resolved pr=%s finding=%s note=%q\n' "$PR_NUMBER" "$root_id" "$note"
             continue
           fi
+          printf 'upstream-unfiled pr=%s finding=%s note=%q\n' "$PR_NUMBER" "$root_id" "$note"
+          printf '::error::upstream-unfiled pr=%s thread=%s finding=%s note=%s The thread stays open and holds the pull request.\n' \
+            "$PR_NUMBER" "$thread_id" "$root_id" "$note"
+          unfiled=$((unfiled + 1))
+          held=$((held + 1))
+          continue
         else
           printf 'upstream-filed pr=%s finding=%s issue=%s\n' "$PR_NUMBER" "$root_id" "$issue"
           reply="$REPLY_PREFIX$issue$REPLY_TAIL"

@@ -174,43 +174,59 @@ skipped_fixture() { # OUTDATED PATH
   jq --argjson outdated "$1" --arg path "$2" '.unclaimed=[10,20]
     | .prs[0:2][] |= (.threads[0].outdated=$outdated | .comments[0].path=$path)' "$BASE" >"$FIXTURE"
 }
-skipped_and_resolved() { # CAUSE
-  [ "$RC" -eq 0 ] && jq -e --arg cause "$1" '
+skipped_and_resolved() {
+  [ "$RC" -eq 0 ] && jq -e '
     ([.writes[] | [.kind, .pr]] | sort) == [["reply",1],["reply",2],["resolve",1],["resolve",2]]
     and .proofs == [1,2]
-    and ([.reports[]?.root] == (if $cause == "outdated" then [] else [10,20] end))
+    and ([.reports[]?.root] == [])
     and all(.prs[0:2][]; .threads[0].resolved and (.threads[1].resolved | not))
     and all(.prs[2:][]; all(.threads[]; .resolved | not))
     and ([.writes[] | select(.kind == "reply") | .body | startswith("Not filed upstream: ")] == [true,true])
-    and ($cause != "outdated" or all(.writes[] | select(.kind == "reply"); .body | contains("outdated")))
+    and all(.writes[] | select(.kind == "reply"); .body | contains("outdated"))
     ' "$FIXTURE" >/dev/null \
     && [ "$(grep -c '^upstream-skipped ' <<<"$OUT")" -eq 2 ] \
-    && grep -q "^upstream-skipped pr=1 finding=10 cause=$1\$" <<<"$OUT" \
-    && grep -q "^upstream-skipped pr=2 finding=20 cause=$1\$" <<<"$OUT" \
+    && grep -q '^upstream-skipped pr=1 finding=10 cause=outdated$' <<<"$OUT" \
+    && grep -q '^upstream-skipped pr=2 finding=20 cause=outdated$' <<<"$OUT" \
     && ! grep -q '^::error::' <<<"$OUT"
 }
-skipped_retry() { # CAUSE
-  [ "$RC" -eq 0 ] && jq -e --arg cause "$1" '(.writes | length) == 4 and .proofs == [1,2]
-    and ([.reports[]?.root] == (if $cause == "outdated" then [] else [10,20] end))' "$FIXTURE" >/dev/null \
+skipped_retry() {
+  [ "$RC" -eq 0 ] && jq -e '(.writes | length) == 4 and .proofs == [1,2]
+    and ([.reports[]?.root] == [])' "$FIXTURE" >/dev/null \
     && grep -q '^refresh-reviews=already-answered pr=1$' <<<"$OUT" \
     && grep -q '^refresh-reviews=already-answered pr=2$' <<<"$OUT"
 }
 
-while IFS='|' read -r cause outdated path; do
-  skipped_fixture "$outdated" "$path"
+unclaimed_stays_open() {
+  [ "$RC" -eq 1 ] && jq -e '(.writes | length) == 0 and .proofs == [1,2]
+    and ([.reports[].root] == [10,20])
+    and all(.prs[]; all(.threads[]; .resolved | not))' "$FIXTURE" >/dev/null \
+    && grep -q '^upstream-unfiled pr=1 finding=10 ' <<<"$OUT" \
+    && grep -q '^upstream-unfiled pr=2 finding=20 ' <<<"$OUT" \
+    && grep -q '^::error::upstream-unfiled pr=1 thread=T1 finding=10 ' <<<"$OUT" \
+    && grep -q '^::error::upstream-unfiled pr=2 thread=T2 finding=20 ' <<<"$OUT" \
+    && ! grep -q '^upstream-skipped ' <<<"$OUT"
+}
+
+while IFS= read -r path; do
+  skipped_fixture true "$path"
   run_writer
-  if skipped_and_resolved "$cause"; then
-    ok "$cause $path: a keyed skip, one not-filed reply and one resolve per automatic thread"
-  else bad "$cause $path skip-and-resolve" "$OUT"; fi
+  if skipped_and_resolved; then
+    ok "outdated $path: a keyed skip, one not-filed reply and one resolve per automatic thread"
+  else bad "outdated $path skip-and-resolve" "$OUT"; fi
   run_writer
-  if skipped_retry "$cause"; then
-    ok "$cause $path: the not-filed marker prevents a second reply, report and classification"
-  else bad "$cause $path retry" "$OUT"; fi
+  if skipped_retry; then
+    ok "outdated $path: the not-filed marker prevents a second reply, report and classification"
+  else bad "outdated $path retry" "$OUT"; fi
 done <<'SKIPPED'
-outdated|true|.kendex-generated.json
-unclaimed|false|.kendex-generated.json
-outdated|true|.agents/skill.sh
+.kendex-generated.json
+.agents/skill.sh
 SKIPPED
+
+skipped_fixture false .kendex-generated.json
+run_writer
+if unclaimed_stays_open; then
+  ok 'live unclaimed inventory threads: keyed unfiled records, no reply or resolution, and a failed run'
+else bad 'live unclaimed findings must stay open' "$OUT"; fi
 
 cp "$BASE" "$FIXTURE"
 run_writer
@@ -449,23 +465,24 @@ run_writer
 if ! unfiled_resolved_clear; then
   ok 'must-fail control: holding on a resolved thread fails the resolved not-filed case'
 else bad 'resolved-thread control did not detect the planted defect' "$OUT"; fi
-while IFS='|' read -r cause outdated needle; do
-  mutant "$cause-mutant" "$needle" "${needle/if /if false \&\& }"
-  skipped_fixture "$outdated" .kendex-generated.json
-  run_writer
-  if ! skipped_and_resolved "$cause"; then
-    ok "must-fail control: disabling $cause resolution fails its inventory-thread case"
-  else bad "$cause control did not detect the planted defect" "$OUT"; fi
-done <<'SKIP_CONTROLS'
-outdated|true|if [ "$outdated" = true ]; then
-unclaimed|false|if [ "$note" = 'No single kendex package claims this path' ]; then
-SKIP_CONTROLS
+mutant outdated-mutant 'if [ "$outdated" = true ]; then' 'if false && [ "$outdated" = true ]; then'
+skipped_fixture true .kendex-generated.json
+run_writer
+if ! skipped_and_resolved; then
+  ok 'must-fail control: disabling outdated resolution fails its inventory-thread case'
+else bad 'outdated control did not detect the planted defect' "$OUT"; fi
+mutant unclaimed-mutant 'if [ -z "$issue" ]; then' 'if false; then # [ -z "$issue" ]'
+skipped_fixture false .kendex-generated.json
+run_writer
+if ! unclaimed_stays_open; then
+  ok 'must-fail control: replying to and resolving a live unclaimed thread fails its inventory-thread case'
+else bad 'unclaimed control did not detect the planted defect' "$OUT"; fi
 mutant not-filed-marker-mutant 'startswith($not_filed)' '(startswith($not_filed) and false)'
 skipped_fixture true .kendex-generated.json
 run_writer
-skipped_and_resolved outdated || bad 'not-filed control fixture reaches the guard' "$OUT"
+skipped_and_resolved || bad 'not-filed control fixture reaches the guard' "$OUT"
 run_writer
-if ! skipped_retry outdated; then
+if ! skipped_retry; then
   ok 'must-fail control: ignoring the not-filed marker fails the skip retry case'
 else bad 'not-filed marker control did not detect the planted defect' "$OUT"; fi
 mutant outdated-shape-mutant 'and (.isOutdated | type) == "boolean"' \

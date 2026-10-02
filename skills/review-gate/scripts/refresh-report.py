@@ -14,15 +14,16 @@ lock, the inventory, a Copilot .github/agents/*.agent.md render), or a package
 kendex report routes elsewhere. Review text about content kendex has not
 claimed is never published, and its step summary row offers no filing link.
 The writer skips outdated threads before reporting. It replies as not filed
-and resolves those threads and paths no single package claims. Other live
-unfiled threads stay open and hold the run until resolved by hand.
+and resolves those threads. Live unfiled threads stay open and hold the run.
+The consumer must answer an unclaimed finding through its trusted removal PR
+or a reply, then resolve the thread by hand.
 
 stdout is one JSON array, read by refresh-reviews: [{root, issue, note}] with
 one row per input row. issue is the html_url of the open upstream issue the
 finding is filed under, or null when it is not filed: one of the routes above,
 no Issues token or denied Issues access. note names which. The note
-"No single kendex package claims this path" tells the writer to skip with a
-not-filed reply and resolution, including paths outside the inventory.
+"No single kendex package claims this path" gives the reason for the writer's
+upstream-unfiled record, including paths outside the inventory.
 Log lines go to stderr.
 
 --settings formats ol_preference_entries' refused and deprecated arrays from
