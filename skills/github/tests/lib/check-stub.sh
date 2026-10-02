@@ -225,6 +225,11 @@ case "${1:-}" in
                 exit 0
                 ;;
         esac
+        # check-review-replies' reading identity.
+        if [[ "${2:-}" == "graphql" && "$*" == *"viewer"* ]]; then
+            jq -cn '{data:{viewer:{login:"lanes-app[bot]"}}}'
+            exit 0
+        fi
         if [[ "${2:-}" == "graphql" && "$*" == *"reviewThreads"* ]]; then
             # A GraphQL error body fails the read at once, where a bare
             # nonzero exit would be retried.

@@ -336,7 +336,7 @@ calls() {
       "api graphql"*mergeQueueEntry*) out="$out,graphql:queue" ;;
       "api user"*) out="$out,user" ;;
       "api -X DELETE repos/{owner}/{repo}/git/refs/heads/"*) out="$out,delete:${line##*/heads/}" ;;
-      "auth status"*|"repo view"*|"api repos/"*|"api graphql"*reviewThreads*|"pr view 123 --json baseRefName"*) ;;
+      "auth status"*|"repo view"*|"api repos/"*|"api graphql"*reviewThreads*|"api graphql"*viewer*|"pr view 123 --json baseRefName"*) ;;
       *) out="$out,?($line)" ;;
     esac
   done < <(awk '/^(pr|api|auth|repo) / { if (call != "") print call; call = $0; next }
@@ -474,9 +474,9 @@ run_table() {
 }
 
 # The calls a --check makes on an open PR, and a merge's calls before the
-# mutation. Each also makes the reply check's review-thread read, which
-# calls() filters out of the pin: the review_replies rows and the no-replies
-# mutant prove that read.
+# mutation. Each also makes the reply check's viewer and review-thread
+# reads, which calls() filters out of the pin: the review_replies rows and
+# the no-replies mutant prove those reads.
 CHECK="view:state,view:mergeable,checks,view:reviews"
 PRE="view:state,view:mergeable,checks,view:reviews,view:head"
 OPEN="state=OPEN mergeable=MERGEABLE at=-"

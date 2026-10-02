@@ -54,10 +54,11 @@ esac
 # below runs a variant of the program over the same shape, so the shape is
 # written here and nowhere else.
 # The PR author is `author`, the login human() writes, so its replies count;
-# bot() writes a review bot with no repository role, whose never do. Whose
-# replies count is check-review-replies.test.sh's.
+# bot() writes a review bot with no repository role, whose never do, and the
+# reading identity is a login neither writes. Whose replies count is
+# check-review-replies.test.sh's.
 page_with() { # page_with PROGRAM THREAD_JSON… -> "truncated untracked unreasoned"
-  jq -r --arg author author "$1" <<<"[$2]"
+  jq -r --arg author author --arg viewer lanes-app "$1" <<<"[$2]"
 }
 page() { page_with "$prog" "$1"; }
 
