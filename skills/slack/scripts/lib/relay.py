@@ -7,10 +7,9 @@ every root on its machine and routes each message event by its channel. The
 relay opens the connection with SLACK_APP_TOKEN, acknowledges each envelope
 by its envelope_id as soon as its loop reads it, before the delivery, then
 routes a message event to the root bound to its channel: a top-level
-message, or an owner reply in any thread. The loop is
-one thread, so an envelope that waits behind a download, a catch-up, the
-mailbox posts or a 429 wait past Slack's three seconds is sent again, and
-the journal skips the repeat by its stamp.
+message, or an owner reply in any thread. One reader owns socket sends and
+queues acknowledged envelopes. The worker owns journal, API and mailbox
+calls, so their waits cannot block acknowledgements or pong replies.
 
 An event moves no position. It writes no `seen` or `thread` line; the
 catch-up writes both, and a start with no seeds writes the `seen` line of
@@ -20,8 +19,8 @@ refused. Each root keeps refused live events in memory and retries them on
 every poll, independently of the history lookback, until delivery succeeds
 or Slack reports that their parent no longer exists.
 It reads the
-channel's history from the journal's position or SLACK_THREAD_DAYS back,
-whichever is older, delivers the top-level messages past the position, and
+channel's history from the journal's position after initial discovery within
+SLACK_THREAD_DAYS, delivers the top-level messages past the position, and
 reads every open ask and every recently active thread, including parents
 older than the history lookback. A refused thread read does not block the
 other threads or outbound mail; a temporary refusal leaves catch-up due
@@ -65,7 +64,9 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import queue
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
@@ -196,6 +197,7 @@ class RootRelay:
         # False until a catch-up has read the channel since the last connect
         # or the last refused event delivery.
         self.caught_up = False
+        self.discovered = False
         # The status record carries the compaction day across restarts; the
         # journal holds deliveries and positions alone.
         record = read_status(path) or {}
@@ -293,19 +295,18 @@ class RootRelay:
         return parent
 
     def catch_up(self, bot_user: str) -> None:
-        """The history read the module docstring states. The read reaches
-        SLACK_THREAD_DAYS back even when the position is younger, since a
-        parent's `latest_reply` is how a reply sent while disconnected is
-        found; only a message past the position is delivered."""
+        """Discover parents once; retained eligible parents supply old-thread
+        discovery on reconnect without repeating the channel lookback."""
         horizon = self.settings.horizon(self.clock())
         position = self.state.seen_ts
-        oldest = position if float(position) <= horizon else f"{horizon:.6f}"
+        oldest = position if self.discovered or float(position) <= horizon else f"{horizon:.6f}"
         messages = list(self.api.paged("conversations.history", "messages", channel=self.channel, oldest=oldest))
         messages.sort(key=lambda m: float(m["ts"]))
         new = [m for m in messages if float(m["ts"]) > float(position)]
         for message in new:
             self.bind_file_share(message)
             self.handle(message, bot_user)
+            self.mark_seen()
         replied = {str(m["ts"]): float(m["latest_reply"]) for m in messages if m.get("latest_reply")}
         complete = True
         for thread_ts in dict.fromkeys([*replied, *self.state.threads]):
@@ -323,6 +324,7 @@ class RootRelay:
         if new:
             self.journal.append(t="seen", ts=new[-1]["ts"])
         self.caught_up = complete
+        self.discovered = self.discovered or complete
 
     def thread_refused(self, err: Refusal, thread_ts: str) -> bool:
         """Report one thread's refusal without stopping the root. Slack's
@@ -347,7 +349,7 @@ class RootRelay:
         thread_ts = str(message.get("thread_ts") or ts)
         if thread_ts == ts:
             self.bind_file_share(message)
-        self.handle(message, bot_user)
+        self.handle(message, bot_user, path="live")
         self.pending_live.pop(ts)
         self.mark_seen()
 
@@ -373,11 +375,12 @@ class RootRelay:
         replies.sort(key=lambda m: float(m["ts"]))
         for reply in replies:
             self.handle(reply, bot_user)
+            self.mark_seen()
         if replies:
             self.journal.append(t="thread", ts=thread.ts, seen=replies[-1]["ts"])
         return True
 
-    def handle(self, message: Dict, bot_user: str) -> None:
+    def handle(self, message: Dict, bot_user: str, path: str = "catch-up") -> None:
         ts = str(message["ts"])
         # The journal skips a stamp it already carried; lane-mail's locked
         # check judges any stamp the journal lost, the crash between the
@@ -409,10 +412,12 @@ class RootRelay:
             outcome, answer_id = self.mail.answer(thread.envelope, text, delivery)
             if outcome == "answered":
                 self.journal.append(t="in", channel=self.channel, ts=ts, kind="answer", id=answer_id, thread=thread_ts)
+                notice("delivered", f"ts={ts} id={answer_id} path={path}")
                 return
         parent = self.parent_context(thread_ts) if thread_ts != ts else None
         envelope = self.mail.send_directive(text, delivery, parent)
         self.journal.append(t="in", channel=self.channel, ts=ts, kind="directive", id=envelope, thread=thread_ts)
+        notice("delivered", f"ts={ts} id={envelope} path={path}")
 
     def react(self, method: str, ts: str, name: str) -> bool:
         """One reaction on the message at `ts`; False when Slack refused it,
@@ -424,7 +429,7 @@ class RootRelay:
         except Refusal as err:
             if err.key == "slack-auth-failed":
                 raise
-            if err.error not in MARK_SETTLED:
+            if method == "reactions.add" and name == SEEN and err.error != "already_reacted" or err.error not in MARK_SETTLED:
                 print_refusal(err)
                 return False
         return True
@@ -802,6 +807,9 @@ class Relay:
         # once a connection opens.
         self.connection_error = ""
         self.opened = False
+        self.incoming: queue.Queue = queue.Queue()
+        self.stop_reader = threading.Event()
+        self.reader: Optional[threading.Thread] = None
 
     def poll_once(self) -> bool:
         """One poll of every root; False when any root's poll was refused."""
@@ -845,6 +853,15 @@ class Relay:
         app_api = Slack(self.settings.app_token, self.settings.api_url, token_name="SLACK_APP_TOKEN", scope="connections:write")
         next_poll = retry_at = self.clock()
         delay = RETRY_FIRST_SECONDS
+        try:
+            self.run_connected(app_api, next_poll, retry_at, delay)
+        finally:
+            self.stop_reader.set()
+            if self.reader is not None:
+                self.reader.join()
+
+    def run_connected(self, app_api: Slack, next_poll: float, retry_at: float, delay: float) -> None:
+        """Worker loop; all persistent state and API calls stay here."""
         while True:
             if self.socket is None and self.clock() >= retry_at:
                 if self.open(app_api):
@@ -902,6 +919,9 @@ class Relay:
             self.refused(Refusal("socket-lost", f"hello ({err})"))
             return False
         self.socket = socket
+        self.stop_reader.clear()
+        self.reader = threading.Thread(target=self.read_socket, args=(socket,), daemon=True)
+        self.reader.start()
         self.set_connection("connected")
         self.connection_error = ""
         kind = "reconnect" if self.opened else "connect"
@@ -915,7 +935,8 @@ class Relay:
     def drop(self, reason: str) -> None:
         """The connection closed, journaled `disconnect` with `reason`."""
         assert self.socket is not None, "drop needs an open connection"
-        self.socket.close()
+        assert self.reader is not None, "drop needs a reader"
+        self.reader.join()
         self.socket = None
         self.set_connection("reconnecting")
         for root in self.roots:
@@ -925,27 +946,36 @@ class Relay:
     def listen_until(self, deadline: float) -> None:
         """Envelopes off the connection until `deadline` or a drop, the
         silent drop `WebSocket.recv` finds among them."""
-        socket = self.socket
-        assert socket is not None, "listen needs an open connection"
+        assert self.socket is not None, "listen needs an open connection"
         while self.clock() < deadline:
             try:
-                text = socket.recv(deadline - self.clock())
+                envelope = self.incoming.get(timeout=max(0.0, deadline - self.clock()))
+            except queue.Empty:
+                return
+            if isinstance(envelope, Closed):
+                self.drop(str(envelope))
+                return
+            self.deliver(envelope)
+
+    def read_socket(self, socket: WebSocket) -> None:
+        """The single reader owns sends and closes; it never calls the worker."""
+        try:
+            while not self.stop_reader.is_set():
+                text = socket.recv(1.0)
                 if text is not None:
                     self.envelope(socket, text)
-            except Closed as err:
-                self.drop(str(err))
-                return
-            if self.socket is None:
-                return
+        except Exception as err:
+            self.incoming.put(Closed(str(err)))
+        finally:
+            socket.close()
 
     def envelope(self, socket: WebSocket, text: str) -> None:
         """One envelope: acknowledged by its envelope_id before anything
         else, since the catch-up covers a stop after the acknowledgement
         within its lookback, and the journal skips an envelope Slack
         sent again. A `disconnect` drops the connection for a
-        new one; a message event goes to the root bound to its channel, and
-        a refused delivery stays pending in its root and leaves its catch-up due; every other
-        envelope stops at the acknowledgement."""
+        new one; other envelopes enter the worker queue without any API,
+        journal or mailbox call."""
         try:
             envelope = json.loads(text)
         except ValueError as err:
@@ -955,8 +985,11 @@ class Relay:
         if envelope.get("envelope_id"):
             socket.send_text(json.dumps({"envelope_id": envelope["envelope_id"]}))
         if envelope.get("type") == "disconnect":
-            self.drop(f"slack-{envelope.get('reason', 'unknown')}")
-            return
+            raise Closed(f"slack-{envelope.get('reason', 'unknown')}")
+        self.incoming.put(envelope)
+
+    def deliver(self, envelope: Dict) -> None:
+        """Route an acknowledged envelope on the worker."""
         if envelope.get("type") != "events_api":
             return
         event = (envelope.get("payload") or {}).get("event") or {}

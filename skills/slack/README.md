@@ -26,12 +26,12 @@ Requires Python 3.8+ and the orch skill, which the install adds.
 
 - `slack setup` resolves each owner's email address to a Slack user, creates the private channel or finds it by name, invites the owners and writes the binding under `tmp/slack/` in the checkout.
 - `slack listen --root A --root B` is one process for every checkout on one machine. Slack sends each owner message over its one Socket Mode connection as it is posted, and the relay routes it by channel to the bound checkout.
-- Each time the connection opens, the relay reads each channel's history, so a message sent while it was stopped or disconnected still lands. A dropped connection is opened again at once.
+- On reconnect, history resumes from saved positions and checks retained active threads. The relay opens a dropped connection again. API and mailbox waits do not block acknowledgements.
 - Every `SLACK_POLL_SECONDS` the relay reads each checkout's mailbox for posts and receipt marks.
 - An owner's message reaches the overseer through the checkout's `lane-mail`, keyed by the Slack message id, so the relay never carries a message twice.
 - Owner text arrives as plain text. Slack links, mentions, channel names and dates expand; emoji stay `:name:`.
 - Owner files go to `tmp/slack/files/`, readable only by the checkout's user. The overseer receives the text and each saved path, or `file <id> not fetched: <why>`. A failed download never holds the message back.
-- Each delivered owner message gets an :eyes: reaction. Once the overseer's mailbox read passes a directive, the relay swaps its mark for :white_check_mark:. Neither mark posts a message. A mark Slack refuses is made again on the next poll.
+- Each delivered owner message gets an :eyes: reaction. Once the overseer's mailbox read passes a directive, the relay swaps its mark for :white_check_mark:. Neither mark posts text. Refused marks retry next poll.
 - The relay posts new owner-bound mailbox envelopes: questions with choices, recommendations and deadlines, threaded notices, and uploaded reports. It skips envelopes older than `SLACK_THREAD_DAYS`.
 - Posts get an `inflight` record before sending. After a stop or lost response, they stay `unknown` in `listen --status`, never repeated. Explicit refusals retry after a token fix if needed.
 - Catch-up reads active threads under old parents. Temporary refusals retry next poll. `thread-read-failed` names the thread and envelope; other threads and posts continue. Deleted questions close in the relay, not the mailbox. Later answers and referenced notices go to the channel. [Journal](schemas/journal.md) defines the records.

@@ -22,6 +22,7 @@ from refusals import Refusal, keyed
 from store import parse_at
 
 LANE_MAIL = Path(".agents/skills/orch/scripts/lane-mail")
+LANE_MAIL_TIMEOUT_SECONDS = 30
 FIELD_CHOICES = {"box": ("to-overseer", "to-lane"), "kind": ("ask", "notice", "answer", "directive", "resolution")}
 
 
@@ -34,14 +35,18 @@ class LaneMail:
             raise Refusal("orch-missing", str(root))
 
     def _run(self, *args: str) -> Tuple[int, str, str]:
-        proc = subprocess.run(
-            [str(self.script), *args],
-            cwd=str(self.root),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
+        try:
+            proc = subprocess.run(
+                [str(self.script), *args],
+                cwd=str(self.root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                timeout=LANE_MAIL_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as err:
+            raise Refusal("lane-mail-failed", f"timeout={LANE_MAIL_TIMEOUT_SECONDS} command={args[0]}") from err
         return proc.returncode, proc.stdout, proc.stderr
 
     def events(self) -> List[Dict]:

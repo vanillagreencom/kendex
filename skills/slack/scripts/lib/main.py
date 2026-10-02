@@ -38,10 +38,10 @@ setup     resolve every SLACK_OWNERS address to a Slack user, create the
           when one stands
 listen    the relay: one Socket Mode connection opened with SLACK_APP_TOKEN
           for every root, each envelope acknowledged as soon as the loop
-          reads it, before its delivery, and each message routed by its
-          channel; an envelope that waits behind other work past Slack's
-          three seconds is sent again and its stamp judged a repeat; at
-          every connect and reconnect,
+          reads it on a separate reader, before delivery; API and mailbox
+          waits do not block acknowledgements or pong replies. Messages route
+          by channel; delivered= names ts, mailbox id and live/catch-up path.
+          At every connect and reconnect,
           per root, one history read that delivers what arrived while
           disconnected; every SLACK_POLL_SECONDS, per root, the mailbox's
           events; owner text lands as a directive or, in a question's

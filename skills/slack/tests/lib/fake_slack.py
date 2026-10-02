@@ -113,6 +113,7 @@ class Workspace:
         self.sockets: list = []  # every connection opened, newest last
         self.sent: list = []
         self.acks: list = []
+        self.pongs: list = []
         self.withheld: list = []
         self.users = users  # email -> id
         self.page = page
@@ -296,6 +297,8 @@ class Handler(BaseHTTPRequestHandler):
                         self.ws.acks.append(json.loads(data)["envelope_id"])
                     elif opcode == 0x9:
                         conn.send(data, 0xA)
+                    elif opcode == 0xA:
+                        self.ws.pongs.append(data.decode())
                     elif opcode == 0x8:
                         conn.send(data, 0x8)
                         conn.close()
@@ -371,6 +374,7 @@ class Handler(BaseHTTPRequestHandler):
                     "uploads": {k: v.decode("utf-8", "replace") for k, v in ws.uploads.items()},
                     "sent": ws.sent,
                     "acks": ws.acks,
+                    "pongs": ws.pongs,
                     "withheld": ws.withheld,
                     "opened": len(ws.sockets),
                 }
@@ -401,6 +405,8 @@ class Handler(BaseHTTPRequestHandler):
             live = [conn for conn in ws.sockets if conn.open]
             if live and body.get("disconnect"):
                 live[-1].send(json.dumps({"type": "disconnect", "reason": body["disconnect"]}))
+            if live and body.get("ping"):
+                live[-1].send(body["ping"].encode(), 0x9)
             return self.send_json({"ok": bool(live)})
         if path == "/_test/faults-reset":
             ws.faults.clear()

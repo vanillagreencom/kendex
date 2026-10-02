@@ -29,7 +29,7 @@
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
-sk_fake_start
+sk_fake_start --page 2
 echo "=== slack listen: Socket Mode ==="
 
 # landed ROOT DELIVERY_ID [TRIES] — the text of the envelope keyed DELIVERY_ID,
@@ -306,7 +306,7 @@ assert_eq "$LOST_TEXT" "sent while the connection dropped" "the message of the l
 assert_eq "$(sk_state .opened)" "$((OPENED + 2))" "the relay opened its connection, then one new one after the drop"
 assert_eq "$(lines "$GAMMA" connect)|$(lines "$GAMMA" disconnect)|$(lines "$GAMMA" reconnect)" "connect |disconnect connection ended|reconnect " \
   "the journal holds connect, the disconnect with its reason, then reconnect"
-assert_eq "$(jq -r 'select(.t != "connect" and .t != "disconnect" and .t != "reconnect") | .t' "$(sk_journal "$GAMMA")" | tr '\n' ' ')" "seen start in seen mark " \
+assert_eq "$(jq -r 'select(.t != "connect" and .t != "disconnect" and .t != "reconnect") | .t' "$(sk_journal "$GAMMA")" | tr '\n' ' ')" "seen start in mark seen " \
   "the directive is delivered once, then marked"
 
 # --- Slack's disconnect envelope: a new connection -----------------------------------------
@@ -369,6 +369,123 @@ refused_first "$MU"
 assert_eq "$FIRST_LINES" "connect " "the refused first poll leaves a journal of the connect line alone"
 assert_eq "$RC=$([ ! -f "$(sk_box "$MU")/to-lane.jsonl" ] || texts "$MU")" "0=" "the next start seeds, and the channel's earlier messages are not delivered"
 assert_eq "$(jq -r 'select(.t == "seen" or .t == "start") | .t' "$(sk_journal "$MU")" | tr '\n' ' ')" "seen start " "the next start journals both seeds"
+
+# --- delivery timing and diagnostics, with the same assertions on mutants ---
+for variant in normal late-ack worker-ack no-mark no-notice; do
+  case "$variant" in
+    late-ack) sk_mutant delivery-ack relay.py '(        if envelope.get\("envelope_id"\):\n)(            socket.send_text[^\n]+)' '\1            self.deliver(envelope)\n\2' ;;
+    worker-ack) sk_mutant delivery-reader relay.py '            socket.send_text\(json.dumps\(\{"envelope_id": envelope\["envelope_id"\]\}\)\)([\s\S]*?def deliver\(self, envelope: Dict\) -> None:\n        """[^\n]+\n)' '            pass\1        if envelope.get("envelope_id"):\n            self.socket.send_text(json.dumps({"envelope_id": envelope["envelope_id"]}))\n' ;;
+    no-mark) sk_mutant delivery-mark relay.py '(        self.pending_live.pop\(ts\)\n)        self.mark_seen\(\)' '\1        pass' ;;
+    no-notice) sk_mutant delivery-notice relay.py '        notice\("delivered", f"ts=\{ts\} id=\{envelope\} path=\{path\}"\)' '        pass' ;;
+  esac
+  SLOW="$(sk_new_root "delivery-$variant")"
+  sk_bind "$SLOW"
+  SC="$(sk_channel "$SLOW")"
+  rm -- "${SLOW:?}/.agents/skills/orch/scripts"
+  mkdir -p "$SLOW/.agents/skills/orch/scripts"
+  cat > "$SLOW/.agents/skills/orch/scripts/lane-mail" <<EOF
+#!/usr/bin/env python3
+import json, os, pathlib, sys, time, urllib.request
+if sys.argv[1] == "send" and not pathlib.Path("tmp/send-start").exists():
+    state = json.load(urllib.request.urlopen("$SK_URL/_test/state"))
+    sent = [e["envelope_id"] for e in state["sent"] if e["channel"] == "$SC"]
+    pathlib.Path("tmp/send-start").write_text(str(all(e in state["acks"] for e in sent)))
+    time.sleep(4)  # Real wait: the next envelope must be acked during mailbox work.
+os.execv("$SK_LANE_MAIL", ["$SK_LANE_MAIL", *sys.argv[1:]])
+EOF
+  chmod +x "$SLOW/.agents/skills/orch/scripts/lane-mail"
+  relay "$SLOW" SLACK_POLL_SECONDS=60
+  SA="$(sk_inject "$SC" U001 'Slow A')"
+  START="$(awaited cat "$SLOW/tmp/send-start" 2>/dev/null)"
+  SB="$(sk_inject "$SC" U001 'Fast B')"
+  sk_ctl /_test/socket "{\"ping\":\"slow-$variant\"}" >/dev/null
+  sleep 0.5 # Observe B while A still holds the worker, before any poll.
+  ACK_B="$(envelope "$SC" "$SB")"
+  PONG_B="$(sk_ctl /_test/state | jq --arg p "slow-$variant" '[.pongs[] | select(. == $p)] | length')"
+  landed "$SLOW" "$SC:$SB" >/dev/null
+  ID="$(jq -r --arg d "$SC:$SA" 'select(.delivery_id == $d) | .id' "$(sk_box "$SLOW")/to-lane.jsonl")"
+  case "$variant" in
+    late-ack) sk_assert_red "$START" True 'control: ack follows slow delivery' ;;
+    worker-ack) sk_assert_red "$ACK_B" 'sent=1 unacked=0' 'control: worker ack waits behind A' ;;
+    no-mark) sk_assert_red "$(sk_reactions "$SC" "$SA")" eyes 'control: live delivery mark removed' ;;
+    no-notice) sk_assert_red "$(grep -Fc "slack: delivered=ts=$SA id=$ID path=live" "$SK_TMP/relay.out")" 1 'control: delivery notice removed' ;;
+    normal)
+      assert_eq "$START|$ACK_B" 'True|sent=1 unacked=0' 'A ack precedes send; B ack does not wait for A'
+      assert_eq "$PONG_B" 1 'slow mailbox does not block pong'
+      assert_eq "$(sk_reactions "$SC" "$SA")" eyes 'live delivery gets eyes before a poll'
+      assert_eq "$(grep -Fc "slack: delivered=ts=$SA id=$ID path=live" "$SK_TMP/relay.out")" 1 'one live delivery notice identifies mailbox id'
+      ;;
+  esac
+  sk_relay_stop
+  sk_bin_reset
+done
+
+# Initial discovery spans history; reconnect reads from the saved position.
+for variant in normal horizon; do
+  if [ "$variant" = horizon ]; then
+    sk_mutant reconnect-position relay.py 'oldest = position if self.discovered or ' 'oldest = position if '
+  fi
+  POS="$(sk_new_root "positions-$variant")"
+  sk_bind "$POS"
+  PC="$(sk_channel "$POS")"
+  for n in 1 2 3 4 5; do PT="$(sk_inject "$PC" U001 "Parent $n")"; done
+  sk_poll "$POS"
+  sk_inject "$PC" U001 'Missed reply under retained parent' "$PT" >/dev/null
+  sk_recovery "$POS" positions
+  COUNTS="$(printf '%s' "$OUT" | jq -r '[.polls[] | [.[] | select(.method == "conversations.history")] | length] | join("/")')"
+  if [ "$variant" = normal ]; then
+    assert_eq "$COUNTS" 3/1 'reconnect does not repeat history pages with no new roots'
+    assert_eq "$(printf '%s' "$OUT" | jq -r '[.polls[1][] | select(.method == "conversations.replies")] | length')" 5 'reconnect preserves retained eligible parent discovery'
+  else
+    sk_assert_red "$COUNTS" 3/1 'control: resetting history to horizon repeats pages'
+  fi
+  sk_bin_reset
+done
+
+# A long Retry-After holds catch-up, not the socket reader.
+RATE="$(sk_new_root rate-ack)"
+sk_bind "$RATE"
+RC_CH="$(sk_channel "$RATE")"
+relay "$RATE" SLACK_POLL_SECONDS=60
+sk_ctl /_test/fault '{"method":"conversations.history","status":429,"retry_after":8}' >/dev/null
+sk_ctl /_test/socket '{"disconnect":"refresh_requested"}' >/dev/null
+sleep 0.5 # The replacement socket opens before catch-up enters its API retry.
+RT="$(sk_inject "$RC_CH" U001 'During Retry-After')"
+sk_ctl /_test/socket '{"ping":"during-429"}' >/dev/null
+sleep 0.5 # Observe the acknowledgement before the eight-second API retry ends.
+assert_eq "$(envelope "$RC_CH" "$RT")" 'sent=1 unacked=0' '429 wait does not block acknowledgements'
+assert_eq "$(sk_state '[.pongs[] | select(. == "during-429")] | length')" 1 '429 wait does not block pong'
+landed "$RATE" "$RC_CH:$RT" >/dev/null
+RID="$(jq -r --arg d "$RC_CH:$RT" 'select(.delivery_id == $d) | .id' "$(sk_box "$RATE")/to-lane.jsonl")"
+assert_eq "$(grep -Fc "slack: delivered=ts=$RT id=$RID path=catch-up" "$SK_TMP/relay.out")" 1 'catch-up logs its delivery once'
+assert_eq "$(sk_reactions "$RC_CH" "$RT")" eyes 'catch-up marks delivery immediately'
+sk_relay_stop
+sk_ctl /_test/faults-reset >/dev/null
+
+# Settled eyes failures retain a retry and print the actual Slack cause.
+for failure in no_reaction message_not_found internal_error mutant; do
+  if [ "$failure" = mutant ]; then
+    sk_mutant eyes-cause relay.py 'if method == "reactions.add" and name == SEEN and err.error != "already_reacted" or err.error not in MARK_SETTLED:' 'if err.error not in MARK_SETTLED:'
+    failure=no_reaction
+    CONTROL=yes
+  else
+    CONTROL=no
+  fi
+  sk_ctl /_test/fault "{\"method\":\"reactions.add\",\"error\":\"$failure\"}" >/dev/null
+  ER="$(sk_new_root "eyes-$failure")"
+  sk_bind "$ER"
+  EC2="$(sk_channel "$ER")"
+  ET="$(sk_inject "$EC2" U001 'Eyes refused')"
+  sk_event "$ER" "$EC2" "$ET" 2>"$SK_TMP/eyes.err"
+  if [ "$CONTROL" = yes ]; then
+    sk_assert_red "$(grep -c '^slack: slack-api-failed=reactions.add error=no_reaction' "$SK_TMP/eyes.err")" 1 'control: settled eyes failure becomes silent'
+  else
+    assert_has "$(cat "$SK_TMP/eyes.err")" "slack: slack-api-failed=reactions.add error=$failure" 'refused eyes prints a keyed cause'
+    sk_poll "$ER"
+    assert_eq "$(sk_reactions "$EC2" "$ET")" eyes 'refused eyes retries on the next poll'
+  fi
+  sk_bin_reset
+done
 
 # --- controls, one mutant per rule -------------------------------------------------------------
 sk_mutant ack relay.py 'socket\.send_text\(json\.dumps\(\{"envelope_id": envelope\["envelope_id"\]\}\)\)' 'pass'

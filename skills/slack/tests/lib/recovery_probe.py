@@ -51,6 +51,19 @@ polls = []
 try:
     if mode == "journal":
         pass
+    elif mode == "positions":
+        original = api.get
+        calls = []
+        def traced(method, **params):
+            if method in ("conversations.history", "conversations.replies"):
+                calls.append({"method": method, "oldest": params.get("oldest"), "ts": params.get("ts")})
+            return original(method, **params)
+        api.get = traced
+        for _ in range(2):
+            relay.caught_up = False
+            relay.poll("UBOT")
+            polls.append(calls[:])
+            calls.clear()
     elif mode == "catchup-retry":
         for _ in range(2):
             relay.poll("UBOT")

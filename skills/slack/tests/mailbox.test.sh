@@ -7,6 +7,27 @@ set -uo pipefail
 sk_fake_start --page 2
 echo "=== slack mailbox events ==="
 
+# A hung lane-mail producer must fail its poll, not hold it indefinitely.
+for variant in normal no-timeout; do
+  HUNG="$(sk_new_root "timeout-$variant")"
+  sk_bind "$HUNG"
+  sk_poll "$HUNG"
+  rm -- "${HUNG:?}/.agents/skills/orch/scripts"
+  mkdir -p "$HUNG/.agents/skills/orch/scripts"
+  printf '#!/usr/bin/env python3\nimport time\ntime.sleep(31)\n' > "$HUNG/.agents/skills/orch/scripts/lane-mail"
+  chmod +x "$HUNG/.agents/skills/orch/scripts/lane-mail"
+  if [ "$variant" = no-timeout ]; then
+    sk_mutant mail-timeout mailbox.py 'timeout=LANE_MAIL_TIMEOUT_SECONDS,' 'timeout=None,'
+  fi
+  sk_poll "$HUNG" # Real wait: crosses the production subprocess timeout.
+  if [ "$variant" = normal ]; then
+    assert_eq "$RC=$ERR1" "1=slack: lane-mail-failed=timeout=30 command=events root=$HUNG" 'hung lane-mail fails the poll with its named timeout'
+  else
+    sk_assert_red "$RC=$ERR1" "1=slack: lane-mail-failed=timeout=30 command=events root=$HUNG" 'control: removing timeout keeps the hung poll green'
+  fi
+  sk_bin_reset
+done
+
 # A failed jq closure scan must stop a real owner answer, not turn it into
 # a directive. The wrapper leaves the ask read and all envelope writes real.
 SCAN="$(sk_new_root closure-scan)"

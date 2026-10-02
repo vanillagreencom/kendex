@@ -1,0 +1,1 @@
+- Slack acknowledges messages during API and mailbox waits, resumes reconnect history from saved positions, and logs deliveries and refused eyes reactions.
