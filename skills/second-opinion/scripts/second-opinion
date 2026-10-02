@@ -2604,11 +2604,87 @@ preserve_cli_failure_and_fail() {
   exit "$exit_code"
 }
 
+# --- Extract JSON (review/audit modes) ----------------------------------------
+
+extract_json() {
+  local input="$1"
+
+  # Whole output is valid JSON
+  if printf '%s' "$input" | jq -e . >/dev/null 2>&1; then
+    printf '%s' "$input" | jq .
+    return 0
+  fi
+
+  # Extract from first ```json ... ``` code fence (stop at first closing fence)
+  local fenced
+  # One expression per command: BSD sed reads a label to the end of its
+  # expression, so the one-line form never closes its brace there. A
+  # here-string, not a pipe: sed quits at the closing fence, and a writer
+  # still filling the pipe would take SIGPIPE and fail the condition.
+  if fenced=$(sed -n -e '/^```json/{' -e 'n' -e ':a' -e '/^```$/q' -e 'p' -e 'n' -e 'ba' -e '}' <<<"$input") \
+    && [[ -n "$fenced" ]] && printf '%s' "$fenced" | jq -e . >/dev/null 2>&1; then
+    printf '%s' "$fenced" | jq .
+    return 0
+  fi
+
+  # Extract from first ``` ... ``` fence (no language tag)
+  if fenced=$(sed -n -e '/^```$/{' -e 'n' -e ':a' -e '/^```$/q' -e 'p' -e 'n' -e 'ba' -e '}' <<<"$input") \
+    && [[ -n "$fenced" ]] && printf '%s' "$fenced" | jq -e . >/dev/null 2>&1; then
+    printf '%s' "$fenced" | jq .
+    return 0
+  fi
+
+  # Last resort: extract from first { to last } (trim trailing prose)
+  local from_brace
+  if from_brace=$(printf '%s' "$input" | sed -n '/^{/,$ p') && [[ -n "$from_brace" ]]; then
+    # Single-line JSON (common): try first line alone
+    local first_line
+    first_line=${from_brace%%$'\n'*}
+    if printf '%s' "$first_line" | jq -e . >/dev/null 2>&1; then
+      printf '%s' "$first_line" | jq .
+      return 0
+    fi
+    # Multiline JSON: truncate at last line starting with }
+    local last_brace_line trimmed
+    if last_brace_line=$(printf '%s\n' "$from_brace" | grep -n '^}' | tail -1 | cut -d: -f1) \
+      && [[ -n "$last_brace_line" ]]; then
+      trimmed=$(head -n "$last_brace_line" <<<"$from_brace")
+      if printf '%s' "$trimmed" | jq -e . >/dev/null 2>&1; then
+        printf '%s' "$trimmed" | jq .
+        return 0
+      fi
+    fi
+  fi
+
+  return 1
+}
+
+# Extraction can yield truncated-but-valid JSON — verdict and summary survive
+# while the finding arrays are silently dropped, so the artifact looks
+# reviewable but the actual blockers/suggestions are lost. The schema requires
+# verdict plus all three arrays (empty [] is fine), so anything less is
+# structurally incomplete: an incomplete FIRST response goes through the
+# one-shot retry (full original context); a still-incomplete retried response
+# is rejected. qa_metadata is deliberately NOT part of this predicate — its
+# absence rejects without a retry.
+response_incomplete_schema() {
+  ! printf '%s' "$1" | jq -e '
+    ((.verdict? | type) == "string")
+    and ((.blockers? | type) == "array")
+    and ((.suggestions? | type) == "array")
+    and ((.questions? | type) == "array")
+  ' >/dev/null 2>&1
+}
+
 # review/audit carry the no-verdict contract (the EXIT_* codes); challenge/quick do not.
 ATTEMPTS_JSON="[]"
 # Claude, Codex and Pi can emit refusal text with a zero exit. There is no
 # common structured error interface across configured commands; match only
 # upstream error codes and refusal prefixes on stderr, not the opinion text.
+# Codex also echoes the prompt and tool output on stderr, so a review of text
+# holding these codes repeats them there: on a zero exit, a stdout holding a
+# usable review answer is answered and stderr is not read. Challenge and quick
+# have no JSON answer, so their stdout never outranks stderr.
 REFUSAL_PATTERNS=(
   'rate_limit_error|rate_limit_exceeded'
   'insufficient_quota|You exceeded your current quota'
@@ -2617,7 +2693,7 @@ REFUSAL_PATTERNS=(
 # Use the same fall-through for primary calls and the existing format retry.
 # A new target receives the original request, never another model's retry.
 collect_response() {
-  local invocation_prompt="$1" attempt_started attempt_finished attempt_seconds pattern refusal_rc
+  local invocation_prompt="$1" attempt_started attempt_finished attempt_seconds pattern refusal_rc answer_json
   while :; do
     EXIT_CODE=0
     attempt_started=$(date +%s)
@@ -2627,6 +2703,8 @@ collect_response() {
     attempt_cause=answered
     if [[ $EXIT_CODE -eq 124 ]]; then attempt_cause=timeout
     elif [[ $EXIT_CODE -ne 0 ]]; then attempt_cause="exit-$EXIT_CODE"
+    elif $REVIEW_LIKE && answer_json=$(extract_json "$RESULT") && ! response_incomplete_schema "$answer_json"; then
+      :
     else
       for pattern in "${REFUSAL_PATTERNS[@]}"; do
         refusal_rc=0
@@ -2694,62 +2772,6 @@ if [[ ${#RESULT} -eq 0 ]]; then
   fi
   exit 1
 fi
-
-# --- Extract JSON (review/audit modes) ----------------------------------------
-
-extract_json() {
-  local input="$1"
-
-  # Whole output is valid JSON
-  if printf '%s' "$input" | jq -e . >/dev/null 2>&1; then
-    printf '%s' "$input" | jq .
-    return 0
-  fi
-
-  # Extract from first ```json ... ``` code fence (stop at first closing fence)
-  local fenced
-  # One expression per command: BSD sed reads a label to the end of its
-  # expression, so the one-line form never closes its brace there. A
-  # here-string, not a pipe: sed quits at the closing fence, and a writer
-  # still filling the pipe would take SIGPIPE and fail the condition.
-  if fenced=$(sed -n -e '/^```json/{' -e 'n' -e ':a' -e '/^```$/q' -e 'p' -e 'n' -e 'ba' -e '}' <<<"$input") \
-    && [[ -n "$fenced" ]] && printf '%s' "$fenced" | jq -e . >/dev/null 2>&1; then
-    printf '%s' "$fenced" | jq .
-    return 0
-  fi
-
-  # Extract from first ``` ... ``` fence (no language tag)
-  if fenced=$(sed -n -e '/^```$/{' -e 'n' -e ':a' -e '/^```$/q' -e 'p' -e 'n' -e 'ba' -e '}' <<<"$input") \
-    && [[ -n "$fenced" ]] && printf '%s' "$fenced" | jq -e . >/dev/null 2>&1; then
-    printf '%s' "$fenced" | jq .
-    return 0
-  fi
-
-  # Last resort: extract from first { to last } (trim trailing prose)
-  local from_brace
-  from_brace=$(printf '%s' "$input" | sed -n '/^{/,$ p')
-  if [[ -n "$from_brace" ]]; then
-    # Single-line JSON (common): try first line alone
-    local first_line
-    first_line=$(printf '%s\n' "$from_brace" | head -1)
-    if printf '%s' "$first_line" | jq -e . >/dev/null 2>&1; then
-      printf '%s' "$first_line" | jq .
-      return 0
-    fi
-    # Multiline JSON: truncate at last line starting with }
-    local last_brace_line trimmed
-    last_brace_line=$(printf '%s\n' "$from_brace" | grep -n '^}' | tail -1 | cut -d: -f1)
-    if [[ -n "$last_brace_line" ]]; then
-      trimmed=$(printf '%s\n' "$from_brace" | head -n "$last_brace_line")
-      if printf '%s' "$trimmed" | jq -e . >/dev/null 2>&1; then
-        printf '%s' "$trimmed" | jq .
-        return 0
-      fi
-    fi
-  fi
-
-  return 1
-}
 
 # --- Retry + raw-preservation helpers (review/audit) --------------------------
 
@@ -2879,22 +2901,6 @@ response_missing_qa_metadata() {
   ! printf '%s' "$1" | jq -e '(.qa_metadata? | type) == "object"' >/dev/null 2>&1
 }
 
-# Extraction can yield truncated-but-valid JSON — verdict and summary survive
-# while the finding arrays are silently dropped, so the artifact looks
-# reviewable but the actual blockers/suggestions are lost. The schema requires
-# verdict plus all three arrays (empty [] is fine), so anything less is
-# structurally incomplete: an incomplete FIRST response goes through the
-# one-shot retry (full original context); a still-incomplete retried response
-# is rejected. qa_metadata is deliberately NOT part of this predicate — its
-# absence rejects without a retry.
-response_incomplete_schema() {
-  ! printf '%s' "$1" | jq -e '
-    ((.verdict? | type) == "string")
-    and ((.blockers? | type) == "array")
-    and ((.suggestions? | type) == "array")
-    and ((.questions? | type) == "array")
-  ' >/dev/null 2>&1
-}
 # Persist the rejected response as a sidecar (durable record), emit an error
 # JSON carrying its path, and exit EXIT_NO_REVIEW. OUTPUT_PATH itself is never
 # written, so no pass artifact can exist for a review that did not verifiably

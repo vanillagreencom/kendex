@@ -1,0 +1,1 @@
+- second-opinion keeps a review or audit answer a CLI printed on stdout with a zero exit, even when its stderr echoes quota or rate-limit text, instead of falling through.

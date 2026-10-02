@@ -11,9 +11,10 @@ FIRST='[{"name":"codex","cause":"exit-7","timed":true},{"name":"claude","cause":
 ROWS="
 nonzero exit falls through and stops after the answer|exit:codex=7 failure-stdout:codex=login-required inline:claude=1|review|rc=0 $FIRST order=codex,claude calls=1,1,0|review-fallback
 per-CLI timeout falls through|delay:codex=5 timeout:1|review|rc=0 [{\"name\":\"codex\",\"cause\":\"timeout\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,claude calls=1,1,0
-Anthropic rate-limit code on stderr overrides valid-looking stdout|refusal:codex=rate_limit_error|review|rc=0 [{\"name\":\"codex\",\"cause\":\"quota\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,claude calls=1,1,0
-OpenAI quota code falls through|refusal:codex=insufficient_quota|review|rc=0 [{\"name\":\"codex\",\"cause\":\"quota\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,claude calls=1,1,0
-Claude usage-limit banner falls through|refusal:codex=claude-banner|review|rc=0 [{\"name\":\"codex\",\"cause\":\"quota\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,claude calls=1,1,0
+Anthropic rate-limit code on stderr with empty stdout falls through|refusal:codex=rate_limit_error codex:empty|review|rc=0 [{\"name\":\"codex\",\"cause\":\"quota\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,claude calls=1,1,0
+OpenAI quota code on stderr with empty stdout falls through|refusal:codex=insufficient_quota codex:empty|review|rc=0 [{\"name\":\"codex\",\"cause\":\"quota\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,claude calls=1,1,0
+Claude usage-limit banner with empty stdout falls through|refusal:codex=claude-banner codex:empty|review|rc=0 [{\"name\":\"codex\",\"cause\":\"quota\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,claude calls=1,1,0
+usable answer on stdout outranks a quota code on stderr|refusal:codex=insufficient_quota|review|rc=0 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true}] order=codex calls=1,0,0
 execution failure during the existing format retry falls through|codex:junk retry-exit:codex=7 inline:claude=1|review|rc=0 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"codex\",\"cause\":\"exit-7\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,codex,claude calls=2,1,0|review-fallback
 replacement review receives its own format retry|codex:junk retry-exit:codex=7 claude:junk retry:claude=clean inline:claude=1|review|rc=0 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"codex\",\"cause\":\"exit-7\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,codex,claude,claude calls=2,2,0|review-fallback
 replacement audit receives its own format retry|codex:junk retry-exit:codex=7 claude:junk retry:claude=clean|audit|rc=0 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"codex\",\"cause\":\"exit-7\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,codex,claude,claude calls=2,2,0|audit-fallback
@@ -79,6 +80,7 @@ per-target recovery allowance|codex:junk retry-exit:codex=7 claude:junk retry:cl
 child invocation history|count:2 codex:junk retry:codex=clean|history|3
 attempted target count|exit:codex=7|selected|2
 stdout failure cause|exit:codex=7 failure-stdout:codex=login-required|cause|login-required
+stdout answer outranks stderr|refusal:codex=insufficient_quota|answer|rc=0 [{"name":"codex","cause":"answered","timed":true}] order=codex calls=1,0,0
 '
 while IFS='|' read -r label world rule correct; do
   [[ -n "$label" ]] || continue
@@ -93,6 +95,7 @@ while IFS='|' read -r label world rule correct; do
   if STAMPED=' '  SELECTED_COUNT=1 # SELECTED_COUNT=${#REVIEW_LANES[@]}
   if STAMPED=' ;;
     cause) mutate_script "$SO" '    CLI_FAILURE_CAUSE=$(printf '\''%s\n'\'' "$partial" | tail -20)' '    : '\''CLI_FAILURE_CAUSE=$(printf "%s\n" "$partial" | tail -20)'\'' ' ;;
+    answer) mutate_script "$SO" '    elif $REVIEW_LIKE && answer_json=$(extract_json "$RESULT") && ! response_incomplete_schema "$answer_json"; then' '    elif false; then # $REVIEW_LIKE && answer_json=$(extract_json "$RESULT") && ! response_incomplete_schema "$answer_json"' ;;
   esac
   got=$(run_fallback review)
   case "$rule" in
@@ -101,6 +104,7 @@ while IFS='|' read -r label world rule correct; do
     history) actual=$(jq '.qa_metadata.attempts | length' < "$ROW/out/out.json") ;;
     selected) actual=$(jq '.qa_metadata.selected_count' < "$ROW/out/out.json") ;;
     cause) actual=$(grep -Fx -- login-required "$ROW/stderr" || true) ;;
+    answer) actual="$got" ;;
   esac
   assert_eq "$([[ "$actual" != "$correct" ]] && printf red || printf green)" red "control: $label turns its assertion red"
 done <<<"$CONTROLS"

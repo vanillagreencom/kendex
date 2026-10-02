@@ -25,7 +25,7 @@ You select a review, audit, challenge or question. The script identifies the cur
 
 Set shared values in `kendex.settings.toml` under `[env]` and personal overrides in `.env.local`; nothing is marked required, so an install writes no settings. Every key, its default and the built-in `claude` and `codex` command lines: `second-opinion --help`. The ones most projects touch:
 
-- `SECOND_OPINION_MODELS`: the ordered fallback list, default `claude codex`. Both room-check skips and execution failures advance to the next name. Nonzero exit, timeout and recognized quota/rate-limit refusal on stderr are execution failures. Attempts report name, cause and seconds. The script stops when it collects the requested opinions or the list ends. It runs one command at a time. A forced target does not fall through.
+- `SECOND_OPINION_MODELS`: the ordered fallback list, default `claude codex`. Both room-check skips and execution failures advance to the next name. Nonzero exit, timeout and recognized quota/rate-limit refusal on stderr are execution failures. A stderr refusal counts only when stdout holds no usable review answer. Attempts report name, cause and seconds. The script stops when it collects the requested opinions or the list ends. It runs one command at a time. A forced target does not fall through.
 - `SECOND_OPINION_COUNT`: opinions a `review` collects, default `1`.
 - `SECOND_OPINION_<NAME>_CMD`: the full command a roster entry runs; another model CLI is a settings entry, not new code. Keep the sandbox read-only so a second opinion can never write to your worktree.
 - `SECOND_OPINION_TIMEOUT`: seconds per CLI invocation, default `1080`.

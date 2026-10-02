@@ -59,7 +59,7 @@ Cross-model is enforced in every mode: a run with no eligible target exits 1 nam
 
 ## Multi-lane review
 
-The `SECOND_OPINION_MODELS` order is the fallback order at both the room check and execution. A nonzero exit, per-CLI timeout or recognized quota/rate-limit refusal on stderr advances to the next name. Each attempt records its name, cause and seconds. A failed attempt does not exclude another entry running that model. Forced targets do not fall through.
+The `SECOND_OPINION_MODELS` order is the fallback order at both the room check and execution. A nonzero exit, per-CLI timeout or recognized quota/rate-limit refusal on stderr advances to the next name. The stderr refusal counts only on a zero exit whose stdout holds no usable review answer. Each attempt records its name, cause and seconds. A failed attempt does not exclude another entry running that model. Forced targets do not fall through.
 
 `SECOND_OPINION_COUNT` of 2 or more makes `review` collect that many distinct eligible opinions in order on one pinned scope and write a single union artifact. Collection stops when the count is met or the list ends. Lane resolution, merge rules, artifact placement and permissions, scratch durability, and the failure taxonomy: [references/multi-lane.md](references/multi-lane.md).
 
