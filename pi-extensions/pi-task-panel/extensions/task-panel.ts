@@ -915,6 +915,9 @@ export default function taskPanel(pi: ExtensionAPI): void {
 
 	const restore = (ctx: ExtensionContext) => {
 		activeCtx = ctx;
+		// The fingerprint names the last state saved, which a tree point before
+		// it does not hold, so the first change after a restore always saves.
+		lastFingerprintBySession.delete(sessionIdForContext(ctx));
 		const sidecar = readSavedState(ctx, sidecarStatePath(ctx));
 		state = emptyState(ctx.cwd);
 		// The raw full record the state came from. A list over the tool-result

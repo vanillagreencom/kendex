@@ -59,76 +59,102 @@ const ROWS: Array<{ name: string; branch: BranchRecord[]; before?: Before; expec
 	{ name: "a fork keeps the last full list and warns", branch: ["small.entry", "newer.entry"], before: "fork", expected: "small", warnings: [BRANCH_STATE_MISSING] },
 ];
 
-for (const row of ROWS) {
-	test(`session_tree restore: ${row.name}`, async () => {
-		const previousPiDir = process.env.PI_CODING_AGENT_DIR;
-		const previousDiagnosticLog = process.env.PI_TASK_PANEL_DIAGNOSTIC_LOG;
-		const base = realpathSync(mkdtempSync(join(tmpdir(), "pi-task-panel-restore-")));
-		try {
-			process.env.PI_CODING_AGENT_DIR = join(base, "agent");
-			process.env.PI_TASK_PANEL_DIAGNOSTIC_LOG = join(base, "diagnostics.log");
-			clearPackageConfigCache();
-			const { default: taskPanel } = await import("../extensions/task-panel.js");
-			const pi = fakePi();
-			taskPanel(pi as never);
-			const notifications: Array<{ message: string; level: string }> = [];
-			const ctx = fakeCtx(base, SESSION_ID, notifications);
-			const tasksWrite = (params: Record<string, unknown>) => pi.tools.get("tasks_write").execute("call", params, undefined, undefined, ctx);
-			const navigate = pi.handlers.get("session_tree");
-			if (!navigate) throw new Error("handler-missing=session_tree");
-			const records = new Map<BranchRecord, unknown>();
-			const save = async (name: Save) => {
-				const result = await tasksWrite({ action: "replace", tasks: SAVES[name].map((content) => ({ content })) });
-				const entry = pi.appended.at(-1);
-				records.set(`${name}.entry`, { type: "custom", customType: entry?.customType, data: entry?.data });
-				records.set(`${name}.result`, { type: "message", message: { role: "toolResult", toolName: "tasks_write", details: result.details } });
-			};
-			const saveLargeLists = async (count: number) => {
-				for (let save = 0; save < count; save++) {
-					await tasksWrite({ action: "replace", tasks: Array.from({ length: 200 }, (_value, index) => ({ content: `${"e".repeat(400)} evict ${save} ${index}` })) });
-				}
-			};
-			for (const name of SAVE_ORDER) await save(name);
-			expect(pi.appended.map((entry) => entry.data.fullSnapshot)).toEqual([undefined, undefined, false, false]);
-			const states = join(base, "agent", "kendex", "sessions", SESSION_ID, "pi-task-panel", "states");
-			const savedStates = () => readdirSync(states).filter((name) => name.endsWith(".json")).sort();
-			const savedStateFile = (name: Save) => `${(records.get(`${name}.entry`) as { data: { fingerprint: string } }).data.fingerprint}.json`;
-			expect(savedStates()).toEqual([savedStateFile("older"), savedStateFile("newer")].sort());
-			let restoreCtx = ctx;
-			if (row.before === "evict") {
-				// Back-dated, so the directory drops it whatever the file system's timestamp granularity.
-				utimesSync(join(states, savedStateFile("older")), 1, 1);
-				await saveLargeLists(SAVED_STATES_MAX - 1);
-				expect(savedStates()).toHaveLength(SAVED_STATES_MAX);
-				expect(savedStates()).not.toContain(savedStateFile("older"));
-			} else if (row.before === "tie") {
-				await saveLargeLists(SAVED_STATES_MAX - 2);
-				writeFileSync(join(states, `${savedStateFile("newer")}.tmp-1`), "{}\n");
-				for (const name of readdirSync(states)) utimesSync(join(states, name), AHEAD_OF_CLOCK, AHEAD_OF_CLOCK);
-				utimesSync(join(states, `${savedStateFile("newer")}.tmp-1`), AHEAD_OF_CLOCK + 1, AHEAD_OF_CLOCK + 1);
-				await save("latest");
-				expect(savedStates()).toHaveLength(SAVED_STATES_MAX);
-				await save("small");
-			} else if (row.before === "fork") restoreCtx = fakeCtx(base, `${SESSION_ID}-fork`, notifications);
-			else if (row.before === "save-at-older") {
-				ctx.sessionManager.getBranch = () => (["small.entry", "older.entry"] as BranchRecord[]).map((name) => records.get(name)) as never;
-				await navigate({}, ctx);
-				await tasksWrite({ action: "add_task", task: "edited at the older point" });
-			}
-			restoreCtx.sessionManager.getBranch = () => row.branch.map((name) => records.get(name)) as never;
-			await navigate({}, restoreCtx);
-			const exported = join(base, "exported.md");
-			await pi.commands.get("tasks:export").handler(exported, restoreCtx);
-			const restored = readFileSync(exported, "utf8").split("\n").filter((line) => line.startsWith("- ")).map((line) => line.slice(2).replace(/ \((active|done|dropped)\)$/, ""));
-			expect(restored.sort()).toEqual(row.expected === "empty" ? [] : [...SAVES[row.expected]].sort());
-			expect(notifications.filter((note) => note.level === "warning").map((note) => note.message.split("\n")[0])).toEqual(row.warnings);
-		} finally {
-			if (previousPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-			else process.env.PI_CODING_AGENT_DIR = previousPiDir;
-			if (previousDiagnosticLog === undefined) delete process.env.PI_TASK_PANEL_DIAGNOSTIC_LOG;
-			else process.env.PI_TASK_PANEL_DIAGNOSTIC_LOG = previousDiagnosticLog;
-			clearPackageConfigCache();
-			rmSync(base, { recursive: true, force: true });
-		}
-	});
+/** Loads the extension into a fresh fake session whose Pi user directory and diagnostic log sit under a scratch root. */
+async function inSession(run: (session: { base: string; pi: ReturnType<typeof fakePi>; ctx: ReturnType<typeof fakeCtx>; notifications: Array<{ message: string; level: string }>; navigate: (event: unknown, ctx: unknown) => unknown }) => Promise<void>): Promise<void> {
+	const previousPiDir = process.env.PI_CODING_AGENT_DIR;
+	const previousDiagnosticLog = process.env.PI_TASK_PANEL_DIAGNOSTIC_LOG;
+	const base = realpathSync(mkdtempSync(join(tmpdir(), "pi-task-panel-restore-")));
+	try {
+		process.env.PI_CODING_AGENT_DIR = join(base, "agent");
+		process.env.PI_TASK_PANEL_DIAGNOSTIC_LOG = join(base, "diagnostics.log");
+		clearPackageConfigCache();
+		const { default: taskPanel } = await import("../extensions/task-panel.js");
+		const pi = fakePi();
+		taskPanel(pi as never);
+		const notifications: Array<{ message: string; level: string }> = [];
+		const navigate = pi.handlers.get("session_tree");
+		if (!navigate) throw new Error("handler-missing=session_tree");
+		await run({ base, pi, ctx: fakeCtx(base, SESSION_ID, notifications), notifications, navigate });
+	} finally {
+		if (previousPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousPiDir;
+		if (previousDiagnosticLog === undefined) delete process.env.PI_TASK_PANEL_DIAGNOSTIC_LOG;
+		else process.env.PI_TASK_PANEL_DIAGNOSTIC_LOG = previousDiagnosticLog;
+		clearPackageConfigCache();
+		rmSync(base, { recursive: true, force: true });
+	}
 }
+
+/** The task lines `/tasks:export` writes for the panel's current state. */
+async function exportedTasks(base: string, pi: ReturnType<typeof fakePi>, ctx: ReturnType<typeof fakeCtx>): Promise<string[]> {
+	const exported = join(base, "exported.md");
+	await pi.commands.get("tasks:export").handler(exported, ctx);
+	return readFileSync(exported, "utf8").split("\n").filter((line) => line.startsWith("- ")).map((line) => line.slice(2));
+}
+
+for (const row of ROWS) {
+	test(`session_tree restore: ${row.name}`, () => inSession(async ({ base, pi, ctx, notifications, navigate }) => {
+		const tasksWrite = (params: Record<string, unknown>) => pi.tools.get("tasks_write").execute("call", params, undefined, undefined, ctx);
+		const records = new Map<BranchRecord, unknown>();
+		const save = async (name: Save) => {
+			const result = await tasksWrite({ action: "replace", tasks: SAVES[name].map((content) => ({ content })) });
+			const entry = pi.appended.at(-1);
+			records.set(`${name}.entry`, { type: "custom", customType: entry?.customType, data: entry?.data });
+			records.set(`${name}.result`, { type: "message", message: { role: "toolResult", toolName: "tasks_write", details: result.details } });
+		};
+		const saveLargeLists = async (count: number) => {
+			for (let save = 0; save < count; save++) {
+				await tasksWrite({ action: "replace", tasks: Array.from({ length: 200 }, (_value, index) => ({ content: `${"e".repeat(400)} evict ${save} ${index}` })) });
+			}
+		};
+		for (const name of SAVE_ORDER) await save(name);
+		expect(pi.appended.map((entry) => entry.data.fullSnapshot)).toEqual([undefined, undefined, false, false]);
+		const states = join(base, "agent", "kendex", "sessions", SESSION_ID, "pi-task-panel", "states");
+		const savedStates = () => readdirSync(states).filter((name) => name.endsWith(".json")).sort();
+		const savedStateFile = (name: Save) => `${(records.get(`${name}.entry`) as { data: { fingerprint: string } }).data.fingerprint}.json`;
+		expect(savedStates()).toEqual([savedStateFile("older"), savedStateFile("newer")].sort());
+		let restoreCtx = ctx;
+		if (row.before === "evict") {
+			// Back-dated, so the directory drops it whatever the file system's timestamp granularity.
+			utimesSync(join(states, savedStateFile("older")), 1, 1);
+			await saveLargeLists(SAVED_STATES_MAX - 1);
+			expect(savedStates()).toHaveLength(SAVED_STATES_MAX);
+			expect(savedStates()).not.toContain(savedStateFile("older"));
+		} else if (row.before === "tie") {
+			await saveLargeLists(SAVED_STATES_MAX - 2);
+			writeFileSync(join(states, `${savedStateFile("newer")}.tmp-1`), "{}\n");
+			for (const name of readdirSync(states)) utimesSync(join(states, name), AHEAD_OF_CLOCK, AHEAD_OF_CLOCK);
+			utimesSync(join(states, `${savedStateFile("newer")}.tmp-1`), AHEAD_OF_CLOCK + 1, AHEAD_OF_CLOCK + 1);
+			await save("latest");
+			expect(savedStates()).toHaveLength(SAVED_STATES_MAX);
+			await save("small");
+		} else if (row.before === "fork") restoreCtx = fakeCtx(base, `${SESSION_ID}-fork`, notifications);
+		else if (row.before === "save-at-older") {
+			ctx.sessionManager.getBranch = () => (["small.entry", "older.entry"] as BranchRecord[]).map((name) => records.get(name)) as never;
+			await navigate({}, ctx);
+			await tasksWrite({ action: "add_task", task: "edited at the older point" });
+		}
+		restoreCtx.sessionManager.getBranch = () => row.branch.map((name) => records.get(name)) as never;
+		await navigate({}, restoreCtx);
+		const restored = (await exportedTasks(base, pi, restoreCtx)).map((line) => line.replace(/ \((active|done|dropped)\)$/, ""));
+		expect(restored.sort()).toEqual(row.expected === "empty" ? [] : [...SAVES[row.expected]].sort());
+		expect(notifications.filter((note) => note.level === "warning").map((note) => note.message.split("\n")[0])).toEqual(row.warnings);
+	}));
+}
+
+test("a slash change at an older tree point that recreates the newer state saves it", () => inSession(async ({ base, pi, ctx, navigate }) => {
+	await pi.tools.get("tasks_write").execute("call", { action: "replace", tasks: [{ content: "first" }, { content: "second" }] }, undefined, undefined, ctx);
+	const older = pi.appended.at(-1);
+	const done = pi.commands.get("tasks:done");
+	await done.handler("first", ctx);
+	expect(pi.appended).toHaveLength(2);
+	const entry = (appended: { customType: string; data: unknown }) => ({ type: "custom", customType: appended.customType, data: appended.data });
+	ctx.sessionManager.getBranch = () => [entry(older!)] as never;
+	await navigate({}, ctx);
+	expect(await exportedTasks(base, pi, ctx)).toEqual(["first (active)", "second"]);
+	await done.handler("first", ctx);
+	expect(pi.appended).toHaveLength(3);
+	ctx.sessionManager.getBranch = () => [entry(older!), entry(pi.appended[2])] as never;
+	await navigate({}, ctx);
+	expect(await exportedTasks(base, pi, ctx)).toEqual(["first (done)", "second (active)"]);
+}));

@@ -4,7 +4,7 @@
 
 ### 3.0.5
 
-- A restore after `/tree` navigation, a fork or a resume shows the list saved at that point of the session. Before, an older tree point showed the newest saved list, and a point with no saved list showed it too. A list over 64 KiB is now also saved as `states/<fingerprint>.json` beside the sidecar `state.json`, and the newest 20 such files are kept. Where the list a manifest or bounded `tasks_write` details stand for is in neither file, as in a fork, the panel keeps the last full list the session holds and warns with a `persistence_failure=branch-state-missing` line.
+- A restore after `/tree` navigation, a fork or a resume shows the list saved at that point of the session. Before, an older tree point showed the newest saved list, and a point with no saved list showed it too. A list over 64 KiB is now also saved as `states/<fingerprint>.json` beside the sidecar `state.json`, and the newest 20 such files are kept. Where the list a manifest or bounded `tasks_write` details stand for is in neither file, as in a fork, the panel keeps the last full list the session holds and warns with a `persistence_failure=branch-state-missing` line. The first task change after a restore always saves, so a change at an older point that recreates the newer list is kept.
 
 ### 3.0.4
 
