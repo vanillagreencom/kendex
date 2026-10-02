@@ -41,7 +41,8 @@ const HEADER: &str = "\
 # on the text of the line the finding fired on. A row is added by hand and
 # reviewed with the finding it accepts; `cargo test -p kendex-core --
 # --ignored regenerate_allowance` refreshes the line hash and message of
-# the rows already here and refuses a row whose finding is gone, and
+# the rows already here and refuses a file whose findings no longer match
+# its rows one per row (`AcceptedFile::refreshed` states when), and
 # `crates/core/tests/allowance.rs` fails while the table is stale. Read by
 # `crates/core/src/quality/allowance.rs`.
 
@@ -195,10 +196,8 @@ impl Allowance {
     /// This table with every row read again off the catalog at `sealed`:
     /// each row's line hash and message as the finding stands there now,
     /// the rows of a file in the order the file holds their lines. A row is
-    /// never added; a listed file whose findings under a row's rule are not
-    /// one per row is refused by name, since a finding that is gone is a
-    /// row nobody should still carry, and one that appeared is a row nobody
-    /// accepted.
+    /// never added. A package the catalog no longer offers is refused here;
+    /// what refuses a listed file is stated once, at `AcceptedFile::refreshed`.
     pub fn refreshed(&self, sealed: &SealedSource, config: &SourceConfig) -> Result<Allowance> {
         let mut packages = Vec::with_capacity(self.packages.len());
         for package in &self.packages {
@@ -254,7 +253,17 @@ fn take(open: &mut Vec<(&str, &Accepted)>, prepared: &Prepared, finding: &Findin
 
 impl AcceptedFile {
     /// This file's rows read again off the prepared package: per rule the
-    /// findings, one per row, each keyed by its line's text.
+    /// findings, one per row, each keyed by its line's text. The one
+    /// statement of what refuses a listed file, by name: a path the package
+    /// does not hold as a text file; a rule whose findings in the file are
+    /// not as many as its rows, since a finding that is gone is a row nobody
+    /// should still carry and one that appeared is a row nobody accepted; or
+    /// a finding under a listed rule at no line, which no row can name.
+    /// Only the count is compared, so a swap is not refused: one accepted
+    /// finding gone and another of its rule new in the same file. The
+    /// committed-table test then fails on the new line's hash, and the
+    /// refresh rewrites the row to that line, a change the reviewer of the
+    /// `allowance.toml` diff sees.
     fn refreshed(
         &self,
         package: &Package,

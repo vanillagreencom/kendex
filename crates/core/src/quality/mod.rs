@@ -427,8 +427,8 @@ pub struct AuditResult {
     pub mentions: Vec<Finding>,
     /// Findings kendex accepted in a package it publishes ([`Allowance`]):
     /// the same shape, at no cost to the score, printed only on a verbose
-    /// reading. Any edit to the file holding one puts it back among
-    /// `findings`.
+    /// reading. A change to the finding's own line or to its message puts
+    /// it back among `findings`; an edit elsewhere in the file does not.
     pub accepted: Vec<Finding>,
     pub skipped: Vec<SkippedRule>,
     /// What every finding here costs — the advisory number every surface

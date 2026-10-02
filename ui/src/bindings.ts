@@ -862,8 +862,8 @@ export type AuditResult = {
 	/**
 	 *  Findings kendex accepted in a package it publishes ([`Allowance`]):
 	 *  the same shape, at no cost to the score, printed only on a verbose
-	 *  reading. Any edit to the file holding one puts it back among
-	 *  `findings`.
+	 *  reading. A change to the finding's own line or to its message puts
+	 *  it back among `findings`; an edit elsewhere in the file does not.
 	 */
 	accepted: Finding[],
 	skipped: SkippedRule[],

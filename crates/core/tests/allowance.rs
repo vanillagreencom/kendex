@@ -39,10 +39,10 @@ fn regenerated() -> String {
 }
 
 /// `cargo test` fails whenever a listed finding's line text or message
-/// changed, and the refresh itself refuses a listed finding the catalog no
-/// longer raises or a file that raises more of that rule than the table
-/// lists; an edit elsewhere in the file, one that moves the finding's line
-/// included, leaves the table current. Refresh with:
+/// changed, or the refresh refuses a file whose findings no longer match
+/// its rows one per row (`AcceptedFile::refreshed` states when); an edit
+/// elsewhere in the file, one that moves the finding's line included,
+/// leaves the table current. Refresh with:
 /// `cargo test -p kendex-core -- --ignored regenerate_allowance`
 #[test]
 fn the_committed_table_is_current_for_every_row_it_holds() {

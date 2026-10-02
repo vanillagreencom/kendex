@@ -2,7 +2,8 @@
 # on the text of the line the finding fired on. A row is added by hand and
 # reviewed with the finding it accepts; `cargo test -p kendex-core --
 # --ignored regenerate_allowance` refreshes the line hash and message of
-# the rows already here and refuses a row whose finding is gone, and
+# the rows already here and refuses a file whose findings no longer match
+# its rows one per row (`AcceptedFile::refreshed` states when), and
 # `crates/core/tests/allowance.rs` fails while the table is stale. Read by
 # `crates/core/src/quality/allowance.rs`.
 
