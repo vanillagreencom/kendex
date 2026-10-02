@@ -263,7 +263,7 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # digit. The effort is lowercase letters, the level as that harness spells
 # it; on pi it is the thinking level. An entry that names no model stops the
 # launch. The deprecated positive account number uses the caller's model
-# and warns once per run until the next minor release after this change.
+# and warns once per run until the next major release.
 # Replace it with a model name, such as claude:claude-opus-5-5:high. The name is not checked
 # before launch, so a misspelled codex, copilot or pi model opens the new
 # overseer on that name. Which entries a first launch and a succession skip is in

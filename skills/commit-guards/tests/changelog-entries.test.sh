@@ -424,7 +424,7 @@ for row in \
   "major-inline-mention|app.json|1.9.0|2.0.0|- Read **Breaking:** in the guide.||||major-breaking" \
   "patch|app.json|1.9.0|1.9.1|||||0" \
   "minor|app.json|1.9.0|1.10.0|||||0" \
-  "minor-breaking|app.json|1.9.0|1.10.0|$BREAK||||minor-breaking" \
+  "minor-breaking|app.json|1.9.0|1.10.0|\n$BREAK||||minor-breaking" \
   "minor-added|app.json|1.9.0|1.10.0|$ADD||||0|added" \
   "patch-added|app.json|1.9.0|1.9.1|$ADD||||patch-added|added" \
   "patch-breaking|app.json|1.9.0|1.9.1|$BREAK||||patch-breaking" \
@@ -436,7 +436,7 @@ for row in \
   "suffix-before-wider-patch|app.json|1.9.9-rc.1|1.9.10|$ADD||||patch-added|added" \
   "zero-patch-added|app.json|0.9.0|0.9.1|$ADD||||0|added" \
   "package-minor-breaking|packages/a/package.json|1.9.0|1.10.0||packages/a/CHANGELOG.md|### Unreleased\n\n$BREAK\n||minor-breaking" \
-  "downgrade|app.json|2.0.0|1.9.0|||||0" \
+  "downgrade|app.json|2.0.0|1.9.0|$BREAK||||0" \
   "large-major|app.json|9223372036854775808.0.0|9223372036854775809.0.0|||||major-breaking" \
   "prerelease-major|app.json|1.9.0|2.0.0-rc.1+build.2|||||major-breaking" \
   "initial|app.json||2.0.0|||||0" \
@@ -456,7 +456,10 @@ for row in \
   "package-other|packages/a/package.json|1.9.0|2.0.0|$BREAK|packages/b/CHANGELOG.md|### Unreleased\n\n$BREAK\n||major-breaking" \
   "committed-base|app.json|1.9.0|2.0.0||||--base base|major-breaking" \
   "committed-against-unnamed|app.json|1.9.0|2.0.0||||--against base|major-breaking" \
-  "committed-against|app.json|1.9.0|2.0.0|$BREAK|||--against base|0"; do
+  "committed-against|app.json|1.9.0|2.0.0|$BREAK|||--against base|0" \
+  "committed-against-patch-added|app.json|1.9.0|1.9.1|$ADD|||--against base|patch-added|added" \
+  "against-past-release|app.json|1.9.0|1.9.1|$ADD|CHANGELOG.md|## [Unreleased]\n\n### Added\n\n$ADD\n\n## [1.9.1] - 2026-10-02\n\n### Fixed\n\n- Fix a typo.\n|--against base|0|added" \
+  "released-patch-added|app.json|1.9.0|1.9.1||CHANGELOG.md|## [Unreleased]\n\n## [1.9.1] - 2026-10-02\n\n### Added\n\n$ADD\n||patch-added"; do
   IFS='|' read -r label manifest prior next fragment record_path record args expected section <<<"$row"
   repo "version-$label"
   if [ -n "$prior" ]; then

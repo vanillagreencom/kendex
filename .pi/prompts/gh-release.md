@@ -2,7 +2,7 @@
 description: Cut a kendex release — version bump, tag, draft review — per docs/RELEASING.md
 argument-hint: "[patch|minor|major]"
 ---
-Cut a kendex release. Optional bump: `$ARGUMENTS` (default: patch; minor when `changelog.d/added/` holds a fragment or CHANGELOG's Unreleased section has an Added entry; major only when asked).
+Cut a kendex release. Optional bump: `$ARGUMENTS` (default: the bump the pending entries call for under `changelog.d/README.md` § Release standard).
 
 The `app-deploy` skill is the procedure and `docs/RELEASING.md` holds what a release carries; this prompt only sequences them.
 

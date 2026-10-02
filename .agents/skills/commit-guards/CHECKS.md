@@ -52,7 +52,7 @@ Seven `<`, seven `|`, or seven `>` at column 0, followed by a space or end of li
 
 ## changelog-entries
 
-Ordinary runs check fragments and configured major bumps. `--collate` also validates the destination record before writing. A path in both roles is a config error. Text that is not valid UTF-8 is a collection error naming the line.
+Ordinary runs check fragments and configured version bumps. `--collate` also validates the destination record before writing. A path in both roles is a config error. Text that is not valid UTF-8 is a collection error naming the line.
 
 ### Fragments
 
@@ -84,8 +84,9 @@ A pattern's root is its leading run of glob-free directories (`changelog.d/*/*.m
 - From 1.0, a prior major of 1 or more, a minor increase fails with `minor-breaking=PATH:OLD:NEW` when its release holds a `- **Breaking:**` item. A patch increase fails with `patch-added=PATH:OLD:NEW` when its release holds an Added entry and with `patch-breaking=PATH:OLD:NEW` when it holds a Breaking one. An Added entry is an `added/` fragment or an item directly under the record's `### Added` heading. Each refusal's next record is `entry-preview=`, the first such entry's first line. Below 1.0 neither increase is judged.
 - A `package.json` uses only its adjacent `CHANGELOG.md`: `### Unreleased` before release, or `### <new version>` as the first release section after the release renames that heading. Another package's call-out does not count. A package record has no Added section, so a package patch takes the Breaking refusal only.
 - Other version files use an accepted fragment or the configured record's `## [Unreleased]` or the first release section, `## [<new version>] - <date>`. This permits the release commit after collation deletes fragments and the caller sets the version. Past versions and fenced examples do not count. An unreadable record fails closed.
+- Once a record holds the new version's own section, that section alone is the release's entries, for a package record too. Pending fragments and the pending section wait for the next release, so a branch restacked past a release and judged `--against` its pre-restack tip is not refused for that release's bump.
 - The owner-approval and compatibility policies belong to the consuming repository's release standard, not this configurable catalog check.
-- [`tests/changelog-entries.test.sh`](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/tests/changelog-entries.test.sh) pins each refusal against a passing control: a major with and without a named Breaking entry, a minor with a Breaking or an Added entry, a patch with an Added, Breaking, Changed or Fixed entry, and a 0.x patch.
+- [`tests/changelog-entries.test.sh`](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/tests/changelog-entries.test.sh) pins each refusal against a passing control: a major with and without a named Breaking entry, a minor with a Breaking or an Added entry, a patch with an Added, Breaking, Changed or Fixed entry, a 0.x patch, and a patch whose own release section leaves an added fragment pending.
 
 ### Measuring one entry
 

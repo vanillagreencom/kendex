@@ -14,7 +14,8 @@
 # increase needs a named Breaking entry; from 1.0, a minor holds no Breaking
 # entry and a patch holds neither a Breaking nor an Added one. The record
 # supplies release evidence after a caller collates fragments or renames a
-# package's Unreleased heading.
+# package's Unreleased heading; once it holds the new version's own section,
+# that section alone is the release's entries.
 #
 # --collate is that write, and the release commit is its only caller: on a
 # clean verdict it folds the fragments this run just accepted into the
@@ -93,6 +94,9 @@ first such entry. A suffix change alone is no increase. A
 package.json uses only its adjacent CHANGELOG.md's '### Unreleased' or
 '### <new version>' section. Other files use accepted fragments or the
 configured record's '## [Unreleased]' or '## [<new version>] - <date>' section.
+Once the record holds the new version's own section, that section alone is the
+release's entries: pending fragments and the Unreleased section wait for the
+next release, so a branch restacked past a release is not judged by it.
 Historical sections and fenced examples do not count.
 The default compares HEAD to the index; --base compares HEAD's merge base
 with REF to the index; --against compares REF itself to the index. Fragments
@@ -418,10 +422,15 @@ if [ -n "$version_paths" ]; then
         record_entries "$local_record" 3 "$new"
         ;;
       *)
-        cp -- "$GG_TMP/fragment-entries" "$GG_TMP/evidence" \
-          || gg_fail evidence-copy "$(gg_shown "$f")" "Could not collect the fragment entries."
-        if [ -n "$RECORD" ] && { [ "$bump" != major ] || ! first_entry breaking >/dev/null; }; then
-          record_entries "$RECORD" 2 "$new"
+        : >"$GG_TMP/evidence"
+        [ -z "$RECORD" ] || record_entries "$RECORD" 2 "$new"
+        # Fragments pending beside the release's own record section wait for
+        # the next release: a branch restacked past a release carries its
+        # fragments across that release's version bump.
+        if ! first_entry released >/dev/null; then
+          cat -- "$GG_TMP/fragment-entries" "$GG_TMP/evidence" >"$GG_TMP/evidence.all" \
+            && mv -- "$GG_TMP/evidence.all" "$GG_TMP/evidence" \
+            || gg_fail evidence-copy "$(gg_shown "$f")" "Could not collect the fragment entries."
         fi
         ;;
     esac

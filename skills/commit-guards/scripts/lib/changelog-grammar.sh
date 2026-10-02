@@ -190,9 +190,11 @@ gg_is_section() { # NAME — 0 when NAME is exactly one of the sections
 # entry_query=1 is the version check's read instead: one "KIND<TAB>line" row
 # per release entry it judges, in file order. KIND is breaking for an item
 # opening with a named call-out, and added for an item under the release's
-# `### Added` heading, a heading only a level-2 record carries. With
-# whole_entry=1 the input is one fragment, whose entry_section names its
-# directory.
+# `### Added` heading, a heading only a level-2 record carries. A record
+# holding the new version's own section answers with that section alone,
+# after a "released<TAB>heading" row: those are the entries the release
+# publishes, and pending ones wait for the next release. With whole_entry=1
+# the input is one fragment, whose entry_section names its directory.
 GG_UNRELEASED_AWK='
 BEGIN { if (!release_level) release_level = 2 }
 function named_breaking(l) { return l ~ /^- \*\*Breaking:\*\*[ \t]+[^ \t]/ }
@@ -240,13 +242,18 @@ function heading_text(l,   i, n, t) {
       pending = (release_level == 2 ? "[unreleased]" : "unreleased")
       released = (release_level == 2 ? "[" release_version "]" : release_version)
       if (lvl == release_level && text != pending) releases++
-      inside = (lvl == release_level && (text == pending || (releases == 1 &&
-        (text == released || (release_level == 2 && release_version != "" && index(text, released " - ") == 1)))))
+      scope = ""
+      if (lvl == release_level && text == pending) scope = "pending"
+      else if (lvl == release_level && releases == 1 && (text == released ||
+        (release_level == 2 && release_version != "" && index(text, released " - ") == 1))) {
+        scope = "released"
+        release_heading = line
+      }
       part = ""
     } else if (release_level == 2 && lvl == 3) part = tolower(heading_text(line))
-    if (!inside) next
-    if (named_breaking(line)) printf "breaking\t%s\n", line
-    if (part == "added" && line ~ /^- /) printf "added\t%s\n", line
+    if (scope == "") next
+    if (named_breaking(line)) rows[scope, ++count[scope]] = "breaking\t" line
+    if (part == "added" && line ~ /^- /) rows[scope, ++count[scope]] = "added\t" line
     next
   }
   if (lvl == 1 || lvl == 2) {
@@ -262,7 +269,13 @@ function heading_text(l,   i, n, t) {
   if (lvl == 3) printf "section\t%d\t%s\n", NR, heading_text(line)
 }
 END {
-  if (entry_query) { if (fence != "") exit 3; exit }
+  if (entry_query) {
+    if (fence != "") exit 3
+    scope = (release_heading != "" ? "released" : "pending")
+    if (scope == "released") printf "released\t%s\n", release_heading
+    for (k = 1; k <= count[scope]; k++) print rows[scope, k]
+    exit
+  }
   # A body that bailed lands here too, and its status is the one to keep.
   if (rc) exit rc
   # The duplicate count outranks a later unclosed fence, as the former

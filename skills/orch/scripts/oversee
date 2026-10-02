@@ -56,7 +56,7 @@
 #        naming none refusing `invalid-preference`, and unset the setting is
 #        lib/overseer-launch.sh's OL_DEFAULT_PREFERENCE. The old
 #        `harness:positive-integer:effort` form is deprecated and read until
-#        the next minor release after this change. It uses the caller's model
+#        the next major release. It uses the caller's model
 #        and warns once per run; a first launch has no caller. The walk is
 #        that file's ol_walk, and `lanes pick` names the lane, judged on the bucket that
 #        walls that model and held to the reading the session will take of

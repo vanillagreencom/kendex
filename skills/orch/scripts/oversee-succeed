@@ -138,7 +138,7 @@
 #        otherwise falls through to step 3.
 #     3. Walk ORCH_OVERSEER_PREFERENCE through lib/overseer-launch.sh's
 #        parser. The old `harness:positive-integer:effort` form is deprecated
-#        and read until the next minor release after this change. It uses the
+#        and read until the next major release. It uses the
 #        caller's model and warns once per run. The walk uses ol_walk
 #        and builds the chosen entry's flag words through its
 #        ol_launch_flags, the walk and the assembly `oversee launch` takes:
