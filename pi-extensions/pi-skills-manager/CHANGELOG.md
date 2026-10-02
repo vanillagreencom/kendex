@@ -4,7 +4,7 @@
 
 ### 2.0.4
 
-- Deleting a skill removes its files without blocking Pi. The manager shows that the deletion is running and takes no input until it ends, then reports the deletion; a deletion that fails is reported as an error. The skill preview lays out its content once per width instead of on every frame, and search matches against text built once when the list loads, so scrolling a long skill and typing a search stay responsive with a large catalog.
+- Deleting a skill removes its files without blocking Pi. The manager shows that the deletion is running and takes no input until it ends, then reports the deletion; a deletion that fails, or a skill list that fails to reload after one, is reported as an error and the manager takes input again. The skill preview lays out its content once per width instead of on every frame, and search matches against text built once when the list loads, so scrolling a long skill and typing a search stay responsive with a large catalog.
 
 ### 2.0.3
 

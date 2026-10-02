@@ -55,27 +55,57 @@ test("a removal that fails is reported as an error and resolves false", async ()
 	expect(notices[0]!.message).toStartWith("Cannot delete skill pinned: ");
 });
 
-test("the manager takes no input while a removal is in flight, then returns to the list", async () => {
+// Each way a removal can end, from each place a delete can start. A skill
+// still on disk returns to where the delete began; a removed one, its reload
+// failed or not, returns to the list. Escape then tells the two apart: the
+// list closes the manager with nothing, a preview goes back to the list.
+const OUTCOMES = ["removed", "kept", "delete-rejected", "reload-rejected"] as const;
+type Outcome = (typeof OUTCOMES)[number];
+type Origin = "browse" | "preview";
+const ROWS = OUTCOMES.flatMap((outcome) => (["browse", "preview"] as const).map((from) => ({ outcome, from })));
+
+function settledMode(outcome: Outcome, from: Origin): Origin {
+	switch (outcome) {
+		case "removed": case "reload-rejected": return "browse";
+		case "kept": case "delete-rejected": return from;
+		default: { const unknown: never = outcome; throw new Error(`unknown outcome ${String(unknown)}`); }
+	}
+}
+
+test.each(ROWS)("a removal that ends $outcome from $from takes no input until it ends, then leaves the deleting mode", async ({ outcome, from }) => {
 	const skill = projectSkill(project.cwd, "doomed");
-	let finishRemoval: (deleted: boolean) => void = () => { throw new Error("onDelete was never called"); };
+	let finishRemoval: () => void = () => { throw new Error("onDelete was never called"); };
 	let deleteCalls = 0;
 	const manager = openManager(project.cwd, registryOf([skill]), {
-		onDelete: () => { deleteCalls += 1; return new Promise<boolean>((resolve) => { finishRemoval = resolve; }); },
-		onRefresh: async () => registryOf([]),
+		onDelete: () => {
+			deleteCalls += 1;
+			return new Promise<boolean>((resolve, reject) => {
+				finishRemoval = () => (outcome === "delete-rejected" ? reject(new Error("removal threw")) : resolve(outcome !== "kept"));
+			});
+		},
+		onRefresh: async () => { if (outcome === "reload-rejected") throw new Error("settings unreadable"); return registryOf([]); },
 	});
 	manager.component.handleInput(KEYS.down);
+	if (from === "preview") manager.component.handleInput(KEYS.tab);
 	manager.component.handleInput(KEYS.backspace);
 	manager.component.handleInput(KEYS.enter);
 	for (const key of [KEYS.enter, KEYS.escape, KEYS.tab]) manager.component.handleInput(key);
 	const busy = manager.component.render(100).join("\n");
-
 	expect({ deleteCalls, closedWith: manager.closedWith, busy: busy.includes("Deleting skill") }).toEqual({ deleteCalls: 1, closedWith: [], busy: true });
-	finishRemoval(true);
-	// Two turns: the removal's continuation, then the catalog reload's.
-	await new Promise((resolve) => setImmediate(resolve));
+
+	finishRemoval();
+	// The removal and the reload settle in microtasks, which drain before this turn.
 	await new Promise((resolve) => setImmediate(resolve));
 	const after = manager.component.render(100).join("\n");
+	manager.component.handleInput(KEYS.escape);
+	const closedByEscape = [...manager.closedWith];
 	manager.close();
 	await manager.shown;
-	expect({ list: after.includes("Skills Manager"), empty: after.includes("0/0 enabled") }).toEqual({ list: true, empty: true });
+
+	const reportsError = outcome === "delete-rejected" || outcome === "reload-rejected";
+	expect({ busy: after.includes("Deleting skill"), closedByEscape, levels: manager.notices.map((notice) => notice.level) }).toEqual({
+		busy: false,
+		closedByEscape: settledMode(outcome, from) === "browse" ? [null] : [],
+		levels: reportsError ? ["error"] : [],
+	});
 });

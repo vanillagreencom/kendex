@@ -259,15 +259,35 @@ class SkillsManagerDialog implements Focusable {
 		}
 		this.requestRender();
 	}
+	private leaveDeleteConfirm(): void { this.mode = this.deleteReturnMode; this.syncFocus(); this.requestRender(); }
+	// Every outcome leaves the deleting mode, which takes no input: a dialog
+	// left in it could never close or release the modal lock.
 	private async confirmDelete(): Promise<void> {
 		const skill = this.getDeleteSkill();
 		if (!skill) { this.exitToBrowse(); return; }
 		this.mode = "deleting"; this.syncFocus(); this.requestRender();
-		const deleted = await this.options.onDelete(skill);
-		if (!deleted) { this.mode = this.deleteReturnMode === "preview" ? "preview" : "browse"; this.syncFocus(); this.requestRender(); return; }
-		this.deleteSkillPath = undefined; this.previewSkillPath = undefined; this.preview = undefined;
-		await this.refreshRegistry();
-		this.exitToBrowse();
+		let phase: "removing" | "reloading" = "removing";
+		try {
+			if (!(await this.options.onDelete(skill))) return;
+			phase = "reloading";
+			this.deleteSkillPath = undefined; this.previewSkillPath = undefined; this.preview = undefined;
+			await this.refreshRegistry();
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error);
+			switch (phase) {
+				case "removing": this.ctx.ui.notify(`Cannot delete skill ${skill.name}: ${reason}`, "error"); break;
+				case "reloading": this.ctx.ui.notify(`Deleted skill ${skill.name}, but the skills list did not reload: ${reason}`, "error"); break;
+				default: { const unknown: never = phase; throw new Error(`confirmDelete: unknown phase ${String(unknown)}`); }
+			}
+		} finally {
+			// A skill still on disk returns to where the delete began; a removed
+			// one leaves its preview, which no longer has a skill to show.
+			switch (phase) {
+				case "removing": this.leaveDeleteConfirm(); break;
+				case "reloading": this.exitToBrowse(); break;
+				default: { const unknown: never = phase; throw new Error(`confirmDelete: unknown phase ${String(unknown)}`); }
+			}
+		}
 	}
 	private async submitRename(value: string): Promise<void> {
 		const skill = this.getCurrentSkill();
@@ -416,7 +436,7 @@ class SkillsManagerDialog implements Focusable {
 		if (this.mode === "rename") { if (matchesKey(data, Key.escape)) { this.closeRenameDialog(); return; } if (this.renameError) this.renameError = undefined; this.renameInput.handleInput(data); return; }
 		// A removal in flight takes no input: a second confirm would delete again.
 		if (this.mode === "deleting") return;
-		if (this.mode === "delete-confirm") { if (matchesKey(data, Key.escape)) { this.mode = this.deleteReturnMode === "preview" ? "preview" : "browse"; this.syncFocus(); return; } if (matchesKey(data, Key.enter)) void this.confirmDelete(); return; }
+		if (this.mode === "delete-confirm") { if (matchesKey(data, Key.escape)) { this.leaveDeleteConfirm(); return; } if (matchesKey(data, Key.enter)) void this.confirmDelete(); return; }
 		if (this.mode === "edit") { this.editorView?.handleInput(data); return; }
 		if (this.mode === "preview") {
 			const skill = this.getCurrentSkill();
