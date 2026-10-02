@@ -148,13 +148,16 @@ for shape in unset missing empty whitespace multiline; do
     "unusable token refuses fallback, retains the mapping during the outage and recovers without repeating alerts: $shape" "$ERR"
 done
 
-# Must-fail control: keep the file read and token checks but disable their
-# refusal. The credential row must fail rather than accept gh's fallback.
-scripts="$(mutant_scripts security-token-control/orch lib/security-alerts.sh)" || exit 1
+# Must-fail control: keep the token file reader's read and checks but disable
+# their refusal. The credential row must fail rather than accept gh's fallback.
+scripts="$(mutant_scripts security-token-control/orch lib/gh-auth.sh)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/security-token-control/github"
-mutate_file "$scripts/lib/security-alerts.sh" \
-  '    || [[ -z "$token" || "$token" == *[[:space:]]* ]]; then' \
-  '    || [[ -z "$token" || "$token" == *[[:space:]]* ]] && false; then'
+mutate_file "$scripts/lib/gh-auth.sh" \
+  '  token="$(cat -- "$1")" || return 1' \
+  '  token="$(cat -- "$1")" || true'
+mutate_file "$scripts/lib/gh-auth.sh" \
+  '  [[ -n "$token" && "$token" != *[[:space:]]* ]] || return 1' \
+  '  [[ -n "$token" && "$token" != *[[:space:]]* ]] || true'
 for shape in missing empty; do
   new_case "security_token_control_$shape"
   case "$shape" in missing) rm -- "$STUB_DIR/alert-token" ;; empty) : > "$STUB_DIR/alert-token" ;; esac

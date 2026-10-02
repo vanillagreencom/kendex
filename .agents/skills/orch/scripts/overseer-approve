@@ -1,0 +1,206 @@
+#!/usr/bin/env bash
+# Approve one exact pull request head as the overseer's GitHub App, from the
+# installation token the fleet supplies. Contract: --help.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+print_usage() {
+  cat <<'EOF'
+Usage: overseer-approve PR_NUMBER FULL_HEAD_SHA --body-file PATH [--repo OWNER/REPO]
+
+Approves FULL_HEAD_SHA on pull request PR_NUMBER as the overseer's GitHub App,
+the fallback approval and the Copilot head notices of
+references/copilot-head-notices.md. Before posting it reads the pull
+request's live head with the same token, and approves only when that head
+equals FULL_HEAD_SHA. The review is one POST to pulls/PR_NUMBER/reviews with
+commit_id FULL_HEAD_SHA, event APPROVE and the text of the body file.
+
+Options:
+  --body-file PATH   the review body, sent as its text
+  --repo OWNER/REPO  the repository; default GH_REPO, then the working
+                     directory (`gh repo view`, then the origin remote)
+  -h, --help         this text
+
+Environment:
+  ORCH_OVERSEER_REVIEW_TOKEN_FILE
+                     absolute path, on the overseer's own host, of a file
+                     holding the overseer app's installation token as one
+                     non-empty line, mode 600, outside lane roots, replaced
+                     atomically before the token expires. No default. The
+                     fleet supplies it: the control VM for a hosted
+                     overseer, the fleet worker on the owner's machine for a
+                     local one. The app key never leaves the control VM, and
+                     this script never mints a token nor prints one. Read
+                     from the caller's environment, then the project's
+                     .env.local and kendex.settings.toml [env].
+
+Output: one line on success,
+  <state> <reviewer login> <short commit>
+as GitHub answered the review, for example
+  APPROVED vanillagreen-overseer[bot] 0123abc
+
+Every refusal's first stderr line is `overseer-approve: <key> ...`:
+  usage              an operand or option is missing or malformed
+  body-file          the body file cannot be read
+  scratch            no scratch directory could be made
+  settings-load      the project settings or private env file did not load
+  credential         the token file is unset, missing, unreadable or empty,
+                     or its value holds white space; the next line names the
+                     supplier. No GitHub call is made
+  repo-unresolved    no repository resolved
+  repo-shape         the repository is not OWNER/REPO
+  head-read-failed   the live head could not be read; gh's words follow
+  head-moved         the live head differs from FULL_HEAD_SHA; both named.
+                     Nothing is posted
+  post-failed        GitHub refused the review; its message follows
+  response-unread    GitHub accepted the review, but its answer could not
+                     be read
+
+Exit codes:
+  0  approved
+  1  repo-unresolved, repo-shape, head-read-failed, post-failed,
+     response-unread, settings-load, scratch
+  2  usage, body-file
+  3  credential
+  4  head-moved
+EOF
+}
+
+# Callers preserve positional values for this diagnostic catalog.
+oa_message() {
+  local _message_key="$1"
+  shift
+  case "$_message_key" in
+    usage)
+      printf 'overseer-approve: usage reason=%s value=%s\n' "$1" "${2:-}"
+      printf '%s\n' "Usage: overseer-approve PR_NUMBER FULL_HEAD_SHA --body-file PATH [--repo OWNER/REPO]; see --help"
+      ;;
+    body-file)
+      printf 'overseer-approve: body-file path=%s\n' "$1"
+      printf '%s\n' "The review body file cannot be read."
+      ;;
+    scratch)
+      printf 'overseer-approve: scratch command=%s\n' mktemp
+      printf '%s\n' "No scratch directory could be made."
+      ;;
+    settings-load)
+      printf 'overseer-approve: settings-load root=%s\n' "$1"
+      printf '%s\n' "The project settings or private env file did not load."
+      ;;
+    credential)
+      printf 'overseer-approve: credential setting=ORCH_OVERSEER_REVIEW_TOKEN_FILE file=%s\n' "$1"
+      printf '%s\n' "The fleet supplies this token file: the control VM for a hosted overseer, the fleet worker on the owner's machine for a local one. It must hold one non-empty line, the overseer app's installation token. Nothing was posted."
+      ;;
+    repo-unresolved)
+      printf 'overseer-approve: repo-unresolved remote=%s\n' origin
+      printf '%s\n' "No repository resolved: pass --repo OWNER/REPO."
+      ;;
+    repo-shape)
+      printf 'overseer-approve: repo-shape repo=%q\n' "$1"
+      printf '%s\n' "The repository is not OWNER/REPO."
+      ;;
+    head-read-failed)
+      printf 'overseer-approve: head-read-failed pr=%s repo=%s\n' "$1" "$2"
+      printf '%s\n' "The pull request's live head could not be read, so nothing was posted."
+      ;;
+    head-moved)
+      printf 'overseer-approve: head-moved pr=%s given=%s live=%s\n' "$1" "$2" "$3"
+      printf '%s\n' "The pull request's head is no longer the one given, so nothing was posted; the new head takes its own route."
+      ;;
+    post-failed)
+      printf 'overseer-approve: post-failed pr=%s repo=%s commit=%s\n' "$1" "$2" "$3"
+      printf '%s\n' "GitHub refused the approval; its message follows."
+      ;;
+    response-unread)
+      printf 'overseer-approve: response-unread pr=%s repo=%s commit=%s\n' "$1" "$2" "$3"
+      printf '%s\n' "GitHub accepted the review, but its answer could not be read; check the pull request's reviews before approving again."
+      ;;
+  esac
+}
+
+refuse() { # STATUS KEY [VALUES...]
+  local status="$1"
+  shift
+  oa_message "$@" >&2
+  exit "$status"
+}
+
+PR_NUM=""
+HEAD_SHA=""
+BODY_FILE=""
+REPO_ARG=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) print_usage; exit 0 ;;
+    --body-file|--repo)
+      [[ $# -ge 2 ]] || refuse 2 usage missing-value "$1"
+      if [[ "$1" == --body-file ]]; then BODY_FILE="$2"; else REPO_ARG="$2"; fi
+      shift 2
+      ;;
+    -*) refuse 2 usage unknown-option "$1" ;;
+    *)
+      if [[ -z "$PR_NUM" ]]; then PR_NUM="$1"
+      elif [[ -z "$HEAD_SHA" ]]; then HEAD_SHA="$1"
+      else refuse 2 usage extra-operand "$1"; fi
+      shift
+      ;;
+  esac
+done
+[[ "$PR_NUM" =~ ^[1-9][0-9]*$ ]] || refuse 2 usage pr-number "$PR_NUM"
+[[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse 2 usage full-head-sha "$HEAD_SHA"
+[[ -n "$BODY_FILE" ]] || refuse 2 usage missing-body-file
+
+SCRATCH="$(mktemp -d)" || refuse 1 scratch
+trap 'rm -rf -- "${SCRATCH:?}"' EXIT
+
+if ! payload="$(jq -n --rawfile body "$BODY_FILE" --arg sha "$HEAD_SHA" \
+  '{commit_id: $sha, event: "APPROVE", body: $body}' 2>"$SCRATCH/err")"; then
+  oa_message body-file "$BODY_FILE" >&2
+  cat -- "$SCRATCH/err" >&2
+  exit 2
+fi
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+# shellcheck source=lib/kendex-env.sh
+source "$SCRIPT_DIR/lib/kendex-env.sh"
+kendex_load_project_env "$PROJECT_ROOT" || refuse 1 settings-load "$PROJECT_ROOT"
+# shellcheck source=lib/gh-auth.sh
+source "$SCRIPT_DIR/lib/gh-auth.sh"
+# shellcheck source=lib/gh-repo.sh
+source "$SCRIPT_DIR/lib/gh-repo.sh"
+
+token_file="${ORCH_OVERSEER_REVIEW_TOKEN_FILE:-}"
+if ! token="$(orch_token_file_read "$token_file" 2>"$SCRATCH/err")"; then
+  oa_message credential "$token_file" >&2
+  cat -- "$SCRATCH/err" >&2
+  exit 3
+fi
+
+repo_status=0
+if [[ -n "$REPO_ARG" ]]; then
+  REPO="$(GH_REPO="$REPO_ARG" orch_resolve_gh_repo "$PROJECT_ROOT")" || repo_status=$?
+else
+  REPO="$(orch_resolve_gh_repo "$PROJECT_ROOT")" || repo_status=$?
+fi
+case "$repo_status" in
+  0) ;;
+  2) refuse 1 repo-shape "$REPO" ;;
+  *) refuse 1 repo-unresolved ;;
+esac
+
+if ! live="$(GH_TOKEN="$token" gh api "repos/$REPO/pulls/$PR_NUM" --jq .head.sha 2>"$SCRATCH/err")"; then
+  oa_message head-read-failed "$PR_NUM" "$REPO" >&2
+  cat -- "$SCRATCH/err" >&2
+  exit 1
+fi
+[[ "$live" == "$HEAD_SHA" ]] || refuse 4 head-moved "$PR_NUM" "$HEAD_SHA" "$live"
+
+if ! response="$(GH_TOKEN="$token" gh api --method POST "repos/$REPO/pulls/$PR_NUM/reviews" \
+  --input - <<<"$payload" 2>"$SCRATCH/err")"; then
+  oa_message post-failed "$PR_NUM" "$REPO" "$HEAD_SHA" >&2
+  cat -- "$SCRATCH/err" >&2
+  exit 1
+fi
+jq -er '"\(.state | strings) \(.user.login | strings) \(.commit_id | strings | .[0:7])"' <<<"$response" 2>/dev/null \
+  || refuse 1 response-unread "$PR_NUM" "$REPO" "$HEAD_SHA"

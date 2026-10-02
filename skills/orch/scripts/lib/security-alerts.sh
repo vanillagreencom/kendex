@@ -145,9 +145,7 @@ check_security_alerts() {
   # The fleet renews the installation token in this file: the control VM for
   # a hosted overseer, the fleet worker for a local one. Read once per
   # long pass so every alert read shares it, but unrelated gh calls never do.
-  # A missing or empty token must not fall back to a lane token or the keyring.
-  if ! token="$(cat -- "${ORCH_SECURITY_ALERT_TOKEN_FILE:-}" 2>"$errf")" \
-    || [[ -z "$token" || "$token" == *[[:space:]]* ]]; then
+  if ! token="$(orch_token_file_read "${ORCH_SECURITY_ALERT_TOKEN_FILE:-}" 2>"$errf")"; then
     security_unread installation-token credential "$errf"
     security_unread_commit "$state"
     return 0

@@ -74,6 +74,7 @@ Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` an
 | `ORCH_REPORT_QUIET_HOURS` | Owner-local window: reports write and print, with no owner notice. Empty disables it. The first due morning brief covers work since the last sent report. Asks and critical notices stay immediate. | `0-7` |
 | `ORCH_OWNER_TIME_ZONE` | Report time zone | `America/Los_Angeles` |
 | Watch settings | `ORCH_WATCH_*`, `ORCH_EXTERNAL_TRIAGE`, `ORCH_SECURITY_ALERTS`: `oversee-watch --help` | |
+| `ORCH_OVERSEER_REVIEW_TOKEN_FILE` | `overseer-approve`'s app token: an absolute path, one line, mode 600, outside lane roots, swapped atomically before expiry by the control VM (hosted) or fleet worker (local) | |
 | `ORCH_LANE_HOST` | `lane-host`'s provider: an executable or `local`; `ORCH_LANE_HOST_MAX_CALLS` and `ORCH_LANE_HOST_BUSY_WAIT_SECS` cap it: [Host protocol](schemas/lane-host.md) | `local` |
 | `ORCH_OVERSEER_HOST` | Runtime of the overseer's own session: `tmux`, the included provider; another is refused as `runtime-unsupported`. [Protocol](schemas/overseer-host.md) | `tmux` |
 | `QA_PERF_PATHS` | Space-separated path globs whose modification adds the `needs-perf-test` QA signal | empty |

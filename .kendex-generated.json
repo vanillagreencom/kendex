@@ -650,6 +650,7 @@
   ".agents/skills/orch/scripts/oversee-report",
   ".agents/skills/orch/scripts/oversee-succeed",
   ".agents/skills/orch/scripts/oversee-watch",
+  ".agents/skills/orch/scripts/overseer-approve",
   ".agents/skills/orch/scripts/overseer-host",
   ".agents/skills/orch/scripts/overseer-host-tmux",
   ".agents/skills/orch/scripts/overseer-run",

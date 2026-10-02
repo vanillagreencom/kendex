@@ -26,6 +26,19 @@ fi
 source "$_ORCH_SHARED_GH_AUTH"
 unset _ORCH_GH_AUTH_DIR _ORCH_SHARED_GH_AUTH
 
+# The overseer app's installation token from FILE, the one reader of the
+# fleet-supplied token files ORCH_SECURITY_ALERT_TOKEN_FILE and
+# ORCH_OVERSEER_REVIEW_TOKEN_FILE name: one non-empty line with no white
+# space. Prints nothing and fails when FILE is unset, missing, unreadable or
+# empty, or the value holds white space; cat's own words go to stderr. Never
+# falls back to a lane token or the keyring.
+orch_token_file_read() { # FILE
+  local token
+  token="$(cat -- "$1")" || return 1
+  [[ -n "$token" && "$token" != *[[:space:]]* ]] || return 1
+  printf '%s' "$token"
+}
+
 orch_sanitize_gh_env() {
   kendex_github_sanitize_gh_env
 }
