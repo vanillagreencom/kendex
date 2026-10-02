@@ -17,34 +17,55 @@ import sys
 
 skill, root = map(Path, sys.argv[1:3])
 real_cli = sys.argv[3]
-# Refresh-consumer owns the parse. This mode only formats its two arrays.
+# Refresh-consumer owns the parse. This mode only formats its three arrays.
 reporter = skill / 'scripts/refresh-report.py'
+astra = 'SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra"'
+fable = 'ORCH_OVERSEER_PREFERENCE = "claude:Fable:high"'
+def settings(refused=(), deprecated=(), models=(), script=reporter):
+ result = subprocess.run(['python3', str(script), '--settings'],
+                         input=json.dumps(dict(refused=refused, deprecated=deprecated, deprecated_models=models)),
+                         text=True, capture_output=True, env={'PATH':'/usr/bin:/bin'})
+ assert result.returncode == 0, result.stderr
+ return result.stdout
+def model_rows(out):
+ return [line for line in out.splitlines() if line.startswith('- <code>')]
 for refused, deprecated, present in [
  ([], [], False),
  ([], ['claude:1:high'], True),
  (['claude::high', 'codex:0:low'], ['claude:1:high'], True),
  (['<script>`bad\nentry</script>'], [], True),
 ]:
- result = subprocess.run(['python3', str(reporter), '--settings'],
-                         input=json.dumps(dict(refused=refused, deprecated=deprecated)),
-                         text=True, capture_output=True, env={'PATH':'/usr/bin:/bin'})
- assert result.returncode == 0, result.stderr
- assert ('## Settings' in result.stdout) == present
- assert result.stdout.count('ORCH_OVERSEER_PREFERENCE:') == len(refused) + len(deprecated)
- assert not present or 'harness:model:effort' in result.stdout
- assert '<script>' not in result.stdout and '`bad' not in result.stdout
- if not present: assert result.stdout == ''
+ out = settings(refused, deprecated)
+ assert ('## Settings' in out) == present
+ assert out.count('ORCH_OVERSEER_PREFERENCE:') == len(refused) + len(deprecated)
+ assert not present or 'harness:model:effort' in out
+ assert '<script>' not in out and '`bad' not in out
+ assert '## Deprecated models' not in out
+ if not present: assert out == ''
+# Each pinned setting is one row, in the order the scan read the file.
+for models, rows in [
+ ([astra], ['- <code>SECOND_OPINION_CODEX_CMD = &quot;codex exec -m gpt-6-astra&quot;</code>']),
+ ([fable], ['- <code>ORCH_OVERSEER_PREFERENCE = &quot;claude:Fable:high&quot;</code>']),
+ ([fable, astra, 'X = "fable <b> `x` y"'], ['- <code>ORCH_OVERSEER_PREFERENCE = &quot;claude:Fable:high&quot;</code>',
+                                          '- <code>SECOND_OPINION_CODEX_CMD = &quot;codex exec -m gpt-6-astra&quot;</code>',
+                                          '- <code>X = &quot;fable &lt;b&gt; &#96;x&#96; y&quot;</code>']),
+]:
+ out = settings(models=models)
+ assert out.count('## Deprecated models\n') == 1 and '## Settings' not in out, out
+ assert model_rows(out) == rows, out
+both = settings(deprecated=['claude:1:high'], models=[astra])
+assert both.index('## Settings') < both.index('## Deprecated models') and len(model_rows(both)) == 1
 source = reporter.read_text()
-needle = '    if rows:\n'
-assert source.count(needle) == 1
-mutant = root / 'settings-report.py'
-changed = source.replace(needle, '# ' + needle + '    if False:\n')
-assert changed != source
-mutant.write_text(changed)
-control = subprocess.run(['python3', str(mutant), '--settings'],
-                         input=json.dumps(dict(refused=[], deprecated=['claude:1:high'])),
-                         text=True, capture_output=True, env={'PATH':'/usr/bin:/bin'})
-assert control.returncode == 0 and control.stdout == ''
+for needle, refused, deprecated, models in [
+ ('    if rows:\n', [], ['claude:1:high'], []),
+ ('    if models:\n', [], [], [astra]),
+]:
+ assert source.count(needle) == 1
+ mutant = root / 'settings-report.py'
+ changed = source.replace(needle, '# ' + needle + '    if False:\n')
+ assert changed != source
+ mutant.write_text(changed)
+ assert settings(refused, deprecated, models, mutant) == ''
 (root / 'bin').mkdir()
 mock = root / 'bin/mock'
 mock.write_text('''#!/usr/bin/env python3

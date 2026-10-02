@@ -130,10 +130,30 @@ preference="$(rg_setting ORCH_OVERSEER_PREFERENCE "$OL_DEFAULT_PREFERENCE" "$pri
 parse_status=0
 ol_preference_entries "$preference" || parse_status=$?
 [ "$parse_status" -le 1 ] || exit "$parse_status"
-jq -cn --argjson refused_count "${#OL_REFUSED_ENTRIES[@]}" --args \
-  '{refused: $ARGS.positional[:$refused_count], deprecated: $ARGS.positional[$refused_count:]}' \
+# No committed setting may pin Fable or Astra. A comment, another table and
+# a private override are not committed [env] values.
+deprecated_models=()
+if [ -f kendex.settings.toml ]; then
+  table="$(rg_env_table kendex.settings.toml)"
+  assignment='^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*"([^"]*)"'
+  shopt -s nocasematch
+  while IFS= read -r line; do
+    [[ $line =~ $assignment ]] || continue
+    key="${BASH_REMATCH[1]}" value="${BASH_REMATCH[2]}"
+    if [[ $value == *gpt-6-astra* || $value == *fable* ]]; then
+      deprecated_models+=("$key = \"$value\"")
+    fi
+  done <<<"$table"
+fi
+jq -cn --argjson refused_count "${#OL_REFUSED_ENTRIES[@]}" \
+  --argjson deprecated_count "${#OL_DEPRECATED_ENTRIES[@]}" --args \
+  '($refused_count + $deprecated_count) as $models_start |
+   {refused: $ARGS.positional[:$refused_count],
+    deprecated: $ARGS.positional[$refused_count:$models_start],
+    deprecated_models: $ARGS.positional[$models_start:]}' \
   -- ${OL_REFUSED_ENTRIES[@]+"${OL_REFUSED_ENTRIES[@]}"} \
-  ${OL_DEPRECATED_ENTRIES[@]+"${OL_DEPRECATED_ENTRIES[@]}"}
+  ${OL_DEPRECATED_ENTRIES[@]+"${OL_DEPRECATED_ENTRIES[@]}"} \
+  ${deprecated_models[@]+"${deprecated_models[@]}"}
 SETTINGS_PARSE
   then
     printf 'refresh-error=settings-extraction value=%s\n' "$ROOT/.agents/skills/orch" >&2
@@ -148,9 +168,10 @@ SETTINGS_PARSE
     settings_lines=$((settings_lines + 1))
     if [ "$settings_lines" -ne 1 ] || ! jq -e -s '
       length == 1 and (.[0] | type == "object" and
-        keys == ["deprecated", "refused"] and
+        keys == ["deprecated", "deprecated_models", "refused"] and
         (.refused | type == "array") and (.deprecated | type == "array") and
-        all(.refused[], .deprecated[]; type == "string"))
+        (.deprecated_models | type == "array") and
+        all(.refused[], .deprecated[], .deprecated_models[]; type == "string"))
     ' <<<"$line" >/dev/null; then
       settings_output=invalid
     fi

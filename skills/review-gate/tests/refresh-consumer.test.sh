@@ -234,11 +234,12 @@ cp "$TMP/version-runner" "$runner"
 commit "$repo"
 git -C "$repo" push -q origin main
 # Committed settings and private overrides are real consumer inputs. Neither
-# the parse nor the report is doubled in these rolling-refresh fixtures.
+# the parse nor the report is doubled in these rolling-refresh fixtures. A
+# private Fable override stays clean: only committed settings are scanned.
 for row in \
   'claude:1:high||deprecated|claude:1:high' \
-  'claude:fable:high||clean|' \
-  'claude:fable:high|codex:2:low|deprecated|codex:2:low' \
+  'claude:opus:high||clean|' \
+  'claude:opus:high|codex:2:low|deprecated|codex:2:low' \
   'claude::high,codex:0:low||refused|claude::high' \
   'claude:1:high|claude:fable:high|clean|' \
   'claude:1:high|claude:fable:high|clean||private.env'; do
@@ -311,6 +312,50 @@ run_refresh stale pass render
 if [ "$RC" -eq 0 ] && ! grep -qxF '## Settings' "$TMP/state/body"; then ok 'control: dropped Settings append turns the deprecated-entry assertion red'; else bad 'Settings append control' "$OUT"; fi
 reset_default
 cp "$TMP/settings-runner" "$runner"
+commit "$repo"
+git -C "$repo" push -q origin main
+# A committed Fable or Astra pin is a warning: the run publishes and arms as a
+# clean render does. Comments, other tables and clean values add no row.
+cp "$runner" "$TMP/models-runner"
+cp "$repo/kendex.settings.toml" "$TMP/models-settings"
+for mode in report control; do
+  reset_default
+  cat >"$repo/kendex.settings.toml" <<'TOML'
+[env]
+ORCH_OVERSEER_PREFERENCE = "claude:opus:high"
+# SECOND_OPINION_CODEX_MODEL = "gpt-6-astra"
+SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra" # pinned
+SECOND_OPINION_CLAUDE_MODEL = "claude-opus-5-5"
+REVIEW_MODEL = "FaBlE"
+[other]
+OTHER_MODEL = "fable"
+TOML
+  if [ "$mode" = control ]; then
+    file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+      '^      deprecated_models\+=\(' 's/^      deprecated_models+=(/      : # &/'
+  fi
+  commit "$repo"
+  git -C "$repo" push -q origin main
+  rm -f -- "$repo/.env.local" "$TMP/state/armed"
+  : >"$TMP/state/calls"
+  run_refresh "models-$mode" pass render
+  rows="$(grep -F -- '- <code>' "$TMP/state/body")" || rows=""
+  if [ "$mode" = report ]; then
+    printf -v expected '%s\n%s' \
+      '- <code>SECOND_OPINION_CODEX_CMD = &quot;codex exec -m gpt-6-astra&quot;</code>' \
+      '- <code>REVIEW_MODEL = &quot;FaBlE&quot;</code>'
+    if refresh_class_matches render pushed yes cause=renders-match-their-sources PATCH &&
+        grep -qxF '## Deprecated models' "$TMP/state/body" && [ "$rows" = "$expected" ] &&
+        ! grep -qxF '## Settings' "$TMP/state/body"; then
+      ok 'committed Fable and Astra pins appear under Deprecated models and the render still arms'
+    else bad 'deprecated model report' "$OUT"; fi
+  elif [ "$RC" -eq 0 ] && ! grep -qxF '## Deprecated models' "$TMP/state/body"; then
+    ok 'control: dropped model scan turns the Deprecated models assertion red'
+  else bad 'deprecated model scan control' "$OUT"; fi
+  reset_default
+  cp "$TMP/models-runner" "$runner"
+done
+cp "$TMP/models-settings" "$repo/kendex.settings.toml"
 commit "$repo"
 git -C "$repo" push -q origin main
 # The setting-fixture commits changed the rolling head used by later rows.
@@ -670,7 +715,7 @@ for output in noise extra-field empty; do
   cp "$TMP/release-parser" "$FRESH_ORCH/scripts/lib/overseer-launch.sh"
   case "$output" in
     noise) printf '\nprintf "not-json\\n"\n' >>"$FRESH_ORCH/scripts/lib/overseer-launch.sh" ;;
-    extra-field) printf '\nprintf '\''{"refused":[],"deprecated":[],"extra":true}\\n'\''\nexit 0\n' >>"$FRESH_ORCH/scripts/lib/overseer-launch.sh" ;;
+    extra-field) printf '\nprintf '\''{"refused":[],"deprecated":[],"deprecated_models":[],"extra":true}\\n'\''\nexit 0\n' >>"$FRESH_ORCH/scripts/lib/overseer-launch.sh" ;;
     empty) printf '\nexit 0\n' >>"$FRESH_ORCH/scripts/lib/overseer-launch.sh" ;;
   esac
   reset_default
@@ -710,7 +755,7 @@ SH
   rm -f -- "$repo/.env.local" "$repo/private.env"
   source_path=kendex.settings.toml
   committed=claude:1:high
-  [ "$command" != tail ] || committed=claude:fable:high
+  [ "$command" != tail ] || committed=claude:opus:high
   printf '[env]\nORCH_OVERSEER_PREFERENCE = "%s"\n' "$committed" >"$repo/kendex.settings.toml"
   commit "$repo"
   git -C "$repo" push -q origin main
@@ -758,7 +803,8 @@ rm -f -- "$repo/.env.local" "$repo/private.env"
 sandbox
 repo="$DIR"
 git -C "$repo" branch -M main
-cp "$TEST_DIR/fixtures/pre-platform/"*.sh "$repo/.agents/skills/review-gate/scripts/"
+cp "$TEST_DIR/fixtures/pre-platform/"*.sh "$TEST_DIR/fixtures/pre-platform/refresh-report.py" \
+  "$repo/.agents/skills/review-gate/scripts/"
 chmod +x "$repo/.agents/skills/review-gate/scripts/"*.sh
 # The old validator checks the engine's tracked path, never its body.
 printf '#!/usr/bin/env bash\nexit 1\n' >"$repo/.agents/skills/review-gate/scripts/review-writer.sh"

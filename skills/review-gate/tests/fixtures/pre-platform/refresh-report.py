@@ -2,7 +2,7 @@
 """File automatic rendered-file review findings for upstream triage.
 
 refresh-reviews supplies JSON [{root, path, body, url}] on stdin after the
-trusted render proof, one row per live unanswered review thread, root being the
+trusted render proof, one row per unanswered review thread, root being the
 thread's first comment id. The head's generated inventory binds each reported
 path. Review text is data; only the upstream verifier confirms a defect. GitHub
 issue titles carry the stable fingerprint consumed by later scheduled runs.
@@ -13,24 +13,16 @@ not filed: a path outside the inventory, a path no single package claims (the
 lock, the inventory, a Copilot .github/agents/*.agent.md render), or a package
 kendex report routes elsewhere. Review text about content kendex has not
 claimed is never published, and its step summary row offers no filing link.
-The writer skips outdated threads before reporting. It replies as not filed
-and resolves those threads. Live unfiled threads stay open and hold the run.
-The consumer must answer an unclaimed finding through its trusted removal PR
-or a reply, then resolve the thread by hand.
 
 stdout is one JSON array, read by refresh-reviews: [{root, issue, note}] with
 one row per input row. issue is the html_url of the open upstream issue the
 finding is filed under, or null when it is not filed: one of the routes above,
-no Issues token or denied Issues access. note names which. The note
-"No single kendex package claims this path" gives the reason for the writer's
-upstream-unfiled record, including paths outside the inventory.
-Log lines go to stderr.
+no Issues token or denied Issues access. note names which. Log lines go to
+stderr.
 
 --settings formats ol_preference_entries' refused and deprecated arrays from
-refresh-consumer as a pull request Settings section, and its
-deprecated_models array, committed `KEY = "value"` settings that pin Fable or
-Astra, as a Deprecated models section. A clean parse emits no text. It does
-not parse settings or preference entries itself.
+refresh-consumer as a pull request Settings section. A clean parse emits no
+text. It does not parse settings or preference entries itself.
 """
 import hashlib
 import html
@@ -50,25 +42,15 @@ UPSTREAM = "vanillagreencom/kendex"
 def settings_report():
     """Format the existing preference parser's diagnostics, not its grammar."""
     entries = json.load(sys.stdin)
-
-    def code(entry):
-        # A setting is untrusted text, not pull request Markdown.
-        text = html.escape(entry).replace("`", "&#96;").replace("\n", "&#10;").replace("\r", "&#13;")
-        return f"<code>{text}</code>"
-
-    sections = []
-    rows = [f"- ORCH_OVERSEER_PREFERENCE: {status} entry {code(entry)}; use `harness:model:effort`."
-            for status in ("refused", "deprecated") for entry in entries[status]]
+    rows = []
+    for status in ("refused", "deprecated"):
+        for entry in entries[status]:
+            # An invalid setting is untrusted text, not pull request Markdown.
+            text = html.escape(entry).replace("`", "&#96;").replace("\n", "&#10;").replace("\r", "&#13;")
+            rows.append(f"- ORCH_OVERSEER_PREFERENCE: {status} entry <code>{text}</code>; use `harness:model:effort`.")
     if rows:
-        sections.append("## Settings\n\n" + "\n".join(rows) + "\n\n"
-                        "A setting joins this report by exposing its existing parse the same way.")
-    models = [f"- {code(entry)}" for entry in entries["deprecated_models"]]
-    if models:
-        sections.append("## Deprecated models\n\n" + "\n".join(models) + "\n\n"
-                        "These committed `kendex.settings.toml` settings pin Fable or Astra. "
-                        "Remove the pin or name a current model.")
-    if sections:
-        print("\n\n".join(sections))
+        print("## Settings\n\n" + "\n".join(rows) + "\n\n"
+              "A setting joins this report by exposing its existing parse the same way.")
 
 
 def main():
@@ -113,10 +95,14 @@ def main():
     results = []
     for finding in json.load(sys.stdin):
         path = finding["path"]
-        record = records.get(path, path)
+        if path not in records:
+            results.append({"root": finding["root"], "issue": None, "note": "Not a rendered file"})
+            print(f"refresh-report=Not a rendered file path={path!r}", file=sys.stderr)
+            continue
+        record = records[path]
         package_path = record["template"] if isinstance(record, dict) else path
         parts = PurePosixPath(package_path).parts
-        matches = names.intersection((*parts, PurePosixPath(package_path).stem)) if path in records else set()
+        matches = names.intersection((*parts, PurePosixPath(package_path).stem))
         label = None
         unrouted = "No single kendex package claims this path"
         if len(matches) == 1:

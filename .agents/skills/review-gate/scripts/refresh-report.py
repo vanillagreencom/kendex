@@ -27,8 +27,10 @@ upstream-unfiled record, including paths outside the inventory.
 Log lines go to stderr.
 
 --settings formats ol_preference_entries' refused and deprecated arrays from
-refresh-consumer as a pull request Settings section. A clean parse emits no
-text. It does not parse settings or preference entries itself.
+refresh-consumer as a pull request Settings section, and its
+deprecated_models array, committed `KEY = "value"` settings that pin Fable or
+Astra, as a Deprecated models section. A clean parse emits no text. It does
+not parse settings or preference entries itself.
 """
 import hashlib
 import html
@@ -48,15 +50,25 @@ UPSTREAM = "vanillagreencom/kendex"
 def settings_report():
     """Format the existing preference parser's diagnostics, not its grammar."""
     entries = json.load(sys.stdin)
-    rows = []
-    for status in ("refused", "deprecated"):
-        for entry in entries[status]:
-            # An invalid setting is untrusted text, not pull request Markdown.
-            text = html.escape(entry).replace("`", "&#96;").replace("\n", "&#10;").replace("\r", "&#13;")
-            rows.append(f"- ORCH_OVERSEER_PREFERENCE: {status} entry <code>{text}</code>; use `harness:model:effort`.")
+
+    def code(entry):
+        # A setting is untrusted text, not pull request Markdown.
+        text = html.escape(entry).replace("`", "&#96;").replace("\n", "&#10;").replace("\r", "&#13;")
+        return f"<code>{text}</code>"
+
+    sections = []
+    rows = [f"- ORCH_OVERSEER_PREFERENCE: {status} entry {code(entry)}; use `harness:model:effort`."
+            for status in ("refused", "deprecated") for entry in entries[status]]
     if rows:
-        print("## Settings\n\n" + "\n".join(rows) + "\n\n"
-              "A setting joins this report by exposing its existing parse the same way.")
+        sections.append("## Settings\n\n" + "\n".join(rows) + "\n\n"
+                        "A setting joins this report by exposing its existing parse the same way.")
+    models = [f"- {code(entry)}" for entry in entries["deprecated_models"]]
+    if models:
+        sections.append("## Deprecated models\n\n" + "\n".join(models) + "\n\n"
+                        "These committed `kendex.settings.toml` settings pin Fable or Astra. "
+                        "Remove the pin or name a current model.")
+    if sections:
+        print("\n\n".join(sections))
 
 
 def main():
