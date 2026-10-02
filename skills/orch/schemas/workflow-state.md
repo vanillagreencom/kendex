@@ -193,7 +193,7 @@ Persistent state file for orch workflows. Survives context compaction.
 
 ## Recording policy
 
-Nine durable records outlive a turn on the control host. Each has one reader, one shape and one retention, and `workflow-state prune` enforces the retention. Every setting below resolves through `orch-env` on the kendex settings ladder: process environment, then `.env.local`, then `.kendex/settings.toml` or `kendex.settings.toml` `[env]`, then the default.
+Durable records outlive a turn on the control host. Each has one reader, one shape and one retention, and `workflow-state prune` enforces the retention. Every setting below resolves through `orch-env` on the kendex settings ladder: process environment, then `.env.local`, then `.kendex/settings.toml` or `kendex.settings.toml` `[env]`, then the default.
 
 | Setting | Meaning | Default |
 |---------|---------|---------|

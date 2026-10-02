@@ -1147,6 +1147,16 @@ unit_names_item() { # UNIT ITEM
 # shellcheck source=lib/state-archive.sh
 . "$SCRIPT_DIR/lib/state-archive.sh"
 
+# An explicit keep protects the path itself and any removal unit holding it.
+unit_explicitly_kept() { # UNIT [KEEP...]
+    local unit="$1" keep
+    shift
+    for keep in "$@"; do
+        [[ "$unit" != "$keep" && "$keep" != "$unit"/* ]] || return 0
+    done
+    return 1
+}
+
 # `prune [--keep PATH]...`: the retention that
 # ../schemas/workflow-state.md § Recording policy states, applied to the fleet
 # state and the directory holding it.
@@ -1260,10 +1270,8 @@ cmd_prune() {
 
     local item kept_by reports=0
     for unit in ${units[@]+"${units[@]}"}; do
+        unit_explicitly_kept "$unit" ${keeps[@]+"${keeps[@]}"} && continue
         kept_by=""
-        for keep in ${keeps[@]+"${keeps[@]}"}; do
-            [[ "$unit" != "$keep" && "$keep" != "$unit"/* ]] || kept_by=keep
-        done
         while IFS= read -r item; do
             [[ -z "$item" ]] || ! unit_names_item "$unit" "$item" || kept_by=live
         done <<<"$live"
@@ -1290,6 +1298,7 @@ cmd_prune() {
     mailbox_archive=$(sed -n 's/^lane-mail: archived=//p' <<<"$compacted") || return 1
     session_rows_dead "$mailbox" "$state_file" || return 1
     for unit in ${SESSION_ROWS_DEAD[@]+"${SESSION_ROWS_DEAD[@]}"}; do
+        unit_explicitly_kept "$unit" ${keeps[@]+"${keeps[@]}"} && continue
         candidates+=("$unit")
         sessions=$((sessions + 1))
     done

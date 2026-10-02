@@ -296,9 +296,18 @@ printf '%s\\n' '{"id":"writer","kind":"directive"}' | mailbox_append_locked "$2"
         with self.assertRaises((AssertionError, json.JSONDecodeError)):
             self.race(paused)
 
-    def prune_sessions(self, scripts):
+    def prune_sessions(self, scripts, ordinary_name, keeps, removed, absolute=False):
         repo, box = self.world()
         files = [box / f"session-999999-{pane}.jsonl" for pane in (1, 2, 3, 4)]
+        neighbor = box / "session-999999-10.jsonl"
+        neighbor.write_text('{}\n')
+        ordinary = repo / "tmp" / ordinary_name
+        if ordinary_name == "keep.run":
+            ordinary.mkdir()
+            (ordinary / "watch.log").write_text("watch\n")
+        else:
+            ordinary.write_text("watch\n")
+        os.utime(ordinary, (946684800, 946684800))
         unknown = box / "session-888888-1.jsonl"
         unknown.write_text('{}\n')
         (self.bin / "ps").write_text("#!/bin/sh\nprintf 'tmux\\n'\n")
@@ -311,31 +320,66 @@ printf '%s\\n' '{"id":"writer","kind":"directive"}' | mailbox_append_locked "$2"
         state.write_text(json.dumps({"issue_id": "oversee", "overseer": {
             "session_rows": str(files[1]), "pending": {"session_rows": str(files[2])}}}))
         self.rows(box, "to-overseer", [{"id": "expired", "kind": "notice", "at": OLD}])
-        result = subprocess.run([str(scripts / "workflow-state"), "--state-dir", str(repo / "tmp"), "prune"],
+        args = [word for path in keeps for word in ("--keep", str(repo / path) if absolute else path)]
+        result = subprocess.run([str(scripts / "workflow-state"), "--state-dir", str(repo / "tmp"), "prune", *args],
                                 cwd=repo, env=self.env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse(files[0].exists())
+        judged = [ordinary, files[0], neighbor]
+        self.assertEqual([path.name for path in judged if not path.exists()], removed)
         self.assertTrue(files[1].exists())
         self.assertTrue(files[2].exists())
         self.assertTrue(files[3].exists())
         self.assertTrue(unknown.exists())
-        self.assertIn("to-lane=0 to-overseer=1 sessions=1", result.stdout)
+        sessions = sum(name.startswith("session-") for name in removed)
+        self.assertIn(f"pruned fleet_log=0 lanes=0 progress_reports=0 paths={len(removed)} "
+                      f"to-lane=0 to-overseer=1 sessions={sessions}\n", result.stdout)
+        self.assertEqual([line[12:] for line in result.stdout.splitlines() if line.startswith("pruned path=")],
+                         [str(path) for path in judged if path.name in removed])
         kept = [Path(line[5:]) for line in result.stdout.splitlines() if line.startswith("kept=")]
-        self.assertEqual(len(kept), 2)
+        self.assertEqual(len(kept), 2 if removed else 1)
         self.assertTrue(all(path.is_file() for path in kept))
+        archived_paths = set()
+        for path in kept:
+            with tarfile.open(path) as archive:
+                archived_paths.update(member.name.rstrip("/") for member in archive.getmembers())
+        for path in judged:
+            self.assertEqual(str(path).lstrip("/") in archived_paths, path.name in removed)
 
     def test_prune_sessions(self):
-        self.prune_sessions(SCRIPTS)
+        cases = [
+            ("kept.log", (), ["kept.log", "session-999999-1.jsonl", "session-999999-10.jsonl"], False),
+            ("kept.log", ("tmp/kept.log", "tmp/lane-mail/overseer/session-999999-1.jsonl"),
+             ["session-999999-10.jsonl"], True),
+            ("keep.run", ("tmp/keep.run/watch.log", "tmp/lane-mail/overseer/session-999999-1.jsonl"),
+             ["session-999999-10.jsonl"], False),
+            ("keep.run", ("tmp/keep.run/watch.log", "tmp/lane-mail/overseer/session-999999-1.jsonl",
+                          "tmp/lane-mail/overseer/session-999999-10.jsonl"), [], False),
+        ]
+        for case in cases:
+            with self.subTest(keeps=case[1]):
+                self.prune_sessions(SCRIPTS, *case)
         mutant = self.mutant("unnamed", "lib/session-rows.sh",
                              '    case "$nl$named$nl" in *"$nl$file$nl"*) continue ;; esac',
                              '    : "$nl$named$nl"')
         with self.assertRaises(AssertionError):
-            self.prune_sessions(mutant)
+            self.prune_sessions(mutant, *cases[0])
         mutant = self.mutant("prune-pointer", "workflow-state",
                              '    [[ -z "$mailbox_archive" ]] || printf \'kept=%s\\n\' "$mailbox_archive"',
                              '    : "$mailbox_archive"')
         with self.assertRaises(AssertionError):
-            self.prune_sessions(mutant)
+            self.prune_sessions(mutant, *cases[0])
+        mutant = self.mutant("ignored-keep", "workflow-state",
+                             '[[ "$unit" != "$keep" && "$keep" != "$unit"/* ]] || return 0',
+                             '[[ "$unit" != "$keep" && "$keep" != "$unit"/* ]] || :')
+        with self.assertRaises(AssertionError):
+            self.prune_sessions(mutant, *cases[2])
+        mutant = self.mutant("session-keep-bypass", "workflow-state",
+                             'for unit in ${SESSION_ROWS_DEAD[@]+"${SESSION_ROWS_DEAD[@]}"}; do\n'
+                             '        unit_explicitly_kept "$unit" ${keeps[@]+"${keeps[@]}"} && continue',
+                             'for unit in ${SESSION_ROWS_DEAD[@]+"${SESSION_ROWS_DEAD[@]}"}; do\n'
+                             '        unit_explicitly_kept "$unit" ${keeps[@]+"${keeps[@]}"} && :')
+        with self.assertRaises(AssertionError):
+            self.prune_sessions(mutant, *cases[1])
 
     def test_retention_floor(self):
         self.env["SLACK_THREAD_DAYS"] = "7"
