@@ -46,7 +46,7 @@ test("component benchmark: five parallel dispatches share a child cap", async ()
 		const mutant = await importRuntimeCopy("dispatch.ts",
 			"const result = await withChildBudget(flow.pi, flow.cwd, flow.signal, async () => runsInPane(taskAgent, lane)",
 			"const result = await (async () => runsInPane(taskAgent, lane)",
-			[{ before: "\t\t\t\t\t\tt.sessionKey,\n\t\t\t\t\t\tt.sameSession ?? flow.sameSession,\n\t\t\t\t\t));", after: "\t\t\t\t\t\tt.sessionKey,\n\t\t\t\t\t\tt.sameSession ?? flow.sameSession,\n\t\t\t\t\t))();" }],
+			[{ before: "\t\t\t\t\t\tt.sessionKey,\n\t\t\t\t\t\tt.sameSession ?? flow.sameSession,\n\t\t\t\t\tflow.modelRegistry,\n\t\t\t\t\t));", after: "\t\t\t\t\t\tt.sessionKey,\n\t\t\t\t\t\tt.sameSession ?? flow.sameSession,\n\t\t\t\t\tflow.modelRegistry,\n\t\t\t\t\t))();" }],
 		) as typeof import("../extensions/subagent/dispatch.js");
 		const control = await dispatchMeasurement(mutant.runParallelDispatch, setSingleAgentSpawnForTests);
 		assert.throws(() => assert.equal(control.peak, 2, "shared cap must bound peak children"), /shared cap must bound/);

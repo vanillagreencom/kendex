@@ -10,7 +10,7 @@ mod fold;
 mod validate;
 pub use file::{
     ManifestFile, is_source_catalog, load, load_current, load_for_mutation, manifest_path,
-    parse_text, project_manifest_path, read_for_mutation, seed,
+    model_class_overrides, parse_text, project_manifest_path, read_for_mutation, seed,
 };
 // Crate-only: the apply op is `save`'s one sanctioned caller — it checks
 // its precondition first. Anywhere else, a direct save is a whole-file
@@ -300,6 +300,9 @@ pub struct BotInstructions(pub toml::Table);
 #[serde(rename_all = "kebab-case")]
 pub struct Manifest {
     pub schema: u32,
+    /// Consumer class replacements. Project values replace personal values per key.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub model_classes: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub sources: BTreeMap<String, SourceDecl>,
     #[serde(default, skip_serializing_if = "file::is_default")]

@@ -576,7 +576,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         Command::Init { name, kind } => commands::init::run(name, kind)?,
         Command::Update { force, git } => commands::update::run(&env, force, git)?,
         Command::VersionCompare(args) => commands::version_compare::run(args)?,
-        Command::TierModel(args) => commands::tier_model::run(args)?,
+        Command::TierModel(args) => commands::tier_model::run(&env, args)?,
         Command::HarnessPaths => commands::harness_paths::run(&env)?,
         Command::HooksOff(args) => commands::hooks_off::run(&env, args)?,
         Command::ReleaseMainBuild(args) => commands::update::release_main_build(args)?,

@@ -1,6 +1,6 @@
 import { afterAll, mock } from "bun:test";
 import * as childProcess from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,7 +12,25 @@ import { join } from "node:path";
 const RUN_TMP_ROOT = mkdtempSync(join(tmpdir(), "pi-agents-tmux-run-"));
 process.env.TMPDIR = RUN_TMP_ROOT;
 
+// Retention and dispatch fixtures exercise child ownership. Their core peer
+// preserves the supplied native selector, while model suites inject decisions.
+const CORE_BIN = join(RUN_TMP_ROOT, "core-bin");
+mkdirSync(CORE_BIN);
+const CORE_PEER = join(CORE_BIN, "kendex");
+writeFileSync(CORE_PEER, `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args.length !== 7 || args[0] !== "tier-model" || args[1] !== "pi" || args[2] !== "--model" || args[4] !== "--runtime-context-json" || args[6] !== "--json") process.exit(71);
+const context = JSON.parse(args[5]);
+if (context.protocol !== "model-resolution-v1" || context.harness !== "pi") process.exit(72);
+const resolution = args[3] === "inherit" ? {tag:"inherit", diagnostics:[]} : {tag:"selected",selection:{nativeSelector:args[3]},diagnostics:[]};
+console.log(JSON.stringify({protocol:"model-resolution-v1",harness:"pi",resolution}));
+`);
+chmodSync(CORE_PEER, 0o755);
+process.env.PATH = `${CORE_BIN}:${process.env.PATH}`;
+
+
 afterAll(() => {
+	rmSync(CORE_BIN, { force: true, recursive: true });
 	// One read, no settle pass: a directory still here, or still being
 	// written, belongs to a test that ended before its writer did.
 	const entries = readdirSync(RUN_TMP_ROOT);
@@ -60,6 +78,8 @@ type SyncOptions = Record<string, unknown> | undefined;
 const withLiveEnv = (options: SyncOptions) => ({ env: process.env, ...(options ?? {}) });
 mock.module("node:child_process", () => ({
 	...realChildProcess,
+	spawn: (command: string, args?: readonly string[], options?: childProcess.SpawnOptions) =>
+		realChildProcess.spawn(command === "kendex" ? CORE_PEER : command, args ?? [], options ?? {}),
 	execFileSync: (command: string, args?: string[] | SyncOptions, options?: SyncOptions) =>
 		Array.isArray(args)
 			? realChildProcess.execFileSync(command, args, withLiveEnv(options))

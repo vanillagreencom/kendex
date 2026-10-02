@@ -13,7 +13,7 @@ import { registerPaneSupportTools } from "../extensions/subagent/pane-support-to
 import { setBgTimeoutKillGraceMsForTests, setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
 import { upsertTaskRecord, writePaneRegistry } from "../extensions/subagent/tasks.js";
 import { PANE_LAUNCHER_VERSION, type SingleResult } from "../extensions/subagent/types.js";
-import { bridgeEvent, bridgeStdout, cleanupTempRuntimes, installLifecycleMockSpawn, installMockSpawn, makeDetails, mockPiEvents, tempRuntime, testAgent, writeSettings } from "./single-agent-fixture.js";
+import { bridgeEvent, bridgeStdout, cleanupTempRuntimes, installLifecycleMockSpawn, installMockSpawn, makeDetails, mockPiEvents, tempRuntime, testAgent, withModelFixtureCapture, writeSettings } from "./single-agent-fixture.js";
 
 after(cleanupTempRuntimes);
 
@@ -56,13 +56,13 @@ function dispatchSingle(runtimeRoot: string, paneOnly = false) {
 // planted message, so a pane dispatch stops there without starting a Pi.
 function recordTmux(serverAnswers: boolean): string[][] {
 	const calls: string[][] = [];
-	setPaneExecCaptureForTests(async (_command, args) => {
+	setPaneExecCaptureForTests(withModelFixtureCapture(async (_command, args) => {
 		calls.push(args);
 		if (!serverAnswers) return { code: 1, stdout: "", stderr: "no server running on /tmp/tmux-test/default" };
 		if (args[0] === "split-window") return { code: 1, stdout: "", stderr: "planted split-window refusal" };
 		const target = args.indexOf("-t");
 		return { code: 0, stdout: `${target >= 0 ? args[target + 1] : "%0"}\n`, stderr: "" };
-	});
+	}));
 	return calls;
 }
 
@@ -184,7 +184,7 @@ for (const row of [
 ] as const) {
 	test(`retireSubagent: ${row.label}`, async () => {
 		const runtimeRoot = tempRuntime();
-		setPaneExecCaptureForTests(async () => ({ code: 1, stdout: "", stderr: "no server running" }));
+		setPaneExecCaptureForTests(withModelFixtureCapture(async () => ({ code: 1, stdout: "", stderr: "no server running" })));
 		if (row.pane) await writePaneRegistry(runtimeRoot, { generalist: paneEntry(runtimeRoot) });
 		await seedLatestTask(runtimeRoot, row.kind);
 
@@ -228,7 +228,7 @@ async function stalledResolvers(runtime: typeof import("../extensions/subagent/d
 	const signals: Array<AbortSignal | undefined> = [];
 	const releases: Array<() => void> = [];
 	let cleaning = false;
-	setPaneExecCaptureForTests(async () => {
+	setPaneExecCaptureForTests(withModelFixtureCapture(async () => {
 		const signal = childSignal();
 		signals.push(signal);
 		return new Promise((resolve) => {
@@ -237,7 +237,7 @@ async function stalledResolvers(runtime: typeof import("../extensions/subagent/d
 			if (cleaning || signal?.aborted) finish();
 			else signal?.addEventListener("abort", finish, { once: true });
 		});
-	});
+	}));
 	const context = { ...flow(root, "single"), pi, signal: controller.signal };
 	const task = { agent: "generalist", task: "inspect" };
 	let settledCount = 0;

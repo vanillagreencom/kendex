@@ -280,6 +280,8 @@ pub(super) struct Catalogs<'a> {
     pub(super) env: &'a Env,
     pub(super) scope: &'a Scope,
     manifest: &'a Manifest,
+    /// Native callbacks read installed sources without publishing or fetching.
+    installed: Option<&'a crate::lock::Lock>,
     /// Keyed by (source, rev): a pinned declaration derives its members and
     /// dependencies from the pinned commit's catalog, not from wherever the
     /// source has moved since.
@@ -326,34 +328,56 @@ impl Catalogs<'_> {
         rev: Option<&str>,
         state: &mut DesiredState,
     ) -> Option<OpenCatalog> {
-        let resolution = match rev {
-            Some(rev) => {
-                let key = (source.to_owned(), rev.to_owned());
-                match state.pinned.get(&key) {
-                    Some(resolution) => resolution.clone(),
-                    None => {
-                        let resolution = crate::source::resolve_at(
-                            self.env,
-                            self.scope,
-                            source,
-                            self.manifest,
-                            Some(rev),
-                        )
-                        .ok()?;
-                        state.pinned.insert(key, resolution.clone());
-                        resolution
-                    }
+        let resolution = if let Some(lock) = self.installed {
+            let recorded = lock.sources.get(source);
+            let commit = rev.or_else(|| recorded.map(|recorded| recorded.commit.as_str()));
+            match crate::source::read_installed(
+                self.env,
+                self.scope,
+                source,
+                self.manifest,
+                commit,
+                recorded.map(|recorded| recorded.repo.as_str()),
+            ) {
+                Ok(resolution) => resolution,
+                Err(problem) => {
+                    state.unreadable_catalogs.insert(source.into());
+                    state.mark_incomplete();
+                    state.notes.push(problem.to_string());
+                    return None;
                 }
             }
-            None => match state.sources.get(source) {
-                Some(resolution) => resolution.clone(),
-                None => {
-                    let resolution =
-                        crate::source::resolve(self.env, self.scope, source, self.manifest).ok()?;
-                    state.sources.insert(source.to_owned(), resolution.clone());
-                    resolution
+        } else {
+            match rev {
+                Some(rev) => {
+                    let key = (source.to_owned(), rev.to_owned());
+                    match state.pinned.get(&key) {
+                        Some(resolution) => resolution.clone(),
+                        None => {
+                            let resolution = crate::source::resolve_at(
+                                self.env,
+                                self.scope,
+                                source,
+                                self.manifest,
+                                Some(rev),
+                            )
+                            .ok()?;
+                            state.pinned.insert(key, resolution.clone());
+                            resolution
+                        }
+                    }
                 }
-            },
+                None => match state.sources.get(source) {
+                    Some(resolution) => resolution.clone(),
+                    None => {
+                        let resolution =
+                            crate::source::resolve(self.env, self.scope, source, self.manifest)
+                                .ok()?;
+                        state.sources.insert(source.to_owned(), resolution.clone());
+                        resolution
+                    }
+                },
+            }
         };
         let SourceState::Ready(ready) = resolution else {
             return None;
@@ -413,6 +437,29 @@ pub(super) fn expand(
     held: Option<&super::desired::hold::HeldPins>,
     state: &mut DesiredState,
 ) -> Expansion {
+    expand_read(env, scope, manifest, held, state, None)
+}
+
+/// Same declaration walk, restricted to installed read-only catalog evidence.
+pub(super) fn expand_installed(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    lock: &crate::lock::Lock,
+    state: &mut DesiredState,
+) -> Expansion {
+    let installed = super::desired::hold::installed_manifest(manifest, lock);
+    expand_read(env, scope, &installed, None, state, Some(lock))
+}
+
+fn expand_read<'a>(
+    env: &'a Env,
+    scope: &'a Scope,
+    manifest: &'a Manifest,
+    held: Option<&super::desired::hold::HeldPins>,
+    state: &mut DesiredState,
+    installed: Option<&'a crate::lock::Lock>,
+) -> Expansion {
     let mut expansion = Expansion::default();
     for kind in PLANNED_KINDS {
         for (name, decl) in manifest.declared(kind) {
@@ -438,6 +485,7 @@ pub(super) fn expand(
         env,
         scope,
         manifest,
+        installed,
         open: BTreeMap::new(),
     };
     super::bundles::expand(scope, manifest, held, &mut expansion, &mut catalogs, state);

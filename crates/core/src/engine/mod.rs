@@ -79,6 +79,7 @@ mod written;
 pub(crate) use desired::IN_PLACE_DISABLED;
 pub use desired::{CatalogSource, Owns, Position};
 pub(crate) use desired_agent::contributes_to_agent;
+pub use desired_agent::{AgentModelRequest, agent_model_request};
 pub use expansion::{NO_PER_PACKAGE_UPDATE, plans_per_package};
 pub use item_source::ItemSource;
 pub use observed::observed_rows;

@@ -252,7 +252,7 @@ pub fn warning(text: &str) {
 /// Whether a render warning describes the model substitution for the run,
 /// rather than a problem with one installed agent.
 pub fn is_run_model_warning(text: &str) -> bool {
-    text == kendex_core::harness::models::HAIKU_SUBSTITUTION_WARNING
+    text.starts_with(kendex_core::harness::models::MODEL_WARNING_PREFIX)
 }
 
 /// Print the model substitution once at delivery. Silent previews and

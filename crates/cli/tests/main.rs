@@ -64,6 +64,7 @@ mod remote_e2e;
 mod safety_print;
 mod template_cli;
 mod terms_first_run;
+mod tier_model;
 mod toggle;
 mod trash_cli;
 mod unmanaged;

@@ -21,6 +21,7 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 - Send corrections, read results and stop running agents.
 - Follow status and transcripts in the agents dashboard.
 - Reuse background memory below its context threshold. Above it, a fresh agent receives the new task and prior final result.
+- Resolve child model classes through kendex against the locally refreshed Pi model registry before either launch form starts.
 
 ## How it works
 
@@ -62,6 +63,8 @@ Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Agent files
 
-An agent is a markdown file whose YAML frontmatter holds `name` and `description`, and optionally `model` (a Pi model id, with `:effort` suffix), `effort` (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`; passed to the child as `--thinking` when the model carries no suffix; `off` passes nothing, so the child runs at Pi's default level), `deny-tools`, `pane`, `color` and `allowed-subagents`. Everything after the frontmatter is the agent's system prompt. When the same name exists in several sources, project Pi wins over project Claude over user Pi over user Claude.
+The `model` field accepts a class, `inherit` or an exact Pi model id. Unknown model access or capacity keeps the native parent or child default and prints one warning per extension session. kendex must be on Pi's PATH for class resolution. With kendex absent, only inherit and one uniquely authenticated exact registry match can start. Other requests refuse before child startup.
+
+An agent is a markdown file whose YAML frontmatter holds `name` and `description`, and optionally `model` (a class, `inherit` or an exact Pi model id, with an optional `:effort` suffix), `effort` (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`; passed to the child as `--thinking` when the model carries no suffix; `off` passes nothing, so the child runs at Pi's default level), `deny-tools`, `pane`, `color` and `allowed-subagents`. Everything after the frontmatter is the agent's system prompt. When the same name exists in several sources, project Pi wins over project Claude over user Pi over user Claude.
 
 kendex generates `allowed-subagents: scout` for engineer-role agents and denies `delegate_subagent` for every other role; override per agent under `[agent-frontmatter.pi]` in `kendex.toml`, where an explicit empty list turns delegation off.

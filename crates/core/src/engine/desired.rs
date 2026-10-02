@@ -480,6 +480,11 @@ fn compute(
     // installed bundles carry, and what those skills require — while the
     // manifest keeps holding only what was chosen.
     let expansion = super::expansion::expand(env, scope, manifest, held, &mut state);
+    let model_classes = if expansion.of(ItemKind::Agent).is_empty() {
+        BTreeMap::new()
+    } else {
+        crate::manifest::model_class_overrides(env, scope, manifest)?
+    };
     let collisions = super::catalog::Collisions::find(&expansion, &mut state);
     // What the sources' current checkouts offer, read once. Item-level pins
     // do not widen this inventory.
@@ -527,6 +532,7 @@ fn compute(
             harnesses.retain(|harness| collisions.allows(kind, name, *harness));
             let reasons = reasons_for(kind, name, &harnesses, &expansion);
             let ctx = ItemCtx {
+                model_classes: &model_classes,
                 env,
                 scope,
                 manifest,
@@ -576,6 +582,7 @@ fn reasons_for(
 }
 
 pub(super) struct ItemCtx<'a> {
+    pub(super) model_classes: &'a BTreeMap<String, String>,
     pub(super) env: &'a Env,
     pub(super) scope: &'a Scope,
     pub(super) manifest: &'a Manifest,

@@ -13,7 +13,7 @@ import {
 } from "./runner.js";
 import { createOneShotSessionKey } from "./sessions.js";
 import { singleResultIsError, singleResultStatus } from "./outcomes.js";
-import { resultLimits, settingNumber, splitResultLimits } from "./settings.js";
+import { type AgentModelRegistry, resultLimits, settingNumber, splitResultLimits } from "./settings.js";
 import { readTaskRegistry } from "./tasks.js";
 import {
 	MAX_CONCURRENCY,
@@ -51,6 +51,7 @@ interface DispatchFlowContext {
 	/** Refuse a pane agent where no tmux server answers, instead of running it headless. */
 	paneOnly?: boolean;
 	parentModel?: string;
+	modelRegistry?: AgentModelRegistry;
 	parentSessionId: string;
 	parentThinkingLevel?: string;
 	pi: ExtensionAPI;
@@ -292,6 +293,7 @@ async function chainDispatch(
 					flow.forceSpawn ?? false,
 					flow.resumeSession,
 					flow.removeDashboardAgent,
+					flow.modelRegistry,
 				)
 			: await runSingleAgent(
 					flow.cwd,
@@ -309,6 +311,7 @@ async function chainDispatch(
 					flow.makeDetails("chain"),
 					step.sessionKey,
 					step.sameSession ?? flow.sameSession,
+					flow.modelRegistry,
 				));
 		results.push(result);
 		if (!runsInPane(stepAgent, lane) || singleResultStatus(result) === "refused") {
@@ -481,6 +484,7 @@ async function parallelDispatch(
 						flow.forceSpawn ?? false,
 						flow.resumeSession,
 						flow.removeDashboardAgent,
+					flow.modelRegistry,
 					)
 				: await runSingleAgent(
 						flow.cwd,
@@ -504,6 +508,7 @@ async function parallelDispatch(
 						flow.makeDetails("parallel"),
 						t.sessionKey,
 						t.sameSession ?? flow.sameSession,
+					flow.modelRegistry,
 					));
 			allResults[index] = result;
 			if (!runsInPane(taskAgent, lane) || singleResultStatus(result) === "refused") await updateOneshotDashboard(result, true);
@@ -582,6 +587,7 @@ async function singleDispatch(
 				flow.forceSpawn ?? false,
 				flow.resumeSession,
 				flow.removeDashboardAgent,
+					flow.modelRegistry,
 			)
 		: await runSingleAgent(
 				flow.cwd,
@@ -599,6 +605,7 @@ async function singleDispatch(
 				flow.makeDetails("single"),
 				flow.sessionKey,
 				flow.sameSession,
+				flow.modelRegistry,
 			));
 	if (!runsInPane(agent, lane) || singleResultStatus(result) === "refused") {
 		flow.updateDashboard({

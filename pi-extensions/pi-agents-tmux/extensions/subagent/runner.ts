@@ -19,6 +19,7 @@ import { safeFileName } from "./names.js";
 import { unknownAgentRefusal } from "./messages.js";
 import { singleResultIsError, singleResultStatus } from "./outcomes.js";
 import {
+	execCapture,
 	getPiInvocation,
 	PI_SUBAGENT_CHILD_PANE_ENV,
 	PI_SUBAGENT_DEPTH_ENV,
@@ -39,6 +40,8 @@ import {
 	resultLimits,
 	selectedEffortForAgent,
 	selectedModelForAgent,
+	resolveAgentModel,
+	type AgentModelRegistry,
 	selectedThinkingLevelForAgent,
 	selectedToolsForAgent,
 	normalizedPiToolName,
@@ -481,6 +484,7 @@ export async function runSingleAgent(
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
 	sessionKey?: string,
 	sameSession = false,
+	modelRegistry?: AgentModelRegistry,
 ): Promise<SingleResult> {
 	signal = childSignal() ?? signal;
 	signal?.throwIfAborted();
@@ -501,9 +505,9 @@ export async function runSingleAgent(
 		};
 	}
 
-	const selectedModel = selectedModelForAgent(agent, parentModel, defaultCwd);
-	const selectedThinking = selectedThinkingLevelForAgent(parentThinkingLevel, defaultCwd);
-	const selectedEffort = selectedEffortForAgent(agent, selectedModel, selectedThinking);
+	const selectedModel = await resolveAgentModel(agent, parentModel, cwd ?? defaultCwd, modelRegistry, execCapture);
+	const selectedThinking = selectedThinkingLevelForAgent(parentThinkingLevel, cwd ?? defaultCwd);
+	const selectedEffort = selectedEffortForAgent(agent, selectedModelForAgent(agent, parentModel, cwd ?? defaultCwd), selectedThinking);
 	let firstSession = resolveBgSession(runtimeRoot, agent.name, sessionKey);
 	await fs.promises.mkdir(path.dirname(firstSession.path), { recursive: true, mode: 0o700 }).catch(() => undefined);
 

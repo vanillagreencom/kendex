@@ -11,10 +11,9 @@ const CURSOR_KEYS: [&str; 3] = ["description", "globs", "alwaysApply"];
 
 /// A model id of a shape this harness's loader cannot use: a provider-
 /// qualified id where the harness is bound to one vendor, or a bare id
-/// where the loader needs the provider named. A tier alias never reaches
-/// here — the renderer resolved it — so what is left is the author's own
-/// id, and the wrong shape means the harness picks some other model or
-/// none, never the one asked for.
+/// where the loader needs the provider named. Only Pi retains class intent;
+/// Claude accepts its own family aliases. Other unresolved class tokens
+/// cannot reach a native model field.
 fn model_finding(harness: HarnessId, model: &str) -> Option<Finding> {
     let model = model.trim();
     // An AWS Bedrock inference-profile ARN carries a `/` and is a bare id
@@ -22,11 +21,25 @@ fn model_finding(harness: HarnessId, model: &str) -> Option<Finding> {
     if model.is_empty() || model == "inherit" || model.starts_with("arn:") {
         return None;
     }
+    if let Some(class) = crate::harness::models::ModelClass::parse(model) {
+        if harness == HarnessId::Pi
+            || (harness == HarnessId::Claude && class.row().claude == Some(model))
+        {
+            return None;
+        }
+        return Some(Finding::breakage(
+            format!(
+                "kendex-model-class-unresolved: harness={} model={model}",
+                harness.name()
+            ),
+            "resolve the class through the managed session or use a native selector",
+        ));
+    }
     let tool = harness.display_name();
     let qualified = model
         .split_once('/')
         .is_some_and(|(provider, id)| !provider.is_empty() && !id.is_empty());
-    match (model_shape(harness), model.contains('/'), qualified) {
+    let shape_finding = match (model_shape(harness), model.contains('/'), qualified) {
         (ModelShape::Bare, true, _) => Some(Finding::breakage(
             format!(
                 "kendex-model-shape: harness={record_arg0} model={record_model} expected=bare\n`model: {model}` names a provider, and {tool} reaches one vendor only",
@@ -44,7 +57,21 @@ fn model_finding(harness: HarnessId, model: &str) -> Option<Finding> {
             "write the model as `provider/model`, or `inherit` to follow the session",
         )),
         _ => None,
-    }
+    };
+    shape_finding.or_else(|| {
+        crate::harness::models::ModelRequest::parse(model)
+            .err()
+            .map(|_| {
+                Finding::breakage(
+                    format!(
+                        "kendex-model-selector-invalid: harness={} model={}",
+                        harness.name(),
+                        crate::names::shown(model)
+                    ),
+                    "use a nonempty native selector without whitespace",
+                )
+            })
+    })
 }
 
 /// An effort level outside what this harness's loader accepts under its

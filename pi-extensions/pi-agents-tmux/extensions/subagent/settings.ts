@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import { stat } from "node:fs/promises";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "./agents.js";
 import { safeFileName } from "./names.js";
@@ -95,6 +96,102 @@ export function selectedEffortForAgent(agent: AgentConfig, selectedModel: string
 
 export function selectedModelForAgent(agent: AgentConfig, parentModel: string | undefined, cwd?: string): string | undefined {
 	return subagentModelSource(cwd) === "parent" ? (parentModel ?? agent.model) : (agent.model ?? parentModel);
+}
+
+export type AgentModelRegistry = Pick<ExtensionContext["modelRegistry"], "refresh" | "getError" | "getAvailable">;
+type ModelCapture = (command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) => Promise<{ code: number; stdout: string; stderr: string; error?: unknown }>;
+let modelWarningEmitted = false;
+
+/** Release the session's warning receipt when the extension session ends. */
+export function resetModelWarning(): void { modelWarningEmitted = false; }
+
+/** Resolve raw child intent through core at the effective child directory. */
+export async function resolveAgentModel(
+	agent: AgentConfig, parentModel: string | undefined, cwd: string,
+	registry: AgentModelRegistry | undefined, capture: ModelCapture,
+): Promise<string | undefined> {
+	const raw = selectedModelForAgent(agent, parentModel, cwd);
+	const request = raw === undefined ? "inherit" : modelWithoutEffortSuffix(raw) ?? raw;
+	const account = "pi-session";
+	const host = "pi-process";
+	let available: ReturnType<AgentModelRegistry["getAvailable"]> = [];
+	let models: unknown = { tag: "unsupported", source: "pi:modelRegistry" };
+	if (registry !== undefined) {
+		let source = "pi:modelRegistry.refresh";
+		try {
+			const refreshed = await registry.refresh({ allowNetwork: false });
+			if (refreshed.aborted) throw new Error("registry refresh aborted");
+			if (refreshed.errors.size > 0) throw new Error([...refreshed.errors].map(([provider, error]) => `${provider}: ${error.message}`).join("; "));
+			const registryError = registry.getError();
+			if (registryError !== undefined) throw new Error(registryError);
+			source = "pi:modelRegistry.getAvailable";
+			available = registry.getAvailable();
+			models = { tag: "complete", source: "pi:modelRegistry.getAvailable", account, host,
+				models: available.map(model => ({ provider: model.provider, id: model.id, nativeSelector: `${model.provider}/${model.id}`, allowed: true, chat: true, isDefault: false })) };
+		} catch (error) {
+			models = { tag: "failed", source, cause: String(error) };
+		}
+	}
+	const parent = available.find(model => `${model.provider}/${model.id}` === parentModel);
+	const context = { protocol: "model-resolution-v1", harness: "pi", account, host,
+		providers: [...new Set(available.map(model => model.provider))], currentProvider: parent?.provider ?? null,
+		models, default: parentModel === undefined ? { tag: "native-default" } : {
+			tag: "observed-session-or-default", selector: parentModel, provider: parent?.provider ?? null,
+			id: parent?.id ?? null, account, host, source: "pi:parent-model" },
+		capacity: available.filter(model => Number.isSafeInteger(model.contextWindow) && model.contextWindow > 0).map(model => ({
+			tag: "known", selector: `${model.provider}/${model.id}`, account, host,
+			source: "pi:modelRegistry.getAvailable", context_window: model.contextWindow })), rejected: [] };
+	const result = await capture("kendex", ["tier-model", "pi", "--model", request, "--runtime-context-json", JSON.stringify(context), "--json"], { cwd, env: { ...process.env } });
+	if (result.error instanceof Error && "code" in result.error && result.error.code === "ENOENT") {
+		if (!(await stat(cwd)).isDirectory()) throw new Error("model-resolution: invalid=child-directory");
+		if (request === "inherit") return parentModel;
+		const exact = available.filter(model => `${model.provider}/${model.id}` === request || model.id === request);
+		if (exact.length === 1) return `${exact[0].provider}/${exact[0].id}`;
+		throw new Error("resolver-missing: command=kendex\nInstall kendex to resolve this model request.");
+	}
+	if (result.code !== 0 || result.error !== undefined) throw new Error(`model-resolution: core-exit=${result.code} cause=${result.stderr || String(result.error)}`);
+	const response = modelObject(JSON.parse(result.stdout));
+	if (response.protocol !== "model-resolution-v1" || response.harness !== "pi") throw new Error("model-resolution: invalid=protocol");
+	const decision = modelObject(response.resolution);
+	let selector: string | undefined;
+	switch (decision.tag) {
+		case "selected": selector = modelSelector(modelObject(decision.selection).nativeSelector); break;
+		case "harness-default": {
+			const fallback = modelObject(decision.path);
+			switch (fallback.tag) {
+				case "native-default": selector = parentModel; break;
+				case "observed-session-or-default": selector = modelSelector(fallback.selector); break;
+				default: throw new Error("model-resolution: invalid=default-path");
+			}
+			break;
+		}
+		case "inherit": selector = parentModel; break;
+		default: throw new Error("model-resolution: invalid=child-result");
+	}
+	if (decision.diagnostics !== undefined) {
+		if (!Array.isArray(decision.diagnostics)) throw new Error("model-resolution: invalid=diagnostics");
+		const diagnostics = decision.diagnostics.map(modelObject);
+		const codes = diagnostics.map(d => modelSelector(d.code));
+		if (decision.diagnostics.length > 0 && !modelWarningEmitted) {
+			console.warn(`model-resolution: requested=${request} selected=${selector ?? "native-default"} causes=${codes.join(",")} source=${diagnostics.map(d => d.source ?? "").join(",")} cause=${diagnostics.map(d => d.cause ?? "").join(";")}`);
+			modelWarningEmitted = true;
+		}
+	}
+	// A core-selected model reaches Pi with effort supplied by --thinking.
+	if (decision.tag === "selected") return selector;
+	// Native defaults and inherited models keep the caller's thinking suffix.
+	const effort = effortFromModelId(raw);
+	return selector && effort ? `${modelWithoutEffortSuffix(selector)}:${effort}` : selector;
+}
+
+function modelObject(value: unknown): Record<string, unknown> {
+	if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("model-resolution: invalid=record");
+	return value as Record<string, unknown>;
+}
+
+function modelSelector(value: unknown): string {
+	if (typeof value !== "string" || value.length === 0) throw new Error("model-resolution: invalid=selector");
+	return value;
 }
 
 export function subagentThinkingSource(cwd?: string): "frontmatter" | "parent" {

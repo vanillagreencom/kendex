@@ -1,5 +1,5 @@
 use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, hooks_prose, skills_prose};
-use crate::harness::models::resolve_model;
+use crate::harness::models::render_model;
 use crate::model::HarnessId;
 use crate::render::permission::PermissionIntent;
 use crate::render::vocab::{copilot_tool_name, rewrite_prose};
@@ -29,8 +29,8 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     push(format!("name: {}", yaml_scalar(&source.name)));
     push(format!("description: {}", yaml_quoted(&source.description)));
     push("include-custom-instructions: true".to_owned());
-    let model = agent.overrides.model.as_deref().unwrap_or(&source.model);
-    let resolved = resolve_model(HarnessId::Copilot, model);
+    let model = agent.model_request();
+    let resolved = render_model(HarnessId::Copilot, model, &agent.model_classes);
     warnings.extend(resolved.warning.map(RenderWarning::new));
     if let Some(id) = &resolved.id {
         push(format!("model: {}", yaml_scalar(id)));
@@ -114,6 +114,7 @@ mod tests {
         hooks: Vec<&'a CustomHook>,
     ) -> EffectiveAgent<'a> {
         EffectiveAgent {
+            model_classes: Default::default(),
             source,
             harness: HarnessId::Copilot,
             scope,

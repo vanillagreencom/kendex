@@ -15,6 +15,15 @@ use std::process::Stdio;
 use super::{Hardened, owned};
 
 impl Hardened {
+    /// Documented stdio app-server RPC, with the target account's inherited auth.
+    /// Model discovery starts no thread, turn, login or account probe.
+    pub fn codex_app_server(cwd: &Path) -> Hardened {
+        let mut hardened = Hardened::new("codex", owned(&["app-server"]));
+        hardened.command.current_dir(cwd);
+        hardened.scrub_git_redirects();
+        hardened
+    }
+
     pub fn git(args: &[&str], cwd: Option<&Path>) -> Hardened {
         let mut hardened = Hardened::git_command(owned(args), cwd);
         hardened.label = format!("git {}", args.join(" "));

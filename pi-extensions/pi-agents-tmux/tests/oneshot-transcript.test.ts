@@ -78,10 +78,10 @@ test("oneshot transcript filters message_update and enriches agent_start for sup
 			const records = content.trim().split(/\r?\n/).map((line) => JSON.parse(line));
 			const agentStart = findAgentStartTranscriptPayload(records);
 			assert.equal(agentStart.agent, "reviewer-test", shape);
-			assert.equal(agentStart.model, "openai-codex/gpt-6-astra:xhigh", shape);
+			assert.equal(agentStart.model, "openai-codex/gpt-6-astra", shape);
 			assert.ok(Array.isArray(agentStart.args), shape);
 			assert.ok(agentStart.args.includes("--model"), shape);
-			assert.ok(agentStart.args.includes("openai-codex/gpt-6-astra:xhigh"), shape);
+			assert.ok(agentStart.args.includes("openai-codex/gpt-6-astra"), shape);
 			assert.equal(agentStart.args.some((arg: string) => arg.startsWith("@")), false, shape);
 		} finally {
 			setSingleAgentSpawnForTests();

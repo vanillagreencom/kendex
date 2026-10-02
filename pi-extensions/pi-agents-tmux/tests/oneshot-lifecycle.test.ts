@@ -550,6 +550,9 @@ test("bg one-shot abort during settled grace clears the pending settled SIGTERM"
 	setBgTimeoutKillGraceMsForTests(10_000);
 	const controller = new AbortController();
 	const calls = installLifecycleMockSpawn({
+		// The resolver can finish after 25ms. Start the unchanged abort
+		// delay with the child's timers so it reaches settled grace.
+		onSpawn: () => { setTimeout(() => controller.abort(), 25); },
 		closeAfterMs: 100,
 		stdout: bridgeStdout([
 			bridgeEvent("agent_start"),
@@ -559,7 +562,6 @@ test("bg one-shot abort during settled grace clears the pending settled SIGTERM"
 			{ delayMs: 5, text: bridgeStdout([bridgeEvent("agent_settled")]) },
 		],
 	});
-	setTimeout(() => controller.abort(), 25);
 	try {
 		// The abort at 25ms lands inside the settled grace window (armed at
 		// 5ms, SIGTERM due at 65ms). Abort must take over the lifecycle: the

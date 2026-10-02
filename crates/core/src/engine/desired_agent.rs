@@ -11,6 +11,9 @@ use crate::render::agent::{
 };
 use crate::render::validate::validate_agent;
 
+mod model_request;
+pub use model_request::{AgentModelRequest, agent_model_request};
+
 use super::desired::{Artifact, Desired, DesiredState, ItemCtx, native_dir};
 
 /// The agent as this tool will know it, or `None` where that is the agent
@@ -44,8 +47,8 @@ fn harness_notices(
     match harness {
         HarnessId::Gemini => super::gemini::agent_notices(ctx, state),
         crate::model::HarnessId::Copilot => {
-            let model = overrides.model.as_deref().unwrap_or(&source_agent.model);
-            let resolved = crate::harness::models::resolve_model(harness, model);
+            let model = EffectiveAgent::requested_model(source_agent, overrides);
+            let resolved = crate::harness::models::render_model(harness, model, ctx.model_classes);
             super::copilot::agent_notices(ctx, state, resolved.id.as_deref());
         }
         _ => {}
@@ -130,6 +133,8 @@ pub(super) fn desired_agent(
     }
     let skills =
         super::agent_skills::assigned_skills(ctx, parsed.role, updated_manifest, manifest_changed)?;
+    let mut hash_manifest = ctx.manifest.clone();
+    hash_manifest.model_classes = ctx.model_classes.clone();
     let mut placed = false;
     for harness in ctx.harnesses.clone() {
         let Some(native) = native_dir(ctx.env, ctx.scope, harness, ItemKind::Agent) else {
@@ -165,7 +170,7 @@ pub(super) fn desired_agent(
             hash: installation_hash(
                 ctx.sealed,
                 ctx.item_path,
-                ctx.manifest,
+                &hash_manifest,
                 ItemKind::Agent,
                 ctx.name,
                 harness,
@@ -422,6 +427,7 @@ fn effective_agent<'a>(
     );
     let permissions = EffectiveAgent::intent(source, &overrides);
     EffectiveAgent {
+        model_classes: ctx.model_classes.clone(),
         source,
         harness,
         scope: ctx.scope,

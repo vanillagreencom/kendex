@@ -1,0 +1,1 @@
+- Model classes resolve through the CLI and both Pi child paths. Unknown access or capacity keeps the native default. Configure classes in `model-classes`.

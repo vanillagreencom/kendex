@@ -51,6 +51,7 @@ pub fn output_style_count(count: usize) -> Option<Finding> {
 
 const TOP_LEVEL: &[&str] = &[
     "schema",
+    "model-classes",
     "sources",
     "install",
     "agents",
@@ -190,8 +191,36 @@ pub fn validate(table: &Table) -> Vec<Finding> {
     items::validate_dependency_choices(table, &mut findings);
     items::validate_forks(table, &mut findings);
     validate_frontmatter(table, &mut findings);
+    validate_model_classes(table, &mut findings);
     validate_hooks(table, &mut findings);
     findings
+}
+
+fn validate_model_classes(table: &Table, findings: &mut Vec<Finding>) {
+    let Some(value) = table.get("model-classes") else {
+        return;
+    };
+    let Some(classes) = value.as_table() else {
+        findings.push(Finding {
+            location: "model-classes".into(),
+            problem: "expected a table".into(),
+            fix: "use a dotted canonical class key with a provider/model value".into(),
+        });
+        return;
+    };
+    for (key, value) in classes {
+        let result = match value.as_str() {
+            Some(value) => crate::harness::models::validate_override(key, value),
+            None => Err("expected a model selector string".into()),
+        };
+        if let Err(problem) = result {
+            findings.push(Finding {
+                location: format!("model-classes.{key}"),
+                problem,
+                fix: "select a provider-qualified exact id or native family".into(),
+            });
+        }
+    }
 }
 
 fn validate_sources(table: &Table, findings: &mut Vec<Finding>) {

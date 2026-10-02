@@ -276,7 +276,7 @@ git -C "$R" reset -q HEAD -- agents .claude/agents .codex .pi
 rm -f "$R/agents/fresh.md" "$R/.claude/agents/fresh.md" "$R/.codex/agents/fresh.toml" "$R/.pi/agents/fresh.md"
 
 echo "=== a render the source change leaves unchanged ==="
-# Pi renders no model for opus or inherit, so moving between them leaves the
+# Pi renders no model for current or inherit, so moving between them leaves the
 # Pi render byte-identical and owes it nothing. Every other change owes the
 # render: a value Pi does render, on either side, a model line removed or
 # added outright (an absent model is sonnet), and a model: line in the body.
@@ -302,12 +302,12 @@ land_pinned() { # FRONTMATTER-MODEL BODY-MODEL — stage that source and the Cla
   git -C "$R" add agents/pinned.md .claude/agents/pinned.md .codex/agents/pinned.toml
 }
 
-seed_pinned opus opus
-land_pinned inherit opus
+seed_pinned current current
+land_pinned inherit current
 run_guard
 [ "$RC" -eq 0 ] \
-  && ok "an opus -> inherit frontmatter edit leaving the Pi render unchanged passes" \
-  || bad "an opus -> inherit frontmatter edit leaving the Pi render unchanged passes" "rc=$RC out=$OUT"
+  && ok "an current -> inherit frontmatter edit leaving the Pi render unchanged passes" \
+  || bad "an current -> inherit frontmatter edit leaving the Pi render unchanged passes" "rc=$RC out=$OUT"
 if mutant_guard '/^    render_unchanged_by "\$1" "\$2" ||$/d'; then
   run_mutant
   [ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/pinned.md -> .pi/agents/pinned.md"* ]] \
@@ -334,11 +334,11 @@ done
 exec "$REAL_AWK" "$@"
 SH
 chmod +x "$TMP/bsd-awk/awk"
-land_pinned inherit opus
+land_pinned inherit current
 run_guard PATH="$TMP/bsd-awk:$PATH" REAL_AWK="$REAL_AWK"
 [ "$RC" -eq 0 ] \
-  && ok "under an awk refusing a newline in a -v value the opus -> inherit edit passes" \
-  || bad "under an awk refusing a newline in a -v value the opus -> inherit edit passes" "rc=$RC out=$OUT"
+  && ok "under an awk refusing a newline in a -v value the current -> inherit edit passes" \
+  || bad "under an awk refusing a newline in a -v value the current -> inherit edit passes" "rc=$RC out=$OUT"
 if mutant_guard 's/^  RENDER_BLIND="\$render_blind" awk -v root="\${2%\/\*}" -v old_end="\$old_end" -v new_end="\$new_end" '"'"'$/  awk -v root="${2%\/*}" -v old_end="$old_end" -v new_end="$new_end" -v rows="$render_blind" '"'"'/; s/split(ENVIRON\["RENDER_BLIND"\], r,/split(rows, r,/'; then
   PATH="$TMP/bsd-awk:$PATH" REAL_AWK="$REAL_AWK" run_mutant
   [ "$RC" -ne 0 ] && [[ "$OUT" == *"awk: newline in string"* ]] \
@@ -352,12 +352,12 @@ git -C "$R" reset -q --hard HEAD
 
 # The commit records the index: a staged sonnet owes the Pi render though the
 # worktree beside it has moved on to inherit.
-land_pinned sonnet opus
-write_pinned inherit opus
+land_pinned sonnet current
+write_pinned inherit current
 run_guard
 [ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/pinned.md -> .pi/agents/pinned.md"* ]] \
-  && ok "a staged opus -> sonnet edit with inherit unstaged beside it reds, naming the Pi render" \
-  || bad "a staged opus -> sonnet edit with inherit unstaged beside it reds, naming the Pi render" "rc=$RC out=$OUT"
+  && ok "a staged current -> sonnet edit with inherit unstaged beside it reds, naming the Pi render" \
+  || bad "a staged current -> sonnet edit with inherit unstaged beside it reds, naming the Pi render" "rc=$RC out=$OUT"
 if mutant_guard '/^# The whole rule reads one tree\./,/^fi$/s/^if \[ "\$MODE" = default \]; then$/if false; then/'; then
   run_mutant
   [ "$RC" -eq 0 ] \
@@ -368,19 +368,19 @@ else
 fi
 git -C "$R" reset -q --hard HEAD
 
-# The changed set is the index's too. An unstaged opus -> inherit edit is not
+# The changed set is the index's too. An unstaged current -> inherit edit is not
 # in the commit, so it owes nothing to a commit of another file; a Pi render
 # edited only in the worktree does not land beside a staged sonnet.
 CHANGED_SET_CONTROL='s/--name-only --no-renames "\${render_diff\[@\]}")/--name-only --no-renames HEAD)/'
-write_pinned inherit opus
+write_pinned inherit current
 printf '# amended\n' >>"$R/.claude/agents/pinned.md"
 printf '# amended\n' >>"$R/.codex/agents/pinned.toml"
 printf 'notes\n' >"$R/notes.txt"
 git -C "$R" add notes.txt
 run_guard
 [ "$RC" -eq 0 ] \
-  && ok "an unrelated commit beside an unstaged opus -> inherit edit passes" \
-  || bad "an unrelated commit beside an unstaged opus -> inherit edit passes" "rc=$RC out=$OUT"
+  && ok "an unrelated commit beside an unstaged current -> inherit edit passes" \
+  || bad "an unrelated commit beside an unstaged current -> inherit edit passes" "rc=$RC out=$OUT"
 if mutant_guard "$CHANGED_SET_CONTROL"; then
   run_mutant
   [ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/pinned.md -> .pi/agents/pinned.md"* ]] \
@@ -390,12 +390,12 @@ else
   bad "control: the changed set could not be pointed at the worktree in a guard copy"
 fi
 git -C "$R" reset -q --hard HEAD
-land_pinned sonnet opus
+land_pinned sonnet current
 printf '# amended\n' >>"$R/.pi/agents/pinned.md"
 run_guard
 [ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/pinned.md -> .pi/agents/pinned.md"* ]] \
-  && ok "a staged opus -> sonnet edit with the Pi render edited only in the worktree reds, naming it" \
-  || bad "a staged opus -> sonnet edit with the Pi render edited only in the worktree reds, naming it" "rc=$RC out=$OUT"
+  && ok "a staged current -> sonnet edit with the Pi render edited only in the worktree reds, naming it" \
+  || bad "a staged current -> sonnet edit with the Pi render edited only in the worktree reds, naming it" "rc=$RC out=$OUT"
 if mutant_guard "$CHANGED_SET_CONTROL"; then
   run_mutant
   [ "$RC" -eq 0 ] \
@@ -407,7 +407,7 @@ fi
 git -C "$R" reset -q --hard HEAD
 
 # The allowance is per render root: the Claude render does carry the model.
-write_pinned inherit opus
+write_pinned inherit current
 printf '# amended\n' >>"$R/.codex/agents/pinned.toml"
 git -C "$R" add agents/pinned.md .codex/agents/pinned.toml
 run_guard
@@ -427,11 +427,12 @@ git -C "$R" reset -q --hard HEAD~1
 
 # ROW: seeded model | seeded body model | edited model | edited body model | guard edit that removes the row's rule
 PINNED_ROWS=(
-  "opus|opus|sonnet|opus|s/^\.pi\/agents model parent'\$/.pi\/agents model parent\n.pi\/agents model sonnet'/"
-  "sonnet|opus|inherit|opus|s/^    \/^-\/ { if (!blind(substr(\$0, 2), o++, old_end)) { bad = 1; exit } /    \/^-\/ { blind(substr(\$0, 2), o++, old_end); /"
-  "opus|opus||opus|s/ if (!bad) for (k in moved) if (moved\[k\]) bad = 1;//"
-  "|opus|inherit|opus|s/ if (!bad) for (k in moved) if (moved\[k\]) bad = 1;//"
-  "opus|opus|opus|inherit|s/ || line >= end + 0 / /"
+  "current|current|sonnet|current|s/^\.pi\/agents model parent'\$/.pi\/agents model parent\n.pi\/agents model sonnet'/"
+  "current|current|opus|current|s/^\.pi\/agents model parent'\$/.pi\/agents model parent\n.pi\/agents model opus'/"
+  "sonnet|current|inherit|current|s/^    \/^-\/ { if (!blind(substr(\$0, 2), o++, old_end)) { bad = 1; exit } /    \/^-\/ { blind(substr(\$0, 2), o++, old_end); /"
+  "current|current||current|s/ if (!bad) for (k in moved) if (moved\[k\]) bad = 1;//"
+  "|current|inherit|current|s/ if (!bad) for (k in moved) if (moved\[k\]) bad = 1;//"
+  "current|current|current|inherit|s/ || line >= end + 0 / /"
 )
 for row in "${PINNED_ROWS[@]}"; do
   IFS='|' read -r seed_model seed_body model body control <<<"$row"

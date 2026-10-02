@@ -586,6 +586,9 @@ pub fn relevant_sections(
             }
         }
         ItemKind::Agent => {
+            for (class, selector) in &manifest.model_classes {
+                push("model-classes", class, selector);
+            }
             if let Some(skills) = manifest.agent_skills.get(name) {
                 push("agent-skills", name, &skills.join(","));
             }

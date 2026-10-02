@@ -1,5 +1,5 @@
 use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, hooks_prose, skills_prose};
-use crate::harness::models::resolve_model;
+use crate::harness::models::render_model;
 use crate::model::HarnessId;
 use crate::render::permission::PermissionIntent;
 use crate::render::vocab::{antigravity_tool_name, rewrite_prose};
@@ -25,8 +25,8 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
 
     push(format!("name: {}", yaml_scalar(&source.name)));
     push(format!("description: {}", yaml_quoted(&source.description)));
-    let model = agent.overrides.model.as_deref().unwrap_or(&source.model);
-    let resolved = resolve_model(HarnessId::Antigravity, model);
+    let model = agent.model_request();
+    let resolved = render_model(HarnessId::Antigravity, model, &agent.model_classes);
     warnings.extend(resolved.warning.map(RenderWarning::new));
     if let Some(id) = &resolved.id {
         push(format!("model: {}", yaml_scalar(id)));
@@ -115,6 +115,7 @@ mod tests {
 
     fn effective<'a>(source: &'a SourceAgent, scope: &'a Scope) -> EffectiveAgent<'a> {
         EffectiveAgent {
+            model_classes: Default::default(),
             source,
             harness: HarnessId::Antigravity,
             scope,
@@ -132,18 +133,18 @@ mod tests {
     }
 
     #[test]
-    fn a_tier_is_the_loaders_own_and_inherit_leaves_the_key_out() {
+    fn classes_and_inherit_leave_the_native_model_key_out() {
         let scope = Scope::Project {
             root: "/tmp/proj".into(),
         };
         let pro = generate(&effective(&source("opus"), &scope)).text;
-        assert!(pro.starts_with("---\nname: rust\ndescription: \"Rust \\\"systems\\\" engineer\"\nmodel: pro\nsubagent: true\n---\n"), "{pro}");
+        assert!(pro.starts_with("---\nname: rust\ndescription: \"Rust \\\"systems\\\" engineer\"\nsubagent: true\n---\n"), "{pro}");
         assert!(!pro.contains("effort"), "{pro}");
         assert!(pro.contains("- dev: .agents/skills/dev/SKILL.md"));
         let inherited = generate(&effective(&source("inherit"), &scope)).text;
         assert!(!inherited.contains("model:"), "{inherited}");
         let flash = generate(&effective(&source("haiku"), &scope)).text;
-        assert!(flash.contains("model: flash\n"), "{flash}");
+        assert!(!flash.contains("model:"), "{flash}");
     }
 
     /// The allowlist arrives in Claude's names and leaves in Antigravity's;

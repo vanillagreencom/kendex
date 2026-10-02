@@ -2995,6 +2995,8 @@ export type ManifestRead_Serialize = {
 
 export type Manifest_Deserialize = {
 	schema: number,
+	/**  Consumer class replacements. Project values replace personal values per key. */
+	"model-classes"?: { [key in string]: string },
 	sources?: { [key in string]: SourceDecl_Deserialize },
 	install?: InstallDefaults_Deserialize,
 	agents?: { [key in string]: ItemDecl_Deserialize },
@@ -3052,6 +3054,8 @@ export type Manifest_Deserialize = {
 
 export type Manifest_Serialize = {
 	schema: number,
+	/**  Consumer class replacements. Project values replace personal values per key. */
+	"model-classes"?: { [key in string]: string },
 	sources?: { [key in string]: SourceDecl_Serialize },
 	install?: InstallDefaults_Serialize,
 	agents?: { [key in string]: ItemDecl_Serialize },

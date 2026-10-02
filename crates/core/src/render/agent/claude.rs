@@ -1,5 +1,5 @@
 use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, Role, default_pane};
-use crate::harness::models::resolve_model;
+use crate::harness::models::render_model;
 use crate::model::HarnessId;
 use crate::render::permission::{Access, PermissionIntent};
 use crate::render::vocab::claude_tool_name;
@@ -28,8 +28,8 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     if !source.tags.is_empty() {
         push(format!("tags: {}", yaml_scalar(&source.tags.join(", "))));
     }
-    let model = o.model.as_deref().unwrap_or(&source.model);
-    let resolved = resolve_model(HarnessId::Claude, model);
+    let model = agent.model_request();
+    let resolved = render_model(HarnessId::Claude, model, &agent.model_classes);
     warnings.extend(resolved.warning.map(crate::render::RenderWarning::new));
     // Claude spells inherit-the-session-model literally.
     push(format!(
@@ -175,6 +175,7 @@ mod tests {
         hooks: Vec<&'a CustomHook>,
     ) -> EffectiveAgent<'a> {
         EffectiveAgent {
+            model_classes: Default::default(),
             source,
             harness: HarnessId::Claude,
             scope,

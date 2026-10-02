@@ -38,6 +38,8 @@ import { piUserDir, projectSettingsPath } from "./package-config.js";
 import {
 	selectedEffortForAgent,
 	selectedModelForAgent,
+	resolveAgentModel,
+	type AgentModelRegistry,
 	selectedThinkingLevelForAgent,
 	selectedToolsForAgent,
 	settingBoolean,
@@ -85,6 +87,7 @@ async function defaultExecCapture(command: string, args: string[], options: Exec
 		const proc = command === "tmux" ? spawner("tmux", args, spawnOptions)
 			: command === "ps" ? spawner("ps", args, spawnOptions)
 			: command === "bash" && args.length === 2 && args[0] === "-lc" && args[1] === "command -v pi-bridge || true" ? spawner("bash", ["-lc", "command -v pi-bridge || true"], spawnOptions)
+			: command === "kendex" ? spawner("kendex", args, spawnOptions)
 			: command === process.execPath ? spawner(process.execPath, args, spawnOptions)
 			: resolvedPiBridgeCommand !== undefined && command === resolvedPiBridgeCommand ? spawner(resolvedPiBridgeCommand, args, spawnOptions)
 			: undefined;
@@ -881,6 +884,7 @@ export async function ensurePersistentPane(
 	parentModel: string | undefined,
 	parentThinkingLevel: string | undefined,
 	activeTools?: string[],
+	modelRegistry?: AgentModelRegistry,
 ): Promise<PaneRegistryEntry> {
 	await ensureTmux();
 
@@ -900,10 +904,10 @@ export async function ensurePersistentPane(
 			return;
 		}
 
-		const selectedModel = selectedModelForAgent(agent, parentModel, cwd);
+		const selectedModel = await resolveAgentModel(agent, parentModel, cwd, modelRegistry, execCapture);
 		const selectedThinking = selectedThinkingLevelForAgent(parentThinkingLevel, cwd);
-		const selectedEffort = selectedEffortForAgent(agent, selectedModel, selectedThinking);
-		const paths = await writeLauncher(runtimeRoot, parentSessionId, cwd, agent, selectedModel, selectedThinking, activeTools);
+		const selectedEffort = selectedEffortForAgent(agent, selectedModelForAgent(agent, parentModel, cwd), selectedThinking);
+		const paths = await writeLauncher(runtimeRoot, parentSessionId, cwd, agent, selectedModel, selectedEffort, activeTools);
 		const windowName = `agent:${agent.name}`;
 		primaryPaneId = await getPrimaryPaneId();
 		layoutGroup = nextLayoutGroup(registry);
@@ -1016,6 +1020,7 @@ export async function queuePersistentPaneTask(
 	parentThinkingLevel: string | undefined,
 	pi: ExtensionAPI,
 	activeTools?: string[],
+	modelRegistry?: AgentModelRegistry,
 ): Promise<QueuedPaneTask> {
 	const effectiveCwd = cwd ?? defaultCwd;
 	const existingRegistry = await readPaneRegistry(runtimeRoot);
@@ -1026,7 +1031,7 @@ export async function queuePersistentPaneTask(
 		.find((record) => normalizedTaskForDedup(record.task) === normalizedTaskForDedup(task));
 	const ensureReusablePane = async () => {
 		try {
-			return await ensurePersistentPane(runtimeRoot, parentSessionId, effectiveCwd, agent, parentModel, parentThinkingLevel, activeTools);
+			return await ensurePersistentPane(runtimeRoot, parentSessionId, effectiveCwd, agent, parentModel, parentThinkingLevel, activeTools, modelRegistry);
 		} catch (error) {
 			if (error instanceof PaneCwdStaleError && liveExisting) emitPaneCwdStale(pi, runtimeRoot, task, liveExisting, error.details, error.message);
 			throw error;
@@ -1191,6 +1196,7 @@ export async function runPersistentPaneAgent(
 	forceSpawn = false,
 	resumeSession?: string,
 	onAgentStopped?: (agentName: string) => void,
+	modelRegistry?: AgentModelRegistry,
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
 	if (!agent) {
@@ -1258,7 +1264,7 @@ export async function runPersistentPaneAgent(
 
 	let queued: QueuedPaneTask;
 	try {
-		queued = await queuePersistentPaneTask(runtimeRoot, parentSessionId, defaultCwd, agent, task, cwd, parentModel, parentThinkingLevel, pi, pi.getActiveTools());
+		queued = await queuePersistentPaneTask(runtimeRoot, parentSessionId, defaultCwd, agent, task, cwd, parentModel, parentThinkingLevel, pi, pi.getActiveTools(), modelRegistry);
 	} catch (error) {
 		if (!(error instanceof PaneCwdStaleError)) throw error;
 		const stderr = error.message;

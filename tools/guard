@@ -986,14 +986,11 @@ for render in sys.stdin.read().splitlines():
 # Frontmatter a harness renders to nothing, one ROOT KEY VALUE row each: a
 # source change that only moves a key between listed values leaves that
 # root's render byte-identical, so the render owes no change. The model rows
-# mirror resolve_model in crates/core/src/harness/models.rs, is_inherit and
-# the (HarnessId::Pi, "fable" | "opus") arm; the models.rs test
+# mirror native inheritance in crates/core/src/harness/models.rs. Its test
 # guard_render_blind_rows_are_the_pi_values_that_render_no_model holds the
 # copy to it both ways. The guard cannot render a source itself, since no
 # kendex verb renders one source for one harness.
-render_blind='.pi/agents model fable
-.pi/agents model opus
-.pi/agents model inherit
+render_blind='.pi/agents model inherit
 .pi/agents model current
 .pi/agents model parent'
 frontmatter_end() { # — the line number of the closing --- of the text on stdin, 0 with none

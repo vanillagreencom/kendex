@@ -1,3 +1,4 @@
+import { resetModelWarning } from "./settings.js";
 import { isTerminalTaskStatus, isTaskActive, isTaskTurnFinished, normalizePaneTaskStatus, taskStatus } from "./outcomes.js";
 /**
  * Agent delegation tool — delegate tasks to specialized agents.
@@ -1650,6 +1651,7 @@ export default function (pi: ExtensionAPI) {
 	registerSettledHandler(pi, handleChildSettled);
 
 	pi.on("session_shutdown", async () => {
+		resetModelWarning();
 		// Every poller stops before the first await: a tick during a stalled
 		// drain could otherwise claim and deliver work after shutdown began.
 		childTitleCancellation.abort();
@@ -1988,6 +1990,7 @@ export default function (pi: ExtensionAPI) {
 				parentModel,
 				parentSessionId,
 				parentThinkingLevel,
+				modelRegistry: ctx.modelRegistry,
 				pi,
 				removeDashboardAgent,
 				resumeSession: undefined,
@@ -2099,6 +2102,7 @@ export default function (pi: ExtensionAPI) {
 					parentModel,
 					parentSessionId,
 					parentThinkingLevel,
+					modelRegistry: ctx.modelRegistry,
 					pi,
 					removeDashboardAgent,
 					resumeSession: params.resumeSession,
@@ -2119,6 +2123,7 @@ export default function (pi: ExtensionAPI) {
 					parentModel,
 					parentSessionId,
 					parentThinkingLevel,
+					modelRegistry: ctx.modelRegistry,
 					pi,
 					removeDashboardAgent,
 					resumeSession: params.resumeSession,
@@ -2143,6 +2148,7 @@ export default function (pi: ExtensionAPI) {
 					parentModel,
 					parentSessionId,
 					parentThinkingLevel,
+					modelRegistry: ctx.modelRegistry,
 					pi,
 					removeDashboardAgent,
 					resumeSession: params.resumeSession,

@@ -188,8 +188,8 @@ async function modeAdmission(dispatch: typeof import("../extensions/subagent/dis
 test("single and chain admission have independent controls", async () => {
 	const runtime = await import("../extensions/subagent/dispatch.js");
 	for (const [mode, start, end] of [
-		["single", "const result = await withChildBudget(flow.pi, flow.cwd, flow.signal, async () => runsInPane(agent, lane)", "\t\t\t\tflow.sessionKey,\n\t\t\t\tflow.sameSession,\n\t\t\t));"],
-		["chain", "const result = await withChildBudget(flow.pi, flow.cwd, flow.signal, async () => runsInPane(stepAgent, lane)", "\t\t\t\t\tstep.sessionKey,\n\t\t\t\t\tstep.sameSession ?? flow.sameSession,\n\t\t\t\t));"],
+		["single", "const result = await withChildBudget(flow.pi, flow.cwd, flow.signal, async () => runsInPane(agent, lane)", "\t\t\t\tflow.sessionKey,\n\t\t\t\tflow.sameSession,\n\t\t\t\tflow.modelRegistry,\n\t\t\t));"],
+		["chain", "const result = await withChildBudget(flow.pi, flow.cwd, flow.signal, async () => runsInPane(stepAgent, lane)", "\t\t\t\t\tstep.sessionKey,\n\t\t\t\t\tstep.sameSession ?? flow.sameSession,\n\t\t\t\t\tflow.modelRegistry,\n\t\t\t\t));"],
 	] as const) {
 		await modeAdmission(runtime, mode);
 		const mutant = await importRuntimeCopy("dispatch.ts", start, start.replace("withChildBudget(flow.pi, flow.cwd, flow.signal, async () =>", "(async () =>"), [{ before: end, after: end.replace("));", "))();") }]) as typeof runtime;

@@ -627,7 +627,7 @@ export async function openAgentsBrowser(
 			}
 			if (action.type === "start") {
 				if (!agent.pane) throw new Error(`${agent.name} is not configured with pane: true.`);
-				await ensurePersistentPane(runtimeRoot, parentSessionId, ctx.cwd, agent, parentModel, parentThinkingLevel, activeTools);
+				await ensurePersistentPane(runtimeRoot, parentSessionId, ctx.cwd, agent, parentModel, parentThinkingLevel, activeTools, ctx.modelRegistry);
 				ctx.ui.notify(`Started/reused ${agent.name}`, "info");
 				continue;
 			}

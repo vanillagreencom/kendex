@@ -76,6 +76,7 @@ mod marketplace_index;
 mod marketplace_subscribe;
 mod me_client;
 mod migration;
+mod model_classes;
 mod not_offered_note;
 mod opencode_commands;
 mod opencode_mcp;

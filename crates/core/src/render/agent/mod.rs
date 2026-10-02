@@ -66,6 +66,8 @@ pub struct EffectiveAgent<'a> {
     pub scope: &'a Scope,
     pub skills: Vec<RequiredSkill>,
     pub overrides: FrontmatterOverrides,
+    /// Effective consumer class policy, never source-catalog defaults.
+    pub model_classes: std::collections::BTreeMap<String, String>,
     pub permissions: PermissionIntent,
     pub launch_instructions: Option<String>,
     pub additional_instructions: Option<String>,
@@ -73,6 +75,18 @@ pub struct EffectiveAgent<'a> {
 }
 
 impl EffectiveAgent<'_> {
+    /// Source and manifest model precedence, shared with native intent lookup.
+    pub fn model_request(&self) -> &str {
+        Self::requested_model(self.source, &self.overrides)
+    }
+
+    /// Read the same precedence without constructing rendering-only resources.
+    pub fn requested_model<'a>(
+        source: &'a SourceAgent,
+        overrides: &'a FrontmatterOverrides,
+    ) -> &'a str {
+        overrides.model.as_deref().unwrap_or(&source.model)
+    }
     /// The intent a rendering runs on: the source's own, narrowed by the
     /// overrides that reached it. Every caller composes the two here — a
     /// second composition is a second answer to what the agent may use.
@@ -404,6 +418,43 @@ mod tests {
         assert!(solo.contains(SHARED_START) && !solo.contains("rust rule"));
     }
 
+    #[test]
+    fn inherit_spellings_keep_each_harness_native_form() {
+        use crate::model::{HarnessId, Scope};
+        let scope = Scope::Global;
+        for selector in ["inherit", "current", "parent"] {
+            let source = parse_source_agent(&format!(
+                "---\nname: rust\ndescription: Rust engineer\nmodel: {selector}\nrole: engineer\n---\nBody.\n"
+            ))
+            .unwrap();
+            for harness in HarnessId::ALL {
+                let agent = EffectiveAgent {
+                    model_classes: Default::default(),
+                    source: &source,
+                    harness,
+                    scope: &scope,
+                    skills: vec![],
+                    permissions: PermissionIntent::Unspecified,
+                    overrides: FrontmatterOverrides::default(),
+                    launch_instructions: None,
+                    additional_instructions: None,
+                    custom_hooks: vec![],
+                };
+                let text = generate(&agent).unwrap().text;
+                let model_lines: Vec<_> = text
+                    .lines()
+                    .filter(|line| line.starts_with("model:") || line.starts_with("model ="))
+                    .collect();
+                let expected = if harness == HarnessId::Claude {
+                    vec!["model: inherit"]
+                } else {
+                    vec![]
+                };
+                assert_eq!(model_lines, expected, "{}: {selector}", harness.name());
+            }
+        }
+    }
+
     /// One control per harness: a custom effort reaches the rendered file
     /// under that harness's own key, and a harness with no per-agent effort
     /// carries nothing rather than a key its loader will not read.
@@ -421,6 +472,7 @@ mod tests {
         };
         let spelled = |harness: HarnessId| -> String {
             let agent = EffectiveAgent {
+                model_classes: Default::default(),
                 source: &source,
                 harness,
                 scope: &scope,
@@ -473,6 +525,7 @@ mod tests {
         };
         let rendered = |harness: HarnessId| -> String {
             let agent = EffectiveAgent {
+                model_classes: Default::default(),
                 source: &source,
                 harness,
                 scope: &scope,

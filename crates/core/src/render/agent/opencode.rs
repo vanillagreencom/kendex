@@ -1,5 +1,5 @@
 use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, Role, hooks_prose, skills_prose};
-use crate::harness::models::resolve_model;
+use crate::harness::models::render_model;
 use crate::manifest::FrontmatterOverrides;
 use crate::model::HarnessId;
 use crate::render::permission::PermissionIntent;
@@ -25,8 +25,8 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     }
     let mode = mode(o);
     out.push_str(&format!("mode: {mode}\n"));
-    let model = o.model.as_deref().unwrap_or(&source.model);
-    let resolved = resolve_model(HarnessId::Opencode, model);
+    let model = agent.model_request();
+    let resolved = render_model(HarnessId::Opencode, model, &agent.model_classes);
     warnings.extend(resolved.warning.map(|w| {
         crate::render::RenderWarning::with_fix(w, "use a provider/model id or a tier alias")
     }));
@@ -196,6 +196,7 @@ mod tests {
 
     fn effective<'a>(source: &'a SourceAgent, scope: &'a Scope) -> EffectiveAgent<'a> {
         EffectiveAgent {
+            model_classes: Default::default(),
             source,
             harness: HarnessId::Opencode,
             scope,
@@ -214,7 +215,7 @@ mod tests {
         let scope = Scope::Global;
         let text = generate(&effective(&source, &scope)).text;
         assert!(text.contains("mode: subagent\n"));
-        assert!(text.contains("model: openai/gpt-5.6-sol\n"));
+        assert!(!text.contains("model:"));
         assert!(text.contains("color: \"#22c55e\"\n"));
         assert!(text.contains("options:\n  reasoningEffort: high\n"));
         assert!(text.contains("permission:\n  task: deny\n  question: deny\n"));
@@ -331,7 +332,7 @@ mod tests {
             rendered
                 .warnings
                 .iter()
-                .any(|w| w.message.contains("provider/model"))
+                .any(|w| w.message.contains("old-id"))
         );
     }
 

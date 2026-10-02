@@ -307,6 +307,51 @@ pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Res
     })
 }
 
+/// Read a source at an installed revision without fetching or publishing cache data.
+/// Native agent callbacks use this instead of the mutable current-cache resolver.
+pub(crate) fn read_installed(
+    env: &Env,
+    scope: &Scope,
+    name: &str,
+    manifest: &Manifest,
+    commit: Option<&str>,
+    recorded_repo: Option<&str>,
+) -> Result<SourceState> {
+    if crate::manifest::is_reserved_source(name)
+        || manifest
+            .sources
+            .get(name)
+            .is_some_and(|decl| decl.path.is_some())
+    {
+        return resolve(env, scope, name, manifest);
+    }
+    let decl = manifest
+        .sources
+        .get(name)
+        .ok_or_else(|| CoreError::UnknownSource { name: name.into() })?;
+    let repo = decl
+        .repo
+        .as_deref()
+        .ok_or_else(|| CoreError::UnknownSource { name: name.into() })?;
+    if !decl.enabled {
+        return Ok(SourceState::Disabled { name: name.into() });
+    }
+    if recorded_repo.is_some_and(|recorded| recorded != repo) {
+        return Err(CoreError::SourcePending { name: name.into() });
+    }
+    let commit = commit.ok_or_else(|| CoreError::SourcePending { name: name.into() })?;
+    let key = crate::remote::cache_key(env, repo);
+    let root = crate::remote::store::published(env, &key, commit)
+        .ok_or_else(|| CoreError::SourcePending { name: name.into() })?;
+    Ok(SourceState::Ready(ResolvedSource {
+        name: name.into(),
+        root,
+        provenance: repo.into(),
+        commit: Some(commit.into()),
+        from_record: true,
+    }))
+}
+
 /// The checkout for the commit this scope's lock recorded, if the cache
 /// still holds it unmodified. Only for the declaration that produced it: a
 /// manifest that now names another repository or another revision must not

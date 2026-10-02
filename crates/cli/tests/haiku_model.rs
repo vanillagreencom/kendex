@@ -71,11 +71,11 @@ fn haiku_renders_sonnet_and_reports_one_warning_per_process() {
         let stderr = String::from_utf8(output.stderr).unwrap();
         let warnings: Vec<_> = stderr
             .lines()
-            .filter(|line| line.contains("lane-model:"))
+            .filter(|line| line.starts_with("model-resolution:"))
             .collect();
         assert_eq!(
             warnings,
-            ["lane-model: requested=haiku resolved=sonnet; KEN-2466 removes this substitution"],
+            ["model-resolution: requested=fast selected=sonnet causes=fallback source="],
             "{args:?}: {stderr}"
         );
         for name in ["fast", "another-fast"] {

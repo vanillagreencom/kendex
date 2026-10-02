@@ -15,8 +15,25 @@ import { runSingleDispatch } from "../extensions/subagent/dispatch.js";
 import * as dispatch from "../extensions/subagent/dispatch.js";
 import type { SubagentDashboardItem } from "../extensions/subagent/types.js";
 import type { SingleResult, SubagentDetails } from "../extensions/subagent/types.js";
+import type { AgentModelRegistry } from "../extensions/subagent/settings.js";
 
 const tempRuntimeDirs = new Set<string>();
+
+/** Supply an authenticated registry with a completed local refresh. */
+export function modelRegistryFixture(getAvailable: AgentModelRegistry["getAvailable"]): AgentModelRegistry {
+	return { refresh: async () => ({ aborted: false, errors: new Map() }), getError: () => undefined, getAvailable };
+}
+
+/** Retention fixtures use a current core reply through their injected capture. */
+export function withModelFixtureCapture(capture: NonNullable<Parameters<typeof import("../extensions/subagent/pane.js").setPaneExecCaptureForTests>[0]>): typeof capture {
+	return async (command, args, options) => {
+		if (command !== "kendex") return capture(command, args, options);
+		assert.deepEqual([args[0], args[1], args[2], args[4], args[6]], ["tier-model", "pi", "--model", "--runtime-context-json", "--json"]);
+		assert.equal(JSON.parse(args[5]!).protocol, "model-resolution-v1");
+		const resolution = args[3] === "inherit" ? { tag: "inherit", diagnostics: [] } : { tag: "selected", selection: { nativeSelector: args[3] }, diagnostics: [] };
+		return { code: 0, stdout: JSON.stringify({ protocol: "model-resolution-v1", harness: "pi", resolution }), stderr: "" };
+	};
+}
 
 export function tempRuntime(): string {
 	const dir = mkdtempSync(join(tmpdir(), "pi-agents-lanes-"));
@@ -261,6 +278,7 @@ export function installMockSpawn(scenarios: Array<{ code?: number | null; delayM
 }
 
 export function installLifecycleMockSpawn(options: {
+	onSpawn?: () => void;
 	closeAfterMs?: number;
 	closeOnSignal?: string;
 	kill?: (signal: string, count: number, proc: EventEmitter) => boolean;
@@ -293,6 +311,7 @@ export function installLifecycleMockSpawn(options: {
 			setTimeout(() => proc.stdout.emit("data", Buffer.from(chunk.text)), chunk.delayMs);
 		}
 		if (options.closeAfterMs !== undefined) setTimeout(() => proc.emit("close", 0, null), options.closeAfterMs);
+		options.onSpawn?.();
 		return proc;
 	}) as any);
 	return calls;
