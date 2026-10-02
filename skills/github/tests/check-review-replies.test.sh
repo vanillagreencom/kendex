@@ -97,9 +97,14 @@ thread_node() { # ACCOUNT BODY [ACCOUNT BODY]... — one thread, oldest comment 
   done
   printf '{"comments":{"totalCount":%s,"nodes":[%s]}}' "$(jq 'length' <<<"[$nodes]")" "$nodes"
 }
+# The thread and viewer answers are staged under their queries' account-id
+# selections, so a query that drops one gets no answer and reaches no verdict:
+# GitHub would answer it with no id for that actor type.
+THREADS_QUERY='api-graphql:... on User { databaseId } ... on Bot { databaseId }'
+VIEWER_QUERY='api-graphql:viewer { login databaseId }'
 threads_set() { # NODE_JSON...
   local IFS=,
-  gh_stub_answer api-graphql:reviewThreads "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[$*]}}}}}"
+  gh_stub_answer "$THREADS_QUERY" "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[$*]}}}}}"
 }
 reviews_set() { local IFS=,; gh_stub_answer "$REVIEWS_PATH" "[$*]"; }
 comments_set() { local IFS=,; gh_stub_answer "$COMMENTS_PATH" "[$*]"; }
@@ -109,7 +114,7 @@ comments_set() { local IFS=,; gh_stub_answer "$COMMENTS_PATH" "[$*]"; }
 # own account id. The live shape is a lane answering under the lanes app on
 # a PR a person opened.
 viewer_set() { # VIEWER_JSON
-  gh_stub_answer api-graphql:viewer "{\"data\":{\"viewer\":$1}}"
+  gh_stub_answer "$VIEWER_QUERY" "{\"data\":{\"viewer\":$1}}"
 }
 VIEWER_APP='{"login":"lanes-app[bot]","databaseId":2002}'
 
@@ -437,10 +442,10 @@ done <<'ROWS'
 a pull request read that fails|gh_stub_fail "$PR_PATH" 1 'gh: Not Found (HTTP 404)'|check-review-replies: read-failed pr=7
 a pull request naming no head|gh_stub_answer "$PR_PATH" '{"user":{"login":"pr-author","id":1001},"head":{}}'|check-review-replies: read-malformed pr=7
 a pull request whose author carries no account id|gh_stub_answer "$PR_PATH" "{\"user\":{\"login\":\"pr-author\"},\"head\":{\"sha\":\"$HEAD\"}}"|check-review-replies: read-malformed pr=7
-a viewer identity read that fails|gh_stub_answer api-graphql:viewer '{"errors":[{"type":"FORBIDDEN","message":"no"}]}'|check-review-replies: read-failed pr=7
+a viewer identity read that fails|gh_stub_answer "$VIEWER_QUERY" '{"errors":[{"type":"FORBIDDEN","message":"no"}]}'|check-review-replies: read-failed pr=7
 a viewer identity read naming no account id|viewer_set '{"login":"lanes-app[bot]"}'|check-review-replies: read-malformed pr=7
 a viewer identity read naming a login for an id|viewer_set '{"login":"lanes-app[bot]","databaseId":"lanes-app"}'|check-review-replies: read-malformed pr=7
-a thread read that fails|gh_stub_answer api-graphql:reviewThreads '{"errors":[{"type":"FORBIDDEN","message":"no"}]}'|check-review-replies: read-failed pr=7
+a thread read that fails|gh_stub_answer "$THREADS_QUERY" '{"errors":[{"type":"FORBIDDEN","message":"no"}]}'|check-review-replies: read-failed pr=7
 a reviews read that fails|gh_stub_fail "$REVIEWS_PATH" 1 'gh: Not Found (HTTP 404)'|check-review-replies: read-failed pr=7
 a reviews read producing zero bytes|gh_stub_answer "$REVIEWS_PATH" ''|check-review-replies: read-empty pr=7
 a reviews page that is not an array|gh_stub_answer "$REVIEWS_PATH" '{"message":"Server Error"}'|check-review-replies: read-malformed pr=7
@@ -501,14 +506,18 @@ assert_eq "$(routed "$script" check-review-replies; printf ' %s' "$(first_err)")
 echo "=== must-fail controls ==="
 # A row is `label|name|from line|to line|setup|want with the mutant`. The
 # setup's live verdict is pinned in a section above; with its rule's line
-# replaced, the same setup answers what the row names instead.
+# replaced, the same setup answers what the row names instead. A refusal
+# prints nothing on stdout, so its first stderr line joins what it answered.
 mutant_row() { # LABEL NAME FROM TO SETUP WANT [PR AUTHOR]
-  local script
+  local script got
   script=$(mutant_copy_edit "$TMP_ROOT/$2" "$3" "$4" commands/check-review-replies.sh)
   world "${7:-author}"
   eval "$5"
-  assert_eq "$(run "$script")" "$6" "must-fail: $1"
+  got=$(run "$script")
+  [ "$got" != "rc=2 " ] || got="$got $(first_err)"
+  assert_eq "$got" "$6" "must-fail: $1"
 }
+READ_FAILED='rc=2  check-review-replies: read-failed pr=7'
 mutant_row "with the untracked-claim line cut, the claim passes" untracked \
   '[ "$untracked" = 0 ] || {' '[ true ] || {' \
   'threads_set "$(thread_node author "Out of scope, tracked.")"' "$PASSED"
@@ -585,6 +594,16 @@ mutant_row "with the reading identity cut, its disposition comment answers nothi
 mutant_row "with the account id test cut, a viewer read naming no id reaches a verdict" account-id \
   '    | if (.id | type) == "number" and .id > 0 and .id == (.id | floor)' '    | if true' \
   "viewer_set '{\"login\":\"lanes-app[bot]\"}'" "$PASSED"
+# GraphQL's Actor interface carries no databaseId; the User and Bot
+# fragments read it, and the viewer selects its own.
+mutant_row "with the Bot id fragment cut, the thread read reaches no verdict" thread-bot-id \
+  "                          comments(first: 100) { totalCount nodes { author { login __typename ... on User { databaseId } ... on Bot { databaseId } } authorAssociation body } }' 2>\"\$READ_ERR\") ||" \
+  "                          comments(first: 100) { totalCount nodes { author { login __typename ... on User { databaseId } } authorAssociation body } }' 2>\"\$READ_ERR\") ||" \
+  'threads_set "$(thread_node app "Declined: frozen")"' "$READ_FAILED"
+mutant_row "with the viewer id selection cut, the viewer read reaches no verdict" viewer-id \
+  "viewer_json=\$(gh_graphql 'query { viewer { login databaseId } }' 2>\"\$READ_ERR\") ||" \
+  "viewer_json=\$(gh_graphql 'query { viewer { login } }' 2>\"\$READ_ERR\") ||" \
+  'threads_set "$(thread_node app "Declined: frozen")"' "$READ_FAILED"
 mutant_row "with every association a member, a NONE-association Fixed in clears the claim" member-open \
   '  def member: .association == "OWNER" or .association == "MEMBER" or .association == "COLLABORATOR";' '  def member: true;' \
   'threads_set "$(thread_node author "Out of scope, tracked." stranger "Fixed in 1a2b3c4")"' "$PASSED"
