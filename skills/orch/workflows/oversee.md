@@ -4,7 +4,7 @@ Standing fleet mode: burn down unblocked work items by launching one orch sessio
 
 ## 1. Resolve The Launch Surface
 
-Launch only this repository's items; file prioritized foreign work in its own tracker and route it with `lane-mail peer send --repo [REPO]`, or, with no live repository overseer, ask a live registered master, else the owner, with a recommendation to launch that repository's overseer in its repository-named tmux session with `overseer` at the base index.
+Launch only this repository's items; file foreign work in its own tracker, then follow [peer-mail.md § Addressing](../references/peer-mail.md#addressing).
 
 Once per session, first match wins:
 
@@ -36,7 +36,7 @@ Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gate
 
 ## 3. Launch
 
-For foreign work, follow [§ 1](#1-resolve-the-launch-surface): send its prioritized tracker issue by peer mail, or ask a live registered master, else the owner, with a launch recommendation when no repository overseer runs.
+Foreign work follows [§ 1](#1-resolve-the-launch-surface).
 
 ### Item Tier
 
