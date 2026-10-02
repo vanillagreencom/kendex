@@ -1,1 +1,1 @@
-- A consumer refresh that retires rendered files now opens its pull request for review instead of stopping, unless it also removes a hook, MCP server or plugin registration from a shared file.
+- A consumer refresh whose only refused path is a retired rendered file now opens its pull request for review instead of stopping; removing a shared hook, MCP server or plugin entry still stops.
