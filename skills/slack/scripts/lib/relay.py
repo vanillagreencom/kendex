@@ -70,11 +70,11 @@ import re
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 from api import Slack
 from mailbox import LaneMail
-from markup import outbound, plain
+from markup import Verbatim, outbound, plain
 from refusals import Refusal, keyed, notice, print_refusal
 from secret import check as secret_check
 from secret import checked_file
@@ -653,7 +653,8 @@ class RootRelay:
         if self.post_failed is None:
             self.post_failed = Refusal(err.key, f"{err.value} id={envelope['id']}")
 
-    def _send(self, envelope: Dict, kind: str, text: str, thread_ts: Optional[str], attach: str = "") -> Optional[str]:
+    def _send(self, envelope: Dict, kind: str, text: Union[str, List[Union[str, Verbatim]]], thread_ts: Optional[str],
+              attach: str = "") -> Optional[str]:
         """The one outbound rule: the text and any attached file pass the
         secret-value check, a refusal there journaled refused and printed;
         then an in-flight line is synced before the file is uploaded with
@@ -661,11 +662,12 @@ class RootRelay:
         Slack's refusal goes to `post_refused`. A
         text past the `markdown_text` cap goes as `text`, Slack's mrkdwn,
         its Markdown marks shown literally: an ask or an answer the owner
-        never sees would stand at its deadline unread. Returns the message
-        ts or the upload's file id; None when nothing landed."""
+        never sees would stand at its deadline unread. A `Verbatim` block
+        mrkdwn cannot show as typed is refused like a secret. Returns the
+        message ts or the upload's file id; None when nothing landed."""
         env_id = str(envelope["id"])
-        text, body_arg = outbound(self.path, text, file_comment=bool(attach))
         try:
+            text, body_arg = outbound(self.path, text, file_comment=bool(attach))
             secret_check(text.encode(), f"id={env_id}")
             data = checked_file(attach, f"id={env_id} file={attach}") if attach else None
         except Refusal as err:
@@ -688,8 +690,10 @@ class RootRelay:
         lines = [f"{mention(self.binding)} Question from {envelope.get('from', 'overseer')}:", envelope.get("text", "")]
         draft = envelope.get("draft")
         if draft:
-            # The owner approves this exact text, so it is posted whole.
-            lines += [f"Draft to {draft['recipient']} by {draft['medium']}:", draft["text"]]
+            # The owner approves this exact text, so it is posted whole and
+            # as typed: a Markdown link would hide its URL.
+            lines += [f"Draft to {draft['recipient']} by {draft['medium']}:",
+                      Verbatim(draft["text"], f"id={envelope['id']} draft")]
         tail = []
         if options:
             tail.append(f"Options: {options}.")
@@ -699,11 +703,17 @@ class RootRelay:
             tail.append(f"It stands at {local_time(str(envelope['deadline']))} unless you reply in this thread.")
         if tail:
             lines.append(" ".join(tail))
-        ts = self._send(envelope, "ask", "\n\n".join(lines), None)
+        pieces: List[Union[str, Verbatim]] = []
+        for line in lines:
+            if pieces:
+                pieces.append("\n\n")
+            pieces.append(line)
+        ts = self._send(envelope, "ask", pieces, None)
         if ts is None:
             return False
+        excerpt = "".join(piece if isinstance(piece, str) else piece.text for piece in pieces)
         self._out(envelope, "ask", "open", thread=ts,
-                  parent=self.parent_of({"ts": ts, "text": "\n\n".join(lines)}, "bot", str(envelope["id"])))
+                  parent=self.parent_of({"ts": ts, "text": excerpt}, "bot", str(envelope["id"])))
         return True
 
     def post_notice(self, envelope: Dict) -> None:

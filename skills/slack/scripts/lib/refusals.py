@@ -137,6 +137,14 @@ EXPLAIN = {
         " not sent; the value names its length and the limit. Send the long"
         " part as a file with --file, with a short text beside it."
     ),
+    "text-not-literal": (
+        "The text must reach the owner as typed, an ask's draft the owner"
+        " approves, and the message is longer than Slack takes as one"
+        " Markdown message. Slack's mrkdwn, the longer form, ends a code block"
+        " at any run of three backticks, which the text holds, so the ask is"
+        " not sent; the value names the envelope and the text's length."
+        " Send it again with a shorter draft or one without that run."
+    ),
     "master-file-unreadable": (
         "SLACK_MASTER_FILE names a path whose age cannot be read, for a"
         " reason other than its absence; the value names the path and the"

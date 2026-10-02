@@ -14,12 +14,13 @@ import os
 import re
 import subprocess
 import time
+from dataclasses import dataclass
 from itertools import chain
 from pathlib import Path
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from api import MARKDOWN_LIMIT
-from refusals import notice
+from refusals import Refusal, notice
 
 TOKEN = re.compile(r"<([^<>]*)>")
 # These are literal regions in owner-authored Markdown and Slack mrkdwn.
@@ -98,30 +99,92 @@ class TrackerMetadata:
 TRACKERS = TrackerMetadata()
 
 
-def outbound(root: Path, text: str, file_comment: bool = False, fallback: bool = True) -> Tuple[str, str]:
+@dataclass(frozen=True)
+class Verbatim:
+    """Text the owner must read exactly as typed, an ask's draft: one code
+    block, never linked. The caller places it on lines of its own. `what`
+    names it in a refusal."""
+
+    text: str
+    what: str
+
+    def markdown(self) -> str:
+        """A fence longer than any backtick run in the text, so no line of
+        the text closes it and Slack shows the text as typed."""
+        longest = max((len(run) for run in re.findall(r"`+", self.text)), default=0)
+        fence = "`" * max(3, longest + 1)
+        return f"{fence}\n{self.text}\n{fence}"
+
+    def mrkdwn(self) -> str:
+        """mrkdwn's code block, its control characters escaped. mrkdwn has
+        one fence, three backticks, so a text holding that run would close
+        the block early and cannot be shown as typed: `text-not-literal`."""
+        if "```" in self.text:
+            raise Refusal("text-not-literal", f"{self.what} chars={len(self.text)}")
+        return f"```\n{escape(self.text)}\n```"
+
+
+# A run of outbound text: plain, a tracker link as (label, url), or a block.
+Part = Union[str, Tuple[str, str], Verbatim]
+
+
+def outbound(root: Path, text: Union[str, Sequence[Union[str, Verbatim]]], file_comment: bool = False,
+             fallback: bool = True) -> Tuple[str, str]:
     """Link bare tracker ids once and return the actual outbound representation.
 
-    Expansion is measured as Markdown before choosing its representation.
-    Post retains its refusal for an already oversized input; link expansion
-    alone can select mrkdwn there. Files always take mrkdwn.
+    `text` is one string, or strings and `Verbatim` blocks in order; a
+    string is linked, a block never is. Expansion is measured as Markdown
+    before choosing its representation. Post retains its refusal for an
+    already oversized input; link expansion alone can select mrkdwn there.
+    Files always take mrkdwn.
     """
+    pieces = [text] if isinstance(text, str) else list(text)
     tracker = TRACKERS.get(root)
-    parts = []
+    parts: List[Part] = []
+    for piece in pieces:
+        if isinstance(piece, Verbatim):
+            parts.append(piece)
+        else:
+            parts.extend(_linked(piece, tracker))
+    markdown = "".join(_render(part, mrkdwn=False) for part in parts)
+    input_size = sum(len(piece) if isinstance(piece, str) else len(piece.markdown()) for piece in pieces)
+    mrkdwn = file_comment or len(markdown) > MARKDOWN_LIMIT and (fallback or input_size <= MARKDOWN_LIMIT)
+    if not mrkdwn:
+        return markdown, "markdown_text"
+    return "".join(_render(part, mrkdwn=True) for part in parts), "text"
+
+
+def _linked(text: str, tracker: Optional[Tracker]) -> List[Part]:
+    """`text` as plain runs and bare tracker ids with their URLs; literal
+    regions are never linked."""
+    parts: List[Part] = []
     pos = 0
     if tracker is not None:
         pattern, url = tracker
         for start, end in chain(((literal.start(), literal.end()) for literal in LITERAL.finditer(text)), [(len(text), len(text))]):
             for match in pattern.finditer(text, pos, start):
-                parts.append((text[pos:match.start()], None))
+                parts.append(text[pos:match.start()])
                 parts.append((match.group(), url(match.group())))
                 pos = match.end()
-            parts.append((text[pos:end], None))
+            parts.append(text[pos:end])
             pos = end
-    parts.append((text[pos:], None))
-    markdown_size = sum(len(label) if target is None else len(label) + len(target) + 4 for label, target in parts)
-    mrkdwn = file_comment or markdown_size > MARKDOWN_LIMIT and (fallback or len(text) <= MARKDOWN_LIMIT)
-    body = "".join(label if target is None else f"<{target}|{label}>" if mrkdwn else f"[{label}]({target})" for label, target in parts)
-    return body, "text" if mrkdwn else "markdown_text"
+    parts.append(text[pos:])
+    return parts
+
+
+def _render(part: Part, mrkdwn: bool) -> str:
+    if isinstance(part, str):
+        return part
+    if isinstance(part, Verbatim):
+        return part.mrkdwn() if mrkdwn else part.markdown()
+    label, target = part
+    return f"<{target}|{label}>" if mrkdwn else f"[{label}]({target})"
+
+
+def escape(text: str) -> str:
+    """Slack's three control characters as entities, `&` first so an
+    entity the text already holds reads back as typed."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def unescape(text: str) -> str:

@@ -1,1 +1,1 @@
-- A Slack owner ask that carries a draft now shows the draft's recipient, medium and full text, so the owner reads the message they approve.
+- A Slack owner ask that carries a draft now shows the draft's recipient, medium and full text exactly as typed, with no link or Markdown rendered in it, so the owner reads what they approve.

@@ -124,7 +124,7 @@ sk_mutant empty markup.py 'or not keys or any\(' 'or any('
 sk_markup "$SK_TMP/broken-empty" outbound '-1' markdown
 assert_eq "$RC=$(jq -r '.notices | length' <<<"$OUT")" '0=0' 'control: an empty metadata array is accepted without its notice'
 sk_bin_reset
-sk_mutant cap markup.py 'markdown_size > MARKDOWN_LIMIT' 'len(text) > MARKDOWN_LIMIT'
+sk_mutant cap markup.py 'len\(markdown\) > MARKDOWN_LIMIT' 'input_size > MARKDOWN_LIMIT'
 sk_markup "$ROOT" outbound "$LONG" markdown
 assert_eq "$RC=$(jq -r '.result[1]' <<<"$OUT")" '0=markdown_text' 'control: measuring input alone misses expansion across the cap'
 sk_bin_reset
