@@ -45,7 +45,7 @@ Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` an
 | `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names, matched case-insensitively and canonicalized | `([A-Z]+-[0-9]+\|issue-[0-9]+)` |
 | `CI_WAIT_NO_CHECKS_GRACE` | Seconds `ci-wait` keeps polling when no CI checks have registered before it fails | `600` |
 | `CI_FIX_MAX_CYCLES` | Automatic ci-fix cycles for one PR, counted across the heads they push; a passing CI run clears the count | `6` |
-| `REVIEW_MAX_CYCLES` | Internal re-review cycles per issue; the number set is the number of re-entries allowed. `0` = one blockers-only fix round, recorded in `review_fix_round` and accepted on its validation, no re-review; `1` = one fix round and one re-review of the fix diff | `1` |
+| `REVIEW_MAX_CYCLES` | Re-review cycles per issue. `0`: one blockers-only fix round, accepted on its validation without re-review; `1`: one fix round and one re-review of its diff | `1` |
 | `REVIEW_MAX_EXTERNAL_ROUNDS` | External comment-triage passes and automatic review-wait restarts on one PR head | `4` |
 | `REVIEWER_SLOT_BUDGET` | Concurrent agent-session budget counting the primary; `0` is unlimited; reviews run in waves past it. On Codex, the cap `spawn-adapter slots` reports | `0` |
 | `ORCH_USER_MODE` | `ceo` or `engineer`, and what each asks: [communication-modes.md](references/communication-modes.md) | `ceo` |
@@ -85,7 +85,7 @@ Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` an
 | `ORCH_SIZE_RENDER_ROOTS` | Render-mirror roots excluded from production and test counts when their source changes in the same branch | `.agents .claude .codex .pi` |
 | `ORCH_SIZE_TEST_PATHS` | Path globs counted as test lines in size reports and cut comparisons | empty |
 
-`ORCH_OVERSEER_PREFERENCE` reads deprecated `harness:positive-integer:effort` until the next minor release after this change. It uses the caller's model at the supplied effort, never on another harness, and warns once per run. Replace the number with a model name: `harness:model:effort`.
+`ORCH_OVERSEER_PREFERENCE` reads the deprecated `harness:positive-integer:effort` form until the next minor release after this change: [kendex.settings.toml.example](kendex.settings.toml.example) § Fleet.
 
 Launch settings and Codex compaction limits: [skill-rules.md](references/skill-rules.md#coordination), Compaction.
 
