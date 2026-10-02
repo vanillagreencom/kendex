@@ -56,20 +56,23 @@ export async function settled(component: QolSessionSearchComponent): Promise<voi
 	if (componentState(component).searchStatus?.status === "failed") throw new Error(componentState(component).searchStatus?.error);
 }
 
+/** Replace every `from` in a copied file, asserting it occurs `count` times. */
+export function patchFile(path: string, from: string, to: string, count = 1): void {
+	const before = readFileSync(path, "utf8");
+	expect(before.split(from).length - 1).toBe(count);
+	const after = before.replaceAll(from, to);
+	expect(after).not.toBe(before);
+	writeFileSync(path, after);
+}
+
 export async function runtimeCopy<T>(relative: string, patches: Array<{ file: string; from: string; to: string; count?: number }>, use: (runtime: T, root: string) => Promise<void>): Promise<void> {
-	// Bun resolves copied runtime imports through the package's installed peers.
+	// Bun resolves copied runtime imports through the package's installed peers;
+	// tests/runtime-copy-peers.test.ts holds that without the preload's stubs.
 	const root = scratch(resolve(import.meta.dir, "../tmp"));
 	try {
 		cpSync(resolve(import.meta.dir, "../extensions"), join(root, "extensions"), { recursive: true });
 		cpSync(resolve(import.meta.dir, "../scripts"), join(root, "scripts"), { recursive: true });
-		for (const patch of patches) {
-			const path = join(root, "extensions", patch.file);
-			const before = readFileSync(path, "utf8");
-			expect(before.split(patch.from).length - 1).toBe(patch.count ?? 1);
-			const after = before.replaceAll(patch.from, patch.to);
-			expect(after).not.toBe(before);
-			writeFileSync(path, after);
-		}
+		for (const patch of patches) patchFile(join(root, "extensions", patch.file), patch.from, patch.to, patch.count);
 		await use(await import(join(root, "extensions", relative)) as T, root);
 	} finally { rmSync(root, { recursive: true, force: true }); }
 }

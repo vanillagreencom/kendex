@@ -1188,8 +1188,8 @@ jobs:
         with:
           bun-version: 1.3.14
 
-      # Pi 0.80.4 introduced agent_settled but was not published to npm;
-      # 0.80.5 is the earliest installable compatible dependency set.
+      # Every peer installs at pi-qol's coding-agent peer floor, and the
+      # package's tests/runtime-copy-peers.test.ts refuses any other version.
       - name: pi-qol regression suite
         if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-qol
@@ -1218,7 +1218,7 @@ jobs:
 
       # Pi 0.84.x is the release the extensions are audited against, so the
       # suites that assert 0.84 wire-format parity install that line rather
-      # than the 0.80.5 floor above.
+      # than pi-qol's peer floor above.
       # The suite's preload starts a tmux server of its own and fails the
       # run when it cannot, so the runner needs the tmux binary; the
       # GitHub image does not carry it. The whole directory is globbed, so

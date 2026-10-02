@@ -22,8 +22,10 @@ For maintainers. What it does for a consumer is [README.md](README.md); mechanic
 
 ## Tests
 
+Install the Pi peers with the command the `pi-qol regression suite` step of `.github/workflows/skill-tests.yml` runs, in this directory, then run the suite:
+
 ```bash
 bun test ./tests
 ```
 
-`bunfig.toml` preloads `tests/preload.ts`, which stubs the `@earendil-works/*` peers so the suite runs from a fresh checkout without `bun install`; a suite needing more of a peer overrides the stub with `mock.module` for itself. `tests/budget-guard-runtime.test.ts` covers key deduplication, ownership, resets and delayed callbacks; `tests/qol-agent-end.test.ts` covers the event wiring, including a delayed `session_compact` from a replaced session while the next one is pending or in flight.
+`bunfig.toml` preloads `tests/preload.ts`, which stubs the `@earendil-works/*` peers for every suite; a suite needing more of a peer overrides the stub with `mock.module` for itself. `tests/runtime-copy-peers.test.ts` runs `tests/runtime-copy-peers.probe.ts` as a plain Bun child with only `HOME` set, so no stub applies. The probe requires each declared peer to resolve into this package's `node_modules` at the coding-agent peer floor. It then runs a `runtimeCopy` copy through the real `SessionManager` and requires the copy removed after a passing and a throwing callback. The test plants one defect per rule in a disposable package context and requires the matching refusal. `tests/budget-guard-runtime.test.ts` covers key deduplication, ownership, resets and delayed callbacks; `tests/qol-agent-end.test.ts` covers the event wiring, including a delayed `session_compact` from a replaced session while the next one is pending or in flight.

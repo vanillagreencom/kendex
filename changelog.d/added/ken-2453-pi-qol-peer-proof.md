@@ -1,0 +1,1 @@
+- pi-qol 2.3.4: the package test suite runs copied extension code against the installed Pi 0.86.0 packages with no stand-in modules.
