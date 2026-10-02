@@ -26,11 +26,18 @@ files = {'kendex.toml': b'schema = 6\n[sources.kendex]\nrepo = "vanillagreencom/
          '.github/workflows/kendex-refresh.yml': b'name: Refresh kendex\n',
          '.agents/skills/review-gate/scripts/refresh-consumer.sh': b'#!/bin/sh\nexit 87\n',
          'private.txt': b'not a refresh input'}
+for name in ('shadcn', 'benchmark', 'ht-ds-usage', 'iced-charts', 'visual-qa'):
+    files['kendex.toml'] += f'[skills.{name}]\nsource = "in-place"\n'.encode()
+    files[f'.agents/skills/{name}/SKILL.md'] = f'# {name}\n'.encode()
+    files[f'.agents/skills/{name}/references/usage.md'] = b'committed source support\n'
 mode = os.environ.get('CASE', 'pass')
 if mode == 'read-failed' and endpoint.endswith('/environments'):
     print('gh: Resource not accessible by integration (HTTP 403)', file=sys.stderr)
     sys.exit(9)
 if mode == 'missing-input': del files['.kendex-lock.json']
+if mode == 'missing-source': del files['.agents/skills/shadcn/SKILL.md']
+if mode == 'unsafe-source':
+    files['kendex.toml'] += b'[skills."../../../escape"]\nsource = "in-place"\n'
 if endpoint.endswith('/commits/main'):
     result = {'sha': 'committed-sha', 'commit': {'committer': {'date': '2026-10-01T00:00:00Z'}}}
 elif '/git/trees/' in endpoint:
@@ -73,11 +80,16 @@ snapshot = json.loads(gzip.decompress(Path(sys.argv[1]).read_bytes()))
 consumer = snapshot['consumers']['fixture']
 assert consumer['commit'] == 'committed-sha'
 assert 'private.txt' not in consumer['files']
+for name in ('shadcn', 'benchmark', 'ht-ds-usage', 'iced-charts', 'visual-qa'):
+    import base64
+    for leaf, content in (('SKILL.md', f'# {name}\n'.encode()),
+                          ('references/usage.md', b'committed source support\n')):
+        assert base64.b64decode(consumer['files'][f'.agents/skills/{name}/{leaf}']['data']) == content
 assert consumer['files']['.agents/skills/review-gate/scripts/refresh-consumer.sh']['mode'] == '100755'
 assert consumer['platform']['repository']['full_name'] == 'vanillagreencom/fixture'
 PY
 then ok 'collector captures committed inputs and modes, not unrelated source'; else bad 'collector complete input' "$OUT"; fi
-for row in 'read-failed|gh: Resource not accessible by integration (HTTP 403)' 'truncated|consumer-refresh-error=tree-truncated value=vanillagreencom/fixture' 'missing-input|consumer-refresh-error=input-missing value=vanillagreencom/fixture/.kendex-lock.json'; do
+for row in 'read-failed|gh: Resource not accessible by integration (HTTP 403)' 'truncated|consumer-refresh-error=tree-truncated value=vanillagreencom/fixture' 'missing-input|consumer-refresh-error=input-missing value=vanillagreencom/fixture/.kendex-lock.json' 'missing-source|consumer-refresh-error=input-missing value=.agents/skills/shadcn/SKILL.md' 'unsafe-source|consumer-refresh-error=path value=.agents/skills/../../../escape/SKILL.md'; do
   IFS='|' read -r mode key <<<"$row"
   collect "$mode"
   if [ "$RC" -eq 1 ] && grep -qxF 'consumer-refresh-error=collect value=vanillagreencom/fixture' <<<"$OUT" &&
@@ -99,5 +111,39 @@ path.chmod(0o755)
 PY
 COLLECTOR="$TMP/mutant" collect truncated
 if [ "$RC" -eq 0 ]; then ok 'control: disabled tree refusal turns the incomplete-collection assertion red'; else bad 'collector mutant' "$OUT"; fi
+python3 - "$ROOT/tools/consumer-refresh" "$TMP/source-mutant" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '            if entry not in files:'
+assert text.count(old) == 1
+changed = text.replace(old, '# ' + old.strip() + '\n            if False:')
+assert changed != text
+path = Path(sys.argv[2])
+path.write_text(changed)
+path.chmod(0o755)
+PY
+COLLECTOR="$TMP/source-mutant" collect missing-source
+if [ "$RC" -eq 0 ]; then ok 'control: disabled declared source check turns the missing-source assertion red'; else bad 'declared source mutant' "$OUT"; fi
+python3 - "$ROOT/tools/consumer-refresh" "$TMP/capture-mutant" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '            wanted.add(".agents")'
+assert text.count(old) == 1
+changed = text.replace(old, '# ' + old.strip())
+assert changed != text
+path = Path(sys.argv[2])
+path.write_text(changed)
+path.chmod(0o755)
+PY
+COLLECTOR="$TMP/capture-mutant" collect pass
+if [ "$RC" -eq 0 ] && python3 - "$TMP/pass.gz" <<'PY'
+import gzip, json, sys
+from pathlib import Path
+files = json.loads(gzip.decompress(Path(sys.argv[1]).read_bytes()))['consumers']['fixture']['files']
+assert '.agents/skills/shadcn/SKILL.md' not in files
+PY
+then ok 'control: disabled in-place capture turns the source-bytes assertion red'; else bad 'in-place capture mutant' "$OUT"; fi
 printf '\nconsumer-snapshots-test: pass=%s fail=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

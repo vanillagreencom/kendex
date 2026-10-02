@@ -64,6 +64,15 @@ def inputs(files):
     if not isinstance(inventory, list):
         refuse("generated-inventory", "not-array")
     wanted = set(REQUIRED)
+    # source::inplace_source_root gives project declarations the shared .agents
+    # tree. generated_paths excludes its authored files from the render inventory.
+    for name, skill in manifest.get("skills", {}).items():
+        if skill.get("source") == "in-place":
+            entry = f".agents/skills/{name}/SKILL.md"
+            relative(entry)
+            if entry not in files:
+                refuse("input-missing", entry)
+            wanted.add(".agents")
     for entry in inventory:
         name = entry if isinstance(entry, str) else entry["path"]
         relative(name)
@@ -306,9 +315,19 @@ def cause(output):
                     if re.match(r"^[a-z][a-z0-9-]*-error=", line))
     # These records carry only a subprocess exit status or a failed read, not
     # the refusal's cause. Equality cannot excuse a different CLI failure.
-    if any(line.startswith(("refresh-error=refresh ", "refresh-error=read ",
-                            "gh-shim-error=")) for line in records):
+    if any(line.startswith(("refresh-error=refresh ", "gh-shim-error=")) or
+           (line.startswith("refresh-error=read ") and
+            line != "refresh-error=read value=class") for line in records):
         return ()
+    if "refresh-error=read value=class" in records:
+        # change-class documents one complete class record. Keep every field;
+        # the runner's read failure alone cannot identify the refused input.
+        classes = tuple(line for line in output.splitlines() if line.startswith("class:"))
+        if len(classes) != 1 or not re.fullmatch(
+                r'class: class=standard measured=false cause=[a-z0-9-]+(?: [a-z][a-z0-9-]*=(?:"(?:\\.|[^"\\])+"|[^\s"]+))*',
+                classes[0]):
+            return ()
+        return records + classes
     return records
 
 

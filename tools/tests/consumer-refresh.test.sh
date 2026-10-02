@@ -72,6 +72,55 @@ gate() {
     --inventory "$TMP/inventory" --snapshot "$1" --baseline "${BASELINE:-$TMP/candidate}" \
     --catalog "$2" --kendex "$REAL_KENDEX" 2>&1)" || RC=$?
 }
+# The preserved refresh runner has no structured failure report. Exercise the
+# documented classifier record from its captured stdout/stderr as one table.
+CAUSE_RC=0
+python3 - "$ROOT/tools/consumer-refresh" >"$TMP/cause-output" 2>&1 <<'PY' || CAUSE_RC=$?
+from pathlib import Path
+import runpy, sys
+text = Path(sys.argv[1]).read_text()
+cause = runpy.run_path(sys.argv[1])['cause']
+record = 'class: class=standard measured=false cause=render-retirement-unproved path=.claude/hooks/skill-load-record.sh'
+read = 'refresh-error=read value=class'
+baseline = record + '\nchange_class=standard\n' + read
+rows = (
+    ('equal complete classifier refusal', baseline, True, True),
+    ('changed refused path', baseline.replace('skill-load-record.sh', 'other.sh'), False, True),
+    ('changed classifier cause', baseline.replace('render-retirement-unproved', 'render-path-unowned'), False, True),
+    ('missing classifier record', read, False, False),
+    ('missing measured field', baseline.replace(' measured=false', ''), False, False),
+    ('missing cause value', baseline.replace('cause=render-retirement-unproved', 'cause='), False, False),
+    ('missing refused value', baseline.replace('path=.claude/hooks/skill-load-record.sh', 'path='), False, False),
+    ('incomplete trailing field', baseline.replace('\nchange_class=', ' detail=\nchange_class='), False, False),
+    ('duplicate classifier record', record + '\n' + baseline, False, False),
+    ('generic refresh failure', baseline + '\nrefresh-error=refresh value=1', False, False),
+    ('other failed read', baseline.replace('value=class', 'value=tree'), False, False),
+    ('platform read failure', baseline + '\ngh-shim-error=unhandled value=api', False, False),
+)
+for label, output, expected, comparable in rows:
+    actual = bool(cause(output)) and cause(output) == cause(baseline)
+    assert actual == expected and bool(cause(output)) == comparable, label
+    print('cause-control=' + label)
+# Keep the record producer intact. Removing its refused path from comparison
+# must break the changed-path row, while allowing other reads must break theirs.
+for old, new, label in (
+    ('return records + classes', 'return records + tuple(line.split(" path=")[0] for line in classes)', 'changed refused path'),
+    ('line != "refresh-error=read value=class"', 'False', 'other failed read'),
+    ('if len(classes) != 1 or not re.fullmatch(', 'if False and re.fullmatch(', 'missing measured field'),
+):
+    assert text.count(old) == 1
+    changed = text.replace(old, new)
+    assert changed != text
+    namespace = {'__file__': sys.argv[1], '__name__': 'cause_control'}
+    exec(compile(changed, sys.argv[1], 'exec'), namespace)
+    mutant = namespace['cause']
+    output, expected, comparable = next((output, expected, comparable)
+        for row_label, output, expected, comparable in rows if row_label == label)
+    actual = bool(mutant(output)) and mutant(output) == mutant(baseline)
+    assert actual != expected or bool(mutant(output)) != comparable, label + ' mutant did not turn red'
+PY
+CAUSE_OUT="$(cat -- "$TMP/cause-output")" || { printf 'consumer-refresh-test: cause-output=read-failed\n' >&2; exit 1; }
+if [ "$CAUSE_RC" -eq 0 ]; then ok 'complete classifier refusals compare every field; incomplete and other failures stay red'; else bad 'classifier cause controls' "$CAUSE_OUT"; fi
 gate "$TMP/snapshot.gz" "$TMP/candidate"
 if [ "$RC" -eq 0 ] && grep -qxF 'consumer-refresh=pass repository=fixture baseline-exit=0 candidate-exit=0' <<<"$OUT"; then
   ok 'real committed consumer refresh passes through a temporary-root alias against the retained catalog'
