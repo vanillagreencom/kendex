@@ -361,7 +361,7 @@ assert_doc_mutant_fails approval_wait_clears_gh_repo "$merge_workflow" \
 # The merged short-circuit is only a short-circuit while it precedes the reads
 # it skips: below them, a micro classification that refuses for want of an
 # orphaned head stands between a completed merge and its cleanup.
-already_merged_line="$(grep -n -F '`[ALREADY_MERGED]=true` skips to step 2' "$merge_workflow" | cut -d: -f1 || true)"
+already_merged_line="$(grep -n -F '`[ALREADY_MERGED]=true` keeps the recorded merge decision in status and the PR body, then skips to step 2' "$merge_workflow" | cut -d: -f1 || true)"
 classify_line="$(grep -n -F 'item-tier --base [PREPARED_BASE] --head [PREPARED_HEAD]' "$merge_workflow" | cut -d: -f1 || true)"
 if [[ -n "$already_merged_line" && -n "$classify_line" && "$already_merged_line" -lt "$classify_line" ]]; then
   pass "merge-pr sends an already-merged PR to step 2 before it classifies a micro entry"
