@@ -84,6 +84,8 @@ control_replace scripts/lib/pages.sh 1 \
     '        cursor=$(jq -ce --argjson key "$key" '\''getpath($key).pageInfo.endCursor | strings | select(length > 0)'\'' <<<"$result") || {' \
     '        cursor=$(jq -c --argjson key "$key" '\''getpath($key).pageInfo.endCursor'\'' <<<"$result") || {'
 
+# The repeated reply also proves the fixture bounds a nonterminating pager.
+control_expect 'repeated-cursor: page walk budget'
 control_expect 'repeated-cursor: cause'
 control_replace scripts/lib/pages.sh 1 \
     '        next=$(jq -rs '\''.[1] as $cursor | .[0] | index($cursor) != null'\'' <<<"$seen"$'\''\n'\''"$cursor") || return 1' \

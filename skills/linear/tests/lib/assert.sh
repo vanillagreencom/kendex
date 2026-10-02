@@ -497,7 +497,7 @@ __assert_on_exit() {
 # The dependency selects replies by owner and cursor, not by the function's
 # output. The suite supplies independent counts and field expectations.
 pages_case() {
-	local name="$1" mode="$2" limit=0
+	local name="$1" mode="$2" limit=0 budget line hits=0
 	[[ "$name" != bounded ]] || limit=1
 	jq -cn --arg name "$name" '
 		def conn($rows; $more; $cursor): {nodes:$rows,pageInfo:{hasNextPage:$more,endCursor:$cursor}};
@@ -551,11 +551,44 @@ pages_case() {
 		elif $name == "children-failure" then .replies |= map(select(.after != "g1"))
 		else . end
 	' >"$PAGE_ROOT/fixture.json" || { assert_fail "$name: fixture generation"; return; }
+	# A fixture permits its reply pages and each open connection's initial page.
+	# Count across subshells, so recursive initial-page reuse also spends pages.
+	# The cap fixture still permits its terminal page beyond the production cap.
+	budget=$(jq '1 + (.replies | length) +
+		([.initial, .replies[].response | .. | objects |
+		  select(.pageInfo.hasNextPage == true)] | length)' "$PAGE_ROOT/fixture.json") || {
+		assert_fail "$name: fixture page budget"; return;
+	}
+	printf '0\n' >"$PAGE_ROOT/page-count"
+	# Instrument only this disposable runtime copy. The fixture step is inside
+	# the real pager's loop, including walks that never make another request.
+	: >"$PAGE_ROOT/pages.sh"
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		printf '%s\n' "$line" >>"$PAGE_ROOT/pages.sh"
+		if [[ "$line" == '    while true; do' ]]; then
+			hits=$((hits + 1))
+			printf '        pages_step || return 1\n' >>"$PAGE_ROOT/pages.sh"
+		fi
+	done <"$SKILL_DIR/scripts/lib/pages.sh"
+	if (( hits != 1 )); then
+		assert_fail "$name: fixture page instrument" "want: one pager loop; got: $hits"
+		return
+	fi
 	cat >"$PAGE_ROOT/subject" <<'SUBJECT'
 #!/bin/bash
 set -euo pipefail
 source "$1"
-fixture="$2" mode="$3" limit="$4" log="$5"
+fixture="$2" mode="$3" limit="$4" log="$5" budget="$6" page_count="$7"
+pages_step() {
+    local count
+    IFS= read -r count <"$page_count" || return 1
+    count=$((count + 1))
+    printf '%s\n' "$count" >"$page_count" || return 1
+    if (( count > budget )); then
+        printf 'fixture: page-budget=%s count=%s\n' "$budget" "$count" >&2
+        return 1
+    fi
+}
 fixture_data=$(cat -- "$fixture") || exit 1
 LINEAR_CHILD_DEPTH=2
 LINEAR_ISSUE_CHILD_MODE=bundle
@@ -584,8 +617,10 @@ esac
 SUBJECT
 	: >"$PAGE_ROOT/requests"
 	PAGE_OUT=$(env -i PATH="$PATH" HOME="$PAGE_ROOT" bash "$PAGE_ROOT/subject" \
-		"$SKILL_DIR/scripts/lib/pages.sh" "$PAGE_ROOT/fixture.json" "$mode" "$limit" \
-		"$PAGE_ROOT/requests" 2>"$PAGE_ROOT/error") && PAGE_RC=0 || PAGE_RC=$?
+		"$PAGE_ROOT/pages.sh" "$PAGE_ROOT/fixture.json" "$mode" "$limit" \
+		"$PAGE_ROOT/requests" "$budget" "$PAGE_ROOT/page-count" \
+		2>"$PAGE_ROOT/error") && PAGE_RC=0 || PAGE_RC=$?
+	assert_file_lacks "$name: page walk budget" "$PAGE_ROOT/error" 'fixture: page-budget='
 }
 
 trap __assert_on_exit EXIT
