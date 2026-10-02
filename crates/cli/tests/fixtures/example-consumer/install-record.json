@@ -1,0 +1,59 @@
+{
+  "version": 11,
+  "entries": {
+    "hook:lane-mail-check:claude": {
+      "name": "lane-mail-check",
+      "kind": "hook",
+      "harness": "claude",
+      "source": "kendex",
+      "sourceRepo": "vanillagreencom/kendex",
+      "sourceHash": "synthetic",
+      "enabled": true,
+      "reasons": [
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": "kendex",
+            "name": "workflow"
+          }
+        }
+      ]
+    },
+    "hook:lane-mail-check:codex": {
+      "name": "lane-mail-check",
+      "kind": "hook",
+      "harness": "codex",
+      "source": "kendex",
+      "sourceRepo": "vanillagreencom/kendex",
+      "sourceHash": "synthetic",
+      "enabled": true,
+      "reasons": [
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": "kendex",
+            "name": "workflow"
+          }
+        }
+      ]
+    },
+    "hook:lane-mail-check:pi": {
+      "name": "lane-mail-check",
+      "kind": "hook",
+      "harness": "pi",
+      "source": "kendex",
+      "sourceRepo": "vanillagreencom/kendex",
+      "sourceHash": "synthetic",
+      "enabled": true,
+      "reasons": [
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": "kendex",
+            "name": "workflow"
+          }
+        }
+      ]
+    }
+  }
+}

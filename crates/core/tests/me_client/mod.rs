@@ -2,9 +2,10 @@
 //! every account state, all of them settled and all of them `load`'s
 //! answers, the offline cache ladder, and the cache's endpoint key. The
 //! UI holds its own "not read yet" and never gets it here. Which sign-in
-//! an answer belongs to is the cache generation. The fixture is a byte copy
-//! of kendex-web's `contracts/api/v1/me.json` — drift between the repos
-//! is a `cmp` away.
+//! an answer belongs to is the cache generation. The fixture is synthetic,
+//! one status and body per answer the client tells apart: an identity with
+//! a linked GitHub account, one without, a rejected token, and a directory
+//! that cannot read its own database.
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};

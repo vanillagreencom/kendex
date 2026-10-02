@@ -1,0 +1,10 @@
+schema = 6
+
+[sources.kendex]
+repo = "vanillagreencom/kendex"
+
+[install]
+harnesses = ["claude", "codex", "pi"]
+
+[bundles.workflow]
+source = "kendex"

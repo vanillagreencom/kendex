@@ -38,13 +38,15 @@ use super::verify_records::{git, kendex, row, said, write};
 
 /// The consumer record holds no Copilot installations. Verify must not ask
 /// for them, even when the catalog adds Copilot-only bundle members.
-/// The real kendex-web inputs stay unchanged; a local mirror supplies
-/// this checkout's catalog without reaching the network or a live consumer.
+/// The fixture is a synthetic consumer: it takes the catalog's `workflow`
+/// bundle on Claude, Codex and Pi, and its record holds only the
+/// `lane-mail-check` hook. A local mirror supplies this checkout's catalog
+/// without reaching the network.
 /// The control restores verify's unfiltered declaration set in a disposable
-/// source copy: these four hooks then produce `Unrecorded` rows.
+/// source copy: the three Copilot-only hooks then produce `Unrecorded` rows.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn kendex_web_record_owes_no_copilot_only_workflow_hooks() {
+fn consumer_record_owes_no_copilot_only_workflow_hooks() {
     use kendex_core::attest::{Document, State};
     use kendex_core::engine::{DeclarationStatus, planned_closure};
     use kendex_core::env::Env;
@@ -52,8 +54,8 @@ fn kendex_web_record_owes_no_copilot_only_workflow_hooks() {
 
     const EXCLUDED: &[&str] = &["lane-mail-compact", "lane-mail-prompt", "lane-mail-start"];
     const RECORDER: &str = "skill-load-record";
-    const MANIFEST: &str = include_str!("fixtures/kendex-web/manifest.toml");
-    const RECORD: &str = include_str!("fixtures/kendex-web/install-record.json");
+    const MANIFEST: &str = include_str!("fixtures/example-consumer/manifest.toml");
+    const RECORD: &str = include_str!("fixtures/example-consumer/install-record.json");
 
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
