@@ -306,6 +306,8 @@ assert_eq "$LOST_TEXT" "sent while the connection dropped" "the message of the l
 assert_eq "$(sk_state .opened)" "$((OPENED + 2))" "the relay opened its connection, then one new one after the drop"
 assert_eq "$(lines "$GAMMA" connect)|$(lines "$GAMMA" disconnect)|$(lines "$GAMMA" reconnect)" "connect |disconnect connection ended|reconnect " \
   "the journal holds connect, the disconnect with its reason, then reconnect"
+# The landing precedes the poll's `in`, `mark` and `seen` rows; `seen` is the last.
+awaited jq -r --arg ts "$LOST" 'select(.t == "seen" and .ts == $ts) | .ts' "$(sk_journal "$GAMMA")" >/dev/null
 assert_eq "$(jq -r 'select(.t != "connect" and .t != "disconnect" and .t != "reconnect") | .t' "$(sk_journal "$GAMMA")" | tr '\n' ' ')" "seen start in mark seen " \
   "the directive is delivered once, then marked"
 
