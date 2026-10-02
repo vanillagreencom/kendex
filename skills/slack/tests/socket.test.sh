@@ -375,7 +375,7 @@ for variant in normal late-ack worker-ack no-mark no-notice; do
   case "$variant" in
     late-ack) sk_mutant delivery-ack relay.py '(        if envelope.get\("envelope_id"\):\n)(            socket.send_text[^\n]+)' '\1            self.deliver(envelope)\n\2' ;;
     worker-ack) sk_mutant delivery-reader relay.py '            socket.send_text\(json.dumps\(\{"envelope_id": envelope\["envelope_id"\]\}\)\)([\s\S]*?def deliver\(self, envelope: Dict\) -> None:\n        """[^\n]+\n)' '            pass\1        if envelope.get("envelope_id"):\n            self.socket.send_text(json.dumps({"envelope_id": envelope["envelope_id"]}))\n' ;;
-    no-mark) sk_mutant delivery-mark relay.py '(        self.pending_live.pop\(ts\)\n)        self.mark_seen\(\)' '\1        pass' ;;
+    no-mark) sk_mutant delivery-mark relay.py '(        notice\("delivered", f"ts=\{ts\} id=\{envelope\} path=\{path\}"\)\n)        self.mark_seen\(\[ts\]\)' '\1        pass' ;;
     no-notice) sk_mutant delivery-notice relay.py '        notice\("delivered", f"ts=\{ts\} id=\{envelope\} path=\{path\}"\)' '        pass' ;;
   esac
   SLOW="$(sk_new_root "delivery-$variant")"
@@ -432,10 +432,11 @@ for variant in normal horizon; do
   sk_poll "$POS"
   sk_inject "$PC" U001 'Missed reply under retained parent' "$PT" >/dev/null
   sk_recovery "$POS" positions
-  COUNTS="$(printf '%s' "$OUT" | jq -r '[.polls[] | [.[] | select(.method == "conversations.history")] | length] | join("/")')"
+  assert_eq "$RC=$(printf '%s\n' "$OUT" | tail -n 1 | jq -r .error)" '0=' "$variant: reconnect probe completes without a refusal"
+  COUNTS="$(printf '%s\n' "$OUT" | tail -n 1 | jq -r '[.polls[] | [.[] | select(.method == "conversations.history")] | length] | join("/")')"
   if [ "$variant" = normal ]; then
     assert_eq "$COUNTS" 3/1 'reconnect does not repeat history pages with no new roots'
-    assert_eq "$(printf '%s' "$OUT" | jq -r '[.polls[1][] | select(.method == "conversations.replies")] | length')" 5 'reconnect preserves retained eligible parent discovery'
+    assert_eq "$(printf '%s\n' "$OUT" | tail -n 1 | jq -r '[.polls[1][] | select(.method == "conversations.replies")] | length')" 5 'reconnect preserves retained eligible parent discovery'
   else
     sk_assert_red "$COUNTS" 3/1 'control: resetting history to horizon repeats pages'
   fi

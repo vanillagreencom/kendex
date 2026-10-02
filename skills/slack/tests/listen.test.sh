@@ -75,7 +75,8 @@ ROOT="$(sk_new_root alpha)"
 sk_bind "$ROOT"
 TS1="$(sk_inject C001 U001 'Ship it today.')"
 sk_poll "$ROOT"
-assert_eq "$RC=$OUT" "0=slack: listening=1 poll_seconds=1" "a poll prints the listening line and exits 0"
+assert_eq "$RC=$OUT" "0=slack: listening=1 poll_seconds=1
+slack: delivered=ts=$TS1 id=$(jq -r --arg d "C001:$TS1" 'select(.delivery_id == $d) | .id' "$(sk_box "$ROOT")/to-lane.jsonl") path=catch-up" "a poll prints the listening and delivery lines and exits 0"
 assert_eq "$(directives "$ROOT")" "C001:$TS1 Ship it today." "an owner's top-level message lands as a directive keyed channel:ts"
 assert_eq "$(jq -r 'select(.t == "in") | [.kind, .ts, .thread] | join(" ")' "$(sk_journal "$ROOT")")" \
   "directive $TS1 $TS1" "the journal records the delivery by identifiers"
@@ -595,10 +596,17 @@ sk_poll "$IOTA"
 assert_eq "$(sk_reactions "$IOTA_CH" "$M2")" "white_check_mark" "an inbox read swaps the rest"
 sk_ctl /_test/fault '{"method": "reactions.add", "error": "missing_scope"}' >/dev/null
 M3="$(sk_inject "$IOTA_CH" U001 'third note')"
+M3_NEXT="$(sk_inject "$IOTA_CH" U001 'after third note')"
+sk_ctl /_test/reset-calls '{}' >/dev/null
 sk_poll "$IOTA"
 assert_eq "$RC=$ERR1" "0=slack: slack-api-failed=reactions.add error=missing_scope" "a mark Slack refuses is printed and fails no poll"
 assert_eq "$(text_of "$IOTA" "$IOTA_CH:$M3")|$(sk_reactions "$IOTA_CH" "$M3")|$(jq -r "select(.t == \"mark\" and .ts == \"$M3\") | .name" "$(sk_journal "$IOTA")")" \
   "third note||" "the directive lands unmarked and no mark is journaled"
+assert_eq "$(sk_reactions "$IOTA_CH" "$M3_NEXT")|$(sk_state '[.calls[] | select(. == "reactions.add")] | length')" "eyes|2" "each new delivery attempts eyes once, even after a refusal"
+sk_ctl /_test/reset-calls '{}' >/dev/null
+sk_ctl /_test/fault '{"method": "reactions.add", "error": "missing_scope"}' >/dev/null
+sk_poll "$IOTA"
+assert_eq "$(sk_reactions "$IOTA_CH" "$M3")|$(sk_state '[.calls[] | select(. == "reactions.add")] | length')" "|1" "a previously refused delivery gets one retry in a later poll"
 sk_poll "$IOTA"
 assert_eq "$RC $(sk_reactions "$IOTA_CH" "$M3")" "0 eyes" "the next poll makes the mark Slack refused"
 sk_lm "$IOTA" inbox --item overseer >/dev/null
@@ -893,6 +901,22 @@ sk_poll "$ZETA"
 assert_eq "$(sk_reactions "$ZETA_CH" "$MC1")" "" "control: the seen mark gone, a delivered directive carries no reaction"
 sk_bin_reset
 
+for retry in poll delivery; do
+  case "$retry" in
+    poll) sk_mutant same-poll relay.py '(        if not self.caught_up:\n            self.catch_up\(bot_user\)\n)' '\1        self.mark_seen(self.state.delivered)\n' ;;
+    delivery) sk_mutant delivery-sweep relay.py '(        notice\("delivered", f"ts=\{ts\} id=\{envelope\} path=\{path\}"\)\n)        self.mark_seen\(\[ts\]\)' '\1        self.mark_seen(self.state.delivered)' ;;
+  esac
+  RETRY_ROOT="$(sk_new_root "retry-$retry")"
+  sk_bind "$RETRY_ROOT"
+  RETRY_CH="$(sk_channel "$RETRY_ROOT")"
+  RETRY_TS="$(sk_inject "$RETRY_CH" U001 'Refuse first mark')"
+  sk_inject "$RETRY_CH" U001 'Mark next delivery' >/dev/null
+  sk_ctl /_test/fault '{"method": "reactions.add", "error": "missing_scope"}' >/dev/null
+  sk_poll "$RETRY_ROOT"
+  sk_assert_red "$(sk_reactions "$RETRY_CH" "$RETRY_TS")" '' "control: $retry retry marks a newly refused delivery in the same poll"
+  sk_bin_reset
+done
+
 sk_mutant mark-cursor relay.py 'if self\.state\.delivered\.get\(ts\) not in read:' 'if False:'
 MC2="$(sk_inject "$ZETA_CH" U001 'unread')"
 sk_poll "$ZETA"
@@ -907,7 +931,7 @@ assert_eq "$RC" "1" "control: a refused mark raised, the poll fails"
 sk_bin_reset
 
 while IFS=$'\t' read -r error methods <&3; do
-  sk_mutant "settled-$error" relay.py "\"$error\"(, )?" ''
+  sk_mutant "settled-$error" relay.py "(MARK_SETTLED = \\{[^}\\n]*)\"$error\"(, )?" '\1'
   SR="$(sk_new_root "settle-$error")"
   sk_bind "$SR"
   SR_CH="$(sk_channel "$SR")"

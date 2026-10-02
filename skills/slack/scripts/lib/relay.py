@@ -31,16 +31,17 @@ The connection opens before the catch-up reads, so no message falls between
 them.
 
 Each poll, every SLACK_POLL_SECONDS, per root: re-resolve the owners when
-the setting moved, run the catch-up when one is due, mark every delivered
-owner message the journal holds no mark for, swap the receipt mark of every
-directive the overseer has read since, then read the mailbox's events and
+the setting moved, retry previously unmarked deliveries, run the catch-up
+when one is due, swap the receipt mark of every directive the overseer has
+read since, then read the mailbox's events and
 post every owner-bound envelope not yet carried.
 
 An owner message carries a delivery mark; a directive also carries a receipt mark, a reaction and never a
 message: SEEN once it lands in the mailbox, READ once the overseer's
-to-lane.cursor passes it. Each mark is judged from the journal on every
-poll, never from the step that delivered the message, so a stop between
-the delivery and its mark leaves the mark to the next poll.
+to-lane.cursor passes it. The journal judges each mark on delivery and
+later polls, so a stop between the delivery and its
+mark leaves the mark to the next poll. Each delivery attempts eyes once,
+without retrying a new refusal later in the same poll.
 
 A start whose journal holds no `start` line seeds both positions before it
 reads anything: Slack from the binding moment, so a channel's earlier history is never delivered,
@@ -69,7 +70,7 @@ import re
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from api import Slack
 from mailbox import LaneMail
@@ -241,6 +242,7 @@ class RootRelay:
     def poll(self, bot_user: str) -> None:
         self.ready()
         self.post_failed = None
+        self.mark_seen(self.state.delivered)
         for message in list(self.pending_live.values()):
             try:
                 self.on_message(message, bot_user)
@@ -251,7 +253,6 @@ class RootRelay:
                 self.pending_live.pop(str(message["ts"]))
         if not self.caught_up:
             self.catch_up(bot_user)
-        self.mark_seen()
         self.mark_read()
         now = self.clock()
         touched = self.master_touched()
@@ -306,7 +307,6 @@ class RootRelay:
         for message in new:
             self.bind_file_share(message)
             self.handle(message, bot_user)
-            self.mark_seen()
         replied = {str(m["ts"]): float(m["latest_reply"]) for m in messages if m.get("latest_reply")}
         complete = True
         for thread_ts in dict.fromkeys([*replied, *self.state.threads]):
@@ -351,7 +351,6 @@ class RootRelay:
             self.bind_file_share(message)
         self.handle(message, bot_user, path="live")
         self.pending_live.pop(ts)
-        self.mark_seen()
 
     def bind_file_share(self, message: Dict) -> None:
         for item in message.get("files") or []:
@@ -375,7 +374,6 @@ class RootRelay:
         replies.sort(key=lambda m: float(m["ts"]))
         for reply in replies:
             self.handle(reply, bot_user)
-            self.mark_seen()
         if replies:
             self.journal.append(t="thread", ts=thread.ts, seen=replies[-1]["ts"])
         return True
@@ -413,11 +411,13 @@ class RootRelay:
             if outcome == "answered":
                 self.journal.append(t="in", channel=self.channel, ts=ts, kind="answer", id=answer_id, thread=thread_ts)
                 notice("delivered", f"ts={ts} id={answer_id} path={path}")
+                self.mark_seen([ts])
                 return
         parent = self.parent_context(thread_ts) if thread_ts != ts else None
         envelope = self.mail.send_directive(text, delivery, parent)
         self.journal.append(t="in", channel=self.channel, ts=ts, kind="directive", id=envelope, thread=thread_ts)
         notice("delivered", f"ts={ts} id={envelope} path={path}")
+        self.mark_seen([ts])
 
     def react(self, method: str, ts: str, name: str) -> bool:
         """One reaction on the message at `ts`; False when Slack refused it,
@@ -434,12 +434,12 @@ class RootRelay:
                 return False
         return True
 
-    def mark_seen(self) -> None:
-        """Mark SEEN every delivered owner message no mark line names: one this
-        poll delivered, one whose mark Slack refused, and one a stop left
-        unmarked. A stop after Slack took the reaction and before its line
-        is answered already_reacted, which settles it."""
-        for ts in sorted(self.state.delivered.keys() - self.state.marks.keys(), key=float):
+    def mark_seen(self, timestamps: Iterable[str]) -> None:
+        """Attempt SEEN for these delivered messages without a journal mark.
+        Delivery supplies its own timestamp; poll retries the retained set
+        before new deliveries. Slack's already_reacted settles a stop after
+        the reaction but before its journal line."""
+        for ts in sorted(set(timestamps) & (self.state.delivered.keys() - self.state.marks.keys()), key=float):
             if self.react("reactions.add", ts, SEEN):
                 self.journal.append(t="mark", ts=ts, name=SEEN)
 
