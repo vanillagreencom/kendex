@@ -430,11 +430,11 @@ assert_eq "$RC|$(recorded_argv)" \
 tm kill-window -t "$(recorded window)"
 
 # A fleet whose settings name no preference: the first launch walks the default
-# ladder and opens on its Fable rung.
+# ladder and opens on its Opus rung.
 LAUNCH_PREF=unset run_oversee -- launch --wait-secs 20
 assert_eq "$RC|$(recorded model)|$(recorded_argv)" \
-  "0|fable|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
-  "an unset preference launches the first overseer on the default ladder's Fable rung"
+  "0|claude-opus-5-5|lane=$H/.claude;-n;overseer;--model;claude-opus-5-5;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
+  "an unset preference launches the first overseer on the default ladder's Opus rung"
 tm kill-window -t "$(recorded window)"
 
 # A pi entry ahead of a claude entry with room: the launch table names no

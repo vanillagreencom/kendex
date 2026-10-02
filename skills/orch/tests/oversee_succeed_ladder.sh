@@ -182,7 +182,7 @@ keyed() { grep -m1 "^oversee-succeed: $1 " <<<"$OUT" || echo none; }
 echo "=== oversee-succeed: the model ladder ==="
 
 # Every claude seat is Fable-walled, .eclaude alone has Opus room, and codex is
-# walled. Under the default ladder the Fable entry finds no seat and the Opus
+# walled. Under the default ladder the first entry is Opus and that
 # entry takes .eclaude: the seat is judged on the bucket that walls Opus, not
 # on its binding bucket, which the Fable window holds at 99.
 seat claude 10 99 99
@@ -293,15 +293,15 @@ assert_eq "$RC|$(launched claude)" \
   "the same fleet with no claim takes the first seat"
 
 # Every claude seat walled for every model: the default reaches codex on
-# GPT-6 Astra, the owner's third entry, ahead of GPT-5.6 Sol.
+# GPT-6.1 Sol, the second entry.
 seat eclaude 99 99 10
 seat fclaude 99 99 10
 codex_seat codex 20
 new_caller
 run_succeed codex unset
 assert_eq "$RC|$(caller_open)|$(launched claude)|$(launched codex | awk '{print $2}')|$(grep -cx 'model_reasoning_effort=high' "$TMP_ROOT/argv.codex")" \
-  "0|no|none|gpt-6-astra|1" \
-  "every claude entry walled: the default reaches codex on GPT-6 Astra"
+  "0|no|none|gpt-6.1-sol|1" \
+  "every claude entry walled: the default reaches codex on GPT-6.1 Sol"
 
 # The setting is the one list of models: a codex model no tier ladder and no
 # script names launches as the setting writes it.
@@ -321,12 +321,12 @@ order_row
 assert_eq "$RC|$(launched claude)|$(launched codex | awk '{print $2}')" "0|none|gpt-5.6-sol" \
   "an edited order is walked in the setting's order"
 # Its control: a walk that reads a built-in order in place of the setting
-# opens on Fable, the built-in first entry, and ignores the edit.
+# opens on Opus, the built-in first entry, and ignores the edit.
 ORDERCTL="$(mutant_scripts orderctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$ORDERCTL/lib/overseer-launch.sh" \
   '"${ORCH_OVERSEER_PREFERENCE-$OL_DEFAULT_PREFERENCE}"' '"$OL_DEFAULT_PREFERENCE"'
 order_row "$ORDERCTL/oversee-succeed"
-assert_eq "$RC|$(launched claude | awk '{print $2}')|$(launched codex)" "0|fable|none" \
+assert_eq "$RC|$(launched claude | awk '{print $2}')|$(launched codex)" "0|claude-opus-5-5|none" \
   "control: a walk on a built-in order ignores the edited setting"
 
 # A copilot entry: `lanes pick --harness copilot` judges a Copilot account on
@@ -451,7 +451,7 @@ new_caller codex
 CALLER_FLAGS=(-m gpt-5.6-sol -c model_reasoning_effort=high -a never)
 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codexcaller unset
 assert_eq "$RC|$(keyed entry-permission-untransferable)|$(launched claude)|$(launched codex | sed "s|^$H/.dcodex[^ ]* |dcodex |")|$(grep -cx never "$TMP_ROOT/argv.codex")" \
-  "0|oversee-succeed: entry-permission-untransferable entry=claude:fable:high source=codex target=claude|none|dcodex gpt-6-astra|1" \
+  "0|oversee-succeed: entry-permission-untransferable entry=claude:claude-opus-5-5:high source=codex target=claude|none|dcodex gpt-6.1-sol|1" \
   "a codex caller whose permission words cannot cross skips the claude entries and succeeds on codex"
 # Its control: a walk that chooses the claude entry anyway refuses after it,
 # launching nothing.
@@ -542,9 +542,8 @@ assert_eq "$RC|$(keyed entry-permission-untransferable)" \
   "control: a check that does not keep the numeric skip silent prints it"
 cp "$FIXTURE_DIR/.1copilot.json" "$FIXTURE_DIR/.2copilot.json"
 
-# The ladder's first rung: a claude seat with Fable room takes a Fable
-# successor, although another seat has Opus room. A default that starts on
-# Opus, or puts Opus ahead of Fable, moves this successor down a model.
+# The ladder's first rung: the first claude seat with Opus room takes an Opus
+# successor, ahead of another seat with room for both Fable and Opus.
 seat claude 10 99 99
 seat eclaude 10 99 10
 seat fclaude 10 10 10
@@ -553,8 +552,8 @@ codex_seat dcodex 99
 new_caller
 run_succeed fable unset
 assert_eq "$RC|$(launched claude)|$(launched codex)" \
-  "0|$H/.fclaude fable|none" \
-  "the default ladder opens on Fable where a seat has Fable room"
+  "0|$H/.eclaude claude-opus-5-5|none" \
+  "the default ladder opens on Opus on the first seat with Opus room"
 
 # A pi overseer on the pi-claude provider, its pane naming no harness and its
 # launch record naming pi, Fable and the account .claude, whose Fable and Opus

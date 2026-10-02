@@ -96,14 +96,14 @@ ol_runtime_supported() {
 }
 
 # ORCH_OVERSEER_PREFERENCE where no settings file names it: the owner's order,
-# Fable, then Opus 5.5 on claude, then GPT-6 Astra, then GPT-5.6 Sol on
-# codex, each at high effort, so a Fable wall moves the overseer onto the next
+# Opus 5.5 on claude, then GPT-6.1 Sol on codex, each at high effort,
+# so an Opus wall moves the overseer onto the next
 # model with room, at a mark and at the wall alike. This value is the
 # setting's default and the only model order any script holds: the walk reads
 # the setting and nothing else, so a new or retired model is an edit to the
 # setting and never to a script. Set to empty, the setting names no entries,
 # which is a caller's own rule to read.
-OL_DEFAULT_PREFERENCE="claude:fable:high,claude:claude-opus-5-5:high,codex:gpt-6-astra:high,codex:gpt-5.6-sol:high"
+OL_DEFAULT_PREFERENCE="claude:claude-opus-5-5:high,codex:gpt-6.1-sol:high"
 ol_preference() {
   printf '%s\n' "${ORCH_OVERSEER_PREFERENCE-$OL_DEFAULT_PREFERENCE}"
 }
