@@ -1,0 +1,1 @@
+- A finding kendex accepts in its own packages stays accepted after an edit elsewhere in its file, including one that moves its line; an edit to the line itself still shows the finding again.

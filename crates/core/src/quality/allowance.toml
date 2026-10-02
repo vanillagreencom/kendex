@@ -1,8 +1,8 @@
 # Findings kendex accepts in its own packages, one row per finding, keyed
-# on the text of the file holding it. A row is added by hand and reviewed
-# with the finding it accepts; `cargo test -p kendex-core -- --ignored
-# regenerate_allowance` refreshes the hash, line and message of the rows
-# already here and refuses a row whose finding is gone, and
+# on the text of the line the finding fired on. A row is added by hand and
+# reviewed with the finding it accepts; `cargo test -p kendex-core --
+# --ignored regenerate_allowance` refreshes the line hash and message of
+# the rows already here and refuses a row whose finding is gone, and
 # `crates/core/tests/allowance.rs` fails while the table is stale. Read by
 # `crates/core/src/quality/allowance.rs`.
 
@@ -14,11 +14,10 @@ name = "orch"
 
 [[package.file]]
 path = "scripts/lib/lane-launch.sh"
-hash = "e02f8b55e4b9edce58386d8191a880d00f28c63fb6db1f45d9cb6044108ccf54"
 
 [[package.file.finding]]
 rule = "safety-bypass"
-line = 243
+line-hash = "36f56839c770e9d1e4f567fba984079248fa0223b9ea72f0f94df0578e887e87"
 message = "`--dangerously-skip-permissions` turns off permission prompts"
 
 [[package]]
@@ -27,11 +26,10 @@ name = "harness-ci"
 
 [[package.file]]
 path = "references/wiring.md"
-hash = "8ef9f2b05421b9c7c074e0fe1a920f258304dadea6baecd8daafd626e06960db"
 
 [[package.file.finding]]
 rule = "rce"
-line = 207
+line-hash = "b2646f7c3e1017f7ad14dc8102adeee12172a7183278d46b780eba666dae2458"
 message = "this line pipes a download straight into a shell with `https://kendex.ai/install.sh`, so whatever the far end serves is what runs"
 
 [[package]]
@@ -40,9 +38,8 @@ name = "review-gate"
 
 [[package.file]]
 path = "templates/review-gate-writer.yml"
-hash = "d735900515860bf132e7b6bdce2937f91c56c7d8af02007313b074572fea1aae"
 
 [[package.file.finding]]
 rule = "rce"
-line = 655
+line-hash = "618f4343fe7c8f11804fe06194842baf1a8df814e3e8bddbe55faa277cace1ed"
 message = "this line pipes a download straight into a shell from `https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/$KE… c4e2972fc18a3f5a`, so whatever the far end serves is what runs"

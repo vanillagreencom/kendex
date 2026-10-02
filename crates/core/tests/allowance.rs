@@ -1,6 +1,6 @@
 //! The compiled-in table of accepted findings against the catalog this
 //! repository is: every row still names a finding the catalog raises, at
-//! the text, line and message it has now, or the build fails until the
+//! the line text and message it has now, or the build fails until the
 //! table is refreshed and the diff reviewed.
 
 use std::path::{Path, PathBuf};
@@ -38,10 +38,11 @@ fn regenerated() -> String {
     text
 }
 
-/// `cargo test` fails whenever a listed finding moved, changed its
-/// message, or sits in a file whose text changed, and the refresh itself
-/// refuses a listed finding the catalog no longer raises or a file that
-/// raises more of that rule than the table lists. Refresh with:
+/// `cargo test` fails whenever a listed finding's line text or message
+/// changed, and the refresh itself refuses a listed finding the catalog no
+/// longer raises or a file that raises more of that rule than the table
+/// lists; an edit elsewhere in the file, one that moves the finding's line
+/// included, leaves the table current. Refresh with:
 /// `cargo test -p kendex-core -- --ignored regenerate_allowance`
 #[test]
 fn the_committed_table_is_current_for_every_row_it_holds() {

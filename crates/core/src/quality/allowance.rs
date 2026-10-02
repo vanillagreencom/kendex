@@ -9,14 +9,16 @@
 //!
 //! The record is `allowance.toml` beside this file, compiled into the
 //! binary: only kendex's own table is ever honoured, and no catalog can
-//! carry one. Each row names a package, a file inside it by the hash of
-//! its text, and the finding by rule, line and message. A finding is
-//! accepted only for an item whose source is kendex's own catalog
-//! ([`Publisher::Kendex`]), where the file the rules read has exactly the
-//! recorded text, under the rule set the rows were accepted for. The same
-//! bytes from another catalog, an edited copy, a hand-placed copy and a
-//! rule change all leave the finding where it is. The table is refreshed
-//! from the catalog, never widened by it, and
+//! carry one. Each row names a package, a file inside it by path, and the
+//! finding by rule, the hash of the line it fired on, and message. A
+//! finding is accepted only for an item whose source is kendex's own
+//! catalog ([`Publisher::Kendex`]), where the line the finding fired on
+//! has exactly the recorded text, under the rule set the rows were
+//! accepted for, and one row accepts one finding. The same bytes from
+//! another catalog, an edit to the line, a hand-placed copy and a rule
+//! change all leave the finding where it is; an edit elsewhere in the
+//! file, which moves the line or not, leaves the acceptance standing. The
+//! table is refreshed from the catalog, never widened by it, and
 //! `crates/core/tests/allowance.rs` holds it current.
 
 use std::sync::LazyLock;
@@ -28,7 +30,7 @@ use crate::model::ItemKind;
 use crate::source::SourceConfig;
 use crate::source_read::SealedSource;
 
-use super::{Finding, Prepared, RULESET_VERSION, place_within};
+use super::{Doc, Finding, Prepared, RULESET_VERSION, place_within};
 
 /// The compiled-in table, as text: the cache key reads its digest.
 pub const ALLOWANCE_TEXT: &str = include_str!("allowance.toml");
@@ -36,10 +38,10 @@ pub const ALLOWANCE_TEXT: &str = include_str!("allowance.toml");
 /// The header every refresh writes above the table.
 const HEADER: &str = "\
 # Findings kendex accepts in its own packages, one row per finding, keyed
-# on the text of the file holding it. A row is added by hand and reviewed
-# with the finding it accepts; `cargo test -p kendex-core -- --ignored
-# regenerate_allowance` refreshes the hash, line and message of the rows
-# already here and refuses a row whose finding is gone, and
+# on the text of the line the finding fired on. A row is added by hand and
+# reviewed with the finding it accepts; `cargo test -p kendex-core --
+# --ignored regenerate_allowance` refreshes the line hash and message of
+# the rows already here and refuses a row whose finding is gone, and
 # `crates/core/tests/allowance.rs` fails while the table is stale. Read by
 # `crates/core/src/quality/allowance.rs`.
 
@@ -104,8 +106,7 @@ pub struct Package {
     pub files: Vec<AcceptedFile>,
 }
 
-/// One file of a package, by the text the rules read, and the findings
-/// accepted in it.
+/// One file of a package, by path, and the findings accepted in it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct AcceptedFile {
@@ -113,21 +114,22 @@ pub struct AcceptedFile {
     /// spelling a row carries: a package that is one file, and the
     /// labelled documents beside a hook's script, are never accepted.
     pub path: String,
-    /// [`super::Doc::digest`] of the text, as every reading computes it.
-    pub hash: String,
     #[serde(rename = "finding")]
     pub accepted: Vec<Accepted>,
 }
 
-/// One accepted finding, by everything that identifies it in a file of
-/// known text. The line is exact for that text; the message says what the
-/// rule matched, so the row reads on its own.
+/// One accepted finding, by everything that identifies it in a file
+/// whatever the rest of that file holds: the line's own text, wherever the
+/// line now stands, and the message saying what the rule matched, so the
+/// row reads on its own.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Accepted {
     pub rule: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub line: Option<u32>,
+    /// [`crate::hash::hash_bytes`] of the line the finding fired on, as the
+    /// author wrote it ([`super::Doc::written`]): a character the rules
+    /// read past is still an edit to the line.
+    pub line_hash: String,
     pub message: String,
 }
 
@@ -163,9 +165,10 @@ impl Allowance {
 
     /// Split what the rules found into what stays a finding and what this
     /// table accepts. Nothing is accepted for anyone but kendex; for
-    /// kendex's own item every acceptance is by exact text: the file the
-    /// finding fired in has the recorded hash, and the finding is one of
-    /// the rows recorded for that file.
+    /// kendex's own item every acceptance is by exact text: the finding is
+    /// one of the rows recorded for its file, at a line of the recorded
+    /// text. Each row accepts one finding, so a second copy of an accepted
+    /// line stays a finding.
     pub(super) fn accept(
         &self,
         prepared: &Prepared,
@@ -179,17 +182,22 @@ impl Allowance {
         let (Some(package), true) = (package, honoured) else {
             return (findings, Vec::new());
         };
+        let mut open: Vec<(&str, &Accepted)> = package
+            .files
+            .iter()
+            .flat_map(|file| file.accepted.iter().map(|row| (file.path.as_str(), row)))
+            .collect();
         findings
             .into_iter()
-            .partition(|finding| !package.accepts(prepared, finding))
+            .partition(|finding| !take(&mut open, prepared, finding))
     }
 
     /// This table with every row read again off the catalog at `sealed`:
-    /// each file's hash, and each row's line and message, as the finding
-    /// stands there now, the rows of a file in line order. A row is never
-    /// added; a listed file whose findings under a row's rule are not one
-    /// per row is refused by name, since a finding that is gone is a row
-    /// nobody should still carry, and one that appeared is a row nobody
+    /// each row's line hash and message as the finding stands there now,
+    /// the rows of a file in the order the file holds their lines. A row is
+    /// never added; a listed file whose findings under a row's rule are not
+    /// one per row is refused by name, since a finding that is gone is a
+    /// row nobody should still carry, and one that appeared is a row nobody
     /// accepted.
     pub fn refreshed(&self, sealed: &SealedSource, config: &SourceConfig) -> Result<Allowance> {
         let mut packages = Vec::with_capacity(self.packages.len());
@@ -226,27 +234,27 @@ impl Allowance {
     }
 }
 
-impl Package {
-    fn accepts(&self, prepared: &Prepared, finding: &Finding) -> bool {
-        let Some((path, digest)) = located(prepared, &finding.location) else {
-            return false;
-        };
-        self.files
-            .iter()
-            .filter(|file| file.path == path && file.hash == digest)
-            .any(|file| {
-                file.accepted.iter().any(|row| {
-                    row.rule == finding.rule
-                        && row.line == finding.line
-                        && row.message == finding.message
-                })
-            })
-    }
+/// Whether one of the `open` rows, each with its file's path, accepts
+/// `finding`, closing the row that does.
+fn take(open: &mut Vec<(&str, &Accepted)>, prepared: &Prepared, finding: &Finding) -> bool {
+    let Some((path, doc)) = located(prepared, &finding.location) else {
+        return false;
+    };
+    let Some(line_hash) = line_hash(doc, finding) else {
+        return false;
+    };
+    let row = open.iter().position(|(at, row)| {
+        *at == path
+            && row.rule == finding.rule
+            && row.line_hash == line_hash
+            && row.message == finding.message
+    });
+    row.map(|index| open.swap_remove(index)).is_some()
 }
 
 impl AcceptedFile {
-    /// This file's rows read again off the prepared package: the text's
-    /// digest, and per rule the findings in line order, one per row.
+    /// This file's rows read again off the prepared package: per rule the
+    /// findings, one per row, each keyed by its line's text.
     fn refreshed(
         &self,
         package: &Package,
@@ -261,13 +269,15 @@ impl AcceptedFile {
                 self.path
             ),
         };
-        let Some(digest) = prepared.docs.iter().find_map(|doc| {
-            (located(prepared, &doc.location)?.0 == self.path).then(|| doc.digest.clone())
-        }) else {
+        let held = prepared
+            .docs
+            .iter()
+            .any(|doc| located(prepared, &doc.location).is_some_and(|(at, _)| at == self.path));
+        if !held {
             return Err(refuse(
                 "which the package does not hold as a text file".to_owned(),
             ));
-        };
+        }
         // Every rule the rows name, once each, in whatever order the rows
         // were written: a hand-written table may interleave them.
         let mut rules: Vec<&str> = self.accepted.iter().map(|row| row.rule.as_str()).collect();
@@ -276,12 +286,12 @@ impl AcceptedFile {
         let mut accepted = Vec::with_capacity(self.accepted.len());
         for rule in rules {
             let listed = self.accepted.iter().filter(|row| row.rule == rule).count();
-            let found: Vec<&Finding> = findings
+            let found: Vec<(&Finding, &Doc)> = findings
                 .iter()
-                .filter(|finding| {
-                    finding.rule == rule
-                        && located(prepared, &finding.location)
-                            .is_some_and(|(at, _)| at == self.path)
+                .filter(|finding| finding.rule == rule)
+                .filter_map(|finding| {
+                    let (at, doc) = located(prepared, &finding.location)?;
+                    (at == self.path).then_some((finding, doc))
                 })
                 .collect();
             if found.len() != listed {
@@ -290,28 +300,49 @@ impl AcceptedFile {
                     found.len()
                 )));
             }
-            accepted.extend(found.into_iter().map(|finding| Accepted {
-                rule: finding.rule.clone(),
-                line: finding.line,
-                message: finding.message.clone(),
-            }));
+            for (finding, doc) in found {
+                let Some(line_hash) = line_hash(doc, finding) else {
+                    return Err(refuse(format!(
+                        "with an accepted {rule} finding the file raises at no line, which no row can name"
+                    )));
+                };
+                accepted.push((
+                    finding.line,
+                    Accepted {
+                        rule: finding.rule.clone(),
+                        line_hash,
+                        message: finding.message.clone(),
+                    },
+                ));
+            }
         }
-        // Rows in the order the file holds them, whatever the table had.
-        accepted.sort_by(|a, b| a.line.cmp(&b.line).then_with(|| a.rule.cmp(&b.rule)));
+        // Rows in the order the file holds their lines, whatever the table
+        // had.
+        accepted.sort_by(|(a_line, a), (b_line, b)| {
+            a_line.cmp(b_line).then_with(|| a.rule.cmp(&b.rule))
+        });
         Ok(AcceptedFile {
             path: self.path.clone(),
-            hash: digest,
-            accepted,
+            accepted: accepted.into_iter().map(|(_, row)| row).collect(),
         })
     }
 }
 
 /// The tree file a finding fired in, as the table names it: its path
-/// inside the package and the digest of its text. `None` for a finding
-/// outside a tree: a package that is one file, a hook's command line or
-/// stored values, a config entry.
-fn located<'a>(prepared: &'a Prepared, location: &str) -> Option<(&'a str, &'a str)> {
+/// inside the package, and the document. `None` for a finding outside a
+/// tree: a package that is one file, a hook's command line or stored
+/// values, a config entry.
+fn located<'a>(prepared: &'a Prepared, location: &str) -> Option<(&'a str, &'a Doc)> {
     let doc = prepared.docs.iter().find(|doc| doc.location == location)?;
     let inside = place_within(&doc.location, &prepared.input.location)?.strip_prefix('/')?;
-    Some((inside, doc.digest.as_str()))
+    Some((inside, doc))
+}
+
+/// The key a row names `finding` by: the hash of the line it fired on, as
+/// `doc` was written. `None` for a finding at no line, such as the report
+/// that a file reads differently than it looks, which no row accepts.
+fn line_hash(doc: &Doc, finding: &Finding) -> Option<String> {
+    let index = usize::try_from(finding.line?).ok()?.checked_sub(1)?;
+    let line = doc.written.lines().nth(index)?;
+    Some(crate::hash::hash_bytes(line.as_bytes()))
 }

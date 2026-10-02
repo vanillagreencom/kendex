@@ -308,10 +308,11 @@ pub struct Doc {
     pub location: String,
     pub role: DocRole,
     pub lines: Vec<Line>,
-    /// [`crate::hash::hash_bytes`] of the text as the input carried it,
-    /// before deobfuscation: what an edit to the file changes, and what
-    /// the [`Allowance`] names a file by.
-    pub digest: String,
+    /// The text as the input carried it, before deobfuscation: what the
+    /// [`Allowance`] reads an accepted finding's line from. Deobfuscation
+    /// adds and removes no line break, so line N of this text is the line
+    /// N the rules read.
+    pub written: String,
 }
 
 /// Where `location` stands inside `root`, kept with the separator that

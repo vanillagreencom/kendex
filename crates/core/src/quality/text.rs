@@ -240,11 +240,10 @@ pub fn prepare(input: AuditInput) -> Prepared {
         out
     };
     let content = match input.content {
-        Content::Document { text } => {
-            let digest = digest(&text);
+        Content::Document { text: written } => {
             let text = clean(
                 input.location.clone(),
-                &text,
+                &written,
                 letters(&input.location, None),
             );
             docs.push(Doc {
@@ -254,7 +253,7 @@ pub fn prepare(input: AuditInput) -> Prepared {
                     &text,
                     language(&input.location, &text).reading(shell::Context::none()),
                 ),
-                digest,
+                written,
             });
             Content::Document { text }
         }
@@ -317,8 +316,8 @@ fn tree_docs(
                 let text = clean(location.clone(), &written, letters(&location, supports));
                 Cleaned {
                     language: language(&location, &text),
-                    digest: digest(&written),
                     text,
+                    written,
                 }
             });
             Placed {
@@ -369,7 +368,7 @@ fn tree_docs(
                 },
                 role: super::DocRole::Text,
                 location: placed.location,
-                digest: cleaned.digest,
+                written: cleaned.written,
             });
             TreeFile {
                 text: Some(cleaned.text),
@@ -470,30 +469,28 @@ fn hook_docs(
 ) -> (String, Option<String>, Option<String>) {
     // The command line is run by a shell, and its script defines nothing
     // the command line can call.
-    let command_digest = digest(&command);
-    let command = clean(format!("{root} (command)"), &command, Letters::Reported);
+    let written = command;
+    let command = clean(format!("{root} (command)"), &written, Letters::Reported);
     docs.push(Doc {
         location: format!("{root} (command)"),
         role: super::DocRole::Text,
         lines: lines(&command, Reading::Shell(shell::Context::none())),
-        digest: command_digest,
+        written,
     });
     // What the harness stores beside the command, not what it runs: one
     // value per line, one document, for the rules about values.
-    let values = values.map(|values| {
-        let digest = digest(&values);
-        let values = clean(format!("{root} (entry)"), &values, Letters::Reported);
+    let values = values.map(|written| {
+        let values = clean(format!("{root} (entry)"), &written, Letters::Reported);
         docs.push(Doc {
             location: format!("{root} (entry)"),
             role: super::DocRole::Values,
             lines: lines(&values, Reading::Plain),
-            digest,
+            written,
         });
         values
     });
-    let script = script.map(|body| {
-        let digest = digest(&body);
-        let body = clean(root.to_owned(), &body, letters(root, None));
+    let script = script.map(|written| {
+        let body = clean(root.to_owned(), &written, letters(root, None));
         let language = language(root, &body);
         let diagnostic = match language {
             Language::Shell => shell::diagnostic_functions(&[&body]),
@@ -509,26 +506,19 @@ fn hook_docs(
                     helpers: None,
                 }),
             ),
-            digest,
+            written,
         });
         body
     });
     (command, values, script)
 }
 
-/// One tree file's text as the rules read it, beside the name of the text
-/// it was read from: the digest is taken before deobfuscation, so it is
-/// the hash a file of exactly the author's text has on disk.
+/// One tree file's text as the rules read it, beside the text it was read
+/// from, the author's own before deobfuscation.
 struct Cleaned {
     text: String,
-    digest: String,
+    written: String,
     language: Language,
-}
-
-/// What names a document's text wherever a reading has to say which text
-/// it read: the hash a file of exactly this text has on disk.
-fn digest(text: &str) -> String {
-    crate::hash::hash_bytes(text.as_bytes())
 }
 
 /// Split into lines, marking the ones that are quoting somebody else and
