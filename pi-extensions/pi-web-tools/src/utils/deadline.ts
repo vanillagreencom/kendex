@@ -29,6 +29,27 @@ export async function withDeadline<T>(parent: AbortSignal | undefined, timeoutMs
 	}
 }
 
+/** How a `requestWithin` request is sent: `fetchImpl`, the global fetch when absent, stopped when `signal` aborts or after
+ * `timeoutMs`, DEFAULT_DEADLINE_MS when absent. */
+export interface RequestOptions {
+	fetchImpl?: typeof fetch;
+	signal?: AbortSignal;
+	timeoutMs?: number;
+}
+
+/** The response to the request `what` as `read` takes it, its JSON body when `read` is absent, with the request and the read
+ * under one `withDeadline`. A response that is not ok rejects with `<what> failed (<status>): <body or status text>`. */
+export async function requestWithin<T>(what: string, url: string, init: RequestInit, options: RequestOptions, read: (response: Response) => Promise<T> = (response) => response.json()): Promise<T> {
+	return await withDeadline(options.signal, options.timeoutMs ?? DEFAULT_DEADLINE_MS, what, async (signal) => {
+		const response = await (options.fetchImpl ?? fetch)(url, { ...init, signal });
+		if (!response.ok) {
+			const text = await response.text().catch(() => "");
+			throw new Error(`${what} failed (${response.status}): ${text || response.statusText}`);
+		}
+		return await read(response);
+	});
+}
+
 /** The sh script a POSIX helper runs under. Pi's exec reports a helper killed by a signal it did not send (a crash, an OOM
  * kill) as exit code 0; run as the script's child, that death becomes the script's exit code 128+N. The script passes Pi's
  * SIGTERM on to the helper and waits for it, so a deadline or a cancellation still kills the helper. */

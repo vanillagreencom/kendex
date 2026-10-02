@@ -38,6 +38,15 @@ function uploadStartedFetch(base: string): typeof fetch {
 		: await redirected(input, init);
 }
 
+/** A fetch that answers the Gemini Files upload start and the upload itself, and sends every other request to `base`: the
+ * analysis request then meets the server under test. */
+function uploadedFetch(base: string): typeof fetch {
+	const started = uploadStartedFetch(base);
+	return async (input, init) => new Headers(init?.headers).get("x-goog-upload-command") === "upload, finalize"
+		? Response.json({ file: { uri: "https://generativelanguage.googleapis.com/v1beta/files/clip" } })
+		: await started(input, init);
+}
+
 /** A local video file small enough to upload. */
 function localVideo(t: TestContext): string {
 	const path = join(tempDir(t), "clip.mp4");
@@ -45,7 +54,9 @@ function localVideo(t: TestContext): string {
 	return path;
 }
 
-const paths: Array<{ name: string; timeout: "TimeoutError" | "wrapped"; call: (base: string, t: TestContext) => Promise<unknown> }> = [
+type ServerMode = "silent" | "stall";
+
+const paths: Array<{ name: string; timeout: "TimeoutError" | "wrapped"; modes?: ServerMode[]; call: (base: string, t: TestContext) => Promise<unknown> }> = [
 	{ name: "Exa search", timeout: "TimeoutError", call: (base) => new ExaClient({ apiKey: "k", baseUrl: base, timeoutMs: DEADLINE_MS }).search({ query: "q" }) },
 	{ name: "Exa research mode", timeout: "TimeoutError", call: (base) => runExaResearch(new ExaClient({ apiKey: "k", baseUrl: base }), { query: "q", researchMode: "lite" }, undefined, { ...DEFAULT_SETTINGS, apiKeys: {}, warnings: [], exaResearchModes: { lite: { timeoutSeconds: DEADLINE_MS / 1000 } } }) },
 	{ name: "Exa MCP", timeout: "TimeoutError", call: (base) => new ExaMcpClient({ baseUrl: base, timeoutMs: DEADLINE_MS }).search({ query: "q" }) },
@@ -57,7 +68,10 @@ const paths: Array<{ name: string; timeout: "TimeoutError" | "wrapped"; call: (b
 	{ name: "HTTP PDF", timeout: "TimeoutError", call: (base, t) => fetchPdf(`${base}/file.pdf`, { reads: urlReads(t), timeoutMs: DEADLINE_MS }) },
 	{ name: "GitHub API", timeout: "TimeoutError", call: (base, t) => extractGitHubUrl("https://github.com/o/r/tree/main/src", { fetchImpl: redirectedFetch(base), cloneEnabled: false, timeoutMs: DEADLINE_MS, reads: urlReads(t) }) },
 	{ name: "GitHub raw file", timeout: "TimeoutError", call: (base, t) => extractGitHubUrl("https://github.com/o/r/blob/main/a.md", { fetchImpl: redirectedFetch(base), cloneEnabled: false, timeoutMs: DEADLINE_MS, reads: urlReads(t) }) },
+	// The upload start reads only its headers, so a server that stalls after them fails it without the deadline.
+	{ name: "local video upload start", timeout: "TimeoutError", modes: ["silent"], call: (base, t) => extractLocalVideo(localVideo(t), { geminiApiKey: "k", fetchImpl: redirectedFetch(base), timeoutMs: DEADLINE_MS }) },
 	{ name: "local video upload", timeout: "TimeoutError", call: (base, t) => extractLocalVideo(localVideo(t), { geminiApiKey: "k", fetchImpl: uploadStartedFetch(base), timeoutMs: DEADLINE_MS }) },
+	{ name: "local video analysis", timeout: "TimeoutError", call: (base, t) => extractLocalVideo(localVideo(t), { geminiApiKey: "k", fetchImpl: uploadedFetch(base), timeoutMs: DEADLINE_MS }) },
 	{ name: "YouTube Gemini API", timeout: "wrapped", call: (base) => extractYouTubeUrl("https://youtu.be/abc123XYZ_-", { mode: "understand", geminiApiKey: "k", fetchImpl: redirectedFetch(base), timeoutMs: DEADLINE_MS }) },
 ];
 
@@ -69,7 +83,7 @@ function namesDeadline(error: unknown, timeout: "TimeoutError" | "wrapped"): boo
 }
 
 for (const mode of ["silent", "stall"] as const) {
-	for (const path of paths) {
+	for (const path of paths.filter((row) => row.modes?.includes(mode) ?? true)) {
 		test(`request deadline: ${path.name}, server ${mode}`, { timeout: 10_000 }, async (t) => {
 			const base = await stallingServer(t, mode);
 			const started = performance.now();
@@ -80,6 +94,18 @@ for (const mode of ["silent", "stall"] as const) {
 		});
 	}
 }
+
+test("request deadline: a repo whose README request stalls returns its description at the deadline", { timeout: 10_000 }, async (t) => {
+	const base = await stallingServer(t, "stall");
+	const redirected = redirectedFetch(base);
+	const fetchImpl: typeof fetch = async (input, init) => String(input) === "https://api.github.com/repos/o/r"
+		? Response.json({ full_name: "o/r", description: "the description" })
+		: await redirected(input, init);
+	const started = performance.now();
+	const result = await extractGitHubUrl("https://github.com/o/r", { fetchImpl, cloneEnabled: false, timeoutMs: DEADLINE_MS, reads: urlReads(t) });
+	const elapsed = performance.now() - started;
+	assert.deepEqual({ content: result?.content, withinBound: elapsed < ENDS_WITHIN_MS }, { content: "# o/r\n\nthe description", withinBound: true });
+});
 
 // Reads of other web_fetch calls hold the whole in-flight budget, so each read below waits for room; its request's deadline
 // ends the wait, long before IN_FLIGHT_WAIT_TIMEOUT_MS would.

@@ -1,5 +1,5 @@
 import { requireApiKey } from "../utils/auth.js";
-import { DEFAULT_DEADLINE_MS, withDeadline } from "../utils/deadline.js";
+import { requestWithin } from "../utils/deadline.js";
 
 export type ExaDeepType = "deep-reasoning" | "deep-lite" | "deep";
 
@@ -100,29 +100,21 @@ export class ExaClient {
 	private readonly apiKey: string;
 	private readonly baseUrl: string;
 	private readonly fetchImpl: typeof fetch;
-	private readonly timeoutMs: number;
+	private readonly timeoutMs: number | undefined;
 
 	constructor(options: ExaClientOptions) {
 		this.apiKey = requireApiKey(options.apiKey, "Exa", "Set EXA_API_KEY or PI_WEB_TOOLS_CONFIG_FILE with exaApiKey.");
 		this.baseUrl = options.baseUrl ?? "https://api.exa.ai";
 		this.fetchImpl = options.fetchImpl ?? fetch;
-		this.timeoutMs = options.timeoutMs ?? DEFAULT_DEADLINE_MS;
+		this.timeoutMs = options.timeoutMs;
 	}
 
 	private post(path: string, body: Record<string, unknown>, signal?: AbortSignal, timeoutMs = this.timeoutMs): Promise<any> {
-		return withDeadline(signal, timeoutMs, `Exa ${path}`, async (deadline) => {
-			const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
-				method: "POST",
-				headers: { "content-type": "application/json", "x-api-key": this.apiKey },
-				body: JSON.stringify(body),
-				signal: deadline,
-			});
-			if (!response.ok) {
-				const text = await response.text().catch(() => "");
-				throw new Error(`Exa request failed (${response.status}): ${text || response.statusText}`);
-			}
-			return response.json();
-		});
+		return requestWithin(`Exa ${path}`, `${this.baseUrl}${path}`, {
+			method: "POST",
+			headers: { "content-type": "application/json", "x-api-key": this.apiKey },
+			body: JSON.stringify(body),
+		}, { fetchImpl: this.fetchImpl, signal, timeoutMs });
 	}
 
 	buildSearchBody(params: ExaSearchParams): Record<string, unknown> {

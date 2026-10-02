@@ -1,5 +1,5 @@
 import { requireApiKey } from "../utils/auth.js";
-import { DEFAULT_DEADLINE_MS, withDeadline } from "../utils/deadline.js";
+import { requestWithin } from "../utils/deadline.js";
 import type { NormalizedExaResponse, NormalizedExaResult } from "./exa.js";
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
@@ -55,13 +55,13 @@ export class GeminiApiClient {
 	private readonly apiKey: string;
 	private readonly baseUrl: string;
 	private readonly fetchImpl: typeof fetch;
-	private readonly timeoutMs: number;
+	private readonly timeoutMs: number | undefined;
 
 	constructor(options: GeminiApiClientOptions) {
 		this.apiKey = requireApiKey(options.apiKey, "Gemini", "Set GEMINI_API_KEY or PI_WEB_TOOLS_CONFIG_FILE with geminiApiKey.");
 		this.baseUrl = options.baseUrl ?? API_BASE;
 		this.fetchImpl = options.fetchImpl ?? fetch;
-		this.timeoutMs = options.timeoutMs ?? DEFAULT_DEADLINE_MS;
+		this.timeoutMs = options.timeoutMs;
 	}
 
 	buildSearchBody(params: GeminiApiSearchParams): Record<string, unknown> {
@@ -82,19 +82,11 @@ export class GeminiApiClient {
 		const model = params.model ?? DEFAULT_MODEL;
 		const body = this.buildSearchBody(params);
 		const url = `${this.baseUrl}/models/${model}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
-		const raw = await withDeadline(signal, this.timeoutMs, `Gemini API ${model}:generateContent`, async (deadline) => {
-			const response = await this.fetchImpl(url, {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify(body),
-				signal: deadline,
-			});
-			if (!response.ok) {
-				const text = await response.text().catch(() => "");
-				throw new Error(`Gemini API request failed (${response.status}): ${text || response.statusText}`);
-			}
-			return await response.json() as GenerateContentResponse;
-		});
+		const raw = await requestWithin<GenerateContentResponse>(`Gemini API ${model}:generateContent`, url, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		}, { fetchImpl: this.fetchImpl, signal, timeoutMs: this.timeoutMs });
 		return {
 			answer: answerFrom(raw),
 			results: citationsFrom(raw),

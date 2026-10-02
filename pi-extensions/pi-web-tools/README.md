@@ -39,11 +39,11 @@ The extension enables tools for the configured providers and available credentia
 ## Time limits
 
 - Each provider request (Exa, Exa MCP, Perplexity, Gemini, Gemini Web, DuckDuckGo) ends after 120 seconds, counted from sending it to reading the last byte of the answer, and then fails with its deadline named.
-- In `web_fetch`, each PDF fetch, each GitHub API, raw-file and README request, each YouTube attempt, and each of the three Gemini requests of a local video (upload start, upload, analysis) ends after 120 seconds. A page fetch and its Jina Reader fallback end together 120 seconds after the page request is sent. A failed URL takes its Exa fallback, as for any failed read.
+- In `web_fetch`, each PDF fetch, each GitHub API, raw-file and README request, each YouTube captions attempt and Gemini API request, and each of the three Gemini requests of a local video (upload start, upload, analysis) ends after 120 seconds. A page fetch and its Jina Reader fallback end together 120 seconds after the page request is sent. A failed URL takes its Exa fallback, as for any failed read.
 - A page, Jina Reader, PDF, GitHub file or README body that stops sending fails after 30 seconds with `web_fetch body stalled`; the 120-second limit ends a server that never sends headers and a body that trickles.
 - A `web_research` run ends after its mode's `timeoutSeconds`, all queries of a `full` run together; each research request may run up to it.
 - `pdftotext` is killed after 120 seconds, and `pdfinfo` and `pdftoppm` together after 120 seconds. Each runs through Pi's exec, is killed when the tool call is cancelled, and has its temporary files removed. A helper that crashes counts as failed.
-- A browser cookie read kills each `sqlite3` run after 4 seconds and each keyring or DPAPI helper (`security`, `secret-tool`, PowerShell) after 60 seconds. A keychain or keyring unlock prompt left open past 60 seconds fails the read.
+- A browser cookie read kills each `sqlite3` run after 4 seconds and each keyring or DPAPI helper (`security`, `secret-tool`, PowerShell) after 60 seconds. A keychain or keyring unlock prompt left open past 60 seconds fails the read. A YouTube Gemini Web attempt runs this read before its 120-second query, so the read's time adds to the query's.
 - Each `git` command of a GitHub clone keeps its own timeout, 60 seconds by default.
 
 ## Settings

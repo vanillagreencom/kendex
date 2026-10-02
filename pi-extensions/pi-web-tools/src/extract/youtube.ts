@@ -1,7 +1,6 @@
-import { GeminiApiClient } from "../providers/gemini-api.js";
 import { GeminiWebClient } from "../providers/gemini-web.js";
 import { readBrowserCookies, type ReadCookiesOptions } from "../utils/browser-cookies.js";
-import { DEFAULT_DEADLINE_MS, withDeadline } from "../utils/deadline.js";
+import { DEFAULT_DEADLINE_MS, requestWithin, withDeadline } from "../utils/deadline.js";
 import { fetchTranscript, type TranscriptConfig, type TranscriptResult, type TranscriptSegment } from "youtube-transcript-plus";
 
 const YOUTUBE_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "music.youtube.com"]);
@@ -45,7 +44,8 @@ export interface YouTubeExtractOptions {
 	preferGeminiWeb?: boolean;
 	transcriptFetcher?: YouTubeTranscriptFetcher;
 	signal?: AbortSignal;
-	/** Deadline of each attempt, captions, Gemini Web or Gemini API; DEFAULT_DEADLINE_MS when absent. */
+	/** Deadline of the captions attempt, of the Gemini Web query and of the Gemini API request; DEFAULT_DEADLINE_MS when absent.
+	 * The Gemini Web browser cookie read before its query runs under the cookie helpers' own deadlines. */
 	timeoutMs?: number;
 	fetchImpl?: typeof fetch;
 }
@@ -197,24 +197,14 @@ async function tryGeminiWeb(parsed: ParsedYouTubeUrl, options: YouTubeExtractOpt
 
 async function tryGeminiApi(parsed: ParsedYouTubeUrl, options: YouTubeExtractOptions): Promise<YouTubeExtractResult | undefined> {
 	if (!options.geminiApiKey) return undefined;
-	const client = new GeminiApiClient({ apiKey: options.geminiApiKey, fetchImpl: options.fetchImpl });
 	const model = options.geminiModel ?? "gemini-2.5-flash";
 	const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(options.geminiApiKey)}`;
 	const body = {
 		contents: [{ role: "user", parts: [{ fileData: { fileUri: parsed.canonicalUrl, mimeType: "video/mp4" } }, { text: enhancePrompt(options.prompt, options.mode) }] }],
 	};
-	const fetchImpl = options.fetchImpl ?? fetch;
-	const raw = await withDeadline(options.signal, options.timeoutMs ?? DEFAULT_DEADLINE_MS, `Gemini API ${model} video request`, async (signal) => {
-		const response = await fetchImpl(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal });
-		if (!response.ok) {
-			const text = await response.text().catch(() => "");
-			throw new Error(`Gemini API video request failed (${response.status}): ${text || response.statusText}`);
-		}
-		return await response.json() as any;
-	});
+	const raw = await requestWithin<any>(`Gemini API ${model} video request`, url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }, options);
 	const text = raw?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text).filter(Boolean).join("\n").trim() ?? "";
 	if (!text) throw new Error("Gemini API returned empty response for YouTube video.");
-	void client;
 	return {
 		videoId: parsed.videoId,
 		url: parsed.canonicalUrl,
