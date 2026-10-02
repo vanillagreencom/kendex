@@ -86,6 +86,6 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
 
 `no-verdict` is a battery the timeout cut off: neither a pass nor a failure. The round's result is then the scoped suites `dev-implement.md` § 5 names, listed in `validate_note`, and CI is the full record. Submit does not re-run a `no-verdict` of either mode, and a run of its own that ends `no-verdict` takes the same scoped-suite fallback.
 
-An item the Apple gate in `dev-return-write --help` names records its passing `mac run test` as one `validate_note` line, `mac run test: pass run=RUN_ID`, beside any other note text. The writer refuses that item's `pass` or `no-verdict` without the line, as `mac-run-missing`. A failed or absent run is `FAILING: mac run test`, which needs no line. Every other receipt is unchanged.
+Where the base branch holds the mac-run workflow, a `pass` or `no-verdict` declares the item's labels, the delegation's `Labels:` entries or none, and the writer refuses it undeclared as `labels-undeclared`. An item the Apple gate in `dev-return-write --help` names records its passing `mac run test` as one `validate_note` line, `mac run test: pass run=RUN_ID`, beside any other note text. The writer refuses that item's `pass` or `no-verdict` without the line, as `mac-run-missing`. A failed or absent run is `FAILING: mac run test`, which needs no line. The labels are never recorded, so every other receipt is unchanged.
 
 `dev-artifact-check` echoes both. An empty or whitespace-only note is rejected.

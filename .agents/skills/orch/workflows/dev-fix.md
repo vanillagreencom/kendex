@@ -122,6 +122,8 @@ Apply [Delegation](../references/skill-rules.md#delegation) for the target workt
 
    `--issue` takes the normalized workflow-state key — the value the delegation's `Artifact Key:` line carries. Only when every item's text is plain (no backticks or quotes) may you pass `--item [N] '[ITEM_TEXT]' '[REACH]'` groups inline in one command instead.
 
+   `[LABELS]` is the issue's labels as [dev-start.md § 2](dev-start.md#2-delegate) renders them, or `none` for a round whose key names no issue.
+
    ⚠ Fill placeholders only ([Format Tags Are Literal](../references/skill-rules.md#format-tags-are-literal)). `Recommendation:` is the technical fix, never procedure steps — the agent owns validate, commit, and return.
 
    <delegation_format>
@@ -132,6 +134,7 @@ Apply [Delegation](../references/skill-rules.md#delegation) for the target workt
    Worktree: [WORKTREE_PATH]
    Round ID: [DEV_ROUND_ID]
    Artifact Key: [ISSUE_ID]
+   Labels: [LABELS]
    QA: [QA_AGENT]
    [If the round may add files: "Adds: [REPO_RELATIVE_PATHS]"]
    [For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]

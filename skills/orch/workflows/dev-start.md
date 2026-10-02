@@ -105,6 +105,8 @@ Labels: [LABELS]
 [For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
 </delegation_format>
 
+`[LABELS]` is the item's labels from § 1's read, comma-separated, or `none` when it carries none. The dev agent passes them to `dev-return-write`, whose Apple gate reads them.
+
 **GitHub items** replace the `Issue:` line with `GitHub Issue: [OWNER/REPO]#[N]`. `Artifact Key:` stays `[ISSUE_ID]`, never `OWNER/REPO#N`.
 
 ### Bundled issue
@@ -127,7 +129,7 @@ Sub-Issues:
 Worktree: [WORKTREE_PATH]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
-Labels: [parent labels]
+Labels: [the parent's labels and every pending sub-issue's labels, each once, comma-separated, or none]
 [For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
 Audit Bundle: [yes — only when caller context `audit_bundle: true`; omit otherwise]
 Parent Title: [PARENT_TITLE — the `.title` from the preflight bundle read, verbatim]

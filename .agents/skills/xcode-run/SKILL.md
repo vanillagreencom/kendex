@@ -61,6 +61,8 @@ gh workflow run mac-run.yml -f step=test
 gh workflow run mac-run.yml -f step=screenshots
 ```
 
+A dev round holds an Apple item to `fleet-mac-run test` against this workflow where fleet installs that command on the lane's `PATH`, as [dev-implement.md § 5. Validate](../dev/workflows/dev-implement.md#5-validate) sets out.
+
 Screenshots capture the launch view after a short wait. They do not navigate the app or assert that its UI is ready.
 
 ## Artifact

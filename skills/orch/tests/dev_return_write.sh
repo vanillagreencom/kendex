@@ -213,14 +213,15 @@ table "control: dropping lanes reds the receipt assertion|$LANE_ARGS|rc=0 has:va
 WRITE="$WRITE_SHIPPED"
 
 echo "=== the Apple gate: a triggered pass carries the mac run test line ==="
-# AW holds the mac-run workflow and a Package.swift naming neither platform on
-# main. Each trigger is one commit off main: apple_commit PATH [CONTENT] writes
-# PATH, or deletes it with no CONTENT, and prints the commit.
+# AW's main holds the mac-run workflow, a Package.swift naming neither platform
+# and ios/Moved.swift. Each trigger is one commit off main: apple_commit PATH
+# [CONTENT] writes PATH, or deletes it with no CONTENT, and prints the commit.
 AW="$(new_repo apple-wt)"
-mkdir -p "$AW/.github/workflows"
+mkdir -p "$AW/.github/workflows" "$AW/ios"
 printf 'name: mac-run\n' > "$AW/.github/workflows/mac-run.yml"
 printf 'let package = Package(platforms: [.tvOS(.v17)])\n' > "$AW/Package.swift"
-git -C "$AW" add .github Package.swift
+printf 'moved\n' > "$AW/ios/Moved.swift"
+git -C "$AW" add .github Package.swift ios
 git -C "$AW" commit -q -m workflow
 apple_commit() {
   git -C "$AW" checkout -q --detach main &&
@@ -241,55 +242,84 @@ A_PKG_IOS="$(apple_commit Package.swift 'let package = Package(platforms: [.iOS(
 A_PKG_MACOS="$(apple_commit pkg/Package.swift 'let package = Package(platforms: [.macOS(.v14)])')" || exit 1
 A_PKG_NEITHER="$(apple_commit pkg/Package.swift 'let package = Package(platforms: [.watchOS(.v10)])')" || exit 1
 A_PKG_DELETED="$(apple_commit Package.swift)" || exit 1
+A_MOVED="$(git -C "$AW" checkout -q --detach main && mkdir -p "$AW/src" && git -C "$AW" mv ios/Moved.swift src/Moved.swift &&
+  git -C "$AW" commit -q -m move && git -C "$AW" rev-parse HEAD)" || exit 1
 git -C "$AW" checkout -q main
+# A fix round on AW, delegated at main, whose fix is a non-Apple path.
+init_growth_state "$STATE" "$AW" issue-777 31-31
+mkdir -p "$AW/.cache/linear"
+printf '[{"identifier":"issue-777","description":"**Expected delta**: 100 lines, 100 test lines"}]\n' \
+  > "$AW/.cache/linear/issues.json"
+growth_round_write "$STATE" "$ROUND_WRITE" --worktree "$AW" --issue issue-777 --round-id 31-31 \
+  --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
+VRUN_AFIX="$(round_run_dir "$TMP_ROOT/validate-run-afix" "$AW" issue-777 31-31)"
+AFIX="--worktree $AW --kind fix --issue issue-777 --round-id 31-31 --branch b --commit $A_PLAIN --validate pass --validate-run-dir $VRUN_AFIX --item 1 Applied x"
 AW_ARGS="--worktree $AW --kind implement --issue issue-apple --round-id 30-30 --branch b"
 AP="$AW_ARGS --validate pass --validate-run-dir $VRUN"
+APN="$AP --no-labels"
 MAC_NOTE="mac+run+test:+pass+run=4242"
 APPLE_ROWS=(
   "the ios label|$AP --commit $A_PLAIN --label ios|rc=2 written=no stderr~dev-return-write:+mac-run-missing+label=ios+validate=pass=true"
   "the macos label among others|$AP --commit $A_PLAIN --label skills --label macos|rc=2 written=no stderr~dev-return-write:+mac-run-missing+label=macos+validate=pass=true"
-  "an .xcodeproj path|$AP --commit $A_XCODEPROJ|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=App.xcodeproj/project.pbxproj=true"
-  "an .xcworkspace path|$AP --commit $A_XCWORKSPACE|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=App.xcworkspace/contents.xcworkspacedata=true"
-  "an ios/ path|$AP --commit $A_IOS|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=ios/App.swift=true"
-  "a nested macos/ path|$AP --commit $A_MACOS|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=apps/macos/App.swift=true"
-  "a Package.swift naming .iOS|$AP --commit $A_PKG_IOS|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=Package.swift=true"
-  "a nested Package.swift naming .macOS|$AP --commit $A_PKG_MACOS|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=pkg/Package.swift=true"
+  "a fix receipt for a label-only item|$AFIX --label ios|rc=2 written=no stderr~dev-return-write:+mac-run-missing+label=ios+validate=pass=true"
+  "an omitted label declaration|$AP --commit $A_PLAIN|rc=2 written=no stderr~dev-return-write:+labels-undeclared+path=$AW+base=refs/heads/main=true"
+  "a label beside --no-labels|$AP --commit $A_PLAIN --label skills --no-labels|rc=2 written=no stderr~dev-return-write:+labels-conflict+labels=skills=true"
+  "an .xcodeproj path|$APN --commit $A_XCODEPROJ|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=App.xcodeproj/project.pbxproj=true"
+  "an .xcworkspace path|$APN --commit $A_XCWORKSPACE|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=App.xcworkspace/contents.xcworkspacedata=true"
+  "an ios/ path|$APN --commit $A_IOS|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=ios/App.swift=true"
+  "a nested macos/ path|$APN --commit $A_MACOS|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=apps/macos/App.swift=true"
+  "a move out of ios/|$APN --commit $A_MOVED|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=ios/Moved.swift=true"
+  "a Package.swift naming .iOS|$APN --commit $A_PKG_IOS|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=Package.swift=true"
+  "a nested Package.swift naming .macOS|$APN --commit $A_PKG_MACOS|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=pkg/Package.swift=true"
   "a no-verdict is held as a pass is|$AW_ARGS --commit $A_PLAIN --label ios --validate no-verdict --validate-run-dir $VRUN_CUT --validate-note scoped+suites+green|rc=2 written=no stderr~dev-return-write:+mac-run-missing+label=ios+validate=no-verdict=true"
-  "a pass line without its run id is no record|$AP --commit $A_IOS --validate-note mac+run+test:+pass|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=ios/App.swift=true"
-  "a Package.swift naming neither platform|$AP --commit $A_PKG_NEITHER|rc=0 written=yes .validate_note=null"
-  "a deleted Package.swift names no platform|$AP --commit $A_PKG_DELETED|rc=0 written=yes .validate_note=null"
-  "the recorded pass line is accepted and round-trips|$AP --commit $A_IOS --validate-note $MAC_NOTE|rc=0 .validate_note|sub(\"=\";\":\")=${MAC_NOTE/=/:} roundtrip=valid"
-  "a FAILING mac run test needs no pass line|$AW_ARGS --commit $A_IOS --validate FAILING:+mac+run+test|rc=0 .validate=FAILING:+mac+run+test roundtrip=valid"
+  "a pass line without its run id is no record|$APN --commit $A_IOS --validate-note mac+run+test:+pass|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=ios/App.swift=true"
+  "text before the pass line on its line is no record|$APN --commit $A_IOS --validate-note scoped+suites+green:+x.sh;+$MAC_NOTE|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=ios/App.swift=true"
+  "text after the run id is no record|$APN --commit $A_IOS --validate-note $MAC_NOTE+then+more|rc=2 written=no stderr~dev-return-write:+mac-run-missing+path=ios/App.swift=true"
+  "a Package.swift naming neither platform|$APN --commit $A_PKG_NEITHER|rc=0 written=yes .validate_note=null"
+  "a deleted Package.swift names no platform|$APN --commit $A_PKG_DELETED|rc=0 written=yes .validate_note=null"
+  "the recorded pass line is accepted and round-trips|$APN --commit $A_IOS --validate-note $MAC_NOTE|rc=0 .validate_note|sub(\"=\";\":\")=${MAC_NOTE/=/:} roundtrip=valid"
+  "a FAILING mac run test needs no pass line and no labels|$AW_ARGS --commit $A_IOS --validate FAILING:+mac+run+test|rc=0 .validate=FAILING:+mac+run+test roundtrip=valid"
 )
 table "${APPLE_ROWS[@]}"
 # A no-verdict note names its scoped suites and the pass line, one per line.
-run --worktree "$AW" --kind implement --issue issue-apple --round-id 30-30 --branch b --commit "$A_IOS" \
+run --worktree "$AW" --kind implement --issue issue-apple --round-id 30-30 --branch b --commit "$A_IOS" --no-labels \
   --validate no-verdict --validate-run-dir "$VRUN_CUT" --validate-note $'scoped suites green: x.sh\nmac run test: pass run=4242'
 assert_eq "$(observe "rc=0 roundtrip=valid")" "rc=0 roundtrip=valid" "a pass line below the scoped suites is found" "$ERR"
 # A git failure inside the gate refuses on its own key. A fix receipt's
-# commit is never measured, so an unresolvable one reaches the gate here.
+# commit is never measured, so an unresolvable one reaches the gate here, with
+# the workflow on FW's main for the length of the row.
 mkdir -p "$FW/.github/workflows"
 printf 'name: mac-run\n' > "$FW/.github/workflows/mac-run.yml"
-table "a commit git cannot diff|--worktree %FW --kind fix --issue issue-776 --round-id 9-9 --branch b --commit c --validate pass --validate-run-dir $VRUN_FIX_9 --item 3 Blocked x|rc=2 written=no stderr~dev-return-write:+apple-diff-unreadable+path=$FW+commit=c=true"
-rm -rf -- "${FW:?}/.github"
+git -C "$FW" add .github
+git -C "$FW" commit -q -m workflow
+table "a commit git cannot diff|--worktree %FW --kind fix --issue issue-776 --round-id 9-9 --branch b --commit c --validate pass --validate-run-dir $VRUN_FIX_9 --no-labels --item 3 Blocked x|rc=2 written=no stderr~dev-return-write:+apple-git-failed+path=$FW+commit=c=true"
+git -C "$FW" reset -q --hard "$FIX_HEAD"
 
 # Non-Apple items: the receipt is byte-equal to the one a writer without the
-# gate writes, for an item with no trigger in AW and for a triggered item in
-# a repository without the workflow.
+# gate writes, for an item with no trigger in AW, and in NW, whose main holds
+# no workflow, for a triggered item, for one declaring no labels, and for a
+# branch that adds the workflow beside an ios/ path.
 GATELESS="$(mutant_scripts gateless-mutant dev-return-write)/dev-return-write" || exit 1
-mutate_file "$GATELESS" 'if [[ "$validate" != FAILING:* && -f "$worktree/$APPLE_WORKFLOW" ]]; then' 'if false; then'
+mutate_file "$GATELESS" $'apple_armed=""\nif [[ "$validate" != FAILING:* ]]; then' $'apple_armed=""\nif false; then'
 NW="$(new_repo apple-unarmed)"
 git -C "$NW" switch -q -c work
-mkdir -p "$NW/ios"
+mkdir -p "$NW/ios" "$NW/.github/workflows"
 printf 'app\n' > "$NW/ios/App.swift"
 git -C "$NW" add ios
 git -C "$NW" commit -q -m ios
 NW_HEAD="$(git -C "$NW" rev-parse HEAD)"
+printf 'name: mac-run\n' > "$NW/.github/workflows/mac-run.yml"
+git -C "$NW" add .github
+git -C "$NW" commit -q -m workflow
+NW_WORKFLOW_HEAD="$(git -C "$NW" rev-parse HEAD)"
+NWP="--worktree $NW --kind implement --issue issue-apple --round-id 30-30 --branch b --validate pass --validate-run-dir $VRUN"
 byte_equal_rows() {
   local row label args shipped
   for row in \
     "an item with no trigger beside the workflow|$AP --commit $A_PLAIN --label skills" \
-    "a triggered item without the workflow|--worktree $NW --kind implement --issue issue-apple --round-id 30-30 --branch b --validate pass --validate-run-dir $VRUN --commit $NW_HEAD --label macos"; do
+    "a triggered item without the workflow|$NWP --commit $NW_HEAD --label macos" \
+    "an omitted label declaration without the workflow|$NWP --commit $NW_HEAD" \
+    "a branch adding the workflow beside an ios/ path|$NWP --commit $NW_WORKFLOW_HEAD --no-labels"; do
     IFS='|' read -r label args <<<"$row"
     # shellcheck disable=SC2086
     run $args
@@ -304,19 +334,28 @@ byte_equal_rows() {
 WRITE_SHIPPED="$WRITE"
 byte_equal_rows
 
-# One control per rule: each mutant disables one rule of the gate.
+# One control per rule: each mutant disables one rule of the gate. In OLD and
+# NEW, \| is a literal bar and \n a newline.
 APPLE_CONTROLS=(
   "labels|if [[ \"\$label\" == \"\$apple\" ]]; then|if false; then|$AP --commit $A_PLAIN --label ios|rc=0"
-  "directory globs|if [[ \"\$segment\" == \$glob ]]; then|if false; then|$AP --commit $A_IOS|rc=0"
-  "manifest platforms|if LC_ALL=C grep -Eq -- \"\$APPLE_MANIFEST_PLATFORMS\" <<<\"\$manifest\"; then|if false; then|$AP --commit $A_PKG_IOS|rc=0"
-  "deleted manifest|[[ -n \"\$listed\" ]] \|\| continue|[[ -n \"\$listed\" ]] \|\| true|$AP --commit $A_PKG_DELETED|rc=2"
-  "pass record|then mac_run_recorded=true; fi|then mac_run_recorded=false; fi|$AP --commit $A_IOS --validate-note $MAC_NOTE|rc=2"
-  "FAILING exemption|[[ \"\$validate\" != FAILING:* && -f|[[ -f|$AW_ARGS --commit $A_IOS --validate FAILING:+mac+run+test|rc=2"
-  "workflow precondition|-f \"\$worktree/\$APPLE_WORKFLOW\"|-n \"\$APPLE_WORKFLOW\"|--worktree $NW --kind implement --issue issue-apple --round-id 30-30 --branch b --validate pass --validate-run-dir $VRUN --commit $NW_HEAD --label macos|rc=2"
+  "labels on a fix receipt|if [[ \"\$label\" == \"\$apple\" ]]; then|if false; then|$AFIX --label ios|rc=0"
+  "label declaration|if [[ \"\$no_labels\" == false ]] && (( \${#labels[@]} == 0 )); then|if false; then|$AP --commit $A_PLAIN|rc=0"
+  "label conflict|if [[ \"\$no_labels\" == true ]] && (( \${#labels[@]} > 0 )); then|if false; then|$AP --commit $A_PLAIN --label skills --no-labels|rc=0"
+  "directory globs|if [[ \"\$segment\" == \$glob ]]; then|if false; then|$APN --commit $A_IOS|rc=0"
+  "renamed paths|--name-only --no-renames -z|--name-only -z|$APN --commit $A_MOVED|rc=0"
+  "manifest platforms|if LC_ALL=C grep -Eq -- \"\$APPLE_MANIFEST_PLATFORMS\" <<<\"\$manifest\"; then|if false; then|$APN --commit $A_PKG_IOS|rc=0"
+  "deleted manifest|[[ -n \"\$listed\" ]] \|\| continue|[[ -n \"\$listed\" ]] \|\| true|$APN --commit $A_PKG_DELETED|rc=2"
+  "pass record|then mac_run_recorded=true; fi|then mac_run_recorded=false; fi|$APN --commit $A_IOS --validate-note $MAC_NOTE|rc=2"
+  "record start anchor|MAC_RUN_PASS='^mac|MAC_RUN_PASS='mac|$APN --commit $A_IOS --validate-note scoped+suites+green:+x.sh;+$MAC_NOTE|rc=0"
+  "record end anchor|[^[:space:]]+\$'|[^[:space:]]+'|$APN --commit $A_IOS --validate-note $MAC_NOTE+then+more|rc=0"
+  "FAILING exemption|apple_armed=\"\"\nif [[ \"\$validate\" != FAILING:* ]]; then|apple_armed=\"\"\nif true; then|$AW_ARGS --commit $A_IOS --no-labels --validate FAILING:+mac+run+test|rc=2"
+  "workflow precondition|if [[ -n \"\$apple_armed\" ]]; then|if [[ -n \"\$APPLE_WORKFLOW\" ]]; then|$NWP --commit $NW_HEAD --label macos|rc=2"
+  "workflow on the base branch|--name-only \"\$apple_base_ref\" -- \"\$APPLE_WORKFLOW\"|--name-only \"\$commit\" -- \"\$APPLE_WORKFLOW\"|$NWP --commit $NW_WORKFLOW_HEAD --no-labels|rc=2"
 )
 for control in "${APPLE_CONTROLS[@]}"; do
   IFS='|' read -r name old new args expect <<<"${control//\\|/$'\x1f'}"
   old="${old//$'\x1f'/|}"; new="${new//$'\x1f'/|}"
+  old="${old//\\n/$'\n'}"; new="${new//\\n/$'\n'}"
   CONTROL_WRITE="$(mutant_scripts "apple-${name// /-}-mutant" dev-return-write)/dev-return-write" || exit 1
   mutate_file "$CONTROL_WRITE" "$old" "$new"
   WRITE="$CONTROL_WRITE"

@@ -260,7 +260,7 @@ Read the near-ceiling lines the last recorded round left, and render one `Near-c
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.near_ceiling // []'
 ```
 
-Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`, and `Labels:` as [dev-fix.md § 2](dev-fix.md#2-delegate) fills it.
 
 <delegation_format>
 Follow workflow: .agents/skills/dev/workflows/dev-fix.md
@@ -271,6 +271,7 @@ PR: #[PR_NUMBER]
 Worktree: [WORKTREE_PATH]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
+Labels: [LABELS]
 [If the round may add files: "Adds: [REPO_RELATIVE_PATHS]"]
 [For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
 

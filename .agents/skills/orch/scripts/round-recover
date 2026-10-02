@@ -48,6 +48,13 @@
 # none joins that text as a ### Proposed Rules section. Recovery never verifies
 # a tracker post, so a recovered artifact records summary_posted false.
 #
+# The delegation's own Labels: line, the item's labels, reaches the writer's
+# Apple gate as one --label per comma-separated entry, or --no-labels where it
+# reads none; a delegation without the line declares nothing. A report carries
+# no mac run test record, so where that gate refuses the receipt
+# (mac-run-missing, or labels-undeclared) the round re-delegates as
+# mac-run-unproven, and the fresh round runs the test.
+#
 # No report, or a report the disk contradicts, is one re-delegation: this script
 # mints the fresh round id (workflow-state new-round-id ID dev_round_id) and
 # records it as recovery_round_id. The round that id names is never re-delegated
@@ -60,8 +67,8 @@
 #   round-recover: round-live run-dir=PATH                         exit 4
 # round-live is the round's validation run still going by dev-validate-run's own
 # answer: the round is not stalled. Reasons: no-transcript, no-report, unparsed,
-# commit-mismatch, validate-unproven. Usage and environment errors exit 2 with a
-# keyed line on stderr.
+# commit-mismatch, validate-unproven, mac-run-unproven. Usage and environment
+# errors exit 2 with a keyed line on stderr.
 
 set -euo pipefail
 
@@ -204,8 +211,10 @@ no_report() { # REASON
 # round starts at the last user turn whose text names its round id, the id
 # followed by a character outside the id grammar. Codex records a delegated
 # prompt as a user_message event, the record open-terminal's kickoff match
-# reads, beside its user response items.
-if ! report="$(jq -R -n -r --arg rid "$round_id" '
+# reads, beside its user response items. Prints {labels, report}, each null
+# where the delegation carries no Labels: line or the round no report, or
+# nothing where no turn delegates the round.
+if ! found="$(jq -R -n -c --arg rid "$round_id" '
   def said: .content
     | if type == "string" then .
       else [arrays | .[] | objects | select(.type == "text" or .type == "input_text") | .text | strings] | join("\n")
@@ -228,9 +237,20 @@ if ! report="$(jq -R -n -r --arg rid "$round_id" '
   | ([range(0; $turns | length) | select($turns[.] | asked | test($marker))] | last) as $start
   | if $start == null then empty
     else [$turns[$start + 1:][] | returned | select(.text | test("\\S"))] as $out
-      | (([$out[] | select(.sent)] | last) // ([$out[] | select(.sent | not)] | last)) | .text // empty
+      | {labels: ([$turns[$start] | asked | splits("\n") | capture("^\\s*Labels:\\s*(?<v>.*?)\\s*$") | .v] | last),
+         report: ((([$out[] | select(.sent)] | last) // ([$out[] | select(.sent | not)] | last)) | .text)}
     end' < "$transcript")"; then
   die transcript-read "path=$transcript"
+fi
+report=""
+labels_line=""
+labels_found=false
+if [[ -n "$found" ]]; then
+  if ! report="$(jq -r '.report // empty' <<<"$found")" \
+    || ! labels_line="$(jq -r '.labels // empty' <<<"$found")" \
+    || ! labels_found="$(jq -r '.labels != null' <<<"$found")"; then
+    die transcript-read "path=$transcript"
+  fi
 fi
 [[ -n "$report" ]] || no_report no-report
 
@@ -351,6 +371,16 @@ else
     done
   fi
 fi
+if [[ "$labels_found" == true && "$labels_line" == none ]]; then
+  args+=(--no-labels)
+elif [[ "$labels_found" == true ]]; then
+  IFS=',' read -r -a entries <<<"$labels_line"
+  for entry in ${entries[@]+"${entries[@]}"}; do
+    entry="${entry#"${entry%%[![:space:]]*}"}"
+    entry="${entry%"${entry##*[![:space:]]}"}"
+    [[ -z "$entry" ]] || args+=(--label "$entry")
+  done
+fi
 args+=(--no-summary)
 [[ -z "$run" ]] || args+=(--validate-run-dir "$run")
 [[ -z "$validate_note" ]] || args+=(--validate-note "scoped suites green: $validate_note")
@@ -364,9 +394,22 @@ if [[ -n "$FIELD" && "$FIELD" != none ]]; then
   printf '\n### Proposed Rules\n\n- %s\n' "$FIELD" >> "$report_file"
 fi
 
-if ! artifact="$("$SCRIPT_DIR/dev-return-write" --worktree "$worktree" --kind "$kind" \
+# The writer's refusal reaches stderr as it would unrecovered; only the Apple
+# gate's keys re-delegate, since the report cannot carry what they ask for.
+write_err="$worktree/tmp/round-recovered-$issue-$round_id.err"
+write_status=0
+artifact="$("$SCRIPT_DIR/dev-return-write" --worktree "$worktree" --kind "$kind" \
   --issue "$issue" --round-id "$round_id" --branch "$branch" --commit "$head_sha" \
-  --validate "$validate" --recovered-text "$report_file" ${args[@]+"${args[@]}"})"; then
+  --validate "$validate" --recovered-text "$report_file" ${args[@]+"${args[@]}"} 2>"$write_err")" \
+  || write_status=$?
+refusal=""
+IFS= read -r refusal <"$write_err" || true
+cat -- "$write_err" >&2
+rm -f -- "${write_err:?}"
+if (( write_status != 0 )); then
+  case "$refusal" in
+    "dev-return-write: mac-run-missing "* | "dev-return-write: labels-undeclared "*) no_report mac-run-unproven ;;
+  esac
   die write-failed "issue=$issue" "round-id=$round_id"
 fi
 
