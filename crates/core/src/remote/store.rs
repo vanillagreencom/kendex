@@ -348,9 +348,8 @@ pub fn ref_names(mirror: &Path) -> Option<Vec<String>> {
 /// commit a record kept is answered here without a fetch.
 ///
 /// Three answers, because a reader acts on each differently: `Some(true)`
-/// and `Some(false)` are the mirror's verdict, a commit it never held
-/// counting as off the history; `None` is a mirror that cannot answer at
-/// all — it does not hold `descendant`, or git could not run in it — so
+/// and `Some(false)` are verdicts only for held commits; `None` means
+/// either commit is absent or git could not run in the mirror, so
 /// the reader points at the mirror rather than at the commit it asked
 /// about. `git merge-base --is-ancestor` exits 1 for "not an ancestor" and
 /// otherwise for an object or repository it cannot read, and the two are
@@ -360,7 +359,7 @@ pub fn is_ancestor(mirror: &Path, ancestor: &str, descendant: &str) -> Option<bo
         return None;
     }
     if !has_commit(mirror, ancestor) {
-        return Some(false);
+        return None;
     }
     let output = Hardened::git_bare(
         mirror,

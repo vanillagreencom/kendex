@@ -197,11 +197,11 @@ fn the_mirror_answers_ancestry_three_ways() {
             Some(false),
         ),
         (
-            "a commit the mirror never held is off every history",
+            "a mirror that does not hold the ancestor cannot answer",
             &mirror,
             unheld,
             &two,
-            Some(false),
+            None,
         ),
         (
             "a mirror that does not hold the descendant cannot answer",

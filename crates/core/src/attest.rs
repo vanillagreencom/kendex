@@ -626,6 +626,25 @@ fn held_problem(
 /// the revision a declaration resolves to.
 const OFF_HISTORY: &str = "is not on the declared revision's history";
 
+/// The recovery line for a recorded remote commit absent from its mirror.
+/// Offline verification cannot distinguish an old mirror from a false record.
+pub fn missing_commit_problem(
+    env: &Env,
+    repo: &str,
+    commit: &str,
+    subject: &str,
+) -> Option<String> {
+    let key = crate::remote::cache_key(env, repo);
+    let mirror = crate::remote::store::mirror_dir(env, &key);
+    (!crate::remote::store::has_commit(&mirror, commit)).then(|| unplaced_commit(repo, subject))
+}
+
+fn unplaced_commit(repo: &str, subject: &str) -> String {
+    format!(
+        "{subject} cannot be placed: the mirror of {repo} does not hold it; fix=\"kendex source refresh\"; if still missing after refresh, the record names a commit the source never held"
+    )
+}
+
 fn selector(rev: Option<&str>) -> &str {
     rev.unwrap_or("the source's own revision")
 }
@@ -658,9 +677,10 @@ fn history_problem(
     match crate::remote::store::is_ancestor(&mirror, recorded, resolved) {
         Some(true) => None,
         Some(false) => Some(format!("{subject} {off_history}")),
-        None => Some(format!(
-            "{subject} cannot be placed: the mirror of {repo} does not answer for it — fetch it with kendex source refresh"
-        )),
+        None => Some(
+            missing_commit_problem(env, repo, recorded, subject)
+                .unwrap_or_else(|| unplaced_commit(repo, subject)),
+        ),
     }
 }
 

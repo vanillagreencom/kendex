@@ -579,7 +579,7 @@ fn every_key_unknown() -> Vec<(&'static str, Option<Foreign>)> {
 /// to the declared tip itself, so only a refusal to ask git about a value
 /// that is not a pin can fail them.
 fn bookkeeping_edits(world: &World) -> Vec<(&'static str, Edit, Vec<Failing>)> {
-    let mut edits = narrowing_edits();
+    let mut edits = narrowing_edits(&world.catalog);
     edits.extend(moving_edits());
     edits.extend(field_edits());
     edits.extend(provenance_edits(&world.catalog));
@@ -716,9 +716,9 @@ fn provenance_edits(catalog: &Path) -> Vec<(&'static str, Edit, Vec<Failing>)> {
                 lock["sources"]["spare"]["commit"] =
                     "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into();
             }),
-            vec![record(
-                "source spare: commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef is not on the declared revision's history",
-            )],
+            vec![record(&format!(
+                "source spare: commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef cannot be placed: the mirror of {catalog} does not hold it; fix=\"kendex source refresh\"",
+            ))],
         ),
         (
             "records a source the manifest does not declare",
@@ -773,9 +773,9 @@ fn provenance_edits(catalog: &Path) -> Vec<(&'static str, Edit, Vec<Failing>)> {
                 lock["bundles"]["starter"]["commit"] =
                     "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into();
             }),
-            vec![record(
-                "set starter: commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef is not on the declared revision's history",
-            )],
+            vec![record(&format!(
+                "set starter: commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef cannot be placed: the mirror of {catalog} does not hold it; fix=\"kendex source refresh\"",
+            ))],
         ),
         (
             "records a set's commit as a revision expression",
@@ -823,9 +823,10 @@ fn inventory_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
 
 /// The edits that narrow or repoint what the proof reads.
 #[allow(clippy::unwrap_used)]
-fn narrowing_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
+fn narrowing_edits(catalog: &Path) -> Vec<(&'static str, Edit, Vec<Failing>)> {
     let record = record_fails;
     let inventory = inventory_fails;
+    let catalog = format!("file://{}", catalog.display());
     vec![
         (
             "de-lists a path the engine still renders",
@@ -875,9 +876,9 @@ fn narrowing_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
                 value["sources"]["cat"]["commit"] =
                     "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into();
             }),
-            vec![record(
-                "source cat: commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef is not on the declared revision's history",
-            )],
+            vec![record(&format!(
+                "source cat: commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef cannot be placed: the mirror of {catalog} does not hold it; fix=\"kendex source refresh\"",
+            ))],
         ),
         (
             "repoints an entry's source commit",
@@ -885,9 +886,9 @@ fn narrowing_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
                 value["entries"]["skill:second:claude"]["sourceCommit"] =
                     "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into();
             }),
-            vec![record(
-                "skill:second:claude: sourceCommit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef is not on the declared revision's history",
-            )],
+            vec![record(&format!(
+                "skill:second:claude: sourceCommit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef cannot be placed: the mirror of {catalog} does not hold it; fix=\"kendex source refresh\"",
+            ))],
         ),
         (
             "records a source commit as a revision expression",
@@ -1348,9 +1349,10 @@ fn a_record_with_no_entries_is_held_to_the_sources_the_pass_reads() {
     let record = row(&document, "record", RECORD, None).unwrap();
     assert_eq!(record.state, State::Failed, "{record:?}");
     assert!(
-        record.detail.as_deref().unwrap_or_default().contains(
-            "source spare: commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef is not on the declared revision's history"
-        ),
+        record.detail.as_deref().unwrap_or_default().contains(&format!(
+            "source spare: commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef cannot be placed: the mirror of file://{} does not hold it; fix=\"kendex source refresh\"",
+            world.catalog.display()
+        )),
         "{record:?}"
     );
     apply();
@@ -1364,8 +1366,7 @@ fn a_record_with_no_entries_is_held_to_the_sources_the_pass_reads() {
 /// never as one off the declared revision's history: a runner whose mirror
 /// is cold has edited nothing, and the accusation would send its reader
 /// searching the record for an edit nobody made. Here the mirror is moved
-/// aside and one entry's commit is repointed, the same edit the warm
-/// mirror answers with the off-history sentence in the table above.
+/// aside and one entry's commit is repointed.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_commit_a_cold_mirror_cannot_place_is_named_as_one_to_fetch() {
@@ -1383,13 +1384,78 @@ fn a_commit_a_cold_mirror_cannot_place_is_named_as_one_to_fetch() {
     assert_eq!(record.state, State::Failed, "{record:?}");
     let detail = record.detail.as_deref().unwrap_or_default();
     let named = format!(
-        "{SECOND}: sourceCommit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef cannot be placed: the mirror of file://{} does not answer for it",
+        "{SECOND}: sourceCommit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef cannot be placed: the mirror of file://{} does not hold it; fix=\"kendex source refresh\"",
         world.catalog.display()
     );
     assert!(detail.contains(&named), "{record:?} does not say {named:?}");
     assert!(
         !detail.contains("is not on the declared revision's history"),
         "{record:?} accuses the record"
+    );
+}
+
+/// Restoring missing-ancestor `Some(false)` fails the record assertion.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_mirror_behind_the_record_names_source_refresh_and_recovers() {
+    let world = world();
+    let mirror = mirror(&world);
+    let saved = mirror.with_extension("saved");
+    git(
+        &world.home,
+        &[
+            "clone",
+            "--mirror",
+            mirror.to_str().unwrap(),
+            saved.to_str().unwrap(),
+        ],
+    );
+    fs::copy(mirror.join("config"), saved.join("config")).unwrap();
+    write(
+        &world.catalog.join("skills/second/SKILL.md"),
+        "---\nname: second\ndescription: a second skill\n---\n# Second\n\nNew body.\n",
+    );
+    commit(&world.catalog, "changed skill");
+    let newer = git(&world.catalog, &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
+    for args in [&["source", "refresh"][..], &["apply", "-y", "--leave"]] {
+        let output = kendex(&world.home, &world.project, args);
+        assert!(output.status.success(), "{}", said(&output));
+    }
+    commit(&world.project, "newer install");
+    fs::remove_dir_all(&mirror).unwrap();
+    fs::rename(saved, &mirror).unwrap();
+    let keyed = format!(
+        "sourceCommit {newer} cannot be placed: the mirror of file://{} does not hold it; fix=\"kendex source refresh\"",
+        world.catalog.display()
+    );
+    let (output, document) = verify(&world, None);
+    assert!(!output.status.success(), "{}", said(&output));
+    for (kind, name, harness) in [
+        ("record", RECORD, None),
+        ("skill", "second", Some(HarnessId::Claude)),
+    ] {
+        let found = row(&document, kind, name, harness).unwrap();
+        assert_eq!(found.state, State::Failed, "{found:?}");
+        assert!(
+            found.detail.as_deref().unwrap().contains(&keyed),
+            "{found:?}"
+        );
+    }
+    let text = said(&output);
+    assert!(
+        !text.contains("is not on the declared revision's history"),
+        "{text}"
+    );
+    assert!(!text.contains("newer content is available"), "{text}");
+    let refresh = kendex(&world.home, &world.project, &["source", "refresh"]);
+    assert!(refresh.status.success(), "{}", said(&refresh));
+    let (output, document) = verify(&world, None);
+    assert!(
+        output.status.success() && document.clean,
+        "{}",
+        said(&output)
     );
 }
 

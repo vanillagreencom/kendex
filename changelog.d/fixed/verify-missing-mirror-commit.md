@@ -1,0 +1,1 @@
+- Verify now names `kendex source refresh` when a source mirror lacks a recorded commit, including stale render rows.

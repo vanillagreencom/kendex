@@ -344,7 +344,7 @@ fn check_scope(
             continue;
         }
         tally.checked += 1;
-        let problem = say_row(style, entry, &report);
+        let problem = say_row(env, style, entry, &report);
         tally.failed += usize::from(problem.is_some());
         let positions = report
             .installations
@@ -982,6 +982,7 @@ fn say_bookkeeping(style: &Style, kind: &str, name: &str, standing: &Standing) -
 /// missing, stale, in conflict, or recorded here while nothing declares
 /// it — and on a source it cannot reach.
 fn say_row(
+    env: &Env,
     style: &Style,
     entry: &kendex_core::lock::LockEntry,
     report: &kendex_core::engine::EngineReport,
@@ -1011,6 +1012,20 @@ fn say_row(
     let name = &entry.name;
     let harness = entry.harness.name();
     let bad = match problem {
+        Some(row) if row.state == DriftState::Stale => Some(
+            entry
+                .source_commit
+                .as_deref()
+                .and_then(|commit| {
+                    attest::missing_commit_problem(
+                        env,
+                        &entry.source_repo,
+                        commit,
+                        &format!("sourceCommit {commit}"),
+                    )
+                })
+                .unwrap_or_else(|| row.detail.clone()),
+        ),
         Some(row) => Some(row.detail.clone()),
         None if unreachable_source => {
             let detail = "where this package comes from is unavailable".to_owned();
