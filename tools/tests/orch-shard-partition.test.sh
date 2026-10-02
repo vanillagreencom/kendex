@@ -713,10 +713,12 @@ check "the linear roster has one injectable shell-version branch" "1" \
 
 os_claims() { # <workflow> <os> <major> ; suite files the expanded matrix runs
   local wf="$1" os="$2" major="$3" excluded="" owners="$TMP/os-owners"
-  [[ "$os" != macos-latest ]] || excluded="$(macos_excluded_shards "$wf")"
+  if [[ "$os" == macos-latest ]]; then
+    excluded="$(macos_excluded_shards "$wf" | tr '\n' ' ')" || return
+  fi
   suite_owners "$wf" files "$major" > "$owners"
   awk -F '\t' -v excluded="$excluded" '
-    BEGIN { n = split(excluded, names, "\n"); for (i = 1; i <= n; i++) skip[names[i]] = 1 }
+    BEGIN { n = split(excluded, names, " "); for (i = 1; i <= n; i++) skip[names[i]] = 1 }
     NR == FNR { universe[$0] = 1; next }
     !skip[$1] && $2 in universe { print $2 }
   ' "$TMP/os-universe" "$owners" | sort
