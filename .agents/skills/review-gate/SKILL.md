@@ -42,7 +42,7 @@ An existing consumer first follows [references/adoption.md § Trusted removal fo
 
 ## 4. Operations
 
-A pull request with no automatic review takes its Copilot request through orch's consumer request owner, `approval-wait <PR#> --request-review --base-checkout PATH`, never a direct request: [orch gates § Copilot requests](../orch/references/gates.md#copilot-requests). Ruleset targeting and request failures: [references/automatic-review.md](references/automatic-review.md).
+A pull request with no automatic review needs a Copilot request. When orch is present, request through its mode owner, `approval-wait <PR#> --request-review --base-checkout PATH`, per orch's `references/gates.md` § Copilot requests. An `off` answer ends the request path with no request. Without orch, request directly: `gh pr edit <PR#> --add-reviewer @copilot`. Ruleset targeting and request failures: [references/automatic-review.md](references/automatic-review.md).
 
 The overseer's fallback approval and emergency merge follow the managing repository's merge workflow. This package grants no bypass and changes no ruleset.
 
