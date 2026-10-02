@@ -2,7 +2,7 @@
 
 Covers: .github/workflows/, .github/actions/, .github/consumer-refresh-repos.txt, tools/consumer-refresh, tools/lock-record, skills/harness-ci/, skills/review-gate/, skills/orch/workflows/merge-pr.md, skills/github/scripts/commands/pr-merge.sh
 
-Each repository owns its pull requests and refresh workflow. The classifier determines the change class. CI selects its jobs from that class. GitHub enforces approval and review-thread requirements. A green pull request that is not queue-only merges past the merge queue by the lanes app's bypass, and the queue merges the rest, per [D013](../decisions/D013-admin-merge-green-prs.md). Consumers pull kendex updates in their own GitHub Actions runners, per [D003](../decisions/D003-one-merge-path.md).
+Each repository owns its pull requests and refresh workflow. The classifier determines the change class. CI selects its jobs from that class. GitHub enforces approval and review-thread requirements. The lanes app can merge a green pull request past the queue only when the pull request is not queue-only and the base queue is empty. [D016](../decisions/D016-merge-route-reads-bypass.md) owns this route and amends [D013](../decisions/D013-admin-merge-green-prs.md). The queue merges the rest. Consumers pull kendex updates in their own GitHub Actions runners, per [D003](../decisions/D003-one-merge-path.md).
 
 ## Ownership
 
