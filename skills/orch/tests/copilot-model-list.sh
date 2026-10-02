@@ -31,7 +31,7 @@ export class CopilotClient {
   }
   async listModels() {
     log('list');
-    if (process.env.MODE === 'list-failed') throw new Error('list failed');
+    if (['list-failed', 'list-stop-failed'].includes(process.env.MODE)) throw new Error('list failed');
     if (process.env.MODE === 'empty') return [];
     if (process.env.MODE === 'bad') return [{ id: '' }];
     return [
@@ -42,7 +42,7 @@ export class CopilotClient {
   }
   stop() {
     log('stop');
-    if (process.env.MODE === 'stop-failed') return Promise.resolve([new Error('cleanup failed')]);
+    if (['stop-failed', 'list-stop-failed'].includes(process.env.MODE)) return Promise.resolve([new Error('cleanup failed')]);
     if (process.env.MODE === 'stop-hang') {
       // The fake SDK supplies the test clock at shutdown, after listing ends.
       globalThis.setTimeout = callback => { queueMicrotask(callback); return undefined; };
@@ -65,7 +65,7 @@ assert_eq "$(jq -c '.models | [.tag,.account,.host]' <<<"$OUTPUT")" '["complete"
 assert_eq "$(jq -c '[.models.models[] | [.id,.allowed,.chat]]' <<<"$OUTPUT")" '[["chat",true,true],["denied",false,true],["embedding",true,false]]' 'policy denial and non-chat capabilities remain distinct'
 assert_eq "$(jq -c '.capacity' <<<"$OUTPUT")" '[{"tag":"known","selector":"chat","account":"fixture-account","host":"fixture-host","source":"copilot:sdk.listModels","context_window":123456}]' 'capacity binds to the listed model and account host'
 assert_eq "$(paste -sd, - < "$TMP_ROOT/sdk.log")" 'connection:undefined:fixture-account,construct,start,list,stop' 'SDK owns executable selection, listing and shutdown without a conversation'
-for mode in empty bad start-failed start-hang list-failed stop-failed stop-hang unsupported; do
+for mode in empty bad start-failed start-hang list-failed stop-failed list-stop-failed stop-hang unsupported; do
   observe "$mode"
   case "$mode" in
     empty) assert_eq "$(jq -c '[.models.tag,.models.models]' <<<"$OUTPUT")" '["complete",[]]' 'complete empty list stays complete' ;;
@@ -73,11 +73,15 @@ for mode in empty bad start-failed start-hang list-failed stop-failed stop-hang 
     *) assert_eq "$(jq -r '.models.tag' <<<"$OUTPUT")" failed "$mode keeps failed evidence" ;;
   esac
   case "$mode" in
-    stop-failed|stop-hang) assert_file_contains "$TMP_ROOT/sdk.log" force-stop "$mode force-closes the owned runtime" ;;
+    stop-failed|list-stop-failed|stop-hang) assert_file_contains "$TMP_ROOT/sdk.log" force-stop "$mode force-closes the owned runtime" ;;
     unsupported) assert_file_not_contains "$TMP_ROOT/sdk.log" start 'unsupported interface starts no runtime' ;;
     *) assert_file_contains "$TMP_ROOT/sdk.log" stop "$mode closes the owned runtime" ;;
   esac
 done
+observe stop-failed
+assert_eq "$(jq -c '[.models.tag,.models.cause]' <<<"$OUTPUT")" '["failed","disconnect: Error: Error: cleanup failed"]' 'cleanup-only failure reports its own cause'
+observe list-stop-failed
+assert_eq "$(jq -c '[.models.tag,.models.cause]' <<<"$OUTPUT")" '["failed","Error: list failed; disconnect: Error: Error: cleanup failed"]' 'discovery and cleanup failures keep both causes'
 observe start-hang
 assert_eq "$(jq -c '[.models.tag,.models.cause]' <<<"$OUTPUT")" '["failed","Error: model-list deadline exceeded"]' 'discovery deadline reports its own failed evidence'
 assert_file_contains "$TMP_ROOT/sdk.log" stop 'discovery deadline closes the owned runtime'
@@ -97,6 +101,7 @@ if [[ "${COPILOT_MODEL_CONTROL:-}" != 1 ]]; then
   done <<'CONTROLS'
 policy	allowed: state === undefined || state === 'enabled', chat	allowed: true, chat	policy denial and non-chat capabilities remain distinct
 deadline	reject(new Error('model-list deadline exceeded'))	void new Error('model-list deadline exceeded')	discovery deadline reports its own failed evidence
+cause	evidence.models.cause += `; disconnect: ${String(error)}`	evidence.models.cause = `; disconnect: ${String(error)}`	discovery and cleanup failures keep both causes
 CONTROLS
 fi
 printf 'pass: %s fail: %s\n' "$PASS" "$FAIL"

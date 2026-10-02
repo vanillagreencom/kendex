@@ -56,7 +56,8 @@ try {
       ]);
       if (Array.isArray(errors) && errors.length > 0) throw new Error(errors.map(String).join(';'));
     } catch (error) {
-      evidence = { providers: [], models: { tag: 'failed', source, cause: `disconnect: ${String(error)}` }, capacity: [] };
+      if (evidence.models.tag === 'failed') evidence.models.cause += `; disconnect: ${String(error)}`;
+      else evidence = { providers: [], models: { tag: 'failed', source, cause: `disconnect: ${String(error)}` }, capacity: [] };
       try { await client.forceStop(); }
       catch (failure) { evidence.models.cause += `; force-stop: ${String(failure)}`; }
     } finally {
