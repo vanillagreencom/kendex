@@ -8,8 +8,8 @@
 control_expect "live get safe filters by state type"
 control_expect "production inverse projection requests state type"
 control_replace scripts/lib/formatters.sh 1 \
-    'readonly ISSUE_BLOCKED_BY_FIELDS='"'"'inverseRelations { nodes { id type issue { id identifier title state { name type } } } }'"'"'' \
-    'readonly ISSUE_BLOCKED_BY_FIELDS='"'"'inverseRelations { nodes { id type issue { id identifier title state { name } } } }'"'"''
+    'readonly ISSUE_BLOCKED_BY_NODE_FIELDS='"'"'id type issue { id identifier title state { name type } }'"'"'' \
+    'readonly ISSUE_BLOCKED_BY_NODE_FIELDS='"'"'id type issue { id identifier title state { name } }'"'"''
 
 # 2. Call every state open, which takes the cache reads, the session status
 #    routing and the blocks projection.

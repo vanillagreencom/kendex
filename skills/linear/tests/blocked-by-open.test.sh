@@ -139,10 +139,7 @@ assert_contains "production inverse projection requests state type" \
 assert_file_contains "live queries use the production inverse projection" \
   "$TMP_ROOT/query.log" "$expected_inverse_query"
 
-projection_sources=""
-if ! projection_sources="$(grep -R -l -F 'inverseRelations' "$SKILL_DIR/scripts")"; then
-  projection_sources=""
-fi
+projection_sources="$(grep -R -l -F 'inverseRelations' "$SKILL_DIR/scripts")"
 projection_count=0
 projection_sites=""
 expected_projection_count="$(tr -d '[:space:]' <<<"$ISSUE_BLOCKED_BY_FIELDS" | awk '
@@ -153,7 +150,7 @@ while IFS= read -r source; do
   [[ -n "$source" ]] || continue
   source_count="$(tr -d '[:space:]' <"$source" | awk '
     { text = text $0 }
-    END { while (match(text, /inverseRelations\{nodes\{[^{}]*issue\{/)) { count++; text = substr(text, RSTART + RLENGTH) } print count + 0 }
+    END { while (match(text, /inverseRelations\{nodes\{([^{}]*issue\{|\$\{?ISSUE_BLOCKED_BY_NODE_FIELDS)/)) { count++; text = substr(text, RSTART + RLENGTH) } print count + 0 }
   ')"
   if (( source_count > 0 )); then
     projection_count=$((projection_count + source_count))
@@ -162,5 +159,5 @@ while IFS= read -r source; do
 done <<<"$projection_sources"
 assert_eq "production inverse relation definition has one nodes opening" "$expected_projection_count" 1
 assert_eq "production GraphQL has one inverse relation projection owner" "$projection_count" "$expected_projection_count"
-assert_contains "the inverse relation projection owner is the formatter library" \
-  "$projection_sites" "scripts/lib/formatters.sh"
+assert_eq "the inverse relation projection owner is the formatter library" \
+  "$projection_sites" "$SKILL_DIR/scripts/lib/formatters.sh"

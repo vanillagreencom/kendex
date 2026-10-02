@@ -59,4 +59,15 @@ children-failure|query|fixture: later page failed
 ROWS
 
 pages_case children query
-assert_file_contains 'children: continuation keeps requested depth' "$PAGE_ROOT/requests" 'children(first: 1)'
+while IFS='|' read -r owner cursor depth; do
+    assert "children: $owner continuation keeps requested depth" jq -se \
+        --arg owner "$owner" --arg cursor "$cursor" --argjson depth "$depth" '
+        [.[] | select(.variables.id == $owner and .variables.after == $cursor)] |
+        length == 1 and (.[0].query |
+            ([scan("children\\(")] | length) == $depth and
+            ([scan("children\\(first: 1\\)")] | length) == ($depth - 1))' \
+        "$PAGE_ROOT/requests"
+done <<'ROWS'
+parent|ch1|2
+child-b|g1|1
+ROWS

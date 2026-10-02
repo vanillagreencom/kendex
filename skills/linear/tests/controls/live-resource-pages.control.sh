@@ -110,3 +110,8 @@ control_expect 'bounded: no continuation'
 control_replace scripts/lib/pages.sh 1 \
     '        if (( limit > 0 && collected >= limit )); then break; fi' \
     '        if (( limit > 0 && collected > limit )); then break; fi'
+
+control_expect 'children: child-b continuation keeps requested depth'
+control_replace scripts/lib/pages.sh 1 \
+    '        if (( depth > 1 )); then' \
+    '        if (( depth > 0 )); then'

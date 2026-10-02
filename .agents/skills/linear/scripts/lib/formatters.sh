@@ -2,8 +2,10 @@
 # Linear CLI - Output Formatters
 set -euo pipefail
 
-readonly ISSUE_BLOCKS_FIELDS='relations { nodes { id type relatedIssue { id identifier title state { name type } } } }'
-readonly ISSUE_BLOCKED_BY_FIELDS='inverseRelations { nodes { id type issue { id identifier title state { name type } } } }'
+readonly ISSUE_BLOCKS_NODE_FIELDS='id type relatedIssue { id identifier title state { name type } }'
+readonly ISSUE_BLOCKED_BY_NODE_FIELDS='id type issue { id identifier title state { name type } }'
+readonly ISSUE_BLOCKS_FIELDS="relations { nodes { $ISSUE_BLOCKS_NODE_FIELDS } }"
+readonly ISSUE_BLOCKED_BY_FIELDS="inverseRelations { nodes { ${ISSUE_BLOCKED_BY_NODE_FIELDS} } }"
 readonly ISSUE_RELATION_FIELDS="$ISSUE_BLOCKS_FIELDS $ISSUE_BLOCKED_BY_FIELDS"
 readonly ISSUE_RELATION_JQ='
 def issue_is_open: (.state.type | IN("completed", "canceled") | not);

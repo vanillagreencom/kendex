@@ -3,7 +3,8 @@
 set -euo pipefail
 
 # Read the requested connection to its end, or to a caller's total row limit.
-# Every page must carry pageInfo. Nothing is printed until the chain closes.
+# Every page must carry pageInfo. A row limit can leave the chain open.
+# Output follows successful traversal to the end or limit. Failures leave stdout empty.
 graphql_pages() {
     local query="$1" variables="$2" path="$3" limit="${4:-0}" initial="${5:-}"
     local result nodes all='[]' seen='[]' cursor='null' next count=0 key
@@ -57,8 +58,8 @@ graphql_pages() {
 linear_connection_fields() {
     case "$1:$2" in
     issue:labels|project:labels|project:teams|user:teams|viewer:teams) printf '%s' 'name' ;;
-    issue:relations) printf '%s' 'id type relatedIssue { id identifier title state { name type } }' ;;
-    issue:inverseRelations) printf '%s' 'id type issue { id identifier title state { name type } }' ;;
+    issue:relations) printf '%s' "$ISSUE_BLOCKS_NODE_FIELDS" ;;
+    issue:inverseRelations) printf '%s' "$ISSUE_BLOCKED_BY_NODE_FIELDS" ;;
     issue:children) linear_children_fields "${LINEAR_CHILD_DEPTH:-1}" ;;
     issue:comments) printf '%s' 'id body createdAt updatedAt user { name }' ;;
     project:relations) printf '%s' 'id type anchorType relatedAnchorType relatedProject { id name state progress }' ;;

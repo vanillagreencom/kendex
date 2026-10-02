@@ -592,10 +592,10 @@ pages_step() {
 fixture_data=$(cat -- "$fixture") || exit 1
 LINEAR_CHILD_DEPTH=2
 LINEAR_ISSUE_CHILD_MODE=bundle
-ISSUE_RELATION_FIELDS='relations(first: 1) { pageInfo { hasNextPage endCursor } nodes { id } }'
+source "$8"
 graphql_request() {
     local query="$1" variables="$2" response
-    printf '%s %s\n' "$query" "$variables" >>"$log"
+    jq -c --arg query "$query" '{query:$query,variables:.}' <<<"$variables" >>"$log" || return 1
     response=$(jq -cs '.[0] as $vars | .[1] |
         if ($vars.after // null) == null then .initial
         else [.replies[] | select(.id == ($vars.id // null) and .after == $vars.after) | .response][0] end |
@@ -618,7 +618,7 @@ SUBJECT
 	: >"$PAGE_ROOT/requests"
 	PAGE_OUT=$(env -i PATH="$PATH" HOME="$PAGE_ROOT" bash "$PAGE_ROOT/subject" \
 		"$PAGE_ROOT/pages.sh" "$PAGE_ROOT/fixture.json" "$mode" "$limit" \
-		"$PAGE_ROOT/requests" "$budget" "$PAGE_ROOT/page-count" \
+		"$PAGE_ROOT/requests" "$budget" "$PAGE_ROOT/page-count" "$SKILL_DIR/scripts/lib/formatters.sh" \
 		2>"$PAGE_ROOT/error") && PAGE_RC=0 || PAGE_RC=$?
 	assert_file_lacks "$name: page walk budget" "$PAGE_ROOT/error" 'fixture: page-budget='
 }
