@@ -12,7 +12,8 @@ change came from an outside contributor.
 
 ### Upgrading
 
-- Run `kendex refresh`, then `adopt-refresh.sh --retire-writer`; drop CI calls to `validate.sh`, `review-writer.sh` and `review-policy`; remove required check `Review gate` before that PR merges.
+- 1.4.0 removed review-gate's `validate.sh`, `review-writer.sh` and `review-policy`; drop every CI call to them.
+- Run `kendex refresh`, then `.agents/skills/review-gate/scripts/adopt-refresh.sh --retire-writer`; remove required check `Review gate` before the resulting PR merges.
 - A consumer still on a refresh-consumer workflow from before 1.4.0 can stop on a standard-class first render: push one `kendex/refresh` render by hand and merge its pull request.
 
 ### Added
