@@ -606,22 +606,39 @@ lane_stop_identity() { # PID START HARNESS
   lane_stop_signal "$found"
 }
 
-# A local lane's stop, lane-close's and the one lane-reach.md's mail that
-# cannot wait runs by hand: by the identity the lane record's launch names, PID
-# and START, and where the record names none, or names a stale one, by the
-# identity lane_harness_identity reads under PANE_PID now. A harness restarted
-# by hand in its pane runs under a pid the record never named, and a record
-# written before launch identities were recorded names none. On status 0
-# LANE_STOP_IDENTITY says which identity stopped it, `recorded` or `pane`; a
+# A local lane's stop, the ONE sequence lane-close runs for an idle lane and
+# lane-reach.md's mail that cannot wait runs by hand, so neither can end the
+# harness and leave a woken turn running: the harness, then the turn a wake
+# started. The harness is stopped by the identity the lane record's launch
+# names, PID and START, and where the record names none, or names a stale one,
+# by the identity lane_harness_identity reads under PANE_PID now. A harness
+# restarted by hand in its pane runs under a pid the record never named, and a
+# record written before launch identities were recorded names none. The turn
+# is stopped by the record's wake, WAKE_PID and WAKE_START (lane_stop_wake).
+# On status 0 LANE_STOP_COUNT is how many harness processes were signalled and
+# LANE_STOP_IDENTITY says which identity stopped them, `recorded` or `pane`; a
 # harness the pane named that exited before its signal is a stop of 0. On
-# status 1 LANE_STOP_CAUSE is lane_stop_identity's, or one of:
+# status 1 LANE_STOP_TARGET is `harness` or `wake`, the stop that failed, and
+# LANE_STOP_CAUSE is lane_stop_identity's, or for the harness one of:
 #   identity-unread       the record names no identity and no harness runs
 #                         under the pane
 #   identity-stale        the record's identity is stale and no harness runs
 #                         under the pane; LANE_STOP_PID is the recorded pid
 #   process-read-failed   the read under the pane failed
 LANE_STOP_IDENTITY=""
-lane_stop_local() { # PANE_PID PID START HARNESS
+LANE_STOP_TARGET=""
+lane_stop_local() { # PANE_PID PID START WAKE_PID WAKE_START HARNESS
+  local count
+  LANE_STOP_TARGET=harness
+  lane_stop_launch "$1" "$2" "$3" "$6" || return 1
+  count="$LANE_STOP_COUNT"
+  lane_stop_wake "$4" "$5" "$6" || return 1
+  LANE_STOP_COUNT="$count"
+  LANE_STOP_TARGET=""
+}
+
+# The harness half of lane_stop_local, its causes listed there.
+lane_stop_launch() { # PANE_PID PID START HARNESS
   local rc=0 identity unread=identity-unread
   lane_stop_reset
   LANE_STOP_IDENTITY=""
@@ -648,6 +665,25 @@ lane_stop_local() { # PANE_PID PID START HARNESS
     *) return 1 ;;
   esac
   LANE_STOP_IDENTITY=pane
+}
+
+# End the turn an open-terminal --wake started, by the identity the lane
+# record's wake names: it runs detached, outside the pane's process tree, so
+# no stop of the harness reaches it, and it goes on calling tools after its
+# lane closes unless it is stopped here. lane_stop_local runs it after the
+# harness, and lane-close alone for a lane whose harness has already exited.
+# A record naming no wake and a stale wake identity, a turn already over, are
+# both status 0. On status 1 LANE_STOP_TARGET is `wake` and LANE_STOP_CAUSE
+# lane_stop_identity's.
+lane_stop_wake() { # PID START HARNESS
+  local rc=0
+  lane_stop_reset
+  [[ -n "$1$2" ]] || return 0
+  lane_stop_identity "$1" "$2" "$3" || rc=$?
+  case "$rc" in
+    0|3) lane_stop_reset ;;
+    *) LANE_STOP_TARGET=wake; return 1 ;;
+  esac
 }
 
 # End one worktree's harness by its directory: every process

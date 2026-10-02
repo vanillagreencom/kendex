@@ -1287,8 +1287,8 @@ UNPARK_JQ='def unpark($at): (if .parked.at == null then .
 # and tmux server pid, and a local lane's harness pid and start once its launch
 # is confirmed, null off tmux; a wake keeps it. A wake writes `wake`, the
 # identity of the detached turn it started, which lane-close stops before the
-# record reads done, null where none was read; every launch and relaunch keeps
-# it.
+# record reads done or stopped, null where none was read; every launch and
+# relaunch keeps it.
 # The park it drops is kept as one of the record's `pauses`, closed at the
 # resume, since oversee-cycle reads a lane's parked time from them.
 lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATUS]

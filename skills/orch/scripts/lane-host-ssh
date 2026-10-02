@@ -299,7 +299,7 @@ exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
     remote(row, '''lib="$1/.agents/skills/orch/scripts/lib/lane-state.sh"
 if ! test -r "$lib" || ! bash -c '. "$1" && declare -F lane_identity_record >/dev/null' lane-host "$lib"; then
   printf 'lane-host-ssh: identity-recorder-missing path=%s\\n' "$lib" >&2
-  printf 'the host clone predates the launch identity recorder; fast-forward it (git -C CLONE pull --ff-only), or remove the clone so create clones it afresh\\n' >&2
+  printf 'the clone, at its base branch, carries a kendex render that predates the launch identity recorder; refresh the kendex render the repository commits on that base branch, then create again\\n' >&2
   exit 1
 fi''', row["clone"])
     env_file = source / ".env.local"

@@ -766,25 +766,63 @@ if proc_table_readable; then
     'rc=1 failed=1 lane=alive' 'control: a stale identity that skips the pane read leaves the restarted harness running'
   kill "$LANE_PID" 2>/dev/null || true
 
-  # A wake's turn runs detached, outside the pane's process tree, so the close
-  # of a lane whose pane already exited still finds it, by the record's wake,
-  # and ends it before the record reads done.
-  wake_row() { # SCRIPT
-    MAIL_ROOT="$LANE_ROOT" write_state running claude ""; write_panes bash; printf '\n' >"$SCREEN"
-    start_local_harness claude
-    jq '.lanes[0].wake = (.lanes[0].launch | {pid, start}) | del(.lanes[0].launch)' "$STATE" >"$STATE.tmp" && mv -- "$STATE.tmp" "$STATE"
-    PATH="$LOCAL_PATH" run_close "$1"
+  # A wake's turn runs detached, outside the pane's process tree, so no stop of
+  # the harness reaches it: the close finds it by the record's wake. PANE is
+  # `exited`, a lane whose harness is already gone, where the close stops the
+  # turn alone, or `idle`, whose harness the close stops by its launch with the
+  # turn after it in one library stop, the one lane-reach.md's mail that cannot
+  # wait runs by hand. WAKE is the turn: `live`, `exited` before the close, a
+  # turn already over, or `ignores` its SIGTERM. The refusal's pid reads WAKE.
+  wake_row() { # SCRIPT PANE WAKE
+    local wake refusal
+    MAIL_ROOT="$LANE_ROOT" write_state running claude ""
+    if [[ "$2" == idle ]]; then write_panes python; claude_screen; else write_panes bash; printf '\n' >"$SCREEN"; fi
+    if [[ "$3" == ignores ]]; then start_local_harness claude claude ''; else start_local_harness claude; fi
+    WAKE_PID="$LANE_PID"
+    wake="$(jq -c '.lanes[0].launch | {pid, start}' "$STATE")"
+    jq --argjson wake "$wake" '.lanes[0].wake = $wake | del(.lanes[0].launch)' "$STATE" >"$STATE.tmp" && mv -- "$STATE.tmp" "$STATE"
+    if [[ "$3" == exited ]]; then
+      kill -KILL "$WAKE_PID"
+      while [[ "$(proc_state_after "$WAKE_PID")" != gone ]]; do sleep 0.05; done
+    fi
+    LANE_PID=""
+    if [[ "$2" == idle ]]; then
+      start_local_harness claude
+      printf '%s 1 claude\n' "$WAKE_PID" >>"$PROC_TABLE"
+    fi
+    PATH="$LOCAL_PATH" LANE_CLOSE_LANE_PID="$LANE_PID" run_close "$1"
+    refusal="$(grep '^lane-close: stop-failed ' <<<"$ERR" || true)"
+    WAKE_GOT="rc=$RC wake=$(proc_state_after "$WAKE_PID")${LANE_PID:+ lane=$(proc_state_after "$LANE_PID")} status=$(jq -r '.lanes[0].status' "$STATE") refusal=[${refusal//pid=$WAKE_PID /pid=WAKE }]"
+    kill -KILL "$WAKE_PID" ${LANE_PID:+"$LANE_PID"} 2>/dev/null || true
   }
-  wake_row "$SCRIPT"
-  assert_eq "rc=$RC lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
-    'rc=0 lane=gone status=done' 'a close during an active wake stops the woken turn before it records done'
-  # Control: a close that never stops the wake records done with the turn
-  # still running.
-  MUTANT="$(mutant lane-close-wake '  [[ -n "$host" ]] || { stop_wake; stop_validations; }' '  [[ -n "$host" ]] || stop_validations')"
-  wake_row "$MUTANT"
-  assert_eq "rc=$RC lane=$(proc_state_after "$LANE_PID") status=$(jq -r '.lanes[0].status' "$STATE")" \
-    'rc=0 lane=alive status=done' 'control: without the wake stop the woken turn outlives its lane'
-  kill "$LANE_PID" 2>/dev/null || true
+  WAKE_TIMEOUT='lane-close: stop-failed item=KEN-1 harness=claude target=wake pid=WAKE cause=timeout'
+  # One control per rule: the exited lane's wake stop, a stale wake as a turn
+  # already over, the refusal of a wake that will not end, the idle lane's
+  # wake in the harness's own stop, and the refusal naming the wake as its
+  # target.
+  WAKE_SKIP="$(mutant lane-close-wake '  [[ -n "$host" ]] || { [[ -n "$STOP_IDENTITY" ]] || stop_wake; stop_validations; }' '  [[ -n "$host" ]] || stop_validations')"
+  WAKE_STALE="$(lib_mutant wake-stale '    0|3) lane_stop_reset ;;' '    0) lane_stop_reset ;;')"
+  WAKE_UNREFUSED="$(lib_mutant wake-unrefused '    *) LANE_STOP_TARGET=wake; return 1 ;;' '    *) LANE_STOP_TARGET=wake; return 0 ;;')"
+  WAKE_LOCAL_SKIP="$(lib_mutant wake-local-skip '  lane_stop_wake "$4" "$5" "$6" || return 1' '  :')"
+  WAKE_UNTARGETED="$(mutant lane-close-wake-target '      [[ "$LANE_STOP_TARGET" != wake ]] || fields+=("target=wake")' '      :')"
+  # label|script|pane|wake|expected
+  WAKE_ROWS=(
+    "an exited lane's close stops its woken turn before it records done|$SCRIPT|exited|live|rc=0 wake=gone status=done refusal=[]"
+    "a woken turn already over lets an exited lane's close go on|$SCRIPT|exited|exited|rc=0 wake=gone status=done refusal=[]"
+    "a woken turn that outlives its signal refuses the close and keeps the record running|$SCRIPT|exited|ignores|rc=1 wake=alive status=running refusal=[$WAKE_TIMEOUT]"
+    "an idle lane's stop ends its woken turn with its harness|$SCRIPT|idle|live|rc=0 wake=gone lane=gone status=done refusal=[]"
+    "an idle lane's woken turn that outlives its signal refuses as the wake's stop|$SCRIPT|idle|ignores|rc=1 wake=alive lane=gone status=running refusal=[$WAKE_TIMEOUT]"
+    "control: without the wake stop the woken turn outlives its exited lane|$WAKE_SKIP|exited|live|rc=0 wake=alive status=done refusal=[]"
+    "control: a stale wake read as a failure refuses a turn already over|$WAKE_STALE|exited|exited|rc=1 wake=gone status=running refusal=[lane-close: stop-failed item=KEN-1 harness=claude target=wake pid=WAKE cause=identity-stale]"
+    "control: a wake stop that fails without refusing records done over the running turn|$WAKE_UNREFUSED|exited|ignores|rc=0 wake=alive status=done refusal=[]"
+    "control: a local stop that skips the wake leaves the idle lane's woken turn running|$WAKE_LOCAL_SKIP|idle|live|rc=0 wake=alive lane=gone status=done refusal=[]"
+    "control: a refusal without its target names the wake's failure as the harness's|$WAKE_UNTARGETED|idle|ignores|rc=1 wake=alive lane=gone status=running refusal=[lane-close: stop-failed item=KEN-1 harness=claude pid=WAKE cause=timeout]"
+  )
+  for row in "${WAKE_ROWS[@]}"; do
+    IFS='|' read -r label script pane wake want <<<"$row"
+    wake_row "$script" "$pane" "$wake"
+    assert_eq "$WAKE_GOT" "$want" "$label"
+  done
 
   # The record is never done while the recorded harness lives: one that
   # outlives its signal refuses the close, its window and record kept.
@@ -854,6 +892,18 @@ proc_table_write "$PROC_TABLE"
 PATH="$LOCAL_PATH" run_close "$SCRIPT"
 assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=identity-unread$' <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 failed=1 kill=0 status=running' 'a local stop with no launch identity refuses and keeps the window'
+# The process table read under the pane failing is no answer, never a pane
+# with no harness under it: the refusal names the failed read.
+pane_read_row() { # SCRIPT
+  write_state running claude ""; write_panes python; claude_screen
+  PATH="$LOCAL_PATH" PROC_TABLE="$TMP_ROOT/no-proc-table" run_close "$1"
+  PANE_READ_GOT="rc=$RC failed=$(grep -c -x 'lane-close: stop-failed item=KEN-1 harness=claude cause=process-read-failed' <<<"$ERR" || true) unread=$(grep -c 'cause=identity-unread' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")"
+}
+pane_read_row "$SCRIPT"
+assert_eq "$PANE_READ_GOT" 'rc=1 failed=1 unread=0 status=running' 'a process read that fails under the pane refuses as process-read-failed'
+# Control: the failed read taking the unread cause reads as no harness.
+pane_read_row "$(lib_mutant pane-read-cause '    *) lane_stop_reset; LANE_STOP_CAUSE=process-read-failed; return 1 ;;' '    *) LANE_STOP_CAUSE="$unread"; return 1 ;;')"
+assert_eq "$PANE_READ_GOT" 'rc=1 failed=0 unread=1 status=running' 'control: a failed read under the pane given the unread cause reads as no harness'
 
 echo '=== a limit banner the account has outlived does not hold a finished lane ==='
 # A banner stays below the last turn of a lane it parked after the window
