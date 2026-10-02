@@ -1518,7 +1518,7 @@ lm_seconds() { # OPTION VALUE
 lm_compact_locked() {
   local counts root total
   lm_cursor_read
-  lm_store plan "$BOX" "$WORK_DIR" "$COMPACT_CUTOFF" "$SEEN" "$LM_JQ_DEFS$MAILBOX_CLASS_JQ"
+  lm_store plan "$BOX" "$WORK_DIR" "$COMPACT_CUTOFF" "$SEEN" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ"
   counts="$(cat -- "$WORK_DIR/counts.json")" || refuse file-unreadable "$BOX"
   total="$(jq '.["to-lane"] + .["to-overseer"]' <<<"$counts")" || refuse file-unreadable "$BOX"
   if [ "$total" -gt 0 ]; then
