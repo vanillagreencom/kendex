@@ -1,0 +1,1 @@
+- Lane selection charges each claim its share of measured account usage, so busy accounts with room remain available for new launches.

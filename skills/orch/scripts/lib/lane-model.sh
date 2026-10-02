@@ -220,11 +220,11 @@ def with_lane_binding($model; $binding_floor):
 # most room fills until it walls; the projection charges each live claim its
 # expected burn before any verdict is taken.
 #
-# Each claim inherits the observed account burn where a rate and claims exist.
-# The samples carry no claim count, so dividing by the current count would
-# cancel added claims while the reading stays cached. Charging the aggregate
-# rate per claim can overestimate concurrent burn, but never makes a new claim
-# free. With no claims or no rate, use ORCH_LANE_BURN_PCT_PER_HOUR.
+# Each claim inherits its share of the observed account burn, divided by the
+# claims live at the latest sample, floored at one. Missing counts and host
+# rows use one. The divisor stays fixed while the sample is cached, so a new
+# claim costs the share for another lane. With no claims or no rate, use
+# ORCH_LANE_BURN_PCT_PER_HOUR.
 #
 # The default is points of the 5-hour session window. A weekly window, the
 # plan-wide one or a model-scoped one, holds the same hour of work as the
@@ -238,7 +238,7 @@ def with_lane_binding($model; $binding_floor):
 # never charged as zero lanes.
 def with_lane_projection($burn_default):
   (if .usage_rate_state == "measured" and (.claims // 0) > 0
-   then .usage_rate_pct_per_min * 60
+   then (.usage_rate_pct_per_min * 60) / ([._rate_sample_claims // 1, 1] | max)
    elif .binding_bucket == "session" then $burn_default
    elif .binding_bucket == "monthly" then $burn_default * 5 / 720
    else $burn_default * 5 / 168 end) as $burn
@@ -269,7 +269,7 @@ def with_lane_selection_score($now):
       (if .projected_headroom_pct == null then null
        else .projected_headroom_pct * (if $hours == null then 1 else 1 + 1 / (1 + $hours) end) end)};
 
-def lane_public: del(._rate_prior, ._rate_elapsed_s, ._id);
+def lane_public: del(._rate_prior, ._rate_elapsed_s, ._rate_sample_claims, ._id);
 
 # One spelling for every reset a lane record carries: whole-second UTC with a
 # Z, the form Codex resets are rendered in. The Claude usage endpoint writes

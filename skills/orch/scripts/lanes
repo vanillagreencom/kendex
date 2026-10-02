@@ -110,7 +110,8 @@
 #         projected room. A lane is
 #         judged on its PROJECTED wall: the reading plus, for each live claim
 #         on it, the burn one lane is expected to spend in the next hour, the
-#         account's measured rate charged to each claim where the rate exists,
+#         each claim's share of the account's measured rate, divided by the
+#         claims at sample time (at least one), where the rate exists,
 #         and ORCH_LANE_BURN_PCT_PER_HOUR, scaled to the window, where it does
 #         not. So an
 #         account whose room the lanes already on it will spend is dropped the
@@ -1499,7 +1500,7 @@ measure_lane() {
 	# the peer holding it measured this lane, and the record that peer wrote
 	# would read as stamped in the future against the clock this function
 	# started with.
-	local raw="" buckets age=null current_at="" prior_at="" prior_raw="" prior_buckets='{}' elapsed="null"
+	local raw="" buckets age=null current_at="" prior_at="" prior_raw="" prior_buckets='{}' elapsed="null" sample_claims=1
 	now_s="$(date +%s)"
 	if ! usage_from_record "$now_s"; then
 		usage_lock_take
@@ -1521,7 +1522,7 @@ measure_lane() {
 	[[ -n "$prior_buckets" ]] || prior_buckets='{}'
 	# A Copilot plan is named by the usage body, not by a credential file.
 	[[ "$harness" != copilot ]] || plan="$(jq -r '.plan // empty' <<<"$buckets")"
-	emit_lane "$alias" "$harness" "$dir" "$status" "$detail" "$plan" "$buckets" "$age" "$refreshed" local "$prior_buckets" "$elapsed"
+	emit_lane "$alias" "$harness" "$dir" "$status" "$detail" "$plan" "$buckets" "$age" "$refreshed" local "$prior_buckets" "$elapsed" "$sample_claims"
 }
 
 # Answers the lane from its usage record without posting anything, into
@@ -1633,6 +1634,7 @@ refresh_lane_usage() {
 	current_at="$at"
 	write_usage_cache "$harness" "$dir" "$at" "$raw" || true
 	prior_at="${USAGE_PRIOR_AT:-}"; prior_raw="${USAGE_PRIOR_RAW:-}"
+	sample_claims="${USAGE_SAMPLE_CLAIMS:-1}"
 }
 
 # Records the refusal the last split_http_answer read, at epoch $1, and sets
@@ -1674,9 +1676,10 @@ serve_refused_usage() { # HARNESS DIR NOW DETAIL
 # unmeasured.
 take_cached_usage() { # CACHED
 	{ IFS= read -r age; IFS= read -r current_at; IFS= read -r raw
-	  IFS= read -r prior_at; IFS= read -r prior_raw; } < <(jq -r '
+	  IFS= read -r prior_at; IFS= read -r prior_raw; IFS= read -r sample_claims; } < <(jq -r '
 		.age, .fetched_at, (.usage | tojson), (.prior.fetched_at // ""),
-		(if (.prior.usage | type) == "object" then (.prior.usage | tojson) else "" end)' <<<"$1")
+		(if (.prior.usage | type) == "object" then (.prior.usage | tojson) else "" end),
+		(.sample_claims // 1)' <<<"$1")
 }
 
 # ── Usage cache ──────────────────────────────────────────────────────────────
@@ -1789,7 +1792,7 @@ read_usage_cache() { # HARNESS DIR NOW MAX_AGE_S
 		       and ($at | type) == "number" and (.usage | type) == "object")
 		| ($now - $at) as $age
 		| select($age >= 0 and ($max == null or $age < $max))
-		| {fetched_at: $at, age: $age, usage: .usage, prior: (.prior // null)}' "$file" 2>/dev/null
+		| {fetched_at: $at, age: $age, usage: .usage, prior: (.prior // null), sample_claims: (.sample_claims // 1)}' "$file" 2>/dev/null
 }
 
 # The age a cached figure is served within: the TTL, or the caller's own pass
@@ -1811,7 +1814,9 @@ usage_serve_max_age() {
 # Renamed into place only once complete, so a concurrent reader never parses
 # half a record.
 write_usage_cache() {
-	local file tmp prior=null
+	local file tmp prior=null sample_claims=1
+	[[ "$1" == host-accounts || "$LANE_CLAIMS_RC" -ne 0 ]] || sample_claims="$(lane_claims_count "$LANE_CLAIMS_LIVE" "$2")" || return 1
+	USAGE_SAMPLE_CLAIMS="$sample_claims"
 	file="$(usage_cache_file "$1" "$2")" || return 1
 	USAGE_PRIOR_AT=""; USAGE_PRIOR_RAW=""
 	if [[ -f "$file" ]] && usage_cache_permitted "$file" "$1"; then
@@ -1827,8 +1832,8 @@ write_usage_cache() {
 	fi
 	mkdir -p -- "$USAGE_CACHE_DIR" 2>/dev/null || return 1
 	tmp="$(mktemp -- "$USAGE_CACHE_DIR/.usage.XXXXXX" 2>/dev/null)" || return 1
-	if jq -nc "${USAGE_POLICY_ARGS[@]}" --arg h "$1" --arg d "$2" --argjson now "$3" --argjson u "$4" --argjson p "$prior" \
-		'{harness: $h, config_dir: $d, fetched_at: $now, usage: $u, prior: $p}
+	if jq -nc "${USAGE_POLICY_ARGS[@]}" --arg h "$1" --arg d "$2" --argjson now "$3" --argjson u "$4" --argjson p "$prior" --argjson claims "$sample_claims" \
+		'{harness: $h, config_dir: $d, fetched_at: $now, usage: $u, prior: $p, sample_claims: $claims}
 		+ (if $h == "host-accounts" then {policy: $policy} else {} end)' >"$tmp" \
 		&& mv -f -- "$tmp" "$file"; then
 		return 0
@@ -2250,7 +2255,7 @@ emit_lane() {
 	# config dir on this machine, `host` for a row the provider reported. Carried
 	# in the record itself so no listing stamps it afterwards, which cost the
 	# whole listing one jq pass whether or not a provider was configured.
-	local alias="$1" harness="$2" dir="$3" status="$4" detail="$5" plan="$6" buckets="$7" age="${8:-null}" refreshable="${9:-false}" through="${10:-local}" prior="${11:-}" elapsed="${12:-null}"
+	local alias="$1" harness="$2" dir="$3" status="$4" detail="$5" plan="$6" buckets="$7" age="${8:-null}" refreshable="${9:-false}" through="${10:-local}" prior="${11:-}" elapsed="${12:-null}" sample_claims="${13:-1}"
 	[[ -n "$prior" ]] || prior='{}'
 	# `null`, never 0, when the store could not be read: "we could not see the
 	# launches in flight" must not read as "there are none".
@@ -2262,7 +2267,7 @@ emit_lane() {
 		--argjson claims "$claims" --argjson age "$age" \
 		--argjson refreshable "$refreshable" \
 		--arg through "$through" --argjson b "$buckets" \
-		--argjson pb "$prior" --argjson elapsed "$elapsed" "$LANE_MODEL_JQ"'
+		--argjson pb "$prior" --argjson elapsed "$elapsed" --argjson sample_claims "$sample_claims" "$LANE_MODEL_JQ"'
 		($b // {} | utc_resets) as $b
 		| [$b.session_5h_pct, $b.weekly_pct, $b.model_pct, $b.monthly_pct] | map(select(. != null)) as $known
 		| (if ($status == "ok" and ($known | length) == 0) then "no_usage_data" else $status end) as $st
@@ -2293,6 +2298,7 @@ emit_lane() {
 		    usage_age_s: $age,
 		    _rate_prior: ($pb | utc_resets),
 		    _rate_elapsed_s: $elapsed,
+		    _rate_sample_claims: $sample_claims,
 		    resets: (($b.resets // {}) | {session: (.session // null), weekly: (.weekly // null),
 		                                 model: (.model // null), monthly: (.monthly // null)}),
 		    detail: (if $st == "no_usage_data" and $detail == ""
