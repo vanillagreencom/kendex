@@ -202,6 +202,17 @@ The tier key replaces KEN-2494's second `sort_by` pass in `lane_selection`, `sor
 
 The kind is the overseer's choice per item. `lanes pick` ranks accounts for that kind. `open-terminal --host claude-cloud` runs the pick under `ORCH_LANE_HOST=claude-cloud`, as `pick_auto_lane` and `named_lane_judge` pass the resolved host today. `lanes pick` reads `pool` from `lane-host capabilities` once per pick. `lanes list` shows each account's credit and E, so the overseer sends cloud-fit items to `claude-cloud` while any account holds credit.
 
+### Other pick rules beside the tier key
+
+Five other items change the same pick. Owner note 1790974374 sets how each one composes with the tier key, and the order in which the builds land.
+
+- **Expiry, not credit.** The tier keys on when an allowance expires, not on whether it is credit. Claude cloud credit expires, so it is tier 0 and ranks first. KEN-2494's Codex credit never expires, so it is tier 2 and ranks last.
+- **Harness order.** One `lanes pick` judges one harness (`lanes --help`, `--harness`), so the tier key ranks only the accounts of that harness. KEN-2497's harness order, Claude, then Codex, then Copilot, stays as it is. No part of this design changes it.
+- **Model class.** KEN-2466's class resolver chooses the model that the pick judges, the `$model` of `lane_selection`. The tier key ranks accounts for that model and chooses no model.
+- **Reserved seats.** A KEN-2012 reserved seat leaves the candidates before any tier is set, as the KEN-1990 overseer seats do today in `cmd_pick` (`overseer_seats`, then `collect_lanes`). The tier key never ranks it.
+- **Last resort.** KEN-1504's last-resort rank becomes the first element of the key, before `tier`. A last-resort account sorts behind every other room candidate of its harness, whatever its tier.
+- **Build order.** KEN-2494 lands first, then KEN-2497 and KEN-2466's resolver, then the first build of this design. The owner note gives KEN-1504 and KEN-2012 no place in that order. Each one adds its rule at the place above when it lands.
+
 ### Effective expiry and its readers
 
 - E is the earliest of `iguana_necktie.resets_at`, the period end of a subscription that will not renew, and the account's `ORCH_LANE_RETIRE` date. `lanes` stops picking an account from its retire date, so a later credit or period end cannot sort it ahead of an account whose E comes first.
@@ -241,7 +252,7 @@ Proposed FLT items. This item files none:
 
 ## The smallest first build
 
-The first build spends Claude cloud credit through this design before the 2claude lapse on 2026-10-08. All 11 accounts' credit expires at 2026-11-05T07:59Z (KEN-2589 correction 3). It builds `claude-cloud` only. `codex-cloud` adds no expiring pool, so it waits for the owner. It lands after KEN-2494 ([PR #3514](https://github.com/vanillagreencom/kendex/pull/3514), open), whose second `sort_by` pass (§ [The expires-first rule](#the-expires-first-rule)), Codex `credits` object and tier 2 rows the tier key builds on, and which moves `parse_claude_usage` to `skills/orch/scripts/lib/lane-usage.sh`.
+The first build spends Claude cloud credit through this design before the 2claude lapse on 2026-10-08. All 11 accounts' credit expires at 2026-11-05T07:59Z (KEN-2589 correction 3). It builds `claude-cloud` only. `codex-cloud` adds no expiring pool, so it waits for the owner. It lands after KEN-2494, KEN-2497 and KEN-2466's resolver, in the build order of § [Other pick rules beside the tier key](#other-pick-rules-beside-the-tier-key). KEN-2494 ([PR #3514](https://github.com/vanillagreencom/kendex/pull/3514), open) supplies the second `sort_by` pass (§ [The expires-first rule](#the-expires-first-rule)), the Codex `credits` object and the tier 2 rows that the tier key builds on. It also moves `parse_claude_usage` to `skills/orch/scripts/lib/lane-usage.sh`.
 
 | File | Change | Lines |
 |---|---|---|
