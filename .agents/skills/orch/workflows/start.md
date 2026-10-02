@@ -31,8 +31,6 @@ That verb owns the question of whether a record stands, and where it is read, fo
 .agents/skills/orch/scripts/workflow-state handoff-resume [ISSUE_ID]
 ```
 
-The item's state is where the verdict's `file=` names. Where that file's directory is not the one `workflow-state path [ISSUE_ID]` prints, pass `--state-dir` with that directory to every later `workflow-state` call of this session, the continuation's included.
-
 ## 1. Route
 
 1. Args starting with `new` → invoke `workflows/start-new.md`.
