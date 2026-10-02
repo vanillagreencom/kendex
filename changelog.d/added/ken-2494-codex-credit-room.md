@@ -1,0 +1,1 @@
+- `lanes pick` keeps a Codex account at its plan limit pickable on a credit balance above `ORCH_LANE_CODEX_CREDIT_FLOOR`, after every account with plan room.

@@ -400,6 +400,24 @@ lanes_table "$(CTX_LANES="$HANDOFF_CTRL/lanes" run_ctx --json)" \
 lanes_table "$(run_ctx --json)" \
   "the default leaves that lane unmarked|ken-103|handoff_required=false"
 
+echo "=== an account on its Codex credits is not marked for handoff ==="
+# ken-102's account at its weekly limit with a balance above the default
+# floor: `pick --lane`, which the lane's own turn-end hook asks, gives it room,
+# and the report reads the same verdict. A TTL of 0 refetches the changed
+# reading, and the original is fetched back after.
+CODEX_PLAN="$(cat "$FIXTURE_DIR/.codex.json")"
+jq -n '{rate_limit: {primary_window: {used_percent: 100, reset_at: 1785000000, limit_window_seconds: 604800}, secondary_window: null},
+  credits: {has_credits: true, unlimited: false, overage_limit_reached: false, balance: "62300"}}' > "$FIXTURE_DIR/.codex.json"
+lanes_table "$(ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
+  "a lane on a spent account with credits above the floor names the credits bucket and is not marked|ken-102|headroom_pct=0 binding_bucket=credits handoff_required=false"
+CREDIT_CTRL="$(mutant_scripts mutant-context-credits lanes)" || exit 1
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+mutate_file "$CREDIT_CTRL/lanes" 'map(with_lane_verdict(.wall; $max; $credit_floor))) as $u' 'map(with_lane_verdict(.wall; $max; 1e18))) as $u'
+lanes_table "$(CTX_LANES="$CREDIT_CTRL/lanes" ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
+  "control: judged with no credit room the lane on credits is marked|ken-102|handoff_required=true"
+printf '%s\n' "$CODEX_PLAN" > "$FIXTURE_DIR/.codex.json"
+ORCH_LANES_USAGE_TTL=0 run_ctx --json >/dev/null
+
 echo "=== the caller's own pane is the overseer, reported with no stored reading ==="
 # An overseer is started by hand into a window nothing claimed, so without its
 # own row the report it reads calls its session an empty fleet. %34 is that

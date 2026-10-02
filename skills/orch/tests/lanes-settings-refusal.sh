@@ -87,6 +87,7 @@ echo "=== lanes refuses a lane setting it cannot read ==="
 # path names no lane, so the account it meant to cover would be read; and a
 # TTL that does not parse has no reuse window to apply. A usage threshold that
 # does not parse has no bound to judge against, nor an expected burn a charge,
+# nor a credit floor a balance,
 # and falling back to a number of
 # the script's own is the silent disagreement reading the setting exists to end.
 # Each is
@@ -96,7 +97,7 @@ echo "=== lanes refuses a lane setting it cannot read ==="
 while IFS='|' read -r setting value want; do
   [[ -n "$setting" ]] || continue
   rc=0; sub=list; [[ "$setting" != ORCH_HANDOFF_HEADROOM_PCT ]] || sub=context
-  out="$(cd "$TMP_ROOT/home" && env -u ORCH_LANE_DIRS -u CODEX_HOME -u ORCH_LANE_EXCLUDE -u ORCH_LANE_RETIRE -u ORCH_LANES_USAGE_TTL -u ORCH_HANDOFF_HEADROOM_PCT -u ORCH_LANE_MAX_PCT -u ORCH_LANE_BURN_PCT_PER_HOUR \
+  out="$(cd "$TMP_ROOT/home" && env -u ORCH_LANE_DIRS -u CODEX_HOME -u ORCH_LANE_EXCLUDE -u ORCH_LANE_RETIRE -u ORCH_LANES_USAGE_TTL -u ORCH_HANDOFF_HEADROOM_PCT -u ORCH_LANE_MAX_PCT -u ORCH_LANE_BURN_PCT_PER_HOUR -u ORCH_LANE_CODEX_CREDIT_FLOOR \
     LANES_HOME="$TMP_ROOT/home" ORCH_LANES_FETCH_CMD=false OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" \
     "$setting=$value" "$LANES" "$sub" --json 2>&1 >/dev/null)" || rc=$?
   if [[ -z "$want" ]]; then
@@ -119,6 +120,9 @@ ORCH_LANE_MAX_PCT|95|
 ORCH_LANE_BURN_PCT_PER_HOUR|101|lanes: invalid-lane-burn value=101
 ORCH_LANE_BURN_PCT_PER_HOUR|often|lanes: invalid-lane-burn value=often
 ORCH_LANE_BURN_PCT_PER_HOUR|0|
+ORCH_LANE_CODEX_CREDIT_FLOOR|-1|lanes: invalid-lane-codex-credit-floor value=-1
+ORCH_LANE_CODEX_CREDIT_FLOOR|many|lanes: invalid-lane-codex-credit-floor value=many
+ORCH_LANE_CODEX_CREDIT_FLOOR|0|
 ORCH_LANE_RETIRE|nclaude=2026-13-01|lanes: invalid-retire entry=nclaude=2026-13-01
 ORCH_LANE_RETIRE|nclaude=2027-02-29|lanes: invalid-retire entry=nclaude=2027-02-29
 ORCH_LANE_RETIRE|nclaude=2028-02-29|

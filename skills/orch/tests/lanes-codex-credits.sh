@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# Tests for the Codex credit room rule: a Codex account at or past its plan
+# windows stays pickable while its credit balance sits above
+# ORCH_LANE_CODEX_CREDIT_FLOOR, ranked after every account with plan room, and
+# the chooser, `pick --lane` and `list` give it one verdict. The network layer
+# is the fetch stub lib/lanes-fixture.sh writes, so every row runs offline.
+set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANES_USAGE_TTL CODEX_HOME
+unset ORCH_LANE_MAX_PCT ORCH_LANE_BURN_PCT_PER_HOUR ORCH_LANE_CODEX_CREDIT_FLOOR ORCH_LANE_HOST ORCH_STATE_DIR
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LANES="$(cd "$TEST_DIR/.." && pwd)/scripts/lanes"
+
+TMP_ROOT="$(mktemp -d)" || { echo "lanes-codex-credits: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "lanes-codex-credits: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "lanes-codex-credits: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+
+# shellcheck source=lib/assertions.sh
+source "$TEST_DIR/lib/assertions.sh"
+# shellcheck source=lib/lanes-fixture.sh
+source "$TEST_DIR/lib/lanes-fixture.sh"
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
+
+FETCHER="$TMP_ROOT/fetch"
+make_fetcher "$FETCHER"
+
+# Runs start in a repository carrying no settings, so neither the checkout's
+# kendex.settings.toml nor its fleet state reaches a row.
+NOSETTINGS="$TMP_ROOT/nosettings"; mkdir -p "$NOSETTINGS"
+git -C "$NOSETTINGS" init -q -b main
+git -C "$NOSETTINGS" config gc.auto 0
+git -C "$NOSETTINGS" config maintenance.auto false
+
+# codex_body WEEKLY BALANCE HAS_CREDITS OVERAGE — a Codex usage body, its
+# 5-hour window at 20 and its weekly window at WEEKLY, carrying the credit
+# reading the endpoint writes, the balance a string.
+codex_body() {
+  jq -n --argjson w "$1" --arg b "$2" --argjson has "$3" --argjson over "$4" '{
+    rate_limit: {allowed: false,
+      primary_window: {used_percent: 20, reset_at: 1785000000, limit_window_seconds: 18000},
+      secondary_window: {used_percent: $w, reset_at: 1785400000, limit_window_seconds: 604800}},
+    credits: {has_credits: $has, unlimited: false, overage_limit_reached: $over, balance: $b,
+              approx_local_messages: [10, 40], approx_cloud_messages: [2, 8]}}'
+}
+
+# Accounts, `name:weekly:balance:has_credits:overage_limit_reached`. codex,
+# 2codex and the floor pair are spent weekly windows on credits; 1codex and
+# 8codex hold plan room, 8codex the more.
+new_home credits
+for spec in codex:100:62300:true:false 1codex:40:0:false:false 2codex:100:80000:true:false \
+  3codex:100:5000:true:false 4codex:100:4999:true:false 5codex:100:90000:false:false \
+  6codex:100:90000:true:true 7codex:100:lots:true:false 8codex:30:0:false:false; do
+  IFS=':' read -r name week balance has over <<<"$spec"
+  make_codex_lane "$H/.$name"
+  codex_body "$week" "$balance" "$has" "$over" > "$FIXTURE_DIR/.$name.json"
+done
+dirs() { local d out=""; for d in "$@"; do out="$out:$H/.$d"; done; printf 'ORCH_LANE_DIRS=%s' "${out#:}"; }
+
+# table ROW... — `label|env|args|expect`: env is `;`-separated `env`
+# arguments. expect is `name=value` tokens: rc, key (the first keyed stderr
+# line as `key,field=value,...`, or none), cr.LANE (the credit balance the
+# table prints as LANE's headroom, or none), or a field of the JSON record.
+RUN_SEQ=0
+table() {
+  local row label env args expect env_args got token name value
+  for row in "$@"; do
+    IFS='|' read -r label env args expect <<<"$row"
+    [[ -n "$expect" ]] || { printf 'table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
+    RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"; mkdir -p "$RUN"
+    env_args=()
+    [[ -z "$env" ]] || IFS=';' read -ra env_args <<<"$env"
+    # shellcheck disable=SC2086
+    OUT=$(cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" \
+      ORCH_LANES_FETCH_CMD="$FETCHER" OVERSEE_WATCH_STATE_DIR="$RUN/store" ORCH_STATE_DIR="$RUN/fleet" \
+      ${env_args[@]+"${env_args[@]}"} "${LANES_UNDER_TEST:-$LANES}" $args 2>"$RUN/err")
+    RC=$?
+    got=""
+    for token in $expect; do
+      name="${token%%=*}"
+      case "$name" in
+        rc) value="$RC" ;;
+        key)
+          value="$(awk '$1 == "lanes:" { $1 = ""; sub(/^ +/, ""); gsub(/ +/, ","); print; exit }' "$RUN/err")"
+          value="${value:-none}"
+          ;;
+        cr.*)
+          value="$(awk -v l="${name#cr.}" '$1 == l' <<<"$OUT" | grep -oE '[0-9.]+k? cr' | tr ' ' '_')"
+          value="${value:-none}"
+          ;;
+        *) value="$(jq -r ".$name" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE)" ;;
+      esac
+      got="$got $name=$value"
+    done
+    assert_eq "${got# }" "$expect" "$label" "$RUN/err"
+  done
+}
+
+PICK='pick --harness codex --json'
+
+echo "=== the chooser ranks credits after plan room ==="
+table \
+  "a credit-backed account ranks after an account with plan room, whatever their scores|$(dirs codex 1codex)|$PICK|rc=0 config_dir=$H/.1codex binding_bucket=weekly" \
+  "with no plan room anywhere, the credit-backed account is picked on its credits|$(dirs codex)|$PICK|rc=0 config_dir=$H/.codex binding_bucket=credits credits.balance=62300" \
+  "among credit-backed accounts the larger balance is picked|$(dirs codex 2codex)|$PICK|rc=0 config_dir=$H/.2codex binding_bucket=credits" \
+  "the plan-room order among accounts with plan room is unchanged|$(dirs codex 1codex 8codex)|$PICK|rc=0 config_dir=$H/.8codex binding_bucket=weekly"
+
+echo "=== the floor and the reading's own flags ==="
+table \
+  "a balance at the floor is refused|$(dirs 3codex)|$PICK|rc=3 walled=1 unmeasured=0" \
+  "a balance under the floor is refused|$(dirs 4codex)|$PICK|rc=3 walled=1 unmeasured=0" \
+  "a spent account whose reading says it has no credits is refused|$(dirs 5codex)|$PICK|rc=3 walled=1" \
+  "a spent account at its overage limit is refused|$(dirs 6codex)|$PICK|rc=3 walled=1" \
+  "a balance that does not parse is no reading and is refused|$(dirs 7codex)|$PICK|rc=3 walled=1" \
+  "the floor setting is read: above the balance it refuses the account|$(dirs codex);ORCH_LANE_CODEX_CREDIT_FLOOR=70000|$PICK|rc=3 walled=1"
+
+echo "=== pick --lane and list give the chooser's verdict ==="
+table \
+  "a named credit-backed account has room on its credits|$(dirs codex)|pick --lane $H/.codex --harness codex --json|rc=0 binding_bucket=credits credits.balance=62300 key=none" \
+  "under --projected the named account is judged on the chooser's rule|$(dirs codex)|pick --lane $H/.codex --harness codex --projected --json|rc=0 binding_bucket=credits" \
+  "a named account at the floor is refused, its line naming the balance and the floor|$(dirs 3codex)|pick --lane $H/.3codex --harness codex --json|rc=3 binding_bucket=weekly key=pick-lane-walled,lane=$H/.3codex,wall=100,bucket=weekly,max-pct=95,projected-headroom=0,credits=5000,credit-floor=5000" \
+  "a named account whose balance did not parse names none|$(dirs 7codex)|pick --lane $H/.7codex --harness codex --json|rc=3 key=pick-lane-walled,lane=$H/.7codex,wall=100,bucket=weekly,max-pct=95,projected-headroom=0,credits=none,credit-floor=5000" \
+  "the listing record carries the credits bucket and the room verdict|$(dirs codex 3codex)|list --harness codex --json|rc=0 [0].alias=codex [0].verdict=room [0].binding_bucket=credits [0].credits.balance=62300 [0].headroom_pct=0 [1].alias=3codex [1].verdict=walled [1].binding_bucket=weekly" \
+  "the listing gives the chooser's verdict and prints the balance as the account's room|$(dirs codex 1codex)|list --harness codex|rc=0 cr.codex=62.3k_cr cr.1codex=none"
+
+echo "=== controls ==="
+# Without the leading rank key the balance outranks every plan-room score.
+CTRL="$(mutant_scripts mutant-credit-rank lib/lane-model.sh)" || exit 1
+mutate_file "$CTRL/lib/lane-model.sh" 'sort_by([(.binding_bucket == "credits"), credit_rank])' 'sort_by([credit_rank])'
+LANES_UNDER_TEST="$CTRL/lanes" table \
+  "control: without the leading rank key the credit-backed account is picked over plan room|$(dirs codex 1codex)|$PICK|rc=0 config_dir=$H/.codex binding_bucket=credits"
+
+# One control per rule credit_room holds.
+CTRL="$(mutant_scripts mutant-credit-floor lib/lane-model.sh)" || exit 1
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+mutate_file "$CTRL/lib/lane-model.sh" '.credits.balance > $credit_floor' '.credits.balance >= $credit_floor'
+LANES_UNDER_TEST="$CTRL/lanes" table "control: a floor met rather than passed admits the account|$(dirs 3codex)|$PICK|rc=0 binding_bucket=credits"
+CTRL="$(mutant_scripts mutant-credit-has lib/lane-model.sh)" || exit 1
+mutate_file "$CTRL/lib/lane-model.sh" '.credits.has_credits == true' 'true'
+LANES_UNDER_TEST="$CTRL/lanes" table "control: unread has_credits admits the account|$(dirs 5codex)|$PICK|rc=0 binding_bucket=credits"
+CTRL="$(mutant_scripts mutant-credit-overage lib/lane-model.sh)" || exit 1
+mutate_file "$CTRL/lib/lane-model.sh" '.credits.overage_limit_reached == false' 'true'
+LANES_UNDER_TEST="$CTRL/lanes" table "control: unread overage_limit_reached admits the account|$(dirs 6codex)|$PICK|rc=0 binding_bucket=credits"
+
+# The record's credits come from parse_codex_usage alone.
+CTRL="$(mutant_scripts mutant-credit-parse lanes)" || exit 1
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+mutate_file "$CTRL/lanes" 'credits:        $credits,' 'credits:        null,'
+LANES_UNDER_TEST="$CTRL/lanes" table "control: a reading carrying no credits walls the lone account|$(dirs codex)|$PICK|rc=3 walled=1"
+
+# The setting is read, not a constant.
+CTRL="$(mutant_scripts mutant-credit-setting lanes)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$CTRL/lanes" 'CREDIT_FLOOR="${ORCH_LANE_CODEX_CREDIT_FLOOR:-5000}"' 'CREDIT_FLOOR=5000'
+LANES_UNDER_TEST="$CTRL/lanes" table "control: a floor read from no setting admits the account the setting refuses|$(dirs codex);ORCH_LANE_CODEX_CREDIT_FLOOR=70000|$PICK|rc=0"
+
+# The setting refusal rows in lanes-settings-refusal.sh, reached through the
+# validation they hold.
+CTRL="$(mutant_scripts mutant-credit-setting-shape lanes)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$CTRL/lanes" 'die invalid-lane-codex-credit-floor "$CREDIT_FLOOR"' 'CREDIT_FLOOR=0'
+LANES_UNDER_TEST="$CTRL/lanes" table "control: a floor nobody can read falls back to a number and the pick goes ahead|$(dirs codex);ORCH_LANE_CODEX_CREDIT_FLOOR=many|$PICK|rc=0"
+
+# The named refusal names the balance only through its own message arm.
+CTRL="$(mutant_scripts mutant-credit-walled-line lanes)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$CTRL/lanes" '[[ -z "${6:-}" ]] || printf' '[[ -n "${6:-}" ]] || printf'
+LANES_UNDER_TEST="$CTRL/lanes" table "control: without its credit fields the refusal names no balance|$(dirs 3codex)|pick --lane $H/.3codex --harness codex --json|rc=3 key=pick-lane-walled,lane=$H/.3codex,wall=100,bucket=weekly,max-pct=95,projected-headroom=0"
+
+# The table prints the balance only through its credits arm.
+CTRL="$(mutant_scripts mutant-credit-table lanes)" || exit 1
+mutate_file "$CTRL/lanes" '(if .binding_bucket == "credits"' '(if false'
+LANES_UNDER_TEST="$CTRL/lanes" table "control: without the credits arm the table prints no balance|$(dirs codex 1codex)|list --harness codex|rc=0 cr.codex=none cr.1codex=none"
+
+echo
+printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+[[ "$FAIL" -eq 0 ]]

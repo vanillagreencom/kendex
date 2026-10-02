@@ -107,7 +107,12 @@
 #         scores 120; 90% resetting in 9 hours scores 99. Equal room favors the
 #         sooner reset. The bonus is at most twofold, so 11% cannot beat 100%
 #         on reset time alone. Equal scores favor fewer live claims, then more
-#         projected room. A lane is
+#         projected room. A Codex account at or above --max-pct is `room` on
+#         its credits (`list` too: binding_bucket `credits`, HEADROOM its
+#         balance) while `credits.balance` exceeds the credit floor below,
+#         `has_credits` is true and `overage_limit_reached` false. It ranks
+#         after every account with plan room, since credits do not reset;
+#         the larger balance first. A lane is
 #         judged on its PROJECTED wall: the reading plus, for each live claim
 #         on it, the burn one lane is expected to spend in the next hour.
 #         Account-wide rates use claims at sample time (at least one) as the
@@ -121,7 +126,7 @@
 #         fleet state that cannot be read refuses the pick with exit 1.
 #         --for-overseer keeps the seats, for a pick that seats an overseer.
 #         --json prints that lane's whole record, which carries headroom_pct,
-#         binding_bucket (session, weekly, model or monthly), the matching
+#         binding_bucket (session, weekly, model, monthly or credits), the matching
 #         binding_resets_at, claims, burn_pct_per_lane_hour,
 #         projected_headroom_pct, selection_score, and qualifying_count from that same
 #         judgement. With
@@ -447,6 +452,10 @@
 #                      model-scoped, is charged 5/168 of it and a monthly
 #                      Copilot pool 5/720 (default 5; 0 charges nothing). Refused, before any lane is measured,
 #                      when it is not an integer 0-100.
+#   ORCH_LANE_CODEX_CREDIT_FLOOR  Credits, never a percentage, a Codex
+#                      account past the threshold must exceed (default 5000,
+#                      provisional; see `pick`). Refused, before any lane is
+#                      measured, when it is not a whole number 0 or more.
 #   ORCH_LANES_USAGE_TTL  Seconds a cached usage figure is reused (default 300;
 #                      0 fetches every run). Keep it at least the longest watch
 #                      interval on the host — `oversee-watch --interval`
@@ -729,7 +738,9 @@ message() {
       printf '%s\n' "$1 must be an integer 0-100"
       ;;
     pick-lane-walled)
-      printf 'lanes: pick-lane-walled lane=%s wall=%s bucket=%s max-pct=%s projected-headroom=%s\n' "$1" "$2" "$3" "$4" "$5"
+      printf 'lanes: pick-lane-walled lane=%s wall=%s bucket=%s max-pct=%s projected-headroom=%s' "$1" "$2" "$3" "$4" "$5"
+      [[ -z "${6:-}" ]] || printf ' credits=%s credit-floor=%s' "$6" "$7"
+      printf '\n'
       printf '%s\n' "that account's window for this model is at or above the threshold, under --projected once the lanes already on it are charged their expected burn; launching it would open on a usage banner"
       ;;
     pick-lane-unmeasured)
@@ -856,6 +867,7 @@ message() {
     invalid-handoff-headroom) printf 'lanes: invalid-handoff-headroom value=%s\nORCH_HANDOFF_HEADROOM_PCT must be an integer 0-100\n' "$1" ;;
     invalid-lane-max-pct) printf 'lanes: invalid-lane-max-pct value=%s\nORCH_LANE_MAX_PCT must be an integer 0-100\n' "$1" ;;
     invalid-lane-burn) printf 'lanes: invalid-lane-burn value=%s\nORCH_LANE_BURN_PCT_PER_HOUR must be an integer 0-100\n' "$1" ;;
+    invalid-lane-codex-credit-floor) printf 'lanes: invalid-lane-codex-credit-floor value=%s\nORCH_LANE_CODEX_CREDIT_FLOOR must be an integer 0 or more\n' "$1" ;;
     pick-overseer-seats)
       printf 'lanes: pick-overseer-seats step=%s state=%s\n' "$1" "$2"
       printf '%s\n' "the fleet state naming an overseer's account could not be read at that step; refusing to pick rather than hand a lane the seat an overseer runs on (fix the fleet state, or pass --for-overseer for an overseer's own pick)"
@@ -1285,10 +1297,21 @@ parse_claude_usage() {
 # reports its 7-day limit as the *primary* window with a null secondary, and
 # routing by position then labels a 7-day window "5h" and invents a 0% weekly.
 # Route each window by its own limit_window_seconds instead.
+# `credits` is the balance spent past the plan windows; a balance or flag
+# that does not parse is null, which credit_room never reads as room.
 parse_codex_usage() {
 	local session_window="$1"
 	jq -c --argjson sw "$session_window" '
 		def pct($p): (($p | numbers) // 0) | floor | (if (. > 1e12 or . < 0) then 0 else . end);
+		def flag: if type == "boolean" then . else null end;
+		def credits:
+			if type != "object" then null
+			else {unit: "credits", unlimited: (.unlimited | flag), has_credits: (.has_credits | flag),
+			      overage_limit_reached: (.overage_limit_reached | flag),
+			      balance: (.balance | if type == "number" then .
+			                           elif type == "string" then (try tonumber catch null)
+			                           else null end)}
+			end;
 		# The reset is rendered as an ISO timestamp here; emit_lane gives it,
 		# and every other reset, the one spelling utc_resets in
 		# lib/lane-model.sh names, so no reader has to know which harness
@@ -1298,8 +1321,9 @@ parse_codex_usage() {
 			resets_at: (($w.reset_at | numbers | todate?) // null),
 			window_s: ((($w.limit_window_seconds | numbers) // 0) | floor)
 		};
-		[ (.rate_limit.primary_window   // null),
-		  (.rate_limit.secondary_window // null) ]
+		(.credits | credits) as $credits
+		| [ (.rate_limit.primary_window   // null),
+		    (.rate_limit.secondary_window // null) ]
 		| map(select(. != null) | win(.))
 		# Within 50% of the 5h window counts as the session bucket; anything
 		# materially longer (daily, weekly, monthly) is the long window.
@@ -1310,6 +1334,7 @@ parse_codex_usage() {
 		    weekly_pct:     (if $w then $w.pct else null end),
 		    model_pct:      null,
 		    model_label:    null,
+		    credits:        $credits,
 		    resets: {
 		      session: (if $s then $s.resets_at else null end),
 		      weekly:  (if $w then $w.resets_at else null end),
@@ -2805,7 +2830,10 @@ render_table() {
 		(["LANE","HARNESS","THROUGH","STATUS","PLAN","5H","WEEK","MODEL","MONTH","HEADROOM","CLAIMS","AGE","DETAIL"] | @tsv),
 		(.[] | [ .alias, .harness, (.measured_through // "local"), .status, (.plan // "-"),
 		         num(.session_5h_pct), num(.weekly_pct), num(.model_pct), num(.monthly_pct),
-		         (if .headroom_pct == null then "-" else (.headroom_pct | tostring) + "%" end),
+		         (if .binding_bucket == "credits"
+		          then (.credits.balance | if . >= 1000 then (((. / 100) | floor) / 10 | tostring) + "k cr"
+		                                   else (floor | tostring) + " cr" end)
+		          elif .headroom_pct == null then "-" else (.headroom_pct | tostring) + "%" end),
 		         (if .claims == null then "?" else .claims end),
 		         (if .usage_age_s == null then "-" else (.usage_age_s | tostring) + "s" end),
 		         (.detail // "-")
@@ -2913,8 +2941,8 @@ copilot_pool_records_fix() { # RECORDS
 }
 
 cmd_pick_lane() {
-	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5" binding_floor="$6" burn="$7" projected_verdict="$8"
-	local target found="" d record="" wall bucket verdict hosted projected
+	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5" binding_floor="$6" burn="$7" projected_verdict="$8" credit_floor="$9"
+	local target found="" d record="" wall bucket verdict hosted projected credits
 	# A malformed override refuses this form as it refuses the chooser, before a
 	# provider row could stand in for an entry nobody can parse.
 	if [[ "$harness" == pi ]]; then copilot_pool_entries >/dev/null || return 1; fi
@@ -2969,9 +2997,6 @@ cmd_pick_lane() {
 		return 4
 	fi
 	[[ -n "$record" ]] || record="$(measure_lane "$harness" "$found")" || { message pick-lane-failed "$dir" measure >&2; return 1; }
-	record="$(jq -c --arg model "$model" --argjson floor "$binding_floor" --argjson burn "$burn" "$LANE_MODEL_JQ"'
-		with_lane_binding($model; $floor) | with_lane_projection($burn)
-	' <<<"$record")" || { message pick-lane-failed "$dir" wall >&2; return 1; }
 	# The classifier is lib/lane-model.sh's, shared with the fleet chooser: one
 	# definition of room, walled and unmeasured, so this form cannot answer a
 	# question the chooser answers differently. The reading by default, which
@@ -2979,10 +3004,13 @@ cmd_pick_lane() {
 	# lane's own claim is among the ones charged, so a projection would send
 	# every lane on a busy account to hand off with room left. --projected is
 	# the launch question, the chooser's own wall.
-	verdict="$(jq -r --argjson max "$max_pct" --argjson projected "$projected_verdict" "$LANE_MODEL_JQ"'
-		(if $projected then judged_wall else .wall end) | wall_verdict($max)
-	' <<<"$record")" || { message pick-lane-failed "$dir" verdict >&2; return 1; }
-	record="$(jq -c "$LANE_MODEL_JQ"' lane_public' <<<"$record")" || return 1
+	record="$(jq -c --arg model "$model" --argjson floor "$binding_floor" --argjson burn "$burn" \
+		--argjson max "$max_pct" --argjson projected "$projected_verdict" --argjson credit_floor "$credit_floor" "$LANE_MODEL_JQ"'
+		with_lane_binding($model; $floor) | with_lane_projection($burn)
+		| with_lane_verdict((if $projected then judged_wall else .wall end); $max; $credit_floor)
+	' <<<"$record")" || { message pick-lane-failed "$dir" wall >&2; return 1; }
+	verdict="$(jq -r '.verdict' <<<"$record")" || { message pick-lane-failed "$dir" verdict >&2; return 1; }
+	record="$(jq -c "$LANE_MODEL_JQ"' del(.verdict) | lane_public' <<<"$record")" || return 1
 	case "$verdict" in
 		room)
 			if [[ "$as_json" == "true" ]]; then printf '%s\n' "$record"; return 0; fi
@@ -3006,7 +3034,12 @@ cmd_pick_lane() {
 				message pick-lane-failed "$dir" projection >&2
 				return 1
 			}
-			message pick-lane-walled "$dir" "$wall" "$bucket" "$max_pct" "$projected" >&2
+			# A Codex credit reading names its balance, `none` if unparsed.
+			credits="$(jq -r 'if .harness == "codex" and .credits != null then (.credits.balance // "none") else "" end' <<<"$record")" || {
+				message pick-lane-failed "$dir" credits >&2
+				return 1
+			}
+			message pick-lane-walled "$dir" "$wall" "$bucket" "$max_pct" "$projected" "$credits" "$credit_floor" >&2
 			# Under --json only, as on exit 0: the plain form speaks env prefixes
 			# and keyed lines, and its refusal detail is the wall= field above.
 			[[ "$as_json" != "true" ]] || printf '%s\n' "$record"
@@ -3088,7 +3121,7 @@ omitted_seats() { # HARNESS HOSTED
 }
 
 cmd_pick() {
-	local harness="$1" max_pct="$2" as_json="$3" model="$4" binding_floor="$5" exclude="$6" for_overseer="$7" burn="$8"
+	local harness="$1" max_pct="$2" as_json="$3" model="$4" binding_floor="$5" exclude="$6" for_overseer="$7" burn="$8" credit_floor="$9"
 	local lanes hosted judged chosen walled unmeasured omitted="" seats=0 seat
 	# A Pi account on the Copilot pool is a Pi root the provider reports a
 	# harness=pi row for or the override names. The override is refused here
@@ -3124,7 +3157,7 @@ cmd_pick() {
 		return 5
 	fi
 	lanes="$(collect_lanes "$harness" "$exclude"$'\n'"$SEATS" "$hosted" "$model")"
-	judged="$(lane_select "$model" "$binding_floor" "$burn" "$max_pct" <<<"$lanes")" || return 1
+	judged="$(lane_select "$model" "$binding_floor" "$burn" "$max_pct" "$credit_floor" <<<"$lanes")" || return 1
 	chosen="$(jq -c '.chosen' <<<"$judged" 2>/dev/null || true)"
 	if [[ -z "$chosen" || "$chosen" == "null" ]]; then
 		walled="$(jq -r '.walled // 0' <<<"$judged" 2>/dev/null || true)"
@@ -3296,6 +3329,10 @@ parse_argv() {
 	BURN_PCT="${ORCH_LANE_BURN_PCT_PER_HOUR:-5}"
 	pct_valid "$BURN_PCT" || die invalid-lane-burn "$BURN_PCT"
 	BURN_PCT=$((10#$BURN_PCT))
+	# Read and refused on the terms MAX_PCT is.
+	CREDIT_FLOOR="${ORCH_LANE_CODEX_CREDIT_FLOOR:-5000}"
+	[[ "$CREDIT_FLOOR" =~ ^[0-9]+$ ]] || die invalid-lane-codex-credit-floor "$CREDIT_FLOOR"
+	CREDIT_FLOOR=$((10#$CREDIT_FLOOR))
 
 	# Refused rather than dropped: an interval nobody can read would silently
 	# leave this caller on the TTL alone, which is the fetch-every-pass burst
@@ -3502,8 +3539,8 @@ case "$SUB" in
 		# The verdict is the reading's: `walled` tells oversee-watch the wall is
 		# reached and lifts at binding_resets_at, which a projection does not
 		# say. The projection rides beside it for a reader weighing the claims.
-		out="$(jq -c --argjson max "$MAX_PCT" --argjson burn "$BURN_PCT" "$LANE_MODEL_JQ"'
-			map(with_lane_projection($burn) | . + {verdict: (.wall | wall_verdict($max))} | lane_public)' <<<"$out")"
+		out="$(jq -c --argjson max "$MAX_PCT" --argjson burn "$BURN_PCT" --argjson credit_floor "$CREDIT_FLOOR" "$LANE_MODEL_JQ"'
+			map(with_lane_projection($burn) | with_lane_verdict(.wall; $max; $credit_floor) | lane_public)' <<<"$out")"
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else render_table <<<"$out"; fi
 		;;
 	host-accounts)
@@ -3551,10 +3588,10 @@ case "$SUB" in
 		if [[ -n "$LANE_ARG" ]]; then
 			[[ -z "$EXCLUDE_LANE" ]] || die unknown-option --exclude-lane
 			[[ "$FOR_OVERSEER" != true ]] || die unknown-option --for-overseer
-			cmd_pick_lane "$LANE_ARG" "$PICK_HARNESS" "$MAX_PCT" "$MODEL" "$AS_JSON" "$BINDING_FLOOR" "$BURN_PCT" "$PROJECTED"
+			cmd_pick_lane "$LANE_ARG" "$PICK_HARNESS" "$MAX_PCT" "$MODEL" "$AS_JSON" "$BINDING_FLOOR" "$BURN_PCT" "$PROJECTED" "$CREDIT_FLOOR"
 		else
 			[[ "$PROJECTED" != true ]] || die unknown-option --projected
-			cmd_pick "$PICK_HARNESS" "$MAX_PCT" "$AS_JSON" "$MODEL" "$BINDING_FLOOR" "$EXCLUDE_LANE" "$FOR_OVERSEER" "$BURN_PCT"
+			cmd_pick "$PICK_HARNESS" "$MAX_PCT" "$AS_JSON" "$MODEL" "$BINDING_FLOOR" "$EXCLUDE_LANE" "$FOR_OVERSEER" "$BURN_PCT" "$CREDIT_FLOOR"
 		fi
 		;;
 	check)
@@ -3693,7 +3730,9 @@ case "$SUB" in
 			usage="$(jq -c --argjson i "$usage_i" --arg d "$usage_key" '.[$i].config_dir=$d' <<<"$usage")"
 			usage_i=$((usage_i + 1))
 		done
-		out="$(jq -nc --argjson c "$out" --argjson u "$usage" --argjson t "$HANDOFF_HEADROOM_PCT" '$c|map(. as $x|((($u|map(select(.config_dir==$x.config_dir))|first)//{}) as $l|($l.headroom_pct//null) as $h|.+{headroom_pct:$h,binding_resets_at:($l.binding_resets_at//null),handoff_required:(($h!=null and $h<=$t) or $x.context_handoff_due==true)}))')"
+		# The handoff mark is the verdict a lane's own hook asks `pick --lane` for.
+		out="$(jq -nc --argjson c "$out" --argjson u "$usage" --argjson max "$((100 - 10#$HANDOFF_HEADROOM_PCT))" \
+			--argjson credit_floor "$CREDIT_FLOOR" "$LANE_MODEL_JQ"'($u|map(with_lane_verdict(.wall; $max; $credit_floor))) as $u|$c|map(. as $x|((($u|map(select(.config_dir==$x.config_dir))|first)//{}) as $l|.+{headroom_pct:($l.headroom_pct//null),binding_bucket:($l.binding_bucket//null),binding_resets_at:($l.binding_resets_at//null),handoff_required:($l.verdict=="walled" or $x.context_handoff_due==true)}))')"
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else lane_context_render <<<"$out"; fi
 		;;
 	*) die unknown-subcommand "$@" ;;

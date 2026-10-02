@@ -207,6 +207,15 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # off.
 # ORCH_LANE_BURN_PCT_PER_HOUR = "5"
 
+# The credits a Codex account past ORCH_LANE_MAX_PCT must hold more than to
+# stay offered on its credit balance. Such an account is offered only after
+# every account with plan allowance left, because the allowance resets and
+# credits do not. 5000 is provisional, about a twelfth of the lowest balance
+# seen, 59.3k: one measured lane-day of spend replaces it, the balance
+# difference between two reads on an account running one lane, times 24 over
+# the hours between the reads.
+# ORCH_LANE_CODEX_CREDIT_FLOOR = "5000"
+
 # The allowance left on an account at which a running lane is marked for
 # handover. The overseer asks a marked lane to hand over at its next safe
 # point.

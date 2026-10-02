@@ -305,15 +305,47 @@ def wall_verdict($max):
   else "walled"
   end;
 
+# credit_room($credit_floor) over one lane record: true where a Codex account
+# holds a credit balance OpenAI spends once the included plan windows are
+# reached, so a window wall does not stop its launch. The balance must sit
+# strictly above the floor, with has_credits true and overage_limit_reached
+# false; any of the three missing or unparsed is no credit room, never room.
+def credit_room($credit_floor):
+  .harness == "codex"
+  and .credits.has_credits == true and .credits.overage_limit_reached == false
+  and (.credits.balance | type) == "number" and .credits.balance > $credit_floor;
+
+# with_lane_verdict($wall; $max; $credit_floor) over one record: the record
+# with `verdict`, the wall_verdict of $wall, which every judge of an account
+# reads, so the chooser, `pick --lane` and the listing know one rule. A walled
+# Codex account with credit_room is `room` on its credits, and its
+# binding_bucket becomes `credits`, which is how the chooser ranks it after
+# every account with plan room and how each display names it. Applied after
+# with_lane_projection, which charges burn by the window bucket.
+def with_lane_verdict($wall; $max; $credit_floor):
+  ($wall | wall_verdict($max)) as $v
+  | if $v == "walled" and credit_room($credit_floor)
+    then . + {verdict: "room", binding_bucket: "credits"}
+    else . + {verdict: $v} end;
+
 # Partition on the same verdict the named pick reads. Score only orders room
 # lanes; it cannot buy a launch past the projected wall. The counts preserve
 # the distinction between an allowance spent and one never measured.
-def lane_selection($model; $floor; $burn; $now; $max):
+#
+# Plan allowance resets and credits do not, so a second, stable sort puts
+# every account with plan room, in the order its score gave it, before any
+# account on credits; credit_rank orders those, the larger balance and then
+# fewer claims first.
+def credit_rank:
+  if .binding_bucket == "credits" then [(0 - .credits.balance), .claims] else [0, 0] end;
+
+def lane_selection($model; $floor; $burn; $now; $max; $credit_floor):
   [ .[] | with_lane_binding($model; $floor) | with_lane_projection($burn)
     | with_lane_selection_score($now)
-    | . + {verdict: (judged_wall | wall_verdict($max))} ]
+    | with_lane_verdict(judged_wall; $max; $credit_floor) ]
   | { chosen: ([ .[] | select(.verdict == "room") ]
-                | sort_by([(0 - .selection_score), .claims, (0 - .projected_headroom_pct), .wall]) | first
+                | sort_by([(0 - .selection_score), .claims, (0 - .projected_headroom_pct), .wall])
+                | sort_by([(.binding_bucket == "credits"), credit_rank]) | first
                 | if . == null then null
                   else . + {effective_headroom_pct: (if .wall == null then null else 100 - .wall end)}
                   | del(.wall, .verdict) | lane_public end),
@@ -324,12 +356,12 @@ def lane_selection($model; $floor; $burn; $now; $max):
 '
 
 # Read lane records on stdin and judge all their reset bonuses at one instant.
-lane_select() { # MODEL BINDING_FLOOR BURN MAX_PCT
+lane_select() { # MODEL BINDING_FLOOR BURN MAX_PCT CREDIT_FLOOR
   local now
   now="$(date +%s)" || return 1
   jq -c --arg model "$1" --argjson floor "$2" --argjson burn "$3" \
-    --argjson max "$4" --argjson now "$now" "$LANE_MODEL_JQ"'
-    lane_selection($model; $floor; $burn; $now; $max)'
+    --argjson max "$4" --argjson credit_floor "$5" --argjson now "$now" "$LANE_MODEL_JQ"'
+    lane_selection($model; $floor; $burn; $now; $max; $credit_floor)'
 }
 
 # Consult DIR for an unreachable host or a measured Claude row missing MODEL.
