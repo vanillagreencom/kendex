@@ -10,7 +10,7 @@
 
 **Approval**: owner note 1790967939 directs the design and this record. No `authority.md` exists. The build waits for the owner's approval of [the design](../plans/lane-host-kinds.md).
 
-**Applies to**: `skills/orch/schemas/lane-host.md`, `skills/orch/scripts/lane-host`, `skills/orch/scripts/open-terminal`, `skills/orch/scripts/oversee-watch`, `skills/orch/scripts/lane-mail`, `skills/orch/scripts/lane-close`, `skills/orch/scripts/lanes`, `skills/orch/scripts/lib/lane-model.sh`
+**Applies to**: `skills/orch/schemas/lane-host.md`, `skills/orch/scripts/lane-host`, `skills/orch/scripts/open-terminal`, `skills/orch/scripts/oversee-watch`, `skills/orch/scripts/lane-mail`, `skills/orch/scripts/lane-close`, `skills/orch/scripts/lanes`, `skills/orch/scripts/lib/lane-model.sh`, `skills/orch/scripts/lib/lane-usage.sh`, `skills/orch/scripts/lib/lane-launch.sh`, `skills/orch/references/skill-rules.md`, `skills/orch/references/oversee-lanes.md`
 
 **Context**: Lanes run in local tmux, on SSH hosts (static and Daytona) and in managed agent clouds (Claude Code cloud, Codex cloud). The provider protocol needs an SSH target, a worktree path and file verbs, and a managed cloud offers none of them. vgs and vsys start Claude cloud sessions by hand, which no lane record, `lanes pick` or `oversee-watch` sees. Claude cloud credit on 11 accounts expires at 2026-11-05T07:59Z, and on 2claude at its lapse on 2026-10-08.
 
@@ -18,7 +18,7 @@
 
 1. Each place a lane runs is a host kind: `local`, `ssh`, `claude-cloud` or `codex-cloud`. A managed cloud is a kind, not a lane-host provider.
 2. A kind declares its capabilities in one `lane-host capabilities` line: `launch`, `channel`, `files`, `status`, `stop`, `relaunch`, `park`, `accounts`, `pool` and `land`, each from a closed set of values. The dispatcher answers for the kinds kendex owns. A provider answers for an `ssh` kind.
-3. Every caller acts on a declared capability, never on a host or provider name. The declaration replaces absent-verb probing.
+3. Every caller acts on a declared capability, never on a host or provider name. The declaration replaces absent-verb probing. The `park` and `accounts` probes go when fleet's Daytona provider declares its line.
 4. `open-terminal` stays the only launcher, the fleet lane record the only record, and `lanes pick` the only account pick.
 5. Expires-first: `lanes pick` spends the allowance that expires first. A grant that expires and does not refill (tier 0, earliest expiry first) comes before a refilling window (tier 1, ordered by `selection_score`), and a refilling window comes before a balance with no expiry (tier 2). The rule is stated once, in `lanes --help` § pick, and judged once, in the sort key of `lane_selection`. Its authority is owner note 1790967939 and this record.
 

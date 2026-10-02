@@ -9,7 +9,7 @@ Every place an orch lane runs becomes a host kind. A kind declares its capabilit
 | Kind | Where the lane runs | Launch | What it offers | Source |
 |---|---|---|---|---|
 | `local` | A tmux window on this machine | `open-terminal` opens the window and types the start command | A mailbox file, the worktree on this disk, pane and process status, a window kill, a native resume | `skills/orch/scripts/open-terminal` (`open_tmux`, `start_cmd`) |
-| `ssh`, static | A machine in the `lane-host-ssh` inventory | `lane-host create`, then an SSH session in a tmux window | Every verb of `schemas/lane-host.md` § Provider protocol except `accounts` and the `stop-sandbox` and `start` pair | `skills/orch/schemas/lane-host.md` § Static SSH implementation |
+| `ssh`, static | A machine in the `lane-host-ssh` inventory | `lane-host create`, then an SSH session in a tmux window | Every verb of `schemas/lane-host.md` § Provider protocol except `accounts`, `wait` and the `stop-sandbox` and `start` pair. Its `create` completes before it returns. `wait` applies only where `create` returns `state=preparing` | `skills/orch/schemas/lane-host.md` § Static SSH implementation |
 | `ssh`, Daytona | A fleet Daytona sandbox | The same route, through `bin/lane-host-daytona` | The same verbs plus `accounts` and the `stop-sandbox` and `start` pair (park) | KEN-2494 (`lane-host-daytona accounts`); [research § Daytona compute and Copilot pool room](claude-cloud-launch-research.md#daytona-compute-and-copilot-pool-room) |
 | `claude-cloud` | An Anthropic-hosted Claude Code cloud session | `claude --cloud "task"` from a checkout | A clone of the checkout's GitHub remote at its current branch, a push through the GitHub proxy, a queued follow-up through `claude -p "msg" --cloud <session-id>`. No SSH, no file access, no stop verb | [claude-code-on-the-web § From terminal to cloud](https://code.claude.com/docs/en/claude-code-on-the-web#from-terminal-to-cloud); [research § Fit with orch](claude-cloud-launch-research.md#fit-with-orch) |
 | `codex-cloud` | An OpenAI-managed Codex cloud task | `codex cloud exec --env ENV_ID [--branch BRANCH] QUERY` | Task status through `codex cloud list --json`, the result as `diff` and `apply`. No follow-up into a task, no pull request from the CLI | [research § Codex cloud tasks](claude-cloud-launch-research.md#codex-cloud-tasks) |
@@ -31,8 +31,8 @@ A managed cloud is a kind, not a lane-host provider. The provider protocol needs
 | `status` | `pane`, `verb`, `task`, `none` | `oversee-watch` lane judgement |
 | `stop` | `window`, `verb`, `none` | `lane-close` |
 | `relaunch` | `resume`, `fresh` | `open-terminal --relaunch` |
-| `park` | `verb`, `none` | `lane-close --park` |
-| `accounts` | `verb`, `none` | `lanes` (`host_account_rows`) |
+| `park` | `verb`, `none` | `lane-close --park`, from FLT item 2 (§ [Absent-verb probing](#absent-verb-probing-ken-1553)) |
+| `accounts` | `verb`, `none` | `lanes` `host_accounts_answer`, whose rows `host_account_rows` parses, from FLT item 2 |
 | `pool` | `plan`, `cloud-credit` | `lanes pick` (§ [One account and room pick](#one-account-and-room-pick)) |
 | `land` | `lane`, `handoff` | The overseer at review convergence (§ [The managed-cloud channel](#the-managed-cloud-channel)) |
 
@@ -56,14 +56,14 @@ A managed cloud is a kind, not a lane-host provider. The provider protocol needs
 
 ### Absent-verb probing (KEN-1553)
 
-The declaration replaces probing. A caller reads the line once per operation and calls only the verbs its capability names. Three probes go: `lane-close --park`'s `stop-sandbox --check` read, `lanes`' exit-2 read of `accounts`, and `oversee-watch`'s pane fallback on `status` exit 2. KEN-1553's optional verbs (`--class`, `walled`) become declared keys when they land, not probed verbs. A declared verb that exits 2 is a provider fault, reported under the caller's host-failure key.
+The declaration replaces probing. A caller reads the line once per operation and calls only the verbs its capability names. Three probes go: `oversee-watch`'s pane fallback on `status` exit 2 in the first build, then `lane-close --park`'s `stop-sandbox --check` read and `lanes`' exit-2 read of `accounts` in `host_accounts_answer` when FLT item 2 merges. KEN-1553's optional verbs (`--class`, `walled`) become declared keys when they land, not probed verbs. A declared verb that exits 2 is a provider fault, reported under the caller's host-failure key.
 
-A provider that does not answer `capabilities` yet exits 2. Until fleet ships FLT item 2, the dispatcher answers the static `ssh` line for it with `park=check`, which sends `lane-close --park` to today's `stop-sandbox --check` read. This compatibility arm serves providers older than the build and goes when FLT item 2 merges.
+A provider that does not answer `capabilities` yet exits 2. Fleet's `bin/lane-host-daytona` is one. For such a provider the dispatcher answers the static `ssh` line. That line says `park=none` and `accounts=none`, which is wrong for Daytona, so no caller reads those two keys until FLT item 2 merges. Until then `lane-close --park` keeps its `stop-sandbox --check` read, and `lanes` `host_accounts_answer` keeps its exit-2 `accounts` read. Daytona's `accounts` rows, the KEN-2494 host rows and the `harness=pi` Copilot pool rows among them, then still reach `lanes`. This compatibility arm and both probes go when FLT item 2 merges.
 
 ### One record, one launcher
 
 - `open-terminal` matches `launch`. `window` and `ssh` are today's arms. `cloud-session` is the new arm in § [The smallest first build](#the-smallest-first-build). `cloud-task` refuses as `kind-unbuilt kind=codex-cloud` until the owner asks for it.
-- The lane record keeps its fields (`open-terminal` `lane_record_write`). A cloud lane records `host` as the kind word, `kind` from the line, `account`, `session_id` as the cloud session id or Codex task id, and no `window`. No new store holds the session id.
+- The lane record gains one field, `kind`, written for every kind, and keeps the rest (`open-terminal` `lane_record_write`). A local lane writes `host` null and `kind` `local`. A cloud lane records `host` as the kind word, `kind` from the line, `account`, `session_id` as the cloud session id or Codex task id, and no `window`. No new store holds the session id.
 - `oversee-watch`, `lane-mail` and `lane-close` read each record's `host` and run `lane-host` under `ORCH_LANE_HOST` set to it. `lane-close` does this today (`close_host`). `oversee-watch` does not: `LANE_ROWS_FILTER` reduces `host` to `local` or `hosted`, and `check_lane_host` holds one `LANE_HOST_SPEC` for the whole fleet. The rows carry the record's `host` instead, so one fleet holds lanes of several kinds.
 - `open-terminal` tests `LANE_HOST` against `local` in 18 places. Each test becomes a match on the capability that the test stands for (§ [What it deletes or folds in](#what-it-deletes-or-folds-in)).
 
@@ -98,7 +98,7 @@ A provider that does not answer `capabilities` yet exits 2. Until fleet ships FL
 
 ### Directives
 
-- `claude-cloud` (`channel=session`): `lane-mail send --directive --state-dir STATE` reads the item's record, as `lane-close` does, and runs `claude -p --cloud <session_id> --output-format json` under the record's account, the text on stdin. `{ok: true}` is delivery. The CLI queues the message and exits ([claude-code-on-the-web § Send follow-ups from the CLI](https://code.claude.com/docs/en/claude-code-on-the-web#send-follow-ups-from-the-cli)). There is no read receipt, so the watch's `directive-read` and `directive-unread` do not apply. `{ok: false}` for an archived session refuses as `session-archived`.
+- `claude-cloud` (`channel=session`): `lane-mail send --directive --state-dir STATE` reads the item's record, as `lane-close` does, and runs `claude -p --cloud <session_id> --output-format json` under the record's account, the text on stdin. `{ok: true}` is delivery. The CLI queues the message and exits ([claude-code-on-the-web § Send follow-ups from the CLI](https://code.claude.com/docs/en/claude-code-on-the-web#send-follow-ups-from-the-cli)). There is no read receipt, so the watch's `directive-read` does not apply. `directive-unread` stays: for a `channel=session` lane it fires when neither the item branch head nor the `## Lane status` body changes within `ORCH_DIRECTIVE_UNREAD_SECS` of a delivered directive, judged from the watch's reads of the pull request. It reports a session that idles on a question, lost its VM or spent its credit. `{ok: false}` for an archived session refuses as `session-archived`.
 - `codex-cloud` (`channel=task`): no CLI verb or API sends into a task ([research § Codex cloud tasks](claude-cloud-launch-research.md#codex-cloud-tasks)). The consequence: a Codex cloud brief is complete at launch, and a review fix is a new `codex cloud exec --branch <item branch>` task with the finding in its query. `lane-mail send --directive` to it refuses as `channel-task`.
 - `--re` and `--halt` to a `session` or `task` channel refuse. Such a lane never asks (§ [The lane-mail rule](#the-lane-mail-rule)), so there is nothing to answer. A halt has no enforcing hook there, so a stop goes to the owner (§ [What a cloud lane cannot do](#what-a-cloud-lane-cannot-do)).
 
@@ -140,9 +140,10 @@ An item whose repository exceeds the cloud VM takes no cloud kind. FLT-551 recor
 ## The permission route
 
 - A cloud session offers Accept edits, Plan and Auto, and no Bypass ([research § Add-repo and push pre-approval](claude-cloud-launch-research.md#add-repo-and-push-pre-approval)). A lane brief written for `--dangerously-skip-permissions` (`LAUNCH_CHOICE_FLAGS` in `skills/orch/scripts/lib/lane-launch.sh`) runs in Auto.
-- The `session` brief names the steps the kind never takes: `linear.sh`, `lane-mail`, `pr-merge`, a background wake, `tools/setup` and git hook arming, and any wait on a person.
+- The `session` brief names the steps the kind never takes: `linear.sh`, `lane-mail`, `pr-merge`, a background wake, and any wait on a person.
+- The repository's `.claude/hooks/pre-commit-check.sh` loads in the cloud session and refuses every commit where the commit-guards hooks are not armed. So the `session` brief runs the repository's documented fresh-clone setup before its first commit: in kendex that is `tools/setup`, which runs commit-guards `install-git-hooks` from the clone and needs no kendex binary. A repository that documents no such setup takes no cloud kind, because nothing would hold its commit rules in a cloud lane.
 - A step that Auto still holds for approval gets an allow rule in the repository's `.claude/settings.json`, which a cloud session loads ([research § Add-repo and push pre-approval](claude-cloud-launch-research.md#add-repo-and-push-pre-approval)). The build adds no rule in advance. The acceptance run lists each approval the session asked for, and each becomes an allow rule or a step the kind never takes.
-- A repository deny rule for `AskUserQuestion` and `EnterPlanMode` is rejected: it binds the owner's own sessions in that repository too. The brief carries the unattended words, and an unanswered question leaves the session idle, which the start-stall check reports.
+- A repository deny rule for `AskUserQuestion` and `EnterPlanMode` is rejected: it binds the owner's own sessions in that repository too. The brief carries the unattended words. An unanswered question leaves the session idle. Before the pull request opens, the start-stall check reports it. After that, `directive-unread` reports it at the next directive (§ [Directives](#directives)). An idle session with no directive outstanding is not reported.
 
 User-level settings do not reach a cloud session ([research § Add-repo and push pre-approval](claude-cloud-launch-research.md#add-repo-and-push-pre-approval)). Their replacements:
 
@@ -156,8 +157,8 @@ User-level settings do not reach a cloud session ([research § Add-repo and push
 ## The GitHub App
 
 - **Coverage.** The owner extended the Claude GitHub App installation on vanillagreencom to kendex, fleet, vgs and vsys and read it back (owner note 1790968643). The overseer token gets HTTP 403 on organization installations, so the record rests on that read-back.
-- **Bundle check.** `claude --cloud` clones only when the App covers the repository, and bundles otherwise ([research § Bundle cause after the App install](claude-cloud-launch-research.md#bundle-cause-after-the-app-install)). The check is the [research acceptance test](claude-cloud-launch-research.md#acceptance-test). Before each launch `open-terminal` refuses `cloud-bundle-risk` when `CCR_FORCE_BUNDLE` is set or the remote is not a github.com URL, the two causes a launcher can read.
-- **Commit identity.** Cloud commits and pull requests land under the GitHub user connected to the Claude account (FLT-551, quoted in KEN-2589). The lanes-app identity rule says a lane pushes and merges under the lanes app's installation token ([D003](https://github.com/vanillagreencom/kendex/blob/main/docs/decisions/D003-one-merge-path.md) § Context; `skills/orch/workflows/merge-pr.md` § 5 step 1, "Who acts"). A cloud lane breaks that rule, so it is `land=handoff`. The connected user's pull request still counts as fleet work, because the outside-contribution check admits `OWNER`, `MEMBER` and `COLLABORATOR` authors (`skills/orch/workflows/oversee.md` § Outside contributions). GitHub's approval rule still holds ([D018](https://github.com/vanillagreencom/kendex/blob/main/docs/decisions/D018-platform-review-requirements.md)).
+- **Bundle check.** `claude --cloud` clones only when the App covers the repository, and bundles otherwise ([research § Bundle cause after the App install](claude-cloud-launch-research.md#bundle-cause-after-the-app-install)). The check is the [research acceptance test](claude-cloud-launch-research.md#acceptance-test). Before each launch `open-terminal` refuses `cloud-bundle-risk` on any of the three causes a launcher can read: `CCR_FORCE_BUNDLE` set in the shell, `CCR_FORCE_BUNDLE=1` in the `env` block of the account's `settings.json` under its `CLAUDE_CONFIG_DIR` or of the repository's `.claude/settings.json`, or a remote that is not a github.com URL.
+- **Commit identity.** Cloud commits and pull requests land under the GitHub user connected to the Claude account (FLT-551, quoted in KEN-2589). The lanes-app identity rule says a lane pushes and merges under the lanes app's installation token ([D003](https://github.com/vanillagreencom/kendex/blob/main/docs/decisions/D003-one-merge-path.md) § Context; `skills/orch/workflows/merge-pr.md` § 5 step 1, "Who acts"). A cloud lane breaks that rule, so it is `land=handoff`. The outside-contribution check admits `OWNER`, `MEMBER` and `COLLABORATOR` authors (`skills/orch/workflows/oversee.md` § Outside contributions). So the connected user's pull request counts as fleet work only if that user is an organization member or a collaborator, and the check reports it as an outside contribution otherwise. Which user each account connected is an [open question](#open-questions). GitHub's approval rule still holds ([D018](https://github.com/vanillagreencom/kendex/blob/main/docs/decisions/D018-platform-review-requirements.md)).
 
 ## One account and room pick
 
@@ -165,7 +166,7 @@ User-level settings do not reach a cloud session ([research § Add-repo and push
 
 | Pool | Reading | Expires or resets |
 |---|---|---|
-| Claude weekly and 5-hour windows | `lanes` `parse_claude_usage` | Refills at each reset |
+| Claude weekly and 5-hour windows | `parse_claude_usage` in `skills/orch/scripts/lib/lane-usage.sh` (KEN-2494) | Refills at each reset |
 | Claude cloud credit | `usage.iguana_necktie`: `limit_dollars`, `used_dollars`, `remaining_dollars`, `resets_at`, `locked_reason` (KEN-2589 correction 3). `parse_claude_usage` ignores it today. | Expires at E below. It does not refill. |
 | Codex windows | `parse_codex_usage` | Refill. Codex cloud tasks share them ([research § Codex cloud tasks](claude-cloud-launch-research.md#codex-cloud-tasks)). |
 | Codex credits | The `credits` object (KEN-2494) | No expiry |
@@ -174,13 +175,15 @@ User-level settings do not reach a cloud session ([research § Add-repo and push
 
 `parse_claude_usage` returns the cloud credit as a `credits` object with `unit: "usd"`. `emit_lane` carries it into the record as it carries the Copilot pool and the KEN-2494 Codex balance.
 
+`usage.iguana_necktie` is no documented interface. The credit's only documented surface is claude.ai Settings > Usage, a web page with no API. `lanes` already depends on `api/oauth/usage` for the plan windows. A body without `iguana_necktie` reads as no tier 0, with the keyed note `lanes: cloud-credit-unread account=NAME`, never a silent drop.
+
 ### The expires-first rule
 
 `lanes pick` spends the allowance that expires first. This rule is stated once, in `lanes --help` § pick, and judged once, in the sort key of `lane_selection` in `skills/orch/scripts/lib/lane-model.sh`. Its authority is owner note 1790967939 and [D020](https://github.com/vanillagreencom/kendex/blob/main/docs/decisions/D020-lane-host-kinds.md). No `authority.md` exists (KEN-2589 correction 6).
 
 Each candidate with room gets a tier from the pool the launch spends first:
 
-- **Tier 0**: a grant that expires and does not refill. The Claude cloud credit is tier 0 when the kind declares `pool=cloud-credit`, `remaining_dollars` is above 0, `locked_reason` is null and E is ahead. Its verdict is `room` whatever the plan windows read: four probe sessions ran on a week at 100 percent ([research § Cost after the plan week](claude-cloud-launch-research.md#cost-after-the-plan-week)).
+- **Tier 0**: a grant that expires and does not refill. The Claude cloud credit is tier 0 when the kind declares `pool=cloud-credit`, `remaining_dollars` is above `ORCH_LANE_CLOUD_CREDIT_FLOOR`, `locked_reason` is null and E is ahead. At or below the floor the account takes its plan-window verdict, so a nearly spent credit does not drop a lane onto a walled week. The floor is in dollars, beside KEN-2494's `ORCH_LANE_CODEX_CREDIT_FLOOR`, and `lanes --help` § pick names it. The acceptance run's `used_dollars` rise for one lane sets its default. Its verdict is `room` whatever the plan windows read: four probe sessions ran on a week at 100 percent ([research § Cost after the plan week](claude-cloud-launch-research.md#cost-after-the-plan-week)).
 - **Tier 1**: a window that refills. This is every account today.
 - **Tier 2**: a balance with no expiry. KEN-2494's credit-backed Codex account is tier 2.
 
@@ -195,17 +198,18 @@ S   = H * (1 + 1 / (1 + T))
 - S is today's `selection_score` (`with_lane_selection_score`). For tier 0, H is `100 * remaining_dollars / limit_dollars` and T is the hours to E. For tier 1, H and T are unchanged. For tier 2, S is the balance, which keeps KEN-2494's larger-balance-first order.
 - `claims`, `projected_headroom_pct` and `wall` are today's keys after S.
 
-KEN-2494's leading key, plan room before credits, is the tier 1 to tier 2 step of this key. The pick extends it and keeps no second copy. Within tier 1 the order is unchanged. When the credit is spent or past E, the account falls to tier 1 on its plan windows, which cloud sessions share ([research § Cost after the plan week](claude-cloud-launch-research.md#cost-after-the-plan-week)).
+The tier key replaces KEN-2494's second `sort_by` pass, `credit_rank` in `lane_selection`, which puts plan room before credits. Its order is the tier 1 to tier 2 step of this key, and the pick keeps no second copy. Within tier 1 the order is unchanged. When the credit is spent or past E, the account falls to tier 1 on its plan windows, which cloud sessions share ([research § Cost after the plan week](claude-cloud-launch-research.md#cost-after-the-plan-week)).
 
-The kind is the overseer's choice per item. `lanes pick` ranks accounts for that kind. `lanes list` shows each account's credit and E, so the overseer sends cloud-fit items to `claude-cloud` while any account holds credit.
+The kind is the overseer's choice per item. `lanes pick` ranks accounts for that kind. `open-terminal --host claude-cloud` runs the pick under `ORCH_LANE_HOST=claude-cloud`, as `pick_auto_lane` and `named_lane_judge` pass the resolved host today. `lanes pick` reads `pool` from `lane-host capabilities` once per pick. `lanes list` shows each account's credit and E, so the overseer sends cloud-fit items to `claude-cloud` while any account holds credit.
 
 ### Effective expiry and its readers
 
-- E is the earlier of `iguana_necktie.resets_at` and, for a subscription that will not renew, its period end.
+- E is the earliest of `iguana_necktie.resets_at`, the period end of a subscription that will not renew, and the account's `ORCH_LANE_RETIRE` date. `lanes` stops picking an account from its retire date, so a later credit or period end cannot sort it ahead of an account whose E comes first.
 - The period end is the next monthly anniversary of `organization.subscription_created_at` after now.
 - The one reader of `subscription_created_at` is `lanes` `measure_lane`. It sends `GET https://api.anthropic.com/api/oauth/profile` with the account's bearer token and reads `.organization.subscription_created_at` ([research § Subscription period end source](claude-cloud-launch-research.md#subscription-period-end-source)). It reads only an account that will not renew, and it caches the answer with the usage body.
+- The profile field is no documented interface. The period end's only documented surface is Anthropic billing, which has no API. A failed profile read or a body without `subscription_created_at` reads as no period end, with the keyed note `lanes: period-end-unread account=NAME`, never a silent drop.
 - The renewal source is `ORCH_LANE_RETIRE`, the owner's lapse list in setting form. A `<name>=<YYYY-MM-DD>` entry says the account is not the fleet's from that date (`skills/orch/scripts/lanes` header). The profile body names no renewal field ([research § Subscription period end source](claude-cloud-launch-research.md#subscription-period-end-source)). An account the setting does not name renews.
-- A failed profile read leaves the retire date standing in for the period end, with the keyed note `lanes: period-end-unread account=NAME`.
+- The first build reads no period end, so its E is the earlier of `resets_at` and the retire date. Where the retire date is the lapse date, as for 2claude, that equals the full rule.
 
 ## What fleet records
 
@@ -222,7 +226,7 @@ A `used_dollars` delta is per account. It is exact for a lane only while that la
 Proposed FLT items. This item files none:
 
 1. The hub lane table gains `host_kind`, `session_ref` and `cost_source` beside `machine_kind`, read from the lane record's `kind`, `session_id` and `account`.
-2. `bin/lane-host-daytona` answers `capabilities` with the Daytona line. kendex then deletes the `park=check` arm.
+2. `bin/lane-host-daytona` answers `capabilities` with the Daytona line. kendex then deletes the compatibility arm and the two probes it keeps (§ [Absent-verb probing](#absent-verb-probing-ken-1553)), and `lane-close --park` and `lanes` match `park` and `accounts`.
 3. Cost per cloud lane: the `used_dollars` delta for `claude-cloud` and the Codex credit delta for `codex-cloud`, read from `lanes list --json`.
 4. If Daytona holds an expiring compute grant, its `accounts` row carries it as a pool with an expiry, and it joins tier 0 with no kendex rule change.
 
@@ -231,27 +235,27 @@ Proposed FLT items. This item files none:
 - **No second launcher, picker or record.** `open-terminal`, `lanes pick` and the lane record take the cloud kinds.
 - **By-hand cloud sessions.** The `Nclaude --cloud` sessions that vgs and vsys start by hand become `open-terminal --host claude-cloud` launches. They gain a record, a pick and a watch. Sessions started before the build finish by hand.
 - **KEN-1553's absent-verb probing.** The capability line replaces it (§ [Absent-verb probing](#absent-verb-probing-ken-1553)). KEN-1553 keeps its verbs and loses its probe rule.
-- **Probes deleted.** The `stop-sandbox --check` read in `lane-close --park` (after FLT item 2), the exit-2 `accounts` read in `lanes`, and the exit-2 pane fallback for `status` in `oversee-watch`.
+- **Probes deleted.** The exit-2 pane fallback for `status` in `oversee-watch`. After FLT item 2 merges, the `stop-sandbox --check` read in `lane-close --park` and the exit-2 `accounts` read in `lanes` `host_accounts_answer`.
 - **Host-name branches.** The 18 `LANE_HOST` tests against `local` in `open-terminal`, the `local` or `hosted` reduction in `oversee-watch`, and the `host` emptiness tests in `lane-close` become capability matches.
 - **Per-kind exceptions.** None. The lane-mail rule is restated per `channel`, never per kind or provider.
 
 ## The smallest first build
 
-The first build spends Claude cloud credit through this design before the 2claude lapse on 2026-10-08. All 11 accounts' credit expires at 2026-11-05T07:59Z (KEN-2589 correction 3). It builds `claude-cloud` only. `codex-cloud` adds no expiring pool, so it waits for the owner.
+The first build spends Claude cloud credit through this design before the 2claude lapse on 2026-10-08. All 11 accounts' credit expires at 2026-11-05T07:59Z (KEN-2589 correction 3). It builds `claude-cloud` only. `codex-cloud` adds no expiring pool, so it waits for the owner. It lands after KEN-2494 ([PR #3514](https://github.com/vanillagreencom/kendex/pull/3514), open), whose `credit_rank` pass, Codex `credits` object and tier 2 rows the tier key builds on, and which moves `parse_claude_usage` to `skills/orch/scripts/lib/lane-usage.sh`.
 
 | File | Change | Lines |
 |---|---|---|
-| `skills/orch/scripts/lane-host` | `capabilities` verb: built-in lines for `local` and `claude-cloud`, the provider pass-through, the `park=check` compatibility arm, `host-kind-verb` | 35 |
-| `skills/orch/scripts/open-terminal` | `launch=cloud-session` arm: `cloud-bundle-risk` check, `worktree create`, push of the item branch, `claude -p --cloud` under the account in that worktree, session id read, record write with `host`, `kind`, `session_id` and no window | 90 |
-| `skills/orch/scripts/lib/lane-launch.sh` | The `session` brief constant | 15 |
+| `skills/orch/scripts/lane-host` | `capabilities` verb: built-in lines for `local` and `claude-cloud`, the provider pass-through, the static `ssh` line for a provider that exits 2, `host-kind-verb`. `lane-close --park` and `lanes` keep their probes until FLT item 2 | 35 |
+| `skills/orch/scripts/open-terminal` | `launch=cloud-session` arm: `cloud-bundle-risk` check, `worktree create`, push of the item branch, `claude -p --cloud` under the account in that worktree, session id read, record write with `kind` for every kind, and `host`, `session_id` and no window for a cloud lane | 90 |
+| `skills/orch/scripts/lib/lane-launch.sh` | The `session` brief constant, with the fresh-clone setup before the first commit | 15 |
 | `skills/orch/scripts/lane-mail` | `send --directive` reads the record and matches `channel`: `session` sends through `claude -p --cloud`; `--re` and `--halt` refuse there | 45 |
-| `skills/orch/scripts/oversee-watch` | Rows carry the record's `host`; the mail pass reads only `channel=mailbox`; start-stall reads the pull request for `files=none` | 35 |
+| `skills/orch/scripts/oversee-watch` | Rows carry the record's `host`; the mail pass reads only `channel=mailbox`; start-stall reads the pull request for `files=none`; `directive-unread` for `channel=session` from the head and the `## Lane status` body | 45 |
 | `skills/orch/scripts/lane-close` | `stop=none` arm: close the record and the local worktree, print `host-kept` | 20 |
-| `skills/orch/scripts/lanes`, `lib/lane-model.sh` | `iguana_necktie` into `credits`, the tier 0 verdict and the tier key, with the retire date standing in for the period end | 45 |
+| `skills/orch/scripts/lanes`, `lib/lane-usage.sh`, `lib/lane-model.sh` | `iguana_necktie` into `credits` in `parse_claude_usage`, the tier 0 verdict with `ORCH_LANE_CLOUD_CREDIT_FLOOR`, the tier key in place of `credit_rank`, and the pick's `pool` read | 50 |
 | `schemas/lane-host.md`, `references/skill-rules.md`, `references/oversee-lanes.md`, `lanes --help` | § Host kinds, the lane-mail rule per `channel`, the directive row, the expires-first rule | 35 |
-| `skills/orch/tests/` | Rows for each changed surface against a `claude` stub and the `tests/fixtures/lane-host` stub, each with its must-fail control | 170 |
+| `skills/orch/tests/` | Rows for each changed surface against a `claude` stub and the `tests/fixtures/lane-host` stub, each with its must-fail control, among them `directive-unread` for a session lane whose head and body do not change | 180 |
 
-That is about 285 production lines, 35 doc lines and 170 test lines, with a changelog fragment and the `.agents/skills/orch/` renders in the same commit. The second build, before 2026-11-05, adds the `subscription_created_at` reader, the credit column in `lanes list`, and the capability matches that replace the host-name branches.
+That is about 300 production lines, 35 doc lines and 180 test lines, with a changelog fragment and the `.agents/skills/orch/` renders in the same commit. The second build, before 2026-11-05, adds the `subscription_created_at` reader, the credit column in `lanes list`, and the capability matches that replace the host-name branches.
 
 Acceptance test:
 
@@ -259,7 +263,7 @@ Acceptance test:
 2. `open-terminal --host claude-cloud --state-dir STATE ITEM` for one small item picks 2claude through the tier key while `ORCH_LANE_RETIRE` names it. The record shows `host=claude-cloud`, `kind`, `session_id` and no window.
 3. One directive: `lane-mail send --directive` answers `{ok: true}`, and the session's next push or `## Lane status` shows that it acted on it.
 4. One pull request landed through the normal route: the session opens it, Copilot reviews it, a landing lane merges it under `merge-pr.md` § 5, `oversee-watch` reports `merged`, and `lane-close` closes the record.
-5. 2claude's `used_dollars` rises across the run. Each approval the session asked for is recorded as an allow rule or a step the kind never takes.
+5. 2claude's `used_dollars` rises across the run. Each approval the session asked for is recorded as an allow rule or a step the kind never takes. The `## Lane status` body quotes the `setup: armed=` line, and the session's first commit passed through the armed pre-commit and commit-msg chain.
 
 ## Open questions
 
