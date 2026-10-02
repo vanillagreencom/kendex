@@ -681,7 +681,9 @@ impl<'a> Placer<'a> {
         // judge a global file against a history that is not this project's.
         // Every global `keys` position is `unknown` instead.
         let foreign = match (scope, base) {
-            (Scope::Project { root }, Some(rev)) => Some(attest::foreign_since(root, rev, report)),
+            (Scope::Project { root }, Some(rev)) => {
+                Some(attest::foreign_since(env, root, rev, report))
+            }
             (Scope::Global, Some(_)) => Some(BTreeMap::new()),
             (_, None) => None,
         };

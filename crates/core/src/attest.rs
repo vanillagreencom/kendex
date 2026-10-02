@@ -696,14 +696,26 @@ fn history_problem(
 /// the order the pass walks them and the shims after, so a file two
 /// registrations write is judged once, with both, its keys come out the
 /// way round the writer put them, and an entry the writer moved since is
-/// retired first as the writer retired it. The files are every `keys`
+/// retired first as the writer retired it. After them come the removals
+/// the writer plans after every write: for each entry the revision's
+/// record holds and this pass's record does not, the edits
+/// [`crate::engine::owned::installed`] names for taking it back out, in
+/// record key order, so a hook, server or plugin dropped since leaves the
+/// file the way the writer left it. A removal lands only in a file a
+/// registration or shim is judged in. The files are every `keys`
 /// position the pass prints: each registration's edit targets and each
 /// instruction shim that is an edit, read off the same standings `verify`
 /// prints rows for, so no position is printed as keys with nothing here
-/// to judge it. A revision that does not resolve, or whose record this
-/// build cannot read, answers `Unknown` for every file rather than reading
-/// an absent copy as an empty one or a moved entry as never moved.
-pub fn foreign_since(root: &Path, rev: &str, report: &EngineReport) -> BTreeMap<PathBuf, Foreign> {
+/// to judge it. A revision that does not resolve, whose record this build
+/// cannot read, or holding an entry whose removal cannot be named,
+/// answers `Unknown` for every file rather than reading an absent copy as
+/// an empty one, a moved entry as never moved, or a dropped one as kept.
+pub fn foreign_since(
+    env: &Env,
+    root: &Path,
+    rev: &str,
+    report: &EngineReport,
+) -> BTreeMap<PathBuf, Foreign> {
     let base = Base { root, rev };
     let record = base.resolves().then(|| base.record()).flatten();
     let previous = |key: &str| match &record {
@@ -728,10 +740,20 @@ pub fn foreign_since(root: &Path, rev: &str, report: &EngineReport) -> BTreeMap<
             by_file.entry(shim.path.clone()).or_default().push(edit);
         }
     }
+    // `None` where `record` is, and where a dropped entry's removal cannot
+    // be named: either way no file here is judged.
+    let removals = record
+        .as_ref()
+        .and_then(|record| dropped_removals(env, record, report));
+    for (path, edit) in removals.iter().flatten() {
+        if let Some(edits) = by_file.get_mut(path) {
+            edits.push(edit.clone());
+        }
+    }
     by_file
         .into_iter()
         .map(|(path, edits)| {
-            let standing = record
+            let standing = removals
                 .is_some()
                 .then(|| foreign_of(&base, &path, &edits))
                 .flatten()
@@ -739,6 +761,33 @@ pub fn foreign_since(root: &Path, rev: &str, report: &EngineReport) -> BTreeMap<
             (path, standing)
         })
         .collect()
+}
+
+/// The edits that take out every entry `record` holds and the pass's own
+/// record does not, the writer's removal of each read off the one place
+/// that names it. `None` where one of them cannot be named: the file it
+/// edits is then unknown, and so is every file it might be.
+fn dropped_removals(
+    env: &Env,
+    record: &BaseRecord,
+    report: &EngineReport,
+) -> Option<Vec<(PathBuf, crate::configedit::ConfigEdit)>> {
+    let lock = match record {
+        BaseRecord::Held(lock) => lock,
+        BaseRecord::Absent => return Some(Vec::new()),
+    };
+    let mut removals = Vec::new();
+    for (key, entry) in &lock.entries {
+        if report.record.entries.contains_key(key) {
+            continue;
+        }
+        removals.extend(
+            crate::engine::owned::installed(env, &report.plan.scope, entry)
+                .edits
+                .ok()?,
+        );
+    }
+    Some(removals)
 }
 
 /// The project as one revision held it, read through git for the replay.

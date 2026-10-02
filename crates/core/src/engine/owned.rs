@@ -29,7 +29,7 @@ pub(super) fn paths(env: &Env, scope: &Scope, lock: &Lock) -> BTreeSet<PathBuf> 
 
 pub(crate) struct Owned {
     pub(crate) files: Vec<PathBuf>,
-    pub(super) edits: crate::error::Result<Vec<(PathBuf, ConfigEdit)>>,
+    pub(crate) edits: crate::error::Result<Vec<(PathBuf, ConfigEdit)>>,
 }
 
 /// What one installation put on this machine: files it wrote, and the
