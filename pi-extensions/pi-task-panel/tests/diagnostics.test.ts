@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { reportTaskPanelPersistenceFailure } from "../extensions/diagnostics.ts";
 
-for (const operation of ["sidecar-read", "sidecar-write", "session-entry", "session-entry-no-sidecar"] as const) {
+for (const operation of ["sidecar-read", "sidecar-write", "session-entry", "session-entry-no-sidecar", "branch-state-missing"] as const) {
 	test(`persistence notice identifies ${operation}`, () => {
 		const root = mkdtempSync(join(tmpdir(), "task-panel-diagnostics-"));
 		const previous = process.env.PI_TASK_PANEL_DIAGNOSTIC_LOG;

@@ -27,7 +27,7 @@ import {
 import { reportTaskPanelPersistenceFailure } from "./diagnostics.js";
 import { writeFileAtomic } from "./atomic-write.js";
 import {
-	applyTaskPanelToolResultRestore,
+	isTaskPanelToolResultBoundedState,
 	taskPanelToolResultState,
 } from "./tool-result-details.js";
 
@@ -793,11 +793,13 @@ export default function taskPanel(pi: ExtensionAPI): void {
 	// save queued so far.
 	let sidecarSaves: Promise<void> = Promise.resolve();
 
-	const readSidecar = (ctx: ExtensionContext): TaskPanelState | undefined => {
+	/** The sidecar state, with the fingerprint of the saved text that manifests and bounded details name. */
+	const readSidecar = (ctx: ExtensionContext): { state: TaskPanelState; fingerprint: string } | undefined => {
 		try {
 			const file = sidecarStatePath(ctx);
 			if (!existsSync(file)) return undefined;
-			return normalizeState(JSON.parse(readFileSync(file, "utf8")), ctx.cwd);
+			const saved = JSON.parse(readFileSync(file, "utf8"));
+			return { state: normalizeState(saved, ctx.cwd), fingerprint: stableTaskPanelFingerprint(saved) };
 		} catch (error) {
 			reportTaskPanelPersistenceFailure("sidecar-read", error, ctx);
 			return undefined;
@@ -882,31 +884,41 @@ export default function taskPanel(pi: ExtensionAPI): void {
 
 	const restore = (ctx: ExtensionContext) => {
 		activeCtx = ctx;
-		const sidecarState = readSidecar(ctx);
-		state = sidecarState ?? emptyState(ctx.cwd);
+		const sidecar = readSidecar(ctx);
+		state = emptyState(ctx.cwd);
+		// A manifest or bounded details stand for a state too large for the
+		// session. The sidecar holds only the newest saved state, so it stands in
+		// only where its fingerprint matches; at an older tree point or in a fork,
+		// the state that record stood for is gone and the restore says so.
+		let missingFingerprint: string | undefined;
+		const takeSidecar = (fingerprint: string) => {
+			if (sidecar?.fingerprint === fingerprint) {
+				state = sidecar.state;
+				missingFingerprint = undefined;
+			} else missingFingerprint = fingerprint;
+		};
 		for (const entry of ctx.sessionManager.getBranch()) {
 			if (entry.type === "custom" && entry.customType === STATE_TYPE) {
-				// Any `fullSnapshot: false` manifest is a sidecar-wins
-				// barrier. Without this, an older full snapshot earlier in the
-				// branch can replace the sidecar-restored state before the manifest
-				// is reached, regressing canonical state to stale data. Re-load
-				// sidecar at the barrier so canonical state survives the iteration.
-				const candidate = entry.data as { fullSnapshot?: unknown } | undefined;
-				if (candidate?.fullSnapshot === false) {
-					if (sidecarState) state = sidecarState;
-					continue;
+				if (isTaskPanelBoundedManifest(entry.data)) takeSidecar(entry.data.fingerprint);
+				else {
+					state = normalizeState(entry.data, ctx.cwd);
+					missingFingerprint = undefined;
 				}
-				state = normalizeState(entry.data, ctx.cwd);
 			}
 			if (entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === "tasks_write") {
-				state = applyTaskPanelToolResultRestore({
-					currentState: state,
-					detailsState: entry.message.details?.state,
-					hasStateContent: (restored) => restored.tasks.length > 0 || restored.phases.length > 0,
-					normalizeState: (value) => normalizeState(value, ctx.cwd),
-					sidecarState,
-				});
+				const details: unknown = entry.message.details?.state;
+				if (isTaskPanelToolResultBoundedState(details)) takeSidecar(details.fingerprint);
+				else {
+					const restored = normalizeState(details, ctx.cwd);
+					if (restored.tasks.length > 0 || restored.phases.length > 0) {
+						state = restored;
+						missingFingerprint = undefined;
+					}
+				}
 			}
+		}
+		if (missingFingerprint !== undefined) {
+			reportTaskPanelPersistenceFailure("branch-state-missing", new Error(`fingerprint=${missingFingerprint} sidecar=${sidecar?.fingerprint ?? "absent"}`), ctx);
 		}
 		updatePanelAfterTaskChange(state, ctx.cwd);
 		syncWidget(ctx);

@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 3.0.5
+
+- A restore after `/tree` navigation, a fork or a resume uses the sidecar `state.json` only where the session's manifest or bounded `tasks_write` details carry the sidecar's fingerprint. Before, an older tree point showed the newest saved list, and a point with no saved list showed it too. Where the list a manifest stands for is gone, the panel keeps the last full list the session holds and warns with a `persistence_failure=branch-state-missing` line.
+
 ### 3.0.4
 
 - Task panels reuse sorted task order and layout during redraws. Bulk replacement and import normalize the completed list once, preserving an explicitly active task after earlier pending tasks.

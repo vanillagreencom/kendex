@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 
 // Tool-result details are written into Pi's session JSONL. Keep large task
-// panels out of that append-only stream; the sidecar remains canonical for
-// restore. Acceptance target for bounded details is <=4 KiB, so summaries keep
+// panels out of that append-only stream; the sidecar holds the full state, and
+// restore takes it only where the details' fingerprint names it. Acceptance target for bounded details is <=4 KiB, so summaries keep
 // counts plus a small id sample rather than every task body/note.
 export const TASK_PANEL_TOOL_RESULT_MAX_STATE_BYTES = 64 * 1024;
 export const TASK_PANEL_TOOL_RESULT_MAX_TASKS = 100;
@@ -84,18 +84,4 @@ export function taskPanelToolResultState<T extends TaskPanelToolResultStateLike>
 		thresholds: { maxBytes, maxTasks },
 		updatedAt: state.updatedAt,
 	};
-}
-
-export interface ApplyTaskPanelToolResultRestoreArgs<T> {
-	currentState: T;
-	detailsState: unknown;
-	hasStateContent: (state: T) => boolean;
-	normalizeState: (value: unknown) => T;
-	sidecarState: T | undefined;
-}
-
-export function applyTaskPanelToolResultRestore<T>(args: ApplyTaskPanelToolResultRestoreArgs<T>): T {
-	if (isTaskPanelToolResultBoundedState(args.detailsState)) return args.sidecarState ?? args.currentState;
-	const restored = args.normalizeState(args.detailsState);
-	return args.hasStateContent(restored) ? restored : args.currentState;
 }

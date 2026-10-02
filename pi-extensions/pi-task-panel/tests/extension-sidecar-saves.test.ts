@@ -98,7 +98,10 @@ test("session shutdown waits for a queued sidecar write", async () => {
 
 test("tree navigation reads the sidecar only after a queued write lands", async () => {
 	await withPanel(async ({ ctx, pi, tasksWrite }) => {
-		const pending = tasksWrite({ action: "add_task", task: "queued" });
+		// Past the session entry cap the branch holds a manifest, so restore needs the sidecar.
+		ctx.sessionManager.getBranch = () => pi.appended.map(({ customType, data }) => ({ type: "custom", customType, data })) as never;
+		const tasks = [{ content: "queued" }, ...Array.from({ length: 200 }, (_value, index) => ({ content: `${"x".repeat(400)} ${index}` }))];
+		const pending = tasksWrite({ action: "replace", tasks });
 		await handler(pi, "session_tree")({ type: "session_tree" }, ctx);
 		await pending;
 		const result = await tasksWrite({ action: "start_task", task: "queued" });

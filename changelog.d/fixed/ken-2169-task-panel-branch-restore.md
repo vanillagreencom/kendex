@@ -1,0 +1,1 @@
+- pi-task-panel 3.0.5: moving to an older point in the session tree, or forking, no longer shows the newest saved task list; a list too large to recover is reported.
