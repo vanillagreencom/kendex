@@ -93,13 +93,13 @@
 #        state and never a healthy one: the account mark does not fire, the
 #        context, rate and qualifying marks still decide, and
 #        the unmeasured account is never reused for the successor, because
-#        the only state that keeps the caller's own lane is a headroom
-#        MEASURED above the trigger (step 3).
+#        only room by that `lanes pick --lane` keeps the caller's own lane
+#        (step 3).
 #        The QUALIFYING mark (ORCH_OVERSEER_SUCCESSOR_ACCOUNTS, 0 turns it
 #        off) counts the accounts of this overseer's harness above
 #        ORCH_OVERSEER_HEADROOM_PCT, by the `lanes pick` judgement a successor
-#        pick takes, credit room included, this overseer's own among them where its headroom was
-#        measured above that trigger. Counted whole, the figure reads the same
+#        pick takes, credit room included, this overseer's own among them
+#        where the account mark found room on it. Counted whole, the figure reads the same
 #        from every account it covers; a count without this account would read
 #        one from either of two accounts, and the overseer would move back and
 #        forth as their headroom readings crossed. The mark fires where the
@@ -107,11 +107,11 @@
 #        it, the account the pick names has more headroom than this one, and
 #        the walk of step 3, run here and launching nothing, chooses an entry
 #        whose successor settles the mark: counting from the lane picked, it
-#        finds no other account above the trigger, or a count above the
+#        finds no other account with room, or a count above the
 #        setting. Where the walk chooses none the mark does not fire, so a
 #        setting no move can clear leaves this trigger inert; at the default
-#        of 1 it fires only where this overseer's own account is not measured
-#        above the trigger and exactly one other account is. Its
+#        of 1 it fires only where the account mark found no room on this
+#        overseer's own account and exactly one other account has room. Its
 #        `mark-reached` line always carries `headroom`, this overseer's own
 #        reading, which at the default shows why that account was not
 #        counted. A qualifying judgement reads ORCH_OVERSEER_PREFERENCE and
@@ -168,7 +168,7 @@
 #        § Settings states; set to empty, it names no entry. Every launch on a measured account but one goes
 #        through `lanes pick
 #        --harness --model --min-headroom-pct`, the headroom trigger itself,
-#        so no successor is opened on an account at or below it, and among
+#        so every successor's account clears it by step 2's rule, and among
 #        the accounts with room it is `lanes pick`'s own order that puts one
 #        carrying live lane claims behind an empty one. The
 #        bound is judged on the bucket that walls the model that entry passes,
@@ -210,8 +210,8 @@
 #        apply. Its pick is judged on the model this pane already runs, since
 #        those flags are what the successor will carry. That entry is the one
 #        exception above, the launch the pick
-#        does not name, and the caller's own lane is kept only where its own
-#        headroom was MEASURED above the trigger; at or below it, and where
+#        does not name, and the caller's own lane is kept only where the
+#        account mark found room on it; where that found none, and where
 #        nothing measured it, the fleet-wide pick over the caller's harness
 #        names the lane instead. A preference states a FIRST choice and never
 #        gives up this last one: without it a single entry whose one harness
@@ -507,7 +507,7 @@ message() { # KEY FIELD=VALUE...
     pi-account-unknown) text='This pi overseer names its model with no provider, in its launch record, the --model word after -- and its context reading alike, so the account its successor would spend is unknown and nothing was launched. Pass --model as provider/id after --, pi-claude/<id> for a claude account.' ;;
     pi-handoff-unmarked) text='A pi successor would compact or reach its wall with no handoff mark, so nothing was launched. The reason field names which: compaction-on is a pi settings file, the one the file field names, leaving compaction.enabled on; settings-unreadable is that file present and unreadable, its reader words below; no-window-read is no installed pi-hooks carrier sending the context window.' ;;
     launch-choice-failed) text='The launch flag table cannot state a required model or an equivalent cross-harness permission posture. Nothing was launched.' ;;
-    no-lane-qualifies) text='No lane walked is above the headroom trigger; nothing was launched and this overseer keeps running. The walk is every ORCH_OVERSEER_PREFERENCE entry, counted in entries, and then the fleet-wide sweep of the harness the fallback field names, which is none where the walk never reached that entry, so a preference aimed at a spent harness is not what this says. walled and unmeasured are the accounts those sweeps refused and the accounts nothing could measure, counted once per sweep. The mark field names the trigger. At mark=headroom the account and resets fields name the account that ran out and when the bucket this session spends frees up. At mark=wall the caller pane read walled and no mark was judged, so no account is named here; the caller that read that wall names it.' ;;
+    no-lane-qualifies) text='No lane walked clears the headroom trigger; nothing was launched and this overseer keeps running. The walk is every ORCH_OVERSEER_PREFERENCE entry, counted in entries, and then the fleet-wide sweep of the harness the fallback field names, which is none where the walk never reached that entry, so a preference aimed at a spent harness is not what this says. walled and unmeasured are the accounts those sweeps refused and the accounts nothing could measure, counted once per sweep. The mark field names the trigger. At mark=headroom the account and resets fields name the account that ran out and when the bucket this session spends frees up. At mark=wall the caller pane read walled and no mark was judged, so no account is named here; the caller that read that wall names it.' ;;
     launch-trust-missing) text='The folder-trust entry for the caller directory could not be made in the config this successor would read, so nothing was launched and the caller keeps running. The successor would open on the folder-trust question and wait there for an answer nobody at the pane gives. The reason field names what failed: trust-refused is an answer already recorded for that directory that is not trust, which this will not overwrite; config-unreadable is the account config present and unreadable or unparseable, a dangling shim link being the usual codex cause; account-store is the account transcript directory that could not be made; home-path, home-create, home-link, home-entry, config-write and config-install are the private CODEX_HOME under the account, or the claude config dir .claude.json, that could not be built, so check that the account directory is writable, home-entry naming a real file or directory sitting where a link to the account belongs; entry-unreadable is the entry written and not read back.' ;;
     launch-failed) text='The successor could not be launched; the caller keeps running.' ;;
     interrupted) text='A signal stopped the script; the successor window was closed and the caller keeps running.' ;;
@@ -661,8 +661,8 @@ fi
 HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md
 WAIT_SECS=60
 # Account headroom, in percent of the binding bucket, at or below which the
-# overseer succeeds itself. One number does two jobs: it is this mark, and it
-# is the floor no successor account may sit at or below. The default answers
+# overseer succeeds itself, Codex credit room aside (lanes --help, pick). One
+# number is this mark and the floor every successor account must clear. The default answers
 # the floor. A higher one rules out every candidate between it and the wall,
 # which is how a fleet of walled accounts refuses every successor it walks,
 # and it costs the mark its warning: a walled overseer runs no turn at all, so
@@ -957,14 +957,14 @@ fi
 # is still a harness.
 #
 # The bound is the trigger itself, so `lanes pick --lane` returns the verdict
-# rather than this script comparing a percentage: MORE than the trigger is
-# room, and a lane sitting exactly at it is refused, which is the documented
-# `at or below` rule.
+# rather than this script comparing a percentage: MORE than the trigger, or
+# Codex credit room (lanes --help, pick), is room, and a lane exactly at it
+# otherwise is refused, the documented `at or below` rule.
 #
 # The caller account is ONE named state, established here and matched by name
 # at every site after: `unreadable` where the judge itself failed, `unmeasured`
-# where nothing measured this account for this launch, `has-room` above the
-# trigger and `at-trigger` at or below it. A judge that failed is not a reason
+# where nothing measured this account for this launch, `has-room` where that
+# pick exits 0 and `at-trigger` where it exits 3. A judge that failed is not a reason
 # to refuse: it says nothing about this account, the account mark does not
 # fire and the other marks still decide, and the below-mark and qualifying
 # lines carry `headroom=unreadable` so the cause stays visible. Only the paths about to launch a successor refuse on a lanes
@@ -1196,7 +1196,7 @@ walk_entries() {
 # QUALIFYING_COUNT is the accounts a successor could open on, this one left
 # out, and at least one of them is what makes a move possible at all.
 # QUALIFYING_TOTAL is the figure the mark is set against: those accounts and
-# this overseer's own where its headroom was measured above the trigger. The
+# this overseer's own where it is `has-room`. The
 # header's step 2 says why the mark is never set against the first.
 QUALIFYING_TOTAL=""
 chosen=""
