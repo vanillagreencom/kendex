@@ -367,19 +367,16 @@
     "text": "A **job** is a set of **steps** in a workflow that is executed on the same **runner**. Each step is either a shell script that will be executed, or an **action** that will be run. Steps are executed in order and are dependent on each other. Since each step is executed on the same runner, you can share data from one step to another."
    },
    {
-    "url": "https://github.com/github/docs/blob/2bd66de8cea336061c9ea060c9b37385136e6ab3/content/code-security/concepts/supply-chain-security/immutable-releases.md",
-    "section": "What immutable releases protect",
-    "text": "**Git tags cannot be moved**: Once an immutable release is published, its associated Git tag is locked to a specific commit, cannot be changed, and cannot be deleted while the release exists. ... **Release assets cannot be modified or deleted**: All files attached to the release (such as binaries and archives) are protected from modification or deletion."
+    "url": "https://github.com/github/docs/blob/2bd66de8cea336061c9ea060c9b37385136e6ab3/data/reusables/actions/jobs/section-defining-outputs-for-jobs.md",
+    "section": "jobs.<job_id>.outputs",
+    "text": "Job outputs containing expressions are evaluated on the runner at the end of each job. Outputs containing secrets are redacted on the runner and not sent to GitHub Actions."
+   },
+   {
+    "url": "https://github.com/actions/create-github-app-token/blob/bcd2ba49218906704ab6c1aa796996da409d3eb1/lib/main.js",
+    "section": "line 48",
+    "text": "// Register the token with the runner as a secret to ensure it is masked in logs\n  core.setSecret(authentication.token);"
    }
   ],
   "uncited": "Which repository's environment a called job's `environment:` reads. The excerpts say the environment secret is used; none names the repository."
- },
- "releaseAssetTrust": {
-  "commands": ["curl -s https://api.github.com/repos/vanillagreencom/kendex/releases/tags/v1.5.1 | jq -c '{tag_name, immutable}'", "curl -s https://api.github.com/repos/vanillagreencom/kendex/releases/tags/v1.5.0 | jq -c '{tag_name, immutable}'"],
-  "immutable": {"v1.5.1": false, "v1.5.0": false},
-  "assetByTagName": "install.sh line 88: base=\"https://github.com/$repo/releases/download/$version\"",
-  "noSignatureCheck": "install.sh, the comment above install_cli (lines 161 to 172): the script does not check the minisign signature the release publishes beside each asset; kendex update refuses an asset no release-key signature covers",
-  "todaySameInstaller": "skills/review-gate/scripts/install-latest.sh line 41 runs install.sh --version VERSION --cli-only; the template's install step precedes both token steps",
-  "tokenActionPostStep": "actions/create-github-app-token action.yml at bcd2ba49: runs.post is dist/post.cjs, which revokes the token at job end; whether that post step receives the private-key input again was not read"
  }
 }
