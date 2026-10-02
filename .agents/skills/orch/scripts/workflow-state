@@ -1569,13 +1569,16 @@ EOF
                                 section Recording policy to the oversee state
                                 and its directory, past the retention in days
                                 that ORCH_RECORD_RETENTION_DAYS sets (default
-                                5). Archives everything it removes under
-                                FLEET_DIR/archive/REPO/oversee first (FLEET_DIR
-                                defaults to ~/.fleet); a failed archive removes
-                                nothing. Never removes a --keep path, the first
-                                lane record, a path named for a lane whose
-                                record is not done, nor a path named for an
-                                item whose workflow state file stands and was
+                                5). Completes overseer mailbox compaction before
+                                the state/path archive. Each owner archives its
+                                own removals under FLEET_DIR/archive/REPO/oversee
+                                before deleting them (FLEET_DIR defaults to
+                                ~/.fleet). A failed archive leaves that owner's
+                                data intact; it does not undo a completed
+                                owner's removals. Never removes a --keep path,
+                                the first lane record, a path named for a lane
+                                whose record is not done, nor a path named for
+                                an item whose workflow state file stands and was
                                 written within the retention or names a
                                 linked worktree, never the main checkout, that
                                 git-context lane-worktree resolves from its
@@ -1584,8 +1587,10 @@ EOF
                                 report directory is or holds the state
                                 directory. Prints "pruned path=PATH" per removed
                                 path, a "pruned fleet_log=N lanes=N
-                                progress_reports=N paths=N" count, then
-                                "kept=ARCHIVE" or kept=none. With no fleet state
+                                progress_reports=N paths=N to-lane=N
+                                to-overseer=N sessions=N" count, then one
+                                "kept=ARCHIVE" line per archive, or kept=none
+                                when nothing was archived. With no fleet state
                                 there are no lane records, and the directory is
                                 judged by age and standing workflow states alone
 
