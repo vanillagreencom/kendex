@@ -466,7 +466,7 @@ usage() { sed -n '/^# Usage:/,/^# Output:/p' "$0" | sed 's/^# \{0,1\}//'; }
 
 message() { # KEY FIELD=VALUE...
   local key="$1" text
-  local headroom_text='The headroom field says what the account mark found: a number above the trigger, 0 for a Codex account room on its credits with its plan window spent (lanes --help, pick), or none or unreadable where nothing measured it.'
+  local headroom_text='The headroom field says what the account mark found: a number above the trigger, or at or below it for a Codex account room on its credits (lanes --help, pick), or none or unreadable where nothing measured it.'
   shift
   case "$key" in
     tmux-missing) text='Run it from inside the overseer tmux pane.' ;;
