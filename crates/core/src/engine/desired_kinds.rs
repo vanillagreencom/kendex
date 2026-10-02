@@ -226,7 +226,7 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
         }
     };
     let first_item = state.items.len();
-    let (mut undeliverable, mut left_out) = (Vec::new(), Vec::new());
+    let mut undeliverable = Vec::new();
     for harness in ctx.harnesses.clone() {
         match not_written(
             ctx.env,
@@ -247,11 +247,7 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
             // it; a name kept removed is theirs the same way. Neither
             // reaches here through a declaration of its own, so the plan
             // writes nothing rather than installing past what they wrote.
-            Some(NotWritten::KeptRemoved) => continue,
-            Some(NotWritten::OtherTools) => {
-                left_out.push(harness);
-                continue;
-            }
+            Some(NotWritten::KeptRemoved | NotWritten::OtherTools) => continue,
             // The finding on the hook already says why.
             Some(NotWritten::Withheld) => continue,
             Some(NotWritten::OwnHarnessesLine { declared }) => {
@@ -302,7 +298,7 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
         let item = declared(ctx, ItemKind::Hook, harness, artifact)?;
         state.items.push(item);
     }
-    pins_left_out(ctx, state, &hook, left_out);
+    pins_left_out(ctx, state, &hook);
     // Unsupported events already refused their copies above. Other delivery
     // limits warn when a copy lands; no artifact means an incomplete hook.
     // Count artifacts so a failed restatement cannot count as delivery.
@@ -348,47 +344,40 @@ fn pin_names_excluded(name: &str, harness: HarnessId, state: &mut DesiredState) 
     ));
 }
 
-/// Records each tool the person's pin alone keeps the hook off: past the
-/// pin, the plan would write the hook there. `left_out` is what the item
-/// loop's [`not_written`] answered `OtherTools` for; a tool the scope
-/// installs on that the pin leaves out never reached that loop, which
-/// walks the tools the declaration aims at, and is asked here.
-fn pins_left_out(
-    ctx: &ItemCtx,
-    state: &mut DesiredState,
-    hook: &HookSpec,
-    mut left_out: Vec<HarnessId>,
-) {
-    for harness in super::desired::harnesses_for(None, ctx.manifest, ItemKind::Hook, ctx.scope) {
-        let unasked = !ctx.harnesses.contains(&harness);
-        if unasked
-            && not_written(
-                ctx.env,
-                ctx.scope,
-                ctx.manifest,
-                state,
-                ItemKind::Hook,
-                ctx.name,
-                Ok(Some(hook)),
-                harness,
-            ) == Some(NotWritten::OtherTools)
-        {
-            left_out.push(harness);
+/// Records each tool the person's pin alone keeps the hook off: one the
+/// declaration aims at or the scope installs on, that the pin leaves out
+/// and the plan would write the hook on past the pin.
+fn pins_left_out(ctx: &ItemCtx, state: &mut DesiredState, hook: &HookSpec) {
+    let defaults = super::desired::harnesses_for(None, ctx.manifest, ItemKind::Hook, ctx.scope);
+    let mut asked = Vec::new();
+    for harness in ctx.harnesses.iter().copied().chain(defaults) {
+        if asked.contains(&harness) {
+            continue;
         }
-    }
-    for harness in left_out {
-        let written = past_pin(
+        asked.push(harness);
+        let left_out = not_written(
             ctx.env,
             ctx.scope,
+            ctx.manifest,
             state,
             ItemKind::Hook,
             ctx.name,
-            Some(hook),
-            false,
+            Ok(Some(hook)),
             harness,
-        )
-        .is_none();
-        if written {
+        ) == Some(NotWritten::OtherTools);
+        let written_past_pin = left_out
+            && past_pin(
+                ctx.env,
+                ctx.scope,
+                state,
+                ItemKind::Hook,
+                ctx.name,
+                Some(hook),
+                false,
+                harness,
+            )
+            .is_none();
+        if written_past_pin {
             state.pinned_hooks.push(super::PinnedHook {
                 name: ctx.name.to_owned(),
                 harness,

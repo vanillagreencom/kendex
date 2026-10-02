@@ -469,10 +469,12 @@ fn a_narrowed_declaration_is_brought_up_to_the_tools_the_script_runs_in() {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
+    // The tools the script runs in are the ones this scope installs on with
+    // no list, so the narrowed list comes up to no list rather than a pin.
     assert_eq!(
         loaded.hooks.get(drift::hook::HOOK_NAME).unwrap().harnesses,
-        Some(targets.clone()),
-        "the declaration still names fewer tools than the confirmation listed files for"
+        None,
+        "the declaration still names fewer tools than the confirmation listed files for, or pins the default"
     );
     assert!(
         drift::setup::every_target_registered(&w.env, &w.scope, &after).unwrap(),
