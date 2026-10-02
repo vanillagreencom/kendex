@@ -12,17 +12,34 @@ const PAYLOAD = {
 	id: REQUEST_ID,
 	questions: [{ header: "Path", options: [{ label: "A" }, { label: "B" }], question: "Which path?" }],
 };
-const DEFAULT_DIALOG_TIMEOUT_MS = 30 * 60_000;
+
+/** A Pi dialog that records the timeout it got and, as Pi's do, resolves undefined once its signal aborts. */
+function recordingDialog(onOpen: (opts: { signal?: AbortSignal; timeout?: number } | undefined) => void) {
+	return (_title: string, _detail: unknown, opts?: { signal?: AbortSignal; timeout?: number }) => {
+		onOpen(opts);
+		return new Promise<undefined>((resolve) => {
+			opts?.signal?.addEventListener("abort", () => resolve(undefined), { once: true });
+		});
+	};
+}
 
 describe("queued question behind a held popup", () => {
-	test("registers no promise reaction per poll and leaves no timer once settled", async () => {
+	test("registers no promise reaction per poll, leaves no timer and opens no popup once settled", async () => {
 		jest.useFakeTimers();
 		const extension = installQuestionExtension(questions);
 		const lock = installModalLock(1);
 		const originalThen = Promise.prototype.then;
 		let reactions = 0;
+		let customOpened = 0;
+		const ui = {
+			custom() {
+				customOpened += 1;
+				return new Promise(() => {});
+			},
+			notify() {},
+		};
 		try {
-			const answer = extension.service.ask({ cwd: extension.root, hasUI: true, ui: { notify() {} } }, PAYLOAD, "tool");
+			const answer = extension.service.ask({ cwd: extension.root, hasUI: true, ui }, PAYLOAD, "tool");
 			await flushMicrotasks();
 			Promise.prototype.then = function (this: Promise<unknown>, ...args: Parameters<Promise<unknown>["then"]>) {
 				reactions += 1;
@@ -39,7 +56,8 @@ describe("queued question behind a held popup", () => {
 			expect(reactions).toBe(0);
 			extension.service.reject(REQUEST_ID, "api");
 			expect(await answer).toEqual({ cancelled: true, requestId: REQUEST_ID });
-			expect(jest.getTimerCount()).toBe(0);
+			await flushMicrotasks();
+			expect({ customOpened, lockDepth: lock.depth(), timers: jest.getTimerCount() }).toEqual({ customOpened: 0, lockDepth: 1, timers: 0 });
 		} finally {
 			Promise.prototype.then = originalThen;
 			lock.restore();
@@ -50,8 +68,10 @@ describe("queued question behind a held popup", () => {
 });
 
 interface Observed {
+	customOpened: number;
 	closed: unknown[];
-	dialogs: Array<{ dismissed: boolean; timeout: number | undefined }>;
+	/** Whether each dialog's abort signal fired; an RPC client's own dialog is out of reach here. */
+	dialogs: Array<{ signalAborted: boolean }>;
 }
 
 describe("question tool abort", () => {
@@ -60,8 +80,17 @@ describe("question tool abort", () => {
 			{
 				name: "queued behind a held popup",
 				lockDepth: 1,
-				ctx: (_observed: Observed) => ({ hasUI: true, ui: { notify() {} } }),
-				expected: { closed: [], dialogs: [], lockDepth: 1 },
+				ctx: (observed: Observed) => ({
+					hasUI: true,
+					ui: {
+						custom() {
+							observed.customOpened += 1;
+							return new Promise(() => {});
+						},
+						notify() {},
+					},
+				}),
+				expected: { closed: [], customOpened: 0, dialogs: [], lockDepth: 1 },
 			},
 			{
 				name: "custom questionnaire open",
@@ -70,6 +99,7 @@ describe("question tool abort", () => {
 					hasUI: true,
 					ui: {
 						custom(factory: (tui: unknown, theme: unknown, keybindings: unknown, done: (result: unknown) => void) => unknown) {
+							observed.customOpened += 1;
 							return new Promise((resolve) => {
 								const tui = { getShowHardwareCursor: () => false, requestRender() {}, setShowHardwareCursor() {} };
 								factory(tui, {}, {}, (result) => {
@@ -81,32 +111,26 @@ describe("question tool abort", () => {
 						notify() {},
 					},
 				}),
-				expected: { closed: [{ cancelled: true, requestId: REQUEST_ID }], dialogs: [], lockDepth: 0 },
+				expected: { closed: [{ cancelled: true, requestId: REQUEST_ID }], customOpened: 1, dialogs: [], lockDepth: 0 },
 			},
 			{
 				name: "native dialog open",
 				lockDepth: 0,
-				// Pi's RPC dialogs resolve undefined when their signal aborts.
 				ctx: (observed: Observed) => {
-					const dialog = (_title: string, _detail: unknown, opts?: { signal?: AbortSignal; timeout?: number }) => {
-						const record = { dismissed: false, timeout: opts?.timeout };
+					const dialog = recordingDialog((opts) => {
+						const record = { signalAborted: false };
 						observed.dialogs.push(record);
-						return new Promise<undefined>((resolve) => {
-							opts?.signal?.addEventListener("abort", () => {
-								record.dismissed = true;
-								resolve(undefined);
-							}, { once: true });
-						});
-					};
+						opts?.signal?.addEventListener("abort", () => { record.signalAborted = true; }, { once: true });
+					});
 					return { hasUI: false, mode: "rpc", ui: { input: dialog, notify() {}, select: dialog } };
 				},
-				expected: { closed: [], dialogs: [{ dismissed: true, timeout: DEFAULT_DIALOG_TIMEOUT_MS }], lockDepth: 0 },
+				expected: { closed: [], customOpened: 0, dialogs: [{ signalAborted: true }], lockDepth: 0 },
 			},
 		]) {
 			const extension = installQuestionExtension(questions);
 			const lock = installModalLock(row.lockDepth);
 			try {
-				const observed: Observed = { closed: [], dialogs: [] };
+				const observed: Observed = { closed: [], customOpened: 0, dialogs: [] };
 				const events: Array<{ action: string; source?: string }> = [];
 				extension.service.subscribe(({ action, source }) => events.push({ action, source }));
 				const controller = new AbortController();
@@ -129,6 +153,32 @@ describe("question tool abort", () => {
 				});
 			} finally {
 				lock.restore();
+				extension.restore();
+			}
+		}
+	});
+});
+
+describe("native dialog timeout", () => {
+	test("follows dialogTimeoutMinutes, capped at the longest delay a timer honours", async () => {
+		for (const row of [
+			{ name: "unset", config: {}, timeouts: [30 * 60_000] },
+			{ name: "five minutes", config: { dialogTimeoutMinutes: 5 }, timeouts: [300_000] },
+			{ name: "zero", config: { dialogTimeoutMinutes: 0 }, timeouts: [undefined] },
+			{ name: "negative", config: { dialogTimeoutMinutes: -1 }, timeouts: [undefined] },
+			{ name: "last minute under the bound", config: { dialogTimeoutMinutes: 35_791 }, timeouts: [2_147_460_000] },
+			{ name: "past the bound", config: { dialogTimeoutMinutes: 35_792 }, timeouts: [2_147_483_647] },
+		]) {
+			const extension = installQuestionExtension(questions, row.config);
+			try {
+				const timeouts: Array<number | undefined> = [];
+				const dialog = recordingDialog((opts) => timeouts.push(opts?.timeout));
+				const answer = extension.service.ask({ cwd: extension.root, hasUI: false, mode: "rpc", ui: { input: dialog, notify() {}, select: dialog } }, PAYLOAD, "tool");
+				await flushMicrotasks();
+				extension.service.reject(REQUEST_ID, "api");
+				await answer;
+				expect({ name: row.name, timeouts }).toStrictEqual({ name: row.name, timeouts: row.timeouts });
+			} finally {
 				extension.restore();
 			}
 		}

@@ -43,6 +43,9 @@ const PADDING_X = 2;
 const PADDING_Y = 0;
 const OPTION_ROWS = 10;
 const DIALOG_TIMEOUT_MINUTES = 30;
+// Node and Bun run a timer delay above 2^31 - 1 ms after 1 ms, which Pi's
+// dialog timeout would turn into an immediate dismissal.
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 // The shared modal lock is a depth counter every kendex package raises and
 // lowers with no release notification, so a queued question polls it.
 const MODAL_LOCK_POLL_MS = 100;
@@ -302,10 +305,13 @@ function operationAborted(): Error {
 	return new Error("Operation aborted");
 }
 
-/** Pi's dialog timeout in milliseconds; a setting of zero or less means none. */
+/**
+ * Pi's dialog timeout in milliseconds, capped at the longest delay a timer
+ * honours; a setting of zero or less means none.
+ */
 function dialogTimeoutMs(cwd?: string): number | undefined {
 	const minutes = settingNumber("dialogTimeoutMinutes", DIALOG_TIMEOUT_MINUTES, cwd);
-	return minutes > 0 ? minutes * 60_000 : undefined;
+	return minutes > 0 ? Math.min(minutes * 60_000, MAX_TIMER_DELAY_MS) : undefined;
 }
 
 function popupContentWidth(width: number): number {

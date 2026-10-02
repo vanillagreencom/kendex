@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { clearPackageConfigCache } from "../../package-config.js";
 import type { DialogOptions } from "../../rpc-fallback.js";
 
+const CONFIG_ID = "@vanillagreen/pi-questions";
 const SERVICE = Symbol.for("kendex.pi-questions.service");
 const MODAL_LOCK = Symbol.for("kendex.pi.modal-lock");
 
@@ -57,10 +58,11 @@ export interface InstalledQuestionExtension {
 }
 
 /**
- * Runs the extension factory against a fresh service and an empty user
- * settings directory, so every setting reads its declared default.
+ * Runs the extension factory against a fresh service and a fresh user
+ * settings directory holding `config` as the package's settings, so every
+ * setting `config` does not name reads its declared default.
  */
-export function installQuestionExtension(factory: (pi: never) => void): InstalledQuestionExtension {
+export function installQuestionExtension(factory: (pi: never) => void, config: Record<string, unknown> = {}): InstalledQuestionExtension {
 	const root = realpathSync(mkdtempSync(join(tmpdir(), "question-service-")));
 	const globals = globalThis as unknown as Record<PropertyKey, unknown>;
 	const previousService = globals[SERVICE];
@@ -68,7 +70,7 @@ export function installQuestionExtension(factory: (pi: never) => void): Installe
 	const handlers = new Map<string, (...args: unknown[]) => unknown>();
 	let tool: TestQuestionTool | undefined;
 	process.env.PI_CODING_AGENT_DIR = root;
-	writeFileSync(join(root, "settings.json"), "{}");
+	writeFileSync(join(root, "settings.json"), JSON.stringify({ kendex: { extensionManager: { config: { [CONFIG_ID]: config } } } }));
 	clearPackageConfigCache();
 	delete globals[SERVICE];
 	const pi = {

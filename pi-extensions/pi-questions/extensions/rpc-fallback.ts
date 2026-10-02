@@ -24,10 +24,12 @@ export interface RpcDialogUI {
 /**
  * What every native dialog of one request receives. `signal` aborts when the
  * request settles anywhere (answer, bridge reply, rejection, tool abort,
- * shutdown); Pi then dismisses the open dialog, which resolves as dismissed,
- * and the walker reads the aborted signal as "settled elsewhere". `timeout`
- * dismisses a dialog nobody answers, so a client that stops responding cancels
- * the question instead of holding the lane.
+ * shutdown); the open dialog then resolves as dismissed, and the walker reads
+ * the aborted signal as "settled elsewhere". `timeout` resolves a dialog
+ * nobody answers the same way, so a client that stops responding cancels the
+ * question instead of holding the lane. Pi's TUI hides the dialog on either;
+ * Pi's RPC mode resolves it locally and sends the client no dismissal, so the
+ * client's dialog closes only if the client honours the request's `timeout`.
  */
 export interface DialogOptions extends ExtensionUIDialogOptions {
 	signal: AbortSignal;

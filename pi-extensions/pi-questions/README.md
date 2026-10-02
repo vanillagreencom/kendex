@@ -23,7 +23,7 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 
 ## How it works
 
-The agent sends questions and choices to the question tool. The extension displays them in Pi's editor area or the host's available dialogs. You select or type answers and submit them. The tool returns the answers to the agent. A connected session bridge can also complete a pending questionnaire. Interrupting the agent cancels its open question and closes the questionnaire or dialog.
+The agent sends questions and choices to the question tool. The extension displays them in Pi's editor area or the host's available dialogs. You select or type answers and submit them. The tool returns the answers to the agent. A connected session bridge can also complete a pending questionnaire. Interrupting the agent cancels its open question and closes the questionnaire or Pi's own dialog. On an RPC host, the client's dialog closes only if the client honours the request's `timeout` or tracks the interrupt itself.
 
 ## Memory use
 
@@ -37,7 +37,7 @@ Open `/extensions:settings`; settings appear under the **Questions** tab. Projec
 
 - `enabled`: package toggle.
 - `renderMode`, `popupWidth`, `popupMaxHeight`, `optionRows`, `defaultHeader`, `glyphStyle`: where and how the questionnaire renders.
-- `dialogTimeoutMinutes`: how long a native select or input dialog waits for an answer before it closes and the question is cancelled; 30 by default, 0 for no limit. The custom questionnaire has no timeout.
+- `dialogTimeoutMinutes`: how long a native select or input dialog waits for an answer before the question is cancelled; 30 by default, 0 for no limit, at most 35791. Pi's own dialogs close at the limit; an RPC client receives it as the request's `timeout`. The custom questionnaire has no timeout.
 - `bridgeRepliesEnabled`: whether `pi-session-bridge` may answer or reject a pending question.
 - `answersAsUserMessage`: mirror each answer into the conversation as a user message.
 

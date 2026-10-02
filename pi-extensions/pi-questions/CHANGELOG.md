@@ -4,8 +4,8 @@
 
 ### 2.1.0
 
-- Interrupting the agent while a question is open cancels the question: the questionnaire or native dialog closes and the tool call ends as aborted. Before, the question stayed open and the lane waited.
-- New setting `dialogTimeoutMinutes` (default 30, 0 for no limit): a native select or input dialog nobody answers closes after that many minutes and the question is cancelled.
+- Interrupting the agent while a question is open cancels the question and ends the tool call as aborted; the questionnaire or Pi's own dialog closes. On an RPC host, the client's dialog closes only if the client honours the request's `timeout` or tracks the interrupt itself. Before, the question stayed open and the lane waited.
+- New setting `dialogTimeoutMinutes` (default 30, 0 for no limit, at most 35791): a native select or input dialog nobody answers cancels the question after that many minutes. Pi's own dialogs close then; an RPC client receives the limit as the request's `timeout`.
 - A question queued behind another kendex popup no longer adds a promise reaction every 100 ms while it waits.
 
 ### 2.0.4
