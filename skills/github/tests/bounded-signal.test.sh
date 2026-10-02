@@ -58,12 +58,33 @@ kendex_github_run_bounded 30 "$WORKER"
 EOF
 chmod +x "$TMP/wrapper.sh"
 
-check_signal() {
-  local signal="$1" expected="$2" rc child_pid="" tries=0
-  local pid_file="$TMP/$signal.pid"
+# A SIGINT SENT BY kill(2) CAN BE LOST ON BASH 3.2, the macOS shard's shell.
+# While the runner waits on its foreground `sleep 0.1` poll, bash swaps its own
+# SIGINT handler in for the trap and judges the signal once the sleep is reaped.
+# One that lands after that judgement and before the trap is put back sets a
+# flag nothing reads, so the runner never forwards it and runs to its bound:
+# `INT exit: expected 130, got 0` after the full 30 seconds. HUP and TERM take
+# no such detour. Stock, the window is the few statements between the two; a
+# bash 3.2 build that holds it open 50ms per poll lost 4 of 20 INTs sent at
+# random points.
+#
+# So the INT row resends, as a person pressing ^C again would, but only once
+# the worker's group has outlived DROP_PROOF seconds since the last INT. A
+# delivered INT has the runner signal that group on its first stop pass, ahead
+# of the runner's one-second grace, so no resend lands inside a forward already
+# under way. Each resend waits a random part of the runner's 0.1s poll first:
+# a fixed DROP_PROOF can fall on the same point of that poll as the INT it
+# replaces, and the widened build then lost the resend too in six drops of
+# seven. A runner that never forwards INT still runs to its bound across
+# every resend, and one that exits without stopping the group still leaves it
+# for the cleanup row below.
+check_signal() { # SIGNAL EXPECTED [RESENDS]
+  local signal="$1" expected="$2" resends="${3:-0}" rc child_pid="" tries=0
+  local pid_file="$TMP/$signal.pid" resent_file="$TMP/$signal.resent" resent=""
   set +e
   SIGNAL="$signal" BOUNDED="$BOUNDED" WORKER="$TMP/worker.sh" \
     WRAPPER="$TMP/wrapper.sh" PID_FILE="$pid_file" \
+    RESENDS="$resends" RESENT_FILE="$resent_file" DROP_PROOF=3 \
     bash -c '
       set -m
       "$WRAPPER" &
@@ -74,14 +95,34 @@ check_signal() {
         tries=$((tries + 1))
       done
       kill -s "$SIGNAL" "$wrapper"
+      if [[ "$RESENDS" -gt 0 && -s "$PID_FILE" ]]; then
+        worker="$(<"$PID_FILE")"
+        sent=0
+        while [[ "$sent" -lt "$RESENDS" ]]; do
+          tries=0
+          while kill -0 -- "-$worker" 2>/dev/null \
+            && [[ "$tries" -lt $((DROP_PROOF * 20)) ]]; do
+            sleep 0.05
+            tries=$((tries + 1))
+          done
+          kill -0 -- "-$worker" 2>/dev/null || break
+          sleep "0.0$((RANDOM % 10))"
+          kill -s "$SIGNAL" "$wrapper"
+          sent=$((sent + 1))
+        done
+        printf "%s" "$sent" >"$RESENT_FILE"
+      fi
       wait "$wrapper"
       exit $?
     ' >"$TMP/$signal.out" 2>"$TMP/$signal.err"
   rc=$?
   set -e
 
+  if [[ -s "$resent_file" && "$(<"$resent_file")" != 0 ]]; then
+    resent=" after $(<"$resent_file") resend(s) of a dropped $signal"
+  fi
   if [[ "$rc" -eq "$expected" ]]; then
-    PASS=$((PASS + 1)); printf '  ok    %s exits %s\n' "$signal" "$expected"
+    PASS=$((PASS + 1)); printf '  ok    %s exits %s%s\n' "$signal" "$expected" "$resent"
   else
     FAIL=$((FAIL + 1)); printf '  FAIL  %s exit: expected %s, got %s\n' "$signal" "$expected" "$rc"
   fi
@@ -106,7 +147,7 @@ check_signal() {
 
 echo "=== bounded runner signal cleanup ==="
 check_signal HUP 129
-check_signal INT 130
+check_signal INT 130 2
 check_signal TERM 143
 
 # The bound is enforced on a 0.1s tick, so a caller may ask for tenths. Junk
