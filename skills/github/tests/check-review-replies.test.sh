@@ -199,6 +199,7 @@ body_of() {
     v2) supp_v2_body 'Previously missed (2)' ;;
     v2-no-count) supp_v2_body 'Previously missed' ;;
     v2-other-title) supp_v2_body 'Reviewer notes (2)' ;;
+    crlf) supp_body '### Suppressed comments (2)' "$SUPP_ENTRIES" | awk '{ printf "%s\r\n", $0 }' ;;
     *) echo "UNKNOWN-BODY: $1" >&2; exit 2 ;;
   esac
 }
@@ -221,6 +222,7 @@ a markdown heading carrying the newer name is the same block|renamed|$BOTH_STAND
 a summary-titled section counts entries past a nested </details>, display spaces stripped|v2|$BOTH_STANDING
 a summary-titled section with no count fails as unparsed|v2-no-count|$FAILED | suppressed-findings state=unparsed
 the same section under another title passes|v2-other-title|$PASSED
+a body written with CRLF line ends reads as the same block|crlf|$BOTH_STANDING
 ROWS
 
 echo "=== which reviews the scan reads ==="
@@ -273,6 +275,7 @@ reply_body_of() {
     *) echo "UNKNOWN-REPLY-BODY: $1" >&2; exit 2 ;;
   esac
 }
+H6="${HEAD:0:6}"
 H7="${HEAD:0:7}"
 O7="${OTHER:0:7}"
 while IFS='|' read -r label body author commenter bound reply want; do
@@ -286,10 +289,12 @@ a bound reasoned decline and a tracked entry clear the block|heading|author|auth
 entries named bare, as this output prints them, clear the block|heading|author|author|$H7|$SUPP_FIRST - $SUPP_REASON\n$SUPP_SECOND - Tracked: KEN-1400|$PASSED
 entries backticked, as the newer body prints them, clear the block|v2|author|author|$H7|\`$SUPP_FIRST\` - $SUPP_REASON\n\`$SUPP_SECOND\` - Tracked: KEN-1400|$PASSED
 entries carrying the body's zero-width spaces clear the block|v2|author|author|$H7|\`$(supp_zwsp "$SUPP_FIRST")\` - $SUPP_REASON\n\`$(supp_zwsp "$SUPP_SECOND")\` - Tracked: KEN-1400|$PASSED
+a head prefix shorter than 7 characters binds nothing|heading|author|author|$H6|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$BOTH_STANDING
 the full head sha binds as its prefix does|heading|author|author|$HEAD|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$PASSED
 a comment naming the head still answers a Fixed-in entry|heading|author|author|$H7|**$SUPP_FIRST** - Fixed in $HEAD\n**$SUPP_SECOND** - $SUPP_REASON|$PASSED
 a comment tied to the head only by its own Fixed-in sha answers nothing|heading|author|author|$O7|**$SUPP_FIRST** - Fixed in $HEAD\n**$SUPP_SECOND** - $SUPP_REASON|$BOTH_STANDING
 a label-only decline answers nothing|heading|author|author|$H7|**$SUPP_FIRST** - Declined: out of scope\n**$SUPP_SECOND** - Declined: pre-existing|$BOTH_STANDING
+a reply naming an issue that is neither a disposition nor a tracking claim answers nothing|heading|author|author|$H7|**$SUPP_FIRST** - see KEN-12\n**$SUPP_SECOND** - see KEN-12|$BOTH_STANDING
 a tracking claim naming no issue answers nothing|heading|author|author|$H7|**$SUPP_FIRST** - Tracking this separately.\n**$SUPP_SECOND** - Tracking this separately.|$BOTH_STANDING
 a reply bound to another head answers nothing|heading|author|author|$O7|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$BOTH_STANDING
 a reply by a NONE-association login answers nothing|heading|author|stranger|$H7|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$BOTH_STANDING
@@ -497,6 +502,15 @@ mutant_row "with no association a member, a maintainer's answer answers nothing"
 mutant_row "with the reply reason test cut, a label-only decline answers" reply-reason \
   '      def unanswered: ((disposition or tracking) | not) or untracked_claim or unreasoned_decline;' '      def unanswered: ((disposition or tracking) | not) or untracked_claim;' \
   'at_head "$(body_of heading)"; comments_set "$(comment author "$(printf "Dispositions at %s:\n**%s** - Declined: out of scope\n**%s** - Declined: pre-existing" "$H7" "$SUPP_FIRST" "$SUPP_SECOND")")"' "$PASSED"
+mutant_row "with the reply form test cut, a reply naming only an issue answers" reply-form \
+  '      def unanswered: ((disposition or tracking) | not) or untracked_claim or unreasoned_decline;' '      def unanswered: false or untracked_claim or unreasoned_decline;' \
+  'at_head "$(body_of heading)"; comments_set "$(comment author "$(printf "Dispositions at %s:\n**%s** - see KEN-12\n**%s** - see KEN-12" "$H7" "$SUPP_FIRST" "$SUPP_SECOND")")"' "$PASSED"
+mutant_row "with the head prefix floor lowered to 6, a 6-character prefix binds" sha-floor \
+  'SHA_FLOOR=7' 'SHA_FLOOR=6' \
+  'at_head "$(body_of heading)"; comments_set "$(comment author "$(printf "Dispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400" "$H6" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"' "$PASSED"
+mutant_row "with the CR strip cut, a CRLF body no longer reads as the block" crlf \
+  "SUPP_NORMALIZE_DEF='def display_strip: gsub(\"\\r\"; \"\") | gsub(\"$SUPP_ZWSP\"; \"\");" "SUPP_NORMALIZE_DEF='def display_strip: gsub(\"$SUPP_ZWSP\"; \"\");" \
+  'at_head "$(body_of crlf)"' "$FAILED | suppressed-findings state=unparsed"
 mutant_row "with the page-shape test cut, a non-array reviews page reads as no review" page-shape \
   "  pages=\$(jq -s 'if (length > 0) and all(type == \"array\") then add else error(\"pages are not arrays\") end' <<<\"\$raw\" 2>/dev/null) ||" \
   "  pages=\$(jq -s '[.[] | arrays] | add // []' <<<\"\$raw\" 2>/dev/null) ||" \

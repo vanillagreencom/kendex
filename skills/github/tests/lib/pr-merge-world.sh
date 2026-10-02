@@ -13,9 +13,10 @@
 #     merge-commit:<oid>, merge-fail:<already-queued|policy|transport|queue-required>
 #     graphql:fail (the queue query fails, the REST fallback answers),
 #     post-view-fail (that REST fallback fails too)
-#     replies:<unreasoned|fail> the review threads check-review-replies
-#     reads: one thread whose author declined with a label alone, or a read
-#     that fails
+#     replies:<unreasoned|two|fail> the review threads check-review-replies
+#     reads: one thread whose author declined with a label alone, that
+#     thread beside one whose author claims tracking and names no issue, or
+#     a read that fails
 #     review:<decision|none> GitHub's reviewDecision, none being empty, with
 #     no latest review; review-latest:<state> one latest review in that state
 #     require-token (the stub refuses a mutation without the bot token)
@@ -205,6 +206,7 @@ word() {
     graphql:fail) W_ENV+=("STUB_POST_GRAPHQL_FAIL=true") ;;
     post-view-fail) W_ENV+=("STUB_POST_VIEW_FAIL=true") ;;
     replies:unreasoned) W_ENV+=('STUB_THREADS=[{"comments":{"totalCount":1,"nodes":[{"author":{"login":"pr-author","__typename":"User"},"body":"Declined: frozen"}]}}]') ;;
+    replies:two) W_ENV+=('STUB_THREADS=[{"comments":{"totalCount":1,"nodes":[{"author":{"login":"pr-author","__typename":"User"},"body":"Out of scope, tracked."}]}},{"comments":{"totalCount":1,"nodes":[{"author":{"login":"pr-author","__typename":"User"},"body":"Declined: frozen"}]}}]') ;;
     replies:fail) W_ENV+=("STUB_THREADS_FAIL=true") ;;
     review:none) W_ENV+=("STUB_REVIEW_DECISION=" "STUB_REVIEW_LATEST=[]") ;;
     review:*) W_ENV+=("STUB_REVIEW_DECISION=$v" "STUB_REVIEW_LATEST=[]") ;;
@@ -472,7 +474,9 @@ run_table() {
 }
 
 # The calls a --check makes on an open PR, and a merge's calls before the
-# mutation: no review-thread read among them.
+# mutation. Each also makes the reply check's review-thread read, which
+# calls() filters out of the pin: the review_replies rows and the no-replies
+# mutant prove that read.
 CHECK="view:state,view:mergeable,checks,view:reviews"
 PRE="view:state,view:mergeable,checks,view:reviews,view:head"
 OPEN="state=OPEN mergeable=MERGEABLE at=-"
