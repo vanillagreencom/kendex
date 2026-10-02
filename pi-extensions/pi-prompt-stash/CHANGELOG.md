@@ -2,6 +2,12 @@
 
 ## Consumer-impacting changes
 
+### 3.0.3
+
+- The stash popup no longer rescans every draft on each frame or keystroke: each draft's search text, preview and line count are computed once, and search results are reused until the query or the drafts change. The list shows no more rows than fit in the terminal, whatever `listRows` says.
+- A stash holds at most 500 prompts and 8,388,608 bytes of store file. A stash past either limit is refused with a `prompt_stash_refused=item-limit` or `prompt_stash_refused=byte-limit` error and the editor text is kept. A store file already over the byte limit is not loaded; the stash and the popup report `prompt_stash_refused=store-too-large` with its path.
+- Store reads and writes no longer block Pi. They run one at a time, so two quick stashes both land. Text typed while a stash is being written stays in the editor.
+
 ### 3.0.2
 
 - Settings reads come from memory. A read is answered for one second without touching disk, then the settings files are read again. A change made in the extension manager, or a new session, applies at once; a hand edit to `settings.json` applies within one second. Before, every read went to disk.

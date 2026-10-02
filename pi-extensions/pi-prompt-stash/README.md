@@ -27,6 +27,8 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 
 The shortcut saves the current editor text in the session's draft file. With an empty editor, the shortcut opens the saved drafts. You select a draft to restore its text to the editor. The session keeps its draft file across restarts.
 
+A session's draft file holds at most 500 drafts and 8,388,608 bytes. A stash past either limit is refused with an error, and the text stays in the editor; delete drafts in the popup to make room. A draft file over the byte limit is not loaded; trim it by hand. The popup list shows no more rows than fit in the terminal.
+
 ## Settings
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-prompt-stash"]`.

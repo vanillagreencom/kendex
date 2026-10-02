@@ -4,7 +4,7 @@ import {
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
 import { Input, matchesKey, truncateToWidth, visibleWidth, type Focusable } from "@earendil-works/pi-tui";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { frameGlyphs, glyphs } from "./glyphs.js";
 import { installSettingsCacheRefresh, piUserDir, readPackageConfig, recordProjectTrust } from "./package-config.js";
@@ -17,6 +17,10 @@ const POPUP_MAX_HEIGHT = "80%";
 const LIST_ROWS = 10;
 const PADDING_X = 2;
 const PADDING_Y = 1;
+// Border, search line, spacer and status around the list, plus vertical padding.
+const POPUP_CHROME_ROWS = 6 + PADDING_Y * 2;
+const MAX_ITEMS = 500;
+const MAX_STORE_BYTES = 8 * 1024 * 1024;
 // Keep the legacy symbol so stale prompt-stash installs and the renamed
 // pi-prompt-stash package do not double-register the same command/shortcut.
 const INSTALL_SYMBOL = Symbol.for("kendex.prompt-stash.installed");
@@ -29,7 +33,26 @@ const ANSI_FG_RESET = "\x1b[39m";
 const stashMessages = {
 	empty: "prompt_stash_items=0\nPrompt stash is empty",
 	saved: (count: number) => `prompt_stash_items=${count}\nStashed prompt (${count} total)`,
+	saveFailed: (error: unknown) => `prompt_stash_save_failed\n${error instanceof Error ? error.message : String(error)}`,
+	refused: {
+		"item-limit": `Prompt stash holds at most ${MAX_ITEMS} prompts; delete some in the popup first`,
+		"byte-limit": `Prompt stash store holds at most ${MAX_STORE_BYTES} bytes; delete some prompts in the popup first`,
+		"store-too-large": `Prompt stash store file is over ${MAX_STORE_BYTES} bytes; trim it by hand`,
+	},
 };
+
+type Refusal = keyof typeof stashMessages.refused;
+
+class StashRefused extends Error {
+	constructor(reason: Refusal, value: string | number) {
+		super(`prompt_stash_refused=${reason} value=${value}\n${stashMessages.refused[reason]}`);
+	}
+}
+
+function notifyRefusal(ctx: ExtensionContext, error: unknown): void {
+	if (!(error instanceof StashRefused)) throw error;
+	ctx.ui.notify(error.message, "error");
+}
 
 function ansiGreen(text: string): string { return `${ANSI_GREEN_FG}${text}${ANSI_FG_RESET}`; }
 function ansiYellow(text: string): string { return `${ANSI_YELLOW_FG}${text}${ANSI_FG_RESET}`; }
@@ -101,10 +124,11 @@ function storePath(ctx: ExtensionContext): string {
 	return join(sessionStoreDir(ctx), configuredStoreFile(ctx));
 }
 
-function loadItems(path: string): StashItem[] {
-	if (!existsSync(path)) return [];
+async function loadItems(path: string): Promise<StashItem[]> {
+	const size = await stat(path).then((info) => info.size, () => 0);
+	if (size > MAX_STORE_BYTES) throw new StashRefused("store-too-large", path);
 	try {
-		const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<StashStore>;
+		const parsed = JSON.parse(await readFile(path, "utf8")) as Partial<StashStore>;
 		if (!Array.isArray(parsed.items)) return [];
 		return parsed.items
 			.filter((item): item is StashItem => {
@@ -122,38 +146,61 @@ function loadItems(path: string): StashItem[] {
 	}
 }
 
-function saveItems(path: string, items: StashItem[]): void {
-	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-	const tempPath = `${path}.tmp-${process.pid}`;
+async function saveItems(path: string, items: StashItem[]): Promise<void> {
 	const store: StashStore = { version: STORE_VERSION, items };
-	writeFileSync(tempPath, `${JSON.stringify(store, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-	renameSync(tempPath, path);
+	const json = `${JSON.stringify(store, null, 2)}\n`;
+	const bytes = Buffer.byteLength(json);
+	if (bytes > MAX_STORE_BYTES) throw new StashRefused("byte-limit", bytes);
+	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+	const tempPath = `${path}.tmp-${process.pid}`;
+	await writeFile(tempPath, json, { encoding: "utf8", mode: 0o600 });
+	await rename(tempPath, path);
+}
+
+let storeQueue: Promise<unknown> = Promise.resolve();
+
+// Every store read and write runs in this one queue, so an async write never
+// interleaves with another stash's read-modify-write or a popup load.
+function serialized<T>(op: () => Promise<T>): Promise<T> {
+	const run = storeQueue.then(op);
+	storeQueue = run.catch(() => undefined);
+	return run;
 }
 
 function makeId(): string {
 	return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function stashPrompt(ctx: ExtensionContext, text: string): number {
-	const path = storePath(ctx);
-	const now = new Date().toISOString();
-	const loaded = loadItems(path);
-	const existing = settingBoolean("deduplicate", true, ctx.cwd) ? loaded.filter((item) => item.text !== text) : loaded;
-	const items = [{ id: makeId(), text, createdAt: now }, ...existing];
-	saveItems(path, items);
-	return items.length;
+function stashPrompt(ctx: ExtensionContext, text: string): Promise<number> {
+	return serialized(async () => {
+		const path = storePath(ctx);
+		const now = new Date().toISOString();
+		const loaded = await loadItems(path);
+		const existing = settingBoolean("deduplicate", true, ctx.cwd) ? loaded.filter((item) => item.text !== text) : loaded;
+		const items = [{ id: makeId(), text, createdAt: now }, ...existing];
+		if (items.length > MAX_ITEMS) throw new StashRefused("item-limit", items.length);
+		await saveItems(path, items);
+		return items.length;
+	});
 }
 
-function lineCount(text: string): number {
-	return Math.max(1, text.split(/\r\n|\r|\n/).length);
+interface ItemView {
+	search: string;
+	preview: string;
+	lines: number;
 }
 
-function previewText(text: string): string {
-	const first = text
-		.split(/\r\n|\r|\n/)
-		.map((line) => line.trim())
-		.find((line) => line.length > 0);
-	return first ?? "(empty prompt)";
+// Items are never mutated, so a view computed once holds for the item's life.
+const itemViews = new WeakMap<StashItem, ItemView>();
+
+function itemView(item: StashItem): ItemView {
+	const cached = itemViews.get(item);
+	if (cached) return cached;
+	const lines = item.text.split(/\r\n|\r|\n/);
+	const preview = lines.map((line) => line.trim()).find((line) => line.length > 0) ?? "(empty prompt)";
+	const view = { search: item.text.toLowerCase(), preview, lines: lines.length };
+	itemViews.set(item, view);
+	return view;
 }
 
 function padAnsi(text: string, width: number): string {
@@ -173,10 +220,6 @@ function acquirekendexModalLock(): () => void {
 		released = true;
 		lock.depth = Math.max(0, lock.depth - 1);
 	};
-}
-
-function searchable(text: string): string {
-	return text.toLowerCase();
 }
 
 function panelLine(content: string, width: number): string {
@@ -227,15 +270,21 @@ function renderSearchLine(searchInput: Input, width: number, theme: Theme): stri
 function filterItems(items: StashItem[], query: string): StashItem[] {
 	const trimmed = query.trim().toLowerCase();
 	if (!trimmed) return items;
-	return items.filter((item) => searchable(item.text).includes(trimmed));
+	return items.filter((item) => itemView(item).search.includes(trimmed));
 }
 
 async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 	if (!ctx.hasUI) return;
 
-	const listRows = Math.max(1, Math.floor(settingNumber("listRows", LIST_ROWS, ctx.cwd)));
+	const configuredRows = Math.max(1, Math.floor(settingNumber("listRows", LIST_ROWS, ctx.cwd)));
 	const path = storePath(ctx);
-	let items = loadItems(path);
+	let items: StashItem[];
+	try {
+		items = await serialized(() => loadItems(path));
+	} catch (error) {
+		notifyRefusal(ctx, error);
+		return;
+	}
 	if (items.length === 0) {
 		ctx.ui.notify(stashMessages.empty, "info");
 		return;
@@ -252,8 +301,19 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 			let scroll = 0;
 			let confirmDeleteAll = false;
 
-			const filtered = () => filterItems(items, searchInput.getValue());
+			let filterCache: { items: StashItem[]; query: string; matches: StashItem[] } | undefined;
+			const filtered = () => {
+				const query = searchInput.getValue();
+				if (filterCache?.items !== items || filterCache.query !== query) filterCache = { items, query, matches: filterItems(items, query) };
+				return filterCache.matches;
+			};
+			const visibleRows = () => Math.max(1, Math.min(configuredRows, tui.terminal.rows - POPUP_CHROME_ROWS));
+			const save = () => {
+				const snapshot = items;
+				void serialized(() => saveItems(path, snapshot)).catch((error) => ctx.ui.notify(stashMessages.saveFailed(error), "error"));
+			};
 			const clampSelection = () => {
+				const listRows = visibleRows();
 				const count = filtered().length;
 				if (count === 0) {
 					selected = 0;
@@ -270,14 +330,14 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 				const item = filtered()[selected];
 				if (!item) return;
 				items = items.filter((candidate) => candidate.id !== item.id);
-				saveItems(path, items);
+				save();
 				clampSelection();
 				tui.requestRender();
 			};
 
 			const clearAll = () => {
 				items = [];
-				saveItems(path, items);
+				save();
 				confirmDeleteAll = false;
 				clampSelection();
 				tui.requestRender();
@@ -292,6 +352,7 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 			const render = (width: number): string[] => {
 				const innerWidth = popupContentWidth(width);
 				const results = filtered();
+				const listRows = visibleRows();
 				clampSelection();
 
 				const lines: string[] = [];
@@ -303,13 +364,14 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 				} else {
 					for (const [visibleIndex, item] of results.slice(scroll, scroll + listRows).entries()) {
 						const index = scroll + visibleIndex;
-						const count = lineCount(item.text);
+						const view = itemView(item);
+						const count = view.lines;
 						const countText = `~${count} ${count === 1 ? "line" : "lines"}`;
 						const countWidth = visibleWidth(countText);
 						const rowWidth = innerWidth;
 						const itemPad = " ";
 						const previewWidth = Math.max(1, rowWidth - visibleWidth(itemPad) - countWidth - 1);
-						const preview = truncateToWidth(previewText(item.text), previewWidth, "");
+						const preview = truncateToWidth(view.preview, previewWidth, "");
 						const styledPreview = index === selected ? theme.bold(preview) : preview;
 						const styledCount = index === selected ? theme.fg("text", countText) : theme.fg("dim", countText);
 						const row = `${itemPad}${styledPreview}${" ".repeat(Math.max(1, rowWidth - visibleWidth(itemPad) - visibleWidth(preview) - countWidth))}${styledCount}`;
@@ -370,13 +432,13 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 						return;
 					}
 					if (matchesKey(data, "-") || matchesKey(data, "pageup")) {
-						selected -= listRows;
+						selected -= visibleRows();
 						clampSelection();
 						tui.requestRender();
 						return;
 					}
 					if (matchesKey(data, "=") || matchesKey(data, "pagedown")) {
-						selected += listRows;
+						selected += visibleRows();
 						clampSelection();
 						tui.requestRender();
 						return;
@@ -442,8 +504,15 @@ async function toggleStash(ctx: ExtensionContext): Promise<void> {
 	if (stashShortcutOpen) return;
 	const text = ctx.ui.getEditorText?.() ?? "";
 	if (text.trim().length > 0) {
-		const count = stashPrompt(ctx, text);
-		ctx.ui.setEditorText("");
+		let count: number;
+		try {
+			count = await stashPrompt(ctx, text);
+		} catch (error) {
+			notifyRefusal(ctx, error);
+			return;
+		}
+		// The write is async; keep anything typed while it ran.
+		if ((ctx.ui.getEditorText?.() ?? "") === text) ctx.ui.setEditorText("");
 		ctx.ui.notify(stashMessages.saved(count), "info");
 		return;
 	}
