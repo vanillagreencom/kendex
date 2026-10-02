@@ -11,15 +11,15 @@
 # that hold no value (rule sources, merge queue, approvals, stale-approval
 # dismissal, thread resolution, Copilot review, no classic protection) are
 # fixed here. Its subject is GitHub
-# state, not the checkout, so validate.sh does not run it: CI's token
+# state, not the checkout, so CI does not run it: CI's token
 # cannot read bypass actors, installations or secret names, and every such
 # row would be unreadable there. The permission each row's reads need is in
 # print_usage.
 #
 # Report protocol: ok/advisory/FAIL check=KEY value=VALUE, then indented
-# explanation, the same records validate.sh prints. VALUE is the observed
-# state; `unreadable` in it means a read failed, which is never a match.
-# Human explanation is not parsed. Full contract: print_usage or --help.
+# explanation, the records rg_report in lib/diagnostics.sh prints. VALUE is
+# the observed state; `unreadable` in it means a read failed, which is never
+# a match. Human explanation is not parsed. Full contract: print_usage or --help.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || {
@@ -64,14 +64,14 @@ code alone, and the run prints one review-gate-warning=standard-advisory
 line to stderr, VALUE the advisory rows, naming each row's new form. The
 advisory rows are standard-ruleset-source, standard-required-approvals and
 standard-stale-dismissal on any departure, and standard-required-contexts
-where the repository declares no REVIEW_GATE_STANDARD_CONTEXTS. An
-unreadable row is FAIL, never advisory.
+where REVIEW_GATE_STANDARD_CONTEXTS is unset or empty. An unreadable row is
+FAIL, never advisory.
 
-Where the repository sets none of REVIEW_GATE_STANDARD_APP,
-REVIEW_GATE_STANDARD_ENVIRONMENT or REVIEW_GATE_STANDARD_SECRETS, each such
-key reads the value standard.json carried before 1.3.0, and the run prints
-one review-gate-warning=standard-setting-unset line to stderr, VALUE the
-unset keys. A key set empty still refuses.
+Each of REVIEW_GATE_STANDARD_APP, REVIEW_GATE_STANDARD_ENVIRONMENT and
+REVIEW_GATE_STANDARD_SECRETS that no source sets reads the value
+standard.json carried before 1.3.0, and the run prints one
+review-gate-warning=standard-setting-unset line to stderr, VALUE the unset
+keys. A key set empty still refuses.
 
   standard-ruleset-source           pull_request, copilot_code_review,
                                     deletion and non_fast_forward each come
@@ -91,7 +91,7 @@ unset keys. A key set empty still refuses.
                                     the standard's gate_context is not among
                                     them. VALUE is the required contexts; an
                                     advisory value is undeclared:CONTEXTS
-                                    (the repository declares no list), and a
+                                    (the list is unset or empty), and a
                                     FAIL value may be gate-required:CONTEXTS
   standard-required-approvals       an organization ruleset's pull-request
                                     rule requires at least 1 approval. VALUE

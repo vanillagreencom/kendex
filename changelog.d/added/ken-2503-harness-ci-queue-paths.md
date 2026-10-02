@@ -1,0 +1,1 @@
+- harness-ci: with `HARNESS_CI_QUEUE_PATHS` unset, every change stays queue-only and the classifier prints one warning to set it in `[env]` to the repository's CI inputs, or empty for none.

@@ -352,14 +352,16 @@ cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
 # The provision scope's refusal of an unset key: a copy that reads the
 # earlier values in every scope takes the owner checkout that declares
 # nothing past its standard-setting-missing refusal, toward writes in the
-# organization under the earlier organization's names.
+# organization under the earlier organization's names. The copy proves it
+# reached the earlier app by refusing on that app's absence from the world.
 file_edit "$SKILL" scripts/lib/standard.sh 1 ' && \[ "\$3" != provision \] \|\| return 0$' 's/ \&\& \[ "\$3" != provision \] || return 0$/ \&\& true || return 0/'
 dir="$TMP/control-provision-earlier"
 world "$dir" "" "" ""
 RC=0
 RAW="$(cd "$TMP/consumer-none" && env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$dir" GH_SHIM_FAIL="" \
   APP_ID=4242 APP_KEY="$KEY" "$SKILL/scripts/provision-environment.sh" --org acme --dry-run 2>&1)" || RC=$?
-if ! grep -q '^review-gate-error=standard-setting-missing ' <<<"$RAW"; then
+if ! grep -q '^review-gate-error=standard-setting-missing ' <<<"$RAW" &&
+  grep -qx 'review-gate-error=app-absent value=vanillagreen-fleet-lanes' <<<"$RAW"; then
   ok 'control: the earlier values read in the provision scope take an undeclared checkout past its refusal'
 else
   bad "control: provision refusal of an unset key (rc=$RC)" "$RAW"

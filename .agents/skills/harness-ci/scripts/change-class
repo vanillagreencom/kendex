@@ -26,21 +26,19 @@
 # line on stderr, ahead of the `class:` line: true where a changed path
 # matches a `queue` line of orch's narrow-change.conf, which is the list of
 # paths a change must run in a merge group for, or a glob of the repository's
-# own HARNESS_CI_QUEUE_PATHS (cause=repository-queue-path); where the
-# settings holding that setting could not be read
-# (cause=queue-settings-unreadable); where a changed path is one
+# own HARNESS_CI_QUEUE_PATHS (cause=repository-queue-path); where that setting
+# is unset (cause=queue-list-undeclared) or the settings holding it could not
+# be read (cause=queue-settings-unreadable); where a changed path is one
 # git quoted (cause=path-quoted), where the diff is empty
 # (cause=no-changed-paths), and where the paths were not read
 # (cause=paths-unread) or the list was not (cause=queue-list-unreadable,
 # cause=queue-list-missing). It is judged on every changed path harness-only
 # read, before any refusal or rule below, and no class changes it. A wiring
 # error prints no such line, and a reader takes its absence as
-# queue_only=true. Where HARNESS_CI_QUEUE_PATHS is unset, the shipped list
-# decides alone until 2.0: a diff it does not name reads queue_only=false
-# cause=no-queue-path queue-list=undeclared, after one
-# `deprecated: setting=HARNESS_CI_QUEUE_PATHS removal=2.0` warning, and from
-# 2.0 it reads queue-only. This paragraph is the one statement of when the
-# line reads true; other docs point here.
+# queue_only=true. The unset setting also prints one
+# `setting-unset: setting=HARNESS_CI_QUEUE_PATHS` warning per run. This
+# paragraph is the one statement of when the line reads true; other docs
+# point here.
 # The render proof runs `kendex verify --scope
 # project --json` in that private checkout, with `--base` set to the base-rev:
 # line harness-only printed and `--at-record` beside it, and reads its
@@ -468,22 +466,17 @@ queue_only_of_paths() {
   fi
   # The shipped list names this catalog's own CI inputs. A repository's own,
   # its test harness or its aggregator outside .github/, are its
-  # HARNESS_CI_QUEUE_PATHS. Set, even empty, the declaration is the rest of
-  # the list.
+  # HARNESS_CI_QUEUE_PATHS, and a repository that declares none, the key
+  # unset, has named no list the shipped one can be judged complete against:
+  # queue-only. Set, even empty, the declaration is the rest of the list.
   if ! base_settings; then
     QUEUE_CAUSE="cause=queue-settings-unreadable"
     return
   fi
-  # A repository that declares none, the key unset, has named no list the
-  # shipped one can be judged complete against. Before 1.3.0 the shipped list
-  # was the whole list, so that form still reads by it alone, with one
-  # warning naming the setting. Compatibility read, floor 1.3.0, removed at
-  # 2.0, when an unset key reads queue-only: no setting turns it off.
   if [ -z "${HARNESS_CI_QUEUE_PATHS+x}" ]; then
-    printf 'deprecated: setting=HARNESS_CI_QUEUE_PATHS removal=2.0\n' >&2
-    echo "change-class: HARNESS_CI_QUEUE_PATHS is unset in the base commit's settings, so the shipped queue list decides alone until 2.0, when every change reads queue-only; set it in the [env] table of kendex.settings.toml to the repository's own CI inputs, or empty for none" >&2
-    QUEUE_ONLY=false
-    QUEUE_CAUSE="cause=no-queue-path queue-list=undeclared"
+    printf 'setting-unset: setting=HARNESS_CI_QUEUE_PATHS\n' >&2
+    echo "change-class: HARNESS_CI_QUEUE_PATHS is unset in the base commit's settings, so every change reads queue-only and never takes the admin merge; set it in the [env] table of kendex.settings.toml to the repository's own CI inputs, or empty for none" >&2
+    QUEUE_CAUSE="cause=queue-list-undeclared"
     return
   fi
   set_globs "$HARNESS_CI_QUEUE_PATHS"

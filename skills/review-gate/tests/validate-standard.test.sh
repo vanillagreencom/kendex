@@ -55,6 +55,7 @@ settings_consumer full 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STA
 settings_consumer no-bypass 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"' "$CONTEXTS"
 settings_consumer bad-bypass 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"' "$CONTEXTS" 'REVIEW_GATE_STANDARD_QUEUE_BYPASS = "Integration:4925608:always;lanes-app;Integration:5115517:bypass"'
 settings_consumer no-contexts 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"'
+settings_consumer empty-contexts 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"' 'REVIEW_GATE_STANDARD_CONTEXTS = ""'
 settings_consumer gated 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"' 'REVIEW_GATE_STANDARD_CONTEXTS = "Cargo (workspace tests);CI;Review gate"'
 settings_consumer none
 settings_consumer seeded 'REVIEW_GATE_STANDARD_APP = ""' 'REVIEW_GATE_STANDARD_ENVIRONMENT = ""' 'REVIEW_GATE_STANDARD_SECRETS = ""'
@@ -332,6 +333,7 @@ while IFS='~' read -r name consumer edit overrides; do
   if [ "$CASE_MATCH" = true ]; then ok "$name"; else bad "$name" "$CASE_DIFF"; fi
 done <<'ROWS'
 a repository that declares no context list~no-contexts~~advisory:standard-required-contexts=undeclared:CI\;Cargo\ \(workspace\ tests\)
+a repository that declares an empty context list~empty-contexts~~advisory:standard-required-contexts=undeclared:CI\;Cargo\ \(workspace\ tests\)
 a required gate context the repository also declares~gated~.[5].parameters.required_status_checks += [{"context": "Review gate"}]~standard-required-contexts=gate-required:CI\;Cargo\ \(workspace\ tests\)\;Review\ gate
 ROWS
 

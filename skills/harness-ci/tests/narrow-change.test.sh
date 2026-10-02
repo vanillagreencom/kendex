@@ -285,8 +285,8 @@ empty_base="$(list_base "")"
 # in the source or the render spelling; a queue path beside others; a path
 # git quotes, alone and beside a product file; a path the repository's own
 # HARNESS_CI_QUEUE_PATHS names; and the control, a diff of paths no entry
-# names, which is not queue-only where the repository declares a list of its
-# own, empty or not, nor until 2.0 where it declares none. A row's path is the edit's
+# names, which is queue-only where the repository declares no list of its
+# own and not where it declares one, empty or not. A row's path is the edit's
 # own, and a `list=` field is the list its base's settings declare.
 # label | expected queue-only line | edits | declared list
 queue_rows=0
@@ -330,7 +330,7 @@ a review-bot instruction file is queue-only|queue_only=true cause=queue-path pat
 a queue path beside a product file is queue-only|queue_only=true cause=queue-path path=tools/ci-aggregate glob=tools/ci-aggregate|runtime/product.ts=2 tools/ci-aggregate=2
 a diff no entry names is not queue-only where the repository declares an empty list|queue_only=false cause=no-queue-path|docs/guide.md=2 runtime/product.ts=2 skills/orch/tests/added.test.sh=30|list=
 a diff no entry names is not queue-only where the repository's list names none of it|queue_only=false cause=no-queue-path|docs/guide.md=2 runtime/product.ts=2|list=scripts/ci/* tools/aggregate
-a diff no entry names is not queue-only where the repository declares no list, until 2.0|queue_only=false cause=no-queue-path queue-list=undeclared|docs/guide.md=2 runtime/product.ts=2
+a diff no entry names is queue-only where the repository declares no list|queue_only=true cause=queue-list-undeclared|docs/guide.md=2 runtime/product.ts=2
 a path the repository's own list names is queue-only|queue_only=true cause=repository-queue-path path=scripts/ci/run.sh glob=scripts/ci/*|runtime/product.ts=2 scripts/ci/run.sh=2|list=tools/aggregate scripts/ci/*
 a refusal raised after the paths were read carries their class|queue_only=false cause=no-queue-path|inventory-invalid runtime/product.ts=2|list=
 a workflow path git quotes is queue-only|queue_only=true cause=path-quoted path=".github/workflows/we\"ird.yml"|.github/workflows/we"ird.yml=2
@@ -366,18 +366,18 @@ assert_eq "a base whose settings the loader rejects reads queue-only" \
 # The undeclared list's one warning, counted by its key line: once where the
 # key is unset, and never where the base declares a list, empty or naming
 # none of the diff.
-deprecations_of() { # STDERR
-  grep -c '^deprecated: setting=HARNESS_CI_QUEUE_PATHS ' <<<"$1" || true
+unset_warnings_of() { # STDERR
+  grep -c '^setting-unset: setting=HARNESS_CI_QUEUE_PATHS$' <<<"$1" || true
 }
 ROW_BASE=""
 assert_eq "an undeclared list warns once" 1 \
-  "$(deprecations_of "$(run_row "$CHANGE_CLASS" runtime/product.ts=2)")"
+  "$(unset_warnings_of "$(run_row "$CHANGE_CLASS" runtime/product.ts=2)")"
 ROW_BASE="$empty_base"
 assert_eq "an empty declared list warns never" 0 \
-  "$(deprecations_of "$(run_row "$CHANGE_CLASS" runtime/product.ts=2)")"
+  "$(unset_warnings_of "$(run_row "$CHANGE_CLASS" runtime/product.ts=2)")"
 ROW_BASE="$declared_base"
 assert_eq "a declared list naming none of the diff warns never" 0 \
-  "$(deprecations_of "$(run_row "$CHANGE_CLASS" runtime/product.ts=2)")"
+  "$(unset_warnings_of "$(run_row "$CHANGE_CLASS" runtime/product.ts=2)")"
 ROW_BASE=""
 
 # Every `queue` entry of the shipped list has a row above, read off the list
@@ -461,11 +461,11 @@ assert_eq "an orch with no list reads queue-only" \
 # one that reads a missing list as not queue-only answers so on the listless
 # orch; one that judges the class after harness-only's refusals, as it once
 # did, answers paths-unread on a refusal raised after the paths were read.
-# One that reads an undeclared repository list as queue-only, as 1.3.0 did,
-# holds the unlisted diff, and one that drops its warning reads it silently;
-# one that never matches the repository's list, one that never reads the base's
+# One that reads an undeclared repository list by the shipped list alone, one
+# that never matches the repository's list, one that never reads the base's
 # settings and one that reads unreadable settings as not queue-only each let
-# through the row that rule holds. The shipped-list controls run where the
+# through the row that rule holds; one that drops the undeclared list's
+# warning reads it silently. The shipped-list controls run where the
 # repository declares an empty list, so only the rule under control answers.
 CONTROL_READ=queue_of
 ROW_BASE="$empty_base"
@@ -500,15 +500,16 @@ assert_eq "a classifier that judges the class after the refusals loses it on a r
   "queue_only=true cause=paths-unread" \
   "$(queue_of "$(run_row "$order_mutant" inventory-invalid runtime/product.ts=2)")"
 ROW_BASE=""
-control "a classifier that reads an undeclared list as queue-only holds an unlisted diff in the queue" \
-  "queue_only=true cause=queue-list-undeclared" runtime/product.ts=2 \
+control "a classifier that reads an undeclared list as not queue-only lets an unlisted diff through" \
+  "queue_only=false cause=queue-list-undeclared" runtime/product.ts=2 \
   queue-undeclared change-class \
-  '    QUEUE_CAUSE="cause=no-queue-path queue-list=undeclared"' \
-  '    QUEUE_ONLY=true QUEUE_CAUSE="cause=queue-list-undeclared"'
+  '    QUEUE_CAUSE="cause=queue-list-undeclared"' \
+  '    QUEUE_ONLY=false QUEUE_CAUSE="cause=queue-list-undeclared"'
 silent_mutant="$(mutant queue-undeclared-silent change-class \
-  "    printf 'deprecated: setting=HARNESS_CI_QUEUE_PATHS removal=2.0\\n' >&2" -)"
+  "    printf 'setting-unset: setting=HARNESS_CI_QUEUE_PATHS\\n' >&2" \
+  "    printf 'setting-unset: setting=HARNESS_CI_QUEUE_PATHS\\n' >/dev/null")"
 assert_eq "a classifier that drops the undeclared list's warning reads it silently" 0 \
-  "$(deprecations_of "$(run_row "$silent_mutant" runtime/product.ts=2)")"
+  "$(unset_warnings_of "$(run_row "$silent_mutant" runtime/product.ts=2)")"
 ROW_BASE="$declared_base"
 control "a classifier that never matches the repository's list lets its path through" \
   "queue_only=false cause=no-queue-path" scripts/ci/run.sh=2 \
@@ -517,7 +518,7 @@ ROW_BASE=""
 base_mutant="$(mutant queue-base-settings change-class \
   '  if ! base_settings; then' '  if false; then')"
 assert_eq "a classifier that never reads the base's settings loses the declared list" \
-  "queue_only=false cause=no-queue-path queue-list=undeclared" \
+  "queue_only=true cause=queue-list-undeclared" \
   "$(settings_queue "$base_mutant" "$declared_base")"
 environment_mutant="$(mutant queue-environment change-class \
   'unset HARNESS_CI_QUEUE_PATHS' ':')"
