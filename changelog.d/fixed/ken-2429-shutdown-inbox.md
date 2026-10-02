@@ -1,0 +1,1 @@
+- pi-agents-tmux: session shutdown stops a pane agent's inbox poller first, so a task queued during shutdown stays queued instead of reaching the closing session.

@@ -91,3 +91,58 @@ test("installed inbox callback catches failure and releases ownership for the ne
 	const retained = await importRuntimeCopy("index.ts", "if (childCurrentTaskFile === file) childCurrentTaskFile = undefined;", "if (childCurrentTaskFile === file) void childCurrentTaskFile;") as typeof runtime;
 	await assert.rejects(installedRecovery(retained.default), /next installed poll must deliver/);
 });
+
+async function shutdownInbox(extension: (pi: import("@earendil-works/pi-coding-agent").ExtensionAPI) => void): Promise<void> {
+	const { EventEmitter } = await import("node:events");
+	const { createHarness, teardown, installExtension, fakeCtx, withoutRealIntervals } = await import("./extension-fixture.js");
+	const { setTmuxPaneTitleSpawnForTests } = await import("../extensions/subagent/pane.js");
+	const { runtimeDirForContext } = await import("../extensions/subagent/settings.js");
+	const harness = createHarness({ childAgent: "engineer", childPane: "1", tmuxPane: "%42" });
+	const handlers: NonNullable<Parameters<typeof installExtension>[1]>["handlers"] = new Map();
+	const ticks: Array<{ callback: () => void; ms: number; cleared?: boolean }> = [];
+	let idle = false;
+	const ctx = { ...fakeCtx(harness), isIdle: () => idle };
+	const source = join(inboxDir(runtimeDirForContext(ctx), "engineer"), "work.md");
+	let deliveries = 0;
+	let stalled!: () => void;
+	const stall = new Promise<void>((resolve) => { stalled = resolve; });
+	// The title command ignores SIGTERM, so shutdown's title drain waits for the kill escalation.
+	setTmuxPaneTitleSpawnForTests((() => {
+		const proc = new EventEmitter() as import("node:child_process").ChildProcess;
+		proc.kill = (signal) => {
+			if (signal === "SIGTERM") stalled();
+			else queueMicrotask(() => proc.emit("close", 1));
+			return true;
+		};
+		return proc;
+	}) as typeof import("node:child_process").spawn);
+	try {
+		await withoutRealIntervals(async () => {
+			const start = await installExtension(harness, { extension, handlers, sendUserMessage: async () => { deliveries++; } });
+			// The startup poll skips a busy session, so only a timer tick can claim the task.
+			await start({}, ctx);
+			mkdirSync(inboxDir(runtimeDirForContext(ctx), "engineer"), { recursive: true });
+			writeFileSync(source, "inspect the code");
+			idle = true;
+			const shutdown = (async () => { for (const handler of handlers.get("session_shutdown") ?? []) await handler({}, ctx); })();
+			await stall;
+			// Every interval still live fires while the title drain waits.
+			for (const tick of ticks) if (!tick.cleared) tick.callback();
+			// The drain's one-second kill escalation outlasts a claim's local file operations.
+			await shutdown;
+			// A claimed task finishes its delivery before teardown removes its runtime.
+			for (let i = 0; i < 100 && !existsSync(source) && deliveries === 0; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+		}, ticks);
+		assert.ok(existsSync(source), "shutdown must stop the inbox poller before its awaited drains");
+		assert.equal(deliveries, 0);
+	} finally { teardown(harness); }
+}
+
+test("shutdown stops the inbox poller before a stalled title drain", { timeout: 10_000 }, async () => {
+	const runtime = await import("../extensions/subagent/index.js");
+	await shutdownInbox(runtime.default);
+	const late = await importRuntimeCopy("index.ts", "\t\tif (childInboxPoller) clearInterval(childInboxPoller);\n\t\tif (runtimeLaneRefresh) clearInterval(runtimeLaneRefresh);\n\t\tcompletionPoller = undefined;", "\t\tif (runtimeLaneRefresh) clearInterval(runtimeLaneRefresh);\n\t\tcompletionPoller = undefined;", [
+		{ before: "await drainCurrentTmuxPaneTitle();\n\t\tawait drainTranscriptUsagePersistences();", after: "await drainCurrentTmuxPaneTitle();\n\t\tif (childInboxPoller) clearInterval(childInboxPoller);\n\t\tawait drainTranscriptUsagePersistences();" },
+	]) as typeof runtime;
+	await assert.rejects(shutdownInbox(late.default), /shutdown must stop the inbox poller/);
+});

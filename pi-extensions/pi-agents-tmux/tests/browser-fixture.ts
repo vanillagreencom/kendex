@@ -89,6 +89,11 @@ export function filesystemCalls(run: () => void): number[] {
 
 /** Load a disposable production edit with the real package's modules and dependencies. */
 export async function importRuntimeCopy(fileName: string, before: string, after: string, additionalEdits: Array<{ before: string; after: string }> = []): Promise<unknown> {
+	return import(writeRuntimeCopy(fileName, before, after, additionalEdits));
+}
+
+/** Write a disposable production edit for a separate process to load; returns its path. */
+export function writeRuntimeCopy(fileName: string, before: string, after: string, additionalEdits: Array<{ before: string; after: string }> = []): string {
 	const runtimeDir = resolve(import.meta.dir, "../extensions/subagent");
 	const original = fs.readFileSync(join(runtimeDir, fileName), "utf8");
 	let modified = original;
@@ -106,7 +111,7 @@ export async function importRuntimeCopy(fileName: string, before: string, after:
 	const copy = join(copyDir, fileName);
 	mkdirSync(dirname(copy), { recursive: true });
 	writeFileSync(copy, source);
-	return import(copy);
+	return copy;
 }
 
 /** Check duplicate queueing through the existing pane transport, without launching Pi. */

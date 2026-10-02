@@ -1650,17 +1650,19 @@ export default function (pi: ExtensionAPI) {
 	registerSettledHandler(pi, handleChildSettled);
 
 	pi.on("session_shutdown", async () => {
+		// Every poller stops before the first await: a tick during a stalled
+		// drain could otherwise claim and deliver work after shutdown began.
 		childTitleCancellation.abort();
 		if (childTitlePoller) clearInterval(childTitlePoller);
-		await drainCurrentTmuxPaneTitle();
 		if (completionPoller) clearInterval(completionPoller);
 		if (childInboxPoller) clearInterval(childInboxPoller);
 		if (runtimeLaneRefresh) clearInterval(runtimeLaneRefresh);
-		runtimeLaneRefresh = undefined;
-		await drainTranscriptUsagePersistences();
-		if (dashboardCtx) setMiniDashboardWidget(dashboardCtx, SUBAGENT_WIDGET_KEY, MINI_DASHBOARD_RANK.AGENTS, undefined);
 		completionPoller = undefined;
 		childInboxPoller = undefined;
+		runtimeLaneRefresh = undefined;
+		await drainCurrentTmuxPaneTitle();
+		await drainTranscriptUsagePersistences();
+		if (dashboardCtx) setMiniDashboardWidget(dashboardCtx, SUBAGENT_WIDGET_KEY, MINI_DASHBOARD_RANK.AGENTS, undefined);
 		dashboardCtx = undefined;
 		usageTranscriptVersionsByTask.clear();
 		transcriptTails.clear();

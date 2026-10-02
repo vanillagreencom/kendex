@@ -67,7 +67,7 @@ test("installed shutdown drains the SIGTERM-resistant title command", async () =
 	try {
 		const runtime = await import("../extensions/subagent/index.js");
 		await shutdownTitle(runtime.default);
-		const mutant = await importRuntimeCopy("index.ts", 'pi.on("session_shutdown", async () => {\n\t\tchildTitleCancellation.abort();\n\t\tif (childTitlePoller) clearInterval(childTitlePoller);\n\t\tawait drainCurrentTmuxPaneTitle();', 'pi.on("session_shutdown", async () => {\n\t\tchildTitleCancellation.abort();\n\t\tif (childTitlePoller) clearInterval(childTitlePoller);\n\t\tvoid drainCurrentTmuxPaneTitle();') as typeof runtime;
+		const mutant = await importRuntimeCopy("index.ts", "await drainCurrentTmuxPaneTitle();\n\t\tawait drainTranscriptUsagePersistences();", "void drainCurrentTmuxPaneTitle();\n\t\tawait drainTranscriptUsagePersistences();") as typeof runtime;
 		await expect(shutdownTitle(mutant.default)).rejects.toThrow("shutdown must drain the active title command");
 	} finally { cleanupTempRuntimes(); }
 });

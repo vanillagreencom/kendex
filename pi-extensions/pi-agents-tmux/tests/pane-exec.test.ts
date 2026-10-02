@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
 import { execCapture } from "../extensions/subagent/pane.js";
-import { cleanupTempRuntimes, importRuntimeCopy, tempRuntime } from "./browser-fixture.js";
+import { cleanupTempRuntimes, importRuntimeCopy, tempRuntime, writeRuntimeCopy } from "./browser-fixture.js";
 
 after(cleanupTempRuntimes);
 
@@ -221,6 +221,75 @@ test("shutdown drains nested capture and its escalation", async () => {
 	await nestedShutdown(execCapture);
 	const mutant = await importRuntimeCopy("pane.ts", "const signal = options.signal ?? childSignal();", "const signal = options.signal;") as typeof import("../extensions/subagent/pane.js");
 	await assert.rejects(nestedShutdown(mutant.execCapture), /shutdown must cancel nested capture/);
+});
+
+async function parentExit(budgetFile: string, paneFile: string): Promise<void> {
+	const { spawn } = await import("node:child_process");
+	const { join } = await import("node:path");
+	const { existsSync, readFileSync } = await import("node:fs");
+	const root = tempRuntime();
+	const pidFile = join(root, "pid");
+	// The new process does not inherit the suite's optional Pi peer mocks.
+	// Only those dependencies are neutral; budget and capture remain production.
+	// The faux bridge outlives the deadline, so only a kill can end it in time.
+	const script = `import { mock } from "bun:test";
+mock.module("@earendil-works/pi-coding-agent", () => ({
+getAgentDir: () => ${JSON.stringify(root)}, parseFrontmatter: () => { throw new Error("unused discovery"); },
+withFileMutationQueue: (_path, action) => action()
+}));
+mock.module("@earendil-works/pi-tui", () => ({
+Container: class {}, Spacer: class {}, truncateToWidth: text => text,
+visibleWidth: text => text.length, wrapTextWithAnsi: text => [text]
+}));
+const { withChildBudget } = await import(${JSON.stringify(budgetFile)});
+const { execCapture } = await import(${JSON.stringify(paneFile)});
+import { existsSync } from "node:fs";
+let shutdown;
+const pi = { on(_event, handler) { shutdown = handler; return () => {}; } };
+// Pi owns the tool call's outcome; this parent awaits only its shutdown handlers.
+withChildBudget(pi, ${JSON.stringify(root)}, undefined, () => execCapture(${JSON.stringify(process.execPath)}, ["-e", ${JSON.stringify(`process.on("SIGTERM", () => {}); require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => {}, 10_000)`)}], { env: { PATH: "/usr/bin:/bin", HOME: ${JSON.stringify(root)}, TMPDIR: ${JSON.stringify(root)} } })).catch(() => {});
+try {
+for (let i = 0; i < 100 && !existsSync(${JSON.stringify(pidFile)}); i++) await new Promise(resolve => setTimeout(resolve, 10));
+if (!existsSync(${JSON.stringify(pidFile)})) throw new Error("faux bridge did not start");
+} finally { await shutdown(); }
+process.exit(0);`;
+	// The parent exits as Pi does after awaited shutdown handlers. It cannot own
+	// a surviving child's escalation timer after that exit. Its fresh HOME holds
+	// no package cache, so Bun would fetch the unmocked Pi peers from the network
+	// before the mocks apply; --no-install makes a missing mock fail on stderr.
+	const parent = spawn(process.execPath, ["--no-install", "-e", script], { env: { PATH: "/usr/bin:/bin", HOME: root, TMPDIR: root }, stdio: ["ignore", "ignore", "pipe"] });
+	let stderr = "";
+	parent.stderr.on("data", (data) => { stderr += String(data); });
+	const closed = new Promise<number | null>((resolve, reject) => { parent.once("close", resolve); parent.once("error", reject); });
+	// Fail within the case's budget if startup or shutdown stalls. Cleanup must
+	// finish before another case can observe this parent's close assertion.
+	const deadline = setTimeout(() => parent.kill("SIGKILL"), 4000);
+	try {
+		const code = await closed;
+		assert.equal(code, 0, stderr);
+		assert.throws(() => process.kill(Number(readFileSync(pidFile, "utf8")), 0), { code: "ESRCH" }, "child must be gone after parent exit");
+	} finally {
+		clearTimeout(deadline);
+		if (existsSync(pidFile)) {
+			try { process.kill(Number(readFileSync(pidFile, "utf8")), "SIGKILL"); }
+			catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+		}
+	}
+}
+
+test("no SIGTERM-resistant faux bridge survives its parent shutdown and exit", { timeout: 20_000 }, async () => {
+	const { resolve } = await import("node:path");
+	const budgetFile = resolve(import.meta.dir, "../extensions/subagent/child-budget.ts");
+	const paneFile = resolve(import.meta.dir, "../extensions/subagent/pane.ts");
+	await parentExit(budgetFile, paneFile);
+	const noEscalation = writeRuntimeCopy("pane.ts", 'if (failure) kill("SIGKILL");', 'if (failure) void failure;', [
+		{ before: 'kill("SIGKILL");\n\t\t\t\tcloseBound', after: 'void failure;\n\t\t\t\tcloseBound' },
+	]);
+	await assert.rejects(parentExit(budgetFile, noEscalation), /child must be gone/);
+	// The capture reads cancellation from the budget module it imports, so the
+	// undrained budget needs a capture wired to that copy.
+	const undrained = writeRuntimeCopy("child-budget.ts", "await Promise.allSettled(this.pending);", "void this.pending;");
+	await assert.rejects(parentExit(undrained, writeRuntimeCopy("pane.ts", 'from "./child-budget.js"', `from ${JSON.stringify(undrained)}`)), /child must be gone/);
 });
 
 test("shared signal policy falls back to the child and reports failed delivery", async () => {

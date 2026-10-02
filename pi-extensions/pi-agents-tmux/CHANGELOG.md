@@ -7,6 +7,7 @@
 - Background children and headless pane agents default to a 2-hour deadline (`bgTaskTimeoutMs` 7200000), up from 30 minutes, so a child whose full validation run, bounded at 60 minutes, starts within 60 minutes of launch outlives that run. The idle-stall watchdog does not reach background children, so a hung one now runs up to 2 hours before termination; set `bgTaskTimeoutMs` lower to keep a shorter bound.
 - Bridge arguments stay separate from the fixed Bash lookup at process launch. Custom bridge executable paths, including paths with spaces, remain supported.
 - Pane command capture accepts fixed probes and the resolved bridge executable without a shell. Shutdown tests pass file paths as data instead of constructing child code.
+- Session shutdown stops a pane agent's inbox poller before it waits for the pane title command, so a task queued during shutdown stays in the inbox instead of reaching the closing session.
 
 ### 3.3.1
 

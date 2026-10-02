@@ -261,17 +261,29 @@ export async function assertAgentContextBudget(extension?: ExtensionFactory, rou
 }
 
 /** Run `fn` with setInterval stubbed out; each interval it starts is pushed
- *  onto `started`, so a case can run a tick itself. */
-export async function withoutRealIntervals(fn: () => Promise<void>, started: Array<{ callback: () => void; ms: number }> = []): Promise<void> {
+ *  onto `started`, so a case can run a tick itself. A clearInterval inside
+ *  `fn` marks its interval `cleared`, as a real timer would stop firing. */
+export async function withoutRealIntervals(fn: () => Promise<void>, started: Array<{ callback: () => void; ms: number; cleared?: boolean }> = []): Promise<void> {
 	const realSetInterval = globalThis.setInterval;
+	const realClearInterval = globalThis.clearInterval;
+	const stubbed = new Map<object, { cleared?: boolean }>();
 	(globalThis as any).setInterval = ((callback: () => void, ms: number) => {
-		started.push({ callback, ms });
-		return { unref: () => undefined };
+		const tick = { callback, ms };
+		started.push(tick);
+		const handle = { unref: () => undefined };
+		stubbed.set(handle, tick);
+		return handle;
+	}) as any;
+	(globalThis as any).clearInterval = ((handle: any) => {
+		const tick = stubbed.get(handle);
+		if (tick) tick.cleared = true;
+		else realClearInterval(handle);
 	}) as any;
 	try {
 		await fn();
 	} finally {
 		globalThis.setInterval = realSetInterval;
+		globalThis.clearInterval = realClearInterval;
 	}
 }
 
