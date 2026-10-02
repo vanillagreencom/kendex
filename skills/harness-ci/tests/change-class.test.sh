@@ -208,7 +208,10 @@ require_rows change-class-table "$table_rows"
 
 # Refresh retires whole artifacts and shared registrations. The released
 # verify interface cannot prove whole-file ownership at the base, so neither
-# inventory absence nor a surviving head tree can authorize a deletion.
+# inventory absence nor a surviving head tree can authorize a deletion. A
+# retirement whose every read came in is standard by rule, so measured; a
+# deletion the head inventory still names, or one verify refuses, is the
+# fallback.
 removed_repo=$(new_repo removed-render)
 commit_paths "$removed_repo" 'recorded renders' .codex/agents/rust.md .agents/skills/orch/app.ts
 # Hook registration removal preserves unrelated user settings in this file.
@@ -217,63 +220,82 @@ printf '{"userGuard":"keep"}\n' >"$removed_repo/.pi/settings.json"
 git -C "$removed_repo" add .pi/settings.json
 git -C "$removed_repo" commit -q -m 'a shared registry with user settings'
 removed_base=$(git -C "$removed_repo" rev-parse HEAD)
-removed_rows=0
-while IFS='|' read -r label path inventory verifier want cause; do
-  removed_rows=$((removed_rows + 1))
-  git -C "$removed_repo" checkout -q -B removal "$removed_base"
-  rm -- "$removed_repo/$path"
-  if [ "$inventory" = absent ]; then
-    jq --arg path "$path" 'map(select(. != $path))' "$removed_repo/.kendex-generated.json" \
-      >"$SANDBOX/removed-inventory"
-    mv -- "$SANDBOX/removed-inventory" "$removed_repo/.kendex-generated.json"
-  fi
-  git -C "$removed_repo" add -A
-  git -C "$removed_repo" commit -q -m "$label"
-  set_verifier "$verifier"
-  PATH="$stub_bin:$PATH" assert_class "$label" "$want" --repo "$removed_repo" --event pull_request \
-    --base "$removed_base" --head HEAD
-  if [ "$cause" != - ]; then
-    removed_err=$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$removed_repo" \
-      --event pull_request --base "$removed_base" --head HEAD 2>&1 >/dev/null)
-    assert_eq "$label names the refusal" "cause=$cause path=$path" \
-      "$(sed -n 's/^class: class=standard measured=false //p' <<<"$removed_err")"
-    if [ "$verifier" = retired-registry ]; then
-      unsanctioned_head=$(git -C "$removed_repo" rev-parse HEAD)
-    fi
-  fi
-done <<'REMOVALS'
-retired render with no base whole-file proof|.codex/agents/rust.md|absent|clean|standard|render-retirement-unproved
-retired file under a surviving skill tree has no base proof|.agents/skills/orch/app.ts|absent|clean|standard|render-retirement-unproved
-retired shared registry still holds user settings|.pi/settings.json|absent|retired-registry|standard|render-retirement-unproved
-a deletion still named in the head inventory|.codex/agents/rust.md|retained|clean|standard|render-path-unowned
-a deletion under a tree still named in the head inventory|.agents/skills/orch/app.ts|retained|clean|standard|render-path-unowned
-verify refuses an unsanctioned deletion|.codex/agents/rust.md|absent|dirty|standard|-
+# label | removed path | head inventory | verifier | class | measured | cause,
+# `-` where the cause is the verifier's own
+cat >"$SANDBOX/removals" <<'REMOVALS'
+retired render with no base whole-file proof|.codex/agents/rust.md|absent|clean|standard|true|render-retirement-unproved
+retired file under a surviving skill tree has no base proof|.agents/skills/orch/app.ts|absent|clean|standard|true|render-retirement-unproved
+retired shared registry still holds user settings|.pi/settings.json|absent|retired-registry|standard|true|render-retirement-unproved
+a deletion still named in the head inventory|.codex/agents/rust.md|retained|clean|standard|false|render-path-unowned
+a deletion under a tree still named in the head inventory|.agents/skills/orch/app.ts|retained|clean|standard|false|render-path-unowned
+verify refuses an unsanctioned deletion|.codex/agents/rust.md|absent|dirty|standard|false|-
 REMOVALS
+
+# Every removal row run against SCRIPT, one `LABEL<TAB>WANT<TAB>GOT` line
+# each, so the shipped script and each control below read the same rows.
+# errexit does not reach a function run inside a substitution, so each step
+# checks its own status.
+removal_rows() { # SCRIPT
+  local label path inventory verifier class measured cause out status line want
+  while IFS='|' read -r label path inventory verifier class measured cause; do
+    git -C "$removed_repo" checkout -q -B removal "$removed_base" || return
+    rm -- "$removed_repo/$path" || return
+    if [ "$inventory" = absent ]; then
+      jq --arg path "$path" 'map(select(. != $path))' "$removed_repo/.kendex-generated.json" \
+        >"$SANDBOX/removed-inventory" || return
+      mv -- "$SANDBOX/removed-inventory" "$removed_repo/.kendex-generated.json" || return
+    fi
+    git -C "$removed_repo" add -A || return
+    git -C "$removed_repo" commit -q -m "$label" || return
+    set_verifier "$verifier"
+    if out=$(PATH="$stub_bin:$PATH" "$1" --repo "$removed_repo" --event pull_request \
+      --base "$removed_base" --head HEAD 2>"$SANDBOX/removal-err"); then
+      status=0
+    else
+      status=$?
+    fi
+    line=$(sed -n 's/^class: //p' "$SANDBOX/removal-err") || return
+    want="change_class=$class exit 0 class=$class measured=$measured cause=$cause path=$path"
+    if [ "$cause" = - ]; then
+      want="change_class=$class exit 0 class=$class measured=$measured"
+      line="${line%% cause=*}"
+    fi
+    printf '%s\t%s\t%s\n' "$label" "$want" "$out exit $status $line"
+  done <"$SANDBOX/removals"
+}
+removals_out=$(removal_rows "$CHANGE_CLASS")
+removed_rows=0
+while IFS=$'\t' read -r label want got; do
+  removed_rows=$((removed_rows + 1))
+  assert_eq "$label" "$want" "$got"
+done <<<"$removals_out"
 require_rows change-class-removals "$removed_rows"
 
-# Must-fail control: keep the refusal text but allow unproved retirement.
-removal_mutant="$SANDBOX/removal-mutant.sh"
-[ ! -L "$CHANGE_CLASS" ] || { echo 'removal-control: source=symlink' >&2; exit 2; }
-perl -e '
-  local $/;
-  my $text = <>;
-  my $old = q{RENDER_REFUSAL="cause=render-retirement-unproved path=$path"
-          return 1};
-  my $count = () = $text =~ /\Q$old\E/g;
-  die "removal-control: anchor=$count\n" unless $count == 1;
-  my $changed = $text;
-  my $replacement = $old;
-  $replacement =~ s/return 1/continue/;
-  $changed =~ s/\Q$old\E/$replacement/;
-  die "removal-control: mutation=unchanged\n" if $changed eq $text;
-  print $changed;
-' "$CHANGE_CLASS" >"$removal_mutant"
-removal_class=$(plant "$SANDBOX/removal-control" change-class "$removal_mutant")
-set_verifier retired-registry
-control_out=$(PATH="$stub_bin:$PATH" "$removal_class" --repo "$removed_repo" \
-  --event pull_request --base "$removed_base" --head "$unsanctioned_head" 2>/dev/null)
-assert_eq "the removal control turns the retired shared/user deletion row red" \
-  change_class=render "$control_out"
+# Must-fail controls, one per rule the rows hold, each naming the rows it
+# turns red: a retirement passed as owned, with the refusal text kept; every
+# render refusal marked measured; and the retirement's measured mark dropped.
+removal_reds() { # NAME LINE REPLACEMENT -> the labels of the rows that turn red
+  local planted rows
+  planted=$(mutant "$1" change-class "$2" "$3") || return
+  rows=$(removal_rows "$planted") || return
+  awk -F '\t' '$2 != $3 { print $1 }' <<<"$rows"
+}
+retirement_rows='retired render with no base whole-file proof
+retired file under a surviving skill tree has no base proof
+retired shared registry still holds user settings'
+control_reds=$(removal_reds removal-control '          RENDER_MEASURED=measured' \
+  '          RENDER_MEASURED=measured; continue')
+assert_eq "the removal control turns the retirement rows red" "$retirement_rows" "$control_reds"
+control_reds=$(removal_reds every-refusal-measured \
+  '  answer standard "$RENDER_REFUSAL" "$RENDER_MEASURED"' \
+  '  answer standard "$RENDER_REFUSAL" measured')
+assert_eq "marking every render refusal measured turns the fallback rows red" \
+  'a deletion still named in the head inventory
+a deletion under a tree still named in the head inventory
+verify refuses an unsanctioned deletion' "$control_reds"
+control_reds=$(removal_reds retirement-unmeasured '          RENDER_MEASURED=measured' -)
+assert_eq "dropping the retirement's measured mark turns the retirement rows red" \
+  "$retirement_rows" "$control_reds"
 
 # `standard` is two answers in one word, and `measured=` is the only thing
 # that separates them. Both shapes, from the same fixtures the table above
@@ -1739,7 +1761,7 @@ TOML
   carried_err="$(classify_stderr --repo "$consumer" --event pull_request \
     --base "$carried_base" --head HEAD)"
   assert_eq "a refresh that drops rendered tests/ needs base ownership proof" \
-    "class=standard measured=false cause=render-retirement-unproved path=.claude/skills/demo/tests/demo.test.sh" \
+    "class=standard measured=true cause=render-retirement-unproved path=.claude/skills/demo/tests/demo.test.sh" \
     "$(printf '%s\n' "$carried_err" | sed -n 's/^class: //p')"
   git -C "$consumer" checkout -q refreshed
 

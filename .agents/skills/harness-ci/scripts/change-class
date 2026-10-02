@@ -51,7 +51,10 @@
 #            verified head inventory, and trusted base whole-file ownership.
 #            verify exposes only current positions, so unproved retirement
 #            answers standard with cause=render-retirement-unproved, including
-#            whole-file and tree removals. Any other changed path answers
+#            whole-file and tree removals. That answer is a rule, marked
+#            measured=true like cause=base-inventory-absent: every read behind
+#            it succeeded, and the proof it lacks is one verify does not
+#            offer. Any other changed path answers
 #            standard with cause=render-path-unowned, and a shared file whose rest the run
 #            cannot vouch for answers cause=render-path-partial. That verdict
 #            is that every installed file equals a fresh render of its
@@ -250,7 +253,8 @@ harness_err="$work/harness-stderr"
 # `measured=` on the class line says which kind of answer this is, and it is
 # the ONE place that distinction is made. Every class but `standard` is earned
 # by a rule, so it is measured. `standard` is BOTH: a rule's verdict at the
-# handful of sites that pass `measured`, and this script's fallback everywhere
+# handful of sites that pass `measured` (a base with no inventory, an unproved
+# render retirement, a path rule), and this script's fallback everywhere
 # something could not be read — a diff, an inventory, a render proof, the
 # branch-size measurer, the narrow-change list. A consumer cannot tell those
 # apart from the cause, and enumerating causes outside this script has failed
@@ -582,6 +586,8 @@ checkout_head() {
 # keys can be owned from the row. Without that line no shared file is
 # proved, which refuses the class on such a file rather than granting it.
 RENDER_REFUSAL=""
+# `measured` where the refusal is a rule's verdict rather than a failed read.
+RENDER_MEASURED=""
 VERIFY_JSON=""
 renders_match() {
   local verify_args counts checked failed version verifier=kendex kind=path verifier_version
@@ -714,10 +720,12 @@ render_paths_covered() {
         "$proof_tree/.kendex-generated.json" >/dev/null 2>&1 || inventory_status=$?
       case "$inventory_status" in
         0)
-          # verify --base in kendex 1.2.0 and 1.3.0 exposes current positions,
-          # not trusted base ownership. Refuse retirement until the engine
-          # exposes that proof; even a current tree cannot grant base ownership.
+          # verify --base exposes current positions, not the files and trees
+          # the base owned whole, and a current tree cannot grant that. Refuse
+          # the render class until the engine exposes base ownership. Every
+          # read behind this answer succeeded, so it is standard by rule.
           RENDER_REFUSAL="cause=render-retirement-unproved path=$path"
+          RENDER_MEASURED=measured
           return 1 ;;
         1) ;;
         *) RENDER_REFUSAL="cause=unreadable-head-inventory head=$head_rev"; return 1 ;;
@@ -774,7 +782,7 @@ render_refused_at() { # PATH
 if [ "$harness_verdict" = "harness_only=true" ]; then
   renders_match && render_paths_covered &&
     answer render "cause=renders-match-their-sources"
-  answer standard "$RENDER_REFUSAL"
+  answer standard "$RENDER_REFUSAL" "$RENDER_MEASURED"
 fi
 
 ! path_class_matches registry standard ||

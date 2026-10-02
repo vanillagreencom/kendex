@@ -1,0 +1,1 @@
+- A consumer refresh that retires a rendered file now opens its pull request for review instead of stopping: change-class answers it as a measured `standard` class.
