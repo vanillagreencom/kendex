@@ -219,7 +219,35 @@ impl Hardened {
         &self.label
     }
 
-    pub fn run(mut self) -> Result<Output> {
+    pub fn run(self) -> Result<Output> {
+        self.run_pipes(|mut stdout, _, cap| read(&mut stdout, cap))
+    }
+
+    /// Bounded native RPC exchange. This owner keeps process teardown and pipe readers.
+    /// The callback closes stdin when its read-only protocol completes.
+    pub fn exchange<F>(mut self, exchange: F) -> Result<Output>
+    where
+        F: FnOnce(std::process::ChildStdout, std::process::ChildStdin) -> io::Result<Vec<u8>>
+            + Send
+            + 'static,
+    {
+        self.command.stdin(Stdio::piped());
+        self.run_pipes(move |stdout, stdin, _| {
+            let stdin = stdin.ok_or_else(|| io::Error::other("RPC child spawned without stdin"))?;
+            exchange(stdout, stdin)
+        })
+    }
+
+    fn run_pipes<F>(mut self, exchange: F) -> Result<Output>
+    where
+        F: FnOnce(
+                std::process::ChildStdout,
+                Option<std::process::ChildStdin>,
+                Option<usize>,
+            ) -> io::Result<Vec<u8>>
+            + Send
+            + 'static,
+    {
         let deadline = Instant::now() + self.timeout;
         // A script this process wrote a moment ago can refuse to start with
         // `ETXTBSY`: a spawn on another thread that began while the writer
@@ -254,8 +282,8 @@ impl Hardened {
                 Err(error) => return Err(CoreError::not_started(&self.label, error)),
             }
         };
-        let (Some(mut stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take())
-        else {
+        let stdin = child.stdin.take();
+        let (Some(stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
             return Err(CoreError::io(
                 &self.label,
                 io::Error::other("spawned without pipes"),
@@ -264,7 +292,7 @@ impl Hardened {
         // Drained on threads: a child that fills a pipe buffer would block
         // forever while we sat polling for its exit.
         let cap = self.max_output;
-        let reading_out = std::thread::spawn(move || read(&mut stdout, cap));
+        let reading_out = std::thread::spawn(move || exchange(stdout, stdin, cap));
         let reading_err = std::thread::spawn(move || read(&mut stderr, cap));
 
         // The deadline covers the READ, not only the wait: breaking on the

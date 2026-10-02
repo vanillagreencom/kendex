@@ -2,6 +2,7 @@ use super::*;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
+use std::io::Write;
 
 fn child_env(hardened: &Hardened) -> HashMap<&OsStr, Option<&OsStr>> {
     hardened.command.get_envs().collect()
@@ -546,6 +547,75 @@ fn a_run_that_outlives_its_timeout_is_ended_with_everything_it_spawned() {
         std::thread::sleep(Duration::from_millis(1500));
         assert!(!marker.exists(), "{label}: a process outlived the timeout");
     }
+}
+
+#[test]
+fn rpc_fixture_peer() {
+    match std::env::var("KENDEX_RPC_FIXTURE").as_deref() {
+        Ok("eof") => {
+            let mut request = String::new();
+            std::io::stdin().read_to_string(&mut request).unwrap();
+            assert_eq!(request, "request\n");
+            std::io::stdout().write_all(b"rpc-eof\n").unwrap();
+        }
+        Ok("wait") => {
+            std::thread::sleep(Duration::from_secs(1));
+            fs::write(std::env::var_os("KENDEX_RPC_MARKER").unwrap(), b"outlived").unwrap();
+        }
+        Ok(other) => panic!("unknown RPC fixture mode: {other}"),
+        Err(_) => {}
+    }
+}
+
+#[test]
+fn rpc_exchange_owns_stdin_eof_and_timeout_teardown() {
+    // Codex collection completes its protocol by closing stdin; stalled reads need teardown.
+    let tmp = tempfile::tempdir().unwrap();
+    let home = crate::test_util::rooted(&tmp);
+    let executable = std::env::current_exe().unwrap();
+    let peer = |mode: &str| {
+        let mut child = Hardened::spawning(
+            executable.as_os_str(),
+            owned(&["--exact", "process::tests::rpc_fixture_peer", "--nocapture"]),
+        );
+        child
+            .command
+            .env_clear()
+            .envs(crate::test_util::fixture_env(&home))
+            .env("KENDEX_RPC_FIXTURE", mode);
+        child
+    };
+    let output = peer("eof")
+        .exchange(|mut stdout, mut stdin| {
+            stdin.write_all(b"request\n")?;
+            drop(stdin);
+            read(&mut stdout, None)
+        })
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("rpc-eof\n")
+    );
+
+    let marker = home.join("rpc-outlived");
+    let mut waiting = peer("wait");
+    waiting.command.env("KENDEX_RPC_MARKER", &marker);
+    let error = waiting
+        .timeout(Duration::from_millis(200))
+        .exchange(|mut stdout, stdin| {
+            drop(stdin);
+            read(&mut stdout, None)
+        })
+        .unwrap_err();
+    let CoreError::Io { source, .. } = error else {
+        panic!("RPC timeout must be an IO error");
+    };
+    assert_eq!(source.kind(), io::ErrorKind::TimedOut);
+    // The peer writes after one second if teardown leaves it alive.
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(!marker.exists());
 }
 
 #[test]
