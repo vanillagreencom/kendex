@@ -2,7 +2,7 @@
 
 Persistent state file for orch workflows. Survives context compaction.
 
-**Location**: `<state-dir>/workflow-state-[ISSUE_ID].json` — `<state-dir>` resolves to the global `--state-dir <path>` flag, then `$ORCH_STATE_DIR`, then `tmp/`.
+**Location**: `<state-dir>/workflow-state-[ISSUE_ID].json` — `<state-dir>` resolves by the one rule `workflow-state --help` states under State directory.
 
 **Key**: `[ISSUE_ID]` is the workflow-state key whose forms `workflow-state --help` § Keys enumerates, never the bare GitHub issue number. Every `workflow-state` action, `init` included, uses the key exactly as given, so the spelling passed to `init` is the spelling every later command must use.
 
@@ -244,7 +244,7 @@ The watch log is rotated, not pruned. Each watch launch writes into a fresh run 
 
 All operations use `.agents/skills/orch/scripts/workflow-state` (run with `help` for full usage).
 
-To target a state directory from a worktree, pass the global `--state-dir <path>` flag before the subcommand — it takes precedence over `ORCH_STATE_DIR`. Prefer it over an `ORCH_STATE_DIR=… workflow-state …` env prefix, which orch's shell rule does not take ([../SKILL.md](../SKILL.md) § Harness-Safe Shell). `ORCH_STATE_DIR` stays supported as an environment fallback. The global `--no-private-env` flag takes only `ORCH_STATE_DIR` from the project's settings files, read as data, sets no other `[env]` key and never sources its private env file, for a caller reading another checkout's state; `lane-mail peer` reads a peer's `overseer` record that way.
+To target a state directory from a worktree, pass the global `--state-dir <path>` flag before the subcommand. Prefer it over an `ORCH_STATE_DIR=… workflow-state …` env prefix, which orch's shell rule does not take ([../SKILL.md](../SKILL.md) § Harness-Safe Shell). The global `--no-private-env` flag takes only `ORCH_STATE_DIR` from the project's settings files, read as data, sets no other `[env]` key and never sources its private env file, for a caller reading another checkout's state; `lane-mail peer` reads a peer's `overseer` record that way.
 
 `set` values are JSON only when they look like it — a `{`/`[` prefix, exactly `null`/`true`/`false`, or all digits. `append` is narrower: only a `{`/`[` prefix is spliced as JSON (a bare `null`/`true`/`123` appends as a string). Every other value is stored as a raw string: pass plain strings bare — `set PROJ-123 pr_review.mode approval`, never `'"approval"'`. `update` always takes a jq expression.
 

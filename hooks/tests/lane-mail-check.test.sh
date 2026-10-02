@@ -306,12 +306,14 @@ template_fields() {
 
 # The record the lane writes at the safe point, and the field a relaunch sets
 # on it once the item is resumed. Nothing reads the values, only the shape.
-record_handoff() { # ITEM [RESUMED_AT]
+# STATE_DIR is the `--state-dir` the lane's orch commands pass, where they pass
+# one.
+record_handoff() { # ITEM [RESUMED_AT] [STATE_DIR]
   local value
   value="$(printf '%s' "$HANDOFF_FIELDS" | tr ',' '\n' | jq -Rn --arg r "${2:-}" \
     '([inputs | {key: ., value: "x"}] | from_entries)
      | if $r == "" then . else .resumed_at = $r end')"
-  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" set "$1" handoff "$value" >/dev/null)
+  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" ${3:+--state-dir "$3"} set "$1" handoff "$value" >/dev/null)
 }
 
 TRANSCRIPT="$TMP_ROOT/transcript.jsonl"
@@ -343,6 +345,37 @@ record_handoff KEN-50 2026-09-18T09:00:00Z
 stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: context=500000" \
   "a record a relaunch resumed belongs to an earlier life and does not clear the mark"
+
+# A lane in a worktree whose orch commands all pass `--state-dir <worktree>/tmp`,
+# as a launch forbidding writes to the main checkout makes it, past the context
+# mark with no record yet. Its record goes to that tmp, while workflow-state's
+# own rule resolves the main clone's. HOOK, where named, is the copy it runs.
+worktree_handoff_lane() { # NAME ITEM [HOOK]
+  new_worktree_lane "$1" "$(printf '%s' "$2" | tr 'A-Z' 'a-z')"
+  [ -z "${3:-}" ] || install_hook "$3" "$LANE/.claude/hooks/lane-mail-check.sh"
+  mkdir -p "$LANE/tmp/lane-mail/$2"
+  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" --state-dir "$LANE/tmp" init "$2" >/dev/null)
+  REPORT_ITEM="$2"
+  write_transcript "$TRANSCRIPT" 500000
+}
+
+worktree_handoff_lane handoff_worktree_state KEN-441
+stop_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: context=500000" \
+  "a worktree lane with its record in neither its worktree nor the main clone is refused at the mark"
+record_handoff KEN-441 "" "$LANE/tmp"
+stop_at "$TRANSCRIPT" false
+assert_eq "RC=$RC first=$(first_line) main=$([ -e "$MAIN/tmp/workflow-state-KEN-441.json" ] && echo record || echo none)" \
+  "RC=0 first=- main=none" \
+  "a handoff record in the worktree's tmp, with none in the main clone, ends the turn past the mark"
+# A killed write in the worktree's tmp is reported with that file named, not
+# read as the none the main clone answers.
+worktree_handoff_lane handoff_worktree_unreadable KEN-443
+printf '{"handoff":' > "$LANE/tmp/workflow-state-KEN-443.json"
+stop_at "$TRANSCRIPT" false
+assert_eq "RC=$RC first=$(first_line)" \
+  "RC=0 first=lane-mail-check: handoff-unreadable=$LANE/tmp/workflow-state-KEN-443.json" \
+  "a worktree state file the verb could not read is reported under its own key, naming that file"
 
 # The figure is the LAST usage line, so a compaction that reset the window
 # reads as the reset it is, and the window the tail read opens on can end
@@ -3381,6 +3414,15 @@ pi_stop '{}'
 run_payload "$(jq -nc --arg p "$PI_TURN" '{session_id:"s1",stop_hook_active:false,transcript_path:$p,context_window:200000}')" \
   "PI_CODING_AGENT_DIR=$PI_POOL"
 assert_eq "rows=$(pi_rows)" "rows=-" "control: without the moved root a pool account's Pi install writes no row"
+
+# The worktree read pointed back at workflow-state's own rule: a lane whose
+# record stands in its worktree's tmp is refused at every turn end.
+mutant no-worktree-read -e 's@^  HANDOFF_DIR="\$ROOT/tmp"$@  HANDOFF_DIR=""@'
+worktree_handoff_lane control_worktree_state KEN-442 "$MUTANT_PATH"
+record_handoff KEN-442 "" "$LANE/tmp"
+stop_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: context=500000" \
+  "control: without the worktree read a record in the worktree's tmp leaves the refusal standing"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

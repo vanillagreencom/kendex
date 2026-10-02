@@ -1396,8 +1396,8 @@ cmd_help() {
 Usage: workflow-state [--state-dir <path>] [--no-private-env] <command> <issue_id> [args...]
 
 Global options (before the subcommand):
-  --state-dir <path>            Override state directory for all subcommands.
-                                Takes precedence over ORCH_STATE_DIR. Prefer this
+  --state-dir <path>            State directory for all subcommands, the first
+                                step of State directory below. Prefer this
                                 flag over the ORCH_STATE_DIR=… env prefix from
                                 worktree sessions: orch's shell rule takes no
                                 env prefix.
@@ -1624,10 +1624,16 @@ Examples:
   workflow-state update PROJ-123 '.fixed_items | map(select(.source == "qa-review"))'
   workflow-state --state-dir /path/to/tmp append PROJ-123 fixed_items '{"description":"Fix"}'
 
-Environment:
-  ORCH_STATE_DIR    Override state directory (default: tmp); --state-dir wins.
-  Paths             Relative paths join the main checkout or cwd outside Git;
-                    absolute paths stay unchanged.
+State directory, the one rule every subcommand resolves its state files by,
+and so the rule any caller naming no --state-dir reads; first match wins:
+  1. --state-dir <path>
+  2. ORCH_STATE_DIR: the caller's environment, then the private env file,
+     then .kendex/settings.toml, then kendex.settings.toml [env]; under
+     --no-private-env .kendex/settings.toml, then kendex.settings.toml,
+     then the environment
+  3. tmp
+  A relative path joins the main checkout, or the working directory outside
+  Git; an absolute path stays unchanged.
 
 Dependencies:
   jq               JSON processing
