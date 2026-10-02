@@ -109,6 +109,12 @@ class LaneMail:
                 if not isinstance(options, list) or not all(isinstance(option, str) for option in options):
                     self.bad_field(envelope.get("id"), "options")
                     invalid = True
+                draft = envelope.get("draft")
+                if "draft" in envelope and not (
+                    isinstance(draft, dict) and all(isinstance(draft.get(key), str) and draft[key] for key in ("recipient", "medium", "text"))
+                ):
+                    self.bad_field(envelope.get("id"), "draft")
+                    invalid = True
                 if invalid:
                     continue
                 # events filters invalid JSON rows, so its output index cannot

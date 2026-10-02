@@ -32,7 +32,7 @@ Requires Python 3.8+ and the orch skill, which the install adds.
 - Owner text arrives as plain text. Slack links, mentions, channel names and dates expand; emoji stay `:name:`.
 - Owner files go to `tmp/slack/files/`, readable only by the checkout's user. The overseer receives the text and each saved path, or `file <id> not fetched: <why>`. A failed download never holds the message back.
 - Each delivered owner message gets an :eyes: reaction. Once the overseer's mailbox read passes a directive, the relay swaps its mark for :white_check_mark:. Neither mark posts text. Refused marks retry next poll.
-- The relay posts new owner-bound mailbox envelopes: questions with choices, recommendations and deadlines, threaded notices, and uploaded reports. It skips envelopes older than `SLACK_THREAD_DAYS`.
+- The relay posts new owner-bound mailbox envelopes: questions with choices, recommendations, deadlines and drafts, threaded notices, and uploaded reports. It skips envelopes older than `SLACK_THREAD_DAYS`.
 - Posts get an `inflight` record before sending. After a stop or lost response, they stay `unknown` in `listen --status`, never repeated. Explicit refusals retry after a token fix if needed.
 - Catch-up reads active threads under old parents. Temporary refusals retry next poll. `thread-read-failed` names the thread and envelope; other threads and posts continue. Deleted questions close in the relay, not the mailbox. Later answers and referenced notices go to the channel. [Journal](schemas/journal.md) defines the records.
 - The relay's first run reads Slack from the moment of the binding and the mailbox from its newest envelope, so neither side's past is replayed. Open questions are posted whatever their age inside `SLACK_THREAD_DAYS`.

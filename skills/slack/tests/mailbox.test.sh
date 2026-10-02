@@ -135,6 +135,8 @@ unknown-kind|kind|.kind = "unknown"|0
 unknown-box|box|.box = "unknown"|0
 bad-options|options|.options = [17]|0
 bad-deadline|deadline|.deadline = "not-a-date"|0
+bad-draft|draft|.draft = "Ship it."|0
+draft-no-text|draft|.draft = {recipient: "a@example.com", medium: "email"}|0
 ROWS
 
 LEGACY="$(sk_new_root legacy-events)"
@@ -216,6 +218,11 @@ sk_bin_reset
 sk_mutant field-options mailbox.py 'if not isinstance\(options, list\) or not all\(isinstance\(option, str\) for option in options\):' 'if False:'
 sk_poll "$SK_TMP/field-bad-options"
 assert_eq "$(asks "$(sk_channel "$SK_TMP/field-bad-options")" 'Malformed field.')" "1" "control: accepting malformed options posts the invalid envelope"
+sk_bin_reset
+
+sk_mutant field-draft mailbox.py 'if "draft" in envelope and not \(' 'if False and not ('
+sk_poll "$SK_TMP/field-bad-draft"
+assert_eq "$(asks "$(sk_channel "$SK_TMP/field-bad-draft")" 'Malformed field.')" "1" "control: accepting a malformed draft posts the invalid envelope"
 sk_bin_reset
 
 sk_mutant missing-count relay.py 'if None in counts:' 'if False:'

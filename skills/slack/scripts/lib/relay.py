@@ -686,6 +686,10 @@ class RootRelay:
         """Whether the ask landed and its `open` line was journaled."""
         options = ", ".join(envelope.get("options") or [])
         lines = [f"{mention(self.binding)} Question from {envelope.get('from', 'overseer')}:", envelope.get("text", "")]
+        draft = envelope.get("draft")
+        if draft:
+            # The owner approves this exact text, so it is posted whole.
+            lines += [f"Draft to {draft['recipient']} by {draft['medium']}:", draft["text"]]
         tail = []
         if options:
             tail.append(f"Options: {options}.")

@@ -1,0 +1,1 @@
+- A Slack owner ask that carries a draft now shows the draft's recipient, medium and full text, so the owner reads the message they approve.
