@@ -980,13 +980,13 @@ sk_poll "$ZETA"
 assert_eq "$(sk_state '[.uploads[] | select(. | contains("ghp_"))] | length')" "1" "control: the report bytes unchecked, a token uploads"
 sk_bin_reset
 
-sk_mutant body-arg markup.py 'return body, "text" if mrkdwn else "markdown_text"' 'return body, "text"'
+sk_mutant body-arg markup.py 'return markdown, "markdown_text"' 'return markdown, "text"'
 sk_lm "$ZETA" notice --item overseer --to owner --file "$(sk_text n13 'Plain again.')" >/dev/null
 sk_poll "$ZETA"
 assert_eq "$(sk_state ".messages.${ZETA_CH}[] | select(.text == \"Plain again.\") | .body_arg")" "text" "control: the body sent as text, Slack renders mrkdwn"
 sk_bin_reset
 
-sk_mutant length markup.py 'return body, "text" if mrkdwn else "markdown_text"' 'return body, "markdown_text"'
+sk_mutant length markup.py 'return ""\.join\(_render\(part, mrkdwn=True\) for part in parts\), "text"' 'return "".join(_render(part, mrkdwn=True) for part in parts), "markdown_text"'
 sk_lm "$ZETA" notice --item overseer --to owner --file "$(sk_text n14 "$LONG")" >/dev/null
 sk_poll "$ZETA"
 assert_eq "$RC=${ERR1%% id=*}=$(sk_state "[.messages.${ZETA_CH}[] | select(.text | startswith(\"xxxx\"))] | length")" \
