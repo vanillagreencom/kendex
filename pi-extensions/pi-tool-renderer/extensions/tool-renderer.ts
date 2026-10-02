@@ -20,6 +20,7 @@ import { installLiveSettingsRefresh } from "./tool-renderer/live-settings.js";
 import { installSettingsCacheRefresh, recordProjectTrust } from "./tool-renderer/package-config.js";
 import { settingBoolean } from "./tool-renderer/settings.js";
 import { registerStackEvents } from "./tool-renderer/stack.js";
+import { registerBlinkEvents } from "./tool-renderer/text.js";
 import { registerBash, registerEdit, registerRead, registerReadOnly, registerWrite } from "./tool-renderer/tools.js";
 
 const INSTALL_SYMBOL = Symbol.for("kendex.pi-tool-renderer.installed");
@@ -33,6 +34,7 @@ export default async function toolRenderer(pi: ExtensionAPI): Promise<void> {
 	pi.on("session_start", (_event, ctx) => recordProjectTrust(ctx));
 
 	registerStackEvents(pi);
+	registerBlinkEvents(pi);
 	installToolExecutionRendererPatch(pi);
 	installLiveSettingsRefresh(pi);
 	installToolChromePatch();

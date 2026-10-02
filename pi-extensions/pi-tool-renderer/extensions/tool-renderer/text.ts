@@ -1,3 +1,4 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getCapabilities, hyperlink, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import * as PiTui from "@earendil-works/pi-tui";
 import * as os from "node:os";
@@ -178,6 +179,21 @@ export function clearBlink(context: any): void {
 		clearInterval(blinkTimer);
 		blinkTimer = undefined;
 	}
+}
+
+function clearAllBlinks(): void {
+	blinkEntries.clear();
+	if (blinkTimer) clearInterval(blinkTimer);
+	blinkTimer = undefined;
+}
+
+/** Pi gives a tool row no disposal call: an interrupted run ends with
+ *  `agent_end` and drops its pending rows without a final render, and a
+ *  session switch drops every row after `session_shutdown`. No row is pending
+ *  past either event, so each clears every blink entry and the interval. */
+export function registerBlinkEvents(pi: ExtensionAPI): void {
+	pi.on("agent_end", clearAllBlinks);
+	pi.on("session_shutdown", clearAllBlinks);
 }
 
 export function blinkingPrefix(theme: any, context: any, cwd?: string): string {

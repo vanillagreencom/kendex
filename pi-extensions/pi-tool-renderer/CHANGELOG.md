@@ -2,6 +2,11 @@
 
 ## Consumer-impacting changes
 
+### 2.0.10
+
+- With `pendingStatusAnimation` on, a running tool row stops blinking when the run is interrupted or the session ends, even when Pi drops the row before its result.
+- With `renderMutationTools` on, a write over a file larger than 700 KB no longer reads the file into memory; the row says the diff was skipped. Edit diffs come from Pi's own patch, and write previews read the old file off the render path.
+
 ### 2.0.9
 
 - Batch children now run through Pi's tool-call guards and result handlers. Guard-refused bash commands no longer run inside `tool_batch`. Requires Pi 0.99.0 or later; upgrade Pi before using this package.

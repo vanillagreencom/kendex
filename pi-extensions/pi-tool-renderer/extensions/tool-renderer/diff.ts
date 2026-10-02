@@ -1,5 +1,5 @@
 import { getLanguageFromPath, highlightCode } from "@earendil-works/pi-coding-agent";
-import { existsSync, readFileSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import {
@@ -961,27 +961,56 @@ export function renderBashDiffOutput(output: string, theme: any, expanded: boole
 	return rendered.join("\n");
 }
 
-export function readTextForDiff(pathValue: unknown, cwd: string): string | undefined {
-	if (typeof pathValue !== "string" || !pathValue.trim()) return undefined;
+/** One side of a write diff: the text, no file at the path, or the reason no
+ *  diff is built, which the rendered row shows. */
+export type DiffSnapshot = { kind: "absent" } | { kind: "text"; text: string } | { kind: "skipped"; reason: string };
+
+const DIFF_OVERSIZE_REASON = `over ${MAX_DIFF_INPUT_BYTES / 1024} KB`;
+
+export function textSnapshot(text: string): DiffSnapshot {
+	return Buffer.byteLength(text, "utf8") <= MAX_DIFF_INPUT_BYTES ? { kind: "text", text } : { kind: "skipped", reason: DIFF_OVERSIZE_REASON };
+}
+
+/** Reads a file for a diff after its size passes the cap, so a large file is
+ *  never read; never rejects. */
+export async function readDiffSnapshot(pathValue: unknown, cwd: string): Promise<DiffSnapshot> {
+	if (typeof pathValue !== "string" || !pathValue.trim()) return { kind: "skipped", reason: "no path" };
 	const target = resolve(cwd, pathValue);
 	try {
-		if (!existsSync(target)) return undefined;
-		const text = readFileSync(target, "utf8");
-		return Buffer.byteLength(text, "utf8") <= MAX_DIFF_INPUT_BYTES ? text : undefined;
-	} catch {
-		return undefined;
+		const stats = await stat(target);
+		if (!stats.isFile()) return { kind: "skipped", reason: "not a regular file" };
+		if (stats.size > MAX_DIFF_INPUT_BYTES) return { kind: "skipped", reason: DIFF_OVERSIZE_REASON };
+		return textSnapshot(await readFile(target, "utf8"));
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException)?.code;
+		if (code === "ENOENT" || code === "ENOTDIR") return { kind: "absent" };
+		return { kind: "skipped", reason: `unreadable (${code ?? String(error)})` };
 	}
 }
 
-export function attachDiffDetails(result: any, before: string | undefined, after: string | undefined, path?: string): any {
-	if (before === undefined && after === undefined) return result;
-	const oldText = before ?? "";
-	const newText = after ?? "";
-	if (oldText === newText) return result;
-	const diff = { ...buildStructuredDiff(oldText, newText), path };
-	const extra = { kendexDiff: diff, kendexDiffWasNewFile: before === undefined };
+function withDetails(result: any, extra: Record<string, unknown>): any {
 	result.details = result?.details && typeof result.details === "object" ? { ...result.details, ...extra } : extra;
 	return result;
+}
+
+export function attachDiffDetails(result: any, before: DiffSnapshot, after: DiffSnapshot, path?: string): any {
+	const wasNewFile = before.kind === "absent";
+	const skipped = before.kind === "skipped" ? before : after.kind === "skipped" ? after : undefined;
+	if (skipped) return withDetails(result, { kendexDiffSkipped: skipped.reason, kendexDiffWasNewFile: wasNewFile });
+	const oldText = before.kind === "text" ? before.text : "";
+	const newText = after.kind === "text" ? after.text : "";
+	if (oldText === newText) return result;
+	return withDetails(result, { kendexDiff: { ...buildStructuredDiff(oldText, newText), path }, kendexDiffWasNewFile: wasNewFile });
+}
+
+/** Builds the edit diff from the unified patch Pi's edit tool returns in its
+ *  details, so an edit reads no file of its own. */
+export function attachPatchDetails(result: any, path?: string): any {
+	const patch = result?.details?.patch;
+	if (typeof patch !== "string") return result;
+	if (Buffer.byteLength(patch, "utf8") > MAX_DIFF_INPUT_BYTES) return withDetails(result, { kendexDiffSkipped: DIFF_OVERSIZE_REASON });
+	const diff = parseUnifiedDiffOutput(patch)?.[0]?.diff;
+	return diff ? withDetails(result, { kendexDiff: { ...diff, path } }) : result;
 }
 
 export function editOperationsFromArgs(args: any): Array<{ oldText: string; newText: string }> {
@@ -1027,9 +1056,5 @@ export function renderMutationCallPreview(kind: "Edit" | "Write" | "Create", tar
 	const hidden = diffs.length - maxShown;
 	if (hidden > 0) text += `\n${treeConnector(theme, "└", cwd)}${theme.fg("muted", `… ${hidden} more edit block${hidden === 1 ? "" : "s"} · ctrl+o to expand`)}`;
 	return makeTruncatedLines(text);
-}
-
-export function existingSmallTextOrUndefined(targetPath: string, cwd: string): string | undefined {
-	return readTextForDiff(targetPath, cwd);
 }
 

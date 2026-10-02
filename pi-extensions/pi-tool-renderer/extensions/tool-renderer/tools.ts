@@ -3,16 +3,18 @@ import { resolve } from "node:path";
 
 import {
 	attachDiffDetails,
+	attachPatchDetails,
 	buildStructuredDiff,
 	diffSummary,
 	editOperationsFromArgs,
-	existingSmallTextOrUndefined,
-	readTextForDiff,
+	readDiffSnapshot,
 	renderBashDiffOutput,
 	renderMutationCallPreview,
 	renderStructuredDiff,
 	shouldRenderBashDiffsForCommand,
 	suppressReadOnlyBashDiffOutput,
+	textSnapshot,
+	type DiffSnapshot,
 	type StructuredDiff,
 } from "./diff.js";
 import { renderReadImages } from "./images.js";
@@ -151,6 +153,43 @@ function renderBashTail(output: string, limit: number, theme: any, cwd?: string)
 	return tailLines.map((line) => theme.fg("dim", line)).join("\n");
 }
 
+function diffSkippedNote(reason: string, theme: any): string {
+	return theme.fg("warning", ` · diff skipped: ${reason}`);
+}
+
+interface WriteCallSnapshot {
+	path: string;
+	snapshot?: DiffSnapshot;
+}
+
+/** The written file as it stood before the call, read once per path into the
+ *  row's renderer state off the render path; undefined until the read settles,
+ *  which redraws the row. A finished row drops it, so a session's rows hold no
+ *  file text. */
+function writeCallSnapshot(context: any, targetPath: string, cwd: string): DiffSnapshot | undefined {
+	const state = context?.state;
+	if (!state || typeof state !== "object") return undefined;
+	const record = state as Record<string, unknown>;
+	if (context.executionStarted && !context.isPartial) {
+		delete record.kendexWriteSnapshot;
+		return undefined;
+	}
+	const current = record.kendexWriteSnapshot as WriteCallSnapshot | undefined;
+	if (current?.path === targetPath) return current.snapshot;
+	const next: WriteCallSnapshot = { path: targetPath };
+	record.kendexWriteSnapshot = next;
+	void readDiffSnapshot(targetPath, cwd).then((snapshot) => {
+		next.snapshot = snapshot;
+		if (record.kendexWriteSnapshot !== next) return;
+		try {
+			context.invalidate?.();
+		} catch {
+			// Best-effort redraw only; the row draws the preview on its next render.
+		}
+	});
+	return undefined;
+}
+
 export function registerRead(pi: ExtensionAPI, agent: any, cwd: string): void {
 	const original = getBuiltInTool(agent, cwd, "read");
 	if (!original) return;
@@ -274,12 +313,9 @@ export function registerEdit(pi: ExtensionAPI, agent: any, cwd: string): void {
 		label: "edit",
 		...piToolContract(original),
 		async execute(id: string, params: any, signal: AbortSignal | undefined, onUpdate: unknown, context: any) {
-			const effectiveCwd = contextCwd(context, cwd);
 			const targetPath = params?.path ?? params?.file_path;
-			const before = readTextForDiff(targetPath, effectiveCwd);
-			const result = await getBuiltInTool(agent, effectiveCwd, "edit").execute(id, params, signal, onUpdate, context);
-			const after = result?.isError ? before : readTextForDiff(targetPath, effectiveCwd);
-			return attachDiffDetails(result, before, after, typeof targetPath === "string" ? targetPath : undefined);
+			const result = await getBuiltInTool(agent, contextCwd(context, cwd), "edit").execute(id, params, signal, onUpdate, context);
+			return attachPatchDetails(result, typeof targetPath === "string" ? targetPath : undefined);
 		},
 		renderCall(args: any, theme: any, context: any) {
 			const effectiveCwd = context?.cwd ?? cwd;
@@ -302,7 +338,8 @@ export function registerEdit(pi: ExtensionAPI, agent: any, cwd: string): void {
 				const errorText = splitTerminalLines(textContent(result))[0] || "edit failed";
 				return makeTruncatedLines(`${stackPrefix(theme)}${call}${theme.fg("dim", " · ")}${theme.fg("error", errorText)}`);
 			}
-			const summary = structured ? diffSummary(structured, theme, context?.cwd ?? cwd) : theme.fg("success", "applied");
+			const skipped = result?.details?.kendexDiffSkipped;
+			const summary = structured ? diffSummary(structured, theme, context?.cwd ?? cwd) : theme.fg("success", "applied") + (typeof skipped === "string" ? diffSkippedNote(skipped, theme) : "");
 			let text = `${stackPrefix(theme)}${call}${theme.fg("dim", " · ")}${summary}`;
 			if (structured) text += `\n${renderStructuredDiff(structured, theme, expanded, context?.cwd ?? cwd, undefined, targetPath)}`;
 			return makeTruncatedLines(text);
@@ -321,23 +358,29 @@ export function registerWrite(pi: ExtensionAPI, agent: any, cwd: string): void {
 		async execute(id: string, params: any, signal: AbortSignal | undefined, onUpdate: unknown, context: any) {
 			const effectiveCwd = contextCwd(context, cwd);
 			const targetPath = params?.path ?? params?.file_path;
-			const before = readTextForDiff(targetPath, effectiveCwd);
+			const before = await readDiffSnapshot(targetPath, effectiveCwd);
 			const result = await getBuiltInTool(agent, effectiveCwd, "write").execute(id, params, signal, onUpdate, context);
-			const after = result?.isError ? before : typeof params?.content === "string" ? params.content : readTextForDiff(targetPath, effectiveCwd);
-			return attachDiffDetails(result, before, after, typeof targetPath === "string" ? targetPath : undefined);
+			if (result?.isError || typeof params?.content !== "string") return result;
+			return attachDiffDetails(result, before, textSnapshot(params.content), typeof targetPath === "string" ? targetPath : undefined);
 		},
 		renderCall(args: any, theme: any, context: any) {
 			const effectiveCwd = context?.cwd ?? cwd;
 			const targetPath = args?.path ?? args?.file_path ?? "";
 			const lineTotal = lineCount(args?.content ?? "");
+			let skipNote = "";
 			if (context?.argsComplete && typeof args?.content === "string") {
-				const before = existingSmallTextOrUndefined(String(targetPath), effectiveCwd);
-				const label: "Write" | "Create" = before === undefined ? "Create" : "Write";
-				const diff = { ...buildStructuredDiff(before ?? "", args.content), path: String(targetPath) };
-				const previewComponent = renderMutationCallPreview(label, String(targetPath), [diff], theme, context, effectiveCwd);
-				if (componentHasVisibleLines(previewComponent)) return previewComponent;
+				const before = writeCallSnapshot(context, String(targetPath), effectiveCwd);
+				const after = textSnapshot(args.content);
+				const skipped = before?.kind === "skipped" ? before : after.kind === "skipped" ? after : undefined;
+				if (skipped) skipNote = diffSkippedNote(skipped.reason, theme);
+				else if (before && after.kind === "text") {
+					const label: "Write" | "Create" = before.kind === "absent" ? "Create" : "Write";
+					const diff = { ...buildStructuredDiff(before.kind === "text" ? before.text : "", after.text), path: String(targetPath) };
+					const previewComponent = renderMutationCallPreview(label, String(targetPath), [diff], theme, context, effectiveCwd);
+					if (componentHasVisibleLines(previewComponent)) return previewComponent;
+				}
 			}
-			return renderPendingCall(`${toolLabel(theme, "Write ")}${renderToolPathText(targetPath, theme, effectiveCwd)} ${theme.fg("dim", `· ${lineTotal} lines`)}`, theme, context, cwd);
+			return renderPendingCall(`${toolLabel(theme, "Write ")}${renderToolPathText(targetPath, theme, effectiveCwd)} ${theme.fg("dim", `· ${lineTotal} lines`)}${skipNote}`, theme, context, cwd);
 		},
 		renderResult(result: any, { expanded, isPartial }: any, theme: any, context: any) {
 			const args = context?.args ?? {};
@@ -352,7 +395,8 @@ export function registerWrite(pi: ExtensionAPI, agent: any, cwd: string): void {
 				const errorText = splitTerminalLines(textContent(result))[0] || "write failed";
 				return makeTruncatedLines(`${stackPrefix(theme)}${call}${theme.fg("dim", " · ")}${theme.fg("error", errorText)}`);
 			}
-			const summary = structured ? diffSummary(structured, theme, context?.cwd ?? cwd) : theme.fg("success", "written");
+			const skipped = result?.details?.kendexDiffSkipped;
+			const summary = structured ? diffSummary(structured, theme, context?.cwd ?? cwd) : theme.fg("success", "written") + (typeof skipped === "string" ? diffSkippedNote(skipped, theme) : "");
 			let text = `${stackPrefix(theme)}${call}${theme.fg("dim", " · ")}${summary}`;
 			if (structured) text += `\n${renderStructuredDiff(structured, theme, expanded, context?.cwd ?? cwd, undefined, targetPath)}`;
 			return makeTruncatedLines(text);
