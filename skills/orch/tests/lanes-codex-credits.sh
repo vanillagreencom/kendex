@@ -33,32 +33,39 @@ git -C "$NOSETTINGS" init -q -b main
 git -C "$NOSETTINGS" config gc.auto 0
 git -C "$NOSETTINGS" config maintenance.auto false
 
-# codex_body WEEKLY BALANCE HAS_CREDITS OVERAGE SPEND — a Codex usage body, its
-# 5-hour window at 20 and its weekly window at WEEKLY, carrying the credit
-# reading the endpoint writes, the balance a string, and its spend_control
-# reading SPEND, or no spend_control at all where SPEND is `absent`.
+# codex_body WEEKLY BALANCE HAS_CREDITS OVERAGE SPEND [RESET] — a Codex usage
+# body, its 5-hour window at 20 and its weekly window at WEEKLY, resetting at
+# epoch RESET (already past by default), carrying the credit reading the
+# endpoint writes, the balance a string, or no credits object at all where
+# BALANCE is `absent`, and its spend_control reading SPEND, or no
+# spend_control at all where SPEND is `absent`.
 codex_body() {
-  jq -n --argjson w "$1" --arg b "$2" --argjson has "$3" --argjson over "$4" --arg spend "$5" '{
+  jq -n --argjson w "$1" --arg b "$2" --argjson has "$3" --argjson over "$4" --arg spend "$5" \
+    --argjson reset "${6:-1785400000}" '{
     rate_limit: {allowed: false,
       primary_window: {used_percent: 20, reset_at: 1785000000, limit_window_seconds: 18000},
-      secondary_window: {used_percent: $w, reset_at: 1785400000, limit_window_seconds: 604800}},
-    credits: {has_credits: $has, unlimited: false, overage_limit_reached: $over, balance: $b,
-              approx_local_messages: [10, 40], approx_cloud_messages: [2, 8]}}
+      secondary_window: {used_percent: $w, reset_at: $reset, limit_window_seconds: 604800}}}
+    + if $b == "absent" then {} else {credits: {has_credits: $has, unlimited: false,
+        overage_limit_reached: $over, balance: $b,
+        approx_local_messages: [10, 40], approx_cloud_messages: [2, 8]}} end
     + if $spend == "absent" then {} else {spend_control: {reached: ($spend | fromjson), individual_limit: null}} end'
 }
 
-# Accounts, `name:weekly:balance:has_credits:overage_limit_reached:spend`.
+# Accounts, `name:weekly:balance:has_credits:overage_limit_reached:spend[:reset]`.
 # codex, 2codex and the floor pair are spent weekly windows on credits;
 # 1codex and 8codex hold plan room, 8codex the more; scodex has reached its
-# spend control and ncodex carries none.
+# spend control and ncodex carries none; ucodex is spent and carries no credit
+# reading. hcodex sits at --max-pct on credits with its reset past, so its
+# score outranks pcodex, which holds plan room at 94 with its reset in 2100.
 new_home credits
 for spec in codex:100:62300:true:false:false 1codex:40:0:false:false:false 2codex:100:80000:true:false:false \
   3codex:100:5000:true:false:false 4codex:100:4999:true:false:false 5codex:100:90000:false:false:false \
   6codex:100:90000:true:true:false 7codex:100:lots:true:false:false 8codex:30:0:false:false:false \
-  scodex:100:90000:true:false:true ncodex:100:90000:true:false:absent; do
-  IFS=':' read -r name week balance has over spend <<<"$spec"
+  scodex:100:90000:true:false:true ncodex:100:90000:true:false:absent ucodex:100:absent:true:false:false \
+  hcodex:95:62300:true:false:false pcodex:94:0:false:false:false:4102444800; do
+  IFS=':' read -r name week balance has over spend reset <<<"$spec"
   make_codex_lane "$H/.$name"
-  codex_body "$week" "$balance" "$has" "$over" "$spend" > "$FIXTURE_DIR/.$name.json"
+  codex_body "$week" "$balance" "$has" "$over" "$spend" "$reset" > "$FIXTURE_DIR/.$name.json"
 done
 dirs() { local d out=""; for d in "$@"; do out="$out:$H/.$d"; done; printf 'ORCH_LANE_DIRS=%s' "${out#:}"; }
 
@@ -105,10 +112,18 @@ PICK='pick --harness codex --json'
 
 echo "=== the chooser ranks credits after plan room ==="
 table \
-  "a credit-backed account ranks after an account with plan room, whatever their scores|$(dirs codex 1codex)|$PICK|rc=0 config_dir=$H/.1codex binding_bucket=weekly" \
+  "a credit-backed account ranks after an account with plan room, whatever their scores|$(dirs hcodex pcodex)|$PICK|rc=0 config_dir=$H/.pcodex binding_bucket=weekly" \
   "with no plan room anywhere, the credit-backed account is picked on its credits|$(dirs codex)|$PICK|rc=0 config_dir=$H/.codex binding_bucket=credits credits.balance=62300" \
   "among credit-backed accounts the larger balance is picked|$(dirs codex 2codex)|$PICK|rc=0 config_dir=$H/.2codex binding_bucket=credits" \
   "the plan-room order among accounts with plan room is unchanged|$(dirs codex 1codex 8codex)|$PICK|rc=0 config_dir=$H/.8codex binding_bucket=weekly"
+
+# One live claim on hcodex, whose score still outranks codex at 100: its
+# server is this suite's own process, which no tmux server enumerates, so the
+# claim lives while the suite runs.
+CLAIM_STORE="$TMP_ROOT/claim-store"; mkdir -p "$CLAIM_STORE/claims"
+printf '%s\t%%1\t%s\tken-1\t2026-09-28T00:00:00Z\t\n' "$$" "$H/.hcodex" > "$CLAIM_STORE/claims/1.claim"
+table \
+  "among credit-backed accounts of one balance fewer claims are picked over a higher score|$(dirs codex hcodex);OVERSEE_WATCH_STATE_DIR=$CLAIM_STORE|$PICK|rc=0 config_dir=$H/.codex binding_bucket=credits claims=0"
 
 echo "=== the floor and the reading's own flags ==="
 table \
@@ -127,6 +142,7 @@ table \
   "under --projected the named account is judged on the chooser's rule|$(dirs codex)|pick --lane $H/.codex --harness codex --projected --json|rc=0 binding_bucket=credits" \
   "a named account at the floor is refused, its line naming the balance and the floor|$(dirs 3codex)|pick --lane $H/.3codex --harness codex --json|rc=3 binding_bucket=weekly key=pick-lane-walled,lane=$H/.3codex,wall=100,bucket=weekly,max-pct=95,projected-headroom=0,credits=5000,credit-floor=5000" \
   "a named account whose balance did not parse names none|$(dirs 7codex)|pick --lane $H/.7codex --harness codex --json|rc=3 key=pick-lane-walled,lane=$H/.7codex,wall=100,bucket=weekly,max-pct=95,projected-headroom=0,credits=none,credit-floor=5000" \
+  "a named account with no credit reading names no credit fields|$(dirs ucodex)|pick --lane $H/.ucodex --harness codex --json|rc=3 key=pick-lane-walled,lane=$H/.ucodex,wall=100,bucket=weekly,max-pct=95,projected-headroom=0" \
   "the listing record carries the credits bucket and the room verdict|$(dirs codex 3codex)|list --harness codex --json|rc=0 [0].alias=codex [0].verdict=room [0].binding_bucket=credits [0].credits.balance=62300 [0].headroom_pct=0 [1].alias=3codex [1].verdict=walled [1].binding_bucket=weekly" \
   "the listing gives the chooser's verdict and prints the balance as the account's room|$(dirs codex 1codex)|list --harness codex|rc=0 cr.codex=62.3k_cr cr.1codex=none"
 
@@ -153,11 +169,18 @@ table \
   "a named account on its credits after 99 then 100 percent carries no rate and no wall minutes|$(dirs codex);OVERSEE_WATCH_STATE_DIR=$RATE_STORE|pick --lane $H/.codex --harness codex --json|rc=0 binding_bucket=credits usage_rate_state=credits projected_wall_minutes=null usage_rate_pct_per_min=null"
 
 echo "=== controls ==="
-# Without the leading rank key the balance outranks every plan-room score.
+# Without the credits stage the score alone orders the pair, and the
+# credit-backed account's is the higher.
 CTRL="$(mutant_scripts mutant-credit-rank lib/lane-model.sh)" || exit 1
-mutate_file "$CTRL/lib/lane-model.sh" 'sort_by([(.binding_bucket == "credits"), credit_rank])' 'sort_by([credit_rank])'
+mutate_file "$CTRL/lib/lane-model.sh" '| sort_by([(.binding_bucket == "credits"), credit_rank]) | first' '| first'
 LANES_UNDER_TEST="$CTRL/lanes" table \
-  "control: without the leading rank key the credit-backed account is picked over plan room|$(dirs codex 1codex)|$PICK|rc=0 config_dir=$H/.codex binding_bucket=credits"
+  "control: without the credits stage the credit-backed account is picked over plan room|$(dirs hcodex pcodex)|$PICK|rc=0 config_dir=$H/.hcodex binding_bucket=credits"
+
+# Without its claims key, credit_rank hands a balance tie to the score.
+CTRL="$(mutant_scripts mutant-credit-claims lib/lane-model.sh)" || exit 1
+mutate_file "$CTRL/lib/lane-model.sh" '[(0 - .credits.balance), .claims]' '[(0 - .credits.balance)]'
+LANES_UNDER_TEST="$CTRL/lanes" table \
+  "control: without the claims key the claimed account's score wins the tie|$(dirs codex hcodex);OVERSEE_WATCH_STATE_DIR=$CLAIM_STORE|$PICK|rc=0 config_dir=$H/.hcodex claims=1"
 
 # One control per rule credit_room holds.
 CTRL="$(mutant_scripts mutant-credit-floor lib/lane-model.sh)" || exit 1
@@ -205,6 +228,11 @@ CTRL="$(mutant_scripts mutant-credit-setting-shape lanes)" || exit 1
 # shellcheck disable=SC2016
 mutate_file "$CTRL/lanes" 'die invalid-lane-codex-credit-floor "$CREDIT_FLOOR"' 'CREDIT_FLOOR=0'
 LANES_UNDER_TEST="$CTRL/lanes" table "control: a floor nobody can read falls back to a number and the pick goes ahead|$(dirs codex);ORCH_LANE_CODEX_CREDIT_FLOOR=many|$PICK|rc=0"
+
+# The named refusal names a balance only for a Codex reading that carries one.
+CTRL="$(mutant_scripts mutant-credit-walled-reading lanes)" || exit 1
+mutate_file "$CTRL/lanes" 'if .harness == "codex" and .credits != null then' 'if .harness == "codex" then'
+LANES_UNDER_TEST="$CTRL/lanes" table "control: without the reading test a lane with no credits names a balance of none|$(dirs ucodex)|pick --lane $H/.ucodex --harness codex --json|rc=3 key=pick-lane-walled,lane=$H/.ucodex,wall=100,bucket=weekly,max-pct=95,projected-headroom=0,credits=none,credit-floor=5000"
 
 # The named refusal names the balance only through its own message arm.
 CTRL="$(mutant_scripts mutant-credit-walled-line lanes)" || exit 1

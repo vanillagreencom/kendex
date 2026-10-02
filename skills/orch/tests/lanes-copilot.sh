@@ -126,16 +126,22 @@ LANES_BIN="$CTL_TABLE/lanes" run_lanes list --harness copilot --local
 assert_eq "$(month_cell)" "-" "control: a table that fills MONTH from another field shows no pool"
 
 echo "=== pick judges a Copilot account on its pool ==="
+# key is the first keyed stderr line, its fields comma-joined, or none.
+pick_key() {
+  local key
+  key="$(awk '$1 == "lanes:" { $1 = ""; sub(/^ +/, ""); gsub(/ +/, ","); print; exit }' <<<"$ERR")"
+  printf '%s\n' "${key:-none}"
+}
 while IFS='|' read -r label args want; do
   eval "set -- $args"
   run_lanes "$@"
-  assert_eq "rc=$RC out=$(head -n 1 <<<"$OUT")" "$want" "$label"
+  assert_eq "rc=$RC out=$(head -n 1 <<<"$OUT") key=$(pick_key)" "$want" "$label"
 done <<ROWS
-the unlimited seat is picked over one with less room, handed back under COPILOT_HOME|pick --harness copilot --exclude-lane $H/.10copilot|rc=0 out=COPILOT_HOME=$H/.4copilot
-a named account at zero is walled even under a bound of 100|pick --lane $H/.2copilot --harness copilot --max-pct 100|rc=3 out=
-a named unlimited seat is room for any model|pick --lane $H/.4copilot --harness copilot --model claude-opus-5 --binding-floor|rc=0 out=COPILOT_HOME=$H/.4copilot
-a named account with room clears the default bound|pick --lane $H/.1copilot --harness copilot --model claude-opus-5|rc=0 out=COPILOT_HOME=$H/.1copilot
-a named account whose answer measured nothing is unmeasured|pick --lane $H/.5copilot --harness copilot|rc=5 out=
+the unlimited seat is picked over one with less room, handed back under COPILOT_HOME|pick --harness copilot --exclude-lane $H/.10copilot|rc=0 out=COPILOT_HOME=$H/.4copilot key=none
+a named account at zero is walled even under a bound of 100, its line naming no Codex credits|pick --lane $H/.2copilot --harness copilot --max-pct 100|rc=3 out= key=pick-lane-walled,lane=$H/.2copilot,wall=100,bucket=monthly,max-pct=100,projected-headroom=0
+a named unlimited seat is room for any model|pick --lane $H/.4copilot --harness copilot --model claude-opus-5 --binding-floor|rc=0 out=COPILOT_HOME=$H/.4copilot key=none
+a named account with room clears the default bound|pick --lane $H/.1copilot --harness copilot --model claude-opus-5|rc=0 out=COPILOT_HOME=$H/.1copilot key=none
+a named account whose answer measured nothing is unmeasured|pick --lane $H/.5copilot --harness copilot|rc=5 out= key=pick-lane-unmeasured,lane=$H/.5copilot,model=none
 ROWS
 
 echo "=== a live lane on a Copilot account is charged its burn over the month ==="
@@ -335,6 +341,10 @@ lanes_control ctl-limit lib/copilot-credits.sh '($remaining != null and $granted
 control_row 6copilot '[.status, .monthly_pct]' '["ok",100]' "control: without the entitlement bound a zero grant reads as a measured pool"
 lanes_control ctl-bind lanes '[{k: "monthly", p: $b.monthly_pct}, ' '['
 control_row 2copilot .binding_bucket null "control: without the monthly bucket in the binding a Copilot pool binds nothing"
+lanes_control ctl-walled-harness lanes 'if .harness == "codex" and .credits != null then' 'if .credits != null then'
+run_lanes pick --lane "$H/.2copilot" --harness copilot --max-pct 100
+assert_eq "rc=$RC key=$(pick_key)" "rc=3 key=pick-lane-walled,lane=$H/.2copilot,wall=100,bucket=monthly,max-pct=100,projected-headroom=0,credits=none,credit-floor=5000" \
+  "control: without the harness test a walled Copilot account names a Codex balance of none"
 lanes_control ctl-unlimited-zero lib/copilot-credits.sh '    | (if $unlimited then 0' '    | (if $unlimited then null'
 copilot_account 4copilot '{"quota_snapshots":{"premium_interactions":{"unlimited":true}}}'
 run_lanes pick --lane "$H/.4copilot" --harness copilot --model claude-opus-5
