@@ -10,7 +10,7 @@
 
 **Approval**: owner note 1790967939 directs the design and this record. No `authority.md` exists. The build waits for the owner's approval of [the design](../plans/lane-host-kinds.md).
 
-**Applies to**: `skills/orch/schemas/lane-host.md`, `skills/orch/scripts/lane-host`, `skills/orch/scripts/open-terminal`, `skills/orch/scripts/oversee-watch`, `skills/orch/scripts/lane-mail`, `skills/orch/scripts/lane-close`, `skills/orch/scripts/lanes`, `skills/orch/scripts/lib/lane-model.sh`, `skills/orch/scripts/lib/lane-usage.sh`, `skills/orch/scripts/lib/lane-launch.sh`, `skills/orch/references/skill-rules.md`, `skills/orch/references/oversee-lanes.md`
+**Applies to**: `skills/orch/schemas/lane-host.md`, `skills/orch/scripts/lane-host`, `skills/orch/scripts/lane-host-ssh`, `skills/orch/scripts/open-terminal`, `skills/orch/scripts/oversee-watch`, `skills/orch/scripts/lib/oversee-watch-text.sh`, `skills/orch/scripts/lane-mail`, `skills/orch/scripts/lane-close`, `skills/orch/scripts/lanes`, `skills/orch/scripts/lib/lane-model.sh`, `skills/orch/scripts/lib/lane-usage.sh`, `skills/orch/scripts/lib/lane-launch.sh`, `skills/orch/references/skill-rules.md`, `skills/orch/references/oversee-lanes.md`, `skills/orch/references/oversee-events.md`
 
 **Context**: Lanes run in local tmux, on SSH hosts (static and Daytona) and in managed agent clouds (Claude Code cloud, Codex cloud). The provider protocol needs an SSH target, a worktree path and file verbs, and a managed cloud offers none of them. vgs and vsys start Claude cloud sessions by hand, which no lane record, `lanes pick` or `oversee-watch` sees. Claude cloud credit on 11 accounts expires at 2026-11-05T07:59Z, and on 2claude at its lapse on 2026-10-08.
 
@@ -26,7 +26,7 @@
 
 - A cloud branch inside `open-terminal` beside the provider route would be a second launcher in all but name, with its own copy of each rule.
 - A tagged capability value per question lets each caller match exhaustively. Probing an exit status cannot tell an absent verb from a fault.
-- Unspent room in a refilling window comes back at its reset. An expiring grant is lost whole, and a balance with no expiry loses nothing by waiting. KEN-2494's order, plan room before Codex credits, is the tier 1 to tier 2 step of the same key.
+- Unspent room in a refilling window comes back at its reset. An expiring grant is lost whole, and a balance with no expiry loses nothing by waiting. KEN-2494's order folds into the same key ([the design](../plans/lane-host-kinds.md#the-expires-first-rule) § The expires-first rule).
 
 **Revisit When**: a managed cloud offers SSH or file access into a session, a provider documents a status or stop interface for its sessions, or an allowance appears that both expires and refills.
 
