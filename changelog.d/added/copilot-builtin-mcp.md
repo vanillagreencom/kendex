@@ -1,1 +1,0 @@
-- List and toggle Copilot's built-in MCP servers per scope. Enable or disable installed packages from the CLI with `kendex enable` and `kendex disable`.

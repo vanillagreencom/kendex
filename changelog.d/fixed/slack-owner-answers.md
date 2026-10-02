@@ -1,1 +1,0 @@
-- Slack delivers repeated replies as answers with eyes reactions until explicit close or deadline. Catalog updates preserve closed questions. Relay restarts retain closure state.

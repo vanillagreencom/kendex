@@ -1,1 +1,0 @@
-- Windows add and subscription commands use the catalog directory name for native local paths instead of including the parent directories.

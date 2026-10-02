@@ -1,1 +1,0 @@
-- Overseer succession onto another harness carries only the translated permission word, a self-succession refused after launch is logged in the fleet log, and lanes reads Copilot CLI 1.0.90 logins.

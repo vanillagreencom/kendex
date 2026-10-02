@@ -1,1 +1,0 @@
-- Consumer refresh defers refused pushes when its rolling pull request is queued, armed, merged or closed, or its branch was deleted. Other push failures still fail.

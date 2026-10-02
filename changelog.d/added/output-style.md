@@ -1,1 +1,0 @@
-- Install one output style per scope in Claude Code and Pi. Show safety findings, preserve user selections and unowned Pi blocks, and repair owned Pi edits with named discard.

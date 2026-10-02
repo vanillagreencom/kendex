@@ -1,1 +1,0 @@
-- Pi extension toggles work globally and per project without removing package files or other settings. Install and update keep disabled extensions off. Verification detects changed filters.

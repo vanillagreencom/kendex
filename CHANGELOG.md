@@ -8,6 +8,71 @@ change came from an outside contributor.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-02
+
+### Upgrading
+
+- 1.4.0 removed the review-gate scripts `validate.sh`, `review-writer.sh` and `review-policy`: run `adopt-refresh.sh --retire-writer` and drop every CI call to those scripts.
+- A consumer still on a refresh-consumer workflow from before 1.4.0 can stop on a standard-class first render: push one `kendex/refresh` render by hand to clear it.
+
+### Added
+
+- List and toggle Copilot's built-in MCP servers per scope. Enable or disable installed packages from the CLI with `kendex enable` and `kendex disable`.
+- Set KENDEX_REAL_HOME to an absolute path for a portable home on Linux, macOS and Windows, including global toggle and verify operations.
+- Direct-push lanes can record cycle time and change class without a pull request, and join the fleet's per-class totals.
+- Orch archives expired, closed mailbox exchanges, including peer replies, without changing read positions and removes session records for panes that no longer run.
+- Install one output style per scope in Claude Code and Pi. Show safety findings, preserve user selections and unowned Pi blocks, and repair owned Pi edits with named discard.
+- Overseers audit growing or stale backlogs, decide aged Triage issues, batch protected changes for owner approval, and report created and closed counts.
+- Add the xcode-run skill to install a manual Mac workflow for Xcode builds, tests and simulator screenshots with one downloadable log and PNG artifact.
+
+### Changed
+
+- Consumer refresh reports the exact engine version in its rolling pull request or current-run summary. The review-gate writer installs the latest release from its immutable installer commit.
+- Orch launch tiers use Expected delta counts. Lane records retain tier inputs, reject conflicting merge-time tiers, and explain estimate and path misses.
+- Claude Code agent rendering replaces the haiku tier with sonnet and reports one warning per run. KEN-2466 removes this substitution.
+
+### Fixed
+
+- Overseer succession onto another harness carries only the translated permission word, a self-succession refused after launch is logged in the fleet log, and lanes reads Copilot CLI 1.0.90 logins.
+- Claude lanes use their own model's account limits at turn end. A full limit for another model no longer forces a handoff.
+- Shared CLI package commands accept output-style. Their kind help and unknown-kind choices include output-style while keeping existing aliases.
+- Codex skill reads through functions.exec count as loaded skills, so the next guarded command can run. Failed and compound reads still refuse.
+- List Copilot's built-in servers and switch them on or off per scope. Enable or disable any installed package from the CLI.
+- Git hook checks no longer emit a stray Broken pipe error when a helper program has changed.
+- Keep skill-load-check on Claude, Codex and Pi when skill-load-record is limited to Copilot. Hook headers can limit companion requirements with requires-on.
+- Branch checks no longer treat documentation or changelog files as an extra source subsystem. Their added lines still count toward the small size limit.
+- Owner notices print receipts. Mail refuses unkeyed repeats under its lock, including owner answers. Peer asks keep both pending records. Hosts require the repeat guard. Reports name their notice.
+- Slack records posts before sending, avoids repeats after lost responses or stops, redirects posts from deleted asks to the channel, and recovers replies in recently active old threads.
+- Agents popup scrolling reuses text layout and retains at most 16 task traces. Managed-agent saves refresh asynchronously with a 120-second deadline.
+- Consumer refresh preserves edited renders and stops before workflow adoption or publication instead of discarding the edits.
+- Consumer refresh preserves hand-edited workflows and accepts exact historical shipped workflows even without an adoption record.
+- Homebrew and Arch release packages install kendex 1.4.0.
+- Linear activation and label replacement resolve live labels for the issue's team, including workspace labels, and refuse unknown names before any write.
+- Windows add and subscription commands use the catalog directory name for native local paths instead of including the parent directories.
+- Voice and terminal replies stay out of Slack. Consequential voice requests can use a server-verified spoken one-time code or authenticated on-screen approval.
+- **Breaking:** `pr-merge` removes `--unless-admin`. Use `--auto` for normal arms; use `--auto --queue` for forced or unresolved-state arms.
+- Consumer refresh resolves outdated automatic review threads without filing them upstream. Live findings on paths no single package claims stay open for the consumer to answer.
+- Copilot pool picks keep the overseer's shared account and charge monthly use. Unread Copilot lane refusals name the status, cause and pool-reading repairs.
+- Hosted mailbox delivery continues with a warning when the host has an older append library. Current hosts still reject repeated messages.
+- Lane mail refuses local overseer deliveries and peer asks without a reply-visible overseer record; use the owner's owner-note tool for remote delivery.
+- Overseer handoffs replace old state and bound resume reads. Live self-succession refuses missing or stale generations. Dead and walled recovery remain available.
+- Pi package removal resolves bin link targets with platform path components before it checks package ownership.
+- Pi extension toggles work globally and per project without removing package files or other settings. Install and update keep disabled extensions off. Verification detects changed filters.
+- Pi package removal deletes owned bin links when Windows uses different path prefixes or a link uses a relative target. Links to other packages stay in place.
+- Pi package disable and disabled-package updates refuse to erase a saved extension selection. Enable and ordinary updates keep the selected extensions.
+- Consumer refresh defers refused pushes when its rolling pull request is queued, armed, merged or closed, or its branch was deleted. Other push failures still fail.
+- Keep skill-load checks installed with released engines. Refuse render classification for deletions without trusted whole-file ownership proof.
+- Codex skill reads through functions.exec now count when the command succeeds. Codex unloaded-skill refusals report the failed check step.
+- Slack delivers repeated replies as answers with eyes reactions until explicit close or deadline. Catalog updates preserve closed questions. Relay restarts retain closure state.
+- Slack holds mailbox posts per checkout using that checkout's master file and age limit. A checkout with no master file keeps posting when another checkout is held.
+- Template installs reject combined output-style declarations before writing any group, including copied styles and disabled declarations.
+
+### Security
+
+- Pane capture separates bridge arguments from the fixed Bash lookup. Custom bridge paths remain supported, and shell execution stays disabled.
+- Pi pane command capture checks executable origin and keeps shell execution disabled. Shutdown tests pass paths as data, not child code.
+- Claude second opinions use restricted read-only tools, deny unapproved commands, and disable user and project hooks, including when the host defaults to bypass permissions.
+
 ## [1.4.0] - 2026-10-01
 
 ### Added
@@ -1253,7 +1318,8 @@ change came from an outside contributor.
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.5.0
 [1.4.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.4.0
 [1.3.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.3.0
 [1.2.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.2.0

@@ -1,1 +1,0 @@
-- Consumer refresh preserves hand-edited workflows and accepts exact historical shipped workflows even without an adoption record.

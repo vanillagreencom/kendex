@@ -1,1 +1,0 @@
-- Homebrew and Arch release packages install kendex 1.4.0.

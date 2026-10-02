@@ -1,1 +1,0 @@
-- Claude Code agent rendering replaces the haiku tier with sonnet and reports one warning per run. KEN-2466 removes this substitution.

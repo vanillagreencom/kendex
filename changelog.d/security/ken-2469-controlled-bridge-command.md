@@ -1,1 +1,0 @@
-- Pane capture separates bridge arguments from the fixed Bash lookup. Custom bridge paths remain supported, and shell execution stays disabled.

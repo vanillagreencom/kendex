@@ -1,1 +1,0 @@
-- Slack holds mailbox posts per checkout using that checkout's master file and age limit. A checkout with no master file keeps posting when another checkout is held.

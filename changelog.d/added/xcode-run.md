@@ -1,1 +1,0 @@
-- Add the xcode-run skill to install a manual Mac workflow for Xcode builds, tests and simulator screenshots with one downloadable log and PNG artifact.

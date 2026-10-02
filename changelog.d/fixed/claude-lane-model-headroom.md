@@ -1,1 +1,0 @@
-- Claude lanes use their own model's account limits at turn end. A full limit for another model no longer forces a handoff.

@@ -1,1 +1,0 @@
-- **Breaking:** `pr-merge` removes `--unless-admin`. Use `--auto` for normal arms; use `--auto --queue` for forced or unresolved-state arms.

@@ -1,1 +1,0 @@
-- Git hook checks no longer emit a stray Broken pipe error when a helper program has changed.

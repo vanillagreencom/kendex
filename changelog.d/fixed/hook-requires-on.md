@@ -1,1 +1,0 @@
-- Keep skill-load-check on Claude, Codex and Pi when skill-load-record is limited to Copilot. Hook headers can limit companion requirements with requires-on.
