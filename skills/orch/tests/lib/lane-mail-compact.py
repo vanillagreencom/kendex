@@ -305,6 +305,7 @@ printf '%s\\n' '{"id":"writer","kind":"directive"}' | mailbox_append_locked "$2"
         if ordinary_name == "keep.run":
             ordinary.mkdir()
             (ordinary / "watch.log").write_text("watch\n")
+            os.utime(ordinary / "watch.log", (946684800, 946684800))
         else:
             ordinary.write_text("watch\n")
         os.utime(ordinary, (946684800, 946684800))
@@ -372,6 +373,11 @@ printf '%s\\n' '{"id":"writer","kind":"directive"}' | mailbox_append_locked "$2"
                              '[[ "$unit" != "$keep" && "$keep" != "$unit"/* ]] || return 0',
                              '[[ "$unit" != "$keep" && "$keep" != "$unit"/* ]] || :')
         with self.assertRaises(AssertionError):
+            self.prune_sessions(mutant, *cases[2])
+        mutant = self.mutant("ignored-containment", "workflow-state",
+                             '[[ "$unit" != "$keep" && "$keep" != "$unit"/* ]] || return 0',
+                             '[[ "$unit" != "$keep" ]] || return 0')
+        with self.assertRaisesRegex(AssertionError, r"\['keep\.run', 'session-999999-10\.jsonl'\]"):
             self.prune_sessions(mutant, *cases[2])
         mutant = self.mutant("session-keep-bypass", "workflow-state",
                              'for unit in ${SESSION_ROWS_DEAD[@]+"${SESSION_ROWS_DEAD[@]}"}; do\n'
