@@ -48,10 +48,10 @@ opening with the word without the colon is still a decline for
 unreasoned-decline. What a decline must say is reviewer conduct:
 .agents/skills/orch/references/finding-disposition.md § Decision flow.
 
-A body finding is answered by a counted PR-level comment with a line
-opening `Dispositions at <sha>`, <sha> being 7 to 40 hex characters the
-current head starts with, and a line per finding opening with its
-`file:line` token, bare, bold or backticked, then the reply:
+A body finding is answered by a counted PR-level comment whose first
+non-blank line opens `Dispositions at <sha>`, <sha> being 7 to 40 hex
+characters the current head starts with, and a line per finding opening
+with its `file:line` token, bare, bold or backticked, then the reply:
 
   Dispositions at 1a2b3c4:
   `src/a.ts:12` - Declined: the caller rejects the empty case first.
@@ -59,8 +59,9 @@ current head starts with, and a line per finding opening with its
 
 The reply is read by the thread grammar, so a label-only decline or a
 tracking claim naming no issue answers nothing. A comment bound to an
-earlier head answers nothing at this one. The newest line naming an entry
-decides.
+earlier head answers nothing at this one, and so does a comment with any
+other line opening `Dispositions at <sha>`, fenced or not. The newest line
+naming an entry decides.
 
 Output, stdout:
   review-replies: pass head=<sha>
@@ -400,24 +401,29 @@ SUPP_ROWS_JQ="$SUPP_NORMALIZE_DEF$SUPP_ENTRY_DEF$SUPP_SCAN_DEF$AUTHOR_TRUST_DEF"
 # the count left followed on its line by the logins of head-bound comments
 # naming an entry whose author does not count, then one entry per line.
 #
-# THE COMMENT BINDS THE HEAD BY SAYING SO: a line opening `Dispositions at
-# <sha>`. Nothing else in it binds. A sha-shaped run asserts no commit (the
-# one a `Fixed in <sha>` names, a tracking claim's `#1234567`, a path that
-# opens with hex), yet while any of them could bind, a comment written for an
-# earlier head bound itself to this one and carried its other replies across
-# a diff no reviewer re-read. A marker cannot be written by accident.
+# THE COMMENT BINDS THE HEAD BY SAYING SO: its first non-blank line opening
+# `Dispositions at <sha>`. Nothing else in it binds. A sha-shaped run
+# asserts no commit (the one a `Fixed in <sha>` names, a tracking claim's
+# `#1234567`, a path that opens with hex), yet while any of them could bind,
+# a comment written for an earlier head bound itself to this one and carried
+# its other replies across a diff no reviewer re-read. A marker cannot be
+# written by accident.
 SUPP_DISPOSITION_JQ="$SUPP_NORMALIZE_DEF$SUPP_ENTRY_DEF$REPLY_FORMS_DEF$AUTHOR_TRUST_DEF"'
       def unanswered: ((disposition or tracking) | not) or untracked_claim or unreasoned_decline;
-      # The bound sha is captured BEFORE the comparison, since referring to it
-      # as dot inside startswith would rebind dot to the head and accept any
-      # sha. THE MARKER OPENS A LINE: a marker quoted from another pull
-      # request, inside a fenced example or mid-sentence is not an author
-      # asserting which commit this comment answers.
+      # The sha a line opening `Dispositions at <sha>` names, or null.
+      def marker_sha($floor):
+        [ capture("^[ \t]*dispositions[ \t]+at[^0-9a-fA-F]*(?<c>[0-9a-fA-F]{" + $floor + ",40})"; "i")
+          | .c | ascii_downcase ][0];
+      # THE MARKER IS THE FIRST NON-BLANK LINE, AND THE ONLY ONE. A marker
+      # below it, quoted from another pull request or inside a fenced example,
+      # is not the author asserting which commit this comment answers. A
+      # comment holding a second marker carries a section per head, and
+      # binding it would carry the older section replies onto this head, so it
+      # binds nothing. The claimed sha is a variable in the comparison, since
+      # dot inside startswith would be the head and accept any sha.
       def head_bound($sha; $floor):
-        [ split("\n")[]
-          | capture("^[ \t]*dispositions[ \t]+at[^0-9a-fA-F]*(?<c>[0-9a-fA-F]{" + $floor + ",40})"; "i")
-          | (.c | ascii_downcase) as $claimed
-          | select(($sha | ascii_downcase) | startswith($claimed)) ] | length > 0;
+        [ split("\n")[] | select(test("\\S")) | marker_sha($floor) ] as $marks
+        | $marks[0] != null and ($sha | ascii_downcase | startswith($marks[0])) and ([$marks[] | values] | length == 1);
       # A line names an entry by EQUALITY with one the scan extracted, never by
       # a token pattern of its own: the scan is the one definition of what an
       # entry token is. The decorated arm ITERATES entry_marks for the same

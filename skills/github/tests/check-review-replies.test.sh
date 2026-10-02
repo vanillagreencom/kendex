@@ -344,9 +344,15 @@ assert_eq "$(grep '^suppressed-findings: ignored-author ' "$TMP_ROOT/stderr" | p
   'suppressed-findings: ignored-author login=copilot-pull-request-reviewer[bot]|suppressed-findings: ignored-author login=stranger' \
   "each head-bound answer by an author who does not count is named on stderr"
 
-# The marker opens a line, and nothing else binds. Each body below carries
-# the head prefix somewhere other than a `Dispositions at` line opening.
+# The marker is the comment's first non-blank line and its only one, and
+# nothing else binds. Each body below carries the head prefix somewhere
+# other than a lone marker on the first non-blank line, but the last.
 SUPP_HEXPATH="${HEAD:0:8}.ts:1"
+# Each body answers both entries once it binds, so a rule binding a marker
+# on any line passes all three; the must-fail controls below run that rule.
+MARKER_BELOW="Thanks for the review.\nDispositions at $H7:\n**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400"
+MARKER_FENCED="The answers below take this shape:\n\`\`\`\nDispositions at $H7:\n\`\`\`\n**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400"
+MARKER_TWO_HEADS="Dispositions at $H7:\n**$SUPP_FIRST** - $SUPP_REASON\n\nDispositions at $O7:\n**$SUPP_SECOND** - Tracked: KEN-1400"
 while IFS='|' read -r label body reply want; do
   [ -n "$label" ] || continue
   world
@@ -357,6 +363,10 @@ done <<'ROWS'
 a head prefix in a path with no marker binds nothing|one_entry "$SUPP_HEXPATH"|Dispositions:\n$SUPP_HEXPATH - $SUPP_REASON|$FAILED | suppressed-findings count=1 | suppressed-entry $SUPP_HEXPATH
 a marker quoted mid-line binds nothing|body_of heading|The other PR says Dispositions at $H7, which is this head.\n**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$BOTH_STANDING
 a comment marked for an older head answers nothing at this one|body_of heading|Dispositions at $O7:\nsrc/model/lanes.ts:9 - Fixed in $HEAD\n**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$BOTH_STANDING
+a current marker below the first line binds nothing|body_of heading|$MARKER_BELOW|$BOTH_STANDING
+a current marker inside a fenced example binds nothing|body_of heading|$MARKER_FENCED|$BOTH_STANDING
+a first-line current marker beside an older head's section binds nothing|body_of heading|$MARKER_TWO_HEADS|$BOTH_STANDING
+a marker after leading blank lines binds|body_of heading|\n  \nDispositions at $H7:\n**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$PASSED
 ROWS
 
 echo "=== the thread rules, wired to the verdict ==="
@@ -515,9 +525,25 @@ mutant_row "with section counts summed, two reviews whose counts cancel pass" se
 mutant_row "with the head filter cut, an earlier head's review fails this one" head-review \
   '      | select(.commit_id == $sha and .state != "DISMISSED" and .state != "PENDING")' '      | select(.state != "DISMISSED" and .state != "PENDING")' \
   'reviews_set "$(review copilot COMMENTED "$OTHER" "$(body_of heading)")"' "$BOTH_STANDING"
+MARKER_RULE='        | $marks[0] != null and ($sha | ascii_downcase | startswith($marks[0])) and ([$marks[] | values] | length == 1);'
 mutant_row "with the head binding cut, a comment for an older head answers" head-bound \
-  '          | select(($sha | ascii_downcase) | startswith($claimed)) ] | length > 0;' '          | select(true) ] | length > 0;' \
+  "$MARKER_RULE" '        | $marks[0] != null and ([$marks[] | values] | length == 1);' \
   'at_head "$(body_of heading)"; comments_set "$(comment author "$(printf "Dispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400" "$O7" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"' "$PASSED"
+# A marker on any line binding the comment is the rule the first-line
+# marker replaced; each body it would bind answers both entries.
+ANY_LINE_CUT=("$MARKER_RULE" '        | [$marks[] | values | . as $c | select($sha | ascii_downcase | startswith($c))] | length > 0;')
+mutant_row "with a marker on any line binding, a marker below the first line answers" any-line-below \
+  "${ANY_LINE_CUT[@]}" \
+  'at_head "$(body_of heading)"; comments_set "$(comment author "$(printf "%b" "$MARKER_BELOW")")"' "$PASSED"
+mutant_row "with a marker on any line binding, a fenced marker answers" any-line-fenced \
+  "${ANY_LINE_CUT[@]}" \
+  'at_head "$(body_of heading)"; comments_set "$(comment author "$(printf "%b" "$MARKER_FENCED")")"' "$PASSED"
+mutant_row "with a marker on any line binding, an older head's section answers" any-line-two-heads \
+  "${ANY_LINE_CUT[@]}" \
+  'at_head "$(body_of heading)"; comments_set "$(comment author "$(printf "%b" "$MARKER_TWO_HEADS")")"' "$PASSED"
+mutant_row "with blank lines kept, a marker after a leading blank line binds nothing" blank-lines \
+  '        [ split("\n")[] | select(test("\\S")) | marker_sha($floor) ] as $marks' '        [ split("\n")[] | marker_sha($floor) ] as $marks' \
+  'at_head "$(body_of heading)"; comments_set "$(comment author "$(printf "\n  \nDispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400" "$H7" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"' "$BOTH_STANDING"
 mutant_row "with the comment author filter cut, another login answers" comment-author \
   '      | [ .[] | select(rest_actor | reply_source($author; $viewer)) | answers($by_length) ] as $said' '      | [ .[] | answers($by_length) ] as $said' \
   'at_head "$(body_of heading)"; comments_set "$(comment stranger "$(printf "Dispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400" "$H7" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"' "$PASSED"
