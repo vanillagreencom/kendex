@@ -5,7 +5,7 @@
 ### 2.0.10
 
 - With `pendingStatusAnimation` on, a running tool row stops blinking when the run is interrupted or the session ends, even when Pi drops the row before its result, and does not blink again when Pi redraws it.
-- With `renderMutationTools` on, a write over a file larger than 700 KB no longer reads the file into memory; the row says the diff was skipped. Edit diffs come from Pi's own patch, skipped when that patch is over 700 KB, and write previews read the old file off the render path.
+- With `renderMutationTools` on, a write over a file larger than 700 KB no longer reads the file into memory; the row says the diff was skipped. Edit result diffs come from Pi's own patch, skipped when that patch is over 700 KB, and write previews read the old file off the render path.
 
 ### 2.0.9
 

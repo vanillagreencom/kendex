@@ -38,7 +38,7 @@ Pi runs a tool and gives its call and result to the display extension. The exten
 - Grouped calls and the list of tool displays to refresh are cleared when a session starts or ends. A tool display Pi no longer shows is not kept alive.
 - With `pendingStatusAnimation` on, a running tool row blinks until its result arrives, the agent run ends or the session ends. A row the agent run ended without a result does not blink again when Pi draws it again. The ids of those rows are kept until the session ends.
 - A write diff reads at most 700 KB of the old file and builds no diff for more than 700 KB of new content; past either limit the row says the diff was skipped. A write row keeps the old file's text only until the write finishes or the agent run ends.
-- An edit diff comes from the patch Pi's edit tool returns, so the renderer reads no file for it. A patch over 700 KB is not shown, and the row says the diff was skipped.
+- An edit's result diff comes from the patch Pi's edit tool returns, so the renderer reads no file for it. A patch over 700 KB is not shown, and the row says the diff was skipped.
 
 ## Settings
 
