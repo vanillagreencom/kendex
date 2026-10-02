@@ -74,10 +74,11 @@ async function uploadVideoToGemini(filePath: string, apiKey: string, options: Lo
 		if (!uploadUrl) throw new Error("Gemini Files API did not return upload URL.");
 		return uploadUrl;
 	});
+	// fetch sets content-length from the body. Node 22's fetch appends its value to one given here ("5, 5"), which the npm
+	// undici 8 dispatcher Pi loads rejects as an invalid content-length header.
 	const payload = await requestWithin<any>("Gemini Files API upload", uploadUrl, {
 		method: "POST",
 		headers: {
-			"content-length": String(data.byteLength),
 			"x-goog-upload-offset": "0",
 			"x-goog-upload-command": "upload, finalize",
 		},
