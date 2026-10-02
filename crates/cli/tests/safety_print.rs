@@ -298,10 +298,10 @@ fn refresh_from_base(home: &Path, project: &Path, verbose: bool) -> String {
 /// A package kendex publishes with a finding its own table accepts,
 /// installed from kendex's own repository holding exactly the published
 /// bytes: the accepted finding is off the plain run and prints only on a
-/// verbose one, one line per row of the table. An edit to the file
-/// holding it puts the finding back on the plain run. What the rest of
-/// the package scores is the rules' business, not this case's, so no
-/// score or empty finding list is asserted.
+/// verbose one, one line per row of the table, at the line the finding
+/// fired on. An edit to that line puts the finding back on the plain run.
+/// What the rest of the package scores is the rules' business, not this
+/// case's, so no score or empty finding list is asserted.
 ///
 /// The package requires one companion, stubbed here so the plan installs
 /// it; the first assertion names the package, so a table that no longer
@@ -349,15 +349,28 @@ fn a_finding_kendex_accepted_in_its_own_package_prints_only_on_a_verbose_run() {
         .lines()
         .filter(|line| line.starts_with("    accepted in kendex's own package: "))
         .collect();
+    // A row names its line by text, so where that line stands is read off
+    // the published file: the printed place is the finding's own.
+    let line_of = |file: &kendex_core::quality::AcceptedFile,
+                   row: &kendex_core::quality::Accepted|
+     -> usize {
+        let text = fs::read_to_string(upstream.join("skills/harness-ci").join(&file.path)).unwrap();
+        let index = text
+            .lines()
+            .position(|line| kendex_core::hash::hash_bytes(line.as_bytes()) == row.line_hash)
+            .unwrap_or_else(|| panic!("no line of {} has the text a row names", file.path));
+        index + 1
+    };
     let expected: Vec<String> = package
         .files
         .iter()
         .flat_map(|file| {
             file.accepted.iter().map(move |row| {
-                let line = row.line.map(|line| format!(":{line}")).unwrap_or_default();
                 format!(
-                    "    accepted in kendex's own package: {} (skills/harness-ci/{}{line})",
-                    row.message, file.path
+                    "    accepted in kendex's own package: {} (skills/harness-ci/{}:{})",
+                    row.message,
+                    file.path,
+                    line_of(file, row)
                 )
             })
         })
@@ -365,16 +378,24 @@ fn a_finding_kendex_accepted_in_its_own_package_prints_only_on_a_verbose_run() {
     assert_eq!(accepted, expected, "{printed}");
     assert_eq!(flagged_rows(&printed), 0, "{printed}");
 
-    // One byte more in the accepted file, published, and the finding is
+    // One byte more on the accepted line, published, and its finding is
     // back.
     let edited = &package.files[0];
+    let index = line_of(edited, &edited.accepted[0]) - 1;
     let path = upstream.join("skills/harness-ci").join(&edited.path);
-    let mut bytes = fs::read(&path).unwrap();
-    bytes.extend_from_slice(b"\n");
-    fs::write(&path, bytes).unwrap();
+    let text = fs::read_to_string(&path).unwrap();
+    let lines: Vec<String> = text
+        .lines()
+        .enumerate()
+        .map(|(at, line)| match at == index {
+            true => format!("{line} \n"),
+            false => format!("{line}\n"),
+        })
+        .collect();
+    fs::write(&path, lines.concat()).unwrap();
     commit_all(&upstream, "two");
     let printed = refresh_from_base(home, &project, false);
-    assert_eq!(flagged_rows(&printed), edited.accepted.len(), "{printed}");
+    assert_eq!(flagged_rows(&printed), 1, "{printed}");
     assert!(
         !printed.contains("accepted in kendex's own package"),
         "{printed}"
