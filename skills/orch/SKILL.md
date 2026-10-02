@@ -91,7 +91,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `dev-validate-run` | Run `DEV_VALIDATE_CMD`, or with `--validate-mode range --base REF` `DEV_VALIDATE_RANGE_CMD`, detached under `DEV_VALIDATE_TIMEOUT_SECS`, with the change class as `DEV_VALIDATE_CLASS`, and leave its verdict on disk as one `guard-exit=N` sentinel; `--wait`, `--record`, `--resolve-mode` and `--stop` poll, read and end runs, per `--help`. The route every harness validates through |
 | `item-tier` | Assign an item's tier, `micro`, `small` or `standard`, from the launch estimate, its Location paths and the classifier's class of its branch; the widest input wins. `--help` |
 | `branch-size-check` | Report added production, test and render-mirror lines against the issue's optional `**Expected delta**`. Size never refuses; malformed allowance text exits 3. `--help` |
-| `approval-wait` | Poll the reviewer gate; `--resolve-mode` prints the gate mode from the base's rulesets and the PR's `reviewDecision` |
+| `approval-wait` | Poll the reviewer gate; `--resolve-mode` prints the gate mode: it reads the consumer's `REVIEW_GATE_MODE` from the base checkout first, then native GitHub requirements where that policy permits it |
 | `ci-wait` | Block until CI completes on a PR |
 | `queue-wait` | Blocking merge-queue / auto-merge waiter and verdict producer |
 | `orch-env` | Effective value of a kendex `[env]` setting (process env > `.env.local` > `.kendex/settings.toml` > `kendex.settings.toml` > default) |

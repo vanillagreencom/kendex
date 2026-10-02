@@ -170,7 +170,7 @@ Bind `[REVIEW_BASE_CHECKOUT]` to the consumer base and resolve its mode, per [Ga
 env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]
 ```
 
-Continue only on `approval`. This tier runs no internal review, so a GitHub approval is the one review the pull request gets: § 5 step 1's arm leaves it to GitHub, which holds the merge until the approval lands. `off` or a non-zero exit escapes (§ Escape condition 7): on such a base the pull request would merge with no reviewer at all.
+Continue only on `approval`. This tier runs no internal review, so a GitHub approval is the one review the pull request gets: § 5 step 1's arm leaves it to GitHub, which holds the merge until the approval lands. `off` or a non-zero exit escapes (§ Escape condition 7). An `off` mode ends the micro route without removing GitHub's approval requirement.
 
 Ask the canonical merge gate for its readiness object before any merge attempt:
 

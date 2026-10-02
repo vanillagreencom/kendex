@@ -20,7 +20,7 @@ The target set is per-repo configuration, not GitHub behaviour. In `vanillagreen
 
 | Situation | Action |
 |---|---|
-| The base is outside the target set | request the reviewer by hand: `gh pr edit <PR#> --add-reviewer @copilot`. It works on a base the ruleset does not target |
+| The base is outside the target set | request the reviewer through orch's consumer request owner, `approval-wait <PR#> --request-review --base-checkout PATH`: [orch gates § Copilot requests](../../orch/references/gates.md#copilot-requests). Its request works on a base the ruleset does not target |
 | The manual request draws nothing | close the pull request and open a fresh one against the default branch |
 | The reviewer already reviewed this pull request once and a new review is needed | reopen it, which re-arms the reviewer |
 | The reviewer never reviewed this pull request | reopening does nothing. Only the manual request, or a new pull request against a targeted base, draws one |
