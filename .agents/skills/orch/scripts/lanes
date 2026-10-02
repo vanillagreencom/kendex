@@ -170,9 +170,11 @@
 #         failed. Every other host status is the provider's reading of its own
 #         copy, `refused` and `expired` included, and stands as above, except
 #         for a successful Claude reading with no window for --model: where a
-#         fresh local reading measures that model window, pick uses the local
-#         reading under `pick-local-model-reading`. It keeps an account neither
-#         reading measures for the model unmeasured, not empty. An absent
+#         fresh local reading carries a model window, pick uses the local
+#         reading under `pick-local-model-reading`, judged on the shared
+#         windows alone where none of its model windows names the model. It
+#         keeps an account unmeasured, not empty, where the local reading
+#         reads nothing or carries no model window. An absent
 #         or failed verb leaves the local reading alone, as it does for `list`.
 #         `pick --lane` judges its one account by this same rule, and a dir
 #         the provider reports with a reading is judged even where discovery
@@ -338,7 +340,9 @@
 #                    spends — instead of the binding bucket. A lane
 #                    whose windows answer nothing for NAME is never picked.
 #                    The scoped model window alone is not enough because either
-#                    shared window can wall every model on the account.
+#                    shared window can wall every model on the account. A
+#                    plan with no window scoped to NAME is judged on the
+#                    shared windows alone.
 #   --binding-floor  pick: hold the account's own binding bucket to the same
 #                    bound as well, so a lane is room only where BOTH clear it.
 #                    With --model the two can differ: an account whose binding
@@ -759,7 +763,7 @@ message() {
       ;;
     pick-local-model-reading)
       printf 'lanes: pick-local-model-reading lane=%s host=%s model=%s age-s=%s\n' "$1" "$2" "$3" "$4"
-      printf '%s\n' "the provider has no window for this model, so this machine's fresh measured model reading is judged in its place"
+      printf '%s\n' "the provider has no window for this model, so this machine's fresh reading is judged in its place, on the shared windows alone where none of its model windows names this model"
       ;;
     pick-local-model-unmeasured)
       printf 'lanes: pick-local-model-unmeasured lane=%s model=%s\n' "$1" "$2"

@@ -332,8 +332,12 @@ lane_select() { # MODEL BINDING_FLOOR BURN MAX_PCT
 }
 
 # Consult DIR for an unreachable host or a measured Claude row missing MODEL.
-# Host credential refusals stay authoritative. Every local Claude result for
-# a named MODEL must measure its window, regardless of the consultation cause.
+# Host credential refusals stay authoritative. A local Claude result for a named
+# MODEL that carries model buckets, none of them MODEL's, is judged on the
+# shared windows alone: the plan has no window scoped to MODEL. The record
+# cannot tell that from a response that omitted MODEL's window, and the shared
+# windows are the rule for both. A local result that read nothing or carries
+# no model bucket stays unmeasured, whatever the consultation cause.
 #
 # `headroom_pct` is emit_lane's one word for a lane that measured a figure: it
 # is null for every status that carries no reading and for a measured status
@@ -381,7 +385,7 @@ host_row_or_local() { # HARNESS DIR HOSTROW MODEL
 	bound="$(usage_serve_max_age)" || return 1
 	age="$(jq -r --arg h "$1" --arg model "$4" --argjson bound "$bound" "$LANE_MODEL_JQ"'
 		if .headroom_pct == null then empty
-		elif $h == "claude" and $model != "" and (model_bindings($model) | length) == 0 then empty
+		elif $h == "claude" and $model != "" and ((.model_buckets // []) | length) == 0 then empty
 		elif $h == "pi" then "stated"
 		elif (.usage_age_s | type) == "number" and (.usage_age_s == 0 or .usage_age_s < $bound)
 		then .usage_age_s else empty end' <<<"$local_record")" || return 1
