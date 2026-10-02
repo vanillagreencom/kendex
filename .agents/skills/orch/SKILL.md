@@ -151,7 +151,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; `.env.
 
 ## Skill Rules
 
-Delegation, planner launch, lifecycle, round closure, coordination, and lane output: [skill-rules](references/skill-rules.md). A design, an item brief, research on another system, and an overseer's directive, item or fix are held to [code-quality § Over-Engineering](../code-quality/SKILL.md#over-engineering): name the problem's source in the core mechanics or architecture and fix it there first. A patch, shim, workaround or new gate names why the source fix cannot happen now, and an item that removes it.
+Delegation, planner launch, lifecycle, round closure, coordination, and lane output: [skill-rules](references/skill-rules.md). A design, an item brief or research on another system is held to [code-quality § Over-Engineering](../code-quality/SKILL.md#over-engineering); an overseer's directive, item or fix names the problem's source in the core mechanics or architecture and fixes it there first. A patch, shim, workaround or gate standing in for that fix names why it cannot happen now, and an item that removes it.
 
 ### Workflow Execution
 
