@@ -38,9 +38,10 @@ Whose words count:
   author association OWNER, MEMBER or COLLABORATOR, and is not the PR
   author. A reply counts when its author is the PR author or the identity
   this check runs as (the token's GraphQL viewer), whatever its actor type,
-  or has one of those associations. Logins compare without case and
-  without the [bot] suffix REST adds to an app's login. Anyone else's
-  review or reply is read as if it were not there.
+  or has one of those associations. An account is its numeric id (REST
+  user.id, GraphQL databaseId), never its login: an account named like an
+  app is not the app. Anyone else's review or reply is read as if it were
+  not there.
 
 A thread's standing reply is its newest counted comment that is
 `Fixed in <sha>`, `Declined: ...` or carries a track word. A decline
@@ -87,7 +88,8 @@ A thread reply that does not count adds no line.
 Exit codes:
   0  every rule passes
   1  a rule fails
-  2  usage error, or a read failed: no verdict. The first stderr line is
+  2  usage error, or a read failed or named no account id for the PR
+     author or the viewer: no verdict. The first stderr line is
      `check-review-replies: <key> pr=<n>`; take no action on it.
 EOF
 }
@@ -227,17 +229,22 @@ REPLY_FORMS_DEF='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|decline
 # reads as, which the router selected and post-reply and post-comment
 # answer under: a lane answers a PR a person opened as its GitHub App, a
 # Bot with association CONTRIBUTOR or NONE, and its replies may also be
-# posted under a maintainer's own login. Logins compare without case and
-# without the [bot] suffix, which REST writes on an app's login and GraphQL
-# drops. Each surface spells the actor its own way, so each has an
-# accessor and the rules read only the normalized actor.
-AUTHOR_TRUST_DEF='def login_key: ascii_downcase | sub("\\[bot\\]$"; "");
-  def rest_actor: {login: (.user.login // ""), bot: ((.user.type // "") == "Bot"), association: (.author_association // "")};
-  def graphql_actor: {login: (.author.login // ""), bot: ((.author.__typename // "") == "Bot"), association: (.authorAssociation // "")};
+# posted under a maintainer's own login.
+#
+# AN ACCOUNT IS ITS NUMERIC ID, the one key every identity test compares:
+# REST `user.id`, GraphQL `databaseId`, which name the same account on both
+# surfaces. A login is a name anyone can register: a User account named like
+# an app's slug is not the app, whatever case or [bot] suffix either spelling
+# carries. $author and $viewer are accounts, `{id, login}`; the login rides
+# along only as the name a diagnostic prints. An actor with no id (a deleted
+# account) is nobody's. Each surface spells the actor its own way, so each
+# has an accessor and the rules read only the normalized actor.
+AUTHOR_TRUST_DEF='def rest_actor: {id: (.user.id // null), login: (.user.login // ""), bot: ((.user.type // "") == "Bot"), association: (.author_association // "")};
+  def graphql_actor: {id: (.author.databaseId // null), login: (.author.login // ""), bot: ((.author.__typename // "") == "Bot"), association: (.authorAssociation // "")};
   def member: .association == "OWNER" or .association == "MEMBER" or .association == "COLLABORATOR";
-  def same_login($login): .login != "" and (.login | login_key) == ($login | login_key);
-  def finding_source($author): (same_login($author) | not) and (.bot or member);
-  def reply_source($author; $viewer): same_login($author) or same_login($viewer) or member;
+  def same_account($account): .id != null and .id == $account.id;
+  def finding_source($author): (same_account($author) | not) and (.bot or member);
+  def reply_source($author; $viewer): same_account($author) or same_account($viewer) or member;
 '
 
 # The two thread rules, over every review thread node the reader returned:
@@ -460,7 +467,7 @@ SUPP_DISPOSITION_JQ="$SUPP_NORMALIZE_DEF$SUPP_ENTRY_DEF$REPLY_FORMS_DEF$AUTHOR_T
       | ($wanted | sort_by(-length)) as $by_length
       | [ .[] | select(rest_actor | reply_source($author; $viewer)) | answers($by_length) ] as $said
       | [ .[] | select(rest_actor | reply_source($author; $viewer) | not)
-          | select([answers($by_length)] | length > 0) | .user.login // "" ] as $ignored
+          | select([answers($by_length)] | length > 0) | rest_actor | .login ] as $ignored
       # The NEWEST line naming an entry decides, whatever it says. The standing
       # reply of a thread skips a comment that is no disposition or claim, but a
       # line naming the entry is always an answer to it, so an author who
@@ -475,6 +482,16 @@ SUPP_DISPOSITION_JQ="$SUPP_NORMALIZE_DEF$SUPP_ENTRY_DEF$REPLY_FORMS_DEF$AUTHOR_T
 
 # The shortest head prefix a `Dispositions at <sha>` line may name.
 SHA_FLOOR=7
+
+# The PR author and the viewer as AUTHOR_TRUST_DEF's accounts, from a REST
+# user, whose id is `id`, or the GraphQL viewer, whose id is `databaseId`.
+# Prints the account, then on a second line the name a diagnostic prints. A
+# read naming no positive integer id is no verdict, never an account nobody
+# matches: every reply's standing turns on it.
+ACCOUNT_DEF='def account($id): {id: $id, login: (.login // "" | strings)}
+    | if (.id | type) == "number" and .id > 0 and .id == (.id | floor)
+      then tojson, "\(.login) id \(.id)" else error("no account id") end;
+'
 
 # One REST collection, every page merged into one array. `--paginate` emits
 # one array per page, so the pages are slurped and added. A read producing
@@ -506,21 +523,28 @@ SLUG="$OWNER/$NAME"
 pr_json=$(gh_rest "repos/$SLUG/pulls/$PR_NUMBER" 2>"$READ_ERR") ||
   refuse "read-failed" "$PR_NUMBER" "the pull request read failed: $(reader_said)"
 HEAD_SHA=$(jq -r '.head.sha // "" | strings' <<<"$pr_json" 2>/dev/null) || HEAD_SHA=""
-PR_AUTHOR=$(jq -r '.user.login // "" | strings' <<<"$pr_json" 2>/dev/null) || PR_AUTHOR=""
-[ -n "$HEAD_SHA" ] && [ -n "$PR_AUTHOR" ] ||
-  refuse "read-malformed" "$PR_NUMBER" "the pull request read named no head commit or no author"
+[ -n "$HEAD_SHA" ] || refuse "read-malformed" "$PR_NUMBER" "the pull request read named no head commit"
+author_read=$(jq -r "$ACCOUNT_DEF"'.user | account(.id)' <<<"$pr_json" 2>/dev/null) ||
+  refuse "read-malformed" "$PR_NUMBER" "the pull request read named no author account id"
+AUTHOR_ACCOUNT="${author_read%%$'\n'*}"
+AUTHOR_NAMED="${author_read#*$'\n'}"
 
 # GraphQL `viewer` answers for a user token and an app installation token
-# alike; REST `/user` refuses an installation token.
-viewer_json=$(gh_graphql 'query { viewer { login } }' 2>"$READ_ERR") ||
+# alike; REST `/user` refuses an installation token. For an installation
+# token the viewer is typed User, and its databaseId is the app's bot
+# account id, the one REST writes on the app's comments and GraphQL on its
+# Bot author.
+viewer_json=$(gh_graphql 'query { viewer { login databaseId } }' 2>"$READ_ERR") ||
   refuse "read-failed" "$PR_NUMBER" "the viewer identity read failed: $(reader_said)"
-VIEWER=$(jq -r '.viewer.login // "" | strings' <<<"$viewer_json" 2>/dev/null) || VIEWER=""
-[ -n "$VIEWER" ] || refuse "read-malformed" "$PR_NUMBER" "the viewer identity read named no login"
+viewer_read=$(jq -r "$ACCOUNT_DEF"'.viewer | account(.databaseId)' <<<"$viewer_json" 2>/dev/null) ||
+  refuse "read-malformed" "$PR_NUMBER" "the viewer identity read named no account id"
+VIEWER_ACCOUNT="${viewer_read%%$'\n'*}"
+VIEWER_NAMED="${viewer_read#*$'\n'}"
 
 threads=$(gh_graphql_threads "$OWNER" "$NAME" "$PR_NUMBER" '
-                          comments(first: 100) { totalCount nodes { author { login __typename } authorAssociation body } }' 2>"$READ_ERR") ||
+                          comments(first: 100) { totalCount nodes { author { login __typename ... on User { databaseId } ... on Bot { databaseId } } authorAssociation body } }' 2>"$READ_ERR") ||
   refuse "read-failed" "$PR_NUMBER" "the review thread read failed: $(reader_said)"
-thread_counts=$(jq -r --arg author "$PR_AUTHOR" --arg viewer "$VIEWER" "$THREAD_RULES_JQ" <<<"$threads" 2>/dev/null) ||
+thread_counts=$(jq -r --argjson author "$AUTHOR_ACCOUNT" --argjson viewer "$VIEWER_ACCOUNT" "$THREAD_RULES_JQ" <<<"$threads" 2>/dev/null) ||
   refuse "read-malformed" "$PR_NUMBER" "the review thread read could not be judged"
 read -r truncated untracked unreasoned <<<"$thread_counts"
 case "$truncated:$untracked:$unreasoned" in
@@ -528,7 +552,7 @@ case "$truncated:$untracked:$unreasoned" in
 esac
 
 reviews=$(read_collection reviews "repos/$SLUG/pulls/$PR_NUMBER/reviews?per_page=100") || exit 2
-supp_raw=$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" "$SUPP_ROWS_JQ" <<<"$reviews" 2>/dev/null) ||
+supp_raw=$(jq -r --arg sha "$HEAD_SHA" --argjson author "$AUTHOR_ACCOUNT" "$SUPP_ROWS_JQ" <<<"$reviews" 2>/dev/null) ||
   refuse "read-malformed" "$PR_NUMBER" "the review bodies could not be scanned"
 supp_head="${supp_raw%%$'\n'*}"
 supp_list=""
@@ -546,7 +570,7 @@ elif [ "$supp_mismatched" != 0 ]; then
   supp_state=mismatch
 elif [ "$supp_entries" != 0 ]; then
   comments=$(read_collection "issue comments" "repos/$SLUG/issues/$PR_NUMBER/comments?per_page=100") || exit 2
-  supp_disp=$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" --arg viewer "$VIEWER" --arg floor "$SHA_FLOOR" \
+  supp_disp=$(jq -r --arg sha "$HEAD_SHA" --argjson author "$AUTHOR_ACCOUNT" --argjson viewer "$VIEWER_ACCOUNT" --arg floor "$SHA_FLOOR" \
     --arg entries "$supp_list" "$SUPP_DISPOSITION_JQ" <<<"$comments" 2>/dev/null) ||
     refuse "read-malformed" "$PR_NUMBER" "the disposition comments could not be read"
   read -r supp_entries supp_ignored <<<"${supp_disp%%$'\n'*}"
@@ -590,7 +614,7 @@ case "$supp_state" in
       # expression.
       read -r -a ignored_logins <<<"$supp_ignored"
       for login in ${ignored_logins[@]+"${ignored_logins[@]}"}; do
-        printf 'suppressed-findings: ignored-author login=%s\n  its head-bound disposition comment does not count: the author is not the PR author (%s), not the identity this check runs as (%s), and not an OWNER, MEMBER or COLLABORATOR\n' "$login" "$PR_AUTHOR" "$VIEWER" >&2
+        printf 'suppressed-findings: ignored-author login=%s\n  its head-bound disposition comment does not count: the author is not the PR author (%s), not the identity this check runs as (%s), and not an OWNER, MEMBER or COLLABORATOR\n' "$login" "$AUTHOR_NAMED" "$VIEWER_NAMED" >&2
       done
     fi
     ;;

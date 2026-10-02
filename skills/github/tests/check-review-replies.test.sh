@@ -60,24 +60,26 @@ REVIEWS_PATH='api-repos/owner/repo/pulls/7/reviews?per_page=100'
 COMMENTS_PATH='api-repos/owner/repo/issues/7/comments?per_page=100'
 
 # --- the world ---------------------------------------------------------------
-# The accounts a world holds, as `login type association` the way REST
+# The accounts a world holds, as `login type association id` the way REST
 # spells them; the live shapes are the lanes app authoring a PR (Bot,
 # CONTRIBUTOR) and Copilot reviewing it (Bot, NONE). GraphQL writes a bot's
-# login without the [bot] suffix.
+# login without the [bot] suffix and its id as databaseId. The impostor is a
+# separate User account registered under the app's slug.
 account() { # NAME
   case "$1" in
-    author) printf 'pr-author User NONE' ;;
-    app) printf 'lanes-app[bot] Bot CONTRIBUTOR' ;;
-    copilot) printf 'copilot-pull-request-reviewer[bot] Bot NONE' ;;
-    maintainer) printf 'maintainer User MEMBER' ;;
-    stranger) printf 'stranger User NONE' ;;
+    author) printf 'pr-author User NONE 1001' ;;
+    app) printf 'lanes-app[bot] Bot CONTRIBUTOR 2002' ;;
+    copilot) printf 'copilot-pull-request-reviewer[bot] Bot NONE 3003' ;;
+    maintainer) printf 'maintainer User MEMBER 4004' ;;
+    stranger) printf 'stranger User NONE 5005' ;;
+    impostor) printf 'lanes-app User NONE 6006' ;;
     *) echo "UNKNOWN-ACCOUNT: $1" >&2; exit 2 ;;
   esac
 }
 rest_actor() { # ACCOUNT -> the user and author_association fields
-  local login type assoc
-  read -r login type assoc <<<"$(account "$1")"
-  jq -cn --arg l "$login" --arg t "$type" --arg a "$assoc" '{user: {login: $l, type: $t}, author_association: $a}'
+  local login type assoc id
+  read -r login type assoc id <<<"$(account "$1")"
+  jq -cn --arg l "$login" --arg t "$type" --arg a "$assoc" --argjson i "$id" '{user: {login: $l, type: $t, id: $i}, author_association: $a}'
 }
 review() { # ACCOUNT STATE COMMIT BODY
   jq -cn --argjson u "$(rest_actor "$1")" --arg s "$2" --arg c "$3" --arg b "$4" '$u + {state: $s, commit_id: $c, body: $b}'
@@ -86,11 +88,11 @@ comment() { # ACCOUNT BODY
   jq -cn --argjson u "$(rest_actor "$1")" --arg b "$2" '$u + {body: $b}'
 }
 thread_node() { # ACCOUNT BODY [ACCOUNT BODY]... — one thread, oldest comment first
-  local nodes="" login type assoc
+  local nodes="" login type assoc id
   while [ "$#" -gt 0 ]; do
-    read -r login type assoc <<<"$(account "$1")"
-    nodes="$nodes${nodes:+,}$(jq -cn --arg l "${login%\[bot\]}" --arg t "$type" --arg a "$assoc" --arg b "$2" \
-      '{author: {login: $l, __typename: $t}, authorAssociation: $a, body: $b}')"
+    read -r login type assoc id <<<"$(account "$1")"
+    nodes="$nodes${nodes:+,}$(jq -cn --arg l "${login%\[bot\]}" --arg t "$type" --arg a "$assoc" --argjson i "$id" --arg b "$2" \
+      '{author: {login: $l, __typename: $t, databaseId: $i}, authorAssociation: $a, body: $b}')"
     shift 2
   done
   printf '{"comments":{"totalCount":%s,"nodes":[%s]}}' "$(jq 'length' <<<"[$nodes]")" "$nodes"
@@ -103,18 +105,20 @@ reviews_set() { local IFS=,; gh_stub_answer "$REVIEWS_PATH" "[$*]"; }
 comments_set() { local IFS=,; gh_stub_answer "$COMMENTS_PATH" "[$*]"; }
 
 # The identity the check reads as, its token's GraphQL viewer, which spells
-# an app's login with the [bot] suffix. The live shape is a lane answering
-# under the lanes app on a PR a person opened.
-viewer_set() { # LOGIN_JSON
-  gh_stub_answer api-graphql:viewer "{\"data\":{\"viewer\":{\"login\":$1}}}"
+# an app's login with the [bot] suffix and its id as databaseId, the app's
+# own account id. The live shape is a lane answering under the lanes app on
+# a PR a person opened.
+viewer_set() { # VIEWER_JSON
+  gh_stub_answer api-graphql:viewer "{\"data\":{\"viewer\":$1}}"
 }
+VIEWER_APP='{"login":"lanes-app[bot]","databaseId":2002}'
 
 # A clean pull request: head HEAD by ACCOUNT (default author), read as the
 # app, no thread, no review, no comment. A case restages what it is about.
 world() { # [ACCOUNT]
   gh_stub_reset
   gh_stub_answer "$PR_PATH" "$(jq -cn --argjson u "$(rest_actor "${1:-author}")" --arg h "$HEAD" '{user: $u.user, head: {sha: $h}}')"
-  viewer_set '"lanes-app[bot]"'
+  viewer_set "$VIEWER_APP"
   threads_set
   reviews_set
   comments_set
@@ -269,7 +273,7 @@ echo "=== the head-bound disposition comments ==="
 # body, then one PR comment by the commenter opening `Dispositions at BOUND`
 # over the reply lines (`\n` between them). A reply counts from the PR
 # author, an app author included, the identity the check reads as, or a
-# repository member.
+# repository member, each matched by account id, never by login.
 SUPP_REASON='Declined: the generator draws its name from the row set, so a collision is unreachable.'
 SUPP_SPACED='docs/release notes.md:12'
 SUPP_SHORT='src/lane.ts:1'
@@ -323,6 +327,8 @@ a maintainer's comment answers for the author|heading|author|maintainer|$H7|**$S
 an app author's own comment answers|heading|app|app|$H7|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$PASSED
 the reading identity's comment answers on a person's PR|heading|author|app|$H7|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$PASSED
 the reading identity's label-only decline answers nothing|heading|author|app|$H7|**$SUPP_FIRST** - Declined: frozen\n**$SUPP_SECOND** - Tracked separately|$BOTH_STANDING
+a User named like the app answers nothing for the app author|heading|app|impostor|$H7|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$BOTH_STANDING
+a User named like the app answers nothing for the reading identity|heading|author|impostor|$H7|**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400|$BOTH_STANDING
 ROWS
 
 # Two reviews whose section counts cancel, every parsed entry answered: the
@@ -372,7 +378,8 @@ ROWS
 echo "=== the thread rules, wired to the verdict ==="
 # A row is `label|pr author|thread|want`. A reply counts from the PR author,
 # whatever its actor type, from the identity the check reads as, or from a
-# repository member; nobody else moves a thread's standing reply.
+# repository member, each matched by account id; nobody else moves a
+# thread's standing reply.
 while IFS='|' read -r label author node want; do
   [ -n "$label" ] || continue
   world "$author"
@@ -391,6 +398,8 @@ a maintainer's reasoned decline replaces the author's untracked claim|author|thr
 the reading identity's label-only decline fails on a person's PR|author|thread_node app 'Declined: frozen'|$FAILED | unreasoned-decline count=1
 the reading identity's lone tracking claim fails on a person's PR|author|thread_node app 'Tracked separately'|$FAILED | untracked-claim count=1
 the reading identity's reasoned decline replaces the author's untracked claim|author|thread_node author 'Out of scope, tracked.' app 'Declined: the caller rejects the empty case first.'|$PASSED
+a User named like the app does not replace the app author's untracked claim|app|thread_node app 'Out of scope, tracked.' impostor 'Fixed in 1a2b3c4'|$FAILED | untracked-claim count=1
+a User named like the app does not replace the author's claim as the reading identity|author|thread_node author 'Out of scope, tracked.' impostor 'Fixed in 1a2b3c4'|$FAILED | untracked-claim count=1
 a thread holding more comments than one read returns fails|author|jq -cn '{comments: {totalCount: 101, nodes: [{author: {login: "pr-author", __typename: "User"}, body: "Tracked: KEN-1"}]}}'|$FAILED | thread-replies state=truncated threads=1
 ROWS
 
@@ -426,9 +435,11 @@ while IFS='|' read -r label stage want; do
   assert_eq "$out $(first_err)" "rc=2  $want" "$label"
 done <<'ROWS'
 a pull request read that fails|gh_stub_fail "$PR_PATH" 1 'gh: Not Found (HTTP 404)'|check-review-replies: read-failed pr=7
-a pull request naming no head|gh_stub_answer "$PR_PATH" '{"user":{"login":"pr-author"},"head":{}}'|check-review-replies: read-malformed pr=7
+a pull request naming no head|gh_stub_answer "$PR_PATH" '{"user":{"login":"pr-author","id":1001},"head":{}}'|check-review-replies: read-malformed pr=7
+a pull request whose author carries no account id|gh_stub_answer "$PR_PATH" "{\"user\":{\"login\":\"pr-author\"},\"head\":{\"sha\":\"$HEAD\"}}"|check-review-replies: read-malformed pr=7
 a viewer identity read that fails|gh_stub_answer api-graphql:viewer '{"errors":[{"type":"FORBIDDEN","message":"no"}]}'|check-review-replies: read-failed pr=7
-a viewer identity read naming no login|viewer_set null|check-review-replies: read-malformed pr=7
+a viewer identity read naming no account id|viewer_set '{"login":"lanes-app[bot]"}'|check-review-replies: read-malformed pr=7
+a viewer identity read naming a login for an id|viewer_set '{"login":"lanes-app[bot]","databaseId":"lanes-app"}'|check-review-replies: read-malformed pr=7
 a thread read that fails|gh_stub_answer api-graphql:reviewThreads '{"errors":[{"type":"FORBIDDEN","message":"no"}]}'|check-review-replies: read-failed pr=7
 a reviews read that fails|gh_stub_fail "$REVIEWS_PATH" 1 'gh: Not Found (HTTP 404)'|check-review-replies: read-failed pr=7
 a reviews read producing zero bytes|gh_stub_answer "$REVIEWS_PATH" ''|check-review-replies: read-empty pr=7
@@ -547,15 +558,21 @@ mutant_row "with blank lines kept, a marker after a leading blank line binds not
 mutant_row "with the comment author filter cut, another login answers" comment-author \
   '      | [ .[] | select(rest_actor | reply_source($author; $viewer)) | answers($by_length) ] as $said' '      | [ .[] | answers($by_length) ] as $said' \
   'at_head "$(body_of heading)"; comments_set "$(comment stranger "$(printf "Dispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400" "$H7" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"' "$PASSED"
-mutant_row "with the [bot] suffix kept, an app author's label-only decline passes" login-key \
-  'AUTHOR_TRUST_DEF='"'"'def login_key: ascii_downcase | sub("\\[bot\\]$"; "");' 'AUTHOR_TRUST_DEF='"'"'def login_key: ascii_downcase;' \
-  'threads_set "$(thread_node app "Declined: frozen")"' "$PASSED" app
+# The login compare the account id replaced, case and [bot] suffix folded:
+# under it a User registered under the app's slug is the app.
+LOGIN_COMPARE=('  def same_account($account): .id != null and .id == $account.id;' '  def same_account($account): .login != "" and (.login | ascii_downcase | sub("\\[bot\\]$"; "")) == ($account.login | ascii_downcase | sub("\\[bot\\]$"; ""));')
+mutant_row "with logins compared, a User named like the app clears the app author's claim" login-thread \
+  "${LOGIN_COMPARE[@]}" \
+  'threads_set "$(thread_node app "Out of scope, tracked." impostor "Fixed in 1a2b3c4")"' "$PASSED" app
+mutant_row "with logins compared, a User named like the app answers as the reading identity" login-disposition \
+  "${LOGIN_COMPARE[@]}" \
+  'at_head "$(body_of heading)"; comments_set "$(comment impostor "$(printf "Dispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400" "$H7" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"' "$PASSED"
 mutant_row "with the finding-source test cut to the author, a NONE-association section fails" finding-source \
-  '  def finding_source($author): (same_login($author) | not) and (.bot or member);' '  def finding_source($author): same_login($author) | not;' \
+  '  def finding_source($author): (same_account($author) | not) and (.bot or member);' '  def finding_source($author): same_account($author) | not;' \
   'reviews_set "$(review stranger COMMENTED "$HEAD" "$(body_of no-count-prose)")"' "$FAILED | suppressed-findings state=unparsed"
 # One definition holds the reading identity for every reader, so one cut of
 # it reaches the thread rules and the disposition read alike.
-VIEWER_CUT=('  def reply_source($author; $viewer): same_login($author) or same_login($viewer) or member;' '  def reply_source($author; $viewer): same_login($author) or member;')
+VIEWER_CUT=('  def reply_source($author; $viewer): same_account($author) or same_account($viewer) or member;' '  def reply_source($author; $viewer): same_account($author) or member;')
 mutant_row "with the reading identity cut, its label-only decline passes" viewer-decline \
   "${VIEWER_CUT[@]}" \
   'threads_set "$(thread_node app "Declined: frozen")"' "$PASSED"
@@ -565,9 +582,9 @@ mutant_row "with the reading identity cut, its lone tracking claim passes" viewe
 mutant_row "with the reading identity cut, its disposition comment answers nothing" viewer-answer \
   "${VIEWER_CUT[@]}" \
   'at_head "$(body_of heading)"; comments_set "$(comment app "$(printf "Dispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400" "$H7" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"' "$BOTH_STANDING"
-mutant_row "with the viewer login test cut, a read naming no login reaches a verdict" viewer-login \
-  '[ -n "$VIEWER" ] || refuse "read-malformed" "$PR_NUMBER" "the viewer identity read named no login"' 'true' \
-  'viewer_set null' "$PASSED"
+mutant_row "with the account id test cut, a viewer read naming no id reaches a verdict" account-id \
+  '    | if (.id | type) == "number" and .id > 0 and .id == (.id | floor)' '    | if true' \
+  "viewer_set '{\"login\":\"lanes-app[bot]\"}'" "$PASSED"
 mutant_row "with every association a member, a NONE-association Fixed in clears the claim" member-open \
   '  def member: .association == "OWNER" or .association == "MEMBER" or .association == "COLLABORATOR";' '  def member: true;' \
   'threads_set "$(thread_node author "Out of scope, tracked." stranger "Fixed in 1a2b3c4")"' "$PASSED"

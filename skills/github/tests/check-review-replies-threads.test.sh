@@ -53,12 +53,12 @@ esac
 # ONE spelling of the input: the thread nodes the reader returns. Every probe
 # below runs a variant of the program over the same shape, so the shape is
 # written here and nowhere else.
-# The PR author is `author`, the login human() writes, so its replies count;
+# The PR author is account 1, the one human() writes, so its replies count;
 # bot() writes a review bot with no repository role, whose never do, and the
-# reading identity is a login neither writes. Whose replies count is
+# reading identity is an account neither writes. Whose replies count is
 # check-review-replies.test.sh's.
 page_with() { # page_with PROGRAM THREAD_JSON… -> "truncated untracked unreasoned"
-  jq -r --arg author author --arg viewer lanes-app "$1" <<<"[$2]"
+  jq -r --argjson author '{"id":1,"login":"author"}' --argjson viewer '{"id":2,"login":"lanes-app[bot]"}' "$1" <<<"[$2]"
 }
 page() { page_with "$prog" "$1"; }
 
@@ -99,8 +99,8 @@ thread() { # thread COMMENT_JSON… (comma-joined) [TRUNCATED]
   [ "${2:-false}" = false ] || n=$((n + 1))
   printf '{"comments":{"totalCount":%s,"nodes":[%s]}}' "$n" "$1"
 }
-human() { printf '{"body":%s,"author":{"login":"author","__typename":"User"}}' "$(jq -Rn --arg b "$1" '$b')"; }
-bot()   { printf '{"body":%s,"author":{"login":"copilot","__typename":"Bot"}}' "$(jq -Rn --arg b "$1" '$b')"; }
+human() { printf '{"body":%s,"author":{"login":"author","__typename":"User","databaseId":1}}' "$(jq -Rn --arg b "$1" '$b')"; }
+bot()   { printf '{"body":%s,"author":{"login":"copilot","__typename":"Bot","databaseId":3}}' "$(jq -Rn --arg b "$1" '$b')"; }
 
 # unreasoned is the THIRD field. The helpers split the line and read that
 # field, rather than globbing for the digit anywhere in it: a glob is right

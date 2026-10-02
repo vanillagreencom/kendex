@@ -17,9 +17,10 @@
 # merge-path call without the bot token. The repository read answers
 # STUB_MERGE_METHODS, STUB_DELETE_BRANCH_ON_MERGE, STUB_DEFAULT_BRANCH and
 # STUB_REPO_PUSHLESS, or fails on STUB_REPO_EXIT; check-review-replies' reads
-# answer the pull request by STUB_HEAD (default test-head), its identity
-# read (`api graphql` naming viewer) the fixed login lanes-app[bot], set by
-# no STUB_* variable, its review threads STUB_THREADS (a JSON array of thread nodes, failing on
+# answer the pull request by STUB_HEAD (default test-head) and its author
+# by the account pr-author, id 1001, its identity read (`api graphql`
+# naming viewer) the fixed account lanes-app[bot], id 2002, set by no
+# STUB_* variable, its review threads STUB_THREADS (a JSON array of thread nodes, failing on
 # STUB_THREADS_FAIL), its reviews STUB_REVIEWS and its PR-level comments
 # STUB_ISSUE_COMMENTS, each of those three collections `[]` when unset. The
 # viewer arm precedes the reviewThreads arm and answers any GraphQL call
@@ -197,7 +198,7 @@ case "${1:-}" in
                 exit 0
                 ;;
             'repos/owner/repo/pulls/'*)
-                jq -cn --arg head "${STUB_HEAD:-test-head}" '{user:{login:"pr-author"},head:{sha:$head}}'
+                jq -cn --arg head "${STUB_HEAD:-test-head}" '{user:{login:"pr-author",id:1001},head:{sha:$head}}'
                 exit 0
                 ;;
             # A merge queue on STUB_QUEUE_BRANCH with STUB_QUEUE_METHOD, and
@@ -230,7 +231,7 @@ case "${1:-}" in
         esac
         # check-review-replies' reading identity.
         if [[ "${2:-}" == "graphql" && "$*" == *"viewer"* ]]; then
-            jq -cn '{data:{viewer:{login:"lanes-app[bot]"}}}'
+            jq -cn '{data:{viewer:{login:"lanes-app[bot]",databaseId:2002}}}'
             exit 0
         fi
         if [[ "${2:-}" == "graphql" && "$*" == *"reviewThreads"* ]]; then
