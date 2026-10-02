@@ -51,7 +51,7 @@
 #        binds it.
 #     4. Walk ORCH_OVERSEER_PREFERENCE, comma-separated `harness:model:effort`
 #        entries, in order, and open on the first whose harness has a lane
-#        above ORCH_OVERSEER_HEADROOM_PCT: the entry names its model in the
+#        clearing ORCH_OVERSEER_HEADROOM_PCT (lanes --help, pick): the entry names its model in the
 #        characters kendex.settings.toml.example § Fleet states, an entry
 #        naming none refusing `invalid-preference`, and unset the setting is
 #        lib/overseer-launch.sh's OL_DEFAULT_PREFERENCE. The old
@@ -214,7 +214,7 @@ message() { # KEY FIELD=VALUE...
     invalid-headroom-trigger) text='ORCH_OVERSEER_HEADROOM_PCT takes a whole number of percent from 0 to 100.' ;;
     invalid-question-tool) text='ORCH_QUESTION_TOOL takes off or overseer.' ;;
     lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
-    no-lane-qualifies) text='No lane of any harness the preference names is above the headroom trigger; nothing was launched. entries counts the preference entries walked; walled and unmeasured are the accounts the sweeps refused and the accounts nothing could measure.' ;;
+    no-lane-qualifies) text='No lane of any harness the preference names clears the headroom trigger; nothing was launched. entries counts the preference entries walked; walled and unmeasured are the accounts the sweeps refused and the accounts nothing could measure.' ;;
     entry-permission-unwritable) text='The launch flag table names no full-bypass permission word for this entry'\''s harness, so a first launch there would stop at its first approval prompt with nobody at the pane. The entry is skipped and the walk goes on; oversee-succeed takes such an entry for a caller of the same harness.' ;;
     successor-status-line) text='The shared installer could not configure this Copilot home or its statusLine fallback. detail names the setup failure and cause names the fallback failure. The entry is skipped.' ;;
     launch-choice-failed) text='The launch flag table cannot state this harness'\''s model, effort or permission words. Nothing was launched.' ;;

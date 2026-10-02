@@ -146,8 +146,8 @@ run TMUX_PANE="$PANE" -- --max-loops 2
 assert_eq "walled=$(grep -c '^EVENT overseer-walled' <<<"$OUT" || true) launched=$(succeed_calls --walled-pane) note=$(grep -c '^oversee-watch: overseer-wall-lifted ' "$ERR" || true)" \
   "walled=0 launched=0 note=1" "a rows wall whose account measures room reads live, and says the wall lifted" "$ERR"
 
-# Succeeded in one pass: a wall the rows state, and an account the mark
-# judgement reads at zero headroom under a live session, each run the walled
+# Succeeded in one pass: a wall the rows state, and an account mark reached
+# at value 0 under a live session, each run the walled
 # succession in the first pass that reads them. A mark above zero is reported
 # as the mark and succeeds nothing.
 one_pass() { # NAME MARK_LINE ROW... [WATCH_BIN via env]
@@ -161,7 +161,7 @@ one_pass() { # NAME MARK_LINE ROW... [WATCH_BIN via env]
 one_pass wall_one_pass "$FIVE_MARK" "$START" "$FAILURE"
 assert_eq "$ONE_PASS" "rc=3 walled=1 marks=0 launched=1" "a rows wall is succeeded in the first pass that reads it" "$ERR"
 one_pass zero_mark "$ZERO_MARK" "$START"
-assert_eq "$ONE_PASS" "rc=3 walled=1 marks=0 launched=1" "an account read at zero headroom is succeeded in the same pass" "$ERR"
+assert_eq "$ONE_PASS" "rc=3 walled=1 marks=0 launched=1" "an account mark reached at value 0 is succeeded in the same pass" "$ERR"
 assert_eq "$(grep '^EVENT overseer-walled' <<<"$OUT")|$(sed -n 2p <<<"$OUT")" \
   "EVENT overseer-walled $PANE window=$WINDOW passes=1 succession=on source=account|account=1claude headroom=0 resets=2026-09-28T03:00:00Z" \
   "the event names the account as its source and the account's own figures follow it" "$ERR"

@@ -19,8 +19,8 @@ HANDOFF_DEFAULT=tmp/handoffs/OVERSEER-HANDOFF.md
 WALL_BANNER="You've hit your usage limit \xc2\xb7 resets 9:50am (America/Los_Angeles)"
 WALL_NOW=1788364800
 # The account judgement that confirms a wall, and the two figures its line
-# carries: `mark-reached kind=headroom` is oversee-succeed's own answer for a
-# session whose account sits at or below its trigger, and the account and its
+# carries: `mark-reached kind=headroom` is oversee-succeed's own answer at
+# its account mark, and the account and its
 # reset come from the same `lanes context` row that measured the headroom.
 WALL_ACCOUNT=9claude
 WALL_RESETS=2026-09-02T16:50:00Z

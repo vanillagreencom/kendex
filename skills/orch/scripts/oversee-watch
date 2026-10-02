@@ -2484,10 +2484,10 @@ overseer_marks_judge() {
 # alive.
 #
 # So the screen never decides alone: the wall is confirmed only by the
-# judge's own `mark-reached kind=headroom`, reached exactly when this
-# session's account sits at or below ORCH_OVERSEER_HEADROOM_PCT, so no figure
-# is compared here. Every other answer, a failed judgement included, leaves
-# the pane read as the working overseer it looks like.
+# judge's own `mark-reached kind=headroom`, by the account mark
+# `oversee-succeed --help` owns, so no figure is compared here. Every other
+# answer, a failed judgement included, leaves the pane read as the working
+# overseer it looks like.
 overseer_wall_confirmed() { # PANE
   overseer_marks_judge || { overseer_note overseer-wall-unjudged "pane=$1"; return 1; }
   [[ "$OVERSEER_MARK_KEY" == mark-reached && "$OVERSEER_MARK_KIND" == headroom ]] && return 0
@@ -2906,7 +2906,7 @@ check_overseer() {
   record_mine="$OVERSEER_RECORD_MINE"
 
   overseer_judge "$pane"
-  # An account the mark judgement reads at zero headroom is a wall whether or
+  # An account mark reached at value 0 is a wall whether or
   # not the harness has met it yet: its next turn fails, and a walled session
   # hands nothing over, so the succession runs from here, `source=account`.
   # The judgement is the pass's one memoised reading, which the live arm's
