@@ -557,12 +557,25 @@ exec git "$@"
                 first = self.call("append", "--item", "TEST-1", "--", str(target),
                                   data=(json.dumps(envelope) + "\n").encode())
                 self.assertEqual(first.returncode, 0, first.stderr)
+                self.assertEqual(first.stderr, b"")
+                self.assertEqual(target.read_bytes(), (json.dumps(envelope) + "\n").encode())
                 second = self.call("append", "--item", "TEST-1", "--", str(target),
-                                   data=(json.dumps(dict(envelope, id="second")) + "\n").encode())
+                                   data=(json.dumps(envelope) + "\n").encode())
                 self.assertEqual((second.returncode, len(target.read_bytes().splitlines())), expected,
                                  second.stderr)
                 if expected == (4, 1):
-                    self.assertIn(b"duplicate id=first\n", second.stderr)
+                    self.assertEqual(second.stderr, b"duplicate id=first\n")
+        # An unconditional compatibility warning breaks the current-library row.
+        original = self.script.read_text()
+        rule = 'if ! declare -F mailbox_duplicate_id >/dev/null; then'
+        self.assertEqual(original.count(rule), 1)
+        changed = original.replace(rule, 'if true; then # ' + rule)
+        self.assertNotEqual(changed, original)
+        self.script.write_text(changed)
+        target.write_bytes(b"")
+        result = self.call("append", "--item", "TEST-1", "--", str(target), data=(json.dumps(envelope) + "\n").encode())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, f"lane-host-ssh: append-library-outdated path={library} repeat-check=skipped\n".encode())
 
     def test_append_names_its_failure_in_a_word(self):
         """The library's number is decoded where it is printed, not passed on."""
@@ -654,7 +667,7 @@ exec "$REAL_CAT" "$@"
         self.assertFalse(target.exists())
         self.assertEqual(list(target.parent.glob("*.kendex-append.*")), [])
 
-    def test_append_refuses_an_old_but_present_library(self):
+    def test_append_delivers_to_an_old_but_present_library(self):
         """An existing host clone can retain append without the repeat guard."""
         self.assertEqual(self.create().returncode, 0)
         library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/mailbox-append.sh"
@@ -668,19 +681,20 @@ exec "$REAL_CAT" "$@"
             old = changed
         library.write_text(old)
         target = self.root / "lane/tmp/lane-mail/TEST-1/to-lane.jsonl"
-        refused = self.call("append", "--item", "TEST-1", "--", str(target), data=b'{"id":"nowhere"}\n')
-        self.assertEqual(refused.returncode, 1, refused.stderr)
-        self.assertIn(f"lane-host-ssh: append-library-outdated path={library}\n".encode(), refused.stderr)
-        self.assertFalse(target.parent.exists())
-        # Without the loader's capability requirement the old append accepts the bytes.
+        result = self.call("append", "--item", "TEST-1", "--", str(target), data=b'{"id":"nowhere"}\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(target.read_bytes(), b'{"id":"nowhere"}\n')
+        self.assertEqual(result.stderr, f"lane-host-ssh: append-library-outdated path={library} repeat-check=skipped\n".encode())
+        self.assertEqual(list(target.parent.glob("*.kendex-append.*")), [])
+        # Restoring the refusal loses delivery to the old host clone.
         original = self.script.read_text()
-        rule = 'if ! declare -F mailbox_duplicate_id >/dev/null; then'
+        rule = '"$lib/mailbox-append.sh" >&2\n'
         self.assertEqual(original.count(rule), 1)
-        changed = original.replace(rule, 'if false; then # ' + rule)
+        changed = original.replace(rule, rule + '  exit 1\n')
         self.assertNotEqual(changed, original)
         self.script.write_text(changed)
         result = self.call("append", "--item", "TEST-1", "--", str(target), data=b'{"id":"nowhere"}\n')
-        self.assertEqual((result.returncode, target.read_bytes()), (0, b'{"id":"nowhere"}\n'))
+        self.assertEqual((result.returncode, target.read_bytes()), (1, b'{"id":"nowhere"}\n'))
 
     def test_cat_tells_an_absent_path_from_one_it_cannot_read(self):
         """Exit 2 is "not there"; every other read failure keeps its own status."""

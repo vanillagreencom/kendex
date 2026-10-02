@@ -101,7 +101,8 @@ fi
 # refusal stages nothing. `$3` is that clone. Each library is checked and
 # sourced in one pass, so the set is named once: a second list is how one
 # library reaches the source line without reaching the check. Neither library
-# defines `lib` or `library`.
+# defines `lib` or `library`. A library without the repeat guard still delivers;
+# the warning names the missing check without duplicating the library's rule.
 APPEND_LIBRARIES = '''lib="$3/.agents/skills/orch/scripts/lib"
 for library in file-lock.sh mailbox-append.sh; do
   if [ ! -r "$lib/$library" ]; then
@@ -112,9 +113,7 @@ for library in file-lock.sh mailbox-append.sh; do
   . "$lib/$library"
 done
 if ! declare -F mailbox_duplicate_id >/dev/null; then
-  printf 'lane-host-ssh: append-library-outdated path=%s\\n' "$lib/mailbox-append.sh" >&2
-  printf 'update the host clone to a build carrying the mailbox repeat guard\\n' >&2
-  exit 1
+  printf 'lane-host-ssh: append-library-outdated path=%s repeat-check=skipped\\n' "$lib/mailbox-append.sh" >&2
 fi
 '''
 
@@ -458,7 +457,8 @@ lib/mailbox-append.sh, which adds them under a lock taken on the host, so
 writers on several machines each keep their line; it creates the file with
 private permissions and closes an unterminated last line first. A repeated
 mail envelope is judged under that same lock and exits 4 with duplicate id=FIRST
-on stderr, appending nothing. A clone
+on stderr, appending nothing. A clone without the repeat guard delivers with
+append-library-outdated path=LIBRARY repeat-check=skipped on stderr. A clone
 without that library predates the verb and append exits 1 naming it, so
 refresh a host created before the verb shipped. Prepare the
 host with Git, gh, Bash, kendex and the harness first. A Pi lane runs with the
