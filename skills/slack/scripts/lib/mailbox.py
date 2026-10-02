@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -23,6 +24,7 @@ from store import parse_at
 
 LANE_MAIL = Path(".agents/skills/orch/scripts/lane-mail")
 LANE_MAIL_TIMEOUT_SECONDS = 30
+LANE_MAIL_CLEANUP_SECONDS = 5
 FIELD_CHOICES = {"box": ("to-overseer", "to-lane"), "kind": ("ask", "notice", "answer", "directive", "resolution")}
 
 
@@ -35,19 +37,39 @@ class LaneMail:
             raise Refusal("orch-missing", str(root))
 
     def _run(self, *args: str) -> Tuple[int, str, str]:
+        proc = subprocess.Popen(
+            [str(self.script), *args],
+            cwd=str(self.root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
         try:
-            proc = subprocess.run(
-                [str(self.script), *args],
-                cwd=str(self.root),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False,
-                timeout=LANE_MAIL_TIMEOUT_SECONDS,
-            )
+            out, err = proc.communicate(timeout=LANE_MAIL_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired as err:
+            # lane-mail owns the directory mutex. TERM must reach its waiting
+            # guard too, so the shell can run the lock owner's release handler.
+            try:
+                for sig in (signal.SIGTERM, signal.SIGKILL):
+                    try:
+                        os.killpg(proc.pid, sig)
+                    except ProcessLookupError:
+                        # The group can finish between the timeout and signal.
+                        if proc.poll() is None:
+                            raise
+                    try:
+                        proc.communicate(timeout=LANE_MAIL_CLEANUP_SECONDS)
+                        break
+                    except subprocess.TimeoutExpired:
+                        if sig == signal.SIGKILL:
+                            # Do not wait for pipes held outside the owned group.
+                            proc.wait(timeout=LANE_MAIL_CLEANUP_SECONDS)
+            finally:
+                proc.stdout.close()
+                proc.stderr.close()
             raise Refusal("lane-mail-failed", f"timeout={LANE_MAIL_TIMEOUT_SECONDS} command={args[0]}") from err
-        return proc.returncode, proc.stdout, proc.stderr
+        return proc.returncode, out, err
 
     def events(self) -> List[Dict]:
         """Validated envelopes from lane-mail; absent position metadata

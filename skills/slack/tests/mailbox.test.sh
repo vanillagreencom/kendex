@@ -17,13 +17,41 @@ for variant in normal no-timeout; do
   printf '#!/usr/bin/env python3\nimport time\ntime.sleep(31)\n' > "$HUNG/.agents/skills/orch/scripts/lane-mail"
   chmod +x "$HUNG/.agents/skills/orch/scripts/lane-mail"
   if [ "$variant" = no-timeout ]; then
-    sk_mutant mail-timeout mailbox.py 'timeout=LANE_MAIL_TIMEOUT_SECONDS,' 'timeout=None,'
+    sk_mutant mail-timeout mailbox.py 'timeout=LANE_MAIL_TIMEOUT_SECONDS\)' 'timeout=None)'
   fi
   sk_poll "$HUNG" # Real wait: crosses the production subprocess timeout.
   if [ "$variant" = normal ]; then
     assert_eq "$RC=$ERR1" "1=slack: lane-mail-failed=timeout=30 command=events root=$HUNG" 'hung lane-mail fails the poll with its named timeout'
   else
     sk_assert_red "$RC=$ERR1" "1=slack: lane-mail-failed=timeout=30 command=events root=$HUNG" 'control: removing timeout keeps the hung poll green'
+  fi
+  sk_bin_reset
+done
+
+# A real send stalls in jq under orch's directory mutex. Only the existing
+# lock owner's TERM/EXIT handlers may release it before the next delivery.
+for variant in normal hard-kill; do
+  LOCKED="$(sk_new_root "mutex-timeout-$variant")"
+  sk_bind "$LOCKED"
+  sk_poll "$LOCKED"
+  LOCKED_CH="$(sk_channel "$LOCKED")"
+  LOCKED_TS="$(sk_inject "$LOCKED_CH" U001 'After the stalled scan.')"
+  sk_stall_delivery "$LOCKED"
+  if [ "$variant" = hard-kill ]; then
+    sk_mutant mail-hard-kill mailbox.py '\(signal.SIGTERM, signal.SIGKILL\)' '(signal.SIGKILL,)'
+  fi
+  sk_poll "$LOCKED" # Real wait: timeout after the shipped send holds its mutex.
+  assert_eq "$RC=$ERR1" "1=slack: lane-mail-failed=timeout=30 command=send root=$LOCKED" "$variant: stalled send keeps its named timeout"
+  assert_eq "$(cat "$LOCKED/tmp/scan-locked")" "locked" "$variant: the guard reached the real directory mutex without flock"
+  MUTEX="$(sk_box "$LOCKED")/to-lane.jsonl.d"
+  RELEASED=no
+  [ -d "$MUTEX" ] || RELEASED=yes
+  sk_poll "$LOCKED"
+  DELIVERIES="$(jq -s --arg key "$LOCKED_CH:$LOCKED_TS" '[.[] | select(.delivery_id == $key)] | length' "$(sk_box "$LOCKED")/to-lane.jsonl")"
+  if [ "$variant" = normal ]; then
+    assert_eq "$RELEASED=$RC=$DELIVERIES" "yes=0=1" 'timeout releases the mutex and the next poll acquires it to deliver once'
+  else
+    sk_assert_red "$RELEASED=$RC=$DELIVERIES" "yes=0=1" 'control: immediate hard kill fails the same mutex recovery assertion'
   fi
   sk_bin_reset
 done

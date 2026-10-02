@@ -126,6 +126,50 @@ sk_new_root() {
   printf '%s' "$root"
 }
 sk_box() { printf '%s/tmp/lane-mail/overseer' "$1"; }     # ROOT
+# sk_stall_delivery ROOT: a real lane-mail send with no flock and a one-shot
+# stalled jq delivery scan. The marker proves the shipped guard holds its lock.
+sk_stall_delivery() {
+  env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C python3 - "$1" "$SK_LANE_MAIL" <<'PY'
+import pathlib, shlex, shutil, sys
+root, mail = pathlib.Path(sys.argv[1]), shlex.quote(sys.argv[2])
+bin_dir = root / "tmp/no-flock-bin"
+bin_dir.mkdir()
+for name in ("bash", "sh", "cat", "tail", "mkdir", "mv", "rm", "rmdir", "date", "awk", "sed", "git",
+             "tr", "head", "sleep", "cp", "ln", "wc", "sort", "grep", "dirname", "basename", "touch",
+             "chmod", "id", "uname", "mktemp", "env"):
+    command = shutil.which(name)
+    if command is None:
+        sys.exit("mutex fixture: command-missing=" + name)
+    (bin_dir / name).symlink_to(command)
+jq = shutil.which("jq")
+if jq is None:
+    sys.exit("mutex fixture: command-missing=jq")
+fault = bin_dir / "jq"
+fault.write_text('''#!/usr/bin/env bash
+set -euo pipefail
+for arg in "$@"; do
+  case "$arg" in
+    *'select(.delivery_id == $key)'*)
+      if [ ! -e tmp/scan-locked ]; then
+        if command -v flock >/dev/null 2>&1; then exit 1; fi
+        [ -d tmp/lane-mail/overseer/to-lane.jsonl.d ]
+        printf 'locked\\n' > tmp/scan-locked
+        exec sleep 60
+      fi
+      ;;
+  esac
+done
+exec ''' + shlex.quote(jq) + ' "$@"\n')
+fault.chmod(0o755)
+scripts = root / ".agents/skills/orch/scripts"
+scripts.unlink()
+scripts.mkdir()
+entry = scripts / "lane-mail"
+entry.write_text('#!/usr/bin/env bash\nset -euo pipefail\nexec env PATH=' + shlex.quote(str(bin_dir)) + ' ' + mail + ' "$@"\n')
+entry.chmod(0o755)
+PY
+  [ "$?" -eq 0 ] || exit 1
+}
 # sk_event_filter ROOT JQ — a lane-mail producer with changed event fields.
 sk_event_filter() {
   rm -- "$1/.agents/skills/orch/scripts"
