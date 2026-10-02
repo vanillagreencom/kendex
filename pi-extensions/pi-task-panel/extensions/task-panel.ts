@@ -1,8 +1,8 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionAPI, ExtensionCommandContext, ExtensionContext, Theme, ToolExecutionMode } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type AutocompleteItem } from "@earendil-works/pi-tui";
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readdir, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
 import { frameGlyphs, glyphs, glyphStyle, treeGlyph } from "./glyphs.js";
@@ -28,6 +28,7 @@ import { reportTaskPanelPersistenceFailure } from "./diagnostics.js";
 import { writeFileAtomic } from "./atomic-write.js";
 import {
 	isTaskPanelToolResultBoundedState,
+	taskPanelStateFingerprint,
 	taskPanelToolResultState,
 } from "./tool-result-details.js";
 
@@ -35,22 +36,8 @@ const INSTALL_SYMBOL = Symbol.for("kendex.pi-task-panel.installed");
 const CONFIG_ID = "@vanillagreen/pi-task-panel";
 const STATE_TYPE = "kendex-task-panel:state";
 const TASK_PANEL_SNAPSHOT_MAX_BYTES = 64 * 1024;
-
-function stableValue(value: unknown): unknown {
-	if (Array.isArray(value)) return value.map(stableValue);
-	if (!value || typeof value !== "object") return value;
-	const sorted: Record<string, unknown> = {};
-	for (const key of Object.keys(value as Record<string, unknown>).sort()) sorted[key] = stableValue((value as Record<string, unknown>)[key]);
-	return sorted;
-}
-
-function stableTaskPanelFingerprint(state: TaskPanelState): string {
-	const { updatedAt: _ignored, ...rest } = state as TaskPanelState & { updatedAt?: string };
-	// hash to a fixed-size digest. Returning the full canonical
-	// JSON would embed the entire state inside the overflow manifest and
-	// defeat the 64 KiB cap.
-	return createHash("sha256").update(JSON.stringify(stableValue(rest))).digest("hex");
-}
+/** How many states over the session entry cap stay on disk by fingerprint; the README names this bound. */
+const TASK_PANEL_SAVED_STATES_MAX = 20;
 
 interface TaskPanelBoundedManifest {
 	version: 2;
@@ -66,6 +53,7 @@ interface TaskPanelBoundedManifest {
 interface SavedState {
 	fingerprint: string;
 	serialized: string;
+	byteSize: number;
 	counts: { tasks: number; phases: number };
 	updatedAt: string;
 }
@@ -139,6 +127,18 @@ function sessionIdForContext(ctx: ExtensionContext): string {
 
 function sidecarStatePath(ctx: ExtensionContext): string {
 	return join(piUserDir(), "kendex", "sessions", safeFileName(sessionIdForContext(ctx)), "pi-task-panel", "state.json");
+}
+
+/** The file holding a state over the session entry cap, named by the fingerprint its manifest and bounded details carry. */
+function savedStatePath(ctx: ExtensionContext, fingerprint: string): string {
+	return join(dirname(sidecarStatePath(ctx)), "states", `${safeFileName(fingerprint)}.json`);
+}
+
+/** Keeps the newest `TASK_PANEL_SAVED_STATES_MAX` files in the saved-state directory and removes the rest. */
+async function pruneSavedStates(directory: string): Promise<void> {
+	const files = await Promise.all((await readdir(directory)).map(async (name) => ({ path: join(directory, name), modified: (await stat(join(directory, name))).mtimeMs })));
+	files.sort((left, right) => right.modified - left.modified);
+	await Promise.all(files.slice(TASK_PANEL_SAVED_STATES_MAX).map((file) => rm(file.path, { force: true })));
 }
 
 
@@ -793,13 +793,12 @@ export default function taskPanel(pi: ExtensionAPI): void {
 	// save queued so far.
 	let sidecarSaves: Promise<void> = Promise.resolve();
 
-	/** The sidecar state, with the fingerprint of the saved text that manifests and bounded details name. */
-	const readSidecar = (ctx: ExtensionContext): { state: TaskPanelState; fingerprint: string } | undefined => {
+	/** A saved state file, with the fingerprint of the saved text that manifests and bounded details name. */
+	const readSavedState = (ctx: ExtensionContext, file: string): { state: TaskPanelState; fingerprint: string } | undefined => {
 		try {
-			const file = sidecarStatePath(ctx);
 			if (!existsSync(file)) return undefined;
 			const saved = JSON.parse(readFileSync(file, "utf8"));
-			return { state: normalizeState(saved, ctx.cwd), fingerprint: stableTaskPanelFingerprint(saved) };
+			return { state: normalizeState(saved, ctx.cwd), fingerprint: taskPanelStateFingerprint(saved) };
 		} catch (error) {
 			reportTaskPanelPersistenceFailure("sidecar-read", error, ctx);
 			return undefined;
@@ -809,8 +808,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 	const lastFingerprintBySession = new Map<string, string>();
 
 	const appendSessionEntry = (saved: SavedState, sidecarOk: boolean) => {
-		const byteSize = Buffer.byteLength(saved.serialized, "utf8");
-		if (!sidecarOk || byteSize <= TASK_PANEL_SNAPSHOT_MAX_BYTES) {
+		if (!sidecarOk || saved.byteSize <= TASK_PANEL_SNAPSHOT_MAX_BYTES) {
 			// If sidecar persistence failed, keep a full session-entry fallback even
 			// for oversized panels. Slash/manager/shortcut mutations have no tool
 			// result details, so a bounded manifest alone would make resume lossy.
@@ -821,7 +819,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 			version: 2,
 			fullSnapshot: false,
 			reason: "payload-too-large",
-			byteSize,
+			byteSize: saved.byteSize,
 			fingerprint: saved.fingerprint,
 			counts: saved.counts,
 			updatedAt: saved.updatedAt,
@@ -844,13 +842,15 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		const sessionKey = sessionIdForContext(ctx);
 		// Fingerprint excludes updatedAt, so an unchanged state costs neither a
 		// sidecar write nor a session entry.
-		const fingerprint = stableTaskPanelFingerprint(state);
+		const fingerprint = taskPanelStateFingerprint(state);
 		if (lastFingerprintBySession.get(sessionKey) === fingerprint) return sidecarSaves;
 		lastFingerprintBySession.set(sessionKey, fingerprint);
 		state.updatedAt = new Date().toISOString();
+		const serialized = JSON.stringify(state);
 		const saved: SavedState = {
 			fingerprint,
-			serialized: JSON.stringify(state),
+			serialized,
+			byteSize: Buffer.byteLength(serialized, "utf8"),
 			counts: { tasks: state.tasks.length, phases: state.phases.length },
 			updatedAt: state.updatedAt,
 		};
@@ -859,6 +859,14 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		sidecarSaves = sidecarSaves.then(async () => {
 			let sidecarOk = true;
 			try {
+				// A state the session keeps only as a manifest is also saved by its
+				// fingerprint, so an older tree point restores its own list. A failed
+				// write here fails the save, and the session entry keeps the full state.
+				if (saved.byteSize > TASK_PANEL_SNAPSHOT_MAX_BYTES) {
+					const file = savedStatePath(ctx, saved.fingerprint);
+					await writeFileAtomic(file, `${saved.serialized}\n`);
+					await pruneSavedStates(dirname(file));
+				}
 				await writeFileAtomic(sidecarStatePath(ctx), `${saved.serialized}\n`);
 			} catch (error) {
 				sidecarOk = false;
@@ -884,28 +892,30 @@ export default function taskPanel(pi: ExtensionAPI): void {
 
 	const restore = (ctx: ExtensionContext) => {
 		activeCtx = ctx;
-		const sidecar = readSidecar(ctx);
+		const sidecar = readSavedState(ctx, sidecarStatePath(ctx));
 		state = emptyState(ctx.cwd);
 		// A manifest or bounded details stand for a state too large for the
-		// session. The sidecar holds only the newest saved state, so it stands in
-		// only where its fingerprint matches; at an older tree point or in a fork,
-		// the state that record stood for is gone and the restore says so.
+		// session. The sidecar holds the newest saved state and the saved-state
+		// directory the newest few by fingerprint; where neither holds it, as in a
+		// fork or past the directory's bound, the restore says the state is gone.
 		let missingFingerprint: string | undefined;
 		// The raw full record the state came from. A list over the tool-result
 		// task cap is saved in full and then as bounded details naming it, so a
-		// record naming this state needs no sidecar. Hashed only on a sidecar miss.
+		// record naming this state needs no saved file.
 		let appliedRecord: unknown;
-		const takeSidecar = (fingerprint: string) => {
-			if (sidecar?.fingerprint === fingerprint) {
-				state = sidecar.state;
+		const takeSaved = (fingerprint: string) => {
+			missingFingerprint = undefined;
+			if (appliedRecord !== undefined && taskPanelStateFingerprint(appliedRecord) === fingerprint) return;
+			const saved = sidecar?.fingerprint === fingerprint ? sidecar : readSavedState(ctx, savedStatePath(ctx, fingerprint));
+			if (!saved) missingFingerprint = fingerprint;
+			else {
+				state = saved.state;
 				appliedRecord = undefined;
-				missingFingerprint = undefined;
-			} else if (appliedRecord !== undefined && stableTaskPanelFingerprint(appliedRecord as TaskPanelState) === fingerprint) missingFingerprint = undefined;
-			else missingFingerprint = fingerprint;
+			}
 		};
 		for (const entry of ctx.sessionManager.getBranch()) {
 			if (entry.type === "custom" && entry.customType === STATE_TYPE) {
-				if (isTaskPanelBoundedManifest(entry.data)) takeSidecar(entry.data.fingerprint);
+				if (isTaskPanelBoundedManifest(entry.data)) takeSaved(entry.data.fingerprint);
 				else {
 					state = normalizeState(entry.data, ctx.cwd);
 					appliedRecord = entry.data;
@@ -914,7 +924,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 			}
 			if (entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === "tasks_write") {
 				const details: unknown = entry.message.details?.state;
-				if (isTaskPanelToolResultBoundedState(details)) takeSidecar(details.fingerprint);
+				if (isTaskPanelToolResultBoundedState(details)) takeSaved(details.fingerprint);
 				else {
 					const restored = normalizeState(details, ctx.cwd);
 					if (restored.tasks.length > 0 || restored.phases.length > 0) {

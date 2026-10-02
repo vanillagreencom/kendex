@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 
 // Tool-result details are written into Pi's session JSONL. Keep large task
-// panels out of that append-only stream; the sidecar holds the full state, and
-// restore takes it only where the details' fingerprint names it. Acceptance target for bounded details is <=4 KiB, so summaries keep
-// counts plus a small id sample rather than every task body/note.
+// panels out of that append-only stream; the sidecar files hold the full state,
+// and restore finds it by the details' fingerprint. Acceptance target for
+// bounded details is <=4 KiB, so summaries keep counts plus a small id sample
+// rather than every task body/note.
 export const TASK_PANEL_TOOL_RESULT_MAX_STATE_BYTES = 64 * 1024;
 export const TASK_PANEL_TOOL_RESULT_MAX_TASKS = 100;
 const TASK_PANEL_TOOL_RESULT_SAMPLE_LIMIT = 20;
@@ -50,7 +51,12 @@ function stableValue(value: unknown): unknown {
 	return sorted;
 }
 
-function fingerprint(value: unknown): string {
+/**
+ * The fingerprint manifests, bounded details and saved state files carry: a
+ * SHA-256 of the state's key-sorted JSON without `updatedAt`. A fixed-size
+ * digest keeps the full state out of the records that stand in for it.
+ */
+export function taskPanelStateFingerprint(value: unknown): string {
 	const { updatedAt: _ignored, ...rest } = value as Record<string, unknown>;
 	return createHash("sha256").update(JSON.stringify(stableValue(rest))).digest("hex");
 }
@@ -76,7 +82,7 @@ export function taskPanelToolResultState<T extends TaskPanelToolResultStateLike>
 		fullSnapshot: false,
 		reason: byteSize > maxBytes ? "payload-too-large" : "task-count-threshold",
 		byteSize,
-		fingerprint: fingerprint(state),
+		fingerprint: taskPanelStateFingerprint(state),
 		counts: { tasks: state.tasks.length, phases: state.phases.length },
 		taskIds,
 		phaseIds,

@@ -23,7 +23,7 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 
 ## How it works
 
-The agent sends tasks to the tasks_write tool. The extension saves the list with the session and displays it above the editor. Tool calls or your edits update task status and notes. Resuming the session restores the saved list.
+The agent sends tasks to the tasks_write tool. The extension saves the list with the session and displays it above the editor. Tool calls or your edits update task status and notes. Resuming the session restores the saved list. A list over 64 KiB is saved in a file beside the session rather than in it. The newest 20 such lists are kept, so moving to an older point with `/tree` restores the list from that point. Where that file is gone, as in a fork or past the 20, the panel shows the last list the session holds and warns.
 
 ## Memory use
 
