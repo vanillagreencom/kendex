@@ -1,1 +1,1 @@
-- Merge lanes wait for CI before a direct merge. Auto-merge refuses a direct-route PR unless `--queue` is explicit. Replace the removed route-arm flag with plain `--auto`.
+- **Breaking:** `pr-merge` removes `--unless-admin`. Use `--auto` for normal arms; use `--auto --queue` for forced or unresolved-state arms.
