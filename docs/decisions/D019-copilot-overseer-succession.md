@@ -27,15 +27,15 @@ All vgs facts come from `gh api` on vanillagreencom/vgs, read on 2026-10-02, and
 | vgs's rendered `oversee-succeed` and `lib/overseer-launch.sh` are byte-identical to kendex main at 033cde32. Its `lanes` differs from main only by commits after fec2cc4a3d. | sha256 of the vgs render, fec2cc4a3d and main |
 | At 2026-10-02T11:03:27Z vgs set `ORCH_OVERSEER_PREFERENCE = "claude:claude-opus-5-5:high,codex:gpt-6.1-sol:high"`, with the message "so a Copilot overseer can hand over to Claude or Codex". | vgs commit 9be103b4f |
 | vgs has no `.github/workflows` directory. It removed its automatic kendex refresh on 2026-09-28. | `gh api` contents 404; vgs commit 1ac25c074 |
-| In kendex#3371, a Claude successor that carried no `--autopilot` still opened at an empty prompt and never ran a turn. Its line still carried the Copilot model spelling `claude-opus-5.5`. KEN-2451 added a fleet-log row for `successor-not-working` and did not find the cause. | kendex#3371 body; KEN-2451 completion summary, cause 2 |
-| Copilot CLI's footer during a model turn is not measured. `WORKING_RE` reads `esc interrupt`, measured on a `!` shell command only, and assumes the same footer for a model turn. | `skills/orch/scripts/lib/lane-state.sh`, comment above `WORKING_RE` |
+| In kendex#3371, a Claude successor that carried no `--autopilot` still opened at an empty prompt and never ran a turn. Its line still carried the Copilot model spelling `claude-opus-5.5`. KEN-2451 added a fleet-log row for `successor-not-working`. The 21:45Z cause is read: both `oversee-succeed` runs launched Claude Code 2.1.286 on nclaude with the Copilot spelling `claude-opus-5.5`, the 58bfe2dc render having read `claude:1:high` as `claude::high` on the caller's model. Claude Code answered `model_not_found` ("There's an issue with the selected model (claude-opus-5.5)"), ended the turn in under 1 s and sat at an empty prompt, so `oversee-succeed` read `successor-not-working` after `waited=60`. | kendex#3371 body; KEN-2451 completion summary, cause 2; Linear comment c2b27525-5428-48b4-a205-754e70a420ad on KEN-2490, sections 1 and 2 |
+| Copilot CLI 1.0.90's footer during a model turn is `Working - autopilot · <size> esc interrupt` behind a rotating spinner glyph. `WORKING_RE` reads `esc interrupt`, first measured on a `!` shell command. The agent turn record in Copilot's `events.jsonl` is one `assistant.turn_start` / `assistant.turn_end` pair per model round. | `skills/orch/scripts/lib/lane-state.sh`, comment above `WORKING_RE`; Linear comment c2b27525-5428-48b4-a205-754e70a420ad on KEN-2490, section 8 |
 | A refusal before the successor launches, such as `no-lane-qualifies`, exits through `die_status` and writes no fleet-log row. Only `abandon`, after the launch, calls `fleet_log_refusal`. | `skills/orch/scripts/oversee-succeed` |
 | On main, `--yolo` and `--allow-all` transfer from a Copilot caller to a Claude or Codex entry. A deprecated numeric entry of another harness is skipped as `entry-permission-untransferable ... model=`. | `launch_choice_permission_transferable` in `lib/lane-launch.sh`; `ol_entry_permitted` in `lib/overseer-launch.sh` |
 
 ## Answers to the owner's three questions
 
-1. **Version.** At 21:45Z vgs ran the orch render of kendex 58bfe2dc, so the #3371 fix did not reach it. vgs has run the fix since its 22:28Z refresh, and runs kendex main's succession code since 2026-10-02T10:58Z. The vgs machine's working-tree lock, `kendex --version` and Copilot CLI version at 21:45Z are owed (§ Owed evidence).
-2. **Why Claude on nclaude.** vgs's preference named `claude:1:high` first. The 58bfe2dc render read it as `claude::high` on the caller's model, carried the caller's flags across, and `lanes pick --harness claude` named nclaude. Main skips that numeric entry. vgs's current named preference, however, puts `claude:claude-opus-5-5:high` first, and Copilot's `--yolo` transfers to Claude. So on main today, a vgs Copilot overseer at its context mark again opens a Claude successor wherever a Claude account has room. Why that Claude pane stayed idle is still not known. The `--autopilot` leak is ruled out by kendex#3371 item 2, its first retry. The Copilot model spelling is gone on main, since a named entry writes `claude-opus-5-5`. The nclaude account's own state at launch, and the brief arriving as a positional prompt, remain open. The pane screen is owed.
+1. **Version.** At 21:45Z vgs ran the orch render of kendex 58bfe2dc, so the #3371 fix did not reach it. vgs has run the fix since its 22:28Z refresh, and runs kendex main's succession code since 2026-10-02T10:58Z. At 21:45Z the vgs working tree stood at a736e636f, with origin/main at 16ce07f7c, and the lock at both commits recorded sourceCommit 58bfe2dc. Copilot CLI was 1.0.90. The installed `kendex` binary's version then is not recorded; if it tracked main, it was at most main-build-568 (1.4.0).
+2. **Why Claude on nclaude.** vgs's preference named `claude:1:high` first. The 58bfe2dc render read it as `claude::high` on the caller's model, carried the caller's flags across, and `lanes pick --harness claude` named nclaude. Main skips that numeric entry. vgs's current named preference, however, puts `claude:claude-opus-5-5:high` first, and Copilot's `--yolo` transfers to Claude. So on main today, a vgs Copilot overseer at its context mark again opens a Claude successor wherever a Claude account has room. The 21:45Z Claude pane stayed idle on the model it was handed: Claude Code answered `model_not_found` for the Copilot spelling `claude-opus-5.5`, ended the turn in under 1 s and sat at an empty prompt (§ Evidence read for this record). On main no path hands a Copilot model spelling to a Claude or Codex successor: `ol_entry_permitted` skips an entry with no model word whose harness differs from the caller's as `entry-permission-untransferable ... model=`, a named entry launches the model word the setting writes, which `ol_entry_model` does not check, `ol_launch_flags` keeps no caller word, `--model` included, on a line of another harness, and `ol_walk`'s caller entry stays on the caller's harness.
 3. **Design review.** § Decision settles the six questions. § Implementation children lists the work.
 
 ## Decision
@@ -78,15 +78,15 @@ All vgs facts come from `gh api` on vanillagreencom/vgs, read on 2026-10-02, and
 
 ## Owed evidence
 
-From the vgs machine, for the 21:45Z attempt. None of it is readable through GitHub.
+Items 1-7, from the vgs machine for the 21:45Z attempt, are read: Linear comment c2b27525-5428-48b4-a205-754e70a420ad on KEN-2490 answers each in its section of the same number. The same comment also reads the former items 8 and 8b, the Copilot footer and turn events during a model turn and the `workspace.yaml` rewrite, which Decision item 4 no longer needs.
 
 1. The `oversee-succeed` lines of the attempt: the refusal line, any `preference-deprecated` and `entry-` lines, and the launch line it built.
-2. The pane screen of window @308 under `successor-not-working`.
-3. `git -C <vgs> rev-parse HEAD` and the working tree's `.kendex-lock.json` sourceCommit at that time. GitHub shows only main's lock.
-4. The installed `kendex --version`.
+2. The pane screen of window @308 under `successor-not-working`. The overseer's own pane screen at that moment was not kept.
+3. `git -C <vgs> rev-parse HEAD` and the working tree's `.kendex-lock.json` sourceCommit at that time.
+4. The installed `kendex --version`. It is not recorded; if the binary tracked main, it was at most main-build-568 (1.4.0).
 5. The Copilot CLI version.
 6. The launch line generation 5 was started with.
-7. vgs's `tmp/` fleet state and fleet-log rows of that night, which are not committed.
+7. vgs's `tmp/` fleet state and fleet-log rows of that night. No full copy of that night's overseer record survives.
 
 For the live acceptance:
 
