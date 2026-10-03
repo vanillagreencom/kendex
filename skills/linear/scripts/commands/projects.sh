@@ -51,7 +51,7 @@ Get:
 
 Create Options:
   --name <text>         Project name (required)
-  --team <name>         Team name (required)
+  --team <ref>          Team key or name (required)
   --description <text>  Short summary (max 255 chars, shows as subtitle)
   --content <text>      Long description (markdown, shows in body)
   --state <name>        Initial state (backlog, planned, started, paused, completed)

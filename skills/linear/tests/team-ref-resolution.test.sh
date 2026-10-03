@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Every --team (and `teams get`) reference resolves through resolve_team_id,
+# which matches a team's key or its name: KEN and kendex send the same team id
+# on each call site, a reference matching no team refuses as not found, and
+# one team's key that is another team's name refuses as ambiguous.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
+SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+assert_tmpdir TMP_ROOT
+TMP_ROOT=$(cd -- "$TMP_ROOT" && pwd -P)
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
+PROJECT="$TMP_ROOT/project"
+mkdir -p "$PROJECT/.agents/skills" "$PROJECT/bin"
+git -C "$PROJECT" init -q -b main
+git -C "$PROJECT" config gc.auto 0
+git -C "$PROJECT" config maintenance.auto false
+cp -R "$SKILL_DIR" "$PROJECT/.agents/skills/linear"
+KENDEX_TEAM_ID=5c2e9f71-a4b8-4d36-91e0-7f3d6b2c8a15
+
+# The stub answers a team lookup from the filter branches its query carries.
+cat >"$PROJECT/bin/curl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+payload=$(sed -n 's/^data = //p' <<<"$(cat)" | jq -r)
+query=$(jq -r '.query' <<<"$payload")
+printf '%s\n' "$payload" >>"${CURL_LOG:?}"
+teams='[{"id":"5c2e9f71-a4b8-4d36-91e0-7f3d6b2c8a15","key":"KEN","name":"kendex"},
+  {"id":"b81d4c95-2e6f-4a3b-8d17-c9e0a5f3b264","key":"ENG","name":"Platform"},
+  {"id":"3f6b2a1e-8c4d-4e7a-9b05-6d2c1f8e4a73","key":"ENX","name":"ENG"}]'
+case "$query" in
+*"teams(filter:"*)
+  key=false name=false
+  [[ "$query" != *'{key: {eq: $name}}'* ]] || key=true
+  [[ "$query" != *'{name: {eq: $name}}'* ]] || name=true
+  jq -cj --argjson p "$payload" --argjson key "$key" --argjson name "$name" \
+    '{data: {teams: {nodes: [.[] | select(($key and .key == $p.variables.name) or ($name and .name == $p.variables.name))]}}}' <<<"$teams"
+  ;;
+*"cycles(filter:"*) printf '%s' '{"data":{"cycles":{"nodes":[]}}}' ;;
+*"cycleCreate("*) printf '%s' '{"data":{"cycleCreate":{"success":true,"cycle":{"id":"c1","number":1,"name":null,"startsAt":"","endsAt":"","team":{"name":"kendex"}}}}}' ;;
+*"issueLabelCreate("*) printf '%s' '{"data":{"issueLabelCreate":{"success":true,"issueLabel":{"id":"l1","name":"n","color":"","isGroup":false,"parent":null}}}}' ;;
+*"issueCreate("*) jq -cj '{data: {issueCreate: {success: true, issue: .issue}}}' "$FIXTURE_DIR/label-team-issue.json" ;;
+*"team(id:"*) printf '%s' '{"data":{"team":{"id":"5c2e9f71-a4b8-4d36-91e0-7f3d6b2c8a15","name":"kendex","key":"KEN"}}}' ;;
+*) printf '%s' '{"errors":[{"message":"unexpected fixture query"}]}' ;;
+esac
+printf '%s' '___HTTP_CODE___200'
+SH
+chmod +x "$PROJECT/bin/curl"
+
+# Usage: run_team_ref NAME LINEAR-ARGS...
+run_team_ref() {
+  local name="$1"
+  shift
+  : >"$TMP_ROOT/$name.jsonl"
+  (cd -- "$PROJECT" && env -i HOME="$TMP_ROOT" PATH="$PROJECT/bin:$PATH" \
+    LINEAR_API_KEY_OVERRIDE=stub LINEAR_TEAM=vsys KENDEX_USER_EMAIL= LINEAR_CACHE_ROOT="$PROJECT" \
+    FIXTURE_DIR="$SKILL_DIR/tests/lib/fixtures" CURL_LOG="$TMP_ROOT/$name.jsonl" \
+    "$BASH" "$PROJECT/.agents/skills/linear/scripts/linear.sh" "$@") \
+    >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err"
+}
+
+# Columns: call site | its arguments, REF standing for the team reference |
+# the path of the team id in the request that follows the lookup.
+while IFS='|' read -r site args path; do
+  for ref in KEN kendex ghost; do
+    # shellcheck disable=SC2086 # the arguments column is several words
+    run_status rc run_team_ref "$site-$ref" ${args//REF/$ref}
+    if [[ "$ref" == ghost ]]; then
+      assert_file_contains "$site: ghost refuses as not found" "$TMP_ROOT/$site-$ref.err" "Team not found: ghost"
+      assert "$site: ghost sends nothing past the team lookup" \
+        jq -s -e 'length == 1 and (.[0].query | contains("teams(filter:"))' "$TMP_ROOT/$site-$ref.jsonl"
+      continue
+    fi
+    assert_eq "$site: $ref succeeds" "$rc" 0
+    assert "$site: $ref sends the kendex team id" \
+      jq -s -e --arg team "$KENDEX_TEAM_ID" "last | $path == \$team" "$TMP_ROOT/$site-$ref.jsonl"
+  done
+done <<'ROWS'
+cycles list|cycles list --team REF|.variables.filter.team.id.eq
+cycles create|cycles create --team REF --start 2026-10-05 --end 2026-10-18|.variables.input.teamId
+issues create|issues create --team REF --title Ref|.variables.input.teamId
+labels create|labels create --team REF --name ref-label|.variables.input.teamId
+teams get|teams get REF|.variables.id
+ROWS
+
+run_status rc run_team_ref ambiguous teams get ENG
+assert_file_contains "ambiguous: ENG refuses naming both teams" "$TMP_ROOT/ambiguous.err" \
+  "Ambiguous team: ENG matches Platform (key ENG) and ENG (key ENX)"

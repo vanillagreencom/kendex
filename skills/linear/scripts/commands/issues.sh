@@ -83,7 +83,7 @@ Bulk Update:
 
 Create Options:
   --title <text>        Issue title (required)
-  --team <name>         Team name (default: $LINEAR_TEAM; required when unset)
+  --team <ref>          Team key or name (default: $LINEAR_TEAM; required when unset)
   --description <text>  Issue description
   --description-file <path>  Read description from file (preferred for markdown)
   --label(s) <a,b,c>    Comma-separated label names

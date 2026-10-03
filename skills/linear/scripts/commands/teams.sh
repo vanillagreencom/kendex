@@ -15,7 +15,7 @@ Usage: teams.sh <action> [options]
 
 Actions:
   list    List teams
-  get     Get a single team by ID or name
+  get     Get a single team by ID, key or name
   keys    Read the workspace URL key and all team keys
 
 List Options:
@@ -100,23 +100,12 @@ get_team() {
     done
 
     if [ -z "$team_ref" ]; then
-        echo '{"error": "Team ID or name required"}' >&2
+        echo '{"error": "Team ID, key or name required"}' >&2
         return 1
     fi
 
-    # Check if it's a UUID or a name - resolve name to ID if needed
-    local team_id="$team_ref"
-    if ! [[ "$team_ref" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
-        # Look up by name
-        local lookup_query='query GetTeamByName($name: String!) { teams(filter: {name: {eq: $name}}) { nodes { id } } }'
-        local lookup_result
-        lookup_result=$(graphql_query "$lookup_query" "{\"name\": \"$team_ref\"}")
-        team_id=$(echo "$lookup_result" | jq -r '.teams.nodes[0].id // empty')
-        if [ -z "$team_id" ]; then
-            echo "{\"error\": \"Team not found: $team_ref\"}" >&2
-            return 1
-        fi
-    fi
+    local team_id
+    team_id=$(resolve_team_id "$team_ref") || return 1
 
     local query='
     query GetTeam($id: String!) {

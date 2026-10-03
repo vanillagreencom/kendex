@@ -683,7 +683,8 @@ resolve_project_id() {
     return 1
 }
 
-# Resolve team name to UUID
+# Resolve a team UUID, key or name to its UUID. A reference that is one team's
+# key and another team's name is refused as ambiguous, naming both.
 # Usage: resolve_team_id "$LINEAR_TEAM_TARGET"
 resolve_team_id() {
     local team_ref="$1"
@@ -694,10 +695,10 @@ resolve_team_id() {
         return 0
     fi
 
-    # Look up by name. A FAILED query must propagate as the API failure it
-    # is (rate limit, outage) — "Team not found" is only true for a
-    # successful lookup that returned no match.
-    local query='query GetTeam($name: String!) { teams(filter: {name: {eq: $name}}) { nodes { id } } }'
+    # Look up by key or name. A FAILED query must propagate as the API
+    # failure it is (rate limit, outage) — "Team not found" is only true for
+    # a successful lookup that returned no match.
+    local query='query GetTeam($name: String!) { teams(filter: {or: [{key: {eq: $name}}, {name: {eq: $name}}]}) { nodes { id key name } } }'
     # Build variables and diagnostics with jq: a team name containing a
     # quote or backslash must neither break the request JSON nor the error.
     local vars result
@@ -707,20 +708,30 @@ resolve_team_id() {
             '{error: ("Could not resolve team '\''" + $team + "'\'': Linear API request failed (see previous error)")}' >&2
         return 1
     fi
-    local team_id
-    team_id=$(echo "$result" | jq -r '.teams.nodes[0].id // empty')
-
-    if [ -z "$team_id" ]; then
-        jq -cn --arg team "$team_ref" '{error: ("Team not found: " + $team)}' >&2
-        return 1
-    fi
-
-    echo "$team_id"
+    # Keys are unique and names are unique, so more than one node is one
+    # team's key and another team's name.
+    local teams
+    teams=$(echo "$result" | jq -c '.teams.nodes // []') || return 1
+    case "$(jq -r 'length' <<<"$teams")" in
+        0)
+            jq -cn --arg team "$team_ref" '{error: ("Team not found: " + $team)}' >&2
+            return 1
+            ;;
+        1)
+            jq -r '.[0].id' <<<"$teams"
+            ;;
+        *)
+            jq -c --arg team "$team_ref" \
+                '{error: ("Ambiguous team: " + $team + " matches " + (map(.name + " (key " + .key + ")") | join(" and ")))}' \
+                <<<"$teams" >&2
+            return 1
+            ;;
+    esac
 }
 
 # Resolve workflow state name to UUID for a specific team
 # Usage: resolve_state_id "In Progress" "team-uuid-or-name"
-# Second arg can be team UUID or team name (will resolve)
+# Second arg can be team UUID, key or name (will resolve)
 resolve_state_id() {
     local state_name="$1"
     local team_ref="$2"

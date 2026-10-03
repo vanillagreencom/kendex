@@ -26,7 +26,7 @@ Create Options:
   --name <text>         Label name (required)
   --color <hex>         Color hex code (e.g., "#FF6B35")
   --description <text>  Label description
-  --team <name>         Team name (workspace label if omitted)
+  --team <ref>          Team key or name (workspace label if omitted)
   --parent <name>       Parent label group name (e.g., "Agent", "Stack")
   --group               Create as a group label (can have children)
 
@@ -157,15 +157,8 @@ create_label() {
 
     # Get team ID if specified
     if [ -n "$team" ]; then
-        local team_query='query GetTeam($name: String!) { teams(filter: {name: {eq: $name}}) { nodes { id } } }'
-        local team_result
-        team_result=$(graphql_query "$team_query" "{\"name\": \"$team\"}")
         local team_id
-        team_id=$(echo "$team_result" | jq -r '.teams.nodes[0].id // empty')
-        if [ -z "$team_id" ]; then
-            echo "{\"error\": \"Team not found: $team\"}" >&2
-            return 1
-        fi
+        team_id=$(resolve_team_id "$team") || return 1
         input_parts+=("\"teamId\": \"$team_id\"")
     fi
 

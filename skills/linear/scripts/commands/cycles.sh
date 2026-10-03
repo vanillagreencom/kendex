@@ -18,13 +18,13 @@ Actions:
   update  Update a cycle (name, dates)
 
 List Options:
-  --team <name>         Team name (default: $LINEAR_TEAM; unset = all teams)
+  --team <ref>          Team key or name (default: $LINEAR_TEAM; unset = all teams)
   --type <type>         Filter: current, previous, next, or all (default: all)
   --limit <n>           Max results (default: 50)
 
 Create Options:
   --name <text>         Cycle name (optional, defaults to "Cycle N")
-  --team <name>         Team name (default: $LINEAR_TEAM; required when unset)
+  --team <ref>          Team key or name (default: $LINEAR_TEAM; required when unset)
   --start <date>        Start date (YYYY-MM-DD, required)
   --end <date>          End date (YYYY-MM-DD, required)
 
@@ -80,16 +80,8 @@ list_cycles() {
     # No configured team means no team filter, never a guessed one.
     local filter_parts=()
     if [ -n "$team" ]; then
-        # Get team ID
-        local team_query='query GetTeam($name: String!) { teams(filter: {name: {eq: $name}}) { nodes { id } } }'
-        local team_result
-        team_result=$(graphql_query "$team_query" "{\"name\": \"$team\"}")
         local team_id
-        team_id=$(echo "$team_result" | jq -r '.teams.nodes[0].id // empty')
-        if [ -z "$team_id" ]; then
-            echo "{\"error\": \"Team not found: $team\"}" >&2
-            return 1
-        fi
+        team_id=$(resolve_team_id "$team") || return 1
         filter_parts+=("\"team\": {\"id\": {\"eq\": \"$team_id\"}}")
     fi
 
@@ -186,16 +178,8 @@ create_cycle() {
         return 1
     fi
 
-    # Get team ID
-    local team_query='query GetTeam($name: String!) { teams(filter: {name: {eq: $name}}) { nodes { id } } }'
-    local team_result
-    team_result=$(graphql_query "$team_query" "{\"name\": \"$team\"}")
     local team_id
-    team_id=$(echo "$team_result" | jq -r '.teams.nodes[0].id // empty')
-    if [ -z "$team_id" ]; then
-        echo "{\"error\": \"Team not found: $team\"}" >&2
-        return 1
-    fi
+    team_id=$(resolve_team_id "$team") || return 1
 
     # Build input object
     local input_parts=()

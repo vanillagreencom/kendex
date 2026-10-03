@@ -1,0 +1,1 @@
+- The linear skill resolves a team key, such as `KEN`, as well as a team name: `--team` on `cycles`, `issues create`, `projects create` and `labels create`, and `teams get`.
