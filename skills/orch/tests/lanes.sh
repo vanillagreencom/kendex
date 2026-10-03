@@ -318,12 +318,12 @@ table \
 echo "=== a weekly wall the harness banner stated reads walled until its reset ==="
 # A usage reading can show room on an account its harness has walled: the
 # endpoint's figures parse and still name no wall. oversee-watch records the
-# weekly wall it raises usage-limit for (lib/account-wall.sh, its writing held
-# in oversee_watch_usage_limit.sh), and while the stated reset is ahead the
-# account's weekly window reads 100 in `list` and in both pick forms; past the
-# reset it reads its measured value. A record nobody can read leaves the
-# account unmeasured. nclaude reads 0 everywhere, so without its wall it would
-# be the pick.
+# weekly wall a claimed lane's harness reported, on each pass that finds the
+# lane walled (lib/account-wall.sh; the oversee_watch suites hold the writer).
+# While the stated reset is ahead the account's weekly window reads 100 in
+# `list` and both pick forms; past it, its measured value. A record nobody can
+# read leaves the account unmeasured. nclaude reads 0 everywhere, so without
+# its wall it would be the pick.
 new_home walled
 make_lane "$H" claude 3600
 make_lane "$H" nclaude 3600
@@ -364,9 +364,9 @@ table "$WALL_ROW_LIST" "$WALL_ROW_PICK" "$WALL_ROW_LANE" "$WALL_ROW_PASSED" "$WA
 # Controls for the reading rules of lib/account-wall.sh these rows reach, each
 # row run against a copy of the scripts with that rule's line mutated and
 # expecting what the mutant reads: the overlay keeping the measured weekly
-# figure, which turns all three walled rows to room; the reset test dropped,
-# which keeps a passed wall; an unreadable record passed over, which reads
-# room; and the account's dir taken as spelled, which misses the wall under
+# figure, which reads room in its list, pick and pick --lane rows; the reset
+# test dropped, which keeps a passed wall; an unreadable record passed over,
+# which reads room; and the dir taken as spelled, which misses the wall under
 # both other spellings. The home goes back to the standard one the sections
 # below read.
 wall_control() { # NAME OLD NEW ROW...

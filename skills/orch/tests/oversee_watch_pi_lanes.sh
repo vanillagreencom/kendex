@@ -41,6 +41,8 @@ rows() {
     reopened) printf '%s\n' '{"at":1,"event":"Stop","harness":"pi","stop_reason":"stop"}' \
       '{"at":2,"event":"PreToolUse","harness":"pi"}' > "$file" ;;
     limit) printf '%s\n' '{"at":1,"event":"Stop","harness":"pi","stop_reason":"error","message":"429 Usage limit reached for this model"}' > "$file" ;;
+    # the Claude Code SDK's own words, which pi-claude-bridge ends the turn on
+    weekly|session) printf '{"at":1,"event":"Stop","harness":"pi","stop_reason":"error","message":"You'"'"'ve hit your %s limit \u00b7 resets Oct 4, 6pm (UTC)"}\n' "$2" > "$file" ;;
   esac
 }
 # watch [ENV=VAL...] — one run of two passes; OUT holds its stdout.
@@ -105,6 +107,49 @@ watch "${HOSTED_ENV[@]}" LANE_HOST_STUB_CAT_STATUS=5 \
   LANE_HOST_STUB_CAT_PATH=/srv/lane/gh-2/tmp/lane-mail/gh-2/session-rows.jsonl
 assert_eq "events=$(events) unread=$(grep -c '^oversee-watch: lane-rows-unread lane=gh-2 item=gh-2 exit=2$' "$STUB_DIR/err" || true)" \
   "events= unread=2" "a failed rows read is noted each pass and the lane is unjudged, never read at its pane" "$STUB_DIR/err"
+
+echo "=== a Pi lane's weekly wall is kept for its account ==="
+# A Pi lane on a Claude model ends its turn on the error its harness reported,
+# carried in its session row and never drawn in a pane, so the weekly phrase
+# alone records the wall for the claimed account (lib/account-wall.sh); a
+# session limit records nothing. Controls: the row read as a pane, through
+# the drawn-prefix test, records nothing; the row's weekly test widened to any
+# limit records the session wall.
+# LABEL|SHAPE|SCRIPTS|WANT, SCRIPTS `-` for the shipped watch or a mutant's name
+WALL_SCRIPTS=()
+pi_wall_mutant() { # NAME FILE OLD NEW
+  local scripts
+  scripts="$(mutant_scripts "$1/orch" "$2")" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/$1/github"
+  mutate_file "$scripts/$2" "$3" "$4"
+  WALL_SCRIPTS+=("$1=$scripts/oversee-watch")
+}
+pi_wall_mutant pi-wall-as-pane oversee-watch '"$banner" "${LANE_ROWS[$i]:+row}"' '"$banner" ""'
+pi_wall_mutant pi-wall-any-limit lib/account-wall.sh '*You*"ve hit your weekly limit"*' '*You*"ve hit your "*'
+while IFS='|' read -r label shape bin want; do
+  [[ -n "$label" ]] || continue
+  new_case "pi_wall_$shape"
+  ROOT="$STUB_DIR/wt"
+  pi_lane "$ROOT"
+  rows "$ROOT" "$shape"
+  printf '%s\n' "$IDLE_SCREEN" > "$STUB_DIR/pane-gh-2.txt"
+  printf '900 %%3\n' > "$STUB_DIR/panes.txt"
+  printf '900 %%3\n' > "$STUB_DIR/pane-key-gh-2.txt"
+  mkdir -p "$STATE_DIR/claims"
+  printf '900\t%%3\t/home/me/.eclaude\tgh-2\t2026-08-16T00:00:00Z\n' > "$STATE_DIR/claims/c.claim"
+  printf '1788364800' > "$STUB_DIR/now.epoch"
+  watch_bin=""
+  for entry in "${WALL_SCRIPTS[@]}"; do [[ "${entry%%=*}" != "$bin" ]] || watch_bin="${entry#*=}"; done
+  [[ "$bin" == - || -n "$watch_bin" ]] || { echo "pi wall: unknown scripts $bin" >&2; exit 1; }
+  WATCH_BIN="$watch_bin" watch TZ=UTC
+  wall="$(find "$STATE_DIR/walls" -name '*.json' -exec cat {} + 2>/dev/null | jq -r '"\(.config_dir)@\(.resets_at)"' | paste -sd, - || true)"
+  assert_eq "events=$(events) wall=${wall:-none}" "$want" "$label" "$STUB_DIR/err"
+done <<'ROWS'
+a claimed Pi lane whose turn ended on the weekly-limit error records its account's wall|weekly|-|events=EVENT usage-limit gh-2 /home/me/.eclaude resets=2026-10-04T18:00:00Z wall=/home/me/.eclaude@1791136800
+a claimed Pi lane whose turn ended on a session limit records no wall|session|-|events=EVENT usage-limit gh-2 /home/me/.eclaude resets=2026-10-04T18:00:00Z wall=none
+control: a Pi lane's row read through the drawn-prefix test records no wall|weekly|pi-wall-as-pane|events=EVENT usage-limit gh-2 /home/me/.eclaude resets=2026-10-04T18:00:00Z wall=none
+control: a row test widened to any limit records the session wall|session|pi-wall-any-limit|events=EVENT usage-limit gh-2 /home/me/.eclaude resets=2026-10-04T18:00:00Z wall=/home/me/.eclaude@1791136800
+ROWS
 
 echo "=== must-fail control ==="
 # Rows read and never handed to the judge: a rowless Pi lane's idle-looking

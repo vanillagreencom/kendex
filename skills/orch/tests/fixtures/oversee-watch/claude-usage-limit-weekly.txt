@@ -1,0 +1,6 @@
+● Background command "Re-arm the fix round 3 watchdog" completed (exit code 0)                                                  
+  Ran 3 shell commands                                                                                                            
+  Ran 2 shell commands                                                                                                            
+  ⎿  You've hit your weekly limit · resets Oct 4, 6pm (UTC)                                                                       
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   What do you want to do?

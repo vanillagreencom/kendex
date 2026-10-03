@@ -3333,8 +3333,8 @@ check_lanes() {
     # changed: the row is observe_lanes's stamp for this pane and this
     # wall, and the reported column names the event it went out as. The
     # lane stays walled above; a reset going by turns the event into
-    # usage-limit-passed, which is news once more. Such a pass still keeps
-    # the account's wall record (lib/account-wall.sh), and prints nothing.
+    # usage-limit-passed, which is news once more. Such a pass only
+    # records the wall (lib/account-wall.sh).
     quiet=""; [[ "$seen_reported" != "$event" ]] || quiet=1
     # The detail is a nicety; a claim store this process cannot read must
     # not take down the event that carries the payload.
@@ -3366,7 +3366,7 @@ check_lanes() {
     banner="$(lane_limit_banner "$below")" || banner_rc=$?
     [[ "$banner_rc" -ne 2 ]] || die limit-scan-failed "" "lane=$lane"
     [[ -n "$banner" ]] || die limit-banner-missing "" "lane=$lane"
-    account_wall_record "$PROJECT_ROOT" "$claimed" "$reset_at" "$PASS_NOW" "$banner" || true
+    account_wall_record "$PROJECT_ROOT" "$claimed" "$reset_at" "$PASS_NOW" "$banner" "${LANE_ROWS[$i]:+row}" || true
     [[ -z "$quiet" ]] || continue
     echo "EVENT $event $lane${claimed:+ $claimed}$reset_note"
     banner_payload "$below" "$banner" || die limit-banner-missing "" "lane=$lane"
