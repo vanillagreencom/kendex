@@ -93,7 +93,7 @@ if PATH="$NOJQ_BIN" command -v jq >/dev/null 2>&1 || ! PATH="$NOJQ_BIN" command 
 fi
 
 # The fake CLI: STUB_RC, STUB_STDOUT, STUB_STDERR, STUB_SLEEP, STUB_STDOUT2
-# (what the second call prints instead), STUB_PROMPT_DIR (each call's prompt
+# and STUB_RC2 (what the second call prints and exits with instead), STUB_PROMPT_DIR (each call's prompt
 # kept as prompt-N.txt, and the whole diff a truncated inline diff names kept
 # as paged-N.txt, its mode in paged-N.mode; both single-lane only, since the
 # counter is shared across lanes), STUB_SIGNAL (the signal it dies to after its last words, an
@@ -117,6 +117,7 @@ if [[ -n "$paged" ]]; then
   ls -l "$paged" | cut -c1-10 >"$STUB_PROMPT_DIR/paged-$n.mode"
 fi
 [[ "$n" -lt 2 || -z "${STUB_STDOUT2:-}" ]] || STUB_STDOUT="$STUB_STDOUT2"
+[[ "$n" -lt 2 || -z "${STUB_RC2:-}" ]] || STUB_RC="$STUB_RC2"
 [[ -n "${STUB_LOCK_DIR:-}" ]] && chmod 0500 "$STUB_LOCK_DIR"
 [[ -n "${STUB_PLANT_DIR:-}" ]] && mkdir -p "$STUB_PLANT_DIR"
 [[ "${STUB_SLEEP:-0}" != "0" ]] && sleep "$STUB_SLEEP"
@@ -146,17 +147,41 @@ PROSE_DELIVERED='My review is complete; the final JSON verdict was already deliv
 PROSE_SQL='I found a critical SQL injection in login(); the JSON verdict was already delivered above.'
 PROSE_PREVIOUSLY='As I said, the review is done and the JSON was provided previously.'
 KILLED='killed from outside'
-# Claude Code's --output-format json result envelopes: a run that ended on an
-# error with no result text, and one whose result is the good review.
+# Claude Code's --output-format json result envelopes, each beside the cause
+# the gate records for it: a run that ended on an error with no result text;
+# an API error whose result is the error text; a success with no result text;
+# an error-flagged run whose result is a whole review; one whose result is the
+# good review.
 ENVELOPE_ERROR='{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":37,"stop_reason":null,"result":"","session_id":"s"}'
-# the cause the gate records for ENVELOPE_ERROR
 ENVELOPE_ERROR_CAUSE='subtype=error_during_execution is_error=true num_turns=37 stop_reason=null'
+ENVELOPE_API_ERROR='{"type":"result","subtype":"success","is_error":true,"num_turns":1,"stop_reason":null,"terminal_reason":"api_error","api_error_status":401,"errors":["Invalid bearer token"],"result":"API Error: 401 Invalid bearer token","session_id":"s"}'
+ENVELOPE_API_ERROR_CAUSE=$'subtype=success is_error=true num_turns=1 stop_reason=null terminal_reason=api_error api_error_status=401\nInvalid bearer token\nAPI Error: 401 Invalid bearer token'
+ENVELOPE_EMPTY_SUCCESS='{"type":"result","subtype":"success","is_error":false,"num_turns":12,"stop_reason":"end_turn","result":"","session_id":"s"}'
+ENVELOPE_EMPTY_SUCCESS_CAUSE='subtype=success is_error=false num_turns=12 stop_reason=end_turn'
+ENVELOPE_FLAGGED_REVIEW="$(jq -cn --arg review "$GOOD" '{type: "result", subtype: "success", is_error: true, num_turns: 12, stop_reason: "end_turn", result: $review, session_id: "s"}')" \
+  || { echo "stub-cli-world: envelope=jq-failed" >&2; exit 1; }
+ENVELOPE_FLAGGED_REVIEW_CAUSE="subtype=success is_error=true num_turns=12 stop_reason=end_turn"$'\n'"$GOOD"
 ENVELOPE_GOOD="$(jq -cn --arg review "$GOOD" '{type: "result", subtype: "success", is_error: false, num_turns: 12, stop_reason: "end_turn", result: $review, session_id: "s"}')" \
   || { echo "stub-cli-world: envelope=jq-failed" >&2; exit 1; }
+# envelope NAME prints that envelope; NAME-cause prints its cause.
+envelope() {
+  case "$1" in
+    error) printf '%s' "$ENVELOPE_ERROR" ;;
+    error-cause) printf '%s' "$ENVELOPE_ERROR_CAUSE" ;;
+    api-error) printf '%s' "$ENVELOPE_API_ERROR" ;;
+    api-error-cause) printf '%s' "$ENVELOPE_API_ERROR_CAUSE" ;;
+    empty-success) printf '%s' "$ENVELOPE_EMPTY_SUCCESS" ;;
+    empty-success-cause) printf '%s' "$ENVELOPE_EMPTY_SUCCESS_CAUSE" ;;
+    flagged-review) printf '%s' "$ENVELOPE_FLAGGED_REVIEW" ;;
+    flagged-review-cause) printf '%s' "$ENVELOPE_FLAGGED_REVIEW_CAUSE" ;;
+    good) printf '%s' "$ENVELOPE_GOOD" ;;
+    *) echo "UNKNOWN-ENVELOPE: $1" >&2; exit 2 ;;
+  esac
+}
 
 # --- the world -----------------------------------------------------------------
 ROW="" WORK="" OUT="" HOME_DIR="" ROW_TMP=""
-W_OUTPUT="" W_RC="" W_STDOUT="" W_STDOUT2="" W_STDERR="" W_SLEEP="" W_LOCK="" W_PLANT="" W_CAPTURE="" W_DIFF="" W_SIGNAL=""
+W_OUTPUT="" W_RC="" W_RC2="" W_STDOUT="" W_STDOUT2="" W_STDERR="" W_SLEEP="" W_LOCK="" W_PLANT="" W_CAPTURE="" W_DIFF="" W_SIGNAL=""
 HEAD_SHA=""
 W_HOME="" W_FAKEHOME="" W_UNSET_HOME="" W_CWD="" W_NOJQ="" W_DASHTMP="" W_SKIP="" W_TARGET=""
 W_ENV=()
@@ -187,9 +212,8 @@ stdout_of() {
     truncated) printf '{"agent":"external-claude","timestamp":"2026-07-18T00:00:00Z","verdict":"pass","summary":"Reviewed the diff, one issue noted"}' ;;
     blockers-string) printf '{"agent":"external-claude","timestamp":"2026-07-18T00:00:00Z","verdict":"pass","summary":"ok","blockers":"none","suggestions":[],"questions":[],"qa_metadata":{}}' ;;
     agent-null) printf '{"agent":null,"timestamp":"2020-01-01T00:00:00Z","verdict":"pass","summary":"provider text","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{}}' ;;
-    # a Claude Code result envelope: envelope:error or envelope:good
-    envelope:error) printf '%s' "$ENVELOPE_ERROR" ;;
-    envelope:good) printf '%s' "$ENVELOPE_GOOD" ;;
+    # a Claude Code result envelope by name: envelope:error, envelope:good
+    envelope:*) envelope "${1#envelope:}" ;;
     agent-foreign) printf '{"agent":"someone-elses-reviewer","timestamp":"2020-01-01T00:00:00Z","verdict":"pass","summary":"provider text","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{}}' ;;
     -) printf '' ;;
     *) echo "UNKNOWN-STDOUT: $1" >&2; exit 2 ;;
@@ -281,6 +305,8 @@ word() {
     # dash, glob
     output:*) W_OUTPUT="${1#output:}" ;;
     rc:*) W_RC="${1#rc:}" ;;
+    # the second call's exit code
+    rc2:*) W_RC2="${1#rc2:}" ;;
     stdout:*) W_STDOUT="${1#stdout:}" ;;
     # what the second call prints; `-` for the first response again
     stdout2:*) W_STDOUT2="${1#stdout2:}" ;;
@@ -350,7 +376,7 @@ build() {
   git -C "$WORK" checkout -q -b scope-branch
   HEAD_SHA="$(git -C "$WORK" rev-parse HEAD)"
   OUT="$ROW/out/review.json"
-  W_OUTPUT=out W_RC=0 W_STDOUT=good W_STDOUT2="" W_STDERR="" W_SLEEP=0 W_LOCK="" W_PLANT="" W_CAPTURE="" W_DIFF="" W_SIGNAL=""
+  W_OUTPUT=out W_RC=0 W_RC2="" W_STDOUT=good W_STDOUT2="" W_STDERR="" W_SLEEP=0 W_LOCK="" W_PLANT="" W_CAPTURE="" W_DIFF="" W_SIGNAL=""
   W_HOME="" W_FAKEHOME="" W_UNSET_HOME="" W_CWD="" W_NOJQ="" W_DASHTMP="" W_SKIP="" W_TARGET=claude W_SCRIPT=""
   W_ENV=()
   W_UNSET=()
@@ -475,7 +501,7 @@ content_class() {
     "$PROSE_PREVIOUSLY") printf 'prose:previously' ;;
     ANSWER) printf 'answer' ;;
     "{"*)
-      jq -r 'if .error then (if (.error | startswith("external CLI was killed")) then "killed(" else "failed(" end) + (.reason // "?") + "|" + ((.cause_source // "") | if . == "" then "-" else . end) + "|" + (if (.cause // "") | test("hit your usage limit") then "quota" elif (.cause // "") == "" then "-" elif .cause_source == "claude result" then .cause else "other" end) + ")"
+      jq -r 'if .error then (if (.error | startswith("external CLI was killed")) then "killed(" else "failed(" end) + (.reason // "?") + "|" + ((.cause_source // "") | if . == "" then "-" else . end) + "|" + (if (.cause // "") | test("hit your usage limit") then "quota" elif (.cause // "") == "" then "-" elif .cause_source == "claude result" then (.cause | gsub("\n"; ";")) else "other" end) + ")"
              elif .agent then "review:" + ((.agent // "null") | tostring) + ":" + ((.summary // "?") | if startswith("Union of ") then "union" else . end) + (if .qa_metadata.review_performed? == false then ":" + ((.qa_metadata.reason // "-") | tostring) else "" end) else "json:" + (.summary // "?") end' "$f" 2>/dev/null || printf 'json?'
       ;;
     "") printf 'empty' ;;
@@ -563,6 +589,7 @@ run() {
     STUB_RC="$W_RC" STUB_STDOUT="$(stdout_of "$W_STDOUT")" STUB_STDERR="$W_STDERR" STUB_SLEEP="$W_SLEEP")
   [[ -z "$W_TARGET" ]] || env_args+=(SECOND_OPINION_TARGET="$W_TARGET")
   [[ -z "$W_STDOUT2" ]] || env_args+=(STUB_STDOUT2="$(stdout_of "$W_STDOUT2")")
+  [[ -z "$W_RC2" ]] || env_args+=(STUB_RC2="$W_RC2")
   [[ -z "$W_SIGNAL" ]] || env_args+=(STUB_SIGNAL="$W_SIGNAL")
   [[ -z "$W_CAPTURE" ]] || env_args+=(STUB_PROMPT_DIR="$ROW/prompts")
   [[ -z "$W_LOCK" ]] || env_args+=(STUB_LOCK_DIR="$ROW_TMP")
@@ -617,14 +644,20 @@ err_word() {
     failed:exit:*) printf 'error=claude exited with code %s — refusing to write a review artifact response=%s\n→ external CLI failed: claude exited with code %s\n' "$c" "$(record_path "$b")" "$c" ;;
     failed:empty:*) printf 'error=claude returned an empty response on a zero exit — check CLI auth and configuration — refusing to write a review artifact response=%s\n→ external CLI failed: claude returned an empty response on a zero exit — check CLI auth and configuration\n' "$(record_path "$b")" ;;
     failed:result:*) printf 'error=claude ended without a review on a zero exit (claude result subtype=%s) — refusing to write a review artifact response=%s\n→ external CLI failed: claude ended without a review on a zero exit (claude result subtype=%s)\n' "$c" "$(record_path "$b")" "$c" ;;
+    failed:retry-exit:*) printf 'error=claude exited with code %s during the recovery retry — refusing to write a review artifact response=%s\n→ external CLI failed: claude exited with code %s during the recovery retry\n' "$c" "$(record_path "$b")" "$c" ;;
     failed:timeout:*) printf 'error=claude timed out after %ss — refusing to write a review artifact response=%s\n→ external CLI failed: claude timed out after %ss\n' "$c" "$(record_path "$b")" "$c" ;;
     # a signal death: killed:<where>:<signal>:<exit>
     killed:*) printf 'error=claude was killed by %s (exit %s) — refusing to write a review artifact response=%s\n→ external CLI was killed: claude was killed by %s (exit %s)\n' "$b" "$c" "$(record_path "$a")" "$b" "$c" ;;
     cause:stderr) printf -- '--- cause (claude stderr) ---\n<quota>\n' ;;
     cause:stderr:killed) printf -- '--- cause (claude stderr) ---\n%s\n' "$KILLED" ;;
-    cause:result) printf -- '--- cause (claude result) ---\n%s\n' "$ENVELOPE_ERROR_CAUSE" ;;
+    # the cause the gate records for a named envelope
+    cause:result:*) printf -- '--- cause (claude result) ---\n%s\n' "$(envelope "${1#cause:result:}-cause")" | record_log ;;
     cause:stdout) printf -- '--- cause (claude stdout) ---\n<quota>\n' ;;
     preserved:*) printf '→ failed invocation preserved: %s\n' "$(record_path "$a")" ;;
+    # the format retry: why it ran, and the raw first response it kept
+    retrying:unparseable) printf '→ extract_json failed on first response; retrying once with captured response\n' ;;
+    retrying:incomplete) printf '→ first response JSON is structurally incomplete; retrying once with captured response\n' ;;
+    raw-kept) printf '→ raw first response preserved: <out>.raw.txt\n' ;;
     not-preserved) printf '→ failed invocation could not be preserved anywhere — the cause above is the whole record\n' ;;
     generic:result:*) printf 'error=claude ended without a review on a zero exit (claude result subtype=%s) target=claude\n' "$b" ;;
     generic:exit:*) printf 'error=claude exited with code %s target=claude\n--- stderr ---\n<quota>\n' "$b" ;;

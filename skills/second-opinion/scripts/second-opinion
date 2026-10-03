@@ -249,11 +249,13 @@ Default commands:
           Bash uses Claude's built-in read-only checks; dontAsk denies writes.
           User/project settings and their hooks are excluded.
           The answer is the JSON result's result field. A result with no
-          text, or flagged is_error, is a CLI failure whose cause is the
-          result's own terminal fields (subtype, is_error, num_turns,
-          stop_reason, terminal_reason), cause_source "claude result".
-          Any command printing such a result envelope is read the same way;
-          text output passes through unchanged.
+          text, or flagged is_error, on the first call or the format retry
+          and on any exit, is a CLI failure whose cause is the result's own
+          fields (subtype, is_error, num_turns, stop_reason, terminal_reason,
+          api_error_status, each errors[] entry, and the result text when
+          is_error), cause_source "claude result". Any command printing such
+          a result envelope is read the same way; text output passes through
+          unchanged.
   codex:  codex exec -m gpt-6.1-sol -s read-only -c model_reasoning_effort=xhigh
             --disable hooks --ephemeral
 
@@ -302,10 +304,13 @@ Exit codes:
      verdict or the blockers/suggestions/questions arrays (response kept as
      <output>.incomplete.json)
   5  review/audit: the external CLI failed to produce any review — it exited
-     non-zero (quota/auth/network), timed out, or returned an empty response on
-     a zero exit. No external verdict; whatever partial output existed is kept
-     as <output>.failed.json and the CLI's own error text is echoed on stderr;
-     a Claude result envelope's terminal fields are that text when it has them
+     non-zero (quota/auth/network), timed out, returned an empty response on
+     a zero exit, or ended without a review on a zero exit (a Claude result
+     envelope with no result text or flagged is_error; it never falls through
+     to the next roster target). No external verdict; whatever partial output
+     existed is kept as <output>.failed.json and the CLI's own error text is
+     echoed on stderr; a Claude result envelope's fields are that text when it
+     has them
   6  review/audit: the external CLI was KILLED — it died to a signal, named in
      the report and the <output>.failed.json record. Something outside the run
      (a reaper, an operator) took the reviewer away; it did not refuse: retry,
@@ -2556,7 +2561,9 @@ run_target_cli() {
 # name, so a command that keeps text output passes through unchanged. A text
 # run keeps no record of how it ended, so an envelope with no result text, or
 # flagged is_error, keeps its terminal fields in RESULT_ENVELOPE_CAUSE: the
-# cause of the failure that run is, ahead of either stream.
+# cause of the failure that run is, ahead of either stream. collect_response
+# classifies such a zero-exit attempt as result-<subtype>, the one fact every
+# gate reads.
 RESULT_ENVELOPE_CAUSE=""
 RESULT_ENVELOPE_SUBTYPE=""
 unwrap_result_envelope() {
@@ -2581,6 +2588,9 @@ unwrap_result_envelope() {
     fi
   fi
   RESULT="$text"
+}
+result_envelope_reason() {
+  printf 'ended without a review on a zero exit (claude result subtype=%s)' "$RESULT_ENVELOPE_SUBTYPE"
 }
 
 # Claude can report login/quota failures on stdout with an empty stderr.
@@ -2748,7 +2758,8 @@ collect_response() {
     attempt_cause=answered
     if [[ $EXIT_CODE -eq 124 ]]; then attempt_cause=timeout
     elif [[ $EXIT_CODE -ne 0 ]]; then attempt_cause="exit-$EXIT_CODE"
-    elif $REVIEW_LIKE && answer_json=$(extract_json "$RESULT") && ! response_incomplete_schema "$answer_json"; then
+    elif [[ -z "$RESULT_ENVELOPE_CAUSE" ]] && $REVIEW_LIKE && answer_json=$(extract_json "$RESULT") \
+      && ! response_incomplete_schema "$answer_json"; then
       :
     else
       for pattern in "${REFUSAL_PATTERNS[@]}"; do
@@ -2757,6 +2768,8 @@ collect_response() {
         [[ $refusal_rc -le 1 ]] || { echo "second-opinion: stderr-read-failed path=$STDERR_TMP" >&2; exit 1; }
         if [[ $refusal_rc -eq 0 ]]; then attempt_cause=quota; EXIT_CODE=1; break; fi
       done
+      # A zero-exit envelope failure stays with this target: no retry on empty.
+      [[ $attempt_cause == quota || -z "$RESULT_ENVELOPE_CAUSE" ]] || attempt_cause="result-$RESULT_ENVELOPE_SUBTYPE"
     fi
     ATTEMPTS_JSON=$(jq -cn --argjson prev "$ATTEMPTS_JSON" --arg name "$TARGET_CLI" \
       --arg cause "$attempt_cause" --argjson seconds "$attempt_seconds" \
@@ -2810,8 +2823,8 @@ echo "→ Response received (${#RESULT} bytes)" >&2
 
 # A result envelope that ran and ended without review text names its own end;
 # the auth advice below is for a stdout that carried nothing at all.
-if [[ -n "$RESULT_ENVELOPE_CAUSE" ]]; then
-  CLI_FAILURE="ended without a review on a zero exit (claude result subtype=$RESULT_ENVELOPE_SUBTYPE)"
+if [[ $attempt_cause == result-* ]]; then
+  CLI_FAILURE=$(result_envelope_reason)
   $REVIEW_LIKE && preserve_cli_failure_and_fail "$CLI_FAILURE" "$RESULT"
   jq -n --arg target "$TARGET_CLI" --arg failure "$CLI_FAILURE" '{error: "\($target) \($failure)", target: $target}' >&2
   printf -- '--- cause (claude result) ---\n%s\n' "$RESULT_ENVELOPE_CAUSE" >&2
@@ -3057,8 +3070,15 @@ if $REVIEW_LIKE; then
             "was killed by $RETRY_SIGNAL (exit $RETRY_EXIT) during the recovery retry" \
             "$RETRY_RESULT" "$EXIT_CLI_KILLED"
         fi
+        if [[ -n "$RESULT_ENVELOPE_CAUSE" ]]; then
+          [[ -z "$RAW_PRESERVED_PATH" ]] || echo "→ raw first response preserved: $RAW_PRESERVED_PATH" >&2
+          preserve_cli_failure_and_fail "exited with code $RETRY_EXIT during the recovery retry" "$RETRY_RESULT"
+        fi
         echo "→ retry exited with code $RETRY_EXIT" >&2
         preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
+      elif [[ $attempt_cause == result-* ]]; then
+        [[ -z "$RAW_PRESERVED_PATH" ]] || echo "→ raw first response preserved: $RAW_PRESERVED_PATH" >&2
+        preserve_cli_failure_and_fail "$(result_envelope_reason)" "$RETRY_RESULT"
       elif [[ ${#RETRY_RESULT} -eq 0 ]]; then
         echo "→ retry returned an empty response" >&2
         preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"

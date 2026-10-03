@@ -96,7 +96,7 @@ while IFS='|' read -r label world rule correct; do
   if STAMPED=' '  SELECTED_COUNT=1 # SELECTED_COUNT=${#REVIEW_LANES[@]}
   if STAMPED=' ;;
     cause) mutate_script "$SO" '    CLI_FAILURE_CAUSE=$(printf '\''%s\n'\'' "$partial" | tail -20)' '    : '\''CLI_FAILURE_CAUSE=$(printf "%s\n" "$partial" | tail -20)'\'' ' ;;
-    answer) mutate_script "$SO" '    elif $REVIEW_LIKE && answer_json=$(extract_json "$RESULT") && ! response_incomplete_schema "$answer_json"; then' '    elif false; then # $REVIEW_LIKE && answer_json=$(extract_json "$RESULT") && ! response_incomplete_schema "$answer_json"' ;;
+    answer) mutate_script "$SO" '    elif [[ -z "$RESULT_ENVELOPE_CAUSE" ]] && $REVIEW_LIKE && answer_json=' '    elif false && [[ -z "$RESULT_ENVELOPE_CAUSE" ]] && $REVIEW_LIKE && answer_json=' ;;
   esac
   got=$(run_fallback review)
   case "$rule" in

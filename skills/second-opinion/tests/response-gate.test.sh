@@ -62,8 +62,6 @@ suite_err_word() {
   local a="${f[1]:-}" b="${f[2]:-}" c="${f[3]:-}"
   case "$1" in
     no-scope) printf 'error=No review scope: git diff <head> is empty — nothing to review cwd=<work> branch=scope-branch\n' ;;
-    retrying:unparseable) printf '→ extract_json failed on first response; retrying once with captured response\n' ;;
-    retrying:incomplete) printf '→ first response JSON is structurally incomplete; retrying once with captured response\n' ;;
     recovered:*) printf '→ retry recovered valid JSON (%s bytes)\n→ raw first response preserved: %s\n' "$a" "$(gate_record "$b" raw)" ;;
     # unparseable:<raw length>:<where the records landed>:<the first response's shape>
     unparseable:*) printf '→ retry response still not parseable\nerror=Failed to extract JSON from claude response after retry raw_length=%s raw_response=%s retry_response=%s\n→ retry response preserved: %s\n→ raw response preserved: %s\n--- First 30 lines of raw response ---\n%s\n' "$a" "$(gate_record "$b" raw)" "$(gate_record "$b" retry)" "$(gate_record "$b" retry)" "$(gate_record "$b" raw)" "$(stdout_of "prose:$c")" ;;
