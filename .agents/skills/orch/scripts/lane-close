@@ -119,8 +119,10 @@ Usage: lane-close [--state-dir PATH] [--keep-sandbox | --park --pr N]
 
 Close one lane recorded in the oversee workflow state. The command refuses a
 live lane. It accepts an exited lane, an idle lane whose tracker item is
-terminal, or, in a full close, a hosted record whose window no pane carries
-on a terminal item. A limit banner below the lane's last turn is passed over only where
+terminal, in a full close a hosted record whose window no pane carries on a
+terminal item, or a record whose host kind declares stop=none, in any state,
+which the close ends on this machine alone (the stop=none paragraph below).
+A limit banner below the lane's last turn is passed over only where
 `lanes pick --lane`, run under the record's host, so a hosted lane is read
 through the provider's copy, reads the account the record names as room, for
 the model the record names or over the whole account where it names none, and

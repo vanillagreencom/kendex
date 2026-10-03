@@ -34,8 +34,9 @@ source "$TEST_DIR/lib/assertions.sh"
 # Stubs. gh answers nothing, so the repository resolves from the origin; lanes
 # clears every lane. `claude` logs its CLAUDE_CONFIG_DIR and its working
 # directory under a `--` separator, then its argv one %q-quoted word a line,
-# and prints STUB_CLAUDE_OUT. The worktree stub logs every call and makes the
-# item's directory on create.
+# prints STUB_CLAUDE_OUT and exits STUB_CLAUDE_EXIT. The worktree stub logs
+# every call, makes the item's directory on create and exits STUB_PUSH_EXIT on
+# push.
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
 printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/gh"
@@ -44,6 +45,7 @@ cat > "$BIN/claude" <<'EOF'
 #!/usr/bin/env bash
 { printf -- '--\n'; printf 'config=%s\ncwd=%s\n' "${CLAUDE_CONFIG_DIR:-}" "$PWD"; printf '%q\n' "$@"; } >> "$STUB_CLAUDE_LOG"
 printf '%s\n' "$STUB_CLAUDE_OUT"
+exit "${STUB_CLAUDE_EXIT:-0}"
 EOF
 WT_LOG="$TMP_ROOT/worktree.log"
 cat > "$BIN/worktree" <<EOF
@@ -52,7 +54,7 @@ set -euo pipefail
 printf '%s\n' "\$*" >> "$WT_LOG"
 case "\${1:-}" in
   create) mkdir -p "$TMP_ROOT/wt/\$2"; printf '%s\n' "$TMP_ROOT/wt/\$2" ;;
-  push) ;;
+  push) exit "\${STUB_PUSH_EXIT:-0}" ;;
   *) echo "unexpected worktree stub call: \$*" >&2; exit 1 ;;
 esac
 EOF
@@ -189,6 +191,30 @@ for row in '{"ok":true,"url":"https://claude.ai/code"}|no session id' '{"ok":fal
     "rc=1 unread=1 record=null null null null null null null null" "${row#*|} is no record and a failed item" "$TMP_ROOT/err"
 done
 
+echo "=== a failed push or launch stops with no record ==="
+# ENV|LINE|CLAUDE|OLD -> NEW: the stub's failure, the refusal line past its key
+# word, whether claude ran, and the control's edit, the guard's text kept and
+# its behaviour removed; the edit is the rest of the row, `|` and all. The
+# claude failure still prints the started answer.
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+FAILURE_ROWS=(
+  'STUB_PUSH_EXIT=1|cloud-push-failed item=CC-20|none||| { ot_message cloud-push-failed -> || true || { ot_message cloud-push-failed'
+  'STUB_CLAUDE_EXIT=1|cloud-launch-failed item=CC-21 exit=1|ran|[[ "$rc" -eq 0 ]] || { ot_message cloud-launch-failed -> true || { ot_message cloud-launch-failed'
+)
+failure_row() { # SCRIPT ROW ITEM — the launch, with RC and ERR set
+  local env line item
+  IFS='|' read -r env line _ <<<"$2"
+  item="${line#* item=}"
+  run_ot SCRIPT="$1" "$env" -- "${CLOUD[@]}" "${3:-${item%% *}}"
+}
+for row in "${FAILURE_ROWS[@]}"; do
+  IFS='|' read -r _ line claude _ <<<"$row"
+  item="${line#* item=}"
+  failure_row "$OT" "$row"
+  assert_eq "rc=$RC refused=$(grep -cxF "open-terminal: $line" <<<"$ERR" || true) claude=$([[ -e "$TMP_ROOT/claude.log" ]] && echo ran || echo none) record=$(record "${item%% *}")" \
+    "rc=1 refused=1 claude=$claude record=null null null null null null null null" "${line%% *} stops the launch with no record" "$TMP_ROOT/err"
+done
+
 echo "=== the launch arm is the declared launch ==="
 CODEX_LINE=$'kind=codex-cloud\tlaunch=cloud-task\tchannel=task\tfiles=none\tstatus=task\tstop=none\trelaunch=fresh\tpark=none\taccounts=none\tpool=plan\tland=handoff'
 cp "$TEST_DIR/fixtures/lane-host" "$TMP_ROOT/provider"
@@ -243,6 +269,14 @@ mutant record-window 'lane_record_write "$RECORD_MODE" "$wt_id" "" "$wt"' 'lane_
 run_ot SCRIPT="$MUTANT" -- "${CLOUD[@]}" CC-8
 assert_eq "$(record CC-8)" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD stub:CC-8 $TMP_ROOT/wt/CC-8 running standard" \
   "control: a record written with a window fails the record row"
+# One per failure guard: each removed in turn, its row's launch is recorded.
+for i in "${!FAILURE_ROWS[@]}"; do
+  IFS='|' read -r _ line _ edit <<<"${FAILURE_ROWS[$i]}"
+  mutant "failure-$i" "${edit%% -> *}" "${edit#* -> }"
+  failure_row "$MUTANT" "${FAILURE_ROWS[$i]}" "CC-2$((i + 2))"
+  assert_eq "$(record "CC-2$((i + 2))")" "claude-cloud claude-cloud $LANE_DIR session_01CLOUD null $TMP_ROOT/wt/CC-2$((i + 2)) running standard" \
+    "control: without its guard, the ${line%% *} row is recorded" "$TMP_ROOT/err"
+done
 # shellcheck disable=SC2016
 mutant session-unread '|| { ot_message cloud-session-unread "item=$item" >&2; return 1; }' '|| session=""'
 run_ot SCRIPT="$MUTANT" STUB_CLAUDE_OUT='{"ok":true,"url":"https://claude.ai/code"}' -- "${CLOUD[@]}" CC-9

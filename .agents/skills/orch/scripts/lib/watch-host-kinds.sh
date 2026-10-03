@@ -5,9 +5,10 @@
 # lane's files are read and the host a lane-host read of it runs under, and the
 # judgement of a lane whose kind declares status=none, which no process read
 # reaches. Sourced by oversee-watch, and like the rest of its lib/ it reads
-# that script's globals (HOSTED, ROOTS, REPOS, WORK_DIR, PW_SEEN, PASS_NOW,
-# MARK_REPEAT, LANE_STALL_SECS) and calls its `die`, `ow_message`,
-# `lane_failure_set` and lane row helpers.
+# that script's globals (SCRIPT_DIR, HOSTED, ROOTS, REPOS, WORK_DIR, PW_SEEN,
+# PASS_NOW, MARK_REPEAT, LANE_STALL_SECS) and calls its `die`, `ow_message`,
+# `lane_failure_set` and lane row helpers, and those of lib/lane-gitfile.sh and
+# lib/lane-capabilities.sh, which that script sources before this file.
 
 # The records host_route sorts by their host kind: the host each hosted record
 # names, as `<item>=<host>`, the items whose kind declares no mailbox channel,

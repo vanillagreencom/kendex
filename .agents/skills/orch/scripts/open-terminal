@@ -2821,8 +2821,8 @@ cloud_bundle_risk() { # ACCOUNT
 # none stops here, since no pane or listing stands in for it. The record
 # carries the kind, the account and that id, the local worktree as mail_root,
 # and no window. A failure after the create leaves the tree standing as the
-# item's claim. Status 75 is an item another session owns; 1 a failure, its
-# keyed line printed.
+# item's claim, and one after the push its branch on origin. Status 75 is an
+# item another session owns; 1 a failure, its keyed line printed.
 cloud_session_launch() {
   local wt out session rc=0 launched_at record_rc=0
   cloud_bundle_risk "${LANE_ENV#*=}" || return 1
