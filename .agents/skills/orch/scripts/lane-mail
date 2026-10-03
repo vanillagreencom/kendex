@@ -149,7 +149,7 @@ Overseer side:
 
 Owner channel, the overseer's own mailbox from any of its checkouts:
   ask --item overseer --to owner --file PATH --options a,b
-              --recommend a [--wait MINUTES]
+              --recommend a [--wait MINUTES] [--ref MSGID]
               a question for the owner, appended to to-overseer.jsonl with
               `to` as a field. --recommend names the option that stands
               where nobody answers, one of --options, and gives the ask its
@@ -157,7 +157,9 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               (default 120) when --wait is not given. An ask with no
               --recommend is refused `recommend-required`, since nothing
               but the owner would ever close it. The owner may still answer
-              outside the options, through send --re
+              outside the options, through send --re. --ref names the
+              envelope the ask answers and copies its delivery_id, as
+              notice's --ref below does
   ask --item overseer --to owner --file PATH --draft PATH [--wait MINUTES]
               an owner ask to approve a message sent as the owner. --file
               is the question the owner reads; --draft names a JSON object
@@ -287,7 +289,8 @@ Options:
   --to WHO      `owner` or `peer`: the audience field of an overseer ask or
                 notice, which a peer ask writes as `peer` itself, and the
                 filter `pending` keeps
-  --ref MSGID   notice --to owner only: the owner note or owner ask answered
+  --ref MSGID   ask and notice --to owner only: the owner note or owner ask
+                answered
   --attach PATH notice --to owner only: the file carried beside the text
   --recommend a ask --to owner only: the option that stands by default
   --wait N      ask --to owner only: minutes until that default stands
@@ -313,8 +316,8 @@ Envelope, one JSON object per line: id, kind, at, from, re (answers and closes),
 halt (true on a directive sent with --halt), text and options (asks with
 choices), and the owner-channel fields each verb above writes: to, ref,
 attach, recommend, wait, deadline (UTC, at plus wait minutes), delivery_id,
-re_delivery_id (notice's copy of its --ref envelope's delivery_id), thread_ts
-and parent (threaded owner directives only),
+re_delivery_id (an ask's or notice's copy of its --ref envelope's
+delivery_id), thread_ts and parent (threaded owner directives only),
 closes (false on new owner answers; absent on legacy closing answers),
 draft (a draft ask only: recipient, medium, text and text_hash),
 and by (`text` or `default` on an owner answer; `explicit`, `text` or
@@ -655,7 +658,8 @@ for given in $OPTS_GIVEN; do
         ask:overseer:peer | notice:overseer:peer) refuse to-invalid "$TO" ;;
         *) refuse option-unknown --to ;;
       esac ;;
-    --ref | --attach) [ "$VERB:$ITEM" = notice:overseer ] || refuse option-unknown "$given" ;;
+    --ref) case "$VERB:$ITEM" in ask:overseer | notice:overseer) ;; *) refuse option-unknown --ref ;; esac ;;
+    --attach) [ "$VERB:$ITEM" = notice:overseer ] || refuse option-unknown --attach ;;
     --recommend | --wait | --draft) [ "$VERB:$ITEM" = ask:overseer ] || refuse option-unknown "$given" ;;
     --due) [ "$VERB" = pending ] || refuse option-unknown --due ;;
     --after)
@@ -1404,8 +1408,8 @@ lm_owner_ask_find() { # ID
 
 # The host worker delivers owner requests with send --delivery-id. Read each
 # possible reference under the lock its writers take, then copy the delivery
-# id before releasing it. Take only one file lock at a time; the notice's
-# append takes its own lock after this read.
+# id before releasing it. Take only one file lock at a time; the ask's or
+# notice's append takes its own lock after this read.
 lm_ref_find() {
   local path ref_json
   for path in "$TO_LANE" "$TO_OVERSEER"; do

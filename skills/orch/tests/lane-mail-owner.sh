@@ -387,6 +387,8 @@ notice --item overseer --to owner --ref $ASK_TO_OWNER --file $F|0=
 notice --item overseer --to owner --ref $PEER_ASK --file $F|2=lane-mail: ref-unknown=$PEER_ASK
 notice --item overseer --to owner --ref $INBOUND_PEER --file $F|2=lane-mail: ref-unknown=$INBOUND_PEER
 notice --item overseer --to owner --ref $RESOLUTION --file $F|2=lane-mail: ref-unknown=$RESOLUTION
+ask --item overseer --to owner --options a,b --recommend a --ref 1790000000-1-1 --file $F|2=lane-mail: ref-unknown=1790000000-1-1
+ask --item overseer --to owner --options a,b --recommend a --attach x --file $F|2=lane-mail: option-unknown=--attach
 notice --item KEN-1 --attach x --file $F|2=lane-mail: option-unknown=--attach
 send --item overseer --re $OWNER_NOTE --file $F|2=lane-mail: ask-unknown=$OWNER_NOTE
 send --item overseer --directive --host --root $LANE --delivery-id k --file $F|2=lane-mail: option-conflict=--host,--delivery-id
@@ -434,6 +436,15 @@ delivered|voice:request-1|yes|true
 plain||yes|false
 unreferenced|voice:request-1|no|false
 ROWS
+
+# An owner ask raised while answering the request binds to it the same way.
+ASK_BINDING='select(.kind == "ask") | [.ref // "", .re_delivery_id // ""] | join("|")'
+new_repo reply_ask
+lm send --item overseer --directive --file "$(text d 'Voice request.')" --delivery-id voice:request-1
+OWNER_NOTE="$(field "$BOX/to-lane.jsonl" '.id')"
+lm ask --item overseer --to owner --options approve,deny --recommend deny --ref "$OWNER_NOTE" --file "$(text q 'Approve?')"
+assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" "$ASK_BINDING")" "0=$OWNER_NOTE|voice:request-1" \
+  "an owner ask names the voice request and copies its delivery id"
 
 # --- the attachment's confinement --------------------------------------------
 new_repo attach
@@ -928,6 +939,15 @@ CONTROL_OUT="$(
   [[ "$FAIL" -eq 0 ]]
 )" || CONTROL_RC=$?
 assert_eq "$RC=$CONTROL_RC" "0=1" "control: the reply-binding assertion fails without the copied field"
+lm ask --item overseer --to owner --options approve,deny --recommend deny --ref "$OWNER_NOTE" --file "$(text q 'Approve?')"
+CONTROL_RC=0
+CONTROL_OUT="$(
+  FAIL=0
+  assert_eq "$(field "$BOX/to-overseer.jsonl" "$ASK_BINDING")" "$OWNER_NOTE|voice:request-1" \
+    "the owner ask carries its request's delivery id"
+  [[ "$FAIL" -eq 0 ]]
+)" || CONTROL_RC=$?
+assert_eq "$RC=$CONTROL_RC" "0=1" "control: the ask-binding assertion fails without the copied field"
 
 # The owner-note class lives in lib/mailbox-append.sh, which a mutant of
 # lane-mail cannot reach: the copied library files a peer's line as an owner
