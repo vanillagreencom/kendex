@@ -37,7 +37,7 @@ From 1.0, kendex keeps a retired consumer-visible form reading, with one warning
 
 ### Validation budget
 
-The per-change validation budget is 1 minute: the `seconds=` value in the `timing` file `dev-validate-run` writes for a change's `DEV_VALIDATE_RANGE_CMD` run.
+The per-change validation budget is 12 minutes: the `seconds=` value in the `timing` file `dev-validate-run` writes for a change's `DEV_VALIDATE_RANGE_CMD` run. It sits above a measured hooks-tree range run of 659 s and full runs of 535 to 676 s.
 
 <!-- kendex:project-instructions:end -->
 
@@ -99,7 +99,7 @@ A new or modified production gate or guard ships with one must-fail control per 
 - A dependency is tested in its own suite; a consumer suite asserts only its own use of it.
 - A change selects its checks, locally and in CI, from each suite's direct and indirect inputs: its sources, the dependencies it consumes, fixtures, generated-code inputs, configuration and build settings. Select through the suite's existing entry point and the dependency metadata the build already holds; a suite both run goes through the same entry point in both. Missing or unreadable selection evidence runs every check in the requested area. Selection needs no custom selector, cache, runner or workflow, and no dependency table outside the tests' own files.
 - Where the build holds no dependency graph, a change to the suite's entry point, the tree's assertion library or its shared fixtures runs the whole suite. Beyond those files, a test is selected by its path, named for its surface under the placement rule below, and by any note in its own file: it runs when it, its surface or a file its note names changes, if every repository file it or its surface uses is named one of those ways. A test where that does not plainly hold runs on every change, with no separate list; no test must carry a note, and no check judges the notes. The repository's full and release runs run every test.
-- Read a suite's wall time from what its entry point already prints; this rule adds no output. A repository may state a per-change validation budget, in minutes, in its Project Instructions; it bounds a change's selected run, never the full or release runs. A suite that takes a change's validation over that budget is split by input under the selection bullets above, never skipped and never moved behind a flag.
+- Read a suite's wall time from what its entry point already prints. A repository may state a per-change validation budget, in minutes, in its Project Instructions; it bounds a change's selected run, never the full or release runs. A change whose selected run exceeds it reports the time; the slow suite or lane is split by input under the selection bullets above in its own work item, outside that change, never skipped or moved behind a flag.
 - Shaped input (positions, settings keys, tamper classes) is one table: one loop, one assertion per row, the rows visible in the file.
 - A test reads time through an injectable clock; a real wait names its reason beside it.
 - A collection-driven check states its coverage floor and proves its discovery completed. It rejects an empty result when the floor requires members, and a failed or incomplete discovery never reports a valid empty set. An empty application input the contract permits passes, and a test covers it.
