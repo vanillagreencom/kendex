@@ -1,12 +1,13 @@
 # shellcheck shell=bash
 # How oversee-watch reads each lane by what its host kind declares
 # (../../schemas/lane-host.md § Host kinds): the host a state record names and
-# its capability line, which fleet_merge routes the record by, and the
+# its capability line, which fleet_merge routes the record by, where each
+# lane's files are read and the host a lane-host read of it runs under, and the
 # judgement of a lane whose kind declares status=none, which no process read
 # reaches. Sourced by oversee-watch, and like the rest of its lib/ it reads
 # that script's globals (HOSTED, ROOTS, REPOS, WORK_DIR, PW_SEEN, PASS_NOW,
-# MARK_REPEAT, LANE_STALL_SECS) and calls its `die`, `ow_message` and lane row
-# helpers.
+# MARK_REPEAT, LANE_STALL_SECS) and calls its `die`, `ow_message`,
+# `lane_failure_set` and lane row helpers.
 
 # The records host_route sorts by their host kind: the host each hosted record
 # names, as `<item>=<host>`, the items whose kind declares no mailbox channel,
@@ -59,6 +60,107 @@ record_host() { # ITEM
     return 0
   done
   return 1
+}
+# A hosted lane is read through `lane-host` under its record's host. One
+# passed by hand with --hosted names none, so it is read under the host
+# `lane-host resolve` answers, and where that is `local` every such read
+# would be made on this disk where the lane is not. Asked once per process,
+# the first time such a lane is carried, so a fleet that gains one while the
+# run loops is judged then.
+LANE_HOST_SPEC=""
+check_lane_host() {
+  local out entry items=""
+  for entry in ${HOSTED[@]+"${HOSTED[@]}"}; do
+    record_host "${entry%%=*}" || items+="${items:+,}${entry%%=*}"
+  done
+  [[ -n "$items" ]] || return 0
+  if [[ -z "$LANE_HOST_SPEC" ]]; then
+    out="$("$SCRIPT_DIR/lane-host" resolve 2>&1)" \
+      || die host-resolve-failed "$out" "path=$SCRIPT_DIR/lane-host"
+    LANE_HOST_SPEC="$out"
+  fi
+  [[ "$LANE_HOST_SPEC" == local ]] || return 0
+  die hosted-without-host "" "items=$items" "host=local"
+}
+# HOSTED_ROOT is the item's lane root on its own host, empty for a lane on this
+# disk, and HOSTED_HOST the host every lane-host read of it runs under: the
+# one its record names, or for a --hosted entry the one lane-host resolves.
+# Set rather than printed: a substitution would carry the lookup's own status
+# out under errexit, and a fleet with no hosted lane at all is the common case.
+HOSTED_ROOT=""
+HOSTED_HOST=""
+hosted_root() { # ITEM
+  local entry
+  HOSTED_ROOT=""
+  HOSTED_HOST=""
+  for entry in ${HOSTED[@]+"${HOSTED[@]}"}; do
+    [[ "${entry%%=*}" == "$1" ]] || continue
+    HOSTED_ROOT="${entry#*=}"
+    HOSTED_HOST="$LANE_HOST_SPEC"
+    ! record_host "$1" || HOSTED_HOST="$RECORD_HOST"
+    return 0
+  done
+}
+# The item's lane worktree on this disk as LOCAL_ROOT, from a --root entry;
+# empty when none names it, and the mail pass then lets lane-mail resolve it.
+LOCAL_ROOT=""
+local_root() { # ITEM
+  local entry
+  LOCAL_ROOT=""
+  for entry in ${ROOTS[@]+"${ROOTS[@]}"}; do
+    [[ "${entry%%=*}" == "$1" ]] || continue
+    LOCAL_ROOT="${entry#*=}"
+    return 0
+  done
+}
+# Whether a route of either type already names the item, for the state merge:
+# a state record of either type displaces a hand-passed entry, so a lane that
+# moved between this disk and a host is read where its record says.
+route_listed() { # ITEM
+  hosted_root "$1"
+  [[ -z "$HOSTED_ROOT" ]] || return 0
+  local_root "$1"
+  [[ -n "$LOCAL_ROOT" ]]
+}
+# The clone a hosted lane's worktree belongs to, which its record does not
+# carry: the worktree's `.git` file names it while the worktree stands, read
+# through lane-gitfile.sh's lane_hosted_clone, and STATE's clone-root row
+# keeps it for after ../../workflows/merge-pr.md § 5 removes the worktree. A
+# root that is itself a clone is its own clone. Sets HOSTED_CLONE, and
+# HOSTED_GONE to 1 when the worktree is gone. Call after hosted_root.
+hosted_clone() { # ITEM STATE
+  local rc=0
+  HOSTED_GONE=0
+  ORCH_LANE_HOST="$HOSTED_HOST" lane_hosted_clone "$SCRIPT_DIR/lane-host" "$1" "$HOSTED_ROOT" "$WORK_DIR/gitfile" "$WORK_DIR/host.err" || rc=$?
+  case "$rc" in
+    0) HOSTED_CLONE="$LANE_HOSTED_CLONE" ;;
+    3)
+      lane_failure_set handoff-read-failed "" "item=$1" "path=$HOSTED_ROOT/.git" "value=${LANE_HOSTED_GITLINE:-<empty>}"
+      return 1 ;;
+    4) lane_failure_set lane-host-busy "" "item=$1"; return 1 ;;
+    1)
+      HOSTED_GONE=1
+      if ! HOSTED_CLONE="$(lane_row_get clone-root "$2" "$1")" || [[ -z "$HOSTED_CLONE" ]]; then
+        lane_failure_set handoff-read-failed "" "item=$1" "clone=unknown"
+        return 1
+      fi ;;
+    *)
+      lane_failure_set handoff-read-failed "$(cat "$WORK_DIR/host.err")" \
+        "item=$1" "path=$HOSTED_ROOT/.git"
+      return 1 ;;
+  esac
+}
+# One hosted state file, ROOT's STATE_DIR copy of ITEM's, fetched into DEST.
+hosted_state_fetch() { # ITEM ROOT STATE_DIR DEST
+  local rc=0
+  lane_hosted_state_path "$2" "$3" "$1"
+  ORCH_LANE_HOST="$HOSTED_HOST" lane_host_fetch "$SCRIPT_DIR/lane-host" "$1" "$LANE_HOSTED_STATE_PATH" \
+    "$4/workflow-state-$1.json" "$WORK_DIR/host.err" || rc=$?
+  [[ "$rc" -ne 4 ]] || { lane_failure_set lane-host-busy "" "item=$1"; return 1; }
+  if [[ "$rc" -gt 1 ]]; then
+    lane_failure_set handoff-read-failed "$(cat "$WORK_DIR/host.err")" "item=$1" "path=${LANE_HOSTED_STATE_PATH%/*}"
+    return 1
+  fi
 }
 # Whether ITEM is one of the items that follow it, for the per-capability
 # item lists fleet_merge builds.

@@ -197,21 +197,21 @@ class LaneHostTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
     LOCAL = b"kind=local\tlaunch=window\tchannel=mailbox\tfiles=local\tstatus=pane\tstop=window\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\n"
     CLOUD = b"kind=claude-cloud\tlaunch=cloud-session\tchannel=session\tfiles=none\tstatus=none\tstop=none\trelaunch=fresh\tpark=none\taccounts=none\tpool=cloud-credit\tland=handoff\n"
+    SSH = b"kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\n"
 
     def capabilities_rows(self):
         """(name, env, exit, stdout, stderr) per declared line and refusal.
         A provider's absent-verb answer, exit 2 or Daytona's 64 with its
-        verb-unsupported line, gets the line lane-host-ssh prints itself;
+        verb-unsupported line, gets the static ssh line, pinned as SSH;
         a 64 without that line is the provider's own failure."""
         stub = {"ORCH_LANE_HOST": str(self.stub)}
-        ssh = subprocess.run([str(self.script.parent / "lane-host-ssh"), "capabilities"], env=self.env, capture_output=True, check=True).stdout
         daytona = "lane-host-daytona: verb-unsupported verb=capabilities provider=daytona"
-        declared = ssh.decode().strip().replace("pool=plan", "pool=cloud-credit")
+        declared = self.SSH.decode().strip().replace("pool=plan", "pool=cloud-credit")
         return [("local", {}, 0, self.LOCAL, b""),
                 ("claude-cloud", {"ORCH_LANE_HOST": "claude-cloud"}, 0, self.CLOUD, b""),
                 ("provider-declared", {**stub, "LANE_HOST_STUB_CAPABILITIES": declared}, 0, (declared + "\n").encode(), b""),
-                ("provider-absent", {**stub, "LANE_HOST_STUB_NO_CAPABILITIES": "2"}, 0, ssh, b""),
-                ("provider-absent-64", {**stub, "LANE_HOST_STUB_NO_CAPABILITIES": "64", "LANE_HOST_STUB_CAPABILITIES_WORDS": daytona}, 0, ssh, b""),
+                ("provider-absent", {**stub, "LANE_HOST_STUB_NO_CAPABILITIES": "2"}, 0, self.SSH, b""),
+                ("provider-absent-64", {**stub, "LANE_HOST_STUB_NO_CAPABILITIES": "64", "LANE_HOST_STUB_CAPABILITIES_WORDS": daytona}, 0, self.SSH, b""),
                 ("provider-failed-64", {**stub, "LANE_HOST_STUB_NO_CAPABILITIES": "64", "LANE_HOST_STUB_CAPABILITIES_WORDS": "usage-invalid"},
                  64, b"", b"usage-invalid\n"),
                 ("value-unknown", {**stub, "LANE_HOST_STUB_CAPABILITIES": declared.replace("status=verb", "status=probe")},
@@ -251,6 +251,7 @@ class LaneHostTests(unittest.TestCase):
         rows = dict((name, (env, code, out, err)) for name, env, code, out, err in self.capabilities_rows())
         controls = [("claude-cloud", "channel=session\\tfiles=none", "channel=mailbox\\tfiles=none"),
                     ("provider-absent", 'line="$("$SCRIPT_DIR/lane-host-ssh" capabilities)"', 'line=""'),
+                    ("provider-absent", '"$status" -eq 2 || ', '"$status" -eq 99 || '),
                     ("provider-absent-64", '( "$status" -eq 64 && ', '( 1 -eq 0 && '),
                     ("provider-failed-64", ' && "$words" == *"verb-unsupported verb=capabilities"* )', ' )'),
                     ("value-unknown", '|| [[ " $values " != *" $value "* ]]; then', '|| false; then')]
