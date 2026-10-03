@@ -623,6 +623,14 @@ cp "$ROWS_BIN/kendex" "$PKG_BIN/kendex"
 cat >"$PKG_BIN/copilot" <<'STANDIN'
 #!/usr/bin/env bash
 prompt="" tools="" share="" prev=""
+# Runs each command .github/hooks/smoke-events.json registers on EVENT with
+# PAYLOAD on its stdin, as Copilot runs a repository hook.
+fire() { # EVENT PAYLOAD
+  local c
+  while IFS= read -r c; do
+    [ -z "$c" ] || bash -c "$c" <<<"$2"
+  done <<<"$(jq -r --arg e "$1" '.hooks[$e][]?.bash' .github/hooks/smoke-events.json)"
+}
 for a; do
   [ "$prev" != -p ] || prompt=$a
   [ "$prev" != --available-tools ] || tools=$a
@@ -665,6 +673,35 @@ case "$prompt" in
       printf 'PreToolUse %s/.claude/hooks/smoke-tool.sh\nPreToolUse %s/.claude/hooks/smoke-claude-only.sh\n' "$PWD" "$PWD" >>smoke-fired
     printf 'ok\n' ;;
   "Use your task tool"*) printf '%s\n' "$STANDIN_SUB" ;;
+  "Run the smoke-child custom agent"*)
+    t="$PWD/session-state/lead-1/events.jsonl"
+    own="$PWD/session-state/sub-1/events.jsonl"
+    for step in $STANDIN_EVENTS; do
+      case "$step" in
+        start) fire sessionStart '{"sessionId":"lead-1","source":"new"}' ;;
+        sub-start) fire sessionStart '{"sessionId":"sub-1","source":"new"}' ;;
+        substart) fire subagentStart '{"sessionId":"lead-1","agentName":"smoke-child"}' ;;
+        substart-id) fire subagentStart '{"sessionId":"lead-1","agentName":"smoke-child","agentId":"sub-1"}' ;;
+        sub-stop) fire agentStop "$(jq -nc --arg t "$t" '{sessionId:"sub-1",transcriptPath:$t,stop_hook_active:false}')" ;;
+        sub-stop-own) fire agentStop "$(jq -nc --arg t "$own" '{sessionId:"sub-1",transcriptPath:$t,stop_hook_active:false}')" ;;
+        subagentstop) fire subagentStop '{"sessionId":"lead-1","agentId":"sub-1","agentType":"smoke-child","response":"SMOKE-CHILD-DONE"}' ;;
+        subagentstop-task) fire subagentStop '{"sessionId":"lead-1","agentId":"sub-1","agentType":"task","response":"SMOKE-CHILD-DONE"}' ;;
+        lead-stop) fire agentStop "$(jq -nc --arg t "$t" '{sessionId:"lead-1",transcriptPath:$t,stop_hook_active:false}')" ;;
+        end) fire sessionEnd '{"sessionId":"lead-1","reason":"complete"}' ;;
+      esac
+    done
+    printf 'SMOKE-CHILD-DONE\n' ;;
+  "Reply with exactly: ok")
+    for step in $STANDIN_ERRORS; do
+      case "$step" in
+        start) fire sessionStart '{"sessionId":"err-1","source":"new"}' ;;
+        model) fire errorOccurred '{"sessionId":"err-1","errorContext":"model_call","recoverable":true,"error":{"name":"Error","message":"refused"}}' ;;
+        tool) fire errorOccurred '{"sessionId":"err-1","errorContext":"tool_execution","recoverable":true,"error":{"name":"Error","message":"refused"}}' ;;
+        end) fire sessionEnd '{"sessionId":"err-1","reason":"error"}' ;;
+      esac
+    done
+    printf 'Could not connect to local model provider.\n'
+    exit 1 ;;
   "Do exactly these steps"*)
     [ "$STANDIN_LOAD" != nologin ] || { printf 'Error: Authentication token found but could not be validated.\n'; exit 1; }
     mkdir -p .github/hooks
@@ -686,6 +723,8 @@ case "$prompt" in
         *) trigger='"$x"-never' ;;
       esac
       printf '#!/usr/bin/env bash\nx=$(cat)\ncase "$x" in %s) printf "%%s: refused=standin\\n" %s >&2; exit 2 ;; esac\n' "$trigger" "$h" >".github/hooks/$h.sh"
+      [ "$h" != "$STANDIN_WRAP" ] ||
+        printf '#!/usr/bin/env bash\nexec "$BASH" %q row SessionStart\n' "$PWD/.github/hooks/lane-mail-check.sh" >".github/hooks/$h.sh"
     done
     case "$STANDIN_FIXTURE" in
       path) printf 'PreToolUse x\n' >>smoke-fired; printf '%s\n' "$PATH" >>smoke-path ;;
@@ -745,6 +784,7 @@ package_run() { # SMOKE ENV=VAL... — the run's output in $TMP/pkg-out, its sta
     STANDIN_TASK_AGENTS="$PKG_AGENTS_ALL" STANDIN_HOOK_NAMES="$PKG_HOOKS" STANDIN_NESTED_ROOT=0 STANDIN_DUP=1 STANDIN_SUB=SMOKE-RULES-REACHED-VIA-AGENT \
     STANDIN_REFUSE=1 STANDIN_HOOKS=1 STANDIN_FEED=all STANDIN_SHAPE=good STANDIN_HOOK_CWD= STANDIN_DROP_ENV=0 \
     STANDIN_SKIP_HOOK= STANDIN_FIXTURE= STANDIN_OMIT= STANDIN_INSTR= STANDIN_SETTINGS= STANDIN_MIXED=1 STANDIN_CROSS=0 STANDIN_TOOL_PROJECT_DIR=0 STANDIN_DENIAL=reason \
+    STANDIN_WRAP= STANDIN_EVENTS='start substart sub-stop subagentstop lead-stop end' STANDIN_ERRORS='start model model end' \
     STANDIN_LOAD= STANDIN_HELD=child-before STANDIN_LOAD_SAYS='skill-load-check: unloaded=linear' "$@" \
     "$BASH" "$smoke" --only copilot --dir "$TMP/pkg-dir" >"$TMP/pkg-out" 2>&1) || PKG_RC=$?
 }
@@ -801,7 +841,15 @@ the recorded payload carries the command|helper:payload|pass|its keys: toolName,
 a hook and a tool call in the project root pass|helper:cwd|pass|both run in the project root
 the launch environment reaching both passes|helper:env|pass|reaches a hook and a tool call
 a subagent refused before its own load and passed after it passes|hook:skill-load-check|pass|its reply relaying 'skill-load-check: unloaded=linear'
-the calls after each agent's own load passing passes the carrier|hook:skill-load-record|pass|which only a load this hook recorded"
+the calls after each agent's own load passing passes the carrier|hook:skill-load-record|pass|which only a load this hook recorded
+a sessionStart under the lead alone passes|event:sessionStart|pass|and never under the subagent's, sub-1
+and so does a sessionEnd|event:sessionEnd|pass|and never under the subagent's, sub-1
+a subagentStart naming no subagent passes|event:subagentStart|pass|naming no agentId or agentType
+a subagentStop naming the subagent's session and agent passes|event:subagentStop|pass|own session sub-1 as agentId, smoke-child as agentType
+an agentStop at each agent's end, both naming the lead's transcript, passes|event:agentStop|pass|fired it twice
+an errorOccurred for each try of a failed model call passes|event:errorOccurred|pass|fired it 2 time(s)
+a hook on an event the session never raises is skipped, naming the event rows|hook:reviewer-stop-check|skipped|raises no SubagentStop; the copilot event rows
+and so is the errorOccurred hook|hook:stop-failure-row|skipped|raises no StopFailure"
 dup_rows="$(awk '$1 == "copilot" { print $2 }' "$TMP/pkg-out" | sort | uniq -d)"
 if [ -z "$dup_rows" ] && [ "$(awk '$1 == "copilot" && $2 ~ /:/' "$TMP/pkg-out" | wc -l)" -gt 0 ]; then
   ok "every package row prints once"
@@ -819,6 +867,18 @@ an unlisted CLAUDE.md fails|instruction:CLAUDE.md|fail|does not list CLAUDE.md
 a count of two differs, and does not claim both files listed|instruction:duplicate|differs|did not show both AGENTS.md and CLAUDE.md, and the model counts the AGENTS.md line twice
 a nested AGENTS.md listed from the root too passes|instruction:nested|pass|from sub/ and from the project root
 a refused command that went through fails its hook|hook:block-unsafe-rm|fail|the call still ran"
+package_run "$SMOKE" STANDIN_WRAP=session-start-row STANDIN_ERRORS='start tool end' \
+  STANDIN_EVENTS='start sub-start substart-id sub-stop-own subagentstop-task lead-stop end'
+package_table "a sessionStart under the subagent's session too fails|event:sessionStart|fail|the subagent's session id is sub-1
+a subagentStart naming the subagent fails|event:subagentStart|fail|sent keys
+a subagentStop naming the task tool as the agent fails|event:subagentStop|fail|sent agentType task
+a subagent's agentStop naming its own transcript fails|event:agentStop|fail|sub-1 in sub-1
+an errorOccurred for a tool's failure fails|event:errorOccurred|fail|tool_execution under err-1
+a wrapper whose judge read its payload under the wrapper's arguments ran|hook:session-start-row|pass|reading the payload Copilot sent"
+package_run "$SMOKE" STANDIN_WRAP=session-end-row STANDIN_EVENTS='start lead-stop end' STANDIN_ERRORS='start end'
+package_table "a session that ran no subagent leaves the subagent rows unanswerable|event:agentStop|unanswerable|no single subagentStop
+a failed model call with no errorOccurred fails|event:errorOccurred|fail|fired no errorOccurred
+a judge's read under another wrapper's arguments is not this wrapper's run|hook:session-end-row|fail|never ran at SessionEnd"
 package_run "$SMOKE" STANDIN_DENIAL=generic
 package_table "a refusal the model was shown only as an exit code fails|hook:block-argv-kill|fail|the model's tool result does not name the hook; the transcript's denials: Denied by preToolUse hook: hook exited with code 2
 and so does a bare cd's|hook:block-bare-cd|fail|the model's tool result does not name the hook"
@@ -930,6 +990,33 @@ package_case "control: a mixed-hook row that never counts Copilot's own copy pas
 plant "$STAND_SMOKE" 's/^  elif grep -qFx -- sub\/AGENTS.md <<<"\$root_sources"; then$/  elif false; then/'
 package_run "$STAND_SMOKE" STANDIN_NESTED_ROOT=1
 package_case "control: a nested reading that ignores the root listing differs where the root lists it" instruction:nested differs "for the working directory only"
+# Controls on the event rows and the package table's hook attribution: each
+# rule planted out passes the payload or the run its row fails.
+EV_BAD="STANDIN_EVENTS=start sub-start substart-id sub-stop-own subagentstop-task lead-stop end"
+plant "$STAND_SMOKE" 's/^      if \[ -n "\$lead" \] \&\& \[ "\$ids" = "\$lead" \]; then$/      if [ -n "$lead" ]; then/'
+package_run "$STAND_SMOKE" "$EV_BAD"
+package_case "control: a sessionStart row that never compares the ids passes one under the subagent too" event:sessionStart pass "fired it once"
+plant "$STAND_SMOKE" 's/ and (\.\[0\] | has("agentId") or has("agentType") | not) then "pass"$/ then "pass"/'
+package_run "$STAND_SMOKE" "$EV_BAD"
+package_case "control: a subagentStart row that never reads its keys passes one naming the subagent" event:subagentStart pass "naming no agentId"
+plant "$STAND_SMOKE" 's/^          and \.\[0\]\.agentType == "smoke-child" and/          and/'
+package_run "$STAND_SMOKE" "$EV_BAD"
+package_case "control: a subagentStop row that never reads agentType passes the task tool's" event:subagentStop pass "smoke-child as agentType"
+plant "$STAND_SMOKE" 's/^          and any(\.\[\]; \.sessionId == \$sub and dir == \$lead)$/          and any(.[]; .sessionId == $sub)/'
+package_run "$STAND_SMOKE" "$EV_BAD"
+package_case "control: an agentStop row that never reads the transcript passes a subagent naming its own" event:agentStop pass "fired it twice"
+plant "$STAND_SMOKE" 's/ and \.errorContext == "model_call" and/ and/'
+package_run "$STAND_SMOKE" STANDIN_ERRORS='start tool end'
+package_case "control: an errorOccurred row that never reads errorContext passes a tool's failure" event:errorOccurred pass "with errorContext model_call"
+plant "$STAND_SMOKE" 's/^  \[ -n "\$args" \] \&\& \[ -n "\$judge" \] || return 1$/  return 1/'
+package_run "$STAND_SMOKE" STANDIN_WRAP=session-start-row
+package_case "control: a hook row that never looks under its judge fails a wrapper that ran" hook:session-start-row fail "never ran at SessionStart"
+plant "$STAND_SMOKE" 's/^    \[ "\$line" = "\$args" \] || continue$/    :/'
+package_run "$STAND_SMOKE" STANDIN_WRAP=session-end-row
+package_case "control: a hook row that takes any read of its judge passes a wrapper whose arguments never ran" hook:session-end-row pass "reading the payload Copilot sent"
+plant "$STAND_SMOKE" "s/^PKG_UNRAISED='SubagentStop StopFailure'\$/PKG_UNRAISED=''/"
+package_run "$STAND_SMOKE"
+package_case "control: with every event read as raised, a SubagentStop hook is judged on a session that runs no subagent" hook:reviewer-stop-check pass "reading the payload Copilot sent"
 
 # The skill-load session's other verdicts, on the committed table, whose
 # copilot cells of skill-load-check and skill-load-record read enforced; the

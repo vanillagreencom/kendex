@@ -3,11 +3,13 @@
 # name: doc-drift-check
 # event: Stop
 # matcher:
-# description: Blocks a stop once per set of findings so the agent, the only party that can act on them, is the one given the list. Three kinds are found: stale, a document covering changed code that did not change; dangling, an architecture topic `Covers:` entry that no tracked or untracked non-ignored path on disk matches; uncovered, a changed non-markdown path still on disk that no topic entry and no AGENTS.md covers, judged only where some topic declares an entry. A changed path the repository's `.kendex-generated.json` lists is named at neither kind, a render being covered through the source it was rendered from. The refusal opens with one keyed line per kind that holds, in the order `doc-drift-check: stale=<count>`, `doc-drift-check: dangling=<count>`, `doc-drift-check: uncovered=<count>`, then `doc-drift-check: base=<ref>` — the ref it compared against, or `default-branch`, `none` or `unrelated` — and names each finding under them; stdout carries nothing and no user-facing notice is written. The set is recorded as `<git common dir>/kendex/doc-drift/<session_id>-<digest of the sorted set>`, so a later stop naming that same set passes and an agent that read the list and changed nothing is not asked again; a set that gains or loses a finding is a different set and blocks once. `stop_hook_active` true passes, and so does a stop with nothing changed; any change, markdown alone included, has every Covers entry judged. Uses the nearest AGENTS.md, tracked or untracked and not ignored, which for a path directly at the repository root is the root's own and for a path below it is one below the root, and architecture topic Covers entries. Compares the branch with its default-branch merge-base, or the working tree when no comparison applies. Not run on gemini: it has no Stop event. Not run on copilot: its agentStop also fires at each custom subagent's end, naming the subagent's own session id and the lead's transcript, and this hook does not tell that stop from the lead's. Not run on antigravity: its Stop payload carries no `stop_hook_active` and names the session `conversationId`.
+# description: Blocks a stop once per set of findings so the agent, the only party that can act on them, is the one given the list. Three kinds are found: stale, a document covering changed code that did not change; dangling, an architecture topic `Covers:` entry that no tracked or untracked non-ignored path on disk matches; uncovered, a changed non-markdown path still on disk that no topic entry and no AGENTS.md covers, judged only where some topic declares an entry. A changed path the repository's `.kendex-generated.json` lists is named at neither kind, a render being covered through the source it was rendered from. The refusal opens with one keyed line per kind that holds, in the order `doc-drift-check: stale=<count>`, `doc-drift-check: dangling=<count>`, `doc-drift-check: uncovered=<count>`, then `doc-drift-check: base=<ref>` — the ref it compared against, or `default-branch`, `none` or `unrelated` — and names each finding under them; stdout carries nothing but on Copilot, and no user-facing notice is written. The set is recorded as `<git common dir>/kendex/doc-drift/<session_id>-<digest of the sorted set>`, so a later stop naming that same set passes and an agent that read the list and changed nothing is not asked again; a set that gains or loses a finding is a different set and blocks once. `stop_hook_active` true passes, and so does a stop with nothing changed; any change, markdown alone included, has every Covers entry judged. Uses the nearest AGENTS.md, tracked or untracked and not ignored, which for a path directly at the repository root is the root's own and for a path below it is one below the root, and architecture topic Covers entries. Compares the branch with its default-branch merge-base, or the working tree when no comparison applies. On Copilot it runs at agentStop, which Copilot CLI 1.0.91 also fires at each custom subagent's end, naming the subagent's own session id and the lead's transcript: the lane-mail-check hook beside it, run with the argument `caller`, names the stop the lead's or a subagent's, a subagent's stop passes, and a stop it cannot name, that hook absent included, is judged as the lead's; the session is the payload's `sessionId`, and the refusal is `decision: block` with the text as `reason` on stdout at exit 0, the answer Copilot takes. Not run on gemini: it has no Stop event. Not run on antigravity: its Stop payload carries no `stop_hook_active` and names the session `conversationId`.
 # summary: Stops an agent at the end of its turn when documents covering the code it changed did not change or an architecture topic names a path that does not exist, and hands it the list. Where some topic declares a Covers entry, changed code with no covering document is named too.
-# safety: Reads the payload, git state, the topic files, the render inventory `.kendex-generated.json` and git's listing of what each Covers entry matches; the only write is the per-set marker under the repository's git common dir. Exit 2 names the findings and asks for each document to be confirmed or updated and each entry or path to be corrected, never bypassed. jq reads the payload and a sha256 tool names the set; every command the hook runs is checked before it is called, the payload readers ahead of the payload and the rest after `stop_hook_active` has been read, so a discovery command's absence costs one retry rather than refusing the retry too; only a missing payload reader refuses that as well, the flag being in the payload it cannot read. A payload, git state, render inventory or marker the hook cannot read or write is refused, never passed. Every refusal opens with `doc-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the payload, on Copilot the lane-mail-check hook's answer for the stop's caller, git state, the topic files, the render inventory `.kendex-generated.json` and git's listing of what each Covers entry matches; the only write is the per-set marker under the repository's git common dir. Exit 2 names the findings and asks for each document to be confirmed or updated and each entry or path to be corrected, never bypassed. jq reads the payload and a sha256 tool names the set; every command the hook runs is checked before it is called, the payload readers ahead of the payload and the rest after `stop_hook_active` has been read, so a discovery command's absence costs one retry rather than refusing the retry too; only a missing payload reader refuses that as well, the flag being in the payload it cannot read. A payload, git state, render inventory or marker the hook cannot read or write is refused, never passed. Every refusal opens with `doc-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 30
-# harnesses: [claude, codex, pi, opencode, cursor]
+# harnesses: [claude, codex, pi, copilot, opencode, cursor]
+# requires: [lane-mail-check]
+# requires-on: [copilot]
 # ---
 
 set -euo pipefail
@@ -17,6 +19,18 @@ set -euo pipefail
 # feeds the digest reads them the same way, so the locale also decides which
 # set two runs agree on.
 export LC_ALL=C
+
+# Which harness this install serves comes from where it is installed, as
+# hooks/lane-mail-check.sh reads it: `hook_target` in
+# `crates/core/src/engine/targets.rs` writes the copilot copy under
+# `.github/hooks` at project scope, and at global scope beside the registry
+# document `<name>.json` that only a copilot install leaves. Read first,
+# because it decides the shape of every refusal.
+INSTALL=""
+case "${BASH_SOURCE[0]%/*}" in
+  */.github/hooks) INSTALL=copilot ;;
+esac
+if [ -z "$INSTALL" ] && [ -f "${BASH_SOURCE[0]%.sh}.json" ]; then INSTALL=copilot; fi
 
 # What the refusals name, empty until each is known: which base the changed set
 # was read against, that same choice in English, and each kind of finding as
@@ -49,7 +63,7 @@ REFUSED=0
 # most sessions in this repository run with nobody watching, so the list goes
 # to the channel the harness gives Claude — stderr with exit 2 — and stdout is
 # left empty rather than carrying a second copy for a user who cannot act on it.
-refuse() { # KEY VALUE [DETAIL], or `drift` alone
+message() { # KEY VALUE [DETAIL], or `drift` alone
   {
     [ "$1" = drift ] || printf 'doc-drift-check: %s=%s\n' "$1" "$2"
     case "$1=${2:-}" in
@@ -98,8 +112,24 @@ refuse() { # KEY VALUE [DETAIL], or `drift` alone
     # The cause a command this hook ran wrote, captured at the site and
     # replayed here: under the keyed line, never ahead of it.
     [ -z "${3:-}" ] || printf '%s\n' "$3"
-  } >&2
+  }
+}
+
+# The one exit for a refusal. Copilot does not hand a stop hook's stderr to
+# the model and ends the turn on exit 2, so its install also answers on
+# stdout with `decision: block` and the text as `reason`, at exit 0, the
+# agentStop answer its hooks reference gives (lane-mail-check.sh::refuse).
+# The JSON is jq's: where jq is the missing tool, stdout stays empty and the
+# exit is 2.
+refuse() { # KEY VALUE [DETAIL], or `drift` alone
+  local text
   REFUSED=1
+  text=$(message "$@")
+  printf '%s\n' "$text" >&2
+  if [ "$INSTALL" = copilot ] && command -v jq >/dev/null 2>&1; then
+    jq -n -c --arg t "$text" '{decision: "block", reason: $t}' || exit 2
+    exit 0
+  fi
   exit 2
 }
 
@@ -137,9 +167,11 @@ INPUT=$(cat 2>&1) || refuse payload unreadable "$INPUT"
 # top-level, and a text scan finds the same characters inside a transcript path
 # or a cwd. jq's own words are captured where a failure would otherwise write
 # them ahead of the keyed line; a jq that answers writes none.
+# Copilot names the session `sessionId`, read after the snake_case spelling.
 FIELDS=$(printf '%s' "$INPUT" | jq -r '
   def str($v): if $v == null then "" elif ($v | type) == "string" then $v else error("not a string") end;
-  [str(.session_id), (.stop_hook_active == true | tostring)] | @tsv' 2>&1) ||
+  [str(if .session_id != null then .session_id else .sessionId end),
+   (.stop_hook_active == true | tostring)] | @tsv' 2>&1) ||
   refuse payload invalid-json "$FIELDS"
 TAB=$'\t'
 SESSION=${FIELDS%%"$TAB"*}
@@ -150,6 +182,23 @@ ACTIVE=${FIELDS#*"$TAB"}
 # and the harness caps a hook that does it anyway.
 if [ "$ACTIVE" = "true" ]; then
   exit 0
+fi
+
+# Copilot fires agentStop at a custom subagent's end too. Whose stop it is, is
+# the lane-mail-check hook's caller rule, asked here rather than judged a
+# second time; a subagent's stop passes, since the branch's documents are the
+# lead's to answer for, as Claude Code's subagents fire no Stop at all. A stop
+# that hook does not name, or cannot because it is not beside this one, is
+# judged as the lead's.
+if [ "$INSTALL" = copilot ]; then
+  CALLER_JUDGE="${BASH_SOURCE[0]%/*}"
+  [ "$CALLER_JUDGE" != "${BASH_SOURCE[0]}" ] || CALLER_JUDGE=.
+  CALLER_JUDGE="$CALLER_JUDGE/lane-mail-check.sh"
+  CALLER=""
+  if [ -f "$CALLER_JUDGE" ]; then
+    CALLER=$(printf '%s' "$INPUT" | "$BASH" "$CALLER_JUDGE" caller 2>/dev/null) || CALLER=""
+  fi
+  [ "$CALLER" != subagent ] || exit 0
 fi
 
 # The rest of what the hook runs: the commands that read what changed and

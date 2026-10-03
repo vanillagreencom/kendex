@@ -3,11 +3,11 @@
 # name: reviewer-stop-check
 # event: SubagentStop
 # matcher:
-# description: Blocks a reviewer subagent's stop once when the worktree it reviewed is not clean. The worktree is the one the artifact path in the subagent's transcript names (`<worktree>/tmp/review-<agent>-*.json`, the newest mention), the transcript being the payload's `agent_transcript_path` where the payload carries that key (Claude Code and Codex, whose `transcript_path` is the parent session's), a null one refused, and its `transcript_path` where it does not; `git status --porcelain --untracked-files=all` there listing anything blocks, naming each path, and a transcript naming no artifact path blocks the same way, since the review contract is an artifact at that path. An agent_type not starting with `reviewer-` passes, as does `stop_hook_active` true; a block is recorded per agent_id under `<git common dir>/kendex/reviewer-stop/` so a later stop of the same subagent passes. Not run on codex: its SubagentStop (Codex hooks reference, CLI 0.160.0) reaches this hook once a released kendex maps it. Not run on pi: it has no SubagentStop event. Not run on gemini: it has no SubagentStop event. Not run on copilot: its subagentStop names the agent type `task`, the tool rather than the agent, and carries no `stop_hook_active`. Not run on antigravity: it has no SubagentStop event.
+# description: Blocks a reviewer subagent's stop once when the worktree it reviewed is not clean. The worktree is the one the artifact path in the subagent's transcript names (`<worktree>/tmp/review-<agent>-*.json`, the newest mention), the transcript being the payload's `agent_transcript_path` where the payload carries that key (Claude Code and Codex, whose `transcript_path` is the parent session's), a null one refused, and its `transcript_path` where it does not; `git status --porcelain --untracked-files=all` there listing anything blocks, naming each path, and a transcript naming no artifact path blocks the same way, since the review contract is an artifact at that path. An agent_type not starting with `reviewer-` passes, as does `stop_hook_active` true; a block is recorded per agent_id under `<git common dir>/kendex/reviewer-stop/` so a later stop of the same subagent passes. On Copilot it runs at subagentStop, whose payload on Copilot CLI 1.0.91 names the custom agent as `agentType` and the subagent's own session as `agentId`, carries no `stop_hook_active`, which the per-agent record stands in for, and names the lead's transcript, so the artifact path is read from the subagent's reply, the payload's `response`, and the block is `decision: block` on stdout at exit 0, the answer Copilot takes, where exit 2 lets the subagent finish. Not run on codex: its SubagentStop (Codex hooks reference, CLI 0.160.0) reaches this hook once a released kendex maps it. Not run on pi: it has no SubagentStop event. Not run on gemini: it has no SubagentStop event. Not run on antigravity: it has no SubagentStop event.
 # summary: Stops a reviewer agent from finishing while the worktree it reviewed still holds files it left behind.
-# safety: Reads the payload, the transcript and git status; the only write is the per-agent marker under the reviewed repository's git common dir. Exit 2 names the paths and asks for the reviewer's own files to be deleted and the rest reported, never bypassed. jq is required to read the payload; a payload, transcript or git that cannot be read is refused, never passed, and so is an `agent_id` that is not a string of ASCII letters, digits, `_` and `-`, the alphabet the harness names subagents in; it is judged in jq where the payload holds it, so a NUL, a `/`, a newline, `.` or `..` never reaches the marker path, whatever encoding the read passes through. Every refusal opens with `reviewer-stop-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the payload, the transcript or on Copilot the subagent's reply, and git status; the only write is the per-agent marker under the reviewed repository's git common dir. Exit 2 names the paths and asks for the reviewer's own files to be deleted and the rest reported, never bypassed. jq is required to read the payload; a payload, transcript or git that cannot be read is refused, never passed, and so is an `agent_id` that is not a string of ASCII letters, digits, `_` and `-`, the alphabet the harness names subagents in; it is judged in jq where the payload holds it, so a NUL, a `/`, a newline, `.` or `..` never reaches the marker path, whatever encoding the read passes through. Every refusal opens with `reviewer-stop-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 30
-# harnesses: [claude, opencode, cursor]
+# harnesses: [claude, copilot, opencode, cursor]
 # ---
 
 set -euo pipefail
@@ -16,12 +16,26 @@ set -euo pipefail
 # them as something else changes what a filename may hold.
 export LC_ALL=C
 
+# Which harness this install serves comes from where it is installed, as
+# hooks/lane-mail-check.sh reads it: `hook_target` in
+# `crates/core/src/engine/targets.rs` writes the copilot copy under
+# `.github/hooks` at project scope, and at global scope beside the registry
+# document `<name>.json` that only a copilot install leaves. Read first,
+# because it decides the shape of every refusal.
+INSTALL=""
+case "${BASH_SOURCE[0]%/*}" in
+  */.github/hooks) INSTALL=copilot ;;
+esac
+if [ -z "$INSTALL" ] && [ -f "${BASH_SOURCE[0]%.sh}.json" ]; then INSTALL=copilot; fi
+
 # What the refusals name, empty until each is known: the calling subagent,
 # whose type names the artifact path, the payload field the transcript is
-# read from and the transcript itself, and the worktree's own dirty paths.
+# read from and the transcript itself, what the artifact path is read out of,
+# and the worktree's own dirty paths.
 AGENT_TYPE=""
 TRANSCRIPT_FIELD=""
 TRANSCRIPT=""
+ARTIFACT_SOURCE="transcript"
 STATUS=""
 
 # Every line this hook writes, and the only place its text lives. The first
@@ -33,7 +47,7 @@ STATUS=""
 # The keyed line stands first, at position 1. What a command this hook runs
 # wrote is captured where the hook reads it and passed here as the cause, so
 # it is replayed under the key rather than ahead of it.
-refuse() { # KEY VALUE [DETAIL]
+message() { # KEY VALUE [DETAIL]
   {
     printf 'reviewer-stop-check: %s=%s\n' "$1" "$2"
     case "$1=$2" in
@@ -56,7 +70,7 @@ refuse() { # KEY VALUE [DETAIL]
         echo "the transcript $TRANSCRIPT could not be read; refusing"
         ;;
       artifact=missing)
-        echo "the transcript names no review artifact path (<worktree>/tmp/review-$AGENT_TYPE-<timestamp>.json), so the reviewed worktree cannot be checked for files you left behind. Write the artifact to that path, delete every probe you created, and finish."
+        echo "the $ARTIFACT_SOURCE names no review artifact path (<worktree>/tmp/review-$AGENT_TYPE-<timestamp>.json), so the reviewed worktree cannot be checked for files you left behind. Write the artifact to that path, name it on the File: line of your reply, delete every probe you created, and finish."
         ;;
       marker=*)
         echo "the marker $2 could not be recorded, so a second stop could not be told from the first"
@@ -73,7 +87,22 @@ refuse() { # KEY VALUE [DETAIL]
     # The cause a command this hook ran wrote, captured at the site and
     # replayed here: under the keyed line, never ahead of it.
     [ -z "${3:-}" ] || printf '%s\n' "$3"
-  } >&2
+  }
+}
+
+# The one exit for a block. The text goes to stderr, which every harness but
+# Copilot reads beside exit 2. Copilot lets a subagent finish on exit 2 and
+# holds it on `decision: block` with the text as `reason` on stdout at exit 0,
+# the subagentStop answer its hooks reference gives. The JSON is jq's: where
+# jq is the missing tool, stdout stays empty and the exit is 2.
+refuse() { # KEY VALUE [DETAIL]
+  local text
+  text=$(message "$@")
+  printf '%s\n' "$text" >&2
+  if [ "$INSTALL" = copilot ] && command -v jq >/dev/null 2>&1; then
+    jq -n -c --arg t "$text" '{decision: "block", reason: $t}' || exit 2
+    exit 0
+  fi
   exit 2
 }
 
@@ -117,13 +146,18 @@ INPUT=$(cat 2>&1) || refuse payload unreadable "$INPUT"
 # the parent session's, whose delegation names an artifact path of its own and
 # can name another worktree; Codex sends the key null for a thread with no
 # rollout, which reads as empty and is refused below. A payload without the key
-# names the subagent's in `transcript_path`. The field read is a column, so the
-# refusal names it.
+# names the subagent's in `transcript_path`. The field read is a column, so
+# the refusal names it.
+#
+# Copilot spells the agent fields in camelCase, so each is read in both
+# spellings, the snake_case one first. Its `transcriptPath` names the lead's
+# transcript, which a Copilot install never reads, so it is not read here.
 FIELDS=$(printf '%s' "$INPUT" | jq -r '
   def str($v): if $v == null then "" elif ($v | type) == "string" then $v else error("not a string") end;
+  def either(a; b): if a != null then a else b end;
   (if has("agent_transcript_path") then "agent_transcript_path" else "transcript_path" end) as $field |
-  [str(.agent_type),
-   (str(.agent_id) | if . != "" and gsub("[A-Za-z0-9_-]"; "") == "" then . else "" end),
+  [str(either(.agent_type; .agentType)),
+   (str(either(.agent_id; .agentId)) | if . != "" and gsub("[A-Za-z0-9_-]"; "") == "" then . else "" end),
    $field,
    str(.[$field]),
    (.stop_hook_active == true | tostring)] | @tsv' 2>/dev/null) ||
@@ -152,7 +186,16 @@ fi
 if [ -z "$AGENT_ID" ]; then
   refuse agent-id invalid
 fi
-if [ ! -r "$TRANSCRIPT" ] || [ ! -f "$TRANSCRIPT" ]; then
+# Copilot's subagentStop names the lead's transcript, which holds every agent
+# of the session, so there the artifact path is read from the subagent's own
+# reply, the payload's documented `response`.
+REPLY=""
+if [ "$INSTALL" = copilot ]; then
+  ARTIFACT_SOURCE="reply this subagent ended with"
+  REPLY=$(printf '%s' "$INPUT" | jq -r '
+    if .response == null then "" elif (.response | type) == "string" then .response else error("not a string") end' 2>/dev/null) ||
+    refuse payload invalid-json
+elif [ ! -r "$TRANSCRIPT" ] || [ ! -f "$TRANSCRIPT" ]; then
   refuse transcript unreadable
 fi
 
@@ -188,11 +231,17 @@ record_and_block() { # KEY VALUE
 }
 
 # The newest artifact path the transcript mentions: the Write call's
-# file_path, the File: line of the return message, either one. A path
+# file_path, the File: line of the return message, either one; on Copilot,
+# the newest the reply mentions, its File: line. A path
 # holding a quote, a space or a backslash is not read; none of the
 # generated artifact paths hold one.
+ARTIFACT_PATTERN='(/[^/"[:space:]\\]+)+/tmp/review-[^/"[:space:]\\]*\.json'
 set +e
-MENTIONS=$(grep -oE '(/[^/"[:space:]\\]+)+/tmp/review-[^/"[:space:]\\]*\.json' -- "$TRANSCRIPT" 2>&1)
+if [ "$INSTALL" = copilot ]; then
+  MENTIONS=$(grep -oE "$ARTIFACT_PATTERN" <<<"$REPLY" 2>&1)
+else
+  MENTIONS=$(grep -oE "$ARTIFACT_PATTERN" -- "$TRANSCRIPT" 2>&1)
+fi
 GREP_RC=$?
 set -e
 case "$GREP_RC" in

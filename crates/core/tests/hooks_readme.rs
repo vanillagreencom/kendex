@@ -348,15 +348,15 @@ fn each_planted_defect_is_refused_on_its_keyed_line() {
             ],
         ),
         (
-            "reviewer-stop-check",
+            "reviewer-read-only",
             |source| {
                 source.description = source.description.replacen(
-                    "Not run on copilot: its subagentStop names the agent type `task`, the tool rather than the agent, and carries no `stop_hook_active`. ",
+                    "Not run on copilot: its preToolUse payload names no calling agent, only the caller's own session, and its subagentStart names the lead's session and no subagent id, so a reviewer's tool call cannot be joined to the reviewer (Copilot hooks reference, CLI 1.0.91). ",
                     "",
                     1,
                 );
             },
-            &["hooks-readme: missing-reason=reviewer-stop-check:copilot"],
+            &["hooks-readme: missing-reason=reviewer-read-only:copilot"],
         ),
         (
             "lane-mail-check",

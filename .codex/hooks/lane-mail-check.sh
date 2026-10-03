@@ -120,6 +120,10 @@ CALLER=""
 # read, which `refuse` may be reached before.
 ARM=""
 CONTEXT_EVENT=""
+# The event a row hook names after `row`, which its row is written under where
+# the payload spells none: Copilot's camelCase payloads carry no
+# hook_event_name. Empty for every other arm.
+ROW_ARG=""
 # The directory resolve_reader puts the orch scripts at, composed into every
 # path the marks run. Empty until the reader resolves.
 SCRIPTS=""
@@ -239,7 +243,7 @@ message() { # KEY VALUE [CAUSE]
         echo "the only lane mailbox reader on offer is $2, supplied by the repository this session has open, and this hook is not installed in that repository; refusing to run it. Install the orch skill in the scope this hook is installed in."
         ;;
       arm=*)
-        echo "this hook judges a turn end with no argument, a finished tool call with deliver, a tool call about to run with halt, a session start with start, a prompt with prompt, a compaction about to begin with compact and a Copilot session's context reading with usage; $2 is none of them"
+        echo "this hook judges a turn end with no argument, a finished tool call with deliver, a tool call about to run with halt, a session start with start, a prompt with prompt, a compaction about to begin with compact and a Copilot session's context reading with usage, writes a session row with row and its event, and names a turn end's caller with caller; $2 is none of them"
         ;;
       mailbox-missing=*)
         if [ "$CALLER" = subagent ]; then
@@ -609,12 +613,16 @@ refuse() { # KEY VALUE [CAUSE]
 # hook beside this one names, or `usage`, which the orch copilot-lane-context
 # extension names. The three arms that hand mail over as
 # context carry the event name that context is written under. `row` judges
-# nothing: it writes the session's own event row and refuses nothing.
+# nothing: it writes the session's own event row, under the event its row hook
+# names after it, and refuses nothing. `caller`, which doc-drift-check runs at
+# a Copilot agentStop, judges and records nothing: it prints the caller rule's
+# answer for that turn end, lead, subagent or unknown, and exits 0.
 # `compact` flags a Copilot session's automatic compaction, which its next
 # turn end judges, and `usage` records a Copilot session's context reading,
 # which the same turn end judges.
 case "${1:-stop}" in
-  stop | halt | row | compact | usage) ARM="${1:-stop}" ;;
+  stop | halt | compact | usage | caller) ARM="${1:-stop}" ;;
+  row) ARM=row ROW_ARG="${2:-}" ;;
   deliver) ARM=deliver CONTEXT_EVENT=PostToolUse ;;
   start) ARM=start CONTEXT_EVENT=SessionStart ;;
   prompt) ARM=prompt CONTEXT_EVENT=UserPromptSubmit ;;
@@ -751,7 +759,8 @@ record_lead() { # [prune]
 # unknown where the payload cannot tell. The read above answers subagent for a
 # payload naming an agent, on every harness. Copilot's payloads name none, so
 # there the rest is settled by event, by what Copilot CLI 1.0.88 was measured
-# sending a lead and a custom subagent it started:
+# sending a lead and a custom subagent it started, and 1.0.91 again
+# (tools/harness-smoke's Copilot event rows):
 # - agentStop: the transcript. The lead's is the session's own,
 #   `session-state/<session id>/events.jsonl`, so a stop whose transcript sits
 #   in a directory named for the session id is the lead's, and records it. A
@@ -779,15 +788,21 @@ record_lead() { # [prune]
 # - sessionStart: the lead's, and recorded, being the session's own start.
 # - userPromptSubmitted: the lead's, and never recorded: that a subagent's
 #   prompt fires no such hook is unmeasured.
+# - a row: sessionStart and sessionEnd are the lead's, Copilot firing neither
+#   for a subagent. errorOccurred follows the preToolUse rule, the lead's
+#   where its session is a recorded lead and otherwise unknown: it carries no
+#   agent and no transcript, and whose session a subagent's failed model call
+#   names is unmeasured.
+# - caller: the agentStop rule, being the turn end doc-drift-check asks about.
 if [ "$CALLER" = lead ]; then
   case "$HARNESS:$ARM" in
     copilot:start) record_lead prune ;;
-    copilot:stop)
+    copilot:stop | copilot:caller)
       if [ -n "$TRANSCRIPT" ] && [ -n "$SESSION" ]; then
         TRANSCRIPT_DIR="${TRANSCRIPT%/*}"
         TRANSCRIPT_DIR="${TRANSCRIPT_DIR##*/}"
         if [ "$TRANSCRIPT_DIR" = "$SESSION" ]; then
-          record_lead
+          [ "$ARM" = caller ] || record_lead
         else
           CALLER=subagent
         fi
@@ -796,8 +811,15 @@ if [ "$CALLER" = lead ]; then
     copilot:deliver | copilot:halt | copilot:compact | copilot:usage)
       { copilot_lead_file && [ -f "$LEAD_FILE" ]; } || CALLER=unknown
       ;;
+    copilot:row)
+      [ "$ROW_ARG" != StopFailure ] || { copilot_lead_file && [ -f "$LEAD_FILE" ]; } || CALLER=unknown
+      ;;
     *) ;;
   esac
+fi
+if [ "$ARM" = caller ]; then
+  printf '%s\n' "$CALLER"
+  exit 0
 fi
 
 # The harness sets stop_hook_active on the turn it continued because a stop
@@ -2550,8 +2572,9 @@ session_row() {
     return 0
   fi
   # The turn-end run is a Stop whatever its payload spells; a row hook's
-  # payload names its own event.
-  ROW_EVENT=""
+  # payload names its own event, and where it spells none, as Copilot's do,
+  # the event its row hook named is the row's.
+  ROW_EVENT="$ROW_ARG"
   [ "$ARM" != stop ] || ROW_EVENT=Stop
   if ! printf '%s' "$INPUT" | "$BASH" -euo pipefail -c '
       . "$1/lib/file-lock.sh" && . "$1/lib/mailbox-append.sh" && . "$1/lib/lane-context.sh" &&
@@ -2936,9 +2959,13 @@ lane_row() {
 }
 
 # A row is a session's with no lane of its own: a lane's events are its own
-# mailbox's to carry, and no reader of the overseer's rows reads them.
+# mailbox's to carry, and no reader of the overseer's rows reads them. A
+# Copilot row the caller rule does not name the lead's is a subagent's, or a
+# failure of a session no lead record names, and writes nothing.
 if [ "$ARM" = row ]; then
-  [ -n "$ITEM" ] || session_row
+  if [ -z "$ITEM" ] && { [ "$HARNESS" != copilot ] || [ "$CALLER" = lead ]; }; then
+    session_row
+  fi
   exit 0
 fi
 if [ "$ARM" = compact ]; then

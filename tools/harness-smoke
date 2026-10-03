@@ -29,7 +29,9 @@
 # command on Claude, Codex, OpenCode, Pi and Gemini; mcp on every harness but
 # Pi; pi-ext on Pi alone; lane-mail and lane-question everywhere; mail-wake
 # on Claude, Codex and Pi; mixed-hook on Claude and Copilot, asked of one
-# project installed for both, whose .claude/settings.json Copilot also reads. Plugin has no row anywhere —
+# project installed for both, whose .claude/settings.json Copilot also reads;
+# one event row per Copilot hook event kendex's Copilot hooks read, on Copilot
+# alone. Plugin has no row anywhere —
 # `Plugin` has `install: NONE` on all eight harnesses, so kendex renders no
 # plugin for one to load — and Antigravity has no agent row for the same
 # reason: agy reads agents from its global root alone, so kendex renders no
@@ -39,8 +41,9 @@
 # or this harness cannot answer, with the reason), `pending` (a lane-mail or
 # lane-question row the table enforces on a harness this script starts no lane
 # session on: the live-lane proof it needs is not made here, with that reason),
-# or `skipped` (left out by --only, or by the frontmatter of the hook a row
-# measures, with its reason).
+# or `skipped` (left out by --only, by the frontmatter of the hook a row
+# measures, or for a package hook by an event the package session never
+# raises, with its reason).
 # Copilot also answers one row per package this checkout ships, under the
 # package table below, which adds `differs` and `excluded`.
 # Silence is never a pass: a run that says nothing about the
@@ -80,7 +83,7 @@
 # fixture could not be installed or `kendex verify` refused it, 3 when nothing failed but a row was
 # unanswerable or pending, so a harness that died on the render never reads
 # as a clean run. Model turns: eight on claude, three on codex, two on
-# antigravity, five on pi, one on gemini, six on copilot (seven where the
+# antigravity, five on pi, one on gemini, seven on copilot (eight where the
 # skill-load-check copilot cell of hooks/README.md reads enforced), two on
 # cursor when logged in.
 #
@@ -1033,7 +1036,7 @@ questions() { # HARNESS — the rows this harness answers, in the order it answe
     codex) printf '%s' 'skill command agent hook mcp mail-wake lane-mail lane-question' ;;
     pi) printf '%s' 'skill agent command pi-ext hook mail-wake lane-mail lane-question' ;;
     antigravity) printf '%s' 'skill hook mcp lane-mail lane-question' ;;
-    copilot) printf '%s' 'skill agent hook mcp mixed-hook lane-mail lane-question' ;;
+    copilot) printf '%s %s' 'skill agent hook mcp mixed-hook' "$(events_questions) lane-mail lane-question" ;;
     *) printf '%s' 'skill agent hook mcp lane-mail lane-question' ;;
   esac
 }
@@ -1420,6 +1423,7 @@ copilot_rows() {
   run copilot-mcp env COPILOT_HOME="$home" copilot mcp list
   judge copilot mcp '^ +smoke-mcp \(local\)' '' 'copilot mcp list'
   mixed_copilot_row "$home"
+  events_rows "$home"
   no_session copilot lane-mail
   no_session copilot lane-question
   copilot_packages live "$home"
@@ -1479,6 +1483,165 @@ antigravity_rows() {
   no_session antigravity lane-question
 }
 
+# ---- the Copilot event rows ------------------------------------------------
+# What Copilot CLI sends the six events kendex's Copilot hooks read, one row
+# each, judged against the payload hooks/README.md's copilot cells rest on: a
+# row passes where the payload still has that shape and fails where it does
+# not, naming what it saw. The project registers one recorder on all six by
+# hand, in .github/hooks/smoke-events.json, and holds one custom agent,
+# smoke-child: the rows measure what Copilot sends, not what kendex renders,
+# and kendex registers nothing on subagentStart, which no fleet event names.
+# One logged-in session runs smoke-child through the task tool and answers
+# five rows; the errorOccurred row runs a session offline against a provider
+# at a closed local port, which fails the model call before any model turn.
+# Each session's payloads are written whole to its log, which the row's
+# evidence names.
+#   sessionStart, sessionEnd  once each, under the lead's session id and never
+#                             the subagent's (session-start-row, session-end-row)
+#   subagentStart             once, under the lead's session id, naming no
+#                             agentId or agentType (reviewer-read-only's gap)
+#   subagentStop              once, under the lead's session id, with the
+#                             subagent's own session as agentId, smoke-child as
+#                             agentType and its reply as response
+#                             (reviewer-stop-check)
+#   agentStop                 twice: at the subagent's end under its own
+#                             session id with the lead's transcript, and at the
+#                             lead's end under the lead's with its own
+#                             (lane-mail-check's caller rule, doc-drift-check)
+#   errorOccurred             at least once, each under the session's own id
+#                             with errorContext model_call and a string
+#                             error.message (stop-failure-row)
+COPILOT_EVENTS='sessionStart sessionEnd subagentStart subagentStop agentStop errorOccurred'
+events_questions() { # — the rows, in the order events_rows answers them
+  local e out=""
+  for e in $COPILOT_EVENTS; do out="$out event:$e"; done
+  printf '%s' "${out# }"
+}
+EVENTS_TASK='Run the smoke-child custom agent with your task tool, then reply with exactly the text it returned and nothing else.'
+EVENTS_CLOSED_PORT='http://127.0.0.1:9/v1'
+EVENTS=""
+events_world() { # — sets EVENTS, the project whose recorder writes under smoke-events/now
+  local rec
+  EVENTS="$DIR/copilot-events/project"
+  scratch_repo "$EVENTS"
+  setup 'the event recorder directories' mkdir -p "$EVENTS/.github/hooks" "$EVENTS/.github/agents" "$EVENTS/smoke-events/now"
+  cat >"$EVENTS/smoke-events/record" <<'REC'
+#!/bin/sh
+f=$(mktemp "${0%/*}/now/$1.XXXXXX") || exit 0
+cat >"$f"
+REC
+  setup 'the event recorder' chmod +x "$EVENTS/smoke-events/record"
+  rec=$(printf '%q' "$EVENTS/smoke-events/record")
+  jq -n --arg rec "$rec" --arg events "$COPILOT_EVENTS" '{version: 1, hooks: ($events | split(" ")
+    | map({key: ., value: [{type: "command", bash: ($rec + " " + .), timeoutSec: 10}]}) | from_entries)}' \
+    >"$EVENTS/.github/hooks/smoke-events.json"
+  printf -- '---\nname: smoke-child\ndescription: Harness smoke fixture agent; ends its turn with one reply.\n---\n\nReply with exactly SMOKE-CHILD-DONE and nothing else.\n' \
+    >"$EVENTS/.github/agents/smoke-child.agent.md"
+}
+# The payloads the last session recorded, as [{event, payload}], moved under
+# NAME and written to that session's log; 1 where one is not JSON.
+EVENTS_ALL=""
+events_take() { # NAME
+  local f e
+  setup 'the event records' mv -- "$EVENTS/smoke-events/now" "$EVENTS/smoke-events/$1"
+  setup 'the event records' mkdir -- "$EVENTS/smoke-events/now"
+  EVENTS_ALL=$(for f in "$EVENTS/smoke-events/$1"/*; do
+    [ -f "$f" ] || continue
+    e=${f##*/}
+    jq -c --arg e "${e%%.*}" '{event: $e, payload: .}' "$f" || exit 1
+  done | jq -s -c .) || return 1
+  printf '%s\n' "$EVENTS_ALL" >"$LOGS/copilot-events-$1.json"
+}
+events_q() { jq -r "$@" <<<"$EVENTS_ALL"; } # JQ [JQ-ARGS...] — over the records
+events_rows() { # HOME — the isolated COPILOT_HOME
+  local home=$1 e log status lead sub ids got label="copilot -p (task tool running smoke-child)"
+  events_world
+  local PROJECT="$EVENTS"
+  run copilot-events-subagent env COPILOT_HOME="$home" COPILOT_ALLOW_ALL=true copilot -p "$EVENTS_TASK" \
+    --available-tools task --allow-all-tools -s
+  status=$STATUS
+  log="$LOGS/copilot-events-subagent.json"
+  if ! events_take subagent; then
+    for e in sessionStart sessionEnd subagentStart subagentStop agentStop; do
+      row copilot "event:$e" fail "a payload Copilot sent is not JSON; the records are under $EVENTS/smoke-events/subagent"
+    done
+  elif [ "$(events_q 'length')" -eq 0 ]; then
+    for e in sessionStart sessionEnd subagentStart subagentStop agentStop; do
+      if [ "$status" -ne 0 ]; then
+        row copilot "event:$e" unanswerable "$label exited $status before any hook ran: $(clip "$(last_line)")"
+      else
+        row copilot "event:$e" fail "$label ran none of the six registrations in .github/hooks/smoke-events.json"
+      fi
+    done
+  elif ! sub=$(events_q '[.[] | select(.event == "subagentStop") | .payload.agentId | strings] | if length == 1 then .[0] else error("not one") end' 2>/dev/null); then
+    for e in sessionStart sessionEnd subagentStart subagentStop agentStop; do
+      row copilot "event:$e" unanswerable "$label recorded $(events_q '[.[].event] | join(",")') and no single subagentStop naming the subagent; its last line: $(clip "$(last_line)")"
+    done
+  else
+    lead=$(events_q --arg sub "$sub" '[.[] | select(.event == "sessionStart") | .payload.sessionId | strings | select(. != $sub)] | unique | if length == 1 then .[0] else "" end') || lead=""
+    for e in sessionStart sessionEnd; do
+      ids=$(events_q --arg e "$e" '[.[] | select(.event == $e) | .payload.sessionId] | map(tostring) | join(",")') || ids=unreadable
+      if [ -n "$lead" ] && [ "$ids" = "$lead" ]; then
+        row copilot "event:$e" pass "$label fired it once, under the lead's session id $lead, and never under the subagent's, $sub ($log)"
+      else
+        row copilot "event:$e" fail "$label fired it under: ${ids:-none}; the subagent's session id is $sub ($log)"
+      fi
+    done
+    got=$(events_q --arg lead "$lead" '[.[] | select(.event == "subagentStart") | .payload]
+      | if length == 1 and .[0].sessionId == $lead and $lead != "" and (.[0] | has("agentId") or has("agentType") | not) then "pass"
+        else "keys \(map(keys | join(",")) | join(";")) under \(map(.sessionId | tostring) | join(","))" end') || got=unreadable
+    if [ "$got" = pass ]; then
+      row copilot event:subagentStart pass "$label fired it once, under the lead's session id, naming no agentId or agentType: nothing in it names the session the subagent's tool calls carry ($log)"
+    else
+      row copilot event:subagentStart fail "$label sent $(clip "$got") ($log)"
+    fi
+    got=$(events_q --arg lead "$lead" --arg sub "$sub" '[.[] | select(.event == "subagentStop") | .payload]
+      | if length == 1 and .[0].sessionId == $lead and $lead != "" and $sub != $lead
+          and .[0].agentType == "smoke-child" and (.[0].response | type) == "string"
+          and ($sub | gsub("[A-Za-z0-9_-]"; "") == "") then "pass"
+        else "agentType \(.[0].agentType | tostring), response \(.[0].response | type), under \(.[0].sessionId | tostring)" end') || got=unreadable
+    if [ "$got" = pass ]; then
+      row copilot event:subagentStop pass "$label fired it once, under the lead's session id, with the subagent's own session $sub as agentId, smoke-child as agentType and its reply as response ($log)"
+    else
+      row copilot event:subagentStop fail "$label sent $(clip "$got") ($log)"
+    fi
+    got=$(events_q --arg lead "$lead" --arg sub "$sub" '
+      def dir: (.transcriptPath // "") | split("/") | .[-2] // "";
+      [.[] | select(.event == "agentStop") | .payload]
+      | if length == 2 and $lead != ""
+          and any(.[]; .sessionId == $sub and dir == $lead)
+          and any(.[]; .sessionId == $lead and dir == $lead) then "pass"
+        else map("\(.sessionId | tostring) in \(dir)") | join(", ") end') || got=unreadable
+    if [ "$got" = pass ]; then
+      row copilot event:agentStop pass "$label fired it twice: at the subagent's end under its own session id with the lead's transcript, and at the lead's end under the lead's ($log)"
+    else
+      row copilot event:agentStop fail "$label fired it as (session in transcript directory): $(clip "${got:-none}"); lead $lead, subagent $sub ($log)"
+    fi
+  fi
+
+  label="copilot -p offline against $EVENTS_CLOSED_PORT"
+  log="$LOGS/copilot-events-error.json"
+  run copilot-events-error env COPILOT_HOME="$home" COPILOT_ALLOW_ALL=true COPILOT_OFFLINE=true \
+    COPILOT_PROVIDER_BASE_URL="$EVENTS_CLOSED_PORT" COPILOT_MODEL=smoke-offline copilot -p 'Reply with exactly: ok' -s
+  status=$STATUS
+  if ! events_take error; then
+    row copilot event:errorOccurred fail "a payload Copilot sent is not JSON; the records are under $EVENTS/smoke-events/error"
+    return 0
+  fi
+  got=$(events_q '([.[] | select(.event == "sessionStart") | .payload.sessionId] | unique) as $s
+    | [.[] | select(.event == "errorOccurred") | .payload]
+    | if length == 0 then "none"
+      elif ($s | length) == 1 and all(.[]; .sessionId == $s[0] and .errorContext == "model_call" and (.error.message | type) == "string")
+        then "pass \(length)"
+      else map("\(.errorContext | tostring) under \(.sessionId | tostring)") | join(", ") end') || got=unreadable
+  case "$status:$got" in
+    *:pass\ *) row copilot event:errorOccurred pass "$label fired it ${got#pass } time(s) for one failed turn, each under the session's own id with errorContext model_call and error.message ($log)" ;;
+    0:none) row copilot event:errorOccurred unanswerable "$label did not fail: something answers there; its last line: $(clip "$(last_line)")" ;;
+    *:none) row copilot event:errorOccurred fail "$label exited $status on its failed model call and fired no errorOccurred ($log)" ;;
+    *) row copilot event:errorOccurred fail "$label fired it as: $(clip "$got") ($log)" ;;
+  esac
+}
+
 # ---- the Copilot package table ---------------------------------------------
 # One row per package this checkout ships, asked of Copilot CLI: every hook,
 # skill and agent under SELF, each instruction source Copilot merges, the skill
@@ -1520,7 +1683,10 @@ antigravity_rows() {
 # Copilot hands the model a hook's refusal only through the registered
 # command's answer and never through its stderr. skill-load-check and
 # skill-load-record are answered by the skill-load session instead, whose
-# comment states their rows.
+# comment states their rows. A hook on an event that session never raises,
+# PKG_UNRAISED, reads skipped, the copilot event rows standing for it; and a
+# hook that execs a sibling to judge its payload is credited with a read the
+# recorder filed under that sibling with the hook's own arguments (pkg_ran).
 PKG_PROOF='tools/harness-smoke --only copilot on a host where copilot is on PATH and logged in'
 PKG_RULES='SMOKE-RULES is SMOKE-RULES-REACHED.'
 # shellcheck disable=SC2016 # the model is handed $HARNESS_SMOKE_UNSET as text a hook refuses
@@ -1686,6 +1852,8 @@ if [ "\$#" -eq 0 ]; then
       hook=\${caller##*/.github/hooks/}
       rec=$records/\${hook%%.sh*}.\$\$
       $cat_q >"\$rec.payload" || exit 1
+      args=\${hook#*.sh}
+      printf '%s\\n' "\${args# }" >"\$rec.args"
       pwd >"\$rec.cwd"
       env | sed 's/=.*//' | sort >"\$rec.env"
       exec $cat_q "\$rec.payload"
@@ -1805,6 +1973,25 @@ pkg_record() { # HOOK SUFFIX — the first record that hook left with that suffi
   done
   return 1
 }
+# A hook that hands its payload on with `exec "$BASH" "$JUDGE" ARGS` never
+# reads it itself, so the recorder files the read under the script JUDGE
+# names: such a hook ran where a record of that script carries its ARGS, both
+# read from the hook's own source.
+pkg_ran() { # HOOK — the payload record of its run; 1 for none
+  local args judge f line
+  pkg_record "$1" payload && return 0
+  args=$(sed -n 's/^exec "\$BASH" "\$JUDGE" \([^<]*[^< ]\).*$/\1/p' "$SELF/hooks/$1.sh") || args=""
+  judge=$(sed -n 's/^  JUDGE="\$HOOK_DIR\/\(.*\)\.sh"$/\1/p' "$SELF/hooks/$1.sh") || judge=""
+  [ -n "$args" ] && [ -n "$judge" ] || return 1
+  for f in "$PKG/smoke-payloads/$judge".*.args; do
+    [ -f "$f" ] || continue
+    IFS= read -r line <"$f" || continue
+    [ "$line" = "$args" ] || continue
+    printf '%s' "${f%.args}.payload"
+    return 0
+  done
+  return 1
+}
 pkg_trigger_record() { # HOOK TRIGGER — the first payload that hook read carrying TRIGGER; 1 for none
   local f command
   for f in "$PKG/smoke-payloads/$1".*.payload; do
@@ -1849,10 +2036,19 @@ pkg_session_verdict() {
     PKG_SESSION_EVIDENCE='the model ran its tool calls, and Copilot ran no repository hook, the fixture hook included'
   fi
 }
+# The events the session of tool calls raises none of on Copilot: it runs no
+# subagent and no failing model call. The copilot event rows record what
+# Copilot sends at each, and the hook's own suite holds it to that payload.
+PKG_UNRAISED='SubagentStop StopFailure'
 pkg_hook_row() { # HOOK — after the session
   local hook=$1 row="hook:$1" event trigger rec rc=0 marker="$PKG/smoke-triggers/$1" denial
   event=$(sed -n 's/^# event: //p' "$SELF/hooks/$hook.sh")
-  if ! pkg_record "$hook" payload >/dev/null; then
+  case " $PKG_UNRAISED " in
+    *" $event "*)
+      pkg_set "$row" skipped "the session of tool calls raises no $event; the copilot event rows record the payload Copilot sends there, and the hook's suite holds the hook to it"
+      return 0 ;;
+  esac
+  if ! pkg_ran "$hook" >/dev/null; then
     if [ -n "$PKG_SESSION_RESULT" ]; then
       pkg_set "$row" "$PKG_SESSION_RESULT" "$PKG_SESSION_EVIDENCE"
     else
