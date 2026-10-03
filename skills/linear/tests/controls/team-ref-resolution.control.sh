@@ -56,3 +56,31 @@ control_expect "labels list: KEN sends the kendex team id"
 control_replace scripts/commands/labels.sh 1 \
     '        filter_json=$(jq -cn --arg id "$team_id" '"'"'{team: {id: {eq: $id}}}'"'"')' \
     '        filter_json=$(jq -cn --arg id "$team" '"'"'{team: {name: {eq: $id}}}'"'"')'
+
+# Drop the state-name filter when the team id merges in: statuses get answers
+# the team's first state instead of the one named.
+control_expect "statuses get: KEN keeps the state name beside the team"
+control_replace scripts/commands/statuses.sh 1 \
+    '        filter_json=$(jq -cn --arg id "$team_id" --argjson base "$filter_json" '"'"'$base + {team: {id: {eq: $id}}}'"'"')' \
+    '        filter_json=$(jq -cn --arg id "$team_id" --argjson base "$filter_json" '"'"'{team: {id: {eq: $id}}}'"'"')'
+
+# Accept an empty --team value: each read sends no team filter and reads every
+# team.
+control_expect "issues list: empty --team sends no request"
+control_expect "projects list: empty --team sends no request"
+control_expect "labels list: empty --team sends no request"
+control_expect "statuses list: empty --team sends no request"
+control_expect "statuses get: empty --team sends no request"
+control_replace scripts/lib/common.sh 1 \
+    '    "")' \
+    '    " ")'
+
+# Accept a dash-led --team value: the next flag binds as the team.
+control_expect "issues list: dash-led --team sends no request"
+control_expect "projects list: dash-led --team sends no request"
+control_expect "labels list: dash-led --team sends no request"
+control_expect "statuses list: dash-led --team sends no request"
+control_expect "statuses get: dash-led --team sends no request"
+control_replace scripts/lib/common.sh 1 \
+    '    -*)' \
+    '    -\*)'

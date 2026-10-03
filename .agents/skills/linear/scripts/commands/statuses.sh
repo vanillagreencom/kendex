@@ -39,6 +39,7 @@ list_statuses() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --team)
+                linear_require_team_value "$@" || return 1
                 team="$2"
                 shift 2
                 ;;
@@ -98,6 +99,7 @@ get_status() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --team)
+                linear_require_team_value "$@" || return 1
                 team="$2"
                 shift 2
                 ;;

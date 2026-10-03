@@ -136,6 +136,7 @@ list_projects() {
             shift 2
             ;;
         --team)
+            linear_require_team_value "$@" || return 1
             team="$2"
             shift 2
             ;;

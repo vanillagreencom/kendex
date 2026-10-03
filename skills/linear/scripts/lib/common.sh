@@ -412,6 +412,28 @@ linear_require_option_value() {
     return 0
 }
 
+# A --team read filter must name a team. A workflow interpolating an unresolved
+# $LINEAR_TEAM writes `--team ""`, which would send no team filter and read
+# every team as if it were the one named, or, unquoted, `--team --max`, which
+# would bind the next flag as the team and swallow it. No Linear team key or
+# name begins with a dash, so a dash-led value is a missing one.
+# Usage: linear_require_team_value "$@", with $1 the --team flag.
+linear_require_team_value() {
+    linear_require_option_value "$@" || return 1
+    case "$2" in
+    -*)
+        linear_require_option_value "$1"
+        return 1
+        ;;
+    "")
+        jq -cn --arg flag "$1" \
+            '{error: ($flag + " requires a non-empty team key or name: an empty value would read every team, not the one named")}' >&2
+        return 1
+        ;;
+    esac
+    return 0
+}
+
 # Days-before-now as an ISO timestamp, for the --updated-since/--created-since
 # "7d" spelling. GNU and BSD date disagree on the flag, so both are tried; a
 # non-numeric count is rejected here rather than reaching either.
@@ -466,7 +488,7 @@ parse_filter() {
             shift 2
             ;;
         --team)
-            linear_require_option_value "$@" || return 1
+            linear_require_team_value "$@" || return 1
             team="$2"
             shift 2
             ;;

@@ -4,7 +4,8 @@
 # filters, and the reference of teams get, resolve through resolve_team_id,
 # which matches a team's key or its name: KEN and kendex send the same team id
 # on each call site, a reference matching no team refuses as not found, and
-# one team's key that is another team's name refuses as ambiguous.
+# one team's key that is another team's name refuses as ambiguous. A team
+# filter given an empty or dash-led value refuses before any request.
 
 set -euo pipefail
 
@@ -102,6 +103,37 @@ statuses get|statuses get --team REF --name Todo|.variables.filter.team.id.eq
 issues list|issues list --team REF|.variables.filter.team.id.eq
 projects list|projects list --team REF|.variables.filter.accessibleTeams.some.id.eq
 labels list|labels list --team REF|.variables.filter.team.id.eq
+ROWS
+
+# The team id merges into the state-name filter rather than replacing it.
+assert "statuses get: KEN keeps the state name beside the team" \
+  jq -s -e 'last | .variables.filter.name.eq == "Todo"' "$TMP_ROOT/statuses get-KEN.jsonl"
+
+# A --team read filter given no team refuses before any request: an empty value
+# would read every team, and a dash-led one is the next flag standing where the
+# value belongs. Columns: call site | its arguments, VALUE standing for the
+# --team value.
+while IFS='|' read -r site args; do
+  for value in "" --state; do
+    case "$value" in
+    "") kind=empty refusal="--team requires a non-empty team key or name" ;;
+    *) kind=dash-led refusal='"--team requires a value"' ;;
+    esac
+    read -r -a argv <<<"$args"
+    for i in "${!argv[@]}"; do
+      [[ "${argv[$i]}" != VALUE ]] || argv[i]=$value
+    done
+    run_status rc run_team_ref "$site-$kind" "${argv[@]}"
+    assert_ne "$site: $kind --team exits nonzero" "$rc" 0
+    assert_file_contains "$site: $kind --team refuses naming the missing team" "$TMP_ROOT/$site-$kind.err" "$refusal"
+    assert "$site: $kind --team sends no request" test ! -s "$TMP_ROOT/$site-$kind.jsonl"
+  done
+done <<'ROWS'
+issues list|issues list --team VALUE
+projects list|projects list --team VALUE
+labels list|labels list --team VALUE
+statuses list|statuses list --team VALUE
+statuses get|statuses get --team VALUE --name Todo
 ROWS
 
 # The issue's team is named ENG, which is another team's key: its state
