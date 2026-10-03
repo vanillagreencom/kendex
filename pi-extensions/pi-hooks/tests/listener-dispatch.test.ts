@@ -249,12 +249,12 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 	 * after it, so the `Stop` row the hook writes never lifts the failure's;
 	 * the shared log holds the order. Claude Code reads nothing a
 	 * `StopFailure` hook says, so its word is the person's — a notification,
-	 * or stderr where the session has no UI — and the boundary carries the
-	 * `Stop` answer alone.
+	 * or stderr where the session has no UI, a hook's stderr beside a clean
+	 * exit included — and the boundary carries the `Stop` answer alone.
 	 */
 	for (const row of [
-		{ outcome: "error", ui: true, logged: stopPayload(false) + failurePayload, notified: ["warning audit=stop", "warning failure=recorded"], stderr: [] },
-		{ outcome: "error", ui: false, logged: stopPayload(false) + failurePayload, notified: [], stderr: ["failure=recorded\n"] },
+		{ outcome: "error", ui: true, logged: stopPayload(false) + failurePayload + failurePayload, notified: ["warning audit=stop", "warning failure=noted", "warning failure=recorded"], stderr: [] },
+		{ outcome: "error", ui: false, logged: stopPayload(false) + failurePayload + failurePayload, notified: [], stderr: ["failure=noted\n", "failure=recorded\n"] },
 		{ outcome: "completed", ui: true, logged: stopPayload(false), notified: ["warning audit=stop"], stderr: [] },
 		{ outcome: "aborted", ui: true, logged: stopPayload(false), notified: ["warning audit=stop"], stderr: [] },
 	]) {
@@ -265,6 +265,7 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 			try {
 				registerRendered(join(project, ".pi"), TURN_END_LISTENER, undefined, customCommand(log, "audit=stop", 2));
 				registerRendered(join(project, ".pi"), STOP_FAILURE_LISTENER, undefined, customCommand(log, "failure=recorded", 2));
+				registerRendered(join(project, ".pi"), STOP_FAILURE_LISTENER, undefined, customCommand(log, "failure=noted", 0));
 				const notified: string[] = [];
 				const carrier = installCarrier();
 				const ctx = row.ui ? notifying(project, notified) : trusted(project);
@@ -286,9 +287,10 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 	 * handler returns only once every hook has. Pi's reason is said in Claude
 	 * Code's `SessionEnd` words, and the matcher reads those words: a
 	 * registration naming `clear` runs for Pi's `new` and not its `quit`,
-	 * which is `prompt_input_exit`. What the hooks say goes to the person,
-	 * never to the session: a notification, or stderr at a `quit`, whose UI
-	 * Pi has stopped, and where the session has no UI. The master switch off
+	 * which is `prompt_input_exit`. What the hooks say, a hook's stderr
+	 * beside a clean exit included, goes to the person, never to the session:
+	 * a notification, or stderr at a `quit` the person asks for, whose UI Pi
+	 * has stopped, and where the session has no UI. The master switch off
 	 * runs none of them.
 	 */
 	test("a registered SessionEnd hook runs on session shutdown, its reason in Claude Code's SessionEnd words", async () => {
@@ -299,7 +301,7 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 		try {
 			const root = join(project, ".pi");
 			registerRendered(root, SESSION_END_LISTENER, undefined, customCommand(ended, "session=ended", 2));
-			registerRendered(root, SESSION_END_LISTENER, "clear", `cat >> ${JSON.stringify(cleared)}; exit 0`);
+			registerRendered(root, SESSION_END_LISTENER, "clear", customCommand(cleared, "session=cleared", 0));
 			const carrier = installCarrier();
 			const onShutdown = carrier.handler(SESSION_END_LISTENER);
 
@@ -311,7 +313,7 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 
 			for (const row of [
 				{ reason: "quit", said: "prompt_input_exit", ui: true, notified: [], stderr: ["session=ended\n"] },
-				{ reason: "new", said: "clear", ui: true, notified: ["warning session=ended"], stderr: [] },
+				{ reason: "new", said: "clear", ui: true, notified: ["warning session=cleared", "warning session=ended"], stderr: [] },
 				{ reason: "reload", said: "resume", ui: true, notified: ["warning session=ended"], stderr: [] },
 				{ reason: "resume", said: "resume", ui: false, notified: [], stderr: ["session=ended\n"] },
 			]) {

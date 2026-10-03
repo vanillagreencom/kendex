@@ -116,9 +116,9 @@ export default function piHooks(pi: ExtensionAPI): void {
 	/**
 	 * The person's channel on `StopFailure` and `SessionEnd`, whose hooks speak
 	 * to the person alone: a notification where a UI will show it, else stderr.
-	 * A print-mode session has no UI, and Pi's interactive quit stops the TUI
-	 * before it emits `session_shutdown` with reason `quit`; `uiGone` is the
-	 * listener's word for the second, which `hasUI` does not say.
+	 * A print-mode session has no UI, and a quit the person asks for stops
+	 * Pi's TUI before Pi emits `session_shutdown` with reason `quit`; `uiGone`
+	 * is the listener's word for the second, which `hasUI` does not say.
 	 */
 	const tellPerson = (ctx: ExtensionContext, uiGone: boolean) => (content: string) => {
 		if (uiGone || !ctx.hasUI) process.stderr.write(`${content}\n`);
@@ -387,15 +387,16 @@ export default function piHooks(pi: ExtensionAPI): void {
 		// as `outcome: "error"`, and only there. Pi names no error kind, so
 		// every registration covers it. Claude Code fires it in place of
 		// `Stop`; here `Stop` above still runs on an errored run, because the
-		// Pi lane's walled verdict reads that `Stop` row (the `row` arm of
-		// `hooks/lane-mail-check.sh` reads the transcript's `stopReason`). A
-		// `Stop` row written after a `StopFailure` row lifts it, so these run
-		// last in the settle, whatever the `Stop` dispatch returns. Claude Code
-		// reads nothing a `StopFailure` hook says, so its word goes to the
-		// person, never into the session as a continuation the error would
-		// refuse again. It judges the lead alone, as `Stop` does: the payload
-		// carries no `agent_id`, the field such a hook tells a subagent's
-		// failure by.
+		// Pi lane's walled verdict reads that `Stop` row (`lane_row` in
+		// `hooks/lane-mail-check.sh`, run at its `stop` arm, writes it through
+		// `session_rows_lane_write`, which reads the transcript's
+		// `stopReason`). A `Stop` row written after a `StopFailure` row lifts
+		// it, so these run last in the settle, whatever the `Stop` dispatch
+		// returns. Claude Code reads nothing a `StopFailure` hook says, so its
+		// word goes to the person, never into the session as a continuation
+		// the error would refuse again. It judges the lead alone, as `Stop`
+		// does: the payload carries no `agent_id`, the field such a hook tells
+		// a subagent's failure by.
 		if (event.outcome === "error") {
 			const failed = await runListener(
 				STOP_FAILURE_LISTENER,
@@ -431,7 +432,8 @@ export default function piHooks(pi: ExtensionAPI): void {
 	// session still stands. Its reason is said in Claude Code's `SessionEnd`
 	// words (`vocab.ts::claudeSessionEndReason`). Claude Code reads nothing a
 	// `SessionEnd` hook says, and no turn is left for the agent, so what the
-	// hooks say goes to the person, on stderr at a `quit`, whose UI is gone.
+	// hooks say goes to the person, on stderr at a `quit` the person asks for,
+	// whose UI is gone.
 	pi.on("session_shutdown", async (event, ctx: ExtensionContext) => {
 		const project = ctx.cwd ? projectRoot(ctx.cwd) : undefined;
 		recordProjectTrust(ctx, project);
