@@ -887,8 +887,9 @@ trap 'rm -rf -- "$WORK_DIR"' EXIT
 #
 # Git reports one status for a directory that is no repository and for
 # metadata it cannot read, and a lane always runs in one. So that directory
-# answers: with no mailbox under it this session is not a lane and passes;
-# with one the lane cannot be named, which is never passed off as no lane.
+# answers: with no mailbox under it this session is not a lane and passes,
+# the lane arm saying none; with one the lane cannot be named, which is never
+# passed off as no lane.
 # The common git directory rides the same call: the launch markers live there.
 LANE_DIR=${CLAUDE_PROJECT_DIR:-$PWD}
 [ "$ARM" != usage ] || LANE_DIR=$PAYLOAD_CWD
@@ -896,7 +897,7 @@ GIT_RC=0
 GIT_DIRS=$(git -C "$LANE_DIR" rev-parse --show-toplevel --path-format=absolute --git-common-dir 2>&1) ||
   GIT_RC=$?
 if [ "$GIT_RC" -ne 0 ]; then
-  [ -d "$LANE_DIR/tmp/lane-mail" ] || exit 0
+  [ -d "$LANE_DIR/tmp/lane-mail" ] || { [ "$ARM" != lane ] || echo none; exit 0; }
   stall git "-C $LANE_DIR rev-parse --show-toplevel --git-common-dir" "$GIT_DIRS"
 fi
 ROOT=${GIT_DIRS%%"$NL"*}

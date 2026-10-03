@@ -24,8 +24,12 @@ SUB_PAYLOAD='{"session_id":"s1","agent_id":"a1","agent_type":"general-purpose","
 #   boxless    the marker binds this root and no mailbox directory stands
 #   bare       neither marker nor mailbox
 #   markerdir  the item's mailbox stands and the marker path is a directory
+#   norepo     the call runs from a directory git finds no repository for,
+#              as in a session a global-scope install reaches outside one
 world() { # NAME BRANCH SHAPE
   local marker
+  CALL_DIR=""
+  CALL_ENV=()
   new_lane "$1" "$2"
   marker="$LANE/.git/lane-mail/$2"
   case "$3" in
@@ -35,6 +39,11 @@ world() { # NAME BRANCH SHAPE
     boxless) ;;
     bare) unmark_lanes ;;
     markerdir) mkdir -p "$LANE/tmp/lane-mail/$2"; rm -f "$marker"; mkdir "$marker" ;;
+    norepo)
+      CALL_DIR="$TMP_ROOT/$1-plain"
+      mkdir -p "$CALL_DIR"
+      CALL_ENV=("GIT_CEILING_DIRECTORIES=$TMP_ROOT")
+      ;;
   esac
 }
 
@@ -57,6 +66,7 @@ lane_rows() {
 5|boxless|main|RC=0 stdout=none first=-|a marked root with no mailbox directory answers none, never the mailbox refusal
 6|bare|main|RC=0 stdout=none first=-|a repository no launch reached is no lane
 7|markerdir|main|RC=0 stdout= first=lane-mail-check: marker=@LANE@/.git/lane-mail/ken-7|a marker that is no plain file is reported with no answer, never read as no lane
+8|norepo|main|RC=0 stdout=none first=-|a directory outside any repository is no lane
 ROWS
 }
 lane_rows
@@ -76,6 +86,9 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   # The arm no longer reports and passes: an unreadable marker refuses.
   control unreported 's/^  true:\* | \*:halt | \*:row | \*:lane) REPORTED=true ;;$/  true:* | *:halt | *:row) REPORTED=true ;;/' \
     "a marker that is no plain file is reported with no answer, never read as no lane"
+  # The arm's answer skipped outside a repository: nothing is printed there.
+  control unanswered 's/^  \[ -d "\$LANE_DIR\/tmp\/lane-mail" \] || { \[ "\$ARM" != lane \] || echo none; exit 0; }$/  [ -d "$LANE_DIR\/tmp\/lane-mail" ] || exit 0/' \
+    "a directory outside any repository is no lane"
   # The arm no longer skips the mailbox refusal: a boxless marked root refuses.
   control boxless 's/^if \[ "\$ARM" != row \] && \[ "\$ARM" != lane \] && /if [ "$ARM" != row ] \&\& /' \
     "a marked root with no mailbox directory answers none, never the mailbox refusal"

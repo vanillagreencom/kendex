@@ -37,9 +37,11 @@ refuse() { # KEY VALUE [CAUSE]
       echo 'Keep d=$(mktemp -d) and remove "${d:?}" in the same shell call.' >&2
       ;;
     refused=recursive-rm)
-      echo "Any rm on a variable-rooted path stalls the session: Claude Code's critical-path check stops on" >&2
+      echo "This rm is on a path rooted at a variable that may be empty:" >&2
       echo "  $COMMAND" >&2
-      echo "with a prompt that waits two minutes in bypassPermissions mode, then denies the call." >&2
+      echo "With the variable empty, the path collapses and the rm can remove from /." >&2
+      echo "In Claude Code, the critical-path check prompts for a glob or trailing slash directly under such a variable;" >&2
+      echo "that prompt waits two minutes in bypassPermissions mode, then denies the call." >&2
       echo "Rewrite so the path cannot collapse to / — either form is accepted:" >&2
       echo "  rm -- \"\${NAME:?}/file\"      (bash aborts if NAME is unset or empty)" >&2
       echo "  rm -- /absolute/literal/path" >&2

@@ -3,13 +3,19 @@
 # name: critical-path-deny
 # event: PermissionRequest
 # matcher: Bash
-# description: Answers Claude Code's critical-path check prompt for a Bash call with deny at once, inside a launched orch lane only, so an unattended lane is not held two minutes per prompt and does not trip the three-prompt circuit breaker. The deny message gives the rewrite the check accepts: guard each expansion in an rm target with `${NAME:?}` or use a literal path, and write a long inline script to a file under the lane's `tmp/` and run that file. A prompt is the critical-path one where the payload's `permission_suggestions` is present and an empty array and the command holds the text `rm`, the payload Claude Code 2.1.288 was measured sending for it; an ask-rule prompt carries no `permission_suggestions` key and is left alone. Whether the session is a launched lane is the lane-mail-check hook's answer, run from beside this one with the argument `lane`; outside a lane, and for every other prompt, it returns no decision, so the prompt stands. It never answers allow. Not run on codex: the critical-path check whose prompt this answers is Claude Code's, and Codex shows no such prompt. Not run on pi: it has no PermissionRequest event. Not run on gemini: it has no PermissionRequest event. Not run on copilot: the critical-path check whose prompt this answers is Claude Code's, and Copilot shows no such prompt. Not run on antigravity: it has no PermissionRequest event. Not run on opencode: it runs no hooks, and an agent cannot answer its own permission prompt from instructions. Not run on cursor: it runs no hooks, and an agent cannot answer its own permission prompt from instructions.
+# description: Answers Claude Code's critical-path check prompt for a Bash call with deny at once, inside a launched orch lane only, so an unattended lane is not held two minutes per prompt and does not trip the three-prompt circuit breaker. The deny message gives the rewrite the permission-modes page gives for each form the check flags: `${NAME:?}` or a literal path for a glob or trailing slash under a variable, a literal path for a variable set from a directory-printing substitution such as `$(pwd)`, and the substitution run on its own first for a target that is only its output; and, as the lane's own rule, a long inline script written to a file under the lane's `tmp/` and run from there, every rm target in that file still guarded with `:?` or literal. A prompt is the critical-path one where the payload's `permission_suggestions` is present and an empty array and the command holds the text `rm`, the payload Claude Code 2.1.288 was measured sending for it; an ask-rule prompt carries no `permission_suggestions` key and is left alone. Whether the session is a launched lane is the lane-mail-check hook's answer, run from beside this one with the argument `lane`; outside a lane, and for every other prompt, it returns no decision, so the prompt stands. It never answers allow. Not run on codex: the critical-path check whose prompt this answers is Claude Code's, and Codex shows no such prompt. Not run on pi: it has no PermissionRequest event. Not run on gemini: it has no PermissionRequest event. Not run on copilot: the critical-path check whose prompt this answers is Claude Code's, and Copilot shows no such prompt. Not run on antigravity: it has no PermissionRequest event. Not run on opencode: it runs no hooks, and an agent cannot answer its own permission prompt from instructions. Not run on cursor: it runs no hooks, and an agent cannot answer its own permission prompt from instructions.
 # summary: In an unattended orch lane, turns down Claude Code's prompt for an rm it could not check at once, with the rewrite that passes, instead of leaving the lane waiting on an answer nobody gives.
-# safety: Reads the payload and runs only the lane-mail-check hook installed in its own directory, which reads git state and the lane's launch marker. Writes nothing. The only decision it returns is deny, and only for a critical-path prompt in a launched lane; every gap (a missing jq or cat, an unreadable payload, a lane-mail-check absent or unable to answer) is reported on stderr under `critical-path-deny: <key>=<value>` with no decision, so the prompt stands. Claude Code does not honor exit 2 on this event, so the hook always exits 0.
+# safety: Reads the payload and runs only the lane-mail-check hook installed in its own directory, which reads git state and the lane's launch marker. Writes one scratch file under TMPDIR holding what lane-mail-check writes to stderr, and removes it on exit. The only decision it returns is deny, and only for a critical-path prompt in a launched lane; every gap (a missing jq or cat, an unreadable payload, a lane-mail-check absent or unable to answer, a scratch file that cannot be made) is reported on stderr under `critical-path-deny: <key>=<value>` with no decision, so the prompt stands. Claude Code does not honor exit 2 on this event, so the hook always exits 0.
 # timeout: 30
 # harnesses: [claude]
 # requires: [lane-mail-check]
 # ---
+
+# The basis is https://code.claude.com/docs/en/permission-modes.md, § Critical
+# paths: in a mode that asks, a PermissionRequest hook can answer the
+# critical-path prompt; in bypassPermissions mode the terminal prompt waits two
+# minutes before it denies, and after three such prompts run out unanswered
+# Claude Code denies every further one at once.
 
 set -euo pipefail
 
@@ -43,12 +49,17 @@ report() { # KEY VALUE [CAUSE]
   exit 0
 }
 
-# The deny message Claude hands the model: the keyed line, then the rewrite
-# the permission-modes page gives for a removal the check flags.
+# The deny message Claude hands the model: the keyed line, the rewrite the
+# permission-modes page gives for each form the check flags, then the lane's
+# own rule for a long inline script, which is not the page's: a file the
+# script moves to is read by neither the check nor block-unsafe-rm, so its rm
+# targets stay guarded or literal.
 DENY_MESSAGE='critical-path-deny: refused=critical-path-removal
-Claude Code'"'"'s critical-path check could not prove this rm stays off the filesystem root, the home directory and the working directory, and in an unattended lane nobody answers its prompt, so it is denied at once. Rewrite it so the check passes:
-  guard each expansion in an rm target so the shell stops when it is empty, as in rm -rf -- "${DIR:?}"/*, or use a literal path;
-  for a long inline script (bash -c, sh -c or a heredoc), write it to a file under this lane'"'"'s tmp/ and run that file.
+Claude Code'"'"'s critical-path check could not prove this rm stays off the filesystem root, the home directory and the working directory, and in an unattended lane nobody answers its prompt, so it is denied at once. Rewrite it the way the check accepts for the form it flagged:
+  a glob or trailing slash under a variable: guard each expansion so the shell stops when it is empty, as in rm -rf -- "${DIR:?}"/*, or use a literal path; under a variable that is normally set, such as $HOME, use a literal path;
+  a variable set from a directory-printing substitution, such as D=$(pwd): use a literal path, since a :? guard does not clear it;
+  a target that is only a command substitution'"'"'s output: run the substitution on its own first, then remove the literal paths it prints.
+This lane'"'"'s own rule: for a long inline script (bash -c, sh -c or a heredoc), write it to a file under this lane'"'"'s tmp/ and run that file, with every rm target in that file still guarded with :? or a literal path.
 The check reads the text rm anywhere in such a script, a path segment such as drm included.'
 
 MISSING=""
