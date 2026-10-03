@@ -17,6 +17,8 @@ Actions:
   create  Create a new label
   update  Update an existing label
   delete  Delete a label
+  audit   List labels on the team's open issues that the taxonomy does not
+          declare, and team labels whose name a workspace label also uses
 
 List Options:
   --team <ref>          Filter by team key or name (workspace labels if omitted)
@@ -30,6 +32,13 @@ Create Options:
   --parent <name>       Parent label group name (e.g., "Agent", "Stack")
   --group               Create as a group label (can have children)
 
+  Where the repository declares a label taxonomy (project-management
+  references/labels.md, plus LINEAR_AGENT_LABELS), create refuses a name it
+  does not declare, and a --team create a name a workspace label uses.
+
+Audit Options:
+  --team <ref>          Team key or name (default: LINEAR_TEAM)
+
 Update Options:
   --name <text>         New name
   --color <hex>         New color
@@ -41,6 +50,7 @@ Examples:
   labels.sh create --name "backend" --color "#E74C3C"
   labels.sh update <id> --name "new-name" --color "#FF0000"
   labels.sh delete <id>
+  labels.sh audit
 EOF
 }
 case "${1:-help}" in help|--help|-h) show_help; exit 0 ;; esac
@@ -142,6 +152,10 @@ create_label() {
         echo '{"error": "Required: --name"}' >&2
         return 1
     fi
+    # The taxonomy rules apply only where the repository declares one.
+    local declared
+    declared=$(linear_declared_labels) || return 1
+    linear_require_declared_labels "$name" || return 1
 
     # Build input object with proper escaping
     local escaped_name
@@ -161,6 +175,20 @@ create_label() {
         local team_id
         team_id=$(resolve_team_id "$team") || return 1
         input_parts+=("\"teamId\": \"$team_id\"")
+    fi
+
+    # A team label beside a workspace label of one name makes every name
+    # lookup in that team ambiguous.
+    if [ -n "$team" ] && [ -n "$declared" ]; then
+        local workspace_query='query WorkspaceLabel($name: String!) { issueLabels(filter: {name: {eq: $name}, team: {null: true}}) { nodes { id } } }'
+        local workspace_vars workspace_result workspace_count
+        workspace_vars=$(jq -cn --arg name "$name" '{name: $name}') || return 1
+        workspace_result=$(graphql_query "$workspace_query" "$workspace_vars") || return 1
+        workspace_count=$(jq -r '.issueLabels.nodes | length' <<<"$workspace_result") || return 1
+        if [ "$workspace_count" != 0 ]; then
+            linear_label_message workspace-duplicate "$name" >&2
+            return 1
+        fi
     fi
 
     # Get parent label group ID if specified
@@ -274,6 +302,87 @@ delete_label() {
     normalize_mutation_response "$result" "issueLabelDelete" "issueLabel"
 }
 
+# Read one connection to its end. A page that cannot be followed fails the
+# audit: a partial read would report a clean team it never finished reading.
+audit_pages() {
+    local query="$1" variables="$2" field="$3" all='[]' cursor=null pages=0
+    local page_vars result has_next
+    while true; do
+        page_vars=$(jq -c --argjson after "$cursor" '. + {after: $after}' <<<"$variables") || return 1
+        result=$(graphql_query "$query" "$page_vars") || return 1
+        if ! all=$(jq -cs --arg field "$field" '.[1][$field].nodes as $nodes | if ($nodes | type) == "array" then .[0] + $nodes else error("nodes") end' <<<"$all"$'\n'"$result" 2>/dev/null) ||
+            ! has_next=$(jq -r --arg field "$field" '.[$field].pageInfo.hasNextPage | if type == "boolean" then . else error("hasNextPage") end' <<<"$result" 2>/dev/null); then
+            linear_label_message audit-incomplete "$field" >&2
+            return 1
+        fi
+        [ "$has_next" = true ] || break
+        # Linear can keep a connection open under concurrent edits; the bound
+        # is `issues list --max`'s page cap.
+        pages=$((pages + 1))
+        if [ "$pages" -ge 200 ] || ! cursor=$(jq -ce --arg field "$field" '.[$field].pageInfo.endCursor | strings' <<<"$result"); then
+            linear_label_message audit-incomplete "$field" >&2
+            return 1
+        fi
+    done
+    printf '%s\n' "$all"
+}
+
+# Drift against the declared taxonomy, read live: each undeclared label on the
+# team's open issues with the issues carrying it, and each name both a team
+# label and a workspace label use. Read-only; it reports and never relabels.
+audit_labels() {
+    local team=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --team)
+                linear_require_team_value "$@" || return 1
+                team="$2"
+                shift 2
+                ;;
+            --) shift; break ;;
+            -*) echo "{\"error\": \"Unknown option: $1. Run --help for valid options.\"}" >&2; return 1 ;;
+            *) break ;;
+        esac
+    done
+
+    linear_set_team_target "$team"
+    if [ -z "$LINEAR_TEAM_TARGET" ]; then
+        linear_label_message no-team "" >&2
+        return 1
+    fi
+    local declared
+    declared=$(linear_declared_labels) || return 1
+    if [ -z "$declared" ]; then
+        linear_label_message absent "$LINEAR_TAXONOMY_FILE" >&2
+        return 1
+    fi
+
+    local team_id variables issues labels
+    team_id=$(resolve_team_id "$LINEAR_TEAM_TARGET") || return 1
+    variables=$(jq -cn --arg teamId "$team_id" '{teamId: $teamId, first: 100}') || return 1
+    issues=$(audit_pages 'query AuditIssues($teamId: ID!, $first: Int, $after: String) { issues(filter: {team: {id: {eq: $teamId}}, state: {type: {nin: ["completed", "canceled"]}}}, first: $first, after: $after) { pageInfo { hasNextPage endCursor } nodes { identifier labels(first: 100) { pageInfo { hasNextPage } nodes { name } } } } }' \
+        "$variables" issues) || return 1
+    if ! jq -e 'all(.[]; .labels.pageInfo.hasNextPage == false)' <<<"$issues" >/dev/null; then
+        linear_label_message audit-incomplete issues.labels >&2
+        return 1
+    fi
+    labels=$(audit_pages 'query AuditLabels($teamId: ID!, $first: Int, $after: String) { issueLabels(filter: {or: [{team: {id: {eq: $teamId}}}, {team: {null: true}}]}, first: $first, after: $after) { pageInfo { hasNextPage endCursor } nodes { id name team { id } } } }' \
+        "$variables" issueLabels) || return 1
+
+    jq -s --arg team "$LINEAR_TEAM_TARGET" --arg taxonomy "$LINEAR_TAXONOMY_FILE" '
+        .[0] as $declared | .[1] as $issues | .[2] as $labels |
+        {team: $team, taxonomy: $taxonomy,
+         undeclared: ([$issues[] | .identifier as $issue | .labels.nodes[].name
+                | select(IN($declared[]) | not) | {label: ., issue: $issue}]
+            | group_by(.label) | map({label: .[0].label, issues: map(.issue)})),
+         same_name: ($labels | group_by(.name)
+            | map(select(any(.[]; .team == null) and any(.[]; .team != null))
+                | {name: .[0].name,
+                   workspace_label: (map(select(.team == null)) | .[0].id),
+                   team_label: (map(select(.team != null)) | .[0].id)}))}' \
+        <<<"$declared"$'\n'"$issues"$'\n'"$labels"
+}
+
 # Main routing
 action="${1:-help}"
 shift || true
@@ -287,6 +396,9 @@ case "$action" in
         ;;
     create)
         create_label "$@"
+        ;;
+    audit)
+        audit_labels "$@"
         ;;
     update)
         if [ -z "${1:-}" ]; then

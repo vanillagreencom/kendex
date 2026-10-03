@@ -26,7 +26,7 @@ Reads go through `cache`; writes go through the live commands, which write throu
 | Resource | Actions |
 |----------|---------|
 | `issues` | list, get, bulk-get, create, update, bulk-update, archive, trash/delete, children, list-relations, add-relation, remove-relation, activate, block, unblock, complete, validate-completion |
-| `comments` / `labels` / `project-labels` | list, create, update, delete |
+| `comments` / `labels` / `project-labels` | list, create, update, delete (`labels` also audit) |
 | `projects` | list, get, create, update, delete, list-dependencies, add-dependency, remove-dependency, post-update, list-updates, reorder, set-sort-order |
 | `initiatives` / `milestones` | list, get, create, update, delete (`initiatives` also add-project, remove-project) |
 | `teams` / `users` / `statuses` / `documents` | list, get (`users` also has `me`; `teams keys` reads `{urlKey, keys}` for outbound tracker links without changing `teams list`'s array) |
@@ -78,6 +78,8 @@ Prepare dependent repository corrections before the label change. After an autho
 Never create a tracked issue directly from an orchestration or review session. Route it through the TPM pipeline (project-management skill), which owns labels, project, priority, estimate, and relations.
 
 Where `LINEAR_AGENT_LABELS` declares a taxonomy, `issues create` refuses before any API call a create with no agent label from that set (`--no-agent-label` permits a deliberate bare create). Where `LINEAR_REQUIRE_REACH` is set, it refuses a description with no `Reached by:` line and, with `--review-born` and `--priority 2`, one with no `Symptom:` line; a placeholder or null token counts as no line. Each guard is its own setting. What the lines say is the author's to judge; the rule is the project-management skill's SKILL.md § Disposition, **Name what reaches it**, which is also where a create decides whether it is review-born.
+
+Where the repository declares a label taxonomy ([project-management labels.md § Project Taxonomy Contract](../project-management/references/labels.md#project-taxonomy-contract)), `issues create`, `issues update --labels`, `issues activate` and `issues block` refuse before any write a label it does not declare, naming the label and the taxonomy file; a label the issue already carries is kept. `labels create` refuses an undeclared name, and a `--team` create a name a workspace label uses. `labels audit` lists the undeclared labels on the team's open issues and the same-name team/workspace pairs. With no taxonomy declared, none of this applies.
 
 ## Attachments
 

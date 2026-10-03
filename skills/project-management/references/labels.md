@@ -20,6 +20,8 @@ Run before any workflow creates an issue or updates issue labels:
 .agents/skills/linear/scripts/linear.sh cache labels list --format=safe
 ```
 
+Under a declared taxonomy, also run `linear.sh labels audit`. It lists the undeclared labels on the team's open issues, with the issues carrying them, and each name both a team label and a workspace label use. Report each finding to the user; it does not halt the create.
+
 GitHub-tracked runs read live instead — `gh label list --repo [OWNER/REPO] --limit 200 --json name,description` — with no cache or sync step.
 
 Safe inventory row shape:
@@ -34,7 +36,7 @@ For Linear, match each label by ID and scope as well as name. The inventory's `t
 
 ## Project Taxonomy Contract
 
-Storage may be TOML, JSON, or prose mapping unambiguously to this shape:
+Declare it in the manifest's `[skill-instructions].project-management`, as this JSON in a fenced `json` code block under a `### Project taxonomy` heading; kendex renders it into this skill's SKILL.md, where the linear CLI reads it:
 
 ```json
 {
@@ -50,6 +52,8 @@ Storage may be TOML, JSON, or prose mapping unambiguously to this shape:
 ```
 
 Category matching order: explicit `labels[]`, then `match.prefix`, then `match.parent` from live inventory, then a project-documented matcher. A label matching two categories must be disambiguated by the taxonomy before mutation.
+
+The declared names are every category's `labels[]` and `match.parent`, plus each name in `LINEAR_AGENT_LABELS`; a `match.prefix` declares none. Under a declared taxonomy the linear CLI refuses, before any write, a label it does not declare: on `issues create`, `issues update --labels`, `issues activate` and `issues block`, and on `labels create`. A label the issue already carries is kept, and `labels audit` lists it. A `### Project taxonomy` heading with no readable JSON block refuses every label write; with no heading the CLI enforces nothing.
 
 ## Validation
 
@@ -84,9 +88,9 @@ A bare `issues update [ID] --labels "agent:new"` strips every other label; use i
 
 ## Creating Labels
 
-**Never create a label unprompted** — all label creation requires explicit user authorization, workflow and classification labels included. An `agent:*` label additionally requires the agent definition and the taxonomy entry to exist first; `agent:researcher` is reserved for research issues owned by the researcher agent.
+A label is a taxonomy change, never a side effect of the work at hand. A lane never creates a label. Change the taxonomy in a reviewed commit whose message gives a one-line reason, and create the label only after that commit merges and the user authorizes the creation, workflow and classification labels included. An `agent:*` label additionally requires the agent definition to exist first; `agent:researcher` is reserved for research issues owned by the researcher agent.
 
-Create only when the taxonomy requires a label the tracker lacks and the user authorizes it. Do not create for a one-off categorization, when an existing label covers the case, or for a project label. After creating, update the taxonomy and rerun preflight before mutating.
+Do not create for a one-off categorization, when an existing label covers the case, or for a project label. `labels create` refuses a name the taxonomy does not declare, and a team label whose name a workspace label already uses. After creating, rerun preflight before mutating.
 
 ## Label drift check
 

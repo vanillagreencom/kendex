@@ -130,6 +130,11 @@ Create Options:
   --priority 2` one with no `Symptom:`; a placeholder or null token (TBD, n/a,
   none, -) counts as no line. Rule: project-management SKILL.md, § Disposition.
 
+  Label taxonomy: where the repository declares one (project-management
+  references/labels.md, plus LINEAR_AGENT_LABELS), create, update --labels,
+  activate and block refuse a label it does not declare, naming the label and
+  the taxonomy file. A label the issue already carries is kept.
+
 Update Options:
   --state <name>        New state
   --label(s) <a,b,c>    Replace labels (comma-separated)
@@ -1273,6 +1278,7 @@ create_issue() {
     fi
 
     require_agent_routing_label "$labels" "$no_agent_label" || return 1
+    linear_require_declared_labels "$labels" || return 1
     require_issue_reach "$description" "$priority" "$review_born" || return 1
 
     # --attach: refuse unreadable paths before ANY API call, which is what
@@ -1833,6 +1839,11 @@ update_issue() {
             jq -cn --arg issue "$issue_id" '{error: ("Issue team missing: " + $issue)}' >&2
             return 1
         fi
+        # Activation, block and unblock reach here too: each rebuilds the set
+        # from the issue's own labels plus the one it applies.
+        local kept_labels
+        kept_labels=$(jq -c '[.issue.labels.nodes[]?.name]' <<<"$issue_result") || return 1
+        linear_require_declared_labels "$labels" "$kept_labels" || return 1
         IFS=',' read -ra label_names <<<"$labels"
         local label_ids=()
         for label_name in "${label_names[@]}"; do

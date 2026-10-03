@@ -16,6 +16,7 @@ Requires Bash 4.0 or newer, curl and jq. Set the credentials in the project's pr
 - Refresh a local cache for repeated reads.
 - Upload and download attachments.
 - Check configured issue requirements during creation and completion.
+- Apply and create only the labels the repository's label taxonomy declares, and list the labels that drift from it.
 
 ## How it works
 
@@ -33,7 +34,7 @@ Set non-secret keys in committed `kendex.settings.toml` under `[env]`; the key l
 | `LINEAR_API_KEY` | Personal API key fallback, in the project's private env file |
 | `LINEAR_TEAM` | The team every write targets; required |
 | `LINEAR_TEAM_PREFIX` | Issue identifier prefix used in examples |
-| `LINEAR_AGENT_LABELS` | Agent-routing labels an `issues create` must carry one of |
+| `LINEAR_AGENT_LABELS` | Agent-routing labels an `issues create` must carry one of; under a declared label taxonomy, the agent labels it declares |
 | `LINEAR_REQUIRE_REACH` | Non-empty enforces the `Reached by:` and `Symptom:` lines at create |
 | `LINEAR_FORMAT` | Default read format: `safe`, `table`, `ids`, `raw` |
 | `LINEAR_RETRY_BASE_DELAY` | Seconds before the first retry of a failed call, doubling after |
