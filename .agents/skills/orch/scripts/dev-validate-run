@@ -266,6 +266,18 @@ start_field() { # FILE KEY
   sed -n "s/^$2=\\(.*\\)\$/\\1/p" < "$1"
 }
 
+# The run's wall time, then its sentinel, in the run directory. The wall time
+# lands first, so every verdict has one. Both are written whole or not at all:
+# a poll that caught a half-written sentinel would read a verdict that is not
+# one. Both routes that end a run, the child and the ci route, write through
+# here.
+write_verdict() { # STARTED-AT ENDED-AT SECONDS SENTINEL-LINE
+  printf 'started-at=%s\nended-at=%s\nseconds=%s\n' "$1" "$2" "$3" > "$run_dir/timing.part"
+  mv "$run_dir/timing.part" "$run_dir/timing"
+  printf '%s\n' "$4" > "$run_dir/exit.part"
+  mv "$run_dir/exit.part" "$run_dir/exit"
+}
+
 # The worktree's diff against the base branch, read once by lib/change-class.sh
 # for everything the command is handed: class, docs_only (the docs verdict for
 # the same range) and the changed paths in class_scratch/paths. Where any of
@@ -541,14 +553,11 @@ if [[ "$mode" == start ]]; then
       "$class" "$docs_only" "${class_fallback:+ class-fallback=$class_fallback}"
   }
   # A ci run starts nothing: its verdict is the pull request CI's, so the
-  # record is written whole here, its timing before its sentinel as the
-  # child writes them.
+  # record is written whole here, through the writer the child uses.
   if [[ "$validate_mode" == ci ]]; then
     ci_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     printf 'runner=none class=%s: the pull request CI on the pushed head validates this change\n' "$class" > "$run_dir/log"
-    printf 'started-at=%s\nended-at=%s\nseconds=0\n' "$ci_at" "$ci_at" > "$run_dir/timing"
-    printf 'guard-exit=0 at=%s verdict=ci\n' "$ci_at" > "$run_dir/exit.part"
-    mv "$run_dir/exit.part" "$run_dir/exit"
+    write_verdict "$ci_at" "$ci_at" 0 "guard-exit=0 at=$ci_at verdict=ci"
     started_line
     printf 'state=done guard-exit=0 at=%s validate=ci run-dir=%s log=%s\n' "$ci_at" "$run_dir" "$run_dir/log"
     exit 0
@@ -663,14 +672,8 @@ if [[ "$mode" == child ]]; then
   if [[ ( "$status" == 124 || "$status" == 137 ) && ! -e "$run_dir/own-exit" ]]; then
     ended_by=" verdict=no-verdict"
   fi
-  # The wall time lands before the sentinel, so every verdict has one. Both
-  # are written whole or not at all: a poll that caught a half-written sentinel
-  # would read a verdict that is not one.
-  printf 'started-at=%s\nended-at=%s\nseconds=%s\n' "${started#* }" "${ended#* }" \
-    "$(( ${ended%% *} - ${started%% *} ))" > "$run_dir/timing.part"
-  mv "$run_dir/timing.part" "$run_dir/timing"
-  printf 'guard-exit=%s at=%s%s\n' "$status" "${ended#* }" "$ended_by" > "$run_dir/exit.part"
-  mv "$run_dir/exit.part" "$run_dir/exit"
+  write_verdict "${started#* }" "${ended#* }" "$(( ${ended%% *} - ${started%% *} ))" \
+    "guard-exit=$status at=${ended#* }$ended_by"
   # The verdict is on disk, so nothing the command left behind is still owed a
   # run. Under setsid, setsid -f made this process its group's leader, and the
   # call tears down what else the group holds before this process exits. In a
