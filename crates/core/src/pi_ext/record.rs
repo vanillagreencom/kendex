@@ -116,11 +116,10 @@ pub fn matching_lock_entry(
     }))
 }
 
-/// Where a planning pass collects what a declaration's switch changes: the
-/// native switches' settings write, and each matched package's
+/// Where a planning pass collects what switching a declaration changes: the
+/// native switches' settings write, and each switched package's
 /// `APPEND_SYSTEM.md` edit with its label, which the plan composes with the
-/// file's other edits into one mutation, none where the block already
-/// matches.
+/// file's other edits into one mutation.
 pub struct SwitchPlan<'a> {
     pub ops: &'a mut Vec<crate::apply::PlannedOp>,
     pub edits: &'a mut Vec<(PathBuf, String, crate::configedit::ConfigEdit)>,
@@ -128,8 +127,8 @@ pub struct SwitchPlan<'a> {
 
 /// Compare each declared carrier package and preserve durable provenance.
 /// Missing or unreadable bytes produce drift rather than an omitted row.
-/// With `plan`, plan native switches and each package's `APPEND_SYSTEM.md`
-/// block, and record their intended state. Without it, retain the observed switch for read-only recovery and
+/// With `plan`, plan native switches and record their intended state.
+/// Without it, retain the observed switch for read-only recovery and
 /// installation.
 pub fn record_matching_manifest(
     env: &Env,
@@ -191,16 +190,11 @@ fn record_matching<'a>(
         let detail = match result {
             Ok(Some(mut entry)) => {
                 let differs = entry.enabled != decl.enabled;
-                if let Some(plan) = plan.as_mut() {
-                    // The block follows the declaration, not the native
-                    // filter: a disable Pi already set needs no switch, yet
-                    // the declaration still takes the block away.
+                if differs && let Some(plan) = plan.as_mut() {
+                    switches.push((name.as_str(), decl.enabled));
+                    entry.enabled = decl.enabled;
                     let (path, edit) = super::append_system_edit(&root, name, decl.enabled)?;
-                    plan.edits.push((path, format!("{name} instructions"), edit));
-                    if differs {
-                        switches.push((name.as_str(), decl.enabled));
-                        entry.enabled = decl.enabled;
-                    }
+                    plan.edits.push((path, format!("switch {name}"), edit));
                 }
                 lock.entries.insert(key, entry);
                 if !differs {
