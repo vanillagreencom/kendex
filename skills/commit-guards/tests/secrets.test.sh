@@ -194,6 +194,27 @@ put s.txt "side\naws = $CRED\n"
 commit evil-merge
 row "a line a merge adds over both parents is refused" \
   "rc=1 secrets: secret=s.txt:2:aws-access-token" "$R" --against main
+# Two branches from one base each add half of a private key block to one
+# file, the header and body on one side and the footer on the other: neither
+# side's commit holds a whole key, and the merge adds the footer over the
+# first parent and the header and body over the second.
+repo split-key
+put key.txt "a\nb\nc\nd\n"
+commit
+git -C "$R" checkout -q -b foot
+put key.txt "a\nb\nc\n$PK_FOOT\nd\n"
+commit foot
+git -C "$R" checkout -q -b head-half main
+put key.txt "a\n$PK_HEAD\n${PK_BODY}b\nc\nd\n"
+commit head-half
+git -C "$R" checkout -q foot
+git -C "$R" merge -q --no-edit head-half >/dev/null
+row "a key block a merge completes from two parents' halves is refused" \
+  "rc=1 secrets: secret=key.txt:2:private-key" "$R" --against main
+carries "MIIEowIBAAKC"
+assert_eq "the refusal never carries the key" "absent" "$HAS"
+SPLIT_KEY="$R"
+R="$MERGE"
 git -C "$R" checkout -q --orphan orphan
 git -C "$R" rm -rqf .
 put o.txt "aws = $CRED\n"
@@ -326,7 +347,7 @@ assert_eq "control: a lane that prints the matched line carries the value" "pres
 gg_mutant LANE secrets 'if [ -n "$LINES" ]; then' 'if false; then'
 row "control: without the added-line filter the committed credential fails the staged change" \
   "rc=1 secrets: secret=cred.txt:1:aws-access-token" "$OLD_CRED"
-gg_mutant LANE secrets '$1 >= s && $1 <= e' '$1 == s'
+gg_mutant LANE secrets '$2 >= s && $2 <= e' '$2 == s'
 row "control: matching the first line alone misses the added key body" \
   "rc=0 secrets: summary=violations=0 files=1 scope=staged skipped=0" "$KEY_BODY"
 gg_mutant LANE secrets '"$GG_TMP/added/$n" 2>"$GG_TMP/added.err"' '"$GG_TMP/added/0" 2>"$GG_TMP/added.err"'
@@ -334,7 +355,7 @@ row "control: holding every finding to the first file's lines fails the old cred
   "rc=1 secrets: secret=b.txt:1:aws-access-token" "$TWO_OLD"
 row "control: and misses the second file's new credential" \
   "rc=0 secrets: summary=violations=0 files=2 scope=staged skipped=0" "$TWO_NEW"
-gg_mutant LANE secrets 'gg_added_lines "$1" "$p..$COMMIT"' 'gg_added_lines "$1"'
+gg_mutant LANE secrets 'side_rows "$1" "$k" "$p..$COMMIT"' 'side_rows "$1" "$k"'
 row "control: reading the index instead of the commit finds no added line" \
   "rc=0 secrets: summary=violations=0 files=2 scope=against skipped=0" "$RANGE_ADD" --against HEAD~2
 gg_mutant LANE secrets 'git rev-list --reverse --parents --right-only "$range"' 'printf "%s %s\n" "$(git rev-parse HEAD)" "$(git rev-parse "$REF")"'
@@ -344,10 +365,13 @@ gg_mutant LANE secrets 'ORIGINS+=("${COMMIT:+ in commit $COMMIT}")' 'ORIGINS+=("
 lane "$REMOVED" --against HEAD~2
 carries "in commit $ADDED;"
 assert_eq "control: a lane that drops the commit from the refusal names no commit" "absent" "$HAS"
-gg_mutant LANE secrets 'for p in $PARENTS; do' 'for p in ${PARENTS%% *}; do'
+gg_mutant LANE secrets 'SIDE_COUNT="${#parent_list[@]}"' 'SIDE_COUNT=1'
 git -C "$MERGE" checkout -q side
-row "control: a merge judged against its first parent alone fails the line main carried" \
+row "control: a merge judged as one side fails the line main carried" \
   "rc=1 secrets: secret=m.txt:2:aws-access-token" "$MERGE" --against main
+gg_mutant LANE secrets '$2 >= s && $2 <= e && !($1 in hit) { hit[$1]; held++ } END { exit held < sides }' '$2 >= s && $2 <= e && ++count[$2] == sides { found = 1 } END { exit !found }'
+row "control: counting only a line every parent adds passes the key the merge completes" \
+  "rc=0 secrets: summary=violations=0 files=3 scope=against skipped=0" "$SPLIT_KEY" --against main
 gg_mutant LANE secrets '--parents --right-only' '--parents --no-merges --right-only'
 git -C "$MERGE" checkout -q evil
 row "control: skipping merges passes the merge's own credential" \
