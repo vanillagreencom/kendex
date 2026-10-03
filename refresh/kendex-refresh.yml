@@ -1,0 +1,27 @@
+# Copy verbatim into .github/workflows/. The shared workflow it calls reads
+# the app secrets from this repository's kendex environment and runs the
+# refresh from the kendex release the major tag names. Opening a pull
+# request needs that repository's app token.
+# Only render arms auto-merge. After review and CI gates pass for a non-render
+# refresh, the repository overseer arms it on the merge queue, or a maintainer
+# merges it through the queue where no overseer runs.
+# The instant repository_dispatch signal needs the organization's lanes app
+# and the catalog's dispatch workflow; it is organization wiring.
+name: Refresh kendex
+
+"on":
+  repository_dispatch:
+    types: [kendex-refresh]
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: kendex-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    permissions:
+      contents: read
+    uses: vanillagreencom/kendex/.github/workflows/refresh-consumer.yml@v1

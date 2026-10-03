@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Copies only refresh workflows whose exact bytes kendex shipped. Adoption
-# records are inventory, not permission to replace an edit. The
+# records are inventory, not permission to replace an edit. A template from
+# the consumer's render gets a record; one from the kendex release tree, the
+# shared workflow's caller, gets none and drops any earlier record. The
 # retired writer ownership check precedes any workflow or inventory change.
 # Retired adoption records emit refresh-warning=legacy-writer value=TEMPLATE.
 # Only the trusted removal route passes --retire-writer.
@@ -31,8 +33,20 @@ fi
 # Process values ensure the read-only check judges the environment and secrets
 # the selected workflow reads, not a different consumer settings value.
 refresh_template="$templates/kendex-refresh.yml"
-template_environment="$(sed -n 's/^    environment: \(.*\)$/\1/p' "$refresh_template")" || exit 2
-template_secrets="$(sed -n 's/.*\${{ secrets\.\([A-Za-z0-9_]*\) }}.*/\1/p' "$refresh_template" | LC_ALL=C sort -u | paste -sd ';' -)" || exit 2
+# A caller of the shared workflow declares neither; the called job reads
+# these names from the caller's environment. adopt-refresh.test.sh holds them
+# equal to the names .github/workflows/refresh-consumer.yml declares.
+caller=0
+grep -q '^    uses: vanillagreencom/kendex/\.github/workflows/refresh-consumer\.yml@' "$refresh_template" || caller=$?
+case "$caller" in
+  0)
+    template_environment=kendex
+    template_secrets='FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY' ;;
+  1)
+    template_environment="$(sed -n 's/^    environment: \(.*\)$/\1/p' "$refresh_template")" || exit 2
+    template_secrets="$(sed -n 's/.*\${{ secrets\.\([A-Za-z0-9_]*\) }}.*/\1/p' "$refresh_template" | LC_ALL=C sort -u | paste -sd ';' -)" || exit 2 ;;
+  *) printf 'refresh-error=read value=%s\n' "$refresh_template" >&2; exit 2 ;;
+esac
 REVIEW_GATE_STANDARD_ENVIRONMENT="$template_environment" REVIEW_GATE_STANDARD_SECRETS="$template_secrets" \
   "$SCRIPT_DIR/validate-standard.sh" --environment-only
 TMP="$(mktemp -d)"
@@ -75,17 +89,19 @@ def git(*arguments):
 history.mkdir()
 git("init", "--bare", "--quiet")
 git("fetch", "--no-tags", "https://github.com/vanillagreencom/kendex.git", "HEAD")
-path = "skills/review-gate/templates/kendex-refresh.yml"
-commits = git("log", "--full-history", "--format=%H", "FETCH_HEAD", "--", path).decode().splitlines()
+# The template rendered into consumers, and the shared workflow's caller.
+paths = ("skills/review-gate/templates/kendex-refresh.yml", "refresh/kendex-refresh.yml")
+commits = git("log", "--full-history", "--format=%H", "FETCH_HEAD", "--", *paths).decode().splitlines()
 shipped_copy = copied is None
 shipped_template = False
 for commit in commits:
-    entry = git("ls-tree", commit, "--", path).split()
-    if not entry:  # Deleting the template ships no bytes.
-        continue
-    candidate = git("cat-file", "blob", entry[2].decode())
-    shipped_copy = shipped_copy or copied == candidate
-    shipped_template = shipped_template or replacement == candidate
+    for path in paths:
+        entry = git("ls-tree", commit, "--", path).split()
+        if not entry:  # Deleting the template ships no bytes.
+            continue
+        candidate = git("cat-file", "blob", entry[2].decode())
+        shipped_copy = shipped_copy or copied == candidate
+        shipped_template = shipped_template or replacement == candidate
 if not shipped_template:
     raise SystemExit("refresh-error=template-edited value=" + str(templates / refresh.name))
 if not shipped_copy:
@@ -103,8 +119,8 @@ from pathlib import Path
 import subprocess
 import sys
 
-root = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
-templates = Path(sys.argv[1])
+root = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()).resolve()
+templates = Path(sys.argv[1]).resolve()
 scratch = Path(sys.argv[2])
 inventory = root / ".kendex-generated.json"
 entries = json.loads(inventory.read_text())
@@ -119,7 +135,11 @@ def path_of(entry):
 
 refresh = root / ".github/workflows/kendex-refresh.yml"
 template = templates / refresh.name
-retired_owner = (templates / "review-gate-writer.yml").relative_to(root).as_posix()
+# kendex verify compares a record's template, a path inside the consumer. A
+# template outside it has no such path; the shipped-history check above is
+# that copy's equality check.
+from_render = template.is_relative_to(root)
+retired_owner = ".agents/skills/review-gate/templates/review-gate-writer.yml"
 retired = [e for e in entries if isinstance(e, dict) and e["template"] == retired_owner]
 retiring = retired if sys.argv[3] == "retire-writer" else []
 # Core refresh preserves adopted records when their template disappears.
@@ -159,8 +179,12 @@ for record in retiring:
     (root / record["path"]).unlink(missing_ok=True)
 refresh.parent.mkdir(parents=True, exist_ok=True)
 refresh.write_bytes(template_bytes)
-owner = template.relative_to(root).as_posix()
-entries = [e for e in entries if e not in retiring and (not isinstance(e, dict) or e["template"] != owner)]
-entries.append({"path": refresh.relative_to(root).as_posix(), "template": owner, "templateHash": digest(template)})
+entries = [e for e in entries if e not in retiring]
+if from_render:
+    owner = template.relative_to(root).as_posix()
+    entries = [e for e in entries if not isinstance(e, dict) or e["template"] != owner]
+    entries.append({"path": refresh.relative_to(root).as_posix(), "template": owner, "templateHash": digest(template)})
+else:
+    entries = [e for e in entries if not isinstance(e, dict) or e["path"] != refresh.relative_to(root).as_posix()]
 inventory.write_text("[\n" + ",\n".join("  " + json.dumps(e, ensure_ascii=False, separators=(",", ":")) for e in sorted(entries, key=path_of)) + "\n]\n")
 PY

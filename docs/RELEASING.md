@@ -1,6 +1,6 @@
 # Releasing
 
-The procedure is the `app-deploy` skill (`.agents/skills/app-deploy/SKILL.md`): collate the changelog from a clean tree under the collate declaration, bump the versions, commit under that declaration, tag, review the draft, publish. `.github/workflows/release.yml` runs on the tag push: one native runner per target, the tag checked against the version the built CLI reports, a full release published as a draft and a pre-release outright. This page holds what neither states.
+The procedure is the `app-deploy` skill (`.agents/skills/app-deploy/SKILL.md`): collate the changelog from a clean tree under the collate declaration, bump the versions, commit under that declaration, tag, review the draft, publish. `.github/workflows/release.yml` runs on the tag push: one native runner per target, the tag checked against the version the built CLI reports, a full release published as a draft and a pre-release outright. It runs on `v*.*.*` tags only: the major tag `v<major>` names the release consumers' shared refresh workflow runs, moves per step 4 of that skill, and starts no build. This page holds what neither states.
 
 ## Choosing the version
 

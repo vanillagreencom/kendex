@@ -4,8 +4,10 @@
 # button installs from, and the signed digests document each lane publishes
 # about what it built.
 #
-# Tag pushes publish releases. A push to main publishes one immutable build,
-# then changes the fixed channel's single feed pointer.
+# Release tag pushes publish releases. A major tag such as v1 names the
+# release consumers' shared refresh workflow runs and starts no build. A push
+# to main publishes one immutable build, then changes the fixed channel's
+# single feed pointer.
 # Pull requests are covered by the per-crate checks. No build cache:
 # the only release-profile cache main saves (catalog-check's x86_64
 # kendex-cli build) is keyed to that job and built without --target, so no
@@ -21,7 +23,7 @@ name: release
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+    tags: ["v*.*.*"]
 
 permissions:
   contents: write

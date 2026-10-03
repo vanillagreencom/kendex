@@ -36,6 +36,14 @@ ship_refresh_template() { # TEMPLATE_FILE
   commit "$CATALOG"
 }
 
+# The shared workflow's caller ships at its own catalog path.
+CALLER="$SKILL_DIR/../../refresh/kendex-refresh.yml"
+ship_caller_template() { # TEMPLATE_FILE
+  mkdir -p "$CATALOG/refresh"
+  cp "$1" "$CATALOG/refresh/kendex-refresh.yml"
+  commit "$CATALOG"
+}
+
 snapshot_adoption() {
   cp "$DIR/.kendex-generated.json" "$TMP/adoption-inventory"
   cp "$DIR/.github/workflows/review-gate-writer.yml" "$TMP/adoption-writer"
@@ -74,16 +82,19 @@ run_refresh_command() {
 }
 
 # The rolling refresh runner uses real git and isolates all service inputs.
+# RUNNER_ARGS, an array, holds the runner's own arguments.
 run_refresh() { # CONTENT VERIFY CLASS
   local result=0
-  rm -f -- "${TMP:?}/state/auth" "$TMP/state/push-refused" "$TMP/state/disable-refused"
+  rm -f -- "${TMP:?}/state/auth" "$TMP/state/push-refused" "$TMP/state/disable-refused" "$TMP/state/refreshed"
   : >"$TMP/state/summary"
-  OUT="$(cd "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=test-token GITHUB_TOKEN=other-test-token GITHUB_STEP_SUMMARY="$TMP/state/summary" TEST_VERSION_EXIT="${VERSION_EXIT:-0}" TEST_SECRET=private-test-value GH_REPO=acme/test REFRESH_APP_SLUG=lanes TEST_STATE="$TMP/state" TEST_REAL_GIT="$REAL_GIT" TEST_CONTENT="$1" TEST_VERIFY="$2" TEST_CLASS="$3" TEST_MEASURED="${MEASURED:-true}" TEST_REASON="${CLASS_REASON:-cause=renders-match-their-sources}" TEST_CLASS_EXIT="${CLASS_EXIT:-0}" TEST_LEASE_RACE="${LEASE_RACE:-}" TEST_PUSH_MODE="${PUSH_MODE:-normal}" TEST_PUSH_QUERY="${PUSH_QUERY:-pass}" TEST_DISABLE_MODE="${DISABLE_MODE:-normal}" TEST_LEASE_REMOTE="$TMP/remote" TEST_HOSTILE="${HOSTILE:-}" TEST_FRESH_ORCH="${FRESH_ORCH:-}" TEST_ORCH_MODE="${ORCH_MODE:-keep}" TEST_REFRESH_SKILL="${REFRESH_SKILL:-}" TEST_FRESH_TEMPLATES="$TMP/fresh-templates" TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" bash "$runner" 2>&1)" || result=$?
+  OUT="$(cd "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=test-token GITHUB_TOKEN=other-test-token GITHUB_STEP_SUMMARY="$TMP/state/summary" TEST_VERSION_EXIT="${VERSION_EXIT:-0}" TEST_SECRET=private-test-value GH_REPO=acme/test REFRESH_APP_SLUG=lanes TEST_STATE="$TMP/state" TEST_REAL_GIT="$REAL_GIT" TEST_CONTENT="$1" TEST_VERIFY="$2" TEST_CLASS="$3" TEST_MEASURED="${MEASURED:-true}" TEST_REASON="${CLASS_REASON:-cause=renders-match-their-sources}" TEST_CLASS_EXIT="${CLASS_EXIT:-0}" TEST_LEASE_RACE="${LEASE_RACE:-}" TEST_PUSH_MODE="${PUSH_MODE:-normal}" TEST_PUSH_QUERY="${PUSH_QUERY:-pass}" TEST_START_QUERY="${START_QUERY:-pass}" TEST_DISABLE_MODE="${DISABLE_MODE:-normal}" TEST_LEASE_REMOTE="$TMP/remote" TEST_HOSTILE="${HOSTILE:-}" TEST_FRESH_ORCH="${FRESH_ORCH:-}" TEST_ORCH_MODE="${ORCH_MODE:-keep}" TEST_REFRESH_SKILL="${REFRESH_SKILL:-}" TEST_FRESH_TEMPLATES="$TMP/fresh-templates" TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" bash "$runner" ${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"} 2>&1)" || result=$?
   RC="$result"
 }
 
 # The acceptance assertion also holds ordering and no publication after refusal.
-refresh_push_matches() { # EXIT REASON
+# STARTS is the number of run-start lifecycle reads, one when a pull request
+# was open at run start.
+refresh_push_matches() { # EXIT REASON STARTS
   local deferred_count
   [ "$RC" -eq "$1" ] || return 1
   if [ "$1" -eq 0 ]; then
@@ -98,16 +109,16 @@ refresh_push_matches() { # EXIT REASON
     esac
     if grep -q '^refresh-state=deferred ' <<<"$OUT"; then return 1; fi
   fi
-  awk '
+  awk -v starts="$3" '
     /^git push$/ { pushes++; pushed = 1 }
-    /^api graphql / { queries++; if (!pushed) exit 1 }
-    END { if (pushes != 1 || queries != 1) exit 1 }
+    /^api graphql / { if (pushed) queries++; else before++ }
+    END { if (pushes != 1 || queries != 1 || before != starts) exit 1 }
   ' "$TMP/state/calls" || return 1
   ! grep -qE '^api --method (POST|PATCH)|^pr merge .*--auto' "$TMP/state/calls"
 }
 
-# A refused disable reads the lifecycle once, after the refusal, and leaves
-# the branch and the pull request alone.
+# A refused disable reads the lifecycle once at run start and once after the
+# refusal, and leaves the branch and the pull request alone.
 refresh_disable_matches() { # EXIT REASON
   local deferred_count
   [ "$RC" -eq "$1" ] || return 1
@@ -122,11 +133,31 @@ refresh_disable_matches() { # EXIT REASON
   fi
   awk '
     /^pr merge .* --disable-auto$/ { disables++; disabled = 1 }
-    /^api graphql / { queries++; if (!disabled) exit 1 }
+    /^api graphql / { if (disabled) queries++; else before++ }
     /^git push$/ { exit 1 }
-    END { if (disables != 1 || queries != 1) exit 1 }
+    END { if (disables != 1 || queries != 1 || before != 1) exit 1 }
   ' "$TMP/state/calls" || return 1
   ! grep -qE '^api --method (POST|PATCH)|^pr merge .*--auto' "$TMP/state/calls"
+}
+
+# A pull request the queue holds at run start ends the run before the
+# refresh: one lifecycle read and no other GitHub write. A run that reads an
+# open, unqueued pull request goes on to the refresh.
+refresh_start_matches() { # EXIT REASON
+  local deferred_count
+  [ "$RC" -eq "$1" ] || return 1
+  deferred_count="$(awk '/^refresh-state=deferred / { count++ } END { print count + 0 }' <<<"$OUT")" || return 1
+  case "$2" in
+    queued | merged | closed)
+      [ "$deferred_count" -eq 1 ] && grep -qxF "refresh-state=deferred reason=$2" <<<"$OUT" &&
+        [ ! -e "$TMP/state/refreshed" ] || return 1
+      [ "$(grep -c '^api graphql ' "$TMP/state/calls")" -eq 1 ] || return 1
+      ! grep -qE '^git push$|^api --method (POST|PATCH)|^pr (merge|close) ' "$TMP/state/calls" ;;
+    query) grep -qxF 'refresh-error=push-state value=query' <<<"$OUT" && [ "$deferred_count" -eq 0 ] &&
+      [ ! -e "$TMP/state/refreshed" ] ;;
+    active | armed) [ "$deferred_count" -eq 0 ] && [ -e "$TMP/state/refreshed" ] ;;
+    *) return 1 ;;
+  esac
 }
 
 reset_default() {

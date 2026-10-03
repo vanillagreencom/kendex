@@ -52,8 +52,16 @@ case "$*" in
   'api --method PATCH repos/acme/test/pulls/1 '*) : ;;
   'api repos/acme/test/pulls?state=open&'*) cat "$TEST_STATE/pr" ;;
   'api graphql '*)
-    [ -f "$TEST_STATE/push-refused" ] || [ -f "$TEST_STATE/disable-refused" ] || exit 89
-    [ "${TEST_PUSH_QUERY:-pass}" != fail ] || exit 87
+    # A read before any refusal is the run-start read, which precedes the
+    # refresh.
+    if [ -f "$TEST_STATE/push-refused" ] || [ -f "$TEST_STATE/disable-refused" ]; then
+      [ "${TEST_PUSH_QUERY:-pass}" != fail ] || exit 87
+      state="$TEST_STATE/push-state.json"
+    else
+      [ ! -f "$TEST_STATE/refreshed" ] || exit 89
+      [ "${TEST_START_QUERY:-pass}" != fail ] || exit 87
+      state="$TEST_STATE/start-state.json"
+    fi
     # GitHub returns only requested fields. Never supply a complete fixture
     # to a query that omits the branch or pull-request state selections.
     for selection in \
@@ -61,7 +69,7 @@ case "$*" in
       'pullRequest(number: $number) @include(if: $hasPR) { state isInMergeQueue autoMergeRequest { enabledAt } }'; do
       case "$query" in *"$selection"*) ;; *) exit 86 ;; esac
     done
-    cat "$TEST_STATE/push-state.json" ;;
+    cat "$state" ;;
   'auth setup-git') : >"$TEST_STATE/auth" ;;
   'pr merge '*)
     case " $* " in
@@ -86,6 +94,7 @@ printf '%s\n' "$*" >>"$TEST_STATE/kendex"
 case "$1" in
   --version) printf 'kendex 7.8.9 (release-build)\n'; exit "${TEST_VERSION_EXIT:-0}" ;;
   refresh)
+    : >"$TEST_STATE/refreshed"
     printf '%s\n' "$TEST_CONTENT" >rendered.txt
     if [ -n "$TEST_REFRESH_SKILL" ]; then
       rm -rf -- .agents/skills/review-gate
@@ -173,6 +182,7 @@ git -C "$repo" push -q origin main
 : >"$TMP/state/pr"
 : >"$TMP/state/creates"
 printf '{"data":{"repository":{"ref":{"target":{"oid":"abc"}},"pullRequest":{"state":"OPEN","isInMergeQueue":false,"autoMergeRequest":null}}}}\n' >"$TMP/state/push-state.json"
+cp "$TMP/state/push-state.json" "$TMP/state/start-state.json"
 runner="$repo/.agents/skills/review-gate/scripts/refresh-consumer.sh"
 
 run_refresh current pass render
@@ -607,9 +617,11 @@ for row in \
     missing-field) jq 'del(.data.repository.pullRequest.isInMergeQueue)' "$TMP/state/push-state.json" >"$TMP/partial"; mv "$TMP/partial" "$TMP/state/push-state.json" ;;
     malformed-response) printf 'not-json\n' >"$TMP/state/push-state.json" ;;
   esac
+  starts=1
+  [ -s "$TMP/state/pr" ] || starts=0
   : >"$TMP/state/calls"
   run_refresh "push-$name" pass render
-  if refresh_push_matches "$expected" "$reason"; then ok "$name post-refusal state"; else bad "$name post-refusal state" "$OUT"; fi
+  if refresh_push_matches "$expected" "$reason" "$starts"; then ok "$name post-refusal state"; else bad "$name post-refusal state" "$OUT"; fi
   # Each acceptance path and the failure path has a planted behavior defect.
   # Copies keep the tracked script untouched and retain the matched condition.
   mutations=""
@@ -654,8 +666,12 @@ PUSH_CONTROL
       git --git-dir="$TMP/remote" update-ref -d refs/heads/kendex/refresh
     fi
     : >"$TMP/state/calls"
+    printf '1\n' >"$TMP/state/pr"
+    case "$name" in
+      branch-gone-no-pr|new-branch-failure) : >"$TMP/state/pr" ;;
+    esac
     run_refresh "control-$name" pass render
-    if ! refresh_push_matches "$expected" "$reason"; then ok "control: $name $mutation assertion turns red"; else bad "$name $mutation push control" "$OUT"; fi
+    if ! refresh_push_matches "$expected" "$reason" "$starts"; then ok "control: $name $mutation assertion turns red"; else bad "$name $mutation push control" "$OUT"; fi
     reset_default
     cp "$TMP/push-runner" "$runner"
     commit "$repo"
@@ -730,6 +746,59 @@ CLASS_REASON='cause=renders-match-their-sources'
 reset_default
 git --git-dir="$TMP/remote" update-ref refs/heads/kendex/refresh "$push_head"
 printf '{"data":{"repository":{"ref":{"target":{"oid":"abc"}},"pullRequest":{"state":"OPEN","isInMergeQueue":false,"autoMergeRequest":null}}}}\n' >"$TMP/state/push-state.json"
+# The run reads the open rolling pull request once at start. A queued, merged
+# or closed one ends the run before the refresh; an armed or active one goes
+# on. The queued push row above starts active and enters the queue before
+# the push, which the post-refusal read defers.
+cp "$runner" "$TMP/start-runner"
+for row in \
+  'queued|OPEN|true|false|pass|0|queued' \
+  'merged|MERGED|false|false|pass|0|merged' \
+  'closed|CLOSED|false|false|pass|0|closed' \
+  'armed|OPEN|false|true|pass|0|armed' \
+  'active|OPEN|false|false|pass|0|active' \
+  'query-failure|OPEN|false|false|fail|1|query'; do
+  IFS='|' read -r name pr_state queued armed START_QUERY expected reason <<<"$row"
+  jq -cn --arg state "$pr_state" --argjson queued "$queued" --argjson armed "$armed" \
+    '{data:{repository:{ref:{target:{oid:"abc"}},pullRequest:{state:$state,isInMergeQueue:$queued,autoMergeRequest:(if $armed then {enabledAt:"2026-10-02T01:09:07Z"} else null end)}}}}' >"$TMP/state/start-state.json"
+  controls=""
+  [ "$name" != queued ] || controls=no-defer
+  for mutation in none $controls; do
+    reset_default
+    if [ "$mutation" != none ]; then
+      python3 - "$runner" <<'START_CONTROL'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve()
+s = p.read_text()
+old = '    queued | merged | closed)\n      printf'
+assert s.count(old) == 1
+changed = s.replace(old, '    no-start-defer)\n      printf') + '\n# ' + old.split('\n')[0] + '\n'
+assert changed != s
+p.write_text(changed)
+START_CONTROL
+      commit "$repo"
+      git -C "$repo" push -q origin main
+    fi
+    git --git-dir="$TMP/remote" update-ref refs/heads/kendex/refresh "$push_head"
+    printf '1\n' >"$TMP/state/pr"
+    : >"$TMP/state/calls"
+    run_refresh "start-$name-$mutation" pass render
+    if [ "$mutation" = none ]; then
+      if refresh_start_matches "$expected" "$reason"; then ok "$name pull request at run start"; else bad "$name pull request at run start" "$OUT"; fi
+    else
+      if ! refresh_start_matches "$expected" "$reason"; then ok "control: $name $mutation start assertion turns red"; else bad "$name $mutation start control" "$OUT"; fi
+      reset_default
+      cp "$TMP/start-runner" "$runner"
+      commit "$repo"
+      git -C "$repo" push -q origin main
+    fi
+  done
+done
+unset START_QUERY
+cp "$TMP/state/push-state.json" "$TMP/state/start-state.json"
+reset_default
+git --git-dir="$TMP/remote" update-ref refs/heads/kendex/refresh "$push_head"
 # One production mutation proves the rolling-PR count assertion observes
 # the runner's create decision, rather than merely the fake API's state.
 reset_default
@@ -1055,9 +1124,9 @@ else bad 'workflow hand edit preservation' "$OUT"; fi
 python3 - "$runner" <<'TRUST_CONTROL'
 from pathlib import Path
 import sys
-p=Path(sys.argv[1]); s=p.read_text(); needle='"$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$ROOT/.agents/skills/review-gate/templates"'
+p=Path(sys.argv[1]); s=p.read_text(); needle='"$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$templates"'
 assert s.count(needle)==1
-replacement='.agents/skills/review-gate/scripts/adopt-refresh.sh --templates-dir "$ROOT/.agents/skills/review-gate/templates" # '+needle
+replacement='.agents/skills/review-gate/scripts/adopt-refresh.sh --templates-dir "$templates" # '+needle
 p.write_text(s.replace(needle,replacement))
 TRUST_CONTROL
 reset_default
@@ -1092,6 +1161,33 @@ if [ "$RC" -eq 0 ] && [ ! -e "$TMP/state/hostile" ] && [ "$(wc -l <"$TMP/state/c
     jq -e '[.[] | objects | .path] == [".github/workflows/kendex-refresh.yml"]' "$repo/.kendex-generated.json" >/dev/null; then
   ok 'no-writer refresh adopts the refresh workflow and opens its pull request'
 else bad 'no-writer refresh' "$OUT"; fi
+# The shared workflow names its release tree's caller template. The run
+# adopts that caller and drops the earlier record; a runner that ignores the
+# argument adopts the rendered template instead.
+mkdir -p "$TMP/release/refresh"
+cp "$CALLER" "$TMP/release/refresh/kendex-refresh.yml"
+ship_caller_template "$CALLER"
+cp "$runner" "$TMP/release-runner"
+for mutation in none ignored; do
+  reset_default
+  if [ "$mutation" = ignored ]; then
+    file_edit "$TMP/no-writer-trusted" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 \
+      '--templates-dir "\$templates"$' 's/--templates-dir "\$templates"$/--templates-dir "$ROOT\/.agents\/skills\/review-gate\/templates" # "$templates"/'
+  fi
+  RUNNER_ARGS=(--templates-dir "$TMP/release/refresh")
+  run_refresh release-caller pass render
+  RUNNER_ARGS=()
+  matched=no
+  if [ "$RC" -eq 0 ] && [ ! -e "$TMP/state/hostile" ] &&
+      cmp -s "$repo/.github/workflows/kendex-refresh.yml" "$CALLER" &&
+      jq -e '[.[] | objects | .path] == []' "$repo/.kendex-generated.json" >/dev/null; then matched=yes; fi
+  case "$mutation:$matched" in
+    none:yes) ok 'release-tree caller adoption writes the caller and drops its record' ;;
+    ignored:no) ok 'control: an ignored templates argument turns the release-tree adoption assertion red' ;;
+    *) bad "release-tree caller adoption mutation=$mutation (rc=$RC)" "$OUT" ;;
+  esac
+  cp "$TMP/release-runner" "$runner"
+done
 # The CLI producer succeeds on a hold. The runner must read its ledger,
 # preserve a fully classified edit set before adoption or publication.
 if [ -z "$REAL_KENDEX" ]; then

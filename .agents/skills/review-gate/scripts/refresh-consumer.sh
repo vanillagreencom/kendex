@@ -1,22 +1,33 @@
 #!/usr/bin/env bash
-# Runs from the default-branch checkout. It rebuilds the rolling branch from
-# that checkout, never executes the remote rolling branch, and pushes only
-# after the shared classifier measures the complete diff. Only render arms.
+# Runs with the consumer's default-branch checkout as the working directory,
+# from either that checkout's preserved copy or the kendex release tree the
+# shared workflow checked out. It rebuilds the rolling branch from the
+# checkout, never executes the remote rolling branch, and pushes only after
+# the shared classifier measures the complete diff. Only render arms.
 # Overseers and maintainers read the pull request body's merge instructions.
+# --templates-dir names the directory holding the refresh workflow template
+# to adopt; without it, the templates the refresh below renders.
 # Output records: refresh-state=current pr=none class=none, or
 # refresh-state=unchanged|pushed pr=NUMBER class=CLASS, or
 # refresh-state=deferred reason=queued|armed|merged|closed|branch-gone.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(git rev-parse --show-toplevel)"
-cd "$ROOT"
-: "${GH_REPO:?GH_REPO names the running repository}"
-: "${GH_TOKEN:?GH_TOKEN must be the repository-scoped app installation token}"
-: "${REFRESH_APP_SLUG:?REFRESH_APP_SLUG names that app}"
-if [ "$#" -gt 0 ]; then
+templates=""
+if [ "$#" -eq 2 ] && [ "$1" = --templates-dir ] && [ -n "$2" ]; then
+  if ! templates="$(cd -- "$2" && pwd -P)"; then
+    printf 'refresh-error=templates value=%s\n' "$2" >&2
+    exit 2
+  fi
+elif [ "$#" -gt 0 ]; then
   printf 'refresh-error=arguments value=%s\n' "$#" >&2
   exit 2
 fi
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+templates="${templates:-$ROOT/.agents/skills/review-gate/templates}"
+: "${GH_REPO:?GH_REPO names the running repository}"
+: "${GH_TOKEN:?GH_TOKEN must be the repository-scoped app installation token}"
+: "${REFRESH_APP_SLUG:?REFRESH_APP_SLUG names that app}"
 if ! clean="$(git status --porcelain)"; then
   printf 'refresh-error=read value=clean\n' >&2
   exit 1
@@ -48,6 +59,53 @@ remote="$(git ls-remote --heads origin refs/heads/kendex/refresh)"
 old="${remote%%[[:space:]]*}"
 if [ -n "$old" ]; then
   git fetch --no-tags origin refs/heads/kendex/refresh
+fi
+# GitHub owns the queue and may merge the rolling pull request and delete its
+# branch at any moment. The read at run start skips a run whose pull request
+# the queue already holds; only a read after GitHub refuses a write can
+# establish the lifecycle at that write. Sets reason to merged, closed,
+# queued, armed, branch-gone or active for the pull request in pr; a failed
+# or malformed read exits.
+refresh_lifecycle() {
+  local has_pr=false push_state
+  if [ -n "$pr" ]; then has_pr=true; fi
+  if ! push_state="$(gh api graphql -f owner="${GH_REPO%%/*}" -f repo="${GH_REPO#*/}" \
+    -F number="${pr:-0}" -F hasPR="$has_pr" \
+    -f query='query($owner: String!, $repo: String!, $number: Int!, $hasPR: Boolean!) { repository(owner: $owner, name: $repo) { ref(qualifiedName: "refs/heads/kendex/refresh") { target { oid } } pullRequest(number: $number) @include(if: $hasPR) { state isInMergeQueue autoMergeRequest { enabledAt } } } }')"; then
+    printf 'refresh-error=push-state value=query\n' >&2
+    exit 1
+  fi
+  if ! reason="$(jq -er -s --argjson has_pr "$has_pr" --arg old "$old" '
+    if length != 1 then error("expected one response") else .[0] end |
+    if (.errors // [] | length) != 0 then error("GraphQL errors") else .data.repository end |
+    if type != "object" or (has("ref") | not) or
+      (.ref != null and (.ref.target.oid | type != "string" or length == 0)) or
+      ($has_pr and (.pullRequest | type != "object" or
+        (has("state") and has("isInMergeQueue") and has("autoMergeRequest") | not) or
+        (.state != "OPEN" and .state != "MERGED" and .state != "CLOSED") or
+        (.isInMergeQueue | type != "boolean") or
+        (.autoMergeRequest != null and (.autoMergeRequest.enabledAt | type != "string" or length == 0))))
+    then error("incomplete refresh state") else . end |
+    if .pullRequest.state == "MERGED" then "merged"
+    elif .pullRequest.state == "CLOSED" then "closed"
+    elif .pullRequest.isInMergeQueue == true then "queued"
+    elif .pullRequest.autoMergeRequest != null then "armed"
+    elif .ref == null and $old != "" then "branch-gone"
+    else "active" end
+  ' <<<"$push_state")"; then
+    printf 'refresh-error=push-state value=output\n' >&2
+    exit 1
+  fi
+}
+# GitHub refuses every write to a pull request the queue holds. The run ends
+# before any refresh, push, body update or auto-merge change.
+if [ -n "$pr" ]; then
+  refresh_lifecycle
+  case "$reason" in
+    queued | merged | closed)
+      printf 'refresh-state=deferred reason=%s\n' "$reason"
+      exit 0 ;;
+  esac
 fi
 git checkout -B kendex/refresh "$base"
 export KENDEX_UI=plain
@@ -114,7 +172,7 @@ if [ -n "$conflict_count" ] || [ "$held_count" -ne 0 ]; then
 fi
 TMP="$(mktemp -d)"
 trap 'rm -rf -- "${TMP:?}"' EXIT
-"$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$ROOT/.agents/skills/review-gate/templates"
+"$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$templates"
 settings_report=""
 # The release-installed parser must judge its own settings, including on a
 # first install. It reads and prints data without the refresh app credential.
@@ -239,42 +297,6 @@ if [ "$class_result" -ne 0 ] || [ -z "$class" ] || [[ "$class_line" != "class: c
   printf 'refresh-error=read value=class\n' >&2
   exit 1
 fi
-# GitHub owns the queue and may merge the rolling pull request and delete its
-# branch at any moment, so only a read after GitHub refuses a write can
-# establish that lifecycle. Sets reason to merged, closed, queued, armed,
-# branch-gone or active for the pull request in pr; a failed or malformed
-# read exits.
-refresh_lifecycle() {
-  local has_pr=false push_state
-  if [ -n "$pr" ]; then has_pr=true; fi
-  if ! push_state="$(gh api graphql -f owner="${GH_REPO%%/*}" -f repo="${GH_REPO#*/}" \
-    -F number="${pr:-0}" -F hasPR="$has_pr" \
-    -f query='query($owner: String!, $repo: String!, $number: Int!, $hasPR: Boolean!) { repository(owner: $owner, name: $repo) { ref(qualifiedName: "refs/heads/kendex/refresh") { target { oid } } pullRequest(number: $number) @include(if: $hasPR) { state isInMergeQueue autoMergeRequest { enabledAt } } } }')"; then
-    printf 'refresh-error=push-state value=query\n' >&2
-    exit 1
-  fi
-  if ! reason="$(jq -er -s --argjson has_pr "$has_pr" --arg old "$old" '
-    if length != 1 then error("expected one response") else .[0] end |
-    if (.errors // [] | length) != 0 then error("GraphQL errors") else .data.repository end |
-    if type != "object" or (has("ref") | not) or
-      (.ref != null and (.ref.target.oid | type != "string" or length == 0)) or
-      ($has_pr and (.pullRequest | type != "object" or
-        (has("state") and has("isInMergeQueue") and has("autoMergeRequest") | not) or
-        (.state != "OPEN" and .state != "MERGED" and .state != "CLOSED") or
-        (.isInMergeQueue | type != "boolean") or
-        (.autoMergeRequest != null and (.autoMergeRequest.enabledAt | type != "string" or length == 0))))
-    then error("incomplete refresh state") else . end |
-    if .pullRequest.state == "MERGED" then "merged"
-    elif .pullRequest.state == "CLOSED" then "closed"
-    elif .pullRequest.isInMergeQueue == true then "queued"
-    elif .pullRequest.autoMergeRequest != null then "armed"
-    elif .ref == null and $old != "" then "branch-gone"
-    else "active" end
-  ' <<<"$push_state")"; then
-    printf 'refresh-error=push-state value=output\n' >&2
-    exit 1
-  fi
-}
 if [ "$class" = render ]; then
   merge_note='Render equality is verified. The refresh workflow arms auto-merge.'
 else

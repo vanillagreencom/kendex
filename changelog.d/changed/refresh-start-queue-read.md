@@ -1,0 +1,1 @@
+- A consumer refresh run ends as deferred, before it refreshes, when its open rolling pull request is already queued, merged or closed.

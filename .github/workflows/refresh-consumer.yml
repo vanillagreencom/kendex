@@ -1,0 +1,145 @@
+# The consumer refresh, called by each consumer's
+# .github/workflows/kendex-refresh.yml, the caller template
+# refresh/kendex-refresh.yml, at a major tag such as v1. Reusable only. In a
+# called workflow the github context is the caller's, so every github.*
+# value below names the consumer.
+#
+# The workflow file, the scripts and the engine come from one kendex commit,
+# the one job.workflow_sha names. The run installs the one stable vN.Y.Z
+# release tagged on that commit, where vN is the tag the caller named, and
+# stops before any install when the commit carries no such tag or more than
+# one. Every script runs from that checkout, never from the consumer's.
+#
+# Report lines, one per line: kendex-install: version=TAG commit=SHA on
+# success, kendex-install: cause=KEY value=VALUE on a refusal, and
+# refresh-warning=behind-release tag=TAG newest=NEWER when a higher stable
+# tag of the same major exists. The English after each refusal is not parsed.
+name: refresh-consumer
+
+"on":
+  workflow_call: {}
+
+jobs:
+  refresh:
+    if: github.repository != 'vanillagreencom/kendex' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    environment: kendex
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: consumer
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: kendex
+          persist-credentials: false
+      - name: Install the release tagged on this commit
+        working-directory: kendex
+        env:
+          GH_TOKEN: ""
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          fail() {
+            printf 'kendex-install: cause=%s value=%s\n%s\n' "$1" "$2" "$3" >&2
+            exit 1
+          }
+          [[ $WORKFLOW_REF =~ @refs/tags/v([0-9]+)$ ]] ||
+            fail workflow-ref "$WORKFLOW_REF" 'Call the shared refresh workflow at a major tag, such as @v1.'
+          major="${BASH_REMATCH[1]}"
+          [[ $WORKFLOW_SHA =~ ^[0-9a-f]{40}$ ]] ||
+            fail workflow-sha "$WORKFLOW_SHA" 'The workflow commit is not a full SHA.'
+          # kendex is public. The checkout kept no credential, and none is needed.
+          tags="$(env -u GH_TOKEN -u GITHUB_TOKEN git ls-remote --tags origin)" ||
+            fail tags-read origin 'Could not list the kendex tags.'
+          # An annotated tag lists its own object and, with ^{}, its commit.
+          releases="$(awk -v major="$major" '
+            { name = $2; sub(/^refs\/tags\//, "", name); peeled = sub(/\^\{\}$/, "", name)
+              if (name !~ ("^v" major "\\.[0-9]+\\.[0-9]+$")) next
+              if (peeled || !(name in commit)) commit[name] = $1 }
+            END { for (name in commit) print commit[name], name }' <<<"$tags")" ||
+            fail tags-parse origin 'Could not read the kendex tag list.'
+          tag="" count=0 newest="" newest_minor=0 newest_patch=0
+          while read -r sha name; do
+            [ -n "$name" ] || continue
+            if [ "$sha" = "$WORKFLOW_SHA" ]; then tag="$name"; count=$((count + 1)); fi
+            rest="${name#v"$major".}"
+            minor="${rest%%.*}" patch="${rest#*.}"
+            if [ -z "$newest" ] || [ "$minor" -gt "$newest_minor" ] ||
+                { [ "$minor" -eq "$newest_minor" ] && [ "$patch" -gt "$newest_patch" ]; }; then
+              newest="$name" newest_minor="$minor" newest_patch="$patch"
+            fi
+          done <<<"$releases"
+          [ "$count" -eq 1 ] ||
+            fail release-tags "$count" "The workflow commit must carry exactly one stable v$major.Y.Z tag."
+          if [ "$newest" != "$tag" ]; then
+            printf 'refresh-warning=behind-release tag=%s newest=%s\n' "$tag" "$newest"
+            printf '::warning::refresh-warning=behind-release tag=%s newest=%s\n' "$tag" "$newest"
+          fi
+          # install.sh picks a bin directory from PATH. The user directory goes
+          # first so CI never needs sudo and later steps know which binary runs.
+          mkdir -p "$HOME/.local/bin"
+          export PATH="$HOME/.local/bin:$PATH"
+          env -u GH_TOKEN -u GITHUB_TOKEN sh ./install.sh --version "$tag" --cli-only ||
+            fail installer-run "$tag" 'The release installer failed.'
+          installed="$(kendex --version)" ||
+            fail engine-version "$tag" 'Could not read the installed engine version.'
+          [ "$installed" = "kendex ${tag#v}" ] ||
+            fail engine-version "$installed" "The installed engine is not $tag."
+          printf '%s\n' "$HOME/.local/bin" >>"$GITHUB_PATH"
+          printf 'kendex-install: version=%s commit=%s\n' "$tag" "$WORKFLOW_SHA"
+      - name: Mint the repository app token
+        id: token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.FLEET_GH_APP_ID }}
+          private-key: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+          permission-administration: read
+          permission-metadata: read
+          permission-actions: read
+          permission-environments: read
+          permission-secrets: read
+          permission-organization-secrets: read
+      - name: Refresh and arm the rolling pull request
+        working-directory: consumer
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          REFRESH_APP_SLUG: ${{ steps.token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          exec "$GITHUB_WORKSPACE/kendex/skills/review-gate/scripts/refresh-consumer.sh" --templates-dir "$GITHUB_WORKSPACE/kendex/refresh"
+      - name: Mint the kendex issue token
+        id: issues-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.FLEET_GH_APP_ID }}
+          private-key: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}
+          owner: vanillagreencom
+          repositories: kendex
+          permission-issues: write
+      # Thread-resolution rules: review-gate references/adoption.md,
+      # Automatic consumer refresh.
+      - name: File rendered-file findings upstream and resolve them
+        working-directory: consumer
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          KENDEX_ISSUES_TOKEN: ${{ steps.issues-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          exec "$GITHUB_WORKSPACE/kendex/skills/review-gate/scripts/refresh-reviews.sh"

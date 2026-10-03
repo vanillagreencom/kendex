@@ -165,7 +165,7 @@ done
 # An exact historical shipped workflow still needs the history lookup.
 sandbox
 cp "$TMP/shipped-historical" "$DIR/$REFRESH"
-file_edit "$DIR" "$ADOPT" 1 '^    shipped_copy = shipped_copy or copied == candidate$' \
+file_edit "$DIR" "$ADOPT" 1 '^        shipped_copy = shipped_copy or copied == candidate$' \
   's/copied == candidate/copied == replacement # copied == candidate/'
 chmod +x "$DIR/$ADOPT"
 run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
@@ -457,5 +457,101 @@ retired-edited|^        if not copied.is_file|s/^        if \(.*\):$/        if 
 retired-symlink|^    if copied.is_symlink|s/^    if \(.*\):$/    if False and (\1):/
 unrecorded|^if.*unrecorded.exists|s/^if \(.*\):$/if False and (\1):/
 CONTROLS
+
+# A caller of the shared workflow declares no environment and no secret. The
+# adopter judges it by the names the shared workflow declares, which this row
+# holds equal; the control renames one secret in a copy of the adopter.
+caller_names_match() { # ADOPTER
+  python3 - "$1" "$SKILL_DIR/../../.github/workflows/refresh-consumer.yml" <<'NAMES'
+import re, sys
+adopter, shared = (open(path).read() for path in sys.argv[1:])
+branch = re.search(r"^  0\)\n    template_environment=(\S+)\n    template_secrets='([^']*)' ;;$", adopter, re.M)
+assert branch, 'caller branch not found in the adopter'
+environments = re.findall(r'^    environment: (\S+)$', shared, re.M)
+secrets = sorted(set(re.findall(r'\$\{\{ secrets\.([A-Za-z0-9_]+) \}\}', shared)))
+assert environments and secrets, 'shared workflow names not found'
+assert [branch.group(1)] == environments, (branch.group(1), environments)
+assert branch.group(2) == ';'.join(secrets), (branch.group(2), secrets)
+NAMES
+}
+if caller_names_match "$SKILL_DIR/scripts/adopt-refresh.sh"; then ok 'caller environment and secret names equal the shared workflow declarations'
+else bad 'caller names differ from the shared workflow'; fi
+sed 's/FLEET_GH_APP_PRIVATE_KEY/FLEET_GH_APP_KEY/' "$SKILL_DIR/scripts/adopt-refresh.sh" >"$TMP/renamed-adopter"
+if ! cmp -s "$SKILL_DIR/scripts/adopt-refresh.sh" "$TMP/renamed-adopter" && ! caller_names_match "$TMP/renamed-adopter" 2>/dev/null; then
+  ok 'control: a renamed caller secret turns the names row red'
+else bad 'caller names control'; fi
+
+# The rendered template becomes the caller. The adopter checks the shared
+# workflow's names and records the copy; the v1.5.1 adopter extracts empty
+# names from the caller and refuses it.
+sandbox
+cp "$DIR/$TEMPLATE" "$DIR/$REFRESH"
+record_adoption "$DIR" "$REFRESH" "$TEMPLATE"
+commit "$DIR"
+cp "$CALLER" "$DIR/$TEMPLATE"
+ship_refresh_template "$CALLER"
+record_template_hash
+cp "$DIR/.kendex-generated.json" "$TMP/caller-inventory"
+cp "$DIR/$REFRESH" "$TMP/caller-workflow"
+run_refresh_command "$DIR" "$DIR/$ADOPT"
+if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$CALLER" &&
+    retirement_matches "$DIR" .github/workflows/review-gate-writer.yml "$OWNER" preserved &&
+    python3 - "$DIR" "$REFRESH" "$TEMPLATE" <<'RECORD'
+import hashlib, json, sys
+from pathlib import Path
+root = Path(sys.argv[1]); path, template = sys.argv[2:]
+record = [e for e in json.loads((root / '.kendex-generated.json').read_text()) if isinstance(e, dict) and e['path'] == path]
+assert record == [{'path': path, 'template': template, 'templateHash': 'sha256:' + hashlib.sha256((root / template).read_bytes()).hexdigest()}]
+RECORD
+then ok 'the rendered caller template adopts with the shared workflow names'
+else bad "rendered caller adoption (rc=$RC)" "$OUT"; fi
+cp "$TMP/caller-inventory" "$DIR/.kendex-generated.json"
+cp "$TMP/caller-workflow" "$DIR/$REFRESH"
+git -C "$SKILL_DIR" show 5a8c5d71f2670d2d26710a11475d17d091c3cd9a:skills/review-gate/scripts/adopt-refresh.sh >"$DIR/$ADOPT"
+trust_refresh_transport "$DIR"
+run_refresh_command "$DIR" "$DIR/$ADOPT"
+if [ "$RC" -ne 0 ] && cmp -s "$DIR/$REFRESH" "$TMP/caller-workflow" && grep -q '^review-gate-error=standard-setting-missing ' <<<"$OUT"; then
+  ok 'control: the v1.5.1 adopter refuses the rendered caller template'
+else bad "v1.5.1 adopter control (rc=$RC)" "$OUT"; fi
+
+# The shared workflow passes its release tree, outside the consumer. The
+# caller ships only at refresh/ in the catalog. The copy gets no record, the
+# earlier refresh record goes and every other record stays.
+RELEASE="$TMP/release-refresh"
+mkdir -p "$RELEASE"
+cp "$CALLER" "$RELEASE/kendex-refresh.yml"
+ship_caller_template "$CALLER"
+for mutation in none record history; do
+  sandbox
+  cp "$DIR/$TEMPLATE" "$DIR/$REFRESH"
+  record_adoption "$DIR" "$REFRESH" "$TEMPLATE"
+  commit "$DIR"
+  case "$mutation" in
+    none) ;;
+    record)
+      file_edit "$DIR" "$ADOPT" 1 '^    entries = \[e for e in entries if not isinstance\(e, dict\) or e\["path"\] != ' \
+        's/^    entries = \[e for e in entries if not isinstance(e, dict) or e\["path"\] != .*$/    pass  # &/' ;;
+    history)
+      file_edit "$DIR" "$ADOPT" 1 '^paths = \(' 's/, "refresh\/kendex-refresh.yml")/) # "refresh\/kendex-refresh.yml"/' ;;
+  esac
+  run_refresh_command "$DIR" "$DIR/$ADOPT" --templates-dir "$RELEASE"
+  matched=no
+  if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$CALLER" &&
+      retirement_matches "$DIR" .github/workflows/review-gate-writer.yml "$OWNER" preserved &&
+      jq -e --arg path "$REFRESH" '[.[] | objects | select(.path == $path)] == []' "$DIR/.kendex-generated.json" >/dev/null; then matched=yes; fi
+  case "$mutation:$matched" in
+    none:yes) ok 'release-tree adoption writes the caller and drops its record' ;;
+    record:no | history:no) ok "control: $mutation turns the release-tree adoption assertion red" ;;
+    *) bad "release-tree adoption mutation=$mutation (rc=$RC)" "$OUT" ;;
+  esac
+  if [ "$mutation" = none ]; then
+    commit "$DIR"
+    cp "$DIR/.kendex-generated.json" "$TMP/release-inventory"
+    run_refresh_command "$DIR" "$DIR/$ADOPT" --templates-dir "$RELEASE"
+    if [ "$RC" -eq 0 ] && cmp -s "$TMP/release-inventory" "$DIR/.kendex-generated.json" && cmp -s "$DIR/$REFRESH" "$CALLER"; then
+      ok 'repeated release-tree adoption accepts the shipped caller and keeps the inventory'
+    else bad "repeated release-tree adoption (rc=$RC)" "$OUT"; fi
+  fi
+done
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
