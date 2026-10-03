@@ -69,9 +69,19 @@ pub(super) fn hook(
             ),
         ));
     }
-    // A catalog script filters `errorContext` itself; a person's command
-    // is registered as written, so the plan says what else it will see.
-    if hook.event == "StopFailure" && matches!(hook.body, HookBody::Command(_)) {
+    // Only a catalog script whose `harnesses:` line names Copilot was written
+    // for errorOccurred, so only it is trusted to filter `errorContext`; a
+    // script with no such line reaches Copilot by default, and a person's
+    // command is registered as written, so the plan says what else either
+    // will see.
+    let written_for_copilot = match hook.body {
+        HookBody::Script(_) => hook.harnesses.as_ref().is_some_and(|list| {
+            list.iter()
+                .any(|h| HarnessId::parse(h) == Some(HarnessId::Copilot))
+        }),
+        HookBody::Command(_) => false,
+    };
+    if hook.event == "StopFailure" && !written_for_copilot {
         let contexts = ERROR_CONTEXTS_BEYOND_STOP_FAILURE;
         state.warnings.push(named(
             format!(
@@ -81,7 +91,7 @@ pub(super) fn hook(
                 also = contexts.join(", "),
             ),
             Some(
-                "have the command exit early unless the payload's `errorContext` is `model_call`, or drop Copilot from this hook's harnesses"
+                "have the hook exit early unless the payload's `errorContext` is `model_call`, or drop Copilot from this hook's harnesses"
                     .to_owned(),
             ),
         ));

@@ -32,9 +32,9 @@ pub(crate) const ALLOWED_MODELS: ProjectPath =
 /// `StopFailure` is the one owner-ruled exception: `errorOccurred` fires on
 /// a failed model call, which is what StopFailure means, and also on every
 /// other error context ([`ERROR_CONTEXTS_BEYOND_STOP_FAILURE`]). A
-/// StopFailure hook records a failure and guards nothing, so a catalog
-/// script that names Copilot filters on `errorContext` itself, and the plan
-/// warns about a custom hook (`engine::copilot::hook`).
+/// StopFailure hook records a failure and guards nothing, so it installs,
+/// and the plan warns about every one except a catalog script whose
+/// `harnesses:` line names Copilot (`engine::copilot::hook`).
 pub(crate) fn event(fleet: &str) -> Option<&'static str> {
     match fleet {
         "PreToolUse" => Some("preToolUse"),

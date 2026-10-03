@@ -116,23 +116,31 @@ fn an_event_copilot_does_not_have_is_reported_never_faked() {
 }
 
 /// Copilot has no StopFailure: the hook registers on errorOccurred, which
-/// fires on every error context. A catalog script filters that itself, so
-/// only a person's own command is warned.
+/// fires on every error context. Only a catalog script whose `harnesses:`
+/// line names Copilot was written for that, so every other StopFailure
+/// hook is warned: a person's command, even one listing Copilot, and a
+/// catalog script that reaches Copilot only because it lists no harnesses.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_custom_stop_failure_hook_is_warned_that_error_occurred_fires_wider() {
+fn a_stop_failure_hook_not_written_for_copilot_is_warned_that_error_occurred_fires_wider() {
     const RECORD: &str = "kendex-hook-event-wider: harness=copilot hook=failed event=StopFailure native=errorOccurred also=tool_execution,system,user_input";
-    for (declaration, warned) in [
+    const CUSTOM: &str =
+        "[[custom-hooks]]\nname = \"failed\"\nevent = \"StopFailure\"\ncommand = \"./failed.sh\"\n";
+    const CATALOG: &str = "[hooks.failed]\nsource = \"cat\"\n";
+    for (declaration, harnesses_line, warned) in [
+        (CUSTOM.to_owned(), "", true),
+        (format!("{CUSTOM}harnesses = [\"copilot\"]\n"), "", true),
+        (CATALOG.to_owned(), "", true),
         (
-            "[[custom-hooks]]\nname = \"failed\"\nevent = \"StopFailure\"\ncommand = \"./failed.sh\"\n",
-            true,
+            CATALOG.to_owned(),
+            "# harnesses: [claude, copilot]\n",
+            false,
         ),
-        ("[hooks.failed]\nsource = \"cat\"\n", false),
     ] {
-        let f = fixture("\"copilot\"", declaration);
+        let f = fixture("\"copilot\"", &declaration);
         fs::write(
             f.env.home.join("catalog/hooks/failed.sh"),
-            "#!/usr/bin/env bash\n# ---\n# name: failed\n# event: StopFailure\n# description: record the failure\n# ---\nexit 0\n",
+            format!("#!/usr/bin/env bash\n# ---\n# name: failed\n# event: StopFailure\n# description: record the failure\n{harnesses_line}# ---\nexit 0\n"),
         )
         .unwrap();
         let report = apply_now(&f);
@@ -142,7 +150,7 @@ fn a_custom_stop_failure_hook_is_warned_that_error_occurred_fires_wider() {
                 .iter()
                 .any(|w| w.message.lines().next() == Some(RECORD)),
             warned,
-            "{declaration}: {:?}",
+            "{declaration}{harnesses_line}: {:?}",
             report.warnings
         );
         let registry = json(&f.project.join(".github/hooks/failed.json"));
