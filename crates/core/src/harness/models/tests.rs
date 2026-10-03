@@ -428,7 +428,10 @@ fn exact_haiku_compatibility_substitution_stops_at_four_point_five() {
     ] {
         let context = context("anthropic", &[id, "claude-sonnet-5"]);
         let request = format!("anthropic/{id}");
-        let result = resolve(&request, &context);
+        // Installed Pi frontmatter is the producer of the later dispatch request.
+        let rendered = render_model(HarnessId::Pi, &request, &BTreeMap::new());
+        assert_eq!(rendered.id.as_deref(), Some(request.as_str()));
+        let result = resolve(rendered.id.as_deref().unwrap(), &context);
         assert_eq!(
             result
                 .diagnostics()
@@ -638,6 +641,19 @@ fn native_alias_and_renderer_boundaries() {
             render_model(harness, "inherit", &BTreeMap::new())
                 .id
                 .is_none()
+        );
+        let pin = "anthropic/claude-haiku-4-5";
+        assert_eq!(
+            render_model(harness, pin, &BTreeMap::new()).id.as_deref(),
+            Some(pin)
+        );
+        let hint = resolve_model(
+            &ModelRequest::parse(pin).unwrap(),
+            ResolutionContext::SelectorHint(harness),
+            &BTreeMap::new(),
+        );
+        assert!(
+            matches!(hint, ModelResolution::NativeAlias { native_selector, .. } if native_selector == pin)
         );
     }
     assert_eq!(

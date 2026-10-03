@@ -49,7 +49,7 @@ pub fn run(env: &Env, args: TierModelArgs) -> CliResult {
     let manifest =
         kendex_core::manifest::load_current(&kendex_core::manifest::manifest_path(env, &scope))?
             .unwrap_or_default();
-    let mut overrides = kendex_core::manifest::model_class_overrides(env, &scope, &manifest)?;
+    let overrides = kendex_core::manifest::model_class_overrides(env, &scope, &manifest)?;
     let mut unmanaged = false;
     let request = if let Some(rank) = args.rank {
         let row = rank
@@ -65,13 +65,7 @@ pub fn run(env: &Env, args: TierModelArgs) -> CliResult {
             .cwd()
             .ok_or("native agent lookup requires a working directory")?;
         match agent_model_request(env, cwd, harness, &identity) {
-            Ok(AgentModelRequest::Managed {
-                request,
-                model_classes,
-            }) => {
-                overrides = model_classes;
-                request
-            }
+            Ok(AgentModelRequest::Managed { request, .. }) => request,
             Ok(AgentModelRequest::Unmanaged) => {
                 unmanaged = true;
                 ModelRequest::Inherit

@@ -3,17 +3,13 @@ use crate::env::Env;
 use crate::harness::models::ModelRequest;
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::render::agent::{EffectiveAgent, merge_overrides, parse_source_agent};
-use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Declared intent or a genuinely unmanaged native identity.
 #[derive(Debug, Clone)]
 pub enum AgentModelRequest {
     /// Enabled managed declaration at the effective working directory.
-    Managed {
-        request: ModelRequest,
-        model_classes: BTreeMap<String, String>,
-    },
+    Managed { request: ModelRequest },
     /// No enabled kendex declaration matches this native identity.
     Unmanaged,
 }
@@ -162,10 +158,5 @@ fn read_declared_request(
             .and_then(|agents| agents.get(name)),
     );
     let request = ModelRequest::parse(EffectiveAgent::requested_model(&source, &overrides))?;
-    let model_classes =
-        crate::manifest::model_class_overrides(env, scope, manifest).map_err(|e| e.to_string())?;
-    Ok(AgentModelRequest::Managed {
-        request,
-        model_classes,
-    })
+    Ok(AgentModelRequest::Managed { request })
 }

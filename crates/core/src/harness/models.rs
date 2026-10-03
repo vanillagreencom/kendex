@@ -408,26 +408,14 @@ pub fn resolve_model(
         }
     }
     let mut diagnostics = Vec::new();
-    let request = match request {
-        ModelRequest::Exact { selector } if excluded(selector) => {
-            diagnostics.extend([diagnostic("old-id"), diagnostic("excluded-haiku")]);
-            ModelRequest::Class {
-                class: ModelClass::Fast,
-            }
-        }
-        ModelRequest::Exact { .. } => {
-            diagnostics.push(diagnostic("old-id"));
-            request.clone()
-        }
-        ModelRequest::Inherit | ModelRequest::Class { .. } | ModelRequest::NativeFamily { .. } => {
-            request.clone()
-        }
-    };
+    if matches!(request, ModelRequest::Exact { .. }) {
+        diagnostics.push(diagnostic("old-id"));
+    }
     match context {
-        ResolutionContext::Render(harness) => render(&request, harness, diagnostics),
+        ResolutionContext::Render(harness) => render(request, harness, diagnostics),
         ResolutionContext::SelectorHint(harness) => {
             diagnostics.push(diagnostic("render-only"));
-            if let ModelRequest::Class { class } = &request
+            if let ModelRequest::Class { class } = request
                 && !overrides.contains_key(class.row().name)
                 && matches!(harness, HarnessId::Codex | HarnessId::Opencode)
             {
@@ -446,11 +434,25 @@ pub fn resolve_model(
                     diagnostics,
                 }
             } else {
-                render(&request, harness, diagnostics)
+                render(request, harness, diagnostics)
             }
         }
         ResolutionContext::Runtime(context) => {
-            evidence::resolve(&request, context, overrides, diagnostics)
+            if let ModelRequest::Exact { selector } = request
+                && excluded(selector)
+            {
+                diagnostics.push(diagnostic("excluded-haiku"));
+                evidence::resolve(
+                    &ModelRequest::Class {
+                        class: ModelClass::Fast,
+                    },
+                    context,
+                    overrides,
+                    diagnostics,
+                )
+            } else {
+                evidence::resolve(request, context, overrides, diagnostics)
+            }
         }
     }
 }

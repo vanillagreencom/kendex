@@ -425,31 +425,87 @@ fn malformed_and_cross_account_inputs_never_select() {
     }
 }
 
+fn installed_native_agent_fixture(
+    home: &Path,
+    project: &Path,
+    catalog: &Path,
+) -> Result<kendex_core::env::Env, Box<dyn std::error::Error>> {
+    use kendex_core::{env::Env, model::Scope};
+    use std::fs;
+    fs::create_dir_all(project.join(".claude"))?;
+    fs::create_dir_all(catalog.join("agents"))?;
+    fs::write(
+        catalog.join("agents/worker.md"),
+        "---\nname: worker\ndescription: Work\nmodel: light\n---\nBody.\n",
+    )?;
+    fs::write(
+        project.join("kendex.toml"),
+        format!(
+            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n[agents.worker]\nsource = \"cat\"\n[agent-frontmatter.claude.worker]\nmodel = \"fast\"\n",
+            crate::test_util::source_path(catalog)
+        ),
+    )?;
+    let env = Env::host_rooted(home.to_path_buf());
+    let report = kendex_core::engine::audit(
+        &env,
+        &Scope::Project {
+            root: project.to_path_buf(),
+        },
+    )?;
+    kendex_core::apply::execute(&env, &report.plan)?;
+    Ok(env)
+}
+
+fn globally_installed_class_agent_fixture(
+    home: &Path,
+    catalog: &Path,
+    env: &kendex_core::env::Env,
+) -> Result<(std::path::PathBuf, Value), Box<dyn std::error::Error>> {
+    use kendex_core::model::Scope;
+    use std::fs;
+    fs::write(
+        catalog.join("agents/worker.md"),
+        "---\nname: worker\ndescription: Work\nmodel: standard\n---\nBody.\n",
+    )?;
+    let personal_path = kendex_core::manifest::manifest_path(env, &Scope::Global);
+    fs::create_dir_all(
+        personal_path
+            .parent()
+            .ok_or("personal manifest path has no parent")?,
+    )?;
+    fs::write(
+        &personal_path,
+        format!(
+            "schema = 6\nmodel-classes.standard = \"anthropic/claude-opus-5\"\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n[agents.worker]\nsource = \"cat\"\n",
+            crate::test_util::source_path(catalog)
+        ),
+    )?;
+    let report = kendex_core::engine::audit(env, &Scope::Global)?;
+    kendex_core::apply::execute(env, &report.plan)?;
+    let class_project = home.join("class-project");
+    fs::create_dir_all(&class_project)?;
+    fs::write(
+        class_project.join("kendex.toml"),
+        "schema = 6\nmodel-classes.standard = \"anthropic/claude-sonnet-5\"\n",
+    )?;
+    let evidence = json!({"protocol":"model-resolution-v1","harness":"claude","account":"fixture","host":"host","providers":["anthropic"],"currentProvider":"anthropic",
+        "models":{"tag":"complete","source":"fixture:list","account":"fixture","host":"host","models":[
+            {"provider":"anthropic","id":"claude-opus-5","nativeSelector":null,"allowed":true,"chat":true,"isDefault":true},
+            {"provider":"anthropic","id":"claude-sonnet-5","nativeSelector":null,"allowed":true,"chat":true,"isDefault":false}]},
+        "default":{"tag":"native-default"},"capacity":[
+            {"tag":"known","selector":"claude-opus-5","account":"fixture","host":"host","source":"fixture:capacity","context_window":1000},
+            {"tag":"known","selector":"claude-sonnet-5","account":"fixture","host":"host","source":"fixture:capacity","context_window":1000}],"rejected":[]});
+    Ok((class_project, evidence))
+}
+
 #[test]
 fn native_agent_lookup_retains_intent_and_refuses_edited_managed_bytes() {
-    use kendex_core::{env::Env, model::Scope};
     use std::fs;
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let project = home.join("project");
     let catalog = home.join("catalog");
-    fs::create_dir_all(project.join(".claude")).unwrap();
-    fs::create_dir_all(catalog.join("agents")).unwrap();
-    fs::write(
-        catalog.join("agents/worker.md"),
-        "---\nname: worker\ndescription: Work\nmodel: light\n---\nBody.\n",
-    )
-    .unwrap();
-    fs::write(project.join("kendex.toml"), format!("schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n[agents.worker]\nsource = \"cat\"\n[agent-frontmatter.claude.worker]\nmodel = \"fast\"\n", crate::test_util::source_path(&catalog))).unwrap();
-    let env = Env::host_rooted(home.clone());
-    let report = kendex_core::engine::audit(
-        &env,
-        &Scope::Project {
-            root: project.clone(),
-        },
-    )
-    .unwrap();
-    kendex_core::apply::execute(&env, &report.plan).unwrap();
+    let env = installed_native_agent_fixture(&home, &project, &catalog).unwrap();
     let evidence = json!({"protocol":"model-resolution-v1","harness":"claude","account":"fixture","host":"host","providers":["anthropic"],"currentProvider":null,"models":{"tag":"failed","source":"fixture:reader","cause":"read failed"},"default":{"tag":"native-default"},"capacity":[],"rejected":[]});
     for (agent, tag, class) in [
         ("worker", "harness-default", Some("fast")),
@@ -498,4 +554,40 @@ fn native_agent_lookup_retains_intent_and_refuses_edited_managed_bytes() {
     let response: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(response["resolution"]["tag"], "refused");
     assert_eq!(response["resolution"]["code"], "agent-request-unreadable");
+
+    // A globally installed agent can run under a project's class replacement.
+    let (class_project, evidence) =
+        globally_installed_class_agent_fixture(&home, &catalog, &env).unwrap();
+    for (cwd, expected) in [
+        (&class_project, "claude-sonnet-5"),
+        (&home, "claude-opus-5"),
+    ] {
+        for (flag, value) in [("--agent", "worker"), ("--model", "standard")] {
+            let output = invoke_at(
+                &home,
+                cwd,
+                &[
+                    "tier-model",
+                    "claude",
+                    flag,
+                    value,
+                    "--runtime-context-stdin",
+                    "--json",
+                ],
+                Some(&evidence),
+                None,
+            );
+            assert!(output.status.success(), "{output:?}");
+            let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(response["request"]["class"], "standard");
+            assert_eq!(response["resolution"]["tag"], "selected");
+            assert_eq!(
+                response["resolution"]["selection"]["concreteId"],
+                expected,
+                "{flag} at {}",
+                cwd.display()
+            );
+            assert!(output.stderr.is_empty());
+        }
+    }
 }

@@ -2,10 +2,11 @@ import { afterEach, expect, spyOn, test } from "bun:test";
 import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { AgentConfig } from "../extensions/subagent/agents.js";
+import { discoverAgents } from "../extensions/subagent/agents.js";
 import * as settings from "../extensions/subagent/settings.js";
 import { resetModelWarning, resolveAgentModel } from "../extensions/subagent/settings.js";
 import { cleanupTempRuntimes, modelRegistryFixture, tempRuntime, writeSettings } from "./single-agent-fixture.js";
-import { importRuntimeCopy } from "./browser-fixture.js";
+import { importRuntimeCopy, writeProjectAgent } from "./browser-fixture.js";
 import { clearPackageConfigCache } from "../extensions/subagent/package-config.js";
 
 const agent = { name: "runtime", model: "standard", source: "project" } as AgentConfig;
@@ -29,6 +30,42 @@ test("the shared child preparation transports registry and child directory to co
   });
   expect(calls).toBe(1);
   expect(model).toBe("custom/chat");
+});
+
+test("exact Haiku frontmatter reaches core unchanged and its warning names the original pin", async () => {
+  const cwd = tempRuntime();
+  const requested = "anthropic/claude-haiku-4-5";
+  const chosen = "anthropic/claude-sonnet-4-6";
+  writeSettings(cwd, { subagentModelSource: "frontmatter" });
+  writeProjectAgent(cwd, "exact-haiku", [`model: ${requested}`]);
+  const declared = discoverAgents(cwd, "project").agents.find(item => item.name === "exact-haiku");
+  expect(declared?.model).toBe(requested);
+  if (!declared) throw new Error("Pi exact Haiku fixture agent was not discovered");
+  const live = modelRegistryFixture(() => [
+    { provider: "anthropic", id: "claude-haiku-4-5", contextWindow: 123456 } as Model<Api>,
+    { provider: "anthropic", id: "claude-sonnet-4-6", contextWindow: 123456 } as Model<Api>,
+  ]);
+  const warnings = spyOn(console, "warn").mockImplementation(() => undefined);
+  let calls = 0;
+  try {
+    const resolved = await resolveAgentModel(declared, undefined, cwd, live, async (_command, args, options) => {
+      calls += 1;
+      expect(args[3]).toBe(requested);
+      expect(options.cwd).toBe(cwd);
+      expect(JSON.parse(args[5]).models.models.map((model: { nativeSelector: string }) => model.nativeSelector))
+        .toEqual([requested, chosen]);
+      // Rust's render/runtime regressions establish the policy. This peer
+      // checks Pi's intent transport and consumption of that core decision.
+      return { code: 0, stdout: JSON.stringify({ ...selected, resolution: {
+        tag: "selected", selection: { nativeSelector: chosen },
+        diagnostics: [{ code: "excluded-haiku", source: "core:fixture" }],
+      } }), stderr: "" };
+    });
+    expect(calls).toBe(1);
+    expect(resolved).toBe(chosen);
+    expect(warnings.mock.calls).toHaveLength(1);
+    expect(warnings.mock.calls[0][0]).toContain(`requested=${requested} selected=${chosen} causes=excluded-haiku`);
+  } finally { warnings.mockRestore(); }
 });
 
 for (const failed of [false, true]) {
@@ -69,10 +106,13 @@ async function missingCoreExactContract(runtime: typeof settings): Promise<void>
   await expect(runtime.resolveAgentModel(agent, undefined, process.cwd(), registry, missing)).rejects.toThrow("resolver-missing: command=kendex");
   await expect(runtime.resolveAgentModel({ ...agent, model: "custom/unlisted" }, undefined, process.cwd(), registry, missing)).rejects.toThrow("resolver-missing: command=kendex");
   const openrouter = modelRegistryFixture(() => [{ ...nativeModel, provider: "openrouter", id: "anthropic/claude-sonnet-4" }]);
+  const haiku = modelRegistryFixture(() => [{ ...nativeModel, provider: "anthropic", id: "claude-haiku-4-5" }]);
   const rows = [
     { request: "chat", registry, selector: "custom/chat" },
     { request: "openrouter/anthropic/claude-sonnet-4", registry: openrouter, selector: "openrouter/anthropic/claude-sonnet-4" },
     { request: "anthropic/claude-sonnet-4", registry: openrouter, selector: undefined },
+    { request: "anthropic/claude-haiku-4-5", registry: haiku, selector: "anthropic/claude-haiku-4-5" },
+    { request: "anthropic/claude-haiku-4-5", registry, selector: undefined },
   ];
   for (const row of rows) {
     const resolved = runtime.resolveAgentModel({ ...agent, model: row.request }, undefined, process.cwd(), row.registry, missing);
