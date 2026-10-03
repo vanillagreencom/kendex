@@ -3,7 +3,7 @@ import test, { after } from "node:test";
 import { isTerminalTaskStatus, normalizePaneTaskStatus, isTaskTurnFinished, isTaskActive, taskStatus, singleResultIsError } from "../extensions/subagent/outcomes.js";
 import * as tasks from "../extensions/subagent/tasks.js";
 import { assertMissingArtifactStatus, cleanupTempRuntimes, importRuntimeCopy } from "./browser-fixture.js";
-import { assertCompletionPresentation, assertStoppedEvent } from "./extension-fixture.js";
+import { assertCompletionPresentation, assertStallSelector, assertStoppedEvent } from "./extension-fixture.js";
 
 after(cleanupTempRuntimes);
 
@@ -14,6 +14,16 @@ test("control: task diagnostics ignore the lost working task", async () => {
 });
 
 test("parent aborted event is stopped in the persisted task result", () => assertStoppedEvent());
+test("extension stall selector keeps the running task and drops the stopped one", () => assertStallSelector());
+test("control: extension stall selector includes a stopped task", async () => {
+	const mutant = await importRuntimeCopy("index.ts", "isTaskActive(record.status)", "true || isTaskActive(record.status)") as typeof import("../extensions/subagent/index.js");
+	// Bound to the selector's answer, so a fixture failure cannot pass as the caught mutant.
+	await assert.rejects(() => assertStallSelector(mutant.default), (error: unknown) => {
+		assert.ok(error instanceof assert.AssertionError);
+		assert.deepEqual(error.actual, ["running", "stopped"]);
+		return true;
+	});
+});
 
 test("completion tool and self-completion message use the status presentation owner", () => assertCompletionPresentation());
 for (const indentation of ["\t\t\t", "\t\t"]) test(`control: completion presentation bypasses owner indent=${indentation.length}`, async () => {

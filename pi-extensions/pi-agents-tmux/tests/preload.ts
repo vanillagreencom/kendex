@@ -4,22 +4,22 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// The whole run gets its OWN tmp root (os.tmpdir()
-// re-reads TMPDIR per call, and this preload runs before any test module),
-// so runs never share live dirs; a short settle pass precedes final cleanup.
+// Leak guard: every tempdir this suite creates must be torn down by the test
+// file that created it, with every writer into it drained first. The whole
+// run gets its OWN tmp root (os.tmpdir() re-reads TMPDIR per call, and this
+// preload runs before any test module), so concurrent runs never see each
+// other's live dirs and unrelated system churn is invisible.
 const RUN_TMP_ROOT = mkdtempSync(join(tmpdir(), "pi-agents-tmux-run-"));
 process.env.TMPDIR = RUN_TMP_ROOT;
 
-afterAll(async () => {
-	let entries = readdirSync(RUN_TMP_ROOT);
-	for (let i = 0; i < 20; i += 1) {
-		await new Promise((resolve) => setTimeout(resolve, 40));
-		const next = readdirSync(RUN_TMP_ROOT);
-		if (next.length === 0 && entries.length === 0) break;
-		if (next.length === entries.length && next.every((name, idx) => name === entries[idx]) && i >= 1) break;
-		entries = next;
-	}
+afterAll(() => {
+	// One read, no settle pass: a directory still here, or still being
+	// written, belongs to a test that ended before its writer did.
+	const entries = readdirSync(RUN_TMP_ROOT);
 	rmSync(RUN_TMP_ROOT, { force: true, recursive: true });
+	if (entries.length > 0) {
+		throw new Error(`pi-agents-tmux tests leaked ${entries.length} tmp dir(s); add teardown in the creating test file: ${entries.slice(0, 12).join(", ")}`);
+	}
 });
 
 // The suite's own tmux server. The launching shell's TMUX and TMUX_PANE

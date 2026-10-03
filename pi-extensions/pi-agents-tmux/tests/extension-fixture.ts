@@ -12,7 +12,7 @@ import {
 	setTmuxPaneTitleSpawnForTests,
 } from "../extensions/subagent/pane.js";
 import { taskRegistryPath } from "../extensions/subagent/paths.js";
-import { sessionRuntimeDir } from "../extensions/subagent/settings.js";
+import { runtimeDirForContext, sessionRuntimeDir } from "../extensions/subagent/settings.js";
 import { taskRegistryReader } from "../extensions/subagent/task-records.js";
 import * as tasks from "../extensions/subagent/tasks.js";
 import { writeTaskRegistry, writePaneRegistry } from "../extensions/subagent/tasks.js";
@@ -23,6 +23,7 @@ import { resolveBgSession } from "../extensions/subagent/sessions.js";
 import { taskRegistryReads, writeSettings } from "./browser-fixture.js";
 import { bridgeEvent, bridgeStdout, installMockSpawn } from "./single-agent-fixture.js";
 import { setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
+import * as idleWatchdog from "../extensions/subagent/idle-stall-watchdog.js";
 import { toneTheme } from "./browser-fixture.js";
 
 type ExtensionFactory = (pi: ExtensionAPI) => void;
@@ -141,10 +142,10 @@ export function fakeCtx(harness: Harness): any {
 	};
 }
 
-/** Run registered tools against an isolated parent with drained shutdown. */
-export async function withExtensionTools(run: (tools: Map<string, any>, ctx: any, harness: Harness) => Promise<void>, extension?: ExtensionFactory) {
+/** Run registered tools against an isolated parent with drained shutdown; headless unless `hasUI`. */
+export async function withExtensionTools(run: (tools: Map<string, any>, ctx: any, harness: Harness) => Promise<void>, extension?: ExtensionFactory, hasUI = false) {
 	const harness = createHarness({});
-	const ctx = fakeCtx(harness);
+	const ctx = { ...fakeCtx(harness), hasUI };
 	const handlers = new Map<string, SessionHandler[]>();
 	const tools = new Map<string, any>();
 	const pending = new Set<Promise<unknown>>();
@@ -183,6 +184,29 @@ export async function assertStoppedEvent(extension?: ExtensionFactory) {
 		const result = await tools.get("get_subagent_result").execute("test", { taskId: "canceled-task", wait: true, timeoutMs: 1000 }, undefined, undefined, ctx);
 		assert.equal(result.details.status, "stopped");
 	}, (pi) => { emit = pi.events.emit.bind(pi.events); factory(pi); });
+}
+
+/** The extension's stall selector reads its own registry and keeps the active task alone. A UI session: a headless one never hands the selector a runtime root. */
+export async function assertStallSelector(extension?: ExtensionFactory) {
+	let listActiveTasks: idleWatchdog.IdleStallWatchdogDeps["listActiveTasks"] | undefined;
+	// The factory hands its selector to the watchdog it constructs.
+	const create = idleWatchdog.createIdleStallWatchdog;
+	const construction = spyOn(idleWatchdog, "createIdleStallWatchdog").mockImplementation((deps) => {
+		listActiveTasks = deps.listActiveTasks;
+		return create(deps);
+	});
+	try {
+		await withExtensionTools(async (_tools, ctx) => {
+			assert.ok(listActiveTasks, "extension must construct the stall watchdog");
+			const row = (taskId: string, status: "running" | "stopped") => ({ agent: "scout", taskId, task: "map files", status, createdAt: "2026-10-01T00:00:00Z" });
+			await tasks.writeTaskRegistry(runtimeDirForContext(ctx), { running: row("running", "running"), stopped: row("stopped", "stopped") });
+			// The running row proves the selector read this registry, so a read that
+			// found nothing cannot stand in for one that filtered the stopped task.
+			assert.deepEqual((await listActiveTasks()).map((record) => record.taskId), ["running"]);
+		}, extension, true);
+	} finally {
+		construction.mockRestore();
+	}
 }
 
 /** Both completion renderers consume the status that complete_subagent writes. */

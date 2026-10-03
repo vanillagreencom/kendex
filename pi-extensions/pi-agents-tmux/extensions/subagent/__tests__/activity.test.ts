@@ -1,11 +1,13 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import assert from "node:assert/strict";
 import { assertStoppedActivity } from "../../../tests/single-agent-fixture.js";
-import { importRuntimeCopy } from "../../../tests/browser-fixture.js";
+import { cleanupTempRuntimes, importRuntimeCopy } from "../../../tests/browser-fixture.js";
 
 import { buildSubagentActivity, publishSubagentActivity, type PiActivityEvent } from "../activity.js";
 
 const BROKER_SYMBOL = Symbol.for("kendex.pi.activity");
+
+afterAll(cleanupTempRuntimes);
 
 function installBroker(): PiActivityEvent[] {
 	const events: PiActivityEvent[] = [];
