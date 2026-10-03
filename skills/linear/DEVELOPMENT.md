@@ -6,7 +6,7 @@ Maintainer notes. Consumer docs: [README.md](README.md); the agent command refer
 
 1. Create `scripts/commands/<resource>.sh`, sourcing `../lib/common.sh` (auth, the GraphQL wire, resolvers, argument guards).
 2. Add a `show_help()` and register the resource in `scripts/linear.sh`.
-3. Register its write actions with `linear_guard_write_action` (below).
+3. Register write actions that need a configured team with `linear_guard_write_action` (below).
 4. Update the Commands table in `SKILL.md`.
 
 Cache reads, merges and write-through are `scripts/lib/cache.sh`; output formats are `scripts/lib/formatters.sh`, which also holds the jq definitions those filters prepend (`ISSUE_RELATION_JQ` for issue relations, `PROJECT_PICK_JQ` for the rule deciding which project a name means); issue rules at create and transition time are `scripts/lib/issue-validation.sh`; the Bash 4 runtime preflight is `scripts/lib/bash-version.sh`.
@@ -22,16 +22,13 @@ A team name is not a workspace-independent identifier: it resolves inside whatev
 - `LINEAR_TEAM_SOURCE` / `LINEAR_API_KEY_SOURCE` record `environment`, `project-config`, or `unset`, captured before project files load.
 - `LINEAR_TEAM_ENV_BLANK` marks the case the source values cannot express: `LINEAR_TEAM` exported empty. The parent-env snapshot in `kendex-env.sh` gives the process environment precedence over project files, so an empty export blocks a configured team while resolving to no target. It reports `team_source: "unset"` with `team_source_file: null` and warns that the export is shadowing the project value.
 
-Two layers enforce the fail-closed rule:
-
-1. Dispatcher: `linear_guard_write_action "$action" "<write actions>" "$@"` runs right after the action is parsed, so a write refuses before any API call, including identifier lookups. It reads only the first remaining argument, and only to let `<action> --help` through. It must never search argv for `--team`: that token is as likely to be free text in a comment body or issue title, and honoring it would let user content open the gate. The list holds the write actions with no `--team` parser. The four that do parse one (`issues create`, `projects create`, `cycles create`, `labels create`) are omitted and instead call `linear_set_team_target` and `linear_require_team_target` immediately after their parse loop. Adding `--team` to another write means moving it out of the dispatcher list and into that pattern.
-2. Wire: `graphql_query` refuses any document whose first token is `mutation` when `LINEAR_TEAM_TARGET` is empty, so an action missing from a dispatcher list degrades to a later refusal, never to a cross-workspace write. `linear_query_is_mutation` classifies by the leading token, so a document burying its operation behind a leading fragment would evade it; `tests/graphql-document-classification.test.sh` fails the build if any document in `scripts/` takes that shape.
+The dispatcher enforces the configured-team requirement for writes that do not address an issue. `linear_guard_write_action "$action" "<write actions>" "$@"` runs right after the action is parsed, before any API call. It reads only the first remaining argument, and only to let `<action> --help` through. It must never search argv for `--team`: that token can be free text in a body or title. The list holds writes that need a configured team and have no `--team` parser. The create actions that parse `--team` instead call `linear_set_team_target` and `linear_require_team_target` immediately after their parse loop. Existing-issue writes and `comments create` use the issue identifier. The GraphQL wire does not require a configured team.
 
 Read paths omit the team filter when the target is empty; they never send an empty or guessed team name. `statuses` and `cycles` reads apply `LINEAR_TEAM` as their default filter; `issues list` filters by team only when `--team` is passed, and that asymmetry is load-bearing for cross-team listings.
 
-The guard proves a team is configured, not that a write lands in it. A mutation addressed by an existing entity ID or identifier (`issues update ABC-123`, `comments create`, relation and project mutations) is routed by that ID inside whatever workspace the key reaches. So the guarantee is: an unconfigured project cannot write to Linear at all, and newly created entities land in the named team. Validating that an identifier belongs to `LINEAR_TEAM` would cost a lookup on every mutation and is not implemented.
+The guard proves a team is configured, not that a write lands in it. A mutation addressed by an existing entity ID or identifier routes by that ID inside the workspace the key reaches. Issue writes resolve states and labels under the issue's own team. Newly created team-scoped entities land in the named team. The guard does not check whether an existing identifier belongs to `LINEAR_TEAM`.
 
-`kendex.settings.toml.example` marks `LINEAR_TEAM` `# required`, so a project gets the key and its comment when this skill arrives and no other key in that file reaches their settings; what an arrival writes, and when, is kendex's `docs/authoring/settings.md`. The written `LINEAR_TEAM = ""` is inert: empty is exactly the unset case, so an unedited seed keeps writes refused.
+`kendex.settings.toml.example` marks `LINEAR_TEAM` `# required`, so a project gets the key and its comment when this skill arrives and no other key in that file reaches their settings; what an arrival writes, and when, is kendex's `docs/authoring/settings.md`. The written `LINEAR_TEAM = ""` is inert: empty is exactly the unset case, so an unedited seed keeps writes that need a configured team refused.
 
 ## Authoring rules
 

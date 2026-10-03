@@ -96,7 +96,7 @@ warnings=()
 if [[ -z "$LINEAR_TEAM_TARGET" ]]; then
   # Nothing resolved, so no file is the source of the target.
   team_source_file=""
-  warnings+=("No LINEAR_TEAM configured: Linear writes are refused. Set LINEAR_TEAM in kendex.settings.toml [env] (committed, non-secret) or $private_env_file.")
+  warnings+=("No LINEAR_TEAM configured: writes that need a configured team are refused. Set LINEAR_TEAM in kendex.settings.toml [env] (committed, non-secret) or $private_env_file.")
   if [[ "${LINEAR_TEAM_ENV_BLANK:-0}" == "1" && -n "$project_declared_team" ]]; then
     warnings+=("LINEAR_TEAM is exported as an empty value, which overrides the project value (\"$project_declared_team\"). Unset it in the environment to use project configuration.")
   fi

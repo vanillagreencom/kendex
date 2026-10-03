@@ -149,7 +149,7 @@ unset _CALLER_LINEAR_API_KEY _PROJECT_LINEAR_API_KEY _CALLER_LINEAR_TEAM _CALLER
 # LINEAR_TEAM has no built-in fallback on purpose: a team name resolves inside
 # whatever workspace the API key reaches, so a guessed default silently targets
 # another project's tracker. Unset means "no team" — reads drop the team filter,
-# writes refuse (see linear_require_team_target).
+# writes needing a configured team refuse (see linear_require_team_target).
 DEFAULT_TEAM="${LINEAR_TEAM:-}"
 DEFAULT_FORMAT="${LINEAR_FORMAT:-safe}"    # safe, raw, ids, table
 DEFAULT_PREFIX="${LINEAR_TEAM_PREFIX:-PROJ}" # Issue identifier prefix (e.g., PROJ-123)
@@ -213,18 +213,6 @@ validate_length() {
     return 0
 }
 
-# A GraphQL document is a write when its first token is `mutation`.
-linear_query_is_mutation() {
-    local query="${1:-}"
-    local leading="${query%%[![:space:]]*}"
-    query="${query#"$leading"}"
-
-    case "$query" in
-    mutation | mutation[!A-Za-z0-9_]*) return 0 ;;
-    esac
-    return 1
-}
-
 # Make GraphQL request with error handling and retry
 # Usage: graphql_query "query string" '{"var": "value"}'
 graphql_query() {
@@ -237,12 +225,6 @@ graphql_query() {
     local retry_delay="$LINEAR_RETRY_BASE_DELAY"
     local attempt=1
     local authorization auth_renewed=0
-
-    # Single choke point for writes: no mutation leaves this process without a
-    # resolved team target, whatever path built it.
-    if linear_query_is_mutation "$query"; then
-        linear_require_team_target || return 1
-    fi
 
     check_api_key || return 1
     authorization=$(linear_authorization) || return 1
@@ -622,7 +604,7 @@ linear_team_target_error() {
     echo '{"error": "No Linear team configured for this project - refusing to write. A team name resolves inside whatever workspace LINEAR_API_KEY reaches, so writing without one can land in another project tracker. Fix: set LINEAR_TEAM in this project kendex.settings.toml [env] (committed, non-secret) or .env.local. The create actions that take a team (issues, projects, cycles, labels) also accept --team <key-or-name> for one call. Verify with: linear.sh auth-check --strict"}' >&2
 }
 
-# Fail-closed gate for every Linear write.
+# Gate for writes that need a configured team rather than an existing issue.
 linear_require_team_target() {
     if [ -n "${LINEAR_TEAM_TARGET:-}" ]; then
         return 0
@@ -638,9 +620,8 @@ linear_require_team_target() {
 # argument is read, and only to let `<action> --help` through. The action list
 # therefore holds only the write actions with no --team parser of their own;
 # actions that do parse it call linear_set_team_target + linear_require_team_target
-# after their parse loop, before any API call. graphql_query enforces the same
-# rule at the wire, so a missing entry degrades to a later refusal, never to a
-# write.
+# after their parse loop, before any API call. Existing-issue writes route by
+# the issue identifier and do not register with this guard.
 # Usage: linear_guard_write_action "$action" "update delete" "$@" || exit 1
 linear_guard_write_action() {
     local action="${1:-}"

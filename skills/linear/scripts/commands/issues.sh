@@ -3385,11 +3385,6 @@ main() {
     action="${1:-help}"
     shift || true
 
-    # Fail closed: a write needs a resolved team target before any API call.
-    linear_guard_write_action "$action" \
-        "update archive trash delete bulk-update add-relation remove-relation activate block unblock complete" \
-        "$@" || exit 1
-
     case "$action" in
     list)
         list_issues "$@"

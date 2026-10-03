@@ -3,8 +3,8 @@
 #
 # A team name resolves inside whatever workspace LINEAR_API_KEY reaches, so a
 # hardcoded default silently targets another project's tracker. With no team
-# configured, a write refuses before any API call, a read drops the team
-# filter, and auth-check reports the target it would use.
+# configured, a team-scoped create refuses before any API call. Existing-issue
+# writes use the issue's team. Reads drop the team filter when unset.
 #
 # One table. A row names the project's settings file, the exported LINEAR_TEAM,
 # the command, and everything the command left behind, rendered as one line:
@@ -44,7 +44,13 @@ case "$query" in
   printf '%s' '{"data":{"viewer":{"id":"viewer-uuid"}}}___HTTP_CODE___200'
   ;;
 *"issue(id:"*)
-  printf '%s' '{"data":{"issue":{"id":"issue-uuid"}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"issue":{"id":"issue-uuid","identifier":"TEAM-1","team":{"id":"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47","name":"IssueTeam"}}}}___HTTP_CODE___200'
+  ;;
+*"issueUpdate(id:"*)
+  printf '%s' '{"data":{"issueUpdate":{"success":true}}}___HTTP_CODE___200'
+  ;;
+*"issueLabels(filter:"*)
+  printf '%s' '{"data":{"issueLabels":{"nodes":[{"id":"label-uuid"}]}}}___HTTP_CODE___200'
   ;;
 *"issueCreate(input:"*)
   printf '%s' '{"data":{"issueCreate":{"success":true,"issue":{"id":"issue-uuid","identifier":"TEAM-1","title":"t","description":"","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Explicit"},"labels":{"nodes":[]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/x/issue/TEAM-1","createdAt":"2026-07-30T00:00:00Z","updatedAt":"2026-07-30T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}}}}___HTTP_CODE___200'
@@ -62,7 +68,7 @@ case "$query" in
   printf '%s' '{"data":{"issueLabelCreate":{"success":true,"issueLabel":{"id":"label-uuid","name":"backend","color":"#fff","description":null,"isGroup":false,"team":null,"parent":null,"createdAt":"2026-07-30T00:00:00Z"}}}}___HTTP_CODE___200'
   ;;
 *"workflowStates(filter:"*)
-  printf '%s' '{"data":{"workflowStates":{"nodes":[]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"workflowStates":{"nodes":[{"id":"state-uuid"}]}}}___HTTP_CODE___200'
   ;;
 *"cycles(filter:"*)
   printf '%s' '{"data":{"cycles":{"nodes":[]}}}___HTTP_CODE___200'
@@ -148,12 +154,11 @@ run() {
   esac
 }
 
-# graphql MODE — the wire backstop: graphql_query sourced with no dispatcher
-# guard in front of it, no team configured.
+# graphql MODE: issue-addressed requests need no configured team at the wire.
 graphql() {
   local doc rc=0 err
   case "$1" in
-  mutation) doc='mutation UnregisteredWrite($input: IssueCreateInput!) { issueCreate(input: $input) { success } }' ;;
+  mutation) doc='mutation AddressedWrite { issueUpdate(id: "TEAM-1", input: {title: "t"}) { success } }' ;;
   read) doc='query Ping { viewer { id } }' ;;
   esac
   settings none
@@ -167,7 +172,7 @@ graphql() {
 # --- the expected lines --------------------------------------------------------
 REFUSAL='{"error": "No Linear team configured for this project - refusing to write. A team name resolves inside whatever workspace LINEAR_API_KEY reaches, so writing without one can land in another project tracker. Fix: set LINEAR_TEAM in this project kendex.settings.toml [env] (committed, non-secret) or .env.local. The create actions that take a team (issues, projects, cycles, labels) also accept --team <key-or-name> for one call. Verify with: linear.sh auth-check --strict"}'
 REDIRECT='Error: Comments are a separate resource. Use:;  linear.sh comments create [ISSUE_ID] --body "Your comment";  linear.sh cache comments list [ISSUE_ID]'
-W_NOTEAM='No LINEAR_TEAM configured: Linear writes are refused. Set LINEAR_TEAM in kendex.settings.toml [env] (committed, non-secret) or .env.local.'
+W_NOTEAM='No LINEAR_TEAM configured: writes that need a configured team are refused. Set LINEAR_TEAM in kendex.settings.toml [env] (committed, non-secret) or .env.local.'
 W_ENVKEY='LINEAR_API_KEY comes from the process environment (a machine-wide key reaches every workspace it owns) while this project names no team. Until LINEAR_TEAM is set, this project has no Linear target of its own.'
 w_shadow() { printf 'LINEAR_TEAM from the process environment ("%s") overrides the project value ("%s"). Writes go to the environment value.' "$1" "$2"; }
 w_empty() { printf 'LINEAR_TEAM is exported as an empty value, which overrides the project value ("%s"). Unset it in the environment to use project configuration.' "$1"; }
@@ -222,21 +227,19 @@ expected() {
 # line, quoted as a shell would. expect is a spec for `expected`.
 ROWS='
 issues create is refused|none|-|err|issues create --title "Cross-workspace write"|refused
-issues update is refused|none|-|err|issues update TEAM-1 --state Done|refused
-issues complete is refused|none|-|err|issues complete TEAM-1|refused
-issues archive is refused|none|-|err|issues archive TEAM-1|refused
-issues add-relation is refused|none|-|err|issues add-relation TEAM-1 --blocks TEAM-2|refused
-comments create is refused|none|-|err|comments create TEAM-1 --body hello|refused
+issues update uses the issue team with no configured team|none|-|err|issues update TEAM-1 --state Done --labels backend|ok GetIssue(),GetLabel(teamName="IssueTeam",name="backend"),GetState(teamId="7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",name="Done"),UpdateIssue()
+issues update uses the issue team instead of the configured team|Configured|-|err|issues update TEAM-1 --state Done --labels backend|ok GetIssue(),GetLabel(teamName="IssueTeam",name="backend"),GetState(teamId="7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",name="Done"),UpdateIssue()
+comments create reaches the API with no configured team|none|-|err|comments create TEAM-1 --body hello|ok CreateComment(input.body="hello\n")
 projects create is refused|none|-|err|projects create --name "New project"|refused
 cycles create is refused|none|-|err|cycles create --start 2026-08-01 --end 2026-08-15|refused
 labels create is refused|none|-|err|labels create --name backend|refused
 milestones create is refused|none|-|err|milestones create --project P --name Alpha|refused
 initiatives create is refused|none|-|err|initiatives create --name "Phase 1"|refused
-a --team=CC comment body is free text, not a target|none|-|err|comments create TEAM-1 --body "--team=CC"|refused
-a bare --team comment body is free text|none|-|err|comments create TEAM-1 --body "--team"|refused
---team inside comment prose is free text|none|-|err|comments create TEAM-1 --body "see --team CC for context"|refused
-a bare --team title on update is free text|none|-|err|issues update TEAM-1 --title "--team" --state Done|refused
-a --team=CC title on update is free text|none|-|err|issues update TEAM-1 --title "--team=CC" --state Done|refused
+a --team=CC comment body is free text, not a target|none|-|err|comments create TEAM-1 --body "--team=CC"|ok CreateComment(input.body="--team=CC\n")
+a bare --team comment body is free text|none|-|err|comments create TEAM-1 --body "--team"|ok CreateComment(input.body="--team\n")
+--team inside comment prose is free text|none|-|err|comments create TEAM-1 --body "see --team CC for context"|ok CreateComment(input.body="see --team CC for context\n")
+a bare --team title on update is free text|none|-|err|issues update TEAM-1 --title "--team"|ok GetIssue(),UpdateIssue(input.title="--team")
+a --team=CC title on update is free text|none|-|err|issues update TEAM-1 --title "--team=CC"|ok GetIssue(),UpdateIssue(input.title="--team=CC")
 a --team=CC title on create is free text|none|-|err|issues create --title "--team=CC"|refused
 the issues comment redirect makes no call|none|-|err|issues comment TEAM-1 --body "--team=CC"|redirect
 a blank configured value stays unset|blank|-|err|issues create --title "Blank team"|refused
@@ -273,9 +276,8 @@ while IFS='|' read -r label fixture envteam view args spec; do
   assert_eq "$label" "$(run "$fixture" "$envteam" "$view" "$@")" "$(expected "$spec")"
 done <<<"$ROWS"
 
-# The backstop sits under every dispatcher: a mutation reaching graphql_query
-# with no target is refused at the wire, a read is not.
-assert_eq "graphql_query refuses a mutation with no team target" \
-  "$(graphql mutation)" "$(expected refused)"
+# The wire sends an already addressed mutation without a team configuration.
+assert_eq "graphql_query sends an issue-addressed mutation with no team target" \
+  "$(graphql mutation)" "rc=0 calls=1 wire=AddressedWrite()"
 assert_eq "graphql_query lets a read through with no team target" \
   "$(graphql read)" "rc=0 calls=1 wire=Ping()"

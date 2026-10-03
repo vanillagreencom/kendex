@@ -65,7 +65,7 @@ The cache is `.cache/linear` under the physical worktree root ([README.md](READM
 
 ## Team Target
 
-`LINEAR_TEAM` has no default. With it unset every write refuses before any API call; reads drop the team filter. `--team <key-or-name>` overrides `LINEAR_TEAM` per call only on `issues create`, `projects create`, `cycles create`, `labels create`, `labels audit`, `cycles list`, `statuses list` and `statuses get`; the `--team` filter of `issues list`, `projects list` and `labels list` takes a key or name too. On these reads and `statuses list|get`, an empty or dash-led `--team` value refuses before any request rather than reading every team. Run `auth-check --strict` before the first mutation in a project.
+`LINEAR_TEAM` has no default. Existing-issue writes, including `comments create`, route by the issue identifier and need no configured team. Other writes refuse when it is unset; reads drop the team filter. `--team <key-or-name>` overrides `LINEAR_TEAM` per call only on `issues create`, `projects create`, `cycles create`, `labels create`, `labels audit`, `cycles list`, `statuses list` and `statuses get`; the `--team` filter of `issues list`, `projects list` and `labels list` takes a key or name too. On these reads and `statuses list|get`, an empty or dash-led `--team` value refuses before any request rather than reading every team. Run `auth-check --strict` before the first mutation that needs a configured team in a project.
 
 Set `LINEAR_APP_TOKEN` or the client pair in the project's private env file (`.env.local` unless `KENDEX_ENV_FILE` names another); `op://` references are supported. Use `auth-mint` on the host with the real pair to publish a token to the fleet. Credential precedence, expiry, caching and attribution: [README.md § Settings](README.md#settings).
 
@@ -73,7 +73,7 @@ Set `LINEAR_APP_TOKEN` or the client pair in the project's private env file (`.e
 
 ## Shared label maintenance
 
-`LINEAR_TEAM` requires a target before writes; it does not restrict an API key or check a label's owning team. `auth-check` verifies authentication and the local target, not the key's permission mask. Inspect key permissions in Linear settings; report fingerprints only.
+`LINEAR_TEAM` requires a target before writes that do not address an issue; it does not restrict an API key or check a label's owning team. `auth-check` verifies authentication and the local target, not the key's permission mask. Inspect key permissions in Linear settings; report fingerprints only.
 
 Before changing a label definition, read its ID, team, parent and group status. An empty team means workspace scope. Read issue use across affected teams and check references in their manifests, scripts, gates and generated instructions. A team-restricted key cannot establish workspace-wide issue use.
 

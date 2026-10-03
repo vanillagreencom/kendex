@@ -323,8 +323,8 @@ delete_comment() {
 action="${1:-help}"
 shift || true
 
-# Fail closed: a write needs a resolved team target before any API call.
-linear_guard_write_action "$action" "create update delete" "$@" || exit 1
+# Comment creation routes by the issue identifier.
+linear_guard_write_action "$action" "update delete" "$@" || exit 1
 
 case "$action" in
     list)

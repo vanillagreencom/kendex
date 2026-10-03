@@ -32,7 +32,7 @@ Set non-secret keys in committed `kendex.settings.toml` under `[env]`; the key l
 | `LINEAR_CLIENT_ID` | OAuth application client ID, in the project's private env file |
 | `LINEAR_CLIENT_SECRET` | OAuth application client secret, in the project's private env file |
 | `LINEAR_API_KEY` | Personal API key fallback, in the project's private env file |
-| `LINEAR_TEAM` | The team every write targets; required |
+| `LINEAR_TEAM` | Team target for creates and writes that do not address an issue; existing-issue writes use the issue's team |
 | `LINEAR_TEAM_PREFIX` | Issue identifier prefix used in examples |
 | `LINEAR_AGENT_LABELS` | Agent-routing labels an `issues create` must carry one of; under a declared label taxonomy, the agent labels it declares |
 | `LINEAR_REQUIRE_REACH` | Non-empty enforces the `Reached by:` and `Symptom:` lines at create |
