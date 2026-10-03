@@ -453,6 +453,27 @@ for row in \
     ok "$class $mode publishes its class and cause with arm=$arm"
   else bad "$class $mode class publication" "$OUT"; fi
 done
+# The body tells its overseer or maintainer how to merge after the gates pass.
+reset_default
+cp "$runner" "$TMP/merge-note-runner"
+for note in current old-control; do
+  reset_default
+  if [ "$note" = old-control ]; then
+    file_edit "$repo" .agents/skills/review-gate/scripts/refresh-consumer.sh 1 '^  merge_note=.*overseer' "s/^  merge_note=.*overseer.*/  merge_note='Auto-merge is disabled. A repository maintainer reviews and merges this pull request through the normal review and CI gates.'/"
+    commit "$repo"
+    git -C "$repo" push -q origin main
+  fi
+  run_refresh "merge-note-$note" pass standard
+  note_matches=0
+  grep -qE '^Auto-merge .*review and CI gates pass.*overseer arms .*merge queue.*maintainer merges .*queue where no overseer runs\.$' "$TMP/state/body" || note_matches=$?
+  if [ "$RC" -eq 0 ] && { { [ "$note" = current ] && [ "$note_matches" -eq 0 ]; } || { [ "$note" = old-control ] && [ "$note_matches" -eq 1 ]; }; }; then
+    ok "$note: non-render merger body assertion"
+  else bad "$note merger body assertion" "$OUT"; fi
+done
+reset_default
+cp "$TMP/merge-note-runner" "$runner"
+commit "$repo"
+git -C "$repo" push -q origin main
 # change-class prints removed dependency names in render-path-unowned paths.
 # A name accepted by kendex can contain text that resembles protocol fields.
 for row in \

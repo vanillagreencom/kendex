@@ -2,6 +2,7 @@
 # Runs from the default-branch checkout. It rebuilds the rolling branch from
 # that checkout, never executes the remote rolling branch, and pushes only
 # after the shared classifier measures the complete diff. Only render arms.
+# Overseers and maintainers read the pull request body's merge instructions.
 # Output records: refresh-state=current pr=none class=none, or
 # refresh-state=unchanged|pushed pr=NUMBER class=CLASS, or
 # refresh-state=deferred reason=queued|armed|merged|closed|branch-gone.
@@ -277,7 +278,7 @@ refresh_lifecycle() {
 if [ "$class" = render ]; then
   merge_note='Render equality is verified. The refresh workflow arms auto-merge.'
 else
-  merge_note='Auto-merge is disabled. A repository maintainer reviews and merges this pull request through the normal review and CI gates.'
+  merge_note='Auto-merge stays disabled until review and CI gates pass, then the repository overseer arms this pull request on the merge queue, or a maintainer merges it through the queue where no overseer runs.'
   if [ -n "$pr" ]; then
     disable_status=0
     gh pr merge "$pr" --repo "$GH_REPO" --disable-auto || disable_status=$?

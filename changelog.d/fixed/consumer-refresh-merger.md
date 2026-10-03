@@ -1,0 +1,1 @@
+- Non-render consumer refresh pull requests name the overseer or a maintainer as the merger through the merge queue after review and CI pass.
