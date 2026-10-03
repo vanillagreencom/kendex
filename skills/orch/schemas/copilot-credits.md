@@ -29,7 +29,7 @@ The record `lanes` produces for one Copilot account's monthly AI credit pool, re
 |---|---|
 | `unit` | `AIC`, AI credits |
 | `unlimited` | `false` |
-| `used` | `credits_used` as the endpoint gives it, null where it gives none; for a stated reading, the stated used |
+| `used` | `entitlement` less `remaining`, the figure `monthly_pct` is judged from, never the endpoint's `credits_used`; for a stated reading, the stated used |
 | `granted` | The monthly grant, `entitlement`; for a stated reading, the stated grant |
 | `remaining` | `remaining`; for a stated reading, the grant less the used, never below 0 |
 | `over`, `overage_permitted`, `token_based_billing` | `overage_count`, `overage_permitted` and `token_based_billing` as given; absent for a stated reading. `overage_permitted` never makes a pool at zero room |

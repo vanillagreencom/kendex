@@ -79,7 +79,8 @@ record() { # ALIAS JQ — one field of that account's listed record
 
 echo "=== the monthly pool is read from the endpoint's counts ==="
 new_home pool
-copilot_account 1copilot "$(pool 1000000 900000)"
+# The endpoint's own credits_used differs from the pool github.com shows.
+copilot_account 1copilot "$(pool 1000000 900000 '{"credits_used":318085}')"
 copilot_account 2copilot "$(pool 1000000 0)"
 copilot_account 3copilot "$(pool 1000000 1)"
 # Equal resets keep the chooser row focused on unlimited room, not its bonus.
@@ -424,6 +425,7 @@ lanes_control() { # NAME FILE OLD NEW
   LANES_BIN="$dir/lanes"
 }
 new_home control
+copilot_account 1copilot "$(pool 1000000 900000 '{"credits_used":318085}')"
 copilot_account 2copilot "$(pool 1000000 0)"
 copilot_account 3copilot "$(pool 1000000 1)"
 copilot_account 5copilot '{"quota_snapshots":{"premium_interactions":{"unlimited":"true","percent_remaining":100}}}'
@@ -444,6 +446,8 @@ lanes_control ctl-unlimited lib/copilot-credits.sh '| ($q.unlimited == true) as 
 control_row 5copilot .headroom_pct 100 "control: an unlimited read loosely takes a string for a measured unlimited seat"
 lanes_control ctl-limit lib/copilot-credits.sh '($remaining != null and $granted != null and $granted > 0) as $counted' '($remaining != null and $granted != null) as $counted'
 control_row 6copilot '[.status, .monthly_pct]' '["ok",100]' "control: without the entitlement bound a zero grant reads as a measured pool"
+lanes_control ctl-used lib/copilot-credits.sh 'used: ($granted - $remaining),' 'used: (($q.credits_used | numbers) // null),'
+control_row 1copilot .credits.used 318085 "control: used read from the endpoint's credits_used is not the pool the share is judged from"
 lanes_control ctl-bind lanes '[{k: "monthly", p: $b.monthly_pct}, ' '['
 control_row 2copilot .binding_bucket null "control: without the monthly bucket in the binding a Copilot pool binds nothing"
 lanes_control ctl-walled-harness lanes 'if .harness == "codex" and .credits != null then' 'if .credits != null then'

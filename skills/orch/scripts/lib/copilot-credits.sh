@@ -70,9 +70,10 @@
 #
 # THE ENDPOINT is internal and its shape can change, so every field is checked
 # for its type. `quota_snapshots.premium_interactions` gives `entitlement`,
-# `remaining`, `unlimited`, `overage_permitted`, `overage_count`,
-# `credits_used` and `token_based_billing`, and `quota_reset_date_utc` the
-# reset. An answer lacking `remaining` or `entitlement` as numbers, or with an
+# `remaining`, `unlimited`, `overage_permitted`, `overage_count` and
+# `token_based_billing`, and `quota_reset_date_utc` the reset. Its
+# `credits_used` is not the pool github.com shows, so the used count is the
+# grant less `remaining`, the figure the share is judged from. An answer lacking `remaining` or `entitlement` as numbers, or with an
 # entitlement of zero, measures nothing. The used share is rounded UP, so a
 # pool one credit short of its grant never reads as having more; a pool at or
 # past its grant is 100, walled at every threshold whatever overage it
@@ -225,7 +226,7 @@ copilot_credits_parse() {
         unlimited: $unlimited,
         credits: (if $unlimited then {unit: "AIC", unlimited: true}
                   elif $counted then {unit: "AIC", unlimited: false,
-                                      used: (($q.credits_used | numbers) // null),
+                                      used: ($granted - $remaining),
                                       granted: $granted,
                                       remaining: $remaining,
                                       over: (($q.overage_count | numbers) // null),
