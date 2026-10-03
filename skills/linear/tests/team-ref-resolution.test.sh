@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Every --team (and `teams get`) reference resolves through resolve_team_id,
+# The --team reference of cycles list, cycles create, issues create and labels
+# create, and the reference of teams get, resolve through resolve_team_id,
 # which matches a team's key or its name: KEN and kendex send the same team id
 # on each call site, a reference matching no team refuses as not found, and
 # one team's key that is another team's name refuses as ambiguous.

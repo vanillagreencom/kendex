@@ -65,7 +65,7 @@ The cache is `.cache/linear` under the physical worktree root ([README.md](READM
 
 ## Team Target
 
-`LINEAR_TEAM` has no default. With it unset every write refuses before any API call; reads drop the team filter. `--team <name>` overrides per call only on `issues create`, `projects create`, `cycles create`, and `labels create`. Run `auth-check --strict` before the first mutation in a project.
+`LINEAR_TEAM` has no default. With it unset every write refuses before any API call; reads drop the team filter. `--team <key-or-name>` overrides `LINEAR_TEAM` per call only on `issues create`, `projects create`, `cycles create`, `labels create` and `cycles list`; `statuses list` and `statuses get` take `--team <name>`. Run `auth-check --strict` before the first mutation in a project.
 
 Set `LINEAR_APP_TOKEN` or the client pair in the project's private env file (`.env.local` unless `KENDEX_ENV_FILE` names another); `op://` references are supported. Use `auth-mint` on the host with the real pair to publish a token to the fleet. Credential precedence, expiry, caching and attribution: [README.md § Settings](README.md#settings).
 
