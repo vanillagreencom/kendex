@@ -36,8 +36,8 @@
 #      another condition. The doc-limits and todo-ban steps run on a pull
 #      request alone and the bot-instructions check beside them on both
 #      events; the job checks out the whole history the secrets scan
-      judges each commit against. Arms take each scan's event condition off
-      and plant a shallow checkout.
+#      judges each commit against. Arms take each scan's event condition off
+#      and plant a shallow checkout.
 #   3. the aggregate: a lane the class authorized may skip; one it did not
 #      is rejected, and so is a dead classifier, a job named twice and a
 #      helper that is not there.
