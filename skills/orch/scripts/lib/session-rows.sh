@@ -132,8 +132,8 @@ session_rows_last() { # FILE [EVENT]
 # session_rows_verdict FILE — what the last row says of the session, into
 # SESSION_ROWS_VERDICT, with that row in SESSION_ROW:
 #   none         no row, so nothing the harness said can be read
-#   unsupported  the row names a harness that emits no session end and no
-#                usage-limit event, so its silence settles nothing
+#   unsupported  the row names any harness but Claude Code, the one whose
+#                rows this verdict answers for, so its silence settles nothing
 #   ended        SessionEnd for any reason but `clear` and `resume`, the two a
 #                SessionStart follows in the same harness
 #   walled       StopFailure with `rate_limit`, the harness's own word for a

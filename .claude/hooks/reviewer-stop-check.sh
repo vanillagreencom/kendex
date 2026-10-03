@@ -3,7 +3,7 @@
 # name: reviewer-stop-check
 # event: SubagentStop
 # matcher:
-# description: Blocks a reviewer subagent's stop once when the worktree it reviewed is not clean. The worktree is the one the artifact path in the subagent's transcript names (`<worktree>/tmp/review-<agent>-*.json`, the newest mention), the transcript being the payload's `agent_transcript_path` where the payload carries that key (Claude Code and Codex, whose `transcript_path` is the parent session's), a null one refused, and its `transcript_path` where it does not; `git status --porcelain --untracked-files=all` there listing anything blocks, naming each path, and a transcript naming no artifact path blocks the same way, since the review contract is an artifact at that path. An agent_type not starting with `reviewer-` passes, as does `stop_hook_active` true; a block is recorded per agent_id under `<git common dir>/kendex/reviewer-stop/` so a later stop of the same subagent passes. On Copilot it runs at subagentStop, whose payload on Copilot CLI 1.0.91 names the custom agent as `agentType` and the subagent's own session as `agentId`, carries no `stop_hook_active`, which the per-agent record stands in for, and names the lead's transcript, so the artifact path is read from the subagent's reply, the payload's `response`, and the block is `decision: block` on stdout at exit 0, the answer Copilot takes, where exit 2 lets the subagent finish. Not run on codex: its SubagentStop (Codex hooks reference, CLI 0.160.0) reaches this hook once a released kendex maps it. Not run on pi: it has no SubagentStop event. Not run on gemini: it has no SubagentStop event. Not run on antigravity: it has no SubagentStop event.
+# description: Blocks a reviewer subagent's stop once when the worktree it reviewed is not clean. The worktree is the one the artifact path in the subagent's transcript names (`<worktree>/tmp/review-<agent>-*.json`, the newest mention), the transcript being the payload's `agent_transcript_path` where the payload carries that key (Claude Code and Codex, whose `transcript_path` is the parent session's), a null one refused, and its `transcript_path` where it does not; `git status --porcelain --untracked-files=all` there listing anything blocks, naming each path, and a transcript naming no artifact path blocks the same way, since the review contract is an artifact at that path. An agent_type not starting with `reviewer-` passes, as does `stop_hook_active` true; a block is recorded per agent_id under `<git common dir>/kendex/reviewer-stop/` so a later stop of the same subagent passes. On Copilot it runs at subagentStop, whose payload on Copilot CLI 1.0.91 names the custom agent as `agentType` and the subagent's own session as `agentId`, carries no `stop_hook_active`, which the per-agent record stands in for: there every refusal once the agent id is read is recorded under that marker, so the same subagent's next stop passes as Claude Code's continued stop does at the flag. It names the lead's transcript, so the artifact path is read from the subagent's reply, the payload's `response`, and the block is `decision: block` on stdout at exit 0, built without jq so a missing jq still holds the subagent, the answer Copilot takes, where exit 2 lets the subagent finish. Not run on codex: its SubagentStop (Codex hooks reference, CLI 0.160.0) reaches this hook once a released kendex maps it. Not run on pi: it has no SubagentStop event. Not run on gemini: it has no SubagentStop event. Not run on antigravity: it has no SubagentStop event.
 # summary: Stops a reviewer agent from finishing while the worktree it reviewed still holds files it left behind.
 # safety: Reads the payload, the transcript or on Copilot the subagent's reply, and git status; the only write is the per-agent marker under the reviewed repository's git common dir. Exit 2 names the paths and asks for the reviewer's own files to be deleted and the rest reported, never bypassed. jq is required to read the payload; a payload, transcript or git that cannot be read is refused, never passed, and so is an `agent_id` that is not a string of ASCII letters, digits, `_` and `-`, the alphabet the harness names subagents in; it is judged in jq where the payload holds it, so a NUL, a `/`, a newline, `.` or `..` never reaches the marker path, whatever encoding the read passes through. Every refusal opens with `reviewer-stop-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 30
@@ -90,20 +90,75 @@ message() { # KEY VALUE [DETAIL]
   }
 }
 
+# TEXT as one JSON string, in the shell alone, so the block answer stands
+# where jq is the missing tool: a copy of lane-mail-check.sh::json_string,
+# since each hook is installed as one file.
+json_string() { # TEXT
+  local s="$1" bs=\\ q='"' octal c u
+  s=${s//"$bs"/"$bs$bs"}
+  s=${s//"$q"/"$bs$q"}
+  for octal in 001 002 003 004 005 006 007 010 011 012 013 014 015 016 017 \
+      020 021 022 023 024 025 026 027 030 031 032 033 034 035 036 037; do
+    printf -v c '%b' "\\0$octal"
+    printf -v u '\\u%04x' "0$octal"
+    s=${s//"$c"/$u}
+  done
+  printf '"%s"' "$s"
+}
+
+# Set on a Copilot install once the agent id is read. Copilot's subagentStop
+# carries no stop_hook_active, so from there every refusal goes through the
+# per-agent marker record_and_block keeps, and the same subagent's next stop
+# passes as Claude Code's continued stop passes at the flag.
+MARK_EVERY_REFUSAL=0
+
 # The one exit for a block. The text goes to stderr, which every harness but
 # Copilot reads beside exit 2. Copilot lets a subagent finish on exit 2 and
 # holds it on `decision: block` with the text as `reason` on stdout at exit 0,
-# the subagentStop answer its hooks reference gives. The JSON is jq's: where
-# jq is the missing tool, stdout stays empty and the exit is 2.
+# the subagentStop answer its hooks reference gives (lane-mail-check.sh::refuse).
 refuse() { # KEY VALUE [DETAIL]
   local text
+  [ "$MARK_EVERY_REFUSAL" -eq 0 ] || record_and_block "$@"
   text=$(message "$@")
   printf '%s\n' "$text" >&2
-  if [ "$INSTALL" = copilot ] && command -v jq >/dev/null 2>&1; then
-    jq -n -c --arg t "$text" '{decision: "block", reason: $t}' || exit 2
+  if [ "$INSTALL" = copilot ]; then
+    printf '{"decision":"block","reason":%s}\n' "$(json_string "$text")"
     exit 0
   fi
   exit 2
+}
+
+git_failed() { # SUBCOMMAND OUTPUT — an unreadable answer is never a clean one
+  refuse git "$1" "$2"
+}
+
+# The block is recorded once per subagent. The marker lives under the git
+# common dir of the reviewed repository once that is known, and of the
+# repository the hook runs in before then; both are shared by every linked
+# worktree. Reached from refuse as well, which it calls in turn, so it turns
+# that routing off before it can refuse.
+MARKER_REPO=.
+record_and_block() { # KEY VALUE [DETAIL]
+  MARK_EVERY_REFUSAL=0
+  COMMON_DIR=$(git -C "$MARKER_REPO" rev-parse --git-common-dir 2>&1) ||
+    git_failed 'rev-parse --git-common-dir' "$COMMON_DIR"
+  case "$COMMON_DIR" in
+    /*) ;;
+    *) COMMON_DIR="$MARKER_REPO/$COMMON_DIR" ;;
+  esac
+  MARKER_DIR="$COMMON_DIR/kendex/reviewer-stop"
+  MARKER="$MARKER_DIR/$AGENT_ID"
+  if [ -e "$MARKER" ]; then
+    exit 0
+  fi
+  # Both probes are captured rather than left to write first: the group runs
+  # the redirection in a subshell so the shell's own "cannot create" reaches
+  # the same variable mkdir's message would.
+  if ! MARKER_ERR=$(mkdir -p -- "$MARKER_DIR" 2>&1) ||
+    ! MARKER_ERR=$( { : >"$MARKER"; } 2>&1 ); then
+    refuse marker "$MARKER" "$MARKER_ERR"
+  fi
+  refuse "$@"
 }
 
 # Every external command this hook runs. jq reads the payload and git answers
@@ -186,6 +241,7 @@ fi
 if [ -z "$AGENT_ID" ]; then
   refuse agent-id invalid
 fi
+[ "$INSTALL" != copilot ] || MARK_EVERY_REFUSAL=1
 # Copilot's subagentStop names the lead's transcript, which holds every agent
 # of the session, so there the artifact path is read from the subagent's own
 # reply, the payload's documented `response`.
@@ -198,37 +254,6 @@ if [ "$INSTALL" = copilot ]; then
 elif [ ! -r "$TRANSCRIPT" ] || [ ! -f "$TRANSCRIPT" ]; then
   refuse transcript unreadable
 fi
-
-git_failed() { # SUBCOMMAND OUTPUT — an unreadable answer is never a clean one
-  refuse git "$1" "$2"
-}
-
-# The block is recorded once per subagent. The marker lives under the git
-# common dir of the reviewed repository once that is known, and of the
-# repository the hook runs in before then; both are shared by every linked
-# worktree.
-MARKER_REPO=.
-record_and_block() { # KEY VALUE
-  COMMON_DIR=$(git -C "$MARKER_REPO" rev-parse --git-common-dir 2>&1) ||
-    git_failed 'rev-parse --git-common-dir' "$COMMON_DIR"
-  case "$COMMON_DIR" in
-    /*) ;;
-    *) COMMON_DIR="$MARKER_REPO/$COMMON_DIR" ;;
-  esac
-  MARKER_DIR="$COMMON_DIR/kendex/reviewer-stop"
-  MARKER="$MARKER_DIR/$AGENT_ID"
-  if [ -e "$MARKER" ]; then
-    exit 0
-  fi
-  # Both probes are captured rather than left to write first: the group runs
-  # the redirection in a subshell so the shell's own "cannot create" reaches
-  # the same variable mkdir's message would.
-  if ! MARKER_ERR=$(mkdir -p -- "$MARKER_DIR" 2>&1) ||
-    ! MARKER_ERR=$( { : >"$MARKER"; } 2>&1 ); then
-    refuse marker "$MARKER" "$MARKER_ERR"
-  fi
-  refuse "$1" "$2"
-}
 
 # The newest artifact path the transcript mentions: the Write call's
 # file_path, the File: line of the return message, either one; on Copilot,

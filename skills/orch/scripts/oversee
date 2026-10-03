@@ -365,7 +365,9 @@ if [[ "$COMMAND" == register ]]; then
   # The launch identity a hand-opened session can state, from what its own
   # harness said at its start where its SessionStart row stands
   # (lib/session-rows.sh): the harness its hook install names, the account its
-  # environment carries, its model and its directory. Nothing here launched
+  # environment carries, its model and its directory. A Copilot session's
+  # account is the COPILOT_HOME it runs under, where its context reader must
+  # live, so the reader below is installed there. Nothing here launched
   # it, so no effort is known. Where no row stands, a harness with no such
   # hook or a session started before its install, the pane's foreground
   # process and directory are read instead, the named fallback, said as
@@ -395,8 +397,8 @@ if [[ "$COMMAND" == register ]]; then
     # lane_harness_process_re) at most two levels under the pane: its shell,
     # the loader, the binary. A Codex pane also reads `node`, and a Copilot
     # run it starts sits deeper, under its own tool shell, so it is not this
-    # pane's harness. Its account is --account's alone: nothing here reads
-    # COPILOT_HOME for a session.
+    # pane's harness. Its account is --account's alone: with no SessionStart
+    # row, nothing here reads the COPILOT_HOME a session runs under.
     if [[ "$shape" == both ]]; then
       case "${cmd#-}" in
         node | copilot)

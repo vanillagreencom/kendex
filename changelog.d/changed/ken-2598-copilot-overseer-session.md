@@ -1,0 +1,1 @@
+- A Copilot overseer's SessionStart row now names its session: the watch ignores a predecessor's context record, and `oversee register` installs the context reader in that session's Copilot home.

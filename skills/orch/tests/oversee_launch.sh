@@ -743,6 +743,26 @@ register_on "$COPILOT_PANE" "$MISSINGCTL/oversee" --account "$H/.1copilot"
 assert_eq "$RC|$(grep -c '^oversee: context-reader=missing ' <<<"$OUT" || true)|$(recorded harness)" "0|0|copilot" \
   "control: register without its missing-reader message loses the warning"
 mv -- "$TMP_ROOT/settings.before-disabled" "$H/.1copilot/settings.json"
+# A Copilot overseer's own SessionStart row, written by session-start-row
+# from Copilot's camelCase payload, names the account its session runs under,
+# its COPILOT_HOME: register with no --account takes it, in a pane that reads
+# no Copilot process, and installs the context reader in that home.
+rm -rf -- "${H:?}/.1copilot/extensions"
+jq -cn --arg account "$H/.1copilot" --arg cwd "$WORK_REAL" '{at: 1, event: "SessionStart",
+  harness: "copilot", session_id: "c0p1", transcript_path: "/t/c0p1/events.jsonl", cwd: $cwd,
+  account: $account}' > "$HAND_ROWS"
+cp -- "$FLEET_STATE" "$TMP_ROOT/state.before-copilot-row"
+register_on "$HAND" ''
+assert_eq "$RC|$(identity)|$(grep -c '^oversee: context-reader=next-start ' <<<"$OUT" || true)" \
+  "0|copilot|$H/.1copilot|$H/.1copilot|none|none|$WORK_REAL||1" \
+  "register takes a Copilot overseer's account from its SessionStart row and installs the context reader there"
+cp -- "$TMP_ROOT/state.before-copilot-row" "$FLEET_STATE"
+rm -rf -- "${H:?}/.1copilot/extensions"
+OVERSEE_BIN="$ROWCTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.claude" -- register
+assert_eq "$RC|$(recorded harness)|$(grep -c '^oversee: context-reader=' <<<"$OUT" || true)" "0|none|0" \
+  "control: a register that reads no row takes no harness from the pane and installs no Copilot reader"
+mv -- "$TMP_ROOT/state.before-copilot-row" "$FLEET_STATE"
+: > "$HAND_ROWS"
 
 # A hand-opened pane with no SessionStart hook, whose current command names
 # no harness, is register's fallback producer. Only the exact server, start

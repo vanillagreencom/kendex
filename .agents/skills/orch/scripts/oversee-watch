@@ -2658,12 +2658,8 @@ overseer_mark_check() { # ROWS IDENTITY PANE
 # wrote, a predecessor's until this one's first reading, says nothing of this
 # one: one naming another pane, a harness other than the one the fleet record
 # names for this pane (check_overseer's OVERSEER_RECORD_HARNESS), or a session
-# other than the one the pane's latest SessionStart row names. A Copilot
-# overseer writes records, readings and gaps, and Stop rows but no
-# SessionStart row (hooks/session-start-row.sh is not run on copilot), so only
-# the harness separates it from a predecessor in the same pane: a Copilot
-# predecessor's record, a gap drawing overseer-context-unmeasured among them,
-# stands as this session's until this session's first reading rewrites it.
+# other than the one the pane's latest SessionStart row names, a Copilot
+# overseer's included, whose session-start-row hook writes that row too.
 # Returns 0 where the record is this session's, 1 otherwise: no record,
 # another session's, or one or its rows that cannot be read, which is noted
 # and settles nothing. Reads the state overseer_pane_read left.

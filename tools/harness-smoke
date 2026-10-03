@@ -30,8 +30,8 @@
 # Pi; pi-ext on Pi alone; lane-mail and lane-question everywhere; mail-wake
 # on Claude, Codex and Pi; mixed-hook on Claude and Copilot, asked of one
 # project installed for both, whose .claude/settings.json Copilot also reads;
-# one event row per Copilot hook event kendex's Copilot hooks read, on Copilot
-# alone. Plugin has no row anywhere —
+# one event row per Copilot hook event the hooks/README.md copilot cells rest
+# on, on Copilot alone. Plugin has no row anywhere —
 # `Plugin` has `install: NONE` on all eight harnesses, so kendex renders no
 # plugin for one to load — and Antigravity has no agent row for the same
 # reason: agy reads agents from its global root alone, so kendex renders no
@@ -1484,10 +1484,10 @@ antigravity_rows() {
 }
 
 # ---- the Copilot event rows ------------------------------------------------
-# What Copilot CLI sends the six events kendex's Copilot hooks read, one row
-# each, judged against the payload hooks/README.md's copilot cells rest on: a
-# row passes where the payload still has that shape and fails where it does
-# not, naming what it saw. The project registers one recorder on all six by
+# What Copilot CLI sends the six events the hooks/README.md copilot cells rest
+# on, one row each, judged against the payload those cells assume: a row
+# passes where the payload still has that shape and fails where it does not,
+# naming what it saw. The project registers one recorder on all six by
 # hand, in .github/hooks/smoke-events.json, and holds one custom agent,
 # smoke-child: the rows measure what Copilot sends, not what kendex renders,
 # and kendex registers nothing on subagentStart, which no fleet event names.

@@ -11,8 +11,8 @@
 # turn on.
 #
 # A row is read as `rc=<status> decision=<stdout .decision or -> first=<line
-# 1 of stderr or ->`. The controls at the end run this suite against mutants of
-# the hook, one per rule, each of which must turn its row red.
+# 1 of stderr or ->`. The controls at the end run these rows against mutants
+# of the hook, one per rule, each of which must turn its row red.
 #
 # HOOK_UNDER_TEST overrides the doc-drift-check script the fixture installs.
 set -euo pipefail
@@ -33,17 +33,8 @@ BASH_BIN="$(command -v bash)"
 ERR_FILE="$TMP_ROOT/stderr"
 OUT_FILE="$TMP_ROOT/stdout"
 
-assert_eq() {
-  local got="$1" want="$2" label="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$label"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        want: %s\n        got:  %s\n' "$label" "$want" "$got"
-  fi
-}
-
+# shellcheck source=lib/assert.sh
+. "$TEST_DIR/lib/assert.sh"
 # shellcheck source=lib/first-line.sh
 . "$TEST_DIR/lib/first-line.sh"
 
@@ -51,14 +42,20 @@ fgit() {
   env HOME="$TMP_ROOT" git "$@"
 }
 
+# The payload readers but jq, for the row that runs the hook without one.
+NO_JQ="$TMP_ROOT/no-jq"
+mkdir -p "$NO_JQ"
+ln -s -- "$(command -v cat)" "$NO_JQ/cat"
+
 # A repository on main whose crates/core changed with neither of the two
 # documents covering it, its AGENTS.md and an architecture topic: a stale set
 # of two. The hooks sit where kendex renders them for Copilot, committed with
 # the rest, so they are no change of their own; JUDGE=absent leaves
-# lane-mail-check out.
+# lane-mail-check out. Each repository is under WORLD, the scratch directory of
+# one run of the rows.
 REPO=""
 new_repo() { # NAME [absent]
-  REPO="$TMP_ROOT/repo.$1"
+  REPO="$WORLD/repo.$1"
   mkdir -p "$REPO/crates/core/src" "$REPO/docs/architecture" "$REPO/.github/hooks"
   fgit init -q "$REPO"
   fgit -C "$REPO" symbolic-ref HEAD refs/heads/main
@@ -75,18 +72,12 @@ new_repo() { # NAME [absent]
   printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
 }
 
-# The lead's transcript sits in the session-state directory named for the
-# lead's session; a subagent's stop names the same file under its own session.
-LEAD_TRANSCRIPT="$TMP_ROOT/session-state/lead-1/events.jsonl"
-mkdir -p "${LEAD_TRANSCRIPT%/*}"
-: >"$LEAD_TRANSCRIPT"
-
-run_stop() { # SESSION [ACTIVE]
+run_stop() { # SESSION [ACTIVE] [PATH]
   local payload
   payload=$(jq -nc --arg s "$1" --arg cwd "$REPO" --arg t "$LEAD_TRANSCRIPT" --argjson a "${2:-false}" \
     '{sessionId:$s, timestamp:1, cwd:$cwd, transcriptPath:$t, stopReason:"end_turn", stop_hook_active:$a}')
   set +e
-  (cd "$REPO" && env HOME="$TMP_ROOT" "$BASH_BIN" "$REPO/.github/hooks/doc-drift-check.sh" <<<"$payload") \
+  (cd "$REPO" && env HOME="$TMP_ROOT" PATH="${3:-$PATH}" "$BASH_BIN" "$REPO/.github/hooks/doc-drift-check.sh" <<<"$payload") \
     >"$OUT_FILE" 2>"$ERR_FILE"
   rc=$?
   set -e
@@ -98,54 +89,67 @@ verdict() {
   printf 'rc=%s decision=%s first=%s' "$rc" "$decision" "$(first_line)"
 }
 
-echo "=== doc-drift-check on Copilot's agentStop ==="
 # Each row is one stop in a repository of its own unless it names `same`,
 # which stops again in the row above's.
-n=0
-while IFS='|' read -r label world session active want; do
-  n=$((n + 1))
-  case "$world" in
-    same) ;;
-    absent) new_repo "$n" absent ;;
-    *) new_repo "$n" ;;
-  esac
-  run_stop "$session" "$active"
-  assert_eq "$(verdict)" "$want" "$label"
-done <<'ROWS'
-the lead's stop over stale documents is held with the block answer at exit 0|fresh|lead-1|false|rc=0 decision=block first=doc-drift-check: stale=2
-the lead's next stop naming the same set passes|same|lead-1|false|rc=0 decision=- first=-
-a custom subagent's stop, its own session naming the lead's transcript, passes|fresh|sub-1|false|rc=0 decision=- first=-
-a stop the harness continued passes|fresh|lead-1|true|rc=0 decision=- first=-
-with no lane-mail-check beside it, a subagent's stop is judged as the lead's|absent|sub-1|false|rc=0 decision=block first=doc-drift-check: stale=2
+copilot_rows() {
+  local n=0 label world session active path want
+  WORLD=$(mktemp -d "$TMP_ROOT/world.XXXXXX") || { echo "doc-drift-check-copilot: world=mktemp-failed" >&2; exit 1; }
+  # The lead's transcript sits in the session-state directory named for the
+  # lead's session; a subagent's stop names the same file under its own
+  # session.
+  LEAD_TRANSCRIPT="$WORLD/session-state/lead-1/events.jsonl"
+  mkdir -p "${LEAD_TRANSCRIPT%/*}"
+  : >"$LEAD_TRANSCRIPT"
+  while IFS='|' read -r label world session active path want; do
+    n=$((n + 1))
+    case "$world" in
+      same) ;;
+      absent) new_repo "$n" absent ;;
+      *) new_repo "$n" ;;
+    esac
+    case "$path" in all) path=$PATH ;; no-jq) path=$NO_JQ ;; esac
+    run_stop "$session" "$active" "$path"
+    assert_eq "$(verdict)" "$want" "$label"
+  done <<'ROWS'
+the lead's stop over stale documents is held with the block answer at exit 0|fresh|lead-1|false|all|rc=0 decision=block first=doc-drift-check: stale=2
+the lead's next stop naming the same set passes|same|lead-1|false|all|rc=0 decision=- first=-
+a custom subagent's stop, its own session naming the lead's transcript, passes|fresh|sub-1|false|all|rc=0 decision=- first=-
+a stop the harness continued passes|fresh|lead-1|true|all|rc=0 decision=- first=-
+with no lane-mail-check beside it, a subagent's stop is judged as the lead's|absent|sub-1|false|all|rc=0 decision=block first=doc-drift-check: stale=2
+with jq off PATH the lead's stop is held with the block answer, built without jq|fresh|lead-1|false|no-jq|rc=0 decision=block first=doc-drift-check: missing-tools=jq
 ROWS
 
-# The reason Copilot hands the lead is the text the stderr carries.
-new_repo reason
-run_stop lead-1
-assert_eq "$(jq -r '.reason' "$OUT_FILE" 2>/dev/null)" "$(cat "$ERR_FILE")" \
-  "the block's reason is the refusal text, keyed line first"
+  # The reason Copilot hands the lead is the text the stderr carries.
+  new_repo reason
+  run_stop lead-1
+  assert_eq "$(jq -r '.reason' "$OUT_FILE" 2>/dev/null)" "$(cat "$ERR_FILE")" \
+    "the block's reason is the refusal text, keyed line first"
+}
+
+echo "=== doc-drift-check on Copilot's agentStop ==="
+copilot_rows
 
 # --- controls ----------------------------------------------------------------
-# Each rule removed from a copy of the hook turns its row red: the install's
-# answer shape, the caller's question, the camelCase session read, and the
-# install's harness read.
+# Each rule a line planted in a copy of the hook undoes turns its row red: the
+# install's answer shape, the answer built without jq, the caller's question,
+# the camelCase session read, and the install's harness read.
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  c=0
-  while IFS='@' read -r old new row; do
-    c=$((c + 1))
-    MUTANT="$TMP_ROOT/mutant-$c.sh"
-    cp "$HOOK" "$MUTANT"
-    assert_eq "$(grep -c -x -F -- "$old" "$MUTANT")" "1" "control $c finds: $old"
-    OLD="$old" NEW="$new" perl -i -pe 's/^\Q$ENV{OLD}\E$/$ENV{NEW}/' "$MUTANT"
-    assert_eq "$(grep -c -x -F -- "$old" "$MUTANT")" "0" "control $c removed it"
-    CONTROL_OUT="$(HOOK_UNDER_TEST="$MUTANT" "$BASH_BIN" "${BASH_SOURCE[0]}" 2>&1 || true)"
-    assert_eq "$(grep -c -x -F -- "  FAIL  $row" <<<"$CONTROL_OUT")" "1" "control $c: without it, '$row' fails"
-  done <<'CONTROLS'
-  if [ "$INSTALL" = copilot ] && command -v jq >/dev/null 2>&1; then@  if false; then@the lead's stop over stale documents is held with the block answer at exit 0
-  [ "$CALLER" != subagent ] || exit 0@  :@a custom subagent's stop, its own session naming the lead's transcript, passes
-  [str(if .session_id != null then .session_id else .sessionId end),@  [str(.session_id),@the lead's next stop naming the same set passes
-  */.github/hooks) INSTALL=copilot ;;@  */.github/hooks-never) INSTALL=copilot ;;@the lead's stop over stale documents is held with the block answer at exit 0
-CONTROLS
+  skill_load_control answer "$HOOK" '  if [ "$INSTALL" = copilot ]; then' \
+    '    exit 2' HOOK copilot_rows \
+    "the lead's stop over stale documents is held with the block answer at exit 0"
+  skill_load_control answer-jq "$HOOK" '  if [ "$INSTALL" = copilot ]; then' \
+    '    command -v jq >/dev/null 2>&1 || exit 2' HOOK copilot_rows \
+    "with jq off PATH the lead's stop is held with the block answer, built without jq"
+  skill_load_control caller "$HOOK" \
+    '    CALLER=$(printf '"'%s'"' "$INPUT" | "$BASH" "$CALLER_JUDGE" caller 2>/dev/null) || CALLER=""' \
+    '    CALLER=""' HOOK copilot_rows \
+    "a custom subagent's stop, its own session naming the lead's transcript, passes"
+  skill_load_control session "$HOOK" 'SESSION=${FIELDS%%"$TAB"*}' \
+    "SESSION=\$(printf '%s' \"\$INPUT\" | jq -r '.session_id // \"\"')" HOOK copilot_rows \
+    "the lead's next stop naming the same set passes"
+  skill_load_control install "$HOOK" 'if [ -z "$INSTALL" ] && [ -f "${BASH_SOURCE[0]%.sh}.json" ]; then INSTALL=copilot; fi' \
+    'INSTALL=""' HOOK copilot_rows \
+    "the lead's stop over stale documents is held with the block answer at exit 0"
 fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

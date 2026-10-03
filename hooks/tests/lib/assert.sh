@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared value assertion for the skill-load-check suites.
+# The value assertion and the must-fail control runner the hooks suites share.
 assert_eq() {
   local got="$1" want="$2" name="$3"
   if [[ "$got" == "$want" ]]; then
