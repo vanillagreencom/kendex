@@ -757,6 +757,10 @@ ci_proj() { # NAME WORKFLOW(yes|no)
   local dir
   dir="$(make_mode_proj "$1" 'echo range')"
   printf 'tmp/\n' > "$dir/.gitignore"
+  # Both projects hold a .github file outside workflows/, so a read of all of
+  # .github finds a workflow in each.
+  mkdir -p "$dir/.github"
+  printf 'notes\n' > "$dir/.github/copilot-instructions.md"
   if [[ "$2" == yes ]]; then
     mkdir -p "$dir/.github/workflows"
     printf 'on: pull_request\n' > "$dir/.github/workflows/ci.yml"
