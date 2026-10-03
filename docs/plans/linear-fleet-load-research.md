@@ -9,13 +9,13 @@ Every lane, VM overseer and local overseer reads and writes Linear as one applic
 Drop the cache. On the live-read route KEN-2335 specifies, with each cache read a workflow names priced as its live command, one lane costs 35 requests and 14,138 complexity points from launch to close. Today's lanes are close to that but not on it: they start with no cache seed (fleet FLT-641 removed it), run no `sync --reconcile` (directive 1790845185) and read issues live where the launch briefs say so, but scripts that read the cache get no answer. Today's lane costs 33 requests and 13,360 points, with `branch-size-check` exiting 2 at both of its reads, and a TPM audit pays a full sync (§ Load per workflow). The with-cache figures come from the sync-query runs and the scratch syncs made under owner exception 1791058163. With a warm cache it costs 247 requests and 184,090 points, because each of its five syncs pays the fixed phases again. On an empty cache the first sync is full and the lane costs 436 requests and 306,515 points. [M]
 
 - A full sync, measured end to end, costs 207 requests and 134,475 points in 711 seconds without attachments, and 234 requests and 158,100 points with the 27 attachment pages. A sync on a fresh seed costs 7 requests and 10,810 points in 7 seconds, and 34 requests and 34,435 points with the attachment pages. [M] runs `seed-full`, `seed-incremental`, `sync-attachments`
-- Peak: the four overseer watches, one per fleet at `--interval 900`, cost 132 requests and 45,584 points an hour. All 38 lanes at the fleets' caps (kendex 20, fleet 12, vg 3, talk 3), each running its whole life in one hour, plus the watches and one TPM audit, use 1,537 requests (30.7 percent) and 639,143 points (32.0 percent) of the shared bucket on the live-read route, and 1,623 (32.5 percent) and 711,618 (35.6 percent) as lanes and the audit run today. With a warm cache, 19 lane starts at once empty the complexity bucket, and kendex's cap of 20 alone reaches that; with empty caches, 9 do. [M] [O]
+- Peak: the four overseer watches, one per fleet at `--interval 900`, cost 132 requests and 45,584 points an hour. All 38 lanes at the fleets' caps (kendex 20, fleet 12, vg 3, talk 3), each running its whole life in one hour, plus the watches and one TPM audit, use 1,537 requests (30.7 percent) and 639,143 points (32.0 percent) of the shared bucket on the live-read route, and 1,623 (32.5 percent) and 711,618 (35.6 percent) as lanes and the audit run today. Started at once, with each start's syncs back to back at their measured pace and the bucket refilling as it drains, 20 warm lane starts exhaust the complexity bucket 95 seconds in, which is kendex's cap; on empty caches 11 do, 786 seconds in (10 without drovr's rows). [M] [O]
 - In a 70-minute window with no other request from this sandbox, in today's state, the shared request bucket never fell below 4,994 of 5,000, and the complexity bucket never below 1,915,628 of 2,000,000. The control host logged no RATELIMITED line in 7 days. [M] [O]
 - Reconcile fails before its first request in this workspace: the 6,488 cached ids make one 272,580-byte jq argument, past Linux's 128 KiB limit (KEN-2667). A plain `sync` reconciles by itself when the reconcile stamp is missing or an hour old, and only `sync --full` writes the stamp, so the sync after a missing-cache full sync fails. The launch briefs' stop on `--reconcile` does not stop it, and 20 workflow, skill and reference files still name `sync --reconcile`. [L5] [T2]
 - A restored seed makes a lane's first sync incremental, but one seeded sync still costs 2.4 times the points of a whole lane without the cache. The recommendation stays drop; § Lane cache seed gives the design and its owner. [M]
 - Nine of the twelve rules the commands enforce have no owner on a raw route, and seven of them become regressions. KEN-2335's thin layer must keep five of them in code: the team target, the agent label and reach lines on create, peer-only blocking relations, and the validate-completion matrix. [L1] [L2] [L3]
 - Freshness: no cache, with live reads, costs the least and needs no new owner. A webhook-fed cache needs a public HTTPS receiver and the `admin` scope, which the kendex app does not hold. [S2] [L4]
-- Drovr is archived and its Linear team was recreated empty, so no consumer, fleet or concurrency figure counts it. The measured full sync still read drovr's 432 issues and 848 comments; without them it costs 225 requests and 152,190 points, and no headroom count changes (§ Drovr). [M]
+- Drovr is archived and its Linear team was recreated empty, so no consumer, fleet or concurrency figure counts it. The measured full sync still read drovr's 432 issues and 848 comments; without them it costs 225 requests and 152,190 points, and the empty-cache threshold falls from 11 starts at once to 10 (§ Drovr). [M]
 - Team-limited write credentials (KEN-2689) should be one OAuth app per team, not personal keys. Personal keys all share the owner's 2,500 requests an hour, and the fleet's peak hour plus the cross-team read key needs 1,591 of them on the live-read route (63.6 percent) and 1,677 as lanes run today (67.1 percent). One app per team gives each team its own 5,000; kendex at its cap needs 843 (16.9 percent) or 965 (19.3 percent). [M] [D1]
 
 § Sync runs during this research lists every sync this research ran and its share of each bucket.
@@ -139,7 +139,7 @@ Drovr is archived on GitHub and its Linear team was recreated empty (owner note 
 | Empty-cache lane start | 326 / 229,702 | 317 / 223,792 | 2 + 225 + 90; 252 + 152,190 + 71,350 |
 | Empty-cache lane | 436 / 306,515 | 427 / 300,605 | 436 − 9; 306,515 − 5,910 |
 | Empty-cache TPM audit sync and `reconcile-work-items` | 234 / 158,100 | 225 / 152,190 | As the full sync |
-| Empty-cache starts that empty a bucket | 16 / 9 | 16 / 9 | ⌊5,000 / 317⌋ + 1; ⌊2,000,000 / 223,792⌋ + 1 |
+| Empty-cache starts at once that exhaust a bucket, time-resolved | 19 / 11 | 18 / 10 | The § Peak concurrency and headroom simulation, with the last 6 issue pages and last 3 comment pages of run `seed-full` removed and their time closed up |
 | All 38 lanes starting on empty caches | 12,388 / 8,728,676 | 12,046 / 8,504,096 | 38 × 317; 38 × 223,792 |
 | Peak hour, 38 empty-cache lanes | 16,568 / 11,647,570 | 16,226 / 11,422,990 | 38 × 427; 38 × 300,605 |
 | Today's TPM audit | 237 / 158,354 | 228 / 152,444 | 225 + 3; 152,190 + 254 |
@@ -269,7 +269,7 @@ All four fleets set `LINEAR_TEAM` (kendex, fleet, vanillagreen, talk) and read a
 
 A long pass starts only when `--interval` has passed since the start recorded in the fleet's mail state (`oversee-watch:3849-3858`, row `long-pass` at `:285`). That state is keyed by the first repository and `--since` under the checkout's `tmp/oversee-watch` (`:255`, `:1205`), and a pass with no `--repo` takes the checkout's own repository (`:1158`). The hook passes run from the same base checkouts with the same `--state` and a `--since` that starts like the repeat watch's (the ps lines are cut off), so they most likely share the clock and add no long pass.
 
-Burst headroom: lane starts at once, no spread, against the 5,000-request and 2,000,000-point buckets.
+Burst load: lane starts at once, as the static sum of each start's requests and points against the 5,000-request and 2,000,000-point buckets. A sum over 100 percent is load, not exhaustion: a start spends its requests over time while the bucket refills. The last row is the time-resolved threshold.
 
 | Lane starts at once | Without cache: req / points | Warm cache: req / points | Empty cache: req / points |
 |---|---|---|---|
@@ -277,9 +277,20 @@ Burst headroom: lane starts at once, no spread, against the 5,000-request and 2,
 | fleet at 12 | 72 (1.4%) / 62,340 (3.1%) | 1,644 (32.9%) / 1,287,324 (64.4%) | 3,912 (78.2%) / 2,756,424 (137.8%) |
 | vg or talk at 3 | 18 (0.4%) / 15,585 (0.8%) | 411 (8.2%) / 321,831 (16.1%) | 978 (19.6%) / 689,106 (34.5%) |
 | All 38 | 228 (4.6%) / 197,410 (9.9%) | 5,206 (104.1%) / 4,076,526 (203.8%) | 12,388 (247.8%) / 8,728,676 (436.4%) |
-| Starts that empty a bucket | 834 / 385 | 37 / 19 | 16 / 9 |
+| Starts at once that exhaust a bucket, time-resolved | 835 / 386 | 38 / 20 | 19 / 11 |
 
-Each figure is the count times the per-start cost above; the last row is the smallest count whose cost passes the bucket. Each 10 minutes of spread adds 833 requests and 333,333 points of refill.
+Each load figure is the count times the per-start cost above. The threshold row is time-resolved. Every start runs its reads back to back at the pace the shim logged: the full sync's 207 requests at their timestamps over 710 s (run `seed-full`), then the 27 attachment pages at their 0.60 s spacing (runs `sync-attachments`); each incremental sync as run `seed-incremental` (7 requests over 5.4 s, a mean gap of 0.89 s), with one comments page, 10 reconcile pages at the 0.94 s gap of runs `reconcile-2613` and the 27 attachment pages added. That makes a warm start 137 requests over 98 s, an empty start 326 requests over 793 s, and a no-cache start 6 requests over 3.9 s. N starts begin together; the bucket starts full, refills at 1.39 requests and 555.6 points a second up to its cap, and loses N times each request's cost at that request's time. The threshold is the smallest N that takes the bucket below zero. Attachment downloads, which add time between pages, and the agent's work between a start's three syncs are left out, so a real start runs slower and each threshold is a lower bound. [M]
+
+What the simulation gives at the caps, all starting at once:
+
+| Fleet at its cap | Warm cache | Empty cache |
+|---|---|---|
+| kendex, 20 | Points exhausted 95 s in; requests stay above 2,395 | Both exhausted: points 289 s in, requests 780 s in |
+| fleet, 12 | Neither: lowest 3,491 requests and 767,006 points | Points exhausted 762 s in; requests stay above 2,189 |
+| vg or talk, 3 | Neither | Neither: lowest 4,659 requests and 1,711,236 points |
+| All 38 | Both exhausted: points 53 s in, requests 97 s in | Both exhausted: points 199 s in, requests 254 s in |
+
+Each 10 minutes of spread between starts adds 833 requests and 333,333 points of refill.
 
 Peak hour on the live-read route, with every one of the 38 lanes running its whole life inside the hour: lanes 38 × 35 = 1,330 requests and 38 × 14,138 = 537,244 points, the four watches 132 and 45,584, one TPM audit 75 and 56,315. Total 1,537 requests (30.7 percent) and 639,143 points (32.0 percent); 1,601 and 659,891 (32.0 and 33.0 percent) if the hook passes keep their own clocks. As lanes and the audit run today (§ Today): 38 × 33 = 1,254, 132 and 237, total 1,623 requests (32.5 percent); 38 × 13,360 = 507,680, 45,584 and 158,354, total 711,618 points (35.6 percent). The heartbeat adds 1.3 requests and 287 points. The read key bills the owner's personal bucket, not the app's: at most 54 requests an hour, 2.2 percent of its 2,500. With a cache the same hour needs 38 × 247 = 9,386 requests and 38 × 184,090 = 6,995,420 points warm, and 38 × 436 = 16,568 and 38 × 306,515 = 11,647,570 empty, before the watches.
 
@@ -287,9 +298,9 @@ The four fleets are the live consumers. Drovr is none and counts in no figure in
 
 Odds of a RATELIMITED answer, from a full bucket, with the complexity refill at 555.6 points a second:
 
-- **Without cache**: no workload in the tables comes near either bucket. At the caps the peak hour uses about a third of each, on the live-read route and as lanes run today, and a burst would need 385 lane starts inside a few minutes.
-- **Warm cache**: certain when kendex starts its 20 lanes within 4 minutes, since their 2,145,540 points pass the bucket plus 4 minutes of refill, 2,133,333; likely when any 19 lanes start together. Merges alone need 55 at once: a warm merge row is 36,847 points, and ⌈2,000,000 / 36,847⌉ = 55.
-- **Empty cache**: certain when 9 lanes start within 2 minutes (2,067,318 points). A kendex relaunch at its cap does it unless spread over more than 78 minutes, a fleet relaunch unless spread over more than 23.
+- **Without cache**: no workload in the tables comes near either bucket. At the caps the peak hour uses about a third of each, on the live-read route and as lanes run today, and a burst needs 386 lane starts at once (time-resolved).
+- **Warm cache**: certain when 20 lanes start at once, kendex's cap, 95 s in; 19 do not exhaust the bucket. Merges alone need 55 at once: a warm merge row is one sync plus `issues complete`, 49 requests and 36,847 points over 33 s, and the same simulation exhausts the bucket at 55.
+- **Empty cache**: certain when 11 lanes start at once (10 without drovr's rows); the bucket runs out during their later syncs, 786 s in. A kendex or fleet relaunch at its cap does it; vg and talk at 3 do not.
 
 ### Fleet consumption
 
@@ -368,7 +379,7 @@ The raw route needs 26 percent of the skill's bytes when the rules move into tex
 | Option | Who owns it | Cost | Gaps |
 |---|---|---|---|
 | Cache fed by Linear webhooks | A new public HTTPS receiver that answers within 5 seconds, plus a fan-out to every host's cache. No such service exists in kendex. Creating the webhook needs a workspace admin or the `admin` scope [S2]; the app token holds `read,write` (`lib/auth.sh:117-121`), and a scope change revokes every app token. | 0 GraphQL requests per change; one hosted service and its signing secret | Linear retries a failed delivery 3 times, after 1 minute, 1 hour and 6 hours, then may disable the webhook [S2]. A missed event needs a delta read to repair it. |
-| `updatedAt` delta read | The existing incremental path in `sync.sh:47-127`, filter `updatedAt gte` | 2 requests per refresh for issues and comments; the fixed phases add 33 more as written (run `seed-incremental` plus the attachment pages) | Archive and trash do not change `updatedAt` (`sync.sh:461`), so deletions need reconcile, which fails in this workspace (KEN-2667). |
+| `updatedAt` delta read | The existing incremental path in `sync.sh:47-127`, filter `updatedAt gte` | 1 request per refresh for the issues delta, plus 1 for comments only when that delta returned a changed issue (`sync.sh:739-775`); the fixed phases add 33 more as written: 34 requests with no change, 35 with one (run `seed-incremental` plus the attachment pages) | Archive and trash do not change `updatedAt` (`sync.sh:461`), so deletions need reconcile, which fails in this workspace (KEN-2667). |
 | No cache | Each call site reads live, as KEN-2335 specifies | 35 requests per lane; the four watches 132 requests an hour as written, 40 with the trimmed read | None for freshness. Each read pays its own request. |
 
 The trimmed watch figure is 4 passes an hour times ⌈rows / 250⌉ pages per fleet: kendex 5, fleet 3, vg 1, talk 1, at the rows of runs `watch-pass-*`.
@@ -406,7 +417,7 @@ The measured X-Complexity values do not follow the [S1] formula literally: a 250
 
 | Choice | Load | Freshness | Guards | Cost to build |
 |---|---|---|---|---|
-| Keep the cache as it is | 247 to 436 requests per lane; the complexity bucket empties at 9 to 19 simultaneous starts | Stale between syncs; reconcile fails in this workspace, and plain sync with it once the stamp is missing or an hour old; initiatives always empty | Kept in code | None, but 20 workflow files and the launch briefs disagree today |
+| Keep the cache as it is | 247 to 436 requests per lane; the complexity bucket runs out at 11 to 20 starts at once | Stale between syncs; reconcile fails in this workspace, and plain sync with it once the stamp is missing or an hour old; initiatives always empty | Kept in code | None, but 20 workflow files and the launch briefs disagree today |
 | Keep the cache with the fix set: seed (fleet), batched reconcile (KEN-2667), a reconcile stamp on every full sync, `sync --if-stale` per step | First sync 34 requests and 34,435 points instead of 234 and 158,100; each later step 0 when fresh, else 34 to 35 requests and 34,435 to 35,635 points; 16 more requests per reconciling sync | Up to the `--if-stale` age | Kept in code | A fleet item, KEN-2667, the stamp, KEN-2695, and 20 workflow files plus the briefs aligned |
 | Change the cache: team filter, no attachment pull per sync, `updatedAt` delta only | Lower than now, still a fixed cost per sync | Same as the delta row | Kept in code | Rework of `sync.sh` that KEN-2335 deletes |
 | Webhook-fed cache | Close to zero reads | Seconds | Kept in code | New hosted service, `admin` scope, token reissue |
@@ -419,7 +430,7 @@ Drop the cache, as KEN-2335 specifies. The decision rests on these figures:
 
 - One lane costs 35 requests and 14,138 points without the cache on the live-read route (33 and 13,360 as lanes run today, § Today), against 247 and 184,090 with a warm cache and 436 and 306,515 with an empty one.
 - With the seed restored, one seeded sync alone costs 34 requests and 34,435 points, 2.4 times a whole no-cache lane's points.
-- At the fleets' caps, 38 lanes in one peak hour with the watches and an audit use 30.7 percent of the requests and 32.0 percent of the points on the live-read route, and 32.5 and 35.6 percent as lanes run today. With a cache, kendex's 20 lane starts alone empty the complexity bucket warm, and 9 starts do it on empty caches.
+- At the fleets' caps, 38 lanes in one peak hour with the watches and an audit use 30.7 percent of the requests and 32.0 percent of the points on the live-read route, and 32.5 and 35.6 percent as lanes run today. With a cache, kendex's 20 lane starts at once exhaust the complexity bucket warm, and 11 starts do it on empty caches (time-resolved, § Peak concurrency and headroom). The time-resolved thresholds are higher than the static sums the first rounds used (20 against 19 warm, 11 against 9 empty); the recommendation does not rest on them and still follows from the per-lane cost.
 - The cache gives no freshness or correctness gain to offset that: reconcile fails in this workspace, initiatives never load, and every sync reads every team's data.
 
 Owed decisions, each closed:
@@ -464,7 +475,7 @@ For filing by the orchestrator:
 - KEN-2335 lands: re-measure one lane end to end on the thin layer with the shim, and compare with the 35-request figure.
 - Linear changes the bucket sizes or the refill rule on [S1], or the headers report other limits.
 - The app gains the `admin` or initiative scopes, which changes the webhook and initiatives rows.
-- A seed or a lane-end sync returns while kendex's cap is 19 or more: a warm-cache relaunch at that cap empties the complexity bucket.
+- A seed or a lane-end sync returns while kendex's cap is 20 or more: a warm-cache relaunch at that cap exhausts the complexity bucket.
 - A fleet's `--interval` falls below 900, or a watch runs months on one `--since`: the watch rows grow with both.
 
 ## Research Metadata
