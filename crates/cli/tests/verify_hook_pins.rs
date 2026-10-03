@@ -44,7 +44,7 @@
 //!   notice on the hook;
 //! - the peer row, where another hook brings the companions onto Copilot
 //!   first: the walk with the pin dropped going on only to a companion
-//!   that gains a tool, and not to every one the hook requires below it
+//!   that learns a reason, and not to every one the hook requires below it
 //!   (`deps::walk`), puts a notice on the hook;
 //! - the switched-off missing-name row: the walk with the pin dropped
 //!   keeping the hook's switch (`deps::withheld_past_pin`) puts a notice

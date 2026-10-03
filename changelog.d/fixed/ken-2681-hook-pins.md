@@ -1,1 +1,1 @@
-- Adopting an agent, skill or hook keeps no `harnesses` list that names exactly its default tools (Antigravity keeps a hook's), and `kendex verify` judges custom, switched-off and chained hook pins.
+- Adoption leaves no `harnesses` list it writes or grows to exactly the default tools (Antigravity keeps a hook's), and `kendex verify` judges custom, switched-off and chained hook pins.

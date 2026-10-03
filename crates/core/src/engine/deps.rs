@@ -140,7 +140,7 @@ pub(super) fn expand(
 
 /// The walk [`expand`] describes, onto `expansion` and `state`, from the
 /// items in `queue` and every one they require, each walked at least once
-/// and again whenever it gains a tool. Returns each hook its pin alone
+/// and again whenever it learns a reason. Returns each hook its pin alone
 /// keeps off a tool, with those tools, where the hook requires a
 /// companion; one that requires nothing is withheld nowhere, pinned or
 /// not.
@@ -153,14 +153,16 @@ fn walk(
 ) -> BTreeMap<String, Vec<HarnessId>> {
     // A hook's withholding is read off the companions below it, so one the
     // queue did not start with is walked the first time it is required,
-    // grown or not: an item another requirer already brought onto the tool
-    // learns nothing, and would otherwise go unread.
+    // grown or not: the walk past a pin starts from an expansion the first
+    // walk already filled, so every item below the hook's direct companions
+    // learns no new reason, and would otherwise go unread.
     let mut seen: BTreeSet<Node> = queue.iter().cloned().collect();
-    // An item is walked again whenever it gains a tool to install on, and
-    // what it came to — the companions it derives, its findings, the tools
-    // it is withheld from — is recomputed against that larger set each
-    // time. Keeping only the last answer per item is what stops a pair of
-    // items that require each other from reporting everything twice.
+    // An item is walked again whenever it learns a reason (another
+    // requirer on a tool, or its switch turned on), and what it came to —
+    // the companions it derives, its findings, the tools it is withheld
+    // from — is recomputed each time. Keeping only the last answer per
+    // item is what stops a pair of items that require each other from
+    // reporting everything twice.
     let mut wanted: BTreeMap<Node, Wanted> = BTreeMap::new();
     while let Some((kind, parent)) = queue.pop_front() {
         // A declaration no tool here can hold installs nothing, so it needs

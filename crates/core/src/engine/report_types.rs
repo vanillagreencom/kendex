@@ -258,7 +258,8 @@ pub struct EngineReport {
     pub warnings: Vec<ItemWarning>,
     /// Catalog hooks left off a tool by their own harnesses line alone.
     /// A declaration that names the tool gets a `kendex-hook-excluded`
-    /// note in `notes` and a `pinned_hooks` row instead.
+    /// note in `notes` instead, and a `pinned_hooks` row where the plan
+    /// judges pins.
     pub excluded_hooks: Vec<ExcludedHook>,
     /// Each tool a hook's pin, on a declaration or a `[[custom-hooks]]`
     /// entry, decides against the hook's own reading; `verify` names every

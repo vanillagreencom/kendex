@@ -48,7 +48,8 @@ pub fn read(env: &Env, scope: &Scope) -> Records {
 
 /// Compare source and disk bytes through the same engine in each reader,
 /// with the source read as `options` says. A scope with no record has
-/// nothing to hold, so `options` reaches the recorded path alone.
+/// nothing to hold, so `options` reaches the recorded path and only its
+/// `judge_pins` reaches the recordless one.
 pub fn audit(
     env: &Env,
     scope: &Scope,

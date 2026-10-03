@@ -346,9 +346,9 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
 /// Each tool a hook's pin is judged on, every one the expansion aims the
 /// hook at or the scope installs on, with what [`if_switched_on`] answers
 /// there. The one set for the pin records ([`pin_records`]) and for the
-/// walk (`deps::wanted_by`), which asks again with the pin dropped about
-/// each tool answered [`NotWritten::OtherTools`], the pin alone keeping
-/// the hook off it.
+/// walk (`deps::wanted_by`), which, where the pass judges pins, asks again
+/// with the pin dropped about each tool answered
+/// [`NotWritten::OtherTools`], the pin alone keeping the hook off it.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn pin_answers(
     env: &Env,
