@@ -65,10 +65,20 @@ fn release(value: &str) -> Option<Vec<u32>> {
     Some(parts)
 }
 fn claude_release(id: &str, family: &str) -> Option<Release> {
-    let tail = id.strip_prefix(&format!("claude-{family}-"))?;
-    let (version, snapshot) = match tail.rsplit_once('-') {
-        Some((version, last)) if last.len() == 8 => (version, Some(date(last)?)),
-        _ => (tail, None),
+    let rest = id.strip_prefix("claude-")?;
+    // Releases before 4 name the version first: `claude-3-5-haiku-20241022`.
+    let (version, snapshot) = match rest.strip_prefix(family).and_then(|t| t.strip_prefix('-')) {
+        Some(tail) => match tail.rsplit_once('-') {
+            Some((version, last)) if last.len() == 8 => (version, Some(date(last)?)),
+            _ => (tail, None),
+        },
+        None => {
+            let (version, after) = rest.split_once(&format!("-{family}"))?;
+            match after {
+                "" => (version, None),
+                suffix => (version, Some(date(suffix.strip_prefix('-')?)?)),
+            }
+        }
     };
     Some(Release {
         components: release(version)?,

@@ -174,6 +174,8 @@ fn request_kinds_and_override_rule() {
         ("fast", "inherit", false),
         ("other", "provider/custom", false),
         ("fast", "anthropic/claude-haiku-4-5", false),
+        ("fast", "anthropic/claude-3-haiku-20240307", false),
+        ("fast", "anthropic/claude-3-5-haiku-20241022", false),
         ("fast", "bare", false),
     ] {
         assert_eq!(
@@ -280,6 +282,15 @@ fn newest_family_numeric_snapshot_and_suffix_rules() {
                 "claude-sonnet-5-20260230",
             ],
             "claude-sonnet-5-20260201",
+        ),
+        (
+            vec![
+                "claude-3-5-sonnet-20241022",
+                "claude-3-7-sonnet-20250219",
+                "claude-3-haiku-20240307",
+                "claude-3-opus-20240229",
+            ],
+            "claude-3-7-sonnet-20250219",
         ),
     ] {
         let mut context = context("anthropic", &ids);
@@ -402,6 +413,23 @@ fn affirmative_no_model_refuses_and_known_pin_never_upgrades() {
     );
 }
 #[test]
+fn excluded_haiku_reads_both_claude_id_orders() {
+    for (id, excluded) in [
+        ("haiku", true),
+        ("claude-haiku-4-5", true),
+        ("claude-haiku-4-5-20251001", true),
+        ("claude-3-haiku-20240307", true),
+        ("claude-3-5-haiku-20241022", true),
+        ("claude-3-5-haiku", true),
+        ("claude-haiku-4-6", false),
+        ("claude-haiku-5", false),
+        ("claude-3-5-sonnet-20241022", false),
+        ("claude-3-haikus-20240307", false),
+    ] {
+        assert_eq!(family::excluded_haiku(id), excluded, "{id}");
+    }
+}
+#[test]
 fn exact_haiku_compatibility_substitution_stops_at_four_point_five() {
     // Native model lists supply the exact pins and their model-bound capacity.
     for (id, expected, effective, causes) in [
@@ -419,6 +447,18 @@ fn exact_haiku_compatibility_substitution_stops_at_four_point_five() {
         ),
         (
             "claude-haiku-4-5-20251001",
+            "claude-sonnet-5",
+            Some(ModelClass::Light),
+            vec!["old-id", "excluded-haiku", "fallback"],
+        ),
+        (
+            "claude-3-haiku-20240307",
+            "claude-sonnet-5",
+            Some(ModelClass::Light),
+            vec!["old-id", "excluded-haiku", "fallback"],
+        ),
+        (
+            "claude-3-5-haiku-20241022",
             "claude-sonnet-5",
             Some(ModelClass::Light),
             vec!["old-id", "excluded-haiku", "fallback"],
