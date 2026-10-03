@@ -426,8 +426,8 @@ fn append_system_block(
 }
 
 /// The edit that brings an installed package's `APPEND_SYSTEM.md` block in
-/// line with a declaration switched to `enabled`, for a plan that changes
-/// the switch without reinstalling the package.
+/// line with its declaration's `enabled`, for a plan that does not
+/// reinstall the package.
 pub(crate) fn append_system_edit(
     scope_root: &Path,
     name: &str,
