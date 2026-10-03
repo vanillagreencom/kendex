@@ -848,8 +848,7 @@ a subagentStart naming no subagent passes|event:subagentStart|pass|naming no age
 a subagentStop naming the subagent's session and agent passes|event:subagentStop|pass|own session sub-1 as agentId, smoke-child as agentType
 an agentStop at each agent's end, both naming the lead's transcript, passes|event:agentStop|pass|fired it twice
 an errorOccurred for each try of a failed model call passes|event:errorOccurred|pass|fired it 2 time(s)
-a hook on an event the session never raises is skipped, naming the event rows|hook:reviewer-stop-check|skipped|raises no SubagentStop; the copilot event rows
-and so is the errorOccurred hook|hook:stop-failure-row|skipped|raises no StopFailure"
+a hook on an event the session never raises is skipped, naming the event rows|hook:reviewer-stop-check|skipped|raises no SubagentStop; the copilot event rows"
 dup_rows="$(awk '$1 == "copilot" { print $2 }' "$TMP/pkg-out" | sort | uniq -d)"
 if [ -z "$dup_rows" ] && [ "$(awk '$1 == "copilot" && $2 ~ /:/' "$TMP/pkg-out" | wc -l)" -gt 0 ]; then
   ok "every package row prints once"
@@ -1014,7 +1013,7 @@ package_case "control: a hook row that never looks under its judge fails a wrapp
 plant "$STAND_SMOKE" 's/^    \[ "\$line" = "\$args" \] || continue$/    :/'
 package_run "$STAND_SMOKE" STANDIN_WRAP=session-end-row
 package_case "control: a hook row that takes any read of its judge passes a wrapper whose arguments never ran" hook:session-end-row pass "reading the payload Copilot sent"
-plant "$STAND_SMOKE" "s/^PKG_UNRAISED='SubagentStop StopFailure'\$/PKG_UNRAISED=''/"
+plant "$STAND_SMOKE" "s/^PKG_UNRAISED='SubagentStop'\$/PKG_UNRAISED=''/"
 package_run "$STAND_SMOKE"
 package_case "control: with every event read as raised, a SubagentStop hook is judged on a session that runs no subagent" hook:reviewer-stop-check pass "reading the payload Copilot sent"
 

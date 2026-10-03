@@ -50,8 +50,9 @@ for tool in git cat grep tail mkdir; do
 done
 
 # A reviewed repository with the hook installed where kendex renders it for
-# Copilot, under WORLD, the scratch directory of one run of the rows. The hook
-# runs from the repository root, as Copilot runs a project's hooks.
+# Copilot at project scope, under WORLD, the scratch directory of one run of
+# the rows. The hook runs from the repository root, as Copilot runs a
+# project's hooks.
 new_repo() { # NAME -> path
   local repo="$WORLD/repo.$1"
   mkdir -p "$repo/src" "$repo/.github/hooks"
@@ -66,16 +67,28 @@ new_repo() { # NAME -> path
   printf '%s' "$repo"
 }
 
-# run REPO AGENT_TYPE AGENT_ID RESPONSE [PATH] -> rc, stdout in OUT_FILE,
-# stderr in ERR_FILE. The transcript is the lead's, in the session-state
-# directory named for the lead's session.
+# The hook where kendex renders it for Copilot at global scope: in an account's
+# hooks directory, beside the <name>.json registry document only a copilot
+# install leaves.
+new_account() { # -> path of the installed hook
+  local hooks="$WORLD/cop-home/.copilot-work/hooks"
+  mkdir -p "$hooks"
+  cp "$HOOK" "$hooks/reviewer-stop-check.sh"
+  printf '{"version":1,"hooks":{}}\n' >"$hooks/reviewer-stop-check.json"
+  printf '%s' "$hooks/reviewer-stop-check.sh"
+}
+
+# run REPO AGENT_TYPE AGENT_ID RESPONSE [PATH] [HOOK] -> rc, stdout in
+# OUT_FILE, stderr in ERR_FILE. HOOK defaults to the repository's project
+# install. The transcript is the lead's, in the session-state directory named
+# for the lead's session.
 run_copilot() {
-  local repo="$1" payload
+  local repo="$1" hook="${6:-$1/.github/hooks/reviewer-stop-check.sh}" payload
   payload=$(jq -nc --arg cwd "$repo" --arg t "$LEAD_TRANSCRIPT" --arg type "$2" --arg id "$3" --arg r "$4" \
     '{sessionId:"lead-1", timestamp:1, cwd:$cwd, transcriptPath:$t, agentId:$id, agentType:$type,
       agentName:$type, agentDisplayName:$type, response:$r, stopReason:"end_turn"}')
   set +e
-  (cd "$repo" && env HOME="$TMP_ROOT" PATH="${5:-$PATH}" "$BASH_BIN" "$repo/.github/hooks/reviewer-stop-check.sh" <<<"$payload") \
+  (cd "$repo" && env HOME="$TMP_ROOT" PATH="${5:-$PATH}" "$BASH_BIN" "$hook" <<<"$payload") \
     >"$OUT_FILE" 2>"$ERR_FILE"
   rc=$?
   set -e
@@ -91,7 +104,7 @@ reply_for() { # REPO
 }
 
 copilot_rows() {
-  local label repo type id reply path want clean dirty none marker
+  local label repo type id reply path install want clean dirty none account marker
   WORLD=$(mktemp -d "$TMP_ROOT/world.XXXXXX") || { echo "reviewer-stop-check-copilot: world=mktemp-failed" >&2; exit 1; }
   LEAD_TRANSCRIPT="$WORLD/session-state/lead-1/events.jsonl"
   mkdir -p "${LEAD_TRANSCRIPT%/*}"
@@ -99,12 +112,13 @@ copilot_rows() {
   dirty="$(new_repo dirty)"
   printf 'probe\n' >"$dirty/probe.sh"
   none="$(new_repo none)"
+  account="$(new_account)"
   # The lead's transcript names the dirty repository's artifact: a hook reading
   # it instead of the reply would block the clean review below.
   printf '{"type":"assistant.message","data":{"content":"File: %s/tmp/review-reviewer-other-20261002-090909.json"}}\n' "$dirty" \
     >"$LEAD_TRANSCRIPT"
 
-  while IFS='|' read -r label repo type id reply path want; do
+  while IFS='|' read -r label repo type id reply path install want; do
     case "$repo" in clean) repo=$clean ;; dirty) repo=$dirty ;; none) repo=$none ;; esac
     case "$reply" in
       artifact) reply=$(reply_for "$repo") ;;
@@ -112,18 +126,20 @@ copilot_rows() {
       unreadable) reply='File: /nonexistent/wt/tmp/review-reviewer-test-1.json' ;;
     esac
     case "$path" in all) path=$PATH ;; no-jq) path=$NO_JQ ;; esac
-    run_copilot "$repo" "$type" "$id" "$reply" "$path"
+    case "$install" in project) install="$repo/.github/hooks/reviewer-stop-check.sh" ;; account) install=$account ;; esac
+    run_copilot "$repo" "$type" "$id" "$reply" "$path" "$install"
     assert_eq "$(verdict)" "${want//@REPO@/$repo}" "$label"
   done <<'ROWS'
-a reviewer whose reply names a clean worktree passes, whatever the lead's transcript names|clean|reviewer-test|sub-1|artifact|all|rc=0 decision=- first=-
-a reviewer whose reply names a dirty worktree is held with the block answer at exit 0|dirty|reviewer-test|sub-2|artifact|all|rc=0 decision=block first=reviewer-stop-check: worktree=@REPO@
-the same subagent's next stop passes|dirty|reviewer-test|sub-2|artifact|all|rc=0 decision=- first=-
-another reviewer subagent over the same dirty worktree is held|dirty|reviewer-test|sub-3|artifact|all|rc=0 decision=block first=reviewer-stop-check: worktree=@REPO@
-a reviewer whose reply names no artifact is held|none|reviewer-test|sub-4|bare|all|rc=0 decision=block first=reviewer-stop-check: artifact=missing
-a subagent that is no reviewer passes over a dirty worktree|dirty|smoke-child|sub-5|artifact|all|rc=0 decision=- first=-
-a reviewer whose reply names a worktree git cannot read is held|clean|reviewer-test|sub-7|unreadable|all|rc=0 decision=block first=reviewer-stop-check: git=rev-parse --show-toplevel
-the same subagent's next stop over that unreadable worktree passes|clean|reviewer-test|sub-7|unreadable|all|rc=0 decision=- first=-
-with jq off PATH a reviewer is held with the block answer, built without jq|dirty|reviewer-test|sub-8|artifact|no-jq|rc=0 decision=block first=reviewer-stop-check: missing-tools=jq
+a reviewer whose reply names a clean worktree passes, whatever the lead's transcript names|clean|reviewer-test|sub-1|artifact|all|project|rc=0 decision=- first=-
+a reviewer whose reply names a dirty worktree is held with the block answer at exit 0|dirty|reviewer-test|sub-2|artifact|all|project|rc=0 decision=block first=reviewer-stop-check: worktree=@REPO@
+the same subagent's next stop passes|dirty|reviewer-test|sub-2|artifact|all|project|rc=0 decision=- first=-
+another reviewer subagent over the same dirty worktree is held|dirty|reviewer-test|sub-3|artifact|all|project|rc=0 decision=block first=reviewer-stop-check: worktree=@REPO@
+a reviewer whose reply names no artifact is held|none|reviewer-test|sub-4|bare|all|project|rc=0 decision=block first=reviewer-stop-check: artifact=missing
+a subagent that is no reviewer passes over a dirty worktree|dirty|smoke-child|sub-5|artifact|all|project|rc=0 decision=- first=-
+a reviewer whose reply names a worktree git cannot read is held|clean|reviewer-test|sub-7|unreadable|all|project|rc=0 decision=block first=reviewer-stop-check: git=rev-parse --show-toplevel
+the same subagent's next stop over that unreadable worktree passes|clean|reviewer-test|sub-7|unreadable|all|project|rc=0 decision=- first=-
+with jq off PATH a reviewer is held with the block answer, built without jq|dirty|reviewer-test|sub-8|artifact|no-jq|project|rc=0 decision=block first=reviewer-stop-check: missing-tools=jq
+a reviewer over a dirty worktree is held with the block answer at exit 0 from a global-scope install|dirty|reviewer-test|sub-9|artifact|all|account|rc=0 decision=block first=reviewer-stop-check: worktree=@REPO@
 ROWS
 
   # The reason Copilot hands the subagent is the text the stderr carries.
@@ -140,8 +156,8 @@ copilot_rows
 # --- controls ----------------------------------------------------------------
 # Each rule a line planted in a copy of the hook undoes turns its row red: the
 # install's answer shape, the answer built without jq, the camelCase agent
-# type and id reads, the reply as the artifact source, the install's harness
-# read, and the per-agent record of every refusal.
+# type and id reads, the reply as the artifact source, each of the install's
+# two harness reads, and the per-agent record of every refusal.
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   skill_load_control answer "$HOOK" '  if [ "$INSTALL" = copilot ]; then' \
     '    exit 2' HOOK copilot_rows \
@@ -158,9 +174,12 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   skill_load_control reply "$HOOK" '  MENTIONS=$(grep -oE "$ARTIFACT_PATTERN" <<<"$REPLY" 2>&1)' \
     '  MENTIONS=$(grep -oE "$ARTIFACT_PATTERN" -- "$TRANSCRIPT" 2>&1)' HOOK copilot_rows \
     "a reviewer whose reply names a clean worktree passes, whatever the lead's transcript names"
-  skill_load_control install "$HOOK" 'if [ -z "$INSTALL" ] && [ -f "${BASH_SOURCE[0]%.sh}.json" ]; then INSTALL=copilot; fi' \
+  skill_load_control install-dir "$HOOK" '  */.github/hooks) INSTALL=copilot' \
     'INSTALL=""' HOOK copilot_rows \
     'a reviewer whose reply names a dirty worktree is held with the block answer at exit 0'
+  skill_load_control install-registry "$HOOK" '[ -f "${BASH_SOURCE[0]%.sh}.json" ]; then INSTALL=copilot' \
+    'INSTALL=""' HOOK copilot_rows \
+    'a reviewer over a dirty worktree is held with the block answer at exit 0 from a global-scope install'
   skill_load_control every-refusal "$HOOK" '[ "$INSTALL" != copilot ] || MARK_EVERY_REFUSAL=1' \
     'MARK_EVERY_REFUSAL=0' HOOK copilot_rows \
     "the same subagent's next stop over that unreadable worktree passes"

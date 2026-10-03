@@ -49,14 +49,20 @@ ln -s -- "$(command -v cat)" "$NO_JQ/cat"
 
 # A repository on main whose crates/core changed with neither of the two
 # documents covering it, its AGENTS.md and an architecture topic: a stale set
-# of two. The hooks sit where kendex renders them for Copilot, committed with
-# the rest, so they are no change of their own; JUDGE=absent leaves
-# lane-mail-check out. Each repository is under WORLD, the scratch directory of
-# one run of the rows.
+# of two. The hooks sit where kendex renders them for Copilot at project
+# scope, committed with the rest, so they are no change of their own; absent
+# leaves lane-mail-check out. account puts both at global scope instead, in an
+# account's hooks directory beside the <name>.json registry document only a
+# copilot install leaves. Each repository is under WORLD, the scratch directory
+# of one run of the rows, and INSTALLED names the doc-drift-check it runs.
 REPO=""
-new_repo() { # NAME [absent]
+INSTALLED=""
+new_repo() { # NAME [absent|account]
+  local hooks name
   REPO="$WORLD/repo.$1"
-  mkdir -p "$REPO/crates/core/src" "$REPO/docs/architecture" "$REPO/.github/hooks"
+  hooks="$REPO/.github/hooks"
+  [ "${2:-}" != account ] || hooks="$WORLD/cop-home.$1/.copilot-work/hooks"
+  mkdir -p "$REPO/crates/core/src" "$REPO/docs/architecture" "$hooks"
   fgit init -q "$REPO"
   fgit -C "$REPO" symbolic-ref HEAD refs/heads/main
   fgit -C "$REPO" config user.email t@example.com
@@ -65,8 +71,14 @@ new_repo() { # NAME [absent]
   printf '# core\n' >"$REPO/crates/core/AGENTS.md"
   printf '# Core\n\nCovers: crates/core\n' >"$REPO/docs/architecture/core.md"
   printf 'pub fn a() {}\n' >"$REPO/crates/core/src/lib.rs"
-  cp "$HOOK" "$REPO/.github/hooks/doc-drift-check.sh"
-  [ "${2:-}" = absent ] || cp "$HOOKS/lane-mail-check.sh" "$REPO/.github/hooks/lane-mail-check.sh"
+  INSTALLED="$hooks/doc-drift-check.sh"
+  cp "$HOOK" "$INSTALLED"
+  [ "${2:-}" = absent ] || cp "$HOOKS/lane-mail-check.sh" "$hooks/lane-mail-check.sh"
+  if [ "${2:-}" = account ]; then
+    for name in doc-drift-check lane-mail-check; do
+      printf '{"version":1,"hooks":{}}\n' >"$hooks/$name.json"
+    done
+  fi
   fgit -C "$REPO" add -A
   fgit -C "$REPO" commit -q -m init
   printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
@@ -77,7 +89,7 @@ run_stop() { # SESSION [ACTIVE] [PATH]
   payload=$(jq -nc --arg s "$1" --arg cwd "$REPO" --arg t "$LEAD_TRANSCRIPT" --argjson a "${2:-false}" \
     '{sessionId:$s, timestamp:1, cwd:$cwd, transcriptPath:$t, stopReason:"end_turn", stop_hook_active:$a}')
   set +e
-  (cd "$REPO" && env HOME="$TMP_ROOT" PATH="${3:-$PATH}" "$BASH_BIN" "$REPO/.github/hooks/doc-drift-check.sh" <<<"$payload") \
+  (cd "$REPO" && env HOME="$TMP_ROOT" PATH="${3:-$PATH}" "$BASH_BIN" "$INSTALLED" <<<"$payload") \
     >"$OUT_FILE" 2>"$ERR_FILE"
   rc=$?
   set -e
@@ -104,7 +116,7 @@ copilot_rows() {
     n=$((n + 1))
     case "$world" in
       same) ;;
-      absent) new_repo "$n" absent ;;
+      absent | account) new_repo "$n" "$world" ;;
       *) new_repo "$n" ;;
     esac
     case "$path" in all) path=$PATH ;; no-jq) path=$NO_JQ ;; esac
@@ -117,6 +129,7 @@ a custom subagent's stop, its own session naming the lead's transcript, passes|f
 a stop the harness continued passes|fresh|lead-1|true|all|rc=0 decision=- first=-
 with no lane-mail-check beside it, a subagent's stop is judged as the lead's|absent|sub-1|false|all|rc=0 decision=block first=doc-drift-check: stale=2
 with jq off PATH the lead's stop is held with the block answer, built without jq|fresh|lead-1|false|no-jq|rc=0 decision=block first=doc-drift-check: missing-tools=jq
+the lead's stop is held with the block answer at exit 0 from a global-scope install|account|lead-1|false|all|rc=0 decision=block first=doc-drift-check: stale=2
 ROWS
 
   # The reason Copilot hands the lead is the text the stderr carries.
@@ -132,7 +145,7 @@ copilot_rows
 # --- controls ----------------------------------------------------------------
 # Each rule a line planted in a copy of the hook undoes turns its row red: the
 # install's answer shape, the answer built without jq, the caller's question,
-# the camelCase session read, and the install's harness read.
+# the camelCase session read, and each of the install's two harness reads.
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   skill_load_control answer "$HOOK" '  if [ "$INSTALL" = copilot ]; then' \
     '    exit 2' HOOK copilot_rows \
@@ -147,9 +160,12 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   skill_load_control session "$HOOK" 'SESSION=${FIELDS%%"$TAB"*}' \
     "SESSION=\$(printf '%s' \"\$INPUT\" | jq -r '.session_id // \"\"')" HOOK copilot_rows \
     "the lead's next stop naming the same set passes"
-  skill_load_control install "$HOOK" 'if [ -z "$INSTALL" ] && [ -f "${BASH_SOURCE[0]%.sh}.json" ]; then INSTALL=copilot; fi' \
+  skill_load_control install-dir "$HOOK" '  */.github/hooks) INSTALL=copilot' \
     'INSTALL=""' HOOK copilot_rows \
     "the lead's stop over stale documents is held with the block answer at exit 0"
+  skill_load_control install-registry "$HOOK" '[ -f "${BASH_SOURCE[0]%.sh}.json" ]; then INSTALL=copilot' \
+    'INSTALL=""' HOOK copilot_rows \
+    "the lead's stop is held with the block answer at exit 0 from a global-scope install"
 fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

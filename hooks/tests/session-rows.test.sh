@@ -212,7 +212,9 @@ COP_END="{$COP_BASE,\"reason\":\"error\"}"
 COP_ERROR='"recoverable":true,"error":{"message":"429 limit reached","name":"Error","stack":"Error: 429"}'
 COP_WALL="{$COP_BASE,\"errorContext\":\"model_call\",$COP_ERROR}"
 COP_TOOL_FAIL="{$COP_BASE,\"errorContext\":\"tool_execution\",$COP_ERROR}"
-COP_SUB_WALL="{\"sessionId\":\"c1\",\"timestamp\":1,\"cwd\":\"/work\",\"errorContext\":\"model_call\",$COP_ERROR}"
+COP_SUB_BASE='"sessionId":"c1","timestamp":1,"cwd":"/work"'
+COP_SUB_START="{$COP_SUB_BASE,\"source\":\"new\",\"initialPrompt\":\"Reply with ok.\"}"
+COP_SUB_WALL="{$COP_SUB_BASE,\"errorContext\":\"model_call\",$COP_ERROR}"
 COP_ENV=("HOME=$COP_HOME_DIR" COPILOT_HOME=/accounts/cop)
 while IFS='|' read -r label wrapper payload want; do
   new_checkout "$label" .github/hooks
@@ -225,6 +227,7 @@ copilot end|session-end-row|$COP_END|SessionEnd,copilot,l1,/work,/accounts/cop,e
 copilot model-call failure|stop-failure-row|$COP_WALL|StopFailure,copilot,l1,/work,/accounts/cop,429 limit reached
 copilot tool failure|stop-failure-row|$COP_TOOL_FAIL|absent
 copilot failure of a session no lead record names|stop-failure-row|$COP_SUB_WALL|absent
+copilot start of a session no lead record names|session-start-row|$COP_SUB_START|SessionStart,copilot,c1,/work,/accounts/cop,new
 ROWSTABLE
 
 # What is reported and passed: an install whose orch scripts lack the row
@@ -346,18 +349,23 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   assert_eq "$(grep -c '^  FAIL  a hook installed under .codex/hooks writes a codex row$' <<<"$CONTROL_OUT")" "1" \
     "control: a row harness fixed at claude fails the codex install row"
 fi
-# The lead-record rule for a Copilot failure removed from a copy of the hook:
-# a failure no lead record names then writes the session's row.
+# The Copilot row's lead-record gate, each side changed in a copy of the hook:
+# with no gate a failure no lead record names writes the session's row, and
+# with the gate on every row a start no lead record names writes none.
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  LEAD_MUTANT="$TMP_ROOT/lead-mutant.sh"
   LEAD_RULE='      [ "$ROW_ARG" != StopFailure ] || { copilot_lead_file && [ -f "$LEAD_FILE" ]; } || CALLER=unknown'
-  cp "$HOOK" "$LEAD_MUTANT"
-  assert_eq "$(grep -c -x -F -- "$LEAD_RULE" "$LEAD_MUTANT")" "1" "control finds the Copilot lead rule"
-  LEAD_RULE="$LEAD_RULE" perl -i -pe 's/^\Q$ENV{LEAD_RULE}\E$/      :/' "$LEAD_MUTANT"
-  assert_eq "$(grep -c -x -F -- "$LEAD_RULE" "$LEAD_MUTANT")" "0" "control removed it"
-  CONTROL_OUT="$(HOOK_UNDER_TEST="$LEAD_MUTANT" bash "${BASH_SOURCE[0]}" 2>&1 || true)"
-  assert_eq "$(grep -c '^  FAIL  copilot failure of a session no lead record names$' <<<"$CONTROL_OUT")" "1" \
-    "control: without the lead rule a failure no lead record names writes a row"
+  while IFS='@' read -r name planted row; do
+    LEAD_MUTANT="$TMP_ROOT/lead-$name-mutant.sh"
+    cp "$HOOK" "$LEAD_MUTANT"
+    assert_eq "$(grep -c -x -F -- "$LEAD_RULE" "$LEAD_MUTANT")" "1" "control $name finds the Copilot lead rule"
+    LEAD_RULE="$LEAD_RULE" PLANTED="$planted" perl -i -pe 's/^\Q$ENV{LEAD_RULE}\E$/$ENV{PLANTED}/' "$LEAD_MUTANT"
+    assert_eq "$(grep -c -x -F -- "$LEAD_RULE" "$LEAD_MUTANT")" "0" "control $name replaced it"
+    CONTROL_OUT="$(HOOK_UNDER_TEST="$LEAD_MUTANT" bash "${BASH_SOURCE[0]}" 2>&1 || true)"
+    assert_eq "$(grep -c -x -F -- "  FAIL  $row" <<<"$CONTROL_OUT")" "1" "control $name: $row fails"
+  done <<'CONTROLS'
+no-gate@      :@copilot failure of a session no lead record names
+every-row@      { copilot_lead_file && [ -f "$LEAD_FILE" ]; } || CALLER=unknown@copilot start of a session no lead record names
+CONTROLS
 fi
 # The errorContext filter removed from the checkout's copy of stop-failure-row:
 # a tool's failure then writes a StopFailure row.
