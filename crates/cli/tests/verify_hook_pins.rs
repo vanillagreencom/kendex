@@ -8,7 +8,9 @@
 //! resolves to nothing. The engine's record of what
 //! the pin does on each tool, which picks the remedy verify prints, is
 //! checked beside the rows, and each notice row's `state` is read as the
-//! JSON spells it.
+//! JSON spells it. A plan not asked to judge pins records none: only
+//! verify reads them. That such a plan also skips the walk with each pin
+//! dropped changes no output, only its cost, so no row holds it.
 //!
 //! Controls, each a row the named defect turns red:
 //! - the leave-out row: the engine no longer recording a tool its pin alone
@@ -40,6 +42,10 @@
 //! - the missing-name rows: the walk withholding no hook on a tool where a
 //!   name it requires resolves to nothing (`deps::wanted_by`) puts a
 //!   notice on the hook;
+//! - the peer row, where another hook brings the companions onto Copilot
+//!   first: the walk with the pin dropped going on only to a companion
+//!   that gains a tool, and not to every one the hook requires below it
+//!   (`deps::walk`), puts a notice on the hook;
 //! - the switched-off missing-name row: the walk with the pin dropped
 //!   keeping the hook's switch (`deps::withheld_past_pin`) puts a notice
 //!   on the hook;
@@ -49,6 +55,11 @@
 //!   scoped entry's, counting only a registered or agent-file one empties
 //!   the OpenCode entry's, and counting a tool where the entry is not
 //!   installable puts a notice on the Antigravity entry;
+//! - every row with a pin record: a plan judging pins unasked
+//!   (`desired_kinds::pin_records` ignoring `DesiredState::judge_pins`)
+//!   fills the unjudged plan's records, and verify's reading no longer
+//!   asking for them (`attest::Reading::plan_options`) empties the
+//!   notices;
 //! - every row with a notice: renaming `State::Notice`, or its wire
 //!   spelling, empties the notices read off the JSON.
 #![cfg(unix)]
@@ -59,7 +70,7 @@ use test_util::{rooted, source_path};
 use std::fs;
 
 use kendex_core::attest::{Document, State};
-use kendex_core::engine::{Pin, PinnedHook};
+use kendex_core::engine::{Pin, PinnedHook, PlanOptions};
 use kendex_core::env::Env;
 use kendex_core::model::{HarnessId, Scope};
 
@@ -73,6 +84,9 @@ const INNER: &str = "inner";
 /// A name the hook requires where a case says so, which the catalog holds
 /// nothing under.
 const MISSING: &str = "absent";
+/// A second hook, declared with no pin, that requires [`COMPANION`] where
+/// a case says so.
+const PEER: &str = "peer";
 /// A catalog set carrying [`HOOK`], installed on both `[install]` tools and
 /// on Codex, which `[install]` leaves out.
 const BUNDLE: &str = "starter";
@@ -100,6 +114,11 @@ struct Case {
     /// Whether the hook also requires [`MISSING`], and holds its
     /// requirements on Copilot alone.
     missing: bool,
+    /// Whether [`PEER`] is declared, and the hook requires [`COMPANION`],
+    /// which requires an undeclared [`INNER`] that requires [`MISSING`] on
+    /// Copilot alone: the peer brings both onto Copilot before the hook's
+    /// pin is dropped.
+    peer: bool,
     /// The tools apply records the hook for.
     recorded: &'static [HarnessId],
     /// What the engine records each hook's pin doing, tool by tool; verify
@@ -115,6 +134,7 @@ const PLAIN: Case = Case {
     companion: None,
     inner: None,
     missing: false,
+    peer: false,
     recorded: &[],
     pinned: &[],
 };
@@ -221,6 +241,15 @@ const CASES: &[Case] = &[
         recorded: &[HarnessId::Claude],
         ..PLAIN
     },
+    // Two levels down, where another hook already brings the companions
+    // onto Copilot: the name the inner one lacks there withholds it, the
+    // companion and the hook, pin or no pin.
+    Case {
+        pin: Some("[\"claude\"]"),
+        peer: true,
+        recorded: &[HarnessId::Claude],
+        ..PLAIN
+    },
     // A companion that runs everywhere stands in the way of nothing.
     Case {
         pin: Some("[\"claude\"]"),
@@ -248,14 +277,15 @@ fn check(case: &Case) {
     fs::create_dir_all(project.join(".claude")).unwrap();
     fs::create_dir_all(project.join(".github")).unwrap();
     let at = format!(
-        "header {:?} pin {:?} bundled {} off {} companion {:?} inner {:?} missing {}",
+        "header {:?} pin {:?} bundled {} off {} companion {:?} inner {:?} missing {} peer {}",
         case.header,
         case.pin,
         case.bundled,
         case.switched_off,
         case.companion,
         case.inner,
-        case.missing
+        case.missing,
+        case.peer
     );
     let applied = kendex(&home, &project, &["apply", "-y", "--leave"]);
     assert!(applied.status.success(), "{at}: {}", said(&applied));
@@ -272,13 +302,19 @@ fn check(case: &Case) {
         })
         .collect();
     assert_eq!(recorded, case.recorded, "{at}: {lock}");
-    let report = kendex_core::engine::audit(
-        &Env::host_rooted(&home),
-        &Scope::Project {
+    let (env, scope) = (
+        Env::host_rooted(&home),
+        Scope::Project {
             root: project.clone(),
         },
-    )
-    .unwrap();
+    );
+    let judged = PlanOptions {
+        judge_pins: true,
+        ..PlanOptions::default()
+    };
+    let report = kendex_core::engine::plan_apply(&env, &scope, &judged).unwrap();
+    let unjudged = kendex_core::engine::audit(&env, &scope).unwrap();
+    assert_eq!(unjudged.pinned_hooks, [], "{at}");
     let pinned: Vec<PinnedHook> = case
         .pinned
         .iter()
@@ -321,7 +357,10 @@ fn lay_out(case: &Case, catalog: &std::path::Path, project: &std::path::Path) {
         &format!("is_source_catalog = true\n{catalog_sets}"),
     );
     let required: Vec<&str> = [
-        (case.companion.is_some() || case.inner.is_some(), COMPANION),
+        (
+            case.companion.is_some() || case.inner.is_some() || case.peer,
+            COMPANION,
+        ),
         (case.missing, MISSING),
     ]
     .into_iter()
@@ -335,9 +374,13 @@ fn lay_out(case: &Case, catalog: &std::path::Path, project: &std::path::Path) {
         true => "# requires-on: [copilot]\n",
         false => "",
     };
-    let requires_inner = match case.inner {
-        Some(_) => format!("# requires: [{INNER}]\n"),
-        None => String::new(),
+    let requires_inner = match case.inner.is_some() || case.peer {
+        true => format!("# requires: [{INNER}]\n"),
+        false => String::new(),
+    };
+    let inner_requires = match case.peer {
+        true => format!("# requires: [{MISSING}]\n# requires-on: [copilot]\n"),
+        false => String::new(),
     };
     write(
         &catalog.join(format!("hooks/{HOOK}.sh")),
@@ -355,7 +398,13 @@ fn lay_out(case: &Case, catalog: &std::path::Path, project: &std::path::Path) {
     write(
         &catalog.join(format!("hooks/{INNER}.sh")),
         &format!(
-            "#!/usr/bin/env bash\n# ---\n# name: {INNER}\n# event: Stop\n# description: delivers\n# ---\nexit 0\n"
+            "#!/usr/bin/env bash\n# ---\n# name: {INNER}\n# event: Stop\n# description: delivers\n{inner_requires}# ---\nexit 0\n"
+        ),
+    );
+    write(
+        &catalog.join(format!("hooks/{PEER}.sh")),
+        &format!(
+            "#!/usr/bin/env bash\n# ---\n# name: {PEER}\n# event: PreToolUse\n# matcher: Bash\n# description: also guards\n# requires: [{COMPANION}]\n# ---\nexit 0\n"
         ),
     );
     let pin = case
@@ -374,10 +423,14 @@ fn lay_out(case: &Case, catalog: &std::path::Path, project: &std::path::Path) {
         .inner
         .map(|list| format!("[hooks.{INNER}]\nsource = \"cat\"\nharnesses = {list}\n"))
         .unwrap_or_default();
+    let peer = match case.peer {
+        true => format!("[hooks.{PEER}]\nsource = \"cat\"\n"),
+        false => String::new(),
+    };
     write(
         &project.join("kendex.toml"),
         &format!(
-            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"copilot\"]\nmethod = \"copy\"\n{bundle}{companion}{inner}[hooks.{HOOK}]\nsource = \"cat\"\n{pin}{switch}",
+            "schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"copilot\"]\nmethod = \"copy\"\n{bundle}{companion}{inner}{peer}[hooks.{HOOK}]\nsource = \"cat\"\n{pin}{switch}",
             source_path(catalog),
         ),
     );

@@ -182,10 +182,15 @@ pub enum Reading {
 impl Reading {
     /// The plan this reading renders through: under `Recorded`, the
     /// single-package hold naming no package, which holds every follower.
+    /// Either judges the hook pins, which verify names.
     pub fn plan_options(self) -> crate::engine::PlanOptions {
-        match self {
+        let options = match self {
             Reading::Current => crate::engine::PlanOptions::default(),
             Reading::Recorded => crate::engine::PlanOptions::for_packages([]),
+        };
+        crate::engine::PlanOptions {
+            judge_pins: true,
+            ..options
         }
     }
 }

@@ -58,7 +58,7 @@ pub fn audit(
     let empty = Manifest::default();
     let manifest = records.manifest.as_deref().unwrap_or(&empty);
     if records.fallback {
-        crate::engine::audit_without_record(env, scope, manifest)
+        crate::engine::audit_without_record(env, scope, manifest, options.judge_pins)
     } else {
         Ok(crate::engine::RecordlessAudit {
             report: crate::engine::plan_scope(env, scope, manifest, &records.lock, options)?,

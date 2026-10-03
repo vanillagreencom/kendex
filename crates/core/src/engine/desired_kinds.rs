@@ -394,7 +394,9 @@ pub(super) fn pin_answers(
 /// it with the pin dropped (`DesiredState::withheld_past_pin`); and one
 /// the pin names that the hook's own harnesses line leaves out, said in
 /// the plan's notes too. The hook script's frontmatter decides that skip,
-/// so the note's remedy names both lines.
+/// so the note's remedy names both lines. The records are kept only where
+/// the pass judges pins (`DesiredState::judge_pins`); the note is said
+/// on every plan.
 fn pin_records(ctx: &ItemCtx, state: &mut DesiredState, hook: &HookSpec) {
     let answers = pin_answers(
         ctx.env,
@@ -407,6 +409,7 @@ fn pin_records(ctx: &ItemCtx, state: &mut DesiredState, hook: &HookSpec) {
     );
     for (harness, answer) in answers {
         let pin = match answer {
+            Some(NotWritten::OtherTools) if !state.judge_pins => continue,
             Some(NotWritten::OtherTools) => {
                 let key = (ItemKind::Hook, ctx.name.to_owned(), harness);
                 let withheld = state.withheld_past_pin.contains(&key)
@@ -446,11 +449,13 @@ fn pin_records(ctx: &ItemCtx, state: &mut DesiredState, hook: &HookSpec) {
                 | NotWritten::RevConflict,
             ) => continue,
         };
-        state.pinned_hooks.push(super::PinnedHook {
-            name: ctx.name.to_owned(),
-            harness,
-            pin,
-        });
+        if state.judge_pins {
+            state.pinned_hooks.push(super::PinnedHook {
+                name: ctx.name.to_owned(),
+                harness,
+                pin,
+            });
+        }
     }
 }
 

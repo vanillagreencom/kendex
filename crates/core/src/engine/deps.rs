@@ -104,39 +104,18 @@ type Node = (ItemKind, String);
 /// forever. Items that came in as bundle members are walked like any other:
 /// what an item needs does not depend on how it was chosen.
 ///
-/// A hook whose pin alone keeps it off a tool is asked about that tool
-/// again, by the same walk with that one pin dropped
-/// ([`withheld_past_pin`]), so the pin records never say a pin keeps a
-/// hook off a tool it could not run on anyway.
+/// Where the pass judges pins (`DesiredState::judge_pins`), a hook whose
+/// pin alone keeps it off a tool is asked about that tool again, by the
+/// same walk with that one pin dropped ([`withheld_past_pin`]), so the pin
+/// records never say a pin keeps a hook off a tool it could not run on
+/// anyway.
 pub(super) fn expand(
     manifest: &Manifest,
     expansion: &mut Expansion,
     catalogs: &mut Catalogs,
     state: &mut DesiredState,
 ) {
-    let declared = expansion.clone();
-    let left_out = walk(manifest, expansion, catalogs, state);
-    for (hook, tools) in left_out {
-        let withheld = withheld_past_pin(manifest, &declared, catalogs, state, &hook, &tools);
-        state.withheld_past_pin.extend(
-            withheld
-                .into_iter()
-                .map(|harness| (ItemKind::Hook, hook.clone(), harness)),
-        );
-    }
-}
-
-/// The walk [`expand`] describes, onto `expansion` and `state`. Returns
-/// each hook its pin alone keeps off a tool, with those tools, where the
-/// hook requires a companion; one that requires nothing is withheld
-/// nowhere, pinned or not.
-fn walk(
-    manifest: &Manifest,
-    expansion: &mut Expansion,
-    catalogs: &mut Catalogs,
-    state: &mut DesiredState,
-) -> BTreeMap<String, Vec<HarnessId>> {
-    let mut queue: VecDeque<Node> = DEPENDENT_KINDS
+    let every_item = DEPENDENT_KINDS
         .into_iter()
         .map(|(kind, _)| kind)
         .collect::<BTreeSet<_>>()
@@ -148,6 +127,35 @@ fn walk(
                 .map(move |(name, _)| (kind, name.clone()))
         })
         .collect();
+    let left_out = walk(manifest, expansion, catalogs, state, every_item);
+    for (hook, tools) in left_out {
+        let withheld = withheld_past_pin(manifest, expansion, catalogs, state, &hook, &tools);
+        state.withheld_past_pin.extend(
+            withheld
+                .into_iter()
+                .map(|harness| (ItemKind::Hook, hook.clone(), harness)),
+        );
+    }
+}
+
+/// The walk [`expand`] describes, onto `expansion` and `state`, from the
+/// items in `queue` and every one they require, each walked at least once
+/// and again whenever it gains a tool. Returns each hook its pin alone
+/// keeps off a tool, with those tools, where the hook requires a
+/// companion; one that requires nothing is withheld nowhere, pinned or
+/// not.
+fn walk(
+    manifest: &Manifest,
+    expansion: &mut Expansion,
+    catalogs: &mut Catalogs,
+    state: &mut DesiredState,
+    mut queue: VecDeque<Node>,
+) -> BTreeMap<String, Vec<HarnessId>> {
+    // A hook's withholding is read off the companions below it, so one the
+    // queue did not start with is walked the first time it is required,
+    // grown or not: an item another requirer already brought onto the tool
+    // learns nothing, and would otherwise go unread.
+    let mut seen: BTreeSet<Node> = queue.iter().cloned().collect();
     // An item is walked again whenever it gains a tool to install on, and
     // what it came to — the companions it derives, its findings, the tools
     // it is withheld from — is recomputed against that larger set each
@@ -191,8 +199,9 @@ fn walk(
                 };
                 grew |= expansion.add(*dep_kind, dep, &decl, *harness, Reason::RequiredBy { by });
             }
-            if grew {
-                queue.push_back((*dep_kind, dep.clone()));
+            let node = (*dep_kind, dep.clone());
+            if seen.insert(node.clone()) || grew {
+                queue.push_back(node);
             }
         }
         wanted.insert((kind, parent.clone()), found);
@@ -240,14 +249,16 @@ fn walk(
 
 /// Of `tools`, each one `hook`'s pin alone keeps it off, those the walk
 /// withholds the hook from once that pin is dropped and the hook switched
-/// on: the walk run again from the declarations it started with
-/// (`declared`), that one declaration taken without its list, so a
-/// companion that would not run there is read as the walk reads it, at
-/// any depth, a revision disagreement included. What that walk derives
-/// and finds is dropped; only the hook's withholding is read off it.
+/// on: the walk run again over what the first one settled (`walked`),
+/// that one declaration taken without its list, from the hook down
+/// through what it requires and no further, since a hook's withholding
+/// is read off its companions alone. A companion that would not run
+/// there is read as the walk reads it, at any depth, a revision
+/// disagreement included. What that walk derives and finds is dropped;
+/// only the hook's withholding is read off it.
 fn withheld_past_pin(
     manifest: &Manifest,
-    declared: &Expansion,
+    walked: &Expansion,
     catalogs: &mut Catalogs,
     state: &DesiredState,
     hook: &str,
@@ -261,16 +272,18 @@ fn withheld_past_pin(
     decl.enabled = true;
     let decl = decl.clone();
     let asked = super::desired::target_harnesses(&decl, &unpinned, ItemKind::Hook, catalogs.scope);
-    let mut expansion = declared.clone();
+    let mut expansion = walked.clone();
     expansion.redeclare(ItemKind::Hook, hook, &decl, asked);
     // The resolutions already read are handed on, so the second walk
-    // resolves no source the first one did.
+    // resolves no source the first one did. It judges no pin: only the
+    // hook's withholding is read off it.
     let mut scratch = DesiredState {
         sources: state.sources.clone(),
         pinned: state.pinned.clone(),
         ..DesiredState::default()
     };
-    walk(&unpinned, &mut expansion, catalogs, &mut scratch);
+    let from_hook = VecDeque::from([(ItemKind::Hook, hook.to_owned())]);
+    walk(&unpinned, &mut expansion, catalogs, &mut scratch, from_hook);
     tools
         .iter()
         .copied()
@@ -337,8 +350,8 @@ struct Wanted {
     /// withheld, since one that is off arms nothing beside a missing judge.
     armed: bool,
     /// The tools a hook's pin alone keeps it off, where it requires a
-    /// companion: each asked again with the pin dropped
-    /// ([`withheld_past_pin`]).
+    /// companion and the pass judges pins: each asked again with the pin
+    /// dropped ([`withheld_past_pin`]).
     left_out: Vec<HarnessId>,
 }
 
@@ -692,6 +705,7 @@ fn wanted_by(
     };
     let header = hook_header(sealed, kind, &dir);
     if let Ok(Some(own)) = &header
+        && state.judge_pins
         && !(declared.required.is_empty() && declared.required_skills.is_empty())
     {
         wanted.left_out = pin_answers(env, scope, manifest, state, expansion, parent, own)

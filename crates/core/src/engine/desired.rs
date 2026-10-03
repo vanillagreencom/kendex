@@ -289,8 +289,13 @@ pub struct DesiredState {
     /// person wrote asks them onto; `EngineReport::excluded_hooks`.
     pub excluded_hooks: Vec<super::ExcludedHook>,
     /// Each tool a declared hook's pin or a `[[custom-hooks]]` entry's
-    /// `harnesses` list decides; `EngineReport::pinned_hooks`.
+    /// `harnesses` list decides, where `judge_pins` asks;
+    /// `EngineReport::pinned_hooks`.
     pub pinned_hooks: Vec<super::PinnedHook>,
+    /// Whether this pass judges hook pins (`PlanOptions::judge_pins`):
+    /// fills `pinned_hooks`, and has the walk ask each pinned hook again
+    /// with its pin dropped (`withheld_past_pin`).
+    pub judge_pins: bool,
     pub refused: Vec<Refused>,
     /// Declarations whose source resolved and whose item was found and
     /// read, each with the provenance it is planned under. What these
@@ -351,7 +356,8 @@ pub struct DesiredState {
     /// (`plan_pass::plan_rebound`).
     pub withheld: BTreeMap<(ItemKind, String, HarnessId), Withholding>,
     /// Hooks whose pin keeps them off a tool where the walk, asked again
-    /// with that pin dropped, withholds them (`deps::withheld_past_pin`).
+    /// with that pin dropped, withholds them (`deps::withheld_past_pin`);
+    /// empty unless `judge_pins` is set.
     /// It plans nothing: read only by the pin records
     /// (`desired_kinds::pin_records`), so a pin is never said to keep a
     /// hook off a tool it could not run on anyway.
@@ -456,12 +462,29 @@ pub(super) fn desired_state(
     lock: &Lock,
     hold_upstream_skills: bool,
     held: Option<&hold::HeldPins>,
+    judge_pins: bool,
 ) -> Result<DesiredState> {
-    let first = compute(env, scope, manifest, lock, hold_upstream_skills, held)?;
+    let first = compute(
+        env,
+        scope,
+        manifest,
+        lock,
+        hold_upstream_skills,
+        held,
+        judge_pins,
+    )?;
     let Some(merged) = first.manifest_update else {
         return Ok(first);
     };
-    let mut second = compute(env, scope, &merged, lock, hold_upstream_skills, held)?;
+    let mut second = compute(
+        env,
+        scope,
+        &merged,
+        lock,
+        hold_upstream_skills,
+        held,
+        judge_pins,
+    )?;
     second.manifest_update = Some(merged);
     Ok(second)
 }
@@ -473,12 +496,14 @@ fn compute(
     lock: &Lock,
     hold_upstream_skills: bool,
     held: Option<&hold::HeldPins>,
+    judge_pins: bool,
 ) -> Result<DesiredState> {
     if manifest.sources.contains_key(manifest::BUILTIN_SOURCE_NAME) {
         manifest::check_source_alias(manifest::BUILTIN_SOURCE_NAME)?;
     }
     let mut state = DesiredState {
         agent_names: crate::source::agent_names::Uses::new(manifest),
+        judge_pins,
         ..DesiredState::default()
     };
     let mut updated_manifest = manifest.clone();

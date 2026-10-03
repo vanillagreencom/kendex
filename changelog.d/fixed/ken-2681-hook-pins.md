@@ -1,1 +1,1 @@
-- Hook pins follow one rule: adoption writes no `harnesses` list equal to where a hook goes without one (Antigravity needs a list), and `kendex verify` judges custom, switched-off and chained hooks.
+- Adopting an agent, skill or hook keeps no `harnesses` list that names exactly its default tools (Antigravity keeps a hook's), and `kendex verify` judges custom, switched-off and chained hook pins.

@@ -28,6 +28,7 @@ pub fn audit_without_record(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
+    judge_pins: bool,
 ) -> Result<RecordlessAudit> {
     let mut seed = Lock {
         version: crate::lock::LOCK_VERSION,
@@ -41,7 +42,11 @@ pub fn audit_without_record(
         crate::pi_ext::RecordBasis::MatchedBytes,
         None,
     )?;
-    let mut report = plan_scope(env, scope, manifest, &seed, &PlanOptions::default())?;
+    let options = PlanOptions {
+        judge_pins,
+        ..PlanOptions::default()
+    };
+    let mut report = plan_scope(env, scope, manifest, &seed, &options)?;
     let matching = proven_entries(
         &report,
         planned_record(&report).unwrap_or_else(|| seed.clone()),
@@ -378,7 +383,7 @@ pub fn plan_record_existing(env: &Env, scope: &Scope) -> Result<EngineReport> {
             });
         }
     }
-    let mut recovered = audit_without_record(env, scope, &manifest)?;
+    let mut recovered = audit_without_record(env, scope, &manifest, false)?;
     // CI metadata can be regenerated after the durable record is restored.
     if let Scope::Project { root } = scope {
         let inventory = root.join(".kendex-generated.json");

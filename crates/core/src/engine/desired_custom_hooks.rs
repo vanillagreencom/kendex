@@ -41,7 +41,7 @@ pub(super) fn desired_custom_hooks(
         });
         let targets =
             super::desired::harnesses_for(listed.as_deref(), manifest, ItemKind::Hook, scope);
-        if listed.is_some() {
+        if listed.is_some() && state.judge_pins {
             pins_left_out(env, scope, manifest, &spec, state);
         }
         for harness in &targets {

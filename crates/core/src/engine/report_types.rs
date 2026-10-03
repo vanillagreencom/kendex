@@ -262,7 +262,8 @@ pub struct EngineReport {
     pub excluded_hooks: Vec<ExcludedHook>,
     /// Each tool a hook's pin, on a declaration or a `[[custom-hooks]]`
     /// entry, decides against the hook's own reading; `verify` names every
-    /// one.
+    /// one. Empty unless the plan was asked to judge pins
+    /// (`PlanOptions::judge_pins`).
     pub pinned_hooks: Vec<PinnedHook>,
     /// What this plan would add to or drop from the installed set.
     pub set_changes: Vec<SetChange>,
@@ -593,6 +594,11 @@ pub struct PlanOptions {
     /// fresh clone re-arrives nothing and a key they deleted stays
     /// deleted.
     pub arriving_skills: BTreeSet<String>,
+    /// Judge each hook's `harnesses` pin against what the hook would get
+    /// with no pin, into `EngineReport::pinned_hooks`. Off, that list is
+    /// empty. Only verify reads it, and judging a pin walks the pinned
+    /// hook's requirements again, so every other plan leaves this off.
+    pub judge_pins: bool,
 }
 
 impl PlanOptions {

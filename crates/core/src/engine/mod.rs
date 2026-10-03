@@ -513,6 +513,7 @@ fn desired_pass<'a>(
         lock,
         options.hold_upstream_skills,
         held_pins.as_ref(),
+        options.judge_pins,
     )?;
     state.agent_names.extend(agent_names);
     if renamed && state.manifest_update.is_none() {
