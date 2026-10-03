@@ -140,6 +140,16 @@ row_setup() {
       HOLDER=$!
       while [[ ! -e "$ROOT/locked" ]]; do sleep 0.05; done
       ;;
+    # A guarded restack paused on a conflict: HEAD detached, the branch named
+    # only in the worktree's rebase state.
+    mid-rebase)
+      { printf 'main\n' >"$MAIN/f" && git -C "$MAIN" add f && git -C "$MAIN" commit -q -m main &&
+        printf 'topic\n' >"$WT/f" && git -C "$WT" add f && git -C "$WT" commit -q -m topic; } ||
+        { echo "mid-rebase: setup=commit-failed" >&2; exit 2; }
+      if git -C "$WT" rebase main >/dev/null 2>&1 || [[ -n "$(git -C "$WT" branch --show-current)" ]]; then
+        echo "mid-rebase: setup=not-paused" >&2; exit 2
+      fi
+      ;;
     summary-fails) ROW_ENV=("ORCH_WORKTREE_BIN=$TMP_ROOT/bin/summary-then-fail") ;;
     target-relative) ROW_ENV=("CARGO_TARGET_DIR=target") ;;
     target-absolute) ROW_ENV=("CARGO_TARGET_DIR=$WT/target") ;;
@@ -189,6 +199,7 @@ past the mark a lock-file node_modules survives the round|80|KEN-1|ken-1|KEN-1|-
 a build holding the target lock fails the round and keeps the output|80|KEN-1|ken-1|KEN-1|-|hold-lock|1|failed used-pct=80 mark-pct=75 bytes=0|failed used=80 mark=75 bytes=0|.cargo-lock,deps/unit-0.rlib
 a prune that reports its summary and then exits non-zero is failed, not pruned|80|KEN-1|ken-1|KEN-1|-|summary-fails|1|failed used-pct=80 mark-pct=75 bytes=<positive>|failed used=80 mark=75 bytes=<positive>|.cargo-lock,deps/unit-0.rlib
 a state keyed apart from the lease prunes under the owner its branch names|80|pr-5|ken-1|KEN-1|-|-|0|pruned used-pct=80 mark-pct=75 bytes=<positive>|pruned used=80 mark=75 bytes=<positive>|.cargo-lock
+a worktree paused mid-rebase under a local key prunes under the issue its rebase names|80|local-1-1-1|ken-1|KEN-1|-|mid-rebase|0|pruned used-pct=80 mark-pct=75 bytes=<positive>|pruned used=80 mark=75 bytes=<positive>|.cargo-lock
 a branch naming no issue is pruned under the state key|80|KEN-1|topic|KEN-1|-|-|0|pruned used-pct=80 mark-pct=75 bytes=<positive>|pruned used=80 mark=75 bytes=<positive>|.cargo-lock
 a state carrying only a branch prunes the worktree that has it checked out|80|pr-5|ken-1|KEN-1|branch|-|0|pruned used-pct=80 mark-pct=75 bytes=<positive>|pruned used=80 mark=75 bytes=<positive>|.cargo-lock
 a state whose branch no worktree holds records no-worktree and lets the round go|80|pr-5|ken-1|KEN-1|none|-|0|no-worktree used-pct=0 mark-pct=75 bytes=0|no-worktree used=0 mark=75 bytes=0|.cargo-lock,deps/unit-0.rlib
@@ -209,7 +220,7 @@ while IFS='|' read -r label used key branch owner state_wt setup rc action recor
   assert_eq "rc=$RC $(line) | $(recorded) | $(artifacts)$(js_left)$(outside_left)" \
     "rc=$rc round-prune: action=$action round=<round> worktree=$([[ "$state_wt" == none || "$state_wt" == main ]] || echo '<wt>') | $record | $left" "$label"
 done <<<"$ROWS"
-[[ "$n" -ge 15 ]] || { echo "the row table was not read" >&2; exit 2; }
+[[ "$n" -ge 16 ]] || { echo "the row table was not read" >&2; exit 2; }
 row_setup -
 
 # A worktree listing git cannot give: which tree the state names is unknown,
@@ -255,6 +266,17 @@ prune 80 "$NEVER"
 [[ "$(artifacts)" == ".cargo-lock" ]] &&
   assert_eq "pruned" "not pruned" "control: with the mark never reached the output past it is kept" ||
   assert_eq "kept" "kept" "control: with the mark never reached the output past it is kept"
+
+# The mid-rebase row's must-fail control: a git-context copy that never reads
+# the rebase head-name leaves the local key as the owner, whose lease is foreign.
+NO_HEAD_NAME="$(mutant_scripts no-head-name git-context)" || exit 1
+mutate_file "$NO_HEAD_NAME/git-context" 'branch="$(cat -- "$head_name")"' ': branch="$(cat -- "$head_name")"'
+build control-mid-rebase KEN-1 - local-1-1-1
+row_setup mid-rebase
+prune 80 "$NO_HEAD_NAME"
+assert_eq "rc=$RC $(line) | $(artifacts)" \
+  "rc=1 round-prune: action=failed used-pct=80 mark-pct=75 bytes=0 round=<round> worktree=<wt> | .cargo-lock,deps/unit-0.rlib" \
+  "control: with the rebase head-name unread the local key's prune is refused and the output kept"
 
 echo "=== target/ across two runs ==="
 # Two rounds, each starting with the round-start prune and ending with a

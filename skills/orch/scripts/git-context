@@ -61,6 +61,17 @@ case "$cmd" in
         worktree="$(worktree_arg "$@")"
         pattern="${2:-${GH_ISSUE_PATTERN:-([A-Z]+-[0-9]+|issue-[0-9]+)}}"
         branch="$(git -C "$worktree" branch --show-current)"
+        if [[ -z "$branch" ]]; then
+            # A paused rebase detaches HEAD; the branch it rewrites is the
+            # head-name in the worktree's rebase state, where git status reads it.
+            git_dir="$(git -C "$worktree" rev-parse --absolute-git-dir)"
+            for head_name in "$git_dir/rebase-merge/head-name" "$git_dir/rebase-apply/head-name"; do
+                [[ -f "$head_name" ]] || continue
+                branch="$(cat -- "$head_name")"
+                branch="${branch#refs/heads/}"
+                break
+            done
+        fi
         shopt -s nocasematch
         if [[ "$branch" =~ $pattern ]]; then
             canonical_issue_id "${BASH_REMATCH[0]}"
