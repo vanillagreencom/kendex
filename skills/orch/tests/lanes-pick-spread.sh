@@ -300,8 +300,8 @@ LANES_UNDER_TEST="$CTRL/lanes" table \
 # Control: a named lane judged on the projection whether asked or not refuses
 # the lane whose reading has room, which every reader of the reading then
 # acts on as a wall.
-CTRL="$(mutant_scripts mutant-named-projected lanes)" || exit 1
-mutate_file "$CTRL/lanes" '(if $projected then judged_wall else .wall end)' 'judged_wall'
+CTRL="$(mutant_scripts mutant-named-projected lib/lane-model.sh)" || exit 1
+mutate_file "$CTRL/lib/lane-model.sh" '(if $projected then judged_wall else .wall end)' 'judged_wall'
 LANES_UNDER_TEST="$CTRL/lanes" table \
   "control: projected unasked, the named lane is refused at the handoff mark|ORCH_LANE_DIRS=$H/.aclaude;ORCH_LANE_BURN_PCT_PER_HOUR=30|claim:a:4||pick --lane $H/.aclaude --harness claude --min-headroom-pct 3 --json|rc=3"
 
