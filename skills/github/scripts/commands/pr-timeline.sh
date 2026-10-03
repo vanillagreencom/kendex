@@ -39,10 +39,9 @@ Output, one JSON object on stdout:
                         the PR carried, force-pushed-over heads included,
                         read from each head's whole status history, since a
                         later status on that head replaces the earlier one,
-    "gate_met":         the first approval submitted on the final head,
-                        which GitHub's approval rule binds to that head and
-                        dismisses on a push; where none was submitted, the
-                        gate context's success on the final head,
+    "gate_met":         the first approval submitted on the final head;
+                        where none was submitted, the gate context's
+                        success on the final head,
     "ci_green":         the last check run on the final head completed, when
                         every one concluded success, neutral or skipped,
     "armed":            the last time auto-merge was enabled,

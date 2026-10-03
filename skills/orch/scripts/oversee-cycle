@@ -44,8 +44,8 @@
 #     review=N fix=N bot=N full_validations=N pr_rounds=N escaped=B refixed=B
 # (one line). A value it could not read prints `-`.
 #   stamps    launched (the record's launched_at), first_commit, pr_opened,
-#             gate_green (pr-timeline's gate_met: the final head's first
-#             approval), ci_green, armed (armed, else queued), merged
+#             gate_green (pr-timeline's gate_met), ci_green, armed (armed,
+#             else queued), merged
 #   missing   the stamps that are null
 #   target    seconds, pull request open to merge: the class target from the
 #             table below plus pr-timeline's ci_merge_group_secs, null as 0

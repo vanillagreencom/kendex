@@ -19,11 +19,10 @@
 # skills/orch/schemas/dev-return.md):
 #   { "schema_version": 1, "round_id": "…", "kind": "implement"|"fix",
 #     "issue": "…", "branch": "…", "commit": "…",
-#     "validate": "pass"|"no-verdict"|"ci" (fix only)|"FAILING: …",
+#     "validate": "pass"|"no-verdict"|"FAILING: …",
 #     "baseline_lines": 138 (implement only),
 #     "validate_mode": "full"|"range"|"ci"|null (the validation mode that ran;
-#       ci only on a fix beside a ci or FAILING: validate, null only beside a
-#       FAILING: validate),
+#       ci only on a fix, null only beside a FAILING: validate),
 #     "validate_time": {"started_at": "…", "ended_at": "…", "seconds": N}|null
 #       (the run's wall time; null only beside a FAILING: validate),
 #     "validate_note": "…"|null (optional free-text qualifier; required
@@ -162,8 +161,8 @@ skills/orch/schemas/dev-round.md § Protected additions.
 A kind fix receipt checked against its round record also carries the mode a
 fix round runs: the mode `dev-validate-run --resolve-mode` reports for WT,
 range, or full where the project sets no DEV_VALIDATE_RANGE_CMD, or ci, a run
-that left the round's verdict to the pull request CI. Any other recorded mode
-is reason=mode_mismatch; a null mode, a failing round that started no run, is
+the pull request CI validates. Any other recorded mode is
+reason=mode_mismatch; a null mode, a failing round that started no run, is
 not judged. A resolution that cannot be read exits 2.
 
 Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
@@ -202,9 +201,8 @@ reason meanings when ok=false:
               wrong-typed/empty: .kind ∈ {implement,fix}; .issue/.branch
               non-empty strings; .round_id non-empty string; .schema_version a
               number; .commit/.validate non-empty strings; .validate_mode
-              present and full or range, or null beside a FAILING: .validate;
-              a ci .validate and a ci .validate_mode only on a fix, each
-              beside the other, save a FAILING: .validate beside a ci run;
+              present and full or range, ci on a fix, or null beside a
+              FAILING: .validate;
               a no-verdict .validate carries a .validate_note;
               .validate_time present, and null beside a FAILING: .validate
               or {started_at, ended_at, seconds} beside a non-null
@@ -472,16 +470,16 @@ emit() {
   #   accept — artifact valid for this round (warnings ride along)
   #   wait   — no artifact for this round yet; the round is still running
   #   retry  — an artifact exists but is not accepted
-  # A validate value other than "pass", "no-verdict" or "ci" downgrades accept
-  # to retry: the agent finished its tail but the round's validation is
-  # failing. no-verdict is a battery the timeout cut off, which is neither pass
-  # nor failing: the scoped suites were the round's result and CI is the full
-  # record. ci is a fix round whose pushed head the pull request CI judges.
+  # A validate value other than "pass" or "no-verdict" downgrades accept to
+  # retry: the agent finished its tail but the round's validation is failing.
+  # no-verdict is a battery the timeout cut off, which is neither pass nor
+  # failing: the scoped suites were the round's result and CI is the full
+  # record.
   local verdict
   if [[ "$ok" == "true" ]]; then
     verdict="accept"
     case "$validate" in
-      null | '"pass"' | '"no-verdict"' | '"ci"') ;;
+      null | '"pass"' | '"no-verdict"') ;;
       *) verdict="retry" ;;
     esac
   elif [[ "$reason" == "missing" ]]; then
@@ -518,15 +516,12 @@ round_id_matches() {
 # Type-strict required scalars: .kind ∈ {implement,fix}; .issue/.branch
 # non-empty STRINGS (arrays/objects/bools/numbers fail, not just ""); .round_id a
 # non-empty string; .schema_version a number; .commit/.validate non-empty
-# strings; .validate_mode present and full or range, or null beside a
-# FAILING: .validate; a ci .validate and a ci .validate_mode only on a fix,
-# each beside the other, save a FAILING: .validate beside a ci run, since a
-# ci run's verdict is the pull request CI's; a no-verdict .validate carries the
+# strings; .validate_mode present and full or range, ci on a fix, or null
+# beside a FAILING: .validate; a no-verdict .validate carries the
 # .validate_note naming the scoped suites, its only evidence; .validate_time
-# present, null beside a
-# FAILING: .validate, else the run's UTC start and end with seconds their
-# difference, and only beside a recorded mode, since a time with no run names
-# nothing. A truncated or half-written receipt fails this gate → reason=invalid.
+# present, null beside a FAILING: .validate, else the run's UTC start and end
+# with seconds their difference, and only beside a recorded mode, since a time
+# with no run names nothing. A truncated or half-written receipt fails this gate → reason=invalid.
 has_required_fields() {
   jq -e '
     (.kind? // "") as $k
@@ -540,9 +535,7 @@ has_required_fields() {
       and has("validate_mode")
       and (.validate_mode == "full" or .validate_mode == "range"
            or (.validate_mode == null and (.validate | startswith("FAILING:")))
-           or (.validate_mode == "ci" and $k == "fix"
-               and (.validate == "ci" or (.validate | startswith("FAILING:")))))
-      and (.validate != "ci" or .validate_mode == "ci")
+           or (.validate_mode == "ci" and $k == "fix"))
       and has("validate_time")
       and (if .validate_time == null then (.validate | startswith("FAILING:"))
            else .validate_mode != null

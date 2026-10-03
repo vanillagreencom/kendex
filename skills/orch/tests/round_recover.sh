@@ -42,13 +42,14 @@ export PATH="$TMP_ROOT/bin:$PATH"
 NOW="$(date +%s)"
 DEAD_PID="$(sh -c 'printf "%s" $$')"
 
-# A full validation run started AGE seconds ago at the worktree's HEAD whose
-# child recorded its wall time and guard-exit=EXIT, with "no-verdict" the
-# bound's cut-off, or with EXIT "-" neither, its pid file naming PID.
-add_run() { # WORKTREE NAME AGE EXIT PID
+# A validation run under MODE, full by default, started AGE seconds ago at the
+# worktree's HEAD whose child recorded its wall time and guard-exit=EXIT, with
+# "no-verdict" the bound's cut-off, or with EXIT "-" neither, its pid file
+# naming PID.
+add_run() { # WORKTREE NAME AGE EXIT PID [MODE]
   local run="$1/tmp/dev-validate-$2"
   mkdir -p "$run"
-  printf 'start=%s\ncap-secs=3640\npoll-secs=30\nvalidate-mode=full\nhead=%s\n' "$(( NOW - $3 ))" \
+  printf 'start=%s\ncap-secs=3640\npoll-secs=30\nvalidate-mode=%s\nhead=%s\n' "$(( NOW - $3 ))" "${6:-full}" \
     "$(git -C "$1" rev-parse HEAD)" > "$run/start"
   printf '%s\n' "$5" > "$run/pid"
   [[ "$4" == - ]] \
@@ -289,6 +290,14 @@ transcript "$TMP_ROOT/fix-none.jsonl" claude-send 5-6 "$(fix_report none pass)"
 run --worktree "$WT" --issue issue-779 --round-id 5-6 --transcript "$TMP_ROOT/fix-none.jsonl"
 assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-issue-779-5-6.json" .commit)" "rc=0 $HEAD_SHA" \
   "Commits: none records the unchanged HEAD" "$TMP_ROOT/stderr"
+# A ci run passed at once and left the round to the pull request CI: a pass
+# beside it recovers the round.
+new_fix_round fix-ci 782 5-9 none
+add_run "$WT" 1 10 0 "$DEAD_PID" ci
+transcript "$TMP_ROOT/fix-ci.jsonl" claude-send 5-9 "$(fix_report "$HEAD_SHA" pass)"
+run --worktree "$WT" --issue issue-782 --round-id 5-9 --transcript "$TMP_ROOT/fix-ci.jsonl"
+assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-issue-782-5-9.json" '"\(.validate) \(.validate_mode)"') $("$CHECK" --worktree "$WT" --issue issue-782 --round-id 5-9 --expect-items-from-round 2>/dev/null | jq -r .verdict)" \
+  "rc=0 pass ci accept" "a fix round whose run was a ci-mode pass is recovered and accepted" "$TMP_ROOT/stderr"
 # A cut round whose fix grew the branch: the gate's refusal is the acceptance
 # table's retry row to route, so the artifact stays and the round is recovered.
 new_fix_round fix-cut 781 5-8 0 yes yes

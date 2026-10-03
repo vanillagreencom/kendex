@@ -409,7 +409,7 @@ for row in "${RESOLVE_ROWS[@]}"; do
 done
 # Control: a resolution that never reads the range command names full for the
 # project that sets one.
-mutant mutant-resolve-full 'validate_mode=range' 'validate_mode=full'
+mutant mutant-resolve-full $'  else\n    validate_mode=range' $'  else\n    validate_mode=full'
 run_script "$MUTANT" --resolve-mode --worktree "$TMP_ROOT/proj-resolve-1"
 assert_eq "$OUT" "validate-mode=full" \
   "control: with the range command unread the project that sets one resolves to full" "$ERR"
@@ -761,9 +761,9 @@ git -C "$proj_ci" update-ref refs/remotes/origin/main HEAD
 ci_head="$(git -C "$proj_ci" rev-parse HEAD)"
 # label|classifier answer|docs answer|measured|verdict and what the command printed|recorded mode
 CI_ROWS=(
-  "a measured micro diff is left to CI|change_class=micro|false|true|state=done guard-exit=0 validate=ci |ci"
-  "a measured small diff is left to CI|change_class=small|false|true|state=done guard-exit=0 validate=ci |ci"
-  "a measured standard diff is left to CI|change_class=standard|false|true|state=done guard-exit=0 validate=ci |ci"
+  "a measured micro diff is left to CI|change_class=micro|false|true|state=done guard-exit=0 validate=pass |ci"
+  "a measured small diff is left to CI|change_class=small|false|true|state=done guard-exit=0 validate=pass |ci"
+  "a measured standard diff is left to CI|change_class=standard|false|true|state=done guard-exit=0 validate=pass |ci"
   "a render diff, whose checks CI stands down, runs the range command|change_class=render|false|true|state=done guard-exit=0 validate=pass range|range"
   "a trivial docs diff runs the range command|change_class=trivial|true|true|state=done guard-exit=0 validate=pass range|range"
   "a standard diff of docs alone runs the range command|change_class=standard|true|true|state=done guard-exit=0 validate=pass range|range"
@@ -797,28 +797,12 @@ STUB_ANSWER=change_class=micro STUB_DOCS=false STUB_MEASURED=true \
   run_script "$CI_SCRIPT" --worktree "$proj_ci" --poll 1 --validate-mode ci --base HEAD
 ci_dir="$(run_dir_of "$OUT")"
 assert_eq "$RC $(sed -n 2p <<<"$OUT" | sed 's/ at=[^ ]* / at=T /')" \
-  "0 state=done guard-exit=0 at=T validate=ci run-dir=$ci_dir log=$ci_dir/log" \
-  "a ci run exits 0 and its done line names the run directory and the log" "$ERR"
+  "0 state=done guard-exit=0 at=T validate=pass run-dir=$ci_dir log=$ci_dir/log" \
+  "a ci run passes, and its done line names the run directory and the log" "$ERR"
 run_script "$CI_SCRIPT" --record --run-dir "$ci_dir"
 assert_eq "$(sed -E 's/started-at=[^ ]+ ended-at=[^ ]+$/started-at=T ended-at=T/' <<<"$OUT")" \
-  "validate-mode=ci selection=unreported verdict=ci head=$ci_head start=$(start_of "$ci_dir") seconds=0 started-at=T ended-at=T" \
-  "its record names the ci mode and verdict, the HEAD it started at and no wall time" "$ERR"
-run_script "$CI_SCRIPT" --wait --run-dir "$ci_dir"
-assert_eq "$RC $(verdict_of "$OUT")" "0 state=done guard-exit=0 validate=ci" "a wait on a ci run reads its verdict and exits 0" "$ERR"
-# Controls: the sentinel's ci marker unread, and a ci verdict that fails the wait.
-mutant mutant-ci-record '    "guard-exit=0 "*" verdict=ci") SENTINEL_VERDICT=ci ;;' ''
-run_script "$MUTANT" --record --run-dir "$ci_dir"
-assert_eq "$(sed -n 's/^.* \(verdict=[a-z]*\) .*$/\1/p' <<<"$OUT")" "verdict=pass" \
-  "control: with the ci marker unread the ci run's record reads pass" "$ERR"
-mutant mutant-ci-wait ' || "$SENTINEL_VERDICT" == ci ]]' ' ]]'
-run_script "$MUTANT" --wait --run-dir "$ci_dir"
-assert_eq "$RC $(verdict_of "$OUT")" "1 state=done guard-exit=0 validate=ci" \
-  "control: with only a pass exiting 0 the wait on a ci run fails" "$ERR"
-# A class the classifier ships that this script does not know.
-STUB_ANSWER=change_class=huge STUB_DOCS=false STUB_MEASURED=true \
-  run_script "$CI_SCRIPT" --worktree "$proj_ci" --poll 1 --validate-mode ci --base HEAD
-assert_eq "$RC $(sed -n 1p <"$ERR")" "2 dev-validate-run: class-unknown class=huge" \
-  "an unknown class is refused before any run, naming it" "$ERR"
+  "validate-mode=ci selection=unreported verdict=pass head=$ci_head start=$(start_of "$ci_dir") seconds=0 started-at=T ended-at=T" \
+  "its record names the ci mode, a pass, the HEAD it started at and no wall time" "$ERR"
 # One control per rule the ci route holds: each mutant copy sits beside the
 # stubbed classifier and leaves to CI the one row that rule keeps local.
 ci_control() { # LABEL ANCHOR REPLACEMENT ROW
@@ -827,10 +811,10 @@ ci_control() { # LABEL ANCHOR REPLACEMENT ROW
   mutate_file "$CI_SCRIPT.mutant" "$2" "$3"
   got_line="$(ci_rows "$CI_SCRIPT.mutant" | awk -F'\t' -v want="$4" '$1 == want')"
   IFS=$'\t' read -r _ _ got <<<"$got_line"
-  assert_eq "$got" "state=done guard-exit=0 validate=ci |ci" "control: with $1, '$4' fails"
+  assert_eq "$got" "state=done guard-exit=0 validate=pass |ci" "control: with $1, '$4' fails"
 }
-ci_control 'render and trivial among the covered classes' \
-  '      render|trivial) ;;' '      render|trivial) validate_mode=ci cmd="" ;;' \
+ci_control 'render among the covered classes' \
+  'micro|small|standard) validate_mode=ci' 'micro|small|standard|render) validate_mode=ci' \
   'a render diff, whose checks CI stands down, runs the range command'
 ci_control 'the docs verdict unread' ' && "$docs_only" == false ]]' ' ]]' \
   'a standard diff of docs alone runs the range command'
@@ -838,6 +822,20 @@ ci_control 'the measured marker unread' ' && "$CHANGE_CLASS_MEASURED" == true' '
   'a standard class the classifier fell back to runs the range command'
 ci_control 'the class fallback unread' '-z "$class_fallback" && ' '' \
   'a docs verdict that did not read runs the range command'
+# A ci run left to CI reads neither command, so a project that sets neither
+# passes it. Control: resolving the range mode first, as a range run does,
+# reads the empty DEV_VALIDATE_CMD and refuses.
+printf '[env]\nDEV_VALIDATE_TIMEOUT_SECS = "20"\n' > "$proj_ci/kendex.settings.toml"
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+mutate_file "$CI_SCRIPT.mutant" '[[ "$validate_mode" == ci ]] || resolve_range_mode' 'resolve_range_mode'
+STUB_ANSWER=change_class=micro STUB_DOCS=false STUB_MEASURED=true \
+  run_script "$CI_SCRIPT" --worktree "$proj_ci" --poll 1 --validate-mode ci --base HEAD
+assert_eq "$RC $(verdict_of "$OUT")" "0 state=done guard-exit=0 validate=pass" \
+  "a ci run left to CI in a project that sets no command passes" "$ERR"
+STUB_ANSWER=change_class=micro STUB_DOCS=false STUB_MEASURED=true \
+  run_script "$CI_SCRIPT.mutant" --worktree "$proj_ci" --poll 1 --validate-mode ci --base HEAD
+assert_eq "$RC $(sed -n 1p <"$ERR")" "2 dev-validate-run: empty-validate-cmd setting=DEV_VALIDATE_CMD" \
+  "control: a ci run that resolves the range mode first is refused" "$ERR"
 rm -f -- "${CI_SCRIPT:?}.mutant"
 
 # --- The real classifier weighs uncommitted render edits -----------------------

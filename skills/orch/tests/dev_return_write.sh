@@ -36,7 +36,6 @@ VRUN_BAD="$(validate_run_dir "$TMP_ROOT/validate-run-bad" class)"
 VRUN_FAILED="$(validate_run_dir "$TMP_ROOT/validate-run-failed" full 1)"
 VRUN_UNFINISHED="$(validate_run_dir "$TMP_ROOT/validate-run-unfinished" full none)"
 VRUN_CUT="$(validate_run_dir "$TMP_ROOT/validate-run-cut" full no-verdict)"
-VRUN_CI="$(validate_run_dir "$TMP_ROOT/validate-run-ci" ci ci)"
 mkdir -p "$TMP_ROOT/validate-run-empty"
 
 new_repo() {
@@ -187,7 +186,7 @@ table \
   "an inline --summary embeds the text|--worktree $WT --kind implement --issue issue-1236i --round-id 12-12 --branch b --commit %H --validate pass --validate-run-dir $VRUN --no-summary --summary inline+completion+summary|rc=0 .summary=inline+completion+summary roundtrip=valid" \
   "a --validate-note is recorded verbatim beside a strictly enumerated pass|--worktree $WT --kind implement --issue issue-note --round-id $RID --branch b --commit %H --validate pass --validate-run-dir $VRUN --validate-note 80/80+on+re-run;+first+run+flaked|rc=0 .validate=pass .validate_note=80/80+on+re-run;+first+run+flaked" \
   "a FAILING verdict carries a note too|--worktree $WT --kind implement --issue issue-failnote --round-id $RID --branch b --commit %H --validate FAILING:+lint --validate-note lint+fails+only+under+--release|rc=0 .validate=FAILING:+lint .validate_note=lint+fails+only+under+--release" \
-  "a ci result beside its round's ci run records the ci mode and round-trips|--worktree %FW --kind fix --issue issue-776 --round-id 41-41 --branch b --commit $FIX_HEAD --validate ci --validate-run-dir $VRUN_FIX_CI --item 1 Applied fixed|rc=0 .validate=ci .validate_mode=ci roundtrip=valid" \
+  "a pass beside its round's ci run records the ci mode and round-trips|--worktree %FW --kind fix --issue issue-776 --round-id 41-41 --branch b --commit $FIX_HEAD --validate pass --validate-run-dir $VRUN_FIX_CI --item 1 Applied fixed|rc=0 .validate=pass .validate_mode=ci roundtrip=valid" \
   "a range validation is recorded as the mode that ran|--worktree %FW --kind fix --issue issue-776 --round-id 17-17 --branch b --commit c --validate pass --validate-run-dir $VRUN_FIX_RANGE --item 1 Applied fixed|rc=0 .validate_mode=range" \
   "a FAILING result beside a run that passed, another gate failing, records the run's mode and wall time|--worktree $WT --kind implement --issue issue-gatefail --round-id 20-20 --branch b --commit %H --validate FAILING:+doc-limits --validate-run-dir $VRUN|rc=0 .validate=FAILING:+doc-limits .validate_mode=full .validate_time.seconds=3300" \
   "a FAILING result beside an unfinished run records the run's mode and no wall time|--worktree $WT --kind implement --issue issue-lost --round-id 21-21 --branch b --commit %H --validate FAILING:+lost --validate-run-dir $VRUN_UNFINISHED|rc=0 .validate=FAILING:+lost .validate_mode=full has:validate_time=true .validate_time|tojson=null roundtrip=valid" \
@@ -601,10 +600,6 @@ table \
   "no-verdict naming a run that failed|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate no-verdict --validate-run-dir $VRUN_FAILED|rc=2 stderr~dev-return-write:+validate-disagrees+validate=no-verdict+run=FAILING=true" \
   "no-verdict naming a run that passed|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate no-verdict --validate-run-dir $VRUN|rc=2 stderr~dev-return-write:+validate-disagrees+validate=no-verdict+run=pass=true" \
   "no-verdict with no note naming the scoped suites|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate no-verdict --validate-run-dir $VRUN_CUT|rc=2 stderr~dev-return-write:+required+option=--validate-note+validate=no-verdict=true" \
-  "a ci result on an implement round|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate ci --validate-run-dir $VRUN_CI|rc=2 stderr~dev-return-write:+ci-not-fix+kind=implement=true" \
-  "a pass naming a run that left its verdict to CI|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN_CI|rc=2 stderr~dev-return-write:+validate-disagrees+validate=pass+run=ci=true" \
-  "ci naming a run that passed|--worktree %FW --kind fix --issue issue-776 --round-id 41-41 --branch b --commit c --validate ci --validate-run-dir $VRUN --item 1 Applied x|rc=2 stderr~dev-return-write:+validate-disagrees+validate=ci+run=pass=true" \
-  "ci with no run directory|--worktree %FW --kind fix --issue issue-776 --round-id 41-41 --branch b --commit c --validate ci --item 1 Applied x|rc=2 stderr~dev-return-write:+required+option=--validate-run-dir+validate=ci=true" \
   "no-verdict with no run directory|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate no-verdict|rc=2 stderr~dev-return-write:+required+option=--validate-run-dir+validate=no-verdict=true" \
   "a pass naming a run with no verdict yet|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN_UNFINISHED|rc=2 stderr~dev-return-write:+validate-disagrees+validate=pass+run=unfinished=true" \
   "a missing --round-id|--worktree $WT --kind implement --issue i --branch b --commit c --validate pass --validate-run-dir $VRUN|rc=2 stderr~dev-return-write:+required+option=--round-id=true" \
@@ -644,12 +639,6 @@ table \
   "a whitespace-only --validate-note|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN --validate-note SPACES|rc=2 stderr~dev-return-write:+empty-text+option=--validate-note=true" \
   "--validate-note with no value|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN --validate-note|rc=2 stderr~dev-return-write:+missing-value+option=--validate-note=true"
 assert_eq "$([[ -f "$WT/tmp/dev-return-issue-noitems-$RID.json" ]] && echo yes || echo no)" "no" "a rejected invocation writes no artifact at the target path"
-# Control: a writer with no kind rule lets an implement round's ci result past.
-CI_WRITE="$(mutant_scripts ci-kind-mutant dev-return-write)/dev-return-write" || exit 1
-mutate_file "$CI_WRITE" '[[ "$validate" != ci || "$kind" == fix ]]' '[[ true ]]'
-WRITE="$CI_WRITE"
-table "control: without the kind rule an implement round's ci result is not refused as ci-not-fix|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate ci --validate-run-dir $VRUN_CI|stderr~dev-return-write:+ci-not-fix=false"
-WRITE="$WRITE_SHIPPED"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

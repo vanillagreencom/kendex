@@ -433,8 +433,8 @@ MODE_ROWS=(
   "a range run in a project with no range command is refused^^.^rc=1 reason=mode_mismatch stderr_first~dev-artifact-check:+mode-mismatch+validate-mode=range+round-mode=full=true"
   "a failing round that started no run is not judged on a mode^tools/guard --range x^.validate=\"FAILING: DEV_VALIDATE_CMD\" | .validate_mode=null | .validate_time=null^rc=0 verdict=retry reason=valid validate_mode=null"
   "a wrong mode outranks a fabricated commit^tools/guard --range x^.validate_mode=\"full\" | .commit=\"$MODE_FAKE_SHA\"^rc=1 reason=mode_mismatch"
-  "a ci run, which left the round to the pull request CI, is valid where the round runs range^tools/guard --range x^.validate=\"ci\" | .validate_mode=\"ci\" | .validate_time={\"started_at\":\"2026-01-01T00:00:00Z\",\"ended_at\":\"2026-01-01T00:00:00Z\",\"seconds\":0}^rc=0 verdict=accept reason=valid validate_mode=ci"
-  "a ci run is valid where the round runs full^^.validate=\"ci\" | .validate_mode=\"ci\" | .validate_time={\"started_at\":\"2026-01-01T00:00:00Z\",\"ended_at\":\"2026-01-01T00:00:00Z\",\"seconds\":0}^rc=0 verdict=accept reason=valid validate_mode=ci"
+  "a ci run, which the pull request CI validates, is valid where the round runs range^tools/guard --range x^.validate_mode=\"ci\"^rc=0 verdict=accept reason=valid validate_mode=ci"
+  "a ci run is valid where the round runs full^^.validate_mode=\"ci\"^rc=0 verdict=accept reason=valid validate_mode=ci"
 )
 for row in "${MODE_ROWS[@]}"; do
   IFS='^' read -r label range_cmd filter expect <<<"$row"
@@ -443,7 +443,7 @@ for row in "${MODE_ROWS[@]}"; do
   assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
 done
 # Control: a mode gate that judges a ci run against the round's own mode.
-mode_row "tools/guard --range x" ".validate=\"ci\" | .validate_mode=\"ci\" | .validate_time={\"started_at\":\"2026-01-01T00:00:00Z\",\"ended_at\":\"2026-01-01T00:00:00Z\",\"seconds\":0}"
+mode_row "tools/guard --range x" ".validate_mode=\"ci\""
 CI_MODE_CHECK="$(mutant_scripts ci-mode dev-artifact-check)/dev-artifact-check" || exit 1
 mutate_file "$CI_MODE_CHECK" ' && "$recorded_mode" != ci ]]' ' ]]'
 set +e
@@ -546,11 +546,8 @@ receipt_table \
   "a no-verdict validate, a battery the timeout cut off, is accepted with its suites named^impl^.validate=\"no-verdict\" | .validate_note=\"$SUITES_NOTE\"^$FILE_ARGS^verdict=accept reason=valid validate=no-verdict" \
   "a no-verdict validate naming no suites is invalid^impl^.validate=\"no-verdict\"^$FILE_ARGS^verdict=retry reason=invalid" \
   "a failing validate on the same receipt is retried^impl^.validate=\"FAILING: lint\"^$FILE_ARGS^verdict=retry reason=valid" \
-  "a fix round's ci validate beside its ci run is accepted^fix^.validate=\"ci\" | .validate_mode=\"ci\" | .validate_time={\"started_at\":\"2026-01-01T00:00:00Z\",\"ended_at\":\"2026-01-01T00:00:00Z\",\"seconds\":0}^$FILE_ARGS^verdict=accept reason=valid validate=ci validate_mode=ci" \
-  "a ci validate on an implement round is invalid^impl^.validate=\"ci\" | .validate_mode=\"ci\" | .validate_time={\"started_at\":\"2026-01-01T00:00:00Z\",\"ended_at\":\"2026-01-01T00:00:00Z\",\"seconds\":0}^$FILE_ARGS^verdict=retry reason=invalid" \
-  "a ci validate beside a range run is invalid^fix^.validate=\"ci\" | .validate_mode=\"ci\" | .validate_time={\"started_at\":\"2026-01-01T00:00:00Z\",\"ended_at\":\"2026-01-01T00:00:00Z\",\"seconds\":0} | .validate_mode=\"range\"^$FILE_ARGS^reason=invalid" \
-  "a pass beside a ci run is invalid^fix^.validate=\"ci\" | .validate_mode=\"ci\" | .validate_time={\"started_at\":\"2026-01-01T00:00:00Z\",\"ended_at\":\"2026-01-01T00:00:00Z\",\"seconds\":0} | .validate=\"pass\"^$FILE_ARGS^reason=invalid" \
-  "a failing validate beside a ci run is retried^fix^.validate_mode=\"ci\"^$FILE_ARGS^verdict=retry reason=valid validate_mode=ci" \
+  "a fix round's pass beside its ci run is accepted^fix^.validate=\"pass\" | .validate_mode=\"ci\" | .validate_time={\"started_at\":\"2026-01-01T00:00:00Z\",\"ended_at\":\"2026-01-01T00:00:00Z\",\"seconds\":0}^$FILE_ARGS^verdict=accept reason=valid validate=pass validate_mode=ci" \
+  "a ci run on an implement round is invalid^impl^.validate_mode=\"ci\"^$FILE_ARGS^verdict=retry reason=invalid" \
   "an empty validate_note is invalid^impl^.validate_note=\"\"^$FILE_ARGS^reason=invalid" \
   "a numeric validate_note is invalid^impl^.validate_note=42^$FILE_ARGS^reason=invalid" \
   "a boolean validate_note is invalid^impl^.validate_note=true^$FILE_ARGS^reason=invalid" \
@@ -568,23 +565,11 @@ CHECK="$LANE_CHECK"
 receipt_table "control: dropping the lane echo reds its assertion^impl^.validate_lanes=\"lint,test\" | .validate_selection=\"subset\"^$FILE_ARGS^reason=valid validate_lanes=null validate_selection=subset"
 CHECK="$CHECK_SHIPPED"
 
-# Controls: one per rule the ci result holds, each in a mutant copy of the check.
-CI_CONTROLS=0
-ci_control() { # LABEL ANCHOR REPLACEMENT ROW
-  local mutant
-  CI_CONTROLS=$((CI_CONTROLS + 1))
-  mutant="$(mutant_scripts "ci-control-$CI_CONTROLS" dev-artifact-check)/dev-artifact-check" || exit 1
-  mutate_file "$mutant" "$2" "$3"
-  CHECK="$mutant"
-  receipt_table "control: $1^$4"
-  CHECK="$CHECK_SHIPPED"
-}
-ci_control "without ci accepted the fix round's ci result is retried" "| '\"ci\"') ;;" ') ;;' \
-  "fix^.validate=\"ci\" | .validate_mode=\"ci\" | .validate_time={\"started_at\":\"2026-01-01T00:00:00Z\",\"ended_at\":\"2026-01-01T00:00:00Z\",\"seconds\":0}^$FILE_ARGS^verdict=retry reason=valid validate=ci"
-ci_control "without the kind rule an implement round's ci result is valid" '.validate_mode == "ci" and $k == "fix"' '.validate_mode == "ci"' \
-  "impl^.validate=\"ci\" | .validate_mode=\"ci\" | .validate_time={\"started_at\":\"2026-01-01T00:00:00Z\",\"ended_at\":\"2026-01-01T00:00:00Z\",\"seconds\":0}^$FILE_ARGS^verdict=accept reason=valid"
-ci_control "without the pairing rule a ci result beside a range run is valid" 'and (.validate != "ci" or .validate_mode == "ci")' '' \
-  "fix^.validate=\"ci\" | .validate_mode=\"ci\" | .validate_time={\"started_at\":\"2026-01-01T00:00:00Z\",\"ended_at\":\"2026-01-01T00:00:00Z\",\"seconds\":0} | .validate_mode=\"range\"^$FILE_ARGS^reason=valid"
+# Control: without the kind rule an implement round's ci run is valid.
+CHECK="$(mutant_scripts ci-kind dev-artifact-check)/dev-artifact-check" || exit 1
+mutate_file "$CHECK" '.validate_mode == "ci" and $k == "fix"' '.validate_mode == "ci"'
+receipt_table "control: without the kind rule an implement round's ci run is valid^impl^.validate_mode=\"ci\"^$FILE_ARGS^verdict=accept reason=valid"
+CHECK="$CHECK_SHIPPED"
 
 echo "=== the validation wall time reaches the orchestrator ==="
 # The lane status file and the overseer's report show minutes per round from

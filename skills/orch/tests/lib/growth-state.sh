@@ -103,8 +103,8 @@ growth_round_write() {
 # run directory for a receipt to name: a start record under MODE, started at
 # HEAD and at the epoch second START where each is given, a wall time of 3300
 # seconds, and a sentinel recording EXIT, 0 by default; EXIT "none" leaves the
-# run unfinished, with neither, "no-verdict" records the bound ending it,
-# as the runner's child does, and "ci" a run that left its verdict to CI. The receipt reads it back through
+# run unfinished, with neither, and "no-verdict" records the bound ending it,
+# as the runner's child does. The receipt reads it back through
 # dev-validate-run --record, which dev_validate_run.sh pins against runs the
 # script itself wrote. Prints DIR.
 validate_run_dir() {
@@ -118,21 +118,18 @@ validate_run_dir() {
   case "${3:-0}" in
     none) ;;
     no-verdict) printf 'guard-exit=124 at=2026-01-01T00:55:00Z verdict=no-verdict\n' > "$1/exit" ;;
-    ci) printf 'guard-exit=0 at=2026-01-01T00:55:00Z verdict=ci\n' > "$1/exit" ;;
     *) printf 'guard-exit=%s at=2026-01-01T00:55:00Z\n' "${3:-0}" > "$1/exit" ;;
   esac
   printf '%s\n' "$1"
 }
 
-# round_run_dir DIR WORKTREE ISSUE RID [MODE] — a finished run started at the
+# round_run_dir DIR WORKTREE ISSUE RID [MODE] — a passing run started at the
 # base_sha of WORKTREE's round record for ISSUE and RID, in the second the
 # round was delegated, which is where and when a fix round's own run starts,
-# so a fix receipt may name it. MODE is full by default; a ci run carries the
-# ci verdict, every other mode a pass. Prints DIR.
+# so a fix receipt may name it. MODE is full by default. Prints DIR.
 round_run_dir() {
-  local base delegated_at verdict=0
+  local base delegated_at
   base="$(jq -r '.base_sha' "$2/tmp/dev-round-$3-$4.json")" || return 1
   delegated_at="$(jq -r '.delegated_at' "$2/tmp/dev-round-$3-$4.json")" || return 1
-  [[ "${5:-}" != ci ]] || verdict=ci
-  validate_run_dir "$1" "${5:-full}" "$verdict" "$base" "$delegated_at"
+  validate_run_dir "$1" "${5:-full}" 0 "$base" "$delegated_at"
 }
