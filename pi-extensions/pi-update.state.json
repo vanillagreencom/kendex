@@ -1,8 +1,8 @@
 {
-  "lastVersion": "0.99.1",
-  "lastDate": "2026-09-29",
-  "lastRun": "2026-09-30T02:31:31Z",
-  "lastRunHead": "3969e96b081551a364ec02a7f5126ff84285ecf0",
+  "lastVersion": "1.0.0",
+  "lastDate": "2026-10-01",
+  "lastRun": "2026-10-03T10:55:59Z",
+  "lastRunHead": "e5d6ed8f847148ba539b49e644e2e57faf3abe8e",
   "sourcesCovered": [
     "agent",
     "ai",
@@ -13,7 +13,6 @@
     "mcp",
     "protocol",
     "server",
-    "session-backends/sqlite-node",
     "telemetry",
     "tui",
     "releases"
