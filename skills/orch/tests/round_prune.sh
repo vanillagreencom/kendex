@@ -109,16 +109,20 @@ full_run() {
   fill "$WT/target/debug/deps/unit-$1.rlib" 65536
 }
 
-OUT="" RC=0
+OUT="" ERR="" RC=0
 ROW_ENV=()
-prune() { # USED [SCRIPTS_DIR] — a fresh round id, then the round-start prune
+prune() { # USED [SCRIPTS_DIR] — a fresh round id, then the round-start prune; its stderr lands in ERR
   local scripts="${2:-$ORCH_SCRIPTS}"
   "$ORCH_SCRIPTS/workflow-state" --state-dir "$STATE" new-round-id "$KEY" dev_round_id >/dev/null
   RC=0
   OUT="$(cd "$MAIN" && env -u CARGO_TARGET_DIR PATH="$TMP_ROOT/bin:$PATH" DF_TARGET_USED="$1" ORCH_ROUND_PRUNE_DISK_PCT=75 \
     ORCH_WORKTREE_BIN="$REPO_ROOT/skills/worktree/scripts/worktree" ${ROW_ENV[@]+"${ROW_ENV[@]}"} \
-    "$scripts/round-prune" --state-dir "$STATE" "$KEY" 2>/dev/null)" || RC=$?
+    "$scripts/round-prune" --state-dir "$STATE" "$KEY" 2>"$ROOT/prune.err")" || RC=$?
+  ERR="$(cat -- "$ROOT/prune.err")" || { echo "round_prune: stderr=unreadable path=[$ROOT/prune.err]" >&2; exit 2; }
 }
+
+# The worktree CLI's keyed refusal lines in ERR, the worktree aliased as in line().
+refusals() { grep '^worktree-' <<<"$ERR" | sed "s| worktree=$WT | worktree=<wt> |" | paste -s -d ',' -; }
 
 # A worktree CLI that reports a whole prune and then exits 1, as one whose
 # claimed lease could not be released does after the engine's summary.
@@ -275,9 +279,9 @@ mutate_file "$NO_HEAD_NAME/git-context" 'branch="$(cat -- "$head_name")"' ': bra
 build control-mid-rebase KEN-1 - local-1-1-1
 row_setup mid-rebase-merge
 prune 80 "$NO_HEAD_NAME"
-assert_eq "rc=$RC $(line) | $(artifacts)" \
-  "rc=1 round-prune: action=failed used-pct=80 mark-pct=75 bytes=0 round=<round> worktree=<wt> | .cargo-lock,deps/unit-0.rlib" \
-  "control: with the rebase head-name unread the local key's prune is refused and the output kept"
+assert_eq "rc=$RC $(line) | $(refusals) | $(artifacts)" \
+  "rc=1 round-prune: action=failed used-pct=80 mark-pct=75 bytes=0 round=<round> worktree=<wt> | worktree-output-prune-lease-foreign: worktree=<wt> owner=local-1-1-1 | .cargo-lock,deps/unit-0.rlib" \
+  "control: with the rebase head-name unread the local key's prune is refused as a foreign lease and the output kept"
 
 echo "=== target/ across two runs ==="
 # Two rounds, each starting with the round-start prune and ending with a
