@@ -10,8 +10,8 @@
     "launched_at": "2026-10-04T00:00:00Z",
     "pauses": [
      {
-      "from": "a",
-      "to": "b",
+      "from": "2026-10-04T01:00:00Z",
+      "to": "2026-10-04T02:00:00Z",
       "cause": "walled"
      }
     ],
@@ -28,7 +28,12 @@
       "full_validations": 2
      }
     },
-    "window": "s:KEN-9"
+    "window": "s:KEN-9",
+    "tier_inputs": {
+     "estimate": 2,
+     "delta": null,
+     "paths": null
+    }
    },
    {
     "item": "KEN-1",

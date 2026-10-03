@@ -1,15 +1,33 @@
 #!/usr/bin/env python3
 """KEN-2343 measure script: one lane's session measures as one JSON object.
 
-usage: measure.py live [--home DIR] [--item ITEM]
-       measure.py archive --dir ARCHIVE_DIR [--oversee-state FILE]
-                          [--brief-tail FILE] [--min-free-gb N]
+usage: measure.py archive (--root ARCHIVE_ROOT | --dir ITEM_DIR) [--since DATE]
+                          [--oversee-state REPO=FILE]... [--brief-tail REPO=FILE]...
+                          [--min-free-gb N]
+       measure.py live [--home DIR] [--item ITEM] [--repo REPO]
+       measure.py aggregate [FILE...]
 
-Python 3.8+, standard library only. Reads, never writes, and prints exactly
-one JSON object on stdout. Notices go to stderr, first line `measure: KEY=VALUE`.
+Python 3.8+, standard library only. Reads, never writes. Notices go to stderr,
+first line `measure: KEY=VALUE`.
 
-live     Runs inside one lane sandbox (`lane-host-daytona exec --item ITEM`).
-         Walks the session stores under --home (default $HOME):
+archive  Runs on the control host, first. --root is the archive root
+         (/home/admin/.fleet/archive): every <repo>/<item> directory under it is
+         one item; --dir reads one item directory. For each item it prints
+         `df -h /` to stderr, stops with exit 3 when free space on / is under
+         --min-free-gb (default 3), then reads every tokens-*.json and every
+         tmp-*.tgz whose close falls on or after --since (default 2026-10-01;
+         a record's `at`, else the file's mtime; "" reads everything). It lists
+         each archive with `tar -tzf` and streams only the members it needs, one
+         at a time, with `tar -xzOf ARCHIVE -- MEMBER`; it never extracts an
+         archive. It prints one JSON line per item with at least one kept
+         record, and a last `measure: archive-done=` notice on stderr.
+         --oversee-state names a repository's tmp/workflow-state-oversee.json,
+         --brief-tail its tmp/brief-tail-template.md; repeat per repository.
+         Measures 1, 4 and 5.
+
+live     Runs inside one open Pi lane's sandbox (`lane-host-daytona exec --item
+         ITEM`), before its close. Walks the session stores under --home
+         (default $HOME):
            pi            .pi/agent/sessions/**/*.jsonl
            pi-kendex     .pi/agent/kendex/sessions/**/*.jsonl (pi-agents-tmux
                          subagent sessions; files that are no Pi session are
@@ -17,23 +35,21 @@ live     Runs inside one lane sandbox (`lane-host-daytona exec --item ITEM`).
            claude        .claude-shared/projects/**/*.jsonl, then
                          .claude/projects/**/*.jsonl (a file both reach is read once)
            copilot       .copilot*/session-state/*/events.jsonl
-         and emits measures 2 (context our extensions add) and 3 (tool calls
-         and tool-result errors) per session, plus token totals per session.
+         and prints one JSON line: measures 2 and 3 per session, plus token
+         totals per session.
 
-archive  Runs on the control host for one `<repo>/<item>` archive directory.
-         Reads every tokens-*.json (measure 1), lists each tmp-*.tgz with
-         `tar -tzf` and streams the members it needs one at a time with
-         `tar -xzOf ARCHIVE -- MEMBER`, never extracting an archive. Prints
-         `df -h /` to stderr before each archive and stops with exit 3 when free
-         space on / is under --min-free-gb (default 3). --oversee-state is the
-         repository's tmp/workflow-state-oversee.json (measures 4 and 5);
-         --brief-tail is tmp/brief-tail-template.md (measure 4).
+aggregate  Reads archive and live lines (files, or stdin) and prints the
+         measure-by-harness table as one JSON line. Every cell carries n, its
+         item count and the measure's source. A measure with fewer than 8 Pi
+         items reads "too small to judge" in every cell, with n kept and no
+         median or p90. Median is the middle value (mean of the two middle
+         values for even n); p90 is the nearest-rank 90th percentile.
 
-Exit status: 0 printed the object; 2 bad arguments or an unreadable required
-input; 3 stopped on low disk (nothing printed on stdout).
+Exit status: 0 done; 2 bad arguments or an unreadable required input; 3
+stopped on low disk (the lines already printed are complete items).
 
 Output schema, live (`schema`: "pi-session-audit/live/1"):
-  mode, item, read_at, home
+  mode, item, repo, read_at, home
   stores.<name>         {root, present, files, unreadable, skipped_non_session}
   append_system         installed ~/.pi/agent/APPEND_SYSTEM.md bytes per package,
                         "other" for text outside package markers; null if absent
@@ -70,8 +86,14 @@ Output schema, live (`schema`: "pi-session-audit/live/1"):
     owed_turns          turn ends a Stop hook refused, or "not recorded"
   errors[]              {path, error}: files or lines that could not be read
 
-Output schema, archive (`schema`: "pi-session-audit/archive/1"):
+Output schema, archive, one line per item (`schema`: "pi-session-audit/archive/2"):
   mode, read_at, dir, repo, item
+  harness               the oversee lane record's harness, else the one harness
+                        with tokens in the kept records, "mixed" for several
+  token_harnesses       harnesses with tokens in the kept records
+  outcome               {merged, wall_secs, paused_secs, fix_rounds,
+                         stopped_parked_or_paused, estimate_band}; null fields
+                         without an oversee lane record
   token_field_order_assumed  the four names given to models.<model>[0..3]
   token_records[]       {file, at, harnesses: {h: {files, unreadable, unrecorded,
                          models: {m: {input, output, cache_read, cache_write, total}}}}}
@@ -80,12 +102,20 @@ Output schema, archive (`schema`: "pi-session-audit/archive/1"):
   lane_status[]         {member, keys} top-level keys of each lane-status member
   lane_mail             {envelopes, by_kind, asks: [{id, at, terms, excerpt}]}
   item_state            {cycles, rereview_cycles, pr_comment_iterations,
-                         fixes, skipped, escalated_items}
+                         fixes, skipped, escalated_items} or null
   oversee               {lanes: [lane record subset], fleet_log: {rows, by_kind,
                          relaunch_rows}} or null
-  brief_tail            {clauses, harness_only: {h: n}} or null
-  disk[]                {before, free_bytes}
+  brief_tail            {clauses, harness_only: {h: n}} for the repository, or null
+  disk                  {before, free_bytes} read before this item
   errors[]              {path, error}
+
+Output schema, aggregate (`schema`: "pi-session-audit/aggregate/1"):
+  rule, inputs {archive_items, live_sessions, mixed_or_unknown_harness}
+  all.<measure>         {source, unit (item | session), pi_items, verdict
+                         ("judged" | "too small to judge"), cells: {harness:
+                         {n, items, median, p90} or {n, items, verdict}}}
+  by_repo_and_band."<repo>|<1-2|3+|unknown>".<measure>  the same, archive
+                        measures only
 """
 
 from __future__ import annotations
@@ -94,6 +124,7 @@ import argparse
 import datetime as _dt
 import glob
 import json
+import math
 import os
 import re
 import shutil
@@ -102,7 +133,14 @@ import sys
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 LIVE_SCHEMA = "pi-session-audit/live/1"
-ARCHIVE_SCHEMA = "pi-session-audit/archive/1"
+ARCHIVE_SCHEMA = "pi-session-audit/archive/2"
+AGGREGATE_SCHEMA = "pi-session-audit/aggregate/1"
+
+# The owner's sample start: every kept close record from this date on.
+DEFAULT_SINCE = "2026-10-01"
+# Reporting rule: a measure with fewer Pi items than this is not a finding.
+MIN_PI_ITEMS = 8
+TOO_SMALL = "too small to judge"
 
 # Every package directory under pi-extensions/. test_measure.py holds this
 # list equal to the directory listing.
@@ -259,7 +297,7 @@ def now_iso() -> str:
 
 
 def notice(key: str, value: Any, explanation: str) -> None:
-    print("measure: %s=%s" % (key, json.dumps(value)), file=sys.stderr)
+    print("measure: %s=%s" % (key, json.dumps(value, sort_keys=True)), file=sys.stderr)
     print(explanation, file=sys.stderr)
 
 
@@ -763,11 +801,11 @@ class DiskLow(Exception):
     pass
 
 
-def check_disk(min_free_bytes: int, before: str, disk: List[Dict[str, Any]]) -> None:
+def check_disk(min_free_bytes: int, disk: Dict[str, Any]) -> None:
     shown = subprocess.run(["df", "-h", "/"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
     sys.stderr.write(shown.stdout)
     free = shutil.disk_usage("/").free
-    disk.append({"before": before, "free_bytes": free})
+    disk["free_bytes"] = free
     if free < min_free_bytes:
         raise DiskLow(free)
 
@@ -853,11 +891,31 @@ def item_state_summary(raw: bytes) -> Dict[str, Any]:
             "skipped": len(review.get("skipped") or []), "escalated_items": len(state.get("escalated_items") or [])}
 
 
-def oversee_summary(path: str, item: str) -> Dict[str, Any]:
+def load_oversee(path: str) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as handle:
         state = json.load(handle)
     if isinstance(state.get("oversee"), dict):
         state = state["oversee"]
+    return state
+
+
+def parse_at(value: Any) -> Optional[_dt.datetime]:
+    """An ISO 8601 UTC stamp as an aware datetime; None for anything else."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return _dt.datetime.strptime(value.replace("Z", "+00:00")[:19] + "+00:00", "%Y-%m-%dT%H:%M:%S%z")
+    except ValueError:
+        return None
+
+
+def estimate_band(estimate: Any) -> Optional[str]:
+    if isinstance(estimate, bool) or not isinstance(estimate, (int, float)):
+        return None
+    return "1-2" if estimate <= 2 else "3+"
+
+
+def oversee_summary(state: Dict[str, Any], item: str) -> Dict[str, Any]:
     keep = ("item", "repo", "harness", "model", "effort", "status", "launched_at", "running_at",
             "session_id", "pauses", "parked", "tier", "tier_inputs", "cycle")
     lanes = [{k: lane.get(k) for k in keep} for lane in state.get("lanes") or [] if lane.get("item") == item]
@@ -867,6 +925,32 @@ def oversee_summary(path: str, item: str) -> Dict[str, Any]:
         by_kind[str(row.get("kind"))] = by_kind.get(str(row.get("kind")), 0) + 1
     relaunch = sum(1 for row in rows if re.search(r"\brelaunch", str(row.get("text")), re.I))
     return {"lanes": lanes, "fleet_log": {"rows": len(rows), "by_kind": by_kind, "relaunch_rows": relaunch}}
+
+
+def lane_outcome(lane: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Measure 5 inputs from one oversee lane record; every field None without one."""
+    if lane is None:
+        return {"merged": None, "wall_secs": None, "paused_secs": None, "fix_rounds": None,
+                "stopped_parked_or_paused": None, "estimate_band": None}
+    cycle = lane.get("cycle") if isinstance(lane.get("cycle"), dict) else None
+    stamps = (cycle or {}).get("stamps") or {}
+    launched = parse_at(stamps.get("launched") or lane.get("launched_at"))
+    merged_at = parse_at(stamps.get("merged"))
+    paused = 0
+    for pause in lane.get("pauses") or []:
+        start, end = parse_at((pause or {}).get("from")), parse_at((pause or {}).get("to"))
+        if start is not None and end is not None and end > start:
+            paused += int((end - start).total_seconds())
+    wall = int((merged_at - launched).total_seconds()) - paused if launched and merged_at else None
+    rounds = (cycle or {}).get("rounds") or {}
+    return {
+        "merged": merged_at is not None,
+        "wall_secs": wall,
+        "paused_secs": paused,
+        "fix_rounds": rounds.get("fix") if isinstance(rounds.get("fix"), int) else None,
+        "stopped_parked_or_paused": lane.get("status") in ("stopped", "parked") or bool(lane.get("pauses")),
+        "estimate_band": estimate_band((lane.get("tier_inputs") or {}).get("estimate")),
+    }
 
 
 def brief_tail_summary(path: str) -> Dict[str, Any]:
@@ -881,14 +965,29 @@ def brief_tail_summary(path: str) -> Dict[str, Any]:
     return {"clauses": len(clauses), "harness_only": only}
 
 
-def run_archive(directory: str, oversee: Optional[str], brief: Optional[str], min_free_gb: float) -> Dict[str, Any]:
-    directory = os.path.abspath(directory)
-    item = os.path.basename(directory)
-    repo = os.path.basename(os.path.dirname(directory))
+def kept_since(path: str, since: Optional[_dt.datetime], at: Any = None) -> bool:
+    """A close record counts from `since` on: its `at`, else the file's mtime."""
+    if since is None:
+        return True
+    stamp = parse_at(at)
+    if stamp is None:
+        stamp = _dt.datetime.fromtimestamp(os.path.getmtime(path), _dt.timezone.utc)
+    return stamp >= since
+
+
+def archive_item(directory: str, repo: str, item: str, since: Optional[_dt.datetime],
+                 oversee: Optional[Dict[str, Any]], brief: Optional[Dict[str, Any]],
+                 disk: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Every kept close record of one `<repo>/<item>` directory; None when none counts."""
     errors: List[Dict[str, Any]] = []
-    disk: List[Dict[str, Any]] = []
-    min_free = int(min_free_gb * 1024 ** 3)
-    records = [r for r in (read_token_record(p, errors) for p in walk(directory, "tokens-*.json")) if r is not None]
+    records = []
+    for path in walk(directory, "tokens-*.json"):
+        record = read_token_record(path, errors)
+        if record is not None and kept_since(path, since, record["at"]):
+            records.append(record)
+    tgzs = [p for p in walk(directory, "tmp-*.tgz") if kept_since(p, since)]
+    if not records and not tgzs:
+        return None
     totals: Dict[str, Dict[str, int]] = {}
     for record in records:
         for harness, body in record["harnesses"].items():
@@ -900,8 +999,7 @@ def run_archive(directory: str, oversee: Optional[str], brief: Optional[str], mi
     lane_status = []
     mail = {"envelopes": 0, "by_kind": {}, "asks": []}  # type: Dict[str, Any]
     item_state: Optional[Dict[str, Any]] = None
-    for archive in walk(directory, "tmp-*.tgz"):
-        check_disk(min_free, os.path.basename(archive), disk)
+    for archive in tgzs:
         row = {"file": os.path.basename(archive), "members": 0, "read": [], "skipped": 0}
         archives.append(row)
         try:
@@ -931,15 +1029,200 @@ def run_archive(directory: str, oversee: Optional[str], brief: Optional[str], mi
                     item_state = item_state_summary(raw)
             except (OSError, ValueError) as error:
                 errors.append({"path": "%s:%s" % (archive, member), "error": str(error)})
+    lanes = oversee_summary(oversee, item) if oversee is not None else None
+    lane = lanes["lanes"][-1] if lanes and lanes["lanes"] else None
+    token_harnesses = sorted(h for h, t in totals.items() if t["total"] > 0) or sorted(totals)
+    harness = (lane or {}).get("harness") or (token_harnesses[0] if len(token_harnesses) == 1 else
+                                              ("mixed" if token_harnesses else None))
     return {
         "schema": ARCHIVE_SCHEMA, "mode": "archive", "read_at": now_iso(), "dir": directory,
-        "repo": repo, "item": item, "token_field_order_assumed": list(TOKEN_RECORD_FIELDS),
+        "repo": repo, "item": item, "harness": harness, "token_harnesses": token_harnesses,
+        "outcome": lane_outcome(lane),
+        "token_field_order_assumed": list(TOKEN_RECORD_FIELDS),
         "token_records": records, "token_totals": totals, "tmp_archives": archives,
         "lane_status": lane_status, "lane_mail": mail, "item_state": item_state,
-        "oversee": oversee_summary(oversee, item) if oversee else None,
-        "brief_tail": brief_tail_summary(brief) if brief else None,
-        "disk": disk, "errors": errors,
+        "oversee": lanes, "brief_tail": brief, "disk": disk, "errors": errors,
     }
+
+
+def repo_map(values: List[str], flag: str) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for value in values:
+        repo, sep, path = value.partition("=")
+        if not sep or not repo or not path:
+            raise ValueError("%s takes REPO=PATH, got %r" % (flag, value))
+        out[repo] = path
+    return out
+
+
+def run_archive(root: str, single: bool, since: Optional[_dt.datetime], oversee_paths: Dict[str, str],
+                brief_paths: Dict[str, str], min_free_gb: float, emit) -> Dict[str, int]:
+    """Emit one object per `<repo>/<item>` (or for `root` itself when `single`)."""
+    root = os.path.abspath(root)
+    if single:
+        items = [(os.path.basename(os.path.dirname(root)), os.path.basename(root), root)]
+    else:
+        items = [(repo, item, os.path.join(root, repo, item))
+                 for repo in sorted(os.listdir(root)) if os.path.isdir(os.path.join(root, repo))
+                 for item in sorted(os.listdir(os.path.join(root, repo))) if os.path.isdir(os.path.join(root, repo, item))]
+    oversee_cache: Dict[str, Dict[str, Any]] = {}
+    brief_cache: Dict[str, Dict[str, Any]] = {}
+    counts = {"items": 0, "emitted": 0, "no_records": 0}
+    for repo, item, directory in items:
+        counts["items"] += 1
+        disk = {"before": "%s/%s" % (repo, item)}  # type: Dict[str, Any]
+        check_disk(int(min_free_gb * 1024 ** 3), disk)
+        if repo in oversee_paths and repo not in oversee_cache:
+            oversee_cache[repo] = load_oversee(oversee_paths[repo])
+        if repo in brief_paths and repo not in brief_cache:
+            brief_cache[repo] = brief_tail_summary(brief_paths[repo])
+        result = archive_item(directory, repo, item, since, oversee_cache.get(repo), brief_cache.get(repo), disk)
+        if result is None:
+            counts["no_records"] += 1
+            continue
+        counts["emitted"] += 1
+        emit(result)
+    return counts
+
+
+# ------------------------------------------------------------------ aggregate
+
+# measure -> (input kind, source, value of one object or None when absent).
+# Archive measures take one value per item, live measures one per session.
+def _sum_pkg(values: Dict[str, Any], skip: Tuple[str, ...] = ("other",)) -> int:
+    return sum(v for k, v in values.items() if k not in skip)
+
+
+def _bytes_by_owner(table: Dict[str, Any]) -> int:
+    return sum(v["bytes"] for v in table.values() if v.get("package") not in ("pi", "unattributed"))
+
+
+def _token(field: str):
+    return lambda o: (o["token_totals"].get(o["harness"]) or {}).get(field) if o["outcome"]["merged"] else None
+
+
+def _context(fn):
+    return lambda s: fn(s["context"]) if isinstance(s.get("context"), dict) else None
+
+
+MEASURES = (
+    ("1 input tokens per merged item", "archive", "tokens-*.json models.<model>[0], field order assumed", _token("input")),
+    ("1 output tokens per merged item", "archive", "tokens-*.json models.<model>[1], field order assumed", _token("output")),
+    ("1 cache read tokens per merged item", "archive", "tokens-*.json models.<model>[2], field order assumed", _token("cache_read")),
+    ("1 cache write tokens per merged item", "archive", "tokens-*.json models.<model>[3], field order assumed", _token("cache_write")),
+    ("1 total tokens per merged item", "archive", "tokens-*.json sum of the four counts", _token("total")),
+    ("2 system-prompt append bytes", "live", "Pi system message addendum section, package markers",
+     _context(lambda c: _sum_pkg(c["addendum_by_package"]))),
+    ("2 our tool definition bytes", "live", "Pi system message toolsAdded",
+     _context(lambda c: sum(v["bytes"] for v in c["tool_definitions"]["ours"].values()))),
+    ("2 custom and custom_message bytes", "live", "Pi custom and custom_message entries",
+     _context(lambda c: _bytes_by_owner(c["custom_entries"]) + _bytes_by_owner(c["custom_messages"]))),
+    ("2 tool-result bytes before budget", "live", "Pi toolResult details.kendexOutputPolicy",
+     _context(lambda c: c["output_policy"]["before_bytes"])),
+    ("2 tool-result bytes after budget", "live", "Pi toolResult content", _context(lambda c: c["output_policy"]["after_bytes"])),
+    ("3 tool calls per session", "live", "session transcript tool calls", lambda s: s["tools"]["calls"]),
+) + tuple(
+    ("3 %s errors per session" % cls, "live", "session transcript errors, ERROR_RULES", (lambda c: lambda s: s["tools"]["errors_by_class"][c])(cls))
+    for cls in ERROR_CLASSES
+) + (
+    ("4 relaunches per item", "archive", "oversee fleet_log text naming relaunch",
+     lambda o: o["oversee"]["fleet_log"]["relaunch_rows"] if o["oversee"] else None),
+    ("4 overseer rulings per item", "archive", "oversee fleet_log kind=ruling",
+     lambda o: o["oversee"]["fleet_log"]["by_kind"].get("ruling", 0) if o["oversee"] else None),
+    ("4 candidate harness-defect asks per item", "archive", "to-overseer.jsonl asks naming harness terms; reviewer confirms",
+     lambda o: sum(1 for a in o["lane_mail"]["asks"] if a["terms"]) if o["tmp_archives"] else None),
+    ("4 turns ended with work owed per session", "live", "Stop hook refusals in the transcript",
+     lambda s: s["owed_turns"] if isinstance(s["owed_turns"], int) else None),
+    ("5 share stopped, parked or paused", "archive", "oversee lane record status, pauses",
+     lambda o: None if o["outcome"]["stopped_parked_or_paused"] is None else int(o["outcome"]["stopped_parked_or_paused"])),
+    ("5 share not merged", "archive", "oversee lane record cycle.stamps.merged",
+     lambda o: None if o["outcome"]["merged"] is None else int(not o["outcome"]["merged"])),
+    ("5 wall seconds launch to merge, less pauses", "archive", "oversee lane record cycle.stamps, pauses",
+     lambda o: o["outcome"]["wall_secs"]),
+    ("5 fix rounds per merged item", "archive", "oversee lane record cycle.rounds.fix", lambda o: o["outcome"]["fix_rounds"]),
+)
+
+
+def nearest_rank(values: List[float], share: float) -> float:
+    ordered = sorted(values)
+    return ordered[max(1, math.ceil(share * len(ordered))) - 1]
+
+
+def cell(points: List[Tuple[str, float]]) -> Dict[str, Any]:
+    values = [v for _, v in points]
+    items = len({i for i, _ in points})
+    if not values:
+        return {"n": 0, "items": 0}
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    median = ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
+    return {"n": len(values), "items": items, "median": median, "p90": nearest_rank(values, 0.9)}
+
+
+def aggregate(objects: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """The measure-by-harness table, with the strata the records allow."""
+    archive = [o for o in objects if o.get("mode") == "archive"]
+    sessions = []
+    for live in (o for o in objects if o.get("mode") == "live"):
+        for session in live["sessions"]:
+            sessions.append((live.get("repo"), live.get("item"), session))
+
+    def table(rows_archive: List[Dict[str, Any]], rows_live: List[Tuple[Any, Any, Dict[str, Any]]]) -> Dict[str, Any]:
+        out = {}
+        for name, kind, source, value in MEASURES:
+            points: Dict[str, List[Tuple[str, float]]] = {}
+            if kind == "archive":
+                for o in rows_archive:
+                    v = value(o)
+                    if v is not None and o["harness"] not in (None, "mixed"):
+                        points.setdefault(o["harness"], []).append((o["item"], v))
+            else:
+                for _, item, s in rows_live:
+                    v = value(s)
+                    if v is not None:
+                        points.setdefault(s["harness"], []).append((item or s["path"], v))
+            cells = {h: cell(p) for h, p in sorted(points.items())}
+            pi_items = cells.get("pi", {}).get("items", 0)
+            judged = pi_items >= MIN_PI_ITEMS
+            if not judged:
+                cells = {h: {"n": c["n"], "items": c["items"], "verdict": TOO_SMALL} for h, c in cells.items()}
+            out[name] = {"source": source, "unit": "item" if kind == "archive" else "session",
+                         "pi_items": pi_items, "verdict": "judged" if judged else TOO_SMALL, "cells": cells}
+        return out
+
+    strata: Dict[str, Any] = {}
+    keys = sorted({(o["repo"], o["outcome"]["estimate_band"]) for o in archive})
+    for repo, band in keys:
+        strata["%s|%s" % (repo, band or "unknown")] = table(
+            [o for o in archive if o["repo"] == repo and o["outcome"]["estimate_band"] == band], [])
+    return {
+        "schema": AGGREGATE_SCHEMA, "mode": "aggregate", "read_at": now_iso(),
+        "rule": "every cell carries n, item count and source; a measure with fewer than %d Pi items reads %r" % (MIN_PI_ITEMS, TOO_SMALL),
+        "inputs": {"archive_items": len(archive), "live_sessions": len(sessions),
+                   "mixed_or_unknown_harness": sum(1 for o in archive if o["harness"] in (None, "mixed"))},
+        "all": table(archive, sessions), "by_repo_and_band": strata,
+    }
+
+
+def read_objects(paths: List[str]) -> List[Dict[str, Any]]:
+    objects = []
+    streams = [open(p, "r", encoding="utf-8") for p in paths] if paths else [sys.stdin]
+    for stream in streams:
+        for number, line in enumerate(stream, 1):
+            if line.strip():
+                value = json.loads(line)
+                if not isinstance(value, dict) or value.get("mode") not in ("archive", "live"):
+                    raise ValueError("%s line %d is no archive or live object" % (getattr(stream, "name", "stdin"), number))
+                objects.append(value)
+        if stream is not sys.stdin:
+            stream.close()
+    return objects
+
+
+def print_json(value: Dict[str, Any]) -> None:
+    json.dump(value, sys.stdout, ensure_ascii=False, sort_keys=True)
+    sys.stdout.write("\n")
+    sys.stdout.flush()
 
 
 def main(argv: List[str]) -> int:
@@ -949,31 +1232,51 @@ def main(argv: List[str]) -> int:
     live = sub.add_parser("live", help="one lane sandbox's session stores")
     live.add_argument("--home", default=os.path.expanduser("~"))
     live.add_argument("--item")
-    arch = sub.add_parser("archive", help="one <repo>/<item> archive directory on the control host")
-    arch.add_argument("--dir", required=True)
-    arch.add_argument("--oversee-state")
-    arch.add_argument("--brief-tail")
+    live.add_argument("--repo")
+    arch = sub.add_parser("archive", help="every <repo>/<item> under --root, or one --dir")
+    where = arch.add_mutually_exclusive_group(required=True)
+    where.add_argument("--root")
+    where.add_argument("--dir")
+    arch.add_argument("--since", default=DEFAULT_SINCE)
+    arch.add_argument("--oversee-state", action="append", default=[], metavar="REPO=PATH")
+    arch.add_argument("--brief-tail", action="append", default=[], metavar="REPO=PATH")
     arch.add_argument("--min-free-gb", type=float, default=3.0)
+    agg = sub.add_parser("aggregate", help="the measure table from archive and live output lines")
+    agg.add_argument("files", nargs="*")
     args = parser.parse_args(argv)
     if args.mode == "live":
         result = run_live(os.path.abspath(args.home), args.item)
-    elif args.mode == "archive":
-        if not os.path.isdir(args.dir):
-            notice("archive-dir", args.dir, "The archive directory does not exist or is not a directory.")
-            return 2
+        result["repo"] = args.repo
+        print_json(result)
+        return 0
+    if args.mode == "aggregate":
         try:
-            result = run_archive(args.dir, args.oversee_state, args.brief_tail, args.min_free_gb)
-        except DiskLow as low:
-            notice("disk-low", low.args[0], "Free space on / is under --min-free-gb; stopped before the next archive.")
-            return 3
-        except (OSError, ValueError) as error:
-            notice("input-unreadable", str(error), "A required input (--oversee-state or --brief-tail) could not be read.")
+            print_json(aggregate(read_objects(args.files)))
+        except (OSError, ValueError, KeyError) as error:
+            notice("aggregate-input", str(error), "An input line is not the output of this script's live or archive mode.")
             return 2
-    else:
+        return 0
+    if args.mode != "archive":
         parser.print_help(sys.stderr)
         return 2
-    json.dump(result, sys.stdout, ensure_ascii=False, sort_keys=True)
-    sys.stdout.write("\n")
+    target = args.root or args.dir
+    if not os.path.isdir(target):
+        notice("archive-dir", target, "The archive directory does not exist or is not a directory.")
+        return 2
+    since = parse_at(args.since + "T00:00:00Z" if len(args.since) == 10 else args.since) if args.since else None
+    if args.since and since is None:
+        notice("since", args.since, "--since takes a date (YYYY-MM-DD) or an ISO 8601 UTC time.")
+        return 2
+    try:
+        counts = run_archive(target, args.dir is not None, since, repo_map(args.oversee_state, "--oversee-state"),
+                             repo_map(args.brief_tail, "--brief-tail"), args.min_free_gb, print_json)
+    except DiskLow as low:
+        notice("disk-low", low.args[0], "Free space on / is under --min-free-gb; stopped before the next item. Lines above are complete.")
+        return 3
+    except (OSError, ValueError) as error:
+        notice("input-unreadable", str(error), "A required input (--oversee-state or --brief-tail) could not be read.")
+        return 2
+    notice("archive-done", counts, "Items under the root, items emitted, and items with no kept record since --since.")
     return 0
 
 

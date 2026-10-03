@@ -157,23 +157,30 @@ class Live(unittest.TestCase):
         self.assertEqual(self.data["output_policy_artifacts"], {"files": 1, "bytes": 10})
 
 
+def make_item(root, repo, item, tar_from=None):
+    """Copy the KEN-9 fixture records into root/repo/item, with a tmp-1.tgz."""
+    directory = os.path.join(root, repo, item)
+    shutil.copytree(os.path.join(FIXTURES, "archive", "kendex", "KEN-9"), directory)
+    subprocess.run(["tar", "-czf", os.path.join(directory, "tmp-1.tgz"), "-C", os.path.join(FIXTURES, "archive-members"), "records"],
+                   check=True, env={"PATH": os.environ["PATH"]})
+    return directory
+
+
 class Archive(unittest.TestCase):
     def setUp(self):
         self.tmp = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
-        self.dir = os.path.join(self.tmp, "kendex", "KEN-9")
-        shutil.copytree(os.path.join(FIXTURES, "archive", "kendex", "KEN-9"), self.dir)
-        subprocess.run(["tar", "-czf", os.path.join(self.dir, "tmp-1.tgz"), "-C", os.path.join(FIXTURES, "archive-members"), "records"],
-                       check=True, env={"PATH": os.environ["PATH"]})
-        self.oversee = os.path.join(FIXTURES, "oversee", "workflow-state-oversee.json")
-        self.brief = os.path.join(FIXTURES, "oversee", "brief-tail-template.md")
+        self.dir = make_item(self.tmp, "kendex", "KEN-9")
+        self.oversee = "kendex=" + os.path.join(FIXTURES, "oversee", "workflow-state-oversee.json")
+        self.brief = "kendex=" + os.path.join(FIXTURES, "oversee", "brief-tail-template.md")
 
-    def test_archive(self):
+    def test_one_item(self):
         code, out, err = run(["archive", "--dir", self.dir, "--oversee-state", self.oversee, "--brief-tail", self.brief, "--min-free-gb", "0"])
         self.assertEqual(code, 0)
         self.assertIn("Filesystem", err)
+        self.assertEqual(len(out.splitlines()), 1)
         data = json.loads(out)
-        self.assertEqual((data["repo"], data["item"]), ("kendex", "KEN-9"))
+        self.assertEqual((data["repo"], data["item"], data["harness"]), ("kendex", "KEN-9", "pi"))
         self.assertEqual(data["token_totals"]["claude"], {"input": 11, "output": 21, "cache_read": 31, "cache_write": 41, "total": 104})
         self.assertEqual(data["token_totals"]["pi"]["total"], 10)
         self.assertEqual([e["error"] for e in data["errors"]], ["token-record-shape harness=pi model=bad"])
@@ -186,16 +193,88 @@ class Archive(unittest.TestCase):
         self.assertEqual(data["item_state"], {"cycles": 2, "rereview_cycles": 1, "pr_comment_iterations": 3, "fixes": 2, "skipped": 1, "escalated_items": 1})
         self.assertEqual(len(data["oversee"]["lanes"]), 1)
         self.assertEqual(data["oversee"]["fleet_log"], {"rows": 2, "by_kind": {"ruling": 1, "close": 1}, "relaunch_rows": 1})
+        # Launched 00:00, merged 05:00, paused 01:00-02:00.
+        self.assertEqual(data["outcome"], {"merged": True, "wall_secs": 4 * 3600, "paused_secs": 3600, "fix_rounds": 1,
+                                           "stopped_parked_or_paused": True, "estimate_band": "1-2"})
         self.assertEqual(data["brief_tail"], {"clauses": 5, "harness_only": {"pi": 1, "claude": 1, "copilot": 1}})
 
-    def test_disk_low_stops_with_nothing_on_stdout(self):
-        code, out, err = run(["archive", "--dir", self.dir, "--min-free-gb", "1000000000"])
+    def test_root_sweep_and_since(self):
+        make_item(self.tmp, "fleet", "FLT-1")
+        old = make_item(self.tmp, "vg", "VG-1")
+        for name in os.listdir(old):
+            path = os.path.join(old, name)
+            if name.startswith("tokens-"):
+                with open(path) as handle:
+                    record = json.load(handle)
+                record["at"] = "2026-09-20T00:00:00Z"
+                with open(path, "w") as handle:
+                    json.dump(record, handle)
+            else:
+                os.utime(path, (1758326400, 1758326400))  # 2025-09-20
+        os.makedirs(os.path.join(self.tmp, "kendex", "oversee"))
+        code, out, err = run(["archive", "--root", self.tmp, "--since", "2026-10-01", "--oversee-state", self.oversee, "--min-free-gb", "0"])
+        self.assertEqual(code, 0)
+        items = [(o["repo"], o["item"]) for o in map(json.loads, out.splitlines())]
+        self.assertEqual(items, [("fleet", "FLT-1"), ("kendex", "KEN-9")])
+        self.assertEqual(err.count("Filesystem"), 4)
+        self.assertIn('measure: archive-done={"emitted": 2, "items": 4, "no_records": 2}', err)
+        # fleet has no oversee state: its outcome is unknown, not unmerged.
+        self.assertIsNone(json.loads(out.splitlines()[0])["outcome"]["merged"])
+
+    def test_disk_low_stops_before_the_item(self):
+        code, out, err = run(["archive", "--root", self.tmp, "--min-free-gb", "1000000000"])
         self.assertEqual((code, out), (3, ""))
         self.assertTrue(err.splitlines()[-2].startswith("measure: disk-low="))
 
-    def test_missing_dir(self):
-        code, out, _ = run(["archive", "--dir", os.path.join(self.tmp, "absent")])
-        self.assertEqual((code, out), (2, ""))
+    def test_refusals(self):
+        self.assertEqual(run(["archive", "--dir", os.path.join(self.tmp, "absent")])[:2], (2, ""))
+        self.assertEqual(run(["archive", "--root", self.tmp, "--oversee-state", "no-equals-sign"])[:2], (2, ""))
+        self.assertEqual(run(["archive", "--root", self.tmp, "--since", "October"])[:2], (2, ""))
+
+
+def archive_object(item, harness, total, merged=True, repo="kendex", band="1-2"):
+    """The fields aggregate reads from one archive line."""
+    return {"mode": "archive", "repo": repo, "item": item, "harness": harness,
+            "token_totals": {harness: {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": total}},
+            "outcome": {"merged": merged, "wall_secs": None, "paused_secs": 0, "fix_rounds": None,
+                        "stopped_parked_or_paused": False, "estimate_band": band},
+            "oversee": None, "tmp_archives": [], "lane_mail": {"asks": []}}
+
+
+class Aggregate(unittest.TestCase):
+    MEASURE = "1 total tokens per merged item"
+
+    def test_judged_with_eight_pi_items(self):
+        objects = [archive_object("P-%d" % i, "pi", i) for i in range(1, 9)]
+        objects += [archive_object("C-%d" % i, "claude", i) for i in range(1, 21)]
+        objects.append(archive_object("P-9", "pi", 1000, merged=False))
+        row = measure.aggregate(objects)["all"][self.MEASURE]
+        self.assertEqual(row["verdict"], "judged")
+        self.assertEqual(row["cells"]["pi"], {"n": 8, "items": 8, "median": 4.5, "p90": 8})
+        # Nearest rank: ceil(0.9 * 20) = 18th of 20.
+        self.assertEqual(row["cells"]["claude"], {"n": 20, "items": 20, "median": 10.5, "p90": 18})
+        self.assertTrue(row["source"].startswith("tokens-*.json"))
+
+    def test_seven_pi_items_is_too_small(self):
+        objects = [archive_object("P-%d" % i, "pi", i) for i in range(1, 8)]
+        objects += [archive_object("C-%d" % i, "claude", 10 * i) for i in range(1, 10)]
+        row = measure.aggregate(objects)["all"][self.MEASURE]
+        self.assertEqual(row["verdict"], "too small to judge")
+        for harness in ("pi", "claude"):
+            self.assertNotIn("median", row["cells"][harness])
+            self.assertEqual(row["cells"][harness]["verdict"], "too small to judge")
+        self.assertEqual(row["cells"]["claude"]["n"], 9)
+
+    def test_strata_and_live_from_fixture_lines(self):
+        code, out, _ = run(["live", "--home", os.path.join(FIXTURES, "home"), "--item", "KEN-9", "--repo", "kendex"])
+        self.assertEqual(code, 0)
+        table = measure.aggregate([json.loads(out), archive_object("P-1", "pi", 5, band="3+"), archive_object("M-1", "mixed", 5)])
+        self.assertEqual(sorted(table["by_repo_and_band"]), ["kendex|1-2", "kendex|3+"])
+        self.assertEqual(table["inputs"]["mixed_or_unknown_harness"], 1)
+        calls = table["all"]["3 tool calls per session"]
+        self.assertEqual(calls["verdict"], "too small to judge")
+        # Four Pi sessions (lead, fork, subagent) from one item; Claude two, Copilot one.
+        self.assertEqual({h: (c["n"], c["items"]) for h, c in calls["cells"].items()}, {"pi": (3, 1), "claude": (2, 1), "copilot": (1, 1)})
 
 
 class SourceDrift(unittest.TestCase):

@@ -1,6 +1,6 @@
 # Findings: Pi lane session audit
 
-Status: instrument only; window not yet opened.
+Status: instrument built; no record read yet.
 
 ## Research Question
 
@@ -8,48 +8,46 @@ Does Pi with the kendex Pi extensions waste tokens, raise errors, force workarou
 
 ## Executive Summary
 
-Nothing is measured yet. This round builds the measure script and fixes the method. The 48-hour window opens after the Pi extension audit items land and lane close keeps transcripts (KEN-2343 hold). [I]
+Nothing is measured yet. This round builds the measure script and fixes the method. The sample is the close records the control host already keeps, plus new closes. [R]
 
-The measure script is [pi-session-audit/measure.py](pi-session-audit/measure.py). It runs in two modes. `live` reads one lane sandbox's session stores before close and emits measures 2 and 3 per session. `archive` reads one closed item's kept archive on the control host and emits the inputs to measures 1, 4 and 5. Each run prints one JSON object. `measure.py --help` states the schema. [S]
+The measure script is [pi-session-audit/measure.py](pi-session-audit/measure.py). It runs in three modes. `archive` sweeps every kept close record on the control host and prints one JSON line per item: the inputs to measures 1, 4 and 5. `live` reads one open Pi lane's sandbox before its close and prints measures 2 and 3 per session. `aggregate` turns those lines into the measure table. `measure.py --help` states each schema. [S]
 
 ## Key Findings
 
-No finding yet. The table in § Measure table holds no value until the window closes.
+No finding yet. The table in § Measure table holds no value until the overseer's run returns.
 
 ## Method
 
 ### Sample
 
-- Pi sample: every Pi lane that closes in the 48 hours after the window opens, across the oversee states on the control VM (kendex, fleet, vg, talk). If that is fewer than 30 lanes, the sample is the first 30 closed Pi lanes. [I]
-- Comparison sample: in the same window, the overseer routes at least 8 items to Claude Code and at least 8 to Copilot CLI. [I]
-- Model: every harness runs claude-opus-5.5. Pi runs it through the `github-copilot` provider. [I]
+- Close records: every kept close record dated 2026-10-01 or later, across every repository and fleet under `/home/admin/.fleet/archive/<repo>/<item>/`, plus each new close. A close record is a `tokens-<sandbox-id>.json` and a `tmp-*.tgz`. [R]
+- Live Pi lanes: measures 2 and 3 need a transcript, and a close keeps none (FLT-671). They are read only from Pi lanes still open, before their close. [R] [O]
+- No routing change and no Copilot spend. The overseer routes no item for this audit. [R]
 
-### Matching rule
+### Comparison
 
-A comparison item matches a Pi item when all four hold:
+The comparison is whatever harness mix the kept records hold: Claude Code, Pi and Copilot CLI. No harness needs a matched sample. [R]
 
-| Key | Rule | Read from |
-|---|---|---|
-| Repository | Same repository | oversee lane record `repo` |
-| Agent label | Same `agent:*` label | Linear or GitHub issue labels |
-| Estimate band | Same band: 1–2 or 3 and up | issue estimate; lane record `tier_inputs.estimate` |
-| Model | claude-opus-5.5 on every assistant message; Pi messages also carry provider `github-copilot` | live `sessions[].models` |
+Where the records allow, `aggregate` also groups the archive measures by repository and estimate band (1–2, 3 and up), in `by_repo_and_band`. The repository is the archive directory's. The band comes from the oversee lane record's `tier_inputs.estimate`. No kept record holds the item's `agent:*` label. The subagent reads it from the tracker when it wants that split. Every session's `models` lists the provider and model of each assistant message, so a reader can see where models differ.
 
-A session whose `models` names any other model or provider leaves the sample. The run lists each one and its reason. The fleet Pi settings on this sandbox set `defaultProvider` to `pi-claude`, so a Pi lane enters the sample only when its launch names `github-copilot/claude-opus-5.5` (`~/.fleet/harness/pi/settings.json`). [S]
+### Reporting rule
+
+- Every figure carries its source and its sample size n. `aggregate` puts `source` on every measure, and `n` and the item count on every cell.
+- A measure with fewer than 8 Pi items reads "too small to judge" in every cell. The cell keeps n and drops the median and p90. It is never a finding. `MIN_PI_ITEMS` in `measure.py` holds the 8, and `test_measure.py` fails when it changes.
+- Median is the middle value, or the mean of the two middle values for an even n. p90 is the nearest-rank 90th percentile.
 
 ### Read procedure
 
-An overseer-briefed control-host subagent runs every read, with the script as its input. The script itself writes no file. Its output is one JSON object per lane. A sandbox of another repository has no copy of the script, so the subagent streams it to `python3 -` on stdin and writes nothing into the sandbox.
+An overseer-briefed control-host subagent runs every read, with the script as its input. It runs `archive` first. The script itself writes no file.
 
-| Measure | Mode | Where | Command |
+| Step | Mode | Where | Command |
 |---|---|---|---|
-| 1 tokens per merged item | `archive` | control host, `/home/admin/.fleet/archive/<repo>/<item>/` | `measure.py archive --dir DIR --oversee-state <repo>/tmp/workflow-state-oversee.json --brief-tail <repo>/tmp/brief-tail-template.md` |
-| 2 context our extensions add | `live` | lane sandbox, before close | `python3 - live --item ITEM`, run through `lane-host-daytona exec --item ITEM` with `measure.py` on its stdin |
-| 3 tool calls and errors | `live` | lane sandbox, before close | same run as measure 2 |
-| 4 forced workarounds | `archive` | control host | same run as measure 1, plus `fleet_log` rows |
-| 5 failures and outcome | `archive` | control host | same run as measure 1, plus `gh pr view N --json state,mergedAt,createdAt` per PR |
+| 1 | `archive` | control host | `measure.py archive --root /home/admin/.fleet/archive --oversee-state REPO=<repo>/tmp/workflow-state-oversee.json --brief-tail REPO=<repo>/tmp/brief-tail-template.md > items.jsonl`, one `--oversee-state` and one `--brief-tail` per repository |
+| 2 | `live` | each open Pi lane's sandbox, before close | `python3 - live --item ITEM --repo REPO > ITEM.live.json`, run through `lane-host-daytona exec --item ITEM` with `measure.py` on its stdin |
+| 3 | `aggregate` | control host | `measure.py aggregate items.jsonl *.live.json` |
+| 4 | — | control host | `gh pr view N --json state,mergedAt,createdAt` for a PR whose lane record holds no `cycle` |
 
-The transcript archive leaves the control VM disk at merge (FLT-671). A close keeps `tokens-<sandbox-id>.json` and `tmp-*.tgz` (lane status, `to-overseer.jsonl`, the item workflow state). So measures 2 and 3 come from the live sandbox before close, and measures 1, 4 and 5 come from what a close keeps. [O]
+`archive` takes every directory under the root's repository directories as an item, and prints a line for each item with at least one close record dated on or after `--since` (default 2026-10-01). A record's date is its `at`, else its file's modification time. A directory with no such record, such as `<repo>/oversee/` with its prune archives, prints nothing and is counted in the last stderr line, `measure: archive-done=`. A sandbox of another repository has no copy of the script, so the subagent streams it to `python3 -` on stdin and writes nothing into the sandbox.
 
 `live` reads these stores under `$HOME`:
 
@@ -67,7 +65,7 @@ The transcript archive leaves the control VM disk at merge (FLT-671). A close ke
 The script obeys these, and the subagent obeys them for every other read.
 
 - Read an archive as a stream. `archive` lists members with `tar -tzf ARCHIVE` and reads one member at a time with `tar -xzOf ARCHIVE -- MEMBER`. It never extracts an archive. It refuses a member over 16 MiB.
-- Before each archive, `archive` runs and prints `df -h /`. Under 3 GB free on `/` it stops with exit 3 and prints nothing on stdout (`--min-free-gb`).
+- Before each item, `archive` runs and prints `df -h /`. Under 3 GB free on `/` it stops with exit 3 before that item (`--min-free-gb`). The lines it already printed are complete items.
 - Run no `git log -S`, `git log -G`, `git log --all -p` and no other read of every blob in history.
 - Write no bulk data. The output carries counts and bytes. It carries text only as excerpts of at most 200 characters: extension-class and unclassified errors, and lane-mail asks.
 
@@ -192,53 +190,60 @@ Every extension-class cost gets a root cause with file and line, and one fix ite
 
 ### Failures and outcome
 
-| Measure | Source |
+`archive` puts these in each item's `outcome`, from the oversee lane record. Without a lane record every field is null: the outcome is unknown, never "not merged".
+
+| Field | Source |
 |---|---|
-| Lane stopped, parked or relaunched | lane record `status`, `parked`, `pauses`; `relaunch_rows` |
-| PR not merged | lane record without `cycle`; `gh pr view` `state` |
-| Wall time, launch to merge | lane record `cycle.stamps.launched` to `cycle.stamps.merged`, less `pauses` |
-| Fix rounds | lane record `cycle.rounds.fix`, `cycle.pr_rounds`; item state `pr_comment_iterations`, `fixes` |
+| `stopped_parked_or_paused` | lane record `status` is `stopped` or `parked`, or `pauses` is not empty |
+| `merged` | lane record `cycle.stamps.merged` is set |
+| `wall_secs` | `cycle.stamps.launched` (else `launched_at`) to `cycle.stamps.merged`, less the `pauses` stretches |
+| `fix_rounds` | `cycle.rounds.fix` |
+| `estimate_band` | `tier_inputs.estimate`: 1–2 or 3+ |
+
+The item's harness is the lane record's `harness`. Without a lane record it is the one harness with tokens in the kept token records. With several such harnesses it is `mixed`, and `aggregate` leaves the item out of every harness cell and counts it in `inputs.mixed_or_unknown_harness`.
 
 ### Measure table
 
-Each cell is n / median / p90 per session or per item. Every cell is empty until the window closes.
+`aggregate` fills this table from the `archive` and `live` lines. Each cell is n / items / median / p90, or n / items / "too small to judge" (§ Reporting rule). Every cell is empty until the overseer's run returns. Harness-only brief clauses are counted per repository in each item's `brief_tail`, not per item, and stay out of the table.
 
-| Measure | Pi with our extensions | Claude Code | Copilot CLI |
-|---|---|---|---|
-| 1 input tokens per merged item | | | |
-| 1 output tokens per merged item | | | |
-| 1 cache read tokens per merged item | | | |
-| 1 cache write tokens per merged item | | | |
-| 1 total tokens per merged item | | | |
-| 2 system-prompt append bytes | | not applicable | not applicable |
-| 2 our tool definition bytes | | not applicable | not applicable |
-| 2 `custom` and `custom_message` bytes | | not applicable | not applicable |
-| 2 tool-result bytes before budget | | not applicable | not applicable |
-| 2 tool-result bytes after budget | | not applicable | not applicable |
-| 3 tool calls per session | | | |
-| 3 extension errors per session | | | |
-| 3 model errors per session | | | |
-| 3 provider errors per session | | | |
-| 3 repository errors per session | | | |
-| 3 unclassified errors per session | | | |
-| 4 harness-only brief clauses | | | |
-| 4 relaunches per item | | | |
-| 4 overseer rulings per item | | | |
-| 4 harness-defect lane-mail asks per item | | | |
-| 4 turns ended with work owed per session | | | |
-| 5 lanes stopped, parked or relaunched | | | |
-| 5 PRs not merged | | | |
-| 5 wall time, launch to merge | | | |
-| 5 fix rounds per item | | | |
+| Measure | Unit | Source | Pi with our extensions | Claude Code | Copilot CLI |
+|---|---|---|---|---|---|
+| 1 input tokens per merged item | item | `tokens-*.json` `models.<model>[0]`, order assumed | | | |
+| 1 output tokens per merged item | item | `models.<model>[1]`, order assumed | | | |
+| 1 cache read tokens per merged item | item | `models.<model>[2]`, order assumed | | | |
+| 1 cache write tokens per merged item | item | `models.<model>[3]`, order assumed | | | |
+| 1 total tokens per merged item | item | sum of the four counts | | | |
+| 2 system-prompt append bytes | session | Pi `addendum` section, package markers | | not applicable | not applicable |
+| 2 our tool definition bytes | session | Pi `toolsAdded` | | not applicable | not applicable |
+| 2 custom and custom_message bytes | session | Pi `custom`, `custom_message` entries | | not applicable | not applicable |
+| 2 tool-result bytes before budget | session | Pi `details.kendexOutputPolicy` | | not applicable | not applicable |
+| 2 tool-result bytes after budget | session | Pi tool-result content | | not applicable | not applicable |
+| 3 tool calls per session | session | transcript tool calls | | | |
+| 3 extension errors per session | session | transcript errors, `ERROR_RULES` | | | |
+| 3 model errors per session | session | same | | | |
+| 3 provider errors per session | session | same | | | |
+| 3 repository errors per session | session | same | | | |
+| 3 unclassified errors per session | session | same | | | |
+| 4 relaunches per item | item | `fleet_log` text naming relaunch | | | |
+| 4 overseer rulings per item | item | `fleet_log` kind `ruling` | | | |
+| 4 candidate harness-defect asks per item | item | `to-overseer.jsonl` asks naming harness words; the reviewer confirms each | | | |
+| 4 turns ended with work owed per session | session | Stop hook refusals in the transcript | | | |
+| 5 share stopped, parked or paused | item | lane record `status`, `pauses` | | | |
+| 5 share not merged | item | lane record `cycle.stamps.merged` | | | |
+| 5 wall seconds launch to merge, less pauses | item | lane record `cycle.stamps`, `pauses` | | | |
+| 5 fix rounds per merged item | item | lane record `cycle.rounds.fix` | | | |
+
+Live measures come only from open Pi lanes, so their Claude Code and Copilot CLI cells stay empty unless such a lane is open on the same sandbox.
 
 ### Instrument tests
 
-`python3 docs/plans/pi-session-audit/test_measure.py` runs the script on the synthetic fixtures under [pi-session-audit/fixtures](pi-session-audit/fixtures). It also holds `TOOL_OWNERS`, `PACKAGES` and the `customType` owners equal to what it extracts from `pi-extensions/` source. A planted defect turns it red for each of: Claude usage keyed per line, a dropped tool owner, a broken classifier row, a disk check that never stops, and Pi fork copies counted twice.
+`python3 docs/plans/pi-session-audit/test_measure.py` runs the script on the synthetic fixtures under [pi-session-audit/fixtures](pi-session-audit/fixtures). It also holds `TOOL_OWNERS`, `PACKAGES` and the `customType` owners equal to what it extracts from `pi-extensions/` source. A planted defect turns it red for each of: Claude usage keyed per line, a dropped tool owner, a broken classifier row, a disk check that never stops, Pi fork copies counted twice, a Pi item floor of 7, a `--since` filter that keeps everything, and a p90 that takes the maximum.
 
 ## Evidence and Sources
 
 - [I] KEN-2343 issue body: sample, measures, read rules, classification classes, Done-when.
 - [O] Overseer ruling for this round: what a close keeps (FLT-671) and the control-host rules.
+- [R] Owner ruling relayed by the overseer: the sample is the kept close records since 2026-10-01 plus new closes, live reads only on open Pi lanes, no routing change and no Copilot spend, and the reporting rule.
 - [S] Repository source at this commit, cited by file and line above.
 - [P] The Pi 1.0.1 npm package's Session File Format and Message Types documents (`@earendil-works/pi-coding-agent`): entry types, system messages with `sections`, `toolsAdded`, `toolsRemoved`, `Usage` fields.
 - [C] `@github/copilot-sdk` 1.0.16 `dist/generated/session-events.d.ts`: `session.shutdown` `modelMetrics.<model>.usage` (`inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`); `assistant.usage` is `ephemeral` and not written to `events.jsonl`; `tool.execution_complete` `success` and `error.message`; `session.error` `errorType`.
@@ -246,7 +251,8 @@ Each cell is n / median / p90 per session or per item. Every cell is empty until
 
 ## Tradeoffs / Alternatives
 
-- Measures 2 and 3 read the live sandbox before close, because a close does not keep transcripts. A lane that closes before the read has no measure 2 or 3. The run reports it as missing rather than sampled.
+- Measures 2 and 3 read the live sandbox before close, because a close does not keep transcripts. A Pi lane that closed before the read has no measure 2 or 3, so those measures cover fewer items than measures 1, 4 and 5.
+- The kept records hold the harness mix the fleet ran, not a matched sample. A harness difference in one cell can come from the item mix. `by_repo_and_band` narrows that where the records allow.
 - Bytes stand in for tokens wherever a transcript records no per-part token count. The table states bytes in those rows.
 
 ## Recommendation / Decision Criteria
@@ -260,17 +266,20 @@ None yet. The verdict line (Pi with our extensions vs Claude Code vs Copilot CLI
 - A Claude Code Stop hook refusal is assumed to reach the transcript as a user message starting `Stop hook feedback`.
 - The forced `before_agent_start` system prompts are not in any Pi transcript.
 - A relaunch is counted from fleet log text, not from a field.
+- A close record with no `at` is dated by its file's modification time.
+- The archive's harness names (`claude` in the token record) are assumed to match the lane record's `harness` words.
+- Records from before 2026-10-01 are outside the sample, so Pi items may number fewer than 8 for some measures. Those read "too small to judge".
 - A minimized-only tool result has no recorded size before the minimizer.
 
 ## Revisit Conditions
 
-- The window opens: KEN-2143 to KEN-2173 are merged, released and in the fleet harness bundle, and lane close keeps transcripts.
+- Lane close starts keeping transcripts: measures 2 and 3 can then come from closed lanes too.
 - A Pi release changes the session format or the forced-prompt projection (`pi-update` audit).
 - The token record writer changes its shape.
 
 ## Research Metadata
 
-- Mode: instrument build. No provider query, no Exa search, no sampled lane.
+- Mode: instrument build. No provider query, no Exa search, no record or lane read.
 - Script: `docs/plans/pi-session-audit/measure.py`, Python 3.8 or later, standard library only.
 - Fixtures and tests: `docs/plans/pi-session-audit/fixtures/`, `docs/plans/pi-session-audit/test_measure.py`.
 - Dry run on this sandbox's own Claude Code transcripts (not sample data): 2 sessions read, 0 unreadable.
