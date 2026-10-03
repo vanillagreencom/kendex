@@ -330,7 +330,7 @@ Use the output as `MAIN_REPO_ROOT`.
    [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues complete [ISSUE] --done-when-met [MET_BOXES]
    ```
 
-   `[MET_BOXES]` is the `## Done when` boxes that check found on the default branch: `all` when it found every box, otherwise their numbers in section order from 1, comma-separated.
+   `[MET_BOXES]` is the `## Done when` boxes that check found on the default branch: `all` when it found every box, otherwise their numbers in section order from 1, comma-separated. A section that holds no checkbox, only plain bullets, takes `all`, which ticks nothing and sets Done.
 
    A canceled or unreadable issue is a tracker failure, not a completed merge record. Carry the diagnostic into § 6 and do not claim tracker completion.
 
