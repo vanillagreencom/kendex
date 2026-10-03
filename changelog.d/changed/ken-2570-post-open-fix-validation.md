@@ -1,1 +1,1 @@
-- orch: a fix round on an open pull request leaves validation to the pull request CI where it checks the change, and runs it locally where no CI runs.
+- orch: a fix round on an open pull request leaves validation to the pull request CI where the repository has a GitHub Actions workflow and CI checks the change, and runs it locally otherwise.

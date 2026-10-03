@@ -750,35 +750,48 @@ assert_eq "$(output_of "$OUT" 2>/dev/null) $(sed -n 's/^state=started .* cap-sec
 mv "$LAYOUT/harness-ci.off" "$LAYOUT/harness-ci"
 
 # --- A ci request runs nothing where the class says CI covers the change -------
-# A project whose range command prints that it ran. Each row's run is a ci
-# request; the classifier stub answers the class, the docs verdict and the
-# measured marker.
-proj_ci="$(make_mode_proj proj-ci 'echo range')"
-printf 'tmp/\n' > "$proj_ci/.gitignore"
-git -C "$proj_ci" add .gitignore
-git -C "$proj_ci" -c user.name=t -c user.email=t@example.com commit -q -m ignore
-git -C "$proj_ci" update-ref refs/remotes/origin/main HEAD
+# Projects whose range command prints that it ran, one with a workflow at
+# HEAD and one with none. Each row's run is a ci request; the classifier stub
+# answers the class, the docs verdict and the measured marker.
+ci_proj() { # NAME WORKFLOW(yes|no)
+  local dir
+  dir="$(make_mode_proj "$1" 'echo range')"
+  printf 'tmp/\n' > "$dir/.gitignore"
+  if [[ "$2" == yes ]]; then
+    mkdir -p "$dir/.github/workflows"
+    printf 'on: pull_request\n' > "$dir/.github/workflows/ci.yml"
+  fi
+  git -C "$dir" add -A
+  git -C "$dir" -c user.name=t -c user.email=t@example.com commit -q -m ignore
+  git -C "$dir" update-ref refs/remotes/origin/main HEAD
+  printf '%s\n' "$dir"
+}
+proj_ci="$(ci_proj proj-ci yes)"
+proj_ci_none="$(ci_proj proj-ci-none no)"
 ci_head="$(git -C "$proj_ci" rev-parse HEAD)"
-# label|classifier answer|docs answer|measured|verdict and what the command printed|recorded mode
+# label|workflow at HEAD|classifier answer|docs answer|measured|verdict and what the command printed|recorded mode
 CI_ROWS=(
-  "a measured micro diff is left to CI|change_class=micro|false|true|state=done guard-exit=0 validate=pass |ci"
-  "a measured small diff is left to CI|change_class=small|false|true|state=done guard-exit=0 validate=pass |ci"
-  "a measured standard diff is left to CI|change_class=standard|false|true|state=done guard-exit=0 validate=pass |ci"
-  "a render diff, whose checks CI stands down, runs the range command|change_class=render|false|true|state=done guard-exit=0 validate=pass range|range"
-  "a trivial docs diff runs the range command|change_class=trivial|true|true|state=done guard-exit=0 validate=pass range|range"
-  "a standard diff of docs alone runs the range command|change_class=standard|true|true|state=done guard-exit=0 validate=pass range|range"
-  "a standard class the classifier fell back to runs the range command|change_class=standard|false|false|state=done guard-exit=0 validate=pass range|range"
-  "a class with no measured marker runs the range command|change_class=micro|false||state=done guard-exit=0 validate=pass range|range"
-  "a docs verdict that did not read runs the range command|change_class=micro|exit-2|true|state=done guard-exit=0 validate=pass range|range"
+  "a measured micro diff is left to CI|yes|change_class=micro|false|true|state=done guard-exit=0 validate=pass |ci"
+  "a measured small diff is left to CI|yes|change_class=small|false|true|state=done guard-exit=0 validate=pass |ci"
+  "a measured standard diff is left to CI|yes|change_class=standard|false|true|state=done guard-exit=0 validate=pass |ci"
+  "a project with no workflow runs the range command|no|change_class=standard|false|true|state=done guard-exit=0 validate=pass range|range"
+  "a render diff, whose checks CI stands down, runs the range command|yes|change_class=render|false|true|state=done guard-exit=0 validate=pass range|range"
+  "a trivial diff outside the docs set runs the range command|yes|change_class=trivial|false|true|state=done guard-exit=0 validate=pass range|range"
+  "a standard diff of docs alone runs the range command|yes|change_class=standard|true|true|state=done guard-exit=0 validate=pass range|range"
+  "a standard class the classifier fell back to runs the range command|yes|change_class=standard|false|false|state=done guard-exit=0 validate=pass range|range"
+  "a class with no measured marker runs the range command|yes|change_class=micro|false||state=done guard-exit=0 validate=pass range|range"
+  "a docs verdict that did not read runs the range command|yes|change_class=micro|exit-2|true|state=done guard-exit=0 validate=pass range|range"
 )
 # ci_rows SCRIPT — one line per row: its label, its stderr file, then the
 # verdict, what the command printed and the recorded mode, tab-separated.
 ci_rows() {
-  local row label answer docs measured ci_dir
+  local row label workflow answer docs measured proj ci_dir
   for row in "${CI_ROWS[@]}"; do
-    IFS='|' read -r label answer docs measured _ _ <<<"$row"
+    IFS='|' read -r label workflow answer docs measured _ _ <<<"$row"
+    proj="$proj_ci"
+    [[ "$workflow" == yes ]] || proj="$proj_ci_none"
     STUB_ANSWER="$answer" STUB_DOCS="$docs" STUB_MEASURED="$measured" \
-      run_script "$1" --worktree "$proj_ci" --poll 1 --validate-mode ci --base HEAD
+      run_script "$1" --worktree "$proj" --poll 1 --validate-mode ci --base HEAD
     ci_dir="$(run_dir_of "$OUT")"
     printf '%s\t%s\t%s %s|%s\n' "$label" "$ERR" "$(verdict_of "$OUT")" "$(output_of "$OUT" 2>/dev/null)" \
       "$(start_line "$ci_dir" validate-mode 2>/dev/null)"
@@ -787,7 +800,7 @@ ci_rows() {
 CI_SCRIPT="$LAYOUT/orch/scripts/dev-validate-run"
 CI_GOT="$(ci_rows "$CI_SCRIPT")"
 for row in "${CI_ROWS[@]}"; do
-  IFS='|' read -r label _ _ _ want_out want_mode <<<"$row"
+  IFS='|' read -r label _ _ _ _ want_out want_mode <<<"$row"
   got_line="$(awk -F'\t' -v want="$label" '$1 == want' <<<"$CI_GOT")"
   IFS=$'\t' read -r _ err got <<<"$got_line"
   assert_eq "$got" "$want_out|$want_mode" "$label" "$err"
@@ -803,6 +816,19 @@ run_script "$CI_SCRIPT" --record --run-dir "$ci_dir"
 assert_eq "$(sed -E 's/started-at=[^ ]+ ended-at=[^ ]+$/started-at=T ended-at=T/' <<<"$OUT")" \
   "validate-mode=ci selection=unreported verdict=pass head=$ci_head start=$(start_of "$ci_dir") seconds=0 started-at=T ended-at=T" \
   "its record names the ci mode, a pass, the HEAD it started at and no wall time" "$ERR"
+# Under --attached a ci run still prints its started line first, then the done
+# line, since no child runs to print it before.
+STUB_ANSWER=change_class=micro STUB_DOCS=false STUB_MEASURED=true \
+  run_script "$CI_SCRIPT" --worktree "$proj_ci" --poll 1 --validate-mode ci --base HEAD --attached
+assert_eq "$RC $(sed -n 1p <<<"$OUT" | cut -d' ' -f1) $(verdict_of "$OUT")" \
+  "0 state=started state=done guard-exit=0 validate=pass" \
+  "an attached ci run prints its started line, then its done line" "$ERR"
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+mutate_file "$CI_SCRIPT.mutant" '[[ "$attached" == true && "$validate_mode" != ci ]]' '[[ "$attached" == true ]]'
+STUB_ANSWER=change_class=micro STUB_DOCS=false STUB_MEASURED=true \
+  run_script "$CI_SCRIPT.mutant" --worktree "$proj_ci" --poll 1 --validate-mode ci --base HEAD --attached
+assert_eq "$(sed -n 1p <<<"$OUT" | cut -d' ' -f1)" "state=done" \
+  "control: an attached ci run that skips its started line opens on the done line" "$ERR"
 # One control per rule the ci route holds: each mutant copy sits beside the
 # stubbed classifier and leaves to CI the one row that rule keeps local.
 ci_control() { # LABEL ANCHOR REPLACEMENT ROW
@@ -813,6 +839,8 @@ ci_control() { # LABEL ANCHOR REPLACEMENT ROW
   IFS=$'\t' read -r _ _ got <<<"$got_line"
   assert_eq "$got" "state=done guard-exit=0 validate=pass |ci" "control: with $1, '$4' fails"
 }
+ci_control 'the workflow read dropped' '-n "$workflows" && ' '' \
+  'a project with no workflow runs the range command'
 ci_control 'render among the covered classes' \
   'micro|small|standard) validate_mode=ci' 'micro|small|standard|render) validate_mode=ci' \
   'a render diff, whose checks CI stands down, runs the range command'

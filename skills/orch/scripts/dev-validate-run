@@ -118,10 +118,12 @@
 #          with the origin base branch.
 #   ci     a post-open fix round's run, which the pull request's CI on the
 #          pushed head validates. It runs no command and passes at once, with
-#          a zero-second wall time. A class other than micro, small or
-#          standard, a docs-only diff, or a class the classifier did not
-#          measure or fell back to runs as range does, since harness-ci may
-#          stand CI's checks down for it, and records the mode that ran.
+#          a zero-second wall time. It runs as range does, and records the
+#          mode that ran, where HEAD holds no file under .github/workflows or
+#          that tree cannot be read, so no pull request CI is known to run,
+#          and for a class other than micro, small or standard, a docs-only
+#          diff, or a class the classifier did not measure or fell back to,
+#          since harness-ci may stand CI's checks down for it.
 #
 # Every mode records the worktree's HEAD when the run started as the head= line
 # of start, empty where the worktree has no commit, beside the start= epoch
@@ -165,7 +167,8 @@
 # launching shell or drops its completion notice changes neither the verdict
 # nor where it is recorded.
 #
-# Exit: 0 the command passed, or --stop left nothing running; 1 it failed,
+# Exit: 0 the command passed, a ci run left its validation to the pull request
+# CI, or --stop left nothing running; 1 it failed,
 # the bound ended it, it was lost, or the cap elapsed with no verdict, or a --stop could
 # not end a run; 2 usage or configuration error; 3 --wait's budget elapsed
 # while the run was still going, so poll again.
@@ -456,7 +459,8 @@ if [[ "$mode" == start ]]; then
   # --help's ci mode names when.
   if [[ "$validate_mode" == ci ]]; then
     validate_mode=range
-    if [[ -z "$class_fallback" && "$CHANGE_CLASS_MEASURED" == true && "$docs_only" == false ]]; then
+    workflows="$(git ls-tree -r --full-tree --name-only HEAD -- .github/workflows 2>/dev/null)" || workflows=""
+    if [[ -n "$workflows" && -z "$class_fallback" && "$CHANGE_CLASS_MEASURED" == true && "$docs_only" == false ]]; then
       case "$class" in micro|small|standard) validate_mode=ci ;; esac
     fi
   fi
