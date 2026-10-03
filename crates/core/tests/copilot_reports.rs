@@ -120,6 +120,7 @@ fn an_event_copilot_does_not_have_is_reported_never_faked() {
 /// line names Copilot was written for that, so every other StopFailure
 /// hook is warned: a person's command, even one listing Copilot, and a
 /// catalog script that reaches Copilot only because it lists no harnesses.
+/// A person's command on any other event is not.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_stop_failure_hook_not_written_for_copilot_is_warned_that_error_occurred_fires_wider() {
@@ -127,13 +128,25 @@ fn a_stop_failure_hook_not_written_for_copilot_is_warned_that_error_occurred_fir
     const CUSTOM: &str =
         "[[custom-hooks]]\nname = \"failed\"\nevent = \"StopFailure\"\ncommand = \"./failed.sh\"\n";
     const CATALOG: &str = "[hooks.failed]\nsource = \"cat\"\n";
-    for (declaration, harnesses_line, warned) in [
-        (CUSTOM.to_owned(), "", true),
-        (format!("{CUSTOM}harnesses = [\"copilot\"]\n"), "", true),
-        (CATALOG.to_owned(), "", true),
+    for (declaration, harnesses_line, native, warned) in [
+        (CUSTOM.to_owned(), "", "errorOccurred", true),
+        (
+            format!("{CUSTOM}harnesses = [\"copilot\"]\n"),
+            "",
+            "errorOccurred",
+            true,
+        ),
+        (
+            CUSTOM.replace("StopFailure", "PreToolUse"),
+            "",
+            "preToolUse",
+            false,
+        ),
+        (CATALOG.to_owned(), "", "errorOccurred", true),
         (
             CATALOG.to_owned(),
             "# harnesses: [claude, copilot]\n",
+            "errorOccurred",
             false,
         ),
     ] {
@@ -155,7 +168,7 @@ fn a_stop_failure_hook_not_written_for_copilot_is_warned_that_error_occurred_fir
         );
         let registry = json(&f.project.join(".github/hooks/failed.json"));
         assert_eq!(
-            registry["hooks"]["errorOccurred"].as_array().map(Vec::len),
+            registry["hooks"][native].as_array().map(Vec::len),
             Some(1),
             "{declaration}: {registry}"
         );
