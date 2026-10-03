@@ -155,7 +155,7 @@ fn pins_left_out(
 }
 
 /// The tools a `[[custom-hooks]]` entry is written on with no `harnesses`
-/// list: each the scope installs on where [`delivery`] answers anything
+/// list: each the scope installs on where [`delivery()`] answers anything
 /// but `NotInstallable` for the entry without its list, registered, in an
 /// agent's file or as prose, as a `[hooks.<n>]` pin is judged
 /// (`desired_kinds::not_written`). The one answer for the leave-out
