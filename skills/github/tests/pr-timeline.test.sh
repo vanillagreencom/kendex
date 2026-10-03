@@ -239,6 +239,7 @@ while IFS='@' read -r label edit want; do
   run "$edit" >/dev/null
   assert_eq "$(jq -c '.stamps.first_gate_met' "$TMP_ROOT/stdout") $(gh_stub_calls | grep -c 'statuses' || :)" "$want" "$label"
 done <<ROWS
+an approval still standing on a force-pushed-over head is the first pass, and no status history is read@.data.repository.pullRequest.reviews.nodes[1].state = "APPROVED"@"2026-09-20T09:40:00Z" 0
 an approval dismissed on a force-pushed-over head is the first pass, and no status history is read@$DISMISSED_APPROVAL@"2026-09-20T09:40:00Z" 0
 approvals on two heads, the older one dismissed: the first@$DISMISSED_APPROVAL | .data.repository.pullRequest.reviews.nodes[2].state = "APPROVED"@"2026-09-20T09:40:00Z" 0
 a dismissed review that requested changes is no pass@$DISMISSED_CHANGES@"2026-09-20T10:05:00Z" 2
@@ -583,6 +584,13 @@ mutate 'first_gate_met: ($approvals | map(.submittedAt) + $dismissed_approvals |
 run '.data.repository.pullRequest.reviews.nodes[2].state = "APPROVED"' >/dev/null
 assert_eq "$(jq -c '.stamps.first_gate_met' "$TMP_ROOT/stdout")" '"2026-09-20T10:05:00Z"' \
   "control: without the approvals the final head's approval is not the first gate pass"
+
+# The first gate pass read from the final head's approvals alone: an approval
+# still standing on the pushed-over head is lost.
+mutate 'first_gate_met: ($approvals | map(.submittedAt)' 'first_gate_met: ($approvals | map(select(.commit.oid == $head.oid) | .submittedAt)'
+run '.data.repository.pullRequest.reviews.nodes[1].state = "APPROVED"' >/dev/null
+assert_eq "$(jq -c '.stamps.first_gate_met' "$TMP_ROOT/stdout") $(gh_stub_calls | grep -c 'statuses' || :)" '"2026-09-20T10:05:00Z" 2' \
+  "control: with the head binding an older head's standing approval is not the first gate pass"
 
 # The first gate pass read from current approvals alone: the approval the
 # ruleset dismissed on the pushed-over head is lost.
