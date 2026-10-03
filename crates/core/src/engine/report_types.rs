@@ -225,8 +225,9 @@ pub struct ExcludedHook {
     pub harness: HarnessId,
 }
 
-/// A declared hook's `harnesses` pin in kendex.toml deciding one tool
-/// against what the hook would get with no pin. Either way the remedy is
+/// A hook's `harnesses` pin in kendex.toml, on a declaration or a
+/// `[[custom-hooks]]` entry, deciding one tool against what the hook would
+/// get with no pin. Either way the remedy is
 /// the pin's: drop it, or change the tool's place in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PinnedHook {
@@ -259,8 +260,9 @@ pub struct EngineReport {
     /// A declaration that names the tool gets a `kendex-hook-excluded`
     /// note in `notes` and a `pinned_hooks` row instead.
     pub excluded_hooks: Vec<ExcludedHook>,
-    /// Each tool a declared hook's pin decides against the hook's own
-    /// reading; `verify` names every one.
+    /// Each tool a hook's pin, on a declaration or a `[[custom-hooks]]`
+    /// entry, decides against the hook's own reading; `verify` names every
+    /// one.
     pub pinned_hooks: Vec<PinnedHook>,
     /// What this plan would add to or drop from the installed set.
     pub set_changes: Vec<SetChange>,

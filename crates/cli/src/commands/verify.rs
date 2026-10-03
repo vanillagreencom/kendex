@@ -451,8 +451,8 @@ fn failed_hook_delivery_rows(
     }
 }
 
-/// Each tool a declared hook's `harnesses` pin decides against the hook's
-/// own reading, as a notice and a `notice` row naming the hook, the tool
+/// Each tool a hook's `harnesses` pin, on a declaration or a
+/// `[[custom-hooks]]` entry, decides against the hook's own reading, as a notice and a `notice` row naming the hook, the tool
 /// and the remedy. The engine's report is the one judge of which those
 /// are. Nothing on disk disagrees with the record, so no run fails on
 /// one, `--strict` included.

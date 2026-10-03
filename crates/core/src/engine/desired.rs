@@ -288,7 +288,8 @@ pub struct DesiredState {
     /// Catalog hooks their own harnesses line keeps off a tool nothing the
     /// person wrote asks them onto; `EngineReport::excluded_hooks`.
     pub excluded_hooks: Vec<super::ExcludedHook>,
-    /// Declared hooks whose pin decides a tool; `EngineReport::pinned_hooks`.
+    /// Each tool a declared hook's pin or a `[[custom-hooks]]` entry's
+    /// `harnesses` list decides; `EngineReport::pinned_hooks`.
     pub pinned_hooks: Vec<super::PinnedHook>,
     pub refused: Vec<Refused>,
     /// Declarations whose source resolved and whose item was found and
@@ -349,11 +350,11 @@ pub struct DesiredState {
     /// invariant 4's conflict where the record is another catalog's
     /// (`plan_pass::plan_rebound`).
     pub withheld: BTreeMap<(ItemKind, String, HarnessId), Withholding>,
-    /// Hooks whose pin keeps them off a tool where, with the pin dropped,
-    /// a hook they require would not run beside them: the walk's answer
-    /// for the tools a pin leaves out (`deps::wanted_by`), which plans
-    /// nothing and is read only by the pin records, so a pin is never said
-    /// to keep a hook off a tool it could not run on anyway.
+    /// Hooks whose pin keeps them off a tool where the walk, asked again
+    /// with that pin dropped, withholds them (`deps::withheld_past_pin`).
+    /// It plans nothing: read only by the pin records
+    /// (`desired_kinds::pin_records`), so a pin is never said to keep a
+    /// hook off a tool it could not run on anyway.
     pub withheld_past_pin: BTreeSet<(ItemKind, String, HarnessId)>,
     /// The paths each enabled agent this pass places on at least one
     /// harness declares as tracked output, by agent name;

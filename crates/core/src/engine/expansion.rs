@@ -54,6 +54,7 @@ pub const NO_PER_PACKAGE_UPDATE: &str = "Not updated one package at a time — P
 /// One item a plan installs: the declaration to plan it under, and the tools
 /// it lands on. A declared item keeps the declaration the user wrote; a
 /// derived one gets its source from whatever brought it in.
+#[derive(Clone)]
 pub(super) struct Planned {
     pub(super) decl: ItemDecl,
     pub(super) harnesses: Vec<HarnessId>,
@@ -69,7 +70,7 @@ pub(super) struct Planned {
     derived_from: Option<Reason>,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(super) struct Expansion {
     items: BTreeMap<(ItemKind, String), Planned>,
     reasons: BTreeMap<(ItemKind, String, HarnessId), BTreeSet<Reason>>,
@@ -155,6 +156,50 @@ impl Expansion {
                 derived_from: None,
             },
         );
+    }
+
+    /// A declaration already here, as it would stand had the person
+    /// written `decl` instead: what the one they wrote asked for goes,
+    /// what a set carries stays, and `decl` is asked for on `harnesses`.
+    /// Read by the walk asked again with a hook's pin dropped
+    /// (`deps::withheld_past_pin`).
+    pub(super) fn redeclare(
+        &mut self,
+        kind: ItemKind,
+        name: &str,
+        decl: &ItemDecl,
+        harnesses: Vec<HarnessId>,
+    ) {
+        let Some(planned) = self.items.get_mut(&(kind, name.to_owned())) else {
+            unreachable!("{name} is redeclared only where it was declared");
+        };
+        let mut carried = Vec::new();
+        for harness in &planned.harnesses {
+            let key = (kind, name.to_owned(), *harness);
+            let Some(reasons) = self.reasons.get_mut(&key) else {
+                continue;
+            };
+            reasons.remove(&Reason::Requested);
+            match reasons.is_empty() {
+                true => {
+                    self.reasons.remove(&key);
+                }
+                false => carried.push(*harness),
+            }
+        }
+        for harness in &harnesses {
+            self.reasons
+                .entry((kind, name.to_owned(), *harness))
+                .or_default()
+                .insert(Reason::Requested);
+        }
+        planned.decl = decl.clone();
+        planned.harnesses = harnesses;
+        for harness in carried {
+            if !planned.harnesses.contains(&harness) {
+                planned.harnesses.push(harness);
+            }
+        }
     }
 
     /// Record one derived reason, returning whether this taught the expansion

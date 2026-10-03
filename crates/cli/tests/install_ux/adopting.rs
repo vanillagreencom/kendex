@@ -121,10 +121,11 @@ fn adopting_a_hook_rewrites_only_its_own_registration() {
 }
 
 /// An adopted hook's `[[custom-hooks]]` entry lists the tools it was found
-/// on only where `[install]` would not give it exactly those: a list equal
-/// to the default changes nothing today and keeps the hook off any tool
-/// `[install]` gains later. Antigravity takes a hook only through a list
-/// that names it, so there the list stays. Each row: the `[install]` tools,
+/// on only where the entry with no list would not be written on exactly
+/// those: a list equal to that changes nothing today and keeps the hook
+/// off any tool `[install]` gains later. Antigravity takes a hook only
+/// through a list that names it, so a hook found there keeps its list, and
+/// one found on every other installed tool needs none. Each row: the `[install]` tools,
 /// the registry the hook sits in and what it holds, the `--harness` values,
 /// and the list the entry carries.
 #[test]
@@ -146,7 +147,7 @@ fn an_adopted_hook_lists_its_tools_only_where_install_would_not() {
         &'static [&'static str],
         Option<&'static [&'static str]>,
     );
-    let rows: [Row; 4] = [
+    let rows: [Row; 5] = [
         (&["claude"], CLAUDE, &[], None),
         (&["claude"], CLAUDE, &["--harness", "claude"], None),
         (
@@ -154,6 +155,12 @@ fn an_adopted_hook_lists_its_tools_only_where_install_would_not() {
             CLAUDE,
             &["--harness", "claude"],
             Some(&["claude"]),
+        ),
+        (
+            &["claude", "antigravity"],
+            CLAUDE,
+            &["--harness", "claude"],
+            None,
         ),
         (
             &["antigravity"],

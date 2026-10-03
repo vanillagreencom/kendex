@@ -311,14 +311,17 @@ fn declare(
         // A list already there is extended, never replaced: the tools it
         // names still have the item, and pinning it to the ones being kept
         // now would leave the rest with files nothing manages. Extended to
-        // exactly the default set, it is left off as a first write's is.
+        // exactly the default set, it is left off as a first write's is; a
+        // list this adoption added nothing to is the person's, and stays.
         Some(listed) => {
+            let mut grew = false;
             for harness in wanted {
                 if !listed.contains(&harness) {
                     listed.push(harness);
+                    grew = true;
                 }
             }
-            if crate::engine::desired::names_the_default(listed, &defaults) {
+            if grew && crate::engine::desired::names_the_default(listed, &defaults) {
                 decl.harnesses = None;
             }
         }

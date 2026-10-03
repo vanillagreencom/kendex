@@ -136,14 +136,25 @@ fn one_folder_read_through_a_link_is_not_two_different_copies() {
 /// answered now would leave the one already on it with files nothing
 /// manages. Extended to exactly the tools `[install]` gives the item, the
 /// list is left off, as a first write's is, so the item follows a tool
-/// added to `[install]` later. Each row: the `[install]` tools, and
-/// whether the extended list stays.
+/// added to `[install]` later. A list that already named the tool being
+/// answered is the person's own and stays, whatever it equals. Each row:
+/// the `[install]` tools, the list already there, and whether a list
+/// naming Claude Code and OpenCode stays.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_harness_list_already_there_is_extended_not_replaced() {
-    for (installed, listed) in [
-        ("[\"claude\", \"opencode\", \"codex\"]", true),
-        ("[\"claude\", \"opencode\"]", false),
+    for (installed, before, listed) in [
+        (
+            "[\"claude\", \"opencode\", \"codex\"]",
+            "[\"claude\"]",
+            true,
+        ),
+        ("[\"claude\", \"opencode\"]", "[\"claude\"]", false),
+        (
+            "[\"claude\", \"opencode\"]",
+            "[\"claude\", \"opencode\"]",
+            true,
+        ),
     ] {
         let tmp = tempfile::tempdir().unwrap();
         let root = rooted(&tmp);
@@ -155,7 +166,7 @@ fn a_harness_list_already_there_is_extended_not_replaced() {
         fs::create_dir_all(&project).unwrap();
         fs::write(
             project.join("kendex.toml"),
-            format!("schema = 6\n\n[install]\nharnesses = {installed}\nmethod = \"copy\"\n\n[skills.handmade]\nsource = \"local\"\nharnesses = [\"claude\"]\n"),
+            format!("schema = 6\n\n[install]\nharnesses = {installed}\nmethod = \"copy\"\n\n[skills.handmade]\nsource = \"local\"\nharnesses = {before}\n"),
         )
         .unwrap();
         fs::create_dir_all(project.join(".opencode/skills/handmade")).unwrap();
@@ -182,7 +193,7 @@ fn a_harness_list_already_there_is_extended_not_replaced() {
         assert_eq!(
             declared.harnesses.as_deref(),
             listed.then_some(&[HarnessId::Claude, HarnessId::Opencode][..]),
-            "{installed}"
+            "{installed} {before}"
         );
     }
 }

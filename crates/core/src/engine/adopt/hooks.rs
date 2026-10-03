@@ -63,15 +63,16 @@ pub(super) fn adopt_hook(
     // One declaration renders back into every tool's registry, so every
     // entry has to say the same thing — read in the words a declaration is
     // written in, not in each tool's own spelling.
+    let mut declared = declaration(name, &found)?;
+    // A list naming exactly the tools the entry is written on with none is
+    // left off, so the hook follows the tools `[install]` gains later.
     let tools: Vec<HarnessId> = found.iter().map(|entry| entry.harness).collect();
-    let defaults = crate::engine::desired::harnesses_for(None, &manifest, ItemKind::Hook, scope);
-    // A list naming exactly what `[install]` gives a hook is left off, so
-    // the hook follows the tools `[install]` gains later; except where a
-    // tool reached only by name is on it, which takes a hook only through
-    // a list that names it (`hook::delivery`).
-    let pinned = !crate::engine::desired::names_the_default(&tools, &defaults)
-        || tools.iter().any(|harness| harness.hooks_by_name_only());
-    let declared = declaration(name, &found, pinned)?;
+    let spec = crate::hook::HookSpec::custom(&declared, name.to_owned());
+    let unlisted =
+        crate::engine::desired_custom_hooks::unlisted_tools(env, scope, &manifest, &spec);
+    if crate::engine::desired::names_the_default(&tools, &unlisted) {
+        declared.harnesses = None;
+    }
     let command = declared.command.clone();
     if owned_here(env, scope, &command)? {
         return Err(CoreError::AlreadyManaged {
