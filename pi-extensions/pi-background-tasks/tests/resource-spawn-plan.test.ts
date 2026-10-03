@@ -31,7 +31,7 @@ test("resource spawn plans retain complete argv, metadata and warnings", () => {
 			name: "auto mode falls back to nice and ionice",
 			input: { settings: settings(), probes: probes(false) },
 			expected: {
-				file: "nice", args: ["-n", "10", "ionice", "-t", "-c", "2", "-n", "7", "/bin/bash", "-lc", command],
+				file: "nice", args: ["-n", "10", "ionice", "-c", "2", "-n", "7", "/bin/bash", "-lc", command],
 				metadata: { mode: "nice-ionice", requestedMode: "auto", warning: fallbackWarning }, warnings: [fallbackWarning],
 			},
 			systemdProbes: 1,
@@ -53,7 +53,7 @@ test("resource spawn plans retain complete argv, metadata and warnings", () => {
 			name: "nice ionice mode never asks the systemd probe",
 			input: { settings: settings({ mode: "nice-ionice" }), probes: probes(true) },
 			expected: {
-				file: "nice", args: ["-n", "10", "ionice", "-t", "-c", "2", "-n", "7", "/bin/bash", "-lc", command],
+				file: "nice", args: ["-n", "10", "ionice", "-c", "2", "-n", "7", "/bin/bash", "-lc", command],
 				metadata: { mode: "nice-ionice", requestedMode: "nice-ionice", warning: undefined }, warnings: [],
 			},
 			systemdProbes: 0,

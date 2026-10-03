@@ -325,9 +325,7 @@ function niceIonicePlan(
 	let args = [...input.shellArgs, input.command];
 	if (useIonice) {
 		file = "ionice";
-		// -t: a refused IO priority (realtime class without CAP_SYS_ADMIN) still
-		// runs the task, under nice alone, instead of failing it.
-		args = ["-t", "-c", ioniceClassNumber(settings.ioniceClass), ...(settings.ioniceClass === "idle" ? [] : ["-n", String(settings.ioniceLevel)]), input.shell, ...input.shellArgs, input.command];
+		args = ["-c", ioniceClassNumber(settings.ioniceClass), ...(settings.ioniceClass === "idle" ? [] : ["-n", String(settings.ioniceLevel)]), input.shell, ...input.shellArgs, input.command];
 	}
 	if (useNice) {
 		args = ["-n", String(settings.nice), file, ...args];
