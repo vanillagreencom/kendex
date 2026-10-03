@@ -142,7 +142,8 @@ Output schema, aggregate (`schema`: "pi-session-audit/aggregate/1"):
   stratum matches. An item key is a work item when it has a tracker id's
   shape (`ABC-123` in any case, or a GitHub `issue-123`) and, when --issues
   is given, its canonical id is a key there; every other key is a probe and
-  left out. The rule reads no environment and no repository setting.
+  left out. A GitHub key's id is `<repo>/issue-N`, the form --issues keys it
+  by. The rule reads no environment and no repository setting.
 """
 
 from __future__ import annotations
@@ -1211,17 +1212,19 @@ def ask_group(text: str) -> str:
     return "other"
 
 
-def work_item_id(key: str, issues: Dict[str, Any]) -> Optional[str]:
+def work_item_id(key: str, issues: Dict[str, Any], repo: str) -> Optional[str]:
     """The canonical id of an archive item key, or None for a probe.
 
     This audit owns the rule, and it reads no environment: the archive spans
     repositories whose trackers differ, so one checkout's GH_ISSUE_PATTERN
     would drop the others' items. A key needs a tracker id's shape and, where
     tracker data was read (--issues), an entry there, which keeps out a probe
-    key of that shape such as `proof-3342777`."""
+    key of that shape such as `proof-3342777`. A GitHub `issue-N` names an
+    item only within its repository, so its id is `<repo>/issue-N`; a Linear
+    id is unique across the workspace and stays bare."""
     if not WORK_ITEM_SHAPE.match(key):
         return None
-    canonical = key.lower() if key.lower().startswith("issue-") else key.upper()
+    canonical = "%s/%s" % (repo, key.lower()) if key.lower().startswith("issue-") else key.upper()
     if issues and canonical not in issues:
         return None
     return canonical
@@ -1272,7 +1275,7 @@ def normalize(o: Dict[str, Any], issues: Dict[str, Any]) -> Dict[str, Any]:
     asks: Dict[str, Any] = {}
     for ask in (o.get("lane_mail") or {}).get("asks") or []:
         asks.setdefault(str(ask.get("id")), ask)
-    canonical = work_item_id(o["item"], issues)
+    canonical = work_item_id(o["item"], issues, o["repo"])
     issue = issues.get(canonical or o["item"]) or {}
     fleet_log = (o.get("oversee") or {}).get("fleet_log")
     return {
@@ -1409,7 +1412,8 @@ def aggregate(objects: List[Dict[str, Any]], issues: Dict[str, Any]) -> Dict[str
     normalized = [normalize(o, issues) for o in objects if o.get("mode") == "archive"]
     probes = [n for n in normalized if not n["work_item"]]
     items = [n for n in normalized if n["work_item"] and n["lead"] is not None]
-    sessions = [(live.get("item"), s) for live in objects if live.get("mode") == "live" for s in live["sessions"]]
+    sessions = [(work_item_id(live["item"], {}, str(live.get("repo"))) if live.get("item") else None, s)
+                for live in objects if live.get("mode") == "live" for s in live["sessions"]]
 
     def item_points(fn, pool):
         points: Dict[str, List[Tuple[str, float]]] = {}

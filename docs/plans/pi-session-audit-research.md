@@ -137,10 +137,10 @@ These are listed with their class. They file nothing.
 
 ### Sample
 
-- Close records: every kept close record dated 2026-10-01 or later, across every repository and fleet under `/home/admin/.fleet/archive/<repo>/<item>/`, plus each new close. A close record is a `tokens-<sandbox-id>.json` and a `tmp-*.tgz`. [R]
+- Close records: every kept close record dated 2026-10-01 or later, across every repository and fleet under `/home/admin/.fleet/archive/<repo>/<item>/`, plus each new close. A close keeps a `tokens-<sandbox-id>.json`, a `tmp-*.tgz`, or both. An item enters the sample when its archive directory holds either one dated on or after `--since`. Of the 462 items, 219 hold both, 188 only a `tmp-*.tgz` (token records start 2026-10-02T03:27Z) and 55 only a token record. [R] [E]
 - Live Pi lanes: measures 2 and 3 need a transcript, and a close keeps none (FLT-671). They come only from Pi lanes still open, read before close. At the read none was open in kendex, fleet, vg or talk, and none was routed. [R] [O]
 - No routing change and no Copilot spend. [R]
-- Excluded: 77 probe keys, such as `proof-02328f9`, `proof-3342777` and `fleet-probe-v23-max`, and 28 tracker items with neither a lane record nor exactly one harness with tokens. `measure.py` owns the rule (`work_item_id`) and reads no environment: a key is a tracker item when it has a tracker id's shape (`ABC-123` in any case, or a GitHub `issue-123`) and, with `--issues`, an entry in the tracker data. [E]
+- Excluded: 77 probe keys, such as `proof-02328f9`, `proof-3342777` and `fleet-probe-v23-max`, and 28 tracker items with neither a lane record nor exactly one harness with tokens. `measure.py` owns the rule (`work_item_id`) and reads no environment: a key is a tracker item when it has a tracker id's shape (`ABC-123` in any case, or a GitHub `issue-123`) and, with `--issues`, an entry in the tracker data. A GitHub key names an item only within its repository, so its id is `<repo>/issue-123`; the sample holds none. [E]
 
 ### Comparison
 
@@ -170,7 +170,7 @@ An overseer-briefed control-host subagent runs every read, with the script as it
 | 4 | `aggregate` | any checkout | `measure.py aggregate --issues issues.json items.jsonl.gz [live.jsonl]` |
 | 5 | outcome | any checkout | `gh pr view N --json state,mergedAt` for a lane with no `cycle` record, where its outcome matters |
 
-`archive` prints one line per item with a close record dated on or after `--since` (default 2026-10-01): the record's `at`, else the file's modification time. It prints `df -h /` before each item and stops with exit 3 under 3 GB free; lines already printed are complete. It lists each archive with `tar -tzf` and reads one member at a time with `tar -xzOf ARCHIVE -- MEMBER`, never extracting an archive, and refuses a member over 16 MiB. A close archive can hold the lane mailbox twice (the worktree's and the close-out evidence copy); `archive` and `aggregate` count each envelope id once. A close archive also holds other mailboxes, the overseer's and test scratch ones; `archive` reads only `lane-mail/<item>/to-overseer.jsonl`, and `aggregate` leaves out the asks of a schema-1 line that read another. The subagent runs no `git log -S`, `-G` or `--all -p`, and writes no bulk data.
+`archive` prints one line per item with a token record or a tmp archive dated on or after `--since` (default 2026-10-01): a token record's `at`, else the file's modification time. It prints `df -h /` before each item and stops with exit 3 under 3 GB free; lines already printed are complete. It lists each archive with `tar -tzf` and reads one member at a time with `tar -xzOf ARCHIVE -- MEMBER`, never extracting an archive, and refuses a member over 16 MiB. A close archive can hold the lane mailbox twice (the worktree's and the close-out evidence copy); `archive` and `aggregate` count each envelope id once. A close archive also holds other mailboxes, the overseer's and test scratch ones; `archive` reads only `lane-mail/<item>/to-overseer.jsonl`, and `aggregate` leaves out the asks of a schema-1 line that read another. The subagent runs no `git log -S`, `-G` or `--all -p`, and writes no bulk data.
 
 ### Token-record field meanings
 
@@ -278,5 +278,5 @@ pi-tool-renderer's pass-through `read`, `bash`, `edit`, `write`, `grep`, `find` 
 
 - Mode: kept close records plus static code reads. No provider query, no Exa search, no live lane.
 - Script: `docs/plans/pi-session-audit/measure.py` (Python 3.8+, standard library), modes `archive`, `live`, `aggregate`.
-- Tests: `docs/plans/pi-session-audit/test_measure.py`, 27 tests, run by hand (Read procedure step 0).
+- Tests: `docs/plans/pi-session-audit/test_measure.py`, 28 tests, run by hand (Read procedure step 0).
 - Archive read: the overseer's run, 462 lines, every one exit 0 with no error; `--oversee-state` for fleet, kendex, talk and vg.

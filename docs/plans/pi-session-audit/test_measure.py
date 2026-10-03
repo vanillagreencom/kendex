@@ -348,14 +348,26 @@ class Aggregate(unittest.TestCase):
         # kendex.settings.toml sets GH_ISSUE_PATTERN=ken-[0-9]+; the archive
         # spans fleet, vg and talk trackers, which that setting must not drop.
         objects = [archive_object(key, "pi", 5) for key in ("KEN-1", "FLT-2", "vg-3", "TLK-4", "issue-5", "proof-3342777", "fleet-probe-v23-max")]
-        issues = {key: {"estimate": 1, "agent": "agent:runtime"} for key in ("KEN-1", "FLT-2", "VG-3", "TLK-4", "issue-5")}
+        issues = {key: {"estimate": 1, "agent": "agent:runtime"} for key in ("KEN-1", "FLT-2", "VG-3", "TLK-4", "kendex/issue-5")}
         with mock.patch.dict(os.environ, {"GH_ISSUE_PATTERN": "ken-[0-9]+"}):
             table = measure.aggregate(objects, issues)
         self.assertEqual((table["inputs"]["items"], table["inputs"]["probe_items_excluded"]), (5, 2))
         # proof-3342777 has a tracker id's shape but no tracker entry.
-        self.assertIsNone(measure.work_item_id("proof-3342777", issues))
-        self.assertEqual(measure.work_item_id("vg-3", issues), "VG-3")
-        self.assertEqual(measure.work_item_id("proof-3342777", {}), "PROOF-3342777")
+        self.assertIsNone(measure.work_item_id("proof-3342777", issues, "fleet"))
+        self.assertEqual(measure.work_item_id("vg-3", issues, "vg"), "VG-3")
+        self.assertEqual(measure.work_item_id("proof-3342777", {}, "fleet"), "PROOF-3342777")
+
+    def test_issue_n_is_qualified_by_repository(self):
+        # issue-1 in two repositories is two items; a match in kendex keeps
+        # vg's issue-1 in the unmatched totals.
+        objects = [archive_object("issue-1", "claude", 5, repo="kendex"), archive_object("PI-1", "pi", 3, repo="kendex"),
+                   archive_object("issue-1", "claude", 7, repo="vg")]
+        issues = {key: {"estimate": 1, "agent": "agent:runtime"} for key in ("kendex/issue-1", "PI-1", "vg/issue-1")}
+        table = measure.aggregate(objects, issues)
+        claude = table["all"][self.MEASURE]["cells"]["claude"]
+        self.assertEqual((claude["n"], claude["items"]), (2, 2))
+        self.assertEqual(sorted(table["matched"][self.MEASURE]), ["kendex|agent:runtime|1-2"])
+        self.assertEqual(table["unmatched"][self.MEASURE]["cells"]["claude"]["n"], 1)
 
     def test_incomplete_and_null_side_runs_leave_measure_one(self):
         objects = [archive_object("PI-%d" % i, "pi", i) for i in range(1, 9)]
