@@ -147,6 +147,9 @@ first_err() { sed -n 1p "$TMP_ROOT/stderr"; }
 PASSED='rc=0 review-replies: pass head={head}'
 FAILED='rc=1 review-replies: fail head={head}'
 
+assert_eq "$(jq -Rrs 'contains("\u200b")' "$CHECKER")" false \
+  "the source contains no literal zero-width space"
+
 # --- the review bodies -----------------------------------------------------------
 # Both bodies are live Copilot shapes. supp_body is the heading-titled one,
 # trailer and all: the block sits inside <details>, a bold "Previously missed
@@ -627,8 +630,11 @@ mutant_row "with the head prefix floor lowered to 6, a 6-character prefix binds"
   'SHA_FLOOR=7' 'SHA_FLOOR=6' \
   'at_head "$(body_of heading)"; comments_set "$(comment author "$(printf "Dispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400" "$H6" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"' "$PASSED"
 mutant_row "with the CR strip cut, a CRLF body no longer reads as the block" crlf \
-  "SUPP_NORMALIZE_DEF='def display_strip: gsub(\"\\r\"; \"\") | gsub(\"$SUPP_ZWSP\"; \"\");" "SUPP_NORMALIZE_DEF='def display_strip: gsub(\"$SUPP_ZWSP\"; \"\");" \
+  "SUPP_NORMALIZE_DEF='def display_strip: gsub(\"\\r\"; \"\") | gsub(\"\\u200b\"; \"\");" "SUPP_NORMALIZE_DEF='def display_strip: gsub(\"\\u200b\"; \"\");" \
   'at_head "$(body_of crlf)"' "$FAILED | suppressed-findings state=unparsed"
+mutant_row "with the zero-width strip cut, a Copilot path retains display spaces" zwsp \
+  "SUPP_NORMALIZE_DEF='def display_strip: gsub(\"\\r\"; \"\") | gsub(\"\\u200b\"; \"\");" "SUPP_NORMALIZE_DEF='def display_strip: gsub(\"\\r\"; \"\");" \
+  'at_head "$(body_of copilot)"' "$FAILED | suppressed-findings count=1 | suppressed-entry $(supp_zwsp "$COPILOT_ENTRY")"
 mutant_row "with the page-shape test cut, a non-array reviews page reads as no review" page-shape \
   "  pages=\$(jq -s 'if (length > 0) and all(type == \"array\") then add else error(\"pages are not arrays\") end' <<<\"\$raw\" 2>/dev/null) ||" \
   "  pages=\$(jq -s '[.[] | arrays] | add // []' <<<\"\$raw\" 2>/dev/null) ||" \

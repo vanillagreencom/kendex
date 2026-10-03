@@ -277,7 +277,7 @@ THREAD_RULES_JQ="$REPLY_FORMS_DEF$AUTHOR_TRUST_DEF"'
 # writes into a path to break it across lines for display. A character
 # dropped on one side and kept on the other is an entry no reply can ever
 # answer, because the difference is invisible in both surfaces.
-SUPP_NORMALIZE_DEF='def display_strip: gsub("\r"; "") | gsub("​"; "");
+SUPP_NORMALIZE_DEF='def display_strip: gsub("\r"; "") | gsub("\u200b"; "");
 '
 # entry_marks is the decoration the review body wraps an entry token in. The
 # scan reads a line so decorated and the disposition read answers a reply so
