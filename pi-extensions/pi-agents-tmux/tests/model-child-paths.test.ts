@@ -48,6 +48,10 @@ async function childPath(kind: "background" | "pane", fallback: boolean, runtime
         : { tag: "selected", selection: { nativeSelector: "custom/chat" }, diagnostics: [] };
       return { code: 0, stdout: JSON.stringify({ protocol: "model-resolution-v1", harness: "pi", resolution }), stderr: "" };
     }
+    if (command === "bash") {
+      expect(args).toEqual(["-lc", "command -v pi-bridge || true"]);
+      return { code: 0, stdout: "pi-bridge\n", stderr: "" };
+    }
     if (args[0] === "list" && args[1] === "--json") {
       expect(basename(command)).toMatch(/^pi-bridge(?:\.js)?$/);
       expect(args).toEqual(["list", "--json"]);
