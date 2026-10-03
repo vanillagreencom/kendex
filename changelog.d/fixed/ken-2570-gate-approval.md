@@ -1,0 +1,1 @@
+- github: `pr-timeline` reads the final head's gate pass from its first approval, so `oversee-cycle` names each merged pull request's longest stage again.

@@ -42,7 +42,7 @@
 # setsid. The log's first line is the runner line.
 #
 # Usage:
-#   dev-validate-run --worktree PATH [--poll SECS] [--validate-mode full|range] [--base REF] [--attached]
+#   dev-validate-run --worktree PATH [--poll SECS] [--validate-mode full|range|ci] [--base REF] [--attached]
 #       Start the run detached, then block until it ends. Prints the run
 #       directory first and the verdict last. Harness launch and resume routes:
 #       ../../dev/SKILL.md § Long-Running Validation.
@@ -116,24 +116,33 @@
 #          branch is recorded as the validate-base-orphaned= line of start in
 #          either mode, and a range run then runs from the merge base of HEAD
 #          with the origin base branch.
+#   ci     a post-open fix round's run, which the pull request's CI on the
+#          pushed head validates where that CI runs the checks for the
+#          changed paths: the class is micro, small or standard, measured by
+#          the classifier with no class-fallback, and the docs verdict is
+#          false. That run runs no command and ends at once with verdict ci,
+#          neither a pass nor a failure, and a zero-second wall time. A render
+#          or docs-only diff, whose checks CI stands down, or a class not
+#          measured, runs as range does and records the mode that ran.
 #
-# Both modes record the worktree's HEAD when the run started as the head= line
+# Every mode records the worktree's HEAD when the run started as the head= line
 # of start, empty where the worktree has no commit, beside the start= epoch
 # second. dev-return-write binds those fields to the delegated round, per
 # schemas/dev-return.md.
 #
 # Output protocol — the agent reads these lines and the tests pin them:
 #   state=started run-dir=… log=… sentinel=… timeout-secs=N poll-secs=N cap-secs=N class=… docs-only=… [class-fallback=…]
-#   state=done guard-exit=N at=TIME validate=pass|FAILING|no-verdict run-dir=… log=…
+#   state=done guard-exit=N at=TIME validate=pass|FAILING|no-verdict|ci run-dir=… log=…
 #   state=running elapsed-secs=N cap-secs=N run-dir=…
 #   state=timeout elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
 #   state=lost elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
-#   validate-mode=full|range [lanes=NAMES] selection=all|subset|unreported verdict=pass|FAILING|no-verdict|unfinished head=SHA| start=EPOCH [validate-base-orphaned=SHA] [seconds=N started-at=TIME ended-at=TIME]   (--record)
+#   validate-mode=full|range|ci [lanes=NAMES] selection=all|subset|unreported verdict=pass|FAILING|no-verdict|ci|unfinished head=SHA| start=EPOCH [validate-base-orphaned=SHA] [seconds=N started-at=TIME ended-at=TIME]   (--record)
 #   validate-mode=full|range                                                  (--resolve-mode)
 #
 # --record's verdict is pass only for a sentinel of guard-exit=0, no-verdict
-# for a sentinel carrying verdict=no-verdict, FAILING for any other exit, and
-# unfinished where no sentinel exists: a run still going, past its cap or lost.
+# for a sentinel carrying verdict=no-verdict, ci for one carrying verdict=ci,
+# FAILING for any other exit, and unfinished where no sentinel exists: a run
+# still going, past its cap or lost.
 # Only pass is a passing validation. The timing fields follow every verdict a
 # sentinel carries, a no-verdict run's included, since the bound's end is
 # still an end, and never an unfinished one, which has none; a sentinel with
@@ -155,10 +164,12 @@
 #
 # The sentinel file holds exactly one line, `guard-exit=N at=TIME`, with
 # ` verdict=no-verdict` after it for a run the bound ended, written by the
-# detached child. A harness that kills the launching shell or drops its
-# completion notice changes neither the verdict nor where it is recorded.
+# detached child, or ` verdict=ci` for a ci run, written by the start path.
+# A harness that kills the launching shell or drops its completion notice
+# changes neither the verdict nor where it is recorded.
 #
-# Exit: 0 the command passed, or --stop left nothing running; 1 it failed,
+# Exit: 0 the command passed, a ci run left its validation to CI, or --stop
+# left nothing running; 1 it failed,
 # the bound ended it, it was lost, or the cap elapsed with no verdict, or a --stop could
 # not end a run; 2 usage or configuration error; 3 --wait's budget elapsed
 # while the run was still going, so poll again.
@@ -200,12 +211,12 @@ die() {
       required) printf 'The required option is absent or empty.\n' ;;
       unknown-argument) printf 'The argument is not supported.\n' ;;
       mode-conflict) printf 'Use one of --worktree, --wait, --stop, --record, --resolve-mode or --child.\n' ;;
-      record-unreadable) printf 'The start record names no validation mode of full or range.\n' ;;
+      record-unreadable) printf 'The start record names no validation mode of full, range or ci.\n' ;;
       option-unused) printf 'The option has no meaning in this mode and would be silently dropped.\n' ;;
       repeated) printf 'The option was given twice, and one of its values would be silently dropped.\n' ;;
       not-directory) printf 'The path is not a directory.\n' ;;
       empty-validate-cmd) printf 'Set it in kendex.settings.toml [env] to the project full test, lint and typecheck command.\n' ;;
-      invalid-mode) printf 'The validation mode must be full or range.\n' ;;
+      invalid-mode) printf 'The validation mode must be full, range or ci.\n' ;;
       invalid-base) printf 'The base does not name a commit in the worktree.\n' ;;
       orphaned-base-unresolved) printf 'The base is not on the branch, and no merge base with the origin base branch could replace it.\n' ;;
       ancestry-unreadable) printf 'Git could not say whether the base is on the branch.\n' ;;
@@ -217,6 +228,7 @@ die() {
       sentinel-unreadable) printf 'The sentinel does not carry a guard-exit value.\n' ;;
       timing-unreadable) printf 'The run has a verdict but no started-at, ended-at and seconds record of its wall time.\n' ;;
       scratch-unavailable) printf 'A scratch directory for reading the change class could not be created.\n' ;;
+      class-unknown) printf 'The classifier named a class this script does not know, so whether CI covers the change is unknown.\n' ;;
       runner-unrecorded) printf 'The record of how the run is started could not be written, so no run was started.\n' ;;
       launch-failed) printf 'The run could not be started, so there is no verdict to wait for.\n' ;;
       job-end-failed) printf 'The verdict is recorded; what the command left in its process group may still run.\n' ;;
@@ -379,7 +391,7 @@ case "$mode" in
     else
       case "$validate_mode" in
         full) [[ "$base_given" == false ]] || die option-unused "option=--base" "validate-mode=$validate_mode" ;;
-        range) [[ -n "$base" ]] || die required "option=--base" "validate-mode=$validate_mode" ;;
+        range|ci) [[ -n "$base" ]] || die required "option=--base" "validate-mode=$validate_mode" ;;
         *) die invalid-mode "option=--validate-mode" "value=$validate_mode" ;;
       esac
     fi
@@ -431,7 +443,11 @@ if [[ "$mode" == start ]]; then
   base_sha=""
   orphaned_sha=""
   cmd=""
-  if [[ "$validate_mode" == range ]]; then
+  # A ci request is set up as the range run it becomes where CI does not
+  # cover the change; the class read below decides which it is.
+  ci_requested=false
+  [[ "$validate_mode" != ci ]] || ci_requested=true
+  if [[ "$validate_mode" == range || "$ci_requested" == true ]]; then
     base_sha="$(git rev-parse --verify -q "$base^{commit}")" || die invalid-base "base=$base"
     # A base a rebase left off the branch is recorded whichever mode runs: a
     # fix round's receipt names the run through it once the round's base is no
@@ -483,6 +499,17 @@ if [[ "$mode" == start ]]; then
   # Read before the run directory exists, since that directory sits inside the
   # worktree the class judges.
   classify
+  # CI covers the change where it runs the checks for its paths: harness-ci
+  # stands them down on a render and a docs-only diff, and a class the
+  # classifier did not measure proves nothing about what CI runs.
+  if [[ "$ci_requested" == true && -z "$class_fallback" && "$CHANGE_CLASS_MEASURED" == true \
+    && "$docs_only" == false ]]; then
+    case "$class" in
+      micro|small|standard) validate_mode=ci cmd="" ;;
+      render|trivial) ;;
+      *) die class-unknown "class=$class" ;;
+    esac
+  fi
 
   # A fresh directory per start, so a poll can never read the previous round's
   # verdict as this one's.
@@ -513,6 +540,19 @@ if [[ "$mode" == start ]]; then
       "$run_dir" "$run_dir/log" "$run_dir/exit" "$timeout_secs" "$poll" "$cap_secs" \
       "$class" "$docs_only" "${class_fallback:+ class-fallback=$class_fallback}"
   }
+  # A ci run starts nothing: its verdict is the pull request CI's, so the
+  # record is written whole here, its timing before its sentinel as the
+  # child writes them.
+  if [[ "$validate_mode" == ci ]]; then
+    ci_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    printf 'runner=none class=%s: the pull request CI on the pushed head validates this change\n' "$class" > "$run_dir/log"
+    printf 'started-at=%s\nended-at=%s\nseconds=0\n' "$ci_at" "$ci_at" > "$run_dir/timing"
+    printf 'guard-exit=0 at=%s verdict=ci\n' "$ci_at" > "$run_dir/exit.part"
+    mv "$run_dir/exit.part" "$run_dir/exit"
+    started_line
+    printf 'state=done guard-exit=0 at=%s validate=ci run-dir=%s log=%s\n' "$ci_at" "$run_dir" "$run_dir/log"
+    exit 0
+  fi
   launch_rc=0
   if [[ "$attached" == true ]]; then
     # Printed first, since the call below returns only once the run has ended:
@@ -657,6 +697,7 @@ read_sentinel() {
   SENTINEL_AT="${SENTINEL_AT%% *}"
   case "$line" in
     *" verdict=no-verdict") SENTINEL_VERDICT=no-verdict ;;
+    "guard-exit=0 "*" verdict=ci") SENTINEL_VERDICT=ci ;;
     "guard-exit=0 "*) SENTINEL_VERDICT=pass ;;
     *) SENTINEL_VERDICT=FAILING ;;
   esac
@@ -681,7 +722,7 @@ if [[ "$mode" == record ]]; then
   fi
   record_mode="$(start_field "$run_dir/start" validate-mode)"
   case "$record_mode" in
-    full|range) ;;
+    full|range|ci) ;;
     *) die record-unreadable "path=$run_dir/start" "validate-mode=$record_mode" ;;
   esac
   record_verdict=unfinished
@@ -750,7 +791,7 @@ while :; do
     read_sentinel
     printf 'state=done guard-exit=%s at=%s validate=%s run-dir=%s log=%s\n' \
       "$SENTINEL_EXIT" "$SENTINEL_AT" "$SENTINEL_VERDICT" "$run_dir" "$run_dir/log"
-    [[ "$SENTINEL_VERDICT" == pass ]] || exit 1
+    [[ "$SENTINEL_VERDICT" == pass || "$SENTINEL_VERDICT" == ci ]] || exit 1
     exit 0
   fi
   now="$(date +%s)"

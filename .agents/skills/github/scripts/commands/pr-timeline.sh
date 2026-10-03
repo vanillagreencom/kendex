@@ -39,7 +39,10 @@ Output, one JSON object on stdout:
                         the PR carried, force-pushed-over heads included,
                         read from each head's whole status history, since a
                         later status on that head replaces the earlier one,
-    "gate_met":         the gate context's success on the final head,
+    "gate_met":         the first approval submitted on the final head,
+                        which GitHub's approval rule binds to that head and
+                        dismisses on a push; where none was submitted, the
+                        gate context's success on the final head,
     "ci_green":         the last check run on the final head completed, when
                         every one concluded success, neutral or skipped,
     "armed":            the last time auto-merge was enabled,
@@ -136,7 +139,7 @@ QUERY='query($owner: String!, $name: String!, $number: Int!, $gate: String!) {
       firstCommit: commits(first: 1) { nodes { commit { authoredDate } } }
       headCommit: commits(last: 1) { nodes { commit { oid committedDate ...gate ...suites } } }
       commits(last: 100) { totalCount nodes { commit { oid committedDate ...pushed } } }
-      reviews(first: 100) { totalCount nodes { submittedAt author { __typename login } commit { oid ...pushed } } }
+      reviews(first: 100) { totalCount nodes { state submittedAt author { __typename login } commit { oid ...pushed } } }
       timelineItems(first: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT, AUTO_MERGE_ENABLED_EVENT, ADDED_TO_MERGE_QUEUE_EVENT]) {
         pageInfo { hasNextPage }
         nodes {
@@ -236,6 +239,7 @@ def rollup($s): [$s[] | . as $suite | .checkRuns.nodes[]
              elif .conclusion == "NEUTRAL" then "SKIPPED" else .conclusion end),
      startedAt, completedAt}];
 def gate($c): $c.status.context // null | select(. != null and .state == "SUCCESS") | .createdAt;
+def approved($reviews; $oid): [$reviews[] | select(.state == "APPROVED" and .submittedAt != null and .commit.oid == $oid) | .submittedAt] | min;
 def secs($a; $b): if $a == null or $b == null then null else ($b | fromdate) - ($a | fromdate) end;
 # A commit connection lists its check suites oldest first.
 def pushed($c): $c.firstSuite.nodes[0].createdAt // null;
@@ -275,7 +279,7 @@ def rounds($reviews; $pushed):
       last_push: ([($pushed[$head.oid] // $head.committedDate), ($pushes[] | .createdAt)] | map(select(. != null)) | max),
       first_bot_review: ($bot | map(.submittedAt) | min),
       first_gate_met: null,
-      gate_met: ([gate($head)] | first // null),
+      gate_met: (approved($p.reviews.nodes; $head.oid) // ([gate($head)] | first // null)),
       ci_green: null,
       armed: ([$p.timelineItems.nodes[] | select(.__typename == "AutoMergeEnabledEvent") | .createdAt] | max),
       queued: ([$p.timelineItems.nodes[] | select(.__typename == "AddedToMergeQueueEvent") | .createdAt] | max),

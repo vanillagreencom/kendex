@@ -1,0 +1,1 @@
+- orch: a fix round on an open pull request skips its local range validation where the change class says the pull request CI checks the change; that CI validates the pushed head.

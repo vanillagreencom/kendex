@@ -12,7 +12,7 @@
 #   force push   10:20, over b1, whose gate had passed at 10:05
 #   reviews      a user's at 09:30 and a Bot's at 09:40 on b1, a Bot's at
 #                10:30 on h2, and the PR author's own, an app's, answering a
-#                thread on h2 at 10:35
+#                thread on h2 at 10:35; none of them an approval
 #   gate         the final head's success at 10:25
 #   head CI      a pull_request suite 10:20-10:40 and an app suite with no
 #                workflow run 10:22-10:45; the merge commit's merge_group
@@ -80,10 +80,10 @@ response() {
             suite(null; [run("scan"; "10:22"; "10:45")])]}})}]},
       commits: {totalCount: 1, nodes: [{commit: (pushed("h2"; "10:20") + {committedDate: t("10:10")})}]},
       reviews: {totalCount: 4, nodes: [
-        {submittedAt: t("09:30"), author: {__typename: "User", login: "someone"}, commit: pushed("b1"; "09:20")},
-        {submittedAt: t("09:40"), author: {__typename: "Bot", login: "reviewer"}, commit: pushed("b1"; "09:20")},
-        {submittedAt: t("10:30"), author: {__typename: "Bot", login: "reviewer"}, commit: pushed("h2"; "10:20")},
-        {submittedAt: t("10:35"), author: {__typename: "Bot", login: "lane-app"}, commit: pushed("h2"; "10:20")}]},
+        {state: "COMMENTED", submittedAt: t("09:30"), author: {__typename: "User", login: "someone"}, commit: pushed("b1"; "09:20")},
+        {state: "COMMENTED", submittedAt: t("09:40"), author: {__typename: "Bot", login: "reviewer"}, commit: pushed("b1"; "09:20")},
+        {state: "COMMENTED", submittedAt: t("10:30"), author: {__typename: "Bot", login: "reviewer"}, commit: pushed("h2"; "10:20")},
+        {state: "COMMENTED", submittedAt: t("10:35"), author: {__typename: "Bot", login: "lane-app"}, commit: pushed("h2"; "10:20")}]},
       timelineItems: {pageInfo: {hasNextPage: false}, nodes: [
         {__typename: "HeadRefForcePushedEvent", createdAt: t("10:20"), beforeCommit: pushed("b1"; "09:20")},
         {__typename: "AutoMergeEnabledEvent", createdAt: t("10:26")},
@@ -210,6 +210,18 @@ a review on no commit ends no round@$NO_COMMIT@$ROUNDS
 a head with no check suite is no push, so its round has no start and sorts by its end, before its fix@$NO_START@$NO_START_ROUNDS
 a stale review on an older head sorts by its round's start@$STALE_REVIEW@$STALE_ROUNDS
 a PR nobody reviewed has no round@.data.repository.pullRequest.reviews.nodes = []@[]
+ROWS
+
+echo "=== the final head's gate is its first approval, else its historical status ==="
+while IFS='@' read -r label edit want; do
+  [[ -n "$label" ]] || continue
+  run "$edit" >/dev/null
+  assert_eq "$(jq -c '.stamps.gate_met' "$TMP_ROOT/stdout")" "$want" "$label"
+done <<'ROWS'
+an approval on the final head is its gate pass, ahead of the historical status@.data.repository.pullRequest.reviews.nodes[2].state = "APPROVED"@"2026-09-20T10:30:00Z"
+two approvals on the final head: the first@.data.repository.pullRequest.reviews.nodes[2,3].state = "APPROVED"@"2026-09-20T10:30:00Z"
+an approval on an older head is not the final head's gate@.data.repository.pullRequest.reviews.nodes[1].state = "APPROVED"@"2026-09-20T10:25:00Z"
+a final head with an approval and no gate status@.data.repository.pullRequest |= (.headCommit.nodes[0].commit.status = null | .reviews.nodes[2].state = "APPROVED")@"2026-09-20T10:30:00Z"
 ROWS
 
 echo "=== the first gate pass is read from each head's status history ==="
@@ -532,6 +544,18 @@ mutate '      and .author.login != $p.author.login)] as $bot' '      )] as $bot'
 run . >/dev/null
 assert_eq "$(jq -c '[.bot_reviews, .bot_review_times[-1]]' "$TMP_ROOT/stdout")" '[3,"2026-09-20T10:35:00Z"]' \
   "control: without the author test the PR author's own review is counted and timed"
+
+# The final head's gate read from its historical status alone.
+mutate 'gate_met: (approved($p.reviews.nodes; $head.oid) // ' 'gate_met: ('
+run '.data.repository.pullRequest.reviews.nodes[2].state = "APPROVED"' >/dev/null
+assert_eq "$(jq -c '.stamps.gate_met' "$TMP_ROOT/stdout")" '"2026-09-20T10:25:00Z"' \
+  "control: without the approval the final head's gate is its historical status"
+
+# Approvals read on any head: an older head's approval stands for the final one's.
+mutate ' and .commit.oid == $oid)' ')'
+run '.data.repository.pullRequest.reviews.nodes[1].state = "APPROVED"' >/dev/null
+assert_eq "$(jq -c '.stamps.gate_met' "$TMP_ROOT/stdout")" '"2026-09-20T09:40:00Z"' \
+  "control: without the head binding an older head's approval is the final head's gate"
 BIN="$PR_TIMELINE"
 
 echo

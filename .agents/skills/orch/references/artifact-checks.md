@@ -20,7 +20,7 @@ Cross-script routing behind the artifact rows in [../SKILL.md](../SKILL.md). Eac
 | `selection` | Eligible lanes follow the command's invocation mode and applicability rules, including change class and changed paths. `all` means every eligible lane; `subset` means the command chose fewer eligible lanes |
 | Repeated lines | The last line starting with `validate:` owns the result |
 | Missing or malformed last line | `selection=unreported`, with no `lanes` field; does not change the run verdict |
-| `validate-mode` | Remains `full` or `range`; names the invocation, not the lane selection |
+| `validate-mode` | Remains `full`, `range` or `ci`; names the invocation, not the lane selection |
 
 ## Round-closure mechanics
 
