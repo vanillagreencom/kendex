@@ -1,1 +1,0 @@
-- `open-terminal --host claude-cloud` launches a lane in a Claude Code cloud session that the fleet records, directs and watches, and `lanes pick` spends a Claude cloud credit before it expires.

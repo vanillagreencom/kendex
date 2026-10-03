@@ -1,1 +1,0 @@
-- A fleet lane that keeps its workflow state in its worktree's `tmp` now hands off from there: its turn-end hook, the overseer's watch and a local relaunch all read the handoff record in that `tmp`.

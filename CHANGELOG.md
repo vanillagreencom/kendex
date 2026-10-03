@@ -8,6 +8,56 @@ change came from an outside contributor.
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-03
+
+### Added
+
+- The github skill's `pr-merge` refuses, each time it runs, to merge or arm a pull request whose review replies track no issue, decline with no reason, or leave review-body findings unanswered.
+- commit-guards runs a default `secrets` lane: gitleaks refuses a credential a commit adds, by file, line and rule id, never the value. No gitleaks is a gap notice, except on a CI range or full scan.
+- `kendex verify --json --base REV` prints `base_owned`, the files and trees the base record owned whole, and a refresh whose only deletions are those renders classifies `render`.
+- `kendex verify` names each hook whose `harnesses` pin keeps it off a default tool or names one it excludes; agent and skill adoption and the drift-check install write no pin equal to the default.
+- On Codex, kendex now registers `SubagentStop` and `SessionEnd` hooks for every agent in `hooks.json`; before, a custom hook on these events was advisory prose and a package hook installed nothing.
+- Pi hooks: `SessionEnd` runs on session shutdown and `StopFailure` on a run that ends in error, through the pi-hooks carrier (0.18.0 or later).
+- On Copilot, the doc-drift-check, reviewer-stop-check, session-start-row and session-end-row hooks now install and run.
+- `open-terminal --host claude-cloud` launches a lane in a Claude Code cloud session that the fleet records, directs and watches, and `lanes pick` spends a Claude cloud credit before it expires.
+- Model classes resolve through the CLI and Pi. Unknown access or capacity keeps the native default. Exact pins survive rendering; project class overrides apply to global agents.
+- linear: `issues complete --done-when-met` ticks the named `## Done when` boxes as it sets Done, and orch's merge passes the boxes it verified, so a normal close leaves no `done-unchecked`.
+- `lane-mail ask --to owner --ref MSGID` binds an owner ask to the note it answers, as `notice --ref` does, so an ask raised for a voice request binds to the call.
+
+### Changed
+
+- doc-limits: only an `AGENTS.md` or `SKILL.md` over its limit fails; other documents warn. The growth margin is gone: `--against` warns and does nothing until 2.0.
+- orch: a fix round on an open pull request leaves validation to the pull request CI where the repository has a GitHub Actions workflow and CI checks the change, and runs it locally otherwise.
+- A Copilot overseer's SessionStart row now names its session: the watch ignores a predecessor's context record, and `oversee register` installs the context reader in that session's Copilot home.
+- orch: an overseer's directive, item or fix now fixes the problem at its source first; a patch, shim, workaround or gate standing in for that fix needs a stated reason and an item to remove it.
+- The kendex-refresh and harness-ci CI templates run on the repository variable `CI_RUNNER_2V` when it is set, and on `ubuntu-latest` otherwise.
+- orch: an overseer's owner messages state a cost as its figure and source, report Claude, Codex and Copilot headroom side by side, and own a mistake in one line with its repair.
+
+### Fixed
+
+- Non-render consumer refresh pull requests name the overseer or a maintainer as the merger through the merge queue after review and CI pass.
+- Pi session manager refuses to delete a session another running Pi has open, such as another lane's, and names that Pi.
+- pi-web-tools ends a stalled provider request, PDF helper or browser cookie read at its deadline instead of holding the tool call, and YouTube understanding honors `browserCookieAccess`.
+- The orch skill reads a Claude account walled in `lanes list` and `lanes pick` once a lane's harness banner states a weekly wall, until the reset it names, even where usage shows room.
+- A fleet lane that keeps its workflow state in its worktree's `tmp` now hands off from there: its turn-end hook, the overseer's watch and a local relaunch all read the handoff record in that `tmp`.
+- pi-agents-tmux 3.3.3: a parallel sub-agent that fails with a long error returns it within `resultMaxBytes` and `resultMaxLines`; the full error stays in the saved full-output file.
+- orch's Copilot head route holds its decline and fallback notices, and the overseer's app approval, while a review-body finding at the head stands unanswered.
+- github: `pr-timeline` reads the final head's gate pass from its first approval, so `oversee-cycle` names each merged pull request's longest stage again.
+- The `reviewer-stop-check` hook now reads the reviewer's own transcript on Claude Code, not the parent session's, so the worktree it checks is the one that reviewer was given.
+- skill-load-check counts a Codex `functions.exec` skill read written as `text((await tools.exec_command(...)).output)`, so the next `linear.sh` call is no longer refused.
+- The linear skill's `statuses` reads and `--team` list filters take a team key such as `KEN`, and refuse an unknown or empty team instead of listing nothing or every team.
+- pi-codex-minimal-tools 2.1.4: an `openai-codex` request no longer fails when history holds a grammar tool call another provider made, as in Pi 1.0.0.
+- The linear skill's `issues create --labels` resolves labels against the issue's team, so a label name two teams share no longer fails the create.
+- The linear skill resolves a team key, such as `KEN`, as well as a team name: `--team` on `cycles`, `issues create`, `projects create` and `labels create`, and `teams get`.
+- review-gate: a consumer refresh no longer fails `Argument list too long` on a busy refresh pull request; `refresh-reviews.sh` gives jq the thread and comment documents on stdin.
+- `lanes` reports a Copilot account's `credits.used` as the pool granted minus what remains, the figure github.com shows and `monthly_pct` is judged from.
+- orch `round-prune` prunes a worktree paused mid-rebase under its own issue's lease instead of refusing `worktree-output-prune-lease-foreign`.
+- second-opinion: an external Claude review that ends with no review text records Claude's terminal reason in its `.failed.json` cause and exits 5.
+- `lane-close` closes a hosted lane whose tmux window is gone once its tracker item is terminal, so a control-VM tmux restart no longer leaves hosted lanes refusing `pane-missing`.
+- The github skill validates its credential once per command, so `pr-view` on an installation token makes 3 GitHub requests instead of 5 to 7.
+- A non-render consumer refresh whose rolling pull request is already queued, merged or closed defers and exits 0 instead of failing the scheduled run.
+- `oversee-watch` no longer reports a day-old refresh failure as a new incident when GitHub's run list returns a stale page.
+
 ## [1.6.0] - 2026-10-03
 
 ### Added
@@ -1386,7 +1436,8 @@ change came from an outside contributor.
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.7.0
 [1.6.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.6.0
 [1.5.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.5.1
 [1.5.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.5.0

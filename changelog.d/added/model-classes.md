@@ -1,1 +1,0 @@
-- Model classes resolve through the CLI and Pi. Unknown access or capacity keeps the native default. Exact pins survive rendering; project class overrides apply to global agents.

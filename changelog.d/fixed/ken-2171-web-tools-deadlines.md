@@ -1,1 +1,0 @@
-- pi-web-tools ends a stalled provider request, PDF helper or browser cookie read at its deadline instead of holding the tool call, and YouTube understanding honors `browserCookieAccess`.

@@ -1,1 +1,0 @@
-- orch: an overseer's directive, item or fix now fixes the problem at its source first; a patch, shim, workaround or gate standing in for that fix needs a stated reason and an item to remove it.
