@@ -92,7 +92,7 @@ Output schema, archive, one line per item (`schema`: "pi-session-audit/archive/2
                         with tokens in the kept records, "mixed" for several
   token_harnesses       harnesses with tokens in the kept records
   outcome               {merged, wall_secs, paused_secs, fix_rounds,
-                         stopped_parked_or_paused, estimate_band}; null fields
+                         stopped_parked_or_paused, tier}; null fields
                          without an oversee lane record
   token_field_order_assumed  the four names given to models.<model>[0..3]
   token_records[]       {file, at, harnesses: {h: {files, unreadable, unrecorded,
@@ -110,12 +110,27 @@ Output schema, archive, one line per item (`schema`: "pi-session-audit/archive/2
   errors[]              {path, error}
 
 Output schema, aggregate (`schema`: "pi-session-audit/aggregate/1"):
-  rule, inputs {archive_items, live_sessions, mixed_or_unknown_harness}
+  rule                  the reporting rule as text
+  inputs                archive_lines, probe_items_excluded (item keys that are
+                        no tracker id), no_harness_excluded, items, items_by_lead,
+                        items_with_lane_record, items_with_tokens_by_harness,
+                        mixed_token_items_by_lead, tokens_under_another_lead
+                        ("<harness> under <lead>": {items, median_total,
+                        max_total}), incomplete_token_items_by_harness,
+                        items_with_issue_fields, matched_strata, live_sessions
+  model_mix             {lead: {lane_record: {model: items}, token_record:
+                         {model: records}}}
   all.<measure>         {source, unit (item | session), pi_items, verdict
-                         ("judged" | "too small to judge"), cells: {harness:
-                         {n, items, median, p90} or {n, items, verdict}}}
-  by_repo_and_band."<repo>|<1-2|3+|unknown>".<measure>  the same, archive
-                        measures only
+                         ("judged" | "too small to judge" | "not sampled (n=0)"),
+                         cells: {harness: {n, items, median, p90} or {n, items,
+                         share} or {n, items, verdict}}}; a harness outside
+                        pi, claude and copilot reads "outside the comparison"
+  by_model.<measure>.<model family>  the same over items of one model
+  matched.<measure>."<repo>|<agent label>|<band>"  the same over one stratum
+                        holding Pi and Claude Code or Copilot CLI items
+  unmatched.<measure>   the same over every item outside a matched stratum
+  --issues FILE is {item: {estimate, agent}} from the tracker; without it no
+  stratum matches.
 """
 
 from __future__ import annotations
@@ -123,6 +138,7 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import glob
+import gzip
 import json
 import math
 import os
@@ -865,7 +881,10 @@ def read_token_record(path: str, errors: List[Dict[str, Any]]) -> Optional[Dict[
     return {"file": os.path.basename(path), "at": record.get("at"), "harnesses": harnesses}
 
 
-def lane_mail_summary(raw: bytes, mail: Dict[str, Any]) -> None:
+def lane_mail_summary(raw: bytes, mail: Dict[str, Any], seen: set) -> None:
+    """Fold one to-overseer.jsonl into `mail`. A close archive can hold the
+    mailbox twice (the worktree's and the close-out evidence copy), so an
+    envelope id already in `seen` is skipped."""
     for line in raw.decode("utf-8", "replace").splitlines():
         try:
             envelope = json.loads(line)
@@ -873,6 +892,10 @@ def lane_mail_summary(raw: bytes, mail: Dict[str, Any]) -> None:
             continue
         if not isinstance(envelope, dict):
             continue
+        key = envelope.get("id") or line
+        if key in seen:
+            continue
+        seen.add(key)
         mail["envelopes"] += 1
         kind = str(envelope.get("kind"))
         mail["by_kind"][kind] = mail["by_kind"].get(kind, 0) + 1
@@ -909,9 +932,10 @@ def parse_at(value: Any) -> Optional[_dt.datetime]:
         return None
 
 
-def estimate_band(estimate: Any) -> Optional[str]:
-    if isinstance(estimate, bool) or not isinstance(estimate, (int, float)):
-        return None
+def estimate_band(estimate: Any) -> str:
+    """A tracker estimate's band. 0 and no estimate are "none": unmatched."""
+    if isinstance(estimate, bool) or not isinstance(estimate, (int, float)) or estimate <= 0:
+        return "none"
     return "1-2" if estimate <= 2 else "3+"
 
 
@@ -931,7 +955,7 @@ def lane_outcome(lane: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Measure 5 inputs from one oversee lane record; every field None without one."""
     if lane is None:
         return {"merged": None, "wall_secs": None, "paused_secs": None, "fix_rounds": None,
-                "stopped_parked_or_paused": None, "estimate_band": None}
+                "stopped_parked_or_paused": None, "tier": None}
     cycle = lane.get("cycle") if isinstance(lane.get("cycle"), dict) else None
     stamps = (cycle or {}).get("stamps") or {}
     launched = parse_at(stamps.get("launched") or lane.get("launched_at"))
@@ -949,7 +973,9 @@ def lane_outcome(lane: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "paused_secs": paused,
         "fix_rounds": rounds.get("fix") if isinstance(rounds.get("fix"), int) else None,
         "stopped_parked_or_paused": lane.get("status") in ("stopped", "parked") or bool(lane.get("pauses")),
-        "estimate_band": estimate_band((lane.get("tier_inputs") or {}).get("estimate")),
+        # tier_inputs.estimate is item-tier's estimate of added production
+        # lines, not the tracker estimate; the band comes from --issues.
+        "tier": lane.get("tier") or (cycle or {}).get("tier"),
     }
 
 
@@ -999,6 +1025,7 @@ def archive_item(directory: str, repo: str, item: str, since: Optional[_dt.datet
     lane_status = []
     mail = {"envelopes": 0, "by_kind": {}, "asks": []}  # type: Dict[str, Any]
     item_state: Optional[Dict[str, Any]] = None
+    seen_mail: set = set()
     for archive in tgzs:
         row = {"file": os.path.basename(archive), "members": 0, "read": [], "skipped": 0}
         archives.append(row)
@@ -1024,7 +1051,7 @@ def archive_item(directory: str, repo: str, item: str, since: Optional[_dt.datet
                         keys = "not json"
                     lane_status.append({"member": member, "keys": keys})
                 elif kind == "to-overseer":
-                    lane_mail_summary(raw, mail)
+                    lane_mail_summary(raw, mail, seen_mail)
                 else:
                     item_state = item_state_summary(raw)
             except (OSError, ValueError) as error:
@@ -1087,8 +1114,62 @@ def run_archive(root: str, single: bool, since: Optional[_dt.datetime], oversee_
 
 # ------------------------------------------------------------------ aggregate
 
-# measure -> (input kind, source, value of one object or None when absent).
-# Archive measures take one value per item, live measures one per session.
+# Harnesses the audit compares. Any other harness in the records gets n and an
+# item count only, marked outside the comparison.
+COMPARED = ("pi", "claude", "copilot")
+NOT_SAMPLED = "not sampled (n=0)"
+WORK_ITEM = re.compile(r"^[A-Z][A-Z0-9]*-[0-9]+$")
+
+
+def model_family(model: Any) -> Optional[str]:
+    """A model name without its provider, in one spelling: `github-copilot/
+    claude-opus-5.5` and `claude-opus-5-5` are both `claude-opus-5.5`."""
+    if not isinstance(model, str) or not model:
+        return None
+    name = model.split("/")[-1]
+    return re.sub(r"-(\d+)-(\d+)$", r"-\1.\2", name)
+
+
+def normalize(o: Dict[str, Any], issues: Dict[str, Any]) -> Dict[str, Any]:
+    """One archive line (schema 1 or 2) as the fields every measure reads.
+
+    The lead harness is the oversee lane record's harness, else the one
+    harness with tokens in the kept token records. An item whose token
+    records hold another harness beside the lead is `mixed_tokens`: its
+    measure 1 is left out, since those tokens may be a side run or a
+    relaunch on another harness.
+    """
+    lanes = (o.get("oversee") or {}).get("lanes") or []
+    lane = lanes[-1] if lanes else None
+    with_tokens = sorted(h for h, t in (o.get("token_totals") or {}).items() if t.get("total", 0) > 0)
+    lead = (lane or {}).get("harness") or (with_tokens[0] if len(with_tokens) == 1 else None)
+    incomplete = sorted({h for r in o.get("token_records") or [] for h, b in r["harnesses"].items()
+                         if (b.get("unreadable") or 0) > 0 or (b.get("unrecorded") or 0) > 0})
+    token_models: Dict[str, int] = {}
+    for record in o.get("token_records") or []:
+        for model in ((record["harnesses"].get(lead) or {}).get("models") or {}):
+            token_models[model] = token_models.get(model, 0) + 1
+    asks: Dict[str, Any] = {}
+    for ask in (o.get("lane_mail") or {}).get("asks") or []:
+        asks.setdefault(str(ask.get("id")), ask)
+    issue = issues.get(o["item"]) or {}
+    fleet_log = (o.get("oversee") or {}).get("fleet_log")
+    return {
+        "repo": o["repo"], "item": o["item"], "work_item": bool(WORK_ITEM.match(o["item"])),
+        "lead": lead, "with_tokens": with_tokens,
+        "mixed_tokens": bool(with_tokens) and with_tokens != [lead],
+        "incomplete": incomplete, "tokens": (o.get("token_totals") or {}).get(lead),
+        "totals": {h: (o.get("token_totals") or {})[h]["total"] for h in with_tokens},
+        "token_models": token_models, "lane_model": (lane or {}).get("model"),
+        "token_family": model_family(next(iter(token_models))) if len(token_models) == 1 else None,
+        "lane_family": model_family((lane or {}).get("model")),
+        "outcome": o.get("outcome") if o.get("schema") != "pi-session-audit/archive/1" else lane_outcome(lane),
+        "has_lane": lane is not None, "fleet_log": fleet_log,
+        "asks": list(asks.values()), "has_mail": bool(o.get("tmp_archives")),
+        "agent": issue.get("agent"), "band": estimate_band(issue.get("estimate")) if issue else "none",
+    }
+
+
 def _sum_pkg(values: Dict[str, Any], skip: Tuple[str, ...] = ("other",)) -> int:
     return sum(v for k, v in values.items() if k not in skip)
 
@@ -1098,48 +1179,64 @@ def _bytes_by_owner(table: Dict[str, Any]) -> int:
 
 
 def _token(field: str):
-    return lambda o: (o["token_totals"].get(o["harness"]) or {}).get(field) if o["outcome"]["merged"] else None
+    def value(n: Dict[str, Any]) -> Optional[float]:
+        if not n["outcome"]["merged"] or n["mixed_tokens"] or not n["tokens"] or n["lead"] in n["incomplete"]:
+            return None
+        return n["tokens"].get(field)
+    return value
 
 
 def _context(fn):
     return lambda s: fn(s["context"]) if isinstance(s.get("context"), dict) else None
 
 
+def _log(fn):
+    return lambda n: fn(n["fleet_log"]) if n["has_lane"] and n["fleet_log"] is not None else None
+
+
+def _outcome(field: str, merged_only: bool = False):
+    def value(n: Dict[str, Any]) -> Optional[float]:
+        out = n["outcome"]
+        if out.get(field) is None or (merged_only and not out.get("merged")):
+            return None
+        return int(out[field]) if isinstance(out[field], bool) else out[field]
+    return value
+
+
+# (measure, unit, source, value of one normalized item or live session).
 MEASURES = (
-    ("1 input tokens per merged item", "archive", "tokens-*.json models.<model>[0], field order assumed", _token("input")),
-    ("1 output tokens per merged item", "archive", "tokens-*.json models.<model>[1], field order assumed", _token("output")),
-    ("1 cache read tokens per merged item", "archive", "tokens-*.json models.<model>[2], field order assumed", _token("cache_read")),
-    ("1 cache write tokens per merged item", "archive", "tokens-*.json models.<model>[3], field order assumed", _token("cache_write")),
-    ("1 total tokens per merged item", "archive", "tokens-*.json sum of the four counts", _token("total")),
-    ("2 system-prompt append bytes", "live", "Pi system message addendum section, package markers",
+    ("1 input tokens per merged item", "item", "tokens-*.json models.<model>[0], lead harness only", _token("input")),
+    ("1 output tokens per merged item", "item", "tokens-*.json models.<model>[1], lead harness only", _token("output")),
+    ("1 cache read tokens per merged item", "item", "tokens-*.json models.<model>[2], lead harness only", _token("cache_read")),
+    ("1 cache write tokens per merged item", "item", "tokens-*.json models.<model>[3], lead harness only", _token("cache_write")),
+    ("1 total tokens per merged item", "item", "tokens-*.json sum of the four counts, lead harness only", _token("total")),
+    ("2 system-prompt append bytes", "session", "live: Pi addendum section, package markers",
      _context(lambda c: _sum_pkg(c["addendum_by_package"]))),
-    ("2 our tool definition bytes", "live", "Pi system message toolsAdded",
+    ("2 our tool definition bytes", "session", "live: Pi system message toolsAdded",
      _context(lambda c: sum(v["bytes"] for v in c["tool_definitions"]["ours"].values()))),
-    ("2 custom and custom_message bytes", "live", "Pi custom and custom_message entries",
+    ("2 custom and custom_message bytes", "session", "live: Pi custom and custom_message entries",
      _context(lambda c: _bytes_by_owner(c["custom_entries"]) + _bytes_by_owner(c["custom_messages"]))),
-    ("2 tool-result bytes before budget", "live", "Pi toolResult details.kendexOutputPolicy",
+    ("2 tool-result bytes before budget", "session", "live: Pi toolResult details.kendexOutputPolicy",
      _context(lambda c: c["output_policy"]["before_bytes"])),
-    ("2 tool-result bytes after budget", "live", "Pi toolResult content", _context(lambda c: c["output_policy"]["after_bytes"])),
-    ("3 tool calls per session", "live", "session transcript tool calls", lambda s: s["tools"]["calls"]),
+    ("2 tool-result bytes after budget", "session", "live: Pi toolResult content", _context(lambda c: c["output_policy"]["after_bytes"])),
+    ("3 tool calls per session", "session", "live: transcript tool calls", lambda s: s["tools"]["calls"]),
 ) + tuple(
-    ("3 %s errors per session" % cls, "live", "session transcript errors, ERROR_RULES", (lambda c: lambda s: s["tools"]["errors_by_class"][c])(cls))
+    ("3 %s errors per session" % cls, "session", "live: transcript errors, ERROR_RULES", (lambda c: lambda s: s["tools"]["errors_by_class"][c])(cls))
     for cls in ERROR_CLASSES
 ) + (
-    ("4 relaunches per item", "archive", "oversee fleet_log text naming relaunch",
-     lambda o: o["oversee"]["fleet_log"]["relaunch_rows"] if o["oversee"] else None),
-    ("4 overseer rulings per item", "archive", "oversee fleet_log kind=ruling",
-     lambda o: o["oversee"]["fleet_log"]["by_kind"].get("ruling", 0) if o["oversee"] else None),
-    ("4 candidate harness-defect asks per item", "archive", "to-overseer.jsonl asks naming harness terms; reviewer confirms",
-     lambda o: sum(1 for a in o["lane_mail"]["asks"] if a["terms"]) if o["tmp_archives"] else None),
-    ("4 turns ended with work owed per session", "live", "Stop hook refusals in the transcript",
+    ("4 relaunches per item", "item", "oversee fleet_log rows naming relaunch", _log(lambda f: f["relaunch_rows"])),
+    ("4 overseer rulings per item", "item", "oversee fleet_log rows of kind ruling", _log(lambda f: f["by_kind"].get("ruling", 0))),
+    ("4 lane-mail asks per item", "item", "to-overseer.jsonl asks, one per envelope id",
+     lambda n: len(n["asks"]) if n["has_mail"] else None),
+    ("4 candidate harness-defect asks per item", "item", "to-overseer.jsonl asks naming harness words; a reviewer confirms each",
+     lambda n: sum(1 for a in n["asks"] if a["terms"]) if n["has_mail"] else None),
+    ("4 turns ended with work owed per session", "session", "live: Stop hook refusals in the transcript",
      lambda s: s["owed_turns"] if isinstance(s["owed_turns"], int) else None),
-    ("5 share stopped, parked or paused", "archive", "oversee lane record status, pauses",
-     lambda o: None if o["outcome"]["stopped_parked_or_paused"] is None else int(o["outcome"]["stopped_parked_or_paused"])),
-    ("5 share not merged", "archive", "oversee lane record cycle.stamps.merged",
-     lambda o: None if o["outcome"]["merged"] is None else int(not o["outcome"]["merged"])),
-    ("5 wall seconds launch to merge, less pauses", "archive", "oversee lane record cycle.stamps, pauses",
-     lambda o: o["outcome"]["wall_secs"]),
-    ("5 fix rounds per merged item", "archive", "oversee lane record cycle.rounds.fix", lambda o: o["outcome"]["fix_rounds"]),
+    ("5 share stopped, parked or paused", "item", "oversee lane record status, pauses", _outcome("stopped_parked_or_paused")),
+    ("5 share not merged", "item", "oversee lane record cycle.stamps.merged",
+     lambda n: None if n["outcome"]["merged"] is None else int(not n["outcome"]["merged"])),
+    ("5 wall seconds launch to merge, less pauses", "item", "oversee lane record cycle.stamps, pauses", _outcome("wall_secs", True)),
+    ("5 fix rounds per merged item", "item", "oversee lane record cycle.rounds.fix", _outcome("fix_rounds", True)),
 )
 
 
@@ -1151,71 +1248,166 @@ def nearest_rank(values: List[float], share: float) -> float:
 def cell(points: List[Tuple[str, float]]) -> Dict[str, Any]:
     values = [v for _, v in points]
     items = len({i for i, _ in points})
-    if not values:
-        return {"n": 0, "items": 0}
     ordered = sorted(values)
     middle = len(ordered) // 2
     median = ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
     return {"n": len(values), "items": items, "median": median, "p90": nearest_rank(values, 0.9)}
 
 
-def aggregate(objects: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """The measure-by-harness table, with the strata the records allow."""
-    archive = [o for o in objects if o.get("mode") == "archive"]
-    sessions = []
-    for live in (o for o in objects if o.get("mode") == "live"):
-        for session in live["sessions"]:
-            sessions.append((live.get("repo"), live.get("item"), session))
+# Measures whose value is 0 or 1 per item: a cell reports the share, not a
+# median and p90.
+SHARE_MEASURES = frozenset(("5 share stopped, parked or paused", "5 share not merged"))
 
-    def table(rows_archive: List[Dict[str, Any]], rows_live: List[Tuple[Any, Any, Dict[str, Any]]]) -> Dict[str, Any]:
-        out = {}
-        for name, kind, source, value in MEASURES:
-            points: Dict[str, List[Tuple[str, float]]] = {}
-            if kind == "archive":
-                for o in rows_archive:
-                    v = value(o)
-                    if v is not None and o["harness"] not in (None, "mixed"):
-                        points.setdefault(o["harness"], []).append((o["item"], v))
-            else:
-                for _, item, s in rows_live:
-                    v = value(s)
-                    if v is not None:
-                        points.setdefault(s["harness"], []).append((item or s["path"], v))
-            cells = {h: cell(p) for h, p in sorted(points.items())}
-            pi_items = cells.get("pi", {}).get("items", 0)
-            judged = pi_items >= MIN_PI_ITEMS
-            if not judged:
-                cells = {h: {"n": c["n"], "items": c["items"], "verdict": TOO_SMALL} for h, c in cells.items()}
-            out[name] = {"source": source, "unit": "item" if kind == "archive" else "session",
-                         "pi_items": pi_items, "verdict": "judged" if judged else TOO_SMALL, "cells": cells}
-        return out
 
-    strata: Dict[str, Any] = {}
-    keys = sorted({(o["repo"], o["outcome"]["estimate_band"]) for o in archive})
-    for repo, band in keys:
-        strata["%s|%s" % (repo, band or "unknown")] = table(
-            [o for o in archive if o["repo"] == repo and o["outcome"]["estimate_band"] == band], [])
+def share_cell(points: List[Tuple[str, float]]) -> Dict[str, Any]:
+    values = [v for _, v in points]
+    return {"n": len(values), "items": len({i for i, _ in points}), "share": round(sum(values) / len(values), 4)}
+
+
+def measure_row(source: str, unit: str, points: Dict[str, List[Tuple[str, float]]], share: bool = False) -> Dict[str, Any]:
+    """One measure's cells under the reporting rule."""
+    if not points:
+        return {"source": source, "unit": unit, "pi_items": 0, "verdict": NOT_SAMPLED, "cells": {}}
+    cells = {h: (share_cell(p) if share else cell(p)) for h, p in sorted(points.items())}
+    pi_items = cells.get("pi", {}).get("items", 0)
+    judged = pi_items >= MIN_PI_ITEMS
+    out = {}
+    for harness, c in cells.items():
+        if harness not in COMPARED:
+            out[harness] = {"n": c["n"], "items": c["items"], "verdict": "outside the comparison"}
+        elif not judged:
+            out[harness] = {"n": c["n"], "items": c["items"], "verdict": TOO_SMALL}
+        else:
+            out[harness] = c
+    return {"source": source, "unit": unit, "pi_items": pi_items, "verdict": "judged" if judged else TOO_SMALL, "cells": out}
+
+
+def aggregate(objects: List[Dict[str, Any]], issues: Dict[str, Any]) -> Dict[str, Any]:
+    """The measure-by-harness table, its matched strata and unmatched totals."""
+    normalized = [normalize(o, issues) for o in objects if o.get("mode") == "archive"]
+    probes = [n for n in normalized if not n["work_item"]]
+    items = [n for n in normalized if n["work_item"] and n["lead"] is not None]
+    sessions = [(live.get("item"), s) for live in objects if live.get("mode") == "live" for s in live["sessions"]]
+
+    def item_points(fn, pool):
+        points: Dict[str, List[Tuple[str, float]]] = {}
+        for n in pool:
+            v = fn(n)
+            if v is not None:
+                points.setdefault(n["lead"], []).append((n["item"], v))
+        return points
+
+    def session_points(fn):
+        points: Dict[str, List[Tuple[str, float]]] = {}
+        for item, s in sessions:
+            v = fn(s)
+            if v is not None:
+                points.setdefault(s["harness"], []).append((item or s["path"], v))
+        return points
+
+    strata: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = {}
+    for n in items:
+        if n["agent"] not in (None, "several") and n["band"] != "none":
+            strata.setdefault((n["repo"], n["agent"], n["band"]), []).append(n)
+    table: Dict[str, Any] = {}
+    matched: Dict[str, Any] = {}
+    unmatched: Dict[str, Any] = {}
+    by_model: Dict[str, Any] = {}
+    for name, unit, source, fn in MEASURES:
+        if unit == "session":
+            table[name] = measure_row(source, unit, session_points(fn))
+            continue
+        share = name in SHARE_MEASURES
+        table[name] = measure_row(source, unit, item_points(fn, items), share)
+        families: Dict[str, List[Dict[str, Any]]] = {}
+        for n in items:
+            family = n["token_family"] if name.startswith("1 ") else n["lane_family"]
+            if family is not None:
+                families.setdefault(family, []).append(n)
+        by_model[name] = {f: measure_row(source, unit, item_points(fn, pool), share) for f, pool in sorted(families.items())}
+        in_matched: set = set()
+        cells = {}
+        for key, pool in sorted(strata.items()):
+            points = item_points(fn, pool)
+            if "pi" in points and ("claude" in points or "copilot" in points):
+                cells["|".join(key)] = measure_row(source, unit, points, share)
+                in_matched.update(n["item"] for n in pool)
+        matched[name] = cells
+        unmatched[name] = measure_row(source, unit, item_points(fn, [n for n in items if n["item"] not in in_matched]), share)
+    model_mix: Dict[str, Dict[str, Dict[str, int]]] = {}
+    for n in items:
+        mix = model_mix.setdefault(n["lead"], {"lane_record": {}, "token_record": {}})
+        if n["lane_model"]:
+            mix["lane_record"][n["lane_model"]] = mix["lane_record"].get(n["lane_model"], 0) + 1
+        for model, count in n["token_models"].items():
+            mix["token_record"][model] = mix["token_record"].get(model, 0) + count
+    incomplete: Dict[str, int] = {}
+    for n in items:
+        for harness in n["incomplete"]:
+            incomplete[harness] = incomplete.get(harness, 0) + 1
+    with_tokens: Dict[str, int] = {}
+    for n in normalized:
+        for harness in n["with_tokens"]:
+            with_tokens[harness] = with_tokens.get(harness, 0) + 1
+    # A harness's tokens in an item whose lane record names another lead: a
+    # side run (a second opinion) or a lane moved to another harness. The
+    # token size tells them apart for a reader; this records both.
+    under_other: Dict[str, List[int]] = {}
+    for n in items:
+        for harness, total in n["totals"].items():
+            if harness != n["lead"]:
+                under_other.setdefault("%s under %s" % (harness, n["lead"]), []).append(total)
+    under_other_cells = {k: {"items": len(v), "median_total": cell([("", x) for x in v])["median"], "max_total": max(v)}
+                         for k, v in sorted(under_other.items())}
     return {
-        "schema": AGGREGATE_SCHEMA, "mode": "aggregate", "read_at": now_iso(),
+        "schema": AGGREGATE_SCHEMA, "mode": "aggregate",
         "rule": "every cell carries n, item count and source; a measure with fewer than %d Pi items reads %r" % (MIN_PI_ITEMS, TOO_SMALL),
-        "inputs": {"archive_items": len(archive), "live_sessions": len(sessions),
-                   "mixed_or_unknown_harness": sum(1 for o in archive if o["harness"] in (None, "mixed"))},
-        "all": table(archive, sessions), "by_repo_and_band": strata,
+        "inputs": {
+            "archive_lines": len(normalized), "probe_items_excluded": len(probes),
+            "no_harness_excluded": sum(1 for n in normalized if n["work_item"] and n["lead"] is None),
+            "items": len(items), "items_by_lead": _count(n["lead"] for n in items),
+            "items_with_lane_record": _count(n["lead"] for n in items if n["has_lane"]),
+            "items_with_tokens_by_harness": with_tokens,
+            "mixed_token_items_by_lead": _count(n["lead"] for n in items if n["mixed_tokens"]),
+            "tokens_under_another_lead": under_other_cells,
+            "incomplete_token_items_by_harness": incomplete,
+            "items_with_issue_fields": sum(1 for n in items if n["agent"] is not None or n["band"] != "none"),
+            "matched_strata": sum(1 for pool in strata.values()
+                                  if {"pi"} & {n["lead"] for n in pool} and {"claude", "copilot"} & {n["lead"] for n in pool}),
+            "live_sessions": len(sessions),
+        },
+        "model_mix": model_mix,
+        "all": table, "by_model": by_model, "matched": matched, "unmatched": unmatched,
     }
 
 
+def _count(values) -> Dict[str, int]:
+    out: Dict[str, int] = {}
+    for value in values:
+        out[str(value)] = out.get(str(value), 0) + 1
+    return out
+
+
 def read_objects(paths: List[str]) -> List[Dict[str, Any]]:
+    """Archive and live lines from files (plain or .gz), or stdin."""
     objects = []
-    streams = [open(p, "r", encoding="utf-8") for p in paths] if paths else [sys.stdin]
-    for stream in streams:
-        for number, line in enumerate(stream, 1):
-            if line.strip():
-                value = json.loads(line)
-                if not isinstance(value, dict) or value.get("mode") not in ("archive", "live"):
-                    raise ValueError("%s line %d is no archive or live object" % (getattr(stream, "name", "stdin"), number))
-                objects.append(value)
-        if stream is not sys.stdin:
-            stream.close()
+    for path in paths or ["-"]:
+        if path == "-":
+            stream = sys.stdin
+        elif path.endswith(".gz"):
+            stream = gzip.open(path, "rt", encoding="utf-8")
+        else:
+            stream = open(path, "r", encoding="utf-8")
+        try:
+            for number, line in enumerate(stream, 1):
+                if line.strip():
+                    value = json.loads(line)
+                    if not isinstance(value, dict) or value.get("mode") not in ("archive", "live"):
+                        raise ValueError("%s line %d is no archive or live object" % (path, number))
+                    objects.append(value)
+        finally:
+            if stream is not sys.stdin:
+                stream.close()
     return objects
 
 
@@ -1242,6 +1434,7 @@ def main(argv: List[str]) -> int:
     arch.add_argument("--brief-tail", action="append", default=[], metavar="REPO=PATH")
     arch.add_argument("--min-free-gb", type=float, default=3.0)
     agg = sub.add_parser("aggregate", help="the measure table from archive and live output lines")
+    agg.add_argument("--issues", help="JSON {item: {estimate, agent}} read from the tracker")
     agg.add_argument("files", nargs="*")
     args = parser.parse_args(argv)
     if args.mode == "live":
@@ -1251,7 +1444,11 @@ def main(argv: List[str]) -> int:
         return 0
     if args.mode == "aggregate":
         try:
-            print_json(aggregate(read_objects(args.files)))
+            issues: Dict[str, Any] = {}
+            if args.issues:
+                with open(args.issues, "r", encoding="utf-8") as handle:
+                    issues = json.load(handle)
+            print_json(aggregate(read_objects(args.files), issues))
         except (OSError, ValueError, KeyError) as error:
             notice("aggregate-input", str(error), "An input line is not the output of this script's live or archive mode.")
             return 2

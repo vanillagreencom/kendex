@@ -7,6 +7,7 @@ repository checkout this file sits in.
 """
 
 import contextlib
+import gzip
 import io
 import json
 import os
@@ -185,9 +186,11 @@ class Archive(unittest.TestCase):
         self.assertEqual(data["token_totals"]["pi"]["total"], 10)
         self.assertEqual([e["error"] for e in data["errors"]], ["token-record-shape harness=pi model=bad"])
         archive = data["tmp_archives"][0]
-        self.assertEqual((archive["members"], archive["skipped"], len(archive["read"])), (4, 1, 3))
+        # The close-out evidence copy of the mailbox is read but not counted twice.
+        self.assertEqual((archive["members"], archive["skipped"], len(archive["read"])), (5, 1, 4))
         self.assertEqual(data["lane_status"][0]["keys"], ["at", "state"])
         self.assertEqual(data["lane_mail"]["by_kind"], {"ask": 2, "notice": 1})
+        self.assertEqual(len(data["lane_mail"]["asks"]), 2)
         self.assertIn("pi-background-tasks", data["lane_mail"]["asks"][0]["terms"])
         self.assertEqual(data["lane_mail"]["asks"][1]["terms"], [])
         self.assertEqual(data["item_state"], {"cycles": 2, "rereview_cycles": 1, "pr_comment_iterations": 3, "fixes": 2, "skipped": 1, "escalated_items": 1})
@@ -195,7 +198,7 @@ class Archive(unittest.TestCase):
         self.assertEqual(data["oversee"]["fleet_log"], {"rows": 2, "by_kind": {"ruling": 1, "close": 1}, "relaunch_rows": 1})
         # Launched 00:00, merged 05:00, paused 01:00-02:00.
         self.assertEqual(data["outcome"], {"merged": True, "wall_secs": 4 * 3600, "paused_secs": 3600, "fix_rounds": 1,
-                                           "stopped_parked_or_paused": True, "estimate_band": "1-2"})
+                                           "stopped_parked_or_paused": True, "tier": None})
         self.assertEqual(data["brief_tail"], {"clauses": 5, "harness_only": {"pi": 1, "claude": 1, "copilot": 1}})
 
     def test_root_sweep_and_since(self):
@@ -232,49 +235,100 @@ class Archive(unittest.TestCase):
         self.assertEqual(run(["archive", "--root", self.tmp, "--since", "October"])[:2], (2, ""))
 
 
-def archive_object(item, harness, total, merged=True, repo="kendex", band="1-2"):
-    """The fields aggregate reads from one archive line."""
-    return {"mode": "archive", "repo": repo, "item": item, "harness": harness,
-            "token_totals": {harness: {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": total}},
-            "outcome": {"merged": merged, "wall_secs": None, "paused_secs": 0, "fix_rounds": None,
-                        "stopped_parked_or_paused": False, "estimate_band": band},
-            "oversee": None, "tmp_archives": [], "lane_mail": {"asks": []}}
+def archive_object(item, harness, total, merged=True, repo="kendex", model="claude-opus-5-5",
+                   extra_tokens=(), asks=0, lane=True):
+    """A schema-1 archive line, the shape the overseer's run produced."""
+    tokens = {harness: {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": total}}
+    for other in extra_tokens:
+        tokens[other] = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": 1}
+    stamps = {"launched": "2026-10-02T00:00:00Z", "merged": "2026-10-02T01:00:00Z" if merged else None}
+    lanes = [{"item": item, "harness": harness, "model": model, "status": "done",
+              "cycle": {"stamps": stamps, "rounds": {"fix": 1}} if merged else None}] if lane else []
+    record = {"file": "tokens-x.json", "at": "2026-10-02T02:00:00Z",
+              "harnesses": {h: {"files": 1, "unreadable": 0, "unrecorded": 0, "models": {model: t}} for h, t in tokens.items()}}
+    return {"schema": "pi-session-audit/archive/1", "mode": "archive", "repo": repo, "item": item,
+            "token_records": [record], "token_totals": tokens, "tmp_archives": [{"file": "tmp-1.tgz"}],
+            "lane_mail": {"asks": [{"id": "a%d" % i, "terms": []} for i in range(asks)] * 2},
+            "oversee": {"lanes": lanes, "fleet_log": {"rows": 1, "by_kind": {"ruling": 1}, "relaunch_rows": 0}}}
 
 
 class Aggregate(unittest.TestCase):
     MEASURE = "1 total tokens per merged item"
 
     def test_judged_with_eight_pi_items(self):
-        objects = [archive_object("P-%d" % i, "pi", i) for i in range(1, 9)]
-        objects += [archive_object("C-%d" % i, "claude", i) for i in range(1, 21)]
-        objects.append(archive_object("P-9", "pi", 1000, merged=False))
-        row = measure.aggregate(objects)["all"][self.MEASURE]
+        objects = [archive_object("PI-%d" % i, "pi", i, model="github-copilot/claude-opus-5.5") for i in range(1, 9)]
+        objects += [archive_object("CL-%d" % i, "claude", i) for i in range(1, 21)]
+        objects.append(archive_object("PI-9", "pi", 1000, merged=False))
+        objects.append(archive_object("CX-1", "codex", 5, model="gpt-6.1-sol"))
+        table = measure.aggregate(objects, {})
+        row = table["all"][self.MEASURE]
         self.assertEqual(row["verdict"], "judged")
         self.assertEqual(row["cells"]["pi"], {"n": 8, "items": 8, "median": 4.5, "p90": 8})
         # Nearest rank: ceil(0.9 * 20) = 18th of 20.
         self.assertEqual(row["cells"]["claude"], {"n": 20, "items": 20, "median": 10.5, "p90": 18})
+        self.assertEqual(row["cells"]["codex"], {"n": 1, "items": 1, "verdict": "outside the comparison"})
         self.assertTrue(row["source"].startswith("tokens-*.json"))
+        # Both spellings of the model fall in one family row.
+        family = table["by_model"][self.MEASURE]["claude-opus-5.5"]["cells"]
+        self.assertEqual((family["pi"]["n"], family["claude"]["n"]), (8, 20))
+        not_merged = table["all"]["5 share not merged"]["cells"]["pi"]
+        self.assertEqual((not_merged["n"], not_merged["share"]), (9, round(1 / 9, 4)))
 
     def test_seven_pi_items_is_too_small(self):
-        objects = [archive_object("P-%d" % i, "pi", i) for i in range(1, 8)]
-        objects += [archive_object("C-%d" % i, "claude", 10 * i) for i in range(1, 10)]
-        row = measure.aggregate(objects)["all"][self.MEASURE]
+        objects = [archive_object("PI-%d" % i, "pi", i) for i in range(1, 8)]
+        objects += [archive_object("CL-%d" % i, "claude", 10 * i) for i in range(1, 10)]
+        row = measure.aggregate(objects, {})["all"][self.MEASURE]
         self.assertEqual(row["verdict"], "too small to judge")
         for harness in ("pi", "claude"):
             self.assertNotIn("median", row["cells"][harness])
             self.assertEqual(row["cells"][harness]["verdict"], "too small to judge")
         self.assertEqual(row["cells"]["claude"]["n"], 9)
 
-    def test_strata_and_live_from_fixture_lines(self):
+    def test_exclusions_and_asks(self):
+        objects = [archive_object("PI-1", "pi", 5, extra_tokens=("copilot",), asks=3),
+                   archive_object("proof-1a", "pi", 5),
+                   archive_object("FLT-1", "pi", 0, lane=False)]
+        table = measure.aggregate(objects, {})
+        inputs = table["inputs"]
+        self.assertEqual((inputs["probe_items_excluded"], inputs["no_harness_excluded"], inputs["items"]), (1, 1, 1))
+        self.assertEqual(inputs["mixed_token_items_by_lead"], {"pi": 1})
+        self.assertEqual(inputs["tokens_under_another_lead"], {"copilot under pi": {"items": 1, "median_total": 1, "max_total": 1}})
+        self.assertEqual(table["all"][self.MEASURE]["verdict"], "not sampled (n=0)")
+        # Each ask appears twice in the line; one per envelope id counts.
+        self.assertEqual(len(measure.normalize(objects[0], {})["asks"]), 3)
+        self.assertEqual(table["all"]["3 tool calls per session"]["verdict"], "not sampled (n=0)")
+
+    def test_matched_strata_and_unmatched_totals(self):
+        objects = [archive_object("PI-1", "pi", 5), archive_object("CL-1", "claude", 7),
+                   archive_object("CL-2", "claude", 9), archive_object("PI-2", "pi", 3), archive_object("PI-3", "pi", 4)]
+        issues = {"PI-1": {"estimate": 2, "agent": "agent:runtime"}, "CL-1": {"estimate": 1, "agent": "agent:runtime"},
+                  "CL-2": {"estimate": 3, "agent": "agent:runtime"}, "PI-2": {"estimate": 0, "agent": "agent:runtime"},
+                  "PI-3": {"estimate": 1, "agent": "agent:rust"}}
+        table = measure.aggregate(objects, issues)
+        matched = table["matched"][self.MEASURE]
+        self.assertEqual(sorted(matched), ["kendex|agent:runtime|1-2"])
+        self.assertEqual({h: c["n"] for h, c in matched["kendex|agent:runtime|1-2"]["cells"].items()}, {"pi": 1, "claude": 1})
+        unmatched = table["unmatched"][self.MEASURE]["cells"]
+        # A stratum holding Pi alone (agent:rust) is no match.
+        self.assertEqual({h: c["n"] for h, c in unmatched.items()}, {"pi": 2, "claude": 1})
+        self.assertEqual(table["inputs"]["matched_strata"], 1)
+
+    def test_reads_gzip_lines_and_live_fixture(self):
         code, out, _ = run(["live", "--home", os.path.join(FIXTURES, "home"), "--item", "KEN-9", "--repo", "kendex"])
         self.assertEqual(code, 0)
-        table = measure.aggregate([json.loads(out), archive_object("P-1", "pi", 5, band="3+"), archive_object("M-1", "mixed", 5)])
-        self.assertEqual(sorted(table["by_repo_and_band"]), ["kendex|1-2", "kendex|3+"])
-        self.assertEqual(table["inputs"]["mixed_or_unknown_harness"], 1)
-        calls = table["all"]["3 tool calls per session"]
+        tmp = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        path = os.path.join(tmp, "lines.jsonl.gz")
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            handle.write(json.dumps(archive_object("PI-1", "pi", 5)) + "\n" + out)
+        code, out, _ = run(["aggregate", path])
+        self.assertEqual(code, 0)
+        calls = json.loads(out)["all"]["3 tool calls per session"]
         self.assertEqual(calls["verdict"], "too small to judge")
-        # Four Pi sessions (lead, fork, subagent) from one item; Claude two, Copilot one.
+        # Three Pi sessions (lead, fork, subagent) from one item; Claude two, Copilot one.
         self.assertEqual({h: (c["n"], c["items"]) for h, c in calls["cells"].items()}, {"pi": (3, 1), "claude": (2, 1), "copilot": (1, 1)})
+        code, out, err = run(["aggregate", os.path.join(FIXTURES, "oversee", "brief-tail-template.md")])
+        self.assertEqual((code, out), (2, ""))
 
 
 class SourceDrift(unittest.TestCase):

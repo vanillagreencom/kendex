@@ -1,285 +1,269 @@
 # Findings: Pi lane session audit
 
-Status: instrument built; no record read yet.
-
 ## Research Question
 
 Does Pi with the kendex Pi extensions waste tokens, raise errors, force workarounds or fail more often than Claude Code and Copilot CLI on the same class of item? Which of those costs do our extensions cause, and what is the root cause of each, with file and line?
 
 ## Executive Summary
 
-Nothing is measured yet. This round builds the measure script and fixes the method. The sample is the close records the control host already keeps, plus new closes. [R]
+Verdict: on the same model (claude-opus-5.5), Pi with our extensions and Claude Code close items with the same overseer rulings, relaunches and fix rounds, and a similar wall time (Pi 64–66 items, Claude Code 145–148). Pi lanes send more lane-mail asks. Pi's token cost on that model is too small to judge (2 items). Copilot CLI led no lane in the sample, so it is not compared. [E]
 
-The measure script is [pi-session-audit/measure.py](pi-session-audit/measure.py). It runs in three modes. `archive` sweeps every kept close record on the control host and prints one JSON line per item: the inputs to measures 1, 4 and 5. `live` reads one open Pi lane's sandbox before its close and prints measures 2 and 3 per session. `aggregate` turns those lines into the measure table. `measure.py --help` states each schema. [S]
+- The sample is 462 kept close records across 11 repositories, dated 2026-10-01 or later. 357 are work items with a known lead harness: Pi 139, Claude Code 164, Codex 54. [E]
+- Measure 1 (tokens) rests on 8 merged Pi items, 6 of them on gpt-6.1-sol. Pi's median is 139.8M tokens per item against Claude Code's 57.5M (126 items). The model, not the harness, can explain that gap. Per model, every Pi token cell is too small to judge. [E]
+- Measures 2 and 3 (context and tool errors) are not sampled (n=0). No Pi lane was open when the overseer read the fleet, and a close keeps no transcript (FLT-671). § Static context cost gives code-derived figures instead. [O]
+- Three extension root causes stand. KEN-2683 covers the two pi-task-panel prompt-cache breaks. One is new this round: a disabled pi-questions still adds its 1,676-byte instructions to every Pi request. The pi-output-policy finding is dropped. [S]
 
 ## Key Findings
 
-No finding yet. The table in § Measure table holds no value until the overseer's run returns.
+- Same model, same outcome. On claude-opus-5.5, Pi and Claude Code both take a median of 2 overseer rulings per item (p90 6 both; n 66 and 148). Their median wall time from launch to merge is 7,866.5 s and 8,722 s (p90 19,989 and 27,030; n 64 and 145). Their median fix rounds are 1 and 1 (n 19 and 29). [E]
+- Pi lanes ask more. Per item, Pi sends a median of 1 lane-mail ask on claude-opus-5.5 against Claude Code's 0 (p90 2 both). On gpt-6.1-sol, Pi's median is 3 (p90 10, n 73). Pi's median is above Claude Code's in 4 of the 5 judged matched strata. In kendex runtime items estimated 3 or more, the medians are 6.5 and 1 (n 14 and 15). [E]
+- 165 of Pi's 348 asks report a failing validation receipt, against 29 of Claude Code's 127. These asks name repository checks: test suites, validation bounds, CI. They are repository-class costs. No kept record ties one to a Pi extension. [E] [K]
+- Nine items hold Pi tokens under another lead harness: 7 under Codex, 2 under Claude Code. Their Pi token medians are 252.3M and 220.2M, the size of whole lanes. Copilot and Codex tokens under Claude Code leads are 0.5M–4.1M (6 items), the size of a second opinion. [E]
+- Pi's token records are sparse. Token records start at 2026-10-02T03:27Z, so 131 of 139 Pi-led items have none. [E]
+- No token record is incomplete. No item has `unreadable` or `unrecorded` above 0 for any harness, and no Codex row carries a null cache write. [E]
+
+## Results
+
+### Measure-by-harness table
+
+Every cell is n / items / median / p90, or n / items / share for a 0-or-1 measure. A cell with fewer than 8 Pi items in its measure reads "too small to judge". Codex is outside the comparison; its cells give n only. Exact values are in [pi-session-audit-research.evidence.json](pi-session-audit-research.evidence.json), `all`. [E]
+
+| Measure | Unit | Source | Pi with our extensions | Claude Code | Copilot CLI | Codex (n) |
+|---|---|---|---|---|---|---|
+| 1 input tokens per merged item | item | `tokens-*.json` `[0]`, lead harness only | 8 / 8 / 2,864 / 159,822 | 126 / 126 / 913 / 2,768 | not sampled (n=0) | 36 |
+| 1 output tokens per merged item | item | `[1]` | 8 / 8 / 174,342 / 616,508 | 126 / 126 / 186,964 / 566,085 | not sampled (n=0) | 36 |
+| 1 cache read tokens per merged item | item | `[2]` | 8 / 8 / 137.1M / 383.4M | 126 / 126 / 55.6M / 145.8M | not sampled (n=0) | 36 |
+| 1 cache write tokens per merged item | item | `[3]` | 8 / 8 / 3.46M / 5.86M | 126 / 126 / 1.40M / 4.57M | not sampled (n=0) | 36 |
+| 1 total tokens per merged item | item | sum of the four | 8 / 8 / 139.8M / 390.1M | 126 / 126 / 57.5M / 150.3M | not sampled (n=0) | 36 |
+| 2 context measures (5 rows) | session | live transcript | not sampled (n=0) | not sampled (n=0) | not sampled (n=0) | — |
+| 3 tool calls and errors by class (6 rows) | session | live transcript | not sampled (n=0) | not sampled (n=0) | not sampled (n=0) | — |
+| 4 relaunches per item | item | `fleet_log` rows naming relaunch | 139 / 139 / 0 / 1 | 154 / 154 / 0 / 1 | not sampled (n=0) | 54 |
+| 4 overseer rulings per item | item | `fleet_log` kind `ruling` | 139 / 139 / 2 / 6 | 154 / 154 / 2 / 6 | not sampled (n=0) | 54 |
+| 4 lane-mail asks per item | item | `to-overseer.jsonl`, one per envelope id | 139 / 139 / 1 / 7 | 164 / 164 / 0 / 2 | not sampled (n=0) | 54 |
+| 4 candidate harness-defect asks per item | item | asks naming harness words | 139 / 139 / 0 / 1 | 164 / 164 / 0 / 1 | not sampled (n=0) | 54 |
+| 4 turns ended with work owed | session | live transcript | not sampled (n=0) | not sampled (n=0) | not sampled (n=0) | — |
+| 5 share stopped, parked or paused | item | lane record `status`, `pauses` | 139 / 139 / 0.7% | 154 / 154 / 3.2% | not sampled (n=0) | 54 |
+| 5 share not merged | item | lane record `cycle.stamps.merged` | 139 / 139 / 1.4% | 154 / 154 / 1.9% | not sampled (n=0) | 54 |
+| 5 wall seconds, launch to merge, less pauses | item | lane record `cycle.stamps`, `pauses` | 137 / 137 / 11,753 / 37,389 | 151 / 151 / 8,455 / 26,953 | not sampled (n=0) | 53 |
+| 5 fix rounds per merged item | item | lane record `cycle.rounds.fix` | 56 / 56 / 0 / 2 | 31 / 31 / 1 / 3 | not sampled (n=0) | 31 |
+
+Fix rounds cover fewer items because `cycle.rounds` is null where the lane's state was gone when the cycle was recorded.
+
+### Model mix
+
+The provider was not held fixed. Every Pi lane ran through the `github-copilot` provider, and Claude Code calls Anthropic directly. Lane records name each lane's model; token records name the model, with the provider for Pi. [E]
+
+| Harness | Lane records: model (items) | Token records: model (records) |
+|---|---|---|
+| Pi | github-copilot/claude-opus-5.5 (66), github-copilot/gpt-6.1-sol (73) | github-copilot/claude-opus-5.5 (2), github-copilot/gpt-6.1-sol (6) |
+| Claude Code | claude-opus-5-5 (148), claude-fable-5-1 (4), fable (2) | claude-opus-5-5 (144), claude-fable-5-1 (7) |
+| Codex | gpt-6.1-sol (47), gpt-6-sol (7) | gpt-6.1-sol (42), gpt-6-sol (1) |
+
+### Same model: claude-opus-5.5
+
+`by_model` in the evidence file holds every measure per model. These rows compare Pi and Claude Code on one model. [E]
+
+| Measure | Pi | Claude Code |
+|---|---|---|
+| 1 total tokens per merged item | 2 items: too small to judge | 119 items: too small to judge |
+| 4 relaunches per item | 66 / 66 / 0 / 0 | 148 / 148 / 0 / 1 |
+| 4 overseer rulings per item | 66 / 66 / 2 / 6 | 148 / 148 / 2 / 6 |
+| 4 lane-mail asks per item | 66 / 66 / 1 / 2 | 148 / 148 / 0 / 2 |
+| 5 share stopped, parked or paused | 66 / 66 / 0.0% | 148 / 148 / 3.4% |
+| 5 share not merged | 66 / 66 / 3.0% | 148 / 148 / 2.0% |
+| 5 wall seconds, launch to merge, less pauses | 64 / 64 / 7,866.5 / 19,989 | 145 / 145 / 8,722 / 27,030 |
+| 5 fix rounds per merged item | 19 / 19 / 1 / 3 | 29 / 29 / 1 / 3 |
+
+Pi on gpt-6.1-sol has a median wall time of 15,879 s (p90 48,125; n 73) and a median of 3 asks (p90 10). Codex runs the same model and is outside the comparison.
+
+### Matched strata and unmatched totals
+
+A stratum is one repository, one `agent:*` label and one estimate band (1–2, 3+), read from the tracker for every item (§ Comparison). A stratum is matched when it holds a Pi item and a Claude Code or Copilot CLI item. 11 strata match. A stratum is judged only when it holds at least 8 Pi items. [E]
+
+- Measure 1: three matched strata hold all 8 Pi token items, at most 6 in one. None is judged, so every matched Pi token cell is too small to judge.
+- Measures 4 and 5: five strata are judged. A Claude Code cell under 8 items, such as kendex rust (2), carries little weight.
+
+| Stratum | Pi asks | Claude Code asks | Pi rulings | Claude Code rulings | Pi wall s | Claude Code wall s |
+|---|---|---|---|---|---|---|
+| fleet, agent:maintainer, 1–2 | 19: 0 / 1 | 10: 0.5 / 2 | 19: 1 / 6 | 10: 3 / 4 | 19: 5,607 / 13,576 | 10: 3,134 / 12,666 |
+| fleet, agent:runtime, 1–2 | 21: 1 / 2 | 19: 0 / 2 | 21: 1 / 4 | 19: 3 / 6 | 19: 5,832 / 19,853 | 19: 6,010 / 18,333 |
+| kendex, agent:runtime, 1–2 | 24: 2 / 5 | 46: 0 / 2 | 24: 1 / 5 | 46: 1 / 4 | 24: 15,514.5 / 36,342 | 46: 12,042.5 / 27,030 |
+| kendex, agent:runtime, 3+ | 14: 6.5 / 14 | 15: 1 / 6 | 14: 2 / 5 | 15: 3 / 12 | 14: 24,251.5 / 55,353 | 14: 28,338 / 71,369 |
+| kendex, agent:rust, 1–2 | 8: 2.5 / 11 | 2: 0 / 0 | 8: 0 / 3 | 2: 0.5 / 1 | 8: 11,556 / 27,728 | 2: 9,981 / 11,990 |
+
+Each cell is n: median / p90. Unmatched totals, outside every matched stratum: asks Pi 29 items, median 1 / p90 6, against Claude Code 40, median 0 / p90 2; wall time Pi 31, median 5,104 / p90 24,696 s, against Claude Code 30, median 3,308 / p90 9,332 s. The evidence file's `unmatched` holds every measure.
+
+### Static context cost
+
+These figures are static: read from the installed packages and fleet harness settings on this sandbox, not from a lane. They are the context our packages add to each Pi request before the first message. [S]
+
+| Source | Bytes | How measured |
+|---|---|---|
+| `instructions.md` blocks in `APPEND_SYSTEM.md`: pi-agents-tmux 7,420, pi-background-tasks 3,434, pi-session-bridge 3,165, pi-web-tools 2,073, pi-questions 1,676, pi-task-panel 1,131 | 18,899 | `kendex:append-system` markers in the installed `~/.pi/agent/APPEND_SYSTEM.md`, equal to each package's `instructions.md` |
+| 19 active tool definitions from our packages (name, description, parameters): pi-agents-tmux 7 tools 10,792, pi-web-tools 7 tools 7,084, pi-background-tasks 2 tools 2,365, pi-tool-renderer `tool_batch` 1,434, pi-task-panel `tasks_write` 694, pi-codex-minimal-tools `apply_patch` 459 | 22,828 | Pi 1.0.1 SDK `createAgentSession` with the fleet harness settings, then `getAllTools()` and `getActiveToolNames()` |
+| Pi's 7 built-ins that pi-tool-renderer registers again with their own contract | 4,746 | same; Pi's cost, not ours |
+| `before_agent_start` forced prompts (pi-task-panel active task, pi-agents-tmux project agents) | not measured | not in any transcript or SDK prompt read |
+
+The fleet settings disable pi-questions (`enabled: false`), so no `question` tool is registered. Its 1,676-byte block is still in the prompt (§ Extension root causes, rank 2).
+
+### Extension root causes
+
+Ranked by cost per affected request. [S]
+
+| Rank | Root cause | Where | Cost | Fix item |
+|---|---|---|---|---|
+| 1 | pi-task-panel returns a forced system prompt that quotes the active task. Each change of active task changes the request's leading prompt, so the next request writes the whole context to the prompt cache again. | `pi-extensions/pi-task-panel/extensions/task-panel.ts:1290-1296`, text from `:730-733` | one cache write of the whole context per active-task change; count unmeasured (measure 2 not sampled) | KEN-2683 |
+| 1 | The same package's `context` handler keeps only the newest task-context message. The cache break lands at the previous agent start's task-context message on each agent start; it lands earlier only when the last task completes or `showWorkflowReminder` is off. | `pi-extensions/pi-task-panel/extensions/task-panel.ts:1278-1287` | one cache write from that message on, per agent start; count unmeasured | KEN-2683 (folded: same two handlers, one PR) |
+| 2 | A package disabled in its kendex settings keeps its `APPEND_SYSTEM.md` block. kendex writes the block at install without reading the package's `enabled` setting. pi-questions then registers nothing (`questions.ts:994`), but its instructions still tell every Pi request to use a `question` tool that does not exist. | `crates/core/src/pi_ext/mod.rs:405-421`; `pi-extensions/pi-questions/extensions/questions.ts:994` | 1,676 bytes on every Pi request, fleet-wide | FILING |
+| — | pi-output-policy's minimize-only path records no byte meta. | `pi-extensions/pi-output-policy/extensions/output-policy.ts:729-735` | none in tokens | Dropped: the result text already carries the visible `[output-policy:minimized-lines=N]` notice that `measure.py` counts; only the pre-minimizer byte figure is missing, and no user or operator decision depends on it. |
+
+Pi's cache-write median per merged item is 3.46M against Claude Code's 1.40M (8 and 126 items). That fits rank 1 but does not show it: 6 of the 8 Pi items ran another model.
+
+### Costs with another class
+
+These are listed with their class. They file nothing.
+
+| Cost | Class | Evidence |
+|---|---|---|
+| Pi lanes ask the overseer more; 165 of 348 Pi asks report a failing validation receipt | repository | ask excerpts name test suites, validation bounds and CI; no kept record names a Pi extension |
+| Pi on gpt-6.1-sol runs longer (median 15,879 s) and asks more (median 3) than Pi on claude-opus-5.5 | model | `by_model` rows; one harness, two models |
+| Pi's measure-1 token medians exceed Claude Code's | model (6 of 8 Pi items on gpt-6.1-sol) and provider (github-copilot against Anthropic), not separable at n=8 | § Model mix |
+| Nine items moved off Pi to Codex (7) or Claude Code (2) after Pi spent a median of 252.3M and 220.2M tokens | not attributable from kept records: the fleet log text that says why is not in the archive lines | `tokens_under_another_lead` |
 
 ## Method
 
 ### Sample
 
 - Close records: every kept close record dated 2026-10-01 or later, across every repository and fleet under `/home/admin/.fleet/archive/<repo>/<item>/`, plus each new close. A close record is a `tokens-<sandbox-id>.json` and a `tmp-*.tgz`. [R]
-- Live Pi lanes: measures 2 and 3 need a transcript, and a close keeps none (FLT-671). They are read only from Pi lanes still open, before their close. [R] [O]
-- No routing change and no Copilot spend. The overseer routes no item for this audit. [R]
+- Live Pi lanes: measures 2 and 3 need a transcript, and a close keeps none (FLT-671). They come only from Pi lanes still open, read before close. At the read none was open in kendex, fleet, vg or talk, and none was routed. [R] [O]
+- No routing change and no Copilot spend. [R]
+- Excluded: 77 item keys that are no tracker id (`proof-*`, `*-probe-*`), and 28 tracker items with neither a lane record nor exactly one harness with tokens. [E]
 
 ### Comparison
 
-The comparison is whatever harness mix the kept records hold: Claude Code, Pi and Copilot CLI. No harness needs a matched sample. [R]
+The comparison is the harness mix the kept records hold. No harness needs a matched sample. Codex is outside the comparison; its n is listed. [R]
 
-Where the records allow, `aggregate` also groups the archive measures by repository and estimate band (1–2, 3 and up), in `by_repo_and_band`. The repository is the archive directory's. The band comes from the oversee lane record's `tier_inputs.estimate`. No kept record holds the item's `agent:*` label. The subagent reads it from the tracker when it wants that split. Every session's `models` lists the provider and model of each assistant message, so a reader can see where models differ.
+`aggregate` reports three views: all items per lead harness (`all`), per model family (`by_model`), and per matched stratum with the unmatched totals (`matched`, `unmatched`). The stratum key is the archive directory's repository, the item's `agent:*` label and its estimate band. Label and estimate come from the tracker through `--issues`, since no kept record holds them. An estimate of 0 or none, or an item with no or several agent labels, is unmatched. The lane record's `tier_inputs.estimate` is item-tier's estimate of added production lines, not the tracker estimate, so it is not used. [S]
+
+The lead harness is the lane record's `harness`, else the one harness with tokens. An item whose token records hold another harness beside the lead is left out of measure 1 and counted in `mixed_token_items_by_lead` and `tokens_under_another_lead`.
 
 ### Reporting rule
 
-- Every figure carries its source and its sample size n. `aggregate` puts `source` on every measure, and `n` and the item count on every cell.
-- A measure with fewer than 8 Pi items reads "too small to judge" in every cell. The cell keeps n and drops the median and p90. It is never a finding. `MIN_PI_ITEMS` in `measure.py` holds the 8, and `test_measure.py` fails when it changes.
-- Median is the middle value, or the mean of the two middle values for an even n. p90 is the nearest-rank 90th percentile.
+- Every figure carries its source and its sample size n. `aggregate` puts `source` on every measure, and n and the item count on every cell.
+- A measure, model row or stratum with fewer than 8 Pi items reads "too small to judge" in every cell. The cell keeps n and drops the median and p90. It is never a finding. `MIN_PI_ITEMS` in `measure.py` holds the 8.
+- A measure with no input at all reads "not sampled (n=0)".
+- Median is the middle value, or the mean of the two middle values for an even n. p90 is the nearest-rank 90th percentile. A 0-or-1 measure reports the share.
 
 ### Read procedure
 
-An overseer-briefed control-host subagent runs every read, with the script as its input. It runs `archive` first. The script itself writes no file.
+An overseer-briefed control-host subagent runs every read, with the script as its input. The script itself writes no file.
 
 | Step | Mode | Where | Command |
 |---|---|---|---|
-| 1 | `archive` | control host | `measure.py archive --root /home/admin/.fleet/archive --oversee-state REPO=<repo>/tmp/workflow-state-oversee.json --brief-tail REPO=<repo>/tmp/brief-tail-template.md > items.jsonl`, one `--oversee-state` and one `--brief-tail` per repository |
-| 2 | `live` | each open Pi lane's sandbox, before close | `python3 - live --item ITEM --repo REPO > ITEM.live.json`, run through `lane-host-daytona exec --item ITEM` with `measure.py` on its stdin |
-| 3 | `aggregate` | control host | `measure.py aggregate items.jsonl *.live.json` |
-| 4 | — | control host | `gh pr view N --json state,mergedAt,createdAt` for a PR whose lane record holds no `cycle` |
+| 1 | `archive` | control host | `measure.py archive --root /home/admin/.fleet/archive --oversee-state REPO=<repo>/tmp/workflow-state-oversee.json ... > items.jsonl` |
+| 2 | `live` | each open Pi lane's sandbox, before close | `python3 - live --item ITEM --repo REPO`, through `lane-host-daytona exec --item ITEM` with `measure.py` on stdin |
+| 3 | tracker read | any checkout | `linear.sh issues bulk-get ID...` for every tracker item, saved as `{item: {estimate, agent}}` |
+| 4 | `aggregate` | any checkout | `measure.py aggregate --issues issues.json items.jsonl.gz [live.jsonl]` |
 
-`archive` takes every directory under the root's repository directories as an item, and prints a line for each item with at least one close record dated on or after `--since` (default 2026-10-01). A record's date is its `at`, else its file's modification time. A directory with no such record, such as `<repo>/oversee/` with its prune archives, prints nothing and is counted in the last stderr line, `measure: archive-done=`. A sandbox of another repository has no copy of the script, so the subagent streams it to `python3 -` on stdin and writes nothing into the sandbox.
+`archive` prints one line per item with a close record dated on or after `--since` (default 2026-10-01): the record's `at`, else the file's modification time. It prints `df -h /` before each item and stops with exit 3 under 3 GB free; lines already printed are complete. It lists each archive with `tar -tzf` and reads one member at a time with `tar -xzOf ARCHIVE -- MEMBER`, never extracting an archive, and refuses a member over 16 MiB. A close archive can hold the lane mailbox twice (the worktree's and the close-out evidence copy); `archive` and `aggregate` count each envelope id once. The subagent runs no `git log -S`, `-G` or `--all -p`, and writes no bulk data.
 
-`live` reads these stores under `$HOME`:
+### Token-record field meanings
 
-| Store | Harness | What it holds |
-|---|---|---|
-| `.pi/agent/sessions/**/*.jsonl` | Pi | lead sessions |
-| `.pi/agent/kendex/sessions/**/*.jsonl` | Pi | pi-agents-tmux subagent sessions; a file whose first line is no Pi session header is counted as skipped |
-| `.pi/agent/kendex/sessions/*/pi-output-policy/artifacts/` | Pi | full outputs pi-output-policy saved; files and bytes only |
-| `.pi/agent/APPEND_SYSTEM.md` | Pi | the installed system-prompt appends, bytes per package |
-| `.claude-shared/projects/**/*.jsonl`, `.claude/projects/**/*.jsonl` | Claude Code | lead and `subagents/agent-*.jsonl` transcripts; a file both paths reach is read once |
-| `.copilot*/session-state/*/events.jsonl` | Copilot CLI | one event log per session |
+The overseer confirmed these from `/opt/fleet/lib/lane_host/tokens.py` lines 8–14 and the KEN-2598 record. [O]
 
-### Control-host rules
-
-The script obeys these, and the subagent obeys them for every other read.
-
-- Read an archive as a stream. `archive` lists members with `tar -tzf ARCHIVE` and reads one member at a time with `tar -xzOf ARCHIVE -- MEMBER`. It never extracts an archive. It refuses a member over 16 MiB.
-- Before each item, `archive` runs and prints `df -h /`. Under 3 GB free on `/` it stops with exit 3 before that item (`--min-free-gb`). The lines it already printed are complete items.
-- Run no `git log -S`, `git log -G`, `git log --all -p` and no other read of every blob in history.
-- Write no bulk data. The output carries counts and bytes. It carries text only as excerpts of at most 200 characters: extension-class and unclassified errors, and lane-mail asks.
-
-### Per-session measures
-
-Each `live` session object carries these. Bytes are UTF-8 bytes, the proxy for tokens wherever a transcript records no token count.
-
-| Field | Meaning | Pi source | Claude Code source | Copilot CLI source |
-|---|---|---|---|---|
-| `tokens` | input, output, cache read, cache write, total; `recorded` and `unrecorded` model calls | assistant `message.usage`, `usage` entries, compaction and branch-summary `usage`, tool-result `usage` | assistant `message.usage`, one per `message.id` | `session.shutdown` `modelMetrics.<model>.usage`, summed over shutdowns; else "not recorded" |
-| `models` | assistant messages per `provider/model` | assistant `provider`, `model` | `message.model` | `modelMetrics.<model>.requests.count` |
-| `context.sections_bytes` | final system-prompt sections after replaying every system message | system messages, compaction `systemMessage` | not applicable | not applicable |
-| `context.system_messages` | system messages in the file; each patches the prompt | same | — | — |
-| `context.addendum_by_package` | `addendum` section bytes per `kendex:append-system` package marker | same | — | — |
-| `context.tool_definitions` | declared tool bytes (name, description, parameters) per owning package, built-in total | `toolsAdded`, `toolsRemoved` | — | — |
-| `context.tools_section_by_package` | bytes of our tools' `- name: snippet` lines in the `tools` section | `tools` section | — | — |
-| `context.custom_entries` | count and data bytes per `customType`, with owner | `custom` entries | — | — |
-| `context.custom_messages` | count, content bytes and hidden count per `customType`, with owner | `custom_message` entries | — | — |
-| `context.nested_agents_md` | text parts and bytes pi-nested-agents-md appended to `read` results | tool-result parts starting `instructions_path=` | — | — |
-| `context.output_policy` | results; truncated; minimized only; bytes before and after the budget | tool-result `details.kendexOutputPolicy[0]` | — | — |
-| `context.forced_prompt_appends` | always "not recorded" (§ Context sources) | — | — | — |
-| `tools.calls`, `tools.results` | tool calls, tool results | `toolCall` blocks, `toolResult` messages | `tool_use`, `tool_result` blocks | `tool.execution_start`, `tool.execution_complete` |
-| `tools.errors_by_class` | errors per class (§ Error classification) | `isError` results; assistant `stopReason: "error"` | `is_error` results; `isApiErrorMessage` entries | `success: false`; `session.error` |
-| `tools.interrupted` | calls stopped by the lane or person; not errors | — | — | — |
-| `owed_turns` | turn ends a Stop hook refused | hidden `kendex-hook` custom messages | user text starting `Stop hook feedback` | "not recorded" |
-
-Pi duplicates: a forked Pi session copies earlier entries. `live` counts an assistant message once per lane, keyed by `responseId`, and a tool result once per `toolCallId`. `duplicate_assistant_messages` reports the copies skipped.
-
-### Token-record field meanings assumed
-
-The overseer verifies each line against a real `tokens-<sandbox-id>.json` before the run. `archive` names the order it applied in `token_field_order_assumed`.
-
-| Field | Assumed meaning |
+| Field | Meaning |
 |---|---|
-| `models.<model>[0]` | input tokens not served from cache |
+| `models.<model>[0]` | input tokens; never includes cache reads |
 | `models.<model>[1]` | output tokens |
 | `models.<model>[2]` | cache read tokens |
-| `models.<model>[3]` | cache write (creation) tokens |
-| total | the sum of the four; assumes no count includes another |
-| `files` | transcript files the record writer read for that harness |
-| `unreadable` | of those, files it could not parse |
-| `unrecorded` | model calls or files that carried no usage |
-| `at` | UTC time the close wrote the record |
+| `models.<model>[3]` | cache write tokens; a Codex row can carry null, read as not recorded |
+| total | the sum of the four |
+| `files` | transcript files the read at close found for that harness |
+| `unreadable` | files and directories the read could not open |
+| `unrecorded` | sessions whose usage record is missing |
+| `at` | the control VM's time of the read at close |
 
-A count list of any other length, or with a non-integer, is refused as `token-record-shape` in `errors`, never guessed.
+Either count above 0 marks that harness's figure for that item incomplete. `incomplete_token_items_by_harness` counts them, and measure 1 leaves such an item out. Codex rows subtract cached input from input. `archive` refuses a count list of another length or with a non-integer as `token-record-shape`.
 
-### Context sources
+### Live measures
 
-These are the context sources our packages add, read from source at this commit. [S]
-
-| Source | Package | Where | In the transcript |
-|---|---|---|---|
-| `instructions.md` appended to every session's system prompt through `pi.appendSystem`: 7,420 bytes | pi-agents-tmux | `pi-extensions/pi-agents-tmux/package.json:19`, `scripts/append-system.mjs:66` | yes, `addendum` section |
-| same, 3,434 bytes | pi-background-tasks | `pi-extensions/pi-background-tasks/instructions.md` | yes |
-| same, 1,676 bytes | pi-questions | `pi-extensions/pi-questions/instructions.md` | yes |
-| same, 3,165 bytes; the package registers no tool | pi-session-bridge | `pi-extensions/pi-session-bridge/instructions.md` | yes |
-| same, 1,131 bytes | pi-task-panel | `pi-extensions/pi-task-panel/instructions.md` | yes |
-| same, 2,073 bytes | pi-web-tools | `pi-extensions/pi-web-tools/instructions.md` | yes |
-| tools `subagent`, `delegate_subagent`, `complete_subagent` | pi-agents-tmux | `pi-extensions/pi-agents-tmux/extensions/subagent/index.ts:2008`, `:1882`, `:1286` | yes, `toolsAdded` |
-| tools `get_subagent_result`, `wait_for_subagent_idle`, `steer_subagent`, `stop_subagent` | pi-agents-tmux | `pi-extensions/pi-agents-tmux/extensions/subagent/pane-support-tools.ts:75`, `:175`, `:200`, `:387` | yes |
-| tools `bg_status`, `bg_task` | pi-background-tasks | `pi-extensions/pi-background-tasks/extensions/registrations.ts:45`, `:83` | yes |
-| tool `question` | pi-questions | `pi-extensions/pi-questions/extensions/questions.ts:1027` | yes |
-| tool `tasks_write` | pi-task-panel | `pi-extensions/pi-task-panel/extensions/task-panel.ts:1215` | yes |
-| tool `tool_batch` | pi-tool-renderer | `pi-extensions/pi-tool-renderer/extensions/tool-renderer/batch.ts:254` | yes |
-| `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls` registered again with the built-in's contract and execute; no added bytes | pi-tool-renderer | `pi-extensions/pi-tool-renderer/extensions/tool-renderer.ts:53-61`, `tool-renderer/tools.ts:206-207` | counted as built-in |
-| seven web tools; seven alias tools only when `compatibilityTools` is on (default off) | pi-web-tools | `pi-extensions/pi-web-tools/src/index.ts:30-36`, `:43-49`, `:53` | yes |
-| `image_generation`, `view_image`, `apply_patch`, only with OpenAI models loaded | pi-codex-minimal-tools | `pi-extensions/pi-codex-minimal-tools/src/index.ts:153-177` | yes |
-| `before_agent_start` system prompt: active task line | pi-task-panel | `pi-extensions/pi-task-panel/extensions/task-panel.ts:1290-1296`, `:730-733` | no |
-| `before_agent_start` system prompt: project agent list | pi-agents-tmux | `pi-extensions/pi-agents-tmux/extensions/subagent/index.ts:1823-1880` | no |
-| hidden task-state message each agent start; earlier copies dropped from context | pi-task-panel | `pi-extensions/pi-task-panel/extensions/task-panel.ts:1278-1296` | yes, `custom_message` |
-| Stop hook refusal delivered as a hidden message | pi-hooks | `pi-extensions/pi-hooks/extensions/hooks.ts:362`, `:424` | yes, `custom_message` |
-| hook, drift, clippy and lane-mail wake messages | pi-hooks | `pi-extensions/pi-hooks/extensions/hooks.ts:177`, `:222`, `:496`; `lane-mail-wake.ts:87` | yes |
-| background task wake messages | pi-background-tasks | `pi-extensions/pi-background-tasks/extensions/wake-events.ts:527-592` | yes |
-| nested `AGENTS.md` text appended to `read` results | pi-nested-agents-md | `pi-extensions/pi-nested-agents-md/extensions/nested-agents-md.ts:137-152` | yes |
-| tool-result budget | pi-output-policy | `pi-extensions/pi-output-policy/extensions/output-policy.ts:1019-1043` | yes, `details.kendexOutputPolicy` |
-
-A `before_agent_start` handler that returns `systemPrompt` sets Pi's forced prompt. Pi sends it as the request's leading system prompt and keeps the structured sections in the transcript (`runner.js:1147-1149`, `agent-session.js:1277` in the Pi 1.0.1 package). So the two forced appends above never reach the session file. `live` reports them as "not recorded". Their size per request is the template text plus the active task (pi-task-panel) or one line per project agent (pi-agents-tmux).
-
-pi-output-policy budget, per `policyMode` (`output-policy.ts:52-80`). The fleet settings set no mode, so `balanced` applies.
-
-| Mode | Spill threshold | Inline tail | Max text block | Max lines |
-|---|---|---|---|---|
-| `compat` | 200 KB | 100 KB | 200 KB | 8,000 |
-| `balanced` | 48 KB | 16 KB | 24 KB | 400 |
-| `compact` | 16 KB | 6 KB | 8 KB | 200 |
-
-Bytes before the budget are `shownBytes + savedBytes` of the result's meta. Bytes after are the result's recorded text. A result the shell minimizer shortened without truncation carries no meta (`output-policy.ts:729-735`). `live` counts it under `minimized_only` with its dropped line count, and its bytes before are not recorded.
+`live` reads `.pi/agent/sessions`, `.pi/agent/kendex/sessions` (pi-agents-tmux subagents), `.claude-shared/projects`, `.claude/projects` and `.copilot*/session-state`. Per session it reports token totals. For Pi it also reports the prompt sections after replaying every system message, the `addendum` bytes per package marker, tool definition bytes per owning package, `custom` and `custom_message` bytes per owner, nested `AGENTS.md` parts, and tool-result bytes before and after the pi-output-policy budget. For every harness it reports tool calls, errors by class and Stop-hook refusals. `measure.py --help` holds the schema. The Pi session format is the Pi 1.0.1 package's Session File Format and Message Types documents. A `before_agent_start` handler that returns `systemPrompt` sets a forced prompt Pi sends without recording it, so `live` reports those appends as "not recorded". Copilot CLI usage comes only from `session.shutdown` `modelMetrics`; `assistant.usage` is ephemeral and never reaches `events.jsonl`.
 
 ### Error classification
 
-One table in `measure.py` (`ERROR_RULES`) classes every error. The first matching row wins. Each row carries a real example the test classifies.
+One table in `measure.py` (`ERROR_RULES`) classes every live error. The first matching row wins.
 
 | Order | Rule | Class | Matches |
 |---|---|---|---|
 | 1 | `interrupted` | not an error | `Operation aborted`, `Command aborted`, a request the person interrupted |
-| 2 | `pi-arguments-invalid` | model | `Validation failed for tool` (pi-ai argument validation) |
-| 3 | `pi-tool-unknown` | model | `Tool NAME not found` |
-| 4 | `pi-arguments-truncated` | model | a call cut off at the output token limit |
-| 5 | `claude-tool-use-error` | model | `<tool_use_error>` |
+| 2–5 | `pi-arguments-invalid`, `pi-tool-unknown`, `pi-arguments-truncated`, `claude-tool-use-error` | model | argument validation, unknown tool, a call cut at the output limit, `<tool_use_error>` |
 | 6 | `pi-hooks-registry-unreadable` | extension, pi-hooks | `hook-registry-unreadable=` |
 | 7 | `our-tool` | extension, the owning package | any error of a tool our packages register (`TOOL_OWNERS`) |
 | 8 | `hook-refusal` | repository | a kendex hook's first line `name: key=value`, or `PreToolUse:… hook error` |
 | 9 | `command-exit` | repository | `Command exited with code N`, `Exit code N`, `Command timed out after N seconds` |
-| 10 | `names-package` | extension, the named package | text naming a pi-extensions package, as `@vanillagreen/pi-…`, `pi-extensions/pi-…` or the bare name |
-| 11 | `file-arguments` | model | a built-in file tool's argument error: missing path, edit text not found or not unique, offset past the end |
+| 10 | `names-package` | extension, the named package | text naming a pi-extensions package |
+| 11 | `file-arguments` | model | a built-in file tool's argument error |
 | 12 | `turn-error` | provider | any other turn-level error: HTTP, stream, rate limit |
 | — | `none` | unclassified | nothing above; reported with its excerpt |
 
-Rules 2–5 run before rule 7, so a bad argument to our tool is a model error, as the issue defines it. Rule 9 runs before rule 10, so a failing command whose output names a package, such as a test run inside `pi-extensions/`, is a repository error. A hook refusal of a call to one of our tools falls to rule 7. Its excerpt is in the row, and the reviewer reclassifies it by hand. pi-tool-renderer's pass-through tools are not "our tools" for rule 7.
+pi-tool-renderer's pass-through `read`, `bash`, `edit`, `write`, `grep`, `find` and `ls` count as Pi built-ins (`tool-renderer.ts:53-61`, `tool-renderer/tools.ts:206-207`).
 
-Every extension-class cost gets a root cause with file and line, and one fix item with a must-fail test. A model, provider or repository cost is listed with its class and files nothing. [I]
+### Forced workarounds and outcome
 
-### Forced-workaround classification
-
-| Workaround | Counted when | Source |
+| Measure | Counted when | Source |
 |---|---|---|
-| Harness-only brief clause | a paragraph or bullet of `tmp/brief-tail-template.md` names exactly one harness (Pi, Claude, Copilot, Codex) | `archive` `brief_tail.harness_only` |
-| Relaunch | a `fleet_log` row for the item whose text says relaunch | `archive` `oversee.fleet_log.relaunch_rows`; lane record `session_id`, `pauses` |
-| Overseer ruling | a `fleet_log` row of kind `ruling` for the item | `archive` `oversee.fleet_log.by_kind.ruling` |
-| Lane-mail ask a harness defect caused | an ask in `to-overseer.jsonl`; `terms` lists harness and extension words; the reviewer reads the excerpt and decides | `archive` `lane_mail.asks` |
-| Turn ended with work owed | a Stop hook refused the turn end | `live` `owed_turns` |
-
-### Failures and outcome
-
-`archive` puts these in each item's `outcome`, from the oversee lane record. Without a lane record every field is null: the outcome is unknown, never "not merged".
-
-| Field | Source |
-|---|---|
-| `stopped_parked_or_paused` | lane record `status` is `stopped` or `parked`, or `pauses` is not empty |
-| `merged` | lane record `cycle.stamps.merged` is set |
-| `wall_secs` | `cycle.stamps.launched` (else `launched_at`) to `cycle.stamps.merged`, less the `pauses` stretches |
-| `fix_rounds` | `cycle.rounds.fix` |
-| `estimate_band` | `tier_inputs.estimate`: 1–2 or 3+ |
-
-The item's harness is the lane record's `harness`. Without a lane record it is the one harness with tokens in the kept token records. With several such harnesses it is `mixed`, and `aggregate` leaves the item out of every harness cell and counts it in `inputs.mixed_or_unknown_harness`.
-
-### Measure table
-
-`aggregate` fills this table from the `archive` and `live` lines. Each cell is n / items / median / p90, or n / items / "too small to judge" (§ Reporting rule). Every cell is empty until the overseer's run returns. Harness-only brief clauses are counted per repository in each item's `brief_tail`, not per item, and stay out of the table.
-
-| Measure | Unit | Source | Pi with our extensions | Claude Code | Copilot CLI |
-|---|---|---|---|---|---|
-| 1 input tokens per merged item | item | `tokens-*.json` `models.<model>[0]`, order assumed | | | |
-| 1 output tokens per merged item | item | `models.<model>[1]`, order assumed | | | |
-| 1 cache read tokens per merged item | item | `models.<model>[2]`, order assumed | | | |
-| 1 cache write tokens per merged item | item | `models.<model>[3]`, order assumed | | | |
-| 1 total tokens per merged item | item | sum of the four counts | | | |
-| 2 system-prompt append bytes | session | Pi `addendum` section, package markers | | not applicable | not applicable |
-| 2 our tool definition bytes | session | Pi `toolsAdded` | | not applicable | not applicable |
-| 2 custom and custom_message bytes | session | Pi `custom`, `custom_message` entries | | not applicable | not applicable |
-| 2 tool-result bytes before budget | session | Pi `details.kendexOutputPolicy` | | not applicable | not applicable |
-| 2 tool-result bytes after budget | session | Pi tool-result content | | not applicable | not applicable |
-| 3 tool calls per session | session | transcript tool calls | | | |
-| 3 extension errors per session | session | transcript errors, `ERROR_RULES` | | | |
-| 3 model errors per session | session | same | | | |
-| 3 provider errors per session | session | same | | | |
-| 3 repository errors per session | session | same | | | |
-| 3 unclassified errors per session | session | same | | | |
-| 4 relaunches per item | item | `fleet_log` text naming relaunch | | | |
-| 4 overseer rulings per item | item | `fleet_log` kind `ruling` | | | |
-| 4 candidate harness-defect asks per item | item | `to-overseer.jsonl` asks naming harness words; the reviewer confirms each | | | |
-| 4 turns ended with work owed per session | session | Stop hook refusals in the transcript | | | |
-| 5 share stopped, parked or paused | item | lane record `status`, `pauses` | | | |
-| 5 share not merged | item | lane record `cycle.stamps.merged` | | | |
-| 5 wall seconds launch to merge, less pauses | item | lane record `cycle.stamps`, `pauses` | | | |
-| 5 fix rounds per merged item | item | lane record `cycle.rounds.fix` | | | |
-
-Live measures come only from open Pi lanes, so their Claude Code and Copilot CLI cells stay empty unless such a lane is open on the same sandbox.
+| Relaunch | a `fleet_log` row for the item whose text says relaunch | `oversee.fleet_log.relaunch_rows` |
+| Overseer ruling | a `fleet_log` row of kind `ruling` | `oversee.fleet_log.by_kind` |
+| Lane-mail ask | an ask envelope in `to-overseer.jsonl`, once per id | `lane_mail.asks` |
+| Candidate harness-defect ask | an ask naming harness or extension words; a reviewer confirms each | `lane_mail.asks[].terms` |
+| Harness-only brief clause | a clause of `tmp/brief-tail-template.md` naming one harness; per repository | `brief_tail`; none in this sample |
+| Stopped, parked or paused | lane `status` `stopped` or `parked`, or `pauses` not empty | lane record |
+| Not merged | no `cycle.stamps.merged` | lane record; an item with no lane record is unknown, never unmerged |
+| Wall time | `cycle.stamps.launched` (else `launched_at`) to `merged`, less `pauses` | lane record |
+| Fix rounds | `cycle.rounds.fix` | lane record |
 
 ### Instrument tests
 
-`python3 docs/plans/pi-session-audit/test_measure.py` runs the script on the synthetic fixtures under [pi-session-audit/fixtures](pi-session-audit/fixtures). It also holds `TOOL_OWNERS`, `PACKAGES` and the `customType` owners equal to what it extracts from `pi-extensions/` source. A planted defect turns it red for each of: Claude usage keyed per line, a dropped tool owner, a broken classifier row, a disk check that never stops, Pi fork copies counted twice, a Pi item floor of 7, a `--since` filter that keeps everything, and a p90 that takes the maximum.
+`python3 docs/plans/pi-session-audit/test_measure.py` runs `measure.py` on the synthetic fixtures under [pi-session-audit/fixtures](pi-session-audit/fixtures) and on schema-1 archive lines built in the test. It holds `TOOL_OWNERS`, `PACKAGES` and the `customType` owners equal to `pi-extensions/` source. A planted defect turns it red for each of 15 rules, among them the Pi item floor, the `--since` filter, the p90 rank, mixed-token exclusion, ask deduplication in `archive` and in `aggregate`, the share cell, the matched-stratum pair, the probe filter and the model family.
 
 ## Evidence and Sources
 
-- [I] KEN-2343 issue body: sample, measures, read rules, classification classes, Done-when.
-- [O] Overseer ruling for this round: what a close keeps (FLT-671) and the control-host rules.
-- [R] Owner ruling relayed by the overseer: the sample is the kept close records since 2026-10-01 plus new closes, live reads only on open Pi lanes, no routing change and no Copilot spend, and the reporting rule.
-- [S] Repository source at this commit, cited by file and line above.
-- [P] The Pi 1.0.1 npm package's Session File Format and Message Types documents (`@earendil-works/pi-coding-agent`): entry types, system messages with `sections`, `toolsAdded`, `toolsRemoved`, `Usage` fields.
-- [C] `@github/copilot-sdk` 1.0.16 `dist/generated/session-events.d.ts`: `session.shutdown` `modelMetrics.<model>.usage` (`inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`); `assistant.usage` is `ephemeral` and not written to `events.jsonl`; `tool.execution_complete` `success` and `error.message`; `session.error` `errorType`.
-- [L] One local Claude Code transcript pair on this sandbox: a response's usage repeats on each of its content-block lines, so usage is keyed by `message.id`.
+- [E] [pi-session-audit-research.evidence.json](pi-session-audit-research.evidence.json): `measure.py aggregate --issues` over the overseer's `archive` run. Input: 462 lines, gzip sha256 `97f59ab3186a26735b713528fc171056cf743870306307428182316577997048`; tracker fields for 384 items, sha256 `8b7d3c172af646c323ca75e936fd9b2b36441a094247424973cc8748bf491e0f`. Neither raw file is committed.
+- [K] Ask excerpts in the archive lines (first 200 characters per ask), grouped by keyword: failing receipt or validation, merge or review gate, ruling, other.
+- [R] Owner ruling relayed by the overseer (1791055181): the sample, live reads only on open Pi lanes, no routing and no Copilot spend, the comparison and the reporting rule.
+- [O] Overseer facts: what a close keeps (FLT-671), the control-host rules, the token-record meanings, and no Pi lane open at 19:57Z.
+- [I] KEN-2343 issue body: measures, classification classes, Done-when.
+- [S] Repository source at this commit, cited by file and line; the static figures from the installed packages and fleet harness settings on this sandbox, Pi 1.0.1.
+- [C] `@github/copilot-sdk` 1.0.16 `session-events.d.ts`: the Copilot CLI event shapes `live` reads.
 
 ## Tradeoffs / Alternatives
 
-- Measures 2 and 3 read the live sandbox before close, because a close does not keep transcripts. A Pi lane that closed before the read has no measure 2 or 3, so those measures cover fewer items than measures 1, 4 and 5.
-- The kept records hold the harness mix the fleet ran, not a matched sample. A harness difference in one cell can come from the item mix. `by_repo_and_band` narrows that where the records allow.
-- Bytes stand in for tokens wherever a transcript records no per-part token count. The table states bytes in those rows.
+- The kept records hold the harness mix the fleet ran, not a matched sample. Same-model rows and matched strata narrow that; neither holds the provider fixed.
+- Measures 2 and 3 waited for live lanes. With none open, the static context figures stand in for measure 2, and measure 3 has no stand-in.
 
 ## Recommendation / Decision Criteria
 
-None yet. The verdict line (Pi with our extensions vs Claude Code vs Copilot CLI) waits for the table.
+- Fix KEN-2683 first: it is the one extension cost that grows with session length.
+- Fix the disabled-package prompt block (rank 2): it costs every Pi request and points the model at a tool that does not exist.
+- Hold any choice between Pi and Claude Code on tokens until a Pi token cell on claude-opus-5.5 reaches 8 merged items. Each Pi close since 2026-10-02 adds a token record.
 
 ## Risks / Unknowns
 
-- The four token-record counts are assumed to be input, output, cache read and cache write, in that order (§ Token-record field meanings assumed).
-- The Copilot event shape is read from the SDK 1.0.16 types, not from a real Copilot CLI 1.0.91 session. A session with no `session.shutdown` event reports tokens as "not recorded".
-- A Claude Code Stop hook refusal is assumed to reach the transcript as a user message starting `Stop hook feedback`.
-- The forced `before_agent_start` system prompts are not in any Pi transcript.
-- A relaunch is counted from fleet log text, not from a field.
-- A close record with no `at` is dated by its file's modification time.
-- The archive's harness names (`claude` in the token record) are assumed to match the lane record's `harness` words.
-- Records from before 2026-10-01 are outside the sample, so Pi items may number fewer than 8 for some measures. Those read "too small to judge".
-- A minimized-only tool result has no recorded size before the minimizer.
+- 6 of the 8 Pi token items ran gpt-6.1-sol; token comparisons mix model and harness.
+- No transcript was read, so no live error is classified and no extension cost is measured in a lane.
+- Relaunches are counted from fleet log text, not a field.
+- The candidate harness-defect ask count rests on keywords; most matches name the work item, not the harness.
+- The static figures come from this sandbox's installed copy of the fleet harness, which can differ from a lane's.
 
 ## Revisit Conditions
 
-- Lane close starts keeping transcripts: measures 2 and 3 can then come from closed lanes too.
-- A Pi release changes the session format or the forced-prompt projection (`pi-update` audit).
-- The token record writer changes its shape.
+- Lane close starts keeping transcripts: measures 2 and 3 can then come from closed lanes.
+- A Pi token cell on one model reaches 8 merged items.
+- KEN-2683 or the disabled-package fix lands: rerun `aggregate` on the next kept records.
 
 ## Research Metadata
 
-- Mode: instrument build. No provider query, no Exa search, no record or lane read.
-- Script: `docs/plans/pi-session-audit/measure.py`, Python 3.8 or later, standard library only.
-- Fixtures and tests: `docs/plans/pi-session-audit/fixtures/`, `docs/plans/pi-session-audit/test_measure.py`.
-- Dry run on this sandbox's own Claude Code transcripts (not sample data): 2 sessions read, 0 unreadable.
+- Mode: kept close records plus static code reads. No provider query, no Exa search, no live lane.
+- Script: `docs/plans/pi-session-audit/measure.py` (Python 3.8+, standard library), modes `archive`, `live`, `aggregate`.
+- Tests: `docs/plans/pi-session-audit/test_measure.py`, 21 tests.
+- Archive read: the overseer's run, 462 lines, every one exit 0 with no error; `--oversee-state` for fleet, kendex, talk and vg.
