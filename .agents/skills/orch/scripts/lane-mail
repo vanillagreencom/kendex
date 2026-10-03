@@ -107,6 +107,18 @@ Overseer side:
               acknowledges it. Prints the receipt below on stdout. No halt
               goes to `--item overseer`: no hook halts an overseer on it, and
               the watch acknowledges that mailbox with --ack
+              A send to a lane first reads the lane's record in the fleet
+              state (--state-dir, else the checkout's) and matches the
+              channel its host kind declares (lane-host capabilities). No
+              record, or channel=mailbox, sends as above. channel=session, a
+              Claude cloud session, queues a --directive into the record's
+              session_id through `claude -p --cloud SESSION --output-format
+              json` under the record's account, the file on stdin, and prints
+              `lane-mail: sent item=ITEM channel=session session=ID` on an
+              {ok: true} answer; {ok: false} refuses as session-archived, and
+              --re and --halt refuse as channel-session, since such a lane
+              never asks and no hook enforces a halt there. channel=task
+              refuses as channel-task.
   drain --item ITEM --after N [--receipts]
               print the header below, then every to-overseer.jsonl
               envelope after line N, skipping asks to-lane.jsonl answers.
@@ -286,6 +298,8 @@ Options:
   --ack N       inbox only: the count a --peek printed, acknowledged once its
                 envelopes were handed over
   --halt        send only: a directive that halts the lane, as above
+  --state-dir PATH
+                send only: the fleet state whose record names the lane
   --to WHO      `owner` or `peer`: the audience field of an overseer ask or
                 notice, which a peer ask writes as `peer` itself, and the
                 filter `pending` keeps
@@ -506,6 +520,13 @@ fix=run `oversee register` from the orch skill in the session that should read t
     overseer-only) text='resolve closes an owner ask in the overseer mailbox alone. A lane ask is answered with `send --item ITEM --re MSGID`.' ;;
     cursor-lowered) text='to-lane.cursor stood past the complete lines the mailbox holds, a count an --ack wrote before it was clamped, so it moved down to the count above. Every line up to that count stays read, and every line after it, the next line written included, is handed over.' ;;
     ack-clamped) text='The --ack count is past the complete lines the mailbox holds, so the count acknowledged is the one above: those lines, or fewer where an unread halt stands among them. A line written later stays unread for the next read.' ;;
+    state-unreadable) text='The fleet state could not be read for the lane'"'"'s record, so which channel reaches the lane is unknown. Nothing was sent.' ;;
+    host-capabilities-unread) text='lane-host could not declare the capability line of the host the lane'"'"'s record names, so which channel reaches the lane is unknown. Nothing was sent.' ;;
+    channel-session) text='The lane runs in a cloud session, which never asks and enforces no halt, so this option reaches nothing there. Send a plain --directive; a stop goes to the operator, who archives the session.' ;;
+    channel-task) text='The lane runs as a cloud task, which takes nothing after its launch. A review fix is a new task on the item branch.' ;;
+    session-unrecorded) text='The lane'"'"'s record names no account or no session id, so no cloud session can be reached. Nothing was sent.' ;;
+    session-archived) text='The cloud session answered ok false: it is archived and takes no more messages. Nothing was delivered; relaunch the item.' ;;
+    session-send-failed) text='The Claude CLI did not answer ok true for the cloud session, so nothing says the directive was queued. Its exit status and its own words follow.' ;;
     duplicate) sep=' id='; text='This envelope was sent to this item less than a minute ago: every field of it but its own id and its stamp matches the envelope the id above names, so the send is a retry of a delivery that already landed rather than a second message. Change any field of the message, or wait out the minute, to send it again.' ;;
     *) printf 'lane-mail: message-invalid key=%s\n' "$1" >&2; return 2 ;;
   esac
@@ -569,6 +590,7 @@ THREAD_TS=""
 PARENT=""
 PARENT_JSON=null
 ONCE=0
+STATE_DIR=""
 
 need_val() { [ "$#" -ge 2 ] && [ -n "${2:-}" ] || refuse missing-value "$1"; }
 
@@ -606,6 +628,7 @@ while [ "$#" -gt 0 ]; do
     --thread-ts) need_val "$@"; THREAD_TS="$2"; shift 2 ;;
     --parent) need_val "$@"; PARENT="$2"; shift 2 ;;
     --once) ONCE=1; shift ;;
+    --state-dir) need_val "$@"; STATE_DIR="$2"; shift 2 ;;
     --help | -h) usage; exit 0 ;;
     *) refuse option-unknown "$1" ;;
   esac
@@ -673,6 +696,7 @@ for given in $OPTS_GIVEN; do
     --thread-ts | --parent)
       [ "$VERB:$ITEM:$DIRECTIVE" = send:overseer:1 ] || refuse option-unknown "$given" ;;
     --once) [ "$VERB" = watch ] || refuse option-unknown --once ;;
+    --state-dir) [ "$VERB" = send ] || refuse option-unknown --state-dir ;;
   esac
 done
 
@@ -764,6 +788,52 @@ WORK_DIR="$(mktemp -d "$TMP_ROOT/lane-mail.XXXXXX")" || refuse write-failed "$TM
 # re-arms this one after it returns; both halves run either way.
 lm_cleanup() { orch_release_lock; rm -rf -- "$WORK_DIR"; }
 trap lm_cleanup EXIT
+
+# A send to a lane is matched on the channel its record's host kind declares
+# (../schemas/lane-host.md § Host kinds). No record, or a mailbox channel, goes
+# on to the mailbox below. A session channel is a Claude cloud session, which
+# has no mailbox: a directive is queued into the record's session through the
+# Claude CLI under the record's account, which answers {ok, session_id, url}.
+# Such a lane never asks, so an answer has nothing to reach, and no hook
+# enforces a halt there. A task channel takes nothing after its launch.
+lm_send_channel() {
+  local state_args=() rc=0 record host channel harness account session out answer
+  [ -z "$STATE_DIR" ] || state_args=(--state-dir "$STATE_DIR")
+  "$SCRIPT_DIR/workflow-state" ${state_args[@]+"${state_args[@]}"} exists oversee >/dev/null 2>"$WORK_DIR/state.err" || rc=$?
+  [ "$rc" -ne 1 ] || return 0
+  [ "$rc" -eq 0 ] || refuse state-unreadable "$ITEM" "$(cat -- "$WORK_DIR/state.err")"
+  record="$("$SCRIPT_DIR/workflow-state" ${state_args[@]+"${state_args[@]}"} get oversee \
+    '[.lanes[]? | objects | select(.item == "'"$ITEM"'")] | first // {}' 2>"$WORK_DIR/state.err")" ||
+    refuse state-unreadable "$ITEM" "$(cat -- "$WORK_DIR/state.err")"
+  host="$(jq -r '.host // "local"' <<<"$record")" || refuse state-unreadable "$ITEM"
+  lane_capabilities_read "$SCRIPT_DIR/lane-host" "$host" 2>"$WORK_DIR/caps.err" ||
+    refuse host-capabilities-unread "$host" "$(cat -- "$WORK_DIR/caps.err")"
+  lane_capability channel channel
+  case "$channel" in
+    mailbox) return 0 ;;
+    session) ;;
+    task) refuse channel-task "$ITEM" ;;
+    *) refuse host-capabilities-unread "$host" ;;
+  esac
+  [ -z "$MSGID" ] || refuse channel-session --re
+  [ "$HALT" -eq 0 ] || refuse channel-session --halt
+  IFS=$'\t' read -r harness account session < <(jq -r '[.harness // "", .account // "", .session_id // ""] | @tsv' <<<"$record") ||
+    refuse state-unreadable "$ITEM"
+  { [ -n "$account" ] && [ -n "$session" ]; } || refuse session-unrecorded "$ITEM"
+  rc=0
+  out="$(env "$(lane_env_prefix "$harness" "$account")" claude -p --cloud "$session" --output-format json <"$FILE" 2>"$WORK_DIR/claude.err")" || rc=$?
+  answer="$(jq -r 'if .ok == true then "sent" elif .ok == false then "archived" else "unread" end' <<<"$out" 2>/dev/null)" || answer=unread
+  [ "$answer" != archived ] || refuse session-archived "$session" "$(cat -- "$WORK_DIR/claude.err")"
+  { [ "$rc" -eq 0 ] && [ "$answer" = sent ]; } || refuse session-send-failed "$session" "exit=$rc $(cat -- "$WORK_DIR/claude.err")"
+  printf 'lane-mail: sent item=%s channel=session session=%s\n' "$ITEM" "$session"
+  exit 0
+}
+if [ "$VERB" = send ] && [ "$ITEM" != overseer ]; then
+  # shellcheck source=lib/lane-capabilities.sh
+  . "$SCRIPT_DIR/lib/lane-capabilities.sh"
+  # shellcheck source=lib/lane-launch.sh
+  . "$SCRIPT_DIR/lib/lane-launch.sh"
+fi
 
 # The caller's own repository: the main checkout behind this shell, whatever
 # worktree it sits in. It names the sender, places a peer named as a bare name,
@@ -1720,6 +1790,7 @@ case "$VERB" in
 
   send)
     lm_read_file
+    [ "$ITEM" = overseer ] || lm_send_channel
     if [ "$DIRECTIVE" -eq 1 ] && [ -n "$MSGID" ]; then
       [ "$HALT" -eq 0 ] || refuse option-conflict '--re,--halt'
       refuse option-conflict '--re,--directive'

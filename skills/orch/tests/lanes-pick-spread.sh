@@ -338,7 +338,7 @@ claude_usage 30 10 5 Opus > "$FIXTURE_DIR/.bclaude.json"
 # Control: ordered on the reading once the claims tie, the seat the lanes on it
 # are spending fastest is returned.
 CTRL="$(mutant_scripts mutant-rank-wall lib/lane-model.sh)" || exit 1
-mutate_file "$CTRL/lib/lane-model.sh" 'sort_by([(0 - .selection_score), .claims, (0 - .projected_headroom_pct), .wall])' 'sort_by([.wall])'
+mutate_file "$CTRL/lib/lane-model.sh" 'sort_by([._tier, ._expires, (._score | neg), .claims, (.projected_headroom_pct | neg), .wall])' 'sort_by([.wall])'
 LANES_UNDER_TEST="$CTRL/lanes" table \
   "control: ranked on the reading, the tie goes to the seat burning fastest|ORCH_LANE_DIRS=$H/.aclaude:$H/.bclaude|claim:a:1;claim:b:1|a:20:15|$PICK|rc=0 config_dir=$H/.aclaude projected_headroom_pct=50"
 

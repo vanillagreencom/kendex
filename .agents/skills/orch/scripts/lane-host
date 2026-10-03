@@ -5,33 +5,93 @@ set -euo pipefail
 
 case "${1:-}" in
   --help|-h|help)
-    printf '%s\n' 'Usage: lane-host resolve | create|wait|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts [arguments]' \
-      'ORCH_LANE_HOST: local (default), or an executable script path.' \
+    printf '%s\n' 'Usage: lane-host resolve | capabilities | create|wait|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts [arguments]' \
+      'ORCH_LANE_HOST: local (default), claude-cloud, or an executable script path.' \
       'resolve prints the selected host. Other verbs pass arguments and stdin unchanged.' \
+      'capabilities prints the host kind'"'"'s one tab-separated key=value line (schemas/lane-host.md § Host kinds):' \
+      'the dispatcher answers local and claude-cloud, a provider answers its own, and a provider that exits 2' \
+      'gets the static ssh line lane-host-ssh prints. A key outside the closed set, a missing key or a value' \
+      'outside its key'"'"'s set refuses capability-invalid key=KEY value=VALUE with exit 1.' \
       'create preserves ownership exit 75; other provider failures report host-create-failed.' \
-      'A local selection refuses provider verbs with exit 2. An unavailable provider or slot failure exits 1. No local fallback runs.' \
+      'A local selection refuses provider verbs with exit 2, and claude-cloud refuses them as host-kind-verb with exit 2.' \
+      'An unavailable provider or slot failure exits 1. No local fallback runs.' \
       'At most ORCH_LANE_HOST_MAX_CALLS (default 4) provider calls run at once per home; a call waits' \
       'up to ORCH_LANE_HOST_BUSY_WAIT_SECS (default 30) for a slot, then exits 69 with lane-host-busy.'
     exit 0 ;;
 esac
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+# Outside a checkout no project settings exist, so ORCH_LANE_HOST comes from
+# the environment alone: a `lanes` pick run from any directory still asks the
+# kind it spends.
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || PROJECT_ROOT=""
 source "$SCRIPT_DIR/lib/kendex-env.sh"
 source "$SCRIPT_DIR/lib/file-lock.sh"
 source "$SCRIPT_DIR/lib/lane-host-slots.sh"
 kendex_load_project_env "$PROJECT_ROOT"
 host="${ORCH_LANE_HOST:-local}"
 verb="${1:-}"
+
+# The closed set of values each capability key takes; a key it does not name
+# is no capability.
+capability_values() { # KEY
+  case "$1" in
+    kind) echo 'local ssh claude-cloud codex-cloud' ;;
+    launch) echo 'window ssh cloud-session cloud-task' ;;
+    channel) echo 'mailbox session task' ;;
+    files) echo 'local verb none' ;;
+    status) echo 'pane verb task none' ;;
+    stop) echo 'window verb none' ;;
+    relaunch) echo 'resume fresh' ;;
+    park | accounts) echo 'verb none' ;;
+    pool) echo 'plan cloud-credit' ;;
+    land) echo 'lane handoff' ;;
+    *) return 1 ;;
+  esac
+}
+CAPABILITY_KEYS='kind launch channel files status stop relaunch park accounts pool land'
+
+# Prints LINE when it holds every key once, each with a value from its set.
+capabilities_print() { # LINE
+  local fields=() field key value values given=" "
+  [[ "$1" != *$'\n'* ]] || { printf 'lane-host: capability-invalid key=line value=lines\n' >&2; exit 1; }
+  IFS=$'\t' read -r -a fields <<<"$1"
+  for field in ${fields[@]+"${fields[@]}"}; do
+    key="${field%%=*}" value="${field#*=}"
+    if [[ "$field" != *=* || "$given" == *" $key "* ]] || ! values="$(capability_values "$key")" \
+      || [[ " $values " != *" $value "* ]]; then
+      printf 'lane-host: capability-invalid key=%s value=%s\n' "$key" "$value" >&2
+      exit 1
+    fi
+    given+="$key "
+  done
+  for key in $CAPABILITY_KEYS; do
+    [[ "$given" == *" $key "* ]] || { printf 'lane-host: capability-invalid key=%s value=\n' "$key" >&2; exit 1; }
+  done
+  printf '%s\n' "$1"
+}
+
 case "$verb" in
   resolve) printf '%s\n' "$host"; exit 0 ;;
-  create|wait|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts) ;;
+  capabilities|create|wait|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts) ;;
   *) printf 'lane-host: verb-invalid verb=%s\n' "$verb" >&2; exit 2 ;;
 esac
-if [[ "$host" == local ]]; then
-  printf 'lane-host: host-local verb=%s\n' "$verb" >&2
-  exit 2
-fi
+# The kinds kendex owns, each running its harness CLI's own interface with no
+# provider between.
+case "$host:$verb" in
+  local:capabilities)
+    capabilities_print $'kind=local\tlaunch=window\tchannel=mailbox\tfiles=local\tstatus=pane\tstop=window\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane'
+    exit 0 ;;
+  claude-cloud:capabilities)
+    capabilities_print $'kind=claude-cloud\tlaunch=cloud-session\tchannel=session\tfiles=none\tstatus=none\tstop=none\trelaunch=fresh\tpark=none\taccounts=none\tpool=cloud-credit\tland=handoff'
+    exit 0 ;;
+  local:*)
+    printf 'lane-host: host-local verb=%s\n' "$verb" >&2
+    exit 2 ;;
+  claude-cloud:*)
+    printf 'lane-host: host-kind-verb kind=%s verb=%s\n' "$host" "$verb" >&2
+    exit 2 ;;
+esac
 if [[ ! -x "$host" || -d "$host" ]]; then
   printf 'lane-host: host-unavailable path=%s\n' "$host" >&2
   exit 1
@@ -44,6 +104,16 @@ lane_host_slot_take "$@" || {
   exit "$status"
 }
 trap lane_host_slot_release EXIT
+if [[ "$verb" == capabilities ]]; then
+  line="$("$host" capabilities)" || status=$?
+  # A provider kendex does not ship that predates the verb answers 2. Every
+  # provider it ships declares its own line, so this arm stands in for those
+  # alone, with the static line its own SSH provider declares.
+  if [[ "$status" -eq 2 ]]; then status=0; line="$("$SCRIPT_DIR/lane-host-ssh" capabilities)" || status=$?; fi
+  [[ "$status" -eq 0 ]] || exit "$status"
+  capabilities_print "$line"
+  exit 0
+fi
 "$host" "$@" || status=$?
 if [[ "$verb" == create && "$status" -ne 0 && "$status" -ne 75 ]]; then
   printf 'lane-host: host-create-failed path=%s exit=%s\n' "$host" "$status" >&2

@@ -1058,8 +1058,8 @@ table \
 # The old ordering reverses the batch: its first pick ignores the sooner
 # reset and takes eclaude's greater unweighted room instead.
 pi_control ctl-batch-claims-first lib/lane-model.sh \
-  'sort_by([(0 - .selection_score), .claims, (0 - .projected_headroom_pct), .wall])' \
-  'sort_by([.claims, (0 - .projected_headroom_pct), .wall])' \
+  'sort_by([._tier, ._expires, (._score | neg), .claims, (.projected_headroom_pct | neg), .wall])' \
+  'sort_by([.claims, (.projected_headroom_pct | neg), .wall])' \
   "$SPREAD_ENV;$CHOICE_CMD" --harness claude --lane auto KEN-4 KEN-5
 assert_eq "$(observe "rc=0 launched=2 claim_lanes=claude,eclaude out_lanes=eclaude,claude")" \
   "rc=0 launched=2 claim_lanes=claude,eclaude out_lanes=eclaude,claude" \
@@ -1246,7 +1246,7 @@ assert_eq "$(observe "rc=0 launched=1") create=$(host_call | tr ';' '\n' | grep 
 COPILOT_OT_SHIPPED="$OPEN_TERMINAL"
 OPEN_TERMINAL="$(mutant_scripts ctl-copilot-host/orch open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/ctl-copilot-host/orch"
-mutate_file "$OPEN_TERMINAL" '"$LANE_ENV" || ! "$HARNESS" =~ ^(claude|codex|pi|copilot)$ ) ]]; then' '"$LANE_ENV" || ! "$HARNESS" =~ ^(claude|codex|pi)$ ) ]]; then'
+mutate_file "$OPEN_TERMINAL" '"$HARNESS" =~ ^(claude|codex|pi|copilot)$ ]] || host_launch_ready=false' '"$HARNESS" =~ ^(claude|codex|pi)$ ]] || host_launch_ready=false'
 run_ot "$COPILOT_HOSTED" --host "$HOST_STUB" --harness copilot --lane "$H/.1copilot" --repo o/r KEN-1935
 assert_eq "$(observe "rc=1 launched=nolog") invalid=$(awk '$2 == "host-invalid" { print $NF }' <<<"$OUT")" "rc=1 launched=nolog invalid=harness=copilot" \
   "control: without copilot in the host protocol's harnesses a hosted copilot launch is host-invalid"

@@ -63,8 +63,9 @@ printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$CASE_REPO_ROOT/tmp/wo
 #                 the repo with everything outside [A-Za-z0-9._-] as `_`
 #   open.txt      the open pull requests `pr list --state open` answers
 #                 (default: none), with open.<SLUG>.txt per repo the same way:
-#                 one `<number>\t<head>\t<title>[\t<author login>]` line
-#                 each, author octocat where absent. --limit caps them, and
+#                 one `<number>\t<head>\t<title>[\t<author login>[\t<head
+#                 commit>[\t<body>]]]` line each, author octocat where
+#                 absent. --head keeps that branch's alone, --limit caps them, and
 #                 each becomes the object gh lists, holding only the --json
 #                 fields, run through the call's own --jq filter as gh runs it
 #   repoview.txt  what `repo view` reports — the repository the watch resolves
@@ -253,9 +254,10 @@ case "${1:-} ${2:-}" in
     src=/dev/null
     if [[ -f "$STUB_DIR/open.$slug.txt" ]]; then src="$STUB_DIR/open.$slug.txt"
     elif [[ -f "$STUB_DIR/open.txt" ]]; then src="$STUB_DIR/open.txt"; fi
-    awk -v n="${limit:-0}" 'n == 0 || NR <= n' "$src" \
+    awk -F'\t' -v n="${limit:-0}" -v head="$head" 'head == "" || $2 == head' "$src" | awk -v n="${limit:-0}" 'n == 0 || NR <= n' \
       | jq -Rn --arg fields "$fields" '[inputs | split("\t")
-          | {number: (.[0] | tonumber), headRefName: .[1], title: .[2], author: {login: (.[3] // "octocat")}}
+          | {number: (.[0] | tonumber), headRefName: .[1], title: .[2], author: {login: (.[3] // "octocat")},
+             headRefOid: (.[4] // null), body: (.[5] // "")}
           | with_entries(select(.key as $k | $fields | split(",") | any(. == $k)))]' \
       | jq -r "${filter:-.}"
     exit ;;
@@ -784,7 +786,7 @@ run_watch() {
   (cd "${WATCH_CWD:-$TMP_ROOT/repo}" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR -u ORCH_LANE_HOST \
-           -u ORCH_WATCH_TAIL_LINES -u ORCH_WATCH_PREPARE_SECS -u ORCH_WATCH_START_STALL_SECS -u ORCH_OVERSEER_MARK_REPEAT -u LINEAR_TEAM -u ORCH_DIRECTIVE_UNREAD_SECS -u ORCH_EXTERNAL_TRIAGE -u ORCH_SECURITY_ALERTS \
+           -u ORCH_WATCH_TAIL_LINES -u ORCH_WATCH_PREPARE_SECS -u ORCH_WATCH_START_STALL_SECS -u ORCH_WATCH_LANE_STALL_SECS -u ORCH_OVERSEER_MARK_REPEAT -u LINEAR_TEAM -u ORCH_DIRECTIVE_UNREAD_SECS -u ORCH_EXTERNAL_TRIAGE -u ORCH_SECURITY_ALERTS \
            -u ORCH_SECURITY_ALERT_TOKEN_FILE \
            -u ORCH_REPORT_EVERY_MINUTES -u ORCH_REPORT_EVERY_ISSUES -u ORCH_REPORT_UPCOMING \
            -u ORCH_REPORT_COLUMNS -u ORCH_PROGRESS_REPORT_DIR -u OVERSEE_WATCH_REPORT \

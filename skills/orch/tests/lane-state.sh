@@ -143,9 +143,10 @@ ROWS
 
 # The provider creates the remote harness; tmux holds only its live ssh child.
 echo "=== lane-state § remote harness: one provider read, no ssh-child verdict ==="
-# Exit 2 is the protocol's absent-verb answer from a provider without status.
+# A status=verb host answering the absent-verb 2 is a provider fault: the lane
+# stays unjudged and no pane stands in for the read.
 export ORCH_LANE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host" LANE_HOST_STUB_LOG="$STUB_DIR/host.calls"
-for row in 'exited|0|exited|provider' 'running|0|idle|' 'exited|2|idle|' 'running|1|unjudged|' 'running|7|unjudged|' 'garbage|0|unjudged|'; do
+for row in 'exited|0|exited|provider' 'running|0|idle|' 'exited|2|unjudged|' 'running|1|unjudged|' 'running|7|unjudged|' 'garbage|0|unjudged|'; do
   IFS='|' read -r remote_status provider_rc want source <<<"$row"
   export LANE_HOST_STUB_HARNESS_STATE="$remote_status" LANE_HOST_STUB_PROBE_STATUS="$provider_rc"
   : > "$LANE_HOST_STUB_LOG"; : > "$STUB_DIR/pgrep.calls"
@@ -153,9 +154,7 @@ for row in 'exited|0|exited|provider' 'running|0|idle|' 'exited|2|idle|' 'runnin
   assert_eq "$remote_result" "$want source=$source" "provider $remote_status/$provider_rc judges the hosted lane"
   assert_eq "$(grep -c '^status --item TEST-1 --harness claude ' "$LANE_HOST_STUB_LOG")" "1" "one provider read per hosted judgment"
   assert_eq "$(wc -c < "$STUB_DIR/pgrep.calls" | tr -d ' ')" "0" "a hosted judgment never reads the local ssh child"
-  if [[ "$provider_rc" -eq 2 ]]; then
-    assert_eq "$(cat "$STUB_DIR/probe.note")" 'lane-state: harness-probe-unsupported item=TEST-1 status=2 judgment=pane' "absent status identifies pane judgment"
-  elif [[ "$want" == unjudged ]]; then
+  if [[ "$want" == unjudged ]]; then
     note_rc="$provider_rc"
     [[ "$provider_rc" -ne 0 ]] || note_rc=2
     assert_eq "$(cat "$STUB_DIR/probe.note")" "lane-state: harness-probe-failed item=TEST-1 status=$note_rc" "failed reads keep their diagnostic"
@@ -171,7 +170,6 @@ while IFS='|' read -r name old new provider_rc want; do
 done <<'ROWS'
 remote-local-walk|  if [[ -n "$_ls_item" ]]; then|  if [[ -n "$_ls_item" && false == true ]]; then|0|idle
 remote-failure|      2) printf -v "$_ls_out" unjudged; return 0 ;;|      2) printf -v "$_ls_out" exited; return 0 ;;|7|exited
-remote-unsupported|      3) ;; # The provider has no status verb; judge the pane below.|      3) printf -v "$_ls_out" unjudged; return 0 ;;|2|unjudged
 ROWS
 export ORCH_LANE_HOST=local
 unset LANE_HOST_STUB_HARNESS_STATE LANE_HOST_STUB_PROBE_STATUS

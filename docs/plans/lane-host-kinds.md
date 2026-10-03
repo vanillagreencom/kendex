@@ -1,6 +1,6 @@
 # Lane host kinds
 
-**Status**: design only. The build waits for the owner's approval of KEN-2589. Nothing in this document is built.
+**Status**: the first build of § [The smallest first build](#the-smallest-first-build) is built (KEN-2609): `claude-cloud` only, its acceptance run still to come. `codex-cloud`, the second build and the FLT items are not built.
 
 Every place an orch lane runs becomes a host kind. A kind declares its capabilities in one line, and every caller acts on a declared capability, never on a host or provider name. `open-terminal` stays the only launcher, the fleet lane record stays the only record, and `lanes pick` stays the only account pick. The decision is [D020](https://github.com/vanillagreencom/kendex/blob/main/docs/decisions/D020-lane-host-kinds.md). Provider facts come from the [research report](claude-cloud-launch-research.md) and the pages it links. Fleet facts come from FLT-551, quoted in KEN-2589.
 

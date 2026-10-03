@@ -207,6 +207,10 @@ source "$SCRIPT_DIR/lib/watch-session.sh"
 source "$SCRIPT_DIR/lib/lane-context.sh"
 # shellcheck source=lib/lane-gitfile.sh
 source "$SCRIPT_DIR/lib/lane-gitfile.sh"
+# shellcheck source=lib/lane-capabilities.sh
+source "$SCRIPT_DIR/lib/lane-capabilities.sh"
+# shellcheck source=lib/watch-host-kinds.sh
+source "$SCRIPT_DIR/lib/watch-host-kinds.sh"
 # shellcheck source=lib/watch-pid.sh
 source "$SCRIPT_DIR/lib/watch-pid.sh"
 # shellcheck source=lib/mailbox-append.sh
@@ -413,6 +417,11 @@ UNREAD_SECS="${ORCH_DIRECTIVE_UNREAD_SECS:-300}"
 # on every harness, and its pane says nothing a watch may read about why.
 START_STALL_SECS="${ORCH_WATCH_START_STALL_SECS:-600}"
 [[ "$START_STALL_SECS" =~ ^[1-9][0-9]*$ ]] || die start-stall-secs-invalid "" "value=$START_STALL_SECS"
+# How long a status=none lane, a cloud session no process read reaches, may
+# hold its pull request's head and lane status body unchanged before
+# lane-stalled goes out. Provisional: the first cloud acceptance run sets it.
+LANE_STALL_SECS="${ORCH_WATCH_LANE_STALL_SECS:-3600}"
+[[ "$LANE_STALL_SECS" =~ ^[1-9][0-9]*$ ]] || die lane-stall-secs-invalid "" "value=$LANE_STALL_SECS"
 # The state's records the pane never judges and the start-stall check reads,
 # rebuilt by every fleet read: `<window>=<item>` for each Pi lane, judged from
 # the rows its own hook writes (lib/session-rows.sh), and `<item>=<epoch it went
@@ -420,6 +429,13 @@ START_STALL_SECS="${ORCH_WATCH_START_STALL_SECS:-600}"
 # under.
 PI_LANES=()
 LAUNCHES=()
+# The records fleet_merge routes by their host kind: the host each hosted
+# record names, as `<item>=<host>`, and the items whose kind declares no
+# mailbox channel, no file access and no status read.
+HOSTS=()
+MAILLESS=()
+FILELESS=()
+STATUSLESS=()
 # What argv itself gave, kept before the first state read rebuilds the four
 # arrays: every merge adds the command line's own entries to the records the
 # state names, so the baseline has to outlive the set a loop carries.
@@ -483,22 +499,27 @@ check_item_set() {
   # mail pass never composes a path out of a value nobody judged.
   check_root_entries hosted ${HOSTED[@]+"${HOSTED[@]}"}
   check_root_entries root ${ROOTS[@]+"${ROOTS[@]}"}
-  [[ ${#HOSTED[@]} -eq 0 ]] || check_lane_host
+  check_lane_host
 }
-# A hosted lane is read through `lane-host`, which answers `local` where no
-# provider is set, and on that answer every hosted read would be made on this
-# disk where the lane is not. Asked once per process, the first time a hosted
-# lane is carried, so a fleet that gains one while the run loops is judged then.
+# A hosted lane is read through `lane-host` under its record's host. One
+# passed by hand with --hosted names none, so it is read under the host
+# `lane-host resolve` answers, and where that is `local` every such read
+# would be made on this disk where the lane is not. Asked once per process,
+# the first time such a lane is carried, so a fleet that gains one while the
+# run loops is judged then.
 LANE_HOST_SPEC=""
 check_lane_host() {
   local out entry items=""
+  for entry in ${HOSTED[@]+"${HOSTED[@]}"}; do
+    record_host "${entry%%=*}" || items+="${items:+,}${entry%%=*}"
+  done
+  [[ -n "$items" ]] || return 0
   if [[ -z "$LANE_HOST_SPEC" ]]; then
     out="$("$SCRIPT_DIR/lane-host" resolve 2>&1)" \
       || die host-resolve-failed "$out" "path=$SCRIPT_DIR/lane-host"
     LANE_HOST_SPEC="$out"
   fi
   [[ "$LANE_HOST_SPEC" == local ]] || return 0
-  for entry in "${HOSTED[@]}"; do items+="${items:+,}${entry%%=*}"; done
   die hosted-without-host "" "items=$items" "host=local"
 }
 # One entry per item: two roots for one lane would read one of its mailboxes
@@ -534,16 +555,21 @@ item_parked() { # ITEM
   return 1
 }
 # HOSTED_ROOT is the item's lane root on its own host, empty for a lane on this
-# disk. Set rather than printed: a substitution would carry the lookup's own
-# status out under errexit, and a fleet with no hosted lane at all is the
-# common case.
+# disk, and HOSTED_HOST the host every lane-host read of it runs under: the
+# one its record names, or for a --hosted entry the one lane-host resolves.
+# Set rather than printed: a substitution would carry the lookup's own status
+# out under errexit, and a fleet with no hosted lane at all is the common case.
 HOSTED_ROOT=""
+HOSTED_HOST=""
 hosted_root() { # ITEM
   local entry
   HOSTED_ROOT=""
+  HOSTED_HOST=""
   for entry in ${HOSTED[@]+"${HOSTED[@]}"}; do
     [[ "${entry%%=*}" == "$1" ]] || continue
     HOSTED_ROOT="${entry#*=}"
+    HOSTED_HOST="$LANE_HOST_SPEC"
+    ! record_host "$1" || HOSTED_HOST="$RECORD_HOST"
     return 0
   done
 }
@@ -591,7 +617,7 @@ lane_skipped() { # WINDOW
 # The live fleet, read from the oversee workflow state open-terminal writes
 # (../schemas/workflow-state.md § Oversee state): a first line counting the
 # records no pass carries, then one line per running lane record, item,
-# window, local|hosted, mail_root, harness and the time the record went
+# window, its host (`local` for a record naming none), mail_root, harness and the time the record went
 # running in epoch seconds, its running_at or, on a record written before that
 # stamp, its launched_at, joined by the unit separator. `running`,
 # lib/lane-claims.sh's LANE_RUNNING_JQ, is the one answer to which records a
@@ -604,7 +630,7 @@ LANE_ROWS_FILTER="$LANE_RUNNING_JQ"'
   | ([.[] | select(running | not)] | length),
     (.[] | select(running)
   | if ((.item? | type) == "string" and (.item | length) > 0) then . else error("lane-field field=item value=\(.item | tojson)") end
-  | [.item, (.window // ""), (if .host == null then "local" else "hosted" end), (.mail_root // ""),
+  | [.item, (.window // ""), (.host // "local"), (.mail_root // ""),
      (.harness // ""), ((.running_at // .launched_at) | if . == null then "" else (fromdateiso8601 | tostring) end)]
   | join("\u001f"))'
 
@@ -655,7 +681,7 @@ FLEET_CARRIED=""
 # The state text the last read parsed, which the heartbeat's owed items judge.
 FLEET_STATE=""
 fleet_merge() { # [quiet]
-  local state rows dropped line item window where root harness running kept carried parked
+  local state rows dropped line item window host root harness running kept carried parked files channel status
   state="$(cat -- "$STATE_FILE" 2>&1)" || die state-unreadable "$state" "option=--state" "path=$STATE_FILE"
   FLEET_STATE="$state"
   rows="$(jq -r "$LANE_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$rows" "option=--state" "path=$STATE_FILE"
@@ -674,17 +700,43 @@ fleet_merge() { # [quiet]
   ITEMS=()
   LANES=()
   HOSTED=()
+  HOSTS=()
   ROOTS=()
   PI_LANES=()
   LAUNCHES=()
-  while IFS=$'\x1f' read -r item window where root harness running; do
+  MAILLESS=()
+  FILELESS=()
+  STATUSLESS=()
+  # Each record is routed by its host kind's declared line, never by a host
+  # name: its files decide where its mailbox, status file and state are read,
+  # its channel whether the mail pass reads it, and its status how it is
+  # judged where no process read reaches it.
+  while IFS=$'\x1f' read -r item window host root harness running; do
     [[ -n "$item" ]] || continue
     ITEMS+=("$item")
     [[ -z "$window" ]] || LANES+=("$window")
     [[ -z "$window" || "$harness" != pi ]] || PI_LANES+=("$window=$item")
     [[ -z "$running" || -z "$root" ]] || LAUNCHES+=("$item=$running")
-    if [[ "$where" == hosted ]]; then HOSTED+=("$item=$root")
-    elif [[ -n "$root" ]]; then ROOTS+=("$item=$root"); fi
+    host_capabilities "$host"
+    lane_capability files files
+    lane_capability channel channel
+    lane_capability status status
+    case "$files" in
+      local) [[ -z "$root" ]] || ROOTS+=("$item=$root") ;;
+      verb) HOSTED+=("$item=$root"); HOSTS+=("$item=$host") ;;
+      none) FILELESS+=("$item") ;;
+      *) die host-capabilities-unread "" "host=$host" "files=$files" ;;
+    esac
+    case "$channel" in
+      mailbox) ;;
+      session | task) MAILLESS+=("$item") ;;
+      *) die host-capabilities-unread "" "host=$host" "channel=$channel" ;;
+    esac
+    case "$status" in
+      pane | verb) ;;
+      none) STATUSLESS+=("$item") ;;
+      *) die host-capabilities-unread "" "host=$host" "status=$status" ;;
+    esac
   done <<<"$rows"
   for line in ${GIVEN_ITEMS[@]+"${GIVEN_ITEMS[@]}"}; do item_listed "$line" || item_parked "$line" || ITEMS+=("$line"); done
   for line in ${GIVEN_LANES[@]+"${GIVEN_LANES[@]}"}; do window_listed "$line" || LANES+=("$line"); done
@@ -1007,7 +1059,7 @@ HOSTED_GONE_ITEMS=""
 hosted_clone() { # ITEM STATE
   local rc=0
   HOSTED_GONE=0
-  lane_hosted_clone "$SCRIPT_DIR/lane-host" "$1" "$HOSTED_ROOT" "$WORK_DIR/gitfile" "$WORK_DIR/host.err" || rc=$?
+  ORCH_LANE_HOST="$HOSTED_HOST" lane_hosted_clone "$SCRIPT_DIR/lane-host" "$1" "$HOSTED_ROOT" "$WORK_DIR/gitfile" "$WORK_DIR/host.err" || rc=$?
   case "$rc" in
     0) HOSTED_CLONE="$LANE_HOSTED_CLONE" ;;
     3)
@@ -1062,7 +1114,7 @@ item_state_dir() { # ITEM
 hosted_state_fetch() { # ITEM ROOT STATE_DIR DEST
   local rc=0
   lane_hosted_state_path "$2" "$3" "$1"
-  lane_host_fetch "$SCRIPT_DIR/lane-host" "$1" "$LANE_HOSTED_STATE_PATH" \
+  ORCH_LANE_HOST="$HOSTED_HOST" lane_host_fetch "$SCRIPT_DIR/lane-host" "$1" "$LANE_HOSTED_STATE_PATH" \
     "$4/workflow-state-$1.json" "$WORK_DIR/host.err" || rc=$?
   [[ "$rc" -ne 4 ]] || { lane_failure_set lane-host-busy "" "item=$1"; return 1; }
   if [[ "$rc" -gt 1 ]]; then
@@ -1680,7 +1732,9 @@ check_refresh() {
 # local root that is no directory is that removal too, and so is a hosted item
 # this run's mail pass found with its worktree gone. A hosted file is read
 # through lane-host, and a read that failed settles nothing: the row stands
-# and the failure is noted.
+# and the failure is noted. A lane whose kind declares files=none, a cloud
+# session, writes no file this watch can read: its start is the draft pull
+# request it opens on the item branch.
 check_start_stall() {
   local entry item running age prior passes path rc rows="${PW_SEEN[0]}" items=()
   for entry in ${LAUNCHES[@]+"${LAUNCHES[@]}"}; do
@@ -1693,9 +1747,11 @@ check_start_stall() {
     [[ "$prior" != "$running|seen" ]] || continue
     rc=0
     hosted_root "$item"
-    if [[ -n "$HOSTED_ROOT" ]]; then
+    if item_in "$item" ${FILELESS[@]+"${FILELESS[@]}"}; then
+      item_open_pr "$item" || rc=$?
+    elif [[ -n "$HOSTED_ROOT" ]]; then
       ! grep -qxF -- "$item" <<<"$HOSTED_GONE_ITEMS" || continue
-      lane_host_fetch "$SCRIPT_DIR/lane-host" "$item" "$HOSTED_ROOT/tmp/lane-status-$item.md" \
+      ORCH_LANE_HOST="$HOSTED_HOST" lane_host_fetch "$SCRIPT_DIR/lane-host" "$item" "$HOSTED_ROOT/tmp/lane-status-$item.md" \
         "$WORK_DIR/status-probe" "$WORK_DIR/host.err" || rc=$?
     else
       local_root "$item"
@@ -1757,9 +1813,10 @@ resolve_due_owner_asks() {
 # failed is set as the lane's failure and returns 1, for the caller to report.
 MAIL_OUT=""
 mail_read() { # ITEM LANE_MAIL_ARGS...
-  local item="$1" rc=0
+  local item="$1" rc=0 host_env=()
   shift
-  MAIL_OUT="$("$LANE_MAIL" "$@" 2>"$WORK_DIR/mail.err")" || rc=$?
+  [[ "$item" == overseer || -z "$HOSTED_HOST" ]] || host_env=("ORCH_LANE_HOST=$HOSTED_HOST")
+  MAIL_OUT="$(env ${host_env[@]+"${host_env[@]}"} "$LANE_MAIL" "$@" 2>"$WORK_DIR/mail.err")" || rc=$?
   [[ "$rc" -ne 0 ]] || return 0
   [[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] || { lane_failure_set lane-host-busy "" "item=$item"; return 1; }
   lane_failure_set mail-read-failed "$(cat "$WORK_DIR/mail.err")" "item=$item" "exit=$rc"
@@ -1784,7 +1841,10 @@ check_mail() {
   # This pass's failures alone, as HOSTED_GONE_ITEMS is this pass's: a long
   # pass forked after it skips only the lanes whose read failed just now.
   PASS_FAILED_ITEMS=""
-  mail_items=(${ITEMS[@]+"${ITEMS[@]}"})
+  mail_items=()
+  for item in ${ITEMS[@]+"${ITEMS[@]}"}; do
+    item_in "$item" ${MAILLESS[@]+"${MAILLESS[@]}"} || mail_items+=("$item")
+  done
   mail_items+=(overseer)
   for item in "${mail_items[@]}"; do
     root=""
@@ -2166,7 +2226,7 @@ lane_rows_read() { # I LANE
   hosted_root "$item"
   if [[ -n "$HOSTED_ROOT" ]]; then
     src="$WORK_DIR/rows-src.$1"
-    lane_host_fetch "$SCRIPT_DIR/lane-host" "$item" "$HOSTED_ROOT/tmp/lane-mail/$item/$SESSION_ROWS_LANE" \
+    ORCH_LANE_HOST="$HOSTED_HOST" lane_host_fetch "$SCRIPT_DIR/lane-host" "$item" "$HOSTED_ROOT/tmp/lane-mail/$item/$SESSION_ROWS_LANE" \
       "$src" "$WORK_DIR/host.err" || rc=$?
   else
     local_root "$item"
@@ -3213,7 +3273,7 @@ check_lanes() {
         || die state-invalid "" "item=$LANE_ITEM"
       [[ -z "$hosted_harness" ]] || hosted_item="$LANE_ITEM"
     fi
-    lane_state state "$window" "$cmd" "$pid" "$pane" "" "" "${LANE_ROWS[$i]:-}" "$hosted_item" "$hosted_harness" \
+    ORCH_LANE_HOST="$HOSTED_HOST" lane_state state "$window" "$cmd" "$pid" "$pane" "" "" "${LANE_ROWS[$i]:-}" "$hosted_item" "$hosted_harness" \
       || die limit-scan-failed "" "lane=$lane"
     # Provider failures stay unjudged; local probe failures still permit pane judgment.
     [[ -n "$hosted_item" || "$LANE_PROBE_RC" -le 1 ]] || note_probe_unusable "$lane"
@@ -3869,6 +3929,7 @@ long_pass() {
     check_security_alerts
     check_prepare
     check_start_stall
+    check_lane_stall
     check_lanes
     check_accounts
     check_report

@@ -39,8 +39,9 @@ printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/gh"
 # The worktree CLI a launch the gate passes reaches next: an empty path, which
 # open-terminal refuses by name before any window opens.
 printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/worktree-stub"
-# A lane host that answers nothing: the gate is judged before it is asked.
-printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/provider"
+# A lane host that answers nothing: the gate is judged before it is asked,
+# and its kind is read as a provider predating the capabilities verb.
+printf '#!/usr/bin/env bash\n[[ "${1:-}" != capabilities ]] || exit 2\nexit 1\n' > "$BIN/provider"
 # The stale-install row could open a terminal if its refusal were skipped:
 # this worktree CLI makes a fresh repository per item.
 cat > "$BIN/worktree-make" <<STUB

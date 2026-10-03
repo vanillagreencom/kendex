@@ -9,6 +9,17 @@ STUB_LIB="${LANE_HOST_STUB_LIB:-}"
 if [ -z "$STUB_LIB" ]; then
   STUB_LIB="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../scripts/lib" 2>/dev/null && pwd -P)" || STUB_LIB=""
 fi
+# The kind's declaration, answered ahead of the call log and the failure
+# switches below, so the log and every staged failure stay the provider verbs
+# a caller spends: the static ssh kind's line by default, as the shipped
+# provider declares it. LANE_HOST_STUB_CAPABILITIES replaces it, and
+# LANE_HOST_STUB_NO_CAPABILITIES is a provider that predates the verb and
+# answers its absent-verb 2.
+if [[ "${1:-}" == capabilities ]]; then
+  [ -z "${LANE_HOST_STUB_NO_CAPABILITIES:-}" ] || exit 2
+  printf '%s\n' "${LANE_HOST_STUB_CAPABILITIES:-$(printf 'kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane')}"
+  exit 0
+fi
 printf '%q ' "$@" >> "$LANE_HOST_STUB_LOG"
 printf '\n' >> "$LANE_HOST_STUB_LOG"
 if [[ "${LANE_HOST_STUB_STATUS:-0}" -ne 0 ]]; then

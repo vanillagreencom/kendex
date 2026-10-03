@@ -111,9 +111,33 @@
 #         its credits (`list` too: binding_bucket `credits`, HEADROOM its
 #         balance) while `credits.balance` exceeds the credit floor below,
 #         `has_credits` is true, and `overage_limit_reached` and
-#         `spend_control_reached` are false. It ranks
-#         after every account with plan room, since credits do not reset;
-#         the larger balance first. A lane is
+#         `spend_control_reached` are false. Expires first: the pick spends
+#         the allowance that expires first, and this is the rule's one
+#         statement (D020). The room candidates sort on the key
+#         [tier, E, -S, claims, -projected_headroom_pct, wall]. Tier 0 is a
+#         grant that expires and does not refill, the Claude cloud credit,
+#         where `lane-host capabilities` declares pool=cloud-credit for the
+#         host kind (ORCH_LANE_HOST=claude-cloud): `remaining_dollars` above
+#         ORCH_LANE_CLOUD_CREDIT_FLOOR, `locked_reason` null and its expiry
+#         E ahead, E being the earlier of the credit's `resets_at` and the
+#         account's ORCH_LANE_RETIRE date. A tier 0 account is `room`
+#         whatever its plan windows read; at or below the floor it takes its
+#         plan-window verdict. Tier 1 is every refilling window, ordered by
+#         selection_score; tier 2 a balance with no expiry, the Codex account
+#         on its credits above, the larger balance first. E is 0 outside tier
+#         0, and S is the credit's share left times the reset bonus of its
+#         hours to E in tier 0, selection_score in tier 1 and the balance in
+#         tier 2. A cloud usage body without the credit reads as no tier 0,
+#         one `lanes: cloud-credit-unread account=NAME` line each. Where the
+#         kind declares launch=cloud-session, an account is a candidate only
+#         where an ORCH_LANE_CLOUD_REPOS entry names the owner/repo of this
+#         checkout's github.com origin; any other takes the verdict
+#         `cloud-repo-unset`, named on a `lanes: cloud-repo-unset` line when
+#         no candidate qualifies. That entry records the operator's one-time
+#         setup of the account: the cloud environment's setup script
+#         `curl -fsSL https://raw.githubusercontent.com/vanillagreencom/kendex/main/install.sh | sh -s -- --cli-only`,
+#         and repository access approved once, both claude.ai cards, in a
+#         session of that account on that repository. A lane is
 #         judged on its PROJECTED wall: the reading plus, for each live claim
 #         on it, the burn one lane is expected to spend in the next hour.
 #         Account-wide rates use claims at sample time (at least one) as the
@@ -462,6 +486,14 @@
 #                      account past the threshold must exceed (default 5000,
 #                      provisional; see `pick`). Refused, before any lane is
 #                      measured, when it is not a whole number 0 or more.
+#   ORCH_LANE_CLOUD_CREDIT_FLOOR  Dollars, never a percentage, a Claude
+#                      cloud credit must exceed to rank as tier 0 (default 0,
+#                      provisional; see `pick`). Refused, before any lane is
+#                      measured, when it is not a whole number 0 or more.
+#   ORCH_LANE_CLOUD_REPOS  Comma-separated `<name>=<owner>/<repo>` pairs, one
+#                      per account and repository it was given access to,
+#                      which a cloud-session pick keeps (see `pick`). A
+#                      malformed pair is refused.
 #   ORCH_LANES_USAGE_TTL  Seconds a cached usage figure is reused (default 300;
 #                      0 fetches every run). Keep it at least the longest watch
 #                      interval on the host — `oversee-watch --interval`
@@ -875,6 +907,23 @@ message() {
     invalid-lane-max-pct) printf 'lanes: invalid-lane-max-pct value=%s\nORCH_LANE_MAX_PCT must be an integer 0-100\n' "$1" ;;
     invalid-lane-burn) printf 'lanes: invalid-lane-burn value=%s\nORCH_LANE_BURN_PCT_PER_HOUR must be an integer 0-100\n' "$1" ;;
     invalid-lane-codex-credit-floor) printf 'lanes: invalid-lane-codex-credit-floor value=%s\nORCH_LANE_CODEX_CREDIT_FLOOR must be an integer 0 or more\n' "$1" ;;
+    invalid-lane-cloud-credit-floor) printf 'lanes: invalid-lane-cloud-credit-floor value=%s\nORCH_LANE_CLOUD_CREDIT_FLOOR must be a whole number of dollars, 0 or more\n' "$1" ;;
+    invalid-cloud-repos)
+      printf 'lanes: invalid-cloud-repos entry=%s\n' "$1"
+      printf '%s\n' "ORCH_LANE_CLOUD_REPOS entries must be <name>=<owner>/<repo>; an entry nobody can read would hand a cloud session an account the repository card waits on"
+      ;;
+    host-capabilities-unread)
+      printf 'lanes: host-capabilities-unread host=%s\n' "$1"
+      printf '%s\n' "lane-host could not say which pool and launch this host kind declares, so the pick cannot tell an expiring credit from a refilling window; its own words are above this line"
+      ;;
+    cloud-credit-unread)
+      printf 'lanes: cloud-credit-unread account=%s\n' "$1"
+      printf '%s\n' "the account's usage body carries no iguana_necktie, the Claude cloud credit, so it is judged on its plan windows alone and spends no credit first"
+      ;;
+    cloud-repo-unset)
+      printf 'lanes: cloud-repo-unset account=%s repo=%s\n' "$1" "$2"
+      printf '%s\n' "no ORCH_LANE_CLOUD_REPOS entry gives that account access to this checkout's github.com repository, so a cloud session on it would wait on the add-repository card; the operator approves the card once in a session of that account and records the entry"
+      ;;
     pick-overseer-seats)
       printf 'lanes: pick-overseer-seats step=%s state=%s\n' "$1" "$2"
       printf '%s\n' "the fleet state naming an overseer's account could not be read at that step; refusing to pick rather than hand a lane the seat an overseer runs on (fix the fleet state, or pass --for-overseer for an overseer's own pick)"
@@ -3035,7 +3084,8 @@ cmd_pick() {
 		return 5
 	fi
 	lanes="$(collect_lanes "$harness" "$exclude"$'\n'"$SEATS" "$hosted" "$model")"
-	judged="$(lane_select "$model" "$binding_floor" "$burn" "$max_pct" "$credit_floor" <<<"$lanes")" || return 1
+	lane_tier_inputs "$lanes" || return 1
+	judged="$(lane_select "$model" "$binding_floor" "$burn" "$max_pct" "$credit_floor" "$TIER_POOL" "$CLOUD_CREDIT_FLOOR" "$TIER_RETIRE" "$TIER_CLOUD_REPO" <<<"$lanes")" || return 1
 	chosen="$(jq -c '.chosen' <<<"$judged" 2>/dev/null || true)"
 	if [[ -z "$chosen" || "$chosen" == "null" ]]; then
 		walled="$(jq -r '.walled // 0' <<<"$judged" 2>/dev/null || true)"
@@ -3065,6 +3115,9 @@ cmd_pick() {
 			while IFS= read -r seat; do
 				[[ -z "$seat" ]] || message pick-seat-omitted "$seat"
 			done <<<"$omitted"
+			while IFS= read -r dir; do
+				[[ -z "$dir" ]] || message cloud-repo-unset "$dir" "${TIER_REPO:-none}"
+			done < <(jq -r '.cloud_repo_unset[]' <<<"$judged")
 			render_table <<<"$lanes"
 		} >&2
 		# The counts on STDOUT under --json, as the named form prints its
@@ -3211,6 +3264,11 @@ parse_argv() {
 	CREDIT_FLOOR="${ORCH_LANE_CODEX_CREDIT_FLOOR:-5000}"
 	[[ "$CREDIT_FLOOR" =~ ^[0-9]+$ ]] || die invalid-lane-codex-credit-floor "$CREDIT_FLOOR"
 	CREDIT_FLOOR=$((10#$CREDIT_FLOOR))
+	# Read and refused on the terms the Codex floor is. The default is
+	# provisional: the acceptance run's spend for one lane sets it.
+	CLOUD_CREDIT_FLOOR="${ORCH_LANE_CLOUD_CREDIT_FLOOR:-0}"
+	[[ "$CLOUD_CREDIT_FLOOR" =~ ^[0-9]+$ ]] || die invalid-lane-cloud-credit-floor "$CLOUD_CREDIT_FLOOR"
+	CLOUD_CREDIT_FLOOR=$((10#$CLOUD_CREDIT_FLOOR))
 
 	# Refused rather than dropped: an interval nobody can read would silently
 	# leave this caller on the TTL alone, which is the fetch-every-pass burst
@@ -3273,6 +3331,8 @@ source "$SCRIPT_DIR/lib/lane-launch.sh"
 source "$SCRIPT_DIR/lib/lane-host-slots.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
+# shellcheck source=lib/lane-capabilities.sh
+source "$SCRIPT_DIR/lib/lane-capabilities.sh"
 # The caller's own launch record and SessionStart row, for `context`.
 # shellcheck source=lib/overseer-launch.sh
 source "$SCRIPT_DIR/lib/overseer-launch.sh"
@@ -3384,6 +3444,10 @@ validate_lane_settings() {
 		[[ "$item" == *=* ]] && lane_key_valid "$(trim "${item%%=*}")" \
 			&& calendar_date_valid "$(trim "${item#*=}")" || die invalid-retire "$item"
 	done < <(setting_items "${ORCH_LANE_RETIRE:-}")
+	while IFS= read -r item; do
+		[[ "$item" == *=* ]] && lane_key_valid "$(trim "${item%%=*}")" \
+			&& [[ "$(trim "${item#*=}")" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]] || die invalid-cloud-repos "$item"
+	done < <(setting_items "${ORCH_LANE_CLOUD_REPOS:-}")
 	[[ "$USAGE_TTL" =~ ^[0-9]+$ ]] || die invalid-usage-ttl "$USAGE_TTL"
 	# Refused here rather than handed to `timeout`, which would exit 125 and be
 	# reported as the provider failing the verb.

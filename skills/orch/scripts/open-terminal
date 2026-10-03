@@ -146,6 +146,8 @@ source "$SCRIPT_DIR/lib/lane-context.sh"
 source "$SCRIPT_DIR/lib/lane-relaunch.sh"
 # shellcheck source=lib/lane-cap.sh
 source "$SCRIPT_DIR/lib/lane-cap.sh"
+# shellcheck source=lib/lane-capabilities.sh
+source "$SCRIPT_DIR/lib/lane-capabilities.sh"
 WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
 LANES_CLI="${LANES_CLI:-$SCRIPT_DIR/lanes}"
 GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
@@ -248,6 +250,26 @@ fi
 # copy again.
 HOST_RELAUNCH=false
 [[ "$LANE_HOST" == local || "$RELAUNCH" != true ]] || HOST_RELAUNCH=true
+# The host kind's capability line, read once: the launch arm is its `launch`,
+# and every lane record carries its `kind`. A cloud session runs Claude
+# Code's own cloud from this checkout, so it takes the claude harness and the
+# brief this launcher writes, and its relaunch is fresh, which this build does
+# not make.
+host_caps_rc=0
+lane_capabilities_read "$SCRIPT_DIR/lane-host" "$LANE_HOST" "${PROJECT_ROOT:-$PWD}" || host_caps_rc=$?
+[[ "$host_caps_rc" -eq 0 ]] || { ot_message host-capabilities-failed "host=$LANE_HOST" "exit=$host_caps_rc" >&2; exit 1; }
+lane_capability HOST_KIND kind
+lane_capability HOST_LAUNCH launch
+case "$HOST_LAUNCH" in
+  window | ssh) ;;
+  cloud-session)
+    if [[ "$HARNESS" != claude || -n "$CMD_TEMPLATE" || "$RELAUNCH" == true ]]; then
+      ot_message cloud-session-invalid "host=$LANE_HOST" "harness=$HARNESS" "relaunch=$RELAUNCH" >&2
+      exit 1
+    fi ;;
+  cloud-task) ot_message kind-unbuilt "kind=$HOST_KIND" >&2; exit 1 ;;
+  *) ot_message host-capabilities-failed "host=$LANE_HOST" "launch=$HOST_LAUNCH" >&2; exit 1 ;;
+esac
 
 pick_auto_lane() {
   local model_args=() state_env=()
@@ -1169,7 +1191,14 @@ fi
 # The hosted pane is driven by keystrokes, the provider's --account is the
 # lane's config dir and the host protocol names four harnesses, so each gap is
 # refused before any host is created.
-if [[ "$LANE_HOST" != local && ( "$TERMINAL_MODE" != tmux || -z "$LANE_ENV" || ! "$HARNESS" =~ ^(claude|codex|pi|copilot)$ ) ]]; then
+# A cloud session needs the resolved lane alone: it opens no pane.
+host_launch_ready=true
+case "$HOST_LAUNCH" in
+  window | cloud-task) ;;
+  ssh) [[ "$TERMINAL_MODE" == tmux && -n "$LANE_ENV" && "$HARNESS" =~ ^(claude|codex|pi|copilot)$ ]] || host_launch_ready=false ;;
+  cloud-session) [[ -n "$LANE_ENV" ]] || host_launch_ready=false ;;
+esac
+if [[ "$host_launch_ready" != true ]]; then
   ot_message host-invalid "host=$LANE_HOST" "mode=$TERMINAL_MODE" "lane=$LANE_ENV" "harness=$HARNESS" >&2
   exit 1
 fi
@@ -1316,9 +1345,9 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
     --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$LAUNCH_MODEL" --arg effort "$LAUNCH_EFFORT" --arg preference_entry "$PREFERENCE_ENTRY" \
     --arg session_id "$session_id" --arg launched_at "$launched_at" --arg status "$status" --argjson prepare "${LAUNCH_PREPARE:-null}" \
     --arg over_cap "$CAP_PASSED" --arg running_at "$running_at" --argjson allow_all "${LAUNCH_ALLOW_ALL:-null}" \
-    --argjson tier_record "$LAUNCH_TIER_RECORD" --arg pane "$LAUNCH_PANE" --arg server "$LAUNCH_SERVER" \
+    --argjson tier_record "$LAUNCH_TIER_RECORD" --arg pane "$LAUNCH_PANE" --arg server "$LAUNCH_SERVER" --arg kind "$HOST_KIND" \
     --arg harness_pid "${LAUNCH_HARNESS_ID%% *}" --arg harness_start "${LAUNCH_HARNESS_ID#* }" --argjson wake "${LAUNCH_WAKE:-null}" \
-    '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, effort: $effort, session_id: $session_id, session_since: $launched_at, launched_at: $launched_at, running_at: $running_at, status: $status, over_cap: $over_cap}
+    '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, kind: $kind, mail_root: $mail_root, surface: $surface, model: $model, effort: $effort, session_id: $session_id, session_since: $launched_at, launched_at: $launched_at, running_at: $running_at, status: $status, over_cap: $over_cap}
      | map_values(if . == "" then null else . end) + {allow_all: $allow_all} + $tier_record
        + (if $preference_entry == "" then {} else {preference_entry: $preference_entry} end)
        + (if $prepare == null then {} else {prepare: $prepare} end)
@@ -2639,7 +2668,7 @@ launch_finish() {
   # answer, and open_tmux checks for a harness screen instead.
   brief=""
   if [[ -z "$CMD_TEMPLATE" && "$HARNESS" == "claude" && -z "$session_file" && "$RELAUNCH_ROUTE" != resume-or-fresh ]]; then
-    if [[ "$TRACKER" == "linear" ]]; then brief="/orch start $item"; else brief="/orch start github $repo#$item"; fi
+    brief="$(claude_start_brief "$item" "$repo")"
   fi
   # A quote-bearing lane dir was refused at lane resolution, before any
   # worktree. A hosted lane's credential is already on its host; the claim alone
@@ -2757,6 +2786,61 @@ launch_finish() {
       return 1
     fi
   fi
+}
+
+# The start of a claude lane's brief, before the words it closes on: what the
+# tmux delivery check looks for and a cloud session's task begins with.
+claude_start_brief() { # ITEM REPO
+  if [[ "$TRACKER" == "linear" ]]; then printf '/orch start %s\n' "$1"; else printf '/orch start github %s#%s\n' "$2" "$1"; fi
+}
+
+# The three causes of a bundled clone a launcher can read, beside the GitHub
+# App's coverage, which it cannot: CCR_FORCE_BUNDLE in this shell,
+# CCR_FORCE_BUNDLE=1 in the env block of the account's settings.json or of the repository's
+# .claude/settings.json, or an origin that is no github.com URL. A bundle has
+# no git remote, so the session could push nothing. A settings file that
+# cannot be read is refused as one that sets it.
+cloud_bundle_risk() { # ACCOUNT
+  local file
+  if [[ -n "${CCR_FORCE_BUNDLE+set}" ]]; then
+    ot_message cloud-bundle-risk "item=$item" cause=shell >&2
+    return 1
+  fi
+  for file in "$1/settings.json" "$CLAIM_ROOT/.claude/settings.json"; do
+    [[ -e "$file" ]] || continue
+    jq -e '(.env.CCR_FORCE_BUNDLE // null | tostring) != "1"' "$file" >/dev/null 2>&1 \
+      || { ot_message cloud-bundle-risk "item=$item" cause=settings "path=$file" >&2; return 1; }
+  done
+  kendex_github_origin_slug "$CLAIM_ROOT" >/dev/null \
+    || { ot_message cloud-bundle-risk "item=$item" cause=remote >&2; return 1; }
+}
+
+# One launch=cloud-session item. The session clones this repository's
+# github.com remote at the checkout's branch, so the item's worktree is made
+# and its branch pushed from the base tip first, and `claude -p --cloud` runs
+# in that worktree under the lane's account. Its session id is the launch
+# record: a launch that prints none stops here, since no pane or listing
+# stands in for it. The record carries the kind, the account and that id, the
+# local worktree as mail_root, and no window. Status 75 is an item another
+# session owns; 1 a failure, its keyed line printed.
+cloud_session_launch() {
+  local wt out session rc=0 launched_at record_rc=0
+  cloud_bundle_risk "${LANE_ENV#*=}" || return 1
+  wt="$("$WORKTREE_CLI" create "$wt_id")" || rc=$?
+  [[ "$rc" -ne 75 ]] || { ot_message item-owned "item=$item" "exit=75" >&2; return 75; }
+  [[ "$rc" -eq 0 ]] || { ot_message worktree-failed "item=$item" "exit=$rc" >&2; return 1; }
+  "$WORKTREE_CLI" push "$wt_id" --set-upstream >&2 || { ot_message cloud-push-failed "item=$item" >&2; return 1; }
+  launched_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
+  out="$(cd -- "$wt" && env "$LANE_ENV" claude -p --cloud "$(claude_start_brief "$item" "$repo") $LAUNCH_SESSION_TEXT" \
+    --output-format json)" || rc=$?
+  [[ "$rc" -eq 0 ]] || { ot_message cloud-launch-failed "item=$item" "exit=$rc" >&2; return 1; }
+  session="$(jq -er 'select(.ok == true) | .session_id | strings | select(length > 0)' <<<"$out" 2>/dev/null)" \
+    || { ot_message cloud-session-unread "item=$item" >&2; return 1; }
+  ot_message cloud-session-started "item=$item" "session=$session"
+  [[ "$FLEET" == true ]] || return 0
+  LAUNCH_PANE="" LAUNCH_PREPARE="" LAUNCH_SERVER="" LAUNCH_HARNESS_ID="" LAUNCH_WAKE="" LAUNCH_ALLOW_ALL=null
+  lane_record_write "$RECORD_MODE" "$wt_id" "" "$wt" "$session" "$launched_at" || record_rc=$?
+  [[ "$record_rc" -eq 0 ]] || { ot_message record-write-failed "item=$item" "state=oversee" >&2; return 1; }
 }
 
 # The preparation record a lane handed to a background job carries: the launch
@@ -3003,6 +3087,17 @@ for raw in "${ITEMS[@]}"; do
   if [[ "$CAP_GATED" == true ]] && ! cap_gate "$item" "$wt_id" "$title"; then
     failed=$((failed + 1))
     break
+  fi
+  if [[ "$HOST_LAUNCH" == cloud-session ]]; then
+    cloud_rc=0
+    cloud_session_launch || cloud_rc=$?
+    case "$cloud_rc" in
+      0) launched=$((launched + 1))
+         grep -qxF -- "$LANE_ENV" <<<"$lanes_seen" || lanes_seen+="$LANE_ENV"$'\n' ;;
+      75) skipped=$((skipped + 1)) ;;
+      *) failed=$((failed + 1)) ;;
+    esac
+    continue
   fi
   cmd="$(start_cmd "$item" "$wt_id" "$repo")"
   if [[ -n "$CMD_TEMPLATE" ]]; then

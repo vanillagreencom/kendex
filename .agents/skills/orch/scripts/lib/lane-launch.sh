@@ -658,6 +658,16 @@ launch_choice_question_off() { # HARNESS
 # holds only letters, spaces, commas, periods and hyphens.
 LAUNCH_UNATTENDED_TEXT='This is an unattended orch lane, and nobody reads this pane. Send every question for the overseer with lane-mail ask and block on lane-mail wait for its answer, never as a question in chat. Never end a turn waiting on the person, and end none before a lane-mail ask or notice says where the work stands. Where you would stop to ask, read lane-mail inbox and continue the workflow.'
 
+# The words a channel=session brief closes on in place of the unattended words
+# above (../../schemas/lane-host.md § Host kinds): a cloud session has no mailbox,
+# so it reaches its overseer through its branch and pull request and nothing
+# else, and never asks. It names the steps the kind never takes, each one a
+# mailbox, a tracker the cloud cannot reach, a merge under another identity or
+# a wait on a person, and arms the commit chain the repository hooks require
+# before its first commit. It holds no apostrophe or backtick, as the words
+# above hold none.
+LAUNCH_SESSION_TEXT='This is an unattended orch lane in a cloud session, and nobody reads it. You reach your overseer through your branch and pull request and nothing else: push the item branch and open a draft pull request as your first step, keep where the work stands under a ## Lane status heading in the pull request body, and name a blocker in a pull request comment. Never ask a question: a step that needs an answer is a step this lane never takes, so name the blocker in the pull request and end your turn. Never run linear.sh, lane-mail or pr-merge, never arm a background wake, and never wait on a person. Before your first commit, arm the commit chain: run tools/setup where the repository has it, else kendex guard install, and quote its report under ## Lane status.'
+
 # ORCH_QUESTION_TOOL, decided once here for every launcher: `off`, the
 # default, gives a launched overseer its harness row's question-off words in
 # LAUNCH_CHOICE_FLAGS, where the row has any, as every lane launch carries

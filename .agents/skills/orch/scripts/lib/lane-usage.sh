@@ -8,6 +8,12 @@
 # and calls copilot_credits_parse from lib/copilot-credits.sh.
 
 # Claude: `.five_hour` and `.seven_day` carry utilization/resets_at directly.
+# `.iguana_necktie` is the Claude cloud credit, an expiring grant cloud
+# sessions spend before the plan windows, carried as `credits` in dollars. No
+# document names it: the credit's one documented surface is claude.ai
+# Settings > Usage, a web page with no API, and this body is the read `lanes`
+# already makes for the windows. A body without it carries no credits, which
+# `lanes pick` names as cloud-credit-unread where the kind spends it.
 # The model-scoped weekly window moved out of the legacy seven_day_sonnet /
 # seven_day_opus fields into `limits[]` entries with kind=="weekly_scoped";
 # the legacy fields stand in where an older response carries no entries, so an
@@ -52,6 +58,10 @@ parse_claude_usage() {
 		      else [] end)) as $legacy
 		| (if ($live | length) > 0 then $live else $legacy end) as $scoped
 		| (($scoped | max_by(.percent // 0)) // null) as $m
+		| (.iguana_necktie | if type == "object" then {unit: "usd",
+		    limit_dollars: ((.limit_dollars | numbers) // null), used_dollars: ((.used_dollars | numbers) // null),
+		    remaining_dollars: ((.remaining_dollars | numbers) // null), resets_at: ((.resets_at | strings) // null),
+		    locked_reason: .locked_reason} else null end) as $credit
 		| {
 		    session_5h_pct:  (if $s then pct($s.utilization) else null end),
 		    weekly_pct:      (if $w then pct($w.utilization) else null end),
@@ -60,6 +70,7 @@ parse_claude_usage() {
 		    model_buckets:   [$scoped[] | {label: .scope.model.display_name,
 		                                   pct: pct(.percent),
 		                                   resets_at: (.resets_at // null)}],
+		    credits:         $credit,
 		    resets: {
 		      session: (if $s then ($s.resets_at // null) else null end),
 		      weekly:  (if $w then ($w.resets_at // null) else null end),

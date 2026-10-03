@@ -4,6 +4,39 @@
 #
 # Source this file; do not execute it directly.
 
+# The owner/name a checkout's origin remote names where that remote is a
+# github.com URL, printed with no validation of its segments; exit 1 for a
+# checkout with no origin, one git cannot read, or an origin on another host.
+kendex_github_origin_slug() { # PROJECT_ROOT
+  local origin_url origin_status=0 repo
+  origin_url=$(git -C "$1" remote get-url origin 2>/dev/null) || origin_status=$?
+  # git answers 2 for "no such remote" — a checkout with no origin. Any
+  # other status means git could not answer at all, most often because the
+  # project root is no repository. Neither resolves anything, and the
+  # caller refuses on that rather than falling back to a repository
+  # nobody named.
+  [ "$origin_status" -eq 0 ] || return 1
+  # github.com must sit where a hostname sits: at the start of the URL,
+  # right after the scheme, or right after userinfo that carries no "/".
+  # A leading `.*` would accept the string anywhere, so an origin such as
+  # https://gitlab.example/group/github.com/owner/repo resolves to
+  # owner/repo and kendex reads and writes GitHub with the operator's
+  # token for a checkout that is not on GitHub at all.
+  #
+  # Capture owner/repo greedily, then strip a trailing ".git" explicitly.
+  # GNU sed / POSIX ERE has no non-greedy quantifier, so a
+  # `[^/]+?(\.git)?$` pattern would greedily swallow ".git" into the slug.
+  # Do the suffix strip with bash parameter expansion instead — portable
+  # for both SSH (git@github.com:owner/repo.git) and HTTPS origins, with
+  # or without ".git", and safe for repo names that merely contain the
+  # substring "git".
+  repo=$(printf '%s' "$origin_url" \
+    | sed -nE 's#^([A-Za-z][A-Za-z0-9+.-]*://)?([^/@]*@)?github\.com[:/]+([^/]+/[^/]+)$#\3#p')
+  repo="${repo%.git}"
+  [ -n "$repo" ] || return 1
+  printf '%s\n' "$repo"
+}
+
 # Resolve the owner/name slug every `gh --repo` argument and `repos/<slug>/`
 # API path carries, so one value decides which repository a command reads and
 # which one it mutates.
@@ -23,38 +56,14 @@
 # repository name, around a single slash.
 kendex_github_resolve_gh_repo() {
   local project_root="${1:?kendex_github_resolve_gh_repo: project_root required}"
-  local repo origin_url origin_status owner name
+  local repo owner name
 
   if [ -n "${GH_REPO:-}" ]; then
     repo="$GH_REPO"
   else
     repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
     if [ -z "$repo" ]; then
-      origin_status=0
-      origin_url=$(git -C "$project_root" remote get-url origin 2>/dev/null) || origin_status=$?
-      # git answers 2 for "no such remote" — a checkout with no origin. Any
-      # other status means git could not answer at all, most often because the
-      # project root is no repository. Neither resolves anything, and the
-      # caller refuses on that rather than falling back to a repository
-      # nobody named.
-      [ "$origin_status" -eq 0 ] || return 1
-      # github.com must sit where a hostname sits: at the start of the URL,
-      # right after the scheme, or right after userinfo that carries no "/".
-      # A leading `.*` would accept the string anywhere, so an origin such as
-      # https://gitlab.example/group/github.com/owner/repo resolves to
-      # owner/repo and kendex reads and writes GitHub with the operator's
-      # token for a checkout that is not on GitHub at all.
-      #
-      # Capture owner/repo greedily, then strip a trailing ".git" explicitly.
-      # GNU sed / POSIX ERE has no non-greedy quantifier, so a
-      # `[^/]+?(\.git)?$` pattern would greedily swallow ".git" into the slug.
-      # Do the suffix strip with bash parameter expansion instead — portable
-      # for both SSH (git@github.com:owner/repo.git) and HTTPS origins, with
-      # or without ".git", and safe for repo names that merely contain the
-      # substring "git".
-      repo=$(printf '%s' "$origin_url" \
-        | sed -nE 's#^([A-Za-z][A-Za-z0-9+.-]*://)?([^/@]*@)?github\.com[:/]+([^/]+/[^/]+)$#\3#p')
-      repo="${repo%.git}"
+      repo=$(kendex_github_origin_slug "$project_root") || return 1
     fi
   fi
 

@@ -20,6 +20,10 @@ IDENTITY_FILE = "/.git/lane-host-pid"
 # no file, a lane whose prefix recorded none, or a stale one. stop then finds
 # the harness by the item's worktree instead.
 STOP_BY_DIRECTORY = 76
+# The static host kind's capability line. lane-host answers it for a provider
+# that predates the verb, so this is its one spelling.
+CAPABILITIES = "\t".join(("kind=ssh", "launch=ssh", "channel=mailbox", "files=verb", "status=verb", "stop=verb",
+                          "relaunch=resume", "park=none", "accounts=none", "pool=plan", "land=lane"))
 
 
 def notice(key, **values):
@@ -583,6 +587,8 @@ close --merged, the caller's word that the item's pull request merged, is
 accepted and changes nothing: a static host keeps the whole archive.
 list prints repo/item, state, age, name as tab-separated fields. Age is '-' for
 static hosts. touch probes SSH; static hosts have no idle expiry.
+capabilities prints the static ssh host kind's one capability line
+(schemas/lane-host.md § Host kinds) and reads no inventory.
 """, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="verb", required=True)
     make = sub.add_parser("create")
@@ -603,7 +609,11 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
         stopping.add_argument("--item", required=True)
         stopping.add_argument("--harness", required=True, choices=("claude", "codex", "pi", "copilot"))
     sub.add_parser("list")
+    sub.add_parser("capabilities")
     args = parser.parse_args()
+    if args.verb == "capabilities":
+        print(CAPABILITIES)
+        return
     inventory = os.environ.get("LANE_HOST_SSH_INVENTORY", "")
     if not inventory:
         notice("inventory-required", variable="LANE_HOST_SSH_INVENTORY")

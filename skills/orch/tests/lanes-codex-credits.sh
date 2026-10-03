@@ -169,18 +169,18 @@ table \
   "a named account on its credits after 99 then 100 percent carries no rate and no wall minutes|$(dirs codex);OVERSEE_WATCH_STATE_DIR=$RATE_STORE|pick --lane $H/.codex --harness codex --json|rc=0 binding_bucket=credits usage_rate_state=credits projected_wall_minutes=null usage_rate_pct_per_min=null"
 
 echo "=== controls ==="
-# Without the credits stage the score alone orders the pair, and the
-# credit-backed account's is the higher.
+# Without the tier the score alone orders the pair, and the credit-backed
+# account's is the higher.
 CTRL="$(mutant_scripts mutant-credit-rank lib/lane-model.sh)" || exit 1
-mutate_file "$CTRL/lib/lane-model.sh" '| sort_by([(.binding_bucket == "credits"), credit_rank]) | first' '| first'
+mutate_file "$CTRL/lib/lane-model.sh" 'sort_by([._tier, ._expires, (._score | neg), .claims,' 'sort_by([(.selection_score | neg), .claims,'
 LANES_UNDER_TEST="$CTRL/lanes" table \
-  "control: without the credits stage the credit-backed account is picked over plan room|$(dirs hcodex pcodex)|$PICK|rc=0 config_dir=$H/.hcodex binding_bucket=credits"
+  "control: without the tier the credit-backed account is picked over plan room|$(dirs hcodex pcodex)|$PICK|rc=0 config_dir=$H/.hcodex binding_bucket=credits"
 
-# Without its claims key, credit_rank hands a balance tie to the score.
+# Without its claims key, the tier key hands a balance tie to projected room.
 CTRL="$(mutant_scripts mutant-credit-claims lib/lane-model.sh)" || exit 1
-mutate_file "$CTRL/lib/lane-model.sh" '[(0 - .credits.balance), .claims]' '[(0 - .credits.balance)]'
+mutate_file "$CTRL/lib/lane-model.sh" '(._score | neg), .claims, (.projected_headroom_pct | neg)' '(._score | neg), (.projected_headroom_pct | neg)'
 LANES_UNDER_TEST="$CTRL/lanes" table \
-  "control: without the claims key the claimed account's score wins the tie|$(dirs codex hcodex);OVERSEE_WATCH_STATE_DIR=$CLAIM_STORE|$PICK|rc=0 config_dir=$H/.hcodex claims=1"
+  "control: without the claims key the claimed account's room wins the tie|$(dirs codex hcodex);OVERSEE_WATCH_STATE_DIR=$CLAIM_STORE|$PICK|rc=0 config_dir=$H/.hcodex claims=1"
 
 # One control per rule credit_room holds.
 CTRL="$(mutant_scripts mutant-credit-floor lib/lane-model.sh)" || exit 1

@@ -62,7 +62,8 @@ mkdir -p "$FLEET_DIR"
 mkdir -p "$SCRIPTS/lib" "$FIXTURE/skills/linear/scripts" "$BIN"
 cp "$TEST_DIR/../scripts/lane-close" "$SCRIPTS/lane-close"
 cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$TEST_DIR/../scripts/lib/date-ladder.sh" \
-  "$TEST_DIR/../scripts/lib/usage-reset.sh" "$TEST_DIR/../scripts/lib/lane-host-slots.sh" "$SCRIPTS/lib/"
+  "$TEST_DIR/../scripts/lib/usage-reset.sh" "$TEST_DIR/../scripts/lib/lane-host-slots.sh" \
+  "$TEST_DIR/../scripts/lib/lane-capabilities.sh" "$SCRIPTS/lib/"
 chmod +x "$SCRIPTS/lane-close"
 
 cat >"$SCRIPTS/workflow-state" <<'EOF'
@@ -93,6 +94,17 @@ chmod +x "$SCRIPTS/workflow-state"
 
 cat >"$SCRIPTS/lane-host" <<'EOF'
 #!/usr/bin/env bash
+# capabilities is the record's kind, answered before the call log so the
+# counts below stay the provider verbs: claude-cloud declares stop=none, and
+# every other host the stop its kind declares.
+if [[ "${1:-}" == capabilities ]]; then
+  case "${ORCH_LANE_HOST:-local}" in
+    local) printf 'kind=local\tstop=window\n' ;;
+    claude-cloud) printf 'kind=claude-cloud\tstop=none\n' ;;
+    *) printf 'kind=ssh\tstop=verb\n' ;;
+  esac
+  exit 0
+fi
 printf '%s\n' "$* host=$ORCH_LANE_HOST" >>"$LANE_CLOSE_HOST_CALLS"
 # stop is the provider signalling the lane's harness on its host: the harness
 # ends, and the pane falls back to the bare shell its window keeps, which the
@@ -458,6 +470,7 @@ lib_mutant() { # NAME OLD NEW [APPEND]
   ln -s "$FIXTURE/skills/linear/scripts/linear.sh" "$dir/skills/linear/scripts/linear.sh"
   ln -s "$FIXTURE/skills/worktree" "$dir/skills/worktree"
   ln -s "$SCRIPTS/lib/lane-host-slots.sh" "$dir/skills/orch/scripts/lib/lane-host-slots.sh"
+  ln -s "$SCRIPTS/lib/lane-capabilities.sh" "$dir/skills/orch/scripts/lib/lane-capabilities.sh"
   python3 - "$SCRIPTS/lib/lane-state.sh" "$dir/skills/orch/scripts/lib/lane-state.sh" "$old" "$new" "${4:-}" <<'MUTPY'
 import pathlib, sys
 source, target, old, new, append = sys.argv[1:]
@@ -1563,6 +1576,38 @@ for row in '--park|missing-value option=--park requires=--pr' '--pr 7|missing-va
   assert_eq "rc=$RC refused=$(grep -c "^lane-close: $expect\$" <<<"$ERR" || true) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
     'rc=2 refused=1 host=0 status=running' "lane-close $args is refused before any read"
 done
+
+echo '=== a stop=none kind closes its record and worktree and keeps the session ==='
+cloud_state() {
+  jq -n --arg root "$TMP_ROOT/cloud-wt" '{lanes:[{item:"KEN-1",tracker:"linear",repo:null,harness:"claude",window:null,account:"/lane",
+    host:"claude-cloud",kind:"claude-cloud",mail_root:$root,session_id:"session_01CLOUD",launched_at:"2026-09-20T00:00:00Z",status:"running"}]}' >"$STATE"
+}
+cloud_close() { # SCRIPT [ARGS...]
+  : >"$LANE_CLOSE_WORKTREE_CALLS"
+  cloud_state
+  LANE_CLOSE_WORKTREE_MERGED=0 run_close "$@"
+}
+cloud_observed() {
+  printf 'rc=%s kept=%s host=%s tmux=%s worktree=%s status=%s' "$RC" \
+    "$(grep -cxF 'lane-close: host-kept kind=claude-cloud session=session_01CLOUD' <<<"$OUT" || true)" "$(host_call_count)" \
+    "$(awk 'END { print NR + 0 }' "$CALLS")" "$(cat "$LANE_CLOSE_WORKTREE_CALLS")" "$(jq -r '.lanes[0].status' "$STATE")"
+}
+CLOUD_CLOSED="rc=0 kept=1 host=0 tmux=0 worktree=remove $TMP_ROOT/cloud-wt status=done"
+cloud_close "$SCRIPT"
+assert_eq "$(cloud_observed)" "$CLOUD_CLOSED" \
+  'a cloud lane closes its record and local worktree, stops nothing and names the session it keeps'
+cloud_close "$SCRIPT" --keep-sandbox
+assert_eq "rc=$RC refused=$(grep -cxF 'lane-close: record-invalid item=KEN-1 field=stop value=none option=--keep-sandbox' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 refused=1 status=running' 'a cloud lane has no sandbox to keep'
+MUTANT="$(mutant cloud-stop '  window | verb) ;;' '  window | verb | none) ;;')"
+cloud_close "$MUTANT"
+assert_eq "red=$([[ "$(cloud_observed)" != "$CLOUD_CLOSED" ]] && echo yes || echo no)" 'red=yes' \
+  'control: a stop=none lane taken through the stop path fails the cloud close row'
+# shellcheck disable=SC2016  # the script's own text, never expanded here.
+MUTANT="$(mutant cloud-kept '    message host-kept "kind=$host_kind" "session=$(record_field session_id)"' '    :')"
+cloud_close "$MUTANT"
+assert_eq "red=$([[ "$(cloud_observed)" != "$CLOUD_CLOSED" ]] && echo yes || echo no)" 'red=yes' \
+  'control: without its host-kept line the close fails the cloud close row'
 
 echo '=== must-fail control ==='
 MUTANT="$(mutant live '  *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;' '  *) ;;')"
