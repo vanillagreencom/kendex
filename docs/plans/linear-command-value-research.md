@@ -130,7 +130,7 @@ Each family line names only the commands a task measured. A command no task meas
 ### Failure causes
 
 - **Raw route, query complexity**: Linear refuses a query above complexity 10,000 with "Query too complex". The model's first query hit that limit in 5 of 5 create runs, 5 of 5 cycles runs and 4 of 5 project-deps runs. Each time it narrowed the query and then succeeded. The complexity came from nested connections with large page sizes, such as all team labels and states in one query.
-- **`linear.sh` route, team key**: `cycles list --team KEN` and `issues create --team KEN` refuse with "Team not found: KEN"; the flag takes the team name, `kendex`. That refusal caused the failed call in 4 of 5 cycles runs and 1 of 2 create runs. The other create run failed on the model's own `jq` filter over `issues get` output, then re-ran the read.
+- **`linear.sh` route, team key**: `cycles list --team KEN` and `issues create --team KEN` refuse with "Team not found: KEN"; the flag takes the team name, `kendex`. That refusal caused the failed call in 4 of 5 cycles runs and 1 of 2 create runs. KEN-2664 tracks the fix. The other create run failed on the model's own `jq` filter over `issues get` output, then re-ran the read.
 - **`linear.sh` route, dependency direction**: in one project-deps run the model read `projects.sh` to learn which direction `list-dependencies` reports, then answered correctly.
 
 ### Request cost
@@ -227,7 +227,7 @@ Scratch issues, all Canceled in one `issueBatchUpdate` and confirmed by one read
 ## Revisit conditions
 
 - KEN-2335 merges: re-run every L row against the thin layer.
-- `--team` accepts the team key: re-run cycles and create on the `linear.sh` route.
+- `--team` accepts the team key (KEN-2664): re-run cycles and create on the `linear.sh` route.
 - The raw skill text names Linear's query-complexity limit: re-run cycles, create and project-deps on the raw route. The keep verdict on `projects list-dependencies` rests on that limit.
 - A different model or effort becomes the lane default.
 
