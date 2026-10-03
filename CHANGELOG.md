@@ -30,7 +30,7 @@ change came from an outside contributor.
 - orch: a fix round on an open pull request leaves validation to the pull request CI where the repository has a GitHub Actions workflow and CI checks the change, and runs it locally otherwise.
 - A Copilot overseer's SessionStart row now names its session: the watch ignores a predecessor's context record, and `oversee register` installs the context reader in that session's Copilot home.
 - orch: an overseer's directive, item or fix now fixes the problem at its source first; a patch, shim, workaround or gate standing in for that fix needs a stated reason and an item to remove it.
-- The kendex-refresh and harness-ci CI templates run on the repository variable `CI_RUNNER_2V` when it is set, and on `ubuntu-latest` otherwise.
+- The kendex-refresh and harness-ci CI templates run on the `CI_RUNNER_2V` variable (organization or repository) when it is set, and on `ubuntu-latest` otherwise.
 - orch: an overseer's owner messages state a cost as its figure and source, report Claude, Codex and Copilot headroom side by side, and own a mistake in one line with its repair.
 
 ### Fixed
@@ -54,7 +54,7 @@ change came from an outside contributor.
 - orch `round-prune` prunes a worktree paused mid-rebase under its own issue's lease instead of refusing `worktree-output-prune-lease-foreign`.
 - second-opinion: an external Claude review that ends with no review text records Claude's terminal reason in its `.failed.json` cause and exits 5.
 - `lane-close` closes a hosted lane whose tmux window is gone once its tracker item is terminal, so a control-VM tmux restart no longer leaves hosted lanes refusing `pane-missing`.
-- The github skill validates its credential once per command, so `pr-view` on an installation token makes 3 GitHub requests instead of 5 to 7.
+- The github skill validates its credential once per command, so `pr-view` on an installation token makes 3 GitHub requests instead of 5.
 - A non-render consumer refresh whose rolling pull request is already queued, merged or closed defers and exits 0 instead of failing the scheduled run.
 - `oversee-watch` no longer reports a day-old refresh failure as a new incident when GitHub's run list returns a stale page.
 
