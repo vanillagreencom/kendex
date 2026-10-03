@@ -214,10 +214,11 @@ impl Tally {
 /// above with its state and the positions the engine resolved for it,
 /// which is what a reader owning changed paths reads instead of the rows'
 /// wording. The human rows, the closing counts line and the exit status
-/// are the same with or without it. With `--base` under the project scope
-/// the document also carries `base_owned`, the whole files and trees the
-/// base revision's record names, which a reader granting a deletion reads
-/// because no row prints a position the head no longer renders.
+/// are the same with or without it. With `--base` under the project scope,
+/// where the base revision's record was read, the document also carries
+/// `base_owned`, the whole files and trees that record names, which a
+/// reader granting a deletion reads because no row prints a position the
+/// head no longer renders.
 ///
 /// `--at-record` renders each package that follows its source and that
 /// the record can place at the commit the record names rather than at the

@@ -1788,7 +1788,9 @@ TOML
   # which removes both. The base is laid by hand because no kendex this suite
   # runs renders tests/; the head is what `kendex refresh` wrote above. The
   # removed paths are listed at the base, so harness-only reads them as
-  # generated. The head tree cannot prove ownership at the base.
+  # generated. The base record names the skill's tree among the paths it
+  # wrote, so verify's base_owned holds the dropped suite under that tree and
+  # grants the deletion.
   git -C "$consumer" checkout -q -B carried-tests refreshed
   mkdir -p "$consumer/.claude/skills/demo/tests"
   cp "$catalog/skills/demo/tests/demo.test.sh" "$consumer/.claude/skills/demo/tests/demo.test.sh"
@@ -1806,8 +1808,8 @@ TOML
     "$(git -C "$consumer" diff --name-only "$carried_base" HEAD | tr '\n' ' ' | sed 's/ $//')"
   carried_err="$(classify_stderr --repo "$consumer" --event pull_request \
     --base "$carried_base" --head HEAD)"
-  assert_eq "a refresh that drops rendered tests/ needs base ownership proof" \
-    "class=standard measured=true cause=render-retirement-unproved path=.claude/skills/demo/tests/demo.test.sh" \
+  assert_eq "a refresh that drops rendered tests/ under a tree the base record owned is a render" \
+    "class=render measured=true cause=renders-match-their-sources" \
     "$(printf '%s\n' "$carried_err" | sed -n 's/^class: //p')"
   git -C "$consumer" checkout -q refreshed
 

@@ -136,9 +136,10 @@ pub struct Document {
     /// With a base revision and the project scope only: [`owned_at`] that
     /// revision, each position spelled as a row's are and carrying no
     /// `foreign`. Absent is unknown, never none: no base was named, the
-    /// scope is global, or the revision does not resolve or holds no record
-    /// this build reads. A reader granting a deletion on it needs the path
-    /// here, as a `file` or under a `tree`.
+    /// scope is global, the revision does not resolve or holds no record
+    /// this build reads, git cannot be run, or a recorded path is not
+    /// under the project root. A reader granting a deletion on it needs the
+    /// path here, as a `file` or under a `tree`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_owned: Option<Vec<Placed>>,
 }
@@ -784,9 +785,12 @@ pub fn foreign_since(
 /// in are never on the record's `emitted` paths, so none is here, and an
 /// entry recorded before those paths were kept contributes nothing.
 ///
-/// `None` where the revision does not resolve, holds no record, holds one
-/// this build cannot read, or git cannot answer for a recorded path: the
-/// caller cannot tell a short list from a complete one, so there is none.
+/// `None` where the revision does not resolve, holds no record, or holds
+/// one this build cannot read, where git cannot be run, or where a
+/// recorded path is not under `root`. Git's `cat-file` exits non-zero
+/// alike for a path the revision does not hold and for an object it
+/// cannot read, so either leaves that path out of the list: a caller
+/// granting on it only ever under-grants.
 pub fn owned_at(root: &Path, rev: &str) -> Option<Vec<Position>> {
     let base = Base { root, rev };
     let lock = match base.resolves().then(|| base.record()).flatten()? {

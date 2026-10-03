@@ -59,7 +59,9 @@
 #            other changed path is read, and any of them that is refused
 #            answers in its place. It is a rule, marked measured=true like
 #            cause=base-inventory-absent: every read behind it succeeded, and
-#            the proof it lacks is one the base record does not give. Any other
+#            the proof it lacks is one the verify document does not give:
+#            base_owned does not name the path, or the document carries no
+#            base_owned. Any other
 #            changed path answers standard with cause=render-path-unowned,
 #            and a shared file whose rest the run cannot vouch for answers
 #            cause=render-path-partial. That verdict
