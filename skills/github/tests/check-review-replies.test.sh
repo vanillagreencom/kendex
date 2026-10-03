@@ -452,6 +452,31 @@ a reviews page that is not an array|gh_stub_answer "$REVIEWS_PATH" '{"message":"
 a comments read that fails while findings stand|gh_stub_fail "$COMMENTS_PATH" 1 'gh: Not Found (HTTP 404)'|check-review-replies: read-failed pr=7
 ROWS
 
+echo "=== the Copilot head route: a finding only a review body carries ==="
+# Copilot review 5388182098 of kendex PR 3414, trimmed to its overview and its
+# one entry: COMMENTED, `Findings: None` and no thread, the finding written
+# only under `Previously missed (1)`. orch's Copilot head route runs this
+# check before any notice or app approval. A row is `label|setup|want`.
+COPILOT_ENTRY='skills/orch/references/merge-attempt.md:25'
+copilot_body() {
+  printf '<!-- ccr-overview-v2 -->\n\n## Copilot review overview\n\n### Needs a closer look\n\nThe recording workflow assumes a lane status file.\n\n**Findings:** None\n\n<details>\n<summary><strong>Previously missed (1)</strong></summary>\n\nIn code that has not changed since last review\n\n<details>\n<summary><picture><img alt="Medium severity"></picture> Unconditional lane-status write breaks standalone merge-pr runs</summary>\n\n`%s`\n\n**Blocking:** This status write is unconditional.\n</details>\n</details>\n' \
+    "$(supp_zwsp "$COPILOT_ENTRY")"
+}
+copilot_at() { reviews_set "$(review copilot COMMENTED "$1" "$(copilot_body)")"; } # COMMIT
+while IFS='|' read -r label setup want; do
+  [ -n "$label" ] || continue
+  world
+  eval "$setup"
+  got=$(run)
+  [ "$got" != "rc=2 " ] || got="$got $(first_err)"
+  assert_eq "$got" "$(eval "printf '%s' \"$want\"")" "$label"
+done <<'ROWS'
+the body finding with no thread fails, naming its file:line|copilot_at "$HEAD"|$FAILED | suppressed-findings count=1 | suppressed-entry $COPILOT_ENTRY
+a comment naming the head and the finding answers it|copilot_at "$HEAD"; comments_set "$(comment author "$(printf 'Dispositions at %s:\n`%s` - Fixed in %s' "$H7" "$COPILOT_ENTRY" "$H7")")"|$PASSED
+the same body at an older head is not this head's|copilot_at "$OTHER"|$PASSED
+a reviews read that fails reaches no verdict|copilot_at "$HEAD"; gh_stub_fail "$REVIEWS_PATH" 1 'gh: Bad Gateway (HTTP 502)'|rc=2  check-review-replies: read-failed pr=7
+ROWS
+
 echo "=== arguments ==="
 while IFS='|' read -r label args want; do
   [ -n "$label" ] || continue
@@ -626,6 +651,9 @@ mutant_row "with the page-shape test cut, a non-array reviews page reads as no r
   "  pages=\$(jq -s 'if (length > 0) and all(type == \"array\") then add else error(\"pages are not arrays\") end' <<<\"\$raw\" 2>/dev/null) ||" \
   "  pages=\$(jq -s '[.[] | arrays] | add // []' <<<\"\$raw\" 2>/dev/null) ||" \
   "at_head \"\$(body_of heading)\"; gh_stub_answer \"\$REVIEWS_PATH\" '{\"message\":\"Server Error\"}'" "$PASSED"
+mutant_row "with the body scan cut, only thread state is read and the Copilot body finding passes" body-scan \
+  '      | (.body // "") | suppressed_scan' '      | "" | suppressed_scan' \
+  'copilot_at "$HEAD"' "$PASSED"
 
 echo
 echo "$PASS passed, $FAIL failed"

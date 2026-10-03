@@ -388,7 +388,7 @@ Auto-resolve every thread where a reply was posted; keep open only threads await
 
 ### 7.2 Copilot Head Route
 
-**Skip if** no thread this triage answered is Copilot's. Copilot's review overview opens with one of three labels. It submits `Approved` as an `APPROVED` review. It submits `Changes recommended` and `Needs a closer look` as `COMMENTED`. It re-reads a head only on a review request, so a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Resolve through that consumer base:
+**Skip if** no thread this triage answered is Copilot's and the body check below, run now, prints no `suppressed-entry`. Copilot's review overview opens with one of three labels. It submits `Approved` as an `APPROVED` review. It submits `Changes recommended` and `Needs a closer look` as `COMMENTED`. It re-reads a head only on a review request, so a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Resolve through that consumer base:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]
@@ -400,10 +400,10 @@ env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [P
 env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
 ```
 
-A non-zero exit, which is reported, ends this step. Otherwise read every review of the pull request, oldest first, one login, `commit_id` and `state` per line:
+A non-zero exit, which is reported, ends this step. Otherwise read every review of the pull request, oldest first, one id, login, `commit_id` and `state` per line:
 
 ```bash
-env -u GH_REPO -u GITHUB_REPOSITORY gh api --paginate 'repos/{owner}/{repo}/pulls/[PR_NUMBER]/reviews' --jq '.[] | [.user.login, .commit_id, .state] | @tsv'
+env -u GH_REPO -u GITHUB_REPOSITORY gh api --paginate 'repos/{owner}/{repo}/pulls/[PR_NUMBER]/reviews' --jq '.[] | [.id, .user.login, .commit_id, .state] | @tsv'
 ```
 
 A line whose `commit_id` is `[HEAD_SHA]` and whose `state` is `APPROVED` ends this step: the head is already approved. Every Copilot thread is answered and resolved by now. The route is whether the head moved since the `commit_id` of the last `copilot-pull-request-reviewer[bot]` line, the last head Copilot read:
@@ -435,6 +435,14 @@ A line whose `commit_id` is `[HEAD_SHA]` and whose `state` is `APPROVED` ends th
   | `timeout` | present, not `APPROVED` | Copilot read the head again and left no open thread. Notice `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA]`, which asks for the overseer's fallback approval |
   | `timeout` | none | No notice: the overseer's `awaiting-stale` rule decides the head |
   | any other | any | No notice: the caller's own approval wait routes it |
+
+**Body findings.** Copilot writes a finding on code the diff left unchanged only in its review body, under `Previously missed` or `Suppressed comments`, and no thread carries it. Before a `copilot-declined-unchanged` or `copilot-fallback` notice, run the one reader of those bodies:
+
+```bash
+env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" check-review-replies [PR_NUMBER]
+```
+
+A `head=` other than `[HEAD_SHA]` ends this step: the new head takes its own route. Answer exit `1` as [submit-pr.md](submit-pr.md) § 6.1 directs, each `suppressed-entry` in the `Dispositions at [HEAD_SHA]` comment, then run the check again. Under the notice's thread lines, one line per body finding gives its review id, its `path:line` and the answering comment's URL. No notice goes out before an exit `0`. Exit `2` reached no verdict: report its first stderr line and send nothing.
 
 **Notice.** In a lane, write it with the harness file-write tool to `[WORKTREE_PATH]/tmp/copilot-head-[ISSUE_ID].md` and send it with `.agents/skills/orch/scripts/lane-mail notice --item [ISSUE_ID] --file [WORKTREE_PATH]/tmp/copilot-head-[ISSUE_ID].md`. Outside a lane no overseer reads a notice, and the caller's own approval wait decides the head.
 
