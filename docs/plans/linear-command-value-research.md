@@ -1,10 +1,54 @@
 # Findings: linear.sh commands against raw GraphQL
 
-## Setup and deviations
+## Research Question
 
-KEN-2335, the thin-layer rewrite of `linear.sh`, has not merged. This run measures the live `linear.sh` commands on branch `ken-2336` at commit `1a632318` as the stand-in, with no `cache` or `sync` command. The `linear` skill's last change on that branch is commit `f2522e08`.
+For each `linear.sh` command, does a model do as well calling Linear's official GraphQL API directly, on the context the task costs, first-try success, requests and time? Which commands should kendex keep, and which can retire under the owner's rule? What context do Linear's MCP tool definitions take at session start in each harness?
 
-Each run is one headless Claude Code session: `claude -p --model claude-opus-5-5 --effort high --output-format stream-json --verbose --no-session-persistence --restricted --tools Bash,Read,Grep,Glob --strict-mcp-config --disable-slash-commands --permission-mode dontAsk --allowedTools Bash Read Grep Glob --max-budget-usd 3`, under a 900-second timeout. The two routes use the same model, effort and task prompt.
+KEN-2335, the thin-layer rewrite of `linear.sh`, has not merged. This run measures the live `linear.sh` commands on branch `ken-2336` at commit `1a632318` as the stand-in, with no `cache` or `sync` command.
+
+## Executive Summary
+
+Keep `issues activate` and `projects list-dependencies`. Retire `issues get` with `issues children`, `issues list`, `projects get`, `cycles list`, `issues create` with `issues add-relation`, `comments create`, `issues complete` and `issues validate-completion`. No task measured the other commands, and they carry no verdict. [M]
+
+- All 99 runs returned the correct answer. Above its fixed overhead, the raw route cost less context on 8 of 10 tasks; `linear.sh` cost less on `projects list-dependencies` and `issues activate`. [M]
+- First-try failures had two causes: Linear's query-complexity limit on the raw route, and `--team` refusing the team key on the `linear.sh` route (KEN-2664). [M]
+- One `linear.sh` round cost 78 Linear requests against 23 for the raw route, so four `linear.sh` cells have two or three runs instead of five. [M]
+- In Claude Code, the installed linear skill adds 46 tokens at session start and the deferred Linear MCP server adds 1,487. Once used, loading the skill adds 5,362 tokens and loading three Linear MCP tools adds 6,283. Copilot CLI loads all 58 Linear MCP tools at session start, for 30,280 tokens. [M] [S2]
+- Each retire line takes effect only through a change that follows owner rule 1790812464. [O]
+
+## Key Findings
+
+### Failure causes
+
+- **Raw route, query complexity**: Linear refuses a query above complexity 10,000 with "Query too complex". The model's first query hit that limit in 5 of 5 create runs, 5 of 5 cycles runs and 4 of 5 project-deps runs. Each time it narrowed the query and then succeeded. The complexity came from nested connections with large page sizes, such as all team labels and states in one query.
+- **`linear.sh` route, team key**: `cycles list --team KEN` and `issues create --team KEN` refuse with "Team not found: KEN"; the flag takes the team name, `kendex`. That refusal caused the failed call in 4 of 5 cycles runs and 1 of 2 create runs. KEN-2664 tracks the fix. The other create run failed on the model's own `jq` filter over `issues get` output, then re-ran the read.
+- **`linear.sh` route, dependency direction**: in one project-deps run the model read `projects.sh` to learn which direction `list-dependencies` reports, then answered correctly.
+
+### Request cost
+
+- One `issues activate` call made 8 requests in the lane's own activation of KEN-2336. Every `linear.sh` activate run made 9; the raw runs made 2.
+- One `issues validate-completion` call on three issues made 6 requests. The raw runs made 3.
+- `issues list --max` pages through every match. Both `linear.sh` list-filter runs also listed every Done issue to cross-check the label filter, at 27 and 28 requests.
+- Across 39 task runs the `linear.sh` route made 31 `--help` calls and 25 `teams list` or `auth-check` calls before or beside the task command.
+- The raw route read the schema file only in the 5 project-deps runs. In every other raw run the model wrote the queries without it.
+
+### Skill against MCP in Claude Code
+
+Claude Code lists an installed skill by name and description, and loads its body only when the Skill tool invokes it. With tool search on, Claude Code loads only MCP tool names at session start and loads a definition when a search selects it [S2]. Each row below compares the two at the same point of use. [M]
+
+| Point of use | Linear skill | Linear MCP server, tool search on |
+| --- | --- | --- |
+| Session start, nothing used | 46 tokens: 8,590 against 8,544 with neither | 1,487 tokens: 10,031 |
+| One task's worth loaded | 5,362 tokens: the skill loaded through the Skill tool, 13,906 | 6,283 tokens: `get_issue`, `list_issues` and `save_issue` loaded through tool search, 14,827 |
+| Every definition loaded | 5,362 tokens, the whole skill | 29,256 tokens: all 58 tools, tool search off (§ Evidence and Sources, Linear MCP tool definitions) |
+
+The loaded rows include the tool call that loads the skill or the tools. The task runs instead appended the skill text to the system prompt, at 5,103 tokens per session (§ Evidence and Sources, Context above the fixed overhead). [M]
+
+## Evidence and Sources
+
+### Setup and deviations
+
+Each run is one headless Claude Code session: `claude -p --model claude-opus-5-5 --effort high --output-format stream-json --verbose --no-session-persistence --restricted --tools Bash,Read,Grep,Glob --strict-mcp-config --disable-slash-commands --permission-mode dontAsk --allowedTools Bash Read Grep Glob --max-budget-usd 3`, under a 900-second timeout. The two routes use the same model, effort and task prompt. The `linear` skill's last change on the measured branch is commit `f2522e08`.
 
 | Route | Appended system prompt | Size |
 | --- | --- | --- |
@@ -18,14 +62,13 @@ Each child runs in an empty directory outside the repository, so no `AGENTS.md` 
 Deviations from the delegated method:
 
 - **Credential**: the host has `LINEAR_APP_TOKEN`, the kendex application token, and no client pair, so `auth-mint` cannot run. Both routes receive that token through the child's environment only.
-- **Network**: the token is a placeholder that the host's proxy substitutes. Each child keeps the proxy and CA variables, or every call fails authentication.
 - **`linear.sh` working directory**: `linear.sh` refuses to run outside a git repository. Each `linear.sh` child runs in a fresh `git init` directory that holds a copy of `kendex.settings.toml` and nothing else, so `LINEAR_TEAM` and the create guards load and each run starts with no cache.
 - **Raw schema path**: `--restricted` confines the file tools to the working directories. The schema sits in a fixtures directory outside the repository, passed with `--add-dir`.
 - **Trace format**: `stream-json` replaces `json`. Its final `result` event carries the same measures, and the stream carries the tool trace.
 - **Writes**: the issue body names one throwaway project. The binding brief limits writes to scratch issues titled "KEN-2336 scratch", so this run creates no project.
-- **Run counts**: the request cap leaves the `linear.sh` route of four tasks short of five runs. See § Requests and cleanup.
+- **Run counts**: the request cap leaves the `linear.sh` route of four tasks short of five runs. See § Evidence and Sources, Requests and cleanup.
 
-## Tasks and grading
+### Tasks and grading
 
 | Task | Target | Correct when |
 | --- | --- | --- |
@@ -44,7 +87,7 @@ The validate prompt states the rule: an issue passes in In Progress or In Review
 
 First-try success means a correct answer with no failed Linear call. A script flags every tool result of a Linear call that carries an error marker or a tool error; each flag was then reviewed by hand. A `--help` call is not a Linear call.
 
-## Results by task and route
+### Results by task and route
 
 `L` is the `linear.sh` route, `R` the raw route. Each cell is the median, with the range in brackets. Peak context is the largest prompt of any turn: input, cache-creation and cache-read tokens. Total input sums those tokens over all turns. Tool bytes are the bytes of tool output the model read. Time is the session's `duration_ms`.
 
@@ -75,7 +118,7 @@ First-try success means a correct answer with no failed Linear call. A script fl
 
 Every one of the 99 runs returned the correct answer.
 
-### Context above the fixed overhead
+#### Context above the fixed overhead
 
 The appended skill text costs the `linear.sh` route 5,103 tokens in every session: the baseline peak is 11,230 tokens against 6,127. A session pays that once, however many Linear tasks it runs. The per-task cost is the median peak context minus the route's baseline.
 
@@ -92,66 +135,13 @@ The appended skill text costs the `linear.sh` route 5,103 tokens in every sessio
 | complete | 2928 | 1648 | 620 | 703 |
 | validate | 2335 | 762 | 378 | 299 |
 
-## Recommendation
+### Linear MCP tool definitions
 
-The rule is the owner's: keep a command that is measurably better on context or on first-try success; retire one where raw GraphQL is as good on both. Context below is the per-task cost above the fixed overhead.
+This subsection answers owner principle 1790815161 (KEN-2336 comment of 2026-10-01): the context Linear's MCP tool definitions take at session start in each harness, and whether each harness loads them on demand. MCP is not a task route here.
 
-Each retire line takes effect only through a change that follows owner rule 1790812464: the same change moves every call site, reference and instruction to the new route, and the removed verb prints its replacement and exits nonzero.
+Linear's MCP server is `https://mcp.linear.app/mcp`, over Streamable HTTP, and accepts an OAuth token or API key as `Authorization: Bearer` [S1]. One `initialize` with the kendex application token, which authenticates at `api.linear.app` from this host, returned HTTP 401 `invalid_token` [R]. The lane had no other non-interactive credential for the kendex application and sent no further MCP request.
 
-The Linear MCP server does not change these verdicts. The owner's rule keeps CLI plus skill unless a measured MCP route wins on the same tasks, and no task here ran through MCP. § Linear MCP tool definitions gives the session-start figures.
-
-### Per command family
-
-Each family line names only the commands a task measured. A command no task measured has no verdict.
-
-- **Issue reads**: retire `issues get`, `issues children` and `issues list`. Raw costs less context on both tasks (683 against 1,933 tokens; 1,853 against 4,266), and both routes succeed first try on every run. Unmeasured: `issues bulk-get`, `issues list-relations`.
-- **Issue writes**: retire `issues create`, `issues add-relation`, `comments create` and `issues complete`; keep `issues activate`. Unmeasured: `issues update`, `issues bulk-update`, `issues archive`, `issues trash`, `issues remove-relation`, `issues block`, `issues unblock`, `comments list`, `comments update`, `comments delete`.
-- **Completion check**: retire `issues validate-completion`, on the condition in § Risks and unknowns.
-- **Planning reads**: retire `projects get` and `cycles list`; keep `projects list-dependencies`. Unmeasured: `projects list`, `projects list-updates`, `cycles create`, `cycles update`, and every project write.
-- **Other families** (`labels`, `project-labels`, `initiatives`, `milestones`, `teams`, `users`, `statuses`, `documents`, `auth-check`, `auth-mint`, `session-status`, and `sync` and `cache`, which KEN-2335 removes): unmeasured.
-
-### Per command
-
-| Command | Verdict | Numbers (L against R) |
-| --- | --- | --- |
-| `issues get` with `issues children` | Retire | 1,933 against 683 tokens; first try 5/5 against 5/5 |
-| `issues list` | Retire | 4,266 against 1,853 tokens; first try 2/2 against 5/5; 28 against 1 requests |
-| `projects get` | Retire | 2,284 against 550 tokens; first try 5/5 against 5/5 |
-| `cycles list` | Retire | 3,841 against 1,928 tokens; first try 1/5 against 0/5, no measurable difference |
-| `projects list-dependencies` | Keep | 745 against 5,543 tokens; first try 5/5 against 1/5, and all 4 raw failures were Linear's query-complexity limit |
-| `issues create` with `issues add-relation` | Retire | 10,550 against 2,101 tokens; first try 0/2 against 0/5 |
-| `comments create` | Retire | 1,218 against 941 tokens read, 490 against 637 written; first try 5/5 against 5/5 |
-| `issues activate` | Keep | 2,131 against 4,242 tokens; 411 against 655 output tokens; first try 3/3 against 5/5 |
-| `issues complete` | Retire | 2,928 against 1,648 tokens; first try 2/2 against 5/5 |
-| `issues validate-completion` | Retire | 2,335 against 762 tokens; first try 5/5 against 5/5 |
-
-## Key findings
-
-### Failure causes
-
-- **Raw route, query complexity**: Linear refuses a query above complexity 10,000 with "Query too complex". The model's first query hit that limit in 5 of 5 create runs, 5 of 5 cycles runs and 4 of 5 project-deps runs. Each time it narrowed the query and then succeeded. The complexity came from nested connections with large page sizes, such as all team labels and states in one query.
-- **`linear.sh` route, team key**: `cycles list --team KEN` and `issues create --team KEN` refuse with "Team not found: KEN"; the flag takes the team name, `kendex`. That refusal caused the failed call in 4 of 5 cycles runs and 1 of 2 create runs. KEN-2664 tracks the fix. The other create run failed on the model's own `jq` filter over `issues get` output, then re-ran the read.
-- **`linear.sh` route, dependency direction**: in one project-deps run the model read `projects.sh` to learn which direction `list-dependencies` reports, then answered correctly.
-
-### Request cost
-
-- One `issues activate` call made 8 requests in the lane's own activation of KEN-2336. Every `linear.sh` activate run made 9; the raw runs made 2.
-- One `issues validate-completion` call on three issues made 6 requests. The raw runs made 3.
-- `issues list --max` pages through every match. Both `linear.sh` list-filter runs also listed every Done issue to cross-check the label filter, at 27 and 28 requests.
-- Across 39 task runs the `linear.sh` route made 31 `--help` calls and 25 `teams list` or `auth-check` calls before or beside the task command.
-- The raw route read the schema file only in the 5 project-deps runs. In every other raw run the model wrote the queries without it.
-
-## Linear MCP tool definitions
-
-This section answers owner principle 1790815161 (KEN-2336 comment of 2026-10-01): the context Linear's MCP tool definitions take at session start in each harness, and whether each harness loads them on demand. MCP is not a task route here.
-
-### Tool list source
-
-Linear's MCP server is `https://mcp.linear.app/mcp`, over Streamable HTTP, and accepts an OAuth token or API key as `Authorization: Bearer` ([Linear MCP docs](https://linear.app/docs/mcp)). On this host the kendex application token is a placeholder that the host's proxy replaces. The same value authenticates at `api.linear.app`, and one `initialize` with it at `mcp.linear.app` returned HTTP 401 `invalid_token`. The lane had no other non-interactive credential for the kendex application and sent no further MCP request.
-
-Linear's docs publish no tool list with schemas. The definitions come from a third-party capture of `tools/list` against `https://mcp.linear.app/mcp`: `fixtures/mcp-tools-list/linear.raw.json` in [pome-sh/digital-twins](https://github.com/pome-sh/digital-twins) at commit `8f0f08eb198423cb2b1ea984cc8d0c9d4a83abb9`. Its metadata records a capture on 2026-08-10 under a `read write` grant, 58 tools, and SHA-256 `c737b527fec275abf693f3718db22875bdae0e9c4f207884af6790b0b4e6465a`; the downloaded file matches that hash (82,866 bytes). The kendex application's client-credentials grant also requests `read,write` (`skills/linear/README.md`), so it sees the same tool set if the server has not changed since the capture. The capture holds no `initialize` response, so the figures below exclude Linear's server instructions.
-
-### Method
+Linear's docs publish no tool list with schemas. The definitions come from a third-party capture of `tools/list` against `https://mcp.linear.app/mcp`: `fixtures/mcp-tools-list/linear.raw.json` in pome-sh/digital-twins at commit `8f0f08eb198423cb2b1ea984cc8d0c9d4a83abb9` [S5]. Its metadata records a capture on 2026-08-10 under a `read write` grant, 58 tools, and SHA-256 `c737b527fec275abf693f3718db22875bdae0e9c4f207884af6790b0b4e6465a`; the downloaded file matches that hash (82,866 bytes). The kendex application's client-credentials grant also requests `read,write` (`skills/linear/README.md`), so it sees the same tool set if the server has not changed since the capture. The capture holds no `initialize` response, so the figures below exclude Linear's server instructions.
 
 A stdio MCP server (`replay.py`, a short Python script) answers `initialize` and serves the captured `result` to `tools/list` byte for byte; a check compared the served bytes with the file. Each harness ran a fresh non-interactive session with the prompt "Reply with the single word OK.", once without the server and once with it, two runs each. Every pair of runs gave the same count to within 5 tokens. Each session ran in an empty directory outside the repository, isolated as the table lists:
 
@@ -164,7 +154,7 @@ A stdio MCP server (`replay.py`, a short Python script) answers `initialize` and
 
 Each harness counts tokens with its own model's tokenizer, so the figures compare modes within a harness, not across harnesses.
 
-### First-turn context
+#### First-turn context
 
 | Harness | Mode | Without MCP | With Linear MCP | Added |
 | --- | --- | --- | --- | --- |
@@ -176,9 +166,9 @@ Each harness counts tokens with its own model's tokenizer, so the figures compar
 | Pi | `deferred` exposure | 2,330 | 2,660 | 330 |
 | Pi | `direct` exposure, all tools declared | 2,330 | 29,737 | 27,407 |
 
-The Claude Code row for all tools loaded compares two sessions without the `ToolSearch` tool, which Claude Code drops when tool search is off.
+The Claude Code row for all tools loaded compares two sessions without the `ToolSearch` tool, which Claude Code drops when tool search is off. The skill comparison in § Key Findings ran a third Claude Code configuration, two runs per row: a fresh `HOME`, tools `Bash,Read,Grep,Glob,ToolSearch,Skill`, and the rendered linear skill installed through a session-only `--plugin-dir`, the route that lists a skill under `--restricted`.
 
-### Loading on demand
+#### Loading on demand
 
 | Harness | At session start | Source |
 | --- | --- | --- |
@@ -187,11 +177,9 @@ The Claude Code row for all tools loaded compares two sessions without the `Tool
 | Copilot CLI | All at session start; no setting in `copilot --help` or `copilot help config` defers MCP tools | Measured sessions |
 | Pi | Set per server. The default `codemode` exposure declares no MCP tool to the model and lists the server in the system prompt; `deferred` declares tools only after `tool_search` loads them; `direct` declares every tool | Pi's MCP guide, § Control tool exposure, shipped in the installed `@earendil-works/pi-coding-agent` package; measured sessions |
 
-In Claude Code, the deferred Linear MCP server adds 1,487 tokens at session start, against 5,103 tokens for the `linear.sh` skill text (§ Context above the fixed overhead). The deferred figures exclude what a task then loads: each tool a session searches for adds its definition, and loading all 58 costs about what the all-tools rows show.
+### Requests and cleanup
 
-## Requests and cleanup
-
-The ledger holds 392 Linear API requests, all as the kendex application: the 390 below, the lane's completion comment on KEN-2336, and the one refused MCP `initialize`.
+The ledger holds 392 Linear API requests, all as the kendex application: the 390 below, the lane's completion comment on KEN-2336, and the one refused MCP `initialize`. The MCP and skill sessions made no Linear request.
 
 | Use | Requests |
 | --- | --- |
@@ -214,26 +202,88 @@ Every other cell has five runs. A driver started each short-cell run only when t
 
 Scratch issues, all Canceled in one `issueBatchUpdate` and confirmed by one read: KEN-2616 to KEN-2653 and KEN-2657 to KEN-2659 (41 issues). KEN-2650 to KEN-2653 and KEN-2657 to KEN-2659 are the issues the create runs made.
 
-## Risks and unknowns
+### Sources
+
+- [M] Measurements sidecar: every run's measures and grade, the per-task summary, the MCP and skill sessions, the request ledger and the scratch issue list.
+- [R] Raw sidecar: what each external source returned, excerpted. The Exa request for this report returned HTTP 401 from this host, so no provider search ran; the lane read the sources below directly.
+- [S1] Linear Docs, MCP server.
+- [S2] Claude Code docs, Scale with MCP tool search.
+- [S3] Pi 1.0.0 MCP guide, Control tool exposure, in the installed `@earendil-works/pi-coding-agent` package.
+- [S4] Codex docs, MCP. Its MCP text names no deferral of MCP tools.
+- [S5] pome-sh/digital-twins, Linear `tools/list` capture and its metadata.
+- [O] KEN-2336 owner comments: rule 1790812464 (2026-09-30) and principle 1790815161 (2026-10-01).
+
+## Tradeoffs / Alternatives
+
+- **`linear.sh` commands**: on simple reads the model reads help text and lists teams first, so the command costs more context and more requests: 9 per activate run against 2. A command wins where the raw query is hard to write within Linear's complexity limit (`projects list-dependencies`) or where it composes several writes (`issues activate`). [M]
+- **Raw GraphQL with a short prompt**: the 579-byte prompt gives a 6,127-token baseline against 11,230 for the appended skill text. The model wrote most queries without opening the schema. Every raw first-try failure was Linear's query-complexity limit, which a line in the raw skill text can name. [M]
+- **Linear MCP server**: in Claude Code, Codex and Pi's default mode the definitions cost little at session start, and each tool a task loads adds its definition. Copilot CLI loads all 58 definitions at session start. The owner ruled MCP out as a task route because it misses required fields, and this run measured no task through it. [M] [O]
+
+## Recommendation / Decision Criteria
+
+The rule is the owner's: keep a command that is measurably better on context or on first-try success; retire one where raw GraphQL is as good on both. Context below is the per-task cost above the fixed overhead.
+
+Each retire line takes effect only through a change that follows owner rule 1790812464: the same change moves every call site, reference and instruction to the new route, and the removed verb prints its replacement and exits nonzero.
+
+The Linear MCP server does not change these verdicts. The owner's rule keeps CLI plus skill unless a measured MCP route wins on the same tasks, and no task here ran through MCP. At session start in Claude Code, the skill's listing line costs 46 tokens against 1,487 for the deferred MCP server; once used, 5,362 against 6,283 for three loaded tools (§ Key Findings, Skill against MCP in Claude Code).
+
+### Per command
+
+| Command | Verdict | Numbers (L against R) |
+| --- | --- | --- |
+| `issues get` with `issues children` | Retire | 1,933 against 683 tokens; first try 5/5 against 5/5 |
+| `issues list` | Retire | 4,266 against 1,853 tokens; first try 2/2 against 5/5; 28 against 1 requests |
+| `projects get` | Retire | 2,284 against 550 tokens; first try 5/5 against 5/5 |
+| `cycles list` | Retire | 3,841 against 1,928 tokens; first try 1/5 against 0/5, no measurable difference |
+| `projects list-dependencies` | Keep | 745 against 5,543 tokens; first try 5/5 against 1/5, and all 4 raw failures were Linear's query-complexity limit |
+| `issues create` with `issues add-relation` | Retire | 10,550 against 2,101 tokens; first try 0/2 against 0/5 |
+| `comments create` | Retire | 1,218 against 941 tokens read, 490 against 637 written; first try 5/5 against 5/5 |
+| `issues activate` | Keep | 2,131 against 4,242 tokens; 411 against 655 output tokens; first try 3/3 against 5/5 |
+| `issues complete` | Retire | 2,928 against 1,648 tokens; first try 2/2 against 5/5 |
+| `issues validate-completion` | Retire | 2,335 against 762 tokens; first try 5/5 against 5/5 |
+
+### Per command family
+
+Each family line names only the commands a task measured. A command no task measured has no verdict.
+
+- **Issue reads**: retire `issues get`, `issues children` and `issues list`. Raw costs less context on both tasks (683 against 1,933 tokens; 1,853 against 4,266), and both routes succeed first try on every run. Unmeasured: `issues bulk-get`, `issues list-relations`.
+- **Issue writes**: retire `issues create`, `issues add-relation`, `comments create` and `issues complete`; keep `issues activate`. Unmeasured: `issues update`, `issues bulk-update`, `issues archive`, `issues trash`, `issues remove-relation`, `issues block`, `issues unblock`, `comments list`, `comments update`, `comments delete`.
+- **Completion check**: retire `issues validate-completion`, on the condition in § Risks / Unknowns.
+- **Planning reads**: retire `projects get` and `cycles list`; keep `projects list-dependencies`. Unmeasured: `projects list`, `projects list-updates`, `cycles create`, `cycles update`, and every project write.
+- **Other families** (`labels`, `project-labels`, `initiatives`, `milestones`, `teams`, `users`, `statuses`, `documents`, `auth-check`, `auth-mint`, `session-status`, and `sync` and `cache`, which KEN-2335 removes): unmeasured.
+
+
+## Risks / Unknowns
 
 - **Stand-in**: the measured route is today's `linear.sh` and its 15,393-byte skill text. KEN-2335 changes both; its thin layer can change every number in the L rows.
 - **Small cells**: four `linear.sh` cells have two or three runs. A first-try count of 0/2 or 3/3 cannot separate the routes.
 - **Rule in the prompt**: the validate prompt states the pass rule. `validate-completion` also encodes the bundle and container rules (`issues --help`), which this task did not exercise. Retiring it needs that rule text in the skill the raw route reads.
 - **One model**: every run used Claude Opus 5.5 at high effort, which knows Linear's API without the schema. A model with less prior knowledge of Linear can need the schema on every task.
-- **Fixed overhead**: the 5,103-token skill text is a per-session cost in this run. A smaller skill after KEN-2335 lowers it.
+- **Fixed overhead**: the task runs appended the 5,103-token skill text to every session. A harness that loads the skill only when invoked pays 46 tokens for its listing line until then. A smaller skill after KEN-2335 lowers both.
 - **MCP tool list**: the MCP figures replay a third-party capture from 2026-08-10, not a `tools/list` this lane read, and exclude Linear's server instructions. A change to Linear's tool set since then changes the figures.
-- **MCP on tasks**: no task ran through MCP, so the MCP figures cover session start only.
+- **MCP on tasks**: no task ran through MCP, so the MCP figures cover session start and tool loading only.
 
-## Revisit conditions
+## Revisit Conditions
 
 - KEN-2335 merges: re-run every L row against the thin layer.
 - `--team` accepts the team key (KEN-2664): re-run cycles and create on the `linear.sh` route.
 - The raw skill text names Linear's query-complexity limit: re-run cycles, create and project-deps on the raw route. The keep verdict on `projects list-dependencies` rests on that limit.
 - A different model or effort becomes the lane default.
 
-## Research metadata
+## Research Metadata
 
-- Runs: 99 (44 `linear.sh`, 55 raw), 2026-10-03, Claude Code 2.1.288.
+- Runs: 99 (44 `linear.sh`, 55 raw), 2026-10-03, Claude Code 2.1.288. MCP and skill sessions: Claude Code 2.1.288, Codex 0.160.0, Copilot CLI 1.0.91, Pi 1.0.0.
 - Session cost: USD 2.06 for the `linear.sh` route and USD 2.19 for the raw route.
 - Linear issue: KEN-2336. Team KEN, id `53d3175c-fcb0-49ce-9f82-286a5b77372e`.
-- Per-run traces, prompts, wrapper logs, the request ledger and the grading data stay in the lane's gitignored `tmp/ken-2336-runs/`. The MCP capture, the replay server and each harness session's output stay in `tmp/ken-2336-runs/mcp/`.
+- Research mode: measurement. The Exa request returned HTTP 401, so the raw sidecar holds directly read source excerpts and no provider payload.
+- Raw metadata sidecar: docs/plans/linear-command-value-research.raw.json
+- Measurements sidecar: docs/plans/linear-command-value-research.evidence.json
+- Per-run traces, prompts, wrapper logs, the request ledger and the grading data stay in the lane's gitignored `tmp/ken-2336-runs/`; the sidecars carry the sanitized measures.
+
+[M]: linear-command-value-research.evidence.json
+[R]: linear-command-value-research.raw.json
+[S1]: https://linear.app/docs/mcp
+[S2]: https://code.claude.com/docs/en/mcp#scale-with-mcp-tool-search
+[S3]: https://www.npmjs.com/package/@earendil-works/pi-coding-agent
+[S4]: https://learn.chatgpt.com/docs/extend/mcp?surface=cli
+[S5]: https://github.com/pome-sh/digital-twins/blob/8f0f08eb198423cb2b1ea984cc8d0c9d4a83abb9/fixtures/mcp-tools-list/linear.meta.json
